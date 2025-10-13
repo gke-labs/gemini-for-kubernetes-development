@@ -1,0 +1,205 @@
+name = "dv:enable"
+description = "Enables declarative validation for a given Kubernetes API by modifying multiple files and adding tests."
+prompt = """
+# Task: Enable Declarative Validation for a Kubernetes API or Subresource
+
+You are an expert Kubernetes developer specializing in API machinery. Your task is to perform the necessary code modifications to enable declarative validation for a given Kubernetes API or subresource.
+
+**Refer to these pull requests for guidance. You can use the `github` tool to inspect their details and diffs if necessary.**
+1.  Enabling for ReplicationController: https://github.com/kubernetes/kubernetes/pull/130724
+2.  Enabling for CertificateSigningRequest: https://github.com/kubernetes/kubernetes/pull/132361
+3.  Enabling for CertificateSigningRequest/status subresource: https://github.com/kubernetes/kubernetes/pull/133068
+4.  Enabling for ResourceClaim: https://github.com/kubernetes/kubernetes/pull/134072
+5.  Enabling for ResourceClaim/status subresource: https://github.com/kubernetes/kubernetes/pull/134113
+6.  Refactoring with Centralized Helper: https://github.com/kubernetes/kubernetes/pull/134113/commits/2d5955383b5aec6ccaf9d3d2987fa8d6eea94ea1
+7.  Simplified Testing: https://github.com/kubernetes/kubernetes/pull/133937
+
+The user has specified the API with the command: `/dv:enable {{args}}`
+
+First, determine if you are enabling validation for a main resource or a subresource based on the `{{args}}`.
+
+---
+
+### If enabling for a main resource (e.g., `core.ReplicationController`):
+
+1.  **Parse the API argument:** The user provided `{{args}}`. This is in the format `<group>.<Kind>` or `<Kind>` for the core group.
+
+2.  **Find all API Versions:**
+    -   You must find all supported versions for the given Kind.
+    -   Use the `list_directory` tool to inspect the `pkg/apis/<group>/` directory. The subdirectories (e.g., `v1`, `v1beta1`) are the versions.
+    -   For the `core` group, the path is `pkg/apis/core/`.
+
+3.  **Enable Validation Code Generation (for each version):**
+    -   For each version you discovered, locate its `doc.go` file (e.g., `pkg/apis/core/v1/doc.go`).
+    -   Add the following two lines to the file's comment block:
+        ```go
+        // +k8s:validation-gen=TypeMeta
+        // +k8s:validation-gen-input=k8s.io/api/<group>/<version>
+        ```
+
+4.  **Update the API Strategy:**
+    -   Locate the `strategy.go` file for the resource (e.g., `pkg/registry/core/replicationcontroller/strategy.go`).
+    -   Add the `k8s.io/apimachinery/pkg/api/operation` import.
+    -   Remove the imports for `k8s.io/apiserver/pkg/util/feature` and `k8s.io/kubernetes/pkg/features` if they are no longer used.
+    -   In the `Validate` and `ValidateUpdate` functions, replace the existing validation logic with a call to the centralized helper function.
+
+        ```go
+        // In Validate(ctx, obj)
+        allErrs := corevalidation.ValidateReplicationController(controller, opts) // Or your resource's specific imperative validation
+        return rest.ValidateDeclarativelyWithMigrationChecks(ctx, legacyscheme.Scheme, controller, nil, allErrs, operation.Create)
+
+        // In ValidateUpdate(ctx, obj, old)
+        errs := corevalidation.ValidateReplicationControllerUpdate(newRc, oldRc, opts) // Or your resource's specific imperative validation
+        return rest.ValidateDeclarativelyWithMigrationChecks(ctx, legacyscheme.Scheme, newRc, oldRc, errs, operation.Update)
+        ```
+
+5.  **Add Declarative Validation Tests:**
+    -   Create a new test file named `declarative_validation_test.go` in the same directory as the `strategy.go` file.
+    -   Use the following multi-version test template.
+        ```go
+        package <package_name>
+
+        import (
+        	"context"
+        	"testing"
+        	// ... other necessary imports ...
+        	"k8s.io/apimachinery/pkg/util/validation/field"
+        	genericapirequest "k8s.io/apiserver/pkg/endpoints/request"
+        	apitesting "k8s.io/kubernetes/pkg/api/testing"
+        	api "<path_to_internal_api_package>"
+        )
+
+        var apiVersions = []string{"<version1>", "<version2>"} // Populate this with discovered versions
+
+        func TestDeclarativeValidate(t *testing.T) {
+        	for _, apiVersion := range apiVersions {
+        		t.Run(apiVersion, func(t *testing.T) {
+        			testDeclarativeValidate(t, apiVersion)
+        		})
+        	}
+        }
+
+        func testDeclarativeValidate(t *testing.T, apiVersion string) {
+        	ctx := genericapirequest.WithRequestInfo(genericapirequest.NewDefaultContext(), &genericapirequest.RequestInfo{
+        		APIGroup:   "<group>",
+        		APIVersion: apiVersion,
+        		Resource:   "<resource_plural>",
+        	})
+        	// ... (any necessary mock setup, e.g., for clients) ...
+        	testCases := map[string]struct {
+        		input        api.<Kind>
+        		expectedErrs field.ErrorList
+        	}{
+        		"valid": {
+        			input: mkValid<Kind>(),
+        		},
+        		// TODO: Add more test cases
+        	}
+        	for k, tc := range testCases {
+        		t.Run(k, func(t *testing.T) {
+        			apitesting.VerifyValidationEquivalence(t, ctx, &tc.input, Strategy.Validate, tc.expectedErrs)
+        		})
+        	}
+        }
+
+        func TestDeclarativeValidateUpdate(t *testing.T) {
+        	for _, apiVersion := range apiVersions {
+        		t.Run(apiVersion, func(t *testing.T) {
+        			testDeclarativeValidateUpdate(t, apiVersion)
+        		})
+        	}
+        }
+
+        func testDeclarativeValidateUpdate(t *testing.T, apiVersion string) {
+        	ctx := genericapirequest.WithRequestInfo(genericapirequest.NewDefaultContext(), &genericapirequest.RequestInfo{
+        		APIGroup:   "<group>",
+        		APIVersion: apiVersion,
+        		Resource:   "<resource_plural>",
+        	})
+        	// ... (any necessary mock setup) ...
+        	validObj := mkValid<Kind>()
+        	testCases := map[string]struct {
+        		update       api.<Kind>
+        		old          api.<Kind>
+        		expectedErrs field.ErrorList
+        	}{
+        		"valid": {
+        			update: validObj,
+        			old:    validObj,
+        		},
+        		// TODO: Add more test cases
+        	}
+        	for k, tc := range testCases {
+        		t.Run(k, func(t *testing.T) {
+        			tc.old.ResourceVersion = "1"
+        			tc.update.ResourceVersion = "2"
+        			apitesting.VerifyUpdateValidationEquivalence(t, ctx, &tc.update, &tc.old, Strategy.ValidateUpdate, tc.expectedErrs)
+        		})
+        	}
+        }
+
+        func mkValid<Kind>() api.<Kind> {
+            // ... implementation to create a valid object ...
+        }
+        ```
+
+6.  **Enable Fuzz Testing (for each version):**
+    -   Open the file `pkg/api/testing/validation_test.go`.
+    -   For each version you discovered, add a `schema.GroupVersion` to the `typesWithDeclarativeValidation` slice.
+
+---
+
+### If enabling for a subresource (e.g., `resource.k8s.io.ResourceClaim/status`):
+
+The process is similar, but the focus is on the subresource's strategy.
+
+1.  **Parse and Find Versions:** Follow steps 1 & 2 from the main resource section.
+2.  **Enable Code Generation:** Follow step 3 from the main resource section.
+3.  **Update Subresource Strategy:** In the validation function for the specific subresource strategy (e.g., `resourceclaimStatusStrategy.ValidateUpdate`), replace the validation logic with a call to the centralized helper.
+    ```go
+    // In <kind><Subresource>Strategy.Validate<Operation>
+    errs := validation.ValidateResourceClaimStatusUpdate(newClaim, oldClaim) // Or your subresource's specific imperative validation
+    return rest.ValidateDeclarativelyWithMigrationChecks(ctx, legacyscheme.Scheme, newClaim, oldClaim, errs, operation.Update)
+    ```
+4.  **Add Subresource Tests:** Add a new test function to the `declarative_validation_test.go` file for the subresource.
+    ```go
+    func TestValidate<Subresource><Operation>ForDeclarative(t *testing.T) {
+        // ... (any necessary mock client setup) ...
+    	strategy := New<Subresource>Strategy(Strategy)
+    
+    	ctx := genericapirequest.WithRequestInfo(genericapirequest.NewDefaultContext(), &genericapirequest.RequestInfo{
+    		APIGroup:    "<group>",
+    		APIVersion:  "<version>", // Usually the latest stable, e.g., "v1"
+    		Subresource: "<subresource>",
+    	})
+        validObj := mkValid<Kind>With<Subresource>() // You may need a new helper for this
+    	testCases := map[string]struct {
+    		old          api.<Kind>
+    		update       api.<Kind>
+    		expectedErrs field.ErrorList
+    	}{
+    		"valid": {
+    			update: validObj,
+    			old:    validObj,
+    		},
+    		// TODO: Add test cases
+    	}
+    	for k, tc := range testCases {
+    		t.Run(k, func(t *testing.T) {
+    			tc.old.ResourceVersion = "1"
+    			tc.update.ResourceVersion = "2"
+    			apitesting.VerifyUpdateValidationEquivalence(t, ctx, &tc.update, &tc.old, strategy.ValidateUpdate, tc.expectedErrs)
+    		})
+    	}
+    }
+    ```
+5.  **Enable Fuzz Testing:** Follow step 6 from the main resource section.
+
+---
+**IMPORTANT:**
+- After completing all the code modifications, you must run `!{hack/update-codegen.sh validation}`.
+- Do **not** run `make verify`.
+- You must run the relevant tests to ensure that your changes have not introduced any regressions. Run tests for the package you modified by running `make test WHAT=./pkg/registry/<group>/<kind>`.
+
+Please proceed with this comprehensive plan.
+"""
