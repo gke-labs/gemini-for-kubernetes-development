@@ -1,0 +1,181 @@
+
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: review-sandbox
+spec:
+  schema:
+    apiVersion: v1alpha1
+    group: custom.agents.x-k8s.io
+    kind: ReviewSandbox
+    spec:
+      # Spec fields that users can provide.
+      replicas: integer | default=1
+      prompt: string
+      entrypoint: string | default="/usr/local/bin/code-server-entrypoint"
+      source:
+        cloneURL: string
+        htmlURL: string
+        pr: string
+        title: string
+        repo: string
+      devcontainerDir: string | default=""
+      devcontainerDockerfile: string | default=""
+      networkPolicy:
+        enabled: boolean | default=false
+        ingress:
+          podLabels: "map[string]string"
+          namespaceLabels: "map[string]string"
+        egress: object
+      gateway:
+        enabled: boolean | default=false
+        ref: string | default="codebox"
+        hostname: string | default="www.example.com"
+    status:
+      # Fields the controller will inject into instances status.
+      fqdn: ${service.metadata.name}.${service.metadata.namespace}.svc.cluster.local
+      sandboxConditions: ${sandbox.status.conditions}
+  resources:
+    - id: sandbox
+      readyWhen: # CEL expressions to determine when a resource is ready
+      - ${sandbox.status.conditions.exists(x, x.type == 'Ready' && x.status == "True")}
+      template:
+        apiVersion: agents.x-k8s.io/v1alpha1
+        kind: Sandbox
+        metadata:
+          name: devc-${schema.metadata.name} # Use the name provided by user
+        spec:
+          replicas: ${schema.spec.replicas}
+          podTemplate:
+            metadata:
+              labels:
+                sandbox: devc-${schema.metadata.name}
+            spec:
+              containers:
+                - name: review-sidecar
+                  image: ko://sigs.k8s.io/agent-sandbox/examples/review-agent/review-sidecar/images/review-sidecar
+                  env:
+                    # URL to the repository where the .devcontainer folder we want to load is located
+                    - name: REPO
+                      value: ${schema.spec.source.repo}
+                    - name: PRID
+                      value: ${schema.spec.source.pr}
+                  volumeMounts:
+                    - name: workspaces-pvc
+                      mountPath: /workspaces
+                - name: devcontainer-main
+                  image: ghcr.io/coder/envbuilder
+                  env:
+                    # URL to the repository where the .devcontainer folder we want to load is located
+                    - name: AGENT_PROMPT
+                      value: ${schema.spec.prompt}
+                    - name: ENVBUILDER_GIT_URL
+                      value: ${schema.spec.source.cloneURL}
+                    - name: ENVBUILDER_DEVCONTAINER_DIR
+                      value: ${schema.spec.devcontainerDir}
+                    - name: ENVBUILDER_DOCKERFILE_PATH
+                      value: ${schema.spec.devcontainerDockerfile}
+                    - name: ENVBUILDER_GIT_CLONE_SINGLE_BRANCH
+                      value: "true"
+                    - name: ENVBUILDER_INIT_SCRIPT
+                      value: "${schema.spec.entrypoint}"
+                    - name: ENVBUILDER_IGNORE_PATHS
+                      value: "/var/run,/product_uuid,/product_name,/tokens"
+                  volumeMounts:
+                    - name: workspaces-pvc
+                      mountPath: /workspaces
+                    - name: tokens-secret
+                      mountPath: "/tokens"
+                      readOnly: true
+                  ports:
+                    - containerPort: 13337
+              volumes:
+              - name: tokens-secret
+                secret:
+                  secretName: gemini-vscode-tokens
+          volumeClaimTemplates:
+            - metadata:
+                name: workspaces-pvc
+              spec:
+                accessModes:
+                  - ReadWriteOnce
+                resources:
+                  requests:
+                    storage: 5Gi
+    - id: service
+      template:
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: devc-${schema.metadata.name}-lb
+        spec:
+          selector:
+            sandbox: devc-${schema.metadata.name}
+          ports:
+            - protocol: TCP
+              port: 13338
+              targetPort: 13337
+    - id: nwpolicy
+      includeWhen:
+        - ${schema.spec.networkPolicy.enabled}
+      template:
+        apiVersion: networking.k8s.io/v1
+        kind: NetworkPolicy
+        metadata:
+          name: allow-frontend-to-backend
+          namespace: default
+        spec:
+          podSelector:
+            matchLabels:
+              sandbox: devc-${schema.metadata.name}
+          policyTypes:
+            - Ingress
+            - Egress
+          ingress:
+          - from:
+            - podSelector:
+                matchLabels: ${schema.spec.networkPolicy.ingress.podLabels}
+            - namespaceSelector:
+                matchLabels: ${schema.spec.networkPolicy.ingress.namespaceLabels}
+          egress: ${schema.spec.networkPolicy.egress}
+    - id: httproute
+      includeWhen:
+        - ${schema.spec.gateway.enabled} # Only include if the user wants to create an Gateway route
+      template:
+        apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        metadata:
+          name: devc-${schema.metadata.name} # Use the name provided by user
+        spec:
+          parentRefs:
+            - name: ${schema.spec.gateway.ref} # Reference to the Gateway created outside of this RGD
+          rules:
+            - backendRefs:
+                - group: ""
+                  kind: Service
+                  name: ${service.metadata.name}
+                  port: 13338
+                  weight: 1
+              matches:
+                - path:
+                    type: PathPrefix
+                    value: /${schema.metadata.name} # Route path based on the name provided by user
+    - id: tcproute
+      includeWhen:
+        - ${schema.spec.gateway.enabled} # Only include if the user wants to create an Gateway route
+      template:
+        apiVersion: gateway.networking.k8s.io/v1alpha2
+        kind: TCPRoute
+        metadata:
+          name: devc-${schema.metadata.name} # Use the name provided by user
+        spec:
+          parentRefs:
+            - name: ${schema.spec.gateway.ref} # Reference to the Gateway created outside of this RGD
+              sectionName: tcp
+          rules:
+            - backendRefs:
+              - group: ""
+                kind: Service
+                name: ${service.metadata.name}
+                port: 13338
+                weight: 1

@@ -1,0 +1,68 @@
+
+KIND_CLUSTER=review-agent
+
+.PHONY: all
+all: fix-go-generate lint-go test-unit create-kind install-packages install-sandbox-operator create-secrets install-review-system
+
+.PHONY: fix-go-generate
+fix-go-generate:
+	../dev/tools/fix-go-generate --working-dir ./repowatch
+
+.PHONY: test-unit
+test-unit:
+	../dev/tools/test-unit --working-dir ./
+
+.PHONY: lint-go
+lint-go:
+	../dev/tools/lint-go --working-dir ./
+
+.PHONY: install-packages
+install-packages:
+	../dev/tools/install-kro
+	../dev/tools/install-envoy
+
+.PHONY: create-kind
+create-kind:
+	../dev/tools/create-kind-cluster --recreate ${KIND_CLUSTER} --kubeconfig bin/KUBECONFIG
+
+.PHONY: install-sandbox-operator
+install-sandbox-operator:
+	# Install Sandbox Operator 
+	# have to do from source until we have a release
+	mkdir /tmp/sandbox-operator || true
+	ls -l /tmp/sandbox-operator/agent-sandbox || git clone https://github.com/kubernetes-sigs/agent-sandbox.git /tmp/sandbox-operator/agent-sandbox
+	cd /tmp/sandbox-operator/agent-sandbox && git pull
+	cd /tmp/sandbox-operator/agent-sandbox && dev/tools/push-images --image-prefix=kind.local/ --kind-cluster-name=${KIND_CLUSTER}
+	cd /tmp/sandbox-operator/agent-sandbox && dev/tools/deploy-to-kube --image-prefix=kind.local/
+	rm -fr /tmp/sandbox-operator
+
+.PHONY: install-review-system
+install-review-system:
+	kubectl apply -f k8s/namespace.yaml
+	# Install
+	../dev/tools/push-images --image-prefix=kind.local/ --kind-cluster-name=${KIND_CLUSTER} --working-dir .
+	../dev/tools/deploy-to-kube --image-prefix=kind.local/ --working-dir .
+
+.PHONY: create-secrets
+create-secrets:
+	kubectl create namespace review-agent-system || true
+	@kubectl create secret -n review-agent-system generic gemini-vscode-tokens --from-literal=gemini=${GEMINI_API_KEY} || true
+	@kubectl create secret -n review-agent-system generic github-pat --from-literal=pat=${GITHUB_PAT} || true
+
+.PHONY: create-instance
+create-instance:
+	kubectl apply -f examples/review-sandbox.yaml
+	sleep 5
+	kubectl get reviewsandboxes
+	sleep 5
+	kubectl get pod devc-demo
+	kubectl logs -f devc-demo
+
+.PHONY: delete-instance
+delete-instance:
+	kubectl delete reviewsandbox demo
+
+.PHONY: port-forward
+port-forward:
+	ENVOY_SERVICE=$$(kubectl get svc -n envoy-gateway-system --selector=gateway.envoyproxy.io/owning-gateway-namespace=review-agent-system,gateway.envoyproxy.io/owning-gateway-name=review-agent-gateway -o jsonpath='{.items[0].metadata.name}') && kubectl port-forward -n envoy-gateway-system --address 0.0.0.0 service/$${ENVOY_SERVICE} 13380:13380
+	# kubectl port-forward -n review-agent-system --address 0.0.0.0 service/pr-review-ui 13380:80

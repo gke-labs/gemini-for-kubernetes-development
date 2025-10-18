@@ -1,0 +1,14 @@
+apiVersion: review.gemini.google.com/v1alpha1
+kind: RepoWatch
+metadata:
+  name: kubernetes-sigs-sandbox
+  namespace: review-agent-system
+spec:
+  #prompt: "You are an expert kubernetes developer who is helping with code reviews. Please look at the most recent commit and provide a review feedback. Would you approve it ?"
+  repoURL: https://github.com/kubernetes-sigs/agent-sandbox
+  devcontainerDir: examples/vscode-sandbox
+  entrypoint: examples/vscode-sandbox/entrypoint.sh
+  maxActiveSandboxes: 5
+  githubSecretRef:
+    name: github-pat
+    key: pat

@@ -1,0 +1,37 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: eg-codebox
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: codebox
+spec:
+  gatewayClassName: eg-codebox
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 13339
+    - name: tcp
+      protocol: TCP
+      port: 14339
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: BackendTrafficPolicy
+metadata:
+  name: codebox-http-upgrade
+  namespace: default
+spec:
+  useClientProtocol: true
+  httpUpgrade:
+    - type: websocket
+    - type: CONNECT
+      connect:
+        terminate: false
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: codebox

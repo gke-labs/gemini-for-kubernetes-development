@@ -1,0 +1,52 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: review-agent-controller
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - custom.agents.x-k8s.io
+  resources:
+  - reviewsandboxes
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - review.gemini.google.com
+  resources:
+  - repowatches
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - review.gemini.google.com
+  resources:
+  - repowatches/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - review.gemini.google.com
+  resources:
+  - repowatches/status
+  verbs:
+  - get
+  - patch
+  - update

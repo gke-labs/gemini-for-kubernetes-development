@@ -1,0 +1,12 @@
+apiVersion: custom.agents.x-k8s.io/v1alpha1
+kind: ReviewSandbox
+metadata:
+  name: demo
+spec:
+  prompt: "You are an expert kubernetes developer who is helping with code reviews. Please look at the most recent commit and provide a review feedback. Would you approve it ?"
+  source:
+    giturl: https://github.com/kubernetes-sigs/agent-sandbox.git
+  devcontainerDir: examples/review-agent/devcontainer
+  entrypoint: examples/review-agent/entrypoint.sh
+  gateway:
+    enabled: true

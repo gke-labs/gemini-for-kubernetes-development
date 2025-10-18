@@ -1,0 +1,71 @@
+kind: ServiceAccount
+apiVersion: v1
+metadata:
+  name: repowatch-controller
+  namespace: review-agent-system
+  labels:
+    app: repowatch-controller
+
+---
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: repowatch-controller
+subjects:
+- kind: ServiceAccount
+  name: repowatch-controller
+  namespace: review-agent-system
+roleRef:
+  kind: ClusterRole
+  name: review-agent-controller
+  apiGroup: rbac.authorization.k8s.io
+
+---
+
+kind: Service
+apiVersion: v1
+metadata:
+  name: repowatch-controller
+  namespace: review-agent-system
+  labels:
+    app: repowatch-controller
+spec:
+  selector:
+    app: repowatch-controller
+  ports:
+  - port: 80
+    targetPort: 8080
+    protocol: TCP
+
+---
+
+kind: StatefulSet
+apiVersion: apps/v1
+metadata:
+  name: repowatch-controller
+  namespace: review-agent-system
+  labels:
+    app: repowatch-controller
+spec:
+  serviceName: repowatch-controller
+  replicas: 1
+  selector:
+    matchLabels:
+      app: repowatch-controller
+  template:
+    metadata:
+      labels:
+        app: repowatch-controller
+    spec:
+      serviceAccountName: repowatch-controller
+      containers:
+      - name: repowatch-controller
+        image: ko://sigs.k8s.io/agent-sandbox/examples/review-agent/repowatch/cmd/repowatch-controller # placeholder value, replaced by deployment scripts
+        resources:
+          limits:
+            cpu: 500m
+            memory: 128Mi
+          requests:
+            cpu: 10m
+            memory: 64Mi
