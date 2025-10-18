@@ -1,0 +1,140 @@
+#!/usr/bin/env python3
+# Copyright 2025 The Kubernetes Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import argparse
+import os
+import subprocess
+
+from shared import utils
+
+
+def create_buildx_builder_if_not_exists():
+    builder_name = "gemini-for-k8s-dev-builder"
+    try:
+        subprocess.run(
+            ["docker", "buildx", "inspect", builder_name],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        print(f"buildx builder '{builder_name}' already exists.")
+    except subprocess.CalledProcessError:
+        print(f"creating buildx builder '{builder_name}'.")
+        subprocess.run(
+            ["docker", "buildx", "create", "--name", builder_name], check=True
+        )
+    subprocess.run(["docker", "buildx", "use", builder_name], check=True)
+
+
+def build_and_push_image_with_docker_buildx(args, image_name, srcdir, dockerfile_path):
+    platforms = "linux/amd64,linux/arm64"
+    build_cmd = [
+        "docker",
+        "buildx",
+        "build",
+        f"--output=type={args.docker_build_output_type}",
+    ]
+    if args.docker_build_output_type == "registry":
+        build_cmd.append("--platform=" + platforms)
+    build_cmd.extend([
+        "-t",
+        image_name,
+        "-f",
+        dockerfile_path,
+        ".",
+    ])
+    subprocess.run(build_cmd, cwd=srcdir, check=True)
+    print(f"pushed image {image_name}")
+
+
+def load_kind_image(cluster_name, image_name, srcdir):
+    build_cmd = [
+        "kind",
+        "load",
+        "docker-image",
+        f"--name={cluster_name}",
+        image_name,
+    ]
+
+    subprocess.run(build_cmd, cwd=srcdir, check=True)
+    print(f"loaded image {image_name} into kind cluster {args.kind_cluster_name}")
+
+
+def build_and_push_image(args, image_name, srcdir, dockerfile_path):
+    build_and_push_image_with_docker_buildx(args, image_name, srcdir, dockerfile_path)
+    if args.kind_cluster_name:
+        load_kind_image(args.kind_cluster_name, image_name, srcdir)
+
+
+def main(args):
+    """Builds and pushes docker images."""
+
+    repo_root = utils.get_repo_root()
+    working_dir = args.working_dir or repo_root
+    print(f"using working dir: {working_dir}")
+
+    images_dir = os.path.join(working_dir, "images")
+
+    if not os.path.isdir(images_dir):
+        print("images directory not found")
+        return
+
+    for root, dirs, files in os.walk(images_dir):
+        for filename in files:
+            if filename != "Dockerfile":
+                continue
+
+            dockerfile_path = os.path.join(root, filename)
+            service_name = os.path.basename(root)
+
+            image_name = utils.get_full_image_name(args, service_name)
+
+            print(f"create Docker buildx builder for {service_name}")
+            create_buildx_builder_if_not_exists()
+            print(f"building image for {service_name} with tag {image_name}")
+            build_and_push_image(args, image_name, working_dir, dockerfile_path)
+
+
+if __name__ == "__main__":
+    # parse arguments and call
+    parser = argparse.ArgumentParser(description="Build and push Docker images")
+    parser.add_argument("--image-prefix",
+                        dest="image_prefix",
+                        help="Prefix for the image name. requires slash at the end if a path",
+                        type=str,
+                        default=os.getenv("IMAGE_PREFIX"))
+    parser.add_argument("--kind-cluster-name",
+                        dest="kind_cluster_name",
+                        help="Name of the kind cluster. If set, images will be loaded into the cluster",
+                        type=str,
+                        default=os.getenv("KIND_CLUSTER_NAME"))
+    parser.add_argument("--working-dir",
+                        dest="working_dir",
+                        help="use working dir instead of repo root",
+                        type=str,
+                        default=None)
+    args = parser.parse_args()
+
+    if args.working_dir:
+        if not os.path.isdir(args.working_dir):
+            print(f"working dir {args.working_dir} not found")
+            exit(1)
+        args.working_dir = os.path.abspath(args.working_dir)
+    if args.kind_cluster_name:
+        args.docker_build_output_type = "docker"
+    else:
+        args.docker_build_output_type = "registry"    
+
+    main(args)
