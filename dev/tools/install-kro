@@ -1,0 +1,67 @@
+#!/usr/bin/env python3
+# Copyright 2025 The Kubernetes Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import requests
+import subprocess
+import time
+
+def get_latest_kro_version():
+    """Fetches the latest Kro version from the GitHub API."""
+    url = "https://api.github.com/repos/kubernetes-sigs/kro/releases/latest"
+    response = requests.get(url)
+    response.raise_for_status()
+    tag_name = response.json()["tag_name"]
+    return tag_name.lstrip("v")
+
+def run_command(command):
+    """Runs a shell command and prints its output."""
+    print(f"Running command: {' '.join(command)}")
+    subprocess.run(command, check=True)
+
+def main():
+    """Installs the latest version of Kro."""
+    try:
+        kro_version = get_latest_kro_version()
+        print(f"Installing kro version: {kro_version}")
+
+        # TODO(barney-s): change OCI registry to k8s-sigs
+        helm_install_command = [
+            "helm", "install", "kro", "oci://ghcr.io/kro-run/kro/kro",
+            "--namespace", "kro",
+            "--create-namespace",
+            f"--version={kro_version}"
+        ]
+        run_command(helm_install_command)
+
+        print("Waiting for 5 seconds...")
+        time.sleep(5)
+
+        helm_list_command = ["helm", "-n", "kro", "list"]
+        run_command(helm_list_command)
+
+        kubectl_get_pods_command = ["kubectl", "get", "pods", "-n", "kro"]
+        run_command(kubectl_get_pods_command)
+
+        print("Kro installed successfully.")
+
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching Kro version: {e}")
+    except subprocess.CalledProcessError as e:
+        print(f"Error executing command: {e}")
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
+
+if __name__ == "__main__":
+    main()

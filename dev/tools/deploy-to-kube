@@ -1,0 +1,125 @@
+#!/usr/bin/env python3
+# Copyright 2025 The Kubernetes Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import argparse
+import io
+import os
+import subprocess
+import yaml
+
+from shared import utils
+
+
+def find_and_replace_images(doc, service_name, image_prefix, image_tag):
+    """Recursively finds and replaces container images in a Kubernetes manifest."""
+    def fn(field_path, v):
+        # if fields_path ends with .spec.template.spec.containers[].image, we found a container image
+        if field_path.endswith(".spec.containers[].image"):
+            # We only replace images that look like :latest
+            image_and_tag = v.split(":")
+            if len(image_and_tag) == 2 and image_and_tag[1] == "latest":
+                v2 = f"{image_prefix}{image_and_tag[0]}:{image_tag}"
+                print(f"{v}: replaced image with {v2}")
+                v = v2
+            if v.startswith("ko://"):
+                # ko://foo/bar/command-name -> image_prefix + command-name + image_tag
+                command_name = v.split("/")[-1]
+                v2 = f"{image_prefix}{command_name}:{image_tag}"
+                print(f"{v}: replaced image with {v2}")
+                v = v2
+        return v
+    walk_object(doc, fn)
+
+
+def walk_object(obj, fn, field_path=""):
+    """Recursively walks an object, and calls fn with the field_path to allow for value replacement."""
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            v2 = fn(f"{field_path}.{k}", v)
+            obj[k] = v2
+            walk_object(v, fn, field_path=f"{field_path}.{k}")
+    elif isinstance(obj, list):
+        for item in obj:
+            walk_object(item, fn, field_path=field_path + "[]")
+    elif isinstance(obj, str) or isinstance(obj, int) or isinstance(obj, float) or obj is None:
+        pass
+    else:
+        raise Exception(f"unexpected type: {type(obj)}")
+
+
+def main(args):
+    repo_root = utils.get_repo_root()
+    working_dir = args.working_dir or repo_root
+    print(f"using working dir: {working_dir}")
+
+    manifests_path = os.path.join(working_dir, "k8s")
+
+    if not os.path.isdir(manifests_path):
+        print("k8s directory not found")
+        return
+
+    for root, dirs, files in os.walk(manifests_path):
+        for filename in files:
+            if not (filename.endswith(".yaml") or filename.endswith(".yml")):
+                continue
+
+            path = os.path.join(root, filename)
+
+            with open(path, "r") as f:
+                # Use safe_load_all for multi-document YAML files
+                docs = list(yaml.safe_load_all(f))
+
+            service_name = os.path.basename(root)
+            image_prefix = utils.get_image_prefix(args)
+            image_tag = utils.get_image_tag()
+
+            # Process each document in the file
+            for doc in docs:
+                if not doc: # Skip empty documents
+                    continue
+
+                find_and_replace_images(doc, service_name, image_prefix, image_tag)
+
+            # Dump the modified documents back to a string
+            string_stream = io.StringIO()
+            yaml.dump_all(docs, string_stream)
+            modified_content = string_stream.getvalue()
+
+            rel_path = os.path.relpath(path, working_dir)
+            print(f"applying manifest {rel_path}")
+
+            cmd = ["kubectl", "apply", "-f", "-"]
+            subprocess.run(cmd, cwd=working_dir, check=True, input=modified_content, text=True)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Deploy manifests under k8s/ to Kubernetes cluster")
+    parser.add_argument("--image-prefix",
+                        dest="image_prefix",
+                        help="prefix for the image name. requires slash at the end if a path",
+                        type=str,
+                        default=os.getenv("IMAGE_PREFIX"))
+    parser.add_argument("--working-dir",
+                        dest="working_dir",
+                        help="use working dir instead of repo root",
+                        type=str,
+                        default=None)
+    args = parser.parse_args()
+    if args.working_dir:
+        if not os.path.isdir(args.working_dir):
+            print(f"working dir {args.working_dir} not found")
+            exit(1)
+        args.working_dir = os.path.abspath(args.working_dir)
+    main(args)

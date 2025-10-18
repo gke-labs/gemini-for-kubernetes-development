@@ -1,0 +1,62 @@
+#!/usr/bin/env python3
+# Copyright 2025 The Kubernetes Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import argparse
+import os
+import subprocess
+import sys
+
+def main():
+    parser = argparse.ArgumentParser(description="Create a kind cluster.")
+    parser.add_argument("name", help="The name of the cluster.")
+    parser.add_argument("--recreate", action="store_true", help="Delete the cluster if it already exists.")
+    parser.add_argument("--config", type=str, help="Path to a Kind cluster configuration file (YAML).")
+    parser.add_argument("--kubeconfig", help="Path to export the kubeconfig to.")
+    args = parser.parse_args()
+
+    clusters = subprocess.run(["kind", "get", "clusters"], capture_output=True, text=True).stdout.splitlines()
+
+    cluster_exists = args.name in clusters
+    if cluster_exists:
+        if args.recreate:
+            print(f"Cluster '{args.name}' already exists. Deleting it.")
+            subprocess.run(["kind", "delete", "cluster", "--name", args.name], check=True)
+            cluster_exists = False
+        else:
+            print(f"Cluster '{args.name}' already exists. Use --recreate to delete and recreate it.")
+
+    if not cluster_exists:
+        print(f"Creating cluster '{args.name}'.")
+        command = ["kind", "create", "cluster", "--name", args.name]
+        if args.config:
+            command.extend(["--config", args.config])
+        try:
+            subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            print(f"Kind cluster '{args.name}' created successfully.")
+        except subprocess.CalledProcessError as e:
+            print(f"Error creating Kind cluster '{args.name}':")
+            print(f"STDOUT: {e.stdout.decode()}")
+            print(f"STDERR: {e.stderr.decode()}")
+            exit(1)
+
+    if args.kubeconfig:
+        kubeconfig_dir = os.path.dirname(args.kubeconfig)
+        if kubeconfig_dir:
+            os.makedirs(kubeconfig_dir, exist_ok=True)
+        print(f"Exporting kubeconfig for cluster '{args.name}' to '{args.kubeconfig}'.")
+        subprocess.run(["kind", "export", "kubeconfig", "--name", args.name, "--kubeconfig", args.kubeconfig], check=True)
+
+if __name__ == "__main__":
+    main()
