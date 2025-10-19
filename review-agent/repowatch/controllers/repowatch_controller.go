@@ -268,6 +268,7 @@ func (r *RepoWatchReconciler) generatePullRequestPrompt(repoWatch *reviewv1alpha
 }
 
 func (r *RepoWatchReconciler) createSandboxForPR(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, pr *github.PullRequest) error {
+	log := log.FromContext(ctx)
 	repoName := strings.Split(repoWatch.Spec.RepoURL, "/")[len(strings.Split(repoWatch.Spec.RepoURL, "/"))-1]
 	sandboxName := fmt.Sprintf("%s-pr-%d", repoName, *pr.Number)
 
@@ -276,6 +277,7 @@ func (r *RepoWatchReconciler) createSandboxForPR(ctx context.Context, repoWatch 
 		return err
 	}
 
+	log.Info("Generated sandbox for PR", "pr", *pr)
 	sandbox := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
@@ -290,15 +292,15 @@ func (r *RepoWatchReconciler) createSandboxForPR(ctx context.Context, repoWatch 
 			"spec": map[string]interface{}{
 				"prompt": prompt,
 				"source": map[string]interface{}{
-					"cloneURL": *pr.Head.Repo.CloneURL,
+					"cloneURL": fmt.Sprintf("%s#refs/heads/%s", *pr.Head.Repo.CloneURL, *pr.Head.Ref),
 					"htmlURL":  *pr.HTMLURL,
 					"pr":       fmt.Sprintf("%d", *pr.Number),
 					"title":    *pr.Title,
 					"repo":     repoWatch.GetName(),
 				},
-				//"gateway": map[string]interface{}{
-				//	"enabled": true,
-				//},
+				"gateway": map[string]interface{}{
+					"httpEnabled": true,
+				},
 				"replicas": int64(1),
 			},
 		},

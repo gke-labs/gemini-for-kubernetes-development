@@ -25,9 +25,9 @@ spec:
           namespaceLabels: "map[string]string"
         egress: object
       gateway:
-        enabled: boolean | default=false
-        ref: string | default="codebox"
-        hostname: string | default="www.example.com"
+        httpEnabled: boolean | default=false
+        tcpEnabled: boolean | default=false
+        ref: string | default="review-agent-gateway"
     status:
       # Fields the controller will inject into instances status.
       fqdn: ${service.metadata.name}.${service.metadata.namespace}.svc.cluster.local
@@ -113,6 +113,8 @@ spec:
             - protocol: TCP
               port: 13338
               targetPort: 13337
+              appProtocol: kubernetes.io/ws
+              #appProtocol: kubernetes.io/h2c
     - id: nwpolicy
       includeWhen:
         - ${schema.spec.networkPolicy.enabled}
@@ -138,7 +140,7 @@ spec:
           egress: ${schema.spec.networkPolicy.egress}
     - id: httproute
       includeWhen:
-        - ${schema.spec.gateway.enabled} # Only include if the user wants to create an Gateway route
+        - ${schema.spec.gateway.httpEnabled} # Only include if the user wants to create an Gateway route
       template:
         apiVersion: gateway.networking.k8s.io/v1
         kind: HTTPRoute
@@ -149,18 +151,24 @@ spec:
             - name: ${schema.spec.gateway.ref} # Reference to the Gateway created outside of this RGD
           rules:
             - backendRefs:
-                - group: ""
-                  kind: Service
-                  name: ${service.metadata.name}
+                - name: ${service.metadata.name}
                   port: 13338
-                  weight: 1
+                  #group: ""
+                  #kind: Service
+                  #weight: 1
               matches:
                 - path:
                     type: PathPrefix
-                    value: /${schema.metadata.name} # Route path based on the name provided by user
+                    value: /sandbox/${schema.metadata.name} # Route path based on the name provided by user
+              filters:
+                - type: URLRewrite
+                  urlRewrite:
+                    path:
+                      type: ReplacePrefixMatch
+                      replacePrefixMatch: / # Repl
     - id: tcproute
       includeWhen:
-        - ${schema.spec.gateway.enabled} # Only include if the user wants to create an Gateway route
+        - ${schema.spec.gateway.tcpEnabled} # Only include if the user wants to create an Gateway route
       template:
         apiVersion: gateway.networking.k8s.io/v1alpha2
         kind: TCPRoute

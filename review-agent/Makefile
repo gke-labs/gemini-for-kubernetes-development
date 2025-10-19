@@ -2,7 +2,7 @@
 KIND_CLUSTER=review-agent
 
 .PHONY: all
-all: fix-go-generate lint-go test-unit create-kind install-packages install-sandbox-operator create-secrets install-review-agent
+all: fix-go-generate lint-go test-unit create-kind install-packages install-sandbox-operator create-secrets install-review-agent create-instance
 
 .PHONY: fix-go-generate
 fix-go-generate:
@@ -53,12 +53,9 @@ create-secrets:
 
 .PHONY: create-instance
 create-instance:
-	kubectl apply -f examples/review-sandbox.yaml
+	kubectl apply -f examples/repowatch.yaml
 	sleep 5
-	kubectl get reviewsandboxes
-	sleep 5
-	kubectl get pod devc-demo
-	kubectl logs -f devc-demo
+	kubectl get reviewsandboxes -A
 
 .PHONY: delete-instance
 delete-instance:
@@ -66,5 +63,7 @@ delete-instance:
 
 .PHONY: port-forward
 port-forward:
-	ENVOY_SERVICE=$$(kubectl get svc -n envoy-gateway-system --selector=gateway.envoyproxy.io/owning-gateway-namespace=review-agent-system,gateway.envoyproxy.io/owning-gateway-name=review-agent-gateway -o jsonpath='{.items[0].metadata.name}') && kubectl port-forward -n envoy-gateway-system --address 0.0.0.0 service/$${ENVOY_SERVICE} 13380:13380
-	# kubectl port-forward -n review-agent-system --address 0.0.0.0 service/pr-review-ui 13380:80
+	while true; do \
+	ENVOY_SERVICE=$$(kubectl get svc -n envoy-gateway-system --selector=gateway.envoyproxy.io/owning-gateway-namespace=review-agent-system,gateway.envoyproxy.io/owning-gateway-name=review-agent-gateway -o jsonpath='{.items[0].metadata.name}') && kubectl port-forward -n envoy-gateway-system --address 0.0.0.0 service/$${ENVOY_SERVICE} 13380:13380;\
+	done
+	# kubectl port-forward -n review-agent-system --address 0.0.0.0 service/devc-agent-sandbox-pr-102-lb  13338:13338

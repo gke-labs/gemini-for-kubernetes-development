@@ -115,7 +115,13 @@ function App() {
           <div key={pr.id} className={`pr-card ${pr.review ? 'review-submitted' : ''}`}>
             <div className="pr-card-header">
               <h3><a href={pr.htmlURL} target="_blank" rel="noopener noreferrer">{pr.title} (PR #{pr.id})</a></h3>
-              <span className={`pr-sandbox ${getSandboxStatusClass(pr)}`}>Sandbox: {pr.sandbox || 'Not created'}</span>
+              {getSandboxStatusClass(pr) === 'green' ? (
+                <a href={`/sandbox/${pr.sandbox}/`} target="_blank" rel="noopener noreferrer" className={`pr-sandbox ${getSandboxStatusClass(pr)}`}>
+                  Sandbox: {pr.sandbox}
+                </a>
+              ) : (
+                <span className={`pr-sandbox ${getSandboxStatusClass(pr)}`}>Sandbox: {pr.sandbox || 'Not created'}</span>
+              )}
             </div>
             {pr.review ? (
               <div className="review-display">
