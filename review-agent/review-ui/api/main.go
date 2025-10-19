@@ -353,13 +353,43 @@ func deletePR(c *gin.Context) {
 
 	// Clean up Redis keys
 	prKey := fmt.Sprintf("pr:repo:%s:pr:%s", repo, prID)
-	err := rdb.HDel(c.Request.Context(), prKey, "review", "draft", "sandbox", "htmlurl", "title").Err()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete PR data from Redis"})
+	if err := rdb.HDel(c.Request.Context(), prKey, "review", "draft", "sandbox", "htmlurl", "title").Err(); err != nil {
+		log.Printf("Failed to HDEL PR data from Redis: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to HDEL PR data from Redis"})
+		return
+	}
+	if err := rdb.Del(c.Request.Context(), prKey).Err(); err != nil {
+		log.Printf("Failed to DEL PR data from Redis: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to DEL PR data from Redis"})
 		return
 	}
 
 	c.Status(http.StatusOK)
+}
+
+func deleteSandbox(ctx context.Context, repo, prID string) error {
+	prKey := fmt.Sprintf("pr:repo:%s:pr:%s", repo, prID)
+	sandboxName, err := rdb.HGet(ctx, prKey, "sandbox").Result()
+	if err == redis.Nil {
+		// If sandbox is not in Redis, we can assume it's already deleted or never existed.
+		log.Printf("Sandbox for repo %s, PR %s not found in Redis. Assuming it's already deleted.", repo, prID)
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("failed to get sandbox name from Redis: %w", err)
+	}
+
+	gvr := schema.GroupVersionResource{
+		Group:    "custom.agents.x-k8s.io",
+		Version:  "v1alpha1",
+		Resource: "reviewsandboxes",
+	}
+	log.Printf("Deleting sandbox %s", sandboxName)
+	err = k8sClient.Resource(gvr).Namespace(namespace).Delete(ctx, sandboxName, v1.DeleteOptions{})
+	if err != nil {
+		// We can choose to not return an error if it's already gone.
+		return fmt.Errorf("failed to delete sandbox: %w", err)
+	}
+	return nil
 }
 
 func scaledownSandbox(ctx context.Context, repo, prID string) error {

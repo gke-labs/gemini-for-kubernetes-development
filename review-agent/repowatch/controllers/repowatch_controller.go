@@ -196,7 +196,15 @@ func (r *RepoWatchReconciler) reconcileSandboxes(ctx context.Context, repoWatch 
 		for _, sandbox := range sandboxes.Items {
 			if sandbox.GetName() == sandboxName {
 				sandboxExists = true
-				activeSandboxes++
+				// Check if replica count > 0
+				replicas, found, err := unstructured.NestedInt64(sandbox.Object, "spec", "replicas")
+				if err != nil || !found {
+					log.Error(err, "unable to get replicas for sandbox", "sandbox", sandbox.GetName())
+					break
+				}
+				if replicas > 0 {
+					activeSandboxes++
+				}
 				watchedPRs = append(watchedPRs, reviewv1alpha1.WatchedPR{
 					Number:      *pr.Number,
 					SandboxName: sandboxName,
