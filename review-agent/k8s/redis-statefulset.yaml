@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
       - name: redis
-        image: ko://sigs.k8s.io/agent-sandbox/examples/review-agent/review-ui/images/redis # This will be built locally
+        image: ko://review-agent/review-ui/images/redis # This will be built locally
         ports:
         - containerPort: 6379
           name: redis

@@ -2,11 +2,12 @@ apiVersion: custom.agents.x-k8s.io/v1alpha1
 kind: ReviewSandbox
 metadata:
   name: demo
+  namespace: review-agent-system
 spec:
   prompt: "You are an expert kubernetes developer who is helping with code reviews. Please look at the most recent commit and provide a review feedback. Would you approve it ?"
   source:
-    giturl: https://github.com/kubernetes-sigs/agent-sandbox.git
-  devcontainerDir: examples/review-agent/devcontainer
-  entrypoint: examples/review-agent/entrypoint.sh
-  gateway:
-    enabled: true
+    cloneURL: https://github.com/kubernetes-sigs/agent-sandbox.git
+    pr: "1"
+    repo: agent-sandbox
+    htmlURL: https://github.com/kubernetes-sigs/agent-sandbox/pull/1
+    title: "Add a simple README file"

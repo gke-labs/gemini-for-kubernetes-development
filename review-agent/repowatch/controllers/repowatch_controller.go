@@ -288,8 +288,6 @@ func (r *RepoWatchReconciler) createSandboxForPR(ctx context.Context, repoWatch 
 					"title":    *pr.Title,
 					"repo":     repoWatch.GetName(),
 				},
-				"devcontainerDir": repoWatch.Spec.DevContainerDir,
-				"entrypoint":      repoWatch.Spec.EntryPoint,
 				//"gateway": map[string]interface{}{
 				//	"enabled": true,
 				//},

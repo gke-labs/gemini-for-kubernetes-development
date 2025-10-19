@@ -26,10 +26,6 @@ spec:
             type: object
           spec:
             properties:
-              devcontainerDir:
-                type: string
-              entrypoint:
-                type: string
               githubSecretRef:
                 properties:
                   key:

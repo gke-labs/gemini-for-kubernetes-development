@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
       - name: ui
-        image: ko://sigs.k8s.io/agent-sandbox/examples/review-agent/review-ui/images/review-ui # This will be built locally
+        image: ko://review-agent/review-ui/images/review-ui # This will be built locally
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 80

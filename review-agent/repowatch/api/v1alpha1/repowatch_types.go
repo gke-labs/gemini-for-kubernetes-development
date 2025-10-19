@@ -27,9 +27,7 @@ type RepoWatchSpec struct {
 	// +kubebuilder:validation:Required
 	RepoURL string `json:"repoURL"`
 
-	Prompt          string `json:"prompt,omitempty"`
-	DevContainerDir string `json:"devcontainerDir,omitempty"`
-	EntryPoint      string `json:"entrypoint,omitempty"`
+	Prompt string `json:"prompt,omitempty"`
 
 	// How often to check for new PRs (in seconds).
 	// +kubebuilder:validation:Minimum=30

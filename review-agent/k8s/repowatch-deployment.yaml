@@ -61,7 +61,7 @@ spec:
       serviceAccountName: repowatch-controller
       containers:
       - name: repowatch-controller
-        image: ko://sigs.k8s.io/agent-sandbox/examples/review-agent/repowatch/cmd/repowatch-controller # placeholder value, replaced by deployment scripts
+        image: ko://review-agent/repowatch/cmd/repowatch-controller # placeholder value, replaced by deployment scripts
         resources:
           limits:
             cpu: 500m

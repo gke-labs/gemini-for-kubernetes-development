@@ -16,7 +16,7 @@ spec:
       serviceAccountName: pr-review-api
       containers:
       - name: api
-        image: ko://sigs.k8s.io/agent-sandbox/examples/review-agent/review-ui/images/review-api # This will be built locally
+        image: ko://review-agent/review-ui/images/review-api # This will be built locally
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8080

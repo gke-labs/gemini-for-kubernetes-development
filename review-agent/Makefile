@@ -2,7 +2,7 @@
 KIND_CLUSTER=review-agent
 
 .PHONY: all
-all: fix-go-generate lint-go test-unit create-kind install-packages install-sandbox-operator create-secrets install-review-system
+all: fix-go-generate lint-go test-unit create-kind install-packages install-sandbox-operator create-secrets install-review-agent
 
 .PHONY: fix-go-generate
 fix-go-generate:
@@ -36,11 +36,13 @@ install-sandbox-operator:
 	cd /tmp/sandbox-operator/agent-sandbox && dev/tools/deploy-to-kube --image-prefix=kind.local/
 	rm -fr /tmp/sandbox-operator
 
-.PHONY: install-review-system
-install-review-system:
+.PHONY: install-review-agent
+install-review-agent:
 	kubectl apply -f k8s/namespace.yaml
 	# Install
 	../dev/tools/push-images --image-prefix=kind.local/ --kind-cluster-name=${KIND_CLUSTER} --working-dir .
+	#  copy RGD to k8s dir so it gets deployed
+	cp review-sandbox/review-sandbox-rgd.yaml k8s/review-sandbox-rgd.yaml
 	../dev/tools/deploy-to-kube --image-prefix=kind.local/ --working-dir .
 
 .PHONY: create-secrets
