@@ -34,7 +34,7 @@ def main():
     args = parser.parse_args()
 
     repo_root = golang.find_repo_root()
-    mod_files = golang.find_go_mod_files(mod_name_patterns=['go.mod', 'tools.mod'])
+    mod_files = golang.find_go_mod_files(mod_name_patterns=["go.mod", "tools.mod"])
 
     if not mod_files:
         print("No go.mod or tools.mod files found.")
@@ -49,14 +49,14 @@ def main():
         mod_dir = os.path.dirname(mod_file)
         mod_filename = os.path.basename(mod_file)
         rel_path = os.path.relpath(mod_dir, repo_root)
-        display_path = rel_path if rel_path != '.' else '(root)'
+        display_path = rel_path if rel_path != "." else "(root)"
 
         go_get_command = ["go", "get"]
         if mod_filename == "tools.mod":
             go_get_command.append("-modfile=tools.mod")
         go_get_command.append(args.dependency)
 
-        print(f"Running '{' '.join(go_get_command)}' in '{display_path}'...")
+        print(f"Running '{" ".join(go_get_command)}' in '{display_path}'...")
         try:
             subprocess.run(
                 go_get_command,
@@ -74,13 +74,13 @@ def main():
         mod_dir = os.path.dirname(mod_file)
         mod_filename = os.path.basename(mod_file)
         rel_path = os.path.relpath(mod_dir, repo_root)
-        display_path = rel_path if rel_path != '.' else '(root)'
+        display_path = rel_path if rel_path != "." else "(root)"
 
         go_tidy_command = ["go", "mod", "tidy"]
         if mod_filename == "tools.mod":
             go_tidy_command.append("-modfile=tools.mod")
 
-        print(f"Running '{' '.join(go_tidy_command)}' in '{display_path}'...")
+        print(f"Running '{" ".join(go_tidy_command)}' in '{display_path}'...")
         try:
             subprocess.run(
                 go_tidy_command,
