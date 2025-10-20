@@ -23,7 +23,7 @@ def get_latest_eg_version():
 
 def run_command(command):
     """Runs a shell command and prints its output."""
-    print(f"Running command: {' '.join(command)}")
+    print(f"Running command: {" ".join(command)}")
     subprocess.run(command, check=True)
 
 def main():

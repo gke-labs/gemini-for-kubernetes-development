@@ -26,7 +26,7 @@ from shared import headers
 
 def main():
     # Find the repo root from the script's location
-    repo_root = os.path.abspath(os.path.join(script_dir, '..', '..'))
+    repo_root = os.path.abspath(os.path.join(script_dir, "..", ".."))
 
     excludes = [
         "**/zz_generated.*",

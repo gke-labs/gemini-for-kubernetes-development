@@ -36,7 +36,7 @@ def main():
     # get the list of packages using go list ./...
     go_list_cmd = ["go", "list", "./..."]
     go_list_output = utils.check_output_go_command(go_list_cmd, cwd=working_dir, text=True)
-    packages = go_list_output.strip().split('\n')
+    packages = go_list_output.strip().split("\n")
 
     # Filter out the e2e packages
     filtered_packages = [pkg for pkg in packages if not "test/e2e" in pkg]

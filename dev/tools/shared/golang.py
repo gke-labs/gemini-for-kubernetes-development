@@ -19,14 +19,14 @@ import glob
 
 def find_repo_root():
     """Finds the repository root from the script's location."""
-    return os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
-def find_go_mod_files(mod_name_patterns=['go.mod']):
+def find_go_mod_files(mod_name_patterns=["go.mod"]):
     """Finds all go.mod files in the repository."""
     repo_root = find_repo_root()
     mod_files = []
     for pattern in mod_name_patterns:
-        search_pattern = os.path.join(repo_root, '**', pattern)
+        search_pattern = os.path.join(repo_root, "**", pattern)
         mod_files.extend(glob.glob(search_pattern, recursive=True))
 
     mod_files.sort()
