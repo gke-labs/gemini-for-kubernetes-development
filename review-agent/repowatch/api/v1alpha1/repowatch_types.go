@@ -27,6 +27,10 @@ type RepoWatchSpec struct {
 	// +kubebuilder:validation:Required
 	RepoURL string `json:"repoURL"`
 
+	// List of path and configmap pairs to project gemini configs into the sandbox.
+	// +kubebuilder:validation:Optional
+	GeminiConfigs []PathConfigMapPair `json:"geminiConfigs,omitempty"`
+
 	Prompt string `json:"prompt,omitempty"`
 
 	// How often to check for new PRs (in seconds).
@@ -41,6 +45,16 @@ type RepoWatchSpec struct {
 	// Secret containing the GitHub Personal Access Token (PAT) for accessing the repo.
 	// +kubebuilder:validation:Required
 	GithubSecretRef GithubSecretRef `json:"githubSecretRef"`
+}
+
+// PathConfigMapPair defines a pair of path and configmap name
+type PathConfigMapPair struct {
+	// Path in the sandbox where the configmap should be projected.
+	// +kubebuilder:validation:Required
+	Path string `json:"path"`
+	// Name of the configmap to project.
+	// +kubebuilder:validation:Required
+	ConfigMapName string `json:"configMapName"`
 }
 
 // GithubSecretRef defines the reference to the secret containing the GitHub PAT

@@ -1,10 +1,14 @@
 module pr-review-api
 
-go 1.21
+go 1.24.0
+
+toolchain go1.24.7
 
 require (
 	github.com/gin-gonic/gin v1.9.1
 	github.com/go-redis/redis/v8 v8.11.5
+	github.com/google/go-github/v39 v39.2.0
+	golang.org/x/oauth2 v0.32.0
 	k8s.io/apimachinery v0.28.2
 	k8s.io/client-go v0.28.2
 )
@@ -23,7 +27,7 @@ require (
 	github.com/go-playground/validator/v10 v10.14.0 // indirect
 	github.com/goccy/go-json v0.10.2 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
-	github.com/golang/protobuf v1.5.3 // indirect
+	github.com/google/go-querystring v1.1.0 // indirect
 	github.com/google/gofuzz v1.2.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.4 // indirect
@@ -38,12 +42,10 @@ require (
 	golang.org/x/arch v0.3.0 // indirect
 	golang.org/x/crypto v0.11.0 // indirect
 	golang.org/x/net v0.13.0 // indirect
-	golang.org/x/oauth2 v0.8.0 // indirect
 	golang.org/x/sys v0.10.0 // indirect
 	golang.org/x/term v0.10.0 // indirect
 	golang.org/x/text v0.11.0 // indirect
 	golang.org/x/time v0.3.0 // indirect
-	google.golang.org/appengine v1.6.7 // indirect
 	google.golang.org/protobuf v1.30.0 // indirect
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect

@@ -2,13 +2,19 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	redis "github.com/go-redis/redis/v8"
+	"github.com/google/go-github/v39/github"
+	"golang.org/x/oauth2"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -320,9 +326,65 @@ func submitReview(c *gin.Context) {
 	ctx := c.Request.Context()
 	log.Printf("Submitting review for PR %s in repo %s with review: %s", prID, repo, payload.Review)
 
+	// Get RepoWatch to get repoURL and secret ref
+	repoWatch, err := getRepoWatch(ctx, repo)
+	if err != nil {
+		log.Printf("Failed to get repowatch %s: %v", repo, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get repowatch config"})
+		return
+	}
+
+	// Get GitHub token from secret
+	token, err := getGitHubToken(ctx, repoWatch)
+	if err != nil {
+		log.Printf("Failed to get github token for repo %s: %v", repo, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get github token"})
+		return
+	}
+
+	// Create GitHub client
+	ts := oauth2.StaticTokenSource(
+		&oauth2.Token{AccessToken: token},
+	)
+	tc := oauth2.NewClient(ctx, ts)
+	client := github.NewClient(tc)
+
+	// Parse repo URL
+	repoURL, found, err := unstructured.NestedString(repoWatch.Object, "spec", "repoURL")
+	if err != nil || !found {
+		log.Printf("repoURL not found in RepoWatch CR %s", repoWatch.GetName())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "repoURL not found in RepoWatch CR"})
+		return
+	}
+	owner, repoName, err := parseRepoURL(repoURL)
+	if err != nil {
+		log.Printf("Failed to parse repo url %s: %v", repoURL, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse repo url"})
+		return
+	}
+
+	// Get PR number
+	prNumber, err := strconv.Atoi(prID)
+	if err != nil {
+		log.Printf("Failed to parse prID %s: %v", prID, err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid pr id"})
+		return
+	}
+
+	// Create comment on PR
+	comment := &github.IssueComment{
+		Body: &payload.Review,
+	}
+	_, _, err = client.Issues.CreateComment(ctx, owner, repoName, prNumber, comment)
+	if err != nil {
+		log.Printf("Failed to create comment on PR %d: %v", prNumber, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create comment on github"})
+		return
+	}
+
 	// Set review in Redis
 	prKey := fmt.Sprintf("pr:repo:%s:pr:%s", repo, prID)
-	err := rdb.HSet(c.Request.Context(), prKey, "review", payload.Review).Err()
+	err = rdb.HSet(c.Request.Context(), prKey, "review", payload.Review).Err()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save review"})
 		return
@@ -433,4 +495,63 @@ func scaledownSandbox(ctx context.Context, repo, prID string) error {
 		return fmt.Errorf("failed to scaledown sandbox: %w", err)
 	}
 	return nil
+}
+
+func getGitHubToken(ctx context.Context, repoWatch *unstructured.Unstructured) (string, error) {
+	secretName, found, err := unstructured.NestedString(repoWatch.Object, "spec", "githubSecretRef", "name")
+	if err != nil || !found {
+		return "", fmt.Errorf("githubSecretRef.name not found in repowatch %s", repoWatch.GetName())
+	}
+	secretKey, found, err := unstructured.NestedString(repoWatch.Object, "spec", "githubSecretRef", "key")
+	if err != nil || !found {
+		return "", fmt.Errorf("githubSecretRef.key not found in repowatch %s", repoWatch.GetName())
+	}
+
+	secretGVR := schema.GroupVersionResource{Version: "v1", Resource: "secrets"}
+	secretUnstructured, err := k8sClient.Resource(secretGVR).Namespace(namespace).Get(ctx, secretName, v1.GetOptions{})
+	if err != nil {
+		return "", err
+	}
+
+	secretData, found, err := unstructured.NestedStringMap(secretUnstructured.Object, "data")
+	if err != nil || !found {
+		return "", fmt.Errorf("data field not found in secret %s", secretName)
+	}
+
+	tokenBase64, ok := secretData[secretKey]
+	if !ok {
+		return "", fmt.Errorf("key %s not found in secret %s", secretKey, secretName)
+	}
+
+	tokenBytes, err := base64.StdEncoding.DecodeString(tokenBase64)
+	if err != nil {
+		return "", fmt.Errorf("failed to decode token for key %s in secret %s: %w", secretKey, secretName, err)
+	}
+
+	return string(tokenBytes), nil
+}
+
+func parseRepoURL(repoURL string) (string, string, error) {
+	u, err := url.Parse(repoURL)
+	if err != nil {
+		return "", "", err
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) != 2 {
+		return "", "", fmt.Errorf("invalid repo url: %s", repoURL)
+	}
+	return parts[0], parts[1], nil
+}
+
+func getRepoWatch(ctx context.Context, name string) (*unstructured.Unstructured, error) {
+	gvr := schema.GroupVersionResource{
+		Group:    "review.gemini.google.com",
+		Version:  "v1alpha1",
+		Resource: "repowatches",
+	}
+	repoWatch, err := k8sClient.Resource(gvr).Namespace(namespace).Get(ctx, name, v1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return repoWatch, nil
 }
