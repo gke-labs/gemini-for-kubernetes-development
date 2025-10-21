@@ -26,7 +26,15 @@ def find_and_replace_images(doc, service_name, image_prefix, image_tag):
     """Recursively finds and replaces container images in a Kubernetes manifest."""
     def fn(field_path, v):
         # if fields_path ends with .spec.template.spec.containers[].image, we found a container image
-        if field_path.endswith(".spec.containers[].image"):
+        needs_replace = False
+        if field_path.endswith(".spec.template.spec.containers[].image"):
+            needs_replace = True
+        elif field_path.endswith(".spec.containers[].image"):
+            needs_replace = True
+        elif field_path.endswith(".spec.initContainers[].image"):
+            needs_replace = True
+
+        if needs_replace:
             # We only replace images that look like :latest
             image_and_tag = v.split(":")
             if len(image_and_tag) == 2 and image_and_tag[1] == "latest":

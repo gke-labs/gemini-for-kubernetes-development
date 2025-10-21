@@ -11,7 +11,10 @@ spec:
     spec:
       # Spec fields that users can provide.
       replicas: integer | default=1
-      prompt: string
+      gemini:
+        prompt: string
+        configdirRef: string | default=""
+      serviceAccountName: string | default="review-sandbox"
       source:
         cloneURL: string
         htmlURL: string
@@ -48,6 +51,14 @@ spec:
               labels:
                 sandbox: devc-${schema.metadata.name}
             spec:
+              serviceAccountName: ${schema.spec.serviceAccountName}
+              initContainers:
+                - name: gemini-configs
+                  image: ko://review-agent/configdir/cmd/configdir-cli
+                  args: ["--directory", "/workspaces/.gemini", "--namespace", "${schema.metadata.namespace}" ,  "--name", "${schema.spec.gemini.configdirRef}", "--ignore-not-found-error"]
+                  volumeMounts:
+                    - name: workspaces-pvc
+                      mountPath: /workspaces
               containers:
                 - name: review-sidecar
                   image: ko://review-agent/review-sidecar/images/review-sidecar
@@ -60,13 +71,13 @@ spec:
                   volumeMounts:
                     - name: workspaces-pvc
                       mountPath: /workspaces
-                - name: devcontainer-main
+                - name: review-sandbox
                   #image: ghcr.io/coder/envbuilder
                   image: ko://review-agent/review-sidecar/images/review-sandbox
                   env:
                     # URL to the repository where the .devcontainer folder we want to load is located
                     - name: AGENT_PROMPT
-                      value: ${schema.spec.prompt}
+                      value: ${schema.spec.gemini.prompt}
                     - name: ENVBUILDER_GIT_URL
                       value: ${schema.spec.source.cloneURL}
                     - name: ENVBUILDER_DEVCONTAINER_DIR

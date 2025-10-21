@@ -95,7 +95,10 @@ func main() {
 		api.DELETE("/repo/:repo/prs/:id", deletePR)
 	}
 
-	router.Run(":8080")
+	err = router.Run(":8080")
+	if err != nil {
+		log.Fatalf("Failed to start router: %v", err)
+	}
 }
 
 func populateMockData() {
@@ -386,19 +389,23 @@ func submitReview(c *gin.Context) {
 	prKey := fmt.Sprintf("pr:repo:%s:pr:%s", repo, prID)
 	err = rdb.HSet(c.Request.Context(), prKey, "review", payload.Review).Err()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save review"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save review", "details": err.Error()})
 		return
 	}
 
 	// Delete draft from Redis
 	err = rdb.HSet(c.Request.Context(), prKey, "draft", "").Err()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to clear draft"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to clear draft", "details": err.Error()})
 		return
 	}
 
 	// scale down sandbox
-	scaledownSandbox(ctx, repo, prID)
+	err = scaledownSandbox(ctx, repo, prID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scaledown Sandbox after review submission", "details": err.Error()})
+		return
+	}
 
 	c.Status(http.StatusOK)
 }
@@ -429,6 +436,7 @@ func deletePR(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
+//nolint:unused
 func deleteSandbox(ctx context.Context, repo, prID string) error {
 	prKey := fmt.Sprintf("pr:repo:%s:pr:%s", repo, prID)
 	sandboxName, err := rdb.HGet(ctx, prKey, "sandbox").Result()

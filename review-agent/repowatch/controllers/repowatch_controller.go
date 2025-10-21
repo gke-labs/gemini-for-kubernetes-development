@@ -245,8 +245,8 @@ func (r *RepoWatchReconciler) reconcileSandboxes(ctx context.Context, repoWatch 
 
 func (r *RepoWatchReconciler) generatePullRequestPrompt(repoWatch *reviewv1alpha1.RepoWatch, pr *github.PullRequest) (string, error) {
 	promptTmpl := "You are an expert kubernetes developer who is helping with code reviews. Please look at the PR {{.Number}} linked at {{.HTMLURL}} provide a review feedback."
-	if repoWatch.Spec.Prompt != "" {
-		promptTmpl = repoWatch.Spec.Prompt
+	if repoWatch.Spec.Gemini.Prompt != "" {
+		promptTmpl = repoWatch.Spec.Gemini.Prompt
 	}
 	tmpl, err := template.New("myTemplate").Parse(promptTmpl)
 	if err != nil {
@@ -290,7 +290,10 @@ func (r *RepoWatchReconciler) createSandboxForPR(ctx context.Context, repoWatch 
 				},
 			},
 			"spec": map[string]interface{}{
-				"prompt": prompt,
+				"gemini": map[string]interface{}{
+					"configdirRef": repoWatch.Spec.Gemini.ConfigdirRef,
+					"prompt":       prompt,
+				},
 				"source": map[string]interface{}{
 					"cloneURL": fmt.Sprintf("%s#refs/heads/%s", *pr.Head.Repo.CloneURL, *pr.Head.Ref),
 					"htmlURL":  *pr.HTMLURL,

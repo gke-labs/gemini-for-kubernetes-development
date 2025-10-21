@@ -20,6 +20,14 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// GeminiConfig defines the Gemini configuration
+type GeminiConfig struct {
+	// Name of the secret
+	Prompt string `json:"prompt,omitempty"`
+	// Key in the secret
+	ConfigdirRef string `json:"configdirRef,omitempty"`
+}
+
 // RepoWatchSpec defines the desired state of RepoWatch
 type RepoWatchSpec struct {
 	// The full URL of the GitHub repository to watch.
@@ -27,11 +35,8 @@ type RepoWatchSpec struct {
 	// +kubebuilder:validation:Required
 	RepoURL string `json:"repoURL"`
 
-	// List of path and configmap pairs to project gemini configs into the sandbox.
-	// +kubebuilder:validation:Optional
-	GeminiConfigs []PathConfigMapPair `json:"geminiConfigs,omitempty"`
-
-	Prompt string `json:"prompt,omitempty"`
+	// Gemini configuration for the review sandboxes.
+	Gemini GeminiConfig `json:"gemini,omitempty"`
 
 	// How often to check for new PRs (in seconds).
 	// +kubebuilder:validation:Minimum=30
@@ -45,16 +50,6 @@ type RepoWatchSpec struct {
 	// Secret containing the GitHub Personal Access Token (PAT) for accessing the repo.
 	// +kubebuilder:validation:Required
 	GithubSecretRef GithubSecretRef `json:"githubSecretRef"`
-}
-
-// PathConfigMapPair defines a pair of path and configmap name
-type PathConfigMapPair struct {
-	// Path in the sandbox where the configmap should be projected.
-	// +kubebuilder:validation:Required
-	Path string `json:"path"`
-	// Name of the configmap to project.
-	// +kubebuilder:validation:Required
-	ConfigMapName string `json:"configMapName"`
 }
 
 // GithubSecretRef defines the reference to the secret containing the GitHub PAT

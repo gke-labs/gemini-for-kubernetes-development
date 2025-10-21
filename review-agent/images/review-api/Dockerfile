@@ -1,15 +1,20 @@
 # Build stage
-FROM golang:1.24-alpine AS builder
+FROM golang:1.24 AS builder
 WORKDIR /app
-COPY review-ui/api/go.mod ./
-COPY review-ui/api/go.sum ./
+
+# Copy the Go Modules manifests
+COPY go.mod go.mod
+COPY go.sum go.sum
+# cache deps before building and copying source so that we don't need to re-download as much
+# and so that source changes don't invalidate our downloaded layer
 RUN go mod download
-COPY review-ui/api/ .
-RUN CGO_ENABLED=0 GOOS=linux go build -o /main .
+
+COPY review-ui/review-api/ .
+RUN CGO_ENABLED=0 GOOS=linux go build -o /review-api .
 
 # Final stage
-FROM alpine:latest
+FROM gcr.io/distroless/static:nonroot
 WORKDIR /
-COPY --from=builder /main /main
+COPY --from=builder /review-api /review-api
 EXPOSE 8080
-CMD ["/main"]
+CMD ["/review-api"]

@@ -4,14 +4,14 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.19.0
-  name: repowatches.review.gemini.google.com
+  name: configfiles.configdir.gke.io
 spec:
-  group: review.gemini.google.com
+  group: configdir.gke.io
   names:
-    kind: RepoWatch
-    listKind: RepoWatchList
-    plural: repowatches
-    singular: repowatch
+    kind: ConfigFile
+    listKind: ConfigFileList
+    plural: configfiles
+    singular: configfile
   scope: Namespaced
   versions:
   - name: v1alpha1
@@ -26,40 +26,25 @@ spec:
             type: object
           spec:
             properties:
-              gemini:
-                properties:
-                  configdirRef:
-                    type: string
-                  prompt:
-                    type: string
-                type: object
-              githubSecretRef:
-                properties:
-                  key:
-                    type: string
-                  name:
-                    type: string
-                required:
-                - key
-                - name
-                type: object
-              maxActiveSandboxes:
-                type: integer
-              pollIntervalSeconds:
-                default: 300
-                minimum: 30
-                type: integer
-              repoURL:
-                type: string
+              files:
+                items:
+                  properties:
+                    content:
+                      type: string
+                    continued:
+                      type: string
+                    path:
+                      type: string
+                  required:
+                  - content
+                  - path
+                  type: object
+                type: array
             required:
-            - githubSecretRef
-            - maxActiveSandboxes
-            - repoURL
+            - files
             type: object
           status:
             properties:
-              activeSandboxCount:
-                type: integer
               conditions:
                 items:
                   properties:
@@ -94,33 +79,6 @@ spec:
                   - reason
                   - status
                   - type
-                  type: object
-                type: array
-              pendingPRs:
-                items:
-                  properties:
-                    number:
-                      type: integer
-                    status:
-                      type: string
-                  required:
-                  - number
-                  - status
-                  type: object
-                type: array
-              watchedPRs:
-                items:
-                  properties:
-                    number:
-                      type: integer
-                    sandboxName:
-                      type: string
-                    status:
-                      type: string
-                  required:
-                  - number
-                  - sandboxName
-                  - status
                   type: object
                 type: array
             type: object

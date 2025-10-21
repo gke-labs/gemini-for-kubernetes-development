@@ -1,0 +1,32 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: configdir-controller
+rules:
+- apiGroups:
+  - configdir.gke.io
+  resources:
+  - configdirs
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - configdir.gke.io
+  resources:
+  - configdirs/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - configdir.gke.io
+  resources:
+  - configdirs/status
+  verbs:
+  - get
+  - patch
+  - update

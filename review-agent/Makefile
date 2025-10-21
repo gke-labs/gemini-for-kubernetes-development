@@ -2,11 +2,16 @@
 KIND_CLUSTER=review-agent
 
 .PHONY: all
-all: fix-go-generate lint-go test-unit create-kind install-packages install-sandbox-operator create-secrets install-review-agent create-instance
+all: generate lint-go test-unit create-kind install-packages install-sandbox-operator create-secrets install-review-agent create-instance
 
-.PHONY: fix-go-generate
-fix-go-generate:
+.PHONY: generate
+generate:
 	../dev/tools/fix-go-generate --working-dir ./repowatch
+	../dev/tools/fix-go-generate --working-dir ./configdir
+
+.PHONY: build
+build:
+	../dev/tools/build-go-binaries --working-dir ./
 
 .PHONY: test-unit
 test-unit:
@@ -51,8 +56,13 @@ create-secrets:
 	@kubectl create secret -n review-agent-system generic gemini-vscode-tokens --from-literal=gemini=${GEMINI_API_KEY} || true
 	@kubectl create secret -n review-agent-system generic github-pat --from-literal=pat=${GITHUB_PAT} || true
 
+bin/configdir-cli: configdir/
+	../dev/tools/build-go-binaries --working-dir .
+
 .PHONY: create-instance
-create-instance:
+create-instance: ./bin/configdir-cli
+	bin/configdir-cli --sync-to-cluster  --directory ./configdir/test-sample/cc/.gemini --namespace review-agent-system --name gemini-cc
+	# create repowatch instance
 	kubectl apply -f examples/repowatch.yaml
 	sleep 5
 	kubectl get reviewsandboxes -A

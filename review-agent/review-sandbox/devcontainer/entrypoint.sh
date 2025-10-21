@@ -1,5 +1,13 @@
 #!/bin/bash
 
+# if .gemini directory exists in /workspaces copy it to home directory
+if [ -d /workspaces/.gemini ]; then
+  echo ".gemini directory exists in /workspaces, copying to repo directory"
+  cp -R /workspaces/.gemini .gemini
+else
+  echo ".gemini directory does not exist in /workspaces"
+fi
+
 export GEMINI_API_KEY=`cat /tokens/gemini`
 set -x
 # protection against running gemini on an unpause
