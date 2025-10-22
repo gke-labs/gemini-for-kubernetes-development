@@ -26,13 +26,6 @@ spec:
             type: object
           spec:
             properties:
-              gemini:
-                properties:
-                  configdirRef:
-                    type: string
-                  prompt:
-                    type: string
-                type: object
               githubSecretRef:
                 properties:
                   key:
@@ -43,18 +36,32 @@ spec:
                 - key
                 - name
                 type: object
-              maxActiveSandboxes:
-                type: integer
               pollIntervalSeconds:
                 default: 300
                 minimum: 30
                 type: integer
               repoURL:
                 type: string
+              review:
+                properties:
+                  devcontainerConfigRef:
+                    type: string
+                  gemini:
+                    properties:
+                      configdirRef:
+                        type: string
+                      prompt:
+                        type: string
+                    type: object
+                  maxActiveSandboxes:
+                    type: integer
+                required:
+                - maxActiveSandboxes
+                type: object
             required:
             - githubSecretRef
-            - maxActiveSandboxes
             - repoURL
+            - review
             type: object
           status:
             properties:

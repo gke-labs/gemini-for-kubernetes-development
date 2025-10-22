@@ -15,6 +15,7 @@ spec:
         prompt: string
         configdirRef: string | default=""
       serviceAccountName: string | default="review-sandbox"
+      devcontainerConfigRef: string | default="devcontainer-json"
       source:
         cloneURL: string
         htmlURL: string
@@ -81,7 +82,7 @@ spec:
                     - name: ENVBUILDER_GIT_URL
                       value: ${schema.spec.source.cloneURL}
                     - name: ENVBUILDER_DEVCONTAINER_DIR
-                      value: /review-agent/
+                      value: /
                     #- name: ENVBUILDER_DOCKERFILE_PATH
                     #  value: ${schema.spec.devcontainerDockerfile}
                     - name: ENVBUILDER_GIT_CLONE_SINGLE_BRANCH
@@ -96,9 +97,17 @@ spec:
                     - name: tokens-secret
                       mountPath: "/tokens"
                       readOnly: true
+                    - name: devcontainer-config
+                      mountPath: /devcontainer.json
+                      subPath: devcontainer.json
                   ports:
                     - containerPort: 13337
               volumes:
+              # configmap volume for devcontainer.json mounting
+              - name: devcontainer-config
+                configMap:
+                  name: ${schema.spec.devcontainerConfigRef}
+              # secret volume for vscode tokens
               - name: tokens-secret
                 secret:
                   secretName: gemini-vscode-tokens

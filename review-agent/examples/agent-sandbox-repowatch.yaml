@@ -1,11 +1,12 @@
 apiVersion: review.gemini.google.com/v1alpha1
 kind: RepoWatch
 metadata:
-  name: kubernetes-sigs-sandbox
+  name: agent-sandbox
   namespace: review-agent-system
 spec:
   repoURL: https://github.com/kubernetes-sigs/agent-sandbox
-  maxActiveSandboxes: 5
+  review:
+    maxActiveSandboxes: 5
   githubSecretRef:
     name: github-pat
     key: pat

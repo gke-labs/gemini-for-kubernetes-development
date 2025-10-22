@@ -215,7 +215,7 @@ func (r *RepoWatchReconciler) reconcileSandboxes(ctx context.Context, repoWatch 
 		}
 
 		if !sandboxExists {
-			if activeSandboxes < repoWatch.Spec.MaxActiveSandboxes {
+			if activeSandboxes < repoWatch.Spec.Review.MaxActiveSandboxes {
 				log.Info("creating sandbox for pr", "pr", *pr.Number)
 				if err := r.createSandboxForPR(ctx, repoWatch, pr); err != nil {
 					log.Error(err, "unable to create sandbox for pr", "pr", *pr.Number)
@@ -245,8 +245,8 @@ func (r *RepoWatchReconciler) reconcileSandboxes(ctx context.Context, repoWatch 
 
 func (r *RepoWatchReconciler) generatePullRequestPrompt(repoWatch *reviewv1alpha1.RepoWatch, pr *github.PullRequest) (string, error) {
 	promptTmpl := "You are an expert kubernetes developer who is helping with code reviews. Please look at the PR {{.Number}} linked at {{.HTMLURL}} provide a review feedback."
-	if repoWatch.Spec.Gemini.Prompt != "" {
-		promptTmpl = repoWatch.Spec.Gemini.Prompt
+	if repoWatch.Spec.Review.Gemini.Prompt != "" {
+		promptTmpl = repoWatch.Spec.Review.Gemini.Prompt
 	}
 	tmpl, err := template.New("myTemplate").Parse(promptTmpl)
 	if err != nil {
@@ -291,7 +291,7 @@ func (r *RepoWatchReconciler) createSandboxForPR(ctx context.Context, repoWatch 
 			},
 			"spec": map[string]interface{}{
 				"gemini": map[string]interface{}{
-					"configdirRef": repoWatch.Spec.Gemini.ConfigdirRef,
+					"configdirRef": repoWatch.Spec.Review.Gemini.ConfigdirRef,
 					"prompt":       prompt,
 				},
 				"source": map[string]interface{}{
@@ -307,6 +307,12 @@ func (r *RepoWatchReconciler) createSandboxForPR(ctx context.Context, repoWatch 
 				"replicas": int64(1),
 			},
 		},
+	}
+
+	if repoWatch.Spec.Review.DevcontainerConfigRef != "" {
+		if err := unstructured.SetNestedField(sandbox.Object, repoWatch.Spec.Review.DevcontainerConfigRef, "spec", "devcontainerConfigRef"); err != nil {
+			return err
+		}
 	}
 
 	if err := controllerutil.SetControllerReference(repoWatch, sandbox, r.Scheme); err != nil {

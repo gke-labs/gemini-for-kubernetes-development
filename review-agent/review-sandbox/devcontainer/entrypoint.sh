@@ -3,6 +3,11 @@
 # if .gemini directory exists in /workspaces copy it to home directory
 if [ -d /workspaces/.gemini ]; then
   echo ".gemini directory exists in /workspaces, copying to repo directory"
+  # if desitation .gemini directory exists move it to .gemini.bak
+  if [ -d .gemini ]; then
+    echo ".gemini directory exists in repo directory, moving to .gemini.bak"
+    mv .gemini .gemini.bak
+  fi
   cp -R /workspaces/.gemini .gemini
 else
   echo ".gemini directory does not exist in /workspaces"

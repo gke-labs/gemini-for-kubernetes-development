@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: github-mcp-server
+  namespace: review-agent-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: github-mcp-server
+  template:
+    metadata:
+      labels:
+        app: github-mcp-server
+    spec:
+      containers:
+      - name: mcp
+        image: ko://review-agent/review-ui/images/github-mcp-server # This will be built locally
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8000
+        env:
+        - name: GITHUB_TOOLSETS
+          #value: "repos,issues,pull_requests,actions,code_security,experiments"
+          value: "issues,pull_requests,actions,experiments"
+        - name: GITHUB_DYNAMIC_TOOLSETS
+          value: "1"
+        - name: GITHUB_READ_ONLY
+          value: "1"
+        - name: GITHUB_PERSONAL_ACCESS_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: github-token
+              key: token
+              optional: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: github-mcp-server
+  namespace: review-agent-system
+spec:
+  ports:
+  - port: 8000
+    targetPort: 8000
+  selector:
+    app: github-mcp-server
+

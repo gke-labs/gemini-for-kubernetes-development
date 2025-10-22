@@ -10,7 +10,7 @@ generate:
 	../dev/tools/fix-go-generate --working-dir ./configdir
 
 .PHONY: build
-build:
+build: generate
 	../dev/tools/build-go-binaries --working-dir ./
 
 .PHONY: test-unit
@@ -61,9 +61,13 @@ bin/configdir-cli: configdir/
 
 .PHONY: create-instance
 create-instance: ./bin/configdir-cli
-	bin/configdir-cli --sync-to-cluster  --directory ./configdir/test-sample/cc/.gemini --namespace review-agent-system --name gemini-cc
-	# create repowatch instance
-	kubectl apply -f examples/repowatch.yaml
+	# agent-sandbox repo
+	kubectl apply -f examples/agent-sandbox-repowatch.yaml
+	# KCC repo
+	# bin/configdir-cli --sync-to-cluster  --directory ./configdir/test-sample/cc/.gemini --namespace review-agent-system --name gemini-cc
+	kubectl apply -f examples/kcc-configmap-devcontainer.yaml # custom devcontainer for KCC
+	kubectl apply -f examples/kcc-configdir.yaml              # custom .gemini for KCC
+	kubectl apply -f examples/kcc-repowatch.yaml              # repowatch for KCC
 	sleep 5
 	kubectl get reviewsandboxes -A
 

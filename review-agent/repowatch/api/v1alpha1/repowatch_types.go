@@ -22,10 +22,22 @@ import (
 
 // GeminiConfig defines the Gemini configuration
 type GeminiConfig struct {
-	// Name of the secret
+	// Prompt string
 	Prompt string `json:"prompt,omitempty"`
-	// Key in the secret
+	// .gemini folder configdir reference
 	ConfigdirRef string `json:"configdirRef,omitempty"`
+}
+
+type RepoWatchReviewSpec struct {
+	// Gemini configuration for the review sandboxes.
+	Gemini GeminiConfig `json:"gemini,omitempty"`
+
+	// DevcontainerConfigRef string
+	DevcontainerConfigRef string `json:"devcontainerConfigRef,omitempty"`
+
+	// The maximum number of sandboxes to have active (replicas > 0) at any given time.
+	// +kubebuilder:validation:Required
+	MaxActiveSandboxes int `json:"maxActiveSandboxes"`
 }
 
 // RepoWatchSpec defines the desired state of RepoWatch
@@ -35,17 +47,14 @@ type RepoWatchSpec struct {
 	// +kubebuilder:validation:Required
 	RepoURL string `json:"repoURL"`
 
-	// Gemini configuration for the review sandboxes.
-	Gemini GeminiConfig `json:"gemini,omitempty"`
+	// Review configuration for PR sandboxes.
+	// +kubebuilder:validation:Required
+	Review RepoWatchReviewSpec `json:"review"`
 
 	// How often to check for new PRs (in seconds).
 	// +kubebuilder:validation:Minimum=30
 	// +kubebuilder:default=300
 	PollIntervalSeconds int `json:"pollIntervalSeconds,omitempty"`
-
-	// The maximum number of sandboxes to have active (replicas > 0) at any given time.
-	// +kubebuilder:validation:Required
-	MaxActiveSandboxes int `json:"maxActiveSandboxes"`
 
 	// Secret containing the GitHub Personal Access Token (PAT) for accessing the repo.
 	// +kubebuilder:validation:Required
