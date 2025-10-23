@@ -19,6 +19,7 @@ package controllers
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -29,7 +30,7 @@ import (
 	"github.com/google/go-github/v39/github"
 	"golang.org/x/oauth2"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -52,21 +53,15 @@ type RepoWatchReconciler struct {
 //+kubebuilder:rbac:groups=review.gemini.google.com,resources=repowatches/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=review.gemini.google.com,resources=repowatches/finalizers,verbs=update
 //+kubebuilder:rbac:groups=custom.agents.x-k8s.io,resources=reviewsandboxes,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=custom.agents.x-k8s.io,resources=issuesandboxes,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 
 func (r *RepoWatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
 
 	repoWatch := &reviewv1alpha1.RepoWatch{}
-	repoWatchObject := unstructured.Unstructured{}
-	repoWatchGVK := schema.GroupVersionKind{
-		Group:   "review.gemini.google.com",
-		Version: "v1alpha1",
-		Kind:    "RepoWatch",
-	}
-	repoWatchObject.SetGroupVersionKind(repoWatchGVK)
 	if err := r.Get(ctx, req.NamespacedName, repoWatch); err != nil {
-		if errors.IsNotFound(err) {
+		if apierrors.IsNotFound(err) {
 			return ctrl.Result{}, nil
 		}
 		log.Error(err, "unable to fetch RepoWatch")
@@ -84,7 +79,7 @@ func (r *RepoWatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		&oauth2.Token{AccessToken: token},
 	)
 	tc := oauth2.NewClient(ctx, ts)
-	client := github.NewClient(tc)
+	ghClient := github.NewClient(tc)
 
 	owner, repo, err := parseRepoURL(repoWatch.Spec.RepoURL)
 	if err != nil {
@@ -92,11 +87,34 @@ func (r *RepoWatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 
+	var reconcileErr error
+	// Reconcile Reviews for Pull Requests
+	if err := r.reconcileReviews(ctx, repoWatch, ghClient, owner, repo); err != nil {
+		log.Error(err, "unable to reconcile reviews")
+		reconcileErr = errors.Join(reconcileErr, err)
+		// Continue to next reconciliation
+	}
+
+	// Reconcile Issues
+	for _, handler := range repoWatch.Spec.IssueHandlers {
+		if err := r.reconcileIssuesForHandler(ctx, token, handler, repoWatch, ghClient, owner, repo); err != nil {
+			log.Error(err, "unable to reconcile issues for handler: "+handler.Name)
+			reconcileErr = errors.Join(reconcileErr, err)
+			// Continue to next reconciliation
+		}
+	}
+
+	return ctrl.Result{RequeueAfter: time.Second * time.Duration(repoWatch.Spec.PollIntervalSeconds)}, reconcileErr
+}
+
+func (r *RepoWatchReconciler) reconcileReviews(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, client *github.Client, owner string, repo string) error {
+	log := log.FromContext(ctx)
+
 	// Get open PRs
 	prs, _, err := client.PullRequests.List(ctx, owner, repo, &github.PullRequestListOptions{State: "open"})
 	if err != nil {
 		log.Error(err, "unable to list pull requests")
-		return ctrl.Result{}, err
+		return err
 	}
 
 	// Get existing sandboxes
@@ -110,22 +128,78 @@ func (r *RepoWatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	if err := r.List(ctx, sandboxList); err != nil {
 		log.Error(err, "unable to list ReviewSandboxes")
-		return ctrl.Result{}, err
+		return err
 	}
 
 	// Reconcile
-	if err := r.reconcileSandboxes(ctx, repoWatch, prs, sandboxList); err != nil {
+	if err := r.reconcileReviewSandboxes(ctx, repoWatch, prs, sandboxList); err != nil {
 		log.Error(err, "unable to reconcile sandboxes")
-		return ctrl.Result{}, err
+		return err
 	}
 
-	return ctrl.Result{RequeueAfter: time.Second * time.Duration(repoWatch.Spec.PollIntervalSeconds)}, nil
+	return nil
+}
+
+func (r *RepoWatchReconciler) reconcileIssuesForHandler(ctx context.Context, token string, handler reviewv1alpha1.IssueHandlerSpec, repoWatch *reviewv1alpha1.RepoWatch, client *github.Client, owner string, repo string) error {
+	log := log.FromContext(ctx)
+
+	if len(handler.Labels) == 0 {
+		log.Info("no labels configured for triage, skipping")
+		return nil
+	}
+
+	// Get open issues with specified labels
+	issues, _, err := client.Issues.ListByRepo(ctx, owner, repo, &github.IssueListByRepoOptions{
+		State:  "open",
+		Labels: handler.Labels,
+	})
+	if err != nil {
+		log.Error(err, "unable to list issues")
+		return err
+	}
+
+	// Get existing sandboxes
+	sandboxList := &unstructured.UnstructuredList{}
+	sandboxGVK := schema.GroupVersionKind{
+		Group:   "custom.agents.x-k8s.io",
+		Version: "v1alpha1",
+		Kind:    "IssueSandbox",
+	}
+	sandboxList.SetGroupVersionKind(sandboxGVK)
+
+	// TODO filter by handler and or namespace
+	if err := r.List(ctx, sandboxList); err != nil {
+		log.Error(err, "unable to list ReviewSandboxes for triage")
+		return err
+	}
+
+	// Get the github user name and email for the given token
+	user, _, err := client.Users.Get(ctx, "")
+	if err != nil {
+		log.Error(err, "unable to get current user")
+		return err
+	}
+	if repoWatch.Spec.GitConfig.User != "" {
+		user.Name = github.String(repoWatch.Spec.GitConfig.User)
+	}
+	if repoWatch.Spec.GitConfig.Email != "" {
+		user.Email = github.String(repoWatch.Spec.GitConfig.Email)
+	}
+	log.Info("Obtained current user", "user", *user)
+
+	// Reconcile
+	if err := r.reconcileIssueHandlerSandboxes(ctx, token, user, handler, repoWatch, issues, sandboxList); err != nil {
+		log.Error(err, "unable to reconcile triage sandboxes")
+		return err
+	}
+
+	return nil
 }
 
 func (r *RepoWatchReconciler) getGitHubToken(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch) (string, error) {
 	secret := &corev1.Secret{}
-	secretName := repoWatch.Spec.GithubSecretRef.Name
-	secretKey := repoWatch.Spec.GithubSecretRef.Key
+	secretName := repoWatch.Spec.GitConfig.GithubSecretRef.Name
+	secretKey := repoWatch.Spec.GitConfig.GithubSecretRef.Key
 	if err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: repoWatch.Namespace}, secret); err != nil {
 		return "", err
 	}
@@ -148,7 +222,7 @@ func parseRepoURL(repoURL string) (string, string, error) {
 	return parts[0], parts[1], nil
 }
 
-func (r *RepoWatchReconciler) reconcileSandboxes(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, prs []*github.PullRequest, sandboxes *unstructured.UnstructuredList) error {
+func (r *RepoWatchReconciler) reconcileReviewSandboxes(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, prs []*github.PullRequest, sandboxes *unstructured.UnstructuredList) error {
 	log := log.FromContext(ctx)
 	activeSandboxes := 0
 	watchedPRs := []reviewv1alpha1.WatchedPR{}
@@ -217,7 +291,7 @@ func (r *RepoWatchReconciler) reconcileSandboxes(ctx context.Context, repoWatch 
 		if !sandboxExists {
 			if activeSandboxes < repoWatch.Spec.Review.MaxActiveSandboxes {
 				log.Info("creating sandbox for pr", "pr", *pr.Number)
-				if err := r.createSandboxForPR(ctx, repoWatch, pr); err != nil {
+				if err := r.createReviewSandboxForPR(ctx, repoWatch, pr); err != nil {
 					log.Error(err, "unable to create sandbox for pr", "pr", *pr.Number)
 				} else {
 					activeSandboxes++
@@ -243,7 +317,125 @@ func (r *RepoWatchReconciler) reconcileSandboxes(ctx context.Context, repoWatch 
 	return r.Status().Update(ctx, repoWatch)
 }
 
-func (r *RepoWatchReconciler) generatePullRequestPrompt(repoWatch *reviewv1alpha1.RepoWatch, pr *github.PullRequest) (string, error) {
+func (r *RepoWatchReconciler) reconcileIssueHandlerSandboxes(ctx context.Context, token string, user *github.User, handler reviewv1alpha1.IssueHandlerSpec, repoWatch *reviewv1alpha1.RepoWatch, issues []*github.Issue, sandboxes *unstructured.UnstructuredList) error {
+	log := log.FromContext(ctx)
+	activeSandboxes := 0
+	watchedIssues := []reviewv1alpha1.WatchedIssue{}
+	pendingIssues := []reviewv1alpha1.PendingIssue{}
+
+	// Cleanup closed issues
+	for _, sandbox := range sandboxes.Items {
+		isOwned := false
+		for _, ownerRef := range sandbox.GetOwnerReferences() {
+			if ownerRef.UID == repoWatch.UID {
+				isOwned = true
+				break
+			}
+		}
+		if !isOwned {
+			continue
+		}
+
+		// split the sandbox name by "-issue-" and get the second part
+		parts := strings.Split(sandbox.GetName(), "-issue-")
+		if len(parts) < 2 {
+			log.Error(fmt.Errorf("invalid sandbox name format"), "unable to parse issue number from sandbox name", "sandbox", sandbox.GetName())
+			continue
+		}
+
+		// parts[1] may contain additional "-" if handler name is included, so split again by "-" and take the first part
+		parts = strings.Split(parts[1], "-")
+		if len(parts) < 2 {
+			log.Error(fmt.Errorf("invalid sandbox name format"), "unable to parse handler name from sandbox name", "sandbox", sandbox.GetName())
+			continue
+		}
+
+		issueNumber, err := strconv.Atoi(parts[0])
+		if err != nil {
+			log.Error(err, "unable to parse issue number from sandbox name", "sandbox", sandbox.GetName())
+			continue
+		}
+		handlerName := parts[1]
+
+		if handlerName != handler.Name {
+			continue
+		}
+
+		found := false
+		for _, issue := range issues {
+			if *issue.Number == issueNumber {
+				found = true
+				break
+			}
+		}
+
+		if !found {
+			log.Info("deleting sandbox for closed issue", "issue", issueNumber)
+			if err := r.Delete(ctx, &sandbox); err != nil {
+				log.Error(err, "unable to delete sandbox", "sandbox", sandbox.GetName())
+			}
+		}
+	}
+
+	// Create new sandboxes
+	for _, issue := range issues {
+		sandboxName := fmt.Sprintf("%s-issue-%d-%s", strings.Split(repoWatch.Spec.RepoURL, "/")[len(strings.Split(repoWatch.Spec.RepoURL, "/"))-1], *issue.Number, handler.Name)
+		sandboxExists := false
+		for _, sandbox := range sandboxes.Items {
+			if sandbox.GetName() == sandboxName {
+				sandboxExists = true
+				replicas, found, err := unstructured.NestedInt64(sandbox.Object, "spec", "replicas")
+				if err != nil || !found {
+					log.Error(err, "unable to get replicas for sandbox", "sandbox", sandbox.GetName())
+					break
+				}
+				if replicas > 0 {
+					activeSandboxes++
+				}
+				watchedIssues = append(watchedIssues, reviewv1alpha1.WatchedIssue{
+					Number:      *issue.Number,
+					SandboxName: sandboxName,
+					Status:      "Active",
+				})
+				break
+			}
+		}
+
+		if !sandboxExists {
+			if activeSandboxes < handler.MaxActiveSandboxes {
+				log.Info("creating sandbox for issue", "issue", *issue.Number)
+				if err := r.createSandboxForIssueHandler(ctx, token, user, handler, repoWatch, issue); err != nil {
+					log.Error(err, "unable to create sandbox for issue", "issue", *issue.Number)
+				} else {
+					activeSandboxes++
+					watchedIssues = append(watchedIssues, reviewv1alpha1.WatchedIssue{
+						Number:      *issue.Number,
+						SandboxName: sandboxName,
+						Status:      "Creating",
+					})
+				}
+			} else {
+				pendingIssues = append(pendingIssues, reviewv1alpha1.PendingIssue{
+					Number: *issue.Number,
+					Status: "Pending",
+				})
+			}
+		}
+	}
+
+	if repoWatch.Status.WatchedIssues == nil {
+		repoWatch.Status.WatchedIssues = make(map[string][]reviewv1alpha1.WatchedIssue)
+	}
+	if repoWatch.Status.PendingIssues == nil {
+		repoWatch.Status.PendingIssues = make(map[string][]reviewv1alpha1.PendingIssue)
+	}
+	repoWatch.Status.WatchedIssues[handler.Name] = watchedIssues
+	repoWatch.Status.PendingIssues[handler.Name] = pendingIssues
+
+	return r.Status().Update(ctx, repoWatch)
+}
+
+func (r *RepoWatchReconciler) generateReviewPrompt(repoWatch *reviewv1alpha1.RepoWatch, pr *github.PullRequest) (string, error) {
 	promptTmpl := "You are an expert kubernetes developer who is helping with code reviews. Please look at the PR {{.Number}} linked at {{.HTMLURL}} provide a review feedback."
 	if repoWatch.Spec.Review.Gemini.Prompt != "" {
 		promptTmpl = repoWatch.Spec.Review.Gemini.Prompt
@@ -253,26 +445,36 @@ func (r *RepoWatchReconciler) generatePullRequestPrompt(repoWatch *reviewv1alpha
 		return "", err
 	}
 
-	// Create a bytes.Buffer to capture the template output
 	var buf bytes.Buffer
-	// Execute the template, writing the output to the buffer
 	err = tmpl.Execute(&buf, pr)
 	if err != nil {
 		return "", err
 	}
-
-	// Get the rendered string from the buffer
-	prompt := buf.String()
-
-	return prompt, nil
+	return buf.String(), nil
 }
 
-func (r *RepoWatchReconciler) createSandboxForPR(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, pr *github.PullRequest) error {
+func (r *RepoWatchReconciler) generateIssueHandlerPrompt(handler reviewv1alpha1.IssueHandlerSpec, issue *github.Issue) (string, error) {
+	// promptTmpl := "You are an expert kubernetes developer who is helping with bug triage. Please look at the issue {{.Number}} linked at {{.HTMLURL}} and provide a triage summary. Please suggest possible causes and solutions."
+	promptTmpl := handler.Gemini.Prompt
+	tmpl, err := template.New("myTemplate").Parse(promptTmpl)
+	if err != nil {
+		return "", err
+	}
+
+	var buf bytes.Buffer
+	err = tmpl.Execute(&buf, issue)
+	if err != nil {
+		return "", err
+	}
+	return buf.String(), nil
+}
+
+func (r *RepoWatchReconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, pr *github.PullRequest) error {
 	log := log.FromContext(ctx)
 	repoName := strings.Split(repoWatch.Spec.RepoURL, "/")[len(strings.Split(repoWatch.Spec.RepoURL, "/"))-1]
 	sandboxName := fmt.Sprintf("%s-pr-%d", repoName, *pr.Number)
 
-	prompt, err := r.generatePullRequestPrompt(repoWatch, pr)
+	prompt, err := r.generateReviewPrompt(repoWatch, pr)
 	if err != nil {
 		return err
 	}
@@ -311,6 +513,79 @@ func (r *RepoWatchReconciler) createSandboxForPR(ctx context.Context, repoWatch 
 
 	if repoWatch.Spec.Review.DevcontainerConfigRef != "" {
 		if err := unstructured.SetNestedField(sandbox.Object, repoWatch.Spec.Review.DevcontainerConfigRef, "spec", "devcontainerConfigRef"); err != nil {
+			return err
+		}
+	}
+
+	if err := controllerutil.SetControllerReference(repoWatch, sandbox, r.Scheme); err != nil {
+		return err
+	}
+
+	return r.Create(ctx, sandbox)
+}
+
+func (r *RepoWatchReconciler) createSandboxForIssueHandler(ctx context.Context, token string, user *github.User, handler reviewv1alpha1.IssueHandlerSpec, repoWatch *reviewv1alpha1.RepoWatch, issue *github.Issue) error {
+	log := log.FromContext(ctx)
+	repoName := strings.Split(repoWatch.Spec.RepoURL, "/")[len(strings.Split(repoWatch.Spec.RepoURL, "/"))-1]
+	sandboxName := fmt.Sprintf("%s-issue-%d-%s", repoName, *issue.Number, handler.Name)
+
+	prompt, err := r.generateIssueHandlerPrompt(handler, issue)
+	if err != nil {
+		return err
+	}
+
+	cloneURL := strings.Replace(*issue.RepositoryURL, "api.github.com/repos", "github.com", 1) + ".git"
+	// Get repo name which is the string after the last /
+	parts := strings.Split(cloneURL, "/")
+	repoName = parts[len(parts)-1]
+	originURL := fmt.Sprintf("https://%s:%s@github.com/%s/%s", user.GetLogin(), token, user.GetLogin(), repoName)
+
+	log.Info("Generated sandbox for Issue", "issue", *issue)
+	sandbox := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
+			"kind":       "IssueSandbox",
+			"metadata": map[string]interface{}{
+				"name":      sandboxName,
+				"namespace": repoWatch.Namespace,
+				"labels": map[string]interface{}{
+					"review.gemini.google.com/repowatch": repoWatch.Name,
+					"review.gemini.google.com/handler":   handler.Name,
+				},
+			},
+			"spec": map[string]interface{}{
+				"gemini": map[string]interface{}{
+					"configdirRef": handler.Gemini.ConfigdirRef,
+					"prompt":       prompt,
+				},
+				"source": map[string]interface{}{
+					// change *issue.RepositoryURL from https://api.github.com/repos/org/repo-name to https://github.com/org/repo-name.git
+					"cloneURL": cloneURL,
+					"htmlURL":  *issue.HTMLURL,
+					"issue":    fmt.Sprintf("%d", *issue.Number),
+					"title":    *issue.Title,
+					"repo":     repoWatch.GetName(),
+					"handler":  handler.Name,
+				},
+				"destination": map[string]interface{}{
+					"pushEnabled": handler.PushEnabled,
+					"branch":      fmt.Sprintf("issue-%d-%s", *issue.Number, handler.Name),
+					"origin":      originURL,
+					"user": map[string]interface{}{
+						"name":  user.GetName(),
+						"email": user.GetEmail(),
+					},
+				},
+				"gateway": map[string]interface{}{
+					"httpEnabled": true,
+				},
+				"replicas": int64(1),
+			},
+		},
+	}
+
+	if handler.DevcontainerConfigRef != "" {
+		if err := unstructured.SetNestedField(sandbox.Object, handler.DevcontainerConfigRef, "spec", "devcontainerConfigRef"); err != nil {
 			return err
 		}
 	}

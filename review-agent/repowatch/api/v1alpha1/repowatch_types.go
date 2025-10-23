@@ -28,7 +28,7 @@ type GeminiConfig struct {
 	ConfigdirRef string `json:"configdirRef,omitempty"`
 }
 
-type RepoWatchReviewSpec struct {
+type PRReviewSpec struct {
 	// Gemini configuration for the review sandboxes.
 	Gemini GeminiConfig `json:"gemini,omitempty"`
 
@@ -40,6 +40,39 @@ type RepoWatchReviewSpec struct {
 	MaxActiveSandboxes int `json:"maxActiveSandboxes"`
 }
 
+type IssueHandlerSpec struct {
+	// Name of the issue handler
+	// +kubebuilder:validation:Required
+	Name string `json:"name"`
+
+	// Labels to filter issues for this handler
+	// +kubebuilder:validation:Required
+	Labels []string `json:"labels"`
+
+	// Gemini configuration for the bug fix sandboxes.
+	Gemini GeminiConfig `json:"gemini,omitempty"`
+
+	// DevcontainerConfigRef string
+	DevcontainerConfigRef string `json:"devcontainerConfigRef,omitempty"`
+
+	// The maximum number of sandboxes to have active (replicas > 0) at any given time.
+	// +kubebuilder:validation:Required
+	MaxActiveSandboxes int `json:"maxActiveSandboxes"`
+
+	// PushEnabled - allow pushing to user origin
+	// +kubebuilder:validation:Optional
+	PushEnabled bool `json:"pushEnabled,omitempty"`
+}
+
+type GitConfigSpec struct {
+	User  string `json:"user,omitempty"`
+	Email string `json:"email,omitempty"`
+
+	// Secret containing the GitHub Personal Access Token (PAT) for accessing the repo.
+	// +kubebuilder:validation:Optional
+	GithubSecretRef GithubSecretRef `json:"githubSecretRef,omitempty"`
+}
+
 // RepoWatchSpec defines the desired state of RepoWatch
 type RepoWatchSpec struct {
 	// The full URL of the GitHub repository to watch.
@@ -47,18 +80,22 @@ type RepoWatchSpec struct {
 	// +kubebuilder:validation:Required
 	RepoURL string `json:"repoURL"`
 
-	// Review configuration for PR sandboxes.
-	// +kubebuilder:validation:Required
-	Review RepoWatchReviewSpec `json:"review"`
+	// Review configuration for PRs
+	// +kubebuilder:validation:Optional
+	Review PRReviewSpec `json:"review,omitempty"`
+
+	// Handlers configuration for Bugs
+	// +kubebuilder:validation:Optional
+	IssueHandlers []IssueHandlerSpec `json:"issueHandlers,omitempty"`
+
+	// User info for git code changes
+	// +kubebuilder:validation:Optional
+	GitConfig GitConfigSpec `json:"gitConfig,omitempty"`
 
 	// How often to check for new PRs (in seconds).
 	// +kubebuilder:validation:Minimum=30
 	// +kubebuilder:default=300
 	PollIntervalSeconds int `json:"pollIntervalSeconds,omitempty"`
-
-	// Secret containing the GitHub Personal Access Token (PAT) for accessing the repo.
-	// +kubebuilder:validation:Required
-	GithubSecretRef GithubSecretRef `json:"githubSecretRef"`
 }
 
 // GithubSecretRef defines the reference to the secret containing the GitHub PAT
@@ -84,6 +121,12 @@ type RepoWatchStatus struct {
 
 	// +optional
 	PendingPRs []PendingPR `json:"pendingPRs,omitempty"`
+
+	// +optional
+	WatchedIssues map[string][]WatchedIssue `json:"watchedIssues,omitempty"`
+
+	// +optional
+	PendingIssues map[string][]PendingIssue `json:"pendingIssues,omitempty"`
 }
 
 // WatchedPR defines the state of a watched PR
@@ -98,6 +141,24 @@ type WatchedPR struct {
 
 // PendingPR defines the state of a pending PR
 type PendingPR struct {
+	// PR number
+	Number int `json:"number"`
+	// Status of the PR
+	Status string `json:"status"`
+}
+
+// WatchedIssue defines the state of a watched Issue
+type WatchedIssue struct {
+	// Issue number
+	Number int `json:"number"`
+	// Name of the sandbox
+	SandboxName string `json:"sandboxName"`
+	// Status of the sandbox
+	Status string `json:"status"`
+}
+
+// PendingIssue defines the state of a pending PR
+type PendingIssue struct {
 	// PR number
 	Number int `json:"number"`
 	// Status of the PR

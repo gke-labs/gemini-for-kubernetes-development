@@ -26,16 +26,51 @@ spec:
             type: object
           spec:
             properties:
-              githubSecretRef:
+              gitConfig:
                 properties:
-                  key:
+                  email:
                     type: string
-                  name:
+                  githubSecretRef:
+                    properties:
+                      key:
+                        type: string
+                      name:
+                        type: string
+                    required:
+                    - key
+                    - name
+                    type: object
+                  user:
                     type: string
-                required:
-                - key
-                - name
                 type: object
+              issueHandlers:
+                items:
+                  properties:
+                    devcontainerConfigRef:
+                      type: string
+                    gemini:
+                      properties:
+                        configdirRef:
+                          type: string
+                        prompt:
+                          type: string
+                      type: object
+                    labels:
+                      items:
+                        type: string
+                      type: array
+                    maxActiveSandboxes:
+                      type: integer
+                    name:
+                      type: string
+                    pushEnabled:
+                      type: boolean
+                  required:
+                  - labels
+                  - maxActiveSandboxes
+                  - name
+                  type: object
+                type: array
               pollIntervalSeconds:
                 default: 300
                 minimum: 30
@@ -59,9 +94,7 @@ spec:
                 - maxActiveSandboxes
                 type: object
             required:
-            - githubSecretRef
             - repoURL
-            - review
             type: object
           status:
             properties:
@@ -103,6 +136,20 @@ spec:
                   - type
                   type: object
                 type: array
+              pendingIssues:
+                additionalProperties:
+                  items:
+                    properties:
+                      number:
+                        type: integer
+                      status:
+                        type: string
+                    required:
+                    - number
+                    - status
+                    type: object
+                  type: array
+                type: object
               pendingPRs:
                 items:
                   properties:
@@ -115,6 +162,23 @@ spec:
                   - status
                   type: object
                 type: array
+              watchedIssues:
+                additionalProperties:
+                  items:
+                    properties:
+                      number:
+                        type: integer
+                      sandboxName:
+                        type: string
+                      status:
+                        type: string
+                    required:
+                    - number
+                    - sandboxName
+                    - status
+                    type: object
+                  type: array
+                type: object
               watchedPRs:
                 items:
                   properties:

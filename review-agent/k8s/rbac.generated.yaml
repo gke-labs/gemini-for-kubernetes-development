@@ -15,6 +15,7 @@ rules:
 - apiGroups:
   - custom.agents.x-k8s.io
   resources:
+  - issuesandboxes
   - reviewsandboxes
   verbs:
   - create

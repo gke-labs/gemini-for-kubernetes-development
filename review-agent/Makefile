@@ -47,7 +47,8 @@ install-review-agent:
 	# Install
 	../dev/tools/push-images --image-prefix=kind.local/ --kind-cluster-name=${KIND_CLUSTER} --working-dir .
 	#  copy RGD to k8s dir so it gets deployed
-	cp review-sandbox/review-sandbox-rgd.yaml k8s/review-sandbox-rgd.yaml
+	cp review-sandbox/review-sandbox-rgd.yaml k8s/
+	cp issue-sandbox/issue-sandbox-rgd.yaml k8s/
 	../dev/tools/deploy-to-kube --image-prefix=kind.local/ --working-dir .
 
 .PHONY: create-secrets
@@ -61,15 +62,16 @@ bin/configdir-cli: configdir/
 
 .PHONY: create-instance
 create-instance: ./bin/configdir-cli
-	# agent-sandbox repo
-	kubectl apply -f examples/agent-sandbox-repowatch.yaml
-	# KCC repo
-	# bin/configdir-cli --sync-to-cluster  --directory ./configdir/test-sample/cc/.gemini --namespace review-agent-system --name gemini-cc
-	kubectl apply -f examples/kcc-configmap-devcontainer.yaml # custom devcontainer for KCC
-	kubectl apply -f examples/kcc-configdir.yaml              # custom .gemini for KCC
-	kubectl apply -f examples/kcc-repowatch.yaml              # repowatch for KCC
+	#kubectl apply -f examples/agent-sandbox-repowatch.yaml
+	#kubectl apply -f examples/kcc-configmap-devcontainer.yaml # custom devcontainer for KCC
+	#kubectl apply -f examples/kcc-configdir.yaml              # custom .gemini for KCC
+	#kubectl apply -f examples/kcc-repowatch.yaml              # repowatch for KCC
+	kubectl apply -f examples/kro-configmap-devcontainer.yaml # custom devcontainer for KRO
+	kubectl apply -f examples/kro-repowatch.yaml               # repowatch for KRO
 	sleep 5
 	kubectl get reviewsandboxes -A
+	kubectl get issuesandboxes -A
+	# bin/configdir-cli --sync-to-cluster  --directory ./configdir/test-sample/cc/.gemini --namespace review-agent-system --name gemini-cc
 
 .PHONY: delete-instance
 delete-instance:
