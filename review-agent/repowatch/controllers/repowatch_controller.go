@@ -143,16 +143,15 @@ func (r *RepoWatchReconciler) reconcileReviews(ctx context.Context, repoWatch *r
 func (r *RepoWatchReconciler) reconcileIssuesForHandler(ctx context.Context, token string, handler reviewv1alpha1.IssueHandlerSpec, repoWatch *reviewv1alpha1.RepoWatch, client *github.Client, owner string, repo string) error {
 	log := log.FromContext(ctx)
 
+	listOptions := &github.IssueListByRepoOptions{
+		State: "open",
+	}
 	if len(handler.Labels) == 0 {
-		log.Info("no labels configured for triage, skipping")
-		return nil
+		listOptions.Labels = handler.Labels
 	}
 
 	// Get open issues with specified labels
-	issues, _, err := client.Issues.ListByRepo(ctx, owner, repo, &github.IssueListByRepoOptions{
-		State:  "open",
-		Labels: handler.Labels,
-	})
+	issues, _, err := client.Issues.ListByRepo(ctx, owner, repo, listOptions)
 	if err != nil {
 		log.Error(err, "unable to list issues")
 		return err
@@ -572,6 +571,7 @@ func (r *RepoWatchReconciler) createSandboxForIssueHandler(ctx context.Context, 
 					"branch":      fmt.Sprintf("issue-%d-%s", *issue.Number, handler.Name),
 					"origin":      originURL,
 					"user": map[string]interface{}{
+						"login": user.GetLogin(),
 						"name":  user.GetName(),
 						"email": user.GetEmail(),
 					},

@@ -5,11 +5,19 @@ metadata:
   namespace: review-agent-system
 spec:
   repoURL: https://github.com/kubernetes-sigs/agent-sandbox
+  gitConfig:
+    user: Barni S
+    email: barni@google.com
+    githubSecretRef:
+      name: github-pat
+      key: pat
   review:
-    maxActiveSandboxes: 5
+    maxActiveSandboxes: 2
   issueHandlers:
   - name: triage
-    maxActiveSandboxes: 1
+    maxActiveSandboxes: 2
+    labels:
+      - "needs-triage"
     gemini:
       prompt: |
         You are a helpful assistant that triages GitHub issues for a Kubernetes-related open source project.
@@ -28,8 +36,3 @@ spec:
         Issue Title: "{{.Title}}"
         Issue Body: "{{.Body}}"
         HTML URL: "{{.HTMLURL}}"
-    labels:
-      - "needs-triage"
-  githubSecretRef:
-    name: github-pat
-    key: pat

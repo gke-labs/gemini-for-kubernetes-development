@@ -23,8 +23,6 @@ spec:
     devcontainerConfigRef: kro-devcontainer-json  
   issueHandlers:
   - name: triage
-    labels:
-      - "needs-triage"
     maxActiveSandboxes: 1
     devcontainerConfigRef: kro-devcontainer-json
     gemini:

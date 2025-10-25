@@ -11,7 +11,7 @@ metadata:
   namespace: review-agent-system
 rules:
 - apiGroups: ["custom.agents.x-k8s.io"]
-  resources: ["reviewsandboxes"]
+  resources: ["reviewsandboxes", "issuesandboxes"]
   verbs: ["get", "list", "delete", "patch", "update"]
 - apiGroups: ["review.gemini.google.com"]
   resources: ["repowatches"]
