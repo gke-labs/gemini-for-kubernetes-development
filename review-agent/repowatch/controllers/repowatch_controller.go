@@ -69,14 +69,14 @@ func (r *RepoWatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	// Get GitHub token
-	token, err := r.getGitHubToken(ctx, repoWatch)
+	config, err := r.getGitHubConfig(ctx, repoWatch)
 	if err != nil {
 		log.Error(err, "unable to get github token")
 		return ctrl.Result{}, err
 	}
 
 	ts := oauth2.StaticTokenSource(
-		&oauth2.Token{AccessToken: token},
+		&oauth2.Token{AccessToken: config["pat"]},
 	)
 	tc := oauth2.NewClient(ctx, ts)
 	ghClient := github.NewClient(tc)
@@ -97,7 +97,7 @@ func (r *RepoWatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	// Reconcile Issues
 	for _, handler := range repoWatch.Spec.IssueHandlers {
-		if err := r.reconcileIssuesForHandler(ctx, token, handler, repoWatch, ghClient, owner, repo); err != nil {
+		if err := r.reconcileIssuesForHandler(ctx, config, handler, repoWatch, ghClient, owner, repo); err != nil {
 			log.Error(err, "unable to reconcile issues for handler: "+handler.Name)
 			reconcileErr = errors.Join(reconcileErr, err)
 			// Continue to next reconciliation
@@ -140,7 +140,7 @@ func (r *RepoWatchReconciler) reconcileReviews(ctx context.Context, repoWatch *r
 	return nil
 }
 
-func (r *RepoWatchReconciler) reconcileIssuesForHandler(ctx context.Context, token string, handler reviewv1alpha1.IssueHandlerSpec, repoWatch *reviewv1alpha1.RepoWatch, client *github.Client, owner string, repo string) error {
+func (r *RepoWatchReconciler) reconcileIssuesForHandler(ctx context.Context, githubConfig map[string]string, handler reviewv1alpha1.IssueHandlerSpec, repoWatch *reviewv1alpha1.RepoWatch, client *github.Client, owner string, repo string) error {
 	log := log.FromContext(ctx)
 
 	listOptions := &github.IssueListByRepoOptions{
@@ -178,16 +178,16 @@ func (r *RepoWatchReconciler) reconcileIssuesForHandler(ctx context.Context, tok
 		log.Error(err, "unable to get current user")
 		return err
 	}
-	if repoWatch.Spec.GitConfig.User != "" {
-		user.Name = github.String(repoWatch.Spec.GitConfig.User)
+	if githubConfig["name"] != "" {
+		user.Name = github.String(githubConfig["name"])
 	}
-	if repoWatch.Spec.GitConfig.Email != "" {
-		user.Email = github.String(repoWatch.Spec.GitConfig.Email)
+	if githubConfig["email"] != "" {
+		user.Email = github.String(githubConfig["email"])
 	}
 	log.Info("Obtained current user", "user", *user)
 
 	// Reconcile
-	if err := r.reconcileIssueHandlerSandboxes(ctx, token, user, handler, repoWatch, issues, sandboxList); err != nil {
+	if err := r.reconcileIssueHandlerSandboxes(ctx, user, handler, repoWatch, issues, sandboxList); err != nil {
 		log.Error(err, "unable to reconcile triage sandboxes")
 		return err
 	}
@@ -195,18 +195,32 @@ func (r *RepoWatchReconciler) reconcileIssuesForHandler(ctx context.Context, tok
 	return nil
 }
 
-func (r *RepoWatchReconciler) getGitHubToken(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch) (string, error) {
+func (r *RepoWatchReconciler) getGitHubConfig(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch) (map[string]string, error) {
 	secret := &corev1.Secret{}
-	secretName := repoWatch.Spec.GitConfig.GithubSecretRef.Name
-	secretKey := repoWatch.Spec.GitConfig.GithubSecretRef.Key
+	secretName := repoWatch.Spec.GithubSecretName
 	if err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: repoWatch.Namespace}, secret); err != nil {
-		return "", err
+		return nil, err
 	}
-	token, ok := secret.Data[secretKey]
+	githubConfig := map[string]string{
+		"name":  "",
+		"email": "",
+	}
+	_, ok := secret.Data["pat"]
 	if !ok {
-		return "", fmt.Errorf("key %s not found in secret %s", secretKey, secretName)
+		return nil, fmt.Errorf("'pat' not found in secret %s", secretName)
 	}
-	return string(token), nil
+	githubConfig["pat"] = string(secret.Data["pat"])
+
+	_, ok = secret.Data["name"]
+	if ok {
+		githubConfig["name"] = string(secret.Data["name"])
+	}
+
+	_, ok = secret.Data["email"]
+	if ok {
+		githubConfig["email"] = string(secret.Data["email"])
+	}
+	return githubConfig, nil
 }
 
 func parseRepoURL(repoURL string) (string, string, error) {
@@ -316,7 +330,7 @@ func (r *RepoWatchReconciler) reconcileReviewSandboxes(ctx context.Context, repo
 	return r.Status().Update(ctx, repoWatch)
 }
 
-func (r *RepoWatchReconciler) reconcileIssueHandlerSandboxes(ctx context.Context, token string, user *github.User, handler reviewv1alpha1.IssueHandlerSpec, repoWatch *reviewv1alpha1.RepoWatch, issues []*github.Issue, sandboxes *unstructured.UnstructuredList) error {
+func (r *RepoWatchReconciler) reconcileIssueHandlerSandboxes(ctx context.Context, user *github.User, handler reviewv1alpha1.IssueHandlerSpec, repoWatch *reviewv1alpha1.RepoWatch, issues []*github.Issue, sandboxes *unstructured.UnstructuredList) error {
 	log := log.FromContext(ctx)
 	activeSandboxes := 0
 	watchedIssues := []reviewv1alpha1.WatchedIssue{}
@@ -403,7 +417,7 @@ func (r *RepoWatchReconciler) reconcileIssueHandlerSandboxes(ctx context.Context
 		if !sandboxExists {
 			if activeSandboxes < handler.MaxActiveSandboxes {
 				log.Info("creating sandbox for issue", "issue", *issue.Number)
-				if err := r.createSandboxForIssueHandler(ctx, token, user, handler, repoWatch, issue); err != nil {
+				if err := r.createSandboxForIssueHandler(ctx, user, handler, repoWatch, issue); err != nil {
 					log.Error(err, "unable to create sandbox for issue", "issue", *issue.Number)
 				} else {
 					activeSandboxes++
@@ -523,7 +537,7 @@ func (r *RepoWatchReconciler) createReviewSandboxForPR(ctx context.Context, repo
 	return r.Create(ctx, sandbox)
 }
 
-func (r *RepoWatchReconciler) createSandboxForIssueHandler(ctx context.Context, token string, user *github.User, handler reviewv1alpha1.IssueHandlerSpec, repoWatch *reviewv1alpha1.RepoWatch, issue *github.Issue) error {
+func (r *RepoWatchReconciler) createSandboxForIssueHandler(ctx context.Context, user *github.User, handler reviewv1alpha1.IssueHandlerSpec, repoWatch *reviewv1alpha1.RepoWatch, issue *github.Issue) error {
 	log := log.FromContext(ctx)
 	repoName := strings.Split(repoWatch.Spec.RepoURL, "/")[len(strings.Split(repoWatch.Spec.RepoURL, "/"))-1]
 	sandboxName := fmt.Sprintf("%s-issue-%d-%s", repoName, *issue.Number, handler.Name)
@@ -537,7 +551,8 @@ func (r *RepoWatchReconciler) createSandboxForIssueHandler(ctx context.Context, 
 	// Get repo name which is the string after the last /
 	parts := strings.Split(cloneURL, "/")
 	repoName = parts[len(parts)-1]
-	originURL := fmt.Sprintf("https://%s:%s@github.com/%s/%s", user.GetLogin(), token, user.GetLogin(), repoName)
+	//originURL := fmt.Sprintf("https://%s:%s@github.com/%s/%s", user.GetLogin(), githubConfig["pat"], user.GetLogin(), repoName)
+	originURL := fmt.Sprintf("github.com/%s/%s", user.GetLogin(), repoName)
 
 	log.Info("Generated sandbox for Issue", "issue", *issue)
 	sandbox := &unstructured.Unstructured{

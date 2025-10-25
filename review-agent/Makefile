@@ -55,7 +55,7 @@ install-review-agent:
 create-secrets:
 	kubectl create namespace review-agent-system || true
 	@kubectl create secret -n review-agent-system generic gemini-vscode-tokens --from-literal=gemini=${GEMINI_API_KEY} || true
-	@kubectl create secret -n review-agent-system generic github-pat --from-literal=pat=${GITHUB_PAT} || true
+	@kubectl create secret -n review-agent-system generic github-pat --from-literal=pat=${GITHUB_PAT} --from-literal=name="`git config --global user.name`" --from-literal=email=`git config --global user.email`|| true
 
 bin/configdir-cli: configdir/
 	../dev/tools/build-go-binaries --working-dir .

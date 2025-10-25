@@ -26,23 +26,8 @@ spec:
             type: object
           spec:
             properties:
-              gitConfig:
-                properties:
-                  email:
-                    type: string
-                  githubSecretRef:
-                    properties:
-                      key:
-                        type: string
-                      name:
-                        type: string
-                    required:
-                    - key
-                    - name
-                    type: object
-                  user:
-                    type: string
-                type: object
+              githubSecretName:
+                type: string
               issueHandlers:
                 items:
                   properties:
@@ -93,6 +78,7 @@ spec:
                 - maxActiveSandboxes
                 type: object
             required:
+            - githubSecretName
             - repoURL
             type: object
           status:

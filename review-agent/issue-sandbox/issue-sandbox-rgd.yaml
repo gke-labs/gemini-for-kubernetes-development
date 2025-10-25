@@ -16,6 +16,7 @@ spec:
         configdirRef: string | default=""
       serviceAccountName: string | default="issue-sandbox"
       devcontainerConfigRef: string | default="devcontainer-json"
+      githubSecretName: string | default="github-pat"
       source:
         cloneURL: string
         htmlURL: string
@@ -93,12 +94,19 @@ spec:
                       value: ${schema.spec.source.issue}
                     - name: ISSUE_BRANCH
                       value: ${schema.spec.destination.branch}
-                    - name: USER_ORIGIN
+                    - name: GITHUB_USER_ORIGIN
                       value: ${schema.spec.destination.origin}
-                    - name: USER_NAME
+                    - name: GITHUB_USER_LOGIN
+                      value: ${schema.spec.destination.user.login}
+                    - name: GITHUB_USER_NAME
                       value: ${schema.spec.destination.user.name}
-                    - name: USER_EMAIL
+                    - name: GITHUB_USER_EMAIL
                       value: ${schema.spec.destination.user.email}
+                    - name: GITHUB_TOKEN
+                      valueFrom:
+                        secretKeyRef:
+                          name: ${schema.spec.githubSecretName}
+                          key: pat
                     - name: GIT_PUSH_ENABLED
                       value: ${string(schema.spec.destination.pushEnabled)}
                     - name: ENVBUILDER_GIT_URL

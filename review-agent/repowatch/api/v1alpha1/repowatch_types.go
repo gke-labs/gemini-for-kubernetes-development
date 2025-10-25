@@ -64,15 +64,6 @@ type IssueHandlerSpec struct {
 	PushEnabled bool `json:"pushEnabled,omitempty"`
 }
 
-type GitConfigSpec struct {
-	User  string `json:"user,omitempty"`
-	Email string `json:"email,omitempty"`
-
-	// Secret containing the GitHub Personal Access Token (PAT) for accessing the repo.
-	// +kubebuilder:validation:Optional
-	GithubSecretRef GithubSecretRef `json:"githubSecretRef,omitempty"`
-}
-
 // RepoWatchSpec defines the desired state of RepoWatch
 type RepoWatchSpec struct {
 	// The full URL of the GitHub repository to watch.
@@ -88,24 +79,14 @@ type RepoWatchSpec struct {
 	// +kubebuilder:validation:Optional
 	IssueHandlers []IssueHandlerSpec `json:"issueHandlers,omitempty"`
 
-	// User info for git code changes
-	// +kubebuilder:validation:Optional
-	GitConfig GitConfigSpec `json:"gitConfig,omitempty"`
+	// Secret containing the GitHub Personal Access Token (PAT) for accessing the repo.
+	// +kubebuilder:validation:Required
+	GithubSecretName string `json:"githubSecretName,"`
 
 	// How often to check for new PRs (in seconds).
 	// +kubebuilder:validation:Minimum=30
 	// +kubebuilder:default=300
 	PollIntervalSeconds int `json:"pollIntervalSeconds,omitempty"`
-}
-
-// GithubSecretRef defines the reference to the secret containing the GitHub PAT
-type GithubSecretRef struct {
-	// Name of the secret
-	// +kubebuilder:validation:Required
-	Name string `json:"name"`
-	// Key in the secret
-	// +kubebuilder:validation:Required
-	Key string `json:"key"`
 }
 
 // RepoWatchStatus defines the observed state of RepoWatch

@@ -1,23 +1,24 @@
 #!/bin/bash
 
 export GEMINI_API_KEY=`cat /tokens/gemini`
-set -x
 # .spec.source.cloneURL is typically upstream repo in a developer workflow
 git remote remove origin
 
 if [ "$GIT_PUSH_ENABLED" == "true" ]; then
   # if new origin is provided set it
-  if [ ! -z $USER_ORIGIN ]; then
-    git remote add origin $USER_ORIGIN
+  if [ ! -z $GITHUB_USER_ORIGIN ]; then
+    ORIGIN=https://$GITHUB_USER_LOGIN:$GITHUB_TOKEN@$GITHUB_USER_ORIGIN
+    git remote add origin $ORIGIN
   fi
 fi
 
-if [ ! -z $USER_EMAIL ]; then
-  git config --global user.email  $USER_EMAIL
+set -x
+if [ ! -z $GITHUB_USER_EMAIL ]; then
+  git config --global user.email  $GITHUB_USER_EMAIL
 fi
 
-if [ ! -z "$USER_NAME" ]; then
-  git config --global user.name "$USER_NAME"
+if [ ! -z "$GITHUB_USER_NAME" ]; then
+  git config --global user.name "$GITHUB_USER_NAME"
 fi
 
 # grab the current git HEAD commit id
@@ -56,7 +57,7 @@ if [ -d .gemini.bak ]; then
 fi
 
 # Try commiting to grab uncommited changes
-if [ ! -z $USER_EMAIL ]; then
+if [ ! -z $GITHUB_USER_EMAIL ]; then
   git add .
   git commit -m "fix for issue # $ISSUEID"  || true
 fi

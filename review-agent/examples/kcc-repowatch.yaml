@@ -5,12 +5,7 @@ metadata:
   namespace: review-agent-system
 spec:
   repoURL: https://github.com/GoogleCloudPlatform/k8s-config-connector
-  gitConfig:
-    user: Barni S
-    email: barni@google.com
-    githubSecretRef:
-      name: github-pat
-      key: pat
+  githubSecretName: github-pat
   review:
     gemini:
       prompt: |
