@@ -30,6 +30,7 @@ function App() {
   useEffect(() => {
     if (activeRepo && activeSubTab.repo === activeRepo) {
       if (activeSubTab.name === 'review') {
+        setIssues([]);
         fetch(`/api/repo/${activeRepo}/prs`)
           .then(res => res.json())
           .then(data => {
@@ -42,6 +43,7 @@ function App() {
           })
           .catch(err => console.error(`Failed to fetch PRs for ${activeRepo}:`, err));
       } else if (activeSubTab.name) {
+        setPrs([]);
         fetch(`/api/repo/${activeRepo}/issues/${activeSubTab.name}`)
           .then(res => res.json())
           .then(data => {
@@ -59,6 +61,8 @@ function App() {
 
   const handleRepoClick = (repoName) => {
     setActiveRepo(repoName);
+    setPrs([]);
+    setIssues([]);
     const repo = repos.find(r => r.name === repoName);
     if (repo) {
       if (repo.review) {

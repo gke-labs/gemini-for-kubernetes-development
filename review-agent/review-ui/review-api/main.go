@@ -368,9 +368,6 @@ func fetchAndPopulatePRs(ctx context.Context, repo string) {
 		Version:  "v1alpha1",
 		Resource: "reviewsandboxes",
 	}
-	// In a real scenario, we would list the CRs from the cluster.
-	// For this demo, we will return a mock list and ensure the URLs are in Redis.
-	// This simulates the controller having populated Redis.
 	list, err := k8sClient.Resource(gvr).Namespace(namespace).List(context.Background(),
 		v1.ListOptions{
 			LabelSelector: fmt.Sprintf("review.gemini.google.com/repowatch=%s", repo),
@@ -380,7 +377,9 @@ func fetchAndPopulatePRs(ctx context.Context, repo string) {
 		return
 	}
 
+	log.Printf("Populating PRs: Found %d reviewsandboxes for Repo: %s", len(list.Items), repo)
 	for _, item := range list.Items {
+		log.Printf("Creating PR entry for ReviewSandbox: %s/%s", item.GetNamespace(), item.GetName())
 		// Get replicas and if it scaled down skip
 		replicas, found, err := unstructured.NestedInt64(item.Object, "spec", "replicas")
 		if err != nil || !found {
@@ -766,7 +765,9 @@ func fetchAndPopulateIssues(ctx context.Context, repo, handler string) {
 		return
 	}
 
+	log.Printf("Populating Issues: Found %d issuesandboxes for Repo: %s Handler: %s", len(list.Items), repo, handler)
 	for _, item := range list.Items {
+		log.Printf("Creating Issue entry for IssueSandbox: %s/%s", item.GetNamespace(), item.GetName())
 		replicas, found, err := unstructured.NestedInt64(item.Object, "spec", "replicas")
 		if err != nil || !found {
 			log.Printf("Replicas (.spec.replicas) not found in IssueSandbox %s", item.GetName())

@@ -157,6 +157,15 @@ func (r *RepoWatchReconciler) reconcileIssuesForHandler(ctx context.Context, git
 		return err
 	}
 
+	// filter issues that are pullrequests
+	var repoIssues []*github.Issue
+	for _, issue := range issues {
+		if issue.IsPullRequest() {
+			continue
+		}
+		repoIssues = append(repoIssues, issue)
+	}
+
 	// Get existing sandboxes
 	sandboxList := &unstructured.UnstructuredList{}
 	sandboxGVK := schema.GroupVersionKind{
@@ -187,7 +196,7 @@ func (r *RepoWatchReconciler) reconcileIssuesForHandler(ctx context.Context, git
 	log.Info("Obtained current user", "user", *user)
 
 	// Reconcile
-	if err := r.reconcileIssueHandlerSandboxes(ctx, user, handler, repoWatch, issues, sandboxList); err != nil {
+	if err := r.reconcileIssueHandlerSandboxes(ctx, user, handler, repoWatch, repoIssues, sandboxList); err != nil {
 		log.Error(err, "unable to reconcile triage sandboxes")
 		return err
 	}

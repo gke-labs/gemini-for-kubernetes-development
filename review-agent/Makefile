@@ -1,6 +1,26 @@
 
 KIND_CLUSTER=review-agent
 
+# Check pre-reqs
+ifndef GEMINI_API_KEY
+$(error GEMINI_API_KEY is not set. Please set it before running make.)
+endif
+
+ifndef GITHUB_PAT
+$(error GITHUB_PAT is not set. Please set it before running make.)
+endif
+
+GIT_USER_NAME := $(strip $(shell git config --global user.name))
+ifeq ($(GIT_USER_NAME),)
+    # The error function prints an error message and stops the build process.
+    $(error "git config --global user.name" is not set. Please configure it with 'git config --global user.name "Your Name"'. )
+endif
+GIT_USER_EMAIL := $(strip $(shell git config --global user.email))
+ifeq ($(GIT_USER_EMAIL),)
+    # The error function prints an error message and stops the build process.
+    $(error "git config --global user.email" is not set. Please configure it with 'git config --global user.email "email@domain.com"'. )
+endif
+
 .PHONY: all
 all: generate lint-go test-unit create-kind install-packages install-sandbox-operator create-secrets install-review-agent create-instance
 
@@ -62,10 +82,10 @@ bin/configdir-cli: configdir/
 
 .PHONY: create-instance
 create-instance: ./bin/configdir-cli
-	#kubectl apply -f examples/agent-sandbox-repowatch.yaml
-	#kubectl apply -f examples/kcc-configmap-devcontainer.yaml # custom devcontainer for KCC
-	#kubectl apply -f examples/kcc-configdir.yaml              # custom .gemini for KCC
-	#kubectl apply -f examples/kcc-repowatch.yaml              # repowatch for KCC
+	kubectl apply -f examples/agent-sandbox-repowatch.yaml
+	kubectl apply -f examples/kcc-configmap-devcontainer.yaml # custom devcontainer for KCC
+	kubectl apply -f examples/kcc-configdir.yaml              # custom .gemini for KCC
+	kubectl apply -f examples/kcc-repowatch.yaml              # repowatch for KCC
 	kubectl apply -f examples/kro-configmap-devcontainer.yaml # custom devcontainer for KRO
 	kubectl apply -f examples/kro-repowatch.yaml               # repowatch for KRO
 	sleep 5
