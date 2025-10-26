@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pr-review-ui
+  namespace: repo-agent-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pr-review-ui
+  template:
+    metadata:
+      labels:
+        app: pr-review-ui
+    spec:
+      containers:
+      - name: ui
+        image: ko://repo-agent/review-ui/images/review-ui # This will be built locally
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 80

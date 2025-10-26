@@ -1,0 +1,64 @@
+apiVersion: review.gemini.google.com/v1alpha1
+kind: RepoWatch
+metadata:
+  name: kro
+  namespace: repo-agent-system
+spec:
+  repoURL: https://github.com/kubernetes-sigs/kro
+  githubSecretName: github-pat
+  review:
+    gemini:
+      prompt: |
+        You are an expert kubernetes developer who is helping with code reviews. Please look at the most recent commit and provide a review feedback. Would you approve it ?
+        Please pay attention to the following:
+        1. Does the fix resolve the original problem. 
+        2. Look for linked issues to understand the original problem.
+        3. Are there tests to check the fix.
+    maxActiveSandboxes: 1
+    devcontainerConfigRef: kro-devcontainer-json  
+  issueHandlers:
+  - name: triage
+    maxActiveSandboxes: 1
+    devcontainerConfigRef: kro-devcontainer-json
+    gemini:
+      prompt: |
+        You are a helpful assistant that triages GitHub issues for a Kubernetes-related open source project.
+        Your task is to categorize incoming issues based on their content and assign appropriate labels.
+        Analyze the issue title and body to determine the most relevant category from the following options:
+        1. bug: Issues that describe unexpected behavior, errors, or malfunctions in the software.
+        2. feature: Suggestions for new features, enhancements, or improvements to existing functionality.
+        2. cleanup: Suggestions for cleaning up code, removing deprecated features, or improving code quality.
+        3. document: Issues related to documentation errors, omissions, or requests for clarification.
+        4. support: Questions or requests for help regarding the use of the software.
+        5. other: Any issue that does not fit into the above categories.
+
+        Start the response with "/kind <Category>" where <Category> is one of bug , feature , document, support, cleanup or other
+        In the next line, provide a concise explanation of your reasoning for the assigned category.
+ 
+        Issue Title: "{{.Title}}"
+        Issue Body: "{{.Body}}"
+        HTML URL: "{{.HTMLURL}}"
+  - name: bugfix
+    labels:
+      - "kind/bug"
+    maxActiveSandboxes: 1
+    pushEnabled: true
+    devcontainerConfigRef: kro-devcontainer-json
+    gemini:
+      prompt: |
+        You are an expert software engineer specializing in debugging and fixing issues in Kubernetes-related open source projects.
+        KRO is a Kubernetes resource orchestrator that helps with declarative management of Kubernetes resources.
+        Your task is to analyze the issue and provide a detailed plan to fix the reported problems.
+        The repo code is available locally for reference. Please look at the code as well as git history to understand the context of the issue.
+        Review the issue title and body to understand the problem, then outline the steps needed to resolve it, including any code changes, tests, or documentation updates required.
+        Then go ahead and make those changes in the local folder.
+        Dont forget to add any relevant tests to verify your fix.
+        At the end run relevant tests to make sure the fix works.
+        Commit the changes with a meaningful commit message.
+        Do not attempt to push any changes.
+
+        If needed look at the comments on the issue linked here for more context: {{.HTMLURL}}
+
+        Issue Title: "{{.Title}}"
+        Issue Body: "{{.Body}}"
+        HTML URL: "{{.HTMLURL}}"
