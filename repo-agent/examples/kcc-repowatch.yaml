@@ -1,0 +1,15 @@
+apiVersion: review.gemini.google.com/v1alpha1
+kind: RepoWatch
+metadata:
+  name: kcc
+  namespace: repo-agent-system
+spec:
+  repoURL: https://github.com/GoogleCloudPlatform/k8s-config-connector
+  githubSecretName: github-pat
+  review:
+    gemini:
+      prompt: |
+        google-internal:review-pr "{{.Number}}"
+      configdirRef: kcc-review-gemini-config
+    maxActiveSandboxes: 1
+    devcontainerConfigRef: kcc-devcontainer-json

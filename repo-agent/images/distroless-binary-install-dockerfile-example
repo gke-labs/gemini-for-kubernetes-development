@@ -1,0 +1,36 @@
+# Stage 1: Build a fully-featured Debian image to get socat and its dependencies.
+FROM debian:bookworm-slim as build
+
+# Install socat and necessary tools.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    socat \
+    # Needed to find dynamic library dependencies.
+    strace \
+    # Clean up APT cache to reduce image size.
+    && rm -rf /var/lib/apt/lists/*
+
+# Use strace to find the required libraries when running socat.
+# This finds libraries and files needed by socat and puts them in a tarball.
+RUN strace -eopenat -f -o /tmp/strace.log socat -V && \
+    cat /tmp/strace.log | \
+    grep -o '/lib64/\S* \| /lib/\S* \| /usr/lib/\S*' | \
+    # Remove duplicates and ensure the paths exist.
+    sort -u | \
+    xargs -r -I {} test -e {} && \
+    cat /tmp/strace.log | \
+    grep -o '/lib64/\S* \| /lib/\S* \| /usr/lib/\S*' | \
+    sort -u | \
+    xargs -r tar -cf /tmp/socat-libs.tar
+
+# Copy the static socat binary and necessary libraries into the final distroless image.
+# For gcr.io/distroless/cc-debian12, the base dynamic libraries (glibc, etc.) are already included.
+FROM gcr.io/distroless/cc-debian12
+
+# Copy the built binary and libraries from the build stage.
+COPY --from=build /usr/bin/socat /usr/bin/socat
+COPY --from=build /tmp/socat-libs.tar /tmp/
+RUN tar -xf /tmp/socat-libs.tar -C /
+
+# Set the entrypoint for the container.
+ENTRYPOINT ["/usr/bin/socat"]
