@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand"
 	"net/url"
 	"strconv"
 	"strings"
@@ -42,6 +43,14 @@ import (
 
 	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/repowatch/api/v1alpha1"
 )
+
+// Character set for the random string
+const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+// We create a new *rand.Rand instance seeded with the current time.
+// This is crucial to get different results on each program execution.
+var seededRand = rand.New(
+	rand.NewSource(time.Now().UnixNano()))
 
 // RepoWatchReconciler reconciles a RepoWatch object
 type RepoWatchReconciler struct {
@@ -96,12 +105,10 @@ func (r *RepoWatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	// Reconcile Issues
-	for _, handler := range repoWatch.Spec.IssueHandlers {
-		if err := r.reconcileIssuesForHandler(ctx, config, handler, repoWatch, ghClient, owner, repo); err != nil {
-			log.Error(err, "unable to reconcile issues for handler: "+handler.Name)
-			reconcileErr = errors.Join(reconcileErr, err)
-			// Continue to next reconciliation
-		}
+	if err := r.reconcileIssues(ctx, config, repoWatch, ghClient, owner, repo); err != nil {
+		log.Error(err, "unable to reconcile issues")
+		reconcileErr = errors.Join(reconcileErr, err)
+		// Continue to next reconciliation
 	}
 
 	return ctrl.Result{RequeueAfter: time.Second * time.Duration(repoWatch.Spec.PollIntervalSeconds)}, reconcileErr
@@ -140,13 +147,56 @@ func (r *RepoWatchReconciler) reconcileReviews(ctx context.Context, repoWatch *r
 	return nil
 }
 
-func (r *RepoWatchReconciler) reconcileIssuesForHandler(ctx context.Context, githubConfig map[string]string, handler reviewv1alpha1.IssueHandlerSpec, repoWatch *reviewv1alpha1.RepoWatch, client *github.Client, owner string, repo string) error {
+func (r *RepoWatchReconciler) reconcileIssues(ctx context.Context, githubConfig map[string]string, repoWatch *reviewv1alpha1.RepoWatch, ghClient *github.Client, owner string, repo string) error {
+	log := log.FromContext(ctx)
+	var reconcileErr error
+
+	// Get existing sandboxes
+	sandboxList := &unstructured.UnstructuredList{}
+	sandboxGVK := schema.GroupVersionKind{
+		Group:   "custom.agents.x-k8s.io",
+		Version: "v1alpha1",
+		Kind:    "IssueSandbox",
+	}
+	sandboxList.SetGroupVersionKind(sandboxGVK)
+
+	// TODO filter by handler and or namespace
+	if err := r.List(ctx, sandboxList); err != nil {
+		log.Error(err, "unable to list ReviewSandboxes")
+		return err
+	}
+
+	// Get the github user name and email for the given token
+	user, _, err := ghClient.Users.Get(ctx, "")
+	if err != nil {
+		log.Error(err, "unable to get current user")
+		return err
+	}
+	if githubConfig["name"] != "" {
+		user.Name = github.String(githubConfig["name"])
+	}
+	if githubConfig["email"] != "" {
+		user.Email = github.String(githubConfig["email"])
+	}
+	log.Info("Obtained current user", "user", *user)
+
+	for _, handler := range repoWatch.Spec.IssueHandlers {
+		if err := r.reconcileIssuesForHandler(ctx, user, sandboxList, handler, repoWatch, ghClient, owner, repo); err != nil {
+			log.Error(err, "unable to reconcile issues for handler: "+handler.Name)
+			reconcileErr = errors.Join(reconcileErr, err)
+			// Continue to next reconciliation
+		}
+	}
+	return reconcileErr
+}
+
+func (r *RepoWatchReconciler) reconcileIssuesForHandler(ctx context.Context, user *github.User, sandboxList *unstructured.UnstructuredList, handler reviewv1alpha1.IssueHandlerSpec, repoWatch *reviewv1alpha1.RepoWatch, client *github.Client, owner string, repo string) error {
 	log := log.FromContext(ctx)
 
 	listOptions := &github.IssueListByRepoOptions{
 		State: "open",
 	}
-	if len(handler.Labels) == 0 {
+	if len(handler.Labels) != 0 {
 		listOptions.Labels = handler.Labels
 	}
 
@@ -166,34 +216,17 @@ func (r *RepoWatchReconciler) reconcileIssuesForHandler(ctx context.Context, git
 		repoIssues = append(repoIssues, issue)
 	}
 
-	// Get existing sandboxes
-	sandboxList := &unstructured.UnstructuredList{}
-	sandboxGVK := schema.GroupVersionKind{
-		Group:   "custom.agents.x-k8s.io",
-		Version: "v1alpha1",
-		Kind:    "IssueSandbox",
+	// Log repoIssues and sandboxList for debug purposes
+	issuesStr := []string{}
+	for _, issue := range repoIssues {
+		issuesStr = append(issuesStr, fmt.Sprintf("%d", *issue.Number))
 	}
-	sandboxList.SetGroupVersionKind(sandboxGVK)
-
-	// TODO filter by handler and or namespace
-	if err := r.List(ctx, sandboxList); err != nil {
-		log.Error(err, "unable to list ReviewSandboxes for triage")
-		return err
+	sandboxesStr := []string{}
+	for _, sandbox := range sandboxList.Items {
+		sandboxesStr = append(sandboxesStr, sandbox.GetName())
 	}
-
-	// Get the github user name and email for the given token
-	user, _, err := client.Users.Get(ctx, "")
-	if err != nil {
-		log.Error(err, "unable to get current user")
-		return err
-	}
-	if githubConfig["name"] != "" {
-		user.Name = github.String(githubConfig["name"])
-	}
-	if githubConfig["email"] != "" {
-		user.Email = github.String(githubConfig["email"])
-	}
-	log.Info("Obtained current user", "user", *user)
+	log.Info("DEBUG INFO issues", "handler", handler.Name, "issues", issuesStr)
+	log.Info("DEBUG INFO sandboxes", "handler", handler.Name, "sandboxes", sandboxesStr)
 
 	// Reconcile
 	if err := r.reconcileIssueHandlerSandboxes(ctx, user, handler, repoWatch, repoIssues, sandboxList); err != nil {
@@ -546,6 +579,21 @@ func (r *RepoWatchReconciler) createReviewSandboxForPR(ctx context.Context, repo
 	return r.Create(ctx, sandbox)
 }
 
+// randString generates a random string of length n.
+func randString(n int) string {
+	// Create a byte slice of length n
+	b := make([]byte, n)
+
+	// Fill each position in the slice with a random character
+	// from our letterBytes constant
+	for i := range b {
+		b[i] = letterBytes[seededRand.Intn(len(letterBytes))]
+	}
+
+	// Convert the byte slice to a string and return it
+	return string(b)
+}
+
 func (r *RepoWatchReconciler) createSandboxForIssueHandler(ctx context.Context, user *github.User, handler reviewv1alpha1.IssueHandlerSpec, repoWatch *reviewv1alpha1.RepoWatch, issue *github.Issue) error {
 	log := log.FromContext(ctx)
 	repoName := strings.Split(repoWatch.Spec.RepoURL, "/")[len(strings.Split(repoWatch.Spec.RepoURL, "/"))-1]
@@ -562,6 +610,8 @@ func (r *RepoWatchReconciler) createSandboxForIssueHandler(ctx context.Context, 
 	repoName = parts[len(parts)-1]
 	//originURL := fmt.Sprintf("https://%s:%s@github.com/%s/%s", user.GetLogin(), githubConfig["pat"], user.GetLogin(), repoName)
 	originURL := fmt.Sprintf("github.com/%s/%s", user.GetLogin(), repoName)
+
+	branchName := fmt.Sprintf("issue-%d-%s-%s", *issue.Number, handler.Name, randString(4))
 
 	log.Info("Generated sandbox for Issue", "issue", *issue)
 	sandbox := &unstructured.Unstructured{
@@ -592,7 +642,7 @@ func (r *RepoWatchReconciler) createSandboxForIssueHandler(ctx context.Context, 
 				},
 				"destination": map[string]interface{}{
 					"pushEnabled": handler.PushEnabled,
-					"branch":      fmt.Sprintf("issue-%d-%s", *issue.Number, handler.Name),
+					"branch":      branchName,
 					"origin":      originURL,
 					"user": map[string]interface{}{
 						"login": user.GetLogin(),
