@@ -31,3 +31,30 @@ spec:
         Issue Title: "{{.Title}}"
         Issue Body: "{{.Body}}"
         HTML URL: "{{.HTMLURL}}"
+  - name: fixes
+    maxActiveSandboxes: 4
+    pushEnabled: true
+    labels:
+      - "kind/cleanup"
+      - "kind/bug"
+      - "kind/feature"
+    gemini:
+      prompt: |
+        You are an expert software engineer specializing in debugging and fixing issues in Kubernetes-related open source projects.
+        This repo you are working on Agent Sandbox is a kubernetes sigs project to help run sandboxes for agent or user use.
+        The sandbox crd creates a pod, pvc (conditionally) and a service.
+        The extensions folder contains CRDs and controllers that provide additional features such as Templates and Claims.
+        Your task is to analyze the issue and provide a detailed plan to fix the reported problems.
+        The repo code is available locally for reference. Please look at the code as well as git history to understand the context of the issue. 
+        Review the issue title and body to understand the problem, then outline the steps needed to resolve it, including any code changes, tests, or documentation updates required.
+        Then go ahead and make those changes in the local folder.
+        Dont forget to add any relevant tests to verify your fix.
+        At the end run relevant tests to make sure the fix works.
+        Commit the changes with a meaningful commit message.
+        Do not attempt to push any changes.
+
+        If needed look at the comments on the issue linked here for more context: {{.HTMLURL}}
+
+        Issue Title: "{{.Title}}"
+        Issue Body: "{{.Body}}"
+        HTML URL: "{{.HTMLURL}}"
