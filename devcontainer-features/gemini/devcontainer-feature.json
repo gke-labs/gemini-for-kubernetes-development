@@ -1,0 +1,17 @@
+{
+    "name": "gemini-cli",
+    "id": "gemini-cli",
+    "version": "0.11.0",
+    "description": "Gemini CLI [code](https://github.com/google-gemini/gemini-cli)",
+    "options": {
+        "version": {
+            "type": "string",
+            "default": "latest",
+            "description": "Installer version cadence: latest|preview|nightly|0.11.0|<some-version>"
+        }
+    },
+    "dependsOn": {
+        "ghcr.io/devcontainers/features/common-utils:2": {},
+        "ghcr.io/devcontainers/features/node:1": { "version": "lts" }
+    }
+}
