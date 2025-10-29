@@ -228,6 +228,11 @@ func (r *RepoWatchReconciler) reconcileIssuesForHandler(ctx context.Context, use
 	log.Info("DEBUG INFO issues", "handler", handler.Name, "issues", issuesStr)
 	log.Info("DEBUG INFO sandboxes", "handler", handler.Name, "sandboxes", sandboxesStr)
 
+	// Workaround for https://github.com/gke-labs/gemini-for-kubernetes-development/issues/8
+	if len(repoIssues) == 0 {
+		log.Info("No issues found")
+		return nil
+	}
 	// Reconcile
 	if err := r.reconcileIssueHandlerSandboxes(ctx, user, handler, repoWatch, repoIssues, sandboxList); err != nil {
 		log.Error(err, "unable to reconcile triage sandboxes")
