@@ -18,7 +18,6 @@ jobs:
           publish-features: "true"
           base-path-to-features: "./devcontainer-features/"
           generate-docs: "true"
-          devcontainer-cli-version: "0.53.0"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Create PR for Documentation
