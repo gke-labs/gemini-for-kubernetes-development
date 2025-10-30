@@ -5,9 +5,12 @@ metadata:
 spec:
   repoURL: https://github.com/gke-labs/gemini-for-kubernetes-development
   githubSecretName: github-pat
+  review:
+    maxActiveSandboxes: 2
+    devcontainerConfigRef: go-devcontainer-json
   issueHandlers:
   - name: fixes
-    maxActiveSandboxes: 4
+    maxActiveSandboxes: 1
     devcontainerConfigRef: go-devcontainer-json
     pushEnabled: true
     labels:

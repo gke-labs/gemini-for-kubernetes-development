@@ -510,11 +510,30 @@ func (r *RepoWatchReconciler) reconcileIssueHandlerSandboxes(ctx context.Context
 }
 
 func (r *RepoWatchReconciler) generateReviewPrompt(repoWatch *reviewv1alpha1.RepoWatch, pr *github.PullRequest) (string, error) {
-	promptTmpl := "You are an expert kubernetes developer who is helping with code reviews. Please look at the PR {{.Number}} linked at {{.HTMLURL}} provide a review feedback."
-	if repoWatch.Spec.Review.Gemini.Prompt != "" {
-		promptTmpl = repoWatch.Spec.Review.Gemini.Prompt
+	// Level 1 substitution
+	promptTmpl := reviewPromptTemplate
+
+	templateVar := struct {
+		github.PullRequest
+		Prompt string
+	}{
+		PullRequest: *pr,
+		Prompt:      repoWatch.Spec.Review.Gemini.Prompt,
 	}
-	tmpl, err := template.New("myTemplate").Parse(promptTmpl)
+
+	lvl1, err := template.New("lvl1").Parse(promptTmpl)
+	if err != nil {
+		return "", err
+	}
+
+	var level1 bytes.Buffer
+	err = lvl1.Execute(&level1, templateVar)
+	if err != nil {
+		return "", err
+	}
+
+	// Level 2 subsitution
+	tmpl, err := template.New("lvl2").Parse(level1.String())
 	if err != nil {
 		return "", err
 	}

@@ -15,7 +15,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 	redis "github.com/go-redis/redis/v8"
+
+	//"github.com/google/go-github/github"
 	"github.com/google/go-github/v39/github"
+	yaml "go.yaml.in/yaml/v3"
 	"golang.org/x/oauth2"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -29,6 +32,12 @@ var (
 	rdb       *redis.Client
 	k8sClient dynamic.Interface
 )
+
+// AgentOutput defines the structure for the agent's YAML output.
+type AgentOutput struct {
+	Note   string                           `yaml:"note"`
+	Review *github.PullRequestReviewRequest `yaml:"review"`
+}
 
 // PR represents a pull request
 type PR struct {
@@ -548,17 +557,30 @@ func submitReview(c *gin.Context) {
 		return
 	}
 
-	// Create comment on PR
-	comment := &github.IssueComment{
-		Body: &payload.Review,
-	}
-	_, _, err = client.Issues.CreateComment(ctx, owner, repoName, prNumber, comment)
+	// https://docs.github.com/en/rest/pulls/reviews?apiVersion=2022-11-28#create-a-review-for-a-pull-request
+	// Try Unmarshalling the yaml review payload into PullRequestReviewRequest
+	agentOutput := &AgentOutput{}
+	reviewRequest := &github.PullRequestReviewRequest{}
+	err = yaml.Unmarshal([]byte(payload.Review), &agentOutput)
 	if err != nil {
-		log.Printf("Failed to create comment on PR %d: %v", prNumber, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create comment on github"})
-		return
+		log.Printf("Failed to unmarshal review payload: %v", err)
+		reviewRequest.Body = github.String(payload.Review)
+	} else {
+		reviewRequest = agentOutput.Review
 	}
 
+	// Not setting event sets it as a draft
+	reviewRequest.Event = nil
+
+	log.Printf("reviewRequest being created: %v", reviewRequest)
+	review, resp, err := client.PullRequests.CreateReview(ctx, owner, repoName, prNumber, reviewRequest)
+	if err != nil {
+		log.Printf("response: %v", resp)
+		log.Printf("Failed to create review on PR %d: %v", prNumber, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create review on github"})
+		return
+	}
+	log.Printf("review created: %v", review)
 	// Set review in Redis
 	err = rdb.HSet(c.Request.Context(), prKey, "review", payload.Review).Err()
 	if err != nil {
