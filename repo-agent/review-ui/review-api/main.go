@@ -225,7 +225,7 @@ func populateMockData() {
 func getRepos(c *gin.Context) {
 	fetchAndPopulateRepos(c.Request.Context())
 
-	var repos []Repo
+	repos := []Repo{}
 	iter := rdb.Scan(c.Request.Context(), 0, "repo:*", 0).Iterator()
 	for iter.Next(c.Request.Context()) {
 		key := iter.Val()
@@ -322,7 +322,7 @@ func getPRs(c *gin.Context) {
 	repo := c.Param("repo")
 	fetchAndPopulatePRs(c.Request.Context(), repo)
 	// SCAN Redis for PRs for repo
-	var prs []PR
+	prs := []PR{}
 	repoPRKeyPrefix := fmt.Sprintf("pr:repo:%s:pr:", repo)
 	iter := rdb.Scan(c.Request.Context(), 0, repoPRKeyPrefix+"*", 0).Iterator()
 	for iter.Next(c.Request.Context()) {
@@ -695,7 +695,7 @@ func getIssues(c *gin.Context) {
 	handler := c.Param("handler")
 	fetchAndPopulateIssues(c.Request.Context(), repo, handler)
 
-	var issues []Issue
+	issues := []Issue{}
 	issueKeyPrefix := fmt.Sprintf("issue:repo:%s:handler:%s:issue:*", repo, handler)
 	iter := rdb.Scan(c.Request.Context(), 0, issueKeyPrefix, 0).Iterator()
 	for iter.Next(c.Request.Context()) {

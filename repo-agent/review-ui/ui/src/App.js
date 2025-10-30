@@ -13,9 +13,10 @@ function App() {
     fetch('/api/repos')
       .then(res => res.json())
       .then(data => {
-        setRepos(data);
-        if (data.length > 0) {
-          const firstRepo = data[0];
+        const safeData = data || [];
+        setRepos(safeData);
+        if (safeData.length > 0) {
+          const firstRepo = safeData[0];
           setActiveRepo(firstRepo.name);
           if (firstRepo.review) {
             setActiveSubTab({ repo: firstRepo.name, name: 'review' });
@@ -34,9 +35,10 @@ function App() {
         fetch(`/api/repo/${activeRepo}/prs`)
           .then(res => res.json())
           .then(data => {
-            setPrs(data);
+            const safeData = data || [];
+            setPrs(safeData);
             const initialDrafts = {};
-            data.forEach(pr => {
+            safeData.forEach(pr => {
               initialDrafts[pr.id] = pr.draft || '';
             });
             setDrafts(initialDrafts);
@@ -47,9 +49,10 @@ function App() {
         fetch(`/api/repo/${activeRepo}/issues/${activeSubTab.name}`)
           .then(res => res.json())
           .then(data => {
-            setIssues(data);
+            const safeData = data || [];
+            setIssues(safeData);
             const initialDrafts = {};
-            data.forEach(issue => {
+            safeData.forEach(issue => {
               initialDrafts[issue.id] = issue.draft || '';
             });
             setDrafts(initialDrafts);
