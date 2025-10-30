@@ -228,11 +228,14 @@ func (r *RepoWatchReconciler) reconcileIssuesForHandler(ctx context.Context, use
 	log.Info("DEBUG INFO issues", "handler", handler.Name, "issues", issuesStr)
 	log.Info("DEBUG INFO sandboxes", "handler", handler.Name, "sandboxes", sandboxesStr)
 
-	// Workaround for https://github.com/gke-labs/gemini-for-kubernetes-development/issues/8
-	if len(repoIssues) == 0 {
-		log.Info("No issues found")
+	// If we have an empty list of issues, but we previously had issues,
+	// we should not proceed with reconciliation for this handler.
+	// This is to prevent accidental deletion of sandboxes due to transient GitHub API issues.
+	if len(repoIssues) == 0 && len(repoWatch.Status.WatchedIssues[handler.Name]) > 0 {
+		log.Info("github issue api returned empty, but we have existing sandboxes. skipping reconcile to be safe.", "handler", handler.Name)
 		return nil
 	}
+
 	// Reconcile
 	if err := r.reconcileIssueHandlerSandboxes(ctx, user, handler, repoWatch, repoIssues, sandboxList); err != nil {
 		log.Error(err, "unable to reconcile triage sandboxes")
