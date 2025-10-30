@@ -7,7 +7,7 @@ metadata:
 data:
   devcontainer.json: |
     {
-      name": "Go and Node.js Dev Container",
+      "name": "Go and Node.js Dev Container",
       "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
       "features": {
         "ghcr.io/devcontainers/features/go:1": { "version": "latest" },
