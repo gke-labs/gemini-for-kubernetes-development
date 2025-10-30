@@ -402,6 +402,11 @@ func fetchAndPopulatePRs(ctx context.Context, repo string) {
 		if err != nil || !found {
 			log.Printf("Title (.spec.source.htmlURL) not found in ReviewSandbox  %s", item.GetName())
 		}
+		draft, found, err := unstructured.NestedString(item.Object, "status", "agentDraft")
+		if err != nil || !found {
+			log.Printf("pushBranch (.status.agentDraft) not found in IssueSandbox %s", item.GetName())
+		}
+
 		pr := PR{
 			ID:             prID,
 			Title:          title,
@@ -417,6 +422,7 @@ func fetchAndPopulatePRs(ctx context.Context, repo string) {
 			"sandbox", pr.Sandbox,
 			"htmlurl", pr.HTMLURL,
 			"sandboxReplica", pr.SandboxReplica,
+			"draft", draft,
 		).Err(); err != nil {
 			log.Printf("Failed to cache PR %s for repo %s: %v", pr.ID, repo, err)
 		}
@@ -818,6 +824,11 @@ func fetchAndPopulateIssues(ctx context.Context, repo, handler string) {
 			log.Printf("pushBranch (.spec.source.pushBranch) not found in IssueSandbox %s", item.GetName())
 		}
 
+		draft, found, err := unstructured.NestedString(item.Object, "status", "agentDraft")
+		if err != nil || !found {
+			log.Printf("pushBranch (.status.agentDraft) not found in IssueSandbox %s", item.GetName())
+		}
+
 		issueKey := fmt.Sprintf("issue:repo:%s:handler:%s:issue:%s", repo, handler, issueID)
 		if err := rdb.HSet(ctx, issueKey,
 			"title", title,
@@ -825,6 +836,7 @@ func fetchAndPopulateIssues(ctx context.Context, repo, handler string) {
 			"htmlurl", htmlurl,
 			"sandboxReplica", fmt.Sprintf("%d", replicas),
 			"branchURL", branchURL,
+			"draft", draft,
 			"pushBranch", strconv.FormatBool(pushBranch),
 		).Err(); err != nil {
 			log.Printf("Failed to cache Issue %s for repo %s handler %s: %v", issueID, repo, handler, err)

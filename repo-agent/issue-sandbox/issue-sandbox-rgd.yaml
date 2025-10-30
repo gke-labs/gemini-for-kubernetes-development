@@ -43,6 +43,7 @@ spec:
         ref: string | default="repo-agent-gateway"
     status:
       # Fields the controller will inject into instances status.
+      agentDraft: "${sandbox.metadata.name}"
       fqdn: ${service.metadata.name}.${service.metadata.namespace}.svc.cluster.local
       sandboxConditions: ${sandbox.status.conditions}
   resources:
@@ -71,8 +72,12 @@ spec:
                       mountPath: /workspaces
               containers:
                 - name: issue-sidecar
-                  image: ko://repo-agent/images/issue-sidecar
+                  image: ko://repo-agent/issue-sidecar
                   env:
+                    - name: NAMESPACE
+                      value: ${schema.metadata.namespace}
+                    - name: NAME
+                      value: ${schema.metadata.name}
                     # URL to the repository where the .devcontainer folder we want to load is located
                     - name: REPO
                       value: ${schema.spec.source.repo}
