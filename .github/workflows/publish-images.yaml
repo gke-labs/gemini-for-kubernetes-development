@@ -1,0 +1,49 @@
+name: build and publish images
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        image_name:
+          - configdir-cli
+          - configdir-controller
+          - github-mcp-server
+          - issue-sandbox
+          - issue-sidecar
+          - redis
+          - repowatch-controller
+          - review-api
+          - review-sandbox
+          - review-sidecar
+          - review-ui
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: repo-agent/images/${{ matrix.image_name }}
+          push: true
+          tags: |
+            ghcr.io/gke-labs/gemini-for-kubernetes-development/${{ matrix.image_name }}:latest
+            ghcr.io/gke-labs/gemini-for-kubernetes-development/${{ matrix.image_name }}:${{ github.sha }}
