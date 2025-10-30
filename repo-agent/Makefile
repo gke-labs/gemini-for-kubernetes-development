@@ -1,5 +1,13 @@
 
 KIND_CLUSTER=repo-agent
+REGISTRY ?= kind.local/
+
+# if REGISTRY is kind.local/, then we are deploying to kind
+ifeq ($(REGISTRY), kind.local/)
+KIND_CLUSTER_ARG=--kind-cluster-name=${KIND_CLUSTER}
+else
+KIND_CLUSTER_ARG=
+endif
 
 # Check pre-reqs
 ifndef GEMINI_API_KEY
@@ -57,19 +65,19 @@ install-sandbox-operator:
 	mkdir /tmp/sandbox-operator || true
 	ls -l /tmp/sandbox-operator/agent-sandbox || git clone https://github.com/kubernetes-sigs/agent-sandbox.git /tmp/sandbox-operator/agent-sandbox
 	cd /tmp/sandbox-operator/agent-sandbox && git pull
-	cd /tmp/sandbox-operator/agent-sandbox && dev/tools/push-images --image-prefix=kind.local/ --kind-cluster-name=${KIND_CLUSTER}
-	cd /tmp/sandbox-operator/agent-sandbox && dev/tools/deploy-to-kube --image-prefix=kind.local/
+	cd /tmp/sandbox-operator/agent-sandbox && dev/tools/push-images --image-prefix=$(REGISTRY) $(KIND_CLUSTER_ARG)
+	cd /tmp/sandbox-operator/agent-sandbox && dev/tools/deploy-to-kube --image-prefix=$(REGISTRY)
 	rm -fr /tmp/sandbox-operator
 
 .PHONY: install-repo-agent
 install-repo-agent:
 	kubectl apply -f k8s/namespace.yaml
 	# Install
-	../dev/tools/push-images --image-prefix=kind.local/ --kind-cluster-name=${KIND_CLUSTER} --working-dir .
+	../dev/tools/push-images --image-prefix=$(REGISTRY) $(KIND_CLUSTER_ARG) --working-dir .
 	#  copy RGD to k8s dir so it gets deployed
 	cp review-sandbox/review-sandbox-rgd.yaml k8s/
 	cp issue-sandbox/issue-sandbox-rgd.yaml k8s/
-	../dev/tools/deploy-to-kube --image-prefix=kind.local/ --working-dir .
+	../dev/tools/deploy-to-kube --image-prefix=$(REGISTRY) --working-dir .
 
 .PHONY: create-secrets
 create-secrets:
