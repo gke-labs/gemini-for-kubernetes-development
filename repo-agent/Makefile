@@ -30,7 +30,15 @@ ifeq ($(GIT_USER_EMAIL),)
 endif
 
 .PHONY: all
-all: generate lint-go test-unit create-kind install-packages install-sandbox-operator create-secrets install-repo-agent create-instance
+all: check-prereqs generate lint-go test-unit create-kind install-packages install-sandbox-operator create-secrets install-repo-agent create-instance
+
+.PHONY: check-prereqs
+check-prereqs:
+	@echo "Checking for prerequisites..."
+	@command -v kind >/dev/null 2>&1 || { echo >&2 "kind not found. Please install it. https://kind.sigs.k8s.io/docs/user/quick-start/#installation"; exit 1; }
+	@command -v kubectl >/dev/null 2>&1 || { echo >&2 "kubectl not found. Please install it. https://kubernetes.io/docs/tasks/tools/install-kubectl/"; exit 1; }
+	@command -v helm >/dev/null 2>&1 || { echo >&2 "helm not found. Please install it. https://helm.sh/docs/intro/install/"; exit 1; }
+	@echo "All prerequisites are installed."
 
 .PHONY: generate
 generate:
