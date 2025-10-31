@@ -40,6 +40,10 @@ spec:
                         prompt:
                           type: string
                       type: object
+                    issues:
+                      items:
+                        type: integer
+                      type: array
                     labels:
                       items:
                         type: string

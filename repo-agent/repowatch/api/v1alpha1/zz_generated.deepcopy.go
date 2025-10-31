@@ -32,6 +32,11 @@ func (in *IssueHandlerSpec) DeepCopyInto(out *IssueHandlerSpec) {
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
+	if in.Issues != nil {
+		in, out := &in.Issues, &out.Issues
+		*out = make([]int, len(*in))
+		copy(*out, *in)
+	}
 	out.Gemini = in.Gemini
 }
 
