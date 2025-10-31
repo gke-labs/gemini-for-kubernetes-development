@@ -43,7 +43,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: repo-agent/
-          file: repo-agent/images/${{ matrix.image_name }}
+          file: repo-agent/images/${{ matrix.image_name }}/Dockerfile
           push: true
           tags: |
             ghcr.io/gke-labs/gemini-for-kubernetes-development/${{ matrix.image_name }}:latest
