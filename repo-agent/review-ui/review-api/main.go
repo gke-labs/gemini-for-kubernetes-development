@@ -423,6 +423,7 @@ func fetchAndPopulatePRs(ctx context.Context, repo string) {
 			"htmlurl", pr.HTMLURL,
 			"sandboxReplica", pr.SandboxReplica,
 			"draft", draft,
+			"agentDraft", draft,
 		).Err(); err != nil {
 			log.Printf("Failed to cache PR %s for repo %s: %v", pr.ID, repo, err)
 		}
@@ -464,12 +465,43 @@ func submitReview(c *gin.Context) {
 	ctx := c.Request.Context()
 	log.Printf("Submitting review for PR %s in repo %s with review: %s", prID, repo, payload.Review)
 
+	// Get draft and agentDraft from Redis
+	prKey := fmt.Sprintf("pr:repo:%s:pr:%s", repo, prID)
+	prData, err := rdb.HGetAll(ctx, prKey).Result()
+	if err != nil {
+		log.Printf("Failed to get PR %s from Redis for repo %s: %v", prID, repo, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get PR data from Redis"})
+		return
+	}
+
+	draft := payload.Review
+	agentDraft := prData["agentDraft"]
+
 	// Get RepoWatch to get repoURL and secret ref
 	repoWatch, err := getRepoWatch(ctx, repo)
 	if err != nil {
 		log.Printf("Failed to get repowatch %s: %v", repo, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get repowatch config"})
 		return
+	}
+
+	if draft != agentDraft {
+		// Store feedback for fine-tuning
+		prompt, _, _ := unstructured.NestedString(repoWatch.Object, "spec", "review", "gemini", "prompt")
+		configdir, _, _ := unstructured.NestedString(repoWatch.Object, "spec", "review", "gemini", "configdirRef")
+		repoURL, _, _ := unstructured.NestedString(repoWatch.Object, "spec", "repoURL")
+		owner, _, _ := parseRepoURL(repoURL)
+
+		hfKey := fmt.Sprintf("hf:review:githubuser:%s:repo:%s:pr:%s", owner, repo, prID)
+		if err := rdb.HSet(ctx, hfKey,
+			"draft", draft,
+			"agentDraft", agentDraft,
+			"prompt", prompt,
+			"configdir", configdir,
+		).Err(); err != nil {
+			log.Printf("Failed to store feedback for PR %s in repo %s: %v", prID, repo, err)
+			// Continue without failing the review submission
+		}
 	}
 
 	// Get GitHub token from secret
@@ -521,7 +553,6 @@ func submitReview(c *gin.Context) {
 	}
 
 	// Set review in Redis
-	prKey := fmt.Sprintf("pr:repo:%s:pr:%s", repo, prID)
 	err = rdb.HSet(c.Request.Context(), prKey, "review", payload.Review).Err()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save review", "details": err.Error()})
@@ -837,6 +868,7 @@ func fetchAndPopulateIssues(ctx context.Context, repo, handler string) {
 			"sandboxReplica", fmt.Sprintf("%d", replicas),
 			"branchURL", branchURL,
 			"draft", draft,
+			"agentDraft", draft,
 			"pushBranch", strconv.FormatBool(pushBranch),
 		).Err(); err != nil {
 			log.Printf("Failed to cache Issue %s for repo %s handler %s: %v", issueID, repo, handler, err)
@@ -881,11 +913,58 @@ func submitIssueComment(c *gin.Context) {
 	ctx := c.Request.Context()
 	log.Printf("Submitting comment for Issue %s in repo %s with comment: %s", issueID, repo, payload.Comment)
 
+	issueKey := fmt.Sprintf("issue:repo:%s:handler:%s:issue:%s", repo, handler, issueID)
+	issueData, err := rdb.HGetAll(ctx, issueKey).Result()
+	if err != nil {
+		log.Printf("Failed to get Issue %s from Redis for repo %s handler %s: %v", issueID, repo, handler, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get Issue data from Redis"})
+		return
+	}
+
+	draft := payload.Comment
+	agentDraft := issueData["agentDraft"]
+
 	repoWatch, err := getRepoWatch(ctx, repo)
 	if err != nil {
 		log.Printf("Failed to get repowatch %s: %v", repo, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get repowatch config"})
 		return
+	}
+
+	if draft != agentDraft {
+		// Store feedback for fine-tuning
+		var prompt, configdir string
+		if handlers, found, err := unstructured.NestedSlice(repoWatch.Object, "spec", "issueHandlers"); err == nil && found {
+			for _, h := range handlers {
+				handlerMap, ok := h.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				name, _ := handlerMap["name"].(string)
+				if name == handler {
+					gemini, ok := handlerMap["gemini"].(map[string]interface{})
+					if ok {
+						prompt, _ = gemini["prompt"].(string)
+						configdir, _ = gemini["configdirRef"].(string)
+					}
+					break
+				}
+			}
+		}
+
+		repoURL, _, _ := unstructured.NestedString(repoWatch.Object, "spec", "repoURL")
+		owner, _, _ := parseRepoURL(repoURL)
+
+		hfKey := fmt.Sprintf("hf:issue:githubuser:%s:repo:%s:handler:%s:pr:%s", owner, repo, handler, issueID)
+		if err := rdb.HSet(ctx, hfKey,
+			"draft", draft,
+			"agentDraft", agentDraft,
+			"prompt", prompt,
+			"configdirname", configdir,
+		).Err(); err != nil {
+			log.Printf("Failed to store feedback for Issue %s in repo %s: %v", issueID, repo, err)
+			// Continue without failing the comment submission
+		}
 	}
 
 	token, err := getGitHubToken(ctx, repoWatch)
@@ -927,7 +1006,6 @@ func submitIssueComment(c *gin.Context) {
 		return
 	}
 
-	issueKey := fmt.Sprintf("issue:repo:%s:handler:%s:issue:%s", repo, handler, issueID)
 	err = rdb.HSet(c.Request.Context(), issueKey, "comment", payload.Comment).Err()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save comment", "details": err.Error()})
