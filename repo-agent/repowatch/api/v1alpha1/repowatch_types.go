@@ -49,6 +49,10 @@ type IssueHandlerSpec struct {
 	// +kubebuilder:validation:Optional
 	Labels []string `json:"labels"`
 
+	// Issues to filter issues for this handler
+	// +kubebuilder:validation:Optional
+	Issues []int `json:"issues"`
+
 	// Gemini configuration for the bug fix sandboxes.
 	Gemini GeminiConfig `json:"gemini,omitempty"`
 

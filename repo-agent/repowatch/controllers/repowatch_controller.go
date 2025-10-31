@@ -216,6 +216,20 @@ func (r *RepoWatchReconciler) reconcileIssuesForHandler(ctx context.Context, use
 		repoIssues = append(repoIssues, issue)
 	}
 
+	// If the handler has a list of issues, filter the issues
+	if len(handler.Issues) > 0 {
+		var filteredIssues []*github.Issue
+		for _, issue := range repoIssues {
+			for _, issueNumber := range handler.Issues {
+				if *issue.Number == issueNumber {
+					filteredIssues = append(filteredIssues, issue)
+					break
+				}
+			}
+		}
+		repoIssues = filteredIssues
+	}
+
 	// Log repoIssues and sandboxList for debug purposes
 	issuesStr := []string{}
 	for _, issue := range repoIssues {
