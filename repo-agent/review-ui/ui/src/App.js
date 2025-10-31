@@ -8,6 +8,12 @@ function App() {
   const [prs, setPrs] = useState([]);
   const [issues, setIssues] = useState([]);
   const [drafts, setDrafts] = useState({});
+  const [theme, setTheme] = useState(localStorage.getItem('theme') || 'light');
+
+  useEffect(() => {
+    document.body.className = theme === 'dark' ? 'dark-mode' : '';
+    localStorage.setItem('theme', theme);
+  }, [theme]);
 
   useEffect(() => {
     fetch('/api/repos')
@@ -179,6 +185,10 @@ function App() {
     return 'green';
   };
 
+  const toggleTheme = () => {
+    setTheme(theme === 'light' ? 'dark' : 'light');
+  };
+
   const renderContent = () => {
     if (activeSubTab.name === 'review') {
       return prs.map(pr => (
@@ -263,6 +273,12 @@ function App() {
     <div className="App">
       <header className="App-header">
         <h1>Repo Agent</h1>
+        <div className="theme-switch-wrapper">
+          <label className="theme-switch" htmlFor="checkbox">
+            <input type="checkbox" id="checkbox" onChange={toggleTheme} checked={theme === 'dark'} />
+            <div className="slider round"></div>
+          </label>
+        </div>
       </header>
       <nav className="repo-tabs">
         {repos.map(repo => (
