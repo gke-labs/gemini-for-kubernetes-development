@@ -8,10 +8,10 @@ spec:
   githubSecretName: github-pat
   issueHandlers:
   - name: fixes
-    maxActiveSandboxes: 5
+    maxActiveSandboxes: 4
     pushEnabled: true
     labels:
-      - ""
+      - "enhancement"
     gemini:
       prompt: |
         You are an expert software engineer specializing in debugging and fixing issues in Kubernetes-related open source projects.
