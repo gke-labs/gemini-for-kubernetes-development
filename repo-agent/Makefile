@@ -98,6 +98,7 @@ bin/configdir-cli: configdir/
 
 .PHONY: create-instance
 create-instance: ./bin/configdir-cli
+	kubectl apply -f examples/gkelabs-geminifork8s-repowatch.yaml
 	kubectl apply -f examples/agent-sandbox-repowatch.yaml
 	kubectl apply -f examples/kcc-configmap-devcontainer.yaml # custom devcontainer for KCC
 	kubectl apply -f examples/kcc-configdir.yaml              # custom .gemini for KCC

@@ -34,7 +34,7 @@ spec:
         ref: string | default="repo-agent-gateway"
     status:
       # Fields the controller will inject into instances status.
-      agentDraft: "${sandbox.metadata.name}...."
+      agentDraft: "${sandbox.metadata.name}"
       fqdn: ${service.metadata.name}.${service.metadata.namespace}.svc.cluster.local
       sandboxConditions: ${sandbox.status.conditions}
   resources:
