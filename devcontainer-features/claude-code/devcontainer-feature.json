@@ -1,0 +1,17 @@
+{
+    "name": "claude-code",
+    "id": "claude-code",
+    "version": "0.1.0",
+    "description": "Claude Code CLI",
+    "options": {
+        "version": {
+            "type": "string",
+            "default": "latest",
+            "description": "Installer version cadence: latest|preview|nightly|0.1.0|<some-version>"
+        }
+    },
+    "dependsOn": {
+        "ghcr.io/devcontainers/features/common-utils:2": {},
+        "ghcr.io/devcontainers/features/node:1": { "version": "lts" }
+    }
+}
