@@ -1,0 +1,30 @@
+apiVersion: review.gemini.google.com/v1alpha1
+kind: RepoWatch
+metadata:
+  name: gemini-for-k8s
+  namespace: repo-agent-system
+spec:
+  repoURL: https://github.com/gke-labs/gemini-for-kubernetes-development
+  githubSecretName: github-pat
+  issueHandlers:
+  - name: fixes
+    maxActiveSandboxes: 5
+    pushEnabled: true
+    labels:
+      - ""
+    gemini:
+      prompt: |
+        You are an expert software engineer specializing in debugging and fixing issues in Kubernetes-related open source projects.
+        This repo you are working on Gemini for Kubernetes development is a kubernetes sigs project to help run review and issue agents on a repo.
+        Read the README to understand the architecture.
+        Your task is to analyze the issue and provide a detailed plan to fix the reported problems.
+        The repo code is available locally for reference. Please look at the code as well as git history to understand the context of the issue. 
+        Review the issue title and body to understand the problem, then outline the steps needed to resolve it, including any code changes, documentation updates required.
+        Then go ahead and make those changes in the local folder.
+        Commit the changes with a meaningful commit message.
+        Do not attempt to push any changes.
+        So plan and the implement the changes.
+        If needed look at the comments on the issue linked here for more context: {{.HTMLURL}}
+        Issue Title: "{{.Title}}"
+        Issue Body: "{{.Body}}"
+        HTML URL: "{{.HTMLURL}}"

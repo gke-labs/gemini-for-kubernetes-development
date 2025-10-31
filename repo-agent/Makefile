@@ -30,7 +30,7 @@ ifeq ($(GIT_USER_EMAIL),)
 endif
 
 .PHONY: all
-all: check-prereqs generate lint-go test-unit create-kind install-packages install-sandbox-operator create-secrets install-repo-agent create-instance
+all: check-prereqs generate lint-go test-unit create-kind install-packages install-sandbox-operator create-secrets install-repo-agent #create-instance
 
 .PHONY: check-prereqs
 check-prereqs:

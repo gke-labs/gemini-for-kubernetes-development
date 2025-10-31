@@ -12,6 +12,14 @@ metadata:
   name: issue-sandbox
 rules:
 - apiGroups:
+  - "custom.agents.x-k8s.io"
+  resources:
+  - issuesandboxes/status
+  - issuesandboxes
+  verbs:
+  - get
+  - update
+- apiGroups:
   - "configdir.gke.io"
   resources:
   - configdirs

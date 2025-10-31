@@ -12,6 +12,14 @@ metadata:
   name: review-sandbox
 rules:
 - apiGroups:
+  - "custom.agents.x-k8s.io"
+  resources:
+  - reviewsandboxes/status
+  - reviewsandboxes
+  verbs:
+  - get
+  - update
+- apiGroups:
   - "configdir.gke.io"
   resources:
   - configdirs
