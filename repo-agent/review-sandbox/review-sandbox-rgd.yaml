@@ -11,6 +11,8 @@ spec:
     spec:
       # Spec fields that users can provide.
       replicas: integer | default=1
+      llmBackend:
+        name: string | default="gemini-cli"
       gemini:
         prompt: string
         configdirRef: string | default=""
@@ -93,7 +95,7 @@ spec:
                     - name: ENVBUILDER_GIT_CLONE_SINGLE_BRANCH
                       value: "true"
                     - name: ENVBUILDER_INIT_SCRIPT
-                      value: /repo-agent/entrypoint.sh
+                      value: /repo-agent/${schema.spec.llmBackend.name}-entrypoint.sh
                     - name: ENVBUILDER_IGNORE_PATHS
                       value: "/var/run,/product_uuid,/product_name,/tokens,/repo-agent/"
                   volumeMounts:
