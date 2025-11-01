@@ -91,7 +91,10 @@ def main(args):
 
             service_name = os.path.basename(root)
             image_prefix = utils.get_image_prefix(args)
-            image_tag = utils.get_image_tag()
+            if args.image_tag:
+                image_tag = args.image_tag
+            else:
+                image_tag = utils.get_image_tag()
 
             # Process each document in the file
             for doc in docs:
@@ -119,6 +122,11 @@ if __name__ == "__main__":
                         help="prefix for the image name. requires slash at the end if a path",
                         type=str,
                         default=os.getenv("IMAGE_PREFIX"))
+    parser.add_argument("--image-tag",
+                        dest="image_tag",
+                        help="tag for image. if not provided a git commit hash will be used",
+                        type=str,
+                        default=os.getenv("IMAGE_TAG"))
     parser.add_argument("--working-dir",
                         dest="working_dir",
                         help="use working dir instead of repo root",

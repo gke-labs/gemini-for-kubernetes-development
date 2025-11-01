@@ -30,7 +30,10 @@ ifeq ($(GIT_USER_EMAIL),)
 endif
 
 .PHONY: all
-all: check-prereqs generate lint-go test-unit create-kind install-packages install-sandbox-operator create-secrets install-repo-agent #create-instance
+all: check-prereqs generate lint-go test-unit create-kind install-dep-packages install-sandbox-operator create-secrets build-and-push-repo-agent install-repo-agent #create-instance
+
+.PHONY: install
+install: check-prereqs install-dep-packages install-sandbox-operator create-secrets install-repo-agent
 
 .PHONY: check-prereqs
 check-prereqs:
@@ -57,8 +60,8 @@ test-unit:
 lint-go:
 	../dev/tools/lint-go --working-dir ./
 
-.PHONY: install-packages
-install-packages:
+.PHONY: install-dep-packages
+install-dep-packages:
 	../dev/tools/install-kro
 	../dev/tools/install-envoy
 
@@ -68,6 +71,10 @@ create-kind:
 
 .PHONY: install-sandbox-operator
 install-sandbox-operator:
+	kubectl apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v0.1.0-rc.0/manifest.yaml
+
+.PHONY: install-sandbox-operator-from-src
+install-sandbox-operator-from-src:
 	# Install Sandbox Operator 
 	# have to do from source until we have a release
 	mkdir /tmp/sandbox-operator || true
@@ -77,11 +84,14 @@ install-sandbox-operator:
 	cd /tmp/sandbox-operator/agent-sandbox && dev/tools/deploy-to-kube --image-prefix=$(REGISTRY)
 	rm -fr /tmp/sandbox-operator
 
+
+.PHONY: build-and-push-repo-agent
+build-and-push-repo-agent:
+	../dev/tools/push-images --image-prefix=$(REGISTRY) $(KIND_CLUSTER_ARG) --working-dir .
+
 .PHONY: install-repo-agent
 install-repo-agent:
 	kubectl apply -f k8s/namespace.yaml
-	# Install
-	../dev/tools/push-images --image-prefix=$(REGISTRY) $(KIND_CLUSTER_ARG) --working-dir .
 	#  copy RGD to k8s dir so it gets deployed
 	cp review-sandbox/review-sandbox-rgd.yaml k8s/
 	cp issue-sandbox/issue-sandbox-rgd.yaml k8s/
