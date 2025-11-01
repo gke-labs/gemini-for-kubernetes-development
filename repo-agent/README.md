@@ -32,12 +32,22 @@ Before you begin, ensure you have the following tools installed:
     export GITHUB_PAT="..."
     ```
 
-2.  **Deploy the Application:**
+2.  **Installing Application:**
+
+    There are 2 installation modes:
+    * Build locally and install in a kind cluster
+    * Install in any kubernetes cluster from images built in GHCR
 
     Run the following command to build the project, create a KinD cluster, and deploy the application:
 
     ```bash
     make
+    ```
+
+    To install in an existing kubernetes cluster (say GKE), run this command:
+
+    ```bash
+    IMAGE_TAG=latest REGISTRY=ghcr.io/gke-labs/gemini-for-kubernetes-development/ make install
     ```
 
 3.  **Apply Example Configuration:**
