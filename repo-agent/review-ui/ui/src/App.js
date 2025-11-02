@@ -3,7 +3,7 @@ import './App.css';
 
 function App() {
   const [repos, setRepos] = useState([]);
-  const [activeRepo, setActiveRepo] = useState('');
+  const [activeRepo, setActiveRepo] = useState(null);
   const [activeSubTab, setActiveSubTab] = useState({ repo: '', name: '' });
   const [prs, setPrs] = useState([]);
   const [issues, setIssues] = useState([]);
@@ -23,7 +23,7 @@ function App() {
         setRepos(safeData);
         if (safeData.length > 0) {
           const firstRepo = safeData[0];
-          setActiveRepo(firstRepo.name);
+          setActiveRepo(firstRepo);
           if (firstRepo.review) {
             setActiveSubTab({ repo: firstRepo.name, name: 'review' });
           } else if (firstRepo.issueHandlers && firstRepo.issueHandlers.length > 0) {
@@ -35,10 +35,10 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (activeRepo && activeSubTab.repo === activeRepo) {
+    if (activeRepo && activeSubTab.repo === activeRepo.name) {
       if (activeSubTab.name === 'review') {
         setIssues([]);
-        fetch(`/api/repo/${activeRepo}/prs`)
+        fetch(`/api/repo/${activeRepo.namespace}/${activeRepo.name}/prs`)
           .then(res => res.json())
           .then(data => {
             const safeData = data || [];
@@ -49,10 +49,10 @@ function App() {
             });
             setDrafts(initialDrafts);
           })
-          .catch(err => console.error(`Failed to fetch PRs for ${activeRepo}:`, err));
+          .catch(err => console.error(`Failed to fetch PRs for ${activeRepo.name}:`, err));
       } else if (activeSubTab.name) {
         setPrs([]);
-        fetch(`/api/repo/${activeRepo}/issues/${activeSubTab.name}`)
+        fetch(`/api/repo/${activeRepo.namespace}/${activeRepo.name}/issues/${activeSubTab.name}`)
           .then(res => res.json())
           .then(data => {
             const safeData = data || [];
@@ -63,16 +63,16 @@ function App() {
             });
             setDrafts(initialDrafts);
           })
-          .catch(err => console.error(`Failed to fetch issues for ${activeRepo} handler ${activeSubTab.name}:`, err));
+          .catch(err => console.error(`Failed to fetch issues for ${activeRepo.name} handler ${activeSubTab.name}:`, err));
       }
     }
   }, [activeRepo, activeSubTab]);
 
   const handleRepoClick = (repoName) => {
-    setActiveRepo(repoName);
+    const repo = repos.find(r => r.name === repoName);
+    setActiveRepo(repo);
     setPrs([]);
     setIssues([]);
-    const repo = repos.find(r => r.name === repoName);
     if (repo) {
       if (repo.review) {
         setActiveSubTab({ repo: repoName, name: 'review' });
@@ -85,7 +85,7 @@ function App() {
   };
 
   const handleDelete = (id) => {
-    fetch(`/api/repo/${activeRepo}/prs/${id}`, { method: 'DELETE' })
+    fetch(`/api/repo/${activeRepo.namespace}/${activeRepo.name}/prs/${id}`, { method: 'DELETE' })
       .then(res => {
         if (res.ok) {
           setPrs(prs.filter(pr => pr.id !== id));
@@ -98,7 +98,7 @@ function App() {
 
   const handleSaveDraft = (id) => {
     const draft = drafts[id];
-    fetch(`/api/repo/${activeRepo}/prs/${id}/draft`, {
+    fetch(`/api/repo/${activeRepo.namespace}/${activeRepo.name}/prs/${id}/draft`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ draft })
@@ -118,7 +118,7 @@ function App() {
       alert("Please leave a review comment before Submitting.");
       return;
     }
-    fetch(`/api/repo/${activeRepo}/prs/${id}/submitreview`, {
+    fetch(`/api/repo/${activeRepo.namespace}/${activeRepo.name}/prs/${id}/submitreview`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ review })
@@ -135,7 +135,7 @@ function App() {
 
   const handleIssueSaveDraft = (issueId, handlerName) => {
     const draft = drafts[issueId];
-    fetch(`/api/repo/${activeRepo}/issues/${issueId}/handler/${handlerName}/draft`, {
+    fetch(`/api/repo/${activeRepo.namespace}/${activeRepo.name}/issues/${issueId}/handler/${handlerName}/draft`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ draft })
@@ -148,7 +148,7 @@ function App() {
       alert("Please leave a comment before Submitting.");
       return;
     }
-    fetch(`/api/repo/${activeRepo}/issues/${issueId}/handler/${handlerName}/submitcomment`, {
+    fetch(`/api/repo/${activeRepo.namespace}/${activeRepo.name}/issues/${issueId}/handler/${handlerName}/submitcomment`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ comment })
@@ -164,7 +164,7 @@ function App() {
   };
 
   const handleIssueDelete = (issueId, handlerName) => {
-    fetch(`/api/repo/${activeRepo}/issues/${issueId}/handler/${handlerName}`, { method: 'DELETE' })
+    fetch(`/api/repo/${activeRepo.namespace}/${activeRepo.name}/issues/${issueId}/handler/${handlerName}`, { method: 'DELETE' })
       .then(res => {
         if (res.ok) {
           setIssues(issues.filter(issue => issue.id !== issueId));
@@ -284,7 +284,7 @@ function App() {
         {repos.map(repo => (
           <button
             key={repo.name}
-            className={`tab-btn ${activeRepo === repo.name ? 'active' : ''}`}
+            className={`tab-btn ${activeRepo && activeRepo.name === repo.name ? 'active' : ''}`}
             onClick={() => handleRepoClick(repo.name)}
           >
             {repo.name}
@@ -293,19 +293,19 @@ function App() {
       </nav>
       {activeRepo && (
         <nav className="sub-tabs">
-          {repos.find(r => r.name === activeRepo)?.review && (
+          {repos.find(r => r.name === activeRepo.name)?.review && (
             <button
               className={`sub-tab-btn ${activeSubTab.name === 'review' ? 'active' : ''}`}
-              onClick={() => setActiveSubTab({ repo: activeRepo, name: 'review' })}
+              onClick={() => setActiveSubTab({ repo: activeRepo.name, name: 'review' })}
             >
               Review
             </button>
           )}
-          {repos.find(r => r.name === activeRepo)?.issueHandlers?.map(handler => (
+          {repos.find(r => r.name === activeRepo.name)?.issueHandlers?.map(handler => (
             <button
               key={handler.name}
               className={`sub-tab-btn ${activeSubTab.name === handler.name ? 'active' : ''}`}
-              onClick={() => setActiveSubTab({ repo: activeRepo, name: handler.name })}
+              onClick={() => setActiveSubTab({ repo: activeRepo.name, name: handler.name })}
             >
               {handler.name}
             </button>
