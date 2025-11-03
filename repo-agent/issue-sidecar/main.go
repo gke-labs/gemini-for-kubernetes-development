@@ -30,7 +30,7 @@ import (
 )
 
 const (
-	outputFile = "/workspaces/gemini-output.txt"
+	outputFile = "/workspaces/agent-output.txt"
 )
 
 var (
