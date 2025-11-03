@@ -118,6 +118,11 @@ spec:
                       value: ${string(schema.spec.destination.pushEnabled)}
                     - name: ENVBUILDER_GIT_URL
                       value: ${schema.spec.source.cloneURL}
+                    # https://github.com/coder/terraform-provider-envbuilder/issues/68#issuecomment-2557247792
+                    #- name: ENVBUILDER_GET_CACHED_IMAGE
+                    #  value: "1"
+                    - name: ENVBUILDER_CACHE_REPO
+                      value: registry.repo-agent-system.svc.cluster.local:5000/envbuilder-cache
                     - name: ENVBUILDER_DEVCONTAINER_DIR
                       value: /
                     #- name: ENVBUILDER_DOCKERFILE_PATH
