@@ -75,6 +75,10 @@ type RepoWatchSpec struct {
 	// +kubebuilder:validation:Required
 	RepoURL string `json:"repoURL"`
 
+	// LLM backend to use
+	// +kubebuilder:validation:Optional
+	LlmBackend LlmBackend `json:"llmBackend,omitempty"`
+
 	// Review configuration for PRs
 	// +kubebuilder:validation:Optional
 	Review PRReviewSpec `json:"review,omitempty"`
@@ -91,6 +95,14 @@ type RepoWatchSpec struct {
 	// +kubebuilder:validation:Minimum=30
 	// +kubebuilder:default=300
 	PollIntervalSeconds int `json:"pollIntervalSeconds,omitempty"`
+}
+
+// LlmBackend defines the LLM backend configuration
+type LlmBackend struct {
+	// Name of the LLM backend
+	// +kubebuilder:validation:Enum=gemini-cli
+	// +kubebuilder:default="gemini-cli"
+	Name string `json:"name,omitempty"`
 }
 
 // RepoWatchStatus defines the observed state of RepoWatch

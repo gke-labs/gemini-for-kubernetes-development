@@ -59,6 +59,14 @@ spec:
                   - name
                   type: object
                 type: array
+              llmBackend:
+                properties:
+                  name:
+                    default: gemini-cli
+                    enum:
+                    - gemini-cli
+                    type: string
+                type: object
               pollIntervalSeconds:
                 default: 300
                 minimum: 30

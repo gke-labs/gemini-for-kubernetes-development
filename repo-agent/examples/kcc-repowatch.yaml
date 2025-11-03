@@ -4,6 +4,8 @@ metadata:
   name: kcc
   namespace: repo-agent-system
 spec:
+  llmBackend:
+    name: "gemini-cli"
   repoURL: https://github.com/GoogleCloudPlatform/k8s-config-connector
   githubSecretName: github-pat
   review:
