@@ -2,8 +2,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: kro-devcontainer-json
-  namespace: repo-agent-system
+  name: go-devcontainer-json
 data:
   devcontainer.json: |
     {

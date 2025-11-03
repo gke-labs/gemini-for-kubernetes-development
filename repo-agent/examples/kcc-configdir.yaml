@@ -2,7 +2,6 @@ apiVersion: configdir.gke.io/v1alpha1
 kind: ConfigDir
 metadata:
   name: kcc-review-gemini-config
-  namespace: repo-agent-system
 spec:
   files:
   - path: .gemini/commands/google-internal/GO-Review.json

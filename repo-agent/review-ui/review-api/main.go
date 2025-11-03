@@ -28,7 +28,6 @@ import (
 var (
 	rdb       *redis.Client
 	k8sClient dynamic.Interface
-	namespace string
 )
 
 // PR represents a pull request
@@ -58,6 +57,7 @@ type Issue struct {
 // Repo represents a repository with its configuration
 type Repo struct {
 	Name          string         `json:"name"`
+	Namespace     string         `json:"namespace"`
 	URL           string         `json:"url"`
 	Review        *ReviewConfig  `json:"review,omitempty"`
 	IssueHandlers []IssueHandler `json:"issueHandlers,omitempty"`
@@ -119,10 +119,6 @@ func ResponseLoggerMiddleware() gin.HandlerFunc {
 
 func main() {
 	// Redis client
-	namespace = os.Getenv("NAMESPACE")
-	if namespace == "" {
-		namespace = "repo-agent-system"
-	}
 	redisAddr := os.Getenv("REDIS_ADDR")
 	if redisAddr == "" {
 		redisAddr = "localhost:6379"
@@ -169,14 +165,14 @@ func main() {
 	api := router.Group("/api")
 	{
 		api.GET("/repos", getRepos)
-		api.GET("/repo/:repo/prs", getPRs)
-		api.POST("/repo/:repo/prs/:id/draft", saveDraft)
-		api.POST("/repo/:repo/prs/:id/submitreview", submitReview)
-		api.DELETE("/repo/:repo/prs/:id", deletePR)
-		api.GET("/repo/:repo/issues/:handler", getIssues)
-		api.POST("/repo/:repo/issues/:issue_id/handler/:handler/draft", saveIssueDraft)
-		api.POST("/repo/:repo/issues/:issue_id/handler/:handler/submitcomment", submitIssueComment)
-		api.DELETE("/repo/:repo/issues/:issue_id/handler/:handler", deleteIssue)
+		api.GET("/repo/:namespace/:repo/prs", getPRs)
+		api.POST("/repo/:namespace/:repo/prs/:id/draft", saveDraft)
+		api.POST("/repo/:namespace/:repo/prs/:id/submitreview", submitReview)
+		api.DELETE("/repo/:namespace/:repo/prs/:id", deletePR)
+		api.GET("/repo/:namespace/:repo/issues/:handler", getIssues)
+		api.POST("/repo/:namespace/:repo/issues/:issue_id/handler/:handler/draft", saveIssueDraft)
+		api.POST("/repo/:namespace/:repo/issues/:issue_id/handler/:handler/submitcomment", submitIssueComment)
+		api.DELETE("/repo/:namespace/:repo/issues/:issue_id/handler/:handler", deleteIssue)
 	}
 
 	err = router.Run(":8080")
@@ -230,10 +226,15 @@ func getRepos(c *gin.Context) {
 	for iter.Next(c.Request.Context()) {
 		key := iter.Val()
 		repoName := key[len("repo:"):]
-
-		repoWatch, err := getRepoWatch(c.Request.Context(), repoName)
+		namespace, err := rdb.HGet(c.Request.Context(), key, "namespace").Result()
 		if err != nil {
-			log.Printf("Failed to get RepoWatch %s: %v", repoName, err)
+			log.Printf("Failed to get namespace for repo %s from Redis: %v", repoName, err)
+			continue
+		}
+
+		repoWatch, err := getRepoWatch(c.Request.Context(), namespace, repoName)
+		if err != nil {
+			log.Printf("Failed to get RepoWatch %s/%s: %v", namespace, repoName, err)
 			continue
 		}
 
@@ -244,8 +245,9 @@ func getRepos(c *gin.Context) {
 		}
 
 		repo := Repo{
-			Name: repoName,
-			URL:  repoURL,
+			Name:      repoName,
+			Namespace: namespace,
+			URL:       repoURL,
 		}
 
 		// Extract review config
@@ -291,7 +293,7 @@ func fetchAndPopulateRepos(ctx context.Context) {
 		Version:  "v1alpha1",
 		Resource: "repowatches",
 	}
-	list, err := k8sClient.Resource(gvr).Namespace(namespace).List(context.Background(), v1.ListOptions{})
+	list, err := k8sClient.Resource(gvr).List(context.Background(), v1.ListOptions{})
 	if err != nil {
 		log.Printf("Failed to list RepoWatch CRs: %v. Serving mock data.", err)
 		return
@@ -304,23 +306,26 @@ func fetchAndPopulateRepos(ctx context.Context) {
 			continue
 		}
 		repo := struct {
-			Name string
-			URL  string
+			Name      string
+			Namespace string
+			URL       string
 		}{
-			Name: item.GetName(),
-			URL:  repoURL,
+			Name:      item.GetName(),
+			Namespace: item.GetNamespace(),
+			URL:       repoURL,
 		}
 
 		// Ensure the URL is in Redis
-		if err := rdb.HSet(ctx, fmt.Sprintf("repo:%s", repo.Name), "url", repo.URL).Err(); err != nil {
+		if err := rdb.HSet(ctx, fmt.Sprintf("repo:%s", repo.Name), "url", repo.URL, "namespace", repo.Namespace).Err(); err != nil {
 			log.Printf("Failed to cache repo URL for %s: %v", repo.Name, err)
 		}
 	}
 }
 
 func getPRs(c *gin.Context) {
+	namespace := c.Param("namespace")
 	repo := c.Param("repo")
-	fetchAndPopulatePRs(c.Request.Context(), repo)
+	fetchAndPopulatePRs(c.Request.Context(), namespace, repo)
 	// SCAN Redis for PRs for repo
 	prs := []PR{}
 	repoPRKeyPrefix := fmt.Sprintf("pr:repo:%s:pr:", repo)
@@ -362,7 +367,7 @@ func getPRs(c *gin.Context) {
 	c.JSON(http.StatusOK, prs)
 }
 
-func fetchAndPopulatePRs(ctx context.Context, repo string) {
+func fetchAndPopulatePRs(ctx context.Context, namespace, repo string) {
 	gvr := schema.GroupVersionResource{
 		Group:    "custom.agents.x-k8s.io",
 		Version:  "v1alpha1",
@@ -431,6 +436,7 @@ func fetchAndPopulatePRs(ctx context.Context, repo string) {
 }
 
 func saveDraft(c *gin.Context) {
+	//namespace := c.Param("namespace")
 	repo := c.Param("repo")
 	prID := c.Param("id")
 	var payload struct {
@@ -452,6 +458,7 @@ func saveDraft(c *gin.Context) {
 }
 
 func submitReview(c *gin.Context) {
+	namespace := c.Param("namespace")
 	repo := c.Param("repo")
 	prID := c.Param("id")
 	var payload struct {
@@ -478,7 +485,7 @@ func submitReview(c *gin.Context) {
 	agentDraft := prData["agentDraft"]
 
 	// Get RepoWatch to get repoURL and secret ref
-	repoWatch, err := getRepoWatch(ctx, repo)
+	repoWatch, err := getRepoWatch(ctx, namespace, repo)
 	if err != nil {
 		log.Printf("Failed to get repowatch %s: %v", repo, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get repowatch config"})
@@ -567,7 +574,7 @@ func submitReview(c *gin.Context) {
 	}
 
 	// scale down sandbox
-	err = scaledownSandbox(ctx, repo, prID)
+	err = scaledownSandbox(ctx, namespace, repo, prID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scaledown Sandbox after review submission", "details": err.Error()})
 		return
@@ -577,11 +584,12 @@ func submitReview(c *gin.Context) {
 }
 
 func deletePR(c *gin.Context) {
+	namespace := c.Param("namespace")
 	repo := c.Param("repo")
 	prID := c.Param("id")
 	ctx := c.Request.Context()
 
-	if err := scaledownSandbox(ctx, repo, prID); err != nil {
+	if err := scaledownSandbox(ctx, namespace, repo, prID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete sandbox", "details": err.Error()})
 		return
 	}
@@ -603,7 +611,7 @@ func deletePR(c *gin.Context) {
 }
 
 //nolint:unused
-func deleteSandbox(ctx context.Context, repo, prID string) error {
+func deleteSandbox(ctx context.Context, namespace, repo, prID string) error {
 	prKey := fmt.Sprintf("pr:repo:%s:pr:%s", repo, prID)
 	sandboxName, err := rdb.HGet(ctx, prKey, "sandbox").Result()
 	if err == redis.Nil {
@@ -628,7 +636,7 @@ func deleteSandbox(ctx context.Context, repo, prID string) error {
 	return nil
 }
 
-func scaledownSandbox(ctx context.Context, repo, prID string) error {
+func scaledownSandbox(ctx context.Context, namespace, repo, prID string) error {
 	prKey := fmt.Sprintf("pr:repo:%s:pr:%s", repo, prID)
 	sandboxName, err := rdb.HGet(ctx, prKey, "sandbox").Result()
 	if err == redis.Nil {
@@ -679,7 +687,7 @@ func getGitHubToken(ctx context.Context, repoWatch *unstructured.Unstructured) (
 	secretKey := "pat"
 
 	secretGVR := schema.GroupVersionResource{Version: "v1", Resource: "secrets"}
-	secretUnstructured, err := k8sClient.Resource(secretGVR).Namespace(namespace).Get(ctx, secretName, v1.GetOptions{})
+	secretUnstructured, err := k8sClient.Resource(secretGVR).Namespace(repoWatch.GetNamespace()).Get(ctx, secretName, v1.GetOptions{})
 	if err != nil {
 		return "", err
 	}
@@ -714,7 +722,7 @@ func parseRepoURL(repoURL string) (string, string, error) {
 	return parts[0], parts[1], nil
 }
 
-func getRepoWatch(ctx context.Context, name string) (*unstructured.Unstructured, error) {
+func getRepoWatch(ctx context.Context, namespace, name string) (*unstructured.Unstructured, error) {
 	gvr := schema.GroupVersionResource{
 		Group:    "review.gemini.google.com",
 		Version:  "v1alpha1",
@@ -728,9 +736,10 @@ func getRepoWatch(ctx context.Context, name string) (*unstructured.Unstructured,
 }
 
 func getIssues(c *gin.Context) {
+	namespace := c.Param("namespace")
 	repo := c.Param("repo")
 	handler := c.Param("handler")
-	fetchAndPopulateIssues(c.Request.Context(), repo, handler)
+	fetchAndPopulateIssues(c.Request.Context(), namespace, repo, handler)
 
 	issues := []Issue{}
 	issueKeyPrefix := fmt.Sprintf("issue:repo:%s:handler:%s:issue:*", repo, handler)
@@ -784,7 +793,7 @@ func getIssues(c *gin.Context) {
 	c.JSON(http.StatusOK, issues)
 }
 
-func fetchAndPopulateIssues(ctx context.Context, repo, handler string) {
+func fetchAndPopulateIssues(ctx context.Context, namespace, repo, handler string) {
 	gvr := schema.GroupVersionResource{
 		Group:    "custom.agents.x-k8s.io",
 		Version:  "v1alpha1",
@@ -877,6 +886,7 @@ func fetchAndPopulateIssues(ctx context.Context, repo, handler string) {
 }
 
 func saveIssueDraft(c *gin.Context) {
+	//namespace := c.Param("namespace")
 	repo := c.Param("repo")
 	issueID := c.Param("issue_id")
 	handler := c.Param("handler")
@@ -899,6 +909,7 @@ func saveIssueDraft(c *gin.Context) {
 }
 
 func submitIssueComment(c *gin.Context) {
+	namespace := c.Param("namespace")
 	repo := c.Param("repo")
 	issueID := c.Param("issue_id")
 	handler := c.Param("handler")
@@ -924,7 +935,7 @@ func submitIssueComment(c *gin.Context) {
 	draft := payload.Comment
 	agentDraft := issueData["agentDraft"]
 
-	repoWatch, err := getRepoWatch(ctx, repo)
+	repoWatch, err := getRepoWatch(ctx, namespace, repo)
 	if err != nil {
 		log.Printf("Failed to get repowatch %s: %v", repo, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get repowatch config"})
@@ -1018,7 +1029,7 @@ func submitIssueComment(c *gin.Context) {
 		return
 	}
 
-	err = scaledownIssueSandbox(ctx, repo, issueID, handler)
+	err = scaledownIssueSandbox(ctx, namespace, repo, issueID, handler)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scaledown Sandbox after comment submission", "details": err.Error()})
 		return
@@ -1027,7 +1038,7 @@ func submitIssueComment(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
-func scaledownIssueSandbox(ctx context.Context, repo, issueID, handler string) error {
+func scaledownIssueSandbox(ctx context.Context, namespace, repo, issueID, handler string) error {
 	sandboxName := fmt.Sprintf("%s-issue-%s-%s", repo, issueID, handler)
 
 	gvr := schema.GroupVersionResource{
@@ -1060,12 +1071,13 @@ func scaledownIssueSandbox(ctx context.Context, repo, issueID, handler string) e
 }
 
 func deleteIssue(c *gin.Context) {
+	namespace := c.Param("namespace")
 	repo := c.Param("repo")
 	issueID := c.Param("issue_id")
 	handler := c.Param("handler")
 	ctx := c.Request.Context()
 
-	if err := scaledownIssueSandbox(ctx, repo, issueID, handler); err != nil {
+	if err := scaledownIssueSandbox(ctx, namespace, repo, issueID, handler); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete sandbox", "details": err.Error()})
 		return
 	}

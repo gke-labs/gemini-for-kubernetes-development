@@ -2,15 +2,16 @@ apiVersion: review.gemini.google.com/v1alpha1
 kind: RepoWatch
 metadata:
   name: agent-sandbox
-  namespace: repo-agent-system
 spec:
   repoURL: https://github.com/kubernetes-sigs/agent-sandbox
   githubSecretName: github-pat
   review:
     maxActiveSandboxes: 2
+    devcontainerConfigRef: go-devcontainer-json
   issueHandlers:
   - name: triage
     maxActiveSandboxes: 2
+    devcontainerConfigRef: go-devcontainer-json
     labels:
       - "needs-triage"
     gemini:
@@ -33,6 +34,7 @@ spec:
         HTML URL: "{{.HTMLURL}}"
   - name: fixes
     maxActiveSandboxes: 4
+    devcontainerConfigRef: go-devcontainer-json
     pushEnabled: true
     labels:
       - "kind/cleanup"

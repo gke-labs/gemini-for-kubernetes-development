@@ -5,7 +5,7 @@ metadata:
   namespace: repo-agent-system
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
+kind: ClusterRole
 metadata:
   name: pr-review-api-role
   namespace: repo-agent-system
@@ -21,14 +21,14 @@ rules:
   verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
+kind: ClusterRoleBinding
 metadata:
   name: pr-review-api-binding
-  namespace: repo-agent-system
 subjects:
 - kind: ServiceAccount
   name: pr-review-api
+  namespace: repo-agent-system
 roleRef:
-  kind: Role
+  kind: ClusterRole
   name: pr-review-api-role
   apiGroup: rbac.authorization.k8s.io

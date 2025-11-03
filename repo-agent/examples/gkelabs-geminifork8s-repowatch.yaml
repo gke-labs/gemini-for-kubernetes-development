@@ -2,13 +2,13 @@ apiVersion: review.gemini.google.com/v1alpha1
 kind: RepoWatch
 metadata:
   name: gemini-for-k8s
-  namespace: repo-agent-system
 spec:
   repoURL: https://github.com/gke-labs/gemini-for-kubernetes-development
   githubSecretName: github-pat
   issueHandlers:
   - name: fixes
     maxActiveSandboxes: 4
+    devcontainerConfigRef: go-devcontainer-json
     pushEnabled: true
     labels:
       - "enhancement"

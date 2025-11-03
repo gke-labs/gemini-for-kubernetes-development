@@ -1,6 +1,7 @@
 
 KIND_CLUSTER=repo-agent
 REGISTRY ?= kind.local/
+NAMESPACE ?= default
 
 # if REGISTRY is kind.local/, then we are deploying to kind
 ifeq ($(REGISTRY), kind.local/)
@@ -100,21 +101,25 @@ install-repo-agent:
 .PHONY: create-secrets
 create-secrets:
 	kubectl create namespace repo-agent-system || true
-	@kubectl create secret -n repo-agent-system generic gemini-vscode-tokens --from-literal=gemini=${GEMINI_API_KEY} || true
-	@kubectl create secret -n repo-agent-system generic github-pat --from-literal=pat=${GITHUB_PAT} --from-literal=name="`git config --global user.name`" --from-literal=email=`git config --global user.email`|| true
+	@kubectl create secret -n ${NAMESPACE} generic gemini-vscode-tokens --from-literal=gemini=${GEMINI_API_KEY} || true
+	@kubectl create secret -n ${NAMESPACE} generic github-pat --from-literal=pat=${GITHUB_PAT} --from-literal=name="`git config --global user.name`" --from-literal=email=`git config --global user.email`|| true
 
 bin/configdir-cli: configdir/
 	../dev/tools/build-go-binaries --working-dir .
 
-.PHONY: create-instance
-create-instance: ./bin/configdir-cli
-	kubectl apply -f examples/gkelabs-geminifork8s-repowatch.yaml
-	kubectl apply -f examples/agent-sandbox-repowatch.yaml
-	kubectl apply -f examples/kcc-configmap-devcontainer.yaml # custom devcontainer for KCC
-	kubectl apply -f examples/kcc-configdir.yaml              # custom .gemini for KCC
-	kubectl apply -f examples/kcc-repowatch.yaml              # repowatch for KCC
-	kubectl apply -f examples/kro-configmap-devcontainer.yaml # custom devcontainer for KRO
-	kubectl apply -f examples/kro-repowatch.yaml               # repowatch for KRO
+.PHONY: apply-examples
+apply-examples:
+	# TODO(barney-s): is there a better way to handle SA ?
+	kubectl apply -f examples/sandbox-rbac.yaml -n $(NAMESPACE)
+	kubectl set subject clusterrolebinding review-sandbox --serviceaccount=${NAMESPACE}:review-sandbox
+	kubectl set subject clusterrolebinding issue-sandbox --serviceaccount=${NAMESPACE}:issue-sandbox
+	# end of SA
+	kubectl apply -f examples/go-configmap-devcontainer.yaml -n $(NAMESPACE)
+	kubectl apply -f examples/gkelabs-geminifork8s-repowatch.yaml -n $(NAMESPACE)
+	kubectl apply -f examples/agent-sandbox-repowatch.yaml -n $(NAMESPACE)
+	kubectl apply -f examples/kcc-configdir.yaml -n $(NAMESPACE)
+	kubectl apply -f examples/kcc-repowatch.yaml -n $(NAMESPACE)
+	kubectl apply -f examples/kro-repowatch.yaml -n $(NAMESPACE)
 	sleep 5
 	kubectl get reviewsandboxes -A
 	kubectl get issuesandboxes -A
