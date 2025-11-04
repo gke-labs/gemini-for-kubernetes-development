@@ -50,13 +50,21 @@ Before you begin, ensure you have the following tools installed:
     IMAGE_TAG=latest REGISTRY=ghcr.io/gke-labs/gemini-for-kubernetes-development/ make install
     ```
 
-3.  **Apply Example Configuration:**
+3.  **Apply Example Configurations:**
 
-    Apply the example `repowatch` configuration:
+    The examples have push changes to branch turned off by default.
+    Enable this in those `repowatches` for which you want to automatically push PR fixes to a branch.
+    ```
+    # enable this to automatically push the changes to the feature branch
+    #pushEnabled: true
+    ```
 
     ```bash
-    kubectl apply -f examples/agent-sandbox-repowatch.yaml
+    make apply-examples
     ```
+
+    This applies SA and RoleBindings for the sandboxes before creating the repowatches.
+
 
 4.  **Access the UI:**
 
@@ -87,6 +95,66 @@ To delete the KinD cluster and all the deployed resources, run the following com
 ```bash
 kind delete cluster --name repo-agent
 ```
+
+## Adding your own examples
+
+To add your own examples, it's easiest to start by cloning one of the existing `RepoWatch` examples from the `examples/` directory. These examples demonstrate how to configure the agent to watch a repository and handle different types of events.
+
+A `RepoWatch` custom resource has two main sections: `review` and `issueHandlers`.
+
+### The `review` section
+
+The `review` section configures the agent to review pull requests. You can specify a Gemini prompt to guide the review process. For example, you can ask the agent to check for specific coding standards, look for potential bugs, or verify that the changes are well-tested.
+
+Here is an example of a `review` section:
+```yaml
+review:
+  prompt: |
+    You are an expert code reviewer. You are reviewing a pull request.
+    Please review the following code and provide feedback.
+    - Does the code follow the project's coding standards?
+    - Are there any potential bugs or security vulnerabilities?
+    - Is the code well-tested?
+```
+
+### The `issueHandlers` section
+
+The `issueHandlers` section configures the agent to handle GitHub issues. You can define multiple handlers, each with its own set of rules and actions. For example, you can have a handler that automatically triages new issues, another that attempts to fix bugs, and a third that responds to feature requests.
+
+Each handler can be configured with a `name`, `labels` to filter issues, and a Gemini `prompt` to guide the agent's response.
+
+Here is an example of an `issueHandlers` section:
+```yaml
+issueHandlers:
+- name: "bug-fixer"
+  labels:
+  - "bug"
+  prompt: |
+    You are an expert bug fixer. You are assigned a bug to fix.
+    Please analyze the issue, identify the root cause, and provide a fix.
+    - Explain the root cause of the bug.
+    - Provide a code snippet with the fix.
+    - Explain how the fix addresses the issue.
+- name: "feature-request-handler"
+  labels:
+  - "feature"
+  prompt: |
+    You are a senior software engineer. You are assigned a feature request.
+    Please analyze the request and provide a high-level implementation plan.
+    - Break down the feature into smaller tasks.
+    - Provide a rough estimate for each task.
+    - Identify any potential risks or dependencies.
+```
+
+### Using `ConfigDir` and `devcontainer`
+
+The examples also demonstrate how to use `ConfigDir` and `devcontainer` to create a consistent and reproducible environment for the agent.
+
+*   **`ConfigDir`**: The `ConfigDir` API is used to mount configuration files, such as a `.gemini/` folder, into the agent's sandbox. This is similar to a `ConfigMap`, but it preserves the directory structure.
+*   **`devcontainer`**: The `devcontainer.json` file defines the development environment for the agent. You can specify the base image, install additional tools, and configure the editor. This ensures that the agent has all the necessary dependencies to build, test, and analyze the code. See `go-configmap-devcontainer.yaml` for an example.
+
+By customizing the `RepoWatch` resource and the `devcontainer` configuration, you can create a powerful and flexible Gemini agent that is tailored to your specific needs.
+
 
 ## Makefile Targets
 
