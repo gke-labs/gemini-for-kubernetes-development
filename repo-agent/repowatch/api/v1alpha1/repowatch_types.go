@@ -20,17 +20,43 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// GeminiConfig defines the Gemini configuration
-type GeminiConfig struct {
-	// Prompt string
+// LLMProviderType defines the type of LLM provider.
+type LLMProviderType string
+
+const (
+	// GeminiProvider represents the Gemini LLM provider.
+	GeminiProvider LLMProviderType = "Gemini"
+)
+
+// LLMConfig defines the configuration for the LLM provider.
+type LLMConfig struct {
+	// Provider is the name of the LLM provider to use. This field is used to
+	// determine which LLM client to instantiate and how to interact with the
+	// LLM API.
+	// +kubebuilder:validation:Enum=Gemini
+	// +kubebuilder:default=Gemini
+	Provider LLMProviderType `json:"provider,omitempty"`
+
+	// APIKeySecretRef is a reference to a Kubernetes secret containing the API
+	// key for the LLM provider. The secret must have a key named "apiKey".
+	// This approach provides a secure way to manage API keys without exposing
+	// them in the CRD.
+	APIKeySecretRef string `json:"apiKeySecretRef,omitempty"`
+
+	// Prompt is the prompt to use for the LLM. This can be a simple string or
+	// a Go template that will be populated with information about the pull
+	// request or issue.
 	Prompt string `json:"prompt,omitempty"`
-	// .gemini folder configdir reference
+
+	// ConfigdirRef is a reference to a ConfigDir resource that contains
+	// additional configuration for the LLM agent, such as tool schemas and
+	// model configurations.
 	ConfigdirRef string `json:"configdirRef,omitempty"`
 }
 
 type PRReviewSpec struct {
-	// Gemini configuration for the review sandboxes.
-	Gemini GeminiConfig `json:"gemini,omitempty"`
+	// LLM configuration for the review sandboxes.
+	LLM LLMConfig `json:"llm,omitempty"`
 
 	// DevcontainerConfigRef string
 	DevcontainerConfigRef string `json:"devcontainerConfigRef,omitempty"`
@@ -53,8 +79,8 @@ type IssueHandlerSpec struct {
 	// +kubebuilder:validation:Optional
 	Issues []int `json:"issues"`
 
-	// Gemini configuration for the bug fix sandboxes.
-	Gemini GeminiConfig `json:"gemini,omitempty"`
+	// LLM configuration for the bug fix sandboxes.
+	LLM LLMConfig `json:"llm,omitempty"`
 
 	// DevcontainerConfigRef string
 	DevcontainerConfigRef string `json:"devcontainerConfigRef,omitempty"`
@@ -75,10 +101,6 @@ type RepoWatchSpec struct {
 	// +kubebuilder:validation:Required
 	RepoURL string `json:"repoURL"`
 
-	// LLM backend to use
-	// +kubebuilder:validation:Optional
-	LlmBackend LlmBackend `json:"llmBackend,omitempty"`
-
 	// Review configuration for PRs
 	// +kubebuilder:validation:Optional
 	Review PRReviewSpec `json:"review,omitempty"`
@@ -95,14 +117,6 @@ type RepoWatchSpec struct {
 	// +kubebuilder:validation:Minimum=30
 	// +kubebuilder:default=300
 	PollIntervalSeconds int `json:"pollIntervalSeconds,omitempty"`
-}
-
-// LlmBackend defines the LLM backend configuration
-type LlmBackend struct {
-	// Name of the LLM backend
-	// +kubebuilder:validation:Enum=gemini-cli
-	// +kubebuilder:default="gemini-cli"
-	Name string `json:"name,omitempty"`
 }
 
 // RepoWatchStatus defines the observed state of RepoWatch
