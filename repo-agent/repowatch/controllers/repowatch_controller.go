@@ -593,6 +593,9 @@ func (r *RepoWatchReconciler) createReviewSandboxForPR(ctx context.Context, repo
 				},
 			},
 			"spec": map[string]interface{}{
+				"llmBackend": map[string]interface{}{
+					"name": repoWatch.Spec.Review.LLM.Provider,
+				},
 				"llm": map[string]interface{}{
 					"configdirRef": repoWatch.Spec.Review.LLM.ConfigdirRef,
 					"prompt":       prompt,
@@ -676,6 +679,9 @@ func (r *RepoWatchReconciler) createSandboxForIssueHandler(ctx context.Context, 
 				},
 			},
 			"spec": map[string]interface{}{
+				"llmBackend": map[string]interface{}{
+					"name": handler.LLM.Provider,
+				},
 				"llm": map[string]interface{}{
 					"configdirRef": handler.LLM.ConfigdirRef,
 					"prompt":       prompt,
