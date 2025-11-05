@@ -54,6 +54,7 @@ Before you begin, ensure you have the following tools installed:
 
     The examples have push changes to branch turned off by default.
     Enable this in those `repowatches` for which you want to automatically push PR fixes to a branch.
+
     ```
     # enable this to automatically push the changes to the feature branch
     #pushEnabled: true
