@@ -33,7 +33,7 @@ spec:
         Issue Body: "{{.Body}}"
         HTML URL: "{{.HTMLURL}}"
   - name: fixes
-    maxActiveSandboxes: 4
+    maxActiveSandboxes: 1
     devcontainerConfigRef: go-devcontainer-json
     pushEnabled: true
     labels:

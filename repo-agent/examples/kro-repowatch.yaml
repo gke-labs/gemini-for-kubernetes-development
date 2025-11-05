@@ -41,7 +41,8 @@ spec:
     labels:
       - "kind/bug"
     maxActiveSandboxes: 1
-    pushEnabled: true
+    # enable this to automatically push the changes to the feature branch
+    #pushEnabled: true
     devcontainerConfigRef: go-devcontainer-json
     gemini:
       prompt: |
