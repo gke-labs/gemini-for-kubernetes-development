@@ -86,6 +86,8 @@ spec:
                     # URL to the repository where the .devcontainer folder we want to load is located
                     - name: AGENT_PROMPT
                       value: ${schema.spec.gemini.prompt}
+                    - name: AGENT_NAME
+                      value: ${schema.spec.llmBackend.name}
                     - name: ENVBUILDER_GIT_URL
                       value: ${schema.spec.source.cloneURL}
                     # https://github.com/coder/terraform-provider-envbuilder/issues/68#issuecomment-2557247792
@@ -100,7 +102,7 @@ spec:
                     - name: ENVBUILDER_GIT_CLONE_SINGLE_BRANCH
                       value: "true"
                     - name: ENVBUILDER_INIT_SCRIPT
-                      value: /repo-agent/${schema.spec.llmBackend.name}-entrypoint.sh
+                      value: /repo-agent/review-sandbox
                     - name: ENVBUILDER_IGNORE_PATHS
                       value: "/var/run,/product_uuid,/product_name,/tokens,/repo-agent/"
                   volumeMounts:
