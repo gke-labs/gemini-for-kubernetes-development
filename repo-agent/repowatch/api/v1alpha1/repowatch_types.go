@@ -64,6 +64,10 @@ type PRReviewSpec struct {
 	// The maximum number of sandboxes to have active (replicas > 0) at any given time.
 	// +kubebuilder:validation:Required
 	MaxActiveSandboxes int `json:"maxActiveSandboxes"`
+
+	// PullRequests to filter for this handler
+	// +kubebuilder:validation:Optional
+	PullRequests []int `json:"pullRequests,omitempty"`
 }
 
 type IssueHandlerSpec struct {
