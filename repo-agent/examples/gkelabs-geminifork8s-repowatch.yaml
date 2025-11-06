@@ -6,6 +6,9 @@ spec:
   repoURL: https://github.com/gke-labs/gemini-for-kubernetes-development
   githubSecretName: github-pat
   review:
+    llm:
+      provider: gemini-cli
+      apiKeySecretRef: gemini-vscode-tokens
     maxActiveSandboxes: 2
     devcontainerConfigRef: go-devcontainer-json
   issueHandlers:
