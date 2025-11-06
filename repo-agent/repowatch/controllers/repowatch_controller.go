@@ -124,6 +124,20 @@ func (r *RepoWatchReconciler) reconcileReviews(ctx context.Context, repoWatch *r
 		return err
 	}
 
+	// If the review spec has a list of PRs, filter the PRs
+	if len(repoWatch.Spec.Review.PullRequests) > 0 {
+		var filteredPRs []*github.PullRequest
+		for _, pr := range prs {
+			for _, prNumber := range repoWatch.Spec.Review.PullRequests {
+				if *pr.Number == prNumber {
+					filteredPRs = append(filteredPRs, pr)
+					break
+				}
+			}
+		}
+		prs = filteredPRs
+	}
+
 	// Get existing sandboxes
 	sandboxList := &unstructured.UnstructuredList{}
 	sandboxGVK := schema.GroupVersionKind{
