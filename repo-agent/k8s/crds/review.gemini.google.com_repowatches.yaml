@@ -33,13 +33,6 @@ spec:
                   properties:
                     devcontainerConfigRef:
                       type: string
-                    gemini:
-                      properties:
-                        configdirRef:
-                          type: string
-                        prompt:
-                          type: string
-                      type: object
                     issues:
                       items:
                         type: integer
@@ -48,6 +41,20 @@ spec:
                       items:
                         type: string
                       type: array
+                    llm:
+                      properties:
+                        apiKeySecretRef:
+                          type: string
+                        configdirRef:
+                          type: string
+                        prompt:
+                          type: string
+                        provider:
+                          default: gemini-cli
+                          enum:
+                          - gemini-cli
+                          type: string
+                      type: object
                     maxActiveSandboxes:
                       type: integer
                     name:
@@ -59,14 +66,6 @@ spec:
                   - name
                   type: object
                 type: array
-              llmBackend:
-                properties:
-                  name:
-                    default: gemini-cli
-                    enum:
-                    - gemini-cli
-                    type: string
-                type: object
               pollIntervalSeconds:
                 default: 300
                 minimum: 30
@@ -77,11 +76,18 @@ spec:
                 properties:
                   devcontainerConfigRef:
                     type: string
-                  gemini:
+                  llm:
                     properties:
+                      apiKeySecretRef:
+                        type: string
                       configdirRef:
                         type: string
                       prompt:
+                        type: string
+                      provider:
+                        default: gemini-cli
+                        enum:
+                        - gemini-cli
                         type: string
                     type: object
                   maxActiveSandboxes:

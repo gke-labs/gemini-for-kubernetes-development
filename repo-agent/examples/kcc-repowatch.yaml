@@ -3,12 +3,12 @@ kind: RepoWatch
 metadata:
   name: kcc
 spec:
-  llmBackend:
-    name: "gemini-cli"
   repoURL: https://github.com/GoogleCloudPlatform/k8s-config-connector
   githubSecretName: github-pat
   review:
-    gemini:
+    llm:
+      provider: gemini-cli
+      apiKeySecretRef: gemini-vscode-tokens
       prompt: |
         google-internal:review-pr "{{.Number}}"
       configdirRef: kcc-review-gemini-config

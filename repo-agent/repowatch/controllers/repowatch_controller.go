@@ -509,6 +509,9 @@ func (r *RepoWatchReconciler) reconcileIssueHandlerSandboxes(ctx context.Context
 	return r.Status().Update(ctx, repoWatch)
 }
 
+// generateReviewPrompt generates a prompt for a pull request review.
+// It uses the prompt specified in the RepoWatch CRD, and if it is not
+// specified, it uses a default prompt.
 func (r *RepoWatchReconciler) generateReviewPrompt(repoWatch *reviewv1alpha1.RepoWatch, pr *github.PullRequest) (string, error) {
 	// Level 1 substitution
 	promptTmpl := reviewPromptTemplate
@@ -518,7 +521,7 @@ func (r *RepoWatchReconciler) generateReviewPrompt(repoWatch *reviewv1alpha1.Rep
 		Prompt string
 	}{
 		PullRequest: *pr,
-		Prompt:      repoWatch.Spec.Review.Gemini.Prompt,
+		Prompt:      repoWatch.Spec.Review.LLM.Prompt,
 	}
 
 	lvl1, err := template.New("lvl1").Parse(promptTmpl)
@@ -546,9 +549,11 @@ func (r *RepoWatchReconciler) generateReviewPrompt(repoWatch *reviewv1alpha1.Rep
 	return buf.String(), nil
 }
 
+// generateIssueHandlerPrompt generates a prompt for an issue handler.
+// It uses the prompt specified in the RepoWatch CRD.
 func (r *RepoWatchReconciler) generateIssueHandlerPrompt(handler reviewv1alpha1.IssueHandlerSpec, issue *github.Issue) (string, error) {
 	// promptTmpl := "You are an expert kubernetes developer who is helping with bug triage. Please look at the issue {{.Number}} linked at {{.HTMLURL}} and provide a triage summary. Please suggest possible causes and solutions."
-	promptTmpl := handler.Gemini.Prompt
+	promptTmpl := handler.LLM.Prompt
 	tmpl, err := template.New("myTemplate").Parse(promptTmpl)
 	if err != nil {
 		return "", err
@@ -562,6 +567,9 @@ func (r *RepoWatchReconciler) generateIssueHandlerPrompt(handler reviewv1alpha1.
 	return buf.String(), nil
 }
 
+// createReviewSandboxForPR creates a ReviewSandbox for a pull request.
+// It uses the LLM configuration from the RepoWatch CRD to configure the
+// sandbox.
 func (r *RepoWatchReconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, pr *github.PullRequest) error {
 	log := log.FromContext(ctx)
 	repoName := strings.Split(repoWatch.Spec.RepoURL, "/")[len(strings.Split(repoWatch.Spec.RepoURL, "/"))-1]
@@ -585,8 +593,11 @@ func (r *RepoWatchReconciler) createReviewSandboxForPR(ctx context.Context, repo
 				},
 			},
 			"spec": map[string]interface{}{
-				"gemini": map[string]interface{}{
-					"configdirRef": repoWatch.Spec.Review.Gemini.ConfigdirRef,
+				"llmBackend": map[string]interface{}{
+					"name": repoWatch.Spec.Review.LLM.Provider,
+				},
+				"llm": map[string]interface{}{
+					"configdirRef": repoWatch.Spec.Review.LLM.ConfigdirRef,
 					"prompt":       prompt,
 				},
 				"source": map[string]interface{}{
@@ -632,6 +643,9 @@ func randString(n int) string {
 	return string(b)
 }
 
+// createSandboxForIssueHandler creates an IssueSandbox for an issue.
+// It uses the LLM configuration from the RepoWatch CRD to configure the
+// sandbox.
 func (r *RepoWatchReconciler) createSandboxForIssueHandler(ctx context.Context, user *github.User, handler reviewv1alpha1.IssueHandlerSpec, repoWatch *reviewv1alpha1.RepoWatch, issue *github.Issue) error {
 	log := log.FromContext(ctx)
 	repoName := strings.Split(repoWatch.Spec.RepoURL, "/")[len(strings.Split(repoWatch.Spec.RepoURL, "/"))-1]
@@ -665,8 +679,11 @@ func (r *RepoWatchReconciler) createSandboxForIssueHandler(ctx context.Context, 
 				},
 			},
 			"spec": map[string]interface{}{
-				"gemini": map[string]interface{}{
-					"configdirRef": handler.Gemini.ConfigdirRef,
+				"llmBackend": map[string]interface{}{
+					"name": handler.LLM.Provider,
+				},
+				"llm": map[string]interface{}{
+					"configdirRef": handler.LLM.ConfigdirRef,
 					"prompt":       prompt,
 				},
 				"source": map[string]interface{}{

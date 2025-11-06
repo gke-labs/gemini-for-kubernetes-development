@@ -15,7 +15,9 @@ spec:
     pushEnabled: true
     labels:
       - "enhancement"
-    gemini:
+    llm:
+      provider: gemini-cli
+      apiKeySecretRef: gemini-vscode-tokens
       prompt: |
         You are an expert software engineer specializing in debugging and fixing issues in Kubernetes-related open source projects.
         This repo you are working on Gemini for Kubernetes development is a kubernetes sigs project to help run review and issue agents on a repo.
