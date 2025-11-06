@@ -156,6 +156,48 @@ The examples also demonstrate how to use `ConfigDir` and `devcontainer` to creat
 
 By customizing the `RepoWatch` resource and the `devcontainer` configuration, you can create a powerful and flexible Gemini agent that is tailored to your specific needs.
 
+#### Creating a configdir from your .gemini folder
+
+Build the `configdir-cli` binary
+```bash
+make build # build all the binaries
+```
+
+Create a `configdir` entry from your `.gemini` folder:
+```bash
+% bin/configdir-cli --include-folder-name --directory ~/workspace/src/acp/oss-tool-sync/gemini-configs/kubernetes/.gemini --sync-to-cluster --name k8s-gemini-configdir
+2025/11/06 17:33:28 found files. count: 7, totalSize: 40003
+2025/11/06 17:33:28 total size is less than 1MB, using inline files
+2025/11/06 17:33:28 created configdir k8s-gemini-configdir
+2025/11/06 17:33:28 successfully synced to cluster
+
+
+% kubectl get configdir 
+NAME                       AGE
+k8s-gemini-configdir       10s
+kcc-review-gemini-config   10h
+
+% kubectl get configdir  k8s-gemini-configdir -o yaml | less
+apiVersion: configdir.gke.io/v1alpha1
+kind: ConfigDir
+metadata:
+  creationTimestamp: "2025-11-06T17:55:01Z"
+  generation: 1
+  name: k8s-gemini-configdir
+  namespace: default
+  resourceVersion: "70225"
+  uid: 6e95992f-49d6-45d6-a5a1-30eab4ea5450
+spec:
+  files:
+  - path: .gemini/commands/document/package.toml
+    source:
+      inline: |-
+        # In: ~/.gemini/commands/document/package.toml
+        # This command will be invoked via: /document:package /path/to/package
+
+        description = "Asks the model to write documentation for a golang package."
+...
+```
 
 ## Makefile Targets
 

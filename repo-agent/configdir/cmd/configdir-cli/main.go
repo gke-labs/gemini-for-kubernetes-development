@@ -41,11 +41,12 @@ import (
 
 func main() {
 	var name, namespace, directory string
-	var syncToCluster, ignoreNotFoundError bool
+	var syncToCluster, ignoreNotFoundError, includeFolderName bool
 	flag.StringVar(&name, "name", "", "The name of the ConfigDir resource. If empty directory name is used.")
 	flag.StringVar(&namespace, "namespace", "default", "The namespace of the ConfigDir.")
 	flag.StringVar(&directory, "directory", "", "The directory to sync the files from or to.")
 	flag.BoolVar(&syncToCluster, "sync-to-cluster", false, "Sync from filesystem to cluster.")
+	flag.BoolVar(&includeFolderName, "include-folder-name", false, "includes the last item(folder) of the path passed to --directory parameter")
 	flag.BoolVar(&ignoreNotFoundError, "ignore-not-found-error", false, "ignores not found errors during sync.")
 	flag.Parse()
 
@@ -72,7 +73,7 @@ func main() {
 		name = filepath.Base(directory)
 	}
 	if syncToCluster {
-		if err := syncConfigDataToCluster(ctx, cli, directory, name, namespace); err != nil {
+		if err := syncConfigDataToCluster(ctx, cli, directory, includeFolderName, name, namespace); err != nil {
 			log.Fatalf("failed: %v", err)
 		}
 		log.Print("successfully synced to cluster")
@@ -141,7 +142,7 @@ func main() {
 	}
 }
 
-func syncConfigDataToCluster(ctx context.Context, cli client.Client, sourceDir, configDirName, namespace string) error {
+func syncConfigDataToCluster(ctx context.Context, cli client.Client, sourceDir string, includeFolderName bool, configDirName, namespace string) error {
 	type fileInfo struct {
 		path    string // relative path
 		content []byte
@@ -150,12 +151,17 @@ func syncConfigDataToCluster(ctx context.Context, cli client.Client, sourceDir, 
 	var files []fileInfo
 	var totalSize int64
 
+	relPathPrefix := ""
+	if includeFolderName {
+		relPathPrefix = filepath.Base(sourceDir)
+	}
 	err := filepath.Walk(sourceDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 		if !info.IsDir() {
 			relPath, err := filepath.Rel(sourceDir, path)
+			relPath = filepath.Join(relPathPrefix, relPath)
 			if err != nil {
 				return err
 			}
