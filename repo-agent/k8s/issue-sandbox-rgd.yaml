@@ -13,7 +13,7 @@ spec:
       replicas: integer | default=1
       llmBackend:
         name: string | default="gemini-cli"
-      gemini:
+      llm:
         prompt: string
         configdirRef: string | default=""
       serviceAccountName: string | default="issue-sandbox"
@@ -68,7 +68,7 @@ spec:
               initContainers:
                 - name: gemini-configs
                   image: ko://repo-agent/configdir/cmd/configdir-cli
-                  args: ["--directory", "/workspaces", "--namespace", "${schema.metadata.namespace}" ,  "--name", "${schema.spec.gemini.configdirRef}", "--ignore-not-found-error"]
+                  args: ["--directory", "/workspaces", "--namespace", "${schema.metadata.namespace}" ,  "--name", "${schema.spec.llm.configdirRef}", "--ignore-not-found-error"]
                   volumeMounts:
                     - name: workspaces-pvc
                       mountPath: /workspaces
@@ -96,7 +96,7 @@ spec:
                   env:
                     # URL to the repository where the .devcontainer folder we want to load is located
                     - name: AGENT_PROMPT
-                      value: ${schema.spec.gemini.prompt}
+                      value: ${schema.spec.llm.prompt}
                     - name: ISSUEID
                       value: ${schema.spec.source.issue}
                     - name: ISSUE_BRANCH
