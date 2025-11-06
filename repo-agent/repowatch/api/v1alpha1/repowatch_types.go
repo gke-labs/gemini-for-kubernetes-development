@@ -25,7 +25,7 @@ type LLMProviderType string
 
 const (
 	// GeminiProvider represents the Gemini LLM provider.
-	GeminiProvider LLMProviderType = "Gemini"
+	GeminiProvider LLMProviderType = "gemini-cli"
 )
 
 // LLMConfig defines the configuration for the LLM provider.
@@ -33,8 +33,8 @@ type LLMConfig struct {
 	// Provider is the name of the LLM provider to use. This field is used to
 	// determine which LLM client to instantiate and how to interact with the
 	// LLM API.
-	// +kubebuilder:validation:Enum=Gemini
-	// +kubebuilder:default=Gemini
+	// +kubebuilder:validation:Enum=gemini-cli
+	// +kubebuilder:default=gemini-cli
 	Provider LLMProviderType `json:"provider,omitempty"`
 
 	// APIKeySecretRef is a reference to a Kubernetes secret containing the API

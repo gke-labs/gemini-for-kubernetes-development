@@ -7,7 +7,7 @@ spec:
   githubSecretName: github-pat
   review:
     llm:
-      provider: Gemini
+      provider: gemini-cli
       apiKeySecretRef: gemini-vscode-tokens
       prompt: |
         google-internal:review-pr "{{.Number}}"

@@ -16,7 +16,7 @@ spec:
     labels:
       - "enhancement"
     llm:
-      provider: Gemini
+      provider: gemini-cli
       apiKeySecretRef: gemini-vscode-tokens
       prompt: |
         You are an expert software engineer specializing in debugging and fixing issues in Kubernetes-related open source projects.

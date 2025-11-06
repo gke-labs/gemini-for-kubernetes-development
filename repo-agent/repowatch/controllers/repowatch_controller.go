@@ -521,7 +521,7 @@ func (r *RepoWatchReconciler) generateReviewPrompt(repoWatch *reviewv1alpha1.Rep
 		Prompt string
 	}{
 		PullRequest: *pr,
-		Prompt:      repoWatch.Spec.Review.Gemini.Prompt,
+		Prompt:      repoWatch.Spec.Review.LLM.Prompt,
 	}
 
 	lvl1, err := template.New("lvl1").Parse(promptTmpl)

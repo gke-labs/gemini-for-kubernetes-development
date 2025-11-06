@@ -50,9 +50,9 @@ spec:
                         prompt:
                           type: string
                         provider:
-                          default: Gemini
+                          default: gemini-cli
                           enum:
-                          - Gemini
+                          - gemini-cli
                           type: string
                       type: object
                     maxActiveSandboxes:
@@ -85,9 +85,9 @@ spec:
                       prompt:
                         type: string
                       provider:
-                        default: Gemini
+                        default: gemini-cli
                         enum:
-                        - Gemini
+                        - gemini-cli
                         type: string
                     type: object
                   maxActiveSandboxes:
