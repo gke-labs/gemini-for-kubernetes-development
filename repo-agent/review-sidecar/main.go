@@ -23,7 +23,6 @@ import (
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
@@ -83,19 +82,24 @@ func main() {
 		fmt.Println("file changed, updating crd")
 		rs, err := dc.Resource(gvr).Namespace(namespace).Get(context.TODO(), name, metav1.GetOptions{})
 		if err != nil {
-			fmt.Println("getting reviewsandbox:", err)
+			fmt.Println("error getting reviewsandbox:", err)
 			continue
 		}
 
-		if err := unstructured.SetNestedField(rs.Object, string(b), "status", "agentDraft"); err != nil {
-			fmt.Println("setting status:", err)
+		// update the annotation[agentDraft]
+		if rs.GetAnnotations() == nil {
+			rs.SetAnnotations(make(map[string]string))
+		}
+		annotations := rs.GetAnnotations()
+		annotations["agentDraft"] = string(b)
+		rs.SetAnnotations(annotations)
+
+		_, err = dc.Resource(gvr).Namespace(namespace).Update(context.TODO(), rs, metav1.UpdateOptions{})
+		if err != nil {
+			fmt.Println("error updating reviewsandbox:", err)
 			continue
 		}
 
-		if _, err := dc.Resource(gvr).Namespace(namespace).UpdateStatus(context.TODO(), rs, metav1.UpdateOptions{}); err != nil {
-			fmt.Println("updating status:", err)
-			continue
-		}
 		last = string(b)
 		fmt.Println("updated crd with latest changes")
 	}

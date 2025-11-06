@@ -416,9 +416,16 @@ func fetchAndPopulatePRs(ctx context.Context, namespace, repo string) {
 		if err != nil || !found {
 			log.Printf("Title (.spec.source.htmlURL) not found in ReviewSandbox  %s", item.GetName())
 		}
-		draft, found, err := unstructured.NestedString(item.Object, "status", "agentDraft")
-		if err != nil || !found {
-			log.Printf("pushBranch (.status.agentDraft) not found in IssueSandbox %s", item.GetName())
+
+		// get draft from annotation[agentDraft]
+		draft := ""
+		annotations := item.GetAnnotations()
+		if annotations == nil {
+			log.Printf("agentDraft (annotations=nil) not found in ReviewSandbox %s", item.GetName())
+		} else if _, ok := annotations["agentDraft"]; !ok {
+			log.Printf("agentDraft (annotations[agentDraft]) not found in ReviewSandbox %s", item.GetName())
+		} else {
+			draft = annotations["agentDraft"]
 		}
 
 		pr := PR{
@@ -517,6 +524,12 @@ func submitReview(c *gin.Context) {
 		).Err(); err != nil {
 			log.Printf("Failed to store feedback for PR %s in repo %s: %v", prID, repo, err)
 			// Continue without failing the review submission
+		}
+
+		// Update the userDraft in the ReviewSandbox status
+		if err := updateReviewSandboxUserDraft(ctx, namespace, prData["sandbox"], draft); err != nil {
+			log.Printf("Failed to update reviewsandbox userDraft for PR %s in repo %s: %v", prID, repo, err)
+			// Not failing the request for this, just logging.
 		}
 	}
 
@@ -698,6 +711,35 @@ func scaledownSandbox(ctx context.Context, namespace, repo, prID string) error {
 		// We can choose to not return an error if it's already gone.
 		return fmt.Errorf("failed to scaledown sandbox: %w", err)
 	}
+	return nil
+}
+
+func updateReviewSandboxUserDraft(ctx context.Context, namespace, sandboxName, userDraft string) error {
+	gvr := schema.GroupVersionResource{
+		Group:    "custom.agents.x-k8s.io",
+		Version:  "v1alpha1",
+		Resource: "reviewsandboxes",
+	}
+
+	// Get the existing resource
+	sandbox, err := k8sClient.Resource(gvr).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to get reviewsandbox %s: %w", sandboxName, err)
+	}
+
+	// update the annotation[agentDraft]
+	if sandbox.GetAnnotations() == nil {
+		sandbox.SetAnnotations(make(map[string]string))
+	}
+	annotations := sandbox.GetAnnotations()
+	annotations["userDraft"] = userDraft
+	sandbox.SetAnnotations(annotations)
+
+	_, err = k8sClient.Resource(gvr).Namespace(namespace).Update(context.TODO(), sandbox, v1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to update reviewsandbox annotation: %w", err)
+	}
+
 	return nil
 }
 
