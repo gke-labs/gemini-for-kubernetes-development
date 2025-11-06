@@ -35,8 +35,12 @@ spec:
         tcpEnabled: boolean | default=false
         ref: string | default="repo-agent-gateway"
     status:
+      # TODO (barney-s):
       # Fields the controller will inject into instances status.
-      agentDraft: "${sandbox.metadata.name}"
+      # Due to KRO bug: https://github.com/kubernetes-sigs/kro/issues/772
+      # moving this to metadata.annotations[agentDraft,userDraft]
+      #agentDraft: string
+      #userDraft: string
       fqdn: ${service.metadata.name}.${service.metadata.namespace}.svc.cluster.local
       sandboxConditions: ${sandbox.status.conditions}
   resources:
