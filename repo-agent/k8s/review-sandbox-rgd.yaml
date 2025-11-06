@@ -35,9 +35,9 @@ spec:
         tcpEnabled: boolean | default=false
         ref: string | default="repo-agent-gateway"
     status:
-      # TODO (barney-s):
+      # TODO (barney-s): 
       # Fields the controller will inject into instances status.
-      # Due to KRO bug: https://github.com/kubernetes-sigs/kro/issues/772
+      # Due to KRO bug: https://github.com/kubernetes-sigs/kro/issues/772 
       # moving this to metadata.annotations[agentDraft,userDraft]
       #agentDraft: string
       #userDraft: string
