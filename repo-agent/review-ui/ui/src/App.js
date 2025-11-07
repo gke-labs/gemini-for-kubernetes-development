@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
+import yaml from 'js-yaml';
 import './App.css';
+import PrReviewCard from './PrReviewCard';
 
 function App() {
   const [repos, setRepos] = useState([]);
@@ -8,7 +10,10 @@ function App() {
   const [prs, setPrs] = useState([]);
   const [issues, setIssues] = useState([]);
   const [drafts, setDrafts] = useState({});
+  const [collapsedReviews, setCollapsedReviews] = useState({});
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'light');
+  const [reviewViewModes, setReviewViewModes] = useState({});
+  const [yamlDrafts, setYamlDrafts] = useState({});
 
   useEffect(() => {
     document.body.className = theme === 'dark' ? 'dark-mode' : '';
@@ -44,10 +49,24 @@ function App() {
             const safeData = data || [];
             setPrs(safeData);
             const initialDrafts = {};
+            const initialCollapsedState = {};
             safeData.forEach(pr => {
-              initialDrafts[pr.id] = pr.draft || '';
+              try {
+                const parsedDraft = yaml.load(pr.draft || '');
+                initialDrafts[pr.id] = parsedDraft || { note: '', review: { body: '', comments: [] } };
+              } catch (e) {
+                console.error(`Error parsing draft YAML for PR ${pr.id}:`, e);
+                initialDrafts[pr.id] = { note: '', review: { body: '', comments: [] } };
+              }
+              initialCollapsedState[pr.id] = true; // Collapse by default
             });
             setDrafts(initialDrafts);
+            setCollapsedReviews(initialCollapsedState);
+            const initialViewModes = {};
+            safeData.forEach(pr => {
+              initialViewModes[pr.id] = 'structured';
+            });
+            setReviewViewModes(initialViewModes);
           })
           .catch(err => console.error(`Failed to fetch PRs for ${activeRepo.name}:`, err));
       } else if (activeSubTab.name) {
@@ -78,8 +97,6 @@ function App() {
         setActiveSubTab({ repo: repoName, name: 'review' });
       } else if (repo.issueHandlers && repo.issueHandlers.length > 0) {
         setActiveSubTab({ repo: repoName, name: repo.issueHandlers[0].name });
-      } else {
-        setActiveSubTab({ repo: repoName, name: '' });
       }
     }
   };
@@ -97,7 +114,7 @@ function App() {
   };
 
   const handleSaveDraft = (id) => {
-    const draft = drafts[id];
+    const draft = yaml.dump(drafts[id]);
     fetch(`/api/repo/${activeRepo.namespace}/${activeRepo.name}/prs/${id}/draft`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -105,27 +122,98 @@ function App() {
     }).catch(err => console.error("Failed to save draft:", err));
   };
 
-  const handleDraftChange = (id, value) => {
+  const handleDraftChange = (id, field, value, index = null) => {
+    setDrafts(prevDrafts => {
+      const newDraft = { ...prevDrafts[id] };
+      if (field === 'note') {
+        newDraft.note = value;
+      } else if (field === 'review.body') {
+        newDraft.review = { ...newDraft.review, body: value };
+      } else if (field === 'comment.body' && index !== null) {
+        newDraft.review.comments[index] = { ...newDraft.review.comments[index], body: value };
+      }
+      return { ...prevDrafts, [id]: newDraft };
+    });
+  };
+
+  const handleRemoveComment = (id, index) => {
+    setDrafts(prevDrafts => {
+      const newDraft = { ...prevDrafts[id] };
+      newDraft.review.comments.splice(index, 1);
+      return { ...prevDrafts, [id]: newDraft };
+    });
+  };
+
+  const handleIssueDraftChange = (issueId, value) => {
     setDrafts(prevDrafts => ({
       ...prevDrafts,
-      [id]: value
+      [issueId]: value
     }));
   };
 
+  const toggleReviewView = (id) => {
+    const currentMode = reviewViewModes[id] || 'structured';
+    if (currentMode === 'yaml') {
+      try {
+        const parsedDraft = yaml.load(yamlDrafts[id]);
+        setDrafts(prev => ({ ...prev, [id]: parsedDraft }));
+        setReviewViewModes(prev => ({ ...prev, [id]: 'structured' }));
+      } catch (e) {
+        alert('Invalid YAML. Please fix it before switching view.');
+        console.error("YAML parse error on view switch:", e);
+      }
+    } else {
+      setYamlDrafts(prev => ({ ...prev, [id]: yaml.dump(drafts[id] || { note: '', review: { body: '', comments: [] } }) }));
+      setReviewViewModes(prev => ({ ...prev, [id]: 'yaml' }));
+    }
+  };
+
+  const handleYamlDraftChange = (id, value) => {
+    setYamlDrafts(prev => ({ ...prev, [id]: value }));
+  };
+
+  const handleYamlDraftBlur = (id) => {
+    try {
+      const parsedDraft = yaml.load(yamlDrafts[id]);
+      setDrafts(prev => ({ ...prev, [id]: parsedDraft }));
+      const draft = yaml.dump(parsedDraft);
+      fetch(`/api/repo/${activeRepo.namespace}/${activeRepo.name}/prs/${id}/draft`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ draft })
+      }).catch(err => console.error("Failed to save draft:", err));
+    } catch (e) {
+      alert('Invalid YAML, not saving.');
+      console.error("YAML parse error on blur:", e);
+    }
+  };
+
   const handleSubmit = (id) => {
-    const review = drafts[id];
-    if (!review.trim()) {
+    let review;
+    if (reviewViewModes[id] === 'yaml') {
+      try {
+        review = yaml.load(yamlDrafts[id]);
+      } catch (e) {
+        alert('Invalid YAML. Please fix it before submitting.');
+        return;
+      }
+    } else {
+      review = drafts[id];
+    }
+
+    if (!review || (!review.review.body?.trim() && (!review.review.comments || review.review.comments.length === 0))) {
       alert("Please leave a review comment before Submitting.");
       return;
     }
+    const reviewYAML = yaml.dump(review);
     fetch(`/api/repo/${activeRepo.namespace}/${activeRepo.name}/prs/${id}/submitreview`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ review })
+      body: JSON.stringify({ review: reviewYAML })
     })
     .then(res => {
       if (res.ok) {
-        setPrs(prs.map(pr => pr.id === id ? { ...pr, review, draft: '' } : pr));
+        setPrs(prs.map(pr => pr.id === id ? { ...pr, review: reviewYAML, draft: '' } : pr));
       } else {
         alert("Failed to submit PR review");
       }
@@ -189,41 +277,34 @@ function App() {
     setTheme(theme === 'light' ? 'dark' : 'light');
   };
 
+  const toggleCollapse = (id) => {
+    setCollapsedReviews(prev => ({
+      ...prev,
+      [id]: !prev[id]
+    }));
+  };
+
   const renderContent = () => {
     if (activeSubTab.name === 'review') {
       return prs.map(pr => (
-        <div key={pr.id} className={`pr-card ${pr.review ? 'review-submitted' : ''}`}>
-          <div className="pr-card-header">
-            <h3><a href={pr.htmlURL} target="_blank" rel="noopener noreferrer">{pr.title} (PR #{pr.id})</a></h3>
-            {getSandboxStatusClass(pr) === 'green' ? (
-              <a href={`/sandbox/${pr.sandbox}/`} target="_blank" rel="noopener noreferrer" className={`pr-sandbox ${getSandboxStatusClass(pr)}`}>
-                Sandbox: {pr.sandbox}
-              </a>
-            ) : (
-              <span className={`pr-sandbox ${getSandboxStatusClass(pr)}`}>Sandbox: {pr.sandbox || 'Not created'}</span>
-            )}
-          </div>
-          {pr.review ? (
-            <div className="review-display">
-              <strong>Review:</strong>
-              <p>{pr.review}</p>
-            </div>
-          ) : (
-            <textarea
-              className="review-textarea"
-              value={drafts[pr.id] || ''}
-              onChange={(e) => handleDraftChange(pr.id, e.target.value)}
-              onBlur={() => handleSaveDraft(pr.id)}
-              placeholder="Leave a review comment..."
-            ></textarea>
-          )}
-          <div className="pr-card-actions">
-            <button className="btn btn-submit" onClick={() => handleSubmit(pr.id)} disabled={!!pr.review}>
-              {pr.review ? 'Submitted' : 'Submit'}
-            </button>
-            <button className="btn btn-delete" onClick={() => handleDelete(pr.id)}>Delete</button>
-          </div>
-        </div>
+        <PrReviewCard
+          key={pr.id}
+          pr={pr}
+          drafts={drafts}
+          collapsedReviews={collapsedReviews}
+          reviewViewModes={reviewViewModes}
+          yamlDrafts={yamlDrafts}
+          handleDelete={handleDelete}
+          handleSaveDraft={handleSaveDraft}
+          handleDraftChange={handleDraftChange}
+          handleRemoveComment={handleRemoveComment}
+          toggleReviewView={toggleReviewView}
+          handleYamlDraftChange={handleYamlDraftChange}
+          handleYamlDraftBlur={handleYamlDraftBlur}
+          handleSubmit={handleSubmit}
+          toggleCollapse={toggleCollapse}
+          getSandboxStatusClass={getSandboxStatusClass}
+        />
       ));
     } else {
       return issues.map(issue => (
@@ -251,7 +332,7 @@ function App() {
             <textarea
               className="review-textarea"
               value={drafts[issue.id] || ''}
-              onChange={(e) => handleDraftChange(issue.id, e.target.value)}
+              onChange={(e) => handleIssueDraftChange(issue.id, e.target.value)}
               onBlur={() => handleIssueSaveDraft(issue.id, activeSubTab.name)}
               placeholder="Leave a comment..."
             ></textarea>
