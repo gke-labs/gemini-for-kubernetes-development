@@ -78,7 +78,11 @@ def main(args):
         print("k8s directory not found")
         return
 
-    for root, dirs, files in os.walk(manifests_path):
+    all_manifests = ""
+    for root, dirs, files in os.walk(manifests_path, topdown=False):
+        # Process files in alphabetical order
+        # TODO: Handle file ordering better so that CRDs and Namespaces are deployed first
+        files.sort()
         for filename in files:
             if not (filename.endswith(".yaml") or filename.endswith(".yml")):
                 continue
@@ -100,7 +104,6 @@ def main(args):
             for doc in docs:
                 if not doc: # Skip empty documents
                     continue
-
                 find_and_replace_images(doc, service_name, image_prefix, image_tag)
 
             # Dump the modified documents back to a string
@@ -109,10 +112,19 @@ def main(args):
             modified_content = string_stream.getvalue()
 
             rel_path = os.path.relpath(path, working_dir)
-            print(f"applying manifest {rel_path}")
-
-            cmd = ["kubectl", "apply", "-f", "-"]
-            subprocess.run(cmd, cwd=working_dir, check=True, input=modified_content, text=True)
+            if args.output_file is not None:
+                if all_manifests == "":
+                    all_manifests = modified_content
+                else:
+                    all_manifests += "---\n" + modified_content
+            else:
+                print(f"applying manifest {rel_path}")
+                cmd = ["kubectl", "apply", "-f", "-"]
+                subprocess.run(cmd, cwd=working_dir, check=True, input=modified_content, text=True)
+    if args.output_file is not None and all_manifests != "":
+        print(f"writing manifest to {args.output_file}")
+        with open(args.output_file, "w") as out_f:
+            out_f.write(all_manifests)
 
 
 if __name__ == "__main__":
@@ -132,7 +144,13 @@ if __name__ == "__main__":
                         help="use working dir instead of repo root",
                         type=str,
                         default=None)
+    parser.add_argument("--output-file",
+                        dest="output_file",
+                        help="output to file instead of applying to cluster",
+                        type=str,
+                        default=None)
     args = parser.parse_args()
+
     if args.working_dir:
         if not os.path.isdir(args.working_dir):
             print(f"working dir {args.working_dir} not found")
