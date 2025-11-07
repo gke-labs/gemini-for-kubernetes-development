@@ -187,6 +187,7 @@ spec:
         spec:
           parentRefs:
             - name: ${schema.spec.gateway.ref} # Reference to the Gateway created outside of this RGD
+              namespace: repo-agent-system
           rules:
             - backendRefs:
                 - name: ${service.metadata.name}
