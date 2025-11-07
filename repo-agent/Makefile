@@ -107,23 +107,27 @@ create-secrets:
 bin/configdir-cli: configdir/
 	../dev/tools/build-go-binaries --working-dir .
 
-.PHONY: apply-examples
-apply-examples:
+.PHONY: apply-common-for-examples
+apply-common-for-examples:
 	# TODO(barney-s): is there a better way to handle SA ?
 	kubectl apply -f examples/sandbox-rbac.yaml -n $(NAMESPACE)
 	kubectl set subject clusterrolebinding review-sandbox --serviceaccount=${NAMESPACE}:review-sandbox
 	kubectl set subject clusterrolebinding issue-sandbox --serviceaccount=${NAMESPACE}:issue-sandbox
 	# end of SA
 	kubectl apply -f examples/go-configmap-devcontainer.yaml -n $(NAMESPACE)
+
+.PHONY: apply-examples
+apply-examples: apply-common-for-examples
 	kubectl apply -f examples/gkelabs-geminifork8s-repowatch.yaml -n $(NAMESPACE)
 	kubectl apply -f examples/agent-sandbox-repowatch.yaml -n $(NAMESPACE)
 	kubectl apply -f examples/kcc-configdir.yaml -n $(NAMESPACE)
 	kubectl apply -f examples/kcc-repowatch.yaml -n $(NAMESPACE)
 	kubectl apply -f examples/kro-repowatch.yaml -n $(NAMESPACE)
+	kubectl apply -f examples/k8s-configdir.yaml -n $(NAMESPACE)
+	kubectl apply -f examples/k8s-repowatch.yaml -n $(NAMESPACE)
 	sleep 5
 	kubectl get reviewsandboxes -A
 	kubectl get issuesandboxes -A
-	# bin/configdir-cli --sync-to-cluster  --directory ./configdir/test-sample/cc/.gemini --namespace repo-agent-system --name gemini-cc
 
 .PHONY: delete-instance
 delete-instance:

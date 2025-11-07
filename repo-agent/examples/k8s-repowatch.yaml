@@ -1,0 +1,20 @@
+apiVersion: review.gemini.google.com/v1alpha1
+kind: RepoWatch
+metadata:
+  name: k8s
+spec:
+  repoURL: https://github.com/kubernetes/kubernetes
+  githubSecretName: github-pat
+  review:
+    llm:
+      provider: gemini-cli
+      apiKeySecretRef: gemini-vscode-tokens
+      prompt: |
+        You are a kubernetes core developer who is helping with review comments on a kubernetes repo PR.
+      configdirRef: k8s-gemini-config
+    maxActiveSandboxes: 2
+    # if you want to review specific pull requests
+    #pullRequests:
+    #- 12345
+    #- 53434
+    devcontainerConfigRef: go-devcontainer-json

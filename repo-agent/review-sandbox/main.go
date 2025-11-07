@@ -46,6 +46,11 @@ func runReview() error {
 	agentName := os.Getenv("AGENT_NAME")
 	log.Printf("Review with AGENT_NAME: %s", agentName)
 
+	// save the incoming prompt
+	if err := os.WriteFile("../agent-prompt.txt", []byte(os.Getenv("AGENT_PROMPT")), 0644); err != nil {
+		log.Printf("Failed to write prompt to file: %v", err)
+	}
+
 	var agentFn func() ([]byte, error)
 	switch agentName {
 	case "gemini-cli":

@@ -1,0 +1,716 @@
+apiVersion: configdir.gke.io/v1alpha1
+kind: ConfigDir
+metadata:
+  name: k8s-gemini-config
+spec:
+  files:
+  - path: .gemini/commands/document/package.toml
+    source:
+      inline: |-
+        # In: ~/.gemini/commands/document/package.toml
+        # This command will be invoked via: /document:package /path/to/package
+
+        description = "Asks the model to write documentation for a golang package."
+
+        prompt = """
+        Please write documentation for the {{args}} package.
+
+        Please follow the below directions carefully.
+
+        ## Guiding Principles & Quality Standards
+
+        **For a concrete example of the quality standard we are aiming for, please review the changes in [pull request #133632](https://github.com/kubernetes/kubernetes/pull/133632), which documents the `client-go` library. The contents of this PR are also available in the `client-go-docs` branch for local inspection using `git` commands.**
+
+        ### Our Target Audience: User Personas
+
+        We are writing for two distinct audiences. All documentation improvements should be made with these personas in mind:
+
+        1.  **The Library Consumer:** A developer who wants to use these libraries to build controllers, operators, or other tools on top of Kubernetes.
+            *   **Needs:** "How do I use this?" They require clear instructions, runnable examples, and a high-level understanding of the library's purpose and public API.
+            *   **Success looks like:** They can quickly and confidently integrate the library into their project to accomplish a specific task.
+
+        2.  **The Library Contributor:** A developer who wants to fix a bug or add a new feature to the library itself.
+            *   **Needs:** "How does this work internally?" They require a deep understanding of the architecture, design principles, key algorithms, and development workflow.
+            *   **Success looks like:** They can navigate the internal codebase, understand the impact of their proposed changes, and follow the correct procedures for testing and code generation.
+
+        ### 1. Explain the "Why," Not Just the "What"
+        Good documentation provides context. Don't just state what a function does; explain *why* it exists.
+        - What problem does this package solve?
+        - How does it fit into the larger architecture of the API server or client libraries?
+        - Are there important design decisions or trade-offs that a developer should be aware of?
+
+        ### 2. Write for the Newcomer
+        Assume your reader is a competent Go developer but is not an expert in the Kubernetes codebase.
+        - Avoid jargon and acronyms, or define them clearly on first use.
+        - Link to relevant design proposals, KEPs (Kubernetes Enhancement Proposals), or community documents that provide more background.
+        - Your goal is to lower the barrier to entry for future contributors.
+
+        ### 3. Adhere to Go Documentation Standards
+        We will use Go's native tooling (`godoc`) as the primary way to present API documentation.
+
+        - **`doc.go` is Mandatory:** Every package *must* have a `doc.go` file with a
+          comprehensive package-level overview. It should include:
+            1.  A concise one-sentence summary starting with `// Package [packagename] ...`.
+            2.  A detailed description of the package's purpose, its key concepts, and
+                how it should be used.
+
+        - **Examples in `example_test.go`:** Runnable, `godoc`-compatible examples are
+          non-negotiable. To ensure they are reliably discovered and rendered by Go
+          tooling, they *must* be placed in a separate `example_test.go` file. This
+          file should be part of a `packagename_test` package to avoid circular
+          dependencies.
+
+        - **Godoc Comments for All Exported Symbols:** Every exported type, function,
+          method, and variable must have a clear, concise Godoc comment.
+            - Start the comment with the name of the item it describes (e.g., `// GetPods retrieves a list of...`).
+            - Describe the function's purpose, its parameters, and its return values.
+            - Explicitly mention any non-obvious behavior, such as potential panics, default values, or concurrency safety.
+
+        - **Documenting API Lifecycle:** For a library that evolves, documenting stability and change is critical.
+            - **Deprecation:** If an exported symbol is deprecated, its Godoc must include a `// Deprecated:` notice explaining why and what to use instead.
+            - **Versioning:** Where applicable, comments should note the Kubernetes version in which a feature was introduced or changed.
+
+        ### 4. Provide Actionable, Runnable Examples
+        Code examples are often the most valuable part of documentation.
+        - Examples should be runnable and self-contained whenever possible.
+        - Cover common, practical use cases. Show how to handle errors.
+
+        #### Example Naming and Commenting Conventions
+        To ensure consistency and clarity across all examples:
+
+        - **Naming:** Follow the standard Go `godoc` conventions, but prefer descriptive names. For package-level examples, use a name with a descriptive suffix (e.g., `Example_outOfClusterConfig`). This makes the purpose of each example clear from its name and avoids ambiguity if more examples are added later.
+        - **Commenting:** Comments within examples should explain the "why," not just the "what." Focus on the purpose of a code block or the rationale for a particular approach. Avoid comments that simply restate what the code is doing, as these are redundant and add clutter.
+            - **Good Comment:** `// A clientset provides convenient access to all API groups and versions.`
+            - **Bad Comment:** `// Create a new clientset.`
+        - **Self-Contained:** Examples must be self-contained. A user should be able to copy the code for a single example and run it with minimal modification (like adjusting imports). Do not use helper functions that are not visible in the `godoc` output for the example, as this makes the example incomplete.
+
+        ### 5. Document the Contributor Workflow
+        While `ARCHITECTURE.md` explains how the system is designed, contributors need a practical guide to making and validating changes. For each major library, we must create or enhance a `CONTRIBUTING.md` file or a "Contributing" section in the `README.md`.
+
+        This document must cover the essential, hands-on steps of the development loop:
+
+        *   **Code Generation:** The API Machinery libraries rely heavily on generated code. This section must explicitly state which code generation scripts (e.g., `hack/update-codegen.sh`) must be run after changing API types or clients. This is the most common pitfall for new contributors.
+        *   **Testing:** Clearly document the commands required to run the primary test suites (e.g., `hack/test-go.sh`). Explain the difference between unit and integration tests in the context of the library and where to find them.
+        *   **Dependencies:** Explain the procedure for managing Go modules and dependencies (e.g., `go mod tidy`, `go mod vendor`).
+        *   **Code Style and Linting:** Point to the project's linting configuration and the command to run the linter (e.g., `hack/update-gofmt.sh`, `hack/verify-golangci-lint.sh`).
+
+        ### 6. Document the Architecture for Contributors
+
+        For a contributor to be effective, they need a mental model of the system's internal workings.
+        Godoc is for public APIs, but a dedicated `ARCHITECTURE.md` file is required for each major
+        library to explain the design for contributors.
+
+        - **Create `ARCHITECTURE.md`:** For each major library (`client-go`, `apiserver`, etc.), create
+          an `ARCHITECTURE.md` file.
+        - **Goal: Provide a Mental Model:** The document must identify the major components, explain how
+          they interact, trace the primary data flows, and justify the key design decisions and
+          trade-offs. It is a map of the existing territory, explained by the history of why the roads
+          were built where they are.
+        - **Synthesize, Don't Just Summarize:** The content must be a synthesis of insights derived
+          from three key sources:
+            1.  **KEPs:** The design rationale and "why" for a feature's existence.
+                (e.g., `/home/exampleuser/projects/enhancements/keps/sig-api-machinery`)
+            2.  **Source Code:** The ground truth of the implementation.
+                (e.g., `/home/exampleuser/projects/kubernetes/staging/src/k8s.io/client-go`)
+            3.  **User-Facing Docs:** The consumer's perspective on how a feature is used.
+                (e.g., `/home/exampleuser/projects/website/content/en`)
+        - **Use a Logical Narrative Structure:** The document should be ordered to follow a logical path,
+          building from foundational concepts (like client configuration) to more advanced patterns
+          (like controllers and Server-Side Apply).
+        - **Use Simple, Direct Titles:** Section titles should be simple and technical (e.g.,
+          "`REST Client`", "`Controller Patterns`") to improve clarity and scannability.
+
+        ### 7. Isolate Documentation from Code Changes (The "Do No Harm" Principle)
+        This is a **documentation-only** initiative. Contributors **must not** refactor, modernize, or
+        change the logic of the code being documented.
+
+        - **Why:** Any change to executable code, no matter how small, requires a separate, rigorous
+          code review process that is outside the scope of this project. Mixing documentation and code
+          changes complicates reviews, introduces risk, and slows down the documentation effort.
+        - **Allowed Changes:** Adding or modifying comments, `doc.go` files, and Markdown files
+          (`ARCHITECTURE.md`).
+        - **Forbidden Changes:** Altering function bodies, renaming variables, changing control flow,
+          updating dependencies, or refactoring code to use newer patterns.
+        - **Procedure for Identified Issues:** If you identify code that is confusing or needs
+          refactoring, the correct procedure is to **file a separate issue** for it. Then, document the
+          code's behavior *as it currently exists* and add a note to the Godoc linking to the issue.
+          This ensures the documentation is accurate while formally tracking the required code
+          improvement. **Do not change the code.**
+
+        ### 8. Documentation Formatting and Style
+
+        To ensure consistency and readability across all documentation, contributors must adhere to the
+        following formatting guidelines.
+
+        - **Markdown Files (`.md`):**
+            - **Line Wrapping:** All prose in Markdown files (`README.md`, `ARCHITECTURE.md`, etc.)
+              should be hard-wrapped at 100 characters.
+            - **Titles:** Use simple, direct, and technical section titles (e.g., "`REST Client`" instead
+              of "`The Foundational REST Client`").
+            - **Diagrams:** Use Mermaid.js diagrams to illustrate data flows where helpful, keeping them
+              within the 100-character limit where possible.
+
+        - **Go Doc Comments (`doc.go`):**
+            - **Headings:** Use markdown-style headings (`#`, `##`) for structuring package-level
+              documentation.
+            - **Code Blocks:** Use indented code blocks for examples.
+
+        - **Consistency:** Use consistent terminology, capitalization, and naming conventions. For example,
+          when referring to Go packages in prose, use their lowercase names (e.g., `client-go`,
+          `dynamic`, `rest`).
+
+        ### 9. Be Concrete and Objective
+        Avoid subjective, qualitative, and unsubstantiated language. The documentation should be a source
+        of verifiable facts, not opinions or characterizations.
+
+        - **Why:** Words like "powerful," "easy," "simple," "idiomatic," or "vastly" are subjective and
+          unhelpful. They don't explain the technical trade-offs or the specific mechanisms that give a
+          component its characteristics.
+        - **What to do instead:**
+            - Instead of calling a mechanism "powerful," describe what it enables (e.g., "provides an
+              in-memory cache to reduce API server load").
+            - Instead of calling a client "the most common," describe its primary, intended use case
+              (e.g., "the standard client for accessing core, versioned Kubernetes resources").
+            - Instead of saying something is "vastly more efficient," explain the architectural reason
+              for the efficiency (e.g., "replaces a polling model with a long-running WATCH
+              connection").
+
+        ### 10. Mandate a Persona-Driven Completeness Review
+        A common failure mode in documentation is to perform a **local review**, which focuses only on
+        the quality of existing content, without performing a **global review** that checks for
+        completeness. This can lead to documentation that is well-written but functionally useless
+        because it omits critical topics.
+
+        To prevent this, the review process *must* be grounded in the user personas.
+
+        - **Initial Planning:** Before writing, create a short, informal checklist of the top 3-5
+          critical, real-world tasks each persona needs to accomplish with the library. For `client-go`,
+          this would include tasks like "Patch a resource safely," "Run a controller in a
+          highly-available way," and "Regenerate code after an API change."
+        - **Final Review:** Before a task is considered "done," the author and reviewer must explicitly
+          ask: "Does this documentation equip our target personas to complete their critical tasks from
+          start to finish?" This includes common but complex topics like error handling, rate limiting,
+          and authentication.
+
+        This persona-driven approach forces a review of the entire user journey, ensuring that no
+        essential concepts are overlooked.
+
+        ### Verification Workflow
+
+        Before any documentation task is considered complete, the contributor must visually inspect the
+        rendered HTML output to ensure it is clean, well-formatted, and easy to read.
+
+        1.  **Install `godoc` (if necessary):**
+            ```bash
+            go install golang.org/x/tools/cmd/godoc@latest
+            ```
+
+        2.  **Run the local `godoc` server:**
+            ```bash
+            godoc -http=:6060 &
+            ```
+            This will start a server in the background on port 6060.
+
+        3.  **Preview the documentation:** The URL will depend on the location of the
+            package within the repository. For staged repositories like `client-go`, the
+            path will include the full staging path.
+            - **Example for `client-go`:**
+              `http://localhost:6060/pkg/k8s.io/kubernetes/staging/src/k8s.io/client-go/`
+
+        4.  **Stop the server when finished:**
+            ```bash
+            pkill godoc
+            ```
+
+        **Troubleshooting:** If the examples are not rendering correctly, ensure they are
+        in a dedicated `example_test.go` file and that the `godoc` server has been
+        restarted to pick up the new file.
+
+        ### Definition of Done
+        A documentation task for a given package is considered "done" when it meets the following criteria:
+        - [ ] A `doc.go` file exists and is populated according to the standards above, including a runnable example.
+        - [ ] Every exported identifier has a clear, helpful Godoc comment that covers API lifecycle details where applicable.
+        - [ ] The `README.md` has been reviewed and, if necessary, updated to align with the improved code-level documentation.
+        - [ ] An `ARCHITECTURE.md` file has been created that provides a clear mental model of the
+              system for contributors, following the updated guidelines.
+        - [ ] A **persona-driven completeness review** has been performed, confirming that the
+              documentation addresses the most critical, real-world tasks for both consumers and
+              contributors.
+        - [ ] The rendered **`godoc` HTML has been visually inspected** to ensure proper formatting and
+              readability.
+        - [ ] A reviewer has confirmed that all of the above criteria have been met.
+
+        ### Our Research Methodology
+        To ensure our documentation is built on a foundation of deep understanding, we will follow a
+        structured research process for each package:
+
+        1.  **Phase 1: Foundational Concepts & KEPs.** We will start by searching for the primary design
+            documents that shaped the library.
+            - **Source:** `kubernetes/enhancements` (specifically KEPs under `keps/sig-api-machinery`).
+            - **Goal:** Understand the original motivation, design trade-offs, and evolution of the feature.
+
+        2.  **Phase 2: Architectural & Historical Context.** We will search for lower-level design
+            documents, community discussions, and meeting notes.
+            - **Source:** `kubernetes/community` repository.
+            - **Goal:** Uncover the "why" behind the internal architecture and specific implementation
+              details.
+
+        3.  **Phase 3: Usage & Best Practices.** We will look for official documentation, tutorials, and
+            high-quality community content.
+            - **Sources:** `kubernetes.io/docs`, `kubernetes/website`, and a broad web search for expert
+              blog posts and conference talks (e.g., KubeCon).
+            - **Goal:** Understand how the library is used in practice and identify common patterns and
+              pitfalls.
+
+        4.  **Phase 4: Synthesis.** All findings will be synthesized into the resulting documentation.
+
+        Please either access this information directly on github, or via the web. Please let the user
+        know if you are unable to access this information.
+        """
+  - path: .gemini/commands/dv/enable.toml
+    source:
+      inline: "name = \"dv:enable\"\ndescription = \"Enables declarative validation
+        for a given Kubernetes API by modifying multiple files and adding tests.\"\nprompt
+        = \"\"\"\n# Task: Enable Declarative Validation for a Kubernetes API or Subresource\n\nYou
+        are an expert Kubernetes developer specializing in API machinery. Your task
+        is to perform the necessary code modifications to enable declarative validation
+        for a given Kubernetes API or subresource.\n\n**Refer to these pull requests
+        for guidance. You can use the `github` tool to inspect their details and diffs
+        if necessary.**\n1.  Enabling for ReplicationController: https://github.com/kubernetes/kubernetes/pull/130724\n2.
+        \ Enabling for CertificateSigningRequest: https://github.com/kubernetes/kubernetes/pull/132361\n3.
+        \ Enabling for CertificateSigningRequest/status subresource: https://github.com/kubernetes/kubernetes/pull/133068\n4.
+        \ Enabling for ResourceClaim: https://github.com/kubernetes/kubernetes/pull/134072\n5.
+        \ Enabling for ResourceClaim/status subresource: https://github.com/kubernetes/kubernetes/pull/134113\n6.
+        \ Refactoring with Centralized Helper: https://github.com/kubernetes/kubernetes/pull/134113/commits/2d5955383b5aec6ccaf9d3d2987fa8d6eea94ea1\n7.
+        \ Simplified Testing: https://github.com/kubernetes/kubernetes/pull/133937\n\nThe
+        user has specified the API with the command: `/dv:enable {{args}}`\n\nFirst,
+        determine if you are enabling validation for a main resource or a subresource
+        based on the `{{args}}`.\n\n---\n\n### If enabling for a main resource (e.g.,
+        `core.ReplicationController`):\n\n1.  **Parse the API argument:** The user
+        provided `{{args}}`. This is in the format `<group>.<Kind>` or `<Kind>` for
+        the core group.\n\n2.  **Find all API Versions:**\n    -   You must find all
+        supported versions for the given Kind.\n    -   Use the `list_directory` tool
+        to inspect the `pkg/apis/<group>/` directory. The subdirectories (e.g., `v1`,
+        `v1beta1`) are the versions.\n    -   For the `core` group, the path is `pkg/apis/core/`.\n\n3.
+        \ **Enable Validation Code Generation (for each version):**\n    -   For each
+        version you discovered, locate its `doc.go` file (e.g., `pkg/apis/core/v1/doc.go`).\n
+        \   -   Add the following two lines to the file's comment block:\n        ```go\n
+        \       // +k8s:validation-gen=TypeMeta\n        // +k8s:validation-gen-input=k8s.io/api/<group>/<version>\n
+        \       ```\n\n4.  **Update the API Strategy:**\n    -   Locate the `strategy.go`
+        file for the resource (e.g., `pkg/registry/core/replicationcontroller/strategy.go`).\n
+        \   -   Add the `k8s.io/apimachinery/pkg/api/operation` import.\n    -   Remove
+        the imports for `k8s.io/apiserver/pkg/util/feature` and `k8s.io/kubernetes/pkg/features`
+        if they are no longer used.\n    -   In the `Validate` and `ValidateUpdate`
+        functions, replace the existing validation logic with a call to the centralized
+        helper function.\n\n        ```go\n        // In Validate(ctx, obj)\n        allErrs
+        := corevalidation.ValidateReplicationController(controller, opts) // Or your
+        resource's specific imperative validation\n        return rest.ValidateDeclarativelyWithMigrationChecks(ctx,
+        legacyscheme.Scheme, controller, nil, allErrs, operation.Create)\n\n        //
+        In ValidateUpdate(ctx, obj, old)\n        errs := corevalidation.ValidateReplicationControllerUpdate(newRc,
+        oldRc, opts) // Or your resource's specific imperative validation\n        return
+        rest.ValidateDeclarativelyWithMigrationChecks(ctx, legacyscheme.Scheme, newRc,
+        oldRc, errs, operation.Update)\n        ```\n\n5.  **Add Declarative Validation
+        Tests:**\n    -   Create a new test file named `declarative_validation_test.go`
+        in the same directory as the `strategy.go` file.\n    -   Use the following
+        multi-version test template.\n        ```go\n        package <package_name>\n\n
+        \       import (\n        \t\"context\"\n        \t\"testing\"\n        \t//
+        ... other necessary imports ...\n        \t\"k8s.io/apimachinery/pkg/util/validation/field\"\n
+        \       \tgenericapirequest \"k8s.io/apiserver/pkg/endpoints/request\"\n        \tapitesting
+        \"k8s.io/kubernetes/pkg/api/testing\"\n        \tapi \"<path_to_internal_api_package>\"\n
+        \       )\n\n        var apiVersions = []string{\"<version1>\", \"<version2>\"}
+        // Populate this with discovered versions\n\n        func TestDeclarativeValidate(t
+        *testing.T) {\n        \tfor _, apiVersion := range apiVersions {\n        \t\tt.Run(apiVersion,
+        func(t *testing.T) {\n        \t\t\ttestDeclarativeValidate(t, apiVersion)\n
+        \       \t\t})\n        \t}\n        }\n\n        func testDeclarativeValidate(t
+        *testing.T, apiVersion string) {\n        \tctx := genericapirequest.WithRequestInfo(genericapirequest.NewDefaultContext(),
+        &genericapirequest.RequestInfo{\n        \t\tAPIGroup:   \"<group>\",\n        \t\tAPIVersion:
+        apiVersion,\n        \t\tResource:   \"<resource_plural>\",\n        \t})\n
+        \       \t// ... (any necessary mock setup, e.g., for clients) ...\n        \ttestCases
+        := map[string]struct {\n        \t\tinput        api.<Kind>\n        \t\texpectedErrs
+        field.ErrorList\n        \t}{\n        \t\t\"valid\": {\n        \t\t\tinput:
+        mkValid<Kind>(),\n        \t\t},\n        \t\t// TODO: Add more test cases\n
+        \       \t}\n        \tfor k, tc := range testCases {\n        \t\tt.Run(k,
+        func(t *testing.T) {\n        \t\t\tapitesting.VerifyValidationEquivalence(t,
+        ctx, &tc.input, Strategy.Validate, tc.expectedErrs)\n        \t\t})\n        \t}\n
+        \       }\n\n        func TestDeclarativeValidateUpdate(t *testing.T) {\n
+        \       \tfor _, apiVersion := range apiVersions {\n        \t\tt.Run(apiVersion,
+        func(t *testing.T) {\n        \t\t\ttestDeclarativeValidateUpdate(t, apiVersion)\n
+        \       \t\t})\n        \t}\n        }\n\n        func testDeclarativeValidateUpdate(t
+        *testing.T, apiVersion string) {\n        \tctx := genericapirequest.WithRequestInfo(genericapirequest.NewDefaultContext(),
+        &genericapirequest.RequestInfo{\n        \t\tAPIGroup:   \"<group>\",\n        \t\tAPIVersion:
+        apiVersion,\n        \t\tResource:   \"<resource_plural>\",\n        \t})\n
+        \       \t// ... (any necessary mock setup) ...\n        \tvalidObj := mkValid<Kind>()\n
+        \       \ttestCases := map[string]struct {\n        \t\tupdate       api.<Kind>\n
+        \       \t\told          api.<Kind>\n        \t\texpectedErrs field.ErrorList\n
+        \       \t}{\n        \t\t\"valid\": {\n        \t\t\tupdate: validObj,\n
+        \       \t\t\told:    validObj,\n        \t\t},\n        \t\t// TODO: Add
+        more test cases\n        \t}\n        \tfor k, tc := range testCases {\n        \t\tt.Run(k,
+        func(t *testing.T) {\n        \t\t\ttc.old.ResourceVersion = \"1\"\n        \t\t\ttc.update.ResourceVersion
+        = \"2\"\n        \t\t\tapitesting.VerifyUpdateValidationEquivalence(t, ctx,
+        &tc.update, &tc.old, Strategy.ValidateUpdate, tc.expectedErrs)\n        \t\t})\n
+        \       \t}\n        }\n\n        func mkValid<Kind>() api.<Kind> {\n            //
+        ... implementation to create a valid object ...\n        }\n        ```\n\n6.
+        \ **Enable Fuzz Testing (for each version):**\n    -   Open the file `pkg/api/testing/validation_test.go`.\n
+        \   -   For each version you discovered, add a `schema.GroupVersion` to the
+        `typesWithDeclarativeValidation` slice.\n\n---\n\n### If enabling for a subresource
+        (e.g., `resource.k8s.io.ResourceClaim/status`):\n\nThe process is similar,
+        but the focus is on the subresource's strategy.\n\n1.  **Parse and Find Versions:**
+        Follow steps 1 & 2 from the main resource section.\n2.  **Enable Code Generation:**
+        Follow step 3 from the main resource section.\n3.  **Update Subresource Strategy:**
+        In the validation function for the specific subresource strategy (e.g., `resourceclaimStatusStrategy.ValidateUpdate`),
+        replace the validation logic with a call to the centralized helper.\n    ```go\n
+        \   // In <kind><Subresource>Strategy.Validate<Operation>\n    errs := validation.ValidateResourceClaimStatusUpdate(newClaim,
+        oldClaim) // Or your subresource's specific imperative validation\n    return
+        rest.ValidateDeclarativelyWithMigrationChecks(ctx, legacyscheme.Scheme, newClaim,
+        oldClaim, errs, operation.Update)\n    ```\n4.  **Add Subresource Tests:**
+        Add a new test function to the `declarative_validation_test.go` file for the
+        subresource.\n    ```go\n    func TestValidate<Subresource><Operation>ForDeclarative(t
+        *testing.T) {\n        // ... (any necessary mock client setup) ...\n    \tstrategy
+        := New<Subresource>Strategy(Strategy)\n    \n    \tctx := genericapirequest.WithRequestInfo(genericapirequest.NewDefaultContext(),
+        &genericapirequest.RequestInfo{\n    \t\tAPIGroup:    \"<group>\",\n    \t\tAPIVersion:
+        \ \"<version>\", // Usually the latest stable, e.g., \"v1\"\n    \t\tSubresource:
+        \"<subresource>\",\n    \t})\n        validObj := mkValid<Kind>With<Subresource>()
+        // You may need a new helper for this\n    \ttestCases := map[string]struct
+        {\n    \t\told          api.<Kind>\n    \t\tupdate       api.<Kind>\n    \t\texpectedErrs
+        field.ErrorList\n    \t}{\n    \t\t\"valid\": {\n    \t\t\tupdate: validObj,\n
+        \   \t\t\told:    validObj,\n    \t\t},\n    \t\t// TODO: Add test cases\n
+        \   \t}\n    \tfor k, tc := range testCases {\n    \t\tt.Run(k, func(t *testing.T)
+        {\n    \t\t\ttc.old.ResourceVersion = \"1\"\n    \t\t\ttc.update.ResourceVersion
+        = \"2\"\n    \t\t\tapitesting.VerifyUpdateValidationEquivalence(t, ctx, &tc.update,
+        &tc.old, strategy.ValidateUpdate, tc.expectedErrs)\n    \t\t})\n    \t}\n
+        \   }\n    ```\n5.  **Enable Fuzz Testing:** Follow step 6 from the main resource
+        section.\n\n---\n**IMPORTANT:**\n- After completing all the code modifications,
+        you must run `!{hack/update-codegen.sh validation}`.\n- Do **not** run `make
+        verify`.\n- You must run the relevant tests to ensure that your changes have
+        not introduced any regressions. Run tests for the package you modified by
+        running `make test WHAT=./pkg/registry/<group>/<kind>`.\n\nPlease proceed
+        with this comprehensive plan.\n\"\"\""
+  - path: .gemini/commands/plan/debrief.toml
+    source:
+      inline: |-
+        # In: ~/.gemini/commands/plan/debrief.toml
+        # Invoked via: /plan:debrief
+
+        description = "Instruct the model to perform a debrief on a task."
+        prompt = """
+        Please perform an after action report on the the work you've done.
+
+        Assume the role of a project lead conducting a blameless after-action review. Your analysis
+        should be objective, constructive, and focused on process improvement.
+
+        Generate a report structured with the following sections:
+
+        # After-Action Report
+
+        ## 1. Task & Objective Summary
+
+        Briefly restate the original goal of the task.
+
+        Summarize the final outcome. Was the objective successfully met?
+
+        ## 2. Plan vs. Reality
+
+        Compare the initial /plan with the steps you actually took.
+
+        Did the execution follow the plan closely? Note any significant deviations, unexpected
+        problems, or shortcuts taken. Why did these deviations occur?
+
+        ## 3. What Went Well (Sustains)
+
+        Identify which parts of the plan or execution were particularly effective or efficient.
+
+        Were the initial assumptions correct?
+
+        Was the available information (code, documentation, etc.) clear and sufficient for these
+        successful steps?
+
+        ## 4. What Went Poorly (Improves)
+
+        Detail any steps that were inefficient, confusing, or resulted in errors.
+
+        Specifically address: Was there any information that was missing, incorrect, or difficult
+        to find?
+
+        Identify any flawed assumptions from the planning phase that caused problems during execution.
+
+        ## 5. Actionable Follow-ups
+
+        Based on the analysis above, propose concrete, specific actions to improve future tasks. These
+        are not for the completed task but for the overall process.
+
+        Examples of follow-ups:
+
+        - "Update the CONTRIBUTING.md to clarify the process for..."
+        - "Create a small script to automate the boilerplate generation for..."
+        - "Suggest a new /plan template that includes a dedicated step for researching..."
+        - "The documentation for the xyz package is unclear; it should be updated to include..."
+        """
+  - path: .gemini/commands/plan/task.toml
+    source:
+      inline: |
+        # In: ~/.gemini/commands/plan/task.toml
+        # Invoked via: /plan:task Description of the task
+
+        description = "Instruct the model to plan a non-trivial task."
+        prompt = """
+        Please plan out this task: {{args}}
+
+        Please follow these instructions when planning out the task:
+
+        You are an expert engineering lead specializing in the Kubernetes open-source project. Your
+        role is to take a high-level task description from a user and deconstruct it into a detailed,
+        actionable, and well-ordered plan.
+
+        The plan you generate must be suitable for a software engineer who is familiar with Go but may
+        be new to the specific area of the Kubernetes codebase they are working on. Every task is to
+        be performed on the main kubernetes/kubernetes codebase.
+
+        For any given task, generate a plan that follows these distinct phases. Be sure to include
+        context-specific, concrete examples of commands to run, files to look for, or people/SIGs
+        (Special Interest Groups) to consult.
+
+        ## 1. Understand & Investigate This initial phase is critical for gathering context. Before
+        any code is written, the engineer must deeply understand the problem and the existing system.
+
+        Clarify Requirements: State any ambiguities in the request and list questions the engineer
+        should answer before starting. Define the "Definition of Done" for the task.
+
+        Locate Relevant Code: Identify the primary Go packages, directories, and specific files related to
+        the task. Suggest commands like grep or git grep to find key functions, types, or API definitions.
+
+        Reproduce the Issue (for bugs): If the task is a bug fix, provide a step-by-step guide on how
+        to reproduce it. This may involve setting up a specific cluster configuration or running a
+        particular test.
+
+        Review Existing Documentation: Point to relevant design proposals (KEPs - Kubernetes Enhancement
+        Proposals), API documentation, or architectural diagrams that will help the engineer understand
+        the "why" behind the existing code.
+
+        ## 2. Design & Propose With a full understanding of the problem, the engineer can now plan
+        their changes. This phase is for thinking and planning, not coding.
+
+        Outline the Proposed Solution: Describe the high-level approach to solving the problem. If
+        there are multiple viable options, list them with their respective pros and cons.
+
+        Define Testing Strategy: Detail the testing plan. Specify what needs to be covered by unit tests
+        (for individual functions), integration tests (for component interactions), and end-to-end (e2e)
+        tests (for user-facing behavior). Name specific test files that will need to be added or modified.
+
+        Consider Impacts: Analyze the potential side effects of the change.
+
+        API Changes: Will this change any Kubernetes API objects? Is it a breaking change?
+
+        Performance: Could this change impact the performance or scalability of any component (e.g.,
+        kube-apiserver, scheduler)?
+
+        Security: Are there any security implications to consider?
+
+        ## 3. Implement & Test This is the hands-on coding phase, guided by the decisions made in
+        the previous phases.
+
+        Step-by-Step Implementation Guide: Provide a logical sequence of coding steps. For
+        example:
+          * [ ] Add the new TimeoutSeconds field to the PluginConfig struct in staging/src/k8s.io/api/somecomponent/v1/types.go.
+          * [ ] Run make generate to update the generated code.
+          * [ ] Implement the timeout logic in the executePlugin function in pkg/kubelet/somecomponent/manager.go..."
+
+        Add Tests: Based on the testing strategy, describe the tests that need to be written. Provide
+        a skeleton or pseudo-code for new test cases.
+
+        Update Documentation: Remind the engineer to update relevant documentation, including Go comments,
+        README.md files, or official website docs (kubernetes/website repo) if necessary.
+
+        ## 4. Review & Merge Getting code merged in a large open-source project is a multi-step
+        process that involves communication and collaboration.
+
+        Prepare the Pull Request (PR): Advise on creating a clear and descriptive PR. This includes
+        writing a detailed title, explaining the problem and the solution, and linking to the relevant
+        GitHub issue.
+
+        Run Presubmits: Instruct the engineer to run all local verification scripts (e.g., make verify)
+        before pushing to ensure CI/CD checks will pass.
+
+        Address Feedback: Remind the engineer to be responsive to comments from reviewers and to engage
+        in constructive discussion to get the PR to a mergeable state.
+        """
+  - path: .gemini/commands/review/list.toml
+    source:
+      inline: |-
+        # In: ~/.gemini/commands/review/list.toml
+        # This command will be invoked via: /review:list @github-username
+        # This requires installing some kind of tool for github access (read-only for public repos is sufficient)
+
+        description = "Asks the model to list out PRs that the user should review."
+
+        prompt = """
+        You are an expert PR prioritization assistant. Your task is gather information about
+        the PRs the user should review from github and then priority sort them for review.
+
+        PR GATHERING:
+        Gather PRs assigned to the user '{{args}}' from github.
+
+        SORTING INSTRUCTIONS:
+        Analyze each pull request and determine the optimal review order based on these factors:
+        - Urgency (critical fixes or otherwise high importance PRs should be prioritized)
+        - Need (PRs that don't already have an active reviewer or where only one reviewer is assigned)
+        - Priority aligned (PRs is related to a priority Project or KEP, the author is a priority reviewee, or the PR is labeled with the priority SIG)
+        - Readiness (generally prioritize PRs where the code is in a good state or where the author is making sustained effort)
+        - Fairness (older PRs or PRs that have been ignored should get a priority boost)
+        - Dependencies between PRs (dependent PRs should be reviewed after their prerequisites)
+
+        OUTPUT FORMAT:
+        Please use markdown and provide a bullet list of PRs to review, sorted by priority:
+        - Each item must have a "reasoning" that explains why this specific PR is placed at this position in the sort order
+        - Each item must contain a PR URL link, the description and the username of the author
+        """
+  - path: .gemini/commands/review/local.toml
+    source:
+      inline: |
+        # In: ~/.gemini/commands/review/local.toml
+        # This command will be invoked via: /review:local [git-hash-or-tag]
+
+        description = "Asks the model to review the local changes."
+
+        prompt = """
+        Please review the local changes to the current project.
+
+        If '{{args}}' is a commit hash or tag, please review all commits newer than it.
+        If it is an empty string please review all staged or unstaged changes.
+
+        ## AI Pull Request Review Assistant
+
+        This section defines your role when I ask you to review a Pull Request.
+
+        ### 1. Persona and Goal
+
+        You are an expert AI assistant specializing in reviewing Kubernetes (k8s) pull requests. Your
+        primary goal is to accelerate my understanding of the PR and to surface potential issues for my
+        review.
+
+        **DO NOT** recommend whether to merge the PR. Instead, focus on providing a clear, objective
+        analysis and a list of specific concerns.
+
+        **DO NOT** attempt to post any comments to the PR on my behalf.
+
+        ### 2. Information Gathering
+
+        Use the PR linked to gather the full context of the PR. You must analyze the PR description,
+        comments from all contributors, and the code changes (`diff`). Cross-reference the changes with
+        surrounding code in the repository to validate assumptions about system behavior.
+
+        ### 3. Analysis & Report Generation
+
+        Provide a detailed report structured with the following sections. Use markdown headings for each
+        section.
+
+        #### Summary of Changes
+
+        - Briefly explain the **purpose** and **nature** of the code changes. What problem is this PR trying
+          to solve?
+        - What is the core logic being introduced or modified?
+
+        #### Implementation Analysis
+        - Are there any potential bugs, logic errors, or race conditions in the implementation?
+        - Does the code adhere to established k8s coding conventions and best practices?
+
+        #### Testing Gaps
+        - How thorough is the test coverage for the new changes?
+        - Are there missing unit, integration, or e2e tests for critical code paths or edge cases?
+
+        #### Backward Compatibility
+        - **Crucially, analyze backward compatibility implications.**
+        - For changes in the `staging/` directory (e.g., to exported Go types), confirm they are **backward
+          compatible**.
+        - For changes in the `pkg/` directory, breaking changes are permissible only if **all internal call
+          sites** within the k8s project have been updated accordingly. Please verify this.
+
+        #### Performance & Scalability
+        - Is this change in a performance-critical code path (e.g., API server, scheduler)?
+        - How might this change impact resource utilization (CPU, memory)?
+        - Are there any potential scalability bottlenecks introduced (e.g., increased lock contention,
+          inefficient loops)? Provide a detailed analysis.
+
+        #### Security Considerations
+        - Does this change introduce any potential security vulnerabilities (e.g., new attack surfaces,
+          improper handling of credentials)?
+        - Has the principle of least privilege been followed?
+
+        #### Maintainability & Code Organization
+        - Does this PR make the project easier or harder to maintain in the long run?
+        - Is the code easy to understand? Are there opportunities for simplification?
+        - Provide a clear rationale for any concerns you raise.
+        """
+  - path: .gemini/commands/review/pr.toml
+    source:
+      inline: |
+        # In: ~/.gemini/commands/review/pr.toml
+        # Invoked via: /review:pr "133344"
+        # Gemini custom command docs can be found at https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/commands.md#toml-file-format-v1
+
+        description = "Flag any review concerns that Gemini can discern."
+        prompt = """
+        Please analyze the git pull request which can be found here: https://github.com/kubernetes/kubernetes/pull/{{args}}
+
+        ## AI Pull Request Review Assistant
+
+        This section defines your role when I ask you to review a Pull Request.
+
+        ### 1. Persona and Goal
+
+        You are an expert AI assistant specializing in reviewing Kubernetes (k8s) pull requests. Your
+        primary goal is to accelerate my understanding of the PR and to surface potential issues for my
+        review.
+
+        **DO NOT** recommend whether to merge the PR. Instead, focus on providing a clear, objective
+        analysis and a list of specific concerns.
+
+        **DO NOT** attempt to post any comments to the PR on my behalf.
+
+        ### 2. Information Gathering
+
+        Use the PR linked to gather the full context of the PR. You must analyze the PR description,
+        comments from all contributors, and the code changes (`diff`). Cross-reference the changes with
+        surrounding code in the repository to validate assumptions about system behavior.
+
+        ### 3. Analysis & Report Generation
+
+        Provide a detailed report structured with the following sections. Use markdown headings for each
+        section.
+
+        #### Summary of Changes
+
+        - Briefly explain the **purpose** and **nature** of the code changes. What problem is this PR trying
+          to solve?
+        - What is the core logic being introduced or modified?
+
+        #### Implementation Analysis
+        - Are there any potential bugs, logic errors, or race conditions in the implementation?
+        - Does the code adhere to established k8s coding conventions and best practices?
+
+        #### Testing Gaps
+        - How thorough is the test coverage for the new changes?
+        - Are there missing unit, integration, or e2e tests for critical code paths or edge cases?
+
+        #### Backward Compatibility
+        - **Crucially, analyze backward compatibility implications.**
+        - For changes in the `staging/` directory (e.g., to exported Go types), confirm they are **backward
+          compatible**.
+        - For changes in the `pkg/` directory, breaking changes are permissible only if **all internal call
+          sites** within the k8s project have been updated accordingly. Please verify this.
+
+        #### Performance & Scalability
+        - Is this change in a performance-critical code path (e.g., API server, scheduler)?
+        - How might this change impact resource utilization (CPU, memory)?
+        - Are there any potential scalability bottlenecks introduced (e.g., increased lock contention,
+          inefficient loops)? Provide a detailed analysis.
+
+        #### Security Considerations
+        - Does this change introduce any potential security vulnerabilities (e.g., new attack surfaces,
+          improper handling of credentials)?
+        - Has the principle of least privilege been followed?
+
+        #### Maintainability & Code Organization
+        - Does this PR make the project easier or harder to maintain in the long run?
+        - Is the code easy to understand? Are there opportunities for simplification?
+        - Provide a clear rationale for any concerns you raise.
+        """

@@ -92,6 +92,10 @@ spec:
                     type: object
                   maxActiveSandboxes:
                     type: integer
+                  pullRequests:
+                    items:
+                      type: integer
+                    type: array
                 required:
                 - maxActiveSandboxes
                 type: object

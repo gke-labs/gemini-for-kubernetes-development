@@ -117,26 +117,34 @@ func (r *RepoWatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 func (r *RepoWatchReconciler) reconcileReviews(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, client *github.Client, owner string, repo string) error {
 	log := log.FromContext(ctx)
 
-	// Get open PRs
-	prs, _, err := client.PullRequests.List(ctx, owner, repo, &github.PullRequestListOptions{State: "open"})
-	if err != nil {
-		log.Error(err, "unable to list pull requests")
-		return err
+	var prs []*github.PullRequest
+	if len(repoWatch.Spec.Review.PullRequests) > 0 {
+		// If specific PRs are requested, fetch them directly
+		for _, prNumber := range repoWatch.Spec.Review.PullRequests {
+			pr, _, err := client.PullRequests.Get(ctx, owner, repo, prNumber)
+			if err != nil {
+				log.Error(err, "unable to get pull request", "prNumber", prNumber)
+				// Continue to the next PR if there's an error fetching a specific one.
+				continue
+			}
+			prs = append(prs, pr)
+		}
+	} else {
+		// Otherwise, list open PRs
+		var err error
+		prs, _, err = client.PullRequests.List(ctx, owner, repo, &github.PullRequestListOptions{State: "open"})
+		if err != nil {
+			log.Error(err, "unable to list pull requests")
+			return err
+		}
 	}
 
-	// If the review spec has a list of PRs, filter the PRs
-	if len(repoWatch.Spec.Review.PullRequests) > 0 {
-		var filteredPRs []*github.PullRequest
-		for _, pr := range prs {
-			for _, prNumber := range repoWatch.Spec.Review.PullRequests {
-				if *pr.Number == prNumber {
-					filteredPRs = append(filteredPRs, pr)
-					break
-				}
-			}
-		}
-		prs = filteredPRs
+	// Log repoIssues and sandboxList for debug purposes
+	prsStr := []string{}
+	for _, pr := range prs {
+		prsStr = append(prsStr, fmt.Sprintf("%d", *pr.Number))
 	}
+	log.Info("DEBUG INFO PRs:", "prs", prsStr)
 
 	// Get existing sandboxes
 	sandboxList := &unstructured.UnstructuredList{}
