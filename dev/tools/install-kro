@@ -33,7 +33,8 @@ def run_command(command):
 def main():
     """Installs the latest version of Kro."""
     try:
-        kro_version = get_latest_kro_version()
+        #kro_version = get_latest_kro_version()
+        kro_version = "0.5.1"
         print(f"Installing kro version: {kro_version}")
 
         # TODO(barney-s): change OCI registry to k8s-sigs
