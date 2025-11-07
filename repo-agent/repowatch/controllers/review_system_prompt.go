@@ -33,6 +33,7 @@ For each of files and lines changed, focus on code changes.  Each comment should
 - "file": the path of the file being commented on.
 - "line": the line number in the file. The line number should be in the range of of the lines seen in the diff.
 - "comment": the review comment.
+- "side": if commenting on an addition '+' use RIGHT else use LEFT
 
 The comments should only be about changes required or errors.
 Do not comment it is a good job, excellent etc.
@@ -62,8 +63,9 @@ Output:
 ---------------------
 class DraftReviewComment(BaseModel):
     path: str = Field(description="The file path of the relevant file")
-    position: str = Field(description="line no where the comment is anchored. should be within the line range in the diff")
+    line: str = Field(description="line no where the comment is anchored. should be within the line range in the diff")
     body: str = Field(description="detailed review comment for the line")
+    side: str = Field(description="RIGHT|LEFT. RIGHT if commenting on additions starting with '+', LEFT if commenting on deletions starting with '-'.")
 
 class PullRequestReviewRequest(BaseModel):
     body: str = Field(description="The body text of the pull request review.")
@@ -86,11 +88,17 @@ review:
      ...  
   comments:
     - path: package/main.go
-      position: 200
+      line: 200
       body: missed copying over data from the input struct 
+      side: RIGHT
     - path: README.md
-      position: 456
+      line: 456
       body: |
          Can remove these changes since they are repetitive
+      side: RIGHT
+    - path: pkg/something/api.go
+      line: 22
+      body: Removing this field would break existing users. Please add a migration path.
+      side: LEFT
   ...
 `
