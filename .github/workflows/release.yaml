@@ -70,7 +70,7 @@ jobs:
           chmod +x ./dev/tools/deploy-to-kube
           mkdir release-assets/
           ./dev/tools/deploy-to-kube --image-prefix=ghcr.io/gke-labs/gemini-for-kubernetes-development/ --image-tag=${{ github.ref_name }} --working-dir repo-agent/ --output-file=release-assets/manifest.yaml
-          sed  's/{REPO_AGENT_VERSION:=.*}/{REPO_AGENT_VERSION:=${{ github.ref_name }}}/g' installer.sh > release-assets/installer.sh
+          sed  's/{REPO_AGENT_VERSION:=.*}/{REPO_AGENT_VERSION:=${{ github.ref_name }}}/g' repo-agent/installer.sh > release-assets/installer.sh
           chmod +x release-assets/installer.sh
 
       - name: Create Release
