@@ -63,7 +63,6 @@ For the PR changes, focus on:
 - security concerns if any
 
 Do not review any file paths that are not part of the diff.
-If the diff is large , try generating atleast 10 review comments
 
 {{if .Prompt}}
 ----------------
