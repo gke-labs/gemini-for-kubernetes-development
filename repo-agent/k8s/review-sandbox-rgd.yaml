@@ -20,6 +20,7 @@ spec:
       devcontainerConfigRef: string | default="devcontainer-json"
       source:
         cloneURL: string
+        diffURL: string
         htmlURL: string
         pr: string
         title: string
@@ -94,6 +95,8 @@ spec:
                       value: ${schema.spec.llmBackend.name}
                     - name: ENVBUILDER_GIT_URL
                       value: ${schema.spec.source.cloneURL}
+                    - name: GIT_DIFF_URL
+                      value: ${schema.spec.source.diffURL}
                     # https://github.com/coder/terraform-provider-envbuilder/issues/68#issuecomment-2557247792
                     #- name: ENVBUILDER_GET_CACHED_IMAGE
                     #  value: "1"

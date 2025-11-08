@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"time"
 
+	"github.com/bluekeyes/go-gitdiff/gitdiff"
 	"github.com/google/go-github/v39/github"
 	"gopkg.in/yaml.v3"
 )
@@ -51,6 +53,19 @@ func runReview() error {
 		log.Printf("Failed to write prompt to file: %v", err)
 	}
 
+	var diffFiles []*gitdiff.File
+	var err error
+	diffURL := os.Getenv("GIT_DIFF_URL")
+	if diffURL != "" {
+		log.Printf("Downloading and parsing diff from %s", diffURL)
+		diffFiles, err = parseDiffFromURL(diffURL)
+		if err != nil {
+			return fmt.Errorf("failed to parse diff from URL: %v", err)
+		}
+	} else {
+		return fmt.Errorf("GIT_DIFF_URL not set, skipping diff-based validation")
+	}
+
 	var agentFn func() ([]byte, error)
 	switch agentName {
 	case "gemini-cli":
@@ -64,8 +79,7 @@ func runReview() error {
 	}
 
 	var output []byte
-	var err error
-	maxRetries := 3
+	maxRetries := 5
 	for i := 0; i < maxRetries; i++ {
 		log.Printf("Running Agent %s (attempt %d/%d)", agentName, i+1, maxRetries)
 		output, err = agentFn()
@@ -83,31 +97,38 @@ func runReview() error {
 			log.Printf("Wrote agent output to %s", filename)
 		}
 
-		if err = validateAgentOutput(output); err == nil {
-			log.Println("Agent output validation successful.")
-			// Write output to file for debugging, regardless of validation result.
-			filename := "../agent-output.txt"
-			if err := os.WriteFile(filename, output, 0644); err != nil {
-				log.Printf("Failed to write agent output to %s: %v", filename, err)
-				continue
-			}
-			log.Printf("Wrote agent output to %s", filename)
-			return nil // Success
+		var agentOutput AgentOutput
+		if err := yaml.Unmarshal(output, &agentOutput); err != nil {
+			log.Printf("Agent output validation failed: failed to unmarshal yaml: %v. Retrying...", err)
+			time.Sleep(5 * time.Second)
+			continue
 		}
 
-		log.Printf("Agent output validation failed: %v. Retrying...", err)
-		time.Sleep(5 * time.Second)
+		if err = validateAgentOutput(&agentOutput, diffFiles); err != nil {
+			log.Printf("Agent output validation failed: %v. Retrying...", err)
+			time.Sleep(5 * time.Second)
+		}
+
+		log.Println("Agent output validation successful.")
+
+		finalOutput, err := yaml.Marshal(&agentOutput)
+		if err != nil {
+			return fmt.Errorf("failed to re-marshal agent output: %w", err)
+		}
+
+		filename = "../agent-output.txt"
+		if err := os.WriteFile(filename, finalOutput, 0644); err != nil {
+			log.Printf("Failed to write agent output to %s: %v", filename, err)
+			continue
+		}
+		log.Printf("Wrote agent output to %s", filename)
+		return nil // Success
 	}
 
 	return fmt.Errorf("agent output failed to validate after %d retries", maxRetries)
 }
 
-func validateAgentOutput(output []byte) error {
-	var agentOutput AgentOutput
-	if err := yaml.Unmarshal(output, &agentOutput); err != nil {
-		return fmt.Errorf("failed to unmarshal yaml: %v", err)
-	}
-
+func validateAgentOutput(agentOutput *AgentOutput, diffFiles []*gitdiff.File) error {
 	if agentOutput.Review == nil {
 		return fmt.Errorf("'review' field is missing from yaml output")
 	}
@@ -116,8 +137,67 @@ func validateAgentOutput(output []byte) error {
 		return fmt.Errorf("'review.body' field is missing or empty")
 	}
 
+	if agentOutput.Review.Comments == nil {
+		return fmt.Errorf("'review.comments' field is missing")
+	}
+
+	validComments := []*github.DraftReviewComment{}
+	for _, comment := range agentOutput.Review.Comments {
+		if isCommentValid(comment, diffFiles) {
+			validComments = append(validComments, comment)
+		} else {
+			if comment.Path != nil && comment.Line != nil {
+				log.Printf("Filtering out invalid comment on file %s at line %d", *comment.Path, *comment.Line)
+			} else {
+				log.Printf("Filtering out invalid comment with missing path or line")
+			}
+		}
+	}
+	agentOutput.Review.Comments = validComments
+
 	log.Println("YAML validation successful.")
 	return nil
+}
+
+func isCommentValid(comment *github.DraftReviewComment, diffFiles []*gitdiff.File) bool {
+	if comment.Path == nil || comment.Line == nil {
+		return false // Invalid comment if path or line is missing
+	}
+	for _, file := range diffFiles {
+		if file.NewName == *comment.Path {
+			for _, fragment := range file.TextFragments {
+				if *comment.Side == "RIGHT" {
+					if fragment.NewPosition <= int64(*comment.Line) && int64(*comment.Line) <= fragment.NewPosition+fragment.NewLines {
+						return true
+					}
+				} else {
+					if fragment.OldPosition <= int64(*comment.Line) && int64(*comment.Line) <= fragment.OldPosition+fragment.OldLines {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+func parseDiffFromURL(url string) ([]*gitdiff.File, error) {
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to download diff: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to download diff: status code %d", resp.StatusCode)
+	}
+
+	files, _, err := gitdiff.Parse(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse diff: %w", err)
+	}
+
+	return files, nil
 }
 
 func startCodeServer() (*exec.Cmd, error) {

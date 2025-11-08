@@ -624,6 +624,7 @@ func (r *RepoWatchReconciler) createReviewSandboxForPR(ctx context.Context, repo
 				},
 				"source": map[string]interface{}{
 					"cloneURL": fmt.Sprintf("%s#refs/heads/%s", *pr.Head.Repo.CloneURL, *pr.Head.Ref),
+					"diffURL":  *pr.DiffURL,
 					"htmlURL":  *pr.HTMLURL,
 					"pr":       fmt.Sprintf("%d", *pr.Number),
 					"title":    *pr.Title,

@@ -92,7 +92,6 @@ build-and-push-repo-agent:
 
 .PHONY: install-repo-agent
 install-repo-agent:
-	kubectl apply -f k8s/namespace.yaml
 	#  copy RGD to k8s dir so it gets deployed
 	cp review-sandbox/review-sandbox-rgd.yaml k8s/
 	cp issue-sandbox/issue-sandbox-rgd.yaml k8s/
