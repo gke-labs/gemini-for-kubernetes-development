@@ -32,22 +32,43 @@ Before you begin, ensure you have the following tools installed:
     export GITHUB_PAT="..."
     ```
 
-2.  **Installing Application:**
+2.  **Installing Repo-Agent:**
 
-    There are 2 installation modes:
-    * Build locally and install in a kind cluster
-    * Install in any kubernetes cluster from images built in GHCR
+    Install from the release manifests:
+
+    ```bash
+    kind create cluster  # optional you can use an existing cluster
+    export VERSION=v0.1.0-rc.1
+    curl -L  https://github.com/gke-labs/gemini-for-kubernetes-development/releases/download/${VERSION}/installer.sh | bash
+    ```
+
+    Run port-forwarding to access the UI.
+    Once you run the following command, the UI is accesible at `http://localhost:13380`.
+
+    ```bash
+    # Setup port forwarding to access the UI
+    while true; do \
+	  ENVOY_SERVICE=$$(kubectl get svc -n envoy-gateway-system --selector=gateway.envoyproxy.io/owning-gateway-namespace=repo-agent-system,gateway.envoyproxy.io/owning-gateway-name=repo-agent-gateway -o jsonpath='{.items[0].metadata.name}') && kubectl port-forward -n envoy-gateway-system --address 0.0.0.0 service/$${ENVOY_SERVICE} 13380:13380;\
+	  done
+    ```
+
+## Developer Installation from source
+
+1.  **Set Environment Variables:**
+
+    Export your Gemini API key and GitHub Personal Access Token as environment variables:
+
+    ```bash
+    export GEMINI_API_KEY="..."
+    export GITHUB_PAT="..."
+    ```
+
+2.  **Installing Repo-Agent:**
 
     Run the following command to build the project, create a KinD cluster, and deploy the application:
 
     ```bash
     make
-    ```
-
-    To install in an existing kubernetes cluster (say GKE), run this command:
-
-    ```bash
-    IMAGE_TAG=latest REGISTRY=ghcr.io/gke-labs/gemini-for-kubernetes-development/ make install
     ```
 
 3.  **Apply Example Configurations:**
