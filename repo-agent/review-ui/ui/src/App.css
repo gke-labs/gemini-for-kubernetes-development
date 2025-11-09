@@ -4,6 +4,7 @@
   background-color: #f4f6f8;
   min-height: 100vh;
   color: #333;
+  font-size: 0.9rem; /* Reduced base font size */
 }
 
 .dark-mode {
@@ -157,8 +158,8 @@ input:checked + .slider:before {
   border-radius: 8px;
   margin-bottom: 20px;
   padding: 20px;
-  width: 90%;
-  max-width: 800px;
+  width: 95%; /* Increased width */
+  /* max-width: 800px; Removed max-width */
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.05);
   text-align: left;
 }
@@ -179,7 +180,7 @@ input:checked + .slider:before {
 .pr-card-header h3 {
   margin: 0;
   color: #333;
-  font-size: 1.4rem;
+  font-size: 1.2rem; /* Reduced font size */
 }
 
 .dark-mode .pr-card-header h3 {
@@ -435,4 +436,47 @@ input:checked + .slider:before {
 
 .branch-link a:hover {
   text-decoration: underline;
+}
+
+.diff-container {
+  margin-top: 1rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+}
+
+.dark-mode .diff-container {
+  border-color: #444;
+}
+
+.diff-file {
+  margin-bottom: 1rem;
+}
+
+.diff-file-header {
+  background-color: #f7f7f7;
+  padding: 0.5rem;
+  font-family: monospace;
+  border-bottom: 1px solid #ddd;
+}
+
+.dark-mode .diff-file-header {
+  background-color: #2d2d2d;
+  border-bottom-color: #444;
+}
+
+.diff-widget {
+  background-color: #fff;
+  border: 1px solid #ddd;
+  padding: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.dark-mode .diff-widget {
+  background-color: #1e1e1e;
+  border-color: #444;
+}
+
+.diff-widget textarea {
+  width: 100%;
+  min-height: 60px;
 }

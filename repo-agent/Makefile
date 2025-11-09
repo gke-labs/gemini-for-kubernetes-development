@@ -138,3 +138,13 @@ port-forward:
 	ENVOY_SERVICE=$$(kubectl get svc -n envoy-gateway-system --selector=gateway.envoyproxy.io/owning-gateway-namespace=repo-agent-system,gateway.envoyproxy.io/owning-gateway-name=repo-agent-gateway -o jsonpath='{.items[0].metadata.name}') && kubectl port-forward -n envoy-gateway-system --address 0.0.0.0 service/$${ENVOY_SERVICE} 13380:13380;\
 	done
 	# kubectl port-forward -n repo-agent-system --address 0.0.0.0 service/devc-agent-sandbox-pr-102-lb  13338:13338
+
+.PHONY: reload-ui
+reload-ui:
+	make build-and-push-repo-agent
+	make install-repo-agent
+	kubectl scale  -n repo-agent-system deployment pr-review-ui --replicas=0
+	sleep 5
+	kubectl scale  -n repo-agent-system deployment pr-review-ui --replicas=1
+	sleep 5
+	make port-forward
