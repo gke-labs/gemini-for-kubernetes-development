@@ -313,7 +313,7 @@ function PrReviewCard({
             <button className="btn btn-submit" onClick={() => handleSubmit(pr.id)} disabled={!!pr.review}>
               {pr.review ? 'Submitted' : 'Create Draft Review'}
             </button>
-            <button className="btn btn-delete" onClick={() => handleDelete(pr.id)}>Delete</button>
+          <button className="btn btn-delete" onClick={(e) => { e.stopPropagation(); handleDelete(pr.id); }}>&#x2715;</button>
           </div>
         </>
       )}
