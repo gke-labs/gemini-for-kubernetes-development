@@ -1174,6 +1174,12 @@ func proxy(c *gin.Context) {
 		return
 	}
 
+	// validate the URL begins with  https://github.com/ or https://raw.githubusercontent.com/
+	if !strings.HasPrefix(proxyURL, "https://github.com/") && !strings.HasPrefix(proxyURL, "https://raw.githubusercontent.com/") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "url must begin with https://github.com/ or https://raw.githubusercontent.com/"})
+		return
+	}
+
 	resp, err := http.Get(proxyURL)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to fetch url: %v", err)})
@@ -1187,5 +1193,5 @@ func proxy(c *gin.Context) {
 		return
 	}
 
-	c.String(http.StatusOK, string(body))
+	c.String(resp.StatusCode, string(body))
 }
