@@ -53,6 +53,13 @@ func (m *mockRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) 
 	return resp, nil
 }
 
+// TestRepoWatchReconciler_Reconcile is a crucial test that covers the main success path of the RepoWatchReconciler.
+// It simulates a RepoWatch resource being created, and it verifies that the reconciler correctly:
+// - Fetches the RepoWatch resource.
+// - Creates a GitHub client.
+// - Lists open pull requests.
+// - Creates a ReviewSandbox for an open pull request.
+// - Updates the RepoWatch status with the correct information about the active sandbox and watched PR.
 func TestRepoWatchReconciler_Reconcile(t *testing.T) {
 	g := NewWithT(t)
 
@@ -148,160 +155,12 @@ func TestRepoWatchReconciler_Reconcile(t *testing.T) {
 	g.Expect(reviewSandboxList.Items).To(HaveLen(1))
 }
 
-func TestRepoWatchReconciler_Reconcile_NotFound(t *testing.T) {
-	g := NewWithT(t)
-
-	// 1. Create a Scheme and add your API types to it
-	s := runtime.NewScheme()
-	_ = clientgoscheme.AddToScheme(s)
-	_ = reviewv1alpha1.AddToScheme(s)
-
-	// 2. Initialize the fake client with any initial objects
-	fakeClient := clientfake.NewClientBuilder().WithScheme(s).Build()
-
-	// 3. Create your Reconciler instance
-	r := &RepoWatchReconciler{
-		Client: fakeClient,
-		Scheme: s,
-	}
-
-	// 4. Define the Reconcile request
-	req := reconcile.Request{
-		NamespacedName: types.NamespacedName{
-			Name:      "test-repowatch",
-			Namespace: "default",
-		},
-	}
-
-	// 5. Call the Reconcile method
-	_, err := r.Reconcile(context.Background(), req)
-	g.Expect(err).NotTo(HaveOccurred())
-}
-
-func TestRepoWatchReconciler_Reconcile_GitHubSecretNotFound(t *testing.T) {
-	g := NewWithT(t)
-
-	// 1. Create a Scheme and add your API types to it
-	s := runtime.NewScheme()
-	_ = clientgoscheme.AddToScheme(s)
-	_ = reviewv1alpha1.AddToScheme(s)
-
-	// 2. Initialize the fake client with any initial objects
-	fakeClient := clientfake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&reviewv1alpha1.RepoWatch{}).Build()
-
-	// 3. Create your Reconciler instance
-	r := &RepoWatchReconciler{
-		Client: fakeClient,
-		Scheme: s,
-		NewGithubClient: func(ctx context.Context, k8sClient client.Client, repoWatch *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
-			// In this test, we expect the secret to be missing, so return an error.
-			return nil, nil, errors.New("github secret not found")
-		},
-	}
-
-	// 4. Define the Reconcile request
-	objName := "test-repowatch"
-	objNamespace := "default"
-	req := reconcile.Request{
-		NamespacedName: types.NamespacedName{
-			Name:      objName,
-			Namespace: objNamespace,
-		},
-	}
-
-	// 5. Create the object your reconciler will act upon
-	repoWatch := &reviewv1alpha1.RepoWatch{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      objName,
-			Namespace: objNamespace,
-		},
-		Spec: reviewv1alpha1.RepoWatchSpec{
-			RepoURL:          "https://github.com/test/repo",
-			GithubSecretName: "github-secret",
-		},
-	}
-	g.Expect(fakeClient.Create(context.Background(), repoWatch)).To(Succeed())
-
-	// 6. Call the Reconcile method
-	_, err := r.Reconcile(context.Background(), req)
-	g.Expect(err).To(HaveOccurred())
-}
-
-func TestRepoWatchReconciler_Reconcile_InvalidRepoURL(t *testing.T) {
-	g := NewWithT(t)
-
-	// 1. Create a Scheme and add your API types to it
-	s := runtime.NewScheme()
-	_ = clientgoscheme.AddToScheme(s)
-	_ = reviewv1alpha1.AddToScheme(s)
-
-	// 2. Initialize the fake client with any initial objects
-	fakeClient := clientfake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&reviewv1alpha1.RepoWatch{}).Build()
-
-	// 3. Create your Reconciler instance
-	mockHTTPClient := &http.Client{
-		Transport: &mockRoundTripper{
-			responses: map[string]*http.Response{
-				"https://api.github.com/repos/test/repo/pulls?state=open": {
-					StatusCode: http.StatusOK,
-					Body:       ioutil.NopCloser(strings.NewReader(`[{"number": 1, "head": {"repo": {"clone_url": "https://github.com/test/repo", "ref": "main"}, "html_url": "https://github.com/test/repo/pull/1"}, "title": "Test PR"}]`)),
-				},
-				"https://api.github.com/user": {
-					StatusCode: http.StatusOK,
-					Body:       ioutil.NopCloser(strings.NewReader(`{"login": "test-user", "name": "Test User", "email": "test@example.com"}`)),
-				},
-			},
-		},
-	}
-	ghClient := github.NewClient(mockHTTPClient)
-	r := &RepoWatchReconciler{
-		Client: fakeClient,
-		Scheme: s,
-		NewGithubClient: func(ctx context.Context, k8sClient client.Client, repoWatch *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
-			return ghClient, map[string]string{"pat": "test-pat"}, nil
-		},
-	}
-
-	// 4. Define the Reconcile request
-	objName := "test-repowatch"
-	objNamespace := "default"
-	req := reconcile.Request{
-		NamespacedName: types.NamespacedName{
-			Name:      objName,
-			Namespace: objNamespace,
-		},
-	}
-
-	// 5. Create the object your reconciler will act upon
-	repoWatch := &reviewv1alpha1.RepoWatch{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      objName,
-			Namespace: objNamespace,
-		},
-		Spec: reviewv1alpha1.RepoWatchSpec{
-			RepoURL:          "invalid-repo-url", // Invalid URL
-			GithubSecretName: "github-secret",
-		},
-	}
-	g.Expect(fakeClient.Create(context.Background(), repoWatch)).To(Succeed())
-
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "github-secret",
-			Namespace: objNamespace,
-		},
-		Data: map[string][]byte{
-			"pat": []byte("test-pat"),
-		},
-	}
-	g.Expect(fakeClient.Create(context.Background(), secret)).To(Succeed())
-
-	// 6. Call the Reconcile method
-	_, err := r.Reconcile(context.Background(), req)
-	g.Expect(err).To(HaveOccurred())
-}
-
-func TestRepoWatchReconciler_Reconcile_Issues(t *testing.T) {
+// TestRepoWatchReconciler_ReconcileIssues focuses on the success path for handling GitHub issues.
+// It ensures that the reconciler can:
+// - List open issues.
+// - Create an IssueSandbox for an open issue based on the IssueHandler configuration.
+// - Updates the RepoWatch status with information about the watched issue.
+func TestRepoWatchReconciler_ReconcileIssues(t *testing.T) {
 	g := NewWithT(t)
 
 	// 1. Create a Scheme and add your API types to it
@@ -424,6 +283,16 @@ func TestRepoWatchReconciler_Reconcile_Issues(t *testing.T) {
 	g.Expect(issueSandboxList.Items).To(HaveLen(1))
 }
 
+// TestReconcileReviewSandboxes contains several sub-tests that are highly relevant for success
+// conditions related to ReviewSandbox management:
+//   - "deletes sandbox for closed PR and creates new for open PR": This test case ensures that the
+//     controller correctly cleans up resources for pull requests that are no longer open and
+//     creates new resources for new open pull requests. This is a key part of the reconciliation logic.
+//   - "does not create new sandbox if max active sandboxes reached": This test verifies that the
+//     controller respects the MaxActiveSandboxes limit, which is an important success condition
+//     for resource management.
+//   - "does not create new sandbox if it already exists": This test ensures that the controller
+//     does not create duplicate resources, which is a fundamental aspect of idempotent reconciliation.
 func TestReconcileReviewSandboxes(t *testing.T) {
 	g := NewWithT(t)
 
@@ -660,6 +529,394 @@ func TestReconcileReviewSandboxes(t *testing.T) {
 		g.Expect(fetchedRepoWatch.Status.PendingPRs).To(HaveLen(0))
 	})
 }
+
+// TestReconcileIssueHandlerSandboxes mirrors the structure of TestReconcileReviewSandboxes but for issues and
+// IssueSandboxes. Its sub-tests are also critical for verifying the success conditions of issue handling:
+//   - "deletes sandbox for closed issue and creates new for open issue": Similar to the PR counterpart, this
+//     test ensures that sandboxes for closed issues are cleaned up and new ones are created for open issues.
+//   - "does not create new sandbox if max active sandboxes reached": This verifies that the
+//     MaxActiveSandboxes limit is respected for issue handlers.
+//   - "does not create new sandbox if it already exists": This ensures idempotency for issue sandbox creation.
+func TestReconcileIssueHandlerSandboxes(t *testing.T) {
+	g := NewWithT(t)
+
+	s := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(s)
+	_ = reviewv1alpha1.AddToScheme(s)
+
+	issueNumber := 1
+	repoURL := "https://github.com/test/repo"
+	handlerName := "testhandler"
+
+	currentUser := &github.User{
+		Login: github.String("test-user"),
+	}
+
+	repoWatch := &reviewv1alpha1.RepoWatch{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-repowatch",
+			Namespace: "default",
+			UID:       "test-uid",
+		},
+		Spec: reviewv1alpha1.RepoWatchSpec{
+			RepoURL:          repoURL,
+			GithubSecretName: "github-secret",
+			IssueHandlers: []reviewv1alpha1.IssueHandlerSpec{
+				{
+					Name:               handlerName,
+					MaxActiveSandboxes: 1,
+				},
+			},
+		},
+	}
+	handler := repoWatch.Spec.IssueHandlers[0]
+
+	// Issue that is open
+	issue := &github.Issue{
+		Number:        &issueNumber,
+		HTMLURL:       github.String("https://github.com/test/repo/issues/1"),
+		Title:         github.String("Test Issue"),
+		RepositoryURL: github.String("https://api.github.com/repos/test/repo"),
+	}
+
+	// Sandbox for an issue that is now closed
+	closedIssueSandbox := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
+			"kind":       "IssueSandbox",
+			"metadata": map[string]interface{}{
+				"name":      "repo-issue-2-testhandler",
+				"namespace": "default",
+				"ownerReferences": []interface{}{
+					map[string]interface{}{
+						"apiVersion": "review.gemini.google.com/v1alpha1",
+						"kind":       "RepoWatch",
+						"name":       "test-repowatch",
+						"uid":        "test-uid",
+					},
+				},
+			},
+		},
+	}
+
+	// Test case 1: Deleting a sandbox for a closed issue and creating a new one for an open issue.
+	t.Run("deletes sandbox for closed issue and creates new for open issue", func(t *testing.T) {
+		r := &RepoWatchReconciler{
+			Client: clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, closedIssueSandbox).WithStatusSubresource(repoWatch).Build(),
+			Scheme: s,
+			NewGithubClient: func(ctx context.Context, k8sClient client.Client, repoWatch *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
+				return &github.Client{}, map[string]string{}, nil
+			},
+		}
+
+		sandboxList := &unstructured.UnstructuredList{}
+		sandboxList.SetGroupVersionKind(schema.GroupVersionKind{
+			Group:   "custom.agents.x-k8s.io",
+			Version: "v1alpha1",
+			Kind:    "IssueSandbox",
+		})
+		g.Expect(r.Client.List(context.Background(), sandboxList)).To(Succeed())
+		g.Expect(sandboxList.Items).To(HaveLen(1)) // Should contain the closedIssueSandbox initially
+
+		err := r.reconcileIssueHandlerSandboxes(context.Background(), currentUser, handler, repoWatch, []*github.Issue{issue}, sandboxList)
+		g.Expect(err).NotTo(HaveOccurred())
+
+		// Check that the sandbox for the closed issue is deleted and a new one for the open issue is created
+		sandboxList = &unstructured.UnstructuredList{}
+		sandboxList.SetGroupVersionKind(schema.GroupVersionKind{
+			Group:   "custom.agents.x-k8s.io",
+			Version: "v1alpha1",
+			Kind:    "IssueSandbox",
+		})
+		g.Expect(r.Client.List(context.Background(), sandboxList)).To(Succeed())
+		g.Expect(sandboxList.Items).To(HaveLen(1)) // Should contain only the sandbox for issueNumber 1
+		g.Expect(sandboxList.Items[0].GetName()).To(Equal("repo-issue-1-testhandler"))
+	})
+
+	// Test case 2: Not creating a new sandbox if the maximum number of active sandboxes has been reached.
+	t.Run("does not create new sandbox if max active sandboxes reached", func(t *testing.T) {
+		// Set MaxActiveSandboxes to 1
+		repoWatch.Spec.IssueHandlers[0].MaxActiveSandboxes = 1
+
+		// Create an existing active sandbox for issueNumber 1
+		activeIssueSandbox := &unstructured.Unstructured{
+			Object: map[string]interface{}{
+				"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
+				"kind":       "IssueSandbox",
+				"metadata": map[string]interface{}{
+					"name":      "repo-issue-1-testhandler",
+					"namespace": "default",
+					"ownerReferences": []interface{}{
+						map[string]interface{}{
+							"apiVersion": "review.gemini.google.com/v1alpha1",
+							"kind":       "RepoWatch",
+							"name":       "test-repowatch",
+							"uid":        "test-uid",
+						},
+					},
+				},
+				"spec": map[string]interface{}{
+					"replicas": int64(1), // Mark as active
+				},
+			},
+		}
+
+		// Create a new issue that should become pending
+		newIssueNumber := 3
+		newIssue := &github.Issue{
+			Number:        &newIssueNumber,
+			HTMLURL:       github.String("https://github.com/test/repo/issues/3"),
+			Title:         github.String("New Pending Issue"),
+			RepositoryURL: github.String("https://api.github.com/repos/test/repo"),
+		}
+
+		r := &RepoWatchReconciler{
+			Client: clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, activeIssueSandbox).WithStatusSubresource(repoWatch).Build(),
+			Scheme: s,
+			NewGithubClient: func(ctx context.Context, k8sClient client.Client, repoWatch *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
+				return &github.Client{}, map[string]string{}, nil
+			},
+		}
+
+		// Call reconcileIssueHandlerSandboxes with the active issue and the new issue
+		err := r.reconcileIssueHandlerSandboxes(context.Background(), currentUser, handler, repoWatch, []*github.Issue{issue, newIssue}, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*activeIssueSandbox}})
+		g.Expect(err).NotTo(HaveOccurred())
+
+		// Check that no new sandbox was created
+		sandboxList := &unstructured.UnstructuredList{}
+		sandboxList.SetGroupVersionKind(schema.GroupVersionKind{
+			Group:   "custom.agents.x-k8s.io",
+			Version: "v1alpha1",
+			Kind:    "IssueSandbox",
+		})
+		g.Expect(r.Client.List(context.Background(), sandboxList)).To(Succeed())
+		g.Expect(sandboxList.Items).To(HaveLen(1)) // Only the activeIssueSandbox should exist
+		g.Expect(sandboxList.Items[0].GetName()).To(Equal("repo-issue-1-testhandler"))
+		// Check that the RepoWatch status is updated correctly
+		fetchedRepoWatch := &reviewv1alpha1.RepoWatch{}
+		g.Expect(r.Client.Get(context.Background(), types.NamespacedName{Name: repoWatch.Name, Namespace: repoWatch.Namespace}, fetchedRepoWatch)).To(Succeed())
+		g.Expect(fetchedRepoWatch.Status.WatchedIssues[handlerName]).To(HaveLen(1))
+		g.Expect(fetchedRepoWatch.Status.WatchedIssues[handlerName][0].Number).To(Equal(issueNumber))
+		g.Expect(fetchedRepoWatch.Status.WatchedIssues[handlerName][0].Status).To(Equal("Active"))
+		g.Expect(fetchedRepoWatch.Status.PendingIssues[handlerName]).To(HaveLen(1))
+		g.Expect(fetchedRepoWatch.Status.PendingIssues[handlerName][0].Number).To(Equal(newIssueNumber))
+		g.Expect(fetchedRepoWatch.Status.PendingIssues[handlerName][0].Status).To(Equal("Pending"))
+	})
+
+	// Test case 3: Not creating a new sandbox if it already exists.
+	t.Run("does not create new sandbox if it already exists", func(t *testing.T) {
+		// Set MaxActiveSandboxes to 1
+		repoWatch.Spec.IssueHandlers[0].MaxActiveSandboxes = 1
+
+		// Existing sandbox for issueNumber 1
+		existingIssueSandbox := &unstructured.Unstructured{
+			Object: map[string]interface{}{
+				"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
+				"kind":       "IssueSandbox",
+				"metadata": map[string]interface{}{
+					"name":      "repo-issue-1-testhandler",
+					"namespace": "default",
+					"ownerReferences": []interface{}{
+						map[string]interface{}{
+							"apiVersion": "review.gemini.google.com/v1alpha1",
+							"kind":       "RepoWatch",
+							"name":       "test-repowatch",
+							"uid":        "test-uid",
+						},
+					},
+				},
+				"spec": map[string]interface{}{
+					"replicas": int64(1),
+				},
+			},
+		}
+
+		r := &RepoWatchReconciler{
+			Client: clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, existingIssueSandbox).WithStatusSubresource(repoWatch).Build(),
+			Scheme: s,
+			NewGithubClient: func(ctx context.Context, k8sClient client.Client, repoWatch *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
+				return &github.Client{}, map[string]string{}, nil
+			},
+		}
+
+		// Call reconcileIssueHandlerSandboxes with the existing issue
+		err := r.reconcileIssueHandlerSandboxes(context.Background(), currentUser, handler, repoWatch, []*github.Issue{issue}, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*existingIssueSandbox}})
+		g.Expect(err).NotTo(HaveOccurred())
+
+		// Check that no new sandbox was created and the existing one is still there
+		sandboxList := &unstructured.UnstructuredList{}
+		sandboxList.SetGroupVersionKind(schema.GroupVersionKind{
+			Group:   "custom.agents.x-k8s.io",
+			Version: "v1alpha1",
+			Kind:    "IssueSandbox",
+		})
+		g.Expect(r.Client.List(context.Background(), sandboxList)).To(Succeed())
+		g.Expect(sandboxList.Items).To(HaveLen(1)) // Only the existingIssueSandbox should exist
+		g.Expect(sandboxList.Items[0].GetName()).To(Equal("repo-issue-1-testhandler"))
+
+		// Check that the RepoWatch status is updated correctly
+		fetchedRepoWatch := &reviewv1alpha1.RepoWatch{}
+		g.Expect(r.Client.Get(context.Background(), types.NamespacedName{Name: repoWatch.Name, Namespace: repoWatch.Namespace}, fetchedRepoWatch)).To(Succeed())
+		g.Expect(fetchedRepoWatch.Status.WatchedIssues[handlerName]).To(HaveLen(1))
+		g.Expect(fetchedRepoWatch.Status.WatchedIssues[handlerName][0].Number).To(Equal(issueNumber))
+		g.Expect(fetchedRepoWatch.Status.WatchedIssues[handlerName][0].Status).To(Equal("Active"))
+		g.Expect(fetchedRepoWatch.Status.PendingIssues[handlerName]).To(HaveLen(0))
+	})
+}
+
+func TestRepoWatchReconciler_Reconcile_NotFound(t *testing.T) {
+	g := NewWithT(t)
+
+	// 1. Create a Scheme and add your API types to it
+	s := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(s)
+	_ = reviewv1alpha1.AddToScheme(s)
+
+	// 2. Initialize the fake client with any initial objects
+	fakeClient := clientfake.NewClientBuilder().WithScheme(s).Build()
+
+	// 3. Create your Reconciler instance
+	r := &RepoWatchReconciler{
+		Client: fakeClient,
+		Scheme: s,
+	}
+
+	// 4. Define the Reconcile request
+	req := reconcile.Request{
+		NamespacedName: types.NamespacedName{
+			Name:      "test-repowatch",
+			Namespace: "default",
+		},
+	}
+
+	// 5. Call the Reconcile method
+	_, err := r.Reconcile(context.Background(), req)
+	g.Expect(err).NotTo(HaveOccurred())
+}
+
+func TestRepoWatchReconciler_Reconcile_GitHubSecretNotFound(t *testing.T) {
+	g := NewWithT(t)
+
+	// 1. Create a Scheme and add your API types to it
+	s := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(s)
+	_ = reviewv1alpha1.AddToScheme(s)
+
+	// 2. Initialize the fake client with any initial objects
+	fakeClient := clientfake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&reviewv1alpha1.RepoWatch{}).Build()
+
+	// 3. Create your Reconciler instance
+	r := &RepoWatchReconciler{
+		Client: fakeClient,
+		Scheme: s,
+		NewGithubClient: func(ctx context.Context, k8sClient client.Client, repoWatch *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
+			// In this test, we expect the secret to be missing, so return an error.
+			return nil, nil, errors.New("github secret not found")
+		},
+	}
+
+	// 4. Define the Reconcile request
+	objName := "test-repowatch"
+	objNamespace := "default"
+	req := reconcile.Request{
+		NamespacedName: types.NamespacedName{
+			Name:      objName,
+			Namespace: objNamespace,
+		},
+	}
+
+	// 5. Create the object your reconciler will act upon
+	repoWatch := &reviewv1alpha1.RepoWatch{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      objName,
+			Namespace: objNamespace,
+		},
+		Spec: reviewv1alpha1.RepoWatchSpec{
+			RepoURL:          "https://github.com/test/repo",
+			GithubSecretName: "github-secret",
+		},
+	}
+	g.Expect(fakeClient.Create(context.Background(), repoWatch)).To(Succeed())
+
+	// 6. Call the Reconcile method
+	_, err := r.Reconcile(context.Background(), req)
+	g.Expect(err).To(HaveOccurred())
+}
+
+func TestRepoWatchReconciler_Reconcile_InvalidRepoURL(t *testing.T) {
+	g := NewWithT(t)
+
+	// 1. Create a Scheme and add your API types to it
+	s := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(s)
+	_ = reviewv1alpha1.AddToScheme(s)
+
+	// 2. Initialize the fake client with any initial objects
+	fakeClient := clientfake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&reviewv1alpha1.RepoWatch{}).Build()
+
+	// 3. Create your Reconciler instance
+	mockHTTPClient := &http.Client{
+		Transport: &mockRoundTripper{
+			responses: map[string]*http.Response{
+				"https://api.github.com/repos/test/repo/pulls?state=open": {
+					StatusCode: http.StatusOK,
+					Body:       ioutil.NopCloser(strings.NewReader(`[{"number": 1, "head": {"repo": {"clone_url": "https://github.com/test/repo", "ref": "main"}, "html_url": "https://github.com/test/repo/pull/1"}, "title": "Test PR"}]`)),
+				},
+				"https://api.github.com/user": {
+					StatusCode: http.StatusOK,
+					Body:       ioutil.NopCloser(strings.NewReader(`{"login": "test-user", "name": "Test User", "email": "test@example.com"}`)),
+				},
+			},
+		},
+	}
+	ghClient := github.NewClient(mockHTTPClient)
+	r := &RepoWatchReconciler{
+		Client: fakeClient,
+		Scheme: s,
+		NewGithubClient: func(ctx context.Context, k8sClient client.Client, repoWatch *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
+			return ghClient, map[string]string{"pat": "test-pat"}, nil
+		},
+	}
+
+	// 4. Define the Reconcile request
+	objName := "test-repowatch"
+	objNamespace := "default"
+	req := reconcile.Request{
+		NamespacedName: types.NamespacedName{
+			Name:      objName,
+			Namespace: objNamespace,
+		},
+	}
+
+	// 5. Create the object your reconciler will act upon
+	repoWatch := &reviewv1alpha1.RepoWatch{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      objName,
+			Namespace: objNamespace,
+		},
+		Spec: reviewv1alpha1.RepoWatchSpec{
+			RepoURL:          "invalid-repo-url", // Invalid URL
+			GithubSecretName: "github-secret",
+		},
+	}
+	g.Expect(fakeClient.Create(context.Background(), repoWatch)).To(Succeed())
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "github-secret",
+			Namespace: objNamespace,
+		},
+		Data: map[string][]byte{
+			"pat": []byte("test-pat"),
+		},
+	}
+	g.Expect(fakeClient.Create(context.Background(), secret)).To(Succeed())
+
+	// 6. Call the Reconcile method
+	_, err := r.Reconcile(context.Background(), req)
+	g.Expect(err).To(HaveOccurred())
+}
+
 func TestNewGithubClient(t *testing.T) {
 	g := NewWithT(t)
 
@@ -773,232 +1030,4 @@ func TestNewGithubClient(t *testing.T) {
 			}
 		})
 	}
-}
-
-
-func TestReconcileIssueHandlerSandboxes(t *testing.T) {
-	g := NewWithT(t)
-
-	s := runtime.NewScheme()
-	_ = clientgoscheme.AddToScheme(s)
-	_ = reviewv1alpha1.AddToScheme(s)
-
-	issueNumber := 1
-	repoURL := "https://github.com/test/repo"
-	handlerName := "testhandler"
-
-	currentUser := &github.User{
-		Login: github.String("test-user"),
-	}
-
-	repoWatch := &reviewv1alpha1.RepoWatch{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-repowatch",
-			Namespace: "default",
-			UID:       "test-uid",
-		},
-		Spec: reviewv1alpha1.RepoWatchSpec{
-			RepoURL:          repoURL,
-			GithubSecretName: "github-secret",
-			IssueHandlers: []reviewv1alpha1.IssueHandlerSpec{
-				{
-					Name:               handlerName,
-					MaxActiveSandboxes: 1,
-				},
-			},
-		},
-	}
-	handler := repoWatch.Spec.IssueHandlers[0]
-
-	// Issue that is open
-	issue := &github.Issue{
-		Number: &issueNumber,
-		HTMLURL: github.String("https://github.com/test/repo/issues/1"),
-		Title:   github.String("Test Issue"),
-		RepositoryURL: github.String("https://api.github.com/repos/test/repo"),
-	}
-
-	// Sandbox for an issue that is now closed
-	closedIssueSandbox := &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
-			"kind":       "IssueSandbox",
-			"metadata": map[string]interface{}{
-				"name":      "repo-issue-2-testhandler",
-				"namespace": "default",
-				"ownerReferences": []interface{}{
-					map[string]interface{}{
-						"apiVersion": "review.gemini.google.com/v1alpha1",
-						"kind":       "RepoWatch",
-						"name":       "test-repowatch",
-						"uid":        "test-uid",
-					},
-				},
-			},
-		},
-	}
-
-	// Test case 1: Deleting a sandbox for a closed issue and creating a new one for an open issue.
-	t.Run("deletes sandbox for closed issue and creates new for open issue", func(t *testing.T) {
-		r := &RepoWatchReconciler{
-			Client: clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, closedIssueSandbox).WithStatusSubresource(repoWatch).Build(),
-			Scheme: s,
-			NewGithubClient: func(ctx context.Context, k8sClient client.Client, repoWatch *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
-				return &github.Client{}, map[string]string{}, nil
-			},
-		}
-
-		sandboxList := &unstructured.UnstructuredList{}
-		sandboxList.SetGroupVersionKind(schema.GroupVersionKind{
-			Group:   "custom.agents.x-k8s.io",
-			Version: "v1alpha1",
-			Kind:    "IssueSandbox",
-		})
-		g.Expect(r.Client.List(context.Background(), sandboxList)).To(Succeed())
-		g.Expect(sandboxList.Items).To(HaveLen(1)) // Should contain the closedIssueSandbox initially
-
-		err := r.reconcileIssueHandlerSandboxes(context.Background(), currentUser, handler, repoWatch, []*github.Issue{issue}, sandboxList)
-		g.Expect(err).NotTo(HaveOccurred())
-
-		// Check that the sandbox for the closed issue is deleted and a new one for the open issue is created
-		sandboxList = &unstructured.UnstructuredList{}
-		sandboxList.SetGroupVersionKind(schema.GroupVersionKind{
-			Group:   "custom.agents.x-k8s.io",
-			Version: "v1alpha1",
-			Kind:    "IssueSandbox",
-		})
-		g.Expect(r.Client.List(context.Background(), sandboxList)).To(Succeed())
-		g.Expect(sandboxList.Items).To(HaveLen(1)) // Should contain only the sandbox for issueNumber 1
-		g.Expect(sandboxList.Items[0].GetName()).To(Equal("repo-issue-1-testhandler"))
-	})
-
-	// Test case 2: Not creating a new sandbox if the maximum number of active sandboxes has been reached.
-	t.Run("does not create new sandbox if max active sandboxes reached", func(t *testing.T) {
-		// Set MaxActiveSandboxes to 1
-		repoWatch.Spec.IssueHandlers[0].MaxActiveSandboxes = 1
-
-		// Create an existing active sandbox for issueNumber 1
-		activeIssueSandbox := &unstructured.Unstructured{
-			Object: map[string]interface{}{
-				"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
-				"kind":       "IssueSandbox",
-				"metadata": map[string]interface{}{
-					"name":      "repo-issue-1-testhandler",
-					"namespace": "default",
-					"ownerReferences": []interface{}{
-						map[string]interface{}{
-							"apiVersion": "review.gemini.google.com/v1alpha1",
-							"kind":       "RepoWatch",
-							"name":       "test-repowatch",
-							"uid":        "test-uid",
-						},
-					},
-				},
-				"spec": map[string]interface{}{
-					"replicas": int64(1), // Mark as active
-				},
-			},
-		}
-
-		// Create a new issue that should become pending
-		newIssueNumber := 3
-		newIssue := &github.Issue{
-			Number: &newIssueNumber,
-			HTMLURL: github.String("https://github.com/test/repo/issues/3"),
-			Title:   github.String("New Pending Issue"),
-			RepositoryURL: github.String("https://api.github.com/repos/test/repo"),
-		}
-
-		r := &RepoWatchReconciler{
-			Client: clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, activeIssueSandbox).WithStatusSubresource(repoWatch).Build(),
-			Scheme: s,
-			NewGithubClient: func(ctx context.Context, k8sClient client.Client, repoWatch *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
-				return &github.Client{}, map[string]string{}, nil
-			},
-		}
-
-		// Call reconcileIssueHandlerSandboxes with the active issue and the new issue
-		err := r.reconcileIssueHandlerSandboxes(context.Background(), currentUser, handler, repoWatch, []*github.Issue{issue, newIssue}, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*activeIssueSandbox}})
-		g.Expect(err).NotTo(HaveOccurred())
-
-		// Check that no new sandbox was created
-		sandboxList := &unstructured.UnstructuredList{}
-		sandboxList.SetGroupVersionKind(schema.GroupVersionKind{
-			Group:   "custom.agents.x-k8s.io",
-			Version: "v1alpha1",
-			Kind:    "IssueSandbox",
-		})
-		g.Expect(r.Client.List(context.Background(), sandboxList)).To(Succeed())
-		        g.Expect(sandboxList.Items).To(HaveLen(1)) // Only the activeIssueSandbox should exist
-				g.Expect(sandboxList.Items[0].GetName()).To(Equal("repo-issue-1-testhandler"))
-		// Check that the RepoWatch status is updated correctly
-		fetchedRepoWatch := &reviewv1alpha1.RepoWatch{}
-		g.Expect(r.Client.Get(context.Background(), types.NamespacedName{Name: repoWatch.Name, Namespace: repoWatch.Namespace}, fetchedRepoWatch)).To(Succeed())
-		g.Expect(fetchedRepoWatch.Status.WatchedIssues[handlerName]).To(HaveLen(1))
-		g.Expect(fetchedRepoWatch.Status.WatchedIssues[handlerName][0].Number).To(Equal(issueNumber))
-		g.Expect(fetchedRepoWatch.Status.WatchedIssues[handlerName][0].Status).To(Equal("Active"))
-		g.Expect(fetchedRepoWatch.Status.PendingIssues[handlerName]).To(HaveLen(1))
-		g.Expect(fetchedRepoWatch.Status.PendingIssues[handlerName][0].Number).To(Equal(newIssueNumber))
-		g.Expect(fetchedRepoWatch.Status.PendingIssues[handlerName][0].Status).To(Equal("Pending"))
-	})
-
-	// Test case 3: Not creating a new sandbox if it already exists.
-	t.Run("does not create new sandbox if it already exists", func(t *testing.T) {
-		// Set MaxActiveSandboxes to 1
-		repoWatch.Spec.IssueHandlers[0].MaxActiveSandboxes = 1
-
-		// Existing sandbox for issueNumber 1
-		existingIssueSandbox := &unstructured.Unstructured{
-			Object: map[string]interface{}{
-				"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
-				"kind":       "IssueSandbox",
-				"metadata": map[string]interface{}{
-					"name":      "repo-issue-1-testhandler",
-					"namespace": "default",
-					"ownerReferences": []interface{}{
-						map[string]interface{}{
-							"apiVersion": "review.gemini.google.com/v1alpha1",
-							"kind":       "RepoWatch",
-							"name":       "test-repowatch",
-							"uid":        "test-uid",
-						},
-					},
-				},
-				"spec": map[string]interface{}{
-					"replicas": int64(1),
-				},
-			},
-		}
-
-		r := &RepoWatchReconciler{
-			Client: clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, existingIssueSandbox).WithStatusSubresource(repoWatch).Build(),
-			Scheme: s,
-			NewGithubClient: func(ctx context.Context, k8sClient client.Client, repoWatch *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
-				return &github.Client{}, map[string]string{}, nil
-			},
-		}
-
-		// Call reconcileIssueHandlerSandboxes with the existing issue
-		err := r.reconcileIssueHandlerSandboxes(context.Background(), currentUser, handler, repoWatch, []*github.Issue{issue}, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*existingIssueSandbox}})
-		g.Expect(err).NotTo(HaveOccurred())
-
-		// Check that no new sandbox was created and the existing one is still there
-		sandboxList := &unstructured.UnstructuredList{}
-		sandboxList.SetGroupVersionKind(schema.GroupVersionKind{
-			Group:   "custom.agents.x-k8s.io",
-			Version: "v1alpha1",
-			Kind:    "IssueSandbox",
-		})
-		g.Expect(r.Client.List(context.Background(), sandboxList)).To(Succeed())
-		g.Expect(sandboxList.Items).To(HaveLen(1)) // Only the existingIssueSandbox should exist
-		g.Expect(sandboxList.Items[0].GetName()).To(Equal("repo-issue-1-testhandler"))
-
-		// Check that the RepoWatch status is updated correctly
-		fetchedRepoWatch := &reviewv1alpha1.RepoWatch{}
-		g.Expect(r.Client.Get(context.Background(), types.NamespacedName{Name: repoWatch.Name, Namespace: repoWatch.Namespace}, fetchedRepoWatch)).To(Succeed())
-		g.Expect(fetchedRepoWatch.Status.WatchedIssues[handlerName]).To(HaveLen(1))
-		g.Expect(fetchedRepoWatch.Status.WatchedIssues[handlerName][0].Number).To(Equal(issueNumber))
-		g.Expect(fetchedRepoWatch.Status.WatchedIssues[handlerName][0].Status).To(Equal("Active"))
-		g.Expect(fetchedRepoWatch.Status.PendingIssues[handlerName]).To(HaveLen(0))
-	})
 }
