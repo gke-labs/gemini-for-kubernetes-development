@@ -311,7 +311,7 @@ function PrReviewCard({
           )}
           <div className="pr-card-actions">
             <button className="btn btn-submit" onClick={() => handleSubmit(pr.id)} disabled={!!pr.review}>
-              {pr.review ? 'Submitted' : 'Submit'}
+              {pr.review ? 'Submitted' : 'Create Draft Review'}
             </button>
             <button className="btn btn-delete" onClick={() => handleDelete(pr.id)}>Delete</button>
           </div>
