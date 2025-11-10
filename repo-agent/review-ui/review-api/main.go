@@ -48,6 +48,7 @@ type PR struct {
 	SandboxReplica string `json:"sandboxReplica,omitempty"`
 	Review         string `json:"review,omitempty"`
 	HTMLURL        string `json:"htmlURL,omitempty"`
+	DiffURL        string `json:"diffURL,omitempty"`
 }
 
 // Issue represents a GitHub issue
@@ -182,6 +183,7 @@ func main() {
 		api.POST("/repo/:namespace/:repo/issues/:issue_id/handler/:handler/draft", saveIssueDraft)
 		api.POST("/repo/:namespace/:repo/issues/:issue_id/handler/:handler/submitcomment", submitIssueComment)
 		api.DELETE("/repo/:namespace/:repo/issues/:issue_id/handler/:handler", deleteIssue)
+		api.GET("/proxy", proxy)
 	}
 
 	err = router.Run(":8080")
@@ -355,6 +357,9 @@ func getPRs(c *gin.Context) {
 		if _, ok := prData["htmlurl"]; ok {
 			pr.HTMLURL = prData["htmlurl"]
 		}
+		if _, ok := prData["diffurl"]; ok {
+			pr.DiffURL = prData["diffurl"]
+		}
 		if _, ok := prData["draft"]; ok {
 			pr.Draft = prData["draft"]
 		}
@@ -416,6 +421,10 @@ func fetchAndPopulatePRs(ctx context.Context, namespace, repo string) {
 		if err != nil || !found {
 			log.Printf("Title (.spec.source.htmlURL) not found in ReviewSandbox  %s", item.GetName())
 		}
+		diffurl, found, err := unstructured.NestedString(item.Object, "spec", "source", "diffURL")
+		if err != nil || !found {
+			log.Printf("diffURL (.spec.source.diffURL) not found in ReviewSandbox  %s", item.GetName())
+		}
 
 		// get draft from annotation[agentDraft]
 		draft := ""
@@ -433,6 +442,7 @@ func fetchAndPopulatePRs(ctx context.Context, namespace, repo string) {
 			Title:          title,
 			Sandbox:        item.GetName(),
 			HTMLURL:        htmlurl,
+			DiffURL:        diffurl,
 			SandboxReplica: fmt.Sprintf("%d", replicas),
 		}
 
@@ -442,6 +452,7 @@ func fetchAndPopulatePRs(ctx context.Context, namespace, repo string) {
 			"title", pr.Title,
 			"sandbox", pr.Sandbox,
 			"htmlurl", pr.HTMLURL,
+			"diffurl", pr.DiffURL,
 			"sandboxReplica", pr.SandboxReplica,
 			"draft", draft,
 			"agentDraft", draft,
@@ -456,7 +467,7 @@ func saveDraft(c *gin.Context) {
 	repo := c.Param("repo")
 	prID := c.Param("id")
 	var payload struct {
-		Draft string `json:"draft"`
+		Draft string
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -478,7 +489,7 @@ func submitReview(c *gin.Context) {
 	repo := c.Param("repo")
 	prID := c.Param("id")
 	var payload struct {
-		Review string `json:"review"`
+		Review string
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -955,7 +966,7 @@ func saveIssueDraft(c *gin.Context) {
 	issueID := c.Param("issue_id")
 	handler := c.Param("handler")
 	var payload struct {
-		Draft string `json:"draft"`
+		Draft string
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -978,7 +989,7 @@ func submitIssueComment(c *gin.Context) {
 	issueID := c.Param("issue_id")
 	handler := c.Param("handler")
 	var payload struct {
-		Comment string `json:"comment"`
+		Comment string
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -1154,4 +1165,33 @@ func deleteIssue(c *gin.Context) {
 	}
 
 	c.Status(http.StatusOK)
+}
+
+func proxy(c *gin.Context) {
+	proxyURL := c.Query("url")
+	if proxyURL == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "url query parameter is required"})
+		return
+	}
+
+	// validate the URL begins with  https://github.com/ or https://raw.githubusercontent.com/
+	if !strings.HasPrefix(proxyURL, "https://github.com/") && !strings.HasPrefix(proxyURL, "https://raw.githubusercontent.com/") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "url must begin with https://github.com/ or https://raw.githubusercontent.com/"})
+		return
+	}
+
+	resp, err := http.Get(proxyURL)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to fetch url: %v", err)})
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to read response body: %v", err)})
+		return
+	}
+
+	c.String(resp.StatusCode, string(body))
 }
