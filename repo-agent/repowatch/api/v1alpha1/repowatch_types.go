@@ -20,12 +20,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// LLMProviderType defines the type of LLM provider.
-type LLMProviderType string
-
 const (
 	// GeminiProvider represents the Gemini LLM provider.
-	GeminiProvider LLMProviderType = "gemini-cli"
+	GeminiProvider = "gemini-cli"
 )
 
 // LLMConfig defines the configuration for the LLM provider.
@@ -35,7 +32,7 @@ type LLMConfig struct {
 	// LLM API.
 	// +kubebuilder:validation:Enum=gemini-cli
 	// +kubebuilder:default=gemini-cli
-	Provider LLMProviderType `json:"provider,omitempty"`
+	Provider string `json:"provider,omitempty"`
 
 	// APIKeySecretRef is a reference to a Kubernetes secret containing the API
 	// key for the LLM provider. The secret must have a key named "apiKey".
