@@ -52,10 +52,46 @@ const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456
 var seededRand = rand.New(
 	rand.NewSource(time.Now().UnixNano()))
 
+type githubClientFactory func(ctx context.Context, k8sClient client.Client, repoWatch *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error)
+
+func NewGithubClient(ctx context.Context, k8sClient client.Client, repoWatch *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
+	secret := &corev1.Secret{}
+	secretName := repoWatch.Spec.GithubSecretName
+	if err := k8sClient.Get(ctx, types.NamespacedName{Name: secretName, Namespace: repoWatch.Namespace}, secret); err != nil {
+		return nil, nil, err
+	}
+	githubConfig := map[string]string{
+		"name":  "",
+		"email": "",
+	}
+	pat, ok := secret.Data["pat"]
+	if !ok {
+		return nil, nil, fmt.Errorf("\"pat\" not found in secret %s", secretName)
+	}
+	githubConfig["pat"] = string(pat)
+
+	_, ok = secret.Data["name"]
+	if ok {
+		githubConfig["name"] = string(secret.Data["name"])
+	}
+
+	_, ok = secret.Data["email"]
+	if ok {
+		githubConfig["email"] = string(secret.Data["email"])
+	}
+
+	ts := oauth2.StaticTokenSource(
+		&oauth2.Token{AccessToken: string(pat)},
+	)
+	tc := oauth2.NewClient(ctx, ts)
+	return github.NewClient(tc), githubConfig, nil
+}
+
 // RepoWatchReconciler reconciles a RepoWatch object
 type RepoWatchReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme          *runtime.Scheme
+	NewGithubClient githubClientFactory
 }
 
 //+kubebuilder:rbac:groups=review.gemini.google.com,resources=repowatches,verbs=get;list;watch;create;update;patch;delete
@@ -77,18 +113,11 @@ func (r *RepoWatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 
-	// Get GitHub token
-	config, err := r.getGitHubConfig(ctx, repoWatch)
+	ghClient, githubConfig, err := r.NewGithubClient(ctx, r.Client, repoWatch)
 	if err != nil {
-		log.Error(err, "unable to get github token")
+		log.Error(err, "unable to create github client")
 		return ctrl.Result{}, err
 	}
-
-	ts := oauth2.StaticTokenSource(
-		&oauth2.Token{AccessToken: config["pat"]},
-	)
-	tc := oauth2.NewClient(ctx, ts)
-	ghClient := github.NewClient(tc)
 
 	owner, repo, err := parseRepoURL(repoWatch.Spec.RepoURL)
 	if err != nil {
@@ -105,7 +134,7 @@ func (r *RepoWatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	// Reconcile Issues
-	if err := r.reconcileIssues(ctx, config, repoWatch, ghClient, owner, repo); err != nil {
+	if err := r.reconcileIssues(ctx, githubConfig, repoWatch, ghClient, owner, repo); err != nil {
 		log.Error(err, "unable to reconcile issues")
 		reconcileErr = errors.Join(reconcileErr, err)
 		// Continue to next reconciliation
@@ -203,7 +232,7 @@ func (r *RepoWatchReconciler) reconcileIssues(ctx context.Context, githubConfig 
 	log.Info("Obtained current user", "user", *user)
 
 	for _, handler := range repoWatch.Spec.IssueHandlers {
-		if err := r.reconcileIssuesForHandler(ctx, user, sandboxList, handler, repoWatch, ghClient, owner, repo); err != nil {
+		if err := r.reconcileIssuesForHandler(ctx, user, sandboxList, handler, repoWatch, ghClient, owner, repo, githubConfig); err != nil {
 			log.Error(err, "unable to reconcile issues for handler: "+handler.Name)
 			reconcileErr = errors.Join(reconcileErr, err)
 			// Continue to next reconciliation
@@ -212,7 +241,7 @@ func (r *RepoWatchReconciler) reconcileIssues(ctx context.Context, githubConfig 
 	return reconcileErr
 }
 
-func (r *RepoWatchReconciler) reconcileIssuesForHandler(ctx context.Context, user *github.User, sandboxList *unstructured.UnstructuredList, handler reviewv1alpha1.IssueHandlerSpec, repoWatch *reviewv1alpha1.RepoWatch, client *github.Client, owner string, repo string) error {
+func (r *RepoWatchReconciler) reconcileIssuesForHandler(ctx context.Context, user *github.User, sandboxList *unstructured.UnstructuredList, handler reviewv1alpha1.IssueHandlerSpec, repoWatch *reviewv1alpha1.RepoWatch, client *github.Client, owner string, repo string, githubConfig map[string]string) error {
 	log := log.FromContext(ctx)
 
 	listOptions := &github.IssueListByRepoOptions{
@@ -278,33 +307,7 @@ func (r *RepoWatchReconciler) reconcileIssuesForHandler(ctx context.Context, use
 	return nil
 }
 
-func (r *RepoWatchReconciler) getGitHubConfig(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch) (map[string]string, error) {
-	secret := &corev1.Secret{}
-	secretName := repoWatch.Spec.GithubSecretName
-	if err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: repoWatch.Namespace}, secret); err != nil {
-		return nil, err
-	}
-	githubConfig := map[string]string{
-		"name":  "",
-		"email": "",
-	}
-	_, ok := secret.Data["pat"]
-	if !ok {
-		return nil, fmt.Errorf("'pat' not found in secret %s", secretName)
-	}
-	githubConfig["pat"] = string(secret.Data["pat"])
 
-	_, ok = secret.Data["name"]
-	if ok {
-		githubConfig["name"] = string(secret.Data["name"])
-	}
-
-	_, ok = secret.Data["email"]
-	if ok {
-		githubConfig["email"] = string(secret.Data["email"])
-	}
-	return githubConfig, nil
-}
 
 func parseRepoURL(repoURL string) (string, string, error) {
 	u, err := url.Parse(repoURL)
