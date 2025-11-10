@@ -236,14 +236,16 @@ function PrReviewCard({
           ) : (
             <span className={`pr-sandbox ${getSandboxStatusClass(pr)}`}>Sandbox: {pr.sandbox || 'Not created'}</span>
           )}
-          <button className="btn" onClick={(e) => { e.stopPropagation(); toggleReviewView(pr.id); }}>
-            {reviewViewModes[pr.id] === 'structured' ? 'YAML' : 'Structured'}
-          </button>
         </div>
       </div>
       {!collapsedReviews[pr.id] && (
         <>
           {renderDiffView()}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '10px 0' }}>
+            <button className="btn" onClick={() => toggleReviewView(pr.id)}>
+              {reviewViewModes[pr.id] === 'structured' ? 'View as YAML' : 'View as Structured'}
+            </button>
+          </div>
           {pr.review ? (
             reviewViewModes[pr.id] === 'structured' ? (
               <div className="review-display">
