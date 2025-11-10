@@ -57,6 +57,10 @@ func runReview() error {
 	var err error
 	diffURL := os.Getenv("GIT_DIFF_URL")
 	var expectedComments int
+	// Check if diffURL beings with https://github.com/
+	if !bytes.HasPrefix([]byte(diffURL), []byte("https://github.com/")) {
+		return fmt.Errorf("GIT_DIFF_URL must start with https://github.com/")
+	}
 	if diffURL != "" {
 		log.Printf("Downloading and parsing diff from %s", diffURL)
 		diffFiles, err = parseDiffFromURL(diffURL)
@@ -71,7 +75,7 @@ func runReview() error {
 	}
 
 	agentPrompt := os.Getenv("AGENT_PROMPT")
-	agentPrompt = fmt.Sprintf("%s \n\n Try generating atleast %d review comments", agentPrompt, expectedComments)
+	agentPrompt = fmt.Sprintf("%s \n\n Try generating at least %d review comments", agentPrompt, expectedComments)
 	var agentFn func(string) ([]byte, error)
 	switch agentName {
 	case "gemini-cli":
@@ -101,7 +105,17 @@ func runReview() error {
 			break
 		}
 
-		output, err := agentFn(agentPrompt)
+		currentPrompt := agentPrompt
+		if accumulatedAgentOutput.Review != nil && len(accumulatedAgentOutput.Review.Comments) > 0 {
+			previousReviews, err := yaml.Marshal(accumulatedAgentOutput)
+			if err != nil {
+				log.Printf("failed to marshal previous reviews, continuing without them: %v", err)
+			} else {
+				currentPrompt = fmt.Sprintf("%s\n\nHere are the reviews generated so far:\n```yaml\n%s\n```\nPlease generate new, unique review comments that are not duplicates of the ones above.", agentPrompt, string(previousReviews))
+			}
+		}
+
+		output, err := agentFn(currentPrompt)
 		if err != nil {
 			log.Printf("Agent run failed: %v. Continuing...", err)
 			time.Sleep(10 * time.Second)
