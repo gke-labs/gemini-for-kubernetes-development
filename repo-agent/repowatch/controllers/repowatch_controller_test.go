@@ -774,3 +774,231 @@ func TestNewGithubClient(t *testing.T) {
 		})
 	}
 }
+
+
+func TestReconcileIssueHandlerSandboxes(t *testing.T) {
+	g := NewWithT(t)
+
+	s := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(s)
+	_ = reviewv1alpha1.AddToScheme(s)
+
+	issueNumber := 1
+	repoURL := "https://github.com/test/repo"
+	handlerName := "testhandler"
+
+	currentUser := &github.User{
+		Login: github.String("test-user"),
+	}
+
+	repoWatch := &reviewv1alpha1.RepoWatch{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-repowatch",
+			Namespace: "default",
+			UID:       "test-uid",
+		},
+		Spec: reviewv1alpha1.RepoWatchSpec{
+			RepoURL:          repoURL,
+			GithubSecretName: "github-secret",
+			IssueHandlers: []reviewv1alpha1.IssueHandlerSpec{
+				{
+					Name:               handlerName,
+					MaxActiveSandboxes: 1,
+				},
+			},
+		},
+	}
+	handler := repoWatch.Spec.IssueHandlers[0]
+
+	// Issue that is open
+	issue := &github.Issue{
+		Number: &issueNumber,
+		HTMLURL: github.String("https://github.com/test/repo/issues/1"),
+		Title:   github.String("Test Issue"),
+		RepositoryURL: github.String("https://api.github.com/repos/test/repo"),
+	}
+
+	// Sandbox for an issue that is now closed
+	closedIssueSandbox := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
+			"kind":       "IssueSandbox",
+			"metadata": map[string]interface{}{
+				"name":      "repo-issue-2-testhandler",
+				"namespace": "default",
+				"ownerReferences": []interface{}{
+					map[string]interface{}{
+						"apiVersion": "review.gemini.google.com/v1alpha1",
+						"kind":       "RepoWatch",
+						"name":       "test-repowatch",
+						"uid":        "test-uid",
+					},
+				},
+			},
+		},
+	}
+
+	// Test case 1: Deleting a sandbox for a closed issue and creating a new one for an open issue.
+	t.Run("deletes sandbox for closed issue and creates new for open issue", func(t *testing.T) {
+		r := &RepoWatchReconciler{
+			Client: clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, closedIssueSandbox).WithStatusSubresource(repoWatch).Build(),
+			Scheme: s,
+			NewGithubClient: func(ctx context.Context, k8sClient client.Client, repoWatch *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
+				return &github.Client{}, map[string]string{}, nil
+			},
+		}
+
+		sandboxList := &unstructured.UnstructuredList{}
+		sandboxList.SetGroupVersionKind(schema.GroupVersionKind{
+			Group:   "custom.agents.x-k8s.io",
+			Version: "v1alpha1",
+			Kind:    "IssueSandbox",
+		})
+		g.Expect(r.Client.List(context.Background(), sandboxList)).To(Succeed())
+		g.Expect(sandboxList.Items).To(HaveLen(1)) // Should contain the closedIssueSandbox initially
+
+		err := r.reconcileIssueHandlerSandboxes(context.Background(), currentUser, handler, repoWatch, []*github.Issue{issue}, sandboxList)
+		g.Expect(err).NotTo(HaveOccurred())
+
+		// Check that the sandbox for the closed issue is deleted and a new one for the open issue is created
+		sandboxList = &unstructured.UnstructuredList{}
+		sandboxList.SetGroupVersionKind(schema.GroupVersionKind{
+			Group:   "custom.agents.x-k8s.io",
+			Version: "v1alpha1",
+			Kind:    "IssueSandbox",
+		})
+		g.Expect(r.Client.List(context.Background(), sandboxList)).To(Succeed())
+		g.Expect(sandboxList.Items).To(HaveLen(1)) // Should contain only the sandbox for issueNumber 1
+		g.Expect(sandboxList.Items[0].GetName()).To(Equal("repo-issue-1-testhandler"))
+	})
+
+	// Test case 2: Not creating a new sandbox if the maximum number of active sandboxes has been reached.
+	t.Run("does not create new sandbox if max active sandboxes reached", func(t *testing.T) {
+		// Set MaxActiveSandboxes to 1
+		repoWatch.Spec.IssueHandlers[0].MaxActiveSandboxes = 1
+
+		// Create an existing active sandbox for issueNumber 1
+		activeIssueSandbox := &unstructured.Unstructured{
+			Object: map[string]interface{}{
+				"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
+				"kind":       "IssueSandbox",
+				"metadata": map[string]interface{}{
+					"name":      "repo-issue-1-testhandler",
+					"namespace": "default",
+					"ownerReferences": []interface{}{
+						map[string]interface{}{
+							"apiVersion": "review.gemini.google.com/v1alpha1",
+							"kind":       "RepoWatch",
+							"name":       "test-repowatch",
+							"uid":        "test-uid",
+						},
+					},
+				},
+				"spec": map[string]interface{}{
+					"replicas": int64(1), // Mark as active
+				},
+			},
+		}
+
+		// Create a new issue that should become pending
+		newIssueNumber := 3
+		newIssue := &github.Issue{
+			Number: &newIssueNumber,
+			HTMLURL: github.String("https://github.com/test/repo/issues/3"),
+			Title:   github.String("New Pending Issue"),
+			RepositoryURL: github.String("https://api.github.com/repos/test/repo"),
+		}
+
+		r := &RepoWatchReconciler{
+			Client: clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, activeIssueSandbox).WithStatusSubresource(repoWatch).Build(),
+			Scheme: s,
+			NewGithubClient: func(ctx context.Context, k8sClient client.Client, repoWatch *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
+				return &github.Client{}, map[string]string{}, nil
+			},
+		}
+
+		// Call reconcileIssueHandlerSandboxes with the active issue and the new issue
+		err := r.reconcileIssueHandlerSandboxes(context.Background(), currentUser, handler, repoWatch, []*github.Issue{issue, newIssue}, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*activeIssueSandbox}})
+		g.Expect(err).NotTo(HaveOccurred())
+
+		// Check that no new sandbox was created
+		sandboxList := &unstructured.UnstructuredList{}
+		sandboxList.SetGroupVersionKind(schema.GroupVersionKind{
+			Group:   "custom.agents.x-k8s.io",
+			Version: "v1alpha1",
+			Kind:    "IssueSandbox",
+		})
+		g.Expect(r.Client.List(context.Background(), sandboxList)).To(Succeed())
+		        g.Expect(sandboxList.Items).To(HaveLen(1)) // Only the activeIssueSandbox should exist
+				g.Expect(sandboxList.Items[0].GetName()).To(Equal("repo-issue-1-testhandler"))
+		// Check that the RepoWatch status is updated correctly
+		fetchedRepoWatch := &reviewv1alpha1.RepoWatch{}
+		g.Expect(r.Client.Get(context.Background(), types.NamespacedName{Name: repoWatch.Name, Namespace: repoWatch.Namespace}, fetchedRepoWatch)).To(Succeed())
+		g.Expect(fetchedRepoWatch.Status.WatchedIssues[handlerName]).To(HaveLen(1))
+		g.Expect(fetchedRepoWatch.Status.WatchedIssues[handlerName][0].Number).To(Equal(issueNumber))
+		g.Expect(fetchedRepoWatch.Status.WatchedIssues[handlerName][0].Status).To(Equal("Active"))
+		g.Expect(fetchedRepoWatch.Status.PendingIssues[handlerName]).To(HaveLen(1))
+		g.Expect(fetchedRepoWatch.Status.PendingIssues[handlerName][0].Number).To(Equal(newIssueNumber))
+		g.Expect(fetchedRepoWatch.Status.PendingIssues[handlerName][0].Status).To(Equal("Pending"))
+	})
+
+	// Test case 3: Not creating a new sandbox if it already exists.
+	t.Run("does not create new sandbox if it already exists", func(t *testing.T) {
+		// Set MaxActiveSandboxes to 1
+		repoWatch.Spec.IssueHandlers[0].MaxActiveSandboxes = 1
+
+		// Existing sandbox for issueNumber 1
+		existingIssueSandbox := &unstructured.Unstructured{
+			Object: map[string]interface{}{
+				"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
+				"kind":       "IssueSandbox",
+				"metadata": map[string]interface{}{
+					"name":      "repo-issue-1-testhandler",
+					"namespace": "default",
+					"ownerReferences": []interface{}{
+						map[string]interface{}{
+							"apiVersion": "review.gemini.google.com/v1alpha1",
+							"kind":       "RepoWatch",
+							"name":       "test-repowatch",
+							"uid":        "test-uid",
+						},
+					},
+				},
+				"spec": map[string]interface{}{
+					"replicas": int64(1),
+				},
+			},
+		}
+
+		r := &RepoWatchReconciler{
+			Client: clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, existingIssueSandbox).WithStatusSubresource(repoWatch).Build(),
+			Scheme: s,
+			NewGithubClient: func(ctx context.Context, k8sClient client.Client, repoWatch *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
+				return &github.Client{}, map[string]string{}, nil
+			},
+		}
+
+		// Call reconcileIssueHandlerSandboxes with the existing issue
+		err := r.reconcileIssueHandlerSandboxes(context.Background(), currentUser, handler, repoWatch, []*github.Issue{issue}, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*existingIssueSandbox}})
+		g.Expect(err).NotTo(HaveOccurred())
+
+		// Check that no new sandbox was created and the existing one is still there
+		sandboxList := &unstructured.UnstructuredList{}
+		sandboxList.SetGroupVersionKind(schema.GroupVersionKind{
+			Group:   "custom.agents.x-k8s.io",
+			Version: "v1alpha1",
+			Kind:    "IssueSandbox",
+		})
+		g.Expect(r.Client.List(context.Background(), sandboxList)).To(Succeed())
+		g.Expect(sandboxList.Items).To(HaveLen(1)) // Only the existingIssueSandbox should exist
+		g.Expect(sandboxList.Items[0].GetName()).To(Equal("repo-issue-1-testhandler"))
+
+		// Check that the RepoWatch status is updated correctly
+		fetchedRepoWatch := &reviewv1alpha1.RepoWatch{}
+		g.Expect(r.Client.Get(context.Background(), types.NamespacedName{Name: repoWatch.Name, Namespace: repoWatch.Namespace}, fetchedRepoWatch)).To(Succeed())
+		g.Expect(fetchedRepoWatch.Status.WatchedIssues[handlerName]).To(HaveLen(1))
+		g.Expect(fetchedRepoWatch.Status.WatchedIssues[handlerName][0].Number).To(Equal(issueNumber))
+		g.Expect(fetchedRepoWatch.Status.WatchedIssues[handlerName][0].Status).To(Equal("Active"))
+		g.Expect(fetchedRepoWatch.Status.PendingIssues[handlerName]).To(HaveLen(0))
+	})
+}
