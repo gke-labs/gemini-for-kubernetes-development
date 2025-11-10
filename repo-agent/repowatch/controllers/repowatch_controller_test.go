@@ -423,3 +423,118 @@ func TestRepoWatchReconciler_Reconcile_Issues(t *testing.T) {
 	g.Expect(fakeClient.List(context.Background(), issueSandboxList)).To(Succeed())
 	g.Expect(issueSandboxList.Items).To(HaveLen(1))
 }
+
+func TestNewGithubClient(t *testing.T) {
+	g := NewWithT(t)
+
+	// 1. Create a Scheme and add your API types to it
+	s := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(s)
+	_ = reviewv1alpha1.AddToScheme(s)
+
+	// 2. Create test cases
+	testCases := []struct {
+		name          string
+		secret        *corev1.Secret
+		expectErr     bool
+		expectedPAT   string
+		expectedName  string
+		expectedEmail string
+	}{
+		{
+			name: "valid secret",
+			secret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "github-secret",
+					Namespace: "default",
+				},
+				Data: map[string][]byte{
+					"pat":   []byte("test-pat"),
+					"name":  []byte("test-user"),
+					"email": []byte("test-email"),
+				},
+			},
+			expectErr:     false,
+			expectedPAT:   "test-pat",
+			expectedName:  "test-user",
+			expectedEmail: "test-email",
+		},
+		{
+			name: "secret not found",
+			secret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "github-secret-not-found",
+					Namespace: "default",
+				},
+				Data: map[string][]byte{
+					"pat": []byte("test-pat"),
+				},
+			},
+			expectErr: true,
+		},
+		{
+			name: "pat not found in secret",
+			secret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "github-secret",
+					Namespace: "default",
+				},
+				Data: map[string][]byte{},
+			},
+			expectErr: true,
+		},
+		{
+			name: "name and email are optional",
+			secret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "github-secret",
+					Namespace: "default",
+				},
+				Data: map[string][]byte{
+					"pat": []byte("test-pat"),
+				},
+			},
+			expectErr:     false,
+			expectedPAT:   "test-pat",
+			expectedName:  "",
+			expectedEmail: "",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// 3. Initialize the fake client with any initial objects
+			var fakeClient client.Client
+			if tc.name == "secret not found" {
+				fakeClient = clientfake.NewClientBuilder().WithScheme(s).Build()
+			} else {
+				fakeClient = clientfake.NewClientBuilder().WithScheme(s).WithObjects(tc.secret).Build()
+			}
+
+			// 4. Create a RepoWatch object
+			repoWatch := &reviewv1alpha1.RepoWatch{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-repowatch",
+					Namespace: "default",
+				},
+				Spec: reviewv1alpha1.RepoWatchSpec{
+					RepoURL:          "https://github.com/test/repo",
+					GithubSecretName: "github-secret",
+				},
+			}
+
+			// 5. Call NewGithubClient
+			_, githubConfig, err := NewGithubClient(context.Background(), fakeClient, repoWatch)
+
+			// 6. Assert expected outcomes
+			if tc.expectErr {
+				g.Expect(err).To(HaveOccurred())
+			} else {
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(githubConfig["pat"]).To(Equal(tc.expectedPAT))
+				g.Expect(githubConfig["name"]).To(Equal(tc.expectedName))
+				g.Expect(githubConfig["email"]).To(Equal(tc.expectedEmail))
+			}
+		})
+	}
+}
