@@ -18,6 +18,24 @@ Diff URL: "{{.DiffURL}}"
 Issue Title: "{{.Title}}"
 Issue Body: "{{.Body}}"
 
+Understanding the changes:
+
+Here's a breakdown of the key components of a git diff patch file {{.DiffURL }}:
+
+Header Lines:
+diff --git a/file.txt b/file.txt: Indicates the files being compared. a/ typically refers to the original or "from" file, and b/ refers to the modified or "to" file.
+index <hash1>..<hash2> <mode>: Shows the blob SHA-1 hashes of the files and their file modes (e.g., 100644 for a regular file).
+File Header Lines:
+--- a/file.txt: Specifies the original file.
++++ b/file.txt: Specifies the modified file. /dev/null is used for newly created or deleted files.
+Hunk Header:
+@@ -start_line_old,num_lines_old +start_line_new,num_lines_new @@: This line introduces a "hunk" of changes. It indicates the starting line number and number of lines in the original file (-) and the modified file (+) for the following block of changes.
+Lines within a Hunk:
+Context Lines: Lines starting with a space (` + "` `" + `) are identical in both files and provide context for the changes.
+Removed Lines: Lines starting with a minus sign (-) are present in the original file but removed in the modified file.
+Added Lines: Lines starting with a plus sign (+) are present in the modified file but not in the original file.
+
+
 Generate a note for the reviewer:
 - Understand the changes being proposed and evaluate it from maintainability, security and scalability perspective.
 - Provide this as a note to the reviewer. 
@@ -30,8 +48,8 @@ Generate PR Review Body text:
 
 Detailed Review comments:
 For each of files and lines changed, focus on code changes.  Each comment should have the following fields:
-- "file": the path of the file being commented on.
-- "line": the line number in the file. The line number should be in the range of of the lines seen in the diff.
+- "file": the path of the file being commented on. This should be one of the modified files from git diff
+- "line": the line number in the file. The line number should be in the range of of the lines seen in the diff hunk headers
 - "comment": the review comment.
 - "side": if commenting on an addition '+' use RIGHT else use LEFT
 
@@ -45,7 +63,6 @@ For the PR changes, focus on:
 - security concerns if any
 
 Do not review any file paths that are not part of the diff.
-If the diff is large , try generating atleast 10 review comments
 
 {{if .Prompt}}
 ----------------

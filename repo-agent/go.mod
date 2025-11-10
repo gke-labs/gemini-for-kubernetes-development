@@ -3,8 +3,10 @@ module github.com/gke-labs/gemini-for-kubernetes-development/repo-agent
 go 1.24.7
 
 require (
+	github.com/bluekeyes/go-gitdiff v0.8.1
 	github.com/gin-gonic/gin v1.11.0
 	github.com/go-redis/redis/v8 v8.11.5
+	github.com/google/go-cmp v0.7.0
 	github.com/google/go-github/v39 v39.2.0
 	go.yaml.in/yaml/v3 v3.0.4
 	golang.org/x/oauth2 v0.31.0
@@ -55,7 +57,6 @@ require (
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/google/btree v1.1.3 // indirect
 	github.com/google/gnostic-models v0.7.0 // indirect
-	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/go-querystring v1.1.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect

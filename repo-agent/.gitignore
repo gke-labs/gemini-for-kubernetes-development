@@ -1,1 +1,4 @@
 bin/
+review-ui/ui/build/
+review-ui/ui/node_modules/
+review-ui/ui/package-lock.json
