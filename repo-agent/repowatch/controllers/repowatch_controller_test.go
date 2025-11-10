@@ -424,6 +424,242 @@ func TestRepoWatchReconciler_Reconcile_Issues(t *testing.T) {
 	g.Expect(issueSandboxList.Items).To(HaveLen(1))
 }
 
+func TestReconcileReviewSandboxes(t *testing.T) {
+	g := NewWithT(t)
+
+	s := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(s)
+	_ = reviewv1alpha1.AddToScheme(s)
+
+	prNumber := 1
+	repoURL := "https://github.com/test/repo"
+
+	repoWatch := &reviewv1alpha1.RepoWatch{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-repowatch",
+			Namespace: "default",
+			UID:       "test-uid",
+		},
+		Spec: reviewv1alpha1.RepoWatchSpec{
+			RepoURL:          repoURL,
+			GithubSecretName: "github-secret",
+			Review: reviewv1alpha1.PRReviewSpec{
+				MaxActiveSandboxes: 1,
+			},
+		},
+	}
+
+	// PR that is open
+	pr := &github.PullRequest{
+		Number: &prNumber,
+		Head: &github.PullRequestBranch{
+			Repo: &github.Repository{
+				CloneURL: github.String(repoURL),
+			},
+			Ref: github.String("main"),
+		},
+		HTMLURL: github.String("https://github.com/test/repo/pull/1"),
+		Title:   github.String("Test PR"),
+	}
+
+	// Sandbox for a PR that is now closed
+	closedPRSandbox := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
+			"kind":       "ReviewSandbox",
+			"metadata": map[string]interface{}{
+				"name":      "repo-pr-2",
+				"namespace": "default",
+				"ownerReferences": []interface{}{
+					map[string]interface{}{
+						"apiVersion": "review.gemini.google.com/v1alpha1",
+						"kind":       "RepoWatch",
+						"name":       "test-repowatch",
+						"uid":        "test-uid",
+					},
+				},
+			},
+		},
+	}
+
+	// Test case 1: Deleting a sandbox for a closed PR and creating a new one for an open PR.
+	t.Run("deletes sandbox for closed PR and creates new for open PR", func(t *testing.T) {
+		// Re-initialize client for this specific test run to ensure a clean state
+		// This is important because the client state is modified by the previous test run
+		// and we want to start fresh for each subtest.
+		// Also, the reconcileReviewSandboxes function calls createReviewSandboxForPR,
+		// which needs a working NewGithubClient.
+		// For this test, we don't need a real github client, so we can mock it.
+		r := &RepoWatchReconciler{
+			Client: clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, closedPRSandbox).WithStatusSubresource(repoWatch).Build(),
+			Scheme: s,
+			NewGithubClient: func(ctx context.Context, k8sClient client.Client, repoWatch *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
+				return &github.Client{}, map[string]string{}, nil
+			},
+		}
+
+		sandboxList := &unstructured.UnstructuredList{}
+		sandboxList.SetGroupVersionKind(schema.GroupVersionKind{
+			Group:   "custom.agents.x-k8s.io",
+			Version: "v1alpha1",
+			Kind:    "ReviewSandbox",
+		})
+		g.Expect(r.Client.List(context.Background(), sandboxList)).To(Succeed())
+		g.Expect(sandboxList.Items).To(HaveLen(1)) // Should contain the closedPRSandbox initially
+
+		err := r.reconcileReviewSandboxes(context.Background(), repoWatch, []*github.PullRequest{pr}, sandboxList)
+		g.Expect(err).NotTo(HaveOccurred())
+
+		// Check that the sandbox for the closed PR is deleted and a new one for the open PR is created
+		sandboxList = &unstructured.UnstructuredList{}
+		sandboxList.SetGroupVersionKind(schema.GroupVersionKind{
+			Group:   "custom.agents.x-k8s.io",
+			Version: "v1alpha1",
+			Kind:    "ReviewSandbox",
+		})
+		g.Expect(r.Client.List(context.Background(), sandboxList)).To(Succeed())
+		g.Expect(sandboxList.Items).To(HaveLen(1)) // Should contain only the sandbox for prNumber 1
+		g.Expect(sandboxList.Items[0].GetName()).To(Equal("repo-pr-1"))
+	})
+
+	// Test case 2: Not creating a new sandbox if the maximum number of active sandboxes has been reached.
+	t.Run("does not create new sandbox if max active sandboxes reached", func(t *testing.T) {
+		// Set MaxActiveSandboxes to 1
+		repoWatch.Spec.Review.MaxActiveSandboxes = 1
+
+		// Create an existing active sandbox for prNumber 1
+		activePRSandbox := &unstructured.Unstructured{
+			Object: map[string]interface{}{
+				"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
+				"kind":       "ReviewSandbox",
+				"metadata": map[string]interface{}{
+					"name":      "repo-pr-1",
+					"namespace": "default",
+					"ownerReferences": []interface{}{
+						map[string]interface{}{
+							"apiVersion": "review.gemini.google.com/v1alpha1",
+							"kind":       "RepoWatch",
+							"name":       "test-repowatch",
+							"uid":        "test-uid",
+						},
+					},
+				},
+				"spec": map[string]interface{}{
+					"replicas": int64(1), // Mark as active
+				},
+			},
+		}
+
+		// Create a new PR that should become pending
+		newPRNumber := 3
+		newPR := &github.PullRequest{
+			Number: &newPRNumber,
+			Head: &github.PullRequestBranch{
+				Repo: &github.Repository{
+					CloneURL: github.String(repoURL),
+				},
+				Ref: github.String("main"),
+			},
+			HTMLURL: github.String("https://github.com/test/repo/pull/3"),
+			Title:   github.String("New Pending PR"),
+		}
+
+		r := &RepoWatchReconciler{
+			Client: clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, activePRSandbox).WithStatusSubresource(repoWatch).Build(),
+			Scheme: s,
+			NewGithubClient: func(ctx context.Context, k8sClient client.Client, repoWatch *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
+				return &github.Client{}, map[string]string{}, nil
+			},
+		}
+
+		// Call reconcileReviewSandboxes with the active PR and the new PR
+		err := r.reconcileReviewSandboxes(context.Background(), repoWatch, []*github.PullRequest{pr, newPR}, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*activePRSandbox}})
+		g.Expect(err).NotTo(HaveOccurred())
+
+		// Check that no new sandbox was created
+		sandboxList := &unstructured.UnstructuredList{}
+		sandboxList.SetGroupVersionKind(schema.GroupVersionKind{
+			Group:   "custom.agents.x-k8s.io",
+			Version: "v1alpha1",
+			Kind:    "ReviewSandbox",
+		})
+		g.Expect(r.Client.List(context.Background(), sandboxList)).To(Succeed())
+		g.Expect(sandboxList.Items).To(HaveLen(1)) // Only the activePRSandbox should exist
+		g.Expect(sandboxList.Items[0].GetName()).To(Equal("repo-pr-1"))
+
+		// Check that the RepoWatch status is updated correctly
+		fetchedRepoWatch := &reviewv1alpha1.RepoWatch{}
+		g.Expect(r.Client.Get(context.Background(), types.NamespacedName{Name: repoWatch.Name, Namespace: repoWatch.Namespace}, fetchedRepoWatch)).To(Succeed())
+		g.Expect(fetchedRepoWatch.Status.ActiveSandboxCount).To(Equal(1))
+		g.Expect(fetchedRepoWatch.Status.WatchedPRs).To(HaveLen(1))
+		g.Expect(fetchedRepoWatch.Status.WatchedPRs[0].Number).To(Equal(prNumber))
+		g.Expect(fetchedRepoWatch.Status.WatchedPRs[0].Status).To(Equal("Active"))
+		g.Expect(fetchedRepoWatch.Status.PendingPRs).To(HaveLen(1))
+		g.Expect(fetchedRepoWatch.Status.PendingPRs[0].Number).To(Equal(newPRNumber))
+		g.Expect(fetchedRepoWatch.Status.PendingPRs[0].Status).To(Equal("Pending"))
+	})
+
+	// Test case 3: Not creating a new sandbox if it already exists.
+	t.Run("does not create new sandbox if it already exists", func(t *testing.T) {
+		// Set MaxActiveSandboxes to 1
+		repoWatch.Spec.Review.MaxActiveSandboxes = 1
+
+		// Existing sandbox for prNumber 1
+		existingPRSandbox := &unstructured.Unstructured{
+			Object: map[string]interface{}{
+				"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
+				"kind":       "ReviewSandbox",
+				"metadata": map[string]interface{}{
+					"name":      "repo-pr-1",
+					"namespace": "default",
+					"ownerReferences": []interface{}{
+						map[string]interface{}{
+							"apiVersion": "review.gemini.google.com/v1alpha1",
+							"kind":       "RepoWatch",
+							"name":       "test-repowatch",
+							"uid":        "test-uid",
+						},
+					},
+				},
+				"spec": map[string]interface{}{
+					"replicas": int64(1),
+				},
+			},
+		}
+
+		r := &RepoWatchReconciler{
+			Client: clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, existingPRSandbox).WithStatusSubresource(repoWatch).Build(),
+			Scheme: s,
+			NewGithubClient: func(ctx context.Context, k8sClient client.Client, repoWatch *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
+				return &github.Client{}, map[string]string{}, nil
+			},
+		}
+
+		// Call reconcileReviewSandboxes with the existing PR
+		err := r.reconcileReviewSandboxes(context.Background(), repoWatch, []*github.PullRequest{pr}, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*existingPRSandbox}})
+		g.Expect(err).NotTo(HaveOccurred())
+
+		// Check that no new sandbox was created and the existing one is still there
+		sandboxList := &unstructured.UnstructuredList{}
+		sandboxList.SetGroupVersionKind(schema.GroupVersionKind{
+			Group:   "custom.agents.x-k8s.io",
+			Version: "v1alpha1",
+			Kind:    "ReviewSandbox",
+		})
+		g.Expect(r.Client.List(context.Background(), sandboxList)).To(Succeed())
+		g.Expect(sandboxList.Items).To(HaveLen(1)) // Only the existingPRSandbox should exist
+		g.Expect(sandboxList.Items[0].GetName()).To(Equal("repo-pr-1"))
+
+		// Check that the RepoWatch status is updated correctly
+		fetchedRepoWatch := &reviewv1alpha1.RepoWatch{}
+		g.Expect(r.Client.Get(context.Background(), types.NamespacedName{Name: repoWatch.Name, Namespace: repoWatch.Namespace}, fetchedRepoWatch)).To(Succeed())
+		g.Expect(fetchedRepoWatch.Status.ActiveSandboxCount).To(Equal(1))
+		g.Expect(fetchedRepoWatch.Status.WatchedPRs).To(HaveLen(1))
+		g.Expect(fetchedRepoWatch.Status.WatchedPRs[0].Number).To(Equal(prNumber))
+		g.Expect(fetchedRepoWatch.Status.WatchedPRs[0].Status).To(Equal("Active"))
+		g.Expect(fetchedRepoWatch.Status.PendingPRs).To(HaveLen(0))
+	})
+}
 func TestNewGithubClient(t *testing.T) {
 	g := NewWithT(t)
 
