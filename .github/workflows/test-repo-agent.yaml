@@ -1,0 +1,30 @@
+name: Test Repo Agent
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'repo-agent/**'
+      - 'dev/tools/**'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'repo-agent/**'
+      - 'dev/tools/**'
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          cache-dependency-path: |
+            repo-agent/go.sum
+            dev/tools/go.sum
+      - name: Run Unit Tests
+        working-directory: repo-agent
+        env:
+          GEMINI_API_KEY: dummy
+          GITHUB_PAT: dummy
+        run: make test-unit
