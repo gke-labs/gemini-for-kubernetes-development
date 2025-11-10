@@ -77,7 +77,7 @@ func TestRepoWatchReconciler_Reconcile(t *testing.T) {
 			responses: map[string]*http.Response{
 				"https://api.github.com/repos/test/repo/pulls?state=open": {
 					StatusCode: http.StatusOK,
-					Body:       ioutil.NopCloser(strings.NewReader(`[{"number": 1, "head": {"repo": {"clone_url": "https://github.com/test/repo", "html_url": "https://github.com/test/repo"}, "ref": "main"}, "html_url": "https://github.com/test/repo/pull/1", "title": "Test PR"}]`)),
+					Body:       ioutil.NopCloser(strings.NewReader(`[{"number": 1, "head": {"repo": {"clone_url": "https://github.com/test/repo", "html_url": "https://github.com/test/repo"}, "ref": "main"}, "html_url": "https://github.com/test/repo/pull/1", "title": "Test PR", "diff_url": "https://github.com/test/repo/pull/1.diff"}]`)),
 				},
 				"https://api.github.com/user": {
 					StatusCode: http.StatusOK,
@@ -329,6 +329,7 @@ func TestReconcileReviewSandboxes(t *testing.T) {
 		},
 		HTMLURL: github.String("https://github.com/test/repo/pull/1"),
 		Title:   github.String("Test PR"),
+		DiffURL: github.String("https://github.com/test/repo/pull/1.diff"),
 	}
 
 	// Sandbox for a PR that is now closed
