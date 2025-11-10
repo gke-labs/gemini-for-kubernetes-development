@@ -179,12 +179,15 @@ input:checked + .slider:before {
   align-items: center;
   margin-bottom: 15px;
   flex-wrap: wrap;
+  cursor: pointer;
 }
 
 .pr-card-header h3 {
   margin: 0;
   color: #333;
   font-size: 1.2rem; /* Reduced font size */
+  display: flex;
+  align-items: center;
 }
 
 .dark-mode .pr-card-header h3 {

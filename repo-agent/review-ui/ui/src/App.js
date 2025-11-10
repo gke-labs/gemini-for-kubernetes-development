@@ -302,8 +302,8 @@ function App() {
           handleYamlDraftChange={handleYamlDraftChange}
           handleYamlDraftBlur={handleYamlDraftBlur}
           handleSubmit={handleSubmit}
-          toggleCollapse={toggleCollapse}
           getSandboxStatusClass={getSandboxStatusClass}
+          toggleCollapse={toggleCollapse}
         />
       ));
     } else {

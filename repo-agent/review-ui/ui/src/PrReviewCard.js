@@ -221,8 +221,13 @@ function PrReviewCard({
 
   return (
     <div key={pr.id} className={`pr-card ${pr.review ? 'review-submitted' : ''}`}>
-      <div className="pr-card-header">
-        <h3><a href={pr.htmlURL} target="_blank" rel="noopener noreferrer">{pr.title} (PR #{pr.id})</a></h3>
+      <div className="pr-card-header" onClick={() => toggleCollapse(pr.id)}>
+        <h3>
+          <a href={pr.htmlURL} target="_blank" rel="noopener noreferrer">{pr.title} (PR #{pr.id})</a>
+          <span style={{ marginLeft: '10px', fontSize: 'small', color: '#555' }}>
+            {collapsedReviews[pr.id] ? 'click to expand' : 'click to collapse'}
+          </span>
+        </h3>
         <div className="pr-card-actions-header">
           {getSandboxStatusClass(pr) === 'green' ? (
             <a href={`/sandbox/${pr.sandbox}/`} target="_blank" rel="noopener noreferrer" className={`pr-sandbox ${getSandboxStatusClass(pr)}`}>
@@ -231,11 +236,8 @@ function PrReviewCard({
           ) : (
             <span className={`pr-sandbox ${getSandboxStatusClass(pr)}`}>Sandbox: {pr.sandbox || 'Not created'}</span>
           )}
-          <button className="btn" onClick={() => toggleReviewView(pr.id)}>
+          <button className="btn" onClick={(e) => { e.stopPropagation(); toggleReviewView(pr.id); }}>
             {reviewViewModes[pr.id] === 'structured' ? 'YAML' : 'Structured'}
-          </button>
-          <button className="btn btn-toggle-collapse" onClick={() => toggleCollapse(pr.id)}>
-            {collapsedReviews[pr.id] ? 'Expand' : 'Collapse'}
           </button>
         </div>
       </div>
