@@ -12,6 +12,10 @@
   color: #e0e0e0;
 }
 
+.dark-mode .App {
+  background-color: #576174;
+}
+
 .App-header {
   background-color: #ffffff;
   padding: 20px;
@@ -165,7 +169,7 @@ input:checked + .slider:before {
 }
 
 .dark-mode .pr-card {
-  background-color: #3a3f47;
+  background-color: #7e8185;
   border-color: #444;
 }
 
