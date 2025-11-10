@@ -231,10 +231,10 @@ function PrReviewCard({
         <div className="pr-card-actions-header">
           {getSandboxStatusClass(pr) === 'green' ? (
             <a href={`/sandbox/${pr.sandbox}/`} target="_blank" rel="noopener noreferrer" className={`pr-sandbox ${getSandboxStatusClass(pr)}`}>
-              Sandbox: {pr.sandbox}
+              Sandbox &#9654;
             </a>
           ) : (
-            <span className={`pr-sandbox ${getSandboxStatusClass(pr)}`}>Sandbox: {pr.sandbox || 'Not created'}</span>
+            <span className={`pr-sandbox ${getSandboxStatusClass(pr)}`}>{pr.sandbox ? 'Sandbox &#9654;' : 'Sandbox: Not created'}</span>
           )}
         </div>
       </div>
