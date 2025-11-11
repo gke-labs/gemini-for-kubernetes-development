@@ -17,9 +17,9 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"flag"
 	"os"
-	"context"
 
 	"github.com/google/go-github/v39/github"
 
@@ -31,9 +31,9 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/repowatch/api/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/repowatch/controllers"
@@ -81,8 +81,8 @@ func main() {
 	}
 
 	if err = (&controllers.RepoWatchReconciler{
-		Client:          mgr.GetClient(),
-		Scheme:          mgr.GetScheme(),
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
 		NewGithubClient: func(ctx context.Context, k8sClient client.Client, repoWatch *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
 			return controllers.NewGithubClient(ctx, k8sClient, repoWatch)
 		},
