@@ -229,6 +229,11 @@ function PrReviewCard({
           </span>
         </h3>
         <div className="pr-card-actions-header">
+          {pr.review && (
+            <span style={{ marginRight: '10px', backgroundColor: '#3e7f67ff', color: 'white', padding: '5px 10px', borderRadius: '5px', fontSize: 'small' }}>
+              Draft Created
+            </span>
+          )}
           {getSandboxStatusClass(pr) === 'green' ? (
             <a href={`/sandbox/${pr.sandbox}/`} target="_blank" rel="noopener noreferrer" className={`pr-sandbox ${getSandboxStatusClass(pr)}`}>
               Sandbox &#9654;
@@ -313,7 +318,7 @@ function PrReviewCard({
           )}
           <div className="pr-card-actions">
             <button className="btn btn-submit" onClick={() => handleSubmit(pr.id)} disabled={!!pr.review}>
-              {pr.review ? 'Submitted' : 'Create Draft Review'}
+              {pr.review ? 'Draft Created' : 'Create Draft Review'}
             </button>
           <button className="btn btn-delete" onClick={(e) => { e.stopPropagation(); handleDelete(pr.id); }}>&#x2715;</button>
           </div>
