@@ -1,7 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import yaml from 'js-yaml';
 import './App.css';
 import PrReviewCard from './PrReviewCard';
+import AddRepo from './AddRepo';
+import DeleteRepo from './DeleteRepo';
 
 function App() {
   const [repos, setRepos] = useState([]);
@@ -14,19 +16,20 @@ function App() {
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'light');
   const [reviewViewModes, setReviewViewModes] = useState({});
   const [yamlDrafts, setYamlDrafts] = useState({});
+  const [showAddRepo, setShowAddRepo] = useState(false);
 
   useEffect(() => {
     document.body.className = theme === 'dark' ? 'dark-mode' : '';
     localStorage.setItem('theme', theme);
   }, [theme]);
 
-  useEffect(() => {
+  const fetchRepos = useCallback(() => {
     fetch('/api/repos')
       .then(res => res.json())
       .then(data => {
         const safeData = data || [];
         setRepos(safeData);
-        if (safeData.length > 0) {
+        if (safeData.length > 0 && !activeRepo && !showAddRepo) {
           const firstRepo = safeData[0];
           setActiveRepo(firstRepo);
           if (firstRepo.review) {
@@ -37,7 +40,11 @@ function App() {
         }
       })
       .catch(err => console.error("Failed to fetch repos:", err));
-  }, []);
+  }, [activeRepo, showAddRepo]);
+
+  useEffect(() => {
+    fetchRepos();
+  }, [fetchRepos]);
 
   useEffect(() => {
     if (activeRepo && activeSubTab.repo === activeRepo.name) {
@@ -88,6 +95,7 @@ function App() {
   }, [activeRepo, activeSubTab]);
 
   const handleRepoClick = (repoName) => {
+    setShowAddRepo(false);
     const repo = repos.find(r => r.name === repoName);
     setActiveRepo(repo);
     setPrs([]);
@@ -99,6 +107,18 @@ function App() {
         setActiveSubTab({ repo: repoName, name: repo.issueHandlers[0].name });
       }
     }
+  };
+
+  const handleRepoDeleted = (deletedRepoName) => {
+    fetchRepos();
+    if (activeRepo && activeRepo.name === deletedRepoName) {
+      setActiveRepo(null);
+    }
+  };
+
+  const handleAddRepoClick = () => {
+    setShowAddRepo(true);
+    setActiveRepo(null);
   };
 
   const handleDelete = (id) => {
@@ -285,6 +305,10 @@ function App() {
   };
 
   const renderContent = () => {
+    if (showAddRepo) {
+      return <AddRepo onRepoAdded={fetchRepos} />;
+    }
+
     if (activeSubTab.name === 'review') {
       return prs.map(pr => (
         <PrReviewCard
@@ -371,8 +395,14 @@ function App() {
             {repo.name}
           </button>
         ))}
+        <button
+          className={`tab-btn ${showAddRepo ? 'active' : ''}`}
+          onClick={handleAddRepoClick}
+        >
+          Add Repo
+        </button>
       </nav>
-      {activeRepo && (
+      {activeRepo && !showAddRepo && (
         <nav className="sub-tabs">
           {repos.find(r => r.name === activeRepo.name)?.review && (
             <button
@@ -391,6 +421,7 @@ function App() {
               {handler.name}
             </button>
           ))}
+          <DeleteRepo repo={activeRepo} onRepoDeleted={handleRepoDeleted} />
         </nav>
       )}
       <main className="pr-list">
