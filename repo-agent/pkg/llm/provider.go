@@ -16,15 +16,24 @@ package llm
 
 import "fmt"
 
+// PostProcessor defines the signature for functions that can post-process the LLM's raw output.
+type PostProcessor func([]byte) ([]byte, error)
+
+// Provider defines the interface for interacting with an LLM.
 type Provider interface {
 	Setup(workspacesDir, tokensDir string) error
 	Run(prompt string) ([]byte, error)
+	// AddPostProcessor adds a post-processing function to the provider.
+	// These functions are applied sequentially to the LLM's raw output.
+	AddPostProcessor(p PostProcessor)
 }
 
 func NewLLMProvider(name string) (Provider, error) {
 	switch name {
 	case "gemini-cli":
-		return &Gemini{Executor: &RealCommandExecutor{}}, nil
+		g := &Gemini{Executor: &RealCommandExecutor{}}
+		g.AddPostProcessor(stripYAMLMarkers)
+		return g, nil
 	default:
 		return nil, fmt.Errorf("unknown provider: %s", name)
 	}

@@ -25,35 +25,45 @@ import (
 
 func TestStripYAMLMarkers(t *testing.T) {
 	tests := []struct {
-		name  string
-		input []byte
-		want  []byte
+		name    string
+		input   []byte
+		want    []byte
+		wantErr bool
 	}{
 		{
-			name:  "with markers",
-			input: []byte("```yaml\nfoo: bar\n```"),
-			want:  []byte("foo: bar"),
+			name:    "with markers",
+			input:   []byte("```yaml\nfoo: bar\n```"),
+			want:    []byte("foo: bar"),
+			wantErr: false,
 		},
 		{
-			name:  "without markers",
-			input: []byte("foo: bar"),
-			want:  []byte("foo: bar"),
+			name:    "without markers",
+			input:   []byte("foo: bar"),
+			want:    []byte("foo: bar"),
+			wantErr: false,
 		},
 		{
-			name:  "empty input",
-			input: []byte(""),
-			want:  []byte(""),
+			name:    "empty input",
+			input:   []byte(""),
+			want:    []byte(""),
+			wantErr: false,
 		},
 		{
-			name:  "only markers",
-			input: []byte("```yaml\n```"),
-			want:  []byte(""),
+			name:    "only markers",
+			input:   []byte("```yaml\n```"),
+			want:    []byte(""),
+			wantErr: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := stripYAMLMarkers(tt.input); !bytes.Equal(got, tt.want) {
+			got, err := stripYAMLMarkers(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("stripYAMLMarkers() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !bytes.Equal(got, tt.want) {
 				t.Errorf("stripYAMLMarkers() = %q, want %q", got, tt.want)
 			}
 		})
@@ -182,8 +192,9 @@ func TestGemini_Run(t *testing.T) {
 			Err:    nil,
 		}
 
-		// Create a Gemini provider with the mock executor
+		// Create a Gemini provider with the mock executor and add the default post-processor
 		g := &Gemini{Executor: mockExecutor}
+		g.AddPostProcessor(stripYAMLMarkers)
 
 		// Run the provider
 		output, err := g.Run("test prompt")
@@ -229,6 +240,29 @@ func TestGemini_Run(t *testing.T) {
 		_, err := g.Run("test prompt")
 		if err == nil {
 			t.Fatal("Gemini.Run() should have failed, but it didn't")
+		}
+	})
+
+	t.Run("post-processor error", func(t *testing.T) {
+		// Create a mock executor
+		mockExecutor := &MockCommandExecutor{
+			Output: []byte("some output"),
+			Err:    nil,
+		}
+
+		// Create a Gemini provider with the mock executor and a post-processor that returns an error
+		g := &Gemini{Executor: mockExecutor}
+		g.AddPostProcessor(func(_ []byte) ([]byte, error) {
+			return nil, errors.New("post-processing failed")
+		})
+
+		// Run the provider
+		_, err := g.Run("test prompt")
+		if err == nil {
+			t.Fatal("Gemini.Run() should have failed due to post-processor error, but it didn't")
+		}
+		if err.Error() != "post-processing failed" {
+			t.Errorf("Expected error 'post-processing failed', but got '%v'", err)
 		}
 	})
 }

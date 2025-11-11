@@ -29,7 +29,12 @@ import (
 var _ Provider = &Gemini{}
 
 type Gemini struct {
-	Executor CommandExecutor
+	Executor   CommandExecutor
+	processors []PostProcessor
+}
+
+func (g *Gemini) AddPostProcessor(p PostProcessor) {
+	g.processors = append(g.processors, p)
 }
 
 func (g *Gemini) Setup(workspacesDir, tokensDir string) error {
@@ -73,19 +78,26 @@ func (g *Gemini) Run(agentPrompt string) ([]byte, error) {
 		return nil, err
 	}
 
-	return stripYAMLMarkers(output), nil
+	for _, p := range g.processors {
+		output, err = p(output)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return output, nil
 }
 
 // stripYAMLMarkers looks for ```yaml and ``` markers in the input byte slice.
 // If found, it strips these markers and returns the content between them.
 // If markers are not found, the original byte slice is returned.
-func stripYAMLMarkers(input []byte) []byte {
+func stripYAMLMarkers(input []byte) ([]byte, error) {
 	startMarker := []byte("```yaml")
 	endMarker := []byte("```")
 
 	startIndex := bytes.Index(input, startMarker)
 	if startIndex == -1 {
-		return input // Start marker not found
+		return input, nil // Start marker not found
 	}
 
 	// Adjust startIndex to point after the start marker
@@ -93,12 +105,12 @@ func stripYAMLMarkers(input []byte) []byte {
 
 	endIndex := bytes.Index(input[startIndex:], endMarker)
 	if endIndex == -1 {
-		return input // End marker not found after start marker
+		return input, nil // End marker not found after start marker
 	}
 
 	// Adjust endIndex to be relative to the original input slice
 	endIndex += startIndex
 
 	// Extract the content between the markers, trimming any leading/trailing whitespace
-	return bytes.TrimSpace(input[startIndex:endIndex])
+	return bytes.TrimSpace(input[startIndex:endIndex]), nil
 }
