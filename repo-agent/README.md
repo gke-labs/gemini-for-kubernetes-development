@@ -32,18 +32,56 @@ Before you begin, ensure you have the following tools installed:
     export GITHUB_PAT="..."
     ```
 
+    1. `GEMINI_API_KEY` is used with `gemini-cli` to generate reviews or bug fixes
+    2. `GITHUB_PAT` is used to make API calls to poll for Pull Requests, Issues etc. It is also used to create Draft reviews and code branches.
+
 2.  **Installing Repo-Agent:**
 
     Install from the release manifests:
 
     ```bash
     kind create cluster  # optional you can use an existing cluster
-    export VERSION=v0.1.0-rc.1
+    export VERSION=v0.1.0-rc.2
     curl -L  https://github.com/gke-labs/gemini-for-kubernetes-development/releases/download/${VERSION}/installer.sh | bash
     ```
 
     Run port-forwarding to access the UI.
     Once you run the following command, the UI is accesible at `http://localhost:13380`.
+
+3.  **Apply Example Configurations:**
+
+    ```bash
+    export VERSION=v0.1.0-rc.2
+    export URL_PREFIX=https://raw.githubusercontent.com/gke-labs/gemini-for-kubernetes-development/refs/tags/${VERSION}/repo-agent/examples
+    ```
+
+    Kubernetes repo review example:
+
+    ```bash
+    curl ${URL_PREFIX}/k8s-configdir.yaml | kubectl apply -f -
+    curl ${URL_PREFIX}/k8s-repowatch.yaml | kubectl apply -f -
+    ```
+
+    GKE Labs repo example:
+
+    ```bash
+    curl ${URL_PREFIX}/gkelabs-geminifork8s-repowatch.yaml | kubectl apply -f -
+    ```
+
+    KCC repo example:
+
+    ```bash
+    curl ${URL_PREFIX}/kcc-configdir.yaml | kubectl apply -f -
+    curl ${URL_PREFIX}/kcc-repowatch.yaml | kubectl apply -f -
+    ```
+
+    Agent Sandbox repo example:
+
+    ```bash
+    curl ${URL_PREFIX}/agent-sandbox-repowatch.yaml | kubectl apply -f -
+    ```
+
+4.  **Access the UI:**
 
     ```bash
     # Setup port forwarding to access the UI

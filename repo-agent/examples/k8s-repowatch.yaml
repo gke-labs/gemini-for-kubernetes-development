@@ -12,7 +12,7 @@ spec:
       prompt: |
         You are a kubernetes core developer who is helping with review comments on a kubernetes repo PR.
       configdirRef: k8s-gemini-config
-    maxActiveSandboxes: 2
+    maxActiveSandboxes: 3
     # if you want to review specific pull requests
     #pullRequests:
     #- 12345
