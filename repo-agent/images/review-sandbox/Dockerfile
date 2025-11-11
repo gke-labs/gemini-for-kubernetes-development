@@ -10,7 +10,7 @@ COPY go.sum go.sum
 RUN go mod download
 
 # Copy the llm directory
-COPY llm/ ./llm/
+COPY pkg/llm/ ./pkg/llm/
 
 COPY review-sandbox/ .
 RUN CGO_ENABLED=0 GOOS=linux go build -o /review-sandbox .

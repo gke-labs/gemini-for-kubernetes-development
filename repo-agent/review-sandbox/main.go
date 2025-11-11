@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/bluekeyes/go-gitdiff/gitdiff"
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/llm"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/llm"
 	"github.com/google/go-github/v39/github"
 	"gopkg.in/yaml.v3"
 )
