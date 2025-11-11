@@ -17,7 +17,7 @@ spec:
     devcontainerConfigRef: go-devcontainer-json
     pushEnabled: true
     labels:
-      - "enhancement"
+      - ""
     llm:
       provider: gemini-cli
       apiKeySecretRef: gemini-vscode-tokens
