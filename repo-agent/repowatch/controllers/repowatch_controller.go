@@ -241,7 +241,7 @@ func (r *RepoWatchReconciler) reconcileIssues(ctx context.Context, githubConfig 
 	return reconcileErr
 }
 
-func (r *RepoWatchReconciler) reconcileIssuesForHandler(ctx context.Context, user *github.User, sandboxList *unstructured.UnstructuredList, handler reviewv1alpha1.IssueHandlerSpec, repoWatch *reviewv1alpha1.RepoWatch, client *github.Client, owner string, repo string, githubConfig map[string]string) error {
+func (r *RepoWatchReconciler) reconcileIssuesForHandler(ctx context.Context, user *github.User, sandboxList *unstructured.UnstructuredList, handler reviewv1alpha1.IssueHandlerSpec, repoWatch *reviewv1alpha1.RepoWatch, client *github.Client, owner string, repo string, _ map[string]string) error {
 	log := log.FromContext(ctx)
 
 	listOptions := &github.IssueListByRepoOptions{
@@ -306,8 +306,6 @@ func (r *RepoWatchReconciler) reconcileIssuesForHandler(ctx context.Context, use
 
 	return nil
 }
-
-
 
 func parseRepoURL(repoURL string) (string, string, error) {
 	u, err := url.Parse(repoURL)
