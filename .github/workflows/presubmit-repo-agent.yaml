@@ -1,0 +1,36 @@
+name: Presubmits for Repo Agent
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'repo-agent/**'
+      - 'dev/tools/**'
+      - '.github/**'
+jobs:
+  unit-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: repo-agent/go.mod
+          cache-dependency-path: |
+            repo-agent/go.sum
+            dev/tools/go.sum
+      - name: Run Unit Tests
+        run: ./dev/tools/test-unit --working-dir repo-agent/
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: repo-agent/go.mod
+          cache-dependency-path: |
+            repo-agent/go.sum
+            dev/tools/go.sum
+      - name: Run Lint
+        run: ./dev/tools/lint-go --working-dir repo-agent/
