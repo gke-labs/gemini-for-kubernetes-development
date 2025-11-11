@@ -15,7 +15,7 @@ rules:
   verbs: ["get", "list", "delete", "patch", "update"]
 - apiGroups: ["review.gemini.google.com"]
   resources: ["repowatches"]
-  verbs: ["get", "list", "create", "delete"]
+  verbs: ["get", "list", "create", "delete", "patch", "update"]
 - apiGroups: [""]
   resources: ["secrets"]
   verbs: ["get", "list", "watch"]

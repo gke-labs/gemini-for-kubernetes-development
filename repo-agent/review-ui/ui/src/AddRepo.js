@@ -3,7 +3,6 @@ import React, { useState } from 'react';
 function AddRepo({ onRepoAdded }) {
     const [name, setName] = useState('');
     const [repoURL, setRepoURL] = useState('');
-    const [namespace, setNamespace] = useState('default');
     const [error, setError] = useState(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -18,7 +17,9 @@ function AddRepo({ onRepoAdded }) {
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ name, repoURL, namespace }),
+                // Hardcoding namespace to 'default' for now for single tenant usage
+                // TODO: when multi-tenant support is added this should use the tenant namespace
+                body: JSON.stringify({ name, repoURL, namespace: 'default' }),
             });
 
             if (!response.ok) {
@@ -66,17 +67,6 @@ function AddRepo({ onRepoAdded }) {
                         onChange={(e) => setRepoURL(e.target.value)}
                         required
                         placeholder="https://github.com/owner/repo"
-                        style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}
-                    />
-                </div>
-                <div style={{ marginBottom: '15px' }}>
-                    <label htmlFor="namespace" style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>Namespace:</label>
-                    <input
-                        type="text"
-                        id="namespace"
-                        value={namespace}
-                        onChange={(e) => setNamespace(e.target.value)}
-                        placeholder="default"
                         style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}
                     />
                 </div>

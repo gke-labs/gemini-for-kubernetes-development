@@ -184,6 +184,7 @@ func main() {
 		api.POST("/repo/:namespace/:repo/issues/:issue_id/handler/:handler/submitcomment", submitIssueComment)
 		api.DELETE("/repo/:namespace/:repo/issues/:issue_id/handler/:handler", deleteIssue)
 		api.POST("/repowatch", createRepoWatch)
+		api.PUT("/repowatch/:namespace/:name", updateRepoWatch)
 		api.DELETE("/repowatch/:namespace/:name", deleteRepoWatch)
 		api.GET("/proxy", proxy)
 	}
@@ -195,6 +196,7 @@ func main() {
 }
 
 func createRepoWatch(c *gin.Context) {
+	// TODO: We can improve this later - Prompts, Issue handlers, etc.
 	var payload struct {
 		Name      string `json:"name"`
 		Namespace string `json:"namespace"`
@@ -252,6 +254,61 @@ func createRepoWatch(c *gin.Context) {
 	}
 
 	c.Status(http.StatusCreated)
+}
+
+func updateRepoWatch(c *gin.Context) {
+	namespace := c.Param("namespace")
+	name := c.Param("name")
+
+	var payload struct {
+		RepoURL string `json:"repoURL"`
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if payload.RepoURL == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "repoURL is required"})
+		return
+	}
+
+	gvr := schema.GroupVersionResource{
+		Group:    "review.gemini.google.com",
+		Version:  "v1alpha1",
+		Resource: "repowatches",
+	}
+
+	// Get existing resource
+	existing, err := k8sClient.Resource(gvr).Namespace(namespace).Get(c.Request.Context(), name, v1.GetOptions{})
+	if err != nil {
+		log.Printf("Failed to get RepoWatch for update: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to get RepoWatch: %v", err)})
+		return
+	}
+
+	// Update spec.repoURL
+	if err := unstructured.SetNestedField(existing.Object, payload.RepoURL, "spec", "repoURL"); err != nil {
+		log.Printf("Failed to set repoURL: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update object structure"})
+		return
+	}
+
+	// Apply update
+	_, err = k8sClient.Resource(gvr).Namespace(namespace).Update(c.Request.Context(), existing, v1.UpdateOptions{})
+	if err != nil {
+		log.Printf("Failed to update RepoWatch: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to update RepoWatch: %v", err)})
+		return
+	}
+
+	// Update Redis cache to reflect the change immediately
+	if err := rdb.HSet(c.Request.Context(), fmt.Sprintf("repo:%s", name), "url", payload.RepoURL).Err(); err != nil {
+		log.Printf("Failed to update repo URL in Redis for %s: %v", name, err)
+		// We don't fail the request here as the K8s source of truth is updated
+	}
+
+	c.Status(http.StatusOK)
 }
 
 func deleteRepoWatch(c *gin.Context) {
