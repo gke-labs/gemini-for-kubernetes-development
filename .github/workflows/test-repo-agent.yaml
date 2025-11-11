@@ -1,11 +1,5 @@
 name: Test Repo Agent
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'repo-agent/**'
-      - 'dev/tools/**'
   pull_request:
     branches:
       - main
@@ -13,18 +7,18 @@ on:
       - 'repo-agent/**'
       - 'dev/tools/**'
 jobs:
-  test:
+  lint-and-unit-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
+          go-version-file: repo-agent/go.mod
           cache-dependency-path: |
             repo-agent/go.sum
             dev/tools/go.sum
+      - name: Run Lint
+        run: ./dev/tools/lint-go --working-dir repo-agent/
       - name: Run Unit Tests
-        working-directory: repo-agent
-        env:
-          GEMINI_API_KEY: dummy
-          GITHUB_PAT: dummy
-        run: make test-unit
+        run: ./dev/tools/test-unit --working-dir repo-agent/
