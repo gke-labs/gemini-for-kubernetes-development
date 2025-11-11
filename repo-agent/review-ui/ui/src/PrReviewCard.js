@@ -221,27 +221,38 @@ function PrReviewCard({
 
   return (
     <div key={pr.id} className={`pr-card ${pr.review ? 'review-submitted' : ''}`}>
-      <div className="pr-card-header">
-        <h3><a href={pr.htmlURL} target="_blank" rel="noopener noreferrer">{pr.title} (PR #{pr.id})</a></h3>
+      <div className="pr-card-header" onClick={() => toggleCollapse(pr.id)}>
+        <h3>
+          <a href={pr.htmlURL} target="_blank" rel="noopener noreferrer">{pr.title} (PR #{pr.id})</a>
+          <span style={{ marginLeft: '10px', fontSize: 'small', color: '#555' }}>
+            {collapsedReviews[pr.id] ? 'click to expand' : 'click to collapse'}
+          </span>
+        </h3>
         <div className="pr-card-actions-header">
+          {pr.review && (
+            <span style={{ marginRight: '10px', backgroundColor: '#3e7f67ff', color: 'white', padding: '5px 10px', borderRadius: '5px', fontSize: 'small' }}>
+              Draft Created
+            </span>
+          )}
           {getSandboxStatusClass(pr) === 'green' ? (
             <a href={`/sandbox/${pr.sandbox}/`} target="_blank" rel="noopener noreferrer" className={`pr-sandbox ${getSandboxStatusClass(pr)}`}>
-              Sandbox: {pr.sandbox}
+              Sandbox &#9654;
             </a>
+          ) : getSandboxStatusClass(pr) === 'yellow' ? (
+            <span className={`pr-sandbox ${getSandboxStatusClass(pr)}`}>Sandbox &#9646;&#9646;</span>
           ) : (
-            <span className={`pr-sandbox ${getSandboxStatusClass(pr)}`}>Sandbox: {pr.sandbox || 'Not created'}</span>
+            <span className={`pr-sandbox ${getSandboxStatusClass(pr)}`}>Sandbox: Not created</span>
           )}
-          <button className="btn" onClick={() => toggleReviewView(pr.id)}>
-            {reviewViewModes[pr.id] === 'structured' ? 'YAML' : 'Structured'}
-          </button>
-          <button className="btn btn-toggle-collapse" onClick={() => toggleCollapse(pr.id)}>
-            {collapsedReviews[pr.id] ? 'Expand' : 'Collapse'}
-          </button>
         </div>
       </div>
       {!collapsedReviews[pr.id] && (
         <>
           {renderDiffView()}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '10px 0' }}>
+            <button className="btn" onClick={() => toggleReviewView(pr.id)}>
+              {reviewViewModes[pr.id] === 'structured' ? 'View as YAML' : 'View as Structured'}
+            </button>
+          </div>
           {pr.review ? (
             reviewViewModes[pr.id] === 'structured' ? (
               <div className="review-display">
@@ -307,9 +318,9 @@ function PrReviewCard({
           )}
           <div className="pr-card-actions">
             <button className="btn btn-submit" onClick={() => handleSubmit(pr.id)} disabled={!!pr.review}>
-              {pr.review ? 'Submitted' : 'Submit'}
+              {pr.review ? 'Draft Created' : 'Create Draft Review'}
             </button>
-            <button className="btn btn-delete" onClick={() => handleDelete(pr.id)}>Delete</button>
+          <button className="btn btn-delete" onClick={(e) => { e.stopPropagation(); handleDelete(pr.id); }}>&#x2715;</button>
           </div>
         </>
       )}
