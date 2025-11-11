@@ -196,7 +196,7 @@ func main() {
 }
 
 func createRepoWatch(c *gin.Context) {
-	// TODO: We can improve this later - Prompts, Issue handlers, etc.
+	// TODO: Improve this - Prompts, Issue handlers, etc.
 	var payload struct {
 		Name      string `json:"name"`
 		Namespace string `json:"namespace"`
@@ -235,7 +235,8 @@ func createRepoWatch(c *gin.Context) {
 				"githubSecretName":    "github-pat",
 				"pollIntervalSeconds": 300,
 				"review": map[string]interface{}{
-					"maxActiveSandboxes": 3,
+					"maxActiveSandboxes":    3,
+					"devcontainerConfigRef": "go-devcontainer-json",
 					"llm": map[string]interface{}{
 						"provider":        "gemini-cli",
 						"apiKeySecretRef": "gemini-vscode-tokens",
