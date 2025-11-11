@@ -112,7 +112,7 @@ type RepoWatchSpec struct {
 
 	// Secret containing the GitHub Personal Access Token (PAT) for accessing the repo.
 	// +kubebuilder:validation:Required
-	GithubSecretName string `json:"githubSecretName,"`
+	GithubSecretName string `json:"githubSecretName"`
 
 	// How often to check for new PRs (in seconds).
 	// +kubebuilder:validation:Minimum=30
