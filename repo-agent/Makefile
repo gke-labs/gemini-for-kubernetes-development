@@ -1,5 +1,5 @@
 
-KIND_CLUSTER=repo-agent
+KIND_CLUSTER ?= repo-agent
 REGISTRY ?= kind.local/
 NAMESPACE ?= default
 

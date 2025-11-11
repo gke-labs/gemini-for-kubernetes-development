@@ -24,8 +24,31 @@ function PrReviewCard({
   const [diff, setDiff] = useState(null);
   const [diffError, setDiffError] = useState(null);
   const [fileCollapsed, setFileCollapsed] = useState({});
+  const [reviewFlairText, setReviewFlairText] = useState('');
+
+  const getReviewFlairColor = (flairText) => {
+    switch (flairText) {
+      case 'Ready':
+        return 'green';
+      case 'Generating ...':
+        return 'orange';
+      case 'Submitted':
+        return '#3f5398ff';
+      default:
+        return '#3e7f67ff'; // Default color
+    }
+  };
 
   const isCollapsed = collapsedReviews[pr.id];
+  useEffect(() => {
+    if (pr.review) {
+      setReviewFlairText('Submitted');
+    } else if (drafts[pr.id] && drafts[pr.id].note && drafts[pr.id].note.trim() !== '') {
+      setReviewFlairText('Ready');
+    } else {
+      setReviewFlairText('Generating ...');
+    }
+  }, [pr.review, drafts, pr.id]);
   useEffect(() => {
     if (!isCollapsed && !diff && !diffError) {
       if (!pr.diffURL) {
@@ -229,9 +252,9 @@ function PrReviewCard({
           </span>
         </h3>
         <div className="pr-card-actions-header">
-          {pr.review && (
-            <span style={{ marginRight: '10px', backgroundColor: '#3e7f67ff', color: 'white', padding: '5px 10px', borderRadius: '5px', fontSize: 'small' }}>
-              Draft Created
+          {reviewFlairText && (
+            <span style={{ marginRight: '10px', backgroundColor: getReviewFlairColor(reviewFlairText), color: 'white', padding: '5px 10px', borderRadius: '5px', fontSize: 'small' }}>
+              {reviewFlairText}
             </span>
           )}
           {getSandboxStatusClass(pr) === 'green' ? (
