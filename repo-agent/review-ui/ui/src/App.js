@@ -242,6 +242,73 @@ function App() {
     .catch(err => console.error("Failed to submit PR review:", err));
   };
 
+  const handleExportCurl = (id, onSuccess) => {
+    let review;
+    if (reviewViewModes[id] === 'yaml') {
+      try {
+        review = yaml.load(yamlDrafts[id]);
+      } catch (e) {
+        alert('Invalid YAML. Please fix it before exporting.');
+        return;
+      }
+    } else {
+      review = drafts[id];
+    }
+
+    if (!review || (!review.review.body?.trim() && (!review.review.comments || review.review.comments.length === 0))) {
+      alert("Please leave a review comment before Exporting.");
+      return;
+    }
+
+    try {
+      const url = new URL(activeRepo.url);
+      const pathParts = url.pathname.split('/').filter(p => p);
+      if (pathParts.length < 2) {
+        alert("Invalid repo URL format");
+        return;
+      }
+      const owner = pathParts[0];
+      const repoName = pathParts[1];
+
+      const reviewRequest = review.review;
+      // Ensure event is not set (draft)
+      const requestBody = { ...reviewRequest };
+      delete requestBody.event;
+
+      // Filter out null values from comments
+      if (requestBody.comments) {
+        requestBody.comments = requestBody.comments.map(comment => {
+          const cleanComment = {};
+          Object.keys(comment).forEach(key => {
+            if (comment[key] !== null && comment[key] !== undefined) {
+              cleanComment[key] = comment[key];
+            }
+          });
+          return cleanComment;
+        });
+      }
+
+      const jsonBody = JSON.stringify(requestBody);
+      // Escape single quotes for bash single-quoted string using unicode escape
+      const escapedJSONBody = jsonBody.replace(/'/g, '\\u0027');
+
+      const curlCmd = `curl -L \\
+  -X POST \\
+  -H "Accept: application/vnd.github+json" \\
+  -H "Authorization: Bearer <YOUR_TOKEN>" \\
+  -H "X-GitHub-Api-Version: 2022-11-28" \\
+  https://api.github.com/repos/${owner}/${repoName}/pulls/${id}/reviews \\
+  -d '${escapedJSONBody}'`;
+
+      if (onSuccess) {
+        onSuccess(curlCmd);
+      }
+    } catch (e) {
+      console.error("Failed to generate curl command:", e);
+      alert("Failed to generate curl command: " + e.message);
+    }
+  };
+
   const handleIssueSaveDraft = (issueId, handlerName) => {
     const draft = drafts[issueId];
     fetch(`/api/repo/${activeRepo.namespace}/${activeRepo.name}/issues/${issueId}/handler/${handlerName}/draft`, {
@@ -327,6 +394,7 @@ function App() {
           handleYamlDraftChange={handleYamlDraftChange}
           handleYamlDraftBlur={handleYamlDraftBlur}
           handleSubmit={handleSubmit}
+          handleExportCurl={handleExportCurl}
           getSandboxStatusClass={getSandboxStatusClass}
           toggleCollapse={toggleCollapse}
         />
