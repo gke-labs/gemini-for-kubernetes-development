@@ -9,6 +9,9 @@ COPY go.sum go.sum
 # and so that source changes don't invalidate our downloaded layer
 RUN go mod download
 
+# Copy the llm directory
+COPY pkg/llm/ ./pkg/llm/
+
 COPY review-sandbox/ .
 RUN CGO_ENABLED=0 GOOS=linux go build -o /review-sandbox .
 

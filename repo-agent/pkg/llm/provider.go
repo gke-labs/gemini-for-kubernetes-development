@@ -1,0 +1,68 @@
+// Copyright 2025 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package llm
+
+import (
+	"bytes"
+	"fmt"
+)
+
+// PostProcessor defines the signature for functions that can post-process the LLM's raw output.
+type PostProcessor func([]byte) ([]byte, error)
+
+// Provider defines the interface for interacting with an LLM.
+type Provider interface {
+	Setup(workspacesDir, tokensDir string) error
+	Run(prompt string) ([]byte, error)
+	// AddPostProcessor adds a post-processing function to the provider.
+	// These functions are applied sequentially to the LLM's raw output.
+	AddPostProcessor(p PostProcessor)
+}
+
+func NewLLMProvider(name string) (Provider, error) {
+	switch name {
+	case "gemini-cli":
+		return &Gemini{Executor: &RealCommandExecutor{}}, nil
+	default:
+		return nil, fmt.Errorf("unknown provider: %s", name)
+	}
+}
+
+// StripYAMLMarkers looks for ```yaml and ``` markers in the input byte slice.
+// If found, it strips these markers and returns the content between them.
+// If markers are not found, the original byte slice is returned.
+func StripYAMLMarkers(input []byte) ([]byte, error) {
+	startMarker := []byte("```yaml")
+	endMarker := []byte("```")
+
+	startIndex := bytes.Index(input, startMarker)
+	if startIndex == -1 {
+		return input, nil // Start marker not found
+	}
+
+	// Adjust startIndex to point after the start marker
+	startIndex += len(startMarker)
+
+	endIndex := bytes.Index(input[startIndex:], endMarker)
+	if endIndex == -1 {
+		return input, nil // End marker not found after start marker
+	}
+
+	// Adjust endIndex to be relative to the original input slice
+	endIndex += startIndex
+
+	// Extract the content between the markers, trimming any leading/trailing whitespace
+	return bytes.TrimSpace(input[startIndex:endIndex]), nil
+}

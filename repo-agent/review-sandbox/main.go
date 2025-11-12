@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/bluekeyes/go-gitdiff/gitdiff"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/llm"
 	"github.com/google/go-github/v39/github"
 	"gopkg.in/yaml.v3"
 )
@@ -76,16 +77,15 @@ func runReview() error {
 
 	agentPrompt := os.Getenv("AGENT_PROMPT")
 	agentPrompt = fmt.Sprintf("%s \n\n Try generating at least %d review comments", agentPrompt, expectedComments)
-	var agentFn func(string) ([]byte, error)
-	switch agentName {
-	case "gemini-cli":
-		log.Println("Setting up Gemini CLI")
-		if err := setupGemini(); err != nil {
-			return err
-		}
-		agentFn = runGeminiCli
-	default:
-		return fmt.Errorf("unknown agent name: %s", agentName)
+
+	provider, err := llm.NewLLMProvider(agentName)
+	if err != nil {
+		return err
+	}
+	provider.AddPostProcessor(llm.StripYAMLMarkers)
+
+	if err := provider.Setup("/workspaces", "/tokens"); err != nil {
+		return err
 	}
 
 	var accumulatedAgentOutput AgentOutput
@@ -115,7 +115,7 @@ func runReview() error {
 			}
 		}
 
-		output, err := agentFn(currentPrompt)
+		output, err := provider.Run(currentPrompt)
 		if err != nil {
 			log.Printf("Agent run failed: %v. Continuing...", err)
 			time.Sleep(10 * time.Second)
@@ -302,77 +302,4 @@ func startCodeServer() (*exec.Cmd, error) {
 	}
 	log.Printf("Running code-server in subprocess %d\n", cmd.Process.Pid)
 	return cmd, nil
-}
-
-func setupGemini() error {
-	// if .gemini directory exists in /workspaces copy it to home directory
-	if _, err := os.Stat("/workspaces/.gemini"); err == nil {
-		log.Println(".gemini directory exists in /workspaces, copying to repo directory")
-		// if desitation .gemini directory exists move it to .gemini.bak
-		if _, err := os.Stat(".gemini"); err == nil {
-			log.Println(".gemini directory exists in repo directory, moving to .gemini.bak")
-			err := os.Rename(".gemini", ".gemini.bak")
-			if err != nil {
-				return fmt.Errorf("failed to move .gemini to .gemini.bak: %v", err)
-			}
-		}
-		cmd := exec.Command("cp", "-R", "/workspaces/.gemini", ".gemini")
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("failed to copy .gemini directory: %v", err)
-		}
-	} else {
-		log.Println(".gemini directory does not exist in /workspaces")
-	}
-
-	geminiKey, err := os.ReadFile("/tokens/gemini")
-	if err != nil {
-		return fmt.Errorf("failed to read /tokens/gemini: %v", err)
-	}
-	os.Setenv("GEMINI_API_KEY", string(geminiKey))
-	return nil
-}
-
-func runGeminiCli(agentPrompt string) ([]byte, error) {
-	log.Println("running gemini")
-
-	var stdout, stderr bytes.Buffer
-	log.Printf("running gemini with prompt: %s", agentPrompt)
-	cmd := exec.Command("gemini", "-y", "-p", agentPrompt)
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		log.Printf("gemini command failed: %v. Stderr: %s", err, stderr.String())
-		return nil, err
-	}
-
-	return stripYAMLMarkers(stdout.Bytes()), nil
-}
-
-// stripYAMLMarkers looks for ```yaml and ``` markers in the input byte slice.
-// If found, it strips these markers and returns the content between them.
-// If markers are not found, the original byte slice is returned.
-func stripYAMLMarkers(input []byte) []byte {
-	startMarker := []byte("```yaml")
-	endMarker := []byte("```")
-
-	startIndex := bytes.Index(input, startMarker)
-	if startIndex == -1 {
-		return input // Start marker not found
-	}
-
-	// Adjust startIndex to point after the start marker
-	startIndex += len(startMarker)
-
-	endIndex := bytes.Index(input[startIndex:], endMarker)
-	if endIndex == -1 {
-		return input // End marker not found after start marker
-	}
-
-	// Adjust endIndex to be relative to the original input slice
-	endIndex += startIndex
-
-	// Extract the content between the markers, trimming any leading/trailing whitespace
-	return bytes.TrimSpace(input[startIndex:endIndex])
 }
