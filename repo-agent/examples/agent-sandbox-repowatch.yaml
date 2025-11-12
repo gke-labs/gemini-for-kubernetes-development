@@ -16,8 +16,7 @@ spec:
     maxActiveSandboxes: 2
     devcontainerConfigRef: go-devcontainer-json
     labels:
-      - ""
-      #- "needs-triage"
+      - "needs-triage"
     llm:
       provider: gemini-cli
       apiKeySecretRef: gemini-vscode-tokens
@@ -41,12 +40,11 @@ spec:
   - name: fixes
     maxActiveSandboxes: 1
     devcontainerConfigRef: go-devcontainer-json
-    #pushEnabled: true
+    pushEnabled: true
     labels:
-      - ""
-      #- "kind/cleanup"
-      #- "kind/bug"
-      #- "kind/feature"
+      - "kind/cleanup"
+      - "kind/bug"
+      - "kind/feature"
     llm:
       provider: gemini-cli
       apiKeySecretRef: gemini-vscode-tokens

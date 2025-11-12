@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
 function IssueCard({
   issue,
@@ -11,10 +11,34 @@ function IssueCard({
   getSandboxStatusClass,
 }) {
   const [isCollapsed, setIsCollapsed] = useState(true);
+  const [reviewFlairText, setReviewFlairText] = useState('');
+
+  const getReviewFlairColor = (flairText) => {
+    switch (flairText) {
+      case 'Ready':
+        return 'green';
+      case 'Generating ...':
+        return 'orange';
+      case 'Submitted':
+        return '#3f5398ff';
+      default:
+        return '#3e7f67ff'; // Default color
+    }
+  };
 
   const toggleCollapse = () => {
     setIsCollapsed(!isCollapsed);
   };
+
+  useEffect(() => {
+    if (issue.comment) {
+      setReviewFlairText('Submitted');
+    } else if (drafts[issue.id] && drafts[issue.id].trim() !== '') {
+      setReviewFlairText('Ready');
+    } else {
+      setReviewFlairText('Generating ...');
+    }
+  }, [issue.comment, drafts, issue.id]);
 
   return (
     <div key={issue.id} className={`pr-card ${issue.comment ? 'review-submitted' : ''}`}>
@@ -25,15 +49,22 @@ function IssueCard({
             {isCollapsed ? 'click to expand' : 'click to collapse'}
           </span>
         </h3>
-        {getSandboxStatusClass(issue) === 'green' ? (
-          <a href={`/sandbox/${issue.sandbox}/`} target="_blank" rel="noopener noreferrer" className={`pr-sandbox ${getSandboxStatusClass(issue)}`}>
-            Sandbox &#9654;
-          </a>
-        ) : getSandboxStatusClass(issue) === 'yellow' ? (
-          <span className={`pr-sandbox ${getSandboxStatusClass(issue)}`}>Sandbox &#9646;&#9646;</span>
-        ) : (
-          <span className={`pr-sandbox ${getSandboxStatusClass(issue)}`}>Sandbox: Not created</span>
-        )}
+        <div className="pr-card-actions-header">
+          {reviewFlairText && (
+            <span style={{ marginRight: '10px', backgroundColor: getReviewFlairColor(reviewFlairText), color: 'white', padding: '5px 10px', borderRadius: '5px', fontSize: 'small' }}>
+              {reviewFlairText}
+            </span>
+          )}
+          {getSandboxStatusClass(issue) === 'green' ? (
+            <a href={`/sandbox/${issue.sandbox}/`} target="_blank" rel="noopener noreferrer" className={`pr-sandbox ${getSandboxStatusClass(issue)}`}>
+              Sandbox &#9654;
+            </a>
+          ) : getSandboxStatusClass(issue) === 'yellow' ? (
+            <span className={`pr-sandbox ${getSandboxStatusClass(issue)}`}>Sandbox &#9646;&#9646;</span>
+          ) : (
+            <span className={`pr-sandbox ${getSandboxStatusClass(issue)}`}>Sandbox: Not created</span>
+          )}
+        </div>
       </div>
       {!isCollapsed && (
         <>
