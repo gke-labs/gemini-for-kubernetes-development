@@ -58,10 +58,10 @@ function IssueCard({
           <div className="pr-card-actions">
             {!issue.pushBranch && (
               <button className="btn btn-submit" onClick={() => handleIssueSubmit(issue.id, activeSubTab.name)} disabled={!!issue.comment}>
-                {issue.comment ? 'Submitted' : 'Submit'}
+                {issue.comment ? 'Submitted' : 'Create Comment'}
               </button>
             )}
-            <button className="btn btn-delete" onClick={() => handleIssueDelete(issue.id, activeSubTab.name)}>Delete</button>
+            <button className="btn btn-delete" onClick={() => handleIssueDelete(issue.id, activeSubTab.name)}>&#x2715;</button>
           </div>
         </>
       )}
