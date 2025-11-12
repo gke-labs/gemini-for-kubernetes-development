@@ -31,10 +31,10 @@ ifeq ($(GIT_USER_EMAIL),)
 endif
 
 .PHONY: all
-all: check-prereqs generate lint-go test-unit create-kind install-dep-packages install-sandbox-operator create-secrets build-and-push-repo-agent install-repo-agent #create-instance
+all: check-prereqs generate lint-go test-unit create-kind install-dep-packages create-secrets build-and-push-repo-agent install-repo-agent #create-instance
 
 .PHONY: install
-install: check-prereqs install-dep-packages install-sandbox-operator create-secrets install-repo-agent
+install: check-prereqs install-dep-packages create-secrets install-repo-agent
 
 .PHONY: check-prereqs
 check-prereqs:
@@ -65,26 +65,11 @@ lint-go:
 install-dep-packages:
 	../dev/tools/install-kro
 	../dev/tools/install-envoy
+	../dev/tools/install-agent-sandbox
 
 .PHONY: create-kind
 create-kind:
 	../dev/tools/create-kind-cluster --recreate ${KIND_CLUSTER} --kubeconfig bin/KUBECONFIG
-
-.PHONY: install-sandbox-operator
-install-sandbox-operator:
-	kubectl apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v0.1.0-rc.0/manifest.yaml
-
-.PHONY: install-sandbox-operator-from-src
-install-sandbox-operator-from-src:
-	# Install Sandbox Operator 
-	# have to do from source until we have a release
-	mkdir /tmp/sandbox-operator || true
-	ls -l /tmp/sandbox-operator/agent-sandbox || git clone https://github.com/kubernetes-sigs/agent-sandbox.git /tmp/sandbox-operator/agent-sandbox
-	cd /tmp/sandbox-operator/agent-sandbox && git pull
-	cd /tmp/sandbox-operator/agent-sandbox && dev/tools/push-images --image-prefix=$(REGISTRY) $(KIND_CLUSTER_ARG)
-	cd /tmp/sandbox-operator/agent-sandbox && dev/tools/deploy-to-kube --image-prefix=$(REGISTRY)
-	rm -fr /tmp/sandbox-operator
-
 
 .PHONY: build-and-push-repo-agent
 build-and-push-repo-agent:
@@ -139,6 +124,8 @@ port-forward:
 	done
 	# kubectl port-forward -n repo-agent-system --address 0.0.0.0 service/devc-agent-sandbox-pr-102-lb  13338:13338
 
+# Dev targets
+
 .PHONY: reload-ui
 reload-ui:
 	make build-and-push-repo-agent
@@ -148,3 +135,9 @@ reload-ui:
 	kubectl scale  -n repo-agent-system deployment pr-review-ui --replicas=1
 	sleep 5
 	make port-forward
+
+##@ E2E Tests
+
+.PHONY: test-e2e
+test-e2e: ## Run e2e tests
+	../dev/tools/test-e2e-chainsaw --working-dir .
