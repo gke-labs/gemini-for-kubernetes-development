@@ -27,10 +27,12 @@ function IssueCard({
         </h3>
         {getSandboxStatusClass(issue) === 'green' ? (
           <a href={`/sandbox/${issue.sandbox}/`} target="_blank" rel="noopener noreferrer" className={`pr-sandbox ${getSandboxStatusClass(issue)}`}>
-            Sandbox: {issue.sandbox}
+            Sandbox &#9654;
           </a>
+        ) : getSandboxStatusClass(issue) === 'yellow' ? (
+          <span className={`pr-sandbox ${getSandboxStatusClass(issue)}`}>Sandbox &#9646;&#9646;</span>
         ) : (
-          <span className={`pr-sandbox ${getSandboxStatusClass(issue)}`}>Sandbox: {issue.sandbox || 'Not created'}</span>
+          <span className={`pr-sandbox ${getSandboxStatusClass(issue)}`}>Sandbox: Not created</span>
         )}
       </div>
       {!isCollapsed && (
