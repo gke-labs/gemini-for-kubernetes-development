@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import yaml from 'js-yaml';
 import './App.css';
 import PrReviewCard from './PrReviewCard';
+import IssueCard from './IssueCard';
 import AddRepo from './AddRepo';
 import DeleteRepo from './DeleteRepo';
 
@@ -332,44 +333,17 @@ function App() {
       ));
     } else {
       return issues.map(issue => (
-        <div key={issue.id} className={`pr-card ${issue.comment ? 'review-submitted' : ''}`}>
-          <div className="pr-card-header">
-            <h3><a href={issue.htmlURL} target="_blank" rel="noopener noreferrer">{issue.title} (Issue #{issue.id})</a></h3>
-            {getSandboxStatusClass(issue) === 'green' ? (
-              <a href={`/sandbox/${issue.sandbox}/`} target="_blank" rel="noopener noreferrer" className={`pr-sandbox ${getSandboxStatusClass(issue)}`}>
-                Sandbox: {issue.sandbox}
-              </a>
-            ) : (
-              <span className={`pr-sandbox ${getSandboxStatusClass(issue)}`}>Sandbox: {issue.sandbox || 'Not created'}</span>
-            )}
-          </div>
-          {issue.pushBranch ? (
-            <div className="branch-link">
-              <strong>Branch: </strong> <a href={issue.branchURL} target="_blank" rel="noopener noreferrer">{issue.branchURL}</a>
-            </div>
-          ) : issue.comment ? (
-            <div className="review-display">
-              <strong>Comment:</strong>
-              <p>{issue.comment}</p>
-            </div>
-          ) : (
-            <textarea
-              className="review-textarea"
-              value={drafts[issue.id] || ''}
-              onChange={(e) => handleIssueDraftChange(issue.id, e.target.value)}
-              onBlur={() => handleIssueSaveDraft(issue.id, activeSubTab.name)}
-              placeholder="Leave a comment..."
-            ></textarea>
-          )}
-          <div className="pr-card-actions">
-            {!issue.pushBranch && (
-              <button className="btn btn-submit" onClick={() => handleIssueSubmit(issue.id, activeSubTab.name)} disabled={!!issue.comment}>
-                {issue.comment ? 'Submitted' : 'Submit'}
-              </button>
-            )}
-            <button className="btn btn-delete" onClick={() => handleIssueDelete(issue.id, activeSubTab.name)}>Delete</button>
-          </div>
-        </div>
+        <IssueCard
+          key={issue.id}
+          issue={issue}
+          drafts={drafts}
+          activeSubTab={activeSubTab}
+          handleIssueDraftChange={handleIssueDraftChange}
+          handleIssueSaveDraft={handleIssueSaveDraft}
+          handleIssueSubmit={handleIssueSubmit}
+          handleIssueDelete={handleIssueDelete}
+          getSandboxStatusClass={getSandboxStatusClass}
+        />
       ));
     }
   };
