@@ -1,0 +1,10 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: check-install-successful
+spec:
+  steps:
+  - name: check-components
+    try:
+    - assert:
+        file: repo-agent-components-assert.yaml

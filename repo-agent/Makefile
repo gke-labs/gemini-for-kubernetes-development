@@ -139,6 +139,8 @@ port-forward:
 	done
 	# kubectl port-forward -n repo-agent-system --address 0.0.0.0 service/devc-agent-sandbox-pr-102-lb  13338:13338
 
+# Dev targets
+
 .PHONY: reload-ui
 reload-ui:
 	make build-and-push-repo-agent
@@ -148,3 +150,27 @@ reload-ui:
 	kubectl scale  -n repo-agent-system deployment pr-review-ui --replicas=1
 	sleep 5
 	make port-forward
+
+##@ E2E Tests
+
+.PHONY: test-e2e
+test-e2e: chainsaw ## Run e2e tests
+	$(CHAINSAW) test ./test/e2e/
+
+## Tool binaries
+## Location to install dependencies to
+LOCALBIN ?= $(shell pwd)/bin
+$(LOCALBIN):
+	mkdir -p $(LOCALBIN)
+
+CHAINSAW ?= $(LOCALBIN)/chainsaw
+CHAINSAW_VERSION ?= v0.2.12
+
+.PHONY: chainsaw
+chainsaw: $(CHAINSAW) ## Download chainsaw locally if necessary. If wrong version is installed, it will be removed before downloading.
+$(CHAINSAW): $(LOCALBIN)
+	@if test -x $(LOCALBIN)/chainsaw && ! $(LOCALBIN)/chainsaw version | grep -q $(CHAINSAW_VERSION); then \
+		echo "$(LOCALBIN)/chainsaw version is not expected $(CHAINSAW_VERSION). Removing it before installing."; \
+		rm -rf $(LOCALBIN)/chainsaw; \
+	fi
+	test -s $(LOCALBIN)/chainsaw || GOBIN=$(LOCALBIN) GO111MODULE=on go install github.com/kyverno/chainsaw@$(CHAINSAW_VERSION)
