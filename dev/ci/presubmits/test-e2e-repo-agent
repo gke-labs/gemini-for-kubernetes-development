@@ -22,22 +22,34 @@ from shared import utils
 
 
 def main():
-    """ invokes e2e tests in kind cluster and outputs a junit report in the ARTIFACTS dir
-
-    The ARTIFACTS environment variable is set by prow.
+    """ invokes e2e tests in kind cluster
     """
     repo_root = utils.get_repo_root()
+    working_dir = repo_root + "/repo-agent"
+    print(f"using working dir: {working_dir}")
 
     result = subprocess.run([f"{repo_root}/dev/tools/create-kind-cluster", "e2e-test", "--recreate", "--kubeconfig", f"{repo_root}/bin/KUBECONFIG"])
     if result.returncode != 0:
         return result.returncode
-    result = subprocess.run([f"{repo_root}/dev/tools/push-images", "--kind-cluster-name", "e2e-test", "--image-prefix", "kind.local/"])
+    result = subprocess.run([f"{repo_root}/dev/tools/install-kro"])
     if result.returncode != 0:
         return result.returncode
-    result = subprocess.run([f"{repo_root}/dev/tools/deploy-to-kube", "--image-prefix", "kind.local/"])
+    result = subprocess.run([f"{repo_root}/dev/tools/install-envoy"])
     if result.returncode != 0:
         return result.returncode
-    result = subprocess.run([f"{repo_root}/dev/tools/test-e2e"])
+    result = subprocess.run([f"{repo_root}/dev/tools/install-agent-sandbox"])
+    if result.returncode != 0:
+        return result.returncode
+
+    ## TODO: create secrets
+
+    result = subprocess.run([f"{repo_root}/dev/tools/push-images", "--kind-cluster-name", "e2e-test", "--image-prefix", "kind.local/" , "--working-dir", working_dir])
+    if result.returncode != 0:
+        return result.returncode
+    result = subprocess.run([f"{repo_root}/dev/tools/deploy-to-kube", "--image-prefix", "kind.local/", "--working-dir", working_dir])
+    if result.returncode != 0:
+        return result.returncode
+    result = subprocess.run([f"{repo_root}/dev/tools/test-e2e-chainsaw", "--working-dir", working_dir])
 
     # Always create junit file whether tests pass or fail
     artifact_dir = os.getenv("ARTIFACTS")

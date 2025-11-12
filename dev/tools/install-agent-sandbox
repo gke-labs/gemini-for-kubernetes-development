@@ -17,9 +17,9 @@ import requests
 import subprocess
 import time
 
-def get_latest_kro_version():
-    """Fetches the latest Kro version from the GitHub API."""
-    url = "https://api.github.com/repos/kubernetes-sigs/kro/releases/latest"
+def get_latest_agent_sandbox_version():
+    """Fetches the latest Agent Sandbox version from the GitHub API."""
+    url = "https://api.github.com/repos/kubernetes-sigs/agent-sandbox/releases/latest"
     response = requests.get(url)
     response.raise_for_status()
     tag_name = response.json()["tag_name"]
@@ -31,33 +31,28 @@ def run_command(command):
     subprocess.run(command, check=True)
 
 def main():
-    """Installs the latest version of Kro."""
+    """Installs the latest version of Agent Sandbox."""
     try:
-        #kro_version = get_latest_kro_version()
-        kro_version = "0.5.1"
-        print(f"Installing kro version: {kro_version}")
-
-        helm_install_command = [
-            "helm", "install", "kro", "oci://registry.k8s.io/kro/charts/kro",
-            "--namespace", "kro",
-            "--create-namespace",
-            f"--version={kro_version}"
+        version = get_latest_agent_sandbox_version()
+        print(f"Installing agent-sandbox version: {version}")
+ 
+	    # kubectl apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v0.1.0-rc.0/manifest.yaml
+        install_command = [
+            "kubectl", "apply", "-f",
+            f"https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v{version}/manifest.yaml"
         ]
-        run_command(helm_install_command)
+        run_command(install_command)
 
         print("Waiting for 5 seconds...")
         time.sleep(5)
 
-        helm_list_command = ["helm", "-n", "kro", "list"]
-        run_command(helm_list_command)
-
-        kubectl_get_pods_command = ["kubectl", "get", "pods", "-n", "kro"]
+        kubectl_get_pods_command = ["kubectl", "get", "pods", "-n", "agent-sandbox-system"]
         run_command(kubectl_get_pods_command)
 
-        print("Kro installed successfully.")
+        print("Agent Sandbox installed successfully.")
 
     except requests.exceptions.RequestException as e:
-        print(f"Error fetching Kro version: {e}")
+        print(f"Error fetching Agent Sandbox version: {e}")
     except subprocess.CalledProcessError as e:
         print(f"Error executing command: {e}")
     except Exception as e:
