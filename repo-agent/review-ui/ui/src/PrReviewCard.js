@@ -270,7 +270,6 @@ function PrReviewCard({
       </div>
       {!collapsedReviews[pr.id] && (
         <>
-          {renderDiffView()}
           <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '10px 0' }}>
             <button className="btn" onClick={() => toggleReviewView(pr.id)}>
               {reviewViewModes[pr.id] === 'structured' ? 'View as YAML' : 'View as Structured'}
@@ -339,6 +338,7 @@ function PrReviewCard({
               </div>
             )
           )}
+          {renderDiffView()}
           <div className="pr-card-actions">
             <button className="btn btn-submit" onClick={() => handleSubmit(pr.id)} disabled={!!pr.review}>
               {pr.review ? 'Draft Created' : 'Create Draft Review'}
