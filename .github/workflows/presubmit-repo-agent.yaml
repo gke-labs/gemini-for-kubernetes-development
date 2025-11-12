@@ -34,3 +34,39 @@ jobs:
             dev/tools/go.sum
       - name: Run Lint
         run: ./dev/tools/lint-go --working-dir repo-agent/
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: repo-agent/go.mod
+          cache-dependency-path: |
+            repo-agent/go.sum
+            dev/tools/go.sum
+      - name: Build Binaries
+        run: ./dev/tools/build-go-binaries --working-dir repo-agent/
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: repo-agent/go.mod
+          cache-dependency-path: |
+            repo-agent/go.sum
+            dev/tools/go.sum
+      - name: Run generators and check for diffs
+        run: ./dev/tools/fix-go-generate --working-dir repo-agent/repowatch/
+        # Check for diffs
+      - name: Check for uncommitted changes
+        run: |
+          if [[ -n $(git status --porcelain) ]]; then
+            echo "Uncommitted changes found after code generation. Please run the generation scripts locally and commit the changes."
+            git status
+            exit 1
+          else
+            echo "No uncommitted changes found."
+          fi
