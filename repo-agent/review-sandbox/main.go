@@ -82,6 +82,7 @@ func runReview() error {
 	if err != nil {
 		return err
 	}
+	provider.AddPostProcessor(llm.StripYAMLMarkers)
 
 	if err := provider.Setup("/workspaces", "/tokens"); err != nil {
 		return err

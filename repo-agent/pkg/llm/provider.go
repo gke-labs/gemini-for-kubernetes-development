@@ -14,7 +14,10 @@
 
 package llm
 
-import "fmt"
+import (
+	"bytes"
+	"fmt"
+)
 
 // PostProcessor defines the signature for functions that can post-process the LLM's raw output.
 type PostProcessor func([]byte) ([]byte, error)
@@ -31,10 +34,35 @@ type Provider interface {
 func NewLLMProvider(name string) (Provider, error) {
 	switch name {
 	case "gemini-cli":
-		g := &Gemini{Executor: &RealCommandExecutor{}}
-		g.AddPostProcessor(stripYAMLMarkers)
-		return g, nil
+		return &Gemini{Executor: &RealCommandExecutor{}}, nil
 	default:
 		return nil, fmt.Errorf("unknown provider: %s", name)
 	}
+}
+
+// StripYAMLMarkers looks for ```yaml and ``` markers in the input byte slice.
+// If found, it strips these markers and returns the content between them.
+// If markers are not found, the original byte slice is returned.
+func StripYAMLMarkers(input []byte) ([]byte, error) {
+	startMarker := []byte("```yaml")
+	endMarker := []byte("```")
+
+	startIndex := bytes.Index(input, startMarker)
+	if startIndex == -1 {
+		return input, nil // Start marker not found
+	}
+
+	// Adjust startIndex to point after the start marker
+	startIndex += len(startMarker)
+
+	endIndex := bytes.Index(input[startIndex:], endMarker)
+	if endIndex == -1 {
+		return input, nil // End marker not found after start marker
+	}
+
+	// Adjust endIndex to be relative to the original input slice
+	endIndex += startIndex
+
+	// Extract the content between the markers, trimming any leading/trailing whitespace
+	return bytes.TrimSpace(input[startIndex:endIndex]), nil
 }

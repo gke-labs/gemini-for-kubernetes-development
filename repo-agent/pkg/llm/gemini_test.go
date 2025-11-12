@@ -23,53 +23,6 @@ import (
 	"testing"
 )
 
-func TestStripYAMLMarkers(t *testing.T) {
-	tests := []struct {
-		name    string
-		input   []byte
-		want    []byte
-		wantErr bool
-	}{
-		{
-			name:    "with markers",
-			input:   []byte("```yaml\nfoo: bar\n```"),
-			want:    []byte("foo: bar"),
-			wantErr: false,
-		},
-		{
-			name:    "without markers",
-			input:   []byte("foo: bar"),
-			want:    []byte("foo: bar"),
-			wantErr: false,
-		},
-		{
-			name:    "empty input",
-			input:   []byte(""),
-			want:    []byte(""),
-			wantErr: false,
-		},
-		{
-			name:    "only markers",
-			input:   []byte("```yaml\n```"),
-			want:    []byte(""),
-			wantErr: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := stripYAMLMarkers(tt.input)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("stripYAMLMarkers() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if !bytes.Equal(got, tt.want) {
-				t.Errorf("stripYAMLMarkers() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestNewProvider(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -192,9 +145,8 @@ func TestGemini_Run(t *testing.T) {
 			Err:    nil,
 		}
 
-		// Create a Gemini provider with the mock executor and add the default post-processor
+		// Create a Gemini provider with the mock executor
 		g := &Gemini{Executor: mockExecutor}
-		g.AddPostProcessor(stripYAMLMarkers)
 
 		// Run the provider
 		output, err := g.Run("test prompt")
@@ -203,7 +155,7 @@ func TestGemini_Run(t *testing.T) {
 		}
 
 		// Check the output
-		expectedOutput := []byte("foo: bar")
+		expectedOutput := []byte("```yaml\nfoo: bar\n```")
 		if !bytes.Equal(output, expectedOutput) {
 			t.Errorf("Expected output %q, but got %q", expectedOutput, output)
 		}
