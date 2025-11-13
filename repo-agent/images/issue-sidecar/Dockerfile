@@ -10,7 +10,7 @@ COPY go.sum go.sum
 RUN go mod download
 
 COPY issue-sidecar/ .
-RUN CGO_ENABLED=0 GOOS=linux go build -o /issue-sidecar .
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /issue-sidecar .
 
 # Final stage
 FROM gcr.io/distroless/static:nonroot

@@ -95,6 +95,8 @@ spec:
                   image: ko://repo-agent/images/issue-sandbox
                   env:
                     # URL to the repository where the .devcontainer folder we want to load is located
+                    - name: AGENT_NAME
+                      value: ${schema.spec.llmBackend.name}
                     - name: AGENT_PROMPT
                       value: ${schema.spec.llm.prompt}
                     - name: ISSUEID
@@ -130,9 +132,9 @@ spec:
                     - name: ENVBUILDER_GIT_CLONE_SINGLE_BRANCH
                       value: "true"
                     - name: ENVBUILDER_INIT_SCRIPT
-                      value: /issue-agent/${schema.spec.llmBackend.name}-entrypoint.sh
+                      value: /repo-agent/issue-sandbox
                     - name: ENVBUILDER_IGNORE_PATHS
-                      value: "/var/run,/product_uuid,/product_name,/tokens,/issue-agent/"
+                      value: "/var/run,/product_uuid,/product_name,/tokens,/repo-agent/"
                   volumeMounts:
                     - name: workspaces-pvc
                       mountPath: /workspaces
