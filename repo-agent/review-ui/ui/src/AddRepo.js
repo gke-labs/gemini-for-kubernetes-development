@@ -1,78 +1,96 @@
 import React, { useState } from 'react';
 
-function AddRepo({ onRepoAdded }) {
+function AddRepo({ onCancel, onRepoAdded }) {
+    const [url, setUrl] = useState('');
     const [name, setName] = useState('');
-    const [repoURL, setRepoURL] = useState('');
-    const [error, setError] = useState(null);
-    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [isLoading, setIsLoading] = useState(false);
+    const [error, setError] = useState('');
 
-    const handleSubmit = async (e) => {
+    const handleSubmit = (e) => {
         e.preventDefault();
-        setError(null);
-        setIsSubmitting(true);
+        setError('');
 
-        try {
-            const response = await fetch('/api/repowatch', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                // Hardcoding namespace to 'default' for now for single tenant usage
-                // TODO: when multi-tenant support is added this should use the tenant namespace
-                body: JSON.stringify({ name, repoURL, namespace: 'default' }),
-            });
+        // Basic validation
+        if (!url.trim()) {
+            setError('Please enter a repository URL.');
+            return;
+        }
+        if (!url.startsWith('https://github.com/')) {
+             setError('URL must start with https://github.com/');
+             return;
+        }
 
-            if (!response.ok) {
-                const data = await response.json();
+        setIsLoading(true);
+        
+        const payload = { url: url.trim() };
+        if (name.trim()) {
+            payload.name = name.trim();
+        }
+
+        fetch('/api/repos', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        })
+        .then(async (res) => {
+            if (!res.ok) {
+                const data = await res.json();
                 throw new Error(data.error || 'Failed to add repository');
             }
-
-            // Success!
-            setName('');
-            setRepoURL('');
-            if (onRepoAdded) {
-                onRepoAdded();
-            }
-            alert('Repository added successfully!');
-        } catch (err) {
+            return res;
+        })
+        .then(() => {
+            setIsLoading(false);
+            onRepoAdded();
+        })
+        .catch(err => {
+            console.error(err);
             setError(err.message);
-        } finally {
-            setIsSubmitting(false);
-        }
+            setIsLoading(false);
+        });
     };
 
     return (
-        <div className="pr-card"> {/* Re-using pr-card for consistent styling */}
-            <h3>Add New Repository</h3>
-            {error && <div style={{ color: 'red', marginBottom: '10px' }}>{error}</div>}
-            <form onSubmit={handleSubmit} className="review-form">
-                <div style={{ marginBottom: '15px' }}>
-                    <label htmlFor="name" style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>Name:</label>
+        <div className="add-repo-container">
+            <h2>Watch New Repository</h2>
+            <p>Enter the full GitHub URL of the repository you want to watch for PRs and Issues.</p>
+            
+            {error && <div className="message error">{error}</div>}
+
+            <form onSubmit={handleSubmit} className="add-repo-form">
+                <div className="form-group">
+                    <label htmlFor="repoUrl">Repository URL:</label>
                     <input
                         type="text"
-                        id="name"
+                        id="repoUrl"
+                        value={url}
+                        onChange={(e) => setUrl(e.target.value)}
+                        placeholder="https://github.com/owner/repo"
+                        disabled={isLoading}
+                    />
+                </div>
+
+                <div className="form-group">
+                    <label htmlFor="repoName">Name (Optional):</label>
+                    <input
+                        type="text"
+                        id="repoName"
                         value={name}
                         onChange={(e) => setName(e.target.value)}
-                        required
-                        placeholder="e.g., kubernetes"
-                        style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}
+                        placeholder="Custom name for this watch"
+                        disabled={isLoading}
                     />
+                    <small>Leave blank to use the repository name.</small>
                 </div>
-                <div style={{ marginBottom: '15px' }}>
-                    <label htmlFor="repoURL" style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>Repository URL:</label>
-                    <input
-                        type="url"
-                        id="repoURL"
-                        value={repoURL}
-                        onChange={(e) => setRepoURL(e.target.value)}
-                        required
-                        placeholder="https://github.com/owner/repo"
-                        style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}
-                    />
+
+                <div className="form-actions">
+                    <button type="submit" className="btn btn-submit" disabled={isLoading}>
+                        {isLoading ? 'Adding...' : 'Start Watching'}
+                    </button>
+                    <button type="button" className="btn" onClick={onCancel} disabled={isLoading}>
+                        Cancel
+                    </button>
                 </div>
-                <button type="submit" className="btn btn-submit" disabled={isSubmitting}>
-                    {isSubmitting ? 'Adding...' : 'Add Repository'}
-                </button>
             </form>
         </div>
     );
