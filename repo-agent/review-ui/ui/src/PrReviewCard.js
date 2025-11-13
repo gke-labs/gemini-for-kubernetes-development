@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import yaml from 'js-yaml';
 import { parseDiff, Diff, getChangeKey } from 'react-diff-view';
 import 'react-diff-view/style/index.css';
@@ -21,12 +21,14 @@ function PrReviewCard({
   handleExportCurl,
   toggleCollapse,
   getSandboxStatusClass,
+  handleMoveCommentAndSave,
 }) {
   const [diff, setDiff] = useState(null);
   const [diffError, setDiffError] = useState(null);
   const [fileCollapsed, setFileCollapsed] = useState({});
   const [reviewFlairText, setReviewFlairText] = useState('');
   const [curlCommand, setCurlCommand] = useState(null);
+  const lastDragTargetRef = useRef(null);
 
   const getReviewFlairColor = (flairText) => {
     switch (flairText) {
@@ -161,7 +163,16 @@ function PrReviewCard({
             widgets[changeKey] = (
               <div className="diff-widget">
                 {keyComments.map(comment => (
-                  <div key={comment.index}>
+                  <div
+                    key={comment.index}
+                    draggable={!pr.review}
+                    onDragStart={e => {
+                      if (pr.review) return;
+                      e.dataTransfer.setData('application/json', JSON.stringify({ prId: pr.id, commentIndex: comment.index }));
+                      e.stopPropagation();
+                    }}
+                    style={{ cursor: pr.review ? 'default' : 'move' }}
+                  >
                     {pr.review ? (
                       <pre className="review-pre">{comment.body}</pre>
                     ) : (
@@ -192,6 +203,94 @@ function PrReviewCard({
             }));
           };
 
+          const handleDragOverFile = e => {
+            e.preventDefault();
+            let target = e.target;
+            while (target && !target.classList.contains('diff-line')) {
+              target = target.parentElement;
+            }
+
+            if (lastDragTargetRef.current !== target) {
+              if (lastDragTargetRef.current) {
+                lastDragTargetRef.current.style.backgroundColor = '';
+              }
+              if (target) {
+                target.style.backgroundColor = 'rgba(0, 100, 255, 0.1)';
+              }
+              lastDragTargetRef.current = target;
+            }
+          };
+
+          const handleDragLeaveFile = e => {
+            if (lastDragTargetRef.current && !e.currentTarget.contains(e.relatedTarget)) {
+              lastDragTargetRef.current.style.backgroundColor = '';
+              lastDragTargetRef.current = null;
+            }
+          };
+
+          const handleDrop = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            console.log('Drop event triggered');
+
+            if (lastDragTargetRef.current) {
+              lastDragTargetRef.current.style.backgroundColor = '';
+              lastDragTargetRef.current = null;
+            }
+
+            const commentDataText = e.dataTransfer.getData('application/json');
+            if (!commentDataText) {
+                console.error('No comment data in dataTransfer.');
+                return;
+            }
+            console.log('Comment data text:', commentDataText);
+            const commentData = JSON.parse(commentDataText);
+            const { prId, commentIndex } = commentData;
+            console.log('Parsed comment data:', { prId, commentIndex });
+
+
+            let target = e.target;
+            while (target && !target.classList.contains('diff-line')) {
+                target = target.parentElement;
+            }
+
+            if (!target) {
+                console.error('Could not find diff-line target.');
+                return;
+            }
+            console.log('Drop target:', target);
+
+            const gutters = target.querySelectorAll('.diff-gutter');
+            const oldLineGutter = gutters[0];
+            const newLineGutter = gutters[1];
+
+            const rect = target.getBoundingClientRect();
+            const isRightSide = e.clientX > rect.left + rect.width / 2;
+            const side = isRightSide ? 'RIGHT' : 'LEFT';
+            console.log('Calculated side:', side);
+
+            let line;
+            if (side === 'RIGHT') {
+                const newLineNumber = parseInt(newLineGutter?.textContent, 10);
+                if (!isNaN(newLineNumber)) {
+                    line = newLineNumber;
+                }
+            } else { // LEFT
+                const oldLineNumber = parseInt(oldLineGutter?.textContent, 10);
+                if (!isNaN(oldLineNumber)) {
+                    line = oldLineNumber;
+                }
+            }
+            console.log('Calculated line:', line);
+
+            if (line && side) {
+                console.log('Calling handleMoveCommentAndSave with:', { prId, commentIndex, path, line, side });
+                handleMoveCommentAndSave(prId, commentIndex, path, line, side);
+            } else {
+                console.error('Could not determine line and/or side for drop.');
+            }
+          };
+
           return (
             <div key={fileId} className="diff-file">
               <div className="diff-file-header" onClick={toggleFileCollapse} style={{ cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
@@ -206,12 +305,21 @@ function PrReviewCard({
                 </span>
               </div>
               {!isFileCollapsed && (
-                <>
+                <div onDragOver={handleDragOverFile} onDrop={handleDrop} onDragLeave={handleDragLeaveFile}>
                   {unplacedComments.length > 0 && (
                     <div className="diff-widget" style={{padding: '10px', borderBottom: '1px solid #ddd'}}>
                       <h6>Comments on lines not shown in diff or file-level comments</h6>
                       {unplacedComments.map(comment => (
-                        <div key={comment.index} style={{ borderTop: '1px solid #eee', paddingTop: '5px', marginTop: '5px' }}>
+                        <div
+                          key={comment.index}
+                          style={{ borderTop: '1px solid #eee', paddingTop: '5px', marginTop: '5px', cursor: pr.review ? 'default' : 'move' }}
+                          draggable={!pr.review}
+                          onDragStart={e => {
+                              if (pr.review) return;
+                              e.dataTransfer.setData('application/json', JSON.stringify({ prId: pr.id, commentIndex: comment.index }));
+                              e.stopPropagation();
+                          }}
+                        >
                           {pr.review ? (
                             <>
                               {comment.line && <p style={{fontSize: 'small', color: '#555', marginBottom: '5px'}}>Line: {comment.line} ({comment.side || 'RIGHT'})</p>}
@@ -235,7 +343,7 @@ function PrReviewCard({
                     </div>
                   )}
                   <Diff viewType="split" diffType={type} hunks={hunks} widgets={widgets} />
-                </>
+                </div>
               )}
             </div>
           );

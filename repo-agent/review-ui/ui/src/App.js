@@ -152,6 +152,12 @@ function App() {
         newDraft.review = { ...newDraft.review, body: value };
       } else if (field === 'comment.body' && index !== null) {
         newDraft.review.comments[index] = { ...newDraft.review.comments[index], body: value };
+      } else if (field === 'comment.path' && index !== null) {
+        newDraft.review.comments[index] = { ...newDraft.review.comments[index], path: value };
+      } else if (field === 'comment.line' && index !== null) {
+        newDraft.review.comments[index] = { ...newDraft.review.comments[index], line: value };
+      } else if (field === 'comment.side' && index !== null) {
+        newDraft.review.comments[index] = { ...newDraft.review.comments[index], side: value };
       }
       return { ...prevDrafts, [id]: newDraft };
     });
@@ -351,6 +357,29 @@ function App() {
       .catch(err => console.error("Failed to delete issue:", err));
   };
 
+  const handleMoveCommentAndSave = (id, index, newPath, newLine, newSide) => {
+    setDrafts(prevDrafts => {
+      const newDrafts = JSON.parse(JSON.stringify(prevDrafts));
+      const draftToUpdate = newDrafts[id];
+      if (draftToUpdate && draftToUpdate.review && draftToUpdate.review.comments && draftToUpdate.review.comments[index]) {
+        const commentToUpdate = draftToUpdate.review.comments[index];
+        commentToUpdate.path = newPath;
+        commentToUpdate.line = newLine;
+        commentToUpdate.side = newSide;
+
+        const draftYaml = yaml.dump(draftToUpdate);
+        fetch(`/api/repo/${activeRepo.namespace}/${activeRepo.name}/prs/${id}/draft`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ draft: draftYaml })
+        }).catch(err => console.error("Failed to save draft:", err));
+      } else {
+        console.error("Could not find comment to update in handleMoveCommentAndSave");
+      }
+      return newDrafts;
+    });
+  };
+
   const getSandboxStatusClass = (item) => {
     if (!item.sandbox) {
       return 'grey';
@@ -397,6 +426,7 @@ function App() {
           handleExportCurl={handleExportCurl}
           getSandboxStatusClass={getSandboxStatusClass}
           toggleCollapse={toggleCollapse}
+          handleMoveCommentAndSave={handleMoveCommentAndSave}
         />
       ));
     } else {
