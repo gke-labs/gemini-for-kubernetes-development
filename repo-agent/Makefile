@@ -87,6 +87,7 @@ create-secrets:
 	kubectl create namespace repo-agent-system || true
 	@kubectl create secret -n ${NAMESPACE} generic gemini-vscode-tokens --from-literal=gemini=${GEMINI_API_KEY} || true
 	@kubectl create secret -n ${NAMESPACE} generic github-pat --from-literal=pat=${GITHUB_PAT} --from-literal=name="`git config --global user.name`" --from-literal=email=`git config --global user.email`|| true
+	@kubectl create secret -n ${NAMESPACE} generic anthropic-api-key --from-literal=claude=${ANTHROPIC_API_KEY} || true
 
 bin/configdir-cli: configdir/
 	../dev/tools/build-go-binaries --working-dir .
@@ -135,6 +136,10 @@ reload-ui:
 	kubectl scale  -n repo-agent-system deployment pr-review-ui --replicas=1
 	sleep 5
 	make port-forward
+
+.PHONY: clean
+clean:
+	rm -rf bin
 
 ##@ E2E Tests
 
