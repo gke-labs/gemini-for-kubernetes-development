@@ -13,7 +13,7 @@ RUN go mod download
 COPY pkg/llm/ ./pkg/llm/
 
 COPY issue-sandbox/ .
-RUN CGO_ENABLED=0 GOOS=linux go build -o /issue-sandbox .
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /issue-sandbox .
 
 # Envbuilder root
 FROM ghcr.io/coder/envbuilder

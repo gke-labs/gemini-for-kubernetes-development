@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"strings"
 )
 
 func main() {
@@ -57,7 +58,7 @@ func prepareGitBranch() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to get old commit id: %w", err)
 	}
-	oldCommitID := string(cmdop)
+	oldCommitID := strings.TrimSpace(string(cmdop))
 
 	// Typically origin would be the upstream repo and not the user's fork
 	// Removing origin to prevent accidental pushes to upstream
@@ -114,7 +115,7 @@ func processGitChanges(oldCommitID string) error {
 		return fmt.Errorf("failed to get new commit id: %w", err)
 	}
 
-	if string(newCommitID) != oldCommitID {
+	if strings.TrimSpace(string(newCommitID)) != oldCommitID {
 		log.Println("New changes being committed")
 		if gitPushEnabled {
 			if _, err := runCommand("git", "push", "--set-upstream", "origin", issueBranch, "--force"); err != nil {
