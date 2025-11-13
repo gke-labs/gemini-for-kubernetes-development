@@ -35,6 +35,8 @@ func NewLLMProvider(name string) (Provider, error) {
 	switch name {
 	case "gemini-cli":
 		return &Gemini{Executor: &RealCommandExecutor{}}, nil
+	case "claude":
+		return &Claude{}, nil
 	default:
 		return nil, fmt.Errorf("unknown provider: %s", name)
 	}
