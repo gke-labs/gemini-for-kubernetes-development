@@ -713,7 +713,7 @@ func deleteRepoWatch(c *gin.Context) {
 	}
 
 	// Also clean up Redis for this repo to be safe, though pollers might do it eventually.
-	rdb.Del(c.Request.Context(), fmt.Sprintf("repo:%s", repoName))
+	rdb.Del(c.Request.Context(), fmt.Sprintf("repo:ns:%s:name:%s", namespace, repoName))
 
 	c.Status(http.StatusOK)
 }
@@ -740,14 +740,14 @@ func populateMockData() {
 	}
 
 	for _, repo := range mockRepos {
-		// Store repo URL
-		if err := rdb.HSet(ctx, fmt.Sprintf("repo:%s", repo.Name), "url", repo.URL).Err(); err != nil {
+		// Store repo URL (Mock data in default namespace)
+		if err := rdb.HSet(ctx, fmt.Sprintf("repo:ns:default:name:%s", repo.Name), "url", repo.URL, "namespace", "default").Err(); err != nil {
 			log.Printf("Failed to set repo URL in Redis: %v", err)
 		}
 
 		// Store PRs for the repo
 		for _, pr := range mockPRs[repo.Name] {
-			prKey := fmt.Sprintf("pr:repo:%s:pr:%s", repo.Name, pr.ID)
+			prKey := fmt.Sprintf("pr:ns:default:repo:%s:pr:%s", repo.Name, pr.ID)
 			if err := rdb.HSet(ctx, prKey, "title", pr.Title, "draft", pr.Draft, "sandbox", pr.Sandbox, "review", pr.Review).Err(); err != nil {
 				log.Printf("Failed to set PR info in Redis: %v", err)
 			}
@@ -760,15 +760,12 @@ func getRepos(c *gin.Context) {
 	fetchAndPopulateRepos(c.Request.Context(), namespace)
 
 	repos := []Repo{}
-	iter := rdb.Scan(c.Request.Context(), 0, "repo:*", 0).Iterator()
+	prefix := fmt.Sprintf("repo:ns:%s:name:", namespace)
+	iter := rdb.Scan(c.Request.Context(), 0, prefix+"*", 0).Iterator()
 	for iter.Next(c.Request.Context()) {
 		key := iter.Val()
-		repoNs, err := rdb.HGet(c.Request.Context(), key, "namespace").Result()
-		if err != nil || repoNs != namespace {
-			continue
-		}
+		repoName := key[len(prefix):]
 
-		repoName := key[len("repo:"):]
 		repoWatch, err := getRepoWatch(c.Request.Context(), namespace, repoName)
 		if err != nil {
 			continue
@@ -807,7 +804,7 @@ func fetchAndPopulateRepos(ctx context.Context, namespace string) {
 	}
 	for _, item := range list.Items {
 		if url, found, _ := unstructured.NestedString(item.Object, "spec", "repoURL"); found {
-			rdb.HSet(ctx, fmt.Sprintf("repo:%s", item.GetName()), "url", url, "namespace", namespace)
+			rdb.HSet(ctx, fmt.Sprintf("repo:ns:%s:name:%s", namespace, item.GetName()), "url", url, "namespace", namespace)
 		}
 	}
 }
