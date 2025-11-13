@@ -18,6 +18,7 @@ function PrReviewCard({
   handleYamlDraftChange,
   handleYamlDraftBlur,
   handleSubmit,
+  handleExportCurl,
   toggleCollapse,
   getSandboxStatusClass,
 }) {
@@ -25,6 +26,7 @@ function PrReviewCard({
   const [diffError, setDiffError] = useState(null);
   const [fileCollapsed, setFileCollapsed] = useState({});
   const [reviewFlairText, setReviewFlairText] = useState('');
+  const [curlCommand, setCurlCommand] = useState(null);
 
   const getReviewFlairColor = (flairText) => {
     switch (flairText) {
@@ -343,8 +345,27 @@ function PrReviewCard({
             <button className="btn btn-submit" onClick={() => handleSubmit(pr.id)} disabled={!!pr.review}>
               {pr.review ? 'Draft Created' : 'Create Draft Review'}
             </button>
+            <button className="btn btn-submit" style={{marginLeft: '10px', backgroundColor: '#6c757d'}} onClick={() => handleExportCurl(pr.id, setCurlCommand)} disabled={!!pr.review}>
+              Export Curl Command
+            </button>
           <button className="btn btn-delete" onClick={(e) => { e.stopPropagation(); handleDelete(pr.id); }}>&#x2715;</button>
           </div>
+          {curlCommand && (
+            <div className="curl-command-display" style={{marginTop: '10px'}}>
+              <h4>Curl Command</h4>
+              <textarea
+                className="review-textarea"
+                style={{height: '150px', fontFamily: 'monospace', width: '100%'}}
+                value={curlCommand}
+                readOnly
+              />
+              <button className="btn" style={{marginTop: '5px'}} onClick={() => {
+                navigator.clipboard.writeText(curlCommand);
+                alert("Copied to clipboard!");
+              }}>Copy to Clipboard</button>
+              <button className="btn" style={{marginTop: '5px', marginLeft: '10px'}} onClick={() => setCurlCommand(null)}>Close</button>
+            </div>
+          )}
         </>
       )}
     </div>
