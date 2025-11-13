@@ -29,3 +29,15 @@ spec:
               name: github-token
               key: token
               optional: true # For local development
+        - name: GITHUB_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: github-token
+              key: github-client-id
+              optional: true
+        - name: GITHUB_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: github-token
+              key: github-client-secret
+              optional: true
