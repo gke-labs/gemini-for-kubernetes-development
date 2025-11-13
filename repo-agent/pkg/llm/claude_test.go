@@ -223,3 +223,30 @@ func TestClaudeRunWithFailingPostProcessor(t *testing.T) {
 		t.Errorf("TestClaudeRunWithFailingPostProcessor: Expected post-processor error, got %v", err)
 	}
 }
+
+func TestClaudeRunWithStripYAMLMarkers(t *testing.T) {
+	mockClient := &MockClient{
+		DoFunc: func(_ *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(bytes.NewBufferString("{\"content\":[{\"text\":\"```yaml\\nfoo: bar\\n```\"}]}")),
+			}, nil
+		},
+	}
+
+	c := &Claude{apiKey: "test-key", client: mockClient}
+	prompt := "test prompt"
+
+	// Add the StripYAMLMarkers post-processor
+	c.AddPostProcessor(StripYAMLMarkers)
+
+	resp, err := c.Run(prompt)
+	if err != nil {
+		t.Fatalf("TestClaudeRunWithStripYAMLMarkers failed: %v", err)
+	}
+
+	expected := "foo: bar"
+	if string(resp) != expected {
+		t.Errorf("TestClaudeRunWithStripYAMLMarkers: Expected %q, got %q", expected, string(resp))
+	}
+}

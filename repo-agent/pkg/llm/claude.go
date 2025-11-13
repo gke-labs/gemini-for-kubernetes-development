@@ -101,6 +101,7 @@ func (c *Claude) Run(prompt string) ([]byte, error) {
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		log.Printf("Claude API request failed with status %d: %s", resp.StatusCode, string(body))
 		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
