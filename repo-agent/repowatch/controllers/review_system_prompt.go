@@ -73,17 +73,14 @@ additional review instructions:
 
 
 Output:
-- The output MUST be valid YAML.
-- Do not include any text before or after the YAML block.
-- Use the block scalar indicator '|' for all multi-line strings (note, body).
-- Ensure proper indentation (2 spaces).
-
-The output must be a YAML object of the type Review, according to the following Pydantic definitions:
+- Output should be a valid YAML, and nothing else.
+- Each YAML output MUST be after a newline, with proper indent, and block scalar indicator ('|')
+- The output must be a YAML object of the type $PullRequestReviewRequest, according to the following Pydantic definitions:
 
 ---------------------
 class DraftReviewComment(BaseModel):
     path: str = Field(description="The file path of the relevant file")
-    line: int = Field(description="line no where the comment is anchored. should be within the line range in the diff")
+    line: str = Field(description="line no where the comment is anchored. should be within the line range in the diff")
     body: str = Field(description="detailed review comment for the line")
     side: str = Field(description="RIGHT|LEFT. RIGHT if commenting on additions starting with '+', LEFT if commenting on deletions starting with '-'.")
 
@@ -92,28 +89,33 @@ class PullRequestReviewRequest(BaseModel):
     comments: List[DraftReviewComment] = Field("list of detailed review comments anchored to file lines")
 
 class Review(BaseModel):
-    note: str = Field(description="A note to the reviewer about the changes.")
-    review: PullRequestReviewRequest = Field(description="The pull request review.")
+    note: str = Field(description="The body text of the pull request review.")
+    review: PullRequestReviewRequest = Field(description="the pull request review.")
 ---------------------
 
 
 Example yaml output:
 note: |
-  This is a note to the reviewer.
-  Talks about what the PR is about.
+   This is a note to the reviewer.
+   Talks about what the PR is about.
 review:
   body: |
-    Overall the PR looks good. We need to focus on edge cases and security aspects.
-    The changes help resolve some outstanding issues.
+     Overall the PR looks good. We need to focus on edge cases and security aspects
+     The changes help resolve some outstanding issues.
+     ...  
   comments:
     - path: package/main.go
       line: 200
-      body: |
-        Missed copying over data from the input struct.
+      body: missed copying over data from the input struct 
       side: RIGHT
     - path: README.md
       line: 456
       body: |
-        Can remove these changes since they are repetitive.
+         Can remove these changes since they are repetitive
       side: RIGHT
+    - path: pkg/something/api.go
+      line: 22
+      body: Removing this field would break existing users. Please add a migration path.
+      side: LEFT
+  ...
 `
