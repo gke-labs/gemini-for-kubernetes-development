@@ -14,7 +14,11 @@
 
 package llm
 
-import "os/exec"
+import (
+	"bytes"
+	"os"
+	"os/exec"
+)
 
 type CommandExecutor interface {
 	Run(command string, args ...string) ([]byte, error)
@@ -26,5 +30,15 @@ type RealCommandExecutor struct{}
 
 func (e *RealCommandExecutor) Run(command string, args ...string) ([]byte, error) {
 	cmd := exec.Command(command, args...)
-	return cmd.CombinedOutput()
+	// Dont return combined output. Return stdout and stderr separately.
+	// cmd.Stdout = os.Stdout
+	// Create a buffer to capture stdout
+	var stdout bytes.Buffer
+	cmd.Stderr = os.Stderr
+	cmd.Stdout = &stdout
+	err := cmd.Run()
+	if err != nil {
+		return nil, err
+	}
+	return stdout.Bytes(), nil
 }

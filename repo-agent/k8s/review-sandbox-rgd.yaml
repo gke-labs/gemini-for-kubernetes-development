@@ -18,6 +18,7 @@ spec:
         configdirRef: string | default=""
       serviceAccountName: string | default="review-sandbox"
       devcontainerConfigRef: string | default="devcontainer-json"
+      githubSecretName: string | default="github-pat"
       source:
         cloneURL: string
         diffURL: string
@@ -97,6 +98,13 @@ spec:
                       value: ${schema.spec.source.cloneURL}
                     - name: GIT_DIFF_URL
                       value: ${schema.spec.source.diffURL}
+                    - name: GIT_HTML_URL
+                      value: ${schema.spec.source.htmlURL}
+                    - name: GITHUB_TOKEN
+                      valueFrom:
+                        secretKeyRef:
+                          name: ${schema.spec.githubSecretName}
+                          key: pat
                     # https://github.com/coder/terraform-provider-envbuilder/issues/68#issuecomment-2557247792
                     #- name: ENVBUILDER_GET_CACHED_IMAGE
                     #  value: "1"
