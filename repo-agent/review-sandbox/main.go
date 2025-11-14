@@ -2,16 +2,20 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/bluekeyes/go-gitdiff/gitdiff"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/llm"
 	"github.com/google/go-github/v39/github"
+	"golang.org/x/oauth2"
 	"gopkg.in/yaml.v3"
 )
 
@@ -88,6 +92,29 @@ func runReview() error {
 		return err
 	}
 
+	// Get existing comments
+	githubToken := os.Getenv("GITHUB_TOKEN")
+	if githubToken == "" {
+		return fmt.Errorf("GITHUB_TOKEN environment variable not set")
+	}
+	repoURL := os.Getenv("GIT_HTML_URL")
+	parts := strings.Split(strings.TrimPrefix(repoURL, "https://github.com/"), "/")
+	if len(parts) < 4 {
+		return fmt.Errorf("invalid GIT_HTML_URL: %s", repoURL)
+	}
+	owner := parts[0]
+	repo := parts[1]
+	prNumber, err := strconv.Atoi(parts[3])
+	if err != nil {
+		return fmt.Errorf("failed to parse PR number from GIT_HTML_URL: %w", err)
+	}
+
+	existingComments, err := getExistingComments(githubToken, owner, repo, prNumber)
+	if err != nil {
+		return fmt.Errorf("failed to get existing comments: %w", err)
+	}
+	log.Printf("Found %d existing comments", len(existingComments))
+
 	var accumulatedAgentOutput AgentOutput
 	maxRuns := 10
 	maxSuccessfulRuns := 5
@@ -106,12 +133,21 @@ func runReview() error {
 		}
 
 		currentPrompt := agentPrompt
+		currentPrompt += "\n\nDon't repeat comments you've already made in previous runs or that already exist on the PR."
 		if accumulatedAgentOutput.Review != nil && len(accumulatedAgentOutput.Review.Comments) > 0 {
 			previousReviews, err := yaml.Marshal(accumulatedAgentOutput)
 			if err != nil {
 				log.Printf("failed to marshal previous reviews, continuing without them: %v", err)
 			} else {
-				currentPrompt = fmt.Sprintf("%s\n\nHere are the reviews generated so far:\n```yaml\n%s\n```\nPlease generate new, unique review comments that are not duplicates of the ones above.", agentPrompt, string(previousReviews))
+				currentPrompt += "\n\nReview comments made in previous runs:\n```yaml\n" + string(previousReviews) + "\n```\n"
+			}
+		}
+		if len(existingComments) > 0 {
+			existingReviews, err := yaml.Marshal(existingComments)
+			if err != nil {
+				log.Printf("failed to marshal existing reviews, continuing without them: %v", err)
+			} else {
+				currentPrompt += "\n\nExisting comments on the PR:\n```yaml\n" + string(existingReviews) + "\n```\n"
 			}
 		}
 
@@ -149,7 +185,13 @@ func runReview() error {
 		if accumulatedAgentOutput.Review == nil {
 			accumulatedAgentOutput = agentOutput
 		} else {
-			accumulatedAgentOutput.Review.Comments = append(accumulatedAgentOutput.Review.Comments, agentOutput.Review.Comments...)
+			for _, newComment := range agentOutput.Review.Comments {
+				if !isDuplicateCommentExact(newComment, existingComments, accumulatedAgentOutput.Review.Comments) {
+					accumulatedAgentOutput.Review.Comments = append(accumulatedAgentOutput.Review.Comments, newComment)
+				} else {
+					log.Printf("Filtering out duplicate comment on file %s at line %d", *newComment.Path, *newComment.Line)
+				}
+			}
 			if agentOutput.Note != "" {
 				accumulatedAgentOutput.Note += "\n---\n" + agentOutput.Note
 			}
@@ -181,6 +223,51 @@ func runReview() error {
 	}
 	log.Printf("Wrote agent output to %s", filename)
 	return nil // Success
+}
+
+func getExistingComments(token, owner, repo string, prNumber int) ([]*github.PullRequestComment, error) {
+	ctx := context.Background()
+	ts := oauth2.StaticTokenSource(
+		&oauth2.Token{AccessToken: token},
+	)
+	tc := oauth2.NewClient(ctx, ts)
+	client := github.NewClient(tc)
+
+	var allComments []*github.PullRequestComment
+	opts := &github.PullRequestListCommentsOptions{
+		ListOptions: github.ListOptions{PerPage: 100},
+	}
+	for {
+		comments, resp, err := client.PullRequests.ListComments(ctx, owner, repo, prNumber, opts)
+		if err != nil {
+			return nil, err
+		}
+		allComments = append(allComments, comments...)
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	return allComments, nil
+}
+
+// TODO improve duplicate detection to fuzzy matching
+func isDuplicateCommentExact(newComment *github.DraftReviewComment, existingComments []*github.PullRequestComment, accumulatedComments []*github.DraftReviewComment) bool {
+	for _, existingComment := range existingComments {
+		if *newComment.Path == *existingComment.Path &&
+			*newComment.Line == *existingComment.Line &&
+			*newComment.Body == *existingComment.Body {
+			return true
+		}
+	}
+	for _, existingComment := range accumulatedComments {
+		if *newComment.Path == *existingComment.Path &&
+			*newComment.Line == *existingComment.Line &&
+			*newComment.Body == *existingComment.Body {
+			return true
+		}
+	}
+	return false
 }
 
 func validateAgentOutput(agentOutput *AgentOutput, diffFiles []*gitdiff.File) error {
