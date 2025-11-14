@@ -25,14 +25,18 @@ func main() {
 		log.Fatalf("failed to prepare git branch: %v", err)
 	}
 
-	// Try solving the issue
-	if err := runIssueSolver(); err != nil {
-		log.Fatalf("failed solving issue: %v", err)
-	}
+	if _, err := os.Stat("../agent-prompt.txt"); os.IsNotExist(err) {
+		// Try solving the issue
+		if err := runIssueSolver(); err != nil {
+			log.Fatalf("failed solving issue: %v", err)
+		}
 
-	// Push the changes
-	if err := processGitChanges(oldCommitID); err != nil {
-		log.Fatalf("failed to process git changes: %v", err)
+		// Push the changes
+		if err := processGitChanges(oldCommitID); err != nil {
+			log.Fatalf("failed to process git changes: %v", err)
+		}
+	} else {
+		log.Println("agent-prompt.txt exists, skipping code generation")
 	}
 
 	// Wait for code-server to exit
@@ -68,7 +72,7 @@ func prepareGitBranch() (string, error) {
 
 	if gitPushEnabled && githubUserOrigin != "" {
 		originURL := fmt.Sprintf("https://%s:%s@%s", githubUserLogin, githubToken, githubUserOrigin)
-		if _, err := runCommand("git", "remote", "add", "origin", originURL); err != nil {
+		if _, err := _runCommand("git", "remote", "add", "origin", originURL); err != nil {
 			return oldCommitID, fmt.Errorf("failed to add origin: %w", err)
 		}
 	}
@@ -85,8 +89,21 @@ func prepareGitBranch() (string, error) {
 		}
 	}
 
-	if _, err := runCommand("git", "checkout", "-b", issueBranch); err != nil {
-		return oldCommitID, fmt.Errorf("failed to create issue branch: %w", err)
+	// Check if the issue branch already exists
+	branchesOutput, err := runCommand("git", "branch", "--list", issueBranch)
+	if err != nil {
+		return oldCommitID, fmt.Errorf("failed to list git branches: %w", err)
+	}
+	if strings.TrimSpace(string(branchesOutput)) != "" {
+		log.Printf("Issue branch %s already exists, checking it out", issueBranch)
+		if _, err := runCommand("git", "checkout", issueBranch); err != nil {
+			return oldCommitID, fmt.Errorf("failed to checkout existing issue branch: %w", err)
+		}
+	} else {
+		log.Printf("Issue branch %s does not exist, creating it", issueBranch)
+		if _, err := runCommand("git", "checkout", "-b", issueBranch); err != nil {
+			return oldCommitID, fmt.Errorf("failed to create issue branch: %w", err)
+		}
 	}
 
 	return oldCommitID, nil
@@ -101,12 +118,20 @@ func processGitChanges(oldCommitID string) error {
 
 	// Commit and push
 	if githubUserEmail != "" {
-		if _, err := runCommand("git", "add", "."); err != nil {
-			return fmt.Errorf("failed to git add: %v", err)
+		// Check if there are any changes to commit
+		statusOutput, err := runCommand("git", "status", "--porcelain")
+		if err != nil {
+			return fmt.Errorf("failed to get git status: %w", err)
 		}
-		commitMsg := fmt.Sprintf("fix for issue # %s", issueID)
-		if _, err := runCommand("git", "commit", "-m", commitMsg); err != nil {
-			return fmt.Errorf("failed to git commit: %v", err)
+		if strings.TrimSpace(string(statusOutput)) != "" {
+			log.Println("Changes detected, committing")
+			if _, err := runCommand("git", "add", "."); err != nil {
+				return fmt.Errorf("failed to git add: %v", err)
+			}
+			commitMsg := fmt.Sprintf("fix for issue # %s", issueID)
+			if _, err := runCommand("git", "commit", "-m", commitMsg); err != nil {
+				return fmt.Errorf("failed to git commit: %v", err)
+			}
 		}
 	}
 
@@ -152,30 +177,26 @@ func runIssueSolver() error {
 	}
 
 	// Run gemini
-	if _, err := os.Stat("../agent-prompt.txt"); os.IsNotExist(err) {
-		log.Println("agent-prompt.txt does not exist, running gemini")
-		if err := os.WriteFile("../agent-prompt.txt", []byte(agentPrompt), 0644); err != nil {
-			return fmt.Errorf("failed to write agent-prompt.txt: %w", err)
-		}
-		geminiAPIKey := os.Getenv("GEMINI_API_KEY")
-		if geminiAPIKey == "" {
-			geminiAPIKeyBytes, err := os.ReadFile("/tokens/gemini")
-			if err != nil {
-				return fmt.Errorf("failed to read gemini token: %w", err)
-			}
-			geminiAPIKey = string(geminiAPIKeyBytes)
-		}
-		cmd := exec.Command("gemini", "-y", "-p", agentPrompt)
-		cmd.Env = append(os.Environ(), "GEMINI_API_KEY="+geminiAPIKey)
-		output, err := cmd.CombinedOutput()
+	log.Println("agent-prompt.txt does not exist, running gemini")
+	if err := os.WriteFile("../agent-prompt.txt", []byte(agentPrompt), 0644); err != nil {
+		return fmt.Errorf("failed to write agent-prompt.txt: %w", err)
+	}
+	geminiAPIKey := os.Getenv("GEMINI_API_KEY")
+	if geminiAPIKey == "" {
+		geminiAPIKeyBytes, err := os.ReadFile("/tokens/gemini")
 		if err != nil {
-			log.Printf("gemini command failed: %v, output: %s", err, string(output))
+			return fmt.Errorf("failed to read gemini token: %w", err)
 		}
-		if err := os.WriteFile("../agent-output.txt", output, 0644); err != nil {
-			return fmt.Errorf("failed to write agent-output.txt: %w", err)
-		}
-	} else {
-		log.Println("agent-prompt.txt exists, skipping gemini generation")
+		geminiAPIKey = string(geminiAPIKeyBytes)
+	}
+	cmd := exec.Command("gemini", "-y", "-p", agentPrompt)
+	cmd.Env = append(os.Environ(), "GEMINI_API_KEY="+geminiAPIKey)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		log.Printf("gemini command failed: %v, output: %s", err, string(output))
+	}
+	if err := os.WriteFile("../agent-output.txt", output, 0644); err != nil {
+		return fmt.Errorf("failed to write agent-output.txt: %w", err)
 	}
 
 	// Cleanup .gemini
@@ -192,14 +213,18 @@ func runIssueSolver() error {
 	return nil
 }
 
-func runCommand(name string, args ...string) ([]byte, error) {
+func _runCommand(name string, args ...string) ([]byte, error) {
 	cmd := exec.Command(name, args...)
-	log.Printf("Running command: %s %v", name, args)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return output, fmt.Errorf("command %s %v failed with output %s: %w", name, args, string(output), err)
 	}
 	return output, nil
+}
+
+func runCommand(name string, args ...string) ([]byte, error) {
+	log.Printf("Running command: %s %v", name, args)
+	return _runCommand(name, args...)
 }
 
 func startCodeServer() (*exec.Cmd, error) {
