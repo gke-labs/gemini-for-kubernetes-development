@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -17,6 +18,8 @@ import (
 	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
 	redis "github.com/go-redis/redis/v8"
+
+	//"github.com/google/go-github/github"
 	"github.com/google/go-github/v39/github"
 	yaml "go.yaml.in/yaml/v3"
 	"golang.org/x/oauth2"
@@ -116,17 +119,20 @@ func (w bodyLogWriter) Write(b []byte) (int, error) {
 
 func RequestLoggerMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// Read the request body
 		var bodyBytes []byte
 		if c.Request.Body != nil {
 			bodyBytes, _ = io.ReadAll(c.Request.Body)
+			// Restore the io.ReadCloser to its original state for subsequent handlers
 			c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 		}
+
 		log.Printf("Request Method: %s\n", c.Request.Method)
 		log.Printf("Request URL: %s\n", c.Request.URL.String())
-		if len(bodyBytes) > 0 {
-			log.Printf("Request Body: %s\n", string(bodyBytes))
-		}
-		c.Next()
+		//log.Printf("Request Headers: %v\n", c.Request.Header)
+		log.Printf("Request Body: %s\n", string(bodyBytes))
+
+		c.Next() // Process the request further
 	}
 }
 
@@ -134,7 +140,12 @@ func ResponseLoggerMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		blw := &bodyLogWriter{body: bytes.NewBufferString(""), ResponseWriter: c.Writer}
 		c.Writer = blw
-		c.Next()
+
+		c.Next() // Process the request and generate the response
+
+		log.Printf("Response Status: %d\n", c.Writer.Status())
+		log.Printf("Response Headers: %v\n", c.Writer.Header())
+		log.Printf("Response Body: %s\n", blw.body.String())
 	}
 }
 
@@ -161,26 +172,31 @@ func initOAuth() {
 }
 
 func main() {
+	// Redis client
 	redisAddr := os.Getenv("REDIS_ADDR")
 	if redisAddr == "" {
 		redisAddr = "localhost:6379"
 	}
-	rdb = redis.NewClient(&redis.Options{Addr: redisAddr})
+	rdb = redis.NewClient(&redis.Options{
+		Addr: redisAddr,
+	})
 
+	// Kubernetes client
 	config, err := rest.InClusterConfig()
 	if err != nil {
+		log.Printf("Failed to get in-cluster config, trying local config: %v", err)
 		kubeconfig := os.Getenv("KUBECONFIG")
 		if kubeconfig == "" {
 			kubeconfig = os.Getenv("HOME") + "/.kube/config"
 		}
 		config, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
 		if err != nil {
-			log.Fatalf("Failed to get kubeconfig: %v", err)
+			log.Fatalf("Failed to get local kubeconfig: %v", err)
 		}
 	}
 	k8sClient, err = dynamic.NewForConfig(config)
 	if err != nil {
-		log.Fatalf("Failed to create dynamic client: %v", err)
+		log.Fatalf("Failed to create kubernetes client: %v", err)
 	}
 	k8sClientset, err = kubernetes.NewForConfig(config)
 	if err != nil {
@@ -189,12 +205,16 @@ func main() {
 
 	initOAuth()
 
-	if _, err := rdb.Ping(context.Background()).Result(); err != nil {
+	// Ping redis to ensure connection
+	_, err = rdb.Ping(context.Background()).Result()
+	if err != nil {
 		log.Fatalf("Failed to connect to Redis: %v", err)
 	}
 
+	// Pre-populate mock data in Redis
 	populateMockData()
 
+	// Gin router
 	router := gin.Default()
 	sessionSecret := os.Getenv("SESSION_SECRET")
 	if sessionSecret == "" {
@@ -207,6 +227,8 @@ func main() {
 	}
 	store := cookie.NewStore([]byte(sessionSecret))
 	router.Use(sessions.Sessions(sessionName, store))
+
+	// Add middleware to log requests and responses
 	router.Use(RequestLoggerMiddleware())
 	router.Use(ResponseLoggerMiddleware())
 
@@ -217,11 +239,13 @@ func main() {
 	router.GET("/api/auth/providers", getAuthProviders)
 	router.POST("/api/auth/github-config", updateGithubConfig)
 
+	// API routes
 	api := router.Group("/api")
 	api.Use(authMiddleware())
 	{
 		api.GET("/repos", getRepos)
 		api.POST("/repos", createRepoWatch)
+		api.PUT("/repos/:repo", updateRepoWatch)
 		api.DELETE("/repos/:repo", deleteRepoWatch)
 
 		api.GET("/settings", getSettings)
@@ -238,7 +262,8 @@ func main() {
 		api.GET("/proxy", proxy)
 	}
 
-	if err := router.Run(":8080"); err != nil {
+	err = router.Run(":8080")
+	if err != nil {
 		log.Fatalf("Failed to start router: %v", err)
 	}
 }
@@ -620,9 +645,10 @@ func updateSecret(ctx context.Context, namespace, name string, data map[string][
 
 func createRepoWatch(c *gin.Context) {
 	namespace := c.MustGet(userKey).(string)
+	// TODO: Improve this - Prompts, Issue handlers, etc.
 	var payload struct {
-		URL  string `json:"url"`
 		Name string `json:"name"`
+		URL  string `json:"url"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -660,20 +686,31 @@ Analyze the issue title and body to determine the most relevant category from th
 Start the response with "/kind <Category>" where <Category> is one of bug , feature , document, support, cleanup or other
 In the next line, provide a concise explanation of your reasoning for the assigned category.`
 
+	gvr := schema.GroupVersionResource{
+		Group:    "review.gemini.google.com",
+		Version:  "v1alpha1",
+		Resource: "repowatches",
+	}
+
 	repoWatch := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "review.gemini.google.com/v1alpha1",
 			"kind":       "RepoWatch",
-			"metadata":   map[string]interface{}{"name": repoName, "namespace": namespace},
+			"metadata": map[string]interface{}{
+				"name":      repoName,
+				"namespace": namespace,
+			},
 			"spec": map[string]interface{}{
-				"repoURL":          payload.URL,
-				"githubSecretName": githubSecretName,
+				"repoURL":             payload.URL,
+				"githubSecretName":    "github-pat",
+				"pollIntervalSeconds": 300,
 				"review": map[string]interface{}{
 					"maxActiveSandboxes":    int64(1),
 					"devcontainerConfigRef": goDevContainerCM,
 					"llm": map[string]interface{}{
-						"provider": "gemini-cli",
-						"prompt":   reviewPrompt,
+						"provider":        "gemini-cli",
+						"apiKeySecretRef": "gemini-vscode-tokens",
+						"prompt":          reviewPrompt,
 					},
 				},
 				"issueHandlers": []interface{}{
@@ -690,11 +727,66 @@ In the next line, provide a concise explanation of your reasoning for the assign
 		},
 	}
 
-	gvr := schema.GroupVersionResource{Group: "review.gemini.google.com", Version: "v1alpha1", Resource: "repowatches"}
-	if _, err := k8sClient.Resource(gvr).Namespace(namespace).Create(c.Request.Context(), repoWatch, v1.CreateOptions{}); err != nil {
+	_, err = k8sClient.Resource(gvr).Namespace(namespace).Create(c.Request.Context(), repoWatch, v1.CreateOptions{})
+	if err != nil {
 		log.Printf("Failed to create RepoWatch: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to create repository watch: %v", err)})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to create RepoWatch: %v", err)})
 		return
+	}
+
+	c.Status(http.StatusOK)
+}
+
+func updateRepoWatch(c *gin.Context) {
+	namespace := c.MustGet(userKey).(string)
+	name := c.Param("repo")
+
+	var payload struct {
+		RepoURL string `json:"repoURL"`
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if payload.RepoURL == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "repoURL is required"})
+		return
+	}
+
+	gvr := schema.GroupVersionResource{
+		Group:    "review.gemini.google.com",
+		Version:  "v1alpha1",
+		Resource: "repowatches",
+	}
+
+	// Get existing resource
+	existing, err := k8sClient.Resource(gvr).Namespace(namespace).Get(c.Request.Context(), name, v1.GetOptions{})
+	if err != nil {
+		log.Printf("Failed to get RepoWatch for update: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to get RepoWatch: %v", err)})
+		return
+	}
+
+	// Update spec.repoURL
+	if err := unstructured.SetNestedField(existing.Object, payload.RepoURL, "spec", "repoURL"); err != nil {
+		log.Printf("Failed to set repoURL: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update object structure"})
+		return
+	}
+
+	// Apply update
+	_, err = k8sClient.Resource(gvr).Namespace(namespace).Update(c.Request.Context(), existing, v1.UpdateOptions{})
+	if err != nil {
+		log.Printf("Failed to update RepoWatch: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to update RepoWatch: %v", err)})
+		return
+	}
+
+	// Update Redis cache to reflect the change immediately
+	if err := rdb.HSet(c.Request.Context(), fmt.Sprintf("repo:ns:%s:name:%s", namespace, name), "url", payload.RepoURL).Err(); err != nil {
+		log.Printf("Failed to update repo URL in Redis for %s: %v", name, err)
+		// Don't fail the request if Redis fails, as K8s deletion is the source of truth
 	}
 
 	c.Status(http.StatusOK)
@@ -702,18 +794,28 @@ In the next line, provide a concise explanation of your reasoning for the assign
 
 func deleteRepoWatch(c *gin.Context) {
 	namespace := c.MustGet(userKey).(string)
-	repoName := c.Param("repo")
-	gvr := schema.GroupVersionResource{Group: "review.gemini.google.com", Version: "v1alpha1", Resource: "repowatches"}
-	if err := k8sClient.Resource(gvr).Namespace(namespace).Delete(c.Request.Context(), repoName, v1.DeleteOptions{}); err != nil {
+	name := c.Param("repo")
+
+	gvr := schema.GroupVersionResource{
+		Group:    "review.gemini.google.com",
+		Version:  "v1alpha1",
+		Resource: "repowatches",
+	}
+
+	err := k8sClient.Resource(gvr).Namespace(namespace).Delete(c.Request.Context(), name, v1.DeleteOptions{})
+	if err != nil {
+		log.Printf("Failed to delete RepoWatch: %v", err)
 		if !errors.IsNotFound(err) {
-			log.Printf("Failed to delete RepoWatch %s: %v", repoName, err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete repository watch"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to delete RepoWatch: %v", err)})
 			return
 		}
 	}
 
-	// Also clean up Redis for this repo to be safe, though pollers might do it eventually.
-	rdb.Del(c.Request.Context(), fmt.Sprintf("repo:ns:%s:name:%s", namespace, repoName))
+	// Also delete from Redis
+	if err := rdb.Del(c.Request.Context(), fmt.Sprintf("repo:ns:%s:name:%s", namespace, name)).Err(); err != nil {
+		log.Printf("Failed to delete repo %s from Redis: %v", name, err)
+		// Don't fail the request if Redis fails, as K8s deletion is the source of truth
+	}
 
 	c.Status(http.StatusOK)
 }
@@ -768,43 +870,80 @@ func getRepos(c *gin.Context) {
 
 		repoWatch, err := getRepoWatch(c.Request.Context(), namespace, repoName)
 		if err != nil {
-			continue
-		}
-		repoURL, found, _ := unstructured.NestedString(repoWatch.Object, "spec", "repoURL")
-		if !found {
+			log.Printf("Failed to get RepoWatch %s/%s: %v", namespace, repoName, err)
 			continue
 		}
 
-		repo := Repo{Name: repoName, Namespace: namespace, URL: repoURL}
-		if maxSandboxes, found, _ := unstructured.NestedInt64(repoWatch.Object, "spec", "review", "maxActiveSandboxes"); found && maxSandboxes > 0 {
-			repo.Review = &ReviewConfig{MaxActiveSandboxes: maxSandboxes}
+		repoURL, found, _ := unstructured.NestedString(repoWatch.Object, "spec", "repoURL")
+		if !found {
+			log.Printf("repoURL not found in RepoWatch CR %s", repoWatch.GetName())
+			continue
 		}
-		if handlers, found, _ := unstructured.NestedSlice(repoWatch.Object, "spec", "issueHandlers"); found {
+
+		repo := Repo{
+			Name:      repoName,
+			Namespace: namespace,
+			URL:       repoURL,
+		}
+
+		// Extract review config
+		if maxActiveSandboxes, found, err := unstructured.NestedInt64(repoWatch.Object, "spec", "review", "maxActiveSandboxes"); err == nil && found && maxActiveSandboxes > 0 {
+			repo.Review = &ReviewConfig{MaxActiveSandboxes: maxActiveSandboxes}
+		}
+
+		// Extract issue handlers
+		if handlers, found, err := unstructured.NestedSlice(repoWatch.Object, "spec", "issueHandlers"); err == nil && found {
+			var issueHandlers []IssueHandler
 			for _, h := range handlers {
-				if hMap, ok := h.(map[string]interface{}); ok {
-					name, _ := hMap["name"].(string)
-					maxSandboxes, _ := hMap["maxActiveSandboxes"].(int64)
-					push, _ := hMap["pushBranch"].(bool)
-					if maxSandboxes > 0 {
-						repo.IssueHandlers = append(repo.IssueHandlers, IssueHandler{Name: name, MaxActiveSandboxes: maxSandboxes, PushBranch: push})
-					}
+				handlerMap, ok := h.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				name, _ := handlerMap["name"].(string)
+				maxActiveSandboxes, _ := handlerMap["maxActiveSandboxes"].(int64)
+				pushBranch, _ := handlerMap["pushBranch"].(bool)
+
+				if maxActiveSandboxes > 0 {
+					issueHandlers = append(issueHandlers, IssueHandler{
+						Name:               name,
+						MaxActiveSandboxes: maxActiveSandboxes,
+						PushBranch:         pushBranch,
+					})
 				}
 			}
+			repo.IssueHandlers = issueHandlers
 		}
+
 		repos = append(repos, repo)
 	}
+	if err := iter.Err(); err != nil {
+		log.Printf("Error during Redis SCAN: %v", err)
+	}
+
 	c.JSON(http.StatusOK, repos)
 }
 
 func fetchAndPopulateRepos(ctx context.Context, namespace string) {
-	gvr := schema.GroupVersionResource{Group: "review.gemini.google.com", Version: "v1alpha1", Resource: "repowatches"}
-	list, err := k8sClient.Resource(gvr).Namespace(namespace).List(ctx, v1.ListOptions{})
+	gvr := schema.GroupVersionResource{
+		Group:    "review.gemini.google.com",
+		Version:  "v1alpha1",
+		Resource: "repowatches",
+	}
+	list, err := k8sClient.Resource(gvr).Namespace(namespace).List(context.Background(), v1.ListOptions{})
 	if err != nil {
+		log.Printf("Failed to list RepoWatch CRs: %v. Serving mock data.", err)
 		return
 	}
+
 	for _, item := range list.Items {
-		if url, found, _ := unstructured.NestedString(item.Object, "spec", "repoURL"); found {
-			rdb.HSet(ctx, fmt.Sprintf("repo:ns:%s:name:%s", namespace, item.GetName()), "url", url, "namespace", namespace)
+		repoURL, found, err := unstructured.NestedString(item.Object, "spec", "repoURL")
+		if err != nil || !found {
+			log.Printf("repoURL not found in RepoWatch CR %s", item.GetName())
+			continue
+		}
+		// Ensure the URL is in Redis
+		if err := rdb.HSet(ctx, fmt.Sprintf("repo:ns:%s:name:%s", namespace, item.GetName()), "url", repoURL, "namespace", namespace).Err(); err != nil {
+			log.Printf("Failed to cache repo URL for %s: %v", item.GetName(), err)
 		}
 	}
 }
@@ -813,49 +952,127 @@ func getPRs(c *gin.Context) {
 	namespace := c.MustGet(userKey).(string)
 	repo := c.Param("repo")
 	fetchAndPopulatePRs(c.Request.Context(), namespace, repo)
-
+	// SCAN Redis for PRs for repo
 	prs := []PR{}
-	prefix := fmt.Sprintf("pr:ns:%s:repo:%s:pr:", namespace, repo)
-	iter := rdb.Scan(c.Request.Context(), 0, prefix+"*", 0).Iterator()
+	repoPRKeyPrefix := fmt.Sprintf("pr:ns:%s:repo:%s:pr:", namespace, repo)
+	iter := rdb.Scan(c.Request.Context(), 0, repoPRKeyPrefix+"*", 0).Iterator()
 	for iter.Next(c.Request.Context()) {
 		key := iter.Val()
-		data, err := rdb.HGetAll(c.Request.Context(), key).Result()
+		prID := key[len(repoPRKeyPrefix):]
+		prData, err := rdb.HGetAll(c.Request.Context(), key).Result()
 		if err != nil {
+			log.Printf("Failed to get PR %s from Redis for repo %s: %v", prID, repo, err)
 			continue
 		}
-		prs = append(prs, PR{
-			ID:             key[len(prefix):],
-			Title:          data["title"],
-			HTMLURL:        data["htmlurl"],
-			DiffURL:        data["diffurl"],
-			Draft:          data["draft"],
-			Sandbox:        data["sandbox"],
-			SandboxReplica: data["sandboxReplica"],
-			Review:         data["review"],
-		})
+		pr := PR{
+			ID:    prID,
+			Title: prData["title"],
+		}
+
+		if _, ok := prData["htmlurl"]; ok {
+			pr.HTMLURL = prData["htmlurl"]
+		}
+		if _, ok := prData["diffurl"]; ok {
+			pr.DiffURL = prData["diffurl"]
+		}
+		if _, ok := prData["draft"]; ok {
+			pr.Draft = prData["draft"]
+		}
+		if _, ok := prData["sandbox"]; ok {
+			pr.Sandbox = prData["sandbox"]
+		}
+		if _, ok := prData["sandboxReplica"]; ok {
+			pr.SandboxReplica = prData["sandboxReplica"]
+		}
+		if _, ok := prData["review"]; ok {
+			pr.Review = prData["review"]
+		}
+		prs = append(prs, pr)
 	}
+	if err := iter.Err(); err != nil {
+		log.Printf("Error during Redis SCAN: %v", err)
+	}
+
 	c.JSON(http.StatusOK, prs)
 }
 
 func fetchAndPopulatePRs(ctx context.Context, namespace, repo string) {
-	gvr := schema.GroupVersionResource{Group: "custom.agents.x-k8s.io", Version: "v1alpha1", Resource: "reviewsandboxes"}
-	list, err := k8sClient.Resource(gvr).Namespace(namespace).List(ctx, v1.ListOptions{LabelSelector: fmt.Sprintf("review.gemini.google.com/repowatch=%s", repo)})
+	gvr := schema.GroupVersionResource{
+		Group:    "custom.agents.x-k8s.io",
+		Version:  "v1alpha1",
+		Resource: "reviewsandboxes",
+	}
+	list, err := k8sClient.Resource(gvr).Namespace(namespace).List(context.Background(),
+		v1.ListOptions{
+			LabelSelector: fmt.Sprintf("review.gemini.google.com/repowatch=%s", repo),
+		})
 	if err != nil {
+		log.Printf("Failed to list ReviewSandbox CRs: %v. Serving mock data.", err)
 		return
 	}
+
+	log.Printf("Populating PRs: Found %d reviewsandboxes for Repo: %s", len(list.Items), repo)
 	for _, item := range list.Items {
-		replicas, _, _ := unstructured.NestedInt64(item.Object, "spec", "replicas")
-		prID, _, _ := unstructured.NestedString(item.Object, "spec", "source", "pr")
-		title, _, _ := unstructured.NestedString(item.Object, "spec", "source", "title")
-		htmlurl, _, _ := unstructured.NestedString(item.Object, "spec", "source", "htmlURL")
-		diffurl, _, _ := unstructured.NestedString(item.Object, "spec", "source", "diffURL")
+		log.Printf("Creating PR entry for ReviewSandbox: %s/%s", item.GetNamespace(), item.GetName())
+		// Get replicas and if it scaled down skip
+		replicas, found, err := unstructured.NestedInt64(item.Object, "spec", "replicas")
+		if err != nil || !found {
+			log.Printf("Replicas (.spec.replicas) not found in ReviewSandbox  %s", item.GetName())
+			continue
+		}
+
+		prID, found, err := unstructured.NestedString(item.Object, "spec", "source", "pr")
+		if err != nil || !found {
+			log.Printf("PR ID (.spec.source.pr) not found in ReviewSandbox  %s", item.GetName())
+			continue
+		}
+
+		title, found, err := unstructured.NestedString(item.Object, "spec", "source", "title")
+		if err != nil || !found {
+			log.Printf("Title (.spec.source.title) not found in ReviewSandbox  %s", item.GetName())
+			continue
+		}
+		htmlurl, found, err := unstructured.NestedString(item.Object, "spec", "source", "htmlURL")
+		if err != nil || !found {
+			log.Printf("Title (.spec.source.htmlURL) not found in ReviewSandbox  %s", item.GetName())
+		}
+		diffurl, found, err := unstructured.NestedString(item.Object, "spec", "source", "diffURL")
+		if err != nil || !found {
+			log.Printf("diffURL (.spec.source.diffURL) not found in ReviewSandbox  %s", item.GetName())
+		}
+
+		// get draft from annotation[agentDraft]
 		draft := ""
-		if annotations := item.GetAnnotations(); annotations != nil {
+		annotations := item.GetAnnotations()
+		if annotations == nil {
+			log.Printf("agentDraft (annotations=nil) not found in ReviewSandbox %s", item.GetName())
+		} else if _, ok := annotations["agentDraft"]; !ok {
+			log.Printf("agentDraft (annotations[agentDraft]) not found in ReviewSandbox %s", item.GetName())
+		} else {
 			draft = annotations["agentDraft"]
 		}
-		if prID != "" {
-			rdb.HSet(ctx, fmt.Sprintf("pr:ns:%s:repo:%s:pr:%s", namespace, repo, prID),
-				"title", title, "sandbox", item.GetName(), "htmlurl", htmlurl, "diffurl", diffurl, "sandboxReplica", fmt.Sprintf("%d", replicas), "draft", draft, "agentDraft", draft)
+
+		pr := PR{
+			ID:             prID,
+			Title:          title,
+			Sandbox:        item.GetName(),
+			HTMLURL:        htmlurl,
+			DiffURL:        diffurl,
+			SandboxReplica: fmt.Sprintf("%d", replicas),
+		}
+
+		prKey := fmt.Sprintf("pr:ns:%s:repo:%s:pr:%s", namespace, repo, prID)
+		// Ensure the URL is in Redis
+		if err := rdb.HSet(ctx, prKey,
+			"title", pr.Title,
+			"sandbox", pr.Sandbox,
+			"htmlurl", pr.HTMLURL,
+			"diffurl", pr.DiffURL,
+			"sandboxReplica", pr.SandboxReplica,
+			"draft", draft,
+			"agentDraft", draft,
+		).Err(); err != nil {
+			log.Printf("Failed to cache PR %s for repo %s: %v", pr.ID, repo, err)
 		}
 	}
 }
@@ -871,10 +1088,14 @@ func saveDraft(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := rdb.HSet(c.Request.Context(), fmt.Sprintf("pr:ns:%s:repo:%s:pr:%s", namespace, repo, prID), "draft", payload.Draft).Err(); err != nil {
+
+	prKey := fmt.Sprintf("pr:ns:%s:repo:%s:pr:%s", namespace, repo, prID)
+	err := rdb.HSet(c.Request.Context(), prKey, "draft", payload.Draft).Err()
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save draft"})
 		return
 	}
+
 	c.Status(http.StatusOK)
 }
 
@@ -889,64 +1110,139 @@ func submitReview(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+
 	ctx := c.Request.Context()
+	log.Printf("Submitting review for PR %s in repo %s with review: %s", prID, repo, payload.Review)
 
 	// Get draft and agentDraft from Redis
 	prKey := fmt.Sprintf("pr:ns:%s:repo:%s:pr:%s", namespace, repo, prID)
 	prData, err := rdb.HGetAll(ctx, prKey).Result()
 	if err != nil {
 		log.Printf("Failed to get PR %s from Redis for repo %s: %v", prID, repo, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get PR data from Redis"})
+		return
 	}
 
 	draft := payload.Review
 	agentDraft := prData["agentDraft"]
 	sandboxName := prData["sandbox"]
 
-	if draft != agentDraft && sandboxName != "" {
-		if err := updateReviewSandboxUserDraft(ctx, namespace, sandboxName, draft); err != nil {
-			log.Printf("Failed to update reviewsandbox userDraft for PR %s in repo %s: %v", prID, repo, err)
-		}
-	}
-
+	// Get RepoWatch to get repoURL and secret ref
 	repoWatch, err := getRepoWatch(ctx, namespace, repo)
 	if err != nil {
+		log.Printf("Failed to get repowatch %s: %v", repo, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get repowatch config"})
 		return
 	}
+
+	if draft != agentDraft {
+		// Store feedback for fine-tuning
+		prompt, _, _ := unstructured.NestedString(repoWatch.Object, "spec", "review", "gemini", "prompt")
+		configdir, _, _ := unstructured.NestedString(repoWatch.Object, "spec", "review", "gemini", "configdirRef")
+		repoURL, _, _ := unstructured.NestedString(repoWatch.Object, "spec", "repoURL")
+		owner, _, _ := parseRepoURL(repoURL)
+
+		hfKey := fmt.Sprintf("hf:review:githubuser:%s:repo:%s:pr:%s", owner, repo, prID)
+		if err := rdb.HSet(ctx, hfKey,
+			"draft", draft,
+			"agentDraft", agentDraft,
+			"prompt", prompt,
+			"configdir", configdir,
+		).Err(); err != nil {
+			log.Printf("Failed to store feedback for PR %s in repo %s: %v", prID, repo, err)
+			// Continue without failing the review submission
+		}
+
+		if sandboxName != "" {
+			if err := updateReviewSandboxUserDraft(ctx, namespace, sandboxName, draft); err != nil {
+				log.Printf("Failed to update reviewsandbox userDraft for PR %s in repo %s: %v", prID, repo, err)
+				// Not failing the request for this, just logging.
+			}
+		}
+	}
+
+	// Get GitHub token from secret
 	token, err := getGitHubToken(ctx, repoWatch)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get GitHub token"})
+		log.Printf("Failed to get github token for repo %s: %v", repo, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get github token"})
 		return
 	}
-	repoURL, _, _ := unstructured.NestedString(repoWatch.Object, "spec", "repoURL")
+
+	// Create GitHub client
+	ts := oauth2.StaticTokenSource(
+		&oauth2.Token{AccessToken: token},
+	)
+	tc := oauth2.NewClient(ctx, ts)
+	client := github.NewClient(tc)
+
+	// Parse repo URL
+	repoURL, found, err := unstructured.NestedString(repoWatch.Object, "spec", "repoURL")
+	if err != nil || !found {
+		log.Printf("repoURL not found in RepoWatch CR %s", repoWatch.GetName())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "repoURL not found in RepoWatch CR"})
+		return
+	}
 	owner, repoName, err := parseRepoURL(repoURL)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid repo URL"})
+		log.Printf("Failed to parse repo url %s: %v", repoURL, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse repo url"})
 		return
 	}
-	prNumber, _ := strconv.Atoi(prID)
-	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
-	client := github.NewClient(oauth2.NewClient(ctx, ts))
 
+	// Get PR number
+	prNumber, err := strconv.Atoi(prID)
+	if err != nil {
+		log.Printf("Failed to parse prID %s: %v", prID, err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid pr id"})
+		return
+	}
+
+	// https://docs.github.com/en/rest/pulls/reviews?apiVersion=2022-11-28#create-a-review-for-a-pull-request
+	// Try Unmarshalling the yaml review payload into PullRequestReviewRequest
 	agentOutput := &AgentOutput{}
 	reviewRequest := &github.PullRequestReviewRequest{}
-	if err := yaml.Unmarshal([]byte(payload.Review), &agentOutput); err != nil {
+	err = yaml.Unmarshal([]byte(payload.Review), &agentOutput)
+	if err != nil {
+		log.Printf("Failed to unmarshal review payload: %v", err)
 		reviewRequest.Body = github.String(payload.Review)
 	} else {
 		reviewRequest = agentOutput.Review
 	}
+
+	// Not setting event sets it as a draft
 	reviewRequest.Event = nil
 
-	if _, _, err := client.PullRequests.CreateReview(ctx, owner, repoName, prNumber, reviewRequest); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to post review"})
+	log.Printf("reviewRequest being created: %v", reviewRequest)
+	review, resp, err := client.PullRequests.CreateReview(ctx, owner, repoName, prNumber, reviewRequest)
+	if err != nil {
+		log.Printf("response: %v", resp)
+		log.Printf("Failed to create review on PR %d: %v", prNumber, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create review on github"})
 		return
 	}
-	key := fmt.Sprintf("pr:ns:%s:repo:%s:pr:%s", namespace, repo, prID)
-	rdb.HSet(ctx, key, "review", payload.Review)
-	rdb.HSet(ctx, key, "draft", "")
-	if err := scaledownSandbox(ctx, namespace, repo, prID); err != nil {
-		log.Printf("Failed to scaledown sandbox: %v", err)
+	log.Printf("review created: %v", review)
+	// Set review in Redis
+	err = rdb.HSet(c.Request.Context(), prKey, "review", payload.Review).Err()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save review", "details": err.Error()})
+		return
 	}
+
+	// Delete draft from Redis
+	err = rdb.HSet(c.Request.Context(), prKey, "draft", "").Err()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to clear draft", "details": err.Error()})
+		return
+	}
+
+	// scale down sandbox
+	err = scaledownSandbox(ctx, namespace, repo, prID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scaledown Sandbox after review submission", "details": err.Error()})
+		return
+	}
+
 	c.Status(http.StatusOK)
 }
 
@@ -954,50 +1250,179 @@ func deletePR(c *gin.Context) {
 	namespace := c.MustGet(userKey).(string)
 	repo := c.Param("repo")
 	prID := c.Param("id")
-	if err := scaledownSandbox(c.Request.Context(), namespace, repo, prID); err != nil {
+	ctx := c.Request.Context()
+
+	if err := scaledownSandbox(ctx, namespace, repo, prID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete sandbox", "details": err.Error()})
 		return
 	}
-	rdb.Del(c.Request.Context(), fmt.Sprintf("pr:ns:%s:repo:%s:pr:%s", namespace, repo, prID))
+
+	// Clean up Redis keys
+	prKey := fmt.Sprintf("pr:ns:%s:repo:%s:pr:%s", namespace, repo, prID)
+	if err := rdb.HDel(c.Request.Context(), prKey, "review", "draft", "sandbox", "htmlurl", "title").Err(); err != nil {
+		log.Printf("Failed to HDEL PR data from Redis: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to HDEL PR data from Redis"})
+		return
+	}
+	if err := rdb.Del(c.Request.Context(), prKey).Err(); err != nil {
+		log.Printf("Failed to DEL PR data from Redis: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to DEL PR data from Redis"})
+		return
+	}
+
 	c.Status(http.StatusOK)
 }
 
+//nolint:unused
+func deleteSandbox(ctx context.Context, namespace, repo, prID string) error {
+	prKey := fmt.Sprintf("pr:ns:%s:repo:%s:pr:%s", namespace, repo, prID)
+	sandboxName, err := rdb.HGet(ctx, prKey, "sandbox").Result()
+	if err == redis.Nil {
+		// If sandbox is not in Redis, we can assume it's already deleted or never existed.
+		log.Printf("Sandbox for repo %s, PR %s not found in Redis. Assuming it's already deleted.", repo, prID)
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("failed to get sandbox name from Redis: %w", err)
+	}
+
+	gvr := schema.GroupVersionResource{
+		Group:    "custom.agents.x-k8s.io",
+		Version:  "v1alpha1",
+		Resource: "reviewsandboxes",
+	}
+	log.Printf("Deleting sandbox %s", sandboxName)
+	err = k8sClient.Resource(gvr).Namespace(namespace).Delete(ctx, sandboxName, v1.DeleteOptions{})
+	if err != nil {
+		// We can choose to not return an error if it's already gone.
+		return fmt.Errorf("failed to delete sandbox: %w", err)
+	}
+	return nil
+}
+
 func scaledownSandbox(ctx context.Context, namespace, repo, prID string) error {
-	key := fmt.Sprintf("pr:ns:%s:repo:%s:pr:%s", namespace, repo, prID)
-	sandboxName, err := rdb.HGet(ctx, key, "sandbox").Result()
+	prKey := fmt.Sprintf("pr:ns:%s:repo:%s:pr:%s", namespace, repo, prID)
+	sandboxName, err := rdb.HGet(ctx, prKey, "sandbox").Result()
 	if err != nil && err != redis.Nil {
-		return err
+		return fmt.Errorf("failed to get sandbox name from Redis: %w", err)
 	}
 	if sandboxName == "" {
 		sandboxName = fmt.Sprintf("%s-pr-%s", repo, prID)
 	}
-	gvr := schema.GroupVersionResource{Group: "custom.agents.x-k8s.io", Version: "v1alpha1", Resource: "reviewsandboxes"}
+
+	gvr := schema.GroupVersionResource{
+		Group:    "custom.agents.x-k8s.io",
+		Version:  "v1alpha1",
+		Resource: "reviewsandboxes",
+	}
+	log.Printf("Scaling down sandbox %s", sandboxName)
+
+	// Set .spec.replicas to 0 and apply the sandbox object
 	sandbox := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
 			"kind":       "ReviewSandbox",
-			"metadata":   map[string]interface{}{"name": sandboxName, "namespace": namespace},
-			"spec":       map[string]interface{}{"replicas": int64(0)},
+			"metadata": map[string]interface{}{
+				"name":      sandboxName,
+				"namespace": namespace,
+			},
+			"spec": map[string]interface{}{
+				"replicas": int64(0),
+			},
 		},
 	}
-	_, err = k8sClient.Resource(gvr).Namespace(namespace).Apply(ctx, sandboxName, sandbox, v1.ApplyOptions{FieldManager: "review-ui", Force: true})
-	return err
+
+	_, err = k8sClient.Resource(gvr).Namespace(namespace).Apply(ctx, sandboxName,
+		sandbox, v1.ApplyOptions{FieldManager: "review-ui", Force: true})
+	if err != nil {
+		// We can choose to not return an error if it's already gone.
+		return fmt.Errorf("failed to scaledown sandbox: %w", err)
+	}
+	return nil
 }
 
 func updateReviewSandboxUserDraft(ctx context.Context, namespace, sandboxName, userDraft string) error {
-	gvr := schema.GroupVersionResource{Group: "custom.agents.x-k8s.io", Version: "v1alpha1", Resource: "reviewsandboxes"}
+	gvr := schema.GroupVersionResource{
+		Group:    "custom.agents.x-k8s.io",
+		Version:  "v1alpha1",
+		Resource: "reviewsandboxes",
+	}
+
+	// Get the existing resource
 	sandbox, err := k8sClient.Resource(gvr).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get reviewsandbox %s: %w", sandboxName, err)
 	}
+
+	// update the annotation[agentDraft]
 	if sandbox.GetAnnotations() == nil {
 		sandbox.SetAnnotations(make(map[string]string))
 	}
 	annotations := sandbox.GetAnnotations()
 	annotations["userDraft"] = userDraft
 	sandbox.SetAnnotations(annotations)
+
 	_, err = k8sClient.Resource(gvr).Namespace(namespace).Update(context.TODO(), sandbox, v1.UpdateOptions{})
-	return err
+	if err != nil {
+		return fmt.Errorf("failed to update reviewsandbox annotation: %w", err)
+	}
+
+	return nil
+}
+
+func getGitHubToken(ctx context.Context, repoWatch *unstructured.Unstructured) (string, error) {
+	secretName, found, err := unstructured.NestedString(repoWatch.Object, "spec", "githubSecretName")
+	if err != nil || !found {
+		return "", fmt.Errorf("githubSecretName not found in repowatch %s", repoWatch.GetName())
+	}
+	secretKey := "pat"
+
+	secretGVR := schema.GroupVersionResource{Version: "v1", Resource: "secrets"}
+	secretUnstructured, err := k8sClient.Resource(secretGVR).Namespace(repoWatch.GetNamespace()).Get(ctx, secretName, v1.GetOptions{})
+	if err != nil {
+		return "", err
+	}
+
+	secretData, found, err := unstructured.NestedStringMap(secretUnstructured.Object, "data")
+	if err != nil || !found {
+		return "", fmt.Errorf("data field not found in secret %s", secretName)
+	}
+
+	tokenBase64, ok := secretData[secretKey]
+	if !ok {
+		return "", fmt.Errorf("key %s not found in secret %s", secretKey, secretName)
+	}
+
+	tokenBytes, err := base64.StdEncoding.DecodeString(tokenBase64)
+	if err != nil {
+		return "", fmt.Errorf("failed to decode token for key %s in secret %s: %w", secretKey, secretName, err)
+	}
+
+	return string(tokenBytes), nil
+}
+
+func parseRepoURL(repoURL string) (string, string, error) {
+	u, err := url.Parse(repoURL)
+	if err != nil {
+		return "", "", err
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) != 2 {
+		return "", "", fmt.Errorf("invalid repo url: %s", repoURL)
+	}
+	return parts[0], parts[1], nil
+}
+
+func getRepoWatch(ctx context.Context, namespace, name string) (*unstructured.Unstructured, error) {
+	gvr := schema.GroupVersionResource{
+		Group:    "review.gemini.google.com",
+		Version:  "v1alpha1",
+		Resource: "repowatches",
+	}
+	repoWatch, err := k8sClient.Resource(gvr).Namespace(namespace).Get(ctx, name, v1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return repoWatch, nil
 }
 
 func getIssues(c *gin.Context) {
@@ -1007,67 +1432,146 @@ func getIssues(c *gin.Context) {
 	fetchAndPopulateIssues(c.Request.Context(), namespace, repo, handler)
 
 	issues := []Issue{}
-	prefix := fmt.Sprintf("issue:ns:%s:repo:%s:handler:%s:issue:", namespace, repo, handler)
-	iter := rdb.Scan(c.Request.Context(), 0, prefix+"*", 0).Iterator()
+	issueKeyPrefix := fmt.Sprintf("issue:ns:%s:repo:%s:handler:%s:issue:*", namespace, repo, handler)
+	iter := rdb.Scan(c.Request.Context(), 0, issueKeyPrefix, 0).Iterator()
 	for iter.Next(c.Request.Context()) {
 		key := iter.Val()
-		data, err := rdb.HGetAll(c.Request.Context(), key).Result()
-		if err != nil {
+		// key is issue:repo:REPO:handler:HANDLER:issue:ISSUEID
+		parts := strings.Split(key, ":")
+		if len(parts) != 9 {
 			continue
 		}
-		// key format: issue:ns:NS:repo:REPO:handler:HANDLER:issue:ISSUEID
-		// split by :
-		parts := strings.Split(key, ":")
-		// issue:ns:NS:repo:REPO:handler:HANDLER:issue:ISSUEID
-		// 0     1  2  3    4    5       6       7     8
-		if len(parts) < 9 {
+		issueID := parts[8]
+
+		issueData, err := rdb.HGetAll(c.Request.Context(), key).Result()
+		if err != nil {
+			log.Printf("Failed to get Issue %s from Redis for repo %s handler %s: %v", issueID, repo, handler, err)
 			continue
+		}
+		pushBranch, _ := strconv.ParseBool(issueData["pushBranch"])
+		issue := Issue{
+			ID:         issueID,
+			Title:      issueData["title"],
+			PushBranch: pushBranch,
 		}
 
-		push, _ := strconv.ParseBool(data["pushBranch"])
-		issues = append(issues, Issue{
-			ID:             parts[8],
-			Title:          data["title"],
-			PushBranch:     push,
-			HTMLURL:        data["htmlurl"],
-			Draft:          data["draft"],
-			Sandbox:        data["sandbox"],
-			SandboxReplica: data["sandboxReplica"],
-			Comment:        data["comment"],
-			BranchURL:      data["branchURL"],
-		})
+		if val, ok := issueData["htmlurl"]; ok {
+			issue.HTMLURL = val
+		}
+		if val, ok := issueData["draft"]; ok {
+			issue.Draft = val
+		}
+		if val, ok := issueData["sandbox"]; ok {
+			issue.Sandbox = val
+		}
+		if val, ok := issueData["sandboxReplica"]; ok {
+			issue.SandboxReplica = val
+		}
+		if val, ok := issueData["comment"]; ok {
+			issue.Comment = val
+		}
+		if val, ok := issueData["branchURL"]; ok {
+			issue.BranchURL = val
+		}
+
+		issues = append(issues, issue)
 	}
+	if err := iter.Err(); err != nil {
+		log.Printf("Error during Redis SCAN for issues: %v", err)
+	}
+
 	c.JSON(http.StatusOK, issues)
 }
 
 func fetchAndPopulateIssues(ctx context.Context, namespace, repo, handler string) {
-	gvr := schema.GroupVersionResource{Group: "custom.agents.x-k8s.io", Version: "v1alpha1", Resource: "issuesandboxes"}
-	list, err := k8sClient.Resource(gvr).Namespace(namespace).List(ctx, v1.ListOptions{
-		LabelSelector: fmt.Sprintf("review.gemini.google.com/repowatch=%s,review.gemini.google.com/handler=%s", repo, handler),
-	})
+	gvr := schema.GroupVersionResource{
+		Group:    "custom.agents.x-k8s.io",
+		Version:  "v1alpha1",
+		Resource: "issuesandboxes",
+	}
+	list, err := k8sClient.Resource(gvr).Namespace(namespace).List(context.Background(),
+		v1.ListOptions{
+			LabelSelector: fmt.Sprintf("review.gemini.google.com/repowatch=%s,review.gemini.google.com/handler=%s", repo, handler),
+		})
 	if err != nil {
+		log.Printf("Failed to list IssueSandbox CRs: %v.", err)
 		return
 	}
-	for _, item := range list.Items {
-		replicas, _, _ := unstructured.NestedInt64(item.Object, "spec", "replicas")
-		issueID, _, _ := unstructured.NestedString(item.Object, "spec", "source", "issue")
-		title, _, _ := unstructured.NestedString(item.Object, "spec", "source", "title")
-		htmlurl, _, _ := unstructured.NestedString(item.Object, "spec", "source", "htmlURL")
-		branch, _, _ := unstructured.NestedString(item.Object, "spec", "destination", "branch")
-		login, _, _ := unstructured.NestedString(item.Object, "spec", "destination", "user", "login")
-		cloneURL, _, _ := unstructured.NestedString(item.Object, "spec", "source", "cloneURL")
-		push, _, _ := unstructured.NestedBool(item.Object, "spec", "destination", "pushEnabled")
-		draft, _, _ := unstructured.NestedString(item.Object, "status", "agentDraft")
 
-		repoName := "unknown"
-		if cloneURL != "" {
-			parts := strings.Split(strings.TrimSuffix(cloneURL, ".git"), "/")
-			repoName = parts[len(parts)-1]
+	log.Printf("Populating Issues: Found %d issuesandboxes for Repo: %s Handler: %s", len(list.Items), repo, handler)
+	for _, item := range list.Items {
+		log.Printf("Creating Issue entry for IssueSandbox: %s/%s", item.GetNamespace(), item.GetName())
+		replicas, found, err := unstructured.NestedInt64(item.Object, "spec", "replicas")
+		if err != nil || !found {
+			log.Printf("Replicas (.spec.replicas) not found in IssueSandbox %s", item.GetName())
+			continue
 		}
-		rdb.HSet(ctx, fmt.Sprintf("issue:ns:%s:repo:%s:handler:%s:issue:%s", namespace, repo, handler, issueID),
-			"title", title, "sandbox", item.GetName(), "htmlurl", htmlurl, "sandboxReplica", fmt.Sprintf("%d", replicas),
-			"branchURL", fmt.Sprintf("https://github.com/%s/%s/tree/%s", login, repoName, branch),
-			"draft", draft, "agentDraft", draft, "pushBranch", strconv.FormatBool(push))
+
+		issueID, found, err := unstructured.NestedString(item.Object, "spec", "source", "issue")
+		if err != nil || !found {
+			log.Printf("Issue ID (.spec.source.issue) not found in IssueSandbox %s", item.GetName())
+			continue
+		}
+
+		title, found, err := unstructured.NestedString(item.Object, "spec", "source", "title")
+		if err != nil || !found {
+			log.Printf("Title (.spec.source.title) not found in IssueSandbox %s", item.GetName())
+			continue
+		}
+		htmlurl, found, err := unstructured.NestedString(item.Object, "spec", "source", "htmlURL")
+		if err != nil || !found {
+			log.Printf("htmlURL (.spec.source.htmlURL) not found in IssueSandbox %s", item.GetName())
+		}
+
+		// https://github.com/barney-s/kro/tree/issue-753-bugfix
+		// https://github.com/ + .user.login + source.cloneURL repo name + /tree/ + .destination.branch
+		// https://github.com/kubernetes-sigs/kro/compare/main...barney-s:kro:issue-753-bugfix
+		// .source.cloneURL - .git + /compare/main... + .user.login + : + source.cloneURL repo name  + : + .destination.branch
+
+		cloneURL, found, err := unstructured.NestedString(item.Object, "spec", "source", "cloneURL")
+		if err != nil || !found {
+			log.Printf("branchURL (.spec.source.cloneURL) not found in IssueSandbox %s", item.GetName())
+			cloneURL = "https://github.com/noorg/norepo.git"
+		}
+		login, found, err := unstructured.NestedString(item.Object, "spec", "destination", "user", "login")
+		if err != nil || !found {
+			log.Printf("branchURL (.spec.destination.user.login) not found in IssueSandbox %s", item.GetName())
+			login = "nouser"
+		}
+		branch, found, err := unstructured.NestedString(item.Object, "spec", "destination", "branch")
+		if err != nil || !found {
+			log.Printf("branchURL (.spec.destination.branch) not found in IssueSandbox %s", item.GetName())
+			branch = "nobranch"
+		}
+
+		repoParts := strings.Split(strings.TrimSuffix(cloneURL, ".git"), "/")
+		repoName := repoParts[len(repoParts)-1]
+
+		branchURL := fmt.Sprintf("https://github.com/%s/%s/tree/%s", login, repoName, branch)
+
+		pushBranch, found, err := unstructured.NestedBool(item.Object, "spec", "destination", "pushEnabled")
+		if err != nil || !found {
+			log.Printf("pushBranch (.spec.source.pushBranch) not found in IssueSandbox %s", item.GetName())
+		}
+
+		draft, found, err := unstructured.NestedString(item.Object, "status", "agentDraft")
+		if err != nil || !found {
+			log.Printf("pushBranch (.status.agentDraft) not found in IssueSandbox %s", item.GetName())
+		}
+
+		issueKey := fmt.Sprintf("issue:ns:%s:repo:%s:handler:%s:issue:%s", namespace, repo, handler, issueID)
+		if err := rdb.HSet(ctx, issueKey,
+			"title", title,
+			"sandbox", item.GetName(),
+			"htmlurl", htmlurl,
+			"sandboxReplica", fmt.Sprintf("%d", replicas),
+			"branchURL", branchURL,
+			"draft", draft,
+			"agentDraft", draft,
+			"pushBranch", strconv.FormatBool(pushBranch),
+		).Err(); err != nil {
+			log.Printf("Failed to cache Issue %s for repo %s handler %s: %v", issueID, repo, handler, err)
+		}
 	}
 }
 
@@ -1083,10 +1587,14 @@ func saveIssueDraft(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := rdb.HSet(c.Request.Context(), fmt.Sprintf("issue:ns:%s:repo:%s:handler:%s:issue:%s", namespace, repo, handler, issueID), "draft", payload.Draft).Err(); err != nil {
+
+	issueKey := fmt.Sprintf("issue:ns:%s:repo:%s:handler:%s:issue:%s", namespace, repo, handler, issueID)
+	err := rdb.HSet(c.Request.Context(), issueKey, "draft", payload.Draft).Err()
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save draft"})
 		return
 	}
+
 	c.Status(http.StatusOK)
 }
 
@@ -1102,52 +1610,154 @@ func submitIssueComment(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+
 	ctx := c.Request.Context()
+	log.Printf("Submitting comment for Issue %s in repo %s with comment: %s", issueID, repo, payload.Comment)
+
+	issueKey := fmt.Sprintf("issue:ns:%s:repo:%s:handler:%s:issue:%s", namespace, repo, handler, issueID)
+	issueData, err := rdb.HGetAll(ctx, issueKey).Result()
+	if err != nil {
+		log.Printf("Failed to get Issue %s from Redis for repo %s handler %s: %v", issueID, repo, handler, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get Issue data from Redis"})
+		return
+	}
+
+	draft := payload.Comment
+	agentDraft := issueData["agentDraft"]
+
 	repoWatch, err := getRepoWatch(ctx, namespace, repo)
 	if err != nil {
+		log.Printf("Failed to get repowatch %s: %v", repo, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get repowatch config"})
 		return
 	}
+
+	if draft != agentDraft {
+		// Store feedback for fine-tuning
+		var prompt, configdir string
+		if handlers, found, err := unstructured.NestedSlice(repoWatch.Object, "spec", "issueHandlers"); err == nil && found {
+			for _, h := range handlers {
+				handlerMap, ok := h.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				name, _ := handlerMap["name"].(string)
+				if name == handler {
+					gemini, ok := handlerMap["gemini"].(map[string]interface{})
+					if ok {
+						prompt, _ = gemini["prompt"].(string)
+						configdir, _ = gemini["configdirRef"].(string)
+					}
+					break
+				}
+			}
+		}
+
+		repoURL, _, _ := unstructured.NestedString(repoWatch.Object, "spec", "repoURL")
+		owner, _, _ := parseRepoURL(repoURL)
+
+		hfKey := fmt.Sprintf("hf:issue:githubuser:%s:repo:%s:handler:%s:pr:%s", owner, repo, handler, issueID)
+		if err := rdb.HSet(ctx, hfKey,
+			"draft", draft,
+			"agentDraft", agentDraft,
+			"prompt", prompt,
+			"configdirname", configdir,
+		).Err(); err != nil {
+			log.Printf("Failed to store feedback for Issue %s in repo %s: %v", issueID, repo, err)
+			// Continue without failing the comment submission
+		}
+	}
+
 	token, err := getGitHubToken(ctx, repoWatch)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get GitHub token"})
+		log.Printf("Failed to get github token for repo %s: %v", repo, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get github token"})
 		return
 	}
-	repoURL, _, _ := unstructured.NestedString(repoWatch.Object, "spec", "repoURL")
+
+	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
+	tc := oauth2.NewClient(ctx, ts)
+	client := github.NewClient(tc)
+
+	repoURL, found, err := unstructured.NestedString(repoWatch.Object, "spec", "repoURL")
+	if err != nil || !found {
+		log.Printf("repoURL not found in RepoWatch CR %s", repoWatch.GetName())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "repoURL not found in RepoWatch CR"})
+		return
+	}
 	owner, repoName, err := parseRepoURL(repoURL)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid repo URL"})
+		log.Printf("Failed to parse repo url %s: %v", repoURL, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse repo url"})
 		return
 	}
-	issueNumber, _ := strconv.Atoi(issueID)
-	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
-	client := github.NewClient(oauth2.NewClient(ctx, ts))
-	if _, _, err := client.Issues.CreateComment(ctx, owner, repoName, issueNumber, &github.IssueComment{Body: &payload.Comment}); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to post comment"})
+
+	issueNumber, err := strconv.Atoi(issueID)
+	if err != nil {
+		log.Printf("Failed to parse issueID %s: %v", issueID, err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid issue id"})
 		return
 	}
-	key := fmt.Sprintf("issue:ns:%s:repo:%s:handler:%s:issue:%s", namespace, repo, handler, issueID)
-	rdb.HSet(ctx, key, "comment", payload.Comment)
-	rdb.HSet(ctx, key, "draft", "")
-	if err := scaledownIssueSandbox(ctx, namespace, repo, issueID, handler); err != nil {
-		log.Printf("Failed to scaledown issue sandbox: %v", err)
+
+	comment := &github.IssueComment{Body: &payload.Comment}
+	_, _, err = client.Issues.CreateComment(ctx, owner, repoName, issueNumber, comment)
+	if err != nil {
+		log.Printf("Failed to create comment on Issue %d: %v", issueNumber, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create comment on github"})
+		return
 	}
+
+	err = rdb.HSet(c.Request.Context(), issueKey, "comment", payload.Comment).Err()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save comment", "details": err.Error()})
+		return
+	}
+
+	err = rdb.HSet(c.Request.Context(), issueKey, "draft", "").Err()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to clear draft", "details": err.Error()})
+		return
+	}
+
+	err = scaledownIssueSandbox(ctx, namespace, repo, issueID, handler)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scaledown Sandbox after comment submission", "details": err.Error()})
+		return
+	}
+
 	c.Status(http.StatusOK)
 }
 
 func scaledownIssueSandbox(ctx context.Context, namespace, repo, issueID, handler string) error {
 	sandboxName := fmt.Sprintf("%s-issue-%s-%s", repo, issueID, handler)
-	gvr := schema.GroupVersionResource{Group: "custom.agents.x-k8s.io", Version: "v1alpha1", Resource: "issuesandboxes"}
+
+	gvr := schema.GroupVersionResource{
+		Group:    "custom.agents.x-k8s.io",
+		Version:  "v1alpha1",
+		Resource: "issuesandboxes",
+	}
+	log.Printf("Scaling down issue sandbox %s", sandboxName)
+
 	sandbox := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
 			"kind":       "IssueSandbox",
-			"metadata":   map[string]interface{}{"name": sandboxName, "namespace": namespace},
-			"spec":       map[string]interface{}{"replicas": int64(0)},
+			"metadata": map[string]interface{}{
+				"name":      sandboxName,
+				"namespace": namespace,
+			},
+			"spec": map[string]interface{}{
+				"replicas": int64(0),
+			},
 		},
 	}
-	_, err := k8sClient.Resource(gvr).Namespace(namespace).Apply(ctx, sandboxName, sandbox, v1.ApplyOptions{FieldManager: "review-ui", Force: true})
-	return err
+
+	_, err := k8sClient.Resource(gvr).Namespace(namespace).Apply(ctx, sandboxName,
+		sandbox, v1.ApplyOptions{FieldManager: "review-ui", Force: true})
+	if err != nil {
+		return fmt.Errorf("failed to scaledown issue sandbox: %w", err)
+	}
+	return nil
 }
 
 func deleteIssue(c *gin.Context) {
@@ -1155,11 +1765,20 @@ func deleteIssue(c *gin.Context) {
 	repo := c.Param("repo")
 	issueID := c.Param("issue_id")
 	handler := c.Param("handler")
-	if err := scaledownIssueSandbox(c.Request.Context(), namespace, repo, issueID, handler); err != nil {
+	ctx := c.Request.Context()
+
+	if err := scaledownIssueSandbox(ctx, namespace, repo, issueID, handler); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete sandbox", "details": err.Error()})
 		return
 	}
-	rdb.Del(c.Request.Context(), fmt.Sprintf("issue:ns:%s:repo:%s:handler:%s:issue:%s", namespace, repo, handler, issueID))
+
+	issueKey := fmt.Sprintf("issue:ns:%s:repo:%s:handler:%s:issue:%s", namespace, repo, handler, issueID)
+	if err := rdb.Del(c.Request.Context(), issueKey).Err(); err != nil {
+		log.Printf("Failed to DEL Issue data from Redis: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to DEL Issue data from Redis"})
+		return
+	}
+
 	c.Status(http.StatusOK)
 }
 
@@ -1169,48 +1788,25 @@ func proxy(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "url query parameter is required"})
 		return
 	}
+
+	// validate the URL begins with  https://github.com/ or https://raw.githubusercontent.com/
 	if !strings.HasPrefix(proxyURL, "https://github.com/") && !strings.HasPrefix(proxyURL, "https://raw.githubusercontent.com/") {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "url must begin with https://github.com/ or https://raw.githubusercontent.com/"})
 		return
 	}
+
 	resp, err := http.Get(proxyURL)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to fetch url: %v", err)})
 		return
 	}
 	defer resp.Body.Close()
+
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to read response body: %v", err)})
 		return
 	}
+
 	c.String(resp.StatusCode, string(body))
-}
-
-func getRepoWatch(ctx context.Context, namespace, name string) (*unstructured.Unstructured, error) {
-	gvr := schema.GroupVersionResource{Group: "review.gemini.google.com", Version: "v1alpha1", Resource: "repowatches"}
-	return k8sClient.Resource(gvr).Namespace(namespace).Get(ctx, name, v1.GetOptions{})
-}
-
-func getGitHubToken(ctx context.Context, repoWatch *unstructured.Unstructured) (string, error) {
-	secretName, found, _ := unstructured.NestedString(repoWatch.Object, "spec", "githubSecretName")
-	if !found {
-		return "", fmt.Errorf("githubSecretName not found")
-	}
-	secret, err := k8sClientset.CoreV1().Secrets(repoWatch.GetNamespace()).Get(ctx, secretName, v1.GetOptions{})
-	if err != nil {
-		return "", err
-	}
-	if token, ok := secret.Data["pat"]; ok {
-		return string(token), nil
-	}
-	return "", fmt.Errorf("pat not found in secret")
-}
-
-func parseRepoURL(repoURL string) (string, string, error) {
-	parts := strings.Split(strings.TrimPrefix(repoURL, "https://github.com/"), "/")
-	if len(parts) >= 2 {
-		return parts[0], parts[1], nil
-	}
-	return "", "", fmt.Errorf("invalid repo url format")
 }
