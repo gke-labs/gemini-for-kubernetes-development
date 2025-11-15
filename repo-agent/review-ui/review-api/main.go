@@ -231,6 +231,7 @@ func main() {
 	router.Use(RequestLoggerMiddleware())
 	router.Use(ResponseLoggerMiddleware())
 
+	// Public routes: Authentication flows and initial configuration do not require a session.
 	router.GET("/api/auth/login", authLogin)
 	router.GET("/api/auth/callback", authCallback)
 	router.GET("/api/auth/status", authStatus)
@@ -238,7 +239,7 @@ func main() {
 	router.GET("/api/auth/providers", getAuthProviders)
 	router.POST("/api/auth/github-config", updateGithubConfig)
 
-	// API routes
+	// Protected routes: The "api" group applies authMiddleware to enforce valid sessions for all downstream endpoints.
 	api := router.Group("/api")
 	api.Use(authMiddleware())
 	{
