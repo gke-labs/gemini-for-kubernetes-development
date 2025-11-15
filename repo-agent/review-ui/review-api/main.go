@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -13,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/gin-contrib/sessions"
+	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
 	redis "github.com/go-redis/redis/v8"
 
@@ -20,17 +23,36 @@ import (
 	"github.com/google/go-github/v39/github"
 	yaml "go.yaml.in/yaml/v3"
 	"golang.org/x/oauth2"
+	githuboauth "golang.org/x/oauth2/github"
+	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/retry"
 )
 
 var (
-	rdb       *redis.Client
-	k8sClient dynamic.Interface
+	rdb          *redis.Client
+	k8sClient    dynamic.Interface
+	k8sClientset *kubernetes.Clientset
+	oauthConf    *oauth2.Config
+	oauthState   string
+)
+
+const (
+	sessionName      = "repo-agent-session"
+	userKey          = "ghUser"
+	systemNamespace  = "repo-agent-system"
+	githubSecretName = "github-pat"
+	geminiSecretName = "gemini-vscode-tokens"
+	devContainerCM   = "devcontainer-json"
+	goDevContainerCM = "go-devcontainer-json"
 )
 
 // AgentOutput defines the structure for the agent's YAML output.
@@ -127,6 +149,28 @@ func ResponseLoggerMiddleware() gin.HandlerFunc {
 	}
 }
 
+func initOAuth() {
+	clientID := os.Getenv("GITHUB_CLIENT_ID")
+	clientSecret := os.Getenv("GITHUB_CLIENT_SECRET")
+
+	if clientID == "" || clientSecret == "" {
+		log.Println("Warning: GITHUB_CLIENT_ID or GITHUB_CLIENT_SECRET not set. OAuth will not work.")
+	}
+
+	oauthConf = &oauth2.Config{
+		ClientID:     clientID,
+		ClientSecret: clientSecret,
+		Scopes:       []string{"read:user", "user:email"},
+		Endpoint:     githuboauth.Endpoint,
+	}
+
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		log.Fatalf("Failed to generate random OAuth state: %v", err)
+	}
+	oauthState = base64.URLEncoding.EncodeToString(b)
+}
+
 func main() {
 	// Redis client
 	redisAddr := os.Getenv("REDIS_ADDR")
@@ -154,6 +198,12 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create kubernetes client: %v", err)
 	}
+	k8sClientset, err = kubernetes.NewForConfig(config)
+	if err != nil {
+		log.Fatalf("Failed to create clientset: %v", err)
+	}
+
+	initOAuth()
 
 	// Ping redis to ensure connection
 	_, err = rdb.Ping(context.Background()).Result()
@@ -166,26 +216,49 @@ func main() {
 
 	// Gin router
 	router := gin.Default()
+	sessionSecret := os.Getenv("SESSION_SECRET")
+	if sessionSecret == "" {
+		// Generate a random secret if not provided
+		b := make([]byte, 32)
+		if _, err := rand.Read(b); err != nil {
+			log.Fatalf("Failed to generate random session secret: %v", err)
+		}
+		sessionSecret = base64.StdEncoding.EncodeToString(b)
+	}
+	store := cookie.NewStore([]byte(sessionSecret))
+	router.Use(sessions.Sessions(sessionName, store))
 
 	// Add middleware to log requests and responses
 	router.Use(RequestLoggerMiddleware())
 	router.Use(ResponseLoggerMiddleware())
 
+	router.GET("/api/auth/login", authLogin)
+	router.GET("/api/auth/callback", authCallback)
+	router.GET("/api/auth/status", authStatus)
+	router.POST("/api/auth/logout", authLogout)
+	router.GET("/api/auth/providers", getAuthProviders)
+	router.POST("/api/auth/github-config", updateGithubConfig)
+
 	// API routes
 	api := router.Group("/api")
+	api.Use(authMiddleware())
 	{
 		api.GET("/repos", getRepos)
-		api.GET("/repo/:namespace/:repo/prs", getPRs)
-		api.POST("/repo/:namespace/:repo/prs/:id/draft", saveDraft)
-		api.POST("/repo/:namespace/:repo/prs/:id/submitreview", submitReview)
-		api.DELETE("/repo/:namespace/:repo/prs/:id", deletePR)
-		api.GET("/repo/:namespace/:repo/issues/:handler", getIssues)
-		api.POST("/repo/:namespace/:repo/issues/:issue_id/handler/:handler/draft", saveIssueDraft)
-		api.POST("/repo/:namespace/:repo/issues/:issue_id/handler/:handler/submitcomment", submitIssueComment)
-		api.DELETE("/repo/:namespace/:repo/issues/:issue_id/handler/:handler", deleteIssue)
-		api.POST("/repowatch", createRepoWatch)
-		api.PUT("/repowatch/:namespace/:name", updateRepoWatch)
-		api.DELETE("/repowatch/:namespace/:name", deleteRepoWatch)
+		api.POST("/repos", createRepoWatch)
+		api.PUT("/repos/:repo", updateRepoWatch)
+		api.DELETE("/repos/:repo", deleteRepoWatch)
+
+		api.GET("/settings", getSettings)
+		api.POST("/settings", updateSettings)
+
+		api.GET("/repo/:repo/prs", getPRs)
+		api.POST("/repo/:repo/prs/:id/draft", saveDraft)
+		api.POST("/repo/:repo/prs/:id/submitreview", submitReview)
+		api.DELETE("/repo/:repo/prs/:id", deletePR)
+		api.GET("/repo/:repo/issues/:handler", getIssues)
+		api.POST("/repo/:repo/issues/:issue_id/handler/:handler/draft", saveIssueDraft)
+		api.POST("/repo/:repo/issues/:issue_id/handler/:handler/submitcomment", submitIssueComment)
+		api.DELETE("/repo/:repo/issues/:issue_id/handler/:handler", deleteIssue)
 		api.GET("/proxy", proxy)
 	}
 
@@ -195,26 +268,423 @@ func main() {
 	}
 }
 
-func createRepoWatch(c *gin.Context) {
-	// TODO: Improve this - Prompts, Issue handlers, etc.
+// --- Auth Handlers ---
+
+func authLogin(c *gin.Context) {
+	if oauthConf.ClientID == "" {
+		c.String(http.StatusInternalServerError, "GitHub OAuth is not configured. Please set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET in the github-token secret.")
+		return
+	}
+	scheme := "http"
+	if c.Request.TLS != nil || c.Request.Header.Get("X-Forwarded-Proto") == "https" {
+		scheme = "https"
+	}
+	oauthConf.RedirectURL = fmt.Sprintf("%s://%s/api/auth/callback", scheme, c.Request.Host)
+	url := oauthConf.AuthCodeURL(oauthState, oauth2.AccessTypeOnline)
+	c.Redirect(http.StatusTemporaryRedirect, url)
+}
+
+func authCallback(c *gin.Context) {
+	if c.Query("state") != oauthState {
+		c.String(http.StatusBadRequest, "Invalid OAuth state")
+		return
+	}
+	token, err := oauthConf.Exchange(c.Request.Context(), c.Query("code"))
+	if err != nil {
+		log.Printf("OAuth exchange failed: %v", err)
+		c.String(http.StatusInternalServerError, "Authentication failed")
+		return
+	}
+
+	client := github.NewClient(oauthConf.Client(c.Request.Context(), token))
+	user, _, err := client.Users.Get(c.Request.Context(), "")
+	if err != nil {
+		log.Printf("Failed to get GitHub user: %v", err)
+		c.String(http.StatusInternalServerError, "Failed to get user info")
+		return
+	}
+
+	ghUser := strings.ToLower(user.GetLogin())
+	if err := bootstrapNamespace(c.Request.Context(), ghUser); err != nil {
+		log.Printf("Failed to bootstrap namespace %s: %v", ghUser, err)
+	}
+
+	session := sessions.Default(c)
+	session.Set(userKey, ghUser)
+	if err := session.Save(); err != nil {
+		log.Printf("Failed to save session: %v", err)
+		c.String(http.StatusInternalServerError, "Failed to save session")
+		return
+	}
+	c.Redirect(http.StatusTemporaryRedirect, "/")
+}
+
+func authStatus(c *gin.Context) {
+	session := sessions.Default(c)
+	if user := session.Get(userKey); user != nil {
+		c.JSON(http.StatusOK, gin.H{"authenticated": true, "user": user})
+		return
+	}
+	c.JSON(http.StatusUnauthorized, gin.H{"authenticated": false})
+}
+
+func authLogout(c *gin.Context) {
+	session := sessions.Default(c)
+	session.Delete(userKey)
+	if err := session.Save(); err != nil {
+		log.Printf("Failed to save session: %v", err)
+		c.String(http.StatusInternalServerError, "Failed to save session")
+		return
+	}
+	c.Status(http.StatusOK)
+}
+
+func getAuthProviders(c *gin.Context) {
+	configured := oauthConf.ClientID != "" && oauthConf.ClientSecret != ""
+	c.JSON(http.StatusOK, gin.H{"github": configured})
+}
+
+func updateGithubConfig(c *gin.Context) {
 	var payload struct {
-		Name      string `json:"name"`
-		Namespace string `json:"namespace"`
-		RepoURL   string `json:"repoURL"`
+		ClientID     string `json:"client_id"`
+		ClientSecret string `json:"client_secret"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	if payload.Namespace == "" {
-		payload.Namespace = "default"
-	}
-
-	if payload.Name == "" || payload.RepoURL == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "name and repoURL are required"})
+	if payload.ClientID == "" || payload.ClientSecret == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "client_id and client_secret are required"})
 		return
 	}
+
+	// Update Secret in repo-agent-system
+	// We need to get the existing secret to preserve the PAT
+	secret, err := k8sClientset.CoreV1().Secrets(systemNamespace).Get(c.Request.Context(), githubSecretName, v1.GetOptions{})
+	if err != nil {
+		log.Printf("Failed to get github secret: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get github secret"})
+		return
+	}
+
+	if secret.Data == nil {
+		secret.Data = make(map[string][]byte)
+	}
+	secret.Data["github-client-id"] = []byte(payload.ClientID)
+	secret.Data["github-client-secret"] = []byte(payload.ClientSecret)
+
+	_, err = k8sClientset.CoreV1().Secrets(systemNamespace).Update(c.Request.Context(), secret, v1.UpdateOptions{})
+	if err != nil {
+		log.Printf("Failed to update github secret: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update github secret"})
+		return
+	}
+
+	// Update in-memory config
+	oauthConf.ClientID = payload.ClientID
+	oauthConf.ClientSecret = payload.ClientSecret
+
+	c.Status(http.StatusOK)
+}
+
+func authMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		session := sessions.Default(c)
+		userVal := session.Get(userKey)
+
+		// If no user is logged in, default to "default" namespace (guest mode)
+		// The user requested: "no auth" logic that puts the user in the default namespace
+		user := "default"
+		if userVal != nil {
+			user = userVal.(string)
+		}
+
+		// Lazy bootstrap checks if namespace exists, creating it if needed.
+		if err := bootstrapNamespace(c.Request.Context(), user); err != nil {
+			log.Printf("Lazy bootstrap failed for user %s: %v", user, err)
+		}
+
+		c.Set(userKey, user)
+		c.Next()
+	}
+}
+
+// --- Bootstrap ---
+
+func bootstrapNamespace(ctx context.Context, targetNS string) error {
+	_, err := k8sClientset.CoreV1().Namespaces().Get(ctx, targetNS, v1.GetOptions{})
+	if errors.IsNotFound(err) {
+		log.Printf("Creating namespace %s", targetNS)
+		ns := &corev1.Namespace{
+			ObjectMeta: v1.ObjectMeta{
+				Name:   targetNS,
+				Labels: map[string]string{"app.kubernetes.io/managed-by": "repo-agent", "review.gemini.google.com/tenant": targetNS},
+			},
+		}
+		if _, err := k8sClientset.CoreV1().Namespaces().Create(ctx, ns, v1.CreateOptions{}); err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	}
+
+	// Copy default secrets/configs from system namespace if they don't exist in user namespace
+	if err := copySecret(ctx, systemNamespace, githubSecretName, targetNS, githubSecretName); err != nil {
+		log.Printf("Warning: failed to copy default github secret: %v", err)
+	}
+	if err := copySecret(ctx, systemNamespace, geminiSecretName, targetNS, geminiSecretName); err != nil {
+		log.Printf("Warning: failed to copy default gemini secret: %v", err)
+	}
+	if err := copyConfigMap(ctx, systemNamespace, devContainerCM, targetNS, devContainerCM); err != nil {
+		log.Printf("Debug: failed to copy %s: %v", devContainerCM, err)
+	}
+	if err := copyConfigMap(ctx, systemNamespace, goDevContainerCM, targetNS, goDevContainerCM); err != nil {
+		log.Printf("Debug: failed to copy %s: %v", goDevContainerCM, err)
+	}
+
+	if err := setupServiceAccounts(ctx, targetNS); err != nil {
+		log.Printf("Warning: failed to setup service accounts: %v", err)
+	}
+
+	return nil
+}
+
+func copySecret(ctx context.Context, srcNS, srcName, dstNS, dstName string) error {
+	src, err := k8sClientset.CoreV1().Secrets(srcNS).Get(ctx, srcName, v1.GetOptions{})
+	if err != nil {
+		log.Printf("Error reading secret %s/%s: %v", srcNS, srcName, err)
+		return err
+	}
+	dst := &corev1.Secret{ObjectMeta: v1.ObjectMeta{Name: dstName, Namespace: dstNS}, Data: src.Data, Type: src.Type}
+	_, err = k8sClientset.CoreV1().Secrets(dstNS).Create(ctx, dst, v1.CreateOptions{})
+	return ignoreAlreadyExists(err)
+}
+
+func copyConfigMap(ctx context.Context, srcNS, srcName, dstNS, dstName string) error {
+	src, err := k8sClientset.CoreV1().ConfigMaps(srcNS).Get(ctx, srcName, v1.GetOptions{})
+	if err != nil {
+		return err
+	}
+	dst := &corev1.ConfigMap{ObjectMeta: v1.ObjectMeta{Name: dstName, Namespace: dstNS}, Data: src.Data, BinaryData: src.BinaryData}
+	_, err = k8sClientset.CoreV1().ConfigMaps(dstNS).Create(ctx, dst, v1.CreateOptions{})
+	return ignoreAlreadyExists(err)
+}
+
+func setupServiceAccounts(ctx context.Context, ns string) error {
+	// --- Review Sandbox ---
+	saReview := &corev1.ServiceAccount{ObjectMeta: v1.ObjectMeta{Name: "review-sandbox", Namespace: ns}}
+	_, err := k8sClientset.CoreV1().ServiceAccounts(ns).Create(ctx, saReview, v1.CreateOptions{})
+	if err != nil && !errors.IsAlreadyExists(err) {
+		return err
+	}
+
+	// Bind to review-sandbox cluster role (base permissions)
+	rbReview := &rbacv1.RoleBinding{
+		ObjectMeta: v1.ObjectMeta{Name: "review-sandbox-binding", Namespace: ns},
+		Subjects:   []rbacv1.Subject{{Kind: "ServiceAccount", Name: "review-sandbox", Namespace: ns}},
+		RoleRef:    rbacv1.RoleRef{Kind: "ClusterRole", Name: "review-sandbox", APIGroup: "rbac.authorization.k8s.io"},
+	}
+	_, err = k8sClientset.RbacV1().RoleBindings(ns).Create(ctx, rbReview, v1.CreateOptions{})
+	if err != nil && !errors.IsAlreadyExists(err) {
+		return err
+	}
+
+	// Add to review-sandbox cluster role binding (to match make apply-common-for-examples)
+	if err := ensureClusterRoleBindingSubject(ctx, "review-sandbox", rbacv1.Subject{Kind: "ServiceAccount", Name: "review-sandbox", Namespace: ns}); err != nil {
+		log.Printf("Warning: failed to update review-sandbox cluster role binding: %v", err)
+	}
+
+	// Bind to configdir-controller cluster role (needed for init container)
+	rbReviewConfigDir := &rbacv1.RoleBinding{
+		ObjectMeta: v1.ObjectMeta{Name: "review-sandbox-configdir-binding", Namespace: ns},
+		Subjects:   []rbacv1.Subject{{Kind: "ServiceAccount", Name: "review-sandbox", Namespace: ns}},
+		RoleRef:    rbacv1.RoleRef{Kind: "ClusterRole", Name: "configdir-controller", APIGroup: "rbac.authorization.k8s.io"},
+	}
+	_, err = k8sClientset.RbacV1().RoleBindings(ns).Create(ctx, rbReviewConfigDir, v1.CreateOptions{})
+	if err != nil && !errors.IsAlreadyExists(err) {
+		return err
+	}
+
+	// --- Issue Sandbox ---
+	saIssue := &corev1.ServiceAccount{ObjectMeta: v1.ObjectMeta{Name: "issue-sandbox", Namespace: ns}}
+	_, err = k8sClientset.CoreV1().ServiceAccounts(ns).Create(ctx, saIssue, v1.CreateOptions{})
+	if err != nil && !errors.IsAlreadyExists(err) {
+		return err
+	}
+
+	// Bind to issue-sandbox cluster role (base permissions)
+	rbIssue := &rbacv1.RoleBinding{
+		ObjectMeta: v1.ObjectMeta{Name: "issue-sandbox-binding", Namespace: ns},
+		Subjects:   []rbacv1.Subject{{Kind: "ServiceAccount", Name: "issue-sandbox", Namespace: ns}},
+		RoleRef:    rbacv1.RoleRef{Kind: "ClusterRole", Name: "issue-sandbox", APIGroup: "rbac.authorization.k8s.io"},
+	}
+	_, err = k8sClientset.RbacV1().RoleBindings(ns).Create(ctx, rbIssue, v1.CreateOptions{})
+	if err != nil && !errors.IsAlreadyExists(err) {
+		return err
+	}
+
+	// Add to issue-sandbox cluster role binding (to match make apply-common-for-examples)
+	if err := ensureClusterRoleBindingSubject(ctx, "issue-sandbox", rbacv1.Subject{Kind: "ServiceAccount", Name: "issue-sandbox", Namespace: ns}); err != nil {
+		log.Printf("Warning: failed to update issue-sandbox cluster role binding: %v", err)
+	}
+
+	// Bind to configdir-controller cluster role (needed for init container)
+	rbIssueConfigDir := &rbacv1.RoleBinding{
+		ObjectMeta: v1.ObjectMeta{Name: "issue-sandbox-configdir-binding", Namespace: ns},
+		Subjects:   []rbacv1.Subject{{Kind: "ServiceAccount", Name: "issue-sandbox", Namespace: ns}},
+		RoleRef:    rbacv1.RoleRef{Kind: "ClusterRole", Name: "configdir-controller", APIGroup: "rbac.authorization.k8s.io"},
+	}
+	_, err = k8sClientset.RbacV1().RoleBindings(ns).Create(ctx, rbIssueConfigDir, v1.CreateOptions{})
+	if err != nil && !errors.IsAlreadyExists(err) {
+		return err
+	}
+
+	return nil
+}
+
+func ensureClusterRoleBindingSubject(ctx context.Context, bindingName string, subject rbacv1.Subject) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		binding, err := k8sClientset.RbacV1().ClusterRoleBindings().Get(ctx, bindingName, v1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		for _, s := range binding.Subjects {
+			if s.Kind == subject.Kind && s.Name == subject.Name && s.Namespace == subject.Namespace {
+				return nil // Already exists
+			}
+		}
+		binding.Subjects = append(binding.Subjects, subject)
+		_, err = k8sClientset.RbacV1().ClusterRoleBindings().Update(ctx, binding, v1.UpdateOptions{})
+		return err
+	})
+}
+
+func ignoreAlreadyExists(err error) error {
+	if errors.IsAlreadyExists(err) {
+		return nil
+	}
+	return err
+}
+
+// --- Settings Handlers ---
+
+func getSettings(c *gin.Context) {
+	namespace := c.MustGet(userKey).(string)
+	settings := gin.H{"github_pat_set": false, "gemini_api_key_set": false}
+
+	if s, err := k8sClientset.CoreV1().Secrets(namespace).Get(c.Request.Context(), githubSecretName, v1.GetOptions{}); err == nil {
+		if _, ok := s.Data["pat"]; ok {
+			settings["github_pat_set"] = true
+		}
+	}
+	if s, err := k8sClientset.CoreV1().Secrets(namespace).Get(c.Request.Context(), geminiSecretName, v1.GetOptions{}); err == nil {
+		if _, ok := s.Data["gemini"]; ok {
+			settings["gemini_api_key_set"] = true
+		}
+	}
+	c.JSON(http.StatusOK, settings)
+}
+
+func updateSettings(c *gin.Context) {
+	namespace := c.MustGet(userKey).(string)
+	var payload struct {
+		GithubPAT    string `json:"github_pat"`
+		GeminiAPIKey string `json:"gemini_api_key"`
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if payload.GithubPAT != "" {
+		err := updateSecret(c.Request.Context(), namespace, githubSecretName, map[string][]byte{"pat": []byte(payload.GithubPAT)})
+		if err != nil {
+			log.Printf("Failed to update GitHub PAT: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update GitHub PAT"})
+			return
+		}
+	}
+
+	if payload.GeminiAPIKey != "" {
+		err := updateSecret(c.Request.Context(), namespace, geminiSecretName, map[string][]byte{"gemini": []byte(payload.GeminiAPIKey)})
+		if err != nil {
+			log.Printf("Failed to update Gemini API Key: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update Gemini API Key"})
+			return
+		}
+	}
+
+	c.Status(http.StatusOK)
+}
+
+func updateSecret(ctx context.Context, namespace, name string, data map[string][]byte) error {
+	secret, err := k8sClientset.CoreV1().Secrets(namespace).Get(ctx, name, v1.GetOptions{})
+	if errors.IsNotFound(err) {
+		secret = &corev1.Secret{
+			ObjectMeta: v1.ObjectMeta{Name: name, Namespace: namespace},
+			Data:       data,
+		}
+		_, err = k8sClientset.CoreV1().Secrets(namespace).Create(ctx, secret, v1.CreateOptions{})
+		return err
+	} else if err != nil {
+		return err
+	}
+
+	if secret.Data == nil {
+		secret.Data = make(map[string][]byte)
+	}
+	for k, v := range data {
+		secret.Data[k] = v
+	}
+	_, err = k8sClientset.CoreV1().Secrets(namespace).Update(ctx, secret, v1.UpdateOptions{})
+	return err
+}
+
+// --- Repo Management Handlers ---
+
+func createRepoWatch(c *gin.Context) {
+	namespace := c.MustGet(userKey).(string)
+	// TODO: Improve this - Prompts, Issue handlers, etc.
+	var payload struct {
+		Name string `json:"name"`
+		URL  string `json:"url"`
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	var repoName string
+	var err error
+	if payload.Name != "" {
+		repoName = payload.Name
+	} else {
+		_, repoName, err = parseRepoURL(payload.URL)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid GitHub URL"})
+			return
+		}
+	}
+
+	// Standard prompts
+	reviewPrompt := `You are an expert kubernetes developer who is helping with code reviews. Please look at the most recent commit and provide a review feedback. Would you approve it ?
+Please pay attention to the following:
+1. Does the fix resolve the original problem.
+2. Look for linked issues to understand the original problem.
+3. Are there tests to check the fix.`
+	triagePrompt := `You are a helpful assistant that triages GitHub issues for a Kubernetes-related open source project.
+Your task is to categorize incoming issues based on their content and assign appropriate labels.
+Analyze the issue title and body to determine the most relevant category from the following options:
+1. bug: Issues that describe unexpected behavior, errors, or malfunctions in the software.
+2. feature: Suggestions for new features, enhancements, or improvements to existing functionality.
+2. cleanup: Suggestions for cleaning up code, removing deprecated features, or improving code quality.
+3. document: Issues related to documentation errors, omissions, or requests for clarification.
+4. support: Questions or requests for help regarding the use of the software.
+5. other: Any issue that does not fit into the above categories.
+
+Start the response with "/kind <Category>" where <Category> is one of bug , feature , document, support, cleanup or other
+In the next line, provide a concise explanation of your reasoning for the assigned category.`
 
 	gvr := schema.GroupVersionResource{
 		Group:    "review.gemini.google.com",
@@ -227,39 +697,49 @@ func createRepoWatch(c *gin.Context) {
 			"apiVersion": "review.gemini.google.com/v1alpha1",
 			"kind":       "RepoWatch",
 			"metadata": map[string]interface{}{
-				"name":      payload.Name,
-				"namespace": payload.Namespace,
+				"name":      repoName,
+				"namespace": namespace,
 			},
 			"spec": map[string]interface{}{
-				"repoURL":             payload.RepoURL,
+				"repoURL":             payload.URL,
 				"githubSecretName":    "github-pat",
 				"pollIntervalSeconds": 300,
 				"review": map[string]interface{}{
-					"maxActiveSandboxes":    3,
-					"devcontainerConfigRef": "go-devcontainer-json",
+					"maxActiveSandboxes":    int64(1),
+					"devcontainerConfigRef": goDevContainerCM,
 					"llm": map[string]interface{}{
 						"provider":        "gemini-cli",
 						"apiKeySecretRef": "gemini-vscode-tokens",
-						"prompt":          "You are an expert code reviewer. Review the following pull request.",
+						"prompt":          reviewPrompt,
+					},
+				},
+				"issueHandlers": []interface{}{
+					map[string]interface{}{
+						"name":               "triage",
+						"maxActiveSandboxes": int64(1),
+						"llm": map[string]interface{}{
+							"provider": "gemini-cli",
+							"prompt":   triagePrompt,
+						},
 					},
 				},
 			},
 		},
 	}
 
-	_, err := k8sClient.Resource(gvr).Namespace(payload.Namespace).Create(c.Request.Context(), repoWatch, v1.CreateOptions{})
+	_, err = k8sClient.Resource(gvr).Namespace(namespace).Create(c.Request.Context(), repoWatch, v1.CreateOptions{})
 	if err != nil {
 		log.Printf("Failed to create RepoWatch: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to create RepoWatch: %v", err)})
 		return
 	}
 
-	c.Status(http.StatusCreated)
+	c.Status(http.StatusOK)
 }
 
 func updateRepoWatch(c *gin.Context) {
-	namespace := c.Param("namespace")
-	name := c.Param("name")
+	namespace := c.MustGet(userKey).(string)
+	name := c.Param("repo")
 
 	var payload struct {
 		RepoURL string `json:"repoURL"`
@@ -304,17 +784,17 @@ func updateRepoWatch(c *gin.Context) {
 	}
 
 	// Update Redis cache to reflect the change immediately
-	if err := rdb.HSet(c.Request.Context(), fmt.Sprintf("repo:%s", name), "url", payload.RepoURL).Err(); err != nil {
+	if err := rdb.HSet(c.Request.Context(), fmt.Sprintf("repo:ns:%s:name:%s", namespace, name), "url", payload.RepoURL).Err(); err != nil {
 		log.Printf("Failed to update repo URL in Redis for %s: %v", name, err)
-		// We don't fail the request here as the K8s source of truth is updated
+		// Don't fail the request if Redis fails, as K8s deletion is the source of truth
 	}
 
 	c.Status(http.StatusOK)
 }
 
 func deleteRepoWatch(c *gin.Context) {
-	namespace := c.Param("namespace")
-	name := c.Param("name")
+	namespace := c.MustGet(userKey).(string)
+	name := c.Param("repo")
 
 	gvr := schema.GroupVersionResource{
 		Group:    "review.gemini.google.com",
@@ -325,12 +805,14 @@ func deleteRepoWatch(c *gin.Context) {
 	err := k8sClient.Resource(gvr).Namespace(namespace).Delete(c.Request.Context(), name, v1.DeleteOptions{})
 	if err != nil {
 		log.Printf("Failed to delete RepoWatch: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to delete RepoWatch: %v", err)})
-		return
+		if !errors.IsNotFound(err) {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to delete RepoWatch: %v", err)})
+			return
+		}
 	}
 
 	// Also delete from Redis
-	if err := rdb.Del(c.Request.Context(), fmt.Sprintf("repo:%s", name)).Err(); err != nil {
+	if err := rdb.Del(c.Request.Context(), fmt.Sprintf("repo:ns:%s:name:%s", namespace, name)).Err(); err != nil {
 		log.Printf("Failed to delete repo %s from Redis: %v", name, err)
 		// Don't fail the request if Redis fails, as K8s deletion is the source of truth
 	}
@@ -360,14 +842,14 @@ func populateMockData() {
 	}
 
 	for _, repo := range mockRepos {
-		// Store repo URL
-		if err := rdb.HSet(ctx, fmt.Sprintf("repo:%s", repo.Name), "url", repo.URL).Err(); err != nil {
+		// Store repo URL (Mock data in default namespace)
+		if err := rdb.HSet(ctx, fmt.Sprintf("repo:ns:default:name:%s", repo.Name), "url", repo.URL, "namespace", "default").Err(); err != nil {
 			log.Printf("Failed to set repo URL in Redis: %v", err)
 		}
 
 		// Store PRs for the repo
 		for _, pr := range mockPRs[repo.Name] {
-			prKey := fmt.Sprintf("pr:repo:%s:pr:%s", repo.Name, pr.ID)
+			prKey := fmt.Sprintf("pr:ns:default:repo:%s:pr:%s", repo.Name, pr.ID)
 			if err := rdb.HSet(ctx, prKey, "title", pr.Title, "draft", pr.Draft, "sandbox", pr.Sandbox, "review", pr.Review).Err(); err != nil {
 				log.Printf("Failed to set PR info in Redis: %v", err)
 			}
@@ -376,18 +858,15 @@ func populateMockData() {
 }
 
 func getRepos(c *gin.Context) {
-	fetchAndPopulateRepos(c.Request.Context())
+	namespace := c.MustGet(userKey).(string)
+	fetchAndPopulateRepos(c.Request.Context(), namespace)
 
 	repos := []Repo{}
-	iter := rdb.Scan(c.Request.Context(), 0, "repo:*", 0).Iterator()
+	prefix := fmt.Sprintf("repo:ns:%s:name:", namespace)
+	iter := rdb.Scan(c.Request.Context(), 0, prefix+"*", 0).Iterator()
 	for iter.Next(c.Request.Context()) {
 		key := iter.Val()
-		repoName := key[len("repo:"):]
-		namespace, err := rdb.HGet(c.Request.Context(), key, "namespace").Result()
-		if err != nil {
-			log.Printf("Failed to get namespace for repo %s from Redis: %v", repoName, err)
-			continue
-		}
+		repoName := key[len(prefix):]
 
 		repoWatch, err := getRepoWatch(c.Request.Context(), namespace, repoName)
 		if err != nil {
@@ -395,8 +874,8 @@ func getRepos(c *gin.Context) {
 			continue
 		}
 
-		repoURL, found, err := unstructured.NestedString(repoWatch.Object, "spec", "repoURL")
-		if err != nil || !found {
+		repoURL, found, _ := unstructured.NestedString(repoWatch.Object, "spec", "repoURL")
+		if !found {
 			log.Printf("repoURL not found in RepoWatch CR %s", repoWatch.GetName())
 			continue
 		}
@@ -444,13 +923,13 @@ func getRepos(c *gin.Context) {
 	c.JSON(http.StatusOK, repos)
 }
 
-func fetchAndPopulateRepos(ctx context.Context) {
+func fetchAndPopulateRepos(ctx context.Context, namespace string) {
 	gvr := schema.GroupVersionResource{
 		Group:    "review.gemini.google.com",
 		Version:  "v1alpha1",
 		Resource: "repowatches",
 	}
-	list, err := k8sClient.Resource(gvr).List(context.Background(), v1.ListOptions{})
+	list, err := k8sClient.Resource(gvr).Namespace(namespace).List(context.Background(), v1.ListOptions{})
 	if err != nil {
 		log.Printf("Failed to list RepoWatch CRs: %v. Serving mock data.", err)
 		return
@@ -462,30 +941,20 @@ func fetchAndPopulateRepos(ctx context.Context) {
 			log.Printf("repoURL not found in RepoWatch CR %s", item.GetName())
 			continue
 		}
-		repo := struct {
-			Name      string
-			Namespace string
-			URL       string
-		}{
-			Name:      item.GetName(),
-			Namespace: item.GetNamespace(),
-			URL:       repoURL,
-		}
-
 		// Ensure the URL is in Redis
-		if err := rdb.HSet(ctx, fmt.Sprintf("repo:%s", repo.Name), "url", repo.URL, "namespace", repo.Namespace).Err(); err != nil {
-			log.Printf("Failed to cache repo URL for %s: %v", repo.Name, err)
+		if err := rdb.HSet(ctx, fmt.Sprintf("repo:ns:%s:name:%s", namespace, item.GetName()), "url", repoURL, "namespace", namespace).Err(); err != nil {
+			log.Printf("Failed to cache repo URL for %s: %v", item.GetName(), err)
 		}
 	}
 }
 
 func getPRs(c *gin.Context) {
-	namespace := c.Param("namespace")
+	namespace := c.MustGet(userKey).(string)
 	repo := c.Param("repo")
 	fetchAndPopulatePRs(c.Request.Context(), namespace, repo)
 	// SCAN Redis for PRs for repo
 	prs := []PR{}
-	repoPRKeyPrefix := fmt.Sprintf("pr:repo:%s:pr:", repo)
+	repoPRKeyPrefix := fmt.Sprintf("pr:ns:%s:repo:%s:pr:", namespace, repo)
 	iter := rdb.Scan(c.Request.Context(), 0, repoPRKeyPrefix+"*", 0).Iterator()
 	for iter.Next(c.Request.Context()) {
 		key := iter.Val()
@@ -592,7 +1061,7 @@ func fetchAndPopulatePRs(ctx context.Context, namespace, repo string) {
 			SandboxReplica: fmt.Sprintf("%d", replicas),
 		}
 
-		prKey := fmt.Sprintf("pr:repo:%s:pr:%s", repo, prID)
+		prKey := fmt.Sprintf("pr:ns:%s:repo:%s:pr:%s", namespace, repo, prID)
 		// Ensure the URL is in Redis
 		if err := rdb.HSet(ctx, prKey,
 			"title", pr.Title,
@@ -609,7 +1078,7 @@ func fetchAndPopulatePRs(ctx context.Context, namespace, repo string) {
 }
 
 func saveDraft(c *gin.Context) {
-	//namespace := c.Param("namespace")
+	namespace := c.MustGet(userKey).(string)
 	repo := c.Param("repo")
 	prID := c.Param("id")
 	var payload struct {
@@ -620,7 +1089,7 @@ func saveDraft(c *gin.Context) {
 		return
 	}
 
-	prKey := fmt.Sprintf("pr:repo:%s:pr:%s", repo, prID)
+	prKey := fmt.Sprintf("pr:ns:%s:repo:%s:pr:%s", namespace, repo, prID)
 	err := rdb.HSet(c.Request.Context(), prKey, "draft", payload.Draft).Err()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save draft"})
@@ -631,7 +1100,7 @@ func saveDraft(c *gin.Context) {
 }
 
 func submitReview(c *gin.Context) {
-	namespace := c.Param("namespace")
+	namespace := c.MustGet(userKey).(string)
 	repo := c.Param("repo")
 	prID := c.Param("id")
 	var payload struct {
@@ -646,7 +1115,7 @@ func submitReview(c *gin.Context) {
 	log.Printf("Submitting review for PR %s in repo %s with review: %s", prID, repo, payload.Review)
 
 	// Get draft and agentDraft from Redis
-	prKey := fmt.Sprintf("pr:repo:%s:pr:%s", repo, prID)
+	prKey := fmt.Sprintf("pr:ns:%s:repo:%s:pr:%s", namespace, repo, prID)
 	prData, err := rdb.HGetAll(ctx, prKey).Result()
 	if err != nil {
 		log.Printf("Failed to get PR %s from Redis for repo %s: %v", prID, repo, err)
@@ -656,6 +1125,7 @@ func submitReview(c *gin.Context) {
 
 	draft := payload.Review
 	agentDraft := prData["agentDraft"]
+	sandboxName := prData["sandbox"]
 
 	// Get RepoWatch to get repoURL and secret ref
 	repoWatch, err := getRepoWatch(ctx, namespace, repo)
@@ -683,10 +1153,11 @@ func submitReview(c *gin.Context) {
 			// Continue without failing the review submission
 		}
 
-		// Update the userDraft in the ReviewSandbox status
-		if err := updateReviewSandboxUserDraft(ctx, namespace, prData["sandbox"], draft); err != nil {
-			log.Printf("Failed to update reviewsandbox userDraft for PR %s in repo %s: %v", prID, repo, err)
-			// Not failing the request for this, just logging.
+		if sandboxName != "" {
+			if err := updateReviewSandboxUserDraft(ctx, namespace, sandboxName, draft); err != nil {
+				log.Printf("Failed to update reviewsandbox userDraft for PR %s in repo %s: %v", prID, repo, err)
+				// Not failing the request for this, just logging.
+			}
 		}
 	}
 
@@ -776,7 +1247,7 @@ func submitReview(c *gin.Context) {
 }
 
 func deletePR(c *gin.Context) {
-	namespace := c.Param("namespace")
+	namespace := c.MustGet(userKey).(string)
 	repo := c.Param("repo")
 	prID := c.Param("id")
 	ctx := c.Request.Context()
@@ -787,7 +1258,7 @@ func deletePR(c *gin.Context) {
 	}
 
 	// Clean up Redis keys
-	prKey := fmt.Sprintf("pr:repo:%s:pr:%s", repo, prID)
+	prKey := fmt.Sprintf("pr:ns:%s:repo:%s:pr:%s", namespace, repo, prID)
 	if err := rdb.HDel(c.Request.Context(), prKey, "review", "draft", "sandbox", "htmlurl", "title").Err(); err != nil {
 		log.Printf("Failed to HDEL PR data from Redis: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to HDEL PR data from Redis"})
@@ -804,7 +1275,7 @@ func deletePR(c *gin.Context) {
 
 //nolint:unused
 func deleteSandbox(ctx context.Context, namespace, repo, prID string) error {
-	prKey := fmt.Sprintf("pr:repo:%s:pr:%s", repo, prID)
+	prKey := fmt.Sprintf("pr:ns:%s:repo:%s:pr:%s", namespace, repo, prID)
 	sandboxName, err := rdb.HGet(ctx, prKey, "sandbox").Result()
 	if err == redis.Nil {
 		// If sandbox is not in Redis, we can assume it's already deleted or never existed.
@@ -829,15 +1300,13 @@ func deleteSandbox(ctx context.Context, namespace, repo, prID string) error {
 }
 
 func scaledownSandbox(ctx context.Context, namespace, repo, prID string) error {
-	prKey := fmt.Sprintf("pr:repo:%s:pr:%s", repo, prID)
+	prKey := fmt.Sprintf("pr:ns:%s:repo:%s:pr:%s", namespace, repo, prID)
 	sandboxName, err := rdb.HGet(ctx, prKey, "sandbox").Result()
-	if err == redis.Nil {
-		// If sandbox is not in Redis, we can assume it's already deleted or never existed.
-		log.Printf("Sandbox for repo %s, PR %s not found in Redis. Assuming it's already deleted.", repo, prID)
-		// For the demo, we'll construct the name to attempt deletion anyway.
-		sandboxName = fmt.Sprintf("%s-pr-%s", repo, prID)
-	} else if err != nil {
+	if err != nil && err != redis.Nil {
 		return fmt.Errorf("failed to get sandbox name from Redis: %w", err)
+	}
+	if sandboxName == "" {
+		sandboxName = fmt.Sprintf("%s-pr-%s", repo, prID)
 	}
 
 	gvr := schema.GroupVersionResource{
@@ -957,22 +1426,22 @@ func getRepoWatch(ctx context.Context, namespace, name string) (*unstructured.Un
 }
 
 func getIssues(c *gin.Context) {
-	namespace := c.Param("namespace")
+	namespace := c.MustGet(userKey).(string)
 	repo := c.Param("repo")
 	handler := c.Param("handler")
 	fetchAndPopulateIssues(c.Request.Context(), namespace, repo, handler)
 
 	issues := []Issue{}
-	issueKeyPrefix := fmt.Sprintf("issue:repo:%s:handler:%s:issue:*", repo, handler)
+	issueKeyPrefix := fmt.Sprintf("issue:ns:%s:repo:%s:handler:%s:issue:*", namespace, repo, handler)
 	iter := rdb.Scan(c.Request.Context(), 0, issueKeyPrefix, 0).Iterator()
 	for iter.Next(c.Request.Context()) {
 		key := iter.Val()
 		// key is issue:repo:REPO:handler:HANDLER:issue:ISSUEID
 		parts := strings.Split(key, ":")
-		if len(parts) != 7 {
+		if len(parts) != 9 {
 			continue
 		}
-		issueID := parts[6]
+		issueID := parts[8]
 
 		issueData, err := rdb.HGetAll(c.Request.Context(), key).Result()
 		if err != nil {
@@ -1090,7 +1559,7 @@ func fetchAndPopulateIssues(ctx context.Context, namespace, repo, handler string
 			log.Printf("pushBranch (.status.agentDraft) not found in IssueSandbox %s", item.GetName())
 		}
 
-		issueKey := fmt.Sprintf("issue:repo:%s:handler:%s:issue:%s", repo, handler, issueID)
+		issueKey := fmt.Sprintf("issue:ns:%s:repo:%s:handler:%s:issue:%s", namespace, repo, handler, issueID)
 		if err := rdb.HSet(ctx, issueKey,
 			"title", title,
 			"sandbox", item.GetName(),
@@ -1107,7 +1576,7 @@ func fetchAndPopulateIssues(ctx context.Context, namespace, repo, handler string
 }
 
 func saveIssueDraft(c *gin.Context) {
-	//namespace := c.Param("namespace")
+	namespace := c.MustGet(userKey).(string)
 	repo := c.Param("repo")
 	issueID := c.Param("issue_id")
 	handler := c.Param("handler")
@@ -1119,7 +1588,7 @@ func saveIssueDraft(c *gin.Context) {
 		return
 	}
 
-	issueKey := fmt.Sprintf("issue:repo:%s:handler:%s:issue:%s", repo, handler, issueID)
+	issueKey := fmt.Sprintf("issue:ns:%s:repo:%s:handler:%s:issue:%s", namespace, repo, handler, issueID)
 	err := rdb.HSet(c.Request.Context(), issueKey, "draft", payload.Draft).Err()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save draft"})
@@ -1130,7 +1599,7 @@ func saveIssueDraft(c *gin.Context) {
 }
 
 func submitIssueComment(c *gin.Context) {
-	namespace := c.Param("namespace")
+	namespace := c.MustGet(userKey).(string)
 	repo := c.Param("repo")
 	issueID := c.Param("issue_id")
 	handler := c.Param("handler")
@@ -1145,7 +1614,7 @@ func submitIssueComment(c *gin.Context) {
 	ctx := c.Request.Context()
 	log.Printf("Submitting comment for Issue %s in repo %s with comment: %s", issueID, repo, payload.Comment)
 
-	issueKey := fmt.Sprintf("issue:repo:%s:handler:%s:issue:%s", repo, handler, issueID)
+	issueKey := fmt.Sprintf("issue:ns:%s:repo:%s:handler:%s:issue:%s", namespace, repo, handler, issueID)
 	issueData, err := rdb.HGetAll(ctx, issueKey).Result()
 	if err != nil {
 		log.Printf("Failed to get Issue %s from Redis for repo %s handler %s: %v", issueID, repo, handler, err)
@@ -1292,7 +1761,7 @@ func scaledownIssueSandbox(ctx context.Context, namespace, repo, issueID, handle
 }
 
 func deleteIssue(c *gin.Context) {
-	namespace := c.Param("namespace")
+	namespace := c.MustGet(userKey).(string)
 	repo := c.Param("repo")
 	issueID := c.Param("issue_id")
 	handler := c.Param("handler")
@@ -1303,7 +1772,7 @@ func deleteIssue(c *gin.Context) {
 		return
 	}
 
-	issueKey := fmt.Sprintf("issue:repo:%s:handler:%s:issue:%s", repo, handler, issueID)
+	issueKey := fmt.Sprintf("issue:ns:%s:repo:%s:handler:%s:issue:%s", namespace, repo, handler, issueID)
 	if err := rdb.Del(c.Request.Context(), issueKey).Err(); err != nil {
 		log.Printf("Failed to DEL Issue data from Redis: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to DEL Issue data from Redis"})

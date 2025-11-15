@@ -8,17 +8,34 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: pr-review-api-role
-  namespace: repo-agent-system
 rules:
+# Can manage sandboxes in all user namespaces
 - apiGroups: ["custom.agents.x-k8s.io"]
   resources: ["reviewsandboxes", "issuesandboxes"]
-  verbs: ["get", "list", "delete", "patch", "update"]
+  verbs: ["get", "list", "delete", "patch", "update", "create"]
+# Can manage repowatches in all user namespaces
 - apiGroups: ["review.gemini.google.com"]
   resources: ["repowatches"]
-  verbs: ["get", "list", "create", "delete", "patch", "update"]
+  verbs: ["get", "list", "create", "delete", "update", "patch"]
+# Can get the specific secrets/configmaps it needs to copy, and create/update new ones.
 - apiGroups: [""]
-  resources: ["secrets"]
-  verbs: ["get", "list", "watch"]
+  resources: ["secrets", "configmaps"]
+  verbs: ["get", "create", "update"]
+# Can check for namespaces and create them if missing
+- apiGroups: [""]
+  resources: ["namespaces"]
+  verbs: ["get", "create"]
+# Can setup service accounts in user namespace
+- apiGroups: [""]
+  resources: ["serviceaccounts"]
+  verbs: ["get", "create"]
+# Can setup rolebindings in user namespace
+- apiGroups: ["rbac.authorization.k8s.io"]
+  resources: ["rolebindings"]
+  verbs: ["get", "create"]
+- apiGroups: ["rbac.authorization.k8s.io"]
+  resources: ["clusterrolebindings"]
+  verbs: ["get", "update"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -31,4 +48,45 @@ subjects:
 roleRef:
   kind: ClusterRole
   name: pr-review-api-role
+  apiGroup: rbac.authorization.k8s.io
+---
+# Grant permissions to bind specific cluster roles
+# Allows the API to create bindings containing these roles, without holding the role itself.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: pr-review-api-bind-review-sandbox
+subjects:
+- kind: ServiceAccount
+  name: pr-review-api
+  namespace: repo-agent-system
+roleRef:
+  kind: ClusterRole
+  name: review-sandbox
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: pr-review-api-bind-issue-sandbox
+subjects:
+- kind: ServiceAccount
+  name: pr-review-api
+  namespace: repo-agent-system
+roleRef:
+  kind: ClusterRole
+  name: issue-sandbox
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: pr-review-api-bind-configdir-controller
+subjects:
+- kind: ServiceAccount
+  name: pr-review-api
+  namespace: repo-agent-system
+roleRef:
+  kind: ClusterRole
+  name: configdir-controller
   apiGroup: rbac.authorization.k8s.io

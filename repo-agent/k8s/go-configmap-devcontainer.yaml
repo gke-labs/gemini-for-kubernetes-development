@@ -1,0 +1,22 @@
+# Configmap embedding devcontainer.json for VSCode Remote - Containers support
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: go-devcontainer-json
+  namespace: repo-agent-system
+data:
+  devcontainer.json: |
+    {
+    	"name": "Go and Node.js Dev Container",
+    	"image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+    	"features": {
+        "ghcr.io/devcontainers/features/go:1": { "version": "latest" },
+        "ghcr.io/devcontainers/features/node:1": { "version": "lts" },
+        "ghcr.io/gke-labs/gemini-for-kubernetes-development/gemini-cli:latest": {},
+        "ghcr.io/coder/devcontainer-features/code-server:1": {
+          "port": 13337,
+          "host": "0.0.0.0"
+        },
+      },
+      "appPort": ["13337:13337"]
+    }
