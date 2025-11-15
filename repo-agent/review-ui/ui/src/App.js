@@ -5,8 +5,20 @@ import PrReviewCard from './PrReviewCard';
 import IssueCard from './IssueCard';
 import AddRepo from './AddRepo';
 import DeleteRepo from './DeleteRepo';
+import Settings from './Settings';
 
 function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isGuest, setIsGuest] = useState(false);
+  const [isLoadingAuth, setIsLoadingAuth] = useState(true);
+  const [user, setUser] = useState(null);
+  const [view, setView] = useState('dashboard'); // 'dashboard', 'settings', 'add_repo'
+  const [githubAuthEnabled, setGithubAuthEnabled] = useState(false);
+  const [showGithubConfig, setShowGithubConfig] = useState(false);
+  const [githubClientId, setGithubClientId] = useState('');
+  const [githubClientSecret, setGithubClientSecret] = useState('');
+  const [configError, setConfigError] = useState('');
+
   const [repos, setRepos] = useState([]);
   const [activeRepo, setActiveRepo] = useState(null);
   const [activeSubTab, setActiveSubTab] = useState({ repo: '', name: '' });
@@ -17,41 +29,89 @@ function App() {
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'light');
   const [reviewViewModes, setReviewViewModes] = useState({});
   const [yamlDrafts, setYamlDrafts] = useState({});
-  const [showAddRepo, setShowAddRepo] = useState(false);
 
   useEffect(() => {
     document.body.className = theme === 'dark' ? 'dark-mode' : '';
     localStorage.setItem('theme', theme);
   }, [theme]);
 
+  // Check authentication status on load
+  useEffect(() => {
+    fetch('/api/auth/status')
+      .then(res => {
+        if (res.ok) return res.json();
+        throw new Error("Not authenticated");
+      })
+      .then(data => {
+        setIsAuthenticated(true);
+        setUser(data.user);
+        setIsLoadingAuth(false);
+      })
+      .catch(() => {
+        setIsAuthenticated(false);
+        setIsLoadingAuth(false);
+      });
+      
+    fetch('/api/auth/providers')
+      .then(res => res.json())
+      .then(data => {
+        setGithubAuthEnabled(data.github);
+      })
+      .catch(err => console.error("Failed to fetch auth providers:", err));
+  }, []);
+
+  const handleGithubConfigSubmit = (e) => {
+    e.preventDefault();
+    setConfigError('');
+    fetch('/api/auth/github-config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_id: githubClientId, client_secret: githubClientSecret })
+    })
+    .then(async (res) => {
+      if (res.ok) {
+        setGithubAuthEnabled(true);
+        setShowGithubConfig(false);
+      } else {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to update config');
+      }
+    })
+    .catch(err => setConfigError(err.message));
+  };
+
   const fetchRepos = useCallback(() => {
+    if (!isAuthenticated && !isGuest) return;
     fetch('/api/repos')
       .then(res => res.json())
       .then(data => {
         const safeData = data || [];
         setRepos(safeData);
-        if (safeData.length > 0 && !activeRepo && !showAddRepo) {
-          const firstRepo = safeData[0];
-          setActiveRepo(firstRepo);
-          if (firstRepo.review) {
-            setActiveSubTab({ repo: firstRepo.name, name: 'review' });
-          } else if (firstRepo.issueHandlers && firstRepo.issueHandlers.length > 0) {
-            setActiveSubTab({ repo: firstRepo.name, name: firstRepo.issueHandlers[0].name });
-          }
+        // If we have an active repo, make sure it still exists
+        if (activeRepo && !safeData.find(r => r.name === activeRepo.name)) {
+           setActiveRepo(null);
+        }
+        // If no active repo and we have repos, select the first one
+        if (!activeRepo && safeData.length > 0 && view === 'dashboard') {
+           handleRepoClick(safeData[0].name, safeData);
         }
       })
       .catch(err => console.error("Failed to fetch repos:", err));
-  }, [activeRepo, showAddRepo]);
+  }, [isAuthenticated, isGuest, activeRepo, view]);
 
   useEffect(() => {
-    fetchRepos();
-  }, [fetchRepos]);
+    if (isAuthenticated || isGuest) {
+        fetchRepos();
+    }
+  }, [isAuthenticated, isGuest, fetchRepos]);
 
   useEffect(() => {
+    if ((!isAuthenticated && !isGuest) || view !== 'dashboard') return;
+
     if (activeRepo && activeSubTab.repo === activeRepo.name) {
       if (activeSubTab.name === 'review') {
         setIssues([]);
-        fetch(`/api/repo/${activeRepo.namespace}/${activeRepo.name}/prs`)
+        fetch(`/api/repo/${activeRepo.name}/prs`)
           .then(res => res.json())
           .then(data => {
             const safeData = data || [];
@@ -79,7 +139,7 @@ function App() {
           .catch(err => console.error(`Failed to fetch PRs for ${activeRepo.name}:`, err));
       } else if (activeSubTab.name) {
         setPrs([]);
-        fetch(`/api/repo/${activeRepo.namespace}/${activeRepo.name}/issues/${activeSubTab.name}`)
+        fetch(`/api/repo/${activeRepo.name}/issues/${activeSubTab.name}`)
           .then(res => res.json())
           .then(data => {
             const safeData = data || [];
@@ -93,11 +153,36 @@ function App() {
           .catch(err => console.error(`Failed to fetch issues for ${activeRepo.name} handler ${activeSubTab.name}:`, err));
       }
     }
-  }, [activeRepo, activeSubTab]);
+  }, [activeRepo, activeSubTab, isAuthenticated, isGuest, view]);
 
-  const handleRepoClick = (repoName) => {
-    setShowAddRepo(false);
-    const repo = repos.find(r => r.name === repoName);
+  const handleLogin = () => {
+    window.location.href = '/api/auth/login';
+  };
+
+  const handleGuestLogin = () => {
+    setIsGuest(true);
+  };
+
+  const handleLogout = () => {
+    if (isGuest) {
+        setIsGuest(false);
+        setRepos([]);
+        setActiveRepo(null);
+        return;
+    }
+    fetch('/api/auth/logout', { method: 'POST' })
+      .then(() => {
+        setIsAuthenticated(false);
+        setUser(null);
+        setRepos([]);
+        setActiveRepo(null);
+      })
+      .catch(err => console.error("Failed to logout", err));
+  };
+
+  const handleRepoClick = (repoName, currentRepos = repos) => {
+    setView('dashboard');
+    const repo = currentRepos.find(r => r.name === repoName);
     setActiveRepo(repo);
     setPrs([]);
     setIssues([]);
@@ -117,13 +202,8 @@ function App() {
     }
   };
 
-  const handleAddRepoClick = () => {
-    setShowAddRepo(true);
-    setActiveRepo(null);
-  };
-
   const handleDelete = (id) => {
-    fetch(`/api/repo/${activeRepo.namespace}/${activeRepo.name}/prs/${id}`, { method: 'DELETE' })
+    fetch(`/api/repo/${activeRepo.name}/prs/${id}`, { method: 'DELETE' })
       .then(res => {
         if (res.ok) {
           setPrs(prs.filter(pr => pr.id !== id));
@@ -136,7 +216,7 @@ function App() {
 
   const handleSaveDraft = (id) => {
     const draft = yaml.dump(drafts[id]);
-    fetch(`/api/repo/${activeRepo.namespace}/${activeRepo.name}/prs/${id}/draft`, {
+    fetch(`/api/repo/${activeRepo.name}/prs/${id}/draft`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ draft })
@@ -198,7 +278,7 @@ function App() {
       const parsedDraft = yaml.load(yamlDrafts[id]);
       setDrafts(prev => ({ ...prev, [id]: parsedDraft }));
       const draft = yaml.dump(parsedDraft);
-      fetch(`/api/repo/${activeRepo.namespace}/${activeRepo.name}/prs/${id}/draft`, {
+      fetch(`/api/repo/${activeRepo.name}/prs/${id}/draft`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ draft })
@@ -227,7 +307,7 @@ function App() {
       return;
     }
     const reviewYAML = yaml.dump(review);
-    fetch(`/api/repo/${activeRepo.namespace}/${activeRepo.name}/prs/${id}/submitreview`, {
+    fetch(`/api/repo/${activeRepo.name}/prs/${id}/submitreview`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ review: reviewYAML })
@@ -311,7 +391,7 @@ function App() {
 
   const handleIssueSaveDraft = (issueId, handlerName) => {
     const draft = drafts[issueId];
-    fetch(`/api/repo/${activeRepo.namespace}/${activeRepo.name}/issues/${issueId}/handler/${handlerName}/draft`, {
+    fetch(`/api/repo/${activeRepo.name}/issues/${issueId}/handler/${handlerName}/draft`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ draft })
@@ -324,7 +404,7 @@ function App() {
       alert("Please leave a comment before Submitting.");
       return;
     }
-    fetch(`/api/repo/${activeRepo.namespace}/${activeRepo.name}/issues/${issueId}/handler/${handlerName}/submitcomment`, {
+    fetch(`/api/repo/${activeRepo.name}/issues/${issueId}/handler/${handlerName}/submitcomment`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ comment })
@@ -340,7 +420,7 @@ function App() {
   };
 
   const handleIssueDelete = (issueId, handlerName) => {
-    fetch(`/api/repo/${activeRepo.namespace}/${activeRepo.name}/issues/${issueId}/handler/${handlerName}`, { method: 'DELETE' })
+    fetch(`/api/repo/${activeRepo.name}/issues/${issueId}/handler/${handlerName}`, { method: 'DELETE' })
       .then(res => {
         if (res.ok) {
           setIssues(issues.filter(issue => issue.id !== issueId));
@@ -373,11 +453,9 @@ function App() {
   };
 
   const renderContent = () => {
-    if (showAddRepo) {
-      return <AddRepo onRepoAdded={fetchRepos} />;
-    }
-
+    if (!activeRepo) return <p>Please select or add a repository to watch.</p>;
     if (activeSubTab.name === 'review') {
+      if (prs.length === 0) return <p>No active Pull Requests found for this repository.</p>;
       return prs.map(pr => (
         <PrReviewCard
           key={pr.id}
@@ -400,6 +478,7 @@ function App() {
         />
       ));
     } else {
+      if (issues.length === 0) return <p>No active Issues found for this handler.</p>;
       return issues.map(issue => (
         <IssueCard
           key={issue.id}
@@ -416,17 +495,8 @@ function App() {
     }
   };
 
-  return (
-    <div className="App">
-      <header className="App-header">
-        <h1>Repo Agent</h1>
-        <div className="theme-switch-wrapper">
-          <label className="theme-switch" htmlFor="checkbox">
-            <input type="checkbox" id="checkbox" onChange={toggleTheme} checked={theme === 'dark'} />
-            <div className="slider round"></div>
-          </label>
-        </div>
-      </header>
+  const renderDashboard = () => (
+    <>
       <nav className="repo-tabs">
         {repos.map(repo => (
           <button
@@ -437,38 +507,105 @@ function App() {
             {repo.name}
           </button>
         ))}
-        <button
-          className={`tab-btn ${showAddRepo ? 'active' : ''}`}
-          onClick={handleAddRepoClick}
-        >
-          Add Repo
-        </button>
+        <button className="tab-btn add-repo-btn" onClick={() => setView('add_repo')} title="Watch new repository">+</button>
       </nav>
-      {activeRepo && !showAddRepo && (
-        <nav className="sub-tabs">
-          {repos.find(r => r.name === activeRepo.name)?.review && (
-            <button
-              className={`sub-tab-btn ${activeSubTab.name === 'review' ? 'active' : ''}`}
-              onClick={() => setActiveSubTab({ repo: activeRepo.name, name: 'review' })}
-            >
-              Review
-            </button>
-          )}
-          {repos.find(r => r.name === activeRepo.name)?.issueHandlers?.map(handler => (
-            <button
-              key={handler.name}
-              className={`sub-tab-btn ${activeSubTab.name === handler.name ? 'active' : ''}`}
-              onClick={() => setActiveSubTab({ repo: activeRepo.name, name: handler.name })}
-            >
-              {handler.name}
-            </button>
-          ))}
-          <DeleteRepo repo={activeRepo} onRepoDeleted={handleRepoDeleted} />
-        </nav>
+      {activeRepo && (
+        <div className="active-repo-container">
+            <nav className="sub-tabs">
+            {repos.find(r => r.name === activeRepo.name)?.review && (
+                <button
+                className={`sub-tab-btn ${activeSubTab.name === 'review' ? 'active' : ''}`}
+                onClick={() => setActiveSubTab({ repo: activeRepo.name, name: 'review' })}
+                >
+                Review
+                </button>
+            )}
+            {repos.find(r => r.name === activeRepo.name)?.issueHandlers?.map(handler => (
+                <button
+                key={handler.name}
+                className={`sub-tab-btn ${activeSubTab.name === handler.name ? 'active' : ''}`}
+                onClick={() => setActiveSubTab({ repo: activeRepo.name, name: handler.name })}
+                >
+                {handler.name}
+                </button>
+            ))}
+            </nav>
+            <DeleteRepo repo={activeRepo} onRepoDeleted={handleRepoDeleted} />
+        </div>
       )}
       <main className="pr-list">
         {renderContent()}
       </main>
+    </>
+  );
+
+  if (isLoadingAuth) return <div className="App"><header className="App-header"><h1>Loading...</h1></header></div>;
+
+  if (!isAuthenticated && !isGuest) {
+    return (
+      <div className="App">
+        <header className="App-header">
+          <h1>Repo Agent</h1>
+          <div className="theme-switch-wrapper">
+            <label className="theme-switch" htmlFor="checkbox"><input type="checkbox" id="checkbox" onChange={toggleTheme} checked={theme === 'dark'} /><div className="slider round"></div></label>
+          </div>
+        </header>
+        <main className="login-container">
+          <h2>Welcome to Repo Agent</h2>
+          <p>Please log in with GitHub to manage your review sandboxes.</p>
+          <div className="login-actions">
+            {githubAuthEnabled ? (
+                <button className="btn btn-submit" onClick={handleLogin}>Login with GitHub</button>
+            ) : (
+                <div className="github-config-section">
+                    <p className="message info">GitHub OAuth is not configured. You can continue as Guest or configure it below.</p>
+                    {!showGithubConfig ? (
+                        <button className="btn" onClick={() => setShowGithubConfig(true)}>Configure GitHub OAuth</button>
+                    ) : (
+                        <form onSubmit={handleGithubConfigSubmit} className="settings-form">
+                            {configError && <div className="message error">{configError}</div>}
+                            <div className="form-group">
+                                <label>Client ID:</label>
+                                <input type="text" value={githubClientId} onChange={e => setGithubClientId(e.target.value)} required />
+                            </div>
+                            <div className="form-group">
+                                <label>Client Secret:</label>
+                                <input type="password" value={githubClientSecret} onChange={e => setGithubClientSecret(e.target.value)} required />
+                            </div>
+                            <div className="form-actions">
+                                <button type="submit" className="btn btn-submit">Save & Enable</button>
+                                <button type="button" className="btn" onClick={() => setShowGithubConfig(false)}>Cancel</button>
+                            </div>
+                        </form>
+                    )}
+                </div>
+            )}
+            <button className="btn" onClick={handleGuestLogin}>Continue as Guest</button>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  return (
+    <div className="App">
+      <header className="App-header">
+        <h1><a href="/" onClick={(e) => { e.preventDefault(); setView('dashboard'); }}>Repo Agent</a></h1>
+        <div className="header-right">
+          {user && <span className="user-greeting">Hi, {user}</span>}
+          {isGuest && <span className="user-greeting">Guest</span>}
+          <button className="btn" onClick={() => setView('settings')} style={{marginRight: '10px'}}>Settings</button>
+          <button className="btn btn-delete" onClick={handleLogout} style={{marginRight: '20px'}}>Logout</button>
+          <div className="theme-switch-wrapper">
+            <label className="theme-switch" htmlFor="checkbox"><input type="checkbox" id="checkbox" onChange={toggleTheme} checked={theme === 'dark'} /><div className="slider round"></div></label>
+          </div>
+        </div>
+      </header>
+      
+      {view === 'dashboard' && renderDashboard()}
+      {view === 'settings' && <Settings onBack={() => setView('dashboard')} />}
+      {view === 'add_repo' && <AddRepo onCancel={() => setView('dashboard')} onRepoAdded={() => { fetchRepos(); setView('dashboard'); }} />}
+
     </div>
   );
 }

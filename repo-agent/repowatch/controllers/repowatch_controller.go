@@ -143,14 +143,14 @@ func (r *RepoWatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	return ctrl.Result{RequeueAfter: time.Second * time.Duration(repoWatch.Spec.PollIntervalSeconds)}, reconcileErr
 }
 
-func (r *RepoWatchReconciler) reconcileReviews(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, client *github.Client, owner string, repo string) error {
+func (r *RepoWatchReconciler) reconcileReviews(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, ghClient *github.Client, owner string, repo string) error {
 	log := log.FromContext(ctx)
 
 	var prs []*github.PullRequest
 	if len(repoWatch.Spec.Review.PullRequests) > 0 {
 		// If specific PRs are requested, fetch them directly
 		for _, prNumber := range repoWatch.Spec.Review.PullRequests {
-			pr, _, err := client.PullRequests.Get(ctx, owner, repo, prNumber)
+			pr, _, err := ghClient.PullRequests.Get(ctx, owner, repo, prNumber)
 			if err != nil {
 				log.Error(err, "unable to get pull request", "prNumber", prNumber)
 				// Continue to the next PR if there's an error fetching a specific one.
@@ -161,7 +161,7 @@ func (r *RepoWatchReconciler) reconcileReviews(ctx context.Context, repoWatch *r
 	} else {
 		// Otherwise, list open PRs
 		var err error
-		prs, _, err = client.PullRequests.List(ctx, owner, repo, &github.PullRequestListOptions{State: "open"})
+		prs, _, err = ghClient.PullRequests.List(ctx, owner, repo, &github.PullRequestListOptions{State: "open"})
 		if err != nil {
 			log.Error(err, "unable to list pull requests")
 			return err
@@ -184,11 +184,10 @@ func (r *RepoWatchReconciler) reconcileReviews(ctx context.Context, repoWatch *r
 	}
 	sandboxList.SetGroupVersionKind(sandboxGVK)
 
-	if err := r.List(ctx, sandboxList); err != nil {
+	if err := r.List(ctx, sandboxList, client.InNamespace(repoWatch.Namespace)); err != nil {
 		log.Error(err, "unable to list ReviewSandboxes")
 		return err
 	}
-
 	// Reconcile
 	if err := r.reconcileReviewSandboxes(ctx, repoWatch, prs, sandboxList); err != nil {
 		log.Error(err, "unable to reconcile sandboxes")
@@ -212,7 +211,7 @@ func (r *RepoWatchReconciler) reconcileIssues(ctx context.Context, githubConfig 
 	sandboxList.SetGroupVersionKind(sandboxGVK)
 
 	// TODO filter by handler and or namespace
-	if err := r.List(ctx, sandboxList); err != nil {
+	if err := r.List(ctx, sandboxList, client.InNamespace(repoWatch.Namespace)); err != nil {
 		log.Error(err, "unable to list ReviewSandboxes")
 		return err
 	}
@@ -241,7 +240,7 @@ func (r *RepoWatchReconciler) reconcileIssues(ctx context.Context, githubConfig 
 	return reconcileErr
 }
 
-func (r *RepoWatchReconciler) reconcileIssuesForHandler(ctx context.Context, user *github.User, sandboxList *unstructured.UnstructuredList, handler reviewv1alpha1.IssueHandlerSpec, repoWatch *reviewv1alpha1.RepoWatch, client *github.Client, owner string, repo string, _ map[string]string) error {
+func (r *RepoWatchReconciler) reconcileIssuesForHandler(ctx context.Context, user *github.User, sandboxList *unstructured.UnstructuredList, handler reviewv1alpha1.IssueHandlerSpec, repoWatch *reviewv1alpha1.RepoWatch, ghClient *github.Client, owner string, repo string, _ map[string]string) error {
 	log := log.FromContext(ctx)
 
 	listOptions := &github.IssueListByRepoOptions{
@@ -252,7 +251,7 @@ func (r *RepoWatchReconciler) reconcileIssuesForHandler(ctx context.Context, use
 	}
 
 	// Get open issues with specified labels
-	issues, _, err := client.Issues.ListByRepo(ctx, owner, repo, listOptions)
+	issues, _, err := ghClient.Issues.ListByRepo(ctx, owner, repo, listOptions)
 	if err != nil {
 		log.Error(err, "unable to list issues")
 		return err

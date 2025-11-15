@@ -483,7 +483,157 @@ input:checked + .slider:before {
   border-color: #444;
 }
 
-.diff-widget textarea {
-  width: 100%;
-  min-height: 60px;
+
+/* Login, Settings, Add Repo Styles */
+.login-container, .settings-container, .add-repo-container {
+    max-width: 600px;
+    margin: 40px auto;
+    padding: 30px;
+    background: #ffffff;
+    border-radius: 8px;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.05);
+    text-align: left;
+}
+
+.dark-mode .login-container, .dark-mode .settings-container, .dark-mode .add-repo-container {
+    background-color: #7e8185;
+    color: #e0e0e0;
+}
+
+.login-actions {
+    display: flex;
+    gap: 20px;
+    justify-content: center;
+    margin-top: 20px;
+}
+
+.settings-form, .add-repo-form {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    margin-top: 20px;
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.form-group label {
+    font-weight: bold;
+}
+
+.form-group input[type="text"],
+.form-group input[type="password"] {
+    padding: 10px;
+    border: 1px solid #ced4da;
+    border-radius: 4px;
+    font-size: 1rem;
+    background-color: #fff;
+    color: #333;
+}
+
+.dark-mode .form-group input[type="text"],
+.dark-mode .form-group input[type="password"] {
+    background-color: #4a4f57;
+    border-color: #555;
+    color: #e0e0e0;
+}
+
+.form-group small {
+    color: #6c757d;
+}
+
+.dark-mode .form-group small {
+    color: #ccc;
+}
+
+.input-status-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.input-status-wrapper input {
+    flex: 1;
+}
+
+.status-badge {
+    font-size: 0.9em;
+    padding: 4px 8px;
+    border-radius: 12px;
+    background-color: #e9ecef;
+    color: #333;
+    white-space: nowrap;
+}
+
+.status-badge.set {
+    background-color: #d4edda;
+    color: #155724;
+}
+
+.status-badge.missing {
+    background-color: #fff3cd;
+    color: #856404;
+}
+
+.form-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 10px;
+}
+
+.message {
+    padding: 15px;
+    border-radius: 4px;
+    margin-bottom: 20px;
+}
+.message.error {
+    background-color: #f8d7da;
+    color: #721c24;
+    border: 1px solid #f5c6cb;
+}
+.message.success {
+    background-color: #d4edda;
+    color: #155724;
+    border: 1px solid #c3e6cb;
+}
+.message.info {
+    background-color: #d1ecf1;
+    color: #0c5460;
+    border: 1px solid #bee5eb;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+.user-greeting {
+  font-weight: 500;
+  margin-right: 10px;
+}
+
+.add-repo-btn {
+    font-weight: bold;
+    font-size: 1.5em;
+    padding: 5px 15px;
+    line-height: 1;
+}
+
+.active-repo-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 20px;
+    margin-bottom: 20px;
+    position: relative;
+    width: 100%;
+}
+
+.repo-delete-btn {
+    position: absolute;
+    right: 20px;
 }
