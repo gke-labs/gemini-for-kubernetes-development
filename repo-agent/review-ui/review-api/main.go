@@ -52,7 +52,6 @@ const (
 	githubSecretName = "github-pat"
 	geminiSecretName = "gemini-vscode-tokens"
 	devContainerCM   = "devcontainer-json"
-	goDevContainerCM = "go-devcontainer-json"
 )
 
 // AgentOutput defines the structure for the agent's YAML output.
@@ -439,9 +438,6 @@ func bootstrapNamespace(ctx context.Context, targetNS string) error {
 	if err := copyConfigMap(ctx, systemNamespace, devContainerCM, targetNS, devContainerCM); err != nil {
 		log.Printf("Debug: failed to copy %s: %v", devContainerCM, err)
 	}
-	if err := copyConfigMap(ctx, systemNamespace, goDevContainerCM, targetNS, goDevContainerCM); err != nil {
-		log.Printf("Debug: failed to copy %s: %v", goDevContainerCM, err)
-	}
 
 	if err := setupServiceAccounts(ctx, targetNS); err != nil {
 		log.Printf("Warning: failed to setup service accounts: %v", err)
@@ -706,7 +702,7 @@ In the next line, provide a concise explanation of your reasoning for the assign
 				"pollIntervalSeconds": 300,
 				"review": map[string]interface{}{
 					"maxActiveSandboxes":    int64(1),
-					"devcontainerConfigRef": goDevContainerCM,
+					"devcontainerConfigRef": devContainerCM,
 					"llm": map[string]interface{}{
 						"provider":        "gemini-cli",
 						"apiKeySecretRef": "gemini-vscode-tokens",
