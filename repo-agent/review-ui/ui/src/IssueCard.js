@@ -9,6 +9,7 @@ function IssueCard({
   handleIssueSubmit,
   handleIssueDelete,
   getSandboxStatusClass,
+  namespace,
 }) {
   const [isCollapsed, setIsCollapsed] = useState(true);
   const [reviewFlairText, setReviewFlairText] = useState('');
@@ -56,7 +57,7 @@ function IssueCard({
             </span>
           )}
           {getSandboxStatusClass(issue) === 'green' ? (
-            <a href={`/sandbox/${issue.sandbox}/`} target="_blank" rel="noopener noreferrer" className={`pr-sandbox ${getSandboxStatusClass(issue)}`}>
+            <a href={`/sandbox/${namespace}/${issue.sandbox}/`} target="_blank" rel="noopener noreferrer" className={`pr-sandbox ${getSandboxStatusClass(issue)}`}>
               Sandbox &#9654;
             </a>
           ) : getSandboxStatusClass(issue) === 'yellow' ? (

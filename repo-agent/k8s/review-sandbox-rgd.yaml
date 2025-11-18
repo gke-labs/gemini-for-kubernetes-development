@@ -1,4 +1,3 @@
-
 apiVersion: kro.run/v1alpha1
 kind: ResourceGraphDefinition
 metadata:
@@ -209,7 +208,7 @@ spec:
               matches:
                 - path:
                     type: PathPrefix
-                    value: /sandbox/${schema.metadata.name} # Route path based on the name provided by user
+                    value: /sandbox/${schema.metadata.namespace}/${schema.metadata.name} # Route path based on the name provided by user
               filters:
                 - type: URLRewrite
                   urlRewrite:

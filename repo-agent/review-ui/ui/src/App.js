@@ -454,6 +454,7 @@ function App() {
 
   const renderContent = () => {
     if (!activeRepo) return <p>Please select or add a repository to watch.</p>;
+    const namespace = user || 'default';
     if (activeSubTab.name === 'review') {
       if (prs.length === 0) return <p>No active Pull Requests found for this repository.</p>;
       return prs.map(pr => (
@@ -475,6 +476,7 @@ function App() {
           handleExportCurl={handleExportCurl}
           getSandboxStatusClass={getSandboxStatusClass}
           toggleCollapse={toggleCollapse}
+          namespace={namespace}
         />
       ));
     } else {
@@ -490,6 +492,7 @@ function App() {
           handleIssueSubmit={handleIssueSubmit}
           handleIssueDelete={handleIssueDelete}
           getSandboxStatusClass={getSandboxStatusClass}
+          namespace={namespace}
         />
       ));
     }

@@ -21,6 +21,7 @@ function PrReviewCard({
   handleExportCurl,
   toggleCollapse,
   getSandboxStatusClass,
+  namespace,
 }) {
   const [diff, setDiff] = useState(null);
   const [diffError, setDiffError] = useState(null);
@@ -260,7 +261,7 @@ function PrReviewCard({
             </span>
           )}
           {getSandboxStatusClass(pr) === 'green' ? (
-            <a href={`/sandbox/${pr.sandbox}/`} target="_blank" rel="noopener noreferrer" className={`pr-sandbox ${getSandboxStatusClass(pr)}`}>
+            <a href={`/sandbox/${namespace}/${pr.sandbox}/`} target="_blank" rel="noopener noreferrer" className={`pr-sandbox ${getSandboxStatusClass(pr)}`}>
               Sandbox &#9654;
             </a>
           ) : getSandboxStatusClass(pr) === 'yellow' ? (
