@@ -1,0 +1,16 @@
+{
+    "name": "antigravity",
+    "id": "antigravity",
+    "version": "0.1.0",
+    "description": "Antigravity - A VS Code clone.",
+    "options": {
+        "version": {
+            "type": "string",
+            "default": "latest",
+            "description": "Installer version cadence: latest|preview|nightly|0.1.0|<some-version>"
+        }
+    },
+    "dependsOn": {
+        "ghcr.io/devcontainers/features/common-utils:2": {}
+    }
+}
