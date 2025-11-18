@@ -35,7 +35,9 @@ jobs:
           git checkout -b $branch
           message='Automated documentation update'
           # Add / update and commit
-          git add ./devcontainer-features/gemini/README.md
+          git add ./devcontainer-features/gemini-cli/README.md
+          git add ./devcontainer-features/claude-code/README.md
+          git add ./devcontainer-features/antigravity/README.md
           git commit -m 'Automated documentation update [skip ci]' || export NO_UPDATES=true
           # Push
           if [ "$NO_UPDATES" != "true" ] ; then
