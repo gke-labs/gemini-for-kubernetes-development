@@ -145,6 +145,7 @@ func (r *RepoWatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 func (r *RepoWatchReconciler) reconcileReviews(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, ghClient *github.Client, owner string, repo string) error {
 	log := log.FromContext(ctx)
+	log.Info("reconciling reviews")
 
 	var prs []*github.PullRequest
 	if len(repoWatch.Spec.Review.PullRequests) > 0 {
@@ -320,6 +321,7 @@ func parseRepoURL(repoURL string) (string, string, error) {
 
 func (r *RepoWatchReconciler) reconcileReviewSandboxes(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, prs []*github.PullRequest, sandboxes *unstructured.UnstructuredList) error {
 	log := log.FromContext(ctx)
+	log.Info("reconciling review sandboxes")
 	activeSandboxes := 0
 	watchedPRs := []reviewv1alpha1.WatchedPR{}
 	pendingPRs := []reviewv1alpha1.PendingPR{}
@@ -386,10 +388,11 @@ func (r *RepoWatchReconciler) reconcileReviewSandboxes(ctx context.Context, repo
 
 		if !sandboxExists {
 			if activeSandboxes < repoWatch.Spec.Review.MaxActiveSandboxes {
-				log.Info("creating sandbox for pr", "pr", *pr.Number)
+				log.Info("processing pr", "pr", *pr.Number, "sandboxName", sandboxName)
 				if err := r.createReviewSandboxForPR(ctx, repoWatch, pr); err != nil {
 					log.Error(err, "unable to create sandbox for pr", "pr", *pr.Number)
 				} else {
+					log.Info("sandbox created successfully for pr", "pr", *pr.Number)
 					activeSandboxes++
 					watchedPRs = append(watchedPRs, reviewv1alpha1.WatchedPR{
 						Number:      *pr.Number,
@@ -602,7 +605,7 @@ func (r *RepoWatchReconciler) createReviewSandboxForPR(ctx context.Context, repo
 		return err
 	}
 
-	log.Info("Generated sandbox for PR", "pr", *pr)
+	log.Info("Generated sandbox for PR", "pr", *pr, "llm.provider", repoWatch.Spec.Review.LLM.Provider)
 	sandbox := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
