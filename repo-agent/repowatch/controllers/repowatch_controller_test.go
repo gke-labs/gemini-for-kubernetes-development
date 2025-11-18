@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-github/v39/github"
 	"github.com/onsi/gomega"
@@ -528,6 +529,67 @@ func TestReconcileReviewSandboxes(t *testing.T) {
 		g.Expect(fetchedRepoWatch.Status.WatchedPRs[0].Number).To(gomega.Equal(prNumber))
 		g.Expect(fetchedRepoWatch.Status.WatchedPRs[0].Status).To(gomega.Equal("Active"))
 		g.Expect(fetchedRepoWatch.Status.PendingPRs).To(gomega.HaveLen(0))
+	})
+
+	// Test case 4: Scales down sandbox if age exceeds ReviewShutdownAfterMinutes
+	t.Run("scales down sandbox if age exceeds ReviewShutdownAfterMinutes", func(_ *testing.T) {
+		// Set ReviewShutdownAfterMinutes
+		repoWatch.Spec.Review.ReviewShutdownAfterMinutes = 60
+		repoWatch.Spec.Review.MaxActiveSandboxes = 10
+
+		// Create a sandbox that is older than 60 minutes
+		oldCreationTime := time.Now().Add(-61 * time.Minute)
+
+		oldSandbox := &unstructured.Unstructured{
+			Object: map[string]interface{}{
+				"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
+				"kind":       "ReviewSandbox",
+				"metadata": map[string]interface{}{
+					"name":              "repo-pr-1",
+					"namespace":         "default",
+					"creationTimestamp": oldCreationTime.Format(time.RFC3339),
+					"ownerReferences": []interface{}{
+						map[string]interface{}{
+							"apiVersion": "review.gemini.google.com/v1alpha1",
+							"kind":       "RepoWatch",
+							"name":       "test-repowatch",
+							"uid":        "test-uid",
+						},
+					},
+				},
+				"spec": map[string]interface{}{
+					"replicas": int64(1),
+				},
+			},
+		}
+
+		r := &RepoWatchReconciler{
+			Client: clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, oldSandbox).WithStatusSubresource(repoWatch).Build(),
+			Scheme: s,
+			NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
+				return &github.Client{}, map[string]string{}, nil
+			},
+		}
+
+		// Call reconcileReviewSandboxes with the PR corresponding to the sandbox
+		// We need the PR to be present so it doesn't try to delete the sandbox because the PR is closed
+		err := r.reconcileReviewSandboxes(context.Background(), repoWatch, []*github.PullRequest{pr}, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*oldSandbox}})
+		g.Expect(err).NotTo(gomega.HaveOccurred())
+
+		// Fetch the updated sandbox
+		updatedSandbox := &unstructured.Unstructured{}
+		updatedSandbox.SetGroupVersionKind(schema.GroupVersionKind{
+			Group:   "custom.agents.x-k8s.io",
+			Version: "v1alpha1",
+			Kind:    "ReviewSandbox",
+		})
+		g.Expect(r.Client.Get(context.Background(), types.NamespacedName{Name: "repo-pr-1", Namespace: "default"}, updatedSandbox)).To(gomega.Succeed())
+
+		// Check replicas
+		replicas, found, err := unstructured.NestedInt64(updatedSandbox.Object, "spec", "replicas")
+		g.Expect(err).NotTo(gomega.HaveOccurred())
+		g.Expect(found).To(gomega.BeTrue())
+		g.Expect(replicas).To(gomega.Equal(int64(0)))
 	})
 }
 
