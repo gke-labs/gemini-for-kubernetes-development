@@ -62,6 +62,10 @@ type PRReviewSpec struct {
 	// +kubebuilder:validation:Required
 	MaxActiveSandboxes int `json:"maxActiveSandboxes"`
 
+	// The time in seconds after which a review sandbox will be scaled down to 0 replicas.
+	// +kubebuilder:validation:Optional
+	ReviewShutdownAfterMinutes int `json:"reviewShutdownAfterMinutes,omitempty"`
+
 	// PullRequests to filter for this handler
 	// +kubebuilder:validation:Optional
 	PullRequests []int `json:"pullRequests,omitempty"`

@@ -96,6 +96,8 @@ spec:
                     items:
                       type: integer
                     type: array
+                  reviewShutdownAfterMinutes:
+                    type: integer
                 required:
                 - maxActiveSandboxes
                 type: object
