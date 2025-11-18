@@ -11,6 +11,7 @@ spec:
       apiKeySecretRef: gemini-vscode-tokens
     maxActiveSandboxes: 2
     devcontainerConfigRef: go-devcontainer-json
+    reviewShutdownAfterMinutes: 15
   issueHandlers:
   - name: fixes
     maxActiveSandboxes: 1
