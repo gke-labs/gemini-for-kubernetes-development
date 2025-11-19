@@ -792,8 +792,6 @@ func updateRepoWatch(c *gin.Context) {
 			for _, v := range pullRequestsSlice {
 				if i, ok := v.(int64); ok {
 					pullRequests = append(pullRequests, i)
-				} else if f, ok := v.(float64); ok {
-					pullRequests = append(pullRequests, int64(f))
 				} else if i, ok := v.(int); ok {
 					pullRequests = append(pullRequests, int64(i))
 				}
