@@ -378,7 +378,7 @@ func TestReconcileReviewSandboxes(t *testing.T) {
 		g.Expect(r.Client.List(context.Background(), sandboxList)).To(gomega.Succeed())
 		g.Expect(sandboxList.Items).To(gomega.HaveLen(1)) // Should contain the closedPRSandbox initially
 
-		err := r.reconcileReviewSandboxes(context.Background(), repoWatch, []*github.PullRequest{pr}, sandboxList)
+		err := r.reconcileReviewSandboxes(context.Background(), repoWatch, []*github.PullRequest{}, []*github.PullRequest{pr}, sandboxList)
 		g.Expect(err).NotTo(gomega.HaveOccurred())
 
 		// Check that the sandbox for the closed PR is deleted and a new one for the open PR is created
@@ -444,7 +444,7 @@ func TestReconcileReviewSandboxes(t *testing.T) {
 		}
 
 		// Call reconcileReviewSandboxes with the active PR and the new PR
-		err := r.reconcileReviewSandboxes(context.Background(), repoWatch, []*github.PullRequest{pr, newPR}, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*activePRSandbox}})
+		err := r.reconcileReviewSandboxes(context.Background(), repoWatch, []*github.PullRequest{}, []*github.PullRequest{pr, newPR}, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*activePRSandbox}})
 		g.Expect(err).NotTo(gomega.HaveOccurred())
 
 		// Check that no new sandbox was created
@@ -507,7 +507,7 @@ func TestReconcileReviewSandboxes(t *testing.T) {
 		}
 
 		// Call reconcileReviewSandboxes with the existing PR
-		err := r.reconcileReviewSandboxes(context.Background(), repoWatch, []*github.PullRequest{pr}, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*existingPRSandbox}})
+		err := r.reconcileReviewSandboxes(context.Background(), repoWatch, []*github.PullRequest{}, []*github.PullRequest{pr}, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*existingPRSandbox}})
 		g.Expect(err).NotTo(gomega.HaveOccurred())
 
 		// Check that no new sandbox was created and the existing one is still there
@@ -573,7 +573,7 @@ func TestReconcileReviewSandboxes(t *testing.T) {
 
 		// Call reconcileReviewSandboxes with the PR corresponding to the sandbox
 		// We need the PR to be present so it doesn't try to delete the sandbox because the PR is closed
-		err := r.reconcileReviewSandboxes(context.Background(), repoWatch, []*github.PullRequest{pr}, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*oldSandbox}})
+		err := r.reconcileReviewSandboxes(context.Background(), repoWatch, []*github.PullRequest{}, []*github.PullRequest{pr}, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*oldSandbox}})
 		g.Expect(err).NotTo(gomega.HaveOccurred())
 
 		// Fetch the updated sandbox
@@ -1093,4 +1093,126 @@ func TestNewGithubClient(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestRepoWatchReconciler_Reconcile_ExplicitAndListedPRs verifies that the reconciler correctly handles
+// both explicitly requested PRs (via Spec.Review.PullRequests) and listed open PRs.
+// It ensures that sandboxes are created for both types.
+func TestRepoWatchReconciler_Reconcile_ExplicitAndListedPRs(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	// 1. Create a Scheme and add your API types to it
+	s := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(s)
+	_ = reviewv1alpha1.AddToScheme(s)
+
+	// 2. Initialize the fake client with any initial objects
+	fakeClient := clientfake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&reviewv1alpha1.RepoWatch{}).Build()
+
+	// 3. Create your Reconciler instance
+	mockHTTPClient := &http.Client{
+		Transport: &mockRoundTripper{
+			responses: map[string]*http.Response{
+				"https://api.github.com/repos/test/repo/pulls?state=open": {
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(`[{"number": 1, "head": {"repo": {"clone_url": "https://github.com/test/repo", "html_url": "https://github.com/test/repo"}, "ref": "main"}, "html_url": "https://github.com/test/repo/pull/1", "title": "Test PR 1", "diff_url": "https://github.com/test/repo/pull/1.diff"}]`)),
+				},
+				"https://api.github.com/repos/test/repo/pulls/42": {
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(`{"number": 42, "head": {"repo": {"clone_url": "https://github.com/test/repo", "html_url": "https://github.com/test/repo"}, "ref": "feature"}, "html_url": "https://github.com/test/repo/pull/42", "title": "Explicit PR 42", "diff_url": "https://github.com/test/repo/pull/42.diff"}`)),
+				},
+				"https://api.github.com/user": {
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(`{"login": "test-user", "name": "Test User", "email": "test@example.com"}`)),
+				},
+			},
+		},
+	}
+	ghClient := github.NewClient(mockHTTPClient)
+
+	r := &RepoWatchReconciler{
+		Client: fakeClient,
+		Scheme: s,
+		NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
+			return ghClient, map[string]string{"pat": "test-pat"}, nil
+		},
+	}
+
+	// 4. Define the Reconcile request
+	objName := "test-repowatch-explicit"
+	objNamespace := "default"
+	req := reconcile.Request{
+		NamespacedName: types.NamespacedName{
+			Name:      objName,
+			Namespace: objNamespace,
+		},
+	}
+
+	// 5. Create the object your reconciler will act upon
+	repoWatch := &reviewv1alpha1.RepoWatch{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      objName,
+			Namespace: objNamespace,
+		},
+		Spec: reviewv1alpha1.RepoWatchSpec{
+			RepoURL:          "https://github.com/test/repo",
+			GithubSecretName: "github-secret",
+			Review: reviewv1alpha1.PRReviewSpec{
+				MaxActiveSandboxes: 10,
+				PullRequests:       []int{42}, // Explicit PR
+			},
+		},
+	}
+	g.Expect(fakeClient.Create(context.Background(), repoWatch)).To(gomega.Succeed())
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "github-secret",
+			Namespace: objNamespace,
+		},
+		Data: map[string][]byte{
+			"pat": []byte("test-pat"),
+		},
+	}
+	g.Expect(fakeClient.Create(context.Background(), secret)).To(gomega.Succeed())
+
+	// 6. Call the Reconcile method
+	_, err := r.Reconcile(context.Background(), req)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	// 7. Assert expected outcomes
+	fetchedRepoWatch := &reviewv1alpha1.RepoWatch{}
+	g.Expect(fakeClient.Get(context.Background(), req.NamespacedName, fetchedRepoWatch)).To(gomega.Succeed())
+	g.Expect(fetchedRepoWatch.Status.ActiveSandboxCount).To(gomega.Equal(2)) // Both 1 and 42
+	g.Expect(fetchedRepoWatch.Status.WatchedPRs).To(gomega.HaveLen(2))
+
+	// Verify PR 1
+	foundPR1 := false
+	for _, pr := range fetchedRepoWatch.Status.WatchedPRs {
+		if pr.Number == 1 {
+			foundPR1 = true
+			break
+		}
+	}
+	g.Expect(foundPR1).To(gomega.BeTrue())
+
+	// Verify PR 42
+	foundPR42 := false
+	for _, pr := range fetchedRepoWatch.Status.WatchedPRs {
+		if pr.Number == 42 {
+			foundPR42 = true
+			break
+		}
+	}
+	g.Expect(foundPR42).To(gomega.BeTrue())
+
+	// Check that ReviewSandboxes were created
+	reviewSandboxList := &unstructured.UnstructuredList{}
+	reviewSandboxList.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "custom.agents.x-k8s.io",
+		Version: "v1alpha1",
+		Kind:    "ReviewSandbox",
+	})
+	g.Expect(fakeClient.List(context.Background(), reviewSandboxList)).To(gomega.Succeed())
+	g.Expect(reviewSandboxList.Items).To(gomega.HaveLen(2))
 }

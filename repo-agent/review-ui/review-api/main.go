@@ -740,14 +740,15 @@ func updateRepoWatch(c *gin.Context) {
 
 	var payload struct {
 		RepoURL string `json:"repoURL"`
+		AddPR   int    `json:"addPR"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	if payload.RepoURL == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "repoURL is required"})
+	if payload.RepoURL == "" && payload.AddPR == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "repoURL or addPR is required"})
 		return
 	}
 
@@ -765,11 +766,57 @@ func updateRepoWatch(c *gin.Context) {
 		return
 	}
 
-	// Update spec.repoURL
-	if err := unstructured.SetNestedField(existing.Object, payload.RepoURL, "spec", "repoURL"); err != nil {
-		log.Printf("Failed to set repoURL: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update object structure"})
-		return
+	// Update spec.repoURL if provided
+	if payload.RepoURL != "" {
+		if err := unstructured.SetNestedField(existing.Object, payload.RepoURL, "spec", "repoURL"); err != nil {
+			log.Printf("Failed to set repoURL: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update object structure"})
+			return
+		}
+		// Update Redis cache to reflect the change immediately
+		if err := rdb.HSet(c.Request.Context(), fmt.Sprintf("repo:ns:%s:name:%s", namespace, name), "url", payload.RepoURL).Err(); err != nil {
+			log.Printf("Failed to update repo URL in Redis for %s: %v", name, err)
+			// Don't fail the request if Redis fails, as K8s deletion is the source of truth
+		}
+	}
+
+	// Add PR if provided
+	if payload.AddPR != 0 {
+		pullRequestsSlice, found, err := unstructured.NestedSlice(existing.Object, "spec", "review", "pullRequests")
+		if err != nil {
+			log.Printf("Failed to get pullRequests: %v", err)
+		}
+
+		var pullRequests []int64
+		if found {
+			for _, v := range pullRequestsSlice {
+				if i, ok := v.(int64); ok {
+					pullRequests = append(pullRequests, i)
+				} else if f, ok := v.(float64); ok {
+					pullRequests = append(pullRequests, int64(f))
+				} else if i, ok := v.(int); ok {
+					pullRequests = append(pullRequests, int64(i))
+				}
+			}
+		}
+
+		// Check for duplicates
+		exists := false
+		for _, pr := range pullRequests {
+			if pr == int64(payload.AddPR) {
+				exists = true
+				break
+			}
+		}
+
+		if !exists {
+			pullRequests = append(pullRequests, int64(payload.AddPR))
+			if err := unstructured.SetNestedSlice(existing.Object, convInt64SliceToInterfaceSlice(pullRequests), "spec", "review", "pullRequests"); err != nil {
+				log.Printf("Failed to set pullRequests: %v", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update object structure for pullRequests"})
+				return
+			}
+		}
 	}
 
 	// Apply update
@@ -780,13 +827,15 @@ func updateRepoWatch(c *gin.Context) {
 		return
 	}
 
-	// Update Redis cache to reflect the change immediately
-	if err := rdb.HSet(c.Request.Context(), fmt.Sprintf("repo:ns:%s:name:%s", namespace, name), "url", payload.RepoURL).Err(); err != nil {
-		log.Printf("Failed to update repo URL in Redis for %s: %v", name, err)
-		// Don't fail the request if Redis fails, as K8s deletion is the source of truth
-	}
-
 	c.Status(http.StatusOK)
+}
+
+func convInt64SliceToInterfaceSlice(in []int64) []interface{} {
+	out := make([]interface{}, len(in))
+	for i, v := range in {
+		out[i] = v
+	}
+	return out
 }
 
 func deleteRepoWatch(c *gin.Context) {

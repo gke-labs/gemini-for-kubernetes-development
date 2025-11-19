@@ -147,7 +147,7 @@ func (r *RepoWatchReconciler) reconcileReviews(ctx context.Context, repoWatch *r
 	log := log.FromContext(ctx)
 	log.Info("reconciling reviews")
 
-	var prs []*github.PullRequest
+	var explicitPRs []*github.PullRequest
 	if len(repoWatch.Spec.Review.PullRequests) > 0 {
 		// If specific PRs are requested, fetch them directly
 		for _, prNumber := range repoWatch.Spec.Review.PullRequests {
@@ -157,16 +157,16 @@ func (r *RepoWatchReconciler) reconcileReviews(ctx context.Context, repoWatch *r
 				// Continue to the next PR if there's an error fetching a specific one.
 				continue
 			}
-			prs = append(prs, pr)
+			explicitPRs = append(explicitPRs, pr)
 		}
-	} else {
-		// Otherwise, list open PRs
-		var err error
-		prs, _, err = ghClient.PullRequests.List(ctx, owner, repo, &github.PullRequestListOptions{State: "open"})
-		if err != nil {
-			log.Error(err, "unable to list pull requests")
-			return err
-		}
+	}
+	var prs []*github.PullRequest
+	// Otherwise, list open PRs
+	var err error
+	prs, _, err = ghClient.PullRequests.List(ctx, owner, repo, &github.PullRequestListOptions{State: "open"})
+	if err != nil {
+		log.Error(err, "unable to list pull requests")
+		return err
 	}
 
 	// Log repoIssues and sandboxList for debug purposes
@@ -190,7 +190,7 @@ func (r *RepoWatchReconciler) reconcileReviews(ctx context.Context, repoWatch *r
 		return err
 	}
 	// Reconcile
-	if err := r.reconcileReviewSandboxes(ctx, repoWatch, prs, sandboxList); err != nil {
+	if err := r.reconcileReviewSandboxes(ctx, repoWatch, explicitPRs, prs, sandboxList); err != nil {
 		log.Error(err, "unable to reconcile sandboxes")
 		return err
 	}
@@ -319,7 +319,7 @@ func parseRepoURL(repoURL string) (string, string, error) {
 	return parts[0], parts[1], nil
 }
 
-func (r *RepoWatchReconciler) reconcileReviewSandboxes(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, prs []*github.PullRequest, sandboxes *unstructured.UnstructuredList) error {
+func (r *RepoWatchReconciler) reconcileReviewSandboxes(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, explicitPRs []*github.PullRequest, prs []*github.PullRequest, sandboxes *unstructured.UnstructuredList) error {
 	log := log.FromContext(ctx)
 	log.Info("reconciling review sandboxes")
 	activeSandboxes := 0
@@ -346,7 +346,7 @@ func (r *RepoWatchReconciler) reconcileReviewSandboxes(ctx context.Context, repo
 		}
 
 		found := false
-		for _, pr := range prs {
+		for _, pr := range append(explicitPRs, prs...) {
 			if *pr.Number == prNumber {
 				found = true
 				break
@@ -362,9 +362,16 @@ func (r *RepoWatchReconciler) reconcileReviewSandboxes(ctx context.Context, repo
 	}
 
 	// Create new sandboxes
-	for _, pr := range prs {
+	for _, pr := range append(explicitPRs, prs...) {
 		sandboxName := fmt.Sprintf("%s-pr-%d", strings.Split(repoWatch.Spec.RepoURL, "/")[len(strings.Split(repoWatch.Spec.RepoURL, "/"))-1], *pr.Number)
 		sandboxExists := false
+		prIsExplicit := false
+		for _, explicitPR := range explicitPRs {
+			if *explicitPR.Number == *pr.Number {
+				prIsExplicit = true
+				break
+			}
+		}
 		for _, sandbox := range sandboxes.Items {
 			if sandbox.GetName() == sandboxName {
 				sandboxExists = true
@@ -374,7 +381,7 @@ func (r *RepoWatchReconciler) reconcileReviewSandboxes(ctx context.Context, repo
 					log.Error(err, "unable to get replicas for sandbox", "sandbox", sandbox.GetName())
 					break
 				}
-				if replicas > 0 {
+				if replicas > 0 && !prIsExplicit {
 					activeSandboxes++
 				}
 				// Check if the sandbox should be scaled down
@@ -407,7 +414,7 @@ func (r *RepoWatchReconciler) reconcileReviewSandboxes(ctx context.Context, repo
 		}
 
 		if !sandboxExists {
-			if activeSandboxes < repoWatch.Spec.Review.MaxActiveSandboxes {
+			if prIsExplicit || (activeSandboxes < repoWatch.Spec.Review.MaxActiveSandboxes) {
 				log.Info("processing pr", "pr", *pr.Number, "sandboxName", sandboxName)
 				if err := r.createReviewSandboxForPR(ctx, repoWatch, pr); err != nil {
 					log.Error(err, "unable to create sandbox for pr", "pr", *pr.Number)
