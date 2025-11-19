@@ -481,34 +481,82 @@ function App() {
     }));
   };
 
+  const handleAddPR = () => {
+    const input = window.prompt("Enter PR URL or Number:");
+    if (!input) return;
+
+    let prNumber = parseInt(input);
+    if (isNaN(prNumber)) {
+      // Try to parse URL
+      // e.g., https://github.com/owner/repo/pull/123
+      try {
+        const url = new URL(input);
+        const parts = url.pathname.split('/');
+        const pullIndex = parts.indexOf('pull');
+        if (pullIndex !== -1 && pullIndex + 1 < parts.length) {
+            prNumber = parseInt(parts[pullIndex + 1]);
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    if (isNaN(prNumber) || !prNumber) {
+        alert("Invalid PR number or URL");
+        return;
+    }
+
+    fetch(`/api/repos/${activeRepo.name}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ addPR: prNumber })
+    })
+    .then(res => {
+        if (res.ok) {
+            alert("PR added to watch list. It may take a few moments to appear.");
+        } else {
+            res.json().then(data => alert("Failed to add PR: " + (data.error || res.statusText)));
+        }
+    })
+    .catch(err => console.error("Failed to add PR:", err));
+  };
+
   const renderContent = () => {
     if (!activeRepo) return <p>Please select or add a repository to watch.</p>;
     const namespace = user || 'default';
     if (activeSubTab.name === 'review') {
-      if (prs.length === 0) return <p>No active Pull Requests found for this repository.</p>;
-      return prs.map(pr => (
-        <PrReviewCard
-          key={pr.id}
-          pr={pr}
-          drafts={drafts}
-          collapsedReviews={collapsedReviews}
-          reviewViewModes={reviewViewModes}
-          yamlDrafts={yamlDrafts}
-          handleDelete={handleDelete}
-          handleSaveDraft={handleSaveDraft}
-          handleDraftChange={handleDraftChange}
-          handleRemoveComment={handleRemoveComment}
-          toggleReviewView={toggleReviewView}
-          handleYamlDraftChange={handleYamlDraftChange}
-          handleYamlDraftBlur={handleYamlDraftBlur}
-          handleSubmit={handleSubmit}
-          handleExportCurl={handleExportCurl}
-          getSandboxStatusClass={getSandboxStatusClass}
-          toggleCollapse={toggleCollapse}
-          namespace={namespace}
-          handleMoveCommentAndSave={handleMoveCommentAndSave}
-        />
-      ));
+      return (
+        <>
+          {prs.length === 0 ? <p>No active Pull Requests found for this repository.</p> : 
+            prs.map(pr => (
+              <PrReviewCard
+                key={pr.id}
+                pr={pr}
+                drafts={drafts}
+                collapsedReviews={collapsedReviews}
+                reviewViewModes={reviewViewModes}
+                yamlDrafts={yamlDrafts}
+                handleDelete={handleDelete}
+                handleSaveDraft={handleSaveDraft}
+                handleDraftChange={handleDraftChange}
+                handleRemoveComment={handleRemoveComment}
+                toggleReviewView={toggleReviewView}
+                handleYamlDraftChange={handleYamlDraftChange}
+                handleYamlDraftBlur={handleYamlDraftBlur}
+                handleSubmit={handleSubmit}
+                handleExportCurl={handleExportCurl}
+                getSandboxStatusClass={getSandboxStatusClass}
+                toggleCollapse={toggleCollapse}
+                namespace={namespace}
+                handleMoveCommentAndSave={handleMoveCommentAndSave}
+              />
+            ))
+          }
+          <div style={{textAlign: 'center', marginTop: '20px'}}>
+            <button className="btn" onClick={handleAddPR} title="Add PR to watch list" style={{fontSize: '24px', width: '50px', height: '50px', borderRadius: '25px', lineHeight: '24px'}}>+</button>
+          </div>
+        </>
+      );
     } else {
       if (issues.length === 0) return <p>No active Issues found for this handler.</p>;
       return issues.map(issue => (
