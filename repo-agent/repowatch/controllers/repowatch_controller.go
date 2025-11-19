@@ -169,6 +169,22 @@ func (r *RepoWatchReconciler) reconcileReviews(ctx context.Context, repoWatch *r
 		return err
 	}
 
+	// Filter out duplicates from explicitPRs
+	var filteredPRs []*github.PullRequest
+	for _, pr := range prs {
+		found := false
+		for _, explicitPR := range explicitPRs {
+			if *pr.Number == *explicitPR.Number {
+				found = true
+				break
+			}
+		}
+		if !found {
+			filteredPRs = append(filteredPRs, pr)
+		}
+	}
+	prs = filteredPRs
+
 	// Log repoIssues and sandboxList for debug purposes
 	prsStr := []string{}
 	for _, pr := range prs {
