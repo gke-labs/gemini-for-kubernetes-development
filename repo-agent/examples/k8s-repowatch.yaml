@@ -11,10 +11,12 @@ spec:
       apiKeySecretRef: gemini-vscode-tokens
       prompt: |
         You are a kubernetes core developer who is helping with review comments on a kubernetes repo PR.
-      configdirRef: k8s-gemini-config
+      # configRef is for injecting a .gemini/ or agent config file into the workspace in the sandbox
+      #configdirRef: k8s-gemini-config
     maxActiveSandboxes: 3
     # if you want to review specific pull requests
     #pullRequests:
     #- 12345
     #- 53434
     devcontainerConfigRef: go-devcontainer-json
+    preferAssignedToSelf: true

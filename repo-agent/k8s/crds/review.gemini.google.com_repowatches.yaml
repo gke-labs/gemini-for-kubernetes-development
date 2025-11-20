@@ -76,6 +76,12 @@ spec:
                 properties:
                   devcontainerConfigRef:
                     type: string
+                  labels:
+                    items:
+                      items:
+                        type: string
+                      type: array
+                    type: array
                   llm:
                     properties:
                       apiKeySecretRef:
@@ -92,6 +98,8 @@ spec:
                     type: object
                   maxActiveSandboxes:
                     type: integer
+                  preferAssignedToSelf:
+                    type: boolean
                   pullRequests:
                     items:
                       type: integer

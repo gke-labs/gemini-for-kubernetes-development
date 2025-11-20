@@ -147,50 +147,23 @@ func (r *RepoWatchReconciler) reconcileReviews(ctx context.Context, repoWatch *r
 	log := log.FromContext(ctx)
 	log.Info("reconciling reviews")
 
-	var explicitPRs []*github.PullRequest
-	if len(repoWatch.Spec.Review.PullRequests) > 0 {
-		// If specific PRs are requested, fetch them directly
-		for _, prNumber := range repoWatch.Spec.Review.PullRequests {
-			pr, _, err := ghClient.PullRequests.Get(ctx, owner, repo, prNumber)
-			if err != nil {
-				log.Error(err, "unable to get pull request", "prNumber", prNumber)
-				// Continue to the next PR if there's an error fetching a specific one.
-				continue
-			}
-			explicitPRs = append(explicitPRs, pr)
-		}
-	}
-	var prs []*github.PullRequest
-	// Otherwise, list open PRs
-	var err error
-	prs, _, err = ghClient.PullRequests.List(ctx, owner, repo, &github.PullRequestListOptions{State: "open"})
+	explicitPRs := r.getExplicitPRs(ctx, ghClient, repoWatch, owner, repo)
+
+	prs, err := r.listOpenPRs(ctx, ghClient, owner, repo)
 	if err != nil {
-		log.Error(err, "unable to list pull requests")
 		return err
 	}
 
-	// Filter out duplicates from explicitPRs
-	var filteredPRs []*github.PullRequest
-	for _, pr := range prs {
-		found := false
-		for _, explicitPR := range explicitPRs {
-			if *pr.Number == *explicitPR.Number {
-				found = true
-				break
-			}
-		}
-		if !found {
-			filteredPRs = append(filteredPRs, pr)
-		}
-	}
-	prs = filteredPRs
+	prs = r.filterPRsByLabels(prs, repoWatch)
+	prs = r.deduplicatePRs(prs, explicitPRs)
+	prs = r.sortPRs(ctx, ghClient, prs, repoWatch)
 
 	// Log repoIssues and sandboxList for debug purposes
 	prsStr := []string{}
 	for _, pr := range prs {
 		prsStr = append(prsStr, fmt.Sprintf("%d", *pr.Number))
 	}
-	log.Info("DEBUG INFO PRs:", "prs", prsStr)
+	log.V(4).Info("PRs:", "prs", prsStr)
 
 	// Get existing sandboxes
 	sandboxList := &unstructured.UnstructuredList{}
@@ -212,6 +185,137 @@ func (r *RepoWatchReconciler) reconcileReviews(ctx context.Context, repoWatch *r
 	}
 
 	return nil
+}
+
+func (r *RepoWatchReconciler) getExplicitPRs(ctx context.Context, ghClient *github.Client, repoWatch *reviewv1alpha1.RepoWatch, owner, repo string) []*github.PullRequest {
+	var explicitPRs []*github.PullRequest
+	log := log.FromContext(ctx)
+	if len(repoWatch.Spec.Review.PullRequests) > 0 {
+		// If specific PRs are requested, fetch them directly
+		for _, prNumber := range repoWatch.Spec.Review.PullRequests {
+			pr, _, err := ghClient.PullRequests.Get(ctx, owner, repo, prNumber)
+			if err != nil {
+				log.Error(err, "unable to get pull request", "prNumber", prNumber)
+				// Continue to the next PR if there's an error fetching a specific one.
+				continue
+			}
+			explicitPRs = append(explicitPRs, pr)
+		}
+	}
+	return explicitPRs
+}
+
+func (r *RepoWatchReconciler) listOpenPRs(ctx context.Context, ghClient *github.Client, owner, repo string) ([]*github.PullRequest, error) {
+	var prs []*github.PullRequest
+	log := log.FromContext(ctx)
+	// Otherwise, list open PRs
+	opts := &github.PullRequestListOptions{
+		State:       "open",
+		Sort:        "created",
+		Direction:   "desc",
+		ListOptions: github.ListOptions{PerPage: 100},
+	}
+	for {
+		list, resp, err := ghClient.PullRequests.List(ctx, owner, repo, opts)
+		if err != nil {
+			log.Error(err, "unable to list pull requests")
+			return nil, err
+		}
+		prs = append(prs, list...)
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	return prs, nil
+}
+
+func (r *RepoWatchReconciler) filterPRsByLabels(prs []*github.PullRequest, repoWatch *reviewv1alpha1.RepoWatch) []*github.PullRequest {
+	// Filter by Labels
+	if len(repoWatch.Spec.Review.Labels) > 0 {
+		var filteredPRs []*github.PullRequest
+		for _, pr := range prs {
+			matches := false
+			for _, labelSet := range repoWatch.Spec.Review.Labels {
+				labelSetMatches := true
+				for _, requiredLabel := range labelSet {
+					hasRequiredLabel := false
+					for _, prLabel := range pr.Labels {
+						if prLabel.Name != nil && *prLabel.Name == requiredLabel {
+							hasRequiredLabel = true
+							break
+						}
+					}
+					if !hasRequiredLabel {
+						labelSetMatches = false
+						break
+					}
+				}
+				if labelSetMatches {
+					matches = true
+					break
+				}
+			}
+			if matches {
+				filteredPRs = append(filteredPRs, pr)
+			}
+		}
+		return filteredPRs
+	}
+	return prs
+}
+
+func (r *RepoWatchReconciler) deduplicatePRs(prs []*github.PullRequest, explicitPRs []*github.PullRequest) []*github.PullRequest {
+	// Filter out duplicates from explicitPRs
+	var filteredPRs []*github.PullRequest
+	for _, pr := range prs {
+		found := false
+		for _, explicitPR := range explicitPRs {
+			if *pr.Number == *explicitPR.Number {
+				found = true
+				break
+			}
+		}
+		if !found {
+			filteredPRs = append(filteredPRs, pr)
+		}
+	}
+	return filteredPRs
+}
+
+func (r *RepoWatchReconciler) sortPRs(ctx context.Context, ghClient *github.Client, prs []*github.PullRequest, repoWatch *reviewv1alpha1.RepoWatch) []*github.PullRequest {
+	log := log.FromContext(ctx)
+	// Sort by PreferAssignedToSelf
+	// TODO(barney-s): May be rate limited. Cache the user info.
+	if repoWatch.Spec.Review.PreferAssignedToSelf {
+		user, _, err := ghClient.Users.Get(ctx, "")
+		if err != nil {
+			log.Error(err, "unable to get current user for sorting PRs")
+			return prs
+		}
+		if user.Login == nil {
+			log.Error(errors.New("user login is nil"), "unable to get current user login for sorting PRs")
+			return prs
+		}
+		var assignedToMe []*github.PullRequest
+		var others []*github.PullRequest
+		for _, pr := range prs {
+			isAssigned := false
+			for _, assignee := range pr.Assignees {
+				if assignee.Login != nil && *assignee.Login == *user.Login {
+					isAssigned = true
+					break
+				}
+			}
+			if isAssigned {
+				assignedToMe = append(assignedToMe, pr)
+			} else {
+				others = append(others, pr)
+			}
+		}
+		return append(assignedToMe, others...)
+	}
+	return prs
 }
 
 func (r *RepoWatchReconciler) reconcileIssues(ctx context.Context, githubConfig map[string]string, repoWatch *reviewv1alpha1.RepoWatch, ghClient *github.Client, owner string, repo string) error {
