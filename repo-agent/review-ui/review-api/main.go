@@ -245,6 +245,7 @@ func main() {
 	{
 		api.GET("/repos", getRepos)
 		api.POST("/repos", createRepoWatch)
+		api.GET("/getRepoWatch", getDefaultRepoWatch)
 		api.PUT("/repos/:repo", updateRepoWatch)
 		api.DELETE("/repos/:repo", deleteRepoWatch)
 
@@ -642,46 +643,13 @@ func updateSecret(ctx context.Context, namespace, name string, data map[string][
 
 func createRepoWatch(c *gin.Context) {
 	namespace := c.MustGet(userKey).(string)
-	// TODO: Improve this - Prompts, Issue handlers, etc.
 	var payload struct {
-		Name string `json:"name"`
-		URL  string `json:"url"`
+		YAML string `json:"yaml"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
-	var repoName string
-	var err error
-	if payload.Name != "" {
-		repoName = payload.Name
-	} else {
-		_, repoName, err = parseRepoURL(payload.URL)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid GitHub URL"})
-			return
-		}
-	}
-
-	// Standard prompts
-	reviewPrompt := `You are an expert kubernetes developer who is helping with code reviews. Please look at the most recent commit and provide a review feedback. Would you approve it ?
-Please pay attention to the following:
-1. Does the fix resolve the original problem.
-2. Look for linked issues to understand the original problem.
-3. Are there tests to check the fix.`
-	triagePrompt := `You are a helpful assistant that triages GitHub issues for a Kubernetes-related open source project.
-Your task is to categorize incoming issues based on their content and assign appropriate labels.
-Analyze the issue title and body to determine the most relevant category from the following options:
-1. bug: Issues that describe unexpected behavior, errors, or malfunctions in the software.
-2. feature: Suggestions for new features, enhancements, or improvements to existing functionality.
-2. cleanup: Suggestions for cleaning up code, removing deprecated features, or improving code quality.
-3. document: Issues related to documentation errors, omissions, or requests for clarification.
-4. support: Questions or requests for help regarding the use of the software.
-5. other: Any issue that does not fit into the above categories.
-
-Start the response with "/kind <Category>" where <Category> is one of bug , feature , document, support, cleanup or other
-In the next line, provide a concise explanation of your reasoning for the assigned category.`
 
 	gvr := schema.GroupVersionResource{
 		Group:    "review.gemini.google.com",
@@ -689,49 +657,86 @@ In the next line, provide a concise explanation of your reasoning for the assign
 		Resource: "repowatches",
 	}
 
-	repoWatch := &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"apiVersion": "review.gemini.google.com/v1alpha1",
-			"kind":       "RepoWatch",
-			"metadata": map[string]interface{}{
-				"name":      repoName,
-				"namespace": namespace,
-			},
-			"spec": map[string]interface{}{
-				"repoURL":             payload.URL,
-				"githubSecretName":    "github-pat",
-				"pollIntervalSeconds": 300,
-				"review": map[string]interface{}{
-					"maxActiveSandboxes":    int64(1),
-					"devcontainerConfigRef": devContainerCM,
-					"llm": map[string]interface{}{
-						"provider":        "gemini-cli",
-						"apiKeySecretRef": "gemini-vscode-tokens",
-						"prompt":          reviewPrompt,
-					},
-				},
-				"issueHandlers": []interface{}{
-					map[string]interface{}{
-						"name":               "triage",
-						"maxActiveSandboxes": int64(1),
-						"llm": map[string]interface{}{
-							"provider": "gemini-cli",
-							"prompt":   triagePrompt,
-						},
-					},
-				},
-			},
-		},
+	if payload.YAML == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "YAML content is required"})
+		return
 	}
 
-	_, err = k8sClient.Resource(gvr).Namespace(namespace).Create(c.Request.Context(), repoWatch, v1.CreateOptions{})
+	// Create from YAML
+	var unstructuredObj map[string]interface{}
+	if err := yaml.Unmarshal([]byte(payload.YAML), &unstructuredObj); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid YAML content"})
+		return
+	}
+	repoWatch := &unstructured.Unstructured{Object: unstructuredObj}
+
+	// Enforce namespace
+	repoWatch.SetNamespace(namespace)
+
+	_, err := k8sClient.Resource(gvr).Namespace(namespace).Create(c.Request.Context(), repoWatch, v1.CreateOptions{})
 	if err != nil {
-		log.Printf("Failed to create RepoWatch: %v", err)
+		log.Printf("Failed to create RepoWatch from YAML: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to create RepoWatch: %v", err)})
 		return
 	}
 
 	c.Status(http.StatusOK)
+}
+
+func getDefaultRepoWatch(c *gin.Context) {
+	defaultRepoWatch := `
+apiVersion: review.gemini.google.com/v1alpha1
+kind: RepoWatch
+metadata:
+  name: change-name
+spec:
+  repoURL: https://github.com/gke-labs/gemini-for-kubernetes-development
+  pollIntervalSeconds: 300
+  githubSecretName: github-pat
+  review:
+    devcontainerConfigRef: devcontainer-json
+    llm:
+      apiKeySecretRef: gemini-vscode-tokens
+      prompt: >-
+        You are an expert kubernetes developer who is helping with code reviews.
+        Please look at the most recent commit and provide a review feedback.
+        Would you approve it ?
+        Please pay attention to the following:
+        1. Does the fix resolve the original problem.
+        2. Look for linked issues to understand the original problem.
+        3. Are there tests to check the fix.
+      provider: gemini-cli
+    maxActiveSandboxes: 3
+  issueHandlers:
+    - llm:
+        prompt: >-
+          You are a helpful assistant that triages GitHub issues for a
+          Kubernetes-related open source project.
+          Your task is to categorize incoming issues based on their content and
+          assign appropriate labels.
+          Analyze the issue title and body to determine the most relevant
+          category from the following options:
+          1. bug: Issues that describe unexpected behavior, errors, or
+          malfunctions in the software.
+          2. feature: Suggestions for new features, enhancements, or
+          improvements to existing functionality.
+          2. cleanup: Suggestions for cleaning up code, removing deprecated
+          features, or improving code quality.
+          3. document: Issues related to documentation errors, omissions, or
+          requests for clarification.
+          4. support: Questions or requests for help regarding the use of the
+          software.
+          5. other: Any issue that does not fit into the above categories.
+
+          Start the response with "/kind <Category>" where <Category> is one of
+          bug , feature , document, support, cleanup or other
+          In the next line, provide a concise explanation of your reasoning for
+          the assigned category.
+        provider: gemini-cli
+      maxActiveSandboxes: 1
+      name: triage
+`
+	c.JSON(http.StatusOK, gin.H{"yaml": defaultRepoWatch})
 }
 
 func updateRepoWatch(c *gin.Context) {

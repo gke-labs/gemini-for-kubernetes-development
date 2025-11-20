@@ -102,6 +102,8 @@ spec:
                       value: ${schema.spec.source.issue}
                     - name: ISSUE_BRANCH
                       value: ${schema.spec.destination.branch}
+                    - name: GIT_HTML_URL
+                      value: ${schema.spec.source.htmlURL}
                     - name: GITHUB_USER_ORIGIN
                       value: ${schema.spec.destination.origin}
                     - name: GITHUB_USER_LOGIN
