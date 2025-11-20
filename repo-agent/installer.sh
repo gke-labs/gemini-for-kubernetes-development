@@ -9,12 +9,12 @@ echo "Checking params"
 : ${NAMESPACE:=default}
 
 echo "Getting git config..."
-GIT_USER_NAME=$(git config --global user.name)
+GIT_USER_NAME=$(git config --global user.name || true)
 if [ -z "$GIT_USER_NAME" ]; then
     echo >&2 "Error: git config --global user.name is not set. Please configure it with 'git config --global user.name \"Your Name\"'."
     exit 1
 fi
-GIT_USER_EMAIL=$(git config --global user.email)
+GIT_USER_EMAIL=$(git config --global user.email || true)
 if [ -z "$GIT_USER_EMAIL" ]; then
     echo >&2 "Error: git config --global user.email is not set. Please configure it with 'git config --global user.email \"email@domain.com\"'."
     exit 1
