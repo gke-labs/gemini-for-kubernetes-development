@@ -76,7 +76,7 @@ func TestRepoWatchReconciler_Reconcile(t *testing.T) {
 	mockHTTPClient := &http.Client{
 		Transport: &mockRoundTripper{
 			responses: map[string]*http.Response{
-				"https://api.github.com/repos/test/repo/pulls?state=open": {
+				"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=created&state=open": {
 					StatusCode: http.StatusOK,
 					Body:       io.NopCloser(strings.NewReader(`[{"number": 1, "head": {"repo": {"clone_url": "https://github.com/test/repo", "html_url": "https://github.com/test/repo"}, "ref": "main"}, "html_url": "https://github.com/test/repo/pull/1", "title": "Test PR", "diff_url": "https://github.com/test/repo/pull/1.diff"}]`)),
 				},
@@ -176,7 +176,7 @@ func TestRepoWatchReconciler_ReconcileIssues(t *testing.T) {
 	mockHTTPClient := &http.Client{
 		Transport: &mockRoundTripper{
 			responses: map[string]*http.Response{
-				"https://api.github.com/repos/test/repo/pulls?state=open": {
+				"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=created&state=open": {
 					StatusCode: http.StatusOK,
 					Body:       io.NopCloser(strings.NewReader(`[]`)),
 				},
@@ -921,7 +921,7 @@ func TestRepoWatchReconciler_Reconcile_InvalidRepoURL(t *testing.T) {
 	mockHTTPClient := &http.Client{
 		Transport: &mockRoundTripper{
 			responses: map[string]*http.Response{
-				"https://api.github.com/repos/test/repo/pulls?state=open": {
+				"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=created&state=open": {
 					StatusCode: http.StatusOK,
 					Body:       io.NopCloser(strings.NewReader(`[{"number": 1, "head": {"repo": {"clone_url": "https://github.com/test/repo", "ref": "main"}, "html_url": "https://github.com/test/repo/pull/1"}, "title": "Test PR"}]`)),
 				},
@@ -1113,7 +1113,7 @@ func TestRepoWatchReconciler_Reconcile_ExplicitAndListedPRs(t *testing.T) {
 	mockHTTPClient := &http.Client{
 		Transport: &mockRoundTripper{
 			responses: map[string]*http.Response{
-				"https://api.github.com/repos/test/repo/pulls?state=open": {
+				"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=created&state=open": {
 					StatusCode: http.StatusOK,
 					Body:       io.NopCloser(strings.NewReader(`[{"number": 1, "head": {"repo": {"clone_url": "https://github.com/test/repo", "html_url": "https://github.com/test/repo"}, "ref": "main"}, "html_url": "https://github.com/test/repo/pull/1", "title": "Test PR 1", "diff_url": "https://github.com/test/repo/pull/1.diff"}]`)),
 				},
@@ -1215,4 +1215,108 @@ func TestRepoWatchReconciler_Reconcile_ExplicitAndListedPRs(t *testing.T) {
 	})
 	g.Expect(fakeClient.List(context.Background(), reviewSandboxList)).To(gomega.Succeed())
 	g.Expect(reviewSandboxList.Items).To(gomega.HaveLen(2))
+}
+
+func TestRepoWatchReconciler_Reconcile_FilteredAndSortedPRs(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	s := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(s)
+	_ = reviewv1alpha1.AddToScheme(s)
+
+	fakeClient := clientfake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&reviewv1alpha1.RepoWatch{}).Build()
+
+	// Mock Response
+	// PR 4: #4, Label: bug, Assignee: test-user
+	// PR 3: #3, Label: enhancement, Assignee: test-user
+	// PR 2: #2, Label: bug, Assignee: other-user
+	// PR 1: #1, Label: bug, Assignee: test-user
+
+	responseBody := `[
+        {"number": 4, "head": {"repo": {"clone_url": "u", "html_url": "u"}, "ref": "m"}, "html_url": "u", "diff_url": "d", "title": "t", "labels": [{"name": "bug"}], "assignees": [{"login": "test-user"}]},
+        {"number": 3, "head": {"repo": {"clone_url": "u", "html_url": "u"}, "ref": "m"}, "html_url": "u", "diff_url": "d", "title": "t", "labels": [{"name": "enhancement"}], "assignees": [{"login": "test-user"}]},
+        {"number": 2, "head": {"repo": {"clone_url": "u", "html_url": "u"}, "ref": "m"}, "html_url": "u", "diff_url": "d", "title": "t", "labels": [{"name": "bug"}], "assignees": [{"login": "other-user"}]},
+        {"number": 1, "head": {"repo": {"clone_url": "u", "html_url": "u"}, "ref": "m"}, "html_url": "u", "diff_url": "d", "title": "t", "labels": [{"name": "bug"}], "assignees": [{"login": "test-user"}]}
+    ]`
+
+	mockHTTPClient := &http.Client{
+		Transport: &mockRoundTripper{
+			responses: map[string]*http.Response{
+				"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=created&state=open": {
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(responseBody)),
+				},
+				"https://api.github.com/user": {
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(`{"login": "test-user", "name": "Test User", "email": "test@example.com"}`)),
+				},
+			},
+		},
+	}
+	ghClient := github.NewClient(mockHTTPClient)
+
+	r := &RepoWatchReconciler{
+		Client: fakeClient,
+		Scheme: s,
+		NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
+			return ghClient, map[string]string{"pat": "test-pat"}, nil
+		},
+	}
+
+	objName := "test-repowatch-filtered"
+	objNamespace := "default"
+	req := reconcile.Request{
+		NamespacedName: types.NamespacedName{
+			Name:      objName,
+			Namespace: objNamespace,
+		},
+	}
+
+	repoWatch := &reviewv1alpha1.RepoWatch{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      objName,
+			Namespace: objNamespace,
+		},
+		Spec: reviewv1alpha1.RepoWatchSpec{
+			RepoURL:          "https://github.com/test/repo",
+			GithubSecretName: "github-secret",
+			Review: reviewv1alpha1.PRReviewSpec{
+				MaxActiveSandboxes:   2,
+				Labels:               [][]string{{"bug"}},
+				PreferAssignedToSelf: true,
+			},
+		},
+	}
+	g.Expect(fakeClient.Create(context.Background(), repoWatch)).To(gomega.Succeed())
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "github-secret",
+			Namespace: objNamespace,
+		},
+		Data: map[string][]byte{
+			"pat": []byte("test-pat"),
+		},
+	}
+	g.Expect(fakeClient.Create(context.Background(), secret)).To(gomega.Succeed())
+
+	_, err := r.Reconcile(context.Background(), req)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	fetchedRepoWatch := &reviewv1alpha1.RepoWatch{}
+	g.Expect(fakeClient.Get(context.Background(), req.NamespacedName, fetchedRepoWatch)).To(gomega.Succeed())
+	g.Expect(fetchedRepoWatch.Status.ActiveSandboxCount).To(gomega.Equal(2))
+	// Expected order of processing: PR 4, PR 1. PR 2 is pending. PR 3 is filtered.
+	g.Expect(fetchedRepoWatch.Status.WatchedPRs).To(gomega.HaveLen(2))
+
+	// Because WatchedPRs are appended as sandboxes are created, and we passed a sorted list to reconcileReviewSandboxes,
+	// they should be in order of the passed list (PR 4, PR 1, PR 2).
+	// However, createReviewSandboxForPR is called sequentially.
+	// So WatchedPRs should reflect that order.
+
+	g.Expect(fetchedRepoWatch.Status.WatchedPRs[0].Number).To(gomega.Equal(4))
+	g.Expect(fetchedRepoWatch.Status.WatchedPRs[1].Number).To(gomega.Equal(1))
+
+	g.Expect(fetchedRepoWatch.Status.PendingPRs).To(gomega.HaveLen(1))
+	g.Expect(fetchedRepoWatch.Status.PendingPRs[0].Number).To(gomega.Equal(2))
 }

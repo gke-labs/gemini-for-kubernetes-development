@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -673,6 +674,45 @@ func createRepoWatch(c *gin.Context) {
 	// Enforce namespace
 	repoWatch.SetNamespace(namespace)
 
+	// Auto-populate labels if missing
+	labels, found, _ := unstructured.NestedStringSlice(repoWatch.Object, "spec", "review", "labels")
+	if !found || len(labels) == 0 {
+		// Ensure githubSecretName is set for getGitHubToken to work
+		_, found, _ = unstructured.NestedString(repoWatch.Object, "spec", "githubSecretName")
+		if !found {
+			_ = unstructured.SetNestedField(repoWatch.Object, "github-pat", "spec", "githubSecretName")
+		}
+
+		token, tokenErr := getGitHubToken(c.Request.Context(), repoWatch)
+		if tokenErr == nil {
+			ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
+			tc := oauth2.NewClient(c.Request.Context(), ts)
+			client := github.NewClient(tc)
+
+			repoURL, _, _ := unstructured.NestedString(repoWatch.Object, "spec", "repoURL")
+			if owner, repoName, urlErr := parseRepoURL(repoURL); urlErr == nil {
+				suggested, suggestErr := getSuggestedLabels(c.Request.Context(), client, owner, repoName)
+				if suggestErr == nil && len(suggested) > 0 {
+					var suggestedInterface []interface{}
+					for _, s := range suggested {
+						var inner []interface{}
+						for _, l := range s {
+							inner = append(inner, l)
+						}
+						suggestedInterface = append(suggestedInterface, inner)
+					}
+					if setErr := unstructured.SetNestedSlice(repoWatch.Object, suggestedInterface, "spec", "review", "labels"); setErr != nil {
+						log.Printf("Failed to set suggested labels: %v", setErr)
+					}
+				} else if suggestErr != nil {
+					log.Printf("Failed to get suggested labels: %v", suggestErr)
+				}
+			}
+		} else {
+			log.Printf("Debug: Could not get token for label suggestion: %v", tokenErr)
+		}
+	}
+
 	_, err := k8sClient.Resource(gvr).Namespace(namespace).Create(c.Request.Context(), repoWatch, v1.CreateOptions{})
 	if err != nil {
 		log.Printf("Failed to create RepoWatch from YAML: %v", err)
@@ -694,6 +734,7 @@ spec:
   pollIntervalSeconds: 300
   githubSecretName: github-pat
   review:
+    preferAssignedToSelf: true
     devcontainerConfigRef: devcontainer-json
     llm:
       apiKeySecretRef: gemini-vscode-tokens
@@ -1858,4 +1899,158 @@ func proxy(c *gin.Context) {
 	}
 
 	c.String(resp.StatusCode, string(body))
+}
+
+// TODO this is k8s specific. we need to generalize it later.
+var allowedLabelPrefixes = []string{"area/", "kind/", "priority/", "sig/", "type/"}
+
+func getSuggestedLabels(ctx context.Context, client *github.Client, owner, repo string) ([][]string, error) {
+	query := fmt.Sprintf("repo:%s/%s involves:@me is:pr", owner, repo)
+	opts := &github.SearchOptions{
+		Sort:        "updated",
+		Order:       "desc",
+		ListOptions: github.ListOptions{PerPage: 100},
+	}
+
+	result, _, err := client.Search.Issues(ctx, query, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, issue := range result.Issues {
+		log.Printf("Found issue #%d with labels:", *issue.Number)
+		for _, label := range issue.Labels {
+			if label.Name != nil {
+				log.Printf(" - %s", *label.Name)
+			}
+		}
+	}
+
+	// Count the label ocurrences
+	issueLabels := [][]string{}
+	unlabelledCount := 0
+	for i, issue := range result.Issues {
+		issueLabels = append(issueLabels, []string{})
+		if len(issue.Labels) == 0 {
+			unlabelledCount++
+		}
+		for _, label := range issue.Labels {
+			if label.Name != nil {
+				// Only consider labels with allowed prefixes
+				allowed := false
+				for _, prefix := range allowedLabelPrefixes {
+					if strings.HasPrefix(*label.Name, prefix) {
+						allowed = true
+						break
+					}
+				}
+				if !allowed {
+					continue
+				}
+				issueLabels[i] = append(issueLabels[i], *label.Name)
+			}
+		}
+	}
+
+	labels, count := findMostCommonCoOccurringLabels(issueLabels)
+
+	// If the most common co-occurring labels appear in less than all unlabelled PRs, return no suggestions
+	if count < unlabelledCount {
+		return [][]string{}, nil
+	}
+
+	return labels, nil
+}
+
+// The size of the co-occurring set we want to find (couplets)
+const TargetSize = 2
+const TopN = 5
+
+// combinations recursively generates all combinations of size k from the list of labels.
+func combinations(labels []string, k int) [][]string {
+	var result [][]string
+
+	var generate func(start int, currentCombination []string)
+	generate = func(start int, currentCombination []string) {
+		// Base case: combination is complete
+		if len(currentCombination) == k {
+			// Create a copy to append to the result
+			combinationCopy := make([]string, k)
+			copy(combinationCopy, currentCombination)
+			result = append(result, combinationCopy)
+			return
+		}
+
+		// Recursive step
+		for i := start; i < len(labels); i++ {
+			// Add the current label and recurse
+			generate(i+1, append(currentCombination, labels[i]))
+		}
+	}
+
+	generate(0, []string{})
+	return result
+}
+
+// findMostCommonCoOccurringLabels processes the data to find the triplet with the highest support.
+func findMostCommonCoOccurringLabels(itemLabels [][]string) ([][]string, int) {
+	// 1. Initialize a map to store the counts (support) of each label set
+	counts := make(map[string]int)
+
+	// 2. Iterate over all items
+	for _, labels := range itemLabels {
+		// Skip items that don't have enough labels
+		if len(labels) < TargetSize {
+			continue
+		}
+
+		// It is crucial to sort the labels *before* generating combinations
+		// to ensure that combinations like (a, b, c) and (c, b, a) are treated
+		// as the same set, ensuring consistent counting.
+		sort.Strings(labels)
+
+		// 3. Generate all combinations of size TargetSize
+		combos := combinations(labels, TargetSize)
+
+		// 4. Count the support for each combination
+		for _, combo := range combos {
+			// Create a unique string key for the map from the sorted combination
+			// This key represents the unique itemset {L1, L2, L3}
+			key := strings.Join(combo, "||")
+			counts[key]++
+		}
+	}
+
+	type labelCount struct {
+		labels []string
+		count  int
+	}
+
+	var allCounts []labelCount
+	for key, count := range counts {
+		allCounts = append(allCounts, labelCount{
+			labels: strings.Split(key, "||"),
+			count:  count,
+		})
+	}
+
+	// Sort by count desc, then by label key asc
+	sort.Slice(allCounts, func(i, j int) bool {
+		if allCounts[i].count != allCounts[j].count {
+			return allCounts[i].count > allCounts[j].count
+		}
+		return strings.Join(allCounts[i].labels, "||") < strings.Join(allCounts[j].labels, "||")
+	})
+
+	var result [][]string
+	maxCount := 0
+	if len(allCounts) > 0 {
+		maxCount = allCounts[0].count
+	}
+
+	for i := 0; i < len(allCounts) && i < TopN; i++ {
+		result = append(result, allCounts[i].labels)
+	}
+
+	return result, maxCount
 }

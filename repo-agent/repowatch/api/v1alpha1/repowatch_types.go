@@ -69,6 +69,15 @@ type PRReviewSpec struct {
 	// PullRequests to filter for this handler
 	// +kubebuilder:validation:Optional
 	PullRequests []int `json:"pullRequests,omitempty"`
+
+	// Labels to filter issues for this handler
+	// labels within the each array are anded, arrays are ored
+	// +kubebuilder:validation:Optional
+	Labels [][]string `json:"labels"`
+
+	// Prefer assigned to self when selecting PRs for review
+	// +kubebuilder:validation:Optional
+	PreferAssignedToSelf bool `json:"preferAssignedToSelf,omitempty"`
 }
 
 type IssueHandlerSpec struct {
