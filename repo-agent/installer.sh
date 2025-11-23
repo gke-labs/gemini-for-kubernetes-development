@@ -3,14 +3,32 @@ set -euo pipefail
 
 echo "Checking params"
 
+# Installation mode: personal or multi-user
+: ${INSTALL_MODE:="single-user"}
 
+if [ "$INSTALL_MODE" != "single-user" ] && [ "$INSTALL_MODE" != "multi-user" ]; then
+    echo "Error: INSTALL_MODE must be either 'single-user' or 'multi-user'."
+    exit 1
+fi
+
+# Required environment variables
 : "${GEMINI_API_KEY:?Error: GEMINI_API_KEY is not set. Please set it before running this script.}"
+
+if [ "$INSTALL_MODE" = "single-user" ]; then
 : "${GITHUB_PAT:?Error: GITHUB_PAT is not set. Please set it before running this script.}"
 : ${NAMESPACE:=default}
+else
+# TODO (barney-s): remove PAT requirement for multi-user mode once OAuth flow is implemented
+: "${GITHUB_PAT:?Error: GITHUB_PAT is not set. Please set it before running this script.}"
+: "${GITHUB_CLIENT_ID:?Error: GITHUB_CLIENT_ID is not set. Is is required for 'multi-user' installation mode.}" 
+: "${GITHUB_CLIENT_SECRET:?Error: GITHUB_CLIENT_SECRET is not set. Is is required for 'multi-user' installation mode.}" 
+fi
+
 : ${ENVOY_GW_VERSION:=v1.5.2}
 : ${KRO_VERSION:=0.5.1}
 : ${AGENT_SANDBOX_VERSION:=v0.1.0}
-: ${REPO_AGENT_VERSION:=v0.1.0-rc.2}
+: ${REPO_AGENT_VERSION:=v0.1.0-rc.3}
+
 
 echo "Getting git config..."
 GIT_USER_NAME=$(git config --global user.name || true)
@@ -53,10 +71,30 @@ kubectl create secret -n ${NAMESPACE} generic github-pat --from-literal=pat=${GI
 
 echo "Install repo agent"
 kubectl apply -f https://github.com/gke-labs/gemini-for-kubernetes-development/releases/download/${REPO_AGENT_VERSION}/manifest.yaml
+kubectl create secret -n repo-agent-system generic gemini-vscode-tokens --from-literal=gemini=${GEMINI_API_KEY} --dry-run=client -o yaml | kubectl apply -f -
+if [ ! -z "${ANTHROPIC_API_KEY:-}" ]; then
+  echo "Creating Anthropic API key secret"
+  kubectl create secret -n repo-agent-system generic anthropic-api-key --from-literal=claude=${ANTHROPIC_API_KEY} --dry-run=client -o yaml | kubectl apply -f -
+else
+  echo "No Anthropic API key (ANTHROPIC_API_KEY) provided, skipping creation of secret"
+fi
 
-echo "Setting up repo-agent for namespace ${NAMESPACE}"
-URL_PREFIX=https://raw.githubusercontent.com/gke-labs/gemini-for-kubernetes-development/refs/tags/${REPO_AGENT_VERSION}/repo-agent/examples
-curl ${URL_PREFIX}/go-configmap-devcontainer.yaml  | kubectl apply -n ${NAMESPACE} -f -
-curl ${URL_PREFIX}/sandbox-rbac.yaml  | kubectl apply -n ${NAMESPACE} -f -
-kubectl set subject clusterrolebinding review-sandbox --serviceaccount=${NAMESPACE}:review-sandbox
-kubectl set subject clusterrolebinding issue-sandbox --serviceaccount=${NAMESPACE}:issue-sandbox
+kubectl create secret -n repo-agent-system generic github-pat --from-literal=pat=${GITHUB_PAT} --from-literal=name="`git config --global user.name`" --from-literal=email=`git config --global user.email` --dry-run=client -o yaml | kubectl apply -f -
+
+# TODO (barney-s): Refactor this once we cleanup the single vs multi user installation process
+if [ "$INSTALL_MODE" != "multi-user" ]; then
+  echo "Setting up repo-agent for namespace ${NAMESPACE} for single user"
+
+  # Create github pat secret for the API
+  kubectl create secret -n repo-agent-system generic github-token \
+    --from-literal=token=${GITHUB_PAT} \
+    --dry-run=client -o yaml | kubectl apply -f -;
+else
+  echo "Setting up repo-agent for multi-user mode"
+  # Create github-token secret for the API, optionally including OAuth credentials
+  kubectl create secret -n repo-agent-system generic github-token \
+    --from-literal=token=${GITHUB_PAT} \
+    --from-literal=github-client-id=${GITHUB_CLIENT_ID} \
+    --from-literal=github-client-secret=${GITHUB_CLIENT_SECRET} \
+    --dry-run=client -o yaml | kubectl apply -f -;
+fi
