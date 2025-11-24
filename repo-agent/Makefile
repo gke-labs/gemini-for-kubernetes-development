@@ -92,6 +92,7 @@ install-repo-agent:
 	#  copy RGD to k8s dir so it gets deployed
 	cp review-sandbox/review-sandbox-rgd.yaml k8s/
 	cp issue-sandbox/issue-sandbox-rgd.yaml k8s/
+	cp dev-sandbox/dev-sandbox-rgd.yaml k8s/
 	../dev/tools/deploy-to-kube --image-prefix=$(REGISTRY) --working-dir .
 
 .PHONY: create-secrets
