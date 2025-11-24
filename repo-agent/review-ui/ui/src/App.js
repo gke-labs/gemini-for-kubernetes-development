@@ -633,35 +633,12 @@ function App() {
         </header>
         <main className="login-container">
           <h2>Welcome to Repo Agent</h2>
-          <p>Please log in with GitHub to manage your review sandboxes.</p>
           <div className="login-actions">
             {githubAuthEnabled ? (
                 <button className="btn btn-submit" onClick={handleLogin}>Login with GitHub</button>
             ) : (
-                <div className="github-config-section">
-                    <p className="message info">GitHub OAuth is not configured. You can continue as Guest or configure it below.</p>
-                    {!showGithubConfig ? (
-                        <button className="btn" onClick={() => setShowGithubConfig(true)}>Configure GitHub OAuth</button>
-                    ) : (
-                        <form onSubmit={handleGithubConfigSubmit} className="settings-form">
-                            {configError && <div className="message error">{configError}</div>}
-                            <div className="form-group">
-                                <label>Client ID:</label>
-                                <input type="text" value={githubClientId} onChange={e => setGithubClientId(e.target.value)} required />
-                            </div>
-                            <div className="form-group">
-                                <label>Client Secret:</label>
-                                <input type="password" value={githubClientSecret} onChange={e => setGithubClientSecret(e.target.value)} required />
-                            </div>
-                            <div className="form-actions">
-                                <button type="submit" className="btn btn-submit">Save & Enable</button>
-                                <button type="button" className="btn" onClick={() => setShowGithubConfig(false)}>Cancel</button>
-                            </div>
-                        </form>
-                    )}
-                </div>
+                <button className="btn btn-submit" onClick={handleGuestLogin}>Continue</button>
             )}
-            <button className="btn" onClick={handleGuestLogin}>Continue as Guest</button>
           </div>
         </main>
       </div>
