@@ -15,7 +15,6 @@
 package llm
 
 import (
-	"bytes"
 	"os/exec"
 )
 
@@ -28,14 +27,14 @@ type CommandExecutor interface {
 type RealCommandExecutor struct{}
 
 func (e *RealCommandExecutor) Run(command string, args ...string) ([]byte, error) {
-	const bufferSize = 25 * 1024 * 1024 // 25MB
-	stderrBuffer := NewCircularBuffer(bufferSize)
+	const errBufferSize = 25 * 1024 * 1024 // 25MB
+	const outBufferSize = 1024 * 1024      // 1MB
+	stderrBuffer := NewCircularBuffer(errBufferSize)
+	stdoutBuffer := NewCircularBuffer(outBufferSize)
 	cmd := exec.Command(command, args...)
 	// Dont return combined output. Return only stdout and log stderr separately.
-	// Create a buffer to capture stdout
-	var stdout bytes.Buffer
 	cmd.Stderr = stderrBuffer
-	cmd.Stdout = &stdout
+	cmd.Stdout = stdoutBuffer
 	err := cmd.Run()
 	// Retrieve the captured output from the buffer
 	capturedOutput := stderrBuffer.String()
@@ -49,5 +48,5 @@ func (e *RealCommandExecutor) Run(command string, args ...string) ([]byte, error
 		return nil, err
 	}
 
-	return stdout.Bytes(), nil
+	return stdoutBuffer.Bytes(), nil
 }
