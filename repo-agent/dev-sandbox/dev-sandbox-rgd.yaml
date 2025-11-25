@@ -16,6 +16,8 @@ spec:
       source:
         cloneURL: string
         htmlURL: string
+      user:
+        dotFilesRepo: string
       destination:
         pushEnabled: boolean | default=false
         branch: string
@@ -51,14 +53,14 @@ spec:
               serviceAccountName: ${schema.spec.serviceAccountName}
               # initContainers:
               #   - name: gemini-configs
-              #     image: {{imagePrefix}}/configdir-cli:git-c0bbab0
+              #     image: {{imagePrefix}}configdir-cli:git-c0bbab0
               #     args: ["--directory", "/workspaces", "--namespace", "${schema.metadata.namespace}" ,  "--name", "${schema.spec.llm.configdirRef}", "--ignore-not-found-error"]
               #     volumeMounts:
               #       - name: workspaces-pvc
               #         mountPath: /workspaces
               containers:
                 # - name: issue-sidecar
-                #   image: {{imagePrefix}}/issue-sidecar:git-c0bbab0
+                #   image: {{imagePrefix}}issue-sidecar:git-c0bbab0
                 #   env:
                 #     - name: NAMESPACE
                 #       value: ${schema.metadata.namespace}
@@ -69,8 +71,10 @@ spec:
                 #       mountPath: /workspaces
                 - name: issue-sandbox
                   #image: ghcr.io/coder/envbuilder
-                  image: {{imagePrefix}}/dev-sandbox:latest
+                  image: {{imagePrefix}}dev-sandbox:latest
                   env:
+                    - name: USER_DOTFILESREPO
+                      value: ${schema.spec.user.dotFilesRepo}
                     # - name: ISSUE_BRANCH
                     #   value: ${schema.spec.destination.branch}
                     - name: GIT_HTML_URL
