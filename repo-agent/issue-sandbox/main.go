@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/llm"
 )
 
 func main() {
@@ -58,7 +60,7 @@ func prepareGitBranch() (string, error) {
 	githubUserName := os.Getenv("GITHUB_USER_NAME")
 	issueBranch := os.Getenv("ISSUE_BRANCH")
 
-	cmdop, err := runCommand("git", "rev-parse", "HEAD")
+	cmdop, err := runGitCommand("rev-parse", "HEAD")
 	if err != nil {
 		return "", fmt.Errorf("failed to get old commit id: %w", err)
 	}
@@ -66,7 +68,7 @@ func prepareGitBranch() (string, error) {
 
 	// Typically origin would be the upstream repo and not the user's fork
 	// Removing origin to prevent accidental pushes to upstream
-	if _, err := runCommand("git", "remote", "remove", "origin"); err != nil {
+	if _, err := runGitCommand("remote", "remove", "origin"); err != nil {
 		log.Printf("could not remove origin, probably because it does not exist: %v", err)
 	}
 
@@ -78,30 +80,30 @@ func prepareGitBranch() (string, error) {
 	}
 
 	if githubUserEmail != "" {
-		if _, err := runCommand("git", "config", "--global", "user.email", githubUserEmail); err != nil {
+		if _, err := runGitCommand("config", "--global", "user.email", githubUserEmail); err != nil {
 			return oldCommitID, fmt.Errorf("failed to set git user email: %w", err)
 		}
 	}
 
 	if githubUserName != "" {
-		if _, err := runCommand("git", "config", "--global", "user.name", githubUserName); err != nil {
+		if _, err := runGitCommand("config", "--global", "user.name", githubUserName); err != nil {
 			return oldCommitID, fmt.Errorf("failed to set git user name: %w", err)
 		}
 	}
 
 	// Check if the issue branch already exists
-	branchesOutput, err := runCommand("git", "branch", "--list", issueBranch)
+	branchesOutput, err := runGitCommand("branch", "--list", issueBranch)
 	if err != nil {
 		return oldCommitID, fmt.Errorf("failed to list git branches: %w", err)
 	}
 	if strings.TrimSpace(string(branchesOutput)) != "" {
 		log.Printf("Issue branch %s already exists, checking it out", issueBranch)
-		if _, err := runCommand("git", "checkout", issueBranch); err != nil {
+		if _, err := runGitCommand("checkout", issueBranch); err != nil {
 			return oldCommitID, fmt.Errorf("failed to checkout existing issue branch: %w", err)
 		}
 	} else {
 		log.Printf("Issue branch %s does not exist, creating it", issueBranch)
-		if _, err := runCommand("git", "checkout", "-b", issueBranch); err != nil {
+		if _, err := runGitCommand("checkout", "-b", issueBranch); err != nil {
 			return oldCommitID, fmt.Errorf("failed to create issue branch: %w", err)
 		}
 	}
@@ -119,23 +121,23 @@ func processGitChanges(oldCommitID string) error {
 	// Commit and push
 	if githubUserEmail != "" {
 		// Check if there are any changes to commit
-		statusOutput, err := runCommand("git", "status", "--porcelain")
+		statusOutput, err := runGitCommand("status", "--porcelain")
 		if err != nil {
 			return fmt.Errorf("failed to get git status: %w", err)
 		}
 		if strings.TrimSpace(string(statusOutput)) != "" {
 			log.Println("Changes detected, committing")
-			if _, err := runCommand("git", "add", "."); err != nil {
+			if _, err := runGitCommand("add", "."); err != nil {
 				return fmt.Errorf("failed to git add: %v", err)
 			}
 			commitMsg := fmt.Sprintf("fix for issue # %s", issueID)
-			if _, err := runCommand("git", "commit", "-m", commitMsg); err != nil {
+			if _, err := runGitCommand("commit", "-m", commitMsg); err != nil {
 				return fmt.Errorf("failed to git commit: %v", err)
 			}
 		}
 	}
 
-	newCommitID, err := runCommand("git", "rev-parse", "HEAD")
+	newCommitID, err := runGitCommand("rev-parse", "HEAD")
 	if err != nil {
 		return fmt.Errorf("failed to get new commit id: %w", err)
 	}
@@ -143,7 +145,7 @@ func processGitChanges(oldCommitID string) error {
 	if strings.TrimSpace(string(newCommitID)) != oldCommitID {
 		log.Println("New changes being committed")
 		if gitPushEnabled {
-			if _, err := runCommand("git", "push", "--set-upstream", "origin", issueBranch, "--force"); err != nil {
+			if _, err := runGitCommand("push", "--set-upstream", "origin", issueBranch, "--force"); err != nil {
 				return fmt.Errorf("failed to push changes: %w", err)
 			}
 			log.Println("New changes pushed")
@@ -155,25 +157,20 @@ func processGitChanges(oldCommitID string) error {
 }
 
 func runIssueSolver() error {
-	log.Println("Starting issue solver")
+	agentName := os.Getenv("AGENT_NAME")
+	log.Printf("Starting issue solver with AGENT_NAME: %s", agentName)
 
 	// Environment variables
 	agentPrompt := os.Getenv("AGENT_PROMPT")
 
-	// Handle .gemini directory
-	if _, err := os.Stat("/workspaces/.gemini"); err == nil {
-		log.Println(".gemini directory exists in /workspaces, copying to repo directory")
-		if _, err := os.Stat(".gemini"); err == nil {
-			log.Println(".gemini directory exists in repo directory, moving to .gemini.bak")
-			if err := os.Rename(".gemini", ".gemini.bak"); err != nil {
-				return fmt.Errorf("failed to move .gemini to .gemini.bak: %w", err)
-			}
-		}
-		if _, err := runCommand("cp", "-R", "/workspaces/.gemini", ".gemini"); err != nil {
-			return fmt.Errorf("failed to copy .gemini directory: %w", err)
-		}
-	} else {
-		log.Println(".gemini directory does not exist in /workspaces")
+	provider, err := llm.NewLLMProvider(agentName)
+	if err != nil {
+		return err
+	}
+	provider.AddPostProcessor(llm.StripYAMLMarkers)
+
+	if err := provider.Setup("/workspaces", "/tokens"); err != nil {
+		return err
 	}
 
 	// Run gemini
@@ -181,33 +178,18 @@ func runIssueSolver() error {
 	if err := os.WriteFile("../agent-prompt.txt", []byte(agentPrompt), 0644); err != nil {
 		return fmt.Errorf("failed to write agent-prompt.txt: %w", err)
 	}
-	geminiAPIKey := os.Getenv("GEMINI_API_KEY")
-	if geminiAPIKey == "" {
-		geminiAPIKeyBytes, err := os.ReadFile("/tokens/gemini")
-		if err != nil {
-			return fmt.Errorf("failed to read gemini token: %w", err)
-		}
-		geminiAPIKey = string(geminiAPIKeyBytes)
-	}
-	cmd := exec.Command("gemini", "-y", "-p", agentPrompt)
-	cmd.Env = append(os.Environ(), "GEMINI_API_KEY="+geminiAPIKey)
-	output, err := cmd.CombinedOutput()
+
+	output, err := provider.Run(agentPrompt)
 	if err != nil {
-		log.Printf("gemini command failed: %v, output: %s", err, string(output))
+		log.Printf("Agent run failed: %v, output: %s", err, string(output))
 	}
 	if err := os.WriteFile("../agent-output.txt", output, 0644); err != nil {
 		return fmt.Errorf("failed to write agent-output.txt: %w", err)
 	}
 
-	// Cleanup .gemini
-	if _, err := os.Stat(".gemini.bak"); err == nil {
-		log.Println("moving .gemini.bak -> .gemini")
-		if err := os.RemoveAll(".gemini"); err != nil {
-			log.Printf("failed to remove .gemini directory: %v", err)
-		}
-		if err := os.Rename(".gemini.bak", ".gemini"); err != nil {
-			return fmt.Errorf("failed to move .gemini.bak to .gemini: %w", err)
-		}
+	// Cleanup
+	if err := provider.Cleanup("/workspaces"); err != nil {
+		return err
 	}
 
 	return nil
@@ -222,7 +204,8 @@ func _runCommand(name string, args ...string) ([]byte, error) {
 	return output, nil
 }
 
-func runCommand(name string, args ...string) ([]byte, error) {
+func runGitCommand(args ...string) ([]byte, error) {
+	name := "git"
 	log.Printf("Running command: %s %v", name, args)
 	return _runCommand(name, args...)
 }

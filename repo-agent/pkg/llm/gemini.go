@@ -68,6 +68,20 @@ func (g *Gemini) Setup(workspacesDir, tokensDir string) error {
 	return nil
 }
 
+func (g *Gemini) Cleanup(workspacesDir string) error {
+	geminiBackupDir := filepath.Join(workspacesDir, ".gemini.bak")
+	if _, err := os.Stat(geminiBackupDir); err == nil {
+		log.Println("moving .gemini.bak -> .gemini")
+		if err := os.RemoveAll(geminiBackupDir); err != nil {
+			log.Printf("failed to remove .gemini directory: %v", err)
+		}
+		if err := os.Rename(".gemini.bak", ".gemini"); err != nil {
+			return fmt.Errorf("failed to move .gemini.bak to .gemini: %w", err)
+		}
+	}
+	return nil
+}
+
 func (g *Gemini) Run(agentPrompt string) ([]byte, error) {
 	log.Println("running gemini")
 

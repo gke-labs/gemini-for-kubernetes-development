@@ -55,6 +55,10 @@ func (c *Claude) Setup(_, _ string) error {
 	return nil
 }
 
+func (c *Claude) Cleanup(_ string) error {
+	return nil
+}
+
 func (c *Claude) Run(prompt string) ([]byte, error) {
 	log.Printf("Claude provider called with prompt: %s", prompt)
 

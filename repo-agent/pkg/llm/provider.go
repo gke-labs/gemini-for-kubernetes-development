@@ -25,6 +25,7 @@ type PostProcessor func([]byte) ([]byte, error)
 // Provider defines the interface for interacting with an LLM.
 type Provider interface {
 	Setup(workspacesDir, tokensDir string) error
+	Cleanup(workspacesDir string) error
 	Run(prompt string) ([]byte, error)
 	// AddPostProcessor adds a post-processing function to the provider.
 	// These functions are applied sequentially to the LLM's raw output.
