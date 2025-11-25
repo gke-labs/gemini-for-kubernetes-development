@@ -58,7 +58,7 @@ def create_and_push_tag(tag_name, clean_version):
     subprocess.check_call(["git", "tag", "-a", "-m", f"Release {clean_version}", tag_name])
     
     print(f"Pushing tag {tag_name}...")
-    subprocess.check_call(["git", "push", "origin", tag_name], cwd=working_dir)
+    subprocess.check_call(["git", "push", "origin", tag_name])
 
 def create_and_push_branch(version):
     """Creates and pushes a release branch if appropriate."""
