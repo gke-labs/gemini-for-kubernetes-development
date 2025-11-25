@@ -68,3 +68,21 @@ func (b *CircularBuffer) String() string {
 	}
 	return string(b.data[:b.count])
 }
+
+// Bytes returns the contents of the buffer starting from the oldest data.
+func (b *CircularBuffer) Bytes() []byte {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.count == 0 {
+		return []byte{}
+	}
+
+	if b.write < b.size && b.count == b.size {
+		buf := make([]byte, b.size)
+		copy(buf, b.data[b.write:])
+		copy(buf[b.size-b.write:], b.data[:b.write])
+		return buf
+	}
+	return b.data[:b.count]
+}
