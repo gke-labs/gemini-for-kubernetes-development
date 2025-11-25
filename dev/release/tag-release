@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+# Copyright 2025 The Kubernetes Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import argparse
+import os
+import re
+import subprocess
+import sys
+
+from shared import utils
+
+def get_version(working_dir):
+    """Reads the version from version.go."""
+    version_file = os.path.join(working_dir, "version.go")
+    if not os.path.exists(version_file):
+        print(f"Error: {version_file} not found.")
+        sys.exit(1)
+
+    with open(version_file, "r") as f:
+        content = f.read()
+        # Match const REPOAGENT_RELEASE_VERSION = "..."
+        match = re.search(r'RELEASE_VERSION\s*=\s*"([^"]+)"', content)
+        if match:
+            return match.group(1)
+    return None
+
+def validate_semver(version):
+    """Validates if the version string is SemVer compatible."""
+    clean_version = version.lstrip("v")
+    # regex from https://semver.org/#is-there-a-suggested-regular-expression-regex-to-check-a-semver-string
+    semver_regex = r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$"
+    return bool(re.match(semver_regex, clean_version))
+
+def tag_exists(tag_name, working_dir):
+    """Checks if a git tag already exists."""
+    try:
+        output = subprocess.check_output(["git", "tag", "-l", tag_name], cwd=working_dir, text=True).strip()
+        return output == tag_name
+    except subprocess.CalledProcessError as e:
+        print(f"Error checking tags: {e}")
+        sys.exit(1)
+
+def create_and_push_tag(tag_name, clean_version):
+    """Creates and pushes a git tag."""
+    print(f"Creating tag {tag_name}...")
+    subprocess.check_call(["git", "tag", "-a", "-m", f"Release {clean_version}", tag_name])
+    
+    print(f"Pushing tag {tag_name}...")
+    subprocess.check_call(["git", "push", "origin", tag_name], cwd=working_dir)
+
+def create_and_push_branch(version):
+    """Creates and pushes a release branch if appropriate."""
+    # Branch creation logic
+    if "rc" in version.lower() or "beta" in version.lower():
+        print("Skipping branch creation (rc or beta detected).")
+        return
+
+    # Create Release Branch from Major.Minor
+    match = re.match(r"^(\d+\.\d+)", version)
+    if match:
+        minor_version = match.group(1)
+        release_branch = f"release-{minor_version}"
+        print(f"Creating release branch {release_branch}...")
+        
+        try:
+            subprocess.check_call(["git", "branch", release_branch])
+            subprocess.check_call(["git", "push", "origin", release_branch])
+        except subprocess.CalledProcessError as e:
+            print(f"Branch creation or push failed: {e}")
+            sys.exit(1)
+    else:
+        print("Could not extract Major.Minor for branch creation.")
+        sys.exit(1)
+
+def main():
+    parser = argparse.ArgumentParser(description="Tag release based on version.go")
+    parser.add_argument("--working-dir",
+                        dest="working_dir",
+                        help="use working dir instead of repo root",
+                        type=str,
+                        default=None)
+    args = parser.parse_args()
+
+    repo_root = utils.get_repo_root()
+    working_dir = args.working_dir or repo_root
+    print(f"using working dir: {working_dir}")
+
+    version = get_version(working_dir)
+    
+    if not version:
+        print("Error: Could not find RELEASE_VERSION in version.go")
+        sys.exit(1)
+
+    print(f"Found version: {version}")
+
+    if not validate_semver(version):
+        print(f"Error: Version {version} is not SemVer compatible.")
+        sys.exit(1)
+
+    clean_version = version.lstrip("v")
+    tag_name = f"v{clean_version}"
+    
+    if tag_exists(tag_name, working_dir):
+        print(f"Tag {tag_name} already exists")
+        sys.exit(0)
+
+    create_and_push_tag(tag_name, clean_version)
+    create_and_push_branch(tag_name)
+
+if __name__ == "__main__":
+    main()
