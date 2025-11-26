@@ -773,6 +773,10 @@ spec:
           bug , feature , document, support, cleanup or other
           In the next line, provide a concise explanation of your reasoning for
           the assigned category.
+
+          Issue Title: "{{.Title}}"
+          Issue Body: "{{.Body}}"
+          HTML URL: "{{.HTMLURL}}"
         provider: gemini-cli
       maxActiveSandboxes: 1
       name: triage
