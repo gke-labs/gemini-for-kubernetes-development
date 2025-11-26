@@ -521,6 +521,57 @@ function App() {
     .catch(err => console.error("Failed to add PR:", err));
   };
 
+  const handlePRScaleUp = (id) => {
+    fetch(`/api/repo/${activeRepo.name}/prs/${id}/scaleup`, { method: 'POST' })
+      .then(res => {
+        if (res.ok) {
+          // Refresh PRs to update status
+          fetchRepos();
+        } else {
+          alert("Failed to scale up sandbox");
+        }
+      })
+      .catch(err => console.error("Failed to scale up sandbox:", err));
+  };
+
+  const handlePRScaleDown = (id) => {
+    fetch(`/api/repo/${activeRepo.name}/prs/${id}/scaledown`, { method: 'POST' })
+      .then(res => {
+        if (res.ok) {
+          // Refresh PRs to update status
+          fetchRepos();
+        } else {
+          alert("Failed to scale down sandbox");
+        }
+      })
+      .catch(err => console.error("Failed to scale down sandbox:", err));
+  };
+
+  const handleIssueScaleUp = (issueId, handlerName) => {
+    fetch(`/api/repo/${activeRepo.name}/issues/${issueId}/handler/${handlerName}/scaleup`, { method: 'POST' })
+      .then(res => {
+        if (res.ok) {
+          // Refresh Issues
+          fetchRepos(); // This might be overkill but ensures consistency. Ideally we just re-fetch issues.
+        } else {
+          alert("Failed to scale up issue sandbox");
+        }
+      })
+      .catch(err => console.error("Failed to scale up issue sandbox:", err));
+  };
+
+  const handleIssueScaleDown = (issueId, handlerName) => {
+    fetch(`/api/repo/${activeRepo.name}/issues/${issueId}/handler/${handlerName}/scaledown`, { method: 'POST' })
+      .then(res => {
+        if (res.ok) {
+           fetchRepos();
+        } else {
+          alert("Failed to scale down issue sandbox");
+        }
+      })
+      .catch(err => console.error("Failed to scale down issue sandbox:", err));
+  };
+
   const renderContent = () => {
     if (!activeRepo) return <p>Please select or add a repository to watch.</p>;
     const namespace = user || 'default';
@@ -549,6 +600,8 @@ function App() {
                 toggleCollapse={toggleCollapse}
                 namespace={namespace}
                 handleMoveCommentAndSave={handleMoveCommentAndSave}
+                handleScaleUp={handlePRScaleUp}
+                handleScaleDown={handlePRScaleDown}
               />
             ))
           }
@@ -571,6 +624,8 @@ function App() {
           handleIssueDelete={handleIssueDelete}
           getSandboxStatusClass={getSandboxStatusClass}
           namespace={namespace}
+          handleScaleUp={handleIssueScaleUp}
+          handleScaleDown={handleIssueScaleDown}
         />
       ));
     }

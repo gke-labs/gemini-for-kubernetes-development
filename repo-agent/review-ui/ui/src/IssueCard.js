@@ -10,6 +10,8 @@ function IssueCard({
   handleIssueDelete,
   getSandboxStatusClass,
   namespace,
+  handleScaleUp,
+  handleScaleDown,
 }) {
   const [isCollapsed, setIsCollapsed] = useState(true);
   const [reviewFlairText, setReviewFlairText] = useState('');
@@ -57,11 +59,21 @@ function IssueCard({
             </span>
           )}
           {getSandboxStatusClass(issue) === 'green' ? (
-            <a href={`/sandbox/${namespace}/${issue.sandbox}/`} target="_blank" rel="noopener noreferrer" className={`pr-sandbox ${getSandboxStatusClass(issue)}`}>
-              Sandbox &#9654;
-            </a>
+            <div style={{display: 'flex', alignItems: 'center', gap: '5px'}}>
+              <a href={`/sandbox/${namespace}/${issue.sandbox}/`} target="_blank" rel="noopener noreferrer" className={`pr-sandbox ${getSandboxStatusClass(issue)}`}>
+                Sandbox
+              </a>
+               <button className="btn btn-sm pr-sandbox yellow" style={{padding: '4px 10px', fontSize: '14px'}} onClick={(e) => { e.stopPropagation(); handleScaleDown(issue.id, activeSubTab.name); }} title="Scale Down">
+                &#9646;&#9646;
+              </button>
+            </div>
           ) : getSandboxStatusClass(issue) === 'yellow' ? (
-            <span className={`pr-sandbox ${getSandboxStatusClass(issue)}`}>Sandbox &#9646;&#9646;</span>
+            <div style={{display: 'flex', alignItems: 'center', gap: '5px'}}>
+              <span className={`pr-sandbox ${getSandboxStatusClass(issue)}`}>Sandbox</span>
+              <button className="btn btn-sm pr-sandbox green" style={{padding: '4px 10px', fontSize: '14px'}} onClick={(e) => { e.stopPropagation(); handleScaleUp(issue.id, activeSubTab.name); }} title="Scale Up">
+                  &#9654;
+               </button>
+            </div>
           ) : (
             <span className={`pr-sandbox ${getSandboxStatusClass(issue)}`}>Sandbox: Not created</span>
           )}

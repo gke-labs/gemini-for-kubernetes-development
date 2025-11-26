@@ -23,6 +23,8 @@ function PrReviewCard({
   getSandboxStatusClass,
   namespace,
   handleMoveCommentAndSave,
+  handleScaleUp,
+  handleScaleDown,
 }) {
   const [diff, setDiff] = useState(null);
   const [diffError, setDiffError] = useState(null);
@@ -369,11 +371,21 @@ function PrReviewCard({
             </span>
           )}
           {getSandboxStatusClass(pr) === 'green' ? (
-            <a href={`/sandbox/${namespace}/${pr.sandbox}/`} target="_blank" rel="noopener noreferrer" className={`pr-sandbox ${getSandboxStatusClass(pr)}`}>
-              Sandbox &#9654;
-            </a>
+            <div style={{display: 'flex', alignItems: 'center', gap: '5px'}}>
+              <a href={`/sandbox/${namespace}/${pr.sandbox}/`} target="_blank" rel="noopener noreferrer" className={`pr-sandbox ${getSandboxStatusClass(pr)}`}>
+                Sandbox
+              </a>
+              <button className="btn btn-sm pr-sandbox yellow" style={{padding: '4px 10px', fontSize: '14px'}} onClick={(e) => { e.stopPropagation(); handleScaleDown(pr.id); }} title="Scale Down">
+                &#9646;&#9646;
+              </button>
+            </div>
           ) : getSandboxStatusClass(pr) === 'yellow' ? (
-            <span className={`pr-sandbox ${getSandboxStatusClass(pr)}`}>Sandbox &#9646;&#9646;</span>
+             <div style={{display: 'flex', alignItems: 'center', gap: '5px'}}>
+               <span className={`pr-sandbox ${getSandboxStatusClass(pr)}`}>Sandbox</span>
+               <button className="btn btn-sm pr-sandbox green" style={{padding: '4px 10px', fontSize: '14px'}} onClick={(e) => { e.stopPropagation(); handleScaleUp(pr.id); }} title="Scale Up">
+                  &#9654;
+               </button>
+             </div>
           ) : (
             <span className={`pr-sandbox ${getSandboxStatusClass(pr)}`}>Sandbox: Not created</span>
           )}
