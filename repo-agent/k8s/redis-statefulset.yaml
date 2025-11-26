@@ -14,6 +14,10 @@ spec:
       labels:
         app: redis
     spec:
+      securityContext:
+        # This ID (e.g., 1000) is often the non-root user/group
+        # for standard images, or a safe ID to use with fsGroup.
+        fsGroup: 1000
       containers:
       - name: redis
         image: ko://repo-agent/review-ui/images/redis # This will be built locally
