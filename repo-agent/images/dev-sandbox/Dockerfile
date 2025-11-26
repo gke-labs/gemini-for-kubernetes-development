@@ -9,14 +9,14 @@ COPY go.sum go.sum
 # and so that source changes don't invalidate our downloaded layer
 RUN go mod download
 # Prebuilds for speed
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -v k8s.io/klog/v2
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -v k8s.io/klog/v2 golang.org/x/crypto/ssh
 
 
 # Copy the llm directory
 COPY pkg/llm/ ./pkg/llm/
 
-COPY dev-sandbox/ .
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -v -o /dev-sandbox .
+COPY dev-sandbox/ dev-sandbox/
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -v -o /dev-sandbox ./dev-sandbox
 
 # Envbuilder root
 FROM ghcr.io/coder/envbuilder

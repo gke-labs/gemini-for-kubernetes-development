@@ -4,18 +4,22 @@ go 1.24.7
 
 require (
 	github.com/bluekeyes/go-gitdiff v0.8.1
+	github.com/creack/pty v1.1.24
 	github.com/gin-contrib/sessions v1.0.4
 	github.com/gin-gonic/gin v1.11.0
 	github.com/go-redis/redis/v8 v8.11.5
 	github.com/google/go-cmp v0.7.0
 	github.com/google/go-github/v39 v39.2.0
 	github.com/onsi/gomega v1.38.2
+	github.com/spf13/cobra v1.9.1
 	go.yaml.in/yaml/v3 v3.0.4
+	golang.org/x/crypto v0.45.0
 	golang.org/x/oauth2 v0.31.0
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.34.1
 	k8s.io/apimachinery v0.34.1
 	k8s.io/client-go v0.34.1
+	k8s.io/klog/v2 v2.130.1
 	sigs.k8s.io/controller-runtime v0.22.2
 )
 
@@ -81,7 +85,6 @@ require (
 	github.com/prometheus/procfs v0.17.0 // indirect
 	github.com/quic-go/qpack v0.5.1 // indirect
 	github.com/quic-go/quic-go v0.54.1 // indirect
-	github.com/spf13/cobra v1.9.1 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.3.0 // indirect
@@ -91,7 +94,6 @@ require (
 	go.uber.org/zap v1.27.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.3 // indirect
 	golang.org/x/arch v0.20.0 // indirect
-	golang.org/x/crypto v0.45.0 // indirect
 	golang.org/x/mod v0.29.0 // indirect
 	golang.org/x/net v0.47.0 // indirect
 	golang.org/x/sync v0.18.0 // indirect
@@ -108,7 +110,6 @@ require (
 	k8s.io/apiextensions-apiserver v0.34.1 // indirect
 	k8s.io/code-generator v0.34.1 // indirect
 	k8s.io/gengo/v2 v2.0.0-20250604051438-85fd79dbfd9f // indirect
-	k8s.io/klog/v2 v2.130.1 // indirect
 	k8s.io/kube-openapi v0.0.0-20250910181357-589584f1c912 // indirect
 	k8s.io/utils v0.0.0-20251002143259-bc988d571ff4 // indirect
 	sigs.k8s.io/controller-tools v0.19.0 // indirect
