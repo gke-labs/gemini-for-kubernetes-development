@@ -16,6 +16,7 @@
 import requests
 import subprocess
 import time
+import argparse
 
 def get_latest_eg_version():
     """Fetches the latest Envoy GW version from the GitHub API."""
@@ -23,12 +24,23 @@ def get_latest_eg_version():
 
 def run_command(command):
     """Runs a shell command and prints its output."""
-    print(f"Running command: {" ".join(command)}")
+    print(f"Running command: {' '.join(command)}")
     subprocess.run(command, check=True)
 
 def main():
-    """Installs the latest version of Envoy GW."""
+    """Installs or uninstalls the latest version of Envoy GW."""
+    parser = argparse.ArgumentParser(description="Installs or uninstalls Envoy GW.")
+    parser.add_argument("--uninstall", action="store_true", help="Uninstall Envoy GW.")
+    args = parser.parse_args()
+
     try:
+        if args.uninstall:
+            print("Uninstalling Envoy GW...")
+            run_command(["helm", "uninstall", "eg", "-n", "envoy-gateway-system"])
+            run_command(["kubectl", "delete", "namespace", "envoy-gateway-system"])
+            print("Envoy GW uninstalled successfully.")
+            return
+
         eg_version = get_latest_eg_version()
         print(f"Installing Envoy GW version: {eg_version}")
 

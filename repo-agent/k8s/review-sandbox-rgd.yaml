@@ -18,6 +18,8 @@ spec:
       serviceAccountName: string | default="review-sandbox"
       devcontainerConfigRef: string | default="devcontainer-json"
       githubSecretName: string | default="github-pat"
+      resources:
+        ephemeralStorage: string | default="6Gi"
       source:
         cloneURL: string
         diffURL: string
@@ -87,6 +89,11 @@ spec:
                 - name: review-sandbox
                   #image: ghcr.io/coder/envbuilder
                   image: ko://repo-agent/review-sidecar/images/review-sandbox
+                  resources:
+                    limits:
+                      ephemeral-storage: ${schema.spec.resources.ephemeralStorage}
+                    requests:
+                      ephemeral-storage: ${schema.spec.resources.ephemeralStorage}
                   env:
                     # URL to the repository where the .devcontainer folder we want to load is located
                     - name: AGENT_PROMPT

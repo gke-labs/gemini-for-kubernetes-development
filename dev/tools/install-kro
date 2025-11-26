@@ -16,6 +16,7 @@
 import requests
 import subprocess
 import time
+import argparse
 
 def get_latest_kro_version():
     """Fetches the latest Kro version from the GitHub API."""
@@ -27,12 +28,23 @@ def get_latest_kro_version():
 
 def run_command(command):
     """Runs a shell command and prints its output."""
-    print(f"Running command: {" ".join(command)}")
+    print(f"Running command: {' '.join(command)}")
     subprocess.run(command, check=True)
 
 def main():
-    """Installs the latest version of Kro."""
+    """Installs or uninstalls the latest version of Kro."""
+    parser = argparse.ArgumentParser(description="Installs or uninstalls Kro.")
+    parser.add_argument("--uninstall", action="store_true", help="Uninstall Kro.")
+    args = parser.parse_args()
+
     try:
+        if args.uninstall:
+            print("Uninstalling Kro...")
+            run_command(["helm", "uninstall", "kro", "--namespace", "kro"])
+            run_command(["kubectl", "delete", "namespace", "kro"])
+            print("Kro uninstalled successfully.")
+            return
+
         #kro_version = get_latest_kro_version()
         kro_version = "0.5.1"
         print(f"Installing kro version: {kro_version}")
