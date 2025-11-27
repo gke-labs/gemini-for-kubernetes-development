@@ -174,6 +174,8 @@ uninstall-repo-agent-latest:
 	kubectl delete crd reviewsandboxes.custom.agents.x-k8s.io --wait=false || true
 	kubectl patch crd reviewsandboxes.custom.agents.x-k8s.io --type=json -p='[{"op":"remove", "path":"/metadata/finalizers", "value":["customresourcecleanup.apiextensions.k8s.io"]}]' || true
 
+.PHONY: reinstall-repo-agent-latest
+reinstall-repo-agent-latest: uninstall-repo-agent-latest install-repo-agent-latest
 # Dev targets
 
 .PHONY: reload-ui
