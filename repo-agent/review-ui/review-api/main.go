@@ -261,6 +261,10 @@ func main() {
 		api.POST("/repo/:repo/issues/:issue_id/handler/:handler/draft", saveIssueDraft)
 		api.POST("/repo/:repo/issues/:issue_id/handler/:handler/submitcomment", submitIssueComment)
 		api.DELETE("/repo/:repo/issues/:issue_id/handler/:handler", deleteIssue)
+		api.POST("/repo/:repo/prs/:id/scaleup", scaleUpPR)
+		api.POST("/repo/:repo/prs/:id/scaledown", scaleDownPR)
+		api.POST("/repo/:repo/issues/:issue_id/handler/:handler/scaleup", scaleUpIssue)
+		api.POST("/repo/:repo/issues/:issue_id/handler/:handler/scaledown", scaleDownIssue)
 		api.GET("/proxy", proxy)
 	}
 
@@ -2057,4 +2061,129 @@ func findMostCommonCoOccurringLabels(itemLabels [][]string) ([][]string, int) {
 	}
 
 	return result, maxCount
+}
+
+func scaleUpPR(c *gin.Context) {
+	namespace := c.MustGet(userKey).(string)
+	repo := c.Param("repo")
+	prID := c.Param("id")
+	ctx := c.Request.Context()
+
+	if err := scaleupSandbox(ctx, namespace, repo, prID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scale up sandbox", "details": err.Error()})
+		return
+	}
+	c.Status(http.StatusOK)
+}
+
+func scaleDownPR(c *gin.Context) {
+	namespace := c.MustGet(userKey).(string)
+	repo := c.Param("repo")
+	prID := c.Param("id")
+	ctx := c.Request.Context()
+
+	if err := scaledownSandbox(ctx, namespace, repo, prID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scale down sandbox", "details": err.Error()})
+		return
+	}
+	c.Status(http.StatusOK)
+}
+
+func scaleUpIssue(c *gin.Context) {
+	namespace := c.MustGet(userKey).(string)
+	repo := c.Param("repo")
+	issueID := c.Param("issue_id")
+	handler := c.Param("handler")
+	ctx := c.Request.Context()
+
+	if err := scaleupIssueSandbox(ctx, namespace, repo, issueID, handler); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scale up issue sandbox", "details": err.Error()})
+		return
+	}
+	c.Status(http.StatusOK)
+}
+
+func scaleDownIssue(c *gin.Context) {
+	namespace := c.MustGet(userKey).(string)
+	repo := c.Param("repo")
+	issueID := c.Param("issue_id")
+	handler := c.Param("handler")
+	ctx := c.Request.Context()
+
+	if err := scaledownIssueSandbox(ctx, namespace, repo, issueID, handler); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scale down issue sandbox", "details": err.Error()})
+		return
+	}
+	c.Status(http.StatusOK)
+}
+
+func scaleupSandbox(ctx context.Context, namespace, repo, prID string) error {
+	prKey := fmt.Sprintf("pr:ns:%s:repo:%s:pr:%s", namespace, repo, prID)
+	sandboxName, err := rdb.HGet(ctx, prKey, "sandbox").Result()
+	if err != nil && err != redis.Nil {
+		return fmt.Errorf("failed to get sandbox name from Redis: %w", err)
+	}
+	if sandboxName == "" {
+		sandboxName = fmt.Sprintf("%s-pr-%s", repo, prID)
+	}
+
+	gvr := schema.GroupVersionResource{
+		Group:    "custom.agents.x-k8s.io",
+		Version:  "v1alpha1",
+		Resource: "reviewsandboxes",
+	}
+	log.Printf("Scaling up sandbox %s", sandboxName)
+
+	sandbox := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
+			"kind":       "ReviewSandbox",
+			"metadata": map[string]interface{}{
+				"name":      sandboxName,
+				"namespace": namespace,
+			},
+			"spec": map[string]interface{}{
+				"replicas": int64(1),
+			},
+		},
+	}
+
+	_, err = k8sClient.Resource(gvr).Namespace(namespace).Apply(ctx, sandboxName,
+		sandbox, v1.ApplyOptions{FieldManager: "review-ui", Force: true})
+	if err != nil {
+		return fmt.Errorf("failed to scale up sandbox: %w", err)
+	}
+	return nil
+}
+
+func scaleupIssueSandbox(ctx context.Context, namespace, repo, issueID, handler string) error {
+	sandboxName := fmt.Sprintf("%s-issue-%s-%s", repo, issueID, handler)
+
+	gvr := schema.GroupVersionResource{
+		Group:    "custom.agents.x-k8s.io",
+		Version:  "v1alpha1",
+		Resource: "issuesandboxes",
+	}
+	log.Printf("Scaling up issue sandbox %s", sandboxName)
+
+	sandbox := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
+			"kind":       "IssueSandbox",
+			"metadata": map[string]interface{}{
+				"name":      sandboxName,
+				"namespace": namespace,
+			},
+			"spec": map[string]interface{}{
+				"replicas": int64(1),
+			},
+		},
+	}
+
+	_, err := k8sClient.Resource(gvr).Namespace(namespace).Apply(ctx, sandboxName,
+		sandbox, v1.ApplyOptions{FieldManager: "review-ui", Force: true})
+	if err != nil {
+		return fmt.Errorf("failed to scale up issue sandbox: %w", err)
+	}
+	return nil
 }
