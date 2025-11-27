@@ -16,6 +16,7 @@
 import requests
 import subprocess
 import time
+import argparse
 
 def get_latest_agent_sandbox_version():
     """Fetches the latest Agent Sandbox version from the GitHub API."""
@@ -27,16 +28,31 @@ def get_latest_agent_sandbox_version():
 
 def run_command(command):
     """Runs a shell command and prints its output."""
-    print(f"Running command: {" ".join(command)}")
+    print(f"Running command: {' '.join(command)}")
     subprocess.run(command, check=True)
 
 def main():
-    """Installs the latest version of Agent Sandbox."""
+    """Installs or uninstalls the latest version of Agent Sandbox."""
+    parser = argparse.ArgumentParser(description="Installs or uninstalls Agent Sandbox.")
+    parser.add_argument("--uninstall", action="store_true", help="Uninstall Agent Sandbox.")
+    args = parser.parse_args()
+
     try:
         version = get_latest_agent_sandbox_version()
+
+        if args.uninstall:
+            print(f"Uninstalling agent-sandbox version: {version}")
+            uninstall_command = [
+                "kubectl", "delete", "-f",
+                f"https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v{version}/manifest.yaml"
+            ]
+            run_command(uninstall_command)
+            print("Agent Sandbox uninstalled successfully.")
+            return
+
         print(f"Installing agent-sandbox version: {version}")
  
-	    # kubectl apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v0.1.0-rc.0/manifest.yaml
+        # kubectl apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v0.1.0-rc.0/manifest.yaml
         install_command = [
             "kubectl", "apply", "-f",
             f"https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v{version}/manifest.yaml"

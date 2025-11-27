@@ -79,6 +79,12 @@ install-dep-packages:
 	../dev/tools/install-envoy
 	../dev/tools/install-agent-sandbox
 
+.PHONY: uninstall-dep-packages
+uninstall-dep-packages:
+	../dev/tools/install-kro --uninstall || true
+	../dev/tools/install-envoy --uninstall || true
+	../dev/tools/install-agent-sandbox --uninstall || true
+
 .PHONY: create-kind
 create-kind:
 	@../dev/tools/limit-docker-log-size --check || echo "*** docker log config is missing. Adding it. Requires sudo"
@@ -151,6 +157,22 @@ port-forward:
 	ENVOY_SERVICE=$$(kubectl get svc -n envoy-gateway-system --selector=gateway.envoyproxy.io/owning-gateway-namespace=repo-agent-system,gateway.envoyproxy.io/owning-gateway-name=repo-agent-gateway -o jsonpath='{.items[0].metadata.name}') && kubectl port-forward -n envoy-gateway-system --address 0.0.0.0 service/$${ENVOY_SERVICE} 13380:13380;\
 	done
 	# kubectl port-forward -n repo-agent-system --address 0.0.0.0 service/devc-agent-sandbox-pr-102-lb  13338:13338
+
+# non-ephemeral (kind) cluster install targets
+.PHONY: install-repo-agent-latest
+install-repo-agent-latest: install-dep-packages create-secrets
+	../dev/tools/deploy-to-kube --image-prefix=ghcr.io/gke-labs/gemini-for-kubernetes-development/ --image-tag=latest --working-dir . --output-file=bin/repo-agent-manifest.yaml
+	kubectl apply -f bin/repo-agent-manifest.yaml
+
+.PHONY: uninstall-repo-agent-latest
+uninstall-repo-agent-latest:
+	../dev/tools/deploy-to-kube --image-prefix=ghcr.io/gke-labs/gemini-for-kubernetes-development/ --image-tag=latest --working-dir . --output-file=bin/repo-agent-manifest.yaml
+	kubectl delete -f bin/repo-agent-manifest.yaml || true
+	${MAKE} uninstall-dep-packages
+	kubectl delete crd issuesandboxes.custom.agents.x-k8s.io --wait=false || true
+	kubectl patch crd issuesandboxes.custom.agents.x-k8s.io --type=json -p='[{"op":"remove", "path":"/metadata/finalizers", "value":["customresourcecleanup.apiextensions.k8s.io"]}]' || true
+	kubectl delete crd reviewsandboxes.custom.agents.x-k8s.io --wait=false || true
+	kubectl patch crd reviewsandboxes.custom.agents.x-k8s.io --type=json -p='[{"op":"remove", "path":"/metadata/finalizers", "value":["customresourcecleanup.apiextensions.k8s.io"]}]' || true
 
 # Dev targets
 
