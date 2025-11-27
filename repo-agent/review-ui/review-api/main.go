@@ -739,7 +739,7 @@ spec:
   githubSecretName: github-pat
   review:
     preferAssignedToSelf: true
-	reviewShutdownAfterMinutes: 30
+    reviewShutdownAfterMinutes: 30
     devcontainerConfigRef: devcontainer-json
     llm:
       apiKeySecretRef: gemini-vscode-tokens
