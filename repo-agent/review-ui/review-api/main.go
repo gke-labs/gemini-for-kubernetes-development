@@ -753,6 +753,7 @@ spec:
         3. Are there tests to check the fix.
       provider: gemini-cli
     maxActiveSandboxes: 3
+    maxSandboxes: 5
   issueHandlers:
     - llm:
         prompt: >-
@@ -784,6 +785,7 @@ spec:
           HTML URL: "{{.HTMLURL}}"
         provider: gemini-cli
       maxActiveSandboxes: 1
+      maxSandboxes: 3
       name: triage
 `
 	c.JSON(http.StatusOK, gin.H{"yaml": defaultRepoWatch})

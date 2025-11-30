@@ -443,6 +443,7 @@ func (r *RepoWatchReconciler) reconcileReviewSandboxes(ctx context.Context, repo
 	log := log.FromContext(ctx)
 	log.Info("reconciling review sandboxes")
 	activeSandboxes := 0
+	totalSandboxes := 0
 	watchedPRs := []reviewv1alpha1.WatchedPR{}
 	pendingPRs := []reviewv1alpha1.PendingPR{}
 
@@ -458,6 +459,8 @@ func (r *RepoWatchReconciler) reconcileReviewSandboxes(ctx context.Context, repo
 		if !isOwned {
 			continue
 		}
+
+		totalSandboxes++
 
 		prNumber, err := strconv.Atoi(strings.Split(sandbox.GetName(), "-pr-")[1])
 		if err != nil {
@@ -478,6 +481,7 @@ func (r *RepoWatchReconciler) reconcileReviewSandboxes(ctx context.Context, repo
 			if err := r.Delete(ctx, &sandbox); err != nil {
 				log.Error(err, "unable to delete sandbox", "sandbox", sandbox.GetName())
 			}
+			totalSandboxes--
 		}
 	}
 
@@ -534,13 +538,14 @@ func (r *RepoWatchReconciler) reconcileReviewSandboxes(ctx context.Context, repo
 		}
 
 		if !sandboxExists {
-			if prIsExplicit || (activeSandboxes < repoWatch.Spec.Review.MaxActiveSandboxes) {
+			if prIsExplicit || ((activeSandboxes < repoWatch.Spec.Review.MaxActiveSandboxes) && (repoWatch.Spec.Review.MaxSandboxes == 0 || totalSandboxes < repoWatch.Spec.Review.MaxSandboxes)) {
 				log.Info("processing pr", "pr", *pr.Number, "sandboxName", sandboxName)
 				if err := r.createReviewSandboxForPR(ctx, repoWatch, pr); err != nil {
 					log.Error(err, "unable to create sandbox for pr", "pr", *pr.Number)
 				} else {
 					log.Info("sandbox created successfully for pr", "pr", *pr.Number)
 					activeSandboxes++
+					totalSandboxes++
 					watchedPRs = append(watchedPRs, reviewv1alpha1.WatchedPR{
 						Number:      *pr.Number,
 						SandboxName: sandboxName,
@@ -566,6 +571,7 @@ func (r *RepoWatchReconciler) reconcileReviewSandboxes(ctx context.Context, repo
 func (r *RepoWatchReconciler) reconcileIssueHandlerSandboxes(ctx context.Context, user *github.User, handler reviewv1alpha1.IssueHandlerSpec, repoWatch *reviewv1alpha1.RepoWatch, issues []*github.Issue, sandboxes *unstructured.UnstructuredList) error {
 	log := log.FromContext(ctx)
 	activeSandboxes := 0
+	totalSandboxes := 0
 	watchedIssues := []reviewv1alpha1.WatchedIssue{}
 	pendingIssues := []reviewv1alpha1.PendingIssue{}
 
@@ -607,6 +613,8 @@ func (r *RepoWatchReconciler) reconcileIssueHandlerSandboxes(ctx context.Context
 			continue
 		}
 
+		totalSandboxes++
+
 		found := false
 		for _, issue := range issues {
 			if *issue.Number == issueNumber {
@@ -620,6 +628,7 @@ func (r *RepoWatchReconciler) reconcileIssueHandlerSandboxes(ctx context.Context
 			if err := r.Delete(ctx, &sandbox); err != nil {
 				log.Error(err, "unable to delete sandbox", "sandbox", sandbox.GetName())
 			}
+			totalSandboxes--
 		}
 	}
 
@@ -648,12 +657,13 @@ func (r *RepoWatchReconciler) reconcileIssueHandlerSandboxes(ctx context.Context
 		}
 
 		if !sandboxExists {
-			if activeSandboxes < handler.MaxActiveSandboxes {
+			if activeSandboxes < handler.MaxActiveSandboxes && (handler.MaxSandboxes == 0 || totalSandboxes < handler.MaxSandboxes) {
 				log.Info("creating sandbox for issue", "issue", *issue.Number)
 				if err := r.createSandboxForIssueHandler(ctx, user, handler, repoWatch, issue); err != nil {
 					log.Error(err, "unable to create sandbox for issue", "issue", *issue.Number)
 				} else {
 					activeSandboxes++
+					totalSandboxes++
 					watchedIssues = append(watchedIssues, reviewv1alpha1.WatchedIssue{
 						Number:      *issue.Number,
 						SandboxName: sandboxName,

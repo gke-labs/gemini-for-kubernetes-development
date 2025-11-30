@@ -57,6 +57,8 @@ spec:
                       type: object
                     maxActiveSandboxes:
                       type: integer
+                    maxSandboxes:
+                      type: integer
                     name:
                       type: string
                     pushEnabled:
@@ -97,6 +99,8 @@ spec:
                         type: string
                     type: object
                   maxActiveSandboxes:
+                    type: integer
+                  maxSandboxes:
                     type: integer
                   preferAssignedToSelf:
                     type: boolean
