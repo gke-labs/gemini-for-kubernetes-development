@@ -1653,9 +1653,15 @@ func fetchAndPopulateIssues(ctx context.Context, namespace, repo, handler string
 			log.Printf("pushBranch (.spec.source.pushBranch) not found in IssueSandbox %s", item.GetName())
 		}
 
-		draft, found, err := unstructured.NestedString(item.Object, "status", "agentDraft")
-		if err != nil || !found {
-			log.Printf("pushBranch (.status.agentDraft) not found in IssueSandbox %s", item.GetName())
+		// get draft from annotation[agentDraft]
+		draft := ""
+		annotations := item.GetAnnotations()
+		if annotations == nil {
+			log.Printf("agentDraft (annotations=nil) not found in IssueSandbox %s", item.GetName())
+		} else if _, ok := annotations["agentDraft"]; !ok {
+			log.Printf("agentDraft (annotations[agentDraft]) not found in IssueSandbox %s", item.GetName())
+		} else {
+			draft = annotations["agentDraft"]
 		}
 
 		issueKey := fmt.Sprintf("issue:ns:%s:repo:%s:handler:%s:issue:%s", namespace, repo, handler, issueID)
