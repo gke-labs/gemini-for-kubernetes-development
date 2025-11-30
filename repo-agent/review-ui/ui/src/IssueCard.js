@@ -61,7 +61,7 @@ function IssueCard({
           {getSandboxStatusClass(issue) === 'green' ? (
             <div style={{display: 'flex', alignItems: 'center', gap: '5px'}}>
               <a href={`/sandbox/${namespace}/${issue.sandbox}/`} target="_blank" rel="noopener noreferrer" className={`pr-sandbox ${getSandboxStatusClass(issue)}`}>
-                Sandbox
+                Sandbox Active
               </a>
                <button className="btn btn-sm pr-sandbox yellow" style={{padding: '4px 10px', fontSize: '14px'}} onClick={(e) => { e.stopPropagation(); handleScaleDown(issue.id, activeSubTab.name); }} title="Scale Down">
                 &#9646;&#9646;
@@ -69,7 +69,7 @@ function IssueCard({
             </div>
           ) : getSandboxStatusClass(issue) === 'yellow' ? (
             <div style={{display: 'flex', alignItems: 'center', gap: '5px'}}>
-              <span className={`pr-sandbox ${getSandboxStatusClass(issue)}`}>Sandbox</span>
+              <span className={`pr-sandbox ${getSandboxStatusClass(issue)}`}>Sandbox Paused</span>
               <button className="btn btn-sm pr-sandbox green" style={{padding: '4px 10px', fontSize: '14px'}} onClick={(e) => { e.stopPropagation(); handleScaleUp(issue.id, activeSubTab.name); }} title="Scale Up">
                   &#9654;
                </button>
