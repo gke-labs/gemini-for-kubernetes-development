@@ -263,7 +263,8 @@ func TestSortPRs(t *testing.T) {
 				},
 			}
 
-			sorted := r.sortPRs(context.Background(), ghClient, tc.inputPRs, repoWatch)
+			user := &github.User{Login: github.String("myself")}
+			sorted := r.sortPRs(context.Background(), tc.inputPRs, repoWatch, user)
 
 			g.Expect(len(sorted)).To(gomega.Equal(len(tc.expectedOrder)))
 			for i, pr := range sorted {

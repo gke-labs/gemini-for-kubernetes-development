@@ -781,6 +781,10 @@ spec:
   repoURL: https://github.com/gke-labs/gemini-for-kubernetes-development
   pollIntervalSeconds: 300
   githubSecretName: github-pat
+  dev:
+    maxActiveSandboxes: 1
+    maxSandboxes: 3
+    devcontainerConfigRef: devcontainer-json
   review:
     preferAssignedToSelf: true
     reviewShutdownAfterMinutes: 30

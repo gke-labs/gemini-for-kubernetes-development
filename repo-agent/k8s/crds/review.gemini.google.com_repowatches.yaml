@@ -26,6 +26,18 @@ spec:
             type: object
           spec:
             properties:
+              dev:
+                properties:
+                  devcontainerConfigRef:
+                    type: string
+                  maxActiveSandboxes:
+                    type: integer
+                  maxSandboxes:
+                    type: integer
+                required:
+                - maxActiveSandboxes
+                - maxSandboxes
+                type: object
               githubSecretName:
                 type: string
               issueHandlers:
@@ -161,6 +173,18 @@ spec:
                   - type
                   type: object
                 type: array
+              pendingDevSandboxes:
+                items:
+                  properties:
+                    branchName:
+                      type: string
+                    status:
+                      type: string
+                  required:
+                  - branchName
+                  - status
+                  type: object
+                type: array
               pendingIssues:
                 additionalProperties:
                   items:
@@ -184,6 +208,21 @@ spec:
                       type: string
                   required:
                   - number
+                  - status
+                  type: object
+                type: array
+              watchedDevSandboxes:
+                items:
+                  properties:
+                    branchName:
+                      type: string
+                    sandboxName:
+                      type: string
+                    status:
+                      type: string
+                  required:
+                  - branchName
+                  - sandboxName
                   - status
                   type: object
                 type: array

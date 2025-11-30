@@ -24,6 +24,7 @@ import (
 	"math/rand"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -197,6 +198,7 @@ type RepoWatchReconciler struct {
 //+kubebuilder:rbac:groups=review.gemini.google.com,resources=repowatches/finalizers,verbs=update
 //+kubebuilder:rbac:groups=custom.agents.x-k8s.io,resources=reviewsandboxes,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=custom.agents.x-k8s.io,resources=issuesandboxes,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=custom.agents.x-k8s.io,resources=devsandboxes,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;update;patch
 
 func (r *RepoWatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -229,17 +231,37 @@ func (r *RepoWatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 
+	// Get the current user
+	user, _, err := ghClient.Users.Get(ctx, "")
+	if err != nil {
+		log.Error(err, "unable to get current user")
+		return ctrl.Result{}, err
+	}
+	if githubConfig["name"] != "" {
+		user.Name = github.String(githubConfig["name"])
+	}
+	if githubConfig["email"] != "" {
+		user.Email = github.String(githubConfig["email"])
+	}
+
 	var reconcileErr error
 	// Reconcile Reviews for Pull Requests
-	if err := r.reconcileReviews(ctx, repoWatch, ghClient, owner, repo); err != nil {
+	if err := r.reconcileReviews(ctx, repoWatch, ghClient, owner, repo, user); err != nil {
 		log.Error(err, "unable to reconcile reviews")
 		reconcileErr = errors.Join(reconcileErr, err)
 		// Continue to next reconciliation
 	}
 
 	// Reconcile Issues
-	if err := r.reconcileIssues(ctx, githubConfig, repoWatch, ghClient, owner, repo); err != nil {
+	if err := r.reconcileIssues(ctx, githubConfig, repoWatch, ghClient, owner, repo, user); err != nil {
 		log.Error(err, "unable to reconcile issues")
+		reconcileErr = errors.Join(reconcileErr, err)
+		// Continue to next reconciliation
+	}
+
+	// Reconcile Dev Sandboxes
+	if err := r.reconcileDevSandboxes(ctx, user, repoWatch, ghClient, repo); err != nil {
+		log.Error(err, "unable to reconcile dev sandboxes")
 		reconcileErr = errors.Join(reconcileErr, err)
 		// Continue to next reconciliation
 	}
@@ -247,7 +269,7 @@ func (r *RepoWatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	return ctrl.Result{RequeueAfter: time.Second * time.Duration(repoWatch.Spec.PollIntervalSeconds)}, reconcileErr
 }
 
-func (r *RepoWatchReconciler) reconcileReviews(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, ghClient *github.Client, owner string, repo string) error {
+func (r *RepoWatchReconciler) reconcileReviews(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, ghClient *github.Client, owner string, repo string, user *github.User) error {
 	log := log.FromContext(ctx)
 	log.Info("reconciling reviews")
 
@@ -260,7 +282,7 @@ func (r *RepoWatchReconciler) reconcileReviews(ctx context.Context, repoWatch *r
 
 	prs = r.filterPRsByLabels(prs, repoWatch)
 	prs = r.deduplicatePRs(prs, explicitPRs)
-	prs = r.sortPRs(ctx, ghClient, prs, repoWatch)
+	prs = r.sortPRs(ctx, prs, repoWatch, user)
 
 	// Log repoIssues and sandboxList for debug purposes
 	prsStr := []string{}
@@ -387,18 +409,13 @@ func (r *RepoWatchReconciler) deduplicatePRs(prs []*github.PullRequest, explicit
 	return filteredPRs
 }
 
-func (r *RepoWatchReconciler) sortPRs(ctx context.Context, ghClient *github.Client, prs []*github.PullRequest, repoWatch *reviewv1alpha1.RepoWatch) []*github.PullRequest {
+func (r *RepoWatchReconciler) sortPRs(ctx context.Context, prs []*github.PullRequest, repoWatch *reviewv1alpha1.RepoWatch, user *github.User) []*github.PullRequest {
 	log := log.FromContext(ctx)
 	// Sort by PreferAssignedToSelf
 	// TODO(barney-s): May be rate limited. Cache the user info.
 	if repoWatch.Spec.Review.PreferAssignedToSelf {
-		user, _, err := ghClient.Users.Get(ctx, "")
-		if err != nil {
-			log.Error(err, "unable to get current user for sorting PRs")
-			return prs
-		}
-		if user.Login == nil {
-			log.Error(errors.New("user login is nil"), "unable to get current user login for sorting PRs")
+		if user == nil || user.Login == nil {
+			log.Error(errors.New("user or user login is nil"), "unable to get current user login for sorting PRs")
 			return prs
 		}
 		var assignedToMe []*github.PullRequest
@@ -422,7 +439,7 @@ func (r *RepoWatchReconciler) sortPRs(ctx context.Context, ghClient *github.Clie
 	return prs
 }
 
-func (r *RepoWatchReconciler) reconcileIssues(ctx context.Context, githubConfig map[string]string, repoWatch *reviewv1alpha1.RepoWatch, ghClient *github.Client, owner string, repo string) error {
+func (r *RepoWatchReconciler) reconcileIssues(ctx context.Context, githubConfig map[string]string, repoWatch *reviewv1alpha1.RepoWatch, ghClient *github.Client, owner string, repo string, user *github.User) error {
 	log := log.FromContext(ctx)
 	var reconcileErr error
 
@@ -441,17 +458,8 @@ func (r *RepoWatchReconciler) reconcileIssues(ctx context.Context, githubConfig 
 		return err
 	}
 
-	// Get the github user name and email for the given token
-	user, _, err := ghClient.Users.Get(ctx, "")
-	if err != nil {
-		log.Error(err, "unable to get current user")
-		return err
-	}
-	if githubConfig["name"] != "" {
-		user.Name = github.String(githubConfig["name"])
-	}
-	if githubConfig["email"] != "" {
-		user.Email = github.String(githubConfig["email"])
+	if user == nil {
+		return fmt.Errorf("user is nil")
 	}
 	log.Info("Obtained current user", "user", *user)
 
@@ -1037,6 +1045,240 @@ func (r *RepoWatchReconciler) createSandboxForIssueHandler(ctx context.Context, 
 
 	if handler.DevcontainerConfigRef != "" {
 		if err := unstructured.SetNestedField(sandbox.Object, handler.DevcontainerConfigRef, "spec", "devcontainerConfigRef"); err != nil {
+			return err
+		}
+	}
+
+	if err := controllerutil.SetControllerReference(repoWatch, sandbox, r.Scheme); err != nil {
+		return err
+	}
+
+	return r.Create(ctx, sandbox)
+}
+
+func (r *RepoWatchReconciler) reconcileDevSandboxes(ctx context.Context, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, ghClient *github.Client, upstreamRepo string) error {
+	log := log.FromContext(ctx)
+
+	if repoWatch.Spec.Dev.MaxSandboxes == 0 {
+		return nil
+	}
+
+	// 1. Get User's Fork
+	// We assume the fork has the same name as the upstream repo
+	forkOwner := user.GetLogin()
+	forkRepo := upstreamRepo
+
+	// Verify fork exists
+	_, _, err := ghClient.Repositories.Get(ctx, forkOwner, forkRepo)
+	if err != nil {
+		log.Error(err, "unable to get user fork", "owner", forkOwner, "repo", forkRepo)
+		// If fork doesn't exist, we can't do anything.
+		return nil
+	}
+
+	// 2. List Branches
+	branches, _, err := ghClient.Repositories.ListBranches(ctx, forkOwner, forkRepo, &github.BranchListOptions{
+		ListOptions: github.ListOptions{PerPage: 100},
+	})
+	if err != nil {
+		return fmt.Errorf("listing branches: %w", err)
+	}
+
+	// 3. Filter Branches
+	var candidateBranches []*github.Branch
+	for _, branch := range branches {
+		name := branch.GetName()
+		if strings.HasPrefix(name, "issue-") {
+			continue
+		}
+		// Also ignore default branch if needed, but keeping it simple for now.
+		candidateBranches = append(candidateBranches, branch)
+	}
+
+	// 4. Sort Branches by Commit Date
+	// We need to fetch commit details for sorting.
+	type BranchWithDate struct {
+		Branch *github.Branch
+		Date   time.Time
+	}
+	var branchesWithDate []BranchWithDate
+
+	for _, branch := range candidateBranches {
+		commit, _, err := ghClient.Repositories.GetCommit(ctx, forkOwner, forkRepo, branch.GetCommit().GetSHA(), nil)
+		if err != nil {
+			log.Error(err, "getting commit details", "branch", branch.GetName())
+			continue
+		}
+		branchesWithDate = append(branchesWithDate, BranchWithDate{
+			Branch: branch,
+			Date:   commit.GetCommit().GetCommitter().GetDate(),
+		})
+	}
+
+	sort.Slice(branchesWithDate, func(i, j int) bool {
+		return branchesWithDate[i].Date.After(branchesWithDate[j].Date)
+	})
+
+	// 5. Select top MaxSandboxes
+	//if len(branchesWithDate) > repoWatch.Spec.Dev.MaxSandboxes {
+	//	branchesWithDate = branchesWithDate[:repoWatch.Spec.Dev.MaxSandboxes]
+	//}
+
+	// 6. List Existing DevSandboxes
+	sandboxList := &unstructured.UnstructuredList{}
+	sandboxGVK := schema.GroupVersionKind{
+		Group:   "custom.agents.x-k8s.io",
+		Version: "v1alpha1",
+		Kind:    "DevSandbox",
+	}
+	sandboxList.SetGroupVersionKind(sandboxGVK)
+	if err := r.List(ctx, sandboxList, client.InNamespace(repoWatch.Namespace)); err != nil {
+		return fmt.Errorf("listing dev sandboxes: %w", err)
+	}
+
+	activeSandboxes := 0
+	watchedDevSandboxes := []reviewv1alpha1.DevSandbox{}
+	pendingDevSandboxes := []reviewv1alpha1.PendingDevSandbox{}
+
+	// Identify which branches we want to have sandboxes for.
+	desiredBranches := make(map[string]bool)
+	for _, b := range branchesWithDate {
+		desiredBranches[b.Branch.GetName()] = true
+	}
+
+	for _, sandbox := range sandboxList.Items {
+		isOwned := false
+		for _, ownerRef := range sandbox.GetOwnerReferences() {
+			if ownerRef.UID == repoWatch.UID {
+				isOwned = true
+				break
+			}
+		}
+		if !isOwned {
+			continue
+		}
+
+		// Get branch from spec
+		branch, found, err := unstructured.NestedString(sandbox.Object, "spec", "destination", "branch")
+		if err != nil || !found {
+			log.Error(err, "unable to get branch from sandbox", "sandbox", sandbox.GetName())
+			continue
+		}
+
+		if !desiredBranches[branch] {
+			log.Info("deleting dev sandbox for untracked branch", "branch", branch)
+			if err := r.Delete(ctx, &sandbox); err != nil {
+				log.Error(err, "unable to delete sandbox", "sandbox", sandbox.GetName())
+			}
+			continue
+		}
+	}
+
+	// 7. Create/Update Sandboxes
+	for _, b := range branchesWithDate {
+		branchName := b.Branch.GetName()
+		// Sanitize branch name for kubernetes resource name
+		safeBranchName := strings.ReplaceAll(branchName, "/", "-")
+		safeBranchName = strings.ReplaceAll(safeBranchName, "_", "-")
+		safeBranchName = strings.ReplaceAll(safeBranchName, ".", "-")
+		safeBranchName = strings.ToLower(safeBranchName)
+		// Ensure not too long?
+		if len(safeBranchName) > 50 {
+			safeBranchName = safeBranchName[:50]
+		}
+
+		sandboxName := fmt.Sprintf("dev-%s-%s", upstreamRepo, safeBranchName)
+
+		sandboxExists := false
+		var existingSandbox unstructured.Unstructured
+
+		for _, sandbox := range sandboxList.Items {
+			if sandbox.GetName() == sandboxName {
+				sandboxExists = true
+				existingSandbox = sandbox
+				break
+			}
+		}
+
+		if sandboxExists {
+			replicas, found, err := unstructured.NestedInt64(existingSandbox.Object, "spec", "replicas")
+			if err != nil || !found {
+				log.Error(err, "unable to get replicas for sandbox", "sandbox", sandboxName)
+			} else if replicas > 0 {
+				activeSandboxes++
+			}
+			watchedDevSandboxes = append(watchedDevSandboxes, reviewv1alpha1.DevSandbox{
+				BranchName:  branchName,
+				SandboxName: sandboxName,
+				Status:      "Active",
+			})
+		} else {
+			if activeSandboxes < repoWatch.Spec.Dev.MaxActiveSandboxes {
+				log.Info("creating dev sandbox", "branch", branchName)
+				if err := r.createDevSandbox(ctx, user, repoWatch, forkOwner, forkRepo, branchName, sandboxName); err != nil {
+					log.Error(err, "creating dev sandbox", "branch", branchName)
+				} else {
+					activeSandboxes++
+					watchedDevSandboxes = append(watchedDevSandboxes, reviewv1alpha1.DevSandbox{
+						BranchName:  branchName,
+						SandboxName: sandboxName,
+						Status:      "Creating",
+					})
+				}
+			} else {
+				pendingDevSandboxes = append(pendingDevSandboxes, reviewv1alpha1.PendingDevSandbox{
+					BranchName: branchName,
+					Status:     "Pending",
+				})
+			}
+		}
+	}
+
+	repoWatch.Status.WatchedDevSandboxes = watchedDevSandboxes
+	repoWatch.Status.PendingDevSandboxes = pendingDevSandboxes
+
+	return r.Status().Update(ctx, repoWatch)
+}
+
+func (r *RepoWatchReconciler) createDevSandbox(ctx context.Context, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, forkOwner, forkRepo, branchName, sandboxName string) error {
+	cloneURL := fmt.Sprintf("https://github.com/%s/%s.git", forkOwner, forkRepo)
+	originURL := fmt.Sprintf("github.com/%s/%s", forkOwner, forkRepo)
+
+	sandbox := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
+			"kind":       "DevSandbox",
+			"metadata": map[string]interface{}{
+				"name":      sandboxName,
+				"namespace": repoWatch.Namespace,
+				"labels": map[string]interface{}{
+					"review.gemini.google.com/repowatch": repoWatch.Name,
+				},
+			},
+			"spec": map[string]interface{}{
+				"replicas": int64(1),
+				"source": map[string]interface{}{
+					"cloneURL": cloneURL,
+					// "htmlURL":  fmt.Sprintf("https://github.com/%s/%s/tree/%s", forkOwner, forkRepo, branchName),
+					"htmlURL": fmt.Sprintf("https://github.com/%s/%s", forkOwner, forkRepo),
+				},
+				"destination": map[string]interface{}{
+					"pushEnabled": true,
+					"branch":      branchName,
+					"origin":      originURL,
+					"user": map[string]interface{}{
+						"login": user.GetLogin(),
+						"name":  user.GetName(),
+						"email": user.GetEmail(),
+					},
+				},
+				"githubSecretName": repoWatch.Spec.GithubSecretName,
+			},
+		},
+	}
+
+	if repoWatch.Spec.Dev.DevcontainerConfigRef != "" {
+		if err := unstructured.SetNestedField(sandbox.Object, repoWatch.Spec.Dev.DevcontainerConfigRef, "spec", "devcontainerConfigRef"); err != nil {
 			return err
 		}
 	}
