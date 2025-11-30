@@ -114,6 +114,10 @@ type IssueHandlerSpec struct {
 	// PushEnabled - allow pushing to user origin
 	// +kubebuilder:validation:Optional
 	PushEnabled bool `json:"pushEnabled,omitempty"`
+
+	// The time in seconds after which a issue sandbox will be scaled down to 0 replicas.
+	// +kubebuilder:validation:Optional
+	IssueShutdownAfterMinutes int `json:"issueShutdownAfterMinutes,omitempty"`
 }
 
 // RepoWatchSpec defines the desired state of RepoWatch
