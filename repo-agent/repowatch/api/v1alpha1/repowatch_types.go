@@ -62,6 +62,10 @@ type PRReviewSpec struct {
 	// +kubebuilder:validation:Required
 	MaxActiveSandboxes int `json:"maxActiveSandboxes"`
 
+	// The maximum number of sandboxes to have (active + inactive) at any given time.
+	// +kubebuilder:validation:Optional
+	MaxSandboxes int `json:"maxSandboxes,omitempty"`
+
 	// The time in seconds after which a review sandbox will be scaled down to 0 replicas.
 	// +kubebuilder:validation:Optional
 	ReviewShutdownAfterMinutes int `json:"reviewShutdownAfterMinutes,omitempty"`
@@ -102,6 +106,10 @@ type IssueHandlerSpec struct {
 	// The maximum number of sandboxes to have active (replicas > 0) at any given time.
 	// +kubebuilder:validation:Required
 	MaxActiveSandboxes int `json:"maxActiveSandboxes"`
+
+	// The maximum number of sandboxes to have (active + inactive) at any given time.
+	// +kubebuilder:validation:Optional
+	MaxSandboxes int `json:"maxSandboxes,omitempty"`
 
 	// PushEnabled - allow pushing to user origin
 	// +kubebuilder:validation:Optional
