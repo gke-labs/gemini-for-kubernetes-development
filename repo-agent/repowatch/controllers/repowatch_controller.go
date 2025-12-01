@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"math/rand"
 	"net/url"
 	"os"
@@ -107,6 +108,18 @@ func (s *PersistingTokenSource) Token() (*oauth2.Token, error) {
 	}
 
 	return t, nil
+}
+
+// NameHash generates an FNV-1a hash from a string and returns
+// it as a fixed-length hexadecimal string.
+func NameHash(objectName string) string {
+	h := fnv.New32a()
+	h.Write([]byte(objectName))
+	hashValue := h.Sum32()
+
+	// Convert the uint32 to a hexadecimal string.
+	// This results in an 8-character string (e.g., "a5b3c2d1").
+	return fmt.Sprintf("%08x", hashValue)
 }
 
 func NewGithubClient(ctx context.Context, k8sClient client.Client, repoWatch *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
@@ -1182,12 +1195,14 @@ func (r *RepoWatchReconciler) reconcileDevSandboxes(ctx context.Context, user *g
 		safeBranchName = strings.ReplaceAll(safeBranchName, "_", "-")
 		safeBranchName = strings.ReplaceAll(safeBranchName, ".", "-")
 		safeBranchName = strings.ToLower(safeBranchName)
-		// Ensure not too long?
-		if len(safeBranchName) > 50 {
-			safeBranchName = safeBranchName[:50]
-		}
 
-		sandboxName := fmt.Sprintf("dev-%s-%s", upstreamRepo, safeBranchName)
+		// Kubernetes names must be <= 63 characters
+		// hashing ensures we don't exceed this limit
+		fullSuffix := fmt.Sprintf("dev-%s-%s", upstreamRepo, safeBranchName)
+		hashedSuffix := NameHash(fullSuffix)
+		sandboxName := fmt.Sprintf("%s-dev", hashedSuffix)
+
+		// Check if sandbox exists
 
 		sandboxExists := false
 		var existingSandbox unstructured.Unstructured

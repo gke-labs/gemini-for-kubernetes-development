@@ -17,7 +17,7 @@ spec:
         cloneURL: string
         htmlURL: string
       user:
-        dotFilesRepo: string
+        dotFilesRepo: string | default=""
       destination:
         pushEnabled: boolean | default=false
         branch: string

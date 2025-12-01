@@ -138,6 +138,7 @@ apply-common-for-examples:
 	kubectl apply -f examples/sandbox-rbac.yaml -n $(NAMESPACE)
 	kubectl set subject clusterrolebinding review-sandbox --serviceaccount=${NAMESPACE}:review-sandbox
 	kubectl set subject clusterrolebinding issue-sandbox --serviceaccount=${NAMESPACE}:issue-sandbox
+	kubectl set subject clusterrolebinding dev-sandbox --serviceaccount=${NAMESPACE}:dev-sandbox
 	# end of SA
 	kubectl apply -f examples/go-configmap-devcontainer.yaml -n $(NAMESPACE)
 
