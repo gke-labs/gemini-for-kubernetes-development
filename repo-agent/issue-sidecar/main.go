@@ -23,7 +23,6 @@ import (
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
@@ -87,13 +86,16 @@ func main() {
 			continue
 		}
 
-		if err := unstructured.SetNestedField(iss.Object, string(b), "status", "agentDraft"); err != nil {
-			fmt.Println("setting status:", err)
-			continue
+		// update the annotation[agentDraft]
+		if iss.GetAnnotations() == nil {
+			iss.SetAnnotations(make(map[string]string))
 		}
+		annotations := iss.GetAnnotations()
+		annotations["agentDraft"] = string(b)
+		iss.SetAnnotations(annotations)
 
-		if _, err := dc.Resource(gvr).Namespace(namespace).UpdateStatus(context.TODO(), iss, metav1.UpdateOptions{}); err != nil {
-			fmt.Println("updating status:", err)
+		if _, err := dc.Resource(gvr).Namespace(namespace).Update(context.TODO(), iss, metav1.UpdateOptions{}); err != nil {
+			fmt.Println("updating issuesandbox:", err)
 			continue
 		}
 		last = string(b)
