@@ -66,7 +66,7 @@ type PRReviewSpec struct {
 	// +kubebuilder:validation:Optional
 	MaxSandboxes int `json:"maxSandboxes,omitempty"`
 
-	// The time in seconds after which a review sandbox will be scaled down to 0 replicas.
+	// The time in minutes after which a review sandbox will be scaled down to 0 replicas.
 	// +kubebuilder:validation:Optional
 	ReviewShutdownAfterMinutes int `json:"reviewShutdownAfterMinutes,omitempty"`
 
@@ -115,7 +115,7 @@ type IssueHandlerSpec struct {
 	// +kubebuilder:validation:Optional
 	PushEnabled bool `json:"pushEnabled,omitempty"`
 
-	// The time in seconds after which a issue sandbox will be scaled down to 0 replicas.
+	// The time in minutes after which a issue sandbox will be scaled down to 0 replicas.
 	// +kubebuilder:validation:Optional
 	IssueShutdownAfterMinutes int `json:"issueShutdownAfterMinutes,omitempty"`
 }

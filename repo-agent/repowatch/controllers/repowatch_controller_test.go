@@ -825,6 +825,68 @@ func TestReconcileIssueHandlerSandboxes(t *testing.T) {
 		g.Expect(fetchedRepoWatch.Status.WatchedIssues[handlerName][0].Status).To(gomega.Equal("Active"))
 		g.Expect(fetchedRepoWatch.Status.PendingIssues[handlerName]).To(gomega.HaveLen(0))
 	})
+
+	// Test case 4: Scales down sandbox if age exceeds IssueShutdownAfterMinutes
+	t.Run("scales down sandbox if age exceeds IssueShutdownAfterMinutes", func(_ *testing.T) {
+		// Set IssueShutdownAfterMinutes
+		repoWatch.Spec.IssueHandlers[0].IssueShutdownAfterMinutes = 60
+		repoWatch.Spec.IssueHandlers[0].MaxActiveSandboxes = 10
+		// Refresh handler copy
+		handler = repoWatch.Spec.IssueHandlers[0]
+
+		// Create a sandbox that is older than 60 minutes
+		oldCreationTime := time.Now().Add(-61 * time.Minute)
+
+		oldSandbox := &unstructured.Unstructured{
+			Object: map[string]interface{}{
+				"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
+				"kind":       "IssueSandbox",
+				"metadata": map[string]interface{}{
+					"name":              "repo-issue-1-testhandler",
+					"namespace":         "default",
+					"creationTimestamp": oldCreationTime.Format(time.RFC3339),
+					"ownerReferences": []interface{}{
+						map[string]interface{}{
+							"apiVersion": "review.gemini.google.com/v1alpha1",
+							"kind":       "RepoWatch",
+							"name":       "test-repowatch",
+							"uid":        "test-uid",
+						},
+					},
+				},
+				"spec": map[string]interface{}{
+					"replicas": int64(1),
+				},
+			},
+		}
+
+		r := &RepoWatchReconciler{
+			Client: clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, oldSandbox).WithStatusSubresource(repoWatch).Build(),
+			Scheme: s,
+			NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
+				return &github.Client{}, map[string]string{}, nil
+			},
+		}
+
+		// Call reconcileIssueHandlerSandboxes with the issue corresponding to the sandbox
+		err := r.reconcileIssueHandlerSandboxes(context.Background(), currentUser, handler, repoWatch, []*github.Issue{issue}, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*oldSandbox}})
+		g.Expect(err).NotTo(gomega.HaveOccurred())
+
+		// Fetch the updated sandbox
+		updatedSandbox := &unstructured.Unstructured{}
+		updatedSandbox.SetGroupVersionKind(schema.GroupVersionKind{
+			Group:   "custom.agents.x-k8s.io",
+			Version: "v1alpha1",
+			Kind:    "IssueSandbox",
+		})
+		g.Expect(r.Client.Get(context.Background(), types.NamespacedName{Name: "repo-issue-1-testhandler", Namespace: "default"}, updatedSandbox)).To(gomega.Succeed())
+
+		// Check replicas
+		replicas, found, err := unstructured.NestedInt64(updatedSandbox.Object, "spec", "replicas")
+		g.Expect(err).NotTo(gomega.HaveOccurred())
+		g.Expect(found).To(gomega.BeTrue())
+		g.Expect(replicas).To(gomega.Equal(int64(0)))
+	})
 }
 
 func TestRepoWatchReconciler_Reconcile_NotFound(t *testing.T) {
