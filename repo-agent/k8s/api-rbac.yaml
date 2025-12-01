@@ -11,7 +11,7 @@ metadata:
 rules:
 # Can manage sandboxes in all user namespaces
 - apiGroups: ["custom.agents.x-k8s.io"]
-  resources: ["reviewsandboxes", "issuesandboxes"]
+  resources: ["reviewsandboxes", "issuesandboxes", "devsandboxes"]
   verbs: ["get", "list", "delete", "patch", "update", "create"]
 # Can manage repowatches in all user namespaces
 - apiGroups: ["review.gemini.google.com"]
@@ -89,4 +89,17 @@ subjects:
 roleRef:
   kind: ClusterRole
   name: configdir-controller
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: pr-review-api-bind-dev-sandbox
+subjects:
+- kind: ServiceAccount
+  name: pr-review-api
+  namespace: repo-agent-system
+roleRef:
+  kind: ClusterRole
+  name: dev-sandbox
   apiGroup: rbac.authorization.k8s.io

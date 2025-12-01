@@ -1287,6 +1287,9 @@ func (r *RepoWatchReconciler) createDevSandbox(ctx context.Context, user *github
 						"email": user.GetEmail(),
 					},
 				},
+				"gateway": map[string]interface{}{
+					"httpEnabled": true,
+				},
 				"githubSecretName": repoWatch.Spec.GithubSecretName,
 			},
 		},

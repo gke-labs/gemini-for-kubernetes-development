@@ -94,6 +94,7 @@ type Repo struct {
 	URL           string         `json:"url"`
 	Review        *ReviewConfig  `json:"review,omitempty"`
 	IssueHandlers []IssueHandler `json:"issueHandlers,omitempty"`
+	Dev           *DevConfig     `json:"dev,omitempty"`
 }
 
 // ReviewConfig holds configuration for PR reviews
@@ -106,6 +107,20 @@ type IssueHandler struct {
 	Name               string `json:"name"`
 	MaxActiveSandboxes int64  `json:"maxActiveSandboxes"`
 	PushBranch         bool   `json:"pushBranch"`
+}
+
+// DevConfig holds configuration for dev sandboxes
+type DevConfig struct {
+	MaxActiveSandboxes int64 `json:"maxActiveSandboxes"`
+}
+
+// DevSandbox represents a dev sandbox
+type DevSandbox struct {
+	Name           string `json:"name"`
+	Sandbox        string `json:"sandbox,omitempty"`
+	SandboxReplica string `json:"sandboxReplica,omitempty"`
+	BranchURL      string `json:"branchURL,omitempty"`
+	Branch         string `json:"branch,omitempty"`
 }
 
 type bodyLogWriter struct {
@@ -270,6 +285,10 @@ func main() {
 		api.POST("/repo/:repo/prs/:id/scaledown", scaleDownPR)
 		api.POST("/repo/:repo/issues/:issue_id/handler/:handler/scaleup", scaleUpIssue)
 		api.POST("/repo/:repo/issues/:issue_id/handler/:handler/scaledown", scaleDownIssue)
+		api.GET("/repo/:repo/dev", getDevSandboxes)
+		api.DELETE("/repo/:repo/dev/:name", deleteDevSandbox)
+		api.POST("/repo/:repo/dev/:name/scaleup", scaleUpDevSandbox)
+		api.POST("/repo/:repo/dev/:name/scaledown", scaleDownDevSandbox)
 		api.GET("/proxy", proxy)
 	}
 
@@ -1131,6 +1150,11 @@ func getRepos(c *gin.Context) {
 		// Extract review config
 		if maxActiveSandboxes, found, err := unstructured.NestedInt64(repoWatch.Object, "spec", "review", "maxActiveSandboxes"); err == nil && found && maxActiveSandboxes > 0 {
 			repo.Review = &ReviewConfig{MaxActiveSandboxes: maxActiveSandboxes}
+		}
+
+		// Extract dev config
+		if maxActiveSandboxes, found, err := unstructured.NestedInt64(repoWatch.Object, "spec", "dev", "maxActiveSandboxes"); err == nil && found && maxActiveSandboxes > 0 {
+			repo.Dev = &DevConfig{MaxActiveSandboxes: maxActiveSandboxes}
 		}
 
 		// Extract issue handlers
@@ -2028,6 +2052,214 @@ func deleteIssue(c *gin.Context) {
 	}
 
 	c.Status(http.StatusOK)
+}
+
+func getDevSandboxes(c *gin.Context) {
+	namespace := c.MustGet(userKey).(string)
+	repo := c.Param("repo")
+	fetchAndPopulateDevSandboxes(c.Request.Context(), namespace, repo)
+
+	sandboxes := []DevSandbox{}
+	// prefix: dev:ns:NAMESPACE:repo:REPO:dev:NAME
+	prefix := fmt.Sprintf("dev:ns:%s:repo:%s:dev:*", namespace, repo)
+	iter := rdb.Scan(c.Request.Context(), 0, prefix, 0).Iterator()
+	for iter.Next(c.Request.Context()) {
+		key := iter.Val()
+		parts := strings.Split(key, ":")
+		// dev:ns:NAMESPACE:repo:REPO:dev:NAME
+		// 0   1  2         3    4    5   6
+		if len(parts) != 7 {
+			continue
+		}
+		name := parts[6]
+
+		data, err := rdb.HGetAll(c.Request.Context(), key).Result()
+		if err != nil {
+			log.Printf("Failed to get DevSandbox %s from Redis for repo %s: %v", name, repo, err)
+			continue
+		}
+
+		sandbox := DevSandbox{
+			Name: name,
+		}
+		if val, ok := data["sandbox"]; ok {
+			sandbox.Sandbox = val
+		}
+		if val, ok := data["sandboxReplica"]; ok {
+			sandbox.SandboxReplica = val
+		}
+		if val, ok := data["branchURL"]; ok {
+			sandbox.BranchURL = val
+		}
+		if val, ok := data["branch"]; ok {
+			sandbox.Branch = val
+		}
+
+		sandboxes = append(sandboxes, sandbox)
+	}
+	if err := iter.Err(); err != nil {
+		log.Printf("Error during Redis SCAN for dev sandboxes: %v", err)
+	}
+
+	c.JSON(http.StatusOK, sandboxes)
+}
+
+func fetchAndPopulateDevSandboxes(ctx context.Context, namespace, repo string) {
+	gvr := schema.GroupVersionResource{
+		Group:    "custom.agents.x-k8s.io",
+		Version:  "v1alpha1",
+		Resource: "devsandboxes",
+	}
+	list, err := k8sClient.Resource(gvr).Namespace(namespace).List(context.Background(),
+		v1.ListOptions{
+			LabelSelector: fmt.Sprintf("review.gemini.google.com/repowatch=%s", repo),
+		})
+	if err != nil {
+		log.Printf("Failed to list DevSandbox CRs: %v.", err)
+		return
+	}
+
+	log.Printf("Populating DevSandboxes: Found %d devsandboxes for Repo: %s", len(list.Items), repo)
+	for _, item := range list.Items {
+		replicas, found, err := unstructured.NestedInt64(item.Object, "spec", "replicas")
+		if err != nil || !found {
+			log.Printf("Replicas (.spec.replicas) not found in DevSandbox %s", item.GetName())
+			continue
+		}
+
+		branch, found, err := unstructured.NestedString(item.Object, "spec", "destination", "branch")
+		if err != nil || !found {
+			log.Printf("Branch (.spec.destination.branch) not found in DevSandbox %s", item.GetName())
+			branch = "nobranch" // fallback
+		}
+
+		cloneURL, found, err := unstructured.NestedString(item.Object, "spec", "source", "cloneURL")
+		if err != nil || !found {
+			log.Printf("cloneURL (.spec.source.cloneURL) not found in DevSandbox %s", item.GetName())
+			cloneURL = "https://github.com/noorg/norepo.git"
+		}
+		repoParts := strings.Split(strings.TrimSuffix(cloneURL, ".git"), "/")
+		if len(repoParts) >= 2 {
+			repoName := repoParts[len(repoParts)-1]
+			owner := repoParts[len(repoParts)-2]
+			// Construct branch URL: https://github.com/OWNER/REPO/tree/BRANCH
+			branchURL := fmt.Sprintf("https://github.com/%s/%s/tree/%s", owner, repoName, branch)
+
+			// Store in Redis
+			// Use sandbox name as the identifier for now or the branch name?
+			// The UI card key is `sandbox.name`. If we use branch name, it must be unique per repo.
+			// Let's use the DevSandbox name as the key in Redis to match deletion logic.
+
+			key := fmt.Sprintf("dev:ns:%s:repo:%s:dev:%s", namespace, repo, item.GetName())
+			if err := rdb.HSet(ctx, key,
+				"sandbox", item.GetName(),
+				"branch", branch,
+				"branchURL", branchURL,
+				"sandboxReplica", fmt.Sprintf("%d", replicas),
+			).Err(); err != nil {
+				log.Printf("Failed to cache DevSandbox %s: %v", item.GetName(), err)
+			}
+		}
+	}
+}
+
+func deleteDevSandbox(c *gin.Context) {
+	namespace := c.MustGet(userKey).(string)
+	repo := c.Param("repo")
+	name := c.Param("name") // This is the sandbox name
+	ctx := c.Request.Context()
+
+	if err := scaledownDevSandboxHelper(ctx, namespace, name); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete dev sandbox", "details": err.Error()})
+		return
+	}
+
+	key := fmt.Sprintf("dev:ns:%s:repo:%s:dev:%s", namespace, repo, name)
+	if err := rdb.Del(c.Request.Context(), key).Err(); err != nil {
+		log.Printf("Failed to DEL DevSandbox data from Redis: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to DEL DevSandbox data from Redis"})
+		return
+	}
+
+	c.Status(http.StatusOK)
+}
+
+func scaleUpDevSandbox(c *gin.Context) {
+	namespace := c.MustGet(userKey).(string)
+	name := c.Param("name")
+
+	gvr := schema.GroupVersionResource{
+		Group:    "custom.agents.x-k8s.io",
+		Version:  "v1alpha1",
+		Resource: "devsandboxes",
+	}
+
+	// Get the existing resource to find max replicas? Or just set to 1.
+	// Usually 1.
+
+	sandbox := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
+			"kind":       "DevSandbox",
+			"metadata": map[string]interface{}{
+				"name":      name,
+				"namespace": namespace,
+			},
+			"spec": map[string]interface{}{
+				"replicas": int64(1),
+			},
+		},
+	}
+
+	_, err := k8sClient.Resource(gvr).Namespace(namespace).Apply(c.Request.Context(), name,
+		sandbox, v1.ApplyOptions{FieldManager: "review-ui", Force: true})
+	if err != nil {
+		log.Printf("Failed to scale up dev sandbox %s: %v", name, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scale up dev sandbox"})
+		return
+	}
+
+	c.Status(http.StatusOK)
+}
+
+func scaleDownDevSandbox(c *gin.Context) {
+	namespace := c.MustGet(userKey).(string)
+	name := c.Param("name")
+	if err := scaledownDevSandboxHelper(c.Request.Context(), namespace, name); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scale down dev sandbox", "details": err.Error()})
+		return
+	}
+	c.Status(http.StatusOK)
+}
+
+func scaledownDevSandboxHelper(ctx context.Context, namespace, name string) error {
+	gvr := schema.GroupVersionResource{
+		Group:    "custom.agents.x-k8s.io",
+		Version:  "v1alpha1",
+		Resource: "devsandboxes",
+	}
+	log.Printf("Scaling down dev sandbox %s", name)
+
+	sandbox := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
+			"kind":       "DevSandbox",
+			"metadata": map[string]interface{}{
+				"name":      name,
+				"namespace": namespace,
+			},
+			"spec": map[string]interface{}{
+				"replicas": int64(0),
+			},
+		},
+	}
+
+	_, err := k8sClient.Resource(gvr).Namespace(namespace).Apply(ctx, name,
+		sandbox, v1.ApplyOptions{FieldManager: "review-ui", Force: true})
+	if err != nil {
+		return fmt.Errorf("failed to scaledown dev sandbox: %w", err)
+	}
+	return nil
 }
 
 func proxy(c *gin.Context) {

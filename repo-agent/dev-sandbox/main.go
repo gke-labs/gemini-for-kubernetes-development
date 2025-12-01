@@ -80,6 +80,10 @@ func RunSSHD(ctx context.Context) error {
 func InitContainer(ctx context.Context) error {
 	log := klog.FromContext(ctx)
 
+	if err := checkoutBranch(ctx); err != nil {
+		return fmt.Errorf("checking out branch: %w", err)
+	}
+
 	var b ImageBuilder
 	if dotFilesRepo := os.Getenv("USER_DOTFILESREPO"); dotFilesRepo != "" {
 		if err := b.InstallDotfilesRepo(ctx, dotFilesRepo); err != nil {
@@ -105,6 +109,34 @@ func InitContainer(ctx context.Context) error {
 		return fmt.Errorf("code-server process exited with error: %w", err)
 	}
 
+	return nil
+}
+
+func checkoutBranch(ctx context.Context) error {
+	log := klog.FromContext(ctx)
+
+	repoURL := os.Getenv("GIT_HTML_URL")
+	if repoURL == "" {
+		return fmt.Errorf("GIT_HTML_URL environment variable not set")
+	}
+
+	parts := strings.Split(strings.TrimPrefix(repoURL, "https://github.com/"), "/")
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid GIT_HTML_URL format: %s", repoURL)
+	}
+	repoDir := filepath.Join("/workspaces", parts[1])
+
+	// Checkout the branch if specified
+	if branchName := os.Getenv("DEV_BRANCH"); branchName != "" {
+		log.Info("checking out branch", "branch", branchName, "repoDir", repoDir)
+		cmd := exec.CommandContext(ctx, "git", "checkout", "-b", branchName, "origin/"+branchName)
+		//cmd.Dir = repoDir
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("failed to checkout branch %q in %q: %w", branchName, repoDir, err)
+		}
+	}
 	return nil
 }
 
