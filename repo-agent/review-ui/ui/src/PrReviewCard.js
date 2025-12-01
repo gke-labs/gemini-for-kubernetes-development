@@ -373,7 +373,7 @@ function PrReviewCard({
           {getSandboxStatusClass(pr) === 'green' ? (
             <div style={{display: 'flex', alignItems: 'center', gap: '5px'}}>
               <a href={`/sandbox/${namespace}/${pr.sandbox}/`} target="_blank" rel="noopener noreferrer" className={`pr-sandbox ${getSandboxStatusClass(pr)}`}>
-                Sandbox
+                Sandbox Active
               </a>
               <button className="btn btn-sm pr-sandbox yellow" style={{padding: '4px 10px', fontSize: '14px'}} onClick={(e) => { e.stopPropagation(); handleScaleDown(pr.id); }} title="Scale Down">
                 &#9646;&#9646;
@@ -381,7 +381,7 @@ function PrReviewCard({
             </div>
           ) : getSandboxStatusClass(pr) === 'yellow' ? (
              <div style={{display: 'flex', alignItems: 'center', gap: '5px'}}>
-               <span className={`pr-sandbox ${getSandboxStatusClass(pr)}`}>Sandbox</span>
+               <span className={`pr-sandbox ${getSandboxStatusClass(pr)}`}>Sandbox Paused</span>
                <button className="btn btn-sm pr-sandbox green" style={{padding: '4px 10px', fontSize: '14px'}} onClick={(e) => { e.stopPropagation(); handleScaleUp(pr.id); }} title="Scale Up">
                   &#9654;
                </button>
