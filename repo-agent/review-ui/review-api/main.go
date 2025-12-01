@@ -784,6 +784,7 @@ spec:
           Issue Body: "{{.Body}}"
           HTML URL: "{{.HTMLURL}}"
         provider: gemini-cli
+      issueShutdownAfterMinutes: 30
       maxActiveSandboxes: 1
       maxSandboxes: 3
       name: triage

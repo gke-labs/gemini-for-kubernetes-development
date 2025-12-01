@@ -33,6 +33,8 @@ spec:
                   properties:
                     devcontainerConfigRef:
                       type: string
+                    issueShutdownAfterMinutes:
+                      type: integer
                     issues:
                       items:
                         type: integer

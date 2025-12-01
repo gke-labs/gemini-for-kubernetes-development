@@ -647,6 +647,26 @@ func (r *RepoWatchReconciler) reconcileIssueHandlerSandboxes(ctx context.Context
 				if replicas > 0 {
 					activeSandboxes++
 				}
+				// Check if the sandbox should be scaled down
+				if handler.IssueShutdownAfterMinutes > 0 {
+					creationTimestamp := sandbox.GetCreationTimestamp()
+					shutdownDuration := time.Minute * time.Duration(handler.IssueShutdownAfterMinutes)
+					if time.Since(creationTimestamp.Time) > shutdownDuration {
+						replicas, found, err := unstructured.NestedInt64(sandbox.Object, "spec", "replicas")
+						if err != nil || !found {
+							log.Error(err, "unable to get replicas for sandbox", "sandbox", sandbox.GetName())
+						} else if replicas > 0 { // Only scale down if it's currently active
+							log.Info("scaling down issue sandbox", "sandbox", sandbox.GetName())
+							if err := unstructured.SetNestedField(sandbox.Object, int64(0), "spec", "replicas"); err != nil {
+								log.Error(err, "unable to set replicas for sandbox", "sandbox", sandbox.GetName())
+							} else {
+								if err := r.Update(ctx, &sandbox); err != nil {
+									log.Error(err, "unable to update sandbox", "sandbox", sandbox.GetName())
+								}
+							}
+						}
+					}
+				}
 				watchedIssues = append(watchedIssues, reviewv1alpha1.WatchedIssue{
 					Number:      *issue.Number,
 					SandboxName: sandboxName,
