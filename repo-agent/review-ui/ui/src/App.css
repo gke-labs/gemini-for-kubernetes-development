@@ -361,6 +361,17 @@ input:checked + .slider:before {
   transition: background-color 0.3s ease;
 }
 
+.btn-sm {
+    padding: 5px 10px;
+    font-size: 0.9rem;
+}
+
+.btn-refresh-lg {
+    padding: 5px 10px;
+    font-size: 1.2rem;
+    line-height: 1;
+}
+
 .btn-submit {
   background-color: #28a745;
   color: white;
@@ -633,7 +644,23 @@ input:checked + .slider:before {
     width: 100%;
 }
 
-.repo-delete-btn {
-    position: absolute;
-    right: 20px;
+.repo-controls {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  position: absolute;
+  right: 20px;
+}
+
+.last-updated {
+  font-size: 0.85rem;
+  color: #666;
+}
+
+.dark-mode .last-updated {
+  color: #aaa;
+}
+
+.stale {
+    color: #e57373; /* Light red/pinkish */
 }
