@@ -29,6 +29,7 @@ function App() {
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'light');
   const [reviewViewModes, setReviewViewModes] = useState({});
   const [yamlDrafts, setYamlDrafts] = useState({});
+  const [lastUpdated, setLastUpdated] = useState(null);
 
   useEffect(() => {
     document.body.className = theme === 'dark' ? 'dark-mode' : '';
@@ -105,55 +106,117 @@ function App() {
     }
   }, [isAuthenticated, isGuest, fetchRepos]);
 
-  useEffect(() => {
-    if ((!isAuthenticated && !isGuest) || view !== 'dashboard') return;
+  const refreshData = useCallback((merge = false) => {
+    if (!isAuthenticated && !isGuest) return;
+    if (!activeRepo) return;
+    if (activeSubTab.repo !== activeRepo.name) return;
 
-    if (activeRepo && activeSubTab.repo === activeRepo.name) {
-      if (activeSubTab.name === 'review') {
-        setIssues([]);
+    if (activeSubTab.name === 'review') {
+        if (!merge) setIssues([]);
         fetch(`/api/repo/${activeRepo.name}/prs`)
           .then(res => res.json())
           .then(data => {
             const safeData = data || [];
             setPrs(safeData);
-            const initialDrafts = {};
-            const initialCollapsedState = {};
-            safeData.forEach(pr => {
-              try {
-                const parsedDraft = yaml.load(pr.draft || '');
-                initialDrafts[pr.id] = parsedDraft || { note: '', review: { body: '', comments: [] } };
-              } catch (e) {
-                console.error(`Error parsing draft YAML for PR ${pr.id}:`, e);
-                initialDrafts[pr.id] = { note: '', review: { body: '', comments: [] } };
-              }
-              initialCollapsedState[pr.id] = true; // Collapse by default
+            setLastUpdated(new Date());
+            
+            setDrafts(prev => {
+                const next = merge ? { ...prev } : {};
+                safeData.forEach(pr => {
+                  if (next[pr.id] === undefined) {
+                    try {
+                      const parsedDraft = yaml.load(pr.draft || '');
+                      next[pr.id] = parsedDraft || { note: '', review: { body: '', comments: [] } };
+                    } catch (e) {
+                      console.error(`Error parsing draft YAML for PR ${pr.id}:`, e);
+                      next[pr.id] = { note: '', review: { body: '', comments: [] } };
+                    }
+                  }
+                });
+                return next;
             });
-            setDrafts(initialDrafts);
-            setCollapsedReviews(initialCollapsedState);
-            const initialViewModes = {};
-            safeData.forEach(pr => {
-              initialViewModes[pr.id] = 'structured';
+
+            setCollapsedReviews(prev => {
+                const next = merge ? { ...prev } : {};
+                safeData.forEach(pr => {
+                    if (next[pr.id] === undefined) next[pr.id] = true;
+                });
+                return next;
             });
-            setReviewViewModes(initialViewModes);
+
+            setReviewViewModes(prev => {
+                const next = merge ? { ...prev } : {};
+                safeData.forEach(pr => {
+                     if (next[pr.id] === undefined) next[pr.id] = 'structured';
+                });
+                return next;
+            });
           })
           .catch(err => console.error(`Failed to fetch PRs for ${activeRepo.name}:`, err));
-      } else if (activeSubTab.name) {
-        setPrs([]);
+    } else if (activeSubTab.name) {
+        if (!merge) setPrs([]);
         fetch(`/api/repo/${activeRepo.name}/issues/${activeSubTab.name}`)
           .then(res => res.json())
           .then(data => {
             const safeData = data || [];
             setIssues(safeData);
-            const initialDrafts = {};
-            safeData.forEach(issue => {
-              initialDrafts[issue.id] = issue.draft || '';
+            setLastUpdated(new Date());
+            setDrafts(prev => {
+                const next = merge ? { ...prev } : {};
+                safeData.forEach(issue => {
+                    if (next[issue.id] === undefined) {
+                        next[issue.id] = issue.draft || '';
+                    }
+                });
+                return next;
             });
-            setDrafts(initialDrafts);
           })
           .catch(err => console.error(`Failed to fetch issues for ${activeRepo.name} handler ${activeSubTab.name}:`, err));
-      }
     }
-  }, [activeRepo, activeSubTab, isAuthenticated, isGuest, view]);
+  }, [activeRepo, activeSubTab, isAuthenticated, isGuest]);
+
+  useEffect(() => {
+    if ((!isAuthenticated && !isGuest) || view !== 'dashboard') return;
+
+    let intervalId;
+
+    const tick = () => refreshData(true);
+
+    const start = () => {
+      if (!intervalId) {
+        intervalId = setInterval(tick, 20000);
+      }
+    };
+
+    const stop = () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+        intervalId = null;
+      }
+    };
+
+    const onVisibilityChange = () => {
+      if (document.hidden) {
+        stop();
+      } else {
+        tick(); // Update immediately when visible
+        start();
+      }
+    };
+
+    refreshData(false);
+
+    if (!document.hidden) {
+      start();
+    }
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    return () => {
+      stop();
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [refreshData, isAuthenticated, isGuest, view]);
 
   const handleLogin = () => {
     window.location.href = '/api/auth/login';
@@ -666,7 +729,11 @@ function App() {
                 </button>
             ))}
             </nav>
-            <DeleteRepo repo={activeRepo} onRepoDeleted={handleRepoDeleted} />
+            <div className="repo-controls">
+                <button className="btn btn-refresh-lg" onClick={() => refreshData(true)} title="Refresh now">↻</button>
+                {lastUpdated && <span className={`last-updated ${Date.now() - lastUpdated > 60000 ? 'stale' : ''}`}>Updated {lastUpdated.toLocaleTimeString()}</span>}
+                <DeleteRepo repo={activeRepo} onRepoDeleted={handleRepoDeleted} />
+            </div>
         </div>
       )}
       <main className="pr-list">
