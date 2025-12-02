@@ -62,6 +62,19 @@ spec:
       containers:
       - name: repowatch-controller
         image: ko://repo-agent/repowatch/cmd/repowatch-controller # placeholder value, replaced by deployment scripts
+        env:
+        - name: GITHUB_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: github-token
+              key: github-client-id
+              optional: true
+        - name: GITHUB_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: github-token
+              key: github-client-secret
+              optional: true
         resources:
           limits:
             cpu: 500m

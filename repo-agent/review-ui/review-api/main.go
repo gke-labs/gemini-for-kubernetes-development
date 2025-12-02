@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
@@ -160,8 +161,9 @@ func initOAuth() {
 	oauthConf = &oauth2.Config{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
-		Scopes:       []string{"read:user", "user:email"},
-		Endpoint:     githuboauth.Endpoint,
+		// for Github "Github App" scopes are ignored, for Github "Oauth" app scopes are used
+		Scopes:   []string{"read:user", "user:email"},
+		Endpoint: githuboauth.Endpoint,
 	}
 
 	b := make([]byte, 16)
@@ -315,6 +317,13 @@ func authCallback(c *gin.Context) {
 		log.Printf("Failed to bootstrap namespace %s: %v", ghUser, err)
 	}
 
+	// Update the secret with the user's token and info
+	if err := updateUserSecret(c.Request.Context(), ghUser, token, user); err != nil {
+		log.Printf("Failed to update user secret: %v", err)
+		c.String(http.StatusInternalServerError, "Failed to update user secret")
+		return
+	}
+
 	session := sessions.Default(c)
 	session.Set(userKey, ghUser)
 	if err := session.Save(); err != nil {
@@ -323,6 +332,25 @@ func authCallback(c *gin.Context) {
 		return
 	}
 	c.Redirect(http.StatusTemporaryRedirect, "/")
+}
+
+func updateUserSecret(ctx context.Context, namespace string, token *oauth2.Token, user *github.User) error {
+	data := map[string][]byte{
+		"pat": []byte(token.AccessToken),
+	}
+	if token.RefreshToken != "" {
+		data["refresh_token"] = []byte(token.RefreshToken)
+	}
+	if !token.Expiry.IsZero() {
+		data["expiry"] = []byte(token.Expiry.Format(time.RFC3339))
+	}
+	if user.Name != nil {
+		data["name"] = []byte(*user.Name)
+	}
+	if user.Email != nil {
+		data["email"] = []byte(*user.Email)
+	}
+	return updateSecret(ctx, namespace, githubSecretName, data)
 }
 
 func authStatus(c *gin.Context) {

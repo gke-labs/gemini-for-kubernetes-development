@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"math/rand"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"text/template"
@@ -30,6 +31,7 @@ import (
 
 	"github.com/google/go-github/v39/github"
 	"golang.org/x/oauth2"
+	githuboauth "golang.org/x/oauth2/github"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -54,6 +56,55 @@ var seededRand = rand.New(
 
 type githubClientFactory func(ctx context.Context, k8sClient client.Client, repoWatch *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error)
 
+// PersistingTokenSource wraps an oauth2.TokenSource and persists the token to a Kubernetes secret when it changes.
+type PersistingTokenSource struct {
+	Source     oauth2.TokenSource
+	K8sClient  client.Client
+	SecretName string
+	Namespace  string
+}
+
+func (s *PersistingTokenSource) Token() (*oauth2.Token, error) {
+	t, err := s.Source.Token()
+	if err != nil {
+		return nil, err
+	}
+
+	// Persist the token if it has changed
+	go func(token *oauth2.Token) {
+		ctx := context.Background()
+		secret := &corev1.Secret{}
+		if err := s.K8sClient.Get(ctx, types.NamespacedName{Name: s.SecretName, Namespace: s.Namespace}, secret); err != nil {
+			log.Log.Error(err, "failed to get secret for token update", "secret", s.SecretName)
+			return
+		}
+
+		if secret.Data == nil {
+			secret.Data = make(map[string][]byte)
+		}
+
+		// Check if token changed
+		currentPAT := string(secret.Data["pat"])
+		if currentPAT == token.AccessToken {
+			return
+		}
+
+		secret.Data["pat"] = []byte(token.AccessToken)
+		if token.RefreshToken != "" {
+			secret.Data["refresh_token"] = []byte(token.RefreshToken)
+		}
+		if !token.Expiry.IsZero() {
+			secret.Data["expiry"] = []byte(token.Expiry.Format(time.RFC3339))
+		}
+
+		if err := s.K8sClient.Update(ctx, secret); err != nil {
+			log.Log.Error(err, "failed to update secret with new token", "secret", s.SecretName)
+		}
+	}(t)
+
+	return t, nil
+}
+
 func NewGithubClient(ctx context.Context, k8sClient client.Client, repoWatch *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
 	secret := &corev1.Secret{}
 	secretName := repoWatch.Spec.GithubSecretName
@@ -65,8 +116,13 @@ func NewGithubClient(ctx context.Context, k8sClient client.Client, repoWatch *re
 		"email": "",
 	}
 	pat, ok := secret.Data["pat"]
-	if !ok {
-		return nil, nil, fmt.Errorf("\"pat\" not found in secret %s", secretName)
+	if !ok || len(string(pat)) == 0 {
+		// If PAT is missing or empty check if we have OAuth credentials configured.
+		// If so, we might be waiting for the user to login.
+		if os.Getenv("GITHUB_CLIENT_ID") != "" && os.Getenv("GITHUB_CLIENT_SECRET") != "" {
+			return nil, nil, fmt.Errorf("waiting for user login to populate github token in secret %s", secretName)
+		}
+		return nil, nil, fmt.Errorf("\"pat\" not found or empty in secret %s", secretName)
 	}
 	githubConfig["pat"] = string(pat)
 
@@ -80,9 +136,48 @@ func NewGithubClient(ctx context.Context, k8sClient client.Client, repoWatch *re
 		githubConfig["email"] = string(secret.Data["email"])
 	}
 
-	ts := oauth2.StaticTokenSource(
-		&oauth2.Token{AccessToken: string(pat)},
-	)
+	clientID := os.Getenv("GITHUB_CLIENT_ID")
+	clientSecret := os.Getenv("GITHUB_CLIENT_SECRET")
+	refreshToken := string(secret.Data["refresh_token"])
+	expiryStr := string(secret.Data["expiry"])
+
+	var ts oauth2.TokenSource
+
+	if clientID != "" && clientSecret != "" && refreshToken != "" {
+		// Use refresh flow
+		oauthConf := &oauth2.Config{
+			ClientID:     clientID,
+			ClientSecret: clientSecret,
+			Endpoint:     githuboauth.Endpoint,
+		}
+
+		token := &oauth2.Token{
+			AccessToken:  string(pat),
+			RefreshToken: refreshToken,
+		}
+
+		if expiryStr != "" {
+			if expiry, err := time.Parse(time.RFC3339, expiryStr); err == nil {
+				token.Expiry = expiry
+			}
+		}
+
+		// ReuseTokenSource will use the existing token if valid, or refresh it if expired.
+		// We wrap it in PersistingTokenSource to save the new token if refreshed.
+		reusingSource := oauthConf.TokenSource(ctx, token)
+		ts = &PersistingTokenSource{
+			Source:     reusingSource,
+			K8sClient:  k8sClient,
+			SecretName: secretName,
+			Namespace:  repoWatch.Namespace,
+		}
+	} else {
+		// Fallback to static token source
+		ts = oauth2.StaticTokenSource(
+			&oauth2.Token{AccessToken: string(pat)},
+		)
+	}
+
 	tc := oauth2.NewClient(ctx, ts)
 	return github.NewClient(tc), githubConfig, nil
 }
@@ -99,7 +194,7 @@ type RepoWatchReconciler struct {
 //+kubebuilder:rbac:groups=review.gemini.google.com,resources=repowatches/finalizers,verbs=update
 //+kubebuilder:rbac:groups=custom.agents.x-k8s.io,resources=reviewsandboxes,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=custom.agents.x-k8s.io,resources=issuesandboxes,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+//+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;update;patch
 
 func (r *RepoWatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
