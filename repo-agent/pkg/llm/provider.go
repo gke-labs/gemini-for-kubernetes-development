@@ -37,7 +37,9 @@ func NewLLMProvider(name string) (Provider, error) {
 	case "gemini-cli":
 		return &Gemini{Executor: &RealCommandExecutor{}}, nil
 	case "claude":
-		return &Claude{}, nil
+		c := &Claude{}
+		c.AddPostProcessor(StripYAMLMarkers)
+		return c, nil
 	default:
 		return nil, fmt.Errorf("unknown provider: %s", name)
 	}
