@@ -19,6 +19,11 @@ import (
 	"fmt"
 )
 
+const (
+	// TODO(seans): Find a more appropriate location for this constant.
+	RepoAgentSystemNamespace = "repo-agent-system"
+)
+
 // PostProcessor defines the signature for functions that can post-process the LLM's raw output.
 type PostProcessor func([]byte) ([]byte, error)
 
