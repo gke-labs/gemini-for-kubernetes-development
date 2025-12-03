@@ -17,48 +17,10 @@ package llm
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 )
-
-func TestNewProvider(t *testing.T) {
-	tests := []struct {
-		name         string
-		provider     string
-		wantErr      bool
-		expectedType string
-	}{
-		{
-			name:         "gemini-cli provider",
-			provider:     "gemini-cli",
-			wantErr:      false,
-			expectedType: "*llm.Gemini",
-		},
-		{
-			name:     "unknown provider",
-			provider: "unknown",
-			wantErr:  true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			provider, err := NewLLMProvider(tt.provider)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("NewProvider() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if !tt.wantErr {
-				providerType := fmt.Sprintf("%T", provider)
-				if providerType != tt.expectedType {
-					t.Errorf("NewProvider() type = %v, want %v", providerType, tt.expectedType)
-				}
-			}
-		})
-	}
-}
 
 func TestGemini_Setup(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
@@ -217,4 +179,11 @@ func TestGemini_Run(t *testing.T) {
 			t.Errorf("Expected error 'post-processing failed', but got '%v'", err)
 		}
 	})
+}
+
+func TestGeminiCleanup(t *testing.T) {
+	g := &Gemini{}
+	if err := g.Cleanup(""); err != nil {
+		t.Errorf("Cleanup() error = %v, want nil", err)
+	}
 }

@@ -360,3 +360,10 @@ func TestClaudeRunWithStripYAMLMarkers(t *testing.T) {
 		t.Errorf("TestClaudeRunWithStripYAMLMarkers: Expected %q, got %q", expected, string(resp))
 	}
 }
+
+func TestClaudeCleanup(t *testing.T) {
+	c := &Claude{}
+	if err := c.Cleanup(""); err != nil {
+		t.Errorf("Cleanup() error = %v, want nil", err)
+	}
+}
