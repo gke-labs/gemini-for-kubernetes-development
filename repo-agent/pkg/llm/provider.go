@@ -40,7 +40,9 @@ type Provider interface {
 func NewLLMProvider(name string) (Provider, error) {
 	switch name {
 	case "gemini-cli":
-		return &Gemini{Executor: &RealCommandExecutor{}}, nil
+		g := &Gemini{Executor: &RealCommandExecutor{}}
+		g.AddPostProcessor(StripYAMLMarkers)
+		return g, nil
 	case "claude":
 		c := &Claude{}
 		c.AddPostProcessor(StripYAMLMarkers)
