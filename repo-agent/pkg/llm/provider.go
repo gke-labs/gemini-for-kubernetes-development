@@ -19,6 +19,11 @@ import (
 	"fmt"
 )
 
+const (
+	// TODO(seans): Find a more appropriate location for this constant.
+	RepoAgentSystemNamespace = "repo-agent-system"
+)
+
 // PostProcessor defines the signature for functions that can post-process the LLM's raw output.
 type PostProcessor func([]byte) ([]byte, error)
 
@@ -35,9 +40,13 @@ type Provider interface {
 func NewLLMProvider(name string) (Provider, error) {
 	switch name {
 	case "gemini-cli":
-		return &Gemini{Executor: &RealCommandExecutor{}}, nil
+		g := &Gemini{Executor: &RealCommandExecutor{}}
+		g.AddPostProcessor(StripYAMLMarkers)
+		return g, nil
 	case "claude":
-		return &Claude{}, nil
+		c := &Claude{}
+		c.AddPostProcessor(StripYAMLMarkers)
+		return c, nil
 	default:
 		return nil, fmt.Errorf("unknown provider: %s", name)
 	}

@@ -55,6 +55,7 @@ spec:
                           default: gemini-cli
                           enum:
                           - gemini-cli
+                          - claude
                           type: string
                       type: object
                     maxActiveSandboxes:
@@ -98,6 +99,7 @@ spec:
                         default: gemini-cli
                         enum:
                         - gemini-cli
+                        - claude
                         type: string
                     type: object
                   maxActiveSandboxes:

@@ -16,19 +16,39 @@ package llm
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 )
+
+// newClientsetFunc is a variable to allow mocking in tests.
+var newClientsetFunc func(c *rest.Config) (kubernetes.Interface, error) = func(c *rest.Config) (kubernetes.Interface, error) {
+	return kubernetes.NewForConfig(c)
+}
+var inClusterConfigFunc = rest.InClusterConfig
 
 const (
 	defaultClaudeModel     = "claude-sonnet-4-5"
 	defaultClaudeMaxTokens = 4096
 	defaultClaudeAPIURL    = "https://api.anthropic.com/v1/messages"
 	anthropicAPIVersion    = "2023-06-01"
+
+	// AnthropicAPIKeySecretName is the name of the secret containing the Anthropic API key.
+	AnthropicAPIKeySecretName = "anthropic-api-key"
+
+	// AnthropicAPIKeySecretKey is the key in the secret containing the Anthropic API key.
+	AnthropicAPIKeySecretKey = "claude"
+
+	// AnthropicAPIKeyEnvVar is the environment variable name for the Anthropic API key.
+	AnthropicAPIKeyEnvVar = "ANTHROPIC_API_KEY"
 )
 
 type HTTPClient interface {
@@ -47,11 +67,35 @@ func (c *Claude) AddPostProcessor(p PostProcessor) {
 }
 
 func (c *Claude) Setup(_, _ string) error {
-	apiKey, ok := os.LookupEnv("ANTHROPIC_API_KEY")
-	if !ok {
-		return fmt.Errorf("ANTHROPIC_API_KEY environment variable not set")
+	// First, try to get the config from in-cluster config
+	config, err := inClusterConfigFunc()
+	if err != nil {
+		// If that fails, fall back to checking the environment variable
+		log.Printf("Not running in a Kubernetes cluster, checking for ANTHROPIC_API_KEY environment variable: %v", err)
+		apiKey, ok := os.LookupEnv(AnthropicAPIKeyEnvVar)
+		if !ok {
+			return fmt.Errorf("%s environment variable not set and not in a Kubernetes cluster", AnthropicAPIKeyEnvVar)
+		}
+		c.apiKey = apiKey
+		return nil
 	}
-	c.apiKey = apiKey
+
+	clientset, err := newClientsetFunc(config)
+	if err != nil {
+		return fmt.Errorf("failed to create clientset: %w", err)
+	}
+
+	secret, err := clientset.CoreV1().Secrets(RepoAgentSystemNamespace).Get(context.TODO(), AnthropicAPIKeySecretName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to get secret %s: %w", AnthropicAPIKeySecretName, err)
+	}
+
+	apiKey, ok := secret.Data[AnthropicAPIKeySecretKey]
+	if !ok {
+		return fmt.Errorf("secret %s does not contain key '%s'", AnthropicAPIKeySecretName, AnthropicAPIKeySecretKey)
+	}
+
+	c.apiKey = string(apiKey)
 	return nil
 }
 

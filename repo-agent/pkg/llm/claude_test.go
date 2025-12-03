@@ -22,9 +22,15 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/rest"
 )
 
-// ... (MockClient and TestClaudeRun function remain the same, but with ioutil.NopCloser replaced with io.NopCloser)
+// ... (MockClient and other test functions remain the same)
 
 type MockClient struct {
 	DoFunc func(req *http.Request) (*http.Response, error)
@@ -139,27 +145,131 @@ func TestClaudeRun(t *testing.T) {
 }
 
 func TestClaudeSetup(t *testing.T) {
-	// Test case 1: ANTHROPIC_API_KEY is set
-	os.Setenv("ANTHROPIC_API_KEY", "test-api-key")
-	defer os.Unsetenv("ANTHROPIC_API_KEY")
+	// Save original functions and restore them after the test
+	originalNewClientsetFunc := newClientsetFunc
+	originalInClusterConfigFunc := inClusterConfigFunc
+	defer func() {
+		newClientsetFunc = originalNewClientsetFunc
+		inClusterConfigFunc = originalInClusterConfigFunc
+	}()
 
-	c := &Claude{}
-	err := c.Setup("", "")
-	if err != nil {
-		t.Fatalf("TestClaudeSetup (API key set) failed: %v", err)
+	testCases := []struct {
+		name             string
+		inCluster        bool
+		secret           *corev1.Secret
+		envVarSet        bool
+		envVarValue      string
+		expectedAPIKey   string
+		expectError      bool
+		expectedErrorMsg string
+	}{
+		{
+			name:      "In-cluster with valid secret",
+			inCluster: true,
+			secret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      AnthropicAPIKeySecretName,
+					Namespace: RepoAgentSystemNamespace,
+				},
+				Data: map[string][]byte{
+					AnthropicAPIKeySecretKey: []byte("test-secret-key"),
+				},
+			},
+			expectedAPIKey: "test-secret-key",
+			expectError:    false,
+		},
+		{
+			name:             "In-cluster with missing secret",
+			inCluster:        true,
+			secret:           nil, // No secret
+			expectError:      true,
+			expectedErrorMsg: fmt.Sprintf("failed to get secret %s", AnthropicAPIKeySecretName),
+		},
+		{
+			name:      "In-cluster with secret missing key",
+			inCluster: true,
+			secret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      AnthropicAPIKeySecretName,
+					Namespace: RepoAgentSystemNamespace,
+				},
+				Data: map[string][]byte{
+					"other-key": []byte("some-value"),
+				},
+			},
+			expectError:      true,
+			expectedErrorMsg: fmt.Sprintf("secret %s does not contain key '%s'", AnthropicAPIKeySecretName, AnthropicAPIKeySecretKey),
+		},
+		{
+			name:           "Outside cluster with env var set",
+			inCluster:      false,
+			envVarSet:      true,
+			envVarValue:    "test-env-key",
+			expectedAPIKey: "test-env-key",
+			expectError:    false,
+		},
+		{
+			name:             "Outside cluster with env var not set",
+			inCluster:        false,
+			envVarSet:        false,
+			expectError:      true,
+			expectedErrorMsg: fmt.Sprintf("%s environment variable not set", AnthropicAPIKeyEnvVar),
+		},
 	}
 
-	if c.apiKey != "test-api-key" {
-		t.Errorf("TestClaudeSetup (API key set): Expected apiKey 'test-api-key', got %q", c.apiKey)
-	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Set up environment variable if needed
+			if tc.envVarSet {
+				os.Setenv(AnthropicAPIKeyEnvVar, tc.envVarValue)
+				defer os.Unsetenv(AnthropicAPIKeyEnvVar)
+			} else {
+				os.Unsetenv(AnthropicAPIKeyEnvVar)
+			}
 
-	// Test case 2: ANTHROPIC_API_KEY is not set
-	os.Unsetenv("ANTHROPIC_API_KEY")
+			// Mock InClusterConfig
+			if tc.inCluster {
+				inClusterConfigFunc = func() (*rest.Config, error) {
+					return &rest.Config{}, nil
+				}
+			} else {
+				inClusterConfigFunc = func() (*rest.Config, error) {
+					return nil, fmt.Errorf("not in cluster")
+				}
+			}
 
-	c = &Claude{}
-	err = c.Setup("", "")
-	if err == nil || !strings.Contains(err.Error(), "ANTHROPIC_API_KEY environment variable not set") {
-		t.Errorf("TestClaudeSetup (API key not set): Expected 'not set' error, got %v", err)
+			// Mock newClientsetFunc
+			var clientset kubernetes.Interface
+			if tc.secret != nil {
+				clientset = fake.NewSimpleClientset(tc.secret)
+			} else {
+				clientset = fake.NewSimpleClientset()
+			}
+			newClientsetFunc = func(_ *rest.Config) (kubernetes.Interface, error) {
+				return clientset, nil
+			}
+
+			// Run the test
+			c := &Claude{}
+			err := c.Setup("", "")
+
+			// Assertions
+			if tc.expectError {
+				if err == nil {
+					t.Fatalf("Expected an error, but got none")
+				}
+				if !strings.Contains(err.Error(), tc.expectedErrorMsg) {
+					t.Errorf("Expected error message to contain %q, but got %q", tc.expectedErrorMsg, err.Error())
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("Expected no error, but got: %v", err)
+				}
+				if c.apiKey != tc.expectedAPIKey {
+					t.Errorf("Expected apiKey %q, but got %q", tc.expectedAPIKey, c.apiKey)
+				}
+			}
+		})
 	}
 }
 
