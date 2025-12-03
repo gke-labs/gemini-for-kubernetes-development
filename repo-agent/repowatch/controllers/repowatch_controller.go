@@ -487,7 +487,7 @@ func (r *RepoWatchReconciler) reconcileReviewSandboxes(ctx context.Context, repo
 
 	// Create new sandboxes
 	for _, pr := range append(explicitPRs, prs...) {
-		sandboxName := fmt.Sprintf("%s-pr-%d", strings.Split(repoWatch.Spec.RepoURL, "/")[len(strings.Split(repoWatch.Spec.RepoURL, "/"))-1], *pr.Number)
+		sandboxName := fmt.Sprintf("%s-pr-%d", repoWatch.Name, *pr.Number)
 		sandboxExists := false
 		prIsExplicit := false
 		for _, explicitPR := range explicitPRs {
@@ -634,7 +634,7 @@ func (r *RepoWatchReconciler) reconcileIssueHandlerSandboxes(ctx context.Context
 
 	// Create new sandboxes
 	for _, issue := range issues {
-		sandboxName := fmt.Sprintf("%s-issue-%d-%s", strings.Split(repoWatch.Spec.RepoURL, "/")[len(strings.Split(repoWatch.Spec.RepoURL, "/"))-1], *issue.Number, handler.Name)
+		sandboxName := fmt.Sprintf("%s-issue-%d-%s", repoWatch.Name, *issue.Number, handler.Name)
 		sandboxExists := false
 		for _, sandbox := range sandboxes.Items {
 			if sandbox.GetName() == sandboxName {
@@ -774,8 +774,7 @@ func (r *RepoWatchReconciler) generateIssueHandlerPrompt(handler reviewv1alpha1.
 // sandbox.
 func (r *RepoWatchReconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, pr *github.PullRequest) error {
 	log := log.FromContext(ctx)
-	repoName := strings.Split(repoWatch.Spec.RepoURL, "/")[len(strings.Split(repoWatch.Spec.RepoURL, "/"))-1]
-	sandboxName := fmt.Sprintf("%s-pr-%d", repoName, *pr.Number)
+	sandboxName := fmt.Sprintf("%s-pr-%d", repoWatch.Name, *pr.Number)
 
 	prompt, err := r.generateReviewPrompt(repoWatch, pr)
 	if err != nil {
@@ -851,8 +850,7 @@ func randString(n int) string {
 // sandbox.
 func (r *RepoWatchReconciler) createSandboxForIssueHandler(ctx context.Context, user *github.User, handler reviewv1alpha1.IssueHandlerSpec, repoWatch *reviewv1alpha1.RepoWatch, issue *github.Issue) error {
 	log := log.FromContext(ctx)
-	repoName := strings.Split(repoWatch.Spec.RepoURL, "/")[len(strings.Split(repoWatch.Spec.RepoURL, "/"))-1]
-	sandboxName := fmt.Sprintf("%s-issue-%d-%s", repoName, *issue.Number, handler.Name)
+	sandboxName := fmt.Sprintf("%s-issue-%d-%s", repoWatch.Name, *issue.Number, handler.Name)
 
 	prompt, err := r.generateIssueHandlerPrompt(handler, issue)
 	if err != nil {
@@ -862,7 +860,7 @@ func (r *RepoWatchReconciler) createSandboxForIssueHandler(ctx context.Context, 
 	cloneURL := strings.Replace(*issue.RepositoryURL, "api.github.com/repos", "github.com", 1) + ".git"
 	// Get repo name which is the string after the last /
 	parts := strings.Split(cloneURL, "/")
-	repoName = parts[len(parts)-1]
+	repoName := parts[len(parts)-1]
 	//originURL := fmt.Sprintf("https://%s:%s@github.com/%s/%s", user.GetLogin(), githubConfig["pat"], user.GetLogin(), repoName)
 	originURL := fmt.Sprintf("github.com/%s/%s", user.GetLogin(), repoName)
 

@@ -19,6 +19,7 @@ package controllers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -339,7 +340,7 @@ func TestReconcileReviewSandboxes(t *testing.T) {
 			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
 			"kind":       "ReviewSandbox",
 			"metadata": map[string]interface{}{
-				"name":      "repo-pr-2",
+				"name":      "test-repowatch-pr-2",
 				"namespace": "default",
 				"ownerReferences": []interface{}{
 					map[string]interface{}{
@@ -390,7 +391,7 @@ func TestReconcileReviewSandboxes(t *testing.T) {
 		})
 		g.Expect(r.Client.List(context.Background(), sandboxList)).To(gomega.Succeed())
 		g.Expect(sandboxList.Items).To(gomega.HaveLen(1)) // Should contain only the sandbox for prNumber 1
-		g.Expect(sandboxList.Items[0].GetName()).To(gomega.Equal("repo-pr-1"))
+		g.Expect(sandboxList.Items[0].GetName()).To(gomega.Equal("test-repowatch-pr-1"))
 	})
 
 	// Test case 2: Not creating a new sandbox if the maximum number of active sandboxes has been reached.
@@ -404,7 +405,7 @@ func TestReconcileReviewSandboxes(t *testing.T) {
 				"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
 				"kind":       "ReviewSandbox",
 				"metadata": map[string]interface{}{
-					"name":      "repo-pr-1",
+					"name":      "test-repowatch-pr-1",
 					"namespace": "default",
 					"ownerReferences": []interface{}{
 						map[string]interface{}{
@@ -456,7 +457,7 @@ func TestReconcileReviewSandboxes(t *testing.T) {
 		})
 		g.Expect(r.Client.List(context.Background(), sandboxList)).To(gomega.Succeed())
 		g.Expect(sandboxList.Items).To(gomega.HaveLen(1)) // Only the activePRSandbox should exist
-		g.Expect(sandboxList.Items[0].GetName()).To(gomega.Equal("repo-pr-1"))
+		g.Expect(sandboxList.Items[0].GetName()).To(gomega.Equal("test-repowatch-pr-1"))
 
 		// Check that the RepoWatch status is updated correctly
 		fetchedRepoWatch := &reviewv1alpha1.RepoWatch{}
@@ -481,7 +482,7 @@ func TestReconcileReviewSandboxes(t *testing.T) {
 				"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
 				"kind":       "ReviewSandbox",
 				"metadata": map[string]interface{}{
-					"name":      "repo-pr-1",
+					"name":      "test-repowatch-pr-1",
 					"namespace": "default",
 					"ownerReferences": []interface{}{
 						map[string]interface{}{
@@ -519,7 +520,7 @@ func TestReconcileReviewSandboxes(t *testing.T) {
 		})
 		g.Expect(r.Client.List(context.Background(), sandboxList)).To(gomega.Succeed())
 		g.Expect(sandboxList.Items).To(gomega.HaveLen(1)) // Only the existingPRSandbox should exist
-		g.Expect(sandboxList.Items[0].GetName()).To(gomega.Equal("repo-pr-1"))
+		g.Expect(sandboxList.Items[0].GetName()).To(gomega.Equal("test-repowatch-pr-1"))
 
 		// Check that the RepoWatch status is updated correctly
 		fetchedRepoWatch := &reviewv1alpha1.RepoWatch{}
@@ -545,7 +546,7 @@ func TestReconcileReviewSandboxes(t *testing.T) {
 				"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
 				"kind":       "ReviewSandbox",
 				"metadata": map[string]interface{}{
-					"name":              "repo-pr-1",
+					"name":              "test-repowatch-pr-1",
 					"namespace":         "default",
 					"creationTimestamp": oldCreationTime.Format(time.RFC3339),
 					"ownerReferences": []interface{}{
@@ -583,7 +584,7 @@ func TestReconcileReviewSandboxes(t *testing.T) {
 			Version: "v1alpha1",
 			Kind:    "ReviewSandbox",
 		})
-		g.Expect(r.Client.Get(context.Background(), types.NamespacedName{Name: "repo-pr-1", Namespace: "default"}, updatedSandbox)).To(gomega.Succeed())
+		g.Expect(r.Client.Get(context.Background(), types.NamespacedName{Name: "test-repowatch-pr-1", Namespace: "default"}, updatedSandbox)).To(gomega.Succeed())
 
 		// Check replicas
 		replicas, found, err := unstructured.NestedInt64(updatedSandbox.Object, "spec", "replicas")
@@ -648,7 +649,7 @@ func TestReconcileIssueHandlerSandboxes(t *testing.T) {
 			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
 			"kind":       "IssueSandbox",
 			"metadata": map[string]interface{}{
-				"name":      "repo-issue-2-testhandler",
+				"name":      "test-repowatch-issue-2-testhandler",
 				"namespace": "default",
 				"ownerReferences": []interface{}{
 					map[string]interface{}{
@@ -692,8 +693,7 @@ func TestReconcileIssueHandlerSandboxes(t *testing.T) {
 			Kind:    "IssueSandbox",
 		})
 		g.Expect(r.Client.List(context.Background(), sandboxList)).To(gomega.Succeed())
-		g.Expect(sandboxList.Items).To(gomega.HaveLen(1)) // Should contain only the sandbox for issueNumber 1
-		g.Expect(sandboxList.Items[0].GetName()).To(gomega.Equal("repo-issue-1-testhandler"))
+		g.Expect(sandboxList.Items[0].GetName()).To(gomega.Equal(fmt.Sprintf("%s-issue-1-testhandler", repoWatch.Name)))
 	})
 
 	// Test case 2: Not creating a new sandbox if the maximum number of active sandboxes has been reached.
@@ -707,7 +707,7 @@ func TestReconcileIssueHandlerSandboxes(t *testing.T) {
 				"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
 				"kind":       "IssueSandbox",
 				"metadata": map[string]interface{}{
-					"name":      "repo-issue-1-testhandler",
+					"name":      "test-repowatch-issue-1-testhandler",
 					"namespace": "default",
 					"ownerReferences": []interface{}{
 						map[string]interface{}{
@@ -754,7 +754,7 @@ func TestReconcileIssueHandlerSandboxes(t *testing.T) {
 		})
 		g.Expect(r.Client.List(context.Background(), sandboxList)).To(gomega.Succeed())
 		g.Expect(sandboxList.Items).To(gomega.HaveLen(1)) // Only the activeIssueSandbox should exist
-		g.Expect(sandboxList.Items[0].GetName()).To(gomega.Equal("repo-issue-1-testhandler"))
+		g.Expect(sandboxList.Items[0].GetName()).To(gomega.Equal("test-repowatch-issue-1-testhandler"))
 		// Check that the RepoWatch status is updated correctly
 		fetchedRepoWatch := &reviewv1alpha1.RepoWatch{}
 		g.Expect(r.Client.Get(context.Background(), types.NamespacedName{Name: repoWatch.Name, Namespace: repoWatch.Namespace}, fetchedRepoWatch)).To(gomega.Succeed())
@@ -777,7 +777,7 @@ func TestReconcileIssueHandlerSandboxes(t *testing.T) {
 				"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
 				"kind":       "IssueSandbox",
 				"metadata": map[string]interface{}{
-					"name":      "repo-issue-1-testhandler",
+					"name":      "test-repowatch-issue-1-testhandler",
 					"namespace": "default",
 					"ownerReferences": []interface{}{
 						map[string]interface{}{
@@ -815,7 +815,7 @@ func TestReconcileIssueHandlerSandboxes(t *testing.T) {
 		})
 		g.Expect(r.Client.List(context.Background(), sandboxList)).To(gomega.Succeed())
 		g.Expect(sandboxList.Items).To(gomega.HaveLen(1)) // Only the existingIssueSandbox should exist
-		g.Expect(sandboxList.Items[0].GetName()).To(gomega.Equal("repo-issue-1-testhandler"))
+		g.Expect(sandboxList.Items[0].GetName()).To(gomega.Equal("test-repowatch-issue-1-testhandler"))
 
 		// Check that the RepoWatch status is updated correctly
 		fetchedRepoWatch := &reviewv1alpha1.RepoWatch{}
@@ -842,7 +842,7 @@ func TestReconcileIssueHandlerSandboxes(t *testing.T) {
 				"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
 				"kind":       "IssueSandbox",
 				"metadata": map[string]interface{}{
-					"name":              "repo-issue-1-testhandler",
+					"name":              "test-repowatch-issue-1-testhandler",
 					"namespace":         "default",
 					"creationTimestamp": oldCreationTime.Format(time.RFC3339),
 					"ownerReferences": []interface{}{
@@ -879,7 +879,7 @@ func TestReconcileIssueHandlerSandboxes(t *testing.T) {
 			Version: "v1alpha1",
 			Kind:    "IssueSandbox",
 		})
-		g.Expect(r.Client.Get(context.Background(), types.NamespacedName{Name: "repo-issue-1-testhandler", Namespace: "default"}, updatedSandbox)).To(gomega.Succeed())
+		g.Expect(r.Client.Get(context.Background(), types.NamespacedName{Name: "test-repowatch-issue-1-testhandler", Namespace: "default"}, updatedSandbox)).To(gomega.Succeed())
 
 		// Check replicas
 		replicas, found, err := unstructured.NestedInt64(updatedSandbox.Object, "spec", "replicas")
