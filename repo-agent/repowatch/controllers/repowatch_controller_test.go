@@ -1382,3 +1382,114 @@ func TestRepoWatchReconciler_Reconcile_FilteredAndSortedPRs(t *testing.T) {
 	g.Expect(fetchedRepoWatch.Status.PendingPRs).To(gomega.HaveLen(1))
 	g.Expect(fetchedRepoWatch.Status.PendingPRs[0].Number).To(gomega.Equal(2))
 }
+
+// TestReconcileReviewSandboxes_RespectsExistingActiveSandboxes verifies that the MaxActiveSandboxes limit
+// is respected by taking pre-existing active sandboxes into account before creating new ones.
+// This test is designed to fail with the buggy implementation and pass with the corrected one.
+func TestReconcileReviewSandboxes_RespectsExistingActiveSandboxes(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	s := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(s)
+	_ = reviewv1alpha1.AddToScheme(s)
+
+	repoURL := "https://github.com/test/repo"
+
+	repoWatch := &reviewv1alpha1.RepoWatch{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-repowatch-maxactive",
+			Namespace: "default",
+			UID:       "test-uid-maxactive",
+		},
+		Spec: reviewv1alpha1.RepoWatchSpec{
+			RepoURL:          repoURL,
+			GithubSecretName: "github-secret",
+			Review: reviewv1alpha1.PRReviewSpec{
+				MaxActiveSandboxes: 1, // Strict limit
+				MaxSandboxes:       10,
+			},
+		},
+	}
+
+	// 1. Pre-existing Active Sandbox for PR #1
+	existingActiveSandbox := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
+			"kind":       "ReviewSandbox",
+			"metadata": map[string]interface{}{
+				"name":      "test-repowatch-maxactive-pr-1",
+				"namespace": "default",
+				"ownerReferences": []interface{}{
+					map[string]interface{}{
+						"apiVersion": "review.gemini.google.com/v1alpha1",
+						"kind":       "RepoWatch",
+						"name":       repoWatch.Name,
+						"uid":        string(repoWatch.UID),
+					},
+				},
+			},
+			"spec": map[string]interface{}{
+				"replicas": int64(1), // It's active
+			},
+		},
+	}
+
+	// 2. New PR (PR 2) that should be made pending
+	pr2Number := 2
+	pr2 := &github.PullRequest{
+		Number: &pr2Number,
+		Head: &github.PullRequestBranch{
+			Repo: &github.Repository{CloneURL: github.String(repoURL)},
+			Ref:  github.String("feature-branch"),
+		},
+		HTMLURL: github.String("https://github.com/test/repo/pull/2"),
+		Title:   github.String("Test PR 2"),
+		DiffURL: github.String("https://github.com/test/repo/pull/2.diff"),
+	}
+
+	// PR #1 is also "open" so the existing sandbox is not deleted.
+	pr1Number := 1
+	pr1 := &github.PullRequest{Number: &pr1Number}
+
+	r := &RepoWatchReconciler{
+		Client: clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, existingActiveSandbox).WithStatusSubresource(repoWatch).Build(),
+		Scheme: s,
+		NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
+			return &github.Client{}, map[string]string{}, nil
+		},
+	}
+
+	// The list of sandboxes passed to the function contains the pre-existing one.
+	existingSandboxList := &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*existingActiveSandbox}}
+
+	// The list of open PRs includes the one with an existing sandbox and the new one.
+	openPRs := []*github.PullRequest{pr2, pr1}
+
+	// Call reconcile
+	err := r.reconcileReviewSandboxes(context.Background(), repoWatch, []*github.PullRequest{}, openPRs, existingSandboxList)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	// Verify results: No new sandbox should be created
+	sandboxList := &unstructured.UnstructuredList{}
+	sandboxList.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "custom.agents.x-k8s.io",
+		Version: "v1alpha1",
+		Kind:    "ReviewSandbox",
+	})
+	g.Expect(r.Client.List(context.Background(), sandboxList)).To(gomega.Succeed())
+	// The buggy code will fail here, creating a second sandbox.
+	g.Expect(sandboxList.Items).To(gomega.HaveLen(1), "No new sandbox should have been created because the active limit of 1 was already met")
+
+	// Verify Status
+	fetchedRepoWatch := &reviewv1alpha1.RepoWatch{}
+	g.Expect(r.Client.Get(context.Background(), types.NamespacedName{Name: repoWatch.Name, Namespace: repoWatch.Namespace}, fetchedRepoWatch)).To(gomega.Succeed())
+
+	// The active count in the status should reflect the running total.
+	g.Expect(fetchedRepoWatch.Status.ActiveSandboxCount).To(gomega.Equal(1))
+
+	// PR 1 should be watched, PR 2 should be pending.
+	g.Expect(fetchedRepoWatch.Status.WatchedPRs).To(gomega.HaveLen(1))
+	g.Expect(fetchedRepoWatch.Status.WatchedPRs[0].Number).To(gomega.Equal(1))
+	g.Expect(fetchedRepoWatch.Status.PendingPRs).To(gomega.HaveLen(1))
+	g.Expect(fetchedRepoWatch.Status.PendingPRs[0].Number).To(gomega.Equal(2))
+}

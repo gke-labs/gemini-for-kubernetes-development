@@ -442,12 +442,9 @@ func parseRepoURL(repoURL string) (string, string, error) {
 func (r *RepoWatchReconciler) reconcileReviewSandboxes(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, explicitPRs []*github.PullRequest, prs []*github.PullRequest, sandboxes *unstructured.UnstructuredList) error {
 	log := log.FromContext(ctx)
 	log.Info("reconciling review sandboxes")
-	activeSandboxes := 0
-	totalSandboxes := 0
-	watchedPRs := []reviewv1alpha1.WatchedPR{}
-	pendingPRs := []reviewv1alpha1.PendingPR{}
 
-	// Cleanup closed PRs
+	// Filter sandboxes to only include those owned by this RepoWatch instance
+	var ownedSandboxes []unstructured.Unstructured
 	for _, sandbox := range sandboxes.Items {
 		isOwned := false
 		for _, ownerRef := range sandbox.GetOwnerReferences() {
@@ -456,12 +453,41 @@ func (r *RepoWatchReconciler) reconcileReviewSandboxes(ctx context.Context, repo
 				break
 			}
 		}
-		if !isOwned {
-			continue
+		if isOwned {
+			ownedSandboxes = append(ownedSandboxes, sandbox)
 		}
+	}
 
-		totalSandboxes++
+	// Pre-calculate active and total sandboxes from the owned list
+	activeSandboxes := 0
+	totalSandboxes := len(ownedSandboxes)
+	for _, sandbox := range ownedSandboxes {
+		replicas, found, err := unstructured.NestedInt64(sandbox.Object, "spec", "replicas")
+		if err == nil && found && replicas > 0 {
+			// Check if the PR is explicit, if so, dont count it towards the active sandbox limit
+			prIsExplicit := false
+			prNumber, err := strconv.Atoi(strings.Split(sandbox.GetName(), "-pr-")[1])
+			if err != nil {
+				log.Error(err, "unable to parse pr number from sandbox name", "sandbox", sandbox.GetName())
+			} else {
+				for _, explicitPR := range explicitPRs {
+					if *explicitPR.Number == prNumber {
+						prIsExplicit = true
+						break
+					}
+				}
+			}
+			if !prIsExplicit {
+				activeSandboxes++
+			}
+		}
+	}
 
+	watchedPRs := []reviewv1alpha1.WatchedPR{}
+	pendingPRs := []reviewv1alpha1.PendingPR{}
+
+	// Cleanup closed PRs from the owned list
+	for _, sandbox := range ownedSandboxes {
 		prNumber, err := strconv.Atoi(strings.Split(sandbox.GetName(), "-pr-")[1])
 		if err != nil {
 			log.Error(err, "unable to parse pr number from sandbox name", "sandbox", sandbox.GetName())
@@ -481,42 +507,23 @@ func (r *RepoWatchReconciler) reconcileReviewSandboxes(ctx context.Context, repo
 			if err := r.Delete(ctx, &sandbox); err != nil {
 				log.Error(err, "unable to delete sandbox", "sandbox", sandbox.GetName())
 			}
-			totalSandboxes--
 		}
 	}
 
-	// Create new sandboxes
+	// Process all open PRs and create sandboxes if within limits
 	for _, pr := range append(explicitPRs, prs...) {
 		sandboxName := fmt.Sprintf("%s-pr-%d", repoWatch.Name, *pr.Number)
 		sandboxExists := false
-		prIsExplicit := false
-		for _, explicitPR := range explicitPRs {
-			if *explicitPR.Number == *pr.Number {
-				prIsExplicit = true
-				break
-			}
-		}
-		for _, sandbox := range sandboxes.Items {
+		for _, sandbox := range ownedSandboxes {
 			if sandbox.GetName() == sandboxName {
 				sandboxExists = true
-				// Check if replica count > 0
-				replicas, found, err := unstructured.NestedInt64(sandbox.Object, "spec", "replicas")
-				if err != nil || !found {
-					log.Error(err, "unable to get replicas for sandbox", "sandbox", sandbox.GetName())
-					break
-				}
-				if replicas > 0 && !prIsExplicit {
-					activeSandboxes++
-				}
-				// Check if the sandbox should be scaled down
+				// Scale down check
 				if repoWatch.Spec.Review.ReviewShutdownAfterMinutes > 0 {
 					creationTimestamp := sandbox.GetCreationTimestamp()
 					shutdownDuration := time.Minute * time.Duration(repoWatch.Spec.Review.ReviewShutdownAfterMinutes)
 					if time.Since(creationTimestamp.Time) > shutdownDuration {
 						replicas, found, err := unstructured.NestedInt64(sandbox.Object, "spec", "replicas")
-						if err != nil || !found {
-							log.Error(err, "unable to get replicas for sandbox", "sandbox", sandbox.GetName())
-						} else if replicas > 0 {
+						if err == nil && found && replicas > 0 {
 							log.Info("scaling down sandbox", "sandbox", sandbox.GetName())
 							if err := unstructured.SetNestedField(sandbox.Object, int64(0), "spec", "replicas"); err != nil {
 								log.Error(err, "unable to set replicas for sandbox", "sandbox", sandbox.GetName())
@@ -537,27 +544,37 @@ func (r *RepoWatchReconciler) reconcileReviewSandboxes(ctx context.Context, repo
 			}
 		}
 
-		if !sandboxExists {
-			if prIsExplicit || ((activeSandboxes < repoWatch.Spec.Review.MaxActiveSandboxes) && (repoWatch.Spec.Review.MaxSandboxes == 0 || totalSandboxes < repoWatch.Spec.Review.MaxSandboxes)) {
-				log.Info("processing pr", "pr", *pr.Number, "sandboxName", sandboxName)
-				if err := r.createReviewSandboxForPR(ctx, repoWatch, pr); err != nil {
-					log.Error(err, "unable to create sandbox for pr", "pr", *pr.Number)
-				} else {
-					log.Info("sandbox created successfully for pr", "pr", *pr.Number)
-					activeSandboxes++
-					totalSandboxes++
-					watchedPRs = append(watchedPRs, reviewv1alpha1.WatchedPR{
-						Number:      *pr.Number,
-						SandboxName: sandboxName,
-						Status:      "Creating",
-					})
-				}
+		if sandboxExists {
+			continue
+		}
+
+		// Logic to create a new sandbox if it doesn't exist
+		prIsExplicit := false
+		for _, explicitPR := range explicitPRs {
+			if *explicitPR.Number == *pr.Number {
+				prIsExplicit = true
+				break
+			}
+		}
+
+		if prIsExplicit || ((activeSandboxes < repoWatch.Spec.Review.MaxActiveSandboxes) && (repoWatch.Spec.Review.MaxSandboxes == 0 || totalSandboxes < repoWatch.Spec.Review.MaxSandboxes)) {
+			log.Info("creating sandbox for pr", "pr", *pr.Number)
+			if err := r.createReviewSandboxForPR(ctx, repoWatch, pr); err != nil {
+				log.Error(err, "unable to create sandbox for pr", "pr", *pr.Number)
 			} else {
-				pendingPRs = append(pendingPRs, reviewv1alpha1.PendingPR{
-					Number: *pr.Number,
-					Status: "Pending",
+				activeSandboxes++
+				totalSandboxes++
+				watchedPRs = append(watchedPRs, reviewv1alpha1.WatchedPR{
+					Number:      *pr.Number,
+					SandboxName: sandboxName,
+					Status:      "Creating",
 				})
 			}
+		} else {
+			pendingPRs = append(pendingPRs, reviewv1alpha1.PendingPR{
+				Number: *pr.Number,
+				Status: "Pending",
+			})
 		}
 	}
 
@@ -570,12 +587,9 @@ func (r *RepoWatchReconciler) reconcileReviewSandboxes(ctx context.Context, repo
 
 func (r *RepoWatchReconciler) reconcileIssueHandlerSandboxes(ctx context.Context, user *github.User, handler reviewv1alpha1.IssueHandlerSpec, repoWatch *reviewv1alpha1.RepoWatch, issues []*github.Issue, sandboxes *unstructured.UnstructuredList) error {
 	log := log.FromContext(ctx)
-	activeSandboxes := 0
-	totalSandboxes := 0
-	watchedIssues := []reviewv1alpha1.WatchedIssue{}
-	pendingIssues := []reviewv1alpha1.PendingIssue{}
 
-	// Cleanup closed issues
+	// 1. Filter sandboxes to only include those owned by this RepoWatch instance and handler
+	var ownedSandboxes []unstructured.Unstructured
 	for _, sandbox := range sandboxes.Items {
 		isOwned := false
 		for _, ownerRef := range sandbox.GetOwnerReferences() {
@@ -588,32 +602,38 @@ func (r *RepoWatchReconciler) reconcileIssueHandlerSandboxes(ctx context.Context
 			continue
 		}
 
-		// split the sandbox name by "-issue-" and get the second part
+		// Further filter by handler name encoded in the sandbox name
 		parts := strings.Split(sandbox.GetName(), "-issue-")
 		if len(parts) < 2 {
-			log.Error(fmt.Errorf("invalid sandbox name format"), "unable to parse issue number from sandbox name", "sandbox", sandbox.GetName())
 			continue
 		}
-
-		// parts[1] may contain additional "-" if handler name is included, so split again by "-" and take the first part
-		parts = strings.Split(parts[1], "-")
-		if len(parts) < 2 {
-			log.Error(fmt.Errorf("invalid sandbox name format"), "unable to parse handler name from sandbox name", "sandbox", sandbox.GetName())
-			continue
+		handlerName := strings.Split(parts[1], "-")[1]
+		if handlerName == handler.Name {
+			ownedSandboxes = append(ownedSandboxes, sandbox)
 		}
+	}
 
-		issueNumber, err := strconv.Atoi(parts[0])
+	// 2. Pre-calculate active and total sandboxes from the owned list.
+	activeSandboxes := 0
+	totalSandboxes := len(ownedSandboxes)
+	for _, sandbox := range ownedSandboxes {
+		replicas, found, err := unstructured.NestedInt64(sandbox.Object, "spec", "replicas")
+		if err == nil && found && replicas > 0 {
+			activeSandboxes++ // Count all active sandboxes
+		}
+	}
+
+	watchedIssues := []reviewv1alpha1.WatchedIssue{}
+	pendingIssues := []reviewv1alpha1.PendingIssue{}
+
+	// 3. Cleanup closed issues from the owned list
+	for _, sandbox := range ownedSandboxes {
+		parts := strings.Split(sandbox.GetName(), "-issue-")
+		issueNumber, err := strconv.Atoi(strings.Split(parts[1], "-")[0])
 		if err != nil {
 			log.Error(err, "unable to parse issue number from sandbox name", "sandbox", sandbox.GetName())
 			continue
 		}
-		handlerName := parts[1]
-
-		if handlerName != handler.Name {
-			continue
-		}
-
-		totalSandboxes++
 
 		found := false
 		for _, issue := range issues {
@@ -628,34 +648,23 @@ func (r *RepoWatchReconciler) reconcileIssueHandlerSandboxes(ctx context.Context
 			if err := r.Delete(ctx, &sandbox); err != nil {
 				log.Error(err, "unable to delete sandbox", "sandbox", sandbox.GetName())
 			}
-			totalSandboxes--
 		}
 	}
 
-	// Create new sandboxes
+	// 4. Process all open issues and create sandboxes if within limits
 	for _, issue := range issues {
 		sandboxName := fmt.Sprintf("%s-issue-%d-%s", repoWatch.Name, *issue.Number, handler.Name)
 		sandboxExists := false
-		for _, sandbox := range sandboxes.Items {
+		for _, sandbox := range ownedSandboxes {
 			if sandbox.GetName() == sandboxName {
 				sandboxExists = true
-				replicas, found, err := unstructured.NestedInt64(sandbox.Object, "spec", "replicas")
-				if err != nil || !found {
-					log.Error(err, "unable to get replicas for sandbox", "sandbox", sandbox.GetName())
-					break
-				}
-				if replicas > 0 {
-					activeSandboxes++
-				}
-				// Check if the sandbox should be scaled down
+				// Scale down check
 				if handler.IssueShutdownAfterMinutes > 0 {
 					creationTimestamp := sandbox.GetCreationTimestamp()
 					shutdownDuration := time.Minute * time.Duration(handler.IssueShutdownAfterMinutes)
 					if time.Since(creationTimestamp.Time) > shutdownDuration {
 						replicas, found, err := unstructured.NestedInt64(sandbox.Object, "spec", "replicas")
-						if err != nil || !found {
-							log.Error(err, "unable to get replicas for sandbox", "sandbox", sandbox.GetName())
-						} else if replicas > 0 { // Only scale down if it's currently active
+						if err == nil && found && replicas > 0 {
 							log.Info("scaling down issue sandbox", "sandbox", sandbox.GetName())
 							if err := unstructured.SetNestedField(sandbox.Object, int64(0), "spec", "replicas"); err != nil {
 								log.Error(err, "unable to set replicas for sandbox", "sandbox", sandbox.GetName())
@@ -676,26 +685,28 @@ func (r *RepoWatchReconciler) reconcileIssueHandlerSandboxes(ctx context.Context
 			}
 		}
 
-		if !sandboxExists {
-			if activeSandboxes < handler.MaxActiveSandboxes && (handler.MaxSandboxes == 0 || totalSandboxes < handler.MaxSandboxes) {
-				log.Info("creating sandbox for issue", "issue", *issue.Number)
-				if err := r.createSandboxForIssueHandler(ctx, user, handler, repoWatch, issue); err != nil {
-					log.Error(err, "unable to create sandbox for issue", "issue", *issue.Number)
-				} else {
-					activeSandboxes++
-					totalSandboxes++
-					watchedIssues = append(watchedIssues, reviewv1alpha1.WatchedIssue{
-						Number:      *issue.Number,
-						SandboxName: sandboxName,
-						Status:      "Creating",
-					})
-				}
+		if sandboxExists {
+			continue
+		}
+
+		if activeSandboxes < handler.MaxActiveSandboxes && (handler.MaxSandboxes == 0 || totalSandboxes < handler.MaxSandboxes) {
+			log.Info("creating sandbox for issue", "issue", *issue.Number)
+			if err := r.createSandboxForIssueHandler(ctx, user, handler, repoWatch, issue); err != nil {
+				log.Error(err, "unable to create sandbox for issue", "issue", *issue.Number)
 			} else {
-				pendingIssues = append(pendingIssues, reviewv1alpha1.PendingIssue{
-					Number: *issue.Number,
-					Status: "Pending",
+				activeSandboxes++
+				totalSandboxes++
+				watchedIssues = append(watchedIssues, reviewv1alpha1.WatchedIssue{
+					Number:      *issue.Number,
+					SandboxName: sandboxName,
+					Status:      "Creating",
 				})
 			}
+		} else {
+			pendingIssues = append(pendingIssues, reviewv1alpha1.PendingIssue{
+				Number: *issue.Number,
+				Status: "Pending",
+			})
 		}
 	}
 
