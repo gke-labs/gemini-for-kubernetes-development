@@ -264,11 +264,28 @@ function PrReviewCard({
             console.log('Drop target:', target);
 
             const gutters = target.querySelectorAll('.diff-gutter');
-            const oldLineGutter = gutters[0];
-            const newLineGutter = gutters[1];
+            let oldLineGutter = gutters[0];
+            let newLineGutter = gutters[1];
+
+            if (gutters.length === 1) {
+              if (type === 'add') {
+                newLineGutter = gutters[0];
+                oldLineGutter = undefined;
+              } else if (type === 'delete') {
+                oldLineGutter = gutters[0];
+                newLineGutter = undefined;
+              }
+            }
 
             const rect = target.getBoundingClientRect();
-            const isRightSide = e.clientX > rect.left + rect.width / 2;
+            let isRightSide = e.clientX > rect.left + rect.width / 2;
+
+            if (type === 'add') {
+              isRightSide = true;
+            } else if (type === 'delete') {
+              isRightSide = false;
+            }
+
             const side = isRightSide ? 'RIGHT' : 'LEFT';
             console.log('Calculated side:', side);
 

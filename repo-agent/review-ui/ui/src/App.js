@@ -511,7 +511,7 @@ function App() {
         commentToUpdate.side = newSide;
 
         const draftYaml = yaml.dump(draftToUpdate);
-        fetch(`/api/repo/${activeRepo.namespace}/${activeRepo.name}/prs/${id}/draft`, {
+        fetch(`/api/repo/${activeRepo.name}/prs/${id}/draft`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ draft: draftYaml })
