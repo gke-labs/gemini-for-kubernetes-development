@@ -150,6 +150,15 @@ func runReview() error {
 			}
 		}
 
+		// Write current prompt to file for debugging
+		promptFilename := fmt.Sprintf("../agent-prompt-run%d.txt", i+1)
+		if err := os.WriteFile(promptFilename, []byte(currentPrompt), 0644); err != nil {
+			log.Printf("Failed to write agent prompt to %s: %v", promptFilename, err)
+		} else {
+			log.Printf("Wrote agent prompt to %s", promptFilename)
+		}
+
+		// RUN THE AGENT
 		output, err := provider.Run(currentPrompt)
 		if err != nil {
 			log.Printf("Agent run failed: %v. Continuing...", err)
@@ -213,6 +222,27 @@ func runReview() error {
 	}
 
 	log.Printf("Finished agent runs. Total successful runs: %d. Total comments: %d", successfulRuns, len(accumulatedAgentOutput.Review.Comments))
+
+	// If more than one successful run, accumalatedAgentOutput has duplicated text in Note and Review.Body, so dedupe and combine them.
+	if successfulRuns > 1 {
+		log.Println("Deduplicating and combining agent output text from multiple runs.")
+		combinedNote, err := dedupeAndCombineText(provider, accumulatedAgentOutput.Note)
+		if err != nil {
+			log.Printf("Failed to dedupe and combine Note: %v. Using original Note.", err)
+			combinedNote = accumulatedAgentOutput.Note
+		} else {
+			log.Println("Successfully deduped and combined Note.")
+		}
+		accumulatedAgentOutput.Note = combinedNote
+
+		combinedBody, err := dedupeAndCombineText(provider, *accumulatedAgentOutput.Review.Body)
+		if err != nil {
+			log.Printf("Failed to dedupe and combine Body: %v. Using original Body.", err)
+		} else {
+			accumulatedAgentOutput.Review.Body = &combinedBody
+			log.Println("Successfully deduped and combined Body.")
+		}
+	}
 
 	finalOutput, err := yaml.Marshal(&accumulatedAgentOutput)
 	if err != nil {
@@ -400,4 +430,16 @@ func startCodeServer() (*exec.Cmd, error) {
 	}
 	log.Printf("Running code-server in subprocess %d\n", cmd.Process.Pid)
 	return cmd, nil
+}
+
+func dedupeAndCombineText(provider llm.Provider, text string) (string, error) {
+	// We get text with sections separated by '---'
+	prompt := fmt.Sprintf("The following text contains multiple sections separated by '---'. Please deduplicate and combine them into a single coherent section of text. Return only the result.\n\n%s", text)
+
+	output, err := provider.Run(prompt)
+	if err != nil {
+		return "", err
+	}
+
+	return string(output), nil
 }
