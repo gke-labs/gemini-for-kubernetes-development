@@ -123,13 +123,23 @@ function App() {
             setDrafts(prev => {
                 const next = merge ? { ...prev } : {};
                 safeData.forEach(pr => {
+                  let parsedDraft = null;
+                  try {
+                    parsedDraft = yaml.load(pr.draft || '');
+                  } catch (e) {
+                    console.error(`Error parsing draft YAML for PR ${pr.id}:`, e);
+                  }
+                  const serverDraftObj = parsedDraft || { note: '', review: { body: '', comments: [] } };
+
                   if (next[pr.id] === undefined) {
-                    try {
-                      const parsedDraft = yaml.load(pr.draft || '');
-                      next[pr.id] = parsedDraft || { note: '', review: { body: '', comments: [] } };
-                    } catch (e) {
-                      console.error(`Error parsing draft YAML for PR ${pr.id}:`, e);
-                      next[pr.id] = { note: '', review: { body: '', comments: [] } };
+                    next[pr.id] = serverDraftObj;
+                  } else {
+                    const local = next[pr.id];
+                    const isLocalEmpty = !local.note?.trim() && !local.review?.body?.trim() && (!local.review?.comments || local.review.comments.length === 0);
+                    const isServerEmpty = !serverDraftObj.note?.trim() && !serverDraftObj.review?.body?.trim() && (!serverDraftObj.review?.comments || serverDraftObj.review.comments.length === 0);
+
+                    if (isLocalEmpty && !isServerEmpty) {
+                        next[pr.id] = serverDraftObj;
                     }
                   }
                 });
@@ -164,8 +174,18 @@ function App() {
             setDrafts(prev => {
                 const next = merge ? { ...prev } : {};
                 safeData.forEach(issue => {
+                    const serverDraft = issue.draft || '';
+                    const isServerEmpty = !serverDraft.trim();
+
                     if (next[issue.id] === undefined) {
-                        next[issue.id] = issue.draft || '';
+                        next[issue.id] = serverDraft;
+                    } else {
+                        const localDraft = next[issue.id];
+                        const isLocalEmpty = !localDraft.trim();
+
+                        if (isLocalEmpty && !isServerEmpty) {
+                            next[issue.id] = serverDraft;
+                        }
                     }
                 });
                 return next;
