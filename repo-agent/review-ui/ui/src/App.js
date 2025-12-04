@@ -778,9 +778,8 @@ function App() {
           <div className="login-actions">
             {githubAuthEnabled ? (
                 <>
-                <button className="btn btn-submit" onClick={() => handleLogin('readonly')} style={{marginBottom: '10px', backgroundColor: '#2ea44f'}}>Login with GitHub (Read-Only)</button>
-                <br/>
-                <button className="btn btn-submit" onClick={() => handleLogin('readwrite')} style={{backgroundColor: '#f78166'}}>Login with GitHub (Read-Write)</button>
+                <button className="btn btn-submit" onClick={() => handleLogin('readwrite')} style={{backgroundColor: '#0366d6', marginRight: '10px'}}>Login with GitHub (Read-Write)</button>
+                <button className="btn btn-submit" onClick={() => handleLogin('readonly')} style={{backgroundColor: '#6f42c1'}}>Login with GitHub (Read-Only)</button>
                 </>
             ) : (
                 <button className="btn btn-submit" onClick={handleGuestLogin}>Continue</button>
