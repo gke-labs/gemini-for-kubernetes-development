@@ -247,6 +247,7 @@ func main() {
 		api.GET("/repos", getRepos)
 		api.POST("/repos", createRepoWatch)
 		api.GET("/getRepoWatch", getDefaultRepoWatch)
+		api.GET("/repos/:repo/yaml", getRepoWatchYAML)
 		api.PUT("/repos/:repo", updateRepoWatch)
 		api.DELETE("/repos/:repo", deleteRepoWatch)
 
@@ -673,6 +674,7 @@ func createRepoWatch(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid YAML content"})
 		return
 	}
+	unstructuredObj = fixYAMLIntegers(unstructuredObj).(map[string]interface{})
 	repoWatch := &unstructured.Unstructured{Object: unstructuredObj}
 
 	// Enforce namespace
@@ -792,6 +794,32 @@ spec:
 	c.JSON(http.StatusOK, gin.H{"yaml": defaultRepoWatch})
 }
 
+func getRepoWatchYAML(c *gin.Context) {
+	namespace := c.MustGet(userKey).(string)
+	name := c.Param("repo")
+
+	repoWatch, err := getRepoWatch(c.Request.Context(), namespace, name)
+	if err != nil {
+		log.Printf("Failed to get RepoWatch %s/%s: %v", namespace, name, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get RepoWatch"})
+		return
+	}
+
+	spec, found, err := unstructured.NestedMap(repoWatch.Object, "spec")
+	if err != nil || !found {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get spec from RepoWatch"})
+		return
+	}
+
+	yamlBytes, err := yaml.Marshal(spec)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to marshal spec to YAML"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"yaml": string(yamlBytes)})
+}
+
 func updateRepoWatch(c *gin.Context) {
 	namespace := c.MustGet(userKey).(string)
 	name := c.Param("repo")
@@ -799,14 +827,15 @@ func updateRepoWatch(c *gin.Context) {
 	var payload struct {
 		RepoURL string `json:"repoURL"`
 		AddPR   int    `json:"addPR"`
+		YAML    string `json:"yaml"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	if payload.RepoURL == "" && payload.AddPR == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "repoURL or addPR is required"})
+	if payload.AddPR == 0 && payload.YAML == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "addPR or yaml is required"})
 		return
 	}
 
@@ -824,17 +853,27 @@ func updateRepoWatch(c *gin.Context) {
 		return
 	}
 
-	// Update spec.repoURL if provided
-	if payload.RepoURL != "" {
-		if err := unstructured.SetNestedField(existing.Object, payload.RepoURL, "spec", "repoURL"); err != nil {
-			log.Printf("Failed to set repoURL: %v", err)
+	if payload.YAML != "" {
+		var spec map[string]interface{}
+		if err := yaml.Unmarshal([]byte(payload.YAML), &spec); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid YAML content"})
+			return
+		}
+
+		spec = fixYAMLIntegers(spec).(map[string]interface{})
+
+		if err := unstructured.SetNestedField(existing.Object, spec, "spec"); err != nil {
+			log.Printf("Failed to set spec: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update object structure"})
 			return
 		}
-		// Update Redis cache to reflect the change immediately
-		if err := rdb.HSet(c.Request.Context(), fmt.Sprintf("repo:ns:%s:name:%s", namespace, name), "url", payload.RepoURL).Err(); err != nil {
-			log.Printf("Failed to update repo URL in Redis for %s: %v", name, err)
-			// Don't fail the request if Redis fails, as K8s deletion is the source of truth
+
+		// If repoURL changed in YAML, we should update Redis too, but strictly speaking
+		// we should extract it from the new spec.
+		if newURL, found, _ := unstructured.NestedString(existing.Object, "spec", "repoURL"); found {
+			if err := rdb.HSet(c.Request.Context(), fmt.Sprintf("repo:ns:%s:name:%s", namespace, name), "url", newURL).Err(); err != nil {
+				log.Printf("Failed to update repo URL in Redis for %s: %v", name, err)
+			}
 		}
 	}
 
@@ -892,6 +931,27 @@ func convInt64SliceToInterfaceSlice(in []int64) []interface{} {
 		out[i] = v
 	}
 	return out
+}
+
+func fixYAMLIntegers(in interface{}) interface{} {
+	switch v := in.(type) {
+	case int:
+		return int64(v)
+	case map[string]interface{}:
+		out := make(map[string]interface{}, len(v))
+		for k, val := range v {
+			out[k] = fixYAMLIntegers(val)
+		}
+		return out
+	case []interface{}:
+		out := make([]interface{}, len(v))
+		for i, val := range v {
+			out[i] = fixYAMLIntegers(val)
+		}
+		return out
+	default:
+		return v
+	}
 }
 
 func deleteRepoWatch(c *gin.Context) {
