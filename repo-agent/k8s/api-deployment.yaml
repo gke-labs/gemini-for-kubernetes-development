@@ -17,7 +17,6 @@ spec:
       containers:
       - name: api
         image: ko://repo-agent/review-ui/images/review-api # This will be built locally
-        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8080
         env:
