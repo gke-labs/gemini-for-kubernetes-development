@@ -1410,7 +1410,6 @@ func TestRepoWatchReconciler_Reconcile_FilteredAndSortedPRs(t *testing.T) {
 
 // TestReconcileReviewSandboxes_RespectsExistingActiveSandboxes verifies that the MaxActiveSandboxes limit
 // is respected by taking pre-existing active sandboxes into account before creating new ones.
-// This test is designed to fail with the buggy implementation and pass with the corrected one.
 func TestReconcileReviewSandboxes_RespectsExistingActiveSandboxes(t *testing.T) {
 	g := gomega.NewWithT(t)
 
