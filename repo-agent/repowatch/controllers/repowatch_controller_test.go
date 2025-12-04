@@ -43,14 +43,15 @@ import (
 )
 
 type mockRoundTripper struct {
-	responses map[string]*http.Response
+	responses map[string]func() *http.Response
 }
 
 func (m *mockRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	resp, ok := m.responses[req.URL.String()]
+	respFunc, ok := m.responses[req.URL.String()]
 	if !ok {
 		return &http.Response{StatusCode: http.StatusNotFound, Body: http.NoBody, Request: req}, nil
 	}
+	resp := respFunc()
 	resp.Request = req
 	return resp, nil
 }
@@ -76,14 +77,18 @@ func TestRepoWatchReconciler_Reconcile(t *testing.T) {
 	// 3. Create your Reconciler instance
 	mockHTTPClient := &http.Client{
 		Transport: &mockRoundTripper{
-			responses: map[string]*http.Response{
-				"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=created&state=open": {
-					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(strings.NewReader(`[{"number": 1, "head": {"repo": {"clone_url": "https://github.com/test/repo", "html_url": "https://github.com/test/repo"}, "ref": "main"}, "html_url": "https://github.com/test/repo/pull/1", "title": "Test PR", "diff_url": "https://github.com/test/repo/pull/1.diff"}]`)),
+			responses: map[string]func() *http.Response{
+				"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=created&state=open": func() *http.Response {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(strings.NewReader(`[{"number": 1, "head": {"repo": {"clone_url": "https://github.com/test/repo", "html_url": "https://github.com/test/repo"}, "ref": "main"}, "html_url": "https://github.com/test/repo/pull/1", "title": "Test PR", "diff_url": "https://github.com/test/repo/pull/1.diff"}]`)),
+					}
 				},
-				"https://api.github.com/user": {
-					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(strings.NewReader(`{"login": "test-user", "name": "Test User", "email": "test@example.com"}`)),
+				"https://api.github.com/user": func() *http.Response {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(strings.NewReader(`{"login": "test-user", "name": "Test User", "email": "test@example.com"}`)),
+					}
 				},
 			},
 		},
@@ -176,14 +181,17 @@ func TestRepoWatchReconciler_ReconcileIssues(t *testing.T) {
 	// 3. Create your Reconciler instance
 	mockHTTPClient := &http.Client{
 		Transport: &mockRoundTripper{
-			responses: map[string]*http.Response{
-				"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=created&state=open": {
-					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(strings.NewReader(`[]`)),
+			responses: map[string]func() *http.Response{
+				"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=created&state=open": func() *http.Response {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(strings.NewReader(`[]`)),
+					}
 				},
-				"https://api.github.com/repos/test/repo/issues?state=open": {
-					StatusCode: http.StatusOK,
-					Body: io.NopCloser(strings.NewReader(`[
+				"https://api.github.com/repos/test/repo/issues?state=open": func() *http.Response {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body: io.NopCloser(strings.NewReader(`[
 												{
 													"number": 10,
 													"title": "Test Issue",
@@ -191,10 +199,13 @@ func TestRepoWatchReconciler_ReconcileIssues(t *testing.T) {
 													"repository_url": "https://api.github.com/repos/test/repo"
 												}
 											]`)),
+					}
 				},
-				"https://api.github.com/user": {
-					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(strings.NewReader(`{"login": "test-user", "name": "Test User", "email": "test@example.com"}`)),
+				"https://api.github.com/user": func() *http.Response {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(strings.NewReader(`{"login": "test-user", "name": "Test User", "email": "test@example.com"}`)),
+					}
 				},
 			}},
 	}
@@ -982,14 +993,18 @@ func TestRepoWatchReconciler_Reconcile_InvalidRepoURL(t *testing.T) {
 	// 3. Create your Reconciler instance
 	mockHTTPClient := &http.Client{
 		Transport: &mockRoundTripper{
-			responses: map[string]*http.Response{
-				"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=created&state=open": {
-					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(strings.NewReader(`[{"number": 1, "head": {"repo": {"clone_url": "https://github.com/test/repo", "ref": "main"}, "html_url": "https://github.com/test/repo/pull/1"}, "title": "Test PR"}]`)),
+			responses: map[string]func() *http.Response{
+				"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=created&state=open": func() *http.Response {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(strings.NewReader(`[{"number": 1, "head": {"repo": {"clone_url": "https://github.com/test/repo", "ref": "main"}, "html_url": "https://github.com/test/repo/pull/1"}, "title": "Test PR"}]`)),
+					}
 				},
-				"https://api.github.com/user": {
-					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(strings.NewReader(`{"login": "test-user", "name": "Test User", "email": "test@example.com"}`)),
+				"https://api.github.com/user": func() *http.Response {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(strings.NewReader(`{"login": "test-user", "name": "Test User", "email": "test@example.com"}`)),
+					}
 				},
 			},
 		},
@@ -1174,18 +1189,24 @@ func TestRepoWatchReconciler_Reconcile_ExplicitAndListedPRs(t *testing.T) {
 	// 3. Create your Reconciler instance
 	mockHTTPClient := &http.Client{
 		Transport: &mockRoundTripper{
-			responses: map[string]*http.Response{
-				"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=created&state=open": {
-					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(strings.NewReader(`[{"number": 1, "head": {"repo": {"clone_url": "https://github.com/test/repo", "html_url": "https://github.com/test/repo"}, "ref": "main"}, "html_url": "https://github.com/test/repo/pull/1", "title": "Test PR 1", "diff_url": "https://github.com/test/repo/pull/1.diff"}]`)),
+			responses: map[string]func() *http.Response{
+				"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=created&state=open": func() *http.Response {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(strings.NewReader(`[{"number": 1, "head": {"repo": {"clone_url": "https://github.com/test/repo", "html_url": "https://github.com/test/repo"}, "ref": "main"}, "html_url": "https://github.com/test/repo/pull/1", "title": "Test PR 1", "diff_url": "https://github.com/test/repo/pull/1.diff"}]`)),
+					}
 				},
-				"https://api.github.com/repos/test/repo/pulls/42": {
-					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(strings.NewReader(`{"number": 42, "head": {"repo": {"clone_url": "https://github.com/test/repo", "html_url": "https://github.com/test/repo"}, "ref": "feature"}, "html_url": "https://github.com/test/repo/pull/42", "title": "Explicit PR 42", "diff_url": "https://github.com/test/repo/pull/42.diff"}`)),
+				"https://api.github.com/repos/test/repo/pulls/42": func() *http.Response {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(strings.NewReader(`{"number": 42, "head": {"repo": {"clone_url": "https://github.com/test/repo", "html_url": "https://github.com/test/repo"}, "ref": "feature"}, "html_url": "https://github.com/test/repo/pull/42", "title": "Explicit PR 42", "diff_url": "https://github.com/test/repo/pull/42.diff"}`)),
+					}
 				},
-				"https://api.github.com/user": {
-					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(strings.NewReader(`{"login": "test-user", "name": "Test User", "email": "test@example.com"}`)),
+				"https://api.github.com/user": func() *http.Response {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(strings.NewReader(`{"login": "test-user", "name": "Test User", "email": "test@example.com"}`)),
+					}
 				},
 			},
 		},
@@ -1303,14 +1324,18 @@ func TestRepoWatchReconciler_Reconcile_FilteredAndSortedPRs(t *testing.T) {
 
 	mockHTTPClient := &http.Client{
 		Transport: &mockRoundTripper{
-			responses: map[string]*http.Response{
-				"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=created&state=open": {
-					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(strings.NewReader(responseBody)),
+			responses: map[string]func() *http.Response{
+				"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=created&state=open": func() *http.Response {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(strings.NewReader(responseBody)),
+					}
 				},
-				"https://api.github.com/user": {
-					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(strings.NewReader(`{"login": "test-user", "name": "Test User", "email": "test@example.com"}`)),
+				"https://api.github.com/user": func() *http.Response {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(strings.NewReader(`{"login": "test-user", "name": "Test User", "email": "test@example.com"}`)),
+					}
 				},
 			},
 		},
@@ -1492,4 +1517,134 @@ func TestReconcileReviewSandboxes_RespectsExistingActiveSandboxes(t *testing.T) 
 	g.Expect(fetchedRepoWatch.Status.WatchedPRs[0].Number).To(gomega.Equal(1))
 	g.Expect(fetchedRepoWatch.Status.PendingPRs).To(gomega.HaveLen(1))
 	g.Expect(fetchedRepoWatch.Status.PendingPRs[0].Number).To(gomega.Equal(2))
+}
+
+// TestReconcile_MultipleRepoWatchesSameRepo verifies that two RepoWatches
+// for the same repository but different LLMs can both create their own distinct
+// sandboxes when reconciled.
+func TestReconcile_MultipleRepoWatchesSameRepo(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	s := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(s)
+	_ = reviewv1alpha1.AddToScheme(s)
+
+	prNumber := 101
+	repoURL := "https://github.com/test/multi-repo"
+
+	// 1. Setup mock GitHub API
+	prListJSON := fmt.Sprintf(`[{"number": %d, "head": {"repo": {"clone_url": "%s", "html_url": "%s"}, "ref": "main"}, "html_url": "%s/pull/%d", "title": "Test PR", "diff_url": "%s/pull/%d.diff"}]`, prNumber, repoURL, repoURL, repoURL, prNumber, repoURL, prNumber)
+	userJSON := `{"login": "test-user", "name": "Test User", "email": "test@example.com"}`
+
+	mockHTTPClient := &http.Client{
+		Transport: &mockRoundTripper{
+			responses: map[string]func() *http.Response{
+				"https://api.github.com/repos/test/multi-repo/pulls?direction=desc&per_page=100&sort=created&state=open": func() *http.Response {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(strings.NewReader(prListJSON)),
+					}
+				},
+				"https://api.github.com/user": func() *http.Response {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(strings.NewReader(userJSON)),
+					}
+				},
+			},
+		},
+	}
+	ghClient := github.NewClient(mockHTTPClient)
+
+	// 2. Create RepoWatch resources
+	repoWatchA := &reviewv1alpha1.RepoWatch{
+		ObjectMeta: metav1.ObjectMeta{Name: "repowatch-a", Namespace: "default", UID: "uid-a"},
+		Spec: reviewv1alpha1.RepoWatchSpec{
+			RepoURL:          repoURL,
+			GithubSecretName: "github-secret",
+			Review: reviewv1alpha1.PRReviewSpec{
+				MaxActiveSandboxes: 1,
+				LLM:                reviewv1alpha1.LLMConfig{Provider: "gemini-cli"},
+			},
+		},
+	}
+	repoWatchB := &reviewv1alpha1.RepoWatch{
+		ObjectMeta: metav1.ObjectMeta{Name: "repowatch-b", Namespace: "default", UID: "uid-b"},
+		Spec: reviewv1alpha1.RepoWatchSpec{
+			RepoURL:          repoURL,
+			GithubSecretName: "github-secret",
+			Review: reviewv1alpha1.PRReviewSpec{
+				MaxActiveSandboxes: 1,
+				LLM:                reviewv1alpha1.LLMConfig{Provider: "claude"},
+			},
+		},
+	}
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "github-secret", Namespace: "default"},
+		Data:       map[string][]byte{"pat": []byte("test-pat")},
+	}
+
+	// 3. Setup fake client and reconciler
+	fakeClient := clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatchA, repoWatchB, secret).WithStatusSubresource(repoWatchA, repoWatchB).Build()
+	r := &RepoWatchReconciler{
+		Client: fakeClient,
+		Scheme: s,
+		NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
+			return ghClient, map[string]string{"pat": "test-pat"}, nil
+		},
+	}
+
+	// 4. Reconcile for RepoWatch-A
+	reqA := reconcile.Request{NamespacedName: types.NamespacedName{Name: repoWatchA.Name, Namespace: repoWatchA.Namespace}}
+	_, err := r.Reconcile(context.Background(), reqA)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	// 5. Reconcile for RepoWatch-B
+	reqB := reconcile.Request{NamespacedName: types.NamespacedName{Name: repoWatchB.Name, Namespace: repoWatchB.Namespace}}
+	_, err = r.Reconcile(context.Background(), reqB)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	// 6. Verification
+	// Assert Total Sandbox Count
+	sandboxList := &unstructured.UnstructuredList{}
+	sandboxList.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "custom.agents.x-k8s.io",
+		Version: "v1alpha1",
+		Kind:    "ReviewSandbox",
+	})
+	g.Expect(r.Client.List(context.Background(), sandboxList)).To(gomega.Succeed())
+	g.Expect(sandboxList.Items).To(gomega.HaveLen(2), "Expected two sandboxes to be created, one for each RepoWatch")
+
+	// Validate Sandbox A
+	sandboxA := &unstructured.Unstructured{}
+	sandboxA.SetGroupVersionKind(sandboxList.GroupVersionKind())
+	sandboxAName := types.NamespacedName{Name: fmt.Sprintf("%s-pr-%d", repoWatchA.Name, prNumber), Namespace: "default"}
+	g.Expect(r.Client.Get(context.Background(), sandboxAName, sandboxA)).To(gomega.Succeed())
+	llmBackendA, foundA, errA := unstructured.NestedString(sandboxA.Object, "spec", "llmBackend", "name")
+	g.Expect(errA).NotTo(gomega.HaveOccurred())
+	g.Expect(foundA).To(gomega.BeTrue())
+	g.Expect(llmBackendA).To(gomega.Equal("gemini-cli"))
+
+	// Validate Sandbox B
+	sandboxB := &unstructured.Unstructured{}
+	sandboxB.SetGroupVersionKind(sandboxList.GroupVersionKind())
+	sandboxBName := types.NamespacedName{Name: fmt.Sprintf("%s-pr-%d", repoWatchB.Name, prNumber), Namespace: "default"}
+	g.Expect(r.Client.Get(context.Background(), sandboxBName, sandboxB)).To(gomega.Succeed())
+	llmBackendB, foundB, errB := unstructured.NestedString(sandboxB.Object, "spec", "llmBackend", "name")
+	g.Expect(errB).NotTo(gomega.HaveOccurred())
+	g.Expect(foundB).To(gomega.BeTrue())
+	g.Expect(llmBackendB).To(gomega.Equal("claude"))
+
+	// Validate Status of RepoWatches
+	fetchedA := &reviewv1alpha1.RepoWatch{}
+	g.Expect(r.Client.Get(context.Background(), reqA.NamespacedName, fetchedA)).To(gomega.Succeed())
+	g.Expect(fetchedA.Status.ActiveSandboxCount).To(gomega.Equal(1))
+	g.Expect(fetchedA.Status.WatchedPRs).To(gomega.HaveLen(1))
+	g.Expect(fetchedA.Status.WatchedPRs[0].Number).To(gomega.Equal(prNumber))
+
+	fetchedB := &reviewv1alpha1.RepoWatch{}
+	g.Expect(r.Client.Get(context.Background(), reqB.NamespacedName, fetchedB)).To(gomega.Succeed())
+	g.Expect(fetchedB.Status.ActiveSandboxCount).To(gomega.Equal(1))
+	g.Expect(fetchedB.Status.WatchedPRs).To(gomega.HaveLen(1))
+	g.Expect(fetchedB.Status.WatchedPRs[0].Number).To(gomega.Equal(prNumber))
 }

@@ -243,10 +243,12 @@ func TestSortPRs(t *testing.T) {
 		t.Run(tc.name, func(_ *testing.T) {
 			mockHTTPClient := &http.Client{
 				Transport: &mockRoundTripper{
-					responses: map[string]*http.Response{
-						"https://api.github.com/user": {
-							StatusCode: http.StatusOK,
-							Body:       io.NopCloser(strings.NewReader(`{"login": "myself", "name": "Me"}`)),
+					responses: map[string]func() *http.Response{
+						"https://api.github.com/user": func() *http.Response {
+							return &http.Response{
+								StatusCode: http.StatusOK,
+								Body:       io.NopCloser(strings.NewReader(`{"login": "myself", "name": "Me"}`)),
+							}
 						},
 					},
 				},
