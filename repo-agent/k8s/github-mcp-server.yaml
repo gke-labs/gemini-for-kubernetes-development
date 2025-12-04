@@ -16,7 +16,6 @@ spec:
       containers:
       - name: mcp
         image: ko://repo-agent/review-ui/images/github-mcp-server # This will be built locally
-        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8000
         env:
