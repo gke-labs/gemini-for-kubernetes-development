@@ -58,6 +58,10 @@ spec:
       labels:
         app: repowatch-controller
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        fsGroup: 65532
       serviceAccountName: repowatch-controller
       containers:
       - name: repowatch-controller

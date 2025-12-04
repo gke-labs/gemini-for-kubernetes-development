@@ -113,11 +113,7 @@ install-repo-agent:
 create-secrets:
 	kubectl create namespace repo-agent-system || true
 	@kubectl create secret -n repo-agent-system generic gemini-vscode-tokens --from-literal=gemini=${GEMINI_API_KEY} --dry-run=client -o yaml | kubectl apply -f -
-	@if [ -n "${GITHUB_PAT}" ]; then \
-		kubectl create secret -n repo-agent-system generic github-pat --from-literal=pat=${GITHUB_PAT} --from-literal=name="`git config --global user.name`" --from-literal=email=`git config --global user.email` --dry-run=client -o yaml | kubectl apply -f -; \
-	else \
-		kubectl create secret -n repo-agent-system generic github-pat --from-literal=pat="" --from-literal=name="`git config --global user.name`" --from-literal=email=`git config --global user.email` --dry-run=client -o yaml | kubectl apply -f -; \
-	fi
+	@kubectl create secret -n repo-agent-system generic github-pat --from-literal=pat="${GITHUB_PAT}" --from-literal=name="`git config --global user.name`" --from-literal=email=`git config --global user.email` --dry-run=client -o yaml | kubectl apply -f -
 	@kubectl create secret -n repo-agent-system generic anthropic-api-key --from-literal=claude=${ANTHROPIC_API_KEY} --dry-run=client -o yaml | kubectl apply -f -
 	# Create github-token secret for the API, optionally including OAuth credentials
 	@if [ -n "${GITHUB_CLIENT_ID}" ] && [ -n "${GITHUB_CLIENT_SECRET}" ]; then \

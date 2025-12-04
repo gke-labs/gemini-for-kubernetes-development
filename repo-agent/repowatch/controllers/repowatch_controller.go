@@ -26,6 +26,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"text/template"
 	"time"
 
@@ -62,45 +63,47 @@ type PersistingTokenSource struct {
 	K8sClient  client.Client
 	SecretName string
 	Namespace  string
+	mu         sync.Mutex
 }
 
 func (s *PersistingTokenSource) Token() (*oauth2.Token, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	t, err := s.Source.Token()
 	if err != nil {
 		return nil, err
 	}
 
-	// Persist the token if it has changed
-	go func(token *oauth2.Token) {
-		ctx := context.Background()
-		secret := &corev1.Secret{}
-		if err := s.K8sClient.Get(ctx, types.NamespacedName{Name: s.SecretName, Namespace: s.Namespace}, secret); err != nil {
-			log.Log.Error(err, "failed to get secret for token update", "secret", s.SecretName)
-			return
-		}
+	// Persist the token if it has changed (or at least try to update the secret)
+	ctx := context.Background()
+	secret := &corev1.Secret{}
+	if err := s.K8sClient.Get(ctx, types.NamespacedName{Name: s.SecretName, Namespace: s.Namespace}, secret); err != nil {
+		log.Log.Error(err, "failed to get secret for token update", "secret", s.SecretName)
+		return t, nil // Return token even if persist fails
+	}
 
-		if secret.Data == nil {
-			secret.Data = make(map[string][]byte)
-		}
+	if secret.Data == nil {
+		secret.Data = make(map[string][]byte)
+	}
 
-		// Check if token changed
-		currentPAT := string(secret.Data["pat"])
-		if currentPAT == token.AccessToken {
-			return
-		}
+	// Check if token changed
+	currentPAT := string(secret.Data["pat"])
+	if currentPAT == t.AccessToken {
+		return t, nil
+	}
 
-		secret.Data["pat"] = []byte(token.AccessToken)
-		if token.RefreshToken != "" {
-			secret.Data["refresh_token"] = []byte(token.RefreshToken)
-		}
-		if !token.Expiry.IsZero() {
-			secret.Data["expiry"] = []byte(token.Expiry.Format(time.RFC3339))
-		}
+	secret.Data["pat"] = []byte(t.AccessToken)
+	if t.RefreshToken != "" {
+		secret.Data["refresh_token"] = []byte(t.RefreshToken)
+	}
+	if !t.Expiry.IsZero() {
+		secret.Data["expiry"] = []byte(t.Expiry.Format(time.RFC3339))
+	}
 
-		if err := s.K8sClient.Update(ctx, secret); err != nil {
-			log.Log.Error(err, "failed to update secret with new token", "secret", s.SecretName)
-		}
-	}(t)
+	if err := s.K8sClient.Update(ctx, secret); err != nil {
+		log.Log.Error(err, "failed to update secret with new token", "secret", s.SecretName)
+	}
 
 	return t, nil
 }
@@ -210,6 +213,12 @@ func (r *RepoWatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	ghClient, githubConfig, err := r.NewGithubClient(ctx, r.Client, repoWatch)
 	if err != nil {
+		// If we are waiting for user login, do not return an error (which triggers immediate exponential backoff).
+		// Instead, requeue with a fixed delay to avoid log spam.
+		if strings.Contains(err.Error(), "waiting for user login") {
+			log.Info("Waiting for user login to populate github token")
+			return ctrl.Result{RequeueAfter: 1 * time.Minute}, nil
+		}
 		log.Error(err, "unable to create github client")
 		return ctrl.Result{}, err
 	}

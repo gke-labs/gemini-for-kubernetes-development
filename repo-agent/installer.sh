@@ -73,7 +73,9 @@ fi
 if [ -n "${GITHUB_PAT:-}" ]; then
   kubectl create secret -n repo-agent-system generic github-pat --from-literal=pat=${GITHUB_PAT} --from-literal=name="`git config --global user.name`" --from-literal=email=`git config --global user.email` --dry-run=client -o yaml | kubectl apply -f -
 else
-  # Create a placeholder secret so other components don't crash, but it won't be functional until populated
+  # Create a placeholder secret with an empty PAT.
+  # This prevents other components (like the controller) from crashing due to a missing secret,
+  # while allowing them to detect the missing token and wait gracefully for the user to log in.
   kubectl create secret -n repo-agent-system generic github-pat --from-literal=pat="" --from-literal=name="`git config --global user.name`" --from-literal=email=`git config --global user.email` --dry-run=client -o yaml | kubectl apply -f -
 fi
 

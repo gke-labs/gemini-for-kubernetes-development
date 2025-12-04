@@ -161,9 +161,11 @@ func initOAuth() {
 	oauthConf = &oauth2.Config{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
-		// for Github "Github App" scopes are ignored, for Github "Oauth" app scopes are used
-		Scopes:   []string{"read:user", "user:email"},
-		Endpoint: githuboauth.Endpoint,
+		Scopes:       []string{"read:user", "user:email"},
+		Endpoint:     githuboauth.Endpoint,
+		// For GitHub Apps, permissions are defined on the app itself during installation.
+		// However, for OAuth Apps (legacy), the scopes parameter is used to request specific permissions.
+		// We set default scopes here, but they can be overridden per request.
 	}
 
 	b := make([]byte, 16)
