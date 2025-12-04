@@ -287,8 +287,20 @@ func authLogin(c *gin.Context) {
 	if c.Request.TLS != nil || c.Request.Header.Get("X-Forwarded-Proto") == "https" {
 		scheme = "https"
 	}
-	oauthConf.RedirectURL = fmt.Sprintf("%s://%s/api/auth/callback", scheme, c.Request.Host)
-	url := oauthConf.AuthCodeURL(oauthState, oauth2.AccessTypeOnline)
+
+	// Create a local copy of the config to modify scopes per request
+	localConf := *oauthConf
+	localConf.RedirectURL = fmt.Sprintf("%s://%s/api/auth/callback", scheme, c.Request.Host)
+
+	scope := c.Query("scope")
+	if scope == "readwrite" {
+		localConf.Scopes = []string{"repo", "read:user", "user:email"}
+	} else {
+		// Default to read-only (or whatever the default was)
+		localConf.Scopes = []string{"read:user", "user:email"}
+	}
+
+	url := localConf.AuthCodeURL(oauthState, oauth2.AccessTypeOnline)
 	c.Redirect(http.StatusTemporaryRedirect, url)
 }
 
