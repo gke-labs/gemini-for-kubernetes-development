@@ -82,6 +82,10 @@ func (g *Gemini) Cleanup(workspacesDir string) error {
 	return nil
 }
 
+func (g *Gemini) ExpandPrompt(prompt string) (string, error) {
+	return expandCommands(prompt, ".gemini")
+}
+
 func (g *Gemini) Run(agentPrompt string) ([]byte, error) {
 	log.Println("running gemini")
 

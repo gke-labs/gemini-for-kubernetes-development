@@ -150,6 +150,12 @@ func runReview() error {
 			}
 		}
 
+		// Expand commands in the prompt
+		currentPrompt, err = provider.ExpandPrompt(currentPrompt)
+		if err != nil {
+			log.Printf("warning: failed to expand commands in prompt: %v", err)
+		}
+
 		// Write current prompt to file for debugging
 		promptFilename := fmt.Sprintf("../agent-prompt-run%d.txt", i+1)
 		if err := os.WriteFile(promptFilename, []byte(currentPrompt), 0644); err != nil {
