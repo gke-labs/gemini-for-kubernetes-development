@@ -66,7 +66,7 @@ func TestReconcileReviewSandboxes_MaxSandboxes(t *testing.T) {
 			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
 			"kind":       "ReviewSandbox",
 			"metadata": map[string]interface{}{
-				"name":      "repo-pr-1",
+				"name":      "test-repowatch-pr-1",
 				"namespace": "default",
 				"ownerReferences": []interface{}{
 					map[string]interface{}{
@@ -89,7 +89,7 @@ func TestReconcileReviewSandboxes_MaxSandboxes(t *testing.T) {
 			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
 			"kind":       "ReviewSandbox",
 			"metadata": map[string]interface{}{
-				"name":      "repo-pr-2",
+				"name":      "test-repowatch-pr-2",
 				"namespace": "default",
 				"ownerReferences": []interface{}{
 					map[string]interface{}{
@@ -194,7 +194,7 @@ func TestReconcileIssueHandlerSandboxes_MaxSandboxes(t *testing.T) {
 			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
 			"kind":       "IssueSandbox",
 			"metadata": map[string]interface{}{
-				"name":      "repo-issue-1-testhandler",
+				"name":      "test-repowatch-issue-1-testhandler",
 				"namespace": "default",
 				"ownerReferences": []interface{}{
 					map[string]interface{}{
@@ -217,7 +217,7 @@ func TestReconcileIssueHandlerSandboxes_MaxSandboxes(t *testing.T) {
 			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
 			"kind":       "IssueSandbox",
 			"metadata": map[string]interface{}{
-				"name":      "repo-issue-2-testhandler",
+				"name":      "test-repowatch-issue-2-testhandler",
 				"namespace": "default",
 				"ownerReferences": []interface{}{
 					map[string]interface{}{

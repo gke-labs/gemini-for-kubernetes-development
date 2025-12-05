@@ -19,6 +19,7 @@ package controllers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -43,14 +44,15 @@ import (
 )
 
 type mockRoundTripper struct {
-	responses map[string]*http.Response
+	responses map[string]func() *http.Response
 }
 
 func (m *mockRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	resp, ok := m.responses[req.URL.String()]
+	respFunc, ok := m.responses[req.URL.String()]
 	if !ok {
 		return &http.Response{StatusCode: http.StatusNotFound, Body: http.NoBody, Request: req}, nil
 	}
+	resp := respFunc()
 	resp.Request = req
 	return resp, nil
 }
@@ -76,14 +78,18 @@ func TestRepoWatchReconciler_Reconcile(t *testing.T) {
 	// 3. Create your Reconciler instance
 	mockHTTPClient := &http.Client{
 		Transport: &mockRoundTripper{
-			responses: map[string]*http.Response{
-				"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=created&state=open": {
-					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(strings.NewReader(`[{"number": 1, "head": {"repo": {"clone_url": "https://github.com/test/repo", "html_url": "https://github.com/test/repo"}, "ref": "main"}, "html_url": "https://github.com/test/repo/pull/1", "title": "Test PR", "diff_url": "https://github.com/test/repo/pull/1.diff"}]`)),
+			responses: map[string]func() *http.Response{
+				"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=created&state=open": func() *http.Response {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(strings.NewReader(`[{"number": 1, "head": {"repo": {"clone_url": "https://github.com/test/repo", "html_url": "https://github.com/test/repo"}, "ref": "main"}, "html_url": "https://github.com/test/repo/pull/1", "title": "Test PR", "diff_url": "https://github.com/test/repo/pull/1.diff"}]`)),
+					}
 				},
-				"https://api.github.com/user": {
-					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(strings.NewReader(`{"login": "test-user", "name": "Test User", "email": "test@example.com"}`)),
+				"https://api.github.com/user": func() *http.Response {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(strings.NewReader(`{"login": "test-user", "name": "Test User", "email": "test@example.com"}`)),
+					}
 				},
 			},
 		},
@@ -176,14 +182,17 @@ func TestRepoWatchReconciler_ReconcileIssues(t *testing.T) {
 	// 3. Create your Reconciler instance
 	mockHTTPClient := &http.Client{
 		Transport: &mockRoundTripper{
-			responses: map[string]*http.Response{
-				"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=created&state=open": {
-					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(strings.NewReader(`[]`)),
+			responses: map[string]func() *http.Response{
+				"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=created&state=open": func() *http.Response {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(strings.NewReader(`[]`)),
+					}
 				},
-				"https://api.github.com/repos/test/repo/issues?state=open": {
-					StatusCode: http.StatusOK,
-					Body: io.NopCloser(strings.NewReader(`[
+				"https://api.github.com/repos/test/repo/issues?state=open": func() *http.Response {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body: io.NopCloser(strings.NewReader(`[
 												{
 													"number": 10,
 													"title": "Test Issue",
@@ -191,10 +200,13 @@ func TestRepoWatchReconciler_ReconcileIssues(t *testing.T) {
 													"repository_url": "https://api.github.com/repos/test/repo"
 												}
 											]`)),
+					}
 				},
-				"https://api.github.com/user": {
-					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(strings.NewReader(`{"login": "test-user", "name": "Test User", "email": "test@example.com"}`)),
+				"https://api.github.com/user": func() *http.Response {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(strings.NewReader(`{"login": "test-user", "name": "Test User", "email": "test@example.com"}`)),
+					}
 				},
 			}},
 	}
@@ -340,7 +352,7 @@ func TestReconcileReviewSandboxes(t *testing.T) {
 			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
 			"kind":       "ReviewSandbox",
 			"metadata": map[string]interface{}{
-				"name":      "repo-pr-2",
+				"name":      "test-repowatch-pr-2",
 				"namespace": "default",
 				"ownerReferences": []interface{}{
 					map[string]interface{}{
@@ -391,7 +403,7 @@ func TestReconcileReviewSandboxes(t *testing.T) {
 		})
 		g.Expect(r.Client.List(context.Background(), sandboxList)).To(gomega.Succeed())
 		g.Expect(sandboxList.Items).To(gomega.HaveLen(1)) // Should contain only the sandbox for prNumber 1
-		g.Expect(sandboxList.Items[0].GetName()).To(gomega.Equal("repo-pr-1"))
+		g.Expect(sandboxList.Items[0].GetName()).To(gomega.Equal("test-repowatch-pr-1"))
 	})
 
 	// Test case 2: Not creating a new sandbox if the maximum number of active sandboxes has been reached.
@@ -405,7 +417,7 @@ func TestReconcileReviewSandboxes(t *testing.T) {
 				"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
 				"kind":       "ReviewSandbox",
 				"metadata": map[string]interface{}{
-					"name":      "repo-pr-1",
+					"name":      "test-repowatch-pr-1",
 					"namespace": "default",
 					"ownerReferences": []interface{}{
 						map[string]interface{}{
@@ -457,7 +469,7 @@ func TestReconcileReviewSandboxes(t *testing.T) {
 		})
 		g.Expect(r.Client.List(context.Background(), sandboxList)).To(gomega.Succeed())
 		g.Expect(sandboxList.Items).To(gomega.HaveLen(1)) // Only the activePRSandbox should exist
-		g.Expect(sandboxList.Items[0].GetName()).To(gomega.Equal("repo-pr-1"))
+		g.Expect(sandboxList.Items[0].GetName()).To(gomega.Equal("test-repowatch-pr-1"))
 
 		// Check that the RepoWatch status is updated correctly
 		fetchedRepoWatch := &reviewv1alpha1.RepoWatch{}
@@ -482,7 +494,7 @@ func TestReconcileReviewSandboxes(t *testing.T) {
 				"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
 				"kind":       "ReviewSandbox",
 				"metadata": map[string]interface{}{
-					"name":      "repo-pr-1",
+					"name":      "test-repowatch-pr-1",
 					"namespace": "default",
 					"ownerReferences": []interface{}{
 						map[string]interface{}{
@@ -520,7 +532,7 @@ func TestReconcileReviewSandboxes(t *testing.T) {
 		})
 		g.Expect(r.Client.List(context.Background(), sandboxList)).To(gomega.Succeed())
 		g.Expect(sandboxList.Items).To(gomega.HaveLen(1)) // Only the existingPRSandbox should exist
-		g.Expect(sandboxList.Items[0].GetName()).To(gomega.Equal("repo-pr-1"))
+		g.Expect(sandboxList.Items[0].GetName()).To(gomega.Equal("test-repowatch-pr-1"))
 
 		// Check that the RepoWatch status is updated correctly
 		fetchedRepoWatch := &reviewv1alpha1.RepoWatch{}
@@ -546,7 +558,7 @@ func TestReconcileReviewSandboxes(t *testing.T) {
 				"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
 				"kind":       "ReviewSandbox",
 				"metadata": map[string]interface{}{
-					"name":              "repo-pr-1",
+					"name":              "test-repowatch-pr-1",
 					"namespace":         "default",
 					"creationTimestamp": oldCreationTime.Format(time.RFC3339),
 					"ownerReferences": []interface{}{
@@ -584,13 +596,55 @@ func TestReconcileReviewSandboxes(t *testing.T) {
 			Version: "v1alpha1",
 			Kind:    "ReviewSandbox",
 		})
-		g.Expect(r.Client.Get(context.Background(), types.NamespacedName{Name: "repo-pr-1", Namespace: "default"}, updatedSandbox)).To(gomega.Succeed())
+		g.Expect(r.Client.Get(context.Background(), types.NamespacedName{Name: "test-repowatch-pr-1", Namespace: "default"}, updatedSandbox)).To(gomega.Succeed())
 
 		// Check replicas
 		replicas, found, err := unstructured.NestedInt64(updatedSandbox.Object, "spec", "replicas")
 		g.Expect(err).NotTo(gomega.HaveOccurred())
 		g.Expect(found).To(gomega.BeTrue())
 		g.Expect(replicas).To(gomega.Equal(int64(0)))
+	})
+
+	// Test case 5: Deletes a sandbox for a closed PR and creates a new one, respecting MaxSandboxes limit.
+	t.Run("deletes sandbox for closed PR and respects MaxSandboxes limit", func(_ *testing.T) {
+		repoWatch.Spec.Review.MaxActiveSandboxes = 1
+		repoWatch.Spec.Review.MaxSandboxes = 1
+
+		r := &RepoWatchReconciler{
+			Client: clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, closedPRSandbox).WithStatusSubresource(repoWatch).Build(),
+			Scheme: s,
+			NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
+				return &github.Client{}, map[string]string{}, nil
+			},
+		}
+
+		sandboxList := &unstructured.UnstructuredList{}
+		sandboxList.SetGroupVersionKind(schema.GroupVersionKind{
+			Group:   "custom.agents.x-k8s.io",
+			Version: "v1alpha1",
+			Kind:    "ReviewSandbox",
+		})
+		g.Expect(r.Client.List(context.Background(), sandboxList)).To(gomega.Succeed())
+		g.Expect(sandboxList.Items).To(gomega.HaveLen(1)) // Should contain the closedPRSandbox initially
+
+		err := r.reconcileReviewSandboxes(context.Background(), repoWatch, []*github.PullRequest{}, []*github.PullRequest{pr}, sandboxList)
+		g.Expect(err).NotTo(gomega.HaveOccurred())
+
+		// Check that the sandbox for the closed PR is deleted and a new one for the open PR is created
+		sandboxList = &unstructured.UnstructuredList{}
+		sandboxList.SetGroupVersionKind(schema.GroupVersionKind{
+			Group:   "custom.agents.x-k8s.io",
+			Version: "v1alpha1",
+			Kind:    "ReviewSandbox",
+		})
+		g.Expect(r.Client.List(context.Background(), sandboxList)).To(gomega.Succeed())
+		g.Expect(sandboxList.Items).To(gomega.HaveLen(1)) // Should contain only the sandbox for prNumber 1
+		g.Expect(sandboxList.Items[0].GetName()).To(gomega.Equal("test-repowatch-pr-1"))
+
+		// Check that the RepoWatch status is updated correctly
+		fetchedRepoWatch := &reviewv1alpha1.RepoWatch{}
+		g.Expect(r.Client.Get(context.Background(), types.NamespacedName{Name: repoWatch.Name, Namespace: repoWatch.Namespace}, fetchedRepoWatch)).To(gomega.Succeed())
+		g.Expect(fetchedRepoWatch.Status.ActiveSandboxCount).To(gomega.Equal(1))
 	})
 }
 
@@ -649,7 +703,7 @@ func TestReconcileIssueHandlerSandboxes(t *testing.T) {
 			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
 			"kind":       "IssueSandbox",
 			"metadata": map[string]interface{}{
-				"name":      "repo-issue-2-testhandler",
+				"name":      "test-repowatch-issue-2-testhandler",
 				"namespace": "default",
 				"ownerReferences": []interface{}{
 					map[string]interface{}{
@@ -693,8 +747,7 @@ func TestReconcileIssueHandlerSandboxes(t *testing.T) {
 			Kind:    "IssueSandbox",
 		})
 		g.Expect(r.Client.List(context.Background(), sandboxList)).To(gomega.Succeed())
-		g.Expect(sandboxList.Items).To(gomega.HaveLen(1)) // Should contain only the sandbox for issueNumber 1
-		g.Expect(sandboxList.Items[0].GetName()).To(gomega.Equal("repo-issue-1-testhandler"))
+		g.Expect(sandboxList.Items[0].GetName()).To(gomega.Equal(fmt.Sprintf("%s-issue-1-testhandler", repoWatch.Name)))
 	})
 
 	// Test case 2: Not creating a new sandbox if the maximum number of active sandboxes has been reached.
@@ -708,7 +761,7 @@ func TestReconcileIssueHandlerSandboxes(t *testing.T) {
 				"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
 				"kind":       "IssueSandbox",
 				"metadata": map[string]interface{}{
-					"name":      "repo-issue-1-testhandler",
+					"name":      "test-repowatch-issue-1-testhandler",
 					"namespace": "default",
 					"ownerReferences": []interface{}{
 						map[string]interface{}{
@@ -755,7 +808,7 @@ func TestReconcileIssueHandlerSandboxes(t *testing.T) {
 		})
 		g.Expect(r.Client.List(context.Background(), sandboxList)).To(gomega.Succeed())
 		g.Expect(sandboxList.Items).To(gomega.HaveLen(1)) // Only the activeIssueSandbox should exist
-		g.Expect(sandboxList.Items[0].GetName()).To(gomega.Equal("repo-issue-1-testhandler"))
+		g.Expect(sandboxList.Items[0].GetName()).To(gomega.Equal("test-repowatch-issue-1-testhandler"))
 		// Check that the RepoWatch status is updated correctly
 		fetchedRepoWatch := &reviewv1alpha1.RepoWatch{}
 		g.Expect(r.Client.Get(context.Background(), types.NamespacedName{Name: repoWatch.Name, Namespace: repoWatch.Namespace}, fetchedRepoWatch)).To(gomega.Succeed())
@@ -778,7 +831,7 @@ func TestReconcileIssueHandlerSandboxes(t *testing.T) {
 				"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
 				"kind":       "IssueSandbox",
 				"metadata": map[string]interface{}{
-					"name":      "repo-issue-1-testhandler",
+					"name":      "test-repowatch-issue-1-testhandler",
 					"namespace": "default",
 					"ownerReferences": []interface{}{
 						map[string]interface{}{
@@ -816,7 +869,7 @@ func TestReconcileIssueHandlerSandboxes(t *testing.T) {
 		})
 		g.Expect(r.Client.List(context.Background(), sandboxList)).To(gomega.Succeed())
 		g.Expect(sandboxList.Items).To(gomega.HaveLen(1)) // Only the existingIssueSandbox should exist
-		g.Expect(sandboxList.Items[0].GetName()).To(gomega.Equal("repo-issue-1-testhandler"))
+		g.Expect(sandboxList.Items[0].GetName()).To(gomega.Equal("test-repowatch-issue-1-testhandler"))
 
 		// Check that the RepoWatch status is updated correctly
 		fetchedRepoWatch := &reviewv1alpha1.RepoWatch{}
@@ -843,7 +896,7 @@ func TestReconcileIssueHandlerSandboxes(t *testing.T) {
 				"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
 				"kind":       "IssueSandbox",
 				"metadata": map[string]interface{}{
-					"name":              "repo-issue-1-testhandler",
+					"name":              "test-repowatch-issue-1-testhandler",
 					"namespace":         "default",
 					"creationTimestamp": oldCreationTime.Format(time.RFC3339),
 					"ownerReferences": []interface{}{
@@ -880,13 +933,54 @@ func TestReconcileIssueHandlerSandboxes(t *testing.T) {
 			Version: "v1alpha1",
 			Kind:    "IssueSandbox",
 		})
-		g.Expect(r.Client.Get(context.Background(), types.NamespacedName{Name: "repo-issue-1-testhandler", Namespace: "default"}, updatedSandbox)).To(gomega.Succeed())
+		g.Expect(r.Client.Get(context.Background(), types.NamespacedName{Name: "test-repowatch-issue-1-testhandler", Namespace: "default"}, updatedSandbox)).To(gomega.Succeed())
 
 		// Check replicas
 		replicas, found, err := unstructured.NestedInt64(updatedSandbox.Object, "spec", "replicas")
 		g.Expect(err).NotTo(gomega.HaveOccurred())
 		g.Expect(found).To(gomega.BeTrue())
 		g.Expect(replicas).To(gomega.Equal(int64(0)))
+	})
+
+	// Test case 5: Deletes a sandbox for a closed issue and creates a new one, respecting MaxSandboxes limit.
+	t.Run("deletes sandbox for closed issue and respects MaxSandboxes limit", func(_ *testing.T) {
+		repoWatch.Spec.IssueHandlers[0].MaxSandboxes = 1
+
+		r := &RepoWatchReconciler{
+			Client: clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, closedIssueSandbox).WithStatusSubresource(repoWatch).Build(),
+			Scheme: s,
+			NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
+				return &github.Client{}, map[string]string{}, nil
+			},
+		}
+
+		sandboxList := &unstructured.UnstructuredList{}
+		sandboxList.SetGroupVersionKind(schema.GroupVersionKind{
+			Group:   "custom.agents.x-k8s.io",
+			Version: "v1alpha1",
+			Kind:    "IssueSandbox",
+		})
+		g.Expect(r.Client.List(context.Background(), sandboxList)).To(gomega.Succeed())
+		g.Expect(sandboxList.Items).To(gomega.HaveLen(1)) // Should contain the closedIssueSandbox initially
+
+		err := r.reconcileIssueHandlerSandboxes(context.Background(), currentUser, handler, repoWatch, []*github.Issue{issue}, sandboxList)
+		g.Expect(err).NotTo(gomega.HaveOccurred())
+
+		// Check that the sandbox for the closed issue is deleted and a new one for the open issue is created
+		sandboxList = &unstructured.UnstructuredList{}
+		sandboxList.SetGroupVersionKind(schema.GroupVersionKind{
+			Group:   "custom.agents.x-k8s.io",
+			Version: "v1alpha1",
+			Kind:    "IssueSandbox",
+		})
+		g.Expect(r.Client.List(context.Background(), sandboxList)).To(gomega.Succeed())
+		g.Expect(sandboxList.Items).To(gomega.HaveLen(1))
+		g.Expect(sandboxList.Items[0].GetName()).To(gomega.Equal(fmt.Sprintf("%s-issue-1-testhandler", repoWatch.Name)))
+
+		// Check that the RepoWatch status is updated correctly
+		fetchedRepoWatch := &reviewv1alpha1.RepoWatch{}
+		g.Expect(r.Client.Get(context.Background(), types.NamespacedName{Name: repoWatch.Name, Namespace: repoWatch.Namespace}, fetchedRepoWatch)).To(gomega.Succeed())
+		g.Expect(fetchedRepoWatch.Status.WatchedIssues[handlerName]).To(gomega.HaveLen(1))
 	})
 }
 
@@ -983,14 +1077,18 @@ func TestRepoWatchReconciler_Reconcile_InvalidRepoURL(t *testing.T) {
 	// 3. Create your Reconciler instance
 	mockHTTPClient := &http.Client{
 		Transport: &mockRoundTripper{
-			responses: map[string]*http.Response{
-				"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=created&state=open": {
-					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(strings.NewReader(`[{"number": 1, "head": {"repo": {"clone_url": "https://github.com/test/repo", "ref": "main"}, "html_url": "https://github.com/test/repo/pull/1"}, "title": "Test PR"}]`)),
+			responses: map[string]func() *http.Response{
+				"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=created&state=open": func() *http.Response {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(strings.NewReader(`[{"number": 1, "head": {"repo": {"clone_url": "https://github.com/test/repo", "ref": "main"}, "html_url": "https://github.com/test/repo/pull/1"}, "title": "Test PR"}]`)),
+					}
 				},
-				"https://api.github.com/user": {
-					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(strings.NewReader(`{"login": "test-user", "name": "Test User", "email": "test@example.com"}`)),
+				"https://api.github.com/user": func() *http.Response {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(strings.NewReader(`{"login": "test-user", "name": "Test User", "email": "test@example.com"}`)),
+					}
 				},
 			},
 		},
@@ -1280,18 +1378,24 @@ func TestRepoWatchReconciler_Reconcile_ExplicitAndListedPRs(t *testing.T) {
 	// 3. Create your Reconciler instance
 	mockHTTPClient := &http.Client{
 		Transport: &mockRoundTripper{
-			responses: map[string]*http.Response{
-				"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=created&state=open": {
-					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(strings.NewReader(`[{"number": 1, "head": {"repo": {"clone_url": "https://github.com/test/repo", "html_url": "https://github.com/test/repo"}, "ref": "main"}, "html_url": "https://github.com/test/repo/pull/1", "title": "Test PR 1", "diff_url": "https://github.com/test/repo/pull/1.diff"}]`)),
+			responses: map[string]func() *http.Response{
+				"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=created&state=open": func() *http.Response {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(strings.NewReader(`[{"number": 1, "head": {"repo": {"clone_url": "https://github.com/test/repo", "html_url": "https://github.com/test/repo"}, "ref": "main"}, "html_url": "https://github.com/test/repo/pull/1", "title": "Test PR 1", "diff_url": "https://github.com/test/repo/pull/1.diff"}]`)),
+					}
 				},
-				"https://api.github.com/repos/test/repo/pulls/42": {
-					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(strings.NewReader(`{"number": 42, "head": {"repo": {"clone_url": "https://github.com/test/repo", "html_url": "https://github.com/test/repo"}, "ref": "feature"}, "html_url": "https://github.com/test/repo/pull/42", "title": "Explicit PR 42", "diff_url": "https://github.com/test/repo/pull/42.diff"}`)),
+				"https://api.github.com/repos/test/repo/pulls/42": func() *http.Response {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(strings.NewReader(`{"number": 42, "head": {"repo": {"clone_url": "https://github.com/test/repo", "html_url": "https://github.com/test/repo"}, "ref": "feature"}, "html_url": "https://github.com/test/repo/pull/42", "title": "Explicit PR 42", "diff_url": "https://github.com/test/repo/pull/42.diff"}`)),
+					}
 				},
-				"https://api.github.com/user": {
-					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(strings.NewReader(`{"login": "test-user", "name": "Test User", "email": "test@example.com"}`)),
+				"https://api.github.com/user": func() *http.Response {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(strings.NewReader(`{"login": "test-user", "name": "Test User", "email": "test@example.com"}`)),
+					}
 				},
 			},
 		},
@@ -1409,14 +1513,18 @@ func TestRepoWatchReconciler_Reconcile_FilteredAndSortedPRs(t *testing.T) {
 
 	mockHTTPClient := &http.Client{
 		Transport: &mockRoundTripper{
-			responses: map[string]*http.Response{
-				"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=created&state=open": {
-					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(strings.NewReader(responseBody)),
+			responses: map[string]func() *http.Response{
+				"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=created&state=open": func() *http.Response {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(strings.NewReader(responseBody)),
+					}
 				},
-				"https://api.github.com/user": {
-					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(strings.NewReader(`{"login": "test-user", "name": "Test User", "email": "test@example.com"}`)),
+				"https://api.github.com/user": func() *http.Response {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(strings.NewReader(`{"login": "test-user", "name": "Test User", "email": "test@example.com"}`)),
+					}
 				},
 			},
 		},
@@ -1487,4 +1595,244 @@ func TestRepoWatchReconciler_Reconcile_FilteredAndSortedPRs(t *testing.T) {
 
 	g.Expect(fetchedRepoWatch.Status.PendingPRs).To(gomega.HaveLen(1))
 	g.Expect(fetchedRepoWatch.Status.PendingPRs[0].Number).To(gomega.Equal(2))
+}
+
+// TestReconcileReviewSandboxes_RespectsExistingActiveSandboxes verifies that the MaxActiveSandboxes limit
+// is respected by taking pre-existing active sandboxes into account before creating new ones.
+func TestReconcileReviewSandboxes_RespectsExistingActiveSandboxes(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	s := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(s)
+	_ = reviewv1alpha1.AddToScheme(s)
+
+	repoURL := "https://github.com/test/repo"
+
+	repoWatch := &reviewv1alpha1.RepoWatch{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-repowatch-maxactive",
+			Namespace: "default",
+			UID:       "test-uid-maxactive",
+		},
+		Spec: reviewv1alpha1.RepoWatchSpec{
+			RepoURL:          repoURL,
+			GithubSecretName: "github-secret",
+			Review: reviewv1alpha1.PRReviewSpec{
+				MaxActiveSandboxes: 1, // Strict limit
+				MaxSandboxes:       10,
+			},
+		},
+	}
+
+	// 1. Pre-existing Active Sandbox for PR #1
+	existingActiveSandbox := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
+			"kind":       "ReviewSandbox",
+			"metadata": map[string]interface{}{
+				"name":      "test-repowatch-maxactive-pr-1",
+				"namespace": "default",
+				"ownerReferences": []interface{}{
+					map[string]interface{}{
+						"apiVersion": "review.gemini.google.com/v1alpha1",
+						"kind":       "RepoWatch",
+						"name":       repoWatch.Name,
+						"uid":        string(repoWatch.UID),
+					},
+				},
+			},
+			"spec": map[string]interface{}{
+				"replicas": int64(1), // It's active
+			},
+		},
+	}
+
+	// 2. New PR (PR 2) that should be made pending
+	pr2Number := 2
+	pr2 := &github.PullRequest{
+		Number: &pr2Number,
+		Head: &github.PullRequestBranch{
+			Repo: &github.Repository{CloneURL: github.String(repoURL)},
+			Ref:  github.String("feature-branch"),
+		},
+		HTMLURL: github.String("https://github.com/test/repo/pull/2"),
+		Title:   github.String("Test PR 2"),
+		DiffURL: github.String("https://github.com/test/repo/pull/2.diff"),
+	}
+
+	// PR #1 is also "open" so the existing sandbox is not deleted.
+	pr1Number := 1
+	pr1 := &github.PullRequest{Number: &pr1Number}
+
+	r := &RepoWatchReconciler{
+		Client: clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, existingActiveSandbox).WithStatusSubresource(repoWatch).Build(),
+		Scheme: s,
+		NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
+			return &github.Client{}, map[string]string{}, nil
+		},
+	}
+
+	// The list of sandboxes passed to the function contains the pre-existing one.
+	existingSandboxList := &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*existingActiveSandbox}}
+
+	// The list of open PRs includes the one with an existing sandbox and the new one.
+	openPRs := []*github.PullRequest{pr2, pr1}
+
+	// Call reconcile
+	err := r.reconcileReviewSandboxes(context.Background(), repoWatch, []*github.PullRequest{}, openPRs, existingSandboxList)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	// Verify results: No new sandbox should be created
+	sandboxList := &unstructured.UnstructuredList{}
+	sandboxList.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "custom.agents.x-k8s.io",
+		Version: "v1alpha1",
+		Kind:    "ReviewSandbox",
+	})
+	g.Expect(r.Client.List(context.Background(), sandboxList)).To(gomega.Succeed())
+	// The buggy code will fail here, creating a second sandbox.
+	g.Expect(sandboxList.Items).To(gomega.HaveLen(1), "No new sandbox should have been created because the active limit of 1 was already met")
+
+	// Verify Status
+	fetchedRepoWatch := &reviewv1alpha1.RepoWatch{}
+	g.Expect(r.Client.Get(context.Background(), types.NamespacedName{Name: repoWatch.Name, Namespace: repoWatch.Namespace}, fetchedRepoWatch)).To(gomega.Succeed())
+
+	// The active count in the status should reflect the running total.
+	g.Expect(fetchedRepoWatch.Status.ActiveSandboxCount).To(gomega.Equal(1))
+
+	// PR 1 should be watched, PR 2 should be pending.
+	g.Expect(fetchedRepoWatch.Status.WatchedPRs).To(gomega.HaveLen(1))
+	g.Expect(fetchedRepoWatch.Status.WatchedPRs[0].Number).To(gomega.Equal(1))
+	g.Expect(fetchedRepoWatch.Status.PendingPRs).To(gomega.HaveLen(1))
+	g.Expect(fetchedRepoWatch.Status.PendingPRs[0].Number).To(gomega.Equal(2))
+}
+
+// TestReconcile_MultipleRepoWatchesSameRepo verifies that two RepoWatches
+// for the same repository but different LLMs can both create their own distinct
+// sandboxes when reconciled.
+func TestReconcile_MultipleRepoWatchesSameRepo(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	s := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(s)
+	_ = reviewv1alpha1.AddToScheme(s)
+
+	prNumber := 101
+	repoURL := "https://github.com/test/multi-repo"
+
+	// 1. Setup mock GitHub API
+	prListJSON := fmt.Sprintf(`[{"number": %d, "head": {"repo": {"clone_url": "%s", "html_url": "%s"}, "ref": "main"}, "html_url": "%s/pull/%d", "title": "Test PR", "diff_url": "%s/pull/%d.diff"}]`, prNumber, repoURL, repoURL, repoURL, prNumber, repoURL, prNumber)
+	userJSON := `{"login": "test-user", "name": "Test User", "email": "test@example.com"}`
+
+	mockHTTPClient := &http.Client{
+		Transport: &mockRoundTripper{
+			responses: map[string]func() *http.Response{
+				"https://api.github.com/repos/test/multi-repo/pulls?direction=desc&per_page=100&sort=created&state=open": func() *http.Response {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(strings.NewReader(prListJSON)),
+					}
+				},
+				"https://api.github.com/user": func() *http.Response {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(strings.NewReader(userJSON)),
+					}
+				},
+			},
+		},
+	}
+	ghClient := github.NewClient(mockHTTPClient)
+
+	// 2. Create RepoWatch resources
+	repoWatchA := &reviewv1alpha1.RepoWatch{
+		ObjectMeta: metav1.ObjectMeta{Name: "repowatch-a", Namespace: "default", UID: "uid-a"},
+		Spec: reviewv1alpha1.RepoWatchSpec{
+			RepoURL:          repoURL,
+			GithubSecretName: "github-secret",
+			Review: reviewv1alpha1.PRReviewSpec{
+				MaxActiveSandboxes: 1,
+				LLM:                reviewv1alpha1.LLMConfig{Provider: "gemini-cli"},
+			},
+		},
+	}
+	repoWatchB := &reviewv1alpha1.RepoWatch{
+		ObjectMeta: metav1.ObjectMeta{Name: "repowatch-b", Namespace: "default", UID: "uid-b"},
+		Spec: reviewv1alpha1.RepoWatchSpec{
+			RepoURL:          repoURL,
+			GithubSecretName: "github-secret",
+			Review: reviewv1alpha1.PRReviewSpec{
+				MaxActiveSandboxes: 1,
+				LLM:                reviewv1alpha1.LLMConfig{Provider: "claude"},
+			},
+		},
+	}
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "github-secret", Namespace: "default"},
+		Data:       map[string][]byte{"pat": []byte("test-pat")},
+	}
+
+	// 3. Setup fake client and reconciler
+	fakeClient := clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatchA, repoWatchB, secret).WithStatusSubresource(repoWatchA, repoWatchB).Build()
+	r := &RepoWatchReconciler{
+		Client: fakeClient,
+		Scheme: s,
+		NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
+			return ghClient, map[string]string{"pat": "test-pat"}, nil
+		},
+	}
+
+	// 4. Reconcile for RepoWatch-A
+	reqA := reconcile.Request{NamespacedName: types.NamespacedName{Name: repoWatchA.Name, Namespace: repoWatchA.Namespace}}
+	_, err := r.Reconcile(context.Background(), reqA)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	// 5. Reconcile for RepoWatch-B
+	reqB := reconcile.Request{NamespacedName: types.NamespacedName{Name: repoWatchB.Name, Namespace: repoWatchB.Namespace}}
+	_, err = r.Reconcile(context.Background(), reqB)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	// 6. Verification
+	// Assert Total Sandbox Count
+	sandboxList := &unstructured.UnstructuredList{}
+	sandboxList.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "custom.agents.x-k8s.io",
+		Version: "v1alpha1",
+		Kind:    "ReviewSandbox",
+	})
+	g.Expect(r.Client.List(context.Background(), sandboxList)).To(gomega.Succeed())
+	g.Expect(sandboxList.Items).To(gomega.HaveLen(2), "Expected two sandboxes to be created, one for each RepoWatch")
+
+	// Validate Sandbox A
+	sandboxA := &unstructured.Unstructured{}
+	sandboxA.SetGroupVersionKind(sandboxList.GroupVersionKind())
+	sandboxAName := types.NamespacedName{Name: fmt.Sprintf("%s-pr-%d", repoWatchA.Name, prNumber), Namespace: "default"}
+	g.Expect(r.Client.Get(context.Background(), sandboxAName, sandboxA)).To(gomega.Succeed())
+	llmBackendA, foundA, errA := unstructured.NestedString(sandboxA.Object, "spec", "llmBackend", "name")
+	g.Expect(errA).NotTo(gomega.HaveOccurred())
+	g.Expect(foundA).To(gomega.BeTrue())
+	g.Expect(llmBackendA).To(gomega.Equal("gemini-cli"))
+
+	// Validate Sandbox B
+	sandboxB := &unstructured.Unstructured{}
+	sandboxB.SetGroupVersionKind(sandboxList.GroupVersionKind())
+	sandboxBName := types.NamespacedName{Name: fmt.Sprintf("%s-pr-%d", repoWatchB.Name, prNumber), Namespace: "default"}
+	g.Expect(r.Client.Get(context.Background(), sandboxBName, sandboxB)).To(gomega.Succeed())
+	llmBackendB, foundB, errB := unstructured.NestedString(sandboxB.Object, "spec", "llmBackend", "name")
+	g.Expect(errB).NotTo(gomega.HaveOccurred())
+	g.Expect(foundB).To(gomega.BeTrue())
+	g.Expect(llmBackendB).To(gomega.Equal("claude"))
+
+	// Validate Status of RepoWatches
+	fetchedA := &reviewv1alpha1.RepoWatch{}
+	g.Expect(r.Client.Get(context.Background(), reqA.NamespacedName, fetchedA)).To(gomega.Succeed())
+	g.Expect(fetchedA.Status.ActiveSandboxCount).To(gomega.Equal(1))
+	g.Expect(fetchedA.Status.WatchedPRs).To(gomega.HaveLen(1))
+	g.Expect(fetchedA.Status.WatchedPRs[0].Number).To(gomega.Equal(prNumber))
+
+	fetchedB := &reviewv1alpha1.RepoWatch{}
+	g.Expect(r.Client.Get(context.Background(), reqB.NamespacedName, fetchedB)).To(gomega.Succeed())
+	g.Expect(fetchedB.Status.ActiveSandboxCount).To(gomega.Equal(1))
+	g.Expect(fetchedB.Status.WatchedPRs).To(gomega.HaveLen(1))
+	g.Expect(fetchedB.Status.WatchedPRs[0].Number).To(gomega.Equal(prNumber))
 }
