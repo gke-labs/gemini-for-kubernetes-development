@@ -11,6 +11,8 @@ rules:
   verbs:
   - get
   - list
+  - patch
+  - update
   - watch
 - apiGroups:
   - custom.agents.x-k8s.io

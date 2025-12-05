@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
@@ -162,6 +163,9 @@ func initOAuth() {
 		ClientSecret: clientSecret,
 		Scopes:       []string{"read:user", "user:email"},
 		Endpoint:     githuboauth.Endpoint,
+		// For GitHub Apps, permissions are defined on the app itself during installation.
+		// However, for OAuth Apps (legacy), the scopes parameter is used to request specific permissions.
+		// We set default scopes here, but they can be overridden per request.
 	}
 
 	b := make([]byte, 16)
@@ -285,8 +289,20 @@ func authLogin(c *gin.Context) {
 	if c.Request.TLS != nil || c.Request.Header.Get("X-Forwarded-Proto") == "https" {
 		scheme = "https"
 	}
-	oauthConf.RedirectURL = fmt.Sprintf("%s://%s/api/auth/callback", scheme, c.Request.Host)
-	url := oauthConf.AuthCodeURL(oauthState, oauth2.AccessTypeOnline)
+
+	// Create a local copy of the config to modify scopes per request
+	localConf := *oauthConf
+	localConf.RedirectURL = fmt.Sprintf("%s://%s/api/auth/callback", scheme, c.Request.Host)
+
+	scope := c.Query("scope")
+	if scope == "readwrite" {
+		localConf.Scopes = []string{"repo", "read:user", "user:email"}
+	} else {
+		// Default to read-only (or whatever the default was)
+		localConf.Scopes = []string{"read:user", "user:email"}
+	}
+
+	url := localConf.AuthCodeURL(oauthState, oauth2.AccessTypeOnline)
 	c.Redirect(http.StatusTemporaryRedirect, url)
 }
 
@@ -315,6 +331,13 @@ func authCallback(c *gin.Context) {
 		log.Printf("Failed to bootstrap namespace %s: %v", ghUser, err)
 	}
 
+	// Update the secret with the user's token and info
+	if err := updateUserSecret(c.Request.Context(), ghUser, token, user); err != nil {
+		log.Printf("Failed to update user secret: %v", err)
+		c.String(http.StatusInternalServerError, "Failed to update user secret")
+		return
+	}
+
 	session := sessions.Default(c)
 	session.Set(userKey, ghUser)
 	if err := session.Save(); err != nil {
@@ -323,6 +346,25 @@ func authCallback(c *gin.Context) {
 		return
 	}
 	c.Redirect(http.StatusTemporaryRedirect, "/")
+}
+
+func updateUserSecret(ctx context.Context, namespace string, token *oauth2.Token, user *github.User) error {
+	data := map[string][]byte{
+		"pat": []byte(token.AccessToken),
+	}
+	if token.RefreshToken != "" {
+		data["refresh_token"] = []byte(token.RefreshToken)
+	}
+	if !token.Expiry.IsZero() {
+		data["expiry"] = []byte(token.Expiry.Format(time.RFC3339))
+	}
+	if user.Name != nil {
+		data["name"] = []byte(*user.Name)
+	}
+	if user.Email != nil {
+		data["email"] = []byte(*user.Email)
+	}
+	return updateSecret(ctx, namespace, githubSecretName, data)
 }
 
 func authStatus(c *gin.Context) {

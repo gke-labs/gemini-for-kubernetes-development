@@ -27,6 +27,7 @@ import (
 
 	"github.com/google/go-github/v39/github"
 	"github.com/onsi/gomega"
+	"golang.org/x/oauth2"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -1155,6 +1156,111 @@ func TestNewGithubClient(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestNewGithubClient_WaitingForLogin verifies that NewGithubClient returns a specific error
+// when the PAT is missing or empty, but OAuth credentials are configured.
+func TestNewGithubClient_WaitingForLogin(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	s := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(s)
+	_ = reviewv1alpha1.AddToScheme(s)
+
+	fakeClient := clientfake.NewClientBuilder().WithScheme(s).Build()
+
+	repoWatch := &reviewv1alpha1.RepoWatch{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-repowatch",
+			Namespace: "default",
+		},
+		Spec: reviewv1alpha1.RepoWatchSpec{
+			RepoURL:          "https://github.com/test/repo",
+			GithubSecretName: "github-secret",
+		},
+	}
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "github-secret",
+			Namespace: "default",
+		},
+		Data: map[string][]byte{
+			"pat": []byte(""), // Empty PAT
+		},
+	}
+	g.Expect(fakeClient.Create(context.Background(), secret)).To(gomega.Succeed())
+
+	// Set env vars for the test
+	t.Setenv("GITHUB_CLIENT_ID", "test-client-id")
+	t.Setenv("GITHUB_CLIENT_SECRET", "test-client-secret")
+
+	_, _, err := NewGithubClient(context.Background(), fakeClient, repoWatch)
+	g.Expect(err).To(gomega.HaveOccurred())
+	g.Expect(err.Error()).To(gomega.ContainSubstring("waiting for user login"))
+}
+
+// TestPersistingTokenSource verifies that PersistingTokenSource updates the Kubernetes secret
+// when a new token is obtained.
+func TestPersistingTokenSource(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	s := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(s)
+	_ = corev1.AddToScheme(s)
+
+	secretName := "github-secret"
+	namespace := "default"
+	oldToken := "old-token"
+	newToken := "new-token"
+	newRefreshToken := "new-refresh-token"
+
+	// 1. Create initial secret with old token
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: namespace,
+		},
+		Data: map[string][]byte{
+			"pat": []byte(oldToken),
+		},
+	}
+	fakeClient := clientfake.NewClientBuilder().WithScheme(s).WithObjects(secret).Build()
+
+	// 2. Create a mock TokenSource that returns the NEW token
+	mockSource := oauth2.StaticTokenSource(&oauth2.Token{
+		AccessToken:  newToken,
+		RefreshToken: newRefreshToken,
+		Expiry:       time.Now().Add(1 * time.Hour),
+	})
+
+	// 3. Create PersistingTokenSource
+	pts := &PersistingTokenSource{
+		Source:     mockSource,
+		K8sClient:  fakeClient,
+		SecretName: secretName,
+		Namespace:  namespace,
+	}
+
+	// 4. Call Token() to trigger the refresh and persist logic
+	token, err := pts.Token()
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(token.AccessToken).To(gomega.Equal(newToken))
+
+	// 5. Wait for the async goroutine to update the secret
+	g.Eventually(func() string {
+		updatedSecret := &corev1.Secret{}
+		err := fakeClient.Get(context.Background(), types.NamespacedName{Name: secretName, Namespace: namespace}, updatedSecret)
+		if err != nil {
+			return ""
+		}
+		return string(updatedSecret.Data["pat"])
+	}, 2*time.Second, 100*time.Millisecond).Should(gomega.Equal(newToken))
+
+	// 6. Verify refresh token was also updated
+	updatedSecret := &corev1.Secret{}
+	g.Expect(fakeClient.Get(context.Background(), types.NamespacedName{Name: secretName, Namespace: namespace}, updatedSecret)).To(gomega.Succeed())
+	g.Expect(string(updatedSecret.Data["refresh_token"])).To(gomega.Equal(newRefreshToken))
 }
 
 // TestRepoWatchReconciler_Reconcile_ExplicitAndListedPRs verifies that the reconciler correctly handles

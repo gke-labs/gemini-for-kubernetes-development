@@ -17,8 +17,7 @@ fi
 if [ "$INSTALL_MODE" = "single-user" ]; then
 : "${GITHUB_PAT:?Error: GITHUB_PAT is not set. Please set it before running this script.}"
 else
-# TODO (barney-s): remove PAT requirement for multi-user mode once OAuth flow is implemented
-: "${GITHUB_PAT:?Error: GITHUB_PAT is not set. Please set it before running this script.}"
+# GITHUB_PAT is optional for multi-user mode if OAuth flow is used
 : "${GITHUB_CLIENT_ID:?Error: GITHUB_CLIENT_ID is not set. Is is required for 'multi-user' installation mode.}" 
 : "${GITHUB_CLIENT_SECRET:?Error: GITHUB_CLIENT_SECRET is not set. Is is required for 'multi-user' installation mode.}" 
 fi
@@ -71,7 +70,14 @@ else
   echo "No Anthropic API key (ANTHROPIC_API_KEY) provided, skipping creation of secret"
 fi
 
-kubectl create secret -n repo-agent-system generic github-pat --from-literal=pat=${GITHUB_PAT} --from-literal=name="`git config --global user.name`" --from-literal=email=`git config --global user.email` --dry-run=client -o yaml | kubectl apply -f -
+if [ -n "${GITHUB_PAT:-}" ]; then
+  kubectl create secret -n repo-agent-system generic github-pat --from-literal=pat=${GITHUB_PAT} --from-literal=name="`git config --global user.name`" --from-literal=email=`git config --global user.email` --dry-run=client -o yaml | kubectl apply -f -
+else
+  # Create a placeholder secret with an empty PAT.
+  # This prevents other components (like the controller) from crashing due to a missing secret,
+  # while allowing them to detect the missing token and wait gracefully for the user to log in.
+  kubectl create secret -n repo-agent-system generic github-pat --from-literal=pat="" --from-literal=name="`git config --global user.name`" --from-literal=email=`git config --global user.email` --dry-run=client -o yaml | kubectl apply -f -
+fi
 
 # TODO (barney-s): Refactor this once we cleanup the single vs multi user installation process
 if [ "$INSTALL_MODE" != "multi-user" ]; then
@@ -84,9 +90,13 @@ if [ "$INSTALL_MODE" != "multi-user" ]; then
 else
   echo "Setting up repo-agent for multi-user mode"
   # Create github-token secret for the API, optionally including OAuth credentials
-  kubectl create secret -n repo-agent-system generic github-token \
-    --from-literal=token=${GITHUB_PAT} \
+  cmd="kubectl create secret -n repo-agent-system generic github-token \
     --from-literal=github-client-id=${GITHUB_CLIENT_ID} \
-    --from-literal=github-client-secret=${GITHUB_CLIENT_SECRET} \
-    --dry-run=client -o yaml | kubectl apply -f -;
+    --from-literal=github-client-secret=${GITHUB_CLIENT_SECRET}"
+
+  if [ -n "${GITHUB_PAT:-}" ]; then
+      cmd="$cmd --from-literal=token=${GITHUB_PAT}"
+  fi
+
+  $cmd --dry-run=client -o yaml | kubectl apply -f -;
 fi

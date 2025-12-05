@@ -238,8 +238,8 @@ function App() {
     };
   }, [refreshData, isAuthenticated, isGuest, view]);
 
-  const handleLogin = () => {
-    window.location.href = '/api/auth/login';
+  const handleLogin = (scope) => {
+    window.location.href = `/api/auth/login?scope=${scope}`;
   };
 
   const handleGuestLogin = () => {
@@ -777,7 +777,10 @@ function App() {
           <h2>Welcome to Repo Agent</h2>
           <div className="login-actions">
             {githubAuthEnabled ? (
-                <button className="btn btn-submit" onClick={handleLogin}>Login with GitHub</button>
+                <>
+                <button className="btn btn-submit" onClick={() => handleLogin('readwrite')} style={{backgroundColor: '#0366d6', marginRight: '10px'}}>Login with GitHub (Read-Write)</button>
+                <button className="btn btn-submit" onClick={() => handleLogin('readonly')} style={{backgroundColor: '#6f42c1'}}>Login with GitHub (Read-Only)</button>
+                </>
             ) : (
                 <button className="btn btn-submit" onClick={handleGuestLogin}>Continue</button>
             )}

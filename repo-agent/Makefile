@@ -16,7 +16,13 @@ $(error GEMINI_API_KEY is not set. Please set it before running make.)
 endif
 
 ifndef GITHUB_PAT
-$(error GITHUB_PAT is not set. Please set it before running make.)
+  # If GITHUB_PAT is not set, we require OAuth credentials
+  ifndef GITHUB_CLIENT_ID
+    $(error GITHUB_PAT is not set. And GITHUB_CLIENT_ID is not set.)
+  endif
+  ifndef GITHUB_CLIENT_SECRET
+    $(error GITHUB_PAT is not set. And GITHUB_CLIENT_SECRET is not set.)
+  endif
 endif
 
 ifndef ANTHROPIC_API_KEY
@@ -107,15 +113,15 @@ install-repo-agent:
 create-secrets:
 	kubectl create namespace repo-agent-system || true
 	@kubectl create secret -n repo-agent-system generic gemini-vscode-tokens --from-literal=gemini=${GEMINI_API_KEY} --dry-run=client -o yaml | kubectl apply -f -
-	@kubectl create secret -n repo-agent-system generic github-pat --from-literal=pat=${GITHUB_PAT} --from-literal=name="`git config --global user.name`" --from-literal=email=`git config --global user.email` --dry-run=client -o yaml | kubectl apply -f -
+	@kubectl create secret -n repo-agent-system generic github-pat --from-literal=pat="${GITHUB_PAT}" --from-literal=name="`git config --global user.name`" --from-literal=email=`git config --global user.email` --dry-run=client -o yaml | kubectl apply -f -
 	@kubectl create secret -n repo-agent-system generic anthropic-api-key --from-literal=claude=${ANTHROPIC_API_KEY} --dry-run=client -o yaml | kubectl apply -f -
 	# Create github-token secret for the API, optionally including OAuth credentials
 	@if [ -n "${GITHUB_CLIENT_ID}" ] && [ -n "${GITHUB_CLIENT_SECRET}" ]; then \
-		kubectl create secret -n repo-agent-system generic github-token \
-			--from-literal=token=${GITHUB_PAT} \
-			--from-literal=github-client-id=${GITHUB_CLIENT_ID} \
-			--from-literal=github-client-secret=${GITHUB_CLIENT_SECRET} \
-			--dry-run=client -o yaml | kubectl apply -f -; \
+		cmd="kubectl create secret -n repo-agent-system generic github-token --from-literal=github-client-id=${GITHUB_CLIENT_ID} --from-literal=github-client-secret=${GITHUB_CLIENT_SECRET}"; \
+		if [ -n "${GITHUB_PAT}" ]; then \
+			cmd="$$cmd --from-literal=token=${GITHUB_PAT}"; \
+		fi; \
+		$$cmd --dry-run=client -o yaml | kubectl apply -f -; \
 	else \
 		kubectl create secret -n repo-agent-system generic github-token \
 			--from-literal=token=${GITHUB_PAT} \
