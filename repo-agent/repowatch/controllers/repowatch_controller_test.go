@@ -603,6 +603,48 @@ func TestReconcileReviewSandboxes(t *testing.T) {
 		g.Expect(found).To(gomega.BeTrue())
 		g.Expect(replicas).To(gomega.Equal(int64(0)))
 	})
+
+	// Test case 5: Deletes a sandbox for a closed PR and creates a new one, respecting MaxSandboxes limit.
+	t.Run("deletes sandbox for closed PR and respects MaxSandboxes limit", func(_ *testing.T) {
+		repoWatch.Spec.Review.MaxActiveSandboxes = 1
+		repoWatch.Spec.Review.MaxSandboxes = 1
+
+		r := &RepoWatchReconciler{
+			Client: clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, closedPRSandbox).WithStatusSubresource(repoWatch).Build(),
+			Scheme: s,
+			NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
+				return &github.Client{}, map[string]string{}, nil
+			},
+		}
+
+		sandboxList := &unstructured.UnstructuredList{}
+		sandboxList.SetGroupVersionKind(schema.GroupVersionKind{
+			Group:   "custom.agents.x-k8s.io",
+			Version: "v1alpha1",
+			Kind:    "ReviewSandbox",
+		})
+		g.Expect(r.Client.List(context.Background(), sandboxList)).To(gomega.Succeed())
+		g.Expect(sandboxList.Items).To(gomega.HaveLen(1)) // Should contain the closedPRSandbox initially
+
+		err := r.reconcileReviewSandboxes(context.Background(), repoWatch, []*github.PullRequest{}, []*github.PullRequest{pr}, sandboxList)
+		g.Expect(err).NotTo(gomega.HaveOccurred())
+
+		// Check that the sandbox for the closed PR is deleted and a new one for the open PR is created
+		sandboxList = &unstructured.UnstructuredList{}
+		sandboxList.SetGroupVersionKind(schema.GroupVersionKind{
+			Group:   "custom.agents.x-k8s.io",
+			Version: "v1alpha1",
+			Kind:    "ReviewSandbox",
+		})
+		g.Expect(r.Client.List(context.Background(), sandboxList)).To(gomega.Succeed())
+		g.Expect(sandboxList.Items).To(gomega.HaveLen(1)) // Should contain only the sandbox for prNumber 1
+		g.Expect(sandboxList.Items[0].GetName()).To(gomega.Equal("test-repowatch-pr-1"))
+
+		// Check that the RepoWatch status is updated correctly
+		fetchedRepoWatch := &reviewv1alpha1.RepoWatch{}
+		g.Expect(r.Client.Get(context.Background(), types.NamespacedName{Name: repoWatch.Name, Namespace: repoWatch.Namespace}, fetchedRepoWatch)).To(gomega.Succeed())
+		g.Expect(fetchedRepoWatch.Status.ActiveSandboxCount).To(gomega.Equal(1))
+	})
 }
 
 // TestReconcileIssueHandlerSandboxes mirrors the structure of TestReconcileReviewSandboxes but for issues and
@@ -897,6 +939,47 @@ func TestReconcileIssueHandlerSandboxes(t *testing.T) {
 		g.Expect(err).NotTo(gomega.HaveOccurred())
 		g.Expect(found).To(gomega.BeTrue())
 		g.Expect(replicas).To(gomega.Equal(int64(0)))
+	})
+
+	// Test case 5: Deletes a sandbox for a closed issue and creates a new one, respecting MaxSandboxes limit.
+	t.Run("deletes sandbox for closed issue and respects MaxSandboxes limit", func(_ *testing.T) {
+		repoWatch.Spec.IssueHandlers[0].MaxSandboxes = 1
+
+		r := &RepoWatchReconciler{
+			Client: clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, closedIssueSandbox).WithStatusSubresource(repoWatch).Build(),
+			Scheme: s,
+			NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
+				return &github.Client{}, map[string]string{}, nil
+			},
+		}
+
+		sandboxList := &unstructured.UnstructuredList{}
+		sandboxList.SetGroupVersionKind(schema.GroupVersionKind{
+			Group:   "custom.agents.x-k8s.io",
+			Version: "v1alpha1",
+			Kind:    "IssueSandbox",
+		})
+		g.Expect(r.Client.List(context.Background(), sandboxList)).To(gomega.Succeed())
+		g.Expect(sandboxList.Items).To(gomega.HaveLen(1)) // Should contain the closedIssueSandbox initially
+
+		err := r.reconcileIssueHandlerSandboxes(context.Background(), currentUser, handler, repoWatch, []*github.Issue{issue}, sandboxList)
+		g.Expect(err).NotTo(gomega.HaveOccurred())
+
+		// Check that the sandbox for the closed issue is deleted and a new one for the open issue is created
+		sandboxList = &unstructured.UnstructuredList{}
+		sandboxList.SetGroupVersionKind(schema.GroupVersionKind{
+			Group:   "custom.agents.x-k8s.io",
+			Version: "v1alpha1",
+			Kind:    "IssueSandbox",
+		})
+		g.Expect(r.Client.List(context.Background(), sandboxList)).To(gomega.Succeed())
+		g.Expect(sandboxList.Items).To(gomega.HaveLen(1))
+		g.Expect(sandboxList.Items[0].GetName()).To(gomega.Equal(fmt.Sprintf("%s-issue-1-testhandler", repoWatch.Name)))
+
+		// Check that the RepoWatch status is updated correctly
+		fetchedRepoWatch := &reviewv1alpha1.RepoWatch{}
+		g.Expect(r.Client.Get(context.Background(), types.NamespacedName{Name: repoWatch.Name, Namespace: repoWatch.Namespace}, fetchedRepoWatch)).To(gomega.Succeed())
+		g.Expect(fetchedRepoWatch.Status.WatchedIssues[handlerName]).To(gomega.HaveLen(1))
 	})
 }
 

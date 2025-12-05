@@ -506,6 +506,8 @@ func (r *RepoWatchReconciler) reconcileReviewSandboxes(ctx context.Context, repo
 			log.Info("deleting sandbox for closed pr", "pr", prNumber)
 			if err := r.Delete(ctx, &sandbox); err != nil {
 				log.Error(err, "unable to delete sandbox", "sandbox", sandbox.GetName())
+			} else {
+				totalSandboxes--
 			}
 		}
 	}
@@ -647,6 +649,8 @@ func (r *RepoWatchReconciler) reconcileIssueHandlerSandboxes(ctx context.Context
 			log.Info("deleting sandbox for closed issue", "issue", issueNumber)
 			if err := r.Delete(ctx, &sandbox); err != nil {
 				log.Error(err, "unable to delete sandbox", "sandbox", sandbox.GetName())
+			} else {
+				totalSandboxes--
 			}
 		}
 	}
