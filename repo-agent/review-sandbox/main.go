@@ -7,12 +7,12 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/bluekeyes/go-gitdiff/gitdiff"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/codeserver"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/llm"
 	"github.com/google/go-github/v39/github"
 	"golang.org/x/oauth2"
@@ -26,7 +26,7 @@ type AgentOutput struct {
 }
 
 func main() {
-	cmdCodeSrv, err := startCodeServer()
+	cmdCodeSrv, err := codeserver.Start()
 	if err != nil {
 		log.Fatalf("failed to start code-server: %v", err)
 	}
@@ -410,26 +410,6 @@ func parseDiffFromURL(url string) ([]*gitdiff.File, error) {
 	}
 
 	return files, nil
-}
-
-func startCodeServer() (*exec.Cmd, error) {
-	log.Println("starting code-server")
-	repoURL := os.Getenv("GIT_HTML_URL")
-	parts := strings.Split(strings.TrimPrefix(repoURL, "https://github.com/"), "/")
-	if len(parts) < 4 {
-		return nil, fmt.Errorf("invalid GIT_HTML_URL: %s", repoURL)
-	}
-	repo := parts[1]
-	codeServerPath := "/usr/bin/code-server"
-	args := []string{"--auth=none", "--bind-addr=0.0.0.0:13337", "/workspaces/" + repo}
-	cmd := exec.Command(codeServerPath, args...)
-	cmd.Stdout = os.Stdout
-	err := cmd.Start()
-	if err != nil {
-		return nil, err
-	}
-	log.Printf("Running code-server in subprocess %d\n", cmd.Process.Pid)
-	return cmd, nil
 }
 
 func dedupeAndCombineText(provider llm.Provider, text string) (string, error) {
