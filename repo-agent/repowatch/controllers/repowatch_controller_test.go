@@ -1176,7 +1176,7 @@ func TestNewGithubClient(t *testing.T) {
 			secret: &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "github-secret",
-					Namespace: RepoAgentSystemNamespace,
+					Namespace: "default",
 				},
 				Data: map[string][]byte{
 					"pat":   []byte("test-pat"),
@@ -1194,7 +1194,7 @@ func TestNewGithubClient(t *testing.T) {
 			secret: &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "github-secret-not-found",
-					Namespace: RepoAgentSystemNamespace,
+					Namespace: "default",
 				},
 				Data: map[string][]byte{
 					"pat": []byte("test-pat"),
@@ -1207,7 +1207,7 @@ func TestNewGithubClient(t *testing.T) {
 			secret: &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "github-secret",
-					Namespace: RepoAgentSystemNamespace,
+					Namespace: "default",
 				},
 				Data: map[string][]byte{},
 			},
@@ -1218,7 +1218,7 @@ func TestNewGithubClient(t *testing.T) {
 			secret: &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "github-secret",
-					Namespace: RepoAgentSystemNamespace,
+					Namespace: "default",
 				},
 				Data: map[string][]byte{
 					"pat": []byte("test-pat"),
@@ -1245,7 +1245,7 @@ func TestNewGithubClient(t *testing.T) {
 			repoWatch := &reviewv1alpha1.RepoWatch{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-repowatch",
-					Namespace: RepoAgentSystemNamespace,
+					Namespace: "default",
 				},
 				Spec: reviewv1alpha1.RepoWatchSpec{
 					RepoURL:          "https://github.com/test/repo",
@@ -1294,7 +1294,7 @@ func TestNewGithubClient_WaitingForLogin(t *testing.T) {
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "github-secret",
-			Namespace: "repo-agent-system",
+			Namespace: "default",
 		},
 		Data: map[string][]byte{
 			"pat": []byte(""), // Empty PAT
