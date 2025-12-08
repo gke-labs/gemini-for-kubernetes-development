@@ -56,6 +56,9 @@ func TestReconcileReviewSandboxes_MaxSandboxes(t *testing.T) {
 			Review: reviewv1alpha1.PRReviewSpec{
 				MaxActiveSandboxes: 10,
 				MaxSandboxes:       2, // Total limit (active + inactive)
+				LLM: reviewv1alpha1.LLMConfig{
+					APIKeySecretRef: "llm-secret",
+				},
 			},
 		},
 	}
@@ -182,6 +185,9 @@ func TestReconcileIssueHandlerSandboxes_MaxSandboxes(t *testing.T) {
 					Name:               handlerName,
 					MaxActiveSandboxes: 10,
 					MaxSandboxes:       2,
+					LLM: reviewv1alpha1.LLMConfig{
+						APIKeySecretRef: "llm-secret",
+					},
 				},
 			},
 		},

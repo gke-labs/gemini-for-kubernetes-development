@@ -15,6 +15,7 @@ spec:
       llm:
         prompt: string
         configdirRef: string | default=""
+        apiKeySecretName: string
       serviceAccountName: string | default="issue-sandbox"
       devcontainerConfigRef: string | default="devcontainer-json"
       githubSecretName: string | default="github-pat"
@@ -159,10 +160,10 @@ spec:
               - name: devcontainer-config
                 configMap:
                   name: ${schema.spec.devcontainerConfigRef}
-              # secret volume for vscode tokens
+              # secret volume for LLM API keys
               - name: tokens-secret
                 secret:
-                  secretName: gemini-vscode-tokens
+                  secretName: ${schema.spec.llm.apiKeySecretName}
           volumeClaimTemplates:
             - metadata:
                 name: workspaces-pvc
