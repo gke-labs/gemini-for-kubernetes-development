@@ -49,6 +49,7 @@ import (
 
 // Character set for the random string
 const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+const RepoAgentSystemNamespace = "repo-agent-system"
 
 // We create a new *rand.Rand instance seeded with the current time.
 // This is crucial to get different results on each program execution.
@@ -111,7 +112,7 @@ func (s *PersistingTokenSource) Token() (*oauth2.Token, error) {
 func NewGithubClient(ctx context.Context, k8sClient client.Client, repoWatch *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
 	secret := &corev1.Secret{}
 	secretName := repoWatch.Spec.GithubSecretName
-	if err := k8sClient.Get(ctx, types.NamespacedName{Name: secretName, Namespace: repoWatch.Namespace}, secret); err != nil {
+	if err := k8sClient.Get(ctx, types.NamespacedName{Name: secretName, Namespace: RepoAgentSystemNamespace}, secret); err != nil {
 		return nil, nil, err
 	}
 	githubConfig := map[string]string{
