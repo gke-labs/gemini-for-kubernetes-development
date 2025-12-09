@@ -18,5 +18,5 @@ spec:
     #pullRequests:
     #- 12345
     #- 53434
-    devcontainerConfigRef: go-devcontainer-json
+    devcontainerConfigRef: devcontainer-json
     preferAssignedToSelf: true

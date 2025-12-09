@@ -10,7 +10,7 @@ spec:
       provider: gemini-cli
       apiKeySecretRef: gemini-vscode-tokens
       prompt: |
-        google-internal:review-pr "{{.Number}}"
+        /google-internal:review-pr "{{.Number}}"
       configdirRef: kcc-review-gemini-config
     maxActiveSandboxes: 1
-    devcontainerConfigRef: go-devcontainer-json
+    devcontainerConfigRef: devcontainer-json
