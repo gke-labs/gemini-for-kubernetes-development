@@ -40,3 +40,9 @@ spec:
               name: github-token
               key: github-client-secret
               optional: true
+        - name: GITHUB_ALLOWED_USERS
+          valueFrom:
+            configMapKeyRef:
+              name: allowed-users
+              key: GITHUB_ALLOWED_USERS
+              optional: true
