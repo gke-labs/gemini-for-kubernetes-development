@@ -1104,6 +1104,12 @@ func (r *RepoWatchReconciler) reconcileDevSandboxes(ctx context.Context, user *g
 		if strings.HasPrefix(name, "issue-") {
 			continue
 		}
+		if name == "main" {
+			continue
+		}
+		if name == "master" {
+			continue
+		}
 		// Also ignore default branch if needed, but keeping it simple for now.
 		candidateBranches = append(candidateBranches, branch)
 	}
