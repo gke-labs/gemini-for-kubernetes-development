@@ -86,6 +86,20 @@ type PRReviewSpec struct {
 	PreferAssignedToSelf bool `json:"preferAssignedToSelf,omitempty"`
 }
 
+// DevSpec defines the configuration for development sandboxes.
+type DevSpec struct {
+	// The maximum number of dev sandboxes to create.
+	// +kubebuilder:validation:Required
+	MaxSandboxes int `json:"maxSandboxes"`
+
+	// The maximum number of dev sandboxes to have active (replicas > 0) at any given time.
+	// +kubebuilder:validation:Required
+	MaxActiveSandboxes int `json:"maxActiveSandboxes"`
+
+	// DevcontainerConfigRef string
+	DevcontainerConfigRef string `json:"devcontainerConfigRef,omitempty"`
+}
+
 type IssueHandlerSpec struct {
 	// Name of the issue handler
 	// +kubebuilder:validation:Required
@@ -137,6 +151,10 @@ type RepoWatchSpec struct {
 	// +kubebuilder:validation:Optional
 	IssueHandlers []IssueHandlerSpec `json:"issueHandlers,omitempty"`
 
+	// Dev configuration for development sandboxes
+	// +kubebuilder:validation:Optional
+	Dev DevSpec `json:"dev,omitempty"`
+
 	// Secret containing the GitHub Personal Access Token (PAT) for accessing the repo.
 	// +kubebuilder:validation:Required
 	GithubSecretName string `json:"githubSecretName"`
@@ -166,6 +184,12 @@ type RepoWatchStatus struct {
 
 	// +optional
 	PendingIssues map[string][]PendingIssue `json:"pendingIssues,omitempty"`
+
+	// +optional
+	WatchedDevSandboxes []DevSandbox `json:"watchedDevSandboxes,omitempty"`
+
+	// +optional
+	PendingDevSandboxes []PendingDevSandbox `json:"pendingDevSandboxes,omitempty"`
 }
 
 // WatchedPR defines the state of a watched PR
@@ -201,6 +225,24 @@ type PendingIssue struct {
 	// PR number
 	Number int `json:"number"`
 	// Status of the PR
+	Status string `json:"status"`
+}
+
+// DevSandbox defines the state of a watched development sandbox
+type DevSandbox struct {
+	// Name of the remote branch
+	BranchName string `json:"branchName"`
+	// Name of the sandbox
+	SandboxName string `json:"sandboxName"`
+	// Status of the sandbox
+	Status string `json:"status"`
+}
+
+// PendingDevSandbox defines the state of a pending development sandbox
+type PendingDevSandbox struct {
+	// Name of the remote branch
+	BranchName string `json:"branchName"`
+	// Status of the branch
 	Status string `json:"status"`
 }
 

@@ -18,9 +18,6 @@ package controllers
 
 import (
 	"context"
-	"io"
-	"net/http"
-	"strings"
 	"testing"
 
 	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/repowatch/api/v1alpha1"
@@ -241,20 +238,6 @@ func TestSortPRs(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(_ *testing.T) {
-			mockHTTPClient := &http.Client{
-				Transport: &mockRoundTripper{
-					responses: map[string]func() *http.Response{
-						"https://api.github.com/user": func() *http.Response {
-							return &http.Response{
-								StatusCode: http.StatusOK,
-								Body:       io.NopCloser(strings.NewReader(`{"login": "myself", "name": "Me"}`)),
-							}
-						},
-					},
-				},
-			}
-			ghClient := github.NewClient(mockHTTPClient)
-
 			repoWatch := &reviewv1alpha1.RepoWatch{
 				Spec: reviewv1alpha1.RepoWatchSpec{
 					Review: reviewv1alpha1.PRReviewSpec{
@@ -263,7 +246,8 @@ func TestSortPRs(t *testing.T) {
 				},
 			}
 
-			sorted := r.sortPRs(context.Background(), ghClient, tc.inputPRs, repoWatch)
+			user := &github.User{Login: github.String("myself")}
+			sorted := r.sortPRs(context.Background(), tc.inputPRs, repoWatch, user)
 
 			g.Expect(len(sorted)).To(gomega.Equal(len(tc.expectedOrder)))
 			for i, pr := range sorted {

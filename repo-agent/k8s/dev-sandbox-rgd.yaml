@@ -17,7 +17,7 @@ spec:
         cloneURL: string
         htmlURL: string
       user:
-        dotFilesRepo: string
+        dotFilesRepo: string | default=""
       destination:
         pushEnabled: boolean | default=false
         branch: string
@@ -75,8 +75,8 @@ spec:
                   env:
                     - name: USER_DOTFILESREPO
                       value: ${schema.spec.user.dotFilesRepo}
-                    # - name: ISSUE_BRANCH
-                    #   value: ${schema.spec.destination.branch}
+                    - name: DEV_BRANCH
+                      value: ${schema.spec.destination.branch}
                     - name: GIT_HTML_URL
                       value: ${schema.spec.source.htmlURL}
                     - name: GITHUB_USER_ORIGIN
@@ -105,8 +105,8 @@ spec:
                       value: /
                     #- name: ENVBUILDER_DOCKERFILE_PATH
                     #  value: ${schema.spec.devcontainerDockerfile}
-                    - name: ENVBUILDER_GIT_CLONE_SINGLE_BRANCH
-                      value: "true"
+                    #- name: ENVBUILDER_GIT_CLONE_SINGLE_BRANCH
+                    #  value: "true"
                     - name: ENVBUILDER_INIT_SCRIPT
                       value: /repo-agent/dev-sandbox init
                     - name: ENVBUILDER_IGNORE_PATHS

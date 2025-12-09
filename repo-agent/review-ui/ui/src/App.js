@@ -3,6 +3,7 @@ import yaml from 'js-yaml';
 import './App.css';
 import PrReviewCard from './PrReviewCard';
 import IssueCard from './IssueCard';
+import DevCard from './DevCard';
 import AddRepo from './AddRepo';
 import DeleteRepo from './DeleteRepo';
 import Settings from './Settings';
@@ -25,6 +26,7 @@ function App() {
   const [activeSubTab, setActiveSubTab] = useState({ repo: '', name: '' });
   const [prs, setPrs] = useState([]);
   const [issues, setIssues] = useState([]);
+  const [devSandboxes, setDevSandboxes] = useState([]);
   const [drafts, setDrafts] = useState({});
   const [collapsedReviews, setCollapsedReviews] = useState({});
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'light');
@@ -164,6 +166,14 @@ function App() {
             });
           })
           .catch(err => console.error(`Failed to fetch PRs for ${activeRepo.name}:`, err));
+      } else if (activeSubTab.name === 'dev') {
+        if (!merge) setDevSandboxes([]);
+        fetch(`/api/repo/${activeRepo.name}/dev`)
+          .then(res => res.json())
+          .then(data => {
+            setDevSandboxes(data || []);
+          })
+          .catch(err => console.error(`Failed to fetch dev sandboxes for ${activeRepo.name}:`, err));
     } else if (activeSubTab.name) {
         if (!merge) setPrs([]);
         fetch(`/api/repo/${activeRepo.name}/issues/${activeSubTab.name}`)
@@ -270,11 +280,14 @@ function App() {
     setActiveRepo(repo);
     setPrs([]);
     setIssues([]);
+    setDevSandboxes([]);
     if (repo) {
       if (repo.review) {
         setActiveSubTab({ repo: repoName, name: 'review' });
       } else if (repo.issueHandlers && repo.issueHandlers.length > 0) {
         setActiveSubTab({ repo: repoName, name: repo.issueHandlers[0].name });
+      } else if (repo.dev) {
+        setActiveSubTab({ repo: repoName, name: 'dev' });
       }
     }
   };
@@ -656,6 +669,42 @@ function App() {
       .catch(err => console.error("Failed to scale down issue sandbox:", err));
   };
 
+  const handleDevDelete = (sandboxName) => {
+    fetch(`/api/repo/${activeRepo.name}/dev/${sandboxName}`, { method: 'DELETE' })
+      .then(res => {
+        if (res.ok) {
+            setDevSandboxes(devSandboxes.filter(s => s.name !== sandboxName));
+        } else {
+            alert("Failed to delete dev sandbox");
+        }
+      })
+      .catch(err => console.error("Failed to delete dev sandbox:", err));
+  };
+
+  const handleDevScaleUp = (sandboxName) => {
+    fetch(`/api/repo/${activeRepo.name}/dev/${sandboxName}/scaleup`, { method: 'POST' })
+        .then(res => {
+            if (res.ok) {
+                fetchRepos(); // Refresh to get updated status
+            } else {
+                alert("Failed to scale up dev sandbox");
+            }
+        })
+        .catch(err => console.error("Failed to scale up dev sandbox:", err));
+  };
+
+  const handleDevScaleDown = (sandboxName) => {
+      fetch(`/api/repo/${activeRepo.name}/dev/${sandboxName}/scaledown`, { method: 'POST' })
+          .then(res => {
+              if (res.ok) {
+                  fetchRepos(); // Refresh to get updated status
+              } else {
+                  alert("Failed to scale down dev sandbox");
+              }
+          })
+          .catch(err => console.error("Failed to scale down dev sandbox:", err));
+  };
+
   const renderContent = () => {
     if (!activeRepo) return <p>Please select or add a repository to watch.</p>;
     const namespace = user || 'default';
@@ -694,6 +743,19 @@ function App() {
           </div>
         </>
       );
+    } else if (activeSubTab.name === 'dev') {
+        if (devSandboxes.length === 0) return <p>No active Dev Sandboxes found.</p>;
+        return devSandboxes.map(sandbox => (
+            <DevCard
+                key={sandbox.name}
+                sandbox={sandbox}
+                handleDelete={handleDevDelete}
+                getSandboxStatusClass={getSandboxStatusClass}
+                namespace={namespace}
+                handleScaleUp={handleDevScaleUp}
+                handleScaleDown={handleDevScaleDown}
+            />
+        ));
     } else {
       if (issues.length === 0) return <p>No active Issues found for this handler.</p>;
       return issues.map(issue => (
@@ -749,6 +811,14 @@ function App() {
                 {handler.name}
                 </button>
             ))}
+            {repos.find(r => r.name === activeRepo.name)?.dev && (
+                <button
+                className={`sub-tab-btn ${activeSubTab.name === 'dev' ? 'active' : ''}`}
+                onClick={() => setActiveSubTab({ repo: activeRepo.name, name: 'dev' })}
+                >
+                Dev
+                </button>
+            )}
             </nav>
             <div className="repo-controls">
                 <button className="btn btn-refresh-lg" onClick={() => refreshData(true)} title="Refresh now">↻</button>
