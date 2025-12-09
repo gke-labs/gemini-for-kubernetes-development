@@ -163,36 +163,6 @@ To ensure your new provider is a valid option in the `RepoWatch` Custom Resource
      Provider string `json:"provider,omitempty"`
     ```
 
-## 4. Updating the API Types
-
-To ensure your new provider is a valid option in the `RepoWatch` Custom Resource Definition (CRD), you need to add its name to the `LLMConfig` type definition.
-
-**File:** `repowatch/api/v1alpha1/repowatch_types.go`
-
-1.  **Add a new constant for your provider's name.**
-
-    ```diff
-     const (
-		// GeminiProvider represents the Gemini LLM provider.
-		GeminiProvider = "gemini-cli"
-		// ClaudeProvider represents the Claude LLM provider.
-		ClaudeProvider = "claude"
-    +    // MyProvider represents our new custom provider.
-    +    MyProviderName = "my-provider"
-     )
-    ```
-
-2.  **Add the name to the `+kubebuilder:validation:Enum` list.** This enforces that only registered provider names can be used in the manifest.
-
-    ```diff
-     // Provider is the name of the LLM provider to use. This field is used to
-     // determine which LLM client to instantiate and how to interact with the
-     // LLM API.
-    -// +kubebuilder:validation:Enum=gemini-cli;claude
-    +// +kubebuilder:validation:Enum=gemini-cli;claude;my-provider
-     // +kubebuilder:default=gemini-cli
-     Provider string `json:"provider,omitempty"`
-    ```
 
 ## 5. Creating the API Key Secret (Local Development)
 
