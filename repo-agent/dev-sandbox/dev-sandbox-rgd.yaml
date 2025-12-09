@@ -9,6 +9,11 @@ spec:
     kind: DevSandbox
     spec:
       # Spec fields that users can provide.
+      llmBackend:
+        name: string | default="gemini-cli"
+      llm:
+        configdirRef: string | default=""
+        apiKeySecretName: string
       replicas: integer | default=1
       serviceAccountName: string | default="dev-sandbox"
       devcontainerConfigRef: string | default="devcontainer-json"
@@ -51,13 +56,13 @@ spec:
                 sandbox: devc-${schema.metadata.name}
             spec:
               serviceAccountName: ${schema.spec.serviceAccountName}
-              # initContainers:
-              #   - name: gemini-configs
-              #     image: {{imagePrefix}}configdir-cli:git-c0bbab0
-              #     args: ["--directory", "/workspaces", "--namespace", "${schema.metadata.namespace}" ,  "--name", "${schema.spec.llm.configdirRef}", "--ignore-not-found-error"]
-              #     volumeMounts:
-              #       - name: workspaces-pvc
-              #         mountPath: /workspaces
+              initContainers:
+                - name: gemini-configs
+                  image: ko://repo-agent/configdir/cmd/configdir-cli
+                  args: ["--directory", "/workspaces", "--namespace", "${schema.metadata.namespace}" ,  "--name", "${schema.spec.llm.configdirRef}", "--ignore-not-found-error"]
+                  volumeMounts:
+                    - name: workspaces-pvc
+                      mountPath: /workspaces
               containers:
                 # - name: issue-sidecar
                 #   image: {{imagePrefix}}issue-sidecar:git-c0bbab0
@@ -73,6 +78,9 @@ spec:
                   #image: ghcr.io/coder/envbuilder
                   image: ko://repo-agent/images/dev-sandbox
                   env:
+                    # URL to the repository where the .devcontainer folder we want to load is located
+                    - name: AGENT_NAME
+                      value: ${schema.spec.llmBackend.name}
                     - name: USER_DOTFILESREPO
                       value: ${schema.spec.user.dotFilesRepo}
                     - name: DEV_BRANCH
@@ -130,7 +138,7 @@ spec:
               # secret volume for vscode tokens
               - name: tokens-secret
                 secret:
-                  secretName: gemini-vscode-tokens
+                  secretName: ${schema.spec.llm.apiKeySecretName}
           volumeClaimTemplates:
             - metadata:
                 name: workspaces-pvc

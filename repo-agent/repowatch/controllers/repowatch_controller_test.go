@@ -341,6 +341,9 @@ func TestReconcileReviewSandboxes(t *testing.T) {
 			GithubSecretName: "github-secret",
 			Review: reviewv1alpha1.PRReviewSpec{
 				MaxActiveSandboxes: 1,
+				LLM: reviewv1alpha1.LLMConfig{
+					APIKeySecretRef: "dummy-secret",
+				},
 			},
 		},
 	}
@@ -696,6 +699,9 @@ func TestReconcileIssueHandlerSandboxes(t *testing.T) {
 				{
 					Name:               handlerName,
 					MaxActiveSandboxes: 1,
+					LLM: reviewv1alpha1.LLMConfig{
+						APIKeySecretRef: "dummy-secret",
+					},
 				},
 			},
 		},
@@ -1445,6 +1451,9 @@ func TestRepoWatchReconciler_Reconcile_ExplicitAndListedPRs(t *testing.T) {
 			Review: reviewv1alpha1.PRReviewSpec{
 				MaxActiveSandboxes: 10,
 				PullRequests:       []int{42}, // Explicit PR
+				LLM: reviewv1alpha1.LLMConfig{
+					APIKeySecretRef: "dummy-secret",
+				},
 			},
 		},
 	}
@@ -1573,6 +1582,9 @@ func TestRepoWatchReconciler_Reconcile_FilteredAndSortedPRs(t *testing.T) {
 				MaxActiveSandboxes:   2,
 				Labels:               [][]string{{"bug"}},
 				PreferAssignedToSelf: true,
+				LLM: reviewv1alpha1.LLMConfig{
+					APIKeySecretRef: "dummy-secret",
+				},
 			},
 		},
 	}
@@ -1633,6 +1645,9 @@ func TestReconcileReviewSandboxes_RespectsExistingActiveSandboxes(t *testing.T) 
 			Review: reviewv1alpha1.PRReviewSpec{
 				MaxActiveSandboxes: 1, // Strict limit
 				MaxSandboxes:       10,
+				LLM: reviewv1alpha1.LLMConfig{
+					APIKeySecretRef: "dummy-secret",
+				},
 			},
 		},
 	}
@@ -1765,7 +1780,7 @@ func TestReconcile_MultipleRepoWatchesSameRepo(t *testing.T) {
 			GithubSecretName: "github-secret",
 			Review: reviewv1alpha1.PRReviewSpec{
 				MaxActiveSandboxes: 1,
-				LLM:                reviewv1alpha1.LLMConfig{Provider: "gemini-cli"},
+				LLM:                reviewv1alpha1.LLMConfig{Provider: "gemini-cli", APIKeySecretRef: "dummy-secret"},
 			},
 		},
 	}
@@ -1776,7 +1791,7 @@ func TestReconcile_MultipleRepoWatchesSameRepo(t *testing.T) {
 			GithubSecretName: "github-secret",
 			Review: reviewv1alpha1.PRReviewSpec{
 				MaxActiveSandboxes: 1,
-				LLM:                reviewv1alpha1.LLMConfig{Provider: "claude"},
+				LLM:                reviewv1alpha1.LLMConfig{Provider: "claude", APIKeySecretRef: "dummy-secret"},
 			},
 		},
 	}

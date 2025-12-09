@@ -30,6 +30,23 @@ spec:
                 properties:
                   devcontainerConfigRef:
                     type: string
+                  llm:
+                    properties:
+                      apiKeySecretRef:
+                        type: string
+                      configdirRef:
+                        type: string
+                      prompt:
+                        type: string
+                      provider:
+                        default: gemini-cli
+                        enum:
+                        - gemini-cli
+                        - claude
+                        type: string
+                    required:
+                    - apiKeySecretRef
+                    type: object
                   maxActiveSandboxes:
                     type: integer
                   maxSandboxes:
@@ -69,6 +86,8 @@ spec:
                           - gemini-cli
                           - claude
                           type: string
+                      required:
+                      - apiKeySecretRef
                       type: object
                     maxActiveSandboxes:
                       type: integer
@@ -113,6 +132,8 @@ spec:
                         - gemini-cli
                         - claude
                         type: string
+                    required:
+                    - apiKeySecretRef
                     type: object
                   maxActiveSandboxes:
                     type: integer

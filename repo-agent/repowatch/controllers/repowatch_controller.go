@@ -1283,6 +1283,13 @@ func (r *RepoWatchReconciler) createDevSandbox(ctx context.Context, user *github
 					// "htmlURL":  fmt.Sprintf("https://github.com/%s/%s/tree/%s", forkOwner, forkRepo, branchName),
 					"htmlURL": fmt.Sprintf("https://github.com/%s/%s", forkOwner, forkRepo),
 				},
+				"llmBackend": map[string]interface{}{
+					"name": repoWatch.Spec.Dev.LLM.Provider,
+				},
+				"llm": map[string]interface{}{
+					"configdirRef":     repoWatch.Spec.Dev.LLM.ConfigdirRef,
+					"apiKeySecretName": repoWatch.Spec.Dev.LLM.APIKeySecretRef,
+				},
 				"destination": map[string]interface{}{
 					"pushEnabled": true,
 					"branch":      branchName,
