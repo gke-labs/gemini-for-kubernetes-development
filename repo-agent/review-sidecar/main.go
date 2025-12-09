@@ -17,19 +17,9 @@ limitations under the License.
 package main
 
 import (
-	"context"
-	"fmt"
-	"os"
-	"time"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/rest"
-)
 
-const (
-	outputFile = "/workspaces/agent-output.txt"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/agentoutput"
 )
 
 var (
@@ -41,66 +31,5 @@ var (
 )
 
 func main() {
-	fmt.Println("starting review sidecar")
-	name := os.Getenv("NAME")
-	if name == "" {
-		fmt.Println("missing NAME env")
-		os.Exit(1)
-	}
-	namespace := os.Getenv("NAMESPACE")
-	if namespace == "" {
-		fmt.Println("missing NAMESPACE env")
-		os.Exit(1)
-	}
-
-	config, err := rest.InClusterConfig()
-	if err != nil {
-		panic(err.Error())
-	}
-
-	dc, err := dynamic.NewForConfig(config)
-	if err != nil {
-		panic(err.Error())
-	}
-
-	var last string
-	for {
-		time.Sleep(10 * time.Second)
-		fmt.Println("watching for file", outputFile)
-		_, err := os.Stat(outputFile)
-		if os.IsNotExist(err) {
-			continue
-		}
-		b, err := os.ReadFile(outputFile)
-		if err != nil {
-			fmt.Println("reading file:", err)
-			continue
-		}
-		if string(b) == last {
-			continue
-		}
-		fmt.Println("file changed, updating crd")
-		rs, err := dc.Resource(gvr).Namespace(namespace).Get(context.TODO(), name, metav1.GetOptions{})
-		if err != nil {
-			fmt.Println("error getting reviewsandbox:", err)
-			continue
-		}
-
-		// update the annotation[agentDraft]
-		if rs.GetAnnotations() == nil {
-			rs.SetAnnotations(make(map[string]string))
-		}
-		annotations := rs.GetAnnotations()
-		annotations["agentDraft"] = string(b)
-		rs.SetAnnotations(annotations)
-
-		_, err = dc.Resource(gvr).Namespace(namespace).Update(context.TODO(), rs, metav1.UpdateOptions{})
-		if err != nil {
-			fmt.Println("error updating reviewsandbox:", err)
-			continue
-		}
-
-		last = string(b)
-		fmt.Println("updated crd with latest changes")
-	}
+	agentoutput.Run("review", gvr)
 }

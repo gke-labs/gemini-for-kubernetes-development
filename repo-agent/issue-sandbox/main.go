@@ -4,14 +4,14 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
-	"strings"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/codeserver"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/gitcli"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/llm"
 )
 
 func main() {
-	cmdCodeSrv, err := startCodeServer()
+	cmdCodeSrv, err := codeserver.Start()
 	if err != nil {
 		log.Fatalf("failed to start code-server: %v", err)
 	}
@@ -60,52 +60,34 @@ func prepareGitBranch() (string, error) {
 	githubUserName := os.Getenv("GITHUB_USER_NAME")
 	issueBranch := os.Getenv("ISSUE_BRANCH")
 
-	cmdop, err := runGitCommand("rev-parse", "HEAD")
+	oldCommitID, err := gitcli.GetHeadCommitID()
 	if err != nil {
 		return "", fmt.Errorf("failed to get old commit id: %w", err)
 	}
-	oldCommitID := strings.TrimSpace(string(cmdop))
 
 	// Typically origin would be the upstream repo and not the user's fork
 	// Removing origin to prevent accidental pushes to upstream
-	if _, err := runGitCommand("remote", "remove", "origin"); err != nil {
+	if err := gitcli.RemoveRemote("origin"); err != nil {
 		log.Printf("could not remove origin, probably because it does not exist: %v", err)
 	}
 
 	if gitPushEnabled && githubUserOrigin != "" {
 		originURL := fmt.Sprintf("https://%s:%s@%s", githubUserLogin, githubToken, githubUserOrigin)
-		if _, err := _runCommand("git", "remote", "add", "origin", originURL); err != nil {
+		if err := gitcli.AddRemote("origin", originURL); err != nil {
 			return oldCommitID, fmt.Errorf("failed to add origin: %w", err)
 		}
 	}
 
-	if githubUserEmail != "" {
-		if _, err := runGitCommand("config", "--global", "user.email", githubUserEmail); err != nil {
-			return oldCommitID, fmt.Errorf("failed to set git user email: %w", err)
-		}
+	if err := gitcli.SetGlobalUserEmail(githubUserEmail); err != nil {
+		return oldCommitID, fmt.Errorf("failed to set git user email: %w", err)
 	}
 
-	if githubUserName != "" {
-		if _, err := runGitCommand("config", "--global", "user.name", githubUserName); err != nil {
-			return oldCommitID, fmt.Errorf("failed to set git user name: %w", err)
-		}
+	if err := gitcli.SetGlobalUserName(githubUserName); err != nil {
+		return oldCommitID, fmt.Errorf("failed to set git user name: %w", err)
 	}
 
-	// Check if the issue branch already exists
-	branchesOutput, err := runGitCommand("branch", "--list", issueBranch)
-	if err != nil {
-		return oldCommitID, fmt.Errorf("failed to list git branches: %w", err)
-	}
-	if strings.TrimSpace(string(branchesOutput)) != "" {
-		log.Printf("Issue branch %s already exists, checking it out", issueBranch)
-		if _, err := runGitCommand("checkout", issueBranch); err != nil {
-			return oldCommitID, fmt.Errorf("failed to checkout existing issue branch: %w", err)
-		}
-	} else {
-		log.Printf("Issue branch %s does not exist, creating it", issueBranch)
-		if _, err := runGitCommand("checkout", "-b", issueBranch); err != nil {
-			return oldCommitID, fmt.Errorf("failed to create issue branch: %w", err)
-		}
+	if err := gitcli.CheckoutOrCreateBranch(issueBranch); err != nil {
+		return oldCommitID, err
 	}
 
 	return oldCommitID, nil
@@ -120,32 +102,20 @@ func processGitChanges(oldCommitID string) error {
 
 	// Commit and push
 	if githubUserEmail != "" {
-		// Check if there are any changes to commit
-		statusOutput, err := runGitCommand("status", "--porcelain")
-		if err != nil {
-			return fmt.Errorf("failed to get git status: %w", err)
-		}
-		if strings.TrimSpace(string(statusOutput)) != "" {
-			log.Println("Changes detected, committing")
-			if _, err := runGitCommand("add", "."); err != nil {
-				return fmt.Errorf("failed to git add: %v", err)
-			}
-			commitMsg := fmt.Sprintf("fix for issue # %s", issueID)
-			if _, err := runGitCommand("commit", "-m", commitMsg); err != nil {
-				return fmt.Errorf("failed to git commit: %v", err)
-			}
+		if err := gitcli.CommitAllChanges("fix for issue # " + issueID); err != nil {
+			return fmt.Errorf("failed to commit changes: %w", err)
 		}
 	}
 
-	newCommitID, err := runGitCommand("rev-parse", "HEAD")
+	newCommitID, err := gitcli.GetHeadCommitID()
 	if err != nil {
 		return fmt.Errorf("failed to get new commit id: %w", err)
 	}
 
-	if strings.TrimSpace(string(newCommitID)) != oldCommitID {
+	if newCommitID != oldCommitID {
 		log.Println("New changes being committed")
 		if gitPushEnabled {
-			if _, err := runGitCommand("push", "--set-upstream", "origin", issueBranch, "--force"); err != nil {
+			if err := gitcli.Push("origin", issueBranch, true); err != nil {
 				return fmt.Errorf("failed to push changes: %w", err)
 			}
 			log.Println("New changes pushed")
@@ -192,39 +162,4 @@ func runIssueSolver() error {
 	}
 
 	return nil
-}
-
-func _runCommand(name string, args ...string) ([]byte, error) {
-	cmd := exec.Command(name, args...)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return output, fmt.Errorf("command %s %v failed with output %s: %w", name, args, string(output), err)
-	}
-	return output, nil
-}
-
-func runGitCommand(args ...string) ([]byte, error) {
-	name := "git"
-	log.Printf("Running command: %s %v", name, args)
-	return _runCommand(name, args...)
-}
-
-func startCodeServer() (*exec.Cmd, error) {
-	log.Println("starting code-server")
-	repoURL := os.Getenv("GIT_HTML_URL")
-	parts := strings.Split(strings.TrimPrefix(repoURL, "https://github.com/"), "/")
-	if len(parts) < 4 {
-		return nil, fmt.Errorf("invalid GIT_HTML_URL: %s", repoURL)
-	}
-	repo := parts[1]
-	codeServerPath := "/usr/bin/code-server"
-	args := []string{"--auth=none", "--bind-addr=0.0.0.0:13337", "/workspaces/" + repo}
-	cmd := exec.Command(codeServerPath, args...)
-	cmd.Stdout = os.Stdout
-	err := cmd.Start()
-	if err != nil {
-		return nil, err
-	}
-	log.Printf("Running code-server in subprocess %d\n", cmd.Process.Pid)
-	return cmd, nil
 }

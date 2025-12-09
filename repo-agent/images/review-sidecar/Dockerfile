@@ -9,6 +9,7 @@ COPY go.sum go.sum
 # and so that source changes don't invalidate our downloaded layer
 RUN go mod download
 
+COPY pkg/ ./pkg
 COPY review-sidecar/ .
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /review-sidecar .
 
