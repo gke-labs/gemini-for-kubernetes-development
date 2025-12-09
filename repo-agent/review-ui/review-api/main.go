@@ -53,6 +53,7 @@ const (
 	systemNamespace  = "repo-agent-system"
 	githubSecretName = "github-pat"
 	geminiSecretName = "gemini-vscode-tokens"
+	claudeSecretName = "anthropic-api-key"
 	devContainerCM   = "devcontainer-json"
 )
 
@@ -503,6 +504,9 @@ func bootstrapNamespace(ctx context.Context, targetNS string) error {
 	}
 	if err := copySecret(ctx, systemNamespace, geminiSecretName, targetNS, geminiSecretName); err != nil {
 		log.Printf("Warning: failed to copy default gemini secret: %v", err)
+	}
+	if err := copySecret(ctx, systemNamespace, claudeSecretName, targetNS, claudeSecretName); err != nil {
+		log.Printf("Warning: failed to copy default claude secret: %v", err)
 	}
 	if err := copyConfigMap(ctx, systemNamespace, devContainerCM, targetNS, devContainerCM); err != nil {
 		log.Printf("Debug: failed to copy %s: %v", devContainerCM, err)
