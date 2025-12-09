@@ -1484,7 +1484,7 @@ func submitReview(c *gin.Context) {
 	if err != nil {
 		log.Printf("response: %v", resp)
 		log.Printf("Failed to create review on PR %d: %v", prNumber, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create review on github"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create review on github", "details": err.Error()})
 		return
 	}
 	log.Printf("review created: %v", review)
