@@ -20,14 +20,9 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
-
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/kubernetes/fake"
-	"k8s.io/client-go/rest"
 )
 
 // ... (MockClient and other test functions remain the same)
@@ -146,17 +141,10 @@ func TestClaudeRun(t *testing.T) {
 
 func TestClaudeSetup(t *testing.T) {
 	// Save original functions and restore them after the test
-	originalNewClientsetFunc := newClientsetFunc
-	originalInClusterConfigFunc := inClusterConfigFunc
-	defer func() {
-		newClientsetFunc = originalNewClientsetFunc
-		inClusterConfigFunc = originalInClusterConfigFunc
-	}()
 
 	testCases := []struct {
 		name             string
-		inCluster        bool
-		secret           *corev1.Secret
+		setupFunc        func(tokensDir string) func() // returns a cleanup function
 		envVarSet        bool
 		envVarValue      string
 		expectedAPIKey   string
@@ -164,62 +152,69 @@ func TestClaudeSetup(t *testing.T) {
 		expectedErrorMsg string
 	}{
 		{
-			name:      "In-cluster with valid secret",
-			inCluster: true,
-			secret: &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      AnthropicAPIKeySecretName,
-					Namespace: RepoAgentSystemNamespace,
-				},
-				Data: map[string][]byte{
-					AnthropicAPIKeySecretKey: []byte("test-secret-key"),
-				},
+			name: "API key from file",
+			setupFunc: func(tokensDir string) func() {
+				// Create a temporary file to simulate the mounted secret
+				filePath := filepath.Join(tokensDir, AnthropicAPIKeySecretKey)
+				if err := os.WriteFile(filePath, []byte("file-api-key"), 0600); err != nil {
+					t.Fatalf("Failed to write API key file: %v", err)
+				}
+				return func() { os.Remove(filePath) }
 			},
-			expectedAPIKey: "test-secret-key",
+			expectedAPIKey: "file-api-key",
 			expectError:    false,
 		},
 		{
-			name:             "In-cluster with missing secret",
-			inCluster:        true,
-			secret:           nil, // No secret
-			expectError:      true,
-			expectedErrorMsg: fmt.Sprintf("failed to get secret %s", AnthropicAPIKeySecretName),
-		},
-		{
-			name:      "In-cluster with secret missing key",
-			inCluster: true,
-			secret: &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      AnthropicAPIKeySecretName,
-					Namespace: RepoAgentSystemNamespace,
-				},
-				Data: map[string][]byte{
-					"other-key": []byte("some-value"),
-				},
+			name: "API key from environment variable (file not found)",
+			setupFunc: func(_ string) func() {
+				// We don't create the file, so it's not found
+				return func() {}
 			},
-			expectError:      true,
-			expectedErrorMsg: fmt.Sprintf("secret %s does not contain key '%s'", AnthropicAPIKeySecretName, AnthropicAPIKeySecretKey),
+			envVarSet:        true,
+			envVarValue:      "env-api-key",
+			expectedAPIKey:   "env-api-key",
+			expectError:      false,
+			expectedErrorMsg: "", // No error expected, as env var is fallback
 		},
 		{
-			name:           "Outside cluster with env var set",
-			inCluster:      false,
-			envVarSet:      true,
-			envVarValue:    "test-env-key",
-			expectedAPIKey: "test-env-key",
-			expectError:    false,
-		},
-		{
-			name:             "Outside cluster with env var not set",
-			inCluster:        false,
+			name: "No API key (file not found and env var not set)",
+			setupFunc: func(_ string) func() {
+				// We don't create the file, so it's not found
+				return func() {}
+			},
 			envVarSet:        false,
+			expectedAPIKey:   "",
 			expectError:      true,
-			expectedErrorMsg: fmt.Sprintf("%s environment variable not set", AnthropicAPIKeyEnvVar),
+			expectedErrorMsg: "API key not found in",
+		},
+
+		{
+			name: "API key from file with leading/trailing whitespace",
+			setupFunc: func(tokensDir string) func() {
+				filePath := filepath.Join(tokensDir, AnthropicAPIKeySecretKey)
+				if err := os.WriteFile(filePath, []byte("  file-api-key  "), 0600); err != nil {
+					t.Fatalf("Failed to write API key file: %v", err)
+				}
+				return func() { os.Remove(filePath) }
+			},
+			expectedAPIKey: "file-api-key",
+			expectError:    false,
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Set up environment variable if needed
+			// Create a temporary directory for tokens
+			tokensDir, err := os.MkdirTemp("", "claude-test-tokens")
+			if err != nil {
+				t.Fatalf("Failed to create temp dir: %v", err)
+			}
+			defer os.RemoveAll(tokensDir)
+
+			// Set up the environment as per the test case
+			cleanupFunc := tc.setupFunc(tokensDir)
+			defer cleanupFunc()
+
 			if tc.envVarSet {
 				os.Setenv(AnthropicAPIKeyEnvVar, tc.envVarValue)
 				defer os.Unsetenv(AnthropicAPIKeyEnvVar)
@@ -227,31 +222,9 @@ func TestClaudeSetup(t *testing.T) {
 				os.Unsetenv(AnthropicAPIKeyEnvVar)
 			}
 
-			// Mock InClusterConfig
-			if tc.inCluster {
-				inClusterConfigFunc = func() (*rest.Config, error) {
-					return &rest.Config{}, nil
-				}
-			} else {
-				inClusterConfigFunc = func() (*rest.Config, error) {
-					return nil, fmt.Errorf("not in cluster")
-				}
-			}
-
-			// Mock newClientsetFunc
-			var clientset kubernetes.Interface
-			if tc.secret != nil {
-				clientset = fake.NewSimpleClientset(tc.secret)
-			} else {
-				clientset = fake.NewSimpleClientset()
-			}
-			newClientsetFunc = func(_ *rest.Config) (kubernetes.Interface, error) {
-				return clientset, nil
-			}
-
 			// Run the test
 			c := &Claude{}
-			err := c.Setup("", "")
+			err = c.Setup("", tokensDir)
 
 			// Assertions
 			if tc.expectError {

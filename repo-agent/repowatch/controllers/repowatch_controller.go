@@ -917,8 +917,9 @@ func (r *RepoWatchReconciler) createReviewSandboxForPR(ctx context.Context, repo
 					"name": repoWatch.Spec.Review.LLM.Provider,
 				},
 				"llm": map[string]interface{}{
-					"configdirRef": repoWatch.Spec.Review.LLM.ConfigdirRef,
-					"prompt":       prompt,
+					"configdirRef":     repoWatch.Spec.Review.LLM.ConfigdirRef,
+					"prompt":           prompt,
+					"apiKeySecretName": repoWatch.Spec.Review.LLM.APIKeySecretRef,
 				},
 				"source": map[string]interface{}{
 					"cloneURL": fmt.Sprintf("%s#refs/heads/%s", *pr.Head.Repo.CloneURL, *pr.Head.Ref),
@@ -1003,8 +1004,9 @@ func (r *RepoWatchReconciler) createSandboxForIssueHandler(ctx context.Context, 
 					"name": handler.LLM.Provider,
 				},
 				"llm": map[string]interface{}{
-					"configdirRef": handler.LLM.ConfigdirRef,
-					"prompt":       prompt,
+					"configdirRef":     handler.LLM.ConfigdirRef,
+					"prompt":           prompt,
+					"apiKeySecretName": handler.LLM.APIKeySecretRef,
 				},
 				"source": map[string]interface{}{
 					// change *issue.RepositoryURL from https://api.github.com/repos/org/repo-name to https://github.com/org/repo-name.git

@@ -16,24 +16,14 @@ package llm
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
+	"path/filepath"
 )
-
-// newClientsetFunc is a variable to allow mocking in tests.
-var newClientsetFunc func(c *rest.Config) (kubernetes.Interface, error) = func(c *rest.Config) (kubernetes.Interface, error) {
-	return kubernetes.NewForConfig(c)
-}
-var inClusterConfigFunc = rest.InClusterConfig
 
 const (
 	defaultClaudeModel     = "claude-sonnet-4-5"
@@ -66,36 +56,21 @@ func (c *Claude) AddPostProcessor(p PostProcessor) {
 	c.postProcessors = append(c.postProcessors, p)
 }
 
-func (c *Claude) Setup(_, _ string) error {
-	// First, try to get the config from in-cluster config
-	config, err := inClusterConfigFunc()
+func (c *Claude) Setup(_, tokensDir string) error {
+	// Read API key from the mounted secret file
+	apiKeyPath := filepath.Join(tokensDir, AnthropicAPIKeySecretKey)
+	apiKeyBytes, err := os.ReadFile(apiKeyPath)
 	if err != nil {
-		// If that fails, fall back to checking the environment variable
-		log.Printf("Not running in a Kubernetes cluster, checking for ANTHROPIC_API_KEY environment variable: %v", err)
+		// If reading from file fails, fall back to checking the environment variable
+		log.Printf("Failed to read API key from %s: %v", apiKeyPath, err)
 		apiKey, ok := os.LookupEnv(AnthropicAPIKeyEnvVar)
 		if !ok {
-			return fmt.Errorf("%s environment variable not set and not in a Kubernetes cluster", AnthropicAPIKeyEnvVar)
+			return fmt.Errorf("API key not found in %s or %s environment variable", apiKeyPath, AnthropicAPIKeyEnvVar)
 		}
 		c.apiKey = apiKey
 		return nil
 	}
-
-	clientset, err := newClientsetFunc(config)
-	if err != nil {
-		return fmt.Errorf("failed to create clientset: %w", err)
-	}
-
-	secret, err := clientset.CoreV1().Secrets(RepoAgentSystemNamespace).Get(context.TODO(), AnthropicAPIKeySecretName, metav1.GetOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to get secret %s: %w", AnthropicAPIKeySecretName, err)
-	}
-
-	apiKey, ok := secret.Data[AnthropicAPIKeySecretKey]
-	if !ok {
-		return fmt.Errorf("secret %s does not contain key '%s'", AnthropicAPIKeySecretName, AnthropicAPIKeySecretKey)
-	}
-
-	c.apiKey = string(apiKey)
+	c.apiKey = string(bytes.TrimSpace(apiKeyBytes))
 	return nil
 }
 

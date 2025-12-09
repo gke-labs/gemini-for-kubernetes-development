@@ -125,6 +125,9 @@ func TestRepoWatchReconciler_Reconcile(t *testing.T) {
 			GithubSecretName: "github-secret",
 			Review: reviewv1alpha1.PRReviewSpec{
 				MaxActiveSandboxes: 1,
+				LLM: reviewv1alpha1.LLMConfig{
+					APIKeySecretRef: "llm-secret",
+				},
 			},
 		},
 	}
@@ -161,6 +164,11 @@ func TestRepoWatchReconciler_Reconcile(t *testing.T) {
 	})
 	g.Expect(fakeClient.List(context.Background(), reviewSandboxList)).To(gomega.Succeed())
 	g.Expect(reviewSandboxList.Items).To(gomega.HaveLen(1))
+	// Check that the apiKeySecretName is set correctly
+	apiKeySecretName, found, err := unstructured.NestedString(reviewSandboxList.Items[0].Object, "spec", "llm", "apiKeySecretName")
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(found).To(gomega.BeTrue())
+	g.Expect(apiKeySecretName).To(gomega.Equal("llm-secret"))
 }
 
 // TestRepoWatchReconciler_ReconcileIssues focuses on the success path for handling GitHub issues.
@@ -295,6 +303,11 @@ func TestRepoWatchReconciler_ReconcileIssues(t *testing.T) {
 	})
 	g.Expect(fakeClient.List(context.Background(), issueSandboxList)).To(gomega.Succeed())
 	g.Expect(issueSandboxList.Items).To(gomega.HaveLen(1))
+	// Check that the apiKeySecretName is set correctly
+	apiKeySecretName, found, err := unstructured.NestedString(issueSandboxList.Items[0].Object, "spec", "llm", "apiKeySecretName")
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(found).To(gomega.BeTrue())
+	g.Expect(apiKeySecretName).To(gomega.Equal("llm-secret"))
 }
 
 // TestReconcileReviewSandboxes contains several sub-tests that are highly relevant for success
