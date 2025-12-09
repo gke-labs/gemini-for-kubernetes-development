@@ -32,3 +32,7 @@ Please follow the [Development Guide](docs/development.md)
 ## Using repo-agent
 
 Please follow the [Usage Guide](docs/usage.md) to understand how to create `repoagent` CRDs.
+
+## Development
+
+*   **[Adding a New LLM Provider](docs/adding-a-new-llm-provider.md)**: A guide for extending the agent to support other Large Language Models.
