@@ -8,6 +8,11 @@ import (
 	"strings"
 )
 
+const (
+	CodeServerPort = 13337
+	WorkspacePath  = "/workspaces"
+)
+
 var execCommand = exec.Command
 
 func Start() (*exec.Cmd, error) {
@@ -19,7 +24,7 @@ func Start() (*exec.Cmd, error) {
 	}
 	repo := parts[1]
 	codeServerPath := "/usr/bin/code-server"
-	args := []string{"--auth=none", "--bind-addr=0.0.0.0:13337", "/workspaces/" + repo}
+	args := []string{"--auth=none", fmt.Sprintf("--bind-addr=0.0.0.0:%d", CodeServerPort), WorkspacePath + "/" + repo}
 	cmd := execCommand(codeServerPath, args...)
 	cmd.Stdout = os.Stdout
 	err := cmd.Start()

@@ -29,7 +29,9 @@ import (
 )
 
 const (
-	outputFile = "/workspaces/agent-output.txt"
+	outputFile           = "/workspaces/agent-output.txt"
+	sleepIntervalSeconds = 10
+	AgentDraftAnnotation = "agentDraft"
 )
 
 // Run starts the sidecar watcher loop.
@@ -60,7 +62,7 @@ func Run(componentName string, gvr schema.GroupVersionResource) {
 
 	var last string
 	for {
-		time.Sleep(10 * time.Second)
+		time.Sleep(sleepIntervalSeconds * time.Second)
 		fmt.Println("watching for file", outputFile)
 		_, err := os.Stat(outputFile)
 		if os.IsNotExist(err) {
@@ -86,7 +88,7 @@ func Run(componentName string, gvr schema.GroupVersionResource) {
 			obj.SetAnnotations(make(map[string]string))
 		}
 		annotations := obj.GetAnnotations()
-		annotations["agentDraft"] = string(b)
+		annotations[AgentDraftAnnotation] = string(b)
 		obj.SetAnnotations(annotations)
 
 		if _, err := dc.Resource(gvr).Namespace(namespace).Update(context.TODO(), obj, metav1.UpdateOptions{}); err != nil {
