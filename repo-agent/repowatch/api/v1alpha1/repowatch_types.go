@@ -40,6 +40,7 @@ type LLMConfig struct {
 	// key for the LLM provider. The secret must have a key named "apiKey".
 	// This approach provides a secure way to manage API keys without exposing
 	// them in the CRD.
+	// +kubebuilder:validation:Required
 	APIKeySecretRef string `json:"apiKeySecretRef,omitempty"`
 
 	// Prompt is the prompt to use for the LLM. This can be a simple string or
@@ -88,6 +89,9 @@ type PRReviewSpec struct {
 
 // DevSpec defines the configuration for development sandboxes.
 type DevSpec struct {
+	// LLM configuration for the review sandboxes.
+	LLM LLMConfig `json:"llm,omitempty"`
+
 	// The maximum number of dev sandboxes to create.
 	// +kubebuilder:validation:Required
 	MaxSandboxes int `json:"maxSandboxes"`

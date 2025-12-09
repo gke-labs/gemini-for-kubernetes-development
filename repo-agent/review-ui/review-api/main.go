@@ -838,6 +838,9 @@ spec:
     maxActiveSandboxes: 1
     maxSandboxes: 3
     devcontainerConfigRef: devcontainer-json
+    llm:
+      apiKeySecretRef: gemini-vscode-tokens
+      provider: gemini-cli
   review:
     preferAssignedToSelf: true
     reviewShutdownAfterMinutes: 30
@@ -857,6 +860,7 @@ spec:
     maxSandboxes: 5
   issueHandlers:
     - llm:
+        apiKeySecretRef: gemini-vscode-tokens
         prompt: >-
           You are a helpful assistant that triages GitHub issues for a
           Kubernetes-related open source project.
