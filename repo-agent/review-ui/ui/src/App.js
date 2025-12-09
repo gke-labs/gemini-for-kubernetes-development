@@ -419,7 +419,7 @@ function App() {
       if (res.ok) {
         setPrs(prs.map(pr => pr.id === id ? { ...pr, review: reviewYAML, draft: '' } : pr));
       } else {
-        alert("Failed to submit PR review");
+        res.json().then(data => alert("Failed to submit PR review: " + (data.error || res.statusText) + (data.details ? "\nDetails: " + data.details : "")));
       }
     })
     .catch(err => console.error("Failed to submit PR review:", err));
