@@ -36,3 +36,4 @@ Please follow the [Usage Guide](docs/usage.md) to understand how to create `repo
 ## Development
 
 *   **[Adding a New LLM Provider](docs/adding-a-new-llm-provider.md)**: A guide for extending the agent to support other Large Language Models.
+*   **[Multi-Tenant Architecture](docs/tenancy.md)**: A guide to understanding the multi-tenant architecture, isolation, and security model.
