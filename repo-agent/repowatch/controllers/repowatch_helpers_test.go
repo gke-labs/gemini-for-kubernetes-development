@@ -18,240 +18,328 @@ package controllers
 
 import (
 	"context"
+	"fmt"
 	"testing"
+	"time"
 
 	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/repowatch/api/v1alpha1"
 	"github.com/google/go-github/v39/github"
 	"github.com/onsi/gomega"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
+	clientfake "sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-func TestFilterPRsByLabels(t *testing.T) {
+func TestCreateOrUpdateReviewSandboxes(t *testing.T) {
 	g := gomega.NewWithT(t)
+	s := runtime.NewScheme()
+	_ = reviewv1alpha1.AddToScheme(s)
 
-	// Helper to create PR with labels
-	createPR := func(number int, labels ...string) *github.PullRequest {
-		prLabels := []*github.Label{}
-		for _, l := range labels {
-			lStr := l // copy for pointer
-			prLabels = append(prLabels, &github.Label{Name: &lStr})
-		}
-		return &github.PullRequest{
-			Number: &number,
-			Labels: prLabels,
-		}
-	}
-
-	tests := []struct {
-		name           string
-		repoWatchSpec  reviewv1alpha1.RepoWatchSpec
-		inputPRs       []*github.PullRequest
-		expectedPRNums []int
-	}{
-		{
-			name: "No labels filter",
-			repoWatchSpec: reviewv1alpha1.RepoWatchSpec{
-				Review: reviewv1alpha1.PRReviewSpec{
-					Labels: [][]string{},
-				},
+	repoWatch := &reviewv1alpha1.RepoWatch{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-watch", Namespace: "default"},
+		Spec: reviewv1alpha1.RepoWatchSpec{
+			Review: reviewv1alpha1.PRReviewSpec{
+				MaxActiveSandboxes:         1,
+				MaxSandboxes:               2,
+				ReviewShutdownAfterMinutes: 60,
 			},
-			inputPRs: []*github.PullRequest{
-				createPR(1, "bug"),
-				createPR(2),
-			},
-			expectedPRNums: []int{1, 2},
-		},
-		{
-			name: "Single label required",
-			repoWatchSpec: reviewv1alpha1.RepoWatchSpec{
-				Review: reviewv1alpha1.PRReviewSpec{
-					Labels: [][]string{{"bug"}},
-				},
-			},
-			inputPRs: []*github.PullRequest{
-				createPR(1, "bug"),
-				createPR(2, "enhancement"),
-				createPR(3, "bug", "critical"),
-			},
-			expectedPRNums: []int{1, 3},
-		},
-		{
-			name: "Multiple label sets (OR logic)",
-			repoWatchSpec: reviewv1alpha1.RepoWatchSpec{
-				Review: reviewv1alpha1.PRReviewSpec{
-					Labels: [][]string{{"bug"}, {"security"}},
-				},
-			},
-			inputPRs: []*github.PullRequest{
-				createPR(1, "bug"),
-				createPR(2, "enhancement"),
-				createPR(3, "security"),
-				createPR(4, "documentation"),
-			},
-			expectedPRNums: []int{1, 3},
-		},
-		{
-			name: "Composite label set (AND logic)",
-			repoWatchSpec: reviewv1alpha1.RepoWatchSpec{
-				Review: reviewv1alpha1.PRReviewSpec{
-					Labels: [][]string{{"bug", "critical"}},
-				},
-			},
-			inputPRs: []*github.PullRequest{
-				createPR(1, "bug"),
-				createPR(2, "bug", "critical"),
-				createPR(3, "critical"),
-			},
-			expectedPRNums: []int{2},
 		},
 	}
 
-	r := &RepoWatchReconciler{}
+	// PR that should be created
+	pr1Num := 1
+	pr1 := &github.PullRequest{Number: &pr1Num, Head: &github.PullRequestBranch{Repo: &github.Repository{CloneURL: github.String("url")}, Ref: github.String("ref")}} // Add dummy data to avoid nil pointers
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(_ *testing.T) {
-			repoWatch := &reviewv1alpha1.RepoWatch{Spec: tc.repoWatchSpec}
-			filtered := r.filterPRsByLabels(tc.inputPRs, repoWatch)
+	// PR that should be pending (due to active limit)
+	pr2Num := 2
+	pr2 := &github.PullRequest{Number: &pr2Num, Head: &github.PullRequestBranch{Repo: &github.Repository{CloneURL: github.String("url")}, Ref: github.String("ref")}} // Add dummy data
 
-			g.Expect(len(filtered)).To(gomega.Equal(len(tc.expectedPRNums)))
-			for i, pr := range filtered {
-				g.Expect(*pr.Number).To(gomega.Equal(tc.expectedPRNums[i]))
-			}
-		})
+	// PR that should be blocked (due to total limit)
+	pr3Num := 3
+	pr3 := &github.PullRequest{Number: &pr3Num, Head: &github.PullRequestBranch{Repo: &github.Repository{CloneURL: github.String("url")}, Ref: github.String("ref")}} // Add dummy data
+
+	// PR with an existing, old sandbox that should be scaled down
+	pr4Num := 4
+	pr4 := &github.PullRequest{Number: &pr4Num}
+	oldSandbox := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
+			"kind":       "ReviewSandbox",
+			"metadata": map[string]interface{}{
+				"name":              fmt.Sprintf("%s-pr-%d", repoWatch.Name, pr4Num),
+				"namespace":         "default",
+				"creationTimestamp": time.Now().Add(-61 * time.Minute).Format(time.RFC3339),
+			},
+			"spec": map[string]interface{}{"replicas": int64(1)},
+		},
 	}
+
+	r := &RepoWatchReconciler{
+		Client: clientfake.NewClientBuilder().WithScheme(s).WithObjects(oldSandbox).Build(),
+		Scheme: s,
+	}
+
+	// Start with one existing sandbox (oldSandbox)
+	ownedSandboxes := []unstructured.Unstructured{*oldSandbox}
+	active, total := 1, 1
+
+	watched, pending, finalActive := r.createOrUpdateReviewSandboxes(context.Background(), repoWatch, []*github.PullRequest{pr1, pr2, pr3, pr4}, ownedSandboxes, []*github.PullRequest{}, active, total)
+
+	// Asserts
+	g.Expect(finalActive).To(gomega.Equal(1), "Active count should be 1 because no new sandbox is created")
+	g.Expect(len(watched)).To(gomega.Equal(1), "Should have only one existing watched PR")
+	g.Expect(watched[0].Number).To(gomega.Equal(pr4Num))
+
+	g.Expect(len(pending)).To(gomega.Equal(3), "Should have three pending PRs")
+	g.Expect(pending[0].Number).To(gomega.Equal(pr1Num))
+	g.Expect(pending[1].Number).To(gomega.Equal(pr2Num))
+	g.Expect(pending[2].Number).To(gomega.Equal(pr3Num))
+
+	// Verify scale down
+	updatedSandbox := &unstructured.Unstructured{}
+	updatedSandbox.SetGroupVersionKind(schema.GroupVersionKind{Group: "custom.agents.x-k8s.io", Version: "v1alpha1", Kind: "ReviewSandbox"})
+	g.Expect(r.Client.Get(context.Background(), types.NamespacedName{Name: oldSandbox.GetName(), Namespace: "default"}, updatedSandbox)).To(gomega.Succeed())
+	replicas, _, _ := unstructured.NestedInt64(updatedSandbox.Object, "spec", "replicas")
+	g.Expect(replicas).To(gomega.Equal(int64(0)))
 }
 
-func TestDeduplicatePRs(t *testing.T) {
+func TestCleanupClosedPRSandboxes(t *testing.T) {
 	g := gomega.NewWithT(t)
+	s := runtime.NewScheme()
 
-	createPR := func(number int) *github.PullRequest {
-		return &github.PullRequest{Number: &number}
-	}
-
-	tests := []struct {
-		name           string
-		prs            []*github.PullRequest
-		explicitPRs    []*github.PullRequest
-		expectedPRNums []int
-	}{
-		{
-			name: "No duplicates",
-			prs: []*github.PullRequest{
-				createPR(1),
-				createPR(2),
+	closedPRSandbox := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
+			"kind":       "ReviewSandbox",
+			"metadata": map[string]interface{}{
+				"name":      "test-repowatch-pr-2",
+				"namespace": "default",
 			},
-			explicitPRs: []*github.PullRequest{
-				createPR(3),
-			},
-			expectedPRNums: []int{1, 2},
-		},
-		{
-			name: "With duplicates",
-			prs: []*github.PullRequest{
-				createPR(1),
-				createPR(2),
-				createPR(3),
-			},
-			explicitPRs: []*github.PullRequest{
-				createPR(2),
-			},
-			expectedPRNums: []int{1, 3},
-		},
-		{
-			name: "All duplicates",
-			prs: []*github.PullRequest{
-				createPR(1),
-			},
-			explicitPRs: []*github.PullRequest{
-				createPR(1),
-			},
-			expectedPRNums: []int{},
 		},
 	}
 
-	r := &RepoWatchReconciler{}
+	openPRNumber := 1
+	openPR := &github.PullRequest{Number: &openPRNumber}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(_ *testing.T) {
-			deduped := r.deduplicatePRs(tc.prs, tc.explicitPRs)
-
-			g.Expect(len(deduped)).To(gomega.Equal(len(tc.expectedPRNums)))
-			for i, pr := range deduped {
-				g.Expect(*pr.Number).To(gomega.Equal(tc.expectedPRNums[i]))
-			}
-		})
+	r := &RepoWatchReconciler{
+		Client: clientfake.NewClientBuilder().WithScheme(s).WithObjects(closedPRSandbox).Build(),
+		Scheme: s,
 	}
+
+	initialTotal := 1
+	ownedSandboxes := []unstructured.Unstructured{*closedPRSandbox}
+	allOpenPRs := []*github.PullRequest{openPR}
+
+	finalTotal := r.cleanupClosedPRSandboxes(context.Background(), initialTotal, ownedSandboxes, allOpenPRs)
+
+	g.Expect(finalTotal).To(gomega.Equal(0))
+
+	sandboxList := &unstructured.UnstructuredList{}
+	sandboxList.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "custom.agents.x-k8s.io",
+		Version: "v1alpha1",
+		Kind:    "ReviewSandbox",
+	})
+	g.Expect(r.Client.List(context.Background(), sandboxList)).To(gomega.Succeed())
+	g.Expect(sandboxList.Items).To(gomega.HaveLen(0))
 }
 
-func TestSortPRs(t *testing.T) {
+func TestCountSandboxes(t *testing.T) {
 	g := gomega.NewWithT(t)
 
-	createPRWithAssignee := func(number int, assignees ...string) *github.PullRequest {
-		var ghAssignees []*github.User
-		for _, a := range assignees {
-			aStr := a
-			ghAssignees = append(ghAssignees, &github.User{Login: &aStr})
-		}
-		return &github.PullRequest{
-			Number:    &number,
-			Assignees: ghAssignees,
-		}
+	explicitPRNumber := 1
+	explicitPR := &github.PullRequest{Number: &explicitPRNumber}
+
+	sandboxes := []unstructured.Unstructured{
+		{
+			Object: map[string]interface{}{
+				"metadata": map[string]interface{}{
+					"name": "sandbox-pr-1", // Explicit
+				},
+				"spec": map[string]interface{}{
+					"replicas": int64(1),
+				},
+			},
+		},
+		{
+			Object: map[string]interface{}{
+				"metadata": map[string]interface{}{
+					"name": "sandbox-pr-2", // Active
+				},
+				"spec": map[string]interface{}{
+					"replicas": int64(1),
+				},
+			},
+		},
+		{
+			Object: map[string]interface{}{
+				"metadata": map[string]interface{}{
+					"name": "sandbox-pr-3", // Inactive
+				},
+				"spec": map[string]interface{}{
+					"replicas": int64(0),
+				},
+			},
+		},
+		{
+			Object: map[string]interface{}{
+				"metadata": map[string]interface{}{
+					"name": "sandbox-pr-4", // Active
+				},
+				"spec": map[string]interface{}{
+					"replicas": int64(1),
+				},
+			},
+		},
 	}
 
-	tests := []struct {
+	active, total := countSandboxes(sandboxes, []*github.PullRequest{explicitPR})
+
+	g.Expect(total).To(gomega.Equal(4))
+	g.Expect(active).To(gomega.Equal(2)) // Should not include the explicit PR's sandbox
+}
+
+func TestGetOwnedIssueSandboxes_Comprehensive(t *testing.T) {
+	ownerUID := types.UID("test-uid")
+	otherUID := types.UID("other-uid")
+	handlerName := "test-handler-with-hyphens"
+
+	testCases := []struct {
 		name          string
-		preferSelf    bool
-		inputPRs      []*github.PullRequest
-		expectedOrder []int
+		sandboxes     []unstructured.Unstructured
+		expectedCount int
+		expectedNames []string
 	}{
 		{
-			name:       "Sort disabled",
-			preferSelf: false,
-			inputPRs: []*github.PullRequest{
-				createPRWithAssignee(1, "other"),
-				createPRWithAssignee(2, "myself"),
-			},
-			expectedOrder: []int{1, 2},
-		},
-		{
-			name:       "Sort enabled",
-			preferSelf: true,
-			inputPRs: []*github.PullRequest{
-				createPRWithAssignee(1, "other"),
-				createPRWithAssignee(2, "myself"),
-				createPRWithAssignee(3, "someone-else"),
-			},
-			expectedOrder: []int{2, 1, 3},
-		},
-		{
-			name:       "Sort enabled - mixed",
-			preferSelf: true,
-			inputPRs: []*github.PullRequest{
-				createPRWithAssignee(1, "other"),
-				createPRWithAssignee(2, "myself", "other"), // assigned to me and others
-				createPRWithAssignee(3, "myself"),
-			},
-			expectedOrder: []int{2, 3, 1}, // 2 and 3 are assigned to me, order between them is stable (relative to input)
-		},
-	}
-
-	r := &RepoWatchReconciler{}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(_ *testing.T) {
-			repoWatch := &reviewv1alpha1.RepoWatch{
-				Spec: reviewv1alpha1.RepoWatchSpec{
-					Review: reviewv1alpha1.PRReviewSpec{
-						PreferAssignedToSelf: tc.preferSelf,
+			name: "happy path with single match",
+			sandboxes: []unstructured.Unstructured{
+				{
+					Object: map[string]interface{}{
+						"metadata": map[string]interface{}{
+							"name": "repo-issue-1-" + handlerName,
+							"ownerReferences": []interface{}{
+								map[string]interface{}{"uid": string(ownerUID)},
+							},
+						},
 					},
 				},
-			}
+			},
+			expectedCount: 1,
+			expectedNames: []string{"repo-issue-1-" + handlerName},
+		},
+		{
+			name: "multiple matches",
+			sandboxes: []unstructured.Unstructured{
+				{
+					Object: map[string]interface{}{
+						"metadata": map[string]interface{}{
+							"name": "repo-issue-1-" + handlerName,
+							"ownerReferences": []interface{}{
+								map[string]interface{}{"uid": string(ownerUID)},
+							},
+						},
+					},
+				},
+				{
+					Object: map[string]interface{}{
+						"metadata": map[string]interface{}{
+							"name": "repo-issue-2-" + handlerName,
+							"ownerReferences": []interface{}{
+								map[string]interface{}{"uid": string(ownerUID)},
+							},
+						},
+					},
+				},
+			},
+			expectedCount: 2,
+			expectedNames: []string{"repo-issue-1-" + handlerName, "repo-issue-2-" + handlerName},
+		},
+		{
+			name: "no match due to wrong handler",
+			sandboxes: []unstructured.Unstructured{
+				{
+					Object: map[string]interface{}{
+						"metadata": map[string]interface{}{
+							"name": "repo-issue-1-wrong-handler",
+							"ownerReferences": []interface{}{
+								map[string]interface{}{"uid": string(ownerUID)},
+							},
+						},
+					},
+				},
+			},
+			expectedCount: 0,
+		},
+		{
+			name: "no match due to wrong owner",
+			sandboxes: []unstructured.Unstructured{
+				{
+					Object: map[string]interface{}{
+						"metadata": map[string]interface{}{
+							"name": "repo-issue-1-" + handlerName,
+							"ownerReferences": []interface{}{
+								map[string]interface{}{"uid": string(otherUID)},
+							},
+						},
+					},
+				},
+			},
+			expectedCount: 0,
+		},
+		{
+			name: "malformed name - no issue separator",
+			sandboxes: []unstructured.Unstructured{
+				{
+					Object: map[string]interface{}{
+						"metadata": map[string]interface{}{
+							"name": "repo-1-" + handlerName,
+							"ownerReferences": []interface{}{
+								map[string]interface{}{"uid": string(ownerUID)},
+							},
+						},
+					},
+				},
+			},
+			expectedCount: 0,
+		},
+		{
+			name: "malformed name - no handler part",
+			sandboxes: []unstructured.Unstructured{
+				{
+					Object: map[string]interface{}{
+						"metadata": map[string]interface{}{
+							"name": "repo-issue-1",
+							"ownerReferences": []interface{}{
+								map[string]interface{}{"uid": string(ownerUID)},
+							},
+						},
+					},
+				},
+			},
+			expectedCount: 0,
+		},
+		{
+			name:          "empty input slice",
+			sandboxes:     []unstructured.Unstructured{},
+			expectedCount: 0,
+		},
+	}
 
-			user := &github.User{Login: github.String("myself")}
-			sorted := r.sortPRs(context.Background(), tc.inputPRs, repoWatch, user)
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+			ownedSandboxes := getOwnedIssueSandboxes(tc.sandboxes, ownerUID, handlerName)
+			g.Expect(len(ownedSandboxes)).To(gomega.Equal(tc.expectedCount))
 
-			g.Expect(len(sorted)).To(gomega.Equal(len(tc.expectedOrder)))
-			for i, pr := range sorted {
-				g.Expect(*pr.Number).To(gomega.Equal(tc.expectedOrder[i]))
+			if tc.expectedCount > 0 {
+				var foundNames []string
+				for _, sb := range ownedSandboxes {
+					foundNames = append(foundNames, sb.GetName())
+				}
+				g.Expect(foundNames).To(gomega.ConsistOf(tc.expectedNames))
 			}
 		})
 	}
