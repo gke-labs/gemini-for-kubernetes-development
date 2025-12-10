@@ -21,6 +21,7 @@ jobs:
           - review-api
           - review-sandbox
           - review-sidecar
+          - dev-sandbox
           - review-ui
     permissions:
       contents: write
