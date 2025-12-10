@@ -262,6 +262,8 @@ func main() {
 	router.Use(ResponseLoggerMiddleware())
 
 	// Public routes: Authentication flows and initial configuration do not require a session.
+	router.GET("/", healthCheckOk)
+	router.GET("/api/", healthCheckOk)
 	router.GET("/api/auth/login", authLogin)
 	router.GET("/api/auth/callback", authCallback)
 	router.GET("/api/auth/status", authStatus)
@@ -306,6 +308,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to start router: %v", err)
 	}
+}
+
+// --- Health Check ---
+func healthCheckOk(c *gin.Context) {
+	c.String(http.StatusOK, "OK")
 }
 
 // --- Auth Handlers ---
