@@ -67,6 +67,20 @@ func TestGemini_Setup(t *testing.T) {
 		if apiKey != "test-api-key" {
 			t.Errorf("Expected GEMINI_API_KEY to be 'test-api-key', but got '%s'", apiKey)
 		}
+
+		// Check if settings.json is created and has previewFeatures: true
+		settingsPath := filepath.Join(".gemini", "settings.json")
+		if _, err := os.Stat(settingsPath); os.IsNotExist(err) {
+			t.Errorf("Expected .gemini/settings.json to exist, but it does not")
+		} else {
+			content, err := os.ReadFile(settingsPath)
+			if err != nil {
+				t.Errorf("Failed to read settings.json: %v", err)
+			}
+			if !bytes.Contains(content, []byte(`"previewFeatures": true`)) {
+				t.Errorf("Expected settings.json to contain '\"previewFeatures\": true', but got: %s", string(content))
+			}
+		}
 	})
 
 	t.Run("read token error", func(t *testing.T) {
@@ -76,6 +90,18 @@ func TestGemini_Setup(t *testing.T) {
 		// Create dummy files and directories
 		workspacesDir := filepath.Join(tmpDir, "workspaces")
 		tokensDir := filepath.Join(tmpDir, "tokens")
+
+		// Change the current working directory to the temporary directory
+		wd, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("Failed to get current working directory: %v", err)
+		}
+		defer func() {
+			_ = os.Chdir(wd)
+		}()
+		if err := os.Chdir(tmpDir); err != nil {
+			t.Fatalf("Failed to change working directory: %v", err)
+		}
 
 		// Create a Gemini provider and run Setup
 		g := &Gemini{}

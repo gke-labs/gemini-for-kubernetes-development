@@ -15,6 +15,7 @@
 package llm
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -57,6 +58,49 @@ func (g *Gemini) Setup(workspacesDir, tokensDir string) error {
 		}
 	} else {
 		log.Println(".gemini directory does not exist in /workspaces")
+	}
+
+	// Ensure .gemini directory exists
+	if _, err := os.Stat(".gemini"); os.IsNotExist(err) {
+		if err := os.Mkdir(".gemini", 0755); err != nil {
+			return fmt.Errorf("failed to create .gemini directory: %v", err)
+		}
+	}
+
+	settingsPath := filepath.Join(".gemini", "settings.json")
+	var settings map[string]interface{}
+	if _, err := os.Stat(settingsPath); err == nil {
+		content, err := os.ReadFile(settingsPath)
+		if err != nil {
+			return fmt.Errorf("failed to read settings.json: %v", err)
+		}
+		if err := json.Unmarshal(content, &settings); err != nil {
+			log.Printf("failed to unmarshal settings.json, starting fresh: %v", err)
+			settings = make(map[string]interface{})
+		}
+	} else {
+		settings = make(map[string]interface{})
+	}
+
+	if settings["general"] == nil {
+		settings["general"] = make(map[string]interface{})
+	}
+
+	if general, ok := settings["general"].(map[string]interface{}); ok {
+		general["previewFeatures"] = true
+		settings["general"] = general
+	} else {
+		// Fallback if general is not a map (unexpected)
+		settings["general"] = map[string]interface{}{"previewFeatures": true}
+	}
+
+	newContent, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal settings.json: %v", err)
+	}
+
+	if err := os.WriteFile(settingsPath, newContent, 0644); err != nil {
+		return fmt.Errorf("failed to write settings.json: %v", err)
 	}
 
 	geminiTokenFile := filepath.Join(tokensDir, "gemini")
