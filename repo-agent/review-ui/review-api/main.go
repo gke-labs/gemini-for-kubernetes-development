@@ -45,6 +45,7 @@ var (
 	k8sClientset *kubernetes.Clientset
 	oauthConf    *oauth2.Config
 	oauthState   string
+	allowedUsers []string // List of allowed GitHub user handles
 )
 
 const (
@@ -225,6 +226,14 @@ func main() {
 
 	initOAuth()
 
+	// Initialize the GitHub allowed users list
+	if allowedUsersStr := os.Getenv("GITHUB_ALLOWED_USERS"); allowedUsersStr != "" {
+		allowedUsers = strings.Split(allowedUsersStr, ",")
+		log.Printf("GitHub authentication restricted to users: %v", allowedUsers)
+	} else {
+		log.Println("No GITHUB_ALLOWED_USERS environment variable set. All GitHub users allowed to authenticate.")
+	}
+
 	// Ping redis to ensure connection
 	_, err = rdb.Ping(context.Background()).Result()
 	if err != nil {
@@ -301,6 +310,18 @@ func main() {
 
 // --- Auth Handlers ---
 
+func isUserAllowed(username string) bool {
+	if len(allowedUsers) == 0 {
+		return true // No restrictions
+	}
+	for _, allowed := range allowedUsers {
+		if strings.EqualFold(username, allowed) {
+			return true
+		}
+	}
+	return false
+}
+
 func authLogin(c *gin.Context) {
 	if oauthConf.ClientID == "" {
 		c.String(http.StatusInternalServerError, "GitHub OAuth is not configured. Please set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET in the github-token secret.")
@@ -348,6 +369,14 @@ func authCallback(c *gin.Context) {
 	}
 
 	ghUser := strings.ToLower(user.GetLogin())
+
+	// Enforce allowlist for GitHub users
+	if !isUserAllowed(ghUser) {
+		log.Printf("Unauthorized GitHub user attempted to log in: %s", ghUser)
+		c.String(http.StatusForbidden, "Unauthorized GitHub user. Please contact administrator.")
+		return
+	}
+
 	if err := bootstrapNamespace(c.Request.Context(), ghUser); err != nil {
 		log.Printf("Failed to bootstrap namespace %s: %v", ghUser, err)
 	}
