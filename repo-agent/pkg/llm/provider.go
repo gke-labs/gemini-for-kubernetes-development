@@ -48,6 +48,10 @@ func NewLLMProvider(name string) (Provider, error) {
 		c := &Claude{}
 		c.AddPostProcessor(StripYAMLMarkers)
 		return c, nil
+	case "dummy":
+		d := &Dummy{}
+		d.AddPostProcessor(StripYAMLMarkers)
+		return d, nil
 	default:
 		return nil, fmt.Errorf("unknown provider: %s", name)
 	}

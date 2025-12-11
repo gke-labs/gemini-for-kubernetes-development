@@ -43,6 +43,7 @@ spec:
                         enum:
                         - gemini-cli
                         - claude
+                        - dummy
                         type: string
                     required:
                     - apiKeySecretRef
@@ -85,6 +86,7 @@ spec:
                           enum:
                           - gemini-cli
                           - claude
+                          - dummy
                           type: string
                       required:
                       - apiKeySecretRef
@@ -131,6 +133,7 @@ spec:
                         enum:
                         - gemini-cli
                         - claude
+                        - dummy
                         type: string
                     required:
                     - apiKeySecretRef
