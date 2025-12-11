@@ -223,22 +223,3 @@ spec:
                     path:
                       type: ReplacePrefixMatch
                       replacePrefixMatch: / # Repl
-    - id: tcproute
-      includeWhen:
-        - ${schema.spec.gateway.tcpEnabled} # Only include if the user wants to create an Gateway route
-      template:
-        apiVersion: gateway.networking.k8s.io/v1alpha2
-        kind: TCPRoute
-        metadata:
-          name: devc-${schema.metadata.name} # Use the name provided by user
-        spec:
-          parentRefs:
-            - name: ${schema.spec.gateway.ref} # Reference to the Gateway created outside of this RGD
-              sectionName: tcp
-          rules:
-            - backendRefs:
-              - group: ""
-                kind: Service
-                name: ${service.metadata.name}
-                port: 13338
-                weight: 1

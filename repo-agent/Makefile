@@ -181,6 +181,8 @@ uninstall-repo-agent-latest:
 	kubectl patch crd issuesandboxes.custom.agents.x-k8s.io --type=json -p='[{"op":"remove", "path":"/metadata/finalizers", "value":["customresourcecleanup.apiextensions.k8s.io"]}]' || true
 	kubectl delete crd reviewsandboxes.custom.agents.x-k8s.io --wait=false || true
 	kubectl patch crd reviewsandboxes.custom.agents.x-k8s.io --type=json -p='[{"op":"remove", "path":"/metadata/finalizers", "value":["customresourcecleanup.apiextensions.k8s.io"]}]' || true
+	kubectl delete crd devsandboxes.custom.agents.x-k8s.io --wait=false || true
+	kubectl patch crd devsandboxes.custom.agents.x-k8s.io --type=json -p='[{"op":"remove", "path":"/metadata/finalizers", "value":["customresourcecleanup.apiextensions.k8s.io"]}]' || true
 
 .PHONY: reinstall-repo-agent-latest
 reinstall-repo-agent-latest: uninstall-repo-agent-latest install-repo-agent-latest
