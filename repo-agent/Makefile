@@ -3,6 +3,7 @@ KIND_CLUSTER ?= repo-agent
 REGISTRY ?= kind.local/
 NAMESPACE ?= default
 LOCAL_PORT ?= 13380
+INSTALL_ENVOY ?= yes
 
 # if REGISTRY is kind.local/, then we are deploying to kind
 ifeq ($(REGISTRY), kind.local/)
@@ -83,13 +84,20 @@ lint-go:
 .PHONY: install-dep-packages
 install-dep-packages:
 	../dev/tools/install-kro
+ifeq ($(strip $(INSTALL_ENVOY)),yes)
+	@echo "INSTALL_ENVOY is true."
 	../dev/tools/install-envoy
+else
+	@echo "INSTALL_ENVOY is not true. Skipping."
+endif
 	../dev/tools/install-agent-sandbox
 
 .PHONY: uninstall-dep-packages
 uninstall-dep-packages:
 	../dev/tools/install-kro --uninstall || true
+ifeq ($(strip $(INSTALL_ENVOY)),yes)
 	../dev/tools/install-envoy --uninstall || true
+endif
 	../dev/tools/install-agent-sandbox --uninstall || true
 
 .PHONY: create-kind
@@ -110,9 +118,13 @@ install-repo-agent:
 	cp dev-sandbox/dev-sandbox-rgd.yaml k8s/
 	../dev/tools/deploy-to-kube --image-prefix=$(REGISTRY) --working-dir .
 
+bin/tls.crt:
+	openssl req -x509 -nodes -days 365 -newkey rsa:2048  -keyout bin/tls.key -out bin/tls.crt  -subj "/CN=repo-agent"
+
 .PHONY: create-secrets
-create-secrets:
+create-secrets: bin/tls.crt
 	kubectl create namespace repo-agent-system || true
+	@kubectl create secret -n repo-agent-system tls repo-agent-tls --cert=bin/tls.crt --key=bin/tls.key
 	@kubectl create secret -n repo-agent-system generic gemini-vscode-tokens --from-literal=gemini=${GEMINI_API_KEY} --dry-run=client -o yaml | kubectl apply -f -
 	@kubectl create secret -n repo-agent-system generic github-pat --from-literal=pat="${GITHUB_PAT}" --from-literal=name="`git config --global user.name`" --from-literal=email=`git config --global user.email` --dry-run=client -o yaml | kubectl apply -f -
 	@kubectl create secret -n repo-agent-system generic anthropic-api-key --from-literal=claude=${ANTHROPIC_API_KEY} --dry-run=client -o yaml | kubectl apply -f -
@@ -162,13 +174,15 @@ delete-instance:
 .PHONY: port-forward
 port-forward:
 	while true; do \
-	ENVOY_SERVICE=$$(kubectl get svc -n envoy-gateway-system --selector=gateway.envoyproxy.io/owning-gateway-namespace=repo-agent-system,gateway.envoyproxy.io/owning-gateway-name=repo-agent-gateway -o jsonpath='{.items[0].metadata.name}') && kubectl port-forward -n envoy-gateway-system --address 0.0.0.0 service/$${ENVOY_SERVICE} $(LOCAL_PORT):13380;\
+	ENVOY_SERVICE=$$(kubectl get svc -n envoy-gateway-system --selector=gateway.envoyproxy.io/owning-gateway-namespace=repo-agent-system,gateway.envoyproxy.io/owning-gateway-name=repo-agent-gateway -o jsonpath='{.items[0].metadata.name}') && kubectl port-forward -n envoy-gateway-system --address 0.0.0.0 service/$${ENVOY_SERVICE} $(LOCAL_PORT):80;\
 	done
 	# kubectl port-forward -n repo-agent-system --address 0.0.0.0 service/devc-agent-sandbox-pr-102-lb  13338:13338
 
 # non-ephemeral (kind) cluster install targets
 .PHONY: install-repo-agent-latest
-install-repo-agent-latest: install-dep-packages create-secrets
+install-repo-agent-latest:
+	INSTALL_ENVOY=no ${MAKE} install-dep-packages
+	${MAKE} create-secrets
 	../dev/tools/deploy-to-kube --image-prefix=ghcr.io/gke-labs/gemini-for-kubernetes-development/ --image-tag=latest --working-dir . --output-file=bin/repo-agent-manifest.yaml
 	kubectl apply -f bin/repo-agent-manifest.yaml
 
@@ -176,7 +190,7 @@ install-repo-agent-latest: install-dep-packages create-secrets
 uninstall-repo-agent-latest:
 	../dev/tools/deploy-to-kube --image-prefix=ghcr.io/gke-labs/gemini-for-kubernetes-development/ --image-tag=latest --working-dir . --output-file=bin/repo-agent-manifest.yaml
 	kubectl delete -f bin/repo-agent-manifest.yaml || true
-	${MAKE} uninstall-dep-packages
+	INSTALL_ENVOY=no ${MAKE} uninstall-dep-packages
 	kubectl delete crd issuesandboxes.custom.agents.x-k8s.io --wait=false || true
 	kubectl patch crd issuesandboxes.custom.agents.x-k8s.io --type=json -p='[{"op":"remove", "path":"/metadata/finalizers", "value":["customresourcecleanup.apiextensions.k8s.io"]}]' || true
 	kubectl delete crd reviewsandboxes.custom.agents.x-k8s.io --wait=false || true
