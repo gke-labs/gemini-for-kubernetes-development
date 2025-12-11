@@ -11,7 +11,10 @@ import (
 	"strings"
 	"time"
 
+	"k8s.io/apimachinery/pkg/runtime/schema"
+
 	"github.com/bluekeyes/go-gitdiff/gitdiff"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/agentoutput"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/codeserver"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/llm"
 	"github.com/google/go-github/v39/github"
@@ -25,7 +28,17 @@ type AgentOutput struct {
 	Review *github.PullRequestReviewRequest `yaml:"review"`
 }
 
+var (
+	gvr = schema.GroupVersionResource{
+		Group:    "custom.agents.x-k8s.io",
+		Version:  "v1alpha1",
+		Resource: "reviewsandboxes",
+	}
+)
+
 func main() {
+	go agentoutput.Run("review", gvr)
+
 	cmdCodeSrv, err := codeserver.Start()
 	if err != nil {
 		log.Fatalf("failed to start code-server: %v", err)

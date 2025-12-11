@@ -75,25 +75,7 @@ spec:
                     - name: workspaces-pvc
                       mountPath: /workspaces
               containers:
-                - name: issue-sidecar
-                  image: ko://repo-agent/issue-sidecar
-                  env:
-                    - name: NAMESPACE
-                      value: ${schema.metadata.namespace}
-                    - name: NAME
-                      value: ${schema.metadata.name}
-                    # URL to the repository where the .devcontainer folder we want to load is located
-                    - name: REPO
-                      value: ${schema.spec.source.repo}
-                    - name: ISSUEID
-                      value: ${schema.spec.source.issue}
-                    - name: HANDLER
-                      value: ${schema.spec.source.handler}
-                  volumeMounts:
-                    - name: workspaces-pvc
-                      mountPath: /workspaces
-                - name: issue-sandbox
-                  #image: ghcr.io/coder/envbuilder
+                - name: sandbox
                   image: ko://repo-agent/images/issue-sandbox
                   resources:
                     limits:
@@ -101,6 +83,14 @@ spec:
                     requests:
                       ephemeral-storage: ${schema.spec.resources.ephemeralStorage}
                   env:
+                    - name: NAMESPACE
+                      value: ${schema.metadata.namespace}
+                    - name: NAME
+                      value: ${schema.metadata.name}
+                    - name: REPO
+                      value: ${schema.spec.source.repo}
+                    - name: HANDLER
+                      value: ${schema.spec.source.handler}
                     # URL to the repository where the .devcontainer folder we want to load is located
                     - name: AGENT_NAME
                       value: ${schema.spec.llmBackend.name}
