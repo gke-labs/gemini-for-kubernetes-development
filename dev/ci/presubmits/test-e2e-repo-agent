@@ -41,7 +41,21 @@ def main():
     if result.returncode != 0:
         return result.returncode
 
-    ## TODO: create secrets
+    ## create secrets
+    GITHUB_PAT = os.getenv("GITHUB_PAT")
+    if not GITHUB_PAT:
+        print("GITHUB_PAT environment variable is not set")
+        return 1
+    print("Creating github-token secret in repo-agent-system namespace")
+    result = subprocess.run(["kubectl", "create", "namespace", "repo-agent-system"])
+    if result.returncode != 0:
+        return result.returncode
+    result = subprocess.run(["kubectl", "create", "secret", "-n", "repo-agent-system", "generic" , "github-pat" , f"--from-literal=pat={GITHUB_PAT}", "--from-literal=email=test@email.com", "--from-literal=name=test"])
+    if result.returncode != 0:
+        return result.returncode
+    result = subprocess.run(["kubectl", "create", "secret", "-n", "repo-agent-system", "generic" , "dummy-provider-token" , f"--from-literal=dummy=testtokem"])
+    if result.returncode != 0:
+        return result.returncode
 
     result = subprocess.run([f"{repo_root}/dev/tools/push-images", "--kind-cluster-name", "e2e-test", "--image-prefix", "kind.local/" , "--working-dir", working_dir])
     if result.returncode != 0:

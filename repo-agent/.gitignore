@@ -1,5 +1,6 @@
 keys.sh
 keys-local.sh
+keys-e2e.sh
 bin/
 review-ui/ui/build/
 review-ui/ui/node_modules/
