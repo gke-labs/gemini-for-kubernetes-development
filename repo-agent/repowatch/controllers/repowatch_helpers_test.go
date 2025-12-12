@@ -344,3 +344,78 @@ func TestGetOwnedIssueSandboxes_Comprehensive(t *testing.T) {
 		})
 	}
 }
+
+func TestSortPRs(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	createPRWithAssignee := func(number int, assignees ...string) *github.PullRequest {
+		var ghAssignees []*github.User
+		for _, a := range assignees {
+			aStr := a
+			ghAssignees = append(ghAssignees, &github.User{Login: &aStr})
+		}
+		return &github.PullRequest{
+			Number:    &number,
+			Assignees: ghAssignees,
+		}
+	}
+
+	tests := []struct {
+		name          string
+		preferSelf    bool
+		inputPRs      []*github.PullRequest
+		expectedOrder []int
+	}{
+		{
+			name:       "Sort disabled",
+			preferSelf: false,
+			inputPRs: []*github.PullRequest{
+				createPRWithAssignee(1, "other"),
+				createPRWithAssignee(2, "myself"),
+			},
+			expectedOrder: []int{1, 2},
+		},
+		{
+			name:       "Sort enabled",
+			preferSelf: true,
+			inputPRs: []*github.PullRequest{
+				createPRWithAssignee(1, "other"),
+				createPRWithAssignee(2, "myself"),
+				createPRWithAssignee(3, "someone-else"),
+			},
+			expectedOrder: []int{2, 1, 3},
+		},
+		{
+			name:       "Sort enabled - mixed",
+			preferSelf: true,
+			inputPRs: []*github.PullRequest{
+				createPRWithAssignee(1, "other"),
+				createPRWithAssignee(2, "myself", "other"), // assigned to me and others
+				createPRWithAssignee(3, "myself"),
+			},
+			expectedOrder: []int{2, 3, 1}, // 2 and 3 are assigned to me, order between them is stable (relative to input)
+		},
+	}
+
+	r := &RepoWatchReconciler{}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(_ *testing.T) {
+			repoWatch := &reviewv1alpha1.RepoWatch{
+				Spec: reviewv1alpha1.RepoWatchSpec{
+					Review: reviewv1alpha1.PRReviewSpec{
+						PreferAssignedToSelf: tc.preferSelf,
+					},
+				},
+			}
+
+			user := &github.User{Login: github.String("myself")}
+			sorted := r.sortPRs(context.Background(), tc.inputPRs, repoWatch, user)
+
+			g.Expect(len(sorted)).To(gomega.Equal(len(tc.expectedOrder)))
+			for i, pr := range sorted {
+				g.Expect(*pr.Number).To(gomega.Equal(tc.expectedOrder[i]))
+			}
+		})
+	}
+}

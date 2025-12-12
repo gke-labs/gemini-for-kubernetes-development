@@ -432,36 +432,6 @@ func (r *RepoWatchReconciler) deduplicatePRs(prs []*github.PullRequest, explicit
 	return filteredPRs
 }
 
-func (r *RepoWatchReconciler) sortPRs(ctx context.Context, prs []*github.PullRequest, repoWatch *reviewv1alpha1.RepoWatch, user *github.User) []*github.PullRequest {
-	log := log.FromContext(ctx)
-	// Sort by PreferAssignedToSelf
-	// TODO(barney-s): May be rate limited. Cache the user info.
-	if repoWatch.Spec.Review.PreferAssignedToSelf {
-		if user == nil || user.Login == nil {
-			log.Error(errors.New("user or user login is nil"), "unable to get current user login for sorting PRs")
-			return prs
-		}
-		var assignedToMe []*github.PullRequest
-		var others []*github.PullRequest
-		for _, pr := range prs {
-			isAssigned := false
-			for _, assignee := range pr.Assignees {
-				if assignee.Login != nil && *assignee.Login == *user.Login {
-					isAssigned = true
-					break
-				}
-			}
-			if isAssigned {
-				assignedToMe = append(assignedToMe, pr)
-			} else {
-				others = append(others, pr)
-			}
-		}
-		return append(assignedToMe, others...)
-	}
-	return prs
-}
-
 func (r *RepoWatchReconciler) reconcileIssues(ctx context.Context, githubConfig map[string]string, repoWatch *reviewv1alpha1.RepoWatch, ghClient *github.Client, owner string, repo string, user *github.User) error {
 	log := log.FromContext(ctx)
 	var reconcileErr error
