@@ -1,0 +1,9 @@
+apiVersion: review.gemini.google.com/v1alpha1
+kind: RepoWatch
+metadata:
+  name: rst-gfkd
+  namespace: repo-agent-system
+# Wait until status is not null
+(status != null): true
+# Wait until activeSandboxCount is specifically 1
+(status.activeSandboxCount): 1

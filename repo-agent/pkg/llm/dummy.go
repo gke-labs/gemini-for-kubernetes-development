@@ -3,6 +3,7 @@ package llm
 import (
 	"bytes"
 	"log"
+	"strings"
 )
 
 const (
@@ -49,7 +50,7 @@ func (d *Dummy) ExpandPrompt(prompt string) (string, error) {
 
 func (d *Dummy) response(prompt string) []byte {
 	// if prompt contains "class DraftReviewComment(BaseModel)", return a different response
-	if bytes.Contains([]byte(prompt), []byte("class DraftReviewComment(BaseModel)")) {
+	if strings.Contains(prompt, "class DraftReviewComment(BaseModel)") {
 		return []byte(dummyReview)
 	}
 	if bytes.Contains([]byte(prompt), []byte(`Start the response with "/kind <Category>" where`)) {

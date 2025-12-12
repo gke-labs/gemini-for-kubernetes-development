@@ -75,7 +75,7 @@ type PRReviewSpec struct {
 	// +kubebuilder:validation:Optional
 	ReviewShutdownAfterMinutes int `json:"reviewShutdownAfterMinutes,omitempty"`
 
-	// PullRequests to filter for this handler
+	// Explicit PullRequests for this handler
 	// +kubebuilder:validation:Optional
 	PullRequests []int `json:"pullRequests,omitempty"`
 
