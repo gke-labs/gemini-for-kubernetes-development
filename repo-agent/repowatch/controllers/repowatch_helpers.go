@@ -159,7 +159,6 @@ func countSandboxes(ownedSandboxes []unstructured.Unstructured, explicitPRs []*g
 }
 
 // getOwnedSandboxes filters a slice of sandboxes and returns only those owned by the specified UID.
-// getOwnedSandboxes filters a slice of sandboxes and returns only those owned by the specified UID.
 func getOwnedSandboxes(sandboxes []unstructured.Unstructured, ownerUID types.UID) []unstructured.Unstructured {
 	var ownedSandboxes []unstructured.Unstructured
 	for _, sandbox := range sandboxes {
