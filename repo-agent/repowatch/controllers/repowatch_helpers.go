@@ -76,13 +76,9 @@ func (r *RepoWatchReconciler) createOrUpdateReviewSandboxes(ctx context.Context,
 		}
 
 		// Logic to create a new sandbox if it doesn't exist
-		prIsExplicit := false
-		for _, explicitPR := range explicitPRs {
-			if *explicitPR.Number == *pr.Number {
-				prIsExplicit = true
-				break
-			}
-		}
+		// An "explicit" PR is one that is specifically listed in the `RepoWatch`
+		// spec's `pullRequests` field. These PRs are exempt from the `maxActiveSandboxes` limit.
+		prIsExplicit := isPRExplicit(*pr.Number, explicitPRs)
 
 		if prIsExplicit || ((activeSandboxes < repoWatch.Spec.Review.MaxActiveSandboxes) && (repoWatch.Spec.Review.MaxSandboxes == 0 || totalSandboxes < repoWatch.Spec.Review.MaxSandboxes)) {
 			log.Info("creating sandbox for pr", "pr", *pr.Number)
@@ -146,17 +142,13 @@ func countSandboxes(ownedSandboxes []unstructured.Unstructured, explicitPRs []*g
 	for _, sandbox := range ownedSandboxes {
 		replicas, found, err := unstructured.NestedInt64(sandbox.Object, "spec", "replicas")
 		if err == nil && found && replicas > 0 {
-			// Check if the PR is explicit, if so, dont count it towards the active sandbox limit
-			prIsExplicit := false
+			// Check if the PR is explicit, if so, dont count it towards the active sandbox limit.
+			// An "explicit" PR is one that is specifically listed in the `RepoWatch`
+			// spec's `pullRequests` field.
+			var prIsExplicit bool
 			prNumber, err := strconv.Atoi(strings.Split(sandbox.GetName(), "-pr-")[1])
 			if err == nil {
-				// Tolerate parsing errors, as the sandbox name format might not always match.
-				for _, explicitPR := range explicitPRs {
-					if *explicitPR.Number == prNumber {
-						prIsExplicit = true
-						break
-					}
-				}
+				prIsExplicit = isPRExplicit(prNumber, explicitPRs)
 			}
 			if !prIsExplicit {
 				activeSandboxes++
@@ -245,4 +237,16 @@ func (r *RepoWatchReconciler) sortPRs(ctx context.Context, prs []*github.PullReq
 		return append(assignedToMe, others...)
 	}
 	return prs
+}
+
+// isPRExplicit checks if a given PR number is in the list of explicit PRs.
+// An "explicit" PR is one that is specifically listed in the `RepoWatch`
+// spec's `pullRequests` field.
+func isPRExplicit(prNumber int, explicitPRs []*github.PullRequest) bool {
+	for _, explicitPR := range explicitPRs {
+		if *explicitPR.Number == prNumber {
+			return true
+		}
+	}
+	return false
 }

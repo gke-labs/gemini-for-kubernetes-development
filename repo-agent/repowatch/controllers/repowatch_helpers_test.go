@@ -419,3 +419,17 @@ func TestSortPRs(t *testing.T) {
 		})
 	}
 }
+
+func TestIsPRExplicit(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	pr1Num := 1
+	pr1 := &github.PullRequest{Number: &pr1Num}
+	pr2Num := 2
+	pr2 := &github.PullRequest{Number: &pr2Num}
+
+	explicitPRs := []*github.PullRequest{pr1}
+
+	g.Expect(isPRExplicit(*pr1.Number, explicitPRs)).To(gomega.BeTrue())
+	g.Expect(isPRExplicit(*pr2.Number, explicitPRs)).To(gomega.BeFalse())
+}
