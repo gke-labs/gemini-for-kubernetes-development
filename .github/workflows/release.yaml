@@ -15,12 +15,10 @@ jobs:
           - configdir-controller
           - github-mcp-server
           - issue-sandbox
-          - issue-sidecar
           - redis
           - repowatch-controller
           - review-api
           - review-sandbox
-          - review-sidecar
           - dev-sandbox
           - review-ui
     permissions:

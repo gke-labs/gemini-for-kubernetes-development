@@ -15,13 +15,11 @@ jobs:
           - configdir-controller
           - github-mcp-server
           - issue-sandbox
-          - issue-sidecar
           - dev-sandbox
           - redis
           - repowatch-controller
           - review-api
           - review-sandbox
-          - review-sidecar
           - review-ui
     permissions:
       contents: read
