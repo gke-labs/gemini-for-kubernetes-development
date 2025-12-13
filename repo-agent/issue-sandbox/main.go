@@ -5,12 +5,25 @@ import (
 	"log"
 	"os"
 
+	"k8s.io/apimachinery/pkg/runtime/schema"
+
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/agentoutput"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/codeserver"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/gitcli"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/llm"
 )
 
+var (
+	gvr = schema.GroupVersionResource{
+		Group:    "custom.agents.x-k8s.io",
+		Version:  "v1alpha1",
+		Resource: "issuesandboxes",
+	}
+)
+
 func main() {
+	go agentoutput.Run("issue", gvr)
+
 	cmdCodeSrv, err := codeserver.Start()
 	if err != nil {
 		log.Fatalf("failed to start code-server: %v", err)

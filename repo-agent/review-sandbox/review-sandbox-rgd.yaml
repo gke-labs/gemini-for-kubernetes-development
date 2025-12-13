@@ -72,8 +72,13 @@ spec:
                     - name: workspaces-pvc
                       mountPath: /workspaces
               containers:
-                - name: review-sidecar
-                  image: ko://repo-agent/review-sidecar
+                - name: sandbox
+                  image: ko://repo-agent/review-sidecar/images/review-sandbox
+                  resources:
+                    limits:
+                      ephemeral-storage: ${schema.spec.resources.ephemeralStorage}
+                    requests:
+                      ephemeral-storage: ${schema.spec.resources.ephemeralStorage}
                   env:
                     - name: NAMESPACE
                       value: ${schema.metadata.namespace}
@@ -84,18 +89,6 @@ spec:
                       value: ${schema.spec.source.repo}
                     - name: PRID
                       value: ${schema.spec.source.pr}
-                  volumeMounts:
-                    - name: workspaces-pvc
-                      mountPath: /workspaces
-                - name: review-sandbox
-                  #image: ghcr.io/coder/envbuilder
-                  image: ko://repo-agent/review-sidecar/images/review-sandbox
-                  resources:
-                    limits:
-                      ephemeral-storage: ${schema.spec.resources.ephemeralStorage}
-                    requests:
-                      ephemeral-storage: ${schema.spec.resources.ephemeralStorage}
-                  env:
                     # URL to the repository where the .devcontainer folder we want to load is located
                     - name: AGENT_PROMPT
                       value: ${schema.spec.llm.prompt}
