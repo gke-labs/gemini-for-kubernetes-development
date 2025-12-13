@@ -1,0 +1,8 @@
+apiVersion: review.gemini.google.com/v1alpha1
+kind: RepoWatch
+metadata:
+  name: ist-gfkd
+  namespace: repo-agent-system
+(status != null): true
+(length(status.watchedIssues.triage || `[]`)): 1
+

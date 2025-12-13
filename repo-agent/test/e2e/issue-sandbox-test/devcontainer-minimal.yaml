@@ -1,0 +1,12 @@
+# Configmap embedding devcontainer.json for VSCode Remote - Containers support
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: minimal-devcontainer
+  namespace: repo-agent-system
+data:
+  devcontainer.json: |
+    {
+      "name": "Go and Node.js Dev Container",
+      "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+    }
