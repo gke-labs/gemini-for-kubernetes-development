@@ -16,7 +16,7 @@ COPY syncer/controllers/ syncer/controllers/
 COPY syncer/pkg/ syncer/pkg/
 
 # Build
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -a -o manager syncer/cmd/main.go
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -a -o manager syncer/cmd/syncer-controller/main.go
 
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
