@@ -34,7 +34,7 @@ gcloud projects add-iam-policy-binding ${PROJECT_ID} \
 This command generates the JSON key and saves it to key.json in your current directory.
 
 ```
-gcloud iam service-accounts keys create key.json \
+gcloud iam service-accounts keys create bin/key.json \
   --iam-account "${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
   --project ${PROJECT_ID}
 ```
@@ -42,7 +42,7 @@ gcloud iam service-accounts keys create key.json \
 5. Setup the syncer credentials
 
 ```bash
-./setup-syncer-creds.sh kind key.json
+./setup-syncer-creds.sh kind bin/key.json
 ```
 
 ## GKE with Workload Identity
