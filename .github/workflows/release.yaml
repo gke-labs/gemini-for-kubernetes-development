@@ -21,6 +21,7 @@ jobs:
           - review-sandbox
           - dev-sandbox
           - review-ui
+          - syncer
     permissions:
       contents: write
       packages: write

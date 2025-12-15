@@ -1,0 +1,19 @@
+apiVersion: syncer.gemini.google.com/v1alpha1
+kind: Syncer
+metadata:
+  name: repo-agent-sandboxes
+  namespace: repo-agent-system
+spec:
+  # kubectl config view --minify --output 'jsonpath={.clusters[0].name}'
+  installationName: kind-repo-agent
+  gcsBucketName: repo-agent-storage
+  rules:
+    - group: custom.agents.x-k8s.io
+      version: v1alpha1
+      kind: IssueSandbox
+      # If left empty, it watches all namespaces.
+      # namespaces: []
+    - group: custom.agents.x-k8s.io
+      version: v1alpha1
+      kind: ReviewSandbox
+      # namespaces: []

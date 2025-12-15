@@ -1,0 +1,40 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: syncer-role
+rules:
+- apiGroups:
+  - '*'
+  resources:
+  - '*'
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - syncer.gemini.google.com
+  resources:
+  - syncers
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - syncer.gemini.google.com
+  resources:
+  - syncers/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - syncer.gemini.google.com
+  resources:
+  - syncers/status
+  verbs:
+  - get
+  - patch
+  - update
