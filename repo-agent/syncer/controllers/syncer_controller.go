@@ -49,6 +49,7 @@ type SyncerReconciler struct {
 //+kubebuilder:rbac:groups=syncer.gemini.google.com,resources=syncers,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=syncer.gemini.google.com,resources=syncers/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=syncer.gemini.google.com,resources=syncers/finalizers,verbs=update
+//+kubebuilder:rbac:groups=*,resources=*,verbs=get;list;watch
 
 func (r *SyncerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	_ = log.FromContext(ctx)
