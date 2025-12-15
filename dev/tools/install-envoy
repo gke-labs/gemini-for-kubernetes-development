@@ -44,6 +44,13 @@ def main():
         eg_version = get_latest_eg_version()
         print(f"Installing Envoy GW version: {eg_version}")
 
+        # if Envoy GW is already installed, skip installation
+        helm_list_command = ["helm", "-n", "envoy-gateway-system", "list"]
+        result = subprocess.run(helm_list_command, capture_output=True, text=True)
+        if "eg" in result.stdout:
+            print("Envoy GW is already installed. Skipping installation.")
+            return
+
         helm_install_command = [
             "helm", "install", "eg", "oci://docker.io/envoyproxy/gateway-helm", 
             f"--version={eg_version}",

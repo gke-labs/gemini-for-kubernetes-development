@@ -5,7 +5,7 @@ metadata:
   namespace: repo-agent-system
 spec:
   # kubectl config view --minify --output 'jsonpath={.clusters[0].name}'
-  installationName: kind-repo-agent
+  installationName: will-be-replaced-during-deploy
   gcsBucketName: repo-agent-storage
   rules:
     - group: custom.agents.x-k8s.io
