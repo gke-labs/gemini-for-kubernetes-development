@@ -4,7 +4,7 @@ metadata:
   name: repo-agent-gateway
   namespace: repo-agent-system
 spec:
-  gatewayClassName: gke-l7-regional-external-managed
+  gatewayClassName: will-be-replaced-during-deploy
   listeners:
   - name: https
     protocol: HTTPS

@@ -51,6 +51,16 @@ def find_and_replace_images(doc, service_name, image_prefix, image_tag):
     walk_object(doc, fn)
 
 
+def find_and_replace(doc, path, value):
+    """Recursively finds and replaces values in a Kubernetes manifest."""
+    def fn(field_path, v):
+        if field_path == path:
+            print(f"{path}: replaced value with {value}")
+            return value
+        return v
+    walk_object(doc, fn)
+
+
 def walk_object(obj, fn, field_path=""):
     """Recursively walks an object, and calls fn with the field_path to allow for value replacement."""
     if isinstance(obj, dict):
@@ -105,6 +115,20 @@ def main(args):
                 if not doc: # Skip empty documents
                     continue
                 find_and_replace_images(doc, service_name, image_prefix, image_tag)
+                if args.replace_params:
+                    for param in args.replace_params:
+                        if "=" not in param:
+                            print(f"invalid replace param {param}. must be in the form .spec.<path>=value")
+                            continue
+                        parts = param.split("=", 1)
+                        path = parts[0]
+                        val_str = parts[1]
+                        try:
+                            # Attempt to parse as YAML (handles int, bool, etc.)
+                            val = yaml.safe_load(val_str)
+                        except yaml.YAMLError:
+                            val = val_str
+                        find_and_replace(doc, path, val)
 
             # Dump the modified documents back to a string
             string_stream = io.StringIO()
@@ -149,6 +173,11 @@ if __name__ == "__main__":
                         help="output to file instead of applying to cluster",
                         type=str,
                         default=None)
+    parser.add_argument("--replace",
+                        dest="replace_params",
+                        help="replace a value in the manifest, e.g. .spec.replicas=3",
+                        action="append",
+                        default=[])
     args = parser.parse_args()
 
     if args.working_dir:

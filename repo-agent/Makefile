@@ -3,7 +3,9 @@ KIND_CLUSTER ?= repo-agent
 REGISTRY ?= kind.local/
 NAMESPACE ?= default
 LOCAL_PORT ?= 13380
-INSTALL_ENVOY ?= yes
+CLUSTER_NAME != kubectl config view --minify --output 'jsonpath={.clusters[0].name}'
+INSTALL_ENVOY = $(shell if [[ ${CLUSTER_NAME} == kind* ]]; then echo "yes"; else echo "no"; fi)
+GW_CLASS = $(shell if [[ ${CLUSTER_NAME} == kind* ]]; then echo "repo-agent-gatewayclass"; else echo "gke-l7-regional-external-managed"; fi)
 
 # if REGISTRY is kind.local/, then we are deploying to kind
 ifeq ($(REGISTRY), kind.local/)
@@ -85,20 +87,21 @@ lint-go:
 .PHONY: install-dep-packages
 install-dep-packages:
 	../dev/tools/install-kro
-ifeq ($(strip $(INSTALL_ENVOY)),yes)
-	@echo "INSTALL_ENVOY is true."
-	../dev/tools/install-envoy
-else
-	@echo "INSTALL_ENVOY is not true. Skipping."
-endif
+	echo "INSTALL_ENVOY is set to $(INSTALL_ENVOY)"
+	@if [ "$(INSTALL_ENVOY)" == "yes" ]; then \
+	  	echo "Installing Envoy..."; \
+		../dev/tools/install-envoy; \
+	fi;
 	../dev/tools/install-agent-sandbox
 
 .PHONY: uninstall-dep-packages
 uninstall-dep-packages:
 	../dev/tools/install-kro --uninstall || true
-ifeq ($(strip $(INSTALL_ENVOY)),yes)
-	../dev/tools/install-envoy --uninstall || true
-endif
+	echo "INSTALL_ENVOY is set to $(INSTALL_ENVOY)"
+	@if [ "$(INSTALL_ENVOY)" == "yes" ]; then \
+	  	echo "UnInstalling Envoy..."; \
+		../dev/tools/install-envoy --uninstall || true; \
+	fi;
 	../dev/tools/install-agent-sandbox --uninstall || true
 
 .PHONY: create-kind
@@ -129,7 +132,7 @@ bin/key.json:
 .PHONY: create-secrets
 create-secrets: bin/tls.crt bin/key.json
 	kubectl create namespace repo-agent-system || true
-	@kubectl create secret -n repo-agent-system tls repo-agent-tls --cert=bin/tls.crt --key=bin/tls.key
+	@kubectl create secret -n repo-agent-system tls repo-agent-tls --cert=bin/tls.crt --key=bin/tls.key --dry-run=client -o yaml | kubectl apply -f -
 	@kubectl create secret -n repo-agent-system generic gcs-credentials --from-file=key.json=./bin/key.json --dry-run=client -o yaml | kubectl apply -f -
 	@kubectl create secret -n repo-agent-system generic dummy-provider-token --from-literal=dummy=testtoken --dry-run=client -o yaml | kubectl apply -f -
 	@kubectl create secret -n repo-agent-system generic gemini-vscode-tokens --from-literal=gemini=${GEMINI_API_KEY} --dry-run=client -o yaml | kubectl apply -f -
@@ -185,19 +188,21 @@ port-forward:
 	done
 	# kubectl port-forward -n repo-agent-system --address 0.0.0.0 service/devc-agent-sandbox-pr-102-lb  13338:13338
 
-# non-ephemeral (kind) cluster install targets
+# non-ephemeral (GKE) cluster install targets
 .PHONY: install-repo-agent-latest
-install-repo-agent-latest:
-	INSTALL_ENVOY=no ${MAKE} install-dep-packages
-	${MAKE} create-secrets
-	../dev/tools/deploy-to-kube --image-prefix=ghcr.io/gke-labs/gemini-for-kubernetes-development/ --image-tag=latest --working-dir . --output-file=bin/repo-agent-manifest.yaml
+install-repo-agent-latest: install-dep-packages create-secrets
+	../dev/tools/deploy-to-kube --image-prefix=ghcr.io/gke-labs/gemini-for-kubernetes-development/ \
+	--image-tag=latest \
+	--replace .spec.installationName=${CLUSTER_NAME} \
+	--replace .spec.gatewayClassName=${GW_CLASS} \
+	--working-dir . --output-file=bin/repo-agent-manifest.yaml
 	kubectl apply -f bin/repo-agent-manifest.yaml
 
 .PHONY: uninstall-repo-agent-latest
 uninstall-repo-agent-latest:
 	../dev/tools/deploy-to-kube --image-prefix=ghcr.io/gke-labs/gemini-for-kubernetes-development/ --image-tag=latest --working-dir . --output-file=bin/repo-agent-manifest.yaml
 	kubectl delete -f bin/repo-agent-manifest.yaml || true
-	INSTALL_ENVOY=no ${MAKE} uninstall-dep-packages
+	${MAKE} uninstall-dep-packages
 	kubectl delete crd issuesandboxes.custom.agents.x-k8s.io --wait=false || true
 	kubectl patch crd issuesandboxes.custom.agents.x-k8s.io --type=json -p='[{"op":"remove", "path":"/metadata/finalizers", "value":["customresourcecleanup.apiextensions.k8s.io"]}]' || true
 	kubectl delete crd reviewsandboxes.custom.agents.x-k8s.io --wait=false || true
@@ -208,6 +213,15 @@ uninstall-repo-agent-latest:
 .PHONY: reinstall-repo-agent-latest
 reinstall-repo-agent-latest: uninstall-repo-agent-latest install-repo-agent-latest
 # Dev targets
+
+.PHONY: update-repo-agent-latest
+update-repo-agent-latest: install-repo-agent-latest
+	kubectl rollout restart statefulset -n repo-agent-system
+	kubectl rollout status  statefulset  -n repo-agent-system
+	kubectl rollout restart deployment -n repo-agent-system
+	kubectl rollout status  deployment  -n repo-agent-system
+	@IP_ADDR=`kubectl get gateway -n repo-agent-system repo-agent-gateway -o json | jq -r ".status.addresses[0].value"`; \
+	echo; echo; echo -e "\e[1;34m REPO AGENT: https://$$IP_ADDR \e[0m"; echo; echo;
 
 .PHONY: reload-ui
 reload-ui:
