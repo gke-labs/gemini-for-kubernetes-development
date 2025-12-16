@@ -273,6 +273,138 @@ func (s *RedisStore) DeleteDevSandbox(ctx context.Context, namespace, repo, name
 	return s.client.Del(ctx, key).Err()
 }
 
+func (s *RedisStore) ListPRs(ctx context.Context, namespace, repo string) ([]models.PR, error) {
+	prs := []models.PR{}
+	repoPRKeyPrefix := fmt.Sprintf("pr:ns:%s:repo:%s:pr:", namespace, repo)
+	iter := s.client.Scan(ctx, 0, repoPRKeyPrefix+"*", 0).Iterator()
+	for iter.Next(ctx) {
+		key := iter.Val()
+		prID := key[len(repoPRKeyPrefix):]
+		prData, err := s.client.HGetAll(ctx, key).Result()
+		if err != nil {
+			log.Printf("Failed to get PR %s from Redis for repo %s: %v", prID, repo, err)
+			continue
+		}
+		pr := models.PR{
+			ID:    prID,
+			Title: prData["title"],
+		}
+
+		if val, ok := prData["htmlurl"]; ok {
+			pr.HTMLURL = val
+		}
+		if val, ok := prData["diffurl"]; ok {
+			pr.DiffURL = val
+		}
+		if val, ok := prData["draft"]; ok {
+			pr.Draft = val
+		}
+		if val, ok := prData["sandbox"]; ok {
+			pr.Sandbox = val
+		}
+		if val, ok := prData["sandboxReplica"]; ok {
+			pr.SandboxReplica = val
+		}
+		if val, ok := prData["review"]; ok {
+			pr.Review = val
+		}
+		if val, ok := prData["agentDraft"]; ok {
+			pr.AgentDraft = val
+		}
+		prs = append(prs, pr)
+	}
+	if err := iter.Err(); err != nil {
+		return nil, err
+	}
+	return prs, nil
+}
+
+func (s *RedisStore) SavePR(ctx context.Context, namespace, repo string, pr models.PR) error {
+	prKey := fmt.Sprintf("pr:ns:%s:repo:%s:pr:%s", namespace, repo, pr.ID)
+	// Ensure the URL is in Redis
+	return s.client.HSet(ctx, prKey,
+		"title", pr.Title,
+		"sandbox", pr.Sandbox,
+		"htmlurl", pr.HTMLURL,
+		"diffurl", pr.DiffURL,
+		"sandboxReplica", pr.SandboxReplica,
+		"draft", pr.Draft,
+		"agentDraft", pr.AgentDraft,
+	).Err()
+}
+
+func (s *RedisStore) GetPR(ctx context.Context, namespace, repo, prID string) (*models.PR, error) {
+	prKey := fmt.Sprintf("pr:ns:%s:repo:%s:pr:%s", namespace, repo, prID)
+	prData, err := s.client.HGetAll(ctx, prKey).Result()
+	if err != nil {
+		return nil, err
+	}
+	if len(prData) == 0 {
+		return nil, fmt.Errorf("PR not found")
+	}
+
+	pr := &models.PR{
+		ID:    prID,
+		Title: prData["title"],
+	}
+
+	if val, ok := prData["htmlurl"]; ok {
+		pr.HTMLURL = val
+	}
+	if val, ok := prData["diffurl"]; ok {
+		pr.DiffURL = val
+	}
+	if val, ok := prData["draft"]; ok {
+		pr.Draft = val
+	}
+	if val, ok := prData["sandbox"]; ok {
+		pr.Sandbox = val
+	}
+	if val, ok := prData["sandboxReplica"]; ok {
+		pr.SandboxReplica = val
+	}
+	if val, ok := prData["review"]; ok {
+		pr.Review = val
+	}
+	if val, ok := prData["agentDraft"]; ok {
+		pr.AgentDraft = val
+	}
+
+	return pr, nil
+}
+
+func (s *RedisStore) UpdatePRDraft(ctx context.Context, namespace, repo, prID, draft string) error {
+	prKey := fmt.Sprintf("pr:ns:%s:repo:%s:pr:%s", namespace, repo, prID)
+	return s.client.HSet(ctx, prKey, "draft", draft).Err()
+}
+
+func (s *RedisStore) UpdatePRReview(ctx context.Context, namespace, repo, prID, review string) error {
+	prKey := fmt.Sprintf("pr:ns:%s:repo:%s:pr:%s", namespace, repo, prID)
+	if err := s.client.HSet(ctx, prKey, "review", review).Err(); err != nil {
+		return err
+	}
+	return s.client.HSet(ctx, prKey, "draft", "").Err()
+}
+
+func (s *RedisStore) SavePRFeedback(ctx context.Context, owner, repo, prID, draft, agentDraft, prompt, configdir string) error {
+	hfKey := fmt.Sprintf("hf:review:githubuser:%s:repo:%s:pr:%s", owner, repo, prID)
+	return s.client.HSet(ctx, hfKey,
+		"draft", draft,
+		"agentDraft", agentDraft,
+		"prompt", prompt,
+		"configdir", configdir,
+	).Err()
+}
+
+func (s *RedisStore) DeletePR(ctx context.Context, namespace, repo, prID string) error {
+	prKey := fmt.Sprintf("pr:ns:%s:repo:%s:pr:%s", namespace, repo, prID)
+	// Clean up Redis keys
+	if err := s.client.HDel(ctx, prKey, "review", "draft", "sandbox", "htmlurl", "title").Err(); err != nil {
+		return err
+	}
+	return s.client.Del(ctx, prKey).Err()
+}
+
 // PopulateMockData populates Redis with mock data
 func PopulateMockData(ctx context.Context, rdb *redis.Client) {
 	// Create a temporary store to use the methods

@@ -22,4 +22,12 @@ type Store interface {
 	ListDevSandboxes(ctx context.Context, namespace, repo string) ([]models.DevSandbox, error)
 	SaveDevSandbox(ctx context.Context, namespace, repo string, sandbox models.DevSandbox) error
 	DeleteDevSandbox(ctx context.Context, namespace, repo, name string) error
+
+	ListPRs(ctx context.Context, namespace, repo string) ([]models.PR, error)
+	SavePR(ctx context.Context, namespace, repo string, pr models.PR) error
+	GetPR(ctx context.Context, namespace, repo, prID string) (*models.PR, error)
+	UpdatePRDraft(ctx context.Context, namespace, repo, prID, draft string) error
+	UpdatePRReview(ctx context.Context, namespace, repo, prID, review string) error
+	SavePRFeedback(ctx context.Context, owner, repo, prID, draft, agentDraft, prompt, configdir string) error
+	DeletePR(ctx context.Context, namespace, repo, prID string) error
 }
