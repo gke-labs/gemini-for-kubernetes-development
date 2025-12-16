@@ -33,6 +33,7 @@ type Issue struct {
 	HTMLURL        string `json:"htmlURL,omitempty"`
 	BranchURL      string `json:"branchURL,omitempty"`
 	PushBranch     bool   `json:"pushBranch"`
+	AgentDraft     string `json:"agentDraft,omitempty"`
 }
 
 // Repo represents a repository with its configuration
