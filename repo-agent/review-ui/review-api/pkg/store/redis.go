@@ -16,8 +16,46 @@ func NewClient(addr string) *redis.Client {
 	})
 }
 
+// RedisStore implements the Store interface using Redis
+type RedisStore struct {
+	client *redis.Client
+}
+
+// NewRedisStore creates a new RedisStore
+func NewRedisStore(client *redis.Client) *RedisStore {
+	return &RedisStore{client: client}
+}
+
+func (s *RedisStore) SaveRepo(ctx context.Context, namespace, name, url string) error {
+	key := fmt.Sprintf("repo:ns:%s:name:%s", namespace, name)
+	return s.client.HSet(ctx, key, "url", url, "namespace", namespace).Err()
+}
+
+func (s *RedisStore) DeleteRepo(ctx context.Context, namespace, name string) error {
+	key := fmt.Sprintf("repo:ns:%s:name:%s", namespace, name)
+	return s.client.Del(ctx, key).Err()
+}
+
+func (s *RedisStore) ListRepos(ctx context.Context, namespace string) ([]string, error) {
+	prefix := fmt.Sprintf("repo:ns:%s:name:", namespace)
+	var repoNames []string
+	iter := s.client.Scan(ctx, 0, prefix+"*", 0).Iterator()
+	for iter.Next(ctx) {
+		key := iter.Val()
+		repoName := key[len(prefix):]
+		repoNames = append(repoNames, repoName)
+	}
+	if err := iter.Err(); err != nil {
+		return nil, err
+	}
+	return repoNames, nil
+}
+
 // PopulateMockData populates Redis with mock data
 func PopulateMockData(ctx context.Context, rdb *redis.Client) {
+	// Create a temporary store to use the methods
+	s := NewRedisStore(rdb)
+
 	mockRepos := []struct {
 		Name string
 		URL  string
@@ -39,7 +77,7 @@ func PopulateMockData(ctx context.Context, rdb *redis.Client) {
 
 	for _, repo := range mockRepos {
 		// Store repo URL (Mock data in default namespace)
-		if err := rdb.HSet(ctx, fmt.Sprintf("repo:ns:default:name:%s", repo.Name), "url", repo.URL, "namespace", "default").Err(); err != nil {
+		if err := s.SaveRepo(ctx, "default", repo.Name, repo.URL); err != nil {
 			log.Printf("Failed to set repo URL in Redis: %v", err)
 		}
 
