@@ -213,6 +213,66 @@ func (s *RedisStore) DeleteIssue(ctx context.Context, namespace, repo, handler, 
 	return s.client.Del(ctx, issueKey).Err()
 }
 
+func (s *RedisStore) ListDevSandboxes(ctx context.Context, namespace, repo string) ([]models.DevSandbox, error) {
+	sandboxes := []models.DevSandbox{}
+	// prefix: dev:ns:NAMESPACE:repo:REPO:dev:*
+	prefix := fmt.Sprintf("dev:ns:%s:repo:%s:dev:*", namespace, repo)
+	iter := s.client.Scan(ctx, 0, prefix, 0).Iterator()
+	for iter.Next(ctx) {
+		key := iter.Val()
+		parts := strings.Split(key, ":")
+		// dev:ns:NAMESPACE:repo:REPO:dev:NAME
+		// 0   1  2         3    4    5   6
+		if len(parts) != 7 {
+			continue
+		}
+		name := parts[6]
+
+		data, err := s.client.HGetAll(ctx, key).Result()
+		if err != nil {
+			log.Printf("Failed to get DevSandbox %s from Redis for repo %s: %v", name, repo, err)
+			continue
+		}
+
+		sandbox := models.DevSandbox{
+			Name: name,
+		}
+		if val, ok := data["sandbox"]; ok {
+			sandbox.Sandbox = val
+		}
+		if val, ok := data["sandboxReplica"]; ok {
+			sandbox.SandboxReplica = val
+		}
+		if val, ok := data["branchURL"]; ok {
+			sandbox.BranchURL = val
+		}
+		if val, ok := data["branch"]; ok {
+			sandbox.Branch = val
+		}
+
+		sandboxes = append(sandboxes, sandbox)
+	}
+	if err := iter.Err(); err != nil {
+		return nil, err
+	}
+	return sandboxes, nil
+}
+
+func (s *RedisStore) SaveDevSandbox(ctx context.Context, namespace, repo string, sandbox models.DevSandbox) error {
+	key := fmt.Sprintf("dev:ns:%s:repo:%s:dev:%s", namespace, repo, sandbox.Name)
+	return s.client.HSet(ctx, key,
+		"sandbox", sandbox.Sandbox,
+		"branch", sandbox.Branch,
+		"branchURL", sandbox.BranchURL,
+		"sandboxReplica", sandbox.SandboxReplica,
+	).Err()
+}
+
+func (s *RedisStore) DeleteDevSandbox(ctx context.Context, namespace, repo, name string) error {
+	key := fmt.Sprintf("dev:ns:%s:repo:%s:dev:%s", namespace, repo, name)
+	return s.client.Del(ctx, key).Err()
+}
+
 // PopulateMockData populates Redis with mock data
 func PopulateMockData(ctx context.Context, rdb *redis.Client) {
 	// Create a temporary store to use the methods

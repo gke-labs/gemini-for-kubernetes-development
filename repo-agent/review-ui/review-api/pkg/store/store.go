@@ -18,4 +18,8 @@ type Store interface {
 	SaveIssueFeedback(ctx context.Context, owner, repo, handler, issueID, draft, agentDraft, prompt, configdir string) error
 	UpdateIssueComment(ctx context.Context, namespace, repo, handler, issueID, comment string) error
 	DeleteIssue(ctx context.Context, namespace, repo, handler, issueID string) error
+
+	ListDevSandboxes(ctx context.Context, namespace, repo string) ([]models.DevSandbox, error)
+	SaveDevSandbox(ctx context.Context, namespace, repo string, sandbox models.DevSandbox) error
+	DeleteDevSandbox(ctx context.Context, namespace, repo, name string) error
 }
