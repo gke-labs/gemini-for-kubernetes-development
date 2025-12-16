@@ -120,7 +120,9 @@ install-repo-agent:
 	cp review-sandbox/review-sandbox-rgd.yaml k8s/
 	cp issue-sandbox/issue-sandbox-rgd.yaml k8s/
 	cp dev-sandbox/dev-sandbox-rgd.yaml k8s/
-	../dev/tools/deploy-to-kube --image-prefix=$(REGISTRY) --working-dir .
+	../dev/tools/deploy-to-kube --image-prefix=$(REGISTRY) --working-dir . \
+	--replace .spec.installationName=${CLUSTER_NAME} \
+	--replace .spec.gatewayClassName=${GW_CLASS}
 
 bin/tls.crt:
 	openssl req -x509 -nodes -days 365 -newkey rsa:2048  -keyout bin/tls.key -out bin/tls.crt  -subj "/CN=repo-agent"
