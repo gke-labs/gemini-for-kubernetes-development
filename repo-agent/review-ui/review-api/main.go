@@ -81,8 +81,11 @@ func main() {
 	// Authenticator
 	authenticator := auth.NewAuthenticator(k8sManager, allowedUsers)
 
+	// Store
+	redisStore := store.NewRedisStore(rdb)
+
 	// API Server
-	server := api.NewServer(k8sManager, authenticator)
+	server := api.NewServer(k8sManager, authenticator, redisStore)
 
 	// Gin router
 	router := gin.Default()

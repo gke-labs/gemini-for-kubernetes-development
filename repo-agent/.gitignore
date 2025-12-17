@@ -1,6 +1,7 @@
-keys.sh
-keys-local.sh
 keys-e2e.sh
+keys-local.sh
+keys-preview.sh
+keys-staging.sh
 bin/
 review-ui/ui/build/
 review-ui/ui/node_modules/

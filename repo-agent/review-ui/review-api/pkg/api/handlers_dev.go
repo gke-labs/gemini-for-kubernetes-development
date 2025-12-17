@@ -20,46 +20,11 @@ func (s *Server) getDevSandboxes(c *gin.Context) {
 	repo := c.Param("repo")
 	s.fetchAndPopulateDevSandboxes(c.Request.Context(), namespace, repo)
 
-	sandboxes := []models.DevSandbox{}
-	// prefix: dev:ns:NAMESPACE:repo:REPO:dev:NAME
-	prefix := fmt.Sprintf("dev:ns:%s:repo:%s:dev:*", namespace, repo)
-	iter := s.Redis.Scan(c.Request.Context(), 0, prefix, 0).Iterator()
-	for iter.Next(c.Request.Context()) {
-		key := iter.Val()
-		parts := strings.Split(key, ":")
-		// dev:ns:NAMESPACE:repo:REPO:dev:NAME
-		// 0   1  2         3    4    5   6
-		if len(parts) != 7 {
-			continue
-		}
-		name := parts[6]
-
-		data, err := s.Redis.HGetAll(c.Request.Context(), key).Result()
-		if err != nil {
-			log.Printf("Failed to get DevSandbox %s from Redis for repo %s: %v", name, repo, err)
-			continue
-		}
-
-		sandbox := models.DevSandbox{
-			Name: name,
-		}
-		if val, ok := data["sandbox"]; ok {
-			sandbox.Sandbox = val
-		}
-		if val, ok := data["sandboxReplica"]; ok {
-			sandbox.SandboxReplica = val
-		}
-		if val, ok := data["branchURL"]; ok {
-			sandbox.BranchURL = val
-		}
-		if val, ok := data["branch"]; ok {
-			sandbox.Branch = val
-		}
-
-		sandboxes = append(sandboxes, sandbox)
-	}
-	if err := iter.Err(); err != nil {
-		log.Printf("Error during Redis SCAN for dev sandboxes: %v", err)
+	sandboxes, err := s.Store.ListDevSandboxes(c.Request.Context(), namespace, repo)
+	if err != nil {
+		log.Printf("Error listing dev sandboxes: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list dev sandboxes"})
+		return
 	}
 
 	c.JSON(http.StatusOK, sandboxes)
@@ -111,13 +76,14 @@ func (s *Server) fetchAndPopulateDevSandboxes(ctx context.Context, namespace, re
 			// The UI card key is `sandbox.name`. If we use branch name, it must be unique per repo.
 			// Let's use the DevSandbox name as the key in Redis to match deletion logic.
 
-			key := fmt.Sprintf("dev:ns:%s:repo:%s:dev:%s", namespace, repo, item.GetName())
-			if err := s.Redis.HSet(ctx, key,
-				"sandbox", item.GetName(),
-				"branch", branch,
-				"branchURL", branchURL,
-				"sandboxReplica", fmt.Sprintf("%d", replicas),
-			).Err(); err != nil {
+			sandbox := models.DevSandbox{
+				Name:           item.GetName(),
+				Sandbox:        item.GetName(),
+				Branch:         branch,
+				BranchURL:      branchURL,
+				SandboxReplica: fmt.Sprintf("%d", replicas),
+			}
+			if err := s.Store.SaveDevSandbox(ctx, namespace, repo, sandbox); err != nil {
 				log.Printf("Failed to cache DevSandbox %s: %v", item.GetName(), err)
 			}
 		}
@@ -135,8 +101,7 @@ func (s *Server) deleteDevSandbox(c *gin.Context) {
 		return
 	}
 
-	key := fmt.Sprintf("dev:ns:%s:repo:%s:dev:%s", namespace, repo, name)
-	if err := s.Redis.Del(c.Request.Context(), key).Err(); err != nil {
+	if err := s.Store.DeleteDevSandbox(c.Request.Context(), namespace, repo, name); err != nil {
 		log.Printf("Failed to DEL DevSandbox data from Redis: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to DEL DevSandbox data from Redis"})
 		return

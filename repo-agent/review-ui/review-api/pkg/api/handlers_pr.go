@@ -10,7 +10,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/review-ui/review-api/pkg/auth"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/review-ui/review-api/pkg/models"
-	redis "github.com/go-redis/redis/v8"
 	"github.com/google/go-github/v39/github"
 	yaml "go.yaml.in/yaml/v3"
 	"golang.org/x/oauth2"
@@ -23,45 +22,12 @@ func (s *Server) getPRs(c *gin.Context) {
 	namespace := c.MustGet(auth.UserKey).(string)
 	repo := c.Param("repo")
 	s.fetchAndPopulatePRs(c.Request.Context(), namespace, repo)
-	// SCAN Redis for PRs for repo
-	prs := []models.PR{}
-	repoPRKeyPrefix := fmt.Sprintf("pr:ns:%s:repo:%s:pr:", namespace, repo)
-	iter := s.Redis.Scan(c.Request.Context(), 0, repoPRKeyPrefix+"*", 0).Iterator()
-	for iter.Next(c.Request.Context()) {
-		key := iter.Val()
-		prID := key[len(repoPRKeyPrefix):]
-		prData, err := s.Redis.HGetAll(c.Request.Context(), key).Result()
-		if err != nil {
-			log.Printf("Failed to get PR %s from Redis for repo %s: %v", prID, repo, err)
-			continue
-		}
-		pr := models.PR{
-			ID:    prID,
-			Title: prData["title"],
-		}
 
-		if _, ok := prData["htmlurl"]; ok {
-			pr.HTMLURL = prData["htmlurl"]
-		}
-		if _, ok := prData["diffurl"]; ok {
-			pr.DiffURL = prData["diffurl"]
-		}
-		if _, ok := prData["draft"]; ok {
-			pr.Draft = prData["draft"]
-		}
-		if _, ok := prData["sandbox"]; ok {
-			pr.Sandbox = prData["sandbox"]
-		}
-		if _, ok := prData["sandboxReplica"]; ok {
-			pr.SandboxReplica = prData["sandboxReplica"]
-		}
-		if _, ok := prData["review"]; ok {
-			pr.Review = prData["review"]
-		}
-		prs = append(prs, pr)
-	}
-	if err := iter.Err(); err != nil {
-		log.Printf("Error during Redis SCAN: %v", err)
+	prs, err := s.Store.ListPRs(c.Request.Context(), namespace, repo)
+	if err != nil {
+		log.Printf("Error listing PRs: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list PRs"})
+		return
 	}
 
 	c.JSON(http.StatusOK, prs)
@@ -130,19 +96,11 @@ func (s *Server) fetchAndPopulatePRs(ctx context.Context, namespace, repo string
 			HTMLURL:        htmlurl,
 			DiffURL:        diffurl,
 			SandboxReplica: fmt.Sprintf("%d", replicas),
+			Draft:          draft,
+			AgentDraft:     draft,
 		}
 
-		prKey := fmt.Sprintf("pr:ns:%s:repo:%s:pr:%s", namespace, repo, prID)
-		// Ensure the URL is in Redis
-		if err := s.Redis.HSet(ctx, prKey,
-			"title", pr.Title,
-			"sandbox", pr.Sandbox,
-			"htmlurl", pr.HTMLURL,
-			"diffurl", pr.DiffURL,
-			"sandboxReplica", pr.SandboxReplica,
-			"draft", draft,
-			"agentDraft", draft,
-		).Err(); err != nil {
+		if err := s.Store.SavePR(ctx, namespace, repo, pr); err != nil {
 			log.Printf("Failed to cache PR %s for repo %s: %v", pr.ID, repo, err)
 		}
 	}
@@ -160,8 +118,7 @@ func (s *Server) saveDraft(c *gin.Context) {
 		return
 	}
 
-	prKey := fmt.Sprintf("pr:ns:%s:repo:%s:pr:%s", namespace, repo, prID)
-	err := s.Redis.HSet(c.Request.Context(), prKey, "draft", payload.Draft).Err()
+	err := s.Store.UpdatePRDraft(c.Request.Context(), namespace, repo, prID, payload.Draft)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save draft"})
 		return
@@ -186,17 +143,16 @@ func (s *Server) submitReview(c *gin.Context) {
 	log.Printf("Submitting review for PR %s in repo %s with review: %s", prID, repo, payload.Review)
 
 	// Get draft and agentDraft from Redis
-	prKey := fmt.Sprintf("pr:ns:%s:repo:%s:pr:%s", namespace, repo, prID)
-	prData, err := s.Redis.HGetAll(ctx, prKey).Result()
+	pr, err := s.Store.GetPR(ctx, namespace, repo, prID)
 	if err != nil {
-		log.Printf("Failed to get PR %s from Redis for repo %s: %v", prID, repo, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get PR data from Redis"})
+		log.Printf("Failed to get PR %s from Store for repo %s: %v", prID, repo, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get PR data from Store"})
 		return
 	}
 
 	draft := payload.Review
-	agentDraft := prData["agentDraft"]
-	sandboxName := prData["sandbox"]
+	agentDraft := pr.AgentDraft
+	sandboxName := pr.Sandbox
 
 	// Get RepoWatch to get repoURL and secret ref
 	repoWatch, err := s.K8sManager.GetRepoWatch(ctx, namespace, repo)
@@ -213,13 +169,7 @@ func (s *Server) submitReview(c *gin.Context) {
 		repoURL, _, _ := unstructured.NestedString(repoWatch.Object, "spec", "repoURL")
 		owner, _, _ := parseRepoURL(repoURL)
 
-		hfKey := fmt.Sprintf("hf:review:githubuser:%s:repo:%s:pr:%s", owner, repo, prID)
-		if err := s.Redis.HSet(ctx, hfKey,
-			"draft", draft,
-			"agentDraft", agentDraft,
-			"prompt", prompt,
-			"configdir", configdir,
-		).Err(); err != nil {
+		if err := s.Store.SavePRFeedback(ctx, owner, repo, prID, draft, agentDraft, prompt, configdir); err != nil {
 			log.Printf("Failed to store feedback for PR %s in repo %s: %v", prID, repo, err)
 			// Continue without failing the review submission
 		}
@@ -293,16 +243,9 @@ func (s *Server) submitReview(c *gin.Context) {
 	}
 	log.Printf("review created: %v", review)
 	// Set review in Redis
-	err = s.Redis.HSet(c.Request.Context(), prKey, "review", payload.Review).Err()
+	err = s.Store.UpdatePRReview(c.Request.Context(), namespace, repo, prID, payload.Review)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save review", "details": err.Error()})
-		return
-	}
-
-	// Delete draft from Redis
-	err = s.Redis.HSet(c.Request.Context(), prKey, "draft", "").Err()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to clear draft", "details": err.Error()})
 		return
 	}
 
@@ -328,13 +271,7 @@ func (s *Server) deletePR(c *gin.Context) {
 	}
 
 	// Clean up Redis keys
-	prKey := fmt.Sprintf("pr:ns:%s:repo:%s:pr:%s", namespace, repo, prID)
-	if err := s.Redis.HDel(c.Request.Context(), prKey, "review", "draft", "sandbox", "htmlurl", "title").Err(); err != nil {
-		log.Printf("Failed to HDEL PR data from Redis: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to HDEL PR data from Redis"})
-		return
-	}
-	if err := s.Redis.Del(c.Request.Context(), prKey).Err(); err != nil {
+	if err := s.Store.DeletePR(c.Request.Context(), namespace, repo, prID); err != nil {
 		log.Printf("Failed to DEL PR data from Redis: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to DEL PR data from Redis"})
 		return
@@ -371,15 +308,13 @@ func (s *Server) scaleDownPR(c *gin.Context) {
 
 //nolint:unused
 func (s *Server) deleteSandbox(ctx context.Context, namespace, repo, prID string) error {
-	prKey := fmt.Sprintf("pr:ns:%s:repo:%s:pr:%s", namespace, repo, prID)
-	sandboxName, err := s.Redis.HGet(ctx, prKey, "sandbox").Result()
-	if err == redis.Nil {
-		// If sandbox is not in Redis, we can assume it's already deleted or never existed.
-		log.Printf("Sandbox for repo %s, PR %s not found in Redis. Assuming it's already deleted.", repo, prID)
+	pr, err := s.Store.GetPR(ctx, namespace, repo, prID)
+	if err != nil {
+		// If sandbox is not in Store, we can assume it's already deleted or never existed.
+		log.Printf("Sandbox for repo %s, PR %s not found in Store. Assuming it's already deleted.", repo, prID)
 		return nil
-	} else if err != nil {
-		return fmt.Errorf("failed to get sandbox name from Redis: %w", err)
 	}
+	sandboxName := pr.Sandbox
 
 	gvr := schema.GroupVersionResource{
 		Group:    "custom.agents.x-k8s.io",

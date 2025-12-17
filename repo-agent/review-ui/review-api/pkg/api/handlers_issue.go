@@ -24,53 +24,11 @@ func (s *Server) getIssues(c *gin.Context) {
 	handler := c.Param("handler")
 	s.fetchAndPopulateIssues(c.Request.Context(), namespace, repo, handler)
 
-	issues := []models.Issue{}
-	issueKeyPrefix := fmt.Sprintf("issue:ns:%s:repo:%s:handler:%s:issue:*", namespace, repo, handler)
-	iter := s.Redis.Scan(c.Request.Context(), 0, issueKeyPrefix, 0).Iterator()
-	for iter.Next(c.Request.Context()) {
-		key := iter.Val()
-		// key is issue:repo:REPO:handler:HANDLER:issue:ISSUEID
-		parts := strings.Split(key, ":")
-		if len(parts) != 9 {
-			continue
-		}
-		issueID := parts[8]
-
-		issueData, err := s.Redis.HGetAll(c.Request.Context(), key).Result()
-		if err != nil {
-			log.Printf("Failed to get Issue %s from Redis for repo %s handler %s: %v", issueID, repo, handler, err)
-			continue
-		}
-		pushBranch, _ := strconv.ParseBool(issueData["pushBranch"])
-		issue := models.Issue{
-			ID:         issueID,
-			Title:      issueData["title"],
-			PushBranch: pushBranch,
-		}
-
-		if val, ok := issueData["htmlurl"]; ok {
-			issue.HTMLURL = val
-		}
-		if val, ok := issueData["draft"]; ok {
-			issue.Draft = val
-		}
-		if val, ok := issueData["sandbox"]; ok {
-			issue.Sandbox = val
-		}
-		if val, ok := issueData["sandboxReplica"]; ok {
-			issue.SandboxReplica = val
-		}
-		if val, ok := issueData["comment"]; ok {
-			issue.Comment = val
-		}
-		if val, ok := issueData["branchURL"]; ok {
-			issue.BranchURL = val
-		}
-
-		issues = append(issues, issue)
-	}
-	if err := iter.Err(); err != nil {
-		log.Printf("Error during Redis SCAN for issues: %v", err)
+	issues, err := s.Store.ListIssues(c.Request.Context(), namespace, repo, handler)
+	if err != nil {
+		log.Printf("Error listing issues: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list issues"})
+		return
 	}
 
 	c.JSON(http.StatusOK, issues)
@@ -158,17 +116,17 @@ func (s *Server) fetchAndPopulateIssues(ctx context.Context, namespace, repo, ha
 			draft = annotations["agentDraft"]
 		}
 
-		issueKey := fmt.Sprintf("issue:ns:%s:repo:%s:handler:%s:issue:%s", namespace, repo, handler, issueID)
-		if err := s.Redis.HSet(ctx, issueKey,
-			"title", title,
-			"sandbox", item.GetName(),
-			"htmlurl", htmlurl,
-			"sandboxReplica", fmt.Sprintf("%d", replicas),
-			"branchURL", branchURL,
-			"draft", draft,
-			"agentDraft", draft,
-			"pushBranch", strconv.FormatBool(pushBranch),
-		).Err(); err != nil {
+		issue := models.Issue{
+			ID:             issueID,
+			Title:          title,
+			Sandbox:        item.GetName(),
+			HTMLURL:        htmlurl,
+			SandboxReplica: fmt.Sprintf("%d", replicas),
+			BranchURL:      branchURL,
+			Draft:          draft,
+			PushBranch:     pushBranch,
+		}
+		if err := s.Store.SaveIssue(ctx, namespace, repo, handler, issue); err != nil {
 			log.Printf("Failed to cache Issue %s for repo %s handler %s: %v", issueID, repo, handler, err)
 		}
 	}
@@ -187,8 +145,7 @@ func (s *Server) saveIssueDraft(c *gin.Context) {
 		return
 	}
 
-	issueKey := fmt.Sprintf("issue:ns:%s:repo:%s:handler:%s:issue:%s", namespace, repo, handler, issueID)
-	err := s.Redis.HSet(c.Request.Context(), issueKey, "draft", payload.Draft).Err()
+	err := s.Store.UpdateIssueDraft(c.Request.Context(), namespace, repo, handler, issueID, payload.Draft)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save draft"})
 		return
@@ -213,16 +170,15 @@ func (s *Server) submitIssueComment(c *gin.Context) {
 	ctx := c.Request.Context()
 	log.Printf("Submitting comment for Issue %s in repo %s with comment: %s", issueID, repo, payload.Comment)
 
-	issueKey := fmt.Sprintf("issue:ns:%s:repo:%s:handler:%s:issue:%s", namespace, repo, handler, issueID)
-	issueData, err := s.Redis.HGetAll(ctx, issueKey).Result()
+	issue, err := s.Store.GetIssue(ctx, namespace, repo, handler, issueID)
 	if err != nil {
-		log.Printf("Failed to get Issue %s from Redis for repo %s handler %s: %v", issueID, repo, handler, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get Issue data from Redis"})
+		log.Printf("Failed to get Issue %s from Store for repo %s handler %s: %v", issueID, repo, handler, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get Issue data from Store"})
 		return
 	}
 
 	draft := payload.Comment
-	agentDraft := issueData["agentDraft"]
+	agentDraft := issue.AgentDraft
 
 	repoWatch, err := s.K8sManager.GetRepoWatch(ctx, namespace, repo)
 	if err != nil {
@@ -255,13 +211,7 @@ func (s *Server) submitIssueComment(c *gin.Context) {
 		repoURL, _, _ := unstructured.NestedString(repoWatch.Object, "spec", "repoURL")
 		owner, _, _ := parseRepoURL(repoURL)
 
-		hfKey := fmt.Sprintf("hf:issue:githubuser:%s:repo:%s:handler:%s:pr:%s", owner, repo, handler, issueID)
-		if err := s.Redis.HSet(ctx, hfKey,
-			"draft", draft,
-			"agentDraft", agentDraft,
-			"prompt", prompt,
-			"configdirname", configdir,
-		).Err(); err != nil {
+		if err := s.Store.SaveIssueFeedback(ctx, owner, repo, handler, issueID, draft, agentDraft, prompt, configdir); err != nil {
 			log.Printf("Failed to store feedback for Issue %s in repo %s: %v", issueID, repo, err)
 			// Continue without failing the comment submission
 		}
@@ -306,15 +256,9 @@ func (s *Server) submitIssueComment(c *gin.Context) {
 		return
 	}
 
-	err = s.Redis.HSet(c.Request.Context(), issueKey, "comment", payload.Comment).Err()
+	err = s.Store.UpdateIssueComment(c.Request.Context(), namespace, repo, handler, issueID, payload.Comment)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save comment", "details": err.Error()})
-		return
-	}
-
-	err = s.Redis.HSet(c.Request.Context(), issueKey, "draft", "").Err()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to clear draft", "details": err.Error()})
 		return
 	}
 
@@ -339,10 +283,9 @@ func (s *Server) deleteIssue(c *gin.Context) {
 		return
 	}
 
-	issueKey := fmt.Sprintf("issue:ns:%s:repo:%s:handler:%s:issue:%s", namespace, repo, handler, issueID)
-	if err := s.Redis.Del(c.Request.Context(), issueKey).Err(); err != nil {
-		log.Printf("Failed to DEL Issue data from Redis: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to DEL Issue data from Redis"})
+	if err := s.Store.DeleteIssue(c.Request.Context(), namespace, repo, handler, issueID); err != nil {
+		log.Printf("Failed to DEL Issue data from Store: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to DEL Issue data from Store"})
 		return
 	}
 

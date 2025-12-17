@@ -250,7 +250,7 @@ func (s *Server) updateRepoWatch(c *gin.Context) {
 		// If repoURL changed in YAML, we should update Redis too, but strictly speaking
 		// we should extract it from the new spec.
 		if newURL, found, _ := unstructured.NestedString(existing.Object, "spec", "repoURL"); found {
-			if err := s.Redis.HSet(c.Request.Context(), fmt.Sprintf("repo:ns:%s:name:%s", namespace, name), "url", newURL).Err(); err != nil {
+			if err := s.Store.SaveRepo(c.Request.Context(), namespace, name, newURL); err != nil {
 				log.Printf("Failed to update repo URL in Redis for %s: %v", name, err)
 			}
 		}
@@ -324,7 +324,7 @@ func (s *Server) deleteRepoWatch(c *gin.Context) {
 	}
 
 	// Also delete from Redis
-	if err := s.Redis.Del(c.Request.Context(), fmt.Sprintf("repo:ns:%s:name:%s", namespace, name)).Err(); err != nil {
+	if err := s.Store.DeleteRepo(c.Request.Context(), namespace, name); err != nil {
 		log.Printf("Failed to delete repo %s from Redis: %v", name, err)
 		// Don't fail the request if Redis fails, as K8s deletion is the source of truth
 	}
@@ -337,12 +337,12 @@ func (s *Server) getRepos(c *gin.Context) {
 	s.fetchAndPopulateRepos(c.Request.Context(), namespace)
 
 	repos := []models.Repo{}
-	prefix := fmt.Sprintf("repo:ns:%s:name:", namespace)
-	iter := s.Redis.Scan(c.Request.Context(), 0, prefix+"*", 0).Iterator()
-	for iter.Next(c.Request.Context()) {
-		key := iter.Val()
-		repoName := key[len(prefix):]
+	repoNames, err := s.Store.ListRepos(c.Request.Context(), namespace)
+	if err != nil {
+		log.Printf("Error during Redis SCAN: %v", err)
+	}
 
+	for _, repoName := range repoNames {
 		repoWatch, err := s.K8sManager.GetRepoWatch(c.Request.Context(), namespace, repoName)
 		if err != nil {
 			log.Printf("Failed to get RepoWatch %s/%s: %v", namespace, repoName, err)
@@ -396,9 +396,6 @@ func (s *Server) getRepos(c *gin.Context) {
 
 		repos = append(repos, repo)
 	}
-	if err := iter.Err(); err != nil {
-		log.Printf("Error during Redis SCAN: %v", err)
-	}
 
 	c.JSON(http.StatusOK, repos)
 }
@@ -422,7 +419,7 @@ func (s *Server) fetchAndPopulateRepos(ctx context.Context, namespace string) {
 			continue
 		}
 		// Ensure the URL is in Redis
-		if err := s.Redis.HSet(ctx, fmt.Sprintf("repo:ns:%s:name:%s", namespace, item.GetName()), "url", repoURL, "namespace", namespace).Err(); err != nil {
+		if err := s.Store.SaveRepo(ctx, namespace, item.GetName(), repoURL); err != nil {
 			log.Printf("Failed to cache repo URL for %s: %v", item.GetName(), err)
 		}
 	}

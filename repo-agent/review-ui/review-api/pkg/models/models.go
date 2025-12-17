@@ -20,6 +20,7 @@ type PR struct {
 	Review         string `json:"review,omitempty"`
 	HTMLURL        string `json:"htmlURL,omitempty"`
 	DiffURL        string `json:"diffURL,omitempty"`
+	AgentDraft     string `json:"agentDraft,omitempty"`
 }
 
 // Issue represents a GitHub issue
@@ -33,6 +34,7 @@ type Issue struct {
 	HTMLURL        string `json:"htmlURL,omitempty"`
 	BranchURL      string `json:"branchURL,omitempty"`
 	PushBranch     bool   `json:"pushBranch"`
+	AgentDraft     string `json:"agentDraft,omitempty"`
 }
 
 // Repo represents a repository with its configuration
