@@ -29,22 +29,24 @@ func NewServer(manager *k8s.Manager, authenticator *auth.Authenticator, store st
 }
 
 func (s *Server) RegisterRoutes(router *gin.Engine) {
+	// Standard group for routes that require logging (non-streaming/non-websocket)
+	standard := router.Group("/")
 	// Add middleware to log requests and responses
-	router.Use(RequestLoggerMiddleware())
-	router.Use(ResponseLoggerMiddleware())
+	standard.Use(RequestLoggerMiddleware())
+	standard.Use(ResponseLoggerMiddleware())
 
 	// Public routes
-	router.GET("/", s.healthCheckOk)
-	router.GET("/api/", s.healthCheckOk)
-	router.GET("/api/auth/login", s.Auth.Login)
-	router.GET("/api/auth/callback", s.Auth.Callback)
-	router.GET("/api/auth/status", s.Auth.Status)
-	router.POST("/api/auth/logout", s.Auth.Logout)
-	router.GET("/api/auth/providers", s.Auth.GetProviders)
-	router.POST("/api/auth/github-config", s.Auth.UpdateGithubConfig)
+	standard.GET("/", s.healthCheckOk)
+	standard.GET("/api/", s.healthCheckOk)
+	standard.GET("/api/auth/login", s.Auth.Login)
+	standard.GET("/api/auth/callback", s.Auth.Callback)
+	standard.GET("/api/auth/status", s.Auth.Status)
+	standard.POST("/api/auth/logout", s.Auth.Logout)
+	standard.GET("/api/auth/providers", s.Auth.GetProviders)
+	standard.POST("/api/auth/github-config", s.Auth.UpdateGithubConfig)
 
 	// Protected routes
-	api := router.Group("/api")
+	api := standard.Group("/api")
 	api.Use(s.Auth.Middleware())
 	{
 		api.GET("/repos", s.getRepos)
@@ -74,6 +76,15 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 		api.POST("/repo/:repo/dev/:name/scaleup", s.scaleUpDevSandbox)
 		api.POST("/repo/:repo/dev/:name/scaledown", s.scaleDownDevSandbox)
 		api.GET("/proxy", s.proxy)
+	}
+
+	// Protected sandbox proxy routes
+	// These are attached directly to router to bypass the logging middleware which buffers responses
+	// and breaks WebSockets/Streaming.
+	sandbox := router.Group("/sandbox")
+	sandbox.Use(s.Auth.Middleware())
+	{
+		sandbox.Any("/:namespace/:name/*path", s.proxySandbox)
 	}
 }
 
