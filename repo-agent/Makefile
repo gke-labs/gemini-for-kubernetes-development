@@ -6,6 +6,8 @@ LOCAL_PORT ?= 13380
 CLUSTER_NAME != kubectl config view --minify --output 'jsonpath={.clusters[0].name}'
 INSTALL_ENVOY = $(shell if [[ ${CLUSTER_NAME} == kind* ]]; then echo "yes"; else echo "no"; fi)
 GW_CLASS = $(shell if [[ ${CLUSTER_NAME} == kind* ]]; then echo "repo-agent-gatewayclass"; else echo "gke-l7-regional-external-managed"; fi)
+PLATFORM_SCHEMA_VALUE = $(shell if [[ ${CLUSTER_NAME} == kind* ]]; then echo "string | default=\"kind\""; else echo "string | default=\"gke\""; fi)
+SKIP_FILES_LIST = $(shell if [[ ${CLUSTER_NAME} == kind* ]]; then echo ""; else echo "--skip k8s/crds/healthcheckpolicies.networking.gke.io.yaml"; fi)
 
 # if REGISTRY is kind.local/, then we are deploying to kind
 ifeq ($(REGISTRY), kind.local/)
@@ -122,7 +124,9 @@ install-repo-agent:
 	cp dev-sandbox/dev-sandbox-rgd.yaml k8s/
 	../dev/tools/deploy-to-kube --image-prefix=$(REGISTRY) --working-dir . \
 	--replace .spec.installationName=${CLUSTER_NAME} \
-	--replace .spec.gatewayClassName=${GW_CLASS}
+	--replace .spec.gatewayClassName=${GW_CLASS} \
+	--replace .spec.schema.spec.platform='${PLATFORM_SCHEMA_VALUE}' \
+	${SKIP_FILES_LIST}
 
 bin/tls.crt:
 	openssl req -x509 -nodes -days 365 -newkey rsa:2048  -keyout bin/tls.key -out bin/tls.crt  -subj "/CN=repo-agent"
@@ -197,7 +201,9 @@ install-repo-agent-latest: install-dep-packages create-secrets
 	--image-tag=latest \
 	--replace .spec.installationName=${CLUSTER_NAME} \
 	--replace .spec.gatewayClassName=${GW_CLASS} \
-	--working-dir . --output-file=bin/repo-agent-manifest.yaml
+	--replace .spec.schema.spec.platform='${PLATFORM_SCHEMA_VALUE}' \
+	--working-dir . --output-file=bin/repo-agent-manifest.yaml \
+	${SKIP_FILES_LIST}
 	kubectl apply -f bin/repo-agent-manifest.yaml
 
 .PHONY: uninstall-repo-agent-latest
@@ -216,14 +222,18 @@ uninstall-repo-agent-latest:
 reinstall-repo-agent-latest: uninstall-repo-agent-latest install-repo-agent-latest
 # Dev targets
 
+.PHONY: show-repo-agent-ip
+show-repo-agent-ip:
+	@IP_ADDR=`kubectl get gateway -n repo-agent-system repo-agent-gateway -o json | jq -r ".status.addresses[0].value"`; \
+	echo; echo; echo -e "\e[1;34m REPO AGENT: https://$$IP_ADDR \e[0m"; echo; echo;
+
 .PHONY: update-repo-agent-latest
 update-repo-agent-latest: install-repo-agent-latest
 	kubectl rollout restart statefulset -n repo-agent-system
 	kubectl rollout status  statefulset  -n repo-agent-system
 	kubectl rollout restart deployment -n repo-agent-system
 	kubectl rollout status  deployment  -n repo-agent-system
-	@IP_ADDR=`kubectl get gateway -n repo-agent-system repo-agent-gateway -o json | jq -r ".status.addresses[0].value"`; \
-	echo; echo; echo -e "\e[1;34m REPO AGENT: https://$$IP_ADDR \e[0m"; echo; echo;
+	${MAKE} show-repo-agent-ip
 
 .PHONY: reload-ui
 reload-ui:

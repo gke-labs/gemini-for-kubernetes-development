@@ -98,6 +98,10 @@ def main(args):
                 continue
 
             path = os.path.join(root, filename)
+            rel_path = os.path.relpath(path, working_dir)
+            if args.skip_files and rel_path in args.skip_files:
+                print(f"skipping manifest {rel_path}")
+                continue
 
             with open(path, "r") as f:
                 # Use safe_load_all for multi-document YAML files
@@ -135,7 +139,6 @@ def main(args):
             yaml.dump_all(docs, string_stream)
             modified_content = string_stream.getvalue()
 
-            rel_path = os.path.relpath(path, working_dir)
             if args.output_file is not None:
                 if all_manifests == "":
                     all_manifests = modified_content
@@ -176,6 +179,11 @@ if __name__ == "__main__":
     parser.add_argument("--replace",
                         dest="replace_params",
                         help="replace a value in the manifest, e.g. .spec.replicas=3",
+                        action="append",
+                        default=[])
+    parser.add_argument("--skip",
+                        dest="skip_files",
+                        help="skip a file from applying, e.g. 0 namespace.yaml",
                         action="append",
                         default=[])
     args = parser.parse_args()

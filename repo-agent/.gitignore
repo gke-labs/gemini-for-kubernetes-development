@@ -1,4 +1,5 @@
-keys.sh
+keys-preview.sh
+keys-staging.sh
 keys-local.sh
 keys-e2e.sh
 bin/

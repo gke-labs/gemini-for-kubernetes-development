@@ -45,12 +45,32 @@ spec:
       gateway:
         httpEnabled: boolean | default=false
         ref: string | default="repo-agent-gateway"
+      platform: string | default="generic"
     status:
       # Fields the controller will inject into instances status.
       # agentDraft: "${sandbox.metadata.name}"
       fqdn: ${service.metadata.name}.${service.metadata.namespace}.svc.cluster.local
       sandboxConditions: ${sandbox.status.conditions}
   resources:
+    - id: healthcheckPolicy
+      includeWhen:
+        - ${schema.spec.platform == 'gke'}
+      template:
+        apiVersion: networking.gke.io/v1
+        kind: HealthCheckPolicy
+        metadata:
+          name: devc-${schema.metadata.name}
+        spec:
+          default:
+            config:
+              type: HTTP
+              httpHealthCheck:
+                requestPath: /healthz
+                port: 13337
+          targetRef:
+            group: ""
+            kind: Service
+            name: ${service.metadata.name}
     - id: sandbox
       readyWhen: # CEL expressions to determine when a resource is ready
       - ${sandbox.status.conditions.exists(x, x.type == 'Ready' && x.status == "True")}
