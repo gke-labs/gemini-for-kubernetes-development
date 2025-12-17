@@ -249,13 +249,6 @@ func (s *Server) submitReview(c *gin.Context) {
 		return
 	}
 
-	// Delete draft from Redis
-	//err = s.Redis.HSet(c.Request.Context(), prKey, "draft", "").Err()
-	//if err != nil {
-	//	c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to clear draft", "details": err.Error()})
-	//	return
-	//}
-
 	// scale down sandbox
 	err = s.K8sManager.ScaledownSandbox(ctx, namespace, repo, prID)
 	if err != nil {

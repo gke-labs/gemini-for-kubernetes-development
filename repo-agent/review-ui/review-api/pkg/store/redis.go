@@ -27,13 +27,17 @@ func NewRedisStore(client *redis.Client) *RedisStore {
 	return &RedisStore{client: client}
 }
 
+func (s *RedisStore) RepoKey(namespace, name string) string {
+	return fmt.Sprintf("repo:ns:%s:name:%s", namespace, name)
+}
+
 func (s *RedisStore) SaveRepo(ctx context.Context, namespace, name, url string) error {
-	key := fmt.Sprintf("repo:ns:%s:name:%s", namespace, name)
+	key := s.RepoKey(namespace, name)
 	return s.client.HSet(ctx, key, "url", url, "namespace", namespace).Err()
 }
 
 func (s *RedisStore) DeleteRepo(ctx context.Context, namespace, name string) error {
-	key := fmt.Sprintf("repo:ns:%s:name:%s", namespace, name)
+	key := s.RepoKey(namespace, name)
 	return s.client.Del(ctx, key).Err()
 }
 
@@ -52,16 +56,17 @@ func (s *RedisStore) ListRepos(ctx context.Context, namespace string) ([]string,
 	return repoNames, nil
 }
 
+func (s *RedisStore) IssueKey(namespace, repo, handler, issueID string) string {
+	return fmt.Sprintf("issue:ns:%s:repo:%s:handler:%s:issue:%s", namespace, repo, handler, issueID)
+}
+
 func (s *RedisStore) ListIssues(ctx context.Context, namespace, repo, handler string) ([]models.Issue, error) {
 	issues := []models.Issue{}
-	issueKeyPrefix := fmt.Sprintf("issue:ns:%s:repo:%s:handler:%s:issue:*", namespace, repo, handler)
+	issueKeyPrefix := s.IssueKey(namespace, repo, handler, "*")
 	iter := s.client.Scan(ctx, 0, issueKeyPrefix, 0).Iterator()
 	for iter.Next(ctx) {
 		key := iter.Val()
 		parts := strings.Split(key, ":")
-		// key is issue:repo:REPO:handler:HANDLER:issue:ISSUEID
-		// But wait, the prefix used in handlers_issue.go was "issue:ns:%s:repo:%s:handler:%s:issue:*"
-		// Let's verify the key structure in handlers_issue.go:
 		// key is issue:ns:NAMESPACE:repo:REPO:handler:HANDLER:issue:ISSUEID
 		// parts: 0:issue 1:ns 2:NAMESPACE 3:repo 4:REPO 5:handler 6:HANDLER 7:issue 8:ISSUEID
 		if len(parts) != 9 {
@@ -77,7 +82,6 @@ func (s *RedisStore) ListIssues(ctx context.Context, namespace, repo, handler st
 
 		pushBranch := false
 		if val, ok := issueData["pushBranch"]; ok {
-			// strconv.ParseBool is needed but I need to import it or just do manual check
 			if val == "true" {
 				pushBranch = true
 			}
@@ -107,9 +111,6 @@ func (s *RedisStore) ListIssues(ctx context.Context, namespace, repo, handler st
 		if val, ok := issueData["branchURL"]; ok {
 			issue.BranchURL = val
 		}
-		// The original handler also had agentDraft in HGetAll but it wasn't put into models.Issue directly,
-		// only used for comparison in submitComment. However, ListIssues returns []models.Issue.
-		// So this is fine.
 
 		issues = append(issues, issue)
 	}
@@ -120,11 +121,7 @@ func (s *RedisStore) ListIssues(ctx context.Context, namespace, repo, handler st
 }
 
 func (s *RedisStore) SaveIssue(ctx context.Context, namespace, repo, handler string, issue models.Issue) error {
-	issueKey := fmt.Sprintf("issue:ns:%s:repo:%s:handler:%s:issue:%s", namespace, repo, handler, issue.ID)
-	// We need to pass extra fields that are not in models.Issue but were in the HSet call in handlers_issue.go
-	// In handlers_issue.go:
-	// "agentDraft": draft (which is issue.Draft)
-	// "pushBranch": strconv.FormatBool(pushBranch)
+	issueKey := s.IssueKey(namespace, repo, handler, issue.ID)
 
 	return s.client.HSet(ctx, issueKey,
 		"title", issue.Title,
@@ -139,7 +136,7 @@ func (s *RedisStore) SaveIssue(ctx context.Context, namespace, repo, handler str
 }
 
 func (s *RedisStore) GetIssue(ctx context.Context, namespace, repo, handler, issueID string) (*models.Issue, error) {
-	issueKey := fmt.Sprintf("issue:ns:%s:repo:%s:handler:%s:issue:%s", namespace, repo, handler, issueID)
+	issueKey := s.IssueKey(namespace, repo, handler, issueID)
 	issueData, err := s.client.HGetAll(ctx, issueKey).Result()
 	if err != nil {
 		return nil, err
@@ -185,7 +182,7 @@ func (s *RedisStore) GetIssue(ctx context.Context, namespace, repo, handler, iss
 }
 
 func (s *RedisStore) UpdateIssueDraft(ctx context.Context, namespace, repo, handler, issueID, draft string) error {
-	issueKey := fmt.Sprintf("issue:ns:%s:repo:%s:handler:%s:issue:%s", namespace, repo, handler, issueID)
+	issueKey := s.IssueKey(namespace, repo, handler, issueID)
 	return s.client.HSet(ctx, issueKey, "draft", draft).Err()
 }
 
@@ -200,7 +197,7 @@ func (s *RedisStore) SaveIssueFeedback(ctx context.Context, owner, repo, handler
 }
 
 func (s *RedisStore) UpdateIssueComment(ctx context.Context, namespace, repo, handler, issueID, comment string) error {
-	issueKey := fmt.Sprintf("issue:ns:%s:repo:%s:handler:%s:issue:%s", namespace, repo, handler, issueID)
+	issueKey := s.IssueKey(namespace, repo, handler, issueID)
 	// This also clears the draft
 	if err := s.client.HSet(ctx, issueKey, "comment", comment).Err(); err != nil {
 		return err
@@ -209,14 +206,18 @@ func (s *RedisStore) UpdateIssueComment(ctx context.Context, namespace, repo, ha
 }
 
 func (s *RedisStore) DeleteIssue(ctx context.Context, namespace, repo, handler, issueID string) error {
-	issueKey := fmt.Sprintf("issue:ns:%s:repo:%s:handler:%s:issue:%s", namespace, repo, handler, issueID)
+	issueKey := s.IssueKey(namespace, repo, handler, issueID)
 	return s.client.Del(ctx, issueKey).Err()
+}
+
+func (s *RedisStore) DevSandboxKey(namespace, repo, name string) string {
+	return fmt.Sprintf("dev:ns:%s:repo:%s:dev:%s", namespace, repo, name)
 }
 
 func (s *RedisStore) ListDevSandboxes(ctx context.Context, namespace, repo string) ([]models.DevSandbox, error) {
 	sandboxes := []models.DevSandbox{}
 	// prefix: dev:ns:NAMESPACE:repo:REPO:dev:*
-	prefix := fmt.Sprintf("dev:ns:%s:repo:%s:dev:*", namespace, repo)
+	prefix := s.DevSandboxKey(namespace, repo, "*")
 	iter := s.client.Scan(ctx, 0, prefix, 0).Iterator()
 	for iter.Next(ctx) {
 		key := iter.Val()
@@ -259,7 +260,7 @@ func (s *RedisStore) ListDevSandboxes(ctx context.Context, namespace, repo strin
 }
 
 func (s *RedisStore) SaveDevSandbox(ctx context.Context, namespace, repo string, sandbox models.DevSandbox) error {
-	key := fmt.Sprintf("dev:ns:%s:repo:%s:dev:%s", namespace, repo, sandbox.Name)
+	key := s.DevSandboxKey(namespace, repo, sandbox.Name)
 	return s.client.HSet(ctx, key,
 		"sandbox", sandbox.Sandbox,
 		"branch", sandbox.Branch,
@@ -269,13 +270,17 @@ func (s *RedisStore) SaveDevSandbox(ctx context.Context, namespace, repo string,
 }
 
 func (s *RedisStore) DeleteDevSandbox(ctx context.Context, namespace, repo, name string) error {
-	key := fmt.Sprintf("dev:ns:%s:repo:%s:dev:%s", namespace, repo, name)
+	key := s.DevSandboxKey(namespace, repo, name)
 	return s.client.Del(ctx, key).Err()
+}
+
+func (s *RedisStore) PRKey(namespace, repo, prID string) string {
+	return fmt.Sprintf("pr:ns:%s:repo:%s:pr:%s", namespace, repo, prID)
 }
 
 func (s *RedisStore) ListPRs(ctx context.Context, namespace, repo string) ([]models.PR, error) {
 	prs := []models.PR{}
-	repoPRKeyPrefix := fmt.Sprintf("pr:ns:%s:repo:%s:pr:", namespace, repo)
+	repoPRKeyPrefix := s.PRKey(namespace, repo, "*")
 	iter := s.client.Scan(ctx, 0, repoPRKeyPrefix+"*", 0).Iterator()
 	for iter.Next(ctx) {
 		key := iter.Val()
@@ -320,7 +325,7 @@ func (s *RedisStore) ListPRs(ctx context.Context, namespace, repo string) ([]mod
 }
 
 func (s *RedisStore) SavePR(ctx context.Context, namespace, repo string, pr models.PR) error {
-	prKey := fmt.Sprintf("pr:ns:%s:repo:%s:pr:%s", namespace, repo, pr.ID)
+	prKey := s.PRKey(namespace, repo, pr.ID)
 	// Ensure the URL is in Redis
 	return s.client.HSet(ctx, prKey,
 		"title", pr.Title,
@@ -334,7 +339,7 @@ func (s *RedisStore) SavePR(ctx context.Context, namespace, repo string, pr mode
 }
 
 func (s *RedisStore) GetPR(ctx context.Context, namespace, repo, prID string) (*models.PR, error) {
-	prKey := fmt.Sprintf("pr:ns:%s:repo:%s:pr:%s", namespace, repo, prID)
+	prKey := s.PRKey(namespace, repo, prID)
 	prData, err := s.client.HGetAll(ctx, prKey).Result()
 	if err != nil {
 		return nil, err
@@ -374,12 +379,12 @@ func (s *RedisStore) GetPR(ctx context.Context, namespace, repo, prID string) (*
 }
 
 func (s *RedisStore) UpdatePRDraft(ctx context.Context, namespace, repo, prID, draft string) error {
-	prKey := fmt.Sprintf("pr:ns:%s:repo:%s:pr:%s", namespace, repo, prID)
+	prKey := s.PRKey(namespace, repo, prID)
 	return s.client.HSet(ctx, prKey, "draft", draft).Err()
 }
 
 func (s *RedisStore) UpdatePRReview(ctx context.Context, namespace, repo, prID, review string) error {
-	prKey := fmt.Sprintf("pr:ns:%s:repo:%s:pr:%s", namespace, repo, prID)
+	prKey := s.PRKey(namespace, repo, prID)
 	if err := s.client.HSet(ctx, prKey, "review", review).Err(); err != nil {
 		return err
 	}
@@ -397,7 +402,7 @@ func (s *RedisStore) SavePRFeedback(ctx context.Context, owner, repo, prID, draf
 }
 
 func (s *RedisStore) DeletePR(ctx context.Context, namespace, repo, prID string) error {
-	prKey := fmt.Sprintf("pr:ns:%s:repo:%s:pr:%s", namespace, repo, prID)
+	prKey := s.PRKey(namespace, repo, prID)
 	// Clean up Redis keys
 	if err := s.client.HDel(ctx, prKey, "review", "draft", "sandbox", "htmlurl", "title").Err(); err != nil {
 		return err

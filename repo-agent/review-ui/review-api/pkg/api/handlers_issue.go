@@ -262,12 +262,6 @@ func (s *Server) submitIssueComment(c *gin.Context) {
 		return
 	}
 
-	//	err = s.Redis.HSet(c.Request.Context(), issueKey, "draft", "").Err()
-	//	if err != nil {
-	//		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to clear draft", "details": err.Error()})
-	//		return
-	//	}
-
 	err = s.K8sManager.ScaledownIssueSandbox(ctx, namespace, repo, issueID, handler)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scaledown Sandbox after comment submission", "details": err.Error()})
