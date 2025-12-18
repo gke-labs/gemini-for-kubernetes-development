@@ -128,14 +128,16 @@ bin/tls.crt:
 	openssl req -x509 -nodes -days 365 -newkey rsa:2048  -keyout bin/tls.key -out bin/tls.crt  -subj "/CN=repo-agent"
 
 bin/key.json:
-	echo "Generate your own Google Cloud service account key and place it in bin/key.json"
-	echo "Follow instructions in ./syncer/README.md"
+	@echo "Warning: bin/key.json not found. This is optional for local KinD development but required for GKE/GCS sync."
+	@echo "To generate: Follow instructions in ./syncer/README.md"
 
 .PHONY: create-secrets
 create-secrets: bin/tls.crt bin/key.json
 	kubectl create namespace repo-agent-system || true
 	@kubectl create secret -n repo-agent-system tls repo-agent-tls --cert=bin/tls.crt --key=bin/tls.key --dry-run=client -o yaml | kubectl apply -f -
-	@kubectl create secret -n repo-agent-system generic gcs-credentials --from-file=key.json=./bin/key.json --dry-run=client -o yaml | kubectl apply -f -
+	@if [ -f ./bin/key.json ]; then \
+		kubectl create secret -n repo-agent-system generic gcs-credentials --from-file=key.json=./bin/key.json --dry-run=client -o yaml | kubectl apply -f -; \
+	fi
 	@kubectl create secret -n repo-agent-system generic dummy-provider-token --from-literal=dummy=testtoken --dry-run=client -o yaml | kubectl apply -f -
 	@kubectl create secret -n repo-agent-system generic gemini-vscode-tokens --from-literal=gemini=${GEMINI_API_KEY} --dry-run=client -o yaml | kubectl apply -f -
 	@kubectl create secret -n repo-agent-system generic github-pat --from-literal=pat="${GITHUB_PAT}" --from-literal=name="`git config --global user.name`" --from-literal=email=`git config --global user.email` --dry-run=client -o yaml | kubectl apply -f -

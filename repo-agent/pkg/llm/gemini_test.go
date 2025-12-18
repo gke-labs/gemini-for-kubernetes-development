@@ -16,6 +16,7 @@ package llm
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -76,6 +77,18 @@ func TestGemini_Setup(t *testing.T) {
 		// Create dummy files and directories
 		workspacesDir := filepath.Join(tmpDir, "workspaces")
 		tokensDir := filepath.Join(tmpDir, "tokens")
+
+		// Change the current working directory to the temporary directory
+		wd, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("Failed to get current working directory: %v", err)
+		}
+		defer func() {
+			_ = os.Chdir(wd)
+		}()
+		if err := os.Chdir(tmpDir); err != nil {
+			t.Fatalf("Failed to change working directory: %v", err)
+		}
 
 		// Create a Gemini provider and run Setup
 		g := &Gemini{}
@@ -182,8 +195,126 @@ func TestGemini_Run(t *testing.T) {
 }
 
 func TestGeminiCleanup(t *testing.T) {
+	// Create a temporary directory for the test
+	tmpDir := t.TempDir()
+
+	// Change the current working directory to the temporary directory
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to get current working directory: %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(wd)
+	}()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Failed to change working directory: %v", err)
+	}
+
 	g := &Gemini{}
 	if err := g.Cleanup(""); err != nil {
 		t.Errorf("Cleanup() error = %v, want nil", err)
 	}
+}
+
+func TestEnsureSettings(t *testing.T) {
+	t.Run("creates new settings", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		geminiDir := filepath.Join(tmpDir, ".gemini")
+
+		if err := ensureSettings(geminiDir); err != nil {
+			t.Fatalf("ensureSettings failed: %v", err)
+		}
+
+		settingsPath := filepath.Join(geminiDir, "settings.json")
+		data, err := os.ReadFile(settingsPath)
+		if err != nil {
+			t.Fatalf("failed to read settings.json: %v", err)
+		}
+
+		expected := `{
+  "general": {
+    "previewFeatures": true
+  },
+  "model": "gemini-3-pro-preview"
+}`
+		if string(data) != expected {
+			t.Errorf("Expected settings:\n%s\nGot:\n%s", expected, string(data))
+		}
+	})
+
+	t.Run("updates existing settings", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		geminiDir := filepath.Join(tmpDir, ".gemini")
+		if err := os.MkdirAll(geminiDir, 0755); err != nil {
+			t.Fatalf("failed to create gemini dir: %v", err)
+		}
+
+		initialSettings := `{"other": "value", "general": {"old": "feature"}}`
+		settingsPath := filepath.Join(geminiDir, "settings.json")
+		if err := os.WriteFile(settingsPath, []byte(initialSettings), 0644); err != nil {
+			t.Fatalf("failed to write initial settings: %v", err)
+		}
+
+		if err := ensureSettings(geminiDir); err != nil {
+			t.Fatalf("ensureSettings failed: %v", err)
+		}
+
+		data, err := os.ReadFile(settingsPath)
+		if err != nil {
+			t.Fatalf("failed to read settings.json: %v", err)
+		}
+
+		// Check if it contains both old and new values
+		var settings map[string]interface{}
+		if err := json.Unmarshal(data, &settings); err != nil {
+			t.Fatalf("failed to unmarshal settings: %v", err)
+		}
+
+		if settings["other"] != "value" {
+			t.Errorf("Expected 'other' to be 'value', got %v", settings["other"])
+		}
+
+		general := settings["general"].(map[string]interface{})
+		if general["old"] != "feature" {
+			t.Errorf("Expected 'general.old' to be 'feature', got %v", general["old"])
+		}
+		if general["previewFeatures"] != true {
+			t.Errorf("Expected 'general.previewFeatures' to be true, got %v", general["previewFeatures"])
+		}
+		if settings["model"] != "gemini-3-pro-preview" {
+			t.Errorf("Expected 'model' to be 'gemini-3-pro-preview', got %v", settings["model"])
+		}
+	})
+
+	t.Run("does not override existing model", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		geminiDir := filepath.Join(tmpDir, ".gemini")
+		if err := os.MkdirAll(geminiDir, 0755); err != nil {
+			t.Fatalf("failed to create gemini dir: %v", err)
+		}
+
+		initialSettings := `{"model": "my-custom-model"}`
+		settingsPath := filepath.Join(geminiDir, "settings.json")
+		if err := os.WriteFile(settingsPath, []byte(initialSettings), 0644); err != nil {
+			t.Fatalf("failed to write initial settings: %v", err)
+		}
+
+		if err := ensureSettings(geminiDir); err != nil {
+			t.Fatalf("ensureSettings failed: %v", err)
+		}
+
+		data, err := os.ReadFile(settingsPath)
+		if err != nil {
+			t.Fatalf("failed to read settings.json: %v", err)
+		}
+
+		var settings map[string]interface{}
+		if err := json.Unmarshal(data, &settings); err != nil {
+			t.Fatalf("failed to unmarshal settings: %v", err)
+		}
+
+		if settings["model"] != "my-custom-model" {
+			t.Errorf("Expected 'model' to be 'my-custom-model', got %v", settings["model"])
+		}
+	})
 }
