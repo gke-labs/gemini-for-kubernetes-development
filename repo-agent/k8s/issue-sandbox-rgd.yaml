@@ -201,32 +201,4 @@ spec:
             - namespaceSelector:
                 matchLabels: ${schema.spec.networkPolicy.ingress.namespaceLabels}
           egress: ${schema.spec.networkPolicy.egress}
-    - id: httproute
-      includeWhen:
-        - ${schema.spec.gateway.httpEnabled} # Only include if the user wants to create an Gateway route
-      template:
-        apiVersion: gateway.networking.k8s.io/v1
-        kind: HTTPRoute
-        metadata:
-          name: devc-${schema.metadata.name} # Use the name provided by user
-        spec:
-          parentRefs:
-            - name: ${schema.spec.gateway.ref} # Reference to the Gateway created outside of this RGD
-              namespace: repo-agent-system
-          rules:
-            - backendRefs:
-                - name: ${service.metadata.name}
-                  port: 13338
-                  #group: ""
-                  #kind: Service
-                  #weight: 1
-              matches:
-                - path:
-                    type: PathPrefix
-                    value: /sandbox/${schema.metadata.namespace}/${schema.metadata.name} # Route path based on the name provided by user
-              filters:
-                - type: URLRewrite
-                  urlRewrite:
-                    path:
-                      type: ReplacePrefixMatch
-                      replacePrefixMatch: / # Repl
+

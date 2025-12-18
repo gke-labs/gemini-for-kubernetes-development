@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-contrib/sessions"
@@ -25,10 +26,11 @@ const (
 )
 
 type Authenticator struct {
-	OAuthConfig  *oauth2.Config
-	OAuthState   string
-	K8sManager   *k8s.Manager
-	AllowedUsers []string
+	OAuthConfig       *oauth2.Config
+	OAuthState        string
+	K8sManager        *k8s.Manager
+	AllowedUsers      []string
+	bootstrappedUsers sync.Map
 }
 
 func NewAuthenticator(manager *k8s.Manager, allowedUsers []string) *Authenticator {
@@ -250,9 +252,22 @@ func (a *Authenticator) Middleware() gin.HandlerFunc {
 			user = userVal.(string)
 		}
 
-		// Lazy bootstrap checks if namespace exists, creating it if needed.
-		if err := a.K8sManager.BootstrapNamespace(c.Request.Context(), user); err != nil {
-			log.Printf("Lazy bootstrap failed for user %s: %v", user, err)
+		// The Auth.Middleware is calling BootstrapNamespace (which makes ~10 Kubernetes API calls) for every single request.
+		// When loading the VS Code UI, the browser requests hundreds of static assets (JS, CSS, icons). This triggers
+		//  thousands of K8s API calls in seconds, causing the client to throttle itself and eventually timing out the requests
+		// (context canceled, 502/504 errors).
+		// Use in-memory cache (sync.Map) for the Authenticator.
+		// First Request: The middleware checks the cache, finds it empty for the user, calls BootstrapNamespace once, and stores
+		//   the result.
+		// Subsequent Requests: The middleware finds the user in the cache and skips the K8s operations entirely.
+		// dramatically reduce latency and eliminate the 502/504 errors caused by client-side throttling, allowing the VS Code UI to load correctly
+		if _, ok := a.bootstrappedUsers.Load(user); !ok {
+			// Lazy bootstrap checks if namespace exists, creating it if needed.
+			if err := a.K8sManager.BootstrapNamespace(c.Request.Context(), user); err != nil {
+				log.Printf("Lazy bootstrap failed for user %s: %v", user, err)
+			} else {
+				a.bootstrappedUsers.Store(user, true)
+			}
 		}
 
 		c.Set(UserKey, user)
