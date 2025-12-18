@@ -132,10 +132,14 @@ bin/key.json:
 	echo "Follow instructions in ./syncer/README.md"
 
 .PHONY: create-secrets
-create-secrets: bin/tls.crt bin/key.json
+create-secrets: bin/tls.crt
 	kubectl create namespace repo-agent-system || true
 	@kubectl create secret -n repo-agent-system tls repo-agent-tls --cert=bin/tls.crt --key=bin/tls.key --dry-run=client -o yaml | kubectl apply -f -
-	@kubectl create secret -n repo-agent-system generic gcs-credentials --from-file=key.json=./bin/key.json --dry-run=client -o yaml | kubectl apply -f -
+	@if [ -f ./bin/key.json ]; then \
+		kubectl create secret -n repo-agent-system generic gcs-credentials --from-file=key.json=./bin/key.json --dry-run=client -o yaml | kubectl apply -f -; \
+	else \
+		echo "Warning: ./bin/key.json not found, skipping gcs-credentials secret creation. Syncer component may not work correctly."; \
+	fi
 	@kubectl create secret -n repo-agent-system generic dummy-provider-token --from-literal=dummy=testtoken --dry-run=client -o yaml | kubectl apply -f -
 	@kubectl create secret -n repo-agent-system generic gemini-vscode-tokens --from-literal=gemini=${GEMINI_API_KEY} --dry-run=client -o yaml | kubectl apply -f -
 	@kubectl create secret -n repo-agent-system generic github-pat --from-literal=pat="${GITHUB_PAT}" --from-literal=name="`git config --global user.name`" --from-literal=email=`git config --global user.email` --dry-run=client -o yaml | kubectl apply -f -
