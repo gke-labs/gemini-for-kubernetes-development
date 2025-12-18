@@ -60,9 +60,17 @@ func (g *Gemini) Setup(workspacesDir, tokensDir string) error {
 		log.Println(".gemini directory does not exist in /workspaces")
 	}
 
-	// Ensure settings.json has previewFeatures: true
+	// Ensure root settings.json has previewFeatures
 	if err := ensureSettings(".gemini"); err != nil {
 		log.Printf("Warning: failed to ensure .gemini/settings.json: %v", err)
+	}
+
+	// Ensure home directory settings.json has previewFeatures
+	homeDir, err := os.UserHomeDir()
+	if err == nil {
+		if err := ensureSettings(filepath.Join(homeDir, ".gemini")); err != nil {
+			log.Printf("Warning: failed to ensure ~/.gemini/settings.json: %v", err)
+		}
 	}
 
 	geminiTokenFile := filepath.Join(tokensDir, "gemini")
@@ -102,6 +110,7 @@ func ensureSettings(geminiDir string) error {
 	}
 	general["previewFeatures"] = true
 	if _, ok := settings["model"]; !ok {
+		// if model is unset, set it to gemini-3-pro-preview
 		settings["model"] = "gemini-3-pro-preview"
 	}
 

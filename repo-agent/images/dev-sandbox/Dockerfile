@@ -22,5 +22,4 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -v -o /dev-sandbox ./dev-
 # Envbuilder root
 FROM ghcr.io/coder/envbuilder
 COPY --from=builder /dev-sandbox /repo-agent/dev-sandbox
-COPY images/settings.json /root/.gemini/settings.json
 ENV KANIKO_DIR=/.envbuilder
