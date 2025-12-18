@@ -42,12 +42,12 @@ func (s *RedisStore) DeleteRepo(ctx context.Context, namespace, name string) err
 }
 
 func (s *RedisStore) ListRepos(ctx context.Context, namespace string) ([]string, error) {
-	prefix := fmt.Sprintf("repo:ns:%s:name:", namespace)
+	prefix := s.RepoKey(namespace, "*")
 	var repoNames []string
-	iter := s.client.Scan(ctx, 0, prefix+"*", 0).Iterator()
+	iter := s.client.Scan(ctx, 0, prefix, 0).Iterator()
 	for iter.Next(ctx) {
 		key := iter.Val()
-		repoName := key[len(prefix):]
+		repoName := key[len(prefix)-1:]
 		repoNames = append(repoNames, repoName)
 	}
 	if err := iter.Err(); err != nil {
@@ -281,10 +281,10 @@ func (s *RedisStore) PRKey(namespace, repo, prID string) string {
 func (s *RedisStore) ListPRs(ctx context.Context, namespace, repo string) ([]models.PR, error) {
 	prs := []models.PR{}
 	repoPRKeyPrefix := s.PRKey(namespace, repo, "*")
-	iter := s.client.Scan(ctx, 0, repoPRKeyPrefix+"*", 0).Iterator()
+	iter := s.client.Scan(ctx, 0, repoPRKeyPrefix, 0).Iterator()
 	for iter.Next(ctx) {
 		key := iter.Val()
-		prID := key[len(repoPRKeyPrefix):]
+		prID := key[len(repoPRKeyPrefix)-1:]
 		prData, err := s.client.HGetAll(ctx, key).Result()
 		if err != nil {
 			log.Printf("Failed to get PR %s from Redis for repo %s: %v", prID, repo, err)
