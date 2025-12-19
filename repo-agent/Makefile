@@ -232,15 +232,12 @@ update-repo-agent-latest: install-repo-agent-latest
 	@IP_ADDR=`kubectl get gateway -n repo-agent-system repo-agent-gateway -o json | jq -r ".status.addresses[0].value"`; \
 	echo; echo; echo -e "\e[1;34m REPO AGENT: https://$$IP_ADDR \e[0m"; echo; echo;
 
-.PHONY: reload-ui
-reload-ui:
-	make build-and-push-repo-agent
-	make install-repo-agent
-	kubectl scale  -n repo-agent-system deployment pr-review-ui --replicas=0
-	kubectl scale  -n repo-agent-system deployment pr-review-api --replicas=0
-	sleep 5
-	kubectl scale  -n repo-agent-system deployment pr-review-ui --replicas=1
-	kubectl scale  -n repo-agent-system deployment pr-review-api --replicas=1
+.PHONY: reload
+reload: build-and-push-repo-agent install-repo-agent
+	kubectl rollout restart statefulset -n repo-agent-system
+	kubectl rollout status  statefulset  -n repo-agent-system
+	kubectl rollout restart deployment -n repo-agent-system
+	kubectl rollout status  deployment  -n repo-agent-system
 	sleep 5
 	make port-forward
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import yaml from 'js-yaml';
 import './App.css';
 import PrReviewCard from './PrReviewCard';
@@ -23,6 +23,9 @@ function App() {
 
   const [repos, setRepos] = useState([]);
   const [activeRepo, setActiveRepo] = useState(null);
+  const activeRepoRef = useRef(activeRepo);
+  useEffect(() => { activeRepoRef.current = activeRepo; }, [activeRepo]);
+
   const [activeSubTab, setActiveSubTab] = useState({ repo: '', name: '' });
   const [prs, setPrs] = useState([]);
   const [issues, setIssues] = useState([]);
@@ -91,17 +94,21 @@ function App() {
       .then(data => {
         const safeData = data || [];
         setRepos(safeData);
-        // If we have an active repo, make sure it still exists
-        if (activeRepo && !safeData.find(r => r.name === activeRepo.name)) {
-           setActiveRepo(null);
-        }
-        // If no active repo and we have repos, select the first one
-        if (!activeRepo && safeData.length > 0 && view === 'dashboard') {
+        
+        const currentActiveRepo = activeRepoRef.current;
+        if (currentActiveRepo) {
+           const updatedRepo = safeData.find(r => r.name === currentActiveRepo.name);
+           if (updatedRepo) {
+               setActiveRepo(updatedRepo);
+           } else {
+               setActiveRepo(null);
+           }
+        } else if (safeData.length > 0 && view === 'dashboard') {
            handleRepoClick(safeData[0].name, safeData);
         }
       })
       .catch(err => console.error("Failed to fetch repos:", err));
-  }, [isAuthenticated, isGuest, activeRepo, view]);
+  }, [isAuthenticated, isGuest, view]);
 
   useEffect(() => {
     if (isAuthenticated || isGuest) {
@@ -299,11 +306,81 @@ function App() {
     }
   };
 
+  const handleAddPR = (prId = null) => {
+    let prNumber;
+    
+    if (prId) {
+        prNumber = parseInt(prId);
+    } else {
+        const input = window.prompt("Enter PR URL or Number:");
+        if (!input) return;
+
+        prNumber = parseInt(input);
+        if (isNaN(prNumber)) {
+          // Try to parse URL
+          // e.g., https://github.com/owner/repo/pull/123
+          try {
+            const url = new URL(input);
+            const parts = url.pathname.split('/');
+            const pullIndex = parts.indexOf('pull');
+            if (pullIndex !== -1 && pullIndex + 1 < parts.length) {
+                prNumber = parseInt(parts[pullIndex + 1]);
+            }
+          } catch (e) {
+            // ignore
+          }
+        }
+    }
+
+    if (isNaN(prNumber) || !prNumber) {
+        alert("Invalid PR number or URL");
+        return;
+    }
+
+    fetch(`/api/repos/${activeRepo.name}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ addPR: prNumber })
+    })
+    .then(res => {
+        if (res.ok) {
+            alert(`PR #${prNumber} has been added to watch list. It may take a few moments to appear.`);
+            fetchRepos(); // Refresh repos to update lists
+        } else {
+            res.json().then(data => {
+                const errorMsg = data.error || res.statusText;
+                const hint = "\n\nTip: If this is a private repo or organization-restricted, you may need a manual GitHub Classic PAT with 'repo' permissions in 'Settings'.";
+                alert("Failed to add PR: " + errorMsg + hint);
+            });
+        }
+    })
+    .catch(err => console.error("Failed to add PR:", err));
+  };
+
   const handleDelete = (id) => {
     fetch(`/api/repo/${activeRepo.name}/prs/${id}`, { method: 'DELETE' })
       .then(res => {
         if (res.ok) {
-          setPrs(prs.filter(pr => pr.id !== id));
+           // Optimistically remove from view immediately
+           setPrs(prevPrs => prevPrs.filter(pr => pr.id !== id));
+
+           // Trigger exclusion in background
+           fetch(`/api/repos/${activeRepo.name}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ excludePR: parseInt(id) })
+           }).then(res2 => {
+               if (res2.ok) {
+                    fetchRepos();
+               } else {
+                   console.error("Sandbox deleted but failed to exclude PR");
+               }
+           });
+           
+           // Show alert slightly deferred to allow UI render
+           setTimeout(() => {
+                alert("PR Sandbox deleted. It will disappear from the list shortly.");
+           }, 50);
         } else {
           alert("Failed to delete PR sandbox");
         }
@@ -588,50 +665,6 @@ function App() {
     }));
   };
 
-  const handleAddPR = () => {
-    const input = window.prompt("Enter PR URL or Number:");
-    if (!input) return;
-
-    let prNumber = parseInt(input);
-    if (isNaN(prNumber)) {
-      // Try to parse URL
-      // e.g., https://github.com/owner/repo/pull/123
-      try {
-        const url = new URL(input);
-        const parts = url.pathname.split('/');
-        const pullIndex = parts.indexOf('pull');
-        if (pullIndex !== -1 && pullIndex + 1 < parts.length) {
-            prNumber = parseInt(parts[pullIndex + 1]);
-        }
-      } catch (e) {
-        // ignore
-      }
-    }
-
-    if (isNaN(prNumber) || !prNumber) {
-        alert("Invalid PR number or URL");
-        return;
-    }
-
-    fetch(`/api/repos/${activeRepo.name}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ addPR: prNumber })
-    })
-    .then(res => {
-        if (res.ok) {
-            alert("PR added to watch list. It may take a few moments to appear.");
-        } else {
-            res.json().then(data => {
-                const errorMsg = data.error || res.statusText;
-                const hint = "\n\nTip: If this is a private repo or organization-restricted, you may need a manual GitHub Classic PAT with 'repo' permissions in 'Settings'.";
-                alert("Failed to add PR: " + errorMsg + hint);
-            });
-        }
-    })
-    .catch(err => console.error("Failed to add PR:", err));
-  };
-
   const handlePRScaleUp = (id) => {
     fetch(`/api/repo/${activeRepo.name}/prs/${id}/scaleup`, { method: 'POST' })
       .then(res => {
@@ -723,13 +756,41 @@ function App() {
     if (!activeRepo) return <p>Please select or add a repository to watch.</p>;
     const namespace = user || 'default';
     if (activeSubTab.name === 'review') {
-      return (
-        <>
-          {prs.length === 0 ? <p>No active Pull Requests found for this repository.</p> : 
-            prs.map(pr => (
+        // 1. Active PRs
+        const activeList = [];
+        if (prs.length > 0) {
+            prs.forEach(pr => activeList.push({ ...pr, type: 'active', sortId: parseInt(pr.id) }));
+        }
+        activeList.sort((a, b) => b.sortId - a.sortId);
+        
+        // 2. Pending PRs
+        const pending = activeRepo.pendingPRs || [];
+        let pendingList = [];
+        pending.forEach(p => {
+             // Avoid duplicates if already in active
+             if (!activeList.find(i => i.sortId === p)) {
+                 pendingList.push({ id: p.toString(), type: 'pending', sortId: p, title: `PR #${p}` });
+             }
+        });
+        pendingList.sort((a, b) => b.sortId - a.sortId);
+        // Limit to 10
+        pendingList = pendingList.slice(0, 10);
+        
+        // 3. Excluded PRs
+        const excluded = activeRepo.excludePullRequests || [];
+        const excludedList = [];
+        excluded.forEach(p => {
+             if (!activeList.find(i => i.sortId === p)) {
+                 excludedList.push({ id: p.toString(), type: 'excluded', sortId: p, title: `PR #${p} (Deleted)` });
+             }
+        });
+        excludedList.sort((a, b) => b.sortId - a.sortId);
+        
+        const renderItem = (item) => {
+            return (
               <PrReviewCard
-                key={pr.id}
-                pr={pr}
+                key={item.id}
+                pr={item}
                 drafts={drafts}
                 collapsedReviews={collapsedReviews}
                 reviewViewModes={reviewViewModes}
@@ -749,11 +810,33 @@ function App() {
                 handleMoveCommentAndSave={handleMoveCommentAndSave}
                 handleScaleUp={handlePRScaleUp}
                 handleScaleDown={handlePRScaleDown}
+                handleAddPR={handleAddPR}
               />
-            ))
-          }
+            );
+        };
+
+      return (
+        <>
+          {activeList.map(renderItem)}
+          
+          {pendingList.length > 0 && (
+             <>
+                <h3 style={{marginTop: '30px', borderBottom: '1px solid #eee', paddingBottom: '10px', color: '#666'}}>Next ...</h3>
+                {pendingList.map(renderItem)}
+             </>
+          )}
+
+          {excludedList.length > 0 && (
+             <>
+                <h3 style={{marginTop: '30px', borderBottom: '1px solid #eee', paddingBottom: '10px', color: '#666'}}>Deleted...</h3>
+                {excludedList.map(renderItem)}
+             </>
+          )}
+
+          {activeList.length === 0 && pendingList.length === 0 && excludedList.length === 0 && <p>No active Pull Requests found for this repository.</p>}
+
           <div style={{textAlign: 'center', marginTop: '20px'}}>
-            <button className="btn" onClick={handleAddPR} title="Add PR to watch list" style={{fontSize: '24px', width: '50px', height: '50px', borderRadius: '25px', lineHeight: '24px'}}>+</button>
+            <button className="btn" onClick={() => handleAddPR()} title="Add PR to watch list" style={{fontSize: '24px', width: '50px', height: '50px', borderRadius: '25px', lineHeight: '24px'}}>+</button>
           </div>
         </>
       );
