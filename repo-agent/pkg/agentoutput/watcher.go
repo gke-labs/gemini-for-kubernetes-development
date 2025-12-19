@@ -38,7 +38,7 @@ const (
 // componentName is used for logging (e.g., "issue", "review").
 // gvr is the GroupVersionResource to update.
 func Run(componentName string, gvr schema.GroupVersionResource) {
-	fmt.Printf("starting %s sidecar\n", componentName)
+	fmt.Printf("starting %s agent output watcher\n", componentName)
 	name := os.Getenv("NAME")
 	if name == "" {
 		fmt.Println("missing NAME env")
@@ -98,4 +98,46 @@ func Run(componentName string, gvr schema.GroupVersionResource) {
 		last = string(b)
 		fmt.Println("updated crd with latest changes")
 	}
+}
+
+func SetAgentState(gvr schema.GroupVersionResource, state string, message string) error {
+	name := os.Getenv("NAME")
+	if name == "" {
+		fmt.Println("missing NAME env")
+		os.Exit(1)
+	}
+	namespace := os.Getenv("NAMESPACE")
+	if namespace == "" {
+		fmt.Println("missing NAMESPACE env")
+		os.Exit(1)
+	}
+
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		return err
+	}
+
+	dc, err := dynamic.NewForConfig(config)
+	if err != nil {
+		return err
+	}
+
+	rs, err := dc.Resource(gvr).Namespace(namespace).Get(context.TODO(), name, metav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+
+	// update the annotation[agentState]
+	if rs.GetAnnotations() == nil {
+		rs.SetAnnotations(make(map[string]string))
+	}
+	annotations := rs.GetAnnotations()
+	annotations["agentState"] = state
+	rs.SetAnnotations(annotations)
+
+	_, err = dc.Resource(gvr).Namespace(namespace).Update(context.TODO(), rs, metav1.UpdateOptions{})
+	if err != nil {
+		return err
+	}
+	return nil
 }

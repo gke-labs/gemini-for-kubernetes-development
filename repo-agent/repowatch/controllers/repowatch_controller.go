@@ -762,6 +762,10 @@ func (r *RepoWatchReconciler) createReviewSandboxForPR(ctx context.Context, repo
 				"labels": map[string]interface{}{
 					"review.gemini.google.com/repowatch": repoWatch.Name,
 				},
+				"annotations": map[string]interface{}{
+					"agentState":  "provisioning",
+					"reviewState": "",
+				},
 			},
 			"spec": map[string]interface{}{
 				"llmBackend": map[string]interface{}{
