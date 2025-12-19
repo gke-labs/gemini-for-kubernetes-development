@@ -572,7 +572,9 @@ func (r *RepoWatchReconciler) reconcileReviewSandboxesInternal(ctx context.Conte
 			})
 		} else {
 			// Sandbox does not exist, try to create it if within limits
-			if activeSandboxes < repoWatch.Spec.Review.MaxActiveSandboxes && (repoWatch.Spec.Review.MaxSandboxes == 0 || totalSandboxes < repoWatch.Spec.Review.MaxSandboxes) {
+			prIsExplicit := isPRExplicit(*pr.Number, explicitPRs)
+			if prIsExplicit || (activeSandboxes < repoWatch.Spec.Review.MaxActiveSandboxes) &&
+				(repoWatch.Spec.Review.MaxSandboxes == 0 || totalSandboxes < repoWatch.Spec.Review.MaxSandboxes) {
 				log.Info("creating sandbox for PR", "pr", *pr.Number)
 				if err := r.createReviewSandboxForPR(ctx, repoWatch, pr); err != nil {
 					log.Error(err, "unable to create sandbox for PR", "pr", *pr.Number)

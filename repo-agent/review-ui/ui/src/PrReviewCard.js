@@ -25,6 +25,7 @@ function PrReviewCard({
   handleMoveCommentAndSave,
   handleScaleUp,
   handleScaleDown,
+  handleAddPR,
 }) {
   const [diff, setDiff] = useState(null);
   const [diffError, setDiffError] = useState(null);
@@ -48,6 +49,8 @@ function PrReviewCard({
 
   const isCollapsed = collapsedReviews[pr.id];
   useEffect(() => {
+    if (pr.type === 'pending' || pr.type === 'excluded') return;
+
     if (pr.review) {
       setReviewFlairText('Submitted');
     } else if (drafts[pr.id] && drafts[pr.id].note && drafts[pr.id].note.trim() !== '') {
@@ -55,8 +58,11 @@ function PrReviewCard({
     } else {
       setReviewFlairText('Generating ...');
     }
-  }, [pr.review, drafts, pr.id]);
+  }, [pr.review, drafts, pr.id, pr.type]);
+
   useEffect(() => {
+    if (pr.type === 'pending' || pr.type === 'excluded') return;
+
     if (!isCollapsed && !diff && !diffError) {
       if (!pr.diffURL) {
         setDiffError("diffURL is empty");
@@ -96,7 +102,28 @@ function PrReviewCard({
           setDiffError(err.message);
         });
     }
-  }, [pr.diffURL, pr.id, isCollapsed, diff, diffError]);
+  }, [pr.diffURL, pr.id, isCollapsed, diff, diffError, pr.type]);
+
+  if (pr.type === 'pending' || pr.type === 'excluded') {
+    return (
+      <div className="pr-card" style={{opacity: 0.6, border: '1px dashed #ccc'}}>
+           <div className="pr-card-header" style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 20px'}}>
+              <h3 style={{margin: 0}}>{pr.title}</h3>
+              <button 
+                className="btn" 
+                onClick={(e) => { 
+                    e.stopPropagation(); 
+                    if (handleAddPR) handleAddPR(pr.id); 
+                }} 
+                title="Add to watch list" 
+                style={{fontSize: '20px', width: '40px', height: '40px', borderRadius: '20px', lineHeight: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center'}}
+              >
+                +
+              </button>
+           </div>
+      </div>
+    );
+  }
 
   const reviewData = pr.review ? yaml.load(pr.review) : null;
 

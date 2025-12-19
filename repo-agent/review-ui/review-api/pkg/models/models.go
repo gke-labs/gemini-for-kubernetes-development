@@ -39,12 +39,14 @@ type Issue struct {
 
 // Repo represents a repository with its configuration
 type Repo struct {
-	Name          string         `json:"name"`
-	Namespace     string         `json:"namespace"`
-	URL           string         `json:"url"`
-	Review        *ReviewConfig  `json:"review,omitempty"`
-	IssueHandlers []IssueHandler `json:"issueHandlers,omitempty"`
-	Dev           *DevConfig     `json:"dev,omitempty"`
+	Name                string         `json:"name"`
+	Namespace           string         `json:"namespace"`
+	URL                 string         `json:"url"`
+	Review              *ReviewConfig  `json:"review,omitempty"`
+	IssueHandlers       []IssueHandler `json:"issueHandlers,omitempty"`
+	Dev                 *DevConfig     `json:"dev,omitempty"`
+	PendingPRs          []int64        `json:"pendingPRs,omitempty"`
+	ExcludePullRequests []int64        `json:"excludePullRequests,omitempty"`
 }
 
 // ReviewConfig holds configuration for PR reviews
