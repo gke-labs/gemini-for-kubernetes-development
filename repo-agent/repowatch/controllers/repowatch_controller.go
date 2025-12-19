@@ -52,6 +52,11 @@ import (
 // Character set for the random string
 const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
+const (
+	OAuthPATKey  = "oauth_pat"
+	ManualPATKey = "manual_pat"
+)
+
 // We create a new *rand.Rand instance seeded with the current time.
 // This is crucial to get different results on each program execution.
 var seededRand = rand.New(
@@ -90,12 +95,17 @@ func (s *PersistingTokenSource) Token() (*oauth2.Token, error) {
 	}
 
 	// Check if token changed
-	currentPAT := string(secret.Data["pat"])
+	currentPAT := string(secret.Data[OAuthPATKey])
+	if currentPAT == "" {
+		// Fallback to 'pat' if 'oauth_pat' is not yet set
+		currentPAT = string(secret.Data["pat"])
+	}
+
 	if currentPAT == t.AccessToken {
 		return t, nil
 	}
 
-	secret.Data["pat"] = []byte(t.AccessToken)
+	secret.Data[OAuthPATKey] = []byte(t.AccessToken)
 	if t.RefreshToken != "" {
 		secret.Data["refresh_token"] = []byte(t.RefreshToken)
 	}
@@ -132,14 +142,20 @@ func NewGithubClient(ctx context.Context, k8sClient client.Client, repoWatch *re
 		"name":  "",
 		"email": "",
 	}
-	pat, ok := secret.Data["pat"]
-	if !ok || len(string(pat)) == 0 {
-		// If PAT is missing or empty check if we have OAuth credentials configured.
-		// If so, we might be waiting for the user to login.
-		if os.Getenv("GITHUB_CLIENT_ID") != "" && os.Getenv("GITHUB_CLIENT_SECRET") != "" {
-			return nil, nil, fmt.Errorf("waiting for user login to populate github token in secret %s", secretName)
+
+	var pat []byte
+	var ok bool
+	if pat, ok = secret.Data[ManualPATKey]; !ok || len(string(pat)) == 0 {
+		if pat, ok = secret.Data[OAuthPATKey]; !ok || len(string(pat)) == 0 {
+			if pat, ok = secret.Data["pat"]; !ok || len(string(pat)) == 0 {
+				// If PAT is missing or empty check if we have OAuth credentials configured.
+				// If so, we might be waiting for the user to login.
+				if os.Getenv("GITHUB_CLIENT_ID") != "" && os.Getenv("GITHUB_CLIENT_SECRET") != "" {
+					return nil, nil, fmt.Errorf("waiting for user login to populate github token in secret %s", secretName)
+				}
+				return nil, nil, fmt.Errorf("GitHub token not found or empty in secret %s (checked %s, %s, and pat)", secretName, ManualPATKey, OAuthPATKey)
+			}
 		}
-		return nil, nil, fmt.Errorf("\"pat\" not found or empty in secret %s", secretName)
 	}
 	githubConfig["pat"] = string(pat)
 

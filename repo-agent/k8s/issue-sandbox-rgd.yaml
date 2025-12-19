@@ -115,6 +115,19 @@ spec:
                         secretKeyRef:
                           name: ${schema.spec.githubSecretName}
                           key: pat
+                          optional: true
+                    - name: MANUAL_PAT
+                      valueFrom:
+                        secretKeyRef:
+                          name: ${schema.spec.githubSecretName}
+                          key: manual_pat
+                          optional: true
+                    - name: OAUTH_PAT
+                      valueFrom:
+                        secretKeyRef:
+                          name: ${schema.spec.githubSecretName}
+                          key: oauth_pat
+                          optional: true
                     - name: GIT_PUSH_ENABLED
                       value: ${string(schema.spec.destination.pushEnabled)}
                     - name: ENVBUILDER_GIT_URL

@@ -55,6 +55,25 @@ function Settings({ onBack }) {
         });
     };
 
+    const handleClearPat = () => {
+        if (!window.confirm("Are you sure you want to clear your manual PAT? The application will fall back to your OAuth login token if available.")) return;
+        
+        fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ github_pat: "" })
+        })
+        .then(res => {
+            if (res.ok) {
+                setMessage({ text: 'Manual PAT cleared.', type: 'success' });
+                fetch('/api/settings').then(r => r.json()).then(setStatus);
+            } else {
+                throw new Error('Failed to clear PAT');
+            }
+        })
+        .catch(err => setMessage({ text: 'Error clearing PAT.', type: 'error' }));
+    };
+
     if (isLoading) return <div className="settings-container"><p>Loading settings...</p></div>;
 
     return (
@@ -67,19 +86,34 @@ function Settings({ onBack }) {
             <form onSubmit={handleSave} className="settings-form">
                 <div className="form-group">
                     <label htmlFor="githubPat">GitHub Personal Access Token (PAT):</label>
+                    <div className="status-info">
+                        {status.manual_pat_set ? (
+                            <span className="status-badge set">✅ Manual PAT Configured</span>
+                        ) : status.oauth_pat_set ? (
+                            <span className="status-badge oauth">ℹ️ Using OAuth Login Token</span>
+                        ) : status.github_pat_set ? (
+                             <span className="status-badge set">✅ Legacy PAT Configured</span>
+                        ) : (
+                            <span className="status-badge missing">⚠️ No Token Configured</span>
+                        )}
+                    </div>
                     <div className="input-status-wrapper">
                         <input
                             type="password"
                             id="githubPat"
                             value={githubPat}
                             onChange={(e) => setGithubPat(e.target.value)}
-                            placeholder={status.github_pat_set ? "(Currently set - leave blank to keep)" : "Enter new PAT"}
+                            placeholder={status.manual_pat_set ? "Enter new PAT to overwrite" : "Enter new Manual PAT"}
                         />
-                        <span className={`status-badge ${status.github_pat_set ? 'set' : 'missing'}`}>
-                            {status.github_pat_set ? '✅ Configured' : '⚠️ Not Set'}
-                        </span>
+                        {status.manual_pat_set && (
+                            <button type="button" className="btn btn-delete btn-sm" onClick={handleClearPat} style={{marginLeft: '10px'}}>Clear Manual PAT</button>
+                        )}
                     </div>
-                    <small>Required for watching repositories and posting comments.</small>
+                    <small>
+                        Manual PAT takes precedence over OAuth login. 
+                        You can generate a <a href="https://github.com/settings/tokens" target="_blank" rel="noopener noreferrer">GitHub Classic PAT</a> with 'repo' (read/write) permissions.
+                        {status.oauth_pat_set && !status.manual_pat_set && " You are currently using your GitHub login session."}
+                    </small>
                 </div>
 
                 <div className="form-group">

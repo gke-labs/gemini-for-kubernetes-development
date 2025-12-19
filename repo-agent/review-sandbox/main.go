@@ -17,6 +17,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/agentoutput"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/codeserver"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/llm"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tokens"
 	"github.com/google/go-github/v39/github"
 	"golang.org/x/oauth2"
 	"gopkg.in/yaml.v3"
@@ -105,9 +106,9 @@ func runReview() error {
 	}
 
 	// Get existing comments
-	githubToken := os.Getenv("GITHUB_TOKEN")
+	githubToken := tokens.GetGitHubToken()
 	if githubToken == "" {
-		return fmt.Errorf("GITHUB_TOKEN environment variable not set")
+		return fmt.Errorf("GitHub token not found in environment variables (tried MANUAL_PAT, OAUTH_PAT, and GITHUB_TOKEN)")
 	}
 	repoURL := os.Getenv("GIT_HTML_URL")
 	parts := strings.Split(strings.TrimPrefix(repoURL, "https://github.com/"), "/")
@@ -223,13 +224,13 @@ func runReview() error {
 				}
 			}
 			if agentOutput.Note != "" {
-				accumulatedAgentOutput.Note += "\n---\n" + agentOutput.Note
+				accumulatedAgentOutput.Note += "\n---" + agentOutput.Note
 			}
 			if agentOutput.Review.Body != nil && *agentOutput.Review.Body != "" {
 				if accumulatedAgentOutput.Review.Body == nil {
 					accumulatedAgentOutput.Review.Body = agentOutput.Review.Body
 				} else {
-					newBody := *accumulatedAgentOutput.Review.Body + "\n---\n" + *agentOutput.Review.Body
+					newBody := *accumulatedAgentOutput.Review.Body + "\n---" + *agentOutput.Review.Body
 					accumulatedAgentOutput.Review.Body = &newBody
 				}
 			}
