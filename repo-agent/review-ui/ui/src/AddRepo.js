@@ -149,7 +149,8 @@ function AddRepo({ onCancel, onRepoAdded }) {
         })
         .catch(err => {
             console.error(err);
-            setError(err.message);
+            const hint = " This often happens for private or restricted repositories if you haven't provided a manual GitHub PAT in 'Settings'.";
+            setError(err.message + hint);
             setIsLoading(false);
         });
     };

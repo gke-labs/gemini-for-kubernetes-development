@@ -419,7 +419,12 @@ function App() {
       if (res.ok) {
         setPrs(prs.map(pr => pr.id === id ? { ...pr, review: reviewYAML, draft: '' } : pr));
       } else {
-        res.json().then(data => alert("Failed to submit PR review: " + (data.error || res.statusText) + (data.details ? "\nDetails: " + data.details : "")));
+        res.json().then(data => {
+            const errorMsg = data.error || res.statusText;
+            const details = data.details ? "\nDetails: " + data.details : "";
+            const hint = "\n\nTip: This often happens if the GitHub token has insufficient permissions for this organization. Go to 'Settings' and provide a manual GitHub Classic PAT with 'repo' (read/write) permissions.";
+            alert("Failed to submit PR review: " + errorMsg + details + hint);
+        });
       }
     })
     .catch(err => console.error("Failed to submit PR review:", err));
@@ -516,7 +521,12 @@ function App() {
       if (res.ok) {
         setIssues(issues.map(issue => issue.id === issueId ? { ...issue, comment, draft: '' } : issue));
       } else {
-        alert("Failed to submit issue comment");
+        res.json().then(data => {
+            const errorMsg = data.error || res.statusText;
+            const details = data.details ? "\nDetails: " + data.details : "";
+            const hint = "\n\nTip: This often happens if the GitHub token has insufficient permissions for this organization. Go to 'Settings' and provide a manual GitHub Classic PAT with 'repo' (read/write) permissions.";
+            alert("Failed to submit issue comment: " + errorMsg + details + hint);
+        });
       }
     })
     .catch(err => console.error("Failed to submit issue comment:", err));
@@ -612,7 +622,11 @@ function App() {
         if (res.ok) {
             alert("PR added to watch list. It may take a few moments to appear.");
         } else {
-            res.json().then(data => alert("Failed to add PR: " + (data.error || res.statusText)));
+            res.json().then(data => {
+                const errorMsg = data.error || res.statusText;
+                const hint = "\n\nTip: If this is a private repo or organization-restricted, you may need a manual GitHub Classic PAT with 'repo' permissions in 'Settings'.";
+                alert("Failed to add PR: " + errorMsg + hint);
+            });
         }
     })
     .catch(err => console.error("Failed to add PR:", err));
