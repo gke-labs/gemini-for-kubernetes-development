@@ -203,19 +203,19 @@ type RepoWatchStatus struct {
 	WatchedPRs []WatchedPR `json:"watchedPRs,omitempty"`
 
 	// +optional
-	PendingPRs []PendingPR `json:"pendingPRs,omitempty"`
+	PendingPRs []int `json:"pendingPRs,omitempty"`
 
 	// +optional
 	WatchedIssues map[string][]WatchedIssue `json:"watchedIssues,omitempty"`
 
 	// +optional
-	PendingIssues map[string][]PendingIssue `json:"pendingIssues,omitempty"`
+	PendingIssues map[string][]int `json:"pendingIssues,omitempty"`
 
 	// +optional
 	WatchedDevSandboxes []DevSandbox `json:"watchedDevSandboxes,omitempty"`
 
 	// +optional
-	PendingDevSandboxes []PendingDevSandbox `json:"pendingDevSandboxes,omitempty"`
+	PendingDevSandboxes []string `json:"pendingDevSandboxes,omitempty"`
 }
 
 // WatchedPR defines the state of a watched PR
@@ -231,14 +231,6 @@ type WatchedPR struct {
 	ScaledDown bool `json:"scaledDown,omitempty"`
 }
 
-// PendingPR defines the state of a pending PR
-type PendingPR struct {
-	// PR number
-	Number int `json:"number"`
-	// Status of the PR
-	Status string `json:"status"`
-}
-
 // WatchedIssue defines the state of a watched Issue
 type WatchedIssue struct {
 	// Issue number
@@ -252,14 +244,6 @@ type WatchedIssue struct {
 	ScaledDown bool `json:"scaledDown,omitempty"`
 }
 
-// PendingIssue defines the state of a pending PR
-type PendingIssue struct {
-	// PR number
-	Number int `json:"number"`
-	// Status of the PR
-	Status string `json:"status"`
-}
-
 // DevSandbox defines the state of a watched development sandbox
 type DevSandbox struct {
 	// Name of the remote branch
@@ -271,14 +255,6 @@ type DevSandbox struct {
 	// ScaledDown indicates if the sandbox for this Dev branch has been scaled down to 0 replicas.
 	// +kubebuilder:validation:Optional
 	ScaledDown bool `json:"scaledDown,omitempty"`
-}
-
-// PendingDevSandbox defines the state of a pending development sandbox
-type PendingDevSandbox struct {
-	// Name of the remote branch
-	BranchName string `json:"branchName"`
-	// Status of the branch
-	Status string `json:"status"`
 }
 
 // +kubebuilder:object:root=true

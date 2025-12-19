@@ -499,8 +499,7 @@ func TestReconcileReviewSandboxes(t *testing.T) {
 		g.Expect(fetchedRepoWatch.Status.WatchedPRs[0].Number).To(gomega.Equal(prNumber))
 		g.Expect(fetchedRepoWatch.Status.WatchedPRs[0].Status).To(gomega.Equal("Active"))
 		g.Expect(fetchedRepoWatch.Status.PendingPRs).To(gomega.HaveLen(1))
-		g.Expect(fetchedRepoWatch.Status.PendingPRs[0].Number).To(gomega.Equal(newPRNumber))
-		g.Expect(fetchedRepoWatch.Status.PendingPRs[0].Status).To(gomega.Equal("Pending"))
+		g.Expect(fetchedRepoWatch.Status.PendingPRs[0]).To(gomega.Equal(newPRNumber))
 	})
 
 	// Test case 3: Not creating a new sandbox if it already exists.
@@ -848,8 +847,7 @@ func TestReconcileIssueHandlerSandboxes(t *testing.T) {
 		g.Expect(fetchedRepoWatch.Status.WatchedIssues[handlerName][0].Number).To(gomega.Equal(issueNumber))
 		g.Expect(fetchedRepoWatch.Status.WatchedIssues[handlerName][0].Status).To(gomega.Equal("Active"))
 		g.Expect(fetchedRepoWatch.Status.PendingIssues[handlerName]).To(gomega.HaveLen(1))
-		g.Expect(fetchedRepoWatch.Status.PendingIssues[handlerName][0].Number).To(gomega.Equal(newIssueNumber))
-		g.Expect(fetchedRepoWatch.Status.PendingIssues[handlerName][0].Status).To(gomega.Equal("Pending"))
+		g.Expect(fetchedRepoWatch.Status.PendingIssues[handlerName][0]).To(gomega.Equal(newIssueNumber))
 	})
 
 	// Test case 3: Not creating a new sandbox if it already exists.
@@ -1632,7 +1630,7 @@ func TestRepoWatchReconciler_Reconcile_FilteredAndSortedPRs(t *testing.T) {
 	g.Expect(fetchedRepoWatch.Status.WatchedPRs[1].Number).To(gomega.Equal(1))
 
 	g.Expect(fetchedRepoWatch.Status.PendingPRs).To(gomega.HaveLen(1))
-	g.Expect(fetchedRepoWatch.Status.PendingPRs[0].Number).To(gomega.Equal(2))
+	g.Expect(fetchedRepoWatch.Status.PendingPRs[0]).To(gomega.Equal(2))
 }
 
 // TestReconcileReviewSandboxes_RespectsExistingActiveSandboxes verifies that the MaxActiveSandboxes limit
@@ -1748,7 +1746,7 @@ func TestReconcileReviewSandboxes_RespectsExistingActiveSandboxes(t *testing.T) 
 	g.Expect(fetchedRepoWatch.Status.WatchedPRs).To(gomega.HaveLen(1))
 	g.Expect(fetchedRepoWatch.Status.WatchedPRs[0].Number).To(gomega.Equal(1))
 	g.Expect(fetchedRepoWatch.Status.PendingPRs).To(gomega.HaveLen(1))
-	g.Expect(fetchedRepoWatch.Status.PendingPRs[0].Number).To(gomega.Equal(2))
+	g.Expect(fetchedRepoWatch.Status.PendingPRs[0]).To(gomega.Equal(2))
 }
 
 // TestReconcile_MultipleRepoWatchesSameRepo verifies that two RepoWatches

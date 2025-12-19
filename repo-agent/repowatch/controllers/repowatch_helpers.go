@@ -33,10 +33,10 @@ import (
 
 // createOrUpdateReviewSandboxes processes all open PRs, creating, updating, or marking them as pending.
 // It returns the lists of watched and pending PRs, and the final count of active sandboxes.
-func (r *RepoWatchReconciler) createOrUpdateReviewSandboxes(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, allOpenPRs []*github.PullRequest, ownedSandboxes []unstructured.Unstructured, explicitPRs []*github.PullRequest, activeSandboxes int, totalSandboxes int) ([]reviewv1alpha1.WatchedPR, []reviewv1alpha1.PendingPR, int) {
+func (r *RepoWatchReconciler) createOrUpdateReviewSandboxes(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, allOpenPRs []*github.PullRequest, ownedSandboxes []unstructured.Unstructured, explicitPRs []*github.PullRequest, activeSandboxes int, totalSandboxes int) ([]reviewv1alpha1.WatchedPR, []int, int) {
 	log := log.FromContext(ctx)
 	watchedPRs := []reviewv1alpha1.WatchedPR{}
-	pendingPRs := []reviewv1alpha1.PendingPR{}
+	pendingPRs := []int{}
 
 	for _, pr := range allOpenPRs {
 		sandboxName := fmt.Sprintf("%s-pr-%d", repoWatch.Name, *pr.Number)
@@ -94,10 +94,7 @@ func (r *RepoWatchReconciler) createOrUpdateReviewSandboxes(ctx context.Context,
 				})
 			}
 		} else {
-			pendingPRs = append(pendingPRs, reviewv1alpha1.PendingPR{
-				Number: *pr.Number,
-				Status: "Pending",
-			})
+			pendingPRs = append(pendingPRs, *pr.Number)
 		}
 	}
 	return watchedPRs, pendingPRs, activeSandboxes

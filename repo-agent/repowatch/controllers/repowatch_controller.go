@@ -464,7 +464,7 @@ func (r *RepoWatchReconciler) excludePRs(prs []*github.PullRequest, repoWatch *r
 	return filteredPRs
 }
 
-func (r *RepoWatchReconciler) reconcileReviewSandboxesInternal(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, explicitPRs []*github.PullRequest, prs []*github.PullRequest, sandboxes *unstructured.UnstructuredList) ([]reviewv1alpha1.WatchedPR, []reviewv1alpha1.PendingPR, int) {
+func (r *RepoWatchReconciler) reconcileReviewSandboxesInternal(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, explicitPRs []*github.PullRequest, prs []*github.PullRequest, sandboxes *unstructured.UnstructuredList) ([]reviewv1alpha1.WatchedPR, []int, int) {
 	log := log.FromContext(ctx)
 
 	ownedSandboxes := getOwnedSandboxes(sandboxes.Items, repoWatch.UID)
@@ -500,7 +500,7 @@ func (r *RepoWatchReconciler) reconcileReviewSandboxesInternal(ctx context.Conte
 	r.cleanupClosedPRSandboxes(ctx, totalSandboxes, ownedSandboxes, allOpenPRs)
 
 	watchedPRs := []reviewv1alpha1.WatchedPR{}
-	pendingPRs := []reviewv1alpha1.PendingPR{}
+	pendingPRs := []int{}
 
 	// Combine explicit and auto-discovered PRs for processing
 	allPRs := append(explicitPRs, prs...)
@@ -571,10 +571,7 @@ func (r *RepoWatchReconciler) reconcileReviewSandboxesInternal(ctx context.Conte
 					})
 				}
 			} else {
-				pendingPRs = append(pendingPRs, reviewv1alpha1.PendingPR{
-					Number: *pr.Number,
-					Status: "Pending",
-				})
+				pendingPRs = append(pendingPRs, *pr.Number)
 			}
 		}
 	}
@@ -713,7 +710,7 @@ func (r *RepoWatchReconciler) reconcileIssueHandlerSandboxesInternal(ctx context
 	}
 
 	watchedIssues := []reviewv1alpha1.WatchedIssue{}
-	pendingIssues := []reviewv1alpha1.PendingIssue{}
+	pendingIssues := []int{}
 
 	// 3. Cleanup closed issues from the owned list
 	for _, sandbox := range ownedSandboxes {
@@ -809,10 +806,7 @@ func (r *RepoWatchReconciler) reconcileIssueHandlerSandboxesInternal(ctx context
 					})
 				}
 			} else {
-				pendingIssues = append(pendingIssues, reviewv1alpha1.PendingIssue{
-					Number: *issue.Number,
-					Status: "Pending",
-				})
+				pendingIssues = append(pendingIssues, *issue.Number)
 			}
 		}
 	}
@@ -821,7 +815,7 @@ func (r *RepoWatchReconciler) reconcileIssueHandlerSandboxesInternal(ctx context
 		repoWatch.Status.WatchedIssues = make(map[string][]reviewv1alpha1.WatchedIssue)
 	}
 	if repoWatch.Status.PendingIssues == nil {
-		repoWatch.Status.PendingIssues = make(map[string][]reviewv1alpha1.PendingIssue)
+		repoWatch.Status.PendingIssues = make(map[string][]int)
 	}
 	repoWatch.Status.WatchedIssues[handler.Name] = watchedIssues
 	repoWatch.Status.PendingIssues[handler.Name] = pendingIssues
@@ -1160,7 +1154,7 @@ func (r *RepoWatchReconciler) reconcileDevSandboxes(ctx context.Context, user *g
 
 	activeSandboxes := 0
 	watchedDevSandboxes := []reviewv1alpha1.DevSandbox{}
-	pendingDevSandboxes := []reviewv1alpha1.PendingDevSandbox{}
+	pendingDevSandboxes := []string{}
 
 	// Identify which branches we want to have sandboxes for.
 	desiredBranches := make(map[string]bool)
@@ -1256,10 +1250,7 @@ func (r *RepoWatchReconciler) reconcileDevSandboxes(ctx context.Context, user *g
 				})
 			}
 		} else {
-			pendingDevSandboxes = append(pendingDevSandboxes, reviewv1alpha1.PendingDevSandbox{
-				BranchName: branchName,
-				Status:     "Pending",
-			})
+			pendingDevSandboxes = append(pendingDevSandboxes, branchName)
 		}
 	}
 

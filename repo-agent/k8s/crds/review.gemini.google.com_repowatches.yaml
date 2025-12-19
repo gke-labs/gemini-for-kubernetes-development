@@ -215,41 +215,17 @@ spec:
                 type: array
               pendingDevSandboxes:
                 items:
-                  properties:
-                    branchName:
-                      type: string
-                    status:
-                      type: string
-                  required:
-                  - branchName
-                  - status
-                  type: object
+                  type: string
                 type: array
               pendingIssues:
                 additionalProperties:
                   items:
-                    properties:
-                      number:
-                        type: integer
-                      status:
-                        type: string
-                    required:
-                    - number
-                    - status
-                    type: object
+                    type: integer
                   type: array
                 type: object
               pendingPRs:
                 items:
-                  properties:
-                    number:
-                      type: integer
-                    status:
-                      type: string
-                  required:
-                  - number
-                  - status
-                  type: object
+                  type: integer
                 type: array
               watchedDevSandboxes:
                 items:

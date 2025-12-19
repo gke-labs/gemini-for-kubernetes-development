@@ -158,7 +158,7 @@ func TestReconcileReviewSandboxes_MaxSandboxes(t *testing.T) {
 
 	// PR 3 should be pending
 	g.Expect(fetchedRepoWatch.Status.PendingPRs).To(gomega.HaveLen(1))
-	g.Expect(fetchedRepoWatch.Status.PendingPRs[0].Number).To(gomega.Equal(3))
+	g.Expect(fetchedRepoWatch.Status.PendingPRs[0]).To(gomega.Equal(3))
 }
 
 // TestReconcileIssueHandlerSandboxes_MaxSandboxes verifies that the MaxSandboxes limit is respected for Issues.
@@ -281,5 +281,5 @@ func TestReconcileIssueHandlerSandboxes_MaxSandboxes(t *testing.T) {
 	g.Expect(r.Client.Get(context.Background(), types.NamespacedName{Name: repoWatch.Name, Namespace: repoWatch.Namespace}, fetchedRepoWatch)).To(gomega.Succeed())
 
 	g.Expect(fetchedRepoWatch.Status.PendingIssues[handlerName]).To(gomega.HaveLen(1))
-	g.Expect(fetchedRepoWatch.Status.PendingIssues[handlerName][0].Number).To(gomega.Equal(3))
+	g.Expect(fetchedRepoWatch.Status.PendingIssues[handlerName][0]).To(gomega.Equal(3))
 }

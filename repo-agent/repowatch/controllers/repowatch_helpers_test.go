@@ -94,9 +94,9 @@ func TestCreateOrUpdateReviewSandboxes(t *testing.T) {
 	g.Expect(watched[0].Number).To(gomega.Equal(pr4Num))
 
 	g.Expect(len(pending)).To(gomega.Equal(3), "Should have three pending PRs")
-	g.Expect(pending[0].Number).To(gomega.Equal(pr1Num))
-	g.Expect(pending[1].Number).To(gomega.Equal(pr2Num))
-	g.Expect(pending[2].Number).To(gomega.Equal(pr3Num))
+	g.Expect(pending[0]).To(gomega.Equal(pr1Num))
+	g.Expect(pending[1]).To(gomega.Equal(pr2Num))
+	g.Expect(pending[2]).To(gomega.Equal(pr3Num))
 
 	// Verify scale down
 	updatedSandbox := &unstructured.Unstructured{}
