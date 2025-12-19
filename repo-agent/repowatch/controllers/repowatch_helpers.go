@@ -19,10 +19,8 @@ package controllers
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strconv"
 	"strings"
-	time "time"
 
 	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/repowatch/api/v1alpha1"
 	"github.com/google/go-github/v39/github"
@@ -30,75 +28,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
-
-// createOrUpdateReviewSandboxes processes all open PRs, creating, updating, or marking them as pending.
-// It returns the lists of watched and pending PRs, and the final count of active sandboxes.
-func (r *RepoWatchReconciler) createOrUpdateReviewSandboxes(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, allOpenPRs []*github.PullRequest, ownedSandboxes []unstructured.Unstructured, explicitPRs []*github.PullRequest, activeSandboxes int, totalSandboxes int) ([]reviewv1alpha1.WatchedPR, []int, int) {
-	log := log.FromContext(ctx)
-	watchedPRs := []reviewv1alpha1.WatchedPR{}
-	pendingPRs := []int{}
-
-	for _, pr := range allOpenPRs {
-		sandboxName := fmt.Sprintf("%s-pr-%d", repoWatch.Name, *pr.Number)
-		sandboxExists := false
-		for _, sandbox := range ownedSandboxes {
-			if sandbox.GetName() == sandboxName {
-				sandboxExists = true
-				// Scale down check
-				if repoWatch.Spec.Review.ReviewShutdownAfterMinutes > 0 {
-					creationTimestamp := sandbox.GetCreationTimestamp()
-					shutdownDuration := time.Minute * time.Duration(repoWatch.Spec.Review.ReviewShutdownAfterMinutes)
-					if time.Since(creationTimestamp.Time) > shutdownDuration {
-						replicas, found, err := unstructured.NestedInt64(sandbox.Object, "spec", "replicas")
-						if err == nil && found && replicas > 0 {
-							log.Info("scaling down sandbox", "sandbox", sandbox.GetName())
-							if err := unstructured.SetNestedField(sandbox.Object, int64(0), "spec", "replicas"); err != nil {
-								log.Error(err, "unable to set replicas for sandbox", "sandbox", sandbox.GetName())
-							} else {
-								if err := r.Update(ctx, &sandbox); err != nil {
-									log.Error(err, "unable to update sandbox", "sandbox", sandbox.GetName())
-								}
-							}
-						}
-					}
-				}
-				watchedPRs = append(watchedPRs, reviewv1alpha1.WatchedPR{
-					Number:      *pr.Number,
-					SandboxName: sandboxName,
-					Status:      "Active",
-				})
-				break
-			}
-		}
-
-		if sandboxExists {
-			continue
-		}
-
-		// Logic to create a new sandbox if it doesn't exist
-		// An "explicit" PR is one that is specifically listed in the `RepoWatch`
-		// spec's `pullRequests` field. These PRs are exempt from the `maxActiveSandboxes` limit.
-		prIsExplicit := isPRExplicit(*pr.Number, explicitPRs)
-
-		if prIsExplicit || ((activeSandboxes < repoWatch.Spec.Review.MaxActiveSandboxes) && (repoWatch.Spec.Review.MaxSandboxes == 0 || totalSandboxes < repoWatch.Spec.Review.MaxSandboxes)) {
-			log.Info("creating sandbox for pr", "pr", *pr.Number)
-			if err := r.createReviewSandboxForPR(ctx, repoWatch, pr); err != nil {
-				log.Error(err, "unable to create sandbox for pr", "pr", *pr.Number)
-			} else {
-				activeSandboxes++
-				totalSandboxes++
-				watchedPRs = append(watchedPRs, reviewv1alpha1.WatchedPR{
-					Number:      *pr.Number,
-					SandboxName: sandboxName,
-					Status:      "Creating",
-				})
-			}
-		} else {
-			pendingPRs = append(pendingPRs, *pr.Number)
-		}
-	}
-	return watchedPRs, pendingPRs, activeSandboxes
-}
 
 // cleanupClosedPRSandboxes iterates through owned sandboxes and deletes those whose corresponding PRs are closed.
 // It returns the updated count of total sandboxes.

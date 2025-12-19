@@ -137,7 +137,7 @@ func TestReconcileReviewSandboxes_MaxSandboxes(t *testing.T) {
 
 	// Call reconcile
 	watchedPRs, pendingPRs, activeSandboxes := r.reconcileReviewSandboxesInternal(context.Background(), repoWatch, []*github.PullRequest{}, []*github.PullRequest{pr1, pr2, pr3}, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*activeSandbox, *inactiveSandbox}})
-	repoWatch.Status.WatchedPRs = watchedPRs
+	repoWatch.Status.ReviewSandboxes = watchedPRs
 	repoWatch.Status.PendingPRs = pendingPRs
 	repoWatch.Status.ActiveSandboxCount = activeSandboxes
 	g.Expect(r.Status().Update(context.Background(), repoWatch)).To(gomega.Succeed())

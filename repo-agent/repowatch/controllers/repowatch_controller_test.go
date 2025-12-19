@@ -152,8 +152,8 @@ func TestRepoWatchReconciler_Reconcile(t *testing.T) {
 	fetchedRepoWatch := &reviewv1alpha1.RepoWatch{}
 	g.Expect(fakeClient.Get(context.Background(), req.NamespacedName, fetchedRepoWatch)).To(gomega.Succeed())
 	g.Expect(fetchedRepoWatch.Status.ActiveSandboxCount).To(gomega.Equal(1))
-	g.Expect(fetchedRepoWatch.Status.WatchedPRs).To(gomega.HaveLen(1))
-	g.Expect(fetchedRepoWatch.Status.WatchedPRs[0].Number).To(gomega.Equal(1))
+	g.Expect(fetchedRepoWatch.Status.ReviewSandboxes).To(gomega.HaveLen(1))
+	g.Expect(fetchedRepoWatch.Status.ReviewSandboxes[0].Number).To(gomega.Equal(1))
 
 	// Check that a ReviewSandbox was created
 	reviewSandboxList := &unstructured.UnstructuredList{}
@@ -291,8 +291,8 @@ func TestRepoWatchReconciler_ReconcileIssues(t *testing.T) {
 	// 7. Assert expected outcomes
 	fetchedRepoWatch := &reviewv1alpha1.RepoWatch{}
 	g.Expect(fakeClient.Get(context.Background(), req.NamespacedName, fetchedRepoWatch)).To(gomega.Succeed())
-	g.Expect(fetchedRepoWatch.Status.WatchedIssues).To(gomega.HaveLen(1))
-	g.Expect(fetchedRepoWatch.Status.WatchedIssues["test-handler"][0].Number).To(gomega.Equal(10))
+	g.Expect(fetchedRepoWatch.Status.IssueSandboxes).To(gomega.HaveLen(1))
+	g.Expect(fetchedRepoWatch.Status.IssueSandboxes["test-handler"][0].Number).To(gomega.Equal(10))
 
 	// Check that an IssueSandbox was created
 	issueSandboxList := &unstructured.UnstructuredList{}
@@ -406,7 +406,7 @@ func TestReconcileReviewSandboxes(t *testing.T) {
 		})
 		g.Expect(r.Client.List(context.Background(), sandboxList)).To(gomega.Succeed())
 		watchedPRs, pendingPRs, activeSandboxes := r.reconcileReviewSandboxesInternal(context.Background(), repoWatch, []*github.PullRequest{}, []*github.PullRequest{pr}, sandboxList)
-		repoWatch.Status.WatchedPRs = watchedPRs
+		repoWatch.Status.ReviewSandboxes = watchedPRs
 		repoWatch.Status.PendingPRs = pendingPRs
 		repoWatch.Status.ActiveSandboxCount = activeSandboxes
 		g.Expect(r.Status().Update(context.Background(), repoWatch)).To(gomega.Succeed())
@@ -475,7 +475,7 @@ func TestReconcileReviewSandboxes(t *testing.T) {
 
 		// Call reconcileReviewSandboxes with the active PR and the new PR
 		watchedPRs, pendingPRs, activeSandboxes := r.reconcileReviewSandboxesInternal(context.Background(), repoWatch, []*github.PullRequest{}, []*github.PullRequest{pr, newPR}, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*activePRSandbox}})
-		repoWatch.Status.WatchedPRs = watchedPRs
+		repoWatch.Status.ReviewSandboxes = watchedPRs
 		repoWatch.Status.PendingPRs = pendingPRs
 		repoWatch.Status.ActiveSandboxCount = activeSandboxes
 		g.Expect(r.Status().Update(context.Background(), repoWatch)).To(gomega.Succeed())
@@ -495,9 +495,9 @@ func TestReconcileReviewSandboxes(t *testing.T) {
 		fetchedRepoWatch := &reviewv1alpha1.RepoWatch{}
 		g.Expect(r.Client.Get(context.Background(), types.NamespacedName{Name: repoWatch.Name, Namespace: repoWatch.Namespace}, fetchedRepoWatch)).To(gomega.Succeed())
 		g.Expect(fetchedRepoWatch.Status.ActiveSandboxCount).To(gomega.Equal(1))
-		g.Expect(fetchedRepoWatch.Status.WatchedPRs).To(gomega.HaveLen(1))
-		g.Expect(fetchedRepoWatch.Status.WatchedPRs[0].Number).To(gomega.Equal(prNumber))
-		g.Expect(fetchedRepoWatch.Status.WatchedPRs[0].Status).To(gomega.Equal("Active"))
+		g.Expect(fetchedRepoWatch.Status.ReviewSandboxes).To(gomega.HaveLen(1))
+		g.Expect(fetchedRepoWatch.Status.ReviewSandboxes[0].Number).To(gomega.Equal(prNumber))
+		g.Expect(fetchedRepoWatch.Status.ReviewSandboxes[0].Status).To(gomega.Equal("Active"))
 		g.Expect(fetchedRepoWatch.Status.PendingPRs).To(gomega.HaveLen(1))
 		g.Expect(fetchedRepoWatch.Status.PendingPRs[0]).To(gomega.Equal(newPRNumber))
 	})
@@ -540,7 +540,7 @@ func TestReconcileReviewSandboxes(t *testing.T) {
 
 		// Call reconcileReviewSandboxes with the existing PR
 		watchedPRs, pendingPRs, activeSandboxes := r.reconcileReviewSandboxesInternal(context.Background(), repoWatch, []*github.PullRequest{}, []*github.PullRequest{pr}, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*existingPRSandbox}})
-		repoWatch.Status.WatchedPRs = watchedPRs
+		repoWatch.Status.ReviewSandboxes = watchedPRs
 		repoWatch.Status.PendingPRs = pendingPRs
 		repoWatch.Status.ActiveSandboxCount = activeSandboxes
 		g.Expect(r.Status().Update(context.Background(), repoWatch)).To(gomega.Succeed())
@@ -560,9 +560,9 @@ func TestReconcileReviewSandboxes(t *testing.T) {
 		fetchedRepoWatch := &reviewv1alpha1.RepoWatch{}
 		g.Expect(r.Client.Get(context.Background(), types.NamespacedName{Name: repoWatch.Name, Namespace: repoWatch.Namespace}, fetchedRepoWatch)).To(gomega.Succeed())
 		g.Expect(fetchedRepoWatch.Status.ActiveSandboxCount).To(gomega.Equal(1))
-		g.Expect(fetchedRepoWatch.Status.WatchedPRs).To(gomega.HaveLen(1))
-		g.Expect(fetchedRepoWatch.Status.WatchedPRs[0].Number).To(gomega.Equal(prNumber))
-		g.Expect(fetchedRepoWatch.Status.WatchedPRs[0].Status).To(gomega.Equal("Active"))
+		g.Expect(fetchedRepoWatch.Status.ReviewSandboxes).To(gomega.HaveLen(1))
+		g.Expect(fetchedRepoWatch.Status.ReviewSandboxes[0].Number).To(gomega.Equal(prNumber))
+		g.Expect(fetchedRepoWatch.Status.ReviewSandboxes[0].Status).To(gomega.Equal("Active"))
 		g.Expect(fetchedRepoWatch.Status.PendingPRs).To(gomega.HaveLen(0))
 	})
 
@@ -609,7 +609,7 @@ func TestReconcileReviewSandboxes(t *testing.T) {
 		// Call reconcileReviewSandboxes with the PR corresponding to the sandbox
 		// We need the PR to be present so it doesn't try to delete the sandbox because the PR is closed
 		watchedPRs, pendingPRs, activeSandboxes := r.reconcileReviewSandboxesInternal(context.Background(), repoWatch, []*github.PullRequest{}, []*github.PullRequest{pr}, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*oldSandbox}})
-		repoWatch.Status.WatchedPRs = watchedPRs
+		repoWatch.Status.ReviewSandboxes = watchedPRs
 		repoWatch.Status.PendingPRs = pendingPRs
 		repoWatch.Status.ActiveSandboxCount = activeSandboxes
 		g.Expect(r.Status().Update(context.Background(), repoWatch)).To(gomega.Succeed())
@@ -653,7 +653,7 @@ func TestReconcileReviewSandboxes(t *testing.T) {
 		g.Expect(sandboxList.Items).To(gomega.HaveLen(1)) // Should contain the closedPRSandbox initially
 
 		watchedPRs, pendingPRs, activeSandboxes := r.reconcileReviewSandboxesInternal(context.Background(), repoWatch, []*github.PullRequest{}, []*github.PullRequest{pr}, sandboxList)
-		repoWatch.Status.WatchedPRs = watchedPRs
+		repoWatch.Status.ReviewSandboxes = watchedPRs
 		repoWatch.Status.PendingPRs = pendingPRs
 		repoWatch.Status.ActiveSandboxCount = activeSandboxes
 		g.Expect(r.Status().Update(context.Background(), repoWatch)).To(gomega.Succeed())
@@ -843,9 +843,9 @@ func TestReconcileIssueHandlerSandboxes(t *testing.T) {
 		// Check that the RepoWatch status is updated correctly
 		fetchedRepoWatch := &reviewv1alpha1.RepoWatch{}
 		g.Expect(r.Client.Get(context.Background(), types.NamespacedName{Name: repoWatch.Name, Namespace: repoWatch.Namespace}, fetchedRepoWatch)).To(gomega.Succeed())
-		g.Expect(fetchedRepoWatch.Status.WatchedIssues[handlerName]).To(gomega.HaveLen(1))
-		g.Expect(fetchedRepoWatch.Status.WatchedIssues[handlerName][0].Number).To(gomega.Equal(issueNumber))
-		g.Expect(fetchedRepoWatch.Status.WatchedIssues[handlerName][0].Status).To(gomega.Equal("Active"))
+		g.Expect(fetchedRepoWatch.Status.IssueSandboxes[handlerName]).To(gomega.HaveLen(1))
+		g.Expect(fetchedRepoWatch.Status.IssueSandboxes[handlerName][0].Number).To(gomega.Equal(issueNumber))
+		g.Expect(fetchedRepoWatch.Status.IssueSandboxes[handlerName][0].Status).To(gomega.Equal("Active"))
 		g.Expect(fetchedRepoWatch.Status.PendingIssues[handlerName]).To(gomega.HaveLen(1))
 		g.Expect(fetchedRepoWatch.Status.PendingIssues[handlerName][0]).To(gomega.Equal(newIssueNumber))
 	})
@@ -904,9 +904,9 @@ func TestReconcileIssueHandlerSandboxes(t *testing.T) {
 		// Check that the RepoWatch status is updated correctly
 		fetchedRepoWatch := &reviewv1alpha1.RepoWatch{}
 		g.Expect(r.Client.Get(context.Background(), types.NamespacedName{Name: repoWatch.Name, Namespace: repoWatch.Namespace}, fetchedRepoWatch)).To(gomega.Succeed())
-		g.Expect(fetchedRepoWatch.Status.WatchedIssues[handlerName]).To(gomega.HaveLen(1))
-		g.Expect(fetchedRepoWatch.Status.WatchedIssues[handlerName][0].Number).To(gomega.Equal(issueNumber))
-		g.Expect(fetchedRepoWatch.Status.WatchedIssues[handlerName][0].Status).To(gomega.Equal("Active"))
+		g.Expect(fetchedRepoWatch.Status.IssueSandboxes[handlerName]).To(gomega.HaveLen(1))
+		g.Expect(fetchedRepoWatch.Status.IssueSandboxes[handlerName][0].Number).To(gomega.Equal(issueNumber))
+		g.Expect(fetchedRepoWatch.Status.IssueSandboxes[handlerName][0].Status).To(gomega.Equal("Active"))
 		g.Expect(fetchedRepoWatch.Status.PendingIssues[handlerName]).To(gomega.HaveLen(0))
 	})
 
@@ -1010,7 +1010,7 @@ func TestReconcileIssueHandlerSandboxes(t *testing.T) {
 		// Check that the RepoWatch status is updated correctly
 		fetchedRepoWatch := &reviewv1alpha1.RepoWatch{}
 		g.Expect(r.Client.Get(context.Background(), types.NamespacedName{Name: repoWatch.Name, Namespace: repoWatch.Namespace}, fetchedRepoWatch)).To(gomega.Succeed())
-		g.Expect(fetchedRepoWatch.Status.WatchedIssues[handlerName]).To(gomega.HaveLen(1))
+		g.Expect(fetchedRepoWatch.Status.IssueSandboxes[handlerName]).To(gomega.HaveLen(1))
 	})
 }
 
@@ -1489,11 +1489,11 @@ func TestRepoWatchReconciler_Reconcile_ExplicitAndListedPRs(t *testing.T) {
 	fetchedRepoWatch := &reviewv1alpha1.RepoWatch{}
 	g.Expect(fakeClient.Get(context.Background(), req.NamespacedName, fetchedRepoWatch)).To(gomega.Succeed())
 	g.Expect(fetchedRepoWatch.Status.ActiveSandboxCount).To(gomega.Equal(2)) // Both 1 and 42
-	g.Expect(fetchedRepoWatch.Status.WatchedPRs).To(gomega.HaveLen(2))
+	g.Expect(fetchedRepoWatch.Status.ReviewSandboxes).To(gomega.HaveLen(2))
 
 	// Verify PR 1
 	foundPR1 := false
-	for _, pr := range fetchedRepoWatch.Status.WatchedPRs {
+	for _, pr := range fetchedRepoWatch.Status.ReviewSandboxes {
 		if pr.Number == 1 {
 			foundPR1 = true
 			break
@@ -1503,7 +1503,7 @@ func TestRepoWatchReconciler_Reconcile_ExplicitAndListedPRs(t *testing.T) {
 
 	// Verify PR 42
 	foundPR42 := false
-	for _, pr := range fetchedRepoWatch.Status.WatchedPRs {
+	for _, pr := range fetchedRepoWatch.Status.ReviewSandboxes {
 		if pr.Number == 42 {
 			foundPR42 = true
 			break
@@ -1619,15 +1619,15 @@ func TestRepoWatchReconciler_Reconcile_FilteredAndSortedPRs(t *testing.T) {
 	g.Expect(fakeClient.Get(context.Background(), req.NamespacedName, fetchedRepoWatch)).To(gomega.Succeed())
 	g.Expect(fetchedRepoWatch.Status.ActiveSandboxCount).To(gomega.Equal(2))
 	// Expected order of processing: PR 4, PR 1. PR 2 is pending. PR 3 is filtered.
-	g.Expect(fetchedRepoWatch.Status.WatchedPRs).To(gomega.HaveLen(2))
+	g.Expect(fetchedRepoWatch.Status.ReviewSandboxes).To(gomega.HaveLen(2))
 
-	// Because WatchedPRs are appended as sandboxes are created, and we passed a sorted list to reconcileReviewSandboxes,
+	// Because ReviewSandboxes are appended as sandboxes are created, and we passed a sorted list to reconcileReviewSandboxes,
 	// they should be in order of the passed list (PR 4, PR 1, PR 2).
 	// However, createReviewSandboxForPR is called sequentially.
-	// So WatchedPRs should reflect that order.
+	// So ReviewSandboxes should reflect that order.
 
-	g.Expect(fetchedRepoWatch.Status.WatchedPRs[0].Number).To(gomega.Equal(4))
-	g.Expect(fetchedRepoWatch.Status.WatchedPRs[1].Number).To(gomega.Equal(1))
+	g.Expect(fetchedRepoWatch.Status.ReviewSandboxes[0].Number).To(gomega.Equal(4))
+	g.Expect(fetchedRepoWatch.Status.ReviewSandboxes[1].Number).To(gomega.Equal(1))
 
 	g.Expect(fetchedRepoWatch.Status.PendingPRs).To(gomega.HaveLen(1))
 	g.Expect(fetchedRepoWatch.Status.PendingPRs[0]).To(gomega.Equal(2))
@@ -1719,7 +1719,7 @@ func TestReconcileReviewSandboxes_RespectsExistingActiveSandboxes(t *testing.T) 
 
 	// Call reconcile
 	watchedPRs, pendingPRs, activeSandboxes := r.reconcileReviewSandboxesInternal(context.Background(), repoWatch, []*github.PullRequest{}, openPRs, existingSandboxList)
-	repoWatch.Status.WatchedPRs = watchedPRs
+	repoWatch.Status.ReviewSandboxes = watchedPRs
 	repoWatch.Status.PendingPRs = pendingPRs
 	repoWatch.Status.ActiveSandboxCount = activeSandboxes
 	g.Expect(r.Status().Update(context.Background(), repoWatch)).To(gomega.Succeed())
@@ -1743,8 +1743,8 @@ func TestReconcileReviewSandboxes_RespectsExistingActiveSandboxes(t *testing.T) 
 	g.Expect(fetchedRepoWatch.Status.ActiveSandboxCount).To(gomega.Equal(1))
 
 	// PR 1 should be watched, PR 2 should be pending.
-	g.Expect(fetchedRepoWatch.Status.WatchedPRs).To(gomega.HaveLen(1))
-	g.Expect(fetchedRepoWatch.Status.WatchedPRs[0].Number).To(gomega.Equal(1))
+	g.Expect(fetchedRepoWatch.Status.ReviewSandboxes).To(gomega.HaveLen(1))
+	g.Expect(fetchedRepoWatch.Status.ReviewSandboxes[0].Number).To(gomega.Equal(1))
 	g.Expect(fetchedRepoWatch.Status.PendingPRs).To(gomega.HaveLen(1))
 	g.Expect(fetchedRepoWatch.Status.PendingPRs[0]).To(gomega.Equal(2))
 }
@@ -1869,12 +1869,12 @@ func TestReconcile_MultipleRepoWatchesSameRepo(t *testing.T) {
 	fetchedA := &reviewv1alpha1.RepoWatch{}
 	g.Expect(r.Client.Get(context.Background(), reqA.NamespacedName, fetchedA)).To(gomega.Succeed())
 	g.Expect(fetchedA.Status.ActiveSandboxCount).To(gomega.Equal(1))
-	g.Expect(fetchedA.Status.WatchedPRs).To(gomega.HaveLen(1))
-	g.Expect(fetchedA.Status.WatchedPRs[0].Number).To(gomega.Equal(prNumber))
+	g.Expect(fetchedA.Status.ReviewSandboxes).To(gomega.HaveLen(1))
+	g.Expect(fetchedA.Status.ReviewSandboxes[0].Number).To(gomega.Equal(prNumber))
 
 	fetchedB := &reviewv1alpha1.RepoWatch{}
 	g.Expect(r.Client.Get(context.Background(), reqB.NamespacedName, fetchedB)).To(gomega.Succeed())
 	g.Expect(fetchedB.Status.ActiveSandboxCount).To(gomega.Equal(1))
-	g.Expect(fetchedB.Status.WatchedPRs).To(gomega.HaveLen(1))
-	g.Expect(fetchedB.Status.WatchedPRs[0].Number).To(gomega.Equal(prNumber))
+	g.Expect(fetchedB.Status.ReviewSandboxes).To(gomega.HaveLen(1))
+	g.Expect(fetchedB.Status.ReviewSandboxes[0].Number).To(gomega.Equal(prNumber))
 }

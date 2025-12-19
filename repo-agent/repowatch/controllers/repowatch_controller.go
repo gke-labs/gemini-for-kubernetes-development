@@ -344,7 +344,7 @@ func (r *RepoWatchReconciler) reconcileReviews(ctx context.Context, repoWatch *r
 	watchedPRs, pendingPRs, activeSandboxes := r.reconcileReviewSandboxesInternal(ctx, repoWatch, explicitPRs, prs, sandboxList)
 
 	repoWatch.Status.ActiveSandboxCount = activeSandboxes
-	repoWatch.Status.WatchedPRs = watchedPRs
+	repoWatch.Status.ReviewSandboxes = watchedPRs
 	repoWatch.Status.PendingPRs = pendingPRs
 
 	return r.Status().Update(ctx, repoWatch)
@@ -811,13 +811,13 @@ func (r *RepoWatchReconciler) reconcileIssueHandlerSandboxesInternal(ctx context
 		}
 	}
 
-	if repoWatch.Status.WatchedIssues == nil {
-		repoWatch.Status.WatchedIssues = make(map[string][]reviewv1alpha1.WatchedIssue)
+	if repoWatch.Status.IssueSandboxes == nil {
+		repoWatch.Status.IssueSandboxes = make(map[string][]reviewv1alpha1.WatchedIssue)
 	}
 	if repoWatch.Status.PendingIssues == nil {
 		repoWatch.Status.PendingIssues = make(map[string][]int)
 	}
-	repoWatch.Status.WatchedIssues[handler.Name] = watchedIssues
+	repoWatch.Status.IssueSandboxes[handler.Name] = watchedIssues
 	repoWatch.Status.PendingIssues[handler.Name] = pendingIssues
 
 	return r.Status().Update(ctx, repoWatch)
@@ -1154,7 +1154,7 @@ func (r *RepoWatchReconciler) reconcileDevSandboxes(ctx context.Context, user *g
 
 	activeSandboxes := 0
 	watchedDevSandboxes := []reviewv1alpha1.DevSandbox{}
-	pendingDevSandboxes := []string{}
+	pendingDevBranches := []string{}
 
 	// Identify which branches we want to have sandboxes for.
 	desiredBranches := make(map[string]bool)
@@ -1236,7 +1236,7 @@ func (r *RepoWatchReconciler) reconcileDevSandboxes(ctx context.Context, user *g
 			continue
 		}
 
-		if activeSandboxes < repoWatch.Spec.Dev.MaxActiveSandboxes && (repoWatch.Spec.Dev.MaxSandboxes == 0 || len(watchedDevSandboxes)+len(pendingDevSandboxes) < repoWatch.Spec.Dev.MaxSandboxes) {
+		if activeSandboxes < repoWatch.Spec.Dev.MaxActiveSandboxes && (repoWatch.Spec.Dev.MaxSandboxes == 0 || len(watchedDevSandboxes) < repoWatch.Spec.Dev.MaxSandboxes) {
 			log.Info("creating dev sandbox", "branch", branchName)
 			if err := r.createDevSandbox(ctx, user, repoWatch, forkOwner, forkRepo, branchName, sandboxName); err != nil {
 				log.Error(err, "creating dev sandbox", "branch", branchName)
@@ -1250,12 +1250,12 @@ func (r *RepoWatchReconciler) reconcileDevSandboxes(ctx context.Context, user *g
 				})
 			}
 		} else {
-			pendingDevSandboxes = append(pendingDevSandboxes, branchName)
+			pendingDevBranches = append(pendingDevBranches, branchName)
 		}
 	}
 
-	repoWatch.Status.WatchedDevSandboxes = watchedDevSandboxes
-	repoWatch.Status.PendingDevSandboxes = pendingDevSandboxes
+	repoWatch.Status.DevSandboxes = watchedDevSandboxes
+	repoWatch.Status.PendingDevBranches = pendingDevBranches
 
 	return r.Status().Update(ctx, repoWatch)
 }

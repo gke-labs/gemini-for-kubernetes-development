@@ -200,22 +200,22 @@ type RepoWatchStatus struct {
 	ActiveSandboxCount int `json:"activeSandboxCount"`
 
 	// +optional
-	WatchedPRs []WatchedPR `json:"watchedPRs,omitempty"`
+	ReviewSandboxes []WatchedPR `json:"reviewSandboxes,omitempty"`
 
 	// +optional
 	PendingPRs []int `json:"pendingPRs,omitempty"`
 
 	// +optional
-	WatchedIssues map[string][]WatchedIssue `json:"watchedIssues,omitempty"`
+	IssueSandboxes map[string][]WatchedIssue `json:"issueSandboxes,omitempty"`
 
 	// +optional
 	PendingIssues map[string][]int `json:"pendingIssues,omitempty"`
 
 	// +optional
-	WatchedDevSandboxes []DevSandbox `json:"watchedDevSandboxes,omitempty"`
+	DevSandboxes []DevSandbox `json:"devSandboxes,omitempty"`
 
 	// +optional
-	PendingDevSandboxes []string `json:"pendingDevSandboxes,omitempty"`
+	PendingDevBranches []string `json:"pendingDevBranches,omitempty"`
 }
 
 // WatchedPR defines the state of a watched PR

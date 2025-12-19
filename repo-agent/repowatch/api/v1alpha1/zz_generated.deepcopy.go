@@ -226,8 +226,8 @@ func (in *RepoWatchStatus) DeepCopyInto(out *RepoWatchStatus) {
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}
 	}
-	if in.WatchedPRs != nil {
-		in, out := &in.WatchedPRs, &out.WatchedPRs
+	if in.ReviewSandboxes != nil {
+		in, out := &in.ReviewSandboxes, &out.ReviewSandboxes
 		*out = make([]WatchedPR, len(*in))
 		copy(*out, *in)
 	}
@@ -236,8 +236,8 @@ func (in *RepoWatchStatus) DeepCopyInto(out *RepoWatchStatus) {
 		*out = make([]int, len(*in))
 		copy(*out, *in)
 	}
-	if in.WatchedIssues != nil {
-		in, out := &in.WatchedIssues, &out.WatchedIssues
+	if in.IssueSandboxes != nil {
+		in, out := &in.IssueSandboxes, &out.IssueSandboxes
 		*out = make(map[string][]WatchedIssue, len(*in))
 		for key, val := range *in {
 			var outVal []WatchedIssue
@@ -268,13 +268,13 @@ func (in *RepoWatchStatus) DeepCopyInto(out *RepoWatchStatus) {
 			(*out)[key] = outVal
 		}
 	}
-	if in.WatchedDevSandboxes != nil {
-		in, out := &in.WatchedDevSandboxes, &out.WatchedDevSandboxes
+	if in.DevSandboxes != nil {
+		in, out := &in.DevSandboxes, &out.DevSandboxes
 		*out = make([]DevSandbox, len(*in))
 		copy(*out, *in)
 	}
-	if in.PendingDevSandboxes != nil {
-		in, out := &in.PendingDevSandboxes, &out.PendingDevSandboxes
+	if in.PendingDevBranches != nil {
+		in, out := &in.PendingDevBranches, &out.PendingDevBranches
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}

@@ -39,7 +39,7 @@ func TestCreateOrUpdateReviewSandboxes(t *testing.T) {
 	_ = reviewv1alpha1.AddToScheme(s)
 
 	repoWatch := &reviewv1alpha1.RepoWatch{
-		ObjectMeta: metav1.ObjectMeta{Name: "test-watch", Namespace: "default"},
+		ObjectMeta: metav1.ObjectMeta{Name: "test-watch", Namespace: "default", UID: types.UID("test-uid")},
 		Spec: reviewv1alpha1.RepoWatchSpec{
 			Review: reviewv1alpha1.PRReviewSpec{
 				MaxActiveSandboxes:         1,
@@ -72,6 +72,11 @@ func TestCreateOrUpdateReviewSandboxes(t *testing.T) {
 				"name":              fmt.Sprintf("%s-pr-%d", repoWatch.Name, pr4Num),
 				"namespace":         "default",
 				"creationTimestamp": time.Now().Add(-61 * time.Minute).Format(time.RFC3339),
+				"ownerReferences": []interface{}{
+					map[string]interface{}{
+						"uid": string(repoWatch.UID),
+					},
+				},
 			},
 			"spec": map[string]interface{}{"replicas": int64(1)},
 		},
@@ -83,13 +88,12 @@ func TestCreateOrUpdateReviewSandboxes(t *testing.T) {
 	}
 
 	// Start with one existing sandbox (oldSandbox)
-	ownedSandboxes := []unstructured.Unstructured{*oldSandbox}
-	active, total := 1, 1
+	sandboxList := &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*oldSandbox}}
 
-	watched, pending, finalActive := r.createOrUpdateReviewSandboxes(context.Background(), repoWatch, []*github.PullRequest{pr1, pr2, pr3, pr4}, ownedSandboxes, []*github.PullRequest{}, active, total)
+	watched, pending, finalActive := r.reconcileReviewSandboxesInternal(context.Background(), repoWatch, []*github.PullRequest{}, []*github.PullRequest{pr1, pr2, pr3, pr4}, sandboxList)
 
 	// Asserts
-	g.Expect(finalActive).To(gomega.Equal(1), "Active count should be 1 because no new sandbox is created")
+	g.Expect(finalActive).To(gomega.Equal(0), "Active count should be 0 because existing sandbox is scaled down and no new one created")
 	g.Expect(len(watched)).To(gomega.Equal(1), "Should have only one existing watched PR")
 	g.Expect(watched[0].Number).To(gomega.Equal(pr4Num))
 
