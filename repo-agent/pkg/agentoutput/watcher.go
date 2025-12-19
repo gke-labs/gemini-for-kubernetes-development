@@ -133,6 +133,7 @@ func SetAgentState(gvr schema.GroupVersionResource, state string, message string
 	}
 	annotations := rs.GetAnnotations()
 	annotations["agentState"] = state
+	annotations["agentStateMessage"] = message
 	rs.SetAnnotations(annotations)
 
 	_, err = dc.Resource(gvr).Namespace(namespace).Update(context.TODO(), rs, metav1.UpdateOptions{})

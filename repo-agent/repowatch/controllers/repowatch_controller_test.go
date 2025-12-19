@@ -405,10 +405,11 @@ func TestReconcileReviewSandboxes(t *testing.T) {
 			Kind:    "ReviewSandbox",
 		})
 		g.Expect(r.Client.List(context.Background(), sandboxList)).To(gomega.Succeed())
-		g.Expect(sandboxList.Items).To(gomega.HaveLen(1)) // Should contain the closedPRSandbox initially
-
-		err := r.reconcileReviewSandboxes(context.Background(), repoWatch, []*github.PullRequest{}, []*github.PullRequest{pr}, sandboxList)
-		g.Expect(err).NotTo(gomega.HaveOccurred())
+		watchedPRs, pendingPRs, activeSandboxes := r.reconcileReviewSandboxesInternal(context.Background(), repoWatch, []*github.PullRequest{}, []*github.PullRequest{pr}, sandboxList)
+		repoWatch.Status.WatchedPRs = watchedPRs
+		repoWatch.Status.PendingPRs = pendingPRs
+		repoWatch.Status.ActiveSandboxCount = activeSandboxes
+		g.Expect(r.Status().Update(context.Background(), repoWatch)).To(gomega.Succeed())
 
 		// Check that the sandbox for the closed PR is deleted and a new one for the open PR is created
 		sandboxList = &unstructured.UnstructuredList{}
@@ -473,8 +474,11 @@ func TestReconcileReviewSandboxes(t *testing.T) {
 		}
 
 		// Call reconcileReviewSandboxes with the active PR and the new PR
-		err := r.reconcileReviewSandboxes(context.Background(), repoWatch, []*github.PullRequest{}, []*github.PullRequest{pr, newPR}, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*activePRSandbox}})
-		g.Expect(err).NotTo(gomega.HaveOccurred())
+		watchedPRs, pendingPRs, activeSandboxes := r.reconcileReviewSandboxesInternal(context.Background(), repoWatch, []*github.PullRequest{}, []*github.PullRequest{pr, newPR}, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*activePRSandbox}})
+		repoWatch.Status.WatchedPRs = watchedPRs
+		repoWatch.Status.PendingPRs = pendingPRs
+		repoWatch.Status.ActiveSandboxCount = activeSandboxes
+		g.Expect(r.Status().Update(context.Background(), repoWatch)).To(gomega.Succeed())
 
 		// Check that no new sandbox was created
 		sandboxList := &unstructured.UnstructuredList{}
@@ -536,8 +540,11 @@ func TestReconcileReviewSandboxes(t *testing.T) {
 		}
 
 		// Call reconcileReviewSandboxes with the existing PR
-		err := r.reconcileReviewSandboxes(context.Background(), repoWatch, []*github.PullRequest{}, []*github.PullRequest{pr}, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*existingPRSandbox}})
-		g.Expect(err).NotTo(gomega.HaveOccurred())
+		watchedPRs, pendingPRs, activeSandboxes := r.reconcileReviewSandboxesInternal(context.Background(), repoWatch, []*github.PullRequest{}, []*github.PullRequest{pr}, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*existingPRSandbox}})
+		repoWatch.Status.WatchedPRs = watchedPRs
+		repoWatch.Status.PendingPRs = pendingPRs
+		repoWatch.Status.ActiveSandboxCount = activeSandboxes
+		g.Expect(r.Status().Update(context.Background(), repoWatch)).To(gomega.Succeed())
 
 		// Check that no new sandbox was created and the existing one is still there
 		sandboxList := &unstructured.UnstructuredList{}
@@ -602,8 +609,11 @@ func TestReconcileReviewSandboxes(t *testing.T) {
 
 		// Call reconcileReviewSandboxes with the PR corresponding to the sandbox
 		// We need the PR to be present so it doesn't try to delete the sandbox because the PR is closed
-		err := r.reconcileReviewSandboxes(context.Background(), repoWatch, []*github.PullRequest{}, []*github.PullRequest{pr}, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*oldSandbox}})
-		g.Expect(err).NotTo(gomega.HaveOccurred())
+		watchedPRs, pendingPRs, activeSandboxes := r.reconcileReviewSandboxesInternal(context.Background(), repoWatch, []*github.PullRequest{}, []*github.PullRequest{pr}, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*oldSandbox}})
+		repoWatch.Status.WatchedPRs = watchedPRs
+		repoWatch.Status.PendingPRs = pendingPRs
+		repoWatch.Status.ActiveSandboxCount = activeSandboxes
+		g.Expect(r.Status().Update(context.Background(), repoWatch)).To(gomega.Succeed())
 
 		// Fetch the updated sandbox
 		updatedSandbox := &unstructured.Unstructured{}
@@ -643,8 +653,11 @@ func TestReconcileReviewSandboxes(t *testing.T) {
 		g.Expect(r.Client.List(context.Background(), sandboxList)).To(gomega.Succeed())
 		g.Expect(sandboxList.Items).To(gomega.HaveLen(1)) // Should contain the closedPRSandbox initially
 
-		err := r.reconcileReviewSandboxes(context.Background(), repoWatch, []*github.PullRequest{}, []*github.PullRequest{pr}, sandboxList)
-		g.Expect(err).NotTo(gomega.HaveOccurred())
+		watchedPRs, pendingPRs, activeSandboxes := r.reconcileReviewSandboxesInternal(context.Background(), repoWatch, []*github.PullRequest{}, []*github.PullRequest{pr}, sandboxList)
+		repoWatch.Status.WatchedPRs = watchedPRs
+		repoWatch.Status.PendingPRs = pendingPRs
+		repoWatch.Status.ActiveSandboxCount = activeSandboxes
+		g.Expect(r.Status().Update(context.Background(), repoWatch)).To(gomega.Succeed())
 
 		// Check that the sandbox for the closed PR is deleted and a new one for the open PR is created
 		sandboxList = &unstructured.UnstructuredList{}
@@ -755,7 +768,7 @@ func TestReconcileIssueHandlerSandboxes(t *testing.T) {
 		g.Expect(r.Client.List(context.Background(), sandboxList)).To(gomega.Succeed())
 		g.Expect(sandboxList.Items).To(gomega.HaveLen(1)) // Should contain the closedIssueSandbox initially
 
-		err := r.reconcileIssueHandlerSandboxes(context.Background(), currentUser, handler, repoWatch, []*github.Issue{issue}, sandboxList)
+		err := r.reconcileIssueHandlerSandboxesInternal(context.Background(), currentUser, handler, repoWatch, []*github.Issue{issue}, sandboxList)
 		g.Expect(err).NotTo(gomega.HaveOccurred())
 
 		// Check that the sandbox for the closed issue is deleted and a new one for the open issue is created
@@ -815,7 +828,7 @@ func TestReconcileIssueHandlerSandboxes(t *testing.T) {
 		}
 
 		// Call reconcileIssueHandlerSandboxes with the active issue and the new issue
-		err := r.reconcileIssueHandlerSandboxes(context.Background(), currentUser, handler, repoWatch, []*github.Issue{issue, newIssue}, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*activeIssueSandbox}})
+		err := r.reconcileIssueHandlerSandboxesInternal(context.Background(), currentUser, handler, repoWatch, []*github.Issue{issue, newIssue}, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*activeIssueSandbox}})
 		g.Expect(err).NotTo(gomega.HaveOccurred())
 
 		// Check that no new sandbox was created
@@ -876,7 +889,7 @@ func TestReconcileIssueHandlerSandboxes(t *testing.T) {
 		}
 
 		// Call reconcileIssueHandlerSandboxes with the existing issue
-		err := r.reconcileIssueHandlerSandboxes(context.Background(), currentUser, handler, repoWatch, []*github.Issue{issue}, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*existingIssueSandbox}})
+		err := r.reconcileIssueHandlerSandboxesInternal(context.Background(), currentUser, handler, repoWatch, []*github.Issue{issue}, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*existingIssueSandbox}})
 		g.Expect(err).NotTo(gomega.HaveOccurred())
 
 		// Check that no new sandbox was created and the existing one is still there
@@ -942,7 +955,7 @@ func TestReconcileIssueHandlerSandboxes(t *testing.T) {
 		}
 
 		// Call reconcileIssueHandlerSandboxes with the issue corresponding to the sandbox
-		err := r.reconcileIssueHandlerSandboxes(context.Background(), currentUser, handler, repoWatch, []*github.Issue{issue}, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*oldSandbox}})
+		err := r.reconcileIssueHandlerSandboxesInternal(context.Background(), currentUser, handler, repoWatch, []*github.Issue{issue}, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*oldSandbox}})
 		g.Expect(err).NotTo(gomega.HaveOccurred())
 
 		// Fetch the updated sandbox
@@ -982,7 +995,7 @@ func TestReconcileIssueHandlerSandboxes(t *testing.T) {
 		g.Expect(r.Client.List(context.Background(), sandboxList)).To(gomega.Succeed())
 		g.Expect(sandboxList.Items).To(gomega.HaveLen(1)) // Should contain the closedIssueSandbox initially
 
-		err := r.reconcileIssueHandlerSandboxes(context.Background(), currentUser, handler, repoWatch, []*github.Issue{issue}, sandboxList)
+		err := r.reconcileIssueHandlerSandboxesInternal(context.Background(), currentUser, handler, repoWatch, []*github.Issue{issue}, sandboxList)
 		g.Expect(err).NotTo(gomega.HaveOccurred())
 
 		// Check that the sandbox for the closed issue is deleted and a new one for the open issue is created
@@ -1707,8 +1720,11 @@ func TestReconcileReviewSandboxes_RespectsExistingActiveSandboxes(t *testing.T) 
 	openPRs := []*github.PullRequest{pr2, pr1}
 
 	// Call reconcile
-	err := r.reconcileReviewSandboxes(context.Background(), repoWatch, []*github.PullRequest{}, openPRs, existingSandboxList)
-	g.Expect(err).NotTo(gomega.HaveOccurred())
+	watchedPRs, pendingPRs, activeSandboxes := r.reconcileReviewSandboxesInternal(context.Background(), repoWatch, []*github.PullRequest{}, openPRs, existingSandboxList)
+	repoWatch.Status.WatchedPRs = watchedPRs
+	repoWatch.Status.PendingPRs = pendingPRs
+	repoWatch.Status.ActiveSandboxCount = activeSandboxes
+	g.Expect(r.Status().Update(context.Background(), repoWatch)).To(gomega.Succeed())
 
 	// Verify results: No new sandbox should be created
 	sandboxList := &unstructured.UnstructuredList{}

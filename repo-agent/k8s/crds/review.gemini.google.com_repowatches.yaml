@@ -28,8 +28,16 @@ spec:
             properties:
               dev:
                 properties:
+                  branches:
+                    items:
+                      type: string
+                    type: array
                   devcontainerConfigRef:
                     type: string
+                  excludeBranches:
+                    items:
+                      type: string
+                    type: array
                   llm:
                     properties:
                       apiKeySecretRef:
@@ -63,6 +71,10 @@ spec:
                   properties:
                     devcontainerConfigRef:
                       type: string
+                    excludeIssues:
+                      items:
+                        type: integer
+                      type: array
                     issueShutdownAfterMinutes:
                       type: integer
                     issues:
@@ -114,6 +126,10 @@ spec:
                 properties:
                   devcontainerConfigRef:
                     type: string
+                  excludePullRequests:
+                    items:
+                      type: integer
+                    type: array
                   labels:
                     items:
                       items:
@@ -242,6 +258,8 @@ spec:
                       type: string
                     sandboxName:
                       type: string
+                    scaledDown:
+                      type: boolean
                     status:
                       type: string
                   required:
@@ -258,6 +276,8 @@ spec:
                         type: integer
                       sandboxName:
                         type: string
+                      scaledDown:
+                        type: boolean
                       status:
                         type: string
                     required:
@@ -274,6 +294,8 @@ spec:
                       type: integer
                     sandboxName:
                       type: string
+                    scaledDown:
+                      type: boolean
                     status:
                       type: string
                   required:

@@ -136,8 +136,11 @@ func TestReconcileReviewSandboxes_MaxSandboxes(t *testing.T) {
 	}
 
 	// Call reconcile
-	err := r.reconcileReviewSandboxes(context.Background(), repoWatch, []*github.PullRequest{}, []*github.PullRequest{pr1, pr2, pr3}, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*activeSandbox, *inactiveSandbox}})
-	g.Expect(err).NotTo(gomega.HaveOccurred())
+	watchedPRs, pendingPRs, activeSandboxes := r.reconcileReviewSandboxesInternal(context.Background(), repoWatch, []*github.PullRequest{}, []*github.PullRequest{pr1, pr2, pr3}, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*activeSandbox, *inactiveSandbox}})
+	repoWatch.Status.WatchedPRs = watchedPRs
+	repoWatch.Status.PendingPRs = pendingPRs
+	repoWatch.Status.ActiveSandboxCount = activeSandboxes
+	g.Expect(r.Status().Update(context.Background(), repoWatch)).To(gomega.Succeed())
 
 	// Verify results
 	sandboxList := &unstructured.UnstructuredList{}
@@ -262,7 +265,7 @@ func TestReconcileIssueHandlerSandboxes_MaxSandboxes(t *testing.T) {
 		},
 	}
 
-	err := r.reconcileIssueHandlerSandboxes(context.Background(), currentUser, handler, repoWatch, []*github.Issue{issue1, issue2, issue3}, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*activeSandbox, *inactiveSandbox}})
+	err := r.reconcileIssueHandlerSandboxesInternal(context.Background(), currentUser, handler, repoWatch, []*github.Issue{issue1, issue2, issue3}, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*activeSandbox, *inactiveSandbox}})
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 
 	sandboxList := &unstructured.UnstructuredList{}
