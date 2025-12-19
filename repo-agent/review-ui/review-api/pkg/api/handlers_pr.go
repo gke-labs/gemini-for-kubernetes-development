@@ -58,6 +58,11 @@ func (s *Server) fetchAndPopulatePRs(ctx context.Context, namespace, repo string
 			continue
 		}
 
+		if item.GetDeletionTimestamp() != nil {
+			log.Printf("Skipping terminating ReviewSandbox: %s", item.GetName())
+			continue
+		}
+
 		prID, found, err := unstructured.NestedString(item.Object, "spec", "source", "pr")
 		if err != nil || !found {
 			log.Printf("PR ID (.spec.source.pr) not found in ReviewSandbox  %s", item.GetName())

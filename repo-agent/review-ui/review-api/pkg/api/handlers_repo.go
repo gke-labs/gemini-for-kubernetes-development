@@ -201,17 +201,18 @@ func (s *Server) updateRepoWatch(c *gin.Context) {
 	name := c.Param("repo")
 
 	var payload struct {
-		RepoURL string `json:"repoURL"`
-		AddPR   int    `json:"addPR"`
-		YAML    string `json:"yaml"`
+		RepoURL   string `json:"repoURL"`
+		AddPR     int    `json:"addPR"`
+		ExcludePR int    `json:"excludePR"`
+		YAML      string `json:"yaml"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	if payload.AddPR == 0 && payload.YAML == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "addPR or yaml is required"})
+	if payload.AddPR == 0 && payload.ExcludePR == 0 && payload.YAML == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "addPR, excludePR or yaml is required"})
 		return
 	}
 
@@ -288,6 +289,95 @@ func (s *Server) updateRepoWatch(c *gin.Context) {
 				return
 			}
 		}
+
+		// Remove from ExcludePullRequests if present
+		excludeSlice, found, _ := unstructured.NestedSlice(existing.Object, "spec", "review", "excludePullRequests")
+		if found {
+			var newExclude []int64
+			changed := false
+			for _, v := range excludeSlice {
+				val := int64(0)
+				if i, ok := v.(int64); ok {
+					val = i
+				} else if i, ok := v.(int); ok {
+					val = int64(i)
+				}
+
+				if val != int64(payload.AddPR) {
+					newExclude = append(newExclude, val)
+				} else {
+					changed = true
+				}
+			}
+			if changed {
+				if err := unstructured.SetNestedSlice(existing.Object, convInt64SliceToInterfaceSlice(newExclude), "spec", "review", "excludePullRequests"); err != nil {
+					log.Printf("Failed to update excludePullRequests: %v", err)
+				}
+			}
+		}
+	}
+
+	// Exclude PR if provided
+	if payload.ExcludePR != 0 {
+		// Add to excludePullRequests
+		excludeSlice, found, err := unstructured.NestedSlice(existing.Object, "spec", "review", "excludePullRequests")
+		if err != nil {
+			log.Printf("Failed to get excludePullRequests: %v", err)
+		}
+
+		var excludeRequests []int64
+		if found {
+			for _, v := range excludeSlice {
+				if i, ok := v.(int64); ok {
+					excludeRequests = append(excludeRequests, i)
+				} else if i, ok := v.(int); ok {
+					excludeRequests = append(excludeRequests, int64(i))
+				}
+			}
+		}
+
+		exists := false
+		for _, pr := range excludeRequests {
+			if pr == int64(payload.ExcludePR) {
+				exists = true
+				break
+			}
+		}
+
+		if !exists {
+			excludeRequests = append(excludeRequests, int64(payload.ExcludePR))
+			if err := unstructured.SetNestedSlice(existing.Object, convInt64SliceToInterfaceSlice(excludeRequests), "spec", "review", "excludePullRequests"); err != nil {
+				log.Printf("Failed to set excludePullRequests: %v", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update object structure for excludePullRequests"})
+				return
+			}
+		}
+
+		// Remove from PullRequests if present
+		pullSlice, found, _ := unstructured.NestedSlice(existing.Object, "spec", "review", "pullRequests")
+		if found {
+			var newPull []int64
+			changed := false
+			for _, v := range pullSlice {
+				val := int64(0)
+				if i, ok := v.(int64); ok {
+					val = i
+				} else if i, ok := v.(int); ok {
+					val = int64(i)
+				}
+
+				if val != int64(payload.ExcludePR) {
+					newPull = append(newPull, val)
+				} else {
+					changed = true
+				}
+			}
+			if changed {
+				if err := unstructured.SetNestedSlice(existing.Object, convInt64SliceToInterfaceSlice(newPull), "spec", "review", "pullRequests"); err != nil {
+					log.Printf("Failed to update pullRequests: %v", err)
+				}
+			}
+		}
 	}
 
 	// Apply update
@@ -361,6 +451,32 @@ func (s *Server) getRepos(c *gin.Context) {
 		// Extract review config
 		if maxActiveSandboxes, found, err := unstructured.NestedInt64(repoWatch.Object, "spec", "review", "maxActiveSandboxes"); err == nil && found && maxActiveSandboxes > 0 {
 			repo.Review = &models.ReviewConfig{MaxActiveSandboxes: maxActiveSandboxes}
+		}
+
+		// Extract PendingPRs
+		if pendingPRsSlice, found, err := unstructured.NestedSlice(repoWatch.Object, "status", "pendingPRs"); err == nil && found {
+			var pendingPRs []int64
+			for _, v := range pendingPRsSlice {
+				if i, ok := v.(int64); ok {
+					pendingPRs = append(pendingPRs, i)
+				} else if i, ok := v.(int); ok {
+					pendingPRs = append(pendingPRs, int64(i))
+				}
+			}
+			repo.PendingPRs = pendingPRs
+		}
+
+		// Extract ExcludePullRequests
+		if excludePRsSlice, found, err := unstructured.NestedSlice(repoWatch.Object, "spec", "review", "excludePullRequests"); err == nil && found {
+			var excludePRs []int64
+			for _, v := range excludePRsSlice {
+				if i, ok := v.(int64); ok {
+					excludePRs = append(excludePRs, i)
+				} else if i, ok := v.(int); ok {
+					excludePRs = append(excludePRs, int64(i))
+				}
+			}
+			repo.ExcludePullRequests = excludePRs
 		}
 
 		// Extract dev config
