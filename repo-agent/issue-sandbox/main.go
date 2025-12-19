@@ -11,6 +11,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/codeserver"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/gitcli"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/llm"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tokens"
 )
 
 var (
@@ -68,7 +69,7 @@ func prepareGitBranch() (string, error) {
 	gitPushEnabled := os.Getenv("GIT_PUSH_ENABLED") == "true"
 	githubUserOrigin := os.Getenv("GITHUB_USER_ORIGIN")
 	githubUserLogin := os.Getenv("GITHUB_USER_LOGIN")
-	githubToken := getGitHubToken()
+	githubToken := tokens.GetGitHubToken()
 	githubUserEmail := os.Getenv("GITHUB_USER_EMAIL")
 	githubUserName := os.Getenv("GITHUB_USER_NAME")
 	issueBranch := os.Getenv("ISSUE_BRANCH")
@@ -107,16 +108,6 @@ func prepareGitBranch() (string, error) {
 	}
 
 	return oldCommitID, nil
-}
-
-func getGitHubToken() string {
-	if token := os.Getenv("MANUAL_PAT"); token != "" {
-		return token
-	}
-	if token := os.Getenv("OAUTH_PAT"); token != "" {
-		return token
-	}
-	return os.Getenv("GITHUB_TOKEN")
 }
 
 func processGitChanges(oldCommitID string) error {

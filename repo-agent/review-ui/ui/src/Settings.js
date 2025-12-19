@@ -111,6 +111,7 @@ function Settings({ onBack }) {
                     </div>
                     <small>
                         Manual PAT takes precedence over OAuth login. 
+                        You can generate a <a href="https://github.com/settings/tokens" target="_blank" rel="noopener noreferrer">GitHub Classic PAT</a> with 'repo' (read/write) permissions.
                         {status.oauth_pat_set && !status.manual_pat_set && " You are currently using your GitHub login session."}
                     </small>
                 </div>
