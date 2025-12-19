@@ -105,9 +105,9 @@ func runReview() error {
 	}
 
 	// Get existing comments
-	githubToken := os.Getenv("GITHUB_TOKEN")
+	githubToken := getGitHubToken()
 	if githubToken == "" {
-		return fmt.Errorf("GITHUB_TOKEN environment variable not set")
+		return fmt.Errorf("GitHub token not found in environment variables (tried MANUAL_PAT, OAUTH_PAT, and GITHUB_TOKEN)")
 	}
 	repoURL := os.Getenv("GIT_HTML_URL")
 	parts := strings.Split(strings.TrimPrefix(repoURL, "https://github.com/"), "/")
@@ -429,6 +429,16 @@ func parseDiffFromURL(url string) ([]*gitdiff.File, error) {
 	}
 
 	return files, nil
+}
+
+func getGitHubToken() string {
+	if token := os.Getenv("MANUAL_PAT"); token != "" {
+		return token
+	}
+	if token := os.Getenv("OAUTH_PAT"); token != "" {
+		return token
+	}
+	return os.Getenv("GITHUB_TOKEN")
 }
 
 func dedupeAndCombineText(provider llm.Provider, text string) (string, error) {

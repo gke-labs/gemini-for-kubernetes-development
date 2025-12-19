@@ -12,11 +12,29 @@ import (
 
 func (s *Server) getSettings(c *gin.Context) {
 	namespace := c.MustGet(auth.UserKey).(string)
-	settings := gin.H{"github_pat_set": false, "gemini_api_key_set": false}
+	settings := gin.H{
+		"manual_pat_set":     false,
+		"oauth_pat_set":      false,
+		"gemini_api_key_set": false,
+		"github_pat_set":     false, // Legacy field for UI compatibility
+	}
 
 	if sec, err := s.K8sManager.Clientset.CoreV1().Secrets(namespace).Get(c.Request.Context(), k8s.GithubSecretName, v1.GetOptions{}); err == nil {
-		if _, ok := sec.Data["pat"]; ok {
+		if _, ok := sec.Data[k8s.ManualPATKey]; ok {
+			settings["manual_pat_set"] = true
 			settings["github_pat_set"] = true
+		}
+		if _, ok := sec.Data[k8s.OAuthPATKey]; ok {
+			settings["oauth_pat_set"] = true
+			if !settings["manual_pat_set"].(bool) {
+				settings["github_pat_set"] = true
+			}
+		}
+		// Fallback for legacy 'pat' key if neither of the new ones are set
+		if !settings["manual_pat_set"].(bool) && !settings["oauth_pat_set"].(bool) {
+			if _, ok := sec.Data["pat"]; ok {
+				settings["github_pat_set"] = true
+			}
 		}
 	}
 	if sec, err := s.K8sManager.Clientset.CoreV1().Secrets(namespace).Get(c.Request.Context(), k8s.GeminiSecretName, v1.GetOptions{}); err == nil {
@@ -30,25 +48,45 @@ func (s *Server) getSettings(c *gin.Context) {
 func (s *Server) updateSettings(c *gin.Context) {
 	namespace := c.MustGet(auth.UserKey).(string)
 	var payload struct {
-		GithubPAT    string `json:"github_pat"`
-		GeminiAPIKey string `json:"gemini_api_key"`
+		GithubPAT    *string `json:"github_pat"` // Use pointer to distinguish between empty string and missing field
+		GeminiAPIKey string  `json:"gemini_api_key"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	if payload.GithubPAT != "" {
-		err := s.K8sManager.UpdateSecret(c.Request.Context(), namespace, k8s.GithubSecretName, map[string][]byte{"pat": []byte(payload.GithubPAT)})
-		if err != nil {
-			log.Printf("Failed to update GitHub PAT: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update GitHub PAT"})
-			return
+	if payload.GithubPAT != nil {
+		patValue := *payload.GithubPAT
+		if patValue == "" {
+			// Clear manual PAT
+			data := map[string][]byte{
+				k8s.ManualPATKey: nil,
+			}
+			err := s.K8sManager.UpdateSecret(c.Request.Context(), namespace, k8s.GithubSecretName, data, nil)
+			if err != nil {
+				log.Printf("Failed to clear GitHub PAT: %v", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to clear GitHub PAT"})
+				return
+			}
+		} else {
+			// Set manual PAT
+			data := map[string][]byte{
+				k8s.ManualPATKey: []byte(patValue),
+				"refresh_token":  nil,
+				"expiry":         nil,
+			}
+			err := s.K8sManager.UpdateSecret(c.Request.Context(), namespace, k8s.GithubSecretName, data, nil)
+			if err != nil {
+				log.Printf("Failed to update GitHub PAT: %v", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update GitHub PAT"})
+				return
+			}
 		}
 	}
 
 	if payload.GeminiAPIKey != "" {
-		err := s.K8sManager.UpdateSecret(c.Request.Context(), namespace, k8s.GeminiSecretName, map[string][]byte{"gemini": []byte(payload.GeminiAPIKey)})
+		err := s.K8sManager.UpdateSecret(c.Request.Context(), namespace, k8s.GeminiSecretName, map[string][]byte{"gemini": []byte(payload.GeminiAPIKey)}, nil)
 		if err != nil {
 			log.Printf("Failed to update Gemini API Key: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update Gemini API Key"})

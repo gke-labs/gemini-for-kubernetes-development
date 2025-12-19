@@ -105,6 +105,19 @@ spec:
                         secretKeyRef:
                           name: ${schema.spec.githubSecretName}
                           key: pat
+                          optional: true
+                    - name: MANUAL_PAT
+                      valueFrom:
+                        secretKeyRef:
+                          name: ${schema.spec.githubSecretName}
+                          key: manual_pat
+                          optional: true
+                    - name: OAUTH_PAT
+                      valueFrom:
+                        secretKeyRef:
+                          name: ${schema.spec.githubSecretName}
+                          key: oauth_pat
+                          optional: true
                     # https://github.com/coder/terraform-provider-envbuilder/issues/68#issuecomment-2557247792
                     #- name: ENVBUILDER_GET_CACHED_IMAGE
                     #  value: "1"

@@ -154,8 +154,9 @@ func (a *Authenticator) Callback(c *gin.Context) {
 
 func (a *Authenticator) updateUserSecret(ctx context.Context, namespace string, token *oauth2.Token, user *github.User) error {
 	data := map[string][]byte{
-		"pat": []byte(token.AccessToken),
+		k8s.OAuthPATKey: []byte(token.AccessToken),
 	}
+
 	if token.RefreshToken != "" {
 		data["refresh_token"] = []byte(token.RefreshToken)
 	}
@@ -168,7 +169,7 @@ func (a *Authenticator) updateUserSecret(ctx context.Context, namespace string, 
 	if user.Email != nil {
 		data["email"] = []byte(*user.Email)
 	}
-	return a.K8sManager.UpdateSecret(ctx, namespace, k8s.GithubSecretName, data)
+	return a.K8sManager.UpdateSecret(ctx, namespace, k8s.GithubSecretName, data, nil)
 }
 
 func (a *Authenticator) Status(c *gin.Context) {

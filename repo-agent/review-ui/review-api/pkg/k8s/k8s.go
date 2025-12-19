@@ -24,6 +24,8 @@ const (
 	GeminiSecretName = "gemini-vscode-tokens"
 	ClaudeSecretName = "anthropic-api-key"
 	DevContainerCM   = "devcontainer-json"
+	OAuthPATKey      = "oauth_pat"
+	ManualPATKey     = "manual_pat"
 )
 
 type Manager struct {
@@ -225,12 +227,16 @@ func ignoreAlreadyExists(err error) error {
 	return err
 }
 
-func (m *Manager) UpdateSecret(ctx context.Context, namespace, name string, data map[string][]byte) error {
+func (m *Manager) UpdateSecret(ctx context.Context, namespace, name string, data map[string][]byte, annotations map[string]string) error {
 	secret, err := m.Clientset.CoreV1().Secrets(namespace).Get(ctx, name, v1.GetOptions{})
 	if errors.IsNotFound(err) {
 		secret = &corev1.Secret{
-			ObjectMeta: v1.ObjectMeta{Name: name, Namespace: namespace},
-			Data:       data,
+			ObjectMeta: v1.ObjectMeta{
+				Name:        name,
+				Namespace:   namespace,
+				Annotations: annotations,
+			},
+			Data: data,
 		}
 		_, err = m.Clientset.CoreV1().Secrets(namespace).Create(ctx, secret, v1.CreateOptions{})
 		return err
@@ -242,8 +248,20 @@ func (m *Manager) UpdateSecret(ctx context.Context, namespace, name string, data
 		secret.Data = make(map[string][]byte)
 	}
 	for k, v := range data {
-		secret.Data[k] = v
+		if v == nil {
+			delete(secret.Data, k)
+		} else {
+			secret.Data[k] = v
+		}
 	}
+
+	if secret.Annotations == nil {
+		secret.Annotations = make(map[string]string)
+	}
+	for k, v := range annotations {
+		secret.Annotations[k] = v
+	}
+
 	_, err = m.Clientset.CoreV1().Secrets(namespace).Update(ctx, secret, v1.UpdateOptions{})
 	return err
 }
@@ -320,7 +338,6 @@ func (m *Manager) GetGitHubToken(ctx context.Context, repoWatch *unstructured.Un
 	if err != nil || !found {
 		return "", fmt.Errorf("githubSecretName not found in repowatch %s", repoWatch.GetName())
 	}
-	secretKey := "pat"
 
 	secretGVR := schema.GroupVersionResource{Version: "v1", Resource: "secrets"}
 	secretUnstructured, err := m.Client.Resource(secretGVR).Namespace(repoWatch.GetNamespace()).Get(ctx, secretName, v1.GetOptions{})
@@ -333,14 +350,21 @@ func (m *Manager) GetGitHubToken(ctx context.Context, repoWatch *unstructured.Un
 		return "", fmt.Errorf("data field not found in secret %s", secretName)
 	}
 
-	tokenBase64, ok := secretData[secretKey]
-	if !ok {
-		return "", fmt.Errorf("key %s not found in secret %s", secretKey, secretName)
+	// Prefer manual_pat, then oauth_pat, then fallback to pat
+	var tokenBase64 string
+	if val, ok := secretData[ManualPATKey]; ok && val != "" {
+		tokenBase64 = val
+	} else if val, ok := secretData[OAuthPATKey]; ok && val != "" {
+		tokenBase64 = val
+	} else if val, ok := secretData["pat"]; ok && val != "" {
+		tokenBase64 = val
+	} else {
+		return "", fmt.Errorf("no GitHub token found in secret %s (checked %s, %s, and pat)", secretName, ManualPATKey, OAuthPATKey)
 	}
 
 	tokenBytes, err := base64.StdEncoding.DecodeString(tokenBase64)
 	if err != nil {
-		return "", fmt.Errorf("failed to decode token for key %s in secret %s: %w", secretKey, secretName, err)
+		return "", fmt.Errorf("failed to decode token in secret %s: %w", secretName, err)
 	}
 
 	return string(tokenBytes), nil

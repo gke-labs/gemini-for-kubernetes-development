@@ -68,7 +68,7 @@ func prepareGitBranch() (string, error) {
 	gitPushEnabled := os.Getenv("GIT_PUSH_ENABLED") == "true"
 	githubUserOrigin := os.Getenv("GITHUB_USER_ORIGIN")
 	githubUserLogin := os.Getenv("GITHUB_USER_LOGIN")
-	githubToken := os.Getenv("GITHUB_TOKEN")
+	githubToken := getGitHubToken()
 	githubUserEmail := os.Getenv("GITHUB_USER_EMAIL")
 	githubUserName := os.Getenv("GITHUB_USER_NAME")
 	issueBranch := os.Getenv("ISSUE_BRANCH")
@@ -85,6 +85,9 @@ func prepareGitBranch() (string, error) {
 	}
 
 	if gitPushEnabled && githubUserOrigin != "" {
+		if githubToken == "" {
+			return oldCommitID, fmt.Errorf("GITHUB_TOKEN not found in environment variables (tried MANUAL_PAT, OAUTH_PAT, and GITHUB_TOKEN)")
+		}
 		originURL := fmt.Sprintf("https://%s:%s@%s", githubUserLogin, githubToken, githubUserOrigin)
 		if err := gitcli.AddRemote("origin", originURL); err != nil {
 			return oldCommitID, fmt.Errorf("failed to add origin: %w", err)
@@ -104,6 +107,16 @@ func prepareGitBranch() (string, error) {
 	}
 
 	return oldCommitID, nil
+}
+
+func getGitHubToken() string {
+	if token := os.Getenv("MANUAL_PAT"); token != "" {
+		return token
+	}
+	if token := os.Getenv("OAUTH_PAT"); token != "" {
+		return token
+	}
+	return os.Getenv("GITHUB_TOKEN")
 }
 
 func processGitChanges(oldCommitID string) error {

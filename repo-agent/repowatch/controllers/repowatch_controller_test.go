@@ -1364,14 +1364,14 @@ func TestPersistingTokenSource(t *testing.T) {
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(token.AccessToken).To(gomega.Equal(newToken))
 
-	// 5. Wait for the async goroutine to update the secret
+	// 5. Wait for the logic to update the secret
 	g.Eventually(func() string {
 		updatedSecret := &corev1.Secret{}
 		err := fakeClient.Get(context.Background(), types.NamespacedName{Name: secretName, Namespace: namespace}, updatedSecret)
 		if err != nil {
 			return ""
 		}
-		return string(updatedSecret.Data["pat"])
+		return string(updatedSecret.Data[OAuthPATKey])
 	}, 2*time.Second, 100*time.Millisecond).Should(gomega.Equal(newToken))
 
 	// 6. Verify refresh token was also updated
