@@ -7,4 +7,4 @@ metadata:
 (status != null): true
 # Wait until activeSandboxCount is specifically 1
 (status.activeSandboxCount): 1
-(length(status.watchedPRs || `[]`)): 1
+(length(status.reviewSandboxes || `[]`)): 1

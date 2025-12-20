@@ -136,8 +136,11 @@ func TestReconcileReviewSandboxes_MaxSandboxes(t *testing.T) {
 	}
 
 	// Call reconcile
-	err := r.reconcileReviewSandboxes(context.Background(), repoWatch, []*github.PullRequest{}, []*github.PullRequest{pr1, pr2, pr3}, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*activeSandbox, *inactiveSandbox}})
-	g.Expect(err).NotTo(gomega.HaveOccurred())
+	watchedPRs, pendingPRs, activeSandboxes := r.reconcileReviewSandboxesInternal(context.Background(), repoWatch, []*github.PullRequest{}, []*github.PullRequest{pr1, pr2, pr3}, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*activeSandbox, *inactiveSandbox}})
+	repoWatch.Status.ReviewSandboxes = watchedPRs
+	repoWatch.Status.PendingPRs = pendingPRs
+	repoWatch.Status.ActiveSandboxCount = activeSandboxes
+	g.Expect(r.Status().Update(context.Background(), repoWatch)).To(gomega.Succeed())
 
 	// Verify results
 	sandboxList := &unstructured.UnstructuredList{}
@@ -155,7 +158,7 @@ func TestReconcileReviewSandboxes_MaxSandboxes(t *testing.T) {
 
 	// PR 3 should be pending
 	g.Expect(fetchedRepoWatch.Status.PendingPRs).To(gomega.HaveLen(1))
-	g.Expect(fetchedRepoWatch.Status.PendingPRs[0].Number).To(gomega.Equal(3))
+	g.Expect(fetchedRepoWatch.Status.PendingPRs[0]).To(gomega.Equal(3))
 }
 
 // TestReconcileIssueHandlerSandboxes_MaxSandboxes verifies that the MaxSandboxes limit is respected for Issues.
@@ -262,7 +265,7 @@ func TestReconcileIssueHandlerSandboxes_MaxSandboxes(t *testing.T) {
 		},
 	}
 
-	err := r.reconcileIssueHandlerSandboxes(context.Background(), currentUser, handler, repoWatch, []*github.Issue{issue1, issue2, issue3}, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*activeSandbox, *inactiveSandbox}})
+	err := r.reconcileIssueHandlerSandboxesInternal(context.Background(), currentUser, handler, repoWatch, []*github.Issue{issue1, issue2, issue3}, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*activeSandbox, *inactiveSandbox}})
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 
 	sandboxList := &unstructured.UnstructuredList{}
@@ -278,5 +281,5 @@ func TestReconcileIssueHandlerSandboxes_MaxSandboxes(t *testing.T) {
 	g.Expect(r.Client.Get(context.Background(), types.NamespacedName{Name: repoWatch.Name, Namespace: repoWatch.Namespace}, fetchedRepoWatch)).To(gomega.Succeed())
 
 	g.Expect(fetchedRepoWatch.Status.PendingIssues[handlerName]).To(gomega.HaveLen(1))
-	g.Expect(fetchedRepoWatch.Status.PendingIssues[handlerName][0].Number).To(gomega.Equal(3))
+	g.Expect(fetchedRepoWatch.Status.PendingIssues[handlerName][0]).To(gomega.Equal(3))
 }

@@ -79,6 +79,11 @@ type PRReviewSpec struct {
 	// +kubebuilder:validation:Optional
 	PullRequests []int `json:"pullRequests,omitempty"`
 
+	// ExcludePullRequests specifies a list of PR numbers that should not have sandboxes created for them.
+	// These PRs will be ignored even if they match other criteria (e.g., labels).
+	// +kubebuilder:validation:Optional
+	ExcludePullRequests []int `json:"excludePullRequests,omitempty"`
+
 	// Labels to filter issues for this handler
 	// labels within the each array are anded, arrays are ored
 	// +kubebuilder:validation:Optional
@@ -104,6 +109,16 @@ type DevSpec struct {
 
 	// DevcontainerConfigRef string
 	DevcontainerConfigRef string `json:"devcontainerConfigRef,omitempty"`
+
+	// Branches specifies a list of branch names that should have development sandboxes created for them.
+	// If this list is empty, the controller will automatically discover branches based on other criteria.
+	// +kubebuilder:validation:Optional
+	Branches []string `json:"branches,omitempty"`
+
+	// ExcludeBranches specifies a list of branch names that should not have development sandboxes created for them.
+	// These branches will be ignored even if they match other criteria or are explicitly listed in 'Branches'.
+	// +kubebuilder:validation:Optional
+	ExcludeBranches []string `json:"excludeBranches,omitempty"`
 }
 
 type IssueHandlerSpec struct {
@@ -118,6 +133,11 @@ type IssueHandlerSpec struct {
 	// Issues to filter issues for this handler
 	// +kubebuilder:validation:Optional
 	Issues []int `json:"issues"`
+
+	// ExcludeIssues specifies a list of Issue numbers that should not have sandboxes created for them.
+	// These Issues will be ignored even if they match other criteria (e.g., labels).
+	// +kubebuilder:validation:Optional
+	ExcludeIssues []int `json:"excludeIssues,omitempty"`
 
 	// LLM configuration for the bug fix sandboxes.
 	LLM LLMConfig `json:"llm,omitempty"`
@@ -180,22 +200,22 @@ type RepoWatchStatus struct {
 	ActiveSandboxCount int `json:"activeSandboxCount"`
 
 	// +optional
-	WatchedPRs []WatchedPR `json:"watchedPRs,omitempty"`
+	ReviewSandboxes []WatchedPR `json:"reviewSandboxes,omitempty"`
 
 	// +optional
-	PendingPRs []PendingPR `json:"pendingPRs,omitempty"`
+	PendingPRs []int `json:"pendingPRs,omitempty"`
 
 	// +optional
-	WatchedIssues map[string][]WatchedIssue `json:"watchedIssues,omitempty"`
+	IssueSandboxes map[string][]WatchedIssue `json:"issueSandboxes,omitempty"`
 
 	// +optional
-	PendingIssues map[string][]PendingIssue `json:"pendingIssues,omitempty"`
+	PendingIssues map[string][]int `json:"pendingIssues,omitempty"`
 
 	// +optional
-	WatchedDevSandboxes []DevSandbox `json:"watchedDevSandboxes,omitempty"`
+	DevSandboxes []DevSandbox `json:"devSandboxes,omitempty"`
 
 	// +optional
-	PendingDevSandboxes []PendingDevSandbox `json:"pendingDevSandboxes,omitempty"`
+	PendingDevBranches []string `json:"pendingDevBranches,omitempty"`
 }
 
 // WatchedPR defines the state of a watched PR
@@ -206,14 +226,9 @@ type WatchedPR struct {
 	SandboxName string `json:"sandboxName"`
 	// Status of the sandbox
 	Status string `json:"status"`
-}
-
-// PendingPR defines the state of a pending PR
-type PendingPR struct {
-	// PR number
-	Number int `json:"number"`
-	// Status of the PR
-	Status string `json:"status"`
+	// ScaledDown indicates if the sandbox for this PR has been scaled down to 0 replicas.
+	// +kubebuilder:validation:Optional
+	ScaledDown bool `json:"scaledDown,omitempty"`
 }
 
 // WatchedIssue defines the state of a watched Issue
@@ -224,14 +239,9 @@ type WatchedIssue struct {
 	SandboxName string `json:"sandboxName"`
 	// Status of the sandbox
 	Status string `json:"status"`
-}
-
-// PendingIssue defines the state of a pending PR
-type PendingIssue struct {
-	// PR number
-	Number int `json:"number"`
-	// Status of the PR
-	Status string `json:"status"`
+	// ScaledDown indicates if the sandbox for this Issue has been scaled down to 0 replicas.
+	// +kubebuilder:validation:Optional
+	ScaledDown bool `json:"scaledDown,omitempty"`
 }
 
 // DevSandbox defines the state of a watched development sandbox
@@ -242,14 +252,9 @@ type DevSandbox struct {
 	SandboxName string `json:"sandboxName"`
 	// Status of the sandbox
 	Status string `json:"status"`
-}
-
-// PendingDevSandbox defines the state of a pending development sandbox
-type PendingDevSandbox struct {
-	// Name of the remote branch
-	BranchName string `json:"branchName"`
-	// Status of the branch
-	Status string `json:"status"`
+	// ScaledDown indicates if the sandbox for this Dev branch has been scaled down to 0 replicas.
+	// +kubebuilder:validation:Optional
+	ScaledDown bool `json:"scaledDown,omitempty"`
 }
 
 // +kubebuilder:object:root=true

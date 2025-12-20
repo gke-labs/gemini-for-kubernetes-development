@@ -42,6 +42,7 @@ func main() {
 
 	cmdCodeSrv, err := codeserver.Start()
 	if err != nil {
+		_ = agentoutput.SetAgentState(gvr, "error", err.Error())
 		log.Fatalf("failed to start code-server: %v", err)
 	}
 	defer func() {
@@ -50,10 +51,13 @@ func main() {
 		}
 	}()
 
+	_ = agentoutput.SetAgentState(gvr, "reviewing", "")
 	err = runReview()
 	if err != nil {
+		_ = agentoutput.SetAgentState(gvr, "error", err.Error())
 		log.Fatalf("failed reviewing: %v", err)
 	}
+	_ = agentoutput.SetAgentState(gvr, "done", "")
 
 	err = cmdCodeSrv.Wait()
 	if err != nil {

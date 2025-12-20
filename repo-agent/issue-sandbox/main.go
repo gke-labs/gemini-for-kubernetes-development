@@ -27,6 +27,7 @@ func main() {
 
 	cmdCodeSrv, err := codeserver.Start()
 	if err != nil {
+		_ = agentoutput.SetAgentState(gvr, "error", err.Error())
 		log.Fatalf("failed to start code-server: %v", err)
 	}
 	defer func() {
@@ -35,20 +36,25 @@ func main() {
 		}
 	}()
 
+	_ = agentoutput.SetAgentState(gvr, "handling issue", "")
 	// Prepare git branch
 	oldCommitID, err := prepareGitBranch()
 	if err != nil {
+		_ = agentoutput.SetAgentState(gvr, "error", err.Error())
 		log.Fatalf("failed to prepare git branch: %v", err)
 	}
 
 	if _, err := os.Stat("../agent-prompt.txt"); os.IsNotExist(err) {
 		// Try solving the issue
 		if err := runIssueSolver(); err != nil {
+			_ = agentoutput.SetAgentState(gvr, "error", err.Error())
 			log.Fatalf("failed solving issue: %v", err)
 		}
+		_ = agentoutput.SetAgentState(gvr, "done", "")
 
 		// Push the changes
 		if err := processGitChanges(oldCommitID); err != nil {
+			_ = agentoutput.SetAgentState(gvr, "error", err.Error())
 			log.Fatalf("failed to process git changes: %v", err)
 		}
 	} else {

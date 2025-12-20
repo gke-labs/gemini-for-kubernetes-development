@@ -18,12 +18,14 @@ package agentoutput
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 )
@@ -38,7 +40,7 @@ const (
 // componentName is used for logging (e.g., "issue", "review").
 // gvr is the GroupVersionResource to update.
 func Run(componentName string, gvr schema.GroupVersionResource) {
-	fmt.Printf("starting %s sidecar\n", componentName)
+	fmt.Printf("starting %s agent output watcher\n", componentName)
 	name := os.Getenv("NAME")
 	if name == "" {
 		fmt.Println("missing NAME env")
@@ -98,4 +100,46 @@ func Run(componentName string, gvr schema.GroupVersionResource) {
 		last = string(b)
 		fmt.Println("updated crd with latest changes")
 	}
+}
+
+func SetAgentState(gvr schema.GroupVersionResource, state string, message string) error {
+	name := os.Getenv("NAME")
+	if name == "" {
+		fmt.Println("missing NAME env")
+		os.Exit(1)
+	}
+	namespace := os.Getenv("NAMESPACE")
+	if namespace == "" {
+		fmt.Println("missing NAMESPACE env")
+		os.Exit(1)
+	}
+
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		return err
+	}
+
+	dc, err := dynamic.NewForConfig(config)
+	if err != nil {
+		return err
+	}
+
+	patch := map[string]interface{}{
+		"metadata": map[string]interface{}{
+			"annotations": map[string]string{
+				"agentState":        state,
+				"agentStateMessage": message,
+			},
+		},
+	}
+	patchBytes, err := json.Marshal(patch)
+	if err != nil {
+		return err
+	}
+
+	_, err = dc.Resource(gvr).Namespace(namespace).Patch(context.TODO(), name, types.MergePatchType, patchBytes, metav1.PatchOptions{})
+	if err != nil {
+		return err
+	}
+	return nil
 }

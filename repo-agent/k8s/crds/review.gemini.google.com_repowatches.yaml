@@ -28,8 +28,16 @@ spec:
             properties:
               dev:
                 properties:
+                  branches:
+                    items:
+                      type: string
+                    type: array
                   devcontainerConfigRef:
                     type: string
+                  excludeBranches:
+                    items:
+                      type: string
+                    type: array
                   llm:
                     properties:
                       apiKeySecretRef:
@@ -63,6 +71,10 @@ spec:
                   properties:
                     devcontainerConfigRef:
                       type: string
+                    excludeIssues:
+                      items:
+                        type: integer
+                      type: array
                     issueShutdownAfterMinutes:
                       type: integer
                     issues:
@@ -114,6 +126,10 @@ spec:
                 properties:
                   devcontainerConfigRef:
                     type: string
+                  excludePullRequests:
+                    items:
+                      type: integer
+                    type: array
                   labels:
                     items:
                       items:
@@ -197,51 +213,15 @@ spec:
                   - type
                   type: object
                 type: array
-              pendingDevSandboxes:
-                items:
-                  properties:
-                    branchName:
-                      type: string
-                    status:
-                      type: string
-                  required:
-                  - branchName
-                  - status
-                  type: object
-                type: array
-              pendingIssues:
-                additionalProperties:
-                  items:
-                    properties:
-                      number:
-                        type: integer
-                      status:
-                        type: string
-                    required:
-                    - number
-                    - status
-                    type: object
-                  type: array
-                type: object
-              pendingPRs:
-                items:
-                  properties:
-                    number:
-                      type: integer
-                    status:
-                      type: string
-                  required:
-                  - number
-                  - status
-                  type: object
-                type: array
-              watchedDevSandboxes:
+              devSandboxes:
                 items:
                   properties:
                     branchName:
                       type: string
                     sandboxName:
                       type: string
+                    scaledDown:
+                      type: boolean
                     status:
                       type: string
                   required:
@@ -250,7 +230,7 @@ spec:
                   - status
                   type: object
                 type: array
-              watchedIssues:
+              issueSandboxes:
                 additionalProperties:
                   items:
                     properties:
@@ -258,6 +238,8 @@ spec:
                         type: integer
                       sandboxName:
                         type: string
+                      scaledDown:
+                        type: boolean
                       status:
                         type: string
                     required:
@@ -267,13 +249,29 @@ spec:
                     type: object
                   type: array
                 type: object
-              watchedPRs:
+              pendingDevBranches:
+                items:
+                  type: string
+                type: array
+              pendingIssues:
+                additionalProperties:
+                  items:
+                    type: integer
+                  type: array
+                type: object
+              pendingPRs:
+                items:
+                  type: integer
+                type: array
+              reviewSandboxes:
                 items:
                   properties:
                     number:
                       type: integer
                     sandboxName:
                       type: string
+                    scaledDown:
+                      type: boolean
                     status:
                       type: string
                   required:
