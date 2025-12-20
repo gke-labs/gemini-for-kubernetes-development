@@ -18,12 +18,14 @@ package agentoutput
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 )
@@ -122,21 +124,20 @@ func SetAgentState(gvr schema.GroupVersionResource, state string, message string
 		return err
 	}
 
-	rs, err := dc.Resource(gvr).Namespace(namespace).Get(context.TODO(), name, metav1.GetOptions{})
+	patch := map[string]interface{}{
+		"metadata": map[string]interface{}{
+			"annotations": map[string]string{
+				"agentState":        state,
+				"agentStateMessage": message,
+			},
+		},
+	}
+	patchBytes, err := json.Marshal(patch)
 	if err != nil {
 		return err
 	}
 
-	// update the annotation[agentState]
-	if rs.GetAnnotations() == nil {
-		rs.SetAnnotations(make(map[string]string))
-	}
-	annotations := rs.GetAnnotations()
-	annotations["agentState"] = state
-	annotations["agentStateMessage"] = message
-	rs.SetAnnotations(annotations)
-
-	_, err = dc.Resource(gvr).Namespace(namespace).Update(context.TODO(), rs, metav1.UpdateOptions{})
+	_, err = dc.Resource(gvr).Namespace(namespace).Patch(context.TODO(), name, types.MergePatchType, patchBytes, metav1.PatchOptions{})
 	if err != nil {
 		return err
 	}
