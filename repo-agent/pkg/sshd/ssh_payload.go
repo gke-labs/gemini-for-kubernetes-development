@@ -17,6 +17,8 @@ package sshd
 import (
 	"encoding/binary"
 	"fmt"
+
+	"golang.org/x/crypto/ssh"
 )
 
 // sshPayload helps parse SSH request payloads.
@@ -46,6 +48,16 @@ func (p *sshPayload) PopUint32() (uint32, error) {
 	v := binary.BigEndian.Uint32(p.b)
 	p.b = p.b[4:]
 	return v, nil
+}
+
+// Unmarshal unmarshals the remaining bytes into the given structure.
+func (p *sshPayload) Unmarshal(size int, dest any) error {
+	if len(p.b) < size {
+		return fmt.Errorf("payload too short to read %d bytes", size)
+	}
+	src := p.b[:size]
+	p.b = p.b[size:]
+	return ssh.Unmarshal(src, dest)
 }
 
 // Len returns the length of the remaining payload.
