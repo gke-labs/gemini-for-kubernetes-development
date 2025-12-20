@@ -23,43 +23,34 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/creack/pty"
 	"golang.org/x/crypto/ssh"
 	"k8s.io/klog/v2"
 )
 
-func (s *Server) startCommand(ctx context.Context, sshChannel ssh.Channel, command string, ptyOptions *sshPayload) error {
+func (s *Server) startCommand(ctx context.Context, sshChannel ssh.Channel, command string, pty *PTY, envVars []string) error {
 	log := klog.FromContext(ctx)
-
-	defer sshChannel.Close()
 
 	userHomeDir := os.Getenv("HOME")
 
-	cmd := exec.CommandContext(ctx, command)
+	// Rather than trying to parse the command, we just run a shell and let it handle it.
+	cmd := exec.CommandContext(ctx, "/bin/bash", "-c", command)
 	cmd.Dir = userHomeDir
 	env := []string{}
 	env = append(env, os.Environ()...)
+	env = append(env, envVars...)
 	// env = append(env, "TERM=xterm-256color")
 	cmd.Env = env
 
 	inputPipeResults := make(chan error, 2)
 
-	if ptyOptions != nil {
-		ptmx, err := pty.Start(cmd)
-		if err != nil {
-			return err
+	if pty != nil {
+		if err := pty.StartCommand(ctx, cmd); err != nil {
+			return fmt.Errorf("starting command with pty: %w", err)
 		}
-		defer func() {
-			if err := ptmx.Close(); err != nil {
-				if !errors.Is(err, os.ErrClosed) {
-					log.Error(err, "closing pty")
-				}
-			}
-		}()
 
 		go func() {
 			// defer ptmx.Close()
-			_, err := io.Copy(ptmx, sshChannel)
+			_, err := io.Copy(pty.pty, sshChannel)
 			if err != nil && !errors.Is(err, io.EOF) {
 				log.Error(err, "copying ssh channel to pty")
 			}
@@ -67,7 +58,7 @@ func (s *Server) startCommand(ctx context.Context, sshChannel ssh.Channel, comma
 
 		go func() {
 			// defer sshChannel.CloseWrite()
-			_, err := io.Copy(sshChannel, ptmx)
+			_, err := io.Copy(sshChannel, pty.pty)
 			inputPipeResults <- err
 			if err != nil && !errors.Is(err, io.EOF) {
 				log.V(2).Info("copying pty to ssh channel", "error", err)
@@ -122,37 +113,52 @@ func (s *Server) startCommand(ctx context.Context, sshChannel ssh.Channel, comma
 		}()
 	}
 
-	exitStatus := 0
-	if err := cmd.Wait(); err != nil {
-		log.Error(err, "command exited with error")
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			if status, ok := exitErr.Sys().(interface{ ExitStatus() int }); ok {
-				exitStatus = status.ExitStatus()
-			}
-		} else {
-			log.Error(err, "unexpected error waiting for command")
-			exitStatus = 255
+	// We wait in a separate goroutine so that we can continue to service the SSH channel.
+	go func() {
+		defer sshChannel.Close()
+
+		if pty != nil {
+			defer func() {
+				if err := pty.Close(); err != nil {
+					if !errors.Is(err, os.ErrClosed) {
+						log.Error(err, "closing pty")
+					}
+				}
+			}()
 		}
-	}
 
-	exitStatusBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(exitStatusBytes, uint32(exitStatus))
-	if _, err := sshChannel.SendRequest("exit-status", false, exitStatusBytes); err != nil {
-		log.Error(err, "sending exit-status message")
-	}
+		exitStatus := 0
+		if err := cmd.Wait(); err != nil {
+			log.Error(err, "command exited with error")
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				if status, ok := exitErr.Sys().(interface{ ExitStatus() int }); ok {
+					exitStatus = status.ExitStatus()
+				}
+			} else {
+				log.Error(err, "unexpected error waiting for command")
+				exitStatus = 255
+			}
+		}
 
-	// Wait for pipes to finish before sending exit code
-	err1 := <-inputPipeResults
-	if errors.Is(err1, io.EOF) {
-		err1 = nil
-	}
-	err2 := <-inputPipeResults
-	if errors.Is(err2, io.EOF) {
-		err2 = nil
-	}
-	if err := errors.Join(err1, err2); err != nil {
-		log.V(2).Info("error copying between pipes", "error", err)
-	}
+		exitStatusBytes := make([]byte, 4)
+		binary.BigEndian.PutUint32(exitStatusBytes, uint32(exitStatus))
+		if _, err := sshChannel.SendRequest("exit-status", false, exitStatusBytes); err != nil {
+			log.Error(err, "sending exit-status message")
+		}
+
+		// Wait for pipes to finish before sending exit code
+		err1 := <-inputPipeResults
+		if errors.Is(err1, io.EOF) {
+			err1 = nil
+		}
+		err2 := <-inputPipeResults
+		if errors.Is(err2, io.EOF) {
+			err2 = nil
+		}
+		if err := errors.Join(err1, err2); err != nil {
+			log.V(2).Info("error copying between pipes", "error", err)
+		}
+	}()
 
 	return nil
 }
