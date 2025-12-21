@@ -6,6 +6,8 @@ LOCAL_PORT ?= 13380
 CLUSTER_NAME != kubectl config view --minify --output 'jsonpath={.clusters[0].name}'
 INSTALL_ENVOY = $(shell if [[ ${CLUSTER_NAME} == kind* ]]; then echo "yes"; else echo "no"; fi)
 GW_CLASS = $(shell if [[ ${CLUSTER_NAME} == kind* ]]; then echo "repo-agent-gatewayclass"; else echo "gke-l7-regional-external-managed"; fi)
+LLM_PROVIDER ?= gemini-cli
+DEFAULT_LLM_PROVIDER = $(shell if [[ ${CLUSTER_NAME} == kind* ]]; then echo ${LLM_PROVIDER}; else echo "gemini-cli"; fi)
 
 # if REGISTRY is kind.local/, then we are deploying to kind
 ifeq ($(REGISTRY), kind.local/)
@@ -122,7 +124,10 @@ install-repo-agent:
 	cp dev-sandbox/dev-sandbox-rgd.yaml k8s/
 	../dev/tools/deploy-to-kube --image-prefix=$(REGISTRY) --working-dir . \
 	--replace .spec.installationName=${CLUSTER_NAME} \
-	--replace .spec.gatewayClassName=${GW_CLASS}
+	--replace .spec.gatewayClassName=${GW_CLASS} \
+	--replace .spec.versions[].schema.openAPIV3Schema.properties.spec.properties.dev.properties.llm.properties.provider.default=${DEFAULT_LLM_PROVIDER} \
+	--replace .spec.versions[].schema.openAPIV3Schema.properties.spec.properties.review.properties.llm.properties.provider.default=${DEFAULT_LLM_PROVIDER} \
+	--replace .spec.versions[].schema.openAPIV3Schema.properties.spec.properties.issueHandlers.items.properties.llm.properties.provider.default=${DEFAULT_LLM_PROVIDER}
 
 bin/tls.crt:
 	openssl req -x509 -nodes -days 365 -newkey rsa:2048  -keyout bin/tls.key -out bin/tls.crt  -subj "/CN=repo-agent"
