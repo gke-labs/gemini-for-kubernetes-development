@@ -116,7 +116,6 @@ spec:
     devcontainerConfigRef: devcontainer-json
     llm:
       apiKeySecretRef: gemini-vscode-tokens
-      provider: gemini-cli
   review:
     preferAssignedToSelf: true
     reviewShutdownAfterMinutes: 30
@@ -131,7 +130,6 @@ spec:
         1. Does the fix resolve the original problem.
         2. Look for linked issues to understand the original problem.
         3. Are there tests to check the fix.
-      provider: gemini-cli
     maxActiveSandboxes: 3
     maxSandboxes: 5
   issueHandlers:
@@ -164,7 +162,6 @@ spec:
           Issue Title: "{{.Title}}"
           Issue Body: "{{.Body}}"
           HTML URL: "{{.HTMLURL}}"
-        provider: gemini-cli
       issueShutdownAfterMinutes: 30
       maxActiveSandboxes: 1
       maxSandboxes: 3
