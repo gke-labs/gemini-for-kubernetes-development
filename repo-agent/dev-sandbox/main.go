@@ -60,6 +60,7 @@ func run(ctx context.Context) error {
 	}
 	rootCommand.AddCommand(sshdCommand)
 
+	rootCommand.AddCommand(commands.BuildCreateCommand())
 	rootCommand.AddCommand(commands.NewCodeCommand())
 	rootCommand.AddCommand(commands.NewTmuxCommand())
 
