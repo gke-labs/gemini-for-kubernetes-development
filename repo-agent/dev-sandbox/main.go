@@ -15,7 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	"k8s.io/klog/v2"
 
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/dev-sandbox/pkg/commands"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/commands"
 )
 
 func main() {
