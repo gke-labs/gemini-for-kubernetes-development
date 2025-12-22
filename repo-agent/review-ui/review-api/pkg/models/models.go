@@ -12,15 +12,18 @@ type AgentOutput struct {
 
 // PR represents a pull request
 type PR struct {
-	ID             string `json:"id"`
-	Title          string `json:"title"`
-	Draft          string `json:"draft,omitempty"`
-	Sandbox        string `json:"sandbox,omitempty"`
-	SandboxReplica string `json:"sandboxReplica,omitempty"`
-	Review         string `json:"review,omitempty"`
-	HTMLURL        string `json:"htmlURL,omitempty"`
-	DiffURL        string `json:"diffURL,omitempty"`
-	AgentDraft     string `json:"agentDraft,omitempty"`
+	ID                string `json:"id"`
+	Title             string `json:"title"`
+	Draft             string `json:"draft,omitempty"`
+	Sandbox           string `json:"sandbox,omitempty"`
+	SandboxReplica    string `json:"sandboxReplica,omitempty"`
+	Review            string `json:"review,omitempty"`
+	HTMLURL           string `json:"htmlURL,omitempty"`
+	DiffURL           string `json:"diffURL,omitempty"`
+	AgentDraft        string `json:"agentDraft,omitempty"`
+	AgentState        string `json:"agentState,omitempty"`
+	AgentStateMessage string `json:"agentStateMessage,omitempty"`
+	ReviewState       string `json:"reviewState,omitempty"`
 }
 
 // Issue represents a GitHub issue

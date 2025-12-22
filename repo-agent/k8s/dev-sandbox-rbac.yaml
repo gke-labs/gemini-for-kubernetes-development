@@ -19,6 +19,7 @@ rules:
   verbs:
   - get
   - update
+  - patch
 - apiGroups:
   - "configdir.gke.io"
   resources:

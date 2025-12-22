@@ -316,6 +316,15 @@ func (s *RedisStore) ListPRs(ctx context.Context, namespace, repo string) ([]mod
 		if val, ok := prData["agentDraft"]; ok {
 			pr.AgentDraft = val
 		}
+		if val, ok := prData["agentState"]; ok {
+			pr.AgentState = val
+		}
+		if val, ok := prData["agentStateMessage"]; ok {
+			pr.AgentStateMessage = val
+		}
+		if val, ok := prData["reviewState"]; ok {
+			pr.ReviewState = val
+		}
 		prs = append(prs, pr)
 	}
 	if err := iter.Err(); err != nil {
@@ -335,6 +344,9 @@ func (s *RedisStore) SavePR(ctx context.Context, namespace, repo string, pr mode
 		"sandboxReplica", pr.SandboxReplica,
 		"draft", pr.Draft,
 		"agentDraft", pr.AgentDraft,
+		"agentState", pr.AgentState,
+		"agentStateMessage", pr.AgentStateMessage,
+		"reviewState", pr.ReviewState,
 	).Err()
 }
 
@@ -373,6 +385,15 @@ func (s *RedisStore) GetPR(ctx context.Context, namespace, repo, prID string) (*
 	}
 	if val, ok := prData["agentDraft"]; ok {
 		pr.AgentDraft = val
+	}
+	if val, ok := prData["agentState"]; ok {
+		pr.AgentState = val
+	}
+	if val, ok := prData["agentStateMessage"]; ok {
+		pr.AgentStateMessage = val
+	}
+	if val, ok := prData["reviewState"]; ok {
+		pr.ReviewState = val
 	}
 
 	return pr, nil
