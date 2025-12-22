@@ -35,30 +35,29 @@ function PrReviewCard({
   const lastDragTargetRef = useRef(null);
 
   const getReviewFlairColor = (flairText) => {
-    switch (flairText) {
-      case 'Ready':
-        return 'green';
-      case 'Generating ...':
-        return 'orange';
-      case 'Submitted':
-        return '#3f5398ff';
-      default:
-        return '#3e7f67ff'; // Default color
-    }
+    if (!flairText) return '#3e7f67ff';
+    const text = flairText.toLowerCase();
+    if (text === 'done') return 'green';
+    if (text.includes('reviewing')) return 'orange';
+    if (text.includes('error')) return '#9e2a2aff';
+    if (text === 'submitted') return '#3f5398ff';
+    return '#cd9945ff'; // Default color
   };
 
   const isCollapsed = collapsedReviews[pr.id];
   useEffect(() => {
     if (pr.type === 'pending' || pr.type === 'excluded') return;
 
-    if (pr.review) {
+    if (pr.reviewState === 'submitted' || pr.review) {
       setReviewFlairText('Submitted');
+    } else if (pr.agentState) {
+      setReviewFlairText(pr.agentState);
     } else if (drafts[pr.id] && drafts[pr.id].note && drafts[pr.id].note.trim() !== '') {
       setReviewFlairText('Ready');
     } else {
       setReviewFlairText('Generating ...');
     }
-  }, [pr.review, drafts, pr.id, pr.type]);
+  }, [pr.review, drafts, pr.id, pr.type, pr.agentState, pr.reviewState]);
 
   useEffect(() => {
     if (pr.type === 'pending' || pr.type === 'excluded') return;
@@ -409,16 +408,25 @@ function PrReviewCard({
           </span>
         </h3>
         <div className="pr-card-actions-header">
-          {reviewFlairText && (
-            <span style={{ marginRight: '10px', backgroundColor: getReviewFlairColor(reviewFlairText), color: 'white', padding: '5px 10px', borderRadius: '5px', fontSize: 'small' }}>
+          {reviewFlairText && pr.agentState !== 'provisioning' && (
+            <span 
+              style={{ marginRight: '10px', backgroundColor: getReviewFlairColor(reviewFlairText), color: 'white', padding: '5px 10px', borderRadius: '5px', fontSize: 'small' }}
+              title={pr.agentStateMessage || ''}
+            >
               {reviewFlairText}
             </span>
           )}
           {getSandboxStatusClass(pr) === 'green' ? (
             <div style={{display: 'flex', alignItems: 'center', gap: '5px'}}>
-              <a href={`/sandbox/${namespace}/${pr.sandbox}/`} target="_blank" rel="noopener noreferrer" className={`pr-sandbox ${getSandboxStatusClass(pr)}`}>
-                Sandbox Active
-              </a>
+              {pr.agentState === 'provisioning' ? (
+                <span className="pr-sandbox" style={{backgroundColor: '#2196F3', color: 'white', cursor: 'default'}}>
+                  Sandbox Provisioning
+                </span>
+              ) : (
+                <a href={`/sandbox/${namespace}/${pr.sandbox}/`} target="_blank" rel="noopener noreferrer" className={`pr-sandbox ${getSandboxStatusClass(pr)}`}>
+                  Sandbox Active
+                </a>
+              )}
               <button className="btn btn-sm pr-sandbox yellow" style={{padding: '4px 10px', fontSize: '14px'}} onClick={(e) => { e.stopPropagation(); handleScaleDown(pr.id); }} title="Scale Down">
                 &#9646;&#9646;
               </button>

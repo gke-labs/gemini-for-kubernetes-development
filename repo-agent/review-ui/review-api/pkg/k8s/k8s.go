@@ -333,6 +333,33 @@ func (m *Manager) UpdateReviewSandboxUserDraft(ctx context.Context, namespace, s
 	return nil
 }
 
+func (m *Manager) UpdateReviewSandboxAnnotation(ctx context.Context, namespace, sandboxName, key, value string) error {
+	gvr := schema.GroupVersionResource{
+		Group:    "custom.agents.x-k8s.io",
+		Version:  "v1alpha1",
+		Resource: "reviewsandboxes",
+	}
+
+	sandbox, err := m.Client.Resource(gvr).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to get reviewsandbox %s: %w", sandboxName, err)
+	}
+
+	if sandbox.GetAnnotations() == nil {
+		sandbox.SetAnnotations(make(map[string]string))
+	}
+	annotations := sandbox.GetAnnotations()
+	annotations[key] = value
+	sandbox.SetAnnotations(annotations)
+
+	_, err = m.Client.Resource(gvr).Namespace(namespace).Update(ctx, sandbox, v1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to update reviewsandbox annotation: %w", err)
+	}
+
+	return nil
+}
+
 func (m *Manager) GetGitHubToken(ctx context.Context, repoWatch *unstructured.Unstructured) (string, error) {
 	secretName, found, err := unstructured.NestedString(repoWatch.Object, "spec", "githubSecretName")
 	if err != nil || !found {

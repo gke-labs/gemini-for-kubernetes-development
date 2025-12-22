@@ -85,24 +85,39 @@ func (s *Server) fetchAndPopulatePRs(ctx context.Context, namespace, repo string
 
 		// get draft from annotation[agentDraft]
 		draft := ""
+		agentState := ""
+		agentStateMessage := ""
+		reviewState := ""
 		annotations := item.GetAnnotations()
 		if annotations == nil {
-			log.Printf("agentDraft (annotations=nil) not found in ReviewSandbox %s", item.GetName())
-		} else if _, ok := annotations["agentDraft"]; !ok {
-			log.Printf("agentDraft (annotations[agentDraft]) not found in ReviewSandbox %s", item.GetName())
+			log.Printf("annotations (annotations=nil) not found in ReviewSandbox %s", item.GetName())
 		} else {
-			draft = annotations["agentDraft"]
+			if val, ok := annotations["agentDraft"]; ok {
+				draft = val
+			}
+			if val, ok := annotations["agentState"]; ok {
+				agentState = val
+			}
+			if val, ok := annotations["agentStateMessage"]; ok {
+				agentStateMessage = val
+			}
+			if val, ok := annotations["reviewState"]; ok {
+				reviewState = val
+			}
 		}
 
 		pr := models.PR{
-			ID:             prID,
-			Title:          title,
-			Sandbox:        item.GetName(),
-			HTMLURL:        htmlurl,
-			DiffURL:        diffurl,
-			SandboxReplica: fmt.Sprintf("%d", replicas),
-			Draft:          draft,
-			AgentDraft:     draft,
+			ID:                prID,
+			Title:             title,
+			Sandbox:           item.GetName(),
+			HTMLURL:           htmlurl,
+			DiffURL:           diffurl,
+			SandboxReplica:    fmt.Sprintf("%d", replicas),
+			Draft:             draft,
+			AgentDraft:        draft,
+			AgentState:        agentState,
+			AgentStateMessage: agentStateMessage,
+			ReviewState:       reviewState,
 		}
 
 		if err := s.Store.SavePR(ctx, namespace, repo, pr); err != nil {
@@ -259,6 +274,12 @@ func (s *Server) submitReview(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scaledown Sandbox after review submission", "details": err.Error()})
 		return
+	}
+
+	if sandboxName != "" {
+		if err := s.K8sManager.UpdateReviewSandboxAnnotation(ctx, namespace, sandboxName, "reviewState", "submitted"); err != nil {
+			log.Printf("Failed to update reviewState annotation for PR %s in repo %s: %v", prID, repo, err)
+		}
 	}
 
 	c.Status(http.StatusOK)

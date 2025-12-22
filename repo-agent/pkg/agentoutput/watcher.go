@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"time"
 
@@ -137,8 +138,10 @@ func SetAgentState(gvr schema.GroupVersionResource, state string, message string
 		return err
 	}
 
+	log.Printf("patching resource %s/%s with: %s\n", namespace, name, patchBytes)
 	_, err = dc.Resource(gvr).Namespace(namespace).Patch(context.TODO(), name, types.MergePatchType, patchBytes, metav1.PatchOptions{})
 	if err != nil {
+		log.Printf("error patching resource %s/%s: %v\n", namespace, name, err)
 		return err
 	}
 	return nil
