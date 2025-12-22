@@ -61,7 +61,7 @@ func (d *Dummy) response(prompt string) []byte {
 
 func (d *Dummy) Run(prompt string) ([]byte, error) {
 	var err error
-	log.Printf("Dummy provider run with prompt: %s", prompt)
+	log.Printf("Dummy provider running with prompt")
 	output := d.response(prompt)
 	for _, p := range d.processors {
 		output, err = p(output)
