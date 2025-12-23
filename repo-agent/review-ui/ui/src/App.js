@@ -767,9 +767,14 @@ function App() {
         const pending = activeRepo.pendingPRs || [];
         let pendingList = [];
         pending.forEach(p => {
+             // Handle both old format (number) and new format (object)
+             const id = typeof p === 'object' ? p.number : p;
+             const title = typeof p === 'object' && p.title ? `PR #${id}: ${p.title}` : `PR #${id}`;
+             const htmlURL = typeof p === 'object' ? p.htmlURL : null;
+
              // Avoid duplicates if already in active
-             if (!activeList.find(i => i.sortId === p)) {
-                 pendingList.push({ id: p.toString(), type: 'pending', sortId: p, title: `PR #${p}` });
+             if (!activeList.find(i => i.sortId === id)) {
+                 pendingList.push({ id: id.toString(), type: 'pending', sortId: id, title: title, htmlURL: htmlURL });
              }
         });
         pendingList.sort((a, b) => b.sortId - a.sortId);

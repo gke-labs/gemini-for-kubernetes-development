@@ -48,8 +48,15 @@ type Repo struct {
 	Review              *ReviewConfig  `json:"review,omitempty"`
 	IssueHandlers       []IssueHandler `json:"issueHandlers,omitempty"`
 	Dev                 *DevConfig     `json:"dev,omitempty"`
-	PendingPRs          []int64        `json:"pendingPRs,omitempty"`
+	PendingPRs          []PendingPR    `json:"pendingPRs,omitempty"`
 	ExcludePullRequests []int64        `json:"excludePullRequests,omitempty"`
+}
+
+// PendingPR represents a pending pull request
+type PendingPR struct {
+	Number  int64  `json:"number"`
+	Title   string `json:"title,omitempty"`
+	HTMLURL string `json:"htmlURL,omitempty"`
 }
 
 // ReviewConfig holds configuration for PR reviews
