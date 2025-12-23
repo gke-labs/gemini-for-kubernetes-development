@@ -60,26 +60,45 @@ func (g *Gemini) Setup(workspacesDir, tokensDir string) error {
 		log.Println(".gemini directory does not exist in /workspaces")
 	}
 
-	// Ensure root settings.json has previewFeatures
-	if err := ensureSettings(".gemini"); err != nil {
-		log.Printf("Warning: failed to ensure .gemini/settings.json: %v", err)
-	}
-
-	// Ensure home directory settings.json has previewFeatures
-	homeDir, err := os.UserHomeDir()
-	if err == nil {
-		if err := ensureSettings(filepath.Join(homeDir, ".gemini")); err != nil {
-			log.Printf("Warning: failed to ensure ~/.gemini/settings.json: %v", err)
+	// If present, set GOOGLE_API_KEY
+	googleAPIKey := filepath.Join(tokensDir, "google")
+	if _, err := os.Stat(googleAPIKey); err == nil {
+		googleKey, err := os.ReadFile(googleAPIKey)
+		if err != nil {
+			return fmt.Errorf("failed to read %s: %v", googleAPIKey, err)
 		}
+		os.Setenv("GOOGLE_API_KEY", string(googleKey))
+		os.Setenv("GOOGLE_GENAI_USE_VERTEXAI", "true")
+
+		return nil
 	}
 
+	// If present, set GEMINI_API_KEY
 	geminiTokenFile := filepath.Join(tokensDir, "gemini")
-	geminiKey, err := os.ReadFile(geminiTokenFile)
-	if err != nil {
-		return fmt.Errorf("failed to read %s: %v", geminiTokenFile, err)
+	if _, err := os.Stat(geminiTokenFile); err == nil {
+		geminiKey, err := os.ReadFile(geminiTokenFile)
+		if err != nil {
+			return fmt.Errorf("failed to read %s: %v", geminiTokenFile, err)
+		}
+		os.Setenv("GEMINI_API_KEY", string(geminiKey))
+
+		// Ensure root settings.json has previewFeatures
+		if err := ensureSettings(".gemini"); err != nil {
+			log.Printf("Warning: failed to ensure .gemini/settings.json: %v", err)
+		}
+
+		// Ensure home directory settings.json has previewFeatures
+		homeDir, err := os.UserHomeDir()
+		if err == nil {
+			if err := ensureSettings(filepath.Join(homeDir, ".gemini")); err != nil {
+				log.Printf("Warning: failed to ensure ~/.gemini/settings.json: %v", err)
+			}
+		}
+
+		return nil
 	}
-	os.Setenv("GEMINI_API_KEY", string(geminiKey))
-	return nil
+
+	return fmt.Errorf("Neither GEMINI_API_KEY nor GOOGLE_API_KEY found in tokens directory")
 }
 
 func ensureSettings(geminiDir string) error {
