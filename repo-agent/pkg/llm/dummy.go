@@ -45,7 +45,7 @@ func (d *Dummy) Cleanup(_ string) error {
 }
 
 func (d *Dummy) ExpandPrompt(prompt string) (string, error) {
-	return prompt, nil
+	return expandCommands(prompt, ".gemini")
 }
 
 func (d *Dummy) response(prompt string) []byte {

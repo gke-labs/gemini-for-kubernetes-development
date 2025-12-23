@@ -9,6 +9,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/review-ui/review-api/pkg/auth"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/review-ui/review-api/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/review-ui/review-api/pkg/store"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/review-ui/review-api/pkg/templates"
 	"github.com/go-redis/redis/v8"
 )
 
@@ -17,6 +18,7 @@ type Server struct {
 	Auth       *auth.Authenticator
 	Redis      *redis.Client
 	Store      store.Store
+	Templates  *templates.Manager
 }
 
 func NewServer(manager *k8s.Manager, authenticator *auth.Authenticator, store store.Store) *Server {
@@ -25,6 +27,7 @@ func NewServer(manager *k8s.Manager, authenticator *auth.Authenticator, store st
 		Auth:       authenticator,
 		Redis:      manager.Redis,
 		Store:      store,
+		Templates:  templates.NewManager(manager.Clientset),
 	}
 }
 
@@ -52,6 +55,7 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 		api.GET("/repos", s.getRepos)
 		api.POST("/repos", s.createRepoWatch)
 		api.GET("/getRepoWatch", s.getDefaultRepoWatch)
+		api.GET("/templates", s.getTemplates)
 		api.GET("/repos/:repo/yaml", s.getRepoWatchYAML)
 		api.PUT("/repos/:repo", s.updateRepoWatch)
 		api.DELETE("/repos/:repo", s.deleteRepoWatch)
