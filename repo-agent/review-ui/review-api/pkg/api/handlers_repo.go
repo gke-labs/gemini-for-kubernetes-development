@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sort"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/review-ui/review-api/pkg/auth"
@@ -455,12 +456,49 @@ func (s *Server) getRepos(c *gin.Context) {
 
 		// Extract PendingPRs
 		if pendingPRsSlice, found, err := unstructured.NestedSlice(repoWatch.Object, "status", "pendingPRs"); err == nil && found {
-			var pendingPRs []int64
+			var pendingPRs []models.PendingPR
+			var prNumbers []int64
 			for _, v := range pendingPRsSlice {
 				if i, ok := v.(int64); ok {
-					pendingPRs = append(pendingPRs, i)
+					prNumbers = append(prNumbers, i)
 				} else if i, ok := v.(int); ok {
-					pendingPRs = append(pendingPRs, int64(i))
+					prNumbers = append(prNumbers, int64(i))
+				}
+			}
+
+			if len(prNumbers) > 0 {
+				// Sort and limit to top 10
+				sort.Slice(prNumbers, func(i, j int) bool {
+					return prNumbers[i] > prNumbers[j]
+				})
+				if len(prNumbers) > 10 {
+					prNumbers = prNumbers[:10]
+				}
+
+				// Try to get GitHub client to fetch titles
+				token, tokenErr := s.K8sManager.GetGitHubToken(c.Request.Context(), repoWatch)
+				var client *github.Client
+				if tokenErr == nil {
+					ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
+					tc := oauth2.NewClient(c.Request.Context(), ts)
+					client = github.NewClient(tc)
+				}
+
+				owner, repoName, urlErr := parseRepoURL(repoURL)
+
+				for _, prNum := range prNumbers {
+					pendingPR := models.PendingPR{Number: prNum}
+					// Only fetch title if we have a client and valid repo info
+					if client != nil && urlErr == nil {
+						pr, _, err := client.PullRequests.Get(c.Request.Context(), owner, repoName, int(prNum))
+						if err == nil {
+							pendingPR.Title = pr.GetTitle()
+							pendingPR.HTMLURL = pr.GetHTMLURL()
+						} else {
+							log.Printf("Failed to get PR %d title: %v", prNum, err)
+						}
+					}
+					pendingPRs = append(pendingPRs, pendingPR)
 				}
 			}
 			repo.PendingPRs = pendingPRs
