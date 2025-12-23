@@ -3,9 +3,11 @@ package api
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"sort"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/review-ui/review-api/pkg/auth"
@@ -29,73 +31,118 @@ func (s *Server) createRepoWatch(c *gin.Context) {
 		return
 	}
 
-	gvr := schema.GroupVersionResource{
-		Group:    "review.gemini.google.com",
-		Version:  "v1alpha1",
-		Resource: "repowatches",
-	}
-
 	if payload.YAML == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "YAML content is required"})
 		return
 	}
 
-	// Create from YAML
-	var unstructuredObj map[string]interface{}
-	if err := yaml.Unmarshal([]byte(payload.YAML), &unstructuredObj); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid YAML content"})
-		return
-	}
-	unstructuredObj = fixYAMLIntegers(unstructuredObj).(map[string]interface{})
-	repoWatch := &unstructured.Unstructured{Object: unstructuredObj}
-
-	// Enforce namespace
-	repoWatch.SetNamespace(namespace)
-
-	// Auto-populate labels if missing
-	labels, found, _ := unstructured.NestedStringSlice(repoWatch.Object, "spec", "review", "labels")
-	if !found || len(labels) == 0 {
-		// Ensure githubSecretName is set for getGitHubToken to work
-		_, found, _ = unstructured.NestedString(repoWatch.Object, "spec", "githubSecretName")
-		if !found {
-			_ = unstructured.SetNestedField(repoWatch.Object, "github-pat", "spec", "githubSecretName")
+	decoder := yaml.NewDecoder(strings.NewReader(payload.YAML))
+	for {
+		var unstructuredObj map[string]interface{}
+		if err := decoder.Decode(&unstructuredObj); err != nil {
+			if err == io.EOF {
+				break
+			}
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid YAML content"})
+			return
 		}
 
-		token, tokenErr := s.K8sManager.GetGitHubToken(c.Request.Context(), repoWatch)
-		if tokenErr == nil {
-			ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
-			tc := oauth2.NewClient(c.Request.Context(), ts)
-			client := github.NewClient(tc)
+		unstructuredObj = fixYAMLIntegers(unstructuredObj).(map[string]interface{})
+		obj := &unstructured.Unstructured{Object: unstructuredObj}
 
-			repoURL, _, _ := unstructured.NestedString(repoWatch.Object, "spec", "repoURL")
-			if owner, repoName, urlErr := parseRepoURL(repoURL); urlErr == nil {
-				suggested, suggestErr := getSuggestedLabels(c.Request.Context(), client, owner, repoName)
-				if suggestErr == nil && len(suggested) > 0 {
-					var suggestedInterface []interface{}
-					for _, s := range suggested {
-						var inner []interface{}
-						for _, l := range s {
-							inner = append(inner, l)
+		// Enforce namespace
+		obj.SetNamespace(namespace)
+
+		gvk := obj.GroupVersionKind()
+
+		// Handle RepoWatch specific logic
+		if gvk.Group == "review.gemini.google.com" && gvk.Kind == "RepoWatch" {
+			// Auto-populate labels if missing
+			labels, found, _ := unstructured.NestedStringSlice(obj.Object, "spec", "review", "labels")
+			if !found || len(labels) == 0 {
+				// Ensure githubSecretName is set for getGitHubToken to work
+				_, found, _ = unstructured.NestedString(obj.Object, "spec", "githubSecretName")
+				if !found {
+					_ = unstructured.SetNestedField(obj.Object, "github-pat", "spec", "githubSecretName")
+				}
+
+				token, tokenErr := s.K8sManager.GetGitHubToken(c.Request.Context(), obj)
+				if tokenErr == nil {
+					ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
+					tc := oauth2.NewClient(c.Request.Context(), ts)
+					client := github.NewClient(tc)
+
+					repoURL, _, _ := unstructured.NestedString(obj.Object, "spec", "repoURL")
+					if owner, repoName, urlErr := parseRepoURL(repoURL); urlErr == nil {
+						suggested, suggestErr := getSuggestedLabels(c.Request.Context(), client, owner, repoName)
+						if suggestErr == nil && len(suggested) > 0 {
+							var suggestedInterface []interface{}
+							for _, s := range suggested {
+								var inner []interface{}
+								for _, l := range s {
+									inner = append(inner, l)
+								}
+								suggestedInterface = append(suggestedInterface, inner)
+							}
+							if setErr := unstructured.SetNestedSlice(obj.Object, suggestedInterface, "spec", "review", "labels"); setErr != nil {
+								log.Printf("Failed to set suggested labels: %v", setErr)
+							}
+						} else if suggestErr != nil {
+							log.Printf("Failed to get suggested labels: %v", suggestErr)
 						}
-						suggestedInterface = append(suggestedInterface, inner)
 					}
-					if setErr := unstructured.SetNestedSlice(repoWatch.Object, suggestedInterface, "spec", "review", "labels"); setErr != nil {
-						log.Printf("Failed to set suggested labels: %v", setErr)
-					}
-				} else if suggestErr != nil {
-					log.Printf("Failed to get suggested labels: %v", suggestErr)
+				} else {
+					log.Printf("Debug: Could not get token for label suggestion: %v", tokenErr)
 				}
 			}
-		} else {
-			log.Printf("Debug: Could not get token for label suggestion: %v", tokenErr)
 		}
-	}
 
-	_, err := s.K8sManager.Client.Resource(gvr).Namespace(namespace).Create(c.Request.Context(), repoWatch, v1.CreateOptions{})
-	if err != nil {
-		log.Printf("Failed to create RepoWatch from YAML: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to create RepoWatch: %v", err)})
-		return
+		// Determine GVR
+		var gvr schema.GroupVersionResource
+		if gvk.Group == "review.gemini.google.com" && gvk.Kind == "RepoWatch" {
+			gvr = schema.GroupVersionResource{
+				Group:    "review.gemini.google.com",
+				Version:  "v1alpha1",
+				Resource: "repowatches",
+			}
+		} else if gvk.Group == "configdir.gke.io" && gvk.Kind == "ConfigDir" {
+			gvr = schema.GroupVersionResource{
+				Group:    "configdir.gke.io",
+				Version:  "v1alpha1",
+				Resource: "configdirs",
+			}
+		} else if gvk.Group == "" && gvk.Kind == "ConfigMap" {
+			gvr = schema.GroupVersionResource{
+				Group:    "",
+				Version:  "v1",
+				Resource: "configmaps",
+			}
+		} else {
+			log.Printf("Skipping disallowed resource type: %s/%s", gvk.Group, gvk.Kind)
+			continue
+		}
+
+		_, err := s.K8sManager.Client.Resource(gvr).Namespace(namespace).Create(c.Request.Context(), obj, v1.CreateOptions{})
+		if err != nil {
+			if errors.IsAlreadyExists(err) {
+				log.Printf("Resource %s %s already exists, attempting update...", gvk.Kind, obj.GetName())
+				// Get existing resourceVersion
+				existing, getErr := s.K8sManager.Client.Resource(gvr).Namespace(namespace).Get(c.Request.Context(), obj.GetName(), v1.GetOptions{})
+				if getErr == nil {
+					obj.SetResourceVersion(existing.GetResourceVersion())
+					_, updateErr := s.K8sManager.Client.Resource(gvr).Namespace(namespace).Update(c.Request.Context(), obj, v1.UpdateOptions{})
+					if updateErr != nil {
+						log.Printf("Failed to update existing %s: %v", gvk.Kind, updateErr)
+					}
+				} else {
+					log.Printf("Failed to get existing %s for update: %v", gvk.Kind, getErr)
+				}
+				continue
+			}
+			log.Printf("Failed to create %s from YAML: %v", gvk.Kind, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to create %s: %v", gvk.Kind, err)})
+			return
+		}
 	}
 
 	c.Status(http.StatusOK)
@@ -574,4 +621,15 @@ func (s *Server) fetchAndPopulateRepos(ctx context.Context, namespace string) {
 			log.Printf("Failed to cache repo URL for %s: %v", item.GetName(), err)
 		}
 	}
+}
+
+func (s *Server) getTemplates(c *gin.Context) {
+	namespace := c.MustGet(auth.UserKey).(string)
+	templates, err := s.Templates.List(c.Request.Context(), namespace)
+	if err != nil {
+		log.Printf("Failed to list templates: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list templates"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"templates": templates})
 }
