@@ -57,7 +57,7 @@ func main() {
 		_ = agentoutput.SetAgentState(gvr, "error", err.Error())
 		log.Fatalf("failed reviewing: %v", err)
 	}
-	_ = agentoutput.SetAgentState(gvr, "done", "")
+	_ = agentoutput.SetAgentState(gvr, "review ready", "")
 
 	err = cmdCodeSrv.Wait()
 	if err != nil {
