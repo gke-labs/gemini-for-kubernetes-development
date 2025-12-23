@@ -8,48 +8,119 @@ function AddRepo({ onCancel, onRepoAdded }) {
     const [yamlContent, setYamlContent] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState('');
+    
+    const [templates, setTemplates] = useState([]);
+    const [selectedTemplateId, setSelectedTemplateId] = useState('');
 
     useEffect(() => {
         setIsLoading(true);
-        fetch('/api/getRepoWatch')
+        fetch('/api/templates')
             .then(res => res.json())
             .then(data => {
-                if (data.yaml) {
-                    setYamlContent(data.yaml);
+                if (data.templates && data.templates.length > 0) {
+                    setTemplates(data.templates);
+                    
+                    // Optional: Pre-load the 'default' template content into yamlContent 
+                    // so the editor isn't blank, but DO NOT set selectedTemplateId
+                    // so the user is forced/able to select one from the dropdown.
+                    const defaultTmpl = data.templates.find(t => t.id === 'default');
+                    if (defaultTmpl) {
+                        setYamlContent(defaultTmpl.content);
+                    }
                 }
                 setIsLoading(false);
             })
             .catch(err => {
                 console.error(err);
-                setError('Failed to load default YAML');
+                setError('Failed to load templates');
                 setIsLoading(false);
             });
     }, []);
 
+    const handleTemplateChange = (e) => {
+        const id = e.target.value;
+        setSelectedTemplateId(id);
+        
+        if (!id) {
+            // "New (Custom)" selected - reset to default template but clear inputs
+            const defaultTmpl = templates.find(t => t.id === 'default');
+            if (defaultTmpl) {
+                // Load default YAML but clear specific fields in our inputs
+                setUrl('');
+                setName('');
+                // We use the default template structure, but the inputs are blank
+                // The user will fill them, which will update the YAML via updateYamlWithInputs
+                setYamlContent(defaultTmpl.content);
+            }
+            return;
+        }
+
+        const tmpl = templates.find(t => t.id === id);
+        if (tmpl) {
+            // Merge current inputs if we wanted to be fancy, but simpler to just load the template content
+            // and maybe re-apply the URL/Name if they are set.
+            const updated = updateYamlWithInputs(tmpl.content, url, name);
+            setYamlContent(updated);
+
+            // Also update inputs from template defaults if current inputs are empty
+             try {
+                const docs = [];
+                yaml.loadAll(tmpl.content, (d) => docs.push(d));
+                const repoWatch = docs.find(d => d && d.kind === 'RepoWatch') || (docs.length === 1 ? docs[0] : null);
+                if (repoWatch) {
+                    if (repoWatch.spec && repoWatch.spec.repoURL) {
+                        setUrl(repoWatch.spec.repoURL);
+                    }
+                     if (repoWatch.metadata && repoWatch.metadata.name && repoWatch.metadata.name !== 'change-name') {
+                        setName(repoWatch.metadata.name);
+                    }
+                }
+            } catch (e) {
+                // ignore
+            }
+        }
+    };
+
     const updateYamlWithInputs = (currentContent, currentUrl, currentName) => {
         try {
-            let parsed = yaml.load(currentContent);
-            if (!parsed) parsed = {};
-            if (!parsed.spec) parsed.spec = {};
-            if (!parsed.metadata) parsed.metadata = {};
+            const docs = [];
+            yaml.loadAll(currentContent, function (doc) {
+                docs.push(doc);
+            });
 
-            parsed.spec.repoURL = currentUrl.trim();
+            if (docs.length === 0) return currentContent;
+
+            // Find RepoWatch
+            let repoWatchDoc = docs.find(d => d && d.kind === 'RepoWatch');
             
-            let finalName = currentName.trim();
-            // Derive name from URL if not provided
-            if (!finalName && currentUrl.trim()) {
-                try {
-                    const urlParts = new URL(currentUrl.trim()).pathname.split('/');
-                    if (urlParts.length >= 3) {
-                        finalName = urlParts[2].replace(".git", ""); 
-                    }
-                } catch (e) {
-                    // ignore
-                }
+            // If no RepoWatch found, fallback to first doc if only one exists
+            if (!repoWatchDoc && docs.length === 1) {
+                 repoWatchDoc = docs[0];
             }
-            parsed.metadata.name = finalName;
 
-            return yaml.dump(parsed);
+            if (repoWatchDoc) {
+                if (!repoWatchDoc.spec) repoWatchDoc.spec = {};
+                if (!repoWatchDoc.metadata) repoWatchDoc.metadata = {};
+
+                repoWatchDoc.spec.repoURL = currentUrl.trim();
+                
+                let finalName = currentName.trim();
+                // Derive name from URL if not provided
+                if (!finalName && currentUrl.trim()) {
+                    try {
+                        const urlParts = new URL(currentUrl.trim()).pathname.split('/');
+                        if (urlParts.length >= 3) {
+                            finalName = urlParts[2].replace(".git", ""); 
+                        }
+                    } catch (e) {
+                        // ignore
+                    }
+                }
+                repoWatchDoc.metadata.name = finalName;
+            }
+
+            // Dump all back to string joined by ---
+            return docs.map(d => yaml.dump(d)).join('\n---\n');
         } catch (e) {
             console.error("Error updating YAML", e);
             return currentContent;
@@ -67,17 +138,19 @@ function AddRepo({ onCancel, onRepoAdded }) {
         const newYaml = e.target.value;
         setYamlContent(newYaml);
         try {
-            const parsed = yaml.load(newYaml);
-            // We don't strictly sync back to inputs while typing to avoid fighting the user
-            // but we could potentially update them if valid. 
-            // For now, let's keep the one-way sync or loose sync as implemented previously,
-            // or just leave inputs as is.
-            // The previous implementation updated inputs:
-            if (parsed && parsed.spec && parsed.spec.repoURL) {
-                setUrl(parsed.spec.repoURL);
-            }
-            if (parsed && parsed.metadata && parsed.metadata.name) {
-                setName(parsed.metadata.name);
+            // We only try to parse the RepoWatch to sync back inputs
+            const docs = [];
+            yaml.loadAll(newYaml, (d) => docs.push(d));
+            
+            const repoWatch = docs.find(d => d && d.kind === 'RepoWatch') || (docs.length === 1 ? docs[0] : null);
+
+            if (repoWatch) {
+                if (repoWatch.spec && repoWatch.spec.repoURL) {
+                    setUrl(repoWatch.spec.repoURL);
+                }
+                if (repoWatch.metadata && repoWatch.metadata.name) {
+                    setName(repoWatch.metadata.name);
+                }
             }
         } catch (e) {
             // Ignore parsing errors while typing
@@ -97,11 +170,20 @@ function AddRepo({ onCancel, onRepoAdded }) {
 
         // Common Validation
         try {
-            const parsed = yaml.load(finalYaml);
-            if (!parsed) throw new Error("YAML is empty or invalid");
+             // Basic validation on the raw text without full multi-doc parse overhead if we want, 
+             // but safer to parse.
+             // We just need to check if there is a RepoWatch with a URL.
+             const docs = [];
+             yaml.loadAll(finalYaml, (d) => docs.push(d));
+             
+             if (docs.length === 0) throw new Error("YAML is empty");
 
-            const repoUrl = parsed.spec?.repoURL || '';
-            const repoName = parsed.metadata?.name || '';
+             const repoWatch = docs.find(d => d && d.kind === 'RepoWatch') || (docs.length === 1 ? docs[0] : null);
+             
+             if (!repoWatch) throw new Error("No RepoWatch resource found in YAML");
+
+             const repoUrl = repoWatch.spec?.repoURL || '';
+             const repoName = repoWatch.metadata?.name || '';
 
             if (!repoUrl.trim()) {
                 setError('Repository URL is required.');
@@ -118,10 +200,6 @@ function AddRepo({ onCancel, onRepoAdded }) {
                  setIsLoading(false);
                  return;
             }
-
-            // If we are here, validation passed. 
-            // Re-dump to ensure we submit clean YAML if we just modified it in memory via updateYamlWithInputs
-            // (updateYamlWithInputs already returns string, but good to be sure)
             
         } catch (e) {
             setError('Invalid YAML content: ' + e.message);
@@ -165,6 +243,22 @@ function AddRepo({ onCancel, onRepoAdded }) {
             <form onSubmit={handleSubmit} className="add-repo-form">
                 {!yamlMode && (
                     <>
+                        <div className="form-group">
+                            <label htmlFor="templateSelect">Repository:</label>
+                            <select 
+                                id="templateSelect"
+                                value={selectedTemplateId}
+                                onChange={handleTemplateChange}
+                                disabled={isLoading}
+                            >
+                                <option value="">New (Custom)</option>
+                                {templates.filter(t => t.id !== 'default').map(t => (
+                                    <option key={t.id} value={t.id}>{t.name}</option>
+                                ))}
+                            </select>
+                            <small>Choose a configuration template or start fresh.</small>
+                        </div>
+
                         <div className="form-group">
                             <label htmlFor="repoUrl">Repository URL:</label>
                             <input
