@@ -713,6 +713,11 @@ spec:
         - Does this PR make the project easier or harder to maintain in the long run?
         - Is the code easy to understand? Are there opportunities for simplification?
         - Provide a clear rationale for any concerns you raise.
+
+        #### Specific instructions for review
+
+        Read @.gemini/user-instructions.json for specific review instructions tuned for this repository.
+
         """
 
 ---
