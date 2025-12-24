@@ -223,6 +223,7 @@ spec:
 
         Read @.gemini/commands/google-internal/KCC-Review.json for information about code reviews on KCC.
         Read @.gemini/commands/google-internal/GO-Review.json for information about code reviews on golang code.
+        Read @.gemini/user-instructions.json for specific review instructions tuned for this repository.
 
         ### 3. Analysis & Review Generation
 
