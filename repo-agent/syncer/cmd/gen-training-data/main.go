@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -46,7 +47,8 @@ func main() {
 	gcsBucket := flag.String("gcs-bucket", "", "Name of the GCS bucket")
 	gcsPrefix := flag.String("gcs-prefix", "", "Prefix for GCS objects (optional)")
 	githubToken := flag.String("github-token", os.Getenv("GITHUB_TOKEN"), "GitHub Personal Access Token")
-	outputFile := flag.String("output-file", "training-data.jsonl", "Output JSONL file")
+	outputFile := flag.String("output-file", "", "Output JSONL file (legacy single-file mode)")
+	outputDir := flag.String("output-dir", "training-data", "Output directory for split files (one per user/repo). Used if output-file is empty.")
 	flag.Parse()
 
 	if *gcsBucket == "" {
@@ -72,12 +74,24 @@ func main() {
 	tc := oauth2.NewClient(ctx, ts)
 	ghClient := github.NewClient(tc)
 
-	// Open Output File
-	f, err := os.Create(*outputFile)
-	if err != nil {
-		log.Fatalf("Failed to create output file: %v", err)
+	// Determine Output Mode
+	var singleFile *os.File
+	if *outputFile != "" {
+		var err error
+		singleFile, err = os.Create(*outputFile)
+		if err != nil {
+			log.Fatalf("Failed to create output file: %v", err)
+		}
+		defer singleFile.Close()
+	} else {
+		// Ensure output directory exists
+		if err := os.MkdirAll(*outputDir, 0755); err != nil {
+			log.Fatalf("Failed to create output directory: %v", err)
+		}
 	}
-	defer f.Close()
+
+	// Track opened files to truncate on first write, then append
+	openedFiles := make(map[string]bool)
 
 	// Iterate GCS Objects
 	it := gcsClient.Bucket(*gcsBucket).Objects(ctx, &storage.Query{Prefix: *gcsPrefix})
@@ -194,19 +208,86 @@ func main() {
 			log.Printf("Failed to marshal record: %v", err)
 			continue
 		}
-		n, err := f.Write(jsonData)
+
+		// Determine Writer
+		var writer io.Writer
+		if singleFile != nil {
+			writer = singleFile
+		} else {
+			// Directory Mode: outputDir/namespace/owner-repo.jsonl
+			namespace := u.GetNamespace()
+			if namespace == "" {
+				namespace = "default"
+			}
+			userDir := filepath.Join(*outputDir, namespace)
+			if err := os.MkdirAll(userDir, 0755); err != nil {
+				log.Printf("Failed to create user directory %s: %v", userDir, err)
+				continue
+			}
+
+			// Filename: owner-repo.jsonl
+			fname := fmt.Sprintf("%s-%s.jsonl", owner, repo)
+			fpath := filepath.Join(userDir, fname)
+
+			flags := os.O_WRONLY | os.O_CREATE
+			if !openedFiles[fpath] {
+				flags |= os.O_TRUNC
+				openedFiles[fpath] = true
+			} else {
+				flags |= os.O_APPEND
+			}
+
+			f, err := os.OpenFile(fpath, flags, 0644)
+			if err != nil {
+				log.Printf("Failed to open file %s: %v", fpath, err)
+				continue
+			}
+			writer = f
+		}
+
+		n, err := writer.Write(jsonData)
 		if err != nil {
-			log.Fatalf("Failed to write record: %v", err)
+			if singleFile != nil {
+				log.Fatalf("Failed to write record: %v", err)
+			} else {
+				log.Printf("Failed to write record: %v", err)
+				writer.(*os.File).Close()
+				continue
+			}
 		}
 		if n != len(jsonData) {
-			log.Fatalf("Short write for record: %d != %d", n, len(jsonData))
+			if singleFile != nil {
+				log.Fatalf("Short write for record: %d != %d", n, len(jsonData))
+			} else {
+				log.Printf("Short write for record: %d != %d", n, len(jsonData))
+				writer.(*os.File).Close()
+				continue
+			}
 		}
-		n, err = f.Write([]byte("\n"))
+
+		n, err = writer.Write([]byte("\n"))
 		if err != nil {
-			log.Fatalf("Failed to write record: %v", err)
+			if singleFile != nil {
+				log.Fatalf("Failed to write record: %v", err)
+			} else {
+				log.Printf("Failed to write record: %v", err)
+				writer.(*os.File).Close()
+				continue
+			}
 		}
 		if n != len("\n") {
-			log.Fatalf("Short write for record: %d != %d", n, len("\n"))
+			if singleFile != nil {
+				log.Fatalf("Short write for record: %d != %d", n, len("\n"))
+			} else {
+				log.Printf("Short write for record: %d != %d", n, len("\n"))
+				writer.(*os.File).Close()
+				continue
+			}
+		}
+
+		// Close file if in directory mode
+		if singleFile == nil {
+			writer.(*os.File).Close()
 		}
 	}
 	log.Println("Processing complete.")

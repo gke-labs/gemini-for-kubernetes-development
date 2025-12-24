@@ -13,6 +13,26 @@ This tool is designed as an offline batch processor (CLI) rather than a real-tim
 
 ## Usage
 
+### Default (Split by User/Repo)
+```bash
+go run cmd/gen-training-data/main.go \
+  --gcs-bucket <YOUR_GCS_BUCKET> \
+  --github-token <YOUR_GITHUB_TOKEN> \
+  --output-dir training-data
+```
+
+This will create a directory structure: `training-data/<namespace>/<owner>-<repo>.jsonl`.
+
+Example:
+
+```bash
+export GITHUB_TOKEN=...
+export GOOGLE_APPLICATION_CREDENTIALS=bin/key.json
+./bin/gen-training-data --gcs-bucket repo-agent-storage --github-token $GITHUB_TOKEN 
+ls -l training-data/
+```
+
+### Legacy (Single File)
 ```bash
 go run cmd/gen-training-data/main.go \
   --gcs-bucket <YOUR_GCS_BUCKET> \
@@ -20,21 +40,13 @@ go run cmd/gen-training-data/main.go \
   --output-file training-data.jsonl
 ```
 
-Example:
-```
-export GITHUB_TOKEN=...
-export GOOGLE_APPLICATION_CREDENTIALS=bin/key.json
-./bin/gen-training-data --gcs-bucket repo-agent-storage --github-token $GITHUB_TOKEN 
-
-ls -l training-data.jsonl
-```
-
 ## Flags
 
 *   `--gcs-bucket`: (Required) The name of the GCS bucket where `syncer` stores `ReviewSandbox` resources.
 *   `--gcs-prefix`: (Optional) Prefix to filter objects in the bucket (e.g., `installation-name/ReviewSandbox/`).
 *   `--github-token`: (Required) GitHub Personal Access Token. Defaults to `GITHUB_TOKEN` env var.
-*   `--output-file`: (Optional) Path to the output JSONL file. Default: `training-data.jsonl`.
+*   `--output-dir`: (Optional) Directory to store split training data files (one per user/repo). Defaults to `training-data` in the current directory.
+*   `--output-file`: (Optional) Path to a single output JSONL file (legacy mode). If specified, `--output-dir` is ignored.
 
 ## Output Format
 
