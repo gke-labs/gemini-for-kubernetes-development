@@ -249,40 +249,36 @@ func main() {
 		if err != nil {
 			if singleFile != nil {
 				log.Fatalf("Failed to write record: %v", err)
-			} else {
-				log.Printf("Failed to write record: %v", err)
-				writer.(*os.File).Close()
-				continue
 			}
+			log.Printf("Failed to write record: %v", err)
+			writer.(*os.File).Close()
+			continue
 		}
 		if n != len(jsonData) {
 			if singleFile != nil {
 				log.Fatalf("Short write for record: %d != %d", n, len(jsonData))
-			} else {
-				log.Printf("Short write for record: %d != %d", n, len(jsonData))
-				writer.(*os.File).Close()
-				continue
 			}
+			log.Printf("Short write for record: %d != %d", n, len(jsonData))
+			writer.(*os.File).Close()
+			continue
 		}
 
 		n, err = writer.Write([]byte("\n"))
 		if err != nil {
 			if singleFile != nil {
 				log.Fatalf("Failed to write record: %v", err)
-			} else {
-				log.Printf("Failed to write record: %v", err)
-				writer.(*os.File).Close()
-				continue
 			}
+			log.Printf("Failed to write record: %v", err)
+			writer.(*os.File).Close()
+			continue
 		}
 		if n != len("\n") {
 			if singleFile != nil {
 				log.Fatalf("Short write for record: %d != %d", n, len("\n"))
-			} else {
-				log.Printf("Short write for record: %d != %d", n, len("\n"))
-				writer.(*os.File).Close()
-				continue
 			}
+			log.Printf("Short write for record: %d != %d", n, len("\n"))
+			writer.(*os.File).Close()
+			continue
 		}
 
 		// Close file if in directory mode
