@@ -36,6 +36,7 @@ function App() {
   const [reviewViewModes, setReviewViewModes] = useState({});
   const [yamlDrafts, setYamlDrafts] = useState({});
   const [lastUpdated, setLastUpdated] = useState(null);
+  const [hasInstructionDraft, setHasInstructionDraft] = useState(false);
 
   useEffect(() => {
     document.body.className = theme === 'dark' ? 'dark-mode' : '';
@@ -66,6 +67,25 @@ function App() {
       })
       .catch(err => console.error("Failed to fetch auth providers:", err));
   }, []);
+
+  useEffect(() => {
+    if (activeRepo && (isAuthenticated || isGuest)) {
+        fetch(`/api/repos/${activeRepo.name}/instructions`)
+            .then(res => {
+                if (res.ok) return res.json();
+                throw new Error("Failed to fetch instructions");
+            })
+            .then(data => {
+                setHasInstructionDraft(!!data.draft);
+            })
+            .catch(err => {
+                console.error("Failed to check instructions draft:", err);
+                setHasInstructionDraft(false);
+            });
+    } else {
+        setHasInstructionDraft(false);
+    }
+  }, [activeRepo, isAuthenticated, isGuest]);
 
   const handleGithubConfigSubmit = (e) => {
     e.preventDefault();
@@ -925,7 +945,10 @@ function App() {
             <div className="repo-controls">
                 <button className="btn btn-refresh-lg" onClick={() => refreshData(true)} title="Refresh now">↻</button>
                 {lastUpdated && <span className={`last-updated ${Date.now() - lastUpdated > 60000 ? 'stale' : ''}`}>Updated {lastUpdated.toLocaleTimeString()}</span>}
-                <button className="btn" onClick={() => setView('update_repo')} style={{marginLeft: '10px', marginRight: '10px'}}>Update Repo</button>
+                <button className="btn" onClick={() => setView('update_repo')} style={{marginLeft: '10px', marginRight: '10px'}}>
+                    Update Repo
+                    {hasInstructionDraft && <span style={{marginLeft: '5px', color: '#ffcc00', fontWeight: 'bold'}}>●</span>}
+                </button>
                 <DeleteRepo repo={activeRepo} onRepoDeleted={handleRepoDeleted} />
             </div>
         </div>
