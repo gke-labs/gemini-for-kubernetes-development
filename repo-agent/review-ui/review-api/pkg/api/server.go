@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"log"
+	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/review-ui/review-api/pkg/auth"
@@ -11,6 +12,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/review-ui/review-api/pkg/store"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/review-ui/review-api/pkg/templates"
 	"github.com/go-redis/redis/v8"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 type Server struct {
@@ -59,6 +61,8 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 		api.GET("/repos/:repo/yaml", s.getRepoWatchYAML)
 		api.PUT("/repos/:repo", s.updateRepoWatch)
 		api.DELETE("/repos/:repo", s.deleteRepoWatch)
+		api.GET("/repos/:repo/instructions", s.getInstructions)
+		api.POST("/repos/:repo/instructions", s.updateInstructions)
 
 		api.GET("/settings", s.getSettings)
 		api.POST("/settings", s.updateSettings)
@@ -132,4 +136,123 @@ func ResponseLoggerMiddleware() gin.HandlerFunc {
 		log.Printf("Response Headers: %v\n", c.Writer.Header())
 		log.Printf("Response Body: %s\n", blw.body.String())
 	}
+}
+
+func (s *Server) getInstructions(c *gin.Context) {
+	repoName := c.Param("repo")
+	user := s.Auth.GetUserFromContext(c)
+	namespace := user // Assuming tenant model where user == namespace
+	if user == "" {
+		namespace = "default"
+	}
+
+	rw, err := s.K8sManager.GetRepoWatch(c.Request.Context(), namespace, repoName)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get RepoWatch", "details": err.Error()})
+		return
+	}
+
+	configDirRef, found, err := unstructured.NestedString(rw.Object, "spec", "review", "llm", "configdirRef")
+	if err != nil || !found {
+		// Try root level or other locations if structure varies?
+		// Assuming standard structure for now.
+		c.JSON(http.StatusNotFound, gin.H{"error": "ConfigDirRef not found in RepoWatch spec"})
+		return
+	}
+
+	cd, err := s.K8sManager.GetConfigDir(c.Request.Context(), namespace, configDirRef)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get ConfigDir", "details": err.Error()})
+		return
+	}
+
+	files, found, err := unstructured.NestedSlice(cd.Object, "spec", "files")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read files from ConfigDir", "details": err.Error()})
+		return
+	}
+
+	var current, draft string
+	if found {
+		for _, f := range files {
+			fileMap, ok := f.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			path, _, _ := unstructured.NestedString(fileMap, "path")
+			content, _, _ := unstructured.NestedString(fileMap, "source", "inline")
+
+			if path == ".gemini/user-instructions.json" {
+				current = content
+			} else if path == ".gemini/user-instructions.draft.json" {
+				draft = content
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"current": current,
+		"draft":   draft,
+	})
+}
+
+func (s *Server) updateInstructions(c *gin.Context) {
+	repoName := c.Param("repo")
+	user := s.Auth.GetUserFromContext(c)
+	namespace := user
+	if user == "" {
+		namespace = "default"
+	}
+
+	var req struct {
+		Current string `json:"current"`
+		Draft   string `json:"draft"`
+		Action  string `json:"action"` // "save_draft", "publish", "discard_draft"
+	}
+
+	if err := c.BindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		return
+	}
+
+	rw, err := s.K8sManager.GetRepoWatch(c.Request.Context(), namespace, repoName)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get RepoWatch", "details": err.Error()})
+		return
+	}
+
+	configDirRef, found, err := unstructured.NestedString(rw.Object, "spec", "review", "llm", "configdirRef")
+	if err != nil || !found {
+		c.JSON(http.StatusNotFound, gin.H{"error": "ConfigDirRef not found in RepoWatch spec"})
+		return
+	}
+
+	switch req.Action {
+	case "save_draft":
+		if err := s.K8sManager.UpdateConfigDirFile(c.Request.Context(), namespace, configDirRef, ".gemini/user-instructions.draft.json", req.Draft); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save draft", "details": err.Error()})
+			return
+		}
+	case "discard_draft":
+		if err := s.K8sManager.UpdateConfigDirFile(c.Request.Context(), namespace, configDirRef, ".gemini/user-instructions.draft.json", ""); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to discard draft", "details": err.Error()})
+			return
+		}
+	case "publish":
+		// Update current
+		if err := s.K8sManager.UpdateConfigDirFile(c.Request.Context(), namespace, configDirRef, ".gemini/user-instructions.json", req.Current); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update current instructions", "details": err.Error()})
+			return
+		}
+		// Remove draft
+		if err := s.K8sManager.UpdateConfigDirFile(c.Request.Context(), namespace, configDirRef, ".gemini/user-instructions.draft.json", ""); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to remove draft", "details": err.Error()})
+			return
+		}
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid action"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "success"})
 }

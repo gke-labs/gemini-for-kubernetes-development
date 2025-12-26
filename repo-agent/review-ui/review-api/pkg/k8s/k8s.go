@@ -28,6 +28,14 @@ const (
 	ManualPATKey     = "manual_pat"
 )
 
+var (
+	ConfigDirGVR = schema.GroupVersionResource{
+		Group:    "configdir.gke.io",
+		Version:  "v1alpha1",
+		Resource: "configdirs",
+	}
+)
+
 type Manager struct {
 	Client    dynamic.Interface
 	Clientset *kubernetes.Clientset
@@ -36,6 +44,71 @@ type Manager struct {
 
 func NewManager(client dynamic.Interface, clientset *kubernetes.Clientset, rdb *redis.Client) *Manager {
 	return &Manager{Client: client, Clientset: clientset, Redis: rdb}
+}
+
+func (m *Manager) GetConfigDir(ctx context.Context, namespace, name string) (*unstructured.Unstructured, error) {
+	return m.Client.Resource(ConfigDirGVR).Namespace(namespace).Get(ctx, name, v1.GetOptions{})
+}
+
+func (m *Manager) UpdateConfigDirFile(ctx context.Context, namespace, name, filePath, content string) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		cd, err := m.GetConfigDir(ctx, namespace, name)
+		if err != nil {
+			return err
+		}
+
+		files, found, err := unstructured.NestedSlice(cd.Object, "spec", "files")
+		if err != nil {
+			return err
+		}
+		if !found {
+			files = make([]interface{}, 0)
+		}
+
+		newFiles := make([]interface{}, 0, len(files))
+		updated := false
+
+		for _, f := range files {
+			fileMap, ok := f.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			path, _, _ := unstructured.NestedString(fileMap, "path")
+			if path == filePath {
+				if content == "" {
+					// Delete file
+					updated = true
+					continue
+				}
+				// Update file
+				if err := unstructured.SetNestedField(fileMap, content, "source", "inline"); err != nil {
+					return err
+				}
+				newFiles = append(newFiles, fileMap)
+				updated = true
+				continue
+			}
+			newFiles = append(newFiles, fileMap)
+		}
+
+		if !updated && content != "" {
+			// Add new file
+			newFile := map[string]interface{}{
+				"path": filePath,
+				"source": map[string]interface{}{
+					"inline": content,
+				},
+			}
+			newFiles = append(newFiles, newFile)
+		}
+
+		if err := unstructured.SetNestedSlice(cd.Object, newFiles, "spec", "files"); err != nil {
+			return err
+		}
+
+		_, err = m.Client.Resource(ConfigDirGVR).Namespace(namespace).Update(ctx, cd, v1.UpdateOptions{})
+		return err
+	})
 }
 
 func (m *Manager) BootstrapNamespace(ctx context.Context, targetNS string) error {
