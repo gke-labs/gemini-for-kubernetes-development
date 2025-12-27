@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import yaml from 'js-yaml';
+import DeleteRepo from './DeleteRepo';
 
-function UpdateRepo({ repo, onCancel, onRepoUpdated }) {
+function UpdateRepo({ repo, onCancel, onRepoUpdated, onRepoDeleted }) {
     const [activeTab, setActiveTab] = useState('config'); // 'config' or 'instructions'
     const [yamlContent, setYamlContent] = useState('');
     const [originalYamlContent, setOriginalYamlContent] = useState('');
@@ -159,7 +160,7 @@ function UpdateRepo({ repo, onCancel, onRepoUpdated }) {
 
     return (
         <div className="add-repo-container" style={{maxWidth: '1000px'}}>
-            <h2>Update Repository: {repo.name}</h2>
+            <h2>Repository Settings: {repo.name}</h2>
             
             <div className="repo-tabs" style={{justifyContent: 'flex-start', marginBottom: '20px'}}>
                 <button 
@@ -195,7 +196,7 @@ function UpdateRepo({ repo, onCancel, onRepoUpdated }) {
                         </div>
                         <div className="form-actions">
                             <button type="submit" className="btn btn-submit" disabled={isLoading}>
-                                {isLoading ? 'Updating...' : 'Update Repo'}
+                                {isLoading ? 'Updating...' : 'Update Repowatch'}
                             </button>
                             <button type="button" className="btn" onClick={onCancel} disabled={isLoading}>
                                 Cancel
@@ -300,6 +301,19 @@ function UpdateRepo({ repo, onCancel, onRepoUpdated }) {
                     </div>
                 </div>
             )}
+            
+            <div style={{marginTop: '40px', borderTop: '1px solid #eee', paddingTop: '20px'}}>
+                <h3 style={{color: '#d9534f'}}>Danger Zone</h3>
+                <div style={{border: '1px solid #d9534f', padding: '15px', borderRadius: '5px', display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+                    <div>
+                        <strong>Delete repowatch</strong>
+                        <p style={{margin: '5px 0 0 0', fontSize: '0.9em', color: '#666'}}>
+                            Unsubmitted reviews would be deleted. You can always add the repo again.
+                        </p>
+                    </div>
+                    <DeleteRepo repo={repo} onRepoDeleted={onRepoDeleted} />
+                </div>
+            </div>
         </div>
     );
 }

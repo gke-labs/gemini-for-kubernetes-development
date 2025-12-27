@@ -946,10 +946,9 @@ function App() {
                 <button className="btn btn-refresh-lg" onClick={() => refreshData(true)} title="Refresh now">↻</button>
                 {lastUpdated && <span className={`last-updated ${Date.now() - lastUpdated > 60000 ? 'stale' : ''}`}>Updated {lastUpdated.toLocaleTimeString()}</span>}
                 <button className="btn" onClick={() => setView('update_repo')} style={{marginLeft: '10px', marginRight: '10px'}}>
-                    Update Repo
+                    Repo Settings
                     {hasInstructionDraft && <span style={{marginLeft: '5px', color: '#ffcc00', fontWeight: 'bold'}}>●</span>}
                 </button>
-                <DeleteRepo repo={activeRepo} onRepoDeleted={handleRepoDeleted} />
             </div>
         </div>
       )}
@@ -1005,7 +1004,7 @@ function App() {
       {view === 'dashboard' && renderDashboard()}
       {view === 'settings' && <Settings onBack={() => setView('dashboard')} />}
       {view === 'add_repo' && <AddRepo onCancel={() => setView('dashboard')} onRepoAdded={() => { fetchRepos(); setView('dashboard'); }} />}
-      {view === 'update_repo' && <UpdateRepo repo={activeRepo} onCancel={() => setView('dashboard')} onRepoUpdated={() => { fetchRepos(); setView('dashboard'); }} />}
+      {view === 'update_repo' && <UpdateRepo repo={activeRepo} onCancel={() => setView('dashboard')} onRepoUpdated={() => { fetchRepos(); setView('dashboard'); }} onRepoDeleted={handleRepoDeleted} />}
 
     </div>
   );
