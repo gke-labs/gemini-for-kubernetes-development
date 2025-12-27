@@ -14,25 +14,34 @@ import (
 	"k8s.io/klog/v2"
 )
 
-// findSandboxPod finds the pod for the given sandbox name.
-func findSandboxPod(ctx context.Context, sandboxName string) (*types.NamespacedName, error) {
+// GetClientset returns a new Kubernetes clientset.
+func GetClientset() (*kubernetes.Clientset, string, error) {
 	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
 	configOverrides := &clientcmd.ConfigOverrides{}
 	kubeConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, configOverrides)
 
 	config, err := kubeConfig.ClientConfig()
 	if err != nil {
-		return nil, fmt.Errorf("failed to load kubeconfig: %w", err)
+		return nil, "", fmt.Errorf("failed to load kubeconfig: %w", err)
 	}
 
 	namespace, _, err := kubeConfig.Namespace()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get namespace: %w", err)
+		return nil, "", fmt.Errorf("failed to get namespace: %w", err)
 	}
 
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create kubernetes client: %w", err)
+		return nil, "", fmt.Errorf("failed to create kubernetes client: %w", err)
+	}
+	return clientset, namespace, nil
+}
+
+// findSandboxPod finds the pod for the given sandbox name.
+func findSandboxPod(ctx context.Context, sandboxName string) (*types.NamespacedName, error) {
+	clientset, namespace, err := GetClientset()
+	if err != nil {
+		return nil, err
 	}
 
 	// The sandbox name in the RGD is devc-<name>

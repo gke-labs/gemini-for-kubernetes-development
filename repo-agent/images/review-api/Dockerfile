@@ -9,6 +9,7 @@ COPY go.sum go.sum
 # and so that source changes don't invalidate our downloaded layer
 RUN go mod download
 
+COPY pkg/ pkg/
 COPY review-ui/review-api/ review-ui/review-api/
 RUN CGO_ENABLED=0 GOOS=linux go build -o /review-api review-ui/review-api/main.go
 

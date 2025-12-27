@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	pkgk8s "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/review-ui/review-api/pkg/auth"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/review-ui/review-api/pkg/k8s"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -19,7 +20,7 @@ func (s *Server) getSettings(c *gin.Context) {
 		"github_pat_set":     false, // Legacy field for UI compatibility
 	}
 
-	if sec, err := s.K8sManager.Clientset.CoreV1().Secrets(namespace).Get(c.Request.Context(), k8s.GithubSecretName, v1.GetOptions{}); err == nil {
+	if sec, err := s.K8sManager.Clientset.CoreV1().Secrets(namespace).Get(c.Request.Context(), pkgk8s.GithubSecretName, v1.GetOptions{}); err == nil {
 		if _, ok := sec.Data[k8s.ManualPATKey]; ok {
 			settings["manual_pat_set"] = true
 			settings["github_pat_set"] = true
@@ -37,7 +38,7 @@ func (s *Server) getSettings(c *gin.Context) {
 			}
 		}
 	}
-	if sec, err := s.K8sManager.Clientset.CoreV1().Secrets(namespace).Get(c.Request.Context(), k8s.GeminiSecretName, v1.GetOptions{}); err == nil {
+	if sec, err := s.K8sManager.Clientset.CoreV1().Secrets(namespace).Get(c.Request.Context(), pkgk8s.GeminiSecretName, v1.GetOptions{}); err == nil {
 		if _, ok := sec.Data["gemini"]; ok {
 			settings["gemini_api_key_set"] = true
 		}
@@ -63,7 +64,7 @@ func (s *Server) updateSettings(c *gin.Context) {
 			data := map[string][]byte{
 				k8s.ManualPATKey: nil,
 			}
-			err := s.K8sManager.UpdateSecret(c.Request.Context(), namespace, k8s.GithubSecretName, data, nil)
+			err := s.K8sManager.UpdateSecret(c.Request.Context(), namespace, pkgk8s.GithubSecretName, data, nil)
 			if err != nil {
 				log.Printf("Failed to clear GitHub PAT: %v", err)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to clear GitHub PAT"})
@@ -76,7 +77,7 @@ func (s *Server) updateSettings(c *gin.Context) {
 				"refresh_token":  nil,
 				"expiry":         nil,
 			}
-			err := s.K8sManager.UpdateSecret(c.Request.Context(), namespace, k8s.GithubSecretName, data, nil)
+			err := s.K8sManager.UpdateSecret(c.Request.Context(), namespace, pkgk8s.GithubSecretName, data, nil)
 			if err != nil {
 				log.Printf("Failed to update GitHub PAT: %v", err)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update GitHub PAT"})
@@ -86,7 +87,7 @@ func (s *Server) updateSettings(c *gin.Context) {
 	}
 
 	if payload.GeminiAPIKey != "" {
-		err := s.K8sManager.UpdateSecret(c.Request.Context(), namespace, k8s.GeminiSecretName, map[string][]byte{"gemini": []byte(payload.GeminiAPIKey)}, nil)
+		err := s.K8sManager.UpdateSecret(c.Request.Context(), namespace, pkgk8s.GeminiSecretName, map[string][]byte{"gemini": []byte(payload.GeminiAPIKey)}, nil)
 		if err != nil {
 			log.Printf("Failed to update Gemini API Key: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update Gemini API Key"})
