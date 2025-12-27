@@ -275,3 +275,14 @@ func (a *Authenticator) Middleware() gin.HandlerFunc {
 		c.Next()
 	}
 }
+
+func (a *Authenticator) GetUserFromContext(c *gin.Context) string {
+	val, exists := c.Get(UserKey)
+	if !exists {
+		return ""
+	}
+	if user, ok := val.(string); ok {
+		return user
+	}
+	return ""
+}
