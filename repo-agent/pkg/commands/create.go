@@ -13,10 +13,11 @@ import (
 
 // CreateOptions holds options for the Create command.
 type CreateOptions struct {
-	Name     string
-	Repo     string
-	Branch   string
-	Dotfiles string
+	Name      string
+	Repo      string
+	Branch    string
+	Dotfiles  string
+	Namespace string
 }
 
 // InitDefaults initializes default values for CreateOptions.
@@ -41,6 +42,7 @@ func BuildCreateCommand() *cobra.Command {
 	cmd.Flags().StringVar(&opt.Repo, "repo", "", "URL of the repository")
 	cmd.Flags().StringVar(&opt.Branch, "branch", "", "Branch to checkout")
 	cmd.Flags().StringVar(&opt.Dotfiles, "dotfiles", "", "URL of the dotfiles repository")
+	cmd.Flags().StringVar(&opt.Namespace, "namespace", "default", "Namespace to create the sandbox in")
 	_ = cmd.MarkFlagRequired("repo")
 
 	return cmd
@@ -59,7 +61,7 @@ func RunCreate(ctx context.Context, opt CreateOptions) error {
 		Kind:       "DevSandbox",
 		Metadata: DevSandboxMeta{
 			Name:      opt.Name,
-			Namespace: "default",
+			Namespace: opt.Namespace,
 		},
 		Spec: DevSandboxSpec{
 			Source: DevSandboxSource{
