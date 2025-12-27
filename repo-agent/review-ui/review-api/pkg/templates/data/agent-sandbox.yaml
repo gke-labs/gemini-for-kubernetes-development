@@ -25,6 +25,9 @@ spec:
         Would you approve it ? Please pay attention to the following: 1. Does
         the fix resolve the original problem. 2. Look for linked issues to
         understand the original problem. 3. Are there tests to check the fix.
+
+        Read @.gemini/user-instructions.json for specific review instructions tuned for this repository.
+
     maxActiveSandboxes: 3
     maxSandboxes: 5
   issueHandlers:
