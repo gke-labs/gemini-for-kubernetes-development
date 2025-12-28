@@ -25,7 +25,7 @@ function DeleteRepo({ repo, onRepoDeleted }) {
         setError(null);
 
         try {
-            const response = await fetch(`/api/repowatch/${repo.namespace}/${repo.name}`, {
+            const response = await fetch(`/api/repos/${repo.name}`, {
                 method: 'DELETE',
             });
 
@@ -46,7 +46,7 @@ function DeleteRepo({ repo, onRepoDeleted }) {
     if (!isConfirming) {
         return (
             <button className="btn btn-delete" onClick={handleDeleteClick} style={{ marginLeft: 'auto' }}>
-                Delete Repo
+                Delete Repowatch
             </button>
         );
     }
