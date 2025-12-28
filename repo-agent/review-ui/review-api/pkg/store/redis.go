@@ -38,7 +38,37 @@ func (s *RedisStore) SaveRepo(ctx context.Context, namespace, name, url string) 
 
 func (s *RedisStore) DeleteRepo(ctx context.Context, namespace, name string) error {
 	key := s.RepoKey(namespace, name)
-	return s.client.Del(ctx, key).Err()
+	if err := s.client.Del(ctx, key).Err(); err != nil {
+		return err
+	}
+
+	// Helper function to delete keys by pattern
+	deleteByPattern := func(pattern string) error {
+		iter := s.client.Scan(ctx, 0, pattern, 0).Iterator()
+		for iter.Next(ctx) {
+			if err := s.client.Del(ctx, iter.Val()).Err(); err != nil {
+				log.Printf("Failed to delete key %s: %v", iter.Val(), err)
+			}
+		}
+		return iter.Err()
+	}
+
+	// Delete PRs
+	if err := deleteByPattern(fmt.Sprintf("pr:ns:%s:repo:%s:*", namespace, name)); err != nil {
+		log.Printf("Failed to delete PR keys for repo %s: %v", name, err)
+	}
+
+	// Delete Issues
+	if err := deleteByPattern(fmt.Sprintf("issue:ns:%s:repo:%s:*", namespace, name)); err != nil {
+		log.Printf("Failed to delete Issue keys for repo %s: %v", name, err)
+	}
+
+	// Delete DevSandboxes
+	if err := deleteByPattern(fmt.Sprintf("dev:ns:%s:repo:%s:*", namespace, name)); err != nil {
+		log.Printf("Failed to delete DevSandbox keys for repo %s: %v", name, err)
+	}
+
+	return nil
 }
 
 func (s *RedisStore) ListRepos(ctx context.Context, namespace string) ([]string, error) {
