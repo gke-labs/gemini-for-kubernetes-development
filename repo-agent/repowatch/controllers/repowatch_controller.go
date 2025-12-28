@@ -46,6 +46,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/repowatch/api/v1alpha1"
 )
 
@@ -1282,60 +1283,40 @@ func (r *RepoWatchReconciler) createDevSandbox(ctx context.Context, user *github
 	cloneURL := fmt.Sprintf("https://github.com/%s/%s.git", forkOwner, forkRepo)
 	originURL := fmt.Sprintf("github.com/%s/%s", forkOwner, forkRepo)
 
-	sandbox := &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
-			"kind":       "DevSandbox",
-			"metadata": map[string]interface{}{
-				"name":      sandboxName,
-				"namespace": repoWatch.Namespace,
-				"labels": map[string]interface{}{
-					"review.gemini.google.com/repowatch": repoWatch.Name,
-				},
-			},
-			"spec": map[string]interface{}{
-				"replicas": int64(1),
-				"source": map[string]interface{}{
-					"cloneURL": cloneURL,
-					// "htmlURL":  fmt.Sprintf("https://github.com/%s/%s/tree/%s", forkOwner, forkRepo, branchName),
-					"htmlURL": fmt.Sprintf("https://github.com/%s/%s", forkOwner, forkRepo),
-				},
-				"llmBackend": map[string]interface{}{
-					"name": repoWatch.Spec.Dev.LLM.Provider,
-				},
-				"llm": map[string]interface{}{
-					"configdirRef":     repoWatch.Spec.Dev.LLM.ConfigdirRef,
-					"apiKeySecretName": repoWatch.Spec.Dev.LLM.APIKeySecretRef,
-				},
-				"destination": map[string]interface{}{
-					"pushEnabled": true,
-					"branch":      branchName,
-					"origin":      originURL,
-					"user": map[string]interface{}{
-						"login": user.GetLogin(),
-						"name":  user.GetName(),
-						"email": user.GetEmail(),
-					},
-				},
-				"gateway": map[string]interface{}{
-					"httpEnabled": true,
-				},
-				"githubSecretName": repoWatch.Spec.GithubSecretName,
-			},
+	opts := sandbox.DevSandboxOptions{
+		Name:      sandboxName,
+		Namespace: repoWatch.Namespace,
+		Labels: map[string]string{
+			"review.gemini.google.com/repowatch": repoWatch.Name,
 		},
+		CloneURL: cloneURL,
+		HTMLURL:  fmt.Sprintf("https://github.com/%s/%s", forkOwner, forkRepo),
+
+		Branch:      branchName,
+		Origin:      originURL,
+		PushEnabled: true,
+		UserLogin:   user.GetLogin(),
+		UserName:    user.GetName(),
+		UserEmail:   user.GetEmail(),
+
+		LLMProvider:         repoWatch.Spec.Dev.LLM.Provider,
+		LLMConfigdirRef:     repoWatch.Spec.Dev.LLM.ConfigdirRef,
+		LLMAPIKeySecretName: repoWatch.Spec.Dev.LLM.APIKeySecretRef,
+
+		GithubSecretName:      repoWatch.Spec.GithubSecretName,
+		DevcontainerConfigRef: repoWatch.Spec.Dev.DevcontainerConfigRef,
+
+		HTTPEnabled: true,
+		Replicas:    1,
 	}
 
-	if repoWatch.Spec.Dev.DevcontainerConfigRef != "" {
-		if err := unstructured.SetNestedField(sandbox.Object, repoWatch.Spec.Dev.DevcontainerConfigRef, "spec", "devcontainerConfigRef"); err != nil {
-			return err
-		}
-	}
+	sb := sandbox.NewDevSandbox(opts)
 
-	if err := controllerutil.SetControllerReference(repoWatch, sandbox, r.Scheme); err != nil {
+	if err := controllerutil.SetControllerReference(repoWatch, sb, r.Scheme); err != nil {
 		return err
 	}
 
-	return r.Create(ctx, sandbox)
+	return r.Create(ctx, sb)
 }
 
 // SetupWithManager sets up the controller with the Manager.

@@ -10,6 +10,7 @@ COPY go.sum go.sum
 RUN go mod download
 
 # Copy the go source
+COPY pkg/ pkg/
 COPY repowatch/cmd/repowatch-controller/main.go repowatch/cmd/repowatch-controller/main.go
 COPY repowatch/api/ repowatch/api/
 COPY repowatch/controllers/ repowatch/controllers/
