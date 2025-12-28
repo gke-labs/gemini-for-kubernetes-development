@@ -7,16 +7,22 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 	"github.com/spf13/cobra"
 	"sigs.k8s.io/yaml"
 )
 
 // CreateOptions holds options for the Create command.
 type CreateOptions struct {
-	Name     string
-	Repo     string
-	Branch   string
-	Dotfiles string
+	Name                  string
+	Repo                  string
+	Branch                string
+	Dotfiles              string
+	Namespace             string
+	LLMProvider           string
+	LLMSecret             string
+	DevcontainerConfigRef string
+	GithubLogin           string
 }
 
 // InitDefaults initializes default values for CreateOptions.
@@ -41,46 +47,109 @@ func BuildCreateCommand() *cobra.Command {
 	cmd.Flags().StringVar(&opt.Repo, "repo", "", "URL of the repository")
 	cmd.Flags().StringVar(&opt.Branch, "branch", "", "Branch to checkout")
 	cmd.Flags().StringVar(&opt.Dotfiles, "dotfiles", "", "URL of the dotfiles repository")
-	_ = cmd.MarkFlagRequired("repo")
+	cmd.Flags().StringVar(&opt.Namespace, "namespace", "default", "Namespace to create the sandbox in")
+	cmd.Flags().StringVar(&opt.LLMProvider, "llm-provider", "gemini-cli", "LLM provider to use")
+	cmd.Flags().StringVar(&opt.LLMSecret, "llm-secret", "", "LLM k8s secret to use")
+	cmd.Flags().StringVar(&opt.DevcontainerConfigRef, "devcontainer-config-ref", "devcontainer-json", "Devcontainer config ref to use")
+	cmd.Flags().StringVar(&opt.GithubLogin, "github-login", "", "GitHub login to use")
+
+	// Mark required flags using : _ = cmd.MarkFlagRequired("branch")
 
 	return cmd
 }
 
-// RunCreate executes the create logic.
-func RunCreate(ctx context.Context, opt CreateOptions) error {
-	htmlURL := strings.TrimSuffix(opt.Repo, ".git")
+// From CreateOptions, return the HTML URL, clone URL, and origin URL
+func urls(opt CreateOptions) (string, string, string) {
+	repo := opt.Repo
+	if repo == "" {
+		// Try this command "git config --get remote.origin.url"
+		out, err := exec.Command("git", "config", "--get", "remote.origin.url").Output()
+		if err != nil {
+			panic("repo URL must be provided")
+		}
+		repo = strings.TrimSpace(string(out))
+	}
+
+	htmlURL := strings.TrimSuffix(repo, ".git")
 	cloneURL := htmlURL + ".git"
 	if opt.Branch != "" {
 		cloneURL += "#refs/heads/" + opt.Branch
 	}
+	originURL := htmlURL + ".git"
+	return htmlURL, cloneURL, originURL
+}
 
-	sandbox := DevSandbox{
-		APIVersion: "custom.agents.x-k8s.io/v1alpha1",
-		Kind:       "DevSandbox",
-		Metadata: DevSandboxMeta{
-			Name:      opt.Name,
-			Namespace: "default",
+func userInfo(opt CreateOptions) (string, string, string) {
+	// Try to get user info from git config
+	nameOut, err := exec.Command("git", "config", "--get", "user.name").Output()
+	if err != nil {
+		panic("user name must be set in git config")
+	}
+	name := strings.TrimSpace(string(nameOut))
+
+	emailOut, err := exec.Command("git", "config", "--get", "user.email").Output()
+	if err != nil {
+		panic("user email must be set in git config")
+	}
+	email := strings.TrimSpace(string(emailOut))
+
+	return name, email, opt.GithubLogin
+}
+
+// RunCreate executes the create logic.
+func RunCreate(ctx context.Context, opt CreateOptions) error {
+	htmlURL, cloneURL, originURL := urls(opt)
+	userName, userEmail, userLogin := userInfo(opt)
+
+	secretName := opt.LLMSecret
+	if secretName == "" {
+		if opt.LLMProvider == "gemini-cli" {
+			secretName = "gemini-vscode-tokens"
+		} else if opt.LLMProvider == "claude" {
+			secretName = "anthropic-api-key"
+		} else {
+			return fmt.Errorf("llm-secret must be provided for llm-provider %q", opt.LLMProvider)
+		}
+	}
+
+	sandboxOpt := sandbox.DevSandboxOptions{
+		Name:      opt.Name,
+		Namespace: opt.Namespace,
+		Labels: map[string]string{
+			"createdBy": "dev-sandbox-cli",
 		},
-		Spec: DevSandboxSpec{
-			Source: DevSandboxSource{
-				CloneURL: cloneURL,
-				HTMLURL:  htmlURL,
-			},
-			ServiceAccountName: "issue-sandbox",
-			Destination: DevSandboxDest{
-				Branch: "master",
-			},
-		},
+		CloneURL: cloneURL,
+		HTMLURL:  htmlURL,
+		Branch:   opt.Branch,
+		// Default service account for CLI created sandboxes
+		ServiceAccountName: "issue-sandbox",
+		DotFilesRepo:       opt.Dotfiles,
+
+		Origin:      originURL,
+		PushEnabled: true,
+
+		UserLogin: userLogin,
+		UserName:  userName,
+		UserEmail: userEmail,
+
+		LLMProvider: opt.LLMProvider,
+		// TODO: LLMConfigdirRef:     repoWatch.Spec.Dev.LLM.ConfigdirRef,
+		LLMAPIKeySecretName: secretName,
+
+		GithubSecretName:      "github-pat",
+		DevcontainerConfigRef: opt.DevcontainerConfigRef,
+
+		HTTPEnabled: true,
+		Replicas:    1,
 	}
 
 	if opt.Branch != "" {
-		sandbox.Spec.Destination.Branch = opt.Branch
-	}
-	if opt.Dotfiles != "" {
-		sandbox.Spec.User.DotFilesRepo = opt.Dotfiles
+		sandboxOpt.Branch = opt.Branch
 	}
 
-	data, err := yaml.Marshal(sandbox)
+	sb := sandbox.NewDevSandbox(sandboxOpt)
+
+	data, err := yaml.Marshal(sb.Object)
 	if err != nil {
 		return fmt.Errorf("marshalling yaml: %w", err)
 	}
@@ -96,36 +165,4 @@ func RunCreate(ctx context.Context, opt CreateOptions) error {
 
 	fmt.Printf("DevSandbox %q created\n", opt.Name)
 	return nil
-}
-
-type DevSandbox struct {
-	APIVersion string         `json:"apiVersion"`
-	Kind       string         `json:"kind"`
-	Metadata   DevSandboxMeta `json:"metadata"`
-	Spec       DevSandboxSpec `json:"spec"`
-}
-
-type DevSandboxMeta struct {
-	Name      string `json:"name"`
-	Namespace string `json:"namespace,omitempty"`
-}
-
-type DevSandboxSpec struct {
-	User               DevSandboxUser   `json:"user,omitempty"`
-	ServiceAccountName string           `json:"serviceAccountName,omitempty"`
-	Source             DevSandboxSource `json:"source,omitempty"`
-	Destination        DevSandboxDest   `json:"destination,omitempty"`
-}
-
-type DevSandboxUser struct {
-	DotFilesRepo string `json:"dotFilesRepo,omitempty"`
-}
-
-type DevSandboxSource struct {
-	CloneURL string `json:"cloneURL,omitempty"`
-	HTMLURL  string `json:"htmlURL,omitempty"`
-}
-
-type DevSandboxDest struct {
-	Branch string `json:"branch,omitempty"`
 }
