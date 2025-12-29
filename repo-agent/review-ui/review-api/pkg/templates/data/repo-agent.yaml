@@ -63,7 +63,7 @@ spec:
     - name: fixes
       maxActiveSandboxes: 1
       maxSandboxes: 1
-      devcontainerConfigRef: go-devcontainer-json
+      devcontainerConfigRef: devcontainer-json
       pushEnabled: true
       labels:
         - ""
