@@ -14,6 +14,7 @@ import (
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
+	pkgk8s "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/review-ui/review-api/pkg/k8s"
 	"github.com/google/go-github/v39/github"
 	"golang.org/x/oauth2"
@@ -131,7 +132,7 @@ func (a *Authenticator) Callback(c *gin.Context) {
 		return
 	}
 
-	if err := a.K8sManager.BootstrapNamespace(c.Request.Context(), ghUser); err != nil {
+	if err := pkgk8s.BootstrapNamespace(c.Request.Context(), a.K8sManager.Clientset, ghUser); err != nil {
 		log.Printf("Failed to bootstrap namespace %s: %v", ghUser, err)
 	}
 
@@ -169,7 +170,7 @@ func (a *Authenticator) updateUserSecret(ctx context.Context, namespace string, 
 	if user.Email != nil {
 		data["email"] = []byte(*user.Email)
 	}
-	return a.K8sManager.UpdateSecret(ctx, namespace, k8s.GithubSecretName, data, nil)
+	return a.K8sManager.UpdateSecret(ctx, namespace, pkgk8s.GithubSecretName, data, nil)
 }
 
 func (a *Authenticator) Status(c *gin.Context) {
@@ -214,7 +215,7 @@ func (a *Authenticator) UpdateGithubConfig(c *gin.Context) {
 
 	// Update Secret in repo-agent-system
 	// We need to get the existing secret to preserve the PAT
-	secret, err := a.K8sManager.Clientset.CoreV1().Secrets(k8s.SystemNamespace).Get(c.Request.Context(), k8s.GithubSecretName, v1.GetOptions{})
+	secret, err := a.K8sManager.Clientset.CoreV1().Secrets(pkgk8s.SystemNamespace).Get(c.Request.Context(), pkgk8s.GithubSecretName, v1.GetOptions{})
 	if err != nil {
 		log.Printf("Failed to get github secret: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get github secret"})
@@ -227,7 +228,7 @@ func (a *Authenticator) UpdateGithubConfig(c *gin.Context) {
 	secret.Data["github-client-id"] = []byte(payload.ClientID)
 	secret.Data["github-client-secret"] = []byte(payload.ClientSecret)
 
-	_, err = a.K8sManager.Clientset.CoreV1().Secrets(k8s.SystemNamespace).Update(c.Request.Context(), secret, v1.UpdateOptions{})
+	_, err = a.K8sManager.Clientset.CoreV1().Secrets(pkgk8s.SystemNamespace).Update(c.Request.Context(), secret, v1.UpdateOptions{})
 	if err != nil {
 		log.Printf("Failed to update github secret: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update github secret"})
@@ -264,7 +265,7 @@ func (a *Authenticator) Middleware() gin.HandlerFunc {
 		// dramatically reduce latency and eliminate the 502/504 errors caused by client-side throttling, allowing the VS Code UI to load correctly
 		if _, ok := a.bootstrappedUsers.Load(user); !ok {
 			// Lazy bootstrap checks if namespace exists, creating it if needed.
-			if err := a.K8sManager.BootstrapNamespace(c.Request.Context(), user); err != nil {
+			if err := pkgk8s.BootstrapNamespace(c.Request.Context(), a.K8sManager.Clientset, user); err != nil {
 				log.Printf("Lazy bootstrap failed for user %s: %v", user, err)
 			} else {
 				a.bootstrappedUsers.Store(user, true)
