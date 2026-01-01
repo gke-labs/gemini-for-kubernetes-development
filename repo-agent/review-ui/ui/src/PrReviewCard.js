@@ -40,7 +40,7 @@ function PrReviewCard({
     if (text === 'done' || text === 'review ready') return 'green';
     if (text.includes('reviewing')) return 'orange';
     if (text.includes('error')) return '#9e2a2aff';
-    if (text === 'submitted') return '#3f5398ff';
+    if (text === 'submitted' || text === 'review draft created') return '#3f5398ff';
     return '#cd9945ff'; // Default color
   };
 
@@ -49,7 +49,7 @@ function PrReviewCard({
     if (pr.type === 'pending' || pr.type === 'excluded') return;
 
     if (pr.reviewState === 'submitted' || pr.review) {
-      setReviewFlairText('Submitted');
+      setReviewFlairText('Review Draft Created');
     } else if (pr.agentState) {
       setReviewFlairText(pr.agentState);
     } else if (drafts[pr.id] && drafts[pr.id].note && drafts[pr.id].note.trim() !== '') {
