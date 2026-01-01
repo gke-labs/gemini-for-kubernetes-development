@@ -76,6 +76,8 @@ func run(ctx context.Context) error {
 	rootCommand.AddCommand(commands.NewCodeCommand())
 	rootCommand.AddCommand(commands.NewTmuxCommand())
 
+	rootCommand.AddCommand(commands.NewThreadsCommand())
+
 	return rootCommand.ExecuteContext(ctx)
 }
 
