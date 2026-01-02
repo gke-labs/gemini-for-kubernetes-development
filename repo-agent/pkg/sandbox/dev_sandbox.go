@@ -30,6 +30,7 @@ type DevSandboxOptions struct {
 	LLMProvider         string
 	LLMConfigdirRef     string
 	LLMAPIKeySecretName string
+	Prompt              string
 
 	// Infra
 	ServiceAccountName    string
@@ -94,13 +95,16 @@ func NewDevSandbox(opt DevSandboxOptions) *unstructured.Unstructured {
 			"name": opt.LLMProvider,
 		}
 	}
-	if opt.LLMConfigdirRef != "" || opt.LLMAPIKeySecretName != "" {
+	if opt.LLMConfigdirRef != "" || opt.LLMAPIKeySecretName != "" || opt.Prompt != "" {
 		llmMap := map[string]interface{}{}
 		if opt.LLMConfigdirRef != "" {
 			llmMap["configdirRef"] = opt.LLMConfigdirRef
 		}
 		if opt.LLMAPIKeySecretName != "" {
 			llmMap["apiKeySecretName"] = opt.LLMAPIKeySecretName
+		}
+		if opt.Prompt != "" {
+			llmMap["prompt"] = opt.Prompt
 		}
 		spec["llm"] = llmMap
 	}
