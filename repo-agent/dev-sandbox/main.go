@@ -18,6 +18,7 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/commands"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 )
 
 var (
@@ -99,9 +100,53 @@ func InitContainer(ctx context.Context) error {
 
 	go agentoutput.Run("dev", gvr)
 
-	if err := checkoutBranch(ctx); err != nil {
+	repoURL := os.Getenv("GIT_HTML_URL")
+	if repoURL == "" {
+		return fmt.Errorf("GIT_HTML_URL environment variable not set")
+	}
+
+	parts := strings.Split(strings.TrimPrefix(repoURL, "https://github.com/"), "/")
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid GIT_HTML_URL format: %s", repoURL)
+	}
+	repoDir := filepath.Join("/workspaces", parts[1])
+
+	// Change to repo dir
+	if err := os.Chdir(repoDir); err != nil {
+		return fmt.Errorf("failed to chdir to %s: %w", repoDir, err)
+	}
+
+	cfg := sandbox.Config{
+		AgentName:        os.Getenv("AGENT_NAME"),
+		AgentPrompt:      os.Getenv("AGENT_PROMPT"),
+		BranchName:       os.Getenv("DEV_BRANCH"),
+		PushEnabled:      os.Getenv("GIT_PUSH_ENABLED") == "true",
+		GithubUserOrigin: os.Getenv("GITHUB_USER_ORIGIN"),
+		GithubUserLogin:  os.Getenv("GITHUB_USER_LOGIN"),
+		GithubUserEmail:  os.Getenv("GITHUB_USER_EMAIL"),
+		GithubUserName:   os.Getenv("GITHUB_USER_NAME"),
+		ReportStatus:     false,
+	}
+
+	// Prepare git branch (checkout)
+	oldCommitID, err := sandbox.PrepareGitBranch(cfg)
+	if err != nil {
 		_ = agentoutput.SetAgentState(gvr, "error", fmt.Sprintf("checkout failed: %v", err))
-		return fmt.Errorf("checking out branch: %w", err)
+		return fmt.Errorf("preparing git branch: %w", err)
+	}
+
+	if cfg.AgentPrompt != "" {
+		log.Info("Running agent with prompt", "prompt", cfg.AgentPrompt)
+		if err := sandbox.RunAgent(cfg); err != nil {
+			_ = agentoutput.SetAgentState(gvr, "error", fmt.Sprintf("running agent failed: %v", err))
+			return fmt.Errorf("running agent: %w", err)
+		}
+
+		commitMsg := "Agent changes for: " + cfg.AgentPrompt
+		if err := sandbox.ProcessGitChanges(cfg, oldCommitID, commitMsg); err != nil {
+			_ = agentoutput.SetAgentState(gvr, "error", fmt.Sprintf("processing git changes failed: %v", err))
+			return fmt.Errorf("processing git changes: %w", err)
+		}
 	}
 
 	var b ImageBuilder
@@ -135,34 +180,6 @@ func InitContainer(ctx context.Context) error {
 		return fmt.Errorf("code-server process exited with error: %w", err)
 	}
 
-	return nil
-}
-
-func checkoutBranch(ctx context.Context) error {
-	log := klog.FromContext(ctx)
-
-	repoURL := os.Getenv("GIT_HTML_URL")
-	if repoURL == "" {
-		return fmt.Errorf("GIT_HTML_URL environment variable not set")
-	}
-
-	parts := strings.Split(strings.TrimPrefix(repoURL, "https://github.com/"), "/")
-	if len(parts) != 2 {
-		return fmt.Errorf("invalid GIT_HTML_URL format: %s", repoURL)
-	}
-	repoDir := filepath.Join("/workspaces", parts[1])
-
-	// Checkout the branch if specified
-	if branchName := os.Getenv("DEV_BRANCH"); branchName != "" {
-		log.Info("checking out branch", "branch", branchName, "repoDir", repoDir)
-		cmd := exec.CommandContext(ctx, "git", "checkout", "-b", branchName, "origin/"+branchName)
-		//cmd.Dir = repoDir
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("failed to checkout branch %q in %q: %w", branchName, repoDir, err)
-		}
-	}
 	return nil
 }
 

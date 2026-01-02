@@ -5,9 +5,12 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	pkgk8s "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/review-ui/review-api/pkg/auth"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/review-ui/review-api/pkg/models"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -28,6 +31,119 @@ func (s *Server) getDevSandboxes(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, sandboxes)
+}
+
+func (s *Server) createDevSandbox(c *gin.Context) {
+	namespace := c.MustGet(auth.UserKey).(string)
+	repo := c.Param("repo")
+
+	var req struct {
+		Branch string `json:"branch"`
+		Prompt string `json:"prompt"`
+	}
+	if err := c.BindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		return
+	}
+
+	if req.Branch == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Branch is required"})
+		return
+	}
+
+	// Fetch RepoWatch to get defaults
+	rw, err := s.K8sManager.GetRepoWatch(c.Request.Context(), namespace, repo)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get RepoWatch", "details": err.Error()})
+		return
+	}
+
+	repoURL, found, err := unstructured.NestedString(rw.Object, "spec", "repoURL")
+	if err != nil || !found {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "RepoURL not found in RepoWatch"})
+		return
+	}
+
+	repoParts := strings.Split(strings.TrimSuffix(repoURL, ".git"), "/")
+	repoName := repoParts[len(repoParts)-1]
+
+	forkCloneURL := fmt.Sprintf("https://github.com/%s/%s.git", namespace, repoName)
+	forkHTMLURL := fmt.Sprintf("https://github.com/%s/%s", namespace, repoName)
+	originURL := fmt.Sprintf("github.com/%s/%s.git", namespace, repoName)
+
+	githubSecretName, _, _ := unstructured.NestedString(rw.Object, "spec", "githubSecretName")
+	apiKeySecretRef, _, _ := unstructured.NestedString(rw.Object, "spec", "dev", "llm", "apiKeySecretRef")
+	configdirRef, _, _ := unstructured.NestedString(rw.Object, "spec", "dev", "llm", "configdirRef")
+	llmProvider, _, _ := unstructured.NestedString(rw.Object, "spec", "dev", "llm", "provider")
+
+	// Fetch user info from secret
+	var userName, userEmail string
+	secret, err := s.K8sManager.Clientset.CoreV1().Secrets(namespace).Get(c.Request.Context(), pkgk8s.GithubSecretName, v1.GetOptions{})
+	if err == nil && secret != nil {
+		if name, ok := secret.Data["name"]; ok {
+			userName = string(name)
+		}
+		if email, ok := secret.Data["email"]; ok {
+			userEmail = string(email)
+		}
+	} else {
+		log.Printf("Failed to get github secret for user %s: %v", namespace, err)
+	}
+
+	// Sanitize branch name for K8s resource name
+	reg := regexp.MustCompile("[^a-z0-9-]+")
+	safeBranch := reg.ReplaceAllString(strings.ToLower(req.Branch), "-")
+	sandboxName := fmt.Sprintf("dev-%s-%s", repo, safeBranch)
+	// Truncate if too long (max 63 chars for DNS labels, but safely 50 here)
+	if len(sandboxName) > 50 {
+		sandboxName = sandboxName[:50]
+	}
+	// Ensure it doesn't end with hyphen
+	sandboxName = strings.TrimSuffix(sandboxName, "-")
+
+	gvr := schema.GroupVersionResource{
+		Group:    "custom.agents.x-k8s.io",
+		Version:  "v1alpha1",
+		Resource: "devsandboxes",
+	}
+
+	opts := sandbox.DevSandboxOptions{
+		Name:      sandboxName,
+		Namespace: namespace,
+		Labels: map[string]string{
+			"review.gemini.google.com/repowatch": repo,
+		},
+		CloneURL: forkCloneURL,
+		HTMLURL:  forkHTMLURL,
+
+		Branch:      req.Branch,
+		Origin:      originURL,
+		PushEnabled: true,
+		UserLogin:   namespace,
+		UserName:    userName,
+		UserEmail:   userEmail,
+
+		LLMProvider:         llmProvider,
+		LLMConfigdirRef:     configdirRef,
+		LLMAPIKeySecretName: apiKeySecretRef,
+		Prompt:              req.Prompt,
+
+		GithubSecretName: githubSecretName,
+
+		HTTPEnabled: true,
+		Replicas:    1,
+	}
+
+	sb := sandbox.NewDevSandbox(opts)
+
+	_, err = s.K8sManager.Client.Resource(gvr).Namespace(namespace).Create(c.Request.Context(), sb, v1.CreateOptions{})
+	if err != nil {
+		log.Printf("Failed to create DevSandbox: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create DevSandbox", "details": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"status": "created", "name": sandboxName})
 }
 
 func (s *Server) fetchAndPopulateDevSandboxes(ctx context.Context, namespace, repo string) {
