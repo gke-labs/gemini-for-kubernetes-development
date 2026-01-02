@@ -1317,7 +1317,7 @@ func (r *RepoWatchReconciler) reconcileDevSandboxesInternal(ctx context.Context,
 
 func (r *RepoWatchReconciler) createDevSandbox(ctx context.Context, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, forkOwner, forkRepo, branchName, sandboxName string) error {
 	cloneURL := fmt.Sprintf("https://github.com/%s/%s.git", forkOwner, forkRepo)
-	originURL := fmt.Sprintf("github.com/%s/%s", forkOwner, forkRepo)
+	originURL := fmt.Sprintf("github.com/%s/%s.git", forkOwner, forkRepo)
 
 	opts := sandbox.DevSandboxOptions{
 		Name:      sandboxName,

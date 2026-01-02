@@ -37,6 +37,10 @@ function App() {
   const [yamlDrafts, setYamlDrafts] = useState({});
   const [lastUpdated, setLastUpdated] = useState(null);
   const [hasInstructionDraft, setHasInstructionDraft] = useState(false);
+  const [devModalOpen, setDevModalOpen] = useState(false);
+  const [newDevBranch, setNewDevBranch] = useState('');
+  const [newDevPrompt, setNewDevPrompt] = useState('');
+
 
   useEffect(() => {
     document.body.className = theme === 'dark' ? 'dark-mode' : '';
@@ -772,6 +776,31 @@ function App() {
           .catch(err => console.error("Failed to scale down dev sandbox:", err));
   };
 
+  const handleDevCreate = (data) => {
+      fetch(`/api/repo/${activeRepo.name}/dev`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data)
+      })
+      .then(res => {
+          if (res.ok) {
+              fetchRepos(); // Refresh to show new sandbox
+          } else {
+              res.json().then(data => alert("Failed to create dev sandbox: " + data.error));
+          }
+      })
+      .catch(err => console.error("Failed to create dev sandbox:", err));
+  };
+
+  const submitDevCreate = () => {
+    if (newDevBranch && newDevPrompt) {
+        handleDevCreate({ branch: newDevBranch, prompt: newDevPrompt });
+        setDevModalOpen(false);
+        setNewDevBranch('');
+        setNewDevPrompt('');
+    }
+  };
+
   const renderContent = () => {
     if (!activeRepo) return <p>Please select or add a repository to watch.</p>;
     const namespace = user || 'default';
@@ -866,8 +895,7 @@ function App() {
         </>
       );
     } else if (activeSubTab.name === 'dev') {
-        if (devSandboxes.length === 0) return <p>No active Dev Sandboxes found.</p>;
-        return devSandboxes.map(sandbox => (
+        const list = devSandboxes.length === 0 ? <p>No active Dev Sandboxes found.</p> : devSandboxes.map(sandbox => (
             <DevCard
                 key={sandbox.name}
                 sandbox={sandbox}
@@ -878,6 +906,28 @@ function App() {
                 handleScaleDown={handleDevScaleDown}
             />
         ));
+
+        return (
+            <>
+                {list}
+                <div style={{textAlign: 'center', marginTop: '20px'}}>
+                    <button className="btn" onClick={() => setDevModalOpen(true)} title="Create new Dev Sandbox" style={{fontSize: '24px', width: '50px', height: '50px', borderRadius: '25px', lineHeight: '24px'}}>+</button>
+                </div>
+                {devModalOpen && (
+                  <div className="modal-overlay" onClick={() => setDevModalOpen(false)} style={{position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000}}>
+                      <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{backgroundColor: '#fff', padding: '20px', borderRadius: '5px', width: '800px', display: 'flex', flexDirection: 'column', gap: '10px', color: 'black'}}>
+                          <h4>New Dev Sandbox Task</h4>
+                          <input type="text" placeholder="New Branch Name" value={newDevBranch} onChange={(e) => setNewDevBranch(e.target.value)} style={{padding: '5px', border: '1px solid #ccc'}} />
+                          <textarea placeholder="Prompt" value={newDevPrompt} onChange={(e) => setNewDevPrompt(e.target.value)} rows="15" style={{padding: '5px', border: '1px solid #ccc'}} />
+                          <div style={{display: 'flex', justifyContent: 'flex-end', gap: '10px'}}>
+                              <button className="btn" onClick={() => setDevModalOpen(false)} style={{backgroundColor: '#ccc', color: 'black'}}>Cancel</button>
+                              <button className="btn" onClick={submitDevCreate} style={{backgroundColor: '#007bff', color: 'white'}}>Create</button>
+                          </div>
+                      </div>
+                  </div>
+                )}
+            </>
+        );
     } else {
       if (issues.length === 0) return <p>No active Issues found for this handler.</p>;
       return issues.map(issue => (
