@@ -1014,6 +1014,9 @@ func (r *RepoWatchReconciler) createSandboxForIssueHandler(ctx context.Context, 
 					"review.gemini.google.com/repowatch": repoWatch.Name,
 					"review.gemini.google.com/handler":   handler.Name,
 				},
+				"annotations": map[string]interface{}{
+					"agentState": "provisioning",
+				},
 			},
 			"spec": map[string]interface{}{
 				"llmBackend": map[string]interface{}{
