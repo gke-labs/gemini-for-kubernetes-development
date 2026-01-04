@@ -17,16 +17,13 @@ function IssueCard({
   const [reviewFlairText, setReviewFlairText] = useState('');
 
   const getReviewFlairColor = (flairText) => {
-    switch (flairText) {
-      case 'Ready':
-        return 'green';
-      case 'Generating ...':
-        return 'orange';
-      case 'Submitted':
-        return '#3f5398ff';
-      default:
-        return '#3e7f67ff'; // Default color
-    }
+    if (!flairText) return '#3e7f67ff';
+    const text = flairText.toLowerCase();
+    if (text === 'done' || text === 'ready') return 'green';
+    if (text.includes('handling') || text.includes('generating')) return 'orange';
+    if (text.includes('error')) return '#9e2a2aff';
+    if (text === 'submitted') return '#3f5398ff';
+    return '#3e7f67ff'; // Default color
   };
 
   const toggleCollapse = () => {
@@ -36,12 +33,14 @@ function IssueCard({
   useEffect(() => {
     if (issue.comment) {
       setReviewFlairText('Submitted');
+    } else if (issue.agentState) {
+      setReviewFlairText(issue.agentState);
     } else if (drafts[issue.id] && drafts[issue.id].trim() !== '') {
       setReviewFlairText('Ready');
     } else {
       setReviewFlairText('Generating ...');
     }
-  }, [issue.comment, drafts, issue.id]);
+  }, [issue.comment, drafts, issue.id, issue.agentState]);
 
   return (
     <div key={issue.id} className={`pr-card ${issue.comment ? 'review-submitted' : ''}`}>
@@ -53,16 +52,25 @@ function IssueCard({
           </span>
         </h3>
         <div className="pr-card-actions-header">
-          {reviewFlairText && (
-            <span style={{ marginRight: '10px', backgroundColor: getReviewFlairColor(reviewFlairText), color: 'white', padding: '5px 10px', borderRadius: '5px', fontSize: 'small' }}>
+          {reviewFlairText && issue.agentState !== 'provisioning' && (
+            <span 
+              style={{ marginRight: '10px', backgroundColor: getReviewFlairColor(reviewFlairText), color: 'white', padding: '5px 10px', borderRadius: '5px', fontSize: 'small' }}
+              title={issue.agentStateMessage || ''}
+            >
               {reviewFlairText}
             </span>
           )}
           {getSandboxStatusClass(issue) === 'green' ? (
             <div style={{display: 'flex', alignItems: 'center', gap: '5px'}}>
-              <a href={`/sandbox/${namespace}/${issue.sandbox}/`} target="_blank" rel="noopener noreferrer" className={`pr-sandbox ${getSandboxStatusClass(issue)}`}>
-                Sandbox Active
-              </a>
+              {issue.agentState === 'provisioning' ? (
+                <span className="pr-sandbox" style={{backgroundColor: '#2196F3', color: 'white', cursor: 'default'}}>
+                  Sandbox Provisioning
+                </span>
+              ) : (
+                <a href={`/sandbox/${namespace}/${issue.sandbox}/`} target="_blank" rel="noopener noreferrer" className={`pr-sandbox ${getSandboxStatusClass(issue)}`}>
+                  Sandbox Active
+                </a>
+              )}
                <button className="btn btn-sm pr-sandbox yellow" style={{padding: '4px 10px', fontSize: '14px'}} onClick={(e) => { e.stopPropagation(); handleScaleDown(issue.id, activeSubTab.name); }} title="Scale Down">
                 &#9646;&#9646;
               </button>

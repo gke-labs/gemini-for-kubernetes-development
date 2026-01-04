@@ -141,6 +141,12 @@ func (s *RedisStore) ListIssues(ctx context.Context, namespace, repo, handler st
 		if val, ok := issueData["branchURL"]; ok {
 			issue.BranchURL = val
 		}
+		if val, ok := issueData["agentState"]; ok {
+			issue.AgentState = val
+		}
+		if val, ok := issueData["agentStateMessage"]; ok {
+			issue.AgentStateMessage = val
+		}
 
 		issues = append(issues, issue)
 	}
@@ -162,6 +168,8 @@ func (s *RedisStore) SaveIssue(ctx context.Context, namespace, repo, handler str
 		"draft", issue.Draft,
 		"agentDraft", issue.Draft, // Initial save sets agentDraft same as draft
 		"pushBranch", fmt.Sprintf("%t", issue.PushBranch),
+		"agentState", issue.AgentState,
+		"agentStateMessage", issue.AgentStateMessage,
 	).Err()
 }
 
@@ -206,6 +214,12 @@ func (s *RedisStore) GetIssue(ctx context.Context, namespace, repo, handler, iss
 	}
 	if val, ok := issueData["agentDraft"]; ok {
 		issue.AgentDraft = val
+	}
+	if val, ok := issueData["agentState"]; ok {
+		issue.AgentState = val
+	}
+	if val, ok := issueData["agentStateMessage"]; ok {
+		issue.AgentStateMessage = val
 	}
 
 	return issue, nil
