@@ -28,16 +28,18 @@ type PR struct {
 
 // Issue represents a GitHub issue
 type Issue struct {
-	ID             string `json:"id"`
-	Title          string `json:"title"`
-	Draft          string `json:"draft,omitempty"`
-	Sandbox        string `json:"sandbox,omitempty"`
-	SandboxReplica string `json:"sandboxReplica,omitempty"`
-	Comment        string `json:"comment,omitempty"`
-	HTMLURL        string `json:"htmlURL,omitempty"`
-	BranchURL      string `json:"branchURL,omitempty"`
-	PushBranch     bool   `json:"pushBranch"`
-	AgentDraft     string `json:"agentDraft,omitempty"`
+	ID                string `json:"id"`
+	Title             string `json:"title"`
+	Draft             string `json:"draft,omitempty"`
+	Sandbox           string `json:"sandbox,omitempty"`
+	SandboxReplica    string `json:"sandboxReplica,omitempty"`
+	Comment           string `json:"comment,omitempty"`
+	HTMLURL           string `json:"htmlURL,omitempty"`
+	BranchURL         string `json:"branchURL,omitempty"`
+	PushBranch        bool   `json:"pushBranch"`
+	AgentDraft        string `json:"agentDraft,omitempty"`
+	AgentState        string `json:"agentState,omitempty"`
+	AgentStateMessage string `json:"agentStateMessage,omitempty"`
 }
 
 // Repo represents a repository with its configuration
