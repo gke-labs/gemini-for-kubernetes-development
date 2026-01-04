@@ -280,6 +280,12 @@ func (s *RedisStore) ListDevSandboxes(ctx context.Context, namespace, repo strin
 		if val, ok := data["branch"]; ok {
 			sandbox.Branch = val
 		}
+		if val, ok := data["agentState"]; ok {
+			sandbox.AgentState = val
+		}
+		if val, ok := data["agentStateMessage"]; ok {
+			sandbox.AgentStateMessage = val
+		}
 
 		sandboxes = append(sandboxes, sandbox)
 	}
@@ -296,6 +302,8 @@ func (s *RedisStore) SaveDevSandbox(ctx context.Context, namespace, repo string,
 		"branch", sandbox.Branch,
 		"branchURL", sandbox.BranchURL,
 		"sandboxReplica", sandbox.SandboxReplica,
+		"agentState", sandbox.AgentState,
+		"agentStateMessage", sandbox.AgentStateMessage,
 	).Err()
 }
 

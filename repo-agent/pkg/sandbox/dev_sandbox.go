@@ -129,6 +129,10 @@ func NewDevSandbox(opt DevSandboxOptions) *unstructured.Unstructured {
 			"kind":       "DevSandbox",
 			"metadata": map[string]interface{}{
 				"name": opt.Name,
+				"annotations": map[string]interface{}{
+					"agentState":  "provisioning",
+					"reviewState": "",
+				},
 			},
 			"spec": spec,
 		},

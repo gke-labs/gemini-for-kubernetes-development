@@ -78,9 +78,11 @@ type DevConfig struct {
 
 // DevSandbox represents a dev sandbox
 type DevSandbox struct {
-	Name           string `json:"name"`
-	Sandbox        string `json:"sandbox,omitempty"`
-	SandboxReplica string `json:"sandboxReplica,omitempty"`
-	BranchURL      string `json:"branchURL,omitempty"`
-	Branch         string `json:"branch,omitempty"`
+	Name              string `json:"name"`
+	Sandbox           string `json:"sandbox,omitempty"`
+	SandboxReplica    string `json:"sandboxReplica,omitempty"`
+	BranchURL         string `json:"branchURL,omitempty"`
+	Branch            string `json:"branch,omitempty"`
+	AgentState        string `json:"agentState,omitempty"`
+	AgentStateMessage string `json:"agentStateMessage,omitempty"`
 }
