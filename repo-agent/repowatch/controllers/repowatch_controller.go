@@ -1079,14 +1079,14 @@ func (r *RepoWatchReconciler) reconcileDevSandboxes(ctx context.Context, user *g
 	forkRepo := upstreamRepo
 
 	// Verify fork exists
-	_, _, err := ghClient.Repositories.Get(ctx, forkOwner, forkRepo)
+	repo, _, err := ghClient.Repositories.Get(ctx, forkOwner, forkRepo)
 	if err != nil {
 		log.Error(err, "unable to get user fork", "owner", forkOwner, "repo", forkRepo)
 		// If fork doesn't exist, we can't do anything.
 		return nil
 	}
 
-	branches, err := r.getDevCandidateBranches(ctx, ghClient, repoWatch, forkOwner, forkRepo)
+	branches, err := r.getDevCandidateBranches(ctx, ghClient, repoWatch, forkOwner, forkRepo, repo.GetDefaultBranch())
 	if err != nil {
 		return err
 	}
@@ -1102,7 +1102,7 @@ func (r *RepoWatchReconciler) reconcileDevSandboxes(ctx context.Context, user *g
 	return r.Status().Update(ctx, repoWatch)
 }
 
-func (r *RepoWatchReconciler) getDevCandidateBranches(ctx context.Context, ghClient *github.Client, repoWatch *reviewv1alpha1.RepoWatch, forkOwner, forkRepo string) ([]*github.Branch, error) {
+func (r *RepoWatchReconciler) getDevCandidateBranches(ctx context.Context, ghClient *github.Client, repoWatch *reviewv1alpha1.RepoWatch, forkOwner, forkRepo string, defaultBranch string) ([]*github.Branch, error) {
 	log := log.FromContext(ctx)
 
 	// 2. List Branches (or use explicit list)
@@ -1146,6 +1146,9 @@ func (r *RepoWatchReconciler) getDevCandidateBranches(ctx context.Context, ghCli
 		if name == "master" {
 			continue
 		}
+		if name == defaultBranch {
+			continue
+		}
 		if excludedBranchesMap[name] {
 			continue
 		}
@@ -1161,6 +1164,16 @@ func (r *RepoWatchReconciler) getDevCandidateBranches(ctx context.Context, ghCli
 	var branchesWithDate []BranchWithDate
 
 	for _, branch := range candidateBranches {
+		// Check if the branch is ahead of the default branch
+		comp, _, err := ghClient.Repositories.CompareCommits(ctx, forkOwner, forkRepo, defaultBranch, branch.GetName(), nil)
+		if err != nil {
+			log.Error(err, "comparing commits", "branch", branch.GetName())
+			continue
+		}
+		if comp.GetAheadBy() == 0 {
+			continue
+		}
+
 		commit, _, err := ghClient.Repositories.GetCommit(ctx, forkOwner, forkRepo, branch.GetCommit().GetSHA(), nil)
 		if err != nil {
 			log.Error(err, "getting commit details", "branch", branch.GetName())
