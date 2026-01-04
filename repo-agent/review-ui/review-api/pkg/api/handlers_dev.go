@@ -76,12 +76,26 @@ func (s *Server) fetchAndPopulateDevSandboxes(ctx context.Context, namespace, re
 			// The UI card key is `sandbox.name`. If we use branch name, it must be unique per repo.
 			// Let's use the DevSandbox name as the key in Redis to match deletion logic.
 
+			agentState := ""
+			agentStateMessage := ""
+			annotations := item.GetAnnotations()
+			if annotations != nil {
+				if val, ok := annotations["agentState"]; ok {
+					agentState = val
+				}
+				if val, ok := annotations["agentStateMessage"]; ok {
+					agentStateMessage = val
+				}
+			}
+
 			sandbox := models.DevSandbox{
-				Name:           item.GetName(),
-				Sandbox:        item.GetName(),
-				Branch:         branch,
-				BranchURL:      branchURL,
-				SandboxReplica: fmt.Sprintf("%d", replicas),
+				Name:              item.GetName(),
+				Sandbox:           item.GetName(),
+				Branch:            branch,
+				BranchURL:         branchURL,
+				SandboxReplica:    fmt.Sprintf("%d", replicas),
+				AgentState:        agentState,
+				AgentStateMessage: agentStateMessage,
 			}
 			if err := s.Store.SaveDevSandbox(ctx, namespace, repo, sandbox); err != nil {
 				log.Printf("Failed to cache DevSandbox %s: %v", item.GetName(), err)

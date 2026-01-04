@@ -11,11 +11,21 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/agentoutput"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sshd"
 	"github.com/spf13/cobra"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/klog/v2"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/commands"
+)
+
+var (
+	gvr = schema.GroupVersionResource{
+		Group:    "custom.agents.x-k8s.io",
+		Version:  "v1alpha1",
+		Resource: "devsandboxes",
+	}
 )
 
 func main() {
@@ -87,20 +97,26 @@ func RunSSHD(ctx context.Context) error {
 func InitContainer(ctx context.Context) error {
 	log := klog.FromContext(ctx)
 
+	go agentoutput.Run("dev", gvr)
+
 	if err := checkoutBranch(ctx); err != nil {
+		_ = agentoutput.SetAgentState(gvr, "error", fmt.Sprintf("checkout failed: %v", err))
 		return fmt.Errorf("checking out branch: %w", err)
 	}
 
 	var b ImageBuilder
 	if dotFilesRepo := os.Getenv("USER_DOTFILESREPO"); dotFilesRepo != "" {
+		_ = agentoutput.SetAgentState(gvr, "provisioning", "installing dotfiles")
 		if err := b.InstallDotfilesRepo(ctx, dotFilesRepo); err != nil {
 			// Note: we don't fail the entire startup if dotfiles installation fails
 			log.Error(err, "installing dotfiles repo", "repo", dotFilesRepo)
+			_ = agentoutput.SetAgentState(gvr, "warning", fmt.Sprintf("dotfiles install failed: %v", err))
 		}
 	}
 
 	cmdCodeSrv, err := startCodeServer(ctx)
 	if err != nil {
+		_ = agentoutput.SetAgentState(gvr, "error", fmt.Sprintf("failed to start code-server: %v", err))
 		return fmt.Errorf("failed to start code-server: %w", err)
 	}
 	defer func() {
@@ -111,8 +127,11 @@ func InitContainer(ctx context.Context) error {
 		}
 	}()
 
+	_ = agentoutput.SetAgentState(gvr, "ready", "")
+
 	// Wait for code-server to exit
 	if err := cmdCodeSrv.Wait(); err != nil {
+		_ = agentoutput.SetAgentState(gvr, "error", fmt.Sprintf("code-server exited: %v", err))
 		return fmt.Errorf("code-server process exited with error: %w", err)
 	}
 
