@@ -107,24 +107,36 @@ func (s *Server) fetchAndPopulateIssues(ctx context.Context, namespace, repo, ha
 
 		// get draft from annotation[agentDraft]
 		draft := ""
+		agentState := ""
+		agentStateMessage := ""
 		annotations := item.GetAnnotations()
 		if annotations == nil {
-			log.Printf("agentDraft (annotations=nil) not found in IssueSandbox %s", item.GetName())
-		} else if _, ok := annotations["agentDraft"]; !ok {
-			log.Printf("agentDraft (annotations[agentDraft]) not found in IssueSandbox %s", item.GetName())
+			log.Printf("annotations (annotations=nil) not found in IssueSandbox %s", item.GetName())
 		} else {
-			draft = annotations["agentDraft"]
+			if val, ok := annotations["agentDraft"]; ok {
+				draft = val
+			} else {
+				log.Printf("agentDraft (annotations[agentDraft]) not found in IssueSandbox %s", item.GetName())
+			}
+			if val, ok := annotations["agentState"]; ok {
+				agentState = val
+			}
+			if val, ok := annotations["agentStateMessage"]; ok {
+				agentStateMessage = val
+			}
 		}
 
 		issue := models.Issue{
-			ID:             issueID,
-			Title:          title,
-			Sandbox:        item.GetName(),
-			HTMLURL:        htmlurl,
-			SandboxReplica: fmt.Sprintf("%d", replicas),
-			BranchURL:      branchURL,
-			Draft:          draft,
-			PushBranch:     pushBranch,
+			ID:                issueID,
+			Title:             title,
+			Sandbox:           item.GetName(),
+			HTMLURL:           htmlurl,
+			SandboxReplica:    fmt.Sprintf("%d", replicas),
+			BranchURL:         branchURL,
+			Draft:             draft,
+			PushBranch:        pushBranch,
+			AgentState:        agentState,
+			AgentStateMessage: agentStateMessage,
 		}
 		if err := s.Store.SaveIssue(ctx, namespace, repo, handler, issue); err != nil {
 			log.Printf("Failed to cache Issue %s for repo %s handler %s: %v", issueID, repo, handler, err)
