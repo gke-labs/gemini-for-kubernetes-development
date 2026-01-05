@@ -1079,12 +1079,31 @@ func (r *RepoWatchReconciler) reconcileDevSandboxes(ctx context.Context, user *g
 	forkRepo := upstreamRepo
 
 	// Verify fork exists
-	_, _, err := ghClient.Repositories.Get(ctx, forkOwner, forkRepo)
+	repo, _, err := ghClient.Repositories.Get(ctx, forkOwner, forkRepo)
 	if err != nil {
 		log.Error(err, "unable to get user fork", "owner", forkOwner, "repo", forkRepo)
 		// If fork doesn't exist, we can't do anything.
 		return nil
 	}
+
+	branches, err := r.getDevCandidateBranches(ctx, ghClient, repoWatch, forkOwner, forkRepo, repo.GetDefaultBranch())
+	if err != nil {
+		return err
+	}
+
+	watchedDevSandboxes, pendingDevBranches, err := r.reconcileDevSandboxesInternal(ctx, user, repoWatch, branches, forkOwner, forkRepo)
+	if err != nil {
+		return err
+	}
+
+	repoWatch.Status.DevSandboxes = watchedDevSandboxes
+	repoWatch.Status.PendingDevBranches = pendingDevBranches
+
+	return r.Status().Update(ctx, repoWatch)
+}
+
+func (r *RepoWatchReconciler) getDevCandidateBranches(ctx context.Context, ghClient *github.Client, repoWatch *reviewv1alpha1.RepoWatch, forkOwner, forkRepo string, defaultBranch string) ([]*github.Branch, error) {
+	log := log.FromContext(ctx)
 
 	// 2. List Branches (or use explicit list)
 	var allBranches []*github.Branch
@@ -1104,7 +1123,7 @@ func (r *RepoWatchReconciler) reconcileDevSandboxes(ctx context.Context, user *g
 			ListOptions: github.ListOptions{PerPage: 100},
 		})
 		if err != nil {
-			return fmt.Errorf("listing branches: %w", err)
+			return nil, fmt.Errorf("listing branches: %w", err)
 		}
 		allBranches = branches
 	}
@@ -1127,6 +1146,9 @@ func (r *RepoWatchReconciler) reconcileDevSandboxes(ctx context.Context, user *g
 		if name == "master" {
 			continue
 		}
+		if name == defaultBranch {
+			continue
+		}
 		if excludedBranchesMap[name] {
 			continue
 		}
@@ -1142,6 +1164,16 @@ func (r *RepoWatchReconciler) reconcileDevSandboxes(ctx context.Context, user *g
 	var branchesWithDate []BranchWithDate
 
 	for _, branch := range candidateBranches {
+		// Check if the branch is ahead of the default branch
+		comp, _, err := ghClient.Repositories.CompareCommits(ctx, forkOwner, forkRepo, defaultBranch, branch.GetName(), nil)
+		if err != nil {
+			log.Error(err, "comparing commits", "branch", branch.GetName())
+			continue
+		}
+		if comp.GetAheadBy() == 0 {
+			continue
+		}
+
 		commit, _, err := ghClient.Repositories.GetCommit(ctx, forkOwner, forkRepo, branch.GetCommit().GetSHA(), nil)
 		if err != nil {
 			log.Error(err, "getting commit details", "branch", branch.GetName())
@@ -1157,11 +1189,16 @@ func (r *RepoWatchReconciler) reconcileDevSandboxes(ctx context.Context, user *g
 		return branchesWithDate[i].Date.After(branchesWithDate[j].Date)
 	})
 
-	// 5. Select top MaxSandboxes
-	//if len(branchesWithDate) > repoWatch.Spec.Dev.MaxSandboxes {
-	//	branchesWithDate = branchesWithDate[:repoWatch.Spec.Dev.MaxSandboxes]
-	//}
+	var sortedBranches []*github.Branch
+	for _, b := range branchesWithDate {
+		sortedBranches = append(sortedBranches, b.Branch)
+	}
 
+	return sortedBranches, nil
+}
+
+func (r *RepoWatchReconciler) reconcileDevSandboxesInternal(ctx context.Context, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, branches []*github.Branch, forkOwner, forkRepo string) ([]reviewv1alpha1.DevSandbox, []string, error) {
+	log := log.FromContext(ctx)
 	// 6. List Existing DevSandboxes
 	sandboxList := &unstructured.UnstructuredList{}
 	sandboxGVK := schema.GroupVersionKind{
@@ -1171,7 +1208,7 @@ func (r *RepoWatchReconciler) reconcileDevSandboxes(ctx context.Context, user *g
 	}
 	sandboxList.SetGroupVersionKind(sandboxGVK)
 	if err := r.List(ctx, sandboxList, client.InNamespace(repoWatch.Namespace)); err != nil {
-		return fmt.Errorf("listing dev sandboxes: %w", err)
+		return nil, nil, fmt.Errorf("listing dev sandboxes: %w", err)
 	}
 
 	activeSandboxes := 0
@@ -1180,8 +1217,8 @@ func (r *RepoWatchReconciler) reconcileDevSandboxes(ctx context.Context, user *g
 
 	// Identify which branches we want to have sandboxes for.
 	desiredBranches := make(map[string]bool)
-	for _, b := range branchesWithDate {
-		desiredBranches[b.Branch.GetName()] = true
+	for _, b := range branches {
+		desiredBranches[b.GetName()] = true
 	}
 
 	for _, sandbox := range sandboxList.Items {
@@ -1231,8 +1268,8 @@ func (r *RepoWatchReconciler) reconcileDevSandboxes(ctx context.Context, user *g
 	}
 
 	// 7. Create/Update Sandboxes
-	for _, b := range branchesWithDate {
-		branchName := b.Branch.GetName()
+	for _, branch := range branches {
+		branchName := branch.GetName()
 		// Sanitize branch name for kubernetes resource name
 		safeBranchName := strings.ReplaceAll(branchName, "/", "-")
 		safeBranchName = strings.ReplaceAll(safeBranchName, "_", "-")
@@ -1241,7 +1278,7 @@ func (r *RepoWatchReconciler) reconcileDevSandboxes(ctx context.Context, user *g
 
 		// Kubernetes names must be <= 63 characters
 		// hashing ensures we don't exceed this limit
-		fullSuffix := fmt.Sprintf("dev-%s-%s", upstreamRepo, safeBranchName)
+		fullSuffix := fmt.Sprintf("dev-%s-%s", forkRepo, safeBranchName)
 		hashedSuffix := NameHash(fullSuffix)
 		sandboxName := fmt.Sprintf("%s-dev", hashedSuffix)
 
@@ -1275,11 +1312,7 @@ func (r *RepoWatchReconciler) reconcileDevSandboxes(ctx context.Context, user *g
 			pendingDevBranches = append(pendingDevBranches, branchName)
 		}
 	}
-
-	repoWatch.Status.DevSandboxes = watchedDevSandboxes
-	repoWatch.Status.PendingDevBranches = pendingDevBranches
-
-	return r.Status().Update(ctx, repoWatch)
+	return watchedDevSandboxes, pendingDevBranches, nil
 }
 
 func (r *RepoWatchReconciler) createDevSandbox(ctx context.Context, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, forkOwner, forkRepo, branchName, sandboxName string) error {

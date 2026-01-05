@@ -85,6 +85,10 @@ spec:
                     requests:
                       ephemeral-storage: ${schema.spec.resources.ephemeralStorage}
                   env:
+                    - name: NAMESPACE
+                      value: ${schema.metadata.namespace}
+                    - name: NAME
+                      value: ${schema.metadata.name}
                     # URL to the repository where the .devcontainer folder we want to load is located
                     - name: AGENT_NAME
                       value: ${schema.spec.llmBackend.name}
