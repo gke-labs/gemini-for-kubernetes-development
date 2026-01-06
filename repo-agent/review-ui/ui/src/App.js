@@ -19,11 +19,13 @@ function App() {
   const [showGithubConfig, setShowGithubConfig] = useState(false);
   const [githubClientId, setGithubClientId] = useState('');
   const [githubClientSecret, setGithubClientSecret] = useState('');
+  const [isGeminiKeySet, setIsGeminiKeySet] = useState(true); // Default to true to avoid flash of warning
   const [configError, setConfigError] = useState('');
 
   const [repos, setRepos] = useState([]);
   const [activeRepo, setActiveRepo] = useState(null);
   const activeRepoRef = useRef(activeRepo);
+  const hasRedirectedMissingKey = useRef(false);
   useEffect(() => { activeRepoRef.current = activeRepo; }, [activeRepo]);
 
   const [activeSubTab, setActiveSubTab] = useState({ repo: '', name: '' });
@@ -71,6 +73,21 @@ function App() {
       })
       .catch(err => console.error("Failed to fetch auth providers:", err));
   }, []);
+
+  useEffect(() => {
+    if (isAuthenticated || isGuest) {
+      fetch('/api/settings')
+        .then(res => res.json())
+        .then(data => {
+          setIsGeminiKeySet(data.gemini_api_key_set);
+          if (!data.gemini_api_key_set && !hasRedirectedMissingKey.current && isAuthenticated) {
+            hasRedirectedMissingKey.current = true;
+            setView('settings');
+          }
+        })
+        .catch(err => console.error("Failed to fetch settings:", err));
+    }
+  }, [isAuthenticated, isGuest]);
 
   useEffect(() => {
     if (activeRepo && (isAuthenticated || isGuest)) {
@@ -961,7 +978,14 @@ function App() {
             {repo.name}
           </button>
         ))}
-        <button className="tab-btn add-repo-btn" onClick={() => setView('add_repo')} title="Watch new repository">+</button>
+        <button className="tab-btn add-repo-btn" onClick={() => {
+          if (!isGeminiKeySet && !isGuest) {
+            alert("Please set your Gemini API Key in Settings before adding a repository.");
+            setView('settings');
+          } else {
+            setView('add_repo');
+          }
+        }} title="Watch new repository">+</button>
       </nav>
       {activeRepo && (
         <div className="active-repo-container">
@@ -1050,6 +1074,12 @@ function App() {
           </div>
         </div>
       </header>
+      
+      {(isAuthenticated || isGuest) && !isGeminiKeySet && (
+        <div className="warning-banner" style={{ backgroundColor: '#fff3cd', color: '#856404', padding: '10px', textAlign: 'center', borderBottom: '1px solid #ffeeba' }}>
+          <strong>⚠️ Gemini API Key Missing:</strong> Please configure your Gemini API Key in <a href="#" onClick={(e) => { e.preventDefault(); setView('settings'); }}>Settings</a> to enable code reviews and issue handling.
+        </div>
+      )}
       
       {view === 'dashboard' && renderDashboard()}
       {view === 'settings' && <Settings onBack={() => setView('dashboard')} />}
