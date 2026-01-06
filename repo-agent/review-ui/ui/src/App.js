@@ -757,16 +757,42 @@ function App() {
       .catch(err => console.error("Failed to scale down issue sandbox:", err));
   };
 
-  const handleDevDelete = (sandboxName) => {
+  const handleDevDelete = (sandbox) => {
+    const sandboxName = sandbox.name;
+    const branchName = sandbox.branch;
+
+    // Optimistically remove from view
+    setDevSandboxes(devSandboxes.filter(s => s.name !== sandboxName));
+
     fetch(`/api/repo/${activeRepo.name}/dev/${sandboxName}`, { method: 'DELETE' })
       .then(res => {
         if (res.ok) {
-            setDevSandboxes(devSandboxes.filter(s => s.name !== sandboxName));
+            fetch(`/api/repos/${activeRepo.name}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ excludeBranch: branchName })
+            })
+            .then(res2 => {
+                 if (res2.ok) {
+                     fetchRepos();
+                 } else {
+                     console.error("Dev sandbox deleted but failed to exclude branch");
+                 }
+            });
         } else {
-            alert("Failed to delete dev sandbox");
+            res.json().then(data => {
+                alert("Failed to delete dev sandbox: " + (data.error || res.statusText));
+                fetchRepos(); // Revert/Refresh
+            }).catch(() => {
+                alert("Failed to delete dev sandbox");
+                fetchRepos();
+            });
         }
       })
-      .catch(err => console.error("Failed to delete dev sandbox:", err));
+      .catch(err => {
+          console.error("Failed to delete dev sandbox:", err);
+          fetchRepos();
+      });
   };
 
   const handleDevScaleUp = (sandboxName) => {

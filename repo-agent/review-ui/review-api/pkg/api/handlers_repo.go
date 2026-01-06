@@ -254,18 +254,19 @@ func (s *Server) updateRepoWatch(c *gin.Context) {
 	name := c.Param("repo")
 
 	var payload struct {
-		RepoURL   string `json:"repoURL"`
-		AddPR     int    `json:"addPR"`
-		ExcludePR int    `json:"excludePR"`
-		YAML      string `json:"yaml"`
+		RepoURL       string `json:"repoURL"`
+		AddPR         int    `json:"addPR"`
+		ExcludePR     int    `json:"excludePR"`
+		ExcludeBranch string `json:"excludeBranch"`
+		YAML          string `json:"yaml"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	if payload.AddPR == 0 && payload.ExcludePR == 0 && payload.YAML == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "addPR, excludePR or yaml is required"})
+	if payload.AddPR == 0 && payload.ExcludePR == 0 && payload.YAML == "" && payload.ExcludeBranch == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "addPR, excludePR, excludeBranch or yaml is required"})
 		return
 	}
 
@@ -429,6 +430,36 @@ func (s *Server) updateRepoWatch(c *gin.Context) {
 				if err := unstructured.SetNestedSlice(existing.Object, convInt64SliceToInterfaceSlice(newPull), "spec", "review", "pullRequests"); err != nil {
 					log.Printf("Failed to update pullRequests: %v", err)
 				}
+			}
+		}
+	}
+
+	// Exclude Branch if provided
+	if payload.ExcludeBranch != "" {
+		excludeSlice, found, err := unstructured.NestedStringSlice(existing.Object, "spec", "dev", "excludeBranches")
+		if err != nil {
+			log.Printf("Failed to get excludeBranches: %v", err)
+		}
+
+		var excludeBranches []string
+		if found {
+			excludeBranches = excludeSlice
+		}
+
+		exists := false
+		for _, b := range excludeBranches {
+			if b == payload.ExcludeBranch {
+				exists = true
+				break
+			}
+		}
+
+		if !exists {
+			excludeBranches = append(excludeBranches, payload.ExcludeBranch)
+			if err := unstructured.SetNestedStringSlice(existing.Object, excludeBranches, "spec", "dev", "excludeBranches"); err != nil {
+				log.Printf("Failed to set excludeBranches: %v", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update object structure for excludeBranches"})
+				return
 			}
 		}
 	}
