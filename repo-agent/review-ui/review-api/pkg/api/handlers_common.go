@@ -3,10 +3,14 @@ package api
 import (
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	pkgk8s "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
+	"k8s.io/apimachinery/pkg/api/errors"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // --- Health Check ---
@@ -41,4 +45,24 @@ func (s *Server) proxy(c *gin.Context) {
 	}
 
 	c.String(resp.StatusCode, string(body))
+}
+
+func (s *Server) ensureGeminiKeySet(c *gin.Context, namespace string) bool {
+	sec, err := s.K8sManager.Clientset.CoreV1().Secrets(namespace).Get(c.Request.Context(), pkgk8s.GeminiSecretName, v1.GetOptions{})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Gemini API Key is not configured. Please set it in Settings."})
+		} else {
+			log.Printf("Error getting Gemini secret: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check Gemini API Key configuration"})
+		}
+		return false
+	}
+
+	if val, ok := sec.Data["gemini"]; !ok || len(val) == 0 {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Gemini API Key is empty. Please set it in Settings."})
+		return false
+	}
+
+	return true
 }
