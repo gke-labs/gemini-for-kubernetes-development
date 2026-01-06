@@ -63,7 +63,7 @@ function DevCard({
           ) : (
             <span className={`pr-sandbox ${getSandboxStatusClass(sandbox)}`}>Sandbox: Not created</span>
           )}
-           <button className="btn btn-delete" onClick={(e) => { e.stopPropagation(); handleDelete(sandbox.name); }}>&#x2715;</button>
+           <button className="btn btn-delete" onClick={(e) => { e.stopPropagation(); handleDelete(sandbox); }}>&#x2715;</button>
         </div>
       </div>
     </div>
