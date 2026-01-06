@@ -285,5 +285,10 @@ func (s *Server) scaleDownDevSandbox(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scale down dev sandbox", "details": err.Error()})
 		return
 	}
+
+	if err := s.K8sManager.UpdateDevSandboxAnnotation(c.Request.Context(), namespace, name, "agentState", "sandbox paused"); err != nil {
+		log.Printf("Failed to update dev sandbox annotation: %v", err)
+	}
+
 	c.Status(http.StatusOK)
 }
