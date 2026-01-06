@@ -80,6 +80,7 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 		api.POST("/repo/:repo/issues/:issue_id/handler/:handler/scaleup", s.scaleUpIssue)
 		api.POST("/repo/:repo/issues/:issue_id/handler/:handler/scaledown", s.scaleDownIssue)
 		api.GET("/repo/:repo/dev", s.getDevSandboxes)
+		api.POST("/repo/:repo/dev", s.createDevSandbox)
 		api.DELETE("/repo/:repo/dev/:name", s.deleteDevSandbox)
 		api.POST("/repo/:repo/dev/:name/scaleup", s.scaleUpDevSandbox)
 		api.POST("/repo/:repo/dev/:name/scaledown", s.scaleDownDevSandbox)
