@@ -761,12 +761,14 @@ function App() {
     const sandboxName = sandbox.name;
     const branchName = sandbox.branch;
 
-    // Optimistically remove from view
-    setDevSandboxes(devSandboxes.filter(s => s.name !== sandboxName));
 
     fetch(`/api/repo/${activeRepo.name}/dev/${sandboxName}`, { method: 'DELETE' })
       .then(res => {
         if (res.ok) {
+            // Optimistically remove from view
+            setDevSandboxes(devSandboxes.filter(s => s.name !== sandboxName));
+
+            // Trigger exclusion in background
             fetch(`/api/repos/${activeRepo.name}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
@@ -774,24 +776,25 @@ function App() {
             })
             .then(res2 => {
                  if (res2.ok) {
-                     fetchRepos();
                  } else {
                      console.error("Dev sandbox deleted but failed to exclude branch");
                  }
             });
+
+           // Show alert slightly deferred to allow UI render
+           setTimeout(() => {
+                alert("Dev Sandbox deleted. It will disappear from the list shortly.");
+           }, 50);
         } else {
             res.json().then(data => {
                 alert("Failed to delete dev sandbox: " + (data.error || res.statusText));
-                fetchRepos(); // Revert/Refresh
             }).catch(() => {
                 alert("Failed to delete dev sandbox");
-                fetchRepos();
             });
         }
       })
       .catch(err => {
           console.error("Failed to delete dev sandbox:", err);
-          fetchRepos();
       });
   };
 
