@@ -839,7 +839,7 @@ function App() {
   };
 
   const submitDevCreate = () => {
-    if (newDevBranch && newDevPrompt) {
+    if (newDevBranch) {
         handleDevCreate({ branch: newDevBranch, prompt: newDevPrompt });
         setDevModalOpen(false);
         setNewDevBranch('');
@@ -928,7 +928,7 @@ function App() {
 
           {excludedList.length > 0 && (
              <>
-                <h3 style={{marginTop: '30px', borderBottom: '1px solid #eee', paddingBottom: '10px', color: '#666'}}>Deleted...</h3>
+                <h3 style={{marginTop: '30px', borderBottom: '1px solid #eee', paddingBottom: '10px', color: '#666'}}>Excluded...</h3>
                 {excludedList.map(renderItem)}
              </>
           )}
@@ -941,23 +941,82 @@ function App() {
         </>
       );
     } else if (activeSubTab.name === 'dev') {
-        const list = devSandboxes.length === 0 ? <p>No active Dev Sandboxes found.</p> : devSandboxes.map(sandbox => (
-            <DevCard
-                key={sandbox.name}
-                sandbox={sandbox}
-                handleDelete={handleDevDelete}
-                getSandboxStatusClass={getSandboxStatusClass}
-                namespace={namespace}
-                handleScaleUp={handleDevScaleUp}
-                handleScaleDown={handleDevScaleDown}
-            />
-        ));
+        const activeList = devSandboxes.map(sandbox => ({...sandbox, type: 'active'}));
+        
+        // Pending Branches
+        const pending = activeRepo.pendingDevBranches || [];
+        const pendingList = [];
+        pending.forEach(branch => {
+            if (!activeList.find(s => s.branch === branch)) {
+                pendingList.push({ branch: branch, type: 'pending', name: branch }); // Name used for key/display
+            }
+        });
+
+        // Excluded Branches
+        const excluded = activeRepo.excludeBranches || [];
+        const excludedList = [];
+        excluded.forEach(branch => {
+             if (!activeList.find(s => s.branch === branch)) {
+                 excludedList.push({ branch: branch, type: 'excluded', name: branch });
+             }
+        });
+
+        const handleAddDevInstance = (branch) => {
+             setNewDevBranch(branch);
+             setDevModalOpen(true);
+        };
+
+        const renderDevItem = (sandbox) => {
+             if (sandbox.type === 'pending' || sandbox.type === 'excluded') {
+                 return (
+                     <div key={sandbox.name} className="pr-card" style={{opacity: 0.7}}>
+                        <div className="pr-card-header">
+                            <h3>{sandbox.branch} {sandbox.type === 'excluded' && '(Excluded)'}</h3>
+                            <div className="pr-card-actions-header">
+                                <button className="btn" onClick={() => handleAddDevInstance(sandbox.branch)} title="Create Dev Sandbox" style={{fontSize: '20px', width: '40px', height: '40px', borderRadius: '20px', lineHeight: '20px'}}>+</button>
+                            </div>
+                        </div>
+                     </div>
+                 );
+             }
+             return (
+                <DevCard
+                    key={sandbox.name}
+                    sandbox={sandbox}
+                    handleDelete={handleDevDelete}
+                    getSandboxStatusClass={getSandboxStatusClass}
+                    namespace={namespace}
+                    handleScaleUp={handleDevScaleUp}
+                    handleScaleDown={handleDevScaleDown}
+                />
+            );
+        };
+
+        const list = activeList.length === 0 && pendingList.length === 0 && excludedList.length === 0 ? <p>No active Dev Sandboxes found.</p> : (
+            <>
+                {activeList.map(renderDevItem)}
+                
+                {pendingList.length > 0 && (
+                    <>
+                        <h3 style={{marginTop: '30px', borderBottom: '1px solid #eee', paddingBottom: '10px', color: '#666'}}>Next ...</h3>
+                        {pendingList.map(renderDevItem)}
+                    </>
+                )}
+
+                {excludedList.length > 0 && (
+                    <>
+                        <h3 style={{marginTop: '30px', borderBottom: '1px solid #eee', paddingBottom: '10px', color: '#666'}}>Excluded...</h3>
+                        {excludedList.map(renderDevItem)}
+                    </>
+                )}
+            </>
+        );
 
         return (
             <>
                 {list}
                 <div style={{textAlign: 'center', marginTop: '20px'}}>
-                    <button className="btn" onClick={() => setDevModalOpen(true)} title="Create new Dev Sandbox" style={{fontSize: '24px', width: '50px', height: '50px', borderRadius: '25px', lineHeight: '24px'}}>+</button>
+                    <button className="btn" onClick={() => { setNewDevBranch(''); setDevModalOpen(true); }} title="Create new Dev Sandbox" style={{fontSize: '24px', width: '50px', height: '50px', borderRadius: '25px', lineHeight: '24px'}}>+</button>
                 </div>
                 {devModalOpen && (
                   <div className="modal-overlay" onClick={() => setDevModalOpen(false)} style={{position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000}}>
