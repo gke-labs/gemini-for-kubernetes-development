@@ -3,9 +3,9 @@ package api
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
 	"log"
 	"net/http"
-	"regexp"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -90,16 +90,47 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 		log.Printf("Failed to get github secret for user %s: %v", namespace, err)
 	}
 
-	// Sanitize branch name for K8s resource name
-	reg := regexp.MustCompile("[^a-z0-9-]+")
-	safeBranch := reg.ReplaceAllString(strings.ToLower(req.Branch), "-")
-	sandboxName := fmt.Sprintf("dev-%s-%s", repo, safeBranch)
-	// Truncate if too long (max 63 chars for DNS labels, but safely 50 here)
-	if len(sandboxName) > 50 {
-		sandboxName = sandboxName[:50]
+	// Sanitize branch name for K8s resource name to match controller logic
+	safeBranch := strings.ReplaceAll(req.Branch, "/", "-")
+	safeBranch = strings.ReplaceAll(safeBranch, "_", "-")
+	safeBranch = strings.ReplaceAll(safeBranch, ".", "-")
+	safeBranch = strings.ToLower(safeBranch)
+
+	fullSuffix := fmt.Sprintf("dev-%s-%s", repoName, safeBranch)
+	h := fnv.New32a()
+	h.Write([]byte(fullSuffix))
+	hashedSuffix := fmt.Sprintf("%08x", h.Sum32())
+	sandboxName := fmt.Sprintf("%s-dev", hashedSuffix)
+
+	// Check if branch is in excludeBranches and remove it if so
+	excludeBranches, found, err := unstructured.NestedStringSlice(rw.Object, "spec", "dev", "excludeBranches")
+	if found && err == nil {
+		newExclude := []string{}
+		changed := false
+		for _, b := range excludeBranches {
+			if b == req.Branch {
+				changed = true
+			} else {
+				newExclude = append(newExclude, b)
+			}
+		}
+
+		if changed {
+			if err := unstructured.SetNestedStringSlice(rw.Object, newExclude, "spec", "dev", "excludeBranches"); err != nil {
+				log.Printf("Failed to update excludeBranches in local object: %v", err)
+			} else {
+				// Update RepoWatch in K8s
+				_, updateErr := s.K8sManager.Client.Resource(schema.GroupVersionResource{
+					Group:    "review.gemini.google.com",
+					Version:  "v1alpha1",
+					Resource: "repowatches",
+				}).Namespace(namespace).Update(c.Request.Context(), rw, v1.UpdateOptions{})
+				if updateErr != nil {
+					log.Printf("Failed to update RepoWatch to remove excluded branch: %v", updateErr)
+				}
+			}
+		}
 	}
-	// Ensure it doesn't end with hyphen
-	sandboxName = strings.TrimSuffix(sandboxName, "-")
 
 	gvr := schema.GroupVersionResource{
 		Group:    "custom.agents.x-k8s.io",

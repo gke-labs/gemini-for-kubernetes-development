@@ -605,6 +605,16 @@ func (s *Server) getRepos(c *gin.Context) {
 			repo.Dev = &models.DevConfig{MaxActiveSandboxes: maxActiveSandboxes}
 		}
 
+		// Extract PendingDevBranches
+		if pendingBranchesSlice, found, err := unstructured.NestedStringSlice(repoWatch.Object, "status", "pendingDevBranches"); err == nil && found {
+			repo.PendingDevBranches = pendingBranchesSlice
+		}
+
+		// Extract ExcludeBranches
+		if excludeBranchesSlice, found, err := unstructured.NestedStringSlice(repoWatch.Object, "spec", "dev", "excludeBranches"); err == nil && found {
+			repo.ExcludeBranches = excludeBranchesSlice
+		}
+
 		// Extract issue handlers
 		if handlers, found, err := unstructured.NestedSlice(repoWatch.Object, "spec", "issueHandlers"); err == nil && found {
 			var issueHandlers []models.IssueHandler
