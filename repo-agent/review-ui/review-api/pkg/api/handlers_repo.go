@@ -23,6 +23,11 @@ import (
 
 func (s *Server) createRepoWatch(c *gin.Context) {
 	namespace := c.MustGet(auth.UserKey).(string)
+
+	if !s.ensureGeminiKeySet(c, namespace) {
+		return
+	}
+
 	var payload struct {
 		YAML string `json:"yaml"`
 	}
