@@ -42,6 +42,9 @@ func RunCode(ctx context.Context, opt RunCodeOptions) error {
 	if err != nil {
 		return err
 	}
+	if podID == nil {
+		return fmt.Errorf("no pod found for sandbox %q", opt.SandboxName)
+	}
 
 	// 2. Update ~/.ssh/config
 	homeDir, err := os.UserHomeDir()
