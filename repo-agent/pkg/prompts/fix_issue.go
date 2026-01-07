@@ -4,32 +4,19 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os"
-	"os/exec"
-	"strings"
 	"text/template"
 
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
-
 	_ "embed"
+
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 )
 
 //go:embed fix_issue.txt
 var FixIssuePromptTemplate string
 
-func FixIssuePrompt(ctx context.Context, repoOwner, repoName string, issueNumber int) ([]byte, error) {
-	githubCommand := exec.CommandContext(ctx, "gh", "auth", "token")
-	var stdout bytes.Buffer
-	githubCommand.Stdout = &stdout
-	githubCommand.Stderr = os.Stderr
-	if err := githubCommand.Run(); err != nil {
-		return nil, fmt.Errorf("unable to get github credentials (with gh auth token command): %w", err)
-	}
+func FixIssuePrompt(ctx context.Context, githubAPI *github.Client, repo *github.Repo, issueNumber int) ([]byte, error) {
 
-	token := strings.TrimSpace(stdout.String())
-	githubAPI := clients.NewGitHubClient(ctx, token)
-
-	issue, _, err := githubAPI.Issues.Get(ctx, repoOwner, repoName, issueNumber)
+	issue, _, err := githubAPI.Issues.Get(ctx, repo.Owner, repo.Name, issueNumber)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get github issue: %w", err)
 	}
@@ -41,7 +28,7 @@ func FixIssuePrompt(ctx context.Context, repoOwner, repoName string, issueNumber
 		IssueDescription: issue.GetBody(),
 	}
 
-	comments, _, err := githubAPI.Issues.ListComments(ctx, repoOwner, repoName, issueNumber, nil)
+	comments, _, err := githubAPI.Issues.ListComments(ctx, repo.Owner, repo.Name, issueNumber, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list github issue comments: %w", err)
 	}
