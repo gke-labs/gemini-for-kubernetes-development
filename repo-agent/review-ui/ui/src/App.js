@@ -654,7 +654,24 @@ function App() {
     fetch(`/api/repo/${activeRepo.name}/issues/${issueId}/handler/${handlerName}`, { method: 'DELETE' })
       .then(res => {
         if (res.ok) {
+          // Optimistically remove from view immediately
           setIssues(issues.filter(issue => issue.id !== issueId));
+
+          // Trigger exclusion in background
+          fetch(`/api/repos/${activeRepo.name}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ excludeIssue: parseInt(issueId), handlerName: handlerName })
+          }).then(res2 => {
+              if (res2.ok) {
+              } else {
+                  console.error("Sandbox deleted but failed to exclude Issue");
+              }
+          });
+          // Show alert slightly deferred to allow UI render
+          setTimeout(() => {
+               alert("Issue Sandbox deleted. It will disappear from the list shortly.");
+          }, 50);
         } else {
           alert("Failed to delete issue sandbox");
         }
