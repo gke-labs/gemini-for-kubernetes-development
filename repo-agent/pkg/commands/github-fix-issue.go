@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/prompts"
 	"github.com/spf13/cobra"
 	v1 "k8s.io/api/core/v1"
@@ -22,26 +23,26 @@ import (
 	sandboxapi "sigs.k8s.io/agent-sandbox/api/v1alpha1"
 )
 
-// GithubIssueOptions holds options for the RunCode function.
-type GithubIssueOptions struct {
+// GithubFixIssueOptions holds options for the RunCode function.
+type GithubFixIssueOptions struct {
 	Repo  string
 	Issue int
 }
 
-// NewGithubIssueCommand creates a new cobra command for using a dev sandbox to solve a github issue
-func NewGithubIssueCommand() *cobra.Command {
-	var opt GithubIssueOptions
+// NewGithubFixIssueCommand creates a new cobra command for using a dev sandbox to solve a github issue
+func NewGithubFixIssueCommand() *cobra.Command {
+	var opt GithubFixIssueOptions
 
 	cmd := &cobra.Command{
-		Use:   "github-issue",
-		Short: "Launch VS Code connected to the dev sandbox",
+		Use:   "github-fix-issue",
+		Short: "Fix a github issue using an LLM in a dev sandbox",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 0 {
 				return fmt.Errorf("command does not take positional arguments")
 			}
 
-			return RunGithubIssue(cmd.Context(), opt)
+			return RunGithubFixIssue(cmd.Context(), opt)
 		},
 	}
 
@@ -50,8 +51,8 @@ func NewGithubIssueCommand() *cobra.Command {
 	return cmd
 }
 
-// RunGithubIssue launches VS Code connected to the specified dev sandbox.
-func RunGithubIssue(ctx context.Context, opt GithubIssueOptions) error {
+// RunGithubFixIssue launches VS Code connected to the specified dev sandbox.
+func RunGithubFixIssue(ctx context.Context, opt GithubFixIssueOptions) error {
 	log := klog.FromContext(ctx)
 
 	kube, err := clients.NewKubernetesClient()
@@ -59,8 +60,15 @@ func RunGithubIssue(ctx context.Context, opt GithubIssueOptions) error {
 		return err
 	}
 
-	repo := strings.TrimPrefix(opt.Repo, "https://")
-	tokens := strings.Split(repo, "/")
+	githubAPI, err := github.NewClient(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to create github client: %w", err)
+	}
+
+	repo, err := github.ParseRepo(opt.Repo)
+	if err != nil {
+		return err
+	}
 
 	if opt.Issue == 0 {
 		return fmt.Errorf("--issue is required")
@@ -69,34 +77,16 @@ func RunGithubIssue(ctx context.Context, opt GithubIssueOptions) error {
 		return fmt.Errorf("--repo is required")
 	}
 
-	repoHost := ""
-	repoOwner := ""
-	repoName := ""
-
-	cloneRepos := []string{}
-
-	if len(tokens) == 2 {
-		repoHost = "github.com"
-		repoOwner = tokens[0]
-		repoName = tokens[1]
-		upstreamRepo := "https://" + repoHost + "/" + repoOwner + "/" + repoName
-		cloneRepos = append(cloneRepos, fmt.Sprintf("/workspaces/%s=%s", repoName, upstreamRepo))
-	} else if len(tokens) == 3 {
-		repoHost = tokens[0]
-		repoOwner = tokens[1]
-		repoName = tokens[2]
-		upstreamRepo := "https://" + repoHost + "/" + repoOwner + "/" + repoName
-		cloneRepos = append(cloneRepos, fmt.Sprintf("/workspaces/%s=%s", repoName, upstreamRepo))
-	} else {
-		return fmt.Errorf("repo format %q not recognized", opt.Repo)
+	cloneRepos := []string{
+		fmt.Sprintf("/workspaces/%s=%s", repo.FilesystemName(), repo.GitCloneURL()),
 	}
 
-	prompt, err := prompts.FixIssuePrompt(ctx, repoOwner, repoName, opt.Issue)
+	prompt, err := prompts.FixIssuePrompt(ctx, githubAPI, repo, opt.Issue)
 	if err != nil {
 		return fmt.Errorf("failed to generate prompt for issue: %w", err)
 	}
 
-	sandboxName := fmt.Sprintf("github-%s-%s-%d", repoOwner, repoName, opt.Issue)
+	sandboxName := fmt.Sprintf("github-%s-%s-%d", repo.Owner, repo.Name, opt.Issue)
 	sandboxName = strings.ToLower(sandboxName) // Repos can have capital letters, but k8s names must be lowercase
 
 	// 1. Find the pod
@@ -158,57 +148,66 @@ func RunGithubIssue(ctx context.Context, opt GithubIssueOptions) error {
 	// Copy the prompt into the pod (for now)
 	if len(prompt) > 0 {
 		log.Info("copying prompt into sandbox pod", "pod", podID.Name)
-		clientset := kube.Clientset
 
 		path := "/workspaces/prompt.txt"
-		command := []string{
-			"/bin/tee", path,
+		if err := writeFileInPod(ctx, kube, podID, path, prompt); err != nil {
+			return fmt.Errorf("copying prompt into sandbox pod: %w", err)
 		}
-		stdin := bytes.NewReader(prompt)
-
-		option := &v1.PodExecOptions{
-			// Container: containerName,
-			Command: command,
-			Stdin:   true,
-			Stdout:  true,
-			Stderr:  true,
-			TTY:     false,
-		}
-		if stdin == nil {
-			option.Stdin = false
-		}
-
-		req := clientset.CoreV1().RESTClient().Post().
-			Resource("pods").
-			Name(podID.Name).
-			Namespace(podID.Namespace).
-			SubResource("exec").
-			VersionedParams(option, scheme.ParameterCodec)
-
-		url := req.URL().String()
-		log.Info("Executing command in pod", "pod", podID.Name, "command", strings.Join(command, " "), "url", url)
-		exec, err := remotecommand.NewWebSocketExecutor(kube.RestConfig, "POST", url)
-		if err != nil {
-			return fmt.Errorf("executing command in pod: %w", err)
-		}
-
-		var stdout bytes.Buffer
-		var stderr bytes.Buffer
-
-		// Run the command
-		if err := exec.StreamWithContext(ctx, remotecommand.StreamOptions{
-			Stdin:  stdin,
-			Stdout: &stdout,
-			Stderr: &stderr,
-			Tty:    false,
-		}); err != nil {
-			return fmt.Errorf("streaming command in pod: %w", err)
-		}
-
-		log.Info("executed command", "command", strings.Join(command, " "), "stdout", stdout.String(), "stderr", stderr.String())
 
 		log.Info("Copied prompt into sandbox pod", "pod", podID.Name, "path", path)
 	}
+
+	return nil
+}
+
+// writeFileInPod writes the specified data to a file in the specified pod.
+func writeFileInPod(ctx context.Context, kube *clients.KubernetesClient, podID *types.NamespacedName, path string, data []byte) error {
+	log := klog.FromContext(ctx)
+
+	command := []string{
+		"/bin/tee", path,
+	}
+	stdin := bytes.NewReader(data)
+
+	option := &v1.PodExecOptions{
+		// Container: containerName,
+		Command: command,
+		Stdin:   true,
+		Stdout:  true,
+		Stderr:  true,
+		TTY:     false,
+	}
+	if stdin == nil {
+		option.Stdin = false
+	}
+
+	req := kube.Clientset.CoreV1().RESTClient().Post().
+		Resource("pods").
+		Name(podID.Name).
+		Namespace(podID.Namespace).
+		SubResource("exec").
+		VersionedParams(option, scheme.ParameterCodec)
+
+	url := req.URL().String()
+	exec, err := remotecommand.NewWebSocketExecutor(kube.RestConfig, "POST", url)
+	if err != nil {
+		return fmt.Errorf("executing command in pod: %w", err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	// Run the command
+	if err := exec.StreamWithContext(ctx, remotecommand.StreamOptions{
+		Stdin:  stdin,
+		Stdout: &stdout,
+		Stderr: &stderr,
+		Tty:    false,
+	}); err != nil {
+		return fmt.Errorf("streaming command in pod: %w", err)
+	}
+
+	log.Info("executed command", "command", strings.Join(command, " "), "stdout", stdout.String(), "stderr", stderr.String())
 
 	return nil
 }
@@ -235,11 +234,7 @@ func waitForPodReady(ctx context.Context, kube *clients.KubernetesClient, podID 
 			if !ok {
 				return fmt.Errorf("unexpected type %T when watching pod", event.Object)
 			}
-			ready, err := isPodReady(pod)
-			if err != nil {
-				return err
-			}
-			if ready {
+			if isPodReady(pod) {
 				log.Info("Sandbox pod is ready", "pod", podID.Name)
 				return nil
 			}
@@ -247,11 +242,11 @@ func waitForPodReady(ctx context.Context, kube *clients.KubernetesClient, podID 
 	}
 }
 
-func isPodReady(pod *v1.Pod) (bool, error) {
+func isPodReady(pod *v1.Pod) bool {
 	for _, cond := range pod.Status.Conditions {
 		if cond.Type == v1.PodReady {
-			return cond.Status == v1.ConditionTrue, nil
+			return cond.Status == v1.ConditionTrue
 		}
 	}
-	return false, fmt.Errorf("pod does not have Ready condition")
+	return false
 }
