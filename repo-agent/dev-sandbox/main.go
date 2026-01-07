@@ -76,6 +76,7 @@ func run(ctx context.Context) error {
 	rootCommand.AddCommand(commands.BuildBootstrapCommand())
 	rootCommand.AddCommand(commands.NewCodeCommand())
 	rootCommand.AddCommand(commands.NewTmuxCommand())
+	rootCommand.AddCommand(commands.NewGithubIssueCommand())
 
 	rootCommand.AddCommand(commands.NewThreadsCommand())
 

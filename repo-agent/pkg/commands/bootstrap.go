@@ -35,7 +35,11 @@ func BuildBootstrapCommand() *cobra.Command {
 
 // RunBootstrap executes the bootstrap logic.
 func RunBootstrap(ctx context.Context, opt BootstrapOptions) error {
-	clientset, _, err := GetClientset()
+	kube, err := NewKubeClient()
+	if err != nil {
+		return err
+	}
+	clientset, err := kube.GetClientset()
 	if err != nil {
 		return err
 	}
