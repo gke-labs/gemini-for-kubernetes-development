@@ -257,6 +257,8 @@ func (s *Server) updateRepoWatch(c *gin.Context) {
 		RepoURL       string `json:"repoURL"`
 		AddPR         int    `json:"addPR"`
 		ExcludePR     int    `json:"excludePR"`
+		ExcludeIssue  int    `json:"excludeIssue"`
+		HandlerName   string `json:"handlerName"`
 		ExcludeBranch string `json:"excludeBranch"`
 		YAML          string `json:"yaml"`
 	}
@@ -265,8 +267,8 @@ func (s *Server) updateRepoWatch(c *gin.Context) {
 		return
 	}
 
-	if payload.AddPR == 0 && payload.ExcludePR == 0 && payload.YAML == "" && payload.ExcludeBranch == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "addPR, excludePR, excludeBranch or yaml is required"})
+	if payload.AddPR == 0 && payload.ExcludePR == 0 && payload.ExcludeIssue == 0 && payload.YAML == "" && payload.ExcludeBranch == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "addPR, excludePR, excludeIssue, excludeBranch or yaml is required"})
 		return
 	}
 
@@ -366,6 +368,68 @@ func (s *Server) updateRepoWatch(c *gin.Context) {
 			if changed {
 				if err := unstructured.SetNestedSlice(existing.Object, convInt64SliceToInterfaceSlice(newExclude), "spec", "review", "excludePullRequests"); err != nil {
 					log.Printf("Failed to update excludePullRequests: %v", err)
+				}
+			}
+		}
+	}
+
+	// Exclude Issue if provided
+	if payload.ExcludeIssue != 0 && payload.HandlerName != "" {
+		handlersSlice, found, err := unstructured.NestedSlice(existing.Object, "spec", "issueHandlers")
+		if err != nil {
+			log.Printf("Failed to get issueHandlers: %v", err)
+		}
+
+		if found {
+			var newHandlers []interface{}
+			updated := false
+			for _, h := range handlersSlice {
+				handlerMap, ok := h.(map[string]interface{})
+				if !ok {
+					newHandlers = append(newHandlers, h)
+					continue
+				}
+
+				name, _ := handlerMap["name"].(string)
+				if name == payload.HandlerName {
+					// Found the handler, update excludeIssues
+					excludeSlice, _, _ := unstructured.NestedSlice(handlerMap, "excludeIssues")
+
+					var excludeIssues []int64
+					for _, v := range excludeSlice {
+						if i, ok := v.(int64); ok {
+							excludeIssues = append(excludeIssues, i)
+						} else if i, ok := v.(int); ok {
+							excludeIssues = append(excludeIssues, int64(i))
+						}
+					}
+
+					exists := false
+					for _, issue := range excludeIssues {
+						if issue == int64(payload.ExcludeIssue) {
+							exists = true
+							break
+						}
+					}
+
+					if !exists {
+						excludeIssues = append(excludeIssues, int64(payload.ExcludeIssue))
+						// Update the handler map
+						if err := unstructured.SetNestedSlice(handlerMap, convInt64SliceToInterfaceSlice(excludeIssues), "excludeIssues"); err != nil {
+							log.Printf("Failed to set excludeIssues: %v", err)
+						} else {
+							updated = true
+						}
+					}
+				}
+				newHandlers = append(newHandlers, handlerMap)
+			}
+
+			if updated {
+				if err := unstructured.SetNestedSlice(existing.Object, newHandlers, "spec", "issueHandlers"); err != nil {
+					log.Printf("Failed to update issueHandlers: %v", err)
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update object structure for issueHandlers"})
+					return
 				}
 			}
 		}
