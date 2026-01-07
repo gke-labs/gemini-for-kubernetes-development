@@ -1,0 +1,99 @@
+package commands
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/prompts"
+	"github.com/spf13/cobra"
+	"k8s.io/klog/v2"
+)
+
+// GithubFeedbackOptions holds options for the RunCode function.
+type GithubFeedbackOptions struct {
+	Repo        string
+	PullRequest int
+	Sandbox     string
+}
+
+// NewGithubFeedbackCommand creates a new cobra command for using a dev sandbox to address github feedback
+func NewGithubFeedbackCommand() *cobra.Command {
+	var opt GithubFeedbackOptions
+
+	cmd := &cobra.Command{
+		Use:   "github-feedback",
+		Short: "Address github pull request feedback using an LLM in a dev sandbox",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) != 0 {
+				return fmt.Errorf("command does not take positional arguments")
+			}
+
+			return RunGithubFeedback(cmd.Context(), opt)
+		},
+	}
+
+	cmd.Flags().StringVar(&opt.Sandbox, "sandbox", opt.Sandbox, "Name of existing sandbox to reuse")
+	cmd.Flags().StringVar(&opt.Repo, "repo", opt.Repo, "GitHub repository (e.g., gke-labs/gemini-for-kubernetes-development)")
+	cmd.Flags().IntVar(&opt.PullRequest, "pull-request", opt.PullRequest, "GitHub pull request number")
+	return cmd
+}
+
+// RunGithubFeedback launches gemini-cli to respond to the specified GitHub pull request feedback.
+func RunGithubFeedback(ctx context.Context, opt GithubFeedbackOptions) error {
+	log := klog.FromContext(ctx)
+
+	githubAPI, err := github.NewClient(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to create github client: %w", err)
+	}
+
+	kube, err := clients.NewKubernetesClient()
+	if err != nil {
+		return err
+	}
+
+	repo, err := github.ParseRepo(opt.Repo)
+	if err != nil {
+		return err
+	}
+
+	if opt.PullRequest == 0 {
+		return fmt.Errorf("--pull-request is required")
+	}
+	if opt.Repo == "" {
+		return fmt.Errorf("--repo is required")
+	}
+	if opt.Sandbox == "" {
+		// TODO: We could choose instead to launch a sandbox here
+		return fmt.Errorf("--sandbox is required")
+	}
+
+	prompt, err := prompts.FixPRFeedbackPrompt(ctx, githubAPI, repo, opt.PullRequest)
+	if err != nil {
+		return fmt.Errorf("failed to generate prompt for pull-request: %w", err)
+	}
+
+	podID, err := findSandboxPod(ctx, opt.Sandbox)
+	if err != nil {
+		return err
+	}
+
+	if podID == nil {
+		return fmt.Errorf("sandbox %q not found", opt.Sandbox)
+	}
+
+	// Copy the prompt into the pod (for now)
+	if len(prompt) > 0 {
+		path := "/workspaces/prompt.txt"
+		if err := writeFileInPod(ctx, kube, podID, path, prompt); err != nil {
+			return fmt.Errorf("copying prompt into sandbox pod: %w", err)
+		}
+
+		log.Info("wrote prompt into sandbox pod", "pod", podID.Name, "path", path)
+	}
+
+	return nil
+}
