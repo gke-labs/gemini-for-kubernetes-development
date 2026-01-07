@@ -1,4 +1,4 @@
-# Build the issue-sandbox binary
+# Build the dev-sandbox binary
 FROM golang:1.24 AS builder
 WORKDIR /app
 

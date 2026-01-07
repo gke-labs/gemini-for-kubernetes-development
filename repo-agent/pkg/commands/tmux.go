@@ -43,6 +43,10 @@ func RunTmux(ctx context.Context, opt RunTmuxOptions) error {
 		return err
 	}
 
+	if podID == nil {
+		return fmt.Errorf("no pod found for sandbox %q", opt.SandboxName)
+	}
+
 	// 2. Update ~/.ssh/config
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
