@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/prompts"
 	"github.com/spf13/cobra"
@@ -152,6 +153,10 @@ func RunGithubIssue(ctx context.Context, opt GithubIssueOptions) error {
 		}
 	}
 
+	if err := waitForPodReady(ctx, kube, podID); err != nil {
+		return err
+	}
+
 	// Copy the prompt into the pod (for now)
 	if len(prompt) > 0 {
 		log.Info("copying prompt into sandbox pod", "pod", podID.Name)
@@ -210,4 +215,50 @@ func RunGithubIssue(ctx context.Context, opt GithubIssueOptions) error {
 	}
 
 	return nil
+}
+
+// waitForPodReady waits for the specified pod to be ready.
+func waitForPodReady(ctx context.Context, kube *KubeClient, podID *types.NamespacedName) error {
+	log := klog.FromContext(ctx)
+
+	clientset, err := kube.GetClientset()
+	if err != nil {
+		return err
+	}
+
+	log.Info("Waiting for sandbox pod to be ready", "pod", podID.Name)
+
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+
+	for {
+		stream, err := clientset.CoreV1().Pods(podID.Namespace).Watch(ctx, metav1.ListOptions{FieldSelector: "metadata.name=" + podID.Name, Watch: true})
+		if err != nil {
+			return err
+		}
+		defer stream.Stop()
+		for event := range stream.ResultChan() {
+			pod, ok := event.Object.(*v1.Pod)
+			if !ok {
+				return fmt.Errorf("unexpected type %T when watching pod", event.Object)
+			}
+			ready, err := isPodReady(pod)
+			if err != nil {
+				return err
+			}
+			if ready {
+				log.Info("Sandbox pod is ready", "pod", podID.Name)
+				return nil
+			}
+		}
+	}
+}
+
+func isPodReady(pod *v1.Pod) (bool, error) {
+	for _, cond := range pod.Status.Conditions {
+		if cond.Type == v1.PodReady {
+			return cond.Status == v1.ConditionTrue, nil
+		}
+	}
+	return false, fmt.Errorf("pod does not have Ready condition")
 }
