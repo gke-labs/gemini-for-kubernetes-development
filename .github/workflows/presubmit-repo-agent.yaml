@@ -81,6 +81,10 @@ jobs:
           cache-dependency-path: |
             repo-agent/go.sum
             dev/tools/go.sum
+
+      - name: dev/tasks/free-disk-space-on-github-actions-runner
+        run: dev/tasks/free-disk-space-on-github-actions-runner
+
       - name: Run E2E Tests
         env:
           GITHUB_PAT: ${{ github.token }}
