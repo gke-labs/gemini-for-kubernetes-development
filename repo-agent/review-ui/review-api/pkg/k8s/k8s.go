@@ -162,6 +162,14 @@ func (m *Manager) ScaledownSandbox(ctx context.Context, namespace, repo, prID st
 	}
 	log.Printf("Scaling down sandbox %s", sandboxName)
 
+	_, err = m.Client.Resource(gvr).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to get sandbox %s: %w", sandboxName, err)
+	}
+
 	sandbox := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
@@ -238,6 +246,33 @@ func (m *Manager) UpdateReviewSandboxAnnotation(ctx context.Context, namespace, 
 	return nil
 }
 
+func (m *Manager) UpdateDevSandboxAnnotation(ctx context.Context, namespace, sandboxName, key, value string) error {
+	gvr := schema.GroupVersionResource{
+		Group:    "custom.agents.x-k8s.io",
+		Version:  "v1alpha1",
+		Resource: "devsandboxes",
+	}
+
+	sandbox, err := m.Client.Resource(gvr).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to get devsandbox %s: %w", sandboxName, err)
+	}
+
+	if sandbox.GetAnnotations() == nil {
+		sandbox.SetAnnotations(make(map[string]string))
+	}
+	annotations := sandbox.GetAnnotations()
+	annotations[key] = value
+	sandbox.SetAnnotations(annotations)
+
+	_, err = m.Client.Resource(gvr).Namespace(namespace).Update(ctx, sandbox, v1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to update devsandbox annotation: %w", err)
+	}
+
+	return nil
+}
+
 func (m *Manager) GetGitHubToken(ctx context.Context, repoWatch *unstructured.Unstructured) (string, error) {
 	secretName, found, err := unstructured.NestedString(repoWatch.Object, "spec", "githubSecretName")
 	if err != nil || !found {
@@ -298,6 +333,14 @@ func (m *Manager) ScaledownIssueSandbox(ctx context.Context, namespace, repo, is
 	}
 	log.Printf("Scaling down issue sandbox %s", sandboxName)
 
+	_, err := m.Client.Resource(gvr).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to get issue sandbox %s: %w", sandboxName, err)
+	}
+
 	sandbox := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
@@ -312,7 +355,7 @@ func (m *Manager) ScaledownIssueSandbox(ctx context.Context, namespace, repo, is
 		},
 	}
 
-	_, err := m.Client.Resource(gvr).Namespace(namespace).Apply(ctx, sandboxName,
+	_, err = m.Client.Resource(gvr).Namespace(namespace).Apply(ctx, sandboxName,
 		sandbox, v1.ApplyOptions{FieldManager: "review-ui", Force: true})
 	if err != nil {
 		return fmt.Errorf("failed to scaledown issue sandbox: %w", err)
@@ -328,6 +371,14 @@ func (m *Manager) ScaledownDevSandboxHelper(ctx context.Context, namespace, name
 	}
 	log.Printf("Scaling down dev sandbox %s", name)
 
+	_, err := m.Client.Resource(gvr).Namespace(namespace).Get(ctx, name, v1.GetOptions{})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to get dev sandbox %s: %w", name, err)
+	}
+
 	sandbox := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
@@ -342,7 +393,7 @@ func (m *Manager) ScaledownDevSandboxHelper(ctx context.Context, namespace, name
 		},
 	}
 
-	_, err := m.Client.Resource(gvr).Namespace(namespace).Apply(ctx, name,
+	_, err = m.Client.Resource(gvr).Namespace(namespace).Apply(ctx, name,
 		sandbox, v1.ApplyOptions{FieldManager: "review-ui", Force: true})
 	if err != nil {
 		return fmt.Errorf("failed to scaledown dev sandbox: %w", err)
@@ -366,6 +417,14 @@ func (m *Manager) ScaleupSandbox(ctx context.Context, namespace, repo, prID stri
 		Resource: "reviewsandboxes",
 	}
 	log.Printf("Scaling up sandbox %s", sandboxName)
+
+	_, err = m.Client.Resource(gvr).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to get sandbox %s: %w", sandboxName, err)
+	}
 
 	sandbox := &unstructured.Unstructured{
 		Object: map[string]interface{}{
@@ -399,6 +458,14 @@ func (m *Manager) ScaleupIssueSandbox(ctx context.Context, namespace, repo, issu
 	}
 	log.Printf("Scaling up issue sandbox %s", sandboxName)
 
+	_, err := m.Client.Resource(gvr).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to get issue sandbox %s: %w", sandboxName, err)
+	}
+
 	sandbox := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
@@ -413,10 +480,48 @@ func (m *Manager) ScaleupIssueSandbox(ctx context.Context, namespace, repo, issu
 		},
 	}
 
-	_, err := m.Client.Resource(gvr).Namespace(namespace).Apply(ctx, sandboxName,
+	_, err = m.Client.Resource(gvr).Namespace(namespace).Apply(ctx, sandboxName,
 		sandbox, v1.ApplyOptions{FieldManager: "review-ui", Force: true})
 	if err != nil {
 		return fmt.Errorf("failed to scale up issue sandbox: %w", err)
+	}
+	return nil
+}
+
+func (m *Manager) ScaleupDevSandboxHelper(ctx context.Context, namespace, name string) error {
+	gvr := schema.GroupVersionResource{
+		Group:    "custom.agents.x-k8s.io",
+		Version:  "v1alpha1",
+		Resource: "devsandboxes",
+	}
+	log.Printf("Scaling up dev sandbox %s", name)
+
+	_, err := m.Client.Resource(gvr).Namespace(namespace).Get(ctx, name, v1.GetOptions{})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to get dev sandbox %s: %w", name, err)
+	}
+
+	sandbox := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
+			"kind":       "DevSandbox",
+			"metadata": map[string]interface{}{
+				"name":      name,
+				"namespace": namespace,
+			},
+			"spec": map[string]interface{}{
+				"replicas": int64(1),
+			},
+		},
+	}
+
+	_, err = m.Client.Resource(gvr).Namespace(namespace).Apply(ctx, name,
+		sandbox, v1.ApplyOptions{FieldManager: "review-ui", Force: true})
+	if err != nil {
+		return fmt.Errorf("failed to scale up dev sandbox: %w", err)
 	}
 	return nil
 }

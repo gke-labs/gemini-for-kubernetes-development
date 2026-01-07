@@ -52,6 +52,8 @@ type Repo struct {
 	Dev                 *DevConfig     `json:"dev,omitempty"`
 	PendingPRs          []PendingPR    `json:"pendingPRs,omitempty"`
 	ExcludePullRequests []int64        `json:"excludePullRequests,omitempty"`
+	PendingDevBranches  []string       `json:"pendingDevBranches,omitempty"`
+	ExcludeBranches     []string       `json:"excludeBranches,omitempty"`
 }
 
 // PendingPR represents a pending pull request
