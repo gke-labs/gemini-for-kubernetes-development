@@ -17,8 +17,10 @@ KIND_CLUSTER_ARG=
 endif
 
 # Check pre-reqs
-ifndef GEMINI_API_KEY
-$(error GEMINI_API_KEY is not set. Please set it before running make.)
+ifndef GITHUB_CLIENT_ID
+  ifndef GEMINI_API_KEY
+    $(error GEMINI_API_KEY is not set. It is required for single-user mode. Please set it or GITHUB_CLIENT_ID before running make.)
+  endif
 endif
 
 ifndef GITHUB_PAT

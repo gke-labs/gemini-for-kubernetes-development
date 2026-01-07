@@ -39,7 +39,7 @@ func (s *Server) getSettings(c *gin.Context) {
 		}
 	}
 	if sec, err := s.K8sManager.Clientset.CoreV1().Secrets(namespace).Get(c.Request.Context(), pkgk8s.GeminiSecretName, v1.GetOptions{}); err == nil {
-		if _, ok := sec.Data["gemini"]; ok {
+		if val, ok := sec.Data["gemini"]; ok && len(val) > 0 {
 			settings["gemini_api_key_set"] = true
 		}
 	}
