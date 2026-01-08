@@ -92,6 +92,10 @@ type PRReviewSpec struct {
 	// Prefer assigned to self when selecting PRs for review
 	// +kubebuilder:validation:Optional
 	PreferAssignedToSelf bool `json:"preferAssignedToSelf,omitempty"`
+
+	// Assignees to filter PRs for this handler
+	// +kubebuilder:validation:Optional
+	Assignees []string `json:"assignees,omitempty"`
 }
 
 // DevSpec defines the configuration for development sandboxes.
