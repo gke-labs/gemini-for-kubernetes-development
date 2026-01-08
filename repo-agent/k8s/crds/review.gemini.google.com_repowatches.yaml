@@ -124,6 +124,10 @@ spec:
                 type: string
               review:
                 properties:
+                  assignees:
+                    items:
+                      type: string
+                    type: array
                   devcontainerConfigRef:
                     type: string
                   excludePullRequests:

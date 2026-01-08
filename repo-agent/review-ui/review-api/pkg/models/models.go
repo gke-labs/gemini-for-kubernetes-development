@@ -65,7 +65,8 @@ type PendingPR struct {
 
 // ReviewConfig holds configuration for PR reviews
 type ReviewConfig struct {
-	MaxActiveSandboxes int64 `json:"maxActiveSandboxes"`
+	MaxActiveSandboxes int64    `json:"maxActiveSandboxes"`
+	Assignees          []string `json:"assignees,omitempty"`
 }
 
 // IssueHandler holds configuration for an issue handler

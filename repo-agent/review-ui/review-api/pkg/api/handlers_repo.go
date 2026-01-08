@@ -599,6 +599,9 @@ func (s *Server) getRepos(c *gin.Context) {
 		// Extract review config
 		if maxActiveSandboxes, found, err := unstructured.NestedInt64(repoWatch.Object, "spec", "review", "maxActiveSandboxes"); err == nil && found && maxActiveSandboxes > 0 {
 			repo.Review = &models.ReviewConfig{MaxActiveSandboxes: maxActiveSandboxes}
+			if assignees, found, err := unstructured.NestedStringSlice(repoWatch.Object, "spec", "review", "assignees"); err == nil && found {
+				repo.Review.Assignees = assignees
+			}
 		}
 
 		// Extract PendingPRs
