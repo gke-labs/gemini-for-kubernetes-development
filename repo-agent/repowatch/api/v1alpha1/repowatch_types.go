@@ -91,7 +91,7 @@ type PRReviewSpec struct {
 
 	// Prefer assigned to self when selecting PRs for review
 	// +kubebuilder:validation:Optional
-	PreferAssignedToSelf bool `json:"preferAssignedToSelf,omitempty"`
+	AssignedToSelf bool `json:"assignedToSelf,omitempty"`
 
 	// Assignees to filter PRs for this handler
 	// +kubebuilder:validation:Optional

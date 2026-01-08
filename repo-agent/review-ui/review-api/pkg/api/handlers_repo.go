@@ -170,7 +170,6 @@ spec:
     llm:
       apiKeySecretRef: gemini-vscode-tokens
   review:
-    preferAssignedToSelf: true
     reviewShutdownAfterMinutes: 30
     devcontainerConfigRef: devcontainer-json
     llm:
