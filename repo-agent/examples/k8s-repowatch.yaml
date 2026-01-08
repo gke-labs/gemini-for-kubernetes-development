@@ -19,4 +19,3 @@ spec:
     #- 12345
     #- 53434
     devcontainerConfigRef: devcontainer-json
-    preferAssignedToSelf: true

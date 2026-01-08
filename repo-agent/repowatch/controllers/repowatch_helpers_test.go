@@ -366,22 +366,19 @@ func TestSortPRs(t *testing.T) {
 
 	tests := []struct {
 		name          string
-		preferSelf    bool
 		inputPRs      []*github.PullRequest
 		expectedOrder []int
 	}{
 		{
-			name:       "Sort disabled",
-			preferSelf: false,
+			name: "Sorts by assignment",
 			inputPRs: []*github.PullRequest{
 				createPRWithAssignee(1, "other"),
 				createPRWithAssignee(2, "myself"),
 			},
-			expectedOrder: []int{1, 2},
+			expectedOrder: []int{2, 1},
 		},
 		{
-			name:       "Sort enabled",
-			preferSelf: true,
+			name: "Sorts by assignment - complex",
 			inputPRs: []*github.PullRequest{
 				createPRWithAssignee(1, "other"),
 				createPRWithAssignee(2, "myself"),
@@ -390,8 +387,7 @@ func TestSortPRs(t *testing.T) {
 			expectedOrder: []int{2, 1, 3},
 		},
 		{
-			name:       "Sort enabled - mixed",
-			preferSelf: true,
+			name: "Sorts by assignment - mixed",
 			inputPRs: []*github.PullRequest{
 				createPRWithAssignee(1, "other"),
 				createPRWithAssignee(2, "myself", "other"), // assigned to me and others
@@ -407,9 +403,7 @@ func TestSortPRs(t *testing.T) {
 		t.Run(tc.name, func(_ *testing.T) {
 			repoWatch := &reviewv1alpha1.RepoWatch{
 				Spec: reviewv1alpha1.RepoWatchSpec{
-					Review: reviewv1alpha1.PRReviewSpec{
-						PreferAssignedToSelf: tc.preferSelf,
-					},
+					Review: reviewv1alpha1.PRReviewSpec{},
 				},
 			}
 
