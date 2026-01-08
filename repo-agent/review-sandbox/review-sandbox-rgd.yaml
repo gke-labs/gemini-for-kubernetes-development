@@ -10,6 +10,7 @@ spec:
     spec:
       # Spec fields that users can provide.
       replicas: integer | default=1
+      maxReviewFiles: integer | default=30
       llmBackend:
         name: string | default="gemini-cli"
       llm:
@@ -89,6 +90,8 @@ spec:
                       value: ${schema.spec.source.repo}
                     - name: PRID
                       value: ${schema.spec.source.pr}
+                    - name: MAX_REVIEW_FILES
+                      value: ${string(schema.spec.maxReviewFiles)}
                     # URL to the repository where the .devcontainer folder we want to load is located
                     - name: AGENT_PROMPT
                       value: ${schema.spec.llm.prompt}

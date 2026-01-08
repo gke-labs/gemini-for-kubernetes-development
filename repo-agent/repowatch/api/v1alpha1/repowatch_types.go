@@ -71,6 +71,11 @@ type PRReviewSpec struct {
 	// +kubebuilder:validation:Optional
 	MaxSandboxes int `json:"maxSandboxes,omitempty"`
 
+	// The maximum number of files to review in a PR.
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=30
+	MaxReviewFiles int `json:"maxReviewFiles,omitempty"`
+
 	// The time in minutes after which a review sandbox will be scaled down to 0 replicas.
 	// +kubebuilder:validation:Optional
 	ReviewShutdownAfterMinutes int `json:"reviewShutdownAfterMinutes,omitempty"`
