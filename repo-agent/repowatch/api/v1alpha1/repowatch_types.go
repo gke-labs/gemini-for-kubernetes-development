@@ -89,9 +89,10 @@ type PRReviewSpec struct {
 	// +kubebuilder:validation:Optional
 	Labels [][]string `json:"labels"`
 
-	// Prefer assigned to self when selecting PRs for review
+	// Assigned to self when selecting PRs for review
+	// If true, only PRs assigned to the user associated with the GitHub token will be considered in addition to the Asignees list.
 	// +kubebuilder:validation:Optional
-	PreferAssignedToSelf bool `json:"preferAssignedToSelf,omitempty"`
+	AssignedToSelf bool `json:"assignedToSelf,omitempty"`
 
 	// Assignees to filter PRs for this handler
 	// +kubebuilder:validation:Optional

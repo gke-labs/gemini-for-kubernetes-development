@@ -1590,9 +1590,8 @@ func TestRepoWatchReconciler_Reconcile_FilteredAndSortedPRs(t *testing.T) {
 			RepoURL:          "https://github.com/test/repo",
 			GithubSecretName: "github-secret",
 			Review: reviewv1alpha1.PRReviewSpec{
-				MaxActiveSandboxes:   2,
-				Labels:               [][]string{{"bug"}},
-				PreferAssignedToSelf: true,
+				MaxActiveSandboxes: 2,
+				Labels:             [][]string{{"bug"}},
 				LLM: reviewv1alpha1.LLMConfig{
 					APIKeySecretRef: "dummy-secret",
 				},
