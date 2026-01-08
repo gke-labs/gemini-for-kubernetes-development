@@ -4,6 +4,7 @@ import yaml from 'js-yaml';
 function AddRepo({ onCancel, onRepoAdded }) {
     const [url, setUrl] = useState('');
     const [name, setName] = useState('');
+    const [assignees, setAssignees] = useState('');
     const [yamlMode, setYamlMode] = useState(false);
     const [yamlContent, setYamlContent] = useState('');
     const [isLoading, setIsLoading] = useState(false);
@@ -59,7 +60,7 @@ function AddRepo({ onCancel, onRepoAdded }) {
         if (tmpl) {
             // Merge current inputs if we wanted to be fancy, but simpler to just load the template content
             // and maybe re-apply the URL/Name if they are set.
-            const updated = updateYamlWithInputs(tmpl.content, url, name);
+            const updated = updateYamlWithInputs(tmpl.content, url, name, assignees);
             setYamlContent(updated);
 
             // Also update inputs from template defaults if current inputs are empty
@@ -71,8 +72,11 @@ function AddRepo({ onCancel, onRepoAdded }) {
                     if (repoWatch.spec && repoWatch.spec.repoURL) {
                         setUrl(repoWatch.spec.repoURL);
                     }
-                     if (repoWatch.metadata && repoWatch.metadata.name && repoWatch.metadata.name !== 'change-name') {
+                    if (repoWatch.metadata && repoWatch.metadata.name && repoWatch.metadata.name !== 'change-name') {
                         setName(repoWatch.metadata.name);
+                    }
+                    if (repoWatch.spec && repoWatch.spec.review && repoWatch.spec.review.assignees) {
+                        setAssignees(repoWatch.spec.review.assignees.join(', '));
                     }
                 }
             } catch (e) {
@@ -81,7 +85,7 @@ function AddRepo({ onCancel, onRepoAdded }) {
         }
     };
 
-    const updateYamlWithInputs = (currentContent, currentUrl, currentName) => {
+    const updateYamlWithInputs = (currentContent, currentUrl, currentName, currentAssignees) => {
         try {
             const docs = [];
             yaml.loadAll(currentContent, function (doc) {
@@ -117,6 +121,13 @@ function AddRepo({ onCancel, onRepoAdded }) {
                     }
                 }
                 repoWatchDoc.metadata.name = finalName;
+
+                if (currentAssignees && currentAssignees.trim()) {
+                    if (!repoWatchDoc.spec.review) repoWatchDoc.spec.review = {};
+                    repoWatchDoc.spec.review.assignees = currentAssignees.split(',').map(s => s.trim()).filter(s => s !== '');
+                } else if (repoWatchDoc.spec.review) {
+                    delete repoWatchDoc.spec.review.assignees;
+                }
             }
 
             // Dump all back to string joined by ---
@@ -129,7 +140,7 @@ function AddRepo({ onCancel, onRepoAdded }) {
 
     const handleSwitchToYaml = () => {
         // Update YAML with current inputs before switching
-        const updatedYaml = updateYamlWithInputs(yamlContent, url, name);
+        const updatedYaml = updateYamlWithInputs(yamlContent, url, name, assignees);
         setYamlContent(updatedYaml);
         setYamlMode(true);
     };
@@ -151,6 +162,11 @@ function AddRepo({ onCancel, onRepoAdded }) {
                 if (repoWatch.metadata && repoWatch.metadata.name) {
                     setName(repoWatch.metadata.name);
                 }
+                if (repoWatch.spec && repoWatch.spec.review && repoWatch.spec.review.assignees) {
+                    setAssignees(repoWatch.spec.review.assignees.join(', '));
+                } else {
+                    setAssignees('');
+                }
             }
         } catch (e) {
             // Ignore parsing errors while typing
@@ -165,7 +181,7 @@ function AddRepo({ onCancel, onRepoAdded }) {
         let finalYaml = yamlContent;
 
         if (!yamlMode) {
-            finalYaml = updateYamlWithInputs(yamlContent, url, name);
+            finalYaml = updateYamlWithInputs(yamlContent, url, name, assignees);
         }
 
         // Common Validation
@@ -282,6 +298,19 @@ function AddRepo({ onCancel, onRepoAdded }) {
                                 disabled={isLoading}
                             />
                             <small>Leave blank to use the repository name.</small>
+                        </div>
+
+                        <div className="form-group">
+                            <label htmlFor="assignees">Assignees (Optional):</label>
+                            <input
+                                type="text"
+                                id="assignees"
+                                value={assignees}
+                                onChange={(e) => setAssignees(e.target.value)}
+                                placeholder="e.g. username1, username2"
+                                disabled={isLoading}
+                            />
+                            <small>Only watch PRs assigned to these users. Leave blank to watch all PRs.</small>
                         </div>
                     </>
                 )}

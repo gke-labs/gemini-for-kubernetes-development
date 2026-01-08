@@ -333,6 +333,7 @@ func (r *RepoWatchReconciler) reconcileReviews(ctx context.Context, repoWatch *r
 	}
 
 	prs = r.filterPRsByLabels(prs, repoWatch)
+	prs = r.filterPRsByAssignees(prs, repoWatch)
 	prs = r.deduplicatePRs(prs, explicitPRs)
 	prs = r.excludePRs(prs, repoWatch)
 	prs = r.sortPRs(ctx, prs, repoWatch, user)
@@ -443,6 +444,32 @@ func (r *RepoWatchReconciler) filterPRsByLabels(prs []*github.PullRequest, repoW
 		return filteredPRs
 	}
 	return prs
+}
+
+func (r *RepoWatchReconciler) filterPRsByAssignees(prs []*github.PullRequest, repoWatch *reviewv1alpha1.RepoWatch) []*github.PullRequest {
+	if len(repoWatch.Spec.Review.Assignees) == 0 {
+		return prs
+	}
+
+	var filteredPRs []*github.PullRequest
+	assigneesMap := make(map[string]bool)
+	for _, assignee := range repoWatch.Spec.Review.Assignees {
+		assigneesMap[assignee] = true
+	}
+
+	for _, pr := range prs {
+		matches := false
+		for _, assignee := range pr.Assignees {
+			if assignee.Login != nil && assigneesMap[*assignee.Login] {
+				matches = true
+				break
+			}
+		}
+		if matches {
+			filteredPRs = append(filteredPRs, pr)
+		}
+	}
+	return filteredPRs
 }
 
 func (r *RepoWatchReconciler) deduplicatePRs(prs []*github.PullRequest, explicitPRs []*github.PullRequest) []*github.PullRequest {
