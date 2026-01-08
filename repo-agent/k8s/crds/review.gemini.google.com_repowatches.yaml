@@ -124,6 +124,8 @@ spec:
                 type: string
               review:
                 properties:
+                  assignedToSelf:
+                    type: boolean
                   assignees:
                     items:
                       type: string
@@ -162,8 +164,6 @@ spec:
                     type: integer
                   maxSandboxes:
                     type: integer
-                  preferAssignedToSelf:
-                    type: boolean
                   pullRequests:
                     items:
                       type: integer

@@ -134,34 +134,30 @@ func getOwnedIssueSandboxes(sandboxes []unstructured.Unstructured, ownerUID type
 	return ownedSandboxes
 }
 
-func (r *RepoWatchReconciler) sortPRs(ctx context.Context, prs []*github.PullRequest, repoWatch *reviewv1alpha1.RepoWatch, user *github.User) []*github.PullRequest {
+func (r *RepoWatchReconciler) sortPRs(ctx context.Context, prs []*github.PullRequest, _ *reviewv1alpha1.RepoWatch, user *github.User) []*github.PullRequest {
+	// Prioritize PRs assigned to the current user
 	log := log.FromContext(ctx)
-	// Sort by PreferAssignedToSelf
-	// TODO(barney-s): May be rate limited. Cache the user info.
-	if repoWatch.Spec.Review.PreferAssignedToSelf {
-		if user == nil || user.Login == nil {
-			log.Error(errors.New("user or user login is nil"), "unable to get current user login for sorting PRs")
-			return prs
-		}
-		var assignedToMe []*github.PullRequest
-		var others []*github.PullRequest
-		for _, pr := range prs {
-			isAssigned := false
-			for _, assignee := range pr.Assignees {
-				if assignee.Login != nil && *assignee.Login == *user.Login {
-					isAssigned = true
-					break
-				}
-			}
-			if isAssigned {
-				assignedToMe = append(assignedToMe, pr)
-			} else {
-				others = append(others, pr)
-			}
-		}
-		return append(assignedToMe, others...)
+	if user == nil || user.Login == nil {
+		log.Error(errors.New("user or user login is nil"), "unable to get current user login for sorting PRs")
+		return prs
 	}
-	return prs
+	var assignedToMe []*github.PullRequest
+	var others []*github.PullRequest
+	for _, pr := range prs {
+		isAssigned := false
+		for _, assignee := range pr.Assignees {
+			if assignee.Login != nil && *assignee.Login == *user.Login {
+				isAssigned = true
+				break
+			}
+		}
+		if isAssigned {
+			assignedToMe = append(assignedToMe, pr)
+		} else {
+			others = append(others, pr)
+		}
+	}
+	return append(assignedToMe, others...)
 }
 
 // isPRExplicit checks if a given PR number is in the list of explicit PRs.
