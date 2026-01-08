@@ -1122,6 +1122,11 @@ function App() {
             )}
             </nav>
             <div className="repo-controls">
+                {activeRepo.review?.assignees && activeRepo.review.assignees.length > 0 && (
+                    <span className="assignee-filter" title={`Watching PRs assigned to: ${activeRepo.review.assignees.join(', ')}`} style={{marginRight: '15px', fontSize: '0.9em', color: '#666', border: '1px solid #ddd', padding: '2px 8px', borderRadius: '12px', backgroundColor: '#f9f9f9'}}>
+                        Filter: {activeRepo.review.assignees.join(', ')}
+                    </span>
+                )}
                 <button className="btn btn-refresh-lg" onClick={() => refreshData(true)} title="Refresh now">↻</button>
                 {lastUpdated && <span className={`last-updated ${Date.now() - lastUpdated > 60000 ? 'stale' : ''}`}>Updated {lastUpdated.toLocaleTimeString()}</span>}
                 <button className="btn" onClick={() => setView('update_repo')} style={{marginLeft: '10px', marginRight: '10px'}}>

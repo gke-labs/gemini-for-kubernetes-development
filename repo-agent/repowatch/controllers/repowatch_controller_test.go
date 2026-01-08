@@ -1878,3 +1878,100 @@ func TestReconcile_MultipleRepoWatchesSameRepo(t *testing.T) {
 	g.Expect(fetchedB.Status.ReviewSandboxes).To(gomega.HaveLen(1))
 	g.Expect(fetchedB.Status.ReviewSandboxes[0].Number).To(gomega.Equal(prNumber))
 }
+
+func TestRepoWatchReconciler_Reconcile_AssigneeFilteredPRs(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	s := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(s)
+	_ = reviewv1alpha1.AddToScheme(s)
+
+	fakeClient := clientfake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&reviewv1alpha1.RepoWatch{}).Build()
+
+	// Mock Response
+	// PR 3: #3, Assignee: user1
+	// PR 2: #2, Assignee: user2
+	// PR 1: #1, No Assignee
+	responseBody := `[
+        {"number": 3, "head": {"repo": {"clone_url": "u", "html_url": "u"}, "ref": "m"}, "html_url": "u", "diff_url": "d", "title": "t", "assignees": [{"login": "user1"}]},
+        {"number": 2, "head": {"repo": {"clone_url": "u", "html_url": "u"}, "ref": "m"}, "html_url": "u", "diff_url": "d", "title": "t", "assignees": [{"login": "user2"}]},
+        {"number": 1, "head": {"repo": {"clone_url": "u", "html_url": "u"}, "ref": "m"}, "html_url": "u", "diff_url": "d", "title": "t", "assignees": []}
+    ]`
+
+	mockHTTPClient := &http.Client{
+		Transport: &mockRoundTripper{
+			responses: map[string]func() *http.Response{
+				"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=created&state=open": func() *http.Response {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(strings.NewReader(responseBody)),
+					}
+				},
+				"https://api.github.com/user": func() *http.Response {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(strings.NewReader(`{"login": "test-user"}`)),
+					}
+				},
+			},
+		},
+	}
+	ghClient := github.NewClient(mockHTTPClient)
+
+	r := &RepoWatchReconciler{
+		Client: fakeClient,
+		Scheme: s,
+		NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
+			return ghClient, map[string]string{"pat": "test-pat"}, nil
+		},
+	}
+
+	objName := "test-repowatch-assignees"
+	objNamespace := "default"
+	req := reconcile.Request{
+		NamespacedName: types.NamespacedName{
+			Name:      objName,
+			Namespace: objNamespace,
+		},
+	}
+
+	repoWatch := &reviewv1alpha1.RepoWatch{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      objName,
+			Namespace: objNamespace,
+		},
+		Spec: reviewv1alpha1.RepoWatchSpec{
+			RepoURL:          "https://github.com/test/repo",
+			GithubSecretName: "github-secret",
+			Review: reviewv1alpha1.PRReviewSpec{
+				MaxActiveSandboxes: 10,
+				Assignees:          []string{"user1"},
+				LLM: reviewv1alpha1.LLMConfig{
+					APIKeySecretRef: "dummy-secret",
+				},
+			},
+		},
+	}
+	g.Expect(fakeClient.Create(context.Background(), repoWatch)).To(gomega.Succeed())
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "github-secret",
+			Namespace: objNamespace,
+		},
+		Data: map[string][]byte{
+			"pat": []byte("test-pat"),
+		},
+	}
+	g.Expect(fakeClient.Create(context.Background(), secret)).To(gomega.Succeed())
+
+	_, err := r.Reconcile(context.Background(), req)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	fetchedRepoWatch := &reviewv1alpha1.RepoWatch{}
+	g.Expect(fakeClient.Get(context.Background(), req.NamespacedName, fetchedRepoWatch)).To(gomega.Succeed())
+
+	// Only PR 3 should be watched
+	g.Expect(fetchedRepoWatch.Status.ReviewSandboxes).To(gomega.HaveLen(1))
+	g.Expect(fetchedRepoWatch.Status.ReviewSandboxes[0].Number).To(gomega.Equal(3))
+}
