@@ -447,10 +447,6 @@ func (r *RepoWatchReconciler) filterPRsByLabels(prs []*github.PullRequest, repoW
 }
 
 func (r *RepoWatchReconciler) filterPRsByAssignees(prs []*github.PullRequest, repoWatch *reviewv1alpha1.RepoWatch, user *github.User) []*github.PullRequest {
-	if len(repoWatch.Spec.Review.Assignees) == 0 && !repoWatch.Spec.Review.AssignedToSelf {
-		return prs
-	}
-
 	var filteredPRs []*github.PullRequest
 	assigneesMap := make(map[string]bool)
 	for _, assignee := range repoWatch.Spec.Review.Assignees {
@@ -459,6 +455,10 @@ func (r *RepoWatchReconciler) filterPRsByAssignees(prs []*github.PullRequest, re
 
 	if repoWatch.Spec.Review.AssignedToSelf && user != nil && user.Login != nil {
 		assigneesMap[*user.Login] = true
+	}
+
+	if len(assigneesMap) == 0 {
+		return prs
 	}
 
 	for _, pr := range prs {
