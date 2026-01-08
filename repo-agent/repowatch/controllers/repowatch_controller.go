@@ -979,7 +979,8 @@ func (r *RepoWatchReconciler) createReviewSandboxForPR(ctx context.Context, repo
 				"gateway": map[string]interface{}{
 					"httpEnabled": true,
 				},
-				"replicas": int64(1),
+				"maxReviewFiles": int64(repoWatch.Spec.Review.MaxReviewFiles),
+				"replicas":       int64(1),
 			},
 		},
 	}

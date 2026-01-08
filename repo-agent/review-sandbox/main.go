@@ -37,6 +37,8 @@ var (
 	}
 )
 
+const DefaultMaxReviewFiles = 30
+
 func main() {
 	go agentoutput.Run("review", gvr)
 
@@ -54,7 +56,11 @@ func main() {
 	_ = agentoutput.SetAgentState(gvr, "reviewing", "")
 	err = runReview()
 	if err != nil {
-		_ = agentoutput.SetAgentState(gvr, "error", err.Error())
+		if strings.Contains(err.Error(), "Too many files") {
+			_ = agentoutput.SetAgentState(gvr, "Error: Too many files", err.Error())
+		} else {
+			_ = agentoutput.SetAgentState(gvr, "error", err.Error())
+		}
 		log.Fatalf("failed reviewing: %v", err)
 	}
 	_ = agentoutput.SetAgentState(gvr, "review ready", "")
@@ -70,6 +76,8 @@ func main() {
 func runReview() error {
 	agentName := os.Getenv("AGENT_NAME")
 	log.Printf("Review with AGENT_NAME: %s", agentName)
+
+	maxReviewFiles := getMaxReviewFiles()
 
 	// save the incoming prompt
 	if err := os.WriteFile("../agent-prompt.txt", []byte(os.Getenv("AGENT_PROMPT")), 0644); err != nil {
@@ -90,6 +98,11 @@ func runReview() error {
 		if err != nil {
 			return fmt.Errorf("failed to parse diff from URL: %v", err)
 		}
+
+		if len(diffFiles) > maxReviewFiles {
+			return fmt.Errorf("Too many files to review: %d (max %d)", len(diffFiles), maxReviewFiles)
+		}
+
 		diffSize := getDiffSize(diffFiles)
 		expectedComments = sizeToComments[diffSize]
 		log.Printf("Diff size categorized as %s, expecting up to %d comments.", diffSize, expectedComments)
@@ -446,4 +459,18 @@ func dedupeAndCombineText(provider llm.Provider, text string) (string, error) {
 	}
 
 	return string(output), nil
+}
+
+func getMaxReviewFiles() int {
+	maxReviewFilesStr := os.Getenv("MAX_REVIEW_FILES")
+	maxReviewFiles := DefaultMaxReviewFiles
+	if maxReviewFilesStr != "" {
+		val, err := strconv.Atoi(maxReviewFilesStr)
+		if err != nil {
+			log.Printf("Invalid MAX_REVIEW_FILES value '%s', using default %d: %v", maxReviewFilesStr, DefaultMaxReviewFiles, err)
+		} else {
+			maxReviewFiles = val
+		}
+	}
+	return maxReviewFiles
 }
