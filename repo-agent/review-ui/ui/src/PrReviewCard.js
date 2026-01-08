@@ -449,6 +449,7 @@ function PrReviewCard({
           ) : (
             <span className={`pr-sandbox ${getSandboxStatusClass(pr)}`}>Sandbox: Not created</span>
           )}
+          <button className="btn btn-delete" style={{ fontSize: '14px', padding: '4px 10px' }} onClick={(e) => { e.stopPropagation(); handleDelete(pr.id); }}>&#x2715;</button>
         </div>
       </div>
       {!collapsedReviews[pr.id] && (
@@ -536,7 +537,6 @@ function PrReviewCard({
             <button className="btn btn-submit" style={{marginLeft: '10px', backgroundColor: '#6c757d'}} onClick={() => handleExportCurl(pr.id, setCurlCommand)} disabled={!!pr.review}>
               Export Curl Command
             </button>
-          <button className="btn btn-delete" onClick={(e) => { e.stopPropagation(); handleDelete(pr.id); }}>&#x2715;</button>
           </div>
           {curlCommand && (
             <div className="curl-command-display" style={{marginTop: '10px'}}>
