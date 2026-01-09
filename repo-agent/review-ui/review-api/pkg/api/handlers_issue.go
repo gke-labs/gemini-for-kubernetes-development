@@ -51,6 +51,8 @@ func (s *Server) fetchAndPopulateIssues(ctx context.Context, namespace, repo, ha
 	}
 
 	log.Printf("Populating Issues: Found %d issuesandboxes for Repo: %s Handler: %s", len(list.Items), repo, handler)
+
+	activeIssues := make(map[string]bool)
 	for _, item := range list.Items {
 		log.Printf("Creating Issue entry for IssueSandbox: %s/%s", item.GetNamespace(), item.GetName())
 		replicas, found, err := unstructured.NestedInt64(item.Object, "spec", "replicas")
@@ -70,6 +72,9 @@ func (s *Server) fetchAndPopulateIssues(ctx context.Context, namespace, repo, ha
 			log.Printf("Title (.spec.source.title) not found in IssueSandbox %s", item.GetName())
 			continue
 		}
+
+		activeIssues[issueID] = true
+
 		htmlurl, found, err := unstructured.NestedString(item.Object, "spec", "source", "htmlURL")
 		if err != nil || !found {
 			log.Printf("htmlURL (.spec.source.htmlURL) not found in IssueSandbox %s", item.GetName())
@@ -146,6 +151,22 @@ func (s *Server) fetchAndPopulateIssues(ctx context.Context, namespace, repo, ha
 		}
 		if err := s.Store.SaveIssue(ctx, namespace, repo, handler, issue); err != nil {
 			log.Printf("Failed to cache Issue %s for repo %s handler %s: %v", issueID, repo, handler, err)
+		}
+	}
+
+	// Cleanup stale entries
+	storedIssues, err := s.Store.ListIssues(ctx, namespace, repo, handler)
+	if err != nil {
+		log.Printf("Failed to list issues for cleanup: %v", err)
+		return
+	}
+
+	for _, issue := range storedIssues {
+		if !activeIssues[issue.ID] {
+			log.Printf("Removing stale Issue from store: %s", issue.ID)
+			if err := s.Store.DeleteIssue(ctx, namespace, repo, handler, issue.ID); err != nil {
+				log.Printf("Failed to delete stale Issue %s: %v", issue.ID, err)
+			}
 		}
 	}
 }
