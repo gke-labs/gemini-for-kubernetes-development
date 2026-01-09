@@ -61,6 +61,8 @@ func main() {
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
+	var concurrentReconciles int
+	flag.IntVar(&concurrentReconciles, "concurrent-reconciles", 1, "The number of concurrent reconciles.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -86,7 +88,7 @@ func main() {
 		NewGithubClient: func(ctx context.Context, k8sClient client.Client, repoWatch *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
 			return controllers.NewGithubClient(ctx, k8sClient, repoWatch)
 		},
-	}).SetupWithManager(mgr); err != nil {
+	}).SetupWithManager(mgr, concurrentReconciles); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "RepoWatch")
 		os.Exit(1)
 	}
