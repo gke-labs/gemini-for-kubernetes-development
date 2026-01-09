@@ -20,15 +20,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/dynamic"
+	schema "k8s.io/apimachinery/pkg/runtime/schema"
+	dynamic "k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
+
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -92,6 +92,16 @@ func Run(componentName string, gvr schema.GroupVersionResource) {
 		}
 		annotations := obj.GetAnnotations()
 		annotations[AgentDraftAnnotation] = string(b)
+
+		// Try to parse as AgentOutput to extract labels
+		var out AgentOutput
+		if err := yaml.Unmarshal(b, &out); err == nil && len(out.Labels) > 0 {
+			labelsJSON, _ := json.Marshal(out.Labels)
+			annotations["agentLabels"] = string(labelsJSON)
+		} else {
+			delete(annotations, "agentLabels")
+		}
+
 		obj.SetAnnotations(annotations)
 
 		if _, err := dc.Resource(gvr).Namespace(namespace).Update(context.TODO(), obj, metav1.UpdateOptions{}); err != nil {
@@ -101,48 +111,4 @@ func Run(componentName string, gvr schema.GroupVersionResource) {
 		last = string(b)
 		fmt.Println("updated crd with latest changes")
 	}
-}
-
-func SetAgentState(gvr schema.GroupVersionResource, state string, message string) error {
-	name := os.Getenv("NAME")
-	if name == "" {
-		fmt.Println("missing NAME env")
-		os.Exit(1)
-	}
-	namespace := os.Getenv("NAMESPACE")
-	if namespace == "" {
-		fmt.Println("missing NAMESPACE env")
-		os.Exit(1)
-	}
-
-	config, err := rest.InClusterConfig()
-	if err != nil {
-		return err
-	}
-
-	dc, err := dynamic.NewForConfig(config)
-	if err != nil {
-		return err
-	}
-
-	patch := map[string]interface{}{
-		"metadata": map[string]interface{}{
-			"annotations": map[string]string{
-				"agentState":        state,
-				"agentStateMessage": message,
-			},
-		},
-	}
-	patchBytes, err := json.Marshal(patch)
-	if err != nil {
-		return err
-	}
-
-	log.Printf("patching resource %s/%s with: %s\n", namespace, name, patchBytes)
-	_, err = dc.Resource(gvr).Namespace(namespace).Patch(context.TODO(), name, types.MergePatchType, patchBytes, metav1.PatchOptions{})
-	if err != nil {
-		log.Printf("error patching resource %s/%s: %v\n", namespace, name, err)
-		return err
-	}
-	return nil
 }

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"hash/fnv"
 	"log"
@@ -225,6 +226,7 @@ func (s *Server) fetchAndPopulateDevSandboxes(ctx context.Context, namespace, re
 
 			agentState := ""
 			agentStateMessage := ""
+			var labels []string
 			annotations := item.GetAnnotations()
 			if annotations != nil {
 				if val, ok := annotations["agentState"]; ok {
@@ -232,6 +234,9 @@ func (s *Server) fetchAndPopulateDevSandboxes(ctx context.Context, namespace, re
 				}
 				if val, ok := annotations["agentStateMessage"]; ok {
 					agentStateMessage = val
+				}
+				if val, ok := annotations["agentLabels"]; ok {
+					_ = json.Unmarshal([]byte(val), &labels)
 				}
 			}
 
@@ -243,6 +248,7 @@ func (s *Server) fetchAndPopulateDevSandboxes(ctx context.Context, namespace, re
 				SandboxReplica:    fmt.Sprintf("%d", replicas),
 				AgentState:        agentState,
 				AgentStateMessage: agentStateMessage,
+				Labels:            labels,
 			}
 			if err := s.Store.SaveDevSandbox(ctx, namespace, repo, sandbox); err != nil {
 				log.Printf("Failed to cache DevSandbox %s: %v", item.GetName(), err)

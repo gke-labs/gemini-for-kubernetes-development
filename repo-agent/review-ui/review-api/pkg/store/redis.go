@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
@@ -147,6 +148,9 @@ func (s *RedisStore) ListIssues(ctx context.Context, namespace, repo, handler st
 		if val, ok := issueData["agentStateMessage"]; ok {
 			issue.AgentStateMessage = val
 		}
+		if val, ok := issueData["labels"]; ok {
+			_ = json.Unmarshal([]byte(val), &issue.Labels)
+		}
 
 		issues = append(issues, issue)
 	}
@@ -159,6 +163,8 @@ func (s *RedisStore) ListIssues(ctx context.Context, namespace, repo, handler st
 func (s *RedisStore) SaveIssue(ctx context.Context, namespace, repo, handler string, issue models.Issue) error {
 	issueKey := s.IssueKey(namespace, repo, handler, issue.ID)
 
+	labelsJSON, _ := json.Marshal(issue.Labels)
+
 	return s.client.HSet(ctx, issueKey,
 		"title", issue.Title,
 		"sandbox", issue.Sandbox,
@@ -170,6 +176,7 @@ func (s *RedisStore) SaveIssue(ctx context.Context, namespace, repo, handler str
 		"pushBranch", fmt.Sprintf("%t", issue.PushBranch),
 		"agentState", issue.AgentState,
 		"agentStateMessage", issue.AgentStateMessage,
+		"labels", string(labelsJSON),
 	).Err()
 }
 
@@ -220,6 +227,9 @@ func (s *RedisStore) GetIssue(ctx context.Context, namespace, repo, handler, iss
 	}
 	if val, ok := issueData["agentStateMessage"]; ok {
 		issue.AgentStateMessage = val
+	}
+	if val, ok := issueData["labels"]; ok {
+		_ = json.Unmarshal([]byte(val), &issue.Labels)
 	}
 
 	return issue, nil
@@ -300,6 +310,9 @@ func (s *RedisStore) ListDevSandboxes(ctx context.Context, namespace, repo strin
 		if val, ok := data["agentStateMessage"]; ok {
 			sandbox.AgentStateMessage = val
 		}
+		if val, ok := data["labels"]; ok {
+			_ = json.Unmarshal([]byte(val), &sandbox.Labels)
+		}
 
 		sandboxes = append(sandboxes, sandbox)
 	}
@@ -311,6 +324,8 @@ func (s *RedisStore) ListDevSandboxes(ctx context.Context, namespace, repo strin
 
 func (s *RedisStore) SaveDevSandbox(ctx context.Context, namespace, repo string, sandbox models.DevSandbox) error {
 	key := s.DevSandboxKey(namespace, repo, sandbox.Name)
+	labelsJSON, _ := json.Marshal(sandbox.Labels)
+
 	return s.client.HSet(ctx, key,
 		"sandbox", sandbox.Sandbox,
 		"branch", sandbox.Branch,
@@ -318,6 +333,7 @@ func (s *RedisStore) SaveDevSandbox(ctx context.Context, namespace, repo string,
 		"sandboxReplica", sandbox.SandboxReplica,
 		"agentState", sandbox.AgentState,
 		"agentStateMessage", sandbox.AgentStateMessage,
+		"labels", string(labelsJSON),
 	).Err()
 }
 
@@ -377,6 +393,9 @@ func (s *RedisStore) ListPRs(ctx context.Context, namespace, repo string) ([]mod
 		if val, ok := prData["reviewState"]; ok {
 			pr.ReviewState = val
 		}
+		if val, ok := prData["labels"]; ok {
+			_ = json.Unmarshal([]byte(val), &pr.Labels)
+		}
 		prs = append(prs, pr)
 	}
 	if err := iter.Err(); err != nil {
@@ -387,6 +406,8 @@ func (s *RedisStore) ListPRs(ctx context.Context, namespace, repo string) ([]mod
 
 func (s *RedisStore) SavePR(ctx context.Context, namespace, repo string, pr models.PR) error {
 	prKey := s.PRKey(namespace, repo, pr.ID)
+	labelsJSON, _ := json.Marshal(pr.Labels)
+
 	// Ensure the URL is in Redis
 	return s.client.HSet(ctx, prKey,
 		"title", pr.Title,
@@ -399,6 +420,7 @@ func (s *RedisStore) SavePR(ctx context.Context, namespace, repo string, pr mode
 		"agentState", pr.AgentState,
 		"agentStateMessage", pr.AgentStateMessage,
 		"reviewState", pr.ReviewState,
+		"labels", string(labelsJSON),
 	).Err()
 }
 
@@ -446,6 +468,9 @@ func (s *RedisStore) GetPR(ctx context.Context, namespace, repo, prID string) (*
 	}
 	if val, ok := prData["reviewState"]; ok {
 		pr.ReviewState = val
+	}
+	if val, ok := prData["labels"]; ok {
+		_ = json.Unmarshal([]byte(val), &pr.Labels)
 	}
 
 	return pr, nil

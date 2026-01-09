@@ -4,42 +4,45 @@ import (
 	"github.com/google/go-github/v39/github"
 )
 
-// AgentOutput defines the structure for the agent's YAML output.
-type AgentOutput struct {
+// ReviewAgentOutput defines the structure for the agent's YAML output.
+type ReviewAgentOutput struct {
 	Note   string                           `yaml:"note"`
 	Review *github.PullRequestReviewRequest `yaml:"review"`
+	Labels []string                         `yaml:"labels,omitempty"`
 }
 
 // PR represents a pull request
 type PR struct {
-	ID                string `json:"id"`
-	Title             string `json:"title"`
-	Draft             string `json:"draft,omitempty"`
-	Sandbox           string `json:"sandbox,omitempty"`
-	SandboxReplica    string `json:"sandboxReplica,omitempty"`
-	Review            string `json:"review,omitempty"`
-	HTMLURL           string `json:"htmlURL,omitempty"`
-	DiffURL           string `json:"diffURL,omitempty"`
-	AgentDraft        string `json:"agentDraft,omitempty"`
-	AgentState        string `json:"agentState,omitempty"`
-	AgentStateMessage string `json:"agentStateMessage,omitempty"`
-	ReviewState       string `json:"reviewState,omitempty"`
+	ID                string   `json:"id"`
+	Title             string   `json:"title"`
+	Draft             string   `json:"draft,omitempty"`
+	Sandbox           string   `json:"sandbox,omitempty"`
+	SandboxReplica    string   `json:"sandboxReplica,omitempty"`
+	Review            string   `json:"review,omitempty"`
+	HTMLURL           string   `json:"htmlURL,omitempty"`
+	DiffURL           string   `json:"diffURL,omitempty"`
+	AgentDraft        string   `json:"agentDraft,omitempty"`
+	AgentState        string   `json:"agentState,omitempty"`
+	AgentStateMessage string   `json:"agentStateMessage,omitempty"`
+	ReviewState       string   `json:"reviewState,omitempty"`
+	Labels            []string `json:"labels,omitempty"`
 }
 
 // Issue represents a GitHub issue
 type Issue struct {
-	ID                string `json:"id"`
-	Title             string `json:"title"`
-	Draft             string `json:"draft,omitempty"`
-	Sandbox           string `json:"sandbox,omitempty"`
-	SandboxReplica    string `json:"sandboxReplica,omitempty"`
-	Comment           string `json:"comment,omitempty"`
-	HTMLURL           string `json:"htmlURL,omitempty"`
-	BranchURL         string `json:"branchURL,omitempty"`
-	PushBranch        bool   `json:"pushBranch"`
-	AgentDraft        string `json:"agentDraft,omitempty"`
-	AgentState        string `json:"agentState,omitempty"`
-	AgentStateMessage string `json:"agentStateMessage,omitempty"`
+	ID                string   `json:"id"`
+	Title             string   `json:"title"`
+	Draft             string   `json:"draft,omitempty"`
+	Sandbox           string   `json:"sandbox,omitempty"`
+	SandboxReplica    string   `json:"sandboxReplica,omitempty"`
+	Comment           string   `json:"comment,omitempty"`
+	HTMLURL           string   `json:"htmlURL,omitempty"`
+	BranchURL         string   `json:"branchURL,omitempty"`
+	PushBranch        bool     `json:"pushBranch"`
+	AgentDraft        string   `json:"agentDraft,omitempty"`
+	AgentState        string   `json:"agentState,omitempty"`
+	AgentStateMessage string   `json:"agentStateMessage,omitempty"`
+	Labels            []string `json:"labels,omitempty"`
 }
 
 // Repo represents a repository with its configuration
@@ -83,11 +86,12 @@ type DevConfig struct {
 
 // DevSandbox represents a dev sandbox
 type DevSandbox struct {
-	Name              string `json:"name"`
-	Sandbox           string `json:"sandbox,omitempty"`
-	SandboxReplica    string `json:"sandboxReplica,omitempty"`
-	BranchURL         string `json:"branchURL,omitempty"`
-	Branch            string `json:"branch,omitempty"`
-	AgentState        string `json:"agentState,omitempty"`
-	AgentStateMessage string `json:"agentStateMessage,omitempty"`
+	Name              string   `json:"name"`
+	Sandbox           string   `json:"sandbox,omitempty"`
+	SandboxReplica    string   `json:"sandboxReplica,omitempty"`
+	BranchURL         string   `json:"branchURL,omitempty"`
+	Branch            string   `json:"branch,omitempty"`
+	AgentState        string   `json:"agentState,omitempty"`
+	AgentStateMessage string   `json:"agentStateMessage,omitempty"`
+	Labels            []string `json:"labels,omitempty"`
 }

@@ -30,6 +30,25 @@ function DevCard({
           <a href={sandbox.branchURL} target="_blank" rel="noopener noreferrer">{sandbox.branch || sandbox.name}</a>
         </h3>
         <div className="pr-card-actions-header">
+          {sandbox.labels && sandbox.labels.length > 0 && (
+            <div style={{ display: 'flex', gap: '5px', marginRight: '10px' }}>
+              {sandbox.labels.map((label, index) => (
+                <span
+                  key={index}
+                  style={{
+                    backgroundColor: '#eee',
+                    color: '#333',
+                    padding: '2px 6px',
+                    borderRadius: '4px',
+                    fontSize: 'small',
+                    border: '1px solid #ddd'
+                  }}
+                >
+                  {label}
+                </span>
+              ))}
+            </div>
+          )}
           {flairText && sandbox.agentState !== 'provisioning' && (
             <span 
               style={{ marginRight: '10px', backgroundColor: getFlairColor(flairText), color: 'white', padding: '5px 10px', borderRadius: '5px', fontSize: 'small' }}
