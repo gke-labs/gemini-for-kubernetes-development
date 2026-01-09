@@ -194,7 +194,10 @@ func (s *Server) fetchAndPopulateDevSandboxes(ctx context.Context, namespace, re
 	}
 
 	log.Printf("Populating DevSandboxes: Found %d devsandboxes for Repo: %s", len(list.Items), repo)
+
+	activeSandboxes := make(map[string]bool)
 	for _, item := range list.Items {
+		activeSandboxes[item.GetName()] = true
 		replicas, found, err := unstructured.NestedInt64(item.Object, "spec", "replicas")
 		if err != nil || !found {
 			log.Printf("Replicas (.spec.replicas) not found in DevSandbox %s", item.GetName())
@@ -252,6 +255,22 @@ func (s *Server) fetchAndPopulateDevSandboxes(ctx context.Context, namespace, re
 			}
 			if err := s.Store.SaveDevSandbox(ctx, namespace, repo, sandbox); err != nil {
 				log.Printf("Failed to cache DevSandbox %s: %v", item.GetName(), err)
+			}
+		}
+	}
+
+	// Cleanup stale entries
+	storedSandboxes, err := s.Store.ListDevSandboxes(ctx, namespace, repo)
+	if err != nil {
+		log.Printf("Failed to list dev sandboxes for cleanup: %v", err)
+		return
+	}
+
+	for _, sb := range storedSandboxes {
+		if !activeSandboxes[sb.Name] {
+			log.Printf("Removing stale DevSandbox from store: %s", sb.Name)
+			if err := s.Store.DeleteDevSandbox(ctx, namespace, repo, sb.Name); err != nil {
+				log.Printf("Failed to delete stale DevSandbox %s: %v", sb.Name, err)
 			}
 		}
 	}

@@ -50,6 +50,8 @@ func (s *Server) fetchAndPopulatePRs(ctx context.Context, namespace, repo string
 	}
 
 	log.Printf("Populating PRs: Found %d reviewsandboxes for Repo: %s", len(list.Items), repo)
+
+	activePRs := make(map[string]bool)
 	for _, item := range list.Items {
 		log.Printf("Creating PR entry for ReviewSandbox: %s/%s", item.GetNamespace(), item.GetName())
 		// Get replicas and if it scaled down skip
@@ -75,6 +77,9 @@ func (s *Server) fetchAndPopulatePRs(ctx context.Context, namespace, repo string
 			log.Printf("Title (.spec.source.title) not found in ReviewSandbox  %s", item.GetName())
 			continue
 		}
+
+		activePRs[prID] = true
+
 		htmlurl, found, err := unstructured.NestedString(item.Object, "spec", "source", "htmlURL")
 		if err != nil || !found {
 			log.Printf("Title (.spec.source.htmlURL) not found in ReviewSandbox  %s", item.GetName())
@@ -128,6 +133,22 @@ func (s *Server) fetchAndPopulatePRs(ctx context.Context, namespace, repo string
 
 		if err := s.Store.SavePR(ctx, namespace, repo, pr); err != nil {
 			log.Printf("Failed to cache PR %s for repo %s: %v", pr.ID, repo, err)
+		}
+	}
+
+	// Cleanup stale entries
+	storedPRs, err := s.Store.ListPRs(ctx, namespace, repo)
+	if err != nil {
+		log.Printf("Failed to list PRs for cleanup: %v", err)
+		return
+	}
+
+	for _, pr := range storedPRs {
+		if !activePRs[pr.ID] {
+			log.Printf("Removing stale PR from store: %s", pr.ID)
+			if err := s.Store.DeletePR(ctx, namespace, repo, pr.ID); err != nil {
+				log.Printf("Failed to delete stale PR %s: %v", pr.ID, err)
+			}
 		}
 	}
 }
