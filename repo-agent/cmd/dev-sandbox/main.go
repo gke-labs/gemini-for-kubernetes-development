@@ -49,7 +49,8 @@ func run(ctx context.Context) error {
 	// log := klog.FromContext(ctx)
 
 	rootCommand := &cobra.Command{}
-	rootCommand.SilenceUsage = true
+	rootCommand.SilenceUsage = true  // Usage is only printed for command syntax errors
+	rootCommand.SilenceErrors = true // We print errors ourselves
 
 	initCommand := &cobra.Command{
 		Use: "init",
