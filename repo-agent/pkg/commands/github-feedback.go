@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
@@ -44,6 +45,11 @@ func BuildGithubFeedbackCommand() *cobra.Command {
 // RunGithubFeedback launches gemini-cli to respond to the specified GitHub pull request feedback.
 func RunGithubFeedback(ctx context.Context, opt GithubFeedbackOptions) error {
 	log := klog.FromContext(ctx)
+
+	geminiAPIKey := os.Getenv("GEMINI_API_KEY")
+	if geminiAPIKey == "" {
+		return fmt.Errorf("GEMINI_API_KEY environment variable is not set")
+	}
 
 	githubAPI, err := github.NewClient(ctx)
 	if err != nil {
@@ -93,6 +99,28 @@ func RunGithubFeedback(ctx context.Context, opt GithubFeedbackOptions) error {
 		}
 
 		log.Info("wrote prompt into sandbox pod", "pod", podID.Name, "path", path)
+	}
+
+	workdir := fmt.Sprintf("/workspaces/%s", repo.FilesystemName())
+
+	// Run gemini with API key and prompt
+	{
+		log.Info("Running gemini in pod", "pod", podID.Name)
+
+		// TODO:
+		// export GEMINI_TELEMETRY_ENABLED=true
+		// export GEMINI_TELEMETRY_OTLP_ENDPOINT=http://otel-portal.otel-system:4317
+
+		opts := execOptions{
+			Command: []string{"sh", "-c", fmt.Sprintf("cd %s && export GEMINI_API_KEY=%s && gemini --yolo --model gemini-3-pro-preview < /workspaces/prompt.txt", workdir, geminiAPIKey)},
+			Stdout:  os.Stdout,
+			Stderr:  os.Stderr,
+		}
+		opts.Secrets = []string{geminiAPIKey}
+
+		if err := execInPod(ctx, kube, podID, opts); err != nil {
+			return fmt.Errorf("running gemini in pod: %w", err)
+		}
 	}
 
 	return nil
