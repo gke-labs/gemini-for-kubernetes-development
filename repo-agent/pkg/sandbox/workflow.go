@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -71,7 +72,7 @@ func PrepareGitBranch(cfg Config) (string, error) {
 	return oldCommitID, nil
 }
 
-func RunAgent(cfg Config) error {
+func RunAgent(ctx context.Context, cfg Config) error {
 	log.Printf("Starting agent with AGENT_NAME: %s", cfg.AgentName)
 
 	provider, err := llm.NewLLMProvider(cfg.AgentName)
@@ -85,7 +86,7 @@ func RunAgent(cfg Config) error {
 
 	// Run gemini
 	if cfg.ReportStatus {
-		_ = agentoutput.SetAgentState(cfg.GVR, "running agent", "")
+		_ = agentoutput.SetAgentState(ctx, cfg.GVR, "running agent", "")
 	}
 
 	// We assume we are in the repo directory or the prompt should be written where the agent can find it?
@@ -112,7 +113,7 @@ func RunAgent(cfg Config) error {
 	return nil
 }
 
-func ProcessGitChanges(cfg Config, oldCommitID string, commitMessage string) error {
+func ProcessGitChanges(ctx context.Context, cfg Config, oldCommitID string, commitMessage string) error {
 	// Commit and push
 	if cfg.GithubUserEmail != "" {
 		if err := gitcli.CommitAllChanges(commitMessage); err != nil {
@@ -129,7 +130,7 @@ func ProcessGitChanges(cfg Config, oldCommitID string, commitMessage string) err
 		log.Println("New changes being committed")
 		if cfg.PushEnabled {
 			if cfg.ReportStatus {
-				_ = agentoutput.SetAgentState(cfg.GVR, "pushing changes", "")
+				_ = agentoutput.SetAgentState(ctx, cfg.GVR, "pushing changes", "")
 			}
 			if err := gitcli.Push("origin", cfg.BranchName, true); err != nil {
 				return fmt.Errorf("failed to push changes: %w", err)

@@ -135,37 +135,37 @@ func InitContainer(ctx context.Context) error {
 	// Prepare git branch (checkout)
 	oldCommitID, err := sandbox.PrepareGitBranch(cfg)
 	if err != nil {
-		_ = agentoutput.SetAgentState(gvr, "error", fmt.Sprintf("checkout failed: %v", err))
+		_ = agentoutput.SetAgentState(ctx, gvr, "error", fmt.Sprintf("checkout failed: %v", err))
 		return fmt.Errorf("preparing git branch: %w", err)
 	}
 
 	if cfg.AgentPrompt != "" {
 		log.Info("Running agent with prompt", "prompt", cfg.AgentPrompt)
-		if err := sandbox.RunAgent(cfg); err != nil {
-			_ = agentoutput.SetAgentState(gvr, "error", fmt.Sprintf("running agent failed: %v", err))
+		if err := sandbox.RunAgent(ctx, cfg); err != nil {
+			_ = agentoutput.SetAgentState(ctx, gvr, "error", fmt.Sprintf("running agent failed: %v", err))
 			return fmt.Errorf("running agent: %w", err)
 		}
 
 		commitMsg := "Agent changes for: " + cfg.AgentPrompt
-		if err := sandbox.ProcessGitChanges(cfg, oldCommitID, commitMsg); err != nil {
-			_ = agentoutput.SetAgentState(gvr, "error", fmt.Sprintf("processing git changes failed: %v", err))
+		if err := sandbox.ProcessGitChanges(ctx, cfg, oldCommitID, commitMsg); err != nil {
+			_ = agentoutput.SetAgentState(ctx, gvr, "error", fmt.Sprintf("processing git changes failed: %v", err))
 			return fmt.Errorf("processing git changes: %w", err)
 		}
 	}
 
 	var b ImageBuilder
 	if dotFilesRepo := os.Getenv("USER_DOTFILESREPO"); dotFilesRepo != "" {
-		_ = agentoutput.SetAgentState(gvr, "provisioning", "installing dotfiles")
+		_ = agentoutput.SetAgentState(ctx, gvr, "provisioning", "installing dotfiles")
 		if err := b.InstallDotfilesRepo(ctx, dotFilesRepo); err != nil {
 			// Note: we don't fail the entire startup if dotfiles installation fails
 			log.Error(err, "installing dotfiles repo", "repo", dotFilesRepo)
-			_ = agentoutput.SetAgentState(gvr, "warning", fmt.Sprintf("dotfiles install failed: %v", err))
+			_ = agentoutput.SetAgentState(ctx, gvr, "warning", fmt.Sprintf("dotfiles install failed: %v", err))
 		}
 	}
 
 	cmdCodeSrv, err := startCodeServer(ctx)
 	if err != nil {
-		_ = agentoutput.SetAgentState(gvr, "error", fmt.Sprintf("failed to start code-server: %v", err))
+		_ = agentoutput.SetAgentState(ctx, gvr, "error", fmt.Sprintf("failed to start code-server: %v", err))
 		return fmt.Errorf("failed to start code-server: %w", err)
 	}
 	defer func() {
@@ -176,11 +176,11 @@ func InitContainer(ctx context.Context) error {
 		}
 	}()
 
-	_ = agentoutput.SetAgentState(gvr, "ready", "")
+	_ = agentoutput.SetAgentState(ctx, gvr, "ready", "")
 
 	// Wait for code-server to exit
 	if err := cmdCodeSrv.Wait(); err != nil {
-		_ = agentoutput.SetAgentState(gvr, "error", fmt.Sprintf("code-server exited: %v", err))
+		_ = agentoutput.SetAgentState(ctx, gvr, "error", fmt.Sprintf("code-server exited: %v", err))
 		return fmt.Errorf("code-server process exited with error: %w", err)
 	}
 

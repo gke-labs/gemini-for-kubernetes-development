@@ -1,10 +1,11 @@
 package main
 
 import (
-	"log"
+	"context"
 	"os"
 
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/klog/v2"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/agentoutput"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/codeserver"
@@ -20,12 +21,16 @@ var (
 )
 
 func main() {
+	ctx := context.Background()
+	log := klog.FromContext(ctx)
+
 	go agentoutput.Run("issue", gvr)
 
 	cmdCodeSrv, err := codeserver.Start()
 	if err != nil {
-		_ = agentoutput.SetAgentState(gvr, "error", err.Error())
-		log.Fatalf("failed to start code-server: %v", err)
+		_ = agentoutput.SetAgentState(ctx, gvr, "error", err.Error())
+		log.Error(err, "failed to start code-server")
+		os.Exit(1)
 	}
 	defer func() {
 		if cmdCodeSrv.Process != nil {
@@ -33,7 +38,7 @@ func main() {
 		}
 	}()
 
-	_ = agentoutput.SetAgentState(gvr, "handling issue", "")
+	_ = agentoutput.SetAgentState(ctx, gvr, "handling issue", "")
 
 	// Create config from env vars
 	cfg := sandbox.Config{
@@ -52,33 +57,36 @@ func main() {
 	// Prepare git branch
 	oldCommitID, err := sandbox.PrepareGitBranch(cfg)
 	if err != nil {
-		_ = agentoutput.SetAgentState(gvr, "error", err.Error())
-		log.Fatalf("failed to prepare git branch: %v", err)
+		_ = agentoutput.SetAgentState(ctx, gvr, "error", err.Error())
+		log.Error(err, "failed to prepare git branch")
+		os.Exit(1)
 	}
 
 	if _, err := os.Stat("../agent-prompt.txt"); os.IsNotExist(err) {
 		// Try solving the issue
-		if err := sandbox.RunAgent(cfg); err != nil {
-			_ = agentoutput.SetAgentState(gvr, "error", err.Error())
-			log.Fatalf("failed solving issue: %v", err)
+		if err := sandbox.RunAgent(ctx, cfg); err != nil {
+			_ = agentoutput.SetAgentState(ctx, gvr, "error", err.Error())
+			log.Error(err, "failed solving issue")
+			os.Exit(1)
 		}
-		_ = agentoutput.SetAgentState(gvr, "done", "")
+		_ = agentoutput.SetAgentState(ctx, gvr, "done", "")
 
 		// Push the changes
 		commitMessage := "fix for issue # " + os.Getenv("ISSUEID")
-		if err := sandbox.ProcessGitChanges(cfg, oldCommitID, commitMessage); err != nil {
-			_ = agentoutput.SetAgentState(gvr, "error", err.Error())
-			log.Fatalf("failed to process git changes: %v", err)
+		if err := sandbox.ProcessGitChanges(ctx, cfg, oldCommitID, commitMessage); err != nil {
+			_ = agentoutput.SetAgentState(ctx, gvr, "error", err.Error())
+			log.Error(err, "failed to process git changes")
+			os.Exit(1)
 		}
 	} else {
-		log.Println("agent-prompt.txt exists, skipping code generation")
+		log.Info("agent-prompt.txt exists, skipping code generation")
 	}
 
 	// Wait for code-server to exit
 	err = cmdCodeSrv.Wait()
 	if err != nil {
-		log.Printf("Code Server exited with error: %v", err)
+		log.Error(err, "Code Server exited with error")
 	} else {
-		log.Println("Code Server exited with no error")
+		log.Info("Code Server exited with no error")
 	}
 }
