@@ -3,8 +3,6 @@ kind: ReviewSandbox
 metadata:
   annotations:
     agentDraft: |
-      labels:
-          - size/L
       note: Response from Dummy LLM. This is a test
       review:
           nodeid: null
