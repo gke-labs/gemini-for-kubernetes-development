@@ -43,6 +43,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -1388,9 +1389,10 @@ func (r *RepoWatchReconciler) createDevSandbox(ctx context.Context, user *github
 }
 
 // SetupWithManager sets up the controller with the Manager.
-func (r *RepoWatchReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *RepoWatchReconciler) SetupWithManager(mgr ctrl.Manager, concurrency int) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&reviewv1alpha1.RepoWatch{}).
+		WithOptions(controller.Options{MaxConcurrentReconciles: concurrency}).
 		// Owns(&reviewv1alpha1.ReviewSandbox{}).
 		Complete(r)
 }

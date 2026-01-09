@@ -66,6 +66,8 @@ spec:
       containers:
       - name: repowatch-controller
         image: ko://repo-agent/repowatch/cmd/repowatch-controller # placeholder value, replaced by deployment scripts
+        args:
+        - --concurrent-reconciles=5
         env:
         - name: GITHUB_CLIENT_ID
           valueFrom:
@@ -81,8 +83,8 @@ spec:
               optional: true
         resources:
           limits:
-            cpu: 500m
-            memory: 128Mi
+            cpu: 2000m
+            memory: 2048Mi
           requests:
-            cpu: 10m
-            memory: 64Mi
+            cpu: 500m
+            memory: 1024Mi
