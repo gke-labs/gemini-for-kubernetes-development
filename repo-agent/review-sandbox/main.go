@@ -23,12 +23,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// AgentOutput defines the structure for the agent's YAML output.
-type AgentOutput struct {
-	Note   string                           `yaml:"note"`
-	Review *github.PullRequestReviewRequest `yaml:"review"`
-}
-
 var (
 	gvr = schema.GroupVersionResource{
 		Group:    "custom.agents.x-k8s.io",
@@ -84,6 +78,7 @@ func runReview() error {
 		log.Printf("Failed to write prompt to file: %v", err)
 	}
 
+	var accumulatedAgentOutput agentoutput.ReviewAgentOutput
 	var diffFiles []*gitdiff.File
 	var err error
 	diffURL := os.Getenv("GIT_DIFF_URL")
@@ -104,6 +99,13 @@ func runReview() error {
 		}
 
 		diffSize := getDiffSize(diffFiles)
+		diffSizeLabel := fmt.Sprintf("size/%s", diffSize)
+		log.Printf("Adding diff size label: %s", diffSizeLabel)
+		// Initialize accumulatedAgentOutput with the size label
+		accumulatedAgentOutput.Labels = []string{diffSizeLabel}
+		if err := agentoutput.AddAgentLabel(gvr, []string{diffSizeLabel}); err != nil {
+			log.Printf("Failed to add size label: %v", err)
+		}
 		expectedComments = sizeToComments[diffSize]
 		log.Printf("Diff size categorized as %s, expecting up to %d comments.", diffSize, expectedComments)
 	} else {
@@ -145,7 +147,6 @@ func runReview() error {
 	}
 	log.Printf("Found %d existing comments", len(existingComments))
 
-	var accumulatedAgentOutput AgentOutput
 	maxRuns := 10
 	maxSuccessfulRuns := 5
 	successfulRuns := 0
@@ -211,7 +212,7 @@ func runReview() error {
 			log.Printf("Wrote agent output to %s", filename)
 		}
 
-		var agentOutput AgentOutput
+		var agentOutput agentoutput.ReviewAgentOutput
 		if err := yaml.Unmarshal(output, &agentOutput); err != nil {
 			log.Printf("Agent output validation failed: failed to unmarshal yaml: %v. Continuing...", err)
 			time.Sleep(5 * time.Second)
@@ -228,7 +229,12 @@ func runReview() error {
 		successfulRuns++
 
 		if accumulatedAgentOutput.Review == nil {
+			// Save existing labels (e.g. size/S)
+			existingLabels := accumulatedAgentOutput.Labels
 			accumulatedAgentOutput = agentOutput
+			// Restore/Merge labels
+			accumulatedAgentOutput.Labels = append(accumulatedAgentOutput.Labels, existingLabels...)
+			accumulatedAgentOutput.Labels = uniqueStrings(accumulatedAgentOutput.Labels)
 		} else {
 			for _, newComment := range agentOutput.Review.Comments {
 				if newComment == nil {
@@ -250,6 +256,10 @@ func runReview() error {
 					newBody := *accumulatedAgentOutput.Review.Body + "\n---" + *agentOutput.Review.Body
 					accumulatedAgentOutput.Review.Body = &newBody
 				}
+			}
+			if len(agentOutput.Labels) > 0 {
+				accumulatedAgentOutput.Labels = append(accumulatedAgentOutput.Labels, agentOutput.Labels...)
+				accumulatedAgentOutput.Labels = uniqueStrings(accumulatedAgentOutput.Labels)
 			}
 		}
 	}
@@ -286,12 +296,28 @@ func runReview() error {
 		return fmt.Errorf("failed to re-marshal agent output: %w", err)
 	}
 
+	if err := agentoutput.AddAgentLabel(gvr, accumulatedAgentOutput.Labels); err != nil {
+		log.Printf("Failed to add agent labels: %v", err)
+	}
+
 	filename := "../agent-output.txt"
 	if err := os.WriteFile(filename, finalOutput, 0644); err != nil {
 		return fmt.Errorf("failed to write agent output to %s: %v", filename, err)
 	}
 	log.Printf("Wrote agent output to %s", filename)
 	return nil // Success
+}
+
+func uniqueStrings(input []string) []string {
+	keys := make(map[string]bool)
+	list := []string{}
+	for _, entry := range input {
+		if _, value := keys[entry]; !value {
+			keys[entry] = true
+			list = append(list, entry)
+		}
+	}
+	return list
 }
 
 func getExistingComments(token, owner, repo string, prNumber int) ([]*github.PullRequestComment, error) {
@@ -342,7 +368,7 @@ func isDuplicateCommentExact(newComment *github.DraftReviewComment, existingComm
 	return false
 }
 
-func validateAgentOutput(agentOutput *AgentOutput, diffFiles []*gitdiff.File) error {
+func validateAgentOutput(agentOutput *agentoutput.ReviewAgentOutput, diffFiles []*gitdiff.File) error {
 	if agentOutput.Review == nil {
 		return fmt.Errorf("'review' field is missing from yaml output")
 	}

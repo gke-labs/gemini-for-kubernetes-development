@@ -416,6 +416,25 @@ function PrReviewCard({
           </span>
         </h3>
         <div className="pr-card-actions-header">
+          {pr.labels && pr.labels.length > 0 && (
+            <div style={{ display: 'flex', gap: '5px', marginRight: '10px' }}>
+              {pr.labels.map((label, index) => (
+                <span
+                  key={index}
+                  style={{
+                    backgroundColor: '#eee',
+                    color: '#333',
+                    padding: '2px 6px',
+                    borderRadius: '4px',
+                    fontSize: 'small',
+                    border: '1px solid #ddd'
+                  }}
+                >
+                  {label}
+                </span>
+              ))}
+            </div>
+          )}
           {reviewFlairText && pr.agentState !== 'provisioning' && (
             <span 
               style={{ marginRight: '10px', backgroundColor: getReviewFlairColor(reviewFlairText), color: 'white', padding: '5px 10px', borderRadius: '5px', fontSize: 'small' }}
