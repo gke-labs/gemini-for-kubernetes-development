@@ -2,7 +2,6 @@ package k8s
 
 import (
 	"context"
-	"log"
 
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -10,6 +9,7 @@ import (
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/util/retry"
+	"k8s.io/klog/v2"
 )
 
 const (
@@ -22,9 +22,10 @@ const (
 
 // BootstrapNamespace bootstraps the target namespace with necessary secrets and service accounts.
 func BootstrapNamespace(ctx context.Context, clientset kubernetes.Interface, targetNS string) error {
+	log := klog.FromContext(ctx)
 	_, err := clientset.CoreV1().Namespaces().Get(ctx, targetNS, v1.GetOptions{})
 	if errors.IsNotFound(err) {
-		log.Printf("Creating namespace %s", targetNS)
+		log.Info("Creating namespace", "name", targetNS)
 		ns := &corev1.Namespace{
 			ObjectMeta: v1.ObjectMeta{
 				Name:   targetNS,
@@ -40,20 +41,20 @@ func BootstrapNamespace(ctx context.Context, clientset kubernetes.Interface, tar
 
 	// Copy default secrets/configs from system namespace if they don't exist in user namespace
 	if err := CopySecret(ctx, clientset, SystemNamespace, GithubSecretName, targetNS, GithubSecretName); err != nil {
-		log.Printf("Warning: failed to copy default github secret: %v", err)
+		log.Info("Warning: failed to copy default github secret", "err", err)
 	}
 	if err := CopySecret(ctx, clientset, SystemNamespace, GeminiSecretName, targetNS, GeminiSecretName); err != nil {
-		log.Printf("Warning: failed to copy default gemini secret: %v", err)
+		log.Info("Warning: failed to copy default gemini secret", "err", err)
 	}
 	if err := CopySecret(ctx, clientset, SystemNamespace, ClaudeSecretName, targetNS, ClaudeSecretName); err != nil {
-		log.Printf("Warning: failed to copy default claude secret: %v", err)
+		log.Info("Warning: failed to copy default claude secret", "err", err)
 	}
 	if err := CopyConfigMap(ctx, clientset, SystemNamespace, DevContainerCM, targetNS, DevContainerCM); err != nil {
-		log.Printf("Debug: failed to copy %s: %v", DevContainerCM, err)
+		log.Info("Debug: failed to copy configmap", "name", DevContainerCM, "err", err)
 	}
 
 	if err := SetupServiceAccounts(ctx, clientset, targetNS); err != nil {
-		log.Printf("Warning: failed to setup service accounts: %v", err)
+		log.Info("Warning: failed to setup service accounts", "err", err)
 	}
 
 	return nil
@@ -61,9 +62,10 @@ func BootstrapNamespace(ctx context.Context, clientset kubernetes.Interface, tar
 
 // CopySecret copies a secret from source namespace to destination namespace.
 func CopySecret(ctx context.Context, clientset kubernetes.Interface, srcNS, srcName, dstNS, dstName string) error {
+	log := klog.FromContext(ctx)
 	src, err := clientset.CoreV1().Secrets(srcNS).Get(ctx, srcName, v1.GetOptions{})
 	if err != nil {
-		log.Printf("Error reading secret %s/%s: %v", srcNS, srcName, err)
+		log.Info("Error reading secret", "namespace", srcNS, "name", srcName, "err", err)
 		return err
 	}
 	dst := &corev1.Secret{ObjectMeta: v1.ObjectMeta{Name: dstName, Namespace: dstNS}, Data: src.Data, Type: src.Type}
@@ -84,6 +86,7 @@ func CopyConfigMap(ctx context.Context, clientset kubernetes.Interface, srcNS, s
 
 // SetupServiceAccounts sets up the necessary service accounts and role bindings in the namespace.
 func SetupServiceAccounts(ctx context.Context, clientset kubernetes.Interface, ns string) error {
+	log := klog.FromContext(ctx)
 	// --- Review Sandbox ---
 	saReview := &corev1.ServiceAccount{ObjectMeta: v1.ObjectMeta{Name: "review-sandbox", Namespace: ns}}
 	_, err := clientset.CoreV1().ServiceAccounts(ns).Create(ctx, saReview, v1.CreateOptions{})
@@ -104,7 +107,7 @@ func SetupServiceAccounts(ctx context.Context, clientset kubernetes.Interface, n
 
 	// Add to review-sandbox cluster role binding (to match make apply-common-for-examples)
 	if err := ensureClusterRoleBindingSubject(ctx, clientset, "review-sandbox", rbacv1.Subject{Kind: "ServiceAccount", Name: "review-sandbox", Namespace: ns}); err != nil {
-		log.Printf("Warning: failed to update review-sandbox cluster role binding: %v", err)
+		log.Info("Warning: failed to update review-sandbox cluster role binding", "err", err)
 	}
 
 	// Bind to configdir-controller cluster role (needed for init container)
@@ -138,7 +141,7 @@ func SetupServiceAccounts(ctx context.Context, clientset kubernetes.Interface, n
 
 	// Add to dev-sandbox cluster role binding (to match make apply-common-for-examples)
 	if err := ensureClusterRoleBindingSubject(ctx, clientset, "dev-sandbox", rbacv1.Subject{Kind: "ServiceAccount", Name: "dev-sandbox", Namespace: ns}); err != nil {
-		log.Printf("Warning: failed to update dev-sandbox cluster role binding: %v", err)
+		log.Info("Warning: failed to update dev-sandbox cluster role binding", "err", err)
 	}
 
 	// Bind to configdir-controller cluster role (needed for init container)
@@ -172,7 +175,7 @@ func SetupServiceAccounts(ctx context.Context, clientset kubernetes.Interface, n
 
 	// Add to issue-sandbox cluster role binding (to match make apply-common-for-examples)
 	if err := ensureClusterRoleBindingSubject(ctx, clientset, "issue-sandbox", rbacv1.Subject{Kind: "ServiceAccount", Name: "issue-sandbox", Namespace: ns}); err != nil {
-		log.Printf("Warning: failed to update issue-sandbox cluster role binding: %v", err)
+		log.Info("Warning: failed to update issue-sandbox cluster role binding", "err", err)
 	}
 
 	// Bind to configdir-controller cluster role (needed for init container)

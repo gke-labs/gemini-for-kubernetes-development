@@ -3,7 +3,6 @@ package api
 import (
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 
@@ -11,6 +10,7 @@ import (
 	pkgk8s "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	"k8s.io/apimachinery/pkg/api/errors"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/klog/v2"
 )
 
 // --- Health Check ---
@@ -53,7 +53,7 @@ func (s *Server) ensureGeminiKeySet(c *gin.Context, namespace string) bool {
 		if errors.IsNotFound(err) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "Gemini API Key is not configured. Please set it in Settings."})
 		} else {
-			log.Printf("Error getting Gemini secret: %v", err)
+			klog.Infof("Error getting Gemini secret: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check Gemini API Key configuration"})
 		}
 		return false

@@ -2,10 +2,11 @@ package codeserver
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"os/exec"
 	"strings"
+
+	"k8s.io/klog/v2"
 )
 
 const (
@@ -22,7 +23,7 @@ func runDummyCommand() (*exec.Cmd, error) {
 	if err != nil {
 		return nil, err
 	}
-	log.Printf("Running dummy command in subprocess %d\n", cmd.Process.Pid)
+	klog.Infof("Running dummy command in subprocess %d\n", cmd.Process.Pid)
 	return cmd, nil
 }
 
@@ -39,13 +40,13 @@ func Start() (*exec.Cmd, error) {
 	if _, err := os.Stat(codeServerPath); err != nil {
 		if os.IsNotExist(err) {
 			// code-server not found.
-			log.Println("code-server not found, running dummy command instead")
+			klog.Info("code-server not found, running dummy command instead")
 			return runDummyCommand()
 		}
 		return nil, err
 	}
 
-	log.Println("starting code-server")
+	klog.Info("starting code-server")
 	args := []string{"--auth=none", fmt.Sprintf("--bind-addr=0.0.0.0:%d", CodeServerPort), WorkspacePath + "/" + repo}
 	cmd := execCommand(codeServerPath, args...)
 	cmd.Stdout = os.Stdout
@@ -53,6 +54,6 @@ func Start() (*exec.Cmd, error) {
 	if err != nil {
 		return nil, err
 	}
-	log.Printf("Running code-server in subprocess %d\n", cmd.Process.Pid)
+	klog.Infof("Running code-server in subprocess %d\n", cmd.Process.Pid)
 	return cmd, nil
 }

@@ -3,7 +3,6 @@ package api
 import (
 	"bytes"
 	"io"
-	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -13,6 +12,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/review-ui/review-api/pkg/templates"
 	"github.com/go-redis/redis/v8"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/klog/v2"
 )
 
 type Server struct {
@@ -117,10 +117,10 @@ func RequestLoggerMiddleware() gin.HandlerFunc {
 			c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 		}
 
-		log.Printf("Request Method: %s\n", c.Request.Method)
-		log.Printf("Request URL: %s\n", c.Request.URL.String())
+		klog.Infof("Request Method: %s\n", c.Request.Method)
+		klog.Infof("Request URL: %s\n", c.Request.URL.String())
 		//log.Printf("Request Headers: %v\n", c.Request.Header)
-		log.Printf("Request Body: %s\n", string(bodyBytes))
+		klog.Infof("Request Body: %s\n", string(bodyBytes))
 
 		c.Next() // Process the request further
 	}
@@ -133,9 +133,9 @@ func ResponseLoggerMiddleware() gin.HandlerFunc {
 
 		c.Next() // Process the request and generate the response
 
-		log.Printf("Response Status: %d\n", c.Writer.Status())
-		log.Printf("Response Headers: %v\n", c.Writer.Header())
-		log.Printf("Response Body: %s\n", blw.body.String())
+		klog.Infof("Response Status: %d\n", c.Writer.Status())
+		klog.Infof("Response Headers: %v\n", c.Writer.Header())
+		klog.Infof("Response Body: %s\n", blw.body.String())
 	}
 }
 

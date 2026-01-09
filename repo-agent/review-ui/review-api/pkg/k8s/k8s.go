@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"log"
 
 	redis "github.com/go-redis/redis/v8"
 	corev1 "k8s.io/api/core/v1"
@@ -15,6 +14,7 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/util/retry"
+	"k8s.io/klog/v2"
 )
 
 const (
@@ -145,6 +145,7 @@ func (m *Manager) UpdateSecret(ctx context.Context, namespace, name string, data
 }
 
 func (m *Manager) ScaledownSandbox(ctx context.Context, namespace, repo, prID string) error {
+	log := klog.FromContext(ctx)
 	prKey := fmt.Sprintf("pr:ns:%s:repo:%s:pr:%s", namespace, repo, prID)
 	sandboxName, err := m.Redis.HGet(ctx, prKey, "sandbox").Result()
 	if err != nil && err != redis.Nil {
@@ -160,7 +161,7 @@ func (m *Manager) ScaledownSandbox(ctx context.Context, namespace, repo, prID st
 		Version:  "v1alpha1",
 		Resource: "reviewsandboxes",
 	}
-	log.Printf("Scaling down sandbox %s", sandboxName)
+	log.Info("Scaling down sandbox", "name", sandboxName)
 
 	_, err = m.Client.Resource(gvr).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
 	if err != nil {
@@ -324,6 +325,7 @@ func (m *Manager) GetRepoWatch(ctx context.Context, namespace, name string) (*un
 }
 
 func (m *Manager) ScaledownIssueSandbox(ctx context.Context, namespace, repo, issueID, handler string) error {
+	log := klog.FromContext(ctx)
 	sandboxName := fmt.Sprintf("%s-issue-%s-%s", repo, issueID, handler)
 
 	gvr := schema.GroupVersionResource{
@@ -331,7 +333,7 @@ func (m *Manager) ScaledownIssueSandbox(ctx context.Context, namespace, repo, is
 		Version:  "v1alpha1",
 		Resource: "issuesandboxes",
 	}
-	log.Printf("Scaling down issue sandbox %s", sandboxName)
+	log.Info("Scaling down issue sandbox", "name", sandboxName)
 
 	_, err := m.Client.Resource(gvr).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
 	if err != nil {
@@ -364,12 +366,13 @@ func (m *Manager) ScaledownIssueSandbox(ctx context.Context, namespace, repo, is
 }
 
 func (m *Manager) ScaledownDevSandboxHelper(ctx context.Context, namespace, name string) error {
+	log := klog.FromContext(ctx)
 	gvr := schema.GroupVersionResource{
 		Group:    "custom.agents.x-k8s.io",
 		Version:  "v1alpha1",
 		Resource: "devsandboxes",
 	}
-	log.Printf("Scaling down dev sandbox %s", name)
+	log.Info("Scaling down dev sandbox", "name", name)
 
 	_, err := m.Client.Resource(gvr).Namespace(namespace).Get(ctx, name, v1.GetOptions{})
 	if err != nil {
@@ -402,6 +405,7 @@ func (m *Manager) ScaledownDevSandboxHelper(ctx context.Context, namespace, name
 }
 
 func (m *Manager) ScaleupSandbox(ctx context.Context, namespace, repo, prID string) error {
+	log := klog.FromContext(ctx)
 	prKey := fmt.Sprintf("pr:ns:%s:repo:%s:pr:%s", namespace, repo, prID)
 	sandboxName, err := m.Redis.HGet(ctx, prKey, "sandbox").Result()
 	if err != nil && err != redis.Nil {
@@ -416,7 +420,7 @@ func (m *Manager) ScaleupSandbox(ctx context.Context, namespace, repo, prID stri
 		Version:  "v1alpha1",
 		Resource: "reviewsandboxes",
 	}
-	log.Printf("Scaling up sandbox %s", sandboxName)
+	log.Info("Scaling up sandbox", "name", sandboxName)
 
 	_, err = m.Client.Resource(gvr).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
 	if err != nil {
@@ -449,6 +453,7 @@ func (m *Manager) ScaleupSandbox(ctx context.Context, namespace, repo, prID stri
 }
 
 func (m *Manager) ScaleupIssueSandbox(ctx context.Context, namespace, repo, issueID, handler string) error {
+	log := klog.FromContext(ctx)
 	sandboxName := fmt.Sprintf("%s-issue-%s-%s", repo, issueID, handler)
 
 	gvr := schema.GroupVersionResource{
@@ -456,7 +461,7 @@ func (m *Manager) ScaleupIssueSandbox(ctx context.Context, namespace, repo, issu
 		Version:  "v1alpha1",
 		Resource: "issuesandboxes",
 	}
-	log.Printf("Scaling up issue sandbox %s", sandboxName)
+	log.Info("Scaling up issue sandbox", "name", sandboxName)
 
 	_, err := m.Client.Resource(gvr).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
 	if err != nil {
@@ -489,12 +494,13 @@ func (m *Manager) ScaleupIssueSandbox(ctx context.Context, namespace, repo, issu
 }
 
 func (m *Manager) ScaleupDevSandboxHelper(ctx context.Context, namespace, name string) error {
+	log := klog.FromContext(ctx)
 	gvr := schema.GroupVersionResource{
 		Group:    "custom.agents.x-k8s.io",
 		Version:  "v1alpha1",
 		Resource: "devsandboxes",
 	}
-	log.Printf("Scaling up dev sandbox %s", name)
+	log.Info("Scaling up dev sandbox", "name", name)
 
 	_, err := m.Client.Resource(gvr).Namespace(namespace).Get(ctx, name, v1.GetOptions{})
 	if err != nil {

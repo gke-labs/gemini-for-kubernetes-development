@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -188,7 +187,8 @@ func InitContainer(ctx context.Context) error {
 }
 
 func startCodeServer(ctx context.Context) (*exec.Cmd, error) {
-	log.Println("starting code-server")
+	log := klog.FromContext(ctx)
+	log.Info("starting code-server")
 	repoURL := os.Getenv("GIT_HTML_URL")
 	parts := strings.Split(strings.TrimPrefix(repoURL, "https://github.com/"), "/")
 	if len(parts) != 2 {
@@ -203,7 +203,7 @@ func startCodeServer(ctx context.Context) (*exec.Cmd, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("running code-server command failed: %w", err)
 	}
-	log.Printf("Running code-server in subprocess %d\n", cmd.Process.Pid)
+	log.Info("Running code-server in subprocess", "pid", cmd.Process.Pid)
 	return cmd, nil
 }
 

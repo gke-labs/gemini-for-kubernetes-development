@@ -16,9 +16,10 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
+
+	"k8s.io/klog/v2"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/llm"
 )
@@ -43,25 +44,25 @@ func main() {
 	// The temporary directory and its contents are deleted when the main function exits.
 	tempDir, err := os.MkdirTemp("", "claude-test-")
 	if err != nil {
-		log.Fatalf("failed to create temp dir: %v", err)
+		klog.Fatalf("failed to create temp dir: %v", err)
 	}
 	defer os.RemoveAll(tempDir) // Clean up the temporary directory on exit
 
 	// Retrieve the API key from environment variable
 	apiKey := os.Getenv("ANTHROPIC_API_KEY")
 	if apiKey == "" {
-		log.Fatal("ANTHROPIC_API_KEY environment variable not set")
+		klog.Fatal("ANTHROPIC_API_KEY environment variable not set")
 	}
 	// Write the API key to a file named 'claude' within the temporary directory.
 	// The filename 'claude' is what the Setup function expects by default.
 	if err := os.WriteFile(filepath.Join(tempDir, "claude"), []byte(apiKey), 0600); err != nil {
-		log.Fatalf("failed to write api key file: %v", err)
+		klog.Fatalf("failed to write api key file: %v", err)
 	}
 
 	// Call the Setup function, passing the temporary directory as the tokens directory.
 	// This ensures the file-based API key retrieval path is tested.
 	if err := claude.Setup("", tempDir); err != nil {
-		log.Fatalf("failed to setup claude: %v", err)
+		klog.Fatalf("failed to setup claude: %v", err)
 	}
 
 	prompt := "What is the capital of France?"
@@ -73,7 +74,7 @@ func main() {
 
 	resp, err := claude.Run(prompt)
 	if err != nil {
-		log.Fatalf("failed to run claude: %v", err)
+		klog.Fatalf("failed to run claude: %v", err)
 	}
 
 	fmt.Printf("Response from Claude: %s\n", string(resp))
