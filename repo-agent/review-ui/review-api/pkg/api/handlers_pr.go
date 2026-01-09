@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -88,6 +89,7 @@ func (s *Server) fetchAndPopulatePRs(ctx context.Context, namespace, repo string
 		agentState := ""
 		agentStateMessage := ""
 		reviewState := ""
+		var labels []string
 		annotations := item.GetAnnotations()
 		if annotations == nil {
 			log.Printf("annotations (annotations=nil) not found in ReviewSandbox %s", item.GetName())
@@ -104,6 +106,9 @@ func (s *Server) fetchAndPopulatePRs(ctx context.Context, namespace, repo string
 			if val, ok := annotations["reviewState"]; ok {
 				reviewState = val
 			}
+			if val, ok := annotations["agentLabels"]; ok {
+				_ = json.Unmarshal([]byte(val), &labels)
+			}
 		}
 
 		pr := models.PR{
@@ -118,6 +123,7 @@ func (s *Server) fetchAndPopulatePRs(ctx context.Context, namespace, repo string
 			AgentState:        agentState,
 			AgentStateMessage: agentStateMessage,
 			ReviewState:       reviewState,
+			Labels:            labels,
 		}
 
 		if err := s.Store.SavePR(ctx, namespace, repo, pr); err != nil {
@@ -240,7 +246,7 @@ func (s *Server) submitReview(c *gin.Context) {
 	}
 
 	// Try Unmarshalling the yaml review payload into PullRequestReviewRequest
-	agentOutput := &models.AgentOutput{}
+	agentOutput := &models.ReviewAgentOutput{}
 	reviewRequest := &github.PullRequestReviewRequest{}
 	err = yaml.Unmarshal([]byte(payload.Review), &agentOutput)
 	if err != nil {

@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/klog/v2"
 
 	"github.com/bluekeyes/go-gitdiff/gitdiff"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/agentoutput"
@@ -22,12 +24,6 @@ import (
 	"golang.org/x/oauth2"
 	"gopkg.in/yaml.v3"
 )
-
-// AgentOutput defines the structure for the agent's YAML output.
-type AgentOutput struct {
-	Note   string                           `yaml:"note"`
-	Review *github.PullRequestReviewRequest `yaml:"review"`
-}
 
 var (
 	gvr = schema.GroupVersionResource{
@@ -40,12 +36,13 @@ var (
 const DefaultMaxReviewFiles = 30
 
 func main() {
+	ctx := context.Background()
 	go agentoutput.Run("review", gvr)
 
 	cmdCodeSrv, err := codeserver.Start()
 	if err != nil {
-		_ = agentoutput.SetAgentState(gvr, "error", err.Error())
-		log.Fatalf("failed to start code-server: %v", err)
+		_ = agentoutput.SetAgentState(ctx, gvr, "error", err.Error())
+		klog.Fatalf("failed to start code-server: %v", err)
 	}
 	defer func() {
 		if cmdCodeSrv.Process != nil {
@@ -53,37 +50,40 @@ func main() {
 		}
 	}()
 
-	_ = agentoutput.SetAgentState(gvr, "reviewing", "")
-	err = runReview()
+	_ = agentoutput.SetAgentState(ctx, gvr, "reviewing", "")
+	err = runReview(ctx)
 	if err != nil {
 		if strings.Contains(err.Error(), "Too many files") {
-			_ = agentoutput.SetAgentState(gvr, "Error: Too many files", err.Error())
+			_ = agentoutput.SetAgentState(ctx, gvr, "Error: Too many files", err.Error())
 		} else {
-			_ = agentoutput.SetAgentState(gvr, "error", err.Error())
+			_ = agentoutput.SetAgentState(ctx, gvr, "error", err.Error())
 		}
-		log.Fatalf("failed reviewing: %v", err)
+		klog.Fatalf("failed reviewing: %v", err)
 	}
-	_ = agentoutput.SetAgentState(gvr, "review ready", "")
+	_ = agentoutput.SetAgentState(ctx, gvr, "review ready", "")
 
 	err = cmdCodeSrv.Wait()
 	if err != nil {
-		log.Printf("Code Server exited with error: %v", err)
+		klog.Infof("Code Server exited with error: %v", err)
 	} else {
-		log.Println("Code Server exited with no error")
+		klog.Info("Code Server exited with no error")
 	}
 }
 
-func runReview() error {
+func runReview(ctx context.Context) error {
+	log := klog.FromContext(ctx)
 	agentName := os.Getenv("AGENT_NAME")
-	log.Printf("Review with AGENT_NAME: %s", agentName)
+	log.Info("Review", "AGENT_NAME", agentName)
 
 	maxReviewFiles := getMaxReviewFiles()
 
 	// save the incoming prompt
 	if err := os.WriteFile("../agent-prompt.txt", []byte(os.Getenv("AGENT_PROMPT")), 0644); err != nil {
-		log.Printf("Failed to write prompt to file: %v", err)
+		log.Error(err, "Failed to write prompt to file")
 	}
 
+	var accumulatedAgentOutput agentoutput.ReviewAgentOutput
+	var diffSizeLabel string
 	var diffFiles []*gitdiff.File
 	var err error
 	diffURL := os.Getenv("GIT_DIFF_URL")
@@ -93,7 +93,7 @@ func runReview() error {
 		return fmt.Errorf("GIT_DIFF_URL must start with https://github.com/")
 	}
 	if diffURL != "" {
-		log.Printf("Downloading and parsing diff from %s", diffURL)
+		log.Info("Downloading and parsing diff", "url", diffURL)
 		diffFiles, err = parseDiffFromURL(diffURL)
 		if err != nil {
 			return fmt.Errorf("failed to parse diff from URL: %v", err)
@@ -104,8 +104,14 @@ func runReview() error {
 		}
 
 		diffSize := getDiffSize(diffFiles)
+		diffSizeLabel = fmt.Sprintf("size/%s", diffSize)
+		log.Info("Adding diff size label", "label", diffSizeLabel)
+		// Initialize accumulatedAgentOutput with the size label
+		if err := agentoutput.AddAgentLabel(gvr, []string{diffSizeLabel}); err != nil {
+			log.Error(err, "Failed to add size label")
+		}
 		expectedComments = sizeToComments[diffSize]
-		log.Printf("Diff size categorized as %s, expecting up to %d comments.", diffSize, expectedComments)
+		log.Info("Diff size categorized", "size", diffSize, "expectedComments", expectedComments)
 	} else {
 		return fmt.Errorf("GIT_DIFF_URL not set, skipping diff-based validation")
 	}
@@ -143,22 +149,21 @@ func runReview() error {
 	if err != nil {
 		return fmt.Errorf("failed to get existing comments: %w", err)
 	}
-	log.Printf("Found %d existing comments", len(existingComments))
+	log.Info("Found existing comments", "count", len(existingComments))
 
-	var accumulatedAgentOutput AgentOutput
 	maxRuns := 10
 	maxSuccessfulRuns := 5
 	successfulRuns := 0
 
 	for i := 0; i < maxRuns; i++ {
-		log.Printf("Running Agent %s (attempt %d/%d, successful runs %d)", agentName, i+1, maxRuns, successfulRuns)
+		log.Info("Running Agent", "agent", agentName, "attempt", i+1, "maxRuns", maxRuns, "successfulRuns", successfulRuns)
 
 		if successfulRuns >= maxSuccessfulRuns {
-			log.Printf("Stopping because max successful runs (%d) reached.", maxSuccessfulRuns)
+			log.Info("Stopping because max successful runs reached", "maxSuccessfulRuns", maxSuccessfulRuns)
 			break
 		}
 		if accumulatedAgentOutput.Review != nil && len(accumulatedAgentOutput.Review.Comments) >= expectedComments {
-			log.Printf("Stopping because expected number of comments (%d) was met.", expectedComments)
+			log.Info("Stopping because expected number of comments was met", "expectedComments", expectedComments)
 			break
 		}
 
@@ -167,7 +172,7 @@ func runReview() error {
 		if accumulatedAgentOutput.Review != nil && len(accumulatedAgentOutput.Review.Comments) > 0 {
 			previousReviews, err := yaml.Marshal(accumulatedAgentOutput)
 			if err != nil {
-				log.Printf("failed to marshal previous reviews, continuing without them: %v", err)
+				log.Info("failed to marshal previous reviews, continuing without them", "error", err)
 			} else {
 				currentPrompt += "\n\nReview comments made in previous runs:\n```yaml\n" + string(previousReviews) + "\n```\n"
 			}
@@ -175,7 +180,7 @@ func runReview() error {
 		if len(existingComments) > 0 {
 			existingReviews, err := yaml.Marshal(existingComments)
 			if err != nil {
-				log.Printf("failed to marshal existing reviews, continuing without them: %v", err)
+				log.Info("failed to marshal existing reviews, continuing without them", "error", err)
 			} else {
 				currentPrompt += "\n\nExisting comments on the PR:\n```yaml\n" + string(existingReviews) + "\n```\n"
 			}
@@ -184,21 +189,21 @@ func runReview() error {
 		// Expand commands in the prompt
 		currentPrompt, err = provider.ExpandPrompt(currentPrompt)
 		if err != nil {
-			log.Printf("warning: failed to expand commands in prompt: %v", err)
+			log.Info("warning: failed to expand commands in prompt", "error", err)
 		}
 
 		// Write current prompt to file for debugging
 		promptFilename := fmt.Sprintf("../agent-prompt-run%d.txt", i+1)
 		if err := os.WriteFile(promptFilename, []byte(currentPrompt), 0644); err != nil {
-			log.Printf("Failed to write agent prompt to %s: %v", promptFilename, err)
+			log.Error(err, "Failed to write agent prompt to file", "filename", promptFilename)
 		} else {
-			log.Printf("Wrote agent prompt to %s", promptFilename)
+			log.Info("Wrote agent prompt", "filename", promptFilename)
 		}
 
 		// RUN THE AGENT
 		output, err := provider.Run(currentPrompt)
 		if err != nil {
-			log.Printf("Agent run failed: %v. Continuing...", err)
+			log.Error(err, "Agent run failed. Continuing...")
 			time.Sleep(10 * time.Second)
 			continue
 		}
@@ -206,29 +211,34 @@ func runReview() error {
 		// Write output to file for debugging, regardless of validation result.
 		filename := fmt.Sprintf("../agent-output-run%d.txt", i+1)
 		if err := os.WriteFile(filename, output, 0644); err != nil {
-			log.Printf("Failed to write agent output to %s: %v", filename, err)
+			log.Error(err, "Failed to write agent output", "filename", filename)
 		} else {
-			log.Printf("Wrote agent output to %s", filename)
+			log.Info("Wrote agent output", "filename", filename)
 		}
 
-		var agentOutput AgentOutput
+		var agentOutput agentoutput.ReviewAgentOutput
 		if err := yaml.Unmarshal(output, &agentOutput); err != nil {
-			log.Printf("Agent output validation failed: failed to unmarshal yaml: %v. Continuing...", err)
+			log.Info("Agent output validation failed: failed to unmarshal yaml. Continuing...", "error", err)
 			time.Sleep(5 * time.Second)
 			continue
 		}
 
-		if err = validateAgentOutput(&agentOutput, diffFiles); err != nil {
-			log.Printf("Agent output validation failed: %v. Continuing...", err)
+		if err = validateAgentOutput(ctx, &agentOutput, diffFiles); err != nil {
+			log.Info("Agent output validation failed. Continuing...", "error", err)
 			time.Sleep(5 * time.Second)
 			continue
 		}
 
-		log.Println("Agent run and validation successful.")
+		log.Info("Agent run and validation successful.")
 		successfulRuns++
 
 		if accumulatedAgentOutput.Review == nil {
+			// Save existing labels (e.g. size/S)
+			existingLabels := accumulatedAgentOutput.Labels
 			accumulatedAgentOutput = agentOutput
+			// Restore/Merge labels
+			accumulatedAgentOutput.Labels = append(accumulatedAgentOutput.Labels, existingLabels...)
+			accumulatedAgentOutput.Labels = uniqueStrings(accumulatedAgentOutput.Labels)
 		} else {
 			for _, newComment := range agentOutput.Review.Comments {
 				if newComment == nil {
@@ -237,7 +247,7 @@ func runReview() error {
 				if !isDuplicateCommentExact(newComment, existingComments, accumulatedAgentOutput.Review.Comments) {
 					accumulatedAgentOutput.Review.Comments = append(accumulatedAgentOutput.Review.Comments, newComment)
 				} else {
-					log.Printf("Filtering out duplicate comment on file %s at line %d", *newComment.Path, *newComment.Line)
+					log.Info("Filtering out duplicate comment", "file", *newComment.Path, "line", *newComment.Line)
 				}
 			}
 			if agentOutput.Note != "" {
@@ -251,6 +261,10 @@ func runReview() error {
 					accumulatedAgentOutput.Review.Body = &newBody
 				}
 			}
+			if len(agentOutput.Labels) > 0 {
+				accumulatedAgentOutput.Labels = append(accumulatedAgentOutput.Labels, agentOutput.Labels...)
+				accumulatedAgentOutput.Labels = uniqueStrings(accumulatedAgentOutput.Labels)
+			}
 		}
 	}
 
@@ -258,26 +272,26 @@ func runReview() error {
 		return fmt.Errorf("agent failed to produce any valid output after %d attempts", maxRuns)
 	}
 
-	log.Printf("Finished agent runs. Total successful runs: %d. Total comments: %d", successfulRuns, len(accumulatedAgentOutput.Review.Comments))
+	log.Info("Finished agent runs", "successfulRuns", successfulRuns, "totalComments", len(accumulatedAgentOutput.Review.Comments))
 
 	// If more than one successful run, accumalatedAgentOutput has duplicated text in Note and Review.Body, so dedupe and combine them.
 	if successfulRuns > 1 {
-		log.Println("Deduplicating and combining agent output text from multiple runs.")
+		log.Info("Deduplicating and combining agent output text from multiple runs.")
 		combinedNote, err := dedupeAndCombineText(provider, accumulatedAgentOutput.Note)
 		if err != nil {
-			log.Printf("Failed to dedupe and combine Note: %v. Using original Note.", err)
+			log.Info("Failed to dedupe and combine Note. Using original Note.", "error", err)
 			combinedNote = accumulatedAgentOutput.Note
 		} else {
-			log.Println("Successfully deduped and combined Note.")
+			log.Info("Successfully deduped and combined Note.")
 		}
 		accumulatedAgentOutput.Note = combinedNote
 
 		combinedBody, err := dedupeAndCombineText(provider, *accumulatedAgentOutput.Review.Body)
 		if err != nil {
-			log.Printf("Failed to dedupe and combine Body: %v. Using original Body.", err)
+			log.Info("Failed to dedupe and combine Body. Using original Body.", "error", err)
 		} else {
 			accumulatedAgentOutput.Review.Body = &combinedBody
-			log.Println("Successfully deduped and combined Body.")
+			log.Info("Successfully deduped and combined Body.")
 		}
 	}
 
@@ -290,8 +304,17 @@ func runReview() error {
 	if err := os.WriteFile(filename, finalOutput, 0644); err != nil {
 		return fmt.Errorf("failed to write agent output to %s: %v", filename, err)
 	}
-	log.Printf("Wrote agent output to %s", filename)
+
+	accumulatedAgentOutput.Labels = append(accumulatedAgentOutput.Labels, diffSizeLabel)
+	if err := agentoutput.AddAgentLabel(gvr, accumulatedAgentOutput.Labels); err != nil {
+		log.Error(err, "Failed to add agent labels")
+	}
+	log.Info("Wrote agent output", "filename", filename)
 	return nil // Success
+}
+
+func uniqueStrings(input []string) []string {
+	return sets.NewString(input...).List()
 }
 
 func getExistingComments(token, owner, repo string, prNumber int) ([]*github.PullRequestComment, error) {
@@ -342,7 +365,8 @@ func isDuplicateCommentExact(newComment *github.DraftReviewComment, existingComm
 	return false
 }
 
-func validateAgentOutput(agentOutput *AgentOutput, diffFiles []*gitdiff.File) error {
+func validateAgentOutput(ctx context.Context, agentOutput *agentoutput.ReviewAgentOutput, diffFiles []*gitdiff.File) error {
+	log := klog.FromContext(ctx)
 	if agentOutput.Review == nil {
 		return fmt.Errorf("'review' field is missing from yaml output")
 	}
@@ -361,15 +385,15 @@ func validateAgentOutput(agentOutput *AgentOutput, diffFiles []*gitdiff.File) er
 			validComments = append(validComments, comment)
 		} else {
 			if comment.Path != nil && comment.Line != nil {
-				log.Printf("Filtering out invalid comment on file %s at line %d", *comment.Path, *comment.Line)
+				log.Info("Filtering out invalid comment", "file", *comment.Path, "line", *comment.Line)
 			} else {
-				log.Printf("Filtering out invalid comment with missing path or line")
+				log.Info("Filtering out invalid comment with missing path or line")
 			}
 		}
 	}
 	agentOutput.Review.Comments = validComments
 
-	log.Println("YAML validation successful.")
+	log.Info("YAML validation successful.")
 	return nil
 }
 
@@ -460,7 +484,6 @@ func dedupeAndCombineText(provider llm.Provider, text string) (string, error) {
 
 	return string(output), nil
 }
-
 func getMaxReviewFiles() int {
 	maxReviewFilesStr := os.Getenv("MAX_REVIEW_FILES")
 	maxReviewFiles := DefaultMaxReviewFiles
