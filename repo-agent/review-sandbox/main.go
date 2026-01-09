@@ -83,6 +83,7 @@ func runReview(ctx context.Context) error {
 	}
 
 	var accumulatedAgentOutput agentoutput.ReviewAgentOutput
+	var diffSizeLabel string
 	var diffFiles []*gitdiff.File
 	var err error
 	diffURL := os.Getenv("GIT_DIFF_URL")
@@ -103,10 +104,9 @@ func runReview(ctx context.Context) error {
 		}
 
 		diffSize := getDiffSize(diffFiles)
-		diffSizeLabel := fmt.Sprintf("size/%s", diffSize)
+		diffSizeLabel = fmt.Sprintf("size/%s", diffSize)
 		log.Info("Adding diff size label", "label", diffSizeLabel)
 		// Initialize accumulatedAgentOutput with the size label
-		accumulatedAgentOutput.Labels = []string{diffSizeLabel}
 		if err := agentoutput.AddAgentLabel(gvr, []string{diffSizeLabel}); err != nil {
 			log.Error(err, "Failed to add size label")
 		}
@@ -295,11 +295,6 @@ func runReview(ctx context.Context) error {
 		}
 	}
 
-	if err := agentoutput.AddAgentLabel(gvr, accumulatedAgentOutput.Labels); err != nil {
-		log.Error(err, "Failed to add agent labels")
-	}
-	// Remove Labels from output written to the file.
-
 	finalOutput, err := yaml.Marshal(&accumulatedAgentOutput)
 	if err != nil {
 		return fmt.Errorf("failed to re-marshal agent output: %w", err)
@@ -308,6 +303,11 @@ func runReview(ctx context.Context) error {
 	filename := "../agent-output.txt"
 	if err := os.WriteFile(filename, finalOutput, 0644); err != nil {
 		return fmt.Errorf("failed to write agent output to %s: %v", filename, err)
+	}
+
+	accumulatedAgentOutput.Labels = append(accumulatedAgentOutput.Labels, diffSizeLabel)
+	if err := agentoutput.AddAgentLabel(gvr, accumulatedAgentOutput.Labels); err != nil {
+		log.Error(err, "Failed to add agent labels")
 	}
 	log.Info("Wrote agent output", "filename", filename)
 	return nil // Success
