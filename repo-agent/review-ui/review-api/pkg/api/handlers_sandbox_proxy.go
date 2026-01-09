@@ -2,13 +2,13 @@ package api
 
 import (
 	"fmt"
-	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/review-ui/review-api/pkg/auth"
+	"k8s.io/klog/v2"
 )
 
 func (s *Server) proxySandbox(c *gin.Context) {
@@ -24,7 +24,7 @@ func (s *Server) proxySandbox(c *gin.Context) {
 	}
 	if user != namespace {
 		c.String(http.StatusUnauthorized, "Unauthorized")
-		log.Printf("Unauthorized access %s for %s", user, c.Request.URL.String())
+		klog.Infof("Unauthorized access %s for %s", user, c.Request.URL.String())
 		return
 	}
 
@@ -82,7 +82,7 @@ func (s *Server) proxySandbox(c *gin.Context) {
 	// Error handling
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 		// Log the error
-		log.Printf("Proxy error for URL %s: %v\n", r.URL.String(), err)
+		klog.Infof("Proxy error for URL %s: %v\n", r.URL.String(), err)
 		w.WriteHeader(http.StatusBadGateway)
 		_, _ = w.Write([]byte(fmt.Sprintf("Bad Gateway: %v", err)))
 	}

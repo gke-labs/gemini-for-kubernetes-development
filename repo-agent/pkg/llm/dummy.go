@@ -2,8 +2,9 @@ package llm
 
 import (
 	"bytes"
-	"log"
 	"strings"
+
+	"k8s.io/klog/v2"
 )
 
 const (
@@ -35,12 +36,12 @@ type Dummy struct {
 }
 
 func (d *Dummy) Setup(_, _ string) error {
-	log.Println("Dummy provider setup")
+	klog.Info("Dummy provider setup")
 	return nil
 }
 
 func (d *Dummy) Cleanup(_ string) error {
-	log.Println("Dummy provider cleanup")
+	klog.Info("Dummy provider cleanup")
 	return nil
 }
 
@@ -61,7 +62,7 @@ func (d *Dummy) response(prompt string) []byte {
 
 func (d *Dummy) Run(prompt string) ([]byte, error) {
 	var err error
-	log.Printf("Dummy provider running with prompt")
+	klog.Infof("Dummy provider running with prompt")
 	output := d.response(prompt)
 	for _, p := range d.processors {
 		output, err = p(output)

@@ -24,7 +24,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -33,6 +32,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 
@@ -52,45 +52,46 @@ func main() {
 
 	cfg, err := config.GetConfig()
 	if err != nil {
-		log.Fatalf("unable to get kubeconfig: %v", err)
+		klog.Fatalf("unable to get kubeconfig: %v", err)
 	}
 
 	if err := configdirv1alpha1.AddToScheme(scheme.Scheme); err != nil {
-		log.Fatalf("unable to add scheme: %v", err)
+		klog.Fatalf("unable to add scheme: %v", err)
 	}
 
 	cli, err := client.New(cfg, client.Options{Scheme: scheme.Scheme})
 	if err != nil {
-		log.Fatalf("unable to create kubernetes client: %v", err)
+		klog.Fatalf("unable to create kubernetes client: %v", err)
 	}
 
 	ctx := context.Background()
+
 	if directory == "" {
-		log.Fatalf("--directory is required when --sync-to-cluster is set.")
+		klog.Fatalf("--directory is required when --sync-to-cluster is set.")
 	}
 	if name == "" {
-		log.Print("--name is not set, using directory name as ConfigDir name")
+		klog.Info("--name is not set, using directory name as ConfigDir name")
 		name = filepath.Base(directory)
 	}
 	if syncToCluster {
 		if err := syncConfigDataToCluster(ctx, cli, directory, includeFolderName, name, namespace); err != nil {
-			log.Fatalf("failed: %v", err)
+			klog.Fatalf("failed: %v", err)
 		}
-		log.Print("successfully synced to cluster")
+		klog.Info("successfully synced to cluster")
 		return
 	}
 
 	if err := os.MkdirAll(directory, 0755); err != nil {
-		log.Fatalf("unable to create target directory: %v", err)
+		klog.Fatalf("unable to create target directory: %v", err)
 	}
 
 	configDir := &configdirv1alpha1.ConfigDir{}
 	if err := cli.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, configDir); err != nil {
 		if client.IgnoreNotFound(err) == nil && ignoreNotFoundError {
-			log.Printf("ConfigDir %s not found in namespace %s, but ignoring not found error as requested.", name, namespace)
+			klog.Info("ConfigDir not found, but ignoring not found error as requested.", "name", name, "namespace", namespace)
 			return
 		}
-		log.Fatalf("unable to fetch ConfigDir: %v", err)
+		klog.Fatalf("unable to fetch ConfigDir: %v", err)
 	}
 
 	for _, file := range configDir.Spec.Files {
@@ -104,45 +105,46 @@ func main() {
 		case source.ConfigMapRef != nil:
 			cm := &corev1.ConfigMap{}
 			if err := cli.Get(ctx, types.NamespacedName{Name: source.ConfigMapRef.Name, Namespace: namespace}, cm); err != nil {
-				log.Printf("unable to fetch ConfigMap %s: %v", source.ConfigMapRef.Name, err)
+				klog.Info("unable to fetch ConfigMap", "name", source.ConfigMapRef.Name, "err", err)
 				continue
 			}
 			content = []byte(cm.Data[source.ConfigMapRef.Key])
 		case source.SecretRef != nil:
 			secret := &corev1.Secret{}
 			if err := cli.Get(ctx, types.NamespacedName{Name: source.SecretRef.Name, Namespace: namespace}, secret); err != nil {
-				log.Printf("unable to fetch Secret %s: %v", source.SecretRef.Name, err)
+				klog.Info("unable to fetch Secret", "name", source.SecretRef.Name, "err", err)
 				continue
 			}
 			content = secret.Data[source.SecretRef.Key]
 		case source.URL != nil:
 			content, err = fetchURL(ctx, cli, namespace, source.URL)
 			if err != nil {
-				log.Printf("unable to fetch URL %s: %v", source.URL.Location, err)
+				klog.Info("unable to fetch URL", "location", source.URL.Location, "err", err)
 				continue
 			}
 		case source.FileContentKey != "":
 			content, err = findFileContent(ctx, cli, namespace, configDir.Spec.FileContentSelector, source.FileContentKey)
 			if err != nil {
-				log.Printf("unable to find file content key %s: %v", source.FileContentKey, err)
+				klog.Info("unable to find file content key", "key", source.FileContentKey, "err", err)
 				continue
 			}
 		}
 
 		filePath := filepath.Join(directory, file.Path)
 		if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
-			log.Printf("unable to create directory for %s: %v", filePath, err)
+			klog.Info("unable to create directory", "path", filePath, "err", err)
 			continue
 		}
 		if err := os.WriteFile(filePath, content, 0644); err != nil {
-			log.Printf("unable to write file: %s: %v", filePath, err)
+			klog.Info("unable to write file", "path", filePath, "err", err)
 			continue
 		}
-		log.Printf("synced file: %s", filePath)
+		klog.Info("synced file", "path", filePath)
 	}
 }
 
 func syncConfigDataToCluster(ctx context.Context, cli client.Client, sourceDir string, includeFolderName bool, configDirName, namespace string) error {
+	log := klog.FromContext(ctx)
 	type fileInfo struct {
 		path    string // relative path
 		content []byte
@@ -179,7 +181,7 @@ func syncConfigDataToCluster(ctx context.Context, cli client.Client, sourceDir s
 		return fmt.Errorf("failed to walk directory: %w", err)
 	}
 
-	log.Printf("found files. count: %d, totalSize: %d", len(files), totalSize)
+	log.Info("found files", "count", len(files), "totalSize", totalSize)
 
 	configDir := &configdirv1alpha1.ConfigDir{
 		ObjectMeta: metav1.ObjectMeta{
@@ -191,7 +193,7 @@ func syncConfigDataToCluster(ctx context.Context, cli client.Client, sourceDir s
 
 	const oneMB = 1 * 1024 * 1024
 	if totalSize < oneMB {
-		log.Print("total size is less than 1MB, using inline files")
+		log.Info("total size is less than 1MB, using inline files")
 		for _, f := range files {
 			configDir.Spec.Files = append(configDir.Spec.Files, configdirv1alpha1.FileItem{
 				Path: f.path,
@@ -201,7 +203,7 @@ func syncConfigDataToCluster(ctx context.Context, cli client.Client, sourceDir s
 			})
 		}
 	} else {
-		log.Print("total size is >= 1MB, using ConfigMaps for files")
+		log.Info("total size is >= 1MB, using ConfigMaps for files")
 		for _, f := range files {
 			if f.size > oneMB {
 				return fmt.Errorf("file %s is larger than 1MB and cannot be stored in a ConfigMap", f.path)
@@ -227,13 +229,13 @@ func syncConfigDataToCluster(ctx context.Context, cli client.Client, sourceDir s
 				if err := cli.Create(ctx, cm); err != nil {
 					return fmt.Errorf("failed to create configmap %s: %w", cmName, err)
 				}
-				log.Printf("created configmap %s", cmName)
+				log.Info("created configmap", "name", cmName)
 			} else {
 				existingCm.Data = cm.Data
 				if err := cli.Update(ctx, &existingCm); err != nil {
 					return fmt.Errorf("failed to update configmap %s: %w", cmName, err)
 				}
-				log.Printf("updated configmap %s", cmName)
+				log.Info("updated configmap", "name", cmName)
 			}
 
 			configDir.Spec.Files = append(configDir.Spec.Files, configdirv1alpha1.FileItem{
@@ -259,13 +261,13 @@ func syncConfigDataToCluster(ctx context.Context, cli client.Client, sourceDir s
 		if err := cli.Create(ctx, configDir); err != nil {
 			return fmt.Errorf("failed to create configdir %s: %w", configDirName, err)
 		}
-		log.Printf("created configdir %s", configDirName)
+		log.Info("created configdir", "name", configDirName)
 	} else {
 		existingCd.Spec = configDir.Spec
 		if err := cli.Update(ctx, &existingCd); err != nil {
 			return fmt.Errorf("failed to update configdir %s: %w", configDirName, err)
 		}
-		log.Printf("updated configdir %s", configDirName)
+		log.Info("updated configdir", "name", configDirName)
 	}
 
 	return nil

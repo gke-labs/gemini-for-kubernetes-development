@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +15,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/homedir"
+	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -60,13 +60,13 @@ func main() {
 		// Fallback to in-cluster config if kubeconfig not found or failed
 		config, err = ctrl.GetConfig()
 		if err != nil {
-			log.Fatalf("Failed to get kubeconfig: %v", err)
+			klog.Fatalf("Failed to get kubeconfig: %v", err)
 		}
 	}
 
 	k8sClient, err := client.New(config, client.Options{Scheme: scheme})
 	if err != nil {
-		log.Fatalf("Failed to create k8s client: %v", err)
+		klog.Fatalf("Failed to create k8s client: %v", err)
 	}
 
 	ctx := context.Background()
@@ -96,7 +96,7 @@ func main() {
 
 		parts := strings.Split(relPath, string(os.PathSeparator))
 		if len(parts) != 2 {
-			log.Printf("Skipping %s: unexpected directory structure. Expected <namespace>/<filename>", relPath)
+			klog.Infof("Skipping %s: unexpected directory structure. Expected <namespace>/<filename>", relPath)
 			return nil
 		}
 
@@ -108,7 +108,7 @@ func main() {
 
 		content, err := os.ReadFile(path)
 		if err != nil {
-			log.Printf("Failed to read %s: %v", path, err)
+			klog.Infof("Failed to read %s: %v", path, err)
 			return nil
 		}
 
@@ -116,7 +116,7 @@ func main() {
 			ProjectName string `json:"project_name"`
 		}
 		if err := json.Unmarshal(content, &instruction); err != nil {
-			log.Printf("Failed to parse JSON in %s: %v", path, err)
+			klog.Infof("Failed to parse JSON in %s: %v", path, err)
 			return nil
 		}
 
@@ -124,16 +124,16 @@ func main() {
 		if repoName == "" {
 			// Fallback to filename parsing if JSON doesn't have it
 			// This is risky if repo name has hyphens.
-			log.Printf("Warning: project_name empty in %s. Using matching logic might be flaky.", path)
+			klog.Infof("Warning: project_name empty in %s. Using matching logic might be flaky.", path)
 			// Try to find matching RepoWatch in the namespace
 		}
 
-		log.Printf("Processing %s for repo %s in namespace %s", relPath, repoName, namespace)
+		klog.Infof("Processing %s for repo %s in namespace %s", relPath, repoName, namespace)
 
 		// Find RepoWatch
 		rwList := &repowatchv1alpha1.RepoWatchList{}
 		if err := k8sClient.List(ctx, rwList, client.InNamespace(namespace)); err != nil {
-			log.Printf("Failed to list RepoWatches in %s: %v", namespace, err)
+			klog.Infof("Failed to list RepoWatches in %s: %v", namespace, err)
 			return nil
 		}
 
@@ -149,20 +149,20 @@ func main() {
 		}
 
 		if matchedRW == nil {
-			log.Printf("No RepoWatch found for %s in namespace %s", repoName, namespace)
+			klog.Infof("No RepoWatch found for %s in namespace %s", repoName, namespace)
 			return nil
 		}
 
 		configDirName := matchedRW.Spec.Review.LLM.ConfigdirRef
 		if configDirName == "" {
-			log.Printf("RepoWatch %s has no ConfigDirRef", matchedRW.Name)
+			klog.Infof("RepoWatch %s has no ConfigDirRef", matchedRW.Name)
 			return nil
 		}
 
 		// Get ConfigDir
 		configDir := &configdirv1alpha1.ConfigDir{}
 		if err := k8sClient.Get(ctx, client.ObjectKey{Name: configDirName, Namespace: namespace}, configDir); err != nil {
-			log.Printf("Failed to get ConfigDir %s: %v", configDirName, err)
+			klog.Infof("Failed to get ConfigDir %s: %v", configDirName, err)
 			return nil
 		}
 
@@ -189,7 +189,7 @@ func main() {
 					configDir.Spec.Files[i] = newFileItem
 					updated = true
 				} else {
-					log.Printf("ConfigDir %s already up to date for %s", configDirName, targetPath)
+					klog.Infof("ConfigDir %s already up to date for %s", configDirName, targetPath)
 				}
 				break
 			}
@@ -206,7 +206,7 @@ func main() {
 			newFiles := []configdirv1alpha1.FileItem{}
 			for _, f := range configDir.Spec.Files {
 				if f.Path == draftPath {
-					log.Printf("Removing draft file %s from ConfigDir %s", draftPath, configDirName)
+					klog.Infof("Removing draft file %s from ConfigDir %s", draftPath, configDirName)
 					updated = true
 					continue
 				}
@@ -217,9 +217,9 @@ func main() {
 
 		if updated {
 			if err := k8sClient.Update(ctx, configDir); err != nil {
-				log.Printf("Failed to update ConfigDir %s: %v", configDirName, err)
+				klog.Infof("Failed to update ConfigDir %s: %v", configDirName, err)
 			} else {
-				log.Printf("Updated ConfigDir %s with instructions at %s", configDirName, targetPath)
+				klog.Infof("Updated ConfigDir %s with instructions at %s", configDirName, targetPath)
 			}
 		}
 
@@ -227,6 +227,6 @@ func main() {
 	})
 
 	if err != nil {
-		log.Fatalf("Walk failed: %v", err)
+		klog.Fatalf("Walk failed: %v", err)
 	}
 }

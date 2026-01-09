@@ -20,7 +20,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -28,6 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
+	"k8s.io/klog/v2"
 )
 
 func getClient() (dynamic.Interface, string, string, error) {
@@ -54,6 +54,7 @@ func getClient() (dynamic.Interface, string, string, error) {
 
 // SetAgentState updates the agentState and agentStateMessage annotations.
 func SetAgentState(ctx context.Context, gvr schema.GroupVersionResource, state string, message string) error {
+	log := klog.FromContext(ctx)
 	dc, name, namespace, err := getClient()
 	if err != nil {
 		return err
@@ -79,10 +80,10 @@ func SetAgentState(ctx context.Context, gvr schema.GroupVersionResource, state s
 		},
 	}
 
-	log.Printf("applying resource %s/%s with state: %s\n", namespace, name, state)
+	log.Info("applying resource with state", "namespace", namespace, "name", name, "state", state)
 	_, err = dc.Resource(gvr).Namespace(namespace).Apply(ctx, name, applyObj, metav1.ApplyOptions{FieldManager: "agent-output-client"})
 	if err != nil {
-		log.Printf("error applying resource %s/%s: %v\n", namespace, name, err)
+		log.Info("error applying resource", "namespace", namespace, "name", name, "err", err)
 		return err
 	}
 	return nil
@@ -119,10 +120,10 @@ func SetAgentLabel(gvr schema.GroupVersionResource, labels []string) error {
 		},
 	}
 
-	log.Printf("applying resource %s/%s labels\n", namespace, name)
+	klog.Infof("applying resource %s/%s labels\n", namespace, name)
 	_, err = dc.Resource(gvr).Namespace(namespace).Apply(context.TODO(), name, applyObj, metav1.ApplyOptions{FieldManager: "agent-output-client"})
 	if err != nil {
-		log.Printf("error applying resource %s/%s: %v\n", namespace, name, err)
+		klog.Infof("error applying resource %s/%s: %v\n", namespace, name, err)
 		return err
 	}
 	return nil
@@ -148,7 +149,7 @@ func AddAgentLabel(gvr schema.GroupVersionResource, newLabels []string) error {
 	var existingLabels []string
 	if val, ok := annotations["agentLabels"]; ok {
 		if err := json.Unmarshal([]byte(val), &existingLabels); err != nil {
-			log.Printf("warning: failed to unmarshal existing agentLabels: %v, resetting", err)
+			klog.Infof("warning: failed to unmarshal existing agentLabels: %v, resetting", err)
 			existingLabels = []string{}
 		}
 	}
