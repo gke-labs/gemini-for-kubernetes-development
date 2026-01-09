@@ -2,9 +2,10 @@ package gitcli
 
 import (
 	"fmt"
-	"log"
 	"os/exec"
 	"strings"
+
+	"k8s.io/klog/v2"
 )
 
 var execCommand = exec.Command
@@ -16,7 +17,7 @@ func runCommand(args ...string) ([]byte, error) {
 	if len(args) > 3 && args[0] == "remote" && args[1] == "add" {
 		logArgs[3] = "*****"
 	}
-	log.Printf("Running command: %s %v", name, logArgs)
+	klog.Infof("Running command: %s %v", name, logArgs)
 	cmd := execCommand(name, args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -65,12 +66,12 @@ func CheckoutOrCreateBranch(branch string) error {
 		return fmt.Errorf("failed to list git branches: %w", err)
 	}
 	if exists {
-		log.Printf("branch %s already exists, checking it out", branch)
+		klog.Infof("branch %s already exists, checking it out", branch)
 		if err := CheckoutBranch(branch); err != nil {
 			return fmt.Errorf("failed to checkout existing branch: %w", err)
 		}
 	} else {
-		log.Printf("branch %s does not exist, creating it", branch)
+		klog.Infof("branch %s does not exist, creating it", branch)
 		if err := CreateAndCheckoutBranch(branch); err != nil {
 			return fmt.Errorf("failed to create issue branch: %w", err)
 		}
@@ -103,7 +104,7 @@ func CommitAllChanges(message string) error {
 		return fmt.Errorf("failed to get git status: %w", err)
 	}
 	if hasChanges {
-		log.Println("Changes detected, committing")
+		klog.Info("Changes detected, committing")
 		if err := AddAll(); err != nil {
 			return fmt.Errorf("failed to git add: %v", err)
 		}

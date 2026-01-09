@@ -2,12 +2,15 @@ package gitcli
 
 import (
 	"bytes"
+	"flag"
 	"fmt"
-	"log"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
 	"testing"
+
+	"k8s.io/klog/v2"
 )
 
 // TestHelperProcess isn't a real test. It's used as a helper process
@@ -146,10 +149,17 @@ func TestAddRemoteRedaction(t *testing.T) {
 	execCommand = fakeExecCommand
 	defer func() { execCommand = exec.Command }()
 
-	// Capture log output
-	var buf bytes.Buffer
-	log.SetOutput(&buf)
-	defer log.SetOutput(os.Stderr)
+	// Capture stderr
+	r, w, _ := os.Pipe()
+	origStderr := os.Stderr
+	os.Stderr = w
+
+	// Ensure klog logs to stderr
+	_ = flag.Set("logtostderr", "true")
+
+	defer func() {
+		os.Stderr = origStderr
+	}()
 
 	// URL with sensitive info
 	err := AddRemote("origin", "https://user:secret-token@github.com/repo.git")
@@ -157,7 +167,14 @@ func TestAddRemoteRedaction(t *testing.T) {
 		t.Errorf("Expected no error, got %v", err)
 	}
 
+	// Force flush klog
+	klog.Flush()
+	w.Close()
+
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, r)
 	output := buf.String()
+
 	if strings.Contains(output, "secret-token") {
 		t.Errorf("Log output contains token: %s", output)
 	}

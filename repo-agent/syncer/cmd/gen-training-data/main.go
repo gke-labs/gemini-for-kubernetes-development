@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -17,6 +16,7 @@ import (
 	"golang.org/x/oauth2"
 	"google.golang.org/api/iterator"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/klog/v2"
 	"sigs.k8s.io/yaml"
 )
 
@@ -52,10 +52,10 @@ func main() {
 	flag.Parse()
 
 	if *gcsBucket == "" {
-		log.Fatal("--gcs-bucket is required")
+		klog.Fatal("--gcs-bucket is required")
 	}
 	if *githubToken == "" {
-		log.Fatal("--github-token is required")
+		klog.Fatal("--github-token is required")
 	}
 
 	ctx := context.Background()
@@ -63,7 +63,7 @@ func main() {
 	// Initialize GCS Client
 	gcsClient, err := storage.NewClient(ctx)
 	if err != nil {
-		log.Fatalf("Failed to create GCS client: %v", err)
+		klog.Fatalf("Failed to create GCS client: %v", err)
 	}
 	defer gcsClient.Close()
 
@@ -80,13 +80,13 @@ func main() {
 		var err error
 		singleFile, err = os.Create(*outputFile)
 		if err != nil {
-			log.Fatalf("Failed to create output file: %v", err)
+			klog.Fatalf("Failed to create output file: %v", err)
 		}
 		defer singleFile.Close()
 	} else {
 		// Ensure output directory exists
 		if err := os.MkdirAll(*outputDir, 0755); err != nil {
-			log.Fatalf("Failed to create output directory: %v", err)
+			klog.Fatalf("Failed to create output directory: %v", err)
 		}
 	}
 
@@ -101,30 +101,30 @@ func main() {
 			break
 		}
 		if err != nil {
-			log.Fatalf("Failed to list objects: %v", err)
+			klog.Fatalf("Failed to list objects: %v", err)
 		}
 
 		if !strings.HasSuffix(attrs.Name, ".yaml") {
 			continue
 		}
 
-		log.Printf("Processing %s", attrs.Name)
+		klog.Infof("Processing %s", attrs.Name)
 		rc, err := gcsClient.Bucket(*gcsBucket).Object(attrs.Name).NewReader(ctx)
 		if err != nil {
-			log.Printf("Failed to read object %s: %v", attrs.Name, err)
+			klog.Infof("Failed to read object %s: %v", attrs.Name, err)
 			continue
 		}
 		data, err := io.ReadAll(rc)
 		rc.Close()
 		if err != nil {
-			log.Printf("Failed to read content of %s: %v", attrs.Name, err)
+			klog.Infof("Failed to read content of %s: %v", attrs.Name, err)
 			continue
 		}
 
 		// Parse Unstructured
 		var u unstructured.Unstructured
 		if err := yaml.Unmarshal(data, &u.Object); err != nil {
-			log.Printf("Failed to unmarshal YAML %s: %v", attrs.Name, err)
+			klog.Infof("Failed to unmarshal YAML %s: %v", attrs.Name, err)
 			continue
 		}
 
@@ -136,13 +136,13 @@ func main() {
 		annotations := u.GetAnnotations()
 		agentDraftYAML, ok := annotations["agentDraft"]
 		if !ok || agentDraftYAML == "" {
-			log.Printf("No agentDraft annotation in %s", attrs.Name)
+			klog.Infof("No agentDraft annotation in %s", attrs.Name)
 			continue
 		}
 
 		var agentOutput AgentOutput
 		if err := yaml.Unmarshal([]byte(agentDraftYAML), &agentOutput); err != nil {
-			log.Printf("Failed to unmarshal agentDraft in %s: %v", attrs.Name, err)
+			klog.Infof("Failed to unmarshal agentDraft in %s: %v", attrs.Name, err)
 			continue
 		}
 
@@ -152,35 +152,35 @@ func main() {
 		prURL, _, _ := unstructured.NestedString(source, "htmlURL")
 
 		if prURL == "" {
-			log.Printf("No htmlURL in source spec for %s", attrs.Name)
+			klog.Infof("No htmlURL in source spec for %s", attrs.Name)
 			continue
 		}
 
 		// URL format: https://github.com/owner/repo/pull/123 or just https://github.com/owner/repo
 		parts := strings.Split(strings.TrimPrefix(prURL, "https://github.com/"), "/")
 		if len(parts) < 4 || parts[2] != "pull" {
-			log.Printf("Invalid PR URL format: %s", prURL)
+			klog.Infof("Invalid PR URL format: %s", prURL)
 			continue
 		}
 		owner := parts[0]
 		repo := parts[1]
 		prNumber, err := strconv.Atoi(parts[3])
 		if err != nil {
-			log.Printf("Invalid PR number in URL: %s", prURL)
+			klog.Infof("Invalid PR number in URL: %s", prURL)
 			continue
 		}
 
 		// Fetch PR Status
 		pr, _, err := ghClient.PullRequests.Get(ctx, owner, repo, prNumber)
 		if err != nil {
-			log.Printf("Failed to get PR %s/%s/%d: %v", owner, repo, prNumber, err)
+			klog.Infof("Failed to get PR %s/%s/%d: %v", owner, repo, prNumber, err)
 			continue
 		}
 
 		// Fetch Reviews
 		reviews, _, err := ghClient.PullRequests.ListReviews(ctx, owner, repo, prNumber, nil)
 		if err != nil {
-			log.Printf("Failed to list reviews for %s/%s/%d: %v", owner, repo, prNumber, err)
+			klog.Infof("Failed to list reviews for %s/%s/%d: %v", owner, repo, prNumber, err)
 			continue
 		}
 
@@ -205,7 +205,7 @@ func main() {
 
 		jsonData, err := json.Marshal(record)
 		if err != nil {
-			log.Printf("Failed to marshal record: %v", err)
+			klog.Infof("Failed to marshal record: %v", err)
 			continue
 		}
 
@@ -221,7 +221,7 @@ func main() {
 			}
 			userDir := filepath.Join(*outputDir, namespace)
 			if err := os.MkdirAll(userDir, 0755); err != nil {
-				log.Printf("Failed to create user directory %s: %v", userDir, err)
+				klog.Infof("Failed to create user directory %s: %v", userDir, err)
 				continue
 			}
 
@@ -239,7 +239,7 @@ func main() {
 
 			f, err := os.OpenFile(fpath, flags, 0644)
 			if err != nil {
-				log.Printf("Failed to open file %s: %v", fpath, err)
+				klog.Infof("Failed to open file %s: %v", fpath, err)
 				continue
 			}
 			writer = f
@@ -248,17 +248,17 @@ func main() {
 		n, err := writer.Write(jsonData)
 		if err != nil {
 			if singleFile != nil {
-				log.Fatalf("Failed to write record: %v", err)
+				klog.Fatalf("Failed to write record: %v", err)
 			}
-			log.Printf("Failed to write record: %v", err)
+			klog.Infof("Failed to write record: %v", err)
 			writer.(*os.File).Close()
 			continue
 		}
 		if n != len(jsonData) {
 			if singleFile != nil {
-				log.Fatalf("Short write for record: %d != %d", n, len(jsonData))
+				klog.Fatalf("Short write for record: %d != %d", n, len(jsonData))
 			}
-			log.Printf("Short write for record: %d != %d", n, len(jsonData))
+			klog.Infof("Short write for record: %d != %d", n, len(jsonData))
 			writer.(*os.File).Close()
 			continue
 		}
@@ -266,17 +266,17 @@ func main() {
 		n, err = writer.Write([]byte("\n"))
 		if err != nil {
 			if singleFile != nil {
-				log.Fatalf("Failed to write record: %v", err)
+				klog.Fatalf("Failed to write record: %v", err)
 			}
-			log.Printf("Failed to write record: %v", err)
+			klog.Infof("Failed to write record: %v", err)
 			writer.(*os.File).Close()
 			continue
 		}
 		if n != len("\n") {
 			if singleFile != nil {
-				log.Fatalf("Short write for record: %d != %d", n, len("\n"))
+				klog.Fatalf("Short write for record: %d != %d", n, len("\n"))
 			}
-			log.Printf("Short write for record: %d != %d", n, len("\n"))
+			klog.Infof("Short write for record: %d != %d", n, len("\n"))
 			writer.(*os.File).Close()
 			continue
 		}
@@ -286,5 +286,5 @@ func main() {
 			writer.(*os.File).Close()
 		}
 	}
-	log.Println("Processing complete.")
+	klog.Info("Processing complete.")
 }

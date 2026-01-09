@@ -4,11 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"strings"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/review-ui/review-api/pkg/models"
 	redis "github.com/go-redis/redis/v8"
+	"k8s.io/klog/v2"
 )
 
 // NewClient creates a new Redis client
@@ -38,6 +38,7 @@ func (s *RedisStore) SaveRepo(ctx context.Context, namespace, name, url string) 
 }
 
 func (s *RedisStore) DeleteRepo(ctx context.Context, namespace, name string) error {
+	log := klog.FromContext(ctx)
 	key := s.RepoKey(namespace, name)
 	if err := s.client.Del(ctx, key).Err(); err != nil {
 		return err
@@ -48,7 +49,7 @@ func (s *RedisStore) DeleteRepo(ctx context.Context, namespace, name string) err
 		iter := s.client.Scan(ctx, 0, pattern, 0).Iterator()
 		for iter.Next(ctx) {
 			if err := s.client.Del(ctx, iter.Val()).Err(); err != nil {
-				log.Printf("Failed to delete key %s: %v", iter.Val(), err)
+				log.Info("Failed to delete key", "key", iter.Val(), "err", err)
 			}
 		}
 		return iter.Err()
@@ -56,17 +57,17 @@ func (s *RedisStore) DeleteRepo(ctx context.Context, namespace, name string) err
 
 	// Delete PRs
 	if err := deleteByPattern(fmt.Sprintf("pr:ns:%s:repo:%s:*", namespace, name)); err != nil {
-		log.Printf("Failed to delete PR keys for repo %s: %v", name, err)
+		log.Info("Failed to delete PR keys for repo", "name", name, "err", err)
 	}
 
 	// Delete Issues
 	if err := deleteByPattern(fmt.Sprintf("issue:ns:%s:repo:%s:*", namespace, name)); err != nil {
-		log.Printf("Failed to delete Issue keys for repo %s: %v", name, err)
+		log.Info("Failed to delete Issue keys for repo", "name", name, "err", err)
 	}
 
 	// Delete DevSandboxes
 	if err := deleteByPattern(fmt.Sprintf("dev:ns:%s:repo:%s:*", namespace, name)); err != nil {
-		log.Printf("Failed to delete DevSandbox keys for repo %s: %v", name, err)
+		log.Info("Failed to delete DevSandbox keys for repo", "name", name, "err", err)
 	}
 
 	return nil
@@ -92,6 +93,7 @@ func (s *RedisStore) IssueKey(namespace, repo, handler, issueID string) string {
 }
 
 func (s *RedisStore) ListIssues(ctx context.Context, namespace, repo, handler string) ([]models.Issue, error) {
+	log := klog.FromContext(ctx)
 	issues := []models.Issue{}
 	issueKeyPrefix := s.IssueKey(namespace, repo, handler, "*")
 	iter := s.client.Scan(ctx, 0, issueKeyPrefix, 0).Iterator()
@@ -107,7 +109,7 @@ func (s *RedisStore) ListIssues(ctx context.Context, namespace, repo, handler st
 
 		issueData, err := s.client.HGetAll(ctx, key).Result()
 		if err != nil {
-			log.Printf("Failed to get Issue %s from Redis for repo %s handler %s: %v", issueID, repo, handler, err)
+			log.Info("Failed to get Issue from Redis", "issueID", issueID, "repo", repo, "handler", handler, "err", err)
 			continue
 		}
 
@@ -269,6 +271,7 @@ func (s *RedisStore) DevSandboxKey(namespace, repo, name string) string {
 }
 
 func (s *RedisStore) ListDevSandboxes(ctx context.Context, namespace, repo string) ([]models.DevSandbox, error) {
+	log := klog.FromContext(ctx)
 	sandboxes := []models.DevSandbox{}
 	// prefix: dev:ns:NAMESPACE:repo:REPO:dev:*
 	prefix := s.DevSandboxKey(namespace, repo, "*")
@@ -285,7 +288,7 @@ func (s *RedisStore) ListDevSandboxes(ctx context.Context, namespace, repo strin
 
 		data, err := s.client.HGetAll(ctx, key).Result()
 		if err != nil {
-			log.Printf("Failed to get DevSandbox %s from Redis for repo %s: %v", name, repo, err)
+			log.Info("Failed to get DevSandbox from Redis", "name", name, "repo", repo, "err", err)
 			continue
 		}
 
@@ -347,6 +350,7 @@ func (s *RedisStore) PRKey(namespace, repo, prID string) string {
 }
 
 func (s *RedisStore) ListPRs(ctx context.Context, namespace, repo string) ([]models.PR, error) {
+	log := klog.FromContext(ctx)
 	prs := []models.PR{}
 	repoPRKeyPrefix := s.PRKey(namespace, repo, "*")
 	iter := s.client.Scan(ctx, 0, repoPRKeyPrefix, 0).Iterator()
@@ -355,7 +359,7 @@ func (s *RedisStore) ListPRs(ctx context.Context, namespace, repo string) ([]mod
 		prID := key[len(repoPRKeyPrefix)-1:]
 		prData, err := s.client.HGetAll(ctx, key).Result()
 		if err != nil {
-			log.Printf("Failed to get PR %s from Redis for repo %s: %v", prID, repo, err)
+			log.Info("Failed to get PR from Redis", "prID", prID, "repo", repo, "err", err)
 			continue
 		}
 		pr := models.PR{
@@ -512,6 +516,7 @@ func (s *RedisStore) DeletePR(ctx context.Context, namespace, repo, prID string)
 func PopulateMockData(ctx context.Context, rdb *redis.Client) {
 	// Create a temporary store to use the methods
 	s := NewRedisStore(rdb)
+	log := klog.FromContext(ctx)
 
 	mockRepos := []struct {
 		Name string
@@ -535,14 +540,14 @@ func PopulateMockData(ctx context.Context, rdb *redis.Client) {
 	for _, repo := range mockRepos {
 		// Store repo URL (Mock data in default namespace)
 		if err := s.SaveRepo(ctx, "default", repo.Name, repo.URL); err != nil {
-			log.Printf("Failed to set repo URL in Redis: %v", err)
+			log.Info("Failed to set repo URL in Redis", "err", err)
 		}
 
 		// Store PRs for the repo
 		for _, pr := range mockPRs[repo.Name] {
 			prKey := fmt.Sprintf("pr:ns:default:repo:%s:pr:%s", repo.Name, pr.ID)
 			if err := rdb.HSet(ctx, prKey, "title", pr.Title, "draft", pr.Draft, "sandbox", pr.Sandbox, "review", pr.Review).Err(); err != nil {
-				log.Printf("Failed to set PR info in Redis: %v", err)
+				log.Info("Failed to set PR info in Redis", "err", err)
 			}
 		}
 	}

@@ -6,11 +6,12 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"k8s.io/klog/v2"
 )
 
 const promptTemplate = `
@@ -71,7 +72,7 @@ func main() {
 
 	// Ensure output directory exists
 	if err := os.MkdirAll(*outputDir, 0755); err != nil {
-		log.Fatalf("Failed to create output directory: %v", err)
+		klog.Fatalf("Failed to create output directory: %v", err)
 	}
 
 	// Walk input directory
@@ -91,15 +92,15 @@ func main() {
 			return err
 		}
 
-		log.Printf("Processing %s", relPath)
+		klog.Infof("Processing %s", relPath)
 		if err := processFile(path, *outputDir, relPath, *geminiCmd, *maxRecords); err != nil {
-			log.Printf("Error processing %s: %v", path, err)
+			klog.Infof("Error processing %s: %v", path, err)
 		}
 		return nil
 	})
 
 	if err != nil {
-		log.Fatalf("Walk failed: %v", err)
+		klog.Fatalf("Walk failed: %v", err)
 	}
 }
 
@@ -120,7 +121,7 @@ func processFile(inputPath, outputDir, relPath, geminiCmd string, maxRecords int
 	for scanner.Scan() {
 		var r TrainingDataRecord
 		if err := json.Unmarshal(scanner.Bytes(), &r); err != nil {
-			log.Printf("Skipping invalid JSON line in %s: %v", inputPath, err)
+			klog.Infof("Skipping invalid JSON line in %s: %v", inputPath, err)
 			continue
 		}
 		records = append(records, r)
@@ -142,7 +143,7 @@ func processFile(inputPath, outputDir, relPath, geminiCmd string, maxRecords int
 	}
 
 	if len(usefulRecords) == 0 {
-		log.Printf("No records with human reviews in %s. Skipping.", inputPath)
+		klog.Infof("No records with human reviews in %s. Skipping.", inputPath)
 		return nil
 	}
 
@@ -168,7 +169,7 @@ func processFile(inputPath, outputDir, relPath, geminiCmd string, maxRecords int
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	log.Printf("Invoking Gemini for %s...", inputPath)
+	klog.Infof("Invoking Gemini for %s...", inputPath)
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("gemini execution failed: %v. Stderr: %s", err, stderr.String())
 	}
@@ -197,7 +198,7 @@ func processFile(inputPath, outputDir, relPath, geminiCmd string, maxRecords int
 		return fmt.Errorf("failed to write output: %v", err)
 	}
 
-	log.Printf("Generated instructions at %s", outPath)
+	klog.Infof("Generated instructions at %s", outPath)
 	return nil
 }
 

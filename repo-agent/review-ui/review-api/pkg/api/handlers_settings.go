@@ -1,7 +1,6 @@
 package api
 
 import (
-	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -9,6 +8,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/review-ui/review-api/pkg/auth"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/review-ui/review-api/pkg/k8s"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/klog/v2"
 )
 
 func (s *Server) getSettings(c *gin.Context) {
@@ -66,7 +66,7 @@ func (s *Server) updateSettings(c *gin.Context) {
 			}
 			err := s.K8sManager.UpdateSecret(c.Request.Context(), namespace, pkgk8s.GithubSecretName, data, nil)
 			if err != nil {
-				log.Printf("Failed to clear GitHub PAT: %v", err)
+				klog.Infof("Failed to clear GitHub PAT: %v", err)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to clear GitHub PAT"})
 				return
 			}
@@ -79,7 +79,7 @@ func (s *Server) updateSettings(c *gin.Context) {
 			}
 			err := s.K8sManager.UpdateSecret(c.Request.Context(), namespace, pkgk8s.GithubSecretName, data, nil)
 			if err != nil {
-				log.Printf("Failed to update GitHub PAT: %v", err)
+				klog.Infof("Failed to update GitHub PAT: %v", err)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update GitHub PAT"})
 				return
 			}
@@ -89,7 +89,7 @@ func (s *Server) updateSettings(c *gin.Context) {
 	if payload.GeminiAPIKey != "" {
 		err := s.K8sManager.UpdateSecret(c.Request.Context(), namespace, pkgk8s.GeminiSecretName, map[string][]byte{"gemini": []byte(payload.GeminiAPIKey)}, nil)
 		if err != nil {
-			log.Printf("Failed to update Gemini API Key: %v", err)
+			klog.Infof("Failed to update Gemini API Key: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update Gemini API Key"})
 			return
 		}

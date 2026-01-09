@@ -3,10 +3,10 @@ package sandbox
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/klog/v2"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/agentoutput"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/gitcli"
@@ -38,7 +38,7 @@ func PrepareGitBranch(cfg Config) (string, error) {
 	// Typically origin would be the upstream repo and not the user's fork
 	// Removing origin to prevent accidental pushes to upstream
 	if err := gitcli.RemoveRemote("origin"); err != nil {
-		log.Printf("could not remove origin, probably because it does not exist: %v", err)
+		klog.Infof("could not remove origin, probably because it does not exist: %v", err)
 	}
 
 	if cfg.PushEnabled && cfg.GithubUserOrigin != "" {
@@ -73,7 +73,8 @@ func PrepareGitBranch(cfg Config) (string, error) {
 }
 
 func RunAgent(ctx context.Context, cfg Config) error {
-	log.Printf("Starting agent with AGENT_NAME: %s", cfg.AgentName)
+	log := klog.FromContext(ctx)
+	log.Info("Starting agent", "agentName", cfg.AgentName)
 
 	provider, err := llm.NewLLMProvider(cfg.AgentName)
 	if err != nil {
@@ -99,7 +100,7 @@ func RunAgent(ctx context.Context, cfg Config) error {
 
 	output, err := provider.Run(cfg.AgentPrompt)
 	if err != nil {
-		log.Printf("Agent run failed: %v, output: %s", err, string(output))
+		log.Info("Agent run failed", "err", err, "output", string(output))
 	}
 	if err := os.WriteFile("../agent-output.txt", output, 0644); err != nil {
 		return fmt.Errorf("failed to write agent-output.txt: %w", err)
@@ -114,6 +115,7 @@ func RunAgent(ctx context.Context, cfg Config) error {
 }
 
 func ProcessGitChanges(ctx context.Context, cfg Config, oldCommitID string, commitMessage string) error {
+	log := klog.FromContext(ctx)
 	// Commit and push
 	if cfg.GithubUserEmail != "" {
 		if err := gitcli.CommitAllChanges(commitMessage); err != nil {
@@ -127,7 +129,7 @@ func ProcessGitChanges(ctx context.Context, cfg Config, oldCommitID string, comm
 	}
 
 	if newCommitID != oldCommitID {
-		log.Println("New changes being committed")
+		log.Info("New changes being committed")
 		if cfg.PushEnabled {
 			if cfg.ReportStatus {
 				_ = agentoutput.SetAgentState(ctx, cfg.GVR, "pushing changes", "")
@@ -135,9 +137,9 @@ func ProcessGitChanges(ctx context.Context, cfg Config, oldCommitID string, comm
 			if err := gitcli.Push("origin", cfg.BranchName, true); err != nil {
 				return fmt.Errorf("failed to push changes: %w", err)
 			}
-			log.Println("New changes pushed")
+			log.Info("New changes pushed")
 		} else {
-			log.Println("New changes not pushed. Git push not enabled")
+			log.Info("New changes not pushed. Git push not enabled")
 		}
 	}
 	return nil

@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -20,6 +19,7 @@ import (
 	"golang.org/x/oauth2"
 	githuboauth "golang.org/x/oauth2/github"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/klog/v2"
 )
 
 const (
@@ -48,7 +48,7 @@ func (a *Authenticator) InitOAuth() {
 	clientSecret := os.Getenv("GITHUB_CLIENT_SECRET")
 
 	if clientID == "" || clientSecret == "" {
-		log.Println("Warning: GITHUB_CLIENT_ID or GITHUB_CLIENT_SECRET not set. OAuth will not work.")
+		klog.Info("Warning: GITHUB_CLIENT_ID or GITHUB_CLIENT_SECRET not set. OAuth will not work.")
 	}
 
 	a.OAuthConfig = &oauth2.Config{
@@ -60,7 +60,7 @@ func (a *Authenticator) InitOAuth() {
 
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
-		log.Fatalf("Failed to generate random OAuth state: %v", err)
+		klog.Fatalf("Failed to generate random OAuth state: %v", err)
 	}
 	a.OAuthState = base64.URLEncoding.EncodeToString(b)
 }
@@ -104,13 +104,14 @@ func (a *Authenticator) Login(c *gin.Context) {
 }
 
 func (a *Authenticator) Callback(c *gin.Context) {
+	log := klog.FromContext(c.Request.Context())
 	if c.Query("state") != a.OAuthState {
 		c.String(http.StatusBadRequest, "Invalid OAuth state")
 		return
 	}
 	token, err := a.OAuthConfig.Exchange(c.Request.Context(), c.Query("code"))
 	if err != nil {
-		log.Printf("OAuth exchange failed: %v", err)
+		log.Info("OAuth exchange failed", "err", err)
 		c.String(http.StatusInternalServerError, "Authentication failed")
 		return
 	}
@@ -118,7 +119,7 @@ func (a *Authenticator) Callback(c *gin.Context) {
 	client := github.NewClient(a.OAuthConfig.Client(c.Request.Context(), token))
 	user, _, err := client.Users.Get(c.Request.Context(), "")
 	if err != nil {
-		log.Printf("Failed to get GitHub user: %v", err)
+		log.Info("Failed to get GitHub user", "err", err)
 		c.String(http.StatusInternalServerError, "Failed to get user info")
 		return
 	}
@@ -127,18 +128,18 @@ func (a *Authenticator) Callback(c *gin.Context) {
 
 	// Enforce allowlist for GitHub users
 	if !a.IsUserAllowed(ghUser) {
-		log.Printf("Unauthorized GitHub user attempted to log in: %s", ghUser)
+		log.Info("Unauthorized GitHub user attempted to log in", "user", ghUser)
 		c.String(http.StatusForbidden, "Unauthorized GitHub user. Please contact administrator.")
 		return
 	}
 
 	if err := pkgk8s.BootstrapNamespace(c.Request.Context(), a.K8sManager.Clientset, ghUser); err != nil {
-		log.Printf("Failed to bootstrap namespace %s: %v", ghUser, err)
+		log.Info("Failed to bootstrap namespace", "user", ghUser, "err", err)
 	}
 
 	// Update the secret with the user's token and info
 	if err := a.updateUserSecret(c.Request.Context(), ghUser, token, user); err != nil {
-		log.Printf("Failed to update user secret: %v", err)
+		log.Info("Failed to update user secret", "err", err)
 		c.String(http.StatusInternalServerError, "Failed to update user secret")
 		return
 	}
@@ -146,7 +147,7 @@ func (a *Authenticator) Callback(c *gin.Context) {
 	session := sessions.Default(c)
 	session.Set(UserKey, ghUser)
 	if err := session.Save(); err != nil {
-		log.Printf("Failed to save session: %v", err)
+		log.Info("Failed to save session", "err", err)
 		c.String(http.StatusInternalServerError, "Failed to save session")
 		return
 	}
@@ -183,10 +184,11 @@ func (a *Authenticator) Status(c *gin.Context) {
 }
 
 func (a *Authenticator) Logout(c *gin.Context) {
+	log := klog.FromContext(c.Request.Context())
 	session := sessions.Default(c)
 	session.Delete(UserKey)
 	if err := session.Save(); err != nil {
-		log.Printf("Failed to save session: %v", err)
+		log.Info("Failed to save session", "err", err)
 		c.String(http.StatusInternalServerError, "Failed to save session")
 		return
 	}
@@ -199,6 +201,7 @@ func (a *Authenticator) GetProviders(c *gin.Context) {
 }
 
 func (a *Authenticator) UpdateGithubConfig(c *gin.Context) {
+	log := klog.FromContext(c.Request.Context())
 	var payload struct {
 		ClientID     string `json:"client_id"`
 		ClientSecret string `json:"client_secret"`
@@ -217,7 +220,7 @@ func (a *Authenticator) UpdateGithubConfig(c *gin.Context) {
 	// We need to get the existing secret to preserve the PAT
 	secret, err := a.K8sManager.Clientset.CoreV1().Secrets(pkgk8s.SystemNamespace).Get(c.Request.Context(), pkgk8s.GithubSecretName, v1.GetOptions{})
 	if err != nil {
-		log.Printf("Failed to get github secret: %v", err)
+		log.Info("Failed to get github secret", "err", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get github secret"})
 		return
 	}
@@ -230,7 +233,7 @@ func (a *Authenticator) UpdateGithubConfig(c *gin.Context) {
 
 	_, err = a.K8sManager.Clientset.CoreV1().Secrets(pkgk8s.SystemNamespace).Update(c.Request.Context(), secret, v1.UpdateOptions{})
 	if err != nil {
-		log.Printf("Failed to update github secret: %v", err)
+		log.Info("Failed to update github secret", "err", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update github secret"})
 		return
 	}
@@ -244,6 +247,7 @@ func (a *Authenticator) UpdateGithubConfig(c *gin.Context) {
 
 func (a *Authenticator) Middleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		log := klog.FromContext(c.Request.Context())
 		session := sessions.Default(c)
 		userVal := session.Get(UserKey)
 
@@ -266,7 +270,7 @@ func (a *Authenticator) Middleware() gin.HandlerFunc {
 		if _, ok := a.bootstrappedUsers.Load(user); !ok {
 			// Lazy bootstrap checks if namespace exists, creating it if needed.
 			if err := pkgk8s.BootstrapNamespace(c.Request.Context(), a.K8sManager.Clientset, user); err != nil {
-				log.Printf("Lazy bootstrap failed for user %s: %v", user, err)
+				log.Info("Lazy bootstrap failed for user", "user", user, "err", err)
 			} else {
 				a.bootstrappedUsers.Store(user, true)
 			}
