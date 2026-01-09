@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -109,6 +110,7 @@ func (s *Server) fetchAndPopulateIssues(ctx context.Context, namespace, repo, ha
 		draft := ""
 		agentState := ""
 		agentStateMessage := ""
+		var labels []string
 		annotations := item.GetAnnotations()
 		if annotations == nil {
 			log.Printf("annotations (annotations=nil) not found in IssueSandbox %s", item.GetName())
@@ -124,6 +126,9 @@ func (s *Server) fetchAndPopulateIssues(ctx context.Context, namespace, repo, ha
 			if val, ok := annotations["agentStateMessage"]; ok {
 				agentStateMessage = val
 			}
+			if val, ok := annotations["agentLabels"]; ok {
+				_ = json.Unmarshal([]byte(val), &labels)
+			}
 		}
 
 		issue := models.Issue{
@@ -137,6 +142,7 @@ func (s *Server) fetchAndPopulateIssues(ctx context.Context, namespace, repo, ha
 			PushBranch:        pushBranch,
 			AgentState:        agentState,
 			AgentStateMessage: agentStateMessage,
+			Labels:            labels,
 		}
 		if err := s.Store.SaveIssue(ctx, namespace, repo, handler, issue); err != nil {
 			log.Printf("Failed to cache Issue %s for repo %s handler %s: %v", issueID, repo, handler, err)
