@@ -28,7 +28,7 @@ import (
 	dynamic "k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 
-	"gopkg.in/yaml.v3"
+	"sigs.k8s.io/yaml"
 )
 
 const (

@@ -54,7 +54,7 @@ func getClient() (dynamic.Interface, string, string, error) {
 }
 
 // SetAgentState updates the agentState and agentStateMessage annotations.
-func SetAgentState(gvr schema.GroupVersionResource, state string, message string) error {
+func SetAgentState(ctx context.Context, gvr schema.GroupVersionResource, state string, message string) error {
 	dc, name, namespace, err := getClient()
 	if err != nil {
 		return err
@@ -74,7 +74,7 @@ func SetAgentState(gvr schema.GroupVersionResource, state string, message string
 	}
 
 	log.Printf("patching resource %s/%s with: %s\n", namespace, name, patchBytes)
-	_, err = dc.Resource(gvr).Namespace(namespace).Patch(context.TODO(), name, types.MergePatchType, patchBytes, metav1.PatchOptions{})
+	_, err = dc.Resource(gvr).Namespace(namespace).Patch(ctx, name, types.MergePatchType, patchBytes, metav1.PatchOptions{})
 	if err != nil {
 		log.Printf("error patching resource %s/%s: %v\n", namespace, name, err)
 		return err
@@ -122,6 +122,7 @@ func AddAgentLabel(gvr schema.GroupVersionResource, newLabels []string) error {
 		return err
 	}
 
+	// TODO (barney-s): switch to server-side apply when supported for dynamic client
 	// Use RetryOnConflict to handle potential concurrent updates
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		// Get the current resource
