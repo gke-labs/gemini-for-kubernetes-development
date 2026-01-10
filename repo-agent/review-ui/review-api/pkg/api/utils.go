@@ -3,12 +3,12 @@ package api
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/url"
 	"sort"
 	"strings"
 
 	"github.com/google/go-github/v39/github"
+	"k8s.io/klog/v2"
 )
 
 func fixYAMLIntegers(in interface{}) interface{} {
@@ -56,6 +56,7 @@ func parseRepoURL(repoURL string) (string, string, error) {
 var allowedLabelPrefixes = []string{"area/", "kind/", "priority/", "sig/", "type/"}
 
 func getSuggestedLabels(ctx context.Context, client *github.Client, owner, repo string) ([][]string, error) {
+	log := klog.FromContext(ctx)
 	query := fmt.Sprintf("repo:%s/%s involves:@me is:pr", owner, repo)
 	opts := &github.SearchOptions{
 		Sort:        "updated",
@@ -69,10 +70,10 @@ func getSuggestedLabels(ctx context.Context, client *github.Client, owner, repo 
 	}
 
 	for _, issue := range result.Issues {
-		log.Printf("Found issue #%d with labels:", *issue.Number)
+		log.Info("Found issue", "issueNumber", *issue.Number)
 		for _, label := range issue.Labels {
 			if label.Name != nil {
-				log.Printf(" - %s", *label.Name)
+				log.Info("Issue label", "label", *label.Name)
 			}
 		}
 	}

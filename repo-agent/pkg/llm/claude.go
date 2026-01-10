@@ -19,10 +19,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+
+	"k8s.io/klog/v2"
 )
 
 const (
@@ -62,7 +63,7 @@ func (c *Claude) Setup(_, tokensDir string) error {
 	apiKeyBytes, err := os.ReadFile(apiKeyPath)
 	if err != nil {
 		// If reading from file fails, fall back to checking the environment variable
-		log.Printf("Failed to read API key from %s: %v", apiKeyPath, err)
+		klog.Infof("Failed to read API key from %s: %v", apiKeyPath, err)
 		apiKey, ok := os.LookupEnv(AnthropicAPIKeyEnvVar)
 		if !ok {
 			return fmt.Errorf("API key not found in %s or %s environment variable", apiKeyPath, AnthropicAPIKeyEnvVar)
@@ -83,7 +84,7 @@ func (c *Claude) ExpandPrompt(prompt string) (string, error) {
 }
 
 func (c *Claude) Run(prompt string) ([]byte, error) {
-	log.Printf("Claude provider called with prompt: %s", prompt)
+	klog.Infof("Claude provider called with prompt: %s", prompt)
 
 	requestBody, err := json.Marshal(map[string]interface{}{
 		"model":      defaultClaudeModel,
@@ -128,7 +129,7 @@ func (c *Claude) Run(prompt string) ([]byte, error) {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		log.Printf("Claude API request failed with status %d: %s", resp.StatusCode, string(body))
+		klog.Infof("Claude API request failed with status %d: %s", resp.StatusCode, string(body))
 		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
 	}
 

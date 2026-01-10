@@ -17,10 +17,11 @@ package llm
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"k8s.io/klog/v2"
 )
 
 // Gemini is an Provider that uses the gemini-cli.
@@ -41,10 +42,10 @@ func (g *Gemini) Setup(workspacesDir, tokensDir string) error {
 	// if .gemini directory exists in /workspaces copy it to home directory
 	geminiConfigDir := filepath.Join(workspacesDir, ".gemini")
 	if _, err := os.Stat(geminiConfigDir); err == nil {
-		log.Println(".gemini directory exists in /workspaces, copying to repo directory")
+		klog.Info(".gemini directory exists in /workspaces, copying to repo directory")
 		// if desitation .gemini directory exists move it to .gemini.bak
 		if _, err := os.Stat(".gemini"); err == nil {
-			log.Println(".gemini directory exists in repo directory, moving to .gemini.bak")
+			klog.Info(".gemini directory exists in repo directory, moving to .gemini.bak")
 			err := os.Rename(".gemini", ".gemini.bak")
 			if err != nil {
 				return fmt.Errorf("failed to move .gemini to .gemini.bak: %v", err)
@@ -57,19 +58,19 @@ func (g *Gemini) Setup(workspacesDir, tokensDir string) error {
 			return fmt.Errorf("failed to copy .gemini directory: %v", err)
 		}
 	} else {
-		log.Println(".gemini directory does not exist in /workspaces")
+		klog.Info(".gemini directory does not exist in /workspaces")
 	}
 
 	// Ensure root settings.json has previewFeatures
 	if err := ensureSettings(".gemini"); err != nil {
-		log.Printf("Warning: failed to ensure .gemini/settings.json: %v", err)
+		klog.Infof("Warning: failed to ensure .gemini/settings.json: %v", err)
 	}
 
 	// Ensure home directory settings.json has previewFeatures
 	homeDir, err := os.UserHomeDir()
 	if err == nil {
 		if err := ensureSettings(filepath.Join(homeDir, ".gemini")); err != nil {
-			log.Printf("Warning: failed to ensure ~/.gemini/settings.json: %v", err)
+			klog.Infof("Warning: failed to ensure ~/.gemini/settings.json: %v", err)
 		}
 	}
 
@@ -93,7 +94,7 @@ func ensureSettings(geminiDir string) error {
 		data, err := os.ReadFile(settingsPath)
 		if err == nil {
 			if err := json.Unmarshal(data, &settings); err != nil {
-				log.Printf("Warning: failed to unmarshal existing settings.json: %v", err)
+				klog.Infof("Warning: failed to unmarshal existing settings.json: %v", err)
 			}
 		}
 	}
@@ -128,9 +129,9 @@ func ensureSettings(geminiDir string) error {
 func (g *Gemini) Cleanup(workspacesDir string) error {
 	geminiBackupDir := filepath.Join(workspacesDir, ".gemini.bak")
 	if _, err := os.Stat(geminiBackupDir); err == nil {
-		log.Println("moving .gemini.bak -> .gemini")
+		klog.Info("moving .gemini.bak -> .gemini")
 		if err := os.RemoveAll(geminiBackupDir); err != nil {
-			log.Printf("failed to remove .gemini directory: %v", err)
+			klog.Infof("failed to remove .gemini directory: %v", err)
 		}
 		if err := os.Rename(".gemini.bak", ".gemini"); err != nil {
 			return fmt.Errorf("failed to move .gemini.bak to .gemini: %w", err)
@@ -144,11 +145,11 @@ func (g *Gemini) ExpandPrompt(prompt string) (string, error) {
 }
 
 func (g *Gemini) Run(agentPrompt string) ([]byte, error) {
-	log.Println("running gemini")
+	klog.Info("running gemini")
 
 	output, err := g.Executor.Run("gemini", "-y", "-p", agentPrompt)
 	if err != nil {
-		log.Printf("gemini command failed: %v. Output: %s", err, string(output))
+		klog.Infof("gemini command failed: %v. Output: %s", err, string(output))
 		return nil, err
 	}
 

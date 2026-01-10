@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"sort"
 	"strings"
@@ -19,9 +18,11 @@ import (
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/klog/v2"
 )
 
 func (s *Server) createRepoWatch(c *gin.Context) {
+	log := klog.FromContext(c.Request.Context())
 	namespace := c.MustGet(auth.UserKey).(string)
 
 	if !s.ensureGeminiKeySet(c, namespace) {
@@ -90,14 +91,14 @@ func (s *Server) createRepoWatch(c *gin.Context) {
 								suggestedInterface = append(suggestedInterface, inner)
 							}
 							if setErr := unstructured.SetNestedSlice(obj.Object, suggestedInterface, "spec", "review", "labels"); setErr != nil {
-								log.Printf("Failed to set suggested labels: %v", setErr)
+								log.Info("Failed to set suggested labels", "err", setErr)
 							}
 						} else if suggestErr != nil {
-							log.Printf("Failed to get suggested labels: %v", suggestErr)
+							log.Info("Failed to get suggested labels", "err", suggestErr)
 						}
 					}
 				} else {
-					log.Printf("Debug: Could not get token for label suggestion: %v", tokenErr)
+					log.Info("Debug: Could not get token for label suggestion", "err", tokenErr)
 				}
 			}
 		}
@@ -123,28 +124,28 @@ func (s *Server) createRepoWatch(c *gin.Context) {
 				Resource: "configmaps",
 			}
 		} else {
-			log.Printf("Skipping disallowed resource type: %s/%s", gvk.Group, gvk.Kind)
+			log.Info("Skipping disallowed resource type", "group", gvk.Group, "kind", gvk.Kind)
 			continue
 		}
 
 		_, err := s.K8sManager.Client.Resource(gvr).Namespace(namespace).Create(c.Request.Context(), obj, v1.CreateOptions{})
 		if err != nil {
 			if errors.IsAlreadyExists(err) {
-				log.Printf("Resource %s %s already exists, attempting update...", gvk.Kind, obj.GetName())
+				log.Info("Resource already exists, attempting update...", "kind", gvk.Kind, "name", obj.GetName())
 				// Get existing resourceVersion
 				existing, getErr := s.K8sManager.Client.Resource(gvr).Namespace(namespace).Get(c.Request.Context(), obj.GetName(), v1.GetOptions{})
 				if getErr == nil {
 					obj.SetResourceVersion(existing.GetResourceVersion())
 					_, updateErr := s.K8sManager.Client.Resource(gvr).Namespace(namespace).Update(c.Request.Context(), obj, v1.UpdateOptions{})
 					if updateErr != nil {
-						log.Printf("Failed to update existing %s: %v", gvk.Kind, updateErr)
+						log.Info("Failed to update existing resource", "kind", gvk.Kind, "err", updateErr)
 					}
 				} else {
-					log.Printf("Failed to get existing %s for update: %v", gvk.Kind, getErr)
+					log.Info("Failed to get existing resource for update", "kind", gvk.Kind, "err", getErr)
 				}
 				continue
 			}
-			log.Printf("Failed to create %s from YAML: %v", gvk.Kind, err)
+			log.Info("Failed to create resource from YAML", "kind", gvk.Kind, "err", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to create %s: %v", gvk.Kind, err)})
 			return
 		}
@@ -223,12 +224,13 @@ spec:
 }
 
 func (s *Server) getRepoWatchYAML(c *gin.Context) {
+	log := klog.FromContext(c.Request.Context())
 	namespace := c.MustGet(auth.UserKey).(string)
 	name := c.Param("repo")
 
 	repoWatch, err := s.K8sManager.GetRepoWatch(c.Request.Context(), namespace, name)
 	if err != nil {
-		log.Printf("Failed to get RepoWatch %s/%s: %v", namespace, name, err)
+		log.Info("Failed to get RepoWatch", "namespace", namespace, "name", name, "err", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get RepoWatch"})
 		return
 	}
@@ -249,6 +251,7 @@ func (s *Server) getRepoWatchYAML(c *gin.Context) {
 }
 
 func (s *Server) updateRepoWatch(c *gin.Context) {
+	log := klog.FromContext(c.Request.Context())
 	namespace := c.MustGet(auth.UserKey).(string)
 	name := c.Param("repo")
 
@@ -280,7 +283,7 @@ func (s *Server) updateRepoWatch(c *gin.Context) {
 	// Get existing resource
 	existing, err := s.K8sManager.Client.Resource(gvr).Namespace(namespace).Get(c.Request.Context(), name, v1.GetOptions{})
 	if err != nil {
-		log.Printf("Failed to get RepoWatch for update: %v", err)
+		log.Info("Failed to get RepoWatch for update", "err", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to get RepoWatch: %v", err)})
 		return
 	}
@@ -295,7 +298,7 @@ func (s *Server) updateRepoWatch(c *gin.Context) {
 		spec = fixYAMLIntegers(spec).(map[string]interface{})
 
 		if err := unstructured.SetNestedField(existing.Object, spec, "spec"); err != nil {
-			log.Printf("Failed to set spec: %v", err)
+			log.Info("Failed to set spec", "err", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update object structure"})
 			return
 		}
@@ -304,7 +307,7 @@ func (s *Server) updateRepoWatch(c *gin.Context) {
 		// we should extract it from the new spec.
 		if newURL, found, _ := unstructured.NestedString(existing.Object, "spec", "repoURL"); found {
 			if err := s.Store.SaveRepo(c.Request.Context(), namespace, name, newURL); err != nil {
-				log.Printf("Failed to update repo URL in Redis for %s: %v", name, err)
+				log.Info("Failed to update repo URL in Redis", "name", name, "err", err)
 			}
 		}
 	}
@@ -313,7 +316,7 @@ func (s *Server) updateRepoWatch(c *gin.Context) {
 	if payload.AddPR != 0 {
 		pullRequestsSlice, found, err := unstructured.NestedSlice(existing.Object, "spec", "review", "pullRequests")
 		if err != nil {
-			log.Printf("Failed to get pullRequests: %v", err)
+			log.Info("Failed to get pullRequests", "err", err)
 		}
 
 		var pullRequests []int64
@@ -339,7 +342,7 @@ func (s *Server) updateRepoWatch(c *gin.Context) {
 		if !exists {
 			pullRequests = append(pullRequests, int64(payload.AddPR))
 			if err := unstructured.SetNestedSlice(existing.Object, convInt64SliceToInterfaceSlice(pullRequests), "spec", "review", "pullRequests"); err != nil {
-				log.Printf("Failed to set pullRequests: %v", err)
+				log.Info("Failed to set pullRequests", "err", err)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update object structure for pullRequests"})
 				return
 			}
@@ -366,7 +369,7 @@ func (s *Server) updateRepoWatch(c *gin.Context) {
 			}
 			if changed {
 				if err := unstructured.SetNestedSlice(existing.Object, convInt64SliceToInterfaceSlice(newExclude), "spec", "review", "excludePullRequests"); err != nil {
-					log.Printf("Failed to update excludePullRequests: %v", err)
+					log.Info("Failed to update excludePullRequests", "err", err)
 				}
 			}
 		}
@@ -376,7 +379,7 @@ func (s *Server) updateRepoWatch(c *gin.Context) {
 	if payload.ExcludeIssue != 0 && payload.HandlerName != "" {
 		handlersSlice, found, err := unstructured.NestedSlice(existing.Object, "spec", "issueHandlers")
 		if err != nil {
-			log.Printf("Failed to get issueHandlers: %v", err)
+			log.Info("Failed to get issueHandlers", "err", err)
 		}
 
 		if found {
@@ -415,7 +418,7 @@ func (s *Server) updateRepoWatch(c *gin.Context) {
 						excludeIssues = append(excludeIssues, int64(payload.ExcludeIssue))
 						// Update the handler map
 						if err := unstructured.SetNestedSlice(handlerMap, convInt64SliceToInterfaceSlice(excludeIssues), "excludeIssues"); err != nil {
-							log.Printf("Failed to set excludeIssues: %v", err)
+							log.Info("Failed to set excludeIssues", "err", err)
 						} else {
 							updated = true
 						}
@@ -426,7 +429,7 @@ func (s *Server) updateRepoWatch(c *gin.Context) {
 
 			if updated {
 				if err := unstructured.SetNestedSlice(existing.Object, newHandlers, "spec", "issueHandlers"); err != nil {
-					log.Printf("Failed to update issueHandlers: %v", err)
+					log.Info("Failed to update issueHandlers", "err", err)
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update object structure for issueHandlers"})
 					return
 				}
@@ -439,7 +442,7 @@ func (s *Server) updateRepoWatch(c *gin.Context) {
 		// Add to excludePullRequests
 		excludeSlice, found, err := unstructured.NestedSlice(existing.Object, "spec", "review", "excludePullRequests")
 		if err != nil {
-			log.Printf("Failed to get excludePullRequests: %v", err)
+			log.Info("Failed to get excludePullRequests", "err", err)
 		}
 
 		var excludeRequests []int64
@@ -464,7 +467,7 @@ func (s *Server) updateRepoWatch(c *gin.Context) {
 		if !exists {
 			excludeRequests = append(excludeRequests, int64(payload.ExcludePR))
 			if err := unstructured.SetNestedSlice(existing.Object, convInt64SliceToInterfaceSlice(excludeRequests), "spec", "review", "excludePullRequests"); err != nil {
-				log.Printf("Failed to set excludePullRequests: %v", err)
+				log.Info("Failed to set excludePullRequests", "err", err)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update object structure for excludePullRequests"})
 				return
 			}
@@ -491,7 +494,7 @@ func (s *Server) updateRepoWatch(c *gin.Context) {
 			}
 			if changed {
 				if err := unstructured.SetNestedSlice(existing.Object, convInt64SliceToInterfaceSlice(newPull), "spec", "review", "pullRequests"); err != nil {
-					log.Printf("Failed to update pullRequests: %v", err)
+					log.Info("Failed to update pullRequests", "err", err)
 				}
 			}
 		}
@@ -501,7 +504,7 @@ func (s *Server) updateRepoWatch(c *gin.Context) {
 	if payload.ExcludeBranch != "" {
 		excludeSlice, found, err := unstructured.NestedStringSlice(existing.Object, "spec", "dev", "excludeBranches")
 		if err != nil {
-			log.Printf("Failed to get excludeBranches: %v", err)
+			log.Info("Failed to get excludeBranches", "err", err)
 		}
 
 		var excludeBranches []string
@@ -520,7 +523,7 @@ func (s *Server) updateRepoWatch(c *gin.Context) {
 		if !exists {
 			excludeBranches = append(excludeBranches, payload.ExcludeBranch)
 			if err := unstructured.SetNestedStringSlice(existing.Object, excludeBranches, "spec", "dev", "excludeBranches"); err != nil {
-				log.Printf("Failed to set excludeBranches: %v", err)
+				log.Info("Failed to set excludeBranches", "err", err)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update object structure for excludeBranches"})
 				return
 			}
@@ -530,7 +533,7 @@ func (s *Server) updateRepoWatch(c *gin.Context) {
 	// Apply update
 	_, err = s.K8sManager.Client.Resource(gvr).Namespace(namespace).Update(c.Request.Context(), existing, v1.UpdateOptions{})
 	if err != nil {
-		log.Printf("Failed to update RepoWatch: %v", err)
+		log.Info("Failed to update RepoWatch", "err", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to update RepoWatch: %v", err)})
 		return
 	}
@@ -539,6 +542,7 @@ func (s *Server) updateRepoWatch(c *gin.Context) {
 }
 
 func (s *Server) deleteRepoWatch(c *gin.Context) {
+	log := klog.FromContext(c.Request.Context())
 	namespace := c.MustGet(auth.UserKey).(string)
 	name := c.Param("repo")
 
@@ -550,7 +554,7 @@ func (s *Server) deleteRepoWatch(c *gin.Context) {
 
 	err := s.K8sManager.Client.Resource(gvr).Namespace(namespace).Delete(c.Request.Context(), name, v1.DeleteOptions{})
 	if err != nil {
-		log.Printf("Failed to delete RepoWatch: %v", err)
+		log.Info("Failed to delete RepoWatch", "err", err)
 		if !errors.IsNotFound(err) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to delete RepoWatch: %v", err)})
 			return
@@ -559,7 +563,7 @@ func (s *Server) deleteRepoWatch(c *gin.Context) {
 
 	// Also delete from Redis
 	if err := s.Store.DeleteRepo(c.Request.Context(), namespace, name); err != nil {
-		log.Printf("Failed to delete repo %s from Redis: %v", name, err)
+		log.Info("Failed to delete repo from Redis", "name", name, "err", err)
 		// Don't fail the request if Redis fails, as K8s deletion is the source of truth
 	}
 
@@ -567,25 +571,26 @@ func (s *Server) deleteRepoWatch(c *gin.Context) {
 }
 
 func (s *Server) getRepos(c *gin.Context) {
+	log := klog.FromContext(c.Request.Context())
 	namespace := c.MustGet(auth.UserKey).(string)
 	s.fetchAndPopulateRepos(c.Request.Context(), namespace)
 
 	repos := []models.Repo{}
 	repoNames, err := s.Store.ListRepos(c.Request.Context(), namespace)
 	if err != nil {
-		log.Printf("Error during Redis SCAN: %v", err)
+		log.Info("Error during Redis SCAN", "err", err)
 	}
 
 	for _, repoName := range repoNames {
 		repoWatch, err := s.K8sManager.GetRepoWatch(c.Request.Context(), namespace, repoName)
 		if err != nil {
-			log.Printf("Failed to get RepoWatch %s/%s: %v", namespace, repoName, err)
+			log.Info("Failed to get RepoWatch", "namespace", namespace, "name", repoName, "err", err)
 			continue
 		}
 
 		repoURL, found, _ := unstructured.NestedString(repoWatch.Object, "spec", "repoURL")
 		if !found {
-			log.Printf("repoURL not found in RepoWatch CR %s", repoWatch.GetName())
+			log.Info("repoURL not found in RepoWatch CR", "name", repoWatch.GetName())
 			continue
 		}
 
@@ -644,7 +649,7 @@ func (s *Server) getRepos(c *gin.Context) {
 							pendingPR.Title = pr.GetTitle()
 							pendingPR.HTMLURL = pr.GetHTMLURL()
 						} else {
-							log.Printf("Failed to get PR %d title: %v", prNum, err)
+							log.Info("Failed to get PR title", "prNumber", prNum, "err", err)
 						}
 					}
 					pendingPRs = append(pendingPRs, pendingPR)
@@ -711,6 +716,7 @@ func (s *Server) getRepos(c *gin.Context) {
 }
 
 func (s *Server) fetchAndPopulateRepos(ctx context.Context, namespace string) {
+	log := klog.FromContext(ctx)
 	gvr := schema.GroupVersionResource{
 		Group:    "review.gemini.google.com",
 		Version:  "v1alpha1",
@@ -718,28 +724,29 @@ func (s *Server) fetchAndPopulateRepos(ctx context.Context, namespace string) {
 	}
 	list, err := s.K8sManager.Client.Resource(gvr).Namespace(namespace).List(context.Background(), v1.ListOptions{})
 	if err != nil {
-		log.Printf("Failed to list RepoWatch CRs: %v. Serving mock data.", err)
+		log.Info("Failed to list RepoWatch CRs. Serving mock data.", "err", err)
 		return
 	}
 
 	for _, item := range list.Items {
 		repoURL, found, err := unstructured.NestedString(item.Object, "spec", "repoURL")
 		if err != nil || !found {
-			log.Printf("repoURL not found in RepoWatch CR %s", item.GetName())
+			log.Info("repoURL not found in RepoWatch CR", "name", item.GetName())
 			continue
 		}
 		// Ensure the URL is in Redis
 		if err := s.Store.SaveRepo(ctx, namespace, item.GetName(), repoURL); err != nil {
-			log.Printf("Failed to cache repo URL for %s: %v", item.GetName(), err)
+			log.Info("Failed to cache repo URL", "name", item.GetName(), "err", err)
 		}
 	}
 }
 
 func (s *Server) getTemplates(c *gin.Context) {
+	log := klog.FromContext(c.Request.Context())
 	namespace := c.MustGet(auth.UserKey).(string)
 	templates, err := s.Templates.List(c.Request.Context(), namespace)
 	if err != nil {
-		log.Printf("Failed to list templates: %v", err)
+		log.Info("Failed to list templates", "err", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list templates"})
 		return
 	}

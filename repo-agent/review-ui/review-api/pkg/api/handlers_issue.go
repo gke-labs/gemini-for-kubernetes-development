@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -17,9 +16,11 @@ import (
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/klog/v2"
 )
 
 func (s *Server) getIssues(c *gin.Context) {
+	log := klog.FromContext(c.Request.Context())
 	namespace := c.MustGet(auth.UserKey).(string)
 	repo := c.Param("repo")
 	handler := c.Param("handler")
@@ -27,7 +28,7 @@ func (s *Server) getIssues(c *gin.Context) {
 
 	issues, err := s.Store.ListIssues(c.Request.Context(), namespace, repo, handler)
 	if err != nil {
-		log.Printf("Error listing issues: %v", err)
+		log.Info("Error listing issues", "err", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list issues"})
 		return
 	}
@@ -36,6 +37,7 @@ func (s *Server) getIssues(c *gin.Context) {
 }
 
 func (s *Server) fetchAndPopulateIssues(ctx context.Context, namespace, repo, handler string) {
+	log := klog.FromContext(ctx)
 	gvr := schema.GroupVersionResource{
 		Group:    "custom.agents.x-k8s.io",
 		Version:  "v1alpha1",
@@ -46,30 +48,30 @@ func (s *Server) fetchAndPopulateIssues(ctx context.Context, namespace, repo, ha
 			LabelSelector: fmt.Sprintf("review.gemini.google.com/repowatch=%s,review.gemini.google.com/handler=%s", repo, handler),
 		})
 	if err != nil {
-		log.Printf("Failed to list IssueSandbox CRs: %v.", err)
+		log.Info("Failed to list IssueSandbox CRs", "err", err)
 		return
 	}
 
-	log.Printf("Populating Issues: Found %d issuesandboxes for Repo: %s Handler: %s", len(list.Items), repo, handler)
+	log.Info("Populating Issues", "issuesandbox_count", len(list.Items), "repo", repo, "handler", handler)
 
 	activeIssues := make(map[string]bool)
 	for _, item := range list.Items {
-		log.Printf("Creating Issue entry for IssueSandbox: %s/%s", item.GetNamespace(), item.GetName())
+		log.Info("Creating Issue entry for IssueSandbox", "namespace", item.GetNamespace(), "name", item.GetName())
 		replicas, found, err := unstructured.NestedInt64(item.Object, "spec", "replicas")
 		if err != nil || !found {
-			log.Printf("Replicas (.spec.replicas) not found in IssueSandbox %s", item.GetName())
+			log.Info("Replicas (.spec.replicas) not found in IssueSandbox", "name", item.GetName())
 			continue
 		}
 
 		issueID, found, err := unstructured.NestedString(item.Object, "spec", "source", "issue")
 		if err != nil || !found {
-			log.Printf("Issue ID (.spec.source.issue) not found in IssueSandbox %s", item.GetName())
+			log.Info("Issue ID (.spec.source.issue) not found in IssueSandbox", "name", item.GetName())
 			continue
 		}
 
 		title, found, err := unstructured.NestedString(item.Object, "spec", "source", "title")
 		if err != nil || !found {
-			log.Printf("Title (.spec.source.title) not found in IssueSandbox %s", item.GetName())
+			log.Info("Title (.spec.source.title) not found in IssueSandbox", "name", item.GetName())
 			continue
 		}
 
@@ -77,7 +79,7 @@ func (s *Server) fetchAndPopulateIssues(ctx context.Context, namespace, repo, ha
 
 		htmlurl, found, err := unstructured.NestedString(item.Object, "spec", "source", "htmlURL")
 		if err != nil || !found {
-			log.Printf("htmlURL (.spec.source.htmlURL) not found in IssueSandbox %s", item.GetName())
+			log.Info("htmlURL (.spec.source.htmlURL) not found in IssueSandbox", "name", item.GetName())
 		}
 
 		// https://github.com/barney-s/kro/tree/issue-753-bugfix
@@ -87,17 +89,17 @@ func (s *Server) fetchAndPopulateIssues(ctx context.Context, namespace, repo, ha
 
 		cloneURL, found, err := unstructured.NestedString(item.Object, "spec", "source", "cloneURL")
 		if err != nil || !found {
-			log.Printf("branchURL (.spec.source.cloneURL) not found in IssueSandbox %s", item.GetName())
+			log.Info("branchURL (.spec.source.cloneURL) not found in IssueSandbox", "name", item.GetName())
 			cloneURL = "https://github.com/noorg/norepo.git"
 		}
 		login, found, err := unstructured.NestedString(item.Object, "spec", "destination", "user", "login")
 		if err != nil || !found {
-			log.Printf("branchURL (.spec.destination.user.login) not found in IssueSandbox %s", item.GetName())
+			log.Info("branchURL (.spec.destination.user.login) not found in IssueSandbox", "name", item.GetName())
 			login = "nouser"
 		}
 		branch, found, err := unstructured.NestedString(item.Object, "spec", "destination", "branch")
 		if err != nil || !found {
-			log.Printf("branchURL (.spec.destination.branch) not found in IssueSandbox %s", item.GetName())
+			log.Info("branchURL (.spec.destination.branch) not found in IssueSandbox", "name", item.GetName())
 			branch = "nobranch"
 		}
 
@@ -108,7 +110,7 @@ func (s *Server) fetchAndPopulateIssues(ctx context.Context, namespace, repo, ha
 
 		pushBranch, found, err := unstructured.NestedBool(item.Object, "spec", "destination", "pushEnabled")
 		if err != nil || !found {
-			log.Printf("pushBranch (.spec.source.pushBranch) not found in IssueSandbox %s", item.GetName())
+			log.Info("pushBranch (.spec.source.pushBranch) not found in IssueSandbox", "name", item.GetName())
 		}
 
 		// get draft from annotation[agentDraft]
@@ -118,12 +120,12 @@ func (s *Server) fetchAndPopulateIssues(ctx context.Context, namespace, repo, ha
 		var labels []string
 		annotations := item.GetAnnotations()
 		if annotations == nil {
-			log.Printf("annotations (annotations=nil) not found in IssueSandbox %s", item.GetName())
+			log.Info("annotations (annotations=nil) not found in IssueSandbox", "name", item.GetName())
 		} else {
 			if val, ok := annotations["agentDraft"]; ok {
 				draft = val
 			} else {
-				log.Printf("agentDraft (annotations[agentDraft]) not found in IssueSandbox %s", item.GetName())
+				log.Info("agentDraft (annotations[agentDraft]) not found in IssueSandbox", "name", item.GetName())
 			}
 			if val, ok := annotations["agentState"]; ok {
 				agentState = val
@@ -150,22 +152,22 @@ func (s *Server) fetchAndPopulateIssues(ctx context.Context, namespace, repo, ha
 			Labels:            labels,
 		}
 		if err := s.Store.SaveIssue(ctx, namespace, repo, handler, issue); err != nil {
-			log.Printf("Failed to cache Issue %s for repo %s handler %s: %v", issueID, repo, handler, err)
+			log.Info("Failed to cache Issue", "issueID", issueID, "repo", repo, "handler", handler, "err", err)
 		}
 	}
 
 	// Cleanup stale entries
 	storedIssues, err := s.Store.ListIssues(ctx, namespace, repo, handler)
 	if err != nil {
-		log.Printf("Failed to list issues for cleanup: %v", err)
+		log.Info("Failed to list issues for cleanup", "err", err)
 		return
 	}
 
 	for _, issue := range storedIssues {
 		if !activeIssues[issue.ID] {
-			log.Printf("Removing stale Issue from store: %s", issue.ID)
+			log.Info("Removing stale Issue from store", "issueID", issue.ID)
 			if err := s.Store.DeleteIssue(ctx, namespace, repo, handler, issue.ID); err != nil {
-				log.Printf("Failed to delete stale Issue %s: %v", issue.ID, err)
+				log.Info("Failed to delete stale Issue", "issueID", issue.ID, "err", err)
 			}
 		}
 	}
@@ -194,6 +196,7 @@ func (s *Server) saveIssueDraft(c *gin.Context) {
 }
 
 func (s *Server) submitIssueComment(c *gin.Context) {
+	log := klog.FromContext(c.Request.Context())
 	namespace := c.MustGet(auth.UserKey).(string)
 	repo := c.Param("repo")
 	issueID := c.Param("issue_id")
@@ -207,11 +210,11 @@ func (s *Server) submitIssueComment(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
-	log.Printf("Submitting comment for Issue %s in repo %s with comment: %s", issueID, repo, payload.Comment)
+	log.Info("Submitting comment for Issue", "issueID", issueID, "repo", repo, "comment", payload.Comment)
 
 	issue, err := s.Store.GetIssue(ctx, namespace, repo, handler, issueID)
 	if err != nil {
-		log.Printf("Failed to get Issue %s from Store for repo %s handler %s: %v", issueID, repo, handler, err)
+		log.Info("Failed to get Issue from Store for repo", "issueID", issueID, "repo", repo, "handler", handler, "err", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get Issue data from Store"})
 		return
 	}
@@ -221,7 +224,7 @@ func (s *Server) submitIssueComment(c *gin.Context) {
 
 	repoWatch, err := s.K8sManager.GetRepoWatch(ctx, namespace, repo)
 	if err != nil {
-		log.Printf("Failed to get repowatch %s: %v", repo, err)
+		log.Info("Failed to get repowatch", "repo", repo, "err", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get repowatch config"})
 		return
 	}
@@ -251,14 +254,14 @@ func (s *Server) submitIssueComment(c *gin.Context) {
 		owner, _, _ := parseRepoURL(repoURL)
 
 		if err := s.Store.SaveIssueFeedback(ctx, owner, repo, handler, issueID, draft, agentDraft, prompt, configdir); err != nil {
-			log.Printf("Failed to store feedback for Issue %s in repo %s: %v", issueID, repo, err)
+			log.Info("Failed to store feedback for Issue", "issueID", issueID, "repo", repo, "err", err)
 			// Continue without failing the comment submission
 		}
 	}
 
 	token, err := s.K8sManager.GetGitHubToken(ctx, repoWatch)
 	if err != nil {
-		log.Printf("Failed to get github token for repo %s: %v", repo, err)
+		log.Info("Failed to get github token for repo", "repo", repo, "err", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get github token"})
 		return
 	}
@@ -269,20 +272,20 @@ func (s *Server) submitIssueComment(c *gin.Context) {
 
 	repoURL, found, err := unstructured.NestedString(repoWatch.Object, "spec", "repoURL")
 	if err != nil || !found {
-		log.Printf("repoURL not found in RepoWatch CR %s", repoWatch.GetName())
+		log.Info("repoURL not found in RepoWatch CR", "name", repoWatch.GetName())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "repoURL not found in RepoWatch CR"})
 		return
 	}
 	owner, repoName, err := parseRepoURL(repoURL)
 	if err != nil {
-		log.Printf("Failed to parse repo url %s: %v", repoURL, err)
+		log.Info("Failed to parse repo url", "url", repoURL, "err", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse repo url"})
 		return
 	}
 
 	issueNumber, err := strconv.Atoi(issueID)
 	if err != nil {
-		log.Printf("Failed to parse issueID %s: %v", issueID, err)
+		log.Info("Failed to parse issueID", "issueID", issueID, "err", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid issue id"})
 		return
 	}
@@ -290,7 +293,7 @@ func (s *Server) submitIssueComment(c *gin.Context) {
 	comment := &github.IssueComment{Body: &payload.Comment}
 	_, _, err = client.Issues.CreateComment(ctx, owner, repoName, issueNumber, comment)
 	if err != nil {
-		log.Printf("Failed to create comment on Issue %d: %v", issueNumber, err)
+		log.Info("Failed to create comment on Issue", "issueNumber", issueNumber, "err", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create comment on github"})
 		return
 	}
@@ -311,6 +314,7 @@ func (s *Server) submitIssueComment(c *gin.Context) {
 }
 
 func (s *Server) deleteIssue(c *gin.Context) {
+	log := klog.FromContext(c.Request.Context())
 	namespace := c.MustGet(auth.UserKey).(string)
 	repo := c.Param("repo")
 	issueID := c.Param("issue_id")
@@ -323,7 +327,7 @@ func (s *Server) deleteIssue(c *gin.Context) {
 	}
 
 	if err := s.Store.DeleteIssue(c.Request.Context(), namespace, repo, handler, issueID); err != nil {
-		log.Printf("Failed to DEL Issue data from Store: %v", err)
+		log.Info("Failed to DEL Issue data from Store", "err", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to DEL Issue data from Store"})
 		return
 	}
