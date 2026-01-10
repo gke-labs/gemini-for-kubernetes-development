@@ -76,3 +76,7 @@ func (d *Dummy) Run(prompt string) ([]byte, error) {
 func (d *Dummy) AddPostProcessor(p PostProcessor) {
 	d.processors = append(d.processors, p)
 }
+
+func (d *Dummy) QuotaCheck() bool {
+	return true
+}

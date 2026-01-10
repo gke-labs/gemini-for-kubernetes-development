@@ -36,6 +36,20 @@ type Provider interface {
 	// AddPostProcessor adds a post-processing function to the provider.
 	// These functions are applied sequentially to the LLM's raw output.
 	AddPostProcessor(p PostProcessor)
+	QuotaCheck() bool
+}
+
+// QuotaError is returned by Run() when the LLM API returns an "Out of Quota" error.
+type QuotaError struct {
+	Err error
+}
+
+func (e *QuotaError) Error() string {
+	return fmt.Sprintf("quota exceeded: %v", e.Err)
+}
+
+func (e *QuotaError) Unwrap() error {
+	return e.Err
 }
 
 func NewLLMProvider(name string) (Provider, error) {

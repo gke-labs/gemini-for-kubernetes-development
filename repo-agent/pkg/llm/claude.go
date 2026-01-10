@@ -57,6 +57,10 @@ func (c *Claude) AddPostProcessor(p PostProcessor) {
 	c.postProcessors = append(c.postProcessors, p)
 }
 
+func (c *Claude) QuotaCheck() bool {
+	return true
+}
+
 func (c *Claude) Setup(_, tokensDir string) error {
 	// Read API key from the mounted secret file
 	apiKeyPath := filepath.Join(tokensDir, AnthropicAPIKeySecretKey)
