@@ -32,9 +32,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/controllers/syncer"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/gcs"
 	syncerv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/syncer/api/v1alpha1"
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/syncer/controllers"
 	//+kubebuilder:scaffold:imports
 )
 
@@ -88,7 +88,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err = (&controllers.SyncerReconciler{
+	if err = (&syncer.Reconciler{
 		Client:    mgr.GetClient(),
 		Scheme:    mgr.GetScheme(),
 		Manager:   mgr,

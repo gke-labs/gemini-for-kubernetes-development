@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controllers
+package repowatch
 
 import (
 	"context"
@@ -31,7 +31,7 @@ import (
 
 // cleanupClosedPRSandboxes iterates through owned sandboxes and deletes those whose corresponding PRs are closed.
 // It returns the updated count of total sandboxes.
-func (r *RepoWatchReconciler) cleanupClosedPRSandboxes(ctx context.Context, totalSandboxes int, ownedSandboxes []unstructured.Unstructured, allOpenPRs []*github.PullRequest) int {
+func (r *Reconciler) cleanupClosedPRSandboxes(ctx context.Context, totalSandboxes int, ownedSandboxes []unstructured.Unstructured, allOpenPRs []*github.PullRequest) int {
 	log := log.FromContext(ctx)
 	for _, sandbox := range ownedSandboxes {
 		prNumber, err := strconv.Atoi(strings.Split(sandbox.GetName(), "-pr-")[1])
@@ -134,7 +134,7 @@ func getOwnedIssueSandboxes(sandboxes []unstructured.Unstructured, ownerUID type
 	return ownedSandboxes
 }
 
-func (r *RepoWatchReconciler) sortPRs(ctx context.Context, prs []*github.PullRequest, _ *reviewv1alpha1.RepoWatch, user *github.User) []*github.PullRequest {
+func (r *Reconciler) sortPRs(ctx context.Context, prs []*github.PullRequest, _ *reviewv1alpha1.RepoWatch, user *github.User) []*github.PullRequest {
 	// Prioritize PRs assigned to the current user
 	log := log.FromContext(ctx)
 	if user == nil || user.Login == nil {

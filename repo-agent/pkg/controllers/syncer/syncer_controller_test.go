@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controllers
+package syncer
 
 import (
 	"context"
@@ -158,7 +158,7 @@ func TestDynamicResourceReconciler_Reconcile(t *testing.T) {
 }
 
 func TestSyncerReconciler_Reconcile(t *testing.T) {
-	// Simple test to ensure SyncerReconciler runs and attempts to set up watchers
+	// Simple test to ensure Reconciler runs and attempts to set up watchers
 	// Note: We can't fully test starting watchers with a fake manager easily in unit tests without envtest,
 	// but we can verify the logic flows.
 
@@ -183,7 +183,7 @@ func TestSyncerReconciler_Reconcile(t *testing.T) {
 
 	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(syncer).Build()
 
-	r := &SyncerReconciler{
+	r := &Reconciler{
 		Client:      k8sClient,
 		Scheme:      scheme,
 		Manager:     nil, // This will cause panic if startWatcher is called and uses Manager
@@ -194,7 +194,7 @@ func TestSyncerReconciler_Reconcile(t *testing.T) {
 	// To safely test Reconcile without a real Manager, we would need to mock the Manager or
 	// refactor startWatcher to be injectable.
 	// However, since we verified the core logic in DynamicResourceReconciler,
-	// we will skip the deep integration test of SyncerReconciler in this unit test file
+	// we will skip the deep integration test of Reconciler in this unit test file
 	// to avoid complexity with mocking ctrl.Manager which is an interface with many methods.
 
 	// We can test that it doesn't crash on Not Found

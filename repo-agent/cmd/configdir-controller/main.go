@@ -32,7 +32,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	configdirv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/configdir/api/v1alpha1"
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/configdir/controllers"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/controllers/configdir"
 	//+kubebuilder:scaffold:imports
 )
 
@@ -76,7 +76,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err = (&controllers.ConfigDirReconciler{
+	if err = (&configdir.Reconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {

@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controllers
+package repowatch
 
 import (
 	"context"
@@ -57,14 +57,14 @@ func (m *mockRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) 
 	return resp, nil
 }
 
-// TestRepoWatchReconciler_Reconcile is a crucial test that covers the main success path of the RepoWatchReconciler.
+// TestReconciler_Reconcile is a crucial test that covers the main success path of the Reconciler.
 // It simulates a RepoWatch resource being created, and it verifies that the reconciler correctly:
 // - Fetches the RepoWatch resource.
 // - Creates a GitHub client.
 // - Lists open pull requests.
 // - Creates a ReviewSandbox for an open pull request.
 // - Updates the RepoWatch status with the correct information about the active sandbox and watched PR.
-func TestRepoWatchReconciler_Reconcile(t *testing.T) {
+func TestReconciler_Reconcile(t *testing.T) {
 	g := gomega.NewWithT(t)
 
 	// 1. Create a Scheme and add your API types to it
@@ -96,7 +96,7 @@ func TestRepoWatchReconciler_Reconcile(t *testing.T) {
 	}
 	ghClient := github.NewClient(mockHTTPClient)
 
-	r := &RepoWatchReconciler{
+	r := &Reconciler{
 		Client: fakeClient,
 		Scheme: s,
 		NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
@@ -171,12 +171,12 @@ func TestRepoWatchReconciler_Reconcile(t *testing.T) {
 	g.Expect(apiKeySecretName).To(gomega.Equal("llm-secret"))
 }
 
-// TestRepoWatchReconciler_ReconcileIssues focuses on the success path for handling GitHub issues.
+// TestReconciler_ReconcileIssues focuses on the success path for handling GitHub issues.
 // It ensures that the reconciler can:
 // - List open issues.
 // - Create an IssueSandbox for an open issue based on the IssueHandler configuration.
 // - Updates the RepoWatch status with information about the watched issue.
-func TestRepoWatchReconciler_ReconcileIssues(t *testing.T) {
+func TestReconciler_ReconcileIssues(t *testing.T) {
 	g := gomega.NewWithT(t)
 
 	// 1. Create a Scheme and add your API types to it
@@ -220,7 +220,7 @@ func TestRepoWatchReconciler_ReconcileIssues(t *testing.T) {
 	}
 	ghClient := github.NewClient(mockHTTPClient)
 
-	r := &RepoWatchReconciler{
+	r := &Reconciler{
 		Client: fakeClient,
 		Scheme: s,
 		NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
@@ -390,7 +390,7 @@ func TestReconcileReviewSandboxes(t *testing.T) {
 		// Also, the reconcileReviewSandboxes function calls createReviewSandboxForPR,
 		// which needs a working NewGithubClient.
 		// For this test, we don't need a real github client, so we can mock it.
-		r := &RepoWatchReconciler{
+		r := &Reconciler{
 			Client: clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, closedPRSandbox).WithStatusSubresource(repoWatch).Build(),
 			Scheme: s,
 			NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
@@ -465,7 +465,7 @@ func TestReconcileReviewSandboxes(t *testing.T) {
 			Title:   github.String("New Pending PR"),
 		}
 
-		r := &RepoWatchReconciler{
+		r := &Reconciler{
 			Client: clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, activePRSandbox).WithStatusSubresource(repoWatch).Build(),
 			Scheme: s,
 			NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
@@ -530,7 +530,7 @@ func TestReconcileReviewSandboxes(t *testing.T) {
 			},
 		}
 
-		r := &RepoWatchReconciler{
+		r := &Reconciler{
 			Client: clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, existingPRSandbox).WithStatusSubresource(repoWatch).Build(),
 			Scheme: s,
 			NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
@@ -598,7 +598,7 @@ func TestReconcileReviewSandboxes(t *testing.T) {
 			},
 		}
 
-		r := &RepoWatchReconciler{
+		r := &Reconciler{
 			Client: clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, oldSandbox).WithStatusSubresource(repoWatch).Build(),
 			Scheme: s,
 			NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
@@ -635,7 +635,7 @@ func TestReconcileReviewSandboxes(t *testing.T) {
 		repoWatch.Spec.Review.MaxActiveSandboxes = 1
 		repoWatch.Spec.Review.MaxSandboxes = 1
 
-		r := &RepoWatchReconciler{
+		r := &Reconciler{
 			Client: clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, closedPRSandbox).WithStatusSubresource(repoWatch).Build(),
 			Scheme: s,
 			NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
@@ -750,7 +750,7 @@ func TestReconcileIssueHandlerSandboxes(t *testing.T) {
 
 	// Test case 1: Deleting a sandbox for a closed issue and creating a new one for an open issue.
 	t.Run("deletes sandbox for closed issue and creates new for open issue", func(_ *testing.T) {
-		r := &RepoWatchReconciler{
+		r := &Reconciler{
 			Client: clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, closedIssueSandbox).WithStatusSubresource(repoWatch).Build(),
 			Scheme: s,
 			NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
@@ -818,7 +818,7 @@ func TestReconcileIssueHandlerSandboxes(t *testing.T) {
 			RepositoryURL: github.String("https://api.github.com/repos/test/repo"),
 		}
 
-		r := &RepoWatchReconciler{
+		r := &Reconciler{
 			Client: clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, activeIssueSandbox).WithStatusSubresource(repoWatch).Build(),
 			Scheme: s,
 			NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
@@ -878,7 +878,7 @@ func TestReconcileIssueHandlerSandboxes(t *testing.T) {
 			},
 		}
 
-		r := &RepoWatchReconciler{
+		r := &Reconciler{
 			Client: clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, existingIssueSandbox).WithStatusSubresource(repoWatch).Build(),
 			Scheme: s,
 			NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
@@ -944,7 +944,7 @@ func TestReconcileIssueHandlerSandboxes(t *testing.T) {
 			},
 		}
 
-		r := &RepoWatchReconciler{
+		r := &Reconciler{
 			Client: clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, oldSandbox).WithStatusSubresource(repoWatch).Build(),
 			Scheme: s,
 			NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
@@ -976,7 +976,7 @@ func TestReconcileIssueHandlerSandboxes(t *testing.T) {
 	t.Run("deletes sandbox for closed issue and respects MaxSandboxes limit", func(_ *testing.T) {
 		repoWatch.Spec.IssueHandlers[0].MaxSandboxes = 1
 
-		r := &RepoWatchReconciler{
+		r := &Reconciler{
 			Client: clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, closedIssueSandbox).WithStatusSubresource(repoWatch).Build(),
 			Scheme: s,
 			NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
@@ -1014,7 +1014,7 @@ func TestReconcileIssueHandlerSandboxes(t *testing.T) {
 	})
 }
 
-func TestRepoWatchReconciler_Reconcile_NotFound(t *testing.T) {
+func TestReconciler_Reconcile_NotFound(t *testing.T) {
 	g := gomega.NewWithT(t)
 
 	// 1. Create a Scheme and add your API types to it
@@ -1026,7 +1026,7 @@ func TestRepoWatchReconciler_Reconcile_NotFound(t *testing.T) {
 	fakeClient := clientfake.NewClientBuilder().WithScheme(s).Build()
 
 	// 3. Create your Reconciler instance
-	r := &RepoWatchReconciler{
+	r := &Reconciler{
 		Client: fakeClient,
 		Scheme: s,
 	}
@@ -1044,7 +1044,7 @@ func TestRepoWatchReconciler_Reconcile_NotFound(t *testing.T) {
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 }
 
-func TestRepoWatchReconciler_Reconcile_GitHubSecretNotFound(t *testing.T) {
+func TestReconciler_Reconcile_GitHubSecretNotFound(t *testing.T) {
 	g := gomega.NewWithT(t)
 
 	// 1. Create a Scheme and add your API types to it
@@ -1056,7 +1056,7 @@ func TestRepoWatchReconciler_Reconcile_GitHubSecretNotFound(t *testing.T) {
 	fakeClient := clientfake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&reviewv1alpha1.RepoWatch{}).Build()
 
 	// 3. Create your Reconciler instance
-	r := &RepoWatchReconciler{
+	r := &Reconciler{
 		Client: fakeClient,
 		Scheme: s,
 		NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
@@ -1093,7 +1093,7 @@ func TestRepoWatchReconciler_Reconcile_GitHubSecretNotFound(t *testing.T) {
 	g.Expect(err).To(gomega.HaveOccurred())
 }
 
-func TestRepoWatchReconciler_Reconcile_InvalidRepoURL(t *testing.T) {
+func TestReconciler_Reconcile_InvalidRepoURL(t *testing.T) {
 	g := gomega.NewWithT(t)
 
 	// 1. Create a Scheme and add your API types to it
@@ -1124,7 +1124,7 @@ func TestRepoWatchReconciler_Reconcile_InvalidRepoURL(t *testing.T) {
 		},
 	}
 	ghClient := github.NewClient(mockHTTPClient)
-	r := &RepoWatchReconciler{
+	r := &Reconciler{
 		Client: fakeClient,
 		Scheme: s,
 		NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
@@ -1391,10 +1391,10 @@ func TestPersistingTokenSource(t *testing.T) {
 	g.Expect(string(updatedSecret.Data["refresh_token"])).To(gomega.Equal(newRefreshToken))
 }
 
-// TestRepoWatchReconciler_Reconcile_ExplicitAndListedPRs verifies that the reconciler correctly handles
+// TestReconciler_Reconcile_ExplicitAndListedPRs verifies that the reconciler correctly handles
 // both explicitly requested PRs (via Spec.Review.PullRequests) and listed open PRs.
 // It ensures that sandboxes are created for both types.
-func TestRepoWatchReconciler_Reconcile_ExplicitAndListedPRs(t *testing.T) {
+func TestReconciler_Reconcile_ExplicitAndListedPRs(t *testing.T) {
 	g := gomega.NewWithT(t)
 
 	// 1. Create a Scheme and add your API types to it
@@ -1432,7 +1432,7 @@ func TestRepoWatchReconciler_Reconcile_ExplicitAndListedPRs(t *testing.T) {
 	}
 	ghClient := github.NewClient(mockHTTPClient)
 
-	r := &RepoWatchReconciler{
+	r := &Reconciler{
 		Client: fakeClient,
 		Scheme: s,
 		NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
@@ -1522,7 +1522,7 @@ func TestRepoWatchReconciler_Reconcile_ExplicitAndListedPRs(t *testing.T) {
 	g.Expect(reviewSandboxList.Items).To(gomega.HaveLen(2))
 }
 
-func TestRepoWatchReconciler_Reconcile_FilteredAndSortedPRs(t *testing.T) {
+func TestReconciler_Reconcile_FilteredAndSortedPRs(t *testing.T) {
 	g := gomega.NewWithT(t)
 
 	s := runtime.NewScheme()
@@ -1564,7 +1564,7 @@ func TestRepoWatchReconciler_Reconcile_FilteredAndSortedPRs(t *testing.T) {
 	}
 	ghClient := github.NewClient(mockHTTPClient)
 
-	r := &RepoWatchReconciler{
+	r := &Reconciler{
 		Client: fakeClient,
 		Scheme: s,
 		NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
@@ -1702,7 +1702,7 @@ func TestReconcileReviewSandboxes_RespectsExistingActiveSandboxes(t *testing.T) 
 	pr1Number := 1
 	pr1 := &github.PullRequest{Number: &pr1Number}
 
-	r := &RepoWatchReconciler{
+	r := &Reconciler{
 		Client: clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, existingActiveSandbox).WithStatusSubresource(repoWatch).Build(),
 		Scheme: s,
 		NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
@@ -1815,7 +1815,7 @@ func TestReconcile_MultipleRepoWatchesSameRepo(t *testing.T) {
 
 	// 3. Setup fake client and reconciler
 	fakeClient := clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatchA, repoWatchB, secret).WithStatusSubresource(repoWatchA, repoWatchB).Build()
-	r := &RepoWatchReconciler{
+	r := &Reconciler{
 		Client: fakeClient,
 		Scheme: s,
 		NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
@@ -1878,7 +1878,7 @@ func TestReconcile_MultipleRepoWatchesSameRepo(t *testing.T) {
 	g.Expect(fetchedB.Status.ReviewSandboxes[0].Number).To(gomega.Equal(prNumber))
 }
 
-func TestRepoWatchReconciler_Reconcile_AssigneeFilteredPRs(t *testing.T) {
+func TestReconciler_Reconcile_AssigneeFilteredPRs(t *testing.T) {
 	g := gomega.NewWithT(t)
 
 	s := runtime.NewScheme()
@@ -1917,7 +1917,7 @@ func TestRepoWatchReconciler_Reconcile_AssigneeFilteredPRs(t *testing.T) {
 	}
 	ghClient := github.NewClient(mockHTTPClient)
 
-	r := &RepoWatchReconciler{
+	r := &Reconciler{
 		Client: fakeClient,
 		Scheme: s,
 		NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {

@@ -12,8 +12,7 @@ RUN go mod download
 # Copy the go source
 COPY cmd/syncer-controller/ cmd/syncer-controller/
 COPY syncer/api/ syncer/api/
-COPY syncer/controllers/ syncer/controllers/
-COPY pkg/gcs/ pkg/gcs/
+COPY pkg/ pkg/
 
 # Build
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -a -o manager ./cmd/syncer-controller/main.go

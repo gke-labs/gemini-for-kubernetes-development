@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controllers
+package repowatch
 
 import (
 	"context"
@@ -127,7 +127,7 @@ func TestReconcileReviewSandboxes_MaxSandboxes(t *testing.T) {
 	pr2Number := 2
 	pr2 := &github.PullRequest{Number: &pr2Number}
 
-	r := &RepoWatchReconciler{
+	r := &Reconciler{
 		Client: clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, activeSandbox, inactiveSandbox).WithStatusSubresource(repoWatch).Build(),
 		Scheme: s,
 		NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
@@ -257,7 +257,7 @@ func TestReconcileIssueHandlerSandboxes_MaxSandboxes(t *testing.T) {
 	issue2Number := 2
 	issue2 := &github.Issue{Number: &issue2Number}
 
-	r := &RepoWatchReconciler{
+	r := &Reconciler{
 		Client: clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, activeSandbox, inactiveSandbox).WithStatusSubresource(repoWatch).Build(),
 		Scheme: s,
 		NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
