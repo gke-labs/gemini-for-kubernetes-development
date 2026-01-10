@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -53,14 +54,18 @@ func main() {
 	_ = agentoutput.SetAgentState(ctx, gvr, "reviewing", "")
 	err = runReview(ctx)
 	if err != nil {
-		if strings.Contains(err.Error(), "Too many files") {
+		var quotaErr *llm.QuotaError
+		if errors.As(err, &quotaErr) {
+			_ = agentoutput.SetAgentState(ctx, gvr, "QUOTA ERROR", err.Error())
+		} else if strings.Contains(err.Error(), "Too many files") {
 			_ = agentoutput.SetAgentState(ctx, gvr, "Error: Too many files", err.Error())
 		} else {
 			_ = agentoutput.SetAgentState(ctx, gvr, "error", err.Error())
+			klog.Fatalf("failed reviewing: %v", err)
 		}
-		klog.Fatalf("failed reviewing: %v", err)
+	} else {
+		_ = agentoutput.SetAgentState(ctx, gvr, "review ready", "")
 	}
-	_ = agentoutput.SetAgentState(ctx, gvr, "review ready", "")
 
 	err = cmdCodeSrv.Wait()
 	if err != nil {
@@ -203,6 +208,11 @@ func runReview(ctx context.Context) error {
 		// RUN THE AGENT
 		output, err := provider.Run(currentPrompt)
 		if err != nil {
+			var quotaErr *llm.QuotaError
+			if errors.As(err, &quotaErr) {
+				log.Error(err, "Agent run failed due to quota.")
+				return err
+			}
 			log.Error(err, "Agent run failed. Continuing...")
 			time.Sleep(10 * time.Second)
 			continue
@@ -479,6 +489,10 @@ func dedupeAndCombineText(provider llm.Provider, text string) (string, error) {
 
 	output, err := provider.Run(prompt)
 	if err != nil {
+		var quotaErr *llm.QuotaError
+		if errors.As(err, &quotaErr) {
+			return "", quotaErr
+		}
 		return "", err
 	}
 

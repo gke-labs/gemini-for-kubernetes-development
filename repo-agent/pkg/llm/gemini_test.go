@@ -103,13 +103,14 @@ type MockCommandExecutor struct {
 	Command string
 	Args    []string
 	Output  []byte
+	Stderr  []byte
 	Err     error
 }
 
-func (e *MockCommandExecutor) Run(command string, args ...string) ([]byte, error) {
+func (e *MockCommandExecutor) Run(command string, args ...string) ([]byte, []byte, error) {
 	e.Command = command
 	e.Args = args
-	return e.Output, e.Err
+	return e.Output, e.Stderr, e.Err
 }
 
 func TestGemini_Run(t *testing.T) {
@@ -121,16 +122,17 @@ func TestGemini_Run(t *testing.T) {
 		}
 
 		// Create a Gemini provider with the mock executor
-		g := &Gemini{Executor: mockExecutor}
+		tg := &Gemini{Executor: mockExecutor}
+		tg.AddPostProcessor(StripYAMLMarkers)
 
 		// Run the provider
-		output, err := g.Run("test prompt")
+		output, err := tg.Run("test prompt")
 		if err != nil {
 			t.Fatalf("Gemini.Run() failed: %v", err)
 		}
 
 		// Check the output
-		expectedOutput := []byte("```yaml\nfoo: bar\n```")
+		expectedOutput := []byte("foo: bar")
 		if !bytes.Equal(output, expectedOutput) {
 			t.Errorf("Expected output %q, but got %q", expectedOutput, output)
 		}
@@ -151,12 +153,16 @@ func TestGemini_Run(t *testing.T) {
 		if mockExecutor.Args[2] != "test prompt" {
 			t.Errorf("Expected third argument to be 'test prompt', but got '%s'", mockExecutor.Args[2])
 		}
+		if len(mockExecutor.Stderr) > 0 {
+			t.Errorf("Expected empty stderr, but got %q", string(mockExecutor.Stderr))
+		}
 	})
 
 	t.Run("error", func(t *testing.T) {
 		// Create a mock executor that returns an error
 		mockExecutor := &MockCommandExecutor{
 			Output: nil,
+			Stderr: nil,
 			Err:    errors.New("command failed"),
 		}
 
@@ -168,12 +174,38 @@ func TestGemini_Run(t *testing.T) {
 		if err == nil {
 			t.Fatal("Gemini.Run() should have failed, but it didn't")
 		}
+		if errors.Is(err, &QuotaError{}) {
+			t.Errorf("Expected generic error, but got QuotaError: %v", err)
+		}
+	})
+
+	t.Run("quota error", func(t *testing.T) {
+		// Create a mock executor that returns a quota error in stderr
+		mockExecutor := &MockCommandExecutor{
+			Output: []byte("some output"),
+			Stderr: []byte("[API Error: You have exhausted your daily quota on this model.]"),
+			Err:    errors.New("command failed due to quota"),
+		}
+
+		// Create a Gemini provider with the mock executor
+		g := &Gemini{Executor: mockExecutor}
+
+		// Run the provider
+		_, err := g.Run("test prompt")
+		if err == nil {
+			t.Fatal("Gemini.Run() should have failed with quota error, but it didn't")
+		}
+		var quotaErr *QuotaError
+		if !errors.As(err, &quotaErr) {
+			t.Errorf("Expected QuotaError, but got %T: %v", err, err)
+		}
 	})
 
 	t.Run("post-processor error", func(t *testing.T) {
 		// Create a mock executor
 		mockExecutor := &MockCommandExecutor{
 			Output: []byte("some output"),
+			Stderr: nil,
 			Err:    nil,
 		}
 

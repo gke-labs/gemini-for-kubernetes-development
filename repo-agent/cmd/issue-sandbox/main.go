@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/agentoutput"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/codeserver"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/llm"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 )
 
@@ -65,18 +67,23 @@ func main() {
 	if _, err := os.Stat("../agent-prompt.txt"); os.IsNotExist(err) {
 		// Try solving the issue
 		if err := sandbox.RunAgent(ctx, cfg); err != nil {
-			_ = agentoutput.SetAgentState(ctx, gvr, "error", err.Error())
-			log.Error(err, "failed solving issue")
-			os.Exit(1)
-		}
-		_ = agentoutput.SetAgentState(ctx, gvr, "done", "")
-
-		// Push the changes
-		commitMessage := "fix for issue # " + os.Getenv("ISSUEID")
-		if err := sandbox.ProcessGitChanges(ctx, cfg, oldCommitID, commitMessage); err != nil {
-			_ = agentoutput.SetAgentState(ctx, gvr, "error", err.Error())
-			log.Error(err, "failed to process git changes")
-			os.Exit(1)
+			var quotaErr *llm.QuotaError
+			if errors.As(err, &quotaErr) {
+				_ = agentoutput.SetAgentState(ctx, gvr, "QUOTA ERROR", err.Error())
+			} else {
+				_ = agentoutput.SetAgentState(ctx, gvr, "error", err.Error())
+				log.Error(err, "failed solving issue")
+				os.Exit(1)
+			}
+		} else {
+			_ = agentoutput.SetAgentState(ctx, gvr, "done", "")
+			// Push the changes
+			commitMessage := "fix for issue # " + os.Getenv("ISSUEID")
+			if err := sandbox.ProcessGitChanges(ctx, cfg, oldCommitID, commitMessage); err != nil {
+				_ = agentoutput.SetAgentState(ctx, gvr, "error", err.Error())
+				log.Error(err, "failed to process git changes")
+				os.Exit(1)
+			}
 		}
 	} else {
 		log.Info("agent-prompt.txt exists, skipping code generation")
