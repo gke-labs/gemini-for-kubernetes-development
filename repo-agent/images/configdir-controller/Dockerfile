@@ -10,12 +10,12 @@ COPY go.sum go.sum
 RUN go mod download
 
 # Copy the go source
-COPY configdir/cmd/configdir-controller/main.go configdir/cmd/configdir-controller/main.go
+COPY cmd/configdir-controller/main.go cmd/configdir-controller/main.go
 COPY configdir/api/ configdir/api/
 COPY configdir/controllers/ configdir/controllers/
 
 # Build
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -a -o manager configdir/cmd/configdir-controller/main.go
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -a -o manager cmd/configdir-controller/main.go
 
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details

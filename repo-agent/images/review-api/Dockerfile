@@ -11,7 +11,8 @@ RUN go mod download
 
 COPY pkg/ pkg/
 COPY review-ui/review-api/ review-ui/review-api/
-RUN CGO_ENABLED=0 GOOS=linux go build -o /review-api review-ui/review-api/main.go
+COPY cmd/review-api/ cmd/review-api/
+RUN CGO_ENABLED=0 GOOS=linux go build -o /review-api cmd/review-api/main.go
 
 # Final stage
 FROM gcr.io/distroless/static:nonroot
