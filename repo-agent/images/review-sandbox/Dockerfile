@@ -12,8 +12,8 @@ RUN go mod download
 # Copy the llm directory
 COPY pkg/ ./pkg
 
-COPY review-sandbox/ .
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /review-sandbox .
+COPY cmd/review-sandbox/ cmd/review-sandbox/
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /review-sandbox ./cmd/review-sandbox/
 
 # Envbuilder root
 FROM ghcr.io/coder/envbuilder
