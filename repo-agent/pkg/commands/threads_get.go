@@ -16,6 +16,13 @@ import (
 type GetThreadsOptions struct {
 	SandboxName string
 	ThreadID    string
+
+	// Whether to include messages in the output
+	IncludeMessages bool
+}
+
+func (o *GetThreadsOptions) InitDefaults() {
+	o.IncludeMessages = true
 }
 
 // NewThreadsGetCommand creates a new cobra command for getting LLM threads/chats in the dev sandbox.
@@ -36,6 +43,9 @@ func NewThreadsGetCommand() *cobra.Command {
 			return RunGetThreads(cmd.Context(), opt)
 		},
 	}
+
+	cmd.Flags().BoolVar(&opt.IncludeMessages, "include-messages", opt.IncludeMessages, "Whether to include messages in the output")
+
 	return cmd
 }
 
@@ -46,8 +56,11 @@ func RunGetThreads(ctx context.Context, opt GetThreadsOptions) error {
 	if err != nil {
 		return err
 	}
+	if podID == nil {
+		return fmt.Errorf("sandbox %q not found", opt.SandboxName)
+	}
 
-	thread, err := getThread(ctx, *podID, opt.ThreadID)
+	thread, err := getThread(ctx, *podID, opt)
 	if err != nil {
 		return fmt.Errorf("failed to get thread: %w", err)
 	}
@@ -63,12 +76,15 @@ func RunGetThreads(ctx context.Context, opt GetThreadsOptions) error {
 }
 
 // getThread runs the agent to get a thread in the given dev sandbox pod.
-func getThread(ctx context.Context, podID types.NamespacedName, threadID string) (*ThreadInfo, error) {
+func getThread(ctx context.Context, podID types.NamespacedName, opt GetThreadsOptions) (*ThreadInfo, error) {
 	args := []string{
 		"kubectl", "exec", "--namespace", podID.Namespace, podID.Name, "--", "/repo-agent/dev-sandbox", "threads", "agent",
 	}
-	args = append(args, "--include-messages=true")
-	args = append(args, fmt.Sprintf("--thread-id=%s", threadID))
+	if opt.IncludeMessages {
+		args = append(args, "--include-messages=true")
+	}
+
+	args = append(args, fmt.Sprintf("--thread-id=%s", opt.ThreadID))
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
@@ -83,7 +99,7 @@ func getThread(ctx context.Context, podID types.NamespacedName, threadID string)
 	}
 
 	if len(threads) == 0 {
-		return nil, fmt.Errorf("thread with ID %q not found", threadID)
+		return nil, fmt.Errorf("thread with ID %q not found", opt.ThreadID)
 	}
 
 	thread := threads[0]

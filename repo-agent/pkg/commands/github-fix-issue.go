@@ -77,6 +77,9 @@ func RunGithubFixIssue(ctx context.Context, opt GithubFixIssueOptions) error {
 		return fmt.Errorf("failed to create github client: %w", err)
 	}
 
+	if opt.Repo == "" {
+		return fmt.Errorf("--repo is required")
+	}
 	repo, err := github.ParseRepo(opt.Repo)
 	if err != nil {
 		return err
@@ -85,9 +88,7 @@ func RunGithubFixIssue(ctx context.Context, opt GithubFixIssueOptions) error {
 	if opt.Issue == 0 {
 		return fmt.Errorf("--issue is required")
 	}
-	if opt.Repo == "" {
-		return fmt.Errorf("--repo is required")
-	}
+	issueURL := fmt.Sprintf("https://github.com/%s/issues/%d", opt.Repo, opt.Issue)
 
 	cloneRepos := []string{
 		fmt.Sprintf("/workspaces/%s=%s", repo.FilesystemName(), repo.GitCloneURL()),
@@ -128,7 +129,11 @@ func RunGithubFixIssue(ctx context.Context, opt GithubFixIssueOptions) error {
 			// This enables findSandbox to work, even if we are launching the dev sandbox directly
 			"sandbox": "devc-" + sandboxName,
 		}
-		dynamic := kube.DynamicClient
+
+		sandbox.Annotations = map[string]string{
+			"repo-agent.labs.gke.io/clone-repos": strings.Join(cloneRepos, ";"),
+			"repo-agent.labs.gke.io/fix-issue":   issueURL,
+		}
 
 		sandboxGVR := sandboxapi.GroupVersion.WithResource("sandboxes")
 		sandboxGVK := sandboxapi.GroupVersion.WithKind("Sandbox")
@@ -140,7 +145,7 @@ func RunGithubFixIssue(ctx context.Context, opt GithubFixIssueOptions) error {
 			return err
 		}
 		u := &unstructured.Unstructured{Object: uObj}
-		_, err = dynamic.Resource(sandboxGVR).Namespace(sandbox.Namespace).Create(ctx, u, metav1.CreateOptions{})
+		_, err = kube.DynamicClient.Resource(sandboxGVR).Namespace(sandbox.Namespace).Create(ctx, u, metav1.CreateOptions{})
 		if err != nil {
 			return fmt.Errorf("failed to create sandbox: %w", err)
 		}

@@ -86,7 +86,6 @@ func RunGithubFeedback(ctx context.Context, opt GithubFeedbackOptions) error {
 	if err != nil {
 		return err
 	}
-
 	if podID == nil {
 		return fmt.Errorf("sandbox %q not found", opt.Sandbox)
 	}
