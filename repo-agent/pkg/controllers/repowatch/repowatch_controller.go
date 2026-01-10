@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controllers
+package repowatch
 
 import (
 	"bytes"
@@ -229,8 +229,8 @@ func NewGithubClient(ctx context.Context, k8sClient client.Client, repoWatch *re
 	return github.NewClient(tc), githubConfig, nil
 }
 
-// RepoWatchReconciler reconciles a RepoWatch object
-type RepoWatchReconciler struct {
+// Reconciler reconciles a RepoWatch object
+type Reconciler struct {
 	client.Client
 	Scheme          *runtime.Scheme
 	NewGithubClient githubClientFactory
@@ -244,7 +244,7 @@ type RepoWatchReconciler struct {
 //+kubebuilder:rbac:groups=custom.agents.x-k8s.io,resources=devsandboxes,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;update;patch
 
-func (r *RepoWatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
 
 	repoWatch := &reviewv1alpha1.RepoWatch{}
@@ -322,7 +322,7 @@ func (r *RepoWatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	return ctrl.Result{RequeueAfter: time.Second * time.Duration(repoWatch.Spec.PollIntervalSeconds)}, reconcileErr
 }
 
-func (r *RepoWatchReconciler) reconcileReviews(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, ghClient *github.Client, owner string, repo string, user *github.User) error {
+func (r *Reconciler) reconcileReviews(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, ghClient *github.Client, owner string, repo string, user *github.User) error {
 	log := log.FromContext(ctx)
 	log.Info("reconciling reviews")
 
@@ -369,7 +369,7 @@ func (r *RepoWatchReconciler) reconcileReviews(ctx context.Context, repoWatch *r
 	return r.Status().Update(ctx, repoWatch)
 }
 
-func (r *RepoWatchReconciler) getExplicitPRs(ctx context.Context, ghClient *github.Client, repoWatch *reviewv1alpha1.RepoWatch, owner, repo string) []*github.PullRequest {
+func (r *Reconciler) getExplicitPRs(ctx context.Context, ghClient *github.Client, repoWatch *reviewv1alpha1.RepoWatch, owner, repo string) []*github.PullRequest {
 	var explicitPRs []*github.PullRequest
 	log := log.FromContext(ctx)
 	if len(repoWatch.Spec.Review.PullRequests) > 0 {
@@ -387,7 +387,7 @@ func (r *RepoWatchReconciler) getExplicitPRs(ctx context.Context, ghClient *gith
 	return explicitPRs
 }
 
-func (r *RepoWatchReconciler) listOpenPRs(ctx context.Context, ghClient *github.Client, owner, repo string) ([]*github.PullRequest, error) {
+func (r *Reconciler) listOpenPRs(ctx context.Context, ghClient *github.Client, owner, repo string) ([]*github.PullRequest, error) {
 	var prs []*github.PullRequest
 	log := log.FromContext(ctx)
 	// Otherwise, list open PRs
@@ -412,7 +412,7 @@ func (r *RepoWatchReconciler) listOpenPRs(ctx context.Context, ghClient *github.
 	return prs, nil
 }
 
-func (r *RepoWatchReconciler) filterPRsByLabels(prs []*github.PullRequest, repoWatch *reviewv1alpha1.RepoWatch) []*github.PullRequest {
+func (r *Reconciler) filterPRsByLabels(prs []*github.PullRequest, repoWatch *reviewv1alpha1.RepoWatch) []*github.PullRequest {
 	// Filter by Labels
 	if len(repoWatch.Spec.Review.Labels) > 0 {
 		var filteredPRs []*github.PullRequest
@@ -447,7 +447,7 @@ func (r *RepoWatchReconciler) filterPRsByLabels(prs []*github.PullRequest, repoW
 	return prs
 }
 
-func (r *RepoWatchReconciler) filterPRsByAssignees(prs []*github.PullRequest, repoWatch *reviewv1alpha1.RepoWatch, user *github.User) []*github.PullRequest {
+func (r *Reconciler) filterPRsByAssignees(prs []*github.PullRequest, repoWatch *reviewv1alpha1.RepoWatch, user *github.User) []*github.PullRequest {
 	var filteredPRs []*github.PullRequest
 	assigneesMap := make(map[string]bool)
 	for _, assignee := range repoWatch.Spec.Review.Assignees {
@@ -477,7 +477,7 @@ func (r *RepoWatchReconciler) filterPRsByAssignees(prs []*github.PullRequest, re
 	return filteredPRs
 }
 
-func (r *RepoWatchReconciler) deduplicatePRs(prs []*github.PullRequest, explicitPRs []*github.PullRequest) []*github.PullRequest {
+func (r *Reconciler) deduplicatePRs(prs []*github.PullRequest, explicitPRs []*github.PullRequest) []*github.PullRequest {
 	// Filter out duplicates from explicitPRs
 	var filteredPRs []*github.PullRequest
 	for _, pr := range prs {
@@ -495,7 +495,7 @@ func (r *RepoWatchReconciler) deduplicatePRs(prs []*github.PullRequest, explicit
 	return filteredPRs
 }
 
-func (r *RepoWatchReconciler) excludePRs(prs []*github.PullRequest, repoWatch *reviewv1alpha1.RepoWatch) []*github.PullRequest {
+func (r *Reconciler) excludePRs(prs []*github.PullRequest, repoWatch *reviewv1alpha1.RepoWatch) []*github.PullRequest {
 	if len(repoWatch.Spec.Review.ExcludePullRequests) == 0 {
 		return prs
 	}
@@ -513,7 +513,7 @@ func (r *RepoWatchReconciler) excludePRs(prs []*github.PullRequest, repoWatch *r
 	return filteredPRs
 }
 
-func (r *RepoWatchReconciler) reconcileReviewSandboxesInternal(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, explicitPRs []*github.PullRequest, prs []*github.PullRequest, sandboxes *unstructured.UnstructuredList) ([]reviewv1alpha1.WatchedPR, []int, int) {
+func (r *Reconciler) reconcileReviewSandboxesInternal(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, explicitPRs []*github.PullRequest, prs []*github.PullRequest, sandboxes *unstructured.UnstructuredList) ([]reviewv1alpha1.WatchedPR, []int, int) {
 	log := log.FromContext(ctx)
 
 	ownedSandboxes := getOwnedSandboxes(sandboxes.Items, repoWatch.UID)
@@ -629,7 +629,7 @@ func (r *RepoWatchReconciler) reconcileReviewSandboxesInternal(ctx context.Conte
 	return watchedPRs, pendingPRs, activeSandboxes
 }
 
-func (r *RepoWatchReconciler) reconcileIssues(ctx context.Context, githubConfig map[string]string, repoWatch *reviewv1alpha1.RepoWatch, ghClient *github.Client, owner string, repo string, user *github.User) error {
+func (r *Reconciler) reconcileIssues(ctx context.Context, githubConfig map[string]string, repoWatch *reviewv1alpha1.RepoWatch, ghClient *github.Client, owner string, repo string, user *github.User) error {
 	log := log.FromContext(ctx)
 	var reconcileErr error
 
@@ -663,7 +663,7 @@ func (r *RepoWatchReconciler) reconcileIssues(ctx context.Context, githubConfig 
 	return reconcileErr
 }
 
-func (r *RepoWatchReconciler) reconcileIssuesForHandler(ctx context.Context, user *github.User, sandboxList *unstructured.UnstructuredList, handler reviewv1alpha1.IssueHandlerSpec, repoWatch *reviewv1alpha1.RepoWatch, ghClient *github.Client, owner string, repo string, _ map[string]string) error {
+func (r *Reconciler) reconcileIssuesForHandler(ctx context.Context, user *github.User, sandboxList *unstructured.UnstructuredList, handler reviewv1alpha1.IssueHandlerSpec, repoWatch *reviewv1alpha1.RepoWatch, ghClient *github.Client, owner string, repo string, _ map[string]string) error {
 	log := log.FromContext(ctx)
 
 	listOptions := &github.IssueListByRepoOptions{
@@ -726,7 +726,7 @@ func (r *RepoWatchReconciler) reconcileIssuesForHandler(ctx context.Context, use
 	return r.reconcileIssueHandlerSandboxesInternal(ctx, user, handler, repoWatch, repoIssues, sandboxList)
 }
 
-func (r *RepoWatchReconciler) excludeIssues(issues []*github.Issue, handler reviewv1alpha1.IssueHandlerSpec) []*github.Issue {
+func (r *Reconciler) excludeIssues(issues []*github.Issue, handler reviewv1alpha1.IssueHandlerSpec) []*github.Issue {
 	if len(handler.ExcludeIssues) == 0 {
 		return issues
 	}
@@ -744,7 +744,7 @@ func (r *RepoWatchReconciler) excludeIssues(issues []*github.Issue, handler revi
 	return filteredIssues
 }
 
-func (r *RepoWatchReconciler) reconcileIssueHandlerSandboxesInternal(ctx context.Context, user *github.User, handler reviewv1alpha1.IssueHandlerSpec, repoWatch *reviewv1alpha1.RepoWatch, issues []*github.Issue, sandboxes *unstructured.UnstructuredList) error {
+func (r *Reconciler) reconcileIssueHandlerSandboxesInternal(ctx context.Context, user *github.User, handler reviewv1alpha1.IssueHandlerSpec, repoWatch *reviewv1alpha1.RepoWatch, issues []*github.Issue, sandboxes *unstructured.UnstructuredList) error {
 	log := log.FromContext(ctx)
 
 	// 1. Filter sandboxes to only include those owned by this RepoWatch instance and handler
@@ -877,7 +877,7 @@ func (r *RepoWatchReconciler) reconcileIssueHandlerSandboxesInternal(ctx context
 // generateReviewPrompt generates a prompt for a pull request review.
 // It uses the prompt specified in the RepoWatch CRD, and if it is not
 // specified, it uses a default prompt.
-func (r *RepoWatchReconciler) generateReviewPrompt(repoWatch *reviewv1alpha1.RepoWatch, pr *github.PullRequest) (string, error) {
+func (r *Reconciler) generateReviewPrompt(repoWatch *reviewv1alpha1.RepoWatch, pr *github.PullRequest) (string, error) {
 	// Level 1 substitution
 	promptTmpl := reviewPromptTemplate
 
@@ -916,7 +916,7 @@ func (r *RepoWatchReconciler) generateReviewPrompt(repoWatch *reviewv1alpha1.Rep
 
 // generateIssueHandlerPrompt generates a prompt for an issue handler.
 // It uses the prompt specified in the RepoWatch CRD.
-func (r *RepoWatchReconciler) generateIssueHandlerPrompt(handler reviewv1alpha1.IssueHandlerSpec, issue *github.Issue) (string, error) {
+func (r *Reconciler) generateIssueHandlerPrompt(handler reviewv1alpha1.IssueHandlerSpec, issue *github.Issue) (string, error) {
 	// promptTmpl := "You are an expert kubernetes developer who is helping with bug triage. Please look at the issue {{.Number}} linked at {{.HTMLURL}} and provide a triage summary. Please suggest possible causes and solutions."
 	promptTmpl := handler.LLM.Prompt
 	tmpl, err := template.New("myTemplate").Parse(promptTmpl)
@@ -935,7 +935,7 @@ func (r *RepoWatchReconciler) generateIssueHandlerPrompt(handler reviewv1alpha1.
 // createReviewSandboxForPR creates a ReviewSandbox for a pull request.
 // It uses the LLM configuration from the RepoWatch CRD to configure the
 // sandbox.
-func (r *RepoWatchReconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, pr *github.PullRequest) error {
+func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, pr *github.PullRequest) error {
 	log := log.FromContext(ctx)
 	sandboxName := fmt.Sprintf("%s-pr-%d", repoWatch.Name, *pr.Number)
 
@@ -1017,7 +1017,7 @@ func randString(n int) string {
 // createSandboxForIssueHandler creates an IssueSandbox for an issue.
 // It uses the LLM configuration from the RepoWatch CRD to configure the
 // sandbox.
-func (r *RepoWatchReconciler) createSandboxForIssueHandler(ctx context.Context, user *github.User, handler reviewv1alpha1.IssueHandlerSpec, repoWatch *reviewv1alpha1.RepoWatch, issue *github.Issue) error {
+func (r *Reconciler) createSandboxForIssueHandler(ctx context.Context, user *github.User, handler reviewv1alpha1.IssueHandlerSpec, repoWatch *reviewv1alpha1.RepoWatch, issue *github.Issue) error {
 	log := log.FromContext(ctx)
 	sandboxName := fmt.Sprintf("%s-issue-%d-%s", repoWatch.Name, *issue.Number, handler.Name)
 
@@ -1099,7 +1099,7 @@ func (r *RepoWatchReconciler) createSandboxForIssueHandler(ctx context.Context, 
 	return r.Create(ctx, sandbox)
 }
 
-func (r *RepoWatchReconciler) reconcileDevSandboxes(ctx context.Context, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, ghClient *github.Client, upstreamRepo string) error {
+func (r *Reconciler) reconcileDevSandboxes(ctx context.Context, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, ghClient *github.Client, upstreamRepo string) error {
 	log := log.FromContext(ctx)
 
 	if repoWatch.Spec.Dev.MaxSandboxes == 0 {
@@ -1135,7 +1135,7 @@ func (r *RepoWatchReconciler) reconcileDevSandboxes(ctx context.Context, user *g
 	return r.Status().Update(ctx, repoWatch)
 }
 
-func (r *RepoWatchReconciler) getDevCandidateBranches(ctx context.Context, ghClient *github.Client, repoWatch *reviewv1alpha1.RepoWatch, forkOwner, forkRepo string, defaultBranch string) ([]*github.Branch, error) {
+func (r *Reconciler) getDevCandidateBranches(ctx context.Context, ghClient *github.Client, repoWatch *reviewv1alpha1.RepoWatch, forkOwner, forkRepo string, defaultBranch string) ([]*github.Branch, error) {
 	log := log.FromContext(ctx)
 
 	// 2. List Branches (or use explicit list)
@@ -1230,7 +1230,7 @@ func (r *RepoWatchReconciler) getDevCandidateBranches(ctx context.Context, ghCli
 	return sortedBranches, nil
 }
 
-func (r *RepoWatchReconciler) reconcileDevSandboxesInternal(ctx context.Context, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, branches []*github.Branch, forkOwner, forkRepo string) ([]reviewv1alpha1.DevSandbox, []string, error) {
+func (r *Reconciler) reconcileDevSandboxesInternal(ctx context.Context, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, branches []*github.Branch, forkOwner, forkRepo string) ([]reviewv1alpha1.DevSandbox, []string, error) {
 	log := log.FromContext(ctx)
 	// 6. List Existing DevSandboxes
 	sandboxList := &unstructured.UnstructuredList{}
@@ -1348,7 +1348,7 @@ func (r *RepoWatchReconciler) reconcileDevSandboxesInternal(ctx context.Context,
 	return watchedDevSandboxes, pendingDevBranches, nil
 }
 
-func (r *RepoWatchReconciler) createDevSandbox(ctx context.Context, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, forkOwner, forkRepo, branchName, sandboxName string) error {
+func (r *Reconciler) createDevSandbox(ctx context.Context, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, forkOwner, forkRepo, branchName, sandboxName string) error {
 	cloneURL := fmt.Sprintf("https://github.com/%s/%s.git", forkOwner, forkRepo)
 	originURL := fmt.Sprintf("github.com/%s/%s.git", forkOwner, forkRepo)
 
@@ -1389,7 +1389,7 @@ func (r *RepoWatchReconciler) createDevSandbox(ctx context.Context, user *github
 }
 
 // SetupWithManager sets up the controller with the Manager.
-func (r *RepoWatchReconciler) SetupWithManager(mgr ctrl.Manager, concurrency int) error {
+func (r *Reconciler) SetupWithManager(mgr ctrl.Manager, concurrency int) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&reviewv1alpha1.RepoWatch{}).
 		WithOptions(controller.Options{MaxConcurrentReconciles: concurrency}).

@@ -1,4 +1,4 @@
-package controllers
+package repowatch
 
 const reviewPromptTemplate = `
 You are an expert software engineer who is helping with code reviews.

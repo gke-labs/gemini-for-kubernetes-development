@@ -75,6 +75,7 @@ generate:
 	../dev/tools/fix-go-generate --working-dir ./repowatch
 	../dev/tools/fix-go-generate --working-dir ./configdir
 	../dev/tools/fix-go-generate --working-dir ./syncer
+	../dev/tools/fix-go-generate --working-dir ./pkg/controllers
 
 .PHONY: build
 build: generate

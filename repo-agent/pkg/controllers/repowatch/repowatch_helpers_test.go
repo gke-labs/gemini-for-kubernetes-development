@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controllers
+package repowatch
 
 import (
 	"context"
@@ -82,7 +82,7 @@ func TestCreateOrUpdateReviewSandboxes(t *testing.T) {
 		},
 	}
 
-	r := &RepoWatchReconciler{
+	r := &Reconciler{
 		Client: clientfake.NewClientBuilder().WithScheme(s).WithObjects(oldSandbox).Build(),
 		Scheme: s,
 	}
@@ -128,7 +128,7 @@ func TestCleanupClosedPRSandboxes(t *testing.T) {
 	openPRNumber := 1
 	openPR := &github.PullRequest{Number: &openPRNumber}
 
-	r := &RepoWatchReconciler{
+	r := &Reconciler{
 		Client: clientfake.NewClientBuilder().WithScheme(s).WithObjects(closedPRSandbox).Build(),
 		Scheme: s,
 	}
@@ -397,7 +397,7 @@ func TestSortPRs(t *testing.T) {
 		},
 	}
 
-	r := &RepoWatchReconciler{}
+	r := &Reconciler{}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(_ *testing.T) {

@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controllers
+package syncer
 
 import (
 	"context"
@@ -35,8 +35,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-// SyncerReconciler reconciles a Syncer object
-type SyncerReconciler struct {
+// Reconciler reconciles a Syncer object
+type Reconciler struct {
 	client.Client
 	Scheme    *runtime.Scheme
 	Manager   ctrl.Manager
@@ -51,7 +51,7 @@ type SyncerReconciler struct {
 //+kubebuilder:rbac:groups=syncer.gemini.google.com,resources=syncers/finalizers,verbs=update
 //+kubebuilder:rbac:groups=*,resources=*,verbs=get;list;watch
 
-func (r *SyncerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	_ = log.FromContext(ctx)
 
 	// Fetch the Syncer instance
@@ -83,7 +83,7 @@ func (r *SyncerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	return ctrl.Result{}, nil
 }
 
-func (r *SyncerReconciler) startWatcher(_ context.Context, gvk schema.GroupVersionKind) error {
+func (r *Reconciler) startWatcher(_ context.Context, gvk schema.GroupVersionKind) error {
 	log.Log.Info("Starting watcher for GVK", "gvk", gvk)
 
 	dr := &DynamicResourceReconciler{
@@ -101,7 +101,7 @@ func (r *SyncerReconciler) startWatcher(_ context.Context, gvk schema.GroupVersi
 		Complete(dr)
 }
 
-func (r *SyncerReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.watchedGVKs = make(map[schema.GroupVersionKind]bool)
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&syncerv1alpha1.Syncer{}).
