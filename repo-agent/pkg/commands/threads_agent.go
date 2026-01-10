@@ -1,10 +1,15 @@
 package commands
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"time"
 
@@ -16,14 +21,27 @@ import (
 type ThreadsAgentOptions struct {
 	SandboxName string
 
-	FilterThreadID string
+	// The ThreadID to operate on
+	ThreadID string
 
 	IncludeMessages bool
+
+	// Action determines what action to perform: "list" or "append"
+	Action string
+
+	// Cwd is the current working directory for the agent
+	Cwd string
+}
+
+func (o *ThreadsAgentOptions) InitDefaults() {
+	o.Action = "list"
 }
 
 // NewThreadsAgentCommand creates a new cobra command for managing LLM threads/chats in the dev sandbox.
 func NewThreadsAgentCommand() *cobra.Command {
 	var opt ThreadsAgentOptions
+
+	opt.InitDefaults()
 
 	cmd := &cobra.Command{
 		Use:   "agent [sandbox-name]",
@@ -38,8 +56,10 @@ func NewThreadsAgentCommand() *cobra.Command {
 	}
 	cmd.Hidden = true
 
-	cmd.Flags().StringVar(&opt.FilterThreadID, "thread-id", "", "If specified, filter only for the given thread ID")
-	cmd.Flags().BoolVar(&opt.IncludeMessages, "include-messages", false, "If specified, include messages in the output")
+	cmd.Flags().StringVar(&opt.ThreadID, "thread-id", opt.ThreadID, "If specified, filter only for the given thread ID")
+	cmd.Flags().StringVar(&opt.Action, "action", opt.Action, "Action to perform: list or append")
+	cmd.Flags().BoolVar(&opt.IncludeMessages, "include-messages", opt.IncludeMessages, "If specified, include messages in the output")
+	cmd.Flags().StringVar(&opt.Cwd, "cwd", opt.Cwd, "Current working directory for the agent")
 
 	return cmd
 }
@@ -48,7 +68,19 @@ func NewThreadsAgentCommand() *cobra.Command {
 func RunThreadsAgent(ctx context.Context, opt ThreadsAgentOptions) error {
 	agent := &threadsAgent{}
 
-	threads, err := agent.listThreads(ctx, opt)
+	switch opt.Action {
+	case "list":
+		return agent.List(ctx, opt)
+	case "append":
+		return agent.Append(ctx, opt)
+
+	default:
+		return fmt.Errorf("unknown action %q", opt.Action)
+	}
+}
+
+func (a *threadsAgent) List(ctx context.Context, opt ThreadsAgentOptions) error {
+	threads, err := a.listThreads(ctx, opt)
 	if err != nil {
 		return fmt.Errorf("failed to list threads: %w", err)
 	}
@@ -60,6 +92,46 @@ func RunThreadsAgent(ctx context.Context, opt ThreadsAgentOptions) error {
 	if _, err := os.Stdout.Write(b); err != nil {
 		return fmt.Errorf("failed to write threads to stdout: %w", err)
 	}
+	return nil
+}
+
+func (a *threadsAgent) Append(ctx context.Context, opt ThreadsAgentOptions) error {
+	log := klog.FromContext(ctx)
+
+	if opt.ThreadID == "" {
+		// TODO: Support creating a new thread?
+		return fmt.Errorf("--thread-id is required for append action")
+	}
+
+	// Read stdin
+	stdin, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return fmt.Errorf("failed to read stdin: %w", err)
+	}
+
+	// Run gemini in yolo mode, resuming the specified thread
+
+	// Use an uncancellable context to avoid issues with the connection being lost
+	geminiCtx := context.WithoutCancel(ctx)
+
+	cmd := exec.CommandContext(geminiCtx, "gemini", "--yolo",
+		"--resume", opt.ThreadID,
+	)
+	cmd.Stdin = bytes.NewReader(stdin)
+	if opt.Cwd != "" {
+		cmd.Dir = opt.Cwd
+	}
+
+	// Our stdout/stderr go to the kubectl exec command
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	log.Info("Running gemini in yolo mode to append to thread", "threadID", opt.ThreadID)
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to run gemini in yolo mode: %w", err)
+	}
+
 	return nil
 }
 
@@ -133,7 +205,7 @@ func (a *threadsAgent) listThreads(ctx context.Context, opt ThreadsAgentOptions)
 			return fmt.Errorf("failed to unmarshal gemini session file %q: %w", path, err)
 		}
 
-		if opt.FilterThreadID != "" && session.SessionID != opt.FilterThreadID {
+		if opt.ThreadID != "" && session.SessionID != opt.ThreadID {
 			return nil
 		}
 
@@ -147,6 +219,13 @@ func (a *threadsAgent) listThreads(ctx context.Context, opt ThreadsAgentOptions)
 			thread.StartTime = t
 		}
 
+		workspace, err := inferWorkspace(path)
+		if err != nil {
+			log.Error(err, "failed to infer workspace from gemini session file path", "path", path)
+		}
+		thread.Workspace = workspace
+
+		// Compute token statistics
 		for _, msg := range session.Messages {
 			thread.TotalTokens += msg.Tokens.Total
 		}
@@ -196,4 +275,44 @@ func (a *threadsAgent) listThreads(ctx context.Context, opt ThreadsAgentOptions)
 	}
 
 	return out, nil
+}
+
+// inferWorkspace tries to infer the workspace directory from the gemini session file path.
+// Annoyingly, this is not actually directly stored in the tmp directory, so we have to see if we can guess the workspace and generate a matching hash.
+func inferWorkspace(geminiSessionFilePath string) (string, error) {
+	// gemini session files are stored in /root/.gemini/tmp/<workspace-hash>/chats/session-<session-id>.json
+	chatsDir := filepath.Dir(geminiSessionFilePath)
+	if filepath.Base(chatsDir) != "chats" {
+		return "", fmt.Errorf("unexpected gemini session file path: %q", geminiSessionFilePath)
+	}
+	workspaceDir := filepath.Dir(chatsDir)
+	workspaceHash := filepath.Base(workspaceDir)
+
+	// Check all the directories under /workspaces, which is where dev-sandbox workspaces are stored
+	workspacesDir := "/workspaces"
+	entries, err := os.ReadDir(workspacesDir)
+	if err != nil {
+		return "", fmt.Errorf("failed to read workspaces dir %q: %w", workspacesDir, err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		p := filepath.Join(workspacesDir, entry.Name())
+
+		// Check if the hash of this directory matches the workspace hash
+		hash := computeGeminiWorkspaceHash(p)
+		if hash == workspaceHash {
+			return p, nil
+		}
+	}
+
+	return "", fmt.Errorf("workspace for %q not found", geminiSessionFilePath)
+}
+
+func computeGeminiWorkspaceHash(dir string) string {
+	hasher := sha256.New()
+	hasher.Write([]byte(dir))
+	hash := hasher.Sum(nil)
+	return hex.EncodeToString(hash)
 }
