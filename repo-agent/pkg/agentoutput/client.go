@@ -81,7 +81,7 @@ func SetAgentState(ctx context.Context, gvr schema.GroupVersionResource, state s
 	}
 
 	log.Info("applying resource with state", "namespace", namespace, "name", name, "state", state)
-	_, err = dc.Resource(gvr).Namespace(namespace).Apply(ctx, name, applyObj, metav1.ApplyOptions{FieldManager: "agent-output-client"})
+	_, err = dc.Resource(gvr).Namespace(namespace).Apply(ctx, name, applyObj, metav1.ApplyOptions{FieldManager: "agent-output-client", Force: true})
 	if err != nil {
 		log.Info("error applying resource", "namespace", namespace, "name", name, "err", err)
 		return err
