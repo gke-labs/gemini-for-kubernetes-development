@@ -3,7 +3,7 @@ package store
 import (
 	"context"
 
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/review-ui/review-api/pkg/models"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 )
 
 type Store interface {

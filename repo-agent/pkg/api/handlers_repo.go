@@ -9,8 +9,8 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/review-ui/review-api/pkg/auth"
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/review-ui/review-api/pkg/models"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/auth"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 	"github.com/google/go-github/v39/github"
 	yaml "go.yaml.in/yaml/v3"
 	"golang.org/x/oauth2"
