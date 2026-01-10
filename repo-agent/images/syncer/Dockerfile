@@ -10,13 +10,13 @@ COPY go.sum go.sum
 RUN go mod download
 
 # Copy the go source
-COPY syncer/cmd/ syncer/cmd/
+COPY cmd/syncer-controller/ cmd/syncer-controller/
 COPY syncer/api/ syncer/api/
 COPY syncer/controllers/ syncer/controllers/
 COPY syncer/pkg/ syncer/pkg/
 
 # Build
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -a -o manager syncer/cmd/syncer-controller/main.go
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -a -o manager ./cmd/syncer-controller/main.go
 
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
