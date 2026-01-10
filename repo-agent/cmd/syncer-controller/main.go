@@ -32,9 +32,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/gcs"
 	syncerv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/syncer/api/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/syncer/controllers"
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/syncer/pkg/gcs"
 	//+kubebuilder:scaffold:imports
 )
 

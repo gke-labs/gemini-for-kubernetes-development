@@ -21,8 +21,8 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/gcs"
 	syncerv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/syncer/api/v1alpha1"
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/syncer/pkg/gcs"
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/common/decls"
 	"github.com/google/cel-go/common/types"
