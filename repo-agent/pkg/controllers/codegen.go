@@ -14,7 +14,9 @@
 
 // This file just exists as a place to put //go:generate directives that should apply to the entire project
 
-package configdir
+package controllers
 
-// Generate CRDs and RBAC rules
-//go:generate go tool sigs.k8s.io/controller-tools/cmd/controller-gen object crd:maxDescLen=0 paths=./api/... output:crd:dir=../k8s/crds
+// Generate RBAC rules
+//go:generate go tool sigs.k8s.io/controller-tools/cmd/controller-gen paths=./configdir/... output:rbac:dir=../../k8s rbac:roleName=configdir-controller,fileName=configdir-rbac.generated.yaml
+//go:generate go tool sigs.k8s.io/controller-tools/cmd/controller-gen paths=./syncer/... output:rbac:dir=../../k8s rbac:roleName=syncer-role,fileName=syncer-rbac.generated.yaml
+//go:generate go tool sigs.k8s.io/controller-tools/cmd/controller-gen paths=./repowatch/... output:rbac:dir=../../k8s rbac:roleName=repo-agent-controller,fileName=rbac.generated.yaml
