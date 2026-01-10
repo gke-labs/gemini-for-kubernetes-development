@@ -7,7 +7,7 @@ import (
 	"net/url"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/review-ui/review-api/pkg/auth"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/auth"
 	"k8s.io/klog/v2"
 )
 
