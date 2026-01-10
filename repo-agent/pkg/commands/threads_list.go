@@ -44,6 +44,9 @@ func RunListThreads(ctx context.Context, opt ListThreadsOptions) error {
 	if err != nil {
 		return err
 	}
+	if podID == nil {
+		return fmt.Errorf("sandbox %q not found", opt.SandboxName)
+	}
 
 	threads, err := listThreads(ctx, *podID)
 	if err != nil {
@@ -51,7 +54,7 @@ func RunListThreads(ctx context.Context, opt ListThreadsOptions) error {
 	}
 
 	for _, thread := range threads {
-		fmt.Fprintf(os.Stdout, "%v\t%v\t%v\t%v\n", thread.SessionID, thread.ProjectHash, thread.StartTime, thread.TotalTokens)
+		fmt.Fprintf(os.Stdout, "%v\t%v\t%v\t%v\t%v\n", thread.Workspace, thread.SessionID, thread.ProjectHash, thread.StartTime, thread.TotalTokens)
 	}
 
 	return nil

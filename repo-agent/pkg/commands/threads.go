@@ -15,6 +15,7 @@ func BuildThreadsCommand() *cobra.Command {
 
 	cmd.AddCommand(NewThreadsListCommand())
 	cmd.AddCommand(NewThreadsGetCommand())
+	cmd.AddCommand(NewAppendToThreadCommand())
 
 	// The agent is added as a hidden command.
 	cmd.AddCommand(NewThreadsAgentCommand())
@@ -31,6 +32,8 @@ type ThreadInfo struct {
 	TotalTokens int `json:"tokens,omitempty"`
 
 	Messages []ThreadMessage `json:"messages,omitempty"`
+
+	Workspace string `json:"workspace,omitempty"`
 }
 
 type ThreadMessage struct {
