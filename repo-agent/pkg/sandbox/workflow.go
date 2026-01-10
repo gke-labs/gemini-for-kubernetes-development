@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 
@@ -100,7 +101,14 @@ func RunAgent(ctx context.Context, cfg Config) error {
 
 	output, err := provider.Run(cfg.AgentPrompt)
 	if err != nil {
+		var quotaErr *llm.QuotaError
+		if errors.As(err, &quotaErr) {
+			_ = agentoutput.SetAgentState(ctx, cfg.GVR, "QUOTA ERROR", err.Error())
+			log.Info("Agent run failed due to quota", "err", err)
+			return err
+		}
 		log.Info("Agent run failed", "err", err, "output", string(output))
+		return err
 	}
 	if err := os.WriteFile("../agent-output.txt", output, 0644); err != nil {
 		return fmt.Errorf("failed to write agent-output.txt: %w", err)
