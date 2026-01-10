@@ -24,8 +24,8 @@ import (
 	"os"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 )
@@ -64,27 +64,25 @@ func SetAgentState(ctx context.Context, gvr schema.GroupVersionResource, state s
 		return err
 	}
 
-	patch := map[string]interface{}{
-		"apiVersion": obj.GetAPIVersion(),
-		"kind":       obj.GetKind(),
-		"metadata": map[string]interface{}{
-			"name":      name,
-			"namespace": namespace,
-			"annotations": map[string]string{
-				"agentState":        state,
-				"agentStateMessage": message,
+	applyObj := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": obj.GetAPIVersion(),
+			"kind":       obj.GetKind(),
+			"metadata": map[string]interface{}{
+				"name":      name,
+				"namespace": namespace,
+				"annotations": map[string]string{
+					"agentState":        state,
+					"agentStateMessage": message,
+				},
 			},
 		},
 	}
-	patchBytes, err := json.Marshal(patch)
-	if err != nil {
-		return err
-	}
 
-	log.Printf("patching resource %s/%s with: %s\n", namespace, name, patchBytes)
-	_, err = dc.Resource(gvr).Namespace(namespace).Patch(ctx, name, types.ApplyPatchType, patchBytes, metav1.PatchOptions{FieldManager: "agent-output-client"})
+	log.Printf("applying resource %s/%s with state: %s\n", namespace, name, state)
+	_, err = dc.Resource(gvr).Namespace(namespace).Apply(ctx, name, applyObj, metav1.ApplyOptions{FieldManager: "agent-output-client"})
 	if err != nil {
-		log.Printf("error patching resource %s/%s: %v\n", namespace, name, err)
+		log.Printf("error applying resource %s/%s: %v\n", namespace, name, err)
 		return err
 	}
 	return nil
@@ -107,26 +105,24 @@ func SetAgentLabel(gvr schema.GroupVersionResource, labels []string) error {
 		return fmt.Errorf("failed to marshal labels: %w", err)
 	}
 
-	patch := map[string]interface{}{
-		"apiVersion": obj.GetAPIVersion(),
-		"kind":       obj.GetKind(),
-		"metadata": map[string]interface{}{
-			"name":      name,
-			"namespace": namespace,
-			"annotations": map[string]string{
-				"agentLabels": string(labelsJSON),
+	applyObj := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": obj.GetAPIVersion(),
+			"kind":       obj.GetKind(),
+			"metadata": map[string]interface{}{
+				"name":      name,
+				"namespace": namespace,
+				"annotations": map[string]string{
+					"agentLabels": string(labelsJSON),
+				},
 			},
 		},
 	}
-	patchBytes, err := json.Marshal(patch)
-	if err != nil {
-		return err
-	}
 
-	log.Printf("patching resource %s/%s labels with: %s\n", namespace, name, patchBytes)
-	_, err = dc.Resource(gvr).Namespace(namespace).Patch(context.TODO(), name, types.ApplyPatchType, patchBytes, metav1.PatchOptions{FieldManager: "agent-output-client"})
+	log.Printf("applying resource %s/%s labels\n", namespace, name)
+	_, err = dc.Resource(gvr).Namespace(namespace).Apply(context.TODO(), name, applyObj, metav1.ApplyOptions{FieldManager: "agent-output-client"})
 	if err != nil {
-		log.Printf("error patching resource %s/%s: %v\n", namespace, name, err)
+		log.Printf("error applying resource %s/%s: %v\n", namespace, name, err)
 		return err
 	}
 	return nil
@@ -178,23 +174,21 @@ func AddAgentLabel(gvr schema.GroupVersionResource, newLabels []string) error {
 			return err
 		}
 
-		patch := map[string]interface{}{
-			"apiVersion": obj.GetAPIVersion(),
-			"kind":       obj.GetKind(),
-			"metadata": map[string]interface{}{
-				"name":      name,
-				"namespace": namespace,
-				"annotations": map[string]string{
-					"agentLabels": string(labelsJSON),
+		applyObj := &unstructured.Unstructured{
+			Object: map[string]interface{}{
+				"apiVersion": obj.GetAPIVersion(),
+				"kind":       obj.GetKind(),
+				"metadata": map[string]interface{}{
+					"name":      name,
+					"namespace": namespace,
+					"annotations": map[string]string{
+						"agentLabels": string(labelsJSON),
+					},
 				},
 			},
 		}
-		patchBytes, err := json.Marshal(patch)
-		if err != nil {
-			return err
-		}
 
-		_, err = dc.Resource(gvr).Namespace(namespace).Patch(context.TODO(), name, types.ApplyPatchType, patchBytes, metav1.PatchOptions{FieldManager: "agent-output-client"})
+		_, err = dc.Resource(gvr).Namespace(namespace).Apply(context.TODO(), name, applyObj, metav1.ApplyOptions{FieldManager: "agent-output-client"})
 		return err
 	}
 
