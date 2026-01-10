@@ -16,8 +16,8 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -v k8s.io/klog/v2 golang.
 # Copy the llm directory
 COPY pkg/ pkg/
 
-COPY dev-sandbox/ dev-sandbox/
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -v -o /dev-sandbox ./dev-sandbox
+COPY cmd/dev-sandbox/ cmd/dev-sandbox/
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -v -o /dev-sandbox ./cmd/dev-sandbox
 
 # --------------------------------
 

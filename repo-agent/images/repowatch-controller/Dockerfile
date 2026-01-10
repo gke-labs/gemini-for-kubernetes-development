@@ -11,12 +11,12 @@ RUN go mod download
 
 # Copy the go source
 COPY pkg/ pkg/
-COPY repowatch/cmd/repowatch-controller/main.go repowatch/cmd/repowatch-controller/main.go
+COPY cmd/repowatch-controller/main.go cmd/repowatch-controller/main.go
 COPY repowatch/api/ repowatch/api/
 COPY repowatch/controllers/ repowatch/controllers/
 
 # Build
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o manager repowatch/cmd/repowatch-controller/main.go
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o manager cmd/repowatch-controller/main.go
 
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
