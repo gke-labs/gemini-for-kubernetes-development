@@ -24,7 +24,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	configdirv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/configdir/api/v1alpha1"
+	configdirv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/configdir/v1alpha1"
 )
 
 // ConfigDirReconciler reconciles a ConfigDir object
