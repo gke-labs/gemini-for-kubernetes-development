@@ -9,7 +9,7 @@ spec:
     maxSandboxes: 1
     maxActiveSandboxes: 1
     devcontainerConfigRef: minimal-devcontainer
-    maxFilesChanged: 1000
+    maxReviewFiles: 1000
     llm:
       apiKeySecretRef: dummy-provider-token
       provider: dummy

@@ -11,7 +11,7 @@ RUN go mod download
 
 # Copy the go source
 COPY cmd/syncer-controller/ cmd/syncer-controller/
-COPY syncer/api/ syncer/api/
+COPY api/ api/
 COPY pkg/ pkg/
 
 # Build

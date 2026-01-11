@@ -20,7 +20,7 @@ import (
 	"context"
 	"testing"
 
-	syncerv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/syncer/api/v1alpha1"
+	syncerv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/syncer/v1alpha1"
 	"github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
