@@ -35,8 +35,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/repowatch/api/v1alpha1"
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/repowatch/controllers"
+	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/controllers/repowatch"
 	//+kubebuilder:scaffold:imports
 )
 
@@ -82,11 +82,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err = (&controllers.RepoWatchReconciler{
+	if err = (&repowatch.Reconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 		NewGithubClient: func(ctx context.Context, k8sClient client.Client, repoWatch *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
-			return controllers.NewGithubClient(ctx, k8sClient, repoWatch)
+			return repowatch.NewGithubClient(ctx, k8sClient, repoWatch)
 		},
 	}).SetupWithManager(mgr, concurrentReconciles); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "RepoWatch")

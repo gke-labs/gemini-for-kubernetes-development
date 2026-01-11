@@ -11,8 +11,8 @@ RUN go mod download
 
 # Copy the go source
 COPY cmd/configdir-controller/main.go cmd/configdir-controller/main.go
-COPY configdir/api/ configdir/api/
-COPY configdir/controllers/ configdir/controllers/
+COPY pkg/ pkg/
+COPY api/ api/
 
 # Build
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -a -o manager cmd/configdir-controller/main.go

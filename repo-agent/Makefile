@@ -72,9 +72,8 @@ check-prereqs:
 
 .PHONY: generate
 generate:
-	../dev/tools/fix-go-generate --working-dir ./repowatch
-	../dev/tools/fix-go-generate --working-dir ./configdir
-	../dev/tools/fix-go-generate --working-dir ./syncer
+	../dev/tools/fix-go-generate --working-dir ./pkg/api
+	../dev/tools/fix-go-generate --working-dir ./pkg/controllers
 
 .PHONY: build
 build: generate
@@ -82,7 +81,8 @@ build: generate
 
 .PHONY: test-unit
 test-unit:
-	../dev/tools/test-unit --working-dir ./
+	../dev/tools/test-unit --working-dir ./cmd/
+	../dev/tools/test-unit --working-dir ./pkg/
 
 .PHONY: lint-go
 lint-go:
