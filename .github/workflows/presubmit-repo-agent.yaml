@@ -58,8 +58,10 @@ jobs:
           cache-dependency-path: |
             repo-agent/go.sum
             dev/tools/go.sum
-      - name: Run generators and check for diffs
-        run: ./dev/tools/fix-go-generate --working-dir repo-agent/repowatch/
+      - name: Run api generators
+        run: ./dev/tools/fix-go-generate --working-dir repo-agent/api/
+      - name: Run controller generators
+        run: ./dev/tools/fix-go-generate --working-dir repo-agent/pkg/controllers/
         # Check for diffs
       - name: Check for uncommitted changes
         run: |

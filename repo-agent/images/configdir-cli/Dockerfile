@@ -11,7 +11,7 @@ RUN go mod download
 
 # Copy the go source
 COPY cmd/configdir-cli/main.go cmd/configdir-cli/main.go
-COPY configdir/api/ configdir/api/
+COPY api/ api/
 
 # Build
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -a -o configdir-cli ./cmd/configdir-cli/main.go

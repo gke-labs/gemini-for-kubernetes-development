@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	configdirv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/configdir/api/v1alpha1"
-	repowatchv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/repowatch/api/v1alpha1"
+	configdirv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/configdir/v1alpha1"
+	repowatchv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"

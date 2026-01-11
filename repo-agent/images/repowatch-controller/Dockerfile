@@ -12,7 +12,7 @@ RUN go mod download
 # Copy the go source
 COPY pkg/ pkg/
 COPY cmd/repowatch-controller/main.go cmd/repowatch-controller/main.go
-COPY repowatch/api/ repowatch/api/
+COPY api/ api/
 
 # Build
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o manager cmd/repowatch-controller/main.go
