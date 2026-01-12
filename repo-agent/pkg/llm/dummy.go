@@ -3,6 +3,7 @@ package llm
 import (
 	"bytes"
 	"strings"
+	"time"
 
 	"k8s.io/klog/v2"
 )
@@ -63,6 +64,8 @@ func (d *Dummy) response(prompt string) []byte {
 func (d *Dummy) Run(prompt string) ([]byte, error) {
 	var err error
 	klog.Infof("Dummy provider running with prompt")
+	// sleep to simulate processing time
+	time.Sleep(5 * time.Second)
 	output := d.response(prompt)
 	for _, p := range d.processors {
 		output, err = p(output)

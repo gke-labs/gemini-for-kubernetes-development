@@ -18,17 +18,11 @@ package agentoutput
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"time"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
-	dynamic "k8s.io/client-go/dynamic"
-	"k8s.io/client-go/rest"
-
-	"sigs.k8s.io/yaml"
 )
 
 const (
@@ -53,16 +47,6 @@ func Run(componentName string, gvr schema.GroupVersionResource) {
 		os.Exit(1)
 	}
 
-	config, err := rest.InClusterConfig()
-	if err != nil {
-		panic(err.Error())
-	}
-
-	dc, err := dynamic.NewForConfig(config)
-	if err != nil {
-		panic(err.Error())
-	}
-
 	var last string
 	for {
 		time.Sleep(sleepIntervalSeconds * time.Second)
@@ -80,31 +64,9 @@ func Run(componentName string, gvr schema.GroupVersionResource) {
 			continue
 		}
 		fmt.Println("file changed, updating crd")
-		obj, err := dc.Resource(gvr).Namespace(namespace).Get(context.TODO(), name, metav1.GetOptions{})
+
+		err = SetAgentDraft(context.TODO(), gvr, string(b))
 		if err != nil {
-			fmt.Printf("getting %s resource: %v\n", componentName, err)
-			continue
-		}
-
-		// update the annotation[agentDraft]
-		if obj.GetAnnotations() == nil {
-			obj.SetAnnotations(make(map[string]string))
-		}
-		annotations := obj.GetAnnotations()
-		annotations[AgentDraftAnnotation] = string(b)
-
-		// Try to parse as AgentOutput to extract labels
-		var out AgentOutput
-		if err := yaml.Unmarshal(b, &out); err == nil && len(out.Labels) > 0 {
-			labelsJSON, _ := json.Marshal(out.Labels)
-			annotations["agentLabels"] = string(labelsJSON)
-		} else {
-			delete(annotations, "agentLabels")
-		}
-
-		obj.SetAnnotations(annotations)
-
-		if _, err := dc.Resource(gvr).Namespace(namespace).Update(context.TODO(), obj, metav1.UpdateOptions{}); err != nil {
 			fmt.Printf("updating %s resource: %v\n", componentName, err)
 			continue
 		}
