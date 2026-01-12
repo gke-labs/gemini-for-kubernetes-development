@@ -17,7 +17,6 @@ limitations under the License.
 package repowatch
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -29,7 +28,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"text/template"
 	"time"
 
 	"github.com/google/go-github/v39/github"
@@ -49,6 +47,7 @@ import (
 
 	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/prompts"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 )
 
@@ -879,58 +878,18 @@ func (r *Reconciler) reconcileIssueHandlerSandboxesInternal(ctx context.Context,
 // It uses the prompt specified in the RepoWatch CRD, and if it is not
 // specified, it uses a default prompt.
 func (r *Reconciler) generateReviewPrompt(repoWatch *reviewv1alpha1.RepoWatch, pr *github.PullRequest) (string, error) {
-	// Level 1 substitution
-	promptTmpl := reviewPromptTemplate
-
-	templateVar := struct {
-		github.PullRequest
-		Prompt string
-	}{
+	model := prompts.ReviewPromptModel{
 		PullRequest: *pr,
 		Prompt:      repoWatch.Spec.Review.LLM.Prompt,
 	}
 
-	lvl1, err := template.New("lvl1").Parse(promptTmpl)
-	if err != nil {
-		return "", err
-	}
-
-	var level1 bytes.Buffer
-	err = lvl1.Execute(&level1, templateVar)
-	if err != nil {
-		return "", err
-	}
-
-	// Level 2 subsitution
-	tmpl, err := template.New("lvl2").Parse(level1.String())
-	if err != nil {
-		return "", err
-	}
-
-	var buf bytes.Buffer
-	err = tmpl.Execute(&buf, pr)
-	if err != nil {
-		return "", err
-	}
-	return buf.String(), nil
+	return prompts.ExpandReviewPrompt(model)
 }
 
 // generateIssueHandlerPrompt generates a prompt for an issue handler.
 // It uses the prompt specified in the RepoWatch CRD.
 func (r *Reconciler) generateIssueHandlerPrompt(handler reviewv1alpha1.IssueHandlerSpec, issue *github.Issue) (string, error) {
-	// promptTmpl := "You are an expert kubernetes developer who is helping with bug triage. Please look at the issue {{.Number}} linked at {{.HTMLURL}} and provide a triage summary. Please suggest possible causes and solutions."
-	promptTmpl := handler.LLM.Prompt
-	tmpl, err := template.New("myTemplate").Parse(promptTmpl)
-	if err != nil {
-		return "", err
-	}
-
-	var buf bytes.Buffer
-	err = tmpl.Execute(&buf, issue)
-	if err != nil {
-		return "", err
-	}
-	return buf.String(), nil
+	return prompts.ExpandIssueHandlerPrompt(handler.LLM.Prompt, issue)
 }
 
 // createReviewSandboxForPR creates a ReviewSandbox for a pull request.
