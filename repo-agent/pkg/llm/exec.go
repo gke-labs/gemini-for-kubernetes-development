@@ -19,14 +19,14 @@ import (
 )
 
 type CommandExecutor interface {
-	Run(command string, args ...string) ([]byte, error)
+	Run(command string, args ...string) ([]byte, []byte, error)
 }
 
 // RealCommandExecutor is a real implementation of CommandExecutor that runs commands.
 
 type RealCommandExecutor struct{}
 
-func (e *RealCommandExecutor) Run(command string, args ...string) ([]byte, error) {
+func (e *RealCommandExecutor) Run(command string, args ...string) ([]byte, []byte, error) {
 	const errBufferSize = 25 * 1024 * 1024 // 25MB
 	const outBufferSize = 1024 * 1024      // 1MB
 	stderrBuffer := NewCircularBuffer(errBufferSize)
@@ -45,8 +45,8 @@ func (e *RealCommandExecutor) Run(command string, args ...string) ([]byte, error
 		println(capturedOutput)
 	}
 	if err != nil {
-		return nil, err
+		return nil, stderrBuffer.Bytes(), err
 	}
 
-	return stdoutBuffer.Bytes(), nil
+	return stdoutBuffer.Bytes(), stderrBuffer.Bytes(), nil
 }

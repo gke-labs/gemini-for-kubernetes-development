@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -11,6 +12,7 @@ import (
 	"syscall"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/agentoutput"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/llm"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sshd"
 	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -131,6 +133,16 @@ func InitContainer(ctx context.Context) error {
 		ReportStatus:     false,
 	}
 
+	var b ImageBuilder
+	if dotFilesRepo := os.Getenv("USER_DOTFILESREPO"); dotFilesRepo != "" {
+		_ = agentoutput.SetAgentState(ctx, gvr, "provisioning", "installing dotfiles")
+		if err := b.InstallDotfilesRepo(ctx, dotFilesRepo); err != nil {
+			// Note: we don't fail the entire startup if dotfiles installation fails
+			log.Error(err, "installing dotfiles repo", "repo", dotFilesRepo)
+			_ = agentoutput.SetAgentState(ctx, gvr, "warning", fmt.Sprintf("dotfiles install failed: %v", err))
+		}
+	}
+
 	// Prepare git branch (checkout)
 	oldCommitID, err := sandbox.PrepareGitBranch(cfg)
 	if err != nil {
@@ -141,24 +153,19 @@ func InitContainer(ctx context.Context) error {
 	if cfg.AgentPrompt != "" {
 		log.Info("Running agent with prompt", "prompt", cfg.AgentPrompt)
 		if err := sandbox.RunAgent(ctx, cfg); err != nil {
-			_ = agentoutput.SetAgentState(ctx, gvr, "error", fmt.Sprintf("running agent failed: %v", err))
-			return fmt.Errorf("running agent: %w", err)
-		}
-
-		commitMsg := "Agent changes for: " + cfg.AgentPrompt
-		if err := sandbox.ProcessGitChanges(ctx, cfg, oldCommitID, commitMsg); err != nil {
-			_ = agentoutput.SetAgentState(ctx, gvr, "error", fmt.Sprintf("processing git changes failed: %v", err))
-			return fmt.Errorf("processing git changes: %w", err)
-		}
-	}
-
-	var b ImageBuilder
-	if dotFilesRepo := os.Getenv("USER_DOTFILESREPO"); dotFilesRepo != "" {
-		_ = agentoutput.SetAgentState(ctx, gvr, "provisioning", "installing dotfiles")
-		if err := b.InstallDotfilesRepo(ctx, dotFilesRepo); err != nil {
-			// Note: we don't fail the entire startup if dotfiles installation fails
-			log.Error(err, "installing dotfiles repo", "repo", dotFilesRepo)
-			_ = agentoutput.SetAgentState(ctx, gvr, "warning", fmt.Sprintf("dotfiles install failed: %v", err))
+			var quotaErr *llm.QuotaError
+			if errors.As(err, &quotaErr) {
+				_ = agentoutput.SetAgentState(ctx, gvr, "QUOTA ERROR", err.Error())
+			} else {
+				_ = agentoutput.SetAgentState(ctx, gvr, "error", fmt.Sprintf("running agent failed: %v", err))
+				return fmt.Errorf("running agent: %w", err)
+			}
+		} else {
+			commitMsg := "Agent changes for: " + cfg.AgentPrompt
+			if err := sandbox.ProcessGitChanges(ctx, cfg, oldCommitID, commitMsg); err != nil {
+				_ = agentoutput.SetAgentState(ctx, gvr, "error", fmt.Sprintf("processing git changes failed: %v", err))
+				return fmt.Errorf("processing git changes: %w", err)
+			}
 		}
 	}
 

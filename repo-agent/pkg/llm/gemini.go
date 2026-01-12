@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"k8s.io/klog/v2"
 )
@@ -36,6 +37,10 @@ type Gemini struct {
 
 func (g *Gemini) AddPostProcessor(p PostProcessor) {
 	g.processors = append(g.processors, p)
+}
+
+func (g *Gemini) QuotaCheck() bool {
+	return true
 }
 
 func (g *Gemini) Setup(workspacesDir, tokensDir string) error {
@@ -147,12 +152,16 @@ func (g *Gemini) ExpandPrompt(prompt string) (string, error) {
 func (g *Gemini) Run(agentPrompt string) ([]byte, error) {
 	klog.Info("running gemini")
 
-	output, err := g.Executor.Run("gemini", "-y", "-p", agentPrompt)
+	stdout, stderr, err := g.Executor.Run("gemini", "-y", "-p", agentPrompt)
 	if err != nil {
-		klog.Infof("gemini command failed: %v. Output: %s", err, string(output))
+		klog.Infof("gemini command failed: %v. Stderr: %s", err, string(stderr))
+		if strings.Contains(string(stderr), "[API Error: You have exhausted your daily quota on this model.]") {
+			return nil, &QuotaError{Err: err}
+		}
 		return nil, err
 	}
 
+	output := stdout
 	for _, p := range g.processors {
 		output, err = p(output)
 		if err != nil {
