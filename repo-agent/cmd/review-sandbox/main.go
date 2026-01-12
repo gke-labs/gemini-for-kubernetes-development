@@ -18,11 +18,11 @@ import (
 
 	"github.com/bluekeyes/go-gitdiff/gitdiff"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/agentoutput"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/codeserver"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/llm"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tokens"
 	"github.com/google/go-github/v39/github"
-	"golang.org/x/oauth2"
 	"gopkg.in/yaml.v3"
 )
 
@@ -329,11 +329,7 @@ func uniqueStrings(input []string) []string {
 
 func getExistingComments(token, owner, repo string, prNumber int) ([]*github.PullRequestComment, error) {
 	ctx := context.Background()
-	ts := oauth2.StaticTokenSource(
-		&oauth2.Token{AccessToken: token},
-	)
-	tc := oauth2.NewClient(ctx, ts)
-	client := github.NewClient(tc)
+	client := clients.NewGitHubClient(ctx, token)
 
 	var allComments []*github.PullRequestComment
 	opts := &github.PullRequestListCommentsOptions{

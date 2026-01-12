@@ -10,10 +10,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/auth"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 	"github.com/google/go-github/v39/github"
 	yaml "go.yaml.in/yaml/v3"
-	"golang.org/x/oauth2"
 	"k8s.io/apimachinery/pkg/api/errors"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -74,9 +74,7 @@ func (s *Server) createRepoWatch(c *gin.Context) {
 
 				token, tokenErr := s.K8sManager.GetGitHubToken(c.Request.Context(), obj)
 				if tokenErr == nil {
-					ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
-					tc := oauth2.NewClient(c.Request.Context(), ts)
-					client := github.NewClient(tc)
+					client := clients.NewGitHubClient(c.Request.Context(), token)
 
 					repoURL, _, _ := unstructured.NestedString(obj.Object, "spec", "repoURL")
 					if owner, repoName, urlErr := parseRepoURL(repoURL); urlErr == nil {
@@ -633,9 +631,7 @@ func (s *Server) getRepos(c *gin.Context) {
 				token, tokenErr := s.K8sManager.GetGitHubToken(c.Request.Context(), repoWatch)
 				var client *github.Client
 				if tokenErr == nil {
-					ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
-					tc := oauth2.NewClient(c.Request.Context(), ts)
-					client = github.NewClient(tc)
+					client = clients.NewGitHubClient(c.Request.Context(), token)
 				}
 
 				owner, repoName, urlErr := parseRepoURL(repoURL)
