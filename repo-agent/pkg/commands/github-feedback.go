@@ -18,8 +18,8 @@ type GithubFeedbackOptions struct {
 	Sandbox     string
 }
 
-// NewGithubFeedbackCommand creates a new cobra command for using a dev sandbox to address github feedback
-func NewGithubFeedbackCommand() *cobra.Command {
+// BuildGithubFeedbackCommand creates a new cobra command for using a dev sandbox to address github feedback
+func BuildGithubFeedbackCommand() *cobra.Command {
 	var opt GithubFeedbackOptions
 
 	cmd := &cobra.Command{
