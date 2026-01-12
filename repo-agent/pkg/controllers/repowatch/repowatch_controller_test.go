@@ -26,6 +26,8 @@ import (
 	"testing"
 	"time"
 
+	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/google/go-github/v39/github"
 	"github.com/onsi/gomega"
 	"golang.org/x/oauth2"
@@ -39,8 +41,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	clientfake "sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-
-	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
 )
 
 type mockRoundTripper struct {
@@ -94,7 +94,7 @@ func TestReconciler_Reconcile(t *testing.T) {
 			},
 		},
 	}
-	ghClient := github.NewClient(mockHTTPClient)
+	ghClient := clients.NewGitHubClientFromHTTP(mockHTTPClient)
 
 	r := &Reconciler{
 		Client: fakeClient,
@@ -218,7 +218,7 @@ func TestReconciler_ReconcileIssues(t *testing.T) {
 				},
 			}},
 	}
-	ghClient := github.NewClient(mockHTTPClient)
+	ghClient := clients.NewGitHubClientFromHTTP(mockHTTPClient)
 
 	r := &Reconciler{
 		Client: fakeClient,
@@ -1123,7 +1123,7 @@ func TestReconciler_Reconcile_InvalidRepoURL(t *testing.T) {
 			},
 		},
 	}
-	ghClient := github.NewClient(mockHTTPClient)
+	ghClient := clients.NewGitHubClientFromHTTP(mockHTTPClient)
 	r := &Reconciler{
 		Client: fakeClient,
 		Scheme: s,
@@ -1430,7 +1430,7 @@ func TestReconciler_Reconcile_ExplicitAndListedPRs(t *testing.T) {
 			},
 		},
 	}
-	ghClient := github.NewClient(mockHTTPClient)
+	ghClient := clients.NewGitHubClientFromHTTP(mockHTTPClient)
 
 	r := &Reconciler{
 		Client: fakeClient,
@@ -1562,7 +1562,7 @@ func TestReconciler_Reconcile_FilteredAndSortedPRs(t *testing.T) {
 			},
 		},
 	}
-	ghClient := github.NewClient(mockHTTPClient)
+	ghClient := clients.NewGitHubClientFromHTTP(mockHTTPClient)
 
 	r := &Reconciler{
 		Client: fakeClient,
@@ -1783,7 +1783,7 @@ func TestReconcile_MultipleRepoWatchesSameRepo(t *testing.T) {
 			},
 		},
 	}
-	ghClient := github.NewClient(mockHTTPClient)
+	ghClient := clients.NewGitHubClientFromHTTP(mockHTTPClient)
 
 	// 2. Create RepoWatch resources
 	repoWatchA := &reviewv1alpha1.RepoWatch{
@@ -1915,7 +1915,7 @@ func TestReconciler_Reconcile_AssigneeFilteredPRs(t *testing.T) {
 			},
 		},
 	}
-	ghClient := github.NewClient(mockHTTPClient)
+	ghClient := clients.NewGitHubClientFromHTTP(mockHTTPClient)
 
 	r := &Reconciler{
 		Client: fakeClient,

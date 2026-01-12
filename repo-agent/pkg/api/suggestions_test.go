@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/google/go-github/v39/github"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 )
 
 func TestGetSuggestedLabels(t *testing.T) {
@@ -31,7 +31,7 @@ func TestGetSuggestedLabels(t *testing.T) {
 	defer server.Close()
 
 	// Configure client to use mock server
-	client := github.NewClient(nil)
+	client := clients.NewGitHubClientFromHTTP(nil)
 	url, _ := url.Parse(server.URL + "/")
 	client.BaseURL = url
 	client.UploadURL = url

@@ -9,10 +9,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/auth"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 	"github.com/google/go-github/v39/github"
 	yaml "go.yaml.in/yaml/v3"
-	"golang.org/x/oauth2"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -241,11 +241,7 @@ func (s *Server) submitReview(c *gin.Context) {
 	}
 
 	// Create GitHub client
-	ts := oauth2.StaticTokenSource(
-		&oauth2.Token{AccessToken: token},
-	)
-	tc := oauth2.NewClient(ctx, ts)
-	client := github.NewClient(tc)
+	client := clients.NewGitHubClient(ctx, token)
 
 	// Parse repo URL
 	repoURL, found, err := unstructured.NestedString(repoWatch.Object, "spec", "repoURL")

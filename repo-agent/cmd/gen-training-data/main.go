@@ -12,8 +12,7 @@ import (
 	"strings"
 
 	"cloud.google.com/go/storage"
-	"github.com/google/go-github/v39/github"
-	"golang.org/x/oauth2"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"google.golang.org/api/iterator"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/klog/v2"
@@ -68,11 +67,7 @@ func main() {
 	defer gcsClient.Close()
 
 	// Initialize GitHub Client
-	ts := oauth2.StaticTokenSource(
-		&oauth2.Token{AccessToken: *githubToken},
-	)
-	tc := oauth2.NewClient(ctx, ts)
-	ghClient := github.NewClient(tc)
+	ghClient := clients.NewGitHubClient(ctx, *githubToken)
 
 	// Determine Output Mode
 	var singleFile *os.File
