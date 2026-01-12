@@ -15,8 +15,8 @@ type RunTmuxOptions struct {
 	SandboxName string
 }
 
-// NewTmuxCommand creates a new cobra command for launching tmux connected to the dev sandbox.
-func NewTmuxCommand() *cobra.Command {
+// BuildTmuxCommand creates a new cobra command for launching tmux connected to the dev sandbox.
+func BuildTmuxCommand() *cobra.Command {
 	var opt RunTmuxOptions
 
 	cmd := &cobra.Command{

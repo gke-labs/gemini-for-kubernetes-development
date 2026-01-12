@@ -15,8 +15,8 @@ type RunCodeOptions struct {
 	SandboxName string
 }
 
-// NewCodeCommand creates a new cobra command for launching VS Code connected to the dev sandbox.
-func NewCodeCommand() *cobra.Command {
+// BuildCodeCommand creates a new cobra command for launching VS Code connected to the dev sandbox.
+func BuildCodeCommand() *cobra.Command {
 	var opt RunCodeOptions
 
 	cmd := &cobra.Command{

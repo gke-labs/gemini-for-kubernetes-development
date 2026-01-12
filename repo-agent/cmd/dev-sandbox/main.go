@@ -5,15 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/agentoutput"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/codeserver"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/imagebuilder"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/llm"
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sshd"
 	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/klog/v2"
@@ -62,44 +62,20 @@ func run(ctx context.Context) error {
 	}
 	rootCommand.AddCommand(initCommand)
 
-	sshdCommand := &cobra.Command{
-		Use: "sshd",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) != 0 {
-				return fmt.Errorf("sshd command does not take any arguments")
-			}
-			return RunSSHD(cmd.Context())
-		},
-	}
-	rootCommand.AddCommand(sshdCommand)
+	rootCommand.AddCommand(commands.BuildSSHDCommand())
+	rootCommand.AddCommand(commands.BuildCodeServerCommand())
 
 	rootCommand.AddCommand(commands.BuildAgentCommand())
 	rootCommand.AddCommand(commands.BuildCreateCommand())
 	rootCommand.AddCommand(commands.BuildBootstrapCommand())
-	rootCommand.AddCommand(commands.NewCodeCommand())
-	rootCommand.AddCommand(commands.NewTmuxCommand())
-	rootCommand.AddCommand(commands.NewGithubFixIssueCommand())
-	rootCommand.AddCommand(commands.NewGithubFeedbackCommand())
+	rootCommand.AddCommand(commands.BuildCodeCommand())
+	rootCommand.AddCommand(commands.BuildTmuxCommand())
+	rootCommand.AddCommand(commands.BuildGithubFixIssueCommand())
+	rootCommand.AddCommand(commands.BuildGithubFeedbackCommand())
 
-	rootCommand.AddCommand(commands.NewThreadsCommand())
+	rootCommand.AddCommand(commands.BuildThreadsCommand())
 
 	return rootCommand.ExecuteContext(ctx)
-}
-
-func RunSSHD(ctx context.Context) error {
-	log := klog.FromContext(ctx)
-
-	conn := sshd.NewStdinStdoutConn(os.Stdin, os.Stdout)
-
-	server := sshd.NewServer()
-
-	if err := server.Start(ctx, conn); err != nil {
-		log.Error(err, "SSH server exited with error")
-		return fmt.Errorf("ssh server: %w", err)
-	}
-
-	// log.Info("SSH server exited successfully")
-	return nil
 }
 
 func InitContainer(ctx context.Context) error {
@@ -135,7 +111,7 @@ func InitContainer(ctx context.Context) error {
 		ReportStatus:     false,
 	}
 
-	var b ImageBuilder
+	var b imagebuilder.ImageBuilder
 	if dotFilesRepo := os.Getenv("USER_DOTFILESREPO"); dotFilesRepo != "" {
 		_ = agentoutput.SetAgentState(ctx, gvr, "provisioning", "installing dotfiles")
 		if err := b.InstallDotfilesRepo(ctx, dotFilesRepo); err != nil {
@@ -171,7 +147,7 @@ func InitContainer(ctx context.Context) error {
 		}
 	}
 
-	cmdCodeSrv, err := startCodeServer(ctx)
+	cmdCodeSrv, err := codeserver.Start()
 	if err != nil {
 		_ = agentoutput.SetAgentState(ctx, gvr, "error", fmt.Sprintf("failed to start code-server: %v", err))
 		return fmt.Errorf("failed to start code-server: %w", err)
@@ -190,105 +166,6 @@ func InitContainer(ctx context.Context) error {
 	if err := cmdCodeSrv.Wait(); err != nil {
 		_ = agentoutput.SetAgentState(ctx, gvr, "error", fmt.Sprintf("code-server exited: %v", err))
 		return fmt.Errorf("code-server process exited with error: %w", err)
-	}
-
-	return nil
-}
-
-func startCodeServer(ctx context.Context) (*exec.Cmd, error) {
-	log := klog.FromContext(ctx)
-	log.Info("starting code-server")
-	repoURL := os.Getenv("GIT_HTML_URL")
-	parts := strings.Split(strings.TrimPrefix(repoURL, "https://github.com/"), "/")
-	if len(parts) != 2 {
-		return nil, fmt.Errorf("invalid GIT_HTML_URL: %s", repoURL)
-	}
-	repo := parts[1]
-	codeServerPath := "/usr/bin/code-server"
-	args := []string{"--auth=none", "--bind-addr=0.0.0.0:13337", "/workspaces/" + repo}
-	cmd := exec.CommandContext(ctx, codeServerPath, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("running code-server command failed: %w", err)
-	}
-	log.Info("Running code-server in subprocess", "pid", cmd.Process.Pid)
-	return cmd, nil
-}
-
-// ImageBuilder is responsible for initializing the container, e.g. installing dotfiles
-type ImageBuilder struct {
-}
-
-// InstallDotfilesRepo clones and install a dotfiles repo
-func (b *ImageBuilder) InstallDotfilesRepo(ctx context.Context, dotFilesRepo string) error {
-	log := klog.FromContext(ctx)
-
-	// Get the user's cache directory
-	cacheDir, err := os.UserCacheDir()
-	if err != nil {
-		return fmt.Errorf("getting user cache dir: %w", err)
-	}
-
-	dotfilesDir := filepath.Join(cacheDir, "dev-sandbox", "dotfiles")
-
-	if err := b.GitClone(ctx, dotFilesRepo, dotfilesDir); err != nil {
-		return err
-	}
-
-	// Well-known entrypoints
-	entrypoints := []string{
-		"setup",
-	}
-
-	var foundEntrypoint string
-	for _, entrypoint := range entrypoints {
-		p := filepath.Join(dotfilesDir, entrypoint)
-		if _, err := os.Stat(p); err != nil {
-			if !os.IsNotExist(err) {
-				log.Error(err, "error checking for entrypoint", "entrypoint", p)
-			}
-			continue
-		}
-		foundEntrypoint = p
-		break
-	}
-
-	if foundEntrypoint == "" {
-		return fmt.Errorf("unable to find entrypoint in dotfiles repo %q", dotFilesRepo)
-	}
-
-	cmd := exec.CommandContext(ctx, foundEntrypoint)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("error running dotfiles entrypoint %q from repo %q: %w", strings.Join(cmd.Args, " "), dotFilesRepo, err)
-	}
-
-	return nil
-}
-
-// GitClone clones a git repo to the dest directory.
-func (b *ImageBuilder) GitClone(ctx context.Context, source string, dest string) error {
-	log := klog.FromContext(ctx)
-
-	args := []string{
-		"git",
-		"clone",
-		source,
-		dest,
-	}
-
-	cmdString := strings.Join(args, " ")
-	log.Info("cloning git repo", "source", source, "command", cmdString)
-
-	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("cloning git repo %q with %q: %w", source, cmdString, err)
 	}
 
 	return nil
