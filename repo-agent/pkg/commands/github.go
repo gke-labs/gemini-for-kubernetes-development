@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/prompts"
 	"github.com/spf13/cobra"
 	v1 "k8s.io/api/core/v1"
@@ -53,7 +54,7 @@ func NewGithubIssueCommand() *cobra.Command {
 func RunGithubIssue(ctx context.Context, opt GithubIssueOptions) error {
 	log := klog.FromContext(ctx)
 
-	kube, err := NewKubeClient()
+	kube, err := clients.NewKubernetesClient()
 	if err != nil {
 		return err
 	}
@@ -125,10 +126,7 @@ func RunGithubIssue(ctx context.Context, opt GithubIssueOptions) error {
 			// This enables findSandbox to work, even if we are launching the dev sandbox directly
 			"sandbox": "devc-" + sandboxName,
 		}
-		dynamic, err := kube.GetDynamicClient()
-		if err != nil {
-			return err
-		}
+		dynamic := kube.DynamicClient
 
 		sandboxGVR := sandboxapi.GroupVersion.WithResource("sandboxes")
 		sandboxGVK := sandboxapi.GroupVersion.WithKind("Sandbox")
@@ -160,10 +158,8 @@ func RunGithubIssue(ctx context.Context, opt GithubIssueOptions) error {
 	// Copy the prompt into the pod (for now)
 	if len(prompt) > 0 {
 		log.Info("copying prompt into sandbox pod", "pod", podID.Name)
-		clientset, err := kube.GetClientset()
-		if err != nil {
-			return err
-		}
+		clientset := kube.Clientset
+
 		path := "/workspaces/prompt.txt"
 		command := []string{
 			"/bin/tee", path,
@@ -191,7 +187,7 @@ func RunGithubIssue(ctx context.Context, opt GithubIssueOptions) error {
 
 		url := req.URL().String()
 		log.Info("Executing command in pod", "pod", podID.Name, "command", strings.Join(command, " "), "url", url)
-		exec, err := remotecommand.NewWebSocketExecutor(kube.restConfig, "POST", url)
+		exec, err := remotecommand.NewWebSocketExecutor(kube.RestConfig, "POST", url)
 		if err != nil {
 			return fmt.Errorf("executing command in pod: %w", err)
 		}
@@ -218,13 +214,10 @@ func RunGithubIssue(ctx context.Context, opt GithubIssueOptions) error {
 }
 
 // waitForPodReady waits for the specified pod to be ready.
-func waitForPodReady(ctx context.Context, kube *KubeClient, podID *types.NamespacedName) error {
+func waitForPodReady(ctx context.Context, kube *clients.KubernetesClient, podID *types.NamespacedName) error {
 	log := klog.FromContext(ctx)
 
-	clientset, err := kube.GetClientset()
-	if err != nil {
-		return err
-	}
+	clientset := kube.Clientset
 
 	log.Info("Waiting for sandbox pod to be ready", "pod", podID.Name)
 
