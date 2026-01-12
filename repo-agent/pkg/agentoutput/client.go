@@ -22,11 +22,11 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
 )
 
@@ -40,16 +40,11 @@ func getClient() (dynamic.Interface, string, string, error) {
 		return nil, "", "", fmt.Errorf("missing NAMESPACE env")
 	}
 
-	config, err := rest.InClusterConfig()
+	kube, err := clients.NewKubernetesClient()
 	if err != nil {
 		return nil, "", "", err
 	}
-
-	dc, err := dynamic.NewForConfig(config)
-	if err != nil {
-		return nil, "", "", err
-	}
-	return dc, name, namespace, nil
+	return kube.DynamicClient, name, namespace, nil
 }
 
 // SetAgentState updates the agentState and agentStateMessage annotations.

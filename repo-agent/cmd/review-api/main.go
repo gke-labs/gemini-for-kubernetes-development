@@ -13,13 +13,10 @@ import (
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/api"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/auth"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/store"
 
-	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
 )
 
@@ -45,29 +42,13 @@ func main() {
 	store.PopulateMockData(context.Background(), rdb)
 
 	// Kubernetes client
-	config, err := rest.InClusterConfig()
-	if err != nil {
-		klog.Infof("Failed to get in-cluster config, trying local config: %v", err)
-		kubeconfig := os.Getenv("KUBECONFIG")
-		if kubeconfig == "" {
-			kubeconfig = os.Getenv("HOME") + "/.kube/config"
-		}
-		config, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
-		if err != nil {
-			klog.Fatalf("Failed to get local kubeconfig: %v", err)
-		}
-	}
-	k8sClient, err := dynamic.NewForConfig(config)
+	kube, err := clients.NewKubernetesClient()
 	if err != nil {
 		klog.Fatalf("Failed to create kubernetes client: %v", err)
 	}
-	k8sClientset, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		klog.Fatalf("Failed to create clientset: %v", err)
-	}
 
 	// K8s Manager
-	k8sManager := k8s.NewManager(k8sClient, k8sClientset, rdb)
+	k8sManager := k8s.NewManager(kube, rdb)
 
 	// Allowed Users
 	var allowedUsers []string
