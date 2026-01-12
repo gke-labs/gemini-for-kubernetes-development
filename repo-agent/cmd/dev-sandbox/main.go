@@ -49,6 +49,7 @@ func run(ctx context.Context) error {
 	// log := klog.FromContext(ctx)
 
 	rootCommand := &cobra.Command{}
+	rootCommand.SilenceUsage = true
 
 	initCommand := &cobra.Command{
 		Use: "init",
@@ -77,7 +78,8 @@ func run(ctx context.Context) error {
 	rootCommand.AddCommand(commands.BuildBootstrapCommand())
 	rootCommand.AddCommand(commands.NewCodeCommand())
 	rootCommand.AddCommand(commands.NewTmuxCommand())
-	rootCommand.AddCommand(commands.NewGithubIssueCommand())
+	rootCommand.AddCommand(commands.NewGithubFixIssueCommand())
+	rootCommand.AddCommand(commands.NewGithubFeedbackCommand())
 
 	rootCommand.AddCommand(commands.NewThreadsCommand())
 
