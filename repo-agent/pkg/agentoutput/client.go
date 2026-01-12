@@ -81,6 +81,42 @@ func SetAgentState(ctx context.Context, gvr schema.GroupVersionResource, state s
 	}
 
 	log.Info("applying resource with state", "namespace", namespace, "name", name, "state", state)
+	_, err = dc.Resource(gvr).Namespace(namespace).Apply(ctx, name, applyObj, metav1.ApplyOptions{FieldManager: "agent-draft-client", Force: true})
+	if err != nil {
+		log.Info("error applying resource", "namespace", namespace, "name", name, "err", err)
+		return err
+	}
+	return nil
+}
+
+// SetAgentDraft updates the agentDraft annotation.
+func SetAgentDraft(ctx context.Context, gvr schema.GroupVersionResource, draft string) error {
+	log := klog.FromContext(ctx)
+	dc, name, namespace, err := getClient()
+	if err != nil {
+		return err
+	}
+
+	obj, err := dc.Resource(gvr).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+
+	applyObj := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": obj.GetAPIVersion(),
+			"kind":       obj.GetKind(),
+			"metadata": map[string]interface{}{
+				"name":      name,
+				"namespace": namespace,
+				"annotations": map[string]string{
+					"agentDraft": draft,
+				},
+			},
+		},
+	}
+
+	log.Info("applying resource with draft", "namespace", namespace, "name", name)
 	_, err = dc.Resource(gvr).Namespace(namespace).Apply(ctx, name, applyObj, metav1.ApplyOptions{FieldManager: "agent-output-client", Force: true})
 	if err != nil {
 		log.Info("error applying resource", "namespace", namespace, "name", name, "err", err)
@@ -121,7 +157,7 @@ func SetAgentLabel(gvr schema.GroupVersionResource, labels []string) error {
 	}
 
 	klog.Infof("applying resource %s/%s labels\n", namespace, name)
-	_, err = dc.Resource(gvr).Namespace(namespace).Apply(context.TODO(), name, applyObj, metav1.ApplyOptions{FieldManager: "agent-output-client"})
+	_, err = dc.Resource(gvr).Namespace(namespace).Apply(context.TODO(), name, applyObj, metav1.ApplyOptions{FieldManager: "agent-label-client"})
 	if err != nil {
 		klog.Infof("error applying resource %s/%s: %v\n", namespace, name, err)
 		return err
@@ -189,7 +225,8 @@ func AddAgentLabel(gvr schema.GroupVersionResource, newLabels []string) error {
 			},
 		}
 
-		_, err = dc.Resource(gvr).Namespace(namespace).Apply(context.TODO(), name, applyObj, metav1.ApplyOptions{FieldManager: "agent-output-client"})
+		_, err = dc.Resource(gvr).Namespace(namespace).Apply(context.TODO(), name, applyObj, metav1.ApplyOptions{FieldManager: "agent-label-client"})
+		klog.Infof("added labels to resource %s/%s: %v\n", namespace, name, newLabels)
 		return err
 	}
 
