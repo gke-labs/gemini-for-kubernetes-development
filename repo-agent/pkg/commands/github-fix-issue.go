@@ -29,8 +29,8 @@ type GithubFixIssueOptions struct {
 	Issue int
 }
 
-// NewGithubFixIssueCommand creates a new cobra command for using a dev sandbox to solve a github issue
-func NewGithubFixIssueCommand() *cobra.Command {
+// BuildGithubFixIssueCommand creates a new cobra command for using a dev sandbox to solve a github issue
+func BuildGithubFixIssueCommand() *cobra.Command {
 	var opt GithubFixIssueOptions
 
 	cmd := &cobra.Command{
