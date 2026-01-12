@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	"github.com/google/go-github/v39/github"
 	"golang.org/x/oauth2"
@@ -115,7 +116,7 @@ func (a *Authenticator) Callback(c *gin.Context) {
 		return
 	}
 
-	client := github.NewClient(a.OAuthConfig.Client(c.Request.Context(), token))
+	client := clients.NewGitHubClientFromHTTP(a.OAuthConfig.Client(c.Request.Context(), token))
 	user, _, err := client.Users.Get(c.Request.Context(), "")
 	if err != nil {
 		log.Info("Failed to get GitHub user", "err", err)
