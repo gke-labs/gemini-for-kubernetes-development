@@ -3,79 +3,25 @@ package commands
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
 )
-
-type KubeClient struct {
-	restConfig       *rest.Config
-	httpClient       *http.Client
-	CurrentNamespace string
-}
-
-func NewKubeClient() (*KubeClient, error) {
-	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
-	configOverrides := &clientcmd.ConfigOverrides{}
-	kubeConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, configOverrides)
-
-	restConfig, err := kubeConfig.ClientConfig()
-	if err != nil {
-		return nil, fmt.Errorf("failed to load kubeconfig: %w", err)
-	}
-
-	httpClient, err := rest.HTTPClientFor(restConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create HTTP client: %w", err)
-	}
-
-	namespace, _, err := kubeConfig.Namespace()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get namespace from kubeconfig: %w", err)
-	}
-
-	return &KubeClient{restConfig: restConfig, httpClient: httpClient, CurrentNamespace: namespace}, nil
-}
-
-// GetClientset returns a new Kubernetes clientset.
-func (k *KubeClient) GetClientset() (*kubernetes.Clientset, error) {
-	clientset, err := kubernetes.NewForConfigAndClient(k.restConfig, k.httpClient)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create kubernetes client: %w", err)
-	}
-	return clientset, nil
-}
-
-// GetDynamicClient returns a new dynamic client.
-func (k *KubeClient) GetDynamicClient() (dynamic.Interface, error) {
-	client, err := dynamic.NewForConfigAndClient(k.restConfig, k.httpClient)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create dynamic client: %w", err)
-	}
-	return client, nil
-}
 
 // findSandboxPod finds the pod for the given sandbox name.
 // If the pod is not found, it returns (nil, nil)
 func findSandboxPod(ctx context.Context, sandboxName string) (*types.NamespacedName, error) {
-	kube, err := NewKubeClient()
+	kube, err := clients.NewKubernetesClient()
 	if err != nil {
 		return nil, err
 	}
 
-	clientset, err := kube.GetClientset()
-	if err != nil {
-		return nil, err
-	}
+	clientset := kube.Clientset
 	namespace := kube.CurrentNamespace
 
 	// The sandbox name in the RGD is devc-<name>

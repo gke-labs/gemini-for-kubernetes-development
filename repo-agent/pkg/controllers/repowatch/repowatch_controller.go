@@ -48,6 +48,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 )
 
@@ -226,7 +227,7 @@ func NewGithubClient(ctx context.Context, k8sClient client.Client, repoWatch *re
 	}
 
 	tc := oauth2.NewClient(ctx, ts)
-	return github.NewClient(tc), githubConfig, nil
+	return clients.NewGitHubClientFromHTTP(tc), githubConfig, nil
 }
 
 // Reconciler reconciles a RepoWatch object

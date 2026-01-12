@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	redis "github.com/go-redis/redis/v8"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -36,8 +37,8 @@ type Manager struct {
 	Redis     *redis.Client
 }
 
-func NewManager(client dynamic.Interface, clientset *kubernetes.Clientset, rdb *redis.Client) *Manager {
-	return &Manager{Client: client, Clientset: clientset, Redis: rdb}
+func NewManager(kube *clients.KubernetesClient, rdb *redis.Client) *Manager {
+	return &Manager{Client: kube.DynamicClient, Clientset: kube.Clientset, Redis: rdb}
 }
 
 func (m *Manager) GetConfigDir(ctx context.Context, namespace, name string) (*unstructured.Unstructured, error) {

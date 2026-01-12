@@ -9,8 +9,7 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/google/go-github/v39/github"
-	"golang.org/x/oauth2"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 
 	_ "embed"
 )
@@ -28,11 +27,7 @@ func FixIssuePrompt(ctx context.Context, repoOwner, repoName string, issueNumber
 	}
 
 	token := strings.TrimSpace(stdout.String())
-	tokenSource := oauth2.StaticTokenSource(
-		&oauth2.Token{AccessToken: token},
-	)
-	authenticatedClient := oauth2.NewClient(ctx, tokenSource)
-	githubAPI := github.NewClient(authenticatedClient)
+	githubAPI := clients.NewGitHubClient(ctx, token)
 
 	issue, _, err := githubAPI.Issues.Get(ctx, repoOwner, repoName, issueNumber)
 	if err != nil {

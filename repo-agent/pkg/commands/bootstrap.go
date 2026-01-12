@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	"github.com/spf13/cobra"
 )
@@ -35,14 +36,11 @@ func BuildBootstrapCommand() *cobra.Command {
 
 // RunBootstrap executes the bootstrap logic.
 func RunBootstrap(ctx context.Context, opt BootstrapOptions) error {
-	kube, err := NewKubeClient()
+	kube, err := clients.NewKubernetesClient()
 	if err != nil {
 		return err
 	}
-	clientset, err := kube.GetClientset()
-	if err != nil {
-		return err
-	}
+	clientset := kube.Clientset
 
 	if err := k8s.BootstrapNamespace(ctx, clientset, opt.Namespace); err != nil {
 		return fmt.Errorf("bootstrapping namespace %q: %w", opt.Namespace, err)
