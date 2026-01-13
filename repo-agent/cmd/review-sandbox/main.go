@@ -33,11 +33,12 @@ func run(ctx context.Context) error {
 			if len(args) != 0 {
 				return fmt.Errorf("review-sandbox does not take arguments, use subcommands")
 			}
-			return commands.RunReview(cmd.Context())
+			return commands.RunReviewDaemon(cmd.Context())
 		},
 	}
 
 	rootCommand.AddCommand(commands.BuildReviewCommand())
+	rootCommand.AddCommand(commands.BuildReviewDaemonCommand())
 	rootCommand.AddCommand(commands.BuildSSHDCommand())
 	rootCommand.AddCommand(commands.BuildCodeServerCommand())
 

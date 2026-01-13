@@ -14,7 +14,6 @@ import (
 	"github.com/bluekeyes/go-gitdiff/gitdiff"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/agentoutput"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/codeserver"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/llm"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tokens"
 	"github.com/google/go-github/v39/github"
@@ -26,7 +25,7 @@ import (
 )
 
 var (
-	reviewGVR = schema.GroupVersionResource{
+	ReviewGVR = schema.GroupVersionResource{
 		Group:    "custom.agents.x-k8s.io",
 		Version:  "v1alpha1",
 		Resource: "reviewsandboxes",
@@ -49,42 +48,25 @@ func BuildReviewCommand() *cobra.Command {
 }
 
 func RunReview(ctx context.Context) error {
-	go agentoutput.Run("review", reviewGVR)
+	go agentoutput.Run("review", ReviewGVR)
 
-	cmdCodeSrv, err := codeserver.Start()
-	if err != nil {
-		_ = agentoutput.SetAgentState(ctx, reviewGVR, "error", err.Error())
-		return fmt.Errorf("failed to start code-server: %w", err)
-	}
-	defer func() {
-		if cmdCodeSrv.Process != nil {
-			_ = cmdCodeSrv.Process.Kill()
-		}
-	}()
-
-	_ = agentoutput.SetAgentState(ctx, reviewGVR, "reviewing", "")
-	err = runReviewLogic(ctx)
+	_ = agentoutput.SetAgentState(ctx, ReviewGVR, "reviewing", "")
+	err := runReviewLogic(ctx)
 	if err != nil {
 		var quotaErr *llm.QuotaError
 		if errors.As(err, &quotaErr) {
-			_ = agentoutput.SetAgentState(ctx, reviewGVR, "QUOTA ERROR", err.Error())
+			_ = agentoutput.SetAgentState(ctx, ReviewGVR, "QUOTA ERROR", err.Error())
 		} else if strings.Contains(err.Error(), "Too many files") {
-			_ = agentoutput.SetAgentState(ctx, reviewGVR, "Error: Too many files", err.Error())
+			_ = agentoutput.SetAgentState(ctx, ReviewGVR, "Error: Too many files", err.Error())
 		} else {
-			_ = agentoutput.SetAgentState(ctx, reviewGVR, "error", err.Error())
+			_ = agentoutput.SetAgentState(ctx, ReviewGVR, "error", err.Error())
 			klog.Errorf("failed reviewing: %v", err)
 			//klog.Fatalf("failed reviewing: %v", err)
 		}
 	} else {
-		_ = agentoutput.SetAgentState(ctx, reviewGVR, "review ready", "")
+		_ = agentoutput.SetAgentState(ctx, ReviewGVR, "review ready", "")
 	}
 
-	// Wait for code-server to exit
-	if err := cmdCodeSrv.Wait(); err != nil {
-		klog.Infof("Code Server exited with error: %v", err)
-		return fmt.Errorf("code-server exited: %w", err)
-	}
-	klog.Info("Code Server exited with no error")
 	return nil
 }
 
@@ -125,7 +107,7 @@ func runReviewLogic(ctx context.Context) error {
 		diffSizeLabel = fmt.Sprintf("size/%s", diffSize)
 		log.Info("Adding diff size label", "label", diffSizeLabel)
 		// Initialize accumulatedAgentOutput with the size label
-		if err := agentoutput.AddAgentLabel(reviewGVR, []string{diffSizeLabel}); err != nil {
+		if err := agentoutput.AddAgentLabel(ReviewGVR, []string{diffSizeLabel}); err != nil {
 			log.Error(err, "Failed to add size label")
 		}
 		expectedComments = sizeToComments[diffSize]
@@ -329,7 +311,7 @@ func runReviewLogic(ctx context.Context) error {
 	}
 
 	accumulatedAgentOutput.Labels = append(accumulatedAgentOutput.Labels, diffSizeLabel)
-	if err := agentoutput.AddAgentLabel(reviewGVR, accumulatedAgentOutput.Labels); err != nil {
+	if err := agentoutput.AddAgentLabel(ReviewGVR, accumulatedAgentOutput.Labels); err != nil {
 		log.Error(err, "Failed to add agent labels")
 	}
 	log.Info("Wrote agent output", "filename", filename)
