@@ -15,6 +15,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/agentoutput"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/llm"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/prompts"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tokens"
 	"github.com/google/go-github/v39/github"
 	"github.com/spf13/cobra"
@@ -77,8 +78,10 @@ func runReviewLogic(ctx context.Context) error {
 
 	maxReviewFiles := getMaxReviewFiles()
 
+	rawAgentPrompt := os.Getenv("AGENT_PROMPT")
+
 	// save the incoming prompt
-	if err := os.WriteFile("../agent-prompt.txt", []byte(os.Getenv("AGENT_PROMPT")), 0644); err != nil {
+	if err := os.WriteFile("../agent-prompt.txt", []byte(rawAgentPrompt), 0644); err != nil {
 		log.Error(err, "Failed to write prompt to file")
 	}
 
@@ -116,10 +119,7 @@ func runReviewLogic(ctx context.Context) error {
 		return fmt.Errorf("GIT_DIFF_URL not set, skipping diff-based validation")
 	}
 
-	agentPrompt := os.Getenv("AGENT_PROMPT")
-	agentPrompt = fmt.Sprintf("%s \n\n Try generating at least %d review comments", agentPrompt, expectedComments)
-
-	provider, err := llm.NewLLMProvider(agentName)
+	provider, err := llm.NewLLMProvider(agentName, "note:")
 	if err != nil {
 		return err
 	}
@@ -133,6 +133,8 @@ func runReviewLogic(ctx context.Context) error {
 	if githubToken == "" {
 		return fmt.Errorf("GitHub token not found in environment variables (tried MANUAL_PAT, OAUTH_PAT, and GITHUB_TOKEN)")
 	}
+	client := clients.NewGitHubClient(ctx, githubToken)
+
 	repoURL := os.Getenv("GIT_HTML_URL")
 	parts := strings.Split(strings.TrimPrefix(repoURL, "https://github.com/"), "/")
 	if len(parts) < 4 {
@@ -145,7 +147,23 @@ func runReviewLogic(ctx context.Context) error {
 		return fmt.Errorf("failed to parse PR number from GIT_HTML_URL: %w", err)
 	}
 
-	existingComments, err := getExistingComments(githubToken, owner, repo, prNumber)
+	pr, _, err := client.PullRequests.Get(ctx, owner, repo, prNumber)
+	if err != nil {
+		return fmt.Errorf("failed to get pull request: %w", err)
+	}
+
+	model := prompts.ReviewPromptModel{
+		PullRequest: *pr,
+		Prompt:      rawAgentPrompt,
+	}
+	expandedPrompt, err := prompts.ExpandReviewPrompt(model)
+	if err != nil {
+		return fmt.Errorf("failed to expand review prompt: %w", err)
+	}
+
+	agentPrompt := fmt.Sprintf("%s \n\n Try generating at least %d review comments", expandedPrompt, expectedComments)
+
+	existingComments, err := getExistingComments(ctx, client, owner, repo, prNumber)
 	if err != nil {
 		return fmt.Errorf("failed to get existing comments: %w", err)
 	}
@@ -322,10 +340,7 @@ func uniqueStrings(input []string) []string {
 	return sets.NewString(input...).List()
 }
 
-func getExistingComments(token, owner, repo string, prNumber int) ([]*github.PullRequestComment, error) {
-	ctx := context.Background()
-	client := clients.NewGitHubClient(ctx, token)
-
+func getExistingComments(ctx context.Context, client *github.Client, owner, repo string, prNumber int) ([]*github.PullRequestComment, error) {
 	var allComments []*github.PullRequestComment
 	opts := &github.PullRequestListCommentsOptions{
 		ListOptions: github.ListOptions{PerPage: 100},

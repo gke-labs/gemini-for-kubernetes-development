@@ -52,11 +52,14 @@ func (e *QuotaError) Unwrap() error {
 	return e.Err
 }
 
-func NewLLMProvider(name string) (Provider, error) {
+func NewLLMProvider(name string, outputStartIndicator string) (Provider, error) {
 	switch name {
 	case "gemini-cli":
 		g := &Gemini{Executor: &RealCommandExecutor{}}
 		g.AddPostProcessor(StripYAMLMarkers)
+		if outputStartIndicator != "" {
+			g.AddPostProcessor(StripThoughts(outputStartIndicator))
+		}
 		return g, nil
 	case "claude":
 		c := &Claude{}

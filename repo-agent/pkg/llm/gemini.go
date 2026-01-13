@@ -15,6 +15,7 @@
 package llm
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -170,4 +171,25 @@ func (g *Gemini) Run(agentPrompt string) ([]byte, error) {
 	}
 
 	return output, nil
+}
+
+func StripThoughts(outputStartIndicator string) PostProcessor {
+	return func(input []byte) ([]byte, error) {
+		if outputStartIndicator == "" {
+			return input, nil
+		}
+		indicator := []byte(outputStartIndicator)
+		// Check for indicator at the beginning
+		if bytes.HasPrefix(input, indicator) {
+			return input, nil
+		}
+
+		// Check for "\n" + indicator (indicator at the beginning of a line)
+		search := append([]byte("\n"), indicator...)
+		if idx := bytes.Index(input, search); idx != -1 {
+			return input[idx+1:], nil
+		}
+
+		return input, nil
+	}
 }
