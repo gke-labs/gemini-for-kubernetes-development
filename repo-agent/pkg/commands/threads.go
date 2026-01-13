@@ -6,8 +6,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// NewThreadsCommand creates a new "parent" cobra command for threads/chats in the dev sandbox.
-func NewThreadsCommand() *cobra.Command {
+// BuildThreadsCommand creates a new "parent" cobra command for threads/chats in the dev sandbox.
+func BuildThreadsCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "threads",
 		Short: "Manage threads/chats in the dev sandbox",

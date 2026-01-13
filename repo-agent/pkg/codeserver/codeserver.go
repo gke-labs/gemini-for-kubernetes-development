@@ -30,7 +30,7 @@ func runDummyCommand() (*exec.Cmd, error) {
 func Start() (*exec.Cmd, error) {
 	repoURL := os.Getenv("GIT_HTML_URL")
 	parts := strings.Split(strings.TrimPrefix(repoURL, "https://github.com/"), "/")
-	if len(parts) < 4 {
+	if len(parts) < 2 {
 		return nil, fmt.Errorf("invalid GIT_HTML_URL: %s", repoURL)
 	}
 	repo := parts[1]

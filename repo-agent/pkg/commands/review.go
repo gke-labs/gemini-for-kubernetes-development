@@ -1,0 +1,522 @@
+package commands
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/bluekeyes/go-gitdiff/gitdiff"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/agentoutput"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/codeserver"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/llm"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tokens"
+	"github.com/google/go-github/v39/github"
+	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/klog/v2"
+)
+
+var (
+	reviewGVR = schema.GroupVersionResource{
+		Group:    "custom.agents.x-k8s.io",
+		Version:  "v1alpha1",
+		Resource: "reviewsandboxes",
+	}
+)
+
+const DefaultMaxReviewFiles = 30
+
+func BuildReviewCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "review",
+		Short: "Run the review agent",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) != 0 {
+				return fmt.Errorf("review command does not take any arguments")
+			}
+			return RunReview(cmd.Context())
+		},
+	}
+}
+
+func RunReview(ctx context.Context) error {
+	go agentoutput.Run("review", reviewGVR)
+
+	cmdCodeSrv, err := codeserver.Start()
+	if err != nil {
+		_ = agentoutput.SetAgentState(ctx, reviewGVR, "error", err.Error())
+		return fmt.Errorf("failed to start code-server: %w", err)
+	}
+	defer func() {
+		if cmdCodeSrv.Process != nil {
+			_ = cmdCodeSrv.Process.Kill()
+		}
+	}()
+
+	_ = agentoutput.SetAgentState(ctx, reviewGVR, "reviewing", "")
+	err = runReviewLogic(ctx)
+	if err != nil {
+		var quotaErr *llm.QuotaError
+		if errors.As(err, &quotaErr) {
+			_ = agentoutput.SetAgentState(ctx, reviewGVR, "QUOTA ERROR", err.Error())
+		} else if strings.Contains(err.Error(), "Too many files") {
+			_ = agentoutput.SetAgentState(ctx, reviewGVR, "Error: Too many files", err.Error())
+		} else {
+			_ = agentoutput.SetAgentState(ctx, reviewGVR, "error", err.Error())
+			klog.Errorf("failed reviewing: %v", err)
+			//klog.Fatalf("failed reviewing: %v", err)
+		}
+	} else {
+		_ = agentoutput.SetAgentState(ctx, reviewGVR, "review ready", "")
+	}
+
+	// Wait for code-server to exit
+	if err := cmdCodeSrv.Wait(); err != nil {
+		klog.Infof("Code Server exited with error: %v", err)
+		return fmt.Errorf("code-server exited: %w", err)
+	}
+	klog.Info("Code Server exited with no error")
+	return nil
+}
+
+func runReviewLogic(ctx context.Context) error {
+	log := klog.FromContext(ctx)
+	agentName := os.Getenv("AGENT_NAME")
+	log.Info("Review", "AGENT_NAME", agentName)
+
+	maxReviewFiles := getMaxReviewFiles()
+
+	// save the incoming prompt
+	if err := os.WriteFile("../agent-prompt.txt", []byte(os.Getenv("AGENT_PROMPT")), 0644); err != nil {
+		log.Error(err, "Failed to write prompt to file")
+	}
+
+	var accumulatedAgentOutput agentoutput.ReviewAgentOutput
+	var diffSizeLabel string
+	var diffFiles []*gitdiff.File
+	var err error
+	diffURL := os.Getenv("GIT_DIFF_URL")
+	var expectedComments int
+	// Check if diffURL beings with https://github.com/
+	if !bytes.HasPrefix([]byte(diffURL), []byte("https://github.com/")) {
+		return fmt.Errorf("GIT_DIFF_URL must start with https://github.com/")
+	}
+	if diffURL != "" {
+		log.Info("Downloading and parsing diff", "url", diffURL)
+		diffFiles, err = parseDiffFromURL(diffURL)
+		if err != nil {
+			return fmt.Errorf("failed to parse diff from URL: %v", err)
+		}
+
+		if len(diffFiles) > maxReviewFiles {
+			return fmt.Errorf("Too many files to review: %d (max %d)", len(diffFiles), maxReviewFiles)
+		}
+
+		diffSize := getDiffSize(diffFiles)
+		diffSizeLabel = fmt.Sprintf("size/%s", diffSize)
+		log.Info("Adding diff size label", "label", diffSizeLabel)
+		// Initialize accumulatedAgentOutput with the size label
+		if err := agentoutput.AddAgentLabel(reviewGVR, []string{diffSizeLabel}); err != nil {
+			log.Error(err, "Failed to add size label")
+		}
+		expectedComments = sizeToComments[diffSize]
+		log.Info("Diff size categorized", "size", diffSize, "expectedComments", expectedComments)
+	} else {
+		return fmt.Errorf("GIT_DIFF_URL not set, skipping diff-based validation")
+	}
+
+	agentPrompt := os.Getenv("AGENT_PROMPT")
+	agentPrompt = fmt.Sprintf("%s \n\n Try generating at least %d review comments", agentPrompt, expectedComments)
+
+	provider, err := llm.NewLLMProvider(agentName)
+	if err != nil {
+		return err
+	}
+
+	if err := provider.Setup("/workspaces", "/tokens"); err != nil {
+		return err
+	}
+
+	// Get existing comments
+	githubToken := tokens.GetGitHubToken()
+	if githubToken == "" {
+		return fmt.Errorf("GitHub token not found in environment variables (tried MANUAL_PAT, OAUTH_PAT, and GITHUB_TOKEN)")
+	}
+	repoURL := os.Getenv("GIT_HTML_URL")
+	parts := strings.Split(strings.TrimPrefix(repoURL, "https://github.com/"), "/")
+	if len(parts) < 4 {
+		return fmt.Errorf("invalid GIT_HTML_URL: %s", repoURL)
+	}
+	owner := parts[0]
+	repo := parts[1]
+	prNumber, err := strconv.Atoi(parts[3])
+	if err != nil {
+		return fmt.Errorf("failed to parse PR number from GIT_HTML_URL: %w", err)
+	}
+
+	existingComments, err := getExistingComments(githubToken, owner, repo, prNumber)
+	if err != nil {
+		return fmt.Errorf("failed to get existing comments: %w", err)
+	}
+	log.Info("Found existing comments", "count", len(existingComments))
+
+	maxRuns := 10
+	maxSuccessfulRuns := 5
+	successfulRuns := 0
+
+	for i := 0; i < maxRuns; i++ {
+		log.Info("Running Agent", "agent", agentName, "attempt", i+1, "maxRuns", maxRuns, "successfulRuns", successfulRuns)
+
+		if successfulRuns >= maxSuccessfulRuns {
+			log.Info("Stopping because max successful runs reached", "maxSuccessfulRuns", maxSuccessfulRuns)
+			break
+		}
+		if accumulatedAgentOutput.Review != nil && len(accumulatedAgentOutput.Review.Comments) >= expectedComments {
+			log.Info("Stopping because expected number of comments was met", "expectedComments", expectedComments)
+			break
+		}
+
+		currentPrompt := agentPrompt
+		currentPrompt += "\n\nDon't repeat comments you've already made in previous runs or that already exist on the PR."
+		if accumulatedAgentOutput.Review != nil && len(accumulatedAgentOutput.Review.Comments) > 0 {
+			previousReviews, err := yaml.Marshal(accumulatedAgentOutput)
+			if err != nil {
+				log.Info("failed to marshal previous reviews, continuing without them", "error", err)
+			} else {
+				currentPrompt += "\n\nReview comments made in previous runs:\n```yaml\n" + string(previousReviews) + "\n```\n"
+			}
+		}
+		if len(existingComments) > 0 {
+			existingReviews, err := yaml.Marshal(existingComments)
+			if err != nil {
+				log.Info("failed to marshal existing reviews, continuing without them", "error", err)
+			} else {
+				currentPrompt += "\n\nExisting comments on the PR:\n```yaml\n" + string(existingReviews) + "\n```\n"
+			}
+		}
+
+		// Expand commands in the prompt
+		currentPrompt, err = provider.ExpandPrompt(currentPrompt)
+		if err != nil {
+			log.Info("warning: failed to expand commands in prompt", "error", err)
+		}
+
+		// Write current prompt to file for debugging
+		promptFilename := fmt.Sprintf("../agent-prompt-run%d.txt", i+1)
+		if err := os.WriteFile(promptFilename, []byte(currentPrompt), 0644); err != nil {
+			log.Error(err, "Failed to write agent prompt to file", "filename", promptFilename)
+		} else {
+			log.Info("Wrote agent prompt", "filename", promptFilename)
+		}
+
+		// RUN THE AGENT
+		output, err := provider.Run(currentPrompt)
+		if err != nil {
+			var quotaErr *llm.QuotaError
+			if errors.As(err, &quotaErr) {
+				log.Error(err, "Agent run failed due to quota.")
+				return err
+			}
+			log.Error(err, "Agent run failed. Continuing...")
+			time.Sleep(10 * time.Second)
+			continue
+		}
+
+		// Write output to file for debugging, regardless of validation result.
+		filename := fmt.Sprintf("../agent-output-run%d.txt", i+1)
+		if err := os.WriteFile(filename, output, 0644); err != nil {
+			log.Error(err, "Failed to write agent output", "filename", filename)
+		} else {
+			log.Info("Wrote agent output", "filename", filename)
+		}
+
+		var agentOutput agentoutput.ReviewAgentOutput
+		if err := yaml.Unmarshal(output, &agentOutput); err != nil {
+			log.Info("Agent output validation failed: failed to unmarshal yaml. Continuing...", "error", err)
+			time.Sleep(5 * time.Second)
+			continue
+		}
+
+		if err = validateAgentOutput(ctx, &agentOutput, diffFiles); err != nil {
+			log.Info("Agent output validation failed. Continuing...", "error", err)
+			time.Sleep(5 * time.Second)
+			continue
+		}
+
+		log.Info("Agent run and validation successful.")
+		successfulRuns++
+
+		if accumulatedAgentOutput.Review == nil {
+			// Save existing labels (e.g. size/S)
+			existingLabels := accumulatedAgentOutput.Labels
+			accumulatedAgentOutput = agentOutput
+			// Restore/Merge labels
+			accumulatedAgentOutput.Labels = append(accumulatedAgentOutput.Labels, existingLabels...)
+			accumulatedAgentOutput.Labels = uniqueStrings(accumulatedAgentOutput.Labels)
+		} else {
+			for _, newComment := range agentOutput.Review.Comments {
+				if newComment == nil {
+					continue
+				}
+				if !isDuplicateCommentExact(newComment, existingComments, accumulatedAgentOutput.Review.Comments) {
+					accumulatedAgentOutput.Review.Comments = append(accumulatedAgentOutput.Review.Comments, newComment)
+				} else {
+					log.Info("Filtering out duplicate comment", "file", *newComment.Path, "line", *newComment.Line)
+				}
+			}
+			if agentOutput.Note != "" {
+				accumulatedAgentOutput.Note += "\n--- " + agentOutput.Note
+			}
+			if agentOutput.Review.Body != nil && *agentOutput.Review.Body != "" {
+				if accumulatedAgentOutput.Review.Body == nil {
+					accumulatedAgentOutput.Review.Body = agentOutput.Review.Body
+				} else {
+					newBody := *accumulatedAgentOutput.Review.Body + "\n--- " + *agentOutput.Review.Body
+					accumulatedAgentOutput.Review.Body = &newBody
+				}
+			}
+			if len(agentOutput.Labels) > 0 {
+				accumulatedAgentOutput.Labels = append(accumulatedAgentOutput.Labels, agentOutput.Labels...)
+				accumulatedAgentOutput.Labels = uniqueStrings(accumulatedAgentOutput.Labels)
+			}
+		}
+	}
+
+	if successfulRuns == 0 {
+		return fmt.Errorf("agent failed to produce any valid output after %d attempts", maxRuns)
+	}
+
+	log.Info("Finished agent runs", "successfulRuns", successfulRuns, "totalComments", len(accumulatedAgentOutput.Review.Comments))
+
+	// If more than one successful run, accumalatedAgentOutput has duplicated text in Note and Review.Body, so dedupe and combine them.
+	if successfulRuns > 1 {
+		log.Info("Deduplicating and combining agent output text from multiple runs.")
+		combinedNote, err := dedupeAndCombineText(provider, accumulatedAgentOutput.Note)
+		if err != nil {
+			log.Info("Failed to dedupe and combine Note. Using original Note.", "error", err)
+			combinedNote = accumulatedAgentOutput.Note
+		} else {
+			log.Info("Successfully deduped and combined Note.")
+		}
+		accumulatedAgentOutput.Note = combinedNote
+
+		combinedBody, err := dedupeAndCombineText(provider, *accumulatedAgentOutput.Review.Body)
+		if err != nil {
+			log.Info("Failed to dedupe and combine Body. Using original Body.", "error", err)
+		} else {
+			accumulatedAgentOutput.Review.Body = &combinedBody
+			log.Info("Successfully deduped and combined Body.")
+		}
+	}
+
+	finalOutput, err := yaml.Marshal(&accumulatedAgentOutput)
+	if err != nil {
+		return fmt.Errorf("failed to re-marshal agent output: %w", err)
+	}
+
+	filename := "../agent-output.txt"
+	if err := os.WriteFile(filename, finalOutput, 0644); err != nil {
+		return fmt.Errorf("failed to write agent output to %s: %v", filename, err)
+	}
+
+	accumulatedAgentOutput.Labels = append(accumulatedAgentOutput.Labels, diffSizeLabel)
+	if err := agentoutput.AddAgentLabel(reviewGVR, accumulatedAgentOutput.Labels); err != nil {
+		log.Error(err, "Failed to add agent labels")
+	}
+	log.Info("Wrote agent output", "filename", filename)
+	return nil // Success
+}
+
+func uniqueStrings(input []string) []string {
+	return sets.NewString(input...).List()
+}
+
+func getExistingComments(token, owner, repo string, prNumber int) ([]*github.PullRequestComment, error) {
+	ctx := context.Background()
+	client := clients.NewGitHubClient(ctx, token)
+
+	var allComments []*github.PullRequestComment
+	opts := &github.PullRequestListCommentsOptions{
+		ListOptions: github.ListOptions{PerPage: 100},
+	}
+	for {
+		comments, resp, err := client.PullRequests.ListComments(ctx, owner, repo, prNumber, opts)
+		if err != nil {
+			return nil, err
+		}
+		allComments = append(allComments, comments...)
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	return allComments, nil
+}
+
+// TODO improve duplicate detection to fuzzy matching
+func isDuplicateCommentExact(newComment *github.DraftReviewComment, existingComments []*github.PullRequestComment, accumulatedComments []*github.DraftReviewComment) bool {
+	for _, existingComment := range existingComments {
+		if existingComment == nil {
+			continue
+		}
+		if *newComment.Path == *existingComment.Path &&
+			*newComment.Line == *existingComment.Line &&
+			*newComment.Body == *existingComment.Body {
+			return true
+		}
+	}
+	for _, existingComment := range accumulatedComments {
+		if *newComment.Path == *existingComment.Path &&
+			*newComment.Line == *existingComment.Line &&
+			*newComment.Body == *existingComment.Body {
+			return true
+		}
+	}
+	return false
+}
+
+func validateAgentOutput(ctx context.Context, agentOutput *agentoutput.ReviewAgentOutput, diffFiles []*gitdiff.File) error {
+	log := klog.FromContext(ctx)
+	if agentOutput.Review == nil {
+		return fmt.Errorf("'review' field is missing from yaml output")
+	}
+
+	if agentOutput.Review.Body == nil || *agentOutput.Review.Body == "" {
+		return fmt.Errorf("'review.body' field is missing or empty")
+	}
+
+	if agentOutput.Review.Comments == nil {
+		return fmt.Errorf("'review.comments' field is missing")
+	}
+
+	validComments := []*github.DraftReviewComment{}
+	for _, comment := range agentOutput.Review.Comments {
+		if isCommentValid(comment, diffFiles) {
+			validComments = append(validComments, comment)
+		} else {
+			if comment.Path != nil && comment.Line != nil {
+				log.Info("Filtering out invalid comment", "file", *comment.Path, "line", *comment.Line)
+			} else {
+				log.Info("Filtering out invalid comment with missing path or line")
+			}
+		}
+	}
+	agentOutput.Review.Comments = validComments
+
+	log.Info("YAML validation successful.")
+	return nil
+}
+
+func isCommentValid(comment *github.DraftReviewComment, diffFiles []*gitdiff.File) bool {
+	if comment.Path == nil || comment.Line == nil {
+		return false // Invalid comment if path or line is missing
+	}
+	for _, file := range diffFiles {
+		if file.NewName == *comment.Path {
+			for _, fragment := range file.TextFragments {
+				if *comment.Side == "RIGHT" {
+					if fragment.NewPosition <= int64(*comment.Line) && int64(*comment.Line) <= fragment.NewPosition+fragment.NewLines {
+						return true
+					}
+				} else {
+					if fragment.OldPosition <= int64(*comment.Line) && int64(*comment.Line) <= fragment.OldPosition+fragment.OldLines {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+var sizeToComments = map[string]int{
+	"XS":  2,
+	"S":   4,
+	"M":   6,
+	"L":   10,
+	"XL":  15,
+	"XXL": 20,
+}
+
+// getDiffSize categorizes the diff based on the total number of lines changed.
+func getDiffSize(files []*gitdiff.File) string {
+	var totalLinesChanged int64
+	for _, file := range files {
+		for _, fragment := range file.TextFragments {
+			totalLinesChanged += fragment.LinesAdded
+			totalLinesChanged += fragment.LinesDeleted
+		}
+	}
+
+	switch {
+	case totalLinesChanged <= 9:
+		return "XS"
+	case totalLinesChanged <= 29:
+		return "S"
+	case totalLinesChanged <= 99:
+		return "M"
+	case totalLinesChanged <= 499:
+		return "L"
+	case totalLinesChanged <= 999:
+		return "XL"
+	default:
+		return "XXL"
+	}
+}
+
+func parseDiffFromURL(url string) ([]*gitdiff.File, error) {
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to download diff: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to download diff: status code %d", resp.StatusCode)
+	}
+
+	files, _, err := gitdiff.Parse(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse diff: %w", err)
+	}
+
+	return files, nil
+}
+
+func dedupeAndCombineText(provider llm.Provider, text string) (string, error) {
+	// We get text with sections separated by '---'
+	prompt := fmt.Sprintf("The following text contains multiple sections separated by '---'. Please deduplicate and combine them into a single coherent section of text. Return only the result.\n\n%s", text)
+
+	output, err := provider.Run(prompt)
+	if err != nil {
+		var quotaErr *llm.QuotaError
+		if errors.As(err, &quotaErr) {
+			return "", quotaErr
+		}
+		return "", err
+	}
+
+	return string(output), nil
+}
+func getMaxReviewFiles() int {
+	maxReviewFilesStr := os.Getenv("MAX_REVIEW_FILES")
+	maxReviewFiles := DefaultMaxReviewFiles
+	if maxReviewFilesStr != "" {
+		val, err := strconv.Atoi(maxReviewFilesStr)
+		if err != nil {
+			klog.Infof("Invalid MAX_REVIEW_FILES value '%s', using default %d: %v", maxReviewFilesStr, DefaultMaxReviewFiles, err)
+		} else {
+			maxReviewFiles = val
+		}
+	}
+	return maxReviewFiles
+}
