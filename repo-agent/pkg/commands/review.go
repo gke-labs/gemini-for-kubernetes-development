@@ -151,8 +151,8 @@ func runReviewLogic(ctx context.Context) error {
 	}
 	log.Info("Found existing comments", "count", len(existingComments))
 
-	maxRuns := 10
-	maxSuccessfulRuns := 5
+	maxRuns := 3
+	maxSuccessfulRuns := 2
 	successfulRuns := 0
 
 	for i := 0; i < maxRuns; i++ {
