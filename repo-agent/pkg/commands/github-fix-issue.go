@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -54,6 +56,16 @@ func BuildGithubFixIssueCommand() *cobra.Command {
 // RunGithubFixIssue launches VS Code connected to the specified dev sandbox.
 func RunGithubFixIssue(ctx context.Context, opt GithubFixIssueOptions) error {
 	log := klog.FromContext(ctx)
+
+	geminiAPIKey := os.Getenv("GEMINI_API_KEY")
+	if geminiAPIKey == "" {
+		return fmt.Errorf("GEMINI_API_KEY environment variable is not set")
+	}
+
+	codebotRobotToken := os.Getenv("CODEBOT_ROBOT_GITHUB_TOKEN")
+	if codebotRobotToken == "" {
+		return fmt.Errorf("CODEBOT_ROBOT_GITHUB_TOKEN environment variable is not set")
+	}
 
 	kube, err := clients.NewKubernetesClient()
 	if err != nil {
@@ -157,28 +169,152 @@ func RunGithubFixIssue(ctx context.Context, opt GithubFixIssueOptions) error {
 		log.Info("Copied prompt into sandbox pod", "pod", podID.Name, "path", path)
 	}
 
+	// mkdir -p ~/.config/gh
+
+	// Write gh config
+	{
+		config := `github.com:
+    users:
+        codebot-robot:
+            oauth_token: {{CODEBOT_ROBOT_GITHUB_TOKEN}}
+    git_protocol: https
+    oauth_token: {{CODEBOT_ROBOT_GITHUB_TOKEN}}
+    user: codebot-robot
+`
+
+		config = strings.ReplaceAll(config, "{{CODEBOT_ROBOT_GITHUB_TOKEN}}", codebotRobotToken)
+
+		opts := execOptions{
+			Command: []string{"mkdir", "-p", "/root/.config/gh"},
+		}
+		if err := execInPod(ctx, kube, podID, opts); err != nil {
+			return fmt.Errorf("creating /root/.config/gh directory: %w", err)
+		}
+
+		if err := writeFileInPod(ctx, kube, podID, "/root/.config/gh/hosts.yml", []byte(config)); err != nil {
+			return fmt.Errorf("writing gh config into pod: %w", err)
+		}
+	}
+
+	// Run git config
+	{
+		opts := execOptions{
+			Command: []string{"git", "config", "--global", "user.email", "codebot-robot@google.com"},
+		}
+		if err := execInPod(ctx, kube, podID, opts); err != nil {
+			return fmt.Errorf("running git config user.email in pod: %w", err)
+		}
+		opts = execOptions{
+			Command: []string{"git", "config", "--global", "user.name", "codebot-robot"},
+		}
+		if err := execInPod(ctx, kube, podID, opts); err != nil {
+			return fmt.Errorf("running git config user.name in pod: %w", err)
+		}
+	}
+
+	// Run gh auth setup-git
+	{
+		opts := execOptions{
+			Command: []string{"gh", "auth", "setup-git"},
+		}
+		if err := execInPod(ctx, kube, podID, opts); err != nil {
+			return fmt.Errorf("running gh auth setup-git in pod: %w", err)
+		}
+	}
+
+	time.Sleep(2 * time.Second) // TODO: Replace with proper wait for git repo to be cloned
+
+	workdir := fmt.Sprintf("/workspaces/%s", repo.FilesystemName())
+
+	// Run gh repo fork
+	log.Info("Forking repository in pod", "pod", podID.Name, "repo", repo.GitCloneURL())
+	{
+		// TODO: Does gh support -C ?
+		opts := execOptions{
+			Command: []string{"sh", "-c", fmt.Sprintf("cd %s && gh repo fork --remote", workdir)},
+		}
+		if err := execInPod(ctx, kube, podID, opts); err != nil {
+			return fmt.Errorf("running gh repo fork in pod: %w", err)
+		}
+	}
+
+	// Setup default remote
+	{
+		defaultRepo := repo.GitCloneURL()
+
+		// TODO: Does gh support -C ?
+		opts := execOptions{
+			Command: []string{"sh", "-c", fmt.Sprintf("cd %s && gh repo set-default %s", workdir, defaultRepo)},
+		}
+		if err := execInPod(ctx, kube, podID, opts); err != nil {
+			return fmt.Errorf("running gh repo fork in pod: %w", err)
+		}
+
+	}
+	// Create a new branch
+	{
+		branchName := fmt.Sprintf("issue_%d", opt.Issue)
+		log.Info("Creating new branch in pod", "pod", podID.Name, "branch", branchName)
+
+		opts := execOptions{
+			Command: []string{"git", "-C", workdir, "checkout", "-b", branchName},
+		}
+		if err := execInPod(ctx, kube, podID, opts); err != nil {
+			return fmt.Errorf("creating new branch in pod: %w", err)
+		}
+	}
+
+	// Run gemini with API key and prompt
+	{
+		log.Info("Running gemini in pod", "pod", podID.Name)
+
+		// TODO:
+		// export GEMINI_TELEMETRY_ENABLED=true
+		// export GEMINI_TELEMETRY_OTLP_ENDPOINT=http://otel-portal.otel-system:4317
+
+		opts := execOptions{
+			Command: []string{"sh", "-c", fmt.Sprintf("cd %s && export GEMINI_API_KEY=%s && gemini --yolo --model gemini-3-pro-preview < /workspaces/prompt.txt", workdir, geminiAPIKey)},
+			Stdout:  os.Stdout,
+			Stderr:  os.Stderr,
+		}
+		opts.Secrets = []string{geminiAPIKey}
+
+		if err := execInPod(ctx, kube, podID, opts); err != nil {
+			return fmt.Errorf("running gemini: %w", err)
+		}
+	}
+
 	return nil
 }
 
-// writeFileInPod writes the specified data to a file in the specified pod.
-func writeFileInPod(ctx context.Context, kube *clients.KubernetesClient, podID *types.NamespacedName, path string, data []byte) error {
+type execOptions struct {
+	Command []string
+	Secrets []string
+
+	Stdin  []byte
+	Stdout io.Writer
+	Stderr io.Writer
+}
+
+// execInPod writes the specified data to a file in the specified pod.
+func execInPod(ctx context.Context, kube *clients.KubernetesClient, podID *types.NamespacedName, opts execOptions) error {
 	log := klog.FromContext(ctx)
 
-	command := []string{
-		"/bin/tee", path,
+	redactedCommand := strings.Join(opts.Command, " ")
+	for _, v := range opts.Secrets {
+		redactedCommand = strings.ReplaceAll(redactedCommand, v, "****")
 	}
-	stdin := bytes.NewReader(data)
 
-	option := &v1.PodExecOptions{
+	podExecOptions := &v1.PodExecOptions{
 		// Container: containerName,
-		Command: command,
+		Command: opts.Command,
 		Stdin:   true,
 		Stdout:  true,
 		Stderr:  true,
 		TTY:     false,
 	}
-	if stdin == nil {
-		option.Stdin = false
+	if opts.Stdin == nil {
+		podExecOptions.Stdin = false
 	}
 
 	req := kube.Clientset.CoreV1().RESTClient().Post().
@@ -186,7 +322,7 @@ func writeFileInPod(ctx context.Context, kube *clients.KubernetesClient, podID *
 		Name(podID.Name).
 		Namespace(podID.Namespace).
 		SubResource("exec").
-		VersionedParams(option, scheme.ParameterCodec)
+		VersionedParams(podExecOptions, scheme.ParameterCodec)
 
 	url := req.URL().String()
 	exec, err := remotecommand.NewWebSocketExecutor(kube.RestConfig, "POST", url)
@@ -197,19 +333,45 @@ func writeFileInPod(ctx context.Context, kube *clients.KubernetesClient, podID *
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
-	// Run the command
-	if err := exec.StreamWithContext(ctx, remotecommand.StreamOptions{
-		Stdin:  stdin,
+	streamOptions := remotecommand.StreamOptions{
 		Stdout: &stdout,
 		Stderr: &stderr,
 		Tty:    false,
-	}); err != nil {
+	}
+	if opts.Stdin != nil {
+		streamOptions.Stdin = bytes.NewReader(opts.Stdin)
+	}
+	if opts.Stdout != nil {
+		streamOptions.Stdout = opts.Stdout
+	}
+	if opts.Stderr != nil {
+		streamOptions.Stderr = opts.Stderr
+	}
+
+	// Run the command
+	if err := exec.StreamWithContext(ctx, streamOptions); err != nil {
+		log.Error(err, "executing command", "command", redactedCommand, "stdout", stdout.String(), "stderr", stderr.String())
 		return fmt.Errorf("streaming command in pod: %w", err)
 	}
 
-	log.Info("executed command", "command", strings.Join(command, " "), "stdout", stdout.String(), "stderr", stderr.String())
+	log.Info("executed command", "command", redactedCommand, "stdout", stdout.String(), "stderr", stderr.String())
 
 	return nil
+}
+
+// writeFileInPod writes the specified data to a file in the specified pod.
+func writeFileInPod(ctx context.Context, kube *clients.KubernetesClient, podID *types.NamespacedName, path string, data []byte) error {
+	// log := klog.FromContext(ctx)
+
+	var stdout bytes.Buffer
+
+	opt := execOptions{
+		Command: []string{"/bin/tee", path},
+		Stdin:   data,
+		Stdout:  &stdout, // To avoid logging to stdout
+	}
+
+	return execInPod(ctx, kube, podID, opt)
 }
 
 // waitForPodReady waits for the specified pod to be ready.
