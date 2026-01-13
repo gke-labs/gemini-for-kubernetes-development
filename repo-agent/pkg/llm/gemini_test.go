@@ -350,3 +350,55 @@ func TestEnsureSettings(t *testing.T) {
 		}
 	})
 }
+
+func TestStripThoughts(t *testing.T) {
+	processor := StripThoughts("note:")
+
+	t.Run("with note at beginning", func(t *testing.T) {
+		input := []byte("note: content")
+		expected := []byte("note: content")
+		result, err := processor(input)
+		if err != nil {
+			t.Fatalf("StripThoughts failed: %v", err)
+		}
+		if !bytes.Equal(result, expected) {
+			t.Errorf("Expected %q, got %q", expected, result)
+		}
+	})
+
+	t.Run("with note after thoughts", func(t *testing.T) {
+		input := []byte("thoughts\nmore thoughts\nnote: content")
+		expected := []byte("note: content")
+		result, err := processor(input)
+		if err != nil {
+			t.Fatalf("StripThoughts failed: %v", err)
+		}
+		if !bytes.Equal(result, expected) {
+			t.Errorf("Expected %q, got %q", expected, result)
+		}
+	})
+
+	t.Run("without note", func(t *testing.T) {
+		input := []byte("just content")
+		expected := []byte("just content")
+		result, err := processor(input)
+		if err != nil {
+			t.Fatalf("StripThoughts failed: %v", err)
+		}
+		if !bytes.Equal(result, expected) {
+			t.Errorf("Expected %q, got %q", expected, result)
+		}
+	})
+
+	t.Run("with note inside line (not start)", func(t *testing.T) {
+		input := []byte("This is a note: content")
+		expected := []byte("This is a note: content")
+		result, err := processor(input)
+		if err != nil {
+			t.Fatalf("StripThoughts failed: %v", err)
+		}
+		if !bytes.Equal(result, expected) {
+			t.Errorf("Expected %q, got %q", expected, result)
+		}
+	})
+}

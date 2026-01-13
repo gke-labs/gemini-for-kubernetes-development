@@ -874,20 +874,7 @@ func (r *Reconciler) reconcileIssueHandlerSandboxesInternal(ctx context.Context,
 	return r.Status().Update(ctx, repoWatch)
 }
 
-// generateReviewPrompt generates a prompt for a pull request review.
-// It uses the prompt specified in the RepoWatch CRD, and if it is not
-// specified, it uses a default prompt.
-func (r *Reconciler) generateReviewPrompt(repoWatch *reviewv1alpha1.RepoWatch, pr *github.PullRequest) (string, error) {
-	model := prompts.ReviewPromptModel{
-		PullRequest: *pr,
-		Prompt:      repoWatch.Spec.Review.LLM.Prompt,
-	}
-
-	return prompts.ExpandReviewPrompt(model)
-}
-
 // generateIssueHandlerPrompt generates a prompt for an issue handler.
-// It uses the prompt specified in the RepoWatch CRD.
 func (r *Reconciler) generateIssueHandlerPrompt(handler reviewv1alpha1.IssueHandlerSpec, issue *github.Issue) (string, error) {
 	return prompts.ExpandIssueHandlerPrompt(handler.LLM.Prompt, issue)
 }
@@ -899,10 +886,7 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 	log := log.FromContext(ctx)
 	sandboxName := fmt.Sprintf("%s-pr-%d", repoWatch.Name, *pr.Number)
 
-	prompt, err := r.generateReviewPrompt(repoWatch, pr)
-	if err != nil {
-		return err
-	}
+	prompt := repoWatch.Spec.Review.LLM.Prompt
 
 	log.Info("Generated sandbox for PR", "pr", *pr, "llm.provider", repoWatch.Spec.Review.LLM.Provider)
 	sandbox := &unstructured.Unstructured{
