@@ -111,11 +111,14 @@ Modify the `switch` statement to include a new case for your provider. This allo
 
 ```diff
  // ... existing code ...
- func NewLLMProvider(name string) (Provider, error) {
+ func NewLLMProvider(name string, outputStartIndicator string) (Provider, error) {
  	switch name {
  	case "gemini-cli":
  		g := &Gemini{Executor: &RealCommandExecutor{}}
  		g.AddPostProcessor(StripYAMLMarkers)
+ 		if outputStartIndicator != "" {
+			g.AddPostProcessor(StripThoughts(outputStartIndicator))
+		}
  		return g, nil
  	case "claude":
  		c := &Claude{}
