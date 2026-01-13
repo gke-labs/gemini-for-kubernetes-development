@@ -77,7 +77,7 @@ func RunAgent(ctx context.Context, cfg Config) error {
 	log := klog.FromContext(ctx)
 	log.Info("Starting agent", "agentName", cfg.AgentName)
 
-	provider, err := llm.NewLLMProvider(cfg.AgentName)
+	provider, err := llm.NewLLMProvider(cfg.AgentName, "")
 	if err != nil {
 		return err
 	}
