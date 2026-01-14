@@ -2,98 +2,45 @@ package main
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/klog/v2"
-
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/agentoutput"
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/codeserver"
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/llm"
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
-)
-
-var (
-	gvr = schema.GroupVersionResource{
-		Group:    "custom.agents.x-k8s.io",
-		Version:  "v1alpha1",
-		Resource: "issuesandboxes",
-	}
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/commands"
+	"github.com/spf13/cobra"
 )
 
 func main() {
 	ctx := context.Background()
-	log := klog.FromContext(ctx)
 
-	go agentoutput.Run("issue", gvr)
+	// Listen to signals so we can gracefully shutdown
+	ctx, stopListeningToSignals := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stopListeningToSignals()
 
-	cmdCodeSrv, err := codeserver.Start()
-	if err != nil {
-		_ = agentoutput.SetAgentState(ctx, gvr, "error", err.Error())
-		log.Error(err, "failed to start code-server")
+	if err := run(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-	defer func() {
-		if cmdCodeSrv.Process != nil {
-			_ = cmdCodeSrv.Process.Kill()
-		}
-	}()
+}
 
-	_ = agentoutput.SetAgentState(ctx, gvr, "handling issue", "")
-
-	// Create config from env vars
-	cfg := sandbox.Config{
-		AgentName:        os.Getenv("AGENT_NAME"),
-		AgentPrompt:      os.Getenv("AGENT_PROMPT"),
-		BranchName:       os.Getenv("ISSUE_BRANCH"),
-		PushEnabled:      os.Getenv("GIT_PUSH_ENABLED") == "true",
-		GithubUserOrigin: os.Getenv("GITHUB_USER_ORIGIN"),
-		GithubUserLogin:  os.Getenv("GITHUB_USER_LOGIN"),
-		GithubUserEmail:  os.Getenv("GITHUB_USER_EMAIL"),
-		GithubUserName:   os.Getenv("GITHUB_USER_NAME"),
-		GVR:              gvr,
-		ReportStatus:     true,
-	}
-
-	// Prepare git branch
-	oldCommitID, err := sandbox.PrepareGitBranch(cfg)
-	if err != nil {
-		_ = agentoutput.SetAgentState(ctx, gvr, "error", err.Error())
-		log.Error(err, "failed to prepare git branch")
-		os.Exit(1)
-	}
-
-	if _, err := os.Stat("../agent-prompt.txt"); os.IsNotExist(err) {
-		// Try solving the issue
-		if err := sandbox.RunAgent(ctx, cfg); err != nil {
-			var quotaErr *llm.QuotaError
-			if errors.As(err, &quotaErr) {
-				_ = agentoutput.SetAgentState(ctx, gvr, "QUOTA ERROR", err.Error())
-			} else {
-				_ = agentoutput.SetAgentState(ctx, gvr, "error", err.Error())
-				log.Error(err, "failed solving issue")
-				os.Exit(1)
+func run(ctx context.Context) error {
+	rootCommand := &cobra.Command{
+		Use:   "issue-sandbox",
+		Short: "Gemini Issue Sandbox Agent",
+		// Default to running the issue daemon if no subcommand is provided
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) != 0 {
+				return fmt.Errorf("issue-sandbox does not take arguments, use subcommands")
 			}
-		} else {
-			_ = agentoutput.SetAgentState(ctx, gvr, "done", "")
-			// Push the changes
-			commitMessage := "fix for issue # " + os.Getenv("ISSUEID")
-			if err := sandbox.ProcessGitChanges(ctx, cfg, oldCommitID, commitMessage); err != nil {
-				_ = agentoutput.SetAgentState(ctx, gvr, "error", err.Error())
-				log.Error(err, "failed to process git changes")
-				os.Exit(1)
-			}
-		}
-	} else {
-		log.Info("agent-prompt.txt exists, skipping code generation")
+			return commands.RunIssueDaemon(cmd.Context())
+		},
 	}
 
-	// Wait for code-server to exit
-	err = cmdCodeSrv.Wait()
-	if err != nil {
-		log.Error(err, "Code Server exited with error")
-	} else {
-		log.Info("Code Server exited with no error")
-	}
+	rootCommand.AddCommand(commands.BuildIssueCommand())
+	rootCommand.AddCommand(commands.BuildIssueDaemonCommand())
+	rootCommand.AddCommand(commands.BuildSSHDCommand())
+	rootCommand.AddCommand(commands.BuildCodeServerCommand())
+
+	return rootCommand.ExecuteContext(ctx)
 }

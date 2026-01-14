@@ -142,7 +142,7 @@ spec:
                     #- name: ENVBUILDER_GIT_CLONE_SINGLE_BRANCH
                     #  value: "true"
                     - name: ENVBUILDER_INIT_SCRIPT
-                      value: /opt/repo-agent/dev-sandbox init
+                      value: /opt/repo-agent/dev-sandbox daemon
                     - name: ENVBUILDER_IGNORE_PATHS
                       value: "/var/run,/product_uuid,/product_name,/tokens,/repo-agent/"
                   volumeMounts:
