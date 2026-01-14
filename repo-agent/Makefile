@@ -72,7 +72,7 @@ check-prereqs:
 
 .PHONY: generate
 generate:
-	../dev/tools/fix-go-generate --working-dir ./pkg/api
+	../dev/tools/fix-go-generate --working-dir ./api
 	../dev/tools/fix-go-generate --working-dir ./pkg/controllers
 
 .PHONY: build
