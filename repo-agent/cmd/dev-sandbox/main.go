@@ -96,6 +96,24 @@ func InitContainer(ctx context.Context) error {
 	}
 	repoDir := filepath.Join("/workspaces", parts[1])
 
+	ib := imagebuilder.ImageBuilder{
+		DotFilesRepo: os.Getenv("USER_DOTFILESREPO"),
+		CloneURL:     os.Getenv("GIT_CLONE_URL"),
+		Destination:  repoDir,
+	}
+	if err := ib.CloneRepo(ctx); err != nil {
+		_ = agentoutput.SetAgentState(ctx, gvr, "error", fmt.Sprintf("cloning repo failed: %v", err))
+		return fmt.Errorf("Cloning repo failed: %w", err)
+	}
+
+	// if repoDir doesnt exist, we need to clone it
+	if _, err := os.Stat(repoDir); os.IsNotExist(err) {
+		if err := ib.InstallDotfilesRepo(ctx); err != nil {
+			// Note: we don't fail the entire startup if dotfiles installation fails
+			log.Error(err, "installing dotfiles repo", "repo", ib.DotFilesRepo)
+		}
+	}
+
 	// Change to repo dir
 	if err := os.Chdir(repoDir); err != nil {
 		return fmt.Errorf("failed to chdir to %s: %w", repoDir, err)
@@ -111,16 +129,6 @@ func InitContainer(ctx context.Context) error {
 		GithubUserEmail:  os.Getenv("GITHUB_USER_EMAIL"),
 		GithubUserName:   os.Getenv("GITHUB_USER_NAME"),
 		ReportStatus:     false,
-	}
-
-	var b imagebuilder.ImageBuilder
-	if dotFilesRepo := os.Getenv("USER_DOTFILESREPO"); dotFilesRepo != "" {
-		_ = agentoutput.SetAgentState(ctx, gvr, "provisioning", "installing dotfiles")
-		if err := b.InstallDotfilesRepo(ctx, dotFilesRepo); err != nil {
-			// Note: we don't fail the entire startup if dotfiles installation fails
-			log.Error(err, "installing dotfiles repo", "repo", dotFilesRepo)
-			_ = agentoutput.SetAgentState(ctx, gvr, "warning", fmt.Sprintf("dotfiles install failed: %v", err))
-		}
 	}
 
 	// Prepare git branch (checkout)
