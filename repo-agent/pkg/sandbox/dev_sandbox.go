@@ -36,6 +36,7 @@ type DevSandboxOptions struct {
 	ServiceAccountName    string
 	GithubSecretName      string
 	DevcontainerConfigRef string
+	Image                 string
 
 	// Gateway
 	HTTPEnabled bool
@@ -118,6 +119,9 @@ func NewDevSandbox(opt DevSandboxOptions) *unstructured.Unstructured {
 	}
 	if opt.DevcontainerConfigRef != "" {
 		spec["devcontainerConfigRef"] = opt.DevcontainerConfigRef
+	}
+	if opt.Image != "" {
+		spec["image"] = opt.Image
 	}
 
 	// Gateway

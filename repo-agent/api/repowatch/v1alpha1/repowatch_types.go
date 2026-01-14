@@ -120,6 +120,10 @@ type DevSpec struct {
 	// DevcontainerConfigRef string
 	DevcontainerConfigRef string `json:"devcontainerConfigRef,omitempty"`
 
+	// Image to use for the development sandbox. If set, this overrides the devcontainer image.
+	// +kubebuilder:validation:Optional
+	Image string `json:"image,omitempty"`
+
 	// Branches specifies a list of branch names that should have development sandboxes created for them.
 	// If this list is empty, the controller will automatically discover branches based on other criteria.
 	// +kubebuilder:validation:Optional
