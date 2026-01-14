@@ -13,11 +13,31 @@ import (
 
 // ImageBuilder is responsible for initializing the container, e.g. installing dotfiles
 type ImageBuilder struct {
+	DotFilesRepo string
+	CloneURL     string
+	Destination  string
+}
+
+// CloneRepo clones source repo to the dest directory.
+func (b *ImageBuilder) CloneRepo(ctx context.Context) error {
+	if b.CloneURL == "" {
+		return fmt.Errorf("CloneURL is not set")
+	}
+
+	if err := b.GitClone(ctx, b.CloneURL, b.Destination); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // InstallDotfilesRepo clones and install a dotfiles repo
-func (b *ImageBuilder) InstallDotfilesRepo(ctx context.Context, dotFilesRepo string) error {
+func (b *ImageBuilder) InstallDotfilesRepo(ctx context.Context) error {
 	log := klog.FromContext(ctx)
+
+	if b.DotFilesRepo == "" {
+		return nil
+	}
 
 	// Get the user's cache directory
 	cacheDir, err := os.UserCacheDir()
@@ -27,7 +47,7 @@ func (b *ImageBuilder) InstallDotfilesRepo(ctx context.Context, dotFilesRepo str
 
 	dotfilesDir := filepath.Join(cacheDir, "dev-sandbox", "dotfiles")
 
-	if err := b.GitClone(ctx, dotFilesRepo, dotfilesDir); err != nil {
+	if err := b.GitClone(ctx, b.DotFilesRepo, dotfilesDir); err != nil {
 		return err
 	}
 
@@ -50,7 +70,7 @@ func (b *ImageBuilder) InstallDotfilesRepo(ctx context.Context, dotFilesRepo str
 	}
 
 	if foundEntrypoint == "" {
-		return fmt.Errorf("unable to find entrypoint in dotfiles repo %q", dotFilesRepo)
+		return fmt.Errorf("unable to find entrypoint in dotfiles repo %q", b.DotFilesRepo)
 	}
 
 	cmd := exec.CommandContext(ctx, foundEntrypoint)
@@ -58,7 +78,7 @@ func (b *ImageBuilder) InstallDotfilesRepo(ctx context.Context, dotFilesRepo str
 	cmd.Stderr = os.Stderr
 
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("error running dotfiles entrypoint %q from repo %q: %w", strings.Join(cmd.Args, " "), dotFilesRepo, err)
+		return fmt.Errorf("error running dotfiles entrypoint %q from repo %q: %w", strings.Join(cmd.Args, " "), b.DotFilesRepo, err)
 	}
 
 	return nil
