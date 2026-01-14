@@ -126,6 +126,8 @@ spec:
                           optional: true
                     - name: GIT_PUSH_ENABLED
                       value: ${string(schema.spec.destination.pushEnabled)}
+                    - name: GIT_CLONE_URL
+                      value: ${schema.spec.source.cloneURL}
                     - name: ENVBUILDER_GIT_URL
                       value: ${schema.spec.source.cloneURL}
                     # https://github.com/coder/terraform-provider-envbuilder/issues/68#issuecomment-2557247792
