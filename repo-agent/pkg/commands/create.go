@@ -23,6 +23,7 @@ type CreateOptions struct {
 	LLMSecret             string
 	DevcontainerConfigRef string
 	GithubLogin           string
+	Image                 string
 }
 
 // InitDefaults initializes default values for CreateOptions.
@@ -52,6 +53,7 @@ func BuildCreateCommand() *cobra.Command {
 	cmd.Flags().StringVar(&opt.LLMSecret, "llm-secret", "", "LLM k8s secret to use")
 	cmd.Flags().StringVar(&opt.DevcontainerConfigRef, "devcontainer-config-ref", "devcontainer-json", "Devcontainer config ref to use")
 	cmd.Flags().StringVar(&opt.GithubLogin, "github-login", "", "GitHub login to use")
+	cmd.Flags().StringVar(&opt.Image, "image", "", "Custom Docker image to use instead of devcontainer-config-ref")
 
 	// Mark required flags using : _ = cmd.MarkFlagRequired("branch")
 
@@ -138,6 +140,7 @@ func RunCreate(ctx context.Context, opt CreateOptions) error {
 
 		GithubSecretName:      "github-pat",
 		DevcontainerConfigRef: opt.DevcontainerConfigRef,
+		Image:                 opt.Image,
 
 		HTTPEnabled: true,
 		Replicas:    1,

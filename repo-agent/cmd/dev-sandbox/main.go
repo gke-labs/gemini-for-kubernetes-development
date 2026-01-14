@@ -101,17 +101,17 @@ func InitContainer(ctx context.Context) error {
 		CloneURL:     os.Getenv("GIT_CLONE_URL"),
 		Destination:  repoDir,
 	}
-	if err := ib.CloneRepo(ctx); err != nil {
-		_ = agentoutput.SetAgentState(ctx, gvr, "error", fmt.Sprintf("cloning repo failed: %v", err))
-		return fmt.Errorf("Cloning repo failed: %w", err)
-	}
-
 	// if repoDir doesnt exist, we need to clone it
 	if _, err := os.Stat(repoDir); os.IsNotExist(err) {
-		if err := ib.InstallDotfilesRepo(ctx); err != nil {
-			// Note: we don't fail the entire startup if dotfiles installation fails
-			log.Error(err, "installing dotfiles repo", "repo", ib.DotFilesRepo)
+		if err := ib.CloneRepo(ctx); err != nil {
+			_ = agentoutput.SetAgentState(ctx, gvr, "error", fmt.Sprintf("cloning repo failed: %v", err))
+			return fmt.Errorf("Cloning repo failed: %w", err)
 		}
+	}
+
+	if err := ib.InstallDotfilesRepo(ctx); err != nil {
+		// Note: we don't fail the entire startup if dotfiles installation fails
+		log.Error(err, "installing dotfiles repo", "repo", ib.DotFilesRepo)
 	}
 
 	// Change to repo dir
