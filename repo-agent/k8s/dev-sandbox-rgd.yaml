@@ -18,6 +18,7 @@ spec:
       replicas: integer | default=1
       serviceAccountName: string | default="dev-sandbox"
       devcontainerConfigRef: string | default="devcontainer-json"
+      image: string | default=""
       githubSecretName: string | default="github-pat"
       resources:
         ephemeralStorage: string | default="6Gi"
@@ -66,20 +67,16 @@ spec:
                   volumeMounts:
                     - name: workspaces-pvc
                       mountPath: /workspaces
-              containers:
-                # - name: issue-sidecar
-                #   image: {{imagePrefix}}issue-sidecar:git-c0bbab0
-                #   env:
-                #     - name: NAMESPACE
-                #       value: ${schema.metadata.namespace}
-                #     - name: NAME
-                #       value: ${schema.metadata.name}
-                #   volumeMounts:
-                #     - name: workspaces-pvc
-                #       mountPath: /workspaces
-                - name: dev-sandbox
-                  #image: ghcr.io/coder/envbuilder
+                - name: inject-agent
                   image: ko://repo-agent/images/dev-sandbox
+                  command: ["/repo-agent/dev-sandbox", "inject", "--path", "/opt/repo-agent"]
+                  volumeMounts:
+                    - name: agent-bin
+                      mountPath: /opt/repo-agent
+              containers:
+                - name: dev-sandbox
+                  image: ${schema.spec.image != "" ? schema.spec.image:"ko://repo-agent/images/dev-sandbox"}
+                  command: ${schema.spec.image != "" ? ["/opt/repo-agent/dev-sandbox", "init"]:[]}
                   resources:
                     limits:
                       ephemeral-storage: ${schema.spec.resources.ephemeralStorage}
@@ -129,6 +126,8 @@ spec:
                           optional: true
                     - name: GIT_PUSH_ENABLED
                       value: ${string(schema.spec.destination.pushEnabled)}
+                    - name: GIT_CLONE_URL
+                      value: ${schema.spec.source.cloneURL}
                     - name: ENVBUILDER_GIT_URL
                       value: ${schema.spec.source.cloneURL}
                     # https://github.com/coder/terraform-provider-envbuilder/issues/68#issuecomment-2557247792
@@ -143,7 +142,7 @@ spec:
                     #- name: ENVBUILDER_GIT_CLONE_SINGLE_BRANCH
                     #  value: "true"
                     - name: ENVBUILDER_INIT_SCRIPT
-                      value: /repo-agent/dev-sandbox init
+                      value: /opt/repo-agent/dev-sandbox init
                     - name: ENVBUILDER_IGNORE_PATHS
                       value: "/var/run,/product_uuid,/product_name,/tokens,/repo-agent/"
                   volumeMounts:
@@ -155,9 +154,13 @@ spec:
                     - name: devcontainer-config
                       mountPath: /devcontainer.json
                       subPath: devcontainer.json
+                    - name: agent-bin
+                      mountPath: /opt/repo-agent
                   ports:
                     - containerPort: 13337
               volumes:
+              - name: agent-bin
+                emptyDir: {}
               # configmap volume for devcontainer.json mounting
               - name: devcontainer-config
                 configMap:

@@ -1318,6 +1318,7 @@ func (r *Reconciler) createDevSandbox(ctx context.Context, user *github.User, re
 
 		GithubSecretName:      repoWatch.Spec.GithubSecretName,
 		DevcontainerConfigRef: repoWatch.Spec.Dev.DevcontainerConfigRef,
+		Image:                 repoWatch.Spec.Dev.Image,
 
 		HTTPEnabled: true,
 		Replicas:    1,

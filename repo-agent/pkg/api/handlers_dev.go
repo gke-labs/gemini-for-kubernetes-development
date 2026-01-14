@@ -78,6 +78,8 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 	apiKeySecretRef, _, _ := unstructured.NestedString(rw.Object, "spec", "dev", "llm", "apiKeySecretRef")
 	configdirRef, _, _ := unstructured.NestedString(rw.Object, "spec", "dev", "llm", "configdirRef")
 	llmProvider, _, _ := unstructured.NestedString(rw.Object, "spec", "dev", "llm", "provider")
+	image, _, _ := unstructured.NestedString(rw.Object, "spec", "dev", "image")
+	devContainerConfigRef, _, _ := unstructured.NestedString(rw.Object, "spec", "dev", "devcontainerConfigRef")
 
 	// Fetch user info from secret
 	var userName, userEmail string
@@ -163,6 +165,9 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 		Prompt:              req.Prompt,
 
 		GithubSecretName: githubSecretName,
+
+		DevcontainerConfigRef: devContainerConfigRef,
+		Image:                 image,
 
 		HTTPEnabled: true,
 		Replicas:    1,
