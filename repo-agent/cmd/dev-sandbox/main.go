@@ -65,6 +65,7 @@ func run(ctx context.Context) error {
 
 	rootCommand.AddCommand(commands.BuildSSHDCommand())
 	rootCommand.AddCommand(commands.BuildCodeServerCommand())
+	rootCommand.AddCommand(commands.BuildInjectCommand())
 
 	rootCommand.AddCommand(commands.BuildAgentCommand())
 	rootCommand.AddCommand(commands.BuildCreateCommand())

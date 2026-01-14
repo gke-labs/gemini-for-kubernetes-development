@@ -69,7 +69,7 @@ spec:
                       mountPath: /workspaces
                 - name: inject-agent
                   image: ko://repo-agent/images/dev-sandbox
-                  command: ["/bin/sh", "-c", "mkdir -p /opt/repo-agent && cp /repo-agent/dev-sandbox /opt/repo-agent/dev-sandbox"]
+                  command: ["/repo-agent/dev-sandbox", "inject", "--path", "/opt/repo-agent"]
                   volumeMounts:
                     - name: agent-bin
                       mountPath: /opt/repo-agent
