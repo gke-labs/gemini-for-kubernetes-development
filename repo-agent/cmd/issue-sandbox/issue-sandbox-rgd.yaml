@@ -76,7 +76,7 @@ spec:
                       mountPath: /workspaces
               containers:
                 - name: sandbox
-                  image: ko://repo-agent/images/issue-sandbox
+                  image: ko://repo-agent/images/dev-sandbox
                   resources:
                     limits:
                       ephemeral-storage: ${schema.spec.resources.ephemeralStorage}
@@ -144,7 +144,7 @@ spec:
                     #- name: ENVBUILDER_GIT_CLONE_SINGLE_BRANCH
                     #  value: "true"
                     - name: ENVBUILDER_INIT_SCRIPT
-                      value: /repo-agent/issue-sandbox daemon
+                      value: /repo-agent/dev-sandbox daemon
                     - name: ENVBUILDER_IGNORE_PATHS
                       value: "/var/run,/product_uuid,/product_name,/tokens,/repo-agent/"
                   volumeMounts:
