@@ -732,13 +732,13 @@ spec:
   dev:
     maxActiveSandboxes: 1
     maxSandboxes: 1
-    devcontainerConfigRef: devcontainer-json
+    image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
     llm:
       apiKeySecretRef: gemini-vscode-tokens
   review:
     assignedToSelf: true
     reviewShutdownAfterMinutes: 30
-    devcontainerConfigRef: devcontainer-json
+    image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
     llm:
       configdirRef: k8s-gemini-config
       apiKeySecretRef: gemini-vscode-tokens
@@ -774,4 +774,5 @@ spec:
       issueShutdownAfterMinutes: 30
       maxActiveSandboxes: 1
       maxSandboxes: 3
+      image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
       name: triage
