@@ -140,7 +140,7 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 	gvr := schema.GroupVersionResource{
 		Group:    "custom.agents.x-k8s.io",
 		Version:  "v1alpha1",
-		Resource: "devsandboxes",
+		Resource: "issuesandboxes",
 	}
 
 	opts := sandbox.DevSandboxOptions{
@@ -190,11 +190,11 @@ func (s *Server) fetchAndPopulateDevSandboxes(ctx context.Context, namespace, re
 	gvr := schema.GroupVersionResource{
 		Group:    "custom.agents.x-k8s.io",
 		Version:  "v1alpha1",
-		Resource: "devsandboxes",
+		Resource: "issuesandboxes",
 	}
 	list, err := s.K8sManager.Client.Resource(gvr).Namespace(namespace).List(context.Background(),
 		v1.ListOptions{
-			LabelSelector: fmt.Sprintf("review.gemini.google.com/repowatch=%s", repo),
+			LabelSelector: fmt.Sprintf("review.gemini.google.com/repowatch=%s,sandbox.gemini.google.com/type=dev", repo),
 		})
 	if err != nil {
 		log.Info("Failed to list DevSandbox CRs", "err", err)
