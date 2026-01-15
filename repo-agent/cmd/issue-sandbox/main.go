@@ -33,7 +33,9 @@ func run(ctx context.Context) error {
 			if len(args) != 0 {
 				return fmt.Errorf("issue-sandbox does not take arguments, use subcommands")
 			}
-			return commands.RunIssueDaemon(cmd.Context())
+			daemonCmd := commands.IssueDaemonCommand{}
+			daemonCmd.InitDefaults()
+			return daemonCmd.Run(cmd.Context())
 		},
 	}
 
