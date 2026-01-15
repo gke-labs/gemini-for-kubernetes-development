@@ -19,6 +19,7 @@ spec:
         apiKeySecretName: string
       serviceAccountName: string | default="review-sandbox"
       devcontainerConfigRef: string | default="devcontainer-json"
+      image: string | default=""
       githubSecretName: string | default="github-pat"
       resources:
         ephemeralStorage: string | default="6Gi"
@@ -72,9 +73,16 @@ spec:
                   volumeMounts:
                     - name: workspaces-pvc
                       mountPath: /workspaces
+                - name: inject-agent
+                  image: ko://repo-agent/images/review-sandbox
+                  command: ["/repo-agent/review-sandbox", "inject", "--path", "/opt/repo-agent"]
+                  volumeMounts:
+                    - name: agent-bin
+                      mountPath: /opt/repo-agent
               containers:
                 - name: sandbox
-                  image: ko://repo-agent/review-sidecar/images/review-sandbox
+                  image: ${schema.spec.image != "" ? schema.spec.image:"ko://repo-agent/images/review-sandbox"}
+                  command: ${schema.spec.image != "" ? ["/opt/repo-agent/review-sandbox", "daemon"]:[]}
                   resources:
                     limits:
                       ephemeral-storage: ${schema.spec.resources.ephemeralStorage}
@@ -133,7 +141,7 @@ spec:
                     - name: ENVBUILDER_GIT_CLONE_SINGLE_BRANCH
                       value: "true"
                     - name: ENVBUILDER_INIT_SCRIPT
-                      value: /repo-agent/review-sandbox
+                      value: /opt/repo-agent/review-sandbox daemon
                     - name: ENVBUILDER_IGNORE_PATHS
                       value: "/var/run,/product_uuid,/product_name,/tokens,/repo-agent/"
                   volumeMounts:
@@ -145,9 +153,13 @@ spec:
                     - name: devcontainer-config
                       mountPath: /devcontainer.json
                       subPath: devcontainer.json
+                    - name: agent-bin
+                      mountPath: /opt/repo-agent
                   ports:
                     - containerPort: 13337
               volumes:
+              - name: agent-bin
+                emptyDir: {}
               # configmap volume for devcontainer.json mounting
               - name: devcontainer-config
                 configMap:

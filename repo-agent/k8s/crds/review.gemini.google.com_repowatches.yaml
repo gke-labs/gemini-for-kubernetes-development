@@ -138,6 +138,8 @@ spec:
                     items:
                       type: integer
                     type: array
+                  image:
+                    type: string
                   labels:
                     items:
                       items:

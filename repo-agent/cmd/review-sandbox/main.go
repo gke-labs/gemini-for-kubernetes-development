@@ -41,6 +41,7 @@ func run(ctx context.Context) error {
 	rootCommand.AddCommand(commands.BuildReviewDaemonCommand())
 	rootCommand.AddCommand(commands.BuildSSHDCommand())
 	rootCommand.AddCommand(commands.BuildCodeServerCommand())
+	rootCommand.AddCommand(commands.BuildInjectCommand())
 
 	return rootCommand.ExecuteContext(ctx)
 }
