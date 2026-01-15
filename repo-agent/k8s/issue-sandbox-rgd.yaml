@@ -86,7 +86,7 @@ spec:
               containers:
                 - name: sandbox
                   image: ${schema.spec.image != "" ? schema.spec.image:"ko://repo-agent/images/dev-sandbox"}
-                  command: ${schema.spec.image != "" ? ["/opt/repo-agent/dev-sandbox", "init"]:[]}
+                  command: ${schema.spec.image != "" ? ["/opt/repo-agent/dev-sandbox", "daemon"]:[]}
                   resources:
                     limits:
                       ephemeral-storage: ${schema.spec.resources.ephemeralStorage}
