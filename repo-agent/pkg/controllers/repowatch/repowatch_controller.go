@@ -935,6 +935,12 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 		}
 	}
 
+	if repoWatch.Spec.Review.Image != "" {
+		if err := unstructured.SetNestedField(sandbox.Object, repoWatch.Spec.Review.Image, "spec", "image"); err != nil {
+			return err
+		}
+	}
+
 	if err := controllerutil.SetControllerReference(repoWatch, sandbox, r.Scheme); err != nil {
 		return err
 	}
