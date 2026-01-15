@@ -60,3 +60,7 @@ func (c *CodeServerCommand) Wait() error {
 	}
 	return nil
 }
+
+func (c *CodeServerCommand) InitDefaults() {
+	// No defaults to initialize for now
+}

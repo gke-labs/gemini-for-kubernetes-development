@@ -12,6 +12,7 @@ require (
 	github.com/google/cel-go v0.26.1
 	github.com/google/go-cmp v0.7.0
 	github.com/google/go-github/v39 v39.2.0
+	github.com/google/martian/v3 v3.3.3
 	github.com/onsi/gomega v1.38.2
 	github.com/spf13/cobra v1.9.1
 	go.yaml.in/yaml/v3 v3.0.4
