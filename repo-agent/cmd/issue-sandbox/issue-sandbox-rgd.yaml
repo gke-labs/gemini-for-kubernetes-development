@@ -13,21 +13,24 @@ spec:
       llmBackend:
         name: string | default="gemini-cli"
       llm:
-        prompt: string
+        prompt: string | default=""
         configdirRef: string | default=""
         apiKeySecretName: string
       serviceAccountName: string | default="issue-sandbox"
       devcontainerConfigRef: string | default="devcontainer-json"
+      image: string | default=""
       githubSecretName: string | default="github-pat"
       resources:
         ephemeralStorage: string | default="6Gi"
       source:
         cloneURL: string
         htmlURL: string
-        issue: string
-        title: string
-        repo: string
-        handler: string
+        issue: string | default=""
+        title: string | default=""
+        repo: string | default=""
+        handler: string | default=""
+      user:
+        dotFilesRepo: string | default=""
       destination:
         pushEnabled: boolean | default=false
         branch: string
@@ -74,9 +77,16 @@ spec:
                   volumeMounts:
                     - name: workspaces-pvc
                       mountPath: /workspaces
+                - name: inject-agent
+                  image: ko://repo-agent/images/dev-sandbox
+                  command: ["/repo-agent/dev-sandbox", "inject", "--path", "/opt/repo-agent"]
+                  volumeMounts:
+                    - name: agent-bin
+                      mountPath: /opt/repo-agent
               containers:
                 - name: sandbox
-                  image: ko://repo-agent/images/dev-sandbox
+                  image: ${schema.spec.image != "" ? schema.spec.image:"ko://repo-agent/images/dev-sandbox"}
+                  command: ${schema.spec.image != "" ? ["/opt/repo-agent/dev-sandbox", "init"]:[]}
                   resources:
                     limits:
                       ephemeral-storage: ${schema.spec.resources.ephemeralStorage}
@@ -99,6 +109,10 @@ spec:
                     - name: ISSUEID
                       value: ${schema.spec.source.issue}
                     - name: ISSUE_BRANCH
+                      value: ${schema.spec.destination.branch}
+                    - name: USER_DOTFILESREPO
+                      value: ${schema.spec.user.dotFilesRepo}
+                    - name: DEV_BRANCH
                       value: ${schema.spec.destination.branch}
                     - name: GIT_HTML_URL
                       value: ${schema.spec.source.htmlURL}
@@ -130,6 +144,8 @@ spec:
                           optional: true
                     - name: GIT_PUSH_ENABLED
                       value: ${string(schema.spec.destination.pushEnabled)}
+                    - name: GIT_CLONE_URL
+                      value: ${schema.spec.source.cloneURL}
                     - name: ENVBUILDER_GIT_URL
                       value: ${schema.spec.source.cloneURL}
                     # https://github.com/coder/terraform-provider-envbuilder/issues/68#issuecomment-2557247792
@@ -144,7 +160,7 @@ spec:
                     #- name: ENVBUILDER_GIT_CLONE_SINGLE_BRANCH
                     #  value: "true"
                     - name: ENVBUILDER_INIT_SCRIPT
-                      value: /repo-agent/dev-sandbox daemon
+                      value: /opt/repo-agent/dev-sandbox daemon
                     - name: ENVBUILDER_IGNORE_PATHS
                       value: "/var/run,/product_uuid,/product_name,/tokens,/repo-agent/"
                   volumeMounts:
@@ -156,9 +172,13 @@ spec:
                     - name: devcontainer-config
                       mountPath: /devcontainer.json
                       subPath: devcontainer.json
+                    - name: agent-bin
+                      mountPath: /opt/repo-agent
                   ports:
                     - containerPort: 13337
               volumes:
+              - name: agent-bin
+                emptyDir: {}
               # configmap volume for devcontainer.json mounting
               - name: devcontainer-config
                 configMap:
@@ -214,4 +234,3 @@ spec:
             - namespaceSelector:
                 matchLabels: ${schema.spec.networkPolicy.ingress.namespaceLabels}
           egress: ${schema.spec.networkPolicy.egress}
-

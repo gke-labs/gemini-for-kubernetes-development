@@ -252,7 +252,7 @@ func (m *Manager) UpdateDevSandboxAnnotation(ctx context.Context, namespace, san
 	gvr := schema.GroupVersionResource{
 		Group:    "custom.agents.x-k8s.io",
 		Version:  "v1alpha1",
-		Resource: "devsandboxes",
+		Resource: "issuesandboxes",
 	}
 
 	sandbox, err := m.Client.Resource(gvr).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
@@ -371,7 +371,7 @@ func (m *Manager) ScaledownDevSandboxHelper(ctx context.Context, namespace, name
 	gvr := schema.GroupVersionResource{
 		Group:    "custom.agents.x-k8s.io",
 		Version:  "v1alpha1",
-		Resource: "devsandboxes",
+		Resource: "issuesandboxes",
 	}
 	log.Info("Scaling down dev sandbox", "name", name)
 
@@ -386,7 +386,7 @@ func (m *Manager) ScaledownDevSandboxHelper(ctx context.Context, namespace, name
 	sandbox := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
-			"kind":       "DevSandbox",
+			"kind":       "IssueSandbox",
 			"metadata": map[string]interface{}{
 				"name":      name,
 				"namespace": namespace,
@@ -499,7 +499,7 @@ func (m *Manager) ScaleupDevSandboxHelper(ctx context.Context, namespace, name s
 	gvr := schema.GroupVersionResource{
 		Group:    "custom.agents.x-k8s.io",
 		Version:  "v1alpha1",
-		Resource: "devsandboxes",
+		Resource: "issuesandboxes",
 	}
 	log.Info("Scaling up dev sandbox", "name", name)
 
@@ -514,7 +514,7 @@ func (m *Manager) ScaleupDevSandboxHelper(ctx context.Context, namespace, name s
 	sandbox := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
-			"kind":       "DevSandbox",
+			"kind":       "IssueSandbox",
 			"metadata": map[string]interface{}{
 				"name":      name,
 				"namespace": namespace,
