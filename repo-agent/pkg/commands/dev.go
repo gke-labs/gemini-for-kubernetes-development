@@ -23,9 +23,14 @@ var (
 		Version:  "v1alpha1",
 		Resource: "devsandboxes",
 	}
+	IssueGVR = schema.GroupVersionResource{
+		Group:    "custom.agents.x-k8s.io",
+		Version:  "v1alpha1",
+		Resource: "issuesandboxes",
+	}
 )
 
-type DevCommand struct {
+type SandboxCommand struct {
 	WorkspaceDir     string
 	RepoURL          string
 	UserDotfilesRepo string
@@ -38,9 +43,11 @@ type DevCommand struct {
 	GithubUserLogin  string
 	GithubUserEmail  string
 	GithubUserName   string
+	IssueID          string
+	PromptFilePath   string
 }
 
-func (c *DevCommand) InitDefaults() {
+func (c *SandboxCommand) InitDefaults() {
 	if c.WorkspaceDir == "" {
 		c.WorkspaceDir = "/workspaces"
 	}
@@ -62,6 +69,9 @@ func (c *DevCommand) InitDefaults() {
 	if c.BranchName == "" {
 		c.BranchName = os.Getenv("DEV_BRANCH")
 	}
+	if c.BranchName == "" {
+		c.BranchName = os.Getenv("ISSUE_BRANCH")
+	}
 	if !c.PushEnabled {
 		if val := os.Getenv("GIT_PUSH_ENABLED"); val == "true" {
 			c.PushEnabled = true
@@ -79,47 +89,77 @@ func (c *DevCommand) InitDefaults() {
 	if c.GithubUserName == "" {
 		c.GithubUserName = os.Getenv("GITHUB_USER_NAME")
 	}
+	if c.IssueID == "" {
+		c.IssueID = os.Getenv("ISSUEID")
+	}
+	if c.PromptFilePath == "" {
+		c.PromptFilePath = "/workspaces/agent-prompt.txt"
+	}
 }
 
-func BuildDevCommand() *cobra.Command {
-	devCommand := DevCommand{}
+func BuildSandboxCommand() *cobra.Command {
+	sandboxCommand := SandboxCommand{}
 	cmd := &cobra.Command{
-		Use:   "dev",
-		Short: "Run the dev agent setup",
+		Use:   "dev", // Keeping "dev" as the command name for backward compatibility/simplicity
+		Short: "Run the sandbox agent setup",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 0 {
 				return fmt.Errorf("dev command does not take any arguments")
 			}
-			devCommand.InitDefaults()
-			return devCommand.Run(cmd.Context())
+			sandboxCommand.InitDefaults()
+			return sandboxCommand.Run(cmd.Context())
 		},
 	}
 
-	cmd.Flags().StringVar(&devCommand.RepoURL, "repo-url", os.Getenv("GIT_HTML_URL"), "Git HTML URL")
-	cmd.Flags().StringVar(&devCommand.UserDotfilesRepo, "user-dotfiles-repo", os.Getenv("USER_DOTFILESREPO"), "User dotfiles repo")
-	cmd.Flags().StringVar(&devCommand.CloneURL, "clone-url", os.Getenv("GIT_CLONE_URL"), "Git clone URL")
-	cmd.Flags().StringVar(&devCommand.AgentName, "agent-name", os.Getenv("AGENT_NAME"), "Agent name")
-	cmd.Flags().StringVar(&devCommand.AgentPrompt, "agent-prompt", os.Getenv("AGENT_PROMPT"), "Agent prompt")
-	cmd.Flags().StringVar(&devCommand.BranchName, "branch-name", os.Getenv("DEV_BRANCH"), "Dev branch name")
-	cmd.Flags().BoolVar(&devCommand.PushEnabled, "push-enabled", os.Getenv("GIT_PUSH_ENABLED") == "true", "Enable git push")
-	cmd.Flags().StringVar(&devCommand.GithubUserOrigin, "github-user-origin", os.Getenv("GITHUB_USER_ORIGIN"), "Github user origin")
-	cmd.Flags().StringVar(&devCommand.GithubUserLogin, "github-user-login", os.Getenv("GITHUB_USER_LOGIN"), "Github user login")
-	cmd.Flags().StringVar(&devCommand.GithubUserEmail, "github-user-email", os.Getenv("GITHUB_USER_EMAIL"), "Github user email")
-	cmd.Flags().StringVar(&devCommand.GithubUserName, "github-user-name", os.Getenv("GITHUB_USER_NAME"), "Github user name")
+	cmd.Flags().StringVar(&sandboxCommand.RepoURL, "repo-url", os.Getenv("GIT_HTML_URL"), "Git HTML URL")
+	cmd.Flags().StringVar(&sandboxCommand.UserDotfilesRepo, "user-dotfiles-repo", os.Getenv("USER_DOTFILESREPO"), "User dotfiles repo")
+	cmd.Flags().StringVar(&sandboxCommand.CloneURL, "clone-url", os.Getenv("GIT_CLONE_URL"), "Git clone URL")
+	cmd.Flags().StringVar(&sandboxCommand.AgentName, "agent-name", os.Getenv("AGENT_NAME"), "Agent name")
+	cmd.Flags().StringVar(&sandboxCommand.AgentPrompt, "agent-prompt", os.Getenv("AGENT_PROMPT"), "Agent prompt")
+	cmd.Flags().StringVar(&sandboxCommand.BranchName, "branch-name", os.Getenv("DEV_BRANCH"), "Dev branch name")
+	cmd.Flags().BoolVar(&sandboxCommand.PushEnabled, "push-enabled", os.Getenv("GIT_PUSH_ENABLED") == "true", "Enable git push")
+	cmd.Flags().StringVar(&sandboxCommand.GithubUserOrigin, "github-user-origin", os.Getenv("GITHUB_USER_ORIGIN"), "Github user origin")
+	cmd.Flags().StringVar(&sandboxCommand.GithubUserLogin, "github-user-login", os.Getenv("GITHUB_USER_LOGIN"), "Github user login")
+	cmd.Flags().StringVar(&sandboxCommand.GithubUserEmail, "github-user-email", os.Getenv("GITHUB_USER_EMAIL"), "Github user email")
+	cmd.Flags().StringVar(&sandboxCommand.GithubUserName, "github-user-name", os.Getenv("GITHUB_USER_NAME"), "Github user name")
+	cmd.Flags().StringVar(&sandboxCommand.IssueID, "issue-id", os.Getenv("ISSUEID"), "Issue ID")
 
 	return cmd
 }
 
-func (c *DevCommand) Run(ctx context.Context) error {
+func (c *SandboxCommand) Run(ctx context.Context) error {
 	log := klog.FromContext(ctx)
 
-	go agentoutput.Run("dev", DevGVR)
+	var (
+		gvr           schema.GroupVersionResource
+		agentType     string
+		reportStatus  bool
+		commitMessage string
+	)
+
+	if c.IssueID != "" {
+		gvr = IssueGVR
+		agentType = "issue"
+		reportStatus = true
+		commitMessage = "fix for issue #" + c.IssueID
+	} else {
+		gvr = DevGVR
+		agentType = "dev"
+		reportStatus = false
+		commitMessage = "Agent changes for: " + c.AgentPrompt
+	}
+
+	go agentoutput.Run(agentType, gvr)
 
 	updateState := func(state, message string) {
-		err := agentoutput.SetAgentState(ctx, DevGVR, state, message)
+		err := agentoutput.SetAgentState(ctx, gvr, state, message)
 		if err != nil {
 			log.Error(err, "updating agent state failed")
 		}
+	}
+
+	if c.IssueID != "" {
+		updateState("handling issue", "")
 	}
 
 	repoURL := c.RepoURL
@@ -128,7 +168,7 @@ func (c *DevCommand) Run(ctx context.Context) error {
 	}
 
 	parts := strings.Split(strings.TrimPrefix(repoURL, "https://github.com/"), "/")
-	if len(parts) != 2 {
+	if len(parts) < 2 {
 		return fmt.Errorf("invalid GIT_HTML_URL format: %s", repoURL)
 	}
 	repoDir := filepath.Join(c.WorkspaceDir, parts[1])
@@ -165,7 +205,8 @@ func (c *DevCommand) Run(ctx context.Context) error {
 		GithubUserLogin:  c.GithubUserLogin,
 		GithubUserEmail:  c.GithubUserEmail,
 		GithubUserName:   c.GithubUserName,
-		ReportStatus:     false,
+		ReportStatus:     reportStatus,
+		GVR:              gvr,
 	}
 
 	// Prepare git branch (checkout)
@@ -175,8 +216,23 @@ func (c *DevCommand) Run(ctx context.Context) error {
 		return fmt.Errorf("preparing git branch: %w", err)
 	}
 
-	if cfg.AgentPrompt != "" {
-		log.Info("Running agent with prompt", "prompt", cfg.AgentPrompt)
+	shouldRunAgent := false
+	if c.IssueID != "" {
+		// Issue mode: Run if prompt file is missing
+		if _, err := os.Stat(c.PromptFilePath); os.IsNotExist(err) {
+			shouldRunAgent = true
+		} else {
+			log.Info("agent-prompt.txt exists, skipping code generation")
+		}
+	} else {
+		// Dev mode: Run if agent prompt is provided
+		if cfg.AgentPrompt != "" {
+			shouldRunAgent = true
+		}
+	}
+
+	if shouldRunAgent {
+		log.Info("Running agent", "agent", cfg.AgentName)
 		if err := sandbox.RunAgent(ctx, cfg); err != nil {
 			var quotaErr *llm.QuotaError
 			if errors.As(err, &quotaErr) {
@@ -186,13 +242,18 @@ func (c *DevCommand) Run(ctx context.Context) error {
 				return fmt.Errorf("running agent: %w", err)
 			}
 		} else {
-			commitMsg := "Agent changes for: " + cfg.AgentPrompt
-			if err := sandbox.ProcessGitChanges(ctx, cfg, oldCommitID, commitMsg); err != nil {
+			if c.IssueID != "" {
+				updateState("done", "")
+			}
+			if err := sandbox.ProcessGitChanges(ctx, cfg, oldCommitID, commitMessage); err != nil {
 				updateState("error", fmt.Sprintf("processing git changes failed: %v", err))
 				return fmt.Errorf("processing git changes: %w", err)
 			}
 		}
 	}
-	updateState("ready", "")
+
+	if c.IssueID == "" {
+		updateState("ready", "")
+	}
 	return nil
 }

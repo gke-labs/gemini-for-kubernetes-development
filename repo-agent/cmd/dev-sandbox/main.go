@@ -37,7 +37,7 @@ func run(ctx context.Context) error {
 			if len(args) != 0 {
 				return fmt.Errorf("dev-sandbox command does not take any arguments")
 			}
-			daemonCmd := commands.DevDaemonCommand{}
+			daemonCmd := commands.SandboxDaemonCommand{}
 			daemonCmd.InitDefaults()
 			return daemonCmd.Run(cmd.Context())
 		},
@@ -45,8 +45,8 @@ func run(ctx context.Context) error {
 	rootCommand.SilenceUsage = true  // Usage is only printed for command syntax errors
 	rootCommand.SilenceErrors = true // We print errors ourselves
 
-	rootCommand.AddCommand(commands.BuildDevDaemonCommand())
-	rootCommand.AddCommand(commands.BuildDevCommand())
+	rootCommand.AddCommand(commands.BuildSandboxDaemonCommand())
+	rootCommand.AddCommand(commands.BuildSandboxCommand())
 	rootCommand.AddCommand(commands.BuildSSHDCommand())
 	rootCommand.AddCommand(commands.BuildCodeServerCommand())
 	rootCommand.AddCommand(commands.BuildInjectCommand())
