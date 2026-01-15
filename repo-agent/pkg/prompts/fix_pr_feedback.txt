@@ -36,6 +36,7 @@ Please address this review feedback:
 
 {{ range  $comment := .Comments }}
 FROM: {{ $comment.Author }}
+GITHUB_ID: {{ $comment.ID }}
 
 {{ $comment.Body }}
 

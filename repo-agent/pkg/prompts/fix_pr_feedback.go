@@ -54,8 +54,11 @@ func FixPRFeedbackPrompt(ctx context.Context, githubAPI *github.Client, repo *gi
 		return nil, fmt.Errorf("failed to list github pull request comments: %w", err)
 	}
 	for _, comment := range issueComments {
+		id := comment.GetNodeID()
+
 		klog.V(2).Infof("Comment: %+v", comment)
 		modelComment := PullRequestComment{
+			ID:        id,
 			Author:    comment.GetUser().GetLogin(),
 			Body:      comment.GetBody(),
 			Timestamp: comment.GetCreatedAt(),
@@ -80,7 +83,9 @@ func FixPRFeedbackPrompt(ctx context.Context, githubAPI *github.Client, repo *gi
 		return nil, fmt.Errorf("failed to list github pull request reviews: %w", err)
 	}
 	for _, review := range reviews {
+		id := review.GetNodeID()
 		modelComment := PullRequestComment{
+			ID:        id,
 			Author:    review.GetUser().GetLogin(),
 			Body:      review.GetBody(),
 			Timestamp: review.GetSubmittedAt(),
@@ -89,7 +94,10 @@ func FixPRFeedbackPrompt(ctx context.Context, githubAPI *github.Client, repo *gi
 		comments := comentsByPullRequestReviewID[review.GetID()]
 
 		for _, comment := range comments {
+			id := comment.GetNodeID()
+
 			out := PullRequestReview{
+				ID:       id,
 				Author:   comment.GetUser().GetLogin(),
 				Body:     comment.GetBody(),
 				Path:     comment.GetPath(),
@@ -100,7 +108,6 @@ func FixPRFeedbackPrompt(ctx context.Context, githubAPI *github.Client, repo *gi
 		}
 
 		model.Comments = append(model.Comments, modelComment)
-
 	}
 
 	sort.Slice(model.Comments, func(i, j int) bool {
@@ -138,6 +145,7 @@ type PullRequestCommit struct {
 }
 
 type PullRequestComment struct {
+	ID     string
 	Author string
 	Body   string
 
@@ -147,6 +155,7 @@ type PullRequestComment struct {
 }
 
 type PullRequestReview struct {
+	ID       string
 	Author   string
 	Body     string
 	Path     string
