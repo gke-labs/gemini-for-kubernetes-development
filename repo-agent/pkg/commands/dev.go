@@ -21,7 +21,7 @@ var (
 	DevGVR = schema.GroupVersionResource{
 		Group:    "custom.agents.x-k8s.io",
 		Version:  "v1alpha1",
-		Resource: "devsandboxes",
+		Resource: "issuesandboxes",
 	}
 	IssueGVR = schema.GroupVersionResource{
 		Group:    "custom.agents.x-k8s.io",

@@ -241,7 +241,6 @@ type Reconciler struct {
 //+kubebuilder:rbac:groups=review.gemini.google.com,resources=repowatches/finalizers,verbs=update
 //+kubebuilder:rbac:groups=custom.agents.x-k8s.io,resources=reviewsandboxes,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=custom.agents.x-k8s.io,resources=issuesandboxes,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=custom.agents.x-k8s.io,resources=devsandboxes,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;update;patch
 
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -1181,10 +1180,10 @@ func (r *Reconciler) reconcileDevSandboxesInternal(ctx context.Context, user *gi
 	sandboxGVK := schema.GroupVersionKind{
 		Group:   "custom.agents.x-k8s.io",
 		Version: "v1alpha1",
-		Kind:    "DevSandbox",
+		Kind:    "IssueSandbox",
 	}
 	sandboxList.SetGroupVersionKind(sandboxGVK)
-	if err := r.List(ctx, sandboxList, client.InNamespace(repoWatch.Namespace)); err != nil {
+	if err := r.List(ctx, sandboxList, client.InNamespace(repoWatch.Namespace), client.MatchingLabels{"sandbox.gemini.google.com/type": "dev"}); err != nil {
 		return nil, nil, fmt.Errorf("listing dev sandboxes: %w", err)
 	}
 
