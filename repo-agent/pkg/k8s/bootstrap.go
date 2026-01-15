@@ -121,40 +121,6 @@ func SetupServiceAccounts(ctx context.Context, clientset kubernetes.Interface, n
 		return err
 	}
 
-	// --- Dev Sandbox ---
-	saDev := &corev1.ServiceAccount{ObjectMeta: v1.ObjectMeta{Name: "dev-sandbox", Namespace: ns}}
-	_, err = clientset.CoreV1().ServiceAccounts(ns).Create(ctx, saDev, v1.CreateOptions{})
-	if err != nil && !errors.IsAlreadyExists(err) {
-		return err
-	}
-
-	// Bind to dev-sandbox cluster role (base permissions)
-	rbDev := &rbacv1.RoleBinding{
-		ObjectMeta: v1.ObjectMeta{Name: "dev-sandbox-binding", Namespace: ns},
-		Subjects:   []rbacv1.Subject{{Kind: "ServiceAccount", Name: "dev-sandbox", Namespace: ns}},
-		RoleRef:    rbacv1.RoleRef{Kind: "ClusterRole", Name: "dev-sandbox", APIGroup: "rbac.authorization.k8s.io"},
-	}
-	_, err = clientset.RbacV1().RoleBindings(ns).Create(ctx, rbDev, v1.CreateOptions{})
-	if err != nil && !errors.IsAlreadyExists(err) {
-		return err
-	}
-
-	// Add to dev-sandbox cluster role binding (to match make apply-common-for-examples)
-	if err := ensureClusterRoleBindingSubject(ctx, clientset, "dev-sandbox", rbacv1.Subject{Kind: "ServiceAccount", Name: "dev-sandbox", Namespace: ns}); err != nil {
-		log.Info("Warning: failed to update dev-sandbox cluster role binding", "err", err)
-	}
-
-	// Bind to configdir-controller cluster role (needed for init container)
-	rbDevConfigDir := &rbacv1.RoleBinding{
-		ObjectMeta: v1.ObjectMeta{Name: "dev-sandbox-configdir-binding", Namespace: ns},
-		Subjects:   []rbacv1.Subject{{Kind: "ServiceAccount", Name: "dev-sandbox", Namespace: ns}},
-		RoleRef:    rbacv1.RoleRef{Kind: "ClusterRole", Name: "configdir-controller", APIGroup: "rbac.authorization.k8s.io"},
-	}
-	_, err = clientset.RbacV1().RoleBindings(ns).Create(ctx, rbDevConfigDir, v1.CreateOptions{})
-	if err != nil && !errors.IsAlreadyExists(err) {
-		return err
-	}
-
 	// --- Issue Sandbox ---
 	saIssue := &corev1.ServiceAccount{ObjectMeta: v1.ObjectMeta{Name: "issue-sandbox", Namespace: ns}}
 	_, err = clientset.CoreV1().ServiceAccounts(ns).Create(ctx, saIssue, v1.CreateOptions{})

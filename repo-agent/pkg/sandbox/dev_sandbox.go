@@ -134,7 +134,7 @@ func NewDevSandbox(opt DevSandboxOptions) *unstructured.Unstructured {
 	u := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
-			"kind":       "DevSandbox",
+			"kind":       "IssueSandbox",
 			"metadata": map[string]interface{}{
 				"name": opt.Name,
 				"annotations": map[string]interface{}{
@@ -149,9 +149,15 @@ func NewDevSandbox(opt DevSandboxOptions) *unstructured.Unstructured {
 	if opt.Namespace != "" {
 		u.SetNamespace(opt.Namespace)
 	}
-	if len(opt.Labels) > 0 {
-		u.SetLabels(opt.Labels)
+
+	// Ensure we label this as a dev sandbox
+	labels := opt.Labels
+	if labels == nil {
+		labels = make(map[string]string)
 	}
+	labels["sandbox.gemini.google.com/type"] = "dev"
+	u.SetLabels(labels)
+
 	if len(opt.Annotations) > 0 {
 		u.SetAnnotations(opt.Annotations)
 	}
