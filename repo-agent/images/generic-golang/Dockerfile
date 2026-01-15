@@ -34,9 +34,13 @@ FROM golang:1.24
 # We want a functional python, because gemini-cli likes to use python
 RUN apt-get update && apt-get install -y python3 python3-pip python3-yaml python-is-python3 python3-venv
 
-RUN apt-get update && apt-get install -y git tmux nodejs npm sudo
+RUN apt-get update && apt-get install -y git tmux nodejs npm sudo curl
 
 RUN npm install -g @google/gemini-cli
+
+# Install code-server
+RUN curl -fsSL https://code-server.dev/install.sh | sh
+RUN code-server --install-extension golang.go --install-extension vscodevim.vim
 
 COPY --from=build-dev-sandbox /dev-sandbox /repo-agent/dev-sandbox
 COPY --from=build-gh /bin/gh /bin/gh
