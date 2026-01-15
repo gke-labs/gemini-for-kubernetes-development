@@ -22,6 +22,7 @@ jobs:
           - dev-sandbox
           - review-ui
           - syncer
+          - generic-golang
     permissions:
       contents: write
       packages: write
