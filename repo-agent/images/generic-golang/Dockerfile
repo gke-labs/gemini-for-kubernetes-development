@@ -31,7 +31,10 @@ RUN GOBIN=/bin go install github.com/cli/cli/v2/cmd/gh@v2.82.1
 # Main image
 FROM golang:1.24
 
-RUN apt-get update && apt-get install -y git tmux nodejs npm
+# We want a functional python, because gemini-cli likes to use python
+RUN apt-get update && apt-get install -y python3 python3-pip python3-yaml python-is-python3 python3-venv
+
+RUN apt-get update && apt-get install -y git tmux nodejs npm sudo
 
 RUN npm install -g @google/gemini-cli
 
