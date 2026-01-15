@@ -1035,6 +1035,12 @@ func (r *Reconciler) createSandboxForIssueHandler(ctx context.Context, user *git
 		}
 	}
 
+	if handler.Image != "" {
+		if err := unstructured.SetNestedField(sandbox.Object, handler.Image, "spec", "image"); err != nil {
+			return err
+		}
+	}
+
 	if err := controllerutil.SetControllerReference(repoWatch, sandbox, r.Scheme); err != nil {
 		return err
 	}
