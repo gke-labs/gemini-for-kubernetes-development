@@ -32,12 +32,14 @@ func run(ctx context.Context) error {
 	rootCommand := &cobra.Command{
 		Use:   "dev-sandbox",
 		Short: "Gemini Dev Sandbox Agent",
-		// Default to running the issue daemon if no subcommand is provided
+		// Default to running the dev daemon if no subcommand is provided
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 0 {
 				return fmt.Errorf("dev-sandbox command does not take any arguments")
 			}
-			return commands.RunDevDaemon(cmd.Context())
+			daemonCmd := commands.DevDaemonCommand{}
+			daemonCmd.InitDefaults()
+			return daemonCmd.Run(cmd.Context())
 		},
 	}
 	rootCommand.SilenceUsage = true  // Usage is only printed for command syntax errors
