@@ -159,6 +159,10 @@ type IssueHandlerSpec struct {
 	// DevcontainerConfigRef string
 	DevcontainerConfigRef string `json:"devcontainerConfigRef,omitempty"`
 
+	// Image to use for the development sandbox. If set, this overrides the devcontainer image.
+	// +kubebuilder:validation:Optional
+	Image string `json:"image,omitempty"`
+
 	// The maximum number of sandboxes to have active (replicas > 0) at any given time.
 	// +kubebuilder:validation:Required
 	MaxActiveSandboxes int `json:"maxActiveSandboxes"`
