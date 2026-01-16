@@ -4,7 +4,7 @@ metadata:
   name: github-mcp-server
   namespace: repo-agent-system
 spec:
-  replicas: 1
+  replicas: 0
   selector:
     matchLabels:
       app: github-mcp-server
