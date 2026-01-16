@@ -33,7 +33,9 @@ func run(ctx context.Context) error {
 			if len(args) != 0 {
 				return fmt.Errorf("review-sandbox does not take arguments, use subcommands")
 			}
-			return commands.RunReviewDaemon(cmd.Context())
+			daemonCmd := commands.ReviewDaemonCommand{}
+			daemonCmd.InitDefaults()
+			return daemonCmd.Run(cmd.Context())
 		},
 	}
 
