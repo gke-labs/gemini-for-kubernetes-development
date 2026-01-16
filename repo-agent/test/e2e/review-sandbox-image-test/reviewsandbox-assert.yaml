@@ -1,0 +1,49 @@
+apiVersion: custom.agents.x-k8s.io/v1alpha1
+kind: ReviewSandbox
+metadata:
+  annotations:
+    agentDraft: |
+      note: Response from Dummy LLM. This is a test
+      review:
+          nodeid: null
+          commitid: null
+          body: Response from Dummy LLM. This is a test
+          event: null
+          comments: []
+  finalizers:
+  - kro.run/finalizer
+  labels:
+    review.gemini.google.com/repowatch: rst-image
+  (starts_with(name, 'rst-image-pr-')): true
+  namespace: repo-agent-system
+  ownerReferences:
+  - apiVersion: review.gemini.google.com/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: RepoWatch
+    name: rst-image
+spec:
+  devcontainerConfigRef: devcontainer-json
+  gateway:
+    httpEnabled: true
+    ref: repo-agent-gateway
+    tcpEnabled: false
+  githubSecretName: github-pat
+  llm:
+    apiKeySecretName: dummy-provider-token
+    configdirRef: ""
+  llmBackend:
+    name: dummy
+  networkPolicy:
+    enabled: false
+  replicas: 1
+  resources:
+    ephemeralStorage: 6Gi
+  serviceAccountName: review-sandbox
+  source:
+    repo: rst-image
+status:
+  (fqdn != null && starts_with(fqdn, 'devc-rst-image-pr-')): true
+  (sandboxConditions[?type == 'Ready']):
+    - reason: DependenciesReady
+      status: "True"
