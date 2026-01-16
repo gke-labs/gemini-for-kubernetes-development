@@ -105,6 +105,8 @@ spec:
                       value: ${schema.spec.llm.prompt}
                     - name: AGENT_NAME
                       value: ${schema.spec.llmBackend.name}
+                    - name: GIT_CLONE_URL
+                      value: ${schema.spec.source.cloneURL}
                     - name: ENVBUILDER_GIT_URL
                       value: ${schema.spec.source.cloneURL}
                     - name: GIT_DIFF_URL

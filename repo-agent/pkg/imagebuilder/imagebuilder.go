@@ -88,12 +88,23 @@ func (b *ImageBuilder) InstallDotfilesRepo(ctx context.Context) error {
 func (b *ImageBuilder) GitClone(ctx context.Context, source string, dest string) error {
 	log := klog.FromContext(ctx)
 
+	var branch string
+	if strings.Contains(source, "#refs/heads/") {
+		parts := strings.SplitN(source, "#refs/heads/", 2)
+		source = parts[0]
+		branch = parts[1]
+	}
+
 	args := []string{
 		"git",
 		"clone",
-		source,
-		dest,
 	}
+
+	if branch != "" {
+		args = append(args, "-b", branch)
+	}
+
+	args = append(args, source, dest)
 
 	cmdString := strings.Join(args, " ")
 	log.Info("cloning git repo", "source", source, "command", cmdString)
