@@ -114,9 +114,14 @@ create-kind:
 	../dev/tools/limit-docker-log-size --check || sudo ../dev/tools/limit-docker-log-size
 	../dev/tools/create-kind-cluster --recreate ${KIND_CLUSTER} --kubeconfig bin/KUBECONFIG
 
+# --skip generic-golang for faster builds
+# github presubmits builds and pushed this image separately
 .PHONY: build-and-push-repo-agent
 build-and-push-repo-agent:
-	../dev/tools/push-images --image-prefix=$(REGISTRY) $(KIND_CLUSTER_ARG) --working-dir .
+	../dev/tools/push-images --image-prefix=$(REGISTRY) $(KIND_CLUSTER_ARG) \
+	--working-dir . \
+	--skip generic-golang \
+	--skip github-mcp-server
 
 .PHONY: install-repo-agent
 install-repo-agent:

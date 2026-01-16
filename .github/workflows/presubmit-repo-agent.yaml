@@ -34,6 +34,36 @@ jobs:
             dev/tools/go.sum
       - name: Run Lint
         run: ./dev/tools/lint-go --working-dir repo-agent/
+  docker-build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # commented images are built in e2e test job
+        image_name:
+          #- configdir-cli
+          #- configdir-controller
+          - github-mcp-server
+          #- redis
+          #- repowatch-controller
+          #- review-api
+          #- repo-sandbox
+          #- review-ui
+          #- syncer
+          - generic-golang
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: repo-agent/
+          file: repo-agent/images/${{ matrix.image_name }}/Dockerfile
+          push: false
   go-build:
     runs-on: ubuntu-latest
     timeout-minutes: 15

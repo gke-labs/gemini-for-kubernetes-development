@@ -15,14 +15,6 @@ status:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: github-mcp-server
-  namespace: repo-agent-system
-status:
-  readyReplicas: 1
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
   name: registry
   namespace: repo-agent-system
 status:
