@@ -99,6 +99,10 @@ def main(args):
             dockerfile_path = os.path.join(root, filename)
             service_name = os.path.basename(root)
 
+            if args.skipped_images and service_name in args.skipped_images:
+                print(f"skipping image {service_name}")
+                continue
+
             image_name = utils.get_full_image_name(args, service_name)
 
             print(f"create Docker buildx builder for {service_name}")
@@ -125,6 +129,12 @@ if __name__ == "__main__":
                         help="use working dir instead of repo root",
                         type=str,
                         default=None)
+    parser.add_argument("--skip",
+                        dest="skipped_images",
+                        action="append",
+                        help="Image name (folder name) to skip. Can be repeated.",
+                        type=str,
+                        default=[])
     args = parser.parse_args()
 
     if args.working_dir:

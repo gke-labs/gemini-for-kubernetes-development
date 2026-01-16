@@ -57,7 +57,8 @@ def main():
     if result.returncode != 0:
         return result.returncode
 
-    result = subprocess.run([f"{repo_root}/dev/tools/push-images", "--kind-cluster-name", "e2e-test", "--image-prefix", "kind.local/" , "--working-dir", working_dir])
+    ## --skip generic-golang because we dont use local build of generic-golang image here
+    result = subprocess.run([f"{repo_root}/dev/tools/push-images", "--kind-cluster-name", "e2e-test", "--image-prefix", "kind.local/" , "--working-dir", working_dir, "--skip", "generic-golang", "--skip", "github-mcp-server"])
     if result.returncode != 0:
         return result.returncode
     result = subprocess.run([f"{repo_root}/dev/tools/deploy-to-kube", "--image-prefix", "kind.local/", "--working-dir", working_dir])
