@@ -873,7 +873,28 @@ function App() {
         if (prs.length > 0) {
             prs.forEach(pr => activeList.push({ ...pr, type: 'active', sortId: parseInt(pr.id) }));
         }
-        activeList.sort((a, b) => b.sortId - a.sortId);
+
+        const getPriority = (pr) => {
+            const isReviewDraftCreated = pr.reviewState === 'submitted' || !!pr.review;
+            if (isReviewDraftCreated) return 5;
+
+            if (!pr.agentState) return 6;
+
+            const state = pr.agentState.toLowerCase();
+            if (state === 'review ready') return 1;
+            if (state.includes('error')) return 2;
+            if (state === 'quota exceeded') return 3;
+            if (state === 'too many files') return 4;
+
+            return 6;
+        };
+
+        activeList.sort((a, b) => {
+            const pA = getPriority(a);
+            const pB = getPriority(b);
+            if (pA !== pB) return pA - pB;
+            return b.sortId - a.sortId;
+        });
         
         // 2. Pending PRs
         const pending = activeRepo.pendingPRs || [];
