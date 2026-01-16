@@ -21,7 +21,8 @@ jobs:
           - review-sandbox
           - review-ui
           - syncer
-          - generic-golang
+          # TODO(barney-s): re-enable when npm install gemini-cli works
+          #- generic-golang
     permissions:
       contents: read
       packages: write

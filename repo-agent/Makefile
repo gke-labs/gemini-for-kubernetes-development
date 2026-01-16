@@ -114,9 +114,10 @@ create-kind:
 	../dev/tools/limit-docker-log-size --check || sudo ../dev/tools/limit-docker-log-size
 	../dev/tools/create-kind-cluster --recreate ${KIND_CLUSTER} --kubeconfig bin/KUBECONFIG
 
+# TODO(barney-s): remove --skip generic-golang when npm install gemini-cli works
 .PHONY: build-and-push-repo-agent
 build-and-push-repo-agent:
-	../dev/tools/push-images --image-prefix=$(REGISTRY) $(KIND_CLUSTER_ARG) --working-dir .
+	../dev/tools/push-images --image-prefix=$(REGISTRY) $(KIND_CLUSTER_ARG) --working-dir . --skip generic-golang
 
 .PHONY: install-repo-agent
 install-repo-agent:
