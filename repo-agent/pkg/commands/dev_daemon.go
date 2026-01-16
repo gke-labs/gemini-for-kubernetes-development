@@ -72,8 +72,9 @@ func (c *SandboxDaemonCommand) Run(ctx context.Context) error {
 		}
 	}()
 
+	// We ignore the error here to keep the pod running for debugging/code-server access
 	if err := c.SandboxCommand.Run(ctx); err != nil {
-		return err
+		log.Error(err, "failed to run sandbox command")
 	}
 
 	return c.CodeServerCommand.Wait()

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/bluekeyes/go-gitdiff/gitdiff"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/agentoutput"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/imagebuilder"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/llm"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/prompts"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tokens"
@@ -35,53 +37,139 @@ var (
 
 const DefaultMaxReviewFiles = 30
 
+type ReviewCommand struct {
+	WorkspaceDir     string
+	RepoURL          string
+	UserDotfilesRepo string
+	CloneURL         string
+	AgentName        string
+	AgentPrompt      string
+	DiffURL          string
+	MaxReviewFiles   int
+}
+
+func (c *ReviewCommand) InitDefaults() {
+	if c.WorkspaceDir == "" {
+		c.WorkspaceDir = "/workspaces"
+	}
+	if c.RepoURL == "" {
+		c.RepoURL = os.Getenv("GIT_HTML_URL")
+	}
+	if c.UserDotfilesRepo == "" {
+		c.UserDotfilesRepo = os.Getenv("USER_DOTFILESREPO")
+	}
+	if c.CloneURL == "" {
+		c.CloneURL = os.Getenv("GIT_CLONE_URL")
+	}
+	if c.AgentName == "" {
+		c.AgentName = os.Getenv("AGENT_NAME")
+	}
+	if c.AgentPrompt == "" {
+		c.AgentPrompt = os.Getenv("AGENT_PROMPT")
+	}
+	if c.DiffURL == "" {
+		c.DiffURL = os.Getenv("GIT_DIFF_URL")
+	}
+	if c.MaxReviewFiles == 0 {
+		maxReviewFilesStr := os.Getenv("MAX_REVIEW_FILES")
+		if maxReviewFilesStr != "" {
+			val, err := strconv.Atoi(maxReviewFilesStr)
+			if err != nil {
+				klog.Infof("Invalid MAX_REVIEW_FILES value '%s', using default %d: %v", maxReviewFilesStr, DefaultMaxReviewFiles, err)
+				c.MaxReviewFiles = DefaultMaxReviewFiles
+			} else {
+				c.MaxReviewFiles = val
+			}
+		} else {
+			c.MaxReviewFiles = DefaultMaxReviewFiles
+		}
+	}
+}
+
 func BuildReviewCommand() *cobra.Command {
-	return &cobra.Command{
+	reviewCommand := ReviewCommand{}
+	cmd := &cobra.Command{
 		Use:   "review",
 		Short: "Run the review agent",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 0 {
 				return fmt.Errorf("review command does not take any arguments")
 			}
-			return RunReview(cmd.Context())
+			reviewCommand.InitDefaults()
+			return reviewCommand.Run(cmd.Context())
 		},
 	}
+
+	cmd.Flags().StringVar(&reviewCommand.RepoURL, "repo-url", os.Getenv("GIT_HTML_URL"), "Git HTML URL")
+	cmd.Flags().StringVar(&reviewCommand.UserDotfilesRepo, "user-dotfiles-repo", os.Getenv("USER_DOTFILESREPO"), "User dotfiles repo")
+	cmd.Flags().StringVar(&reviewCommand.CloneURL, "clone-url", os.Getenv("GIT_CLONE_URL"), "Git clone URL")
+	cmd.Flags().StringVar(&reviewCommand.AgentName, "agent-name", os.Getenv("AGENT_NAME"), "Agent name")
+	cmd.Flags().StringVar(&reviewCommand.AgentPrompt, "agent-prompt", os.Getenv("AGENT_PROMPT"), "Agent prompt")
+	cmd.Flags().StringVar(&reviewCommand.DiffURL, "diff-url", os.Getenv("GIT_DIFF_URL"), "Git diff URL")
+	cmd.Flags().IntVar(&reviewCommand.MaxReviewFiles, "max-review-files", 0, "Max review files")
+
+	return cmd
 }
 
-func RunReview(ctx context.Context) error {
+func (c *ReviewCommand) workspacePath(file string) string {
+	// Ensure the workspace path is correctly joined
+	return filepath.Join(c.WorkspaceDir, file)
+}
+
+func (c *ReviewCommand) Run(ctx context.Context) error {
+	log := klog.FromContext(ctx)
+
 	go agentoutput.Run("review", ReviewGVR)
 
-	_ = agentoutput.SetAgentState(ctx, ReviewGVR, "reviewing", "")
-	err := runReviewLogic(ctx)
-	if err != nil {
-		var quotaErr *llm.QuotaError
-		if errors.As(err, &quotaErr) {
-			_ = agentoutput.SetAgentState(ctx, ReviewGVR, "QUOTA ERROR", err.Error())
-		} else if strings.Contains(err.Error(), "Too many files") {
-			_ = agentoutput.SetAgentState(ctx, ReviewGVR, "Error: Too many files", err.Error())
-		} else {
-			_ = agentoutput.SetAgentState(ctx, ReviewGVR, "error", err.Error())
-			klog.Errorf("failed reviewing: %v", err)
-			//klog.Fatalf("failed reviewing: %v", err)
+	updateState := func(state, message string) {
+		err := agentoutput.SetAgentState(ctx, ReviewGVR, state, message)
+		if err != nil {
+			log.Error(err, "updating agent state failed")
 		}
-	} else {
-		_ = agentoutput.SetAgentState(ctx, ReviewGVR, "review ready", "")
 	}
 
-	return nil
-}
+	updateState("reviewing", "")
 
-func runReviewLogic(ctx context.Context) error {
-	log := klog.FromContext(ctx)
-	agentName := os.Getenv("AGENT_NAME")
-	log.Info("Review", "AGENT_NAME", agentName)
+	// -------------------------------------------------------------------------
+	// 1. Setup Environment (Clone Repo & Dotfiles) - copied/adapted from dev.go
+	// -------------------------------------------------------------------------
+	if c.RepoURL == "" {
+		return fmt.Errorf("GIT_HTML_URL (or --repo-url) not set")
+	}
 
-	maxReviewFiles := getMaxReviewFiles()
+	parts := strings.Split(strings.TrimPrefix(c.RepoURL, "https://github.com/"), "/")
+	if len(parts) < 2 {
+		return fmt.Errorf("invalid GIT_HTML_URL format: %s", c.RepoURL)
+	}
+	repoDir := filepath.Join(c.WorkspaceDir, parts[1])
 
-	rawAgentPrompt := os.Getenv("AGENT_PROMPT")
+	ib := imagebuilder.ImageBuilder{
+		DotFilesRepo: c.UserDotfilesRepo,
+		CloneURL:     c.CloneURL,
+		Destination:  repoDir,
+	}
+
+	// If repoDir doesnt exist, we need to clone it
+	if _, err := os.Stat(repoDir); os.IsNotExist(err) {
+		log.Info("Cloning repo", "url", c.CloneURL, "dest", repoDir)
+		if err := ib.CloneRepo(ctx); err != nil {
+			updateState("error", fmt.Sprintf("cloning repo failed: %v", err))
+			return fmt.Errorf("cloning repo failed: %w", err)
+		}
+	}
+
+	if err := ib.InstallDotfilesRepo(ctx); err != nil {
+		log.Error(err, "installing dotfiles repo", "repo", ib.DotFilesRepo)
+	}
+
+	// -------------------------------------------------------------------------
+	// 2. Run Review Agent
+	// -------------------------------------------------------------------------
+	log.Info("Review", "AGENT_NAME", c.AgentName)
+	rawAgentPrompt := c.AgentPrompt
 
 	// save the incoming prompt
-	if err := os.WriteFile("../agent-prompt.txt", []byte(rawAgentPrompt), 0644); err != nil {
+	if err := os.WriteFile(c.workspacePath("agent-prompt.txt"), []byte(rawAgentPrompt), 0644); err != nil {
 		log.Error(err, "Failed to write prompt to file")
 	}
 
@@ -89,21 +177,25 @@ func runReviewLogic(ctx context.Context) error {
 	var diffSizeLabel string
 	var diffFiles []*gitdiff.File
 	var err error
-	diffURL := os.Getenv("GIT_DIFF_URL")
+	diffURL := c.DiffURL
 	var expectedComments int
-	// Check if diffURL beings with https://github.com/
+	// Check if diffURL begins with https://github.com/
 	if !bytes.HasPrefix([]byte(diffURL), []byte("https://github.com/")) {
-		return fmt.Errorf("GIT_DIFF_URL must start with https://github.com/")
+		return fmt.Errorf("GIT_DIFF_URL (or --diff-url) must start with https://github.com/")
 	}
+
 	if diffURL != "" {
 		log.Info("Downloading and parsing diff", "url", diffURL)
 		diffFiles, err = parseDiffFromURL(diffURL)
 		if err != nil {
+			updateState("error", fmt.Sprintf("failed to parse diff: %v", err))
 			return fmt.Errorf("failed to parse diff from URL: %v", err)
 		}
 
-		if len(diffFiles) > maxReviewFiles {
-			return fmt.Errorf("Too many files to review: %d (max %d)", len(diffFiles), maxReviewFiles)
+		if len(diffFiles) > c.MaxReviewFiles {
+			errStr := fmt.Sprintf("Too many files to review: %d (max %d)", len(diffFiles), c.MaxReviewFiles)
+			updateState("Error: Too many files", errStr)
+			return fmt.Errorf("%s", errStr)
 		}
 
 		diffSize := getDiffSize(diffFiles)
@@ -119,12 +211,14 @@ func runReviewLogic(ctx context.Context) error {
 		return fmt.Errorf("GIT_DIFF_URL not set, skipping diff-based validation")
 	}
 
-	provider, err := llm.NewLLMProvider(agentName, "note:")
+	provider, err := llm.NewLLMProvider(c.AgentName, "note:")
 	if err != nil {
+		updateState("error", err.Error())
 		return err
 	}
 
 	if err := provider.Setup("/workspaces", "/tokens"); err != nil {
+		updateState("error", err.Error())
 		return err
 	}
 
@@ -135,10 +229,10 @@ func runReviewLogic(ctx context.Context) error {
 	}
 	client := clients.NewGitHubClient(ctx, githubToken)
 
-	repoURL := os.Getenv("GIT_HTML_URL")
-	parts := strings.Split(strings.TrimPrefix(repoURL, "https://github.com/"), "/")
+	// Reuse parts from earlier, but need to be sure about format for PR
+	// c.RepoURL: https://github.com/owner/repo/pull/123
 	if len(parts) < 4 {
-		return fmt.Errorf("invalid GIT_HTML_URL: %s", repoURL)
+		return fmt.Errorf("invalid GIT_HTML_URL for review: %s", c.RepoURL)
 	}
 	owner := parts[0]
 	repo := parts[1]
@@ -149,6 +243,7 @@ func runReviewLogic(ctx context.Context) error {
 
 	pr, _, err := client.PullRequests.Get(ctx, owner, repo, prNumber)
 	if err != nil {
+		updateState("error", err.Error())
 		return fmt.Errorf("failed to get pull request: %w", err)
 	}
 
@@ -158,6 +253,7 @@ func runReviewLogic(ctx context.Context) error {
 	}
 	expandedPrompt, err := prompts.ExpandReviewPrompt(model)
 	if err != nil {
+		updateState("error", err.Error())
 		return fmt.Errorf("failed to expand review prompt: %w", err)
 	}
 
@@ -165,6 +261,7 @@ func runReviewLogic(ctx context.Context) error {
 
 	existingComments, err := getExistingComments(ctx, client, owner, repo, prNumber)
 	if err != nil {
+		updateState("error", err.Error())
 		return fmt.Errorf("failed to get existing comments: %w", err)
 	}
 	log.Info("Found existing comments", "count", len(existingComments))
@@ -174,7 +271,7 @@ func runReviewLogic(ctx context.Context) error {
 	successfulRuns := 0
 
 	for i := 0; i < maxRuns; i++ {
-		log.Info("Running Agent", "agent", agentName, "attempt", i+1, "maxRuns", maxRuns, "successfulRuns", successfulRuns)
+		log.Info("Running Agent", "agent", c.AgentName, "attempt", i+1, "maxRuns", maxRuns, "successfulRuns", successfulRuns)
 
 		if successfulRuns >= maxSuccessfulRuns {
 			log.Info("Stopping because max successful runs reached", "maxSuccessfulRuns", maxSuccessfulRuns)
@@ -211,8 +308,8 @@ func runReviewLogic(ctx context.Context) error {
 		}
 
 		// Write current prompt to file for debugging
-		promptFilename := fmt.Sprintf("../agent-prompt-run%d.txt", i+1)
-		if err := os.WriteFile(promptFilename, []byte(currentPrompt), 0644); err != nil {
+		promptFilename := fmt.Sprintf("agent-prompt-run%d.txt", i+1)
+		if err := os.WriteFile(c.workspacePath(promptFilename), []byte(currentPrompt), 0644); err != nil {
 			log.Error(err, "Failed to write agent prompt to file", "filename", promptFilename)
 		} else {
 			log.Info("Wrote agent prompt", "filename", promptFilename)
@@ -223,6 +320,7 @@ func runReviewLogic(ctx context.Context) error {
 		if err != nil {
 			var quotaErr *llm.QuotaError
 			if errors.As(err, &quotaErr) {
+				updateState("QUOTA ERROR", err.Error())
 				log.Error(err, "Agent run failed due to quota.")
 				return err
 			}
@@ -232,8 +330,8 @@ func runReviewLogic(ctx context.Context) error {
 		}
 
 		// Write output to file for debugging, regardless of validation result.
-		filename := fmt.Sprintf("../agent-output-run%d.txt", i+1)
-		if err := os.WriteFile(filename, output, 0644); err != nil {
+		filename := fmt.Sprintf("agent-output-run%d.txt", i+1)
+		if err := os.WriteFile(c.workspacePath(filename), output, 0644); err != nil {
 			log.Error(err, "Failed to write agent output", "filename", filename)
 		} else {
 			log.Info("Wrote agent output", "filename", filename)
@@ -292,6 +390,7 @@ func runReviewLogic(ctx context.Context) error {
 	}
 
 	if successfulRuns == 0 {
+		updateState("error", fmt.Sprintf("agent failed to produce any valid output after %d attempts", maxRuns))
 		return fmt.Errorf("agent failed to produce any valid output after %d attempts", maxRuns)
 	}
 
@@ -320,11 +419,13 @@ func runReviewLogic(ctx context.Context) error {
 
 	finalOutput, err := yaml.Marshal(&accumulatedAgentOutput)
 	if err != nil {
+		updateState("error", fmt.Sprintf("failed to re-marshal agent output: %v", err))
 		return fmt.Errorf("failed to re-marshal agent output: %w", err)
 	}
 
-	filename := "../agent-output.txt"
-	if err := os.WriteFile(filename, finalOutput, 0644); err != nil {
+	filename := "agent-output.txt"
+	if err := os.WriteFile(c.workspacePath(filename), finalOutput, 0644); err != nil {
+		updateState("error", fmt.Sprintf("failed to write agent output: %v", err))
 		return fmt.Errorf("failed to write agent output to %s: %v", filename, err)
 	}
 
@@ -333,7 +434,9 @@ func runReviewLogic(ctx context.Context) error {
 		log.Error(err, "Failed to add agent labels")
 	}
 	log.Info("Wrote agent output", "filename", filename)
-	return nil // Success
+
+	updateState("review ready", "")
+	return nil
 }
 
 func uniqueStrings(input []string) []string {
@@ -503,17 +606,4 @@ func dedupeAndCombineText(provider llm.Provider, text string) (string, error) {
 	}
 
 	return string(output), nil
-}
-func getMaxReviewFiles() int {
-	maxReviewFilesStr := os.Getenv("MAX_REVIEW_FILES")
-	maxReviewFiles := DefaultMaxReviewFiles
-	if maxReviewFilesStr != "" {
-		val, err := strconv.Atoi(maxReviewFilesStr)
-		if err != nil {
-			klog.Infof("Invalid MAX_REVIEW_FILES value '%s', using default %d: %v", maxReviewFilesStr, DefaultMaxReviewFiles, err)
-		} else {
-			maxReviewFiles = val
-		}
-	}
-	return maxReviewFiles
 }
