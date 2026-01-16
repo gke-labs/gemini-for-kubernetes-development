@@ -1,0 +1,21 @@
+apiVersion: review.gemini.google.com/v1alpha1
+kind: RepoWatch
+metadata:
+  name: rst-image
+  namespace: repo-agent-system
+spec:
+  repoURL: https://github.com/gke-labs/gemini-for-kubernetes-development
+  review:
+    maxSandboxes: 1
+    maxActiveSandboxes: 1
+    maxReviewFiles: 1000
+    image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
+    llm:
+      apiKeySecretRef: dummy-provider-token
+      provider: dummy
+      prompt: "dummy-review-prompt"
+  issueHandlers: []
+  dev:
+    maxSandboxes: 0
+    maxActiveSandboxes: 0
+  githubSecretName: github-pat
