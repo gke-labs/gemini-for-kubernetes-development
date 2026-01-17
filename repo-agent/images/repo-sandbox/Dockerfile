@@ -1,4 +1,4 @@
-# Build the dev-sandbox binary
+# Build the repo-sandbox binary
 FROM golang:1.24 AS builder
 WORKDIR /app
 
@@ -15,10 +15,10 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -v k8s.io/klog/v2 golang.
 # Copy the llm directory
 COPY pkg/ pkg/
 
-COPY cmd/dev-sandbox/ cmd/dev-sandbox
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -v -o /dev-sandbox ./cmd/dev-sandbox/
+COPY cmd/repo-sandbox/ cmd/repo-sandbox
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -v -o /repo-sandbox ./cmd/repo-sandbox/
 
 # Envbuilder root
 FROM ghcr.io/coder/envbuilder
-COPY --from=builder /dev-sandbox /repo-agent/dev-sandbox
+COPY --from=builder /repo-sandbox /repo-agent/repo-sandbox
 ENV KANIKO_DIR=/.envbuilder

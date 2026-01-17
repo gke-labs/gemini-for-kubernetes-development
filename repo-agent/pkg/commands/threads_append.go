@@ -107,7 +107,7 @@ func appendToThread(ctx context.Context, kube *clients.KubernetesClient, podID *
 		return nil, fmt.Errorf("GEMINI_API_KEY environment variable is not set")
 	}
 
-	command := fmt.Sprintf("export GEMINI_API_KEY=%s && /repo-agent/dev-sandbox threads agent", geminiAPIKey)
+	command := fmt.Sprintf("export GEMINI_API_KEY=%s && /repo-agent/repo-sandbox threads agent", geminiAPIKey)
 	command += fmt.Sprintf(" --thread-id=%s", threadID)
 	command += " --action=append"
 	command += " --cwd=" + cwd
@@ -120,7 +120,7 @@ func appendToThread(ctx context.Context, kube *clients.KubernetesClient, podID *
 	}
 
 	if err := execInPod(ctx, kube, podID, execOptions); err != nil {
-		return nil, fmt.Errorf("failed to execute dev-sandbox agent in pod: %w", err)
+		return nil, fmt.Errorf("failed to execute repo-sandbox agent in pod: %w", err)
 	}
 
 	var thread ThreadInfo

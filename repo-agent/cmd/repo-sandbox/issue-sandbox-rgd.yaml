@@ -1,23 +1,22 @@
 apiVersion: kro.run/v1alpha1
 kind: ResourceGraphDefinition
 metadata:
-  name: review-sandbox
+  name: issue-sandbox
 spec:
   schema:
     apiVersion: v1alpha1
     group: custom.agents.x-k8s.io
-    kind: ReviewSandbox
+    kind: IssueSandbox
     spec:
       # Spec fields that users can provide.
       replicas: integer | default=1
-      maxReviewFiles: integer | default=30
       llmBackend:
         name: string | default="gemini-cli"
       llm:
-        prompt: string
+        prompt: string | default=""
         configdirRef: string | default=""
         apiKeySecretName: string
-      serviceAccountName: string | default="review-sandbox"
+      serviceAccountName: string | default="issue-sandbox"
       devcontainerConfigRef: string | default="devcontainer-json"
       image: string | default=""
       githubSecretName: string | default="github-pat"
@@ -25,11 +24,21 @@ spec:
         ephemeralStorage: string | default="6Gi"
       source:
         cloneURL: string
-        diffURL: string
         htmlURL: string
-        pr: string
-        title: string
-        repo: string
+        issue: string | default=""
+        title: string | default=""
+        repo: string | default=""
+        handler: string | default=""
+      user:
+        dotFilesRepo: string | default=""
+      destination:
+        pushEnabled: boolean | default=false
+        branch: string
+        origin: string | default=""
+        user:
+          login: string
+          name: string | default="gemini"
+          email: string | default="gemini@gemini.ai"
       networkPolicy:
         enabled: boolean | default=false
         ingress:
@@ -38,15 +47,10 @@ spec:
         egress: object
       gateway:
         httpEnabled: boolean | default=false
-        tcpEnabled: boolean | default=false
         ref: string | default="repo-agent-gateway"
     status:
-      # TODO (barney-s): 
       # Fields the controller will inject into instances status.
-      # Due to KRO bug: https://github.com/kubernetes-sigs/kro/issues/772 
-      # moving this to metadata.annotations[agentDraft,userDraft]
-      #agentDraft: string
-      #userDraft: string
+      # agentDraft: "${sandbox.metadata.name}"
       fqdn: ${service.metadata.name}.${service.metadata.namespace}.svc.cluster.local
       sandboxConditions: ${sandbox.status.conditions}
   resources:
@@ -74,15 +78,15 @@ spec:
                     - name: workspaces-pvc
                       mountPath: /workspaces
                 - name: inject-agent
-                  image: ko://repo-agent/images/review-sandbox
-                  command: ["/repo-agent/review-sandbox", "inject", "--path", "/opt/repo-agent"]
+                  image: ko://repo-agent/images/repo-sandbox
+                  command: ["/repo-agent/repo-sandbox", "inject", "--path", "/opt/repo-agent"]
                   volumeMounts:
                     - name: agent-bin
                       mountPath: /opt/repo-agent
               containers:
                 - name: sandbox
-                  image: ${schema.spec.image != "" ? schema.spec.image:"ko://repo-agent/images/review-sandbox"}
-                  command: ${schema.spec.image != "" ? ["/opt/repo-agent/review-sandbox", "daemon"]:[]}
+                  image: ${schema.spec.image != "" ? schema.spec.image:"ko://repo-agent/images/repo-sandbox"}
+                  command: ${schema.spec.image != "" ? ["/opt/repo-agent/repo-sandbox", "dev-daemon"]:[]}
                   resources:
                     limits:
                       ephemeral-storage: ${schema.spec.resources.ephemeralStorage}
@@ -93,26 +97,33 @@ spec:
                       value: ${schema.metadata.namespace}
                     - name: NAME
                       value: ${schema.metadata.name}
-                    # URL to the repository where the .devcontainer folder we want to load is located
                     - name: REPO
                       value: ${schema.spec.source.repo}
-                    - name: PRID
-                      value: ${schema.spec.source.pr}
-                    - name: MAX_REVIEW_FILES
-                      value: ${string(schema.spec.maxReviewFiles)}
+                    - name: HANDLER
+                      value: ${schema.spec.source.handler}
                     # URL to the repository where the .devcontainer folder we want to load is located
-                    - name: AGENT_PROMPT
-                      value: ${schema.spec.llm.prompt}
                     - name: AGENT_NAME
                       value: ${schema.spec.llmBackend.name}
-                    - name: GIT_CLONE_URL
-                      value: ${schema.spec.source.cloneURL}
-                    - name: ENVBUILDER_GIT_URL
-                      value: ${schema.spec.source.cloneURL}
-                    - name: GIT_DIFF_URL
-                      value: ${schema.spec.source.diffURL}
+                    - name: AGENT_PROMPT
+                      value: ${schema.spec.llm.prompt}
+                    - name: ISSUEID
+                      value: ${schema.spec.source.issue}
+                    - name: ISSUE_BRANCH
+                      value: ${schema.spec.destination.branch}
+                    - name: USER_DOTFILESREPO
+                      value: ${schema.spec.user.dotFilesRepo}
+                    - name: DEV_BRANCH
+                      value: ${schema.spec.destination.branch}
                     - name: GIT_HTML_URL
                       value: ${schema.spec.source.htmlURL}
+                    - name: GITHUB_USER_ORIGIN
+                      value: ${schema.spec.destination.origin}
+                    - name: GITHUB_USER_LOGIN
+                      value: ${schema.spec.destination.user.login}
+                    - name: GITHUB_USER_NAME
+                      value: ${schema.spec.destination.user.name}
+                    - name: GITHUB_USER_EMAIL
+                      value: ${schema.spec.destination.user.email}
                     - name: GITHUB_TOKEN
                       valueFrom:
                         secretKeyRef:
@@ -131,6 +142,12 @@ spec:
                           name: ${schema.spec.githubSecretName}
                           key: oauth_pat
                           optional: true
+                    - name: GIT_PUSH_ENABLED
+                      value: ${string(schema.spec.destination.pushEnabled)}
+                    - name: GIT_CLONE_URL
+                      value: ${schema.spec.source.cloneURL}
+                    - name: ENVBUILDER_GIT_URL
+                      value: ${schema.spec.source.cloneURL}
                     # https://github.com/coder/terraform-provider-envbuilder/issues/68#issuecomment-2557247792
                     #- name: ENVBUILDER_GET_CACHED_IMAGE
                     #  value: "1"
@@ -140,10 +157,10 @@ spec:
                       value: /
                     #- name: ENVBUILDER_DOCKERFILE_PATH
                     #  value: ${schema.spec.devcontainerDockerfile}
-                    - name: ENVBUILDER_GIT_CLONE_SINGLE_BRANCH
-                      value: "true"
+                    #- name: ENVBUILDER_GIT_CLONE_SINGLE_BRANCH
+                    #  value: "true"
                     - name: ENVBUILDER_INIT_SCRIPT
-                      value: /opt/repo-agent/review-sandbox daemon
+                      value: /opt/repo-agent/repo-sandbox dev-daemon
                     - name: ENVBUILDER_IGNORE_PATHS
                       value: "/var/run,/product_uuid,/product_name,/tokens,/repo-agent/"
                   volumeMounts:
@@ -217,4 +234,3 @@ spec:
             - namespaceSelector:
                 matchLabels: ${schema.spec.networkPolicy.ingress.namespaceLabels}
           egress: ${schema.spec.networkPolicy.egress}
-
