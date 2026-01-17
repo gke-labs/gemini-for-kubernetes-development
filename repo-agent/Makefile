@@ -121,8 +121,8 @@ build-and-push-repo-agent:
 .PHONY: install-repo-agent
 install-repo-agent:
 	#  copy RGD to k8s dir so it gets deployed
-	cp cmd/review-sandbox/review-sandbox-rgd.yaml k8s/
-	cp cmd/issue-sandbox/issue-sandbox-rgd.yaml k8s/
+	cp cmd/repo-sandbox/review-sandbox-rgd.yaml k8s/
+	cp cmd/repo-sandbox/issue-sandbox-rgd.yaml k8s/
 	../dev/tools/deploy-to-kube --image-prefix=$(REGISTRY) --working-dir . \
 	--replace .spec.installationName=${CLUSTER_NAME} \
 	--replace .spec.gatewayClassName=${GW_CLASS} \

@@ -1,6 +1,6 @@
 # --------------------------------
-# Build the dev-sandbox binary
-FROM golang:1.24 AS build-dev-sandbox
+# Build the repo-sandbox binary
+FROM golang:1.24 AS build-repo-sandbox
 WORKDIR /app
 
 # Copy the Go Modules manifests
@@ -16,8 +16,8 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -v k8s.io/klog/v2 golang.
 # Copy the llm directory
 COPY pkg/ pkg/
 
-COPY cmd/dev-sandbox/ cmd/dev-sandbox/
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -v -o /dev-sandbox ./cmd/dev-sandbox
+COPY cmd/repo-sandbox/ cmd/repo-sandbox/
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -v -o /repo-sandbox ./cmd/repo-sandbox
 
 # --------------------------------
 
@@ -42,10 +42,10 @@ RUN npm install -g @google/gemini-cli
 RUN curl -fsSL https://code-server.dev/install.sh | sh
 RUN code-server --install-extension golang.go --install-extension vscodevim.vim
 
-COPY --from=build-dev-sandbox /dev-sandbox /repo-agent/dev-sandbox
+COPY --from=build-repo-sandbox /repo-sandbox /repo-agent/repo-sandbox
 COPY --from=build-gh /bin/gh /bin/gh
 
 RUN ln -sf /usr/local/go/bin/go /usr/local/bin/go
 
 WORKDIR /workspaces
-ENTRYPOINT ["/repo-agent/dev-sandbox", "agent"]
+ENTRYPOINT ["/repo-agent/repo-sandbox", "agent"]

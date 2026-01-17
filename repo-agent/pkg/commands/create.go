@@ -118,7 +118,7 @@ func RunCreate(ctx context.Context, opt CreateOptions) error {
 		Name:      opt.Name,
 		Namespace: opt.Namespace,
 		Labels: map[string]string{
-			"createdBy": "dev-sandbox-cli",
+			"createdBy": "repo-sandbox-cli",
 		},
 		CloneURL: cloneURL,
 		HTMLURL:  htmlURL,
