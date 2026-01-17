@@ -33,7 +33,7 @@ func RunAgent(ctx context.Context) error {
 		return fmt.Errorf("cloning repos: %w", err)
 	}
 
-	log.Info("dev-sandbox agent started; waiting for commands")
+	log.Info("repo-sandbox agent started; waiting for commands")
 	<-ctx.Done()
 
 	return nil

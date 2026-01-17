@@ -62,12 +62,12 @@ func RunListThreads(ctx context.Context, opt ListThreadsOptions) error {
 
 // listThreads runs the agent to list threads in the given dev sandbox pod.
 func listThreads(ctx context.Context, podID types.NamespacedName) ([]ThreadInfo, error) {
-	cmd := exec.CommandContext(ctx, "kubectl", "exec", "--namespace", podID.Namespace, podID.Name, "--", "/repo-agent/dev-sandbox", "threads", "agent")
+	cmd := exec.CommandContext(ctx, "kubectl", "exec", "--namespace", podID.Namespace, podID.Name, "--", "/repo-agent/repo-sandbox", "threads", "agent")
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("failed to launch dev-sandbox agent via kubectl: %w", err)
+		return nil, fmt.Errorf("failed to launch repo-sandbox agent via kubectl: %w", err)
 	}
 
 	var threads []ThreadInfo

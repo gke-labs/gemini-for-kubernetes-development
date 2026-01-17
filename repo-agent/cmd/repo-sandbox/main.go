@@ -22,35 +22,25 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-
-	// fmt.Fprintf(os.Stderr, "Completed successfully\n")
 }
 
 func run(ctx context.Context) error {
-	// log := klog.FromContext(ctx)
-
 	rootCommand := &cobra.Command{
-		Use:   "dev-sandbox",
-		Short: "Gemini Dev Sandbox Agent",
-		// Default to running the dev daemon if no subcommand is provided
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) != 0 {
-				return fmt.Errorf("dev-sandbox command does not take any arguments")
-			}
-			daemonCmd := commands.SandboxDaemonCommand{}
-			daemonCmd.InitDefaults()
-			return daemonCmd.Run(cmd.Context())
+		Use:   "repo-sandbox",
+		Short: "Gemini Repository Sandbox Agent",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			return fmt.Errorf("repo-sandbox command requires a subcommand (e.g., dev-daemon, review-daemon)")
 		},
 	}
 	rootCommand.SilenceUsage = true  // Usage is only printed for command syntax errors
 	rootCommand.SilenceErrors = true // We print errors ourselves
 
-	rootCommand.AddCommand(commands.BuildSandboxDaemonCommand())
-	rootCommand.AddCommand(commands.BuildSandboxCommand())
-	rootCommand.AddCommand(commands.BuildSSHDCommand())
-	rootCommand.AddCommand(commands.BuildCodeServerCommand())
-	rootCommand.AddCommand(commands.BuildInjectCommand())
+	// Commands from dev-sandbox
+	sandboxDaemon := commands.BuildSandboxDaemonCommand()
+	sandboxDaemon.Use = "dev-daemon"
+	rootCommand.AddCommand(sandboxDaemon)
 
+	rootCommand.AddCommand(commands.BuildSandboxCommand())
 	rootCommand.AddCommand(commands.BuildAgentCommand())
 	rootCommand.AddCommand(commands.BuildCreateCommand())
 	rootCommand.AddCommand(commands.BuildBootstrapCommand())
@@ -58,8 +48,19 @@ func run(ctx context.Context) error {
 	rootCommand.AddCommand(commands.BuildTmuxCommand())
 	rootCommand.AddCommand(commands.BuildGithubFixIssueCommand())
 	rootCommand.AddCommand(commands.BuildGithubFeedbackCommand())
-
 	rootCommand.AddCommand(commands.BuildThreadsCommand())
+
+	// Commands from review-sandbox
+	reviewDaemon := commands.BuildReviewDaemonCommand()
+	reviewDaemon.Use = "review-daemon"
+	rootCommand.AddCommand(reviewDaemon)
+
+	rootCommand.AddCommand(commands.BuildReviewCommand())
+
+	// Common commands
+	rootCommand.AddCommand(commands.BuildSSHDCommand())
+	rootCommand.AddCommand(commands.BuildCodeServerCommand())
+	rootCommand.AddCommand(commands.BuildInjectCommand())
 
 	return rootCommand.ExecuteContext(ctx)
 }

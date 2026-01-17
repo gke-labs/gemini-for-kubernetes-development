@@ -45,7 +45,7 @@ func (b *ImageBuilder) InstallDotfilesRepo(ctx context.Context) error {
 		return fmt.Errorf("getting user cache dir: %w", err)
 	}
 
-	dotfilesDir := filepath.Join(cacheDir, "dev-sandbox", "dotfiles")
+	dotfilesDir := filepath.Join(cacheDir, "repo-sandbox", "dotfiles")
 
 	if err := b.GitClone(ctx, b.DotFilesRepo, dotfilesDir); err != nil {
 		return err
