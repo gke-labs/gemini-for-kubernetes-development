@@ -223,8 +223,8 @@ func TestClaudeSetup(t *testing.T) {
 			}
 
 			// Run the test
-			c := &Claude{}
-			err = c.Setup("", tokensDir)
+			c := &Claude{ProviderConfig: ProviderConfig{WorkspacesDir: "", TokensDir: tokensDir}}
+			err = c.Setup()
 
 			// Assertions
 			if tc.expectError {
@@ -336,7 +336,7 @@ func TestClaudeRunWithStripYAMLMarkers(t *testing.T) {
 
 func TestClaudeCleanup(t *testing.T) {
 	c := &Claude{}
-	if err := c.Cleanup(""); err != nil {
+	if err := c.Cleanup(); err != nil {
 		t.Errorf("Cleanup() error = %v, want nil", err)
 	}
 }

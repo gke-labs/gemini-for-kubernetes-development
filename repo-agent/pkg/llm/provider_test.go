@@ -95,7 +95,7 @@ func TestNewProvider(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			provider, err := NewLLMProvider(tt.provider, "")
+			provider, err := NewLLMProvider(ProviderConfig{Name: tt.provider})
 			if (err != nil) != tt.wantErr {
 				t.Errorf("NewProvider() error = %v, wantErr %v", err, tt.wantErr)
 				return

@@ -26,6 +26,11 @@ type Config struct {
 	GithubUserName   string
 	GVR              schema.GroupVersionResource
 	ReportStatus     bool
+
+	// Directory paths
+	RepoDir       string
+	WorkspacesDir string
+	TokensDir     string
 }
 
 func PrepareGitBranch(cfg Config) (string, error) {
@@ -77,12 +82,17 @@ func RunAgent(ctx context.Context, cfg Config) error {
 	log := klog.FromContext(ctx)
 	log.Info("Starting agent", "agentName", cfg.AgentName)
 
-	provider, err := llm.NewLLMProvider(cfg.AgentName, "")
+	provider, err := llm.NewLLMProvider(llm.ProviderConfig{
+		Name:          cfg.AgentName,
+		WorkspacesDir: cfg.WorkspacesDir,
+		TokensDir:     cfg.TokensDir,
+		RepoDir:       cfg.RepoDir,
+	})
 	if err != nil {
 		return err
 	}
 
-	if err := provider.Setup("/workspaces", "/tokens"); err != nil {
+	if err := provider.Setup(); err != nil {
 		return err
 	}
 
@@ -115,7 +125,7 @@ func RunAgent(ctx context.Context, cfg Config) error {
 	}
 
 	// Cleanup
-	if err := provider.Cleanup("/workspaces"); err != nil {
+	if err := provider.Cleanup(); err != nil {
 		return err
 	}
 
