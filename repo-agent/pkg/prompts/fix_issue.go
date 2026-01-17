@@ -4,18 +4,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"text/template"
-
-	_ "embed"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 )
 
-//go:embed fix_issue.txt
-var FixIssuePromptTemplate string
-
 func FixIssuePrompt(ctx context.Context, githubAPI *github.Client, repo *github.Repo, issueNumber int) ([]byte, error) {
-
 	issue, _, err := githubAPI.Issues.Get(ctx, repo.Owner, repo.Name, issueNumber)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get github issue: %w", err)
@@ -39,9 +32,9 @@ func FixIssuePrompt(ctx context.Context, githubAPI *github.Client, repo *github.
 		})
 	}
 
-	tmpl, err := template.New("prompt").Parse(FixIssuePromptTemplate)
+	tmpl, err := getTemplate("fix_issue.txt")
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse prompt template: %w", err)
+		return nil, err
 	}
 	var w bytes.Buffer
 	if err := tmpl.Execute(&w, &model); err != nil {
