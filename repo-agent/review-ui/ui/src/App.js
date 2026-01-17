@@ -42,6 +42,10 @@ function App() {
   const [devModalOpen, setDevModalOpen] = useState(false);
   const [newDevBranch, setNewDevBranch] = useState('');
   const [newDevPrompt, setNewDevPrompt] = useState('');
+  const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
+  const [feedbackText, setFeedbackText] = useState('');
+  const [feedbackImage, setFeedbackImage] = useState('');
+  const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
 
 
   useEffect(() => {
@@ -864,6 +868,73 @@ function App() {
     }
   };
 
+  const handleFeedbackClick = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: { cursor: "always" },
+        audio: false
+      });
+      const video = document.createElement("video");
+      video.srcObject = stream;
+      video.onloadedmetadata = () => {
+        video.play();
+        const canvas = document.createElement("canvas");
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const image = canvas.toDataURL("image/png");
+        setFeedbackImage(image);
+        setFeedbackModalOpen(true);
+        stream.getTracks().forEach(track => track.stop());
+
+        // Automatically open image in new tab
+        const w = window.open("");
+        if (w) {
+            w.document.write('<img src="' + image + '" style="max-width: 100%;" />');
+            // Attempt to keep focus on current window (background the new tab)
+            try {
+                w.blur();
+                window.focus();
+            } catch (e) {
+                // ignore
+            }
+        }
+      };
+    } catch (err) {
+      console.error("Error capturing screen:", err);
+      // Fallback to text only if user cancels or error
+      setFeedbackImage('');
+      setFeedbackModalOpen(true);
+    }
+  };
+
+  const submitFeedback = () => {
+    setIsSubmittingFeedback(true);
+    fetch('/api/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: feedbackText, image: feedbackImage })
+    })
+    .then(res => {
+        if (res.ok) {
+            res.json().then(data => {
+                alert(`Feedback submitted successfully!`);
+                if (data.issue_url) {
+                    window.open(data.issue_url, '_blank');
+                }
+                setFeedbackModalOpen(false);
+                setFeedbackText('');
+                setFeedbackImage('');
+            });
+        } else {
+            res.json().then(data => alert("Failed to submit feedback: " + (data.error || res.statusText)));
+        }
+    })
+    .catch(err => alert("Failed to submit feedback: " + err))
+    .finally(() => setIsSubmittingFeedback(false));
+  };
+
   const renderContent = () => {
     if (!activeRepo) return <p>Please select or add a repository to watch.</p>;
     const namespace = user || 'default';
@@ -1198,6 +1269,7 @@ function App() {
         <div className="header-right">
           {user && <span className="user-greeting">Hi, {user}</span>}
           {isGuest && <span className="user-greeting">Guest</span>}
+          <button className="btn" onClick={handleFeedbackClick} style={{marginRight: '10px', backgroundColor: '#28a745'}}>Feedback</button>
           <button className="btn" onClick={() => setView('settings')} style={{marginRight: '10px'}}>Settings</button>
           <button className="btn btn-delete" onClick={handleLogout} style={{marginRight: '20px'}}>Logout</button>
           <div className="theme-switch-wrapper">
@@ -1216,6 +1288,48 @@ function App() {
       {view === 'settings' && <Settings onBack={() => setView('dashboard')} />}
       {view === 'add_repo' && <AddRepo onCancel={() => setView('dashboard')} onRepoAdded={() => { fetchRepos(); setView('dashboard'); }} />}
       {view === 'update_repo' && <UpdateRepo repo={activeRepo} onCancel={() => setView('dashboard')} onRepoUpdated={() => { fetchRepos(); setView('dashboard'); }} onRepoDeleted={handleRepoDeleted} />}
+
+      {feedbackModalOpen && (
+        <div className="modal-overlay" onClick={() => setFeedbackModalOpen(false)} style={{position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 2000}}>
+            <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{backgroundColor: '#fff', padding: '20px', borderRadius: '5px', width: '800px', maxHeight: '90vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '10px', color: 'black'}}>
+                <h4>Send Feedback</h4>
+                {feedbackImage && (
+                    <>
+                        <div style={{border: '1px solid #ccc', padding: '5px', maxHeight: '300px', overflow: 'hidden'}}>
+                            <img 
+                                src={feedbackImage} 
+                                alt="Screenshot" 
+                                style={{maxWidth: '100%', display: 'block', cursor: 'pointer'}} 
+                                title="Click to open in new tab"
+                                onClick={() => {
+                                    const w = window.open("");
+                                    if (w) {
+                                        w.document.write('<img src="' + feedbackImage + '" style="max-width: 100%;" />');
+                                    }
+                                }}
+                            />
+                        </div>
+                        <p style={{fontSize: '0.9em', color: '#555', marginTop: '5px', marginBottom: '5px'}}>
+                           <strong>Note:</strong> The screenshot has been opened in a new tab. You can also click the image above to open it again. Please copy and manually paste the screenshot into the GitHub issue that will be created after you click "Send Feedback".
+                        </p>
+                    </>
+                )}
+                <textarea 
+                    placeholder="Describe your issue or feedback..." 
+                    value={feedbackText} 
+                    onChange={(e) => setFeedbackText(e.target.value)} 
+                    rows="5" 
+                    style={{padding: '5px', border: '1px solid #ccc'}} 
+                />
+                <div style={{display: 'flex', justifyContent: 'flex-end', gap: '10px'}}>
+                    <button className="btn" onClick={() => setFeedbackModalOpen(false)} style={{backgroundColor: '#ccc', color: 'black'}}>Cancel</button>
+                    <button className="btn" onClick={submitFeedback} disabled={isSubmittingFeedback} style={{backgroundColor: '#007bff', color: 'white'}}>
+                        {isSubmittingFeedback ? 'Sending...' : 'Send Feedback'}
+                    </button>
+                </div>
+            </div>
+        </div>
+      )}
 
     </div>
   );
