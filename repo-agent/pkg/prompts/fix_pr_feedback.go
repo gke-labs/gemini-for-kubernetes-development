@@ -8,21 +8,14 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"text/template"
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 	githubapi "github.com/google/go-github/v39/github"
 	"k8s.io/klog/v2"
-
-	_ "embed"
 )
 
-//go:embed fix_pr_feedback.txt
-var FixPRFeedbackTemplate string
-
 func FixPRFeedbackPrompt(ctx context.Context, githubAPI *github.Client, repo *github.Repo, prNumber int) ([]byte, error) {
-
 	model := FixPRFeedbackPromptModel{}
 
 	pr, _, err := githubAPI.PullRequests.Get(ctx, repo.Owner, repo.Name, prNumber)
@@ -107,10 +100,11 @@ func FixPRFeedbackPrompt(ctx context.Context, githubAPI *github.Client, repo *gi
 		return model.Comments[i].Timestamp.Before(model.Comments[j].Timestamp)
 	})
 
-	tmpl, err := template.New("fix_pr_feedback").Parse(FixPRFeedbackTemplate)
+	tmpl, err := getTemplate("fix_pr_feedback.txt")
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse prompt template: %w", err)
+		return nil, err
 	}
+
 	var w bytes.Buffer
 	if err := tmpl.Execute(&w, &model); err != nil {
 		return nil, fmt.Errorf("failed to execute prompt template: %w", err)
