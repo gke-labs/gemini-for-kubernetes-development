@@ -27,10 +27,19 @@ const (
 // PostProcessor defines the signature for functions that can post-process the LLM's raw output.
 type PostProcessor func([]byte) ([]byte, error)
 
+// ProviderConfig holds the configuration for an LLM provider.
+type ProviderConfig struct {
+	Name                 string
+	WorkspacesDir        string
+	RepoDir              string
+	TokensDir            string
+	OutputStartIndicator string
+}
+
 // Provider defines the interface for interacting with an LLM.
 type Provider interface {
-	Setup(workspacesDir, tokensDir string) error
-	Cleanup(workspacesDir string) error
+	Setup() error
+	Cleanup() error
 	ExpandPrompt(prompt string) (string, error)
 	Run(prompt string) ([]byte, error)
 	// AddPostProcessor adds a post-processing function to the provider.
@@ -52,25 +61,32 @@ func (e *QuotaError) Unwrap() error {
 	return e.Err
 }
 
-func NewLLMProvider(name string, outputStartIndicator string) (Provider, error) {
-	switch name {
+func NewLLMProvider(cfg ProviderConfig) (Provider, error) {
+	switch cfg.Name {
 	case "gemini-cli":
-		g := &Gemini{Executor: &RealCommandExecutor{}}
+		g := &Gemini{
+			Executor:       &RealCommandExecutor{},
+			ProviderConfig: cfg,
+		}
 		g.AddPostProcessor(StripYAMLMarkers)
-		if outputStartIndicator != "" {
-			g.AddPostProcessor(StripThoughts(outputStartIndicator))
+		if cfg.OutputStartIndicator != "" {
+			g.AddPostProcessor(StripThoughts(cfg.OutputStartIndicator))
 		}
 		return g, nil
 	case "claude":
-		c := &Claude{}
+		c := &Claude{
+			ProviderConfig: cfg,
+		}
 		c.AddPostProcessor(StripYAMLMarkers)
 		return c, nil
 	case "dummy":
-		d := &Dummy{}
+		d := &Dummy{
+			ProviderConfig: cfg,
+		}
 		d.AddPostProcessor(StripYAMLMarkers)
 		return d, nil
 	default:
-		return nil, fmt.Errorf("unknown provider: %s", name)
+		return nil, fmt.Errorf("unknown provider: %s", cfg.Name)
 	}
 }
 

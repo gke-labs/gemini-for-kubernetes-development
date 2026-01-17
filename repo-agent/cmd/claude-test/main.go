@@ -19,9 +19,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"k8s.io/klog/v2"
-
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/llm"
+	"k8s.io/klog/v2"
 )
 
 // This binary tests the Claude LLM provider implementation found in `pkg/llm/claude.go`.
@@ -30,10 +29,6 @@ import (
 // It takes an optional prompt as a command-line argument, sends it to the
 // Claude LLM provider, and prints the response.
 func main() {
-	// Initialize the Claude LLM client. The implementation for Claude LLM provider
-	// is located at `pkg/llm/claude.go`.
-	claude := &llm.Claude{}
-
 	// --- Secure API Key Handling for Testing Primary Setup Path ---
 	// The Setup function in `pkg/llm/claude.go` prioritizes reading the API key from a file.
 	// To test this primary path securely without hardcoding or exposing the API key,
@@ -59,9 +54,18 @@ func main() {
 		klog.Fatalf("failed to write api key file: %v", err)
 	}
 
+	// Initialize the Claude LLM client. The implementation for Claude LLM provider
+	// is located at `pkg/llm/claude.go`.
+	claude := &llm.Claude{
+		ProviderConfig: llm.ProviderConfig{
+			WorkspacesDir: "",
+			TokensDir:     tempDir, // Point to the temp dir containing the API key file
+		},
+	}
+
 	// Call the Setup function, passing the temporary directory as the tokens directory.
 	// This ensures the file-based API key retrieval path is tested.
-	if err := claude.Setup("", tempDir); err != nil {
+	if err := claude.Setup(); err != nil {
 		klog.Fatalf("failed to setup claude: %v", err)
 	}
 

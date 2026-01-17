@@ -46,11 +46,15 @@ type ReviewCommand struct {
 	AgentPrompt      string
 	DiffURL          string
 	MaxReviewFiles   int
+	TokensDir        string
 }
 
 func (c *ReviewCommand) InitDefaults() {
 	if c.WorkspaceDir == "" {
 		c.WorkspaceDir = "/workspaces"
+	}
+	if c.TokensDir == "" {
+		c.TokensDir = "/tokens"
 	}
 	if c.RepoURL == "" {
 		c.RepoURL = os.Getenv("GIT_HTML_URL")
@@ -211,13 +215,19 @@ func (c *ReviewCommand) Run(ctx context.Context) error {
 		return fmt.Errorf("GIT_DIFF_URL not set, skipping diff-based validation")
 	}
 
-	provider, err := llm.NewLLMProvider(c.AgentName, "note:")
+	provider, err := llm.NewLLMProvider(llm.ProviderConfig{
+		Name:                 c.AgentName,
+		OutputStartIndicator: "note:",
+		WorkspacesDir:        c.WorkspaceDir,
+		TokensDir:            c.TokensDir,
+		RepoDir:              repoDir,
+	})
 	if err != nil {
 		updateState("error", err.Error())
 		return err
 	}
 
-	if err := provider.Setup("/workspaces", "/tokens"); err != nil {
+	if err := provider.Setup(); err != nil {
 		updateState("error", err.Error())
 		return err
 	}
