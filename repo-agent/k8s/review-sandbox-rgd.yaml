@@ -74,15 +74,15 @@ spec:
                     - name: workspaces-pvc
                       mountPath: /workspaces
                 - name: inject-agent
-                  image: ko://repo-agent/images/review-sandbox
-                  command: ["/repo-agent/review-sandbox", "inject", "--path", "/opt/repo-agent"]
+                  image: ko://repo-agent/images/repo-sandbox
+                  command: ["/repo-agent/repo-sandbox", "inject", "--path", "/opt/repo-agent"]
                   volumeMounts:
                     - name: agent-bin
                       mountPath: /opt/repo-agent
               containers:
                 - name: sandbox
-                  image: ${schema.spec.image != "" ? schema.spec.image:"ko://repo-agent/images/review-sandbox"}
-                  command: ${schema.spec.image != "" ? ["/opt/repo-agent/review-sandbox", "daemon"]:[]}
+                  image: ${schema.spec.image != "" ? schema.spec.image:"ko://repo-agent/images/repo-sandbox"}
+                  command: ${schema.spec.image != "" ? ["/opt/repo-agent/repo-sandbox", "review-daemon"]:[]}
                   resources:
                     limits:
                       ephemeral-storage: ${schema.spec.resources.ephemeralStorage}
@@ -143,7 +143,7 @@ spec:
                     - name: ENVBUILDER_GIT_CLONE_SINGLE_BRANCH
                       value: "true"
                     - name: ENVBUILDER_INIT_SCRIPT
-                      value: /opt/repo-agent/review-sandbox daemon
+                      value: /opt/repo-agent/repo-sandbox review-daemon
                     - name: ENVBUILDER_IGNORE_PATHS
                       value: "/var/run,/product_uuid,/product_name,/tokens,/repo-agent/"
                   volumeMounts:
