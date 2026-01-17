@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/types"
@@ -28,6 +29,8 @@ func (o *GetThreadsOptions) InitDefaults() {
 // NewThreadsGetCommand creates a new cobra command for getting LLM threads/chats in the dev sandbox.
 func NewThreadsGetCommand() *cobra.Command {
 	var opt GetThreadsOptions
+
+	opt.InitDefaults()
 
 	cmd := &cobra.Command{
 		Use:   "get [sandbox-name] [thread-id]",
@@ -68,7 +71,11 @@ func RunGetThreads(ctx context.Context, opt GetThreadsOptions) error {
 	for _, msg := range thread.Messages {
 		fmt.Printf("%v\t%v\t%v\n", msg.Type, msg.Content, msg.Timestamp)
 		for _, toolCall := range msg.ToolCalls {
-			fmt.Printf("\tTool Call: %v\n", toolCall.Name)
+			var args []string
+			for k, v := range toolCall.Arguments {
+				args = append(args, fmt.Sprintf("%v=%v", k, v))
+			}
+			fmt.Printf("\tTool Call: %v(%v)\n", toolCall.Name, strings.Join(args, ","))
 		}
 	}
 
@@ -78,7 +85,7 @@ func RunGetThreads(ctx context.Context, opt GetThreadsOptions) error {
 // getThread runs the agent to get a thread in the given dev sandbox pod.
 func getThread(ctx context.Context, podID types.NamespacedName, opt GetThreadsOptions) (*ThreadInfo, error) {
 	args := []string{
-		"kubectl", "exec", "--namespace", podID.Namespace, podID.Name, "--", "/repo-agent/repo-sandbox", "threads", "agent",
+		"kubectl", "exec", "--namespace", podID.Namespace, podID.Name, "--", repoSandboxBinary, "threads", "agent",
 	}
 	if opt.IncludeMessages {
 		args = append(args, "--include-messages=true")

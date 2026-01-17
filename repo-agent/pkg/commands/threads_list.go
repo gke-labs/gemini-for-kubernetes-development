@@ -12,6 +12,8 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
+const repoSandboxBinary = "/repo-agent/repo-sandbox"
+
 // ListThreadsOptions holds options for the ListThreads function.
 type ListThreadsOptions struct {
 	SandboxName string
@@ -62,7 +64,7 @@ func RunListThreads(ctx context.Context, opt ListThreadsOptions) error {
 
 // listThreads runs the agent to list threads in the given dev sandbox pod.
 func listThreads(ctx context.Context, podID types.NamespacedName) ([]ThreadInfo, error) {
-	cmd := exec.CommandContext(ctx, "kubectl", "exec", "--namespace", podID.Namespace, podID.Name, "--", "/repo-agent/repo-sandbox", "threads", "agent")
+	cmd := exec.CommandContext(ctx, "kubectl", "exec", "--namespace", podID.Namespace, podID.Name, "--", repoSandboxBinary, "threads", "agent")
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = os.Stderr

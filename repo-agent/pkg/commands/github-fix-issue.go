@@ -15,20 +15,15 @@ import (
 	"github.com/spf13/cobra"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/remotecommand"
 	"k8s.io/klog/v2"
-
-	sandboxapi "sigs.k8s.io/agent-sandbox/api/v1alpha1"
 )
 
 // GithubFixIssueOptions holds options for the RunCode function.
 type GithubFixIssueOptions struct {
-	Repo  string
-	Issue int
+	URL string
 }
 
 // BuildGithubFixIssueCommand creates a new cobra command for using a dev sandbox to solve a github issue
@@ -48,8 +43,7 @@ func BuildGithubFixIssueCommand() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&opt.Repo, "repo", opt.Repo, "GitHub repository (e.g., gke-labs/gemini-for-kubernetes-development)")
-	cmd.Flags().IntVar(&opt.Issue, "issue", opt.Issue, "GitHub issue number")
+	cmd.Flags().StringVar(&opt.URL, "url", opt.URL, "GitHub issue URL")
 	return cmd
 }
 
@@ -72,206 +66,74 @@ func RunGithubFixIssue(ctx context.Context, opt GithubFixIssueOptions) error {
 		return fmt.Errorf("failed to create github client: %w", err)
 	}
 
-	if opt.Repo == "" {
-		return fmt.Errorf("--repo is required")
+	if opt.URL == "" {
+		return fmt.Errorf("--url is required")
 	}
-	repo, err := github.ParseRepo(opt.Repo)
+
+	issue, err := github.ParseIssueURL(opt.URL)
 	if err != nil {
 		return err
 	}
+	repo := issue.Repo
 
-	if opt.Issue == 0 {
-		return fmt.Errorf("--issue is required")
-	}
-	issueURL := fmt.Sprintf("https://github.com/%s/issues/%d", opt.Repo, opt.Issue)
-
-	cloneRepos := []string{
-		fmt.Sprintf("/workspaces/%s=%s", repo.FilesystemName(), repo.GitCloneURL()),
-	}
-
-	prompt, err := prompts.FixIssuePrompt(ctx, githubAPI, repo, opt.Issue)
+	prompt, err := prompts.FixIssuePrompt(ctx, githubAPI, issue)
 	if err != nil {
 		return fmt.Errorf("failed to generate prompt for issue: %w", err)
 	}
 
-	sandboxName := fmt.Sprintf("github-%s-%s-%d", repo.Owner, repo.Name, opt.Issue)
-	sandboxName = strings.ToLower(sandboxName) // Repos can have capital letters, but k8s names must be lowercase
-
-	// 1. Find the pod
-	podID, err := findSandboxPod(ctx, sandboxName)
+	sandbox, found, err := findSandboxForIssue(ctx, kube, repo, issue)
 	if err != nil {
 		return err
 	}
 
-	if podID == nil {
-		log.Info("Creating sandbox", "name", sandboxName, "repos", cloneRepos, "issue", opt.Issue)
-
-		container := v1.Container{}
-		container.Name = "agent"
-		container.Image = "gcr.io/justinsb-knotai-dev/generic-golang:latest"
-
-		container.Env = append(container.Env, v1.EnvVar{
-			Name:  "CLONE_REPOS",
-			Value: strings.Join(cloneRepos, ";"),
-		})
-
-		sandbox := &sandboxapi.Sandbox{}
-		sandbox.Name = sandboxName
-		sandbox.Namespace = kube.CurrentNamespace
-		sandbox.Spec.PodTemplate.Spec.Containers = append(sandbox.Spec.PodTemplate.Spec.Containers, container)
-
-		sandbox.Spec.PodTemplate.ObjectMeta.Labels = map[string]string{
-			// This enables findSandbox to work, even if we are launching the dev sandbox directly
-			"sandbox": "devc-" + sandboxName,
-		}
-
-		sandbox.Annotations = map[string]string{
-			"repo-agent.labs.gke.io/clone-repos": strings.Join(cloneRepos, ";"),
-			"repo-agent.labs.gke.io/fix-issue":   issueURL,
-		}
-
-		sandboxGVR := sandboxapi.GroupVersion.WithResource("sandboxes")
-		sandboxGVK := sandboxapi.GroupVersion.WithKind("Sandbox")
-
-		sandbox.SetGroupVersionKind(sandboxGVK)
-
-		uObj, err := runtime.DefaultUnstructuredConverter.ToUnstructured(sandbox)
+	if !found {
+		sandbox, err = launchSandboxForIssue(ctx, kube, repo, issue)
 		if err != nil {
-			return err
-		}
-		u := &unstructured.Unstructured{Object: uObj}
-		_, err = kube.DynamicClient.Resource(sandboxGVR).Namespace(sandbox.Namespace).Create(ctx, u, metav1.CreateOptions{})
-		if err != nil {
-			return fmt.Errorf("failed to create sandbox: %w", err)
-		}
-
-		log.Info("Sandbox created", "name", sandboxName)
-
-		podID = &types.NamespacedName{
-			Namespace: kube.CurrentNamespace,
-			Name:      sandboxName,
+			return fmt.Errorf("launching sandbox for issue: %w", err)
 		}
 	}
 
-	geminiAPIKey, err := GetGeminiAPIKey(podID.Namespace + "/" + podID.Name)
+	geminiAPIKey, err := GetGeminiAPIKey(sandbox.podID.Namespace + "/" + sandbox.podID.Name)
 	if err != nil {
 		return err
 	}
 
-	if err := waitForPodReady(ctx, kube, podID); err != nil {
-		return err
+	if err := sandbox.setupGit(ctx); err != nil {
+		return fmt.Errorf("setting up git in sandbox: %w", err)
+	}
+
+	if err := sandbox.SetupGitRepos(ctx); err != nil {
+		return fmt.Errorf("setting up git branches in sandbox: %w", err)
 	}
 
 	// Copy the prompt into the pod (for now)
 	if len(prompt) > 0 {
-		log.Info("copying prompt into sandbox pod", "pod", podID.Name)
+		log.Info("copying prompt into sandbox pod", "pod", sandbox.podID)
 
 		path := "/workspaces/prompt.txt"
-		if err := writeFileInPod(ctx, kube, podID, path, prompt); err != nil {
+		if err := writeFileInPod(ctx, kube, sandbox.podID, path, prompt); err != nil {
 			return fmt.Errorf("copying prompt into sandbox pod: %w", err)
 		}
 
-		log.Info("Copied prompt into sandbox pod", "pod", podID.Name, "path", path)
+		log.Info("Copied prompt into sandbox pod", "pod", sandbox.podID, "path", path)
 	}
 
-	// mkdir -p ~/.config/gh
+	// HACK: Avoid git lock issues
+	time.Sleep(5 * time.Second)
 
-	// Write gh config
-	{
-		config := `github.com:
-    users:
-        codebot-robot:
-            oauth_token: {{CODEBOT_ROBOT_GITHUB_TOKEN}}
-    git_protocol: https
-    oauth_token: {{CODEBOT_ROBOT_GITHUB_TOKEN}}
-    user: codebot-robot
-`
-
-		config = strings.ReplaceAll(config, "{{CODEBOT_ROBOT_GITHUB_TOKEN}}", codebotRobotToken)
-
-		opts := execOptions{
-			Command: []string{"mkdir", "-p", "/root/.config/gh"},
-		}
-		if err := execInPod(ctx, kube, podID, opts); err != nil {
-			return fmt.Errorf("creating /root/.config/gh directory: %w", err)
-		}
-
-		if err := writeFileInPod(ctx, kube, podID, "/root/.config/gh/hosts.yml", []byte(config)); err != nil {
-			return fmt.Errorf("writing gh config into pod: %w", err)
-		}
+	if err := sandbox.CheckoutNewBranch(ctx); err != nil {
+		return fmt.Errorf("checking out branch: %w", err)
 	}
 
-	// Run git config
-	{
-		opts := execOptions{
-			Command: []string{"git", "config", "--global", "user.email", "codebot-robot@google.com"},
-		}
-		if err := execInPod(ctx, kube, podID, opts); err != nil {
-			return fmt.Errorf("running git config user.email in pod: %w", err)
-		}
-		opts = execOptions{
-			Command: []string{"git", "config", "--global", "user.name", "codebot-robot"},
-		}
-		if err := execInPod(ctx, kube, podID, opts); err != nil {
-			return fmt.Errorf("running git config user.name in pod: %w", err)
-		}
-	}
-
-	// Run gh auth setup-git
-	{
-		opts := execOptions{
-			Command: []string{"gh", "auth", "setup-git"},
-		}
-		if err := execInPod(ctx, kube, podID, opts); err != nil {
-			return fmt.Errorf("running gh auth setup-git in pod: %w", err)
-		}
-	}
-
-	time.Sleep(2 * time.Second) // TODO: Replace with proper wait for git repo to be cloned
-
-	workdir := fmt.Sprintf("/workspaces/%s", repo.FilesystemName())
-
-	// Run gh repo fork
-	log.Info("Forking repository in pod", "pod", podID.Name, "repo", repo.GitCloneURL())
-	{
-		// TODO: Does gh support -C ?
-		opts := execOptions{
-			Command: []string{"sh", "-c", fmt.Sprintf("cd %s && gh repo fork --remote", workdir)},
-		}
-		if err := execInPod(ctx, kube, podID, opts); err != nil {
-			return fmt.Errorf("running gh repo fork in pod: %w", err)
-		}
-	}
-
-	// Setup default remote
-	{
-		defaultRepo := repo.GitCloneURL()
-
-		// TODO: Does gh support -C ?
-		opts := execOptions{
-			Command: []string{"sh", "-c", fmt.Sprintf("cd %s && gh repo set-default %s", workdir, defaultRepo)},
-		}
-		if err := execInPod(ctx, kube, podID, opts); err != nil {
-			return fmt.Errorf("running gh repo fork in pod: %w", err)
-		}
-
-	}
-	// Create a new branch
-	{
-		branchName := fmt.Sprintf("issue_%d", opt.Issue)
-		log.Info("Creating new branch in pod", "pod", podID.Name, "branch", branchName)
-
-		opts := execOptions{
-			Command: []string{"git", "-C", workdir, "checkout", "-b", branchName},
-		}
-		if err := execInPod(ctx, kube, podID, opts); err != nil {
-			return fmt.Errorf("creating new branch in pod: %w", err)
-		}
+	if err := configureGemini(ctx, sandbox); err != nil {
+		return fmt.Errorf("configuring gemini in sandbox: %w", err)
 	}
 
 	// Run gemini with API key and prompt
 	{
-		log.Info("Running gemini in pod", "pod", podID.Name)
+		log.Info("Running gemini in pod", "pod", sandbox.podID)
+
+		workdir := fmt.Sprintf("/workspaces/%s", sandbox.repo.FilesystemName())
 
 		// TODO:
 		// export GEMINI_TELEMETRY_ENABLED=true
@@ -284,7 +146,7 @@ func RunGithubFixIssue(ctx context.Context, opt GithubFixIssueOptions) error {
 		}
 		opts.Secrets = []string{geminiAPIKey}
 
-		if err := execInPod(ctx, kube, podID, opts); err != nil {
+		if err := execInPod(ctx, kube, sandbox.podID, opts); err != nil {
 			return fmt.Errorf("running gemini: %w", err)
 		}
 	}
@@ -302,7 +164,7 @@ type execOptions struct {
 }
 
 // execInPod writes the specified data to a file in the specified pod.
-func execInPod(ctx context.Context, kube *clients.KubernetesClient, podID *types.NamespacedName, opts execOptions) error {
+func execInPod(ctx context.Context, kube *clients.KubernetesClient, podID types.NamespacedName, opts execOptions) error {
 	log := klog.FromContext(ctx)
 
 	redactedCommand := strings.Join(opts.Command, " ")
@@ -355,17 +217,16 @@ func execInPod(ctx context.Context, kube *clients.KubernetesClient, podID *types
 
 	// Run the command
 	if err := exec.StreamWithContext(ctx, streamOptions); err != nil {
-		log.Error(err, "executing command", "command", redactedCommand, "stdout", stdout.String(), "stderr", stderr.String())
+		log.Error(err, "executing command", "pod", podID, "command", redactedCommand, "stdout", stdout.String(), "stderr", stderr.String())
 		return fmt.Errorf("streaming command in pod: %w", err)
 	}
 
-	log.Info("executed command", "command", redactedCommand, "stdout", stdout.String(), "stderr", stderr.String())
-
+	log.Info("executed command", "pod", podID, "command", redactedCommand, "stdout", stdout.String(), "stderr", stderr.String())
 	return nil
 }
 
 // writeFileInPod writes the specified data to a file in the specified pod.
-func writeFileInPod(ctx context.Context, kube *clients.KubernetesClient, podID *types.NamespacedName, path string, data []byte) error {
+func writeFileInPod(ctx context.Context, kube *clients.KubernetesClient, podID types.NamespacedName, path string, data []byte) error {
 	// log := klog.FromContext(ctx)
 
 	var stdout bytes.Buffer
@@ -380,7 +241,7 @@ func writeFileInPod(ctx context.Context, kube *clients.KubernetesClient, podID *
 }
 
 // waitForPodReady waits for the specified pod to be ready.
-func waitForPodReady(ctx context.Context, kube *clients.KubernetesClient, podID *types.NamespacedName) error {
+func waitForPodReady(ctx context.Context, kube *clients.KubernetesClient, podID types.NamespacedName) error {
 	log := klog.FromContext(ctx)
 
 	clientset := kube.Clientset

@@ -93,7 +93,7 @@ func RunGithubFeedback(ctx context.Context, opt GithubFeedbackOptions) error {
 	// Copy the prompt into the pod (for now)
 	if len(prompt) > 0 {
 		path := "/workspaces/prompt.txt"
-		if err := writeFileInPod(ctx, kube, podID, path, prompt); err != nil {
+		if err := writeFileInPod(ctx, kube, *podID, path, prompt); err != nil {
 			return fmt.Errorf("copying prompt into sandbox pod: %w", err)
 		}
 
@@ -117,7 +117,7 @@ func RunGithubFeedback(ctx context.Context, opt GithubFeedbackOptions) error {
 		}
 		opts.Secrets = []string{geminiAPIKey}
 
-		if err := execInPod(ctx, kube, podID, opts); err != nil {
+		if err := execInPod(ctx, kube, *podID, opts); err != nil {
 			return fmt.Errorf("running gemini in pod: %w", err)
 		}
 	}
