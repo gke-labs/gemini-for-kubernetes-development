@@ -17,8 +17,7 @@ jobs:
           - redis
           - repowatch-controller
           - review-api
-          - review-sandbox
-          - dev-sandbox
+          - repo-sandbox
           - review-ui
           - syncer
           - generic-golang

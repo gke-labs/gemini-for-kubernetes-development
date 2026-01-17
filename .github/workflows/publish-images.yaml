@@ -14,11 +14,10 @@ jobs:
           - configdir-cli
           - configdir-controller
           - github-mcp-server
-          - dev-sandbox
+          - repo-sandbox
           - redis
           - repowatch-controller
           - review-api
-          - review-sandbox
           - review-ui
           - syncer
           - generic-golang
