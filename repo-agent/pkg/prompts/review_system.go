@@ -5,13 +5,8 @@ import (
 	"fmt"
 	"text/template"
 
-	_ "embed"
-
 	"github.com/google/go-github/v39/github"
 )
-
-//go:embed review_system.txt
-var ReviewPromptTemplate string
 
 type ReviewPromptModel struct {
 	github.PullRequest
@@ -22,11 +17,9 @@ type ReviewPromptModel struct {
 // It performs a two-level substitution to allow the user-provided prompt to also use template variables from the PR.
 func ExpandReviewPrompt(model ReviewPromptModel) (string, error) {
 	// Level 1 substitution
-	promptTmpl := ReviewPromptTemplate
-
-	lvl1, err := template.New("lvl1").Parse(promptTmpl)
+	lvl1, err := getTemplate("review_system.txt")
 	if err != nil {
-		return "", fmt.Errorf("failed to parse level 1 template: %w", err)
+		return "", err
 	}
 
 	var level1 bytes.Buffer
