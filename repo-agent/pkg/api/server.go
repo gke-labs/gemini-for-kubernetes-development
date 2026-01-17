@@ -84,6 +84,7 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 		api.DELETE("/repo/:repo/dev/:name", s.deleteDevSandbox)
 		api.POST("/repo/:repo/dev/:name/scaleup", s.scaleUpDevSandbox)
 		api.POST("/repo/:repo/dev/:name/scaledown", s.scaleDownDevSandbox)
+		api.POST("/feedback", s.submitFeedback)
 		api.GET("/proxy", s.proxy)
 	}
 
