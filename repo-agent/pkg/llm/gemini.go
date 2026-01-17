@@ -34,6 +34,7 @@ var _ Provider = &Gemini{}
 type Gemini struct {
 	Executor   CommandExecutor
 	processors []PostProcessor
+	ProviderConfig
 }
 
 func (g *Gemini) AddPostProcessor(p PostProcessor) {
@@ -44,20 +45,22 @@ func (g *Gemini) QuotaCheck() bool {
 	return true
 }
 
-func (g *Gemini) Setup(workspacesDir, tokensDir string) error {
-	// if .gemini directory exists in /workspaces copy it to home directory
-	geminiConfigDir := filepath.Join(workspacesDir, ".gemini")
-	if _, err := os.Stat(geminiConfigDir); err == nil {
+func (g *Gemini) Setup() error {
+	// if .gemini directory exists in /workspaces copy it to repo directory
+	wsGeminiConfigDir := filepath.Join(g.WorkspacesDir, ".gemini")
+	repoGeminiConfigDir := filepath.Join(g.RepoDir, ".gemini")
+	backupGeminiConfigDir := filepath.Join(g.WorkspacesDir, ".gemini.bak")
+	if _, err := os.Stat(wsGeminiConfigDir); err == nil {
 		klog.Info(".gemini directory exists in /workspaces, copying to repo directory")
 		// if desitation .gemini directory exists move it to .gemini.bak
-		if _, err := os.Stat(".gemini"); err == nil {
+		if _, err := os.Stat(repoGeminiConfigDir); err == nil {
 			klog.Info(".gemini directory exists in repo directory, moving to .gemini.bak")
-			err := os.Rename(".gemini", ".gemini.bak")
+			err := os.Rename(repoGeminiConfigDir, backupGeminiConfigDir)
 			if err != nil {
 				return fmt.Errorf("failed to move .gemini to .gemini.bak: %v", err)
 			}
 		}
-		cmd := exec.Command("cp", "-R", geminiConfigDir, ".gemini")
+		cmd := exec.Command("cp", "-R", wsGeminiConfigDir, repoGeminiConfigDir)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
@@ -68,7 +71,7 @@ func (g *Gemini) Setup(workspacesDir, tokensDir string) error {
 	}
 
 	// Ensure root settings.json has previewFeatures
-	if err := ensureSettings(".gemini"); err != nil {
+	if err := ensureSettings(repoGeminiConfigDir); err != nil {
 		klog.Infof("Warning: failed to ensure .gemini/settings.json: %v", err)
 	}
 
@@ -80,7 +83,7 @@ func (g *Gemini) Setup(workspacesDir, tokensDir string) error {
 		}
 	}
 
-	geminiTokenFile := filepath.Join(tokensDir, "gemini")
+	geminiTokenFile := filepath.Join(g.TokensDir, "gemini")
 	geminiKey, err := os.ReadFile(geminiTokenFile)
 	if err != nil {
 		return fmt.Errorf("failed to read %s: %v", geminiTokenFile, err)
@@ -132,14 +135,16 @@ func ensureSettings(geminiDir string) error {
 	return nil
 }
 
-func (g *Gemini) Cleanup(workspacesDir string) error {
-	geminiBackupDir := filepath.Join(workspacesDir, ".gemini.bak")
-	if _, err := os.Stat(geminiBackupDir); err == nil {
+func (g *Gemini) Cleanup() error {
+	wsGeminiConfigDir := filepath.Join(g.WorkspacesDir, ".gemini")
+	repoGeminiConfigDir := filepath.Join(g.RepoDir, ".gemini")
+	backupGeminiConfigDir := filepath.Join(g.WorkspacesDir, ".gemini.bak")
+	if _, err := os.Stat(backupGeminiConfigDir); err == nil {
 		klog.Info("moving .gemini.bak -> .gemini")
-		if err := os.RemoveAll(geminiBackupDir); err != nil {
+		if err := os.RemoveAll(repoGeminiConfigDir); err != nil {
 			klog.Infof("failed to remove .gemini directory: %v", err)
 		}
-		if err := os.Rename(".gemini.bak", ".gemini"); err != nil {
+		if err := os.Rename(backupGeminiConfigDir, wsGeminiConfigDir); err != nil {
 			return fmt.Errorf("failed to move .gemini.bak to .gemini: %w", err)
 		}
 	}

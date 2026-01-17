@@ -45,11 +45,16 @@ type SandboxCommand struct {
 	GithubUserName   string
 	IssueID          string
 	PromptFilePath   string
+	TokensDir        string
+	RepoDir          string
 }
 
 func (c *SandboxCommand) InitDefaults() {
 	if c.WorkspaceDir == "" {
 		c.WorkspaceDir = "/workspaces"
+	}
+	if c.TokensDir == "" {
+		c.TokensDir = "/tokens"
 	}
 	if c.RepoURL == "" {
 		c.RepoURL = os.Getenv("GIT_HTML_URL")
@@ -207,6 +212,10 @@ func (c *SandboxCommand) Run(ctx context.Context) error {
 		GithubUserName:   c.GithubUserName,
 		ReportStatus:     reportStatus,
 		GVR:              gvr,
+
+		WorkspacesDir: c.WorkspaceDir,
+		RepoDir:       repoDir,
+		TokensDir:     c.TokensDir,
 	}
 
 	// Prepare git branch (checkout)
