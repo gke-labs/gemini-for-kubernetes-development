@@ -90,7 +90,7 @@ func RunAppendToThread(ctx context.Context, opt AppendToThreadOptions) error {
 		return fmt.Errorf("thread %q does not have a workspace associated with it", opt.ThreadID)
 	}
 
-	updated, err := appendToThread(ctx, kube, podID, opt.ThreadID, cwd, comment)
+	updated, err := appendToThread(ctx, kube, *podID, opt.ThreadID, cwd, comment)
 	if err != nil {
 		return fmt.Errorf("failed to get thread: %w", err)
 	}
@@ -100,14 +100,14 @@ func RunAppendToThread(ctx context.Context, opt AppendToThreadOptions) error {
 }
 
 // appendToThread runs the agent to append a comment to a thread in the given dev sandbox pod.
-func appendToThread(ctx context.Context, kube *clients.KubernetesClient, podID *types.NamespacedName, threadID string, cwd string, stdin []byte) (*ThreadInfo, error) {
+func appendToThread(ctx context.Context, kube *clients.KubernetesClient, podID types.NamespacedName, threadID string, cwd string, stdin []byte) (*ThreadInfo, error) {
 	// TODO: This is a bit of a hack, would be great to use a service portal
 	geminiAPIKey, err := GetGeminiAPIKey(podID.Namespace + "/" + podID.Name)
 	if err != nil {
 		return nil, err
 	}
 
-	command := fmt.Sprintf("export GEMINI_API_KEY=%s && /repo-agent/repo-sandbox threads agent", geminiAPIKey)
+	command := fmt.Sprintf("export GEMINI_API_KEY=%s && %s threads agent", geminiAPIKey, repoSandboxBinary)
 	command += fmt.Sprintf(" --thread-id=%s", threadID)
 	command += " --action=append"
 	command += " --cwd=" + cwd

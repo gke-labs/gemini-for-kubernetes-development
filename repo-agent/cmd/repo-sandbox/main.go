@@ -48,6 +48,8 @@ func run(ctx context.Context) error {
 	rootCommand.AddCommand(commands.BuildTmuxCommand())
 	rootCommand.AddCommand(commands.BuildGithubFixIssueCommand())
 	rootCommand.AddCommand(commands.BuildGithubFeedbackCommand())
+	rootCommand.AddCommand(commands.BuildGithubAutopollCommand())
+
 	rootCommand.AddCommand(commands.BuildThreadsCommand())
 
 	// Commands from review-sandbox
