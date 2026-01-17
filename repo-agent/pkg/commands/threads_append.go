@@ -102,9 +102,9 @@ func RunAppendToThread(ctx context.Context, opt AppendToThreadOptions) error {
 // appendToThread runs the agent to append a comment to a thread in the given dev sandbox pod.
 func appendToThread(ctx context.Context, kube *clients.KubernetesClient, podID *types.NamespacedName, threadID string, cwd string, stdin []byte) (*ThreadInfo, error) {
 	// TODO: This is a bit of a hack, would be great to use a service portal
-	geminiAPIKey := os.Getenv("GEMINI_API_KEY")
-	if geminiAPIKey == "" {
-		return nil, fmt.Errorf("GEMINI_API_KEY environment variable is not set")
+	geminiAPIKey, err := GetGeminiAPIKey(podID.Namespace + "/" + podID.Name)
+	if err != nil {
+		return nil, err
 	}
 
 	command := fmt.Sprintf("export GEMINI_API_KEY=%s && /repo-agent/repo-sandbox threads agent", geminiAPIKey)
