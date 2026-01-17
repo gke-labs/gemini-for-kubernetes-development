@@ -57,11 +57,6 @@ func BuildGithubFixIssueCommand() *cobra.Command {
 func RunGithubFixIssue(ctx context.Context, opt GithubFixIssueOptions) error {
 	log := klog.FromContext(ctx)
 
-	geminiAPIKey := os.Getenv("GEMINI_API_KEY")
-	if geminiAPIKey == "" {
-		return fmt.Errorf("GEMINI_API_KEY environment variable is not set")
-	}
-
 	codebotRobotToken := os.Getenv("CODEBOT_ROBOT_GITHUB_TOKEN")
 	if codebotRobotToken == "" {
 		return fmt.Errorf("CODEBOT_ROBOT_GITHUB_TOKEN environment variable is not set")
@@ -156,6 +151,11 @@ func RunGithubFixIssue(ctx context.Context, opt GithubFixIssueOptions) error {
 			Namespace: kube.CurrentNamespace,
 			Name:      sandboxName,
 		}
+	}
+
+	geminiAPIKey, err := GetGeminiAPIKey(podID.Namespace + "/" + podID.Name)
+	if err != nil {
+		return err
 	}
 
 	if err := waitForPodReady(ctx, kube, podID); err != nil {

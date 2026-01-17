@@ -46,11 +46,6 @@ func BuildGithubFeedbackCommand() *cobra.Command {
 func RunGithubFeedback(ctx context.Context, opt GithubFeedbackOptions) error {
 	log := klog.FromContext(ctx)
 
-	geminiAPIKey := os.Getenv("GEMINI_API_KEY")
-	if geminiAPIKey == "" {
-		return fmt.Errorf("GEMINI_API_KEY environment variable is not set")
-	}
-
 	githubAPI, err := github.NewClient(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create github client: %w", err)
@@ -88,6 +83,11 @@ func RunGithubFeedback(ctx context.Context, opt GithubFeedbackOptions) error {
 	}
 	if podID == nil {
 		return fmt.Errorf("sandbox %q not found", opt.Sandbox)
+	}
+
+	geminiAPIKey, err := GetGeminiAPIKey(podID.Namespace + "/" + podID.Name)
+	if err != nil {
+		return err
 	}
 
 	// Copy the prompt into the pod (for now)
