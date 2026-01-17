@@ -1,0 +1,8 @@
+apiVersion: review.gemini.google.com/v1alpha1
+kind: RepoWatch
+metadata:
+  name: ist-image
+  namespace: repo-agent-system
+(status != null): true
+(length(status.issueSandboxes.triage || `[]`)): 1
+

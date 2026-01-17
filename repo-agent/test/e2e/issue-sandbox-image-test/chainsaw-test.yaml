@@ -1,0 +1,67 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: issuesandbox-with-image
+spec:
+  steps:
+  - name: wait-for-repowatch-controller
+    try:
+    - sleep:
+        duration: 10s
+    - assert:
+        timeout: 3m
+        resource:
+          apiVersion: apps/v1
+          kind: StatefulSet
+          metadata:
+            name: repowatch-controller
+            namespace: repo-agent-system
+          status:
+            readyReplicas: 1
+  - name: create-repowatch
+    try:
+    - apply:
+        file: repowatch.yaml
+  - name: check-repowatch
+    try:
+    - assert:
+        timeout: 1m
+        file: repowatch-assert.yaml
+    catch:
+      - describe:
+          apiVersion: review.gemini.google.com/v1alpha1
+          kind: RepoWatch
+          namespace: repo-agent-system
+      - podLogs:
+          namespace: repo-agent-system
+          selector: statefulset.kubernetes.io/pod-name=repowatch-controller-0
+      - events:
+          namespace: repo-agent-system
+  - name: check-issuesandbox
+    try:
+    - assert:
+        timeout: 20m
+        file: issuesandbox-assert.yaml
+    catch:
+    - describe:
+        apiVersion: custom.agents.x-k8s.io/v1alpha1
+        kind: IssueSandbox
+        namespace: repo-agent-system
+        selector: review.gemini.google.com/repowatch=ist-image
+    - script:
+        content: |
+          IS_NAME=$(kubectl get issuesandbox -n repo-agent-system -l review.gemini.google.com/repowatch=ist-image -o jsonpath='{.items[0].metadata.name}')
+          if [ -z "$IS_NAME" ]; then
+            echo "No IssueSandbox found via label selector!"
+            exit 0
+          fi
+          echo "Found IssueSandbox: $IS_NAME"
+          POD_NAME="devc-$IS_NAME"
+          SANDBOX_NAME="devc-$IS_NAME"
+          echo "Looking for Pod: $POD_NAME"
+          echo "--- Describing Sandbox $SANDBOX_NAME ---"
+          kubectl describe sandbox -n repo-agent-system "$SANDBOX_NAME" || echo "Sandbox not found yet"
+          echo "--- Describing Pod $POD_NAME ---"
+          kubectl describe pod -n repo-agent-system "$POD_NAME" || echo "Pod not found yet"
+          echo "--- Logs for Pod $POD_NAME (container: issue-sandbox) ---"
+          kubectl logs -n repo-agent-system "$POD_NAME" -c issue-sandbox || echo "Could not fetch logs"
