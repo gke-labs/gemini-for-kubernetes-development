@@ -34,14 +34,15 @@ var _ Provider = &Dummy{}
 
 type Dummy struct {
 	processors []PostProcessor
+	ProviderConfig
 }
 
-func (d *Dummy) Setup(_, _ string) error {
+func (d *Dummy) Setup() error {
 	klog.Info("Dummy provider setup")
 	return nil
 }
 
-func (d *Dummy) Cleanup(_ string) error {
+func (d *Dummy) Cleanup() error {
 	klog.Info("Dummy provider cleanup")
 	return nil
 }

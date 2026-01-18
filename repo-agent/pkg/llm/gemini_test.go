@@ -58,8 +58,8 @@ func TestGemini_Setup(t *testing.T) {
 		}
 
 		// Create a Gemini provider and run Setup
-		g := &Gemini{}
-		if err := g.Setup(workspacesDir, tokensDir); err != nil {
+		g := &Gemini{ProviderConfig: ProviderConfig{WorkspacesDir: workspacesDir, TokensDir: tokensDir}}
+		if err := g.Setup(); err != nil {
 			t.Fatalf("Gemini.Setup() failed: %v", err)
 		}
 
@@ -91,8 +91,8 @@ func TestGemini_Setup(t *testing.T) {
 		}
 
 		// Create a Gemini provider and run Setup
-		g := &Gemini{}
-		if err := g.Setup(workspacesDir, tokensDir); err == nil {
+		g := &Gemini{ProviderConfig: ProviderConfig{WorkspacesDir: workspacesDir, TokensDir: tokensDir}}
+		if err := g.Setup(); err == nil {
 			t.Fatal("Gemini.Setup() should have failed, but it didn't")
 		}
 	})
@@ -243,7 +243,7 @@ func TestGeminiCleanup(t *testing.T) {
 	}
 
 	g := &Gemini{}
-	if err := g.Cleanup(""); err != nil {
+	if err := g.Cleanup(); err != nil {
 		t.Errorf("Cleanup() error = %v, want nil", err)
 	}
 }

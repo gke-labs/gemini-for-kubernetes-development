@@ -19,14 +19,14 @@ func TestDummy_Run(t *testing.T) {
 
 func TestDummy_Setup(t *testing.T) {
 	d := &Dummy{}
-	if err := d.Setup("", ""); err != nil {
+	if err := d.Setup(); err != nil {
 		t.Fatalf("Dummy.Setup failed: %v", err)
 	}
 }
 
 func TestDummy_Cleanup(t *testing.T) {
 	d := &Dummy{}
-	if err := d.Cleanup(""); err != nil {
+	if err := d.Cleanup(); err != nil {
 		t.Fatalf("Dummy.Cleanup failed: %v", err)
 	}
 }

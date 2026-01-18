@@ -51,6 +51,7 @@ type Claude struct {
 	client         HTTPClient
 	postProcessors []PostProcessor
 	URL            string
+	ProviderConfig
 }
 
 func (c *Claude) AddPostProcessor(p PostProcessor) {
@@ -61,7 +62,8 @@ func (c *Claude) QuotaCheck() bool {
 	return true
 }
 
-func (c *Claude) Setup(_, tokensDir string) error {
+func (c *Claude) Setup() error {
+	tokensDir := c.TokensDir
 	// Read API key from the mounted secret file
 	apiKeyPath := filepath.Join(tokensDir, AnthropicAPIKeySecretKey)
 	apiKeyBytes, err := os.ReadFile(apiKeyPath)
@@ -79,7 +81,7 @@ func (c *Claude) Setup(_, tokensDir string) error {
 	return nil
 }
 
-func (c *Claude) Cleanup(_ string) error {
+func (c *Claude) Cleanup() error {
 	return nil
 }
 
