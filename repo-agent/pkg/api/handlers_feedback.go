@@ -21,11 +21,17 @@ func (s *Server) submitFeedback(c *gin.Context) {
 	}
 
 	var payload struct {
+		Title string `json:"title"`
 		Text  string `json:"text"`
 		Image string `json:"image"` // base64
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if payload.Title == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Title is required"})
 		return
 	}
 
@@ -48,16 +54,18 @@ func (s *Server) submitFeedback(c *gin.Context) {
 	// Create Issue
 	owner := "gke-labs"
 	repo := "gemini-for-kubernetes-development"
-	title := fmt.Sprintf("Feedback from %s", namespace)
+	title := fmt.Sprintf("[repo-agent] %s", payload.Title)
 	body := fmt.Sprintf("User: %s\n\n%s", namespace, payload.Text)
+	labels := []string{"feedback"}
 
 	if payload.Image != "" {
 		body += "\n\n[Screenshot attached in request but ignored due to missing image host configuration]"
 	}
 
 	req := &github.IssueRequest{
-		Title: &title,
-		Body:  &body,
+		Title:  &title,
+		Body:   &body,
+		Labels: &labels,
 	}
 
 	issue, _, err := client.Issues.Create(c.Request.Context(), owner, repo, req)
