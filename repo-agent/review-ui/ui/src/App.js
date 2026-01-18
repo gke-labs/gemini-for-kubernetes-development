@@ -43,6 +43,7 @@ function App() {
   const [newDevBranch, setNewDevBranch] = useState('');
   const [newDevPrompt, setNewDevPrompt] = useState('');
   const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
+  const [feedbackTitle, setFeedbackTitle] = useState('');
   const [feedbackText, setFeedbackText] = useState('');
   const [feedbackImage, setFeedbackImage] = useState('');
   const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
@@ -914,7 +915,7 @@ function App() {
     fetch('/api/feedback', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: feedbackText, image: feedbackImage })
+        body: JSON.stringify({ title: feedbackTitle, text: feedbackText, image: feedbackImage })
     })
     .then(res => {
         if (res.ok) {
@@ -924,6 +925,7 @@ function App() {
                     window.open(data.issue_url, '_blank');
                 }
                 setFeedbackModalOpen(false);
+                setFeedbackTitle('');
                 setFeedbackText('');
                 setFeedbackImage('');
             });
@@ -1314,6 +1316,13 @@ function App() {
                         </p>
                     </>
                 )}
+                <input 
+                    type="text" 
+                    placeholder="Title" 
+                    value={feedbackTitle} 
+                    onChange={(e) => setFeedbackTitle(e.target.value)} 
+                    style={{padding: '5px', border: '1px solid #ccc'}} 
+                />
                 <textarea 
                     placeholder="Describe your issue or feedback..." 
                     value={feedbackText} 
