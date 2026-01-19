@@ -8,9 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/auth"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/store"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/templates"
-	"github.com/go-redis/redis/v8"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/klog/v2"
 )
@@ -18,17 +16,13 @@ import (
 type Server struct {
 	K8sManager *k8s.Manager
 	Auth       *auth.Authenticator
-	Redis      *redis.Client
-	Store      store.Store
 	Templates  *templates.Manager
 }
 
-func NewServer(manager *k8s.Manager, authenticator *auth.Authenticator, store store.Store) *Server {
+func NewServer(manager *k8s.Manager, authenticator *auth.Authenticator) *Server {
 	return &Server{
 		K8sManager: manager,
 		Auth:       authenticator,
-		Redis:      manager.Redis,
-		Store:      store,
 		Templates:  templates.NewManager(manager.Clientset),
 	}
 }

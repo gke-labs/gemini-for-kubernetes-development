@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -300,14 +299,6 @@ func (s *Server) updateRepoWatch(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update object structure"})
 			return
 		}
-
-		// If repoURL changed in YAML, we should update Redis too, but strictly speaking
-		// we should extract it from the new spec.
-		if newURL, found, _ := unstructured.NestedString(existing.Object, "spec", "repoURL"); found {
-			if err := s.Store.SaveRepo(c.Request.Context(), namespace, name, newURL); err != nil {
-				log.Info("Failed to update repo URL in Redis", "name", name, "err", err)
-			}
-		}
 	}
 
 	// Add PR if provided
@@ -559,36 +550,31 @@ func (s *Server) deleteRepoWatch(c *gin.Context) {
 		}
 	}
 
-	// Also delete from Redis
-	if err := s.Store.DeleteRepo(c.Request.Context(), namespace, name); err != nil {
-		log.Info("Failed to delete repo from Redis", "name", name, "err", err)
-		// Don't fail the request if Redis fails, as K8s deletion is the source of truth
-	}
-
 	c.Status(http.StatusOK)
 }
 
 func (s *Server) getRepos(c *gin.Context) {
 	log := klog.FromContext(c.Request.Context())
 	namespace := c.MustGet(auth.UserKey).(string)
-	s.fetchAndPopulateRepos(c.Request.Context(), namespace)
 
-	repos := []models.Repo{}
-	repoNames, err := s.Store.ListRepos(c.Request.Context(), namespace)
+	gvr := schema.GroupVersionResource{
+		Group:    "review.gemini.google.com",
+		Version:  "v1alpha1",
+		Resource: "repowatches",
+	}
+	list, err := s.K8sManager.Client.Resource(gvr).Namespace(namespace).List(c.Request.Context(), v1.ListOptions{})
 	if err != nil {
-		log.Info("Error during Redis SCAN", "err", err)
+		log.Info("Failed to list RepoWatch CRs", "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list repos"})
+		return
 	}
 
-	for _, repoName := range repoNames {
-		repoWatch, err := s.K8sManager.GetRepoWatch(c.Request.Context(), namespace, repoName)
-		if err != nil {
-			log.Info("Failed to get RepoWatch", "namespace", namespace, "name", repoName, "err", err)
-			continue
-		}
-
+	repos := []models.Repo{}
+	for _, repoWatch := range list.Items {
+		repoName := repoWatch.GetName()
 		repoURL, found, _ := unstructured.NestedString(repoWatch.Object, "spec", "repoURL")
 		if !found {
-			log.Info("repoURL not found in RepoWatch CR", "name", repoWatch.GetName())
+			log.Info("repoURL not found in RepoWatch CR", "name", repoName)
 			continue
 		}
 
@@ -628,7 +614,7 @@ func (s *Server) getRepos(c *gin.Context) {
 				}
 
 				// Try to get GitHub client to fetch titles
-				token, tokenErr := s.K8sManager.GetGitHubToken(c.Request.Context(), repoWatch)
+				token, tokenErr := s.K8sManager.GetGitHubToken(c.Request.Context(), &repoWatch)
 				var client *github.Client
 				if tokenErr == nil {
 					client = clients.NewGitHubClient(c.Request.Context(), token)
@@ -709,32 +695,6 @@ func (s *Server) getRepos(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, repos)
-}
-
-func (s *Server) fetchAndPopulateRepos(ctx context.Context, namespace string) {
-	log := klog.FromContext(ctx)
-	gvr := schema.GroupVersionResource{
-		Group:    "review.gemini.google.com",
-		Version:  "v1alpha1",
-		Resource: "repowatches",
-	}
-	list, err := s.K8sManager.Client.Resource(gvr).Namespace(namespace).List(context.Background(), v1.ListOptions{})
-	if err != nil {
-		log.Info("Failed to list RepoWatch CRs. Serving mock data.", "err", err)
-		return
-	}
-
-	for _, item := range list.Items {
-		repoURL, found, err := unstructured.NestedString(item.Object, "spec", "repoURL")
-		if err != nil || !found {
-			log.Info("repoURL not found in RepoWatch CR", "name", item.GetName())
-			continue
-		}
-		// Ensure the URL is in Redis
-		if err := s.Store.SaveRepo(ctx, namespace, item.GetName(), repoURL); err != nil {
-			log.Info("Failed to cache repo URL", "name", item.GetName(), "err", err)
-		}
-	}
 }
 
 func (s *Server) getTemplates(c *gin.Context) {

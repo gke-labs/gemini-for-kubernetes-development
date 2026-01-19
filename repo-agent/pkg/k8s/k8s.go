@@ -6,7 +6,6 @@ import (
 	"fmt"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
-	redis "github.com/go-redis/redis/v8"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -34,11 +33,10 @@ var (
 type Manager struct {
 	Client    dynamic.Interface
 	Clientset *kubernetes.Clientset
-	Redis     *redis.Client
 }
 
-func NewManager(kube *clients.KubernetesClient, rdb *redis.Client) *Manager {
-	return &Manager{Client: kube.DynamicClient, Clientset: kube.Clientset, Redis: rdb}
+func NewManager(kube *clients.KubernetesClient) *Manager {
+	return &Manager{Client: kube.DynamicClient, Clientset: kube.Clientset}
 }
 
 func (m *Manager) GetConfigDir(ctx context.Context, namespace, name string) (*unstructured.Unstructured, error) {
@@ -147,15 +145,7 @@ func (m *Manager) UpdateSecret(ctx context.Context, namespace, name string, data
 
 func (m *Manager) ScaledownSandbox(ctx context.Context, namespace, repo, prID string) error {
 	log := klog.FromContext(ctx)
-	prKey := fmt.Sprintf("pr:ns:%s:repo:%s:pr:%s", namespace, repo, prID)
-	sandboxName, err := m.Redis.HGet(ctx, prKey, "sandbox").Result()
-	if err != nil && err != redis.Nil {
-		return fmt.Errorf("failed to get sandbox name from Redis: %w", err)
-	}
-
-	if sandboxName == "" {
-		sandboxName = fmt.Sprintf("%s-pr-%s", repo, prID)
-	}
+	sandboxName := fmt.Sprintf("%s-pr-%s", repo, prID)
 
 	gvr := schema.GroupVersionResource{
 		Group:    "custom.agents.x-k8s.io",
@@ -164,7 +154,7 @@ func (m *Manager) ScaledownSandbox(ctx context.Context, namespace, repo, prID st
 	}
 	log.Info("Scaling down sandbox", "name", sandboxName)
 
-	_, err = m.Client.Resource(gvr).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
+	_, err := m.Client.Resource(gvr).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
 	if err != nil {
 		if errors.IsNotFound(err) {
 			return nil
@@ -407,14 +397,7 @@ func (m *Manager) ScaledownDevSandboxHelper(ctx context.Context, namespace, name
 
 func (m *Manager) ScaleupSandbox(ctx context.Context, namespace, repo, prID string) error {
 	log := klog.FromContext(ctx)
-	prKey := fmt.Sprintf("pr:ns:%s:repo:%s:pr:%s", namespace, repo, prID)
-	sandboxName, err := m.Redis.HGet(ctx, prKey, "sandbox").Result()
-	if err != nil && err != redis.Nil {
-		return fmt.Errorf("failed to get sandbox name from Redis: %w", err)
-	}
-	if sandboxName == "" {
-		sandboxName = fmt.Sprintf("%s-pr-%s", repo, prID)
-	}
+	sandboxName := fmt.Sprintf("%s-pr-%s", repo, prID)
 
 	gvr := schema.GroupVersionResource{
 		Group:    "custom.agents.x-k8s.io",
@@ -423,7 +406,7 @@ func (m *Manager) ScaleupSandbox(ctx context.Context, namespace, repo, prID stri
 	}
 	log.Info("Scaling up sandbox", "name", sandboxName)
 
-	_, err = m.Client.Resource(gvr).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
+	_, err := m.Client.Resource(gvr).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
 	if err != nil {
 		if errors.IsNotFound(err) {
 			return nil
