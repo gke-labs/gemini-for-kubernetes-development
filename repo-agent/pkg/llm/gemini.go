@@ -178,7 +178,7 @@ func (g *Gemini) Run(agentPrompt string) ([]byte, error) {
 	return output, nil
 }
 
-func StripThoughts(outputStartIndicator string) PostProcessor {
+func StripUnillStartIndicator(outputStartIndicator string) PostProcessor {
 	return func(input []byte) ([]byte, error) {
 		if outputStartIndicator == "" {
 			return input, nil
@@ -196,5 +196,29 @@ func StripThoughts(outputStartIndicator string) PostProcessor {
 		}
 
 		return input, nil
+	}
+}
+
+func StripIWillStatements() PostProcessor {
+	return func(input []byte) ([]byte, error) {
+		lines := bytes.SplitAfter(input, []byte("\n"))
+		var start int
+		foundContent := false
+		for i, line := range lines {
+			trimmed := bytes.TrimSpace(line)
+			if len(trimmed) == 0 {
+				continue
+			}
+			if bytes.HasPrefix(trimmed, []byte("I will")) {
+				continue
+			}
+			start = i
+			foundContent = true
+			break
+		}
+		if !foundContent {
+			return []byte{}, nil
+		}
+		return bytes.Join(lines[start:], nil), nil
 	}
 }

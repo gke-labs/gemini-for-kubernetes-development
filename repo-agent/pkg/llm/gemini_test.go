@@ -351,15 +351,15 @@ func TestEnsureSettings(t *testing.T) {
 	})
 }
 
-func TestStripThoughts(t *testing.T) {
-	processor := StripThoughts("note:")
+func TestStripUnillStartIndicator(t *testing.T) {
+	processor := StripUnillStartIndicator("note:")
 
 	t.Run("with note at beginning", func(t *testing.T) {
 		input := []byte("note: content")
 		expected := []byte("note: content")
 		result, err := processor(input)
 		if err != nil {
-			t.Fatalf("StripThoughts failed: %v", err)
+			t.Fatalf("StripUnillStartIndicator failed: %v", err)
 		}
 		if !bytes.Equal(result, expected) {
 			t.Errorf("Expected %q, got %q", expected, result)
@@ -371,7 +371,7 @@ func TestStripThoughts(t *testing.T) {
 		expected := []byte("note: content")
 		result, err := processor(input)
 		if err != nil {
-			t.Fatalf("StripThoughts failed: %v", err)
+			t.Fatalf("StripUnillStartIndicator failed: %v", err)
 		}
 		if !bytes.Equal(result, expected) {
 			t.Errorf("Expected %q, got %q", expected, result)
@@ -383,7 +383,7 @@ func TestStripThoughts(t *testing.T) {
 		expected := []byte("just content")
 		result, err := processor(input)
 		if err != nil {
-			t.Fatalf("StripThoughts failed: %v", err)
+			t.Fatalf("StripUnillStartIndicator failed: %v", err)
 		}
 		if !bytes.Equal(result, expected) {
 			t.Errorf("Expected %q, got %q", expected, result)
@@ -395,7 +395,7 @@ func TestStripThoughts(t *testing.T) {
 		expected := []byte("This is a note: content")
 		result, err := processor(input)
 		if err != nil {
-			t.Fatalf("StripThoughts failed: %v", err)
+			t.Fatalf("StripUnillStartIndicator failed: %v", err)
 		}
 		if !bytes.Equal(result, expected) {
 			t.Errorf("Expected %q, got %q", expected, result)
