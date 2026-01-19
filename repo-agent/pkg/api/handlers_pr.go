@@ -36,6 +36,9 @@ func (s *Server) getPRs(c *gin.Context) {
 }
 
 func (s *Server) fetchAndPopulatePRs(ctx context.Context, namespace, repo string) {
+	if !s.Store.RequiresPopulate() {
+		return
+	}
 	log := klog.FromContext(ctx)
 	gvr := schema.GroupVersionResource{
 		Group:    "custom.agents.x-k8s.io",
@@ -192,7 +195,7 @@ func (s *Server) submitReview(c *gin.Context) {
 	ctx := c.Request.Context()
 	log.Info("Submitting review for PR", "prID", prID, "repo", repo, "review", payload.Review)
 
-	// Get draft and agentDraft from Redis
+	// Get draft and agentDraft from Store
 	pr, err := s.Store.GetPR(ctx, namespace, repo, prID)
 	if err != nil {
 		log.Info("Failed to get PR from Store for repo", "prID", prID, "repo", repo, "err", err)
@@ -219,7 +222,7 @@ func (s *Server) submitReview(c *gin.Context) {
 		repoURL, _, _ := unstructured.NestedString(repoWatch.Object, "spec", "repoURL")
 		owner, _, _ := parseRepoURL(repoURL)
 
-		if err := s.Store.SavePRFeedback(ctx, owner, repo, prID, draft, agentDraft, prompt, configdir); err != nil {
+		if err := s.Store.SavePRFeedback(ctx, namespace, owner, repo, prID, draft, agentDraft, prompt, configdir); err != nil {
 			log.Info("Failed to store feedback for PR", "prID", prID, "repo", repo, "err", err)
 			// Continue without failing the review submission
 		}
@@ -288,7 +291,7 @@ func (s *Server) submitReview(c *gin.Context) {
 		return
 	}
 	log.Info("review created", "review", review)
-	// Set review in Redis
+	// Set review in Store
 	err = s.Store.UpdatePRReview(c.Request.Context(), namespace, repo, prID, payload.Review)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save review", "details": err.Error()})
@@ -323,10 +326,10 @@ func (s *Server) deletePR(c *gin.Context) {
 		return
 	}
 
-	// Clean up Redis keys
+	// Clean up Store keys
 	if err := s.Store.DeletePR(c.Request.Context(), namespace, repo, prID); err != nil {
-		log.Info("Failed to DEL PR data from Redis", "err", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to DEL PR data from Redis"})
+		log.Info("Failed to DEL PR data from Store", "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to DEL PR data from Store"})
 		return
 	}
 

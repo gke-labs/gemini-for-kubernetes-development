@@ -7,6 +7,8 @@ import (
 )
 
 type Store interface {
+	RequiresPopulate() bool
+
 	SaveRepo(ctx context.Context, namespace, name, url string) error
 	DeleteRepo(ctx context.Context, namespace, name string) error
 	ListRepos(ctx context.Context, namespace string) ([]string, error)
@@ -15,7 +17,7 @@ type Store interface {
 	SaveIssue(ctx context.Context, namespace, repo, handler string, issue models.Issue) error
 	GetIssue(ctx context.Context, namespace, repo, handler, issueID string) (*models.Issue, error)
 	UpdateIssueDraft(ctx context.Context, namespace, repo, handler, issueID, draft string) error
-	SaveIssueFeedback(ctx context.Context, owner, repo, handler, issueID, draft, agentDraft, prompt, configdir string) error
+	SaveIssueFeedback(ctx context.Context, namespace, owner, repo, handler, issueID, draft, agentDraft, prompt, configdir string) error
 	UpdateIssueComment(ctx context.Context, namespace, repo, handler, issueID, comment string) error
 	DeleteIssue(ctx context.Context, namespace, repo, handler, issueID string) error
 
@@ -28,6 +30,6 @@ type Store interface {
 	GetPR(ctx context.Context, namespace, repo, prID string) (*models.PR, error)
 	UpdatePRDraft(ctx context.Context, namespace, repo, prID, draft string) error
 	UpdatePRReview(ctx context.Context, namespace, repo, prID, review string) error
-	SavePRFeedback(ctx context.Context, owner, repo, prID, draft, agentDraft, prompt, configdir string) error
+	SavePRFeedback(ctx context.Context, namespace, owner, repo, prID, draft, agentDraft, prompt, configdir string) error
 	DeletePR(ctx context.Context, namespace, repo, prID string) error
 }

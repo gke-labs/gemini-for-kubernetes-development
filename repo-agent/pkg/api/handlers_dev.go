@@ -186,6 +186,10 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 }
 
 func (s *Server) fetchAndPopulateDevSandboxes(ctx context.Context, namespace, repo string) {
+	if !s.Store.RequiresPopulate() {
+		return
+	}
+
 	log := klog.FromContext(ctx)
 	gvr := schema.GroupVersionResource{
 		Group:    "custom.agents.x-k8s.io",
@@ -230,10 +234,9 @@ func (s *Server) fetchAndPopulateDevSandboxes(ctx context.Context, namespace, re
 			// Construct branch URL: https://github.com/OWNER/REPO/tree/BRANCH
 			branchURL := fmt.Sprintf("https://github.com/%s/%s/tree/%s", owner, repoName, branch)
 
-			// Store in Redis
 			// Use sandbox name as the identifier for now or the branch name?
 			// The UI card key is `sandbox.name`. If we use branch name, it must be unique per repo.
-			// Let's use the DevSandbox name as the key in Redis to match deletion logic.
+			// Let's use the DevSandbox name as the key in Store to match deletion logic.
 
 			agentState := ""
 			agentStateMessage := ""
@@ -297,8 +300,8 @@ func (s *Server) deleteDevSandbox(c *gin.Context) {
 	}
 
 	if err := s.Store.DeleteDevSandbox(c.Request.Context(), namespace, repo, name); err != nil {
-		log.Info("Failed to DEL DevSandbox data from Redis", "err", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to DEL DevSandbox data from Redis"})
+		log.Info("Failed to DEL DevSandbox data from Store", "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to DEL DevSandbox data from Store"})
 		return
 	}
 

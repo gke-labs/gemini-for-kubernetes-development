@@ -37,6 +37,9 @@ func (s *Server) getIssues(c *gin.Context) {
 }
 
 func (s *Server) fetchAndPopulateIssues(ctx context.Context, namespace, repo, handler string) {
+	if !s.Store.RequiresPopulate() {
+		return
+	}
 	log := klog.FromContext(ctx)
 	gvr := schema.GroupVersionResource{
 		Group:    "custom.agents.x-k8s.io",
@@ -253,7 +256,7 @@ func (s *Server) submitIssueComment(c *gin.Context) {
 		repoURL, _, _ := unstructured.NestedString(repoWatch.Object, "spec", "repoURL")
 		owner, _, _ := parseRepoURL(repoURL)
 
-		if err := s.Store.SaveIssueFeedback(ctx, owner, repo, handler, issueID, draft, agentDraft, prompt, configdir); err != nil {
+		if err := s.Store.SaveIssueFeedback(ctx, namespace, owner, repo, handler, issueID, draft, agentDraft, prompt, configdir); err != nil {
 			log.Info("Failed to store feedback for Issue", "issueID", issueID, "repo", repo, "err", err)
 			// Continue without failing the comment submission
 		}

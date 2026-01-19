@@ -301,11 +301,11 @@ func (s *Server) updateRepoWatch(c *gin.Context) {
 			return
 		}
 
-		// If repoURL changed in YAML, we should update Redis too, but strictly speaking
+		// If repoURL changed in YAML, we should update Store too, but strictly speaking
 		// we should extract it from the new spec.
 		if newURL, found, _ := unstructured.NestedString(existing.Object, "spec", "repoURL"); found {
 			if err := s.Store.SaveRepo(c.Request.Context(), namespace, name, newURL); err != nil {
-				log.Info("Failed to update repo URL in Redis", "name", name, "err", err)
+				log.Info("Failed to update repo URL in Store", "name", name, "err", err)
 			}
 		}
 	}
@@ -559,10 +559,10 @@ func (s *Server) deleteRepoWatch(c *gin.Context) {
 		}
 	}
 
-	// Also delete from Redis
+	// Also delete from Store
 	if err := s.Store.DeleteRepo(c.Request.Context(), namespace, name); err != nil {
-		log.Info("Failed to delete repo from Redis", "name", name, "err", err)
-		// Don't fail the request if Redis fails, as K8s deletion is the source of truth
+		log.Info("Failed to delete repo from Store", "name", name, "err", err)
+		// Don't fail the request if Store fails, as K8s deletion is the source of truth
 	}
 
 	c.Status(http.StatusOK)
@@ -576,7 +576,7 @@ func (s *Server) getRepos(c *gin.Context) {
 	repos := []models.Repo{}
 	repoNames, err := s.Store.ListRepos(c.Request.Context(), namespace)
 	if err != nil {
-		log.Info("Error during Redis SCAN", "err", err)
+		log.Info("Error during Store ListRepos", "err", err)
 	}
 
 	for _, repoName := range repoNames {
@@ -712,6 +712,9 @@ func (s *Server) getRepos(c *gin.Context) {
 }
 
 func (s *Server) fetchAndPopulateRepos(ctx context.Context, namespace string) {
+	if !s.Store.RequiresPopulate() {
+		return
+	}
 	log := klog.FromContext(ctx)
 	gvr := schema.GroupVersionResource{
 		Group:    "review.gemini.google.com",
@@ -730,7 +733,7 @@ func (s *Server) fetchAndPopulateRepos(ctx context.Context, namespace string) {
 			log.Info("repoURL not found in RepoWatch CR", "name", item.GetName())
 			continue
 		}
-		// Ensure the URL is in Redis
+		// Ensure the URL is in Store
 		if err := s.Store.SaveRepo(ctx, namespace, item.GetName(), repoURL); err != nil {
 			log.Info("Failed to cache repo URL", "name", item.GetName(), "err", err)
 		}

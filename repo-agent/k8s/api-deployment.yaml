@@ -20,6 +20,8 @@ spec:
         ports:
         - containerPort: 8080
         env:
+        - name: USE_STORE
+          value: "kubernetes"
         - name: REDIS_ADDR
           value: "redis:6379"
         - name: GITHUB_TOKEN

@@ -11,13 +11,6 @@ import (
 	"k8s.io/klog/v2"
 )
 
-// NewClient creates a new Redis client
-func NewClient(addr string) *redis.Client {
-	return redis.NewClient(&redis.Options{
-		Addr: addr,
-	})
-}
-
 // RedisStore implements the Store interface using Redis
 type RedisStore struct {
 	client *redis.Client
@@ -26,6 +19,10 @@ type RedisStore struct {
 // NewRedisStore creates a new RedisStore
 func NewRedisStore(client *redis.Client) *RedisStore {
 	return &RedisStore{client: client}
+}
+
+func (s *RedisStore) RequiresPopulate() bool {
+	return true
 }
 
 func (s *RedisStore) RepoKey(namespace, name string) string {
@@ -242,7 +239,7 @@ func (s *RedisStore) UpdateIssueDraft(ctx context.Context, namespace, repo, hand
 	return s.client.HSet(ctx, issueKey, "draft", draft).Err()
 }
 
-func (s *RedisStore) SaveIssueFeedback(ctx context.Context, owner, repo, handler, issueID, draft, agentDraft, prompt, configdir string) error {
+func (s *RedisStore) SaveIssueFeedback(ctx context.Context, _, owner, repo, handler, issueID, draft, agentDraft, prompt, configdir string) error {
 	hfKey := fmt.Sprintf("hf:issue:githubuser:%s:repo:%s:handler:%s:pr:%s", owner, repo, handler, issueID)
 	return s.client.HSet(ctx, hfKey,
 		"draft", draft,
@@ -493,7 +490,7 @@ func (s *RedisStore) UpdatePRReview(ctx context.Context, namespace, repo, prID, 
 	return s.client.HSet(ctx, prKey, "draft", "").Err()
 }
 
-func (s *RedisStore) SavePRFeedback(ctx context.Context, owner, repo, prID, draft, agentDraft, prompt, configdir string) error {
+func (s *RedisStore) SavePRFeedback(ctx context.Context, _, owner, repo, prID, draft, agentDraft, prompt, configdir string) error {
 	hfKey := fmt.Sprintf("hf:review:githubuser:%s:repo:%s:pr:%s", owner, repo, prID)
 	return s.client.HSet(ctx, hfKey,
 		"draft", draft,

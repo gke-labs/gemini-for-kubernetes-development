@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"os"
@@ -25,22 +24,6 @@ const (
 )
 
 func main() {
-	// Redis client
-	redisAddr := os.Getenv("REDIS_ADDR")
-	if redisAddr == "" {
-		redisAddr = "localhost:6379"
-	}
-	rdb := store.NewClient(redisAddr)
-
-	// Ping redis to ensure connection
-	_, err := rdb.Ping(context.Background()).Result()
-	if err != nil {
-		klog.Fatalf("Failed to connect to Redis: %v", err)
-	}
-
-	// Pre-populate mock data in Redis
-	store.PopulateMockData(context.Background(), rdb)
-
 	// Kubernetes client
 	kube, err := clients.NewKubernetesClient()
 	if err != nil {
@@ -48,7 +31,12 @@ func main() {
 	}
 
 	// K8s Manager
-	k8sManager := k8s.NewManager(kube, rdb)
+	k8sManager := k8s.NewManager(kube)
+
+	useStore := os.Getenv("USE_STORE")
+	if useStore == "" {
+		useStore = "redis"
+	}
 
 	// Allowed Users
 	var allowedUsers []string
@@ -62,11 +50,19 @@ func main() {
 	// Authenticator
 	authenticator := auth.NewAuthenticator(k8sManager, allowedUsers)
 
-	// Store
-	redisStore := store.NewRedisStore(rdb)
+	// Get a store instance
+	var storeInstance store.Store
+	switch useStore {
+	case "kubernetes":
+		storeInstance = store.NewK8sStore(k8sManager)
+	case "redis":
+		rdb := clients.NewRedisClient()
+		clients.EnsureRedisClient(rdb)
+		storeInstance = store.NewRedisStore(rdb)
+	}
 
 	// API Server
-	server := api.NewServer(k8sManager, authenticator, redisStore)
+	server := api.NewServer(k8sManager, authenticator, storeInstance)
 
 	// Gin router
 	router := gin.Default()
