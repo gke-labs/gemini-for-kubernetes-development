@@ -116,9 +116,16 @@ func ensureSettings(geminiDir string) error {
 		settings["general"] = general
 	}
 	general["previewFeatures"] = true
-	if _, ok := settings["model"]; !ok {
+	if model, ok := settings["model"]; !ok {
 		// if model is unset, set it to gemini-3-pro-preview
-		settings["model"] = "gemini-3-pro-preview"
+		settings["model"] = map[string]interface{}{
+			"name": "gemini-3-pro-preview",
+		}
+	} else if modelStr, ok := model.(string); ok {
+		// if model is a string, convert it to an object
+		settings["model"] = map[string]interface{}{
+			"name": modelStr,
+		}
 	}
 
 	data, err := json.MarshalIndent(settings, "", "  ")

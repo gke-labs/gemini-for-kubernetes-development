@@ -267,7 +267,9 @@ func TestEnsureSettings(t *testing.T) {
   "general": {
     "previewFeatures": true
   },
-  "model": "gemini-3-pro-preview"
+  "model": {
+    "name": "gemini-3-pro-preview"
+  }
 }`
 		if string(data) != expected {
 			t.Errorf("Expected settings:\n%s\nGot:\n%s", expected, string(data))
@@ -313,8 +315,9 @@ func TestEnsureSettings(t *testing.T) {
 		if general["previewFeatures"] != true {
 			t.Errorf("Expected 'general.previewFeatures' to be true, got %v", general["previewFeatures"])
 		}
-		if settings["model"] != "gemini-3-pro-preview" {
-			t.Errorf("Expected 'model' to be 'gemini-3-pro-preview', got %v", settings["model"])
+		model := settings["model"].(map[string]interface{})
+		if model["name"] != "gemini-3-pro-preview" {
+			t.Errorf("Expected 'model.name' to be 'gemini-3-pro-preview', got %v", model["name"])
 		}
 	})
 
@@ -325,7 +328,7 @@ func TestEnsureSettings(t *testing.T) {
 			t.Fatalf("failed to create gemini dir: %v", err)
 		}
 
-		initialSettings := `{"model": "my-custom-model"}`
+		initialSettings := `{"model": {"name": "my-custom-model"}}`
 		settingsPath := filepath.Join(geminiDir, "settings.json")
 		if err := os.WriteFile(settingsPath, []byte(initialSettings), 0644); err != nil {
 			t.Fatalf("failed to write initial settings: %v", err)
@@ -345,8 +348,45 @@ func TestEnsureSettings(t *testing.T) {
 			t.Fatalf("failed to unmarshal settings: %v", err)
 		}
 
-		if settings["model"] != "my-custom-model" {
-			t.Errorf("Expected 'model' to be 'my-custom-model', got %v", settings["model"])
+		model := settings["model"].(map[string]interface{})
+		if model["name"] != "my-custom-model" {
+			t.Errorf("Expected 'model.name' to be 'my-custom-model', got %v", model["name"])
+		}
+	})
+
+	t.Run("converts string model to object", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		geminiDir := filepath.Join(tmpDir, ".gemini")
+		if err := os.MkdirAll(geminiDir, 0755); err != nil {
+			t.Fatalf("failed to create gemini dir: %v", err)
+		}
+
+		initialSettings := `{"model": "string-model"}`
+		settingsPath := filepath.Join(geminiDir, "settings.json")
+		if err := os.WriteFile(settingsPath, []byte(initialSettings), 0644); err != nil {
+			t.Fatalf("failed to write initial settings: %v", err)
+		}
+
+		if err := ensureSettings(geminiDir); err != nil {
+			t.Fatalf("ensureSettings failed: %v", err)
+		}
+
+		data, err := os.ReadFile(settingsPath)
+		if err != nil {
+			t.Fatalf("failed to read settings.json: %v", err)
+		}
+
+		var settings map[string]interface{}
+		if err := json.Unmarshal(data, &settings); err != nil {
+			t.Fatalf("failed to unmarshal settings: %v", err)
+		}
+
+		model, ok := settings["model"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("Expected 'model' to be an object, but got %T", settings["model"])
+		}
+		if model["name"] != "string-model" {
+			t.Errorf("Expected 'model.name' to be 'string-model', got %v", model["name"])
 		}
 	})
 }
