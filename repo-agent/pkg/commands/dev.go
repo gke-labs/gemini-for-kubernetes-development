@@ -138,19 +138,16 @@ func (c *SandboxCommand) Run(ctx context.Context) error {
 	var (
 		gvr           schema.GroupVersionResource
 		agentType     string
-		reportStatus  bool
 		commitMessage string
 	)
 
 	if c.IssueID != "" {
 		gvr = IssueGVR
 		agentType = "issue"
-		reportStatus = true
 		commitMessage = "fix for issue #" + c.IssueID
 	} else {
 		gvr = DevGVR
 		agentType = "dev"
-		reportStatus = false
 		commitMessage = "Agent changes for: " + c.AgentPrompt
 	}
 
@@ -210,7 +207,6 @@ func (c *SandboxCommand) Run(ctx context.Context) error {
 		GithubUserLogin:  c.GithubUserLogin,
 		GithubUserEmail:  c.GithubUserEmail,
 		GithubUserName:   c.GithubUserName,
-		ReportStatus:     reportStatus,
 		GVR:              gvr,
 
 		WorkspacesDir: c.WorkspaceDir,
