@@ -372,7 +372,7 @@ func (c *ReviewCommand) Run(ctx context.Context) error {
 			accumulatedAgentOutput.Labels = uniqueStrings(accumulatedAgentOutput.Labels)
 		} else {
 			for _, newComment := range agentOutput.Review.Comments {
-				if newComment == nil {
+				if newComment == nil || newComment.Path == nil || newComment.Line == nil || newComment.Body == nil {
 					continue
 				}
 				if !isDuplicateCommentExact(newComment, existingComments, accumulatedAgentOutput.Review.Comments) {
