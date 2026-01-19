@@ -35,11 +35,3 @@ metadata:
   namespace: repo-agent-system
 status:
   readyReplicas: 1
----
-apiVersion: apps/v1
-kind: StatefulSet
-metadata:
-  name: redis
-  namespace: repo-agent-system
-status:
-  readyReplicas: 1
