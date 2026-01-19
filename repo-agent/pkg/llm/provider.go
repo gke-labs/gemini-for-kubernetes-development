@@ -70,7 +70,8 @@ func NewLLMProvider(cfg ProviderConfig) (Provider, error) {
 		}
 		g.AddPostProcessor(StripYAMLMarkers)
 		if cfg.OutputStartIndicator != "" {
-			g.AddPostProcessor(StripThoughts(cfg.OutputStartIndicator))
+			g.AddPostProcessor(StripUnillStartIndicator(cfg.OutputStartIndicator))
+			g.AddPostProcessor(StripIWillStatements())
 		}
 		return g, nil
 	case "claude":
