@@ -117,7 +117,7 @@ Modify the `switch` statement to include a new case for your provider. This allo
  		g := &Gemini{Executor: &RealCommandExecutor{}}
  		g.AddPostProcessor(StripYAMLMarkers)
  		if outputStartIndicator != "" {
-			g.AddPostProcessor(StripThoughts(outputStartIndicator))
+			g.AddPostProcessor(StripUnillStartIndicator(outputStartIndicator))
 		}
  		return g, nil
  	case "claude":
