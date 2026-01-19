@@ -48,7 +48,7 @@ function PrReviewCard({
   useEffect(() => {
     if (pr.type === 'pending' || pr.type === 'excluded') return;
 
-    if (pr.reviewState === 'submitted' || pr.review) {
+    if (pr.reviewState === 'submitted') {
       setReviewFlairText('Review Draft Created');
     } else if (pr.agentState) {
       setReviewFlairText(pr.agentState);
@@ -57,7 +57,7 @@ function PrReviewCard({
     } else {
       setReviewFlairText('Generating ...');
     }
-  }, [pr.review, drafts, pr.id, pr.type, pr.agentState, pr.reviewState]);
+  }, [drafts, pr.id, pr.type, pr.agentState, pr.reviewState]);
 
   useEffect(() => {
     if (pr.type === 'pending' || pr.type === 'excluded') return;
@@ -132,7 +132,7 @@ function PrReviewCard({
     );
   }
 
-  const reviewData = pr.review ? yaml.load(pr.review) : null;
+  const isSubmitted = pr.reviewState === 'submitted';
 
   const renderDiffView = () => {
     if (diffError) {
@@ -142,7 +142,7 @@ function PrReviewCard({
       return <div className="diff-container">Loading diff...</div>;
     }
 
-    const comments = pr.review ? (reviewData?.review?.comments || []) : (drafts[pr.id]?.review?.comments || []);
+    const comments = drafts[pr.id]?.review?.comments || [];
     const indexedComments = comments.map((c, i) => ({ ...c, index: i }));
 
     return (
@@ -202,15 +202,15 @@ function PrReviewCard({
                 {keyComments.map(comment => (
                   <div
                     key={comment.index}
-                    draggable={!pr.review}
+                    draggable={!isSubmitted}
                     onDragStart={e => {
-                      if (pr.review) return;
+                      if (isSubmitted) return;
                       e.dataTransfer.setData('application/json', JSON.stringify({ prId: pr.id, commentIndex: comment.index }));
                       e.stopPropagation();
                     }}
-                    style={{ cursor: pr.review ? 'default' : 'move' }}
+                    style={{ cursor: isSubmitted ? 'default' : 'move' }}
                   >
-                    {pr.review ? (
+                    {isSubmitted ? (
                       <pre className="review-pre">{comment.body}</pre>
                     ) : (
                       <>
@@ -366,15 +366,15 @@ function PrReviewCard({
                       {unplacedComments.map(comment => (
                         <div
                           key={comment.index}
-                          style={{ borderTop: '1px solid #eee', paddingTop: '5px', marginTop: '5px', cursor: pr.review ? 'default' : 'move' }}
-                          draggable={!pr.review}
+                          style={{ borderTop: '1px solid #eee', paddingTop: '5px', marginTop: '5px', cursor: isSubmitted ? 'default' : 'move' }}
+                          draggable={!isSubmitted}
                           onDragStart={e => {
-                              if (pr.review) return;
+                              if (isSubmitted) return;
                               e.dataTransfer.setData('application/json', JSON.stringify({ prId: pr.id, commentIndex: comment.index }));
                               e.stopPropagation();
                           }}
                         >
-                          {pr.review ? (
+                          {isSubmitted ? (
                             <>
                               {comment.line && <p style={{fontSize: 'small', color: '#555', marginBottom: '5px'}}>Line: {comment.line} ({comment.side || 'RIGHT'})</p>}
                               <pre className="review-pre">{comment.body}</pre>
@@ -407,7 +407,7 @@ function PrReviewCard({
   };
 
   return (
-    <div key={pr.id} className={`pr-card ${pr.review ? 'review-submitted' : ''}`}>
+    <div key={pr.id} className={`pr-card ${isSubmitted ? 'review-submitted' : ''}`}>
       <div className="pr-card-header" onClick={() => toggleCollapse(pr.id)}>
         <h3>
           <a href={pr.htmlURL} target="_blank" rel="noopener noreferrer">{pr.title} (PR #{pr.id})</a>
@@ -478,27 +478,27 @@ function PrReviewCard({
               {reviewViewModes[pr.id] === 'structured' ? 'View as YAML' : 'View as Structured'}
             </button>
           </div>
-          {pr.review ? (
+          {isSubmitted ? (
             reviewViewModes[pr.id] === 'structured' ? (
               <div className="review-display">
                 <strong>Review:</strong>
-                {reviewData.note &&
+                {drafts[pr.id]?.note &&
                   <div className="review-section">
                     <h4>Note to Reviewer</h4>
-                    <pre className="review-pre">{reviewData.note}</pre>
+                    <pre className="review-pre">{drafts[pr.id].note}</pre>
                   </div>
                 }
-                {reviewData.review && reviewData.review.body &&
+                {drafts[pr.id]?.review?.body &&
                   <div className="review-section">
                     <h4>GitHub Review</h4>
-                    <pre className="review-pre">{reviewData.review.body}</pre>
+                    <pre className="review-pre">{drafts[pr.id].review.body}</pre>
                   </div>
                 }
               </div>
             ) : (
               <div className="review-display">
                 <strong>Review:</strong>
-                <pre>{pr.review}</pre>
+                <pre>{yamlDrafts[pr.id] || ''}</pre>
               </div>
             )
           ) : (
@@ -543,17 +543,17 @@ function PrReviewCard({
           )}
           {renderDiffView()}
           <div className="pr-card-actions">
-            {!pr.review && (
+            {!isSubmitted && (
               <button className="btn btn-submit" onClick={() => handleSubmit(pr.id)}>
                 Create Draft Review
               </button>
             )}
-            {pr.review && (
+            {isSubmitted && (
               <a href={pr.htmlURL} target="_blank" rel="noopener noreferrer" className="btn btn-submit" style={{textDecoration: 'none'}}>
                 Go to review
               </a>
             )}
-            <button className="btn btn-submit" style={{marginLeft: '10px', backgroundColor: '#6c757d'}} onClick={() => handleExportCurl(pr.id, setCurlCommand)} disabled={!!pr.review}>
+            <button className="btn btn-submit" style={{marginLeft: '10px', backgroundColor: '#6c757d'}} onClick={() => handleExportCurl(pr.id, setCurlCommand)} disabled={isSubmitted}>
               Export Curl Command
             </button>
           </div>

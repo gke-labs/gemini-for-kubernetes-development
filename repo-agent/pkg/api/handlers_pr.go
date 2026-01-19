@@ -23,9 +23,8 @@ func (s *Server) getPRs(c *gin.Context) {
 	log := klog.FromContext(c.Request.Context())
 	namespace := c.MustGet(auth.UserKey).(string)
 	repo := c.Param("repo")
-	s.fetchAndPopulatePRs(c.Request.Context(), namespace, repo)
 
-	prs, err := s.Store.ListPRs(c.Request.Context(), namespace, repo)
+	prs, err := s.listPRsFromK8s(c.Request.Context(), namespace, repo)
 	if err != nil {
 		log.Info("Error listing PRs", "err", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list PRs"})
@@ -35,7 +34,7 @@ func (s *Server) getPRs(c *gin.Context) {
 	c.JSON(http.StatusOK, prs)
 }
 
-func (s *Server) fetchAndPopulatePRs(ctx context.Context, namespace, repo string) {
+func (s *Server) listPRsFromK8s(ctx context.Context, namespace, repo string) ([]models.PR, error) {
 	log := klog.FromContext(ctx)
 	gvr := schema.GroupVersionResource{
 		Group:    "custom.agents.x-k8s.io",
@@ -47,24 +46,19 @@ func (s *Server) fetchAndPopulatePRs(ctx context.Context, namespace, repo string
 			LabelSelector: fmt.Sprintf("review.gemini.google.com/repowatch=%s", repo),
 		})
 	if err != nil {
-		log.Info("Failed to list ReviewSandbox CRs. Serving mock data.", "err", err)
-		return
+		return nil, fmt.Errorf("failed to list ReviewSandbox CRs: %w", err)
 	}
 
-	log.Info("Populating PRs", "reviewsandbox_count", len(list.Items), "repo", repo)
-
-	activePRs := make(map[string]bool)
+	var prs []models.PR
 	for _, item := range list.Items {
-		log.Info("Creating PR entry for ReviewSandbox", "namespace", item.GetNamespace(), "name", item.GetName())
+		if item.GetDeletionTimestamp() != nil {
+			continue
+		}
+
 		// Get replicas and if it scaled down skip
 		replicas, found, err := unstructured.NestedInt64(item.Object, "spec", "replicas")
 		if err != nil || !found {
 			log.Info("Replicas (.spec.replicas) not found in ReviewSandbox", "name", item.GetName())
-			continue
-		}
-
-		if item.GetDeletionTimestamp() != nil {
-			log.Info("Skipping terminating ReviewSandbox", "name", item.GetName())
 			continue
 		}
 
@@ -79,8 +73,6 @@ func (s *Server) fetchAndPopulatePRs(ctx context.Context, namespace, repo string
 			log.Info("Title (.spec.source.title) not found in ReviewSandbox", "name", item.GetName())
 			continue
 		}
-
-		activePRs[prID] = true
 
 		htmlurl, found, err := unstructured.NestedString(item.Object, "spec", "source", "htmlURL")
 		if err != nil || !found {
@@ -98,12 +90,13 @@ func (s *Server) fetchAndPopulatePRs(ctx context.Context, namespace, repo string
 		reviewState := ""
 		var labels []string
 		annotations := item.GetAnnotations()
-		if annotations == nil {
-			log.Info("annotations (annotations=nil) not found in ReviewSandbox", "name", item.GetName())
-		} else {
-			if val, ok := annotations["agentDraft"]; ok {
+		if annotations != nil {
+			if val, ok := annotations["userDraft"]; ok {
+				draft = val
+			} else if val, ok := annotations["agentDraft"]; ok {
 				draft = val
 			}
+
 			if val, ok := annotations["agentState"]; ok {
 				agentState = val
 			}
@@ -126,33 +119,15 @@ func (s *Server) fetchAndPopulatePRs(ctx context.Context, namespace, repo string
 			DiffURL:           diffurl,
 			SandboxReplica:    fmt.Sprintf("%d", replicas),
 			Draft:             draft,
-			AgentDraft:        draft,
+			AgentDraft:        annotations["agentDraft"], // Explicitly set AgentDraft
 			AgentState:        agentState,
 			AgentStateMessage: agentStateMessage,
 			ReviewState:       reviewState,
 			Labels:            labels,
 		}
-
-		if err := s.Store.SavePR(ctx, namespace, repo, pr); err != nil {
-			log.Info("Failed to cache PR", "prID", pr.ID, "repo", repo, "err", err)
-		}
+		prs = append(prs, pr)
 	}
-
-	// Cleanup stale entries
-	storedPRs, err := s.Store.ListPRs(ctx, namespace, repo)
-	if err != nil {
-		log.Info("Failed to list PRs for cleanup", "err", err)
-		return
-	}
-
-	for _, pr := range storedPRs {
-		if !activePRs[pr.ID] {
-			log.Info("Removing stale PR from store", "prID", pr.ID)
-			if err := s.Store.DeletePR(ctx, namespace, repo, pr.ID); err != nil {
-				log.Info("Failed to delete stale PR", "prID", pr.ID, "err", err)
-			}
-		}
-	}
+	return prs, nil
 }
 
 func (s *Server) saveDraft(c *gin.Context) {
@@ -167,9 +142,10 @@ func (s *Server) saveDraft(c *gin.Context) {
 		return
 	}
 
-	err := s.Store.UpdatePRDraft(c.Request.Context(), namespace, repo, prID, payload.Draft)
+	sandboxName := fmt.Sprintf("%s-pr-%s", repo, prID)
+	err := s.K8sManager.UpdateReviewSandboxUserDraft(c.Request.Context(), namespace, sandboxName, payload.Draft)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save draft"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save draft", "details": err.Error()})
 		return
 	}
 
@@ -192,17 +168,28 @@ func (s *Server) submitReview(c *gin.Context) {
 	ctx := c.Request.Context()
 	log.Info("Submitting review for PR", "prID", prID, "repo", repo, "review", payload.Review)
 
-	// Get draft and agentDraft from Redis
-	pr, err := s.Store.GetPR(ctx, namespace, repo, prID)
+	sandboxName := fmt.Sprintf("%s-pr-%s", repo, prID)
+	gvr := schema.GroupVersionResource{
+		Group:    "custom.agents.x-k8s.io",
+		Version:  "v1alpha1",
+		Resource: "reviewsandboxes",
+	}
+
+	// Get ReviewSandbox to check agentDraft
+	sandbox, err := s.K8sManager.Client.Resource(gvr).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
 	if err != nil {
-		log.Info("Failed to get PR from Store for repo", "prID", prID, "repo", repo, "err", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get PR data from Store"})
+		log.Info("Failed to get reviewsandbox", "name", sandboxName, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get reviewsandbox"})
 		return
 	}
 
 	draft := payload.Review
-	agentDraft := pr.AgentDraft
-	sandboxName := pr.Sandbox
+	agentDraft := ""
+	if annotations := sandbox.GetAnnotations(); annotations != nil {
+		if val, ok := annotations["agentDraft"]; ok {
+			agentDraft = val
+		}
+	}
 
 	// Get RepoWatch to get repoURL and secret ref
 	repoWatch, err := s.K8sManager.GetRepoWatch(ctx, namespace, repo)
@@ -213,21 +200,9 @@ func (s *Server) submitReview(c *gin.Context) {
 	}
 
 	if draft != agentDraft {
-		// Store feedback for fine-tuning
-		prompt, _, _ := unstructured.NestedString(repoWatch.Object, "spec", "review", "gemini", "prompt")
-		configdir, _, _ := unstructured.NestedString(repoWatch.Object, "spec", "review", "gemini", "configdirRef")
-		repoURL, _, _ := unstructured.NestedString(repoWatch.Object, "spec", "repoURL")
-		owner, _, _ := parseRepoURL(repoURL)
-
-		if err := s.Store.SavePRFeedback(ctx, owner, repo, prID, draft, agentDraft, prompt, configdir); err != nil {
-			log.Info("Failed to store feedback for PR", "prID", prID, "repo", repo, "err", err)
-			// Continue without failing the review submission
-		}
-
 		if sandboxName != "" {
 			if err := s.K8sManager.UpdateReviewSandboxUserDraft(ctx, namespace, sandboxName, draft); err != nil {
 				log.Info("Failed to update reviewsandbox userDraft for PR", "prID", prID, "repo", repo, "err", err)
-				// Not failing the request for this, just logging.
 			}
 		}
 	}
@@ -288,11 +263,9 @@ func (s *Server) submitReview(c *gin.Context) {
 		return
 	}
 	log.Info("review created", "review", review)
-	// Set review in Redis
-	err = s.Store.UpdatePRReview(c.Request.Context(), namespace, repo, prID, payload.Review)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save review", "details": err.Error()})
-		return
+
+	if err := s.K8sManager.UpdateReviewSandboxAnnotation(ctx, namespace, sandboxName, "reviewState", "submitted"); err != nil {
+		log.Info("Failed to update reviewsandbox reviewState", "prID", prID, "repo", repo, "err", err)
 	}
 
 	// scale down sandbox
@@ -302,17 +275,10 @@ func (s *Server) submitReview(c *gin.Context) {
 		return
 	}
 
-	if sandboxName != "" {
-		if err := s.K8sManager.UpdateReviewSandboxAnnotation(ctx, namespace, sandboxName, "reviewState", "submitted"); err != nil {
-			log.Info("Failed to update reviewState annotation for PR", "prID", prID, "repo", repo, "err", err)
-		}
-	}
-
 	c.Status(http.StatusOK)
 }
 
 func (s *Server) deletePR(c *gin.Context) {
-	log := klog.FromContext(c.Request.Context())
 	namespace := c.MustGet(auth.UserKey).(string)
 	repo := c.Param("repo")
 	prID := c.Param("id")
@@ -320,13 +286,6 @@ func (s *Server) deletePR(c *gin.Context) {
 
 	if err := s.K8sManager.ScaledownSandbox(ctx, namespace, repo, prID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete sandbox", "details": err.Error()})
-		return
-	}
-
-	// Clean up Redis keys
-	if err := s.Store.DeletePR(c.Request.Context(), namespace, repo, prID); err != nil {
-		log.Info("Failed to DEL PR data from Redis", "err", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to DEL PR data from Redis"})
 		return
 	}
 
@@ -357,29 +316,4 @@ func (s *Server) scaleDownPR(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusOK)
-}
-
-//nolint:unused
-func (s *Server) deleteSandbox(ctx context.Context, namespace, repo, prID string) error {
-	log := klog.FromContext(ctx)
-	pr, err := s.Store.GetPR(ctx, namespace, repo, prID)
-	if err != nil {
-		// If sandbox is not in Store, we can assume it's already deleted or never existed.
-		log.Info("Sandbox for repo and PR not found in Store. Assuming it's already deleted.", "repo", repo, "prID", prID)
-		return nil
-	}
-	sandboxName := pr.Sandbox
-
-	gvr := schema.GroupVersionResource{
-		Group:    "custom.agents.x-k8s.io",
-		Version:  "v1alpha1",
-		Resource: "reviewsandboxes",
-	}
-	log.Info("Deleting sandbox", "name", sandboxName)
-	err = s.K8sManager.Client.Resource(gvr).Namespace(namespace).Delete(ctx, sandboxName, v1.DeleteOptions{})
-	if err != nil {
-		// We can choose to not return an error if it's already gone.
-		return fmt.Errorf("failed to delete sandbox: %w", err)
-	}
-	return nil
 }

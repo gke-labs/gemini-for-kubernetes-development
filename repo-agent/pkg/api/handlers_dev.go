@@ -23,9 +23,8 @@ func (s *Server) getDevSandboxes(c *gin.Context) {
 	log := klog.FromContext(c.Request.Context())
 	namespace := c.MustGet(auth.UserKey).(string)
 	repo := c.Param("repo")
-	s.fetchAndPopulateDevSandboxes(c.Request.Context(), namespace, repo)
 
-	sandboxes, err := s.Store.ListDevSandboxes(c.Request.Context(), namespace, repo)
+	sandboxes, err := s.listDevSandboxesFromK8s(c.Request.Context(), namespace, repo)
 	if err != nil {
 		log.Info("Error listing dev sandboxes", "err", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list dev sandboxes"})
@@ -33,6 +32,79 @@ func (s *Server) getDevSandboxes(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, sandboxes)
+}
+
+func (s *Server) listDevSandboxesFromK8s(ctx context.Context, namespace, repo string) ([]models.DevSandbox, error) {
+	log := klog.FromContext(ctx)
+	gvr := schema.GroupVersionResource{
+		Group:    "custom.agents.x-k8s.io",
+		Version:  "v1alpha1",
+		Resource: "issuesandboxes",
+	}
+	list, err := s.K8sManager.Client.Resource(gvr).Namespace(namespace).List(context.Background(),
+		v1.ListOptions{
+			LabelSelector: fmt.Sprintf("review.gemini.google.com/repowatch=%s,sandbox.gemini.google.com/type=dev", repo),
+		})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list DevSandbox CRs: %w", err)
+	}
+
+	var sandboxes []models.DevSandbox
+	for _, item := range list.Items {
+		replicas, found, err := unstructured.NestedInt64(item.Object, "spec", "replicas")
+		if err != nil || !found {
+			log.Info("Replicas (.spec.replicas) not found in DevSandbox", "name", item.GetName())
+			continue
+		}
+
+		branch, found, err := unstructured.NestedString(item.Object, "spec", "destination", "branch")
+		if err != nil || !found {
+			log.Info("Branch (.spec.destination.branch) not found in DevSandbox", "name", item.GetName())
+			branch = "nobranch" // fallback
+		}
+
+		cloneURL, found, err := unstructured.NestedString(item.Object, "spec", "source", "cloneURL")
+		if err != nil || !found {
+			log.Info("cloneURL (.spec.source.cloneURL) not found in DevSandbox", "name", item.GetName())
+			cloneURL = "https://github.com/noorg/norepo.git"
+		}
+		repoParts := strings.Split(strings.TrimSuffix(cloneURL, ".git"), "/")
+		if len(repoParts) >= 2 {
+			repoName := repoParts[len(repoParts)-1]
+			owner := repoParts[len(repoParts)-2]
+			// Construct branch URL: https://github.com/OWNER/REPO/tree/BRANCH
+			branchURL := fmt.Sprintf("https://github.com/%s/%s/tree/%s", owner, repoName, branch)
+
+			agentState := ""
+			agentStateMessage := ""
+			var labels []string
+			annotations := item.GetAnnotations()
+			if annotations != nil {
+				if val, ok := annotations["agentState"]; ok {
+					agentState = val
+				}
+				if val, ok := annotations["agentStateMessage"]; ok {
+					agentStateMessage = val
+				}
+				if val, ok := annotations["agentLabels"]; ok {
+					_ = json.Unmarshal([]byte(val), &labels)
+				}
+			}
+
+			sandbox := models.DevSandbox{
+				Name:              item.GetName(),
+				Sandbox:           item.GetName(),
+				Branch:            branch,
+				BranchURL:         branchURL,
+				SandboxReplica:    fmt.Sprintf("%d", replicas),
+				AgentState:        agentState,
+				AgentStateMessage: agentStateMessage,
+				Labels:            labels,
+			}
+			sandboxes = append(sandboxes, sandbox)
+		}
+	}
+	return sandboxes, nil
 }
 
 func (s *Server) createDevSandbox(c *gin.Context) {
@@ -185,120 +257,13 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"status": "created", "name": sandboxName})
 }
 
-func (s *Server) fetchAndPopulateDevSandboxes(ctx context.Context, namespace, repo string) {
-	log := klog.FromContext(ctx)
-	gvr := schema.GroupVersionResource{
-		Group:    "custom.agents.x-k8s.io",
-		Version:  "v1alpha1",
-		Resource: "issuesandboxes",
-	}
-	list, err := s.K8sManager.Client.Resource(gvr).Namespace(namespace).List(context.Background(),
-		v1.ListOptions{
-			LabelSelector: fmt.Sprintf("review.gemini.google.com/repowatch=%s,sandbox.gemini.google.com/type=dev", repo),
-		})
-	if err != nil {
-		log.Info("Failed to list DevSandbox CRs", "err", err)
-		return
-	}
-
-	log.Info("Populating DevSandboxes", "devsandbox_count", len(list.Items), "repo", repo)
-
-	activeSandboxes := make(map[string]bool)
-	for _, item := range list.Items {
-		activeSandboxes[item.GetName()] = true
-		replicas, found, err := unstructured.NestedInt64(item.Object, "spec", "replicas")
-		if err != nil || !found {
-			log.Info("Replicas (.spec.replicas) not found in DevSandbox", "name", item.GetName())
-			continue
-		}
-
-		branch, found, err := unstructured.NestedString(item.Object, "spec", "destination", "branch")
-		if err != nil || !found {
-			log.Info("Branch (.spec.destination.branch) not found in DevSandbox", "name", item.GetName())
-			branch = "nobranch" // fallback
-		}
-
-		cloneURL, found, err := unstructured.NestedString(item.Object, "spec", "source", "cloneURL")
-		if err != nil || !found {
-			log.Info("cloneURL (.spec.source.cloneURL) not found in DevSandbox", "name", item.GetName())
-			cloneURL = "https://github.com/noorg/norepo.git"
-		}
-		repoParts := strings.Split(strings.TrimSuffix(cloneURL, ".git"), "/")
-		if len(repoParts) >= 2 {
-			repoName := repoParts[len(repoParts)-1]
-			owner := repoParts[len(repoParts)-2]
-			// Construct branch URL: https://github.com/OWNER/REPO/tree/BRANCH
-			branchURL := fmt.Sprintf("https://github.com/%s/%s/tree/%s", owner, repoName, branch)
-
-			// Store in Redis
-			// Use sandbox name as the identifier for now or the branch name?
-			// The UI card key is `sandbox.name`. If we use branch name, it must be unique per repo.
-			// Let's use the DevSandbox name as the key in Redis to match deletion logic.
-
-			agentState := ""
-			agentStateMessage := ""
-			var labels []string
-			annotations := item.GetAnnotations()
-			if annotations != nil {
-				if val, ok := annotations["agentState"]; ok {
-					agentState = val
-				}
-				if val, ok := annotations["agentStateMessage"]; ok {
-					agentStateMessage = val
-				}
-				if val, ok := annotations["agentLabels"]; ok {
-					_ = json.Unmarshal([]byte(val), &labels)
-				}
-			}
-
-			sandbox := models.DevSandbox{
-				Name:              item.GetName(),
-				Sandbox:           item.GetName(),
-				Branch:            branch,
-				BranchURL:         branchURL,
-				SandboxReplica:    fmt.Sprintf("%d", replicas),
-				AgentState:        agentState,
-				AgentStateMessage: agentStateMessage,
-				Labels:            labels,
-			}
-			if err := s.Store.SaveDevSandbox(ctx, namespace, repo, sandbox); err != nil {
-				log.Info("Failed to cache DevSandbox", "name", item.GetName(), "err", err)
-			}
-		}
-	}
-
-	// Cleanup stale entries
-	storedSandboxes, err := s.Store.ListDevSandboxes(ctx, namespace, repo)
-	if err != nil {
-		log.Info("Failed to list dev sandboxes for cleanup", "err", err)
-		return
-	}
-
-	for _, sb := range storedSandboxes {
-		if !activeSandboxes[sb.Name] {
-			log.Info("Removing stale DevSandbox from store", "name", sb.Name)
-			if err := s.Store.DeleteDevSandbox(ctx, namespace, repo, sb.Name); err != nil {
-				log.Info("Failed to delete stale DevSandbox", "name", sb.Name, "err", err)
-			}
-		}
-	}
-}
-
 func (s *Server) deleteDevSandbox(c *gin.Context) {
-	log := klog.FromContext(c.Request.Context())
 	namespace := c.MustGet(auth.UserKey).(string)
-	repo := c.Param("repo")
 	name := c.Param("name") // This is the sandbox name
 	ctx := c.Request.Context()
 
 	if err := s.K8sManager.ScaledownDevSandboxHelper(ctx, namespace, name); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete dev sandbox", "details": err.Error()})
-		return
-	}
-
-	if err := s.Store.DeleteDevSandbox(c.Request.Context(), namespace, repo, name); err != nil {
-		log.Info("Failed to DEL DevSandbox data from Redis", "err", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to DEL DevSandbox data from Redis"})
 		return
 	}
 
