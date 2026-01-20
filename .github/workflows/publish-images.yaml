@@ -15,7 +15,6 @@ jobs:
           - configdir-controller
           - github-mcp-server
           - repo-sandbox
-          - redis
           - repowatch-controller
           - review-api
           - review-ui

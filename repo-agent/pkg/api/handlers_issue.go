@@ -24,9 +24,8 @@ func (s *Server) getIssues(c *gin.Context) {
 	namespace := c.MustGet(auth.UserKey).(string)
 	repo := c.Param("repo")
 	handler := c.Param("handler")
-	s.fetchAndPopulateIssues(c.Request.Context(), namespace, repo, handler)
 
-	issues, err := s.Store.ListIssues(c.Request.Context(), namespace, repo, handler)
+	issues, err := s.listIssuesFromK8s(c.Request.Context(), namespace, repo, handler)
 	if err != nil {
 		log.Info("Error listing issues", "err", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list issues"})
@@ -36,7 +35,7 @@ func (s *Server) getIssues(c *gin.Context) {
 	c.JSON(http.StatusOK, issues)
 }
 
-func (s *Server) fetchAndPopulateIssues(ctx context.Context, namespace, repo, handler string) {
+func (s *Server) listIssuesFromK8s(ctx context.Context, namespace, repo, handler string) ([]models.Issue, error) {
 	log := klog.FromContext(ctx)
 	gvr := schema.GroupVersionResource{
 		Group:    "custom.agents.x-k8s.io",
@@ -48,15 +47,11 @@ func (s *Server) fetchAndPopulateIssues(ctx context.Context, namespace, repo, ha
 			LabelSelector: fmt.Sprintf("review.gemini.google.com/repowatch=%s,review.gemini.google.com/handler=%s", repo, handler),
 		})
 	if err != nil {
-		log.Info("Failed to list IssueSandbox CRs", "err", err)
-		return
+		return nil, fmt.Errorf("failed to list IssueSandbox CRs: %w", err)
 	}
 
-	log.Info("Populating Issues", "issuesandbox_count", len(list.Items), "repo", repo, "handler", handler)
-
-	activeIssues := make(map[string]bool)
+	var issues []models.Issue
 	for _, item := range list.Items {
-		log.Info("Creating Issue entry for IssueSandbox", "namespace", item.GetNamespace(), "name", item.GetName())
 		replicas, found, err := unstructured.NestedInt64(item.Object, "spec", "replicas")
 		if err != nil || !found {
 			log.Info("Replicas (.spec.replicas) not found in IssueSandbox", "name", item.GetName())
@@ -75,17 +70,10 @@ func (s *Server) fetchAndPopulateIssues(ctx context.Context, namespace, repo, ha
 			continue
 		}
 
-		activeIssues[issueID] = true
-
 		htmlurl, found, err := unstructured.NestedString(item.Object, "spec", "source", "htmlURL")
 		if err != nil || !found {
 			log.Info("htmlURL (.spec.source.htmlURL) not found in IssueSandbox", "name", item.GetName())
 		}
-
-		// https://github.com/barney-s/kro/tree/issue-753-bugfix
-		// https://github.com/ + .user.login + source.cloneURL repo name + /tree/ + .destination.branch
-		// https://github.com/kubernetes-sigs/kro/compare/main...barney-s:kro:issue-753-bugfix
-		// .source.cloneURL - .git + /compare/main... + .user.login + : + source.cloneURL repo name  + : + .destination.branch
 
 		cloneURL, found, err := unstructured.NestedString(item.Object, "spec", "source", "cloneURL")
 		if err != nil || !found {
@@ -118,14 +106,13 @@ func (s *Server) fetchAndPopulateIssues(ctx context.Context, namespace, repo, ha
 		agentState := ""
 		agentStateMessage := ""
 		var labels []string
+		comment := ""
 		annotations := item.GetAnnotations()
-		if annotations == nil {
-			log.Info("annotations (annotations=nil) not found in IssueSandbox", "name", item.GetName())
-		} else {
-			if val, ok := annotations["agentDraft"]; ok {
+		if annotations != nil {
+			if val, ok := annotations["userDraft"]; ok {
 				draft = val
-			} else {
-				log.Info("agentDraft (annotations[agentDraft]) not found in IssueSandbox", "name", item.GetName())
+			} else if val, ok := annotations["agentDraft"]; ok {
+				draft = val
 			}
 			if val, ok := annotations["agentState"]; ok {
 				agentState = val
@@ -136,6 +123,9 @@ func (s *Server) fetchAndPopulateIssues(ctx context.Context, namespace, repo, ha
 			if val, ok := annotations["agentLabels"]; ok {
 				_ = json.Unmarshal([]byte(val), &labels)
 			}
+			if val, ok := annotations["issueCommentSubmitted"]; ok && val == "true" {
+				comment = draft
+			}
 		}
 
 		issue := models.Issue{
@@ -145,32 +135,17 @@ func (s *Server) fetchAndPopulateIssues(ctx context.Context, namespace, repo, ha
 			HTMLURL:           htmlurl,
 			SandboxReplica:    fmt.Sprintf("%d", replicas),
 			BranchURL:         branchURL,
+			Comment:           comment,
 			Draft:             draft,
+			AgentDraft:        annotations["agentDraft"],
 			PushBranch:        pushBranch,
 			AgentState:        agentState,
 			AgentStateMessage: agentStateMessage,
 			Labels:            labels,
 		}
-		if err := s.Store.SaveIssue(ctx, namespace, repo, handler, issue); err != nil {
-			log.Info("Failed to cache Issue", "issueID", issueID, "repo", repo, "handler", handler, "err", err)
-		}
+		issues = append(issues, issue)
 	}
-
-	// Cleanup stale entries
-	storedIssues, err := s.Store.ListIssues(ctx, namespace, repo, handler)
-	if err != nil {
-		log.Info("Failed to list issues for cleanup", "err", err)
-		return
-	}
-
-	for _, issue := range storedIssues {
-		if !activeIssues[issue.ID] {
-			log.Info("Removing stale Issue from store", "issueID", issue.ID)
-			if err := s.Store.DeleteIssue(ctx, namespace, repo, handler, issue.ID); err != nil {
-				log.Info("Failed to delete stale Issue", "issueID", issue.ID, "err", err)
-			}
-		}
-	}
+	return issues, nil
 }
 
 func (s *Server) saveIssueDraft(c *gin.Context) {
@@ -186,9 +161,10 @@ func (s *Server) saveIssueDraft(c *gin.Context) {
 		return
 	}
 
-	err := s.Store.UpdateIssueDraft(c.Request.Context(), namespace, repo, handler, issueID, payload.Draft)
+	sandboxName := fmt.Sprintf("%s-issue-%s-%s", repo, issueID, handler)
+	err := s.K8sManager.UpdateDevSandboxAnnotation(c.Request.Context(), namespace, sandboxName, "userDraft", payload.Draft)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save draft"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save draft", "details": err.Error()})
 		return
 	}
 
@@ -212,15 +188,28 @@ func (s *Server) submitIssueComment(c *gin.Context) {
 	ctx := c.Request.Context()
 	log.Info("Submitting comment for Issue", "issueID", issueID, "repo", repo, "comment", payload.Comment)
 
-	issue, err := s.Store.GetIssue(ctx, namespace, repo, handler, issueID)
+	sandboxName := fmt.Sprintf("%s-issue-%s-%s", repo, issueID, handler)
+	gvr := schema.GroupVersionResource{
+		Group:    "custom.agents.x-k8s.io",
+		Version:  "v1alpha1",
+		Resource: "issuesandboxes",
+	}
+
+	// Get IssueSandbox to check agentDraft
+	sandbox, err := s.K8sManager.Client.Resource(gvr).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
 	if err != nil {
-		log.Info("Failed to get Issue from Store for repo", "issueID", issueID, "repo", repo, "handler", handler, "err", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get Issue data from Store"})
+		log.Info("Failed to get issuesandbox", "name", sandboxName, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get issuesandbox"})
 		return
 	}
 
 	draft := payload.Comment
-	agentDraft := issue.AgentDraft
+	agentDraft := ""
+	if annotations := sandbox.GetAnnotations(); annotations != nil {
+		if val, ok := annotations["agentDraft"]; ok {
+			agentDraft = val
+		}
+	}
 
 	repoWatch, err := s.K8sManager.GetRepoWatch(ctx, namespace, repo)
 	if err != nil {
@@ -230,32 +219,10 @@ func (s *Server) submitIssueComment(c *gin.Context) {
 	}
 
 	if draft != agentDraft {
-		// Store feedback for fine-tuning
-		var prompt, configdir string
-		if handlers, found, err := unstructured.NestedSlice(repoWatch.Object, "spec", "issueHandlers"); err == nil && found {
-			for _, h := range handlers {
-				handlerMap, ok := h.(map[string]interface{})
-				if !ok {
-					continue
-				}
-				name, _ := handlerMap["name"].(string)
-				if name == handler {
-					gemini, ok := handlerMap["gemini"].(map[string]interface{})
-					if ok {
-						prompt, _ = gemini["prompt"].(string)
-						configdir, _ = gemini["configdirRef"].(string)
-					}
-					break
-				}
+		if sandboxName != "" {
+			if err := s.K8sManager.UpdateDevSandboxAnnotation(ctx, namespace, sandboxName, "userDraft", draft); err != nil {
+				log.Info("Failed to update issuesandbox userDraft", "issueID", issueID, "repo", repo, "err", err)
 			}
-		}
-
-		repoURL, _, _ := unstructured.NestedString(repoWatch.Object, "spec", "repoURL")
-		owner, _, _ := parseRepoURL(repoURL)
-
-		if err := s.Store.SaveIssueFeedback(ctx, owner, repo, handler, issueID, draft, agentDraft, prompt, configdir); err != nil {
-			log.Info("Failed to store feedback for Issue", "issueID", issueID, "repo", repo, "err", err)
-			// Continue without failing the comment submission
 		}
 	}
 
@@ -296,10 +263,8 @@ func (s *Server) submitIssueComment(c *gin.Context) {
 		return
 	}
 
-	err = s.Store.UpdateIssueComment(c.Request.Context(), namespace, repo, handler, issueID, payload.Comment)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save comment", "details": err.Error()})
-		return
+	if err := s.K8sManager.UpdateDevSandboxAnnotation(ctx, namespace, sandboxName, "issueCommentSubmitted", "true"); err != nil {
+		log.Info("Failed to update issuesandbox issueCommentSubmitted", "issueID", issueID, "repo", repo, "err", err)
 	}
 
 	err = s.K8sManager.ScaledownIssueSandbox(ctx, namespace, repo, issueID, handler)
@@ -312,7 +277,6 @@ func (s *Server) submitIssueComment(c *gin.Context) {
 }
 
 func (s *Server) deleteIssue(c *gin.Context) {
-	log := klog.FromContext(c.Request.Context())
 	namespace := c.MustGet(auth.UserKey).(string)
 	repo := c.Param("repo")
 	issueID := c.Param("issue_id")
@@ -321,12 +285,6 @@ func (s *Server) deleteIssue(c *gin.Context) {
 
 	if err := s.K8sManager.ScaledownIssueSandbox(ctx, namespace, repo, issueID, handler); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete sandbox", "details": err.Error()})
-		return
-	}
-
-	if err := s.Store.DeleteIssue(c.Request.Context(), namespace, repo, handler, issueID); err != nil {
-		log.Info("Failed to DEL Issue data from Store", "err", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to DEL Issue data from Store"})
 		return
 	}
 
