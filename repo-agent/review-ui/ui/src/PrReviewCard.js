@@ -26,6 +26,7 @@ function PrReviewCard({
   handleScaleUp,
   handleScaleDown,
   handleAddPR,
+  isMainView,
 }) {
   const [diff, setDiff] = useState(null);
   const [diffError, setDiffError] = useState(null);
@@ -408,12 +409,14 @@ function PrReviewCard({
 
   return (
     <div key={pr.id} className={`pr-card ${isSubmitted ? 'review-submitted' : ''}`}>
-      <div className="pr-card-header" onClick={() => toggleCollapse(pr.id)}>
+      <div className="pr-card-header" onClick={() => toggleCollapse(pr.id)} style={isMainView ? {cursor: 'default'} : {}}>
         <h3>
           <a href={pr.htmlURL} target="_blank" rel="noopener noreferrer">{pr.title} (PR #{pr.id})</a>
-          <span style={{ marginLeft: '10px', fontSize: 'small', color: '#555' }}>
-            {collapsedReviews[pr.id] ? 'click to expand' : 'click to collapse'}
-          </span>
+          {!isMainView && (
+            <span style={{ marginLeft: '10px', fontSize: 'small', color: '#555' }}>
+              {collapsedReviews[pr.id] ? 'click to expand' : 'click to collapse'}
+            </span>
+          )}
         </h3>
         <div className="pr-card-actions-header">
           {pr.labels && pr.labels.length > 0 && (

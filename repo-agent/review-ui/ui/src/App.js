@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import yaml from 'js-yaml';
 import './App.css';
 import PrReviewCard from './PrReviewCard';
+import Review from './Review';
 import IssueCard from './IssueCard';
 import DevCard from './DevCard';
 import AddRepo from './AddRepo';
@@ -941,115 +942,31 @@ function App() {
     if (!activeRepo) return <p>Please select or add a repository to watch.</p>;
     const namespace = user || 'default';
     if (activeSubTab.name === 'review') {
-        // 1. Active PRs
-        const activeList = [];
-        if (prs.length > 0) {
-            prs.forEach(pr => activeList.push({ ...pr, type: 'active', sortId: parseInt(pr.id) }));
-        }
-
-        const getPriority = (pr) => {
-            const isReviewDraftCreated = pr.reviewState === 'submitted' || !!pr.review;
-            if (isReviewDraftCreated) return 5;
-
-            if (!pr.agentState) return 6;
-
-            const state = pr.agentState.toLowerCase();
-            if (state === 'review ready') return 1;
-            if (state.includes('error')) return 2;
-            if (state === 'quota exceeded') return 3;
-            if (state === 'too many files') return 4;
-
-            return 6;
-        };
-
-        activeList.sort((a, b) => {
-            const pA = getPriority(a);
-            const pB = getPriority(b);
-            if (pA !== pB) return pA - pB;
-            return b.sortId - a.sortId;
-        });
-        
-        // 2. Pending PRs
-        const pending = activeRepo.pendingPRs || [];
-        let pendingList = [];
-        pending.forEach(p => {
-             // Handle both old format (number) and new format (object)
-             const id = typeof p === 'object' ? p.number : p;
-             const title = typeof p === 'object' && p.title ? `PR #${id}: ${p.title}` : `PR #${id}`;
-             const htmlURL = typeof p === 'object' ? p.htmlURL : null;
-
-             // Avoid duplicates if already in active
-             if (!activeList.find(i => i.sortId === id)) {
-                 pendingList.push({ id: id.toString(), type: 'pending', sortId: id, title: title, htmlURL: htmlURL });
-             }
-        });
-        pendingList.sort((a, b) => b.sortId - a.sortId);
-        // Limit to 10
-        pendingList = pendingList.slice(0, 10);
-        
-        // 3. Excluded PRs
-        const excluded = activeRepo.excludePullRequests || [];
-        const excludedList = [];
-        excluded.forEach(p => {
-             if (!activeList.find(i => i.sortId === p)) {
-                 excludedList.push({ id: p.toString(), type: 'excluded', sortId: p, title: `PR #${p} (Deleted)` });
-             }
-        });
-        excludedList.sort((a, b) => b.sortId - a.sortId);
-        
-        const renderItem = (item) => {
-            return (
-              <PrReviewCard
-                key={item.id}
-                pr={item}
-                drafts={drafts}
-                collapsedReviews={collapsedReviews}
-                reviewViewModes={reviewViewModes}
-                yamlDrafts={yamlDrafts}
-                handleDelete={handleDelete}
-                handleSaveDraft={handleSaveDraft}
-                handleDraftChange={handleDraftChange}
-                handleRemoveComment={handleRemoveComment}
-                toggleReviewView={toggleReviewView}
-                handleYamlDraftChange={handleYamlDraftChange}
-                handleYamlDraftBlur={handleYamlDraftBlur}
-                handleSubmit={handleSubmit}
-                handleExportCurl={handleExportCurl}
-                getSandboxStatusClass={getSandboxStatusClass}
-                toggleCollapse={toggleCollapse}
-                namespace={namespace}
-                handleMoveCommentAndSave={handleMoveCommentAndSave}
-                handleScaleUp={handlePRScaleUp}
-                handleScaleDown={handlePRScaleDown}
-                handleAddPR={handleAddPR}
-              />
-            );
-        };
-
       return (
-        <>
-          {activeList.map(renderItem)}
-          
-          {pendingList.length > 0 && (
-             <>
-                <h3 style={{marginTop: '30px', borderBottom: '1px solid #eee', paddingBottom: '10px', color: '#666'}}>Next ...</h3>
-                {pendingList.map(renderItem)}
-             </>
-          )}
-
-          {excludedList.length > 0 && (
-             <>
-                <h3 style={{marginTop: '30px', borderBottom: '1px solid #eee', paddingBottom: '10px', color: '#666'}}>Excluded...</h3>
-                {excludedList.map(renderItem)}
-             </>
-          )}
-
-          {activeList.length === 0 && pendingList.length === 0 && excludedList.length === 0 && <p>No active Pull Requests found for this repository.</p>}
-
-          <div style={{textAlign: 'center', marginTop: '20px'}}>
-            <button className="btn" onClick={() => handleAddPR()} title="Add PR to watch list" style={{fontSize: '24px', width: '50px', height: '50px', borderRadius: '25px', lineHeight: '24px'}}>+</button>
-          </div>
-        </>
+        <Review
+          activeRepo={activeRepo}
+          prs={prs}
+          drafts={drafts}
+          collapsedReviews={collapsedReviews}
+          reviewViewModes={reviewViewModes}
+          yamlDrafts={yamlDrafts}
+          handleDelete={handleDelete}
+          handleSaveDraft={handleSaveDraft}
+          handleDraftChange={handleDraftChange}
+          handleRemoveComment={handleRemoveComment}
+          toggleReviewView={toggleReviewView}
+          handleYamlDraftChange={handleYamlDraftChange}
+          handleYamlDraftBlur={handleYamlDraftBlur}
+          handleSubmit={handleSubmit}
+          handleExportCurl={handleExportCurl}
+          getSandboxStatusClass={getSandboxStatusClass}
+          toggleCollapse={toggleCollapse}
+          namespace={namespace}
+          handleMoveCommentAndSave={handleMoveCommentAndSave}
+          handleScaleUp={handlePRScaleUp}
+          handleScaleDown={handlePRScaleDown}
+          handleAddPR={handleAddPR}
+        />
       );
     } else if (activeSubTab.name === 'dev') {
         const activeList = devSandboxes.map(sandbox => ({...sandbox, type: 'active'}));
@@ -1230,7 +1147,7 @@ function App() {
             </div>
         </div>
       )}
-      <main className="pr-list">
+      <main className={activeSubTab.name === 'review' ? 'pr-list-review' : 'pr-list'}>
         {renderContent()}
       </main>
     </>
