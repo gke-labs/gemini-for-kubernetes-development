@@ -31,10 +31,10 @@ type Template struct {
 }
 
 type Manager struct {
-	clientset *kubernetes.Clientset
+	clientset kubernetes.Interface
 }
 
-func NewManager(clientset *kubernetes.Clientset) *Manager {
+func NewManager(clientset kubernetes.Interface) *Manager {
 	return &Manager{clientset: clientset}
 }
 

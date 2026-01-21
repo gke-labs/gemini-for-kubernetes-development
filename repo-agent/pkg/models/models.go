@@ -11,6 +11,19 @@ type ReviewAgentOutput struct {
 	Labels []string                         `yaml:"labels,omitempty"`
 }
 
+// Task represents a sandbox task
+type Task struct {
+	Name              string `json:"name"`
+	Type              string `json:"type"`
+	TaskState         string `json:"taskState"` // from status.taskState
+	Result            string `json:"result"`    // from status.result
+	CreationTimestamp string `json:"creationTimestamp"`
+	AgentDraft        string `json:"agentDraft,omitempty"`
+	UserDraft         string `json:"userDraft,omitempty"`
+	AgentState        string `json:"agentState,omitempty"`
+	AgentStateMessage string `json:"agentStateMessage,omitempty"`
+}
+
 // PR represents a pull request
 type PR struct {
 	ID                string   `json:"id"`
@@ -26,6 +39,7 @@ type PR struct {
 	AgentStateMessage string   `json:"agentStateMessage,omitempty"`
 	ReviewState       string   `json:"reviewState,omitempty"`
 	Labels            []string `json:"labels,omitempty"`
+	Tasks             []Task   `json:"tasks,omitempty"`
 }
 
 // Issue represents a GitHub issue

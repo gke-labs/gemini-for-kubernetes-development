@@ -47,11 +47,20 @@ type SandboxCommand struct {
 	PromptFilePath   string
 	TokensDir        string
 	RepoDir          string
+
+	// output
+	TaskDir         string
+	OutputGVR       *schema.GroupVersionResource
+	OutputName      string
+	OutputNamespace string
 }
 
 func (c *SandboxCommand) InitDefaults() {
 	if c.WorkspaceDir == "" {
 		c.WorkspaceDir = "/workspaces"
+	}
+	if c.TaskDir == "" {
+		c.TaskDir = c.WorkspaceDir
 	}
 	if c.TokensDir == "" {
 		c.TokensDir = "/tokens"
@@ -100,6 +109,18 @@ func (c *SandboxCommand) InitDefaults() {
 	if c.PromptFilePath == "" {
 		c.PromptFilePath = "/workspaces/agent-prompt.txt"
 	}
+
+	if c.IssueID != "" {
+		c.OutputGVR = &IssueGVR
+	} else {
+		c.OutputGVR = &DevGVR
+	}
+	if c.OutputName == "" {
+		c.OutputName = os.Getenv("NAME")
+	}
+	if c.OutputNamespace == "" {
+		c.OutputNamespace = os.Getenv("NAMESPACE")
+	}
 }
 
 func BuildSandboxCommand() *cobra.Command {
@@ -137,24 +158,23 @@ func (c *SandboxCommand) Run(ctx context.Context) error {
 
 	var (
 		gvr           schema.GroupVersionResource
-		agentType     string
 		commitMessage string
 	)
 
 	if c.IssueID != "" {
-		gvr = IssueGVR
-		agentType = "issue"
 		commitMessage = "fix for issue #" + c.IssueID
 	} else {
-		gvr = DevGVR
-		agentType = "dev"
 		commitMessage = "Agent changes for: " + c.AgentPrompt
 	}
 
-	go agentoutput.Run(agentType, gvr)
+	ao, err := agentoutput.New(*c.OutputGVR, c.OutputName, c.OutputNamespace)
+	if err != nil {
+		log.Error(err, "failed to create k8s client: %w", err)
+		return err
+	}
 
 	updateState := func(state, message string) {
-		err := agentoutput.SetAgentState(ctx, gvr, state, message)
+		err := ao.SetAgentState(ctx, state, message)
 		if err != nil {
 			log.Error(err, "updating agent state failed")
 		}
@@ -212,6 +232,8 @@ func (c *SandboxCommand) Run(ctx context.Context) error {
 		WorkspacesDir: c.WorkspaceDir,
 		RepoDir:       repoDir,
 		TokensDir:     c.TokensDir,
+		TaskDir:       c.TaskDir,
+		AgentOutput:   ao,
 	}
 
 	// Prepare git branch (checkout)
