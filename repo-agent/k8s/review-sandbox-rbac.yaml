@@ -21,6 +21,17 @@ rules:
   - update
   - patch
 - apiGroups:
+  - "custom.agents.x-k8s.io"
+  resources:
+  - sandboxtasks
+  - sandboxtasks/status
+  verbs:
+  - get
+  - list
+  - watch
+  - update
+  - patch
+- apiGroups:
   - "configdir.gke.io"
   resources:
   - configdirs

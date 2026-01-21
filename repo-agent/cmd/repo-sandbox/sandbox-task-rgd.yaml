@@ -1,0 +1,24 @@
+# NOT USED - Just for reference
+# CRD is explicitly defined in k8s/crds/sandbox-task-crd.yaml
+# Due to a bug in KRO where status fields are not created in CRD
+
+
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: sandbox-task
+spec:
+  schema:
+    apiVersion: v1alpha1
+    group: custom.agents.x-k8s.io
+    kind: SandboxTask
+    spec:
+      sandboxName: string
+      type: string
+      params: map[string]string | default={}
+      script: string | default=""
+    status:
+      # BUG IS KRO is not creating the status fields
+      taskState: string | default="Pending" # Pending, Running, Completed, Failed
+      result: string | default=""
+  resources: []

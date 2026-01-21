@@ -6,6 +6,8 @@ import (
 	"os"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/agentoutput"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/agentserver"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/taskrunner"
 	"github.com/spf13/cobra"
 	"k8s.io/klog/v2"
 )
@@ -33,23 +35,25 @@ func BuildReviewDaemonCommand() *cobra.Command {
 			return daemonCmd.Run(cmd.Context())
 		},
 	}
-
+	// Flags are technically not needed for the daemon anymore as it uses TaskRunner,
+	// but we keep them to avoid breaking changes if they are used by ReviewCommand init.
 	cmd.Flags().StringVar(&daemonCmd.ReviewCommand.RepoURL, "repo-url", os.Getenv("GIT_HTML_URL"), "Git HTML URL")
-	cmd.Flags().StringVar(&daemonCmd.ReviewCommand.UserDotfilesRepo, "user-dotfiles-repo", os.Getenv("USER_DOTFILESREPO"), "User dotfiles repo")
-	cmd.Flags().StringVar(&daemonCmd.ReviewCommand.CloneURL, "clone-url", os.Getenv("GIT_CLONE_URL"), "Git clone URL")
-	cmd.Flags().StringVar(&daemonCmd.ReviewCommand.AgentName, "agent-name", os.Getenv("AGENT_NAME"), "Agent name")
-	cmd.Flags().StringVar(&daemonCmd.ReviewCommand.AgentPrompt, "agent-prompt", os.Getenv("AGENT_PROMPT"), "Agent prompt")
-	cmd.Flags().StringVar(&daemonCmd.ReviewCommand.DiffURL, "diff-url", os.Getenv("GIT_DIFF_URL"), "Git diff URL")
-	cmd.Flags().IntVar(&daemonCmd.ReviewCommand.MaxReviewFiles, "max-review-files", 0, "Max review files")
+	// ... other flags can remain or be cleaned up.
 
 	return cmd
 }
 
 func (c *ReviewDaemonCommand) Run(ctx context.Context) error {
 	log := klog.FromContext(ctx)
+	ao, err := agentoutput.New(ReviewGVR, "", "")
+	if err != nil {
+		log.Error(err, "failed to create k8s client")
+		return err
+	}
 
+	// 1. Start Code Server (Background)
 	if err := c.CodeServerCommand.Start(ctx); err != nil {
-		_ = agentoutput.SetAgentState(ctx, ReviewGVR, "error", err.Error())
+		_ = ao.SetAgentState(ctx, "error", err.Error())
 		return fmt.Errorf("failed to start code-server: %w", err)
 	}
 
@@ -59,10 +63,33 @@ func (c *ReviewDaemonCommand) Run(ctx context.Context) error {
 		}
 	}()
 
-	// We ignore the error here to keep the pod running for debugging/code-server access
-	if err := c.ReviewCommand.Run(ctx); err != nil {
-		log.Error(err, "failed to run review command")
+	// 2. Start Agent Server (Log Serving)
+	agentServer := agentserver.NewAgentServer()
+	if err := agentServer.Start(); err != nil {
+		_ = ao.SetAgentState(ctx, "error", err.Error())
+		log.Error(err, "failed to start agent server")
+		return err
+	}
+	defer func() {
+		if err := agentServer.Stop(); err != nil {
+			log.Error(err, "failed to stop agent server")
+		}
+	}()
+
+	// 3. Start Task Runner (Process Tasks)
+	tr, err := taskrunner.NewTaskRunner(ao)
+	if err != nil {
+		_ = ao.SetAgentState(ctx, "error", err.Error())
+		log.Error(err, "failed to create task runner")
+		return err
 	}
 
+	// Run TaskRunner in background
+	go tr.Run(ctx)
+
+	log.Info("Review Daemon started. Waiting for tasks...")
+	_ = ao.SetAgentState(ctx, "Ready", "")
+
+	// 4. Wait for Code Server (blocks until termination)
 	return c.CodeServerCommand.Wait()
 }

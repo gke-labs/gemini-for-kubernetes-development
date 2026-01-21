@@ -17,6 +17,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/imagebuilder"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/llm"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/prompts"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tokens"
 	"github.com/google/go-github/v39/github"
@@ -39,6 +40,7 @@ const DefaultMaxReviewFiles = 30
 
 type ReviewCommand struct {
 	WorkspaceDir     string
+	TokensDir        string
 	RepoURL          string
 	UserDotfilesRepo string
 	CloneURL         string
@@ -46,12 +48,46 @@ type ReviewCommand struct {
 	AgentPrompt      string
 	DiffURL          string
 	MaxReviewFiles   int
-	TokensDir        string
+
+	// output
+	TaskDir         string
+	OutputGVR       *schema.GroupVersionResource
+	OutputName      string
+	OutputNamespace string
 }
 
 func (c *ReviewCommand) InitDefaults() {
+	if c.OutputGVR == nil {
+		if gvrResource := os.Getenv("AGENT_OUTPUT_GVR_RESOURCE"); gvrResource != "" {
+			group := os.Getenv("AGENT_OUTPUT_GVR_GROUP")
+			version := os.Getenv("AGENT_OUTPUT_GVR_VERSION")
+			if group != "" && version != "" {
+				gvr := schema.GroupVersionResource{
+					Group:    group,
+					Version:  version,
+					Resource: gvrResource,
+				}
+				c.OutputGVR = &gvr
+			}
+		}
+	}
+	if c.OutputGVR == nil {
+		c.OutputGVR = &ReviewGVR
+	}
+	if c.OutputName == "" {
+		c.OutputName = os.Getenv("NAME")
+	}
+	if c.OutputNamespace == "" {
+		c.OutputNamespace = os.Getenv("NAMESPACE")
+	}
 	if c.WorkspaceDir == "" {
 		c.WorkspaceDir = "/workspaces"
+	}
+	if c.TaskDir == "" {
+		c.TaskDir = os.Getenv("TASKDIR")
+	}
+	if c.TaskDir == "" {
+		c.TaskDir = c.WorkspaceDir
 	}
 	if c.TokensDir == "" {
 		c.TokensDir = "/tokens"
@@ -70,6 +106,12 @@ func (c *ReviewCommand) InitDefaults() {
 	}
 	if c.AgentPrompt == "" {
 		c.AgentPrompt = os.Getenv("AGENT_PROMPT")
+	}
+	if c.AgentPrompt == "" {
+		c.AgentPrompt = os.Getenv("prompt")
+	}
+	if c.AgentPrompt == "" {
+		c.AgentPrompt = os.Getenv("PROMPT")
 	}
 	if c.DiffURL == "" {
 		c.DiffURL = os.Getenv("GIT_DIFF_URL")
@@ -115,18 +157,23 @@ func BuildReviewCommand() *cobra.Command {
 	return cmd
 }
 
-func (c *ReviewCommand) workspacePath(file string) string {
-	// Ensure the workspace path is correctly joined
-	return filepath.Join(c.WorkspaceDir, file)
+func (c *ReviewCommand) taskPath(name string, args ...interface{}) string {
+	// Ensure the task path is correctly joined
+	file := fmt.Sprintf(name, args...)
+	return filepath.Join(c.TaskDir, file)
 }
 
 func (c *ReviewCommand) Run(ctx context.Context) error {
 	log := klog.FromContext(ctx)
 
-	go agentoutput.Run("review", ReviewGVR)
+	ao, err := agentoutput.New(*c.OutputGVR, c.OutputName, c.OutputNamespace)
+	if err != nil {
+		log.Error(err, "failed to create k8s client: %w", err)
+		return err
+	}
 
 	updateState := func(state, message string) {
-		err := agentoutput.SetAgentState(ctx, ReviewGVR, state, message)
+		err := ao.SetAgentState(ctx, state, message)
 		if err != nil {
 			log.Error(err, "updating agent state failed")
 		}
@@ -173,14 +220,13 @@ func (c *ReviewCommand) Run(ctx context.Context) error {
 	rawAgentPrompt := c.AgentPrompt
 
 	// save the incoming prompt
-	if err := os.WriteFile(c.workspacePath("agent-prompt.txt"), []byte(rawAgentPrompt), 0644); err != nil {
+	if err := os.WriteFile(c.taskPath("agent-prompt.txt"), []byte(rawAgentPrompt), 0644); err != nil {
 		log.Error(err, "Failed to write prompt to file")
 	}
 
-	var accumulatedAgentOutput agentoutput.ReviewAgentOutput
+	var accumulatedAgentOutput models.ReviewAgentOutput
 	var diffSizeLabel string
 	var diffFiles []*gitdiff.File
-	var err error
 	diffURL := c.DiffURL
 	var expectedComments int
 	// Check if diffURL begins with https://github.com/
@@ -206,7 +252,7 @@ func (c *ReviewCommand) Run(ctx context.Context) error {
 		diffSizeLabel = fmt.Sprintf("size/%s", diffSize)
 		log.Info("Adding diff size label", "label", diffSizeLabel)
 		// Initialize accumulatedAgentOutput with the size label
-		if err := agentoutput.AddAgentLabel(ReviewGVR, []string{diffSizeLabel}); err != nil {
+		if err := ao.AddAgentLabel(ctx, []string{diffSizeLabel}); err != nil {
 			log.Error(err, "Failed to add size label")
 		}
 		expectedComments = sizeToComments[diffSize]
@@ -318,8 +364,8 @@ func (c *ReviewCommand) Run(ctx context.Context) error {
 		}
 
 		// Write current prompt to file for debugging
-		promptFilename := fmt.Sprintf("agent-prompt-run%d.txt", i+1)
-		if err := os.WriteFile(c.workspacePath(promptFilename), []byte(currentPrompt), 0644); err != nil {
+		promptFilename := c.taskPath("agent-prompt-run%d.txt", i+1)
+		if err := os.WriteFile(promptFilename, []byte(currentPrompt), 0644); err != nil {
 			log.Error(err, "Failed to write agent prompt to file", "filename", promptFilename)
 		} else {
 			log.Info("Wrote agent prompt", "filename", promptFilename)
@@ -340,14 +386,14 @@ func (c *ReviewCommand) Run(ctx context.Context) error {
 		}
 
 		// Write output to file for debugging, regardless of validation result.
-		filename := fmt.Sprintf("agent-output-run%d.txt", i+1)
-		if err := os.WriteFile(c.workspacePath(filename), output, 0644); err != nil {
+		filename := c.taskPath("agent-output-run%d.txt", i+1)
+		if err := os.WriteFile(filename, output, 0644); err != nil {
 			log.Error(err, "Failed to write agent output", "filename", filename)
 		} else {
 			log.Info("Wrote agent output", "filename", filename)
 		}
 
-		var agentOutput agentoutput.ReviewAgentOutput
+		var agentOutput models.ReviewAgentOutput
 		if err := yaml.Unmarshal(output, &agentOutput); err != nil {
 			log.Info("Agent output validation failed: failed to unmarshal yaml. Continuing...", "error", err)
 			time.Sleep(5 * time.Second)
@@ -433,14 +479,19 @@ func (c *ReviewCommand) Run(ctx context.Context) error {
 		return fmt.Errorf("failed to re-marshal agent output: %w", err)
 	}
 
-	filename := "agent-output.txt"
-	if err := os.WriteFile(c.workspacePath(filename), finalOutput, 0644); err != nil {
+	filename := c.taskPath("agent-output.txt")
+	if err := os.WriteFile(filename, finalOutput, 0644); err != nil {
 		updateState("error", fmt.Sprintf("failed to write agent output: %v", err))
 		return fmt.Errorf("failed to write agent output to %s: %v", filename, err)
 	}
 
+	if err := ao.SetAgentDraft(ctx, string(finalOutput)); err != nil {
+		log.Error(err, "Failed to set agent draft")
+		return fmt.Errorf("failed to write agent output to %s: %v", filename, err)
+	}
+
 	accumulatedAgentOutput.Labels = append(accumulatedAgentOutput.Labels, diffSizeLabel)
-	if err := agentoutput.AddAgentLabel(ReviewGVR, accumulatedAgentOutput.Labels); err != nil {
+	if err := ao.AddAgentLabel(ctx, accumulatedAgentOutput.Labels); err != nil {
 		log.Error(err, "Failed to add agent labels")
 	}
 	log.Info("Wrote agent output", "filename", filename)
@@ -494,7 +545,7 @@ func isDuplicateCommentExact(newComment *github.DraftReviewComment, existingComm
 	return false
 }
 
-func validateAgentOutput(ctx context.Context, agentOutput *agentoutput.ReviewAgentOutput, diffFiles []*gitdiff.File) error {
+func validateAgentOutput(ctx context.Context, agentOutput *models.ReviewAgentOutput, diffFiles []*gitdiff.File) error {
 	log := klog.FromContext(ctx)
 	if agentOutput.Review == nil {
 		return fmt.Errorf("'review' field is missing from yaml output")

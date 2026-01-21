@@ -128,6 +128,8 @@ install-repo-agent:
 	#  copy RGD to k8s dir so it gets deployed
 	cp cmd/repo-sandbox/review-sandbox-rgd.yaml k8s/
 	cp cmd/repo-sandbox/issue-sandbox-rgd.yaml k8s/
+	# Using crd yaml directly due to KRO bug with status fields not being created
+	# cp cmd/repo-sandbox/sandbox-task-rgd.yaml k8s/
 	../dev/tools/deploy-to-kube --image-prefix=$(REGISTRY) --working-dir . \
 	--replace .spec.installationName=${CLUSTER_NAME} \
 	--replace .spec.gatewayClassName=${GW_CLASS} \

@@ -30,32 +30,54 @@ import (
 	"k8s.io/klog/v2"
 )
 
-func getClient() (dynamic.Interface, string, string, error) {
-	name := os.Getenv("NAME")
+const (
+	AgentDraftAnnotation = "agentDraft"
+)
+
+// AgentOutputConfig holds configuration for the agent output client.
+type AgentOutput struct {
+	name          string
+	namespace     string
+	gvr           schema.GroupVersionResource
+	dynamicClient dynamic.Interface
+}
+
+// New creates a new AgentOutput instance.
+func New(gvr schema.GroupVersionResource, name, namespace string) (*AgentOutput, error) {
 	if name == "" {
-		return nil, "", "", fmt.Errorf("missing NAME env")
+		name = os.Getenv("NAME")
+		if name == "" {
+			return nil, fmt.Errorf("missing NAME env")
+		}
 	}
-	namespace := os.Getenv("NAMESPACE")
+
 	if namespace == "" {
-		return nil, "", "", fmt.Errorf("missing NAMESPACE env")
+		namespace = os.Getenv("NAMESPACE")
+		if namespace == "" {
+			return nil, fmt.Errorf("missing NAMESPACE env")
+		}
+	}
+
+	ao := &AgentOutput{
+		name:      name,
+		namespace: namespace,
+		gvr:       gvr,
 	}
 
 	kube, err := clients.NewKubernetesClient()
 	if err != nil {
-		return nil, "", "", err
+		return nil, err
 	}
-	return kube.DynamicClient, name, namespace, nil
+
+	ao.dynamicClient = kube.DynamicClient
+
+	return ao, nil
 }
 
 // SetAgentState updates the agentState and agentStateMessage annotations.
-func SetAgentState(ctx context.Context, gvr schema.GroupVersionResource, state string, message string) error {
+func (ao *AgentOutput) SetAgentState(ctx context.Context, state string, message string) error {
 	log := klog.FromContext(ctx)
-	dc, name, namespace, err := getClient()
-	if err != nil {
-		return err
-	}
-
-	obj, err := dc.Resource(gvr).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	obj, err := ao.dynamicClient.Resource(ao.gvr).Namespace(ao.namespace).Get(ctx, ao.name, metav1.GetOptions{})
 	if err != nil {
 		return err
 	}
@@ -65,8 +87,8 @@ func SetAgentState(ctx context.Context, gvr schema.GroupVersionResource, state s
 			"apiVersion": obj.GetAPIVersion(),
 			"kind":       obj.GetKind(),
 			"metadata": map[string]interface{}{
-				"name":      name,
-				"namespace": namespace,
+				"name":      ao.name,
+				"namespace": ao.namespace,
 				"annotations": map[string]string{
 					"agentState":        state,
 					"agentStateMessage": message,
@@ -75,24 +97,19 @@ func SetAgentState(ctx context.Context, gvr schema.GroupVersionResource, state s
 		},
 	}
 
-	log.Info("applying resource with state", "namespace", namespace, "name", name, "state", state)
-	_, err = dc.Resource(gvr).Namespace(namespace).Apply(ctx, name, applyObj, metav1.ApplyOptions{FieldManager: "agent-draft-client", Force: true})
+	log.Info("applying resource with state", "namespace", ao.namespace, "name", ao.name, "state", state)
+	_, err = ao.dynamicClient.Resource(ao.gvr).Namespace(ao.namespace).Apply(ctx, ao.name, applyObj, metav1.ApplyOptions{FieldManager: "agent-draft-client", Force: true})
 	if err != nil {
-		log.Info("error applying resource", "namespace", namespace, "name", name, "err", err)
+		log.Info("error applying resource", "namespace", ao.namespace, "name", ao.name, "err", err)
 		return err
 	}
 	return nil
 }
 
 // SetAgentDraft updates the agentDraft annotation.
-func SetAgentDraft(ctx context.Context, gvr schema.GroupVersionResource, draft string) error {
+func (ao *AgentOutput) SetAgentDraft(ctx context.Context, draft string) error {
 	log := klog.FromContext(ctx)
-	dc, name, namespace, err := getClient()
-	if err != nil {
-		return err
-	}
-
-	obj, err := dc.Resource(gvr).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	obj, err := ao.dynamicClient.Resource(ao.gvr).Namespace(ao.namespace).Get(ctx, ao.name, metav1.GetOptions{})
 	if err != nil {
 		return err
 	}
@@ -102,8 +119,8 @@ func SetAgentDraft(ctx context.Context, gvr schema.GroupVersionResource, draft s
 			"apiVersion": obj.GetAPIVersion(),
 			"kind":       obj.GetKind(),
 			"metadata": map[string]interface{}{
-				"name":      name,
-				"namespace": namespace,
+				"name":      ao.name,
+				"namespace": ao.namespace,
 				"annotations": map[string]string{
 					"agentDraft": draft,
 				},
@@ -111,23 +128,18 @@ func SetAgentDraft(ctx context.Context, gvr schema.GroupVersionResource, draft s
 		},
 	}
 
-	log.Info("applying resource with draft", "namespace", namespace, "name", name)
-	_, err = dc.Resource(gvr).Namespace(namespace).Apply(ctx, name, applyObj, metav1.ApplyOptions{FieldManager: "agent-output-client", Force: true})
+	log.Info("applying resource with draft", "namespace", ao.namespace, "name", ao.name)
+	_, err = ao.dynamicClient.Resource(ao.gvr).Namespace(ao.namespace).Apply(ctx, ao.name, applyObj, metav1.ApplyOptions{FieldManager: "agent-output-client", Force: true})
 	if err != nil {
-		log.Info("error applying resource", "namespace", namespace, "name", name, "err", err)
+		log.Info("error applying resource", "namespace", ao.namespace, "name", ao.name, "err", err)
 		return err
 	}
 	return nil
 }
 
 // SetAgentLabel replaces the agentLabels annotation with the provided labels.
-func SetAgentLabel(gvr schema.GroupVersionResource, labels []string) error {
-	dc, name, namespace, err := getClient()
-	if err != nil {
-		return err
-	}
-
-	obj, err := dc.Resource(gvr).Namespace(namespace).Get(context.TODO(), name, metav1.GetOptions{})
+func (ao *AgentOutput) SetAgentLabel(ctx context.Context, labels []string) error {
+	obj, err := ao.dynamicClient.Resource(ao.gvr).Namespace(ao.namespace).Get(ctx, ao.name, metav1.GetOptions{})
 	if err != nil {
 		return err
 	}
@@ -142,8 +154,8 @@ func SetAgentLabel(gvr schema.GroupVersionResource, labels []string) error {
 			"apiVersion": obj.GetAPIVersion(),
 			"kind":       obj.GetKind(),
 			"metadata": map[string]interface{}{
-				"name":      name,
-				"namespace": namespace,
+				"name":      ao.name,
+				"namespace": ao.namespace,
 				"annotations": map[string]string{
 					"agentLabels": string(labelsJSON),
 				},
@@ -151,23 +163,18 @@ func SetAgentLabel(gvr schema.GroupVersionResource, labels []string) error {
 		},
 	}
 
-	klog.Infof("applying resource %s/%s labels\n", namespace, name)
-	_, err = dc.Resource(gvr).Namespace(namespace).Apply(context.TODO(), name, applyObj, metav1.ApplyOptions{FieldManager: "agent-label-client"})
+	klog.Infof("applying resource %s/%s labels\n", ao.namespace, ao.name)
+	_, err = ao.dynamicClient.Resource(ao.gvr).Namespace(ao.namespace).Apply(ctx, ao.name, applyObj, metav1.ApplyOptions{FieldManager: "agent-label-client"})
 	if err != nil {
-		klog.Infof("error applying resource %s/%s: %v\n", namespace, name, err)
+		klog.Infof("error applying resource %s/%s: %v\n", ao.namespace, ao.name, err)
 		return err
 	}
 	return nil
 }
 
 // AddAgentLabel adds a list of labels to the agentLabels annotation, handling deduplication.
-func AddAgentLabel(gvr schema.GroupVersionResource, newLabels []string) error {
-	dc, name, namespace, err := getClient()
-	if err != nil {
-		return err
-	}
-
-	obj, err := dc.Resource(gvr).Namespace(namespace).Get(context.TODO(), name, metav1.GetOptions{})
+func (ao *AgentOutput) AddAgentLabel(ctx context.Context, newLabels []string) error {
+	obj, err := ao.dynamicClient.Resource(ao.gvr).Namespace(ao.namespace).Get(ctx, ao.name, metav1.GetOptions{})
 	if err != nil {
 		return err
 	}
@@ -211,8 +218,8 @@ func AddAgentLabel(gvr schema.GroupVersionResource, newLabels []string) error {
 				"apiVersion": obj.GetAPIVersion(),
 				"kind":       obj.GetKind(),
 				"metadata": map[string]interface{}{
-					"name":      name,
-					"namespace": namespace,
+					"name":      ao.name,
+					"namespace": ao.namespace,
 					"annotations": map[string]string{
 						"agentLabels": string(labelsJSON),
 					},
@@ -220,8 +227,8 @@ func AddAgentLabel(gvr schema.GroupVersionResource, newLabels []string) error {
 			},
 		}
 
-		_, err = dc.Resource(gvr).Namespace(namespace).Apply(context.TODO(), name, applyObj, metav1.ApplyOptions{FieldManager: "agent-label-client"})
-		klog.Infof("added labels to resource %s/%s: %v\n", namespace, name, newLabels)
+		_, err = ao.dynamicClient.Resource(ao.gvr).Namespace(ao.namespace).Apply(ctx, ao.name, applyObj, metav1.ApplyOptions{FieldManager: "agent-label-client"})
+		klog.Infof("added labels to resource %s/%s: %v\n", ao.namespace, ao.name, newLabels)
 		return err
 	}
 

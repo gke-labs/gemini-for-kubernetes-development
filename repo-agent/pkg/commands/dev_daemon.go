@@ -60,9 +60,14 @@ func (c *SandboxDaemonCommand) Run(ctx context.Context) error {
 	} else {
 		gvr = DevGVR
 	}
+	ao, err := agentoutput.New(gvr, "", "")
+	if err != nil {
+		log.Error(err, "failed to create k8s client: %w", err)
+		return err
+	}
 
 	if err := c.CodeServerCommand.Start(ctx); err != nil {
-		_ = agentoutput.SetAgentState(ctx, gvr, "error", err.Error())
+		_ = ao.SetAgentState(ctx, "error", err.Error())
 		return fmt.Errorf("failed to start code-server: %w", err)
 	}
 

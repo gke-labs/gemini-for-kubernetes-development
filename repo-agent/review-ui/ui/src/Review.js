@@ -148,6 +148,9 @@ function Review({
         <div className="review-sidebar">
             <div className="sidebar-section">
                 {activeList.map(renderSidebarItem)}
+                <div className="sidebar-item add-pr" onClick={() => handleAddPR()} style={{textAlign: 'center', cursor: 'pointer', color: '#555', border: '1px dashed #ccc'}}>
+                    + Add PR
+                </div>
             </div>
             {(pendingList.length > 0 || excludedList.length > 0) && <hr className="sidebar-divider" />}
             <div className="sidebar-section">
@@ -168,9 +171,6 @@ function Review({
                         {isExcludedOpen && excludedList.map(renderSidebarItem)}
                     </>
                 )}
-            </div>
-            <div className="sidebar-actions">
-                <button className="btn btn-add-pr" onClick={() => handleAddPR()} title="Add PR to watch list">+</button>
             </div>
         </div>
         <div className="review-main">
