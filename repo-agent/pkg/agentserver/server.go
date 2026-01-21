@@ -1,0 +1,87 @@
+package agentserver
+
+import (
+	"fmt"
+	"net/http"
+	"os"
+	"path/filepath"
+
+	"github.com/gorilla/handlers"
+	"github.com/gorilla/mux"
+	"k8s.io/klog/v2"
+)
+
+const (
+	ServerPort    = 13339
+	LogsDirectory = "/workspaces/.agent/logs"
+)
+
+type AgentServer struct {
+	server *http.Server
+}
+
+func NewAgentServer() *AgentServer {
+	r := mux.NewRouter()
+	r.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("OK"))
+	})
+
+	r.HandleFunc("/logs/{taskID}", serveLogFile)
+
+	// Add CORS middleware
+	corsObj := handlers.AllowedOrigins([]string{"*"})
+
+	srv := &http.Server{
+		Addr:    fmt.Sprintf(":%d", ServerPort),
+		Handler: handlers.CORS(corsObj)(r),
+	}
+
+	return &AgentServer{
+		server: srv,
+	}
+}
+
+func (s *AgentServer) Start() error {
+	// Ensure logs directory exists
+	if err := os.MkdirAll(LogsDirectory, 0755); err != nil {
+		return fmt.Errorf("failed to create logs directory: %w", err)
+	}
+
+	klog.Infof("AgentServer listening on %d", ServerPort)
+	go func() {
+		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			klog.Errorf("AgentServer failed: %v", err)
+		}
+	}()
+	return nil
+}
+
+func (s *AgentServer) Stop() error {
+	return s.server.Close()
+}
+
+func serveLogFile(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	taskID := vars["taskID"]
+
+	// Sanitize taskID to prevent path traversal
+	if taskID == "" || filepath.Clean(taskID) != taskID || taskID == ".." || taskID == "." {
+		http.Error(w, "Invalid task ID", http.StatusBadRequest)
+		return
+	}
+
+	logFilePath := filepath.Join(LogsDirectory, taskID+".log")
+
+	// Check if file exists
+	if _, err := os.Stat(logFilePath); os.IsNotExist(err) {
+		http.Error(w, "Log file not found", http.StatusNotFound)
+		return
+	}
+
+	// Serve the file
+	// http.ServeFile handles Range requests and caching headers automatically,
+	// but for live streaming (tailing), we might want a WebSocket or chunked response.
+	// For now, simple file serving is a good start. The UI can poll or use Range headers.
+	http.ServeFile(w, r, logFilePath)
+}

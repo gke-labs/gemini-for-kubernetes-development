@@ -101,8 +101,9 @@ spec:
                     - name: MAX_REVIEW_FILES
                       value: ${string(schema.spec.maxReviewFiles)}
                     # URL to the repository where the .devcontainer folder we want to load is located
-                    - name: AGENT_PROMPT
-                      value: ${schema.spec.llm.prompt}
+                    # injected via tasks
+                    #- name: AGENT_PROMPT
+                    #  value: ${schema.spec.llm.prompt}
                     - name: AGENT_NAME
                       value: ${schema.spec.llmBackend.name}
                     - name: GIT_CLONE_URL

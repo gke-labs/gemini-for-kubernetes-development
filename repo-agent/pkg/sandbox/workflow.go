@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/klog/v2"
@@ -27,9 +28,17 @@ type Config struct {
 	GVR              schema.GroupVersionResource
 
 	// Directory paths
+	TaskDir       string
 	RepoDir       string
 	WorkspacesDir string
 	TokensDir     string
+	AgentOutput   *agentoutput.AgentOutput
+}
+
+func (c *Config) taskPath(name string, args ...interface{}) string {
+	// Ensure the task path is correctly joined
+	file := fmt.Sprintf(name, args...)
+	return filepath.Join(c.TaskDir, file)
 }
 
 func PrepareGitBranch(cfg Config) (string, error) {
@@ -96,13 +105,9 @@ func RunAgent(ctx context.Context, cfg Config) error {
 	}
 
 	// Run gemini
-	_ = agentoutput.SetAgentState(ctx, cfg.GVR, "running agent", "")
+	_ = cfg.AgentOutput.SetAgentState(ctx, "running agent", "")
 
-	// We assume we are in the repo directory or the prompt should be written where the agent can find it?
-	// issue-sandbox writes to "../agent-prompt.txt".
-	// Let's stick to that for now to avoid breaking things, or make it configurable.
-	// For dev-sandbox, /workspaces/REPO is the CWD. So ".." is /workspaces.
-	if err := os.WriteFile("../agent-prompt.txt", []byte(cfg.AgentPrompt), 0644); err != nil {
+	if err := os.WriteFile(cfg.taskPath("agent-prompt.txt"), []byte(cfg.AgentPrompt), 0644); err != nil {
 		return fmt.Errorf("failed to write agent-prompt.txt: %w", err)
 	}
 
@@ -110,17 +115,21 @@ func RunAgent(ctx context.Context, cfg Config) error {
 	if err != nil {
 		var quotaErr *llm.QuotaError
 		if errors.As(err, &quotaErr) {
-			_ = agentoutput.SetAgentState(ctx, cfg.GVR, "QUOTA ERROR", err.Error())
+			_ = cfg.AgentOutput.SetAgentState(ctx, "QUOTA ERROR", err.Error())
 			log.Info("Agent run failed due to quota", "err", err)
 			return err
 		}
 		log.Info("Agent run failed", "err", err, "output", string(output))
 		return err
 	}
-	if err := os.WriteFile("../agent-output.txt", output, 0644); err != nil {
+	if err := os.WriteFile(cfg.taskPath("agent-output.txt"), output, 0644); err != nil {
 		return fmt.Errorf("failed to write agent-output.txt: %w", err)
 	}
 
+	if err := cfg.AgentOutput.SetAgentDraft(ctx, string(output)); err != nil {
+		return fmt.Errorf("failed to set agent draft: %w", err)
+	}
+	log.Info("Agent run completed successfully")
 	// Cleanup
 	if err := provider.Cleanup(); err != nil {
 		return err
@@ -146,7 +155,6 @@ func ProcessGitChanges(ctx context.Context, cfg Config, oldCommitID string, comm
 	if newCommitID != oldCommitID {
 		log.Info("New changes being committed")
 		if cfg.PushEnabled {
-			_ = agentoutput.SetAgentState(ctx, cfg.GVR, "pushing changes", "")
 			if err := gitcli.Push("origin", cfg.BranchName, true); err != nil {
 				return fmt.Errorf("failed to push changes: %w", err)
 			}
