@@ -1,3 +1,7 @@
 # Ignore python cache files
 **/__pycache__/
 bin/
+
+# Go workspace files
+go.work
+go.work.sum
