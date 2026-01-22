@@ -978,6 +978,7 @@ func (r *Reconciler) createSandboxTask(ctx context.Context, repoWatch *reviewv1a
 				"namespace": repoWatch.Namespace,
 				"labels": map[string]interface{}{
 					"sandbox.gemini.google.com/sandbox-name": sandboxName,
+					"review.gemini.google.com/repowatch":     repoWatch.Name,
 				},
 			},
 			"spec": map[string]interface{}{
