@@ -1,15 +1,6 @@
 apiVersion: custom.agents.x-k8s.io/v1alpha1
 kind: ReviewSandbox
 metadata:
-  annotations:
-    agentDraft: |
-      note: Response from Dummy LLM. This is a test
-      review:
-          nodeid: null
-          commitid: null
-          body: Response from Dummy LLM. This is a test
-          event: null
-          comments: []
   finalizers:
   - kro.run/finalizer
   labels:

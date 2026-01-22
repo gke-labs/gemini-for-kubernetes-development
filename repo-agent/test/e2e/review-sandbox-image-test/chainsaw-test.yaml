@@ -72,6 +72,25 @@ spec:
           # 4. Fetch the logs
           echo "--- Logs for Pod $POD_NAME (container: review-sandbox) ---"
           kubectl logs -n repo-agent-system "$POD_NAME" -c review-sandbox || echo "Could not fetch logs (pod might not be running)"
+  - name: check-sandboxtask
+    try:
+    - assert:
+        timeout: 20m
+        file: sandboxtask-assert.yaml
+    catch:
+    - describe:
+        apiVersion: custom.agents.x-k8s.io/v1alpha1
+        kind: SandboxTask
+        namespace: repo-agent-system
+        selector: review.gemini.google.com/repowatch=rst-image
+    - script:
+        content: |
+          RS_NAME=$(kubectl get reviewsandbox -n repo-agent-system -l review.gemini.google.com/repowatch=rst-image -o jsonpath='{.items[0].metadata.name}')
+          if [ -n "$RS_NAME" ]; then
+            POD_NAME="devc-$RS_NAME"
+            echo "--- Logs for Pod $POD_NAME (container: review-sandbox) ---"
+            kubectl logs -n repo-agent-system "$POD_NAME" -c review-sandbox || echo "Could not fetch logs"
+          fi
   #- name: delete-repowatch
   #  try:
   #  - delete:
