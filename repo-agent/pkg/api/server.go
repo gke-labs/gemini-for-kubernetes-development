@@ -50,6 +50,7 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 	{
 		api.GET("/repos", s.getRepos)
 		api.POST("/repos", s.createRepoWatch)
+		api.GET("/repos/:repo", s.getRepo)
 		api.GET("/getRepoWatch", s.getDefaultRepoWatch)
 		api.GET("/templates", s.getTemplates)
 		api.GET("/repos/:repo/yaml", s.getRepoWatchYAML)

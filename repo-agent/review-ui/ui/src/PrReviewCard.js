@@ -536,6 +536,8 @@ function PrReviewCard({
   handleScaleDown,
   handleAddPR,
   isMainView,
+  lastUpdated,
+  repoName: propRepoName,
 }) {
   const [diff, setDiff] = useState(null);
   const [diffError, setDiffError] = useState(null);
@@ -547,7 +549,7 @@ function PrReviewCard({
   const lastDragTargetRef = useRef(null);
 
   const isCollapsed = collapsedReviews[pr.id];
-  const repoName = pr.sandbox ? pr.sandbox.split('-pr-')[0] : '';
+  const repoName = propRepoName || (pr.sandbox ? pr.sandbox.split('-pr-')[0] : '');
 
   const handleSaveTaskDraft = (taskName, draft) => {
       if (!repoName) return;
@@ -592,7 +594,9 @@ function PrReviewCard({
 
   useEffect(() => {
     fetchTasks();
-  }, [pr.id, pr.type, pr.sandbox]);
+    const interval = setInterval(fetchTasks, 10000);
+    return () => clearInterval(interval);
+  }, [pr.id, pr.type, pr.sandbox, lastUpdated, repoName]);
 
   const handleCreateTask = () => {
       if (!repoName) return;

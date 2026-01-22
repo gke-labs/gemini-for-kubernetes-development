@@ -708,3 +708,139 @@ func (s *Server) getTemplates(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"templates": templates})
 }
+
+func (s *Server) getRepo(c *gin.Context) {
+	log := klog.FromContext(c.Request.Context())
+	namespace := c.MustGet(auth.UserKey).(string)
+	name := c.Param("repo")
+
+	repoWatch, err := s.K8sManager.GetRepoWatch(c.Request.Context(), namespace, name)
+	if err != nil {
+		log.Info("Failed to get RepoWatch", "namespace", namespace, "name", name, "err", err)
+		c.JSON(http.StatusNotFound, gin.H{"error": "RepoWatch not found"})
+		return
+	}
+
+	repoName := repoWatch.GetName()
+	repoURL, found, _ := unstructured.NestedString(repoWatch.Object, "spec", "repoURL")
+	if !found {
+		log.Info("repoURL not found in RepoWatch CR", "name", repoName)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "repoURL not found"})
+		return
+	}
+
+	repo := models.Repo{
+		Name:      repoName,
+		Namespace: namespace,
+		URL:       repoURL,
+	}
+
+	// Extract review config
+	if maxActiveSandboxes, found, err := unstructured.NestedInt64(repoWatch.Object, "spec", "review", "maxActiveSandboxes"); err == nil && found && maxActiveSandboxes > 0 {
+		repo.Review = &models.ReviewConfig{MaxActiveSandboxes: maxActiveSandboxes}
+		if assignees, found, err := unstructured.NestedStringSlice(repoWatch.Object, "spec", "review", "assignees"); err == nil && found {
+			repo.Review.Assignees = assignees
+		}
+	}
+
+	// Extract PendingPRs
+	if pendingPRsSlice, found, err := unstructured.NestedSlice(repoWatch.Object, "status", "pendingPRs"); err == nil && found {
+		var pendingPRs []models.PendingPR
+		var prNumbers []int64
+		for _, v := range pendingPRsSlice {
+			if i, ok := v.(int64); ok {
+				prNumbers = append(prNumbers, i)
+			} else if i, ok := v.(int); ok {
+				prNumbers = append(prNumbers, int64(i))
+			}
+		}
+
+		if len(prNumbers) > 0 {
+			// Sort and limit to top 10
+			sort.Slice(prNumbers, func(i, j int) bool {
+				return prNumbers[i] > prNumbers[j]
+			})
+			if len(prNumbers) > 10 {
+				prNumbers = prNumbers[:10]
+			}
+
+			// Try to get GitHub client to fetch titles
+			token, tokenErr := s.K8sManager.GetGitHubToken(c.Request.Context(), repoWatch)
+			var client *github.Client
+			if tokenErr == nil {
+				client = clients.NewGitHubClient(c.Request.Context(), token)
+			}
+
+			owner, repoName, urlErr := parseRepoURL(repoURL)
+
+			for _, prNum := range prNumbers {
+				pendingPR := models.PendingPR{Number: prNum}
+				// Only fetch title if we have a client and valid repo info
+				if client != nil && urlErr == nil {
+					pr, _, err := client.PullRequests.Get(c.Request.Context(), owner, repoName, int(prNum))
+					if err == nil {
+						pendingPR.Title = pr.GetTitle()
+						pendingPR.HTMLURL = pr.GetHTMLURL()
+					} else {
+						log.Info("Failed to get PR title", "prNumber", prNum, "err", err)
+					}
+				}
+				pendingPRs = append(pendingPRs, pendingPR)
+			}
+		}
+		repo.PendingPRs = pendingPRs
+	}
+
+	// Extract ExcludePullRequests
+	if excludePRsSlice, found, err := unstructured.NestedSlice(repoWatch.Object, "spec", "review", "excludePullRequests"); err == nil && found {
+		var excludePRs []int64
+		for _, v := range excludePRsSlice {
+			if i, ok := v.(int64); ok {
+				excludePRs = append(excludePRs, i)
+			} else if i, ok := v.(int); ok {
+				excludePRs = append(excludePRs, int64(i))
+			}
+		}
+		repo.ExcludePullRequests = excludePRs
+	}
+
+	// Extract dev config
+	if maxActiveSandboxes, found, err := unstructured.NestedInt64(repoWatch.Object, "spec", "dev", "maxActiveSandboxes"); err == nil && found && maxActiveSandboxes > 0 {
+		repo.Dev = &models.DevConfig{MaxActiveSandboxes: maxActiveSandboxes}
+	}
+
+	// Extract PendingDevBranches
+	if pendingBranchesSlice, found, err := unstructured.NestedStringSlice(repoWatch.Object, "status", "pendingDevBranches"); err == nil && found {
+		repo.PendingDevBranches = pendingBranchesSlice
+	}
+
+	// Extract ExcludeBranches
+	if excludeBranchesSlice, found, err := unstructured.NestedStringSlice(repoWatch.Object, "spec", "dev", "excludeBranches"); err == nil && found {
+		repo.ExcludeBranches = excludeBranchesSlice
+	}
+
+	// Extract issue handlers
+	if handlers, found, err := unstructured.NestedSlice(repoWatch.Object, "spec", "issueHandlers"); err == nil && found {
+		var issueHandlers []models.IssueHandler
+		for _, h := range handlers {
+			handlerMap, ok := h.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			name, _ := handlerMap["name"].(string)
+			maxActiveSandboxes, _ := handlerMap["maxActiveSandboxes"].(int64)
+			pushBranch, _ := handlerMap["pushBranch"].(bool)
+
+			if maxActiveSandboxes > 0 {
+				issueHandlers = append(issueHandlers, models.IssueHandler{
+					Name:               name,
+					MaxActiveSandboxes: maxActiveSandboxes,
+					PushBranch:         pushBranch,
+				})
+			}
+		}
+		repo.IssueHandlers = issueHandlers
+	}
+
+	c.JSON(http.StatusOK, repo)
+}
