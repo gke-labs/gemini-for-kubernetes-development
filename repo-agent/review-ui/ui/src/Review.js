@@ -23,7 +23,8 @@ function Review({
   handleMoveCommentAndSave,
   handleScaleUp,
   handleScaleDown,
-  handleAddPR
+  handleAddPR,
+  lastUpdated
 }) {
   const [selectedPrId, setSelectedPrId] = useState(null);
   const [isPendingOpen, setIsPendingOpen] = useState(false);
@@ -199,6 +200,8 @@ function Review({
                     handleScaleDown={handleScaleDown}
                     handleAddPR={handleAddPR}
                     isMainView={true} // Hint to component that it is in main view
+                    lastUpdated={lastUpdated}
+                    repoName={activeRepo.name}
                 />
             ) : (
                 <div className="empty-state">
