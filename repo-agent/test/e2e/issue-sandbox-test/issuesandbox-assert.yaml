@@ -1,15 +1,10 @@
 apiVersion: custom.agents.x-k8s.io/v1alpha1
 kind: IssueSandbox
 metadata:
-  annotations:
-    agentDraft: |
-      /kind feature
-      This issue is a feature request to add AGI to the project.
   finalizers:
   - kro.run/finalizer
   labels:
     review.gemini.google.com/repowatch: ist-gfkd
-    review.gemini.google.com/handler: triage
   (starts_with(name, 'ist-gfkd-issue-')): true
   namespace: repo-agent-system
   ownerReferences:
@@ -27,10 +22,11 @@ spec:
     ref: repo-agent-gateway
   githubSecretName: github-pat
   llm:
-    apiKeySecretName: dummy-provider-token
+    # Dummy config as placeholder
+    apiKeySecretName: ""
     configdirRef: ""
   llmBackend:
-    name: dummy
+    name: gemini-cli
   networkPolicy:
     enabled: false
   replicas: 1
@@ -39,7 +35,6 @@ spec:
   serviceAccountName: issue-sandbox
   source:
     repo: ist-gfkd
-    handler: triage
 status:
   (fqdn != null && starts_with(fqdn, 'devc-ist-gfkd-issue-')): true
   (sandboxConditions[?type == 'Ready']):
