@@ -23,10 +23,10 @@ spec:
   githubSecretName: github-pat
   llm:
     # Dummy config as placeholder
-    apiKeySecretName: ""
+    apiKeySecretName: dummy-provider-token
     configdirRef: ""
   llmBackend:
-    name: gemini-cli
+    name: dummy
   networkPolicy:
     enabled: false
   replicas: 1

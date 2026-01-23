@@ -372,3 +372,56 @@ func (s *Server) scaleDownIssue(c *gin.Context) {
 	}
 	c.Status(http.StatusOK)
 }
+
+func (s *Server) getIssueDetails(c *gin.Context) {
+	log := klog.FromContext(c.Request.Context())
+	namespace := c.MustGet(auth.UserKey).(string)
+	repo := c.Param("repo")
+	issueIDStr := c.Param("issue_id")
+
+	issueID, err := strconv.Atoi(issueIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid issue ID"})
+		return
+	}
+
+	repoWatch, err := s.K8sManager.GetRepoWatch(c.Request.Context(), namespace, repo)
+	if err != nil {
+		log.Info("Failed to get RepoWatch", "namespace", namespace, "name", repo, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get RepoWatch"})
+		return
+	}
+
+	token, err := s.K8sManager.GetGitHubToken(c.Request.Context(), repoWatch)
+	if err != nil {
+		log.Info("Failed to get github token", "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get GitHub token"})
+		return
+	}
+
+	client := clients.NewGitHubClient(c.Request.Context(), token)
+
+	repoURL, found, _ := unstructured.NestedString(repoWatch.Object, "spec", "repoURL")
+	if !found {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "RepoURL not found"})
+		return
+	}
+	owner, repoName, err := parseRepoURL(repoURL)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid RepoURL"})
+		return
+	}
+
+	issue, _, err := client.Issues.Get(c.Request.Context(), owner, repoName, issueID)
+	if err != nil {
+		log.Info("Failed to get issue details", "issueID", issueID, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get issue details"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"number":  issue.GetNumber(),
+		"title":   issue.GetTitle(),
+		"htmlURL": issue.GetHTMLURL(),
+	})
+}

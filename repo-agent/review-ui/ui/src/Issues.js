@@ -18,6 +18,49 @@ function Issues({
   const [selectedIssueId, setSelectedIssueId] = useState(null);
   const [isPendingOpen, setIsPendingOpen] = useState(false);
   const [isExcludedOpen, setIsExcludedOpen] = useState(false);
+  const [excludedDetails, setExcludedDetails] = useState({});
+
+  useEffect(() => {
+    if (activeRepo) {
+        // Fetch details for excluded issues
+        if (activeRepo.excludeIssues) {
+            activeRepo.excludeIssues.forEach(p => {
+                const id = typeof p === 'object' ? p.id : p;
+                if (!excludedDetails[id]) {
+                    fetch(`/api/repo/${activeRepo.name}/issues/${id}/details`)
+                        .then(res => {
+                            if (res.ok) return res.json();
+                            throw new Error("Failed");
+                        })
+                        .then(data => {
+                            setExcludedDetails(prev => ({ ...prev, [id]: data }));
+                        })
+                        .catch(() => {});
+                }
+            });
+        }
+        
+        // Fetch details for pending issues
+        if (activeRepo.pendingIssues) {
+            activeRepo.pendingIssues.forEach(p => {
+                const id = typeof p === 'object' ? p.number : p;
+                // Pending issues might come with title if cached, but if lazy we fetch
+                // The backend now only returns number for pendingIssues
+                if (!excludedDetails[id]) {
+                     fetch(`/api/repo/${activeRepo.name}/issues/${id}/details`)
+                        .then(res => {
+                            if (res.ok) return res.json();
+                            throw new Error("Failed");
+                        })
+                        .then(data => {
+                            setExcludedDetails(prev => ({ ...prev, [id]: data }));
+                        })
+                        .catch(() => {});
+                }
+            });
+        }
+    }
+  }, [activeRepo]);
 
   // 1. Active Issues
   const activeList = [];
@@ -34,8 +77,16 @@ function Issues({
   pending.forEach(p => {
        // Handle both old format (number) and new format (object)
        const id = typeof p === 'object' ? p.number : p;
-       const title = typeof p === 'object' && p.title ? `Issue #${id}: ${p.title}` : `Issue #${id}`;
-       const htmlURL = typeof p === 'object' ? p.htmlURL : null;
+       
+       const details = excludedDetails[id];
+       // Prefer details from state (lazy fetch), fallback to object properties (if any), then generic
+       let title = details && details.title ? `Issue #${id}: ${details.title}` : `Issue #${id}`;
+       let htmlURL = details ? details.htmlURL : null;
+
+       if (!details && typeof p === 'object' && p.title) {
+           title = `Issue #${id}: ${p.title}`;
+           htmlURL = p.htmlURL;
+       }
 
        // Avoid duplicates if already in active
        if (!activeList.find(i => i.sortId === parseInt(id))) {
@@ -53,7 +104,10 @@ function Issues({
        // excludeIssues might be numbers or objects depending on backend, assume numbers or check
        const id = typeof p === 'object' ? p.id : p; 
        if (!activeList.find(i => i.sortId === parseInt(id))) {
-           excludedList.push({ id: id.toString(), type: 'excluded', sortId: id, title: `Issue #${id} (Deleted)` });
+           const details = excludedDetails[id];
+           const title = details && details.title ? `Issue #${id}: ${details.title}` : `Issue #${id} (Excluded)`;
+           const htmlURL = details ? details.htmlURL : null;
+           excludedList.push({ id: id.toString(), type: 'excluded', sortId: id, title: title, htmlURL: htmlURL });
        }
   });
   excludedList.sort((a, b) => b.sortId - a.sortId);
