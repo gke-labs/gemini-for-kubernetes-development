@@ -241,6 +241,7 @@ type Reconciler struct {
 //+kubebuilder:rbac:groups=review.gemini.google.com,resources=repowatches/finalizers,verbs=update
 //+kubebuilder:rbac:groups=custom.agents.x-k8s.io,resources=reviewsandboxes,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=custom.agents.x-k8s.io,resources=issuesandboxes,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=custom.agents.x-k8s.io,resources=sandboxtasks,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;update;patch
 
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -909,7 +910,7 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 				},
 				"llm": map[string]interface{}{
 					"configdirRef":     repoWatch.Spec.Review.LLM.ConfigdirRef,
-					"prompt":           prompt,
+					"prompt":           "",
 					"apiKeySecretName": repoWatch.Spec.Review.LLM.APIKeySecretRef,
 				},
 				"source": map[string]interface{}{
@@ -945,7 +946,54 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 		return err
 	}
 
-	return r.Create(ctx, sandbox)
+	if err := r.Create(ctx, sandbox); err != nil {
+		return err
+	}
+
+	if err := r.createSandboxTask(ctx, repoWatch, sandboxName, "review", map[string]string{
+		"AGENT_PROMPT": prompt,
+	}); err != nil {
+		log.Error(err, "unable to create initial review task for sandbox", "sandbox", sandboxName)
+	}
+
+	return nil
+}
+
+// createSandboxTask creates a SandboxTask for a sandbox.
+func (r *Reconciler) createSandboxTask(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, sandboxName string, taskType string, params map[string]string) error {
+	taskName := fmt.Sprintf("%s-task-%d-%s", sandboxName, time.Now().Unix(), strings.ToLower(randString(4)))
+
+	// Convert params to map[string]interface{}
+	paramsInterface := make(map[string]interface{})
+	for k, v := range params {
+		paramsInterface[k] = v
+	}
+
+	task := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
+			"kind":       "SandboxTask",
+			"metadata": map[string]interface{}{
+				"name":      taskName,
+				"namespace": repoWatch.Namespace,
+				"labels": map[string]interface{}{
+					"sandbox.gemini.google.com/sandbox-name": sandboxName,
+					"review.gemini.google.com/repowatch":     repoWatch.Name,
+				},
+			},
+			"spec": map[string]interface{}{
+				"sandboxName": sandboxName,
+				"type":        taskType,
+				"params":      paramsInterface,
+			},
+		},
+	}
+
+	if err := controllerutil.SetControllerReference(repoWatch, task, r.Scheme); err != nil {
+		return err
+	}
+
+	return r.Create(ctx, task)
 }
 
 // randString generates a random string of length n.

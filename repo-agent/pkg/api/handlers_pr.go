@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/auth"
@@ -32,6 +34,58 @@ func (s *Server) getPRs(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, prs)
+}
+
+func (s *Server) getPRTasks(c *gin.Context) {
+	namespace := c.MustGet(auth.UserKey).(string)
+	repo := c.Param("repo")
+	prID := c.Param("id")
+
+	sandboxName := fmt.Sprintf("%s-pr-%s", repo, prID)
+
+	taskList, err := s.K8sManager.ListSandboxTasks(c.Request.Context(), namespace, sandboxName)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list tasks", "details": err.Error()})
+		return
+	}
+
+	var tasks []models.Task
+	for _, taskItem := range taskList.Items {
+		taskType, _, _ := unstructured.NestedString(taskItem.Object, "spec", "type")
+		taskState, _, _ := unstructured.NestedString(taskItem.Object, "status", "taskState")
+		result, _, _ := unstructured.NestedString(taskItem.Object, "status", "result")
+
+		tAgentDraft := ""
+		tUserDraft := ""
+		tAgentState := ""
+		tAgentStateMessage := ""
+
+		tAnnotations := taskItem.GetAnnotations()
+		if tAnnotations != nil {
+			tAgentDraft = tAnnotations["agentDraft"]
+			tUserDraft = tAnnotations["userDraft"]
+			tAgentState = tAnnotations["agentState"]
+			tAgentStateMessage = tAnnotations["agentStateMessage"]
+		}
+
+		tasks = append(tasks, models.Task{
+			Name:              taskItem.GetName(),
+			Type:              taskType,
+			TaskState:         taskState,
+			Result:            result,
+			CreationTimestamp: taskItem.GetCreationTimestamp().Format(time.RFC3339),
+			AgentDraft:        tAgentDraft,
+			UserDraft:         tUserDraft,
+			AgentState:        tAgentState,
+			AgentStateMessage: tAgentStateMessage,
+		})
+	}
+	// Sort tasks by creation timestamp (newest first)
+	sort.Slice(tasks, func(i, j int) bool {
+		return tasks[i].CreationTimestamp > tasks[j].CreationTimestamp
+	})
+
+	c.JSON(http.StatusOK, tasks)
 }
 
 func (s *Server) listPRsFromK8s(ctx context.Context, namespace, repo string) ([]models.PR, error) {
@@ -146,6 +200,26 @@ func (s *Server) saveDraft(c *gin.Context) {
 	err := s.K8sManager.UpdateReviewSandboxUserDraft(c.Request.Context(), namespace, sandboxName, payload.Draft)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save draft", "details": err.Error()})
+		return
+	}
+
+	c.Status(http.StatusOK)
+}
+
+func (s *Server) saveTaskDraft(c *gin.Context) {
+	namespace := c.MustGet(auth.UserKey).(string)
+	taskName := c.Param("taskID")
+	var payload struct {
+		Draft string
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	err := s.K8sManager.UpdateSandboxTaskUserDraft(c.Request.Context(), namespace, taskName, payload.Draft)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save task draft", "details": err.Error()})
 		return
 	}
 
@@ -315,5 +389,55 @@ func (s *Server) scaleDownPR(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scale down sandbox", "details": err.Error()})
 		return
 	}
+	c.Status(http.StatusOK)
+}
+
+func (s *Server) createPRTask(c *gin.Context) {
+	namespace := c.MustGet(auth.UserKey).(string)
+	repo := c.Param("repo")
+	prID := c.Param("id")
+
+	var payload struct {
+		Prompt string `json:"prompt"`
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	sandboxName := fmt.Sprintf("%s-pr-%s", repo, prID)
+
+	prompt := payload.Prompt
+	if prompt == "" {
+		// Fetch default prompt from RepoWatch
+		rw, err := s.K8sManager.GetRepoWatch(c.Request.Context(), namespace, repo)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get RepoWatch", "details": err.Error()})
+			return
+		}
+
+		defaultPrompt, found, err := unstructured.NestedString(rw.Object, "spec", "review", "llm", "prompt")
+		if err == nil && found {
+			prompt = defaultPrompt
+		}
+	}
+
+	params := map[string]interface{}{
+		"AGENT_PROMPT": prompt,
+	}
+
+	err := s.K8sManager.CreateSandboxTask(c.Request.Context(), namespace, sandboxName, "review", params)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create task", "details": err.Error()})
+		return
+	}
+
+	// Scale up the sandbox so it can process the task
+	if err := s.K8sManager.ScaleupSandbox(c.Request.Context(), namespace, repo, prID); err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Failed to scale up sandbox after task creation", "details": err.Error()})
+		klog.Warningf("Failed to scale up sandbox after task creation: %v", err)
+		return
+	}
+
 	c.Status(http.StatusOK)
 }

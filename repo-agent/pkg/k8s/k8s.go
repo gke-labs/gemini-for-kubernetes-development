@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"math/rand"
+	"strings"
+	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	corev1 "k8s.io/api/core/v1"
@@ -32,7 +35,7 @@ var (
 
 type Manager struct {
 	Client    dynamic.Interface
-	Clientset *kubernetes.Clientset
+	Clientset kubernetes.Interface
 }
 
 func NewManager(kube *clients.KubernetesClient) *Manager {
@@ -514,4 +517,97 @@ func (m *Manager) ScaleupDevSandboxHelper(ctx context.Context, namespace, name s
 		return fmt.Errorf("failed to scale up dev sandbox: %w", err)
 	}
 	return nil
+}
+
+func (m *Manager) ListSandboxTasks(ctx context.Context, namespace, sandboxName string) (*unstructured.UnstructuredList, error) {
+	gvr := schema.GroupVersionResource{
+		Group:    "custom.agents.x-k8s.io",
+		Version:  "v1alpha1",
+		Resource: "sandboxtasks",
+	}
+	return m.Client.Resource(gvr).Namespace(namespace).List(ctx, v1.ListOptions{
+		LabelSelector: fmt.Sprintf("sandbox.gemini.google.com/sandbox-name=%s", sandboxName),
+	})
+}
+
+func (m *Manager) UpdateSandboxTaskUserDraft(ctx context.Context, namespace, taskName, userDraft string) error {
+	gvr := schema.GroupVersionResource{
+		Group:    "custom.agents.x-k8s.io",
+		Version:  "v1alpha1",
+		Resource: "sandboxtasks",
+	}
+
+	task, err := m.Client.Resource(gvr).Namespace(namespace).Get(ctx, taskName, v1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to get sandboxtask %s: %w", taskName, err)
+	}
+
+	if task.GetAnnotations() == nil {
+		task.SetAnnotations(make(map[string]string))
+	}
+	annotations := task.GetAnnotations()
+	annotations["userDraft"] = userDraft
+	task.SetAnnotations(annotations)
+
+	_, err = m.Client.Resource(gvr).Namespace(namespace).Update(context.TODO(), task, v1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to update sandboxtask annotation: %w", err)
+	}
+
+	return nil
+}
+
+// We create a new *rand.Rand instance seeded with the current time.
+// This is crucial to get different results on each program execution.
+var seededRand = rand.New(
+	rand.NewSource(time.Now().UnixNano()))
+
+const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+// randString generates a random string of length n.
+func randString(n int) string {
+	// Create a byte slice of length n
+	b := make([]byte, n)
+
+	// Fill each position in the slice with a random character
+	// from our letterBytes constant
+	for i := range b {
+		b[i] = letterBytes[seededRand.Intn(len(letterBytes))]
+	}
+
+	// Convert the byte slice to a string and return it
+	return string(b)
+}
+
+func (m *Manager) CreateSandboxTask(ctx context.Context, namespace, sandboxName, taskType string, params map[string]interface{}) error {
+	gvr := schema.GroupVersionResource{
+		Group:    "custom.agents.x-k8s.io",
+		Version:  "v1alpha1",
+		Resource: "sandboxtasks",
+	}
+
+	// Generate a name
+	name := fmt.Sprintf("%s-task-%d-%s", sandboxName, time.Now().Unix(), strings.ToLower(randString(4)))
+
+	task := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
+			"kind":       "SandboxTask",
+			"metadata": map[string]interface{}{
+				"name":      name,
+				"namespace": namespace,
+				"labels": map[string]interface{}{
+					"sandbox.gemini.google.com/sandbox-name": sandboxName,
+				},
+			},
+			"spec": map[string]interface{}{
+				"sandboxName": sandboxName,
+				"type":        taskType,
+				"params":      params,
+			},
+		},
+	}
+
+	_, err := m.Client.Resource(gvr).Namespace(namespace).Create(ctx, task, v1.CreateOptions{})
+	return err
 }

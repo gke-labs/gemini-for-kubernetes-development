@@ -50,6 +50,7 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 	{
 		api.GET("/repos", s.getRepos)
 		api.POST("/repos", s.createRepoWatch)
+		api.GET("/repos/:repo", s.getRepo)
 		api.GET("/getRepoWatch", s.getDefaultRepoWatch)
 		api.GET("/templates", s.getTemplates)
 		api.GET("/repos/:repo/yaml", s.getRepoWatchYAML)
@@ -62,6 +63,9 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 		api.POST("/settings", s.updateSettings)
 
 		api.GET("/repo/:repo/prs", s.getPRs)
+		api.GET("/repo/:repo/prs/:id/tasks", s.getPRTasks)
+		api.POST("/repo/:repo/prs/:id/tasks", s.createPRTask)
+		api.POST("/repo/:repo/tasks/:taskID/draft", s.saveTaskDraft)
 		api.POST("/repo/:repo/prs/:id/draft", s.saveDraft)
 		api.POST("/repo/:repo/prs/:id/submitreview", s.submitReview)
 		api.DELETE("/repo/:repo/prs/:id", s.deletePR)

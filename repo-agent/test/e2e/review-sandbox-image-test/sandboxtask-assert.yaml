@@ -1,0 +1,12 @@
+apiVersion: custom.agents.x-k8s.io/v1alpha1
+kind: SandboxTask
+metadata:
+  namespace: repo-agent-system
+  labels:
+    review.gemini.google.com/repowatch: rst-image
+  (starts_with(name, 'rst-image-pr-')): true
+  # Safe navigation: if agentDraft is null/missing, this returns false instead of erroring
+  (contains(annotations.agentDraft || '', 'Response from Dummy LLM')): true
+status:
+  # Wait until the taskState transitions to Completed
+  (taskState == 'Completed'): true

@@ -4,6 +4,515 @@ import { parseDiff, Diff, getChangeKey } from 'react-diff-view';
 import 'react-diff-view/style/index.css';
 
 
+function TaskReviewCard({
+    task,
+    prId,
+    drafts,
+    reviewViewModes,
+    yamlDrafts,
+    handleSaveDraft,
+    handleDraftChange,
+    handleRemoveComment,
+    toggleReviewView,
+    handleYamlDraftChange,
+    handleYamlDraftBlur,
+    handleSubmit,
+    handleExportCurl,
+    namespace,
+    isSubmitted,
+    diff,
+    diffError,
+    fileCollapsed,
+    setFileCollapsed,
+    handleMoveCommentAndSave,
+    lastDragTargetRef,
+    setCurlCommand,
+    curlCommand,
+    handleSubmitTask,
+    handleSaveTaskDraft
+}) {
+    const [taskCollapsed, setTaskCollapsed] = useState(false);
+    const [reviewFlairText, setReviewFlairText] = useState('');
+    const [localYaml, setLocalYaml] = useState(task.userDraft || task.agentDraft || '');
+    // Parse initial YAML to structured object for Diff/Form views
+    const [localDraft, setLocalDraft] = useState(() => {
+        try {
+            return yaml.load(task.userDraft || task.agentDraft || '') || {};
+        } catch (e) {
+            return {};
+        }
+    });
+
+    // Update local state when task prop updates (e.g. re-fetch)
+    useEffect(() => {
+         const content = task.userDraft || task.agentDraft || '';
+         if (content !== localYaml) {
+             setLocalYaml(content);
+             try {
+                 setLocalDraft(yaml.load(content) || {});
+             } catch (e) {
+                 // ignore parse error on init
+             }
+         }
+    }, [task.userDraft, task.agentDraft]);
+
+    const handleLocalYamlChange = (val) => {
+        setLocalYaml(val);
+        // debounce parse or parse on blur? For now, try parse immediately for responsiveness
+        try {
+            setLocalDraft(yaml.load(val) || {});
+        } catch (e) {
+            // invalid yaml, don't update structured view yet
+        }
+    };
+
+    const handleLocalStructuredChange = (path, value, index) => {
+        // Create deep copy
+        const newDraft = JSON.parse(JSON.stringify(localDraft));
+        
+        // Helper to set value by path string "review.body" etc
+        // path is like 'note', 'review.body', 'comment.body' (with index)
+        if (path === 'note') {
+            newDraft.note = value;
+        } else if (path === 'review.body') {
+            if (!newDraft.review) newDraft.review = {};
+            newDraft.review.body = value;
+        } else if (path === 'comment.body' && index !== undefined) {
+             if (newDraft.review && newDraft.review.comments && newDraft.review.comments[index]) {
+                 newDraft.review.comments[index].body = value;
+             }
+        }
+        
+        setLocalDraft(newDraft);
+        // update YAML
+        try {
+            setLocalYaml(yaml.dump(newDraft));
+        } catch (e) {
+            console.error("Failed to dump yaml", e);
+        }
+    };
+    
+    // We need a way to save this specific task's draft to the backend
+    const saveTaskDraft = () => {
+        // Call API to update task userDraft
+        // We need the parent to pass a handler or call fetch directly here.
+        // Let's assume we pass a new prop `handleSaveTaskDraft`
+        if (handleSaveTaskDraft) {
+            handleSaveTaskDraft(task.name, localYaml);
+        }
+    };
+    
+    // Custom submit that uses local content
+    const submitTaskDraft = () => {
+         // We need to tell the parent to submit THIS content
+         if (handleSubmitTask) {
+             handleSubmitTask(prId, localYaml);
+         } else {
+             // Fallback: update global draft then submit?
+             // Or call the existing handleSubmit but we need it to support payload override.
+             // Let's assume handleSubmit can take content.
+             handleSubmit(prId, localYaml);
+         }
+    };
+
+    const getReviewFlairColor = (flairText) => {
+        if (!flairText) return '#3e7f67ff';
+        const text = flairText.toLowerCase();
+        if (text === 'done' || text === 'review ready' || text === 'completed') return 'green';
+        if (text.includes('reviewing') || text === 'running') return 'orange';
+        if (text.includes('error') || text === 'failed') return '#9e2a2aff';
+        if (text === 'submitted' || text === 'review draft created') return '#3f5398ff';
+        return '#cd9945ff'; // Default color
+    };
+
+    useEffect(() => {
+        if (task.taskState === 'Completed') {
+             if (isSubmitted) {
+                 setReviewFlairText('Review Draft Created');
+             } else {
+                 setReviewFlairText('Ready');
+             }
+        } else if (task.taskState === 'Running') {
+             setReviewFlairText('Running Task');
+        } else if (task.taskState === 'Failed') {
+             setReviewFlairText('Task Failed');
+        } else {
+             setReviewFlairText(task.taskState || task.agentState || 'Pending');
+        }
+    }, [task, isSubmitted]);
+
+    const renderDiffView = () => {
+        if (diffError) {
+          return <div className="diff-container error">Could not load diff: {diffError}</div>;
+        }
+        if (!diff) {
+          return <div className="diff-container">Loading diff...</div>;
+        }
+    
+        const comments = localDraft?.review?.comments || [];
+        const indexedComments = comments.map((c, i) => ({ ...c, index: i }));
+    
+        return (
+          <div className="diff-container">
+            <h4>Diff</h4>
+            {diff.map(({ oldRevision, newRevision, type, hunks, newPath, oldPath }) => {
+              const path = newPath !== '/dev/null' ? newPath : oldPath;
+              const fileComments = indexedComments.filter(c => c.path === path);
+              const allChanges = hunks.reduce((acc, hunk) => [...acc, ...hunk.changes], []);
+    
+              const commentsByChangeKey = {};
+              const placedComments = new Set();
+    
+              fileComments.forEach(comment => {
+                const { line, side, index } = comment;
+    
+                if (!line) {
+                  return;
+                }
+    
+                const targetChange = allChanges.find(change => {
+                  if (side === 'RIGHT') {
+                    if (change.type === 'insert') {
+                      return line === change.lineNumber;
+                    }
+                    if (change.type === 'normal') {
+                      return line === change.newLineNumber;
+                    }
+                  } else if (side === 'LEFT') {
+                    if (change.type === 'delete') {
+                      return line === change.lineNumber;
+                    }
+                    if (change.type === 'normal') {
+                      return line === change.oldLineNumber;
+                    }
+                  }
+                  return false;
+                });
+    
+                if (targetChange) {
+                  const changeKey = getChangeKey(targetChange);
+                  if (!commentsByChangeKey[changeKey]) {
+                    commentsByChangeKey[changeKey] = [];
+                  }
+                  commentsByChangeKey[changeKey].push(comment);
+                  placedComments.add(index);
+                }
+              });
+    
+              const unplacedComments = fileComments.filter(comment => !placedComments.has(comment.index));
+    
+              const widgets = {};
+              for (const changeKey in commentsByChangeKey) {
+                const keyComments = commentsByChangeKey[changeKey];
+                widgets[changeKey] = (
+                  <div className="diff-widget">
+                    {keyComments.map(comment => (
+                      <div
+                        key={comment.index}
+                        draggable={!isSubmitted}
+                        onDragStart={e => {
+                          if (isSubmitted) return;
+                          e.dataTransfer.setData('application/json', JSON.stringify({ prId: prId, commentIndex: comment.index }));
+                          e.stopPropagation();
+                        }}
+                        style={{ cursor: isSubmitted ? 'default' : 'move' }}
+                      >
+                        {isSubmitted ? (
+                          <pre className="review-pre">{comment.body}</pre>
+                        ) : (
+                          <>
+                            <textarea
+                              className="review-textarea"
+                              value={comment.body || ''}
+                              onChange={(e) => handleLocalStructuredChange('comment.body', e.target.value, comment.index)}
+                              onBlur={saveTaskDraft}
+                              placeholder="Line-specific comment..."
+                            ></textarea>
+                            <button className="btn btn-remove-comment" onClick={() => handleRemoveComment(prId, comment.index)}>Remove</button>
+                          </>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                );
+              }
+    
+              const fileId = oldRevision + '-' + newRevision;
+              const isFileCollapsed = fileCollapsed[fileId];
+    
+              const toggleFileCollapse = () => {
+                setFileCollapsed(prevState => ({
+                  ...prevState,
+                  [fileId]: !prevState[fileId]
+                }));
+              };
+    
+              const handleDragOverFile = e => {
+                e.preventDefault();
+                let target = e.target;
+                while (target && !target.classList.contains('diff-line')) {
+                  target = target.parentElement;
+                }
+    
+                if (lastDragTargetRef.current !== target) {
+                  if (lastDragTargetRef.current) {
+                    lastDragTargetRef.current.style.backgroundColor = '';
+                  }
+                  if (target) {
+                    target.style.backgroundColor = 'rgba(0, 100, 255, 0.1)';
+                  }
+                  lastDragTargetRef.current = target;
+                }
+              };
+    
+              const handleDragLeaveFile = e => {
+                if (lastDragTargetRef.current && !e.currentTarget.contains(e.relatedTarget)) {
+                  lastDragTargetRef.current.style.backgroundColor = '';
+                  lastDragTargetRef.current = null;
+                }
+              };
+    
+              const handleDrop = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                
+                if (lastDragTargetRef.current) {
+                  lastDragTargetRef.current.style.backgroundColor = '';
+                  lastDragTargetRef.current = null;
+                }
+    
+                const commentDataText = e.dataTransfer.getData('application/json');
+                if (!commentDataText) return;
+                const commentData = JSON.parse(commentDataText);
+                const { prId: droppedPrId, commentIndex } = commentData;
+                
+                if (droppedPrId !== prId) return;
+
+                let target = e.target;
+                while (target && !target.classList.contains('diff-line')) {
+                    target = target.parentElement;
+                }
+    
+                if (!target) return;
+    
+                const gutters = target.querySelectorAll('.diff-gutter');
+                let oldLineGutter = gutters[0];
+                let newLineGutter = gutters[1];
+    
+                if (gutters.length === 1) {
+                  if (type === 'add') {
+                    newLineGutter = gutters[0];
+                    oldLineGutter = undefined;
+                  } else if (type === 'delete') {
+                    oldLineGutter = gutters[0];
+                    newLineGutter = undefined;
+                  }
+                }
+    
+                const rect = target.getBoundingClientRect();
+                let isRightSide = e.clientX > rect.left + rect.width / 2;
+    
+                if (type === 'add') {
+                  isRightSide = true;
+                } else if (type === 'delete') {
+                  isRightSide = false;
+                }
+    
+                const side = isRightSide ? 'RIGHT' : 'LEFT';
+    
+                let line;
+                if (side === 'RIGHT') {
+                    const newLineNumber = parseInt(newLineGutter?.textContent, 10);
+                    if (!isNaN(newLineNumber)) {
+                        line = newLineNumber;
+                    }
+                } else { // LEFT
+                    const oldLineNumber = parseInt(oldLineGutter?.textContent, 10);
+                    if (!isNaN(oldLineNumber)) {
+                        line = oldLineNumber;
+                    }
+                }
+    
+                if (line && side) {
+                    handleMoveCommentAndSave(droppedPrId, commentIndex, path, line, side);
+                }
+              };
+    
+              return (
+                <div key={fileId} className="diff-file">
+                  <div className="diff-file-header" onClick={toggleFileCollapse} style={{ cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
+                    {path}
+                    {fileComments.length > 0 && (
+                      <span style={{ marginLeft: '10px', backgroundColor: 'orange', borderRadius: '50%', width: '20px', height: '20px', display: 'flex', justifyContent: 'center', alignItems: 'center', color: 'white', fontSize: 'small' }}>
+                        {fileComments.length}
+                      </span>
+                    )}
+                    <span style={{ marginLeft: '10px', fontSize: 'small', color: '#555' }}>
+                      {isFileCollapsed ? 'click to expand' : 'click to collapse'}
+                    </span>
+                  </div>
+                  {!isFileCollapsed && (
+                    <div onDragOver={handleDragOverFile} onDrop={handleDrop} onDragLeave={handleDragLeaveFile}>
+                      {unplacedComments.length > 0 && (
+                        <div className="diff-widget" style={{padding: '10px', borderBottom: '1px solid #ddd'}}>
+                          <h6>Comments on lines not shown in diff or file-level comments</h6>
+                          {unplacedComments.map(comment => (
+                            <div
+                              key={comment.index}
+                              style={{ borderTop: '1px solid #eee', paddingTop: '5px', marginTop: '5px', cursor: isSubmitted ? 'default' : 'move' }}
+                              draggable={!isSubmitted}
+                              onDragStart={e => {
+                                  if (isSubmitted) return;
+                                  e.dataTransfer.setData('application/json', JSON.stringify({ prId: prId, commentIndex: comment.index }));
+                                  e.stopPropagation();
+                              }}
+                            >
+                              {isSubmitted ? (
+                                <>
+                                  {comment.line && <p style={{fontSize: 'small', color: '#555', marginBottom: '5px'}}>Line: {comment.line} ({comment.side || 'RIGHT'})</p>}
+                                  <pre className="review-pre">{comment.body}</pre>
+                                </>
+                              ) : (
+                                <>
+                                  {comment.line && <p style={{fontSize: 'small', color: '#555', marginBottom: '5px'}}>Line: {comment.line} ({comment.side || 'RIGHT'})</p>}
+                                  <textarea
+                                    className="review-textarea"
+                                    value={comment.body || ''}
+                                    onChange={(e) => handleLocalStructuredChange('comment.body', e.target.value, comment.index)}
+                                    onBlur={saveTaskDraft}
+                                    placeholder="Comment..."
+                                  ></textarea>
+                                  <button className="btn btn-remove-comment" onClick={() => handleRemoveComment(prId, comment.index)}>Remove</button>
+                                </>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <Diff viewType="split" diffType={type} hunks={hunks} widgets={widgets} />
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        );
+      };
+
+    return (
+        <div style={{border: '1px solid #ddd', borderRadius: '5px', margin: '10px 0', backgroundColor: '#f9f9f9'}}>
+            <div 
+                style={{padding: '10px', borderBottom: '1px solid #ddd', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', backgroundColor: '#eee'}}
+                onClick={() => setTaskCollapsed(!taskCollapsed)}
+            >
+                <div>
+                    <strong>{task.type.toUpperCase()}</strong> - {new Date(task.creationTimestamp).toLocaleString()}
+                    <span style={{ marginLeft: '10px', fontSize: 'small', color: '#555' }}>
+                        {taskCollapsed ? 'click to expand' : 'click to collapse'}
+                    </span>
+                </div>
+                 {reviewFlairText && (
+                    <span 
+                    style={{ marginRight: '10px', backgroundColor: getReviewFlairColor(reviewFlairText), color: 'white', padding: '5px 10px', borderRadius: '5px', fontSize: 'small' }}
+                    title={task.agentStateMessage || ''}
+                    >
+                    {reviewFlairText}
+                    </span>
+                )}
+            </div>
+            
+            {!taskCollapsed && (
+                <div style={{padding: '15px'}}>
+                     <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '10px 0' }}>
+                        <button className="btn" onClick={() => toggleReviewView(prId)}>
+                        {reviewViewModes[prId] === 'structured' ? 'View as YAML' : 'View as Structured'}
+                        </button>
+                    </div>
+                     {isSubmitted ? (
+                        reviewViewModes[prId] === 'structured' ? (
+                        <div className="review-display">
+                            <strong>Review:</strong>
+                            {localDraft?.note &&
+                            <div className="review-section">
+                                <h4>Note to Reviewer</h4>
+                                <pre className="review-pre">{localDraft.note}</pre>
+                            </div>
+                            }
+                            {localDraft?.review?.body &&
+                            <div className="review-section">
+                                <h4>GitHub Review</h4>
+                                <pre className="review-pre">{localDraft.review.body}</pre>
+                            </div>
+                            }
+                        </div>
+                        ) : (
+                        <div className="review-display">
+                            <strong>Review:</strong>
+                            <pre>{localYaml || ''}</pre>
+                        </div>
+                        )
+                    ) : (
+                        reviewViewModes[prId] === 'structured' ? (
+                        <div className="review-form">
+                            <div className="review-section">
+                            <h4>Note to Reviewer</h4>
+                            <textarea
+                                className="review-textarea"
+                                value={localDraft?.note || ''}
+                                onChange={(e) => handleLocalStructuredChange('note', e.target.value)}
+                                onBlur={saveTaskDraft}
+                                placeholder="A description of the changes as a note to the reviewer..."
+                            ></textarea>
+                            </div>
+                            <div className="review-section">
+                            <h4>GitHub Review</h4>
+                            <textarea
+                                className="review-textarea"
+                                value={localDraft?.review?.body || ''}
+                                onChange={(e) => handleLocalStructuredChange('review.body', e.target.value)}
+                                onBlur={saveTaskDraft}
+                                placeholder="Overall review comment for the PR..."
+                            ></textarea>
+                            </div>
+                        </div>
+                        ) : (
+                        <div className="review-form">
+                            <div className="review-section">
+                            <h4>Review YAML</h4>
+                            <textarea
+                                className="review-textarea yaml-editor"
+                                style={{ height: '300px', fontFamily: 'monospace' }}
+                                value={localYaml || ''}
+                                onChange={(e) => handleLocalYamlChange(e.target.value)}
+                                onBlur={saveTaskDraft}
+                                placeholder="Enter review as YAML..."
+                            ></textarea>
+                            </div>
+                        </div>
+                        )
+                    )}
+                    {renderDiffView()}
+                    <div className="pr-card-actions">
+                        {!isSubmitted && (
+                        <button className="btn btn-submit" onClick={() => submitTaskDraft()}>
+                            Create Draft Review
+                        </button>
+                        )}
+                        {isSubmitted && (
+                        <a href={`https://github.com/${namespace}/${prId.split('-')[0]}/pull/${prId.split('-')[2]}`} target="_blank" rel="noopener noreferrer" className="btn btn-submit" style={{textDecoration: 'none'}}>
+                            Go to review
+                        </a>
+                        )}
+                        <button className="btn btn-submit" style={{marginLeft: '10px', backgroundColor: '#6c757d'}} onClick={() => handleExportCurl(prId, setCurlCommand)} disabled={isSubmitted}>
+                        Export Curl Command
+                        </button>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
+
 function PrReviewCard({
   pr,
   drafts,
@@ -27,38 +536,86 @@ function PrReviewCard({
   handleScaleDown,
   handleAddPR,
   isMainView,
+  lastUpdated,
+  repoName: propRepoName,
 }) {
   const [diff, setDiff] = useState(null);
   const [diffError, setDiffError] = useState(null);
   const [fileCollapsed, setFileCollapsed] = useState({});
-  const [reviewFlairText, setReviewFlairText] = useState('');
   const [curlCommand, setCurlCommand] = useState(null);
+  const [tasks, setTasks] = useState([]);
+  const [showNewTaskForm, setShowNewTaskForm] = useState(false);
+  const [newTaskPrompt, setNewTaskPrompt] = useState('');
   const lastDragTargetRef = useRef(null);
 
-  const getReviewFlairColor = (flairText) => {
-    if (!flairText) return '#3e7f67ff';
-    const text = flairText.toLowerCase();
-    if (text === 'done' || text === 'review ready') return 'green';
-    if (text.includes('reviewing')) return 'orange';
-    if (text.includes('error')) return '#9e2a2aff';
-    if (text === 'submitted' || text === 'review draft created') return '#3f5398ff';
-    return '#cd9945ff'; // Default color
+  const isCollapsed = collapsedReviews[pr.id];
+  const repoName = propRepoName || (pr.sandbox ? pr.sandbox.split('-pr-')[0] : '');
+
+  const handleSaveTaskDraft = (taskName, draft) => {
+      if (!repoName) return;
+      fetch(`/api/repo/${repoName}/tasks/${taskName}/draft`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ draft })
+      }).catch(err => console.error("Failed to save task draft", err));
   };
 
-  const isCollapsed = collapsedReviews[pr.id];
-  useEffect(() => {
+  const handleSubmitTask = (prId, draft) => {
+      if (!repoName) return;
+      fetch(`/api/repo/${repoName}/prs/${pr.id}/submitreview`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ review: draft })
+      })
+      .then(res => {
+          if (res.ok) {
+              alert("Review submitted!");
+              // potentially trigger a refresh or update UI state
+          } else {
+              res.text().then(t => alert("Failed to submit: " + t));
+          }
+      })
+      .catch(err => console.error("Failed to submit task draft", err));
+  };
+  
+  const fetchTasks = () => {
     if (pr.type === 'pending' || pr.type === 'excluded') return;
+    if (!repoName) return;
 
-    if (pr.reviewState === 'submitted') {
-      setReviewFlairText('Review Draft Created');
-    } else if (pr.agentState) {
-      setReviewFlairText(pr.agentState);
-    } else if (drafts[pr.id] && drafts[pr.id].note && drafts[pr.id].note.trim() !== '') {
-      setReviewFlairText('Ready');
-    } else {
-      setReviewFlairText('Generating ...');
-    }
-  }, [drafts, pr.id, pr.type, pr.agentState, pr.reviewState]);
+    fetch(`/api/repo/${repoName}/prs/${pr.id}/tasks`)
+        .then(res => res.json())
+        .then(data => {
+            if (Array.isArray(data)) {
+                setTasks(data);
+            }
+        })
+        .catch(err => console.error("Failed to fetch tasks:", err));
+  };
+
+  useEffect(() => {
+    fetchTasks();
+    const interval = setInterval(fetchTasks, 10000);
+    return () => clearInterval(interval);
+  }, [pr.id, pr.type, pr.sandbox, lastUpdated, repoName]);
+
+  const handleCreateTask = () => {
+      if (!repoName) return;
+      fetch(`/api/repo/${repoName}/prs/${pr.id}/tasks`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt: newTaskPrompt })
+      })
+      .then(res => {
+          if (res.ok) {
+              setShowNewTaskForm(false);
+              setNewTaskPrompt('');
+              fetchTasks();
+          } else {
+              res.text().then(t => alert("Failed to create task: " + t));
+          }
+      })
+      .catch(err => console.error("Failed to create task", err));
+  };
 
   useEffect(() => {
     if (pr.type === 'pending' || pr.type === 'excluded') return;
@@ -135,278 +692,6 @@ function PrReviewCard({
 
   const isSubmitted = pr.reviewState === 'submitted';
 
-  const renderDiffView = () => {
-    if (diffError) {
-      return <div className="diff-container error">Could not load diff: {diffError}</div>;
-    }
-    if (!diff) {
-      return <div className="diff-container">Loading diff...</div>;
-    }
-
-    const comments = drafts[pr.id]?.review?.comments || [];
-    const indexedComments = comments.map((c, i) => ({ ...c, index: i }));
-
-    return (
-      <div className="diff-container">
-        <h4>Diff</h4>
-        {diff.map(({ oldRevision, newRevision, type, hunks, newPath, oldPath }) => {
-          const path = newPath !== '/dev/null' ? newPath : oldPath;
-          const fileComments = indexedComments.filter(c => c.path === path);
-          const allChanges = hunks.reduce((acc, hunk) => [...acc, ...hunk.changes], []);
-
-          const commentsByChangeKey = {};
-          const placedComments = new Set();
-
-          fileComments.forEach(comment => {
-            const { line, side, index } = comment;
-
-            if (!line) {
-              return;
-            }
-
-            const targetChange = allChanges.find(change => {
-              if (side === 'RIGHT') {
-                if (change.type === 'insert') {
-                  return line === change.lineNumber;
-                }
-                if (change.type === 'normal') {
-                  return line === change.newLineNumber;
-                }
-              } else if (side === 'LEFT') {
-                if (change.type === 'delete') {
-                  return line === change.lineNumber;
-                }
-                if (change.type === 'normal') {
-                  return line === change.oldLineNumber;
-                }
-              }
-              return false;
-            });
-
-            if (targetChange) {
-              const changeKey = getChangeKey(targetChange);
-              if (!commentsByChangeKey[changeKey]) {
-                commentsByChangeKey[changeKey] = [];
-              }
-              commentsByChangeKey[changeKey].push(comment);
-              placedComments.add(index);
-            }
-          });
-
-          const unplacedComments = fileComments.filter(comment => !placedComments.has(comment.index));
-
-          const widgets = {};
-          for (const changeKey in commentsByChangeKey) {
-            const keyComments = commentsByChangeKey[changeKey];
-            widgets[changeKey] = (
-              <div className="diff-widget">
-                {keyComments.map(comment => (
-                  <div
-                    key={comment.index}
-                    draggable={!isSubmitted}
-                    onDragStart={e => {
-                      if (isSubmitted) return;
-                      e.dataTransfer.setData('application/json', JSON.stringify({ prId: pr.id, commentIndex: comment.index }));
-                      e.stopPropagation();
-                    }}
-                    style={{ cursor: isSubmitted ? 'default' : 'move' }}
-                  >
-                    {isSubmitted ? (
-                      <pre className="review-pre">{comment.body}</pre>
-                    ) : (
-                      <>
-                        <textarea
-                          className="review-textarea"
-                          value={comment.body || ''}
-                          onChange={(e) => handleDraftChange(pr.id, 'comment.body', e.target.value, comment.index)}
-                          onBlur={() => handleSaveDraft(pr.id)}
-                          placeholder="Line-specific comment..."
-                        ></textarea>
-                        <button className="btn btn-remove-comment" onClick={() => handleRemoveComment(pr.id, comment.index)}>Remove</button>
-                      </>
-                    )}
-                  </div>
-                ))}
-              </div>
-            );
-          }
-
-          const fileId = oldRevision + '-' + newRevision;
-          const isFileCollapsed = fileCollapsed[fileId];
-
-          const toggleFileCollapse = () => {
-            setFileCollapsed(prevState => ({
-              ...prevState,
-              [fileId]: !prevState[fileId]
-            }));
-          };
-
-          const handleDragOverFile = e => {
-            e.preventDefault();
-            let target = e.target;
-            while (target && !target.classList.contains('diff-line')) {
-              target = target.parentElement;
-            }
-
-            if (lastDragTargetRef.current !== target) {
-              if (lastDragTargetRef.current) {
-                lastDragTargetRef.current.style.backgroundColor = '';
-              }
-              if (target) {
-                target.style.backgroundColor = 'rgba(0, 100, 255, 0.1)';
-              }
-              lastDragTargetRef.current = target;
-            }
-          };
-
-          const handleDragLeaveFile = e => {
-            if (lastDragTargetRef.current && !e.currentTarget.contains(e.relatedTarget)) {
-              lastDragTargetRef.current.style.backgroundColor = '';
-              lastDragTargetRef.current = null;
-            }
-          };
-
-          const handleDrop = (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            console.log('Drop event triggered');
-
-            if (lastDragTargetRef.current) {
-              lastDragTargetRef.current.style.backgroundColor = '';
-              lastDragTargetRef.current = null;
-            }
-
-            const commentDataText = e.dataTransfer.getData('application/json');
-            if (!commentDataText) {
-                console.error('No comment data in dataTransfer.');
-                return;
-            }
-            console.log('Comment data text:', commentDataText);
-            const commentData = JSON.parse(commentDataText);
-            const { prId, commentIndex } = commentData;
-            console.log('Parsed comment data:', { prId, commentIndex });
-
-
-            let target = e.target;
-            while (target && !target.classList.contains('diff-line')) {
-                target = target.parentElement;
-            }
-
-            if (!target) {
-                console.error('Could not find diff-line target.');
-                return;
-            }
-            console.log('Drop target:', target);
-
-            const gutters = target.querySelectorAll('.diff-gutter');
-            let oldLineGutter = gutters[0];
-            let newLineGutter = gutters[1];
-
-            if (gutters.length === 1) {
-              if (type === 'add') {
-                newLineGutter = gutters[0];
-                oldLineGutter = undefined;
-              } else if (type === 'delete') {
-                oldLineGutter = gutters[0];
-                newLineGutter = undefined;
-              }
-            }
-
-            const rect = target.getBoundingClientRect();
-            let isRightSide = e.clientX > rect.left + rect.width / 2;
-
-            if (type === 'add') {
-              isRightSide = true;
-            } else if (type === 'delete') {
-              isRightSide = false;
-            }
-
-            const side = isRightSide ? 'RIGHT' : 'LEFT';
-            console.log('Calculated side:', side);
-
-            let line;
-            if (side === 'RIGHT') {
-                const newLineNumber = parseInt(newLineGutter?.textContent, 10);
-                if (!isNaN(newLineNumber)) {
-                    line = newLineNumber;
-                }
-            } else { // LEFT
-                const oldLineNumber = parseInt(oldLineGutter?.textContent, 10);
-                if (!isNaN(oldLineNumber)) {
-                    line = oldLineNumber;
-                }
-            }
-            console.log('Calculated line:', line);
-
-            if (line && side) {
-                console.log('Calling handleMoveCommentAndSave with:', { prId, commentIndex, path, line, side });
-                handleMoveCommentAndSave(prId, commentIndex, path, line, side);
-            } else {
-                console.error('Could not determine line and/or side for drop.');
-            }
-          };
-
-          return (
-            <div key={fileId} className="diff-file">
-              <div className="diff-file-header" onClick={toggleFileCollapse} style={{ cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
-                {path}
-                {fileComments.length > 0 && (
-                  <span style={{ marginLeft: '10px', backgroundColor: 'orange', borderRadius: '50%', width: '20px', height: '20px', display: 'flex', justifyContent: 'center', alignItems: 'center', color: 'white', fontSize: 'small' }}>
-                    {fileComments.length}
-                  </span>
-                )}
-                <span style={{ marginLeft: '10px', fontSize: 'small', color: '#555' }}>
-                  {isFileCollapsed ? 'click to expand' : 'click to collapse'}
-                </span>
-              </div>
-              {!isFileCollapsed && (
-                <div onDragOver={handleDragOverFile} onDrop={handleDrop} onDragLeave={handleDragLeaveFile}>
-                  {unplacedComments.length > 0 && (
-                    <div className="diff-widget" style={{padding: '10px', borderBottom: '1px solid #ddd'}}>
-                      <h6>Comments on lines not shown in diff or file-level comments</h6>
-                      {unplacedComments.map(comment => (
-                        <div
-                          key={comment.index}
-                          style={{ borderTop: '1px solid #eee', paddingTop: '5px', marginTop: '5px', cursor: isSubmitted ? 'default' : 'move' }}
-                          draggable={!isSubmitted}
-                          onDragStart={e => {
-                              if (isSubmitted) return;
-                              e.dataTransfer.setData('application/json', JSON.stringify({ prId: pr.id, commentIndex: comment.index }));
-                              e.stopPropagation();
-                          }}
-                        >
-                          {isSubmitted ? (
-                            <>
-                              {comment.line && <p style={{fontSize: 'small', color: '#555', marginBottom: '5px'}}>Line: {comment.line} ({comment.side || 'RIGHT'})</p>}
-                              <pre className="review-pre">{comment.body}</pre>
-                            </>
-                          ) : (
-                            <>
-                              {comment.line && <p style={{fontSize: 'small', color: '#555', marginBottom: '5px'}}>Line: {comment.line} ({comment.side || 'RIGHT'})</p>}
-                              <textarea
-                                className="review-textarea"
-                                value={comment.body || ''}
-                                onChange={(e) => handleDraftChange(pr.id, 'comment.body', e.target.value, comment.index)}
-                                onBlur={() => handleSaveDraft(pr.id)}
-                                placeholder="Comment..."
-                              ></textarea>
-                              <button className="btn btn-remove-comment" onClick={() => handleRemoveComment(pr.id, comment.index)}>Remove</button>
-                            </>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  <Diff viewType="split" diffType={type} hunks={hunks} widgets={widgets} />
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    );
-  };
-
   return (
     <div key={pr.id} className={`pr-card ${isSubmitted ? 'review-submitted' : ''}`}>
       <div className="pr-card-header" onClick={() => toggleCollapse(pr.id)} style={isMainView ? {cursor: 'default'} : {}}>
@@ -438,14 +723,6 @@ function PrReviewCard({
               ))}
             </div>
           )}
-          {reviewFlairText && pr.agentState !== 'provisioning' && (
-            <span 
-              style={{ marginRight: '10px', backgroundColor: getReviewFlairColor(reviewFlairText), color: 'white', padding: '5px 10px', borderRadius: '5px', fontSize: 'small' }}
-              title={pr.agentStateMessage || ''}
-            >
-              {reviewFlairText}
-            </span>
-          )}
           {getSandboxStatusClass(pr) === 'green' ? (
             <div style={{display: 'flex', alignItems: 'center', gap: '5px'}}>
               {pr.agentState === 'provisioning' ? (
@@ -476,106 +753,77 @@ function PrReviewCard({
       </div>
       {!collapsedReviews[pr.id] && (
         <>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '10px 0' }}>
-            <button className="btn" onClick={() => toggleReviewView(pr.id)}>
-              {reviewViewModes[pr.id] === 'structured' ? 'View as YAML' : 'View as Structured'}
-            </button>
-          </div>
-          {isSubmitted ? (
-            reviewViewModes[pr.id] === 'structured' ? (
-              <div className="review-display">
-                <strong>Review:</strong>
-                {drafts[pr.id]?.note &&
-                  <div className="review-section">
-                    <h4>Note to Reviewer</h4>
-                    <pre className="review-pre">{drafts[pr.id].note}</pre>
-                  </div>
-                }
-                {drafts[pr.id]?.review?.body &&
-                  <div className="review-section">
-                    <h4>GitHub Review</h4>
-                    <pre className="review-pre">{drafts[pr.id].review.body}</pre>
-                  </div>
-                }
-              </div>
-            ) : (
-              <div className="review-display">
-                <strong>Review:</strong>
-                <pre>{yamlDrafts[pr.id] || ''}</pre>
-              </div>
-            )
-          ) : (
-            reviewViewModes[pr.id] === 'structured' ? (
-              <div className="review-form">
-                <div className="review-section">
-                  <h4>Note to Reviewer</h4>
-                  <textarea
-                    className="review-textarea"
-                    value={drafts[pr.id]?.note || ''}
-                    onChange={(e) => handleDraftChange(pr.id, 'note', e.target.value)}
-                    onBlur={() => handleSaveDraft(pr.id)}
-                    placeholder="A description of the changes as a note to the reviewer..."
-                  ></textarea>
-                </div>
-                <div className="review-section">
-                  <h4>GitHub Review</h4>
-                  <textarea
-                    className="review-textarea"
-                    value={drafts[pr.id]?.review?.body || ''}
-                    onChange={(e) => handleDraftChange(pr.id, 'review.body', e.target.value)}
-                    onBlur={() => handleSaveDraft(pr.id)}
-                    placeholder="Overall review comment for the PR..."
-                  ></textarea>
-                </div>
-              </div>
-            ) : (
-              <div className="review-form">
-                <div className="review-section">
-                  <h4>Review YAML</h4>
-                  <textarea
-                    className="review-textarea yaml-editor"
-                    style={{ height: '300px', fontFamily: 'monospace' }}
-                    value={yamlDrafts[pr.id] || ''}
-                    onChange={(e) => handleYamlDraftChange(pr.id, e.target.value)}
-                    onBlur={() => handleYamlDraftBlur(pr.id)}
-                    placeholder="Enter review as YAML..."
-                  ></textarea>
-                </div>
-              </div>
-            )
-          )}
-          {renderDiffView()}
-          <div className="pr-card-actions">
+            {tasks.map(task => (
+                <TaskReviewCard 
+                    key={task.name}
+                    task={task}
+                    prId={pr.id}
+                    drafts={drafts} // kept for backward compatibility if needed, but local draft is used
+                    reviewViewModes={reviewViewModes}
+                    yamlDrafts={yamlDrafts} // kept for backward compatibility
+                    handleSaveDraft={handleSaveDraft} // kept for backward compatibility
+                    handleDraftChange={handleDraftChange} // kept
+                    handleRemoveComment={handleRemoveComment}
+                    toggleReviewView={toggleReviewView}
+                    handleYamlDraftChange={handleYamlDraftChange}
+                    handleYamlDraftBlur={handleYamlDraftBlur}
+                    handleSubmit={handleSubmit} // Original handler
+                    handleSubmitTask={handleSubmitTask} // New handler
+                    handleSaveTaskDraft={handleSaveTaskDraft} // New handler
+                    handleExportCurl={handleExportCurl}
+                    namespace={namespace}
+                    isSubmitted={isSubmitted}
+                    diff={diff}
+                    diffError={diffError}
+                    fileCollapsed={fileCollapsed}
+                    setFileCollapsed={setFileCollapsed}
+                    handleMoveCommentAndSave={handleMoveCommentAndSave}
+                    lastDragTargetRef={lastDragTargetRef}
+                    setCurlCommand={setCurlCommand}
+                    curlCommand={curlCommand}
+                />
+            ))}
+
             {!isSubmitted && (
-              <button className="btn btn-submit" onClick={() => handleSubmit(pr.id)}>
-                Create Draft Review
-              </button>
+                <div style={{padding: '10px', borderTop: '1px solid #eee', marginTop: '10px'}}>
+                    {!showNewTaskForm ? (
+                        <button className="btn" onClick={() => setShowNewTaskForm(true)}>Review Again</button>
+                    ) : (
+                        <div className="new-task-form" style={{padding: '10px', backgroundColor: '#f0f0f0', borderRadius: '5px'}}>
+                            <h4>Request New Review Task</h4>
+                            <textarea 
+                                className="review-textarea"
+                                value={newTaskPrompt}
+                                onChange={(e) => setNewTaskPrompt(e.target.value)}
+                                placeholder="Enter custom instructions for the agent (optional)..."
+                                style={{width: '100%', marginBottom: '10px'}}
+                            />
+                            <div>
+                                <button className="btn btn-submit" onClick={handleCreateTask}>Start Task</button>
+                                <button className="btn" style={{marginLeft: '10px', backgroundColor: '#6c757d'}} onClick={() => setShowNewTaskForm(false)}>Cancel</button>
+                            </div>
+                        </div>
+                    )}
+                </div>
             )}
-            {isSubmitted && (
-              <a href={pr.htmlURL} target="_blank" rel="noopener noreferrer" className="btn btn-submit" style={{textDecoration: 'none'}}>
-                Go to review
-              </a>
+            
+            {/* Show CURL command if set - GLOBAL to PR since it's an action outcome */}
+            {curlCommand && (
+                <div className="curl-command-display" style={{marginTop: '10px'}}>
+                <h4>Curl Command</h4>
+                <textarea
+                    className="review-textarea"
+                    style={{height: '150px', fontFamily: 'monospace', width: '100%'}}
+                    value={curlCommand}
+                    readOnly
+                />
+                <button className="btn" style={{marginTop: '5px'}} onClick={() => {
+                    navigator.clipboard.writeText(curlCommand);
+                    alert("Copied to clipboard!");
+                }}>Copy to Clipboard</button>
+                <button className="btn" style={{marginTop: '5px', marginLeft: '10px'}} onClick={() => setCurlCommand(null)}>Close</button>
+                </div>
             )}
-            <button className="btn btn-submit" style={{marginLeft: '10px', backgroundColor: '#6c757d'}} onClick={() => handleExportCurl(pr.id, setCurlCommand)} disabled={isSubmitted}>
-              Export Curl Command
-            </button>
-          </div>
-          {curlCommand && (
-            <div className="curl-command-display" style={{marginTop: '10px'}}>
-              <h4>Curl Command</h4>
-              <textarea
-                className="review-textarea"
-                style={{height: '150px', fontFamily: 'monospace', width: '100%'}}
-                value={curlCommand}
-                readOnly
-              />
-              <button className="btn" style={{marginTop: '5px'}} onClick={() => {
-                navigator.clipboard.writeText(curlCommand);
-                alert("Copied to clipboard!");
-              }}>Copy to Clipboard</button>
-              <button className="btn" style={{marginTop: '5px', marginLeft: '10px'}} onClick={() => setCurlCommand(null)}>Close</button>
-            </div>
-          )}
         </>
       )}
     </div>

@@ -226,6 +226,7 @@ function App() {
           .then(res => res.json())
           .then(data => {
             setDevSandboxes(data || []);
+            setLastUpdated(new Date());
           })
           .catch(err => console.error(`Failed to fetch dev sandboxes for ${activeRepo.name}:`, err));
     } else if (activeSubTab.name) {
@@ -264,8 +265,26 @@ function App() {
     if ((!isAuthenticated && !isGuest) || view !== 'dashboard') return;
 
     let intervalId;
+    let ticks = 0;
 
-    const tick = () => refreshData(true);
+    const tick = () => {
+        refreshData(true);
+        ticks++;
+        if (ticks % 3 === 0 && activeRepoRef.current) {
+             fetch(`/api/repos/${activeRepoRef.current.name}`)
+                .then(res => {
+                    if (res.ok) return res.json();
+                    throw new Error("Failed to fetch repo");
+                })
+                .then(updatedRepo => {
+                     if (activeRepoRef.current && activeRepoRef.current.name === updatedRepo.name) {
+                         setActiveRepo(updatedRepo);
+                     }
+                     setRepos(prevRepos => prevRepos.map(r => r.name === updatedRepo.name ? updatedRepo : r));
+                })
+                .catch(err => console.error("Failed to refresh active repo:", err));
+        }
+    };
 
     const start = () => {
       if (!intervalId) {
@@ -966,6 +985,7 @@ function App() {
           handleScaleUp={handlePRScaleUp}
           handleScaleDown={handlePRScaleDown}
           handleAddPR={handleAddPR}
+          lastUpdated={lastUpdated}
         />
       );
     } else if (activeSubTab.name === 'dev') {

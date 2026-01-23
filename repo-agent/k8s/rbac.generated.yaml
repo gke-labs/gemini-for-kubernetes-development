@@ -19,6 +19,7 @@ rules:
   resources:
   - issuesandboxes
   - reviewsandboxes
+  - sandboxtasks
   verbs:
   - create
   - delete
