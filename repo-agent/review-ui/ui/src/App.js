@@ -231,7 +231,11 @@ function App() {
           .catch(err => console.error(`Failed to fetch dev sandboxes for ${activeRepo.name}:`, err));
     } else if (activeSubTab.name) {
         if (!merge) setPrs([]);
-        fetch(`/api/repo/${activeRepo.name}/issues/${activeSubTab.name}`)
+        let url = `/api/repo/${activeRepo.name}/issues/${activeSubTab.name}`;
+        if (activeSubTab.name === 'issues') {
+             url = `/api/repo/${activeRepo.name}/issues`;
+        }
+        fetch(url)
           .then(res => res.json())
           .then(data => {
             const safeData = data || [];
@@ -257,7 +261,7 @@ function App() {
                 return next;
             });
           })
-          .catch(err => console.error(`Failed to fetch issues for ${activeRepo.name} handler ${activeSubTab.name}:`, err));
+          .catch(err => console.error(`Failed to fetch issues for ${activeRepo.name} tab ${activeSubTab.name}:`, err));
     }
   }, [activeRepo, activeSubTab, isAuthenticated, isGuest]);
 
@@ -357,8 +361,8 @@ function App() {
     if (repo) {
       if (repo.review) {
         setActiveSubTab({ repo: repoName, name: 'review' });
-      } else if (repo.issueHandlers && repo.issueHandlers.length > 0) {
-        setActiveSubTab({ repo: repoName, name: repo.issueHandlers[0].name });
+      } else if (repo.issue) {
+        setActiveSubTab({ repo: repoName, name: 'issues' });
       } else if (repo.dev) {
         setActiveSubTab({ repo: repoName, name: 'dev' });
       }
@@ -640,22 +644,22 @@ function App() {
     }
   };
 
-  const handleIssueSaveDraft = (issueId, handlerName) => {
+  const handleIssueSaveDraft = (issueId) => {
     const draft = drafts[issueId];
-    fetch(`/api/repo/${activeRepo.name}/issues/${issueId}/handler/${handlerName}/draft`, {
+    fetch(`/api/repo/${activeRepo.name}/issues/${issueId}/draft`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ draft })
     }).catch(err => console.error("Failed to save issue draft:", err));
   };
 
-  const handleIssueSubmit = (issueId, handlerName) => {
+  const handleIssueSubmit = (issueId) => {
     const comment = drafts[issueId];
     if (!comment.trim()) {
       alert("Please leave a comment before Submitting.");
       return;
     }
-    fetch(`/api/repo/${activeRepo.name}/issues/${issueId}/handler/${handlerName}/submitcomment`, {
+    fetch(`/api/repo/${activeRepo.name}/issues/${issueId}/submitcomment`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ comment })
@@ -675,24 +679,32 @@ function App() {
     .catch(err => console.error("Failed to submit issue comment:", err));
   };
 
-  const handleIssueDelete = (issueId, handlerName) => {
-    fetch(`/api/repo/${activeRepo.name}/issues/${issueId}/handler/${handlerName}`, { method: 'DELETE' })
+  const handleIssueDelete = (issueId) => {
+    fetch(`/api/repo/${activeRepo.name}/issues/${issueId}`, { method: 'DELETE' })
       .then(res => {
         if (res.ok) {
           // Optimistically remove from view immediately
           setIssues(issues.filter(issue => issue.id !== issueId));
 
           // Trigger exclusion in background
-          fetch(`/api/repos/${activeRepo.name}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ excludeIssue: parseInt(issueId), handlerName: handlerName })
-          }).then(res2 => {
-              if (res2.ok) {
-              } else {
-                  console.error("Sandbox deleted but failed to exclude Issue");
-              }
-          });
+          // We pick the first handler to add exclusion to, or 'triage' if available
+          let handlerName = '';
+          if (activeRepo.issue && activeRepo.issue.handlers && activeRepo.issue.handlers.length > 0) {
+              handlerName = activeRepo.issue.handlers[0].name;
+          }
+          
+          if (handlerName) {
+            fetch(`/api/repos/${activeRepo.name}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ excludeIssue: parseInt(issueId), handlerName: handlerName })
+            }).then(res2 => {
+                if (res2.ok) {
+                } else {
+                    console.error("Sandbox deleted but failed to exclude Issue");
+                }
+            });
+          }
           // Show alert slightly deferred to allow UI render
           setTimeout(() => {
                alert("Issue Sandbox deleted. It will disappear from the list shortly.");
@@ -774,8 +786,8 @@ function App() {
       .catch(err => console.error("Failed to scale down sandbox:", err));
   };
 
-  const handleIssueScaleUp = (issueId, handlerName) => {
-    fetch(`/api/repo/${activeRepo.name}/issues/${issueId}/handler/${handlerName}/scaleup`, { method: 'POST' })
+  const handleIssueScaleUp = (issueId) => {
+    fetch(`/api/repo/${activeRepo.name}/issues/${issueId}/scaleup`, { method: 'POST' })
       .then(res => {
         if (res.ok) {
           // Refresh Issues
@@ -787,8 +799,8 @@ function App() {
       .catch(err => console.error("Failed to scale up issue sandbox:", err));
   };
 
-  const handleIssueScaleDown = (issueId, handlerName) => {
-    fetch(`/api/repo/${activeRepo.name}/issues/${issueId}/handler/${handlerName}/scaledown`, { method: 'POST' })
+  const handleIssueScaleDown = (issueId) => {
+    fetch(`/api/repo/${activeRepo.name}/issues/${issueId}/scaledown`, { method: 'POST' })
       .then(res => {
         if (res.ok) {
            fetchRepos();
@@ -1081,8 +1093,8 @@ function App() {
                 )}
             </>
         );
-    } else {
-      if (issues.length === 0) return <p>No active Issues found for this handler.</p>;
+    } else if (activeSubTab.name === 'issues') {
+      if (issues.length === 0) return <p>No active Issues found.</p>;
       return issues.map(issue => (
         <IssueCard
           key={issue.id}
@@ -1097,6 +1109,7 @@ function App() {
           namespace={namespace}
           handleScaleUp={handleIssueScaleUp}
           handleScaleDown={handleIssueScaleDown}
+          repoName={activeRepo.name}
         />
       ));
     }
@@ -1134,15 +1147,14 @@ function App() {
                 Review
                 </button>
             )}
-            {repos.find(r => r.name === activeRepo.name)?.issueHandlers?.map(handler => (
+            {repos.find(r => r.name === activeRepo.name)?.issue && (
                 <button
-                key={handler.name}
-                className={`sub-tab-btn ${activeSubTab.name === handler.name ? 'active' : ''}`}
-                onClick={() => setActiveSubTab({ repo: activeRepo.name, name: handler.name })}
+                className={`sub-tab-btn ${activeSubTab.name === 'issues' ? 'active' : ''}`}
+                onClick={() => setActiveSubTab({ repo: activeRepo.name, name: 'issues' })}
                 >
-                {handler.name}
+                Issues
                 </button>
-            ))}
+            )}
             {repos.find(r => r.name === activeRepo.name)?.dev && (
                 <button
                 className={`sub-tab-btn ${activeSubTab.name === 'dev' ? 'active' : ''}`}

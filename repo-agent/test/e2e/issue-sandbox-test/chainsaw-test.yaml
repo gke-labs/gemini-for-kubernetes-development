@@ -69,3 +69,14 @@ spec:
           kubectl describe pod -n repo-agent-system "$POD_NAME" || echo "Pod not found yet"
           echo "--- Logs for Pod $POD_NAME (container: issue-sandbox) ---"
           kubectl logs -n repo-agent-system "$POD_NAME" -c issue-sandbox || echo "Could not fetch logs"
+  - name: check-sandboxtask
+    try:
+    - assert:
+        timeout: 20m
+        file: sandboxtask-assert.yaml
+    catch:
+    - describe:
+        apiVersion: custom.agents.x-k8s.io/v1alpha1
+        kind: SandboxTask
+        namespace: repo-agent-system
+        selector: review.gemini.google.com/repowatch=ist-gfkd

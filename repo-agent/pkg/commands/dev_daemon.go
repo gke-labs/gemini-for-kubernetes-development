@@ -6,6 +6,8 @@ import (
 	"os"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/agentoutput"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/agentserver"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/taskrunner"
 	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/klog/v2"
@@ -77,10 +79,31 @@ func (c *SandboxDaemonCommand) Run(ctx context.Context) error {
 		}
 	}()
 
-	// We ignore the error here to keep the pod running for debugging/code-server access
-	if err := c.SandboxCommand.Run(ctx); err != nil {
-		log.Error(err, "failed to run sandbox command")
+	// Start Agent Server (Log Serving)
+	agentServer := agentserver.NewAgentServer()
+	if err := agentServer.Start(); err != nil {
+		_ = ao.SetAgentState(ctx, "error", err.Error())
+		log.Error(err, "failed to start agent server")
+		return err
 	}
+	defer func() {
+		if err := agentServer.Stop(); err != nil {
+			log.Error(err, "failed to stop agent server")
+		}
+	}()
+
+	// Start Task Runner (Process Tasks)
+	tr, err := taskrunner.NewTaskRunner(ao)
+	if err != nil {
+		_ = ao.SetAgentState(ctx, "error", err.Error())
+		log.Error(err, "failed to create task runner")
+		return err
+	}
+
+	// Run TaskRunner in background
+	go tr.Run(ctx)
+
+	log.Info("Sandbox Daemon started. Waiting for tasks...")
 
 	return c.CodeServerCommand.Wait()
 }

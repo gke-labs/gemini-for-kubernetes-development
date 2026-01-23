@@ -182,7 +182,11 @@ spec:
         3. Are there tests to check the fix.
     maxActiveSandboxes: 3
     maxSandboxes: 5
-  issueHandlers:
+  issue:
+    maxActiveSandboxes: 1
+    maxSandboxes: 3
+    issueShutdownAfterMinutes: 30
+    handlers:
     - llm:
         apiKeySecretRef: gemini-vscode-tokens
         prompt: >-
@@ -212,9 +216,6 @@ spec:
           Issue Title: "{{.Title}}"
           Issue Body: "{{.Body}}"
           HTML URL: "{{.HTMLURL}}"
-      issueShutdownAfterMinutes: 30
-      maxActiveSandboxes: 1
-      maxSandboxes: 3
       name: triage
 `
 	c.JSON(http.StatusOK, gin.H{"yaml": defaultRepoWatch})
@@ -366,9 +367,9 @@ func (s *Server) updateRepoWatch(c *gin.Context) {
 
 	// Exclude Issue if provided
 	if payload.ExcludeIssue != 0 && payload.HandlerName != "" {
-		handlersSlice, found, err := unstructured.NestedSlice(existing.Object, "spec", "issueHandlers")
+		handlersSlice, found, err := unstructured.NestedSlice(existing.Object, "spec", "issue", "handlers")
 		if err != nil {
-			log.Info("Failed to get issueHandlers", "err", err)
+			log.Info("Failed to get issue handlers", "err", err)
 		}
 
 		if found {
@@ -417,9 +418,9 @@ func (s *Server) updateRepoWatch(c *gin.Context) {
 			}
 
 			if updated {
-				if err := unstructured.SetNestedSlice(existing.Object, newHandlers, "spec", "issueHandlers"); err != nil {
-					log.Info("Failed to update issueHandlers", "err", err)
-					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update object structure for issueHandlers"})
+				if err := unstructured.SetNestedSlice(existing.Object, newHandlers, "spec", "issue", "handlers"); err != nil {
+					log.Info("Failed to update issue handlers", "err", err)
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update object structure for issue handlers"})
 					return
 				}
 			}
@@ -669,26 +670,26 @@ func (s *Server) getRepos(c *gin.Context) {
 		}
 
 		// Extract issue handlers
-		if handlers, found, err := unstructured.NestedSlice(repoWatch.Object, "spec", "issueHandlers"); err == nil && found {
-			var issueHandlers []models.IssueHandler
-			for _, h := range handlers {
-				handlerMap, ok := h.(map[string]interface{})
-				if !ok {
-					continue
-				}
-				name, _ := handlerMap["name"].(string)
-				maxActiveSandboxes, _ := handlerMap["maxActiveSandboxes"].(int64)
-				pushBranch, _ := handlerMap["pushBranch"].(bool)
+		if maxActiveSandboxes, found, err := unstructured.NestedInt64(repoWatch.Object, "spec", "issue", "maxActiveSandboxes"); err == nil && found && maxActiveSandboxes > 0 {
+			repo.Issue = &models.IssueConfig{MaxActiveSandboxes: maxActiveSandboxes}
 
-				if maxActiveSandboxes > 0 {
+			if handlers, found, err := unstructured.NestedSlice(repoWatch.Object, "spec", "issue", "handlers"); err == nil && found {
+				var issueHandlers []models.IssueHandler
+				for _, h := range handlers {
+					handlerMap, ok := h.(map[string]interface{})
+					if !ok {
+						continue
+					}
+					name, _ := handlerMap["name"].(string)
+					pushBranch, _ := handlerMap["pushBranch"].(bool)
+
 					issueHandlers = append(issueHandlers, models.IssueHandler{
-						Name:               name,
-						MaxActiveSandboxes: maxActiveSandboxes,
-						PushBranch:         pushBranch,
+						Name:       name,
+						PushBranch: pushBranch,
 					})
 				}
+				repo.Issue.Handlers = issueHandlers
 			}
-			repo.IssueHandlers = issueHandlers
 		}
 
 		repos = append(repos, repo)
@@ -820,26 +821,26 @@ func (s *Server) getRepo(c *gin.Context) {
 	}
 
 	// Extract issue handlers
-	if handlers, found, err := unstructured.NestedSlice(repoWatch.Object, "spec", "issueHandlers"); err == nil && found {
-		var issueHandlers []models.IssueHandler
-		for _, h := range handlers {
-			handlerMap, ok := h.(map[string]interface{})
-			if !ok {
-				continue
-			}
-			name, _ := handlerMap["name"].(string)
-			maxActiveSandboxes, _ := handlerMap["maxActiveSandboxes"].(int64)
-			pushBranch, _ := handlerMap["pushBranch"].(bool)
+	if maxActiveSandboxes, found, err := unstructured.NestedInt64(repoWatch.Object, "spec", "issue", "maxActiveSandboxes"); err == nil && found && maxActiveSandboxes > 0 {
+		repo.Issue = &models.IssueConfig{MaxActiveSandboxes: maxActiveSandboxes}
 
-			if maxActiveSandboxes > 0 {
+		if handlers, found, err := unstructured.NestedSlice(repoWatch.Object, "spec", "issue", "handlers"); err == nil && found {
+			var issueHandlers []models.IssueHandler
+			for _, h := range handlers {
+				handlerMap, ok := h.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				name, _ := handlerMap["name"].(string)
+				pushBranch, _ := handlerMap["pushBranch"].(bool)
+
 				issueHandlers = append(issueHandlers, models.IssueHandler{
-					Name:               name,
-					MaxActiveSandboxes: maxActiveSandboxes,
-					PushBranch:         pushBranch,
+					Name:       name,
+					PushBranch: pushBranch,
 				})
 			}
+			repo.Issue.Handlers = issueHandlers
 		}
-		repo.IssueHandlers = issueHandlers
 	}
 
 	c.JSON(http.StatusOK, repo)

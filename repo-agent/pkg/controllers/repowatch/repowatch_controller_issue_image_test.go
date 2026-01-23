@@ -57,7 +57,7 @@ func TestReconciler_Reconcile_Issue_With_Image(t *testing.T) {
 						Body:       io.NopCloser(strings.NewReader(`[]`)),
 					}
 				},
-				"https://api.github.com/repos/test/repo/issues?labels=bug&state=open": func() *http.Response {
+				"https://api.github.com/repos/test/repo/issues?per_page=100&state=open": func() *http.Response {
 					return &http.Response{
 						StatusCode: http.StatusOK,
 						Body: io.NopCloser(strings.NewReader(`[
@@ -65,7 +65,8 @@ func TestReconciler_Reconcile_Issue_With_Image(t *testing.T) {
 													"number": 10,
 													"title": "Test Issue",
 													"html_url": "https://github.com/test/repo/issues/10",
-													"repository_url": "https://api.github.com/repos/test/repo"
+													"repository_url": "https://api.github.com/repos/test/repo",
+													"labels": [{"name": "bug"}]
 												}
 											]`)),
 					}
@@ -105,17 +106,19 @@ func TestReconciler_Reconcile_Issue_With_Image(t *testing.T) {
 		Spec: reviewv1alpha1.RepoWatchSpec{
 			RepoURL:          "https://github.com/test/repo",
 			GithubSecretName: "github-secret",
-			IssueHandlers: []reviewv1alpha1.IssueHandlerSpec{
-				{
-					Name:               "test-handler",
-					MaxActiveSandboxes: 1,
-					Labels:             []string{"bug"},
-					LLM: reviewv1alpha1.LLMConfig{
-						Provider:        "gemini-cli",
-						APIKeySecretRef: "llm-secret",
-						Prompt:          "Triage this",
+			Issue: &reviewv1alpha1.IssueSpec{
+				MaxActiveSandboxes: 1,
+				Image:              "custom-image:latest",
+				LLM: reviewv1alpha1.LLMConfig{
+					Provider:        "gemini-cli",
+					APIKeySecretRef: "llm-secret",
+				},
+				Handlers: []reviewv1alpha1.IssueHandlerSpec{
+					{
+						Name:   "test-handler",
+						Labels: []string{"bug"},
+						Prompt: "Triage this",
 					},
-					Image: "custom-image:latest",
 				},
 			},
 		},
