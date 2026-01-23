@@ -11,7 +11,6 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/auth"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
-	"github.com/google/go-github/v39/github"
 	yaml "go.yaml.in/yaml/v3"
 	"k8s.io/apimachinery/pkg/api/errors"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -570,7 +569,6 @@ func (s *Server) getRepos(c *gin.Context) {
 
 		// Extract PendingPRs
 		if pendingPRsSlice, found, err := unstructured.NestedSlice(repoWatch.Object, "status", "pendingPRs"); err == nil && found {
-			var pendingPRs []models.PendingPR
 			var prNumbers []int64
 			for _, v := range pendingPRsSlice {
 				if i, ok := v.(int64); ok {
@@ -589,31 +587,8 @@ func (s *Server) getRepos(c *gin.Context) {
 					prNumbers = prNumbers[:10]
 				}
 
-				// Try to get GitHub client to fetch titles
-				token, tokenErr := s.K8sManager.GetGitHubToken(c.Request.Context(), &repoWatch)
-				var client *github.Client
-				if tokenErr == nil {
-					client = clients.NewGitHubClient(c.Request.Context(), token)
-				}
-
-				owner, repoName, urlErr := parseRepoURL(repoURL)
-
-				for _, prNum := range prNumbers {
-					pendingPR := models.PendingPR{Number: prNum}
-					// Only fetch title if we have a client and valid repo info
-					if client != nil && urlErr == nil {
-						pr, _, err := client.PullRequests.Get(c.Request.Context(), owner, repoName, int(prNum))
-						if err == nil {
-							pendingPR.Title = pr.GetTitle()
-							pendingPR.HTMLURL = pr.GetHTMLURL()
-						} else {
-							log.Info("Failed to get PR title", "prNumber", prNum, "err", err)
-						}
-					}
-					pendingPRs = append(pendingPRs, pendingPR)
-				}
+				repo.PendingPRs = prNumbers
 			}
-			repo.PendingPRs = pendingPRs
 		}
 
 		// Extract ExcludePullRequests
@@ -664,6 +639,46 @@ func (s *Server) getRepos(c *gin.Context) {
 					})
 				}
 				repo.Issue.Handlers = issueHandlers
+			}
+		}
+
+		// Extract PendingIssues
+		if pendingIssuesMap, found, err := unstructured.NestedMap(repoWatch.Object, "status", "pendingIssues"); err == nil && found {
+			var issueNumbers []int64
+
+			for _, v := range pendingIssuesMap {
+				if issuesSlice, ok := v.([]interface{}); ok {
+					for _, issue := range issuesSlice {
+						if i, ok := issue.(int64); ok {
+							issueNumbers = append(issueNumbers, i)
+						} else if i, ok := issue.(int); ok {
+							issueNumbers = append(issueNumbers, int64(i))
+						}
+					}
+				}
+			}
+
+			if len(issueNumbers) > 0 {
+				// Remove duplicates
+				uniqueIssues := make(map[int64]bool)
+				var uniqueList []int64
+				for _, num := range issueNumbers {
+					if !uniqueIssues[num] {
+						uniqueIssues[num] = true
+						uniqueList = append(uniqueList, num)
+					}
+				}
+				issueNumbers = uniqueList
+
+				// Sort and limit to top 10
+				sort.Slice(issueNumbers, func(i, j int) bool {
+					return issueNumbers[i] > issueNumbers[j]
+				})
+				if len(issueNumbers) > 10 {
+					issueNumbers = issueNumbers[:10]
+				}
+
+				repo.PendingIssues = issueNumbers
 			}
 		}
 
@@ -721,7 +736,6 @@ func (s *Server) getRepo(c *gin.Context) {
 
 	// Extract PendingPRs
 	if pendingPRsSlice, found, err := unstructured.NestedSlice(repoWatch.Object, "status", "pendingPRs"); err == nil && found {
-		var pendingPRs []models.PendingPR
 		var prNumbers []int64
 		for _, v := range pendingPRsSlice {
 			if i, ok := v.(int64); ok {
@@ -740,31 +754,8 @@ func (s *Server) getRepo(c *gin.Context) {
 				prNumbers = prNumbers[:10]
 			}
 
-			// Try to get GitHub client to fetch titles
-			token, tokenErr := s.K8sManager.GetGitHubToken(c.Request.Context(), repoWatch)
-			var client *github.Client
-			if tokenErr == nil {
-				client = clients.NewGitHubClient(c.Request.Context(), token)
-			}
-
-			owner, repoName, urlErr := parseRepoURL(repoURL)
-
-			for _, prNum := range prNumbers {
-				pendingPR := models.PendingPR{Number: prNum}
-				// Only fetch title if we have a client and valid repo info
-				if client != nil && urlErr == nil {
-					pr, _, err := client.PullRequests.Get(c.Request.Context(), owner, repoName, int(prNum))
-					if err == nil {
-						pendingPR.Title = pr.GetTitle()
-						pendingPR.HTMLURL = pr.GetHTMLURL()
-					} else {
-						log.Info("Failed to get PR title", "prNumber", prNum, "err", err)
-					}
-				}
-				pendingPRs = append(pendingPRs, pendingPR)
-			}
+			repo.PendingPRs = prNumbers
 		}
-		repo.PendingPRs = pendingPRs
 	}
 
 	// Extract ExcludePullRequests
@@ -816,6 +807,59 @@ func (s *Server) getRepo(c *gin.Context) {
 			}
 			repo.Issue.Handlers = issueHandlers
 		}
+	}
+
+	// Extract PendingIssues
+	if pendingIssuesMap, found, err := unstructured.NestedMap(repoWatch.Object, "status", "pendingIssues"); err == nil && found {
+		var issueNumbers []int64
+
+		for _, v := range pendingIssuesMap {
+			if issuesSlice, ok := v.([]interface{}); ok {
+				for _, issue := range issuesSlice {
+					if i, ok := issue.(int64); ok {
+						issueNumbers = append(issueNumbers, i)
+					} else if i, ok := issue.(int); ok {
+						issueNumbers = append(issueNumbers, int64(i))
+					}
+				}
+			}
+		}
+
+		if len(issueNumbers) > 0 {
+			// Remove duplicates
+			uniqueIssues := make(map[int64]bool)
+			var uniqueList []int64
+			for _, num := range issueNumbers {
+				if !uniqueIssues[num] {
+					uniqueIssues[num] = true
+					uniqueList = append(uniqueList, num)
+				}
+			}
+			issueNumbers = uniqueList
+
+			// Sort and limit to top 10
+			sort.Slice(issueNumbers, func(i, j int) bool {
+				return issueNumbers[i] > issueNumbers[j]
+			})
+			if len(issueNumbers) > 10 {
+				issueNumbers = issueNumbers[:10]
+			}
+
+			repo.PendingIssues = issueNumbers
+		}
+	}
+
+	// Extract ExcludeIssues
+	if excludeIssuesSlice, found, err := unstructured.NestedSlice(repoWatch.Object, "spec", "issue", "excludeIssues"); err == nil && found {
+		var excludeIssues []int64
+		for _, v := range excludeIssuesSlice {
+			if i, ok := v.(int64); ok {
+				excludeIssues = append(excludeIssues, i)
+			} else if i, ok := v.(int); ok {
+				excludeIssues = append(excludeIssues, int64(i))
+			}
+		}
+		repo.ExcludeIssues = excludeIssues
 	}
 
 	c.JSON(http.StatusOK, repo)

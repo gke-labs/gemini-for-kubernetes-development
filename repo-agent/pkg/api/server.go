@@ -64,6 +64,7 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 
 		api.GET("/repo/:repo/prs", s.getPRs)
 		api.GET("/repo/:repo/prs/:id/tasks", s.getPRTasks)
+		api.GET("/repo/:repo/prs/:id/details", s.getPRDetails)
 		api.POST("/repo/:repo/prs/:id/tasks", s.createPRTask)
 		api.POST("/repo/:repo/tasks/:taskID/draft", s.saveTaskDraft)
 		api.POST("/repo/:repo/prs/:id/draft", s.saveDraft)
@@ -71,6 +72,7 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 		api.DELETE("/repo/:repo/prs/:id", s.deletePR)
 		api.GET("/repo/:repo/issues", s.getIssues)
 		api.GET("/repo/:repo/issues/:issue_id/tasks", s.getIssueTasks)
+		api.GET("/repo/:repo/issues/:issue_id/details", s.getIssueDetails)
 		api.POST("/repo/:repo/issues/:issue_id/draft", s.saveIssueDraft)
 		api.POST("/repo/:repo/issues/:issue_id/submitcomment", s.submitIssueComment)
 		api.DELETE("/repo/:repo/issues/:issue_id", s.deleteIssue)

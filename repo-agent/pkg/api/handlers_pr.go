@@ -441,3 +441,56 @@ func (s *Server) createPRTask(c *gin.Context) {
 
 	c.Status(http.StatusOK)
 }
+
+func (s *Server) getPRDetails(c *gin.Context) {
+	log := klog.FromContext(c.Request.Context())
+	namespace := c.MustGet(auth.UserKey).(string)
+	repo := c.Param("repo")
+	prIDStr := c.Param("id")
+
+	prID, err := strconv.Atoi(prIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid PR ID"})
+		return
+	}
+
+	repoWatch, err := s.K8sManager.GetRepoWatch(c.Request.Context(), namespace, repo)
+	if err != nil {
+		log.Info("Failed to get RepoWatch", "namespace", namespace, "name", repo, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get RepoWatch"})
+		return
+	}
+
+	token, err := s.K8sManager.GetGitHubToken(c.Request.Context(), repoWatch)
+	if err != nil {
+		log.Info("Failed to get github token", "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get GitHub token"})
+		return
+	}
+
+	client := clients.NewGitHubClient(c.Request.Context(), token)
+
+	repoURL, found, _ := unstructured.NestedString(repoWatch.Object, "spec", "repoURL")
+	if !found {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "RepoURL not found"})
+		return
+	}
+	owner, repoName, err := parseRepoURL(repoURL)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid RepoURL"})
+		return
+	}
+
+	pr, _, err := client.PullRequests.Get(c.Request.Context(), owner, repoName, prID)
+	if err != nil {
+		log.Info("Failed to get PR details", "prID", prID, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get PR details"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"number":  pr.GetNumber(),
+		"title":   pr.GetTitle(),
+		"htmlURL": pr.GetHTMLURL(),
+	})
+}

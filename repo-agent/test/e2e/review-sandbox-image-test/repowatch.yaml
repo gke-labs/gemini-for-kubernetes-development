@@ -14,7 +14,9 @@ spec:
       apiKeySecretRef: dummy-provider-token
       provider: dummy
       prompt: "dummy-review-prompt"
-  issueHandlers: []
+  issue:
+    maxSandboxes: 0
+    maxActiveSandboxes: 0
   dev:
     maxSandboxes: 0
     maxActiveSandboxes: 0
