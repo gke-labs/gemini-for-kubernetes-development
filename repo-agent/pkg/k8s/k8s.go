@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"math/rand"
+	"strings"
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
@@ -555,6 +557,28 @@ func (m *Manager) UpdateSandboxTaskUserDraft(ctx context.Context, namespace, tas
 	return nil
 }
 
+// We create a new *rand.Rand instance seeded with the current time.
+// This is crucial to get different results on each program execution.
+var seededRand = rand.New(
+	rand.NewSource(time.Now().UnixNano()))
+
+const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+// randString generates a random string of length n.
+func randString(n int) string {
+	// Create a byte slice of length n
+	b := make([]byte, n)
+
+	// Fill each position in the slice with a random character
+	// from our letterBytes constant
+	for i := range b {
+		b[i] = letterBytes[seededRand.Intn(len(letterBytes))]
+	}
+
+	// Convert the byte slice to a string and return it
+	return string(b)
+}
+
 func (m *Manager) CreateSandboxTask(ctx context.Context, namespace, sandboxName, taskType string, params map[string]interface{}) error {
 	gvr := schema.GroupVersionResource{
 		Group:    "custom.agents.x-k8s.io",
@@ -563,7 +587,7 @@ func (m *Manager) CreateSandboxTask(ctx context.Context, namespace, sandboxName,
 	}
 
 	// Generate a name
-	name := fmt.Sprintf("%s-task-%d", sandboxName, time.Now().Unix())
+	name := fmt.Sprintf("%s-task-%d-%s", sandboxName, time.Now().Unix(), strings.ToLower(randString(4)))
 
 	task := &unstructured.Unstructured{
 		Object: map[string]interface{}{
@@ -577,9 +601,9 @@ func (m *Manager) CreateSandboxTask(ctx context.Context, namespace, sandboxName,
 				},
 			},
 			"spec": map[string]interface{}{
-				"sandboxRef": sandboxName,
-				"type":       taskType,
-				"params":     params,
+				"sandboxName": sandboxName,
+				"type":        taskType,
+				"params":      params,
 			},
 		},
 	}

@@ -434,7 +434,9 @@ func (s *Server) createPRTask(c *gin.Context) {
 
 	// Scale up the sandbox so it can process the task
 	if err := s.K8sManager.ScaleupSandbox(c.Request.Context(), namespace, repo, prID); err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Failed to scale up sandbox after task creation", "details": err.Error()})
 		klog.Warningf("Failed to scale up sandbox after task creation: %v", err)
+		return
 	}
 
 	c.Status(http.StatusOK)
