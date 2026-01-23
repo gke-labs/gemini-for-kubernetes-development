@@ -29,6 +29,33 @@ function Review({
   const [selectedPrId, setSelectedPrId] = useState(null);
   const [isPendingOpen, setIsPendingOpen] = useState(false);
   const [isExcludedOpen, setIsExcludedOpen] = useState(false);
+  const [excludedDetails, setExcludedDetails] = useState({});
+
+  useEffect(() => {
+    if (activeRepo) {
+         const fetchDetails = (id) => {
+             if (!excludedDetails[id]) {
+                fetch(`/api/repo/${activeRepo.name}/prs/${id}/details`)
+                    .then(res => {
+                        if (res.ok) return res.json();
+                        throw new Error("Failed");
+                    })
+                    .then(data => {
+                        setExcludedDetails(prev => ({ ...prev, [id]: data }));
+                    })
+                    .catch(() => {});
+             }
+         };
+
+         if (activeRepo.excludePullRequests) {
+            activeRepo.excludePullRequests.forEach(p => fetchDetails(typeof p === 'object' ? p.id : p));
+         }
+         
+         if (activeRepo.pendingPRs) {
+            activeRepo.pendingPRs.forEach(p => fetchDetails(typeof p === 'object' ? p.number : p));
+         }
+    }
+  }, [activeRepo]);
 
   // Categorize PRs (Active, Pending, Excluded)
   // 1. Active PRs
@@ -65,8 +92,15 @@ function Review({
   pending.forEach(p => {
        // Handle both old format (number) and new format (object)
        const id = typeof p === 'object' ? p.number : p;
-       const title = typeof p === 'object' && p.title ? `PR #${id}: ${p.title}` : `PR #${id}`;
-       const htmlURL = typeof p === 'object' ? p.htmlURL : null;
+
+       const details = excludedDetails[id];
+       let title = details && details.title ? `PR #${id}: ${details.title}` : `PR #${id}`;
+       let htmlURL = details ? details.htmlURL : null;
+       
+       if (!details && typeof p === 'object' && p.title) {
+            title = `PR #${id}: ${p.title}`;
+            htmlURL = p.htmlURL;
+       }
 
        // Avoid duplicates if already in active
        if (!activeList.find(i => i.sortId === parseInt(id))) {
@@ -82,7 +116,9 @@ function Review({
   const excludedList = [];
   excluded.forEach(p => {
        if (!activeList.find(i => i.sortId === parseInt(p))) {
-           excludedList.push({ id: p.toString(), type: 'excluded', sortId: p, title: `PR #${p} (Deleted)` });
+           const details = excludedDetails[p];
+           const title = details && details.title ? `PR #${p}: ${details.title}` : `PR #${p} (Excluded)`;
+           excludedList.push({ id: p.toString(), type: 'excluded', sortId: p, title: title });
        }
   });
   excludedList.sort((a, b) => b.sortId - a.sortId);
