@@ -56,6 +56,21 @@ type SandboxCommand struct {
 }
 
 func (c *SandboxCommand) InitDefaults() {
+	if c.OutputGVR == nil {
+		if gvrResource := os.Getenv("AGENT_OUTPUT_GVR_RESOURCE"); gvrResource != "" {
+			group := os.Getenv("AGENT_OUTPUT_GVR_GROUP")
+			version := os.Getenv("AGENT_OUTPUT_GVR_VERSION")
+			if group != "" && version != "" {
+				gvr := schema.GroupVersionResource{
+					Group:    group,
+					Version:  version,
+					Resource: gvrResource,
+				}
+				c.OutputGVR = &gvr
+			}
+		}
+	}
+
 	if c.WorkspaceDir == "" {
 		c.WorkspaceDir = "/workspaces"
 	}
@@ -110,10 +125,12 @@ func (c *SandboxCommand) InitDefaults() {
 		c.PromptFilePath = "/workspaces/agent-prompt.txt"
 	}
 
-	if c.IssueID != "" {
-		c.OutputGVR = &IssueGVR
-	} else {
-		c.OutputGVR = &DevGVR
+	if c.OutputGVR == nil {
+		if c.IssueID != "" {
+			c.OutputGVR = &IssueGVR
+		} else {
+			c.OutputGVR = &DevGVR
+		}
 	}
 	if c.OutputName == "" {
 		c.OutputName = os.Getenv("NAME")
@@ -244,18 +261,9 @@ func (c *SandboxCommand) Run(ctx context.Context) error {
 	}
 
 	shouldRunAgent := false
-	if c.IssueID != "" {
-		// Issue mode: Run if prompt file is missing
-		if _, err := os.Stat(c.PromptFilePath); os.IsNotExist(err) {
-			shouldRunAgent = true
-		} else {
-			log.Info("agent-prompt.txt exists, skipping code generation")
-		}
-	} else {
-		// Dev mode: Run if agent prompt is provided
-		if cfg.AgentPrompt != "" {
-			shouldRunAgent = true
-		}
+	// Always run if prompt is present
+	if cfg.AgentPrompt != "" {
+		shouldRunAgent = true
 	}
 
 	if shouldRunAgent {

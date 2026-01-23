@@ -8,12 +8,13 @@ spec:
   review:
     maxSandboxes: 0
     maxActiveSandboxes: 0
-  issueHandlers:
+  issue:
+    maxSandboxes: 1
+    maxActiveSandboxes: 1
+    issueShutdownAfterMinutes: 30
+    image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
+    handlers:
     - name: triage
-      maxSandboxes: 1
-      maxActiveSandboxes: 1
-      issueShutdownAfterMinutes: 30
-      image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
       llm:
         apiKeySecretRef: dummy-provider-token
         provider: dummy

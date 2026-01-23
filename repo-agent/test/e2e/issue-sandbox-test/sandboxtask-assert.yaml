@@ -1,0 +1,10 @@
+apiVersion: custom.agents.x-k8s.io/v1alpha1
+kind: SandboxTask
+metadata:
+  namespace: repo-agent-system
+  labels:
+    review.gemini.google.com/repowatch: ist-gfkd
+  (starts_with(name, 'ist-gfkd-issue-')): true
+  (contains(name, 'triage')): true
+status:
+  (taskState == 'Completed'): true

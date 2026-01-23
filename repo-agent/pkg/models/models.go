@@ -61,16 +61,16 @@ type Issue struct {
 
 // Repo represents a repository with its configuration
 type Repo struct {
-	Name                string         `json:"name"`
-	Namespace           string         `json:"namespace"`
-	URL                 string         `json:"url"`
-	Review              *ReviewConfig  `json:"review,omitempty"`
-	IssueHandlers       []IssueHandler `json:"issueHandlers,omitempty"`
-	Dev                 *DevConfig     `json:"dev,omitempty"`
-	PendingPRs          []PendingPR    `json:"pendingPRs,omitempty"`
-	ExcludePullRequests []int64        `json:"excludePullRequests,omitempty"`
-	PendingDevBranches  []string       `json:"pendingDevBranches,omitempty"`
-	ExcludeBranches     []string       `json:"excludeBranches,omitempty"`
+	Name                string        `json:"name"`
+	Namespace           string        `json:"namespace"`
+	URL                 string        `json:"url"`
+	Review              *ReviewConfig `json:"review,omitempty"`
+	Issue               *IssueConfig  `json:"issue,omitempty"`
+	Dev                 *DevConfig    `json:"dev,omitempty"`
+	PendingPRs          []PendingPR   `json:"pendingPRs,omitempty"`
+	ExcludePullRequests []int64       `json:"excludePullRequests,omitempty"`
+	PendingDevBranches  []string      `json:"pendingDevBranches,omitempty"`
+	ExcludeBranches     []string      `json:"excludeBranches,omitempty"`
 }
 
 // PendingPR represents a pending pull request
@@ -86,11 +86,16 @@ type ReviewConfig struct {
 	Assignees          []string `json:"assignees,omitempty"`
 }
 
+// IssueConfig holds configuration for issues
+type IssueConfig struct {
+	MaxActiveSandboxes int64          `json:"maxActiveSandboxes"`
+	Handlers           []IssueHandler `json:"handlers,omitempty"`
+}
+
 // IssueHandler holds configuration for an issue handler
 type IssueHandler struct {
-	Name               string `json:"name"`
-	MaxActiveSandboxes int64  `json:"maxActiveSandboxes"`
-	PushBranch         bool   `json:"pushBranch"`
+	Name       string `json:"name"`
+	PushBranch bool   `json:"pushBranch"`
 }
 
 // DevConfig holds configuration for dev sandboxes
