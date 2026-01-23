@@ -1,0 +1,2 @@
+https://github.com/google-gemini/skill-kubernetes v1.2.0
+https://github.com/google-gemini/skill-sample-cli-extension
