@@ -695,7 +695,7 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 		// Identify applicable handlers
 		var applicableHandlers []reviewv1alpha1.IssueHandlerSpec
 		for _, handler := range repoWatch.Spec.Issue.Handlers {
-			if r.isIssueMatch(issue, handler) {
+			if r.isIssueMatch(issue, handler, repoWatch) {
 				applicableHandlers = append(applicableHandlers, handler)
 			}
 		}
@@ -807,11 +807,13 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 	return r.Status().Update(ctx, repoWatch)
 }
 
-func (r *Reconciler) isIssueMatch(issue *github.Issue, handler reviewv1alpha1.IssueHandlerSpec) bool {
-	// Exclude explicit excludes
-	for _, excluded := range handler.ExcludeIssues {
-		if *issue.Number == excluded {
-			return false
+func (r *Reconciler) isIssueMatch(issue *github.Issue, handler reviewv1alpha1.IssueHandlerSpec, repoWatch *reviewv1alpha1.RepoWatch) bool {
+	// Exclude explicit excludes from IssueSpec
+	if repoWatch.Spec.Issue != nil {
+		for _, excluded := range repoWatch.Spec.Issue.ExcludeIssues {
+			if *issue.Number == excluded {
+				return false
+			}
 		}
 	}
 

@@ -72,13 +72,13 @@ spec:
                 properties:
                   devcontainerConfigRef:
                     type: string
+                  excludeIssues:
+                    items:
+                      type: integer
+                    type: array
                   handlers:
                     items:
                       properties:
-                        excludeIssues:
-                          items:
-                            type: integer
-                          type: array
                         issues:
                           items:
                             type: integer

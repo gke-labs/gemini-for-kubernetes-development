@@ -3,6 +3,7 @@ import yaml from 'js-yaml';
 import './App.css';
 import PrReviewCard from './PrReviewCard';
 import Review from './Review';
+import Issues from './Issues';
 import IssueCard from './IssueCard';
 import DevCard from './DevCard';
 import AddRepo from './AddRepo';
@@ -1094,11 +1095,10 @@ function App() {
             </>
         );
     } else if (activeSubTab.name === 'issues') {
-      if (issues.length === 0) return <p>No active Issues found.</p>;
-      return issues.map(issue => (
-        <IssueCard
-          key={issue.id}
-          issue={issue}
+      return (
+        <Issues
+          activeRepo={activeRepo}
+          issues={issues}
           drafts={drafts}
           activeSubTab={activeSubTab}
           handleIssueDraftChange={handleIssueDraftChange}
@@ -1109,9 +1109,8 @@ function App() {
           namespace={namespace}
           handleScaleUp={handleIssueScaleUp}
           handleScaleDown={handleIssueScaleDown}
-          repoName={activeRepo.name}
         />
-      ));
+      );
     }
   };
 

@@ -117,8 +117,14 @@ function IssueCard({
   handleScaleDown,
   handleIssueDelete,
   repoName,
+  isMainView,
+  drafts,
+  activeSubTab,
+  handleIssueDraftChange,
+  handleIssueSaveDraft,
+  handleIssueSubmit,
 }) {
-  const [isCollapsed, setIsCollapsed] = useState(true);
+  const [isCollapsed, setIsCollapsed] = useState(!isMainView);
   const [tasks, setTasks] = useState([]);
 
   const fetchTasks = () => {
@@ -134,21 +140,23 @@ function IssueCard({
   };
 
   useEffect(() => {
-    if (!isCollapsed) {
+    if (isMainView || !isCollapsed) {
         fetchTasks();
         const interval = setInterval(fetchTasks, 10000);
         return () => clearInterval(interval);
     }
-  }, [isCollapsed, repoName, issue.id]);
+  }, [isCollapsed, isMainView, repoName, issue.id]);
 
   return (
     <div key={issue.id} className="pr-card">
-      <div className="pr-card-header" onClick={() => setIsCollapsed(!isCollapsed)}>
+      <div className="pr-card-header" onClick={() => !isMainView && setIsCollapsed(!isCollapsed)} style={isMainView ? {cursor: 'default'} : {}}>
         <h3>
           <a href={issue.htmlURL} target="_blank" rel="noopener noreferrer">{issue.title} (Issue #{issue.id})</a>
-          <span style={{ marginLeft: '10px', fontSize: 'small', color: '#555' }}>
-            {isCollapsed ? 'click to expand' : 'click to collapse'}
-          </span>
+          {!isMainView && (
+            <span style={{ marginLeft: '10px', fontSize: 'small', color: '#555' }}>
+                {isCollapsed ? 'click to expand' : 'click to collapse'}
+            </span>
+          )}
         </h3>
         <div className="pr-card-actions-header">
           {issue.labels && issue.labels.length > 0 && (
