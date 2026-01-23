@@ -83,9 +83,9 @@ func TestCreatePRTask(t *testing.T) {
 			if params["AGENT_PROMPT"] != "Test Prompt" {
 				t.Errorf("Expected prompt 'Test Prompt', got %v", params["AGENT_PROMPT"])
 			}
-			sandboxRef, _, _ := unstructured.NestedString(task.Object, "spec", "sandboxRef")
-			if sandboxRef != "test-repo-pr-123" {
-				t.Errorf("Expected sandboxRef 'test-repo-pr-123', got %s", sandboxRef)
+			sandboxName, _, _ := unstructured.NestedString(task.Object, "spec", "sandboxName")
+			if sandboxName != "test-repo-pr-123" {
+				t.Errorf("Expected sandboxName 'test-repo-pr-123', got %s", sandboxName)
 			}
 		}
 	})
