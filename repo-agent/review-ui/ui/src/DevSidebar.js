@@ -144,6 +144,8 @@ const ExplorationNode = ({ ideaID, description, isExpanded, onToggle, onAddAppro
 
 // --- Main Sidebar Component ---
 function DevSidebar({
+    activeRepo,
+    activeCount,
     explorations,
     ungrouped,
     activeSandbox,
@@ -210,15 +212,20 @@ function DevSidebar({
 
     return (
         <div className="dev-sidebar">
-            <div className="sidebar-header-row">
-                <span className="sidebar-header-title">EXPLORATIONS</span>
-                <button 
-                    className="sidebar-header-btn" 
-                    onClick={onAddExploration} 
-                    title="New Exploration"
-                >
-                    <PlusIcon />
-                </button>
+            <div className="sidebar-header-row" style={{flexDirection: "column", alignItems: "flex-start"}}>
+                <div style={{display: "flex", justifyContent: "space-between", width: "100%"}}>
+                    <span className="sidebar-header-title">EXPLORATIONS</span>
+                    <button 
+                        className="sidebar-header-btn" 
+                        onClick={onAddExploration} 
+                        title="New Exploration"
+                    >
+                        <PlusIcon />
+                    </button>
+                </div>
+                <div style={{fontSize: "0.8em", color: "#666", marginTop: "4px", paddingLeft: "10px"}}>
+                    Active ({activeCount}/{activeRepo?.dev?.maxActiveSandboxes || '?'})
+                </div>
             </div>
             
             <div className="sidebar-tree-content">
