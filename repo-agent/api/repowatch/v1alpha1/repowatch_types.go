@@ -152,12 +152,26 @@ type IssueHandlerSpec struct {
 	// +kubebuilder:validation:Optional
 	Issues []int `json:"issues"`
 
+	// Prompt is the prompt to use for the LLM.
+	// +kubebuilder:validation:Optional
+	Prompt string `json:"prompt,omitempty"`
+
+	// TaskType is the type of task to create. Defaults to "issue".
+	// +kubebuilder:validation:Optional
+	TaskType string `json:"taskType,omitempty"`
+
+	// PushEnabled - allow pushing to user origin
+	// +kubebuilder:validation:Optional
+	PushEnabled bool `json:"pushEnabled,omitempty"`
+}
+
+type IssueSpec struct {
 	// ExcludeIssues specifies a list of Issue numbers that should not have sandboxes created for them.
 	// These Issues will be ignored even if they match other criteria (e.g., labels).
 	// +kubebuilder:validation:Optional
 	ExcludeIssues []int `json:"excludeIssues,omitempty"`
 
-	// LLM configuration for the bug fix sandboxes.
+	// LLM configuration for the issue sandboxes.
 	LLM LLMConfig `json:"llm,omitempty"`
 
 	// DevcontainerConfigRef string
@@ -175,13 +189,13 @@ type IssueHandlerSpec struct {
 	// +kubebuilder:validation:Optional
 	MaxSandboxes int `json:"maxSandboxes,omitempty"`
 
-	// PushEnabled - allow pushing to user origin
-	// +kubebuilder:validation:Optional
-	PushEnabled bool `json:"pushEnabled,omitempty"`
-
 	// The time in minutes after which a issue sandbox will be scaled down to 0 replicas.
 	// +kubebuilder:validation:Optional
 	IssueShutdownAfterMinutes int `json:"issueShutdownAfterMinutes,omitempty"`
+
+	// Handlers configuration for Bugs
+	// +kubebuilder:validation:Optional
+	Handlers []IssueHandlerSpec `json:"handlers,omitempty"`
 }
 
 // RepoWatchSpec defines the desired state of RepoWatch
@@ -195,11 +209,12 @@ type RepoWatchSpec struct {
 	// +kubebuilder:validation:Optional
 	Review PRReviewSpec `json:"review,omitempty"`
 
-	// Handlers configuration for Bugs
+	// Issue configuration for Bugs
 	// +kubebuilder:validation:Optional
-	IssueHandlers []IssueHandlerSpec `json:"issueHandlers,omitempty"`
+	Issue *IssueSpec `json:"issue,omitempty"`
 
 	// Dev configuration for development sandboxes
+
 	// +kubebuilder:validation:Optional
 	Dev DevSpec `json:"dev,omitempty"`
 

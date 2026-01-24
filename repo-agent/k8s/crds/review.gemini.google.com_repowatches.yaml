@@ -68,58 +68,66 @@ spec:
                 type: object
               githubSecretName:
                 type: string
-              issueHandlers:
-                items:
-                  properties:
-                    devcontainerConfigRef:
-                      type: string
-                    excludeIssues:
-                      items:
-                        type: integer
-                      type: array
-                    image:
-                      type: string
-                    issueShutdownAfterMinutes:
+              issue:
+                properties:
+                  devcontainerConfigRef:
+                    type: string
+                  excludeIssues:
+                    items:
                       type: integer
-                    issues:
-                      items:
-                        type: integer
-                      type: array
-                    labels:
-                      items:
-                        type: string
-                      type: array
-                    llm:
+                    type: array
+                  handlers:
+                    items:
                       properties:
-                        apiKeySecretRef:
-                          type: string
-                        configdirRef:
+                        issues:
+                          items:
+                            type: integer
+                          type: array
+                        labels:
+                          items:
+                            type: string
+                          type: array
+                        name:
                           type: string
                         prompt:
                           type: string
-                        provider:
-                          default: gemini-cli
-                          enum:
-                          - gemini-cli
-                          - claude
-                          - dummy
+                        pushEnabled:
+                          type: boolean
+                        taskType:
                           type: string
                       required:
-                      - apiKeySecretRef
+                      - name
                       type: object
-                    maxActiveSandboxes:
-                      type: integer
-                    maxSandboxes:
-                      type: integer
-                    name:
-                      type: string
-                    pushEnabled:
-                      type: boolean
-                  required:
-                  - maxActiveSandboxes
-                  - name
-                  type: object
-                type: array
+                    type: array
+                  image:
+                    type: string
+                  issueShutdownAfterMinutes:
+                    type: integer
+                  llm:
+                    properties:
+                      apiKeySecretRef:
+                        type: string
+                      configdirRef:
+                        type: string
+                      prompt:
+                        type: string
+                      provider:
+                        default: gemini-cli
+                        enum:
+                        - gemini-cli
+                        - claude
+                        - dummy
+                        type: string
+                    required:
+                    - apiKeySecretRef
+                    type: object
+                  maxActiveSandboxes:
+                    type: integer
+                  maxSandboxes:
+                    type: integer
+                required:
+                - maxActiveSandboxes
+                type: object
               pollIntervalSeconds:
                 default: 300
                 minimum: 30

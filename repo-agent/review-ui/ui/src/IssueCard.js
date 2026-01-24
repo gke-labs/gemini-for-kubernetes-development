@@ -1,55 +1,162 @@
 import React, { useState, useEffect } from 'react';
+import yaml from 'js-yaml';
+
+function TaskIssueCard({
+    task,
+    repoName,
+    issueId,
+    handleScaleUp, // Optional: if we want to scale up on interaction
+}) {
+    const [localDraft, setLocalDraft] = useState(task.userDraft || task.agentDraft || '');
+    const [isCollapsed, setIsCollapsed] = useState(false);
+    const [statusText, setStatusText] = useState('');
+
+    useEffect(() => {
+        const content = task.userDraft || task.agentDraft || '';
+        if (content !== localDraft) {
+            setLocalDraft(content);
+        }
+    }, [task.userDraft, task.agentDraft]);
+
+    useEffect(() => {
+        if (task.taskState === 'Completed') {
+             if (task.result === 'submitted') { // Assuming we track submission state in result or similar
+                 setStatusText('Submitted');
+             } else {
+                 setStatusText('Ready');
+             }
+        } else if (task.taskState === 'Running') {
+             setStatusText('Running');
+        } else if (task.taskState === 'Failed') {
+             setStatusText('Failed');
+        } else {
+             setStatusText(task.taskState || 'Pending');
+        }
+    }, [task.taskState, task.result]);
+
+    const getStatusColor = (text) => {
+        const t = text.toLowerCase();
+        if (t === 'ready' || t === 'completed') return 'green';
+        if (t === 'running') return 'orange';
+        if (t === 'failed') return '#9e2a2aff';
+        return '#cd9945ff';
+    };
+
+    const handleSaveDraft = () => {
+        fetch(`/api/repo/${repoName}/tasks/${task.name}/draft`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ draft: localDraft })
+        }).catch(err => console.error("Failed to save task draft", err));
+    };
+
+    const handleSubmit = () => {
+        // We submit the draft as a comment to the issue
+        // We use the generic submitComment endpoint
+        fetch(`/api/repo/${repoName}/issues/${issueId}/submitcomment`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ comment: localDraft })
+        })
+        .then(res => {
+            if (res.ok) {
+                alert("Comment submitted!");
+                // Ideally we update local state or refresh
+            } else {
+                res.text().then(t => alert("Failed to submit: " + t));
+            }
+        })
+        .catch(err => console.error("Failed to submit comment", err));
+    };
+
+    return (
+        <div style={{border: '1px solid #ddd', borderRadius: '5px', margin: '10px 0', backgroundColor: '#f9f9f9'}}>
+            <div 
+                style={{padding: '10px', borderBottom: '1px solid #ddd', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', backgroundColor: '#eee'}}
+                onClick={() => setIsCollapsed(!isCollapsed)}
+            >
+                <div>
+                    <strong>{task.name.split('-').pop().toUpperCase()}</strong> {/* Display generic name like TRIAGE */}
+                    <span style={{ fontSize: 'small', color: '#555', marginLeft: '10px' }}>
+                        {new Date(task.creationTimestamp).toLocaleString()}
+                    </span>
+                </div>
+                <span 
+                    style={{ backgroundColor: getStatusColor(statusText), color: 'white', padding: '2px 8px', borderRadius: '4px', fontSize: 'small' }}
+                    title={task.agentStateMessage}
+                >
+                    {statusText}
+                </span>
+            </div>
+            
+            {!isCollapsed && (
+                <div style={{padding: '15px'}}>
+                    <textarea
+                        className="review-textarea"
+                        value={localDraft}
+                        onChange={(e) => setLocalDraft(e.target.value)}
+                        onBlur={handleSaveDraft}
+                        placeholder="Agent output or your comment..."
+                        rows={10}
+                        style={{width: '100%', marginBottom: '10px'}}
+                    />
+                    <div className="pr-card-actions">
+                        <button className="btn btn-submit" onClick={handleSubmit}>Submit Comment</button>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
 
 function IssueCard({
   issue,
+  getSandboxStatusClass,
+  namespace,
+  handleScaleUp,
+  handleScaleDown,
+  handleIssueDelete,
+  repoName,
+  isMainView,
   drafts,
   activeSubTab,
   handleIssueDraftChange,
   handleIssueSaveDraft,
   handleIssueSubmit,
-  handleIssueDelete,
-  getSandboxStatusClass,
-  namespace,
-  handleScaleUp,
-  handleScaleDown,
 }) {
-  const [isCollapsed, setIsCollapsed] = useState(true);
-  const [reviewFlairText, setReviewFlairText] = useState('');
+  const [isCollapsed, setIsCollapsed] = useState(!isMainView);
+  const [tasks, setTasks] = useState([]);
 
-  const getReviewFlairColor = (flairText) => {
-    if (!flairText) return '#3e7f67ff';
-    const text = flairText.toLowerCase();
-    if (text === 'done' || text === 'ready') return 'green';
-    if (text.includes('handling') || text.includes('generating')) return 'orange';
-    if (text.includes('error')) return '#9e2a2aff';
-    if (text === 'submitted') return '#3f5398ff';
-    return '#3e7f67ff'; // Default color
-  };
-
-  const toggleCollapse = () => {
-    setIsCollapsed(!isCollapsed);
+  const fetchTasks = () => {
+    if (!repoName || !issue.id) return;
+    fetch(`/api/repo/${repoName}/issues/${issue.id}/tasks`)
+        .then(res => res.json())
+        .then(data => {
+            if (Array.isArray(data)) {
+                setTasks(data);
+            }
+        })
+        .catch(err => console.error("Failed to fetch tasks:", err));
   };
 
   useEffect(() => {
-    if (issue.comment) {
-      setReviewFlairText('Submitted');
-    } else if (issue.agentState) {
-      setReviewFlairText(issue.agentState);
-    } else if (drafts[issue.id] && drafts[issue.id].trim() !== '') {
-      setReviewFlairText('Ready');
-    } else {
-      setReviewFlairText('Generating ...');
+    if (isMainView || !isCollapsed) {
+        fetchTasks();
+        const interval = setInterval(fetchTasks, 10000);
+        return () => clearInterval(interval);
     }
-  }, [issue.comment, drafts, issue.id, issue.agentState]);
+  }, [isCollapsed, isMainView, repoName, issue.id]);
 
   return (
-    <div key={issue.id} className={`pr-card ${issue.comment ? 'review-submitted' : ''}`}>
-      <div className="pr-card-header" onClick={toggleCollapse}>
+    <div key={issue.id} className="pr-card">
+      <div className="pr-card-header" onClick={() => !isMainView && setIsCollapsed(!isCollapsed)} style={isMainView ? {cursor: 'default'} : {}}>
         <h3>
           <a href={issue.htmlURL} target="_blank" rel="noopener noreferrer">{issue.title} (Issue #{issue.id})</a>
-          <span style={{ marginLeft: '10px', fontSize: 'small', color: '#555' }}>
-            {isCollapsed ? 'click to expand' : 'click to collapse'}
-          </span>
+          {!isMainView && (
+            <span style={{ marginLeft: '10px', fontSize: 'small', color: '#555' }}>
+                {isCollapsed ? 'click to expand' : 'click to collapse'}
+            </span>
+          )}
         </h3>
         <div className="pr-card-actions-header">
           {issue.labels && issue.labels.length > 0 && (
@@ -71,70 +178,43 @@ function IssueCard({
               ))}
             </div>
           )}
-          {reviewFlairText && issue.agentState !== 'provisioning' && (
-            <span 
-              style={{ marginRight: '10px', backgroundColor: getReviewFlairColor(reviewFlairText), color: 'white', padding: '5px 10px', borderRadius: '5px', fontSize: 'small' }}
-              title={issue.agentStateMessage || ''}
-            >
-              {reviewFlairText}
-            </span>
-          )}
           {getSandboxStatusClass(issue) === 'green' ? (
             <div style={{display: 'flex', alignItems: 'center', gap: '5px'}}>
-              {issue.agentState === 'provisioning' ? (
-                <span className="pr-sandbox" style={{backgroundColor: '#2196F3', color: 'white', cursor: 'default'}}>
-                  Sandbox Provisioning
-                </span>
-              ) : (
-                <a href={`/sandbox/${namespace}/${issue.sandbox}/`} target="_blank" rel="noopener noreferrer" className={`pr-sandbox ${getSandboxStatusClass(issue)}`}>
+              <a href={`/sandbox/${namespace}/${issue.sandbox}/`} target="_blank" rel="noopener noreferrer" className={`pr-sandbox ${getSandboxStatusClass(issue)}`}>
                   Sandbox Active
-                </a>
-              )}
-               <button className="btn btn-sm pr-sandbox yellow" style={{padding: '4px 10px', fontSize: '14px'}} onClick={(e) => { e.stopPropagation(); handleScaleDown(issue.id, activeSubTab.name); }} title="Scale Down">
+              </a>
+               <button className="btn btn-sm pr-sandbox yellow" style={{padding: '4px 10px', fontSize: '14px'}} onClick={(e) => { e.stopPropagation(); handleScaleDown(issue.id); }} title="Scale Down">
                 &#9646;&#9646;
               </button>
             </div>
           ) : getSandboxStatusClass(issue) === 'yellow' ? (
             <div style={{display: 'flex', alignItems: 'center', gap: '5px'}}>
               <span className={`pr-sandbox ${getSandboxStatusClass(issue)}`}>Sandbox Paused</span>
-              <button className="btn btn-sm pr-sandbox green" style={{padding: '4px 10px', fontSize: '14px'}} onClick={(e) => { e.stopPropagation(); handleScaleUp(issue.id, activeSubTab.name); }} title="Scale Up">
+              <button className="btn btn-sm pr-sandbox green" style={{padding: '4px 10px', fontSize: '14px'}} onClick={(e) => { e.stopPropagation(); handleScaleUp(issue.id); }} title="Scale Up">
                   &#9654;
                </button>
             </div>
           ) : (
             <span className={`pr-sandbox ${getSandboxStatusClass(issue)}`}>Sandbox: Not created</span>
           )}
+          <button className="btn btn-delete" style={{ fontSize: '14px', padding: '4px 10px' }} onClick={(e) => { e.stopPropagation(); handleIssueDelete(issue.id); }}>&#x2715;</button>
         </div>
       </div>
       {!isCollapsed && (
-        <>
-          {issue.pushBranch ? (
-            <div className="branch-link">
-              <strong>Branch: </strong> <a href={issue.branchURL} target="_blank" rel="noopener noreferrer">{issue.branchURL}</a>
-            </div>
-          ) : issue.comment ? (
-            <div className="review-display">
-              <strong>Comment:</strong>
-              <p>{issue.comment}</p>
-            </div>
-          ) : (
-            <textarea
-              className="review-textarea"
-              value={drafts[issue.id] || ''}
-              onChange={(e) => handleIssueDraftChange(issue.id, e.target.value)}
-              onBlur={() => handleIssueSaveDraft(issue.id, activeSubTab.name)}
-              placeholder="Leave a comment..."
-            ></textarea>
-          )}
-          <div className="pr-card-actions">
-            {!issue.pushBranch && (
-              <button className="btn btn-submit" onClick={() => handleIssueSubmit(issue.id, activeSubTab.name)} disabled={!!issue.comment}>
-                {issue.comment ? 'Submitted' : 'Create Comment'}
-              </button>
+        <div style={{padding: '10px'}}>
+            {tasks.length > 0 ? (
+                tasks.map(task => (
+                    <TaskIssueCard 
+                        key={task.name} 
+                        task={task} 
+                        repoName={repoName} 
+                        issueId={issue.id}
+                    />
+                ))
+            ) : (
+                <p>No tasks found. Tasks should appear shortly if the sandbox is active.</p>
             )}
-            <button className="btn btn-delete" onClick={() => handleIssueDelete(issue.id, activeSubTab.name)}>&#x2715;</button>
-          </div>
-        </>
+        </div>
       )}
     </div>
   );

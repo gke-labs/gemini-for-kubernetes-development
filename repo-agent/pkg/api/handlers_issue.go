@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/auth"
@@ -23,9 +25,8 @@ func (s *Server) getIssues(c *gin.Context) {
 	log := klog.FromContext(c.Request.Context())
 	namespace := c.MustGet(auth.UserKey).(string)
 	repo := c.Param("repo")
-	handler := c.Param("handler")
 
-	issues, err := s.listIssuesFromK8s(c.Request.Context(), namespace, repo, handler)
+	issues, err := s.listIssuesFromK8s(c.Request.Context(), namespace, repo)
 	if err != nil {
 		log.Info("Error listing issues", "err", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list issues"})
@@ -35,7 +36,59 @@ func (s *Server) getIssues(c *gin.Context) {
 	c.JSON(http.StatusOK, issues)
 }
 
-func (s *Server) listIssuesFromK8s(ctx context.Context, namespace, repo, handler string) ([]models.Issue, error) {
+func (s *Server) getIssueTasks(c *gin.Context) {
+	namespace := c.MustGet(auth.UserKey).(string)
+	repo := c.Param("repo")
+	issueID := c.Param("issue_id")
+
+	sandboxName := fmt.Sprintf("%s-issue-%s", repo, issueID)
+
+	taskList, err := s.K8sManager.ListSandboxTasks(c.Request.Context(), namespace, sandboxName)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list tasks", "details": err.Error()})
+		return
+	}
+
+	var tasks []models.Task
+	for _, taskItem := range taskList.Items {
+		taskType, _, _ := unstructured.NestedString(taskItem.Object, "spec", "type")
+		taskState, _, _ := unstructured.NestedString(taskItem.Object, "status", "taskState")
+		result, _, _ := unstructured.NestedString(taskItem.Object, "status", "result")
+
+		tAgentDraft := ""
+		tUserDraft := ""
+		tAgentState := ""
+		tAgentStateMessage := ""
+
+		tAnnotations := taskItem.GetAnnotations()
+		if tAnnotations != nil {
+			tAgentDraft = tAnnotations["agentDraft"]
+			tUserDraft = tAnnotations["userDraft"]
+			tAgentState = tAnnotations["agentState"]
+			tAgentStateMessage = tAnnotations["agentStateMessage"]
+		}
+
+		tasks = append(tasks, models.Task{
+			Name:              taskItem.GetName(),
+			Type:              taskType,
+			TaskState:         taskState,
+			Result:            result,
+			CreationTimestamp: taskItem.GetCreationTimestamp().Format(time.RFC3339),
+			AgentDraft:        tAgentDraft,
+			UserDraft:         tUserDraft,
+			AgentState:        tAgentState,
+			AgentStateMessage: tAgentStateMessage,
+		})
+	}
+	// Sort tasks by creation timestamp (newest first)
+	sort.Slice(tasks, func(i, j int) bool {
+		return tasks[i].CreationTimestamp > tasks[j].CreationTimestamp
+	})
+
+	c.JSON(http.StatusOK, tasks)
+}
+
+func (s *Server) listIssuesFromK8s(ctx context.Context, namespace, repo string) ([]models.Issue, error) {
 	log := klog.FromContext(ctx)
 	gvr := schema.GroupVersionResource{
 		Group:    "custom.agents.x-k8s.io",
@@ -44,7 +97,7 @@ func (s *Server) listIssuesFromK8s(ctx context.Context, namespace, repo, handler
 	}
 	list, err := s.K8sManager.Client.Resource(gvr).Namespace(namespace).List(context.Background(),
 		v1.ListOptions{
-			LabelSelector: fmt.Sprintf("review.gemini.google.com/repowatch=%s,review.gemini.google.com/handler=%s", repo, handler),
+			LabelSelector: fmt.Sprintf("review.gemini.google.com/repowatch=%s", repo),
 		})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list IssueSandbox CRs: %w", err)
@@ -52,6 +105,12 @@ func (s *Server) listIssuesFromK8s(ctx context.Context, namespace, repo, handler
 
 	var issues []models.Issue
 	for _, item := range list.Items {
+		// Filter out dev sandboxes
+		labels := item.GetLabels()
+		if labels != nil && labels["sandbox.gemini.google.com/type"] == "dev" {
+			continue
+		}
+
 		replicas, found, err := unstructured.NestedInt64(item.Object, "spec", "replicas")
 		if err != nil || !found {
 			log.Info("Replicas (.spec.replicas) not found in IssueSandbox", "name", item.GetName())
@@ -105,7 +164,7 @@ func (s *Server) listIssuesFromK8s(ctx context.Context, namespace, repo, handler
 		draft := ""
 		agentState := ""
 		agentStateMessage := ""
-		var labels []string
+		var agentLabels []string
 		comment := ""
 		annotations := item.GetAnnotations()
 		if annotations != nil {
@@ -121,7 +180,7 @@ func (s *Server) listIssuesFromK8s(ctx context.Context, namespace, repo, handler
 				agentStateMessage = val
 			}
 			if val, ok := annotations["agentLabels"]; ok {
-				_ = json.Unmarshal([]byte(val), &labels)
+				_ = json.Unmarshal([]byte(val), &agentLabels)
 			}
 			if val, ok := annotations["issueCommentSubmitted"]; ok && val == "true" {
 				comment = draft
@@ -141,7 +200,7 @@ func (s *Server) listIssuesFromK8s(ctx context.Context, namespace, repo, handler
 			PushBranch:        pushBranch,
 			AgentState:        agentState,
 			AgentStateMessage: agentStateMessage,
-			Labels:            labels,
+			Labels:            agentLabels,
 		}
 		issues = append(issues, issue)
 	}
@@ -152,7 +211,6 @@ func (s *Server) saveIssueDraft(c *gin.Context) {
 	namespace := c.MustGet(auth.UserKey).(string)
 	repo := c.Param("repo")
 	issueID := c.Param("issue_id")
-	handler := c.Param("handler")
 	var payload struct {
 		Draft string
 	}
@@ -161,7 +219,7 @@ func (s *Server) saveIssueDraft(c *gin.Context) {
 		return
 	}
 
-	sandboxName := fmt.Sprintf("%s-issue-%s-%s", repo, issueID, handler)
+	sandboxName := fmt.Sprintf("%s-issue-%s", repo, issueID)
 	err := s.K8sManager.UpdateDevSandboxAnnotation(c.Request.Context(), namespace, sandboxName, "userDraft", payload.Draft)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save draft", "details": err.Error()})
@@ -176,7 +234,6 @@ func (s *Server) submitIssueComment(c *gin.Context) {
 	namespace := c.MustGet(auth.UserKey).(string)
 	repo := c.Param("repo")
 	issueID := c.Param("issue_id")
-	handler := c.Param("handler")
 	var payload struct {
 		Comment string
 	}
@@ -188,7 +245,7 @@ func (s *Server) submitIssueComment(c *gin.Context) {
 	ctx := c.Request.Context()
 	log.Info("Submitting comment for Issue", "issueID", issueID, "repo", repo, "comment", payload.Comment)
 
-	sandboxName := fmt.Sprintf("%s-issue-%s-%s", repo, issueID, handler)
+	sandboxName := fmt.Sprintf("%s-issue-%s", repo, issueID)
 	gvr := schema.GroupVersionResource{
 		Group:    "custom.agents.x-k8s.io",
 		Version:  "v1alpha1",
@@ -267,7 +324,7 @@ func (s *Server) submitIssueComment(c *gin.Context) {
 		log.Info("Failed to update issuesandbox issueCommentSubmitted", "issueID", issueID, "repo", repo, "err", err)
 	}
 
-	err = s.K8sManager.ScaledownIssueSandbox(ctx, namespace, repo, issueID, handler)
+	err = s.K8sManager.ScaledownIssueSandbox(ctx, namespace, repo, issueID, "")
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scaledown Sandbox after comment submission", "details": err.Error()})
 		return
@@ -280,10 +337,9 @@ func (s *Server) deleteIssue(c *gin.Context) {
 	namespace := c.MustGet(auth.UserKey).(string)
 	repo := c.Param("repo")
 	issueID := c.Param("issue_id")
-	handler := c.Param("handler")
 	ctx := c.Request.Context()
 
-	if err := s.K8sManager.ScaledownIssueSandbox(ctx, namespace, repo, issueID, handler); err != nil {
+	if err := s.K8sManager.ScaledownIssueSandbox(ctx, namespace, repo, issueID, ""); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete sandbox", "details": err.Error()})
 		return
 	}
@@ -295,10 +351,9 @@ func (s *Server) scaleUpIssue(c *gin.Context) {
 	namespace := c.MustGet(auth.UserKey).(string)
 	repo := c.Param("repo")
 	issueID := c.Param("issue_id")
-	handler := c.Param("handler")
 	ctx := c.Request.Context()
 
-	if err := s.K8sManager.ScaleupIssueSandbox(ctx, namespace, repo, issueID, handler); err != nil {
+	if err := s.K8sManager.ScaleupIssueSandbox(ctx, namespace, repo, issueID, ""); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scale up issue sandbox", "details": err.Error()})
 		return
 	}
@@ -309,12 +364,64 @@ func (s *Server) scaleDownIssue(c *gin.Context) {
 	namespace := c.MustGet(auth.UserKey).(string)
 	repo := c.Param("repo")
 	issueID := c.Param("issue_id")
-	handler := c.Param("handler")
 	ctx := c.Request.Context()
 
-	if err := s.K8sManager.ScaledownIssueSandbox(ctx, namespace, repo, issueID, handler); err != nil {
+	if err := s.K8sManager.ScaledownIssueSandbox(ctx, namespace, repo, issueID, ""); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scale down issue sandbox", "details": err.Error()})
 		return
 	}
 	c.Status(http.StatusOK)
+}
+
+func (s *Server) getIssueDetails(c *gin.Context) {
+	log := klog.FromContext(c.Request.Context())
+	namespace := c.MustGet(auth.UserKey).(string)
+	repo := c.Param("repo")
+	issueIDStr := c.Param("issue_id")
+
+	issueID, err := strconv.Atoi(issueIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid issue ID"})
+		return
+	}
+
+	repoWatch, err := s.K8sManager.GetRepoWatch(c.Request.Context(), namespace, repo)
+	if err != nil {
+		log.Info("Failed to get RepoWatch", "namespace", namespace, "name", repo, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get RepoWatch"})
+		return
+	}
+
+	token, err := s.K8sManager.GetGitHubToken(c.Request.Context(), repoWatch)
+	if err != nil {
+		log.Info("Failed to get github token", "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get GitHub token"})
+		return
+	}
+
+	client := clients.NewGitHubClient(c.Request.Context(), token)
+
+	repoURL, found, _ := unstructured.NestedString(repoWatch.Object, "spec", "repoURL")
+	if !found {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "RepoURL not found"})
+		return
+	}
+	owner, repoName, err := parseRepoURL(repoURL)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid RepoURL"})
+		return
+	}
+
+	issue, _, err := client.Issues.Get(c.Request.Context(), owner, repoName, issueID)
+	if err != nil {
+		log.Info("Failed to get issue details", "issueID", issueID, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get issue details"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"number":  issue.GetNumber(),
+		"title":   issue.GetTitle(),
+		"htmlURL": issue.GetHTMLURL(),
+	})
 }

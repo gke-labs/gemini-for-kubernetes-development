@@ -11,7 +11,6 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/auth"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
-	"github.com/google/go-github/v39/github"
 	yaml "go.yaml.in/yaml/v3"
 	"k8s.io/apimachinery/pkg/api/errors"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -182,7 +181,11 @@ spec:
         3. Are there tests to check the fix.
     maxActiveSandboxes: 3
     maxSandboxes: 5
-  issueHandlers:
+  issue:
+    maxActiveSandboxes: 1
+    maxSandboxes: 3
+    issueShutdownAfterMinutes: 30
+    handlers:
     - llm:
         apiKeySecretRef: gemini-vscode-tokens
         prompt: >-
@@ -212,9 +215,6 @@ spec:
           Issue Title: "{{.Title}}"
           Issue Body: "{{.Body}}"
           HTML URL: "{{.HTMLURL}}"
-      issueShutdownAfterMinutes: 30
-      maxActiveSandboxes: 1
-      maxSandboxes: 3
       name: triage
 `
 	c.JSON(http.StatusOK, gin.H{"yaml": defaultRepoWatch})
@@ -365,63 +365,38 @@ func (s *Server) updateRepoWatch(c *gin.Context) {
 	}
 
 	// Exclude Issue if provided
-	if payload.ExcludeIssue != 0 && payload.HandlerName != "" {
-		handlersSlice, found, err := unstructured.NestedSlice(existing.Object, "spec", "issueHandlers")
+	if payload.ExcludeIssue != 0 {
+		// Add to spec.issue.excludeIssues
+		excludeSlice, found, err := unstructured.NestedSlice(existing.Object, "spec", "issue", "excludeIssues")
 		if err != nil {
-			log.Info("Failed to get issueHandlers", "err", err)
+			log.Info("Failed to get excludeIssues", "err", err)
 		}
 
+		var excludeIssues []int64
 		if found {
-			var newHandlers []interface{}
-			updated := false
-			for _, h := range handlersSlice {
-				handlerMap, ok := h.(map[string]interface{})
-				if !ok {
-					newHandlers = append(newHandlers, h)
-					continue
+			for _, v := range excludeSlice {
+				if i, ok := v.(int64); ok {
+					excludeIssues = append(excludeIssues, i)
+				} else if i, ok := v.(int); ok {
+					excludeIssues = append(excludeIssues, int64(i))
 				}
-
-				name, _ := handlerMap["name"].(string)
-				if name == payload.HandlerName {
-					// Found the handler, update excludeIssues
-					excludeSlice, _, _ := unstructured.NestedSlice(handlerMap, "excludeIssues")
-
-					var excludeIssues []int64
-					for _, v := range excludeSlice {
-						if i, ok := v.(int64); ok {
-							excludeIssues = append(excludeIssues, i)
-						} else if i, ok := v.(int); ok {
-							excludeIssues = append(excludeIssues, int64(i))
-						}
-					}
-
-					exists := false
-					for _, issue := range excludeIssues {
-						if issue == int64(payload.ExcludeIssue) {
-							exists = true
-							break
-						}
-					}
-
-					if !exists {
-						excludeIssues = append(excludeIssues, int64(payload.ExcludeIssue))
-						// Update the handler map
-						if err := unstructured.SetNestedSlice(handlerMap, convInt64SliceToInterfaceSlice(excludeIssues), "excludeIssues"); err != nil {
-							log.Info("Failed to set excludeIssues", "err", err)
-						} else {
-							updated = true
-						}
-					}
-				}
-				newHandlers = append(newHandlers, handlerMap)
 			}
+		}
 
-			if updated {
-				if err := unstructured.SetNestedSlice(existing.Object, newHandlers, "spec", "issueHandlers"); err != nil {
-					log.Info("Failed to update issueHandlers", "err", err)
-					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update object structure for issueHandlers"})
-					return
-				}
+		exists := false
+		for _, issue := range excludeIssues {
+			if issue == int64(payload.ExcludeIssue) {
+				exists = true
+				break
+			}
+		}
+
+		if !exists {
+			excludeIssues = append(excludeIssues, int64(payload.ExcludeIssue))
+			if err := unstructured.SetNestedSlice(existing.Object, convInt64SliceToInterfaceSlice(excludeIssues), "spec", "issue", "excludeIssues"); err != nil {
+				log.Info("Failed to set excludeIssues", "err", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update object structure for excludeIssues"})
+				return
 			}
 		}
 	}
@@ -594,7 +569,6 @@ func (s *Server) getRepos(c *gin.Context) {
 
 		// Extract PendingPRs
 		if pendingPRsSlice, found, err := unstructured.NestedSlice(repoWatch.Object, "status", "pendingPRs"); err == nil && found {
-			var pendingPRs []models.PendingPR
 			var prNumbers []int64
 			for _, v := range pendingPRsSlice {
 				if i, ok := v.(int64); ok {
@@ -613,31 +587,8 @@ func (s *Server) getRepos(c *gin.Context) {
 					prNumbers = prNumbers[:10]
 				}
 
-				// Try to get GitHub client to fetch titles
-				token, tokenErr := s.K8sManager.GetGitHubToken(c.Request.Context(), &repoWatch)
-				var client *github.Client
-				if tokenErr == nil {
-					client = clients.NewGitHubClient(c.Request.Context(), token)
-				}
-
-				owner, repoName, urlErr := parseRepoURL(repoURL)
-
-				for _, prNum := range prNumbers {
-					pendingPR := models.PendingPR{Number: prNum}
-					// Only fetch title if we have a client and valid repo info
-					if client != nil && urlErr == nil {
-						pr, _, err := client.PullRequests.Get(c.Request.Context(), owner, repoName, int(prNum))
-						if err == nil {
-							pendingPR.Title = pr.GetTitle()
-							pendingPR.HTMLURL = pr.GetHTMLURL()
-						} else {
-							log.Info("Failed to get PR title", "prNumber", prNum, "err", err)
-						}
-					}
-					pendingPRs = append(pendingPRs, pendingPR)
-				}
+				repo.PendingPRs = prNumbers
 			}
-			repo.PendingPRs = pendingPRs
 		}
 
 		// Extract ExcludePullRequests
@@ -669,26 +620,66 @@ func (s *Server) getRepos(c *gin.Context) {
 		}
 
 		// Extract issue handlers
-		if handlers, found, err := unstructured.NestedSlice(repoWatch.Object, "spec", "issueHandlers"); err == nil && found {
-			var issueHandlers []models.IssueHandler
-			for _, h := range handlers {
-				handlerMap, ok := h.(map[string]interface{})
-				if !ok {
-					continue
-				}
-				name, _ := handlerMap["name"].(string)
-				maxActiveSandboxes, _ := handlerMap["maxActiveSandboxes"].(int64)
-				pushBranch, _ := handlerMap["pushBranch"].(bool)
+		if maxActiveSandboxes, found, err := unstructured.NestedInt64(repoWatch.Object, "spec", "issue", "maxActiveSandboxes"); err == nil && found && maxActiveSandboxes > 0 {
+			repo.Issue = &models.IssueConfig{MaxActiveSandboxes: maxActiveSandboxes}
 
-				if maxActiveSandboxes > 0 {
+			if handlers, found, err := unstructured.NestedSlice(repoWatch.Object, "spec", "issue", "handlers"); err == nil && found {
+				var issueHandlers []models.IssueHandler
+				for _, h := range handlers {
+					handlerMap, ok := h.(map[string]interface{})
+					if !ok {
+						continue
+					}
+					name, _ := handlerMap["name"].(string)
+					pushBranch, _ := handlerMap["pushBranch"].(bool)
+
 					issueHandlers = append(issueHandlers, models.IssueHandler{
-						Name:               name,
-						MaxActiveSandboxes: maxActiveSandboxes,
-						PushBranch:         pushBranch,
+						Name:       name,
+						PushBranch: pushBranch,
 					})
 				}
+				repo.Issue.Handlers = issueHandlers
 			}
-			repo.IssueHandlers = issueHandlers
+		}
+
+		// Extract PendingIssues
+		if pendingIssuesMap, found, err := unstructured.NestedMap(repoWatch.Object, "status", "pendingIssues"); err == nil && found {
+			var issueNumbers []int64
+
+			for _, v := range pendingIssuesMap {
+				if issuesSlice, ok := v.([]interface{}); ok {
+					for _, issue := range issuesSlice {
+						if i, ok := issue.(int64); ok {
+							issueNumbers = append(issueNumbers, i)
+						} else if i, ok := issue.(int); ok {
+							issueNumbers = append(issueNumbers, int64(i))
+						}
+					}
+				}
+			}
+
+			if len(issueNumbers) > 0 {
+				// Remove duplicates
+				uniqueIssues := make(map[int64]bool)
+				var uniqueList []int64
+				for _, num := range issueNumbers {
+					if !uniqueIssues[num] {
+						uniqueIssues[num] = true
+						uniqueList = append(uniqueList, num)
+					}
+				}
+				issueNumbers = uniqueList
+
+				// Sort and limit to top 10
+				sort.Slice(issueNumbers, func(i, j int) bool {
+					return issueNumbers[i] > issueNumbers[j]
+				})
+				if len(issueNumbers) > 10 {
+					issueNumbers = issueNumbers[:10]
+				}
+
+				repo.PendingIssues = issueNumbers
+			}
 		}
 
 		repos = append(repos, repo)
@@ -745,7 +736,6 @@ func (s *Server) getRepo(c *gin.Context) {
 
 	// Extract PendingPRs
 	if pendingPRsSlice, found, err := unstructured.NestedSlice(repoWatch.Object, "status", "pendingPRs"); err == nil && found {
-		var pendingPRs []models.PendingPR
 		var prNumbers []int64
 		for _, v := range pendingPRsSlice {
 			if i, ok := v.(int64); ok {
@@ -764,31 +754,8 @@ func (s *Server) getRepo(c *gin.Context) {
 				prNumbers = prNumbers[:10]
 			}
 
-			// Try to get GitHub client to fetch titles
-			token, tokenErr := s.K8sManager.GetGitHubToken(c.Request.Context(), repoWatch)
-			var client *github.Client
-			if tokenErr == nil {
-				client = clients.NewGitHubClient(c.Request.Context(), token)
-			}
-
-			owner, repoName, urlErr := parseRepoURL(repoURL)
-
-			for _, prNum := range prNumbers {
-				pendingPR := models.PendingPR{Number: prNum}
-				// Only fetch title if we have a client and valid repo info
-				if client != nil && urlErr == nil {
-					pr, _, err := client.PullRequests.Get(c.Request.Context(), owner, repoName, int(prNum))
-					if err == nil {
-						pendingPR.Title = pr.GetTitle()
-						pendingPR.HTMLURL = pr.GetHTMLURL()
-					} else {
-						log.Info("Failed to get PR title", "prNumber", prNum, "err", err)
-					}
-				}
-				pendingPRs = append(pendingPRs, pendingPR)
-			}
+			repo.PendingPRs = prNumbers
 		}
-		repo.PendingPRs = pendingPRs
 	}
 
 	// Extract ExcludePullRequests
@@ -820,26 +787,79 @@ func (s *Server) getRepo(c *gin.Context) {
 	}
 
 	// Extract issue handlers
-	if handlers, found, err := unstructured.NestedSlice(repoWatch.Object, "spec", "issueHandlers"); err == nil && found {
-		var issueHandlers []models.IssueHandler
-		for _, h := range handlers {
-			handlerMap, ok := h.(map[string]interface{})
-			if !ok {
-				continue
-			}
-			name, _ := handlerMap["name"].(string)
-			maxActiveSandboxes, _ := handlerMap["maxActiveSandboxes"].(int64)
-			pushBranch, _ := handlerMap["pushBranch"].(bool)
+	if maxActiveSandboxes, found, err := unstructured.NestedInt64(repoWatch.Object, "spec", "issue", "maxActiveSandboxes"); err == nil && found && maxActiveSandboxes > 0 {
+		repo.Issue = &models.IssueConfig{MaxActiveSandboxes: maxActiveSandboxes}
 
-			if maxActiveSandboxes > 0 {
+		if handlers, found, err := unstructured.NestedSlice(repoWatch.Object, "spec", "issue", "handlers"); err == nil && found {
+			var issueHandlers []models.IssueHandler
+			for _, h := range handlers {
+				handlerMap, ok := h.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				name, _ := handlerMap["name"].(string)
+				pushBranch, _ := handlerMap["pushBranch"].(bool)
+
 				issueHandlers = append(issueHandlers, models.IssueHandler{
-					Name:               name,
-					MaxActiveSandboxes: maxActiveSandboxes,
-					PushBranch:         pushBranch,
+					Name:       name,
+					PushBranch: pushBranch,
 				})
 			}
+			repo.Issue.Handlers = issueHandlers
 		}
-		repo.IssueHandlers = issueHandlers
+	}
+
+	// Extract PendingIssues
+	if pendingIssuesMap, found, err := unstructured.NestedMap(repoWatch.Object, "status", "pendingIssues"); err == nil && found {
+		var issueNumbers []int64
+
+		for _, v := range pendingIssuesMap {
+			if issuesSlice, ok := v.([]interface{}); ok {
+				for _, issue := range issuesSlice {
+					if i, ok := issue.(int64); ok {
+						issueNumbers = append(issueNumbers, i)
+					} else if i, ok := issue.(int); ok {
+						issueNumbers = append(issueNumbers, int64(i))
+					}
+				}
+			}
+		}
+
+		if len(issueNumbers) > 0 {
+			// Remove duplicates
+			uniqueIssues := make(map[int64]bool)
+			var uniqueList []int64
+			for _, num := range issueNumbers {
+				if !uniqueIssues[num] {
+					uniqueIssues[num] = true
+					uniqueList = append(uniqueList, num)
+				}
+			}
+			issueNumbers = uniqueList
+
+			// Sort and limit to top 10
+			sort.Slice(issueNumbers, func(i, j int) bool {
+				return issueNumbers[i] > issueNumbers[j]
+			})
+			if len(issueNumbers) > 10 {
+				issueNumbers = issueNumbers[:10]
+			}
+
+			repo.PendingIssues = issueNumbers
+		}
+	}
+
+	// Extract ExcludeIssues
+	if excludeIssuesSlice, found, err := unstructured.NestedSlice(repoWatch.Object, "spec", "issue", "excludeIssues"); err == nil && found {
+		var excludeIssues []int64
+		for _, v := range excludeIssuesSlice {
+			if i, ok := v.(int64); ok {
+				excludeIssues = append(excludeIssues, i)
+			} else if i, ok := v.(int); ok {
+				excludeIssues = append(excludeIssues, int64(i))
+			}
+		}
+		repo.ExcludeIssues = excludeIssues
 	}
 
 	c.JSON(http.StatusOK, repo)

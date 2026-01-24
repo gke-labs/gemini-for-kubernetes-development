@@ -1,15 +1,10 @@
 apiVersion: custom.agents.x-k8s.io/v1alpha1
 kind: IssueSandbox
 metadata:
-  annotations:
-    agentDraft: |
-      /kind feature
-      This issue is a feature request to add AGI to the project.
   finalizers:
   - kro.run/finalizer
   labels:
     review.gemini.google.com/repowatch: ist-image
-    review.gemini.google.com/handler: triage
   (starts_with(name, 'ist-image-issue-')): true
   namespace: repo-agent-system
   ownerReferences:
@@ -27,6 +22,7 @@ spec:
     ref: repo-agent-gateway
   githubSecretName: github-pat
   llm:
+    # Dummy config as placeholder
     apiKeySecretName: dummy-provider-token
     configdirRef: ""
   llmBackend:
@@ -39,7 +35,6 @@ spec:
   serviceAccountName: issue-sandbox
   source:
     repo: ist-image
-    handler: triage
 status:
   (fqdn != null && starts_with(fqdn, 'devc-ist-image-issue-')): true
   (sandboxConditions[?type == 'Ready']):
