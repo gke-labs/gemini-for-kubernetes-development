@@ -568,26 +568,11 @@ func (r *Reconciler) reconcileReviewSandboxesInternal(ctx context.Context, repoW
 		}
 
 		if sandboxExists {
-			// Check for scale down
-			if repoWatch.Spec.Review.ReviewShutdownAfterMinutes > 0 {
-				creationTimestamp := existingSandbox.GetCreationTimestamp()
-				shutdownDuration := time.Minute * time.Duration(repoWatch.Spec.Review.ReviewShutdownAfterMinutes)
-				if time.Since(creationTimestamp.Time) > shutdownDuration {
-					replicas, found, err := unstructured.NestedInt64(existingSandbox.Object, "spec", "replicas")
-					if err == nil && found && replicas > 0 {
-						log.Info("scaling down review sandbox", "sandbox", existingSandbox.GetName())
-						if err := unstructured.SetNestedField(existingSandbox.Object, int64(0), "spec", "replicas"); err != nil {
-							log.Error(err, "unable to set replicas for sandbox", "sandbox", existingSandbox.GetName())
-						} else {
-							if err := r.Update(ctx, existingSandbox); err != nil {
-								log.Error(err, "unable to update sandbox", "sandbox", existingSandbox.GetName())
-							} else {
-								// Decrement active count as it is no longer active
-								activeSandboxes--
-							}
-						}
-					}
-				}
+			// Manage lifecycle (pause/unpause)
+			shutdownDuration := time.Minute * time.Duration(repoWatch.Spec.Review.ReviewShutdownAfterMinutes)
+			wasScaled, err := r.manageSandboxLifecycle(ctx, existingSandbox, shutdownDuration)
+			if err != nil {
+				log.Error(err, "unable to manage sandbox lifecycle", "sandbox", existingSandbox.GetName())
 			}
 
 			// Check if sandbox is scaled down (re-check in case we just updated it or it was already down)
@@ -595,6 +580,11 @@ func (r *Reconciler) reconcileReviewSandboxesInternal(ctx context.Context, repoW
 			scaledDown := false
 			if err == nil && found && replicas == 0 {
 				scaledDown = true
+			}
+
+			// If it was just scaled down, decrement active count
+			if wasScaled && scaledDown {
+				activeSandboxes--
 			}
 
 			watchedPRs = append(watchedPRs, reviewv1alpha1.WatchedPR{
@@ -717,33 +707,22 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 		}
 
 		if existingSandbox != nil {
-			// Check scale down
-			scaledDown := false
-			if repoWatch.Spec.Issue.IssueShutdownAfterMinutes > 0 {
-				creationTimestamp := existingSandbox.GetCreationTimestamp()
-				shutdownDuration := time.Minute * time.Duration(repoWatch.Spec.Issue.IssueShutdownAfterMinutes)
-				if time.Since(creationTimestamp.Time) > shutdownDuration {
-					replicas, found, err := unstructured.NestedInt64(existingSandbox.Object, "spec", "replicas")
-					if err == nil && found && replicas > 0 {
-						log.Info("scaling down issue sandbox", "sandbox", existingSandbox.GetName())
-						if err := unstructured.SetNestedField(existingSandbox.Object, int64(0), "spec", "replicas"); err != nil {
-							log.Error(err, "unable to set replicas for sandbox", "sandbox", existingSandbox.GetName())
-						} else {
-							if err := r.Update(ctx, existingSandbox); err != nil {
-								log.Error(err, "unable to update sandbox", "sandbox", existingSandbox.GetName())
-							} else {
-								scaledDown = true
-								activeSandboxes-- // Correct count since we decremented replicas
-							}
-						}
-					}
-				}
+			// Manage lifecycle (pause/unpause)
+			shutdownDuration := time.Minute * time.Duration(repoWatch.Spec.Issue.IssueShutdownAfterMinutes)
+			wasScaled, err := r.manageSandboxLifecycle(ctx, existingSandbox, shutdownDuration)
+			if err != nil {
+				log.Error(err, "unable to manage sandbox lifecycle", "sandbox", existingSandbox.GetName())
 			}
 
-			// Re-check replicas
+			// Re-check replicas to see if it's scaled down
 			replicas, found, err := unstructured.NestedInt64(existingSandbox.Object, "spec", "replicas")
+			scaledDown := false
 			if err == nil && found && replicas == 0 {
 				scaledDown = true
+			}
+
+			if wasScaled && scaledDown {
+				activeSandboxes--
 			}
 
 			// Ensure tasks exist for applicable handlers
@@ -1424,4 +1403,109 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager, concurrency int) error {
 		WithOptions(controller.Options{MaxConcurrentReconciles: concurrency}).
 		// Owns(&reviewv1alpha1.ReviewSandbox{}).
 		Complete(r)
+}
+
+func (r *Reconciler) unpauseSandboxIfPendingTasks(ctx context.Context, sandbox *unstructured.Unstructured) (bool, error) {
+	log := log.FromContext(ctx)
+
+	// Check if paused (replicas == 0)
+	replicas, found, err := unstructured.NestedInt64(sandbox.Object, "spec", "replicas")
+	if err != nil || !found {
+		// If field missing, default is usually 1, so not paused.
+		return false, nil
+	}
+	if replicas > 0 {
+		return false, nil
+	}
+
+	// List tasks
+	tasks := &unstructured.UnstructuredList{}
+	tasks.SetGroupVersionKind(schema.GroupVersionKind{Group: "custom.agents.x-k8s.io", Version: "v1alpha1", Kind: "SandboxTask"})
+	if err := r.List(ctx, tasks, client.InNamespace(sandbox.GetNamespace()), client.MatchingLabels{"sandbox.gemini.google.com/sandbox-name": sandbox.GetName()}); err != nil {
+		return false, err
+	}
+
+	hasPending := false
+	for _, task := range tasks.Items {
+		state, _, _ := unstructured.NestedString(task.Object, "status", "taskState")
+		// Pending (default if empty) or Running
+		if state == "" || state == "Pending" || state == "Running" {
+			hasPending = true
+			break
+		}
+	}
+
+	if hasPending {
+		log.Info("Unpausing sandbox due to pending tasks", "sandbox", sandbox.GetName())
+		if err := unstructured.SetNestedField(sandbox.Object, int64(1), "spec", "replicas"); err != nil {
+			return false, err
+		}
+		return true, r.Update(ctx, sandbox)
+	}
+	return false, nil
+}
+
+func (r *Reconciler) pauseSandboxIfIdle(ctx context.Context, sandbox *unstructured.Unstructured, shutdownDuration time.Duration) (bool, error) {
+	log := log.FromContext(ctx)
+
+	// Check if running (replicas > 0)
+	replicas, found, err := unstructured.NestedInt64(sandbox.Object, "spec", "replicas")
+	if err == nil && found && replicas == 0 {
+		return false, nil // Already paused
+	}
+
+	// List tasks
+	tasks := &unstructured.UnstructuredList{}
+	tasks.SetGroupVersionKind(schema.GroupVersionKind{Group: "custom.agents.x-k8s.io", Version: "v1alpha1", Kind: "SandboxTask"})
+	if err := r.List(ctx, tasks, client.InNamespace(sandbox.GetNamespace()), client.MatchingLabels{"sandbox.gemini.google.com/sandbox-name": sandbox.GetName()}); err != nil {
+		return false, err
+	}
+
+	// Check if all tasks are completed and find latest completion time
+	latestTime := sandbox.GetCreationTimestamp().Time
+
+	for _, task := range tasks.Items {
+		state, _, _ := unstructured.NestedString(task.Object, "status", "taskState")
+		if state != "Completed" && state != "Failed" {
+			// Found an active task, do not pause
+			return false, nil
+		}
+
+		// Check completion time
+		annotations := task.GetAnnotations()
+		if tsStr, ok := annotations["sandbox.gemini.google.com/completion-time"]; ok {
+			if ts, err := time.Parse(time.RFC3339, tsStr); err == nil {
+				if ts.After(latestTime) {
+					latestTime = ts
+				}
+			}
+		}
+	}
+
+	if time.Since(latestTime) > shutdownDuration {
+		log.Info("Pausing sandbox (idle)", "sandbox", sandbox.GetName(), "lastActivity", latestTime)
+		if err := unstructured.SetNestedField(sandbox.Object, int64(0), "spec", "replicas"); err != nil {
+			return false, err
+		}
+		return true, r.Update(ctx, sandbox)
+	}
+
+	return false, nil
+}
+
+func (r *Reconciler) manageSandboxLifecycle(ctx context.Context, sandbox *unstructured.Unstructured, shutdownDuration time.Duration) (bool, error) {
+	replicas, found, err := unstructured.NestedInt64(sandbox.Object, "spec", "replicas")
+	if err != nil || !found {
+		// If field missing, assume it's running (default behavior usually)
+		replicas = 1
+	}
+
+	if replicas == 0 {
+		return r.unpauseSandboxIfPendingTasks(ctx, sandbox)
+	} else {
+		if shutdownDuration > 0 {
+			return r.pauseSandboxIfIdle(ctx, sandbox, shutdownDuration)
+		}
+	}
+	return false, nil
 }

@@ -2,7 +2,6 @@ package taskrunner
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -15,7 +14,6 @@ import (
 	k8s_metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	k8s_types "k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
@@ -211,16 +209,36 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *unstructured.Unstru
 
 func (tr *TaskRunner) updateTaskStatus(ctx context.Context, task *unstructured.Unstructured, state, result string) {
 	klog.Infof("Updating task %s status to %s", task.GetName(), state)
-	status := map[string]interface{}{
-		"status": map[string]interface{}{
-			"taskState": state,
-			"result":    result,
+
+	timestamp := time.Now().UTC().Format(time.RFC3339)
+	metadata := map[string]interface{}{
+		"name":      task.GetName(),
+		"namespace": tr.namespace,
+	}
+
+	if state == "Running" {
+		metadata["annotations"] = map[string]interface{}{
+			"sandbox.gemini.google.com/start-time": timestamp,
+		}
+	} else if state == "Completed" || state == "Failed" {
+		metadata["annotations"] = map[string]interface{}{
+			"sandbox.gemini.google.com/completion-time": timestamp,
+		}
+	}
+
+	applyObj := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
+			"kind":       "SandboxTask",
+			"metadata":   metadata,
+			"status": map[string]interface{}{
+				"taskState": state,
+				"result":    result,
+			},
 		},
 	}
 
-	patchBytes, _ := json.Marshal(status)
-
-	_, err := tr.client.Resource(SandboxTaskGVR).Namespace(tr.namespace).Patch(ctx, task.GetName(), k8s_types.MergePatchType, patchBytes, k8s_metav1.PatchOptions{}, "status")
+	_, err := tr.client.Resource(SandboxTaskGVR).Namespace(tr.namespace).ApplyStatus(ctx, task.GetName(), applyObj, k8s_metav1.ApplyOptions{FieldManager: "task-runner", Force: true})
 	if err != nil {
 		klog.Errorf("Failed to update task status: %v", err)
 	}
