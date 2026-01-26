@@ -8,6 +8,7 @@ import (
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 	gogithub "github.com/google/go-github/v39/github"
 	"github.com/spf13/cobra"
 	"k8s.io/klog/v2"
@@ -229,7 +230,7 @@ func shouldProcessIssue(ctx context.Context, githubAPI *github.Client, repo *git
 	sandboxName := fmt.Sprintf("github-%s-%s-%d", repo.Owner, repo.Name, issue.GetNumber())
 	sandboxName = strings.ToLower(sandboxName)
 
-	podID, err := findSandboxPod(ctx, sandboxName)
+	podID, err := sandbox.FindSandboxPod(ctx, sandboxName)
 	if err != nil {
 		log.Error(err, "failed to check for existing sandbox", "sandboxName", sandboxName)
 		// If we can't check, skip this issue for now

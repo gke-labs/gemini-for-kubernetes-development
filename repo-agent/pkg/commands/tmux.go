@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 	"github.com/spf13/cobra"
 )
 
@@ -38,7 +39,7 @@ func BuildTmuxCommand() *cobra.Command {
 // RunTmux launches tmux connected to the specified dev sandbox.
 func RunTmux(ctx context.Context, opt RunTmuxOptions) error {
 	// 1. Find the pod
-	podID, err := findSandboxPod(ctx, opt.SandboxName)
+	podID, err := sandbox.FindSandboxPod(ctx, opt.SandboxName)
 	if err != nil {
 		return err
 	}

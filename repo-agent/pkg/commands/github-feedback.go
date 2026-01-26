@@ -8,6 +8,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/prompts"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 	"github.com/spf13/cobra"
 	"k8s.io/klog/v2"
 )
@@ -77,7 +78,7 @@ func RunGithubFeedback(ctx context.Context, opt GithubFeedbackOptions) error {
 		return fmt.Errorf("failed to generate prompt for pull-request: %w", err)
 	}
 
-	podID, err := findSandboxPod(ctx, opt.Sandbox)
+	podID, err := sandbox.FindSandboxPod(ctx, opt.Sandbox)
 	if err != nil {
 		return err
 	}
@@ -93,7 +94,7 @@ func RunGithubFeedback(ctx context.Context, opt GithubFeedbackOptions) error {
 	// Copy the prompt into the pod (for now)
 	if len(prompt) > 0 {
 		path := "/workspaces/prompt.txt"
-		if err := writeFileInPod(ctx, kube, *podID, path, prompt); err != nil {
+		if err := sandbox.WriteFileInPod(ctx, kube, *podID, path, prompt); err != nil {
 			return fmt.Errorf("copying prompt into sandbox pod: %w", err)
 		}
 
@@ -110,14 +111,14 @@ func RunGithubFeedback(ctx context.Context, opt GithubFeedbackOptions) error {
 		// export GEMINI_TELEMETRY_ENABLED=true
 		// export GEMINI_TELEMETRY_OTLP_ENDPOINT=http://otel-portal.otel-system:4317
 
-		opts := execOptions{
+		opts := sandbox.ExecOptions{
 			Command: []string{"sh", "-c", fmt.Sprintf("cd %s && export GEMINI_API_KEY=%s && gemini --yolo --model gemini-3-pro-preview < /workspaces/prompt.txt", workdir, geminiAPIKey)},
 			Stdout:  os.Stdout,
 			Stderr:  os.Stderr,
 		}
 		opts.Secrets = []string{geminiAPIKey}
 
-		if err := execInPod(ctx, kube, *podID, opts); err != nil {
+		if err := sandbox.ExecInPod(ctx, kube, *podID, opts); err != nil {
 			return fmt.Errorf("running gemini in pod: %w", err)
 		}
 	}
