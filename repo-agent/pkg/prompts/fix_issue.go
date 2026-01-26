@@ -8,20 +8,24 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 )
 
-func FixIssuePrompt(ctx context.Context, githubAPI *github.Client, repo *github.Repo, issueNumber int) ([]byte, error) {
-	issue, _, err := githubAPI.Issues.Get(ctx, repo.Owner, repo.Name, issueNumber)
+func FixIssuePrompt(ctx context.Context, githubAPI *github.Client, i *github.Issue) ([]byte, error) {
+
+	repo := i.Repo
+
+	issueData, _, err := githubAPI.Issues.Get(ctx, repo.Owner, repo.Name, i.IssueNumber)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get github issue: %w", err)
 	}
 
 	model := FixIssuePromptModel{
-		IssueURL:         issue.GetHTMLURL(),
-		IssueNumber:      issue.GetNumber(),
-		IssueTitle:       issue.GetTitle(),
-		IssueDescription: issue.GetBody(),
+		IssueURL:         issueData.GetHTMLURL(),
+		IssueNumber:      issueData.GetNumber(),
+		IssueTitle:       issueData.GetTitle(),
+		IssueDescription: issueData.GetBody(),
+		Upstream:         repo.GitCloneURL(),
 	}
 
-	comments, _, err := githubAPI.Issues.ListComments(ctx, repo.Owner, repo.Name, issueNumber, nil)
+	comments, _, err := githubAPI.Issues.ListComments(ctx, repo.Owner, repo.Name, i.IssueNumber, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list github issue comments: %w", err)
 	}
@@ -50,6 +54,8 @@ type FixIssuePromptModel struct {
 	IssueTitle       string
 	IssueDescription string
 	IssueComments    []IssueComment
+
+	Upstream string
 }
 
 type IssueComment struct {

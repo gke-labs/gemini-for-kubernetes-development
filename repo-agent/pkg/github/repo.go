@@ -1,8 +1,11 @@
 package github
 
 import (
+	"context"
 	"fmt"
 	"strings"
+
+	githubapi "github.com/google/go-github/v39/github"
 )
 
 type Repo struct {
@@ -42,4 +45,32 @@ func (r *Repo) FilesystemName() string {
 // GitCloneURL returns the git clone URL for the repository.
 func (r *Repo) GitCloneURL() string {
 	return fmt.Sprintf("https://%s/%s/%s.git", r.Host, r.Owner, r.Name)
+}
+
+func (r *Repo) FetchInfo(ctx context.Context, client *Client) (*RepoInfo, error) {
+	info, _, err := client.Repositories.Get(ctx, r.Owner, r.Name)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get github repo info for %s/%s: %w", r.Owner, r.Name, err)
+	}
+
+	return &RepoInfo{
+		Repo: r,
+		info: info,
+	}, nil
+}
+
+// RepoInfo holds information about a repository.
+// It is a wrapper around the github Repository type
+type RepoInfo struct {
+	*Repo
+	info *githubapi.Repository
+}
+
+// DefaultBranch returns the default branch of the repository (or "main" if not set).
+// This is typically "main" or "master".
+func (r *RepoInfo) DefaultBranch() string {
+	if r.info.GetDefaultBranch() != "" {
+		return r.info.GetDefaultBranch()
+	}
+	return "main"
 }
