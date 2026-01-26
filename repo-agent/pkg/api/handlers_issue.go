@@ -353,7 +353,18 @@ func (s *Server) scaleUpIssue(c *gin.Context) {
 	issueID := c.Param("issue_id")
 	ctx := c.Request.Context()
 
-	if err := s.K8sManager.ScaleupIssueSandbox(ctx, namespace, repo, issueID, ""); err != nil {
+	var payload struct {
+		Manual bool `json:"manual"`
+	}
+	// Ignore error as body might be empty
+	_ = c.ShouldBindJSON(&payload)
+
+	annotationValue := ""
+	if payload.Manual {
+		annotationValue = "true"
+	}
+
+	if err := s.K8sManager.ScaleupIssueSandbox(ctx, namespace, repo, issueID, "", annotationValue); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scale up issue sandbox", "details": err.Error()})
 		return
 	}

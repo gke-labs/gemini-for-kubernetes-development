@@ -741,7 +741,7 @@ function PrReviewCard({
           ) : getSandboxStatusClass(pr) === 'yellow' ? (
              <div style={{display: 'flex', alignItems: 'center', gap: '5px'}}>
                <span className={`pr-sandbox ${getSandboxStatusClass(pr)}`}>Sandbox Paused</span>
-               <button className="btn btn-sm pr-sandbox green" style={{padding: '4px 10px', fontSize: '14px'}} onClick={(e) => { e.stopPropagation(); handleScaleUp(pr.id); }} title="Scale Up">
+               <button className="btn btn-sm pr-sandbox green" style={{padding: '4px 10px', fontSize: '14px'}} onClick={(e) => { e.stopPropagation(); handleScaleUp(pr.id, true); }} title="Scale Up">
                   &#9654;
                </button>
              </div>
