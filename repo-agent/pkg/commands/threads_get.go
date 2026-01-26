@@ -1,16 +1,13 @@
 package commands
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"os"
-	"os/exec"
 	"strings"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 	"github.com/spf13/cobra"
-	"k8s.io/apimachinery/pkg/types"
 )
 
 // GetThreadsOptions holds options for the GetThreads function.
@@ -54,8 +51,13 @@ func NewThreadsGetCommand() *cobra.Command {
 
 // RunGetThreads gets LLM thread/chat in the specified dev sandbox.
 func RunGetThreads(ctx context.Context, opt GetThreadsOptions) error {
+	kube, err := clients.NewKubernetesClient()
+	if err != nil {
+		return err
+	}
+
 	// 1. Find the pod
-	podID, err := findSandboxPod(ctx, opt.SandboxName)
+	podID, err := sandbox.FindSandboxPod(ctx, opt.SandboxName)
 	if err != nil {
 		return err
 	}
@@ -63,7 +65,12 @@ func RunGetThreads(ctx context.Context, opt GetThreadsOptions) error {
 		return fmt.Errorf("sandbox %q not found", opt.SandboxName)
 	}
 
-	thread, err := getThread(ctx, *podID, opt)
+	executor := &sandbox.PodExecutor{
+		Kube:  kube,
+		PodID: *podID,
+	}
+
+	thread, err := sandbox.GetThread(ctx, executor, opt.ThreadID, opt.IncludeMessages)
 	if err != nil {
 		return fmt.Errorf("failed to get thread: %w", err)
 	}
@@ -80,35 +87,4 @@ func RunGetThreads(ctx context.Context, opt GetThreadsOptions) error {
 	}
 
 	return nil
-}
-
-// getThread runs the agent to get a thread in the given dev sandbox pod.
-func getThread(ctx context.Context, podID types.NamespacedName, opt GetThreadsOptions) (*ThreadInfo, error) {
-	args := []string{
-		"kubectl", "exec", "--namespace", podID.Namespace, podID.Name, "--", repoSandboxBinary, "threads", "agent",
-	}
-	if opt.IncludeMessages {
-		args = append(args, "--include-messages=true")
-	}
-
-	args = append(args, fmt.Sprintf("--thread-id=%s", opt.ThreadID))
-	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
-	var stdout bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("failed to launch repo-sandbox agent via kubectl: %w", err)
-	}
-
-	var threads []ThreadInfo
-	if err := json.Unmarshal(stdout.Bytes(), &threads); err != nil {
-		return nil, fmt.Errorf("failed to parse threads agent output: %w", err)
-	}
-
-	if len(threads) == 0 {
-		return nil, fmt.Errorf("thread with ID %q not found", opt.ThreadID)
-	}
-
-	thread := threads[0]
-	return &thread, nil
 }

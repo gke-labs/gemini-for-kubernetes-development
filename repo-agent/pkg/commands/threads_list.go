@@ -1,18 +1,14 @@
 package commands
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 	"github.com/spf13/cobra"
-	"k8s.io/apimachinery/pkg/types"
 )
-
-const repoSandboxBinary = "/repo-agent/repo-sandbox"
 
 // ListThreadsOptions holds options for the ListThreads function.
 type ListThreadsOptions struct {
@@ -41,8 +37,13 @@ func NewThreadsListCommand() *cobra.Command {
 
 // RunListThreads lists LLM threads/chats in the specified dev sandbox.
 func RunListThreads(ctx context.Context, opt ListThreadsOptions) error {
+	kube, err := clients.NewKubernetesClient()
+	if err != nil {
+		return err
+	}
+
 	// 1. Find the pod
-	podID, err := findSandboxPod(ctx, opt.SandboxName)
+	podID, err := sandbox.FindSandboxPod(ctx, opt.SandboxName)
 	if err != nil {
 		return err
 	}
@@ -50,7 +51,12 @@ func RunListThreads(ctx context.Context, opt ListThreadsOptions) error {
 		return fmt.Errorf("sandbox %q not found", opt.SandboxName)
 	}
 
-	threads, err := listThreads(ctx, *podID)
+	executor := &sandbox.PodExecutor{
+		Kube:  kube,
+		PodID: *podID,
+	}
+
+	threads, err := sandbox.ListThreads(ctx, executor)
 	if err != nil {
 		return fmt.Errorf("failed to list threads: %w", err)
 	}
@@ -60,21 +66,4 @@ func RunListThreads(ctx context.Context, opt ListThreadsOptions) error {
 	}
 
 	return nil
-}
-
-// listThreads runs the agent to list threads in the given dev sandbox pod.
-func listThreads(ctx context.Context, podID types.NamespacedName) ([]ThreadInfo, error) {
-	cmd := exec.CommandContext(ctx, "kubectl", "exec", "--namespace", podID.Namespace, podID.Name, "--", repoSandboxBinary, "threads", "agent")
-	var stdout bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("failed to launch repo-sandbox agent via kubectl: %w", err)
-	}
-
-	var threads []ThreadInfo
-	if err := json.Unmarshal(stdout.Bytes(), &threads); err != nil {
-		return nil, fmt.Errorf("failed to parse threads agent output: %w", err)
-	}
-	return threads, nil
 }
