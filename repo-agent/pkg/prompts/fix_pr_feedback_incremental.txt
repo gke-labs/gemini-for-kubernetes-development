@@ -1,0 +1,22 @@
+More feedback was posted on your Pull Request; please address this additional review feedback and push your updated branch:
+
+{{ range  $comment := .Comments }}
+FROM: {{ $comment.Author }}
+GITHUB_ID: {{ $comment.ID }}
+
+{{ $comment.Body }}
+
+{{ range $review := $comment.Reviews }}
+
+{{ if $review.DiffHunk }}
+```{{ $review.Path }}
+{{ $review.DiffHunk }}
+```
+{{ end }}
+{{ $review.Body }}
+
+{{ end }}
+
+---
+
+{{ end }}
