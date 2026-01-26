@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
@@ -67,7 +68,7 @@ func RunAppendToThread(ctx context.Context, opt AppendToThreadOptions) error {
 	}
 
 	// 1. Find the pod
-	podID, err := findSandboxPod(ctx, opt.SandboxName)
+	podID, err := sandbox.FindSandboxPod(ctx, opt.SandboxName)
 	if err != nil {
 		return err
 	}
@@ -75,12 +76,13 @@ func RunAppendToThread(ctx context.Context, opt AppendToThreadOptions) error {
 		return fmt.Errorf("sandbox %q not found", opt.SandboxName)
 	}
 
-	// We need to read the current thread both to validate it exists and to infer the workspace
-	getThreadOptions := GetThreadsOptions{
-		ThreadID:        opt.ThreadID,
-		IncludeMessages: false,
+	executor := &sandbox.PodExecutor{
+		Kube:  kube,
+		PodID: *podID,
 	}
-	thread, err := getThread(ctx, *podID, getThreadOptions)
+
+	// We need to read the current thread both to validate it exists and to infer the workspace
+	thread, err := sandbox.GetThread(ctx, executor, opt.ThreadID, false)
 	if err != nil {
 		return fmt.Errorf("failed to get thread: %w", err)
 	}
@@ -100,30 +102,31 @@ func RunAppendToThread(ctx context.Context, opt AppendToThreadOptions) error {
 }
 
 // appendToThread runs the agent to append a comment to a thread in the given dev sandbox pod.
-func appendToThread(ctx context.Context, kube *clients.KubernetesClient, podID types.NamespacedName, threadID string, cwd string, stdin []byte) (*ThreadInfo, error) {
+func appendToThread(ctx context.Context, kube *clients.KubernetesClient, podID types.NamespacedName, threadID string, cwd string, stdin []byte) (*sandbox.ThreadInfo, error) {
 	// TODO: This is a bit of a hack, would be great to use a service portal
 	geminiAPIKey, err := GetGeminiAPIKey(podID.Namespace + "/" + podID.Name)
 	if err != nil {
 		return nil, err
 	}
 
-	command := fmt.Sprintf("export GEMINI_API_KEY=%s && %s threads agent", geminiAPIKey, repoSandboxBinary)
+	command := fmt.Sprintf("export GEMINI_API_KEY=%s && %s threads agent", geminiAPIKey, sandbox.RepoSandboxBinary)
 	command += fmt.Sprintf(" --thread-id=%s", threadID)
 	command += " --action=append"
 	command += " --cwd=" + cwd
 
 	var stdout bytes.Buffer
-	execOptions := execOptions{
+	execOptions := sandbox.ExecOptions{
 		Command: []string{"sh", "-c", command},
+		Secrets: []string{geminiAPIKey},
 		Stdin:   stdin,
 		Stdout:  &stdout,
 	}
 
-	if err := execInPod(ctx, kube, podID, execOptions); err != nil {
+	if err := sandbox.ExecInPod(ctx, kube, podID, execOptions); err != nil {
 		return nil, fmt.Errorf("failed to execute repo-sandbox agent in pod: %w", err)
 	}
 
-	var thread ThreadInfo
+	var thread sandbox.ThreadInfo
 	// TODO: Parse output to get updated thread info, particularly for a new thread
 	return &thread, nil
 }
