@@ -772,6 +772,10 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 
 	// Cleanup old sandboxes
 	for _, sandbox := range ownedSandboxes {
+		labels := sandbox.GetLabels()
+		if labels != nil && labels["sandbox.gemini.google.com/type"] == "dev" {
+			continue
+		}
 		if !validSandboxNames[sandbox.GetName()] {
 			log.Info("deleting orphan issue sandbox", "sandbox", sandbox.GetName())
 			if err := r.Delete(ctx, &sandbox); err != nil {
@@ -862,6 +866,7 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 				"namespace": repoWatch.Namespace,
 				"labels": map[string]interface{}{
 					"review.gemini.google.com/repowatch": repoWatch.Name,
+					"sandbox.gemini.google.com/type":     "issue",
 				},
 				"annotations": map[string]interface{}{
 					"agentState": "provisioning",
@@ -1448,6 +1453,14 @@ func (r *Reconciler) unpauseSandboxIfPendingTasks(ctx context.Context, sandbox *
 func (r *Reconciler) pauseSandboxIfIdle(ctx context.Context, sandbox *unstructured.Unstructured, shutdownDuration time.Duration) (bool, error) {
 	log := log.FromContext(ctx)
 
+	// Check for manual override annotation
+	annotations := sandbox.GetAnnotations()
+	if val, ok := annotations["sandbox.gemini.google.com/prevent-auto-shutdown"]; ok && val == "true" {
+		// Log only at debug level to avoid spam, or Info if occasional
+		log.V(4).Info("Skipping auto-pause due to manual override", "sandbox", sandbox.GetName())
+		return false, nil
+	}
+
 	// Check if running (replicas > 0)
 	replicas, found, err := unstructured.NestedInt64(sandbox.Object, "spec", "replicas")
 	if err == nil && found && replicas == 0 {
@@ -1502,10 +1515,10 @@ func (r *Reconciler) manageSandboxLifecycle(ctx context.Context, sandbox *unstru
 
 	if replicas == 0 {
 		return r.unpauseSandboxIfPendingTasks(ctx, sandbox)
-	} else {
-		if shutdownDuration > 0 {
-			return r.pauseSandboxIfIdle(ctx, sandbox, shutdownDuration)
-		}
+	}
+
+	if shutdownDuration > 0 {
+		return r.pauseSandboxIfIdle(ctx, sandbox, shutdownDuration)
 	}
 	return false, nil
 }
