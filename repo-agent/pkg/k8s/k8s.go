@@ -320,7 +320,12 @@ func (m *Manager) GetRepoWatch(ctx context.Context, namespace, name string) (*un
 
 func (m *Manager) ScaledownIssueSandbox(ctx context.Context, namespace, repo, issueID, handler string) error {
 	log := klog.FromContext(ctx)
-	sandboxName := fmt.Sprintf("%s-issue-%s-%s", repo, issueID, handler)
+	var sandboxName string
+	if handler != "" {
+		sandboxName = fmt.Sprintf("%s-issue-%s-%s", repo, issueID, handler)
+	} else {
+		sandboxName = fmt.Sprintf("%s-issue-%s", repo, issueID)
+	}
 
 	gvr := schema.GroupVersionResource{
 		Group:    "custom.agents.x-k8s.io",
@@ -398,7 +403,7 @@ func (m *Manager) ScaledownDevSandboxHelper(ctx context.Context, namespace, name
 	return nil
 }
 
-func (m *Manager) ScaleupSandbox(ctx context.Context, namespace, repo, prID string) error {
+func (m *Manager) ScaleupSandbox(ctx context.Context, namespace, repo, prID, annotationValue string) error {
 	log := klog.FromContext(ctx)
 	sandboxName := fmt.Sprintf("%s-pr-%s", repo, prID)
 
@@ -417,14 +422,22 @@ func (m *Manager) ScaleupSandbox(ctx context.Context, namespace, repo, prID stri
 		return fmt.Errorf("failed to get sandbox %s: %w", sandboxName, err)
 	}
 
+	metadata := map[string]interface{}{
+		"name":      sandboxName,
+		"namespace": namespace,
+	}
+
+	if annotationValue != "" {
+		metadata["annotations"] = map[string]interface{}{
+			"sandbox.gemini.google.com/prevent-auto-shutdown": annotationValue,
+		}
+	}
+
 	sandbox := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
 			"kind":       "ReviewSandbox",
-			"metadata": map[string]interface{}{
-				"name":      sandboxName,
-				"namespace": namespace,
-			},
+			"metadata":   metadata,
 			"spec": map[string]interface{}{
 				"replicas": int64(1),
 			},
@@ -439,16 +452,16 @@ func (m *Manager) ScaleupSandbox(ctx context.Context, namespace, repo, prID stri
 	return nil
 }
 
-func (m *Manager) ScaleupIssueSandbox(ctx context.Context, namespace, repo, issueID, handler string) error {
+func (m *Manager) ScaleupIssueSandbox(ctx context.Context, namespace, repo, issueID, handler, annotationValue string) error {
 	log := klog.FromContext(ctx)
-	sandboxName := fmt.Sprintf("%s-issue-%s-%s", repo, issueID, handler)
+	sandboxName := fmt.Sprintf("%s-issue-%s", repo, issueID)
 
 	gvr := schema.GroupVersionResource{
 		Group:    "custom.agents.x-k8s.io",
 		Version:  "v1alpha1",
 		Resource: "issuesandboxes",
 	}
-	log.Info("Scaling up issue sandbox", "name", sandboxName)
+	log.Info("Scaling up issue sandbox", "name", sandboxName, "handler", handler, "annotationValue", annotationValue)
 
 	_, err := m.Client.Resource(gvr).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
 	if err != nil {
@@ -458,14 +471,22 @@ func (m *Manager) ScaleupIssueSandbox(ctx context.Context, namespace, repo, issu
 		return fmt.Errorf("failed to get issue sandbox %s: %w", sandboxName, err)
 	}
 
+	metadata := map[string]interface{}{
+		"name":      sandboxName,
+		"namespace": namespace,
+	}
+
+	if annotationValue != "" {
+		metadata["annotations"] = map[string]interface{}{
+			"sandbox.gemini.google.com/prevent-auto-shutdown": annotationValue,
+		}
+	}
+
 	sandbox := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
 			"kind":       "IssueSandbox",
-			"metadata": map[string]interface{}{
-				"name":      sandboxName,
-				"namespace": namespace,
-			},
+			"metadata":   metadata,
 			"spec": map[string]interface{}{
 				"replicas": int64(1),
 			},

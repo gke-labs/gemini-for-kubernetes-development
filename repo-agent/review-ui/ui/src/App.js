@@ -761,8 +761,12 @@ function App() {
     }));
   };
 
-  const handlePRScaleUp = (id) => {
-    fetch(`/api/repo/${activeRepo.name}/prs/${id}/scaleup`, { method: 'POST' })
+  const handlePRScaleUp = (id, manual = false) => {
+    fetch(`/api/repo/${activeRepo.name}/prs/${id}/scaleup`, { 
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ manual })
+    })
       .then(res => {
         if (res.ok) {
           // Refresh PRs to update status
@@ -787,8 +791,12 @@ function App() {
       .catch(err => console.error("Failed to scale down sandbox:", err));
   };
 
-  const handleIssueScaleUp = (issueId) => {
-    fetch(`/api/repo/${activeRepo.name}/issues/${issueId}/scaleup`, { method: 'POST' })
+  const handleIssueScaleUp = (issueId, manual = false) => {
+    fetch(`/api/repo/${activeRepo.name}/issues/${issueId}/scaleup`, { 
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ manual })
+    })
       .then(res => {
         if (res.ok) {
           // Refresh Issues
