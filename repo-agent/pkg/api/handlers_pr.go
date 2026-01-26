@@ -372,7 +372,18 @@ func (s *Server) scaleUpPR(c *gin.Context) {
 	prID := c.Param("id")
 	ctx := c.Request.Context()
 
-	if err := s.K8sManager.ScaleupSandbox(ctx, namespace, repo, prID); err != nil {
+	var payload struct {
+		Manual bool `json:"manual"`
+	}
+	// Ignore error as body might be empty
+	_ = c.ShouldBindJSON(&payload)
+
+	annotationValue := ""
+	if payload.Manual {
+		annotationValue = "true"
+	}
+
+	if err := s.K8sManager.ScaleupSandbox(ctx, namespace, repo, prID, annotationValue); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scale up sandbox", "details": err.Error()})
 		return
 	}
@@ -433,7 +444,7 @@ func (s *Server) createPRTask(c *gin.Context) {
 	}
 
 	// Scale up the sandbox so it can process the task
-	if err := s.K8sManager.ScaleupSandbox(c.Request.Context(), namespace, repo, prID); err != nil {
+	if err := s.K8sManager.ScaleupSandbox(c.Request.Context(), namespace, repo, prID, ""); err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Failed to scale up sandbox after task creation", "details": err.Error()})
 		klog.Warningf("Failed to scale up sandbox after task creation: %v", err)
 		return
