@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 	"github.com/spf13/cobra"
 	"k8s.io/klog/v2"
 )
@@ -181,10 +182,10 @@ type geminiToolCall struct {
 	RenderOutputAsMarkdown bool            `json:"renderOutputAsMarkdown"`
 }
 
-func (a *threadsAgent) listThreads(ctx context.Context, opt ThreadsAgentOptions) ([]ThreadInfo, error) {
+func (a *threadsAgent) listThreads(ctx context.Context, opt ThreadsAgentOptions) ([]sandbox.ThreadInfo, error) {
 	log := klog.FromContext(ctx)
 
-	var out []ThreadInfo
+	var out []sandbox.ThreadInfo
 
 	// gemini --list-sessions only does one directory (the cwd), and doesn't output structured information.
 
@@ -214,7 +215,7 @@ func (a *threadsAgent) listThreads(ctx context.Context, opt ThreadsAgentOptions)
 			return nil
 		}
 
-		thread := ThreadInfo{
+		thread := sandbox.ThreadInfo{
 			SessionID:   session.SessionID,
 			ProjectHash: session.ProjectHash,
 		}
@@ -237,7 +238,7 @@ func (a *threadsAgent) listThreads(ctx context.Context, opt ThreadsAgentOptions)
 
 		if opt.IncludeMessages {
 			for _, msg := range session.Messages {
-				msgOut := ThreadMessage{
+				msgOut := sandbox.ThreadMessage{
 					ID:        msg.ID,
 					Timestamp: msg.Timestamp,
 					Type:      msg.Type,
@@ -245,7 +246,7 @@ func (a *threadsAgent) listThreads(ctx context.Context, opt ThreadsAgentOptions)
 					Model:     msg.Model,
 				}
 				for _, toolCall := range msg.ToolCalls {
-					toolCallOut := ToolCall{
+					toolCallOut := sandbox.ToolCall{
 						ID:        toolCall.ID,
 						Name:      toolCall.Name,
 						Arguments: toolCall.Args,
