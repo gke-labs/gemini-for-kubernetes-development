@@ -1,19 +1,15 @@
 package commands
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
-	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/prompts"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks"
 	"github.com/spf13/cobra"
-	"k8s.io/klog/v2"
 )
 
 // GithubFixIssueCommand holds options for the RunCode function.
@@ -128,149 +124,8 @@ func (c *GithubFixIssueCommand) loadSandbox(ctx context.Context) error {
 	return nil
 }
 
-func (c *GithubFixIssueCommand) SetupGit() error {
-	//log := klog.FromContext(ctx)
-
-	{
-		config := `github.com:
-    users:
-        {{UserID}}:
-            oauth_token: {{Token}}
-    git_protocol: https
-    oauth_token: {{Token}}
-    user: {{UserID}}
-`
-
-		if c.user.Token == "" {
-			return fmt.Errorf("user token is not set")
-		}
-
-		config = strings.ReplaceAll(config, "{{Token}}", c.user.Token)
-		config = strings.ReplaceAll(config, "{{UserID}}", c.user.UserID)
-
-		opts := sandbox.ExecOptions{
-			Command: []string{"mkdir", "-p", "/root/.config/gh"},
-		}
-		if err := c.sandbox.Exec(opts); err != nil {
-			return fmt.Errorf("creating /root/.config/gh directory: %w", err)
-		}
-
-		if err := c.sandbox.WriteFile("/root/.config/gh/hosts.yml", []byte(config)); err != nil {
-			return fmt.Errorf("writing gh config: %w", err)
-		}
-	}
-
-	// Run git config
-	{
-		opts := sandbox.ExecOptions{
-			Command: []string{"git", "config", "--global", "user.email", c.user.Email},
-		}
-		if err := c.sandbox.Exec(opts); err != nil {
-			return fmt.Errorf("running git config user.email: %w", err)
-		}
-		opts = sandbox.ExecOptions{
-			Command: []string{"git", "config", "--global", "user.name", c.user.Name},
-		}
-		if err := c.sandbox.Exec(opts); err != nil {
-			return fmt.Errorf("running git config user.name: %w", err)
-		}
-	}
-
-	// Run gh auth setup-git
-	{
-		opts := sandbox.ExecOptions{
-			Command: []string{"gh", "auth", "setup-git"},
-		}
-		if err := c.sandbox.Exec(opts); err != nil {
-			return fmt.Errorf("running gh auth setup-git: %w", err)
-		}
-	}
-
-	return nil
-}
-
-func (c *GithubFixIssueCommand) SetupGitRepos(ctx context.Context) error {
-	log := klog.FromContext(ctx)
-
-	workdir := fmt.Sprintf("/workspaces/%s", c.repo.Name())
-
-	// Run gh repo fork
-	log.Info("Forking repository", "sandbox", c.sandboxID, "repo", c.repo.CloneURL())
-	{
-		// TODO: Does gh support -C ?
-		opts := sandbox.ExecOptions{
-			Command: []string{"sh", "-c", fmt.Sprintf("cd %s && gh repo fork --remote", workdir)},
-		}
-		if err := c.sandbox.Exec(opts); err != nil {
-			return fmt.Errorf("running gh repo fork: %w", err)
-		}
-	}
-
-	// Setup default remote
-	{
-		defaultRepo := c.repo.CloneURL()
-
-		// TODO: Does gh support -C ?
-		opts := sandbox.ExecOptions{
-			Command: []string{"sh", "-c", fmt.Sprintf("cd %s && gh repo set-default %s", workdir, defaultRepo)},
-		}
-		if err := c.sandbox.Exec(opts); err != nil {
-			return fmt.Errorf("running gh repo fork: %w", err)
-		}
-
-	}
-
-	// Wait for checkout to complete
-	{
-		timeoutAt := time.Now().Add(time.Minute)
-		for {
-			log.Info("Waiting for checkout to be ready")
-
-			var stdout bytes.Buffer
-			opts := sandbox.ExecOptions{
-				Command: []string{"git", "-C", workdir, "branch", "--show-current"},
-				Stdout:  &stdout,
-			}
-			if err := c.sandbox.Exec(opts); err != nil {
-				klog.Infof("stdout: %v", stdout.String())
-				if time.Now().After(timeoutAt) {
-					return fmt.Errorf("timed out waiting for initial checkout to complete: %w", err)
-				}
-			} else {
-				klog.Infof("current branch: %v", stdout.String())
-				break
-			}
-
-			time.Sleep(2 * time.Second)
-		}
-	}
-
-	return nil
-}
-
-func (c *GithubFixIssueCommand) CheckoutNewBranch(ctx context.Context) error {
-	log := klog.FromContext(ctx)
-
-	workdir := fmt.Sprintf("/workspaces/%s", c.repo.Name())
-
-	branchName := fmt.Sprintf("issue_%d", c.issue.Number())
-
-	// Create a new branch
-	log.Info("Creating new branch", "sandbox", c.sandboxID, "branch", branchName)
-
-	opts := sandbox.ExecOptions{
-		Command: []string{"git", "-C", workdir, "checkout", "-b", branchName},
-	}
-	if err := c.sandbox.Exec(opts); err != nil {
-		return fmt.Errorf("creating new branch: %w", err)
-	}
-
-	return nil
-}
-
 // RunGithubFixIssue launches VS Code connected to the specified dev sandbox.
 func (c *GithubFixIssueCommand) Run(ctx context.Context) error {
-	log := klog.FromContext(ctx)
 
 	// Load data from github.com
 	err := c.loadGithubObjects(ctx)
@@ -284,63 +139,27 @@ func (c *GithubFixIssueCommand) Run(ctx context.Context) error {
 		return err
 	}
 
-	// setup git repo clone in sandbox
-	if err := c.SetupGit(); err != nil {
-		return fmt.Errorf("setting up git in sandbox: %w", err)
-	}
-
-	if err := c.SetupGitRepos(ctx); err != nil {
-		return fmt.Errorf("setting up git branches in sandbox: %w", err)
-	}
-
-	// HACK: Avoid git lock issues
-	time.Sleep(5 * time.Second)
-
-	if err := c.CheckoutNewBranch(ctx); err != nil {
-		return fmt.Errorf("checking out branch: %w", err)
-	}
-
-	// Prepare prompt
-	model := prompts.FixIssueModel{
-		Issue:         c.issue,
-		IssueComments: c.issue.IssueComments,
-		Repo:          c.repo,
-	}
-	prompt, err := prompts.FixIssuePrompt(model)
-	if err != nil {
-		return fmt.Errorf("failed to generate prompt for issue: %w", err)
-	}
-
-	log.Info("copying prompt into sandbox", "sandbox", c.sandboxID)
-
 	promptPath := c.taskPath("agent-prompt.txt")
-	if err := c.sandbox.WriteFile(promptPath, prompt); err != nil {
-		return fmt.Errorf("copying prompt into sandbox: %w", err)
-	}
-
-	log.Info("Copied prompt into sandbox", "sandbox", c.sandboxID, "path", promptPath)
-
-	if err := c.sandbox.ConfigureGemini(ctx); err != nil {
-		return fmt.Errorf("configuring gemini in sandbox: %w", err)
+	task := tasks.FixIssueModel{
+		Issue:         c.issue,
+		Repo:          c.repo,
+		User:          c.user,
+		IssueComments: c.issue.IssueComments,
+		PromptFile:    promptPath,
 	}
 
 	apikey, err := GetGeminiAPIKey(c.sandboxID)
 	if err != nil {
 		return err
 	}
-	log.Info("Running gemini in sandbox", "sandbox", c.sandboxID)
 
-	workdir := fmt.Sprintf("/workspaces/%s", c.repo.Name())
-
-	opts := sandbox.ExecOptions{
-		Command: []string{"sh", "-c", fmt.Sprintf("cd %s && export GEMINI_API_KEY=%s && gemini --yolo --model gemini-3-pro-preview < %s", workdir, apikey, promptPath)},
-		Stdout:  os.Stdout,
-		Stderr:  os.Stderr,
+	env := map[string]string{
+		"GEMINI_API_KEY":    apikey,
+		"GITHUB_USER_TOKEN": c.GithubUserToken,
 	}
-	opts.Secrets = []string{apikey}
-
-	if err := c.sandbox.Exec(opts); err != nil {
-		return fmt.Errorf("running gemini: %w", err)
+	err = tasks.RunTask(ctx, &task, c.sandbox, c.TaskDir, env)
+	if err != nil {
+		return fmt.Errorf("running fix-issue task: %w", err)
 	}
 
 	return nil
