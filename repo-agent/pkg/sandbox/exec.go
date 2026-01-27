@@ -33,10 +33,10 @@ type Executor interface {
 type ExecOptions struct {
 	Command []string
 	Secrets []string
-
-	Stdin  []byte
-	Stdout io.Writer
-	Stderr io.Writer
+	Stdin   []byte
+	Stdout  io.Writer
+	Stderr  io.Writer
+	Env     map[string]string
 }
 
 // PodExecutor implements Executor for running commands in a Kubernetes pod.
@@ -92,6 +92,13 @@ func (e *LocalExecutor) Exec(opts ExecOptions) error {
 		cmd.Dir = e.WorkDir
 	}
 
+	if len(opts.Env) > 0 {
+		env := os.Environ()
+		for k, v := range opts.Env {
+			env = append(env, fmt.Sprintf("%s=%s", k, v))
+		}
+		cmd.Env = env
+	}
 	if opts.Stdin != nil {
 		cmd.Stdin = bytes.NewReader(opts.Stdin)
 	}
@@ -114,7 +121,7 @@ func (e *LocalExecutor) Exec(opts ExecOptions) error {
 		redactedCommand = strings.ReplaceAll(redactedCommand, v, "****")
 	}
 
-	log.Info("Executing local command", "command", redactedCommand, "dir", e.WorkDir)
+	log.Info("Executing local command", "command", redactedCommand, "dir", cmd.Dir)
 
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("executing local command %q: %w", redactedCommand, err)
@@ -152,9 +159,22 @@ func ExecInPod(ctx context.Context, kube *clients.KubernetesClient, podID types.
 		redactedCommand = strings.ReplaceAll(redactedCommand, v, "****")
 	}
 
+	command := opts.Command
+	if len(opts.Env) > 0 {
+		envCommands := []string{}
+		for k, v := range opts.Env {
+			envCommands = append(envCommands, fmt.Sprintf("export %s=%q", k, v))
+		}
+		// Prepend the env commands to the original command
+		shellCommand := strings.Join(envCommands, " && ") + " && " + strings.Join(command, " ")
+		command = []string{"sh", "-c", shellCommand}
+	}
+
+	log.Info("Executing command in pod", "pod", podID, "command", redactedCommand)
+
 	podExecOptions := &v1.PodExecOptions{
 		// Container: containerName,
-		Command: opts.Command,
+		Command: command,
 		Stdin:   true,
 		Stdout:  true,
 		Stderr:  true,
@@ -163,7 +183,6 @@ func ExecInPod(ctx context.Context, kube *clients.KubernetesClient, podID types.
 	if opts.Stdin == nil {
 		podExecOptions.Stdin = false
 	}
-
 	req := kube.Clientset.CoreV1().RESTClient().Post().
 		Resource("pods").
 		Name(podID.Name).
