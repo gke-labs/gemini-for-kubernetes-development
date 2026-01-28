@@ -5,9 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
-	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
@@ -23,47 +21,94 @@ import (
 
 const RepoSandboxBinary = "/repo-agent/repo-sandbox"
 
-// InteractiveSandbox represents an agent sandbox being used to fix a GitHub issue.
-type InteractiveSandbox struct {
-	kube     *clients.KubernetesClient
-	podID    types.NamespacedName
-	repo     *github.Repo
+// IssueSandbox represents an agent sandbox being used to fix a GitHub issue.
+type IssueSandbox struct {
+	repo     *github.Repository
 	issue    *github.Issue
 	executor Executor
+	user     github.User
 }
 
-// GetPodID returns the pod ID of the sandbox.
-func (s *InteractiveSandbox) GetPodID() types.NamespacedName {
-	return s.podID
+func NewIssueSandbox(ctx context.Context, local bool, repo *github.Repository, issue *github.Issue, user github.User) (*IssueSandbox, error) {
+	log := klog.FromContext(ctx)
+
+	kube, err := clients.NewKubernetesClient()
+	if err != nil {
+		return nil, err
+	}
+
+	if local {
+		log.Info("Using local executor for sandbox")
+		return &IssueSandbox{
+			repo:  repo,
+			issue: issue,
+			executor: &LocalExecutor{
+				Ctx:     ctx,
+				Name:    fmt.Sprintf("local-%s/issue/%d", repo.Name(), issue.Number()),
+				WorkDir: fmt.Sprintf("/workspaces/%s", repo.Name()),
+			},
+			user: user,
+		}, nil
+	}
+	log.Info("Looking for existing sandbox for issue", "repo", repo.CloneURL(), "issue", issue.String())
+	sb, found, err := FindSandboxForIssue(ctx, kube, repo, issue, user)
+	if err != nil {
+		return nil, err
+	}
+
+	if !found {
+		sb, err = LaunchSandboxForIssue(ctx, kube, repo, issue, user)
+		if err != nil {
+			return nil, fmt.Errorf("launching sandbox for issue: %w", err)
+		}
+	}
+	return sb, nil
+}
+
+// GetPodID returns the pod ID of the sandbox if it is running in a pod.
+func (s *IssueSandbox) GetPodID() types.NamespacedName {
+	if podExecutor, ok := s.executor.(*PodExecutor); ok {
+		return podExecutor.PodID
+	}
+	return types.NamespacedName{}
+}
+
+// GetIssue returns the issue associated with the sandbox.
+func (s *IssueSandbox) GetIssue() *github.Issue {
+	return s.issue
+}
+
+func (s *IssueSandbox) GetSandboxID() string {
+	return s.executor.ID()
 }
 
 // GetRepo returns the repo associated with the sandbox.
-func (s *InteractiveSandbox) GetRepo() *github.Repo {
+func (s *IssueSandbox) GetRepo() *github.Repository {
 	return s.repo
 }
 
-func (s *InteractiveSandbox) Exec(ctx context.Context, opts ExecOptions) error {
-	return s.executor.Exec(ctx, opts)
+func (s *IssueSandbox) Exec(opts ExecOptions) error {
+	return s.executor.Exec(opts)
 }
 
-func (s *InteractiveSandbox) MkdirAll(ctx context.Context, path string) error {
+func (s *IssueSandbox) MkdirAll(path string) error {
 	opts := ExecOptions{
 		Command: []string{"mkdir", "-p", path},
 	}
-	if err := s.executor.Exec(ctx, opts); err != nil {
+	if err := s.executor.Exec(opts); err != nil {
 		return fmt.Errorf("creating directory %q: %w", path, err)
 	}
 	return nil
 }
 
-func (s *InteractiveSandbox) WriteFile(ctx context.Context, path string, data []byte) error {
-	if err := s.executor.WriteFile(ctx, path, data); err != nil {
+func (s *IssueSandbox) WriteFile(path string, data []byte) error {
+	if err := s.executor.WriteFile(path, data); err != nil {
 		return fmt.Errorf("writing file %q: %w", path, err)
 	}
 	return nil
 }
 
-func LaunchSandboxForIssue(ctx context.Context, kube *clients.KubernetesClient, repo *github.Repo, issue *github.Issue) (*InteractiveSandbox, error) {
+func LaunchSandboxForIssue(ctx context.Context, kube *clients.KubernetesClient, repo *github.Repository, issue *github.Issue, user github.User) (*IssueSandbox, error) {
 	log := klog.FromContext(ctx)
 
 	sandboxName := NameForIssue(repo, issue)
@@ -71,7 +116,7 @@ func LaunchSandboxForIssue(ctx context.Context, kube *clients.KubernetesClient, 
 	issueURL := issue.String()
 
 	cloneRepos := []string{
-		fmt.Sprintf("/workspaces/%s=%s", repo.FilesystemName(), repo.GitCloneURL()),
+		fmt.Sprintf("/workspaces/%s=%s", repo.Name(), repo.CloneURL()),
 	}
 
 	log.Info("Creating sandbox", "name", sandboxName, "repos", cloneRepos, "issue", issueURL)
@@ -126,26 +171,26 @@ func LaunchSandboxForIssue(ctx context.Context, kube *clients.KubernetesClient, 
 		return nil, err
 	}
 
-	return &InteractiveSandbox{
-		kube:  kube,
-		podID: podID,
+	return &IssueSandbox{
 		repo:  repo,
 		issue: issue,
 		executor: &PodExecutor{
+			Ctx:   ctx,
 			Kube:  kube,
 			PodID: podID,
 		},
+		user: user,
 	}, nil
 }
 
-func NameForIssue(repo *github.Repo, issue *github.Issue) string {
-	sandboxName := fmt.Sprintf("github-%s-%s-%d", repo.Owner, repo.Name, issue.IssueNumber)
+func NameForIssue(repo *github.Repository, issue *github.Issue) string {
+	sandboxName := fmt.Sprintf("github-%s-%s-%d", repo.Owner(), repo.Name(), issue.Number())
 	sandboxName = strings.ToLower(sandboxName) // Repos can have capital letters, but k8s names must be lowercase
 
 	return sandboxName
 }
 
-func FindSandboxForIssue(ctx context.Context, kube *clients.KubernetesClient, repo *github.Repo, issue *github.Issue) (*InteractiveSandbox, bool, error) {
+func FindSandboxForIssue(ctx context.Context, kube *clients.KubernetesClient, repo *github.Repository, issue *github.Issue, user github.User) (*IssueSandbox, bool, error) {
 	sandboxName := NameForIssue(repo, issue)
 
 	podIDPtr, err := FindSandboxPod(ctx, sandboxName)
@@ -157,15 +202,15 @@ func FindSandboxForIssue(ctx context.Context, kube *clients.KubernetesClient, re
 		return nil, false, nil
 	}
 
-	return &InteractiveSandbox{
-		kube:  kube,
-		podID: *podIDPtr,
+	return &IssueSandbox{
 		repo:  repo,
 		issue: issue,
 		executor: &PodExecutor{
+			Ctx:   ctx,
 			Kube:  kube,
 			PodID: *podIDPtr,
 		},
+		user: user,
 	}, true, nil
 }
 
@@ -211,180 +256,39 @@ func FindSandboxPod(ctx context.Context, sandboxName string) (*types.NamespacedN
 	return podID, nil
 }
 
-func (s *InteractiveSandbox) ReadFile(ctx context.Context, path string) ([]byte, error) {
-	return s.executor.ReadFile(ctx, path)
+func (s *IssueSandbox) ReadFile(path string) ([]byte, error) {
+	return s.executor.ReadFile(path)
 }
 
-func (s *InteractiveSandbox) SetupGit(ctx context.Context) error {
-	// log := klog.FromContext(ctx)
-
-	// Write gh config
-	{
-		config := `github.com:
-    users:
-        codebot-robot:
-            oauth_token: {{CODEBOT_ROBOT_GITHUB_TOKEN}}
-    git_protocol: https
-    oauth_token: {{CODEBOT_ROBOT_GITHUB_TOKEN}}
-    user: codebot-robot
-`
-
-		codebotRobotToken := os.Getenv("CODEBOT_ROBOT_GITHUB_TOKEN")
-		if codebotRobotToken == "" {
-			return fmt.Errorf("CODEBOT_ROBOT_GITHUB_TOKEN environment variable is not set")
-		}
-
-		config = strings.ReplaceAll(config, "{{CODEBOT_ROBOT_GITHUB_TOKEN}}", codebotRobotToken)
-
-		opts := ExecOptions{
-			Command: []string{"mkdir", "-p", "/root/.config/gh"},
-		}
-		if err := s.executor.Exec(ctx, opts); err != nil {
-			return fmt.Errorf("creating /root/.config/gh directory: %w", err)
-		}
-
-		if err := s.executor.WriteFile(ctx, "/root/.config/gh/hosts.yml", []byte(config)); err != nil {
-			return fmt.Errorf("writing gh config: %w", err)
-		}
-	}
-
-	// Run git config
-	{
-		opts := ExecOptions{
-			Command: []string{"git", "config", "--global", "user.email", "codebot-robot@google.com"},
-		}
-		if err := s.executor.Exec(ctx, opts); err != nil {
-			return fmt.Errorf("running git config user.email: %w", err)
-		}
-		opts = ExecOptions{
-			Command: []string{"git", "config", "--global", "user.name", "codebot-robot"},
-		}
-		if err := s.executor.Exec(ctx, opts); err != nil {
-			return fmt.Errorf("running git config user.name: %w", err)
-		}
-	}
-
-	// Run gh auth setup-git
-	{
-		opts := ExecOptions{
-			Command: []string{"gh", "auth", "setup-git"},
-		}
-		if err := s.executor.Exec(ctx, opts); err != nil {
-			return fmt.Errorf("running gh auth setup-git: %w", err)
-		}
-	}
-
-	return nil
-}
-
-func (s *InteractiveSandbox) SetupGitRepos(ctx context.Context) error {
+func (s *IssueSandbox) CheckoutExistingBranch(ctx context.Context, branchName string) error {
 	log := klog.FromContext(ctx)
 
-	workdir := fmt.Sprintf("/workspaces/%s", s.repo.FilesystemName())
+	workdir := fmt.Sprintf("/workspaces/%s", s.repo.Name())
 
-	// Run gh repo fork
-	log.Info("Forking repository", "pod", s.podID.Name, "repo", s.repo.GitCloneURL())
-	{
-		// TODO: Does gh support -C ?
-		opts := ExecOptions{
-			Command: []string{"sh", "-c", fmt.Sprintf("cd %s && gh repo fork --remote", workdir)},
-		}
-		if err := s.executor.Exec(ctx, opts); err != nil {
-			return fmt.Errorf("running gh repo fork: %w", err)
-		}
-	}
-
-	// Setup default remote
-	{
-		defaultRepo := s.repo.GitCloneURL()
-
-		// TODO: Does gh support -C ?
-		opts := ExecOptions{
-			Command: []string{"sh", "-c", fmt.Sprintf("cd %s && gh repo set-default %s", workdir, defaultRepo)},
-		}
-		if err := s.executor.Exec(ctx, opts); err != nil {
-			return fmt.Errorf("running gh repo fork: %w", err)
-		}
-
-	}
-
-	// Wait for checkout to complete
-	{
-		timeoutAt := time.Now().Add(time.Minute)
-		for {
-			log.Info("Waiting for checkout to be ready")
-
-			var stdout bytes.Buffer
-			opts := ExecOptions{
-				Command: []string{"git", "-C", workdir, "branch", "--show-current"},
-				Stdout:  &stdout,
-			}
-			if err := s.executor.Exec(ctx, opts); err != nil {
-				klog.Infof("stdout: %v", stdout.String())
-				if time.Now().After(timeoutAt) {
-					return fmt.Errorf("timed out waiting for initial checkout to complete: %w", err)
-				}
-			} else {
-				klog.Infof("current branch: %v", stdout.String())
-				break
-			}
-
-			time.Sleep(2 * time.Second)
-		}
-	}
-
-	return nil
-}
-
-func (s *InteractiveSandbox) CheckoutNewBranch(ctx context.Context) error {
-	log := klog.FromContext(ctx)
-
-	workdir := fmt.Sprintf("/workspaces/%s", s.repo.FilesystemName())
-
-	branchName := fmt.Sprintf("issue_%d", s.issue.IssueNumber)
-
-	// Create a new branch
-	log.Info("Creating new branch", "pod", s.podID.Name, "branch", branchName)
-
-	opts := ExecOptions{
-		Command: []string{"git", "-C", workdir, "checkout", "-b", branchName},
-	}
-	if err := s.executor.Exec(ctx, opts); err != nil {
-		return fmt.Errorf("creating new branch: %w", err)
-	}
-
-	return nil
-}
-
-func (s *InteractiveSandbox) CheckoutExistingBranch(ctx context.Context, branchName string) error {
-	log := klog.FromContext(ctx)
-
-	workdir := fmt.Sprintf("/workspaces/%s", s.repo.FilesystemName())
-
-	log.Info("Fetching from fork", "pod", s.podID.Name)
+	log.Info("Fetching from fork", "pod", s.GetPodID().Name)
 
 	opts := ExecOptions{
 		Command: []string{"git", "-C", workdir, "fetch", "origin"},
 	}
-	if err := s.executor.Exec(ctx, opts); err != nil {
+	if err := s.executor.Exec(opts); err != nil {
 		return fmt.Errorf("fetching from fork: %w", err)
 	}
 
 	opts = ExecOptions{
 		Command: []string{"git", "-C", workdir, "checkout", branchName},
 	}
-	if err := s.executor.Exec(ctx, opts); err != nil {
+	if err := s.executor.Exec(opts); err != nil {
 		return fmt.Errorf("checking out branch %q: %w", branchName, err)
 	}
 
 	return nil
 }
 
-func (s *InteractiveSandbox) ListThreads(ctx context.Context) ([]ThreadInfo, error) {
-	return ListThreads(ctx, s.executor)
+func (s *IssueSandbox) ListThreads() ([]ThreadInfo, error) {
+	return ListThreads(s.executor)
 }
 
-func ListThreads(ctx context.Context, executor Executor) ([]ThreadInfo, error) {
+func ListThreads(executor Executor) ([]ThreadInfo, error) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
@@ -394,7 +298,7 @@ func ListThreads(ctx context.Context, executor Executor) ([]ThreadInfo, error) {
 		Stderr:  &stderr,
 	}
 
-	if err := executor.Exec(ctx, opts); err != nil {
+	if err := executor.Exec(opts); err != nil {
 		return nil, fmt.Errorf("failed to list threads via agent: %w, stderr: %s", err, stderr.String())
 	}
 
@@ -405,11 +309,11 @@ func ListThreads(ctx context.Context, executor Executor) ([]ThreadInfo, error) {
 	return threads, nil
 }
 
-func (s *InteractiveSandbox) GetThreadMessages(ctx context.Context, threadID string) ([]ThreadMessage, error) {
-	return GetThreadMessages(ctx, s.executor, threadID)
+func (s *IssueSandbox) GetThreadMessages(threadID string) ([]ThreadMessage, error) {
+	return GetThreadMessages(s.executor, threadID)
 }
 
-func GetThread(ctx context.Context, executor Executor, threadID string, includeMessages bool) (*ThreadInfo, error) {
+func GetThread(executor Executor, threadID string, includeMessages bool) (*ThreadInfo, error) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
@@ -424,7 +328,7 @@ func GetThread(ctx context.Context, executor Executor, threadID string, includeM
 		Stderr:  &stderr,
 	}
 
-	if err := executor.Exec(ctx, opts); err != nil {
+	if err := executor.Exec(opts); err != nil {
 		return nil, fmt.Errorf("failed to get thread via agent: %w, stderr: %s", err, stderr.String())
 	}
 
@@ -440,15 +344,15 @@ func GetThread(ctx context.Context, executor Executor, threadID string, includeM
 	return &threads[0], nil
 }
 
-func GetThreadMessages(ctx context.Context, executor Executor, threadID string) ([]ThreadMessage, error) {
-	thread, err := GetThread(ctx, executor, threadID, true)
+func GetThreadMessages(executor Executor, threadID string) ([]ThreadMessage, error) {
+	thread, err := GetThread(executor, threadID, true)
 	if err != nil {
 		return nil, err
 	}
 	return thread.Messages, nil
 }
 
-func ConfigureGemini(ctx context.Context, sandbox *InteractiveSandbox) error {
+func (s *IssueSandbox) ConfigureGemini(ctx context.Context) error {
 	log := klog.FromContext(ctx)
 
 	// Configure gemini
@@ -482,7 +386,7 @@ func ConfigureGemini(ctx context.Context, sandbox *InteractiveSandbox) error {
 			return fmt.Errorf("marshaling gemini config: %w", err)
 		}
 
-		log.Info("Writing gemini config in pod", "pod", sandbox.podID)
+		log.Info("Writing gemini config in pod", "sandbox", s.GetSandboxID())
 
 		// if b0, err := sandbox.ReadFile(ctx, "/root/.gemini/settings.json"); err != nil {
 		// 	return fmt.Errorf("reading gemini config in pod: %w", err)
@@ -490,11 +394,11 @@ func ConfigureGemini(ctx context.Context, sandbox *InteractiveSandbox) error {
 		// 	klog.Infof("Existing gemini config: %s", string(b0))
 		// }
 
-		if err := sandbox.MkdirAll(ctx, "/root/.gemini"); err != nil {
+		if err := s.MkdirAll("/root/.gemini"); err != nil {
 			return fmt.Errorf("creating /root/.gemini directory in pod: %w", err)
 		}
 
-		if err := sandbox.WriteFile(ctx, "/root/.gemini/settings.json", b); err != nil {
+		if err := s.WriteFile("/root/.gemini/settings.json", b); err != nil {
 			return fmt.Errorf("writing gemini config in pod: %w", err)
 		}
 	}
