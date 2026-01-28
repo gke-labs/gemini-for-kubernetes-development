@@ -82,7 +82,7 @@ func RunAppendToThread(ctx context.Context, opt AppendToThreadOptions) error {
 	}
 
 	// We need to read the current thread both to validate it exists and to infer the workspace
-	thread, err := sandbox.GetThread(ctx, executor, opt.ThreadID, false)
+	thread, err := sandbox.GetThread(executor, opt.ThreadID, false)
 	if err != nil {
 		return fmt.Errorf("failed to get thread: %w", err)
 	}
