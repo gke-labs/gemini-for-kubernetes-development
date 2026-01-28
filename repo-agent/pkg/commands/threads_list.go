@@ -56,7 +56,7 @@ func RunListThreads(ctx context.Context, opt ListThreadsOptions) error {
 		PodID: *podID,
 	}
 
-	threads, err := sandbox.ListThreads(ctx, executor)
+	threads, err := sandbox.ListThreads(executor)
 	if err != nil {
 		return fmt.Errorf("failed to list threads: %w", err)
 	}
