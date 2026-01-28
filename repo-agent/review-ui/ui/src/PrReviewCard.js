@@ -91,6 +91,44 @@ function TaskReviewCard({
             console.error("Failed to dump yaml", e);
         }
     };
+
+    const handleLocalRemoveComment = (index) => {
+        const newDraft = JSON.parse(JSON.stringify(localDraft));
+        if (newDraft.review && newDraft.review.comments) {
+            newDraft.review.comments.splice(index, 1);
+            setLocalDraft(newDraft);
+            try {
+                const newYaml = yaml.dump(newDraft);
+                setLocalYaml(newYaml);
+                if (handleSaveTaskDraft) {
+                    handleSaveTaskDraft(task.name, newYaml);
+                }
+            } catch (e) {
+                console.error("Failed to dump yaml", e);
+            }
+        }
+    };
+
+    const handleLocalMoveComment = (index, path, line, side) => {
+        const newDraft = JSON.parse(JSON.stringify(localDraft));
+        if (newDraft.review && newDraft.review.comments && newDraft.review.comments[index]) {
+            const comment = newDraft.review.comments[index];
+            comment.path = path;
+            comment.line = line;
+            comment.side = side;
+            
+            setLocalDraft(newDraft);
+            try {
+                const newYaml = yaml.dump(newDraft);
+                setLocalYaml(newYaml);
+                if (handleSaveTaskDraft) {
+                    handleSaveTaskDraft(task.name, newYaml);
+                }
+            } catch (e) {
+                console.error("Failed to dump yaml", e);
+            }
+        }
+    };
     
     // We need a way to save this specific task's draft to the backend
     const saveTaskDraft = () => {
@@ -228,7 +266,7 @@ function TaskReviewCard({
                               onBlur={saveTaskDraft}
                               placeholder="Line-specific comment..."
                             ></textarea>
-                            <button className="btn btn-remove-comment" onClick={() => handleRemoveComment(prId, comment.index)}>Remove</button>
+                            <button className="btn btn-remove-comment" onClick={() => handleLocalRemoveComment(comment.index)}>Remove</button>
                           </>
                         )}
                       </div>
@@ -334,7 +372,7 @@ function TaskReviewCard({
                 }
     
                 if (line && side) {
-                    handleMoveCommentAndSave(droppedPrId, commentIndex, path, line, side);
+                    handleLocalMoveComment(commentIndex, path, line, side);
                 }
               };
     
@@ -382,7 +420,7 @@ function TaskReviewCard({
                                     onBlur={saveTaskDraft}
                                     placeholder="Comment..."
                                   ></textarea>
-                                  <button className="btn btn-remove-comment" onClick={() => handleRemoveComment(prId, comment.index)}>Remove</button>
+                                  <button className="btn btn-remove-comment" onClick={() => handleLocalRemoveComment(comment.index)}>Remove</button>
                                 </>
                               )}
                             </div>
