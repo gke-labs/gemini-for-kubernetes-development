@@ -70,7 +70,7 @@ func RunGetThreads(ctx context.Context, opt GetThreadsOptions) error {
 		PodID: *podID,
 	}
 
-	thread, err := sandbox.GetThread(ctx, executor, opt.ThreadID, opt.IncludeMessages)
+	thread, err := sandbox.GetThread(executor, opt.ThreadID, opt.IncludeMessages)
 	if err != nil {
 		return fmt.Errorf("failed to get thread: %w", err)
 	}

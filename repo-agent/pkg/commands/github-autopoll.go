@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -188,11 +189,18 @@ func (p *AutoPoller) pollOnce(ctx context.Context) error {
 			issueURL := fmt.Sprintf("https://github.com/%s/%s/issues/%d", repo.Owner, repo.Name, issue.GetNumber())
 
 			go func(issueURL string) {
-				fixIssueOpt := GithubFixIssueOptions{
-					URL: issueURL,
+				// TODO (barney-s): set additional fields
+				fixIssue := GithubFixIssueCommand{
+					URL:             issueURL,
+					InPod:           false,
+					GithubUserLogin: "codebot-robot",
+					GithubUserEmail: "codebot-robot@google.com",
+					GithubUserName:  "codebot-robot",
+					GithubUserToken: os.Getenv("CODEBOT_ROBOT_GITHUB_TOKEN"),
 				}
+				// fixIssue.InitDefaults()
 
-				if err := RunGithubFixIssue(ctx, fixIssueOpt); err != nil {
+				if err := fixIssue.Run(ctx); err != nil {
 					log.Error(err, "failed to process issue", "issue", issueKey)
 					// Don't return error, continue processing other issues
 				}

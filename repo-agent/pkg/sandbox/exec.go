@@ -23,9 +23,10 @@ import (
 // Executor defines the interface for executing commands and managing files.
 // It abstracts away the difference between running in a pod and running locally.
 type Executor interface {
-	Exec(ctx context.Context, opts ExecOptions) error
-	WriteFile(ctx context.Context, path string, data []byte) error
-	ReadFile(ctx context.Context, path string) ([]byte, error)
+	Exec(opts ExecOptions) error
+	WriteFile(path string, data []byte) error
+	ReadFile(path string) ([]byte, error)
+	ID() string
 }
 
 // ExecOptions holds options for executing a command.
@@ -40,25 +41,30 @@ type ExecOptions struct {
 
 // PodExecutor implements Executor for running commands in a Kubernetes pod.
 type PodExecutor struct {
+	Ctx   context.Context
 	Kube  *clients.KubernetesClient
 	PodID types.NamespacedName
 }
 
-func (e *PodExecutor) Exec(ctx context.Context, opts ExecOptions) error {
-	return ExecInPod(ctx, e.Kube, e.PodID, opts)
+func (e *PodExecutor) Exec(opts ExecOptions) error {
+	return ExecInPod(e.Ctx, e.Kube, e.PodID, opts)
 }
 
-func (e *PodExecutor) WriteFile(ctx context.Context, path string, data []byte) error {
-	return WriteFileInPod(ctx, e.Kube, e.PodID, path, data)
+func (e *PodExecutor) ID() string {
+	return fmt.Sprintf("%s/%s", e.PodID.Namespace, e.PodID.Name)
 }
 
-func (e *PodExecutor) ReadFile(ctx context.Context, path string) ([]byte, error) {
+func (e *PodExecutor) WriteFile(path string, data []byte) error {
+	return WriteFileInPod(e.Ctx, e.Kube, e.PodID, path, data)
+}
+
+func (e *PodExecutor) ReadFile(path string) ([]byte, error) {
 	var stdout bytes.Buffer
 	opts := ExecOptions{
 		Command: []string{"cat", path},
 		Stdout:  &stdout,
 	}
-	if err := e.Exec(ctx, opts); err != nil {
+	if err := e.Exec(opts); err != nil {
 		return nil, fmt.Errorf("reading file %q in pod: %w", path, err)
 	}
 	return stdout.Bytes(), nil
@@ -66,16 +72,22 @@ func (e *PodExecutor) ReadFile(ctx context.Context, path string) ([]byte, error)
 
 // LocalExecutor implements Executor for running commands locally.
 type LocalExecutor struct {
+	Ctx     context.Context
 	WorkDir string
+	Name    string
 }
 
-func (e *LocalExecutor) Exec(ctx context.Context, opts ExecOptions) error {
-	log := klog.FromContext(ctx)
+func (e *LocalExecutor) ID() string {
+	return e.Name
+}
+
+func (e *LocalExecutor) Exec(opts ExecOptions) error {
+	log := klog.FromContext(e.Ctx)
 
 	name := opts.Command[0]
 	args := opts.Command[1:]
 
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := exec.CommandContext(e.Ctx, name, args...)
 	if e.WorkDir != "" {
 		cmd.Dir = e.WorkDir
 	}
@@ -110,7 +122,7 @@ func (e *LocalExecutor) Exec(ctx context.Context, opts ExecOptions) error {
 	return nil
 }
 
-func (e *LocalExecutor) WriteFile(_ context.Context, path string, data []byte) error {
+func (e *LocalExecutor) WriteFile(path string, data []byte) error {
 	// If path is absolute, use it? Or relative to WorkDir?
 	// The paths in our code are often absolute container paths like /workspaces/...
 	// For local execution, we might need to map these or just assume user knows what they are doing.
@@ -127,7 +139,7 @@ func (e *LocalExecutor) WriteFile(_ context.Context, path string, data []byte) e
 	return nil
 }
 
-func (e *LocalExecutor) ReadFile(_ context.Context, path string) ([]byte, error) {
+func (e *LocalExecutor) ReadFile(path string) ([]byte, error) {
 	return os.ReadFile(path)
 }
 
