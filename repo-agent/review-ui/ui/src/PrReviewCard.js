@@ -30,9 +30,12 @@ function TaskReviewCard({
     curlCommand,
     handleSubmitTask,
     handleSaveTaskDraft,
-    prUrl
+    prUrl,
+    repoName
 }) {
     const [taskCollapsed, setTaskCollapsed] = useState(false);
+    const [showLogs, setShowLogs] = useState(false);
+    const [logs, setLogs] = useState('');
     const [reviewFlairText, setReviewFlairText] = useState('');
     const [localYaml, setLocalYaml] = useState(task.userDraft || task.agentDraft || '');
     // Parse initial YAML to structured object for Diff/Form views
@@ -43,6 +46,39 @@ function TaskReviewCard({
             return {};
         }
     });
+
+    useEffect(() => {
+        let isMounted = true;
+        let timeoutId;
+
+        if (showLogs && repoName) {
+            const fetchLogs = () => {
+                fetch(`/api/repo/${encodeURIComponent(repoName)}/prs/${encodeURIComponent(prId)}/tasks/${encodeURIComponent(task.name)}/logs`)
+                .then(res => {
+                    if (res.ok) return res.text();
+                    throw new Error("Failed to load logs");
+                })
+                .then(text => {
+                    if (isMounted) {
+                        setLogs(text);
+                        timeoutId = setTimeout(fetchLogs, 5000);
+                    }
+                })
+                .catch(err => {
+                    if (isMounted) {
+                        setLogs(`Error loading logs: ${err.message}`);
+                        timeoutId = setTimeout(fetchLogs, 5000);
+                    }
+                });
+            };
+            fetchLogs();
+        }
+        
+        return () => {
+            isMounted = false;
+            clearTimeout(timeoutId);
+        };
+    }, [showLogs, repoName, prId, task.name]);
 
     // Update local state when task prop updates (e.g. re-fetch)
     useEffect(() => {
@@ -462,11 +498,19 @@ function TaskReviewCard({
             
             {!taskCollapsed && (
                 <div style={{padding: '15px'}}>
-                     <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '10px 0' }}>
+                     <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '10px 0', gap: '10px' }}>
+                        <button className="btn" onClick={() => setShowLogs(!showLogs)}>
+                            {showLogs ? 'Hide Logs' : 'View Logs'}
+                        </button>
                         <button className="btn" onClick={() => toggleReviewView(prId)}>
                         {reviewViewModes[prId] === 'structured' ? 'View as YAML' : 'View as Structured'}
                         </button>
                     </div>
+                     {showLogs && (
+                        <div className="logs-display" style={{backgroundColor: '#333', color: '#fff', padding: '10px', borderRadius: '5px', marginBottom: '10px', maxHeight: '300px', overflowY: 'auto'}}>
+                            <pre style={{margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'monospace'}}>{logs || 'Loading logs...'}</pre>
+                        </div>
+                     )}
                      {isSubmitted ? (
                         reviewViewModes[prId] === 'structured' ? (
                         <div className="review-display">
@@ -797,6 +841,7 @@ function PrReviewCard({
                     key={task.name}
                     task={task}
                     prId={pr.id}
+                    repoName={repoName}
                     drafts={drafts} // kept for backward compatibility if needed, but local draft is used
                     reviewViewModes={reviewViewModes}
                     yamlDrafts={yamlDrafts} // kept for backward compatibility
