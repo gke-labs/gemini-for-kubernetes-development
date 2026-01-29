@@ -43,9 +43,8 @@ func NewIssueSandbox(ctx context.Context, local bool, repo *github.Repository, i
 			repo:  repo,
 			issue: issue,
 			executor: &LocalExecutor{
-				Ctx:     ctx,
-				Name:    fmt.Sprintf("local-%s/issue/%d", repo.Name(), issue.Number()),
-				WorkDir: fmt.Sprintf("/workspaces/%s", repo.Name()),
+				Ctx:  ctx,
+				Name: fmt.Sprintf("local-%s/issue/%d", repo.Name(), issue.Number()),
 			},
 			user: user,
 		}, nil
@@ -104,6 +103,13 @@ func (s *IssueSandbox) MkdirAll(path string) error {
 func (s *IssueSandbox) WriteFile(path string, data []byte) error {
 	if err := s.executor.WriteFile(path, data); err != nil {
 		return fmt.Errorf("writing file %q: %w", path, err)
+	}
+	return nil
+}
+
+func (s *IssueSandbox) WriteXFile(path string, data []byte) error {
+	if err := s.executor.WriteXFile(path, data); err != nil {
+		return fmt.Errorf("writing executable script %q: %w", path, err)
 	}
 	return nil
 }

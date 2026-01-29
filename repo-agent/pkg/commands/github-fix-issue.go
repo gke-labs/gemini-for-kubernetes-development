@@ -10,6 +10,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks"
 	"github.com/spf13/cobra"
+	"k8s.io/klog/v2"
 )
 
 // GithubFixIssueCommand holds options for the RunCode function.
@@ -76,9 +77,6 @@ func (c *GithubFixIssueCommand) InitDefaults() {
 	if c.TaskDir == "" {
 		c.TaskDir = c.WorkspaceDir
 	}
-	if c.GithubUserToken == "" {
-		c.GithubUserToken = os.Getenv("GITHUB_USER_TOKEN")
-	}
 }
 
 func (c *GithubFixIssueCommand) taskPath(name string, args ...interface{}) string {
@@ -88,6 +86,13 @@ func (c *GithubFixIssueCommand) taskPath(name string, args ...interface{}) strin
 }
 
 func (c *GithubFixIssueCommand) loadGithubObjects(ctx context.Context) error {
+	// Get github token
+	token, err := github.GetGithubToken(ctx)
+	if err != nil {
+		return err
+	}
+	c.GithubUserToken = token
+
 	githubAPI, err := github.NewClient(context.Background())
 	if err != nil {
 		return err
@@ -126,7 +131,8 @@ func (c *GithubFixIssueCommand) loadSandbox(ctx context.Context) error {
 
 // RunGithubFixIssue launches VS Code connected to the specified dev sandbox.
 func (c *GithubFixIssueCommand) Run(ctx context.Context) error {
-
+	log := klog.FromContext(ctx)
+	log.Info("Starting github-fix-issue task", "taskdir", c.TaskDir)
 	// Load data from github.com
 	err := c.loadGithubObjects(ctx)
 	if err != nil {
