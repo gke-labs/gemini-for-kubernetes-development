@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -435,4 +437,41 @@ func (s *Server) getIssueDetails(c *gin.Context) {
 		"title":   issue.GetTitle(),
 		"htmlURL": issue.GetHTMLURL(),
 	})
+}
+
+func (s *Server) getIssueTaskLogs(c *gin.Context) {
+	log := klog.FromContext(c.Request.Context())
+	namespace := c.MustGet(auth.UserKey).(string)
+	repo := c.Param("repo")
+	issueID := c.Param("issue_id")
+	taskID := c.Param("taskID")
+
+	sandboxName := fmt.Sprintf("%s-issue-%s", repo, issueID)
+	// Service name logic must match KRO's RGD: devc-${schema.metadata.name}-lb
+	serviceName := fmt.Sprintf("devc-%s-lb", sandboxName)
+
+	targetURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:13339", serviceName, namespace)
+
+	proxyURL, err := url.Parse(targetURL)
+	if err != nil {
+		log.Error(err, "Failed to parse target URL", "url", targetURL)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid target URL"})
+		return
+	}
+
+	proxy := httputil.NewSingleHostReverseProxy(proxyURL)
+	originalDirector := proxy.Director
+	proxy.Director = func(req *http.Request) {
+		originalDirector(req)
+		req.URL.Path = fmt.Sprintf("/logs/%s", taskID)
+	}
+
+	// Custom error handler for proxy
+	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, err error) {
+		log.Error(err, "Proxy error", "target", targetURL)
+		// If connection refused, it might mean the pod is not ready or port not exposed yet
+		http.Error(w, "Failed to connect to agent server logs (pod might be starting or scaled down)", http.StatusBadGateway)
+	}
+
+	proxy.ServeHTTP(c.Writer, c.Request)
 }
