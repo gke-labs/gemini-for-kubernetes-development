@@ -171,3 +171,12 @@ func isPRExplicit(prNumber int, explicitPRs []*github.PullRequest) bool {
 	}
 	return false
 }
+
+func isIssueExplicit(issueNumber int, explicitIssues []int) bool {
+	for _, explicitIssue := range explicitIssues {
+		if explicitIssue == issueNumber {
+			return true
+		}
+	}
+	return false
+}

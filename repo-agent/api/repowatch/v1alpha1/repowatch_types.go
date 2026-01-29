@@ -148,10 +148,6 @@ type IssueHandlerSpec struct {
 	// +kubebuilder:validation:Optional
 	Labels []string `json:"labels"`
 
-	// Issues to filter issues for this handler
-	// +kubebuilder:validation:Optional
-	Issues []int `json:"issues"`
-
 	// Prompt is the prompt to use for the LLM.
 	// +kubebuilder:validation:Optional
 	Prompt string `json:"prompt,omitempty"`
@@ -166,6 +162,10 @@ type IssueHandlerSpec struct {
 }
 
 type IssueSpec struct {
+	// Issues to filter issues for this handler
+	// +kubebuilder:validation:Optional
+	Issues []int `json:"issues"`
+
 	// ExcludeIssues specifies a list of Issue numbers that should not have sandboxes created for them.
 	// These Issues will be ignored even if they match other criteria (e.g., labels).
 	// +kubebuilder:validation:Optional

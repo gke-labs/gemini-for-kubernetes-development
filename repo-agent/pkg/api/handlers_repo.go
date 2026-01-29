@@ -255,6 +255,7 @@ func (s *Server) updateRepoWatch(c *gin.Context) {
 	var payload struct {
 		RepoURL       string `json:"repoURL"`
 		AddPR         int    `json:"addPR"`
+		AddIssue      int    `json:"addIssue"`
 		ExcludePR     int    `json:"excludePR"`
 		ExcludeIssue  int    `json:"excludeIssue"`
 		HandlerName   string `json:"handlerName"`
@@ -266,8 +267,8 @@ func (s *Server) updateRepoWatch(c *gin.Context) {
 		return
 	}
 
-	if payload.AddPR == 0 && payload.ExcludePR == 0 && payload.ExcludeIssue == 0 && payload.YAML == "" && payload.ExcludeBranch == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "addPR, excludePR, excludeIssue, excludeBranch or yaml is required"})
+	if payload.AddPR == 0 && payload.AddIssue == 0 && payload.ExcludePR == 0 && payload.ExcludeIssue == 0 && payload.YAML == "" && payload.ExcludeBranch == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "addPR, addIssue, excludePR, excludeIssue, excludeBranch or yaml is required"})
 		return
 	}
 
@@ -298,6 +299,68 @@ func (s *Server) updateRepoWatch(c *gin.Context) {
 			log.Info("Failed to set spec", "err", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update object structure"})
 			return
+		}
+	}
+
+	// Add Issue if provided
+	if payload.AddIssue != 0 {
+		issuesSlice, found, err := unstructured.NestedSlice(existing.Object, "spec", "issue", "issues")
+		if err != nil {
+			log.Info("Failed to get issues", "err", err)
+		}
+
+		var issues []int64
+		if found {
+			for _, v := range issuesSlice {
+				if i, ok := v.(int64); ok {
+					issues = append(issues, i)
+				} else if i, ok := v.(int); ok {
+					issues = append(issues, int64(i))
+				}
+			}
+		}
+
+		exists := false
+		for _, issue := range issues {
+			if issue == int64(payload.AddIssue) {
+				exists = true
+				break
+			}
+		}
+
+		if !exists {
+			issues = append(issues, int64(payload.AddIssue))
+			if err := unstructured.SetNestedSlice(existing.Object, convInt64SliceToInterfaceSlice(issues), "spec", "issue", "issues"); err != nil {
+				log.Info("Failed to set issues", "err", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update object structure for issues"})
+				return
+			}
+		}
+
+		// Remove from ExcludeIssues if present
+		excludeSlice, found, _ := unstructured.NestedSlice(existing.Object, "spec", "issue", "excludeIssues")
+		if found {
+			var newExclude []int64
+			changed := false
+			for _, v := range excludeSlice {
+				val := int64(0)
+				if i, ok := v.(int64); ok {
+					val = i
+				} else if i, ok := v.(int); ok {
+					val = int64(i)
+				}
+
+				if val != int64(payload.AddIssue) {
+					newExclude = append(newExclude, val)
+				} else {
+					changed = true
+				}
+			}
+			if changed {
+				if err := unstructured.SetNestedSlice(existing.Object, convInt64SliceToInterfaceSlice(newExclude), "spec", "issue", "excludeIssues"); err != nil {
+					log.Info("Failed to update excludeIssues", "err", err)
+				}
+			}
 		}
 	}
 
@@ -623,6 +686,18 @@ func (s *Server) getRepos(c *gin.Context) {
 		if maxActiveSandboxes, found, err := unstructured.NestedInt64(repoWatch.Object, "spec", "issue", "maxActiveSandboxes"); err == nil && found && maxActiveSandboxes > 0 {
 			repo.Issue = &models.IssueConfig{MaxActiveSandboxes: maxActiveSandboxes}
 
+			if issues, found, err := unstructured.NestedSlice(repoWatch.Object, "spec", "issue", "issues"); err == nil && found {
+				var issueList []int64
+				for _, v := range issues {
+					if i, ok := v.(int64); ok {
+						issueList = append(issueList, i)
+					} else if i, ok := v.(int); ok {
+						issueList = append(issueList, int64(i))
+					}
+				}
+				repo.Issue.Issues = issueList
+			}
+
 			if handlers, found, err := unstructured.NestedSlice(repoWatch.Object, "spec", "issue", "handlers"); err == nil && found {
 				var issueHandlers []models.IssueHandler
 				for _, h := range handlers {
@@ -789,6 +864,18 @@ func (s *Server) getRepo(c *gin.Context) {
 	// Extract issue handlers
 	if maxActiveSandboxes, found, err := unstructured.NestedInt64(repoWatch.Object, "spec", "issue", "maxActiveSandboxes"); err == nil && found && maxActiveSandboxes > 0 {
 		repo.Issue = &models.IssueConfig{MaxActiveSandboxes: maxActiveSandboxes}
+
+		if issues, found, err := unstructured.NestedSlice(repoWatch.Object, "spec", "issue", "issues"); err == nil && found {
+			var issueList []int64
+			for _, v := range issues {
+				if i, ok := v.(int64); ok {
+					issueList = append(issueList, i)
+				} else if i, ok := v.(int); ok {
+					issueList = append(issueList, int64(i))
+				}
+			}
+			repo.Issue.Issues = issueList
+		}
 
 		if handlers, found, err := unstructured.NestedSlice(repoWatch.Object, "spec", "issue", "handlers"); err == nil && found {
 			var issueHandlers []models.IssueHandler
