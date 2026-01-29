@@ -1,5 +1,6 @@
 #!/bin/bash
 set -e
+set -x
 
 # It expects the following environment variables to be set:
 # - GEMINI_API_KEY
@@ -8,12 +9,12 @@ set -e
 export REPO_NAME="{{ .Repo.Name }}"
 export CLONE_URL={{ .Repo.CloneURL }}
 export ISSUE_NUMBER={{ .Issue.Number }}
-export PROMPT_FILE="{{ .PromptFile }}""
+export PROMPT_FILE="{{ .PromptFile }}"
 export GITHUB_USER_ID={{ .User.UserID }}
 export GITHUB_USER_EMAIL={{ .User.Email }}
 export GITHUB_USER_NAME="{{ .User.Name }}"
 
-function setupGit() {
+function setupGit {
     echo "Running setupGit..."
     echo "creating /root/.config/gh directory"
     mkdir -p /root/.config/gh
@@ -39,9 +40,13 @@ EOF
     gh auth setup-git
 }
 
-function setupGitRepos() {
+function setupGitRepos {
     echo "Running setupGitRepos..."
     
+    echo "cloning repository"
+    (cd /workspaces/ && git clone ${CLONE_URL})
+
+    (cd "/workspaces/${REPO_NAME}" && gh repo fork --remote)
     echo "running gh repo fork"
     (cd "/workspaces/${REPO_NAME}" && gh repo fork --remote)
 
@@ -52,13 +57,13 @@ function setupGitRepos() {
     (cd "/workspaces/${REPO_NAME}" && git branch --show-current)
 }
 
-function checkoutNewBranch() {
+function checkoutNewBranch {
     echo "Running checkoutNewBranch..."
     echo "creating new branch"
     (cd "/workspaces/${REPO_NAME}" && git checkout -b "issue_${ISSUE_NUMBER}")
 }
 
-function configureGemini() {
+function configureGemini {
     echo "Running configureGemini..."
     echo "creating /root/.gemini directory"
     mkdir -p /root/.gemini
@@ -74,7 +79,7 @@ function configureGemini() {
 EOF
 }
 
-function runGemini() {
+function runGemini {
     echo "Running runGemini..."
     echo "running gemini in yolo mode"
     (cd "/workspaces/${REPO_NAME}" && export GEMINI_API_KEY="${GEMINI_API_KEY}" && gemini --yolo --model gemini-3-pro-preview < ${PROMPT_FILE})
