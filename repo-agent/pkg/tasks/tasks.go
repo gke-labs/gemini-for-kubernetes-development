@@ -49,7 +49,7 @@ func RunTask(ctx context.Context, t Task, sb *sandbox.IssueSandbox, taskDir stri
 
 	log.Info("copying pre-script into sandbox", "sandbox", sb.GetSandboxID())
 	preScriptPath := taskPath(taskDir, "pre-script.sh")
-	if err := sb.WriteFile(preScriptPath, taskScript); err != nil {
+	if err := sb.WriteXFile(preScriptPath, taskScript); err != nil {
 		return fmt.Errorf("copying pre-script into sandbox: %w", err)
 	}
 	log.Info("Copied pre-script into sandbox", "sandbox", sb.GetSandboxID(), "path", preScriptPath)
@@ -58,7 +58,7 @@ func RunTask(ctx context.Context, t Task, sb *sandbox.IssueSandbox, taskDir stri
 	if postScript != nil {
 		log.Info("copying post-script into sandbox", "sandbox", sb.GetSandboxID())
 		postScriptPath = taskPath(taskDir, "post-script.sh")
-		if err := sb.WriteFile(postScriptPath, postScript); err != nil {
+		if err := sb.WriteXFile(postScriptPath, postScript); err != nil {
 			return fmt.Errorf("copying post-script into sandbox: %w", err)
 		}
 		log.Info("Copied post-script into sandbox", "sandbox", sb.GetSandboxID(), "path", postScriptPath)
@@ -67,7 +67,7 @@ func RunTask(ctx context.Context, t Task, sb *sandbox.IssueSandbox, taskDir stri
 	// Run the pre-script
 	log.Info("running pre-script in sandbox", "sandbox", sb.GetSandboxID())
 	opts := sandbox.ExecOptions{
-		Command: []string{"sh", preScriptPath},
+		Command: []string{preScriptPath},
 		Stdout:  os.Stdout,
 		Stderr:  os.Stderr,
 		Env:     env,
@@ -81,7 +81,7 @@ func RunTask(ctx context.Context, t Task, sb *sandbox.IssueSandbox, taskDir stri
 	if postScriptPath != "" {
 		log.Info("running post-script in sandbox", "sandbox", sb.GetSandboxID())
 		opts := sandbox.ExecOptions{
-			Command: []string{"sh", postScriptPath},
+			Command: []string{postScriptPath},
 			Stdout:  os.Stdout,
 			Stderr:  os.Stderr,
 			Env:     env,

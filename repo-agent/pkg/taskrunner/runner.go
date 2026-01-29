@@ -151,6 +151,18 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *unstructured.Unstru
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
 		}
 
+	case "github-fix-issue":
+		cmd = exec.Command("/opt/repo-agent/repo-sandbox", "github-fix-issue", "--in-pod=true")
+		// Map params to env vars
+		cmd.Env = os.Environ()
+		cmd.Env = append(cmd.Env, "AGENT_OUTPUT_GVR_RESOURCE=sandboxtasks")
+		cmd.Env = append(cmd.Env, "AGENT_OUTPUT_GVR_GROUP=custom.agents.x-k8s.io")
+		cmd.Env = append(cmd.Env, "AGENT_OUTPUT_GVR_VERSION=v1alpha1")
+		// Inject params into env
+		for k, v := range params {
+			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
+		}
+
 	case "issue":
 		cmd = exec.Command("/opt/repo-agent/repo-sandbox", "dev")
 		// Map params to env vars
@@ -163,6 +175,7 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *unstructured.Unstru
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
 		}
 
+	// TODO (barney-s): Pending decision: Should we support script tasks ?
 	case "script":
 		if command, ok := params["command"]; ok {
 			cmd = exec.Command("/bin/sh", "-c", command)

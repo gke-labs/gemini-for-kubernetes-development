@@ -25,6 +25,7 @@ import (
 type Executor interface {
 	Exec(opts ExecOptions) error
 	WriteFile(path string, data []byte) error
+	WriteXFile(path string, data []byte) error
 	ReadFile(path string) ([]byte, error)
 	ID() string
 }
@@ -58,6 +59,24 @@ func (e *PodExecutor) WriteFile(path string, data []byte) error {
 	return WriteFileInPod(e.Ctx, e.Kube, e.PodID, path, data)
 }
 
+func (e *PodExecutor) WriteXFile(path string, data []byte) error {
+	err := WriteFileInPod(e.Ctx, e.Kube, e.PodID, path, data)
+	if err != nil {
+		return err
+	}
+
+	// Set executable permissions
+	chmodCmd := []string{"chmod", "0755", path}
+	execOpts := ExecOptions{
+		Command: chmodCmd,
+	}
+	if err := e.Exec(execOpts); err != nil {
+		return fmt.Errorf("setting executable permissions on file %q in pod: %w", path, err)
+	}
+	return nil
+
+}
+
 func (e *PodExecutor) ReadFile(path string) ([]byte, error) {
 	var stdout bytes.Buffer
 	opts := ExecOptions{
@@ -72,9 +91,8 @@ func (e *PodExecutor) ReadFile(path string) ([]byte, error) {
 
 // LocalExecutor implements Executor for running commands locally.
 type LocalExecutor struct {
-	Ctx     context.Context
-	WorkDir string
-	Name    string
+	Ctx  context.Context
+	Name string
 }
 
 func (e *LocalExecutor) ID() string {
@@ -88,17 +106,16 @@ func (e *LocalExecutor) Exec(opts ExecOptions) error {
 	args := opts.Command[1:]
 
 	cmd := exec.CommandContext(e.Ctx, name, args...)
-	if e.WorkDir != "" {
-		cmd.Dir = e.WorkDir
-	}
 
+	// Environment variables
+	env := os.Environ()
 	if len(opts.Env) > 0 {
-		env := os.Environ()
 		for k, v := range opts.Env {
 			env = append(env, fmt.Sprintf("%s=%s", k, v))
 		}
-		cmd.Env = env
 	}
+	cmd.Env = env
+
 	if opts.Stdin != nil {
 		cmd.Stdin = bytes.NewReader(opts.Stdin)
 	}
@@ -113,8 +130,6 @@ func (e *LocalExecutor) Exec(opts ExecOptions) error {
 		cmd.Stderr = os.Stderr
 	}
 
-	// Environment? We might want to inherit or set.
-	cmd.Env = os.Environ()
 	// Filter secrets from logging?
 	redactedCommand := strings.Join(opts.Command, " ")
 	for _, v := range opts.Secrets {
@@ -129,11 +144,20 @@ func (e *LocalExecutor) Exec(opts ExecOptions) error {
 	return nil
 }
 
+func (e *LocalExecutor) WriteXFile(path string, data []byte) error {
+	err := e.WriteFile(path, data)
+	if err != nil {
+		return err
+	}
+
+	// Set executable permissions
+	if err := os.Chmod(path, 0755); err != nil {
+		return fmt.Errorf("setting executable permissions on file %q: %w", path, err)
+	}
+	return nil
+}
+
 func (e *LocalExecutor) WriteFile(path string, data []byte) error {
-	// If path is absolute, use it? Or relative to WorkDir?
-	// The paths in our code are often absolute container paths like /workspaces/...
-	// For local execution, we might need to map these or just assume user knows what they are doing.
-	// For now, let's just write to the path.
 
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
