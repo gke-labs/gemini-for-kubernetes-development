@@ -29,7 +29,8 @@ function TaskReviewCard({
     setCurlCommand,
     curlCommand,
     handleSubmitTask,
-    handleSaveTaskDraft
+    handleSaveTaskDraft,
+    prUrl
 }) {
     const [taskCollapsed, setTaskCollapsed] = useState(false);
     const [reviewFlairText, setReviewFlairText] = useState('');
@@ -537,7 +538,7 @@ function TaskReviewCard({
                         </button>
                         )}
                         {isSubmitted && (
-                        <a href={`https://github.com/${namespace}/${prId.split('-')[0]}/pull/${prId.split('-')[2]}`} target="_blank" rel="noopener noreferrer" className="btn btn-submit" style={{textDecoration: 'none'}}>
+                        <a href={prUrl} target="_blank" rel="noopener noreferrer" className="btn btn-submit" style={{textDecoration: 'none'}}>
                             Go to review
                         </a>
                         )}
@@ -819,6 +820,7 @@ function PrReviewCard({
                     lastDragTargetRef={lastDragTargetRef}
                     setCurlCommand={setCurlCommand}
                     curlCommand={curlCommand}
+                    prUrl={pr.htmlURL}
                 />
             ))}
 
