@@ -12,6 +12,13 @@ import (
 func GetGeminiAPIKey(seed string) (string, error) {
 	s := os.Getenv("GEMINI_API_KEY")
 	if s == "" {
+		// read from /tokens/gemini file if it exists
+		data, err := os.ReadFile("/tokens/gemini")
+		if err == nil {
+			s = strings.TrimSpace(string(data))
+		}
+	}
+	if s == "" {
 		return "", fmt.Errorf("GEMINI_API_KEY environment variable is not set")
 	}
 	if suffix, ok := strings.CutPrefix(s, "exec:"); ok {

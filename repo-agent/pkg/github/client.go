@@ -13,16 +13,33 @@ import (
 	githubv39 "github.com/google/go-github/v39/github"
 )
 
-func NewClient(ctx context.Context) (*Client, error) {
-	githubCommand := exec.CommandContext(ctx, "gh", "auth", "token")
-	var stdout bytes.Buffer
-	githubCommand.Stdout = &stdout
-	githubCommand.Stderr = os.Stderr
-	if err := githubCommand.Run(); err != nil {
-		return nil, fmt.Errorf("unable to get github credentials (with gh auth token command): %w", err)
+func GetGithubToken(ctx context.Context) (string, error) {
+	token := os.Getenv("MANUAL_PAT")
+	if token == "" {
+		token = os.Getenv("GITHUB_TOKEN")
 	}
+	if token == "" {
+		token = os.Getenv("OAUTH_PAT")
+	}
+	if token == "" {
+		githubCommand := exec.CommandContext(ctx, "gh", "auth", "token")
+		var stdout bytes.Buffer
+		githubCommand.Stdout = &stdout
+		githubCommand.Stderr = os.Stderr
+		if err := githubCommand.Run(); err != nil {
+			return "", fmt.Errorf("unable to get github credentials (with gh auth token command): %w", err)
+		}
 
-	token := strings.TrimSpace(stdout.String())
+		token = strings.TrimSpace(stdout.String())
+	}
+	return token, nil
+}
+
+func NewClient(ctx context.Context) (*Client, error) {
+	token, err := GetGithubToken(ctx)
+	if err != nil {
+		return nil, err
+	}
 	return &Client{
 		Client: clients.NewGitHubClient(ctx, token),
 	}, nil
