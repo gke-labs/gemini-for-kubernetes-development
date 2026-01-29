@@ -368,6 +368,9 @@ func TestReconcileIssueHandlerSandboxes(t *testing.T) {
 			"metadata": map[string]interface{}{
 				"name":      "test-repowatch-issue-2",
 				"namespace": "default",
+				"labels": map[string]interface{}{
+					"sandbox.gemini.google.com/type": "issue",
+				},
 				"ownerReferences": []interface{}{
 					map[string]interface{}{
 						"apiVersion": "review.gemini.google.com/v1alpha1",
@@ -452,6 +455,9 @@ func TestReconcileIssueHandlerSandboxes(t *testing.T) {
 				"metadata": map[string]interface{}{
 					"name":      "test-repowatch-issue-1",
 					"namespace": "default",
+					"labels": map[string]interface{}{
+						"sandbox.gemini.google.com/type": "issue",
+					},
 					"ownerReferences": []interface{}{
 						map[string]interface{}{
 							"apiVersion": "review.gemini.google.com/v1alpha1",
