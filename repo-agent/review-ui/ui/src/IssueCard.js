@@ -10,6 +10,8 @@ function TaskIssueCard({
     const [localDraft, setLocalDraft] = useState(task.userDraft || task.agentDraft || '');
     const [isCollapsed, setIsCollapsed] = useState(false);
     const [statusText, setStatusText] = useState('');
+    const [showLogs, setShowLogs] = useState(false);
+    const [logs, setLogs] = useState('');
 
     useEffect(() => {
         const content = task.userDraft || task.agentDraft || '';
@@ -17,6 +19,39 @@ function TaskIssueCard({
             setLocalDraft(content);
         }
     }, [task.userDraft, task.agentDraft]);
+
+    useEffect(() => {
+        let isMounted = true;
+        let timeoutId;
+
+        if (showLogs && repoName) {
+            const fetchLogs = () => {
+                fetch(`/api/repo/${encodeURIComponent(repoName)}/issues/${encodeURIComponent(issueId)}/tasks/${encodeURIComponent(task.name)}/logs`)
+                .then(res => {
+                    if (res.ok) return res.text();
+                    throw new Error("Failed to load logs");
+                })
+                .then(text => {
+                    if (isMounted) {
+                        setLogs(text);
+                        timeoutId = setTimeout(fetchLogs, 5000);
+                    }
+                })
+                .catch(err => {
+                    if (isMounted) {
+                        setLogs(`Error loading logs: ${err.message}`);
+                        timeoutId = setTimeout(fetchLogs, 5000);
+                    }
+                });
+            };
+            fetchLogs();
+        }
+        
+        return () => {
+            isMounted = false;
+            clearTimeout(timeoutId);
+        };
+    }, [showLogs, repoName, issueId, task.name]);
 
     useEffect(() => {
         if (task.taskState === 'Completed') {
@@ -91,6 +126,16 @@ function TaskIssueCard({
             
             {!isCollapsed && (
                 <div style={{padding: '15px'}}>
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '10px 0', gap: '10px' }}>
+                        <button className="btn" onClick={() => setShowLogs(!showLogs)}>
+                            {showLogs ? 'Hide Logs' : 'View Logs'}
+                        </button>
+                    </div>
+                    {showLogs && (
+                        <div className="logs-display" style={{backgroundColor: '#333', color: '#fff', padding: '10px', borderRadius: '5px', marginBottom: '10px', maxHeight: '300px', overflowY: 'auto'}}>
+                            <pre style={{margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'monospace'}}>{logs || 'Loading logs...'}</pre>
+                        </div>
+                    )}
                     <textarea
                         className="review-textarea"
                         value={localDraft}

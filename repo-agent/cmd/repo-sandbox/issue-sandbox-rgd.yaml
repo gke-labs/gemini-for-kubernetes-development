@@ -178,6 +178,7 @@ spec:
                       mountPath: /opt/repo-agent
                   ports:
                     - containerPort: 13337
+                    - containerPort: 13339
               volumes:
               - name: agent-bin
                 emptyDir: {}
@@ -208,11 +209,16 @@ spec:
           selector:
             sandbox: devc-${schema.metadata.name}
           ports:
-            - protocol: TCP
+            - name: code-server
+              protocol: TCP
               port: 13338
               targetPort: 13337
               appProtocol: kubernetes.io/ws
               #appProtocol: kubernetes.io/h2c
+            - name: agent-server
+              protocol: TCP
+              port: 13339
+              targetPort: 13339
     - id: nwpolicy
       includeWhen:
         - ${schema.spec.networkPolicy.enabled}
