@@ -79,10 +79,6 @@ spec:
                   handlers:
                     items:
                       properties:
-                        issues:
-                          items:
-                            type: integer
-                          type: array
                         labels:
                           items:
                             type: string
@@ -103,6 +99,10 @@ spec:
                     type: string
                   issueShutdownAfterMinutes:
                     type: integer
+                  issues:
+                    items:
+                      type: integer
+                    type: array
                   llm:
                     properties:
                       apiKeySecretRef:
