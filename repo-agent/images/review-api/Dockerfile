@@ -10,6 +10,7 @@ COPY go.sum go.sum
 RUN go mod download
 
 COPY pkg/ pkg/
+COPY api/ api/
 COPY cmd/review-api/ cmd/review-api/
 RUN CGO_ENABLED=0 GOOS=linux go build -o /review-api cmd/review-api/main.go
 

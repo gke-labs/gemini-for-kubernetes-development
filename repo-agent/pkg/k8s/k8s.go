@@ -8,11 +8,13 @@ import (
 	"strings"
 	"time"
 
+	sandboxtaskv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
@@ -540,15 +542,25 @@ func (m *Manager) ScaleupDevSandboxHelper(ctx context.Context, namespace, name s
 	return nil
 }
 
-func (m *Manager) ListSandboxTasks(ctx context.Context, namespace, sandboxName string) (*unstructured.UnstructuredList, error) {
+func (m *Manager) ListSandboxTasks(ctx context.Context, namespace, sandboxName string) (*sandboxtaskv1alpha1.SandboxTaskList, error) {
 	gvr := schema.GroupVersionResource{
 		Group:    "custom.agents.x-k8s.io",
 		Version:  "v1alpha1",
 		Resource: "sandboxtasks",
 	}
-	return m.Client.Resource(gvr).Namespace(namespace).List(ctx, v1.ListOptions{
+	unstructuredList, err := m.Client.Resource(gvr).Namespace(namespace).List(ctx, v1.ListOptions{
 		LabelSelector: fmt.Sprintf("sandbox.gemini.google.com/sandbox-name=%s", sandboxName),
 	})
+	if err != nil {
+		return nil, err
+	}
+
+	taskList := &sandboxtaskv1alpha1.SandboxTaskList{}
+	err = runtime.DefaultUnstructuredConverter.FromUnstructured(unstructuredList.UnstructuredContent(), taskList)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert unstructured list to SandboxTaskList: %w", err)
+	}
+	return taskList, nil
 }
 
 func (m *Manager) UpdateSandboxTaskUserDraft(ctx context.Context, namespace, taskName, userDraft string) error {
@@ -600,7 +612,7 @@ func randString(n int) string {
 	return string(b)
 }
 
-func (m *Manager) CreateSandboxTask(ctx context.Context, namespace, sandboxName, taskType string, params map[string]interface{}) error {
+func (m *Manager) CreateSandboxTask(ctx context.Context, namespace, sandboxName, taskType string, params map[string]string) error {
 	gvr := schema.GroupVersionResource{
 		Group:    "custom.agents.x-k8s.io",
 		Version:  "v1alpha1",
@@ -610,25 +622,71 @@ func (m *Manager) CreateSandboxTask(ctx context.Context, namespace, sandboxName,
 	// Generate a name
 	name := fmt.Sprintf("%s-task-%d-%s", sandboxName, time.Now().Unix(), strings.ToLower(randString(4)))
 
-	task := &unstructured.Unstructured{
+	task := &sandboxtaskv1alpha1.SandboxTask{
+		TypeMeta: v1.TypeMeta{
+			APIVersion: "custom.agents.x-k8s.io/v1alpha1",
+			Kind:       "SandboxTask",
+		},
+		ObjectMeta: v1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+			Labels: map[string]string{
+				"sandbox.gemini.google.com/sandbox-name": sandboxName,
+			},
+		},
+		Spec: sandboxtaskv1alpha1.SandboxTaskSpec{
+			SandboxName: sandboxName,
+			Type:        taskType,
+			Params:      params,
+		},
+	}
+
+	unstructuredMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(task)
+	if err != nil {
+		return fmt.Errorf("failed to convert SandboxTask to unstructured: %w", err)
+	}
+
+	_, err = m.Client.Resource(gvr).Namespace(namespace).Create(ctx, &unstructured.Unstructured{Object: unstructuredMap}, v1.CreateOptions{})
+	return err
+}
+
+func (m *Manager) UpdateSandboxTaskStatus(ctx context.Context, namespace, taskName, state, result string) error {
+	klog.Infof("Updating task %s status to %s", taskName, state)
+
+	timestamp := time.Now().UTC().Format(time.RFC3339)
+	metadata := map[string]interface{}{
+		"name":      taskName,
+		"namespace": namespace,
+	}
+
+	if state == "Running" {
+		metadata["annotations"] = map[string]interface{}{
+			"sandbox.gemini.google.com/start-time": timestamp,
+		}
+	} else if state == "Completed" || state == "Failed" {
+		metadata["annotations"] = map[string]interface{}{
+			"sandbox.gemini.google.com/completion-time": timestamp,
+		}
+	}
+
+	applyObj := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
 			"kind":       "SandboxTask",
-			"metadata": map[string]interface{}{
-				"name":      name,
-				"namespace": namespace,
-				"labels": map[string]interface{}{
-					"sandbox.gemini.google.com/sandbox-name": sandboxName,
-				},
-			},
-			"spec": map[string]interface{}{
-				"sandboxName": sandboxName,
-				"type":        taskType,
-				"params":      params,
+			"metadata":   metadata,
+			"status": map[string]interface{}{
+				"taskState": state,
+				"result":    result,
 			},
 		},
 	}
 
-	_, err := m.Client.Resource(gvr).Namespace(namespace).Create(ctx, task, v1.CreateOptions{})
+	gvr := schema.GroupVersionResource{
+		Group:    "custom.agents.x-k8s.io",
+		Version:  "v1alpha1",
+		Resource: "sandboxtasks",
+	}
+
+	_, err := m.Client.Resource(gvr).Namespace(namespace).ApplyStatus(ctx, taskName, applyObj, v1.ApplyOptions{FieldManager: "task-runner", Force: true})
 	return err
 }
