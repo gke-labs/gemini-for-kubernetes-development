@@ -27,6 +27,7 @@ import (
 	"time"
 
 	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
+	sandboxtaskv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/google/go-github/v39/github"
 	"github.com/onsi/gomega"
@@ -183,6 +184,7 @@ func TestReconciler_ReconcileIssues(t *testing.T) {
 	s := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(s)
 	_ = reviewv1alpha1.AddToScheme(s)
+	_ = sandboxtaskv1alpha1.AddToScheme(s)
 
 	// 2. Initialize the fake client with any initial objects
 	fakeClient := clientfake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&reviewv1alpha1.RepoWatch{}).Build()
@@ -317,8 +319,7 @@ func TestReconciler_ReconcileIssues(t *testing.T) {
 	// `ensureIssueTask` creates a SandboxTask.
 	// So I should verify SandboxTask creation.
 
-	task := &unstructured.Unstructured{}
-	task.SetGroupVersionKind(schema.GroupVersionKind{Group: "custom.agents.x-k8s.io", Version: "v1alpha1", Kind: "SandboxTask"})
+	task := &sandboxtaskv1alpha1.SandboxTask{}
 	taskName := fmt.Sprintf("%s-issue-10-test-handler", repoWatch.Name)
 	g.Expect(fakeClient.Get(context.Background(), types.NamespacedName{Name: taskName, Namespace: objNamespace}, task)).To(gomega.Succeed())
 }

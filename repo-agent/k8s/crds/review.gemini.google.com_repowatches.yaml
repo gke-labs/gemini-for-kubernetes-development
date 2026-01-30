@@ -79,6 +79,8 @@ spec:
                   handlers:
                     items:
                       properties:
+                        comment:
+                          type: boolean
                         labels:
                           items:
                             type: string
@@ -87,8 +89,6 @@ spec:
                           type: string
                         prompt:
                           type: string
-                        pushEnabled:
-                          type: boolean
                         taskType:
                           type: string
                       required:
