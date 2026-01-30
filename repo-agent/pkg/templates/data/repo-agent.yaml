@@ -38,8 +38,8 @@ spec:
     llm:
         apiKeySecretRef: gemini-vscode-tokens
     handlers:
-    - name: issue-fixer
-      taskType: github-fix-issue
+    - name: fix
+      taskType: fix-issue
       labels:
         - "fixme"
       prompt: |

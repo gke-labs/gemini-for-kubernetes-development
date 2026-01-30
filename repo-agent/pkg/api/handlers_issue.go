@@ -475,3 +475,45 @@ func (s *Server) getIssueTaskLogs(c *gin.Context) {
 
 	proxy.ServeHTTP(c.Writer, c.Request)
 }
+
+func (s *Server) createIssueTask(c *gin.Context) {
+	namespace := c.MustGet(auth.UserKey).(string)
+	repo := c.Param("repo")
+	issueID := c.Param("issue_id")
+
+	var payload struct {
+		Prompt   string `json:"prompt"`
+		TaskType string `json:"taskType"`
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	sandboxName := fmt.Sprintf("%s-issue-%s", repo, issueID)
+
+	taskType := payload.TaskType
+	if taskType == "" {
+		taskType = "triage-issue"
+	}
+
+	params := map[string]string{}
+	if payload.Prompt != "" {
+		params["AGENT_PROMPT"] = payload.Prompt
+	}
+
+	err := s.K8sManager.CreateSandboxTask(c.Request.Context(), namespace, sandboxName, taskType, params)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create task", "details": err.Error()})
+		return
+	}
+
+	// Scale up the sandbox so it can process the task
+	if err := s.K8sManager.ScaleupIssueSandbox(c.Request.Context(), namespace, repo, issueID, "", ""); err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Failed to scale up sandbox after task creation", "details": err.Error()})
+		klog.Warningf("Failed to scale up issue sandbox after task creation: %v", err)
+		return
+	}
+
+	c.Status(http.StatusOK)
+}

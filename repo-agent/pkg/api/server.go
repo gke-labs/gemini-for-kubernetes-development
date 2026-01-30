@@ -75,6 +75,7 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 		api.GET("/repo/:repo/issues/:issue_id/tasks", s.getIssueTasks)
 		api.GET("/repo/:repo/issues/:issue_id/tasks/:taskID/logs", s.getIssueTaskLogs)
 		api.GET("/repo/:repo/issues/:issue_id/details", s.getIssueDetails)
+		api.POST("/repo/:repo/issues/:issue_id/tasks", s.createIssueTask)
 		api.POST("/repo/:repo/issues/:issue_id/draft", s.saveIssueDraft)
 		api.POST("/repo/:repo/issues/:issue_id/submitcomment", s.submitIssueComment)
 		api.DELETE("/repo/:repo/issues/:issue_id", s.deleteIssue)
