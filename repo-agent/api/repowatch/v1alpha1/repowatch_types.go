@@ -156,9 +156,9 @@ type IssueHandlerSpec struct {
 	// +kubebuilder:validation:Optional
 	TaskType string `json:"taskType,omitempty"`
 
-	// PushEnabled - allow pushing to user origin
+	// CommentOutput - does this action produce an output that can be a comment on the issue ?
 	// +kubebuilder:validation:Optional
-	PushEnabled bool `json:"pushEnabled,omitempty"`
+	CommentOutput bool `json:"comment,omitempty"`
 }
 
 type IssueSpec struct {
