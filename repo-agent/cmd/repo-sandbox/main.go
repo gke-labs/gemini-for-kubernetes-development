@@ -47,6 +47,7 @@ func run(ctx context.Context) error {
 	rootCommand.AddCommand(commands.BuildCodeCommand())
 	rootCommand.AddCommand(commands.BuildTmuxCommand())
 	rootCommand.AddCommand(commands.BuildGithubFixIssueCommand())
+	rootCommand.AddCommand(commands.BuildGithubTriageIssueCommand())
 	rootCommand.AddCommand(commands.BuildGithubFeedbackCommand())
 	rootCommand.AddCommand(commands.BuildGithubAutopollCommand())
 

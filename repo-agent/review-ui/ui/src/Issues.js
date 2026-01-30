@@ -162,7 +162,7 @@ function Issues({
     if (!targetTask) return null;
 
     const status = getTaskStatus(targetTask);
-    const name = targetTask.name.split('-').pop().toUpperCase();
+    const name = targetTask.type.toUpperCase();
     return `${name}: ${status}`;
   };
 
