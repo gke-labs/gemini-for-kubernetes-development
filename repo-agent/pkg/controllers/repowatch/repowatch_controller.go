@@ -299,12 +299,14 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 
 	var reconcileErr error
 	// Reconcile Reviews for Pull Requests
+	log.Info("reconciling reviews")
 	if err := r.reconcileReviews(ctx, repoWatch, ghClient, owner, repo, user); err != nil {
 		log.Error(err, "unable to reconcile reviews")
 		reconcileErr = errors.Join(reconcileErr, err)
 		// Continue to next reconciliation
 	}
 
+	log.Info("reconciling issues")
 	// Reconcile Issues
 	if err := r.reconcileIssues(ctx, repoWatch, ghClient, owner, repo, user); err != nil {
 		log.Error(err, "unable to reconcile issues")
@@ -312,6 +314,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		// Continue to next reconciliation
 	}
 
+	log.Info("reconciling dev sandboxes")
 	// Reconcile Dev Sandboxes
 	if err := r.reconcileDevSandboxes(ctx, user, repoWatch, ghClient, repo); err != nil {
 		log.Error(err, "unable to reconcile dev sandboxes")
@@ -324,7 +327,6 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 
 func (r *Reconciler) reconcileReviews(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, ghClient *github.Client, owner string, repo string, user *github.User) error {
 	log := log.FromContext(ctx)
-	log.Info("reconciling reviews")
 
 	explicitPRs := r.getExplicitPRs(ctx, ghClient, repoWatch, owner, repo)
 
@@ -657,7 +659,7 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 		Kind:    "IssueSandbox",
 	}
 	sandboxList.SetGroupVersionKind(sandboxGVK)
-	if err := r.List(ctx, sandboxList, client.InNamespace(repoWatch.Namespace)); err != nil {
+	if err := r.List(ctx, sandboxList, client.InNamespace(repoWatch.Namespace), client.MatchingLabels{"sandbox.gemini.google.com/type": "issue"}); err != nil {
 		return err
 	}
 
@@ -707,6 +709,7 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 		}
 
 		if existingSandbox != nil {
+			log.Info("sandbox found for", "issue", *issue.Number)
 			// Manage lifecycle (pause/unpause)
 			shutdownDuration := time.Minute * time.Duration(repoWatch.Spec.Issue.IssueShutdownAfterMinutes)
 			wasScaled, err := r.manageSandboxLifecycle(ctx, existingSandbox, shutdownDuration)
@@ -739,9 +742,11 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 			}
 
 		} else {
+			log.Info("sandbox not found for", "issue", *issue.Number, "activeSandboxes", activeSandboxes, "totalSandboxes", totalSandboxes)
 			// Create Sandbox if within limits
-			if activeSandboxes < repoWatch.Spec.Issue.MaxActiveSandboxes &&
-				(repoWatch.Spec.Issue.MaxSandboxes == 0 || totalSandboxes < repoWatch.Spec.Issue.MaxSandboxes) {
+			issueIsExplicit := isIssueExplicit(*issue.Number, repoWatch.Spec.Issue.Issues)
+			if issueIsExplicit || (activeSandboxes < repoWatch.Spec.Issue.MaxActiveSandboxes &&
+				(repoWatch.Spec.Issue.MaxSandboxes == 0 || totalSandboxes < repoWatch.Spec.Issue.MaxSandboxes)) {
 
 				log.Info("creating sandbox for issue", "issue", *issue.Number)
 				if err := r.createIssueSandbox(ctx, user, repoWatch, issue); err != nil {
@@ -798,18 +803,13 @@ func (r *Reconciler) isIssueMatch(issue *github.Issue, handler reviewv1alpha1.Is
 				return false
 			}
 		}
-	}
 
-	// Include explicit includes
-	for _, included := range handler.Issues {
-		if *issue.Number == included {
-			return true
+		// Include explicit includes
+		for _, included := range repoWatch.Spec.Issue.Issues {
+			if *issue.Number == included {
+				return true
+			}
 		}
-	}
-
-	// If explicit includes are provided and we didn't match, return false
-	if len(handler.Issues) > 0 {
-		return false
 	}
 
 	// Check labels

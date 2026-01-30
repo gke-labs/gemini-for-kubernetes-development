@@ -19,6 +19,22 @@ function Issues({
   const [isPendingOpen, setIsPendingOpen] = useState(false);
   const [isExcludedOpen, setIsExcludedOpen] = useState(false);
   const [excludedDetails, setExcludedDetails] = useState({});
+  const [issueTasks, setIssueTasks] = useState({});
+
+  useEffect(() => {
+    if (activeRepo && issues.length > 0) {
+        issues.forEach(issue => {
+            fetch(`/api/repo/${activeRepo.name}/issues/${issue.id}/tasks`)
+                .then(res => res.json())
+                .then(data => {
+                    if (Array.isArray(data)) {
+                        setIssueTasks(prev => ({ ...prev, [issue.id]: data }));
+                    }
+                })
+                .catch(err => console.error("Failed to fetch tasks for sidebar:", err));
+        });
+    }
+  }, [activeRepo, issues]);
 
   useEffect(() => {
     if (activeRepo) {
@@ -122,13 +138,48 @@ function Issues({
   const allItems = [...activeList, ...pendingList, ...excludedList];
   const selectedIssue = allItems.find(p => p.id === selectedIssueId);
 
-  const getStatusColor = (item) => {
-    // If we had status/flair logic like Review.js
+  const getTaskStatus = (task) => {
+    if (task.taskState === 'Completed') {
+         if (task.result === 'submitted') return 'Submitted';
+         return 'Ready';
+    }
+    if (task.taskState === 'Running') return 'Running';
+    if (task.taskState === 'Failed') return 'Failed';
+    return task.taskState || 'Pending';
+  };
+
+  const getIssueFlair = (issueId) => {
+    const tasks = issueTasks[issueId];
+    if (!tasks || tasks.length === 0) return null;
+    
+    let targetTask = tasks[0];
+    const running = tasks.find(t => t.taskState === 'Running');
+    const failed = tasks.find(t => t.taskState === 'Failed');
+    
+    if (running) targetTask = running;
+    else if (failed) targetTask = failed;
+    
+    if (!targetTask) return null;
+
+    const status = getTaskStatus(targetTask);
+    const name = targetTask.name.split('-').pop().toUpperCase();
+    return `${name}: ${status}`;
+  };
+
+  const getStatusColor = (text) => {
+    if (!text) return '#cd9945ff';
+    const t = text.toLowerCase();
+    if (t.includes('ready') || t.includes('completed') || t.includes('submitted')) return 'green';
+    if (t.includes('running')) return 'orange';
+    if (t.includes('failed')) return '#9e2a2aff';
     return '#cd9945ff';
   };
 
   const renderSidebarItem = (item) => {
-      const flairText = ''; // Placeholder for future status logic
+      let flairText = '';
+      if (item.type === 'active') {
+          flairText = getIssueFlair(item.id);
+      }
 
       return (
           <div 
@@ -139,7 +190,7 @@ function Issues({
               <div className="sidebar-item-header">
                   <span className="sidebar-id">#{item.id}</span>
                   {flairText && item.type === 'active' && (
-                      <span className="sidebar-flair" style={{ backgroundColor: getStatusColor(item) }}>
+                      <span className="sidebar-flair" style={{ backgroundColor: getStatusColor(flairText) }}>
                           {flairText}
                       </span>
                   )}
@@ -175,16 +226,6 @@ function Issues({
         alert("Invalid Issue number or URL");
         return;
     }
-
-    // Call API to add issue (similar to addPR in App.js)
-    // We need a handler passed from App.js or we call fetch here
-    // App.js doesn't expose handleAddIssue currently. 
-    // I'll assume we can use the same pattern as App.js's handleAddPR but for issues.
-    // However, App.js logic for addPR uses `addPR` key in PUT.
-    // I should check if backend supports `addIssue`. 
-    // For now I'll just comment it out or implement it if I see fit.
-    // The user didn't explicitly ask for "Add Issue" button but Review.js has it. 
-    // I will implement it assuming backend support or similarity.
     
     fetch(`/api/repos/${activeRepo.name}`, {
         method: 'PUT',
