@@ -23,7 +23,7 @@ func (m *FixIssueModel) Name() string {
 }
 
 func (m *FixIssueModel) PreScript() ([]byte, error) {
-	tmpl, err := getTemplate("fix_issue.sh")
+	tmpl, err := getScriptTemplate("fix_issue.sh")
 	if err != nil {
 		return nil, err
 	}

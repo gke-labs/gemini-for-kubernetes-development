@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/agentoutput"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/klog/v2"
 )
 
@@ -16,10 +18,9 @@ type Task interface {
 	PostScript() ([]byte, error)
 }
 
-func taskPath(taskDir string, name string, args ...interface{}) string {
+func taskPath(taskDir string, name string) string {
 	// Ensure the task path is correctly joined
-	file := fmt.Sprintf(name, args...)
-	return filepath.Join(taskDir, file)
+	return filepath.Join(taskDir, name)
 }
 
 func RunTask(ctx context.Context, t Task, sb *sandbox.IssueSandbox, taskDir string, env map[string]string) error {
@@ -90,6 +91,31 @@ func RunTask(ctx context.Context, t Task, sb *sandbox.IssueSandbox, taskDir stri
 			return fmt.Errorf("running post-script: %w", err)
 		}
 		log.Info("Completed post-script in sandbox", "sandbox", sb.GetSandboxID())
+	}
+
+	// Read agent output and update annotation
+	agentOutputPath := taskPath(taskDir, "agent-output.txt")
+	output, err := sb.ReadFile(agentOutputPath)
+	if err == nil && len(output) > 0 {
+		log.Info("Read agent output", "output", string(output))
+
+		// Check if we have env vars for AgentOutput
+
+		gvr := schema.GroupVersionResource{
+			Group:    os.Getenv("AGENT_OUTPUT_GVR_GROUP"),
+			Version:  os.Getenv("AGENT_OUTPUT_GVR_VERSION"),
+			Resource: os.Getenv("AGENT_OUTPUT_GVR_RESOURCE"),
+		}
+		ao, err := agentoutput.New(gvr, "", "")
+		if err != nil {
+			log.Error(err, "Failed to create agent output client")
+		} else {
+			if err := ao.SetAgentDraft(ctx, string(output)); err != nil {
+				log.Error(err, "Failed to set agent draft")
+			}
+		}
+	} else if err != nil {
+		log.Info("Failed to read agent output (might be missing)", "path", agentOutputPath, "err", err)
 	}
 
 	return nil

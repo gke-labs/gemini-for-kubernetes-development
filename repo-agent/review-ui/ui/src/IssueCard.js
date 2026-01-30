@@ -111,7 +111,7 @@ function TaskIssueCard({
                 onClick={() => setIsCollapsed(!isCollapsed)}
             >
                 <div>
-                    <strong>{task.name.split('-').pop().toUpperCase()}</strong> {/* Display generic name like TRIAGE */}
+                    <strong>{task.type.toUpperCase()}</strong> {/* Display generic name like TRIAGE */}
                     <span style={{ fontSize: 'small', color: '#555', marginLeft: '10px' }}>
                         {new Date(task.creationTimestamp).toLocaleString()}
                     </span>
@@ -182,6 +182,24 @@ function IssueCard({
             }
         })
         .catch(err => console.error("Failed to fetch tasks:", err));
+  };
+
+  const handleCreateTask = (taskType, prompt = '') => {
+      if (!repoName || !issue.id) return;
+      fetch(`/api/repo/${repoName}/issues/${issue.id}/tasks`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ taskType, prompt })
+      })
+      .then(res => {
+          if (res.ok) {
+              alert(`Task ${taskType} started!`);
+              fetchTasks();
+          } else {
+              res.text().then(t => alert("Failed to create task: " + t));
+          }
+      })
+      .catch(err => console.error("Failed to create task", err));
   };
 
   useEffect(() => {
@@ -259,6 +277,13 @@ function IssueCard({
             ) : (
                 <p>No tasks found. Tasks should appear shortly if the sandbox is active.</p>
             )}
+            
+            <div style={{padding: '10px', borderTop: '1px solid #eee', marginTop: '10px'}}>
+                <div style={{display: 'flex', gap: '10px'}}>
+                    <button className="btn" onClick={() => handleCreateTask('triage-issue')}>Triage</button>
+                    <button className="btn" onClick={() => handleCreateTask('address-feedback')}>Address Feedback</button>
+                </div>
+            </div>
         </div>
       )}
     </div>
