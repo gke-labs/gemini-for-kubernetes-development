@@ -9,40 +9,25 @@ import (
 	"strings"
 	"time"
 
+	sandboxtaskv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/agentoutput"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/agentserver"
-	k8s_metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/rest"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	"k8s.io/klog/v2"
 )
 
-var (
-	SandboxTaskGVR = schema.GroupVersionResource{
-		Group:    "custom.agents.x-k8s.io",
-		Version:  "v1alpha1",
-		Resource: "sandboxtasks",
-	}
-)
-
 type TaskRunner struct {
-	client      dynamic.Interface
+	manager     *k8s.Manager
 	namespace   string
 	sandboxName string
 	ao          *agentoutput.AgentOutput
 }
 
 func NewTaskRunner(ao *agentoutput.AgentOutput) (*TaskRunner, error) {
-	config, err := rest.InClusterConfig()
+	kubeClient, err := clients.NewKubernetesClient()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get in-cluster config: %w", err)
-	}
-
-	client, err := dynamic.NewForConfig(config)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create dynamic client: %w", err)
+		return nil, fmt.Errorf("failed to create kubernetes client: %w", err)
 	}
 
 	ns := os.Getenv("NAMESPACE")
@@ -53,7 +38,7 @@ func NewTaskRunner(ao *agentoutput.AgentOutput) (*TaskRunner, error) {
 	}
 
 	return &TaskRunner{
-		client:      client,
+		manager:     k8s.NewManager(kubeClient),
 		namespace:   ns,
 		sandboxName: name,
 		ao:          ao,
@@ -77,19 +62,15 @@ func (tr *TaskRunner) Run(ctx context.Context) {
 
 func (tr *TaskRunner) processPendingTasks(ctx context.Context) {
 
-	// List tasks with label selector
-	listOptions := k8s_metav1.ListOptions{
-		LabelSelector: fmt.Sprintf("sandbox.gemini.google.com/sandbox-name=%s", tr.sandboxName),
-	}
-
-	tasks, err := tr.client.Resource(SandboxTaskGVR).Namespace(tr.namespace).List(ctx, listOptions)
+	// List tasks with label selector using k8s manager
+	tasks, err := tr.manager.ListSandboxTasks(ctx, tr.namespace, tr.sandboxName)
 	if err != nil {
 		klog.Errorf("Failed to list tasks: %v", err)
 		return
 	}
 
 	for _, task := range tasks.Items {
-		taskState, _, _ := unstructured.NestedString(task.Object, "status", "taskState")
+		taskState := task.Status.TaskState
 		if taskState == "" || taskState == "Pending" {
 			tr.executeTask(ctx, &task)
 			// Process one task at a time for now
@@ -114,15 +95,15 @@ func (tr *TaskRunner) createTaskDir(taskName string) (string, error) {
 }
 
 // executeTask handles the execution of a single task
-func (tr *TaskRunner) executeTask(ctx context.Context, task *unstructured.Unstructured) {
+func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1.SandboxTask) {
 	taskName := task.GetName()
 	klog.Infof("Processing task: %s", taskName)
 
 	// Update status to Running
 	tr.updateTaskStatus(ctx, task, "Running", "")
 
-	taskType, _, _ := unstructured.NestedString(task.Object, "spec", "type")
-	params, _, _ := unstructured.NestedStringMap(task.Object, "spec", "params")
+	taskType := task.Spec.Type
+	params := task.Spec.Params
 
 	// Set sandbox state to Running Task
 	_ = tr.ao.SetAgentState(ctx, "Working on "+taskType, "")
@@ -220,40 +201,8 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *unstructured.Unstru
 	}
 }
 
-func (tr *TaskRunner) updateTaskStatus(ctx context.Context, task *unstructured.Unstructured, state, result string) {
-	klog.Infof("Updating task %s status to %s", task.GetName(), state)
-
-	timestamp := time.Now().UTC().Format(time.RFC3339)
-	metadata := map[string]interface{}{
-		"name":      task.GetName(),
-		"namespace": tr.namespace,
-	}
-
-	if state == "Running" {
-		metadata["annotations"] = map[string]interface{}{
-			"sandbox.gemini.google.com/start-time": timestamp,
-		}
-	} else if state == "Completed" || state == "Failed" {
-		metadata["annotations"] = map[string]interface{}{
-			"sandbox.gemini.google.com/completion-time": timestamp,
-		}
-	}
-
-	applyObj := &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
-			"kind":       "SandboxTask",
-			"metadata":   metadata,
-			"status": map[string]interface{}{
-				"taskState": state,
-				"result":    result,
-			},
-		},
-	}
-
-	_, err := tr.client.Resource(SandboxTaskGVR).Namespace(tr.namespace).ApplyStatus(ctx, task.GetName(), applyObj, k8s_metav1.ApplyOptions{FieldManager: "task-runner", Force: true})
-	if err != nil {
+func (tr *TaskRunner) updateTaskStatus(ctx context.Context, task *sandboxtaskv1alpha1.SandboxTask, state, result string) {
+	if err := tr.manager.UpdateSandboxTaskStatus(ctx, tr.namespace, task.GetName(), state, result); err != nil {
 		klog.Errorf("Failed to update task status: %v", err)
 	}
-	klog.Infof("Task %s status updated to %s", task.GetName(), state)
 }

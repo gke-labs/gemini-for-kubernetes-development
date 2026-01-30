@@ -53,9 +53,9 @@ func (s *Server) getIssueTasks(c *gin.Context) {
 
 	var tasks []models.Task
 	for _, taskItem := range taskList.Items {
-		taskType, _, _ := unstructured.NestedString(taskItem.Object, "spec", "type")
-		taskState, _, _ := unstructured.NestedString(taskItem.Object, "status", "taskState")
-		result, _, _ := unstructured.NestedString(taskItem.Object, "status", "result")
+		taskType := taskItem.Spec.Type
+		taskState := taskItem.Status.TaskState
+		result := taskItem.Status.Result
 
 		tAgentDraft := ""
 		tUserDraft := ""

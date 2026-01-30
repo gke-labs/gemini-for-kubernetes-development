@@ -20,3 +20,4 @@ package api
 //go:generate go tool sigs.k8s.io/controller-tools/cmd/controller-gen object crd:maxDescLen=0 paths=./configdir/... output:crd:dir=../k8s/crds
 //go:generate go tool sigs.k8s.io/controller-tools/cmd/controller-gen object crd:maxDescLen=0 paths=./repowatch/... output:crd:dir=../k8s/crds
 //go:generate go tool sigs.k8s.io/controller-tools/cmd/controller-gen object crd:maxDescLen=0 paths=./syncer/... output:crd:dir=../k8s/crds
+//go:generate go tool sigs.k8s.io/controller-tools/cmd/controller-gen object crd:maxDescLen=0 paths=./sandboxtask/... output:crd:dir=../k8s/crds

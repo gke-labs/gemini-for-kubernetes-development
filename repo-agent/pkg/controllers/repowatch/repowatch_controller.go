@@ -35,6 +35,7 @@ import (
 	githuboauth "golang.org/x/oauth2/github"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -46,6 +47,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
+	sandboxtaskv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/prompts"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
@@ -929,8 +931,7 @@ func (r *Reconciler) ensureIssueTask(ctx context.Context, repoWatch *reviewv1alp
 	taskName := fmt.Sprintf("%s-%s", sandboxName, handler.Name) // e.g. repo-issue-123-triage
 
 	// Check if task exists
-	task := &unstructured.Unstructured{}
-	task.SetGroupVersionKind(schema.GroupVersionKind{Group: "custom.agents.x-k8s.io", Version: "v1alpha1", Kind: "SandboxTask"})
+	task := &sandboxtaskv1alpha1.SandboxTask{}
 	err := r.Get(ctx, types.NamespacedName{Name: taskName, Namespace: repoWatch.Namespace}, task)
 	if err == nil {
 		return nil // Task exists
@@ -950,9 +951,7 @@ func (r *Reconciler) ensureIssueTask(ctx context.Context, repoWatch *reviewv1alp
 		"AGENT_PROMPT": prompt,
 		"HANDLER_NAME": handler.Name,
 	}
-	if handler.PushEnabled {
-		params["GIT_PUSH_ENABLED"] = "true"
-	}
+	//params["GIT_PUSH_ENABLED"] = "true"
 	if repoWatch.Spec.Issue.LLM.Provider != "" {
 		params["AGENT_LLM_PROVIDER"] = repoWatch.Spec.Issue.LLM.Provider
 	}
@@ -1063,29 +1062,19 @@ func (r *Reconciler) createSandboxTask(ctx context.Context, repoWatch *reviewv1a
 		taskName = fmt.Sprintf("%s-task-%d-%s", sandboxName, time.Now().Unix(), strings.ToLower(randString(4)))
 	}
 
-	// Convert params to map[string]interface{}
-	paramsInterface := make(map[string]interface{})
-	for k, v := range params {
-		paramsInterface[k] = v
-	}
-
-	task := &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
-			"kind":       "SandboxTask",
-			"metadata": map[string]interface{}{
-				"name":      taskName,
-				"namespace": repoWatch.Namespace,
-				"labels": map[string]interface{}{
-					"sandbox.gemini.google.com/sandbox-name": sandboxName,
-					"review.gemini.google.com/repowatch":     repoWatch.Name,
-				},
+	task := &sandboxtaskv1alpha1.SandboxTask{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      taskName,
+			Namespace: repoWatch.Namespace,
+			Labels: map[string]string{
+				"sandbox.gemini.google.com/sandbox-name": sandboxName,
+				"review.gemini.google.com/repowatch":     repoWatch.Name,
 			},
-			"spec": map[string]interface{}{
-				"sandboxName": sandboxName,
-				"type":        taskType,
-				"params":      paramsInterface,
-			},
+		},
+		Spec: sandboxtaskv1alpha1.SandboxTaskSpec{
+			SandboxName: sandboxName,
+			Type:        taskType,
+			Params:      params,
 		},
 	}
 
@@ -1424,15 +1413,14 @@ func (r *Reconciler) unpauseSandboxIfPendingTasks(ctx context.Context, sandbox *
 	}
 
 	// List tasks
-	tasks := &unstructured.UnstructuredList{}
-	tasks.SetGroupVersionKind(schema.GroupVersionKind{Group: "custom.agents.x-k8s.io", Version: "v1alpha1", Kind: "SandboxTask"})
+	tasks := &sandboxtaskv1alpha1.SandboxTaskList{}
 	if err := r.List(ctx, tasks, client.InNamespace(sandbox.GetNamespace()), client.MatchingLabels{"sandbox.gemini.google.com/sandbox-name": sandbox.GetName()}); err != nil {
 		return false, err
 	}
 
 	hasPending := false
 	for _, task := range tasks.Items {
-		state, _, _ := unstructured.NestedString(task.Object, "status", "taskState")
+		state := task.Status.TaskState
 		// Pending (default if empty) or Running
 		if state == "" || state == "Pending" || state == "Running" {
 			hasPending = true
@@ -1468,8 +1456,7 @@ func (r *Reconciler) pauseSandboxIfIdle(ctx context.Context, sandbox *unstructur
 	}
 
 	// List tasks
-	tasks := &unstructured.UnstructuredList{}
-	tasks.SetGroupVersionKind(schema.GroupVersionKind{Group: "custom.agents.x-k8s.io", Version: "v1alpha1", Kind: "SandboxTask"})
+	tasks := &sandboxtaskv1alpha1.SandboxTaskList{}
 	if err := r.List(ctx, tasks, client.InNamespace(sandbox.GetNamespace()), client.MatchingLabels{"sandbox.gemini.google.com/sandbox-name": sandbox.GetName()}); err != nil {
 		return false, err
 	}
@@ -1478,7 +1465,7 @@ func (r *Reconciler) pauseSandboxIfIdle(ctx context.Context, sandbox *unstructur
 	latestTime := sandbox.GetCreationTimestamp().Time
 
 	for _, task := range tasks.Items {
-		state, _, _ := unstructured.NestedString(task.Object, "status", "taskState")
+		state := task.Status.TaskState
 		if state != "Completed" && state != "Failed" {
 			// Found an active task, do not pause
 			return false, nil
