@@ -26,10 +26,9 @@ type IssueSandbox struct {
 	repo     *github.Repository
 	issue    *github.Issue
 	executor Executor
-	user     github.User
 }
 
-func NewIssueSandbox(ctx context.Context, local bool, repo *github.Repository, issue *github.Issue, user github.User) (*IssueSandbox, error) {
+func NewIssueSandbox(ctx context.Context, local bool, repo *github.Repository, issue *github.Issue) (*IssueSandbox, error) {
 	log := klog.FromContext(ctx)
 
 	kube, err := clients.NewKubernetesClient()
@@ -46,17 +45,16 @@ func NewIssueSandbox(ctx context.Context, local bool, repo *github.Repository, i
 				Ctx:  ctx,
 				Name: fmt.Sprintf("local-%s/issue/%d", repo.Name(), issue.Number()),
 			},
-			user: user,
 		}, nil
 	}
 	log.Info("Looking for existing sandbox for issue", "repo", repo.CloneURL(), "issue", issue.String())
-	sb, found, err := FindSandboxForIssue(ctx, kube, repo, issue, user)
+	sb, found, err := FindSandboxForIssue(ctx, kube, repo, issue)
 	if err != nil {
 		return nil, err
 	}
 
 	if !found {
-		sb, err = LaunchSandboxForIssue(ctx, kube, repo, issue, user)
+		sb, err = LaunchSandboxForIssue(ctx, kube, repo, issue)
 		if err != nil {
 			return nil, fmt.Errorf("launching sandbox for issue: %w", err)
 		}
@@ -79,11 +77,6 @@ func (s *IssueSandbox) GetIssue() *github.Issue {
 
 func (s *IssueSandbox) GetSandboxID() string {
 	return s.executor.ID()
-}
-
-// GetRepo returns the repo associated with the sandbox.
-func (s *IssueSandbox) GetRepo() *github.Repository {
-	return s.repo
 }
 
 func (s *IssueSandbox) Exec(opts ExecOptions) error {
@@ -114,7 +107,7 @@ func (s *IssueSandbox) WriteXFile(path string, data []byte) error {
 	return nil
 }
 
-func LaunchSandboxForIssue(ctx context.Context, kube *clients.KubernetesClient, repo *github.Repository, issue *github.Issue, user github.User) (*IssueSandbox, error) {
+func LaunchSandboxForIssue(ctx context.Context, kube *clients.KubernetesClient, repo *github.Repository, issue *github.Issue) (*IssueSandbox, error) {
 	log := klog.FromContext(ctx)
 
 	sandboxName := NameForIssue(repo, issue)
@@ -185,7 +178,6 @@ func LaunchSandboxForIssue(ctx context.Context, kube *clients.KubernetesClient, 
 			Kube:  kube,
 			PodID: podID,
 		},
-		user: user,
 	}, nil
 }
 
@@ -196,7 +188,7 @@ func NameForIssue(repo *github.Repository, issue *github.Issue) string {
 	return sandboxName
 }
 
-func FindSandboxForIssue(ctx context.Context, kube *clients.KubernetesClient, repo *github.Repository, issue *github.Issue, user github.User) (*IssueSandbox, bool, error) {
+func FindSandboxForIssue(ctx context.Context, kube *clients.KubernetesClient, repo *github.Repository, issue *github.Issue) (*IssueSandbox, bool, error) {
 	sandboxName := NameForIssue(repo, issue)
 
 	podIDPtr, err := FindSandboxPod(ctx, sandboxName)
@@ -216,7 +208,6 @@ func FindSandboxForIssue(ctx context.Context, kube *clients.KubernetesClient, re
 			Kube:  kube,
 			PodID: *podIDPtr,
 		},
-		user: user,
 	}, true, nil
 }
 
@@ -264,30 +255,6 @@ func FindSandboxPod(ctx context.Context, sandboxName string) (*types.NamespacedN
 
 func (s *IssueSandbox) ReadFile(path string) ([]byte, error) {
 	return s.executor.ReadFile(path)
-}
-
-func (s *IssueSandbox) CheckoutExistingBranch(ctx context.Context, branchName string) error {
-	log := klog.FromContext(ctx)
-
-	workdir := fmt.Sprintf("/workspaces/%s", s.repo.Name())
-
-	log.Info("Fetching from fork", "pod", s.GetPodID().Name)
-
-	opts := ExecOptions{
-		Command: []string{"git", "-C", workdir, "fetch", "origin"},
-	}
-	if err := s.executor.Exec(opts); err != nil {
-		return fmt.Errorf("fetching from fork: %w", err)
-	}
-
-	opts = ExecOptions{
-		Command: []string{"git", "-C", workdir, "checkout", branchName},
-	}
-	if err := s.executor.Exec(opts); err != nil {
-		return fmt.Errorf("checking out branch %q: %w", branchName, err)
-	}
-
-	return nil
 }
 
 func (s *IssueSandbox) ListThreads() ([]ThreadInfo, error) {

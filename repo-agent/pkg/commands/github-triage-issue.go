@@ -13,57 +13,51 @@ import (
 	"k8s.io/klog/v2"
 )
 
-// GithubFixIssueCommand holds options for the RunCode function.
-type GithubFixIssueCommand struct {
+// GithubTriageIssueCommand holds options for the RunCode function.
+type GithubTriageIssueCommand struct {
 	// Configurable options
 	URL             string
 	AgentName       string
-	GithubUserLogin string
-	GithubUserEmail string
-	GithubUserName  string
-	GithubUserToken string
 	InPod           bool
 	WorkspaceDir    string
 	TaskDir         string
+	GithubUserToken string
 
 	// loaded objects
-	issue     *github.Issue
+	issue *github.Issue
+	// TODO(barney-s): do we need repo ?
 	repo      *github.Repository
-	user      *github.User
 	sandbox   *sandbox.IssueSandbox
 	sandboxID string
 }
 
-// BuildGithubFixIssueCommand creates a new cobra command for using a dev sandbox to solve a github issue
-func BuildGithubFixIssueCommand() *cobra.Command {
-	fixCommand := GithubFixIssueCommand{}
+// BuildGithubTriageIssueCommand creates a new cobra command for using a dev sandbox to solve a github issue
+func BuildGithubTriageIssueCommand() *cobra.Command {
+	triageCommand := GithubTriageIssueCommand{}
 
 	cmd := &cobra.Command{
-		Use:   "github-fix-issue",
-		Short: "Fix a github issue using an LLM in a dev sandbox",
+		Use:   "github-triage-issue",
+		Short: "Triage a github issue using an LLM in a dev sandbox",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 0 {
 				return fmt.Errorf("command does not take positional arguments")
 			}
-			if fixCommand.URL == "" {
+			if triageCommand.URL == "" {
 				return fmt.Errorf("--issue-url is required")
 			}
-			fixCommand.InitDefaults()
-			return fixCommand.Run(cmd.Context())
+			triageCommand.InitDefaults()
+			return triageCommand.Run(cmd.Context())
 		},
 	}
 
-	cmd.Flags().StringVar(&fixCommand.URL, "issue-url", os.Getenv("ISSUE_URL"), "GitHub issue URL")
-	cmd.Flags().StringVar(&fixCommand.AgentName, "agent-name", os.Getenv("AGENT_NAME"), "Agent name")
-	cmd.Flags().StringVar(&fixCommand.GithubUserLogin, "github-user-login", os.Getenv("GITHUB_USER_LOGIN"), "Github user login")
-	cmd.Flags().StringVar(&fixCommand.GithubUserEmail, "github-user-email", os.Getenv("GITHUB_USER_EMAIL"), "Github user email")
-	cmd.Flags().StringVar(&fixCommand.GithubUserName, "github-user-name", os.Getenv("GITHUB_USER_NAME"), "Github user name")
-	cmd.Flags().BoolVar(&fixCommand.InPod, "in-pod", false, "Whether running inside the pod")
+	cmd.Flags().StringVar(&triageCommand.URL, "issue-url", os.Getenv("ISSUE_URL"), "GitHub issue URL")
+	cmd.Flags().StringVar(&triageCommand.AgentName, "agent-name", os.Getenv("AGENT_NAME"), "Agent name")
+	cmd.Flags().BoolVar(&triageCommand.InPod, "in-pod", false, "Whether running inside the pod")
 	return cmd
 }
 
-func (c *GithubFixIssueCommand) InitDefaults() {
+func (c *GithubTriageIssueCommand) InitDefaults() {
 	if c.AgentName == "" {
 		c.AgentName = "gemini-cli"
 	}
@@ -79,13 +73,13 @@ func (c *GithubFixIssueCommand) InitDefaults() {
 	}
 }
 
-func (c *GithubFixIssueCommand) taskPath(name string, args ...interface{}) string {
+func (c *GithubTriageIssueCommand) taskPath(name string, args ...interface{}) string {
 	// Ensure the task path is correctly joined
 	file := fmt.Sprintf(name, args...)
 	return filepath.Join(c.TaskDir, file)
 }
 
-func (c *GithubFixIssueCommand) loadGithubObjects(ctx context.Context) error {
+func (c *GithubTriageIssueCommand) loadGithubObjects(ctx context.Context) error {
 	// Get github token
 	token, err := github.GetGithubToken(ctx)
 	if err != nil {
@@ -108,18 +102,10 @@ func (c *GithubFixIssueCommand) loadGithubObjects(ctx context.Context) error {
 		return err
 	}
 
-	user := github.User{
-		UserID: c.GithubUserLogin,
-		Email:  c.GithubUserEmail,
-		Name:   c.GithubUserName,
-		Token:  c.GithubUserToken,
-	}
-
-	c.user = &user
 	return nil
 }
 
-func (c *GithubFixIssueCommand) loadSandbox(ctx context.Context) error {
+func (c *GithubTriageIssueCommand) loadSandbox(ctx context.Context) error {
 	sb, err := sandbox.NewIssueSandbox(ctx, c.InPod, c.repo, c.issue)
 	if err != nil {
 		return err
@@ -129,10 +115,10 @@ func (c *GithubFixIssueCommand) loadSandbox(ctx context.Context) error {
 	return nil
 }
 
-// RunGithubFixIssue launches VS Code connected to the specified dev sandbox.
-func (c *GithubFixIssueCommand) Run(ctx context.Context) error {
+// RunGithubTriageIssue launches VS Code connected to the specified dev sandbox.
+func (c *GithubTriageIssueCommand) Run(ctx context.Context) error {
 	log := klog.FromContext(ctx)
-	log.Info("Starting github-fix-issue task", "taskdir", c.TaskDir)
+	log.Info("Starting github-triage-issue task", "taskdir", c.TaskDir)
 	// Load data from github.com
 	err := c.loadGithubObjects(ctx)
 	if err != nil {
@@ -146,12 +132,9 @@ func (c *GithubFixIssueCommand) Run(ctx context.Context) error {
 	}
 
 	promptPath := c.taskPath("agent-prompt.txt")
-	task := tasks.FixIssueModel{
-		Issue:         c.issue,
-		Repo:          c.repo,
-		User:          c.user,
-		IssueComments: c.issue.IssueComments,
-		PromptFile:    promptPath,
+	task := tasks.TriageIssueModel{
+		Issue:      c.issue,
+		PromptFile: promptPath,
 	}
 
 	apikey, err := GetGeminiAPIKey(c.sandboxID)
@@ -160,12 +143,13 @@ func (c *GithubFixIssueCommand) Run(ctx context.Context) error {
 	}
 
 	env := map[string]string{
-		"GEMINI_API_KEY":    apikey,
-		"GITHUB_USER_TOKEN": c.GithubUserToken,
+		"GEMINI_API_KEY": apikey,
+		// Dont need it for the script. leaving a comment here just in case we change the script
+		//"GITHUB_USER_TOKEN": c.GithubUserToken,
 	}
 	err = tasks.RunTask(ctx, &task, c.sandbox, c.TaskDir, env)
 	if err != nil {
-		return fmt.Errorf("running fix-issue task: %w", err)
+		return fmt.Errorf("running triage-issue task: %w", err)
 	}
 
 	return nil
