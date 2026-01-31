@@ -167,6 +167,15 @@ create-secrets: bin/tls.crt bin/key.json
 			--from-literal=token=${GITHUB_PAT} \
 			--dry-run=client -o yaml | kubectl apply -f -; \
 	fi
+	# Create robot account secret if ROBOT1_GH_PAT is set
+	@if [ -n "${ROBOT1_GH_PAT}" ]; then \
+		kubectl create secret -n repo-agent-system generic ${ROBOT1_GH_USERID} \
+			--from-literal=pat="${ROBOT1_GH_PAT}" \
+			--from-literal=name="${ROBOT1_GH_NAME}" \
+			--from-literal=userid="${ROBOT1_GH_USERID}" \
+			--from-literal=email="${ROBOT1_GH_EMAIL}" \
+			--dry-run=client -o yaml | kubectl apply -f -; \
+	fi
 
 bin/configdir-cli: configdir/
 	../dev/tools/build-go-binaries --working-dir .
