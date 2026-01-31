@@ -125,6 +125,8 @@ spec:
                     type: integer
                   maxSandboxes:
                     type: integer
+                  robotAccount:
+                    type: string
                 required:
                 - maxActiveSandboxes
                 type: object
@@ -187,6 +189,8 @@ spec:
                     type: array
                   reviewShutdownAfterMinutes:
                     type: integer
+                  robotAccount:
+                    type: string
                 required:
                 - maxActiveSandboxes
                 type: object
