@@ -106,6 +106,10 @@ type PRReviewSpec struct {
 	// Assignees to filter PRs for this handler
 	// +kubebuilder:validation:Optional
 	Assignees []string `json:"assignees,omitempty"`
+
+	// RobotAccount to use for this handler.
+	// +kubebuilder:validation:Optional
+	RobotAccount string `json:"robotAccount,omitempty"`
 }
 
 // DevSpec defines the configuration for development sandboxes.
@@ -192,6 +196,10 @@ type IssueSpec struct {
 	// The time in minutes after which a issue sandbox will be scaled down to 0 replicas.
 	// +kubebuilder:validation:Optional
 	IssueShutdownAfterMinutes int `json:"issueShutdownAfterMinutes,omitempty"`
+
+	// RobotAccount to use for this handler.
+	// +kubebuilder:validation:Optional
+	RobotAccount string `json:"robotAccount,omitempty"`
 
 	// Handlers configuration for Bugs
 	// +kubebuilder:validation:Optional

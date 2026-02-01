@@ -244,7 +244,7 @@ type Reconciler struct {
 //+kubebuilder:rbac:groups=custom.agents.x-k8s.io,resources=reviewsandboxes,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=custom.agents.x-k8s.io,resources=issuesandboxes,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=custom.agents.x-k8s.io,resources=sandboxtasks,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;update;patch
+//+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
 
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
@@ -859,6 +859,15 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 		apiKeySecretName = "gemini-vscode-tokens"
 	}
 
+	githubSecretName := repoWatch.Spec.GithubSecretName
+	if repoWatch.Spec.Issue.RobotAccount != "" {
+		githubSecretName = repoWatch.Spec.Issue.RobotAccount
+		if err := r.ensureRobotSecret(ctx, repoWatch.Namespace, githubSecretName); err != nil {
+			log.Error(err, "failed to ensure robot secret", "secret", githubSecretName)
+			return err
+		}
+	}
+
 	sandbox := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
@@ -903,7 +912,8 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 				"gateway": map[string]interface{}{
 					"httpEnabled": true,
 				},
-				"replicas": int64(1),
+				"replicas":         int64(1),
+				"githubSecretName": githubSecretName,
 			},
 		},
 	}
@@ -984,6 +994,15 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 
 	prompt := repoWatch.Spec.Review.LLM.Prompt
 
+	githubSecretName := repoWatch.Spec.GithubSecretName
+	if repoWatch.Spec.Review.RobotAccount != "" {
+		githubSecretName = repoWatch.Spec.Review.RobotAccount
+		if err := r.ensureRobotSecret(ctx, repoWatch.Namespace, githubSecretName); err != nil {
+			log.Error(err, "failed to ensure robot secret", "secret", githubSecretName)
+			return err
+		}
+	}
+
 	log.Info("Generated sandbox for PR", "pr", *pr, "llm.provider", repoWatch.Spec.Review.LLM.Provider)
 	sandbox := &unstructured.Unstructured{
 		Object: map[string]interface{}{
@@ -1020,8 +1039,9 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 				"gateway": map[string]interface{}{
 					"httpEnabled": true,
 				},
-				"maxReviewFiles": int64(repoWatch.Spec.Review.MaxReviewFiles),
-				"replicas":       int64(1),
+				"maxReviewFiles":   int64(repoWatch.Spec.Review.MaxReviewFiles),
+				"replicas":         int64(1),
+				"githubSecretName": githubSecretName,
 			},
 		},
 	}
@@ -1397,6 +1417,43 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager, concurrency int) error {
 		WithOptions(controller.Options{MaxConcurrentReconciles: concurrency}).
 		// Owns(&reviewv1alpha1.ReviewSandbox{}).
 		Complete(r)
+}
+
+func (r *Reconciler) ensureRobotSecret(ctx context.Context, namespace, secretName string) error {
+	// Check if secret exists in namespace
+	secret := &corev1.Secret{}
+	err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: namespace}, secret)
+	if err == nil {
+		return nil // Secret exists
+	}
+	if !apierrors.IsNotFound(err) {
+		return err
+	}
+
+	// Secret not found, try to copy from system namespace
+	systemNamespace := os.Getenv("REPO_AGENT_SYSTEM_NAMESPACE")
+	if systemNamespace == "" {
+		systemNamespace = "repo-agent-system"
+	}
+
+	sourceSecret := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: systemNamespace}, sourceSecret); err != nil {
+		return fmt.Errorf("failed to find robot secret %s in %s: %w", secretName, systemNamespace, err)
+	}
+
+	// Create secret in target namespace
+	newSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        secretName,
+			Namespace:   namespace,
+			Labels:      sourceSecret.Labels,
+			Annotations: sourceSecret.Annotations,
+		},
+		Data: sourceSecret.Data,
+		Type: sourceSecret.Type,
+	}
+
+	return r.Create(ctx, newSecret)
 }
 
 func (r *Reconciler) unpauseSandboxIfPendingTasks(ctx context.Context, sandbox *unstructured.Unstructured) (bool, error) {
