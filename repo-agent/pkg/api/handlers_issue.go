@@ -482,8 +482,9 @@ func (s *Server) createIssueTask(c *gin.Context) {
 	issueID := c.Param("issue_id")
 
 	var payload struct {
-		Prompt   string `json:"prompt"`
-		TaskType string `json:"taskType"`
+		Prompt   string            `json:"prompt"`
+		TaskType string            `json:"taskType"`
+		Params   map[string]string `json:"params"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -500,6 +501,9 @@ func (s *Server) createIssueTask(c *gin.Context) {
 	params := map[string]string{}
 	if payload.Prompt != "" {
 		params["AGENT_PROMPT"] = payload.Prompt
+	}
+	for k, v := range payload.Params {
+		params[k] = v
 	}
 
 	err := s.K8sManager.CreateSandboxTask(c.Request.Context(), namespace, sandboxName, taskType, params)
