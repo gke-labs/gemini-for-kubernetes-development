@@ -732,7 +732,7 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 
 			// Ensure tasks exist for applicable handlers
 			for _, handler := range applicableHandlers {
-				if err := r.ensureIssueTask(ctx, repoWatch, sandboxName, issue, handler); err != nil {
+				if err := r.ensureIssueTask(ctx, repoWatch, existingSandbox, sandboxName, issue, handler); err != nil {
 					log.Error(err, "unable to ensure task", "sandbox", sandboxName, "handler", handler.Name)
 				}
 				watchedIssues[handler.Name] = append(watchedIssues[handler.Name], reviewv1alpha1.WatchedIssue{
@@ -751,14 +751,15 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 				(repoWatch.Spec.Issue.MaxSandboxes == 0 || totalSandboxes < repoWatch.Spec.Issue.MaxSandboxes)) {
 
 				log.Info("creating sandbox for issue", "issue", *issue.Number)
-				if err := r.createIssueSandbox(ctx, user, repoWatch, issue); err != nil {
+				createdSandbox, err := r.createIssueSandbox(ctx, user, repoWatch, issue)
+				if err != nil {
 					log.Error(err, "unable to create sandbox for issue", "issue", *issue.Number)
 				} else {
 					activeSandboxes++
 					totalSandboxes++
 					// Create tasks immediately
 					for _, handler := range applicableHandlers {
-						if err := r.ensureIssueTask(ctx, repoWatch, sandboxName, issue, handler); err != nil {
+						if err := r.ensureIssueTask(ctx, repoWatch, createdSandbox, sandboxName, issue, handler); err != nil {
 							log.Error(err, "unable to create task", "sandbox", sandboxName, "handler", handler.Name)
 						}
 						watchedIssues[handler.Name] = append(watchedIssues[handler.Name], reviewv1alpha1.WatchedIssue{
@@ -836,7 +837,7 @@ func (r *Reconciler) isIssueMatch(issue *github.Issue, handler reviewv1alpha1.Is
 	return true
 }
 
-func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, issue *github.Issue) error {
+func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, issue *github.Issue) (*unstructured.Unstructured, error) {
 	log := log.FromContext(ctx)
 	sandboxName := fmt.Sprintf("%s-issue-%d", repoWatch.Name, *issue.Number)
 
@@ -864,7 +865,7 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 		githubSecretName = repoWatch.Spec.Issue.RobotAccount
 		if err := r.ensureRobotSecret(ctx, repoWatch.Namespace, githubSecretName); err != nil {
 			log.Error(err, "failed to ensure robot secret", "secret", githubSecretName)
-			return err
+			return nil, err
 		}
 	}
 
@@ -920,24 +921,24 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 
 	if devcontainer != "" {
 		if err := unstructured.SetNestedField(sandbox.Object, devcontainer, "spec", "devcontainerConfigRef"); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
 	if image != "" {
 		if err := unstructured.SetNestedField(sandbox.Object, image, "spec", "image"); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
 	if err := controllerutil.SetControllerReference(repoWatch, sandbox, r.Scheme); err != nil {
-		return err
+		return nil, err
 	}
 
-	return r.Create(ctx, sandbox)
+	return sandbox, r.Create(ctx, sandbox)
 }
 
-func (r *Reconciler) ensureIssueTask(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, sandboxName string, issue *github.Issue, handler reviewv1alpha1.IssueHandlerSpec) error {
+func (r *Reconciler) ensureIssueTask(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, sandbox client.Object, sandboxName string, issue *github.Issue, handler reviewv1alpha1.IssueHandlerSpec) error {
 	taskName := fmt.Sprintf("%s-%s", sandboxName, handler.Name) // e.g. repo-issue-123-triage
 
 	// Check if task exists
@@ -977,7 +978,7 @@ func (r *Reconciler) ensureIssueTask(ctx context.Context, repoWatch *reviewv1alp
 		taskType = "issue"
 	}
 
-	return r.createSandboxTask(ctx, repoWatch, sandboxName, taskName, taskType, params)
+	return r.createSandboxTask(ctx, repoWatch, sandbox, sandboxName, taskName, taskType, params)
 }
 
 // generateIssueHandlerPrompt generates a prompt for an issue handler.
@@ -1066,7 +1067,7 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 		return err
 	}
 
-	if err := r.createSandboxTask(ctx, repoWatch, sandboxName, "", "review", map[string]string{
+	if err := r.createSandboxTask(ctx, repoWatch, sandbox, sandboxName, "", "review", map[string]string{
 		"AGENT_PROMPT": prompt,
 	}); err != nil {
 		log.Error(err, "unable to create initial review task for sandbox", "sandbox", sandboxName)
@@ -1076,7 +1077,7 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 }
 
 // createSandboxTask creates a SandboxTask for a sandbox.
-func (r *Reconciler) createSandboxTask(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, sandboxName string, name string, taskType string, params map[string]string) error {
+func (r *Reconciler) createSandboxTask(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, owner client.Object, sandboxName string, name string, taskType string, params map[string]string) error {
 	taskName := name
 	if taskName == "" {
 		taskName = fmt.Sprintf("%s-task-%d-%s", sandboxName, time.Now().Unix(), strings.ToLower(randString(4)))
@@ -1098,7 +1099,7 @@ func (r *Reconciler) createSandboxTask(ctx context.Context, repoWatch *reviewv1a
 		},
 	}
 
-	if err := controllerutil.SetControllerReference(repoWatch, task, r.Scheme); err != nil {
+	if err := controllerutil.SetControllerReference(owner, task, r.Scheme); err != nil {
 		return err
 	}
 
