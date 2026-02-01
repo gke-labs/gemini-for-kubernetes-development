@@ -143,7 +143,6 @@ func ensureSettings(geminiDir string) error {
 }
 
 func (g *Gemini) Cleanup() error {
-	wsGeminiConfigDir := filepath.Join(g.WorkspacesDir, ".gemini")
 	repoGeminiConfigDir := filepath.Join(g.RepoDir, ".gemini")
 	backupGeminiConfigDir := filepath.Join(g.WorkspacesDir, ".gemini.bak")
 	if _, err := os.Stat(backupGeminiConfigDir); err == nil {
@@ -151,7 +150,7 @@ func (g *Gemini) Cleanup() error {
 		if err := os.RemoveAll(repoGeminiConfigDir); err != nil {
 			klog.Infof("failed to remove .gemini directory: %v", err)
 		}
-		if err := os.Rename(backupGeminiConfigDir, wsGeminiConfigDir); err != nil {
+		if err := os.Rename(backupGeminiConfigDir, repoGeminiConfigDir); err != nil {
 			return fmt.Errorf("failed to move .gemini.bak to .gemini: %w", err)
 		}
 	}
