@@ -11,8 +11,13 @@ Analyze the issue title and body to determine the most relevant category from th
 4. support: Questions or requests for help regarding the use of the software.
 5. other: Any issue that does not fit into the above categories.
 
-Start the response with "/kind <Category>" where <Category> is one of bug , feature , document, support, cleanup or other.
-In the next line, provide a concise explanation of your reasoning for the assigned category.
+Response format:
+Please output your response in YAML format within a code block.
+
+```yaml
+kind: <Category>
+explanation: <concise explanation>
+```
 
 Issue Title: "{{.Issue.Title}}"
 Issue Body: "{{.Issue.Body}}"
