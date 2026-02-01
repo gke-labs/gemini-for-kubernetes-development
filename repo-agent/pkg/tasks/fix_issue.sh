@@ -1,11 +1,12 @@
 #!/bin/bash
 set -e
-#set -x
+set -x
 
 # It expects the following environment variables to be set:
 # - GEMINI_API_KEY
 # - GITHUB_USER_TOKEN
 
+export REPO_OWNER="{{ .Repo.Owner }}"
 export REPO_NAME="{{ .Repo.Name }}"
 export CLONE_URL={{ .Repo.CloneURL }}
 export ISSUE_NUMBER={{ .Issue.Number }}
@@ -57,6 +58,38 @@ function setupGitRepos {
     (cd "/workspaces/${REPO_NAME}" && git branch --show-current)
 }
 
+function checkForExistingPR {
+    echo "Checking for existing PRs..."
+    pushd "/workspaces/${REPO_NAME}" > /dev/null
+
+    # Try to find a PR by the current user first
+    local pr_number=$(gh search prs "${ISSUE_NUMBER}" --state open --repo "${REPO_OWNER}/${REPO_NAME}" --author "${GITHUB_USER_ID}" --json number --jq '.[0] | "\(.number)"' --limit 1)
+    local pr_url=$(gh search prs "${ISSUE_NUMBER}" --state open --repo "${REPO_OWNER}/${REPO_NAME}" --author "${GITHUB_USER_ID}" --json url --jq '.[0] | "\(.url)"' --limit 1)
+
+    # If not found, look for any PR
+    if [ -z "$pr_info" ] || [ "$pr_info" == "null" ]; then
+        pr_number=$(gh search prs "${ISSUE_NUMBER}" --repo "${REPO_OWNER}/${REPO_NAME}" --state open --json number --jq '.[0] | "\(.number)"' --limit 1)
+        pr_url=$(gh search prs "${ISSUE_NUMBER}" --repo "${REPO_OWNER}/${REPO_NAME}" --state open --json url --jq '.[0] | "\(.url)"' --limit 1)
+    fi
+
+    if [ -n "$pr_number" ] && [ "$pr_number" != "null" ]; then
+        echo "Found existing PR:"
+        echo $pr_number
+        echo $pr_url
+
+        echo "Found existing PR #${pr_number}"
+        gh pr checkout "$pr_number"
+
+        local output_file="$(dirname "${PROMPT_FILE}")/agent-output.txt"
+
+        echo "We are not generating anything because there is an existing PR." > "$output_file"
+        echo "${pr_url}" >> "$output_file"
+        exit 0
+    fi
+
+    popd > /dev/null
+}
+
 function checkoutNewBranch {
     echo "Running checkoutNewBranch..."
     echo "creating new branch"
@@ -80,9 +113,19 @@ EOF
 }
 
 function runGemini {
-    echo "Running runGemini..."
     echo "running gemini in yolo mode"
-    (cd "/workspaces/${REPO_NAME}" && export GEMINI_API_KEY="${GEMINI_API_KEY}" && gemini --yolo --model gemini-3-pro-preview < ${PROMPT_FILE})
+    pushd "/workspaces/${REPO_NAME}" > /dev/null
+    set +x
+    export GEMINI_API_KEY="${GEMINI_API_KEY}"
+    gemini --yolo --model gemini-3-pro-preview < ${PROMPT_FILE}
+    set -x
+    popd > /dev/null
+}
+
+function recordPRLink {
+    pushd "/workspaces/${REPO_NAME}" > /dev/null
+    gh pr status --json url --jq  .currentBranch.url > "$(dirname "${PROMPT_FILE}")/agent-output.txt"
+    popd > /dev/null
 }
 
 # Main execution
@@ -90,6 +133,8 @@ setupGit
 setupGitRepos
 # HACK: Avoid git lock issues
 sleep 5
+checkForExistingPR
 checkoutNewBranch
 configureGemini
 runGemini
+recordPRLink

@@ -4,15 +4,18 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	githubv39 "github.com/google/go-github/v39/github"
 )
 
-type PullRequest struct {
+// TODO (barney-s): Deprecate. refactor autopoll to use PullReq instead of this
+type PullRequestRef struct {
 	Repo Repo
 
 	PullRequestNumber int
 }
 
-func ParsePullRequestURL(s string) (*PullRequest, error) {
+func ParsePullRequestURL(s string) (*PullRequestRef, error) {
 	u := strings.TrimPrefix(s, "https://")
 
 	if prefix, suffix, found := strings.Cut(u, "#"); found {
@@ -27,7 +30,7 @@ func ParsePullRequestURL(s string) (*PullRequest, error) {
 
 	// e.g. https://github.com/GoogleCloudPlatform/k8s-config-connector/pull/6010
 	if len(tokens) == 5 && tokens[0] == "github.com" && tokens[3] == "pull" {
-		pr := &PullRequest{
+		pr := &PullRequestRef{
 			Repo: Repo{
 				Host:  "github.com",
 				Owner: tokens[1],
@@ -44,4 +47,28 @@ func ParsePullRequestURL(s string) (*PullRequest, error) {
 	}
 
 	return nil, fmt.Errorf("pull-request format %q not recognized", s)
+}
+
+type PullRequest struct {
+	pr *githubv39.PullRequest
+}
+
+func (p *PullRequest) HTMLURL() string {
+	return p.pr.GetHTMLURL()
+}
+
+func (p *PullRequest) URL() string {
+	return p.pr.GetHTMLURL()
+}
+
+func (p *PullRequest) Number() int {
+	return p.pr.GetNumber()
+}
+
+func (p *PullRequest) Title() string {
+	return p.pr.GetTitle()
+}
+
+func (p *PullRequest) Body() string {
+	return p.pr.GetBody()
 }

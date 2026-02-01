@@ -92,7 +92,10 @@ func (c *Client) GetIssueComments(ctx context.Context, url string) ([]IssueComme
 	if err != nil {
 		return nil, err
 	}
+	return c.GetIssueCommentsByNumber(ctx, owner, repo, number)
+}
 
+func (c *Client) GetIssueCommentsByNumber(ctx context.Context, owner, repo string, number int) ([]IssueComment, error) {
 	comments, _, err := c.Client.Issues.ListComments(ctx, owner, repo, number, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list github issue comments: %w", err)
@@ -106,7 +109,60 @@ func (c *Client) GetIssueComments(ctx context.Context, url string) ([]IssueComme
 	return issueComments, nil
 }
 
+func (c *Client) GetPullRequest(ctx context.Context, owner, repo string, number int) (*PullRequest, error) {
+	pr, _, err := c.Client.PullRequests.Get(ctx, owner, repo, number)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get github pull request: %w", err)
+	}
+	return &PullRequest{
+		pr: pr,
+	}, nil
+}
+
+func (c *Client) GetPullRequestCommits(ctx context.Context, owner, repo string, number int) ([]RepositoryCommit, error) {
+	commits, _, err := c.Client.PullRequests.ListCommits(ctx, owner, repo, number, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list github pull request commits: %w", err)
+	}
+	var pullRequestCommits []RepositoryCommit
+	for _, commit := range commits {
+		pullRequestCommits = append(pullRequestCommits, RepositoryCommit{
+			commit: commit,
+		})
+	}
+	return pullRequestCommits, nil
+}
+
+func (c *Client) GetPullRequestComments(ctx context.Context, owner, repo string, number int) ([]PullRequestComment, error) {
+	comments, _, err := c.Client.PullRequests.ListComments(ctx, owner, repo, number, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list github pull request comments: %w", err)
+	}
+	var pullRequestComments []PullRequestComment
+	for _, comment := range comments {
+		pullRequestComments = append(pullRequestComments, PullRequestComment{
+			comment: comment,
+		})
+	}
+	return pullRequestComments, nil
+}
+
+func (c *Client) GetPullRequestReviews(ctx context.Context, owner, repo string, number int) ([]PullRequestReview, error) {
+	reviews, _, err := c.Client.PullRequests.ListReviews(ctx, owner, repo, number, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list github pull request reviews: %w", err)
+	}
+	var pullRequestReviews []PullRequestReview
+	for _, review := range reviews {
+		pullRequestReviews = append(pullRequestReviews, PullRequestReview{
+			review: review,
+		})
+	}
+	return pullRequestReviews, nil
+}
+
 func (c *Client) GetRepositoryFromIssueURL(ctx context.Context, url string) (*Repository, error) {
+
 	owner, repo, _, err := parseIssueURL(url)
 	if err != nil {
 		return nil, err
@@ -118,4 +174,16 @@ func (c *Client) GetRepositoryFromIssueURL(ctx context.Context, url string) (*Re
 	return &Repository{
 		repository: repository,
 	}, nil
+}
+
+func MapPRCommentsToReview(comments []PullRequestComment, reviews []PullRequestReview) {
+	commentsByReviewID := make(map[int64][]PullRequestComment)
+	for _, comment := range comments {
+		rid := comment.PullRequestReviewID()
+		commentsByReviewID[rid] = append(commentsByReviewID[rid], comment)
+	}
+
+	for i := range reviews {
+		reviews[i].PullRequestComments = commentsByReviewID[reviews[i].ID()]
+	}
 }

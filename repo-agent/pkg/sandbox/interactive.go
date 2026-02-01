@@ -62,6 +62,22 @@ func NewIssueSandbox(ctx context.Context, local bool, repo *github.Repository, i
 	return sb, nil
 }
 
+// NewSandboxFromPodID creates an IssueSandbox from a specific pod ID.
+// This is useful when reusing an existing sandbox.
+func NewSandboxFromPodID(ctx context.Context, podID types.NamespacedName) (*IssueSandbox, error) {
+	kube, err := clients.NewKubernetesClient()
+	if err != nil {
+		return nil, err
+	}
+	return &IssueSandbox{
+		executor: &PodExecutor{
+			Ctx:   ctx,
+			Kube:  kube,
+			PodID: podID,
+		},
+	}, nil
+}
+
 // GetPodID returns the pod ID of the sandbox if it is running in a pod.
 func (s *IssueSandbox) GetPodID() types.NamespacedName {
 	if podExecutor, ok := s.executor.(*PodExecutor); ok {
