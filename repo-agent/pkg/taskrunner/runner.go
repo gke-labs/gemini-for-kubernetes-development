@@ -141,6 +141,15 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
 		}
 
+	case "address-feedback":
+		cmd = exec.Command("/opt/repo-agent/repo-sandbox", "github-feedback", "--in-pod=true")
+		// Map params to env vars
+		cmd.Env = os.Environ()
+		// Inject params into env
+		for k, v := range params {
+			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
+		}
+
 	case "triage-issue":
 		cmd = exec.Command("/opt/repo-agent/repo-sandbox", "github-triage-issue", "--in-pod=true")
 		// Map params to env vars

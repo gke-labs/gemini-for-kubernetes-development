@@ -184,12 +184,12 @@ function IssueCard({
         .catch(err => console.error("Failed to fetch tasks:", err));
   };
 
-  const handleCreateTask = (taskType, prompt = '') => {
+  const handleCreateTask = (taskType, prompt = '', params = {}) => {
       if (!repoName || !issue.id) return;
       fetch(`/api/repo/${repoName}/issues/${issue.id}/tasks`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ taskType, prompt })
+          body: JSON.stringify({ taskType, prompt, params })
       })
       .then(res => {
           if (res.ok) {
@@ -281,7 +281,19 @@ function IssueCard({
             <div style={{padding: '10px', borderTop: '1px solid #eee', marginTop: '10px'}}>
                 <div style={{display: 'flex', gap: '10px'}}>
                     <button className="btn" onClick={() => handleCreateTask('triage-issue')}>Triage</button>
-                    <button className="btn" onClick={() => handleCreateTask('address-feedback')}>Address Feedback</button>
+                    <button className="btn" onClick={() => {
+                        const fixTask = tasks.find(t => t.type === 'fix-issue');
+                        if (!fixTask || !fixTask.agentDraft) {
+                            alert("No 'fix-issue' task with a draft found to extract PR ID.");
+                            return;
+                        }
+                        const match = fixTask.agentDraft.match(/\/pull\/(\d+)/);
+                        if (!match) {
+                            alert("Could not extract PR ID from fix-issue draft.");
+                            return;
+                        }
+                        handleCreateTask('address-feedback', '', { PULL_REQUEST_ID: match[1] });
+                    }}>Address Feedback</button>
                 </div>
             </div>
         </div>

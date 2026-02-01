@@ -844,7 +844,37 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 	cloneURL := strings.Replace(*issue.RepositoryURL, "api.github.com/repos", "github.com", 1) + ".git"
 	repoParts := strings.Split(cloneURL, "/")
 	repoName := repoParts[len(repoParts)-1]
-	originURL := fmt.Sprintf("github.com/%s/%s", user.GetLogin(), repoName)
+
+	userLogin := user.GetLogin()
+	userName := user.GetName()
+	userEmail := user.GetEmail()
+
+	githubSecretName := repoWatch.Spec.GithubSecretName
+	if repoWatch.Spec.Issue.RobotAccount != "" {
+		githubSecretName = repoWatch.Spec.Issue.RobotAccount
+		if err := r.ensureRobotSecret(ctx, repoWatch.Namespace, githubSecretName); err != nil {
+			log.Error(err, "failed to ensure robot secret", "secret", githubSecretName)
+			return nil, err
+		}
+
+		secret := &corev1.Secret{}
+		if err := r.Get(ctx, types.NamespacedName{Name: githubSecretName, Namespace: repoWatch.Namespace}, secret); err != nil {
+			log.Error(err, "failed to get robot secret", "secret", githubSecretName)
+			return nil, err
+		}
+
+		if len(secret.Data["userid"]) > 0 {
+			userLogin = string(secret.Data["userid"])
+		}
+		if len(secret.Data["name"]) > 0 {
+			userName = string(secret.Data["name"])
+		}
+		if len(secret.Data["email"]) > 0 {
+			userEmail = string(secret.Data["email"])
+		}
+	}
+
+	originURL := fmt.Sprintf("github.com/%s/%s", userLogin, repoName)
 	branchName := fmt.Sprintf("issue-%d-%s", *issue.Number, randString(4))
 
 	log.Info("Generated sandbox for Issue", "issue", *issue)
@@ -858,15 +888,6 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 	if apiKeySecretName == "" {
 		// Fallback to a default if not specified, to avoid Pod validation error
 		apiKeySecretName = "gemini-vscode-tokens"
-	}
-
-	githubSecretName := repoWatch.Spec.GithubSecretName
-	if repoWatch.Spec.Issue.RobotAccount != "" {
-		githubSecretName = repoWatch.Spec.Issue.RobotAccount
-		if err := r.ensureRobotSecret(ctx, repoWatch.Namespace, githubSecretName); err != nil {
-			log.Error(err, "failed to ensure robot secret", "secret", githubSecretName)
-			return nil, err
-		}
 	}
 
 	sandbox := &unstructured.Unstructured{
@@ -905,9 +926,9 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 					"branch":      branchName,
 					"origin":      originURL,
 					"user": map[string]interface{}{
-						"login": user.GetLogin(),
-						"name":  user.GetName(),
-						"email": user.GetEmail(),
+						"login": userLogin,
+						"name":  userName,
+						"email": userEmail,
 					},
 				},
 				"gateway": map[string]interface{}{
