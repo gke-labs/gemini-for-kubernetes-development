@@ -22,6 +22,7 @@ spec:
       githubSecretName: string | default="github-pat"
       resources:
         ephemeralStorage: string | default="6Gi"
+      dockerEnabled: boolean | default=false
       source:
         cloneURL: string
         htmlURL: string
@@ -87,6 +88,8 @@ spec:
                 - name: sandbox
                   image: ${schema.spec.image != "" ? schema.spec.image:"ko://repo-agent/images/repo-sandbox"}
                   command: ${schema.spec.image != "" ? ["/opt/repo-agent/repo-sandbox", "dev-daemon"]:[]}
+                  securityContext:
+                    privileged: ${schema.spec.dockerEnabled}
                   resources:
                     limits:
                       ephemeral-storage: ${schema.spec.resources.ephemeralStorage}
