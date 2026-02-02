@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/agentoutput"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -100,11 +101,10 @@ func RunTask(ctx context.Context, t Task, sb *sandbox.IssueSandbox, taskDir stri
 		log.Info("Read agent output", "output", string(output))
 
 		// Check if we have env vars for AgentOutput
-
 		gvr := schema.GroupVersionResource{
-			Group:    os.Getenv("AGENT_OUTPUT_GVR_GROUP"),
-			Version:  os.Getenv("AGENT_OUTPUT_GVR_VERSION"),
-			Resource: os.Getenv("AGENT_OUTPUT_GVR_RESOURCE"),
+			Group:    v1alpha1.GroupVersion.Group,
+			Version:  v1alpha1.GroupVersion.Version,
+			Resource: "sandboxtasks",
 		}
 		ao, err := agentoutput.New(gvr, "", "")
 		if err != nil {

@@ -252,7 +252,7 @@ func shouldProcessIssue(ctx context.Context, githubAPI *github.Client, repo *git
 }
 
 // hasLinkedPR checks if the issue has any linked pull requests
-func hasLinkedPR(ctx context.Context, githubAPI *github.Client, repo *github.Repo, issue *gogithub.Issue) ([]*github.PullRequest, error) {
+func hasLinkedPR(ctx context.Context, githubAPI *github.Client, repo *github.Repo, issue *gogithub.Issue) ([]*github.PullRequestRef, error) {
 	// Use the timeline API to check for linked PRs
 	// GitHub's timeline API shows cross-references including linked PRs
 	timeline, _, err := githubAPI.Issues.ListIssueTimeline(ctx, repo.Owner, repo.Name, issue.GetNumber(), nil)
@@ -260,7 +260,7 @@ func hasLinkedPR(ctx context.Context, githubAPI *github.Client, repo *github.Rep
 		return nil, fmt.Errorf("failed to get issue timeline: %w", err)
 	}
 
-	var prs []*github.PullRequest
+	var prs []*github.PullRequestRef
 
 	for _, event := range timeline {
 		// Check for cross-referenced events that link to PRs
