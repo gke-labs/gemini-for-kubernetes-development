@@ -48,25 +48,31 @@ If using `envbuilder` (the default base for `repo-sandbox`), we can leverage dev
 *   **Pros**: More secure.
 *   **Cons**: `kind` often has issues with rootless docker or requires specific cgroup v2 setup and host configuration which might not be guaranteed in all K8s environments where `repo-agent` runs.
 
-## Proposed Approach (Option 1 & 2 Hybrid)
-We should modify the `IssueSandbox` RGD to expose a `dockerEnabled` (or `privileged`) field.
-Since `kind` explicitly needs a robust Docker environment, the Sidecar approach (Option 1) is often more reliable for "providing a service" to the agent without polluting the agent's image with Docker daemon management.
+## Selected Approach: Privileged Main Container (Option 2)
+We modify the `IssueSandbox` RGD to expose a `dockerEnabled` (or `privileged`) field.
+Since `envbuilder` is a core part of the stack, enabling `privileged` mode allows `envbuilder` to do its job (installing Docker) if configured via `devcontainer.json`.
 
-However, since `envbuilder` is a core part of the stack, enabling `privileged` mode allows `envbuilder` to do its job if configured via `devcontainer.json`.
-
-**Recommendation**:
+**Implementation**:
 1.  Update `IssueSandbox` RGD schema to include `dockerEnabled` boolean.
 2.  When `dockerEnabled` is true:
-    *   Add a `dind` sidecar container (image: `docker:dind-rootless` or `docker:dind`).
-    *   Mount `docker-socket` volume to both containers.
-    *   Set `privileged: true` (or necessary capabilities) on the sidecar.
-    *   Set `DOCKER_HOST` env var in the main container.
+    *   Set `securityContext.privileged: true` on the main container.
 
-This allows any agent/image in the main container to use `docker` and `kind` commands without needing to install the docker daemon itself.
+This allows the main container to run Docker (via `envbuilder` or custom setup) and `kind`.
 
 ## Implementation Steps
 1.  Modify `repo-agent/k8s/issue-sandbox-rgd.yaml`:
     *   Add `dockerEnabled` to `spec.schema.spec`.
-    *   Update `spec.resources[0].template.spec.podTemplate.spec` to conditionally include the sidecar and volume mounts.
+    *   Update `spec.resources[0].template.spec.podTemplate.spec.containers[0].securityContext.privileged` to be set based on the `dockerEnabled` flag.
 2.  Verify creation of `IssueSandbox` with `dockerEnabled: true`.
 3.  Verify `kind create cluster` works inside the sandbox.
+
+## Considerations for GKE Autopilot and Rootless Docker
+This implementation leverages `privileged` containers, which are standard for running Docker-in-Docker (and thus `kind`).
+
+*   **GKE Autopilot**: By default, GKE Autopilot adheres to strong security standards and disallows privileged containers. Therefore, `dockerEnabled: true` will likely fail on standard GKE Autopilot clusters.
+*   **Rootless Docker**: A "rootless" approach (Option 3) would be required to support strict environments like GKE Autopilot. This involves running Docker (and `kind`) without root privileges, often requiring:
+    *   User Namespaces enabled on the host.
+    *   Cgroup v2 delegation.
+    *   Specialized container images (e.g., `kind` rootless variants).
+
+Support for rootless Docker and GKE Autopilot is deferred to future work.
