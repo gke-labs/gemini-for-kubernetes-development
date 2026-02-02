@@ -32,6 +32,10 @@
 
   --bg-sidebar-selected: #e3f2fd;
   --border-sidebar-selected: #007bff;
+  
+  --text-danger: #d9534f;
+  --border-danger: #d9534f;
+  --bg-danger-light: #fdf7f7;
 }
 
 body.dark-mode {
@@ -64,6 +68,10 @@ body.dark-mode {
 
   --bg-sidebar-selected: #1f2428;
   --border-sidebar-selected: #58a6ff;
+
+  --text-danger: #f85149;
+  --border-danger: #f85149;
+  --bg-danger-light: #2c1a1a;
 }
 
 .App {
@@ -787,4 +795,19 @@ body.dark-mode .warning-banner {
   height: 40px;
   border-radius: 20px;
   line-height: 20px;
+}
+
+.danger-zone {
+  border: 1px solid var(--border-danger);
+  padding: 15px;
+  border-radius: 5px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background-color: var(--bg-danger-light);
+}
+
+.danger-zone h3 {
+  color: var(--text-danger);
+  margin-top: 0;
 }
