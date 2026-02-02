@@ -6,13 +6,15 @@ You must NOT attempt to fix, resolve, or generate code for the issue. Your ONLY 
 Analyze the issue title and body to determine the most relevant category from the following options:
 1. bug: Issues that describe unexpected behavior, errors, or malfunctions in the software.
 2. feature: Suggestions for new features, enhancements, or improvements to existing functionality.
-2. cleanup: Suggestions for cleaning up code, removing deprecated features, or improving code quality.
-3. document: Issues related to documentation errors, omissions, or requests for clarification.
-4. support: Questions or requests for help regarding the use of the software.
-5. other: Any issue that does not fit into the above categories.
+3. cleanup: Suggestions for cleaning up code, removing deprecated features, or improving code quality.
+4. documentation: Issues related to documentation errors, omissions, or requests for clarification.
+5. support: Questions or requests for help regarding the use of the software.
+6. other: Any issue that does not fit into the above categories.
 
-Start the response with "/kind <Category>" where <Category> is one of bug , feature , document, support, cleanup or other.
-In the next line, provide a concise explanation of your reasoning for the assigned category.
+Response format:
+Please output your response as a single line starting with the Prow command.
+
+/kind <Category> <concise explanation>
 
 Issue Title: "{{.Issue.Title}}"
 Issue Body: "{{.Issue.Body}}"

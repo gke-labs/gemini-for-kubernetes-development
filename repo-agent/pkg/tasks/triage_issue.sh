@@ -29,8 +29,8 @@ function runGemini {
     export GEMINI_API_KEY="${GEMINI_API_KEY}"
     gemini --yolo --model gemini-3-pro-preview < ${PROMPT_FILE} > "$(dirname "${PROMPT_FILE}")/raw-agent-output.txt" 2>&1
     cat "$(dirname "${PROMPT_FILE}")/raw-agent-output.txt"
-    # remove agent thoughts
-    cat "$(dirname "${PROMPT_FILE}")/raw-agent-output.txt" | sed -n '/^\/kind.*/,$p' > "$(dirname "${PROMPT_FILE}")/agent-output.txt"
+    # remove agent thoughts (extract prow command)
+    grep "^/kind " "$(dirname "${PROMPT_FILE}")/raw-agent-output.txt" > "$(dirname "${PROMPT_FILE}")/agent-output.txt" || true
 }
 
 # Main execution
