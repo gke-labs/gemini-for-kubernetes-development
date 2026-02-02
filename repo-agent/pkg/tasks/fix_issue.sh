@@ -54,6 +54,12 @@ function setupGitRepos {
     echo "running gh repo set-default"
     (cd "/workspaces/${REPO_NAME}" && gh repo set-default "${CLONE_URL}")
 
+    echo "running git config local user.email"
+    (cd "/workspaces/${REPO_NAME}" && git config user.email "${GITHUB_USER_EMAIL}")
+
+    echo "running git config local user.name"
+    (cd "/workspaces/${REPO_NAME}" && git config user.name "${GITHUB_USER_NAME}")
+
     echo "waiting for checkout to be ready (branch check)"
     (cd "/workspaces/${REPO_NAME}" && git branch --show-current)
 }
