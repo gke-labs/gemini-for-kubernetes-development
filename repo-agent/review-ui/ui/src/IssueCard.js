@@ -168,6 +168,7 @@ function IssueCard({
   handleIssueDraftChange,
   handleIssueSaveDraft,
   handleIssueSubmit,
+  handleAddIssue,
 }) {
   const [isCollapsed, setIsCollapsed] = useState(!isMainView);
   const [tasks, setTasks] = useState([]);
@@ -209,6 +210,35 @@ function IssueCard({
         return () => clearInterval(interval);
     }
   }, [isCollapsed, isMainView, repoName, issue.id]);
+
+  if (issue.type === 'pending' || issue.type === 'excluded') {
+      return (
+        <div className="pr-card" style={{opacity: 0.6, border: '1px dashed #ccc'}}>
+             <div className="pr-card-header" style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 20px'}}>
+                <h3 style={{margin: 0}}>
+                  {issue.htmlURL ? (
+                    <a href={issue.htmlURL} target="_blank" rel="noopener noreferrer" style={{color: 'inherit', textDecoration: 'none'}}>
+                      {issue.title}
+                    </a>
+                  ) : (
+                    issue.title
+                  )}
+                </h3>
+                <button 
+                  className="btn" 
+                  onClick={(e) => { 
+                      e.stopPropagation(); 
+                      if (handleAddIssue) handleAddIssue(issue.id); 
+                  }} 
+                  title="Add to watch list" 
+                  style={{fontSize: '20px', width: '40px', height: '40px', borderRadius: '20px', lineHeight: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center'}}
+                >
+                  +
+                </button>
+             </div>
+        </div>
+      );
+  }
 
   return (
     <div key={issue.id} className="pr-card">
