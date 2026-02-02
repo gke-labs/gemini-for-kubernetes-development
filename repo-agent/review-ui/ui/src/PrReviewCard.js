@@ -412,6 +412,80 @@ function TaskReviewCard({
                     handleLocalMoveComment(commentIndex, path, line, side);
                 }
               };
+
+              const handleLineClick = (e) => {
+                if (isSubmitted) return;
+                if (e.target.closest('.diff-widget')) return;
+
+                let target = e.target;
+                while (target && !target.classList.contains('diff-line')) {
+                    target = target.parentElement;
+                }
+    
+                if (!target) return;
+    
+                const gutters = target.querySelectorAll('.diff-gutter');
+                let oldLineGutter = gutters[0];
+                let newLineGutter = gutters[1];
+    
+                if (gutters.length === 1) {
+                  if (type === 'add') {
+                    newLineGutter = gutters[0];
+                    oldLineGutter = undefined;
+                  } else if (type === 'delete') {
+                    oldLineGutter = gutters[0];
+                    newLineGutter = undefined;
+                  }
+                }
+    
+                const rect = target.getBoundingClientRect();
+                let isRightSide = e.clientX > rect.left + rect.width / 2;
+    
+                if (type === 'add') {
+                  isRightSide = true;
+                } else if (type === 'delete') {
+                  isRightSide = false;
+                }
+    
+                const side = isRightSide ? 'RIGHT' : 'LEFT';
+    
+                let line;
+                if (side === 'RIGHT') {
+                    const newLineNumber = parseInt(newLineGutter?.textContent, 10);
+                    if (!isNaN(newLineNumber)) {
+                        line = newLineNumber;
+                    }
+                } else { // LEFT
+                    const oldLineNumber = parseInt(oldLineGutter?.textContent, 10);
+                    if (!isNaN(oldLineNumber)) {
+                        line = oldLineNumber;
+                    }
+                }
+    
+                if (line && side) {
+                     const newDraft = JSON.parse(JSON.stringify(localDraft));
+                     if (!newDraft.review) newDraft.review = {};
+                     if (!newDraft.review.comments) newDraft.review.comments = [];
+                     
+                     newDraft.review.comments.push({
+                         path: path,
+                         side: side,
+                         line: line,
+                         body: ''
+                     });
+                     
+                     setLocalDraft(newDraft);
+                     try {
+                         const newYaml = yaml.dump(newDraft);
+                         setLocalYaml(newYaml);
+                         if (handleSaveTaskDraft) {
+                             handleSaveTaskDraft(task.name, newYaml);
+                         }
+                     } catch (e) {
+                         console.error("Failed to dump yaml", e);
+                     }
+                }
+              };
     
               return (
                 <div key={fileId} className="diff-file">
@@ -427,7 +501,7 @@ function TaskReviewCard({
                     </span>
                   </div>
                   {!isFileCollapsed && (
-                    <div onDragOver={handleDragOverFile} onDrop={handleDrop} onDragLeave={handleDragLeaveFile}>
+                    <div onDragOver={handleDragOverFile} onDrop={handleDrop} onDragLeave={handleDragLeaveFile} onClick={handleLineClick}>
                       {unplacedComments.length > 0 && (
                         <div className="diff-widget" style={{padding: '10px', borderBottom: '1px solid #ddd'}}>
                           <h6>Comments on lines not shown in diff or file-level comments</h6>
