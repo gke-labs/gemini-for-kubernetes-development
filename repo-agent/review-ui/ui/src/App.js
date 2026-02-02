@@ -1008,6 +1008,7 @@ function App() {
           handleScaleDown={handlePRScaleDown}
           handleAddPR={handleAddPR}
           lastUpdated={lastUpdated}
+          onRefresh={() => refreshData(true)}
         />
       );
     } else if (activeSubTab.name === 'dev') {
