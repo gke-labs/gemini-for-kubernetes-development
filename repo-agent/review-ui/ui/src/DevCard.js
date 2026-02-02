@@ -36,12 +36,12 @@ function DevCard({
                 <span
                   key={index}
                   style={{
-                    backgroundColor: '#eee',
-                    color: '#333',
+                    backgroundColor: 'var(--bg-secondary)',
+                    color: 'var(--text-primary)',
                     padding: '2px 6px',
                     borderRadius: '4px',
                     fontSize: 'small',
-                    border: '1px solid #ddd'
+                    border: '1px solid var(--border-color)'
                   }}
                 >
                   {label}
@@ -60,7 +60,7 @@ function DevCard({
           {getSandboxStatusClass(sandbox) === 'green' ? (
             <div style={{display: 'flex', alignItems: 'center', gap: '5px'}}>
               {sandbox.agentState === 'provisioning' ? (
-                <span className="pr-sandbox" style={{backgroundColor: '#2196F3', color: 'white', cursor: 'default'}} title={sandbox.agentStateMessage || ''}>
+                <span className="pr-sandbox" style={{backgroundColor: 'var(--text-link)', color: 'white', cursor: 'default'}} title={sandbox.agentStateMessage || ''}>
                   Sandbox Provisioning...
                 </span>
               ) : (
