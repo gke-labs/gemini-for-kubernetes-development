@@ -15,8 +15,10 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic/fake"
 	kubernetesfake "k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 func TestCreatePRTask(t *testing.T) {
@@ -29,6 +31,14 @@ func TestCreatePRTask(t *testing.T) {
 		gvrReviewSandbox: "ReviewSandboxList",
 	})
 	k8sClient := kubernetesfake.NewSimpleClientset()
+
+	dynamicClient.PrependReactor("patch", "reviewsandboxes", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
+		patchAction := action.(k8stesting.PatchAction)
+		if patchAction.GetPatchType() == types.ApplyPatchType {
+			return true, nil, nil
+		}
+		return false, nil, nil
+	})
 
 	manager := &k8s.Manager{
 		Client:    dynamicClient,
@@ -54,6 +64,22 @@ func TestCreatePRTask(t *testing.T) {
 	r.POST("/repo/:repo/prs/:id/tasks", server.createPRTask)
 
 	t.Run("Create task with explicit prompt", func(t *testing.T) {
+		// Create the ReviewSandbox first
+		sandbox := &unstructured.Unstructured{
+			Object: map[string]interface{}{
+				"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
+				"kind":       "ReviewSandbox",
+				"metadata": map[string]interface{}{
+					"name":      "test-repo-pr-123",
+					"namespace": "default",
+				},
+			},
+		}
+		_, err := dynamicClient.Resource(gvrReviewSandbox).Namespace("default").Create(context.Background(), sandbox, v1.CreateOptions{})
+		if err != nil {
+			t.Fatalf("Failed to create review sandbox: %v", err)
+		}
+
 		payload := map[string]string{
 			"prompt": "Test Prompt",
 		}
