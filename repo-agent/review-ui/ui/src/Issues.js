@@ -204,21 +204,27 @@ function Issues({
       );
   };
 
-  const handleAddIssue = () => {
-    const input = window.prompt("Enter Issue URL or Number:");
-    if (!input) return;
+  const handleAddIssue = (issueId = null) => {
+    let issueNumber;
+    
+    if (issueId) {
+        issueNumber = parseInt(issueId);
+    } else {
+        const input = window.prompt("Enter Issue URL or Number:");
+        if (!input) return;
 
-    let issueNumber = parseInt(input);
-    if (isNaN(issueNumber)) {
-        try {
-        const url = new URL(input);
-        const parts = url.pathname.split('/');
-        const issuesIndex = parts.indexOf('issues');
-        if (issuesIndex !== -1 && issuesIndex + 1 < parts.length) {
-            issueNumber = parseInt(parts[issuesIndex + 1]);
-        }
-        } catch (e) {
-        // ignore
+        issueNumber = parseInt(input);
+        if (isNaN(issueNumber)) {
+            try {
+            const url = new URL(input);
+            const parts = url.pathname.split('/');
+            const issuesIndex = parts.indexOf('issues');
+            if (issuesIndex !== -1 && issuesIndex + 1 < parts.length) {
+                issueNumber = parseInt(parts[issuesIndex + 1]);
+            }
+            } catch (e) {
+            // ignore
+            }
         }
     }
 
@@ -249,7 +255,7 @@ function Issues({
         <div className="review-sidebar">
             <div className="sidebar-section">
                 {activeList.map(renderSidebarItem)}
-                <div className="sidebar-item add-pr" onClick={handleAddIssue} style={{textAlign: 'center', cursor: 'pointer', color: 'var(--text-secondary)', border: '1px dashed var(--border-color)'}}>
+                <div className="sidebar-item add-pr" onClick={() => handleAddIssue()} style={{textAlign: 'center', cursor: 'pointer', color: 'var(--text-secondary)', border: '1px dashed var(--border-color)'}}>
                     + Add Issue
                 </div>
             </div>
@@ -290,6 +296,7 @@ function Issues({
                     handleScaleUp={handleScaleUp}
                     handleScaleDown={handleScaleDown}
                     repoName={activeRepo.name}
+                    handleAddIssue={handleAddIssue}
                     isMainView={true}
                 />
             ) : (
