@@ -1487,5 +1487,3 @@ func TestReconciler_Reconcile_AssigneeFilteredPRs(t *testing.T) {
 	g.Expect(fetchedRepoWatch.Status.ReviewSandboxes).To(gomega.HaveLen(1))
 	g.Expect(fetchedRepoWatch.Status.ReviewSandboxes[0].Number).To(gomega.Equal(3))
 }
-
-
