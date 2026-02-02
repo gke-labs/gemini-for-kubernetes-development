@@ -4,18 +4,15 @@ Your task is to categorize incoming issues based on their content and assign app
 Analyze the issue title and body to determine the most relevant category from the following options:
 1. bug: Issues that describe unexpected behavior, errors, or malfunctions in the software.
 2. feature: Suggestions for new features, enhancements, or improvements to existing functionality.
-2. cleanup: Suggestions for cleaning up code, removing deprecated features, or improving code quality.
-3. document: Issues related to documentation errors, omissions, or requests for clarification.
-4. support: Questions or requests for help regarding the use of the software.
-5. other: Any issue that does not fit into the above categories.
+3. cleanup: Suggestions for cleaning up code, removing deprecated features, or improving code quality.
+4. documentation: Issues related to documentation errors, omissions, or requests for clarification.
+5. support: Questions or requests for help regarding the use of the software.
+6. other: Any issue that does not fit into the above categories.
 
 Response format:
-Please output your response in YAML format within a code block.
+Please output your response as a single line starting with the Prow command.
 
-```yaml
-kind: <Category>
-explanation: <concise explanation>
-```
+/kind <Category> <concise explanation>
 
 Issue Title: "{{.Issue.Title}}"
 Issue Body: "{{.Issue.Body}}"
