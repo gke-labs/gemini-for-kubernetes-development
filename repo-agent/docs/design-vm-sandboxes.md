@@ -5,6 +5,7 @@ The current sandbox implementation in `repo-agent` uses Kubernetes Pods (contain
 1.  Creating VMs on Google Cloud Platform (GCP).
 2.  Using in-cluster virtualization frameworks like Firecracker, KVM/QEMU (KubeVirt), or Kata Containers.
 3.  Compatibility with GKE Autopilot clusters.
+4.  Compatibility and requirements for Standard GKE clusters.
 
 ## Constraint Analysis: GKE Autopilot
 A critical factor in this exploration is compatibility with GKE Autopilot, the managed mode of operation for GKE.
@@ -12,6 +13,14 @@ A critical factor in this exploration is compatibility with GKE Autopilot, the m
 *   **No Privileged Containers**: Autopilot restricts the use of privileged containers, which are often required to set up networking or storage for in-cluster VM managers.
 *   **No Nested Virtualization**: Autopilot nodes do not support nested virtualization. This means the `/dev/kvm` device is not available to Pods.
     *   **Impact**: Technologies relying on hardware-assisted virtualization (KVM) — including **Firecracker**, **KubeVirt** (with KVM), and **Kata Containers** (standard configuration) — **cannot run on GKE Autopilot nodes**.
+
+## Constraint Analysis: GKE Standard
+While GKE Standard offers more flexibility, running VM-based sandboxes still requires specific configurations:
+
+*   **Nested Virtualization**: To run VMs inside Pods (e.g., Firecracker), the underlying GKE nodes must support and have nested virtualization enabled.
+    *   **Requirement**: This is generally supported on N1, N2, and N2D machine series. It must be explicitly enabled when creating the node pool.
+*   **Privileged Mode**: Many virtualization controllers require privileged containers to manage the host kernel or network namespaces.
+    *   **Requirement**: GKE Standard allows privileged containers, making it compatible with tools like KubeVirt.
 
 ## Options Exploration
 
@@ -35,7 +44,7 @@ This approach involves running VMs *inside* the Kubernetes cluster, managed as P
 This approach involves the `repo-agent` controller managing the lifecycle of standard Google Compute Engine (GCE) VMs directly, essentially acting as a cloud orchestrator.
 
 *   **Mechanism**:
-    *   The `ReviewSandbox` controller uses the GCP API (or a tool like Config Connector / Crossplane) to create a `ComputeInstance` for each sandbox.
+    *   The `ReviewSandbox` controller uses the GCP API (or a tool like Config Connector, Crossplane, or **Cluster API**) to create a `ComputeInstance` for each sandbox.
     *   The VM runs the `repo-sandbox` agent.
 *   **Pros**:
     *   **Autopilot Compatible**: The controller runs in the cluster, but the VMs run as top-level GCP resources, bypassing Autopilot constraints.
@@ -91,3 +100,6 @@ To support these options, we can extend the `ReviewSandbox` / `IssueSandbox` CRD
     *   Simply map `isolationStrategy: gVisor` to `runtimeClassName: gvisor` in the generated Pod.
 3.  **Explore `VM` support (Future)**:
     *   Create a prototype controller that spins up a GCE instance when `isolationStrategy: VM` is selected, potentially using a sidecar in the cluster to proxy traffic to the VM.
+4.  **Explore Firecracker on Standard GKE (Future)**:
+    *   Investigate integrating a Firecracker-based runtime (like `firecracker-containerd` or Kata Containers with Firecracker shim) for GKE Standard users.
+    *   This would require validating that the node pool has nested virtualization enabled.
