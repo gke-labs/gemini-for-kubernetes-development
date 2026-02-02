@@ -8,7 +8,6 @@ import (
 	monitoring "cloud.google.com/go/monitoring/apiv3/v2"
 	"cloud.google.com/go/monitoring/apiv3/v2/monitoringpb"
 	"google.golang.org/api/iterator"
-	"google.golang.org/api/option"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"k8s.io/klog/v2"
 )
@@ -21,13 +20,11 @@ type Usage struct {
 
 type Checker struct {
 	ProjectID string
-	APIKey    string
 }
 
-func NewChecker(projectID string, apiKey string) *Checker {
+func NewChecker(projectID string) *Checker {
 	return &Checker{
 		ProjectID: projectID,
-		APIKey:    apiKey,
 	}
 }
 
@@ -42,12 +39,7 @@ func (c *Checker) GetUsage(ctx context.Context) ([]Usage, error) {
 		return nil, fmt.Errorf("project ID is not set")
 	}
 
-	var opts []option.ClientOption
-	if c.APIKey != "" {
-		opts = append(opts, option.WithAPIKey(c.APIKey))
-	}
-
-	client, err := monitoring.NewMetricClient(ctx, opts...)
+	client, err := monitoring.NewMetricClient(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("creating client for GCP Monitoring API: %w", err)
 	}

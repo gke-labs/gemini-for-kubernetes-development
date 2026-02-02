@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/auth"
@@ -15,15 +16,11 @@ func (s *Server) getQuota(c *gin.Context) {
 	namespace := c.MustGet(auth.UserKey).(string)
 
 	projectID := os.Getenv("GOOGLE_CLOUD_PROJECT")
-	apiKey := ""
 
 	// Check if project ID is overridden in user settings
 	if sec, err := s.K8sManager.Clientset.CoreV1().Secrets(namespace).Get(c.Request.Context(), k8s.GeminiSecretName, v1.GetOptions{}); err == nil {
 		if val, ok := sec.Data["project_id"]; ok && len(val) > 0 {
 			projectID = string(val)
-		}
-		if val, ok := sec.Data["gemini"]; ok && len(val) > 0 {
-			apiKey = string(val)
 		}
 	}
 
@@ -32,12 +29,20 @@ func (s *Server) getQuota(c *gin.Context) {
 		return
 	}
 
-	checker := quota.NewChecker(projectID, apiKey)
+	checker := quota.NewChecker(projectID)
 	usage, err := checker.GetUsage(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check quota usage", "details": err.Error()})
+		details := err.Error()
+		if isAuthError(details) {
+			details += ". Please ensure you have authenticated with Google Cloud (e.g., using Workload Identity or 'gcloud auth application-default login')."
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check quota usage: " + details})
 		return
 	}
 
 	c.JSON(http.StatusOK, usage)
+}
+
+func isAuthError(msg string) bool {
+	return strings.Contains(msg, "Unauthenticated") || strings.Contains(msg, "credentials") || strings.Contains(msg, "metadata")
 }
