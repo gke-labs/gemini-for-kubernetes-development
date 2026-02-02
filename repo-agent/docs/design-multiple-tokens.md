@@ -106,6 +106,17 @@ This approach offers the best balance of flexibility and simplicity. It allows m
     *   Update the K8s secret generation to populate the pool.
     *   Set `/tokens/gemini` to `exec: /path/to/token-rotator`.
 
+### Advanced Usage: KMS Integration
+
+The `exec:` pattern (Option 2) naturally supports integration with external Key Management Systems (KMS) or Secret Managers (e.g., Google Secret Manager, AWS Secrets Manager, HashiCorp Vault).
+
+Instead of a local rotator reading a file, the command specified in `exec:` can be a script or binary that:
+1.  Authenticates with the external KMS provider (using Workload Identity, instance profiles, or other credentials).
+2.  Fetches the latest active token(s) from the KMS.
+3.  Returns the valid token to standard output.
+
+This allows `repo-agent` to support complex secret management workflows (automatic rotation, centralized auditing, external revocation) without requiring changes to the core agent code. The `exec:` contract acts as a standard interface for any token source.
+
 ## Security Considerations
 *   Tokens are still stored in K8s Secrets.
 *   The `exec:` command is run within the container context.
