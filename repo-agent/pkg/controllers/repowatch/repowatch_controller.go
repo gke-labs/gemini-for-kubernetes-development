@@ -24,7 +24,6 @@ import (
 	"math/rand"
 	"net/url"
 	"os"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -149,12 +148,6 @@ func parseRepoURL(repoURL string) (string, string, error) {
 	return parts[0], parts[1], nil
 }
 
-var emailRegex = regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
-
-func isValidEmail(email string) bool {
-	return emailRegex.MatchString(email)
-}
-
 func NewGithubClient(ctx context.Context, k8sClient client.Client, repoWatch *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
 	secret := &corev1.Secret{}
 	secretName := repoWatch.Spec.GithubSecretName
@@ -189,10 +182,7 @@ func NewGithubClient(ctx context.Context, k8sClient client.Client, repoWatch *re
 
 	_, ok = secret.Data["email"]
 	if ok {
-		email := string(secret.Data["email"])
-		if isValidEmail(email) {
-			githubConfig["email"] = email
-		}
+		githubConfig["email"] = string(secret.Data["email"])
 	}
 
 	clientID := os.Getenv("GITHUB_CLIENT_ID")
@@ -305,12 +295,8 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	if githubConfig["name"] != "" {
 		user.Name = github.String(githubConfig["name"])
 	}
-	if githubConfig["email"] != "" && isValidEmail(githubConfig["email"]) {
+	if githubConfig["email"] != "" {
 		user.Email = github.String(githubConfig["email"])
-	} else if user.GetEmail() == "" {
-		// Fallback to noreply email if no email is set in secret and GitHub user has no public email
-		noreply := fmt.Sprintf("%d+%s@users.noreply.github.com", user.GetID(), user.GetLogin())
-		user.Email = github.String(noreply)
 	}
 
 	var reconcileErr error
