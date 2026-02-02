@@ -695,6 +695,7 @@ function PrReviewCard({
   isMainView,
   lastUpdated,
   repoName: propRepoName,
+  onRefresh,
 }) {
   const [diff, setDiff] = useState(null);
   const [diffError, setDiffError] = useState(null);
@@ -728,6 +729,7 @@ function PrReviewCard({
           if (res.ok) {
               alert("Review submitted!");
               // potentially trigger a refresh or update UI state
+              if (onRefresh) onRefresh();
           } else {
               res.text().then(t => alert("Failed to submit: " + t));
           }
