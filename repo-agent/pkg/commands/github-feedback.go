@@ -28,6 +28,7 @@ type GithubFeedbackCommand struct {
 	InPod           bool
 	WorkspaceDir    string
 	TaskDir         string
+	Model           string
 
 	// loaded objects
 	issue         *github.Issue
@@ -72,6 +73,7 @@ func BuildGithubFeedbackCommand() *cobra.Command {
 	cmd.Flags().StringVar(&c.GithubUserLogin, "github-user-login", os.Getenv("GITHUB_USER_LOGIN"), "Github user login")
 	cmd.Flags().StringVar(&c.GithubUserEmail, "github-user-email", os.Getenv("GITHUB_USER_EMAIL"), "Github user email")
 	cmd.Flags().StringVar(&c.GithubUserName, "github-user-name", os.Getenv("GITHUB_USER_NAME"), "Github user name")
+	cmd.Flags().StringVar(&c.Model, "model", os.Getenv("MODEL"), "Model to use")
 	cmd.Flags().BoolVar(&c.InPod, "in-pod", false, "Whether running inside the pod")
 
 	return cmd
@@ -90,6 +92,10 @@ func (c *GithubFeedbackCommand) InitDefaults() {
 	}
 	if c.TaskDir == "" {
 		c.TaskDir = c.WorkspaceDir
+	}
+
+	if c.Model == "" {
+		c.Model = "gemini-3-pro-preview"
 	}
 
 	if c.PullRequestID == 0 {
@@ -260,6 +266,7 @@ func (c *GithubFeedbackCommand) Run(ctx context.Context) error {
 		OldPullRequestReviews: oldPrReviews,
 		PromptFile:            promptPath,
 		User:                  c.user,
+		Model:                 c.Model,
 	}
 
 	apikey, err := GetGeminiAPIKey(c.sandboxID)

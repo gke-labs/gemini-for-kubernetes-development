@@ -10,8 +10,11 @@ import (
 var _ Task = &TriageIssueModel{}
 
 type TriageIssueModel struct {
-	Issue      *github.Issue
-	PromptFile string
+	Issue         *github.Issue
+	IssueComments []github.IssueComment
+	User          *github.User
+	PromptFile    string
+	Model         string
 }
 
 func (m *TriageIssueModel) Name() string {

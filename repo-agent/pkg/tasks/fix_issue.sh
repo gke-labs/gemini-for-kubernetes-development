@@ -123,7 +123,7 @@ function runGemini {
     pushd "/workspaces/${REPO_NAME}" > /dev/null
     set +x
     export GEMINI_API_KEY="${GEMINI_API_KEY}"
-    gemini --yolo --model gemini-3-pro-preview < ${PROMPT_FILE}
+    gemini --yolo --model {{ .Model }} < ${PROMPT_FILE}
     set -x
     popd > /dev/null
 }
