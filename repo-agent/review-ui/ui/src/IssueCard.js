@@ -243,9 +243,15 @@ function IssueCard({
           )}
           {getSandboxStatusClass(issue) === 'green' ? (
             <div style={{display: 'flex', alignItems: 'center', gap: '5px'}}>
-              <a href={`/sandbox/${namespace}/${issue.sandbox}/`} target="_blank" rel="noopener noreferrer" className={`pr-sandbox ${getSandboxStatusClass(issue)}`}>
+              {issue.agentState === 'provisioning' ? (
+                <span className="pr-sandbox" style={{backgroundColor: '#2196F3', color: 'white', cursor: 'default'}}>
+                  Sandbox Provisioning
+                </span>
+              ) : (
+                <a href={`/sandbox/${namespace}/${issue.sandbox}/`} target="_blank" rel="noopener noreferrer" className={`pr-sandbox ${getSandboxStatusClass(issue)}`}>
                   Sandbox Active
-              </a>
+                </a>
+              )}
                <button className="btn btn-sm pr-sandbox yellow" style={{padding: '4px 10px', fontSize: '14px'}} onClick={(e) => { e.stopPropagation(); handleScaleDown(issue.id); }} title="Scale Down">
                 &#9646;&#9646;
               </button>
