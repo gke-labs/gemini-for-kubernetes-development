@@ -248,7 +248,7 @@ func (c *ReviewCommand) Run(ctx context.Context) error {
 			return fmt.Errorf("%s", errStr)
 		}
 
-		diffSize := getDiffSize(diffFiles)
+		diffSize := getDiffSize(repoDir, diffFiles)
 		diffSizeLabel = fmt.Sprintf("size/%s", diffSize)
 		log.Info("Adding diff size label", "label", diffSizeLabel)
 		// Initialize accumulatedAgentOutput with the size label
@@ -421,6 +421,13 @@ func (c *ReviewCommand) Run(ctx context.Context) error {
 				if newComment == nil || newComment.Path == nil || newComment.Line == nil || newComment.Body == nil {
 					continue
 				}
+				cleanPath := strings.TrimPrefix(*newComment.Path, "b/")
+
+				if IsGeneratedFile(repoDir, cleanPath) {
+					log.Info("Filtering out comment on generated file", "file", *newComment.Path)
+					continue
+				}
+
 				if !isDuplicateCommentExact(newComment, existingComments, accumulatedAgentOutput.Review.Comments) {
 					accumulatedAgentOutput.Review.Comments = append(accumulatedAgentOutput.Review.Comments, newComment)
 				} else {
@@ -609,9 +616,16 @@ var sizeToComments = map[string]int{
 }
 
 // getDiffSize categorizes the diff based on the total number of lines changed.
-func getDiffSize(files []*gitdiff.File) string {
+func getDiffSize(repoDir string, files []*gitdiff.File) string {
 	var totalLinesChanged int64
 	for _, file := range files {
+		// Git diffs usually use a/ and b/ prefixes
+		path := strings.TrimPrefix(file.NewName, "b/")
+
+		if IsGeneratedFile(repoDir, path) {
+			continue
+		}
+
 		for _, fragment := range file.TextFragments {
 			totalLinesChanged += fragment.LinesAdded
 			totalLinesChanged += fragment.LinesDeleted
