@@ -79,7 +79,7 @@ EOF
 function runGemini {
     echo "Running runGemini..."
     echo "running gemini in yolo mode"
-    (cd "/workspaces/${REPO_NAME}" && export GEMINI_API_KEY="${GEMINI_API_KEY}" && gemini --yolo --model gemini-3-pro-preview < ${PROMPT_FILE})
+    (cd "/workspaces/${REPO_NAME}" && export GEMINI_API_KEY="${GEMINI_API_KEY}" && gemini --yolo --model {{ .Model }} < ${PROMPT_FILE})
 }
 
 # Main execution
