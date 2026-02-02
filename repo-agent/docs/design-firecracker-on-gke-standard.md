@@ -130,6 +130,7 @@ Once the Pod is running, the container process is actually running inside a dedi
 *   **Storage**: Kind uses overlayfs. Firecracker's root filesystem (and the passed-through container filesystem) needs to support this. Kata Containers 2.x/3.x handles storage passthrough efficiently (typically using virtio-fs), which generally supports standard operations.
 *   **Networking**: Kind creates a docker network. This is contained entirely inside the Firecracker VM. The "Host" for Kind is the Firecracker VM, not the GKE Node.
 *   **Performance**: There is overhead for the double-nesting (GKE Node VM -> Firecracker VM -> Kind Docker Containers). N2 CPUs are performant, but expect some latency.
+*   **KVM Passthrough**: Kind uses container-based virtualization (namespaces/cgroups), not hardware virtualization. Therefore, it does **not** require `/dev/kvm` to be passed through to the Firecracker guest. The `/dev/kvm` device is utilized by the GKE Node to spawn the Firecracker VM itself.
 
 ## Architecture Summary
 
