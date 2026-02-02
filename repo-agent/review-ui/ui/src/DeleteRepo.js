@@ -53,14 +53,14 @@ function DeleteRepo({ repo, onRepoDeleted }) {
 
     return (
         <div className="delete-repo-confirmation" style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '10px' }}>
-            {error && <span style={{ color: 'red' }}>{error}</span>}
+            {error && <span style={{ color: 'var(--text-danger)' }}>{error}</span>}
             <span>Type <strong>{repo.name}</strong> to confirm:</span>
             <input
                 type="text"
                 value={confirmationName}
                 onChange={(e) => setConfirmationName(e.target.value)}
                 placeholder={repo.name}
-                style={{ padding: '5px', borderRadius: '4px', border: '1px solid #ccc' }}
+                style={{ padding: '5px', borderRadius: '4px', border: '1px solid var(--border-color)' }}
             />
             <button
                 className="btn btn-delete"

@@ -174,7 +174,7 @@ function UpdateRepo({ repo, onCancel, onRepoUpdated, onRepoDeleted }) {
                     onClick={() => setActiveTab('instructions')}
                 >
                     User Instructions
-                    {hasDraft && <span style={{marginLeft: '5px', color: '#orange'}}>●</span>} 
+                    {hasDraft && <span style={{marginLeft: '5px', color: 'var(--status-yellow)'}}>●</span>} 
                 </button>
             </div>
 
@@ -235,20 +235,20 @@ function UpdateRepo({ repo, onCancel, onRepoUpdated, onRepoDeleted }) {
                         </div>
 
                         {hasDraft && (
-                            <div style={{flex: 1, borderTop: '1px solid #eee', paddingTop: '20px'}}>
-                                <h3 style={{color: '#d9534f'}}>Proposed Draft</h3>
+                            <div style={{flex: 1, borderTop: '1px solid var(--border-color)', paddingTop: '20px'}}>
+                                <h3 style={{color: 'var(--text-danger)'}}>Proposed Draft</h3>
                                 <textarea
                                     value={draftInstructions}
                                     onChange={(e) => setDraftInstructions(e.target.value)}
                                     className="yaml-editor"
                                     rows={20}
                                     disabled={isInstructionsLoading}
-                                    style={{fontFamily: 'monospace', width: '100%', whiteSpace: 'pre', border: '1px solid #d9534f'}}
+                                    style={{fontFamily: 'monospace', width: '100%', whiteSpace: 'pre', border: '1px solid var(--text-danger)'}}
                                 />
                                 <div className="form-actions" style={{marginTop: '10px', display: 'flex', gap: '10px', flexWrap: 'wrap'}}>
                                     <button 
                                         className="btn btn-submit" 
-                                        style={{backgroundColor: '#5cb85c'}}
+                                        style={{backgroundColor: 'var(--status-green)'}}
                                         onClick={() => {
                                             // Copy draft to current then publish
                                             setCurrentInstructions(draftInstructions);
@@ -294,7 +294,7 @@ function UpdateRepo({ repo, onCancel, onRepoUpdated, onRepoDeleted }) {
                             </div>
                         )}
                     </div>
-                     <div className="form-actions" style={{marginTop: '20px', borderTop: '1px solid #eee', paddingTop: '20px'}}>
+                     <div className="form-actions" style={{marginTop: '20px', borderTop: '1px solid var(--border-color)', paddingTop: '20px'}}>
                         <button type="button" className="btn" onClick={onCancel} disabled={isInstructionsLoading}>
                             Back / Cancel
                         </button>
@@ -302,12 +302,12 @@ function UpdateRepo({ repo, onCancel, onRepoUpdated, onRepoDeleted }) {
                 </div>
             )}
             
-            <div style={{marginTop: '40px', borderTop: '1px solid #eee', paddingTop: '20px'}}>
-                <h3 style={{color: '#d9534f'}}>Danger Zone</h3>
-                <div style={{border: '1px solid #d9534f', padding: '15px', borderRadius: '5px', display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+            <div style={{marginTop: '40px', borderTop: '1px solid var(--border-color)', paddingTop: '20px'}}>
+                <h3>Danger Zone</h3>
+                <div className="danger-zone">
                     <div>
                         <strong>Delete repowatch</strong>
-                        <p style={{margin: '5px 0 0 0', fontSize: '0.9em', color: '#666'}}>
+                        <p style={{margin: '5px 0 0 0', fontSize: '0.9em', color: 'var(--text-secondary)'}}>
                             Unsubmitted reviews would be deleted. You can always add the repo again.
                         </p>
                     </div>
