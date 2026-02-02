@@ -502,7 +502,7 @@ func (s *Server) createIssueTask(c *gin.Context) {
 		params["AGENT_PROMPT"] = payload.Prompt
 	}
 
-	err := s.K8sManager.CreateSandboxTask(c.Request.Context(), namespace, sandboxName, taskType, params)
+	err := s.K8sManager.CreateSandboxTask(c.Request.Context(), namespace, sandboxName, "IssueSandbox", taskType, params)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create task", "details": err.Error()})
 		return
