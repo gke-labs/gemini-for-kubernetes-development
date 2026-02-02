@@ -21,6 +21,7 @@ type GithubTriageIssueCommand struct {
 	InPod           bool
 	WorkspaceDir    string
 	TaskDir         string
+	Model           string
 	GithubUserToken string
 
 	// loaded objects
@@ -53,6 +54,7 @@ func BuildGithubTriageIssueCommand() *cobra.Command {
 
 	cmd.Flags().StringVar(&triageCommand.URL, "issue-url", os.Getenv("ISSUE_URL"), "GitHub issue URL")
 	cmd.Flags().StringVar(&triageCommand.AgentName, "agent-name", os.Getenv("AGENT_NAME"), "Agent name")
+	cmd.Flags().StringVar(&triageCommand.Model, "model", os.Getenv("MODEL"), "Model to use")
 	cmd.Flags().BoolVar(&triageCommand.InPod, "in-pod", false, "Whether running inside the pod")
 	return cmd
 }
@@ -70,6 +72,10 @@ func (c *GithubTriageIssueCommand) InitDefaults() {
 	}
 	if c.TaskDir == "" {
 		c.TaskDir = c.WorkspaceDir
+	}
+
+	if c.Model == "" {
+		c.Model = "gemini-3-pro-preview"
 	}
 }
 
@@ -135,6 +141,7 @@ func (c *GithubTriageIssueCommand) Run(ctx context.Context) error {
 	task := tasks.TriageIssueModel{
 		Issue:      c.issue,
 		PromptFile: promptPath,
+		Model:      c.Model,
 	}
 
 	apikey, err := GetGeminiAPIKey(c.sandboxID)
