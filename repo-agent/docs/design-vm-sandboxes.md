@@ -102,4 +102,4 @@ To support these options, we can extend the `ReviewSandbox` / `IssueSandbox` CRD
     *   Create a prototype controller that spins up a GCE instance when `isolationStrategy: VM` is selected, potentially using a sidecar in the cluster to proxy traffic to the VM.
 4.  **Explore Firecracker on Standard GKE (Future)**:
     *   Investigate integrating a Firecracker-based runtime (like `firecracker-containerd` or Kata Containers with Firecracker shim) for GKE Standard users.
-    *   This would require validating that the node pool has nested virtualization enabled.
+    *   See [Detailed Design: Firecracker & Kind on GKE Standard](design-firecracker-on-gke-standard.md) for a deep dive into the implementation steps.
