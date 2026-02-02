@@ -757,6 +757,19 @@ func (s *Server) getRepos(c *gin.Context) {
 			}
 		}
 
+		// Extract ExcludeIssues
+		if excludeIssuesSlice, found, err := unstructured.NestedSlice(repoWatch.Object, "spec", "issue", "excludeIssues"); err == nil && found {
+			var excludeIssues []int64
+			for _, v := range excludeIssuesSlice {
+				if i, ok := v.(int64); ok {
+					excludeIssues = append(excludeIssues, i)
+				} else if i, ok := v.(int); ok {
+					excludeIssues = append(excludeIssues, int64(i))
+				}
+			}
+			repo.ExcludeIssues = excludeIssues
+		}
+
 		repos = append(repos, repo)
 	}
 
