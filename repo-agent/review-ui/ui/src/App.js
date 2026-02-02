@@ -701,6 +701,7 @@ function App() {
                     body: JSON.stringify({ excludeIssue: parseInt(issueId), handlerName: handlerName })
             }).then(res2 => {
                 if (res2.ok) {
+                    fetchRepos();
                 } else {
                     console.error("Sandbox deleted but failed to exclude Issue");
                 }
