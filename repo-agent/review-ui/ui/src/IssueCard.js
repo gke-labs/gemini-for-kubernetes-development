@@ -105,14 +105,14 @@ function TaskIssueCard({
     };
 
     return (
-        <div style={{border: '1px solid #ddd', borderRadius: '5px', margin: '10px 0', backgroundColor: '#f9f9f9'}}>
+        <div style={{border: '1px solid var(--border-color)', borderRadius: '5px', margin: '10px 0', backgroundColor: 'var(--bg-review-section)'}}>
             <div 
-                style={{padding: '10px', borderBottom: '1px solid #ddd', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', backgroundColor: '#eee'}}
+                style={{padding: '10px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', backgroundColor: 'var(--bg-hover)'}}
                 onClick={() => setIsCollapsed(!isCollapsed)}
             >
                 <div>
                     <strong>{task.type.toUpperCase()}</strong> {/* Display generic name like TRIAGE */}
-                    <span style={{ fontSize: 'small', color: '#555', marginLeft: '10px' }}>
+                    <span style={{ fontSize: 'small', color: 'var(--text-secondary)', marginLeft: '10px' }}>
                         {new Date(task.creationTimestamp).toLocaleString()}
                     </span>
                 </div>
@@ -216,7 +216,7 @@ function IssueCard({
         <h3>
           <a href={issue.htmlURL} target="_blank" rel="noopener noreferrer">{issue.title} (Issue #{issue.id})</a>
           {!isMainView && (
-            <span style={{ marginLeft: '10px', fontSize: 'small', color: '#555' }}>
+            <span style={{ marginLeft: '10px', fontSize: 'small', color: 'var(--text-secondary)' }}>
                 {isCollapsed ? 'click to expand' : 'click to collapse'}
             </span>
           )}
@@ -228,12 +228,12 @@ function IssueCard({
                 <span
                   key={index}
                   style={{
-                    backgroundColor: '#eee',
-                    color: '#333',
+                    backgroundColor: 'var(--bg-secondary)',
+                    color: 'var(--text-primary)',
                     padding: '2px 6px',
                     borderRadius: '4px',
                     fontSize: 'small',
-                    border: '1px solid #ddd'
+                    border: '1px solid var(--border-color)'
                   }}
                 >
                   {label}
@@ -278,7 +278,7 @@ function IssueCard({
                 <p>No tasks found. Tasks should appear shortly if the sandbox is active.</p>
             )}
             
-            <div style={{padding: '10px', borderTop: '1px solid #eee', marginTop: '10px'}}>
+            <div style={{padding: '10px', borderTop: '1px solid var(--border-color)', marginTop: '10px'}}>
                 <div style={{display: 'flex', gap: '10px'}}>
                     <button className="btn" onClick={() => handleCreateTask('triage-issue')}>Triage</button>
                     <button className="btn" onClick={() => {

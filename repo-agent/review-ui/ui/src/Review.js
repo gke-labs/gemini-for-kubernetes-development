@@ -185,7 +185,7 @@ function Review({
         <div className="review-sidebar">
             <div className="sidebar-section">
                 {activeList.map(renderSidebarItem)}
-                <div className="sidebar-item add-pr" onClick={() => handleAddPR()} style={{textAlign: 'center', cursor: 'pointer', color: '#555', border: '1px dashed #ccc'}}>
+                <div className="sidebar-item add-pr" onClick={() => handleAddPR()} style={{textAlign: 'center', cursor: 'pointer', color: 'var(--text-secondary)', border: '1px dashed var(--border-color)'}}>
                     + Add PR
                 </div>
             </div>
