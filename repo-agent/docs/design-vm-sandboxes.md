@@ -99,7 +99,8 @@ To support these options, we can extend the `ReviewSandbox` / `IssueSandbox` CRD
 2.  **Implement `gVisor` support**:
     *   Simply map `isolationStrategy: gVisor` to `runtimeClassName: gvisor` in the generated Pod.
 3.  **Explore `VM` support (Future)**:
-    *   Create a prototype controller that spins up a GCE instance when `isolationStrategy: VM` is selected, potentially using a sidecar in the cluster to proxy traffic to the VM.
+    *   Create a prototype controller that spins up a GCE instance when `isolationStrategy: VM` is selected.
+    *   See [Design Note: Native GCP VM Sandboxes](design-gcp-vm-sandboxes.md) for a comparison of using Cluster API vs. a Custom Controller.
 4.  **Explore Firecracker on Standard GKE (Future)**:
     *   Investigate integrating a Firecracker-based runtime (like `firecracker-containerd` or Kata Containers with Firecracker shim) for GKE Standard users.
     *   See [Detailed Design: Firecracker & Kind on GKE Standard](design-firecracker-on-gke-standard.md) for a deep dive into the implementation steps.
