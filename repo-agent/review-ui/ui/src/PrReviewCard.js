@@ -422,19 +422,19 @@ function TaskReviewCard({
                         {fileComments.length}
                       </span>
                     )}
-                    <span style={{ marginLeft: '10px', fontSize: 'small', color: '#555' }}>
+                    <span style={{ marginLeft: '10px', fontSize: 'small', color: 'var(--text-secondary)' }}>
                       {isFileCollapsed ? 'click to expand' : 'click to collapse'}
                     </span>
                   </div>
                   {!isFileCollapsed && (
                     <div onDragOver={handleDragOverFile} onDrop={handleDrop} onDragLeave={handleDragLeaveFile}>
                       {unplacedComments.length > 0 && (
-                        <div className="diff-widget" style={{padding: '10px', borderBottom: '1px solid #ddd'}}>
+                        <div className="diff-widget" style={{padding: '10px', borderBottom: '1px solid var(--border-color)'}}>
                           <h6>Comments on lines not shown in diff or file-level comments</h6>
                           {unplacedComments.map(comment => (
                             <div
                               key={comment.index}
-                              style={{ borderTop: '1px solid #eee', paddingTop: '5px', marginTop: '5px', cursor: isSubmitted ? 'default' : 'move' }}
+                              style={{ borderTop: '1px solid var(--border-color)', paddingTop: '5px', marginTop: '5px', cursor: isSubmitted ? 'default' : 'move' }}
                               draggable={!isSubmitted}
                               onDragStart={e => {
                                   if (isSubmitted) return;
@@ -444,12 +444,12 @@ function TaskReviewCard({
                             >
                               {isSubmitted ? (
                                 <>
-                                  {comment.line && <p style={{fontSize: 'small', color: '#555', marginBottom: '5px'}}>Line: {comment.line} ({comment.side || 'RIGHT'})</p>}
+                                  {comment.line && <p style={{fontSize: 'small', color: 'var(--text-secondary)', marginBottom: '5px'}}>Line: {comment.line} ({comment.side || 'RIGHT'})</p>}
                                   <pre className="review-pre">{comment.body}</pre>
                                 </>
                               ) : (
                                 <>
-                                  {comment.line && <p style={{fontSize: 'small', color: '#555', marginBottom: '5px'}}>Line: {comment.line} ({comment.side || 'RIGHT'})</p>}
+                                  {comment.line && <p style={{fontSize: 'small', color: 'var(--text-secondary)', marginBottom: '5px'}}>Line: {comment.line} ({comment.side || 'RIGHT'})</p>}
                                   <textarea
                                     className="review-textarea"
                                     value={comment.body || ''}
@@ -475,14 +475,14 @@ function TaskReviewCard({
       };
 
     return (
-        <div style={{border: '1px solid #ddd', borderRadius: '5px', margin: '10px 0', backgroundColor: '#f9f9f9'}}>
+        <div style={{border: '1px solid var(--border-color)', borderRadius: '5px', margin: '10px 0', backgroundColor: 'var(--bg-review-section)'}}>
             <div 
-                style={{padding: '10px', borderBottom: '1px solid #ddd', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', backgroundColor: '#eee'}}
+                style={{padding: '10px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', backgroundColor: 'var(--bg-hover)'}}
                 onClick={() => setTaskCollapsed(!taskCollapsed)}
             >
                 <div>
                     <strong>{task.type.toUpperCase()}</strong> - {new Date(task.creationTimestamp).toLocaleString()}
-                    <span style={{ marginLeft: '10px', fontSize: 'small', color: '#555' }}>
+                    <span style={{ marginLeft: '10px', fontSize: 'small', color: 'var(--text-secondary)' }}>
                         {taskCollapsed ? 'click to expand' : 'click to collapse'}
                     </span>
                 </div>
@@ -586,7 +586,7 @@ function TaskReviewCard({
                             Go to review
                         </a>
                         )}
-                        <button className="btn btn-submit" style={{marginLeft: '10px', backgroundColor: '#6c757d'}} onClick={() => handleExportCurl(prId, setCurlCommand)} disabled={isSubmitted}>
+                        <button className="btn btn-submit" style={{marginLeft: '10px', backgroundColor: 'var(--status-grey)'}} onClick={() => handleExportCurl(prId, setCurlCommand)} disabled={isSubmitted}>
                         Export Curl Command
                         </button>
                     </div>
@@ -781,7 +781,7 @@ function PrReviewCard({
         <h3>
           <a href={pr.htmlURL} target="_blank" rel="noopener noreferrer">{pr.title} (PR #{pr.id})</a>
           {!isMainView && (
-            <span style={{ marginLeft: '10px', fontSize: 'small', color: '#555' }}>
+            <span style={{ marginLeft: '10px', fontSize: 'small', color: 'var(--text-secondary)' }}>
               {collapsedReviews[pr.id] ? 'click to expand' : 'click to collapse'}
             </span>
           )}
@@ -793,12 +793,12 @@ function PrReviewCard({
                 <span
                   key={index}
                   style={{
-                    backgroundColor: '#eee',
-                    color: '#333',
+                    backgroundColor: 'var(--bg-secondary)',
+                    color: 'var(--text-primary)',
                     padding: '2px 6px',
                     borderRadius: '4px',
                     fontSize: 'small',
-                    border: '1px solid #ddd'
+                    border: '1px solid var(--border-color)'
                   }}
                 >
                   {label}
@@ -870,11 +870,11 @@ function PrReviewCard({
             ))}
 
             {!isSubmitted && (
-                <div style={{padding: '10px', borderTop: '1px solid #eee', marginTop: '10px'}}>
+                <div style={{padding: '10px', borderTop: '1px solid var(--border-color)', marginTop: '10px'}}>
                     {!showNewTaskForm ? (
                         <button className="btn" onClick={() => setShowNewTaskForm(true)}>Review Again</button>
                     ) : (
-                        <div className="new-task-form" style={{padding: '10px', backgroundColor: '#f0f0f0', borderRadius: '5px'}}>
+                        <div className="new-task-form" style={{padding: '10px', backgroundColor: 'var(--bg-secondary)', borderRadius: '5px'}}>
                             <h4>Request New Review Task</h4>
                             <textarea 
                                 className="review-textarea"
@@ -885,7 +885,7 @@ function PrReviewCard({
                             />
                             <div>
                                 <button className="btn btn-submit" onClick={handleCreateTask}>Start Task</button>
-                                <button className="btn" style={{marginLeft: '10px', backgroundColor: '#6c757d'}} onClick={() => setShowNewTaskForm(false)}>Cancel</button>
+                                <button className="btn" style={{marginLeft: '10px', backgroundColor: 'var(--status-grey)'}} onClick={() => setShowNewTaskForm(false)}>Cancel</button>
                             </div>
                         </div>
                     )}
