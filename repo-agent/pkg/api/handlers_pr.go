@@ -439,7 +439,7 @@ func (s *Server) createPRTask(c *gin.Context) {
 		"AGENT_PROMPT": prompt,
 	}
 
-	err := s.K8sManager.CreateSandboxTask(c.Request.Context(), namespace, sandboxName, "review", params)
+	err := s.K8sManager.CreateSandboxTask(c.Request.Context(), namespace, sandboxName, "ReviewSandbox", "review", params)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create task", "details": err.Error()})
 		return
