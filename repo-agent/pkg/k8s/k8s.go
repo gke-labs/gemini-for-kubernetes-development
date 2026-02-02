@@ -588,11 +588,36 @@ func (m *Manager) UpdateSandboxTaskUserDraft(ctx context.Context, namespace, tas
 	return nil
 }
 
-func (m *Manager) CreateSandboxTask(ctx context.Context, namespace, sandboxName, taskType string, params map[string]string) error {
+func (m *Manager) CreateSandboxTask(ctx context.Context, namespace, sandboxName, sandboxKind, taskType string, params map[string]string) error {
 	gvr := schema.GroupVersionResource{
 		Group:    "custom.agents.x-k8s.io",
 		Version:  "v1alpha1",
 		Resource: "sandboxtasks",
+	}
+
+	// Determine the GVR for the sandbox owner
+	var ownerGVR schema.GroupVersionResource
+	switch sandboxKind {
+	case "ReviewSandbox":
+		ownerGVR = schema.GroupVersionResource{
+			Group:    "custom.agents.x-k8s.io",
+			Version:  "v1alpha1",
+			Resource: "reviewsandboxes",
+		}
+	case "IssueSandbox":
+		ownerGVR = schema.GroupVersionResource{
+			Group:    "custom.agents.x-k8s.io",
+			Version:  "v1alpha1",
+			Resource: "issuesandboxes",
+		}
+	default:
+		return fmt.Errorf("unknown sandbox kind: %s", sandboxKind)
+	}
+
+	// Fetch the sandbox to get its UID
+	sandbox, err := m.Client.Resource(ownerGVR).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to get sandbox %s: %w", sandboxName, err)
 	}
 
 	// Generate a name
@@ -608,6 +633,13 @@ func (m *Manager) CreateSandboxTask(ctx context.Context, namespace, sandboxName,
 			Namespace: namespace,
 			Labels: map[string]string{
 				"sandbox.gemini.google.com/sandbox-name": sandboxName,
+			},
+			OwnerReferences: []v1.OwnerReference{
+				*v1.NewControllerRef(sandbox, schema.GroupVersionKind{
+					Group:   "custom.agents.x-k8s.io",
+					Version: "v1alpha1",
+					Kind:    sandboxKind,
+				}),
 			},
 		},
 		Spec: sandboxtaskv1alpha1.SandboxTaskSpec{
