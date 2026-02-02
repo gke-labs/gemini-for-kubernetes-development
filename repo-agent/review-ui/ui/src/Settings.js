@@ -4,18 +4,30 @@ function Settings({ onBack }) {
     const [githubPat, setGithubPat] = useState('');
     const [geminiKey, setGeminiKey] = useState('');
     const [anthropicKey, setAnthropicKey] = useState('');
-    const [status, setStatus] = useState({ github_pat_set: false, gemini_api_key_set: false, anthropic_api_key_set: false });
+    const [geminiProjectID, setGeminiProjectID] = useState('');
+    const [status, setStatus] = useState({ 
+        github_pat_set: false, 
+        gemini_api_key_set: false, 
+        anthropic_api_key_set: false,
+        gemini_project_id: '' 
+    });
     const [isLoading, setIsLoading] = useState(true);
     const [message, setMessage] = useState({ text: '', type: '' }); // type: 'success' or 'error'
     const [versionInfo, setVersionInfo] = useState({ version: '...', commit: '...' });
     const [authStatus, setAuthStatus] = useState(null);
     const [targetNamespace, setTargetNamespace] = useState('');
+    const [quotaUsage, setQuotaUsage] = useState(null);
+    const [loadingQuota, setLoadingQuota] = useState(false);
+    const [quotaError, setQuotaError] = useState(null);
 
     useEffect(() => {
         fetch('/api/settings')
             .then(res => res.json())
             .then(data => {
                 setStatus(data);
+                if (data.gemini_project_id) {
+                    setGeminiProjectID(data.gemini_project_id);
+                }
                 setIsLoading(false);
             })
             .catch(err => {
@@ -52,6 +64,9 @@ function Settings({ onBack }) {
             }
             payload.anthropic_api_key = trimmedAnthropicKey;
         }
+        if (geminiProjectID !== status.gemini_project_id) {
+            payload.gemini_project_id = geminiProjectID.trim();
+        }
 
         if (Object.keys(payload).length === 0) {
              setMessage({ text: 'Nothing to update.', type: 'info' });
@@ -70,7 +85,10 @@ function Settings({ onBack }) {
                 setGeminiKey('');
                 setAnthropicKey('');
                 // Refresh status
-                fetch('/api/settings').then(r => r.json()).then(setStatus);
+                fetch('/api/settings').then(r => r.json()).then(data => {
+                    setStatus(data);
+                    if (data.gemini_project_id) setGeminiProjectID(data.gemini_project_id);
+                });
             } else {
                 throw new Error('Failed to update settings');
             }
@@ -107,6 +125,28 @@ function Settings({ onBack }) {
              console.error(err);
              setMessage({ text: 'Error switching namespace.', type: 'error' });
         });
+    };
+
+    const handleCheckQuota = () => {
+        setLoadingQuota(true);
+        setQuotaError(null);
+        setQuotaUsage(null);
+        fetch('/api/quota')
+            .then(async res => {
+                if (!res.ok) {
+                    const data = await res.json();
+                    throw new Error(data.error || 'Failed to check quota');
+                }
+                return res.json();
+            })
+            .then(data => {
+                setQuotaUsage(data);
+                setLoadingQuota(false);
+            })
+            .catch(err => {
+                setQuotaError(err.message);
+                setLoadingQuota(false);
+            });
     };
 
     const handleClearPat = () => {
@@ -253,11 +293,63 @@ function Settings({ onBack }) {
                     </p>
                 </div>
 
+                <div className="form-group">
+                    <label htmlFor="geminiProjectID">Google Cloud Project ID:</label>
+                    <div className="input-status-wrapper">
+                        <input
+                            type="text"
+                            id="geminiProjectID"
+                            value={geminiProjectID}
+                            onChange={(e) => setGeminiProjectID(e.target.value)}
+                            placeholder="e.g. my-gcp-project-id"
+                        />
+                    </div>
+                    <small>Required for checking quota usage.</small>
+                </div>
+
                 <div className="form-actions">
                     <button type="submit" className="btn btn-submit">Save Settings</button>
                     <button type="button" className="btn" onClick={onBack}>Back to Dashboard</button>
                 </div>
             </form>
+
+            <div className="quota-section" style={{marginTop: '30px', borderTop: '1px solid #ccc', paddingTop: '20px'}}>
+                <h3>Quota Usage</h3>
+                <p>Check your Gemini API quota usage (requests per day).</p>
+                <button className="btn" onClick={handleCheckQuota} disabled={loadingQuota}>
+                    {loadingQuota ? 'Checking...' : 'Check Quota'}
+                </button>
+                
+                {quotaError && <div className="message error" style={{marginTop: '10px'}}>{quotaError}</div>}
+                
+                {quotaUsage && (
+                    <div className="quota-results" style={{marginTop: '15px'}}>
+                        {quotaUsage.length === 0 ? (
+                            <p>No quota usage found for the configured project/timeframe.</p>
+                        ) : (
+                            <table className="quota-table" style={{width: '100%', borderCollapse: 'collapse'}}>
+                                <thead>
+                                    <tr style={{textAlign: 'left', borderBottom: '1px solid #ddd'}}>
+                                        <th style={{padding: '8px'}}>Model</th>
+                                        <th style={{padding: '8px'}}>Usage (Requests)</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {quotaUsage.map((usage, index) => (
+                                        <tr key={index} style={{borderBottom: '1px solid #eee'}}>
+                                            <td style={{padding: '8px'}}>{usage.model}</td>
+                                            <td style={{padding: '8px'}}>{usage.total}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        )}
+                        <p style={{fontSize: '0.9em', color: '#666', marginTop: '10px'}}>
+                            Note: Quota usage resets at midnight Pacific Time.
+                        </p>
+                    </div>
+                )}
+            </div>
             
             {authStatus && authStatus.isAdmin && (
                 <div className="admin-section" style={{marginTop: '40px', borderTop: '1px solid #eee', paddingTop: '20px'}}>

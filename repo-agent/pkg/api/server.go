@@ -64,6 +64,8 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 		api.GET("/settings", s.getSettings)
 		api.POST("/settings", s.updateSettings)
 
+		api.GET("/quota", s.getQuota)
+
 		api.GET("/repo/:repo/prs", s.getPRs)
 		api.GET("/repo/:repo/prs/:id/tasks", s.getPRTasks)
 		api.GET("/repo/:repo/prs/:id/tasks/:taskID/logs", s.getTaskLogs)

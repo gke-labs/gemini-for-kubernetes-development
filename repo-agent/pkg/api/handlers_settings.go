@@ -42,6 +42,9 @@ func (s *Server) getSettings(c *gin.Context) {
 		if val, ok := sec.Data["gemini"]; ok && len(val) > 0 {
 			settings["gemini_api_key_set"] = true
 		}
+		if val, ok := sec.Data["project_id"]; ok && len(val) > 0 {
+			settings["gemini_project_id"] = string(val)
+		}
 	}
 	if sec, err := s.K8sManager.Clientset.CoreV1().Secrets(namespace).Get(c.Request.Context(), k8s.ClaudeSecretName, v1.GetOptions{}); err == nil {
 		if val, ok := sec.Data["claude"]; ok && len(val) > 0 {
@@ -57,6 +60,7 @@ func (s *Server) updateSettings(c *gin.Context) {
 		GithubPAT       *string `json:"github_pat"`        // Use pointer to distinguish between empty string and missing field
 		GeminiAPIKey    *string `json:"gemini_api_key"`    // Use pointer to distinguish between empty string and missing field
 		AnthropicAPIKey *string `json:"anthropic_api_key"` // Use pointer to distinguish between empty string and missing field
+		GeminiProjectID *string `json:"gemini_project_id"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -120,6 +124,22 @@ func (s *Server) updateSettings(c *gin.Context) {
 		if err != nil {
 			klog.Errorf("Failed to update Anthropic API Key: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update Anthropic API Key"})
+			return
+		}
+	}
+
+	if payload.GeminiProjectID != nil {
+		projectID := *payload.GeminiProjectID
+		var data map[string][]byte
+		if projectID == "" {
+			data = map[string][]byte{"project_id": nil}
+		} else {
+			data = map[string][]byte{"project_id": []byte(projectID)}
+		}
+		err := s.K8sManager.UpdateSecret(c.Request.Context(), namespace, k8s.GeminiSecretName, data, nil)
+		if err != nil {
+			klog.Infof("Failed to update Gemini Project ID: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update Gemini Project ID"})
 			return
 		}
 	}
