@@ -25,6 +25,7 @@ def run_command(cmd, shell=False, check=True):
 def main():
     parser = argparse.ArgumentParser(description="Scale down Repowatch and clean up Sandbox resources.")
     parser.add_argument("--apply", action="store_true", help="Apply changes to the cluster. Defaults to dry-run if not specified.")
+    parser.add_argument("--types", type=str, help="Comma-separated list of sandbox types to clean up. Defaults to all types.")
     args = parser.parse_args()
 
     if not args.apply:
@@ -42,9 +43,16 @@ def main():
         print(f"Warning: Failed to scale down repowatch-controller: {e}")
         print("Continuing...")
 
-    resource_types = ["issuesandboxes", "reviewsandboxes", "devsandboxes", "sandboxes"]
+    all_resource_types = ["issuesandboxes", "reviewsandboxes", "devsandboxes", "sandboxes"]
     
-    print("--- 2. Deleting Sandbox Resources ---")
+    if args.types:
+        resource_types = [t.strip() for t in args.types.split(",") if t.strip()]
+        cleaning_all = False
+    else:
+        resource_types = all_resource_types
+        cleaning_all = True
+    
+    print(f"--- 2. Deleting Sandbox Resources ({', '.join(resource_types)}) ---")
     existing_types = []
     # Always check what exists, safe read-only operation
     for r in resource_types:
@@ -133,24 +141,27 @@ def main():
             except:
                 pass
 
-    print("--- 4. Ensuring Pods are deleted ---")
-    labels = ["sandbox.gemini.google.com/type", "sandbox"]
-    
-    for label in labels:
-        try:
-            out = run_command(["kubectl", "get", "pods", "-A", "-l", label, "--no-headers"], check=False)
-            if out:
-                cmd = ["kubectl", "delete", "pods", "-A", "-l", label, "--wait=false"]
-                if args.apply:
-                    print(f"Found orphaned pods with label {label}. Deleting...")
-                    run_command(cmd)
-                    print(f"Delete command issued for orphaned pods with label {label}.")
+    if cleaning_all:
+        print("--- 4. Ensuring Pods are deleted ---")
+        labels = ["sandbox.gemini.google.com/type", "sandbox"]
+        
+        for label in labels:
+            try:
+                out = run_command(["kubectl", "get", "pods", "-A", "-l", label, "--no-headers"], check=False)
+                if out:
+                    cmd = ["kubectl", "delete", "pods", "-A", "-l", label, "--wait=false"]
+                    if args.apply:
+                        print(f"Found orphaned pods with label {label}. Deleting...")
+                        run_command(cmd)
+                        print(f"Delete command issued for orphaned pods with label {label}.")
+                    else:
+                        print(f"Dry Run: Found orphaned pods with label {label}. Would execute: {' '.join(cmd)}")
                 else:
-                    print(f"Dry Run: Found orphaned pods with label {label}. Would execute: {' '.join(cmd)}")
-            else:
-                print(f"No pods found with label {label}.")
-        except Exception as e:
-            print(f"Error checking/deleting pods with label {label}: {e}")
+                    print(f"No pods found with label {label}.")
+            except Exception as e:
+                print(f"Error checking/deleting pods with label {label}: {e}")
+    else:
+        print("--- 4. Skipping Pod deletion (specific types selected) ---")
 
     print("--- Done ---")
 
