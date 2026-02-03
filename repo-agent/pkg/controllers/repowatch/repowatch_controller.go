@@ -1643,7 +1643,7 @@ func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *revi
 
 		// Fetch PR commits to find the latest one to establish a baseline time
 		var latestCommitTime time.Time
-		var latestCommitAuthorID int64
+		var latestCommitAuthorLogin string
 		opts := &github.ListOptions{PerPage: 100}
 		commitsFound := false
 		for {
@@ -1657,7 +1657,7 @@ func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *revi
 				if t := commit.GetCommit().GetCommitter().GetDate(); t.After(latestCommitTime) {
 					latestCommitTime = t
 					if commit.Author != nil {
-						latestCommitAuthorID = commit.Author.GetID()
+						latestCommitAuthorLogin = commit.Author.GetLogin()
 					}
 				}
 			}
@@ -1672,7 +1672,7 @@ func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *revi
 		}
 
 		// Check for new feedback
-		hasNew, err := r.hasNewFeedback(ctx, ghClient, owner, repo, pr, issue, latestCommitTime, latestCommitAuthorID, user.GetID())
+		hasNew, err := r.hasNewFeedback(ctx, ghClient, owner, repo, pr, issue, latestCommitTime, latestCommitAuthorLogin)
 		if err != nil {
 			log.Error(err, "checking for new feedback", "pr", pr.Number)
 			continue
@@ -1756,7 +1756,7 @@ func (r *Reconciler) getLinkedPRsFromSandbox(ctx context.Context, ghClient *gith
 	return prs, nil
 }
 
-func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client, owner, repo string, pr *github.PullRequest, issue *github.Issue, since time.Time, latestCommitAuthorID int64, botUserID int64) (bool, error) {
+func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client, owner, repo string, pr *github.PullRequest, issue *github.Issue, since time.Time, latestCommitAuthorLogin string) (bool, error) {
 	// Check PR comments
 	comments, _, err := ghClient.Issues.ListComments(ctx, owner, repo, *pr.Number, &github.IssueListCommentsOptions{
 		Since: &since,
@@ -1766,7 +1766,7 @@ func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client
 	}
 	for _, c := range comments {
 		if c.CreatedAt.After(since) {
-			if c.User.GetID() == latestCommitAuthorID {
+			if c.User.GetLogin() == latestCommitAuthorLogin {
 				continue
 			}
 			return true, nil
@@ -1780,7 +1780,7 @@ func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client
 	}
 	for _, rev := range reviews {
 		if rev.SubmittedAt != nil && rev.SubmittedAt.After(since) {
-			if rev.User.GetID() == latestCommitAuthorID {
+			if rev.User.GetLogin() == latestCommitAuthorLogin {
 				continue
 			}
 			return true, nil
@@ -1796,7 +1796,9 @@ func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client
 	}
 	for _, c := range issueComments {
 		if c.CreatedAt.After(since) {
-			if c.User.GetID() == botUserID {
+			// We use the latest commit author (likely the bot/agent) to filter out
+			// comments made by the agent itself on the issue.
+			if c.User.GetLogin() == latestCommitAuthorLogin {
 				continue
 			}
 			return true, nil
