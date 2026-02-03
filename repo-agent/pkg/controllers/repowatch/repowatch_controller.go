@@ -24,6 +24,7 @@ import (
 	"math/rand"
 	"net/url"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -1635,7 +1636,7 @@ func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *revi
 		return err
 	}
 
-	linkedPRs, err := r.getLinkedPRs(ctx, ghClient, owner, repo, *issue.Number)
+	linkedPRs, err := r.getLinkedPRsFromSandbox(ctx, ghClient, sandbox)
 	if err != nil {
 		return err
 	}
@@ -1677,36 +1678,42 @@ func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *revi
 	return nil
 }
 
-func (r *Reconciler) getLinkedPRs(ctx context.Context, ghClient *github.Client, owner, repo string, issueNumber int) ([]*github.PullRequest, error) {
-	timeline, _, err := ghClient.Issues.ListIssueTimeline(ctx, owner, repo, issueNumber, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get issue timeline: %w", err)
+var prURLRegex = regexp.MustCompile(`https://github\.com/[\w-]+/[\w-]+/pull/\d+`)
+
+func (r *Reconciler) getLinkedPRsFromSandbox(ctx context.Context, ghClient *github.Client, sandbox *unstructured.Unstructured) ([]*github.PullRequest, error) {
+	// List tasks
+	tasks := &sandboxtaskv1alpha1.SandboxTaskList{}
+	if err := r.List(ctx, tasks, client.InNamespace(sandbox.GetNamespace()), client.MatchingLabels{"sandbox.gemini.google.com/sandbox-name": sandbox.GetName()}); err != nil {
+		return nil, err
 	}
 
 	var prs []*github.PullRequest
-	processedPRs := make(map[string]bool)
+	processedPRs := make(map[int]bool)
 
-	for _, event := range timeline {
-		if event.GetEvent() == "cross-referenced" && event.Source != nil {
-			if event.Source.Issue != nil && event.Source.Issue.PullRequestLinks != nil {
-				u := event.Source.Issue.GetHTMLURL()
-				if processedPRs[u] {
-					continue
-				}
+	for _, task := range tasks.Items {
+		annotations := task.GetAnnotations()
+		agentDraft, ok := annotations["agentDraft"]
+		if !ok || agentDraft == "" {
+			continue
+		}
 
-				// Parse URL to get PR number
-				parsedPR, err := pkg_github.ParsePullRequestURL(u)
-				if err != nil {
-					continue
-				}
-
-				pr, _, err := ghClient.PullRequests.Get(ctx, parsedPR.Repo.Owner, parsedPR.Repo.Name, parsedPR.PullRequestNumber)
-				if err != nil {
-					continue
-				}
-				prs = append(prs, pr)
-				processedPRs[u] = true
+		matches := prURLRegex.FindAllString(agentDraft, -1)
+		for _, match := range matches {
+			prRef, err := pkg_github.ParsePullRequestURL(match)
+			if err != nil {
+				continue
 			}
+
+			if processedPRs[prRef.PullRequestNumber] {
+				continue
+			}
+
+			pr, _, err := ghClient.PullRequests.Get(ctx, prRef.Repo.Owner, prRef.Repo.Name, prRef.PullRequestNumber)
+			if err != nil {
+				continue
+			}
+			prs = append(prs, pr)
+			processedPRs[prRef.PullRequestNumber] = true
 		}
 	}
 	return prs, nil
