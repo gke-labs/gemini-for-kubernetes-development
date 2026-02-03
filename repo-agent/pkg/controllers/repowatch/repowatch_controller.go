@@ -1641,13 +1641,31 @@ func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *revi
 			continue
 		}
 
-		// Fetch the latest commit on the PR to establish a baseline time
-		commit, _, err := ghClient.Repositories.GetCommit(ctx, owner, repo, *pr.Head.SHA, nil)
-		if err != nil {
-			log.Error(err, "unable to get latest commit for PR", "pr", pr.Number)
+		// Fetch PR commits to find the latest one to establish a baseline time
+		var latestCommitTime time.Time
+		opts := &github.ListOptions{PerPage: 100}
+		commitsFound := false
+		for {
+			commits, resp, err := ghClient.PullRequests.ListCommits(ctx, owner, repo, *pr.Number, opts)
+			if err != nil {
+				log.Error(err, "unable to list commits for PR", "pr", pr.Number)
+				break
+			}
+			for _, commit := range commits {
+				commitsFound = true
+				if t := commit.GetCommit().GetCommitter().GetDate(); t.After(latestCommitTime) {
+					latestCommitTime = t
+				}
+			}
+			if resp.NextPage == 0 {
+				break
+			}
+			opts.Page = resp.NextPage
+		}
+
+		if !commitsFound {
 			continue
 		}
-		latestCommitTime := commit.GetCommit().GetCommitter().GetDate()
 
 		// Check for new feedback
 		hasNew, err := r.hasNewFeedback(ctx, ghClient, owner, repo, pr, issue, latestCommitTime)
