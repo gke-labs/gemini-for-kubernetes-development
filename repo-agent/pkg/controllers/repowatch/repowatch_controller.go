@@ -49,6 +49,7 @@ import (
 	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
 	sandboxtaskv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
+	pkg_github "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/prompts"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 )
@@ -712,6 +713,12 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 
 		if existingSandbox != nil {
 			log.Info("sandbox found for", "issue", *issue.Number)
+
+			// Check for feedback
+			if err := r.reconcileIssueFeedback(ctx, repoWatch, existingSandbox, issue, user, ghClient); err != nil {
+				log.Error(err, "unable to reconcile issue feedback", "issue", *issue.Number)
+			}
+
 			// Manage lifecycle (pause/unpause)
 			shutdownDuration := time.Minute * time.Duration(repoWatch.Spec.Issue.IssueShutdownAfterMinutes)
 			wasScaled, err := r.manageSandboxLifecycle(ctx, existingSandbox, shutdownDuration)
@@ -1586,5 +1593,162 @@ func (r *Reconciler) manageSandboxLifecycle(ctx context.Context, sandbox *unstru
 	if shutdownDuration > 0 {
 		return r.pauseSandboxIfIdle(ctx, sandbox, shutdownDuration)
 	}
+	return false, nil
+}
+
+func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, sandbox *unstructured.Unstructured, issue *github.Issue, user *github.User, ghClient *github.Client) error {
+	log := log.FromContext(ctx)
+
+	// Check if we have an active address-feedback task
+	tasks := &sandboxtaskv1alpha1.SandboxTaskList{}
+	if err := r.List(ctx, tasks, client.InNamespace(sandbox.GetNamespace()), client.MatchingLabels{"sandbox.gemini.google.com/sandbox-name": sandbox.GetName()}); err != nil {
+		return err
+	}
+
+	if len(tasks.Items) == 0 {
+		return nil
+	}
+
+	var latestTaskTime time.Time
+	activeTaskExists := false
+
+	for _, task := range tasks.Items {
+		if task.Spec.Type == "address-feedback" {
+			state := task.Status.TaskState
+			if state == "" || state == "Pending" || state == "Running" {
+				activeTaskExists = true
+				break
+			}
+		}
+
+		if task.CreationTimestamp.Time.After(latestTaskTime) {
+			latestTaskTime = task.CreationTimestamp.Time
+		}
+	}
+
+	if activeTaskExists {
+		return nil
+	}
+
+	owner, repo, err := parseRepoURL(repoWatch.Spec.RepoURL)
+	if err != nil {
+		return err
+	}
+
+	linkedPRs, err := r.getLinkedPRs(ctx, ghClient, owner, repo, *issue.Number)
+	if err != nil {
+		return err
+	}
+
+	for _, pr := range linkedPRs {
+		if pr.GetState() != "open" {
+			continue
+		}
+
+		// Check for new feedback
+		hasNew, err := r.hasNewFeedback(ctx, ghClient, owner, repo, pr, issue, latestTaskTime, user.GetLogin())
+		if err != nil {
+			log.Error(err, "checking for new feedback", "pr", pr.Number)
+			continue
+		}
+
+		if hasNew {
+			log.Info("Found new feedback, creating address-feedback task", "pr", pr.Number)
+			params := map[string]string{
+				"PULL_REQUEST_ID": fmt.Sprintf("%d", *pr.Number),
+				"ISSUE_URL":       *issue.HTMLURL,
+				"AGENT_PROMPT":    repoWatch.Spec.Issue.LLM.Prompt,
+			}
+			// Add LLM params
+			if repoWatch.Spec.Issue.LLM.Provider != "" {
+				params["AGENT_LLM_PROVIDER"] = repoWatch.Spec.Issue.LLM.Provider
+			}
+			if repoWatch.Spec.Issue.LLM.APIKeySecretRef != "" {
+				params["AGENT_LLM_API_KEY_SECRET"] = repoWatch.Spec.Issue.LLM.APIKeySecretRef
+			}
+			if repoWatch.Spec.Issue.LLM.ConfigdirRef != "" {
+				params["AGENT_LLM_CONFIGDIR"] = repoWatch.Spec.Issue.LLM.ConfigdirRef
+			}
+
+			return r.createSandboxTask(ctx, repoWatch, sandbox, sandbox.GetName(), "", "address-feedback", params)
+		}
+	}
+
+	return nil
+}
+
+func (r *Reconciler) getLinkedPRs(ctx context.Context, ghClient *github.Client, owner, repo string, issueNumber int) ([]*github.PullRequest, error) {
+	timeline, _, err := ghClient.Issues.ListIssueTimeline(ctx, owner, repo, issueNumber, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get issue timeline: %w", err)
+	}
+
+	var prs []*github.PullRequest
+	processedPRs := make(map[string]bool)
+
+	for _, event := range timeline {
+		if event.GetEvent() == "cross-referenced" && event.Source != nil {
+			if event.Source.Issue != nil && event.Source.Issue.PullRequestLinks != nil {
+				u := event.Source.Issue.GetHTMLURL()
+				if processedPRs[u] {
+					continue
+				}
+
+				// Parse URL to get PR number
+				parsedPR, err := pkg_github.ParsePullRequestURL(u)
+				if err != nil {
+					continue
+				}
+
+				pr, _, err := ghClient.PullRequests.Get(ctx, parsedPR.Repo.Owner, parsedPR.Repo.Name, parsedPR.PullRequestNumber)
+				if err != nil {
+					continue
+				}
+				prs = append(prs, pr)
+				processedPRs[u] = true
+			}
+		}
+	}
+	return prs, nil
+}
+
+func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client, owner, repo string, pr *github.PullRequest, issue *github.Issue, since time.Time, botUser string) (bool, error) {
+	// Check PR comments
+	comments, _, err := ghClient.Issues.ListComments(ctx, owner, repo, *pr.Number, &github.IssueListCommentsOptions{
+		Since: &since,
+	})
+	if err != nil {
+		return false, err
+	}
+	for _, c := range comments {
+		if c.User.GetLogin() != botUser {
+			return true, nil
+		}
+	}
+
+	// Check PR reviews
+	reviews, _, err := ghClient.PullRequests.ListReviews(ctx, owner, repo, *pr.Number, nil)
+	if err != nil {
+		return false, err
+	}
+	for _, rev := range reviews {
+		if rev.SubmittedAt != nil && rev.SubmittedAt.After(since) && rev.User.GetLogin() != botUser {
+			return true, nil
+		}
+	}
+
+	// Check Issue comments
+	issueComments, _, err := ghClient.Issues.ListComments(ctx, owner, repo, *issue.Number, &github.IssueListCommentsOptions{
+		Since: &since,
+	})
+	if err != nil {
+		return false, err
+	}
+	for _, c := range issueComments {
+		if c.User.GetLogin() != botUser {
+			return true, nil
+		}
+	}
+
 	return false, nil
 }
