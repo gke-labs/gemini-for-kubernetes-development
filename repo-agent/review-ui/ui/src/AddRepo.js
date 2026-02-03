@@ -51,6 +51,8 @@ function AddRepo({ onCancel, onRepoAdded }) {
                 // Load default YAML but clear specific fields in our inputs
                 setUrl('');
                 setName('');
+                setReviewMaxActiveSandboxes(3);
+                setIssueMaxActiveSandboxes(3);
                 // We use the default template structure, but the inputs are blank
                 // The user will fill them, which will update the YAML via updateYamlWithInputs
                 setYamlContent(defaultTmpl.content);
@@ -82,9 +84,13 @@ function AddRepo({ onCancel, onRepoAdded }) {
                     }
                     if (repoWatch.spec && repoWatch.spec.review && repoWatch.spec.review.maxActiveSandboxes) {
                         setReviewMaxActiveSandboxes(repoWatch.spec.review.maxActiveSandboxes);
+                    } else {
+                        setReviewMaxActiveSandboxes(3);
                     }
                     if (repoWatch.spec && repoWatch.spec.issue && repoWatch.spec.issue.maxActiveSandboxes) {
                         setIssueMaxActiveSandboxes(repoWatch.spec.issue.maxActiveSandboxes);
+                    } else {
+                        setIssueMaxActiveSandboxes(3);
                     }
                 }
             } catch (e) {
