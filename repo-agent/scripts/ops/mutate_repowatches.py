@@ -178,9 +178,9 @@ def main():
     args = parser.parse_args()
 
     mutators = {
-        "migrate-devcontainer": migrate_devcontainer_to_image,
-        "fix-issues-spec": fix_issues_spec,
-        "disable-dev": disable_dev_sandboxes,
+        "migrate-devcontainer-to-image-012026": migrate_devcontainer_to_image,
+        "migrate-issues-taskbased-022026": fix_issues_spec,
+        "set-dev-maxcounts-0": disable_dev_sandboxes,
     }
 
     if not args.mutator:
