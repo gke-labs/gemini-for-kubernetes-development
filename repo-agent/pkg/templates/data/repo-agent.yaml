@@ -33,7 +33,7 @@ spec:
   issue:
     robotAccount: codebot-robot
     maxActiveSandboxes: 1
-    maxSandboxes: 3
+    maxSandboxes: 10
     issueShutdownAfterMinutes: 300
     image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
     llm:
@@ -42,7 +42,7 @@ spec:
     - name: fix
       taskType: fix-issue
       labels:
-        - "fixme"
+        - "repo-agent"
       prompt: |
           Fix this issue
 ---
