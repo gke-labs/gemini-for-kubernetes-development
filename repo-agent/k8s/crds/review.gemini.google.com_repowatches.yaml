@@ -70,6 +70,9 @@ spec:
                 type: string
               issue:
                 properties:
+                  assignedToSelf:
+                    default: true
+                    type: boolean
                   devcontainerConfigRef:
                     type: string
                   excludeIssues:
