@@ -1611,7 +1611,7 @@ func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *revi
 	}
 
 	activeTaskExists := false
-	lastAddressFeedbackTimeByPR := make(map[int]time.Time)
+	var lastAddressFeedbackTaskTime time.Time
 
 	for _, task := range tasks.Items {
 		if task.Spec.Type == "address-feedback" {
@@ -1620,13 +1620,9 @@ func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *revi
 				activeTaskExists = true
 			}
 
-			// Track the latest address-feedback task for each PR
-			if prIDStr, ok := task.Spec.Params["PULL_REQUEST_ID"]; ok {
-				if prID, err := strconv.Atoi(prIDStr); err == nil {
-					if task.CreationTimestamp.Time.After(lastAddressFeedbackTimeByPR[prID]) {
-						lastAddressFeedbackTimeByPR[prID] = task.CreationTimestamp.Time
-					}
-				}
+			// Track the latest address-feedback task
+			if task.CreationTimestamp.Time.After(lastAddressFeedbackTaskTime) {
+				lastAddressFeedbackTaskTime = task.CreationTimestamp.Time
 			}
 		}
 	}
@@ -1640,92 +1636,92 @@ func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *revi
 		return err
 	}
 
-	linkedPRs, err := r.getLinkedPRsFromSandbox(ctx, ghClient, sandbox)
+	pr, err := r.getLinkedPRFromSandbox(ctx, ghClient, sandbox)
 	if err != nil {
 		return err
 	}
+	if pr == nil {
+		return nil
+	}
 
-	for _, pr := range linkedPRs {
-		if pr.GetState() != "open" {
-			continue
-		}
+	if pr.GetState() != "open" {
+		return nil
+	}
 
-		// Fetch PR commits to find the latest one to establish a baseline time
-		var latestCommitTime time.Time
-		var latestCommitAuthorLogin string
-		opts := &github.ListOptions{PerPage: 100}
-		commitsFound := false
-		for {
-			commits, resp, err := ghClient.PullRequests.ListCommits(ctx, owner, repo, *pr.Number, opts)
-			if err != nil {
-				log.Error(err, "unable to list commits for PR", "pr", pr.Number)
-				break
-			}
-			for _, commit := range commits {
-				commitsFound = true
-				if t := commit.GetCommit().GetCommitter().GetDate(); t.After(latestCommitTime) {
-					latestCommitTime = t
-					if commit.Author != nil {
-						latestCommitAuthorLogin = commit.Author.GetLogin()
-					}
-				}
-			}
-			if resp.NextPage == 0 {
-				break
-			}
-			opts.Page = resp.NextPage
-		}
-
-		if !commitsFound {
-			continue
-		}
-
-		// Check for new feedback
-		hasNew, latestFeedbackTime, err := r.hasNewFeedback(ctx, ghClient, owner, repo, pr, issue, latestCommitTime, latestCommitAuthorLogin)
+	// Fetch PR commits to find the latest one to establish a baseline time
+	var latestCommitTime time.Time
+	var latestCommitAuthorLogin string
+	opts := &github.ListOptions{PerPage: 100}
+	commitsFound := false
+	for {
+		commits, resp, err := ghClient.PullRequests.ListCommits(ctx, owner, repo, *pr.Number, opts)
 		if err != nil {
-			log.Error(err, "checking for new feedback", "pr", pr.Number)
-			continue
+			log.Error(err, "unable to list commits for PR", "pr", pr.Number)
+			break
 		}
-
-		if hasNew {
-			// Check if we have already created a task after the latest feedback
-			lastTaskTime := lastAddressFeedbackTimeByPR[*pr.Number]
-			if !lastTaskTime.IsZero() && lastTaskTime.After(latestFeedbackTime) {
-				log.Info("Skipping address-feedback: last attempt was after latest feedback", "pr", *pr.Number, "lastAttempt", lastTaskTime, "latestFeedback", latestFeedbackTime)
-				continue
-			}
-
-			log.Info("Found new feedback, creating address-feedback task", "pr", pr.Number)
-			params := map[string]string{
-				"PULL_REQUEST_ID": fmt.Sprintf("%d", *pr.Number),
-				"ISSUE_URL":       *issue.HTMLURL,
-				"AGENT_PROMPT":    repoWatch.Spec.Issue.LLM.Prompt,
-			}
-			// Add LLM params
-			if repoWatch.Spec.Issue.LLM.Provider != "" {
-				params["AGENT_LLM_PROVIDER"] = repoWatch.Spec.Issue.LLM.Provider
-			}
-			if repoWatch.Spec.Issue.LLM.APIKeySecretRef != "" {
-				params["AGENT_LLM_API_KEY_SECRET"] = repoWatch.Spec.Issue.LLM.APIKeySecretRef
-			}
-			if repoWatch.Spec.Issue.LLM.ConfigdirRef != "" {
-				params["AGENT_LLM_CONFIGDIR"] = repoWatch.Spec.Issue.LLM.ConfigdirRef
-			}
-
-			// Ensure sandbox is scaled up
-			replicas, found, err := unstructured.NestedInt64(sandbox.Object, "spec", "replicas")
-			if err != nil || !found || replicas == 0 {
-				if err := unstructured.SetNestedField(sandbox.Object, int64(1), "spec", "replicas"); err != nil {
-					log.Error(err, "unable to set replicas to 1")
-				} else {
-					if err := r.Update(ctx, sandbox); err != nil {
-						log.Error(err, "unable to scale up sandbox")
-					}
+		for _, commit := range commits {
+			commitsFound = true
+			if t := commit.GetCommit().GetCommitter().GetDate(); t.After(latestCommitTime) {
+				latestCommitTime = t
+				if commit.Author != nil {
+					latestCommitAuthorLogin = commit.Author.GetLogin()
 				}
 			}
-
-			return r.createSandboxTask(ctx, repoWatch, sandbox, sandbox.GetName(), "", "address-feedback", params)
 		}
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+
+	if !commitsFound {
+		return nil
+	}
+
+	// Check for new feedback
+	hasNew, latestFeedbackTime, err := r.hasNewFeedback(ctx, ghClient, owner, repo, pr, issue, latestCommitTime, latestCommitAuthorLogin)
+	if err != nil {
+		log.Error(err, "checking for new feedback", "pr", pr.Number)
+		return nil
+	}
+
+	if hasNew {
+		// Check if we have already created a task after the latest feedback
+		if !lastAddressFeedbackTaskTime.IsZero() && lastAddressFeedbackTaskTime.After(latestFeedbackTime) {
+			log.Info("Skipping address-feedback: last attempt was after latest feedback", "pr", *pr.Number, "lastAttempt", lastAddressFeedbackTaskTime, "latestFeedback", latestFeedbackTime)
+			return nil
+		}
+
+		log.Info("Found new feedback, creating address-feedback task", "pr", pr.Number)
+		params := map[string]string{
+			"PULL_REQUEST_ID": fmt.Sprintf("%d", *pr.Number),
+			"ISSUE_URL":       *issue.HTMLURL,
+			"AGENT_PROMPT":    repoWatch.Spec.Issue.LLM.Prompt,
+		}
+		// Add LLM params
+		if repoWatch.Spec.Issue.LLM.Provider != "" {
+			params["AGENT_LLM_PROVIDER"] = repoWatch.Spec.Issue.LLM.Provider
+		}
+		if repoWatch.Spec.Issue.LLM.APIKeySecretRef != "" {
+			params["AGENT_LLM_API_KEY_SECRET"] = repoWatch.Spec.Issue.LLM.APIKeySecretRef
+		}
+		if repoWatch.Spec.Issue.LLM.ConfigdirRef != "" {
+			params["AGENT_LLM_CONFIGDIR"] = repoWatch.Spec.Issue.LLM.ConfigdirRef
+		}
+
+		// Ensure sandbox is scaled up
+		replicas, found, err := unstructured.NestedInt64(sandbox.Object, "spec", "replicas")
+		if err != nil || !found || replicas == 0 {
+			if err := unstructured.SetNestedField(sandbox.Object, int64(1), "spec", "replicas"); err != nil {
+				log.Error(err, "unable to set replicas to 1")
+			} else {
+				if err := r.Update(ctx, sandbox); err != nil {
+					log.Error(err, "unable to scale up sandbox")
+				}
+			}
+		}
+
+		return r.createSandboxTask(ctx, repoWatch, sandbox, sandbox.GetName(), "", "address-feedback", params)
 	}
 
 	return nil
@@ -1733,15 +1729,12 @@ func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *revi
 
 var prURLRegex = regexp.MustCompile(`https://github\.com/[\w-]+/[\w-]+/pull/\d+`)
 
-func (r *Reconciler) getLinkedPRsFromSandbox(ctx context.Context, ghClient *github.Client, sandbox *unstructured.Unstructured) ([]*github.PullRequest, error) {
+func (r *Reconciler) getLinkedPRFromSandbox(ctx context.Context, ghClient *github.Client, sandbox *unstructured.Unstructured) (*github.PullRequest, error) {
 	// List tasks
 	tasks := &sandboxtaskv1alpha1.SandboxTaskList{}
 	if err := r.List(ctx, tasks, client.InNamespace(sandbox.GetNamespace()), client.MatchingLabels{"sandbox.gemini.google.com/sandbox-name": sandbox.GetName()}); err != nil {
 		return nil, err
 	}
-
-	var prs []*github.PullRequest
-	processedPRs := make(map[int]bool)
 
 	for _, task := range tasks.Items {
 		annotations := task.GetAnnotations()
@@ -1757,19 +1750,14 @@ func (r *Reconciler) getLinkedPRsFromSandbox(ctx context.Context, ghClient *gith
 				continue
 			}
 
-			if processedPRs[prRef.PullRequestNumber] {
-				continue
-			}
-
 			pr, _, err := ghClient.PullRequests.Get(ctx, prRef.Repo.Owner, prRef.Repo.Name, prRef.PullRequestNumber)
 			if err != nil {
 				continue
 			}
-			prs = append(prs, pr)
-			processedPRs[prRef.PullRequestNumber] = true
+			return pr, nil
 		}
 	}
-	return prs, nil
+	return nil, nil
 }
 
 func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client, owner, repo string, pr *github.PullRequest, issue *github.Issue, since time.Time, latestCommitAuthorLogin string) (bool, time.Time, error) {
