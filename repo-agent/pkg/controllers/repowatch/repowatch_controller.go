@@ -1611,13 +1611,22 @@ func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *revi
 	}
 
 	activeTaskExists := false
+	lastAddressFeedbackTimeByPR := make(map[int]time.Time)
 
 	for _, task := range tasks.Items {
 		if task.Spec.Type == "address-feedback" {
 			state := task.Status.TaskState
 			if state == "" || state == "Pending" || state == "Running" {
 				activeTaskExists = true
-				break
+			}
+
+			// Track the latest address-feedback task for each PR
+			if prIDStr, ok := task.Spec.Params["PULL_REQUEST_ID"]; ok {
+				if prID, err := strconv.Atoi(prIDStr); err == nil {
+					if task.CreationTimestamp.Time.After(lastAddressFeedbackTimeByPR[prID]) {
+						lastAddressFeedbackTimeByPR[prID] = task.CreationTimestamp.Time
+					}
+				}
 			}
 		}
 	}
@@ -1672,13 +1681,20 @@ func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *revi
 		}
 
 		// Check for new feedback
-		hasNew, err := r.hasNewFeedback(ctx, ghClient, owner, repo, pr, issue, latestCommitTime, latestCommitAuthorLogin)
+		hasNew, latestFeedbackTime, err := r.hasNewFeedback(ctx, ghClient, owner, repo, pr, issue, latestCommitTime, latestCommitAuthorLogin)
 		if err != nil {
 			log.Error(err, "checking for new feedback", "pr", pr.Number)
 			continue
 		}
 
 		if hasNew {
+			// Check if we have already created a task after the latest feedback
+			lastTaskTime := lastAddressFeedbackTimeByPR[*pr.Number]
+			if !lastTaskTime.IsZero() && lastTaskTime.After(latestFeedbackTime) {
+				log.Info("Skipping address-feedback: last attempt was after latest feedback", "pr", *pr.Number, "lastAttempt", lastTaskTime, "latestFeedback", latestFeedbackTime)
+				continue
+			}
+
 			log.Info("Found new feedback, creating address-feedback task", "pr", pr.Number)
 			params := map[string]string{
 				"PULL_REQUEST_ID": fmt.Sprintf("%d", *pr.Number),
@@ -1756,34 +1772,43 @@ func (r *Reconciler) getLinkedPRsFromSandbox(ctx context.Context, ghClient *gith
 	return prs, nil
 }
 
-func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client, owner, repo string, pr *github.PullRequest, issue *github.Issue, since time.Time, latestCommitAuthorLogin string) (bool, error) {
+func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client, owner, repo string, pr *github.PullRequest, issue *github.Issue, since time.Time, latestCommitAuthorLogin string) (bool, time.Time, error) {
+	var latestFeedbackTime time.Time
+	found := false
+
 	// Check PR comments
 	comments, _, err := ghClient.Issues.ListComments(ctx, owner, repo, *pr.Number, &github.IssueListCommentsOptions{
 		Since: &since,
 	})
 	if err != nil {
-		return false, err
+		return false, time.Time{}, err
 	}
 	for _, c := range comments {
-		if c.CreatedAt.After(since) {
+		if c.CreatedAt != nil && c.CreatedAt.After(since) {
 			if c.User.GetLogin() == latestCommitAuthorLogin {
 				continue
 			}
-			return true, nil
+			found = true
+			if c.CreatedAt.After(latestFeedbackTime) {
+				latestFeedbackTime = *c.CreatedAt
+			}
 		}
 	}
 
 	// Check PR reviews
 	reviews, _, err := ghClient.PullRequests.ListReviews(ctx, owner, repo, *pr.Number, nil)
 	if err != nil {
-		return false, err
+		return false, time.Time{}, err
 	}
 	for _, rev := range reviews {
 		if rev.SubmittedAt != nil && rev.SubmittedAt.After(since) {
 			if rev.User.GetLogin() == latestCommitAuthorLogin {
 				continue
 			}
-			return true, nil
+			found = true
+			if rev.SubmittedAt.After(latestFeedbackTime) {
+				latestFeedbackTime = *rev.SubmittedAt
+			}
 		}
 	}
 
@@ -1792,18 +1817,21 @@ func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client
 		Since: &since,
 	})
 	if err != nil {
-		return false, err
+		return false, time.Time{}, err
 	}
 	for _, c := range issueComments {
-		if c.CreatedAt.After(since) {
+		if c.CreatedAt != nil && c.CreatedAt.After(since) {
 			// We use the latest commit author (likely the bot/agent) to filter out
 			// comments made by the agent itself on the issue.
 			if c.User.GetLogin() == latestCommitAuthorLogin {
 				continue
 			}
-			return true, nil
+			found = true
+			if c.CreatedAt.After(latestFeedbackTime) {
+				latestFeedbackTime = *c.CreatedAt
+			}
 		}
 	}
 
-	return false, nil
+	return found, latestFeedbackTime, nil
 }
