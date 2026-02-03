@@ -225,3 +225,18 @@ spec:
     #- 53434
     devcontainerConfigRef: devcontainer-json
     reviewShutdownAfterMinutes: 15
+  issue:
+    robotAccount: codebot-robot
+    maxActiveSandboxes: 1
+    maxSandboxes: 10
+    issueShutdownAfterMinutes: 300
+    image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
+    llm:
+      apiKeySecretRef: gemini-vscode-tokens
+    handlers:
+    - name: fix
+      taskType: fix-issue
+      labels:
+        - "repo-agent"
+      prompt: |
+          Fix this issue
