@@ -716,7 +716,7 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 			log.Info("sandbox found for", "issue", *issue.Number)
 
 			// Check for feedback
-			if err := r.reconcileIssueFeedback(ctx, repoWatch, existingSandbox, issue, user, ghClient); err != nil {
+			if err := r.reconcileIssueFeedback(ctx, repoWatch, existingSandbox, issue, ghClient); err != nil {
 				log.Error(err, "unable to reconcile issue feedback", "issue", *issue.Number)
 			}
 
@@ -1597,7 +1597,7 @@ func (r *Reconciler) manageSandboxLifecycle(ctx context.Context, sandbox *unstru
 	return false, nil
 }
 
-func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, sandbox *unstructured.Unstructured, issue *github.Issue, user *github.User, ghClient *github.Client) error {
+func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, sandbox *unstructured.Unstructured, issue *github.Issue, ghClient *github.Client) error {
 	log := log.FromContext(ctx)
 
 	// Check if we have an active address-feedback task
