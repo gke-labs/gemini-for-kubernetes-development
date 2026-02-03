@@ -266,8 +266,8 @@ spec:
   pollIntervalSeconds: 300
   githubSecretName: github-pat
   dev:
-    maxActiveSandboxes: 1
-    maxSandboxes: 1
+    maxActiveSandboxes: 0
+    maxSandboxes: 0
     image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
     llm:
       apiKeySecretRef: gemini-vscode-tokens
