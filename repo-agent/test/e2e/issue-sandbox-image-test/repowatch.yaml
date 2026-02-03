@@ -9,6 +9,7 @@ spec:
     maxSandboxes: 0
     maxActiveSandboxes: 0
   issue:
+    assignedToSelf: false
     maxSandboxes: 1
     maxActiveSandboxes: 1
     issueShutdownAfterMinutes: 30
