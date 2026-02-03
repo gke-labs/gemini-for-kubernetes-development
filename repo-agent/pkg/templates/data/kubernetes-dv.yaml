@@ -227,8 +227,8 @@ spec:
     reviewShutdownAfterMinutes: 15
   issue:
     robotAccount: codebot-robot
-    maxActiveSandboxes: 1
-    maxSandboxes: 10
+    maxActiveSandboxes: 6
+    maxSandboxes: 6
     issueShutdownAfterMinutes: 300
     image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
     llm:
