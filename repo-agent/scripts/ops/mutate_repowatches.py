@@ -80,6 +80,62 @@ def migrate_devcontainer_to_image(repowatch):
                 
     return changed
 
+def fix_issues_spec(repowatch):
+    """
+    Resets .spec.issue to the new format.
+    """
+    spec = repowatch.get("spec", {})
+    
+    new_issue_spec = {
+      "handlers": [
+        {
+          "labels": [
+            "repo-agent"
+          ],
+          "name": "fix",
+          "prompt": "Fix this issue\n",
+          "taskType": "fix-issue"
+        }
+      ],
+      "image": "ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest",
+      "issueShutdownAfterMinutes": 0,
+      "llm": {
+        "apiKeySecretRef": "gemini-vscode-tokens",
+        "provider": "gemini-cli"
+      },
+      "maxActiveSandboxes": 6,
+      "maxSandboxes": 6,
+      "robotAccount": "codebot-robot"
+    }
+
+    # Check if current spec.issue is different
+    current_issue_spec = spec.get("issue")
+    
+    if current_issue_spec == new_issue_spec:
+         return False
+    
+    print(f"  Updating spec.issue")
+    spec["issue"] = new_issue_spec
+    return True
+
+def disable_dev_sandboxes(repowatch):
+    """
+    Sets maxActiveSandboxes and maxSandboxes to 0 in .spec.dev
+    """
+    changed = False
+    spec = repowatch.get("spec", {})
+    if "dev" in spec and isinstance(spec["dev"], dict):
+        if spec["dev"].get("maxActiveSandboxes") != 0:
+            print(f"  Setting spec.dev.maxActiveSandboxes to 0")
+            spec["dev"]["maxActiveSandboxes"] = 0
+            changed = True
+        
+        if spec["dev"].get("maxSandboxes") != 0:
+            print(f"  Setting spec.dev.maxSandboxes to 0")
+            spec["dev"]["maxSandboxes"] = 0
+            changed = True
+    return changed
+
 def apply_changes(repowatch):
     namespace = repowatch["metadata"]["namespace"]
     name = repowatch["metadata"]["name"]
@@ -118,17 +174,34 @@ def show_diff(original, modified):
 def main():
     parser = argparse.ArgumentParser(description="Mutate RepoWatch resources in the cluster.")
     parser.add_argument("--apply", action="store_true", help="Apply changes to the cluster. Defaults to dry-run if not specified.")
+    parser.add_argument("--mutator", type=str, help="Short name of the mutator to run. If not provided, lists available mutators.")
     args = parser.parse_args()
+
+    mutators = {
+        "migrate-devcontainer": migrate_devcontainer_to_image,
+        "fix-issues-spec": fix_issues_spec,
+        "disable-dev": disable_dev_sandboxes,
+    }
+
+    if not args.mutator:
+        print("Available mutators:")
+        for name in mutators:
+            print(f"  {name}")
+        return
+
+    if args.mutator not in mutators:
+        print(f"Unknown mutator: {args.mutator}")
+        print("Available mutators:")
+        for name in mutators:
+            print(f"  {name}")
+        sys.exit(1)
+
+    mutation_func = mutators[args.mutator]
 
     data = get_repowatches()
     items = data.get("items", [])
     
     print(f"Found {len(items)} RepoWatches.")
-    
-    # List of mutation functions
-    mutations = [
-        migrate_devcontainer_to_image,
-    ]
     
     for item in items:
         name = item["metadata"]["name"]
@@ -137,11 +210,7 @@ def main():
         
         # Deep copy to preserve original state for diffing or because mutations are in-place
         original_item = copy.deepcopy(item)
-        item_changed = False
-        
-        for mutation in mutations:
-            if mutation(item):
-                item_changed = True
+        item_changed = mutation_func(item)
         
         if item_changed:
             if args.apply:
