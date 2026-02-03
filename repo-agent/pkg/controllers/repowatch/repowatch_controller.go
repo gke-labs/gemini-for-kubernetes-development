@@ -1610,7 +1610,6 @@ func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *revi
 		return nil
 	}
 
-	var latestTaskTime time.Time
 	activeTaskExists := false
 
 	for _, task := range tasks.Items {
@@ -1620,10 +1619,6 @@ func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *revi
 				activeTaskExists = true
 				break
 			}
-		}
-
-		if task.CreationTimestamp.Time.After(latestTaskTime) {
-			latestTaskTime = task.CreationTimestamp.Time
 		}
 	}
 
@@ -1646,8 +1641,16 @@ func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *revi
 			continue
 		}
 
+		// Fetch the latest commit on the PR to establish a baseline time
+		commit, _, err := ghClient.Repositories.GetCommit(ctx, owner, repo, *pr.Head.SHA, nil)
+		if err != nil {
+			log.Error(err, "unable to get latest commit for PR", "pr", pr.Number)
+			continue
+		}
+		latestCommitTime := commit.GetCommit().GetCommitter().GetDate()
+
 		// Check for new feedback
-		hasNew, err := r.hasNewFeedback(ctx, ghClient, owner, repo, pr, issue, latestTaskTime, user.GetLogin())
+		hasNew, err := r.hasNewFeedback(ctx, ghClient, owner, repo, pr, issue, latestCommitTime)
 		if err != nil {
 			log.Error(err, "checking for new feedback", "pr", pr.Number)
 			continue
@@ -1719,7 +1722,7 @@ func (r *Reconciler) getLinkedPRsFromSandbox(ctx context.Context, ghClient *gith
 	return prs, nil
 }
 
-func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client, owner, repo string, pr *github.PullRequest, issue *github.Issue, since time.Time, botUser string) (bool, error) {
+func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client, owner, repo string, pr *github.PullRequest, issue *github.Issue, since time.Time) (bool, error) {
 	// Check PR comments
 	comments, _, err := ghClient.Issues.ListComments(ctx, owner, repo, *pr.Number, &github.IssueListCommentsOptions{
 		Since: &since,
@@ -1728,7 +1731,7 @@ func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client
 		return false, err
 	}
 	for _, c := range comments {
-		if c.User.GetLogin() != botUser {
+		if c.CreatedAt.After(since) {
 			return true, nil
 		}
 	}
@@ -1739,7 +1742,7 @@ func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client
 		return false, err
 	}
 	for _, rev := range reviews {
-		if rev.SubmittedAt != nil && rev.SubmittedAt.After(since) && rev.User.GetLogin() != botUser {
+		if rev.SubmittedAt != nil && rev.SubmittedAt.After(since) {
 			return true, nil
 		}
 	}
@@ -1752,7 +1755,7 @@ func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client
 		return false, err
 	}
 	for _, c := range issueComments {
-		if c.User.GetLogin() != botUser {
+		if c.CreatedAt.After(since) {
 			return true, nil
 		}
 	}
