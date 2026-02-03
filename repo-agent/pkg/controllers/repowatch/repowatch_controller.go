@@ -691,7 +691,7 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 		// Identify applicable handlers
 		var applicableHandlers []reviewv1alpha1.IssueHandlerSpec
 		for _, handler := range repoWatch.Spec.Issue.Handlers {
-			if r.isIssueMatch(issue, handler, repoWatch) {
+			if r.isIssueMatch(issue, handler, repoWatch, user) {
 				applicableHandlers = append(applicableHandlers, handler)
 			}
 		}
@@ -806,11 +806,25 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 	return r.Status().Update(ctx, repoWatch)
 }
 
-func (r *Reconciler) isIssueMatch(issue *github.Issue, handler reviewv1alpha1.IssueHandlerSpec, repoWatch *reviewv1alpha1.RepoWatch) bool {
+func (r *Reconciler) isIssueMatch(issue *github.Issue, handler reviewv1alpha1.IssueHandlerSpec, repoWatch *reviewv1alpha1.RepoWatch, user *github.User) bool {
 	// Exclude explicit excludes from IssueSpec
 	if repoWatch.Spec.Issue != nil {
 		for _, excluded := range repoWatch.Spec.Issue.ExcludeIssues {
 			if *issue.Number == excluded {
+				return false
+			}
+		}
+
+		// Check AssignedToSelf
+		if repoWatch.Spec.Issue.AssignedToSelf && user != nil && user.Login != nil {
+			isAssigned := false
+			for _, assignee := range issue.Assignees {
+				if assignee.Login != nil && *assignee.Login == *user.Login {
+					isAssigned = true
+					break
+				}
+			}
+			if !isAssigned {
 				return false
 			}
 		}

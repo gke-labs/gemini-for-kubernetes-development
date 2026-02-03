@@ -175,6 +175,12 @@ type IssueSpec struct {
 	// +kubebuilder:validation:Optional
 	ExcludeIssues []int `json:"excludeIssues,omitempty"`
 
+	// Assigned to self when selecting issues.
+	// If true, only issues assigned to the current user (based on the GitHub token) will be processed.
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=true
+	AssignedToSelf bool `json:"assignedToSelf,omitempty"`
+
 	// LLM configuration for the issue sandboxes.
 	LLM LLMConfig `json:"llm,omitempty"`
 
