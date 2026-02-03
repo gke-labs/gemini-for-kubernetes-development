@@ -1643,6 +1643,7 @@ func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *revi
 
 		// Fetch PR commits to find the latest one to establish a baseline time
 		var latestCommitTime time.Time
+		var latestCommitAuthorID int64
 		opts := &github.ListOptions{PerPage: 100}
 		commitsFound := false
 		for {
@@ -1655,6 +1656,9 @@ func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *revi
 				commitsFound = true
 				if t := commit.GetCommit().GetCommitter().GetDate(); t.After(latestCommitTime) {
 					latestCommitTime = t
+					if commit.Author != nil {
+						latestCommitAuthorID = commit.Author.GetID()
+					}
 				}
 			}
 			if resp.NextPage == 0 {
@@ -1668,7 +1672,7 @@ func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *revi
 		}
 
 		// Check for new feedback
-		hasNew, err := r.hasNewFeedback(ctx, ghClient, owner, repo, pr, issue, latestCommitTime)
+		hasNew, err := r.hasNewFeedback(ctx, ghClient, owner, repo, pr, issue, latestCommitTime, latestCommitAuthorID, user.GetID())
 		if err != nil {
 			log.Error(err, "checking for new feedback", "pr", pr.Number)
 			continue
@@ -1690,6 +1694,18 @@ func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *revi
 			}
 			if repoWatch.Spec.Issue.LLM.ConfigdirRef != "" {
 				params["AGENT_LLM_CONFIGDIR"] = repoWatch.Spec.Issue.LLM.ConfigdirRef
+			}
+
+			// Ensure sandbox is scaled up
+			replicas, found, err := unstructured.NestedInt64(sandbox.Object, "spec", "replicas")
+			if err != nil || !found || replicas == 0 {
+				if err := unstructured.SetNestedField(sandbox.Object, int64(1), "spec", "replicas"); err != nil {
+					log.Error(err, "unable to set replicas to 1")
+				} else {
+					if err := r.Update(ctx, sandbox); err != nil {
+						log.Error(err, "unable to scale up sandbox")
+					}
+				}
 			}
 
 			return r.createSandboxTask(ctx, repoWatch, sandbox, sandbox.GetName(), "", "address-feedback", params)
@@ -1740,7 +1756,7 @@ func (r *Reconciler) getLinkedPRsFromSandbox(ctx context.Context, ghClient *gith
 	return prs, nil
 }
 
-func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client, owner, repo string, pr *github.PullRequest, issue *github.Issue, since time.Time) (bool, error) {
+func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client, owner, repo string, pr *github.PullRequest, issue *github.Issue, since time.Time, latestCommitAuthorID int64, botUserID int64) (bool, error) {
 	// Check PR comments
 	comments, _, err := ghClient.Issues.ListComments(ctx, owner, repo, *pr.Number, &github.IssueListCommentsOptions{
 		Since: &since,
@@ -1750,6 +1766,9 @@ func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client
 	}
 	for _, c := range comments {
 		if c.CreatedAt.After(since) {
+			if c.User.GetID() == latestCommitAuthorID {
+				continue
+			}
 			return true, nil
 		}
 	}
@@ -1761,6 +1780,9 @@ func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client
 	}
 	for _, rev := range reviews {
 		if rev.SubmittedAt != nil && rev.SubmittedAt.After(since) {
+			if rev.User.GetID() == latestCommitAuthorID {
+				continue
+			}
 			return true, nil
 		}
 	}
@@ -1774,6 +1796,9 @@ func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client
 	}
 	for _, c := range issueComments {
 		if c.CreatedAt.After(since) {
+			if c.User.GetID() == botUserID {
+				continue
+			}
 			return true, nil
 		}
 	}
