@@ -146,7 +146,9 @@ function AddRepo({ onCancel, onRepoAdded }) {
                 // Update Review Max Active Sandboxes
                 if (currentReviewMax !== undefined && currentReviewMax !== null) {
                     if (!repoWatchDoc.spec.review) repoWatchDoc.spec.review = {};
-                    repoWatchDoc.spec.review.maxActiveSandboxes = parseInt(currentReviewMax);
+                    const max = parseInt(currentReviewMax);
+                    repoWatchDoc.spec.review.maxActiveSandboxes = max;
+                    repoWatchDoc.spec.review.maxSandboxes = max;
                 }
 
                 // Update Issue Max Active Sandboxes
@@ -160,12 +162,15 @@ function AddRepo({ onCancel, onRepoAdded }) {
                 // Given the UI will have a slider, user expects it to work.
                 
                 if (currentIssueMax !== undefined && currentIssueMax !== null) {
+                    const max = parseInt(currentIssueMax);
                     if (!repoWatchDoc.spec.issue) repoWatchDoc.spec.issue = { 
                         // Default fields if creating from scratch, though usually template handles this
-                        maxActiveSandboxes: parseInt(currentIssueMax)
+                        maxActiveSandboxes: max,
+                        maxSandboxes: max
                     };
                     else {
-                        repoWatchDoc.spec.issue.maxActiveSandboxes = parseInt(currentIssueMax);
+                        repoWatchDoc.spec.issue.maxActiveSandboxes = max;
+                        repoWatchDoc.spec.issue.maxSandboxes = max;
                     }
                 }
             }
