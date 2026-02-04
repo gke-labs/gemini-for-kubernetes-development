@@ -159,6 +159,24 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
 		}
 
+	case "dev-setup":
+		cmd = exec.Command("/opt/repo-agent/repo-sandbox", "dev-init", "--in-pod=true")
+		// Map params to env vars
+		cmd.Env = os.Environ()
+		// Inject params into env
+		for k, v := range params {
+			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
+		}
+
+	case "iterate":
+		cmd = exec.Command("/opt/repo-agent/repo-sandbox", "iterate", "--in-pod=true")
+		// Map params to env vars
+		cmd.Env = os.Environ()
+		// Inject params into env
+		for k, v := range params {
+			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
+		}
+
 	case "issue":
 		cmd = exec.Command("/opt/repo-agent/repo-sandbox", "dev")
 		// Map params to env vars

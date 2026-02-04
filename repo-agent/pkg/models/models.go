@@ -110,4 +110,7 @@ type DevSandbox struct {
 	AgentState        string   `json:"agentState,omitempty"`
 	AgentStateMessage string   `json:"agentStateMessage,omitempty"`
 	Labels            []string `json:"labels,omitempty"`
+	IdeaID            string   `json:"ideaID,omitempty"`
+	Approach          string   `json:"approach,omitempty"`
+	ParentApproach    string   `json:"parentApproach,omitempty"`
 }

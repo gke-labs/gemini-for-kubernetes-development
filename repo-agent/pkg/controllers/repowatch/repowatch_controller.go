@@ -1513,7 +1513,22 @@ func (r *Reconciler) createDevSandbox(ctx context.Context, user *github.User, re
 		return err
 	}
 
-	return r.Create(ctx, sb)
+	if err := r.Create(ctx, sb); err != nil {
+		return err
+	}
+
+	params := map[string]string{
+		"REPO_URL":          opts.HTMLURL, // HTMLURL is https://github.com/owner/repo
+		"BRANCH_NAME":       branchName,
+		"GITHUB_USER_LOGIN": opts.UserLogin,
+		"GITHUB_USER_EMAIL": opts.UserEmail,
+		"GITHUB_USER_NAME":  opts.UserName,
+	}
+	if repoWatch.Spec.Dev.LLM.Prompt != "" {
+		params["AGENT_PROMPT"] = repoWatch.Spec.Dev.LLM.Prompt
+	}
+
+	return r.createSandboxTask(ctx, repoWatch, sb, sandboxName, "", "dev-setup", params)
 }
 
 // SetupWithManager sets up the controller with the Manager.

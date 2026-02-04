@@ -6,7 +6,11 @@ import (
 	"fmt"
 	"hash/fnv"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/auth"
@@ -91,6 +95,23 @@ func (s *Server) listDevSandboxesFromK8s(ctx context.Context, namespace, repo st
 				}
 			}
 
+			// Read Idea Labels
+			itemLabels := item.GetLabels()
+			ideaID := ""
+			approach := ""
+			parentApproach := ""
+			if itemLabels != nil {
+				if val, ok := itemLabels["repo-agent.gemini.google.com/idea-id"]; ok {
+					ideaID = val
+				}
+				if val, ok := itemLabels["repo-agent.gemini.google.com/approach"]; ok {
+					approach = val
+				}
+				if val, ok := itemLabels["repo-agent.gemini.google.com/parent-approach"]; ok {
+					parentApproach = val
+				}
+			}
+
 			sandbox := models.DevSandbox{
 				Name:              item.GetName(),
 				Sandbox:           item.GetName(),
@@ -100,6 +121,9 @@ func (s *Server) listDevSandboxesFromK8s(ctx context.Context, namespace, repo st
 				AgentState:        agentState,
 				AgentStateMessage: agentStateMessage,
 				Labels:            labels,
+				IdeaID:            ideaID,
+				Approach:          approach,
+				ParentApproach:    parentApproach,
 			}
 			sandboxes = append(sandboxes, sandbox)
 		}
@@ -113,15 +137,26 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 	repo := c.Param("repo")
 
 	var req struct {
-		Branch string `json:"branch"`
-		Prompt string `json:"prompt"`
+		Branch         string `json:"branch"`
+		Prompt         string `json:"prompt"`
+		IdeaID         string `json:"ideaID"`
+		Approach       string `json:"approach"`
+		BaseBranch     string `json:"baseBranch"`
+		ParentApproach string `json:"parentApproach"`
 	}
 	if err := c.BindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
 		return
 	}
 
-	if req.Branch == "" {
+	branchName := req.Branch
+	if req.IdeaID != "" && req.Approach != "" {
+		if branchName == "" {
+			branchName = fmt.Sprintf("ideas/%s/%s", req.IdeaID, req.Approach)
+		}
+	}
+
+	if branchName == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Branch is required"})
 		return
 	}
@@ -143,6 +178,10 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 	repoName := repoParts[len(repoParts)-1]
 
 	forkCloneURL := fmt.Sprintf("https://github.com/%s/%s.git", namespace, repoName)
+	if req.BaseBranch != "" {
+		forkCloneURL = fmt.Sprintf("%s#refs/heads/%s", forkCloneURL, req.BaseBranch)
+	}
+
 	forkHTMLURL := fmt.Sprintf("https://github.com/%s/%s", namespace, repoName)
 	originURL := fmt.Sprintf("github.com/%s/%s.git", namespace, repoName)
 
@@ -168,7 +207,7 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 	}
 
 	// Sanitize branch name for K8s resource name to match controller logic
-	safeBranch := strings.ReplaceAll(req.Branch, "/", "-")
+	safeBranch := strings.ReplaceAll(branchName, "/", "-")
 	safeBranch = strings.ReplaceAll(safeBranch, "_", "-")
 	safeBranch = strings.ReplaceAll(safeBranch, ".", "-")
 	safeBranch = strings.ToLower(safeBranch)
@@ -224,7 +263,7 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 		CloneURL: forkCloneURL,
 		HTMLURL:  forkHTMLURL,
 
-		Branch:      req.Branch,
+		Branch:      branchName,
 		Origin:      originURL,
 		PushEnabled: true,
 		UserLogin:   namespace,
@@ -243,6 +282,10 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 
 		HTTPEnabled: true,
 		Replicas:    1,
+
+		IdeaID:         req.IdeaID,
+		Approach:       req.Approach,
+		ParentApproach: req.ParentApproach,
 	}
 
 	sb := sandbox.NewDevSandbox(opts)
@@ -252,6 +295,26 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 		log.Info("Failed to create DevSandbox", "err", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create DevSandbox", "details": err.Error()})
 		return
+	}
+
+	// Create initial dev-setup task
+	taskParams := map[string]string{
+		"REPO_URL":          forkHTMLURL,
+		"BRANCH_NAME":       branchName,
+		"GITHUB_USER_LOGIN": namespace,
+		"GITHUB_USER_EMAIL": userEmail,
+		"GITHUB_USER_NAME":  userName,
+	}
+	if req.BaseBranch != "" {
+		taskParams["SOURCE_BRANCH"] = req.BaseBranch
+	}
+	if req.Prompt != "" {
+		taskParams["AGENT_PROMPT"] = req.Prompt
+	}
+
+	if err := s.K8sManager.CreateSandboxTask(c.Request.Context(), namespace, sandboxName, "IssueSandbox", "dev-setup", taskParams); err != nil {
+		log.Info("Failed to create initial dev-setup task", "err", err)
+		// We don't fail the request, just log it. The user can retry or creating task manually.
 	}
 
 	c.JSON(http.StatusCreated, gin.H{"status": "created", "name": sandboxName})
@@ -298,4 +361,130 @@ func (s *Server) scaleDownDevSandbox(c *gin.Context) {
 	}
 
 	c.Status(http.StatusOK)
+}
+func (s *Server) getDevTasks(c *gin.Context) {
+	namespace := c.MustGet(auth.UserKey).(string)
+	sandboxName := c.Param("name")
+
+	taskList, err := s.K8sManager.ListSandboxTasks(c.Request.Context(), namespace, sandboxName)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list tasks", "details": err.Error()})
+		return
+	}
+
+	var tasks []models.Task
+	for _, taskItem := range taskList.Items {
+		taskType := taskItem.Spec.Type
+		taskState := taskItem.Status.TaskState
+		result := taskItem.Status.Result
+
+		tAgentDraft := ""
+		tUserDraft := ""
+		tAgentState := ""
+		tAgentStateMessage := ""
+
+		tAnnotations := taskItem.GetAnnotations()
+		if tAnnotations != nil {
+			tAgentDraft = tAnnotations["agentDraft"]
+			tUserDraft = tAnnotations["userDraft"]
+			tAgentState = tAnnotations["agentState"]
+			tAgentStateMessage = tAnnotations["agentStateMessage"]
+		}
+
+		tasks = append(tasks, models.Task{
+			Name:              taskItem.GetName(),
+			Type:              taskType,
+			TaskState:         taskState,
+			Result:            result,
+			CreationTimestamp: taskItem.GetCreationTimestamp().Format(time.RFC3339),
+			AgentDraft:        tAgentDraft,
+			UserDraft:         tUserDraft,
+			AgentState:        tAgentState,
+			AgentStateMessage: tAgentStateMessage,
+		})
+	}
+	// Sort tasks by creation timestamp (newest first)
+	sort.Slice(tasks, func(i, j int) bool {
+		return tasks[i].CreationTimestamp > tasks[j].CreationTimestamp
+	})
+
+	c.JSON(http.StatusOK, tasks)
+}
+
+func (s *Server) createDevTask(c *gin.Context) {
+	namespace := c.MustGet(auth.UserKey).(string)
+	sandboxName := c.Param("name")
+
+	var payload struct {
+		Prompt   string            `json:"prompt"`
+		TaskType string            `json:"taskType"`
+		Params   map[string]string `json:"params"`
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	taskType := payload.TaskType
+	if taskType == "" {
+		taskType = "generic-task"
+	}
+
+	params := map[string]string{}
+	if payload.Prompt != "" {
+		params["AGENT_PROMPT"] = payload.Prompt
+	}
+	for k, v := range payload.Params {
+		params[k] = v
+	}
+
+	// DevSandbox is an IssueSandbox CR in K8s
+	err := s.K8sManager.CreateSandboxTask(c.Request.Context(), namespace, sandboxName, "IssueSandbox", taskType, params)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create task", "details": err.Error()})
+		return
+	}
+
+	// Scale up the sandbox so it can process the task
+	if err := s.K8sManager.ScaleupDevSandboxHelper(c.Request.Context(), namespace, sandboxName); err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Failed to scale up sandbox after task creation", "details": err.Error()})
+		return
+	}
+
+	c.Status(http.StatusOK)
+}
+
+func (s *Server) getDevTaskLogs(c *gin.Context) {
+	log := klog.FromContext(c.Request.Context())
+	namespace := c.MustGet(auth.UserKey).(string)
+	sandboxName := c.Param("name")
+	taskID := c.Param("taskID")
+
+	// Service name logic must match KRO's RGD: devc-${schema.metadata.name}-lb
+	serviceName := fmt.Sprintf("devc-%s-lb", sandboxName)
+
+	targetURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:13339", serviceName, namespace)
+
+	proxyURL, err := url.Parse(targetURL)
+	if err != nil {
+		log.Error(err, "Failed to parse target URL", "url", targetURL)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid target URL"})
+		return
+	}
+
+	proxy := httputil.NewSingleHostReverseProxy(proxyURL)
+	originalDirector := proxy.Director
+	proxy.Director = func(req *http.Request) {
+		originalDirector(req)
+		req.URL.Path = fmt.Sprintf("/logs/%s", taskID)
+	}
+
+	// Custom error handler for proxy
+	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, err error) {
+		log.Error(err, "Proxy error", "target", targetURL)
+		// If connection refused, it might mean the pod is not ready or port not exposed yet
+		http.Error(w, "Failed to connect to agent server logs (pod might be starting or scaled down)", http.StatusBadGateway)
+	}
+
+	proxy.ServeHTTP(c.Writer, c.Request)
 }
