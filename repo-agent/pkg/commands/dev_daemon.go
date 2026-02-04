@@ -103,6 +103,8 @@ func (c *SandboxDaemonCommand) Run(ctx context.Context) error {
 	// Run TaskRunner in background
 	go tr.Run(ctx)
 
+	_ = ao.SetAgentState(ctx, "Ready", "")
+
 	log.Info("Sandbox Daemon started. Waiting for tasks...")
 
 	return c.CodeServerCommand.Wait()
