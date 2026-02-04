@@ -778,7 +778,7 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 				annotations = make(map[string]string)
 			}
 
-			shouldPersist := podStatusStr == "Evicted" || strings.HasPrefix(podStatusStr, "fail:")
+			shouldPersist := podStatusStr != ""
 			if shouldPersist {
 				if annotations["sandbox.gemini.google.com/pod-status"] != podStatusStr {
 					annotations["sandbox.gemini.google.com/pod-status"] = podStatusStr
