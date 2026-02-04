@@ -113,15 +113,15 @@ func TestReconciler_ReconcileIssues_PodEvicted(t *testing.T) {
 	// Failed Pod
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "devc-" + sandboxName + "-pod",
+			Name:      "devc-" + sandboxName + "-pod",
 			Namespace: "default",
 			Labels: map[string]string{
-				"sandbox": "devc-" + sandboxName,
+				"sandbox":      "devc-" + sandboxName,
 				"sandbox-type": "issue",
 			},
 		},
 		Status: corev1.PodStatus{
-			Phase: corev1.PodFailed,
+			Phase:  corev1.PodFailed,
 			Reason: "Evicted",
 		},
 	}
@@ -144,7 +144,7 @@ func TestReconciler_ReconcileIssues_PodEvicted(t *testing.T) {
 	// Verify RepoWatch status
 	fetchedRepoWatch := &reviewv1alpha1.RepoWatch{}
 	g.Expect(fakeClient.Get(context.Background(), types.NamespacedName{Name: repoWatch.Name, Namespace: repoWatch.Namespace}, fetchedRepoWatch)).To(gomega.Succeed())
-	
+
 	g.Expect(fetchedRepoWatch.Status.IssueSandboxes["default"]).To(gomega.HaveLen(1))
 	g.Expect(fetchedRepoWatch.Status.IssueSandboxes["default"][0].Status).To(gomega.Equal("Evicted"))
 
@@ -152,7 +152,7 @@ func TestReconciler_ReconcileIssues_PodEvicted(t *testing.T) {
 	fetchedSandbox := &unstructured.Unstructured{}
 	fetchedSandbox.SetGroupVersionKind(schema.GroupVersionKind{Group: "custom.agents.x-k8s.io", Version: "v1alpha1", Kind: "IssueSandbox"})
 	g.Expect(fakeClient.Get(context.Background(), types.NamespacedName{Name: sandboxName, Namespace: "default"}, fetchedSandbox)).To(gomega.Succeed())
-	
+
 	ann := fetchedSandbox.GetAnnotations()
 	g.Expect(ann).NotTo(gomega.BeNil())
 	g.Expect(ann["sandbox.gemini.google.com/pod-status"]).To(gomega.Equal("Evicted"))
@@ -231,15 +231,15 @@ func TestReconciler_ReconcileIssues_PodFailedOOM(t *testing.T) {
 	// Failed Pod OOM
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "devc-" + sandboxName + "-pod",
+			Name:      "devc-" + sandboxName + "-pod",
 			Namespace: "default",
 			Labels: map[string]string{
-				"sandbox": "devc-" + sandboxName,
+				"sandbox":      "devc-" + sandboxName,
 				"sandbox-type": "issue",
 			},
 		},
 		Status: corev1.PodStatus{
-			Phase: corev1.PodFailed,
+			Phase:  corev1.PodFailed,
 			Reason: "OOMKilled",
 		},
 	}
@@ -262,7 +262,7 @@ func TestReconciler_ReconcileIssues_PodFailedOOM(t *testing.T) {
 	// Verify RepoWatch status
 	fetchedRepoWatch := &reviewv1alpha1.RepoWatch{}
 	g.Expect(fakeClient.Get(context.Background(), types.NamespacedName{Name: repoWatch.Name, Namespace: repoWatch.Namespace}, fetchedRepoWatch)).To(gomega.Succeed())
-	
+
 	g.Expect(fetchedRepoWatch.Status.IssueSandboxes["default"]).To(gomega.HaveLen(1))
 	// Should match "fail: OOMKilled"
 	g.Expect(fetchedRepoWatch.Status.IssueSandboxes["default"][0].Status).To(gomega.Equal("fail: OOMKilled"))
@@ -271,7 +271,7 @@ func TestReconciler_ReconcileIssues_PodFailedOOM(t *testing.T) {
 	fetchedSandbox := &unstructured.Unstructured{}
 	fetchedSandbox.SetGroupVersionKind(schema.GroupVersionKind{Group: "custom.agents.x-k8s.io", Version: "v1alpha1", Kind: "IssueSandbox"})
 	g.Expect(fakeClient.Get(context.Background(), types.NamespacedName{Name: sandboxName, Namespace: "default"}, fetchedSandbox)).To(gomega.Succeed())
-	
+
 	ann := fetchedSandbox.GetAnnotations()
 	g.Expect(ann).NotTo(gomega.BeNil())
 	g.Expect(ann["sandbox.gemini.google.com/pod-status"]).To(gomega.Equal("fail: OOMKilled"))
