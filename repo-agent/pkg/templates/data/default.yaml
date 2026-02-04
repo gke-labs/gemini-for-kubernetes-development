@@ -15,6 +15,8 @@ spec:
   review:
     reviewShutdownAfterMinutes: 30
     image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
+    maxActiveSandboxes: 3
+    maxSandboxes: 5
     llm:
       apiKeySecretRef: gemini-vscode-tokens
       prompt: >-
@@ -25,21 +27,18 @@ spec:
         1. Does the fix resolve the original problem.
         2. Look for linked issues to understand the original problem.
         3. Are there tests to check the fix.
-        maxActiveSandboxes: 3
-        maxSandboxes: 5
-      issue:
-        robotAccount: codebot-robot
-        maxActiveSandboxes: 6
-        maxSandboxes: 6
-        issueShutdownAfterMinutes: 300
-        image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
-        llm:
-            apiKeySecretRef: gemini-vscode-tokens
-        handlers:
-        - name: fix
-          taskType: fix-issue
-          labels:
-            - "repo-agent"
-          prompt: |
-              Fix this issue
-    
+  issue:
+    robotAccount: codebot-robot
+    maxActiveSandboxes: 6
+    maxSandboxes: 6
+    issueShutdownAfterMinutes: 0
+    image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
+    llm:
+      apiKeySecretRef: gemini-vscode-tokens
+    handlers:
+    - name: fix
+      taskType: fix-issue
+      labels:
+        - "repo-agent"
+      prompt: |
+          Fix this issue
