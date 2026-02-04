@@ -6,7 +6,7 @@ function AddRepo({ onCancel, onRepoAdded }) {
     const [name, setName] = useState('');
     const [assignees, setAssignees] = useState('');
     const [reviewMaxActiveSandboxes, setReviewMaxActiveSandboxes] = useState(3);
-    const [issueMaxActiveSandboxes, setIssueMaxActiveSandboxes] = useState(3);
+    const [issueMaxActiveSandboxes, setIssueMaxActiveSandboxes] = useState(6);
     const [yamlMode, setYamlMode] = useState(false);
     const [yamlContent, setYamlContent] = useState('');
     const [isLoading, setIsLoading] = useState(false);
@@ -52,7 +52,7 @@ function AddRepo({ onCancel, onRepoAdded }) {
                 setUrl('');
                 setName('');
                 setReviewMaxActiveSandboxes(3);
-                setIssueMaxActiveSandboxes(3);
+                setIssueMaxActiveSandboxes(6);
                 // We use the default template structure, but the inputs are blank
                 // The user will fill them, which will update the YAML via updateYamlWithInputs
                 setYamlContent(defaultTmpl.content);
@@ -90,7 +90,7 @@ function AddRepo({ onCancel, onRepoAdded }) {
                     if (repoWatch.spec && repoWatch.spec.issue && repoWatch.spec.issue.maxActiveSandboxes) {
                         setIssueMaxActiveSandboxes(repoWatch.spec.issue.maxActiveSandboxes);
                     } else {
-                        setIssueMaxActiveSandboxes(3);
+                        setIssueMaxActiveSandboxes(6);
                     }
                 }
             } catch (e) {
