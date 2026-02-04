@@ -35,6 +35,7 @@ spec:
       - podLogs:
           namespace: repo-agent-system
           selector: statefulset.kubernetes.io/pod-name=repowatch-controller-0
+          tail: 200
       - events:
           namespace: repo-agent-system
   - name: check-reviewsandbox
