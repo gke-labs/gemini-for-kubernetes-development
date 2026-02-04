@@ -5,6 +5,8 @@ function AddRepo({ onCancel, onRepoAdded }) {
     const [url, setUrl] = useState('');
     const [name, setName] = useState('');
     const [assignees, setAssignees] = useState('');
+    const [reviewMaxActiveSandboxes, setReviewMaxActiveSandboxes] = useState(3);
+    const [issueMaxActiveSandboxes, setIssueMaxActiveSandboxes] = useState(6);
     const [yamlMode, setYamlMode] = useState(false);
     const [yamlContent, setYamlContent] = useState('');
     const [isLoading, setIsLoading] = useState(false);
@@ -49,6 +51,8 @@ function AddRepo({ onCancel, onRepoAdded }) {
                 // Load default YAML but clear specific fields in our inputs
                 setUrl('');
                 setName('');
+                setReviewMaxActiveSandboxes(3);
+                setIssueMaxActiveSandboxes(6);
                 // We use the default template structure, but the inputs are blank
                 // The user will fill them, which will update the YAML via updateYamlWithInputs
                 setYamlContent(defaultTmpl.content);
@@ -60,7 +64,7 @@ function AddRepo({ onCancel, onRepoAdded }) {
         if (tmpl) {
             // Merge current inputs if we wanted to be fancy, but simpler to just load the template content
             // and maybe re-apply the URL/Name if they are set.
-            const updated = updateYamlWithInputs(tmpl.content, url, name, assignees);
+            const updated = updateYamlWithInputs(tmpl.content, url, name, assignees, reviewMaxActiveSandboxes, issueMaxActiveSandboxes);
             setYamlContent(updated);
 
             // Also update inputs from template defaults if current inputs are empty
@@ -78,6 +82,16 @@ function AddRepo({ onCancel, onRepoAdded }) {
                     if (repoWatch.spec && repoWatch.spec.review && repoWatch.spec.review.assignees) {
                         setAssignees(repoWatch.spec.review.assignees.join(', '));
                     }
+                    if (repoWatch.spec && repoWatch.spec.review && repoWatch.spec.review.maxActiveSandboxes) {
+                        setReviewMaxActiveSandboxes(repoWatch.spec.review.maxActiveSandboxes);
+                    } else {
+                        setReviewMaxActiveSandboxes(3);
+                    }
+                    if (repoWatch.spec && repoWatch.spec.issue && repoWatch.spec.issue.maxActiveSandboxes) {
+                        setIssueMaxActiveSandboxes(repoWatch.spec.issue.maxActiveSandboxes);
+                    } else {
+                        setIssueMaxActiveSandboxes(6);
+                    }
                 }
             } catch (e) {
                 // ignore
@@ -85,7 +99,7 @@ function AddRepo({ onCancel, onRepoAdded }) {
         }
     };
 
-    const updateYamlWithInputs = (currentContent, currentUrl, currentName, currentAssignees) => {
+    const updateYamlWithInputs = (currentContent, currentUrl, currentName, currentAssignees, currentReviewMax, currentIssueMax) => {
         try {
             const docs = [];
             yaml.loadAll(currentContent, function (doc) {
@@ -128,6 +142,37 @@ function AddRepo({ onCancel, onRepoAdded }) {
                 } else if (repoWatchDoc.spec.review) {
                     delete repoWatchDoc.spec.review.assignees;
                 }
+
+                // Update Review Max Active Sandboxes
+                if (currentReviewMax !== undefined && currentReviewMax !== null) {
+                    if (!repoWatchDoc.spec.review) repoWatchDoc.spec.review = {};
+                    const max = parseInt(currentReviewMax);
+                    repoWatchDoc.spec.review.maxActiveSandboxes = max;
+                    repoWatchDoc.spec.review.maxSandboxes = max;
+                }
+
+                // Update Issue Max Active Sandboxes
+                // Only if spec.issue exists or we want to create it? 
+                // The issue description implies we want to set it.
+                // But if spec.issue is nil in the template, maybe we shouldn't create it blindly?
+                // However, "One for review and one for issue" suggests enabling both.
+                // But the user might not want issue handling.
+                // Let's assume if the template has issue config or if we are in "New (Custom)" (which uses default template), we might want to ensure it exists if user interacts with it.
+                // For now, let's update it if spec.issue exists, or if we force it.
+                // Given the UI will have a slider, user expects it to work.
+                
+                if (currentIssueMax !== undefined && currentIssueMax !== null) {
+                    const max = parseInt(currentIssueMax);
+                    if (!repoWatchDoc.spec.issue) repoWatchDoc.spec.issue = { 
+                        // Default fields if creating from scratch, though usually template handles this
+                        maxActiveSandboxes: max,
+                        maxSandboxes: max
+                    };
+                    else {
+                        repoWatchDoc.spec.issue.maxActiveSandboxes = max;
+                        repoWatchDoc.spec.issue.maxSandboxes = max;
+                    }
+                }
             }
 
             // Dump all back to string joined by ---
@@ -140,7 +185,7 @@ function AddRepo({ onCancel, onRepoAdded }) {
 
     const handleSwitchToYaml = () => {
         // Update YAML with current inputs before switching
-        const updatedYaml = updateYamlWithInputs(yamlContent, url, name, assignees);
+        const updatedYaml = updateYamlWithInputs(yamlContent, url, name, assignees, reviewMaxActiveSandboxes, issueMaxActiveSandboxes);
         setYamlContent(updatedYaml);
         setYamlMode(true);
     };
@@ -167,6 +212,12 @@ function AddRepo({ onCancel, onRepoAdded }) {
                 } else {
                     setAssignees('');
                 }
+                if (repoWatch.spec && repoWatch.spec.review && repoWatch.spec.review.maxActiveSandboxes) {
+                    setReviewMaxActiveSandboxes(repoWatch.spec.review.maxActiveSandboxes);
+                }
+                if (repoWatch.spec && repoWatch.spec.issue && repoWatch.spec.issue.maxActiveSandboxes) {
+                    setIssueMaxActiveSandboxes(repoWatch.spec.issue.maxActiveSandboxes);
+                }
             }
         } catch (e) {
             // Ignore parsing errors while typing
@@ -181,7 +232,7 @@ function AddRepo({ onCancel, onRepoAdded }) {
         let finalYaml = yamlContent;
 
         if (!yamlMode) {
-            finalYaml = updateYamlWithInputs(yamlContent, url, name, assignees);
+            finalYaml = updateYamlWithInputs(yamlContent, url, name, assignees, reviewMaxActiveSandboxes, issueMaxActiveSandboxes);
         }
 
         // Common Validation
@@ -311,6 +362,36 @@ function AddRepo({ onCancel, onRepoAdded }) {
                                 disabled={isLoading}
                             />
                             <small>Only watch PRs assigned to these users. Leave blank to watch all PRs.</small>
+                        </div>
+
+                        <div className="form-group">
+                            <label htmlFor="reviewMax">Review Sandbox Max Count: {reviewMaxActiveSandboxes}</label>
+                            <input
+                                type="range"
+                                id="reviewMax"
+                                min="0"
+                                max="15"
+                                value={reviewMaxActiveSandboxes}
+                                onChange={(e) => setReviewMaxActiveSandboxes(parseInt(e.target.value))}
+                                disabled={isLoading}
+                                style={{width: '100%'}}
+                            />
+                            <small>Maximum number of concurrent review sandboxes.</small>
+                        </div>
+
+                        <div className="form-group">
+                            <label htmlFor="issueMax">Issue Sandbox Max Count: {issueMaxActiveSandboxes}</label>
+                            <input
+                                type="range"
+                                id="issueMax"
+                                min="0"
+                                max="15"
+                                value={issueMaxActiveSandboxes}
+                                onChange={(e) => setIssueMaxActiveSandboxes(parseInt(e.target.value))}
+                                disabled={isLoading}
+                                style={{width: '100%'}}
+                            />
+                            <small>Maximum number of concurrent issue sandboxes.</small>
                         </div>
                     </>
                 )}
