@@ -612,12 +612,180 @@ input:checked + .slider:before {
     color: #e57373; /* Light red/pinkish */
 }
 
+/* Two-Panel Layout for Dev Tab */
+.dev-container-full {
+  width: 100%;
+  padding: 0;
+  margin: 0;
+  height: 100%;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.dev-layout {
+  display: flex;
+  flex: 1;
+  height: 100%;
+  overflow: hidden;
+}
+
+.dev-sidebar {
+  /* Width handled by parent style prop */
+  width: 100%; 
+  height: 100%;
+  background-color: var(--bg-secondary);
+  /* Border removed here as resizer acts as separator, or we can keep it */
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.resizer {
+  width: 5px;
+  background-color: var(--border-color);
+  cursor: col-resize;
+  transition: background-color 0.2s;
+  z-index: 10;
+  flex-shrink: 0;
+}
+
+.resizer:hover, .resizer:active {
+  background-color: var(--text-link);
+}
+
+.dev-main {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+  background-color: var(--bg-color);
+}
+
+/* Professional Tree View */
+.sidebar-tree-content {
+  flex: 1;
+  overflow-y: auto;
+  padding-bottom: 20px;
+}
+
+.sidebar-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 15px;
+  border-bottom: 1px solid var(--border-color);
+  background-color: var(--bg-secondary);
+}
+
+.sidebar-header-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.sidebar-header-btn {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+}
+.sidebar-header-btn:hover {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.sidebar-tree-row {
+  display: flex;
+  align-items: center;
+  height: 24px;
+  cursor: pointer;
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  border: 1px solid transparent; /* Maintain height on hover border */
+}
+
+.sidebar-tree-row:hover {
+  background-color: var(--bg-hover);
+}
+
+.sidebar-tree-row.active {
+  background-color: var(--bg-sidebar-selected); /* Light blue */
+  color: var(--text-link);
+}
+
+.root-row {
+  font-weight: 600;
+  padding-left: 5px; /* Less indentation for roots */
+  height: 28px;
+}
+
+.tree-expander {
+  width: 20px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.tree-icon {
+  width: 20px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-right: 4px;
+}
+
+.tree-label {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 24px;
+  text-align: left; /* Explicitly align left */
+}
+
+.tree-action-btn {
+  background: none;
+  border: none;
+  padding: 2px;
+  margin-right: 5px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+}
+.tree-action-btn:hover {
+  background-color: var(--bg-active);
+  color: white;
+}
+
+.pr-list-review {
+  padding: 0;
+  width: 100%;
+  height: 100%; /* Ensure it takes full height for the review container */
+  display: flex; /* Add flex to allow child to grow */
+  flex-direction: column;
+}
+
 /* Review Split Layout */
 .review-container {
   display: flex;
   width: 100%;
-  height: calc(100vh - 200px); /* Approximate height minus headers */
+  height: calc(100vh - 120px); /* Approximate height minus headers */
   border-top: 1px solid var(--border-color);
+  overflow: hidden;
 }
 
 .review-sidebar {
@@ -674,57 +842,6 @@ input:checked + .slider:before {
   font-weight: bold;
   font-size: 0.9rem;
   color: var(--text-secondary);
-}
-
-.sidebar-flair {
-  font-size: 0.7rem;
-  padding: 2px 6px;
-  border-radius: 4px;
-  color: white;
-  white-space: nowrap;
-}
-
-.sidebar-title {
-  font-size: 0.9rem;
-  color: var(--text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.sidebar-status {
-  font-size: 0.75rem;
-  color: var(--text-muted);
-  font-style: italic;
-}
-
-.sidebar-divider {
-  border: 0;
-  border-top: 1px solid var(--border-color);
-  margin: 5px 0;
-}
-
-.sidebar-actions {
-  padding: 10px;
-  text-align: center;
-  margin-top: auto; /* Push to bottom if container has height */
-}
-
-.btn-add-pr {
-  width: 100%;
-  font-size: 1.2rem;
-  background-color: var(--bg-secondary);
-  color: var(--text-secondary);
-  border: 1px dashed var(--border-color);
-}
-
-.btn-add-pr:hover {
-  background-color: var(--bg-hover);
-}
-
-.pr-list-review {
-  padding: 0;
-  width: 100%;
 }
 
 .sidebar-header {

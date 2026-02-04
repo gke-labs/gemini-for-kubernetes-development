@@ -1,158 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import yaml from 'js-yaml';
-
-function TaskIssueCard({
-    task,
-    repoName,
-    issueId,
-    handleScaleUp, // Optional: if we want to scale up on interaction
-}) {
-    const [localDraft, setLocalDraft] = useState(task.userDraft || task.agentDraft || '');
-    const [isCollapsed, setIsCollapsed] = useState(false);
-    const [statusText, setStatusText] = useState('');
-    const [showLogs, setShowLogs] = useState(false);
-    const [logs, setLogs] = useState('');
-
-    useEffect(() => {
-        const content = task.userDraft || task.agentDraft || '';
-        if (content !== localDraft) {
-            setLocalDraft(content);
-        }
-    }, [task.userDraft, task.agentDraft]);
-
-    useEffect(() => {
-        let isMounted = true;
-        let timeoutId;
-
-        if (showLogs && repoName) {
-            const fetchLogs = () => {
-                fetch(`/api/repo/${encodeURIComponent(repoName)}/issues/${encodeURIComponent(issueId)}/tasks/${encodeURIComponent(task.name)}/logs`)
-                .then(res => {
-                    if (res.ok) return res.text();
-                    throw new Error("Failed to load logs");
-                })
-                .then(text => {
-                    if (isMounted) {
-                        setLogs(text);
-                        timeoutId = setTimeout(fetchLogs, 5000);
-                    }
-                })
-                .catch(err => {
-                    if (isMounted) {
-                        setLogs(`Error loading logs: ${err.message}`);
-                        timeoutId = setTimeout(fetchLogs, 5000);
-                    }
-                });
-            };
-            fetchLogs();
-        }
-        
-        return () => {
-            isMounted = false;
-            clearTimeout(timeoutId);
-        };
-    }, [showLogs, repoName, issueId, task.name]);
-
-    useEffect(() => {
-        if (task.taskState === 'Completed') {
-             if (task.result === 'submitted') { // Assuming we track submission state in result or similar
-                 setStatusText('Submitted');
-             } else {
-                 setStatusText('Ready');
-             }
-        } else if (task.taskState === 'Running') {
-             setStatusText('Running');
-        } else if (task.taskState === 'Failed') {
-             setStatusText('Failed');
-        } else {
-             setStatusText(task.taskState || 'Pending');
-        }
-    }, [task.taskState, task.result]);
-
-    const getStatusColor = (text) => {
-        const t = text.toLowerCase();
-        if (t === 'ready' || t === 'completed') return 'green';
-        if (t === 'running') return 'orange';
-        if (t === 'failed') return '#9e2a2aff';
-        return '#cd9945ff';
-    };
-
-    const handleSaveDraft = () => {
-        fetch(`/api/repo/${repoName}/tasks/${task.name}/draft`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ draft: localDraft })
-        }).catch(err => console.error("Failed to save task draft", err));
-    };
-
-    const handleSubmit = () => {
-        // We submit the draft as a comment to the issue
-        // We use the generic submitComment endpoint
-        fetch(`/api/repo/${repoName}/issues/${issueId}/submitcomment`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ comment: localDraft })
-        })
-        .then(res => {
-            if (res.ok) {
-                alert("Comment submitted!");
-                // Ideally we update local state or refresh
-            } else {
-                res.text().then(t => alert("Failed to submit: " + t));
-            }
-        })
-        .catch(err => console.error("Failed to submit comment", err));
-    };
-
-    return (
-        <div style={{border: '1px solid var(--border-color)', borderRadius: '5px', margin: '10px 0', backgroundColor: 'var(--bg-review-section)'}}>
-            <div 
-                style={{padding: '10px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', backgroundColor: 'var(--bg-hover)'}}
-                onClick={() => setIsCollapsed(!isCollapsed)}
-            >
-                <div>
-                    <strong>{task.type.toUpperCase()}</strong> {/* Display generic name like TRIAGE */}
-                    <span style={{ fontSize: 'small', color: 'var(--text-secondary)', marginLeft: '10px' }}>
-                        {new Date(task.creationTimestamp).toLocaleString()}
-                    </span>
-                </div>
-                <span 
-                    style={{ backgroundColor: getStatusColor(statusText), color: 'white', padding: '2px 8px', borderRadius: '4px', fontSize: 'small' }}
-                    title={task.agentStateMessage}
-                >
-                    {statusText}
-                </span>
-            </div>
-            
-            {!isCollapsed && (
-                <div style={{padding: '15px'}}>
-                    <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '10px 0', gap: '10px' }}>
-                        <button className="btn" onClick={() => setShowLogs(!showLogs)}>
-                            {showLogs ? 'Hide Logs' : 'View Logs'}
-                        </button>
-                    </div>
-                    {showLogs && (
-                        <div className="logs-display" style={{backgroundColor: '#333', color: '#fff', padding: '10px', borderRadius: '5px', marginBottom: '10px', maxHeight: '300px', overflowY: 'auto'}}>
-                            <pre style={{margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'monospace'}}>{logs || 'Loading logs...'}</pre>
-                        </div>
-                    )}
-                    <textarea
-                        className="review-textarea"
-                        value={localDraft}
-                        onChange={(e) => setLocalDraft(e.target.value)}
-                        onBlur={handleSaveDraft}
-                        placeholder="Agent output or your comment..."
-                        rows={10}
-                        style={{width: '100%', marginBottom: '10px'}}
-                    />
-                    <div className="pr-card-actions">
-                        <button className="btn btn-submit" onClick={handleSubmit}>Submit Comment</button>
-                    </div>
-                </div>
-            )}
-        </div>
-    );
-}
+import TaskCard from './TaskCard';
 
 function IssueCard({
   issue,
@@ -172,6 +20,7 @@ function IssueCard({
 }) {
   const [isCollapsed, setIsCollapsed] = useState(!isMainView);
   const [tasks, setTasks] = useState([]);
+  const [iteratePrompt, setIteratePrompt] = useState('');
 
   const fetchTasks = () => {
     if (!repoName || !issue.id) return;
@@ -309,12 +158,13 @@ function IssueCard({
       {!isCollapsed && (
         <div style={{padding: '10px'}}>
             {tasks.length > 0 ? (
-                tasks.map(task => (
-                    <TaskIssueCard 
+                tasks.slice().reverse().map(task => (
+                    <TaskCard 
                         key={task.name} 
                         task={task} 
                         repoName={repoName} 
-                        issueId={issue.id}
+                        parentId={issue.id}
+                        parentType="issues"
                     />
                 ))
             ) : (
@@ -322,21 +172,38 @@ function IssueCard({
             )}
             
             <div style={{padding: '10px', borderTop: '1px solid var(--border-color)', marginTop: '10px'}}>
-                <div style={{display: 'flex', gap: '10px'}}>
-                    <button className="btn" onClick={() => handleCreateTask('triage-issue')}>Triage</button>
-                    <button className="btn" onClick={() => {
-                        const fixTask = tasks.find(t => t.type === 'fix-issue');
-                        if (!fixTask || !fixTask.agentDraft) {
-                            alert("No 'fix-issue' task with a draft found to extract PR ID.");
-                            return;
-                        }
-                        const match = fixTask.agentDraft.match(/\/pull\/(\d+)/);
-                        if (!match) {
-                            alert("Could not extract PR ID from fix-issue draft.");
-                            return;
-                        }
-                        handleCreateTask('address-feedback', '', { PULL_REQUEST_ID: match[1] });
-                    }}>Address Feedback</button>
+                <div style={{display: 'flex', gap: '10px', flexDirection: 'column'}}>
+                     {getSandboxStatusClass(issue) === 'green' && (
+                         <div style={{display: 'flex', gap: '5px'}}>
+                            <textarea 
+                                value={iteratePrompt} 
+                                onChange={(e) => setIteratePrompt(e.target.value)} 
+                                placeholder="Describe changes to iterate on..."
+                                style={{flexGrow: 1, minHeight: '60px', padding: '5px', borderRadius: '4px', border: '1px solid var(--border-color)'}}
+                            />
+                            <button className="btn" onClick={() => {
+                                if (!iteratePrompt.trim()) return;
+                                handleCreateTask('iterate', iteratePrompt);
+                                setIteratePrompt('');
+                            }}>Iterate</button>
+                         </div>
+                     )}
+                    <div style={{display: 'flex', gap: '10px'}}>
+                        <button className="btn" onClick={() => handleCreateTask('triage-issue')}>Triage</button>
+                        <button className="btn" onClick={() => {
+                            const fixTask = tasks.find(t => t.type === 'fix-issue');
+                            if (!fixTask || !fixTask.agentDraft) {
+                                alert("No 'fix-issue' task with a draft found to extract PR ID.");
+                                return;
+                            }
+                            const match = fixTask.agentDraft.match(/\/pull\/(\d+)/);
+                            if (!match) {
+                                alert("Could not extract PR ID from fix-issue draft.");
+                                return;
+                            }
+                            handleCreateTask('address-feedback', '', { PULL_REQUEST_ID: match[1] });
+                        }}>Address Feedback</button>
+                    </div>
                 </div>
             </div>
         </div>

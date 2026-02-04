@@ -914,7 +914,7 @@ function PrReviewCard({
       </div>
       {!collapsedReviews[pr.id] && (
         <>
-            {tasks.map(task => (
+            {tasks.slice().reverse().map(task => (
                 <TaskReviewCard 
                     key={task.name}
                     task={task}

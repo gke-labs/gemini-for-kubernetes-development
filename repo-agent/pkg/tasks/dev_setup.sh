@@ -1,0 +1,127 @@
+#!/bin/bash
+set -e
+set -x
+
+# It expects the following environment variables to be set:
+# - GEMINI_API_KEY
+# - GITHUB_USER_TOKEN
+
+export REPO_NAME="{{ .Repo.Name }}"
+export CLONE_URL={{ .Repo.CloneURL }}
+export BRANCH_NAME="{{ .BranchName }}"
+export SOURCE_BRANCH="{{ .SourceBranch }}"
+export PROMPT_FILE="{{ .PromptFile }}"
+export GITHUB_USER_ID={{ .User.UserID }}
+export GITHUB_USER_EMAIL={{ .User.Email }}
+export GITHUB_USER_NAME="{{ .User.Name }}"
+
+function setupGit {
+    echo "Running setupGit..."
+    echo "creating /root/.config/gh directory"
+    mkdir -p /root/.config/gh
+
+    echo "writing gh config"
+    cat <<EOF > /root/.config/gh/hosts.yml
+github.com:
+    users:
+        ${GITHUB_USER_ID}:
+            oauth_token: ${GITHUB_USER_TOKEN}
+    git_protocol: https
+    oauth_token: ${GITHUB_USER_TOKEN}
+    user: ${GITHUB_USER_ID}
+EOF
+
+    echo "running git config user.email"
+    git config --global user.email ${GITHUB_USER_EMAIL}
+
+    echo "running git config user.name"
+    git config --global user.name ${GITHUB_USER_NAME}
+
+    echo "running gh auth setup-git"
+    gh auth setup-git
+}
+
+function setupGitRepos {
+    echo "Running setupGitRepos..."
+    
+    # Check if repo already exists (reuse sandbox case)
+    if [ ! -d "/workspaces/${REPO_NAME}" ]; then
+        echo "cloning repository"
+        (cd /workspaces/ && git clone ${CLONE_URL})
+    else
+        echo "repository already exists"
+        # Optional: fetch latest changes
+        (cd "/workspaces/${REPO_NAME}" && git fetch origin)
+    fi
+}
+
+function checkoutBranch {
+    echo "Running checkoutBranch..."
+    cd "/workspaces/${REPO_NAME}"
+    
+    # Check if branch exists locally
+    if git show-ref --verify --quiet "refs/heads/${BRANCH_NAME}"; then
+        echo "Branch ${BRANCH_NAME} exists locally, checking out..."
+        git checkout "${BRANCH_NAME}"
+    # Check if branch exists remotely
+    elif git show-ref --verify --quiet "refs/remotes/origin/${BRANCH_NAME}"; then
+        echo "Branch ${BRANCH_NAME} exists remotely, checking out..."
+        git checkout "${BRANCH_NAME}"
+    else
+        echo "Branch ${BRANCH_NAME} does not exist."
+        if [ -n "${SOURCE_BRANCH}" ] && [ "${SOURCE_BRANCH}" != "${BRANCH_NAME}" ]; then
+             echo "Creating ${BRANCH_NAME} from ${SOURCE_BRANCH}..."
+             # Try remote source first
+             if git show-ref --verify --quiet "refs/remotes/origin/${SOURCE_BRANCH}"; then
+                 git checkout -b "${BRANCH_NAME}" "origin/${SOURCE_BRANCH}"
+             elif git show-ref --verify --quiet "refs/heads/${SOURCE_BRANCH}"; then
+                 git checkout -b "${BRANCH_NAME}" "${SOURCE_BRANCH}"
+             else
+                 echo "Source branch ${SOURCE_BRANCH} not found, creating from default..."
+                 git checkout -b "${BRANCH_NAME}"
+             fi
+        else
+             echo "Creating ${BRANCH_NAME}..."
+             git checkout -b "${BRANCH_NAME}"
+        fi
+
+        echo "Pushing ${BRANCH_NAME} to origin..."
+        git push -u origin "${BRANCH_NAME}"
+    fi
+}
+
+function configureGemini {
+    echo "Running configureGemini..."
+    echo "creating /root/.gemini directory"
+    mkdir -p /root/.gemini
+
+    echo "writing gemini config"
+    cat <<EOF > /root/.gemini/settings.json
+{
+  "general": {
+    "enableAutoUpdate": false,
+    "retryFetchErrors": true
+  }
+}
+EOF
+}
+
+function runGemini {
+    # Only run gemini if a prompt was actually provided in env or prompt file is non-empty
+    if [ -s "${PROMPT_FILE}" ]; then
+        echo "Running runGemini..."
+        echo "running gemini in yolo mode"
+        (cd "/workspaces/${REPO_NAME}" && export GEMINI_API_KEY="${GEMINI_API_KEY}" && gemini --yolo --model {{ .Model }} < ${PROMPT_FILE})
+    else
+        echo "No prompt provided, skipping gemini execution."
+    fi
+}
+
+# Main execution
+setupGit
+setupGitRepos
+# HACK: Avoid git lock issues
+sleep 5
+checkoutBranch
+configureGemini
+#runGemini
