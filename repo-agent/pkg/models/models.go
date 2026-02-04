@@ -56,6 +56,7 @@ type Issue struct {
 	AgentDraft        string   `json:"agentDraft,omitempty"`
 	AgentState        string   `json:"agentState,omitempty"`
 	AgentStateMessage string   `json:"agentStateMessage,omitempty"`
+	SandboxStatus     string   `json:"sandboxStatus,omitempty"`
 	Labels            []string `json:"labels,omitempty"`
 }
 
