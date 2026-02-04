@@ -295,7 +295,7 @@ function IssueCard({
             </div>
           ) : getSandboxStatusClass(issue) === 'red' ? (
             <div style={{display: 'flex', alignItems: 'center', gap: '5px'}}>
-              <span className={`pr-sandbox ${getSandboxStatusClass(issue)}`}>Sandbox Evicted</span>
+              <span className={`pr-sandbox ${getSandboxStatusClass(issue)}`}>{issue.sandboxStatus || 'Error'}</span>
               <button className="btn btn-sm pr-sandbox green" style={{padding: '4px 10px', fontSize: '14px'}} onClick={(e) => { e.stopPropagation(); handleScaleUp(issue.id, true); }} title="Restart">
                   &#8635;
                </button>
