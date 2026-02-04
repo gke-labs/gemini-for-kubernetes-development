@@ -31,7 +31,7 @@ spec:
     robotAccount: codebot-robot
     maxActiveSandboxes: 6
     maxSandboxes: 6
-    issueShutdownAfterMinutes: 300
+    issueShutdownAfterMinutes: 0
     image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
     llm:
       apiKeySecretRef: gemini-vscode-tokens
