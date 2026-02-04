@@ -166,6 +166,7 @@ func (s *Server) listIssuesFromK8s(ctx context.Context, namespace, repo string) 
 		draft := ""
 		agentState := ""
 		agentStateMessage := ""
+		sandboxStatus := ""
 		var agentLabels []string
 		comment := ""
 		annotations := item.GetAnnotations()
@@ -180,6 +181,9 @@ func (s *Server) listIssuesFromK8s(ctx context.Context, namespace, repo string) 
 			}
 			if val, ok := annotations["agentStateMessage"]; ok {
 				agentStateMessage = val
+			}
+			if val, ok := annotations["sandbox.gemini.google.com/pod-status"]; ok {
+				sandboxStatus = val
 			}
 			if val, ok := annotations["agentLabels"]; ok {
 				_ = json.Unmarshal([]byte(val), &agentLabels)
@@ -202,6 +206,7 @@ func (s *Server) listIssuesFromK8s(ctx context.Context, namespace, repo string) 
 			PushBranch:        pushBranch,
 			AgentState:        agentState,
 			AgentStateMessage: agentStateMessage,
+			SandboxStatus:     sandboxStatus,
 			Labels:            agentLabels,
 		}
 		issues = append(issues, issue)

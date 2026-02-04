@@ -22,6 +22,10 @@ spec:
       githubSecretName: string | default="github-pat"
       resources:
         ephemeralStorage: string | default="6Gi"
+        memoryRequest: string | default="4Gi"
+        memoryLimit: string | default="12Gi"
+        cpuRequest: string | default="2"
+        cpuLimit: string | default="4"
       dockerEnabled: boolean | default=false
       source:
         cloneURL: string
@@ -93,8 +97,12 @@ spec:
                   resources:
                     limits:
                       ephemeral-storage: ${schema.spec.resources.ephemeralStorage}
+                      memory: ${schema.spec.resources.memoryLimit}
+                      cpu: ${schema.spec.resources.cpuLimit}
                     requests:
                       ephemeral-storage: ${schema.spec.resources.ephemeralStorage}
+                      memory: ${schema.spec.resources.memoryRequest}
+                      cpu: ${schema.spec.resources.cpuRequest}
                   env:
                     - name: NAMESPACE
                       value: ${schema.metadata.namespace}

@@ -669,6 +669,20 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 
 	ownedSandboxes := getOwnedSandboxes(sandboxList.Items, repoWatch.UID)
 
+	// List Pods to check for eviction
+	podList := &corev1.PodList{}
+	if err := r.List(ctx, podList, client.InNamespace(repoWatch.Namespace)); err != nil {
+		log.Error(err, "unable to list pods")
+	}
+	podsBySandbox := make(map[string]*corev1.Pod)
+	for i := range podList.Items {
+		pod := &podList.Items[i]
+		// RGD creates Pod with label sandbox=devc-<IssueSandboxName>
+		if sandboxLabel, ok := pod.Labels["sandbox"]; ok {
+			podsBySandbox[sandboxLabel] = pod
+		}
+	}
+
 	// 3. Process Issues
 	activeSandboxes := 0
 	totalSandboxes := 0
@@ -738,6 +752,40 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 				activeSandboxes--
 			}
 
+			// Check if pod is evicted
+			podName := fmt.Sprintf("devc-%s", existingSandbox.GetName())
+			pod := podsBySandbox[podName]
+			sandboxStatus := "Active"
+			if scaledDown {
+				sandboxStatus = "ScaledDown"
+			}
+
+			updateAnnotation := false
+			annotations := existingSandbox.GetAnnotations()
+			if annotations == nil {
+				annotations = make(map[string]string)
+			}
+
+			if pod != nil && pod.Status.Reason == "Evicted" {
+				sandboxStatus = "Evicted"
+				if annotations["sandbox.gemini.google.com/pod-status"] != "Evicted" {
+					annotations["sandbox.gemini.google.com/pod-status"] = "Evicted"
+					updateAnnotation = true
+				}
+			} else {
+				if annotations["sandbox.gemini.google.com/pod-status"] == "Evicted" {
+					delete(annotations, "sandbox.gemini.google.com/pod-status")
+					updateAnnotation = true
+				}
+			}
+
+			if updateAnnotation {
+				existingSandbox.SetAnnotations(annotations)
+				if err := r.Update(ctx, existingSandbox); err != nil {
+					log.Error(err, "failed to update sandbox annotation for pod status")
+				}
+			}
+
 			// Ensure tasks exist for applicable handlers
 			for _, handler := range applicableHandlers {
 				if err := r.ensureIssueTask(ctx, repoWatch, existingSandbox, sandboxName, issue, handler); err != nil {
@@ -746,7 +794,7 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 				watchedIssues[handler.Name] = append(watchedIssues[handler.Name], reviewv1alpha1.WatchedIssue{
 					Number:      *issue.Number,
 					SandboxName: sandboxName,
-					Status:      "Active",
+					Status:      sandboxStatus,
 					ScaledDown:  scaledDown,
 				})
 			}
