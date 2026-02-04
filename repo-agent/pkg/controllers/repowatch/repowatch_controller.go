@@ -671,7 +671,7 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 
 	// List Pods to check for eviction
 	podList := &corev1.PodList{}
-	if err := r.List(ctx, podList, client.InNamespace(repoWatch.Namespace)); err != nil {
+	if err := r.List(ctx, podList, client.InNamespace(repoWatch.Namespace), client.MatchingLabels{"sandbox-type": "issue"}); err != nil {
 		log.Error(err, "unable to list pods")
 	}
 	podsBySandbox := make(map[string]*corev1.Pod)
@@ -752,12 +752,24 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 				activeSandboxes--
 			}
 
-			// Check if pod is evicted
+			// Check if pod is evicted or has other status
 			podName := fmt.Sprintf("devc-%s", existingSandbox.GetName())
 			pod := podsBySandbox[podName]
 			sandboxStatus := "Active"
 			if scaledDown {
 				sandboxStatus = "ScaledDown"
+			}
+
+			podStatusStr := ""
+			if pod != nil {
+				if pod.Status.Reason == "Evicted" {
+					podStatusStr = "Evicted"
+				} else if pod.Status.Phase == corev1.PodFailed {
+					podStatusStr = fmt.Sprintf("fail: %s", pod.Status.Reason)
+				} else {
+					podStatusStr = string(pod.Status.Phase)
+				}
+				sandboxStatus = podStatusStr
 			}
 
 			updateAnnotation := false
@@ -766,14 +778,14 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 				annotations = make(map[string]string)
 			}
 
-			if pod != nil && pod.Status.Reason == "Evicted" {
-				sandboxStatus = "Evicted"
-				if annotations["sandbox.gemini.google.com/pod-status"] != "Evicted" {
-					annotations["sandbox.gemini.google.com/pod-status"] = "Evicted"
+			shouldPersist := podStatusStr == "Evicted" || strings.HasPrefix(podStatusStr, "fail:")
+			if shouldPersist {
+				if annotations["sandbox.gemini.google.com/pod-status"] != podStatusStr {
+					annotations["sandbox.gemini.google.com/pod-status"] = podStatusStr
 					updateAnnotation = true
 				}
 			} else {
-				if annotations["sandbox.gemini.google.com/pod-status"] == "Evicted" {
+				if _, ok := annotations["sandbox.gemini.google.com/pod-status"]; ok {
 					delete(annotations, "sandbox.gemini.google.com/pod-status")
 					updateAnnotation = true
 				}
