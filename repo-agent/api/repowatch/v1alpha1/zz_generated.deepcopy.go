@@ -122,6 +122,11 @@ func (in *LLMConfig) DeepCopy() *LLMConfig {
 func (in *PRReviewSpec) DeepCopyInto(out *PRReviewSpec) {
 	*out = *in
 	out.LLM = in.LLM
+	if in.IgnoreFiles != nil {
+		in, out := &in.IgnoreFiles, &out.IgnoreFiles
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	if in.PullRequests != nil {
 		in, out := &in.PullRequests, &out.PullRequests
 		*out = make([]int, len(*in))
