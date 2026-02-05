@@ -43,6 +43,11 @@ type DevSandboxOptions struct {
 
 	// Scaling
 	Replicas int64
+
+	// Idea Exploration
+	IdeaID         string
+	Approach       string
+	ParentApproach string
 }
 
 // NewDevSandbox creates a new DevSandbox unstructured object.
@@ -156,6 +161,15 @@ func NewDevSandbox(opt DevSandboxOptions) *unstructured.Unstructured {
 		labels = make(map[string]string)
 	}
 	labels["sandbox.gemini.google.com/type"] = "dev"
+	if opt.IdeaID != "" {
+		labels["repo-agent.gemini.google.com/idea-id"] = opt.IdeaID
+	}
+	if opt.Approach != "" {
+		labels["repo-agent.gemini.google.com/approach"] = opt.Approach
+	}
+	if opt.ParentApproach != "" {
+		labels["repo-agent.gemini.google.com/parent-approach"] = opt.ParentApproach
+	}
 	u.SetLabels(labels)
 
 	if len(opt.Annotations) > 0 {

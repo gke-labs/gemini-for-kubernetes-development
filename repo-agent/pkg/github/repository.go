@@ -8,6 +8,10 @@ type Repository struct {
 	repository *githubv39.Repository
 }
 
+func NewRepository(repo *githubv39.Repository) *Repository {
+	return &Repository{repository: repo}
+}
+
 func (r *Repository) CloneURL() string {
 	return r.repository.GetCloneURL()
 }

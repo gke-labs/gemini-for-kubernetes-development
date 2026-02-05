@@ -13,14 +13,33 @@ import (
 	"k8s.io/klog/v2"
 )
 
+var (
+	DevGVR = schema.GroupVersionResource{
+		Group:    "custom.agents.x-k8s.io",
+		Version:  "v1alpha1",
+		Resource: "issuesandboxes",
+	}
+	IssueGVR = schema.GroupVersionResource{
+		Group:    "custom.agents.x-k8s.io",
+		Version:  "v1alpha1",
+		Resource: "issuesandboxes",
+	}
+)
+
 type SandboxDaemonCommand struct {
-	SandboxCommand    SandboxCommand
 	CodeServerCommand CodeServerCommand
+	// Flattened fields from deleted SandboxCommand to keep Daemon logic working
+	// We only need fields necessary for startup configuration if any
+	// Actually daemon mostly relies on env vars and TaskRunner now.
+	// But let's keep flags for compatibility or future use.
+	IssueID string
 }
 
 func (c *SandboxDaemonCommand) InitDefaults() {
-	c.SandboxCommand.InitDefaults()
 	c.CodeServerCommand.InitDefaults()
+	if c.IssueID == "" {
+		c.IssueID = os.Getenv("ISSUEID")
+	}
 }
 
 func BuildSandboxDaemonCommand() *cobra.Command {
@@ -37,18 +56,7 @@ func BuildSandboxDaemonCommand() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&daemonCmd.SandboxCommand.RepoURL, "repo-url", os.Getenv("GIT_HTML_URL"), "Git HTML URL")
-	cmd.Flags().StringVar(&daemonCmd.SandboxCommand.UserDotfilesRepo, "user-dotfiles-repo", os.Getenv("USER_DOTFILESREPO"), "User dotfiles repo")
-	cmd.Flags().StringVar(&daemonCmd.SandboxCommand.CloneURL, "clone-url", os.Getenv("GIT_CLONE_URL"), "Git clone URL")
-	cmd.Flags().StringVar(&daemonCmd.SandboxCommand.AgentName, "agent-name", os.Getenv("AGENT_NAME"), "Agent name")
-	cmd.Flags().StringVar(&daemonCmd.SandboxCommand.AgentPrompt, "agent-prompt", os.Getenv("AGENT_PROMPT"), "Agent prompt")
-	cmd.Flags().StringVar(&daemonCmd.SandboxCommand.BranchName, "branch-name", os.Getenv("DEV_BRANCH"), "Dev branch name")
-	cmd.Flags().BoolVar(&daemonCmd.SandboxCommand.PushEnabled, "push-enabled", os.Getenv("GIT_PUSH_ENABLED") == "true", "Enable git push")
-	cmd.Flags().StringVar(&daemonCmd.SandboxCommand.GithubUserOrigin, "github-user-origin", os.Getenv("GITHUB_USER_ORIGIN"), "Github user origin")
-	cmd.Flags().StringVar(&daemonCmd.SandboxCommand.GithubUserLogin, "github-user-login", os.Getenv("GITHUB_USER_LOGIN"), "Github user login")
-	cmd.Flags().StringVar(&daemonCmd.SandboxCommand.GithubUserEmail, "github-user-email", os.Getenv("GITHUB_USER_EMAIL"), "Github user email")
-	cmd.Flags().StringVar(&daemonCmd.SandboxCommand.GithubUserName, "github-user-name", os.Getenv("GITHUB_USER_NAME"), "Github user name")
-	cmd.Flags().StringVar(&daemonCmd.SandboxCommand.IssueID, "issue-id", os.Getenv("ISSUEID"), "Issue ID")
+	cmd.Flags().StringVar(&daemonCmd.IssueID, "issue-id", os.Getenv("ISSUEID"), "Issue ID")
 
 	return cmd
 }
@@ -57,7 +65,7 @@ func (c *SandboxDaemonCommand) Run(ctx context.Context) error {
 	log := klog.FromContext(ctx)
 
 	var gvr schema.GroupVersionResource
-	if c.SandboxCommand.IssueID != "" {
+	if c.IssueID != "" {
 		gvr = IssueGVR
 	} else {
 		gvr = DevGVR
@@ -107,5 +115,5 @@ func (c *SandboxDaemonCommand) Run(ctx context.Context) error {
 
 	log.Info("Sandbox Daemon started. Waiting for tasks...")
 
-	return c.CodeServerCommand.Wait()
+	return c.CodeServerCommand.Wait() // Wait for code server (or context cancel)
 }

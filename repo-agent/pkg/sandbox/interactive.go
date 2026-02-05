@@ -28,7 +28,7 @@ type IssueSandbox struct {
 	executor Executor
 }
 
-func NewIssueSandbox(ctx context.Context, local bool, repo *github.Repository, issue *github.Issue) (*IssueSandbox, error) {
+func NewIssueSandbox(ctx context.Context, local bool, repo *github.Repository, issue *github.Issue, branch string) (*IssueSandbox, error) {
 	log := klog.FromContext(ctx)
 
 	kube, err := clients.NewKubernetesClient()
@@ -38,25 +38,37 @@ func NewIssueSandbox(ctx context.Context, local bool, repo *github.Repository, i
 
 	if local {
 		log.Info("Using local executor for sandbox")
+		name := fmt.Sprintf("local-%s", repo.Name())
+		if issue != nil {
+			name = fmt.Sprintf("%s/issue/%d", name, issue.Number())
+		} else {
+			name = fmt.Sprintf("%s/branch/%s", name, branch)
+		}
 		return &IssueSandbox{
 			repo:  repo,
 			issue: issue,
 			executor: &LocalExecutor{
 				Ctx:  ctx,
-				Name: fmt.Sprintf("local-%s/issue/%d", repo.Name(), issue.Number()),
+				Name: name,
 			},
 		}, nil
 	}
-	log.Info("Looking for existing sandbox for issue", "repo", repo.CloneURL(), "issue", issue.String())
-	sb, found, err := FindSandboxForIssue(ctx, kube, repo, issue)
+
+	issueStr := "nil"
+	if issue != nil {
+		issueStr = issue.String()
+	}
+	log.Info("Looking for existing sandbox", "repo", repo.CloneURL(), "issue", issueStr, "branch", branch)
+
+	sb, found, err := FindSandbox(ctx, kube, repo, issue, branch)
 	if err != nil {
 		return nil, err
 	}
 
 	if !found {
-		sb, err = LaunchSandboxForIssue(ctx, kube, repo, issue)
+		sb, err = LaunchSandbox(ctx, kube, repo, issue, branch)
 		if err != nil {
-			return nil, fmt.Errorf("launching sandbox for issue: %w", err)
+			return nil, fmt.Errorf("launching sandbox: %w", err)
 		}
 	}
 	return sb, nil
@@ -84,11 +96,6 @@ func (s *IssueSandbox) GetPodID() types.NamespacedName {
 		return podExecutor.PodID
 	}
 	return types.NamespacedName{}
-}
-
-// GetIssue returns the issue associated with the sandbox.
-func (s *IssueSandbox) GetIssue() *github.Issue {
-	return s.issue
 }
 
 func (s *IssueSandbox) GetSandboxID() string {
@@ -123,12 +130,15 @@ func (s *IssueSandbox) WriteXFile(path string, data []byte) error {
 	return nil
 }
 
-func LaunchSandboxForIssue(ctx context.Context, kube *clients.KubernetesClient, repo *github.Repository, issue *github.Issue) (*IssueSandbox, error) {
+func LaunchSandbox(ctx context.Context, kube *clients.KubernetesClient, repo *github.Repository, issue *github.Issue, branch string) (*IssueSandbox, error) {
 	log := klog.FromContext(ctx)
 
-	sandboxName := NameForIssue(repo, issue)
+	sandboxName := NameForSandbox(repo, issue, branch)
 
-	issueURL := issue.String()
+	issueURL := ""
+	if issue != nil {
+		issueURL = issue.String()
+	}
 
 	cloneRepos := []string{
 		fmt.Sprintf("/workspaces/%s=%s", repo.Name(), repo.CloneURL()),
@@ -157,7 +167,9 @@ func LaunchSandboxForIssue(ctx context.Context, kube *clients.KubernetesClient, 
 
 	sandbox.Annotations = map[string]string{
 		"repo-agent.labs.gke.io/clone-repos": strings.Join(cloneRepos, ";"),
-		"repo-agent.labs.gke.io/fix-issue":   issueURL,
+	}
+	if issueURL != "" {
+		sandbox.Annotations["repo-agent.labs.gke.io/fix-issue"] = issueURL
 	}
 
 	sandboxGVR := sandboxapi.GroupVersion.WithResource("sandboxes")
@@ -197,15 +209,24 @@ func LaunchSandboxForIssue(ctx context.Context, kube *clients.KubernetesClient, 
 	}, nil
 }
 
-func NameForIssue(repo *github.Repository, issue *github.Issue) string {
-	sandboxName := fmt.Sprintf("github-%s-%s-%d", repo.Owner(), repo.Name(), issue.Number())
+func NameForSandbox(repo *github.Repository, issue *github.Issue, branch string) string {
+	var sandboxName string
+	if issue != nil {
+		sandboxName = fmt.Sprintf("github-%s-%s-%d", repo.Owner(), repo.Name(), issue.Number())
+	} else {
+		// Fallback for dev sandboxes without issue
+		// Sanitize branch name
+		safeBranch := strings.ReplaceAll(branch, "/", "-")
+		safeBranch = strings.ReplaceAll(safeBranch, "_", "-")
+		sandboxName = fmt.Sprintf("github-%s-%s-%s", repo.Owner(), repo.Name(), safeBranch)
+	}
 	sandboxName = strings.ToLower(sandboxName) // Repos can have capital letters, but k8s names must be lowercase
 
 	return sandboxName
 }
 
-func FindSandboxForIssue(ctx context.Context, kube *clients.KubernetesClient, repo *github.Repository, issue *github.Issue) (*IssueSandbox, bool, error) {
-	sandboxName := NameForIssue(repo, issue)
+func FindSandbox(ctx context.Context, kube *clients.KubernetesClient, repo *github.Repository, issue *github.Issue, branch string) (*IssueSandbox, bool, error) {
+	sandboxName := NameForSandbox(repo, issue, branch)
 
 	podIDPtr, err := FindSandboxPod(ctx, sandboxName)
 	if err != nil {

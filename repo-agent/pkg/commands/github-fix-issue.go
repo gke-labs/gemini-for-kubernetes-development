@@ -126,7 +126,7 @@ func (c *GithubFixIssueCommand) loadGithubObjects(ctx context.Context) error {
 }
 
 func (c *GithubFixIssueCommand) loadSandbox(ctx context.Context) error {
-	sb, err := sandbox.NewIssueSandbox(ctx, c.InPod, c.repo, c.issue)
+	sb, err := sandbox.NewIssueSandbox(ctx, c.InPod, c.repo, c.issue, "")
 	if err != nil {
 		return err
 	}

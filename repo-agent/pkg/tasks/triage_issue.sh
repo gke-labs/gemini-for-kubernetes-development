@@ -25,9 +25,15 @@ EOF
 
 function runGemini {
     echo "Running runGemini..."
+{{ if eq .AgentName "dummy" }}
+    echo "Running in dummy mode..."
+    echo "/kind bug" > "$(dirname "${PROMPT_FILE}")/raw-agent-output.txt"
+    echo "This is a dummy response for triage." >> "$(dirname "${PROMPT_FILE}")/raw-agent-output.txt"
+{{ else }}
     echo "running gemini in yolo mode"
     export GEMINI_API_KEY="${GEMINI_API_KEY}"
     gemini --yolo --model {{ .Model }} < ${PROMPT_FILE} > "$(dirname "${PROMPT_FILE}")/raw-agent-output.txt" 2>&1
+{{ end }}
     cat "$(dirname "${PROMPT_FILE}")/raw-agent-output.txt"
     # remove agent thoughts (extract prow command)
     grep "^/kind " "$(dirname "${PROMPT_FILE}")/raw-agent-output.txt" > "$(dirname "${PROMPT_FILE}")/agent-output.txt" || true

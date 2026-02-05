@@ -6,6 +6,8 @@ import Review from './Review';
 import Issues from './Issues';
 import IssueCard from './IssueCard';
 import DevCard from './DevCard';
+import ExplorationGroup from './ExplorationGroup';
+import DevSidebar from './DevSidebar';
 import AddRepo from './AddRepo';
 import DeleteRepo from './DeleteRepo';
 import Settings from './Settings';
@@ -34,6 +36,7 @@ function App() {
   const [prs, setPrs] = useState([]);
   const [issues, setIssues] = useState([]);
   const [devSandboxes, setDevSandboxes] = useState([]);
+  const [activeSandbox, setActiveSandbox] = useState(null); // Selected sandbox in Dev Tab
   const [drafts, setDrafts] = useState({});
   const [collapsedReviews, setCollapsedReviews] = useState({});
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'light');
@@ -41,9 +44,30 @@ function App() {
   const [yamlDrafts, setYamlDrafts] = useState({});
   const [lastUpdated, setLastUpdated] = useState(null);
   const [hasInstructionDraft, setHasInstructionDraft] = useState(false);
+  
+  // Dev Sandbox Sidebar State
+  const [sidebarWidth, setSidebarWidth] = useState(400);
+  const [isResizing, setIsResizing] = useState(false);
+
+  // Dev Sandbox Modals
   const [devModalOpen, setDevModalOpen] = useState(false);
   const [newDevBranch, setNewDevBranch] = useState('');
   const [newDevPrompt, setNewDevPrompt] = useState('');
+  
+  // Exploration Modals
+  const [explorationModalOpen, setExplorationModalOpen] = useState(false);
+  const [newExplorationIdea, setNewExplorationIdea] = useState('');
+  const [newExplorationApproach, setNewExplorationApproach] = useState('');
+  const [newExplorationPrompt, setNewExplorationPrompt] = useState('');
+
+  // Approach Modal
+  const [approachModalOpen, setApproachModalOpen] = useState(false);
+  const [targetIdeaID, setTargetIdeaID] = useState('');
+  const [newApproachName, setNewApproachName] = useState('');
+  const [newApproachPrompt, setNewApproachPrompt] = useState('');
+  const [baseBranchForFork, setBaseBranchForFork] = useState('');
+  const [parentApproachForFork, setParentApproachForFork] = useState('');
+
   const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
   const [feedbackTitle, setFeedbackTitle] = useState('');
   const [feedbackText, setFeedbackText] = useState('');
@@ -55,6 +79,45 @@ function App() {
     document.body.className = theme === 'dark' ? 'dark-mode' : '';
     localStorage.setItem('theme', theme);
   }, [theme]);
+
+  // Sidebar Resizing Logic
+  const startResizing = useCallback(() => {
+    setIsResizing(true);
+  }, []);
+
+  const stopResizing = useCallback(() => {
+    setIsResizing(false);
+  }, []);
+
+  const resize = useCallback(
+    (mouseMoveEvent) => {
+      if (isResizing) {
+        // Limit width to reasonable bounds
+        const newWidth = Math.max(200, Math.min(mouseMoveEvent.clientX, 600));
+        setSidebarWidth(newWidth);
+      }
+    },
+    [isResizing]
+  );
+
+  useEffect(() => {
+    window.addEventListener("mousemove", resize);
+    window.addEventListener("mouseup", stopResizing);
+    return () => {
+      window.removeEventListener("mousemove", resize);
+      window.removeEventListener("mouseup", stopResizing);
+    };
+  }, [resize, stopResizing]);
+
+  // Keep activeSandbox in sync with polled updates
+  useEffect(() => {
+      if (activeSandbox && devSandboxes.length > 0) {
+          const updated = devSandboxes.find(s => s.name === activeSandbox.name);
+          if (updated && (updated.agentState !== activeSandbox.agentState || updated.sandboxReplica !== activeSandbox.sandboxReplica)) {
+              setActiveSandbox(updated);
+          }
+      }
+  }, [devSandboxes, activeSandbox]);
 
   // Check authentication status on load
   useEffect(() => {
@@ -914,6 +977,78 @@ function App() {
     }
   };
 
+  const submitExplorationCreate = () => {
+    if (newExplorationIdea && newExplorationApproach) {
+        // Idea ID should be URL-safe-ish
+        const ideaID = newExplorationIdea.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+        const approach = newExplorationApproach.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+        
+        handleDevCreate({ 
+            ideaID: ideaID, 
+            approach: approach, 
+            prompt: newExplorationPrompt 
+        });
+        setExplorationModalOpen(false);
+        setNewExplorationIdea('');
+        setNewExplorationApproach('');
+        setNewExplorationPrompt('');
+    } else {
+        alert("Idea Name and Approach Name are required.");
+    }
+  };
+
+  const submitApproachCreate = () => {
+      if (targetIdeaID && newApproachName) {
+          const approach = newApproachName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+          const payload = {
+              ideaID: targetIdeaID,
+              approach: approach,
+              prompt: newApproachPrompt
+          };
+          
+          if (baseBranchForFork) {
+              payload.baseBranch = baseBranchForFork;
+              payload.parentApproach = parentApproachForFork;
+          }
+
+          handleDevCreate(payload);
+          setApproachModalOpen(false);
+          setTargetIdeaID('');
+          setNewApproachName('');
+          setNewApproachPrompt('');
+          setBaseBranchForFork('');
+          setParentApproachForFork('');
+      } else {
+          alert("Approach Name is required.");
+      }
+  };
+
+  const handleOpenAddApproach = (ideaID) => {
+      setTargetIdeaID(ideaID);
+      setNewApproachName('');
+      setNewApproachPrompt('');
+      setBaseBranchForFork('');
+      setParentApproachForFork('');
+      setApproachModalOpen(true);
+  };
+  
+  const handleForkDevInstance = (sandbox) => {
+      if (sandbox.ideaID) {
+        setTargetIdeaID(sandbox.ideaID);
+        // Pre-fill name if it follows a pattern, or leave blank?
+        // Let's leave blank but maybe we can suggest something in the placeholder
+        setNewApproachName(''); 
+        setNewApproachPrompt('');
+        setBaseBranchForFork(sandbox.branch);
+        setParentApproachForFork(sandbox.approach || sandbox.branch);
+        setApproachModalOpen(true);
+      } else {
+          // If forking an ungrouped sandbox, maybe start a new exploration based on it?
+          // For now, let's just alert not supported or implement basic branching
+          alert("Forking ungrouped sandboxes into new explorations is not yet supported via this button.");
+      }
+  };
+
   const handleFeedbackClick = async () => {
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({
@@ -1017,95 +1152,135 @@ function App() {
     } else if (activeSubTab.name === 'dev') {
         const activeList = devSandboxes.map(sandbox => ({...sandbox, type: 'active'}));
         
-        // Pending Branches
-        const pending = activeRepo.pendingDevBranches || [];
-        const pendingList = [];
-        pending.forEach(branch => {
-            if (!activeList.find(s => s.branch === branch)) {
-                pendingList.push({ branch: branch, type: 'pending', name: branch }); // Name used for key/display
+        // Group by Idea ID
+        const explorations = {};
+        const ungrouped = [];
+
+        activeList.forEach(sandbox => {
+            if (sandbox.ideaID) {
+                if (!explorations[sandbox.ideaID]) {
+                    explorations[sandbox.ideaID] = [];
+                }
+                explorations[sandbox.ideaID].push(sandbox);
+            } else {
+                ungrouped.push(sandbox);
             }
         });
 
-        // Excluded Branches
-        const excluded = activeRepo.excludeBranches || [];
-        const excludedList = [];
-        excluded.forEach(branch => {
-             if (!activeList.find(s => s.branch === branch)) {
-                 excludedList.push({ branch: branch, type: 'excluded', name: branch });
-             }
-        });
+        // Ensure activeSandbox is still up to date with new data
+        if (activeSandbox) {
+            const updatedActive = activeList.find(s => s.name === activeSandbox.name);
+            if (updatedActive && updatedActive !== activeSandbox) {
+                // Only update if reference changed to avoid loop, though React handles set state check
+                // We use a useEffect/callback pattern for this usually, but inside render we just rely on data being fresh
+            }
+        }
 
         const handleAddDevInstance = (branch) => {
              setNewDevBranch(branch);
              setDevModalOpen(true);
         };
 
-        const renderDevItem = (sandbox) => {
-             if (sandbox.type === 'pending' || sandbox.type === 'excluded') {
-                 return (
-                     <div key={sandbox.name} className="pr-card" style={{opacity: 0.7}}>
-                        <div className="pr-card-header">
-                            <h3>{sandbox.branch} {sandbox.type === 'excluded' && '(Excluded)'}</h3>
-                            <div className="pr-card-actions-header">
-                                <button className="btn" onClick={() => handleAddDevInstance(sandbox.branch)} title="Create Dev Sandbox" style={{fontSize: '20px', width: '40px', height: '40px', borderRadius: '20px', lineHeight: '20px'}}>+</button>
+        return (
+            <div className="dev-layout">
+                <div style={{ width: sidebarWidth, display: 'flex', flexDirection: 'column' }}>
+                    <DevSidebar 
+                        explorations={explorations}
+                        ungrouped={ungrouped}
+                        activeSandbox={activeSandbox}
+                        onSelectSandbox={setActiveSandbox}
+                        onAddExploration={() => setExplorationModalOpen(true)}
+                        onAddApproach={handleOpenAddApproach}
+                    />
+                </div>
+                <div 
+                    className="resizer"
+                    onMouseDown={startResizing}
+                />
+                
+                <div className="dev-main">
+                    {activeSandbox ? (
+                        <DevCard
+                            key={activeSandbox.name}
+                            sandbox={activeSandbox}
+                            handleDelete={handleDevDelete}
+                            getSandboxStatusClass={getSandboxStatusClass}
+                            namespace={namespace}
+                            handleScaleUp={handleDevScaleUp}
+                            handleScaleDown={handleDevScaleDown}
+                            handleFork={handleForkDevInstance}
+                            repoName={activeRepo.name}
+                        />
+                    ) : (
+                        <div style={{textAlign: 'center', marginTop: '50px', color: 'var(--text-secondary)'}}>
+                            <p>Select an approach from the sidebar to view details.</p>
+                            <p>Or create a standalone sandbox:</p>
+                            <button className="btn" onClick={() => { setNewDevBranch(''); setDevModalOpen(true); }} title="Create new Dev Sandbox (Branch)">
+                                Create Standalone Sandbox
+                            </button>
+                        </div>
+                    )}
+
+                    {/* Modals are rendered here to be part of the main layout but absolute/fixed positioned */}
+                    {devModalOpen && (
+                    <div className="modal-overlay" onClick={() => setDevModalOpen(false)}>
+                        <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+                            <h4>New Dev Sandbox (Branch)</h4>
+                            <input type="text" placeholder="Branch Name" value={newDevBranch} onChange={(e) => setNewDevBranch(e.target.value)} style={{padding: '5px', border: '1px solid #ccc'}} />
+                            <textarea placeholder="Prompt (optional)" value={newDevPrompt} onChange={(e) => setNewDevPrompt(e.target.value)} rows="15" style={{padding: '5px', border: '1px solid #ccc'}} />
+                            <div style={{display: 'flex', justifyContent: 'flex-end', gap: '10px'}}>
+                                <button className="btn" onClick={() => setDevModalOpen(false)} style={{backgroundColor: '#ccc', color: 'black'}}>Cancel</button>
+                                <button className="btn" onClick={submitDevCreate} style={{backgroundColor: '#007bff', color: 'white'}}>Create</button>
                             </div>
                         </div>
-                     </div>
-                 );
-             }
-             return (
-                <DevCard
-                    key={sandbox.name}
-                    sandbox={sandbox}
-                    handleDelete={handleDevDelete}
-                    getSandboxStatusClass={getSandboxStatusClass}
-                    namespace={namespace}
-                    handleScaleUp={handleDevScaleUp}
-                    handleScaleDown={handleDevScaleDown}
-                />
-            );
-        };
+                    </div>
+                    )}
 
-        const list = activeList.length === 0 && pendingList.length === 0 && excludedList.length === 0 ? <p>No active Dev Sandboxes found.</p> : (
-            <>
-                {activeList.map(renderDevItem)}
-                
-                {pendingList.length > 0 && (
-                    <>
-                        <h3 style={{marginTop: '30px', borderBottom: '1px solid var(--border-color)', paddingBottom: '10px', color: 'var(--text-secondary)'}}>Next ...</h3>
-                        {pendingList.map(renderDevItem)}
-                    </>
-                )}
+                    {explorationModalOpen && (
+                        <div className="modal-overlay" onClick={() => setExplorationModalOpen(false)}>
+                            <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+                                <h4>Start New Exploration</h4>
+                                <div className="form-group">
+                                    <label>Idea Name (e.g., optimize-db)</label>
+                                    <input type="text" value={newExplorationIdea} onChange={(e) => setNewExplorationIdea(e.target.value)} style={{padding: '5px', border: '1px solid #ccc'}} />
+                                </div>
+                                <div className="form-group">
+                                    <label>Initial Approach (e.g., attempt-1)</label>
+                                    <input type="text" value={newExplorationApproach} onChange={(e) => setNewExplorationApproach(e.target.value)} style={{padding: '5px', border: '1px solid #ccc'}} />
+                                </div>
+                                <div className="form-group">
+                                    <label>Prompt (Instructions for Agent)</label>
+                                    <textarea value={newExplorationPrompt} onChange={(e) => setNewExplorationPrompt(e.target.value)} rows="10" style={{padding: '5px', border: '1px solid #ccc'}} />
+                                </div>
+                                <div style={{display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '15px'}}>
+                                    <button className="btn" onClick={() => setExplorationModalOpen(false)} style={{backgroundColor: '#ccc', color: 'black'}}>Cancel</button>
+                                    <button className="btn" onClick={submitExplorationCreate} style={{backgroundColor: '#007bff', color: 'white'}}>Create Exploration</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
 
-                {excludedList.length > 0 && (
-                    <>
-                        <h3 style={{marginTop: '30px', borderBottom: '1px solid var(--border-color)', paddingBottom: '10px', color: 'var(--text-secondary)'}}>Excluded...</h3>
-                        {excludedList.map(renderDevItem)}
-                    </>
-                )}
-            </>
-        );
-
-        return (
-            <>
-                {list}
-                <div style={{textAlign: 'center', marginTop: '20px'}}>
-                    <button className="btn" onClick={() => { setNewDevBranch(''); setDevModalOpen(true); }} title="Create new Dev Sandbox" style={{fontSize: '24px', width: '50px', height: '50px', borderRadius: '25px', lineHeight: '24px'}}>+</button>
+                    {approachModalOpen && (
+                        <div className="modal-overlay" onClick={() => setApproachModalOpen(false)}>
+                            <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+                                <h4>Add Approach to {targetIdeaID}</h4>
+                                <div className="form-group">
+                                    <label>Approach Name (e.g., attempt-2)</label>
+                                    <input type="text" value={newApproachName} onChange={(e) => setNewApproachName(e.target.value)} style={{padding: '5px', border: '1px solid #ccc'}} />
+                                </div>
+                                <div className="form-group">
+                                    <label>Prompt (Instructions for Agent)</label>
+                                    <textarea value={newApproachPrompt} onChange={(e) => setNewApproachPrompt(e.target.value)} rows="10" style={{padding: '5px', border: '1px solid #ccc'}} />
+                                </div>
+                                <div style={{display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '15px'}}>
+                                    <button className="btn" onClick={() => setApproachModalOpen(false)} style={{backgroundColor: '#ccc', color: 'black'}}>Cancel</button>
+                                    <button className="btn" onClick={submitApproachCreate} style={{backgroundColor: '#007bff', color: 'white'}}>Create Approach</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
                 </div>
-                {devModalOpen && (
-                  <div className="modal-overlay" onClick={() => setDevModalOpen(false)}>
-                      <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-                          <h4>New Dev Sandbox Task</h4>
-                          <input type="text" placeholder="New Branch Name" value={newDevBranch} onChange={(e) => setNewDevBranch(e.target.value)} style={{padding: '5px', border: '1px solid #ccc'}} />
-                          <textarea placeholder="Prompt" value={newDevPrompt} onChange={(e) => setNewDevPrompt(e.target.value)} rows="15" style={{padding: '5px', border: '1px solid #ccc'}} />
-                          <div style={{display: 'flex', justifyContent: 'flex-end', gap: '10px'}}>
-                              <button className="btn" onClick={() => setDevModalOpen(false)} style={{backgroundColor: '#ccc', color: 'black'}}>Cancel</button>
-                              <button className="btn" onClick={submitDevCreate} style={{backgroundColor: '#007bff', color: 'white'}}>Create</button>
-                          </div>
-                      </div>
-                  </div>
-                )}
-            </>
+            </div>
         );
     } else if (activeSubTab.name === 'issues') {
       return (
@@ -1191,7 +1366,7 @@ function App() {
             </div>
         </div>
       )}
-      <main className={activeSubTab.name === 'review' ? 'pr-list-review' : 'pr-list'}>
+      <main className={activeSubTab.name === 'review' ? 'pr-list-review' : (activeSubTab.name === 'dev' ? 'dev-container-full' : 'pr-list')}>
         {renderContent()}
       </main>
     </>

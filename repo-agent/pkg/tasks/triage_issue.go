@@ -15,6 +15,7 @@ type TriageIssueModel struct {
 	User          *github.User
 	PromptFile    string
 	Model         string
+	AgentName     string
 }
 
 func (m *TriageIssueModel) Name() string {

@@ -40,7 +40,7 @@ func run(ctx context.Context) error {
 	sandboxDaemon.Use = "dev-daemon"
 	rootCommand.AddCommand(sandboxDaemon)
 
-	rootCommand.AddCommand(commands.BuildSandboxCommand())
+	rootCommand.AddCommand(commands.BuildDevInitCommand())
 	rootCommand.AddCommand(commands.BuildAgentCommand())
 	rootCommand.AddCommand(commands.BuildCreateCommand())
 	rootCommand.AddCommand(commands.BuildBootstrapCommand())
@@ -50,6 +50,7 @@ func run(ctx context.Context) error {
 	rootCommand.AddCommand(commands.BuildGithubTriageIssueCommand())
 	rootCommand.AddCommand(commands.BuildGithubFeedbackCommand())
 	rootCommand.AddCommand(commands.BuildGithubAutopollCommand())
+	rootCommand.AddCommand(commands.BuildIterateCommand())
 
 	rootCommand.AddCommand(commands.BuildThreadsCommand())
 
