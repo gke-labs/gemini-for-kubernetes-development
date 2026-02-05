@@ -153,6 +153,10 @@ spec:
                     items:
                       type: integer
                     type: array
+                  ignoreFiles:
+                    items:
+                      type: string
+                    type: array
                   image:
                     type: string
                   labels:
