@@ -1048,6 +1048,12 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 	}
 
 	log.Info("Generated sandbox for PR", "pr", *pr, "llm.provider", repoWatch.Spec.Review.LLM.Provider)
+
+	var ignoreFiles []interface{}
+	for _, f := range repoWatch.Spec.Review.IgnoreFiles {
+		ignoreFiles = append(ignoreFiles, f)
+	}
+
 	sandbox := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
@@ -1084,7 +1090,7 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 					"httpEnabled": true,
 				},
 				"maxReviewFiles":   int64(repoWatch.Spec.Review.MaxReviewFiles),
-				"ignoreFiles":      repoWatch.Spec.Review.IgnoreFiles,
+				"ignoreFiles":      ignoreFiles,
 				"replicas":         int64(1),
 				"githubSecretName": githubSecretName,
 			},
