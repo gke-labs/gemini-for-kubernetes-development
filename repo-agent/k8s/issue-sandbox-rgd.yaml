@@ -22,10 +22,8 @@ spec:
       githubSecretName: string | default="github-pat"
       resources:
         ephemeralStorage: string | default="6Gi"
-        memoryRequest: string | default="4Gi"
-        memoryLimit: string | default="12Gi"
-        cpuRequest: string | default="2"
-        cpuLimit: string | default="4"
+        memoryRequest: string | default="1Gi"
+        memoryLimit: string | default="3Gi"
       dockerEnabled: boolean | default=false
       source:
         cloneURL: string
@@ -73,6 +71,7 @@ spec:
             metadata:
               labels:
                 sandbox: devc-${schema.metadata.name}
+                sandbox-type: issue
             spec:
               serviceAccountName: ${schema.spec.serviceAccountName}
               initContainers:
@@ -98,11 +97,9 @@ spec:
                     limits:
                       ephemeral-storage: ${schema.spec.resources.ephemeralStorage}
                       memory: ${schema.spec.resources.memoryLimit}
-                      cpu: ${schema.spec.resources.cpuLimit}
                     requests:
                       ephemeral-storage: ${schema.spec.resources.ephemeralStorage}
                       memory: ${schema.spec.resources.memoryRequest}
-                      cpu: ${schema.spec.resources.cpuRequest}
                   env:
                     - name: NAMESPACE
                       value: ${schema.metadata.namespace}
