@@ -317,6 +317,7 @@ func (c *ReviewCommand) Run(ctx context.Context) error {
 	model := prompts.ReviewPromptModel{
 		PullRequest: *pr,
 		Prompt:      rawAgentPrompt,
+		IgnoreFiles: c.IgnoreFiles,
 	}
 	expandedPrompt, err := prompts.ExpandReviewPrompt(model)
 	if err != nil {
