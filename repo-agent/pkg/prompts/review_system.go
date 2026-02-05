@@ -10,7 +10,8 @@ import (
 
 type ReviewPromptModel struct {
 	github.PullRequest
-	Prompt string
+	Prompt      string
+	IgnoreFiles []string
 }
 
 // ExpandReviewPrompt expands the review prompt template with the provided model.
