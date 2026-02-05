@@ -250,6 +250,9 @@ func (c *ReviewCommand) Run(ctx context.Context) error {
 			return fmt.Errorf("failed to parse diff from URL: %v", err)
 		}
 
+		// Filter files based on ignore patterns and generated files
+		diffFiles = filterDiffFiles(repoDir, diffFiles, c.IgnoreFiles)
+
 		if len(diffFiles) > c.MaxReviewFiles {
 			errStr := fmt.Sprintf("Too many files to review: %d (max %d)", len(diffFiles), c.MaxReviewFiles)
 			updateState("Error: Too many files", errStr)
@@ -702,6 +705,14 @@ func dedupeAndCombineText(provider llm.Provider, text string) (string, error) {
 
 func shouldIgnoreFile(path string, ignorePatterns []string) bool {
 	for _, pattern := range ignorePatterns {
+		// Special case for recursive directory matching with ** at the end
+		if strings.HasSuffix(pattern, "/**") {
+			prefix := strings.TrimSuffix(pattern, "**")
+			if strings.HasPrefix(path, prefix) {
+				return true
+			}
+		}
+
 		// If the pattern doesn't contain a separator, match against the file name
 		if !strings.Contains(pattern, "/") {
 			matched, err := filepath.Match(pattern, filepath.Base(path))
@@ -716,4 +727,24 @@ func shouldIgnoreFile(path string, ignorePatterns []string) bool {
 		}
 	}
 	return false
+}
+
+func filterDiffFiles(repoDir string, diffFiles []*gitdiff.File, ignoreFiles []string) []*gitdiff.File {
+	var filteredDiffFiles []*gitdiff.File
+	for _, file := range diffFiles {
+		// gitdiff usually uses a/ and b/ prefixes
+		path := strings.TrimPrefix(file.NewName, "b/")
+
+		if IsGeneratedFile(repoDir, path) {
+			klog.Infof("Filtering out generated file: %s", path)
+			continue
+		}
+
+		if shouldIgnoreFile(path, ignoreFiles) {
+			klog.Infof("Filtering out ignored file: %s", path)
+			continue
+		}
+		filteredDiffFiles = append(filteredDiffFiles, file)
+	}
+	return filteredDiffFiles
 }
