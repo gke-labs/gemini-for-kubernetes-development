@@ -704,6 +704,7 @@ function PrReviewCard({
   const [tasks, setTasks] = useState([]);
   const [showNewTaskForm, setShowNewTaskForm] = useState(false);
   const [newTaskPrompt, setNewTaskPrompt] = useState('');
+  const [expectedComments, setExpectedComments] = useState(0);
   const lastDragTargetRef = useRef(null);
 
   const isCollapsed = collapsedReviews[pr.id];
@@ -762,12 +763,13 @@ function PrReviewCard({
       fetch(`/api/repo/${repoName}/prs/${pr.id}/tasks`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt: newTaskPrompt })
+          body: JSON.stringify({ prompt: newTaskPrompt, expectedComments: expectedComments })
       })
       .then(res => {
           if (res.ok) {
               setShowNewTaskForm(false);
               setNewTaskPrompt('');
+              setExpectedComments(0);
               fetchTasks();
           } else {
               res.text().then(t => alert("Failed to create task: " + t));
@@ -952,6 +954,23 @@ function PrReviewCard({
                     ) : (
                         <div className="new-task-form" style={{padding: '10px', backgroundColor: 'var(--bg-secondary)', borderRadius: '5px'}}>
                             <h4>Request New Review Task</h4>
+                            <div style={{marginBottom: '10px'}}>
+                                <label style={{marginRight: '10px', display: 'block', marginBottom: '5px'}}>
+                                    Expected Comments: {expectedComments === 0 ? 'Auto' : expectedComments}
+                                </label>
+                                <input 
+                                    type="range" 
+                                    min="0" 
+                                    max="50" 
+                                    value={expectedComments} 
+                                    onChange={(e) => setExpectedComments(parseInt(e.target.value))}
+                                    style={{width: '100%'}}
+                                />
+                                <div style={{display: 'flex', justifyContent: 'space-between', fontSize: 'small', color: 'var(--text-secondary)'}}>
+                                    <span>Auto</span>
+                                    <span>50</span>
+                                </div>
+                            </div>
                             <textarea 
                                 className="review-textarea"
                                 value={newTaskPrompt}
