@@ -745,6 +745,9 @@ function App() {
     if (!item.sandbox) {
       return 'grey';
     }
+    if (item.sandboxStatus && (item.sandboxStatus === 'Evicted' || item.sandboxStatus.startsWith('fail:') || item.sandboxStatus === 'Failed')) {
+      return 'red';
+    }
     if (item.sandboxReplica === "0") {
       return 'yellow';
     }

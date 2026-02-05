@@ -811,3 +811,7 @@ body.dark-mode .warning-banner {
   color: var(--text-danger);
   margin-top: 0;
 }
+.pr-sandbox.red {
+  background-color: var(--text-danger);
+  color: white;
+}
