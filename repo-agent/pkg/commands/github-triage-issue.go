@@ -142,11 +142,17 @@ func (c *GithubTriageIssueCommand) Run(ctx context.Context) error {
 		Issue:      c.issue,
 		PromptFile: promptPath,
 		Model:      c.Model,
+		AgentName:  c.AgentName,
 	}
 
-	apikey, err := GetGeminiAPIKey(c.sandboxID)
-	if err != nil {
-		return err
+	var apikey string
+	if c.AgentName == "dummy" {
+		apikey = "dummy_key"
+	} else {
+		apikey, err = GetGeminiAPIKey(c.sandboxID)
+		if err != nil {
+			return err
+		}
 	}
 
 	env := map[string]string{
