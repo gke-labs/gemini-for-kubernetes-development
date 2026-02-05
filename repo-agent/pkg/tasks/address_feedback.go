@@ -53,3 +53,7 @@ func (m *AddressFeedbackModel) Prompt() ([]byte, error) {
 func (m *AddressFeedbackModel) PostScript() ([]byte, error) {
 	return nil, nil
 }
+
+func (m *AddressFeedbackModel) DraftState() string {
+	return "informational"
+}

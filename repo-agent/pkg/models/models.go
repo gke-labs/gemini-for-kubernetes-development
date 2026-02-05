@@ -19,6 +19,7 @@ type Task struct {
 	Result            string `json:"result"`    // from status.result
 	CreationTimestamp string `json:"creationTimestamp"`
 	AgentDraft        string `json:"agentDraft,omitempty"`
+	AgentDraftState   string `json:"agentDraftState,omitempty"`
 	UserDraft         string `json:"userDraft,omitempty"`
 	AgentState        string `json:"agentState,omitempty"`
 	AgentStateMessage string `json:"agentStateMessage,omitempty"`
