@@ -48,6 +48,7 @@ type ReviewCommand struct {
 	AgentPrompt      string
 	DiffURL          string
 	MaxReviewFiles   int
+	IgnoreFiles      []string
 
 	// output
 	TaskDir         string
@@ -130,6 +131,35 @@ func (c *ReviewCommand) InitDefaults() {
 			c.MaxReviewFiles = DefaultMaxReviewFiles
 		}
 	}
+	if len(c.IgnoreFiles) == 0 {
+		ignoreFilesStr := os.Getenv("IGNORE_FILES")
+		if ignoreFilesStr != "" {
+			c.IgnoreFiles = parseIgnoreFiles(ignoreFilesStr)
+		}
+	}
+}
+
+func parseIgnoreFiles(input string) []string {
+	input = strings.TrimSpace(input)
+	if strings.HasPrefix(input, "[") && strings.HasSuffix(input, "]") {
+		input = input[1 : len(input)-1]
+	}
+	// Try parsing as JSON first (e.g. ["file1", "file2"])
+	// But simply splitting by space or comma might be enough if filenames don't have spaces.
+	// Go's fmt.Sprint([]string) output is space separated.
+	// Let's assume space separated for now as it handles [a b].
+	// Also handle comma for user provided lists in other contexts.
+	parts := strings.FieldsFunc(input, func(r rune) bool {
+		return r == ' ' || r == ','
+	})
+	var result []string
+	for _, p := range parts {
+		p = strings.Trim(p, "\"") // remove quotes if any
+		if p != "" {
+			result = append(result, p)
+		}
+	}
+	return result
 }
 
 func BuildReviewCommand() *cobra.Command {
@@ -248,7 +278,7 @@ func (c *ReviewCommand) Run(ctx context.Context) error {
 			return fmt.Errorf("%s", errStr)
 		}
 
-		diffSize := getDiffSize(repoDir, diffFiles)
+		diffSize := getDiffSize(repoDir, diffFiles, c.IgnoreFiles)
 		diffSizeLabel = fmt.Sprintf("size/%s", diffSize)
 		log.Info("Adding diff size label", "label", diffSizeLabel)
 		// Initialize accumulatedAgentOutput with the size label
@@ -425,6 +455,11 @@ func (c *ReviewCommand) Run(ctx context.Context) error {
 
 				if IsGeneratedFile(repoDir, cleanPath) {
 					log.Info("Filtering out comment on generated file", "file", *newComment.Path)
+					continue
+				}
+
+				if IsIgnoredFile(cleanPath, c.IgnoreFiles) {
+					log.Info("Filtering out comment on ignored file", "file", *newComment.Path)
 					continue
 				}
 
@@ -616,13 +651,17 @@ var sizeToComments = map[string]int{
 }
 
 // getDiffSize categorizes the diff based on the total number of lines changed.
-func getDiffSize(repoDir string, files []*gitdiff.File) string {
+func getDiffSize(repoDir string, files []*gitdiff.File, ignoreFiles []string) string {
 	var totalLinesChanged int64
 	for _, file := range files {
 		// Git diffs usually use a/ and b/ prefixes
 		path := strings.TrimPrefix(file.NewName, "b/")
 
 		if IsGeneratedFile(repoDir, path) {
+			continue
+		}
+
+		if IsIgnoredFile(path, ignoreFiles) {
 			continue
 		}
 

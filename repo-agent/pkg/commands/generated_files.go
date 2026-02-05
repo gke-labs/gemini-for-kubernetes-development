@@ -61,3 +61,29 @@ func IsGeneratedFile(repoDir, path string) bool {
 
 	return false
 }
+
+// IsIgnoredFile checks if a file matches any of the ignore patterns.
+func IsIgnoredFile(path string, ignorePatterns []string) bool {
+	for _, pattern := range ignorePatterns {
+		matched, err := filepath.Match(pattern, path)
+		if err == nil && matched {
+			return true
+		}
+		// Also match if the pattern is a directory and the file is inside it
+		// e.g. pattern "vendor/" matches "vendor/foo.go"
+		// filepath.Match doesn't handle directory recursion implicitly like gitignore.
+		// So we might want to check prefix if pattern ends with separator.
+		// However, standard glob usually implies ** for recursion.
+		// Let's assume standard filepath.Match for now.
+		// If users want to ignore a directory, they should probably use "dir/*" or "dir/**" if supported?
+		// filepath.Match does NOT support **.
+		// So "dir/*" only matches files in dir.
+		// To be more user friendly, if pattern ends with /, we treat it as directory prefix.
+		if strings.HasSuffix(pattern, "/") {
+			if strings.HasPrefix(path, pattern) {
+				return true
+			}
+		}
+	}
+	return false
+}
