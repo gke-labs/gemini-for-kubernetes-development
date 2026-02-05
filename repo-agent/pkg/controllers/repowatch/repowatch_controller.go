@@ -1145,6 +1145,7 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 					"httpEnabled": true,
 				},
 				"maxReviewFiles":   int64(repoWatch.Spec.Review.MaxReviewFiles),
+				"ignoreFiles":      strings.Join(repoWatch.Spec.Review.IgnoreFiles, ","),
 				"replicas":         int64(1),
 				"githubSecretName": githubSecretName,
 			},

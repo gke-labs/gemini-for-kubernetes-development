@@ -48,6 +48,7 @@ type ReviewCommand struct {
 	AgentPrompt      string
 	DiffURL          string
 	MaxReviewFiles   int
+	IgnoreFiles      []string
 
 	// output
 	TaskDir         string
@@ -130,6 +131,12 @@ func (c *ReviewCommand) InitDefaults() {
 			c.MaxReviewFiles = DefaultMaxReviewFiles
 		}
 	}
+	if len(c.IgnoreFiles) == 0 {
+		ignoreFilesStr := os.Getenv("IGNORE_FILES")
+		if ignoreFilesStr != "" {
+			c.IgnoreFiles = strings.Split(ignoreFilesStr, ",")
+		}
+	}
 }
 
 func BuildReviewCommand() *cobra.Command {
@@ -153,6 +160,7 @@ func BuildReviewCommand() *cobra.Command {
 	cmd.Flags().StringVar(&reviewCommand.AgentPrompt, "agent-prompt", os.Getenv("AGENT_PROMPT"), "Agent prompt")
 	cmd.Flags().StringVar(&reviewCommand.DiffURL, "diff-url", os.Getenv("GIT_DIFF_URL"), "Git diff URL")
 	cmd.Flags().IntVar(&reviewCommand.MaxReviewFiles, "max-review-files", 0, "Max review files")
+	cmd.Flags().StringSliceVar(&reviewCommand.IgnoreFiles, "ignore-files", nil, "Comma separated list of glob patterns to ignore")
 
 	return cmd
 }
@@ -248,7 +256,7 @@ func (c *ReviewCommand) Run(ctx context.Context) error {
 			return fmt.Errorf("%s", errStr)
 		}
 
-		diffSize := getDiffSize(repoDir, diffFiles)
+		diffSize := getDiffSize(repoDir, diffFiles, c.IgnoreFiles)
 		diffSizeLabel = fmt.Sprintf("size/%s", diffSize)
 		log.Info("Adding diff size label", "label", diffSizeLabel)
 		// Initialize accumulatedAgentOutput with the size label
@@ -425,6 +433,11 @@ func (c *ReviewCommand) Run(ctx context.Context) error {
 
 				if IsGeneratedFile(repoDir, cleanPath) {
 					log.Info("Filtering out comment on generated file", "file", *newComment.Path)
+					continue
+				}
+
+				if shouldIgnoreFile(cleanPath, c.IgnoreFiles) {
+					log.Info("Filtering out comment on ignored file", "file", *newComment.Path)
 					continue
 				}
 
@@ -616,13 +629,17 @@ var sizeToComments = map[string]int{
 }
 
 // getDiffSize categorizes the diff based on the total number of lines changed.
-func getDiffSize(repoDir string, files []*gitdiff.File) string {
+func getDiffSize(repoDir string, files []*gitdiff.File, ignoreFiles []string) string {
 	var totalLinesChanged int64
 	for _, file := range files {
 		// Git diffs usually use a/ and b/ prefixes
 		path := strings.TrimPrefix(file.NewName, "b/")
 
 		if IsGeneratedFile(repoDir, path) {
+			continue
+		}
+
+		if shouldIgnoreFile(path, ignoreFiles) {
 			continue
 		}
 
@@ -681,4 +698,14 @@ func dedupeAndCombineText(provider llm.Provider, text string) (string, error) {
 	}
 
 	return string(output), nil
+}
+
+func shouldIgnoreFile(path string, ignorePatterns []string) bool {
+	for _, pattern := range ignorePatterns {
+		matched, err := filepath.Match(pattern, path)
+		if err == nil && matched {
+			return true
+		}
+	}
+	return false
 }
