@@ -130,10 +130,10 @@ function Settings({ onBack }) {
                             {status.gemini_api_key_set ? '✅ Configured' : '⚠️ Not Set'}
                         </span>
                     </div>
-                    <small>
+                    <p style={{ fontSize: '0.9rem', marginTop: '5px' }}>
                         Required for AI-powered reviews and triage. 
                         Check your <a href="https://ai.dev/rate-limit" target="_blank" rel="noopener noreferrer">token usage</a>.
-                    </small>
+                    </p>
                 </div>
 
                 <div className="form-actions">
