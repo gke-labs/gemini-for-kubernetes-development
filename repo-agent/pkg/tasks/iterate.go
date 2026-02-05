@@ -48,3 +48,7 @@ func (m *IterateModel) Prompt() ([]byte, error) {
 func (m *IterateModel) PostScript() ([]byte, error) {
 	return nil, nil
 }
+
+func (m *IterateModel) DraftState() string {
+	return "informational"
+}

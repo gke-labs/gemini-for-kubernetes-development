@@ -31,8 +31,8 @@ import (
 )
 
 const (
-	AgentDraftAnnotation      = "agentDraft"
-	AgentDraftStateAnnotation = "agentDraftState"
+	AgentDraftAnnotation     = "agentDraft"
+	AgentDraftTypeAnnotation = "agentDraftType"
 )
 
 // AgentOutputConfig holds configuration for the agent output client.
@@ -138,8 +138,8 @@ func (ao *AgentOutput) SetAgentDraft(ctx context.Context, draft string) error {
 	return nil
 }
 
-// SetAgentDraftState updates the agentDraftState annotation.
-func (ao *AgentOutput) SetAgentDraftState(ctx context.Context, state string) error {
+// SetAgentDraftType updates the agentDraftType annotation.
+func (ao *AgentOutput) SetAgentDraftType(ctx context.Context, draftType string) error {
 	log := klog.FromContext(ctx)
 	obj, err := ao.dynamicClient.Resource(ao.gvr).Namespace(ao.namespace).Get(ctx, ao.name, metav1.GetOptions{})
 	if err != nil {
@@ -154,13 +154,13 @@ func (ao *AgentOutput) SetAgentDraftState(ctx context.Context, state string) err
 				"name":      ao.name,
 				"namespace": ao.namespace,
 				"annotations": map[string]string{
-					"agentDraftState": state,
+					"agentDraftType": draftType,
 				},
 			},
 		},
 	}
 
-	log.Info("applying resource with draft state", "namespace", ao.namespace, "name", ao.name, "state", state)
+	log.Info("applying resource with draft type", "namespace", ao.namespace, "name", ao.name, "type", draftType)
 	_, err = ao.dynamicClient.Resource(ao.gvr).Namespace(ao.namespace).Apply(ctx, ao.name, applyObj, metav1.ApplyOptions{FieldManager: "agent-output-client", Force: true})
 	if err != nil {
 		log.Info("error applying resource", "namespace", ao.namespace, "name", ao.name, "err", err)
