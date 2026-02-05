@@ -49,3 +49,7 @@ func (m *TriageIssueModel) Prompt() ([]byte, error) {
 func (m *TriageIssueModel) PostScript() ([]byte, error) {
 	return nil, nil
 }
+
+func (m *TriageIssueModel) DraftState() string {
+	return "submittable"
+}

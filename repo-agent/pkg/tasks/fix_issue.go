@@ -49,3 +49,7 @@ func (m *FixIssueModel) Prompt() ([]byte, error) {
 func (m *FixIssueModel) PostScript() ([]byte, error) {
 	return nil, nil
 }
+
+func (m *FixIssueModel) DraftState() string {
+	return "informational"
+}
