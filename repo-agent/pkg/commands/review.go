@@ -702,6 +702,14 @@ func dedupeAndCombineText(provider llm.Provider, text string) (string, error) {
 
 func shouldIgnoreFile(path string, ignorePatterns []string) bool {
 	for _, pattern := range ignorePatterns {
+		// If the pattern doesn't contain a separator, match against the file name
+		if !strings.Contains(pattern, "/") {
+			matched, err := filepath.Match(pattern, filepath.Base(path))
+			if err == nil && matched {
+				return true
+			}
+		}
+		// Match against the full path
 		matched, err := filepath.Match(pattern, path)
 		if err == nil && matched {
 			return true
