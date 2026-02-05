@@ -58,15 +58,15 @@ func TestFilterDiffFiles(t *testing.T) {
 			ignoreFiles: []string{"ignore_me.go"},
 			want:        0,
 		},
-        {
-            name: "ignore directory wildcard recursive",
-            diffFiles: []*gitdiff.File{
-                {NewName: "b/pkg/clients/generated/subdir/foo.go"},
-                {NewName: "b/pkg/other/foo.go"},
-            },
-            ignoreFiles: []string{"pkg/clients/generated/**"},
-            want: 1,
-        },
+		{
+			name: "ignore directory wildcard recursive",
+			diffFiles: []*gitdiff.File{
+				{NewName: "b/pkg/clients/generated/subdir/foo.go"},
+				{NewName: "b/pkg/other/foo.go"},
+			},
+			ignoreFiles: []string{"pkg/clients/generated/**"},
+			want:        1,
+		},
 	}
 
 	for _, tt := range tests {
