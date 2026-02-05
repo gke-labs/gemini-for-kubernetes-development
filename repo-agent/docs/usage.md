@@ -29,6 +29,11 @@ review:
     - Does the code follow the project's coding standards?
     - Are there any potential bugs or security vulnerabilities?
     - Is the code well-tested?
+  # Optional: Files to ignore during review (glob patterns)
+  ignoreFiles:
+  - "go.sum"
+  - "vendor/**"
+  - "*.generated.go"
 ```
 
 ### The `issueHandlers` section

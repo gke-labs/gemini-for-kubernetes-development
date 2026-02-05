@@ -48,6 +48,7 @@ type ReviewCommand struct {
 	AgentPrompt      string
 	DiffURL          string
 	MaxReviewFiles   int
+	IgnoreFiles      []string
 
 	// output
 	TaskDir         string
@@ -130,6 +131,12 @@ func (c *ReviewCommand) InitDefaults() {
 			c.MaxReviewFiles = DefaultMaxReviewFiles
 		}
 	}
+	if len(c.IgnoreFiles) == 0 {
+		ignoreFilesStr := os.Getenv("IGNORE_FILES")
+		if ignoreFilesStr != "" {
+			c.IgnoreFiles = strings.Split(ignoreFilesStr, ",")
+		}
+	}
 }
 
 func BuildReviewCommand() *cobra.Command {
@@ -153,6 +160,7 @@ func BuildReviewCommand() *cobra.Command {
 	cmd.Flags().StringVar(&reviewCommand.AgentPrompt, "agent-prompt", os.Getenv("AGENT_PROMPT"), "Agent prompt")
 	cmd.Flags().StringVar(&reviewCommand.DiffURL, "diff-url", os.Getenv("GIT_DIFF_URL"), "Git diff URL")
 	cmd.Flags().IntVar(&reviewCommand.MaxReviewFiles, "max-review-files", 0, "Max review files")
+	cmd.Flags().StringSliceVar(&reviewCommand.IgnoreFiles, "ignore-files", nil, "Comma separated list of glob patterns to ignore")
 
 	return cmd
 }
@@ -242,13 +250,16 @@ func (c *ReviewCommand) Run(ctx context.Context) error {
 			return fmt.Errorf("failed to parse diff from URL: %v", err)
 		}
 
+		// Filter files based on ignore patterns and generated files
+		diffFiles = filterDiffFiles(repoDir, diffFiles, c.IgnoreFiles)
+
 		if len(diffFiles) > c.MaxReviewFiles {
 			errStr := fmt.Sprintf("Too many files to review: %d (max %d)", len(diffFiles), c.MaxReviewFiles)
 			updateState("Error: Too many files", errStr)
 			return fmt.Errorf("%s", errStr)
 		}
 
-		diffSize := getDiffSize(repoDir, diffFiles)
+		diffSize := getDiffSize(repoDir, diffFiles, c.IgnoreFiles)
 		diffSizeLabel = fmt.Sprintf("size/%s", diffSize)
 		log.Info("Adding diff size label", "label", diffSizeLabel)
 		// Initialize accumulatedAgentOutput with the size label
@@ -425,6 +436,11 @@ func (c *ReviewCommand) Run(ctx context.Context) error {
 
 				if IsGeneratedFile(repoDir, cleanPath) {
 					log.Info("Filtering out comment on generated file", "file", *newComment.Path)
+					continue
+				}
+
+				if shouldIgnoreFile(cleanPath, c.IgnoreFiles) {
+					log.Info("Filtering out comment on ignored file", "file", *newComment.Path)
 					continue
 				}
 
@@ -616,13 +632,17 @@ var sizeToComments = map[string]int{
 }
 
 // getDiffSize categorizes the diff based on the total number of lines changed.
-func getDiffSize(repoDir string, files []*gitdiff.File) string {
+func getDiffSize(repoDir string, files []*gitdiff.File, ignoreFiles []string) string {
 	var totalLinesChanged int64
 	for _, file := range files {
 		// Git diffs usually use a/ and b/ prefixes
 		path := strings.TrimPrefix(file.NewName, "b/")
 
 		if IsGeneratedFile(repoDir, path) {
+			continue
+		}
+
+		if shouldIgnoreFile(path, ignoreFiles) {
 			continue
 		}
 
@@ -681,4 +701,50 @@ func dedupeAndCombineText(provider llm.Provider, text string) (string, error) {
 	}
 
 	return string(output), nil
+}
+
+func shouldIgnoreFile(path string, ignorePatterns []string) bool {
+	for _, pattern := range ignorePatterns {
+		// Special case for recursive directory matching with ** at the end
+		if strings.HasSuffix(pattern, "/**") {
+			prefix := strings.TrimSuffix(pattern, "**")
+			if strings.HasPrefix(path, prefix) {
+				return true
+			}
+		}
+
+		// If the pattern doesn't contain a separator, match against the file name
+		if !strings.Contains(pattern, "/") {
+			matched, err := filepath.Match(pattern, filepath.Base(path))
+			if err == nil && matched {
+				return true
+			}
+		}
+		// Match against the full path
+		matched, err := filepath.Match(pattern, path)
+		if err == nil && matched {
+			return true
+		}
+	}
+	return false
+}
+
+func filterDiffFiles(repoDir string, diffFiles []*gitdiff.File, ignoreFiles []string) []*gitdiff.File {
+	var filteredDiffFiles []*gitdiff.File
+	for _, file := range diffFiles {
+		// gitdiff usually uses a/ and b/ prefixes
+		path := strings.TrimPrefix(file.NewName, "b/")
+
+		if IsGeneratedFile(repoDir, path) {
+			klog.Infof("Filtering out generated file: %s", path)
+			continue
+		}
+
+		if shouldIgnoreFile(path, ignoreFiles) {
+			klog.Infof("Filtering out ignored file: %s", path)
+			continue
+		}
+		filteredDiffFiles = append(filteredDiffFiles, file)
+	}
+	return filteredDiffFiles
 }

@@ -80,6 +80,10 @@ type PRReviewSpec struct {
 	// +kubebuilder:default=30
 	MaxReviewFiles int `json:"maxReviewFiles,omitempty"`
 
+	// IgnoreFiles specifies a list of glob patterns for files that should be ignored during review.
+	// +kubebuilder:validation:Optional
+	IgnoreFiles []string `json:"ignoreFiles,omitempty"`
+
 	// The time in minutes after which a review sandbox will be scaled down to 0 replicas.
 	// +kubebuilder:validation:Optional
 	ReviewShutdownAfterMinutes int `json:"reviewShutdownAfterMinutes,omitempty"`
