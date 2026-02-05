@@ -114,10 +114,12 @@ func RunTask(ctx context.Context, t Task, sb *sandbox.IssueSandbox, taskDir stri
 			if err := ao.SetAgentDraft(ctx, string(output)); err != nil {
 				log.Error(err, "Failed to set agent draft")
 			}
-			if state := t.DraftState(); state != "" {
-				if err := ao.SetAgentDraftState(ctx, state); err != nil {
-					log.Error(err, "Failed to set agent draft state")
-				}
+			state := t.DraftState()
+			if state == "" {
+				state = "informational"
+			}
+			if err := ao.SetAgentDraftType(ctx, state); err != nil {
+				log.Error(err, "Failed to set agent draft type")
 			}
 		}
 	} else if err != nil {
