@@ -48,6 +48,7 @@ type ReviewCommand struct {
 	AgentPrompt      string
 	DiffURL          string
 	MaxReviewFiles   int
+	ExpectedComments int
 	IgnoreFiles      []string
 
 	// output
@@ -131,6 +132,17 @@ func (c *ReviewCommand) InitDefaults() {
 			c.MaxReviewFiles = DefaultMaxReviewFiles
 		}
 	}
+	if c.ExpectedComments == 0 {
+		expectedCommentsStr := os.Getenv("EXPECTED_COMMENTS")
+		if expectedCommentsStr != "" {
+			val, err := strconv.Atoi(expectedCommentsStr)
+			if err != nil {
+				klog.Infof("Invalid EXPECTED_COMMENTS value '%s', ignoring: %v", expectedCommentsStr, err)
+			} else {
+				c.ExpectedComments = val
+			}
+		}
+	}
 	if len(c.IgnoreFiles) == 0 {
 		ignoreFilesStr := os.Getenv("IGNORE_FILES")
 		if ignoreFilesStr != "" {
@@ -160,6 +172,7 @@ func BuildReviewCommand() *cobra.Command {
 	cmd.Flags().StringVar(&reviewCommand.AgentPrompt, "agent-prompt", os.Getenv("AGENT_PROMPT"), "Agent prompt")
 	cmd.Flags().StringVar(&reviewCommand.DiffURL, "diff-url", os.Getenv("GIT_DIFF_URL"), "Git diff URL")
 	cmd.Flags().IntVar(&reviewCommand.MaxReviewFiles, "max-review-files", 0, "Max review files")
+	cmd.Flags().IntVar(&reviewCommand.ExpectedComments, "expected-comments", 0, "Expected number of comments")
 	cmd.Flags().StringSliceVar(&reviewCommand.IgnoreFiles, "ignore-files", nil, "Comma separated list of glob patterns to ignore")
 
 	return cmd
@@ -266,7 +279,11 @@ func (c *ReviewCommand) Run(ctx context.Context) error {
 		if err := ao.AddAgentLabel(ctx, []string{diffSizeLabel}); err != nil {
 			log.Error(err, "Failed to add size label")
 		}
-		expectedComments = sizeToComments[diffSize]
+		if c.ExpectedComments > 0 {
+			expectedComments = c.ExpectedComments
+		} else {
+			expectedComments = sizeToComments[diffSize]
+		}
 		log.Info("Diff size categorized", "size", diffSize, "expectedComments", expectedComments)
 	} else {
 		return fmt.Errorf("GIT_DIFF_URL not set, skipping diff-based validation")

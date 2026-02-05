@@ -411,7 +411,8 @@ func (s *Server) createPRTask(c *gin.Context) {
 	prID := c.Param("id")
 
 	var payload struct {
-		Prompt string `json:"prompt"`
+		Prompt           string `json:"prompt"`
+		ExpectedComments int    `json:"expectedComments"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -437,6 +438,10 @@ func (s *Server) createPRTask(c *gin.Context) {
 
 	params := map[string]string{
 		"AGENT_PROMPT": prompt,
+	}
+
+	if payload.ExpectedComments > 0 {
+		params["EXPECTED_COMMENTS"] = strconv.Itoa(payload.ExpectedComments)
 	}
 
 	err := s.K8sManager.CreateSandboxTask(c.Request.Context(), namespace, sandboxName, "ReviewSandbox", "review", params)
