@@ -17,6 +17,7 @@ type Task interface {
 	PreScript() ([]byte, error)
 	Prompt() ([]byte, error)
 	PostScript() ([]byte, error)
+	DraftState() string
 }
 
 func taskPath(taskDir string, name string) string {
@@ -112,6 +113,13 @@ func RunTask(ctx context.Context, t Task, sb *sandbox.IssueSandbox, taskDir stri
 		} else {
 			if err := ao.SetAgentDraft(ctx, string(output)); err != nil {
 				log.Error(err, "Failed to set agent draft")
+			}
+			state := t.DraftState()
+			if state == "" {
+				state = "informational"
+			}
+			if err := ao.SetAgentDraftType(ctx, state); err != nil {
+				log.Error(err, "Failed to set agent draft type")
 			}
 		}
 	} else if err != nil {

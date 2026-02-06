@@ -61,10 +61,12 @@ func (s *Server) getIssueTasks(c *gin.Context) {
 		tUserDraft := ""
 		tAgentState := ""
 		tAgentStateMessage := ""
+		tAgentDraftType := ""
 
 		tAnnotations := taskItem.GetAnnotations()
 		if tAnnotations != nil {
 			tAgentDraft = tAnnotations["agentDraft"]
+			tAgentDraftType = tAnnotations["agentDraftType"]
 			tUserDraft = tAnnotations["userDraft"]
 			tAgentState = tAnnotations["agentState"]
 			tAgentStateMessage = tAnnotations["agentStateMessage"]
@@ -77,6 +79,7 @@ func (s *Server) getIssueTasks(c *gin.Context) {
 			Result:            result,
 			CreationTimestamp: taskItem.GetCreationTimestamp().Format(time.RFC3339),
 			AgentDraft:        tAgentDraft,
+			AgentDraftType:    tAgentDraftType,
 			UserDraft:         tUserDraft,
 			AgentState:        tAgentState,
 			AgentStateMessage: tAgentStateMessage,

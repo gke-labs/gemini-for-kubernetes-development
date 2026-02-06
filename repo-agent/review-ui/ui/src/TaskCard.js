@@ -116,7 +116,7 @@ function TaskCard({
             alert("Submission for this task type is not yet implemented.");
         }
     };
-
+    const isSubmittable = task.agentDraftState === 'submittable';
     return (
         <div style={{border: '1px solid var(--border-color)', borderRadius: '5px', margin: '10px 0', backgroundColor: 'var(--bg-review-section)'}}>
             <div 
@@ -149,18 +149,33 @@ function TaskCard({
                             <pre style={{margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'monospace'}}>{logs || 'Loading logs...'}</pre>
                         </div>
                     )}
-                    <textarea
-                        className="review-textarea"
-                        value={localDraft}
-                        onChange={(e) => setLocalDraft(e.target.value)}
-                        onBlur={handleSaveDraft}
-                        placeholder="Agent output or your comment..."
-                        rows={10}
-                        style={{width: '100%', marginBottom: '10px'}}
-                    />
-                    <div className="pr-card-actions">
-                        <button className="btn btn-submit" onClick={handleSubmit}>Submit Comment</button>
-                    </div>
+                    {isSubmittable ? (
+                        <>
+                            <textarea
+                                className="review-textarea"
+                                value={localDraft}
+                                onChange={(e) => setLocalDraft(e.target.value)}
+                                onBlur={handleSaveDraft}
+                                placeholder="Agent output or your comment..."
+                                rows={10}
+                                style={{width: '100%', marginBottom: '10px'}}
+                            />
+                            <div className="pr-card-actions">
+                                <button className="btn btn-submit" onClick={handleSubmit}>Submit Comment</button>
+                            </div>
+                        </>
+                    ) : (
+                         <div style={{
+                            backgroundColor: 'var(--bg-secondary)', 
+                            padding: '10px', 
+                            borderRadius: '5px', 
+                            marginBottom: '10px',
+                            border: '1px solid var(--border-color)',
+                            overflowX: 'auto'
+                        }}>
+                             <pre style={{margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'monospace'}}>{localDraft}</pre>
+                        </div>
+                    )}
                 </div>
             )}
         </div>

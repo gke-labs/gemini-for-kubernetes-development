@@ -52,3 +52,7 @@ func (m *DevSetupModel) Prompt() ([]byte, error) {
 func (m *DevSetupModel) PostScript() ([]byte, error) {
 	return nil, nil
 }
+
+func (m *DevSetupModel) DraftState() string {
+	return "informational"
+}
