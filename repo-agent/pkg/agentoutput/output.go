@@ -161,7 +161,7 @@ func (ao *AgentOutput) SetAgentDraftType(ctx context.Context, draftType string) 
 	}
 
 	log.Info("applying resource with draft type", "namespace", ao.namespace, "name", ao.name, "type", draftType)
-	_, err = ao.dynamicClient.Resource(ao.gvr).Namespace(ao.namespace).Apply(ctx, ao.name, applyObj, metav1.ApplyOptions{FieldManager: "agent-output-client", Force: true})
+	_, err = ao.dynamicClient.Resource(ao.gvr).Namespace(ao.namespace).Apply(ctx, ao.name, applyObj, metav1.ApplyOptions{FieldManager: "agent-output-type-client", Force: true})
 	if err != nil {
 		log.Info("error applying resource", "namespace", ao.namespace, "name", ao.name, "err", err)
 		return err

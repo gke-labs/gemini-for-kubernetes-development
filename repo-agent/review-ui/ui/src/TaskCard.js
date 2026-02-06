@@ -116,7 +116,7 @@ function TaskCard({
             alert("Submission for this task type is not yet implemented.");
         }
     };
-    const isSubmittable = task.agentDraftState === 'submittable';
+    const isSubmittable = task.agentDraftType === 'submittable';
     return (
         <div style={{border: '1px solid var(--border-color)', borderRadius: '5px', margin: '10px 0', backgroundColor: 'var(--bg-review-section)'}}>
             <div 
