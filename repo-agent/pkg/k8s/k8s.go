@@ -34,8 +34,8 @@ var (
 )
 
 type Manager struct {
-	Client    dynamic.Interface
-	Clientset kubernetes.Interface
+	Client     dynamic.Interface
+	Clientset  kubernetes.Interface
 	KubeClient *clients.KubernetesClient
 }
 
