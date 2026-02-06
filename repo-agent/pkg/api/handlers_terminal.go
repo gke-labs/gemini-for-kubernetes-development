@@ -37,13 +37,13 @@ type pipeConn struct {
 	w io.Writer
 }
 
-func (c *pipeConn) Read(b []byte) (n int, err error) { return c.r.Read(b) }
-func (c *pipeConn) Write(b []byte) (n int, err error) { return c.w.Write(b) }
-func (c *pipeConn) Close() error                     { return nil } // Pipes are closed separately
-func (c *pipeConn) LocalAddr() net.Addr              { return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0} }
-func (c *pipeConn) RemoteAddr() net.Addr             { return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0} }
-func (c *pipeConn) SetDeadline(t time.Time) error    { return nil }
-func (c *pipeConn) SetReadDeadline(t time.Time) error { return nil }
+func (c *pipeConn) Read(b []byte) (n int, err error)   { return c.r.Read(b) }
+func (c *pipeConn) Write(b []byte) (n int, err error)  { return c.w.Write(b) }
+func (c *pipeConn) Close() error                       { return nil } // Pipes are closed separately
+func (c *pipeConn) LocalAddr() net.Addr                { return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0} }
+func (c *pipeConn) RemoteAddr() net.Addr               { return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0} }
+func (c *pipeConn) SetDeadline(t time.Time) error      { return nil }
+func (c *pipeConn) SetReadDeadline(t time.Time) error  { return nil }
 func (c *pipeConn) SetWriteDeadline(t time.Time) error { return nil }
 
 func (s *Server) terminal(c *gin.Context) {
@@ -93,7 +93,7 @@ func (s *Server) terminal(c *gin.Context) {
 			Stderr:      execOutW,
 			TTY:         false, // SSH transport doesn't need TTY
 		}
-		
+
 		klog.Infof("Starting sshd in pod %s", podID.Name)
 		if err := sandbox.ExecInPod(ctx, s.K8sManager.KubeClient, *podID, opts); err != nil {
 			klog.Errorf("ExecInPod failed: %v", err)
@@ -103,11 +103,11 @@ func (s *Server) terminal(c *gin.Context) {
 
 	// Connect SSH Client
 	conn := &pipeConn{r: execOutR, w: execInW}
-	
+
 	// Establish SSH connection
 	// We might need to wait a bit for the pod command to start?
 	// NewClientConn should handle the handshake.
-	
+
 	sshClientConfig := &ssh.ClientConfig{
 		User:            "root", // Repo-agent runs as root usually
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
@@ -188,7 +188,7 @@ func (s *Server) terminal(c *gin.Context) {
 			}
 		}
 	}()
-	
+
 	go func() {
 		buf := make([]byte, 1024)
 		for {
@@ -236,6 +236,6 @@ func (s *Server) terminal(c *gin.Context) {
 			}
 		}
 	}
-	
+
 	klog.Info("Terminal session ended")
 }

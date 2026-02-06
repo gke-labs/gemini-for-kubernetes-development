@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import TaskCard from './TaskCard';
 import SandboxTerminal from './Terminal';
 
@@ -30,7 +30,7 @@ function DevCard({
     setFlairText(sandbox.agentState || '');
   }, [sandbox.agentState]);
 
-  const fetchTasks = () => {
+  const fetchTasks = useCallback(() => {
     if (!repoName || !sandbox.name) return;
     fetch(`/api/repo/${encodeURIComponent(repoName)}/dev/${encodeURIComponent(sandbox.name)}/tasks`)
         .then(res => res.json())
@@ -40,7 +40,7 @@ function DevCard({
             }
         })
         .catch(err => console.error("Failed to fetch tasks:", err));
-  };
+  }, [repoName, sandbox.name]);
 
   const handleCreateTask = (taskType, prompt = '', params = {}) => {
       if (!repoName || !sandbox.name) return;
@@ -64,7 +64,7 @@ function DevCard({
       fetchTasks();
       const interval = setInterval(fetchTasks, 10000);
       return () => clearInterval(interval);
-  }, [repoName, sandbox.name]);
+  }, [fetchTasks]);
 
   return (
     <div key={sandbox.name} className="pr-card">
