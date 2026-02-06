@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import TaskCard from './TaskCard';
+import SandboxTerminal from './Terminal';
 
 function DevCard({
   sandbox,
@@ -14,6 +15,7 @@ function DevCard({
   const [flairText, setFlairText] = useState('');
   const [tasks, setTasks] = useState([]);
   const [iteratePrompt, setIteratePrompt] = useState('');
+  const [showTerminal, setShowTerminal] = useState(false);
 
   const getFlairColor = (text) => {
     if (!text) return '#cd9945ff';
@@ -171,8 +173,16 @@ function DevCard({
                      <div style={{display: 'flex', gap: '10px'}}>
                         {/* Add buttons for standard dev tasks here if needed, e.g., "Run Build", "Run Tests" */}
                         <button className="btn" onClick={() => handleCreateTask('generic-task', 'Analyze the codebase structure')}>Analyze Codebase</button>
+                        <button className="btn" onClick={() => setShowTerminal(!showTerminal)}>
+                            {showTerminal ? 'Hide Terminal' : 'Show Terminal'}
+                        </button>
                     </div>
                 </div>
+                {showTerminal && (
+                    <div style={{ marginTop: '10px' }}>
+                        <SandboxTerminal namespace={namespace} sandboxName={sandbox.name} />
+                    </div>
+                )}
             </div>
         )}
       </div>
