@@ -22,8 +22,8 @@ spec:
       githubSecretName: string | default="github-pat"
       resources:
         ephemeralStorage: string | default="6Gi"
-        memoryRequest: string | default="1Gi"
-        memoryLimit: string | default="3Gi"
+        memoryRequest: string | default="2Gi"
+        memoryLimit: string | default="6Gi"
       dockerEnabled: boolean | default=false
       source:
         cloneURL: string
