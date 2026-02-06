@@ -251,13 +251,21 @@ func FindSandbox(ctx context.Context, kube *clients.KubernetesClient, repo *gith
 // FindSandboxPod finds the pod for the given sandbox name.
 // If the pod is not found, it returns (nil, nil)
 func FindSandboxPod(ctx context.Context, sandboxName string) (*types.NamespacedName, error) {
+	return FindSandboxPodInNamespace(ctx, sandboxName, "")
+}
+
+// FindSandboxPodInNamespace finds the pod for the given sandbox name in the specified namespace.
+// If namespace is empty, it uses the current namespace from kube config.
+func FindSandboxPodInNamespace(ctx context.Context, sandboxName, namespace string) (*types.NamespacedName, error) {
 	kube, err := clients.NewKubernetesClient()
 	if err != nil {
 		return nil, err
 	}
 
 	clientset := kube.Clientset
-	namespace := kube.CurrentNamespace
+	if namespace == "" {
+		namespace = kube.CurrentNamespace
+	}
 
 	// The sandbox name in the RGD is devc-<name>
 	// And the pods have label sandbox=devc-<name>

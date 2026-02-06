@@ -102,6 +102,21 @@ function DevCard({
           )}
           {getSandboxStatusClass(sandbox) === 'green' ? (
             <div style={{display: 'flex', alignItems: 'center', gap: '5px'}}>
+              <button 
+                className="btn btn-sm" 
+                style={{
+                    backgroundColor: showTerminal ? 'var(--bg-active)' : 'transparent', 
+                    color: 'var(--text-primary)', 
+                    padding: '4px 8px', 
+                    border: '1px solid var(--border-color)',
+                    fontFamily: 'monospace',
+                    fontWeight: 'bold'
+                }}
+                onClick={(e) => { e.stopPropagation(); setShowTerminal(!showTerminal); }}
+                title={showTerminal ? "Hide Terminal" : "Show Terminal"}
+              >
+                &gt;_
+              </button>
               {sandbox.agentState === 'provisioning' ? (
                 <span className="pr-sandbox" style={{backgroundColor: 'var(--text-link)', color: 'white', cursor: 'default'}} title={sandbox.agentStateMessage || ''}>
                   Sandbox Provisioning...
@@ -140,6 +155,12 @@ function DevCard({
         </div>
       </div>
       
+      {showTerminal && getSandboxStatusClass(sandbox) === 'green' && (
+        <div style={{ borderBottom: '1px solid var(--border-color)' }}>
+            <SandboxTerminal namespace={namespace} sandboxName={sandbox.name} />
+        </div>
+      )}
+
       <div style={{padding: '10px'}}>
         {tasks.length > 0 && (
             tasks.slice().reverse().map(task => (
@@ -173,16 +194,8 @@ function DevCard({
                      <div style={{display: 'flex', gap: '10px'}}>
                         {/* Add buttons for standard dev tasks here if needed, e.g., "Run Build", "Run Tests" */}
                         <button className="btn" onClick={() => handleCreateTask('generic-task', 'Analyze the codebase structure')}>Analyze Codebase</button>
-                        <button className="btn" onClick={() => setShowTerminal(!showTerminal)}>
-                            {showTerminal ? 'Hide Terminal' : 'Show Terminal'}
-                        </button>
                     </div>
                 </div>
-                {showTerminal && (
-                    <div style={{ marginTop: '10px' }}>
-                        <SandboxTerminal namespace={namespace} sandboxName={sandbox.name} />
-                    </div>
-                )}
             </div>
         )}
       </div>
