@@ -24,15 +24,23 @@ const SandboxTerminal = ({ namespace, sandboxName }) => {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         // The path must match the backend route
         const socket = new WebSocket(`${protocol}//${window.location.host}/api/terminal/${namespace}/${sandboxName}`);
+        socket.binaryType = 'arraybuffer';
 
         socket.onopen = () => {
             term.write('\r\n*** Connected to sandbox terminal ***\r\n');
             // Trigger a resize to ensure the terminal size is correct on the backend if we implement that
             fitAddon.fit();
+            if (socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+            }
         };
 
         socket.onmessage = (event) => {
-            term.write(event.data);
+            if (typeof event.data === 'string') {
+                term.write(event.data);
+            } else {
+                term.write(new Uint8Array(event.data));
+            }
         };
 
         socket.onclose = (event) => {

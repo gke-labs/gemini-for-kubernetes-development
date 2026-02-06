@@ -216,8 +216,7 @@ func ExecInPod(ctx context.Context, kube *clients.KubernetesClient, podID types.
 		SubResource("exec").
 		VersionedParams(podExecOptions, scheme.ParameterCodec)
 
-	url := req.URL().String()
-	exec, err := remotecommand.NewWebSocketExecutor(kube.RestConfig, "POST", url)
+	exec, err := remotecommand.NewSPDYExecutor(kube.RestConfig, "POST", req.URL())
 	if err != nil {
 		return fmt.Errorf("executing command in pod: %w", err)
 	}

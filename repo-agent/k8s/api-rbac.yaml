@@ -21,6 +21,14 @@ rules:
 - apiGroups: [""]
   resources: ["secrets", "configmaps"]
   verbs: ["get", "list", "create", "update"]
+# Can list pods to find sandboxes and exec into them for terminal
+- apiGroups: [""]
+  resources: ["pods", "pods/exec"]
+  verbs: ["get", "list", "create"]
+# Can proxy to nodes for exec
+- apiGroups: [""]
+  resources: ["nodes", "nodes/proxy"]
+  verbs: ["get", "list", "create", "update"]
 # Can check for namespaces and create them if missing
 - apiGroups: [""]
   resources: ["namespaces"]
