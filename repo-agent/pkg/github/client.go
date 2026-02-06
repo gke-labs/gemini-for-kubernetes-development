@@ -65,6 +65,16 @@ func parseIssueURL(url string) (owner string, repo string, number int, err error
 	return "", "", 0, fmt.Errorf("issue format %q not recognized", url)
 }
 
+func parseHTMLUrl(url string) (owner string, repo string, err error) {
+	u := strings.TrimPrefix(url, "https://")
+	u = strings.TrimSuffix(u, ".git")
+	tokens := strings.Split(u, "/")
+	if len(tokens) >= 3 && tokens[0] == "github.com" {
+		return tokens[1], tokens[2], nil
+	}
+	return "", "", fmt.Errorf("url format %q not recognized", url)
+}
+
 func (c *Client) GetIssue(ctx context.Context, url string, includeComments bool) (*Issue, error) {
 	owner, repo, number, err := parseIssueURL(url)
 	if err != nil {
@@ -164,6 +174,20 @@ func (c *Client) GetPullRequestReviews(ctx context.Context, owner, repo string, 
 func (c *Client) GetRepositoryFromIssueURL(ctx context.Context, url string) (*Repository, error) {
 
 	owner, repo, _, err := parseIssueURL(url)
+	if err != nil {
+		return nil, err
+	}
+	repository, _, err := c.Client.Repositories.Get(ctx, owner, repo)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get github repository: %w", err)
+	}
+	return &Repository{
+		repository: repository,
+	}, nil
+}
+
+func (c *Client) GetRepositoryFromHTMLUrl(ctx context.Context, url string) (*Repository, error) {
+	owner, repo, err := parseHTMLUrl(url)
 	if err != nil {
 		return nil, err
 	}
