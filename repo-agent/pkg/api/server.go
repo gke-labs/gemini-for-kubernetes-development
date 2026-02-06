@@ -95,6 +95,13 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 		api.GET("/proxy", s.proxy)
 	}
 
+	// Protected terminal routes (WebSocket)
+	terminal := router.Group("/api/terminal")
+	terminal.Use(s.Auth.Middleware())
+	{
+		terminal.GET("/:namespace/:name", s.terminal)
+	}
+
 	// Protected sandbox proxy routes
 	// These are attached directly to router to bypass the logging middleware which buffers responses
 	// and breaks WebSockets/Streaming.
