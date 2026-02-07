@@ -55,8 +55,31 @@ The robot pushes to the human's fork.
     *   Robot needs permission to push to Human's fork (Human must grant it).
     *   Hard to automate.
 
+### Option 4: Two Forks (Isolated Sandboxes)
+The human and the robot maintain separate forks and sandboxes. Synchronization happens via git operations (fetch/merge/cherry-pick) across forks.
+
+*   **Mechanism**:
+    *   **Bot Sandbox**:
+        *   Bot creates its own fork (e.g., `bot-account/repo`).
+        *   Bot runs in its own sandbox, authenticated as itself.
+        *   Bot pushes changes to a branch on its fork.
+    *   **Human Sandbox**:
+        *   Human creates their own fork (e.g., `human-user/repo`).
+        *   Human runs in their own sandbox, authenticated as themselves.
+        *   Human adds the Bot's fork as a remote (e.g., `git remote add bot https://github.com/bot-account/repo.git`).
+        *   Human fetches the Bot's branch and merges or cherry-picks the changes.
+        *   Human pushes the combined result to their own fork.
+*   **Pros**:
+    *   **Maximum Isolation**: No shared credentials (PATs), no impersonation, no cross-write permissions needed.
+    *   **Security**: Compromise of one sandbox does not compromise the other's credentials (beyond public code).
+    *   **Auditability**: Git history clearly shows merges/cherry-picks and who pushed what to which fork.
+*   **Cons**:
+    *   **High Friction**: Requires the human to manage multiple remotes and perform manual git sync operations.
+    *   **Complexity**: Tooling needs to facilitate the "handoff" (finding the bot's fork/branch).
+    *   **Resource Intensity**: Potentially requires running two separate sandboxes (one for the bot to generate, one for the human to review/edit) or switching contexts.
+
 ## Recommendation
-**Option 1** is the best immediate solution. It is robust, requires no extra permissions, and correctly attributes authorship.
+**Option 1** remains the recommended solution for the current "collaborative assistant" use case. It prioritizes low friction and a unified workspace. **Option 4** is a valid alternative for high-security environments where isolation is paramount, but the complexity overhead (managing remotes, multiple sandboxes) makes it less suitable for the default rapid-development workflow.
 
 ## Proposed Implementation (Option 1)
 
