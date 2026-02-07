@@ -9,7 +9,6 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks"
-	githubv39 "github.com/google/go-github/v39/github"
 	"github.com/spf13/cobra"
 	"k8s.io/klog/v2"
 )
@@ -94,19 +93,15 @@ func (c *IterateCommand) loadGithubObjects(ctx context.Context) error {
 	}
 	c.GithubUserToken = token
 
-	// Let's parse the name from URL for directory naming
-	// e.g. https://github.com/owner/repo
-	base := filepath.Base(c.RepoURL)
-	if ext := filepath.Ext(base); ext != "" {
-		base = base[:len(base)-len(ext)]
+	githubAPI, err := github.NewClient(context.Background())
+	if err != nil {
+		return err
 	}
 
-	// Construct basic repo object
-	innerRepo := &githubv39.Repository{
-		CloneURL: githubv39.String(c.RepoURL + ".git"),
-		Name:     githubv39.String(base),
+	c.repo, err = githubAPI.GetRepositoryFromHTMLUrl(ctx, c.RepoURL)
+	if err != nil {
+		return err
 	}
-	c.repo = github.NewRepository(innerRepo)
 
 	user := github.User{
 		UserID: c.GithubUserLogin,
