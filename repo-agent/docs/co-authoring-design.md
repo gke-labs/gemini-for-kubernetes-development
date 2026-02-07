@@ -69,6 +69,8 @@ The human and the robot maintain separate forks and sandboxes. Synchronization h
         *   Human adds the Bot's fork as a remote (e.g., `git remote add bot https://github.com/bot-account/repo.git`).
         *   Human fetches the Bot's branch and merges or cherry-picks the changes.
         *   Human pushes the combined result to their own fork.
+    *   **Reverse Handoff (Optional)**:
+        *   If the Bot needs to make further changes after the Human, the Bot adds the Human's fork as a remote and merges/cherry-picks changes back to its fork.
 *   **Pros**:
     *   **Maximum Isolation**: No shared credentials (PATs), no impersonation, no cross-write permissions needed.
     *   **Security**: Compromise of one sandbox does not compromise the other's credentials (beyond public code).
