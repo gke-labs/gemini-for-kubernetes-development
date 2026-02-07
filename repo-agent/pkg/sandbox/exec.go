@@ -32,12 +32,14 @@ type Executor interface {
 
 // ExecOptions holds options for executing a command.
 type ExecOptions struct {
-	Command []string
-	Secrets []string
-	Stdin   []byte
-	Stdout  io.Writer
-	Stderr  io.Writer
-	Env     map[string]string
+	Command     []string
+	Secrets     []string
+	Stdin       []byte
+	StdinReader io.Reader
+	Stdout      io.Writer
+	Stderr      io.Writer
+	Env         map[string]string
+	TTY         bool
 }
 
 // PodExecutor implements Executor for running commands in a Kubernetes pod.
@@ -202,9 +204,9 @@ func ExecInPod(ctx context.Context, kube *clients.KubernetesClient, podID types.
 		Stdin:   true,
 		Stdout:  true,
 		Stderr:  true,
-		TTY:     false,
+		TTY:     opts.TTY,
 	}
-	if opts.Stdin == nil {
+	if opts.Stdin == nil && opts.StdinReader == nil {
 		podExecOptions.Stdin = false
 	}
 	req := kube.Clientset.CoreV1().RESTClient().Post().
@@ -214,8 +216,7 @@ func ExecInPod(ctx context.Context, kube *clients.KubernetesClient, podID types.
 		SubResource("exec").
 		VersionedParams(podExecOptions, scheme.ParameterCodec)
 
-	url := req.URL().String()
-	exec, err := remotecommand.NewWebSocketExecutor(kube.RestConfig, "POST", url)
+	exec, err := remotecommand.NewSPDYExecutor(kube.RestConfig, "POST", req.URL())
 	if err != nil {
 		return fmt.Errorf("executing command in pod: %w", err)
 	}
@@ -226,10 +227,12 @@ func ExecInPod(ctx context.Context, kube *clients.KubernetesClient, podID types.
 	streamOptions := remotecommand.StreamOptions{
 		Stdout: &stdout,
 		Stderr: &stderr,
-		Tty:    false,
+		Tty:    opts.TTY,
 	}
 	if opts.Stdin != nil {
 		streamOptions.Stdin = bytes.NewReader(opts.Stdin)
+	} else if opts.StdinReader != nil {
+		streamOptions.Stdin = opts.StdinReader
 	}
 	if opts.Stdout != nil {
 		streamOptions.Stdout = opts.Stdout

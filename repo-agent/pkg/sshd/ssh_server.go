@@ -54,7 +54,15 @@ func (s *Server) Start(ctx context.Context, conn net.Conn) error {
 		sshDir = "/etc/ssh"
 	}
 	if err := os.MkdirAll(sshDir, 0700); err != nil {
-		return fmt.Errorf("creating ssh dir: %w", err)
+		if sshDir == "/etc/ssh" {
+			log.Info("Could not create /etc/ssh, falling back to /tmp/ssh", "err", err)
+			sshDir = "/tmp/ssh"
+			if err := os.MkdirAll(sshDir, 0700); err != nil {
+				return fmt.Errorf("creating ssh dir fallback %q: %w", sshDir, err)
+			}
+		} else {
+			return fmt.Errorf("creating ssh dir %q: %w", sshDir, err)
+		}
 	}
 	privateKeyPath := filepath.Join(sshDir, "ssh_host_ed25519_key")
 	publicKeyPath := filepath.Join(sshDir, "ssh_host_ed25519_key.pub")

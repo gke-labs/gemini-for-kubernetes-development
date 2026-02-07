@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import yaml from 'js-yaml';
 import TaskCard from './TaskCard';
+import SandboxTerminal from './Terminal';
 
 function IssueCard({
   issue,
@@ -21,6 +22,7 @@ function IssueCard({
   const [isCollapsed, setIsCollapsed] = useState(!isMainView);
   const [tasks, setTasks] = useState([]);
   const [iteratePrompt, setIteratePrompt] = useState('');
+  const [showTerminal, setShowTerminal] = useState(false);
 
   const fetchTasks = () => {
     if (!repoName || !issue.id) return;
@@ -122,6 +124,21 @@ function IssueCard({
           )}
           {getSandboxStatusClass(issue) === 'green' ? (
             <div style={{display: 'flex', alignItems: 'center', gap: '5px'}}>
+              <button 
+                className="btn btn-sm" 
+                style={{
+                    backgroundColor: showTerminal ? 'var(--bg-active)' : 'transparent', 
+                    color: 'var(--text-primary)', 
+                    padding: '4px 8px', 
+                    border: '1px solid var(--border-color)',
+                    fontFamily: 'monospace',
+                    fontWeight: 'bold'
+                }}
+                onClick={(e) => { e.stopPropagation(); setShowTerminal(!showTerminal); }}
+                title={showTerminal ? "Hide Terminal" : "Show Terminal"}
+              >
+                &gt;_
+              </button>
               {issue.agentState === 'provisioning' ? (
                 <span className="pr-sandbox" style={{backgroundColor: '#2196F3', color: 'white', cursor: 'default'}}>
                   Sandbox Provisioning
@@ -155,6 +172,13 @@ function IssueCard({
           <button className="btn btn-delete" style={{ fontSize: '14px', padding: '4px 10px' }} onClick={(e) => { e.stopPropagation(); handleIssueDelete(issue.id); }}>&#x2715;</button>
         </div>
       </div>
+      
+      {showTerminal && getSandboxStatusClass(issue) === 'green' && (
+        <div style={{ borderBottom: '1px solid var(--border-color)' }}>
+            <SandboxTerminal namespace={namespace} sandboxName={issue.sandbox} />
+        </div>
+      )}
+
       {!isCollapsed && (
         <div style={{padding: '10px'}}>
             {tasks.length > 0 ? (

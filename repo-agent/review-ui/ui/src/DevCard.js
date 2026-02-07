@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import TaskCard from './TaskCard';
+import SandboxTerminal from './Terminal';
 
 function DevCard({
   sandbox,
@@ -14,6 +15,7 @@ function DevCard({
   const [flairText, setFlairText] = useState('');
   const [tasks, setTasks] = useState([]);
   const [iteratePrompt, setIteratePrompt] = useState('');
+  const [showTerminal, setShowTerminal] = useState(false);
 
   const getFlairColor = (text) => {
     if (!text) return '#cd9945ff';
@@ -28,7 +30,7 @@ function DevCard({
     setFlairText(sandbox.agentState || '');
   }, [sandbox.agentState]);
 
-  const fetchTasks = () => {
+  const fetchTasks = useCallback(() => {
     if (!repoName || !sandbox.name) return;
     fetch(`/api/repo/${encodeURIComponent(repoName)}/dev/${encodeURIComponent(sandbox.name)}/tasks`)
         .then(res => res.json())
@@ -38,7 +40,7 @@ function DevCard({
             }
         })
         .catch(err => console.error("Failed to fetch tasks:", err));
-  };
+  }, [repoName, sandbox.name]);
 
   const handleCreateTask = (taskType, prompt = '', params = {}) => {
       if (!repoName || !sandbox.name) return;
@@ -62,7 +64,7 @@ function DevCard({
       fetchTasks();
       const interval = setInterval(fetchTasks, 10000);
       return () => clearInterval(interval);
-  }, [repoName, sandbox.name]);
+  }, [fetchTasks]);
 
   return (
     <div key={sandbox.name} className="pr-card">
@@ -100,6 +102,21 @@ function DevCard({
           )}
           {getSandboxStatusClass(sandbox) === 'green' ? (
             <div style={{display: 'flex', alignItems: 'center', gap: '5px'}}>
+              <button 
+                className="btn btn-sm" 
+                style={{
+                    backgroundColor: showTerminal ? 'var(--bg-active)' : 'transparent', 
+                    color: 'var(--text-primary)', 
+                    padding: '4px 8px', 
+                    border: '1px solid var(--border-color)',
+                    fontFamily: 'monospace',
+                    fontWeight: 'bold'
+                }}
+                onClick={(e) => { e.stopPropagation(); setShowTerminal(!showTerminal); }}
+                title={showTerminal ? "Hide Terminal" : "Show Terminal"}
+              >
+                &gt;_
+              </button>
               {sandbox.agentState === 'provisioning' ? (
                 <span className="pr-sandbox" style={{backgroundColor: 'var(--text-link)', color: 'white', cursor: 'default'}} title={sandbox.agentStateMessage || ''}>
                   Sandbox Provisioning...
@@ -138,6 +155,12 @@ function DevCard({
         </div>
       </div>
       
+      {showTerminal && getSandboxStatusClass(sandbox) === 'green' && (
+        <div style={{ borderBottom: '1px solid var(--border-color)' }}>
+            <SandboxTerminal namespace={namespace} sandboxName={sandbox.name} />
+        </div>
+      )}
+
       <div style={{padding: '10px'}}>
         {tasks.length > 0 && (
             tasks.slice().reverse().map(task => (

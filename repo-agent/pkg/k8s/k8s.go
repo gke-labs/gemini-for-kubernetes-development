@@ -34,12 +34,13 @@ var (
 )
 
 type Manager struct {
-	Client    dynamic.Interface
-	Clientset kubernetes.Interface
+	Client     dynamic.Interface
+	Clientset  kubernetes.Interface
+	KubeClient *clients.KubernetesClient
 }
 
 func NewManager(kube *clients.KubernetesClient) *Manager {
-	return &Manager{Client: kube.DynamicClient, Clientset: kube.Clientset}
+	return &Manager{Client: kube.DynamicClient, Clientset: kube.Clientset, KubeClient: kube}
 }
 
 func (m *Manager) GetConfigDir(ctx context.Context, namespace, name string) (*unstructured.Unstructured, error) {

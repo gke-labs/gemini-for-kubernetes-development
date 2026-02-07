@@ -102,6 +102,7 @@ func (p *PTY) StartCommand(ctx context.Context, cmd *exec.Cmd) error {
 	}
 
 	if err := cmd.Start(); err != nil {
+		log.Error(err, "failed to start command with pty")
 		return err
 	}
 
