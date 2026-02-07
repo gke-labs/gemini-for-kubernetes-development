@@ -37,6 +37,7 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 	// Public routes
 	standard.GET("/", s.healthCheckOk)
 	standard.GET("/api/", s.healthCheckOk)
+	standard.GET("/api/version", s.getVersion)
 	standard.GET("/api/auth/login", s.Auth.Login)
 	standard.GET("/api/auth/callback", s.Auth.Callback)
 	standard.GET("/api/auth/status", s.Auth.Status)

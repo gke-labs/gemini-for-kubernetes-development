@@ -48,7 +48,16 @@ def build_and_push_image_with_docker_buildx(args, image_name, srcdir, dockerfile
     ]
     if args.docker_build_output_type == "registry":
         build_cmd.append("--platform=" + platforms)
+
+    git_commit = "unknown"
+    try:
+        git_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=srcdir, text=True).strip()
+    except Exception:
+        pass
+
     build_cmd.extend([
+        "--build-arg",
+        f"VERSION={git_commit}",
         "-t",
         image_name,
         "-f",

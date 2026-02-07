@@ -6,6 +6,7 @@ function Settings({ onBack }) {
     const [status, setStatus] = useState({ github_pat_set: false, gemini_api_key_set: false });
     const [isLoading, setIsLoading] = useState(true);
     const [message, setMessage] = useState({ text: '', type: '' }); // type: 'success' or 'error'
+    const [versionInfo, setVersionInfo] = useState({ version: '...', commit: '...' });
 
     useEffect(() => {
         fetch('/api/settings')
@@ -18,6 +19,11 @@ function Settings({ onBack }) {
                 console.error("Failed to fetch settings status:", err);
                 setIsLoading(false);
             });
+        
+        fetch('/api/version')
+            .then(res => res.json())
+            .then(data => setVersionInfo(data))
+            .catch(err => console.error("Failed to fetch version:", err));
     }, []);
 
     const handleSave = (e) => {
@@ -141,6 +147,12 @@ function Settings({ onBack }) {
                     <button type="button" className="btn" onClick={onBack}>Back to Dashboard</button>
                 </div>
             </form>
+            
+            <div className="about-section" style={{marginTop: '40px', borderTop: '1px solid #eee', paddingTop: '20px', color: '#666', fontSize: '0.9em'}}>
+                <h3 style={{fontSize: '1.1em', marginBottom: '10px'}}>About Repo Agent</h3>
+                <p style={{margin: '5px 0'}}><strong>Version:</strong> {versionInfo.version}</p>
+                <p style={{margin: '5px 0'}}><strong>Git Commit:</strong> <code style={{background: '#f5f5f5', padding: '2px 5px', borderRadius: '3px'}}>{versionInfo.commit}</code></p>
+            </div>
         </div>
     );
 }
