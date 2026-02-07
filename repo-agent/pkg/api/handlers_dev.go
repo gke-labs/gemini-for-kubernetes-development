@@ -143,6 +143,7 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 		Approach       string `json:"approach"`
 		BaseBranch     string `json:"baseBranch"`
 		ParentApproach string `json:"parentApproach"`
+		Description    string `json:"description"`
 	}
 	if err := c.BindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
@@ -150,7 +151,10 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 	}
 
 	branchName := req.Branch
-	if req.IdeaID != "" && req.Approach != "" {
+	if req.IdeaID != "" {
+		if req.Approach == "" {
+			req.Approach = "initial"
+		}
 		if branchName == "" {
 			branchName = fmt.Sprintf("ideas/%s/%s", req.IdeaID, req.Approach)
 		}
@@ -254,14 +258,20 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 		Resource: "issuesandboxes",
 	}
 
+	annotations := map[string]string{}
+	if req.Description != "" {
+		annotations["repo-agent.gemini.google.com/idea-description"] = req.Description
+	}
+
 	opts := sandbox.DevSandboxOptions{
 		Name:      sandboxName,
 		Namespace: namespace,
 		Labels: map[string]string{
 			"review.gemini.google.com/repowatch": repo,
 		},
-		CloneURL: forkCloneURL,
-		HTMLURL:  forkHTMLURL,
+		Annotations: annotations,
+		CloneURL:    forkCloneURL,
+		HTMLURL:     forkHTMLURL,
 
 		Branch:      branchName,
 		Origin:      originURL,
