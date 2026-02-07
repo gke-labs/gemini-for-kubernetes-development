@@ -4,7 +4,8 @@ WORKDIR /app
 COPY review-ui/ui/package.json ./
 RUN npm install
 COPY review-ui/ui/ .
-RUN npm run build
+ARG VERSION=unknown
+RUN REACT_APP_GIT_SHA=$VERSION npm run build
 
 # Final stage
 FROM nginx:1.25-alpine
