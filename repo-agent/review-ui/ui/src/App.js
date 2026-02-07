@@ -1476,6 +1476,10 @@ function App() {
         </div>
       )}
 
+      <footer style={{ textAlign: 'center', padding: '10px', marginTop: '20px', color: '#888', fontSize: '0.8em' }}>
+        Repo Agent UI {process.env.REACT_APP_GIT_SHA ? `(${process.env.REACT_APP_GIT_SHA.substring(0, 7)})` : ''}
+      </footer>
+
     </div>
   );
 }
