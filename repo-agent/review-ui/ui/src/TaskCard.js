@@ -165,7 +165,7 @@ function TaskCard({
                             </div>
                         </>
                     ) : (
-                         <div style={{
+                         localDraft && <div style={{
                             backgroundColor: 'var(--bg-secondary)', 
                             padding: '10px', 
                             borderRadius: '5px', 
