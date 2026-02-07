@@ -12,7 +12,9 @@ RUN go mod download
 COPY pkg/ pkg/
 COPY api/ api/
 COPY cmd/review-api/ cmd/review-api/
-RUN CGO_ENABLED=0 GOOS=linux go build -o /review-api cmd/review-api/main.go
+COPY version.go version.go
+ARG VERSION=unknown
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags "-X github.com/gke-labs/gemini-for-kubernetes-development/repo-agent.GitCommit=$VERSION" -o /review-api cmd/review-api/main.go
 
 # Final stage
 FROM gcr.io/distroless/static:nonroot
