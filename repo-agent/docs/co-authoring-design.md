@@ -109,8 +109,40 @@ For cases where the human enters a sandbox not originally assigned to them (or g
     ```
     (It does *not* change `gh` auth or `origin` remote).
 
-### 3. Future: Multiple Robots
-If multiple robots cooperate, they can use Option 1 as well (Secondary Robot authors commits, Primary Robot pushes them). Or they can use Option 2 if they have distinct permissions.
+### 3. Multi-Bot Collaboration (The "Task Force" Model)
+
+Expanding the scope to support a team of specialized agents (e.g., `code-bot`, `doc-bot`, `sec-bot`, `review-bot`) cooperating on the *same* PR requires a more robust coordination model.
+
+#### Use Case Roles
+*   **Code-Bot**: Implements the core logic fix.
+*   **Doc-Bot**: Updates documentation based on code changes.
+*   **Sec-Bot**: Scans for vulnerabilities and applies security hardening.
+*   **Review-Bot**: Provides critique (comments) rather than commits.
+*   **Human**: Refines the PR and handles complex merges.
+
+#### Collaboration Architectures
+
+**A. Shared Branch (Sequential or Coordinated)**
+All bots push to the same feature branch on the Primary Bot's fork.
+*   **Workflow**: `code-bot` initializes the branch. `doc-bot` and `sec-bot` checkout the branch, apply changes, and push.
+*   **Coordination**: Requires strict locking (sequential execution) or robust rebase/merge strategies to handle race conditions if running in parallel.
+*   **Sandboxes**: Each bot runs in its own ephemeral sandbox but shares the *remote* target.
+
+**B. Distributed Forks (Parallel)**
+Each bot works in its own fork and submits "Sub-PRs" to the main feature branch.
+*   **Workflow**: `doc-bot` forks the `code-bot`'s branch, applies changes, and opens a PR targeting the `code-bot`'s branch.
+*   **Pros**: High isolation.
+*   **Cons**: High complexity in managing nested PRs and merges.
+
+#### Recommendation for Multi-Bot
+Use **Model A (Shared Branch)** with an **Event-Driven Handoff**.
+1.  **Trigger**: Issue assigned to `code-bot`.
+2.  **Phase 1**: `code-bot` pushes fix.
+3.  **Phase 2**: Push event triggers `doc-bot` and `sec-bot`.
+    *   If they modify disjoint files (e.g., `*.md` vs `*.go`), they can run in parallel and push.
+    *   Otherwise, they should run sequentially.
+4.  **Phase 3**: `review-bot` scans the final state.
+5.  **Phase 4**: `code-bot` (or Human) addresses review comments.
 
 ## Summary
 We will decouple **Authentication Identity** (Robot) from **Authorship Identity** (Human) in the `IssueSandbox` specification to enable seamless co-authoring.
