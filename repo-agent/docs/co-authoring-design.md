@@ -45,6 +45,8 @@ The robot grants the human collaborator access to its fork.
     *   Requires Human to supply a PAT with `repo` scope.
     *   Robot needs admin rights on the fork.
 
+## Future Considerations: Alternative Workflows
+
 ### Option 3: Human Fork
 The robot pushes to the human's fork.
 
