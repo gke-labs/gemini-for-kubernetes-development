@@ -57,8 +57,7 @@ function App() {
   // Exploration Modals
   const [explorationModalOpen, setExplorationModalOpen] = useState(false);
   const [newExplorationIdea, setNewExplorationIdea] = useState('');
-  const [newExplorationApproach, setNewExplorationApproach] = useState('');
-  const [newExplorationPrompt, setNewExplorationPrompt] = useState('');
+  const [newExplorationDescription, setNewExplorationDescription] = useState('');
 
   // Approach Modal
   const [approachModalOpen, setApproachModalOpen] = useState(false);
@@ -978,22 +977,19 @@ function App() {
   };
 
   const submitExplorationCreate = () => {
-    if (newExplorationIdea && newExplorationApproach) {
+    if (newExplorationIdea) {
         // Idea ID should be URL-safe-ish
         const ideaID = newExplorationIdea.toLowerCase().replace(/[^a-z0-9-]/g, '-');
-        const approach = newExplorationApproach.toLowerCase().replace(/[^a-z0-9-]/g, '-');
         
         handleDevCreate({ 
             ideaID: ideaID, 
-            approach: approach, 
-            prompt: newExplorationPrompt 
+            description: newExplorationDescription
         });
         setExplorationModalOpen(false);
         setNewExplorationIdea('');
-        setNewExplorationApproach('');
-        setNewExplorationPrompt('');
+        setNewExplorationDescription('');
     } else {
-        alert("Idea Name and Approach Name are required.");
+        alert("Idea Name is required.");
     }
   };
 
@@ -1241,16 +1237,12 @@ function App() {
                             <div className="modal-content" onClick={(e) => e.stopPropagation()}>
                                 <h4>Start New Exploration</h4>
                                 <div className="form-group">
-                                    <label>Idea Name (e.g., optimize-db)</label>
+                                    <label>Exploration Name (e.g., optimize-db)</label>
                                     <input type="text" value={newExplorationIdea} onChange={(e) => setNewExplorationIdea(e.target.value)} style={{padding: '5px', border: '1px solid #ccc'}} />
                                 </div>
                                 <div className="form-group">
-                                    <label>Initial Approach (e.g., attempt-1)</label>
-                                    <input type="text" value={newExplorationApproach} onChange={(e) => setNewExplorationApproach(e.target.value)} style={{padding: '5px', border: '1px solid #ccc'}} />
-                                </div>
-                                <div className="form-group">
-                                    <label>Prompt (Instructions for Agent)</label>
-                                    <textarea value={newExplorationPrompt} onChange={(e) => setNewExplorationPrompt(e.target.value)} rows="10" style={{padding: '5px', border: '1px solid #ccc'}} />
+                                    <label>Description</label>
+                                    <textarea value={newExplorationDescription} onChange={(e) => setNewExplorationDescription(e.target.value)} rows="5" style={{padding: '5px', border: '1px solid #ccc'}} />
                                 </div>
                                 <div style={{display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '15px'}}>
                                     <button className="btn" onClick={() => setExplorationModalOpen(false)} style={{backgroundColor: '#ccc', color: 'black'}}>Cancel</button>

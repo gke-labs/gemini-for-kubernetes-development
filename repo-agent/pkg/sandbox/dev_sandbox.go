@@ -136,16 +136,20 @@ func NewDevSandbox(opt DevSandboxOptions) *unstructured.Unstructured {
 		}
 	}
 
+	annotations := map[string]string{
+		"agentState":  "provisioning",
+		"reviewState": "",
+	}
+	for k, v := range opt.Annotations {
+		annotations[k] = v
+	}
+
 	u := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
 			"kind":       "IssueSandbox",
 			"metadata": map[string]interface{}{
 				"name": opt.Name,
-				"annotations": map[string]interface{}{
-					"agentState":  "provisioning",
-					"reviewState": "",
-				},
 			},
 			"spec": spec,
 		},
@@ -172,9 +176,7 @@ func NewDevSandbox(opt DevSandboxOptions) *unstructured.Unstructured {
 	}
 	u.SetLabels(labels)
 
-	if len(opt.Annotations) > 0 {
-		u.SetAnnotations(opt.Annotations)
-	}
+	u.SetAnnotations(annotations)
 
 	return u
 }

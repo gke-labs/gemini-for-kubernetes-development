@@ -40,6 +40,37 @@ func (s *Server) getDevSandboxes(c *gin.Context) {
 
 func (s *Server) listDevSandboxesFromK8s(ctx context.Context, namespace, repo string) ([]models.DevSandbox, error) {
 	log := klog.FromContext(ctx)
+	var sandboxes []models.DevSandbox
+
+	// 1. Fetch RepoWatch to get Ideas
+	if rw, err := s.K8sManager.GetRepoWatch(ctx, namespace, repo); err == nil {
+		ideas, found, err := unstructured.NestedSlice(rw.Object, "spec", "dev", "ideas")
+		if found && err == nil {
+			for _, idea := range ideas {
+				ideaMap, ok := idea.(map[string]interface{})
+				if !ok {
+					continue
+				}
+
+				id, _, _ := unstructured.NestedString(ideaMap, "id")
+				name, _, _ := unstructured.NestedString(ideaMap, "name")
+				desc, _, _ := unstructured.NestedString(ideaMap, "description")
+
+				// We use the name field for IdeaID if Name is not suitable, but model has separate fields.
+				// In the UI, IdeaID is used as the key.
+				sandboxes = append(sandboxes, models.DevSandbox{
+					Name:        name, // Display name
+					IdeaID:      id,
+					Description: desc,
+					// Approach and Branch are empty to signify this is the Idea metadata
+				})
+			}
+		}
+	} else {
+		log.Info("Failed to get RepoWatch for ideas", "err", err)
+	}
+
+	// 2. Fetch active Dev Sandboxes
 	gvr := schema.GroupVersionResource{
 		Group:    "custom.agents.x-k8s.io",
 		Version:  "v1alpha1",
@@ -53,7 +84,6 @@ func (s *Server) listDevSandboxesFromK8s(ctx context.Context, namespace, repo st
 		return nil, fmt.Errorf("failed to list DevSandbox CRs: %w", err)
 	}
 
-	var sandboxes []models.DevSandbox
 	for _, item := range list.Items {
 		replicas, found, err := unstructured.NestedInt64(item.Object, "spec", "replicas")
 		if err != nil || !found {
@@ -143,14 +173,87 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 		Approach       string `json:"approach"`
 		BaseBranch     string `json:"baseBranch"`
 		ParentApproach string `json:"parentApproach"`
+		Description    string `json:"description"`
 	}
 	if err := c.BindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
 		return
 	}
 
+	// Case 1: Creating a new Idea (Exploration) - Just metadata, no sandbox
+	if req.IdeaID != "" && req.Approach == "" {
+		// Fetch RepoWatch
+		rw, err := s.K8sManager.GetRepoWatch(c.Request.Context(), namespace, repo)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get RepoWatch", "details": err.Error()})
+			return
+		}
+
+		ideas, found, err := unstructured.NestedSlice(rw.Object, "spec", "dev", "ideas")
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read ideas", "details": err.Error()})
+			return
+		}
+		if !found {
+			ideas = []interface{}{}
+		}
+
+		// Check if ID already exists
+		for _, idea := range ideas {
+			ideaMap, ok := idea.(map[string]interface{})
+			if ok {
+				id, _, _ := unstructured.NestedString(ideaMap, "id")
+				if id == req.IdeaID {
+					c.JSON(http.StatusConflict, gin.H{"error": "Idea ID already exists"})
+					return
+				}
+			}
+		}
+
+		// Add new idea
+		newIdea := map[string]interface{}{
+			"id":          req.IdeaID,
+			"name":        req.IdeaID, // Use ID as name for now, or we could accept a separate name
+			"description": req.Description,
+			"createdAt":   time.Now().Format(time.RFC3339),
+			"author":      namespace,
+		}
+		ideas = append(ideas, newIdea)
+
+		if err := unstructured.SetNestedSlice(rw.Object, ideas, "spec", "dev", "ideas"); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to set ideas", "details": err.Error()})
+			return
+		}
+
+		// Update RepoWatch
+		_, updateErr := s.K8sManager.Client.Resource(schema.GroupVersionResource{
+			Group:    "review.gemini.google.com",
+			Version:  "v1alpha1",
+			Resource: "repowatches",
+		}).Namespace(namespace).Update(c.Request.Context(), rw, v1.UpdateOptions{})
+
+		if updateErr != nil {
+			log.Info("Failed to update RepoWatch with new idea", "err", updateErr)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update RepoWatch", "details": updateErr.Error()})
+			return
+		}
+
+		c.JSON(http.StatusCreated, gin.H{"status": "created", "ideaID": req.IdeaID})
+		return
+	}
+
+	// Case 2: Creating a Sandbox (Standalone or Approach)
+
 	branchName := req.Branch
-	if req.IdeaID != "" && req.Approach != "" {
+	if req.IdeaID != "" {
+		// If creating an approach
+		if req.Approach == "" {
+			// Should have been caught by Case 1, but if for some reason we end up here with Branch set?
+			// But createDevSandbox logic for IdeaID usually derives branch name.
+			// If IdeaID is set, Approach SHOULD be set if we are creating a sandbox.
+			// Unless the logic below defaults it.
+			req.Approach = "initial" // Fallback if someone calls this endpoint incorrectly for an approach
+		}
 		if branchName == "" {
 			branchName = fmt.Sprintf("ideas/%s/%s", req.IdeaID, req.Approach)
 		}
@@ -254,14 +357,21 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 		Resource: "issuesandboxes",
 	}
 
+	annotations := map[string]string{}
+	// Description is now stored in RepoWatch for the Idea, but we can still add it here if provided
+	if req.Description != "" {
+		annotations["repo-agent.gemini.google.com/idea-description"] = req.Description
+	}
+
 	opts := sandbox.DevSandboxOptions{
 		Name:      sandboxName,
 		Namespace: namespace,
 		Labels: map[string]string{
 			"review.gemini.google.com/repowatch": repo,
 		},
-		CloneURL: forkCloneURL,
-		HTMLURL:  forkHTMLURL,
+		Annotations: annotations,
+		CloneURL:    forkCloneURL,
+		HTMLURL:     forkHTMLURL,
 
 		Branch:      branchName,
 		Origin:      originURL,
