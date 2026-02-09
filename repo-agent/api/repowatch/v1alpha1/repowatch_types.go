@@ -116,6 +116,22 @@ type PRReviewSpec struct {
 	RobotAccount string `json:"robotAccount,omitempty"`
 }
 
+// IdeaSpec defines the configuration for an idea/exploration.
+type IdeaSpec struct {
+	// ID of the idea
+	ID string `json:"id"`
+	// Name of the idea
+	Name string `json:"name"`
+	// Description of the idea
+	Description string `json:"description"`
+	// Branch associated with the idea (optional)
+	Branch string `json:"branch,omitempty"`
+	// Author of the idea
+	Author string `json:"author,omitempty"`
+	// CreatedAt timestamp
+	CreatedAt string `json:"createdAt,omitempty"`
+}
+
 // DevSpec defines the configuration for development sandboxes.
 type DevSpec struct {
 	// LLM configuration for the review sandboxes.
@@ -145,6 +161,10 @@ type DevSpec struct {
 	// These branches will be ignored even if they match other criteria or are explicitly listed in 'Branches'.
 	// +kubebuilder:validation:Optional
 	ExcludeBranches []string `json:"excludeBranches,omitempty"`
+
+	// Ideas specifies a list of ideas/explorations.
+	// +kubebuilder:validation:Optional
+	Ideas []IdeaSpec `json:"ideas,omitempty"`
 }
 
 type IssueHandlerSpec struct {

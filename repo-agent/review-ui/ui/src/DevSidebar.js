@@ -152,6 +152,7 @@ function DevSidebar({
         // 1. Initialize nodes
         sandboxes.forEach(s => {
             const name = s.approach || s.branch;
+            if (!name) return;
             byName[name] = { ...s, children: [] };
         });
 
