@@ -819,8 +819,25 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 			if issueIsExplicit || (activeSandboxes < repoWatch.Spec.Issue.MaxActiveSandboxes &&
 				(repoWatch.Spec.Issue.MaxSandboxes == 0 || totalSandboxes < repoWatch.Spec.Issue.MaxSandboxes)) {
 
+				// Determine the "author" user for the sandbox
+				sandboxUser := user
+				if len(issue.Assignees) > 0 {
+					// Use the first assignee
+					assignee := issue.Assignees[0]
+					// We need to fetch the full user details to get name and email
+					// explicitly, because the embedded user object might be incomplete.
+					if assignee.GetLogin() != "" {
+						fullUser, _, err := ghClient.Users.Get(ctx, assignee.GetLogin())
+						if err != nil {
+							log.Error(err, "unable to fetch assignee user details", "login", assignee.GetLogin())
+						} else {
+							sandboxUser = fullUser
+						}
+					}
+				}
+
 				log.Info("creating sandbox for issue", "issue", *issue.Number)
-				createdSandbox, err := r.createIssueSandbox(ctx, user, repoWatch, issue)
+				createdSandbox, err := r.createIssueSandbox(ctx, sandboxUser, repoWatch, issue)
 				if err != nil {
 					log.Error(err, "unable to create sandbox for issue", "issue", *issue.Number)
 				} else {
@@ -946,13 +963,16 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 			return nil, err
 		}
 
+		// Always override Login with Robot Account (for Auth/Fork)
 		if len(secret.Data["userid"]) > 0 {
 			userLogin = string(secret.Data["userid"])
 		}
-		if len(secret.Data["name"]) > 0 {
+
+		// Only use Robot Name/Email if the original user's details are missing
+		if userName == "" && len(secret.Data["name"]) > 0 {
 			userName = string(secret.Data["name"])
 		}
-		if len(secret.Data["email"]) > 0 {
+		if userEmail == "" && len(secret.Data["email"]) > 0 {
 			userEmail = string(secret.Data["email"])
 		}
 	}
@@ -1066,6 +1086,24 @@ func (r *Reconciler) ensureIssueTask(ctx context.Context, repoWatch *reviewv1alp
 		"AGENT_PROMPT": prompt,
 		"HANDLER_NAME": handler.Name,
 	}
+
+	// If RobotAccount is configured, inject it into params so the task runs as the robot
+	if repoWatch.Spec.Issue != nil && repoWatch.Spec.Issue.RobotAccount != "" {
+		githubSecretName := repoWatch.Spec.Issue.RobotAccount
+		secret := &corev1.Secret{}
+		if err := r.Get(ctx, types.NamespacedName{Name: githubSecretName, Namespace: repoWatch.Namespace}, secret); err == nil {
+			if len(secret.Data["name"]) > 0 {
+				params["GITHUB_USER_NAME"] = string(secret.Data["name"])
+			}
+			if len(secret.Data["email"]) > 0 {
+				params["GITHUB_USER_EMAIL"] = string(secret.Data["email"])
+			}
+			if len(secret.Data["userid"]) > 0 {
+				params["GITHUB_USER_LOGIN"] = string(secret.Data["userid"])
+			}
+		}
+	}
+
 	//params["GIT_PUSH_ENABLED"] = "true"
 	if repoWatch.Spec.Issue.LLM.Provider != "" {
 		params["AGENT_LLM_PROVIDER"] = repoWatch.Spec.Issue.LLM.Provider
