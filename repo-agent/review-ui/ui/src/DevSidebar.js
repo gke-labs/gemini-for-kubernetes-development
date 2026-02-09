@@ -95,7 +95,7 @@ const TreeNode = ({ node, level, activeSandbox, onSelect, onAddApproach, ideaID 
 };
 
 // --- Exploration Node (Root) ---
-const ExplorationNode = ({ ideaID, isExpanded, onToggle, onAddApproach, children }) => {
+const ExplorationNode = ({ ideaID, description, isExpanded, onToggle, onAddApproach, children }) => {
     const [hover, setHover] = useState(false);
 
     return (
@@ -112,7 +112,20 @@ const ExplorationNode = ({ ideaID, isExpanded, onToggle, onAddApproach, children
                 <span className="tree-icon root-icon">
                     {isExpanded ? <FolderIcon open={true} /> : <FolderIcon open={false} />}
                 </span>
-                <span className="tree-label root-label">{ideaID}</span>
+                <span className="tree-label root-label">
+                    {ideaID}
+                    {description && (
+                        <span style={{
+                            fontSize: '0.85em',
+                            color: '#6a737d',
+                            fontWeight: 'normal',
+                            marginLeft: '8px',
+                            fontFamily: 'monospace'
+                        }}>
+                            {description}
+                        </span>
+                    )}
+                </span>
                 
                 {hover && (
                     <button 
@@ -160,6 +173,7 @@ function DevSidebar({
         sandboxes.forEach(s => {
             const name = s.approach || s.branch;
             const node = byName[name];
+            if (!node) return;
             if (s.parentApproach && byName[s.parentApproach]) {
                 byName[s.parentApproach].children.push(node);
             } else {
@@ -211,10 +225,13 @@ function DevSidebar({
                 {Object.keys(explorations).map(ideaID => {
                     const roots = buildTree(explorations[ideaID]);
                     const isExpanded = expandedGroups[ideaID];
+                    const description = explorations[ideaID].find(s => s.description)?.description;
+
                     return (
                         <ExplorationNode
                             key={ideaID}
                             ideaID={ideaID}
+                            description={description}
                             isExpanded={isExpanded}
                             onToggle={() => toggleGroup(ideaID)}
                             onAddApproach={onAddApproach}
