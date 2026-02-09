@@ -16,45 +16,7 @@ else
 KIND_CLUSTER_ARG=
 endif
 
-# Check pre-reqs
-ifndef GITHUB_CLIENT_ID
-  ifndef GEMINI_API_KEY
-    $(error GEMINI_API_KEY is not set. It is required for single-user mode. Please set it or GITHUB_CLIENT_ID before running make.)
-  endif
-endif
 
-ifndef GITHUB_PAT
-  # If GITHUB_PAT is not set, we require OAuth credentials
-  ifndef GITHUB_CLIENT_ID
-    $(error GITHUB_PAT is not set. And GITHUB_CLIENT_ID is not set.)
-  endif
-  ifndef GITHUB_CLIENT_SECRET
-    $(error GITHUB_PAT is not set. And GITHUB_CLIENT_SECRET is not set.)
-  endif
-endif
-
-ifndef ANTHROPIC_API_KEY
-$(warning ANTHROPIC_API_KEY is not set. Claude provider will not work.)
-endif
-
-# Optional: Check for OAuth credentials to automate API secret creation
-ifndef GITHUB_CLIENT_ID
-$(warning GITHUB_CLIENT_ID is not set. API oauth will need manual setup in k8s/api-secret.yaml or via kubectl)
-endif
-ifndef GITHUB_CLIENT_SECRET
-$(warning GITHUB_CLIENT_SECRET is not set. API oauth will need manual setup in k8s/api-secret.yaml or via kubectl)
-endif
-
-GIT_USER_NAME := $(strip $(shell git config --global user.name))
-ifeq ($(GIT_USER_NAME),)
-    # The error function prints an error message and stops the build process.
-    $(error "git config --global user.name" is not set. Please configure it with 'git config --global user.name "Your Name"'. )
-endif
-GIT_USER_EMAIL := $(strip $(shell git config --global user.email))
-ifeq ($(GIT_USER_EMAIL),)
-    # The error function prints an error message and stops the build process.
-    $(error "git config --global user.email" is not set. Please configure it with 'git config --global user.email "email@domain.com"'. )
-endif
 
 .PHONY: all
 all: check-prereqs generate lint-go test-unit create-kind install-dep-packages create-secrets build-and-push-repo-agent install-repo-agent #create-instance
@@ -146,6 +108,37 @@ bin/key.json:
 
 .PHONY: create-secrets
 create-secrets: bin/tls.crt bin/key.json
+	@if [ -z "${GITHUB_CLIENT_ID}" ] && [ -z "${GEMINI_API_KEY}" ]; then \
+		echo "Error: GEMINI_API_KEY is not set. It is required for single-user mode. Please set it or GITHUB_CLIENT_ID before running make." >&2; \
+		exit 1; \
+	fi
+	@if [ -z "${GITHUB_PAT}" ]; then \
+		if [ -z "${GITHUB_CLIENT_ID}" ]; then \
+			echo "Error: GITHUB_PAT is not set. And GITHUB_CLIENT_ID is not set." >&2; \
+			exit 1; \
+		fi; \
+		if [ -z "${GITHUB_CLIENT_SECRET}" ]; then \
+			echo "Error: GITHUB_PAT is not set. And GITHUB_CLIENT_SECRET is not set." >&2; \
+			exit 1; \
+		fi; \
+	fi
+	@if [ -z "${ANTHROPIC_API_KEY}" ]; then \
+		echo "Warning: ANTHROPIC_API_KEY is not set. Claude provider will not work."; \
+	fi
+	@if [ -z "${GITHUB_CLIENT_ID}" ]; then \
+		echo "Warning: GITHUB_CLIENT_ID is not set. API oauth will need manual setup in k8s/api-secret.yaml or via kubectl"; \
+	fi
+	@if [ -z "${GITHUB_CLIENT_SECRET}" ]; then \
+		echo "Warning: GITHUB_CLIENT_SECRET is not set. API oauth will need manual setup in k8s/api-secret.yaml or via kubectl"; \
+	fi
+	@if [ -z "$$(git config --global user.name)" ]; then \
+		echo "Error: \"git config --global user.name\" is not set. Please configure it with 'git config --global user.name \"Your Name\"'." >&2; \
+		exit 1; \
+	fi
+	@if [ -z "$$(git config --global user.email)" ]; then \
+		echo "Error: \"git config --global user.email\" is not set. Please configure it with 'git config --global user.email \"email@domain.com\"'." >&2; \
+		exit 1; \
+	fi
 	kubectl create namespace repo-agent-system || true
 	@kubectl create secret -n repo-agent-system tls repo-agent-tls --cert=bin/tls.crt --key=bin/tls.key --dry-run=client -o yaml | kubectl apply -f -
 	@if [ -f ./bin/key.json ]; then \
