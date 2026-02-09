@@ -38,6 +38,27 @@ spec:
                     items:
                       type: string
                     type: array
+                  ideas:
+                    items:
+                      properties:
+                        author:
+                          type: string
+                        branch:
+                          type: string
+                        createdAt:
+                          type: string
+                        description:
+                          type: string
+                        id:
+                          type: string
+                        name:
+                          type: string
+                      required:
+                      - description
+                      - id
+                      - name
+                      type: object
+                    type: array
                   image:
                     type: string
                   llm:
