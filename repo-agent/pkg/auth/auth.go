@@ -338,14 +338,14 @@ func (a *Authenticator) Middleware() gin.HandlerFunc {
 		//   the result.
 		// Subsequent Requests: The middleware finds the user in the cache and skips the K8s operations entirely.
 		// dramatically reduce latency and eliminate the 502/504 errors caused by client-side throttling, allowing the VS Code UI to load correctly
-		
+
 		// Note: We bootstrap the *target* namespace, because that's what we are accessing.
-		// If an admin switches to 'bob', we need 'bob' namespace to exist? 
+		// If an admin switches to 'bob', we need 'bob' namespace to exist?
 		// Actually, if 'bob' doesn't exist, maybe we shouldn't bootstrap it implicitly?
 		// But existing logic bootstraps 'user'.
 		// If admin switches to a namespace, presumably it exists or they want to create it?
 		// Let's stick to bootstrapping the *target* namespace.
-		
+
 		if _, ok := a.bootstrappedUsers.Load(namespace); !ok {
 			// Lazy bootstrap checks if namespace exists, creating it if needed.
 			if err := k8s.BootstrapNamespace(c.Request.Context(), a.K8sManager.Clientset, namespace); err != nil {

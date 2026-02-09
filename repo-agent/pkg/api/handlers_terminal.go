@@ -56,7 +56,7 @@ func (s *Server) terminal(c *gin.Context) {
 		c.String(http.StatusUnauthorized, "Unauthorized")
 		return
 	}
-	
+
 	if user != namespace && !s.Auth.IsUserAdmin(user) {
 		c.String(http.StatusForbidden, "Forbidden")
 		return
