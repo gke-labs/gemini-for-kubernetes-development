@@ -35,8 +35,7 @@ func (c *GitSetupCommand) Run(ctx context.Context) error {
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("failed to set user.name: %s: %w", string(out), err)
 		}
-		fmt.Printf("Git user.name set to: %s
-", c.Name)
+		fmt.Printf("Git user.name set to: %s\n", c.Name)
 	}
 
 	if c.Email != "" {
@@ -44,8 +43,7 @@ func (c *GitSetupCommand) Run(ctx context.Context) error {
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("failed to set user.email: %s: %w", string(out), err)
 		}
-		fmt.Printf("Git user.email set to: %s
-", c.Email)
+		fmt.Printf("Git user.email set to: %s\n", c.Email)
 	}
 
 	return nil
