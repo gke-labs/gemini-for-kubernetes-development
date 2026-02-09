@@ -25,7 +25,7 @@ import (
 
 func (s *Server) getPRs(c *gin.Context) {
 	log := klog.FromContext(c.Request.Context())
-	namespace := c.MustGet(auth.UserKey).(string)
+	namespace := s.Auth.GetNamespaceFromContext(c)
 	repo := c.Param("repo")
 
 	prs, err := s.listPRsFromK8s(c.Request.Context(), namespace, repo)
@@ -39,7 +39,7 @@ func (s *Server) getPRs(c *gin.Context) {
 }
 
 func (s *Server) getPRTasks(c *gin.Context) {
-	namespace := c.MustGet(auth.UserKey).(string)
+	namespace := s.Auth.GetNamespaceFromContext(c)
 	repo := c.Param("repo")
 	prID := c.Param("id")
 
@@ -190,7 +190,7 @@ func (s *Server) listPRsFromK8s(ctx context.Context, namespace, repo string) ([]
 }
 
 func (s *Server) saveDraft(c *gin.Context) {
-	namespace := c.MustGet(auth.UserKey).(string)
+	namespace := s.Auth.GetNamespaceFromContext(c)
 	repo := c.Param("repo")
 	prID := c.Param("id")
 	var payload struct {
@@ -212,7 +212,7 @@ func (s *Server) saveDraft(c *gin.Context) {
 }
 
 func (s *Server) saveTaskDraft(c *gin.Context) {
-	namespace := c.MustGet(auth.UserKey).(string)
+	namespace := s.Auth.GetNamespaceFromContext(c)
 	taskName := c.Param("taskID")
 	var payload struct {
 		Draft string
@@ -233,7 +233,7 @@ func (s *Server) saveTaskDraft(c *gin.Context) {
 
 func (s *Server) submitReview(c *gin.Context) {
 	log := klog.FromContext(c.Request.Context())
-	namespace := c.MustGet(auth.UserKey).(string)
+	namespace := s.Auth.GetNamespaceFromContext(c)
 	repo := c.Param("repo")
 	prID := c.Param("id")
 	var payload struct {
@@ -358,7 +358,7 @@ func (s *Server) submitReview(c *gin.Context) {
 }
 
 func (s *Server) deletePR(c *gin.Context) {
-	namespace := c.MustGet(auth.UserKey).(string)
+	namespace := s.Auth.GetNamespaceFromContext(c)
 	repo := c.Param("repo")
 	prID := c.Param("id")
 	ctx := c.Request.Context()
@@ -372,7 +372,7 @@ func (s *Server) deletePR(c *gin.Context) {
 }
 
 func (s *Server) scaleUpPR(c *gin.Context) {
-	namespace := c.MustGet(auth.UserKey).(string)
+	namespace := s.Auth.GetNamespaceFromContext(c)
 	repo := c.Param("repo")
 	prID := c.Param("id")
 	ctx := c.Request.Context()
@@ -396,7 +396,7 @@ func (s *Server) scaleUpPR(c *gin.Context) {
 }
 
 func (s *Server) scaleDownPR(c *gin.Context) {
-	namespace := c.MustGet(auth.UserKey).(string)
+	namespace := s.Auth.GetNamespaceFromContext(c)
 	repo := c.Param("repo")
 	prID := c.Param("id")
 	ctx := c.Request.Context()
@@ -409,7 +409,7 @@ func (s *Server) scaleDownPR(c *gin.Context) {
 }
 
 func (s *Server) createPRTask(c *gin.Context) {
-	namespace := c.MustGet(auth.UserKey).(string)
+	namespace := s.Auth.GetNamespaceFromContext(c)
 	repo := c.Param("repo")
 	prID := c.Param("id")
 
@@ -465,7 +465,7 @@ func (s *Server) createPRTask(c *gin.Context) {
 
 func (s *Server) getPRDetails(c *gin.Context) {
 	log := klog.FromContext(c.Request.Context())
-	namespace := c.MustGet(auth.UserKey).(string)
+	namespace := s.Auth.GetNamespaceFromContext(c)
 	repo := c.Param("repo")
 	prIDStr := c.Param("id")
 
@@ -518,7 +518,7 @@ func (s *Server) getPRDetails(c *gin.Context) {
 
 func (s *Server) getTaskLogs(c *gin.Context) {
 	log := klog.FromContext(c.Request.Context())
-	namespace := c.MustGet(auth.UserKey).(string)
+	namespace := s.Auth.GetNamespaceFromContext(c)
 	repo := c.Param("repo")
 	prID := c.Param("id")
 	taskID := c.Param("taskID")

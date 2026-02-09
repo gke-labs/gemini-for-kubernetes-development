@@ -44,6 +44,7 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 	standard.POST("/api/auth/logout", s.Auth.Logout)
 	standard.GET("/api/auth/providers", s.Auth.GetProviders)
 	standard.POST("/api/auth/github-config", s.Auth.UpdateGithubConfig)
+	standard.POST("/api/auth/switch-namespace", s.Auth.SwitchNamespace)
 
 	// Protected routes
 	api := standard.Group("/api")
@@ -157,9 +158,8 @@ func ResponseLoggerMiddleware() gin.HandlerFunc {
 
 func (s *Server) getInstructions(c *gin.Context) {
 	repoName := c.Param("repo")
-	user := s.Auth.GetUserFromContext(c)
-	namespace := user // Assuming tenant model where user == namespace
-	if user == "" {
+	namespace := s.Auth.GetNamespaceFromContext(c)
+	if namespace == "" {
 		namespace = "default"
 	}
 
@@ -215,9 +215,8 @@ func (s *Server) getInstructions(c *gin.Context) {
 
 func (s *Server) updateInstructions(c *gin.Context) {
 	repoName := c.Param("repo")
-	user := s.Auth.GetUserFromContext(c)
-	namespace := user
-	if user == "" {
+	namespace := s.Auth.GetNamespaceFromContext(c)
+	if namespace == "" {
 		namespace = "default"
 	}
 

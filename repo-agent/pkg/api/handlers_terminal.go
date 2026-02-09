@@ -56,7 +56,11 @@ func (s *Server) terminal(c *gin.Context) {
 		c.String(http.StatusUnauthorized, "Unauthorized")
 		return
 	}
-	// TODO: Verify user has access to this sandbox/namespace
+	
+	if user != namespace && !s.Auth.IsUserAdmin(user) {
+		c.String(http.StatusForbidden, "Forbidden")
+		return
+	}
 
 	// Upgrade to WebSocket
 	ws, err := upgrader.Upgrade(c.Writer, c.Request, nil)

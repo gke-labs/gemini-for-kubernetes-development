@@ -41,8 +41,15 @@ func main() {
 		klog.Info("No GITHUB_ALLOWED_USERS environment variable set. All GitHub users allowed to authenticate.")
 	}
 
+	// Admin Users
+	var adminUsers []string
+	if adminUsersStr := os.Getenv("GITHUB_ADMIN_USERS"); adminUsersStr != "" {
+		adminUsers = strings.Split(adminUsersStr, ",")
+		klog.Infof("GitHub admin users: %v", adminUsers)
+	}
+
 	// Authenticator
-	authenticator := auth.NewAuthenticator(k8sManager, allowedUsers)
+	authenticator := auth.NewAuthenticator(k8sManager, allowedUsers, adminUsers)
 
 	// API Server
 	server := api.NewServer(k8sManager, authenticator)

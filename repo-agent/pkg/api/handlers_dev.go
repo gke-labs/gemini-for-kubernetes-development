@@ -25,7 +25,7 @@ import (
 
 func (s *Server) getDevSandboxes(c *gin.Context) {
 	log := klog.FromContext(c.Request.Context())
-	namespace := c.MustGet(auth.UserKey).(string)
+	namespace := s.Auth.GetNamespaceFromContext(c)
 	repo := c.Param("repo")
 
 	sandboxes, err := s.listDevSandboxesFromK8s(c.Request.Context(), namespace, repo)
@@ -133,7 +133,7 @@ func (s *Server) listDevSandboxesFromK8s(ctx context.Context, namespace, repo st
 
 func (s *Server) createDevSandbox(c *gin.Context) {
 	log := klog.FromContext(c.Request.Context())
-	namespace := c.MustGet(auth.UserKey).(string)
+	namespace := s.Auth.GetNamespaceFromContext(c)
 	repo := c.Param("repo")
 
 	var req struct {
@@ -321,7 +321,7 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 }
 
 func (s *Server) deleteDevSandbox(c *gin.Context) {
-	namespace := c.MustGet(auth.UserKey).(string)
+	namespace := s.Auth.GetNamespaceFromContext(c)
 	name := c.Param("name") // This is the sandbox name
 	ctx := c.Request.Context()
 
@@ -335,7 +335,7 @@ func (s *Server) deleteDevSandbox(c *gin.Context) {
 
 func (s *Server) scaleUpDevSandbox(c *gin.Context) {
 	log := klog.FromContext(c.Request.Context())
-	namespace := c.MustGet(auth.UserKey).(string)
+	namespace := s.Auth.GetNamespaceFromContext(c)
 	name := c.Param("name")
 
 	if err := s.K8sManager.ScaleupDevSandboxHelper(c.Request.Context(), namespace, name); err != nil {
@@ -349,7 +349,7 @@ func (s *Server) scaleUpDevSandbox(c *gin.Context) {
 
 func (s *Server) scaleDownDevSandbox(c *gin.Context) {
 	log := klog.FromContext(c.Request.Context())
-	namespace := c.MustGet(auth.UserKey).(string)
+	namespace := s.Auth.GetNamespaceFromContext(c)
 	name := c.Param("name")
 	if err := s.K8sManager.ScaledownDevSandboxHelper(c.Request.Context(), namespace, name); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scale down dev sandbox", "details": err.Error()})
@@ -363,7 +363,7 @@ func (s *Server) scaleDownDevSandbox(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 func (s *Server) getDevTasks(c *gin.Context) {
-	namespace := c.MustGet(auth.UserKey).(string)
+	namespace := s.Auth.GetNamespaceFromContext(c)
 	sandboxName := c.Param("name")
 
 	taskList, err := s.K8sManager.ListSandboxTasks(c.Request.Context(), namespace, sandboxName)
@@ -412,7 +412,7 @@ func (s *Server) getDevTasks(c *gin.Context) {
 }
 
 func (s *Server) createDevTask(c *gin.Context) {
-	namespace := c.MustGet(auth.UserKey).(string)
+	namespace := s.Auth.GetNamespaceFromContext(c)
 	sandboxName := c.Param("name")
 
 	var payload struct {
@@ -456,7 +456,7 @@ func (s *Server) createDevTask(c *gin.Context) {
 
 func (s *Server) getDevTaskLogs(c *gin.Context) {
 	log := klog.FromContext(c.Request.Context())
-	namespace := c.MustGet(auth.UserKey).(string)
+	namespace := s.Auth.GetNamespaceFromContext(c)
 	sandboxName := c.Param("name")
 	taskID := c.Param("taskID")
 

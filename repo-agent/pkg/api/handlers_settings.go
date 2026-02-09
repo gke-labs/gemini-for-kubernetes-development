@@ -11,7 +11,7 @@ import (
 )
 
 func (s *Server) getSettings(c *gin.Context) {
-	namespace := c.MustGet(auth.UserKey).(string)
+	namespace := s.Auth.GetNamespaceFromContext(c)
 	settings := gin.H{
 		"manual_pat_set":     false,
 		"oauth_pat_set":      false,
@@ -46,7 +46,7 @@ func (s *Server) getSettings(c *gin.Context) {
 }
 
 func (s *Server) updateSettings(c *gin.Context) {
-	namespace := c.MustGet(auth.UserKey).(string)
+	namespace := s.Auth.GetNamespaceFromContext(c)
 	var payload struct {
 		GithubPAT    *string `json:"github_pat"` // Use pointer to distinguish between empty string and missing field
 		GeminiAPIKey string  `json:"gemini_api_key"`
