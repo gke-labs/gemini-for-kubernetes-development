@@ -133,7 +133,7 @@ spec:
                     - name: GITHUB_USER_ORIGIN
                       value: ${schema.spec.destination.origin}
                     - name: GITHUB_USER_LOGIN
-                      value: ${schema.spec.destination.bot.login != "" ? schema.spec.destination.bot.login : schema.spec.destination.user.login}
+                      value: ${schema.spec.destination.user.login}
                     - name: GITHUB_USER_NAME
                       value: ${schema.spec.destination.user.name}
                     - name: GITHUB_USER_EMAIL
