@@ -819,7 +819,7 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 			if issueIsExplicit || (activeSandboxes < repoWatch.Spec.Issue.MaxActiveSandboxes &&
 				(repoWatch.Spec.Issue.MaxSandboxes == 0 || totalSandboxes < repoWatch.Spec.Issue.MaxSandboxes)) {
 				log.Info("creating sandbox for issue", "issue", *issue.Number)
-				createdSandbox, err := r.createIssueSandbox(ctx, ghClient, user, repoWatch, issue)
+				createdSandbox, err := r.createIssueSandbox(ctx, user, repoWatch, issue)
 				if err != nil {
 					log.Error(err, "unable to create sandbox for issue", "issue", *issue.Number)
 				} else {
@@ -919,7 +919,7 @@ func (r *Reconciler) isIssueMatch(issue *github.Issue, handler reviewv1alpha1.Is
 	return true
 }
 
-func (r *Reconciler) createIssueSandbox(ctx context.Context, ghClient *github.Client, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, issue *github.Issue) (*unstructured.Unstructured, error) {
+func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, issue *github.Issue) (*unstructured.Unstructured, error) {
 	log := log.FromContext(ctx)
 	sandboxName := fmt.Sprintf("%s-issue-%d", repoWatch.Name, *issue.Number)
 
