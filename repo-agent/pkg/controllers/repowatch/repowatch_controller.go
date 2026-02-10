@@ -51,6 +51,7 @@ import (
 	sandboxtaskv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	pkg_github "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/overseer"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/prompts"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 )
@@ -323,6 +324,14 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	// Reconcile Dev Sandboxes
 	if err := r.reconcileDevSandboxes(ctx, user, repoWatch, ghClient, repo); err != nil {
 		log.Error(err, "unable to reconcile dev sandboxes")
+		reconcileErr = errors.Join(reconcileErr, err)
+		// Continue to next reconciliation
+	}
+
+	log.Info("reconciling agents")
+	// Reconcile Agents
+	if err := r.reconcileAgents(ctx, repoWatch, ghClient, owner, repo, user); err != nil {
+		log.Error(err, "unable to reconcile agents")
 		reconcileErr = errors.Join(reconcileErr, err)
 		// Continue to next reconciliation
 	}
@@ -1913,4 +1922,232 @@ func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client
 	}
 
 	return found, latestFeedbackTime, nil
+}
+
+func (r *Reconciler) reconcileAgents(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, ghClient *github.Client, owner string, repo string, user *github.User) error {
+	log := log.FromContext(ctx)
+
+	// 1. Fetch Agents
+	svc := overseer.NewService(ghClient)
+	agents, err := svc.FetchAgentDefinitions(ctx, owner, repo)
+	if err != nil {
+		return fmt.Errorf("fetching agents: %w", err)
+	}
+
+	if len(agents) == 0 {
+		return nil
+	}
+
+	// 2. Fetch Open Issues (for matching)
+	// We might want to optimize this by passing list from caller, but let's keep it simple for now.
+	opts := &github.IssueListByRepoOptions{
+		State:       "open",
+		ListOptions: github.ListOptions{PerPage: 100},
+	}
+	var allIssues []*github.Issue
+	for {
+		issues, resp, err := ghClient.Issues.ListByRepo(ctx, owner, repo, opts)
+		if err != nil {
+			return fmt.Errorf("listing issues: %w", err)
+		}
+		// We process both Issues and PRs (PRs are issues in GitHub API v3 list)
+		allIssues = append(allIssues, issues...)
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+
+	// 3. Match Agents to Issues
+	for _, issue := range allIssues {
+		for _, agent := range agents {
+			if svc.MatchIssue(issue, agent) {
+				// Matched! Create Sandbox/Task if needed.
+				if err := r.ensureAgentSandbox(ctx, repoWatch, agent, issue, user); err != nil {
+					log.Error(err, "ensuring agent sandbox", "agent", agent.Name, "issue", *issue.Number)
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+func (r *Reconciler) ensureAgentSandbox(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, agent *overseer.AgentDefinition, issue *github.Issue, user *github.User) error {
+	log := log.FromContext(ctx)
+	// Create IssueSandbox with type: agent
+	// Check if exists
+	// Name includes agent name hash to allow multiple agents per issue
+	sandboxName := fmt.Sprintf("%s-agent-%s-%d", repoWatch.Name, NameHash(agent.Name), *issue.Number)
+	// Truncate if too long (max 63 chars)
+	if len(sandboxName) > 63 {
+		sandboxName = sandboxName[:63]
+	}
+
+	sandbox := &unstructured.Unstructured{}
+	sandbox.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "custom.agents.x-k8s.io",
+		Version: "v1alpha1",
+		Kind:    "IssueSandbox",
+	})
+
+	err := r.Get(ctx, types.NamespacedName{Name: sandboxName, Namespace: repoWatch.Namespace}, sandbox)
+	if err == nil {
+		// Sandbox exists. Check if task exists.
+		taskName := fmt.Sprintf("%s-task", sandboxName)
+		task := &sandboxtaskv1alpha1.SandboxTask{}
+		if err := r.Get(ctx, types.NamespacedName{Name: taskName, Namespace: repoWatch.Namespace}, task); err != nil {
+			if apierrors.IsNotFound(err) {
+				// Create task if missing
+				return r.createAgentTask(ctx, repoWatch, sandbox, sandboxName, taskName, agent, issue)
+			}
+			return err
+		}
+		return nil
+	}
+	if !apierrors.IsNotFound(err) {
+		return err
+	}
+
+	// Create Sandbox
+	cloneURL := strings.Replace(*issue.RepositoryURL, "api.github.com/repos", "github.com", 1) + ".git"
+	repoParts := strings.Split(cloneURL, "/")
+	// repoName := repoParts[len(repoParts)-1]
+
+	userLogin := user.GetLogin()
+	userName := user.GetName()
+	userEmail := user.GetEmail()
+
+	githubSecretName := repoWatch.Spec.GithubSecretName
+	
+	// Use Issue specs for defaults if available, otherwise defaults
+	var llmProvider, llmPrompt, apiKeySecret, configdirRef string
+	var devcontainerRef, image string
+	
+	if repoWatch.Spec.Issue != nil {
+		if repoWatch.Spec.Issue.RobotAccount != "" {
+			githubSecretName = repoWatch.Spec.Issue.RobotAccount
+			if err := r.ensureRobotSecret(ctx, repoWatch.Namespace, githubSecretName); err != nil {
+				log.Error(err, "failed to ensure robot secret", "secret", githubSecretName)
+				return err
+			}
+		}
+		llmProvider = repoWatch.Spec.Issue.LLM.Provider
+		llmPrompt = repoWatch.Spec.Issue.LLM.Prompt
+		apiKeySecret = repoWatch.Spec.Issue.LLM.APIKeySecretRef
+		configdirRef = repoWatch.Spec.Issue.LLM.ConfigdirRef
+		devcontainerRef = repoWatch.Spec.Issue.DevcontainerConfigRef
+		image = repoWatch.Spec.Issue.Image
+	}
+	
+	if apiKeySecret == "" {
+		apiKeySecret = "gemini-vscode-tokens"
+	}
+	if llmProvider == "" {
+		llmProvider = "gemini-cli"
+	}
+
+	originURL := fmt.Sprintf("github.com/%s/%s", repoParts[len(repoParts)-2], repoParts[len(repoParts)-1])
+	branchName := fmt.Sprintf("agent-%s-%d-%s", NameHash(agent.Name), *issue.Number, randString(4))
+
+	newSandbox := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
+			"kind":       "IssueSandbox",
+			"metadata": map[string]interface{}{
+				"name":      sandboxName,
+				"namespace": repoWatch.Namespace,
+				"labels": map[string]interface{}{
+					"review.gemini.google.com/repowatch": repoWatch.Name,
+					"sandbox.gemini.google.com/type":     "agent", // DIFFERENT TYPE
+					"sandbox.gemini.google.com/agent":    agent.Name,
+				},
+				"annotations": map[string]interface{}{
+					"agentState": "provisioning",
+				},
+			},
+			"spec": map[string]interface{}{
+				"llmBackend": map[string]interface{}{
+					"name": llmProvider,
+				},
+				"llm": map[string]interface{}{
+					"prompt":           llmPrompt, // Base prompt
+					"apiKeySecretName": apiKeySecret,
+					"configdirRef":     configdirRef,
+				},
+				"source": map[string]interface{}{
+					"cloneURL": cloneURL,
+					"htmlURL":  *issue.HTMLURL,
+					"issue":    fmt.Sprintf("%d", *issue.Number),
+					"title":    *issue.Title,
+					"repo":     repoWatch.GetName(),
+				},
+				"destination": map[string]interface{}{
+					"pushEnabled": false, 
+					"branch":      branchName,
+					"origin":      originURL,
+					"user": map[string]interface{}{
+						"login": userLogin,
+						"name":  userName,
+						"email": userEmail,
+					},
+				},
+				"gateway": map[string]interface{}{
+					"httpEnabled": true,
+				},
+				"replicas":         int64(1),
+				"githubSecretName": githubSecretName,
+			},
+		},
+	}
+
+	if devcontainerRef != "" {
+		if err := unstructured.SetNestedField(newSandbox.Object, devcontainerRef, "spec", "devcontainerConfigRef"); err != nil {
+			return err
+		}
+	}
+	if image != "" {
+		if err := unstructured.SetNestedField(newSandbox.Object, image, "spec", "image"); err != nil {
+			return err
+		}
+	}
+
+	if err := controllerutil.SetControllerReference(repoWatch, newSandbox, r.Scheme); err != nil {
+		return err
+	}
+
+	if err := r.Create(ctx, newSandbox); err != nil {
+		return err
+	}
+	
+	// Create Task
+	return r.createAgentTask(ctx, repoWatch, newSandbox, sandboxName, "", agent, issue)
+}
+
+func (r *Reconciler) createAgentTask(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, sandbox *unstructured.Unstructured, sandboxName, taskName string, agent *overseer.AgentDefinition, issue *github.Issue) error {
+	prompt, err := prompts.ExpandIssueHandlerPrompt(agent.Prompt, issue)
+	if err != nil {
+		return err
+	}
+	
+	params := map[string]string{
+		"ISSUEID":      fmt.Sprintf("%d", *issue.Number),
+		"AGENT_PROMPT": prompt,
+		"AGENT_NAME":   agent.Name,
+	}
+	
+	// Add LLM params if available from IssueSpec
+	if repoWatch.Spec.Issue != nil {
+		if repoWatch.Spec.Issue.LLM.Provider != "" {
+			params["AGENT_LLM_PROVIDER"] = repoWatch.Spec.Issue.LLM.Provider
+		}
+		if repoWatch.Spec.Issue.LLM.APIKeySecretRef != "" {
+			params["AGENT_LLM_API_KEY_SECRET"] = repoWatch.Spec.Issue.LLM.APIKeySecretRef
+		}
+		if repoWatch.Spec.Issue.LLM.ConfigdirRef != "" {
+			params["AGENT_LLM_CONFIGDIR"] = repoWatch.Spec.Issue.LLM.ConfigdirRef
+		}
+	}
+
+	return r.createSandboxTask(ctx, repoWatch, sandbox, sandboxName, taskName, "issue", params)
 }
