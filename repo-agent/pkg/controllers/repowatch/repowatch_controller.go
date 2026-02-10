@@ -1914,4 +1914,3 @@ func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client
 
 	return found, latestFeedbackTime, nil
 }
-
