@@ -26,6 +26,18 @@ spec:
             type: object
           spec:
             properties:
+              agent:
+                properties:
+                  discoveryInterval:
+                    default: 1h
+                    type: string
+                  enabled:
+                    default: true
+                    type: boolean
+                  path:
+                    default: .agent
+                    type: string
+                type: object
               dev:
                 properties:
                   branches:

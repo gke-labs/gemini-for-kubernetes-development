@@ -132,6 +132,21 @@ type IdeaSpec struct {
 	CreatedAt string `json:"createdAt,omitempty"`
 }
 
+// AgentSpec defines the configuration for agent discovery.
+type AgentSpec struct {
+	// Enabled enables the agent discovery mechanism.
+	// +kubebuilder:default=true
+	Enabled bool `json:"enabled,omitempty"`
+
+	// Path to the agent definitions directory.
+	// +kubebuilder:default=".agent"
+	Path string `json:"path,omitempty"`
+
+	// Interval for checking the agent definitions.
+	// +kubebuilder:default="1h"
+	DiscoveryInterval string `json:"discoveryInterval,omitempty"`
+}
+
 // DevSpec defines the configuration for development sandboxes.
 type DevSpec struct {
 	// LLM configuration for the review sandboxes.
@@ -250,6 +265,10 @@ type RepoWatchSpec struct {
 	// Issue configuration for Bugs
 	// +kubebuilder:validation:Optional
 	Issue *IssueSpec `json:"issue,omitempty"`
+
+	// Agent configuration for discovering agents in the repo
+	// +kubebuilder:validation:Optional
+	Agent *AgentSpec `json:"agent,omitempty"`
 
 	// Dev configuration for development sandboxes
 

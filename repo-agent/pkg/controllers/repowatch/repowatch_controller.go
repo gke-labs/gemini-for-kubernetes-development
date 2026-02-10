@@ -319,6 +319,14 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		// Continue to next reconciliation
 	}
 
+	log.Info("reconciling agents")
+	// Reconcile Agents
+	if err := r.reconcileAgents(ctx, repoWatch, ghClient, owner, repo); err != nil {
+		log.Error(err, "unable to reconcile agents")
+		reconcileErr = errors.Join(reconcileErr, err)
+		// Continue to next reconciliation
+	}
+
 	log.Info("reconciling dev sandboxes")
 	// Reconcile Dev Sandboxes
 	if err := r.reconcileDevSandboxes(ctx, user, repoWatch, ghClient, repo); err != nil {
