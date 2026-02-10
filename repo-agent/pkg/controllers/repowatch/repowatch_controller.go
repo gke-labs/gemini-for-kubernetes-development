@@ -818,7 +818,6 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 			issueIsExplicit := isIssueExplicit(*issue.Number, repoWatch.Spec.Issue.Issues)
 			if issueIsExplicit || (activeSandboxes < repoWatch.Spec.Issue.MaxActiveSandboxes &&
 				(repoWatch.Spec.Issue.MaxSandboxes == 0 || totalSandboxes < repoWatch.Spec.Issue.MaxSandboxes)) {
-
 				log.Info("creating sandbox for issue", "issue", *issue.Number)
 				createdSandbox, err := r.createIssueSandbox(ctx, user, repoWatch, issue)
 				if err != nil {
@@ -932,6 +931,11 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 	userName := user.GetName()
 	userEmail := user.GetEmail()
 
+	// Default bot info to empty (or current user if not using robot account)
+	botLogin := ""
+	botName := ""
+	botEmail := ""
+
 	githubSecretName := repoWatch.Spec.GithubSecretName
 	if repoWatch.Spec.Issue.RobotAccount != "" {
 		githubSecretName = repoWatch.Spec.Issue.RobotAccount
@@ -947,17 +951,21 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 		}
 
 		if len(secret.Data["userid"]) > 0 {
-			userLogin = string(secret.Data["userid"])
+			botLogin = string(secret.Data["userid"])
 		}
 		if len(secret.Data["name"]) > 0 {
-			userName = string(secret.Data["name"])
+			botName = string(secret.Data["name"])
 		}
 		if len(secret.Data["email"]) > 0 {
-			userEmail = string(secret.Data["email"])
+			botEmail = string(secret.Data["email"])
 		}
 	}
 
-	originURL := fmt.Sprintf("github.com/%s/%s", userLogin, repoName)
+	originUser := userLogin
+	if botLogin != "" {
+		originUser = botLogin
+	}
+	originURL := fmt.Sprintf("github.com/%s/%s", originUser, repoName)
 	branchName := fmt.Sprintf("issue-%d-%s", *issue.Number, randString(4))
 
 	log.Info("Generated sandbox for Issue", "issue", *issue)
@@ -1012,6 +1020,11 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 						"login": userLogin,
 						"name":  userName,
 						"email": userEmail,
+					},
+					"bot": map[string]interface{}{
+						"login": botLogin,
+						"name":  botName,
+						"email": botEmail,
 					},
 				},
 				"gateway": map[string]interface{}{

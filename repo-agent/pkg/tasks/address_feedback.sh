@@ -19,22 +19,35 @@ function setupGit {
     echo "creating /root/.config/gh directory"
     mkdir -p /root/.config/gh
 
+    local GH_USER="${GITHUB_USER_ID}"
+    if [ -n "${GITHUB_BOT_LOGIN}" ]; then
+        GH_USER="${GITHUB_BOT_LOGIN}"
+    fi
+
     echo "writing gh config"
     cat <<EOF > /root/.config/gh/hosts.yml
 github.com:
     users:
-        ${GITHUB_USER_ID}:
+        ${GH_USER}:
             oauth_token: ${GITHUB_USER_TOKEN}
     git_protocol: https
     oauth_token: ${GITHUB_USER_TOKEN}
-    user: ${GITHUB_USER_ID}
+    user: ${GH_USER}
 EOF
 
     echo "running git config user.email"
-    git config --global user.email ${GITHUB_USER_EMAIL}
+    if [ -n "$GITHUB_BOT_EMAIL" ]; then
+        git config --global user.email "${GITHUB_BOT_EMAIL}"
+    else
+        git config --global user.email ${GITHUB_USER_EMAIL}
+    fi
 
     echo "running git config user.name"
-    git config --global user.name ${GITHUB_USER_NAME}
+    if [ -n "$GITHUB_BOT_NAME" ]; then
+        git config --global user.name "${GITHUB_BOT_NAME}"
+    else
+        git config --global user.name ${GITHUB_USER_NAME}
+    fi
 
     echo "running gh auth setup-git"
     gh auth setup-git
@@ -79,6 +92,15 @@ EOF
 function runGemini {
     echo "Running runGemini..."
     echo "running gemini in yolo mode"
+
+    if [ -n "$GITHUB_BOT_NAME" ]; then
+        echo "Using bot identity for commits"
+        export GIT_AUTHOR_NAME="$GITHUB_BOT_NAME"
+        export GIT_AUTHOR_EMAIL="$GITHUB_BOT_EMAIL"
+        export GIT_COMMITTER_NAME="$GITHUB_BOT_NAME"
+        export GIT_COMMITTER_EMAIL="$GITHUB_BOT_EMAIL"
+    fi
+
     (cd "/workspaces/${REPO_NAME}" && export GEMINI_API_KEY="${GEMINI_API_KEY}" && gemini --yolo --model {{ .Model }} < ${PROMPT_FILE})
 }
 
