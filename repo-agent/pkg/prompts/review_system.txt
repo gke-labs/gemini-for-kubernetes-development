@@ -88,6 +88,7 @@ class DraftReviewComment(BaseModel):
     line: str = Field(description="line no where the comment is anchored. should be within the line range in the diff")
     body: str = Field(description="detailed review comment for the line")
     side: str = Field(description="RIGHT|LEFT. RIGHT if commenting on additions starting with '+', LEFT if commenting on deletions starting with '-'.")
+    severity: str = Field(description="severity of the comment. one of [LOW, MEDIUM, HIGH]")
 
 class PullRequestReviewRequest(BaseModel):
     body: str = Field(description="The body text of the pull request review.")
@@ -113,13 +114,16 @@ review:
       line: 200
       body: missed copying over data from the input struct 
       side: RIGHT
+      severity: HIGH
     - path: README.md
       line: 456
       body: |
          Can remove these changes since they are repetitive
       side: RIGHT
+      severity: LOW
     - path: pkg/something/api.go
       line: 22
       body: Removing this field would break existing users. Please add a migration path.
       side: LEFT
+      severity: HIGH
   ...

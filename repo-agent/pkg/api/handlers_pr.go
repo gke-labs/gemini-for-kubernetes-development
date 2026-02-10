@@ -327,7 +327,7 @@ func (s *Server) submitReview(c *gin.Context) {
 		log.Info("Failed to unmarshal review payload", "err", err)
 		reviewRequest.Body = github.String(payload.Review)
 	} else {
-		reviewRequest = agentOutput.Review
+		reviewRequest = agentOutput.Review.ToGitHubReviewRequest()
 	}
 
 	// Not setting event sets it as a draft
