@@ -163,13 +163,14 @@ function DevCard({
 
       <div style={{padding: '10px'}}>
         {tasks.length > 0 && (
-            tasks.slice().reverse().map(task => (
+            tasks.slice().reverse().map((task, index) => (
                 <TaskCard 
                     key={task.name} 
                     task={task} 
                     repoName={repoName} 
                     parentId={sandbox.name}
                     parentType="dev"
+                    defaultCollapsed={index !== 0}
                 />
             ))
         )}
