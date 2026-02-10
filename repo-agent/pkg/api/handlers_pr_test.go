@@ -25,10 +25,12 @@ func TestCreatePRTask(t *testing.T) {
 	scheme := runtime.NewScheme()
 	gvrSandboxTask := schema.GroupVersionResource{Group: "custom.agents.x-k8s.io", Version: "v1alpha1", Resource: "sandboxtasks"}
 	gvrReviewSandbox := schema.GroupVersionResource{Group: "custom.agents.x-k8s.io", Version: "v1alpha1", Resource: "reviewsandboxes"}
+	gvrRepoWatch := schema.GroupVersionResource{Group: "review.gemini.google.com", Version: "v1alpha1", Resource: "repowatches"}
 
 	dynamicClient := fake.NewSimpleDynamicClientWithCustomListKinds(scheme, map[schema.GroupVersionResource]string{
 		gvrSandboxTask:   "SandboxTaskList",
 		gvrReviewSandbox: "ReviewSandboxList",
+		gvrRepoWatch:     "RepoWatchList",
 	})
 	k8sClient := kubernetesfake.NewSimpleClientset()
 
@@ -64,6 +66,28 @@ func TestCreatePRTask(t *testing.T) {
 	r.POST("/repo/:repo/prs/:id/tasks", server.createPRTask)
 
 	t.Run("Create task with explicit prompt", func(t *testing.T) {
+		// Create the RepoWatch
+		repoWatch := &unstructured.Unstructured{
+			Object: map[string]interface{}{
+				"apiVersion": "review.gemini.google.com/v1alpha1",
+				"kind":       "RepoWatch",
+				"metadata": map[string]interface{}{
+					"name":      "test-repo",
+					"namespace": "default",
+				},
+				"spec": map[string]interface{}{
+					"review": map[string]interface{}{
+						"maxReviewFiles": int64(10),
+						"ignoreFiles":    []interface{}{"*.lock", "*.pdf"},
+					},
+				},
+			},
+		}
+		_, err := dynamicClient.Resource(gvrRepoWatch).Namespace("default").Create(context.Background(), repoWatch, v1.CreateOptions{})
+		if err != nil {
+			t.Fatalf("Failed to create repowatch: %v", err)
+		}
+
 		// Create the ReviewSandbox first
 		sandbox := &unstructured.Unstructured{
 			Object: map[string]interface{}{
@@ -75,7 +99,7 @@ func TestCreatePRTask(t *testing.T) {
 				},
 			},
 		}
-		_, err := dynamicClient.Resource(gvrReviewSandbox).Namespace("default").Create(context.Background(), sandbox, v1.CreateOptions{})
+		_, err = dynamicClient.Resource(gvrReviewSandbox).Namespace("default").Create(context.Background(), sandbox, v1.CreateOptions{})
 		if err != nil {
 			t.Fatalf("Failed to create review sandbox: %v", err)
 		}
@@ -108,6 +132,12 @@ func TestCreatePRTask(t *testing.T) {
 			params, _, _ := unstructured.NestedMap(task.Object, "spec", "params")
 			if params["AGENT_PROMPT"] != "Test Prompt" {
 				t.Errorf("Expected prompt 'Test Prompt', got %v", params["AGENT_PROMPT"])
+			}
+			if params["MAX_REVIEW_FILES"] != "10" {
+				t.Errorf("Expected MAX_REVIEW_FILES '10', got %v", params["MAX_REVIEW_FILES"])
+			}
+			if params["IGNORE_FILES"] != "*.lock,*.pdf" {
+				t.Errorf("Expected IGNORE_FILES '*.lock,*.pdf', got %v", params["IGNORE_FILES"])
 			}
 			sandboxName, _, _ := unstructured.NestedString(task.Object, "spec", "sandboxName")
 			if sandboxName != "test-repo-pr-123" {
