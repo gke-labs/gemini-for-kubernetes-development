@@ -1,103 +1,55 @@
-# Overseer Design Options
+# Overseer Design: Agentic Approach
 
-This document outlines design options for the "Overseer" component in `repo-agent`.
-The Overseer is responsible for orchestrating agents defined in `.agent/` folder of the repository.
+This document outlines the design for the "Overseer" component in `repo-agent`.
+The Overseer is an autonomous agent responsible for orchestrating other agents and managing repository events.
 
-## Requirements
-1.  Watch for repository events (Issues, PRs, Comments).
-2.  Read agent definitions from `.agent/*.md` in the repository.
-3.  Match events to agents.
-4.  Orchestrate execution (Plan -> Task -> Sandbox).
+## Core Philosophy: Agentic Loop
 
-## Option 1: Extend `repowatch-controller` (The Integrated Approach)
+Instead of rigid Go code defining the logic, the Overseer operates as an LLM-driven agent in a loop.
+It uses a System Prompt and a set of Tools (MCP) to observe the state of the repository and take actions.
 
-In this option, we enhance the existing `repowatch-controller` to handle dynamic agent definitions.
+## Architecture
 
-### Architecture
-*   **Component**: `repo-agent/cmd/repowatch-controller`
+*   **Runtime**: The Overseer runs as a persistent process (e.g., in a Sandbox or as a Deployment).
 *   **Logic**:
-    *   The `Reconcile` loop fetches `.agent/*.md` files using the GitHub client.
-    *   It parses these definitions into in-memory structures.
-    *   When processing Issues/PRs, it checks against these dynamic definitions in addition to the static CRD spec.
-    *   It creates `Sandbox` and `SandboxTask` resources accordingly.
+    *   **Observation**: The agent uses CLI tools (like `gh`) and GitHub APIs to poll for events, workflow runs, and status updates.
+        *   Example: `gh api /orgs/gke-labs/events | jq ".[] | .repo.name , .type"`
+        *   Example: `gh run list --json`
+    *   **Decision**: Based on the System Prompt and observations, the agent decides what action to take.
+    *   **Action**: The agent executes actions via Tools.
 
-### Pros
-*   **Simplicity**: Reuses existing GitHub client, authentication, and event loop.
-*   **Efficiency**: No need to duplicate event fetching logic.
-*   **Consistency**: Single source of truth for repository watching.
+### Available Actions (Tools)
 
-### Cons
-*   **Complexity**: Increases the complexity of the already large `repowatch-controller`.
-*   **Coupling**: Tightly couples infrastructure provisioning (Sandboxes) with agent orchestration logic.
+The Overseer can perform the following actions:
 
-## Option 2: Dedicated `overseer-controller` (The Decoupled Approach)
+1.  **Comment**: Post comments on PRs or Issues.
+2.  **Issue Management**: Create or update issues.
+3.  **Sandbox Creation**:
+    *   Create a sandbox for generating a PR (to fix an issue).
+    *   Create a sandbox for reviewing a PR.
+    *   Create a sandbox for running a specific task.
+4.  **Orchestration**: Trigger other specialized agents defined in `.agent/`.
 
-In this option, we create a new controller specifically for agent orchestration.
+## Implementation Details
 
-### Architecture
-*   **Component**: `repo-agent/cmd/overseer`
-*   **Logic**:
-    *   Watches `RepoWatch` CRs to know which repositories to monitor.
-    *   Implements its own polling/webhook handling for GitHub events (or shares a bus).
-    *   Fetches and parses `.agent/*.md` files.
-    *   Decides *what* needs to be done and creates `Sandbox` and `SandboxTask` CRs.
-    *   `repowatch-controller` (or a thinner `sandbox-controller`) is responsible only for fulfilling the `Sandbox` CRs (spinning up Pods).
+### System Prompt
 
-### Pros
-*   **Separation of Concerns**: Infrastructure (Pods/Sandboxes) is separated from Business Logic (Agents/Workflows).
-*   **Scalability**: Can scale independently.
-*   **Extensibility**: Easier to add new event sources or logic without touching core infrastructure code.
+The System Prompt will define the Overseer's role:
+*   Monitor the repository for activity.
+*   Triage incoming issues and PRs.
+*   Delegate work to specialized agents (by creating Sandboxes for them).
+*   Ensure that the "Human in the Loop" is kept informed but not overwhelmed.
 
-### Cons
-*   **Overhead**: Requires a new controller binary, deployment, and RBAC.
-*   **Duplication**: Might duplicate some GitHub API calls if not careful (e.g., polling).
+### Tools & MCP
 
-## Option 3: In-Sandbox Agent (The Distributed Approach)
+The Overseer will rely on the Model Context Protocol (MCP) or similar tool-use interfaces to interact with:
+*   GitHub (via `gh` CLI or API).
+*   Kubernetes (to create Sandboxes).
+*   Local Filesystem (to read `.agent/` definitions).
 
-In this option, the controller is dumb and just spins up a sandbox. The logic resides inside the sandbox.
+## Why this approach?
 
-### Architecture
-*   **Component**: `repo-agent/pkg/agent` (running inside the sandbox)
-*   **Logic**:
-    *   `repowatch-controller` spins up a generic "Overseer Sandbox" for the repo.
-    *   Inside this sandbox, a process monitors `.agent/` files and GitHub events.
-    *   It executes agents locally or requests new Sandboxes via K8s API (if it has permission).
+*   **Flexibility**: Logic is defined by the prompt, not compiled code. Easy to adjust behavior.
+*   **Extensibility**: Adding new capabilities is as simple as giving the agent a new tool.
+*   **Intelligence**: The agent can make fuzzy decisions (e.g., "Is this issue distinct enough?") that are hard to code in Go.
 
-### Pros
-*   **Isolation**: User code (agents) runs in a sandbox, reducing risk to the controller.
-*   **Flexibility**: Agents can be complex scripts without burdening the K8s controller.
-
-### Cons
-*   **Resource Usage**: Requires a running pod for every repo just to watch.
-*   **Latency**: Spin-up time for handling events might be higher if not persistent.
-*   **Permissions**: The in-sandbox agent needs K8s API access to create other sandboxes.
-
-## Recommendation
-
-**Option 1 (Integrated)** is recommended for the initial implementation because:
-1.  It builds directly on the existing working machinery.
-2.  It avoids the operational overhead of a new controller.
-3.  We can still structure the code internally (e.g., `pkg/overseer`) to allow for future extraction into Option 2.
-
-## Agent Definition Format (Draft)
-
-We propose a Markdown-based format for agent definitions, compatible with `gemini-cli` skills.
-
-```markdown
----
-name: "Bug Triager"
-description: "Triages new bugs"
-triggers:
-  - type: issue
-    action: opened
-    labels: ["bug"]
----
-
-# Instructions
-
-You are a helpful assistant that triages bugs.
-When a new bug is opened:
-1. Check if it has a reproduction.
-2. If not, ask for one.
-3. If yes, try to reproduce it.
-```
