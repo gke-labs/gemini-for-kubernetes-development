@@ -715,6 +715,23 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 			continue
 		}
 
+		// Determine the "author" user for the sandbox/task
+		sandboxUser := user
+		if len(issue.Assignees) > 0 {
+			// Use the first assignee
+			assignee := issue.Assignees[0]
+			// We need to fetch the full user details to get name and email
+			// explicitly, because the embedded user object might be incomplete.
+			if assignee.GetLogin() != "" {
+				fullUser, _, err := ghClient.Users.Get(ctx, assignee.GetLogin())
+				if err != nil {
+					log.Error(err, "unable to fetch assignee user details", "login", assignee.GetLogin())
+				} else {
+					sandboxUser = fullUser
+				}
+			}
+		}
+
 		sandboxName := fmt.Sprintf("%s-issue-%d", repoWatch.Name, *issue.Number)
 		validSandboxNames[sandboxName] = true
 
@@ -801,7 +818,7 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 
 			// Ensure tasks exist for applicable handlers
 			for _, handler := range applicableHandlers {
-				if err := r.ensureIssueTask(ctx, repoWatch, existingSandbox, sandboxName, issue, handler); err != nil {
+				if err := r.ensureIssueTask(ctx, repoWatch, existingSandbox, sandboxName, issue, handler, sandboxUser); err != nil {
 					log.Error(err, "unable to ensure task", "sandbox", sandboxName, "handler", handler.Name)
 				}
 				watchedIssues[handler.Name] = append(watchedIssues[handler.Name], reviewv1alpha1.WatchedIssue{
@@ -819,23 +836,6 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 			if issueIsExplicit || (activeSandboxes < repoWatch.Spec.Issue.MaxActiveSandboxes &&
 				(repoWatch.Spec.Issue.MaxSandboxes == 0 || totalSandboxes < repoWatch.Spec.Issue.MaxSandboxes)) {
 
-				// Determine the "author" user for the sandbox
-				sandboxUser := user
-				if len(issue.Assignees) > 0 {
-					// Use the first assignee
-					assignee := issue.Assignees[0]
-					// We need to fetch the full user details to get name and email
-					// explicitly, because the embedded user object might be incomplete.
-					if assignee.GetLogin() != "" {
-						fullUser, _, err := ghClient.Users.Get(ctx, assignee.GetLogin())
-						if err != nil {
-							log.Error(err, "unable to fetch assignee user details", "login", assignee.GetLogin())
-						} else {
-							sandboxUser = fullUser
-						}
-					}
-				}
-
 				log.Info("creating sandbox for issue", "issue", *issue.Number)
 				createdSandbox, err := r.createIssueSandbox(ctx, sandboxUser, repoWatch, issue)
 				if err != nil {
@@ -845,7 +845,7 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 					totalSandboxes++
 					// Create tasks immediately
 					for _, handler := range applicableHandlers {
-						if err := r.ensureIssueTask(ctx, repoWatch, createdSandbox, sandboxName, issue, handler); err != nil {
+						if err := r.ensureIssueTask(ctx, repoWatch, createdSandbox, sandboxName, issue, handler, sandboxUser); err != nil {
 							log.Error(err, "unable to create task", "sandbox", sandboxName, "handler", handler.Name)
 						}
 						watchedIssues[handler.Name] = append(watchedIssues[handler.Name], reviewv1alpha1.WatchedIssue{
@@ -969,6 +969,8 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 		}
 
 		// Only use Robot Name/Email if the original user's details are missing
+		// This ensures the sandbox is configured with the Human's git identity (for manual commits),
+		// but uses the Robot's credentials (and fork) for authentication.
 		if userName == "" && len(secret.Data["name"]) > 0 {
 			userName = string(secret.Data["name"])
 		}
@@ -1062,7 +1064,7 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 	return sandbox, r.Create(ctx, sandbox)
 }
 
-func (r *Reconciler) ensureIssueTask(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, sandbox client.Object, sandboxName string, issue *github.Issue, handler reviewv1alpha1.IssueHandlerSpec) error {
+func (r *Reconciler) ensureIssueTask(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, sandbox client.Object, sandboxName string, issue *github.Issue, handler reviewv1alpha1.IssueHandlerSpec, user *github.User) error {
 	taskName := fmt.Sprintf("%s-%s", sandboxName, handler.Name) // e.g. repo-issue-123-triage
 
 	// Check if task exists
@@ -1087,19 +1089,31 @@ func (r *Reconciler) ensureIssueTask(ctx context.Context, repoWatch *reviewv1alp
 		"HANDLER_NAME": handler.Name,
 	}
 
-	// If RobotAccount is configured, inject it into params so the task runs as the robot
+	// Inject User details (Human)
+	if user != nil {
+		params["GITHUB_USER_NAME"] = user.GetName()
+		params["GITHUB_USER_EMAIL"] = user.GetEmail()
+		params["GITHUB_USER_LOGIN"] = user.GetLogin()
+	}
+
+	// Default Bot details to User details
+	params["GITHUB_BOT_NAME"] = params["GITHUB_USER_NAME"]
+	params["GITHUB_BOT_EMAIL"] = params["GITHUB_USER_EMAIL"]
+	params["GITHUB_BOT_USER_ID"] = params["GITHUB_USER_LOGIN"]
+
+	// If RobotAccount is configured, override Bot details from secret
 	if repoWatch.Spec.Issue != nil && repoWatch.Spec.Issue.RobotAccount != "" {
 		githubSecretName := repoWatch.Spec.Issue.RobotAccount
 		secret := &corev1.Secret{}
 		if err := r.Get(ctx, types.NamespacedName{Name: githubSecretName, Namespace: repoWatch.Namespace}, secret); err == nil {
 			if len(secret.Data["name"]) > 0 {
-				params["GITHUB_USER_NAME"] = string(secret.Data["name"])
+				params["GITHUB_BOT_NAME"] = string(secret.Data["name"])
 			}
 			if len(secret.Data["email"]) > 0 {
-				params["GITHUB_USER_EMAIL"] = string(secret.Data["email"])
+				params["GITHUB_BOT_EMAIL"] = string(secret.Data["email"])
 			}
 			if len(secret.Data["userid"]) > 0 {
-				params["GITHUB_USER_LOGIN"] = string(secret.Data["userid"])
+				params["GITHUB_BOT_USER_ID"] = string(secret.Data["userid"])
 			}
 		}
 	}

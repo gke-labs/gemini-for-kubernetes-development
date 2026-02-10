@@ -14,35 +14,16 @@ export GITHUB_USER_EMAIL={{ .User.Email }}
 export GITHUB_USER_NAME="{{ .User.Name }}"
 export PR_NUMBER={{ .PullRequest.Number }}
 
-function setupGit {
-    echo "Running setupGit..."
-    
-    # Use a temporary directory for gh config to avoid overwriting user's config
-    export GH_CONFIG_DIR=$(mktemp -d)
-    echo "using GH_CONFIG_DIR: ${GH_CONFIG_DIR}"
-    
-    echo "creating ${GH_CONFIG_DIR}/hosts.yml"
-    mkdir -p "${GH_CONFIG_DIR}"
-
-    echo "writing gh config"
-    cat <<EOF > "${GH_CONFIG_DIR}/hosts.yml"
-github.com:
-    users:
-        ${GITHUB_USER_ID}:
-            oauth_token: ${GITHUB_USER_TOKEN}
-    git_protocol: https
-    oauth_token: ${GITHUB_USER_TOKEN}
-    user: ${GITHUB_USER_ID}
-EOF
-
-    echo "setting git identity via environment variables"
-    export GIT_AUTHOR_NAME="${GITHUB_USER_NAME}"
-    export GIT_AUTHOR_EMAIL="${GITHUB_USER_EMAIL}"
-    export GIT_COMMITTER_NAME="${GITHUB_USER_NAME}"
-    export GIT_COMMITTER_EMAIL="${GITHUB_USER_EMAIL}"
-
-    echo "running gh auth setup-git"
-    gh auth setup-git
+function setupGitIdentity {
+    echo "Setting up git identity from BOT environment variables..."
+    if [ -n "$GITHUB_BOT_NAME" ]; then
+        export GIT_AUTHOR_NAME="$GITHUB_BOT_NAME"
+        export GIT_COMMITTER_NAME="$GITHUB_BOT_NAME"
+    fi
+    if [ -n "$GITHUB_BOT_EMAIL" ]; then
+        export GIT_AUTHOR_EMAIL="$GITHUB_BOT_EMAIL"
+        export GIT_COMMITTER_EMAIL="$GITHUB_BOT_EMAIL"
+    fi
 }
 
 function setupGitRepos {
@@ -88,7 +69,7 @@ function runGemini {
 }
 
 # Main execution
-setupGit
+setupGitIdentity
 setupGitRepos
 # HACK: Avoid git lock issues
 sleep 5
