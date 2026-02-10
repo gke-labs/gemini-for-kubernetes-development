@@ -819,12 +819,19 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 			if issueIsExplicit || (activeSandboxes < repoWatch.Spec.Issue.MaxActiveSandboxes &&
 				(repoWatch.Spec.Issue.MaxSandboxes == 0 || totalSandboxes < repoWatch.Spec.Issue.MaxSandboxes)) {
 
-				log.Info("creating sandbox for issue", "issue", *issue.Number)
-				createdSandbox, err := r.createIssueSandbox(ctx, user, repoWatch, issue)
-				if err != nil {
-					log.Error(err, "unable to create sandbox for issue", "issue", *issue.Number)
-				} else {
-					activeSandboxes++
+									log.Info("creating sandbox for issue", "issue", *issue.Number)
+
+								createdSandbox, err := r.createIssueSandbox(ctx, ghClient, user, repoWatch, issue)
+
+								if err != nil {
+
+									log.Error(err, "unable to create sandbox for issue", "issue", *issue.Number)
+
+								} else {
+
+									activeSandboxes++
+
+				
 					totalSandboxes++
 					// Create tasks immediately
 					for _, handler := range applicableHandlers {
@@ -920,7 +927,7 @@ func (r *Reconciler) isIssueMatch(issue *github.Issue, handler reviewv1alpha1.Is
 	return true
 }
 
-func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, issue *github.Issue) (*unstructured.Unstructured, error) {
+func (r *Reconciler) createIssueSandbox(ctx context.Context, ghClient *github.Client, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, issue *github.Issue) (*unstructured.Unstructured, error) {
 	log := log.FromContext(ctx)
 	sandboxName := fmt.Sprintf("%s-issue-%d", repoWatch.Name, *issue.Number)
 
@@ -931,6 +938,11 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 	userLogin := user.GetLogin()
 	userName := user.GetName()
 	userEmail := user.GetEmail()
+
+	// Default bot info to empty (or current user if not using robot account)
+	botLogin := ""
+	botName := ""
+	botEmail := ""
 
 	githubSecretName := repoWatch.Spec.GithubSecretName
 	if repoWatch.Spec.Issue.RobotAccount != "" {
@@ -947,13 +959,39 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 		}
 
 		if len(secret.Data["userid"]) > 0 {
-			userLogin = string(secret.Data["userid"])
+			botLogin = string(secret.Data["userid"])
 		}
 		if len(secret.Data["name"]) > 0 {
-			userName = string(secret.Data["name"])
+			botName = string(secret.Data["name"])
 		}
 		if len(secret.Data["email"]) > 0 {
-			userEmail = string(secret.Data["email"])
+			botEmail = string(secret.Data["email"])
+		}
+		
+		// If robot account is used, the sandbox identity (login) should be the robot
+		// so that origin URL points to robot's fork.
+		userLogin = botLogin
+		
+		// Default user name/email to robot's if no assignee found
+		userName = botName
+		userEmail = botEmail
+	}
+
+	// Try to find a human assignee to be the "Author"
+	if len(issue.Assignees) > 0 {
+		assignee := issue.Assignees[0]
+		// Fetch full details if possible
+		if assigneeUser, _, err := ghClient.Users.Get(ctx, assignee.GetLogin()); err == nil {
+			if assigneeUser.GetName() != "" {
+				userName = assigneeUser.GetName()
+			}
+			if assigneeUser.GetEmail() != "" {
+				userEmail = assigneeUser.GetEmail()
+			}
+		} else {
+			log.Info("unable to fetch assignee details", "assignee", assignee.GetLogin(), "err", err)
+			// Fallback to what we have in assignee struct (often just login)
+			// But since name/email are often empty in list response, we rely on Get above.
 		}
 	}
 
@@ -1012,6 +1050,11 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 						"login": userLogin,
 						"name":  userName,
 						"email": userEmail,
+					},
+					"bot": map[string]interface{}{
+						"login": botLogin,
+						"name":  botName,
+						"email": botEmail,
 					},
 				},
 				"gateway": map[string]interface{}{

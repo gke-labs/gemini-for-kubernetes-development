@@ -123,6 +123,15 @@ function runGemini {
     pushd "/workspaces/${REPO_NAME}" > /dev/null
     set +x
     export GEMINI_API_KEY="${GEMINI_API_KEY}"
+
+    if [ -n "$GITHUB_BOT_NAME" ]; then
+        echo "Using bot identity for commits"
+        export GIT_AUTHOR_NAME="$GITHUB_BOT_NAME"
+        export GIT_AUTHOR_EMAIL="$GITHUB_BOT_EMAIL"
+        export GIT_COMMITTER_NAME="$GITHUB_BOT_NAME"
+        export GIT_COMMITTER_EMAIL="$GITHUB_BOT_EMAIL"
+    fi
+
     gemini --yolo --model {{ .Model }} < ${PROMPT_FILE}
     set -x
     popd > /dev/null

@@ -42,6 +42,10 @@ spec:
           login: string
           name: string | default="gemini"
           email: string | default="gemini@gemini.ai"
+        bot:
+          login: string | default=""
+          name: string | default=""
+          email: string | default=""
       networkPolicy:
         enabled: boolean | default=false
         ingress:
@@ -134,6 +138,12 @@ spec:
                       value: ${schema.spec.destination.user.name}
                     - name: GITHUB_USER_EMAIL
                       value: ${schema.spec.destination.user.email}
+                    - name: GITHUB_BOT_LOGIN
+                      value: ${schema.spec.destination.bot.login}
+                    - name: GITHUB_BOT_NAME
+                      value: ${schema.spec.destination.bot.name}
+                    - name: GITHUB_BOT_EMAIL
+                      value: ${schema.spec.destination.bot.email}
                     - name: GITHUB_TOKEN
                       valueFrom:
                         secretKeyRef:
