@@ -7,6 +7,8 @@ function Settings({ onBack }) {
     const [isLoading, setIsLoading] = useState(true);
     const [message, setMessage] = useState({ text: '', type: '' }); // type: 'success' or 'error'
     const [versionInfo, setVersionInfo] = useState({ version: '...', commit: '...' });
+    const [authStatus, setAuthStatus] = useState(null);
+    const [targetNamespace, setTargetNamespace] = useState('');
 
     useEffect(() => {
         fetch('/api/settings')
@@ -24,6 +26,14 @@ function Settings({ onBack }) {
             .then(res => res.json())
             .then(data => setVersionInfo(data))
             .catch(err => console.error("Failed to fetch version:", err));
+
+        fetch('/api/auth/status')
+            .then(res => res.json())
+            .then(data => {
+                setAuthStatus(data);
+                if (data.namespace) setTargetNamespace(data.namespace);
+            })
+            .catch(err => console.error("Failed to fetch auth status:", err));
     }, []);
 
     const handleSave = (e) => {
@@ -58,6 +68,34 @@ function Settings({ onBack }) {
         .catch(err => {
             console.error(err);
             setMessage({ text: 'Error updating settings.', type: 'error' });
+        });
+    };
+
+    const handleSwitchNamespace = (e) => {
+        e.preventDefault();
+        
+        // If target namespace is empty, we confirm if they want to reset
+        if (!targetNamespace && !window.confirm("Switching to empty namespace will reset to your default user namespace. Continue?")) return;
+
+        fetch('/api/auth/switch-namespace', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ namespace: targetNamespace })
+        })
+        .then(res => {
+            if (res.ok) {
+                window.location.reload(); 
+            } else {
+                res.json().then(data => {
+                    setMessage({ text: 'Failed to switch namespace: ' + (data.error || 'Unknown error'), type: 'error' });
+                }).catch(() => {
+                    setMessage({ text: 'Failed to switch namespace.', type: 'error' });
+                });
+            }
+        })
+        .catch(err => {
+             console.error(err);
+             setMessage({ text: 'Error switching namespace.', type: 'error' });
         });
     };
 
@@ -147,6 +185,29 @@ function Settings({ onBack }) {
                     <button type="button" className="btn" onClick={onBack}>Back to Dashboard</button>
                 </div>
             </form>
+            
+            {authStatus && authStatus.isAdmin && (
+                <div className="admin-section" style={{marginTop: '40px', borderTop: '1px solid #eee', paddingTop: '20px'}}>
+                    <h3>Admin: Namespace Switching</h3>
+                    <p>Current Namespace: <strong>{authStatus.namespace}</strong></p>
+                    <form onSubmit={handleSwitchNamespace} className="settings-form">
+                         <div className="form-group">
+                            <label htmlFor="targetNamespace">Target Namespace:</label>
+                            <div className="input-status-wrapper">
+                                <input
+                                    type="text"
+                                    id="targetNamespace"
+                                    value={targetNamespace}
+                                    onChange={(e) => setTargetNamespace(e.target.value)}
+                                    placeholder="Enter namespace"
+                                />
+                                <button type="submit" className="btn btn-submit" style={{marginLeft: '10px'}}>Switch</button>
+                            </div>
+                            <small>Enter the namespace you want to manage. Leave empty to return to your default namespace.</small>
+                         </div>
+                    </form>
+                </div>
+            )}
             
             <div className="about-section" style={{marginTop: '40px', borderTop: '1px solid #eee', paddingTop: '20px', color: '#666', fontSize: '0.9em'}}>
                 <h3 style={{fontSize: '1.1em', marginBottom: '10px'}}>About Repo Agent</h3>
