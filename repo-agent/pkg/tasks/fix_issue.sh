@@ -20,15 +20,20 @@ function setupGit {
     echo "creating /root/.config/gh directory"
     mkdir -p /root/.config/gh
 
+    local GH_USER="${GITHUB_USER_ID}"
+    if [ -n "${GITHUB_BOT_LOGIN}" ]; then
+        GH_USER="${GITHUB_BOT_LOGIN}"
+    fi
+
     echo "writing gh config"
     cat <<EOF > /root/.config/gh/hosts.yml
 github.com:
     users:
-        ${GITHUB_USER_ID}:
+        ${GH_USER}:
             oauth_token: ${GITHUB_USER_TOKEN}
     git_protocol: https
     oauth_token: ${GITHUB_USER_TOKEN}
-    user: ${GITHUB_USER_ID}
+    user: ${GH_USER}
 EOF
 
     echo "running git config user.email"
