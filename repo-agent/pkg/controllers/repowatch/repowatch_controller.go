@@ -582,11 +582,6 @@ func (r *Reconciler) reconcileReviewSandboxesInternal(ctx context.Context, repoW
 				log.Error(err, "unable to manage sandbox lifecycle", "sandbox", existingSandbox.GetName())
 			}
 
-			// Update sandbox config if needed
-			if err := r.updateSandboxConfig(ctx, existingSandbox, repoWatch); err != nil {
-				log.Error(err, "unable to update sandbox config", "sandbox", existingSandbox.GetName())
-			}
-
 			// Check if sandbox is scaled down (re-check in case we just updated it or it was already down)
 			replicas, found, err := unstructured.NestedInt64(existingSandbox.Object, "spec", "replicas")
 			scaledDown := false
@@ -1920,56 +1915,3 @@ func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client
 	return found, latestFeedbackTime, nil
 }
 
-func (r *Reconciler) updateSandboxConfig(ctx context.Context, sandbox *unstructured.Unstructured, repoWatch *reviewv1alpha1.RepoWatch) error {
-	log := log.FromContext(ctx)
-	updated := false
-
-	// Helper to check and update int64 fields
-	checkUpdateInt64 := func(path []string, desired int64) {
-		current, found, err := unstructured.NestedInt64(sandbox.Object, path...)
-		if err != nil || !found || current != desired {
-			if err := unstructured.SetNestedField(sandbox.Object, desired, path...); err == nil {
-				updated = true
-			} else {
-				log.Error(err, "failed to update int64 field", "path", path)
-			}
-		}
-	}
-
-	// Helper to check and update string fields
-	checkUpdateString := func(path []string, desired string) {
-		current, found, err := unstructured.NestedString(sandbox.Object, path...)
-		if err != nil || !found || current != desired {
-			if err := unstructured.SetNestedField(sandbox.Object, desired, path...); err == nil {
-				updated = true
-			} else {
-				log.Error(err, "failed to update string field", "path", path)
-			}
-		}
-	}
-
-	// Update MaxReviewFiles
-	checkUpdateInt64([]string{"spec", "maxReviewFiles"}, int64(repoWatch.Spec.Review.MaxReviewFiles))
-
-	// Update IgnoreFiles
-	checkUpdateString([]string{"spec", "ignoreFiles"}, strings.Join(repoWatch.Spec.Review.IgnoreFiles, ","))
-
-	// Update LLM Config
-	checkUpdateString([]string{"spec", "llmBackend", "name"}, repoWatch.Spec.Review.LLM.Provider)
-	checkUpdateString([]string{"spec", "llm", "configdirRef"}, repoWatch.Spec.Review.LLM.ConfigdirRef)
-	checkUpdateString([]string{"spec", "llm", "apiKeySecretName"}, repoWatch.Spec.Review.LLM.APIKeySecretRef)
-
-	// Update Image and Devcontainer
-	if repoWatch.Spec.Review.Image != "" {
-		checkUpdateString([]string{"spec", "image"}, repoWatch.Spec.Review.Image)
-	}
-	if repoWatch.Spec.Review.DevcontainerConfigRef != "" {
-		checkUpdateString([]string{"spec", "devcontainerConfigRef"}, repoWatch.Spec.Review.DevcontainerConfigRef)
-	}
-
-	if updated {
-		log.Info("Updating ReviewSandbox configuration", "name", sandbox.GetName())
-		return r.Update(ctx, sandbox)
-	}
-	return nil
-}
