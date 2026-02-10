@@ -238,6 +238,7 @@ type Reconciler struct {
 	client.Client
 	Scheme          *runtime.Scheme
 	NewGithubClient githubClientFactory
+	agentScheduleCache sync.Map
 }
 
 //+kubebuilder:rbac:groups=review.gemini.google.com,resources=repowatches,verbs=get;list;watch;create;update;patch;delete

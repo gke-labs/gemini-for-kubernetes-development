@@ -1,13 +1,19 @@
 package repowatch
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"time"
 
 	"github.com/google/go-github/v39/github"
 	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/yaml"
 )
@@ -97,7 +103,7 @@ func (r *Reconciler) processAgentFile(ctx context.Context, repoWatch *reviewv1al
 	}
 
 	// Check if task is due
-	isDue, err := r.isAgentTaskDue(ctx, ghClient, owner, repo, agentDef, filename)
+	isDue, err := r.isAgentTaskDue(ctx, repoWatch, ghClient, owner, repo, agentDef, filename)
 	if err != nil {
 		return err
 	}
@@ -112,11 +118,7 @@ func (r *Reconciler) processAgentFile(ctx context.Context, repoWatch *reviewv1al
 	return nil
 }
 
-func (r *Reconciler) isAgentTaskDue(ctx context.Context, ghClient *github.Client, owner, repo string, agentDef AgentDefinition, filename string) (bool, error) {
-	// Check schedule
-	// Supports "@weekly", "@daily", or "24h" duration style?
-	// Start with strict matching of keywords or duration.
-
+func (r *Reconciler) isAgentTaskDue(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, ghClient *github.Client, owner, repo string, agentDef AgentDefinition, filename string) (bool, error) {
 	// Find latest issue with label "agent:<filename>"
 	label := fmt.Sprintf("agent:%s", filename)
 	query := fmt.Sprintf("repo:%s/%s is:issue label:\"%s\" sort:created-desc", owner, repo, label)
@@ -137,31 +139,165 @@ func (r *Reconciler) isAgentTaskDue(ctx context.Context, ghClient *github.Client
 
 	// Parse schedule
 	schedule := strings.TrimSpace(agentDef.Schedule)
-	var duration time.Duration
 
-	switch schedule {
-	case "@weekly":
-		duration = 7 * 24 * time.Hour
-	case "@daily":
-		duration = 24 * time.Hour
-	case "@hourly":
-		duration = 1 * time.Hour
-	default:
-		d, err := time.ParseDuration(schedule)
-		if err != nil {
-			// Treat as cron? No, too complex for now.
-			// Just default to never if invalid? Or log error?
-			return false, fmt.Errorf("invalid schedule format: %s", schedule)
+	// Try to parse as Go duration first (e.g. "2h", "30m")
+	if d, err := time.ParseDuration(schedule); err == nil {
+		if time.Since(*lastRun) > d {
+			return true, nil
 		}
-		duration = d
+		return false, nil
 	}
 
-	if time.Since(*lastRun) > duration {
+	// Fallback to LLM for natural language schedules
+	return r.isAgentTaskDueWithLLM(ctx, repoWatch, schedule, lastRun)
+}
+
+func (r *Reconciler) isAgentTaskDueWithLLM(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, schedule string, lastRun *time.Time) (bool, error) {
+	log := log.FromContext(ctx)
+
+	// Check cache
+	cacheKey := fmt.Sprintf("%s|%s", schedule, lastRun.Format(time.RFC3339))
+	if val, ok := r.agentScheduleCache.Load(cacheKey); ok {
+		nextRun := val.(time.Time)
+		if time.Now().After(nextRun) {
+			return true, nil
+		}
+		return false, nil
+	}
+
+	// Call LLM
+	apiKey, err := r.getLLMAPIKey(ctx, repoWatch)
+	if err != nil {
+		log.Error(err, "unable to get LLM API key for agent schedule parsing")
+		// Fallback: if we can't parse it, assume not due to avoid spam
+		return false, nil
+	}
+
+	prompt := fmt.Sprintf(`Given the schedule description "%s" and the last run time "%s" (ISO 8601), what is the expected next run time? Return only the ISO 8601 timestamp for the next run.`, schedule, lastRun.Format(time.RFC3339))
+
+	response, err := r.callGeminiAPI(ctx, apiKey, prompt)
+	if err != nil {
+		log.Error(err, "LLM call failed for agent schedule")
+		return false, nil
+	}
+
+	// Clean response (remove quotes, whitespace)
+	response = strings.Trim(response, " \"\n\r")
+
+	nextRun, err := time.Parse(time.RFC3339, response)
+	if err != nil {
+		log.Error(err, "failed to parse LLM response as time", "response", response)
+		return false, nil
+	}
+
+	r.agentScheduleCache.Store(cacheKey, nextRun)
+
+	if time.Now().After(nextRun) {
 		return true, nil
 	}
-
 	return false, nil
 }
+
+func (r *Reconciler) getLLMAPIKey(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch) (string, error) {
+	var secretName string
+	if repoWatch.Spec.Issue != nil && repoWatch.Spec.Issue.LLM.APIKeySecretRef != "" {
+		secretName = repoWatch.Spec.Issue.LLM.APIKeySecretRef
+	} else if repoWatch.Spec.Review.LLM.APIKeySecretRef != "" {
+		secretName = repoWatch.Spec.Review.LLM.APIKeySecretRef
+	} else {
+		return "", fmt.Errorf("no LLM API key configured in RepoWatch (checked Issue and Review specs)")
+	}
+
+	secret := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: repoWatch.Namespace}, secret); err != nil {
+		return "", err
+	}
+
+	if val, ok := secret.Data["apiKey"]; ok {
+		return string(val), nil
+	}
+	if val, ok := secret.Data["gemini"]; ok {
+		return string(val), nil
+	}
+	return "", fmt.Errorf("secret %s does not contain 'apiKey' or 'gemini' key", secretName)
+}
+
+func (r *Reconciler) callGeminiAPI(ctx context.Context, apiKey, prompt string) (string, error) {
+	url := "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + apiKey
+
+	requestBody := map[string]interface{}{
+		"contents": []map[string]interface{}{
+			{
+				"parts": []map[string]interface{}{
+					{
+						"text": prompt,
+					},
+				},
+			},
+		},
+	}
+
+	jsonBody, err := json.Marshal(requestBody)
+	if err != nil {
+		return "", err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonBody))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", err
+	}
+
+	candidates, ok := result["candidates"].([]interface{})
+	if !ok || len(candidates) == 0 {
+		return "", fmt.Errorf("no candidates in response")
+	}
+
+	candidate, ok := candidates[0].(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("invalid candidate format")
+	}
+
+	content, ok := candidate["content"].(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("invalid content format")
+	}
+
+	parts, ok := content["parts"].([]interface{})
+	if !ok || len(parts) == 0 {
+		return "", fmt.Errorf("no parts in content")
+	}
+
+	part, ok := parts[0].(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("invalid part format")
+	}
+
+	text, ok := part["text"].(string)
+	if !ok {
+		return "", fmt.Errorf("invalid text format")
+	}
+
+	return text, nil
+}
+
 
 func (r *Reconciler) createAgentIssue(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, ghClient *github.Client, owner, repo string, agentDef AgentDefinition, filename, body string) error {
 	title := fmt.Sprintf("[Agent] %s", agentDef.Name)
