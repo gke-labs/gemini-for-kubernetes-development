@@ -786,6 +786,6 @@ func getSeverityLevel(severity string) int {
 	case "low":
 		return 1
 	default:
-		return 1 // Default to low if not specified or unknown
+		return 2 // Default to medium if not specified or unknown
 	}
 }

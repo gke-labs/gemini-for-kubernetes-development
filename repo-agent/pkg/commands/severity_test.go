@@ -15,8 +15,8 @@ func TestGetSeverityLevel(t *testing.T) {
 		{"High", 3},
 		{"medium", 2},
 		{"LOW", 1},
-		{"", 1},
-		{"unknown", 1},
+		{"", 2},
+		{"unknown", 2},
 	}
 
 	for _, tt := range tests {
@@ -47,7 +47,7 @@ func TestFilterComments(t *testing.T) {
 		{Severity: high},
 		{Severity: medium},
 		{Severity: low},
-		{Severity: empty}, // default low
+		{Severity: empty}, // default medium
 	}
 
 	tests := []struct {
@@ -55,9 +55,9 @@ func TestFilterComments(t *testing.T) {
 		want      int
 	}{
 		{"HIGH", 1},
-		{"MEDIUM", 2},
+		{"MEDIUM", 3},
 		{"LOW", 4},
-		{"", 4},
+		{"", 3},
 	}
 
 	for _, tt := range tests {
