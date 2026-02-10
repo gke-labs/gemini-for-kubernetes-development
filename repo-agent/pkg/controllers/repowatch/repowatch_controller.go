@@ -818,20 +818,12 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 			issueIsExplicit := isIssueExplicit(*issue.Number, repoWatch.Spec.Issue.Issues)
 			if issueIsExplicit || (activeSandboxes < repoWatch.Spec.Issue.MaxActiveSandboxes &&
 				(repoWatch.Spec.Issue.MaxSandboxes == 0 || totalSandboxes < repoWatch.Spec.Issue.MaxSandboxes)) {
-
-									log.Info("creating sandbox for issue", "issue", *issue.Number)
-
-								createdSandbox, err := r.createIssueSandbox(ctx, ghClient, user, repoWatch, issue)
-
-								if err != nil {
-
-									log.Error(err, "unable to create sandbox for issue", "issue", *issue.Number)
-
-								} else {
-
-									activeSandboxes++
-
-				
+				log.Info("creating sandbox for issue", "issue", *issue.Number)
+				createdSandbox, err := r.createIssueSandbox(ctx, ghClient, user, repoWatch, issue)
+				if err != nil {
+					log.Error(err, "unable to create sandbox for issue", "issue", *issue.Number)
+				} else {
+					activeSandboxes++
 					totalSandboxes++
 					// Create tasks immediately
 					for _, handler := range applicableHandlers {
@@ -967,35 +959,13 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, ghClient *github.Cl
 		if len(secret.Data["email"]) > 0 {
 			botEmail = string(secret.Data["email"])
 		}
-		
-		// If robot account is used, the sandbox identity (login) should be the robot
-		// so that origin URL points to robot's fork.
-		userLogin = botLogin
-		
-		// Default user name/email to robot's if no assignee found
-		userName = botName
-		userEmail = botEmail
 	}
 
-	// Try to find a human assignee to be the "Author"
-	if len(issue.Assignees) > 0 {
-		assignee := issue.Assignees[0]
-		// Fetch full details if possible
-		if assigneeUser, _, err := ghClient.Users.Get(ctx, assignee.GetLogin()); err == nil {
-			if assigneeUser.GetName() != "" {
-				userName = assigneeUser.GetName()
-			}
-			if assigneeUser.GetEmail() != "" {
-				userEmail = assigneeUser.GetEmail()
-			}
-		} else {
-			log.Info("unable to fetch assignee details", "assignee", assignee.GetLogin(), "err", err)
-			// Fallback to what we have in assignee struct (often just login)
-			// But since name/email are often empty in list response, we rely on Get above.
-		}
+	originUser := userLogin
+	if botLogin != "" {
+		originUser = botLogin
 	}
-
-	originURL := fmt.Sprintf("github.com/%s/%s", userLogin, repoName)
+	originURL := fmt.Sprintf("github.com/%s/%s", originUser, repoName)
 	branchName := fmt.Sprintf("issue-%d-%s", *issue.Number, randString(4))
 
 	log.Info("Generated sandbox for Issue", "issue", *issue)
