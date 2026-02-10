@@ -10,10 +10,3 @@ that builds the cobra.Command and binds the FooOptions fields to flags.
 Avoid adding new dependencies on libraries that are not already in go.mod.
 
 Prefer `sigs.k8s.io/yaml` for yaml.
-
-## Verification
-
-After making code changes, run the following commands to verify your changes and fix any errors:
-
-*   **Linting:** `cd repo-agent ; make lint-go`
-*   **Build:** `cd repo-agent; make build`
