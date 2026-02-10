@@ -4,14 +4,13 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/auth"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
 )
 
 func (s *Server) getSettings(c *gin.Context) {
-	namespace := c.MustGet(auth.UserKey).(string)
+	namespace := s.Auth.GetNamespaceFromContext(c)
 	settings := gin.H{
 		"manual_pat_set":     false,
 		"oauth_pat_set":      false,
@@ -46,7 +45,7 @@ func (s *Server) getSettings(c *gin.Context) {
 }
 
 func (s *Server) updateSettings(c *gin.Context) {
-	namespace := c.MustGet(auth.UserKey).(string)
+	namespace := s.Auth.GetNamespaceFromContext(c)
 	var payload struct {
 		GithubPAT    *string `json:"github_pat"` // Use pointer to distinguish between empty string and missing field
 		GeminiAPIKey string  `json:"gemini_api_key"`

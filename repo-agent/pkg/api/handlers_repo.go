@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/auth"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 	yaml "go.yaml.in/yaml/v3"
@@ -21,7 +20,7 @@ import (
 
 func (s *Server) createRepoWatch(c *gin.Context) {
 	log := klog.FromContext(c.Request.Context())
-	namespace := c.MustGet(auth.UserKey).(string)
+	namespace := s.Auth.GetNamespaceFromContext(c)
 
 	if !s.ensureGeminiKeySet(c, namespace) {
 		return
@@ -222,7 +221,7 @@ spec:
 
 func (s *Server) getRepoWatchYAML(c *gin.Context) {
 	log := klog.FromContext(c.Request.Context())
-	namespace := c.MustGet(auth.UserKey).(string)
+	namespace := s.Auth.GetNamespaceFromContext(c)
 	name := c.Param("repo")
 
 	repoWatch, err := s.K8sManager.GetRepoWatch(c.Request.Context(), namespace, name)
@@ -249,7 +248,7 @@ func (s *Server) getRepoWatchYAML(c *gin.Context) {
 
 func (s *Server) updateRepoWatch(c *gin.Context) {
 	log := klog.FromContext(c.Request.Context())
-	namespace := c.MustGet(auth.UserKey).(string)
+	namespace := s.Auth.GetNamespaceFromContext(c)
 	name := c.Param("repo")
 
 	var payload struct {
@@ -570,7 +569,7 @@ func (s *Server) updateRepoWatch(c *gin.Context) {
 
 func (s *Server) deleteRepoWatch(c *gin.Context) {
 	log := klog.FromContext(c.Request.Context())
-	namespace := c.MustGet(auth.UserKey).(string)
+	namespace := s.Auth.GetNamespaceFromContext(c)
 	name := c.Param("repo")
 
 	gvr := schema.GroupVersionResource{
@@ -593,7 +592,7 @@ func (s *Server) deleteRepoWatch(c *gin.Context) {
 
 func (s *Server) getRepos(c *gin.Context) {
 	log := klog.FromContext(c.Request.Context())
-	namespace := c.MustGet(auth.UserKey).(string)
+	namespace := s.Auth.GetNamespaceFromContext(c)
 
 	gvr := schema.GroupVersionResource{
 		Group:    "review.gemini.google.com",
@@ -778,7 +777,7 @@ func (s *Server) getRepos(c *gin.Context) {
 
 func (s *Server) getTemplates(c *gin.Context) {
 	log := klog.FromContext(c.Request.Context())
-	namespace := c.MustGet(auth.UserKey).(string)
+	namespace := s.Auth.GetNamespaceFromContext(c)
 	templates, err := s.Templates.List(c.Request.Context(), namespace)
 	if err != nil {
 		log.Info("Failed to list templates", "err", err)
@@ -790,7 +789,7 @@ func (s *Server) getTemplates(c *gin.Context) {
 
 func (s *Server) getRepo(c *gin.Context) {
 	log := klog.FromContext(c.Request.Context())
-	namespace := c.MustGet(auth.UserKey).(string)
+	namespace := s.Auth.GetNamespaceFromContext(c)
 	name := c.Param("repo")
 
 	repoWatch, err := s.K8sManager.GetRepoWatch(c.Request.Context(), namespace, name)

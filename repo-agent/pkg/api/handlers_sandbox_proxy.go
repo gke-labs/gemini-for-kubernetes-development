@@ -7,7 +7,6 @@ import (
 	"net/url"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/auth"
 	"k8s.io/klog/v2"
 )
 
@@ -17,13 +16,13 @@ func (s *Server) proxySandbox(c *gin.Context) {
 	// The path parameter will include the leading slash, e.g. "/some/file"
 	proxyPath := c.Param("path")
 
-	user := c.GetString(auth.UserKey)
+	user := s.Auth.GetUserFromContext(c)
 	if user == "" {
 		c.String(http.StatusUnauthorized, "Unauthorized")
 		return
 	}
-	if user != namespace {
-		c.String(http.StatusUnauthorized, "Unauthorized")
+	if user != namespace && !s.Auth.IsUserAdmin(user) {
+		c.String(http.StatusForbidden, "Forbidden")
 		klog.Infof("Unauthorized access %s for %s", user, c.Request.URL.String())
 		return
 	}

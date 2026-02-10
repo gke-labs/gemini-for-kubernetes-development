@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/auth"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 	"github.com/google/go-github/v39/github"
@@ -25,7 +24,7 @@ import (
 
 func (s *Server) getIssues(c *gin.Context) {
 	log := klog.FromContext(c.Request.Context())
-	namespace := c.MustGet(auth.UserKey).(string)
+	namespace := s.Auth.GetNamespaceFromContext(c)
 	repo := c.Param("repo")
 
 	issues, err := s.listIssuesFromK8s(c.Request.Context(), namespace, repo)
@@ -39,7 +38,7 @@ func (s *Server) getIssues(c *gin.Context) {
 }
 
 func (s *Server) getIssueTasks(c *gin.Context) {
-	namespace := c.MustGet(auth.UserKey).(string)
+	namespace := s.Auth.GetNamespaceFromContext(c)
 	repo := c.Param("repo")
 	issueID := c.Param("issue_id")
 
@@ -218,7 +217,7 @@ func (s *Server) listIssuesFromK8s(ctx context.Context, namespace, repo string) 
 }
 
 func (s *Server) saveIssueDraft(c *gin.Context) {
-	namespace := c.MustGet(auth.UserKey).(string)
+	namespace := s.Auth.GetNamespaceFromContext(c)
 	repo := c.Param("repo")
 	issueID := c.Param("issue_id")
 	var payload struct {
@@ -241,7 +240,7 @@ func (s *Server) saveIssueDraft(c *gin.Context) {
 
 func (s *Server) submitIssueComment(c *gin.Context) {
 	log := klog.FromContext(c.Request.Context())
-	namespace := c.MustGet(auth.UserKey).(string)
+	namespace := s.Auth.GetNamespaceFromContext(c)
 	repo := c.Param("repo")
 	issueID := c.Param("issue_id")
 	var payload struct {
@@ -344,7 +343,7 @@ func (s *Server) submitIssueComment(c *gin.Context) {
 }
 
 func (s *Server) deleteIssue(c *gin.Context) {
-	namespace := c.MustGet(auth.UserKey).(string)
+	namespace := s.Auth.GetNamespaceFromContext(c)
 	repo := c.Param("repo")
 	issueID := c.Param("issue_id")
 	ctx := c.Request.Context()
@@ -358,7 +357,7 @@ func (s *Server) deleteIssue(c *gin.Context) {
 }
 
 func (s *Server) scaleUpIssue(c *gin.Context) {
-	namespace := c.MustGet(auth.UserKey).(string)
+	namespace := s.Auth.GetNamespaceFromContext(c)
 	repo := c.Param("repo")
 	issueID := c.Param("issue_id")
 	ctx := c.Request.Context()
@@ -382,7 +381,7 @@ func (s *Server) scaleUpIssue(c *gin.Context) {
 }
 
 func (s *Server) scaleDownIssue(c *gin.Context) {
-	namespace := c.MustGet(auth.UserKey).(string)
+	namespace := s.Auth.GetNamespaceFromContext(c)
 	repo := c.Param("repo")
 	issueID := c.Param("issue_id")
 	ctx := c.Request.Context()
@@ -396,7 +395,7 @@ func (s *Server) scaleDownIssue(c *gin.Context) {
 
 func (s *Server) getIssueDetails(c *gin.Context) {
 	log := klog.FromContext(c.Request.Context())
-	namespace := c.MustGet(auth.UserKey).(string)
+	namespace := s.Auth.GetNamespaceFromContext(c)
 	repo := c.Param("repo")
 	issueIDStr := c.Param("issue_id")
 
@@ -449,7 +448,7 @@ func (s *Server) getIssueDetails(c *gin.Context) {
 
 func (s *Server) getIssueTaskLogs(c *gin.Context) {
 	log := klog.FromContext(c.Request.Context())
-	namespace := c.MustGet(auth.UserKey).(string)
+	namespace := s.Auth.GetNamespaceFromContext(c)
 	repo := c.Param("repo")
 	issueID := c.Param("issue_id")
 	taskID := c.Param("taskID")
@@ -485,7 +484,7 @@ func (s *Server) getIssueTaskLogs(c *gin.Context) {
 }
 
 func (s *Server) createIssueTask(c *gin.Context) {
-	namespace := c.MustGet(auth.UserKey).(string)
+	namespace := s.Auth.GetNamespaceFromContext(c)
 	repo := c.Param("repo")
 	issueID := c.Param("issue_id")
 

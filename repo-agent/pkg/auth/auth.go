@@ -23,7 +23,8 @@ import (
 )
 
 const (
-	UserKey = "ghUser"
+	UserKey      = "ghUser"
+	NamespaceKey = "namespace"
 )
 
 type Authenticator struct {
@@ -31,13 +32,15 @@ type Authenticator struct {
 	OAuthState        string
 	K8sManager        *k8s.Manager
 	AllowedUsers      []string
+	AdminUsers        []string
 	bootstrappedUsers sync.Map
 }
 
-func NewAuthenticator(manager *k8s.Manager, allowedUsers []string) *Authenticator {
+func NewAuthenticator(manager *k8s.Manager, allowedUsers []string, adminUsers []string) *Authenticator {
 	a := &Authenticator{
 		K8sManager:   manager,
 		AllowedUsers: allowedUsers,
+		AdminUsers:   adminUsers,
 	}
 	a.InitOAuth()
 	return a
@@ -71,6 +74,15 @@ func (a *Authenticator) IsUserAllowed(username string) bool {
 	}
 	for _, allowed := range a.AllowedUsers {
 		if strings.EqualFold(username, allowed) {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *Authenticator) IsUserAdmin(username string) bool {
+	for _, admin := range a.AdminUsers {
+		if strings.EqualFold(username, admin) {
 			return true
 		}
 	}
@@ -146,6 +158,8 @@ func (a *Authenticator) Callback(c *gin.Context) {
 
 	session := sessions.Default(c)
 	session.Set(UserKey, ghUser)
+	// Reset namespace on new login
+	session.Delete(NamespaceKey)
 	if err := session.Save(); err != nil {
 		log.Info("Failed to save session", "err", err)
 		c.String(http.StatusInternalServerError, "Failed to save session")
@@ -176,8 +190,20 @@ func (a *Authenticator) updateUserSecret(ctx context.Context, namespace string, 
 
 func (a *Authenticator) Status(c *gin.Context) {
 	session := sessions.Default(c)
-	if user := session.Get(UserKey); user != nil {
-		c.JSON(http.StatusOK, gin.H{"authenticated": true, "user": user})
+	userVal := session.Get(UserKey)
+	if userVal != nil {
+		user := userVal.(string)
+		isAdmin := a.IsUserAdmin(user)
+		namespace := user
+		if nsVal := session.Get(NamespaceKey); nsVal != nil {
+			namespace = nsVal.(string)
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"authenticated": true,
+			"user":          user,
+			"isAdmin":       isAdmin,
+			"namespace":     namespace,
+		})
 		return
 	}
 	c.JSON(http.StatusUnauthorized, gin.H{"authenticated": false})
@@ -187,12 +213,51 @@ func (a *Authenticator) Logout(c *gin.Context) {
 	log := klog.FromContext(c.Request.Context())
 	session := sessions.Default(c)
 	session.Delete(UserKey)
+	session.Delete(NamespaceKey)
 	if err := session.Save(); err != nil {
 		log.Info("Failed to save session", "err", err)
 		c.String(http.StatusInternalServerError, "Failed to save session")
 		return
 	}
 	c.Status(http.StatusOK)
+}
+
+func (a *Authenticator) SwitchNamespace(c *gin.Context) {
+	session := sessions.Default(c)
+	userVal := session.Get(UserKey)
+	if userVal == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Not authenticated"})
+		return
+	}
+	user := userVal.(string)
+
+	if !a.IsUserAdmin(user) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only admins can switch namespaces"})
+		return
+	}
+
+	var payload struct {
+		Namespace string `json:"namespace"`
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if payload.Namespace == "" {
+		// Reset to user's own namespace
+		session.Delete(NamespaceKey)
+	} else {
+		session.Set(NamespaceKey, payload.Namespace)
+	}
+
+	if err := session.Save(); err != nil {
+		klog.Errorf("Failed to save session: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save session"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "success", "namespace": payload.Namespace})
 }
 
 func (a *Authenticator) GetProviders(c *gin.Context) {
@@ -258,6 +323,12 @@ func (a *Authenticator) Middleware() gin.HandlerFunc {
 			user = userVal.(string)
 		}
 
+		// Determine target namespace
+		namespace := user
+		if nsVal := session.Get(NamespaceKey); nsVal != nil {
+			namespace = nsVal.(string)
+		}
+
 		// The Auth.Middleware is calling BootstrapNamespace (which makes ~10 Kubernetes API calls) for every single request.
 		// When loading the VS Code UI, the browser requests hundreds of static assets (JS, CSS, icons). This triggers
 		//  thousands of K8s API calls in seconds, causing the client to throttle itself and eventually timing out the requests
@@ -267,16 +338,25 @@ func (a *Authenticator) Middleware() gin.HandlerFunc {
 		//   the result.
 		// Subsequent Requests: The middleware finds the user in the cache and skips the K8s operations entirely.
 		// dramatically reduce latency and eliminate the 502/504 errors caused by client-side throttling, allowing the VS Code UI to load correctly
-		if _, ok := a.bootstrappedUsers.Load(user); !ok {
+
+		// Note: We bootstrap the *target* namespace, because that's what we are accessing.
+		// If an admin switches to 'bob', we need 'bob' namespace to exist?
+		// Actually, if 'bob' doesn't exist, maybe we shouldn't bootstrap it implicitly?
+		// But existing logic bootstraps 'user'.
+		// If admin switches to a namespace, presumably it exists or they want to create it?
+		// Let's stick to bootstrapping the *target* namespace.
+
+		if _, ok := a.bootstrappedUsers.Load(namespace); !ok {
 			// Lazy bootstrap checks if namespace exists, creating it if needed.
-			if err := k8s.BootstrapNamespace(c.Request.Context(), a.K8sManager.Clientset, user); err != nil {
-				log.Info("Lazy bootstrap failed for user", "user", user, "err", err)
+			if err := k8s.BootstrapNamespace(c.Request.Context(), a.K8sManager.Clientset, namespace); err != nil {
+				log.Info("Lazy bootstrap failed for namespace", "namespace", namespace, "err", err)
 			} else {
-				a.bootstrappedUsers.Store(user, true)
+				a.bootstrappedUsers.Store(namespace, true)
 			}
 		}
 
 		c.Set(UserKey, user)
+		c.Set(NamespaceKey, namespace)
 		c.Next()
 	}
 }
@@ -288,6 +368,18 @@ func (a *Authenticator) GetUserFromContext(c *gin.Context) string {
 	}
 	if user, ok := val.(string); ok {
 		return user
+	}
+	return ""
+}
+
+func (a *Authenticator) GetNamespaceFromContext(c *gin.Context) string {
+	val, exists := c.Get(NamespaceKey)
+	if !exists {
+		// Fallback to UserKey if NamespaceKey is missing (should not happen due to Middleware)
+		return a.GetUserFromContext(c)
+	}
+	if ns, ok := val.(string); ok {
+		return ns
 	}
 	return ""
 }
