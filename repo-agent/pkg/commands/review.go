@@ -39,17 +39,18 @@ var (
 const DefaultMaxReviewFiles = 30
 
 type ReviewCommand struct {
-	WorkspaceDir     string
-	TokensDir        string
-	RepoURL          string
-	UserDotfilesRepo string
-	CloneURL         string
-	AgentName        string
-	AgentPrompt      string
-	DiffURL          string
-	MaxReviewFiles   int
-	ExpectedComments int
-	IgnoreFiles      []string
+	WorkspaceDir      string
+	TokensDir         string
+	RepoURL           string
+	UserDotfilesRepo  string
+	CloneURL          string
+	AgentName         string
+	AgentPrompt       string
+	DiffURL           string
+	MaxReviewFiles    int
+	ExpectedComments  int
+	IgnoreFiles       []string
+	SeverityThreshold string
 
 	// output
 	TaskDir         string
@@ -149,6 +150,9 @@ func (c *ReviewCommand) InitDefaults() {
 			c.IgnoreFiles = strings.Split(ignoreFilesStr, ",")
 		}
 	}
+	if c.SeverityThreshold == "" {
+		c.SeverityThreshold = os.Getenv("SEVERITY_THRESHOLD")
+	}
 }
 
 func BuildReviewCommand() *cobra.Command {
@@ -174,6 +178,7 @@ func BuildReviewCommand() *cobra.Command {
 	cmd.Flags().IntVar(&reviewCommand.MaxReviewFiles, "max-review-files", 0, "Max review files")
 	cmd.Flags().IntVar(&reviewCommand.ExpectedComments, "expected-comments", 0, "Expected number of comments")
 	cmd.Flags().StringSliceVar(&reviewCommand.IgnoreFiles, "ignore-files", nil, "Comma separated list of glob patterns to ignore")
+	cmd.Flags().StringVar(&reviewCommand.SeverityThreshold, "severity-threshold", os.Getenv("SEVERITY_THRESHOLD"), "Severity threshold for review comments")
 
 	return cmd
 }
@@ -462,6 +467,11 @@ func (c *ReviewCommand) Run(ctx context.Context) error {
 					continue
 				}
 
+				if getSeverityLevel(newComment.Severity) < getSeverityLevel(c.SeverityThreshold) {
+					log.Info("Filtering out comment below severity threshold", "file", *newComment.Path, "severity", newComment.Severity, "threshold", c.SeverityThreshold)
+					continue
+				}
+
 				if !isDuplicateCommentExact(newComment, existingComments, accumulatedAgentOutput.Review.Comments) {
 					accumulatedAgentOutput.Review.Comments = append(accumulatedAgentOutput.Review.Comments, newComment)
 				} else {
@@ -565,7 +575,7 @@ func getExistingComments(ctx context.Context, client *github.Client, owner, repo
 }
 
 // TODO improve duplicate detection to fuzzy matching
-func isDuplicateCommentExact(newComment *github.DraftReviewComment, existingComments []*github.PullRequestComment, accumulatedComments []*github.DraftReviewComment) bool {
+func isDuplicateCommentExact(newComment *models.DraftReviewComment, existingComments []*github.PullRequestComment, accumulatedComments []*models.DraftReviewComment) bool {
 	for _, existingComment := range existingComments {
 		if existingComment == nil {
 			continue
@@ -600,7 +610,7 @@ func validateAgentOutput(ctx context.Context, agentOutput *models.ReviewAgentOut
 		return fmt.Errorf("'review.comments' field is missing")
 	}
 
-	validComments := []*github.DraftReviewComment{}
+	validComments := []*models.DraftReviewComment{}
 	for _, comment := range agentOutput.Review.Comments {
 		if isCommentValid(comment, diffFiles) {
 			validComments = append(validComments, comment)
@@ -618,7 +628,7 @@ func validateAgentOutput(ctx context.Context, agentOutput *models.ReviewAgentOut
 	return nil
 }
 
-func isCommentValid(comment *github.DraftReviewComment, diffFiles []*gitdiff.File) bool {
+func isCommentValid(comment *models.DraftReviewComment, diffFiles []*gitdiff.File) bool {
 	if comment.Path == nil || comment.Line == nil {
 		return false // Invalid comment if path or line is missing
 	}
@@ -765,4 +775,17 @@ func filterDiffFiles(repoDir string, diffFiles []*gitdiff.File, ignoreFiles []st
 		filteredDiffFiles = append(filteredDiffFiles, file)
 	}
 	return filteredDiffFiles
+}
+
+func getSeverityLevel(severity string) int {
+	switch strings.ToLower(severity) {
+	case "high":
+		return 3
+	case "medium":
+		return 2
+	case "low":
+		return 1
+	default:
+		return 2 // Default to medium if not specified or unknown
+	}
 }
