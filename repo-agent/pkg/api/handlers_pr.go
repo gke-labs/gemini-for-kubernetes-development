@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -423,15 +424,15 @@ func (s *Server) createPRTask(c *gin.Context) {
 
 	sandboxName := fmt.Sprintf("%s-pr-%s", repo, prID)
 
+	// Fetch RepoWatch to get latest config
+	rw, err := s.K8sManager.GetRepoWatch(c.Request.Context(), namespace, repo)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get RepoWatch", "details": err.Error()})
+		return
+	}
+
 	prompt := payload.Prompt
 	if prompt == "" {
-		// Fetch default prompt from RepoWatch
-		rw, err := s.K8sManager.GetRepoWatch(c.Request.Context(), namespace, repo)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get RepoWatch", "details": err.Error()})
-			return
-		}
-
 		defaultPrompt, found, err := unstructured.NestedString(rw.Object, "spec", "review", "llm", "prompt")
 		if err == nil && found {
 			prompt = defaultPrompt
@@ -442,11 +443,23 @@ func (s *Server) createPRTask(c *gin.Context) {
 		"AGENT_PROMPT": prompt,
 	}
 
+	// Inject MaxReviewFiles from RepoWatch
+	maxReviewFiles, found, err := unstructured.NestedInt64(rw.Object, "spec", "review", "maxReviewFiles")
+	if err == nil && found {
+		params["MAX_REVIEW_FILES"] = strconv.FormatInt(maxReviewFiles, 10)
+	}
+
+	// Inject IgnoreFiles from RepoWatch
+	ignoreFiles, found, err := unstructured.NestedStringSlice(rw.Object, "spec", "review", "ignoreFiles")
+	if err == nil && found && len(ignoreFiles) > 0 {
+		params["IGNORE_FILES"] = strings.Join(ignoreFiles, ",")
+	}
+
 	if payload.ExpectedComments > 0 {
 		params["EXPECTED_COMMENTS"] = strconv.Itoa(payload.ExpectedComments)
 	}
 
-	err := s.K8sManager.CreateSandboxTask(c.Request.Context(), namespace, sandboxName, "ReviewSandbox", "review", params)
+	err = s.K8sManager.CreateSandboxTask(c.Request.Context(), namespace, sandboxName, "ReviewSandbox", "review", params)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create task", "details": err.Error()})
 		return
