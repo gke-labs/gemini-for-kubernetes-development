@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -446,6 +447,12 @@ func (s *Server) createPRTask(c *gin.Context) {
 	maxReviewFiles, found, err := unstructured.NestedInt64(rw.Object, "spec", "review", "maxReviewFiles")
 	if err == nil && found {
 		params["MAX_REVIEW_FILES"] = strconv.FormatInt(maxReviewFiles, 10)
+	}
+
+	// Inject IgnoreFiles from RepoWatch
+	ignoreFiles, found, err := unstructured.NestedStringSlice(rw.Object, "spec", "review", "ignoreFiles")
+	if err == nil && found && len(ignoreFiles) > 0 {
+		params["IGNORE_FILES"] = strings.Join(ignoreFiles, ",")
 	}
 
 	if payload.ExpectedComments > 0 {
