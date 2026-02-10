@@ -16,11 +16,16 @@ export PR_NUMBER={{ .PullRequest.Number }}
 
 function setupGit {
     echo "Running setupGit..."
-    echo "creating /root/.config/gh directory"
-    mkdir -p /root/.config/gh
+    
+    # Use a temporary directory for gh config to avoid overwriting user's config
+    export GH_CONFIG_DIR=$(mktemp -d)
+    echo "using GH_CONFIG_DIR: ${GH_CONFIG_DIR}"
+    
+    echo "creating ${GH_CONFIG_DIR}/hosts.yml"
+    mkdir -p "${GH_CONFIG_DIR}"
 
     echo "writing gh config"
-    cat <<EOF > /root/.config/gh/hosts.yml
+    cat <<EOF > "${GH_CONFIG_DIR}/hosts.yml"
 github.com:
     users:
         ${GITHUB_USER_ID}:
@@ -30,11 +35,11 @@ github.com:
     user: ${GITHUB_USER_ID}
 EOF
 
-    echo "running git config user.email"
-    git config --global user.email ${GITHUB_USER_EMAIL}
-
-    echo "running git config user.name"
-    git config --global user.name ${GITHUB_USER_NAME}
+    echo "setting git identity via environment variables"
+    export GIT_AUTHOR_NAME="${GITHUB_USER_NAME}"
+    export GIT_AUTHOR_EMAIL="${GITHUB_USER_EMAIL}"
+    export GIT_COMMITTER_NAME="${GITHUB_USER_NAME}"
+    export GIT_COMMITTER_EMAIL="${GITHUB_USER_EMAIL}"
 
     echo "running gh auth setup-git"
     gh auth setup-git

@@ -514,7 +514,22 @@ func (s *Server) createIssueTask(c *gin.Context) {
 		params[k] = v
 	}
 
-	err := s.K8sManager.CreateSandboxTask(c.Request.Context(), namespace, sandboxName, "IssueSandbox", taskType, params)
+	// Inject current user details
+	secret, err := s.K8sManager.Clientset.CoreV1().Secrets(namespace).Get(c.Request.Context(), "github-token", v1.GetOptions{})
+	if err == nil {
+		if len(secret.Data["name"]) > 0 {
+			params["GITHUB_USER_NAME"] = string(secret.Data["name"])
+		}
+		if len(secret.Data["email"]) > 0 {
+			params["GITHUB_USER_EMAIL"] = string(secret.Data["email"])
+		}
+		params["GITHUB_USER_LOGIN"] = namespace // Namespace is the user login
+	} else {
+		// Log error but continue (might be a service account or non-authenticated context)
+		klog.FromContext(c.Request.Context()).Info("Failed to get user details from secret", "err", err)
+	}
+
+	err = s.K8sManager.CreateSandboxTask(c.Request.Context(), namespace, sandboxName, "IssueSandbox", taskType, params)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create task", "details": err.Error()})
 		return
