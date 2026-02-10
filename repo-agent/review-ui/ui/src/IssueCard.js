@@ -182,13 +182,14 @@ function IssueCard({
       {!isCollapsed && (
         <div style={{padding: '10px'}}>
             {tasks.length > 0 ? (
-                tasks.slice().reverse().map(task => (
+                tasks.slice().reverse().map((task, index) => (
                     <TaskCard 
                         key={task.name} 
                         task={task} 
                         repoName={repoName} 
                         parentId={issue.id}
                         parentType="issues"
+                        defaultCollapsed={index !== 0}
                     />
                 ))
             ) : (

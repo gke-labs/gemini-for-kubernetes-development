@@ -6,9 +6,10 @@ function TaskCard({
     parentId, // issueId or sandboxName
     parentType, // 'issues' or 'dev' or 'prs'
     handleScaleUp,
+    defaultCollapsed = false,
 }) {
     const [localDraft, setLocalDraft] = useState(task.userDraft || task.agentDraft || '');
-    const [isCollapsed, setIsCollapsed] = useState(false);
+    const [isCollapsed, setIsCollapsed] = useState(defaultCollapsed);
     const [statusText, setStatusText] = useState('');
     const [showLogs, setShowLogs] = useState(false);
     const [logs, setLogs] = useState('');
