@@ -138,6 +138,10 @@ spec:
                       value: ${schema.spec.destination.user.name}
                     - name: GITHUB_USER_EMAIL
                       value: ${schema.spec.destination.user.email}
+                    - name: GIT_AUTHOR_NAME
+                      value: ${schema.spec.destination.user.name}
+                    - name: GIT_AUTHOR_EMAIL
+                      value: ${schema.spec.destination.user.email}
                     - name: GITHUB_BOT_LOGIN
                       value: ${schema.spec.destination.bot.login}
                     - name: GITHUB_BOT_NAME

@@ -32,10 +32,18 @@ github.com:
 EOF
 
     echo "running git config user.email"
-    git config --global user.email ${GITHUB_USER_EMAIL}
+    if [ -n "$GITHUB_BOT_EMAIL" ]; then
+        git config --global user.email "${GITHUB_BOT_EMAIL}"
+    else
+        git config --global user.email ${GITHUB_USER_EMAIL}
+    fi
 
     echo "running git config user.name"
-    git config --global user.name ${GITHUB_USER_NAME}
+    if [ -n "$GITHUB_BOT_NAME" ]; then
+        git config --global user.name "${GITHUB_BOT_NAME}"
+    else
+        git config --global user.name ${GITHUB_USER_NAME}
+    fi
 
     echo "running gh auth setup-git"
     gh auth setup-git
