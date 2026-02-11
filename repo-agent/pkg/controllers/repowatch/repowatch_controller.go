@@ -1933,7 +1933,7 @@ func (r *Reconciler) reconcileOverseer(ctx context.Context, repoWatch *reviewv1a
 	}
 
 	overseerName := fmt.Sprintf("overseer-%s", repoWatch.Name)
-	
+
 	overseer := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "overseer.kro.run/v1alpha1",
@@ -1963,7 +1963,7 @@ func (r *Reconciler) reconcileOverseer(ctx context.Context, repoWatch *reviewv1a
 	existing := &unstructured.Unstructured{}
 	existing.SetGroupVersionKind(overseer.GroupVersionKind())
 	err := r.Get(ctx, types.NamespacedName{Name: overseerName, Namespace: repoWatch.Namespace}, existing)
-	
+
 	if apierrors.IsNotFound(err) {
 		log.Info("Creating Overseer", "name", overseerName)
 		if err := r.Create(ctx, overseer); err != nil {
@@ -1983,4 +1983,3 @@ func (r *Reconciler) reconcileOverseer(ctx context.Context, repoWatch *reviewv1a
 
 	return r.Status().Update(ctx, repoWatch)
 }
-
