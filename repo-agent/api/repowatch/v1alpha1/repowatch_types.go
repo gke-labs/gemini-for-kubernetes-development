@@ -17,6 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -236,6 +237,20 @@ type IssueSpec struct {
 	Handlers []IssueHandlerSpec `json:"handlers,omitempty"`
 }
 
+// OverseerSpec defines the configuration for the Overseer agent.
+type OverseerSpec struct {
+	// LLM configuration for the overseer.
+	LLM LLMConfig `json:"llm,omitempty"`
+
+	// Image to use for the overseer.
+	// +kubebuilder:validation:Optional
+	Image string `json:"image,omitempty"`
+
+	// Env defines additional environment variables for the overseer.
+	// +kubebuilder:validation:Optional
+	Env []corev1.EnvVar `json:"env,omitempty"`
+}
+
 // RepoWatchSpec defines the desired state of RepoWatch
 type RepoWatchSpec struct {
 	// The full URL of the GitHub repository to watch.
@@ -252,9 +267,12 @@ type RepoWatchSpec struct {
 	Issue *IssueSpec `json:"issue,omitempty"`
 
 	// Dev configuration for development sandboxes
-
 	// +kubebuilder:validation:Optional
 	Dev DevSpec `json:"dev,omitempty"`
+
+	// Overseer configuration
+	// +kubebuilder:validation:Optional
+	Overseer *OverseerSpec `json:"overseer,omitempty"`
 
 	// Secret containing the GitHub Personal Access Token (PAT) for accessing the repo.
 	// +kubebuilder:validation:Required
@@ -291,6 +309,9 @@ type RepoWatchStatus struct {
 
 	// +optional
 	PendingDevBranches []string `json:"pendingDevBranches,omitempty"`
+
+	// +optional
+	OverseerStatus string `json:"overseerStatus,omitempty"`
 }
 
 // WatchedPR defines the state of a watched PR

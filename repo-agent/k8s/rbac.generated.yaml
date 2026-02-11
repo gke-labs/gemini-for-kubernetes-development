@@ -7,17 +7,30 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - namespaces
+  - secrets
+  verbs:
+  - create
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
   - pods
   verbs:
   - get
   - list
   - watch
 - apiGroups:
-  - ""
+  - apps
   resources:
-  - secrets
+  - deployments
   verbs:
   - create
+  - delete
   - get
   - list
   - patch
