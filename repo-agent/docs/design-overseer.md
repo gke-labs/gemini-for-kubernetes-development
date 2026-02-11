@@ -1,55 +1,84 @@
-# Overseer Design: Agentic Approach
+# Overseer Design: The Autonomous Agentic Loop
 
-This document outlines the design for the "Overseer" component in `repo-agent`.
-The Overseer is an autonomous agent responsible for orchestrating other agents and managing repository events.
+The Overseer (also referred to as Principal, Arbiter, or Oracle) is an autonomous agent responsible for orchestrating other agents and managing the state of the repository.
 
-## Core Philosophy: Agentic Loop
+Unlike traditional controllers with rigid logic, the Overseer operates as an LLM-driven agent in a continuous loop, observing the system, understanding the desired state, and taking actions to move the system towards that state.
 
-Instead of rigid Go code defining the logic, the Overseer operates as an LLM-driven agent in a loop.
-It uses a System Prompt and a set of Tools (MCP) to observe the state of the repository and take actions.
+## 1. Core Philosophy
 
-## Architecture
+The Overseer is built on the following principles:
 
-*   **Runtime**: The Overseer runs as a persistent process (e.g., in a Sandbox or as a Deployment).
-*   **Logic**:
-    *   **Observation**: The agent uses CLI tools (like `gh`) and GitHub APIs to poll for events, workflow runs, and status updates.
-        *   Example: `gh api /orgs/gke-labs/events | jq ".[] | .repo.name , .type"`
-        *   Example: `gh run list --json`
-    *   **Decision**: Based on the System Prompt and observations, the agent decides what action to take.
-    *   **Action**: The agent executes actions via Tools.
+1.  **Observation**: Continuously observe the system (the GitHub repository) and respond to events.
+2.  **Intent Understanding**: Grok the desired state of the system from user intent (issues, PRDs, design docs) and current state.
+3.  **Dynamic Goals**: The desired state is a moving target determined by user intent and the evolving system state.
+4.  **Orchestration**: Orchestrate other specialized agents to perform specific tasks (coding, reviewing, etc.) to achieve sub-goals.
 
-### Available Actions (Tools)
+## 2. The System Model
 
-The Overseer can perform the following actions:
+For the current iteration, the "System" is defined as a GitHub repository. The state of this system includes:
 
-1.  **Comment**: Post comments on PRs or Issues.
-2.  **Issue Management**: Create or update issues.
-3.  **Sandbox Creation**:
-    *   Create a sandbox for generating a PR (to fix an issue).
-    *   Create a sandbox for reviewing a PR.
-    *   Create a sandbox for running a specific task.
-4.  **Orchestration**: Trigger other specialized agents defined in `.agent/`.
+*   **Source Code**: The git repository itself.
+*   **System Model**: The metadata exposed via the GitHub API (Issues, PRs, Comments, Workflows).
+*   **Project Management**: Milestones, Project plans, etc.
 
-## Implementation Details
+## 3. Events
 
-### System Prompt
+The Overseer monitors various events within the system, including but not limited to:
 
-The System Prompt will define the Overseer's role:
-*   Monitor the repository for activity.
-*   Triage incoming issues and PRs.
-*   Delegate work to specialized agents (by creating Sandboxes for them).
-*   Ensure that the "Human in the Loop" is kept informed but not overwhelmed.
+*   **GitHub Events**: Push events, Pull Request events, Issue events.
+*   **Interactions**: Comments on PRs and Issues, reviews, workflow run statuses.
+*   **External Interfaces**: Inputs from `gh` CLI, direct API calls, etc.
 
-### Tools & MCP
+## 4. Desired State & Goals
 
-The Overseer will rely on the Model Context Protocol (MCP) or similar tool-use interfaces to interact with:
-*   GitHub (via `gh` CLI or API).
-*   Kubernetes (to create Sandboxes).
-*   Local Filesystem (to read `.agent/` definitions).
+The desired state is defined within the system itself (in the repo). This allows agents to define intermediate states/goals and update the system to reflect progress.
 
-## Why this approach?
+### Larger Goals
+*   **High-level Issues**: Describing desired changes, features, or bug fixes.
+*   **Documentation**: PRDs and Design Docs describing user intent.
 
-*   **Flexibility**: Logic is defined by the prompt, not compiled code. Easy to adjust behavior.
-*   **Extensibility**: Adding new capabilities is as simple as giving the agent a new tool.
-*   **Intelligence**: The agent can make fuzzy decisions (e.g., "Is this issue distinct enough?") that are hard to code in Go.
+### Sub-goals (Nudging the System)
+*   **Issues & Sub-issues**: Created by the Overseer or other agents to break down larger goals. Specialized agents pick these up to perform work (create PR, update doc, release).
+*   **Pull Requests**: Must be nudged towards "merge ready" status by:
+    *   Addressing review comments.
+    *   Fixing workflow failures.
+    *   Rebasing when stale.
 
+## 5. Overseer Architecture
+
+The Overseer is designed as an agentic loop, distinct from a standard Kubernetes controller.
+
+### Key Characteristics
+1.  **LLM-Based**: It is an agent itself (e.g., `gemini-cli` instance) driven by a System Prompt.
+2.  **Minimal Wrapper**: It has a minimal Go-code wrapper, primarily to invoke the agent loop.
+3.  **Tool Usage**: It relies on external tools to observe and act:
+    *   `gh` CLI
+    *   GitHub API
+    *   `git` CLI
+4.  **Delegation**: It relies on sub-agents to do the heavy lifting. It breaks down paths to desired states into issues/sub-issues and triggers sub-agents to act on them.
+
+### Actions
+The Overseer's actions include:
+1.  **Spinning up Sandboxes**: Launching environments for other agents to run.
+2.  **State Updates**: Communicating by updating the state of the repository (creating issues, commenting on PRs).
+
+## 6. Agents Ecosystem
+
+The system uses `gemini-cli` as the core agent loop but is extensible to other agents (e.g., `claude-code`, `codex`).
+
+### Agent Definitions
+*   **Built-in Agents**: Standard agents for common tasks (Fixing issues, Reviewing PRs, Addressing comments).
+*   **Custom Agents**: Defined in the repository under `.agent/*.md`.
+
+### Agent Orchestration
+The Overseer acts as the manager. When it detects a need (e.g., a new issue labeled `bug`), it:
+1.  Analyzes the requirement.
+2.  Identifies the appropriate agent (built-in or custom).
+3.  Triggers the agent (e.g., by creating a Sandbox with the agent's context).
+
+## 7. Implementation Plan
+
+The implementation will focus on:
+1.  **System Prompt**: Developing a robust system prompt for the Overseer that can interpret repository state and decide on orchestration actions.
+2.  **Tool Integration**: Ensuring the Overseer has access to `gh`, `git`, and Kubernetes client tools (for sandbox creation).
+3.  **Loop Mechanism**: A simple loop that periodically invokes the Overseer agent with the current context.
