@@ -1,8 +1,12 @@
 #!/bin/bash
 set -e
 
-# Default prompt if not set
-PROMPT="${AGENT_PROMPT:-You are the Overseer. Monitor the repository and orchestrate agents.}"
+# Default prompt from file
+if [ -f "/system_prompt.txt" ]; then
+    PROMPT=$(cat /system_prompt.txt)
+else
+    PROMPT="${AGENT_PROMPT:-You are the Overseer. Monitor the repository and orchestrate agents.}"
+fi
 
 # Loop
 while true; do

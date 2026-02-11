@@ -34,7 +34,6 @@ import (
 	"github.com/google/go-github/v39/github"
 	"golang.org/x/oauth2"
 	githuboauth "golang.org/x/oauth2/github"
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -247,6 +246,7 @@ type Reconciler struct {
 //+kubebuilder:rbac:groups=custom.agents.x-k8s.io,resources=reviewsandboxes,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=custom.agents.x-k8s.io,resources=issuesandboxes,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=custom.agents.x-k8s.io,resources=sandboxtasks,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=overseer.kro.run,resources=overseers,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
 //+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 //+kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
@@ -1927,52 +1927,56 @@ func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client
 func (r *Reconciler) reconcileOverseer(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch) error {
 	log := log.FromContext(ctx)
 
-	if repoWatch.Spec.Overseer == nil {
+	// Check if enabled
+	if repoWatch.Spec.Overseer == nil || !repoWatch.Spec.Overseer.Enabled {
 		return nil
 	}
 
-	overseerNamespace := "overseer"
-	if err := r.ensureNamespace(ctx, overseerNamespace); err != nil {
+	overseerName := fmt.Sprintf("overseer-%s", repoWatch.Name)
+	
+	overseer := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "overseer.kro.run/v1alpha1",
+			"kind":       "Overseer",
+			"metadata": map[string]interface{}{
+				"name":      overseerName,
+				"namespace": repoWatch.Namespace,
+				"labels": map[string]interface{}{
+					"repowatch": repoWatch.Name,
+				},
+			},
+			"spec": map[string]interface{}{
+				"repoUrl":          repoWatch.Spec.RepoURL,
+				"githubSecretName": repoWatch.Spec.GithubSecretName,
+				"image":            repoWatch.Spec.Overseer.Image,
+				// Assuming a default secret name for API key if not specified elsewhere.
+				"apiKeySecretName": "gemini-api-key",
+			},
+		},
+	}
+
+	if err := controllerutil.SetControllerReference(repoWatch, overseer, r.Scheme); err != nil {
 		return err
 	}
 
-	// Ensure secrets are present in the overseer namespace
-	secrets := []string{repoWatch.Spec.GithubSecretName}
-	if repoWatch.Spec.Overseer.LLM.APIKeySecretRef != "" {
-		secrets = append(secrets, repoWatch.Spec.Overseer.LLM.APIKeySecretRef)
-	}
-
-	for _, secretName := range secrets {
-		if err := r.ensureSecretInNamespace(ctx, repoWatch.Namespace, overseerNamespace, secretName); err != nil {
-			log.Error(err, "failed to ensure secret in overseer namespace", "secret", secretName)
-			return err
-		}
-	}
-
-	deploymentName := fmt.Sprintf("overseer-%s", repoWatch.Name)
-	deployment := &appsv1.Deployment{}
-	err := r.Get(ctx, types.NamespacedName{Name: deploymentName, Namespace: overseerNamespace}, deployment)
-
+	// Create or Update
+	existing := &unstructured.Unstructured{}
+	existing.SetGroupVersionKind(overseer.GroupVersionKind())
+	err := r.Get(ctx, types.NamespacedName{Name: overseerName, Namespace: repoWatch.Namespace}, existing)
+	
 	if apierrors.IsNotFound(err) {
-		// Create Deployment
-		deployment, err = r.createOverseerDeployment(repoWatch, deploymentName, overseerNamespace)
-		if err != nil {
-			return err
-		}
-		if err := r.Create(ctx, deployment); err != nil {
+		log.Info("Creating Overseer", "name", overseerName)
+		if err := r.Create(ctx, overseer); err != nil {
 			return err
 		}
 		repoWatch.Status.OverseerStatus = "Created"
 	} else if err != nil {
 		return err
 	} else {
-		// Update existing deployment if needed (simplified: just ensure replicas)
-		if *deployment.Spec.Replicas != 1 {
-			replicas := int32(1)
-			deployment.Spec.Replicas = &replicas
-			if err := r.Update(ctx, deployment); err != nil {
-				return err
-			}
+		// Update specs if changed
+		existing.Object["spec"] = overseer.Object["spec"]
+		if err := r.Update(ctx, existing); err != nil {
+			return err
 		}
 		repoWatch.Status.OverseerStatus = "Active"
 	}
@@ -1980,145 +1984,3 @@ func (r *Reconciler) reconcileOverseer(ctx context.Context, repoWatch *reviewv1a
 	return r.Status().Update(ctx, repoWatch)
 }
 
-func (r *Reconciler) ensureNamespace(ctx context.Context, name string) error {
-	ns := &corev1.Namespace{}
-	err := r.Get(ctx, types.NamespacedName{Name: name}, ns)
-	if apierrors.IsNotFound(err) {
-		ns = &corev1.Namespace{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: name,
-			},
-		}
-		return r.Create(ctx, ns)
-	}
-	return err
-}
-
-func (r *Reconciler) ensureSecretInNamespace(ctx context.Context, sourceNamespace, targetNamespace, secretName string) error {
-	if sourceNamespace == targetNamespace {
-		return nil
-	}
-	
-	targetSecret := &corev1.Secret{}
-	err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: targetNamespace}, targetSecret)
-	if err == nil {
-		return nil // Secret exists
-	}
-	if !apierrors.IsNotFound(err) {
-		return err
-	}
-
-	sourceSecret := &corev1.Secret{}
-	if err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: sourceNamespace}, sourceSecret); err != nil {
-		return fmt.Errorf("failed to get source secret %s in %s: %w", secretName, sourceNamespace, err)
-	}
-
-	newSecret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      secretName,
-			Namespace: targetNamespace,
-			Labels:    sourceSecret.Labels,
-		},
-		Data: sourceSecret.Data,
-		Type: sourceSecret.Type,
-	}
-
-	return r.Create(ctx, newSecret)
-}
-
-func (r *Reconciler) createOverseerDeployment(repoWatch *reviewv1alpha1.RepoWatch, name, namespace string) (*appsv1.Deployment, error) {
-	replicas := int32(1)
-	
-	image := repoWatch.Spec.Overseer.Image
-	if image == "" {
-		// Default image if not specified. Using a placeholder for now, needs to be built.
-		image = "ghcr.io/gke-labs/gemini-for-kubernetes-development/overseer:latest"
-	}
-
-	env := []corev1.EnvVar{
-		{
-			Name:  "REPO_URL",
-			Value: repoWatch.Spec.RepoURL,
-		},
-		{
-			Name:  "LLM_PROVIDER",
-			Value: repoWatch.Spec.Overseer.LLM.Provider,
-		},
-		{
-			Name: "GITHUB_TOKEN",
-			ValueFrom: &corev1.EnvVarSource{
-				SecretKeyRef: &corev1.SecretKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: repoWatch.Spec.GithubSecretName,
-					},
-					Key: "pat", // Assuming 'pat' key. Might need logic to handle 'oauth_pat' etc.
-				},
-			},
-		},
-	}
-	
-	// Add API Key if present
-	if repoWatch.Spec.Overseer.LLM.APIKeySecretRef != "" {
-		env = append(env, corev1.EnvVar{
-			Name: "LLM_API_KEY",
-			ValueFrom: &corev1.EnvVarSource{
-				SecretKeyRef: &corev1.SecretKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: repoWatch.Spec.Overseer.LLM.APIKeySecretRef,
-					},
-					Key: "apiKey", // Assuming 'apiKey' key or standard keys?
-					// Usually it's specific to provider. Gemini uses GEMINI_API_KEY.
-					// But let's export as LLM_API_KEY and let the agent handle it.
-					// Actually, gemini-cli expects specific env vars.
-				},
-			},
-		})
-	}
-	
-	if repoWatch.Spec.Overseer.LLM.Prompt != "" {
-		env = append(env, corev1.EnvVar{
-			Name:  "AGENT_PROMPT",
-			Value: repoWatch.Spec.Overseer.LLM.Prompt,
-		})
-	}
-
-	env = append(env, repoWatch.Spec.Overseer.Env...)
-
-	deployment := &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: namespace,
-			Labels: map[string]string{
-				"app": "overseer",
-				"repowatch": repoWatch.Name,
-			},
-		},
-		Spec: appsv1.DeploymentSpec{
-			Replicas: &replicas,
-			Selector: &metav1.LabelSelector{
-				MatchLabels: map[string]string{
-					"app": "overseer",
-					"repowatch": repoWatch.Name,
-				},
-			},
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{
-						"app": "overseer",
-						"repowatch": repoWatch.Name,
-					},
-				},
-				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{
-						{
-							Name:  "overseer",
-							Image: image,
-							Env:   env,
-						},
-					},
-				},
-			},
-		},
-	}
-	return deployment, nil
-}

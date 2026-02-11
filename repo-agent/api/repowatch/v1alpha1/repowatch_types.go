@@ -17,7 +17,6 @@ limitations under the License.
 package v1alpha1
 
 import (
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -239,16 +238,13 @@ type IssueSpec struct {
 
 // OverseerSpec defines the configuration for the Overseer agent.
 type OverseerSpec struct {
-	// LLM configuration for the overseer.
-	LLM LLMConfig `json:"llm,omitempty"`
-
 	// Image to use for the overseer.
 	// +kubebuilder:validation:Optional
 	Image string `json:"image,omitempty"`
 
-	// Env defines additional environment variables for the overseer.
+	// Enabled defines if the overseer is enabled.
 	// +kubebuilder:validation:Optional
-	Env []corev1.EnvVar `json:"env,omitempty"`
+	Enabled bool `json:"enabled,omitempty"`
 }
 
 // RepoWatchSpec defines the desired state of RepoWatch
