@@ -5,3 +5,6 @@ bin/
 # Go workspace files
 go.work
 go.work.sum
+
+# Vscode files
+.vscode
