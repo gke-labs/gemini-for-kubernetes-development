@@ -23,6 +23,9 @@ review:
   # Reference to the DevContainer configuration for the sandbox environment (Alternative to image)
   # devcontainerConfigRef: go-devcontainer-json
   
+  # How long to keep the sandbox running after the review is complete
+  reviewShutdownAfterMinutes: 10
+  
   # Maximum number of concurrent review sandboxes
   maxActiveSandboxes: 3
   
@@ -45,6 +48,7 @@ review:
 
 *   **`image`**: The container image to use for the sandbox environment.
 *   **`devcontainerConfigRef`**: (Optional) The name of a `ConfigMap` containing a `devcontainer.json` file. This defines the environment where the agent runs (e.g., installed tools, extensions). Use this as an alternative to `image`.
+*   **`reviewShutdownAfterMinutes`**: How long to keep the sandbox running after the review is complete (in minutes).
 *   **`maxActiveSandboxes`**: The maximum number of concurrent sandboxes to run for reviews. This helps manage resource usage.
 *   **`maxSandboxes`**: The maximum total number of sandboxes (active + inactive) to keep.
 *   **`llm`**:
@@ -67,22 +71,24 @@ issue:
   # Maximum total number of sandboxes (active + inactive)
   maxSandboxes: 6
   
+  # Robot account name
+  robotAccount: codebot-robot
+  
+  # How long the sandbox remains active after an issue is processed
+  issueShutdownAfterMinutes: 300
+  
   # Configuration for the LLM (Large Language Model)
   llm:
     provider: gemini-cli
     apiKeySecretRef: gemini-vscode-tokens
     prompt: |
-      You are a helpful assistant that triages GitHub issues...
+      You are a helpful assistant that fixes GitHub issues...
 
   handlers:
-  - name: triage
-    # Filter issues by labels
-    labels:
-      - "needs-triage"
-      
   - name: fix-bug
     labels:
-      - "bug"
+      - "repo-agent"
+    taskType: fix-issue
     # ...
 ```
 
@@ -91,9 +97,12 @@ issue:
 *   **`image`**: The container image to use for the sandbox environment.
 *   **`maxActiveSandboxes`**: The maximum number of concurrent sandboxes to run for issues.
 *   **`maxSandboxes`**: The maximum total number of sandboxes (active + inactive) to keep.
+*   **`robotAccount`**: Name of the GitHub user account used by the bot.
+*   **`issueShutdownAfterMinutes`**: How long to keep the sandbox active after processing (in minutes).
 *   **`handlers`**: A list of handler configurations.
     *   **`name`**: A unique name for the handler.
     *   **`labels`**: A list of GitHub labels. The handler will only process issues that have at least one of these labels.
+    *   **`taskType`**: The type of task to perform (e.g., `fix-issue`).
 
 ## Example
 
@@ -111,6 +120,7 @@ spec:
   # Pull Request Review Configuration
   review:
     image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
+    reviewShutdownAfterMinutes: 10
     maxActiveSandboxes: 3
     maxSandboxes: 5
     llm:
@@ -127,6 +137,8 @@ spec:
     image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
     maxActiveSandboxes: 6
     maxSandboxes: 6
+    robotAccount: codebot-robot
+    issueShutdownAfterMinutes: 300
     llm:
       provider: gemini-cli
       apiKeySecretRef: gemini-api-key
@@ -135,7 +147,8 @@ spec:
         Analyze the issue, reproduce the bug, and implement a fix.
         Commit your changes.
     handlers:
-    - name: bug-fixer
+    - name: fix-bug
       labels:
-        - "bug"
+        - "repo-agent"
+      taskType: fix-issue
 ```
