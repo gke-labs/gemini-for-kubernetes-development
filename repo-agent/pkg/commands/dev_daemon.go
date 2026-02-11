@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
+	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/agentoutput"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/agentserver"
@@ -76,6 +78,11 @@ func (c *SandboxDaemonCommand) Run(ctx context.Context) error {
 		return err
 	}
 
+	if err := startDockerd(ctx); err != nil {
+		log.Error(err, "failed to start dockerd")
+		// Continue anyway
+	}
+
 	if err := c.CodeServerCommand.Start(ctx); err != nil {
 		_ = ao.SetAgentState(ctx, "error", err.Error())
 		return fmt.Errorf("failed to start code-server: %w", err)
@@ -116,4 +123,55 @@ func (c *SandboxDaemonCommand) Run(ctx context.Context) error {
 	log.Info("Sandbox Daemon started. Waiting for tasks...")
 
 	return c.CodeServerCommand.Wait() // Wait for code server (or context cancel)
+}
+
+func startDockerd(ctx context.Context) error {
+	if os.Getenv("DOCKER_ENABLED") != "true" {
+		return nil
+	}
+	// Check if dockerd is available
+	if _, err := exec.LookPath("dockerd"); err != nil {
+		klog.Warning("dockerd not found, skipping start")
+		return nil
+	}
+
+	// Start dockerd
+	cmd := exec.CommandContext(ctx, "dockerd")
+	// Redirect output to log file
+	f, err := os.Create("/var/log/dockerd.log")
+	if err == nil {
+		cmd.Stdout = f
+		cmd.Stderr = f
+	} else {
+		klog.Error(err, "failed to create dockerd log file")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+	}
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start dockerd: %w", err)
+	}
+
+	klog.Info("dockerd started")
+
+	// Wait for socket
+	go func() {
+		for {
+			if _, err := os.Stat("/var/run/docker.sock"); err == nil {
+				klog.Info("docker socket available")
+				// Chown socket to current user/group if needed?
+				// Usually dockerd runs as root, socket is root:docker.
+				// If current user is root, it's fine.
+				return
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(1 * time.Second):
+				continue
+			}
+		}
+	}()
+
+	return nil
 }
