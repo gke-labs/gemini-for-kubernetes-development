@@ -9,7 +9,7 @@ A `RepoWatch` resource consists of the following main sections:
 *   **`repoURL`**: The URL of the GitHub repository to watch (e.g., `https://github.com/kubernetes/kubernetes`).
 *   **`githubSecretName`**: The name of the Kubernetes Secret containing the GitHub Personal Access Token (PAT) or App credentials.
 *   **`review`**: Configuration for reviewing Pull Requests.
-*   **`issueHandlers`**: Configuration for handling GitHub Issues.
+*   **`issue`**: Configuration for handling GitHub Issues.
 
 ## Review Configuration
 
@@ -17,11 +17,17 @@ The `review` section controls how the agent reviews Pull Requests.
 
 ```yaml
 review:
-  # Reference to the DevContainer configuration for the sandbox environment
-  devcontainerConfigRef: go-devcontainer-json
+  # Image to use for the sandbox environment
+  image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
+
+  # Reference to the DevContainer configuration for the sandbox environment (Alternative to image)
+  # devcontainerConfigRef: go-devcontainer-json
   
   # Maximum number of concurrent review sandboxes
   maxActiveSandboxes: 3
+  
+  # Maximum total number of sandboxes (active + inactive)
+  maxSandboxes: 5
   
   # Configuration for the LLM (Large Language Model)
   llm:
@@ -37,47 +43,57 @@ review:
 
 ### Key Fields:
 
-*   **`devcontainerConfigRef`**: (Optional) The name of a `ConfigMap` containing a `devcontainer.json` file. This defines the environment where the agent runs (e.g., installed tools, extensions).
+*   **`image`**: The container image to use for the sandbox environment.
+*   **`devcontainerConfigRef`**: (Optional) The name of a `ConfigMap` containing a `devcontainer.json` file. This defines the environment where the agent runs (e.g., installed tools, extensions). Use this as an alternative to `image`.
 *   **`maxActiveSandboxes`**: The maximum number of concurrent sandboxes to run for reviews. This helps manage resource usage.
+*   **`maxSandboxes`**: The maximum total number of sandboxes (active + inactive) to keep.
 *   **`llm`**:
     *   **`provider`**: The LLM provider to use (e.g., `gemini-cli`, `vertex-ai`).
     *   **`apiKeySecretRef`**: The name of the Secret containing the API key for the LLM.
     *   **`prompt`**: The system instruction or prompt given to the LLM for reviewing code.
 
-## Issue Handlers
+## Issue Configuration
 
-The `issueHandlers` section allows you to define multiple handlers for GitHub Issues. Each handler can filter issues by labels and perform specific tasks.
+The `issue` section allows you to configure how the agent handles GitHub Issues and define multiple handlers.
 
 ```yaml
-issueHandlers:
-- name: triage
-  # Filter issues by labels
-  labels:
-    - "needs-triage"
-    
-  # Handler-specific sandbox configuration
-  maxActiveSandboxes: 2
-  devcontainerConfigRef: go-devcontainer-json
+issue:
+  # Image to use for the sandbox environment
+  image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
   
+  # Maximum number of concurrent issue sandboxes
+  maxActiveSandboxes: 6
+  
+  # Maximum total number of sandboxes (active + inactive)
+  maxSandboxes: 6
+  
+  # Configuration for the LLM (Large Language Model)
   llm:
     provider: gemini-cli
     apiKeySecretRef: gemini-vscode-tokens
     prompt: |
       You are a helpful assistant that triages GitHub issues...
+
+  handlers:
+  - name: triage
+    # Filter issues by labels
+    labels:
+      - "needs-triage"
       
-- name: fix-bug
-  labels:
-    - "bug"
-  pushEnabled: true # Allow the agent to push code changes
-  # ...
+  - name: fix-bug
+    labels:
+      - "bug"
+    # ...
 ```
 
 ### Key Fields:
 
-*   **`name`**: A unique name for the handler.
-*   **`labels`**: A list of GitHub labels. The handler will only process issues that have at least one of these labels.
-*   **`pushEnabled`**: (Boolean) If set to `true`, the agent is allowed to push commits to the repository (e.g., to fix a bug).
-*   **`devcontainerConfigRef`**, **`maxActiveSandboxes`**, **`llm`**: Similar to the `review` section, these configure the environment and LLM for this specific handler.
+*   **`image`**: The container image to use for the sandbox environment.
+*   **`maxActiveSandboxes`**: The maximum number of concurrent sandboxes to run for issues.
+*   **`maxSandboxes`**: The maximum total number of sandboxes (active + inactive) to keep.
+*   **`handlers`**: A list of handler configurations.
+    *   **`name`**: A unique name for the handler.
+    *   **`labels`**: A list of GitHub labels. The handler will only process issues that have at least one of these labels.
 
 ## Example
 
@@ -94,8 +110,9 @@ spec:
   
   # Pull Request Review Configuration
   review:
-    devcontainerConfigRef: go-devcontainer-json
+    image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
     maxActiveSandboxes: 3
+    maxSandboxes: 5
     llm:
       provider: gemini-cli
       apiKeySecretRef: gemini-api-key
@@ -106,13 +123,10 @@ spec:
         - Code style adherence
 
   # Issue Handling Configuration
-  issueHandlers:
-  - name: bug-fixer
-    labels:
-      - "bug"
-    pushEnabled: true
-    devcontainerConfigRef: go-devcontainer-json
-    maxActiveSandboxes: 2
+  issue:
+    image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
+    maxActiveSandboxes: 6
+    maxSandboxes: 6
     llm:
       provider: gemini-cli
       apiKeySecretRef: gemini-api-key
@@ -120,4 +134,8 @@ spec:
         You are an expert software engineer. 
         Analyze the issue, reproduce the bug, and implement a fix.
         Commit your changes.
+    handlers:
+    - name: bug-fixer
+      labels:
+        - "bug"
 ```
