@@ -154,10 +154,8 @@ function Issues({
     
     let targetTask = tasks[0];
     const running = tasks.find(t => t.taskState === 'Running');
-    const failed = tasks.find(t => t.taskState === 'Failed');
     
     if (running) targetTask = running;
-    else if (failed) targetTask = failed;
     
     if (!targetTask) return null;
 
