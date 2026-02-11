@@ -77,7 +77,7 @@ type PRReviewSpec struct {
 
 	// The maximum number of files to review in a PR.
 	// +kubebuilder:validation:Optional
-	// +kubebuilder:default=30
+	// +kubebuilder:default=150
 	MaxReviewFiles int `json:"maxReviewFiles,omitempty"`
 
 	// IgnoreFiles specifies a list of glob patterns for files that should be ignored during review.
