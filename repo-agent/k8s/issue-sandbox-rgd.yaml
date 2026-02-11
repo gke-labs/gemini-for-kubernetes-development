@@ -77,7 +77,7 @@ spec:
                 sandbox: devc-${schema.metadata.name}
                 sandbox-type: issue
             spec:
-              runtimeClassName: ${schema.spec.dockerEnabled ? "gvisor" : null}
+              runtimeClassName: ${schema.spec.dockerEnabled?"gvisor":null}
               serviceAccountName: ${schema.spec.serviceAccountName}
               initContainers:
                 - name: gemini-configs
