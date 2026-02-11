@@ -152,8 +152,13 @@ function Issues({
     const tasks = issueTasks[issueId];
     if (!tasks || tasks.length === 0) return null;
     
-    let targetTask = tasks[0];
-    const running = tasks.find(t => t.taskState === 'Running');
+    // Sort tasks by creationTimestamp descending
+    const sortedTasks = [...tasks].sort((a, b) => {
+        return new Date(b.creationTimestamp) - new Date(a.creationTimestamp);
+    });
+    
+    let targetTask = sortedTasks[0];
+    const running = sortedTasks.find(t => t.taskState === 'Running');
     
     if (running) targetTask = running;
     
