@@ -24,7 +24,7 @@ review:
   # devcontainerConfigRef: go-devcontainer-json
   
   # How long to keep the sandbox running after the review is complete
-  reviewShutdownAfterMinutes: 10
+  reviewShutdownAfterMinutes: 60
   
   # Maximum number of concurrent review sandboxes
   maxActiveSandboxes: 3
@@ -71,10 +71,10 @@ issue:
   # Maximum total number of sandboxes (active + inactive)
   maxSandboxes: 6
   
-  # Robot account name
+  # Optional: Robot account name. If not set, the PR is created in the user's name.
   robotAccount: codebot-robot
   
-  # How long the sandbox remains active after an issue is processed
+  # Optional: How long the sandbox remains active after an issue is processed.
   issueShutdownAfterMinutes: 300
   
   # Configuration for the LLM (Large Language Model)
@@ -97,8 +97,8 @@ issue:
 *   **`image`**: The container image to use for the sandbox environment.
 *   **`maxActiveSandboxes`**: The maximum number of concurrent sandboxes to run for issues.
 *   **`maxSandboxes`**: The maximum total number of sandboxes (active + inactive) to keep.
-*   **`robotAccount`**: Name of the GitHub user account used by the bot.
-*   **`issueShutdownAfterMinutes`**: How long to keep the sandbox active after processing (in minutes).
+*   **`robotAccount`**: (Optional) Name of the GitHub user account used by the bot. If not set, the PR is created in the user's name.
+*   **`issueShutdownAfterMinutes`**: (Optional) How long to keep the sandbox active after processing (in minutes).
 *   **`handlers`**: A list of handler configurations.
     *   **`name`**: A unique name for the handler.
     *   **`labels`**: A list of GitHub labels. The handler will only process issues that have at least one of these labels.
@@ -120,7 +120,7 @@ spec:
   # Pull Request Review Configuration
   review:
     image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
-    reviewShutdownAfterMinutes: 10
+    reviewShutdownAfterMinutes: 60
     maxActiveSandboxes: 3
     maxSandboxes: 5
     llm:
