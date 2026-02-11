@@ -6,24 +6,19 @@ The Repo Agent supports a seamless "co-authoring" workflow where human developer
 
 When a sandbox is created for an issue or pull request that is **assigned to you**, the Repo Agent automatically configures the git environment to match your identity.
 
-*   **Authentication**: The sandbox uses the **Robot's** credentials (PAT) to authenticate with GitHub. This means you don't need to log in or provide your own token to push changes.
 *   **Attribution**: The git configuration (`user.name` and `user.email`) is set to **Your** GitHub profile details. Any commits you make will be authored by you, even though they are pushed by the robot.
 
 ## How to Use
 
-### 1. Assign Yourself
-Ensure you are assigned to the GitHub Issue or Pull Request *before* the sandbox is created.
-- If the sandbox is already created, you may need to wait for it to be reconciled or recreated for the changes to take effect (or manually configure git).
-
-### 2. Enter the Sandbox
+### 1. Enter the Sandbox
 You can access the sandbox environment in two ways:
 *   **Web Terminal**: Click the terminal icon (`>_`) in the Review UI.
-*   **VS Code**: If enabled, use the "Open in VS Code" feature.
+*   **VS Code**: Click on the "Sandbox" icon to open VS Code.
 
-### 3. Make Changes
+### 2. Make Changes
 Once inside, you are in a fully functional development environment. You can edit files, run builds, and test changes.
 
-### 4. Commit and Push
+### 3. Commit and Push
 When you are ready, use standard git commands:
 
 ```bash
@@ -35,6 +30,8 @@ git commit -m "Fix: handled edge case in validation logic"
 
 # Push (Uses the Robot's credentials)
 git push
+# Or force push if necessary
+git push origin --force
 ```
 
 The commit will show up on GitHub as **Authored by You**.
