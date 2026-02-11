@@ -2,18 +2,28 @@
 
 This directory contains user guides for the Repo Agent.
 
-## Topics
+## Usage
+
+*   Usage Overview <!-- TODO -->
+*   Review UI <!-- TODO -->
+*   GitHub Integration <!-- TODO -->
+
+## Configuration
+
+*   ConfigDir <!-- TODO -->
+*   Review Prompts <!-- TODO -->
+*   DevContainer Integration <!-- TODO -->
+*   RepoWatch Configuration <!-- TODO -->
+*   Issue Handlers <!-- TODO -->
+
+## Features
 
 *   [Co-authoring with Robot Accounts](co-authoring.md)
 *   [Interactive Terminal](terminal.md)
+
+## Installation
+
 *   Installation <!-- TODO -->
-*   Usage Overview <!-- TODO -->
-*   RepoWatch Configuration <!-- TODO -->
-*   Issue Handlers <!-- TODO -->
-*   Review Prompts <!-- TODO -->
-*   ConfigDir <!-- TODO -->
-*   DevContainer Integration <!-- TODO -->
-*   Review UI <!-- TODO -->
 
 ## Advanced Usage
 
