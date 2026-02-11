@@ -207,7 +207,7 @@ spec:
                   maxActiveSandboxes:
                     type: integer
                   maxReviewFiles:
-                    default: 30
+                    default: 150
                     type: integer
                   maxSandboxes:
                     type: integer

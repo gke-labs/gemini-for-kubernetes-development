@@ -36,7 +36,7 @@ var (
 	}
 )
 
-const DefaultMaxReviewFiles = 30
+const DefaultMaxReviewFiles = 150
 
 type ReviewCommand struct {
 	WorkspaceDir      string
