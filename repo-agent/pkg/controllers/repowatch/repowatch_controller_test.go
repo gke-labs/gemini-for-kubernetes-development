@@ -1377,14 +1377,14 @@ func TestReconcile_MultipleRepoWatchesSameRepo(t *testing.T) {
 	sandboxA.SetGroupVersionKind(sandboxList.GroupVersionKind())
 	sandboxAName := types.NamespacedName{Name: fmt.Sprintf("%s-pr-%d", repoWatchA.Name, prNumber), Namespace: "default"}
 	g.Expect(r.Client.Get(context.Background(), sandboxAName, sandboxA)).To(gomega.Succeed())
-	
+
 	// Check AGENT_NAME env var for provider
 	containersA, foundA, errA := unstructured.NestedSlice(sandboxA.Object, "spec", "podTemplate", "spec", "containers")
 	g.Expect(errA).NotTo(gomega.HaveOccurred())
 	g.Expect(foundA).To(gomega.BeTrue())
 	containerA := containersA[0].(map[string]interface{})
 	envA := containerA["env"].([]interface{})
-	
+
 	foundAgentNameA := false
 	for _, e := range envA {
 		envVar := e.(map[string]interface{})
@@ -1401,13 +1401,13 @@ func TestReconcile_MultipleRepoWatchesSameRepo(t *testing.T) {
 	sandboxB.SetGroupVersionKind(sandboxList.GroupVersionKind())
 	sandboxBName := types.NamespacedName{Name: fmt.Sprintf("%s-pr-%d", repoWatchB.Name, prNumber), Namespace: "default"}
 	g.Expect(r.Client.Get(context.Background(), sandboxBName, sandboxB)).To(gomega.Succeed())
-	
+
 	containersB, foundB, errB := unstructured.NestedSlice(sandboxB.Object, "spec", "podTemplate", "spec", "containers")
 	g.Expect(errB).NotTo(gomega.HaveOccurred())
 	g.Expect(foundB).To(gomega.BeTrue())
 	containerB := containersB[0].(map[string]interface{})
 	envB := containerB["env"].([]interface{})
-	
+
 	foundAgentNameB := false
 	for _, e := range envB {
 		envVar := e.(map[string]interface{})
