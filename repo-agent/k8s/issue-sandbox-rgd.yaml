@@ -25,8 +25,8 @@ spec:
         memoryRequest: string | default="2Gi"
         memoryLimit: string | default="6Gi"
       dockerEnabled: boolean | default=false
-      command: [string] | default=[]
-      args: [string] | default=[]
+      command: [string]
+      args: [string]
       source:
         cloneURL: string
         htmlURL: string
