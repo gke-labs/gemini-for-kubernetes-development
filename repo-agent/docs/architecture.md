@@ -2,7 +2,56 @@
 
 This document provides a high-level overview of the `repo-agent` architecture, its core components, and how they interact to provide automated code reviews and issue management.
 
-![Architecture Diagram](repo-agent-architecture.png)
+```mermaid
+graph TD
+    subgraph "External Systems"
+        GH[GitHub]
+        GCS[Google Cloud Storage]
+        LLM["LLM Provider (Gemini/Claude)"]
+        User[User]
+    end
+
+    subgraph "Repo Agent System"
+        RWC[RepoWatch Controller]
+        SC[Syncer Controller]
+        
+        subgraph "Review/Issue Sandbox (Pod)"
+            Agent[Agent Container]
+            Sidecar[ConfigDir Sidecar]
+            Volume[Shared Volume]
+        end
+
+        API[Review API / UI]
+        
+        CR_RW[RepoWatch CR]
+        CR_CD[ConfigDir CR]
+        CR_S[Syncer CR]
+    end
+
+    %% Interactions
+    User -->|Access| API
+    User -->|Define Config| CR_CD
+    
+    API -->|Manage| CR_RW
+    API -->|Manage| CR_S
+    API -->|Auth| GH
+
+    RWC -->|Watch| CR_RW
+    RWC -->|Poll| GH
+    RWC -->|Create Pod| Agent
+
+    Agent -->|Clone| GH
+    Agent -->|Review/Triage| LLM
+    Agent -->|Comment| GH
+    
+    Sidecar -->|Read| CR_CD
+    Sidecar -->|Sync Files| Volume
+    Volume -->|Read Config| Agent
+
+    SC -->|Watch| CR_S
+    SC -->|Watch Resources| CR_RW
+    SC -->|Sync Data| GCS
+```
 
 ## 1. Overview
 
@@ -41,7 +90,7 @@ The user interface and backend API for the system.
 *   **Role**: Provides a dashboard for users to manage their agents and view status.
 *   **Key Features**:
     *   **Dashboard**: View active repositories, recent reviews, and agent status.
-    *   **Authentication**: Handles GitHub OAuth flow and session management.
+    *   **Authentication**: Handles GitHub OAuth flow and session management (using stateless cookie sessions).
     *   **Interactive Review**: Allows users to "chat" with the agent about a specific review or override its decisions.
     *   **Proxy**: Proxies traffic to active Dev Sandboxes (e.g., accessing the VS Code instance running inside a pod).
 
@@ -49,6 +98,12 @@ The user interface and backend API for the system.
 A mechanism to project configuration files (like prompts, tool definitions, linting rules) into the sandboxes.
 *   **CRD**: `ConfigDir` defines a set of files and their sources (Inline, ConfigMap, Secret, URL).
 *   **Sidecar**: A `configdir-cli` container runs in every sandbox pod to watch these resources and sync them to a shared volume, ensuring the agent always has the latest configuration.
+*   **CLI**: The `configdir-cli` tool can also be used to sync a local directory to a `ConfigDir` CR in the cluster.
+
+### 2.5. Syncer Controller (`syncer-controller`)
+A controller responsible for syncing Kubernetes resources to Google Cloud Storage (GCS).
+*   **CRD**: `Syncer` defines which resources (Group, Version, Kind, Namespace, Label Selector) to watch.
+*   **Role**: Watches the specified resources and uploads their state to a GCS bucket. This is useful for auditing, data collection, or cross-cluster observability.
 
 ## 3. Data Flow
 
@@ -57,7 +112,7 @@ A mechanism to project configuration files (like prompts, tool definitions, lint
 2.  **Sandbox Provisioning**: The controller creates a `ReviewSandbox` CR in the user's namespace.
 3.  **Pod Startup**:
     *   The `ReviewSandbox` controller creates a Kubernetes Pod.
-    *   The `configdir-cli` sidecar syncs prompts and tools to `/etc/gemini`.
+    *   The `configdir-cli` sidecar syncs prompts and tools to `/etc/gemini` (shared volume).
     *   The main agent container clones the repository.
 4.  **Analysis**: The agent container reads the diff and sends it to the configured LLM provider (Gemini, Claude, etc.) along with the prompts.
 5.  **Action**: The LLM returns a structured review (YAML/JSON). The agent parses this and posts review comments to GitHub via the GitHub API.
@@ -78,4 +133,5 @@ For a detailed deep-dive into the tenancy model, please see [Multi-Tenant Archit
 *   `repo-agent/review-ui`: The web dashboard and API.
 *   `repo-agent/review-sandbox`: The agent code that runs inside review pods.
 *   `repo-agent/configdir`: The ConfigDir CRD and sidecar logic.
+*   `repo-agent/syncer`: The Syncer CRD and controller logic.
 *   `repo-agent/pkg/llm`: Shared library for interacting with LLM providers.
