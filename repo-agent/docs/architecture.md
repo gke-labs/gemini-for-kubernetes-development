@@ -7,7 +7,7 @@ graph TD
     subgraph "External Systems"
         GH[GitHub]
         GCS[Google Cloud Storage]
-        LLM[LLM Provider (Gemini/Claude)]
+        LLM["LLM Provider (Gemini/Claude)"]
         User[User]
     end
 
