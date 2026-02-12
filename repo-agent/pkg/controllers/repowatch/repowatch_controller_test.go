@@ -169,7 +169,7 @@ func TestReconciler_Reconcile(t *testing.T) {
 	volumes, found, err := unstructured.NestedSlice(reviewSandboxList.Items[0].Object, "spec", "podTemplate", "spec", "volumes")
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(found).To(gomega.BeTrue())
-	
+
 	foundSecret := false
 	for _, v := range volumes {
 		vol := v.(map[string]interface{})
