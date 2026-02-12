@@ -27,8 +27,6 @@ spec:
     configdirRef: ""
   llmBackend:
     name: dummy
-  networkPolicy:
-    enabled: false
   replicas: 1
   resources:
     ephemeralStorage: 6Gi
