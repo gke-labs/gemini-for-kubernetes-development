@@ -142,7 +142,7 @@ func (s *Server) listPRsFromK8s(ctx context.Context, namespace, repo string) ([]
 		agentStateMessage := ""
 		reviewState := ""
 		var labels []string
-		
+
 		if val, ok := annotations["userDraft"]; ok {
 			draft = val
 		} else if val, ok := annotations["agentDraft"]; ok {

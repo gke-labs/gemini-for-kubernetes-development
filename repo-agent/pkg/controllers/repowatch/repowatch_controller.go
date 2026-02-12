@@ -1171,7 +1171,7 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 					"review.gemini.google.com/repowatch": repoWatch.Name,
 				},
 				"annotations": map[string]interface{}{
-					"agentState": "provisioning",
+					"agentState":  "provisioning",
 					"reviewState": "",
 					// Source info injected as annotations for UI
 					"pr":       fmt.Sprintf("%d", *pr.Number),
@@ -1255,8 +1255,8 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 										"name": "GITHUB_TOKEN",
 										"valueFrom": map[string]interface{}{
 											"secretKeyRef": map[string]interface{}{
-												"name": githubSecretName,
-												"key":  "pat",
+												"name":     githubSecretName,
+												"key":      "pat",
 												"optional": true,
 											},
 										},
@@ -1265,8 +1265,8 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 										"name": "MANUAL_PAT",
 										"valueFrom": map[string]interface{}{
 											"secretKeyRef": map[string]interface{}{
-												"name": githubSecretName,
-												"key":  "manual_pat",
+												"name":     githubSecretName,
+												"key":      "manual_pat",
 												"optional": true,
 											},
 										},
@@ -1275,8 +1275,8 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 										"name": "OAUTH_PAT",
 										"valueFrom": map[string]interface{}{
 											"secretKeyRef": map[string]interface{}{
-												"name": githubSecretName,
-												"key":  "oauth_pat",
+												"name":     githubSecretName,
+												"key":      "oauth_pat",
 												"optional": true,
 											},
 										},
