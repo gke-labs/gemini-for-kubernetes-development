@@ -140,14 +140,20 @@ func TestReconciler_Reconcile_PR_With_Image(t *testing.T) {
 
 	reviewSandboxList := &unstructured.UnstructuredList{}
 	reviewSandboxList.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   "custom.agents.x-k8s.io",
+		Group:   "agents.x-k8s.io",
 		Version: "v1alpha1",
-		Kind:    "ReviewSandbox",
+		Kind:    "Sandbox",
 	})
 	g.Expect(fakeClient.List(context.Background(), reviewSandboxList)).To(gomega.Succeed())
 	g.Expect(reviewSandboxList.Items).To(gomega.HaveLen(1))
 
-	image, found, err := unstructured.NestedString(reviewSandboxList.Items[0].Object, "spec", "image")
+	containers, found, err := unstructured.NestedSlice(reviewSandboxList.Items[0].Object, "spec", "podTemplate", "spec", "containers")
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(found).To(gomega.BeTrue())
+	g.Expect(containers).To(gomega.HaveLen(1))
+
+	container := containers[0].(map[string]interface{})
+	image, found, err := unstructured.NestedString(container, "image")
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(found).To(gomega.BeTrue())
 	g.Expect(image).To(gomega.Equal("custom-review-image:latest"))

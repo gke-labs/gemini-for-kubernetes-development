@@ -159,17 +159,29 @@ func TestReconciler_Reconcile(t *testing.T) {
 	// Check that a ReviewSandbox was created
 	reviewSandboxList := &unstructured.UnstructuredList{}
 	reviewSandboxList.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   "custom.agents.x-k8s.io",
+		Group:   "agents.x-k8s.io",
 		Version: "v1alpha1",
-		Kind:    "ReviewSandbox",
+		Kind:    "Sandbox",
 	})
 	g.Expect(fakeClient.List(context.Background(), reviewSandboxList)).To(gomega.Succeed())
 	g.Expect(reviewSandboxList.Items).To(gomega.HaveLen(1))
-	// Check that the apiKeySecretName is set correctly
-	apiKeySecretName, found, err := unstructured.NestedString(reviewSandboxList.Items[0].Object, "spec", "llm", "apiKeySecretName")
+	// Check that the apiKeySecretName is set correctly in the volume
+	volumes, found, err := unstructured.NestedSlice(reviewSandboxList.Items[0].Object, "spec", "podTemplate", "spec", "volumes")
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(found).To(gomega.BeTrue())
-	g.Expect(apiKeySecretName).To(gomega.Equal("llm-secret"))
+	
+	foundSecret := false
+	for _, v := range volumes {
+		vol := v.(map[string]interface{})
+		if vol["name"] == "tokens-secret" {
+			secret := vol["secret"].(map[string]interface{})
+			if secret["secretName"] == "llm-secret" {
+				foundSecret = true
+				break
+			}
+		}
+	}
+	g.Expect(foundSecret).To(gomega.BeTrue())
 }
 
 // TestReconciler_ReconcileIssues focuses on the success path for handling GitHub issues.
@@ -1027,9 +1039,9 @@ func TestReconciler_Reconcile_ExplicitAndListedPRs(t *testing.T) {
 	// Check that ReviewSandboxes were created
 	reviewSandboxList := &unstructured.UnstructuredList{}
 	reviewSandboxList.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   "custom.agents.x-k8s.io",
+		Group:   "agents.x-k8s.io",
 		Version: "v1alpha1",
-		Kind:    "ReviewSandbox",
+		Kind:    "Sandbox",
 	})
 	g.Expect(fakeClient.List(context.Background(), reviewSandboxList)).To(gomega.Succeed())
 	g.Expect(reviewSandboxList.Items).To(gomega.HaveLen(2))
@@ -1178,11 +1190,14 @@ func TestReconcileReviewSandboxes_RespectsExistingActiveSandboxes(t *testing.T) 
 	// 1. Pre-existing Active Sandbox for PR #1
 	existingActiveSandbox := &unstructured.Unstructured{
 		Object: map[string]interface{}{
-			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
-			"kind":       "ReviewSandbox",
+			"apiVersion": "agents.x-k8s.io/v1alpha1",
+			"kind":       "Sandbox",
 			"metadata": map[string]interface{}{
 				"name":      "test-repowatch-maxactive-pr-1",
 				"namespace": "default",
+				"labels": map[string]interface{}{
+					"review.gemini.google.com/repowatch": repoWatch.Name,
+				},
 				"ownerReferences": []interface{}{
 					map[string]interface{}{
 						"apiVersion": "review.gemini.google.com/v1alpha1",
@@ -1239,9 +1254,9 @@ func TestReconcileReviewSandboxes_RespectsExistingActiveSandboxes(t *testing.T) 
 	// Verify results: No new sandbox should be created
 	sandboxList := &unstructured.UnstructuredList{}
 	sandboxList.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   "custom.agents.x-k8s.io",
+		Group:   "agents.x-k8s.io",
 		Version: "v1alpha1",
-		Kind:    "ReviewSandbox",
+		Kind:    "Sandbox",
 	})
 	g.Expect(r.Client.List(context.Background(), sandboxList)).To(gomega.Succeed())
 	// The buggy code will fail here, creating a second sandbox.
@@ -1350,9 +1365,9 @@ func TestReconcile_MultipleRepoWatchesSameRepo(t *testing.T) {
 	// Assert Total Sandbox Count
 	sandboxList := &unstructured.UnstructuredList{}
 	sandboxList.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   "custom.agents.x-k8s.io",
+		Group:   "agents.x-k8s.io",
 		Version: "v1alpha1",
-		Kind:    "ReviewSandbox",
+		Kind:    "Sandbox",
 	})
 	g.Expect(r.Client.List(context.Background(), sandboxList)).To(gomega.Succeed())
 	g.Expect(sandboxList.Items).To(gomega.HaveLen(2), "Expected two sandboxes to be created, one for each RepoWatch")
@@ -1362,20 +1377,47 @@ func TestReconcile_MultipleRepoWatchesSameRepo(t *testing.T) {
 	sandboxA.SetGroupVersionKind(sandboxList.GroupVersionKind())
 	sandboxAName := types.NamespacedName{Name: fmt.Sprintf("%s-pr-%d", repoWatchA.Name, prNumber), Namespace: "default"}
 	g.Expect(r.Client.Get(context.Background(), sandboxAName, sandboxA)).To(gomega.Succeed())
-	llmBackendA, foundA, errA := unstructured.NestedString(sandboxA.Object, "spec", "llmBackend", "name")
+	
+	// Check AGENT_NAME env var for provider
+	containersA, foundA, errA := unstructured.NestedSlice(sandboxA.Object, "spec", "podTemplate", "spec", "containers")
 	g.Expect(errA).NotTo(gomega.HaveOccurred())
 	g.Expect(foundA).To(gomega.BeTrue())
-	g.Expect(llmBackendA).To(gomega.Equal("gemini-cli"))
+	containerA := containersA[0].(map[string]interface{})
+	envA := containerA["env"].([]interface{})
+	
+	foundAgentNameA := false
+	for _, e := range envA {
+		envVar := e.(map[string]interface{})
+		if envVar["name"] == "AGENT_NAME" {
+			g.Expect(envVar["value"]).To(gomega.Equal("gemini-cli"))
+			foundAgentNameA = true
+			break
+		}
+	}
+	g.Expect(foundAgentNameA).To(gomega.BeTrue())
 
 	// Validate Sandbox B
 	sandboxB := &unstructured.Unstructured{}
 	sandboxB.SetGroupVersionKind(sandboxList.GroupVersionKind())
 	sandboxBName := types.NamespacedName{Name: fmt.Sprintf("%s-pr-%d", repoWatchB.Name, prNumber), Namespace: "default"}
 	g.Expect(r.Client.Get(context.Background(), sandboxBName, sandboxB)).To(gomega.Succeed())
-	llmBackendB, foundB, errB := unstructured.NestedString(sandboxB.Object, "spec", "llmBackend", "name")
+	
+	containersB, foundB, errB := unstructured.NestedSlice(sandboxB.Object, "spec", "podTemplate", "spec", "containers")
 	g.Expect(errB).NotTo(gomega.HaveOccurred())
 	g.Expect(foundB).To(gomega.BeTrue())
-	g.Expect(llmBackendB).To(gomega.Equal("claude"))
+	containerB := containersB[0].(map[string]interface{})
+	envB := containerB["env"].([]interface{})
+	
+	foundAgentNameB := false
+	for _, e := range envB {
+		envVar := e.(map[string]interface{})
+		if envVar["name"] == "AGENT_NAME" {
+			g.Expect(envVar["value"]).To(gomega.Equal("claude"))
+			foundAgentNameB = true
+			break
+		}
+	}
+	g.Expect(foundAgentNameB).To(gomega.BeTrue())
 
 	// Validate Status of RepoWatches
 	fetchedA := &reviewv1alpha1.RepoWatch{}
