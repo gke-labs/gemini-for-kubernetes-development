@@ -154,6 +154,13 @@ spec:
                 required:
                 - maxActiveSandboxes
                 type: object
+              overseer:
+                properties:
+                  enabled:
+                    type: boolean
+                  image:
+                    type: string
+                type: object
               pollIntervalSeconds:
                 default: 300
                 minimum: 30
@@ -302,6 +309,8 @@ spec:
                     type: object
                   type: array
                 type: object
+              overseerStatus:
+                type: string
               pendingDevBranches:
                 items:
                   type: string

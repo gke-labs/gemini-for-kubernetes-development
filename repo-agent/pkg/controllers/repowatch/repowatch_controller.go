@@ -51,6 +51,7 @@ import (
 	sandboxtaskv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	pkg_github "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/overseer"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/prompts"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 )
@@ -254,8 +255,11 @@ type Reconciler struct {
 //+kubebuilder:rbac:groups=custom.agents.x-k8s.io,resources=reviewsandboxes,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=custom.agents.x-k8s.io,resources=issuesandboxes,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=custom.agents.x-k8s.io,resources=sandboxtasks,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=agents.x-k8s.io,resources=sandboxes,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
 //+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
+//+kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create;update;patch
 
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
@@ -333,6 +337,12 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		log.Error(err, "unable to reconcile dev sandboxes")
 		reconcileErr = errors.Join(reconcileErr, err)
 		// Continue to next reconciliation
+	}
+
+	log.Info("reconciling overseer")
+	if err := r.reconcileOverseer(ctx, repoWatch); err != nil {
+		log.Error(err, "unable to reconcile overseer")
+		reconcileErr = errors.Join(reconcileErr, err)
 	}
 
 	return ctrl.Result{RequeueAfter: time.Second * time.Duration(repoWatch.Spec.PollIntervalSeconds)}, reconcileErr
@@ -1936,4 +1946,18 @@ func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client
 	}
 
 	return found, latestFeedbackTime, nil
+}
+
+func (r *Reconciler) reconcileOverseer(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch) error {
+	log := log.FromContext(ctx)
+
+	log.Info("reconciling overseer", "enabled", repoWatch.Spec.Overseer != nil && repoWatch.Spec.Overseer.Enabled)
+	if err := overseer.Reconcile(ctx, r.Client, repoWatch); err != nil {
+		return err
+	}
+
+	if repoWatch.Spec.Overseer != nil && repoWatch.Spec.Overseer.Enabled {
+		return r.Status().Update(ctx, repoWatch)
+	}
+	return nil
 }

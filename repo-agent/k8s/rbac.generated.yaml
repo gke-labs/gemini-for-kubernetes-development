@@ -7,17 +7,42 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - namespaces
+  - secrets
+  verbs:
+  - create
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
   - pods
   verbs:
   - get
   - list
   - watch
 - apiGroups:
-  - ""
+  - agents.x-k8s.io
   resources:
-  - secrets
+  - sandboxes
   verbs:
   - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  verbs:
+  - create
+  - delete
   - get
   - list
   - patch
