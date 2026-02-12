@@ -19,7 +19,7 @@ type AddressFeedbackModel struct {
 	OldPullRequestReviews []github.PullRequestReview
 	User                  *github.User
 	PromptFile            string
-	Model                 string
+	Models                []string
 }
 
 func (m *AddressFeedbackModel) Name() string {

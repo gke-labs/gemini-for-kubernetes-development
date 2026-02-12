@@ -14,7 +14,7 @@ type IterateModel struct {
 	User        *github.User
 	AgentPrompt string
 	PromptFile  string
-	Model       string
+	Models      []string
 }
 
 func (m *IterateModel) Name() string {

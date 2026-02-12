@@ -145,7 +145,23 @@ function runGemini {
         export GIT_COMMITTER_EMAIL="$GITHUB_BOT_EMAIL"
     fi
 
-    gemini --yolo --model {{ .Model }} < ${PROMPT_FILE}
+    MODELS=( {{ range .Models }}"{{ . }}" {{ end }} )
+    SUCCESS=false
+    for MODEL in "${MODELS[@]}"; do
+        echo "Trying model: $MODEL"
+        if gemini --yolo --model "$MODEL" < ${PROMPT_FILE}; then
+            echo "Gemini execution successful with model: $MODEL"
+            SUCCESS=true
+            break
+        else
+            echo "Gemini execution failed with model: $MODEL. Retrying with next model..."
+        fi
+    done
+
+    if [ "$SUCCESS" = false ]; then
+        echo "All models failed."
+        exit 1
+    fi
     set -x
     popd > /dev/null
 }

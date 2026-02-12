@@ -15,7 +15,7 @@ type FixIssueModel struct {
 	IssueComments []github.IssueComment
 	User          *github.User
 	PromptFile    string
-	Model         string
+	Models        []string
 }
 
 func (m *FixIssueModel) Name() string {

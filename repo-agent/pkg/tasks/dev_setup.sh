@@ -111,7 +111,23 @@ function runGemini {
     if [ -s "${PROMPT_FILE}" ]; then
         echo "Running runGemini..."
         echo "running gemini in yolo mode"
-        (cd "/workspaces/${REPO_NAME}" && export GEMINI_API_KEY="${GEMINI_API_KEY}" && gemini --yolo --model {{ .Model }} < ${PROMPT_FILE})
+        MODELS=( {{ range .Models }}"{{ . }}" {{ end }} )
+        SUCCESS=false
+        for MODEL in "${MODELS[@]}"; do
+            echo "Trying model: $MODEL"
+            if (cd "/workspaces/${REPO_NAME}" && export GEMINI_API_KEY="${GEMINI_API_KEY}" && gemini --yolo --model "$MODEL" < ${PROMPT_FILE}); then
+                 echo "Gemini execution successful with model: $MODEL"
+                 SUCCESS=true
+                 break
+            else
+                 echo "Gemini execution failed with model: $MODEL. Retrying with next model..."
+            fi
+        done
+        
+        if [ "$SUCCESS" = false ]; then
+            echo "All models failed."
+            exit 1
+        fi
     else
         echo "No prompt provided, skipping gemini execution."
     fi

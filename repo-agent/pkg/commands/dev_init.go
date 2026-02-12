@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
@@ -155,7 +156,7 @@ func (c *DevInitCommand) Run(ctx context.Context) error {
 		SourceBranch: c.SourceBranch,
 		AgentPrompt:  c.AgentPrompt,
 		PromptFile:   promptPath,
-		Model:        c.Model,
+		Models:       strings.Split(c.Model, ","),
 	}
 
 	apikey, err := GetGeminiAPIKey(c.sandboxID)

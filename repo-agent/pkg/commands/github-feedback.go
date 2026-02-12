@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
@@ -266,7 +267,7 @@ func (c *GithubFeedbackCommand) Run(ctx context.Context) error {
 		OldPullRequestReviews: oldPrReviews,
 		PromptFile:            promptPath,
 		User:                  c.user,
-		Model:                 c.Model,
+		Models:                strings.Split(c.Model, ","),
 	}
 
 	apikey, err := GetGeminiAPIKey(c.sandboxID)
