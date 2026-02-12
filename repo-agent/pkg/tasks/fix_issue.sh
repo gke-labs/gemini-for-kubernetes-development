@@ -145,7 +145,28 @@ function runGemini {
         export GIT_COMMITTER_EMAIL="$GITHUB_BOT_EMAIL"
     fi
 
-    gemini --yolo --model {{ .Model }} < ${PROMPT_FILE}
+    set +e
+    gemini --yolo --model {{ .Model }} < ${PROMPT_FILE} 2> gemini.err
+    local exit_code=$?
+    set -e
+
+    if [ $exit_code -ne 0 ]; then
+        echo "gemini command failed with exit code $exit_code"
+        if grep -q "API Error: You have exhausted your daily quota on this model" gemini.err; then
+             # Check if we are already using flash
+             if [ "{{ .Model }}" != "gemini-3-flash-preview" ]; then
+                echo "Quota exhausted on {{ .Model }}, retrying with gemini-3-flash-preview"
+                gemini --yolo --model gemini-3-flash-preview < ${PROMPT_FILE}
+             else
+                echo "Quota exhausted on gemini-3-flash-preview. Cannot retry."
+                cat gemini.err >&2
+                exit $exit_code
+             fi
+        else
+            cat gemini.err >&2
+            exit $exit_code
+        fi
+    fi
     set -x
     popd > /dev/null
 }
