@@ -1,3 +1,5 @@
+// Package sandbox manages the lifecycle of the agent's execution environment.
+// It handles setting up the git repository, configuring the agent, and running the LLM workflow.
 package sandbox
 
 import (
@@ -16,6 +18,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tokens"
 )
 
+// Config holds the configuration for running an agent in a sandbox.
 type Config struct {
 	AgentName        string
 	AgentPrompt      string
@@ -41,6 +44,8 @@ func (c *Config) taskPath(name string, args ...interface{}) string {
 	return filepath.Join(c.TaskDir, file)
 }
 
+// PrepareGitBranch sets up the git environment for the agent.
+// It configures the user, remote, and checks out the target branch.
 func PrepareGitBranch(cfg Config) (string, error) {
 	githubToken := tokens.GetGitHubToken()
 
@@ -55,6 +60,7 @@ func PrepareGitBranch(cfg Config) (string, error) {
 		klog.Infof("could not remove origin, probably because it does not exist: %v", err)
 	}
 
+	// Configure the origin remote to point to the user's fork if push is enabled.
 	if cfg.PushEnabled && cfg.GithubUserOrigin != "" {
 		if githubToken == "" {
 			return oldCommitID, fmt.Errorf("GITHUB_TOKEN not found in environment variables (tried MANUAL_PAT, OAUTH_PAT, and GITHUB_TOKEN)")
@@ -65,6 +71,7 @@ func PrepareGitBranch(cfg Config) (string, error) {
 		}
 	}
 
+	// Configure git user identity for commits.
 	if cfg.GithubUserEmail != "" {
 		if err := gitcli.SetGlobalUserEmail(cfg.GithubUserEmail); err != nil {
 			return oldCommitID, fmt.Errorf("failed to set git user email: %w", err)
@@ -77,6 +84,7 @@ func PrepareGitBranch(cfg Config) (string, error) {
 		}
 	}
 
+	// Checkout or create the working branch.
 	if cfg.BranchName != "" {
 		if err := gitcli.CheckoutOrCreateBranch(cfg.BranchName); err != nil {
 			return oldCommitID, err
@@ -86,6 +94,8 @@ func PrepareGitBranch(cfg Config) (string, error) {
 	return oldCommitID, nil
 }
 
+// RunAgent executes the agent workflow.
+// It initializes the LLM provider, runs the agent with the prompt, and handles the output.
 func RunAgent(ctx context.Context, cfg Config) error {
 	log := klog.FromContext(ctx)
 	log.Info("Starting agent", "agentName", cfg.AgentName)
@@ -100,17 +110,19 @@ func RunAgent(ctx context.Context, cfg Config) error {
 		return err
 	}
 
+	// Setup provider-specific environment (e.g., copying .gemini folder).
 	if err := provider.Setup(); err != nil {
 		return err
 	}
 
-	// Run gemini
+	// Update status to indicate the agent is running.
 	_ = cfg.AgentOutput.SetAgentState(ctx, "running agent", "")
 
 	if err := os.WriteFile(cfg.taskPath("agent-prompt.txt"), []byte(cfg.AgentPrompt), 0644); err != nil {
 		return fmt.Errorf("failed to write agent-prompt.txt: %w", err)
 	}
 
+	// Execute the LLM agent.
 	output, err := provider.Run(cfg.AgentPrompt)
 	if err != nil {
 		var quotaErr *llm.QuotaError
@@ -126,11 +138,12 @@ func RunAgent(ctx context.Context, cfg Config) error {
 		return fmt.Errorf("failed to write agent-output.txt: %w", err)
 	}
 
+	// Report the agent's output as a draft response.
 	if err := cfg.AgentOutput.SetAgentDraft(ctx, string(output)); err != nil {
 		return fmt.Errorf("failed to set agent draft: %w", err)
 	}
 	log.Info("Agent run completed successfully")
-	// Cleanup
+	// Cleanup resources (e.g., remove temporary files).
 	if err := provider.Cleanup(); err != nil {
 		return err
 	}
@@ -138,6 +151,8 @@ func RunAgent(ctx context.Context, cfg Config) error {
 	return nil
 }
 
+// ProcessGitChanges handles the post-agent execution git operations.
+// It commits changes made by the agent and pushes them if enabled.
 func ProcessGitChanges(ctx context.Context, cfg Config, oldCommitID string, commitMessage string) error {
 	log := klog.FromContext(ctx)
 	// Commit and push
@@ -152,6 +167,7 @@ func ProcessGitChanges(ctx context.Context, cfg Config, oldCommitID string, comm
 		return fmt.Errorf("failed to get new commit id: %w", err)
 	}
 
+	// Only push if there are new commits.
 	if newCommitID != oldCommitID {
 		log.Info("New changes being committed")
 		if cfg.PushEnabled {
