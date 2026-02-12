@@ -20,15 +20,44 @@ function DevCard({
   const getFlairColor = (text) => {
     if (!text) return '#cd9945ff';
     const lower = text.toLowerCase();
-    if (lower === 'ready') return 'green';
+    if (lower.includes('ready') || lower.includes('completed') || lower.includes('submitted')) return 'green';
+    if (lower.includes('running')) return 'orange';
     if (lower.includes('provisioning')) return '#2196F3';
-    if (lower.includes('error')) return '#9e2a2aff';
+    if (lower.includes('error') || lower.includes('failed')) return '#9e2a2aff';
     return '#cd9945ff';
   };
 
+  const getTaskStatus = (task) => {
+    if (task.taskState === 'Completed') {
+         if (task.result === 'submitted') return 'Submitted';
+         return 'Ready';
+    }
+    if (task.taskState === 'Running') return 'Running';
+    if (task.taskState === 'Failed') return 'Failed';
+    return task.taskState || 'Pending';
+  };
+
   useEffect(() => {
+    if (tasks.length > 0) {
+        // Sort tasks by creationTimestamp descending
+        const sortedTasks = [...tasks].sort((a, b) => {
+            return new Date(b.creationTimestamp) - new Date(a.creationTimestamp);
+        });
+
+        let targetTask = sortedTasks[0];
+        const running = sortedTasks.find(t => t.taskState === 'Running');
+
+        if (running) targetTask = running;
+
+        if (targetTask) {
+             const status = getTaskStatus(targetTask);
+             const name = targetTask.type.toUpperCase();
+             setFlairText(`${name}: ${status}`);
+             return;
+        }
+    }
     setFlairText(sandbox.agentState || '');
-  }, [sandbox.agentState]);
+  }, [sandbox.agentState, tasks]);
 
   const fetchTasks = useCallback(() => {
     if (!repoName || !sandbox.name) return;
