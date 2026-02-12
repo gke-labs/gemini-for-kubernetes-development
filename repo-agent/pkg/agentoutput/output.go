@@ -34,7 +34,9 @@ const (
 	// AgentDraftAnnotation is the key for the annotation where the agent writes its draft response.
 	// The UI watches this annotation to provide real-time streaming feedback to the user.
 	AgentDraftAnnotation = "agentDraft"
-	// AgentDraftTypeAnnotation specifies the type/format of the draft content (e.g., markdown, code).
+	// AgentDraftTypeAnnotation specifies the type/format of the draft content.
+	// Values: "submittable" | "informational".
+	// If submittable, the agentDraft is shown in the UI with a submit button (posting to issue).
 	AgentDraftTypeAnnotation = "agentDraftType"
 )
 
