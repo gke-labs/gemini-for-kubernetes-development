@@ -167,13 +167,38 @@ func (g *Gemini) ExpandPrompt(prompt string) (string, error) {
 func (g *Gemini) Run(agentPrompt string) ([]byte, error) {
 	klog.Info("running gemini")
 
-	stdout, stderr, err := g.Executor.Run("gemini", "-y", "-p", agentPrompt)
+	args := []string{"-y", "-p", agentPrompt}
+	if g.Model != "" {
+		args = append(args, "--model", g.Model)
+	}
+
+	stdout, stderr, err := g.Executor.Run("gemini", args...)
 	if err != nil {
 		klog.Infof("gemini command failed: %v. Stderr: %s", err, string(stderr))
 		if strings.Contains(string(stderr), "[API Error: You have exhausted your daily quota on this model.]") {
-			return nil, &QuotaError{Err: err}
+			// Check if we can retry
+			currentModel := g.Model
+			if currentModel == "" {
+				currentModel = "gemini-3-pro-preview" // Default assumption
+			}
+
+			if currentModel != "gemini-3-flash-preview" {
+				klog.Infof("Quota exhausted on %s, retrying with gemini-3-flash-preview", currentModel)
+				retryArgs := []string{"-y", "-p", agentPrompt, "--model", "gemini-3-flash-preview"}
+				stdout, stderr, err = g.Executor.Run("gemini", retryArgs...)
+				if err != nil {
+					klog.Infof("gemini retry command failed: %v. Stderr: %s", err, string(stderr))
+					if strings.Contains(string(stderr), "[API Error: You have exhausted your daily quota on this model.]") {
+						return nil, &QuotaError{Err: err}
+					}
+					return nil, err
+				}
+			} else {
+				return nil, &QuotaError{Err: err}
+			}
+		} else {
+			return nil, err
 		}
-		return nil, err
 	}
 
 	output := stdout

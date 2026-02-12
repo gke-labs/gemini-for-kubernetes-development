@@ -105,9 +105,13 @@ type MockCommandExecutor struct {
 	Output  []byte
 	Stderr  []byte
 	Err     error
+	RunFunc func(command string, args ...string) ([]byte, []byte, error)
 }
 
 func (e *MockCommandExecutor) Run(command string, args ...string) ([]byte, []byte, error) {
+	if e.RunFunc != nil {
+		return e.RunFunc(command, args...)
+	}
 	e.Command = command
 	e.Args = args
 	return e.Output, e.Stderr, e.Err
@@ -224,7 +228,66 @@ func TestGemini_Run(t *testing.T) {
 			t.Errorf("Expected error 'post-processing failed', but got '%v'", err)
 		}
 	})
+
+	t.Run("quota error retry success", func(t *testing.T) {
+		callCount := 0
+		mockExecutor := &MockCommandExecutor{
+			RunFunc: func(command string, args ...string) ([]byte, []byte, error) {
+				callCount++
+				if callCount == 1 {
+					return nil, []byte("[API Error: You have exhausted your daily quota on this model.]"), errors.New("command failed due to quota")
+				}
+				// Verify retry args
+				foundModel := false
+				for i, arg := range args {
+					if arg == "--model" && i+1 < len(args) && args[i+1] == "gemini-3-flash-preview" {
+						foundModel = true
+					}
+				}
+				if !foundModel {
+					t.Errorf("Expected retry with --model gemini-3-flash-preview, got args: %v", args)
+				}
+				return []byte("success after retry"), nil, nil
+			},
+		}
+
+		g := &Gemini{Executor: mockExecutor}
+		output, err := g.Run("test prompt")
+		if err != nil {
+			t.Fatalf("Gemini.Run() failed: %v", err)
+		}
+		if string(output) != "success after retry" {
+			t.Errorf("Expected 'success after retry', got '%s'", string(output))
+		}
+		if callCount != 2 {
+			t.Errorf("Expected 2 calls, got %d", callCount)
+		}
+	})
+
+	t.Run("quota error retry failure", func(t *testing.T) {
+		callCount := 0
+		mockExecutor := &MockCommandExecutor{
+			RunFunc: func(command string, args ...string) ([]byte, []byte, error) {
+				callCount++
+				return nil, []byte("[API Error: You have exhausted your daily quota on this model.]"), errors.New("command failed due to quota")
+			},
+		}
+
+		g := &Gemini{Executor: mockExecutor}
+		_, err := g.Run("test prompt")
+		if err == nil {
+			t.Fatal("Gemini.Run() should have failed, but it didn't")
+		}
+		var quotaErr *QuotaError
+		if !errors.As(err, &quotaErr) {
+			t.Errorf("Expected QuotaError, but got %T: %v", err, err)
+		}
+		if callCount != 2 {
+			t.Errorf("Expected 2 calls (initial + retry), got %d", callCount)
+		}
+	})
 }
+
 
 func TestGeminiCleanup(t *testing.T) {
 	// Create a temporary directory for the test

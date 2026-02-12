@@ -34,6 +34,7 @@ type ProviderConfig struct {
 	RepoDir              string
 	TokensDir            string
 	OutputStartIndicator string
+	Model                string
 }
 
 // Provider defines the interface for interacting with an LLM.
