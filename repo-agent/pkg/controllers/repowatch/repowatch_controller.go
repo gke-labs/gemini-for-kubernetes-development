@@ -1148,15 +1148,6 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 		}
 	}
 
-	repoSandboxImage := r.RepoSandboxImage
-	if repoSandboxImage == "" {
-		repoSandboxImage = "ko://repo-agent/images/repo-sandbox"
-	}
-	configDirImage := r.ConfigDirImage
-	if configDirImage == "" {
-		configDirImage = "ko://repo-agent/configdir/cmd/configdir-cli"
-	}
-
 	log.Info("Generated Sandbox for PR", "pr", *pr, "llm.provider", repoWatch.Spec.Review.LLM.Provider)
 
 	sandbox := &unstructured.Unstructured{
@@ -1194,7 +1185,7 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 						"initContainers": []interface{}{
 							map[string]interface{}{
 								"name":  "gemini-configs",
-								"image": configDirImage,
+								"image": r.ConfigDirImage,
 								"args":  []interface{}{"--directory", "/workspaces", "--namespace", repoWatch.Namespace, "--name", repoWatch.Spec.Review.LLM.ConfigdirRef, "--ignore-not-found-error"},
 								"volumeMounts": []interface{}{
 									map[string]interface{}{
@@ -1205,7 +1196,7 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 							},
 							map[string]interface{}{
 								"name":    "inject-agent",
-								"image":   repoSandboxImage,
+								"image":   r.RepoSandboxImage,
 								"command": []interface{}{"/repo-agent/repo-sandbox", "inject", "--path", "/opt/repo-agent"},
 								"volumeMounts": []interface{}{
 									map[string]interface{}{
