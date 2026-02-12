@@ -29,6 +29,7 @@ type GithubFeedbackCommand struct {
 	WorkspaceDir    string
 	TaskDir         string
 	Model           string
+	MainActor       string
 
 	// loaded objects
 	issue         *github.Issue
@@ -75,6 +76,7 @@ func BuildGithubFeedbackCommand() *cobra.Command {
 	cmd.Flags().StringVar(&c.GithubUserName, "github-user-name", os.Getenv("GITHUB_USER_NAME"), "Github user name")
 	cmd.Flags().StringVar(&c.Model, "model", os.Getenv("MODEL"), "Model to use")
 	cmd.Flags().BoolVar(&c.InPod, "in-pod", false, "Whether running inside the pod")
+	cmd.Flags().StringVar(&c.MainActor, "main-actor", os.Getenv("MAIN_ACTOR"), "Main actor login (ignore others)")
 
 	return cmd
 }
@@ -239,6 +241,9 @@ func (c *GithubFeedbackCommand) Run(ctx context.Context) error {
 
 	var newIssueComments, oldIssueComments []github.IssueComment
 	for _, comment := range c.issueComments {
+		if c.MainActor != "" && comment.UserLogin() != c.MainActor {
+			continue
+		}
 		if comment.CreatedAt().Before(lastCommitTime) {
 			oldIssueComments = append(oldIssueComments, comment)
 		} else {
@@ -248,6 +253,9 @@ func (c *GithubFeedbackCommand) Run(ctx context.Context) error {
 
 	var newPrReviews, oldPrReviews []github.PullRequestReview
 	for _, review := range c.prReviews {
+		if c.MainActor != "" && review.UserLogin() != c.MainActor {
+			continue
+		}
 		if review.SubmittedAt().Before(lastCommitTime) {
 			oldPrReviews = append(oldPrReviews, review)
 		} else {

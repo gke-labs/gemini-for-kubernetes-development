@@ -1793,7 +1793,7 @@ func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *revi
 	}
 
 	// Check for new feedback
-	hasNew, latestFeedbackTime, err := r.hasNewFeedback(ctx, ghClient, owner, repo, pr, issue, latestCommitTime, latestCommitAuthorLogin)
+	hasNew, latestFeedbackTime, err := r.hasNewFeedback(ctx, ghClient, owner, repo, pr, issue, latestCommitTime, latestCommitAuthorLogin, issue.User.GetLogin())
 	if err != nil {
 		log.Error(err, "checking for new feedback", "pr", pr.Number)
 		return nil
@@ -1811,6 +1811,7 @@ func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *revi
 			"PULL_REQUEST_ID": fmt.Sprintf("%d", *pr.Number),
 			"ISSUE_URL":       *issue.HTMLURL,
 			"AGENT_PROMPT":    repoWatch.Spec.Issue.LLM.Prompt,
+			"MAIN_ACTOR":      issue.User.GetLogin(),
 		}
 		// Add LLM params
 		if repoWatch.Spec.Issue.LLM.Provider != "" {
@@ -1874,7 +1875,7 @@ func (r *Reconciler) getLinkedPRFromSandbox(ctx context.Context, ghClient *githu
 	return nil, nil
 }
 
-func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client, owner, repo string, pr *github.PullRequest, issue *github.Issue, since time.Time, latestCommitAuthorLogin string) (bool, time.Time, error) {
+func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client, owner, repo string, pr *github.PullRequest, issue *github.Issue, since time.Time, latestCommitAuthorLogin string, mainActor string) (bool, time.Time, error) {
 	var latestFeedbackTime time.Time
 	found := false
 
@@ -1888,6 +1889,9 @@ func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client
 	for _, c := range comments {
 		if c.CreatedAt != nil && c.CreatedAt.After(since) {
 			if c.User.GetLogin() == latestCommitAuthorLogin {
+				continue
+			}
+			if mainActor != "" && c.User.GetLogin() != mainActor {
 				continue
 			}
 			found = true
@@ -1905,6 +1909,9 @@ func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client
 	for _, rev := range reviews {
 		if rev.SubmittedAt != nil && rev.SubmittedAt.After(since) {
 			if rev.User.GetLogin() == latestCommitAuthorLogin {
+				continue
+			}
+			if mainActor != "" && rev.User.GetLogin() != mainActor {
 				continue
 			}
 			found = true
@@ -1926,6 +1933,9 @@ func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client
 			// We use the latest commit author (likely the bot/agent) to filter out
 			// comments made by the agent itself on the issue.
 			if c.User.GetLogin() == latestCommitAuthorLogin {
+				continue
+			}
+			if mainActor != "" && c.User.GetLogin() != mainActor {
 				continue
 			}
 			found = true
