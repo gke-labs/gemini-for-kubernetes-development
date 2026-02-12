@@ -1,3 +1,5 @@
+// Package github provides a wrapper around the Google go-github library.
+// It includes helper functions for parsing URLs, authenticating, and interacting with GitHub APIs.
 package github
 
 import (
@@ -13,6 +15,12 @@ import (
 	githubv39 "github.com/google/go-github/v39/github"
 )
 
+// GetGithubToken retrieves the GitHub token from environment variables or the gh CLI.
+// The precedence order is:
+// 1. MANUAL_PAT (Manually provided Personal Access Token)
+// 2. GITHUB_TOKEN (Standard GitHub Actions or environment token)
+// 3. OAUTH_PAT (Token from OAuth flow)
+// 4. gh auth token (Fallback to gh CLI credential helper)
 func GetGithubToken(ctx context.Context) (string, error) {
 	token := os.Getenv("MANUAL_PAT")
 	if token == "" {
@@ -35,6 +43,7 @@ func GetGithubToken(ctx context.Context) (string, error) {
 	return token, nil
 }
 
+// NewClient creates a new GitHub client using the token retrieved by GetGithubToken.
 func NewClient(ctx context.Context) (*Client, error) {
 	token, err := GetGithubToken(ctx)
 	if err != nil {
@@ -45,10 +54,12 @@ func NewClient(ctx context.Context) (*Client, error) {
 	}, nil
 }
 
+// Client is a wrapper around the github.Client.
 type Client struct {
 	*githubv39.Client
 }
 
+// parseIssueURL extracts owner, repo, and issue number from a GitHub issue URL.
 func parseIssueURL(url string) (owner string, repo string, number int, err error) {
 	u := strings.TrimPrefix(url, "https://")
 	tokens := strings.Split(u, "/")
@@ -65,6 +76,7 @@ func parseIssueURL(url string) (owner string, repo string, number int, err error
 	return "", "", 0, fmt.Errorf("issue format %q not recognized", url)
 }
 
+// parseHTMLUrl extracts owner and repo from a GitHub HTML URL.
 func parseHTMLUrl(url string) (owner string, repo string, err error) {
 	u := strings.TrimPrefix(url, "https://")
 	u = strings.TrimSuffix(u, ".git")
@@ -75,6 +87,7 @@ func parseHTMLUrl(url string) (owner string, repo string, err error) {
 	return "", "", fmt.Errorf("url format %q not recognized", url)
 }
 
+// GetIssue retrieves an issue and optionally its comments.
 func (c *Client) GetIssue(ctx context.Context, url string, includeComments bool) (*Issue, error) {
 	owner, repo, number, err := parseIssueURL(url)
 	if err != nil {
@@ -97,6 +110,7 @@ func (c *Client) GetIssue(ctx context.Context, url string, includeComments bool)
 	}, nil
 }
 
+// GetIssueComments retrieves all comments for an issue specified by URL.
 func (c *Client) GetIssueComments(ctx context.Context, url string) ([]IssueComment, error) {
 	owner, repo, number, err := parseIssueURL(url)
 	if err != nil {
@@ -105,6 +119,7 @@ func (c *Client) GetIssueComments(ctx context.Context, url string) ([]IssueComme
 	return c.GetIssueCommentsByNumber(ctx, owner, repo, number)
 }
 
+// GetIssueCommentsByNumber retrieves all comments for an issue specified by number.
 func (c *Client) GetIssueCommentsByNumber(ctx context.Context, owner, repo string, number int) ([]IssueComment, error) {
 	comments, _, err := c.Client.Issues.ListComments(ctx, owner, repo, number, nil)
 	if err != nil {
@@ -119,6 +134,7 @@ func (c *Client) GetIssueCommentsByNumber(ctx context.Context, owner, repo strin
 	return issueComments, nil
 }
 
+// GetPullRequest retrieves a pull request by number.
 func (c *Client) GetPullRequest(ctx context.Context, owner, repo string, number int) (*PullRequest, error) {
 	pr, _, err := c.Client.PullRequests.Get(ctx, owner, repo, number)
 	if err != nil {
@@ -129,6 +145,7 @@ func (c *Client) GetPullRequest(ctx context.Context, owner, repo string, number 
 	}, nil
 }
 
+// GetPullRequestCommits retrieves commits of a pull request.
 func (c *Client) GetPullRequestCommits(ctx context.Context, owner, repo string, number int) ([]RepositoryCommit, error) {
 	commits, _, err := c.Client.PullRequests.ListCommits(ctx, owner, repo, number, nil)
 	if err != nil {
@@ -143,6 +160,7 @@ func (c *Client) GetPullRequestCommits(ctx context.Context, owner, repo string, 
 	return pullRequestCommits, nil
 }
 
+// GetPullRequestComments retrieves comments on a pull request.
 func (c *Client) GetPullRequestComments(ctx context.Context, owner, repo string, number int) ([]PullRequestComment, error) {
 	comments, _, err := c.Client.PullRequests.ListComments(ctx, owner, repo, number, nil)
 	if err != nil {
@@ -157,6 +175,7 @@ func (c *Client) GetPullRequestComments(ctx context.Context, owner, repo string,
 	return pullRequestComments, nil
 }
 
+// GetPullRequestReviews retrieves reviews on a pull request.
 func (c *Client) GetPullRequestReviews(ctx context.Context, owner, repo string, number int) ([]PullRequestReview, error) {
 	reviews, _, err := c.Client.PullRequests.ListReviews(ctx, owner, repo, number, nil)
 	if err != nil {
@@ -171,6 +190,7 @@ func (c *Client) GetPullRequestReviews(ctx context.Context, owner, repo string, 
 	return pullRequestReviews, nil
 }
 
+// GetRepositoryFromIssueURL retrieves a repository based on an issue URL.
 func (c *Client) GetRepositoryFromIssueURL(ctx context.Context, url string) (*Repository, error) {
 
 	owner, repo, _, err := parseIssueURL(url)
@@ -186,6 +206,7 @@ func (c *Client) GetRepositoryFromIssueURL(ctx context.Context, url string) (*Re
 	}, nil
 }
 
+// GetRepositoryFromHTMLUrl retrieves a repository based on its HTML URL.
 func (c *Client) GetRepositoryFromHTMLUrl(ctx context.Context, url string) (*Repository, error) {
 	owner, repo, err := parseHTMLUrl(url)
 	if err != nil {
@@ -200,6 +221,8 @@ func (c *Client) GetRepositoryFromHTMLUrl(ctx context.Context, url string) (*Rep
 	}, nil
 }
 
+// MapPRCommentsToReview maps pull request comments to their corresponding reviews.
+// This is useful for associating inline comments with the review that contains them.
 func MapPRCommentsToReview(comments []PullRequestComment, reviews []PullRequestReview) {
 	commentsByReviewID := make(map[int64][]PullRequestComment)
 	for _, comment := range comments {

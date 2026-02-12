@@ -180,8 +180,9 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 	}
 
 	// Case 1: Creating a new Idea (Exploration) - Just metadata, no sandbox
-	if req.IdeaID != "" && req.Approach == "" {
-		// Fetch RepoWatch
+	// This part handles the creation of "Idea" metadata within the RepoWatch CRD.
+	// It does NOT provision a Pod or Sandbox CR yet; it serves as a placeholder for future work.
+	if req.IdeaID != "" && req.Approach == "" { // Fetch RepoWatch
 		rw, err := s.K8sManager.GetRepoWatch(c.Request.Context(), namespace, repo)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get RepoWatch", "details": err.Error()})
@@ -309,6 +310,8 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 	}
 
 	// Sanitize branch name for K8s resource name to match controller logic
+	// We replace special characters and hash the result to ensure the K8s resource name
+	// is valid (RFC 1123) and unique, avoiding length limits.
 	safeBranch := strings.ReplaceAll(branchName, "/", "-")
 	safeBranch = strings.ReplaceAll(safeBranch, "_", "-")
 	safeBranch = strings.ReplaceAll(safeBranch, ".", "-")

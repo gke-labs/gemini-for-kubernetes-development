@@ -21,6 +21,9 @@ const (
 )
 
 // BootstrapNamespace bootstraps the target namespace with necessary secrets and service accounts.
+// Multi-Tenancy Model: Each user gets a dedicated Kubernetes namespace.
+// Upon login (which triggers this bootstrap), we copy essential system-level secrets (GitHub tokens, LLM API keys)
+// from the 'repo-agent-system' namespace to the user's private namespace to enable isolated sandboxes.
 func BootstrapNamespace(ctx context.Context, clientset kubernetes.Interface, targetNS string) error {
 	log := klog.FromContext(ctx)
 	_, err := clientset.CoreV1().Namespaces().Get(ctx, targetNS, v1.GetOptions{})

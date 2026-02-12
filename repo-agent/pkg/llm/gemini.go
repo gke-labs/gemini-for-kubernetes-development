@@ -47,6 +47,9 @@ func (g *Gemini) QuotaCheck() bool {
 
 func (g *Gemini) Setup() error {
 	// if .gemini directory exists in /workspaces copy it to repo directory
+	// We copy the .gemini folder from the workspace root (if it exists) to the repo directory
+	// to make sure the agent running in the repo context has access to the user's configuration.
+	// If a .gemini folder already exists in the repo, we back it up to .gemini.bak to restore it later.
 	wsGeminiConfigDir := filepath.Join(g.WorkspacesDir, ".gemini")
 	repoGeminiConfigDir := filepath.Join(g.RepoDir, ".gemini")
 	backupGeminiConfigDir := filepath.Join(g.WorkspacesDir, ".gemini.bak")
@@ -71,10 +74,10 @@ func (g *Gemini) Setup() error {
 	}
 
 	// Ensure root settings.json has previewFeatures
+	// We force previewFeatures to true to enable experimental capabilities required by the agent.
 	if err := ensureSettings(repoGeminiConfigDir); err != nil {
 		klog.Infof("Warning: failed to ensure .gemini/settings.json: %v", err)
 	}
-
 	// Ensure home directory settings.json has previewFeatures
 	homeDir, err := os.UserHomeDir()
 	if err == nil {

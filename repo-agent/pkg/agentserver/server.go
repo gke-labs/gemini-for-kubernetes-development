@@ -1,3 +1,5 @@
+// Package agentserver provides a simple HTTP server that runs within the agent's environment.
+// It is primarily used to expose logs and health status to the Gemini for Kubernetes UI.
 package agentserver
 
 import (
@@ -12,24 +14,30 @@ import (
 )
 
 const (
-	ServerPort    = 13339
+	// ServerPort is the port where the agent server listens.
+	ServerPort = 13339
+	// LogsDirectory is the directory where the agent writes its logs.
 	LogsDirectory = "/workspaces/.agent/logs"
 )
 
+// AgentServer encapsulates the HTTP server for the agent.
 type AgentServer struct {
 	server *http.Server
 }
 
+// NewAgentServer creates a new instance of AgentServer with configured routes.
 func NewAgentServer() *AgentServer {
 	r := mux.NewRouter()
+	// Health check endpoint for readiness probes.
 	r.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("OK"))
 	})
 
+	// Endpoint to serve specific log files by task ID.
 	r.HandleFunc("/logs/{taskID}", serveLogFile)
 
-	// Add CORS middleware
+	// Add CORS middleware to allow requests from the UI (potentially running on a different origin).
 	corsObj := handlers.AllowedOrigins([]string{"*"})
 
 	srv := &http.Server{
@@ -42,6 +50,7 @@ func NewAgentServer() *AgentServer {
 	}
 }
 
+// Start initializes the log directory and starts the HTTP server in a background goroutine.
 func (s *AgentServer) Start() error {
 	// Ensure logs directory exists
 	if err := os.MkdirAll(LogsDirectory, 0755); err != nil {
@@ -57,10 +66,13 @@ func (s *AgentServer) Start() error {
 	return nil
 }
 
+// Stop gracefully shuts down the server.
 func (s *AgentServer) Stop() error {
 	return s.server.Close()
 }
 
+// serveLogFile handles requests to read log files.
+// It validates the taskID to prevent path traversal and serves the file if it exists.
 func serveLogFile(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	taskID := vars["taskID"]

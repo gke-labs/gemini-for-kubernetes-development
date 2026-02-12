@@ -73,6 +73,9 @@ func (s *Server) createRepoWatch(c *gin.Context) {
 				if tokenErr == nil {
 					client := clients.NewGitHubClient(c.Request.Context(), token)
 
+					// If no labels are provided, we attempt to fetch "suggested labels"
+					// from the GitHub repository itself (e.g. existing labels used in the repo)
+					// to bootstrap the configuration.
 					repoURL, _, _ := unstructured.NestedString(obj.Object, "spec", "repoURL")
 					if owner, repoName, urlErr := parseRepoURL(repoURL); urlErr == nil {
 						suggested, suggestErr := getSuggestedLabels(c.Request.Context(), client, owner, repoName)
