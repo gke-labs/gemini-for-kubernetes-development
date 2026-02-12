@@ -31,12 +31,13 @@ import (
 )
 
 const (
-        // AgentDraftAnnotation is the key for the annotation where the agent writes its draft response.
-        // The UI watches this annotation to provide real-time streaming feedback to the user.
-        AgentDraftAnnotation     = "agentDraft"
-        // AgentDraftTypeAnnotation specifies the type/format of the draft content (e.g., markdown, code).
-        AgentDraftTypeAnnotation = "agentDraftType"
+	// AgentDraftAnnotation is the key for the annotation where the agent writes its draft response.
+	// The UI watches this annotation to provide real-time streaming feedback to the user.
+	AgentDraftAnnotation = "agentDraft"
+	// AgentDraftTypeAnnotation specifies the type/format of the draft content (e.g., markdown, code).
+	AgentDraftTypeAnnotation = "agentDraftType"
 )
+
 // AgentOutputConfig holds configuration for the agent output client.
 type AgentOutput struct {
 	name          string
