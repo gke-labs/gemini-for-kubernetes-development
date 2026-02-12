@@ -76,7 +76,6 @@ rules:
   - custom.agents.x-k8s.io
   resources:
   - issuesandboxes
-  - reviewsandboxes
   - sandboxtasks
   verbs:
   - create

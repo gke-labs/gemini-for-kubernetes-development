@@ -12,15 +12,6 @@ metadata:
   name: review-sandbox
 rules:
 - apiGroups:
-  - "custom.agents.x-k8s.io"
-  resources:
-  - reviewsandboxes/status
-  - reviewsandboxes
-  verbs:
-  - get
-  - update
-  - patch
-- apiGroups:
   - "agents.x-k8s.io"
   resources:
   - sandboxes
