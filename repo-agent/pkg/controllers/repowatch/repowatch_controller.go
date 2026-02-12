@@ -245,14 +245,17 @@ func NewGithubClient(ctx context.Context, k8sClient client.Client, repoWatch *re
 // Reconciler reconciles a RepoWatch object
 type Reconciler struct {
 	client.Client
-	Scheme          *runtime.Scheme
-	NewGithubClient githubClientFactory
+	Scheme           *runtime.Scheme
+	NewGithubClient  githubClientFactory
+	RepoSandboxImage string
+	ConfigDirImage   string
 }
 
 //+kubebuilder:rbac:groups=review.gemini.google.com,resources=repowatches,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=review.gemini.google.com,resources=repowatches/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=review.gemini.google.com,resources=repowatches/finalizers,verbs=update
 //+kubebuilder:rbac:groups=custom.agents.x-k8s.io,resources=reviewsandboxes,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=agents.x-k8s.io,resources=sandboxes,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=custom.agents.x-k8s.io,resources=issuesandboxes,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=custom.agents.x-k8s.io,resources=sandboxtasks,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=agents.x-k8s.io,resources=sandboxes,verbs=get;list;watch;create;update;patch;delete
@@ -260,6 +263,7 @@ type Reconciler struct {
 //+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 //+kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create;update;patch
+//+kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
@@ -374,14 +378,18 @@ func (r *Reconciler) reconcileReviews(ctx context.Context, repoWatch *reviewv1al
 	// Get existing sandboxes
 	sandboxList := &unstructured.UnstructuredList{}
 	sandboxGVK := schema.GroupVersionKind{
-		Group:   "custom.agents.x-k8s.io",
+		Group:   "agents.x-k8s.io",
 		Version: "v1alpha1",
-		Kind:    "ReviewSandbox",
+		Kind:    "Sandbox",
 	}
 	sandboxList.SetGroupVersionKind(sandboxGVK)
 
-	if err := r.List(ctx, sandboxList, client.InNamespace(repoWatch.Namespace)); err != nil {
-		log.Error(err, "unable to list ReviewSandboxes")
+	labelSelector := client.MatchingLabels{
+		"review.gemini.google.com/repowatch": repoWatch.Name,
+	}
+
+	if err := r.List(ctx, sandboxList, client.InNamespace(repoWatch.Namespace), labelSelector); err != nil {
+		log.Error(err, "unable to list Sandboxes")
 		return err
 	}
 
@@ -1141,11 +1149,21 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 		}
 	}
 
-	log.Info("Generated sandbox for PR", "pr", *pr, "llm.provider", repoWatch.Spec.Review.LLM.Provider)
+	repoSandboxImage := r.RepoSandboxImage
+	if repoSandboxImage == "" {
+		repoSandboxImage = "ko://repo-agent/images/repo-sandbox"
+	}
+	configDirImage := r.ConfigDirImage
+	if configDirImage == "" {
+		configDirImage = "ko://repo-agent/configdir/cmd/configdir-cli"
+	}
+
+	log.Info("Generated Sandbox for PR", "pr", *pr, "llm.provider", repoWatch.Spec.Review.LLM.Provider)
+
 	sandbox := &unstructured.Unstructured{
 		Object: map[string]interface{}{
-			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
-			"kind":       "ReviewSandbox",
+			"apiVersion": "agents.x-k8s.io/v1alpha1",
+			"kind":       "Sandbox",
 			"metadata": map[string]interface{}{
 				"name":      sandboxName,
 				"namespace": repoWatch.Namespace,
@@ -1153,48 +1171,171 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 					"review.gemini.google.com/repowatch": repoWatch.Name,
 				},
 				"annotations": map[string]interface{}{
-					"agentState":  "provisioning",
+					"agentState": "provisioning",
 					"reviewState": "",
-				},
-			},
-			"spec": map[string]interface{}{
-				"llmBackend": map[string]interface{}{
-					"name": repoWatch.Spec.Review.LLM.Provider,
-				},
-				"llm": map[string]interface{}{
-					"configdirRef":     repoWatch.Spec.Review.LLM.ConfigdirRef,
-					"prompt":           "",
-					"apiKeySecretName": repoWatch.Spec.Review.LLM.APIKeySecretRef,
-				},
-				"source": map[string]interface{}{
-					"cloneURL": fmt.Sprintf("%s#refs/heads/%s", *pr.Head.Repo.CloneURL, *pr.Head.Ref),
-					"diffURL":  *pr.DiffURL,
-					"htmlURL":  *pr.HTMLURL,
+					// Source info injected as annotations for UI
 					"pr":       fmt.Sprintf("%d", *pr.Number),
 					"title":    *pr.Title,
 					"repo":     repoWatch.GetName(),
+					"htmlURL":  *pr.HTMLURL,
+					"diffURL":  *pr.DiffURL,
+					"cloneURL": fmt.Sprintf("%s#refs/heads/%s", *pr.Head.Repo.CloneURL, *pr.Head.Ref),
 				},
-				"gateway": map[string]interface{}{
-					"httpEnabled": true,
+			},
+			"spec": map[string]interface{}{
+				"replicas": int64(1),
+				"podTemplate": map[string]interface{}{
+					"metadata": map[string]interface{}{
+						"labels": map[string]interface{}{
+							"sandbox": fmt.Sprintf("devc-%s", sandboxName),
+						},
+					},
+					"spec": map[string]interface{}{
+						"serviceAccountName": "review-sandbox",
+						"initContainers": []interface{}{
+							map[string]interface{}{
+								"name":  "gemini-configs",
+								"image": configDirImage,
+								"args":  []interface{}{"--directory", "/workspaces", "--namespace", repoWatch.Namespace, "--name", repoWatch.Spec.Review.LLM.ConfigdirRef, "--ignore-not-found-error"},
+								"volumeMounts": []interface{}{
+									map[string]interface{}{
+										"name":      "workspaces-pvc",
+										"mountPath": "/workspaces",
+									},
+								},
+							},
+							map[string]interface{}{
+								"name":    "inject-agent",
+								"image":   repoSandboxImage,
+								"command": []interface{}{"/repo-agent/repo-sandbox", "inject", "--path", "/opt/repo-agent"},
+								"volumeMounts": []interface{}{
+									map[string]interface{}{
+										"name":      "agent-bin",
+										"mountPath": "/opt/repo-agent",
+									},
+								},
+							},
+						},
+						"containers": []interface{}{
+							map[string]interface{}{
+								"name": "sandbox",
+								"image": func() string {
+									if repoWatch.Spec.Review.Image != "" {
+										return repoWatch.Spec.Review.Image
+									}
+									return repoSandboxImage
+								}(),
+								"command": func() []interface{} {
+									if repoWatch.Spec.Review.Image != "" {
+										return []interface{}{"/opt/repo-agent/repo-sandbox", "review-daemon"}
+									}
+									return []interface{}{}
+								}(),
+								"resources": map[string]interface{}{
+									"limits": map[string]interface{}{
+										"ephemeral-storage": "6Gi",
+									},
+									"requests": map[string]interface{}{
+										"ephemeral-storage": "6Gi",
+									},
+								},
+								"env": []interface{}{
+									map[string]interface{}{"name": "NAMESPACE", "value": repoWatch.Namespace},
+									map[string]interface{}{"name": "NAME", "value": sandboxName},
+									map[string]interface{}{"name": "REPO", "value": repoWatch.GetName()},
+									map[string]interface{}{"name": "PRID", "value": fmt.Sprintf("%d", *pr.Number)},
+									map[string]interface{}{"name": "MAX_REVIEW_FILES", "value": strconv.Itoa(repoWatch.Spec.Review.MaxReviewFiles)},
+									map[string]interface{}{"name": "IGNORE_FILES", "value": strings.Join(repoWatch.Spec.Review.IgnoreFiles, ",")},
+									map[string]interface{}{"name": "AGENT_NAME", "value": repoWatch.Spec.Review.LLM.Provider},
+									map[string]interface{}{"name": "GIT_CLONE_URL", "value": fmt.Sprintf("%s#refs/heads/%s", *pr.Head.Repo.CloneURL, *pr.Head.Ref)},
+									map[string]interface{}{"name": "ENVBUILDER_GIT_URL", "value": fmt.Sprintf("%s#refs/heads/%s", *pr.Head.Repo.CloneURL, *pr.Head.Ref)},
+									map[string]interface{}{"name": "GIT_DIFF_URL", "value": *pr.DiffURL},
+									map[string]interface{}{"name": "GIT_HTML_URL", "value": *pr.HTMLURL},
+									map[string]interface{}{
+										"name": "GITHUB_TOKEN",
+										"valueFrom": map[string]interface{}{
+											"secretKeyRef": map[string]interface{}{
+												"name": githubSecretName,
+												"key":  "pat",
+												"optional": true,
+											},
+										},
+									},
+									map[string]interface{}{
+										"name": "MANUAL_PAT",
+										"valueFrom": map[string]interface{}{
+											"secretKeyRef": map[string]interface{}{
+												"name": githubSecretName,
+												"key":  "manual_pat",
+												"optional": true,
+											},
+										},
+									},
+									map[string]interface{}{
+										"name": "OAUTH_PAT",
+										"valueFrom": map[string]interface{}{
+											"secretKeyRef": map[string]interface{}{
+												"name": githubSecretName,
+												"key":  "oauth_pat",
+												"optional": true,
+											},
+										},
+									},
+									map[string]interface{}{"name": "ENVBUILDER_CACHE_REPO", "value": "registry.repo-agent-system.svc.cluster.local:5000/envbuilder-cache"},
+									map[string]interface{}{"name": "ENVBUILDER_DEVCONTAINER_DIR", "value": "/"},
+									map[string]interface{}{"name": "ENVBUILDER_GIT_CLONE_SINGLE_BRANCH", "value": "true"},
+									map[string]interface{}{"name": "ENVBUILDER_INIT_SCRIPT", "value": "/opt/repo-agent/repo-sandbox review-daemon"},
+									map[string]interface{}{"name": "ENVBUILDER_IGNORE_PATHS", "value": "/var/run,/product_uuid,/product_name,/tokens,/repo-agent/"},
+								},
+								"volumeMounts": []interface{}{
+									map[string]interface{}{"name": "workspaces-pvc", "mountPath": "/workspaces"},
+									map[string]interface{}{"name": "tokens-secret", "mountPath": "/tokens", "readOnly": true},
+									map[string]interface{}{"name": "devcontainer-config", "mountPath": "/devcontainer.json", "subPath": "devcontainer.json"},
+									map[string]interface{}{"name": "agent-bin", "mountPath": "/opt/repo-agent"},
+								},
+								"ports": []interface{}{
+									map[string]interface{}{"containerPort": 13337},
+									map[string]interface{}{"containerPort": 13339},
+								},
+							},
+						},
+						"volumes": []interface{}{
+							map[string]interface{}{"name": "agent-bin", "emptyDir": map[string]interface{}{}},
+							map[string]interface{}{
+								"name": "devcontainer-config",
+								"configMap": map[string]interface{}{
+									"name": func() string {
+										if repoWatch.Spec.Review.DevcontainerConfigRef != "" {
+											return repoWatch.Spec.Review.DevcontainerConfigRef
+										}
+										return "devcontainer-json"
+									}(),
+								},
+							},
+							map[string]interface{}{
+								"name": "tokens-secret",
+								"secret": map[string]interface{}{
+									"secretName": repoWatch.Spec.Review.LLM.APIKeySecretRef,
+								},
+							},
+						},
+					},
 				},
-				"maxReviewFiles":   int64(repoWatch.Spec.Review.MaxReviewFiles),
-				"ignoreFiles":      strings.Join(repoWatch.Spec.Review.IgnoreFiles, ","),
-				"replicas":         int64(1),
-				"githubSecretName": githubSecretName,
+				"volumeClaimTemplates": []interface{}{
+					map[string]interface{}{
+						"metadata": map[string]interface{}{"name": "workspaces-pvc"},
+						"spec": map[string]interface{}{
+							"accessModes": []interface{}{"ReadWriteOnce"},
+							"resources": map[string]interface{}{
+								"requests": map[string]interface{}{
+									"storage": "5Gi",
+								},
+							},
+						},
+					},
+				},
 			},
 		},
-	}
-
-	if repoWatch.Spec.Review.DevcontainerConfigRef != "" {
-		if err := unstructured.SetNestedField(sandbox.Object, repoWatch.Spec.Review.DevcontainerConfigRef, "spec", "devcontainerConfigRef"); err != nil {
-			return err
-		}
-	}
-
-	if repoWatch.Spec.Review.Image != "" {
-		if err := unstructured.SetNestedField(sandbox.Object, repoWatch.Spec.Review.Image, "spec", "image"); err != nil {
-			return err
-		}
 	}
 
 	if err := controllerutil.SetControllerReference(repoWatch, sandbox, r.Scheme); err != nil {
@@ -1203,6 +1344,48 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 
 	if err := r.Create(ctx, sandbox); err != nil {
 		return err
+	}
+
+	serviceName := fmt.Sprintf("devc-%s-lb", sandboxName)
+	service := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "v1",
+			"kind":       "Service",
+			"metadata": map[string]interface{}{
+				"name":      serviceName,
+				"namespace": repoWatch.Namespace,
+			},
+			"spec": map[string]interface{}{
+				"selector": map[string]interface{}{
+					"sandbox": fmt.Sprintf("devc-%s", sandboxName),
+				},
+				"ports": []interface{}{
+					map[string]interface{}{
+						"name":        "code-server",
+						"protocol":    "TCP",
+						"port":        13338,
+						"targetPort":  13337,
+						"appProtocol": "kubernetes.io/ws",
+					},
+					map[string]interface{}{
+						"name":       "agent-server",
+						"protocol":   "TCP",
+						"port":       13339,
+						"targetPort": 13339,
+					},
+				},
+			},
+		},
+	}
+
+	if err := controllerutil.SetControllerReference(repoWatch, service, r.Scheme); err != nil {
+		log.Error(err, "failed to set owner ref on service")
+	}
+
+	if err := r.Create(ctx, service); err != nil {
+		if !apierrors.IsAlreadyExists(err) {
+			return err
+		}
 	}
 
 	if err := r.createSandboxTask(ctx, repoWatch, sandbox, sandboxName, "", "review", map[string]string{

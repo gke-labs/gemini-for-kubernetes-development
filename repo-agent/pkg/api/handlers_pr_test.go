@@ -24,17 +24,17 @@ import (
 func TestCreatePRTask(t *testing.T) {
 	scheme := runtime.NewScheme()
 	gvrSandboxTask := schema.GroupVersionResource{Group: "custom.agents.x-k8s.io", Version: "v1alpha1", Resource: "sandboxtasks"}
-	gvrReviewSandbox := schema.GroupVersionResource{Group: "custom.agents.x-k8s.io", Version: "v1alpha1", Resource: "reviewsandboxes"}
+	gvrSandbox := schema.GroupVersionResource{Group: "agents.x-k8s.io", Version: "v1alpha1", Resource: "sandboxes"}
 	gvrRepoWatch := schema.GroupVersionResource{Group: "review.gemini.google.com", Version: "v1alpha1", Resource: "repowatches"}
 
 	dynamicClient := fake.NewSimpleDynamicClientWithCustomListKinds(scheme, map[schema.GroupVersionResource]string{
-		gvrSandboxTask:   "SandboxTaskList",
-		gvrReviewSandbox: "ReviewSandboxList",
-		gvrRepoWatch:     "RepoWatchList",
+		gvrSandboxTask: "SandboxTaskList",
+		gvrSandbox:     "SandboxList",
+		gvrRepoWatch:   "RepoWatchList",
 	})
 	k8sClient := kubernetesfake.NewSimpleClientset()
 
-	dynamicClient.PrependReactor("patch", "reviewsandboxes", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
+	dynamicClient.PrependReactor("patch", "sandboxes", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
 		patchAction := action.(k8stesting.PatchAction)
 		if patchAction.GetPatchType() == types.ApplyPatchType {
 			return true, nil, nil
@@ -88,18 +88,18 @@ func TestCreatePRTask(t *testing.T) {
 			t.Fatalf("Failed to create repowatch: %v", err)
 		}
 
-		// Create the ReviewSandbox first
+		// Create the Sandbox first
 		sandbox := &unstructured.Unstructured{
 			Object: map[string]interface{}{
-				"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
-				"kind":       "ReviewSandbox",
+				"apiVersion": "agents.x-k8s.io/v1alpha1",
+				"kind":       "Sandbox",
 				"metadata": map[string]interface{}{
 					"name":      "test-repo-pr-123",
 					"namespace": "default",
 				},
 			},
 		}
-		_, err = dynamicClient.Resource(gvrReviewSandbox).Namespace("default").Create(context.Background(), sandbox, v1.CreateOptions{})
+		_, err = dynamicClient.Resource(gvrSandbox).Namespace("default").Create(context.Background(), sandbox, v1.CreateOptions{})
 		if err != nil {
 			t.Fatalf("Failed to create review sandbox: %v", err)
 		}

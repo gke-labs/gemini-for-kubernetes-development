@@ -31,6 +31,11 @@ var (
 		Version:  "v1alpha1",
 		Resource: "configdirs",
 	}
+	SandboxGVR = schema.GroupVersionResource{
+		Group:    "agents.x-k8s.io",
+		Version:  "v1alpha1",
+		Resource: "sandboxes",
+	}
 )
 
 type Manager struct {
@@ -151,14 +156,9 @@ func (m *Manager) ScaledownSandbox(ctx context.Context, namespace, repo, prID st
 	log := klog.FromContext(ctx)
 	sandboxName := fmt.Sprintf("%s-pr-%s", repo, prID)
 
-	gvr := schema.GroupVersionResource{
-		Group:    "custom.agents.x-k8s.io",
-		Version:  "v1alpha1",
-		Resource: "reviewsandboxes",
-	}
 	log.Info("Scaling down sandbox", "name", sandboxName)
 
-	_, err := m.Client.Resource(gvr).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
+	_, err := m.Client.Resource(SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
 	if err != nil {
 		if errors.IsNotFound(err) {
 			return nil
@@ -168,8 +168,8 @@ func (m *Manager) ScaledownSandbox(ctx context.Context, namespace, repo, prID st
 
 	sandbox := &unstructured.Unstructured{
 		Object: map[string]interface{}{
-			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
-			"kind":       "ReviewSandbox",
+			"apiVersion": "agents.x-k8s.io/v1alpha1",
+			"kind":       "Sandbox",
 			"metadata": map[string]interface{}{
 				"name":      sandboxName,
 				"namespace": namespace,
@@ -180,7 +180,7 @@ func (m *Manager) ScaledownSandbox(ctx context.Context, namespace, repo, prID st
 		},
 	}
 
-	_, err = m.Client.Resource(gvr).Namespace(namespace).Apply(ctx, sandboxName,
+	_, err = m.Client.Resource(SandboxGVR).Namespace(namespace).Apply(ctx, sandboxName,
 		sandbox, v1.ApplyOptions{FieldManager: "review-ui", Force: true})
 	if err != nil {
 		return fmt.Errorf("failed to scaledown sandbox: %w", err)
@@ -189,13 +189,7 @@ func (m *Manager) ScaledownSandbox(ctx context.Context, namespace, repo, prID st
 }
 
 func (m *Manager) UpdateReviewSandboxUserDraft(ctx context.Context, namespace, sandboxName, userDraft string) error {
-	gvr := schema.GroupVersionResource{
-		Group:    "custom.agents.x-k8s.io",
-		Version:  "v1alpha1",
-		Resource: "reviewsandboxes",
-	}
-
-	sandbox, err := m.Client.Resource(gvr).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
+	sandbox, err := m.Client.Resource(SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to get reviewsandbox %s: %w", sandboxName, err)
 	}
@@ -207,7 +201,7 @@ func (m *Manager) UpdateReviewSandboxUserDraft(ctx context.Context, namespace, s
 	annotations["userDraft"] = userDraft
 	sandbox.SetAnnotations(annotations)
 
-	_, err = m.Client.Resource(gvr).Namespace(namespace).Update(context.TODO(), sandbox, v1.UpdateOptions{})
+	_, err = m.Client.Resource(SandboxGVR).Namespace(namespace).Update(context.TODO(), sandbox, v1.UpdateOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to update reviewsandbox annotation: %w", err)
 	}
@@ -216,13 +210,7 @@ func (m *Manager) UpdateReviewSandboxUserDraft(ctx context.Context, namespace, s
 }
 
 func (m *Manager) UpdateReviewSandboxAnnotation(ctx context.Context, namespace, sandboxName, key, value string) error {
-	gvr := schema.GroupVersionResource{
-		Group:    "custom.agents.x-k8s.io",
-		Version:  "v1alpha1",
-		Resource: "reviewsandboxes",
-	}
-
-	sandbox, err := m.Client.Resource(gvr).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
+	sandbox, err := m.Client.Resource(SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to get reviewsandbox %s: %w", sandboxName, err)
 	}
@@ -234,7 +222,7 @@ func (m *Manager) UpdateReviewSandboxAnnotation(ctx context.Context, namespace, 
 	annotations[key] = value
 	sandbox.SetAnnotations(annotations)
 
-	_, err = m.Client.Resource(gvr).Namespace(namespace).Update(ctx, sandbox, v1.UpdateOptions{})
+	_, err = m.Client.Resource(SandboxGVR).Namespace(namespace).Update(ctx, sandbox, v1.UpdateOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to update reviewsandbox annotation: %w", err)
 	}
@@ -408,14 +396,9 @@ func (m *Manager) ScaleupSandbox(ctx context.Context, namespace, repo, prID, ann
 	log := klog.FromContext(ctx)
 	sandboxName := fmt.Sprintf("%s-pr-%s", repo, prID)
 
-	gvr := schema.GroupVersionResource{
-		Group:    "custom.agents.x-k8s.io",
-		Version:  "v1alpha1",
-		Resource: "reviewsandboxes",
-	}
 	log.Info("Scaling up sandbox", "name", sandboxName)
 
-	_, err := m.Client.Resource(gvr).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
+	_, err := m.Client.Resource(SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
 	if err != nil {
 		if errors.IsNotFound(err) {
 			return nil
@@ -436,8 +419,8 @@ func (m *Manager) ScaleupSandbox(ctx context.Context, namespace, repo, prID, ann
 
 	sandbox := &unstructured.Unstructured{
 		Object: map[string]interface{}{
-			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
-			"kind":       "ReviewSandbox",
+			"apiVersion": "agents.x-k8s.io/v1alpha1",
+			"kind":       "Sandbox",
 			"metadata":   metadata,
 			"spec": map[string]interface{}{
 				"replicas": int64(1),
@@ -445,7 +428,7 @@ func (m *Manager) ScaleupSandbox(ctx context.Context, namespace, repo, prID, ann
 		},
 	}
 
-	_, err = m.Client.Resource(gvr).Namespace(namespace).Apply(ctx, sandboxName,
+	_, err = m.Client.Resource(SandboxGVR).Namespace(namespace).Apply(ctx, sandboxName,
 		sandbox, v1.ApplyOptions{FieldManager: "review-ui", Force: true})
 	if err != nil {
 		return fmt.Errorf("failed to scale up sandbox: %w", err)
@@ -611,6 +594,12 @@ func (m *Manager) CreateSandboxTask(ctx context.Context, namespace, sandboxName,
 			Version:  "v1alpha1",
 			Resource: "issuesandboxes",
 		}
+	case "Sandbox":
+		ownerGVR = schema.GroupVersionResource{
+			Group:    "agents.x-k8s.io",
+			Version:  "v1alpha1",
+			Resource: "sandboxes",
+		}
 	default:
 		return fmt.Errorf("unknown sandbox kind: %s", sandboxKind)
 	}
@@ -637,8 +626,8 @@ func (m *Manager) CreateSandboxTask(ctx context.Context, namespace, sandboxName,
 			},
 			OwnerReferences: []v1.OwnerReference{
 				*v1.NewControllerRef(sandbox, schema.GroupVersionKind{
-					Group:   "custom.agents.x-k8s.io",
-					Version: "v1alpha1",
+					Group:   ownerGVR.Group,
+					Version: ownerGVR.Version,
 					Kind:    sandboxKind,
 				}),
 			},

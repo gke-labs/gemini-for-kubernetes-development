@@ -96,16 +96,16 @@ func (s *Server) getPRTasks(c *gin.Context) {
 func (s *Server) listPRsFromK8s(ctx context.Context, namespace, repo string) ([]models.PR, error) {
 	log := klog.FromContext(ctx)
 	gvr := schema.GroupVersionResource{
-		Group:    "custom.agents.x-k8s.io",
+		Group:    "agents.x-k8s.io",
 		Version:  "v1alpha1",
-		Resource: "reviewsandboxes",
+		Resource: "sandboxes",
 	}
 	list, err := s.K8sManager.Client.Resource(gvr).Namespace(namespace).List(context.Background(),
 		v1.ListOptions{
 			LabelSelector: fmt.Sprintf("review.gemini.google.com/repowatch=%s", repo),
 		})
 	if err != nil {
-		return nil, fmt.Errorf("failed to list ReviewSandbox CRs: %w", err)
+		return nil, fmt.Errorf("failed to list Sandbox CRs: %w", err)
 	}
 
 	var prs []models.PR
@@ -117,29 +117,23 @@ func (s *Server) listPRsFromK8s(ctx context.Context, namespace, repo string) ([]
 		// Get replicas and if it scaled down skip
 		replicas, found, err := unstructured.NestedInt64(item.Object, "spec", "replicas")
 		if err != nil || !found {
-			log.Info("Replicas (.spec.replicas) not found in ReviewSandbox", "name", item.GetName())
+			log.Info("Replicas (.spec.replicas) not found in Sandbox", "name", item.GetName())
 			continue
 		}
 
-		prID, found, err := unstructured.NestedString(item.Object, "spec", "source", "pr")
-		if err != nil || !found {
-			log.Info("PR ID (.spec.source.pr) not found in ReviewSandbox", "name", item.GetName())
+		annotations := item.GetAnnotations()
+		if annotations == nil {
 			continue
 		}
 
-		title, found, err := unstructured.NestedString(item.Object, "spec", "source", "title")
-		if err != nil || !found {
-			log.Info("Title (.spec.source.title) not found in ReviewSandbox", "name", item.GetName())
-			continue
-		}
+		prID := annotations["pr"]
+		title := annotations["title"]
+		htmlurl := annotations["htmlURL"]
+		diffurl := annotations["diffURL"]
 
-		htmlurl, found, err := unstructured.NestedString(item.Object, "spec", "source", "htmlURL")
-		if err != nil || !found {
-			log.Info("Title (.spec.source.htmlURL) not found in ReviewSandbox", "name", item.GetName())
-		}
-		diffurl, found, err := unstructured.NestedString(item.Object, "spec", "source", "diffURL")
-		if err != nil || !found {
-			log.Info("diffURL (.spec.source.diffURL) not found in ReviewSandbox", "name", item.GetName())
+		if prID == "" {
+			log.Info("PR ID not found in Sandbox annotations", "name", item.GetName())
+			continue
 		}
 
 		// get draft from annotation[agentDraft]
@@ -148,26 +142,24 @@ func (s *Server) listPRsFromK8s(ctx context.Context, namespace, repo string) ([]
 		agentStateMessage := ""
 		reviewState := ""
 		var labels []string
-		annotations := item.GetAnnotations()
-		if annotations != nil {
-			if val, ok := annotations["userDraft"]; ok {
-				draft = val
-			} else if val, ok := annotations["agentDraft"]; ok {
-				draft = val
-			}
+		
+		if val, ok := annotations["userDraft"]; ok {
+			draft = val
+		} else if val, ok := annotations["agentDraft"]; ok {
+			draft = val
+		}
 
-			if val, ok := annotations["agentState"]; ok {
-				agentState = val
-			}
-			if val, ok := annotations["agentStateMessage"]; ok {
-				agentStateMessage = val
-			}
-			if val, ok := annotations["reviewState"]; ok {
-				reviewState = val
-			}
-			if val, ok := annotations["agentLabels"]; ok {
-				_ = json.Unmarshal([]byte(val), &labels)
-			}
+		if val, ok := annotations["agentState"]; ok {
+			agentState = val
+		}
+		if val, ok := annotations["agentStateMessage"]; ok {
+			agentStateMessage = val
+		}
+		if val, ok := annotations["reviewState"]; ok {
+			reviewState = val
+		}
+		if val, ok := annotations["agentLabels"]; ok {
+			_ = json.Unmarshal([]byte(val), &labels)
 		}
 
 		pr := models.PR{
@@ -249,16 +241,16 @@ func (s *Server) submitReview(c *gin.Context) {
 
 	sandboxName := fmt.Sprintf("%s-pr-%s", repo, prID)
 	gvr := schema.GroupVersionResource{
-		Group:    "custom.agents.x-k8s.io",
+		Group:    "agents.x-k8s.io",
 		Version:  "v1alpha1",
-		Resource: "reviewsandboxes",
+		Resource: "sandboxes",
 	}
 
-	// Get ReviewSandbox to check agentDraft
+	// Get Sandbox to check agentDraft
 	sandbox, err := s.K8sManager.Client.Resource(gvr).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
 	if err != nil {
-		log.Info("Failed to get reviewsandbox", "name", sandboxName, "err", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get reviewsandbox"})
+		log.Info("Failed to get sandbox", "name", sandboxName, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get sandbox"})
 		return
 	}
 
@@ -459,7 +451,7 @@ func (s *Server) createPRTask(c *gin.Context) {
 		params["EXPECTED_COMMENTS"] = strconv.Itoa(payload.ExpectedComments)
 	}
 
-	err = s.K8sManager.CreateSandboxTask(c.Request.Context(), namespace, sandboxName, "ReviewSandbox", "review", params)
+	err = s.K8sManager.CreateSandboxTask(c.Request.Context(), namespace, sandboxName, "Sandbox", "review", params)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create task", "details": err.Error()})
 		return

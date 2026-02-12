@@ -21,6 +21,14 @@ rules:
   - update
   - patch
 - apiGroups:
+  - "agents.x-k8s.io"
+  resources:
+  - sandboxes
+  verbs:
+  - get
+  - update
+  - patch
+- apiGroups:
   - "custom.agents.x-k8s.io"
   resources:
   - sandboxtasks

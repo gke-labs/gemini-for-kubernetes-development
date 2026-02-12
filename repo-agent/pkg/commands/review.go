@@ -30,9 +30,9 @@ import (
 
 var (
 	ReviewGVR = schema.GroupVersionResource{
-		Group:    "custom.agents.x-k8s.io",
+		Group:    "agents.x-k8s.io",
 		Version:  "v1alpha1",
-		Resource: "reviewsandboxes",
+		Resource: "sandboxes",
 	}
 )
 

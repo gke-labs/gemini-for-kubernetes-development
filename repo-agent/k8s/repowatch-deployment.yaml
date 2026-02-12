@@ -69,6 +69,10 @@ spec:
         args:
         - --concurrent-reconciles=5
         env:
+        - name: REPO_SANDBOX_IMAGE
+          value: ko://repo-agent/images/repo-sandbox
+        - name: CONFIGDIR_CLI_IMAGE
+          value: ko://repo-agent/configdir/cmd/configdir-cli
         - name: OVERSEER_IMAGE
           value: ko://repo-agent/images/overseer
         - name: GITHUB_CLIENT_ID
