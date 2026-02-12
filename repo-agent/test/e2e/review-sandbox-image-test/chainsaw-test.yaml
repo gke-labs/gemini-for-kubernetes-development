@@ -44,35 +44,37 @@ spec:
         timeout: 20m
         file: reviewsandbox-assert.yaml
     catch:
-    # 1. Describe the ReviewSandbox to see why it might be stuck (Status/Events)
+    # 1. Describe the Sandbox to see why it might be stuck (Status/Events)
     - describe:
-        apiVersion: custom.agents.x-k8s.io/v1alpha1
-        kind: ReviewSandbox
+        apiVersion: agents.x-k8s.io/v1alpha1
+        kind: Sandbox
         namespace: repo-agent-system
         selector: review.gemini.google.com/repowatch=rst-image
     # 2. Run a script to dynamically find the Pod and get its logs
     - script:
         content: |
-          # 1. Find the ReviewSandbox name using the common label
-          # We use jsonpath to extract just the name string (e.g., "rst-image-pr-209")
-          RS_NAME=$(kubectl get reviewsandbox -n repo-agent-system -l review.gemini.google.com/repowatch=rst-image -o jsonpath='{.items[0].metadata.name}')
+          # 1. Find the Sandbox name using the common label
+          RS_NAME=$(kubectl get sandbox -n repo-agent-system -l review.gemini.google.com/repowatch=rst-image -o jsonpath='{.items[0].metadata.name}')
           if [ -z "$RS_NAME" ]; then
-            echo "No ReviewSandbox found via label selector!"
+            echo "No Sandbox found via label selector!"
             exit 0
           fi
-          echo "Found ReviewSandbox: $RS_NAME"
-          # 2. Construct the Pod name based on your convention (devc-<name>)
-          POD_NAME="devc-$RS_NAME"
-          SANDBOX_NAME="devc-$RS_NAME"
-          echo "Looking for Pod: $POD_NAME"
-          # 3. Describe the Sandbox and pod first
-          echo "--- Describing Sandbox $SANDBOX_NAME ---"
-          kubectl describe sandbox -n repo-agent-system "$SANDBOX_NAME" || echo "Sandbox not found yet"
-          echo "--- Describing Pod $POD_NAME ---"
-          kubectl describe pod -n repo-agent-system "$POD_NAME" || echo "Pod not found yet"
-          # 4. Fetch the logs
-          echo "--- Logs for Pod $POD_NAME (container: review-sandbox) ---"
-          kubectl logs -n repo-agent-system "$POD_NAME" -c review-sandbox || echo "Could not fetch logs (pod might not be running)"
+          echo "Found Sandbox: $RS_NAME"
+          # 2. Find the Pod using the label selector
+          POD_LABEL="sandbox=devc-$RS_NAME"
+          echo "Looking for Pod with label: $POD_LABEL"
+          POD_NAME=$(kubectl get pod -n repo-agent-system -l "$POD_LABEL" -o jsonpath='{.items[0].metadata.name}')
+
+          if [ -z "$POD_NAME" ]; then
+             echo "Pod not found yet"
+          else
+             echo "Found Pod: $POD_NAME"
+             echo "--- Describing Pod $POD_NAME ---"
+             kubectl describe pod -n repo-agent-system "$POD_NAME"
+             # 4. Fetch the logs
+             echo "--- Logs for Pod $POD_NAME (container: sandbox) ---"
+             kubectl logs -n repo-agent-system "$POD_NAME" -c sandbox || echo "Could not fetch logs (pod might not be running)"
+          fi
   - name: check-sandboxtask
     try:
     - assert:
@@ -86,11 +88,14 @@ spec:
         selector: review.gemini.google.com/repowatch=rst-image
     - script:
         content: |
-          RS_NAME=$(kubectl get reviewsandbox -n repo-agent-system -l review.gemini.google.com/repowatch=rst-image -o jsonpath='{.items[0].metadata.name}')
+          RS_NAME=$(kubectl get sandbox -n repo-agent-system -l review.gemini.google.com/repowatch=rst-image -o jsonpath='{.items[0].metadata.name}')
           if [ -n "$RS_NAME" ]; then
-            POD_NAME="devc-$RS_NAME"
-            echo "--- Logs for Pod $POD_NAME (container: review-sandbox) ---"
-            kubectl logs -n repo-agent-system "$POD_NAME" -c review-sandbox || echo "Could not fetch logs"
+            POD_LABEL="sandbox=devc-$RS_NAME"
+            POD_NAME=$(kubectl get pod -n repo-agent-system -l "$POD_LABEL" -o jsonpath='{.items[0].metadata.name}')
+            if [ -n "$POD_NAME" ]; then
+              echo "--- Logs for Pod $POD_NAME (container: sandbox) ---"
+              kubectl logs -n repo-agent-system "$POD_NAME" -c sandbox || echo "Could not fetch logs"
+            fi
           fi
   #- name: delete-repowatch
   #  try:
