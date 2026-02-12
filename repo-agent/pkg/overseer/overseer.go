@@ -93,7 +93,7 @@ func newOverseerSandbox(repoWatch *reviewv1alpha1.RepoWatch, name string) *unstr
 						"valueFrom": map[string]interface{}{
 							"secretKeyRef": map[string]interface{}{
 								"name":     apiKeySecretName,
-								"key":      "key", // Assuming 'key' is the key in secret
+								"key":      "gemini",
 								"optional": true,
 							},
 						},
