@@ -63,19 +63,21 @@ func (s *Server) createRepoWatch(c *gin.Context) {
 			// Auto-populate labels if missing
 			labels, found, _ := unstructured.NestedStringSlice(obj.Object, "spec", "review", "labels")
 			if !found || len(labels) == 0 {
-				// Ensure githubSecretName is set for getGitHubToken to work
-				_, found, _ = unstructured.NestedString(obj.Object, "spec", "githubSecretName")
-				if !found {
-					_ = unstructured.SetNestedField(obj.Object, "github-pat", "spec", "githubSecretName")
-				}
-
-				token, tokenErr := s.K8sManager.GetGitHubToken(c.Request.Context(), obj)
-				if tokenErr == nil {
-					client := clients.NewGitHubClient(c.Request.Context(), token)
-
-					repoURL, _, _ := unstructured.NestedString(obj.Object, "spec", "repoURL")
-					if owner, repoName, urlErr := parseRepoURL(repoURL); urlErr == nil {
-						suggested, suggestErr := getSuggestedLabels(c.Request.Context(), client, owner, repoName)
+				                                // Ensure githubSecretName is set for getGitHubToken to work
+				                                _, found, _ = unstructured.NestedString(obj.Object, "spec", "githubSecretName")
+				                                if !found {
+				                                        _ = unstructured.SetNestedField(obj.Object, "github-pat", "spec", "githubSecretName")
+				                                }
+				
+				                                token, tokenErr := s.K8sManager.GetGitHubToken(c.Request.Context(), obj)
+				                                if tokenErr == nil {
+				                                        client := clients.NewGitHubClient(c.Request.Context(), token)
+				
+				                                        // If no labels are provided, we attempt to fetch "suggested labels"
+				                                        // from the GitHub repository itself (e.g. existing labels used in the repo)
+				                                        // to bootstrap the configuration.
+				                                        repoURL, _, _ := unstructured.NestedString(obj.Object, "spec", "repoURL")
+				                                        if owner, repoName, urlErr := parseRepoURL(repoURL); urlErr == nil {						suggested, suggestErr := getSuggestedLabels(c.Request.Context(), client, owner, repoName)
 						if suggestErr == nil && len(suggested) > 0 {
 							var suggestedInterface []interface{}
 							for _, s := range suggested {

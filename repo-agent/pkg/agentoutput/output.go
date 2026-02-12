@@ -31,10 +31,12 @@ import (
 )
 
 const (
-	AgentDraftAnnotation     = "agentDraft"
-	AgentDraftTypeAnnotation = "agentDraftType"
+        // AgentDraftAnnotation is the key for the annotation where the agent writes its draft response.
+        // The UI watches this annotation to provide real-time streaming feedback to the user.
+        AgentDraftAnnotation     = "agentDraft"
+        // AgentDraftTypeAnnotation specifies the type/format of the draft content (e.g., markdown, code).
+        AgentDraftTypeAnnotation = "agentDraftType"
 )
-
 // AgentOutputConfig holds configuration for the agent output client.
 type AgentOutput struct {
 	name          string
@@ -76,6 +78,8 @@ func New(gvr schema.GroupVersionResource, name, namespace string) (*AgentOutput,
 }
 
 // SetAgentState updates the agentState and agentStateMessage annotations.
+// These annotations are watched by the UI to display the current status of the agent (e.g., "Thinking", "Writing Code")
+// and any relevant status messages to the user.
 func (ao *AgentOutput) SetAgentState(ctx context.Context, state string, message string) error {
 	log := klog.FromContext(ctx)
 	obj, err := ao.dynamicClient.Resource(ao.gvr).Namespace(ao.namespace).Get(ctx, ao.name, metav1.GetOptions{})

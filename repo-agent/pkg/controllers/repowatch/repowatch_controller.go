@@ -71,6 +71,8 @@ var seededRand = rand.New(
 type githubClientFactory func(ctx context.Context, k8sClient client.Client, repoWatch *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error)
 
 // PersistingTokenSource wraps an oauth2.TokenSource and persists the token to a Kubernetes secret when it changes.
+// It ensures that refreshed OAuth tokens (and their new refresh tokens/expiry) are saved back to the K8s Secret,
+// preventing token loss if the pod restarts.
 type PersistingTokenSource struct {
 	Source     oauth2.TokenSource
 	K8sClient  client.Client
@@ -161,11 +163,16 @@ func NewGithubClient(ctx context.Context, k8sClient client.Client, repoWatch *re
 		"email": "",
 	}
 
-	var pat []byte
-	var ok bool
-	if pat, ok = secret.Data[ManualPATKey]; !ok || len(string(pat)) == 0 {
-		if pat, ok = secret.Data[OAuthPATKey]; !ok || len(string(pat)) == 0 {
-			if pat, ok = secret.Data["pat"]; !ok || len(string(pat)) == 0 {
+	        var pat []byte
+	        var ok bool
+	        // Token priority:
+	        // 1. Manual PAT (manual_pat) - User manually provided a PAT.
+	        // 2. OAuth PAT (oauth_pat) - Token obtained via OAuth flow.
+	        // 3. Legacy PAT (pat) - Backward compatibility.
+	        // If OAuth credentials are configured but no token exists, we return a specific error
+	        // to indicate we are "waiting for user login" via the UI.
+	        if pat, ok = secret.Data[ManualPATKey]; !ok || len(string(pat)) == 0 {
+	                if pat, ok = secret.Data[OAuthPATKey]; !ok || len(string(pat)) == 0 {			if pat, ok = secret.Data["pat"]; !ok || len(string(pat)) == 0 {
 				// If PAT is missing or empty check if we have OAuth credentials configured.
 				// If so, we might be waiting for the user to login.
 				if os.Getenv("GITHUB_CLIENT_ID") != "" && os.Getenv("GITHUB_CLIENT_SECRET") != "" {
@@ -600,12 +607,13 @@ func (r *Reconciler) reconcileReviewSandboxesInternal(ctx context.Context, repoW
 				Status:      "Active",
 				ScaledDown:  scaledDown,
 			})
-		} else {
-			// Sandbox does not exist, try to create it if within limits
-			prIsExplicit := isPRExplicit(*pr.Number, explicitPRs)
-			if prIsExplicit || (activeSandboxes < repoWatch.Spec.Review.MaxActiveSandboxes) &&
-				(repoWatch.Spec.Review.MaxSandboxes == 0 || totalSandboxes < repoWatch.Spec.Review.MaxSandboxes) {
-				log.Info("creating sandbox for PR", "pr", *pr.Number)
+		                } else {
+		                        // Sandbox does not exist, try to create it if within limits
+		                        prIsExplicit := isPRExplicit(*pr.Number, explicitPRs)
+		                        // Explicit PRs (defined in RepoWatch CRD) bypass MaxActiveSandboxes and MaxSandboxes limits.
+		                        // Auto-discovered PRs must respect these limits to prevent resource exhaustion.
+		                        if prIsExplicit || (activeSandboxes < repoWatch.Spec.Review.MaxActiveSandboxes) &&
+		                                (repoWatch.Spec.Review.MaxSandboxes == 0 || totalSandboxes < repoWatch.Spec.Review.MaxSandboxes) {				log.Info("creating sandbox for PR", "pr", *pr.Number)
 				if err := r.createReviewSandboxForPR(ctx, repoWatch, pr); err != nil {
 					log.Error(err, "unable to create sandbox for PR", "pr", *pr.Number)
 				} else {
