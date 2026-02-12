@@ -170,7 +170,7 @@ function DevCard({
                     repoName={repoName} 
                     parentId={sandbox.name}
                     parentType="dev"
-                    defaultCollapsed={index !== 0}
+                    defaultCollapsed={index !== tasks.length - 1}
                 />
             ))
         )}

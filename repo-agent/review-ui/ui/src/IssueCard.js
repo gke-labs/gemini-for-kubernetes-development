@@ -189,7 +189,7 @@ function IssueCard({
                         repoName={repoName} 
                         parentId={issue.id}
                         parentType="issues"
-                        defaultCollapsed={index !== 0}
+                        defaultCollapsed={index !== tasks.length - 1}
                     />
                 ))
             ) : (
