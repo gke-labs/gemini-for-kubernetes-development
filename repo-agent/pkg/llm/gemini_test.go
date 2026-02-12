@@ -105,9 +105,13 @@ type MockCommandExecutor struct {
 	Output  []byte
 	Stderr  []byte
 	Err     error
+	RunFunc func(command string, args ...string) ([]byte, []byte, error)
 }
 
 func (e *MockCommandExecutor) Run(command string, args ...string) ([]byte, []byte, error) {
+	if e.RunFunc != nil {
+		return e.RunFunc(command, args...)
+	}
 	e.Command = command
 	e.Args = args
 	return e.Output, e.Stderr, e.Err
@@ -198,6 +202,45 @@ func TestGemini_Run(t *testing.T) {
 		var quotaErr *QuotaError
 		if !errors.As(err, &quotaErr) {
 			t.Errorf("Expected QuotaError, but got %T: %v", err, err)
+		}
+	})
+
+	t.Run("retry success", func(t *testing.T) {
+		// Create a mock executor using RunFunc
+		var callCount int
+		mockExecutor := &MockCommandExecutor{
+			RunFunc: func(command string, args ...string) ([]byte, []byte, error) {
+				callCount++
+				if callCount == 1 {
+					// First call fails with quota error
+					return nil, []byte("[API Error: You have exhausted your daily quota on this model.]"), errors.New("quota exceeded")
+				}
+				// Second call succeeds
+				// Check args for fallback model
+				foundModel := false
+				for i, arg := range args {
+					if arg == "--model" && i+1 < len(args) && args[i+1] == "gemini-3-flash-preview" {
+						foundModel = true
+						break
+					}
+				}
+				if !foundModel {
+					t.Errorf("Expected fallback model 'gemini-3-flash-preview', but args were: %v", args)
+				}
+				return []byte("fallback success"), nil, nil
+			},
+		}
+
+		g := &Gemini{Executor: mockExecutor}
+		output, err := g.Run("test prompt")
+		if err != nil {
+			t.Fatalf("Gemini.Run() failed on retry: %v", err)
+		}
+		if string(output) != "fallback success" {
+			t.Errorf("Expected output 'fallback success', got %q", string(output))
+		}
+		if callCount != 2 {
+			t.Errorf("Expected 2 calls, got %d", callCount)
 		}
 	})
 

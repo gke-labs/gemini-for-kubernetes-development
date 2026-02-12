@@ -145,7 +145,18 @@ function runGemini {
         export GIT_COMMITTER_EMAIL="$GITHUB_BOT_EMAIL"
     fi
 
-    gemini --yolo --model {{ .Model }} < ${PROMPT_FILE}
+    if ! gemini --yolo --model {{ .Model }} < ${PROMPT_FILE} 2> gemini_stderr.txt; then
+        echo "Gemini failed with model {{ .Model }}. Stderr:"
+        cat gemini_stderr.txt
+        if grep -qE "quota|429" gemini_stderr.txt; then
+             echo "Quota exhausted. Retrying with gemini-3-flash-preview..."
+             gemini --yolo --model gemini-3-flash-preview < ${PROMPT_FILE}
+        else
+             exit 1
+        fi
+    else
+        cat gemini_stderr.txt
+    fi
     set -x
     popd > /dev/null
 }

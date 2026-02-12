@@ -32,7 +32,14 @@ function runGemini {
 {{ else }}
     echo "running gemini in yolo mode"
     export GEMINI_API_KEY="${GEMINI_API_KEY}"
-    gemini --yolo --model {{ .Model }} < ${PROMPT_FILE} > "$(dirname "${PROMPT_FILE}")/raw-agent-output.txt" 2>&1
+    local OUTPUT_FILE="$(dirname "${PROMPT_FILE}")/raw-agent-output.txt"
+    if ! gemini --yolo --model {{ .Model }} < ${PROMPT_FILE} > "$OUTPUT_FILE" 2>&1; then
+        echo "Gemini failed with model {{ .Model }}."
+        if grep -qE "quota|429" "$OUTPUT_FILE"; then
+             echo "Quota exhausted. Retrying with gemini-3-flash-preview..."
+             gemini --yolo --model gemini-3-flash-preview < ${PROMPT_FILE} > "$OUTPUT_FILE" 2>&1
+        fi
+    fi
 {{ end }}
     cat "$(dirname "${PROMPT_FILE}")/raw-agent-output.txt"
     # remove agent thoughts (extract prow command)
