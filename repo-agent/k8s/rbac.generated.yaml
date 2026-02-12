@@ -51,18 +51,6 @@ rules:
   - update
   - watch
 - apiGroups:
-  - overseer.kro.run
-  resources:
-  - overseers
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
   - review.gemini.google.com
   resources:
   - repowatches

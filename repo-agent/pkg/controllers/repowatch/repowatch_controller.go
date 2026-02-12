@@ -51,6 +51,7 @@ import (
 	sandboxtaskv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	pkg_github "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/overseer"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/prompts"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 )
@@ -246,7 +247,6 @@ type Reconciler struct {
 //+kubebuilder:rbac:groups=custom.agents.x-k8s.io,resources=reviewsandboxes,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=custom.agents.x-k8s.io,resources=issuesandboxes,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=custom.agents.x-k8s.io,resources=sandboxtasks,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=overseer.kro.run,resources=overseers,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
 //+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 //+kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
@@ -1927,59 +1927,13 @@ func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client
 func (r *Reconciler) reconcileOverseer(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch) error {
 	log := log.FromContext(ctx)
 
-	// Check if enabled
-	if repoWatch.Spec.Overseer == nil || !repoWatch.Spec.Overseer.Enabled {
-		return nil
-	}
-
-	overseerName := fmt.Sprintf("overseer-%s", repoWatch.Name)
-
-	overseer := &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"apiVersion": "overseer.kro.run/v1alpha1",
-			"kind":       "Overseer",
-			"metadata": map[string]interface{}{
-				"name":      overseerName,
-				"namespace": repoWatch.Namespace,
-				"labels": map[string]interface{}{
-					"repowatch": repoWatch.Name,
-				},
-			},
-			"spec": map[string]interface{}{
-				"repoUrl":          repoWatch.Spec.RepoURL,
-				"githubSecretName": repoWatch.Spec.GithubSecretName,
-				"image":            repoWatch.Spec.Overseer.Image,
-				// Assuming a default secret name for API key if not specified elsewhere.
-				"apiKeySecretName": "gemini-api-key",
-			},
-		},
-	}
-
-	if err := controllerutil.SetControllerReference(repoWatch, overseer, r.Scheme); err != nil {
+	log.Info("reconciling overseer", "enabled", repoWatch.Spec.Overseer != nil && repoWatch.Spec.Overseer.Enabled)
+	if err := overseer.Reconcile(ctx, r.Client, repoWatch); err != nil {
 		return err
 	}
 
-	// Create or Update
-	existing := &unstructured.Unstructured{}
-	existing.SetGroupVersionKind(overseer.GroupVersionKind())
-	err := r.Get(ctx, types.NamespacedName{Name: overseerName, Namespace: repoWatch.Namespace}, existing)
-
-	if apierrors.IsNotFound(err) {
-		log.Info("Creating Overseer", "name", overseerName)
-		if err := r.Create(ctx, overseer); err != nil {
-			return err
-		}
-		repoWatch.Status.OverseerStatus = "Created"
-	} else if err != nil {
-		return err
-	} else {
-		// Update specs if changed
-		existing.Object["spec"] = overseer.Object["spec"]
-		if err := r.Update(ctx, existing); err != nil {
-			return err
-		}
-		repoWatch.Status.OverseerStatus = "Active"
+	if repoWatch.Spec.Overseer != nil && repoWatch.Spec.Overseer.Enabled {
+		return r.Status().Update(ctx, repoWatch)
 	}
-
-	return r.Status().Update(ctx, repoWatch)
+	return nil
 }
