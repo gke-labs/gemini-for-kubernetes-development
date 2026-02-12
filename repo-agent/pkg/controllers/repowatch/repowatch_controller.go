@@ -1213,7 +1213,7 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 									if repoWatch.Spec.Review.Image != "" {
 										return repoWatch.Spec.Review.Image
 									}
-									return repoSandboxImage
+									return r.RepoSandboxImage
 								}(),
 								"command": func() []interface{} {
 									if repoWatch.Spec.Review.Image != "" {
