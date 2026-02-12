@@ -3,6 +3,7 @@ package overseer
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -53,10 +54,10 @@ func Reconcile(ctx context.Context, c client.Client, repoWatch *reviewv1alpha1.R
 
 func newOverseerSandbox(repoWatch *reviewv1alpha1.RepoWatch, name string) *unstructured.Unstructured {
 	// Construct the unstructured Sandbox
-	
+
 	image := repoWatch.Spec.Overseer.Image
 	if image == "" {
-		image = "ko://repo-agent/images/overseer"
+		image = os.Getenv("OVERSEER_IMAGE")
 	}
 
 	apiKeySecretName := "gemini-api-key"
@@ -81,8 +82,8 @@ func newOverseerSandbox(repoWatch *reviewv1alpha1.RepoWatch, name string) *unstr
 						"name": "GITHUB_TOKEN",
 						"valueFrom": map[string]interface{}{
 							"secretKeyRef": map[string]interface{}{
-								"name": githubSecretName,
-								"key":  "pat",
+								"name":     githubSecretName,
+								"key":      "pat",
 								"optional": true,
 							},
 						},
@@ -91,8 +92,8 @@ func newOverseerSandbox(repoWatch *reviewv1alpha1.RepoWatch, name string) *unstr
 						"name": "GEMINI_API_KEY",
 						"valueFrom": map[string]interface{}{
 							"secretKeyRef": map[string]interface{}{
-								"name": apiKeySecretName,
-								"key":  "key", // Assuming 'key' is the key in secret
+								"name":     apiKeySecretName,
+								"key":      "key", // Assuming 'key' is the key in secret
 								"optional": true,
 							},
 						},
@@ -139,4 +140,3 @@ func newOverseerSandbox(repoWatch *reviewv1alpha1.RepoWatch, name string) *unstr
 
 	return u
 }
-

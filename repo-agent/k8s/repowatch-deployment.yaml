@@ -69,6 +69,8 @@ spec:
         args:
         - --concurrent-reconciles=5
         env:
+        - name: OVERSEER_IMAGE
+          value: ko://repo-agent/images/overseer
         - name: GITHUB_CLIENT_ID
           valueFrom:
             secretKeyRef:
