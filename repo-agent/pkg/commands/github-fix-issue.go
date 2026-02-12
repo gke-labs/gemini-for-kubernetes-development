@@ -81,7 +81,7 @@ func (c *GithubFixIssueCommand) InitDefaults() {
 	}
 
 	if c.Model == "" {
-		c.Model = "gemini-3-pro-preview"
+		c.Model = "gemini-3-flash-preview"
 	}
 }
 
