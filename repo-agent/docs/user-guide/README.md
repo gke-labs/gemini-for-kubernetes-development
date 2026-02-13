@@ -4,7 +4,7 @@ This directory contains user guides for the Repo Agent.
 
 ## Usage
 
-*   Usage Overview <!-- TODO -->
+*   [Usage Overview](usage.md)
 *   Review UI <!-- TODO -->
 *   GitHub Integration <!-- TODO -->
 
