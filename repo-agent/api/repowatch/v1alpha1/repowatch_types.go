@@ -231,6 +231,10 @@ type IssueSpec struct {
 	// +kubebuilder:validation:Optional
 	RobotAccount string `json:"robotAccount,omitempty"`
 
+	// Models specifies a list of models to use for the issue handler.
+	// +kubebuilder:validation:Optional
+	Models []string `json:"models,omitempty"`
+
 	// Handlers configuration for Bugs
 	// +kubebuilder:validation:Optional
 	Handlers []IssueHandlerSpec `json:"handlers,omitempty"`

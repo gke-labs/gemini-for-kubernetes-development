@@ -104,6 +104,11 @@ func (in *IssueSpec) DeepCopyInto(out *IssueSpec) {
 		copy(*out, *in)
 	}
 	out.LLM = in.LLM
+	if in.Models != nil {
+		in, out := &in.Models, &out.Models
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	if in.Handlers != nil {
 		in, out := &in.Handlers, &out.Handlers
 		*out = make([]IssueHandlerSpec, len(*in))

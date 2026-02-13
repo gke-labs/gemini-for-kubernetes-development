@@ -149,6 +149,10 @@ spec:
                     type: integer
                   maxSandboxes:
                     type: integer
+                  models:
+                    items:
+                      type: string
+                    type: array
                   robotAccount:
                     type: string
                 required:
