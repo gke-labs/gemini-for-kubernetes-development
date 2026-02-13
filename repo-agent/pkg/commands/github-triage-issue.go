@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
@@ -141,7 +142,7 @@ func (c *GithubTriageIssueCommand) Run(ctx context.Context) error {
 	task := tasks.TriageIssueModel{
 		Issue:      c.issue,
 		PromptFile: promptPath,
-		Model:      c.Model,
+		Models:     strings.Split(c.Model, ","),
 		AgentName:  c.AgentName,
 	}
 

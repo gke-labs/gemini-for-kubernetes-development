@@ -16,7 +16,7 @@ type DevSetupModel struct {
 	SourceBranch string
 	PromptFile   string
 	AgentPrompt  string
-	Model        string
+	Models       []string
 }
 
 func (m *DevSetupModel) Name() string {

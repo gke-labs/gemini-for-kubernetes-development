@@ -136,6 +136,28 @@ def disable_dev_sandboxes(repowatch):
             changed = True
     return changed
 
+def inject_issue_model_list(repowatch):
+    """
+    Injects the model list into .spec.issue.models
+    """
+    changed = False
+    spec = repowatch.get("spec", {})
+    if "issue" in spec and isinstance(spec["issue"], dict):
+        target_models = [
+            "gemini-3-flash-preview",
+            "gemini-3-pro-preview",
+            "gemini-2.5-pro",
+            "gemini-2.5-flash"
+        ]
+        
+        current_models = spec["issue"].get("models")
+        if current_models != target_models:
+            print(f"  Updating spec.issue.models")
+            spec["issue"]["models"] = target_models
+            changed = True
+            
+    return changed
+
 def apply_changes(repowatch):
     namespace = repowatch["metadata"]["namespace"]
     name = repowatch["metadata"]["name"]
@@ -181,6 +203,7 @@ def main():
         "migrate-devcontainer-to-image-012026": migrate_devcontainer_to_image,
         "migrate-issues-taskbased-022026": fix_issues_spec,
         "set-dev-maxcounts-0": disable_dev_sandboxes,
+        "inject-issue-model-list-02122026": inject_issue_model_list,
     }
 
     if not args.mutator:

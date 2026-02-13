@@ -500,6 +500,13 @@ func (s *Server) createIssueTask(c *gin.Context) {
 
 	sandboxName := fmt.Sprintf("%s-issue-%s", repo, issueID)
 
+	// Fetch RepoWatch to get latest config
+	rw, err := s.K8sManager.GetRepoWatch(c.Request.Context(), namespace, repo)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get RepoWatch", "details": err.Error()})
+		return
+	}
+
 	taskType := payload.TaskType
 	if taskType == "" {
 		taskType = "triage-issue"
@@ -513,7 +520,13 @@ func (s *Server) createIssueTask(c *gin.Context) {
 		params[k] = v
 	}
 
-	err := s.K8sManager.CreateSandboxTask(c.Request.Context(), namespace, sandboxName, "IssueSandbox", taskType, params)
+	// Inject Models from RepoWatch
+	models, found, err := unstructured.NestedStringSlice(rw.Object, "spec", "issue", "models")
+	if err == nil && found && len(models) > 0 {
+		params["model"] = strings.Join(models, ",")
+	}
+
+	err = s.K8sManager.CreateSandboxTask(c.Request.Context(), namespace, sandboxName, "IssueSandbox", taskType, params)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create task", "details": err.Error()})
 		return

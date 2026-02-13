@@ -1144,6 +1144,9 @@ func (r *Reconciler) ensureIssueTask(ctx context.Context, repoWatch *reviewv1alp
 	if repoWatch.Spec.Issue.LLM.ConfigdirRef != "" {
 		params["AGENT_LLM_CONFIGDIR"] = repoWatch.Spec.Issue.LLM.ConfigdirRef
 	}
+	if len(repoWatch.Spec.Issue.Models) > 0 {
+		params["model"] = strings.Join(repoWatch.Spec.Issue.Models, ",")
+	}
 
 	taskType := handler.TaskType
 	if taskType == "" {
@@ -2032,6 +2035,9 @@ func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *revi
 		}
 		if repoWatch.Spec.Issue.LLM.ConfigdirRef != "" {
 			params["AGENT_LLM_CONFIGDIR"] = repoWatch.Spec.Issue.LLM.ConfigdirRef
+		}
+		if len(repoWatch.Spec.Issue.Models) > 0 {
+			params["model"] = strings.Join(repoWatch.Spec.Issue.Models, ",")
 		}
 
 		// Ensure sandbox is scaled up

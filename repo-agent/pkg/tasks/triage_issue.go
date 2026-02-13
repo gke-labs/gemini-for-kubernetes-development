@@ -14,7 +14,7 @@ type TriageIssueModel struct {
 	IssueComments []github.IssueComment
 	User          *github.User
 	PromptFile    string
-	Model         string
+	Models        []string
 	AgentName     string
 }
 
