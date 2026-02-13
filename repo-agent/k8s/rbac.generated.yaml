@@ -25,6 +25,18 @@ rules:
   - list
   - watch
 - apiGroups:
+  - ""
+  resources:
+  - services
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
   - agents.x-k8s.io
   resources:
   - sandboxes
@@ -52,7 +64,6 @@ rules:
   - custom.agents.x-k8s.io
   resources:
   - issuesandboxes
-  - reviewsandboxes
   - sandboxtasks
   verbs:
   - create

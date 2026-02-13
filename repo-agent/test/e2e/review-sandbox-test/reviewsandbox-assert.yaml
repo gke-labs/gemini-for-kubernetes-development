@@ -1,8 +1,6 @@
-apiVersion: custom.agents.x-k8s.io/v1alpha1
-kind: ReviewSandbox
+apiVersion: agents.x-k8s.io/v1alpha1
+kind: Sandbox
 metadata:
-  finalizers:
-  - kro.run/finalizer
   labels:
     review.gemini.google.com/repowatch: rst-gfkd
   (starts_with(name, 'rst-gfkd-pr-')): true
@@ -14,26 +12,18 @@ metadata:
     kind: RepoWatch
     name: rst-gfkd
 spec:
-  devcontainerConfigRef: minimal-devcontainer
-  gateway:
-    httpEnabled: true
-    ref: repo-agent-gateway
-    tcpEnabled: false
-  githubSecretName: github-pat
-  llm:
-    apiKeySecretName: dummy-provider-token
-    configdirRef: ""
-  llmBackend:
-    name: dummy
   replicas: 1
-  resources:
-    ephemeralStorage: 6Gi
-  serviceAccountName: review-sandbox
-  source:
-    repo: rst-gfkd
-status:
-  (fqdn != null && starts_with(fqdn, 'devc-rst-gfkd-pr-')): true
-  (sandboxConditions[?type == 'Ready']):
-    - reason: DependenciesReady
-      status: "True"
-  #state: IN_PROGRESS
+  podTemplate:
+    metadata:
+      labels:
+        (starts_with(sandbox, 'devc-rst-gfkd-pr-')): true
+    spec:
+      serviceAccountName: review-sandbox
+      initContainers:
+      - name: gemini-configs
+      - name: inject-agent
+      containers:
+      - name: sandbox
+        resources:
+          limits:
+            ephemeral-storage: 6Gi

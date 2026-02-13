@@ -11,7 +11,13 @@ metadata:
 rules:
 # Can manage sandboxes in all user namespaces
 - apiGroups: ["custom.agents.x-k8s.io"]
-  resources: ["reviewsandboxes", "issuesandboxes", "sandboxtasks"]
+  resources: ["issuesandboxes", "sandboxtasks"]
+  verbs: ["get", "list", "delete", "patch", "update", "create"]
+- apiGroups: ["agents.x-k8s.io"]
+  resources: ["sandboxes"]
+  verbs: ["get", "list", "delete", "patch", "update", "create"]
+- apiGroups: [""]
+  resources: ["services"]
   verbs: ["get", "list", "delete", "patch", "update", "create"]
 # Can manage repowatches in all user namespaces
 - apiGroups: ["review.gemini.google.com"]
