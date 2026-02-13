@@ -16,6 +16,7 @@ import (
 	pkgk8s "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -71,9 +72,9 @@ func (s *Server) listDevSandboxesFromK8s(ctx context.Context, namespace, repo st
 
 	// 2. Fetch active Dev Sandboxes
 	gvr := schema.GroupVersionResource{
-		Group:    "custom.agents.x-k8s.io",
+		Group:    "agents.x-k8s.io",
 		Version:  "v1alpha1",
-		Resource: "issuesandboxes",
+		Resource: "sandboxes",
 	}
 	list, err := s.K8sManager.Client.Resource(gvr).Namespace(namespace).List(context.Background(),
 		v1.ListOptions{
@@ -90,17 +91,22 @@ func (s *Server) listDevSandboxesFromK8s(ctx context.Context, namespace, repo st
 			continue
 		}
 
-		branch, found, err := unstructured.NestedString(item.Object, "spec", "destination", "branch")
-		if err != nil || !found {
-			log.Info("Branch (.spec.destination.branch) not found in DevSandbox", "name", item.GetName())
-			branch = "nobranch" // fallback
+		annotations := item.GetAnnotations()
+		if annotations == nil {
+			annotations = make(map[string]string)
 		}
 
-		cloneURL, found, err := unstructured.NestedString(item.Object, "spec", "source", "cloneURL")
-		if err != nil || !found {
-			log.Info("cloneURL (.spec.source.cloneURL) not found in DevSandbox", "name", item.GetName())
+		branch := annotations["sandbox.gemini.google.com/branch"]
+		if branch == "" {
+			// Try to read from env or fallback
+			branch = "nobranch"
+		}
+
+		cloneURL := annotations["sandbox.gemini.google.com/clone-url"]
+		if cloneURL == "" {
 			cloneURL = "https://github.com/noorg/norepo.git"
 		}
+		
 		repoParts := strings.Split(strings.TrimSuffix(cloneURL, ".git"), "/")
 		if len(repoParts) >= 2 {
 			repoName := repoParts[len(repoParts)-1]
@@ -111,17 +117,15 @@ func (s *Server) listDevSandboxesFromK8s(ctx context.Context, namespace, repo st
 			agentState := ""
 			agentStateMessage := ""
 			var labels []string
-			annotations := item.GetAnnotations()
-			if annotations != nil {
-				if val, ok := annotations["agentState"]; ok {
-					agentState = val
-				}
-				if val, ok := annotations["agentStateMessage"]; ok {
-					agentStateMessage = val
-				}
-				if val, ok := annotations["agentLabels"]; ok {
-					_ = json.Unmarshal([]byte(val), &labels)
-				}
+			
+			if val, ok := annotations["agentState"]; ok {
+				agentState = val
+			}
+			if val, ok := annotations["agentStateMessage"]; ok {
+				agentStateMessage = val
+			}
+			if val, ok := annotations["agentLabels"]; ok {
+				_ = json.Unmarshal([]byte(val), &labels)
 			}
 
 			// Read Idea Labels
@@ -140,10 +144,12 @@ func (s *Server) listDevSandboxesFromK8s(ctx context.Context, namespace, repo st
 					parentApproach = val
 				}
 			}
+			
+			name := strings.TrimPrefix(item.GetName(), "devc-")
 
 			sandbox := models.DevSandbox{
-				Name:              item.GetName(),
-				Sandbox:           item.GetName(),
+				Name:              name,
+				Sandbox:           name, // Should be name without prefix for API consistency? Or full name? UI expects name returned by create.
 				Branch:            branch,
 				BranchURL:         branchURL,
 				SandboxReplica:    fmt.Sprintf("%d", replicas),
@@ -353,12 +359,6 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 		}
 	}
 
-	gvr := schema.GroupVersionResource{
-		Group:    "custom.agents.x-k8s.io",
-		Version:  "v1alpha1",
-		Resource: "issuesandboxes",
-	}
-
 	annotations := map[string]string{}
 	// Description is now stored in RepoWatch for the Idea, but we can still add it here if provided
 	if req.Description != "" {
@@ -400,9 +400,25 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 		ParentApproach: req.ParentApproach,
 	}
 
-	sb := sandbox.NewDevSandbox(opts)
+	sb, svc := sandbox.NewDevSandbox(opts)
+	
+	// Create Service
+	// We use Clientset for Service creation as it is core resource
+	_, err = s.K8sManager.Clientset.CoreV1().Services(namespace).Create(c.Request.Context(), svc, v1.CreateOptions{})
+	if err != nil && !apierrors.IsAlreadyExists(err) { // Ignore if exists
+		log.Info("Failed to create Service for DevSandbox", "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create Service", "details": err.Error()})
+		return
+	}
 
-	_, err = s.K8sManager.Client.Resource(gvr).Namespace(namespace).Create(c.Request.Context(), sb, v1.CreateOptions{})
+	// Create Sandbox (using dynamic client)
+	sandboxGVR := schema.GroupVersionResource{
+		Group:    "agents.x-k8s.io",
+		Version:  "v1alpha1",
+		Resource: "sandboxes",
+	}
+
+	_, err = s.K8sManager.Client.Resource(sandboxGVR).Namespace(namespace).Create(c.Request.Context(), sb, v1.CreateOptions{})
 	if err != nil {
 		log.Info("Failed to create DevSandbox", "err", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create DevSandbox", "details": err.Error()})
@@ -424,7 +440,7 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 		taskParams["AGENT_PROMPT"] = req.Prompt
 	}
 
-	if err := s.K8sManager.CreateSandboxTask(c.Request.Context(), namespace, sandboxName, "IssueSandbox", "dev-setup", taskParams); err != nil {
+	if err := s.K8sManager.CreateSandboxTask(c.Request.Context(), namespace, sb.GetName(), "Sandbox", "dev-setup", taskParams); err != nil {
 		log.Info("Failed to create initial dev-setup task", "err", err)
 		// We don't fail the request, just log it. The user can retry or creating task manually.
 	}
@@ -437,7 +453,8 @@ func (s *Server) deleteDevSandbox(c *gin.Context) {
 	name := c.Param("name") // This is the sandbox name
 	ctx := c.Request.Context()
 
-	if err := s.K8sManager.ScaledownDevSandboxHelper(ctx, namespace, name); err != nil {
+	resourceName := "devc-" + name
+	if err := s.K8sManager.ScaledownDevSandboxHelper(ctx, namespace, resourceName); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete dev sandbox", "details": err.Error()})
 		return
 	}
@@ -450,7 +467,8 @@ func (s *Server) scaleUpDevSandbox(c *gin.Context) {
 	namespace := s.Auth.GetNamespaceFromContext(c)
 	name := c.Param("name")
 
-	if err := s.K8sManager.ScaleupDevSandboxHelper(c.Request.Context(), namespace, name); err != nil {
+	resourceName := "devc-" + name
+	if err := s.K8sManager.ScaleupDevSandboxHelper(c.Request.Context(), namespace, resourceName); err != nil {
 		log.Info("Failed to scale up dev sandbox", "name", name, "err", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scale up dev sandbox"})
 		return
@@ -463,12 +481,14 @@ func (s *Server) scaleDownDevSandbox(c *gin.Context) {
 	log := klog.FromContext(c.Request.Context())
 	namespace := s.Auth.GetNamespaceFromContext(c)
 	name := c.Param("name")
-	if err := s.K8sManager.ScaledownDevSandboxHelper(c.Request.Context(), namespace, name); err != nil {
+	
+	resourceName := "devc-" + name
+	if err := s.K8sManager.ScaledownDevSandboxHelper(c.Request.Context(), namespace, resourceName); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scale down dev sandbox", "details": err.Error()})
 		return
 	}
 
-	if err := s.K8sManager.UpdateDevSandboxAnnotation(c.Request.Context(), namespace, name, "agentState", "sandbox paused"); err != nil {
+	if err := s.K8sManager.UpdateDevSandboxAnnotation(c.Request.Context(), namespace, resourceName, "agentState", "sandbox paused"); err != nil {
 		log.Info("Failed to update dev sandbox annotation", "err", err)
 	}
 
@@ -478,7 +498,8 @@ func (s *Server) getDevTasks(c *gin.Context) {
 	namespace := s.Auth.GetNamespaceFromContext(c)
 	sandboxName := c.Param("name")
 
-	taskList, err := s.K8sManager.ListSandboxTasks(c.Request.Context(), namespace, sandboxName)
+	resourceName := "devc-" + sandboxName
+	taskList, err := s.K8sManager.ListSandboxTasks(c.Request.Context(), namespace, resourceName)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list tasks", "details": err.Error()})
 		return
@@ -550,15 +571,15 @@ func (s *Server) createDevTask(c *gin.Context) {
 		params[k] = v
 	}
 
-	// DevSandbox is an IssueSandbox CR in K8s
-	err := s.K8sManager.CreateSandboxTask(c.Request.Context(), namespace, sandboxName, "IssueSandbox", taskType, params)
+	resourceName := "devc-" + sandboxName
+	err := s.K8sManager.CreateSandboxTask(c.Request.Context(), namespace, resourceName, "Sandbox", taskType, params)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create task", "details": err.Error()})
 		return
 	}
 
 	// Scale up the sandbox so it can process the task
-	if err := s.K8sManager.ScaleupDevSandboxHelper(c.Request.Context(), namespace, sandboxName); err != nil {
+	if err := s.K8sManager.ScaleupDevSandboxHelper(c.Request.Context(), namespace, resourceName); err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Failed to scale up sandbox after task creation", "details": err.Error()})
 		return
 	}

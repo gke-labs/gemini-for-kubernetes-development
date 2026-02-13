@@ -1,11 +1,10 @@
-apiVersion: custom.agents.x-k8s.io/v1alpha1
-kind: IssueSandbox
+apiVersion: agents.x-k8s.io/v1alpha1
+kind: Sandbox
 metadata:
-  finalizers:
-  - kro.run/finalizer
   labels:
     review.gemini.google.com/repowatch: ist-gfkd
-  (starts_with(name, 'ist-gfkd-issue-')): true
+    sandbox.gemini.google.com/type: issue
+  (starts_with(name, 'devc-ist-gfkd-issue-')): true
   namespace: repo-agent-system
   ownerReferences:
   - apiVersion: review.gemini.google.com/v1alpha1
@@ -14,27 +13,10 @@ metadata:
     kind: RepoWatch
     name: ist-gfkd
 spec:
-  destination:
-    pushEnabled: false
-  devcontainerConfigRef: minimal-devcontainer
-  gateway:
-    httpEnabled: true
-    ref: repo-agent-gateway
-  githubSecretName: github-pat
-  llm:
-    # Dummy config as placeholder
-    apiKeySecretName: dummy-provider-token
-    configdirRef: ""
-  llmBackend:
-    name: dummy
   replicas: 1
-  resources:
-    ephemeralStorage: 6Gi
-  serviceAccountName: issue-sandbox
-  source:
-    repo: ist-gfkd
-status:
-  (fqdn != null && starts_with(fqdn, 'devc-ist-gfkd-issue-')): true
-  (sandboxConditions[?type == 'Ready']):
-    - reason: DependenciesReady
-      status: "True"
+  podTemplate:
+    spec:
+      serviceAccountName: issue-sandbox
+      containers:
+      - name: sandbox
+        (env[?name == 'REPO'] | [0].value): ist-gfkd

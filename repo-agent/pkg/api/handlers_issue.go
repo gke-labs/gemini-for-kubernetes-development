@@ -42,7 +42,7 @@ func (s *Server) getIssueTasks(c *gin.Context) {
 	repo := c.Param("repo")
 	issueID := c.Param("issue_id")
 
-	sandboxName := fmt.Sprintf("%s-issue-%s", repo, issueID)
+	sandboxName := fmt.Sprintf("devc-%s-issue-%s", repo, issueID)
 
 	taskList, err := s.K8sManager.ListSandboxTasks(c.Request.Context(), namespace, sandboxName)
 	if err != nil {
@@ -95,16 +95,16 @@ func (s *Server) getIssueTasks(c *gin.Context) {
 func (s *Server) listIssuesFromK8s(ctx context.Context, namespace, repo string) ([]models.Issue, error) {
 	log := klog.FromContext(ctx)
 	gvr := schema.GroupVersionResource{
-		Group:    "custom.agents.x-k8s.io",
+		Group:    "agents.x-k8s.io",
 		Version:  "v1alpha1",
-		Resource: "issuesandboxes",
+		Resource: "sandboxes",
 	}
 	list, err := s.K8sManager.Client.Resource(gvr).Namespace(namespace).List(context.Background(),
 		v1.ListOptions{
 			LabelSelector: fmt.Sprintf("review.gemini.google.com/repowatch=%s", repo),
 		})
 	if err != nil {
-		return nil, fmt.Errorf("failed to list IssueSandbox CRs: %w", err)
+		return nil, fmt.Errorf("failed to list Sandbox CRs: %w", err)
 	}
 
 	var issues []models.Issue
@@ -117,52 +117,44 @@ func (s *Server) listIssuesFromK8s(ctx context.Context, namespace, repo string) 
 
 		replicas, found, err := unstructured.NestedInt64(item.Object, "spec", "replicas")
 		if err != nil || !found {
-			log.Info("Replicas (.spec.replicas) not found in IssueSandbox", "name", item.GetName())
+			log.Info("Replicas (.spec.replicas) not found in Sandbox", "name", item.GetName())
 			continue
 		}
 
-		issueID, found, err := unstructured.NestedString(item.Object, "spec", "source", "issue")
-		if err != nil || !found {
-			log.Info("Issue ID (.spec.source.issue) not found in IssueSandbox", "name", item.GetName())
+		annotations := item.GetAnnotations()
+		if annotations == nil {
+			annotations = make(map[string]string)
+		}
+
+		issueID := annotations["sandbox.gemini.google.com/issue-id"]
+		title := annotations["sandbox.gemini.google.com/issue-title"]
+		htmlurl := annotations["sandbox.gemini.google.com/html-url"]
+		cloneURL := annotations["sandbox.gemini.google.com/clone-url"]
+		login := annotations["sandbox.gemini.google.com/user-login"]
+		branch := annotations["sandbox.gemini.google.com/branch"]
+		pushBranchStr := annotations["sandbox.gemini.google.com/push-enabled"]
+		pushBranch := false
+		if pushBranchStr == "true" {
+			pushBranch = true
+		}
+
+		if issueID == "" {
+			// Fallback or skip? It might be an old sandbox or failed creation?
+			// Try to parse from name if possible?
+			// Sandbox name: devc-repo-issue-123.
+			// RepoWatch name: repo.
+			// Issue ID is suffix.
 			continue
 		}
 
-		title, found, err := unstructured.NestedString(item.Object, "spec", "source", "title")
-		if err != nil || !found {
-			log.Info("Title (.spec.source.title) not found in IssueSandbox", "name", item.GetName())
-			continue
-		}
-
-		htmlurl, found, err := unstructured.NestedString(item.Object, "spec", "source", "htmlURL")
-		if err != nil || !found {
-			log.Info("htmlURL (.spec.source.htmlURL) not found in IssueSandbox", "name", item.GetName())
-		}
-
-		cloneURL, found, err := unstructured.NestedString(item.Object, "spec", "source", "cloneURL")
-		if err != nil || !found {
-			log.Info("branchURL (.spec.source.cloneURL) not found in IssueSandbox", "name", item.GetName())
+		if cloneURL == "" {
 			cloneURL = "https://github.com/noorg/norepo.git"
 		}
-		login, found, err := unstructured.NestedString(item.Object, "spec", "destination", "user", "login")
-		if err != nil || !found {
-			log.Info("branchURL (.spec.destination.user.login) not found in IssueSandbox", "name", item.GetName())
-			login = "nouser"
-		}
-		branch, found, err := unstructured.NestedString(item.Object, "spec", "destination", "branch")
-		if err != nil || !found {
-			log.Info("branchURL (.spec.destination.branch) not found in IssueSandbox", "name", item.GetName())
-			branch = "nobranch"
-		}
-
+		
 		repoParts := strings.Split(strings.TrimSuffix(cloneURL, ".git"), "/")
 		repoName := repoParts[len(repoParts)-1]
 
 		branchURL := fmt.Sprintf("https://github.com/%s/%s/tree/%s", login, repoName, branch)
-
-		pushBranch, found, err := unstructured.NestedBool(item.Object, "spec", "destination", "pushEnabled")
-		if err != nil || !found {
-			log.Info("pushBranch (.spec.source.pushBranch) not found in IssueSandbox", "name", item.GetName())
-		}
 
 		// get draft from annotation[agentDraft]
 		draft := ""
@@ -171,34 +163,34 @@ func (s *Server) listIssuesFromK8s(ctx context.Context, namespace, repo string) 
 		sandboxStatus := ""
 		var agentLabels []string
 		comment := ""
-		annotations := item.GetAnnotations()
-		if annotations != nil {
-			if val, ok := annotations["userDraft"]; ok {
-				draft = val
-			} else if val, ok := annotations["agentDraft"]; ok {
-				draft = val
-			}
-			if val, ok := annotations["agentState"]; ok {
-				agentState = val
-			}
-			if val, ok := annotations["agentStateMessage"]; ok {
-				agentStateMessage = val
-			}
-			if val, ok := annotations["sandbox.gemini.google.com/pod-status"]; ok {
-				sandboxStatus = val
-			}
-			if val, ok := annotations["agentLabels"]; ok {
-				_ = json.Unmarshal([]byte(val), &agentLabels)
-			}
-			if val, ok := annotations["issueCommentSubmitted"]; ok && val == "true" {
-				comment = draft
-			}
+		
+		if val, ok := annotations["userDraft"]; ok {
+			draft = val
+		} else if val, ok := annotations["agentDraft"]; ok {
+			draft = val
 		}
+		if val, ok := annotations["agentState"]; ok {
+			agentState = val
+		}
+		if val, ok := annotations["agentStateMessage"]; ok {
+			agentStateMessage = val
+		}
+		if val, ok := annotations["sandbox.gemini.google.com/pod-status"]; ok {
+			sandboxStatus = val
+		}
+		if val, ok := annotations["agentLabels"]; ok {
+			_ = json.Unmarshal([]byte(val), &agentLabels)
+		}
+		if val, ok := annotations["issueCommentSubmitted"]; ok && val == "true" {
+			comment = draft
+		}
+
+		name := strings.TrimPrefix(item.GetName(), "devc-")
 
 		issue := models.Issue{
 			ID:                issueID,
 			Title:             title,
-			Sandbox:           item.GetName(),
+			Sandbox:           name,
 			HTMLURL:           htmlurl,
 			SandboxReplica:    fmt.Sprintf("%d", replicas),
 			BranchURL:         branchURL,
@@ -254,11 +246,11 @@ func (s *Server) submitIssueComment(c *gin.Context) {
 	ctx := c.Request.Context()
 	log.Info("Submitting comment for Issue", "issueID", issueID, "repo", repo, "comment", payload.Comment)
 
-	sandboxName := fmt.Sprintf("%s-issue-%s", repo, issueID)
+	sandboxName := fmt.Sprintf("devc-%s-issue-%s", repo, issueID)
 	gvr := schema.GroupVersionResource{
-		Group:    "custom.agents.x-k8s.io",
+		Group:    "agents.x-k8s.io",
 		Version:  "v1alpha1",
-		Resource: "issuesandboxes",
+		Resource: "sandboxes",
 	}
 
 	// Get IssueSandbox to check agentDraft
@@ -498,7 +490,7 @@ func (s *Server) createIssueTask(c *gin.Context) {
 		return
 	}
 
-	sandboxName := fmt.Sprintf("%s-issue-%s", repo, issueID)
+	sandboxName := fmt.Sprintf("devc-%s-issue-%s", repo, issueID)
 
 	// Fetch RepoWatch to get latest config
 	rw, err := s.K8sManager.GetRepoWatch(c.Request.Context(), namespace, repo)
@@ -526,7 +518,7 @@ func (s *Server) createIssueTask(c *gin.Context) {
 		params["model"] = strings.Join(models, ",")
 	}
 
-	err = s.K8sManager.CreateSandboxTask(c.Request.Context(), namespace, sandboxName, "IssueSandbox", taskType, params)
+	err = s.K8sManager.CreateSandboxTask(c.Request.Context(), namespace, sandboxName, "Sandbox", taskType, params)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create task", "details": err.Error()})
 		return
