@@ -54,6 +54,15 @@ func (r *PullRequestReviewRequest) ToGitHubReviewRequest() *github.PullRequestRe
 	}
 }
 
+// Condition represents a Kubernetes-style status condition
+type Condition struct {
+	Type               string `json:"type"`
+	Status             string `json:"status"`
+	Reason             string `json:"reason,omitempty"`
+	Message            string `json:"message,omitempty"`
+	LastTransitionTime string `json:"lastTransitionTime,omitempty"`
+}
+
 // Task represents a sandbox task
 type Task struct {
 	Name              string `json:"name"`
@@ -118,6 +127,7 @@ type Repo struct {
 	ExcludeBranches     []string      `json:"excludeBranches,omitempty"`
 	PendingIssues       []int64       `json:"pendingIssues,omitempty"`
 	ExcludeIssues       []int64       `json:"excludeIssues,omitempty"`
+	Conditions          []Condition   `json:"conditions,omitempty"`
 }
 
 // ReviewConfig holds configuration for PR reviews

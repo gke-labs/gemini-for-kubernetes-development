@@ -1413,7 +1413,13 @@ function App() {
           <strong>⚠️ Gemini API Key Missing:</strong> Please configure your Gemini API Key in <a href="#" onClick={(e) => { e.preventDefault(); setView('settings'); }}>Settings</a> to enable code reviews and issue handling.
         </div>
       )}
-      
+
+      {activeRepo && activeRepo.conditions && activeRepo.conditions.filter(c => c.status === 'False').map((c, i) => (
+        <div key={i} className="warning-banner" style={{ backgroundColor: '#fdecea', color: '#721c24', borderColor: '#f5c6cb' }}>
+          <strong>⚠️ {c.type}:</strong> {c.message} <span style={{ opacity: 0.7, fontSize: 'small' }}>({c.reason}{c.lastTransitionTime ? ` — ${new Date(c.lastTransitionTime).toLocaleString()}` : ''})</span>
+        </div>
+      ))}
+
       {view === 'dashboard' && renderDashboard()}
       {view === 'settings' && <Settings onBack={() => setView('dashboard')} />}
       {view === 'add_repo' && <AddRepo onCancel={() => setView('dashboard')} onRepoAdded={() => { fetchRepos(); setView('dashboard'); }} />}

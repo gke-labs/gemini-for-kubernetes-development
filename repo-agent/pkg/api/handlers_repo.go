@@ -619,9 +619,10 @@ func (s *Server) getRepos(c *gin.Context) {
 		}
 
 		repo := models.Repo{
-			Name:      repoName,
-			Namespace: namespace,
-			URL:       repoURL,
+			Name:       repoName,
+			Namespace:  namespace,
+			URL:        repoURL,
+			Conditions: extractConditions(&repoWatch),
 		}
 
 		// Extract review config
@@ -811,9 +812,10 @@ func (s *Server) getRepo(c *gin.Context) {
 	}
 
 	repo := models.Repo{
-		Name:      repoName,
-		Namespace: namespace,
-		URL:       repoURL,
+		Name:       repoName,
+		Namespace:  namespace,
+		URL:        repoURL,
+		Conditions: extractConditions(repoWatch),
 	}
 
 	// Extract review config

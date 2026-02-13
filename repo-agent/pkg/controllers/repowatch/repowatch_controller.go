@@ -36,6 +36,7 @@ import (
 	githuboauth "golang.org/x/oauth2/github"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -282,9 +283,11 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		// Instead, requeue with a fixed delay to avoid log spam.
 		if strings.Contains(err.Error(), "waiting for user login") {
 			log.Info("Waiting for user login to populate github token")
+			r.setAuthCondition(ctx, repoWatch, metav1.ConditionFalse, "WaitingForLogin", err.Error())
 			return ctrl.Result{RequeueAfter: 1 * time.Minute}, nil
 		}
 		log.Error(err, "unable to create github client")
+		r.setAuthCondition(ctx, repoWatch, metav1.ConditionFalse, "TokenMissing", err.Error())
 		return ctrl.Result{}, err
 	}
 
@@ -307,9 +310,13 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 			}
 		} else {
 			log.Error(err, "unable to get current user")
+			r.setAuthCondition(ctx, repoWatch, metav1.ConditionFalse, "TokenInvalid", err.Error())
 			return ctrl.Result{}, err
 		}
 	}
+
+	// GitHub auth succeeded — clear any previous auth failure condition
+	r.setAuthCondition(ctx, repoWatch, metav1.ConditionTrue, "Authenticated", "GitHub authentication successful")
 	if githubConfig["name"] != "" {
 		user.Name = github.String(githubConfig["name"])
 	}
@@ -349,6 +356,27 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 
 	return ctrl.Result{RequeueAfter: time.Second * time.Duration(repoWatch.Spec.PollIntervalSeconds)}, reconcileErr
+}
+
+// setAuthCondition sets the GitHubAuthentication condition on the RepoWatch status.
+func (r *Reconciler) setAuthCondition(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, status metav1.ConditionStatus, reason, message string) {
+	log := log.FromContext(ctx)
+
+	condition := metav1.Condition{
+		Type:               "GitHubAuthentication",
+		Status:             status,
+		Reason:             reason,
+		Message:            message,
+		ObservedGeneration: repoWatch.Generation,
+	}
+
+	changed := apimeta.SetStatusCondition(&repoWatch.Status.Conditions, condition)
+	if !changed {
+		return
+	}
+	if err := r.Status().Update(ctx, repoWatch); err != nil {
+		log.Error(err, "unable to update RepoWatch auth condition")
+	}
 }
 
 func (r *Reconciler) reconcileReviews(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, ghClient *github.Client, owner string, repo string, user *github.User) error {
