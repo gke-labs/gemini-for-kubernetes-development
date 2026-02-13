@@ -55,10 +55,10 @@ func TestFixIssuePromptTemplate(t *testing.T) {
 	data := MockModel{
 		Issue:         MockIssue{},
 		Repo:          MockRepo{},
-				IssueComments: []MockComment{{}},
-				Models:        []string{"gemini-test"},
-				User:          MockUser{UserID: "test", Email: "test@test.com", Name: "Test User"},
-		}
+		IssueComments: []MockComment{{}},
+		Models:        []string{"gemini-test"},
+		User:          MockUser{UserID: "test", Email: "test@test.com", Name: "Test User"},
+	}
 	var w bytes.Buffer
 	if err := tmpl.Execute(&w, data); err != nil {
 		t.Fatalf("Failed to execute template: %v", err)
