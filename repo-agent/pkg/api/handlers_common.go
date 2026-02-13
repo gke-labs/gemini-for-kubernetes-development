@@ -8,8 +8,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 	pkgk8s "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 	"k8s.io/apimachinery/pkg/api/errors"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/klog/v2"
 )
 
@@ -45,6 +48,33 @@ func (s *Server) proxy(c *gin.Context) {
 	}
 
 	c.String(resp.StatusCode, string(body))
+}
+
+// extractConditions converts unstructured Kubernetes conditions to the API model format.
+func extractConditions(obj *unstructured.Unstructured) []models.Condition {
+	conditionsSlice, found, err := unstructured.NestedSlice(obj.Object, "status", "conditions")
+	if err != nil || !found {
+		return nil
+	}
+	var conditions []models.Condition
+	for _, item := range conditionsSlice {
+		condMap, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		var k8sCond v1.Condition
+		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(condMap, &k8sCond); err != nil {
+			continue
+		}
+		conditions = append(conditions, models.Condition{
+			Type:               k8sCond.Type,
+			Status:             string(k8sCond.Status),
+			Reason:             k8sCond.Reason,
+			Message:            k8sCond.Message,
+			LastTransitionTime: k8sCond.LastTransitionTime.Format("2006-01-02T15:04:05Z07:00"),
+		})
+	}
+	return conditions
 }
 
 func (s *Server) ensureGeminiKeySet(c *gin.Context, namespace string) bool {
