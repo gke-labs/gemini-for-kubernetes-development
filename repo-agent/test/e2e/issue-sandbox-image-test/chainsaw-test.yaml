@@ -45,27 +45,33 @@ spec:
         file: issuesandbox-assert.yaml
     catch:
     - describe:
-        apiVersion: custom.agents.x-k8s.io/v1alpha1
-        kind: IssueSandbox
+        apiVersion: agents.x-k8s.io/v1alpha1
+        kind: Sandbox
         namespace: repo-agent-system
         selector: review.gemini.google.com/repowatch=ist-image
     - script:
         content: |
-          IS_NAME=$(kubectl get issuesandbox -n repo-agent-system -l review.gemini.google.com/repowatch=ist-image -o jsonpath='{.items[0].metadata.name}')
-          if [ -z "$IS_NAME" ]; then
-            echo "No IssueSandbox found via label selector!"
+          SANDBOX_NAME=$(kubectl get sandbox -n repo-agent-system -l review.gemini.google.com/repowatch=ist-image -o jsonpath='{.items[0].metadata.name}')
+          if [ -z "$SANDBOX_NAME" ]; then
+            echo "No Sandbox found via label selector!"
             exit 0
           fi
-          echo "Found IssueSandbox: $IS_NAME"
-          POD_NAME="devc-$IS_NAME"
-          SANDBOX_NAME="devc-$IS_NAME"
+          echo "Found Sandbox: $SANDBOX_NAME"
+          
+          # Find pod by sandbox label
+          POD_NAME=$(kubectl get pod -n repo-agent-system -l sandbox=$SANDBOX_NAME -o jsonpath='{.items[0].metadata.name}')
+          if [ -z "$POD_NAME" ]; then
+             echo "Pod not found for sandbox $SANDBOX_NAME"
+             POD_NAME="$SANDBOX_NAME"
+          fi
+
           echo "Looking for Pod: $POD_NAME"
           echo "--- Describing Sandbox $SANDBOX_NAME ---"
           kubectl describe sandbox -n repo-agent-system "$SANDBOX_NAME" || echo "Sandbox not found yet"
           echo "--- Describing Pod $POD_NAME ---"
           kubectl describe pod -n repo-agent-system "$POD_NAME" || echo "Pod not found yet"
-          echo "--- Logs for Pod $POD_NAME (container: issue-sandbox) ---"
-          kubectl logs -n repo-agent-system "$POD_NAME" -c issue-sandbox || echo "Could not fetch logs"
+          echo "--- Logs for Pod $POD_NAME (container: sandbox) ---"
+          kubectl logs -n repo-agent-system "$POD_NAME" -c sandbox || echo "Could not fetch logs"
   - name: check-sandboxtask
     try:
     - assert:
