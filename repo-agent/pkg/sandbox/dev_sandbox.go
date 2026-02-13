@@ -39,6 +39,10 @@ type DevSandboxOptions struct {
 	DevcontainerConfigRef string
 	Image                 string
 
+	// System Images
+	RepoSandboxImage string
+	ConfigDirImage   string
+
 	// Gateway
 	HTTPEnabled bool
 

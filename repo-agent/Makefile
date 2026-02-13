@@ -87,8 +87,6 @@ build-and-push-repo-agent:
 
 .PHONY: install-repo-agent
 install-repo-agent:
-	#  copy RGD to k8s dir so it gets deployed
-	cp cmd/repo-sandbox/issue-sandbox-rgd.yaml k8s/
 	# Using crd yaml directly due to KRO bug with status fields not being created
 	# cp cmd/repo-sandbox/sandbox-task-rgd.yaml k8s/
 	../dev/tools/deploy-to-kube --image-prefix=$(REGISTRY) --working-dir . \
@@ -176,9 +174,6 @@ bin/configdir-cli: configdir/
 apply-common-for-examples:
 	# TODO(barney-s): is there a better way to handle SA ?
 	kubectl apply -f examples/sandbox-rbac.yaml -n $(NAMESPACE)
-	kubectl set subject clusterrolebinding review-sandbox --serviceaccount=${NAMESPACE}:review-sandbox
-	kubectl set subject clusterrolebinding issue-sandbox --serviceaccount=${NAMESPACE}:issue-sandbox
-	kubectl set subject clusterrolebinding dev-sandbox --serviceaccount=${NAMESPACE}:dev-sandbox
 	# end of SA
 	kubectl apply -f examples/go-configmap-devcontainer.yaml -n $(NAMESPACE)
 

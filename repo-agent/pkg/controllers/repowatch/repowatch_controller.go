@@ -1060,8 +1060,11 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 			GithubSecretName:      githubSecretName,
 			DevcontainerConfigRef: repoWatch.Spec.Issue.DevcontainerConfigRef,
 			Image:                 repoWatch.Spec.Issue.Image,
+			RepoSandboxImage:      r.RepoSandboxImage,
+			ConfigDirImage:        r.ConfigDirImage,
 			HTTPEnabled:           true,
 			Replicas:              1,
+			ServiceAccountName:    "issue-sandbox",
 		},
 		IssueID:    fmt.Sprintf("%d", *issue.Number),
 		IssueTitle: *issue.Title,
@@ -1733,9 +1736,12 @@ func (r *Reconciler) createDevSandbox(ctx context.Context, user *github.User, re
 		GithubSecretName:      repoWatch.Spec.GithubSecretName,
 		DevcontainerConfigRef: repoWatch.Spec.Dev.DevcontainerConfigRef,
 		Image:                 repoWatch.Spec.Dev.Image,
+		RepoSandboxImage:      r.RepoSandboxImage,
+		ConfigDirImage:        r.ConfigDirImage,
 
 		HTTPEnabled: true,
 		Replicas:    1,
+		ServiceAccountName: "issue-sandbox",
 	}
 
 	sb, svc := sandbox.NewDevSandbox(opts)

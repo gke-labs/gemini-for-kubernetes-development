@@ -36,6 +36,10 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 	name := opt.Name
 	sandboxName := "devc-" + name
 
+	if opt.DevcontainerConfigRef == "" {
+		opt.DevcontainerConfigRef = "devcontainer-json"
+	}
+
 	// Default resources if not set
 	resources := opt.Resources
 	if resources.Requests == nil {
@@ -74,7 +78,7 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 	// Environment variables
 	env := []interface{}{
 		map[string]interface{}{"name": "NAMESPACE", "value": opt.Namespace},
-		map[string]interface{}{"name": "NAME", "value": name},
+		map[string]interface{}{"name": "NAME", "value": sandboxName},
 		map[string]interface{}{"name": "REPO", "value": opt.IssueRepo},
 		map[string]interface{}{"name": "HANDLER", "value": opt.Handler},
 		map[string]interface{}{"name": "AGENT_NAME", "value": opt.LLMProvider},
@@ -136,7 +140,7 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 	image := opt.Image
 	var cmd []string
 	if image == "" {
-		image = "ko://repo-agent/images/repo-sandbox"
+		image = opt.RepoSandboxImage
 		cmd = []string{}
 	} else {
 		cmd = []string{"/opt/repo-agent/repo-sandbox", "dev-daemon"}
@@ -194,7 +198,7 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 						"initContainers": []interface{}{
 							map[string]interface{}{
 								"name":  "gemini-configs",
-								"image": "ko://repo-agent/configdir/cmd/configdir-cli",
+								"image": opt.ConfigDirImage,
 								"args":  []interface{}{"--directory", "/workspaces", "--namespace", opt.Namespace, "--name", opt.LLMConfigdirRef, "--ignore-not-found-error"},
 								"volumeMounts": []interface{}{
 									map[string]interface{}{"name": "workspaces-pvc", "mountPath": "/workspaces"},
@@ -202,7 +206,7 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 							},
 							map[string]interface{}{
 								"name":    "inject-agent",
-								"image":   "ko://repo-agent/images/repo-sandbox",
+								"image":   opt.RepoSandboxImage,
 								"command": []interface{}{"/repo-agent/repo-sandbox", "inject", "--path", "/opt/repo-agent"},
 								"volumeMounts": []interface{}{
 									map[string]interface{}{"name": "agent-bin", "mountPath": "/opt/repo-agent"},
