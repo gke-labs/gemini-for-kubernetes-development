@@ -25,9 +25,9 @@ type AgentSandboxOptions struct {
 	BotLogin string
 	BotName  string
 	BotEmail string
-	
+
 	// Resources
-	Resources corev1.ResourceRequirements
+	Resources     corev1.ResourceRequirements
 	DockerEnabled bool
 }
 
@@ -35,7 +35,7 @@ type AgentSandboxOptions struct {
 func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *corev1.Service) {
 	name := opt.Name
 	sandboxName := "devc-" + name
-	
+
 	// Default resources if not set
 	resources := opt.Resources
 	if resources.Requests == nil {
@@ -65,7 +65,7 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 	labels["sandbox"] = sandboxName
 	// Default type to issue if not set
 	if _, ok := labels["sandbox-type"]; !ok {
-		labels["sandbox-type"] = "issue" 
+		labels["sandbox-type"] = "issue"
 	}
 	if _, ok := labels["sandbox.gemini.google.com/type"]; !ok {
 		labels["sandbox.gemini.google.com/type"] = "issue"
@@ -98,8 +98,8 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 			"name": "GITHUB_TOKEN",
 			"valueFrom": map[string]interface{}{
 				"secretKeyRef": map[string]interface{}{
-					"name": opt.GithubSecretName,
-					"key":  "pat",
+					"name":     opt.GithubSecretName,
+					"key":      "pat",
 					"optional": true,
 				},
 			},
@@ -108,8 +108,8 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 			"name": "MANUAL_PAT",
 			"valueFrom": map[string]interface{}{
 				"secretKeyRef": map[string]interface{}{
-					"name": opt.GithubSecretName,
-					"key":  "manual_pat",
+					"name":     opt.GithubSecretName,
+					"key":      "manual_pat",
 					"optional": true,
 				},
 			},
@@ -118,8 +118,8 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 			"name": "OAUTH_PAT",
 			"valueFrom": map[string]interface{}{
 				"secretKeyRef": map[string]interface{}{
-					"name": opt.GithubSecretName,
-					"key":  "oauth_pat",
+					"name":     opt.GithubSecretName,
+					"key":      "oauth_pat",
 					"optional": true,
 				},
 			},
@@ -137,7 +137,7 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 	var cmd []string
 	if image == "" {
 		image = "ko://repo-agent/images/repo-sandbox"
-		cmd = []string{} 
+		cmd = []string{}
 	} else {
 		cmd = []string{"/opt/repo-agent/repo-sandbox", "dev-daemon"}
 	}
@@ -163,9 +163,9 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 			"apiVersion": "agents.x-k8s.io/v1alpha1",
 			"kind":       "Sandbox",
 			"metadata": map[string]interface{}{
-				"name":      sandboxName,
-				"namespace": opt.Namespace,
-				"labels":    labels,
+				"name":        sandboxName,
+				"namespace":   opt.Namespace,
+				"labels":      labels,
 				"annotations": opt.Annotations,
 			},
 			"spec": map[string]interface{}{
@@ -196,23 +196,23 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 						},
 						"containers": []map[string]interface{}{
 							{
-								"name":            "sandbox",
-								"image":           image,
-								"command":         cmd,
+								"name":    "sandbox",
+								"image":   image,
+								"command": cmd,
 								"securityContext": map[string]interface{}{
 									"privileged": opt.DockerEnabled,
 								},
 								"resources": map[string]interface{}{
 									"requests": map[string]interface{}{
-										"memory": resources.Requests.Memory().String(),
+										"memory":            resources.Requests.Memory().String(),
 										"ephemeral-storage": ephemeralRequest.String(),
 									},
 									"limits": map[string]interface{}{
-										"memory": resources.Limits.Memory().String(),
+										"memory":            resources.Limits.Memory().String(),
 										"ephemeral-storage": ephemeralLimit.String(),
 									},
 								},
-								"env":             env,
+								"env": env,
 								"volumeMounts": []map[string]interface{}{
 									{"name": "workspaces-pvc", "mountPath": "/workspaces"},
 									{"name": "tokens-secret", "mountPath": "/tokens", "readOnly": true},
@@ -220,14 +220,14 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 									{"name": "agent-bin", "mountPath": "/opt/repo-agent"},
 								},
 								"ports": []map[string]interface{}{
-									{"containerPort": 13337},
-									{"containerPort": 13339},
+									{"containerPort": int64(13337)},
+									{"containerPort": int64(13339)},
 								},
 							},
 						},
 						"volumes": []map[string]interface{}{
 							{
-								"name": "agent-bin",
+								"name":     "agent-bin",
 								"emptyDir": map[string]interface{}{},
 							},
 							{
@@ -278,10 +278,10 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 			},
 			Ports: []corev1.ServicePort{
 				{
-					Name:       "code-server",
-					Protocol:   corev1.ProtocolTCP,
-					Port:       13338,
-					TargetPort: intstr.FromInt(13337),
+					Name:        "code-server",
+					Protocol:    corev1.ProtocolTCP,
+					Port:        13338,
+					TargetPort:  intstr.FromInt(13337),
 					AppProtocol: stringPtr("kubernetes.io/ws"),
 				},
 				{
@@ -296,10 +296,6 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 	service.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("Service"))
 
 	return sandbox, service
-}
-
-func boolPtr(b bool) *bool {
-	return &b
 }
 
 func stringPtr(s string) *string {

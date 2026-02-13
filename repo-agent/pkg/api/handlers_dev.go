@@ -106,7 +106,7 @@ func (s *Server) listDevSandboxesFromK8s(ctx context.Context, namespace, repo st
 		if cloneURL == "" {
 			cloneURL = "https://github.com/noorg/norepo.git"
 		}
-		
+
 		repoParts := strings.Split(strings.TrimSuffix(cloneURL, ".git"), "/")
 		if len(repoParts) >= 2 {
 			repoName := repoParts[len(repoParts)-1]
@@ -117,7 +117,7 @@ func (s *Server) listDevSandboxesFromK8s(ctx context.Context, namespace, repo st
 			agentState := ""
 			agentStateMessage := ""
 			var labels []string
-			
+
 			if val, ok := annotations["agentState"]; ok {
 				agentState = val
 			}
@@ -144,7 +144,7 @@ func (s *Server) listDevSandboxesFromK8s(ctx context.Context, namespace, repo st
 					parentApproach = val
 				}
 			}
-			
+
 			name := strings.TrimPrefix(item.GetName(), "devc-")
 
 			sandbox := models.DevSandbox{
@@ -401,7 +401,7 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 	}
 
 	sb, svc := sandbox.NewDevSandbox(opts)
-	
+
 	// Create Service
 	// We use Clientset for Service creation as it is core resource
 	_, err = s.K8sManager.Clientset.CoreV1().Services(namespace).Create(c.Request.Context(), svc, v1.CreateOptions{})
@@ -481,7 +481,7 @@ func (s *Server) scaleDownDevSandbox(c *gin.Context) {
 	log := klog.FromContext(c.Request.Context())
 	namespace := s.Auth.GetNamespaceFromContext(c)
 	name := c.Param("name")
-	
+
 	resourceName := "devc-" + name
 	if err := s.K8sManager.ScaledownDevSandboxHelper(c.Request.Context(), namespace, resourceName); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scale down dev sandbox", "details": err.Error()})

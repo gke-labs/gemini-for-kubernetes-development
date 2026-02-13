@@ -150,7 +150,7 @@ func (s *Server) listIssuesFromK8s(ctx context.Context, namespace, repo string) 
 		if cloneURL == "" {
 			cloneURL = "https://github.com/noorg/norepo.git"
 		}
-		
+
 		repoParts := strings.Split(strings.TrimSuffix(cloneURL, ".git"), "/")
 		repoName := repoParts[len(repoParts)-1]
 
@@ -163,7 +163,7 @@ func (s *Server) listIssuesFromK8s(ctx context.Context, namespace, repo string) 
 		sandboxStatus := ""
 		var agentLabels []string
 		comment := ""
-		
+
 		if val, ok := annotations["userDraft"]; ok {
 			draft = val
 		} else if val, ok := annotations["agentDraft"]; ok {
