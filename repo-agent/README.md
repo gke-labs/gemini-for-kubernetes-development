@@ -31,7 +31,7 @@ Please follow the [Development Guide](docs/development.md)
 
 ## Using repo-agent
 
-Please follow the [Usage Guide](docs/usage.md) to understand how to create `repoagent` CRDs.
+Please follow the [Usage Guide](docs/user-guide/usage.md) to understand how to create `repoagent` CRDs.
 
 ## Development
 

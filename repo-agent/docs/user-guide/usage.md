@@ -119,5 +119,5 @@ spec:
 
 ## User Guides
 
-- [Interactive Terminal](user-guide/terminal.md): Learn how to use the web terminal to explore and debug sandboxes.
-- [Co-authoring with Robot Accounts](user-guide/co-authoring.md): Learn how to collaborate with the robot in the same sandbox, with proper git attribution.
+- [Interactive Terminal](terminal.md): Learn how to use the web terminal to explore and debug sandboxes.
+- [Co-authoring with Robot Accounts](co-authoring.md): Learn how to collaborate with the robot in the same sandbox, with proper git attribution.
