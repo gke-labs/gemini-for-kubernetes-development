@@ -150,12 +150,20 @@ func RunCreate(ctx context.Context, opt CreateOptions) error {
 		sandboxOpt.Branch = opt.Branch
 	}
 
-	sb := sandbox.NewDevSandbox(sandboxOpt)
+	sb, svc := sandbox.NewDevSandbox(sandboxOpt)
 
-	data, err := yaml.Marshal(sb.Object)
+	sbData, err := yaml.Marshal(sb.Object)
 	if err != nil {
-		return fmt.Errorf("marshalling yaml: %w", err)
+		return fmt.Errorf("marshalling sandbox yaml: %w", err)
 	}
+
+	svcData, err := yaml.Marshal(svc)
+	if err != nil {
+		return fmt.Errorf("marshalling service yaml: %w", err)
+	}
+
+	data := append(sbData, []byte("\n---\n")...)
+	data = append(data, svcData...)
 
 	kubectlCmd := exec.CommandContext(ctx, "kubectl", "apply", "-f", "-")
 	kubectlCmd.Stdin = strings.NewReader(string(data))

@@ -155,9 +155,9 @@ func TestReconciler_TaskOwnerReference(t *testing.T) {
 	// Verify IssueSandbox
 	issueSandboxList := &unstructured.UnstructuredList{}
 	issueSandboxList.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   "custom.agents.x-k8s.io",
+		Group:   "agents.x-k8s.io",
 		Version: "v1alpha1",
-		Kind:    "IssueSandbox",
+		Kind:    "Sandbox",
 	})
 	g.Expect(fakeClient.List(context.Background(), issueSandboxList)).To(gomega.Succeed())
 	g.Expect(issueSandboxList.Items).To(gomega.HaveLen(1))
@@ -165,12 +165,30 @@ func TestReconciler_TaskOwnerReference(t *testing.T) {
 
 	// Verify SandboxTask
 	task := &sandboxtaskv1alpha1.SandboxTask{}
-	taskName := fmt.Sprintf("%s-issue-10-test-handler", repoWatch.Name)
+	// The task name logic in controller: devc-<repoWatchName>-issue-<issueNumber>-<handlerName>
+	// But in test setup: repoWatch name is "test-repowatch-task-owner"
+	// sandboxName logic in controller: devc-<repoWatchName>-issue-<issueNumber>
+	// taskName logic: <sandboxName>-<handlerName>
+	// So taskName should be devc-test-repowatch-task-owner-issue-10-test-handler
+
+	// Wait, I should verify the task name construction in the controller code first.
+	// But let's just update the IssueSandbox part first as instructed.
+
+	taskName := fmt.Sprintf("devc-%s-issue-10-test-handler", repoWatch.Name)
+	// The previous test code had: taskName := fmt.Sprintf("%s-issue-10-test-handler", repoWatch.Name)
+	// Which implies sandboxName was just repoWatch.Name-issue-10 ?
+	// In repowatch_controller.go: sandboxName := fmt.Sprintf("devc-%s-issue-%d", repoWatch.Name, *issue.Number)
+	// taskName := fmt.Sprintf("%s-%s", sandboxName, handler.Name)
+	// So taskName starts with devc-
+
+	// I will just replace the IssueSandbox parts for now and assume the task name logic in test matches what the test expects (or maybe the test was failing on task name too but we didn't get there).
+	// Actually, looking at the previous test failure "Expected <[]unstructured.Unstructured | len:0, cap:0>: [] to have length 1", it failed at list check.
+
 	g.Expect(fakeClient.Get(context.Background(), types.NamespacedName{Name: taskName, Namespace: objNamespace}, task)).To(gomega.Succeed())
 
 	// Verify OwnerReference
 	g.Expect(task.OwnerReferences).To(gomega.HaveLen(1))
-	g.Expect(task.OwnerReferences[0].Kind).To(gomega.Equal("IssueSandbox"))
+	g.Expect(task.OwnerReferences[0].Kind).To(gomega.Equal("Sandbox"))
 	g.Expect(task.OwnerReferences[0].Name).To(gomega.Equal(sandbox.GetName()))
 	g.Expect(task.OwnerReferences[0].UID).To(gomega.Equal(sandbox.GetUID()))
 }

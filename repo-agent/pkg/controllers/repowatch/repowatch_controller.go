@@ -37,6 +37,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -711,12 +712,12 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 		opts.Page = resp.NextPage
 	}
 
-	// 2. List existing IssueSandboxes
+	// 2. List existing Sandboxes (issues)
 	sandboxList := &unstructured.UnstructuredList{}
 	sandboxGVK := schema.GroupVersionKind{
-		Group:   "custom.agents.x-k8s.io",
+		Group:   "agents.x-k8s.io",
 		Version: "v1alpha1",
-		Kind:    "IssueSandbox",
+		Kind:    "Sandbox",
 	}
 	sandboxList.SetGroupVersionKind(sandboxGVK)
 	if err := r.List(ctx, sandboxList, client.InNamespace(repoWatch.Namespace), client.MatchingLabels{"sandbox.gemini.google.com/type": "issue"}); err != nil {
@@ -770,7 +771,7 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 			continue
 		}
 
-		sandboxName := fmt.Sprintf("%s-issue-%d", repoWatch.Name, *issue.Number)
+		sandboxName := fmt.Sprintf("devc-%s-issue-%d", repoWatch.Name, *issue.Number)
 		validSandboxNames[sandboxName] = true
 
 		// Check if sandbox exists
@@ -809,7 +810,7 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 			}
 
 			// Check if pod is evicted or has other status
-			podName := fmt.Sprintf("devc-%s", existingSandbox.GetName())
+			podName := existingSandbox.GetName()
 			pod := podsBySandbox[podName]
 			sandboxStatus := "Active"
 			if scaledDown {
@@ -976,7 +977,8 @@ func (r *Reconciler) isIssueMatch(issue *github.Issue, handler reviewv1alpha1.Is
 
 func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, issue *github.Issue) (*unstructured.Unstructured, error) {
 	log := log.FromContext(ctx)
-	sandboxName := fmt.Sprintf("%s-issue-%d", repoWatch.Name, *issue.Number)
+	// Base name matches the issue identifier
+	name := fmt.Sprintf("%s-issue-%d", repoWatch.Name, *issue.Number)
 
 	cloneURL := strings.Replace(*issue.RepositoryURL, "api.github.com/repos", "github.com", 1) + ".git"
 	repoParts := strings.Split(cloneURL, "/")
@@ -1025,10 +1027,6 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 
 	log.Info("Generated sandbox for Issue", "issue", *issue)
 
-	// Determine image and devcontainer
-	image := repoWatch.Spec.Issue.Image
-	devcontainer := repoWatch.Spec.Issue.DevcontainerConfigRef
-
 	// Determine apiKeySecretName from IssueSpec
 	apiKeySecretName := repoWatch.Spec.Issue.LLM.APIKeySecretRef
 	if apiKeySecretName == "" {
@@ -1036,78 +1034,77 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 		apiKeySecretName = "gemini-vscode-tokens"
 	}
 
-	sandbox := &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
-			"kind":       "IssueSandbox",
-			"metadata": map[string]interface{}{
-				"name":      sandboxName,
-				"namespace": repoWatch.Namespace,
-				"labels": map[string]interface{}{
-					"review.gemini.google.com/repowatch": repoWatch.Name,
-					"sandbox.gemini.google.com/type":     "issue",
-				},
-				"annotations": map[string]interface{}{
-					"agentState": "provisioning",
-				},
+	opt := sandbox.AgentSandboxOptions{
+		DevSandboxOptions: sandbox.DevSandboxOptions{
+			Name:      name,
+			Namespace: repoWatch.Namespace,
+			Labels: map[string]string{
+				"review.gemini.google.com/repowatch": repoWatch.Name,
+				"sandbox.gemini.google.com/type":     "issue",
 			},
-			"spec": map[string]interface{}{
-				"llmBackend": map[string]interface{}{
-					"name": repoWatch.Spec.Issue.LLM.Provider,
-				},
-				"llm": map[string]interface{}{
-					"prompt":           repoWatch.Spec.Issue.LLM.Prompt,
-					"apiKeySecretName": apiKeySecretName,
-					"configdirRef":     repoWatch.Spec.Issue.LLM.ConfigdirRef,
-				},
-				"source": map[string]interface{}{
-					"cloneURL": cloneURL,
-					"htmlURL":  *issue.HTMLURL,
-					"issue":    fmt.Sprintf("%d", *issue.Number),
-					"title":    *issue.Title,
-					"repo":     repoWatch.GetName(),
-				},
-				"destination": map[string]interface{}{
-					"pushEnabled": false, // Enabled per task/handler if needed? IssueSandbox spec has pushEnabled.
-					"branch":      branchName,
-					"origin":      originURL,
-					"user": map[string]interface{}{
-						"login": userLogin,
-						"name":  userName,
-						"email": userEmail,
-					},
-					"bot": map[string]interface{}{
-						"login": botLogin,
-						"name":  botName,
-						"email": botEmail,
-					},
-				},
-				"gateway": map[string]interface{}{
-					"httpEnabled": true,
-				},
-				"replicas":         int64(1),
-				"githubSecretName": githubSecretName,
+			Annotations: map[string]string{
+				"agentState": "provisioning",
+			},
+			CloneURL:              cloneURL,
+			HTMLURL:               *issue.HTMLURL,
+			Branch:                branchName,
+			Origin:                originURL,
+			PushEnabled:           false,
+			UserLogin:             userLogin,
+			UserName:              userName,
+			UserEmail:             userEmail,
+			LLMProvider:           repoWatch.Spec.Issue.LLM.Provider,
+			LLMConfigdirRef:       repoWatch.Spec.Issue.LLM.ConfigdirRef,
+			LLMAPIKeySecretName:   apiKeySecretName,
+			Prompt:                repoWatch.Spec.Issue.LLM.Prompt,
+			GithubSecretName:      githubSecretName,
+			DevcontainerConfigRef: repoWatch.Spec.Issue.DevcontainerConfigRef,
+			Image:                 repoWatch.Spec.Issue.Image,
+			RepoSandboxImage:      r.RepoSandboxImage,
+			ConfigDirImage:        r.ConfigDirImage,
+			HTTPEnabled:           true,
+			Replicas:              1,
+			ServiceAccountName:    "issue-sandbox",
+		},
+		IssueID:    fmt.Sprintf("%d", *issue.Number),
+		IssueTitle: *issue.Title,
+		IssueRepo:  repoWatch.GetName(),
+		//Handler:    "", // Handled per task?
+		BotLogin: botLogin,
+		BotName:  botName,
+		BotEmail: botEmail,
+		Resources: corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{
+				corev1.ResourceMemory: resource.MustParse("2Gi"),
+				"ephemeral-storage":   resource.MustParse("6Gi"),
+			},
+			Limits: corev1.ResourceList{
+				corev1.ResourceMemory: resource.MustParse("6Gi"),
+				"ephemeral-storage":   resource.MustParse("6Gi"),
 			},
 		},
 	}
 
-	if devcontainer != "" {
-		if err := unstructured.SetNestedField(sandbox.Object, devcontainer, "spec", "devcontainerConfigRef"); err != nil {
-			return nil, err
-		}
-	}
+	sb, svc := sandbox.NewAgentSandbox(opt)
 
-	if image != "" {
-		if err := unstructured.SetNestedField(sandbox.Object, image, "spec", "image"); err != nil {
-			return nil, err
-		}
+	if err := controllerutil.SetControllerReference(repoWatch, sb, r.Scheme); err != nil {
+		return nil, err
 	}
-
-	if err := controllerutil.SetControllerReference(repoWatch, sandbox, r.Scheme); err != nil {
+	if err := controllerutil.SetControllerReference(repoWatch, svc, r.Scheme); err != nil {
 		return nil, err
 	}
 
-	return sandbox, r.Create(ctx, sandbox)
+	if err := r.Create(ctx, svc); err != nil {
+		if !apierrors.IsAlreadyExists(err) {
+			return nil, err
+		}
+	}
+
+	if err := r.Create(ctx, sb); err != nil {
+		return nil, err
+	}
+
+	return sb, nil
 }
 
 func (r *Reconciler) ensureIssueTask(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, sandbox client.Object, sandboxName string, issue *github.Issue, handler reviewv1alpha1.IssueHandlerSpec) error {
@@ -1739,15 +1736,27 @@ func (r *Reconciler) createDevSandbox(ctx context.Context, user *github.User, re
 		GithubSecretName:      repoWatch.Spec.GithubSecretName,
 		DevcontainerConfigRef: repoWatch.Spec.Dev.DevcontainerConfigRef,
 		Image:                 repoWatch.Spec.Dev.Image,
+		RepoSandboxImage:      r.RepoSandboxImage,
+		ConfigDirImage:        r.ConfigDirImage,
 
-		HTTPEnabled: true,
-		Replicas:    1,
+		HTTPEnabled:        true,
+		Replicas:           1,
+		ServiceAccountName: "issue-sandbox",
 	}
 
-	sb := sandbox.NewDevSandbox(opts)
+	sb, svc := sandbox.NewDevSandbox(opts)
 
 	if err := controllerutil.SetControllerReference(repoWatch, sb, r.Scheme); err != nil {
 		return err
+	}
+	if err := controllerutil.SetControllerReference(repoWatch, svc, r.Scheme); err != nil {
+		return err
+	}
+
+	if err := r.Create(ctx, svc); err != nil {
+		if !apierrors.IsAlreadyExists(err) {
+			return err
+		}
 	}
 
 	if err := r.Create(ctx, sb); err != nil {
@@ -1765,7 +1774,7 @@ func (r *Reconciler) createDevSandbox(ctx context.Context, user *github.User, re
 		params["AGENT_PROMPT"] = repoWatch.Spec.Dev.LLM.Prompt
 	}
 
-	return r.createSandboxTask(ctx, repoWatch, sb, sandboxName, "", "dev-setup", params)
+	return r.createSandboxTask(ctx, repoWatch, sb, sb.GetName(), "", "dev-setup", params)
 }
 
 // SetupWithManager sets up the controller with the Manager.

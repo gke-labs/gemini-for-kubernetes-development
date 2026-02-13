@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -38,6 +39,10 @@ type DevSandboxOptions struct {
 	DevcontainerConfigRef string
 	Image                 string
 
+	// System Images
+	RepoSandboxImage string
+	ConfigDirImage   string
+
 	// Gateway
 	HTTPEnabled bool
 
@@ -50,133 +55,10 @@ type DevSandboxOptions struct {
 	ParentApproach string
 }
 
-// NewDevSandbox creates a new DevSandbox unstructured object.
-func NewDevSandbox(opt DevSandboxOptions) *unstructured.Unstructured {
-	spec := map[string]interface{}{
-		"source": map[string]interface{}{
-			"cloneURL": opt.CloneURL,
-			"htmlURL":  opt.HTMLURL,
-		},
-		"destination": map[string]interface{}{
-			"branch": opt.Branch,
-		},
+// NewDevSandbox creates a new DevSandbox.
+func NewDevSandbox(opt DevSandboxOptions) (*unstructured.Unstructured, *corev1.Service) {
+	agentOpt := AgentSandboxOptions{
+		DevSandboxOptions: opt,
 	}
-
-	if opt.Replicas > 0 {
-		spec["replicas"] = opt.Replicas
-	}
-
-	// Destination details
-	dest := spec["destination"].(map[string]interface{})
-	if opt.Origin != "" {
-		dest["origin"] = opt.Origin
-	}
-	if opt.PushEnabled {
-		dest["pushEnabled"] = true
-	}
-	if opt.UserLogin != "" || opt.UserName != "" || opt.UserEmail != "" {
-		userMap := map[string]interface{}{}
-		if opt.UserLogin != "" {
-			userMap["login"] = opt.UserLogin
-		}
-		if opt.UserName != "" {
-			userMap["name"] = opt.UserName
-		}
-		if opt.UserEmail != "" {
-			userMap["email"] = opt.UserEmail
-		}
-		dest["user"] = userMap
-	}
-
-	// User Config (Dotfiles)
-	if opt.DotFilesRepo != "" {
-		spec["user"] = map[string]interface{}{
-			"dotFilesRepo": opt.DotFilesRepo,
-		}
-	}
-
-	// LLM
-	if opt.LLMProvider != "" {
-		spec["llmBackend"] = map[string]interface{}{
-			"name": opt.LLMProvider,
-		}
-	}
-	if opt.LLMConfigdirRef != "" || opt.LLMAPIKeySecretName != "" || opt.Prompt != "" {
-		llmMap := map[string]interface{}{}
-		if opt.LLMConfigdirRef != "" {
-			llmMap["configdirRef"] = opt.LLMConfigdirRef
-		}
-		if opt.LLMAPIKeySecretName != "" {
-			llmMap["apiKeySecretName"] = opt.LLMAPIKeySecretName
-		}
-		if opt.Prompt != "" {
-			llmMap["prompt"] = opt.Prompt
-		}
-		spec["llm"] = llmMap
-	}
-
-	// Infra
-	if opt.ServiceAccountName != "" {
-		spec["serviceAccountName"] = opt.ServiceAccountName
-	}
-	if opt.GithubSecretName != "" {
-		spec["githubSecretName"] = opt.GithubSecretName
-	}
-	if opt.DevcontainerConfigRef != "" {
-		spec["devcontainerConfigRef"] = opt.DevcontainerConfigRef
-	}
-	if opt.Image != "" {
-		spec["image"] = opt.Image
-	}
-
-	// Gateway
-	if opt.HTTPEnabled {
-		spec["gateway"] = map[string]interface{}{
-			"httpEnabled": true,
-		}
-	}
-
-	annotations := map[string]string{
-		"agentState":  "provisioning",
-		"reviewState": "",
-	}
-	for k, v := range opt.Annotations {
-		annotations[k] = v
-	}
-
-	u := &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
-			"kind":       "IssueSandbox",
-			"metadata": map[string]interface{}{
-				"name": opt.Name,
-			},
-			"spec": spec,
-		},
-	}
-
-	if opt.Namespace != "" {
-		u.SetNamespace(opt.Namespace)
-	}
-
-	// Ensure we label this as a dev sandbox
-	labels := opt.Labels
-	if labels == nil {
-		labels = make(map[string]string)
-	}
-	labels["sandbox.gemini.google.com/type"] = "dev"
-	if opt.IdeaID != "" {
-		labels["repo-agent.gemini.google.com/idea-id"] = opt.IdeaID
-	}
-	if opt.Approach != "" {
-		labels["repo-agent.gemini.google.com/approach"] = opt.Approach
-	}
-	if opt.ParentApproach != "" {
-		labels["repo-agent.gemini.google.com/parent-approach"] = opt.ParentApproach
-	}
-	u.SetLabels(labels)
-
-	u.SetAnnotations(annotations)
-
-	return u
+	return NewAgentSandbox(agentOpt)
 }
