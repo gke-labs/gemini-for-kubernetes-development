@@ -231,6 +231,10 @@ type IssueSpec struct {
 	// +kubebuilder:validation:Optional
 	RobotAccount string `json:"robotAccount,omitempty"`
 
+	// DockerEnabled enables docker-in-docker support for the sandbox.
+	// +kubebuilder:validation:Optional
+	DockerEnabled bool `json:"dockerEnabled,omitempty"`
+
 	// Models specifies a list of models to use for the issue handler.
 	// +kubebuilder:validation:Optional
 	Models []string `json:"models,omitempty"`

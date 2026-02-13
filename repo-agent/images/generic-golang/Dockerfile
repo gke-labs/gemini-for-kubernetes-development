@@ -40,6 +40,12 @@ RUN apt-get update && apt-get install -y git tmux nodejs npm sudo curl
 
 RUN npm install -g @google/gemini-cli
 
+# Install docker and kind
+RUN apt-get update && apt-get install -y docker.io
+RUN curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.26.0/kind-linux-amd64 && \
+    chmod +x ./kind && \
+    mv ./kind /usr/local/bin/kind
+
 # Install code-server
 RUN curl -fsSL https://code-server.dev/install.sh | sh
 RUN code-server --install-extension golang.go --install-extension vscodevim.vim
