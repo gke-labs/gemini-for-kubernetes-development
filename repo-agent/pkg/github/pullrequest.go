@@ -72,3 +72,7 @@ func (p *PullRequest) Title() string {
 func (p *PullRequest) Body() string {
 	return p.pr.GetBody()
 }
+
+func (p *PullRequest) HeadRef() string {
+	return p.pr.GetHead().GetRef()
+}

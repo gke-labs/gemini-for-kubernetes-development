@@ -228,6 +228,19 @@ function IssueCard({
                             }
                             handleCreateTask('address-feedback', '', { PULL_REQUEST_ID: match[1] });
                         }}>Address Feedback</button>
+                        <button className="btn" onClick={() => {
+                            const fixTask = tasks.find(t => t.type === 'fix-issue');
+                            if (!fixTask || !fixTask.agentDraft) {
+                                alert("No 'fix-issue' task with a draft found to extract PR ID.");
+                                return;
+                            }
+                            const match = fixTask.agentDraft.match(/\/pull\/(\d+)/);
+                            if (!match) {
+                                alert("Could not extract PR ID from fix-issue draft.");
+                                return;
+                            }
+                            handleCreateTask('investigate-failures', '', { PULL_REQUEST_ID: match[1] });
+                        }}>Investigate Failures</button>
                     </div>
                 </div>
             </div>
