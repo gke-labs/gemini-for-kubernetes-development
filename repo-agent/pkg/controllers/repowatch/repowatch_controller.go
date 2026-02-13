@@ -1739,8 +1739,8 @@ func (r *Reconciler) createDevSandbox(ctx context.Context, user *github.User, re
 		RepoSandboxImage:      r.RepoSandboxImage,
 		ConfigDirImage:        r.ConfigDirImage,
 
-		HTTPEnabled: true,
-		Replicas:    1,
+		HTTPEnabled:        true,
+		Replicas:           1,
 		ServiceAccountName: "issue-sandbox",
 	}
 
