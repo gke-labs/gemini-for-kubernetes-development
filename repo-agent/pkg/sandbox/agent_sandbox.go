@@ -72,29 +72,29 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 	}
 
 	// Environment variables
-	env := []map[string]interface{}{
-		{"name": "NAMESPACE", "value": opt.Namespace},
-		{"name": "NAME", "value": name},
-		{"name": "REPO", "value": opt.IssueRepo},
-		{"name": "HANDLER", "value": opt.Handler},
-		{"name": "AGENT_NAME", "value": opt.LLMProvider},
-		{"name": "AGENT_PROMPT", "value": opt.Prompt},
-		{"name": "ISSUEID", "value": opt.IssueID},
-		{"name": "ISSUE_BRANCH", "value": opt.Branch},
-		{"name": "USER_DOTFILESREPO", "value": opt.DotFilesRepo},
-		{"name": "DEV_BRANCH", "value": opt.Branch},
-		{"name": "GIT_HTML_URL", "value": opt.HTMLURL},
-		{"name": "ISSUE_URL", "value": opt.HTMLURL},
-		{"name": "GITHUB_USER_ORIGIN", "value": opt.Origin},
-		{"name": "GITHUB_USER_LOGIN", "value": opt.UserLogin},
-		{"name": "GITHUB_USER_NAME", "value": opt.UserName},
-		{"name": "GITHUB_USER_EMAIL", "value": opt.UserEmail},
-		{"name": "GIT_AUTHOR_NAME", "value": opt.UserName},
-		{"name": "GIT_AUTHOR_EMAIL", "value": opt.UserEmail},
-		{"name": "GITHUB_BOT_LOGIN", "value": opt.BotLogin},
-		{"name": "GITHUB_BOT_NAME", "value": opt.BotName},
-		{"name": "GITHUB_BOT_EMAIL", "value": opt.BotEmail},
-		{
+	env := []interface{}{
+		map[string]interface{}{"name": "NAMESPACE", "value": opt.Namespace},
+		map[string]interface{}{"name": "NAME", "value": name},
+		map[string]interface{}{"name": "REPO", "value": opt.IssueRepo},
+		map[string]interface{}{"name": "HANDLER", "value": opt.Handler},
+		map[string]interface{}{"name": "AGENT_NAME", "value": opt.LLMProvider},
+		map[string]interface{}{"name": "AGENT_PROMPT", "value": opt.Prompt},
+		map[string]interface{}{"name": "ISSUEID", "value": opt.IssueID},
+		map[string]interface{}{"name": "ISSUE_BRANCH", "value": opt.Branch},
+		map[string]interface{}{"name": "USER_DOTFILESREPO", "value": opt.DotFilesRepo},
+		map[string]interface{}{"name": "DEV_BRANCH", "value": opt.Branch},
+		map[string]interface{}{"name": "GIT_HTML_URL", "value": opt.HTMLURL},
+		map[string]interface{}{"name": "ISSUE_URL", "value": opt.HTMLURL},
+		map[string]interface{}{"name": "GITHUB_USER_ORIGIN", "value": opt.Origin},
+		map[string]interface{}{"name": "GITHUB_USER_LOGIN", "value": opt.UserLogin},
+		map[string]interface{}{"name": "GITHUB_USER_NAME", "value": opt.UserName},
+		map[string]interface{}{"name": "GITHUB_USER_EMAIL", "value": opt.UserEmail},
+		map[string]interface{}{"name": "GIT_AUTHOR_NAME", "value": opt.UserName},
+		map[string]interface{}{"name": "GIT_AUTHOR_EMAIL", "value": opt.UserEmail},
+		map[string]interface{}{"name": "GITHUB_BOT_LOGIN", "value": opt.BotLogin},
+		map[string]interface{}{"name": "GITHUB_BOT_NAME", "value": opt.BotName},
+		map[string]interface{}{"name": "GITHUB_BOT_EMAIL", "value": opt.BotEmail},
+		map[string]interface{}{
 			"name": "GITHUB_TOKEN",
 			"valueFrom": map[string]interface{}{
 				"secretKeyRef": map[string]interface{}{
@@ -104,7 +104,7 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 				},
 			},
 		},
-		{
+		map[string]interface{}{
 			"name": "MANUAL_PAT",
 			"valueFrom": map[string]interface{}{
 				"secretKeyRef": map[string]interface{}{
@@ -114,7 +114,7 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 				},
 			},
 		},
-		{
+		map[string]interface{}{
 			"name": "OAUTH_PAT",
 			"valueFrom": map[string]interface{}{
 				"secretKeyRef": map[string]interface{}{
@@ -124,13 +124,13 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 				},
 			},
 		},
-		{"name": "GIT_PUSH_ENABLED", "value": strconv.FormatBool(opt.PushEnabled)},
-		{"name": "GIT_CLONE_URL", "value": opt.CloneURL},
-		{"name": "ENVBUILDER_GIT_URL", "value": opt.CloneURL},
-		{"name": "ENVBUILDER_CACHE_REPO", "value": "registry.repo-agent-system.svc.cluster.local:5000/envbuilder-cache"},
-		{"name": "ENVBUILDER_DEVCONTAINER_DIR", "value": "/"},
-		{"name": "ENVBUILDER_INIT_SCRIPT", "value": "/opt/repo-agent/repo-sandbox dev-daemon"},
-		{"name": "ENVBUILDER_IGNORE_PATHS", "value": "/var/run,/product_uuid,/product_name,/tokens,/repo-agent/"},
+		map[string]interface{}{"name": "GIT_PUSH_ENABLED", "value": strconv.FormatBool(opt.PushEnabled)},
+		map[string]interface{}{"name": "GIT_CLONE_URL", "value": opt.CloneURL},
+		map[string]interface{}{"name": "ENVBUILDER_GIT_URL", "value": opt.CloneURL},
+		map[string]interface{}{"name": "ENVBUILDER_CACHE_REPO", "value": "registry.repo-agent-system.svc.cluster.local:5000/envbuilder-cache"},
+		map[string]interface{}{"name": "ENVBUILDER_DEVCONTAINER_DIR", "value": "/"},
+		map[string]interface{}{"name": "ENVBUILDER_INIT_SCRIPT", "value": "/opt/repo-agent/repo-sandbox dev-daemon"},
+		map[string]interface{}{"name": "ENVBUILDER_IGNORE_PATHS", "value": "/var/run,/product_uuid,/product_name,/tokens,/repo-agent/"},
 	}
 
 	image := opt.Image
@@ -140,6 +140,11 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 		cmd = []string{}
 	} else {
 		cmd = []string{"/opt/repo-agent/repo-sandbox", "dev-daemon"}
+	}
+
+	cmdInterface := make([]interface{}, len(cmd))
+	for i, v := range cmd {
+		cmdInterface[i] = v
 	}
 
 	// Add metadata annotations for easier retrieval
@@ -157,6 +162,16 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 	ephemeralRequest := resources.Requests["ephemeral-storage"]
 	ephemeralLimit := resources.Limits["ephemeral-storage"]
 
+	labelsInterface := make(map[string]interface{}, len(labels))
+	for k, v := range labels {
+		labelsInterface[k] = v
+	}
+
+	annotationsInterface := make(map[string]interface{}, len(opt.Annotations))
+	for k, v := range opt.Annotations {
+		annotationsInterface[k] = v
+	}
+
 	// Construct unstructured Sandbox
 	sandbox := &unstructured.Unstructured{
 		Object: map[string]interface{}{
@@ -165,40 +180,40 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 			"metadata": map[string]interface{}{
 				"name":        sandboxName,
 				"namespace":   opt.Namespace,
-				"labels":      labels,
-				"annotations": opt.Annotations,
+				"labels":      labelsInterface,
+				"annotations": annotationsInterface,
 			},
 			"spec": map[string]interface{}{
 				"replicas": opt.Replicas,
 				"podTemplate": map[string]interface{}{
 					"metadata": map[string]interface{}{
-						"labels": labels,
+						"labels": labelsInterface,
 					},
 					"spec": map[string]interface{}{
 						"serviceAccountName": opt.ServiceAccountName,
-						"initContainers": []map[string]interface{}{
-							{
+						"initContainers": []interface{}{
+							map[string]interface{}{
 								"name":  "gemini-configs",
 								"image": "ko://repo-agent/configdir/cmd/configdir-cli",
-								"args":  []string{"--directory", "/workspaces", "--namespace", opt.Namespace, "--name", opt.LLMConfigdirRef, "--ignore-not-found-error"},
-								"volumeMounts": []map[string]interface{}{
-									{"name": "workspaces-pvc", "mountPath": "/workspaces"},
+								"args":  []interface{}{"--directory", "/workspaces", "--namespace", opt.Namespace, "--name", opt.LLMConfigdirRef, "--ignore-not-found-error"},
+								"volumeMounts": []interface{}{
+									map[string]interface{}{"name": "workspaces-pvc", "mountPath": "/workspaces"},
 								},
 							},
-							{
+							map[string]interface{}{
 								"name":    "inject-agent",
 								"image":   "ko://repo-agent/images/repo-sandbox",
-								"command": []string{"/repo-agent/repo-sandbox", "inject", "--path", "/opt/repo-agent"},
-								"volumeMounts": []map[string]interface{}{
-									{"name": "agent-bin", "mountPath": "/opt/repo-agent"},
+								"command": []interface{}{"/repo-agent/repo-sandbox", "inject", "--path", "/opt/repo-agent"},
+								"volumeMounts": []interface{}{
+									map[string]interface{}{"name": "agent-bin", "mountPath": "/opt/repo-agent"},
 								},
 							},
 						},
-						"containers": []map[string]interface{}{
-							{
+						"containers": []interface{}{
+							map[string]interface{}{
 								"name":    "sandbox",
 								"image":   image,
-								"command": cmd,
+								"command": cmdInterface,
 								"securityContext": map[string]interface{}{
 									"privileged": opt.DockerEnabled,
 								},
@@ -213,30 +228,30 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 									},
 								},
 								"env": env,
-								"volumeMounts": []map[string]interface{}{
-									{"name": "workspaces-pvc", "mountPath": "/workspaces"},
-									{"name": "tokens-secret", "mountPath": "/tokens", "readOnly": true},
-									{"name": "devcontainer-config", "mountPath": "/devcontainer.json", "subPath": "devcontainer.json"},
-									{"name": "agent-bin", "mountPath": "/opt/repo-agent"},
+								"volumeMounts": []interface{}{
+									map[string]interface{}{"name": "workspaces-pvc", "mountPath": "/workspaces"},
+									map[string]interface{}{"name": "tokens-secret", "mountPath": "/tokens", "readOnly": true},
+									map[string]interface{}{"name": "devcontainer-config", "mountPath": "/devcontainer.json", "subPath": "devcontainer.json"},
+									map[string]interface{}{"name": "agent-bin", "mountPath": "/opt/repo-agent"},
 								},
-								"ports": []map[string]interface{}{
-									{"containerPort": int64(13337)},
-									{"containerPort": int64(13339)},
+								"ports": []interface{}{
+									map[string]interface{}{"containerPort": int64(13337)},
+									map[string]interface{}{"containerPort": int64(13339)},
 								},
 							},
 						},
-						"volumes": []map[string]interface{}{
-							{
+						"volumes": []interface{}{
+							map[string]interface{}{
 								"name":     "agent-bin",
 								"emptyDir": map[string]interface{}{},
 							},
-							{
+							map[string]interface{}{
 								"name": "devcontainer-config",
 								"configMap": map[string]interface{}{
 									"name": opt.DevcontainerConfigRef,
 								},
 							},
-							{
+							map[string]interface{}{
 								"name": "tokens-secret",
 								"secret": map[string]interface{}{
 									"secretName": opt.LLMAPIKeySecretName,
@@ -245,13 +260,13 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 						},
 					},
 				},
-				"volumeClaimTemplates": []map[string]interface{}{
-					{
+				"volumeClaimTemplates": []interface{}{
+					map[string]interface{}{
 						"metadata": map[string]interface{}{
 							"name": "workspaces-pvc",
 						},
 						"spec": map[string]interface{}{
-							"accessModes": []string{"ReadWriteOnce"},
+							"accessModes": []interface{}{"ReadWriteOnce"},
 							"resources": map[string]interface{}{
 								"requests": map[string]interface{}{
 									"storage": "5Gi",

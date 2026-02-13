@@ -84,11 +84,11 @@ func TestReconciler_ReconcileIssues_PodEvicted(t *testing.T) {
 	}
 
 	// Existing Sandbox
-	sandboxName := "test-repowatch-issue-1"
+	sandboxName := "devc-test-repowatch-issue-1"
 	issueSandbox := &unstructured.Unstructured{
 		Object: map[string]interface{}{
-			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
-			"kind":       "IssueSandbox",
+			"apiVersion": "agents.x-k8s.io/v1alpha1",
+			"kind":       "Sandbox",
 			"metadata": map[string]interface{}{
 				"name":      sandboxName,
 				"namespace": "default",
@@ -113,10 +113,10 @@ func TestReconciler_ReconcileIssues_PodEvicted(t *testing.T) {
 	// Failed Pod
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "devc-" + sandboxName + "-pod",
+			Name:      sandboxName + "-pod",
 			Namespace: "default",
 			Labels: map[string]string{
-				"sandbox":      "devc-" + sandboxName,
+				"sandbox":      sandboxName,
 				"sandbox-type": "issue",
 			},
 		},
@@ -150,7 +150,7 @@ func TestReconciler_ReconcileIssues_PodEvicted(t *testing.T) {
 
 	// Verify Annotation
 	fetchedSandbox := &unstructured.Unstructured{}
-	fetchedSandbox.SetGroupVersionKind(schema.GroupVersionKind{Group: "custom.agents.x-k8s.io", Version: "v1alpha1", Kind: "IssueSandbox"})
+	fetchedSandbox.SetGroupVersionKind(schema.GroupVersionKind{Group: "agents.x-k8s.io", Version: "v1alpha1", Kind: "Sandbox"})
 	g.Expect(fakeClient.Get(context.Background(), types.NamespacedName{Name: sandboxName, Namespace: "default"}, fetchedSandbox)).To(gomega.Succeed())
 
 	ann := fetchedSandbox.GetAnnotations()
@@ -202,11 +202,11 @@ func TestReconciler_ReconcileIssues_PodFailedOOM(t *testing.T) {
 	}
 
 	// Existing Sandbox
-	sandboxName := "test-repowatch-oom-issue-1"
+	sandboxName := "devc-test-repowatch-oom-issue-1"
 	issueSandbox := &unstructured.Unstructured{
 		Object: map[string]interface{}{
-			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
-			"kind":       "IssueSandbox",
+			"apiVersion": "agents.x-k8s.io/v1alpha1",
+			"kind":       "Sandbox",
 			"metadata": map[string]interface{}{
 				"name":      sandboxName,
 				"namespace": "default",
@@ -231,10 +231,10 @@ func TestReconciler_ReconcileIssues_PodFailedOOM(t *testing.T) {
 	// Failed Pod OOM
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "devc-" + sandboxName + "-pod",
+			Name:      sandboxName + "-pod",
 			Namespace: "default",
 			Labels: map[string]string{
-				"sandbox":      "devc-" + sandboxName,
+				"sandbox":      sandboxName,
 				"sandbox-type": "issue",
 			},
 		},
@@ -269,7 +269,7 @@ func TestReconciler_ReconcileIssues_PodFailedOOM(t *testing.T) {
 
 	// Verify Annotation
 	fetchedSandbox := &unstructured.Unstructured{}
-	fetchedSandbox.SetGroupVersionKind(schema.GroupVersionKind{Group: "custom.agents.x-k8s.io", Version: "v1alpha1", Kind: "IssueSandbox"})
+	fetchedSandbox.SetGroupVersionKind(schema.GroupVersionKind{Group: "agents.x-k8s.io", Version: "v1alpha1", Kind: "Sandbox"})
 	g.Expect(fakeClient.Get(context.Background(), types.NamespacedName{Name: sandboxName, Namespace: "default"}, fetchedSandbox)).To(gomega.Succeed())
 
 	ann := fetchedSandbox.GetAnnotations()

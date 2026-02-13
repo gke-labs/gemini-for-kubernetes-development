@@ -152,15 +152,20 @@ func TestReconciler_Reconcile_Issue_With_Image(t *testing.T) {
 
 	issueSandboxList := &unstructured.UnstructuredList{}
 	issueSandboxList.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   "custom.agents.x-k8s.io",
+		Group:   "agents.x-k8s.io",
 		Version: "v1alpha1",
-		Kind:    "IssueSandbox",
+		Kind:    "Sandbox",
 	})
 	g.Expect(fakeClient.List(context.Background(), issueSandboxList)).To(gomega.Succeed())
 	g.Expect(issueSandboxList.Items).To(gomega.HaveLen(1))
 
-	image, found, err := unstructured.NestedString(issueSandboxList.Items[0].Object, "spec", "image")
+	// Verify image in podTemplate
+	containers, found, err := unstructured.NestedSlice(issueSandboxList.Items[0].Object, "spec", "podTemplate", "spec", "containers")
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(found).To(gomega.BeTrue())
+	g.Expect(containers).To(gomega.HaveLen(1))
+
+	container := containers[0].(map[string]interface{})
+	image := container["image"].(string)
 	g.Expect(image).To(gomega.Equal("custom-image:latest"))
 }

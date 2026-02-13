@@ -34,7 +34,11 @@ import (
 func (r *Reconciler) cleanupClosedPRSandboxes(ctx context.Context, totalSandboxes int, ownedSandboxes []unstructured.Unstructured, allOpenPRs []*github.PullRequest) int {
 	log := log.FromContext(ctx)
 	for _, sandbox := range ownedSandboxes {
-		prNumber, err := strconv.Atoi(strings.Split(sandbox.GetName(), "-pr-")[1])
+		parts := strings.Split(sandbox.GetName(), "-pr-")
+		if len(parts) < 2 {
+			continue
+		}
+		prNumber, err := strconv.Atoi(parts[1])
 		if err != nil {
 			log.Error(err, "unable to parse pr number from sandbox name", "sandbox", sandbox.GetName())
 			continue
@@ -72,12 +76,15 @@ func countSandboxes(ownedSandboxes []unstructured.Unstructured, explicitPRs []*g
 			// An "explicit" PR is one that is specifically listed in the `RepoWatch`
 			// spec's `pullRequests` field.
 			var prIsExplicit bool
-			prNumber, err := strconv.Atoi(strings.Split(sandbox.GetName(), "-pr-")[1])
-			if err == nil {
-				prIsExplicit = isPRExplicit(prNumber, explicitPRs)
-			}
-			if !prIsExplicit {
-				activeSandboxes++
+			parts := strings.Split(sandbox.GetName(), "-pr-")
+			if len(parts) >= 2 {
+				prNumber, err := strconv.Atoi(parts[1])
+				if err == nil {
+					prIsExplicit = isPRExplicit(prNumber, explicitPRs)
+				}
+				if !prIsExplicit {
+					activeSandboxes++
+				}
 			}
 		}
 	}
