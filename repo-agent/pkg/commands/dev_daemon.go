@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/agentoutput"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/agentserver"
@@ -76,6 +77,11 @@ func (c *SandboxDaemonCommand) Run(ctx context.Context) error {
 		return err
 	}
 
+	if err := c.startDockerd(ctx); err != nil {
+		_ = ao.SetAgentState(ctx, "error", err.Error())
+		return fmt.Errorf("failed to start dockerd: %w", err)
+	}
+
 	if err := c.CodeServerCommand.Start(ctx); err != nil {
 		_ = ao.SetAgentState(ctx, "error", err.Error())
 		return fmt.Errorf("failed to start code-server: %w", err)
@@ -116,4 +122,31 @@ func (c *SandboxDaemonCommand) Run(ctx context.Context) error {
 	log.Info("Sandbox Daemon started. Waiting for tasks...")
 
 	return c.CodeServerCommand.Wait() // Wait for code server (or context cancel)
+}
+
+func (c *SandboxDaemonCommand) startDockerd(ctx context.Context) error {
+	path, err := exec.LookPath("dockerd")
+	if err != nil {
+		return nil // Not installed, skip
+	}
+
+	klog.FromContext(ctx).Info("Starting dockerd")
+
+	cmd := exec.CommandContext(ctx, path)
+
+	// Redirect logs to /tmp/dockerd.log
+	f, err := os.Create("/tmp/dockerd.log")
+	if err == nil {
+		cmd.Stdout = f
+		cmd.Stderr = f
+	} else {
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+	}
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start dockerd: %w", err)
+	}
+
+	return nil
 }
