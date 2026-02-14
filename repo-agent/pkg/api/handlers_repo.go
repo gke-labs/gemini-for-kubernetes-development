@@ -701,6 +701,10 @@ func (s *Server) getRepos(c *gin.Context) {
 				repo.Issue.Issues = issueList
 			}
 
+			if models, found, err := unstructured.NestedStringSlice(repoWatch.Object, "spec", "issue", "models"); err == nil && found {
+				repo.Issue.Models = models
+			}
+
 			if handlers, found, err := unstructured.NestedSlice(repoWatch.Object, "spec", "issue", "handlers"); err == nil && found {
 				var issueHandlers []models.IssueHandler
 				for _, h := range handlers {
@@ -892,6 +896,10 @@ func (s *Server) getRepo(c *gin.Context) {
 				}
 			}
 			repo.Issue.Issues = issueList
+		}
+
+		if models, found, err := unstructured.NestedStringSlice(repoWatch.Object, "spec", "issue", "models"); err == nil && found {
+			repo.Issue.Models = models
 		}
 
 		if handlers, found, err := unstructured.NestedSlice(repoWatch.Object, "spec", "issue", "handlers"); err == nil && found {

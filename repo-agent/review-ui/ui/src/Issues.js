@@ -301,6 +301,7 @@ function Issues({
                     repoName={activeRepo.name}
                     handleAddIssue={handleAddIssue}
                     isMainView={true}
+                    availableModels={activeRepo.issue?.models}
                 />
             ) : (
                 <div className="empty-state">

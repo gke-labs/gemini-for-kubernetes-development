@@ -18,11 +18,13 @@ function IssueCard({
   handleIssueSaveDraft,
   handleIssueSubmit,
   handleAddIssue,
+  availableModels = [],
 }) {
   const [isCollapsed, setIsCollapsed] = useState(!isMainView);
   const [tasks, setTasks] = useState([]);
   const [iteratePrompt, setIteratePrompt] = useState('');
   const [showTerminal, setShowTerminal] = useState(false);
+  const [selectedModel, setSelectedModel] = useState('');
 
   const fetchTasks = () => {
     if (!repoName || !issue.id) return;
@@ -208,13 +210,26 @@ function IssueCard({
                             />
                             <button className="btn" onClick={() => {
                                 if (!iteratePrompt.trim()) return;
-                                handleCreateTask('iterate', iteratePrompt);
+                                handleCreateTask('iterate', iteratePrompt, selectedModel ? { model: selectedModel } : {});
                                 setIteratePrompt('');
                             }}>Iterate</button>
                          </div>
                      )}
-                    <div style={{display: 'flex', gap: '10px'}}>
-                        <button className="btn" onClick={() => handleCreateTask('triage-issue')}>Triage</button>
+                    <div style={{display: 'flex', gap: '10px', alignItems: 'center'}}>
+                        {availableModels && availableModels.length > 0 && (
+                            <div style={{display: 'flex', alignItems: 'center', gap: '5px'}}>
+                                <label style={{fontSize: 'small', color: 'var(--text-secondary)'}}>Model:</label>
+                                <select 
+                                    value={selectedModel} 
+                                    onChange={(e) => setSelectedModel(e.target.value)}
+                                    style={{padding: '4px', borderRadius: '4px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-primary)', color: 'var(--text-primary)'}}
+                                >
+                                    <option value="">Default (All)</option>
+                                    {availableModels.map(m => <option key={m} value={m}>{m}</option>)}
+                                </select>
+                            </div>
+                        )}
+                        <button className="btn" onClick={() => handleCreateTask('triage-issue', '', selectedModel ? { model: selectedModel } : {})}>Triage</button>
                         <button className="btn" onClick={() => {
                             const fixTask = tasks.find(t => t.type === 'fix-issue');
                             if (!fixTask || !fixTask.agentDraft) {
@@ -226,7 +241,9 @@ function IssueCard({
                                 alert("Could not extract PR ID from fix-issue draft.");
                                 return;
                             }
-                            handleCreateTask('address-feedback', '', { PULL_REQUEST_ID: match[1] });
+                            const params = { PULL_REQUEST_ID: match[1] };
+                            if (selectedModel) params.model = selectedModel;
+                            handleCreateTask('address-feedback', '', params);
                         }}>Address Feedback</button>
                         <button className="btn" onClick={() => {
                             const fixTask = tasks.find(t => t.type === 'fix-issue');
@@ -239,7 +256,9 @@ function IssueCard({
                                 alert("Could not extract PR ID from fix-issue draft.");
                                 return;
                             }
-                            handleCreateTask('investigate-failures', '', { PULL_REQUEST_ID: match[1] });
+                            const params = { PULL_REQUEST_ID: match[1] };
+                            if (selectedModel) params.model = selectedModel;
+                            handleCreateTask('investigate-failures', '', params);
                         }}>Investigate Failures</button>
                     </div>
                 </div>
