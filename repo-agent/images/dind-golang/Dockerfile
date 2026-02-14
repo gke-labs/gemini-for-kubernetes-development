@@ -9,13 +9,17 @@ FROM ubuntu:24.04
 ARG DOCKER_VERSION="5:27.5.1-1~ubuntu.24.04~noble"
 
 ENV DEBIAN_FRONTEND="noninteractive"
-RUN apt-get update && apt-get -y install ca-certificates curl
+RUN apt-get update && apt-get -y install ca-certificates curl gnupg
 
 RUN curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc && \
     chmod a+r /etc/apt/keyrings/docker.asc && \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
-    $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list && \
-    apt-get update && \
+    $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list
+
+RUN curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg && \
+    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" > /etc/apt/sources.list.d/nodesource.list
+
+RUN apt-get update && \
     apt-get install -qqy \
     docker-ce=${DOCKER_VERSION} \
     docker-ce-cli=${DOCKER_VERSION} \
@@ -23,7 +27,8 @@ RUN curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings
     docker-buildx-plugin \
     docker-compose-plugin \
     iproute2 \
-    iptables
+    iptables \
+    nodejs
 
 # ------- Install go -------
 #RUN apt-get update && apt-get install -y golang-go
@@ -43,7 +48,7 @@ ENV GOTOOLCHAIN=auto
 # -------- Install python --------
 # We want a functional python, because gemini-cli likes to use python
 RUN apt-get update && apt-get install -y python3 python3-pip python3-yaml python-is-python3 python3-venv
-RUN apt-get update && apt-get install -y git tmux nodejs npm sudo curl
+RUN apt-get update && apt-get install -y git tmux sudo curl
 
 RUN npm install -g @google/gemini-cli
 
