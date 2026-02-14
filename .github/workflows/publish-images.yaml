@@ -20,6 +20,7 @@ jobs:
           - review-ui
           - syncer
           - generic-golang
+          - dind-golang
     permissions:
       contents: read
       packages: write
