@@ -10,7 +10,6 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 	v1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -150,14 +149,6 @@ func LaunchSandbox(ctx context.Context, kube *clients.KubernetesClient, repo *gi
 	container := v1.Container{}
 	container.Name = "agent"
 	container.Image = "gcr.io/justinsb-knotai-dev/generic-golang:latest"
-	container.Resources.Requests = v1.ResourceList{
-		v1.ResourceCPU:    resource.MustParse("2000m"),
-		v1.ResourceMemory: resource.MustParse("2Gi"),
-	}
-	container.Resources.Limits = v1.ResourceList{
-		v1.ResourceCPU:    resource.MustParse("4000m"),
-		v1.ResourceMemory: resource.MustParse("6Gi"),
-	}
 
 	container.Env = append(container.Env, v1.EnvVar{
 		Name:  "CLONE_REPOS",

@@ -1253,11 +1253,9 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 								}(),
 								"resources": map[string]interface{}{
 									"limits": map[string]interface{}{
-										"cpu":               "4000m",
 										"ephemeral-storage": "6Gi",
 									},
 									"requests": map[string]interface{}{
-										"cpu":               "2000m",
 										"ephemeral-storage": "6Gi",
 									},
 								},

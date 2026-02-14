@@ -105,12 +105,12 @@ func newOverseerSandbox(repoWatch *reviewv1alpha1.RepoWatch, name string) *unstr
 				},
 				"resources": map[string]interface{}{
 					"requests": map[string]interface{}{
-						"cpu":    "500m",
-						"memory": "512Mi",
-					},
-					"limits": map[string]interface{}{
 						"cpu":    "1000m",
 						"memory": "1Gi",
+					},
+					"limits": map[string]interface{}{
+						"cpu":    "2000m",
+						"memory": "2Gi",
 					},
 				},
 				"volumeMounts": []interface{}{
