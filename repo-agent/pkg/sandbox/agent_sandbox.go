@@ -201,6 +201,20 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 							}
 							return nil
 						}(),
+						"dnsPolicy": func() interface{} {
+							if opt.DockerEnabled {
+								return "None"
+							}
+							return nil
+						}(),
+						"dnsConfig": func() interface{} {
+							if opt.DockerEnabled {
+								return map[string]interface{}{
+									"nameservers": []interface{}{"8.8.8.8", "8.8.4.4"},
+								}
+							}
+							return nil
+						}(),
 						"initContainers": []interface{}{
 							map[string]interface{}{
 								"name":  "gemini-configs",
@@ -224,9 +238,17 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 								"name":    "sandbox",
 								"image":   image,
 								"command": cmdInterface,
-								"securityContext": map[string]interface{}{
-									"privileged": false,
-								},
+								"securityContext": func() map[string]interface{} {
+									sc := map[string]interface{}{}
+									if opt.DockerEnabled {
+										sc["capabilities"] = map[string]interface{}{
+											"add": []interface{}{
+												"AUDIT_WRITE", "CHOWN", "DAC_OVERRIDE", "FOWNER", "FSETID", "KILL", "MKNOD", "NET_BIND_SERVICE", "NET_RAW", "SETFCAP", "SETGID", "SETPCAP", "SETUID", "SYS_CHROOT", "SYS_PTRACE", "NET_ADMIN", "SYS_ADMIN",
+											},
+										}
+									}
+									return sc
+								}(),
 								"resources": map[string]interface{}{
 									"requests": map[string]interface{}{
 										"memory":            resources.Requests.Memory().String(),
@@ -238,36 +260,51 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 									},
 								},
 								"env": env,
-								"volumeMounts": []interface{}{
-									map[string]interface{}{"name": "workspaces-pvc", "mountPath": "/workspaces"},
-									map[string]interface{}{"name": "tokens-secret", "mountPath": "/tokens", "readOnly": true},
-									map[string]interface{}{"name": "devcontainer-config", "mountPath": "/devcontainer.json", "subPath": "devcontainer.json"},
-									map[string]interface{}{"name": "agent-bin", "mountPath": "/opt/repo-agent"},
-								},
+								"volumeMounts": func() []interface{} {
+									vm := []interface{}{
+										map[string]interface{}{"name": "workspaces-pvc", "mountPath": "/workspaces"},
+										map[string]interface{}{"name": "tokens-secret", "mountPath": "/tokens", "readOnly": true},
+										map[string]interface{}{"name": "devcontainer-config", "mountPath": "/devcontainer.json", "subPath": "devcontainer.json"},
+										map[string]interface{}{"name": "agent-bin", "mountPath": "/opt/repo-agent"},
+									}
+									if opt.DockerEnabled {
+										vm = append(vm, map[string]interface{}{"name": "docker", "mountPath": "/var/lib/docker"})
+									}
+									return vm
+								}(),
 								"ports": []interface{}{
 									map[string]interface{}{"containerPort": int64(13337)},
 									map[string]interface{}{"containerPort": int64(13339)},
 								},
 							},
 						},
-						"volumes": []interface{}{
-							map[string]interface{}{
-								"name":     "agent-bin",
-								"emptyDir": map[string]interface{}{},
-							},
-							map[string]interface{}{
-								"name": "devcontainer-config",
-								"configMap": map[string]interface{}{
-									"name": opt.DevcontainerConfigRef,
+						"volumes": func() []interface{} {
+							v := []interface{}{
+								map[string]interface{}{
+									"name":     "agent-bin",
+									"emptyDir": map[string]interface{}{},
 								},
-							},
-							map[string]interface{}{
-								"name": "tokens-secret",
-								"secret": map[string]interface{}{
-									"secretName": opt.LLMAPIKeySecretName,
+								map[string]interface{}{
+									"name": "devcontainer-config",
+									"configMap": map[string]interface{}{
+										"name": opt.DevcontainerConfigRef,
+									},
 								},
-							},
-						},
+								map[string]interface{}{
+									"name": "tokens-secret",
+									"secret": map[string]interface{}{
+										"secretName": opt.LLMAPIKeySecretName,
+									},
+								},
+							}
+							if opt.DockerEnabled {
+								v = append(v, map[string]interface{}{
+									"name":     "docker",
+									"emptyDir": map[string]interface{}{},
+								})
+							}
+							return v
+						}(),
 					},
 				},
 				"volumeClaimTemplates": []interface{}{
