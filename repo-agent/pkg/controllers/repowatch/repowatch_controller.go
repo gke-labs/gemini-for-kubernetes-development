@@ -1245,7 +1245,7 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 								}(),
 								"command": func() []interface{} {
 									if repoWatch.Spec.Review.Image != "" {
-										return []interface{}{"/opt/repo-agent/repo-sandbox", "review-daemon"}
+										return []interface{}{sandbox.RepoSandboxBinary, "review-daemon"}
 									}
 									return []interface{}{}
 								}(),
@@ -1302,7 +1302,7 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 									map[string]interface{}{"name": "ENVBUILDER_CACHE_REPO", "value": "registry.repo-agent-system.svc.cluster.local:5000/envbuilder-cache"},
 									map[string]interface{}{"name": "ENVBUILDER_DEVCONTAINER_DIR", "value": "/"},
 									map[string]interface{}{"name": "ENVBUILDER_GIT_CLONE_SINGLE_BRANCH", "value": "true"},
-									map[string]interface{}{"name": "ENVBUILDER_INIT_SCRIPT", "value": "/opt/repo-agent/repo-sandbox review-daemon"},
+									map[string]interface{}{"name": "ENVBUILDER_INIT_SCRIPT", "value": sandbox.RepoSandboxBinary + " review-daemon"},
 									map[string]interface{}{"name": "ENVBUILDER_IGNORE_PATHS", "value": "/var/run,/product_uuid,/product_name,/tokens,/repo-agent/"},
 								},
 								"volumeMounts": []interface{}{

@@ -133,7 +133,7 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 		map[string]interface{}{"name": "ENVBUILDER_GIT_URL", "value": opt.CloneURL},
 		map[string]interface{}{"name": "ENVBUILDER_CACHE_REPO", "value": "registry.repo-agent-system.svc.cluster.local:5000/envbuilder-cache"},
 		map[string]interface{}{"name": "ENVBUILDER_DEVCONTAINER_DIR", "value": "/"},
-		map[string]interface{}{"name": "ENVBUILDER_INIT_SCRIPT", "value": "/opt/repo-agent/repo-sandbox dev-daemon"},
+		map[string]interface{}{"name": "ENVBUILDER_INIT_SCRIPT", "value": RepoSandboxBinary + " dev-daemon"},
 		map[string]interface{}{"name": "ENVBUILDER_IGNORE_PATHS", "value": "/var/run,/product_uuid,/product_name,/tokens,/repo-agent/"},
 	}
 
@@ -143,7 +143,7 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 		image = opt.RepoSandboxImage
 		cmd = []string{}
 	} else {
-		cmd = []string{"/opt/repo-agent/repo-sandbox", "dev-daemon"}
+		cmd = []string{RepoSandboxBinary, "dev-daemon"}
 	}
 
 	cmdInterface := make([]interface{}, len(cmd))
