@@ -91,7 +91,6 @@ func main() {
 			return repowatch.NewGithubClient(ctx, k8sClient, repoWatch)
 		},
 		RepoSandboxImage: os.Getenv("REPO_SANDBOX_IMAGE"),
-		DindGolangImage:  os.Getenv("DIND_GOLANG_IMAGE"),
 		ConfigDirImage:   os.Getenv("CONFIGDIR_CLI_IMAGE"),
 	}).SetupWithManager(mgr, concurrentReconciles); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "RepoWatch")

@@ -185,8 +185,6 @@ spec:
                     type: array
                   devcontainerConfigRef:
                     type: string
-                  dockerEnabled:
-                    type: boolean
                   excludePullRequests:
                     items:
                       type: integer
