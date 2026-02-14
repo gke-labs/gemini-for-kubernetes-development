@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/agentoutput"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/agentserver"
@@ -125,14 +126,55 @@ func (c *SandboxDaemonCommand) Run(ctx context.Context) error {
 }
 
 func (c *SandboxDaemonCommand) startDockerd(ctx context.Context) error {
+	log := klog.FromContext(ctx)
+
 	path, err := exec.LookPath("dockerd")
 	if err != nil {
 		return nil // Not installed, skip
 	}
 
-	klog.FromContext(ctx).Info("Starting dockerd")
+	log.Info("Preparing and starting dockerd")
 
-	cmd := exec.CommandContext(ctx, path)
+	// 1. Mount tmpfs on /var/lib/docker if not already tmpfs
+	// gVisor only supports tmpfs as an upper layer for overlay.
+	out, err := exec.Command("stat", "-f", "-c", "%T", "/var/lib/docker").Output()
+	if err != nil || strings.TrimSpace(string(out)) != "tmpfs" {
+		log.Info("Mounting tmpfs on /var/lib/docker")
+		_ = os.MkdirAll("/var/lib/docker", 0755)
+		if err := exec.Command("mount", "-t", "tmpfs", "-o", "size=2G", "tmpfs", "/var/lib/docker").Run(); err != nil {
+			log.Error(err, "failed to mount tmpfs on /var/lib/docker")
+		}
+	}
+
+	// 2. Enable IP forwarding
+	if err := os.WriteFile("/proc/sys/net/ipv4/ip_forward", []byte("1\n"), 0644); err != nil {
+		log.Error(err, "failed to enable ip_forward")
+	}
+
+	// 3. Setup NAT rules
+	// Find default route interface and its IP address
+	devCmd := "ip route show default | sed 's/.*\\sdev\\s\\(\\S*\\)\\s.*$/\\1/'"
+	if devOut, err := exec.Command("sh", "-c", devCmd).Output(); err == nil {
+		dev := strings.TrimSpace(string(devOut))
+		if dev != "" {
+			addrCmd := fmt.Sprintf("ip addr show dev %s | grep -w inet | sed 's/^\\s*inet\\s\\(\\S*\\)\\/.*$/\\1/'", dev)
+			if addrOut, err := exec.Command("sh", "-c", addrCmd).Output(); err == nil {
+				addr := strings.TrimSpace(string(addrOut))
+				if addr != "" {
+					iptablesCmd := "iptables"
+					if _, err := exec.LookPath("iptables-legacy"); err == nil {
+						iptablesCmd = "iptables-legacy"
+					}
+					log.Info("Setting up iptables NAT rules", "dev", dev, "addr", addr, "cmd", iptablesCmd)
+					_ = exec.Command(iptablesCmd, "-t", "nat", "-A", "POSTROUTING", "-o", dev, "-j", "SNAT", "--to-source", addr, "-p", "tcp").Run()
+					_ = exec.Command(iptablesCmd, "-t", "nat", "-A", "POSTROUTING", "-o", dev, "-j", "SNAT", "--to-source", addr, "-p", "udp").Run()
+				}
+			}
+		}
+	}
+
+	// 4. Start dockerd with flags to disable its own iptables management
+	cmd := exec.CommandContext(ctx, path, "--iptables=false", "--ip6tables=false", "-D")
 
 	// Redirect logs to /tmp/dockerd.log
 	f, err := os.Create("/tmp/dockerd.log")
