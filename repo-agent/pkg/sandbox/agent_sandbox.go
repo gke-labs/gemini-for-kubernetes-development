@@ -54,6 +54,12 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 	if resources.Limits.Memory().IsZero() {
 		resources.Limits[corev1.ResourceMemory] = resource.MustParse("6Gi")
 	}
+	if resources.Requests.Cpu().IsZero() {
+		resources.Requests[corev1.ResourceCPU] = resource.MustParse("2000m")
+	}
+	if resources.Limits.Cpu().IsZero() {
+		resources.Limits[corev1.ResourceCPU] = resource.MustParse("4000m")
+	}
 	if _, ok := resources.Requests["ephemeral-storage"]; !ok {
 		resources.Requests["ephemeral-storage"] = resource.MustParse("6Gi")
 	}
@@ -251,10 +257,12 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 								}(),
 								"resources": map[string]interface{}{
 									"requests": map[string]interface{}{
+										"cpu":               resources.Requests.Cpu().String(),
 										"memory":            resources.Requests.Memory().String(),
 										"ephemeral-storage": ephemeralRequest.String(),
 									},
 									"limits": map[string]interface{}{
+										"cpu":               resources.Limits.Cpu().String(),
 										"memory":            resources.Limits.Memory().String(),
 										"ephemeral-storage": ephemeralLimit.String(),
 									},
