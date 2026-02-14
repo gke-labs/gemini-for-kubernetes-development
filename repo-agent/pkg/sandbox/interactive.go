@@ -19,7 +19,7 @@ import (
 	sandboxapi "sigs.k8s.io/agent-sandbox/api/v1alpha1"
 )
 
-const RepoSandboxBinary = "/repo-agent/repo-sandbox"
+const RepoSandboxBinary = "/opt/repo-agent/repo-sandbox"
 
 // IssueSandbox represents an agent sandbox being used to fix a GitHub issue.
 type IssueSandbox struct {

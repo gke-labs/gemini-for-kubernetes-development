@@ -14,6 +14,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/agentserver"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 	"k8s.io/klog/v2"
 )
 
@@ -121,7 +122,7 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 
 	switch taskType {
 	case "review":
-		cmd = exec.Command("/opt/repo-agent/repo-sandbox", "review")
+		cmd = exec.Command(sandbox.RepoSandboxBinary, "review")
 		// Map params to env vars
 		cmd.Env = os.Environ()
 		cmd.Env = append(cmd.Env, "AGENT_OUTPUT_GVR_RESOURCE=sandboxtasks")
@@ -133,7 +134,7 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		}
 
 	case "fix-issue":
-		cmd = exec.Command("/opt/repo-agent/repo-sandbox", "github-fix-issue", "--in-pod=true")
+		cmd = exec.Command(sandbox.RepoSandboxBinary, "github-fix-issue", "--in-pod=true")
 		// Map params to env vars
 		cmd.Env = os.Environ()
 		// Inject params into env
@@ -142,7 +143,7 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		}
 
 	case "address-feedback":
-		cmd = exec.Command("/opt/repo-agent/repo-sandbox", "github-feedback", "--in-pod=true")
+		cmd = exec.Command(sandbox.RepoSandboxBinary, "github-feedback", "--in-pod=true")
 		// Map params to env vars
 		cmd.Env = os.Environ()
 		// Inject params into env
@@ -151,7 +152,7 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		}
 
 	case "investigate-failures":
-		cmd = exec.Command("/opt/repo-agent/repo-sandbox", "github-investigate", "--in-pod=true")
+		cmd = exec.Command(sandbox.RepoSandboxBinary, "github-investigate", "--in-pod=true")
 		// Map params to env vars
 		cmd.Env = os.Environ()
 		// Inject params into env
@@ -160,7 +161,7 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		}
 
 	case "triage-issue":
-		cmd = exec.Command("/opt/repo-agent/repo-sandbox", "github-triage-issue", "--in-pod=true")
+		cmd = exec.Command(sandbox.RepoSandboxBinary, "github-triage-issue", "--in-pod=true")
 		// Map params to env vars
 		cmd.Env = os.Environ()
 		// Inject params into env
@@ -169,7 +170,7 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		}
 
 	case "dev-setup":
-		cmd = exec.Command("/opt/repo-agent/repo-sandbox", "dev-init", "--in-pod=true")
+		cmd = exec.Command(sandbox.RepoSandboxBinary, "dev-init", "--in-pod=true")
 		// Map params to env vars
 		cmd.Env = os.Environ()
 		// Inject params into env
@@ -178,7 +179,7 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		}
 
 	case "iterate":
-		cmd = exec.Command("/opt/repo-agent/repo-sandbox", "iterate", "--in-pod=true")
+		cmd = exec.Command(sandbox.RepoSandboxBinary, "iterate", "--in-pod=true")
 		// Map params to env vars
 		cmd.Env = os.Environ()
 		// Inject params into env
@@ -187,7 +188,7 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		}
 
 	case "issue":
-		cmd = exec.Command("/opt/repo-agent/repo-sandbox", "dev")
+		cmd = exec.Command(sandbox.RepoSandboxBinary, "dev")
 		// Map params to env vars
 		cmd.Env = os.Environ()
 		cmd.Env = append(cmd.Env, "AGENT_OUTPUT_GVR_RESOURCE=sandboxtasks")
