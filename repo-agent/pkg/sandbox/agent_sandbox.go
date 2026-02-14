@@ -239,9 +239,7 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 								"image":   image,
 								"command": cmdInterface,
 								"securityContext": func() map[string]interface{} {
-									sc := map[string]interface{}{
-										"privileged": false,
-									}
+									sc := map[string]interface{}{}
 									if opt.DockerEnabled {
 										sc["capabilities"] = map[string]interface{}{
 											"add": []interface{}{
