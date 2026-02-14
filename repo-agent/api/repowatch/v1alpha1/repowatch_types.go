@@ -114,6 +114,10 @@ type PRReviewSpec struct {
 	// RobotAccount to use for this handler.
 	// +kubebuilder:validation:Optional
 	RobotAccount string `json:"robotAccount,omitempty"`
+
+	// DockerEnabled enables docker-in-docker support for the sandbox.
+	// +kubebuilder:validation:Optional
+	DockerEnabled bool `json:"dockerEnabled,omitempty"`
 }
 
 // IdeaSpec defines the configuration for an idea/exploration.
@@ -165,6 +169,10 @@ type DevSpec struct {
 	// Ideas specifies a list of ideas/explorations.
 	// +kubebuilder:validation:Optional
 	Ideas []IdeaSpec `json:"ideas,omitempty"`
+
+	// DockerEnabled enables docker-in-docker support for the sandbox.
+	// +kubebuilder:validation:Optional
+	DockerEnabled bool `json:"dockerEnabled,omitempty"`
 }
 
 type IssueHandlerSpec struct {

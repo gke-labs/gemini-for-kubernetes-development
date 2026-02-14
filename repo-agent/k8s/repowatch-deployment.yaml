@@ -71,6 +71,8 @@ spec:
         env:
         - name: REPO_SANDBOX_IMAGE
           value: ko://repo-agent/images/repo-sandbox
+        - name: DIND_GOLANG_IMAGE
+          value: ghcr.io/gke-labs/gemini-for-kubernetes-development/dind-golang:latest
         - name: CONFIGDIR_CLI_IMAGE
           value: ko://repo-agent/configdir/cmd/configdir-cli
         - name: OVERSEER_IMAGE

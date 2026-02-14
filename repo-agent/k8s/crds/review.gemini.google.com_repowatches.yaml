@@ -34,6 +34,8 @@ spec:
                     type: array
                   devcontainerConfigRef:
                     type: string
+                  dockerEnabled:
+                    type: boolean
                   excludeBranches:
                     items:
                       type: string
@@ -183,6 +185,8 @@ spec:
                     type: array
                   devcontainerConfigRef:
                     type: string
+                  dockerEnabled:
+                    type: boolean
                   excludePullRequests:
                     items:
                       type: integer

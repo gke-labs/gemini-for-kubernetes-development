@@ -250,6 +250,7 @@ type Reconciler struct {
 	Scheme           *runtime.Scheme
 	NewGithubClient  githubClientFactory
 	RepoSandboxImage string
+	DindGolangImage  string
 	ConfigDirImage   string
 }
 
@@ -1056,12 +1057,17 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 			LLMConfigdirRef:       repoWatch.Spec.Issue.LLM.ConfigdirRef,
 			LLMAPIKeySecretName:   apiKeySecretName,
 			Prompt:                repoWatch.Spec.Issue.LLM.Prompt,
-			GithubSecretName:      githubSecretName,
-			DevcontainerConfigRef: repoWatch.Spec.Issue.DevcontainerConfigRef,
-			Image:                 repoWatch.Spec.Issue.Image,
-			RepoSandboxImage:      r.RepoSandboxImage,
-			ConfigDirImage:        r.ConfigDirImage,
-			HTTPEnabled:           true,
+						GithubSecretName:      githubSecretName,
+						DevcontainerConfigRef: repoWatch.Spec.Issue.DevcontainerConfigRef,
+						Image:                 repoWatch.Spec.Issue.Image,
+						RepoSandboxImage: func() string {
+							if repoWatch.Spec.Issue.DockerEnabled && r.DindGolangImage != "" {
+								return r.DindGolangImage
+							}
+							return r.RepoSandboxImage
+						}(),
+						ConfigDirImage: r.ConfigDirImage,
+						HTTPEnabled:    true,
 			Replicas:              1,
 			ServiceAccountName:    "issue-sandbox",
 		},
@@ -1210,6 +1216,26 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 					},
 					"spec": map[string]interface{}{
 						"serviceAccountName": "review-sandbox",
+						"runtimeClassName": func() interface{} {
+							if repoWatch.Spec.Review.DockerEnabled {
+								return "gvisor"
+							}
+							return nil
+						}(),
+						"dnsPolicy": func() interface{} {
+							if repoWatch.Spec.Review.DockerEnabled {
+								return "None"
+							}
+							return nil
+						}(),
+						"dnsConfig": func() interface{} {
+							if repoWatch.Spec.Review.DockerEnabled {
+								return map[string]interface{}{
+									"nameservers": []interface{}{"8.8.8.8", "8.8.4.4"},
+								}
+							}
+							return nil
+						}(),
 						"initContainers": []interface{}{
 							map[string]interface{}{
 								"name":  "gemini-configs",
@@ -1223,8 +1249,8 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 								},
 							},
 							map[string]interface{}{
-								"name":    "inject-agent",
-								"image":   r.RepoSandboxImage,
+								"name":  "inject-agent",
+								"image": r.RepoSandboxImage,
 								"command": []interface{}{"/repo-agent/repo-sandbox", "inject", "--path", "/opt/repo-agent"},
 								"volumeMounts": []interface{}{
 									map[string]interface{}{
@@ -1241,6 +1267,9 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 									if repoWatch.Spec.Review.Image != "" {
 										return repoWatch.Spec.Review.Image
 									}
+									if repoWatch.Spec.Review.DockerEnabled && r.DindGolangImage != "" {
+										return r.DindGolangImage
+									}
 									return r.RepoSandboxImage
 								}(),
 								"command": func() []interface{} {
@@ -1248,6 +1277,17 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 										return []interface{}{"/opt/repo-agent/repo-sandbox", "review-daemon"}
 									}
 									return []interface{}{}
+								}(),
+								"securityContext": func() map[string]interface{} {
+									sc := map[string]interface{}{}
+									if repoWatch.Spec.Review.DockerEnabled {
+										sc["capabilities"] = map[string]interface{}{
+											"add": []interface{}{
+												"AUDIT_WRITE", "CHOWN", "DAC_OVERRIDE", "FOWNER", "FSETID", "KILL", "MKNOD", "NET_BIND_SERVICE", "NET_RAW", "SETFCAP", "SETGID", "SETPCAP", "SETUID", "SYS_CHROOT", "SYS_PTRACE", "NET_ADMIN", "SYS_ADMIN",
+											},
+										}
+									}
+									return sc
 								}(),
 								"resources": map[string]interface{}{
 									"limits": map[string]interface{}{
@@ -1305,38 +1345,53 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 									map[string]interface{}{"name": "ENVBUILDER_INIT_SCRIPT", "value": "/opt/repo-agent/repo-sandbox review-daemon"},
 									map[string]interface{}{"name": "ENVBUILDER_IGNORE_PATHS", "value": "/var/run,/product_uuid,/product_name,/tokens,/repo-agent/"},
 								},
-								"volumeMounts": []interface{}{
-									map[string]interface{}{"name": "workspaces-pvc", "mountPath": "/workspaces"},
-									map[string]interface{}{"name": "tokens-secret", "mountPath": "/tokens", "readOnly": true},
-									map[string]interface{}{"name": "devcontainer-config", "mountPath": "/devcontainer.json", "subPath": "devcontainer.json"},
-									map[string]interface{}{"name": "agent-bin", "mountPath": "/opt/repo-agent"},
-								},
+								"volumeMounts": func() []interface{} {
+									vm := []interface{}{
+										map[string]interface{}{"name": "workspaces-pvc", "mountPath": "/workspaces"},
+										map[string]interface{}{"name": "tokens-secret", "mountPath": "/tokens", "readOnly": true},
+										map[string]interface{}{"name": "devcontainer-config", "mountPath": "/devcontainer.json", "subPath": "devcontainer.json"},
+										map[string]interface{}{"name": "agent-bin", "mountPath": "/opt/repo-agent"},
+									}
+									if repoWatch.Spec.Review.DockerEnabled {
+										vm = append(vm, map[string]interface{}{"name": "docker", "mountPath": "/var/lib/docker"})
+									}
+									return vm
+								}(),
 								"ports": []interface{}{
 									map[string]interface{}{"containerPort": int64(13337)},
 									map[string]interface{}{"containerPort": int64(13339)},
 								},
 							},
 						},
-						"volumes": []interface{}{
-							map[string]interface{}{"name": "agent-bin", "emptyDir": map[string]interface{}{}},
-							map[string]interface{}{
-								"name": "devcontainer-config",
-								"configMap": map[string]interface{}{
-									"name": func() string {
-										if repoWatch.Spec.Review.DevcontainerConfigRef != "" {
-											return repoWatch.Spec.Review.DevcontainerConfigRef
-										}
-										return "devcontainer-json"
-									}(),
+						"volumes": func() []interface{} {
+							v := []interface{}{
+								map[string]interface{}{"name": "agent-bin", "emptyDir": map[string]interface{}{}},
+								map[string]interface{}{
+									"name": "devcontainer-config",
+									"configMap": map[string]interface{}{
+										"name": func() string {
+											if repoWatch.Spec.Review.DevcontainerConfigRef != "" {
+												return repoWatch.Spec.Review.DevcontainerConfigRef
+											}
+											return "devcontainer-json"
+										}(),
+									},
 								},
-							},
-							map[string]interface{}{
-								"name": "tokens-secret",
-								"secret": map[string]interface{}{
-									"secretName": repoWatch.Spec.Review.LLM.APIKeySecretRef,
+								map[string]interface{}{
+									"name": "tokens-secret",
+									"secret": map[string]interface{}{
+										"secretName": repoWatch.Spec.Review.LLM.APIKeySecretRef,
+									},
 								},
-							},
-						},
+							}
+							if repoWatch.Spec.Review.DockerEnabled {
+								v = append(v, map[string]interface{}{
+									"name":     "docker",
+									"emptyDir": map[string]interface{}{},
+								})
+							}
+							return v
+						}(),
 					},
 				},
 				"volumeClaimTemplates": []interface{}{
@@ -1736,12 +1791,18 @@ func (r *Reconciler) createDevSandbox(ctx context.Context, user *github.User, re
 		GithubSecretName:      repoWatch.Spec.GithubSecretName,
 		DevcontainerConfigRef: repoWatch.Spec.Dev.DevcontainerConfigRef,
 		Image:                 repoWatch.Spec.Dev.Image,
-		RepoSandboxImage:      r.RepoSandboxImage,
-		ConfigDirImage:        r.ConfigDirImage,
+		RepoSandboxImage: func() string {
+			if repoWatch.Spec.Dev.DockerEnabled && r.DindGolangImage != "" {
+				return r.DindGolangImage
+			}
+			return r.RepoSandboxImage
+		}(),
+		ConfigDirImage: r.ConfigDirImage,
 
 		HTTPEnabled:        true,
 		Replicas:           1,
 		ServiceAccountName: "issue-sandbox",
+		DockerEnabled:      repoWatch.Spec.Dev.DockerEnabled,
 	}
 
 	sb, svc := sandbox.NewDevSandbox(opts)
