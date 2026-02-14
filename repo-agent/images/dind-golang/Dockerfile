@@ -11,18 +11,18 @@ ARG DOCKER_VERSION="5:27.5.1-1~ubuntu.24.04~noble"
 ENV DEBIAN_FRONTEND="noninteractive"
 RUN apt-get update && apt-get -y install ca-certificates curl
 
-RUN curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc && 
-    chmod a+r /etc/apt/keyrings/docker.asc && 
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu 
-    $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list && 
-    apt-get update && 
-    apt-get install -qqy 
-    docker-ce=${DOCKER_VERSION} 
-    docker-ce-cli=${DOCKER_VERSION} 
-    containerd.io 
-    docker-buildx-plugin 
-    docker-compose-plugin 
-    iproute2 
+RUN curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc && \
+    chmod a+r /etc/apt/keyrings/docker.asc && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
+    $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list && \
+    apt-get update && \
+    apt-get install -qqy \
+    docker-ce=${DOCKER_VERSION} \
+    docker-ce-cli=${DOCKER_VERSION} \
+    containerd.io \
+    docker-buildx-plugin \
+    docker-compose-plugin \
+    iproute2 \
     iptables
 
 # ------- Install go -------
@@ -33,8 +33,8 @@ ENV ARCH=amd64
 
 # Download, extract, and set up environment variables
 RUN apt-get update && apt-get install -y wget
-RUN wget -c https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz -O go.tar.gz && 
-    tar -C /usr/local -xzf go.tar.gz && 
+RUN wget -c https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz -O go.tar.gz && \
+    tar -C /usr/local -xzf go.tar.gz && \
     rm go.tar.gz
 
 ENV PATH=$PATH:/usr/local/go/bin
@@ -48,13 +48,13 @@ RUN apt-get update && apt-get install -y git tmux nodejs npm sudo curl
 RUN npm install -g @google/gemini-cli
 
 # Install Kind
-RUN curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.26.0/kind-linux-amd64 && 
-    chmod +x ./kind && 
+RUN curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.26.0/kind-linux-amd64 && \
+    chmod +x ./kind && \
     mv ./kind /usr/local/bin/kind
 
 # Install Kubectl
-RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" && 
-    chmod +x kubectl && 
+RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" && \
+    chmod +x kubectl && \
     mv kubectl /usr/local/bin/kubectl
 
 # Install code-server
