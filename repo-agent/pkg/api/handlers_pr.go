@@ -194,7 +194,7 @@ func (s *Server) saveDraft(c *gin.Context) {
 	}
 
 	sandboxName := fmt.Sprintf("%s-pr-%s", repo, prID)
-	err := s.K8sManager.UpdateReviewSandboxUserDraft(c.Request.Context(), namespace, sandboxName, payload.Draft)
+	err := s.K8sManager.UpdateSandboxUserDraft(c.Request.Context(), namespace, sandboxName, payload.Draft)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save draft", "details": err.Error()})
 		return
@@ -272,8 +272,8 @@ func (s *Server) submitReview(c *gin.Context) {
 
 	if draft != agentDraft {
 		if sandboxName != "" {
-			if err := s.K8sManager.UpdateReviewSandboxUserDraft(ctx, namespace, sandboxName, draft); err != nil {
-				log.Info("Failed to update reviewsandbox userDraft for PR", "prID", prID, "repo", repo, "err", err)
+			if err := s.K8sManager.UpdateSandboxUserDraft(ctx, namespace, sandboxName, draft); err != nil {
+				log.Info("Failed to update userDraft for PR", "prID", prID, "repo", repo, "err", err)
 			}
 		}
 	}
@@ -335,12 +335,12 @@ func (s *Server) submitReview(c *gin.Context) {
 	}
 	log.Info("review created", "review", review)
 
-	if err := s.K8sManager.UpdateReviewSandboxAnnotation(ctx, namespace, sandboxName, "reviewState", "submitted"); err != nil {
-		log.Info("Failed to update reviewsandbox reviewState", "prID", prID, "repo", repo, "err", err)
+	if err := s.K8sManager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "reviewState", "submitted"); err != nil {
+		log.Info("Failed to update sandbox reviewState", "prID", prID, "repo", repo, "err", err)
 	}
 
 	// scale down sandbox
-	err = s.K8sManager.ScaledownSandbox(ctx, namespace, repo, prID)
+	err = s.K8sManager.ScaledownPRSandbox(ctx, namespace, repo, prID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scaledown Sandbox after review submission", "details": err.Error()})
 		return
@@ -355,7 +355,7 @@ func (s *Server) deletePR(c *gin.Context) {
 	prID := c.Param("id")
 	ctx := c.Request.Context()
 
-	if err := s.K8sManager.ScaledownSandbox(ctx, namespace, repo, prID); err != nil {
+	if err := s.K8sManager.ScaledownPRSandbox(ctx, namespace, repo, prID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete sandbox", "details": err.Error()})
 		return
 	}
@@ -380,7 +380,7 @@ func (s *Server) scaleUpPR(c *gin.Context) {
 		annotationValue = "true"
 	}
 
-	if err := s.K8sManager.ScaleupSandbox(ctx, namespace, repo, prID, annotationValue); err != nil {
+	if err := s.K8sManager.ScaleupPRSandbox(ctx, namespace, repo, prID, annotationValue); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scale up sandbox", "details": err.Error()})
 		return
 	}
@@ -393,7 +393,7 @@ func (s *Server) scaleDownPR(c *gin.Context) {
 	prID := c.Param("id")
 	ctx := c.Request.Context()
 
-	if err := s.K8sManager.ScaledownSandbox(ctx, namespace, repo, prID); err != nil {
+	if err := s.K8sManager.ScaledownPRSandbox(ctx, namespace, repo, prID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scale down sandbox", "details": err.Error()})
 		return
 	}
@@ -458,7 +458,7 @@ func (s *Server) createPRTask(c *gin.Context) {
 	}
 
 	// Scale up the sandbox so it can process the task
-	if err := s.K8sManager.ScaleupSandbox(c.Request.Context(), namespace, repo, prID, ""); err != nil {
+	if err := s.K8sManager.ScaleupPRSandbox(c.Request.Context(), namespace, repo, prID, ""); err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Failed to scale up sandbox after task creation", "details": err.Error()})
 		klog.Warningf("Failed to scale up sandbox after task creation: %v", err)
 		return

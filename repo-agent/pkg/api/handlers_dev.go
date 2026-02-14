@@ -454,7 +454,7 @@ func (s *Server) deleteDevSandbox(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	resourceName := "devc-" + name
-	if err := s.K8sManager.ScaledownDevSandboxHelper(ctx, namespace, resourceName); err != nil {
+	if err := s.K8sManager.ScaledownDevSandbox(ctx, namespace, resourceName); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete dev sandbox", "details": err.Error()})
 		return
 	}
@@ -468,7 +468,7 @@ func (s *Server) scaleUpDevSandbox(c *gin.Context) {
 	name := c.Param("name")
 
 	resourceName := "devc-" + name
-	if err := s.K8sManager.ScaleupDevSandboxHelper(c.Request.Context(), namespace, resourceName); err != nil {
+	if err := s.K8sManager.ScaleupDevSandbox(c.Request.Context(), namespace, resourceName); err != nil {
 		log.Info("Failed to scale up dev sandbox", "name", name, "err", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scale up dev sandbox"})
 		return
@@ -483,12 +483,12 @@ func (s *Server) scaleDownDevSandbox(c *gin.Context) {
 	name := c.Param("name")
 
 	resourceName := "devc-" + name
-	if err := s.K8sManager.ScaledownDevSandboxHelper(c.Request.Context(), namespace, resourceName); err != nil {
+	if err := s.K8sManager.ScaledownDevSandbox(c.Request.Context(), namespace, resourceName); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scale down dev sandbox", "details": err.Error()})
 		return
 	}
 
-	if err := s.K8sManager.UpdateDevSandboxAnnotation(c.Request.Context(), namespace, resourceName, "agentState", "sandbox paused"); err != nil {
+	if err := s.K8sManager.UpdateSandboxAnnotation(c.Request.Context(), namespace, resourceName, "agentState", "sandbox paused"); err != nil {
 		log.Info("Failed to update dev sandbox annotation", "err", err)
 	}
 
@@ -579,7 +579,7 @@ func (s *Server) createDevTask(c *gin.Context) {
 	}
 
 	// Scale up the sandbox so it can process the task
-	if err := s.K8sManager.ScaleupDevSandboxHelper(c.Request.Context(), namespace, resourceName); err != nil {
+	if err := s.K8sManager.ScaleupDevSandbox(c.Request.Context(), namespace, resourceName); err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Failed to scale up sandbox after task creation", "details": err.Error()})
 		return
 	}
