@@ -1,27 +1,3 @@
-# --------------------------------
-# Build the repo-sandbox binary
-FROM golang:1.25 AS build-repo-sandbox
-WORKDIR /app
-
-# Copy the Go Modules manifests
-COPY go.mod go.mod
-COPY go.sum go.sum
-# cache deps before building and copying source so that we don't need to re-download as much
-# and so that source changes don't invalidate our downloaded layer
-RUN go mod download
-# Prebuilds for speed
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -v k8s.io/klog/v2 golang.org/x/crypto/ssh
-
-
-# Copy the llm directory
-COPY pkg/ pkg/
-COPY api/ api/
-
-COPY cmd/repo-sandbox/ cmd/repo-sandbox/
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -v -o /repo-sandbox ./cmd/repo-sandbox
-
-# --------------------------------
-
 # Build the gh CLI
 FROM golang:1.25 AS build-gh
 RUN GOBIN=/bin go install github.com/cli/cli/v2/cmd/gh@v2.82.1
@@ -85,7 +61,6 @@ RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/s
 RUN curl -fsSL https://code-server.dev/install.sh | sh
 RUN code-server --install-extension golang.go --install-extension vscodevim.vim
 
-COPY --from=build-repo-sandbox /repo-sandbox /repo-agent/repo-sandbox
 COPY --from=build-gh /bin/gh /bin/gh
 COPY scripts/start-dockerd.sh /usr/local/bin/start-dockerd.sh
 RUN chmod +x /usr/local/bin/start-dockerd.sh
@@ -93,4 +68,3 @@ RUN chmod +x /usr/local/bin/start-dockerd.sh
 RUN ln -sf /usr/local/go/bin/go /usr/local/bin/go
 
 WORKDIR /workspaces
-ENTRYPOINT ["/repo-agent/repo-sandbox", "agent"]
