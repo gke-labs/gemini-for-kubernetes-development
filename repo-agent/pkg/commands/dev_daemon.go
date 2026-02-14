@@ -125,14 +125,17 @@ func (c *SandboxDaemonCommand) Run(ctx context.Context) error {
 }
 
 func (c *SandboxDaemonCommand) startDockerd(ctx context.Context) error {
-	path, err := exec.LookPath("dockerd")
-	if err != nil {
-		return nil // Not installed, skip
+	log := klog.FromContext(ctx)
+
+	scriptPath := "/usr/local/bin/start-dockerd.sh"
+	if _, err := os.Stat(scriptPath); os.IsNotExist(err) {
+		log.Info("start-dockerd.sh not found, skipping dockerd startup")
+		return nil
 	}
 
-	klog.FromContext(ctx).Info("Starting dockerd")
+	log.Info("Starting dockerd via script", "script", scriptPath)
 
-	cmd := exec.CommandContext(ctx, path)
+	cmd := exec.CommandContext(ctx, scriptPath)
 
 	// Redirect logs to /tmp/dockerd.log
 	f, err := os.Create("/tmp/dockerd.log")
@@ -145,7 +148,7 @@ func (c *SandboxDaemonCommand) startDockerd(ctx context.Context) error {
 	}
 
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("failed to start dockerd: %w", err)
+		return fmt.Errorf("failed to start dockerd script: %w", err)
 	}
 
 	return nil
