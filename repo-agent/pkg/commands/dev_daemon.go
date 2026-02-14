@@ -16,14 +16,14 @@ import (
 
 var (
 	DevGVR = schema.GroupVersionResource{
-		Group:    "custom.agents.x-k8s.io",
+		Group:    "agents.x-k8s.io",
 		Version:  "v1alpha1",
-		Resource: "issuesandboxes",
+		Resource: "sandboxes",
 	}
 	IssueGVR = schema.GroupVersionResource{
-		Group:    "custom.agents.x-k8s.io",
+		Group:    "agents.x-k8s.io",
 		Version:  "v1alpha1",
-		Resource: "issuesandboxes",
+		Resource: "sandboxes",
 	}
 )
 

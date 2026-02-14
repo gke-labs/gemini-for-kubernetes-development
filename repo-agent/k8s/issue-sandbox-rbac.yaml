@@ -12,10 +12,10 @@ metadata:
   name: issue-sandbox
 rules:
 - apiGroups:
-  - "custom.agents.x-k8s.io"
+  - "agents.x-k8s.io"
   resources:
-  - issuesandboxes/status
-  - issuesandboxes
+  - sandboxes
+  - sandboxes/status
   verbs:
   - get
   - update
