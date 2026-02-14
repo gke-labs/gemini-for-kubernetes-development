@@ -1075,10 +1075,12 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 		BotEmail: botEmail,
 		Resources: corev1.ResourceRequirements{
 			Requests: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("2000m"),
 				corev1.ResourceMemory: resource.MustParse("2Gi"),
 				"ephemeral-storage":   resource.MustParse("6Gi"),
 			},
 			Limits: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("4000m"),
 				corev1.ResourceMemory: resource.MustParse("6Gi"),
 				"ephemeral-storage":   resource.MustParse("6Gi"),
 			},

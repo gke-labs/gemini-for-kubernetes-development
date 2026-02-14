@@ -103,6 +103,16 @@ func newOverseerSandbox(repoWatch *reviewv1alpha1.RepoWatch, name string) *unstr
 						"value": repoWatch.Spec.RepoURL,
 					},
 				},
+				"resources": map[string]interface{}{
+					"requests": map[string]interface{}{
+						"cpu":    "1000m",
+						"memory": "1Gi",
+					},
+					"limits": map[string]interface{}{
+						"cpu":    "2000m",
+						"memory": "2Gi",
+					},
+				},
 				"volumeMounts": []interface{}{
 					// We might need to mount secrets if envFrom isn't enough or for other tools
 					// For now, env vars should suffice for GITHUB_TOKEN and GEMINI_API_KEY
