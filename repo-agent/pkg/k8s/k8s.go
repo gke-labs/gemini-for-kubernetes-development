@@ -556,24 +556,8 @@ func (m *Manager) CreateSandboxTask(ctx context.Context, namespace, sandboxName,
 	// Determine the GVR for the sandbox owner
 	var ownerGVR schema.GroupVersionResource
 	switch sandboxKind {
-	case "ReviewSandbox":
-		ownerGVR = schema.GroupVersionResource{
-			Group:    "custom.agents.x-k8s.io",
-			Version:  "v1alpha1",
-			Resource: "reviewsandboxes",
-		}
-	case "IssueSandbox":
-		ownerGVR = schema.GroupVersionResource{
-			Group:    "custom.agents.x-k8s.io",
-			Version:  "v1alpha1",
-			Resource: "issuesandboxes",
-		}
-	case "Sandbox":
-		ownerGVR = schema.GroupVersionResource{
-			Group:    "agents.x-k8s.io",
-			Version:  "v1alpha1",
-			Resource: "sandboxes",
-		}
+	case "Sandbox", "ReviewSandbox", "IssueSandbox":
+		ownerGVR = SandboxGVR
 	default:
 		return fmt.Errorf("unknown sandbox kind: %s", sandboxKind)
 	}

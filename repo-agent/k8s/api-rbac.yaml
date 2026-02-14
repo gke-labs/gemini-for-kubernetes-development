@@ -11,7 +11,7 @@ metadata:
 rules:
 # Can manage sandboxes in all user namespaces
 - apiGroups: ["custom.agents.x-k8s.io"]
-  resources: ["issuesandboxes", "sandboxtasks"]
+  resources: ["sandboxtasks"]
   verbs: ["get", "list", "delete", "patch", "update", "create"]
 - apiGroups: ["agents.x-k8s.io"]
   resources: ["sandboxes"]
