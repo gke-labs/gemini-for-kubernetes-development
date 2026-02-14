@@ -141,6 +141,7 @@ type IssueConfig struct {
 	MaxActiveSandboxes int64          `json:"maxActiveSandboxes"`
 	Handlers           []IssueHandler `json:"handlers,omitempty"`
 	Issues             []int64        `json:"issues,omitempty"`
+	Models             []string       `json:"models,omitempty"`
 }
 
 // IssueHandler holds configuration for an issue handler

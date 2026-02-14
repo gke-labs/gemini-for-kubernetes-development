@@ -512,10 +512,12 @@ func (s *Server) createIssueTask(c *gin.Context) {
 		params[k] = v
 	}
 
-	// Inject Models from RepoWatch
-	models, found, err := unstructured.NestedStringSlice(rw.Object, "spec", "issue", "models")
-	if err == nil && found && len(models) > 0 {
-		params["model"] = strings.Join(models, ",")
+	// Inject Models from RepoWatch if not already specified
+	if params["model"] == "" {
+		models, found, err := unstructured.NestedStringSlice(rw.Object, "spec", "issue", "models")
+		if err == nil && found && len(models) > 0 {
+			params["model"] = strings.Join(models, ",")
+		}
 	}
 
 	err = s.K8sManager.CreateSandboxTask(c.Request.Context(), namespace, sandboxName, "Sandbox", taskType, params)
