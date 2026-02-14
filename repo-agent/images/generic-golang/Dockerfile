@@ -76,6 +76,8 @@ RUN code-server --install-extension golang.go --install-extension vscodevim.vim
 
 COPY --from=build-repo-sandbox /repo-sandbox /repo-agent/repo-sandbox
 COPY --from=build-gh /bin/gh /bin/gh
+COPY scripts/start-dockerd.sh /usr/local/bin/start-dockerd.sh
+RUN chmod +x /usr/local/bin/start-dockerd.sh
 
 RUN ln -sf /usr/local/go/bin/go /usr/local/bin/go
 
