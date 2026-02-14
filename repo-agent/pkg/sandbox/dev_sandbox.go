@@ -49,6 +49,8 @@ type DevSandboxOptions struct {
 	// Scaling
 	Replicas int64
 
+	DockerEnabled bool
+
 	// Idea Exploration
 	IdeaID         string
 	Approach       string
@@ -59,6 +61,7 @@ type DevSandboxOptions struct {
 func NewDevSandbox(opt DevSandboxOptions) (*unstructured.Unstructured, *corev1.Service) {
 	agentOpt := AgentSandboxOptions{
 		DevSandboxOptions: opt,
+		DockerEnabled:     opt.DockerEnabled,
 	}
 	return NewAgentSandbox(agentOpt)
 }

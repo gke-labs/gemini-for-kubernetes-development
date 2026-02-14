@@ -165,6 +165,10 @@ type DevSpec struct {
 	// Ideas specifies a list of ideas/explorations.
 	// +kubebuilder:validation:Optional
 	Ideas []IdeaSpec `json:"ideas,omitempty"`
+
+	// DockerEnabled enables docker-in-docker support for the sandbox.
+	// +kubebuilder:validation:Optional
+	DockerEnabled bool `json:"dockerEnabled,omitempty"`
 }
 
 type IssueHandlerSpec struct {

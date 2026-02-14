@@ -1742,6 +1742,7 @@ func (r *Reconciler) createDevSandbox(ctx context.Context, user *github.User, re
 		HTTPEnabled:        true,
 		Replicas:           1,
 		ServiceAccountName: "issue-sandbox",
+		DockerEnabled:      repoWatch.Spec.Dev.DockerEnabled,
 	}
 
 	sb, svc := sandbox.NewDevSandbox(opts)

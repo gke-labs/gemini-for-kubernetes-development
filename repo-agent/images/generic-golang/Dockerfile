@@ -40,44 +40,12 @@ RUN apt-get update && apt-get install -y git tmux nodejs npm sudo curl
 
 RUN npm install -g @google/gemini-cli
 
-# Add Docker's official GPG key:
-RUN apt-get update && apt-get install -y ca-certificates curl
-RUN install -m 0755 -d /etc/apt/keyrings
-RUN curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
-RUN chmod a+r /etc/apt/keyrings/docker.asc
-
-# Add the repository to Apt sources:
-RUN echo \
-  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian \
-  $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list
-
-RUN apt-get update && apt-get install -y \
-    docker-ce \
-    docker-ce-cli \
-    containerd.io \
-    docker-buildx-plugin \
-    docker-compose-plugin \
-    iproute2 \
-    iptables
-
-# Install Kind
-RUN curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.26.0/kind-linux-amd64 && \
-    chmod +x ./kind && \
-    mv ./kind /usr/local/bin/kind
-
-# Install Kubectl
-RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" && \
-    chmod +x kubectl && \
-    mv kubectl /usr/local/bin/kubectl
-
 # Install code-server
 RUN curl -fsSL https://code-server.dev/install.sh | sh
 RUN code-server --install-extension golang.go --install-extension vscodevim.vim
 
 COPY --from=build-repo-sandbox /repo-sandbox /repo-agent/repo-sandbox
 COPY --from=build-gh /bin/gh /bin/gh
-COPY scripts/start-dockerd.sh /usr/local/bin/start-dockerd.sh
-RUN chmod +x /usr/local/bin/start-dockerd.sh
 
 RUN ln -sf /usr/local/go/bin/go /usr/local/bin/go
 
