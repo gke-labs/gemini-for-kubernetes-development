@@ -195,6 +195,12 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 					},
 					"spec": map[string]interface{}{
 						"serviceAccountName": opt.ServiceAccountName,
+						"runtimeClassName": func() interface{} {
+							if opt.DockerEnabled {
+								return "gvisor"
+							}
+							return nil
+						}(),
 						"initContainers": []interface{}{
 							map[string]interface{}{
 								"name":  "gemini-configs",
@@ -219,7 +225,7 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 								"image":   image,
 								"command": cmdInterface,
 								"securityContext": map[string]interface{}{
-									"privileged": opt.DockerEnabled,
+									"privileged": false,
 								},
 								"resources": map[string]interface{}{
 									"requests": map[string]interface{}{

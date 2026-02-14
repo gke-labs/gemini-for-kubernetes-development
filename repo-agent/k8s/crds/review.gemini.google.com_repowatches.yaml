@@ -96,6 +96,8 @@ spec:
                     type: boolean
                   devcontainerConfigRef:
                     type: string
+                  dockerEnabled:
+                    type: boolean
                   excludeIssues:
                     items:
                       type: integer
