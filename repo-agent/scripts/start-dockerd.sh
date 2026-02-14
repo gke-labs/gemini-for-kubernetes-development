@@ -14,12 +14,19 @@ echo 1 > /proc/sys/net/ipv4/ip_forward
 
 # 3. Setup NAT rules
 # Find default route interface and its IP address
-dev=$(ip route show default | sed 's/.*\sdev\s\(\S*\)\s.*$/\1/')
-addr=$(ip addr show dev "$dev"  | grep -w inet | sed 's/^\s*inet\s\(\S*\)\/.*$/\1/')
-
-echo 1 > /proc/sys/net/ipv4/ip_forward
-iptables-legacy -t nat -A POSTROUTING -o "$dev" -j SNAT --to-source "$addr" -p tcp
-iptables-legacy -t nat -A POSTROUTING -o "$dev" -j SNAT --to-source "$addr" -p udp
+DEV=$(ip route show default | sed 's/.*[[:space:]]dev[[:space:]]\([^[:space:]]*\)[[:space:]].*$/\1/')
+if [ -n "$DEV" ]; then
+    ADDR=$(ip addr show dev "$DEV" | grep -w inet | sed 's/^[[:space:]]*inet[[:space:]]\([^[:space:]]*\)\/.*$/\1/')
+    if [ -n "$ADDR" ]; then
+        IPTABLES_CMD="iptables"
+        if command -v iptables-legacy >/dev/null 2>&1; then
+            IPTABLES_CMD="iptables-legacy"
+        fi
+        echo "Setting up iptables NAT rules: dev=$DEV, addr=$ADDR, cmd=$IPTABLES_CMD"
+        "$IPTABLES_CMD" -t nat -A POSTROUTING -o "$DEV" -j SNAT --to-source "$ADDR" -p tcp
+        "$IPTABLES_CMD" -t nat -A POSTROUTING -o "$DEV" -j SNAT --to-source "$ADDR" -p udp
+    fi
+fi
 
 # 4. Start dockerd with flags to disable its own iptables management
 echo "Starting dockerd..."
