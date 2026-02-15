@@ -27,6 +27,10 @@ const (
 	ClaudeProvider = "claude"
 	// Dummy provider for testing
 	DummyProvider = "dummy"
+
+	DindSupportNone       = "none"
+	DindSupportGvisor     = "gvisor"
+	DindSupportPrivileged = "privileged"
 )
 
 // LLMConfig defines the configuration for the LLM provider.
@@ -166,9 +170,11 @@ type DevSpec struct {
 	// +kubebuilder:validation:Optional
 	Ideas []IdeaSpec `json:"ideas,omitempty"`
 
-	// DockerEnabled enables docker-in-docker support for the sandbox.
+	// DindSupport enables docker-in-docker support for the sandbox.
+	// +kubebuilder:validation:Enum=none;gvisor;privileged
+	// +kubebuilder:default=none
 	// +kubebuilder:validation:Optional
-	DockerEnabled bool `json:"dockerEnabled,omitempty"`
+	DindSupport string `json:"dindSupport,omitempty"`
 }
 
 type IssueHandlerSpec struct {
@@ -235,9 +241,11 @@ type IssueSpec struct {
 	// +kubebuilder:validation:Optional
 	RobotAccount string `json:"robotAccount,omitempty"`
 
-	// DockerEnabled enables docker-in-docker support for the sandbox.
+	// DindSupport enables docker-in-docker support for the sandbox.
+	// +kubebuilder:validation:Enum=none;gvisor;privileged
+	// +kubebuilder:default=none
 	// +kubebuilder:validation:Optional
-	DockerEnabled bool `json:"dockerEnabled,omitempty"`
+	DindSupport string `json:"dindSupport,omitempty"`
 
 	// Models specifies a list of models to use for the issue handler.
 	// +kubebuilder:validation:Optional
