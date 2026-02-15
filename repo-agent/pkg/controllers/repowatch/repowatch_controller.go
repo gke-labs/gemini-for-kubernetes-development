@@ -1033,6 +1033,11 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 		apiKeySecretName = "gemini-vscode-tokens"
 	}
 
+	ephemeralStorage := resource.MustParse("6Gi")
+	if repoWatch.Spec.Issue.DindSupport == reviewv1alpha1.DindSupportPrivileged {
+		ephemeralStorage = resource.MustParse("20Gi")
+	}
+
 	opt := sandbox.AgentSandboxOptions{
 		DevSandboxOptions: sandbox.DevSandboxOptions{
 			Name:      name,
@@ -1077,12 +1082,12 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 			Requests: corev1.ResourceList{
 				corev1.ResourceCPU:    resource.MustParse("2000m"),
 				corev1.ResourceMemory: resource.MustParse("2Gi"),
-				"ephemeral-storage":   resource.MustParse("6Gi"),
+				"ephemeral-storage":   ephemeralStorage,
 			},
 			Limits: corev1.ResourceList{
 				corev1.ResourceCPU:    resource.MustParse("4000m"),
 				corev1.ResourceMemory: resource.MustParse("6Gi"),
-				"ephemeral-storage":   resource.MustParse("6Gi"),
+				"ephemeral-storage":   ephemeralStorage,
 			},
 		},
 	}
@@ -1348,7 +1353,7 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 							"accessModes": []interface{}{"ReadWriteOnce"},
 							"resources": map[string]interface{}{
 								"requests": map[string]interface{}{
-									"storage": "5Gi",
+									"storage": "10Gi",
 								},
 							},
 						},
