@@ -9,7 +9,7 @@ FROM ubuntu:24.04
 ARG DOCKER_VERSION="5:27.5.1-1~ubuntu.24.04~noble"
 
 ENV DEBIAN_FRONTEND="noninteractive"
-RUN apt-get update && apt-get -y install ca-certificates curl gnupg openssl
+RUN apt-get update && apt-get -y install ca-certificates curl gnupg
 
 RUN curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc && \
     chmod a+r /etc/apt/keyrings/docker.asc && \
