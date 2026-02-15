@@ -10,6 +10,12 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
+const (
+	DindSupportNone       = "none"
+	DindSupportGvisor     = "gvisor"
+	DindSupportPrivileged = "privileged"
+)
+
 // AgentSandboxOptions holds options for creating an AgentSandbox.
 // It is a superset of DevSandboxOptions.
 type AgentSandboxOptions struct {
@@ -27,8 +33,8 @@ type AgentSandboxOptions struct {
 	BotEmail string
 
 	// Resources
-	Resources     corev1.ResourceRequirements
-	DockerEnabled bool
+	Resources   corev1.ResourceRequirements
+	DindSupport string
 }
 
 // NewAgentSandbox creates a new Sandbox (unstructured) and Service object.
@@ -141,6 +147,7 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 		map[string]interface{}{"name": "ENVBUILDER_DEVCONTAINER_DIR", "value": "/"},
 		map[string]interface{}{"name": "ENVBUILDER_INIT_SCRIPT", "value": RepoSandboxBinary + " dev-daemon"},
 		map[string]interface{}{"name": "ENVBUILDER_IGNORE_PATHS", "value": "/var/run,/product_uuid,/product_name,/tokens,/repo-agent/"},
+		map[string]interface{}{"name": "DIND_SUPPORT", "value": opt.DindSupport},
 	}
 
 	image := opt.Image
@@ -202,19 +209,19 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 					"spec": map[string]interface{}{
 						"serviceAccountName": opt.ServiceAccountName,
 						"runtimeClassName": func() interface{} {
-							if opt.DockerEnabled {
+							if opt.DindSupport == DindSupportGvisor {
 								return "gvisor"
 							}
 							return nil
 						}(),
 						"dnsPolicy": func() interface{} {
-							if opt.DockerEnabled {
+							if opt.DindSupport != "" && opt.DindSupport != DindSupportNone {
 								return "None"
 							}
 							return nil
 						}(),
 						"dnsConfig": func() interface{} {
-							if opt.DockerEnabled {
+							if opt.DindSupport != "" && opt.DindSupport != DindSupportNone {
 								return map[string]interface{}{
 									"nameservers": []interface{}{"8.8.8.8", "8.8.4.4"},
 								}
@@ -246,7 +253,9 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 								"command": cmdInterface,
 								"securityContext": func() map[string]interface{} {
 									sc := map[string]interface{}{}
-									if opt.DockerEnabled {
+									if opt.DindSupport == DindSupportPrivileged {
+										sc["privileged"] = true
+									} else if opt.DindSupport == DindSupportGvisor {
 										sc["capabilities"] = map[string]interface{}{
 											"add": []interface{}{
 												"AUDIT_WRITE", "CHOWN", "DAC_OVERRIDE", "FOWNER", "FSETID", "KILL", "MKNOD", "NET_BIND_SERVICE", "NET_RAW", "SETFCAP", "SETGID", "SETPCAP", "SETUID", "SYS_CHROOT", "SYS_PTRACE", "NET_ADMIN", "SYS_ADMIN",
@@ -275,7 +284,7 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 										map[string]interface{}{"name": "devcontainer-config", "mountPath": "/devcontainer.json", "subPath": "devcontainer.json"},
 										map[string]interface{}{"name": "agent-bin", "mountPath": "/opt/repo-agent"},
 									}
-									if opt.DockerEnabled {
+									if opt.DindSupport != "" && opt.DindSupport != DindSupportNone {
 										vm = append(vm, map[string]interface{}{"name": "docker", "mountPath": "/var/lib/docker"})
 									}
 									return vm
@@ -305,7 +314,7 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 									},
 								},
 							}
-							if opt.DockerEnabled {
+							if opt.DindSupport != "" && opt.DindSupport != DindSupportNone {
 								v = append(v, map[string]interface{}{
 									"name":     "docker",
 									"emptyDir": map[string]interface{}{},

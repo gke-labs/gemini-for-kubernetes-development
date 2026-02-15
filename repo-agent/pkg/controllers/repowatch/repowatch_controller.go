@@ -1065,10 +1065,10 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 			Replicas:              1,
 			ServiceAccountName:    "issue-sandbox",
 		},
-		DockerEnabled: repoWatch.Spec.Issue.DockerEnabled,
-		IssueID:       fmt.Sprintf("%d", *issue.Number),
-		IssueTitle:    *issue.Title,
-		IssueRepo:     repoWatch.GetName(),
+		DindSupport: repoWatch.Spec.Issue.DindSupport,
+		IssueID:     fmt.Sprintf("%d", *issue.Number),
+		IssueTitle:  *issue.Title,
+		IssueRepo:   repoWatch.GetName(),
 		//Handler:    "", // Handled per task?
 		BotLogin: botLogin,
 		BotName:  botName,
@@ -1744,7 +1744,7 @@ func (r *Reconciler) createDevSandbox(ctx context.Context, user *github.User, re
 		HTTPEnabled:        true,
 		Replicas:           1,
 		ServiceAccountName: "issue-sandbox",
-		DockerEnabled:      repoWatch.Spec.Dev.DockerEnabled,
+		DindSupport:        repoWatch.Spec.Dev.DindSupport,
 	}
 
 	sb, svc := sandbox.NewDevSandbox(opts)

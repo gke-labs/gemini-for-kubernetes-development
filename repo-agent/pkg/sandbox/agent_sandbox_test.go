@@ -6,16 +6,24 @@ import (
 
 func TestNewAgentSandbox(t *testing.T) {
 	tests := []struct {
-		name          string
-		dockerEnabled bool
+		name        string
+		dindSupport string
 	}{
 		{
-			name:          "DockerDisabled",
-			dockerEnabled: false,
+			name:        "DindSupportNone",
+			dindSupport: DindSupportNone,
 		},
 		{
-			name:          "DockerEnabled",
-			dockerEnabled: true,
+			name:        "DindSupportEmpty",
+			dindSupport: "",
+		},
+		{
+			name:        "DindSupportGvisor",
+			dindSupport: DindSupportGvisor,
+		},
+		{
+			name:        "DindSupportPrivileged",
+			dindSupport: DindSupportPrivileged,
 		},
 	}
 
@@ -26,7 +34,7 @@ func TestNewAgentSandbox(t *testing.T) {
 					Name:      "test",
 					Namespace: "default",
 				},
-				DockerEnabled: tt.dockerEnabled,
+				DindSupport: tt.dindSupport,
 			}
 			sandbox, _ := NewAgentSandbox(opt)
 
@@ -36,7 +44,7 @@ func TestNewAgentSandbox(t *testing.T) {
 
 			// Check runtimeClassName
 			runtimeClassName := podSpec["runtimeClassName"]
-			if tt.dockerEnabled {
+			if tt.dindSupport == DindSupportGvisor {
 				if runtimeClassName != "gvisor" {
 					t.Errorf("expected runtimeClassName gvisor, got %v", runtimeClassName)
 				}
@@ -49,7 +57,8 @@ func TestNewAgentSandbox(t *testing.T) {
 			// Check dnsPolicy and dnsConfig
 			dnsPolicy := podSpec["dnsPolicy"]
 			dnsConfig := podSpec["dnsConfig"]
-			if tt.dockerEnabled {
+			isDind := tt.dindSupport == DindSupportGvisor || tt.dindSupport == DindSupportPrivileged
+			if isDind {
 				if dnsPolicy != "None" {
 					t.Errorf("expected dnsPolicy None, got %v", dnsPolicy)
 				}
@@ -70,13 +79,23 @@ func TestNewAgentSandbox(t *testing.T) {
 			container := containers[0].(map[string]interface{})
 			securityContext := container["securityContext"].(map[string]interface{})
 
-			if tt.dockerEnabled {
+			if tt.dindSupport == DindSupportPrivileged {
+				if securityContext["privileged"] != true {
+					t.Errorf("expected privileged true, got %v", securityContext["privileged"])
+				}
+			} else if tt.dindSupport == DindSupportGvisor {
+				if securityContext["privileged"] != nil {
+					t.Errorf("expected privileged nil, got %v", securityContext["privileged"])
+				}
 				capabilities := securityContext["capabilities"].(map[string]interface{})
 				add := capabilities["add"].([]interface{})
 				if len(add) == 0 {
 					t.Errorf("expected capabilities.add to be non-empty")
 				}
 			} else {
+				if securityContext["privileged"] != nil {
+					t.Errorf("expected privileged nil, got %v", securityContext["privileged"])
+				}
 				if securityContext["capabilities"] != nil {
 					t.Errorf("expected capabilities nil, got %v", securityContext["capabilities"])
 				}
@@ -92,8 +111,8 @@ func TestNewAgentSandbox(t *testing.T) {
 					break
 				}
 			}
-			if tt.dockerEnabled != hasDockerVolume {
-				t.Errorf("expected hasDockerVolume %v, got %v", tt.dockerEnabled, hasDockerVolume)
+			if isDind != hasDockerVolume {
+				t.Errorf("expected hasDockerVolume %v, got %v", isDind, hasDockerVolume)
 			}
 
 			// Check volumeMounts
@@ -106,8 +125,25 @@ func TestNewAgentSandbox(t *testing.T) {
 					break
 				}
 			}
-			if tt.dockerEnabled != hasDockerVolumeMount {
-				t.Errorf("expected hasDockerVolumeMount %v, got %v", tt.dockerEnabled, hasDockerVolumeMount)
+			if isDind != hasDockerVolumeMount {
+				t.Errorf("expected hasDockerVolumeMount %v, got %v", isDind, hasDockerVolumeMount)
+			}
+
+			// Check DIND_SUPPORT env var
+			env := container["env"].([]interface{})
+			foundDindEnv := false
+			for _, e := range env {
+				envVar := e.(map[string]interface{})
+				if envVar["name"] == "DIND_SUPPORT" {
+					foundDindEnv = true
+					if envVar["value"] != tt.dindSupport {
+						t.Errorf("expected DIND_SUPPORT env %v, got %v", tt.dindSupport, envVar["value"])
+					}
+					break
+				}
+			}
+			if !foundDindEnv {
+				t.Errorf("DIND_SUPPORT env var not found")
 			}
 		})
 	}
