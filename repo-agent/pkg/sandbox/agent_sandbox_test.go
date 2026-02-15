@@ -36,14 +36,8 @@ func TestNewAgentSandbox(t *testing.T) {
 
 			// Check runtimeClassName
 			runtimeClassName := podSpec["runtimeClassName"]
-			if tt.dockerEnabled {
-				if runtimeClassName != "gvisor" {
-					t.Errorf("expected runtimeClassName gvisor, got %v", runtimeClassName)
-				}
-			} else {
-				if runtimeClassName != nil {
-					t.Errorf("expected runtimeClassName nil, got %v", runtimeClassName)
-				}
+			if runtimeClassName != nil {
+				t.Errorf("expected runtimeClassName nil, got %v", runtimeClassName)
 			}
 
 			// Check dnsPolicy and dnsConfig
@@ -71,14 +65,12 @@ func TestNewAgentSandbox(t *testing.T) {
 			securityContext := container["securityContext"].(map[string]interface{})
 
 			if tt.dockerEnabled {
-				capabilities := securityContext["capabilities"].(map[string]interface{})
-				add := capabilities["add"].([]interface{})
-				if len(add) == 0 {
-					t.Errorf("expected capabilities.add to be non-empty")
+				if securityContext["privileged"] != true {
+					t.Errorf("expected privileged true, got %v", securityContext["privileged"])
 				}
 			} else {
-				if securityContext["capabilities"] != nil {
-					t.Errorf("expected capabilities nil, got %v", securityContext["capabilities"])
+				if securityContext["privileged"] != nil {
+					t.Errorf("expected privileged nil, got %v", securityContext["privileged"])
 				}
 			}
 

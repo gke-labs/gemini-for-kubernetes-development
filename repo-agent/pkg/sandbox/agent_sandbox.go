@@ -201,12 +201,7 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 					},
 					"spec": map[string]interface{}{
 						"serviceAccountName": opt.ServiceAccountName,
-						"runtimeClassName": func() interface{} {
-							if opt.DockerEnabled {
-								return "gvisor"
-							}
-							return nil
-						}(),
+						"runtimeClassName": nil,
 						"dnsPolicy": func() interface{} {
 							if opt.DockerEnabled {
 								return "None"
@@ -247,11 +242,7 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 								"securityContext": func() map[string]interface{} {
 									sc := map[string]interface{}{}
 									if opt.DockerEnabled {
-										sc["capabilities"] = map[string]interface{}{
-											"add": []interface{}{
-												"AUDIT_WRITE", "CHOWN", "DAC_OVERRIDE", "FOWNER", "FSETID", "KILL", "MKNOD", "NET_BIND_SERVICE", "NET_RAW", "SETFCAP", "SETGID", "SETPCAP", "SETUID", "SYS_CHROOT", "SYS_PTRACE", "NET_ADMIN", "SYS_ADMIN",
-											},
-										}
+										sc["privileged"] = true
 									}
 									return sc
 								}(),
