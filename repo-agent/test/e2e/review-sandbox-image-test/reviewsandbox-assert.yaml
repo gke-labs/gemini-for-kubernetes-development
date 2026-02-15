@@ -26,4 +26,4 @@ spec:
       - name: sandbox
         resources:
           limits:
-            ephemeral-storage: 6Gi
+            ephemeral-storage: 20Gi

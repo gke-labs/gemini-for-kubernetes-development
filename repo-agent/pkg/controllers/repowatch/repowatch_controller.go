@@ -1077,12 +1077,12 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 			Requests: corev1.ResourceList{
 				corev1.ResourceCPU:    resource.MustParse("2000m"),
 				corev1.ResourceMemory: resource.MustParse("2Gi"),
-				"ephemeral-storage":   resource.MustParse("6Gi"),
+				"ephemeral-storage":   resource.MustParse("20Gi"),
 			},
 			Limits: corev1.ResourceList{
 				corev1.ResourceCPU:    resource.MustParse("4000m"),
 				corev1.ResourceMemory: resource.MustParse("6Gi"),
-				"ephemeral-storage":   resource.MustParse("6Gi"),
+				"ephemeral-storage":   resource.MustParse("20Gi"),
 			},
 		},
 	}
@@ -1253,10 +1253,10 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 								}(),
 								"resources": map[string]interface{}{
 									"limits": map[string]interface{}{
-										"ephemeral-storage": "6Gi",
+										"ephemeral-storage": "20Gi",
 									},
 									"requests": map[string]interface{}{
-										"ephemeral-storage": "6Gi",
+										"ephemeral-storage": "20Gi",
 									},
 								},
 								"env": []interface{}{
@@ -1348,7 +1348,7 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 							"accessModes": []interface{}{"ReadWriteOnce"},
 							"resources": map[string]interface{}{
 								"requests": map[string]interface{}{
-									"storage": "5Gi",
+									"storage": "10Gi",
 								},
 							},
 						},

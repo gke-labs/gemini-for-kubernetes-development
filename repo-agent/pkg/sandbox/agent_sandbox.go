@@ -67,10 +67,10 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 		resources.Limits[corev1.ResourceCPU] = resource.MustParse("4000m")
 	}
 	if _, ok := resources.Requests["ephemeral-storage"]; !ok {
-		resources.Requests["ephemeral-storage"] = resource.MustParse("6Gi")
+		resources.Requests["ephemeral-storage"] = resource.MustParse("20Gi")
 	}
 	if _, ok := resources.Limits["ephemeral-storage"]; !ok {
-		resources.Limits["ephemeral-storage"] = resource.MustParse("6Gi")
+		resources.Limits["ephemeral-storage"] = resource.MustParse("20Gi")
 	}
 
 	labels := make(map[string]string)
@@ -333,7 +333,7 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 							"accessModes": []interface{}{"ReadWriteOnce"},
 							"resources": map[string]interface{}{
 								"requests": map[string]interface{}{
-									"storage": "5Gi",
+									"storage": "10Gi",
 								},
 							},
 						},
