@@ -47,7 +47,7 @@ ENV GOTOOLCHAIN=auto
 
 # -------- Install python --------
 # We want a functional python, because gemini-cli likes to use python
-RUN apt-get update && apt-get install -y python3 python3-pip python3-yaml python-is-python3 python3-venv
+RUN apt-get update && apt-get install -y python3 python3-pip python3-yaml python3-requests python-is-python3 python3-venv
 RUN apt-get update && apt-get install -y git tmux sudo curl
 
 RUN npm install -g @google/gemini-cli
