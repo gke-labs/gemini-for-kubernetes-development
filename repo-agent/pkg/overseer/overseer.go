@@ -76,7 +76,7 @@ func newOverseerSandbox(repoWatch *reviewv1alpha1.RepoWatch, name string) *unstr
 			map[string]interface{}{
 				"name":    "overseer",
 				"image":   image,
-				"command": []string{"/run.sh"},
+				"command": []string{"/workspaces/run.sh"},
 				"env": []interface{}{
 					map[string]interface{}{
 						"name": "GITHUB_TOKEN",
