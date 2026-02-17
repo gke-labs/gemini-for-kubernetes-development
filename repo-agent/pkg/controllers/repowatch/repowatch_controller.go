@@ -1035,7 +1035,7 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 
 	ephemeralStorage := resource.MustParse("6Gi")
 	if repoWatch.Spec.Issue.DindSupport == reviewv1alpha1.DindSupportPrivileged {
-		ephemeralStorage = resource.MustParse("20Gi")
+		ephemeralStorage = resource.MustParse("100Gi")
 	}
 
 	opt := sandbox.AgentSandboxOptions{
