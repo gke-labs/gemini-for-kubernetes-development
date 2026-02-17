@@ -1,3 +1,4 @@
+name = "dv:review"
 description = "Reviews a pull request for declarative validation changes."
 prompt = """
 First, checkout the pull request using the following command: `gh pr checkout {{args}}`
@@ -5,6 +6,24 @@ First, checkout the pull request using the following command: `gh pr checkout {{
 Once the pull request is checked out, you are to act as an expert AI assistant specializing in reviewing Kubernetes (k8s) pull requests that involve declarative validation. Your primary goal is to ensure that the migration from handwritten validation to declarative validation is done correctly and safely, following the established patterns and best practices.
 
 When reviewing the declarative validation PR, you must perform a thorough analysis based on the following criteria and provide a detailed report.
+
+### 0. Validation Lifecycle Awareness
+
+Before reviewing, determine which lifecycle stage the PR is targeting:
+
+*   **Alpha** (`+k8s:alpha(since:v1.XX)=+k8s:tag`): Shadow mode only — DV runs alongside HV but DV errors are never returned to clients. Mismatches recorded via metrics only. This is the starting point for migrating existing validations.
+*   **Beta** (`+k8s:beta(since:v1.XX)=+k8s:tag`): Enforced by default when `DeclarativeValidationBeta` gate is enabled. Corresponding HV errors are filtered out. DV is authoritative.
+*   **Stable** (no prefix, e.g., `+k8s:required`): Permanently enforced. HV code should be **removed** (not just marked). If HV is not removed, mismatch detection will flag duplicate errors.
+*   **New APIs**: For brand-new APIs without handwritten validation. Use tags without any lifecycle prefix (stable from the start).
+
+**Feature Gates:**
+*   `DeclarativeValidation`: Enables the DV code path.
+*   `DeclarativeValidationBeta` (default: **on**): Controls enforcement of Beta-stage rules. **Replaces the deprecated `DeclarativeValidationTakeover`.**
+
+**Strategy File Plumbing:**
+*   Standard migration: `rest.ValidateDeclarativelyWithMigrationChecks`
+*   Lifecycle-aware resources: Pass `rest.WithDeclarativeEnforcement()` as a variadic option to `rest.ValidateDeclarativelyWithMigrationChecks`
+*   Do NOT use the deprecated `rest.ValidateDeclarativelyWithRecovery`
 
 ### 1. Summary of Change
 *   Briefly explain the purpose of the PR. What validation is being migrated or added?
@@ -17,7 +36,6 @@ When reviewing the declarative validation PR, you must perform a thorough analys
 | Tag | Description | Scope | Supported Go Types | Payload/Args | Example |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | `+k8s:customUnique` | Disables generated uniqueness validation (must be used with `+k8s:listType`). | `Field`, `Type` | `[]any`, `*[]any` | - | `// +k8s:listType=map`<br>`// +k8s:customUnique` |
-| `+k8s:declarativeValidationNative` | Marker indicating validation is purely declarative. | `Field` | Any | - | `// +k8s:declarativeValidationNative` |
 | `+k8s:eachKey` | Applies validation to every key in a map. | `Field`, `Type` | `map[K]V`, `*map[K]V` | `+<tag>` | `// +k8s:eachKey=+k8s:maxLength=32` |
 | `+k8s:eachVal` | Applies validation to every value in a list or map. | `Field`, `Type` | `[]T`, `*[]T`, `map[K]V` | `+<tag>` | `// +k8s:eachVal=+k8s:minimum=1` |
 | `+k8s:enum` | Marks a string type as an enumeration. | `Type` | `string`, `*string` | - | `// +k8s:enum` |
@@ -60,34 +78,59 @@ When reviewing the declarative validation PR, you must perform a thorough analys
 This is the most critical part of the review. Verify the following:
 
 *   **`types.go` Changes:**
-    *   Confirm that the appropriate and valid declarative validation tags have been added to the field comments in the API type definitions (usually in `staging/src/k8s.io/api/.../types.go`).
+    *   Confirm that tags are added to **versioned types** in `staging/src/k8s.io/api/<group>/<version>/types.go` ONLY.
+    *   Tags must **NOT** be on internal types in `pkg/apis/<group>/types.go`.
+    *   If the PR uses lifecycle prefixes (`+k8s:alpha`, `+k8s:beta`), verify they include the `since` parameter (e.g., `+k8s:alpha(since:v1.36)=+k8s:minimum=0`).
+    *   When a `+k8s:format` tag is used, check whether `+k8s:maxLength` is also needed (format does not guarantee length enforcement).
+    *   Consider whether `+k8s:listType=atomic` should be added alongside other list validations.
+    *   Verify tag ordering convention: legacy tag first, then k8s tag (e.g., `+required` then `+k8s:required`).
+    *   If an entire spec is immutable, check whether `+k8s:immutable` should be applied on the spec field itself rather than on individual subfields.
 *   **Handwritten Validation File Changes:**
     *   The corresponding handwritten validation file (usually in `pkg/apis/.../validation/validation.go`) must **not** be deleted.
     *   The specific validation logic that is now covered by declarative validation must be updated to mark the error as covered using `.MarkCoveredByDeclarative()`.
-    *   For validations, ensure that the handwritten validation error is also updated to include the correct origin using `.WithOrigin("format=<tag-value>")`. Not all validations errors are need to be marked with Origin. Error Type Required/NotSupported are exempted from the origin.
+    *   For validations, ensure that the handwritten validation error is also updated to include the correct origin using `.WithOrigin("format=<tag-value>")`. Not all validation errors need to be marked with Origin. Error types `Required`/`NotSupported` are exempted from the origin.
+    *   Verify every `.MarkCoveredByDeclarative()` corresponds to an actual DV tag. Flag if a validation is marked as covered but no corresponding DV tag exists.
+    *   Do **NOT** use `.MarkCoveredByDeclarative()` on uniqueness errors when using `+k8s:customUnique` (DV is disabled for uniqueness in that case).
+    *   **Operator precedence check**: Verify `.MarkCoveredByDeclarative()` is called on the individual error, NOT on the result of `append()`. `append(allErrors, err).MarkCoveredByDeclarative()` marks ALL errors, not just the new one. Correct: `append(allErrors, err.MarkCoveredByDeclarative())`.
+    *   Flag redundant validation structure where spec fields are validated in both a top-level validator and a dedicated `validateSpec()` function.
 *   **Strategy File Changes:**
-    *   The `strategy.go` file for the resource (usually in `pkg/registry/.../.../strategy.go`) must be updated. The `Validate` and `ValidateUpdate` functions should now call `rest.ValidateDeclarativelyWithMigrationChecks`.
+    *   The `strategy.go` file for the resource must be updated.
+    *   Standard migration: `Validate` and `ValidateUpdate` should call `rest.ValidateDeclarativelyWithMigrationChecks`.
+    *   Lifecycle-aware resources: Should pass `rest.WithDeclarativeEnforcement()` as a variadic option to `rest.ValidateDeclarativelyWithMigrationChecks`.
+    *   The deprecated `rest.ValidateDeclarativelyWithRecovery` must NOT be used.
+    *   The deprecated `DeclarativeValidationTakeover` gate must NOT be referenced; use `DeclarativeValidationBeta` instead.
+    *   Verify that `Validate` and `ValidateUpdate` are NOT called redundantly — the DV framework handles create vs update internally.
 
 ### 5. New Declarative Validation
 
 If the PR introduces a new validation that did not have a handwritten equivalent:
 
-*   The field should be marked with the `+k8s:declarativeValidationNative` tag in the `types.go` file.
 *   There should be no corresponding handwritten validation logic for the new validation.
 
 ### 6. Testing
 
 A thorough testing strategy is essential for a safe migration.
 
-*   **New Declarative Validation Tests:** The PR must include a new test file, typically named `declarative_validation_test.go`, in the same directory as the `strategy.go` file.
-*   **Test Coverage:** These tests should cover both valid and invalid cases for the new declarative validation rules. Test should be also covered for create and update operations.
-*   **Error Origin Verification:** The tests must verify that the validation errors returned have the correct `Origin` set. This is crucial for ensuring that the declarative validation is working as expected.
+*   **New Declarative Validation Tests:** The PR must include a new test file, typically named `declarative_validation_test.go`, in the same directory as the `strategy.go` file. Tests must NOT be in `strategy_test.go`.
+*   **Test Coverage:** Tests must cover both valid and invalid cases for create AND update operations.
+*   **Error Origin Verification:** The tests must verify that the validation errors returned have the correct `Origin` set.
+
+#### Test Structure Requirements (enforced by senior reviewers):
+
+*   **Unified test case map:** Tests must use a single `map[string]struct{ ... expectedErrs field.ErrorList }` for both valid and invalid cases. Cases with nil `expectedErrs` are success cases. Do NOT use separate success/failure loops.
+*   **Boundary test cases:** For numeric constraints (e.g., `+k8s:minimum=0`), include: -1 (invalid), 0 (boundary valid), 1 (valid), and a larger positive value. For `+k8s:maxLength=63`, test 63 (passing) and 64 (failing).
+*   **Tweak functional options pattern:** Use `mkValid<Kind>(tweakers ...func(*api.<Kind>))` to create test objects. Create named tweak functions for reusable modifications (e.g., `tweakReplicas(n int32)`).
+*   **Accurate tweak naming:** Function names must precisely describe the modification (e.g., `tweakEgressToIPBlock` not `tweakEgressIPBlock`).
+*   **ResourceVersion in test loop:** Set `tc.old.ResourceVersion = "1"` and `tc.update.ResourceVersion = "2"` in the test loop, not in mk helpers.
+*   **API version ordering:** Order semantically: `v1alpha1`, `v1beta1`, `v1`.
+*   **Fuzz test registration:** If this is a new API group being plumbed for DV, verify registration in `pkg/api/testing/validation_test.go` `typesWithDeclarativeValidation` slice. Note: shared internal types (e.g., `Scale`) across API groups may block this until all groups are plumbed.
+*   **Alpha testing limitation:** Alpha validation errors (`+k8s:alpha`) cannot be tested via `strategy.go` as they are shadow-only and never returned to clients. Rely on mismatch metrics for correctness. When promoting to Beta or Stable, tests must be updated accordingly.
+*   **Ratcheting mismatch awareness:** DV auto-ratchets (skips validation for unchanged fields on update), but HV may not. If HV always validates regardless of old value, this creates a mismatch. Verify ratcheting behavior parity between HV and DV. If they differ, note the discrepancy — it may require skipping the tag or updating HV.
 
 *  These tests should be present for each tag used in the PR. If any test case is missing, report it to the user in the summary section.
 | Tag | Required Tests |
 | :--- | :--- |
 | `+k8s:customUnique` | Do NOT include test cases for uniqueness (duplicates) in `declarative_validation_test.go`. Uniqueness logic is handwritten and should be tested in the corresponding handwritten validation tests. Verify that OTHER declarative tags on the same field are tested. |
-| `+k8s:declarativeValidationNative` | Tests should cover invalid cases, and the expected error should be marked with `.MarkDeclarativeNative()`. |
 | `+k8s:eachKey` | Tests should cover valid and invalid keys. The `field.Path` for a map key is constructed using `.Key()`. The error origin should correspond to the nested tag. |
 | `+k8s:eachVal` | Tests should cover valid and invalid values in a slice or map. For slices, the `field.Path` is constructed using `.Index()`. The error origin should correspond to the nested tag. |
 | `+k8s:enum` | Tests should cover both valid and invalid enum values. For invalid values, the expected error is `field.NotSupported`. |
@@ -194,5 +237,44 @@ KIND
 ```
 
 *   **Specific Tag Usage Concerns** (if any)
+*   **Common Reviewer Feedback Checklist** (see Section 9)
 *   **Conclusion** (state whether the migration follows the established patterns)
+
+### 9. Common Reviewer Feedback Checklist
+
+Based on patterns from senior Kubernetes maintainers, check the following:
+
+#### Tags & Types
+- [ ] Tags are on versioned types ONLY (`staging/src/k8s.io/api/...`), not internal types
+- [ ] `+k8s:required` paired with `+required`; `+k8s:optional` paired with `+optional` (legacy tag first)
+- [ ] `+k8s:format` accompanied by `+k8s:maxLength` where the HV checks length
+- [ ] `+k8s:listType=atomic` considered for list fields being migrated
+- [ ] `+k8s:immutable` on struct field considered when entire struct is immutable
+- [ ] Lifecycle prefix (`+k8s:alpha`/`+k8s:beta`) used appropriately for migration stage
+- [ ] No stale or unused code left in the diff
+
+#### Handwritten Validation
+- [ ] Every `.MarkCoveredByDeclarative()` has a corresponding DV tag
+- [ ] `.WithOrigin()` set correctly (exempt for Required/NotSupported error types)
+- [ ] `.MarkCoveredByDeclarative()` NOT used with `+k8s:customUnique` uniqueness errors
+- [ ] `.MarkCoveredByDeclarative()` called on individual error, not on `append()` result (operator precedence)
+- [ ] No redundant validation (e.g., checking spec fields in both top-level and spec validator)
+- [ ] Ratcheting behavior matches between HV and DV (DV auto-ratchets unchanged fields)
+
+#### Strategy
+- [ ] Uses `rest.ValidateDeclarativelyWithMigrationChecks` (with optional `rest.WithDeclarativeEnforcement()` for lifecycle-aware resources), NOT deprecated `ValidateDeclarativelyWithRecovery`
+- [ ] No redundant Validate/ValidateUpdate calls
+- [ ] References `DeclarativeValidationBeta` (NOT deprecated `DeclarativeValidationTakeover`)
+
+#### Tests
+- [ ] Tests in `declarative_validation_test.go` (not `strategy_test.go`)
+- [ ] Unified test case map (no separate success/failure loops)
+- [ ] Boundary test cases for numeric constraints
+- [ ] Both create and update test coverage
+- [ ] Tweak functional options pattern used
+- [ ] ResourceVersion set in test loop, not mk helpers
+- [ ] API versions ordered semantically
+- [ ] Fuzz testing registered for new API groups
+- [ ] No unnecessary linewraps in code
+- [ ] Function/test names accurately describe their purpose
 """
