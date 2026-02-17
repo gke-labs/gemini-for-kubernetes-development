@@ -4,10 +4,10 @@ REGISTRY ?= kind.local/
 NAMESPACE ?= default
 LOCAL_PORT ?= 13380
 CLUSTER_NAME != kubectl config view --minify --output 'jsonpath={.clusters[0].name}'
-INSTALL_ENVOY = $(shell if [[ ${CLUSTER_NAME} == kind* ]]; then echo "yes"; else echo "no"; fi)
-GW_CLASS = $(shell if [[ ${CLUSTER_NAME} == kind* ]]; then echo "repo-agent-gatewayclass"; else echo "gke-l7-regional-external-managed"; fi)
+INSTALL_ENVOY = $(if $(filter kind%,$(CLUSTER_NAME)),yes,no)
+GW_CLASS = $(if $(filter kind%,$(CLUSTER_NAME)),repo-agent-gatewayclass,gke-l7-regional-external-managed)
 LLM_PROVIDER ?= gemini-cli
-DEFAULT_LLM_PROVIDER = $(shell if [[ ${CLUSTER_NAME} == kind* ]]; then echo ${LLM_PROVIDER}; else echo "gemini-cli"; fi)
+DEFAULT_LLM_PROVIDER = $(if $(filter kind%,$(CLUSTER_NAME)),$(LLM_PROVIDER),gemini-cli)
 
 # if REGISTRY is kind.local/, then we are deploying to kind
 ifeq ($(REGISTRY), kind.local/)
@@ -54,7 +54,7 @@ lint-go:
 install-dep-packages:
 	../dev/tools/install-kro
 	echo "INSTALL_ENVOY is set to $(INSTALL_ENVOY)"
-	@if [ "$(INSTALL_ENVOY)" == "yes" ]; then \
+	@if [ "$(INSTALL_ENVOY)" = "yes" ]; then \
 	  	echo "Installing Envoy..."; \
 		../dev/tools/install-envoy; \
 	fi;
@@ -64,7 +64,7 @@ install-dep-packages:
 uninstall-dep-packages:
 	../dev/tools/install-kro --uninstall || true
 	echo "INSTALL_ENVOY is set to $(INSTALL_ENVOY)"
-	@if [ "$(INSTALL_ENVOY)" == "yes" ]; then \
+	@if [ "$(INSTALL_ENVOY)" = "yes" ]; then \
 	  	echo "UnInstalling Envoy..."; \
 		../dev/tools/install-envoy --uninstall || true; \
 	fi;
