@@ -11,8 +11,10 @@ RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/s
 # Install gemini-cli
 RUN npm install -g @google/gemini-cli
 
-COPY images/overseer/run.sh /run.sh
-COPY images/overseer/system_prompt.txt /system_prompt.txt
-RUN chmod +x /run.sh
+WORKDIR /workspaces
 
-ENTRYPOINT ["/run.sh"]
+COPY images/overseer/run.sh /workspaces/run.sh
+COPY images/overseer/system_prompt.txt /workspaces/system_prompt.txt
+RUN chmod +x /workspaces/run.sh
+
+ENTRYPOINT ["/workspaces/run.sh"]
