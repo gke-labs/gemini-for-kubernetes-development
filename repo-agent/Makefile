@@ -73,7 +73,7 @@ uninstall-dep-packages:
 .PHONY: create-kind
 create-kind:
 	@../dev/tools/limit-docker-log-size --check || echo "*** docker log config is missing. Adding it. Requires sudo"
-	../dev/tools/limit-docker-log-size --check || sudo ../dev/tools/limit-docker-log-size
+	../dev/tools/limit-docker-log-size --check || sudo ../dev/tools/limit-docker-log-size || true
 	../dev/tools/create-kind-cluster --recreate ${KIND_CLUSTER} --kubeconfig bin/KUBECONFIG
 
 # --skip generic-golang for faster builds
