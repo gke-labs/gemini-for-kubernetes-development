@@ -13,6 +13,19 @@ You are an expert Kubernetes developer specializing in API machinery. Your task 
 5.  Enabling for ResourceClaim/status subresource: https://github.com/kubernetes/kubernetes/pull/134113
 6.  Refactoring with Centralized Helper: https://github.com/kubernetes/kubernetes/pull/134113/commits/2d5955383b5aec6ccaf9d3d2987fa8d6eea94ea1
 7.  Simplified Testing: https://github.com/kubernetes/kubernetes/pull/133937
+8.  Storage group wiring (new API group plumbing): https://github.com/kubernetes/kubernetes/pull/135438
+
+### Validation Lifecycle
+
+DV uses a stability-based lifecycle for validation rules, controlled by tag prefixes:
+- **Migrating existing APIs**: Start with `+k8s:alpha(since:v1.XX)=+k8s:tag`. Alpha is shadow-only — DV runs alongside HV but errors are never returned to clients. Mismatches are recorded via metrics.
+- **Beta** (`+k8s:beta(since:v1.XX)=+k8s:tag`): Enforced by default when `DeclarativeValidationBeta` gate is on. Corresponding HV errors are filtered out.
+- **Stable** (no prefix, e.g., `+k8s:required`): Permanently enforced. HV should be removed.
+- **New APIs without HV**: Use tags without any lifecycle prefix (stable from the start).
+
+Feature gates:
+- `DeclarativeValidation`: Enables the DV code path.
+- `DeclarativeValidationBeta` (default: on): Controls enforcement of Beta-stage DV rules. Replaces the deprecated `DeclarativeValidationTakeover`.
 
 The user has specified the API with the command: `/dv:enable {{args}}`
 
@@ -42,7 +55,9 @@ First, determine if you are enabling validation for a main resource or a subreso
     -   Add the `k8s.io/apimachinery/pkg/api/operation` import.
     -   Remove the imports for `k8s.io/apiserver/pkg/util/feature` and `k8s.io/kubernetes/pkg/features` if they are no longer used.
     -   In the `Validate` and `ValidateUpdate` functions, replace the existing validation logic with a call to the centralized helper function.
+    -   **Do NOT** call both imperative `Validate` and `ValidateUpdate` redundantly in the `ValidateUpdate` path — the DV framework handles create vs update internally.
 
+        **Standard migration pattern:**
         ```go
         // In Validate(ctx, obj)
         allErrs := corevalidation.ValidateReplicationController(controller, opts) // Or your resource's specific imperative validation
@@ -53,23 +68,41 @@ First, determine if you are enabling validation for a main resource or a subreso
         return rest.ValidateDeclarativelyWithMigrationChecks(ctx, legacyscheme.Scheme, newRc, oldRc, errs, operation.Update)
         ```
 
+        **Lifecycle-aware pattern (for resources opting into the Alpha/Beta/GA validation lifecycle):**
+        The `rest.WithDeclarativeEnforcement()` option is passed as a variadic argument to `rest.ValidateDeclarativelyWithMigrationChecks`. This opts the resource into fine-grained lifecycle enforcement where authority is determined by individual tag prefixes (`+k8s:alpha`, `+k8s:beta`) and the `DeclarativeValidationBeta` safety switch.
+        ```go
+        // In Validate(ctx, obj)
+        allErrs := corevalidation.ValidateReplicationController(controller, opts)
+        return rest.ValidateDeclarativelyWithMigrationChecks(ctx, legacyscheme.Scheme, controller, nil, allErrs, operation.Create, rest.WithDeclarativeEnforcement())
+
+        // In ValidateUpdate(ctx, obj, old)
+        errs := corevalidation.ValidateReplicationControllerUpdate(newRc, oldRc, opts)
+        return rest.ValidateDeclarativelyWithMigrationChecks(ctx, legacyscheme.Scheme, newRc, oldRc, errs, operation.Update, rest.WithDeclarativeEnforcement())
+        ```
+
 5.  **Add Declarative Validation Tests:**
     -   Create a new test file named `declarative_validation_test.go` in the same directory as the `strategy.go` file.
+    -   **Important test conventions:**
+        -   Use a **unified test case map** with `expectedErrs field.ErrorList` for both valid and invalid cases. Cases with nil `expectedErrs` are success cases. Do NOT use separate success/failure loops.
+        -   Include **boundary test cases**: for `+k8s:minimum=0`, test -1 (invalid), 0 (boundary valid), 1 (valid), and a larger positive value.
+        -   Use **tweak functional options** pattern: `mkValid<Kind>(tweakers ...func(*api.<Kind>))`.
+        -   Set `ResourceVersion` in the **test loop**, not in mk helpers.
+        -   Order API versions **semantically**: `v1alpha1`, `v1beta1`, `v1`.
+        -   Create named **tweak functions** for commonly modified fields (e.g., `tweakReplicas(n int32)`) with names that accurately describe the modification.
     -   Use the following multi-version test template.
         ```go
         package <package_name>
 
         import (
-        	"context"
         	"testing"
-        	// ... other necessary imports ...
         	"k8s.io/apimachinery/pkg/util/validation/field"
         	genericapirequest "k8s.io/apiserver/pkg/endpoints/request"
         	apitesting "k8s.io/kubernetes/pkg/api/testing"
         	api "<path_to_internal_api_package>"
         )
 
-        var apiVersions = []string{"<version1>", "<version2>"} // Populate this with discovered versions
+        // Order versions semantically: v1alpha1, v1beta1, v1
+        var apiVersions = []string{"<version1>", "<version2>"}
 
         func TestDeclarativeValidate(t *testing.T) {
         	for _, apiVersion := range apiVersions {
@@ -86,6 +119,9 @@ First, determine if you are enabling validation for a main resource or a subreso
         		Resource:   "<resource_plural>",
         	})
         	// ... (any necessary mock setup, e.g., for clients) ...
+
+        	// Use a unified map for both valid and invalid cases.
+        	// Cases with nil expectedErrs are success cases.
         	testCases := map[string]struct {
         		input        api.<Kind>
         		expectedErrs field.ErrorList
@@ -93,7 +129,20 @@ First, determine if you are enabling validation for a main resource or a subreso
         		"valid": {
         			input: mkValid<Kind>(),
         		},
-        		// TODO: Add more test cases
+        		// Boundary test cases for numeric constraints:
+        		"zero <field>": {
+        			input: mkValid<Kind>(func(obj *api.<Kind>) { obj.Spec.<Field> = 0 }),
+        		},
+        		"positive <field>": {
+        			input: mkValid<Kind>(func(obj *api.<Kind>) { obj.Spec.<Field> = 3 }),
+        		},
+        		"negative <field>": {
+        			input: mkValid<Kind>(func(obj *api.<Kind>) { obj.Spec.<Field> = -1 }),
+        			expectedErrs: field.ErrorList{
+        				field.Invalid(field.NewPath("spec.<field>"), nil, "").WithOrigin("minimum"),
+        			},
+        		},
+        		// TODO: Add more test cases for each tag
         	}
         	for k, tc := range testCases {
         		t.Run(k, func(t *testing.T) {
@@ -117,20 +166,20 @@ First, determine if you are enabling validation for a main resource or a subreso
         		Resource:   "<resource_plural>",
         	})
         	// ... (any necessary mock setup) ...
-        	validObj := mkValid<Kind>()
         	testCases := map[string]struct {
         		update       api.<Kind>
         		old          api.<Kind>
         		expectedErrs field.ErrorList
         	}{
         		"valid": {
-        			update: validObj,
-        			old:    validObj,
+        			update: mkValid<Kind>(),
+        			old:    mkValid<Kind>(),
         		},
         		// TODO: Add more test cases
         	}
         	for k, tc := range testCases {
         		t.Run(k, func(t *testing.T) {
+        			// Set ResourceVersion in the loop, not in mk helpers
         			tc.old.ResourceVersion = "1"
         			tc.update.ResourceVersion = "2"
         			apitesting.VerifyUpdateValidationEquivalence(t, ctx, &tc.update, &tc.old, Strategy.ValidateUpdate, tc.expectedErrs)
@@ -138,14 +187,22 @@ First, determine if you are enabling validation for a main resource or a subreso
         	}
         }
 
-        func mkValid<Kind>() api.<Kind> {
-            // ... implementation to create a valid object ...
+        // mkValid<Kind> creates a valid object with optional tweakers.
+        func mkValid<Kind>(tweakers ...func(*api.<Kind>)) api.<Kind> {
+            obj := api.<Kind>{
+                // ... minimal valid object ...
+            }
+            for _, tweak := range tweakers {
+                tweak(&obj)
+            }
+            return obj
         }
         ```
 
 6.  **Enable Fuzz Testing (for each version):**
     -   Open the file `pkg/api/testing/validation_test.go`.
     -   For each version you discovered, add a `schema.GroupVersion` to the `typesWithDeclarativeValidation` slice.
+    -   **Important**: Be aware that some types (e.g., `Scale`) exist in multiple API groups (`autoscaling/v1`, `apps/v1beta1`, `extensions/v1beta1`). All groups sharing the internal type must be plumbed for DV before the type can be added to fuzz testing. If this causes failures, note it and skip adding to fuzz testing with a TODO.
 
 ---
 
@@ -197,6 +254,9 @@ The process is similar, but the focus is on the subresource's strategy.
 
 ---
 **IMPORTANT:**
+- Tags go on **versioned types** in `staging/src/k8s.io/api/<group>/<version>/types.go` ONLY. Do **NOT** add tags to internal types in `pkg/apis/<group>/types.go`.
+- `+k8s:required` must be paired with the legacy `+required` tag. `+k8s:optional` must be paired with `+optional`. This is required for OpenAPI output consistency. Convention: legacy tag first (`+required` then `+k8s:required`).
+- When a `+k8s:format` tag is used, `+k8s:maxLength` may still be needed alongside it (format does not guarantee length enforcement).
 - After completing all the code modifications, you must run `!{hack/update-codegen.sh validation}`.
 - Do **not** run `make verify`.
 - You must run the relevant tests to ensure that your changes have not introduced any regressions. Run tests for the package you modified by running `make test WHAT=./pkg/registry/<group>/<kind>`.
