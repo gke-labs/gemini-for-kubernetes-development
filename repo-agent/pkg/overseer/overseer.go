@@ -14,10 +14,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
+	pkg_github "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 )
 
 // Reconcile ensures the Overseer sandbox is running for the given RepoWatch.
-func Reconcile(ctx context.Context, c client.Client, repoWatch *reviewv1alpha1.RepoWatch) error {
+func Reconcile(ctx context.Context, c client.Client, repoWatch *reviewv1alpha1.RepoWatch, user *pkg_github.User) error {
 	log := log.FromContext(ctx)
 
 	if repoWatch.Spec.Overseer == nil || !repoWatch.Spec.Overseer.Enabled {
@@ -39,7 +40,7 @@ func Reconcile(ctx context.Context, c client.Client, repoWatch *reviewv1alpha1.R
 		if errors.IsNotFound(err) {
 			// Create
 			log.Info("Creating Overseer sandbox", "name", overseerName)
-			newSandbox := newOverseerSandbox(repoWatch, overseerName)
+			newSandbox := newOverseerSandbox(repoWatch, overseerName, user)
 			if err := controllerutil.SetControllerReference(repoWatch, newSandbox, c.Scheme()); err != nil {
 				return err
 			}
@@ -52,7 +53,7 @@ func Reconcile(ctx context.Context, c client.Client, repoWatch *reviewv1alpha1.R
 	return nil
 }
 
-func newOverseerSandbox(repoWatch *reviewv1alpha1.RepoWatch, name string) *unstructured.Unstructured {
+func newOverseerSandbox(repoWatch *reviewv1alpha1.RepoWatch, name string, user *pkg_github.User) *unstructured.Unstructured {
 	// Construct the unstructured Sandbox
 
 	image := repoWatch.Spec.Overseer.Image
@@ -69,6 +70,58 @@ func newOverseerSandbox(repoWatch *reviewv1alpha1.RepoWatch, name string) *unstr
 
 	githubSecretName := repoWatch.Spec.GithubSecretName
 
+	env := []interface{}{
+		map[string]interface{}{
+			"name": "GITHUB_TOKEN",
+			"valueFrom": map[string]interface{}{
+				"secretKeyRef": map[string]interface{}{
+					"name":     githubSecretName,
+					"key":      "pat",
+					"optional": true,
+				},
+			},
+		},
+		map[string]interface{}{
+			"name": "GITHUB_USER_TOKEN",
+			"valueFrom": map[string]interface{}{
+				"secretKeyRef": map[string]interface{}{
+					"name":     githubSecretName,
+					"key":      "pat",
+					"optional": true,
+				},
+			},
+		},
+		map[string]interface{}{
+			"name": "GEMINI_API_KEY",
+			"valueFrom": map[string]interface{}{
+				"secretKeyRef": map[string]interface{}{
+					"name":     apiKeySecretName,
+					"key":      "gemini",
+					"optional": true,
+				},
+			},
+		},
+		map[string]interface{}{
+			"name":  "REPO_URL",
+			"value": repoWatch.Spec.RepoURL,
+		},
+	}
+
+	if user != nil {
+		env = append(env, map[string]interface{}{
+			"name":  "GITHUB_USER_ID",
+			"value": user.UserID,
+		})
+		env = append(env, map[string]interface{}{
+			"name":  "GITHUB_USER_NAME",
+			"value": user.Name,
+		})
+		env = append(env, map[string]interface{}{
+			"name":  "GITHUB_USER_EMAIL",
+			"value": user.Email,
+		})
+	}
+
 	// Pod Template Spec
 	podSpec := map[string]interface{}{
 		"serviceAccountName": "default", // TODO: Ensure this SA has permissions
@@ -77,32 +130,7 @@ func newOverseerSandbox(repoWatch *reviewv1alpha1.RepoWatch, name string) *unstr
 				"name":    "overseer",
 				"image":   image,
 				"command": []string{"/workspaces/run.sh"},
-				"env": []interface{}{
-					map[string]interface{}{
-						"name": "GITHUB_TOKEN",
-						"valueFrom": map[string]interface{}{
-							"secretKeyRef": map[string]interface{}{
-								"name":     githubSecretName,
-								"key":      "pat",
-								"optional": true,
-							},
-						},
-					},
-					map[string]interface{}{
-						"name": "GEMINI_API_KEY",
-						"valueFrom": map[string]interface{}{
-							"secretKeyRef": map[string]interface{}{
-								"name":     apiKeySecretName,
-								"key":      "gemini",
-								"optional": true,
-							},
-						},
-					},
-					map[string]interface{}{
-						"name":  "REPO_URL",
-						"value": repoWatch.Spec.RepoURL,
-					},
-				},
+				"env":     env,
 				"resources": map[string]interface{}{
 					"requests": map[string]interface{}{
 						"cpu":    "1000m",

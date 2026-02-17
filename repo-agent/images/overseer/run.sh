@@ -13,6 +13,45 @@ if [ -z "$REPO_URL" ]; then
   exit 1
 fi
 
+function setupGit {
+    echo "Running setupGit..."
+    
+    # Use GITHUB_TOKEN if GITHUB_USER_TOKEN is not set
+    GITHUB_USER_TOKEN="${GITHUB_USER_TOKEN:-$GITHUB_TOKEN}"
+
+    if [ -n "${GITHUB_USER_TOKEN}" ] && [ -n "${GITHUB_USER_ID}" ]; then
+        echo "creating /root/.config/gh directory"
+        mkdir -p /root/.config/gh
+
+        echo "writing gh config"
+        cat <<EOF > /root/.config/gh/hosts.yml
+github.com:
+    users:
+        ${GITHUB_USER_ID}:
+            oauth_token: ${GITHUB_USER_TOKEN}
+    git_protocol: https
+    oauth_token: ${GITHUB_USER_TOKEN}
+    user: ${GITHUB_USER_ID}
+EOF
+    fi
+
+    if [ -n "${GITHUB_USER_EMAIL}" ]; then
+        echo "running git config user.email"
+        git config --global user.email "${GITHUB_USER_EMAIL}"
+    fi
+
+    if [ -n "${GITHUB_USER_NAME}" ]; then
+        echo "running git config user.name"
+        git config --global user.name "${GITHUB_USER_NAME}"
+    fi
+
+    echo "running gh auth setup-git"
+    gh auth setup-git
+}
+
+# Setup git and gh
+setupGit
+
 # Clone the repo if it doesn't exist
 # We are in /workspaces because of WORKDIR in Dockerfile
 REPO_NAME=$(basename "$REPO_URL" .git)

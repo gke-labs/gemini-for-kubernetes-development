@@ -350,7 +350,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 
 	log.Info("reconciling overseer")
-	if err := r.reconcileOverseer(ctx, repoWatch); err != nil {
+	if err := r.reconcileOverseer(ctx, repoWatch, user); err != nil {
 		log.Error(err, "unable to reconcile overseer")
 		reconcileErr = errors.Join(reconcileErr, err)
 	}
@@ -2172,11 +2172,15 @@ func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client
 	return found, latestFeedbackTime, nil
 }
 
-func (r *Reconciler) reconcileOverseer(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch) error {
+func (r *Reconciler) reconcileOverseer(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, user *github.User) error {
 	log := log.FromContext(ctx)
 
 	log.Info("reconciling overseer", "enabled", repoWatch.Spec.Overseer != nil && repoWatch.Spec.Overseer.Enabled)
-	if err := overseer.Reconcile(ctx, r.Client, repoWatch); err != nil {
+	if err := overseer.Reconcile(ctx, r.Client, repoWatch, &pkg_github.User{
+		UserID: user.GetLogin(),
+		Name:   user.GetName(),
+		Email:  user.GetEmail(),
+	}); err != nil {
 		return err
 	}
 
