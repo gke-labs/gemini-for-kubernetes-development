@@ -20,7 +20,7 @@ while true; do
   # Note: If LLM_PROVIDER is set, we might need to adapt.
   # But for now we assume gemini-cli handles what it handles.
   
-  gemini prompt "$PROMPT"
+  echo "$PROMPT" | gemini --yolo
   
   echo "$(date): Cycle complete. Sleeping..."
   sleep ${POLL_INTERVAL:-300}
