@@ -156,6 +156,9 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 		map[string]interface{}{"name": "ENVBUILDER_INIT_SCRIPT", "value": RepoSandboxBinary + " dev-daemon"},
 		map[string]interface{}{"name": "ENVBUILDER_IGNORE_PATHS", "value": "/var/run,/product_uuid,/product_name,/tokens,/repo-agent/"},
 		map[string]interface{}{"name": "DIND_SUPPORT", "value": opt.DindSupport},
+		map[string]interface{}{"name": "GOCACHE", "value": "/workspaces/.cache/go-build"},
+		map[string]interface{}{"name": "GOMODCACHE", "value": "/workspaces/.cache/mod"},
+		map[string]interface{}{"name": "TMPDIR", "value": "/workspaces/.tmp"},
 	}
 
 	image := opt.Image
@@ -248,9 +251,10 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 							map[string]interface{}{
 								"name":    "inject-agent",
 								"image":   opt.RepoSandboxImage,
-								"command": []interface{}{"/repo-agent/repo-sandbox", "inject", "--path", "/opt/repo-agent"},
+								"command": []interface{}{"sh", "-c", "/repo-agent/repo-sandbox inject --path /opt/repo-agent && mkdir -p /workspaces/.cache/go-build /workspaces/.cache/mod /workspaces/.tmp"},
 								"volumeMounts": []interface{}{
 									map[string]interface{}{"name": "agent-bin", "mountPath": "/opt/repo-agent"},
+									map[string]interface{}{"name": "workspaces-pvc", "mountPath": "/workspaces"},
 								},
 							},
 						},
