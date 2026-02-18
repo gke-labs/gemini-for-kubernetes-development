@@ -83,8 +83,20 @@ while true; do
   # Note: If LLM_PROVIDER is set, we might need to adapt.
   # But for now we assume gemini-cli handles what it handles.
   
-  gemini --yolo "$PROMPT"
-  
-  echo "$(date): Cycle complete. Sleeping..."
-  sleep ${POLL_INTERVAL:-300}
+  # Capture stderr to a file so we can inspect it for quota errors
+  GEMINI_ERR=$(mktemp)
+  if ! gemini --yolo "$PROMPT" 2> "$GEMINI_ERR"; then
+    cat "$GEMINI_ERR" >&2
+    if grep -iq "TerminalQuotaError\|Quota exceeded" "$GEMINI_ERR"; then
+      echo "$(date): Quota exhausted. Sleeping for 1 hour..."
+      sleep 3600
+    else
+      echo "$(date): Gemini failed with non-quota error. Sleeping for normal interval..."
+      sleep ${POLL_INTERVAL:-300}
+    fi
+  else
+    echo "$(date): Cycle complete. Sleeping..."
+    sleep ${POLL_INTERVAL:-300}
+  fi
+  rm -f "$GEMINI_ERR"
 done
