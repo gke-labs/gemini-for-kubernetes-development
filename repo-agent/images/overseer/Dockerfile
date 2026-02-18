@@ -1,11 +1,14 @@
 FROM golang:1.23 AS builder
 
 WORKDIR /app
-COPY go.mod go.sum ./
+COPY go.mod go.mod
+COPY go.sum go.sum
 RUN go mod download
 
-COPY . .
-RUN go build -o /overseer-cli ./cmd/overseer-cli/main.go
+# Copy the go source
+COPY cmd/overseer-cli/main.go cmd/overseer-cli/main.go
+COPY pkg/ pkg/
+RUN go build -o overseer-cli ./cmd/overseer-cli/main.go
 
 FROM node:20-slim
 
@@ -30,7 +33,7 @@ RUN npm install -g @google/gemini-cli
 
 WORKDIR /workspaces
 
-COPY --from=builder /overseer-cli /usr/local/bin/overseer-cli
+COPY --from=builder /app/overseer-cli /usr/local/bin/overseer-cli
 COPY images/overseer/run.sh /workspaces/run.sh
 COPY images/overseer/system_prompt.txt /workspaces/system_prompt.txt
 RUN chmod +x /workspaces/run.sh
