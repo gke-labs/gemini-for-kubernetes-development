@@ -158,6 +158,29 @@ func SetupServiceAccounts(ctx context.Context, clientset kubernetes.Interface, n
 		return err
 	}
 
+	// --- Overseer ---
+	saOverseer := &corev1.ServiceAccount{ObjectMeta: v1.ObjectMeta{Name: "overseer", Namespace: ns}}
+	_, err = clientset.CoreV1().ServiceAccounts(ns).Create(ctx, saOverseer, v1.CreateOptions{})
+	if err != nil && !errors.IsAlreadyExists(err) {
+		return err
+	}
+
+	// Bind to overseer cluster role (base permissions)
+	rbOverseer := &rbacv1.RoleBinding{
+		ObjectMeta: v1.ObjectMeta{Name: "overseer-binding", Namespace: ns},
+		Subjects:   []rbacv1.Subject{{Kind: "ServiceAccount", Name: "overseer", Namespace: ns}},
+		RoleRef:    rbacv1.RoleRef{Kind: "ClusterRole", Name: "overseer", APIGroup: "rbac.authorization.k8s.io"},
+	}
+	_, err = clientset.RbacV1().RoleBindings(ns).Create(ctx, rbOverseer, v1.CreateOptions{})
+	if err != nil && !errors.IsAlreadyExists(err) {
+		return err
+	}
+
+	// Add to overseer cluster role binding
+	if err := ensureClusterRoleBindingSubject(ctx, clientset, "overseer-binding", rbacv1.Subject{Kind: "ServiceAccount", Name: "overseer", Namespace: ns}); err != nil {
+		log.Info("Warning: failed to update overseer cluster role binding", "err", err)
+	}
+
 	return nil
 }
 

@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: overseer
+  namespace: repo-agent-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: overseer
+rules:
+- apiGroups: ["review.gemini.google.com"]
+  resources: ["repowatches"]
+  verbs: ["get", "list"]
+- apiGroups: ["agents.x-k8s.io"]
+  resources: ["sandboxes"]
+  verbs: ["get", "list", "create", "update", "patch", "delete"]
+- apiGroups: ["custom.agents.x-k8s.io"]
+  resources: ["sandboxtasks"]
+  verbs: ["get", "list", "create", "update", "patch", "delete"]
+- apiGroups: [""]
+  resources: ["services"]
+  verbs: ["get", "list", "create", "update", "patch", "delete"]
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: overseer-binding
+subjects:
+- kind: ServiceAccount
+  name: overseer
+  namespace: repo-agent-system
+roleRef:
+  kind: ClusterRole
+  name: overseer
+  apiGroup: rbac.authorization.k8s.io

@@ -2183,7 +2183,7 @@ func (r *Reconciler) reconcileOverseer(ctx context.Context, repoWatch *reviewv1a
 		UserID: user.GetLogin(),
 		Name:   user.GetName(),
 		Email:  user.GetEmail(),
-	}); err != nil {
+	}, r.RepoSandboxImage, r.ConfigDirImage); err != nil {
 		return err
 	}
 

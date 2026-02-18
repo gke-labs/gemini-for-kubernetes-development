@@ -18,7 +18,7 @@ import (
 )
 
 // Reconcile ensures the Overseer sandbox is running for the given RepoWatch.
-func Reconcile(ctx context.Context, c client.Client, repoWatch *reviewv1alpha1.RepoWatch, user *pkg_github.User) error {
+func Reconcile(ctx context.Context, c client.Client, repoWatch *reviewv1alpha1.RepoWatch, user *pkg_github.User, repoSandboxImage, configDirImage string) error {
 	log := log.FromContext(ctx)
 
 	if repoWatch.Spec.Overseer == nil || !repoWatch.Spec.Overseer.Enabled {
@@ -40,7 +40,7 @@ func Reconcile(ctx context.Context, c client.Client, repoWatch *reviewv1alpha1.R
 		if errors.IsNotFound(err) {
 			// Create
 			log.Info("Creating Overseer sandbox", "name", overseerName)
-			newSandbox := newOverseerSandbox(repoWatch, overseerName, user)
+			newSandbox := newOverseerSandbox(repoWatch, overseerName, user, repoSandboxImage, configDirImage)
 			if err := controllerutil.SetControllerReference(repoWatch, newSandbox, c.Scheme()); err != nil {
 				return err
 			}
@@ -53,7 +53,7 @@ func Reconcile(ctx context.Context, c client.Client, repoWatch *reviewv1alpha1.R
 	return nil
 }
 
-func newOverseerSandbox(repoWatch *reviewv1alpha1.RepoWatch, name string, user *pkg_github.User) *unstructured.Unstructured {
+func newOverseerSandbox(repoWatch *reviewv1alpha1.RepoWatch, name string, user *pkg_github.User, repoSandboxImage, configDirImage string) *unstructured.Unstructured {
 	// Construct the unstructured Sandbox
 
 	image := repoWatch.Spec.Overseer.Image
@@ -105,6 +105,26 @@ func newOverseerSandbox(repoWatch *reviewv1alpha1.RepoWatch, name string, user *
 			"name":  "REPO_URL",
 			"value": repoWatch.Spec.RepoURL,
 		},
+		map[string]interface{}{
+			"name":  "REPOWATCH_NAME",
+			"value": repoWatch.Name,
+		},
+		map[string]interface{}{
+			"name": "NAMESPACE",
+			"valueFrom": map[string]interface{}{
+				"fieldRef": map[string]interface{}{
+					"fieldPath": "metadata.namespace",
+				},
+			},
+		},
+		map[string]interface{}{
+			"name":  "REPO_SANDBOX_IMAGE",
+			"value": repoSandboxImage,
+		},
+		map[string]interface{}{
+			"name":  "CONFIG_DIR_IMAGE",
+			"value": configDirImage,
+		},
 	}
 
 	if user != nil {
@@ -124,7 +144,7 @@ func newOverseerSandbox(repoWatch *reviewv1alpha1.RepoWatch, name string, user *
 
 	// Pod Template Spec
 	podSpec := map[string]interface{}{
-		"serviceAccountName": "default", // TODO: Ensure this SA has permissions
+		"serviceAccountName": "overseer",
 		"containers": []interface{}{
 			map[string]interface{}{
 				"name":    "overseer",

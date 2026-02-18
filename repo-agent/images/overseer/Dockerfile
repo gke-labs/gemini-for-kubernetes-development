@@ -1,3 +1,15 @@
+FROM golang:1.23 AS builder
+
+WORKDIR /app
+COPY repo-agent/go.mod repo-agent/go.sum ./repo-agent/
+WORKDIR /app/repo-agent
+RUN go mod download
+
+WORKDIR /app
+COPY repo-agent/ ./repo-agent/
+WORKDIR /app/repo-agent
+RUN go build -o /overseer-cli ./cmd/overseer-cli/main.go
+
 FROM node:20-slim
 
 # Install tools
@@ -21,6 +33,7 @@ RUN npm install -g @google/gemini-cli
 
 WORKDIR /workspaces
 
+COPY --from=builder /overseer-cli /usr/local/bin/overseer-cli
 COPY images/overseer/run.sh /workspaces/run.sh
 COPY images/overseer/system_prompt.txt /workspaces/system_prompt.txt
 RUN chmod +x /workspaces/run.sh
