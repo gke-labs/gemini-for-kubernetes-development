@@ -17,121 +17,85 @@ limitations under the License.
 package main
 
 import (
-	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
-	"os"
+	"log"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/agentsandboxes"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// This is a stub for an MCP server that manages agent sandboxes.
-// It currently implements a very basic JSON-RPC loop over stdio.
-
-type JSONRPCRequest struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      interface{}     `json:"id"`
-	Method  string          `json:"method"`
-	Params  json.RawMessage `json:"params"`
-}
-
-type JSONRPCResponse struct {
-	JSONRPC string      `json:"jsonrpc"`
-	ID      interface{} `json:"id"`
-	Result  interface{} `json:"result,omitempty"`
-	Error   interface{} `json:"error,omitempty"`
-}
-
 func main() {
-	scanner := bufio.NewScanner(os.Stdin)
-	for scanner.Scan() {
-		var req JSONRPCRequest
-		if err := json.Unmarshal(scanner.Bytes(), &req); err != nil {
-			sendError(nil, -32700, "Parse error")
-			continue
-		}
+	server := mcp.NewServer(&mcp.Implementation{
+		Name:    "agentsandboxes-mcp",
+		Version: "0.1.0",
+	}, nil)
 
-		handleRequest(req)
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "list_sandboxes",
+		Description: "List all agent sandboxes",
+	}, listSandboxesHandler)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "create_sandbox",
+		Description: "Create a new agent sandbox",
+	}, createSandboxHandler)
+
+	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
+		log.Fatalf("Server failed: %v", err)
 	}
 }
 
-func handleRequest(req JSONRPCRequest) {
-	ctx := context.Background()
+type emptyInput struct{}
 
-	switch req.Method {
-	case "list_sandboxes":
-		sandboxes, err := agentsandboxes.List(ctx)
-		if err != nil {
-			sendError(req.ID, -32603, err.Error())
-			return
-		}
-		sendResponse(req.ID, sandboxes)
-
-	case "create_sandbox":
-		var params struct {
-			Name  string `json:"name"`
-			Image string `json:"image"`
-		}
-		if err := json.Unmarshal(req.Params, &params); err != nil {
-			sendError(req.ID, -32602, "Invalid params")
-			return
-		}
-
-		builder, err := agentsandboxes.New(params.Name)
-		if err != nil {
-			sendError(req.ID, -32603, err.Error())
-			return
-		}
-		if params.Image != "" {
-			builder.Image(params.Image)
-		}
-
-		sandbox, err := builder.Create(ctx)
-		if err != nil {
-			sendError(req.ID, -32603, err.Error())
-			return
-		}
-		sendResponse(req.ID, sandbox)
-
-	case "initialize":
-		// MCP initialize handshake
-		sendResponse(req.ID, map[string]interface{}{
-			"protocolVersion": "2024-11-05",
-			"capabilities":    map[string]interface{}{},
-			"serverInfo": map[string]string{
-				"name":    "agentsandboxes-mcp",
-				"version": "0.1.0",
-			},
-		})
-
-	default:
-		sendError(req.ID, -32601, "Method not found")
+func listSandboxesHandler(ctx context.Context, req *mcp.CallToolRequest, args emptyInput) (*mcp.CallToolResult, any, error) {
+	client, err := agentsandboxes.NewClient()
+	if err != nil {
+		return nil, nil, err
 	}
-}
 
-func sendResponse(id interface{}, result interface{}) {
-	resp := JSONRPCResponse{
-		JSONRPC: "2.0",
-		ID:      id,
-		Result:  result,
+	sandboxes, err := client.List(ctx)
+	if err != nil {
+		return nil, nil, err
 	}
-	send(resp)
-}
 
-func sendError(id interface{}, code int, message string) {
-	resp := JSONRPCResponse{
-		JSONRPC: "2.0",
-		ID:      id,
-		Error: map[string]interface{}{
-			"code":    code,
-			"message": message,
+	var results []string
+	for _, s := range sandboxes {
+		results = append(results, fmt.Sprintf("%s/%s", s.Namespace, s.Name))
+	}
+
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: fmt.Sprintf("Sandboxes: %v", results)},
 		},
-	}
-	send(resp)
+	}, sandboxes, nil
 }
 
-func send(v interface{}) {
-	b, _ := json.Marshal(v)
-	fmt.Println(string(b))
+type createSandboxInput struct {
+	Name  string `json:"name" jsonschema:"The name of the sandbox"`
+	Image string `json:"image,omitempty" jsonschema:"The container image for the sandbox"`
+}
+
+func createSandboxHandler(ctx context.Context, req *mcp.CallToolRequest, args createSandboxInput) (*mcp.CallToolResult, any, error) {
+	client, err := agentsandboxes.NewClient()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	builder := client.New(args.Name)
+	if args.Image != "" {
+		builder.Image(args.Image)
+	}
+
+	sandbox, err := builder.Create(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	msg := fmt.Sprintf("Created sandbox: %s/%s", sandbox.Namespace, sandbox.Name)
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: msg},
+		},
+	}, sandbox, nil
 }
