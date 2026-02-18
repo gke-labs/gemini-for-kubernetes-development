@@ -65,6 +65,22 @@ func BuildSandboxDaemonCommand() *cobra.Command {
 func (c *SandboxDaemonCommand) Run(ctx context.Context) error {
 	log := klog.FromContext(ctx)
 
+	// Ensure cache and tmp directories exist on /workspaces
+	// This is important for Go builds to avoid ephemeral storage exhaustion.
+	dirs := []string{
+		os.Getenv("GOCACHE"),
+		os.Getenv("GOMODCACHE"),
+		os.Getenv("TMPDIR"),
+	}
+	for _, dir := range dirs {
+		if dir == "" {
+			continue
+		}
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			log.Error(err, "failed to create directory", "path", dir)
+		}
+	}
+
 	var gvr schema.GroupVersionResource
 	if c.IssueID != "" {
 		gvr = IssueGVR

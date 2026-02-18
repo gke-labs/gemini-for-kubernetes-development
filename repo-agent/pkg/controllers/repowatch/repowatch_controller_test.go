@@ -29,6 +29,7 @@ import (
 	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
 	sandboxtaskv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 	"github.com/google/go-github/v39/github"
 	"github.com/onsi/gomega"
 	"golang.org/x/oauth2"
@@ -182,6 +183,36 @@ func TestReconciler_Reconcile(t *testing.T) {
 		}
 	}
 	g.Expect(foundSecret).To(gomega.BeTrue())
+
+	// Check environment variables
+	containers, found, err := unstructured.NestedSlice(reviewSandboxList.Items[0].Object, "spec", "podTemplate", "spec", "containers")
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(found).To(gomega.BeTrue())
+	g.Expect(containers).To(gomega.HaveLen(1))
+
+	container := containers[0].(map[string]interface{})
+	env, found, err := unstructured.NestedSlice(container, "env")
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(found).To(gomega.BeTrue())
+
+	expectedEnv := map[string]string{
+		"GOCACHE":    sandbox.GoCachePath,
+		"GOMODCACHE": sandbox.GoModCachePath,
+		"TMPDIR":     sandbox.TmpDirPath,
+	}
+
+	for name, value := range expectedEnv {
+		found := false
+		for _, e := range env {
+			envVar := e.(map[string]interface{})
+			if envVar["name"] == name {
+				found = true
+				g.Expect(envVar["value"]).To(gomega.Equal(value))
+				break
+			}
+		}
+		g.Expect(found).To(gomega.BeTrue(), fmt.Sprintf("%s env var not found", name))
+	}
 }
 
 // TestReconciler_ReconcileIssues focuses on the success path for handling GitHub issues.

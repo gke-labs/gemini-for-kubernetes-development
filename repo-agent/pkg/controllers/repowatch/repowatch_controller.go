@@ -1311,6 +1311,9 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 									map[string]interface{}{"name": "ENVBUILDER_GIT_CLONE_SINGLE_BRANCH", "value": "true"},
 									map[string]interface{}{"name": "ENVBUILDER_INIT_SCRIPT", "value": sandbox.RepoSandboxBinary + " review-daemon"},
 									map[string]interface{}{"name": "ENVBUILDER_IGNORE_PATHS", "value": "/var/run,/product_uuid,/product_name,/tokens,/repo-agent/"},
+									map[string]interface{}{"name": "GOCACHE", "value": sandbox.GoCachePath},
+									map[string]interface{}{"name": "GOMODCACHE", "value": sandbox.GoModCachePath},
+									map[string]interface{}{"name": "TMPDIR", "value": sandbox.TmpDirPath},
 								},
 								"volumeMounts": []interface{}{
 									map[string]interface{}{"name": "workspaces-pvc", "mountPath": "/workspaces"},

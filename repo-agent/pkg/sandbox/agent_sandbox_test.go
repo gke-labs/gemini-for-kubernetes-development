@@ -145,6 +145,30 @@ func TestNewAgentSandbox(t *testing.T) {
 			if !foundDindEnv {
 				t.Errorf("DIND_SUPPORT env var not found")
 			}
+
+			// Check Go cache and tmp env vars
+			expectedEnv := map[string]string{
+				"GOCACHE":    GoCachePath,
+				"GOMODCACHE": GoModCachePath,
+				"TMPDIR":     TmpDirPath,
+			}
+
+			for name, value := range expectedEnv {
+				found := false
+				for _, e := range env {
+					envVar := e.(map[string]interface{})
+					if envVar["name"] == name {
+						found = true
+						if envVar["value"] != value {
+							t.Errorf("expected %s env %s, got %v", name, value, envVar["value"])
+						}
+						break
+					}
+				}
+				if !found {
+					t.Errorf("%s env var not found", name)
+				}
+			}
 		})
 	}
 }
