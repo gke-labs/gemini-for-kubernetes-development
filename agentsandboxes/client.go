@@ -18,6 +18,7 @@ package agentsandboxes
 
 import (
 	"context"
+	"net/http"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -62,12 +63,21 @@ func NewClient() (*Client, error) {
 
 // NewClientFromConfig creates a new Client from the given rest.Config.
 func NewClientFromConfig(config *rest.Config, namespace string) (*Client, error) {
-	kube, err := kubernetes.NewForConfig(config)
+	httpClient, err := rest.HTTPClientFor(config)
+	if err != nil {
+		return nil, err
+	}
+	return NewClientFromConfigAndClient(config, httpClient, namespace)
+}
+
+// NewClientFromConfigAndClient creates a new Client from the given rest.Config and http.Client.
+func NewClientFromConfigAndClient(config *rest.Config, httpClient *http.Client, namespace string) (*Client, error) {
+	kube, err := kubernetes.NewForConfigAndClient(config, httpClient)
 	if err != nil {
 		return nil, err
 	}
 
-	dyn, err := dynamic.NewForConfig(config)
+	dyn, err := dynamic.NewForConfigAndClient(config, httpClient)
 	if err != nil {
 		return nil, err
 	}
@@ -226,42 +236,4 @@ func (c *Client) Get(ctx context.Context, name string) (*Sandbox, error) {
 		Namespace: res.Namespace,
 		Status:    res.Status,
 	}, nil
-}
-
-// Top-level functions for convenience
-
-var defaultClient *Client
-
-func init() {
-	// We don't initialize defaultClient here because it might fail if not in a k8s environment
-	// and we don't want to panic on import.
-}
-
-func getDefaultClient() (*Client, error) {
-	if defaultClient == nil {
-		var err error
-		defaultClient, err = NewClient()
-		if err != nil {
-			return nil, err
-		}
-	}
-	return defaultClient, nil
-}
-
-// List is a convenience wrapper for Client.List using a default client.
-func List(ctx context.Context) ([]*Sandbox, error) {
-	c, err := getDefaultClient()
-	if err != nil {
-		return nil, err
-	}
-	return c.List(ctx)
-}
-
-// New is a convenience wrapper for Client.New using a default client.
-func New(name string) (*SandboxBuilder, error) {
-	c, err := getDefaultClient()
-	if err != nil {
-		return nil, err
-	}
-	return c.New(name), nil
 }
