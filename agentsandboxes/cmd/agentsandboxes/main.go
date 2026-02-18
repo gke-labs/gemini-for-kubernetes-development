@@ -17,7 +17,6 @@ limitations under the License.
 package main
 
 import (
-	"context"
 	"fmt"
 	"os"
 
@@ -47,8 +46,12 @@ var listCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List agent sandboxes",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx := context.Background()
-		sandboxes, err := agentsandboxes.List(ctx)
+		ctx := cmd.Context()
+		client, err := agentsandboxes.NewClient()
+		if err != nil {
+			return err
+		}
+		sandboxes, err := client.List(ctx)
 		if err != nil {
 			return err
 		}
@@ -68,11 +71,12 @@ var createCmd = &cobra.Command{
 		name := args[0]
 		image, _ := cmd.Flags().GetString("image")
 
-		ctx := context.Background()
-		builder, err := agentsandboxes.New(name)
+		ctx := cmd.Context()
+		client, err := agentsandboxes.NewClient()
 		if err != nil {
 			return err
 		}
+		builder := client.New(name)
 
 		if image != "" {
 			builder.Image(image)
@@ -94,7 +98,7 @@ var deleteCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
-		ctx := context.Background()
+		ctx := cmd.Context()
 		client, err := agentsandboxes.NewClient()
 		if err != nil {
 			return err
