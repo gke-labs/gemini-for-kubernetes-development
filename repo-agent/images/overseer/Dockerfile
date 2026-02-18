@@ -1,7 +1,15 @@
-FROM node:20-alpine
+FROM node:20-slim
 
 # Install tools
-RUN apk add --no-cache bash git curl jq github-cli
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    bash \
+    git \
+    curl \
+    jq \
+    gh \
+    ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
 
 # Install kubectl
 RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" && \
