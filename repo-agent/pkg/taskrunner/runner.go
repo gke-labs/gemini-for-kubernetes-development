@@ -38,6 +38,20 @@ func NewTaskRunner(ao *agentoutput.AgentOutput) (*TaskRunner, error) {
 		return nil, fmt.Errorf("NAMESPACE and NAME environment variables must be set")
 	}
 
+	// Ensure cache and tmp directories exist on /workspaces
+	// This is important for Go builds to avoid ephemeral storage exhaustion
+	// and to allow caching across task runs.
+	dirs := []string{
+		"/workspaces/.cache/go-build",
+		"/workspaces/.cache/mod",
+		"/workspaces/.tmp",
+	}
+	for _, dir := range dirs {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			klog.Errorf("Failed to create directory %s: %v", dir, err)
+		}
+	}
+
 	return &TaskRunner{
 		manager:     k8s.NewManager(kubeClient),
 		namespace:   ns,

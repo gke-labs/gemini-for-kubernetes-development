@@ -156,6 +156,9 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 		map[string]interface{}{"name": "ENVBUILDER_INIT_SCRIPT", "value": RepoSandboxBinary + " dev-daemon"},
 		map[string]interface{}{"name": "ENVBUILDER_IGNORE_PATHS", "value": "/var/run,/product_uuid,/product_name,/tokens,/repo-agent/"},
 		map[string]interface{}{"name": "DIND_SUPPORT", "value": opt.DindSupport},
+		map[string]interface{}{"name": "GOCACHE", "value": "/workspaces/.cache/go-build"},
+		map[string]interface{}{"name": "GOMODCACHE", "value": "/workspaces/.cache/mod"},
+		map[string]interface{}{"name": "TMPDIR", "value": "/workspaces/.tmp"},
 	}
 
 	image := opt.Image
