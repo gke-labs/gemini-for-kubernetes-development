@@ -56,14 +56,14 @@ func buildIssueCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "issue",
 		Short: "Create/ensure sandbox and task for an issue",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runIssue(cmd.Context(), number, taskType)
+		RunE: func(_ *cobra.Command, _ []string) error {
+			return runIssue(context.Background(), number, taskType)
 		},
 	}
 
 	cmd.Flags().IntVar(&number, "number", 0, "Issue number")
 	cmd.Flags().StringVar(&taskType, "task", "fix-issue", "Task type (e.g., fix-issue, triage-issue, investigate-failures)")
-	cmd.MarkFlagRequired("number")
+	_ = cmd.MarkFlagRequired("number")
 
 	return cmd
 }
@@ -75,14 +75,14 @@ func buildPRCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "pr",
 		Short: "Create/ensure sandbox and task for a PR",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runPR(cmd.Context(), number, taskType)
+		RunE: func(_ *cobra.Command, _ []string) error {
+			return runPR(context.Background(), number, taskType)
 		},
 	}
 
 	cmd.Flags().IntVar(&number, "number", 0, "PR number")
 	cmd.Flags().StringVar(&taskType, "task", "review", "Task type (e.g., review, address-feedback)")
-	cmd.MarkFlagRequired("number")
+	_ = cmd.MarkFlagRequired("number")
 
 	return cmd
 }
@@ -109,7 +109,7 @@ func runIssue(ctx context.Context, number int, taskType string) error {
 
 	kubeClient := &clients.KubernetesClient{
 		DynamicClient: dynClient,
-		Clientset:    clientset,
+		Clientset:     clientset,
 	}
 	manager := k8s.NewManager(kubeClient)
 
@@ -206,7 +206,7 @@ func runPR(ctx context.Context, number int, taskType string) error {
 
 	kubeClient := &clients.KubernetesClient{
 		DynamicClient: dynClient,
-		Clientset:    clientset,
+		Clientset:     clientset,
 	}
 	manager := k8s.NewManager(kubeClient)
 
@@ -290,7 +290,7 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 	// Replicate logic from repowatch_controller.go:createIssueSandbox
 	name := fmt.Sprintf("%s-issue-%d", repoWatch.Name, issue.GetNumber())
 	cloneURL := strings.Replace(issue.GetRepositoryURL(), "api.github.com/repos", "github.com", 1) + ".git"
-	
+
 	// We need to fetch user info. In Overseer, we might just use env vars.
 	userLogin := os.Getenv("GITHUB_USER_ID")
 	userName := os.Getenv("GITHUB_USER_NAME")
@@ -332,9 +332,9 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 			Replicas:              1,
 			ServiceAccountName:    "issue-sandbox",
 		},
-		IssueID:     fmt.Sprintf("%d", issue.GetNumber()),
-		IssueTitle:  issue.GetTitle(),
-		IssueRepo:   repoWatch.Name,
+		IssueID:    fmt.Sprintf("%d", issue.GetNumber()),
+		IssueTitle: issue.GetTitle(),
+		IssueRepo:  repoWatch.Name,
 	}
 
 	sb, svc := sandbox.NewAgentSandbox(opt)
@@ -352,7 +352,7 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 	// Replicate logic from repowatch_controller.go:createPRSandbox
 	name := fmt.Sprintf("%s-pr-%d", repoWatch.Name, pr.GetNumber())
 	cloneURL := pr.GetBase().GetRepo().GetCloneURL()
-	
+
 	userLogin := os.Getenv("GITHUB_USER_ID")
 	userName := os.Getenv("GITHUB_USER_NAME")
 	userEmail := os.Getenv("GITHUB_USER_EMAIL")
@@ -391,9 +391,9 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 			Replicas:              1,
 			ServiceAccountName:    "review-sandbox",
 		},
-		IssueID:     fmt.Sprintf("%d", pr.GetNumber()),
-		IssueTitle:  pr.GetTitle(),
-		IssueRepo:   repoWatch.Name,
+		IssueID:    fmt.Sprintf("%d", pr.GetNumber()),
+		IssueTitle: pr.GetTitle(),
+		IssueRepo:  repoWatch.Name,
 	}
 
 	sb, svc := sandbox.NewAgentSandbox(opt)
@@ -408,7 +408,7 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 }
 
 var letterBytes = "abcdefghijklmnopqrstuvwxyz0123456789"
-var seededRand *rand.Rand = rand.New(rand.NewSource(time.Now().UnixNano()))
+var seededRand = rand.New(rand.NewSource(time.Now().UnixNano()))
 
 func randString(n int) string {
 	b := make([]byte, n)

@@ -1,13 +1,10 @@
 FROM golang:1.23 AS builder
 
 WORKDIR /app
-COPY repo-agent/go.mod repo-agent/go.sum ./repo-agent/
-WORKDIR /app/repo-agent
+COPY go.mod go.sum ./
 RUN go mod download
 
-WORKDIR /app
-COPY repo-agent/ ./repo-agent/
-WORKDIR /app/repo-agent
+COPY . .
 RUN go build -o /overseer-cli ./cmd/overseer-cli/main.go
 
 FROM node:20-slim
