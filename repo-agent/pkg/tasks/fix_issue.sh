@@ -86,7 +86,7 @@ function checkForExistingPR {
     local pr_url=$(gh search prs "${ISSUE_NUMBER}" --state open --repo "${REPO_OWNER}/${REPO_NAME}" --author "${GITHUB_USER_ID}" --json url --jq '.[0] | "\(.url)"' --limit 1)
 
     # If not found, look for any PR
-    if [ -z "$pr_info" ] || [ "$pr_info" == "null" ]; then
+    if [ -z "$pr_number" ] || [ "$pr_number" == "null" ]; then
         pr_number=$(gh search prs "${ISSUE_NUMBER}" --repo "${REPO_OWNER}/${REPO_NAME}" --state open --json number --jq '.[0] | "\(.number)"' --limit 1)
         pr_url=$(gh search prs "${ISSUE_NUMBER}" --repo "${REPO_OWNER}/${REPO_NAME}" --state open --json url --jq '.[0] | "\(.url)"' --limit 1)
     fi
@@ -167,8 +167,37 @@ function runGemini {
 }
 
 function recordPRLink {
+    echo "Recording PR link..."
     pushd "/workspaces/${REPO_NAME}" > /dev/null
-    gh pr status --json url --jq  .currentBranch.url > "$(dirname "${PROMPT_FILE}")/agent-output.txt"
+    local output_file="$(dirname "${PROMPT_FILE}")/agent-output.txt"
+    local pr_url=""
+
+    # Try current branch PR status
+    echo "Checking pr status..."
+    pr_url=$(gh pr status --json url --jq '.currentBranch.url // empty')
+
+    # If not found, try listing PRs for this branch
+    if [ -z "$pr_url" ] || [ "$pr_url" == "null" ]; then
+        echo "Checking pr list by branch..."
+        pr_url=$(gh pr list --head "issue_${ISSUE_NUMBER}" --json url --jq '.[0].url // empty')
+    fi
+
+    # If still not found, try searching PRs by issue number and author
+    if [ -z "$pr_url" ] || [ "$pr_url" == "null" ]; then
+        echo "Searching for PR..."
+        pr_url=$(gh search prs "${ISSUE_NUMBER}" --state open --repo "${REPO_OWNER}/${REPO_NAME}" --author "${GITHUB_USER_ID}" --json url --jq '.[0].url // empty' --limit 1)
+    fi
+
+    if [ -n "$pr_url" ] && [ "$pr_url" != "null" ]; then
+        echo "Successfully found PR: ${pr_url}"
+        echo "${pr_url}" > "$output_file"
+    else
+        echo "Could not find PR link automatically."
+        # Don't overwrite if it already exists (unlikely here but safe)
+        if [ ! -s "$output_file" ]; then
+            echo "Could not find PR link automatically." > "$output_file"
+        fi
+    fi
     popd > /dev/null
 }
 
