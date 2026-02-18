@@ -6,8 +6,9 @@ COPY go.sum go.sum
 RUN go mod download
 
 # Copy the go source
-COPY cmd/overseer-cli/main.go cmd/overseer-cli/main.go
+COPY api/ api/
 COPY pkg/ pkg/
+COPY cmd/overseer-cli/ cmd/overseer-cli/
 RUN go build -o overseer-cli ./cmd/overseer-cli/main.go
 
 FROM node:20-slim
