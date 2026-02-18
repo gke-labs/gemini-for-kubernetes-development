@@ -21,6 +21,7 @@ RUN apt-get update && \
     curl \
     jq \
     gh \
+    psutils \
     ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
