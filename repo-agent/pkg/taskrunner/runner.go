@@ -48,6 +48,28 @@ func NewTaskRunner(ao *agentoutput.AgentOutput) (*TaskRunner, error) {
 
 func (tr *TaskRunner) Run(ctx context.Context) {
 	klog.Infof("Starting TaskRunner for sandbox: %s/%s", tr.namespace, tr.sandboxName)
+
+	// Automatically inject Go cache environment variables for Go-based repositories
+	// while these are also set in the Pod spec, setting them here ensures they are present
+	// and the directories exist even if the Pod was created with an older spec.
+	if _, err := os.Stat("/workspaces/go.mod"); err == nil {
+		klog.Infof("Detected Go repository, ensuring Go cache directories and environment variables")
+		if os.Getenv("GOCACHE") == "" {
+			os.Setenv("GOCACHE", "/workspaces/.cache/go-build")
+		}
+		if os.Getenv("GOMODCACHE") == "" {
+			os.Setenv("GOMODCACHE", "/workspaces/.cache/mod")
+		}
+		if os.Getenv("TMPDIR") == "" {
+			os.Setenv("TMPDIR", "/workspaces/.tmp")
+		}
+
+		// Ensure directories exist
+		_ = os.MkdirAll("/workspaces/.cache/go-build", 0755)
+		_ = os.MkdirAll("/workspaces/.cache/mod", 0755)
+		_ = os.MkdirAll("/workspaces/.tmp", 0755)
+	}
+
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
