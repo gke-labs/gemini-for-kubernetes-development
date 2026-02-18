@@ -16,8 +16,13 @@ fi
 function setupGit {
     echo "Running setupGit..."
     
-    # Use GITHUB_TOKEN if GITHUB_USER_TOKEN is not set
-    GITHUB_USER_TOKEN="${GITHUB_USER_TOKEN:-$GITHUB_TOKEN}"
+    # Hierarchy: MANUAL_PAT > OAUTH_PAT > GITHUB_USER_TOKEN
+    GITHUB_USER_TOKEN="${MANUAL_PAT:-${OAUTH_PAT:-$GITHUB_USER_TOKEN}}"
+
+    # Also ensure GITHUB_TOKEN is set for tools that specifically look for it
+    if [ -n "$GITHUB_USER_TOKEN" ]; then
+        export GITHUB_TOKEN="$GITHUB_USER_TOKEN"
+    fi
 
     if [ -n "${GITHUB_USER_TOKEN}" ] && [ -n "${GITHUB_USER_ID}" ]; then
         echo "creating /root/.config/gh directory"
