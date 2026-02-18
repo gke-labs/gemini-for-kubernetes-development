@@ -1,8 +1,10 @@
 package sandbox
 
 import (
+	"encoding/json"
 	"strconv"
 
+	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -39,6 +41,8 @@ type AgentSandboxOptions struct {
 	// Resources
 	Resources   corev1.ResourceRequirements
 	DindSupport string
+
+	LLMExtensions []reviewv1alpha1.GeminiExtension
 }
 
 // NewAgentSandbox creates a new Sandbox (unstructured) and Service object.
@@ -164,6 +168,17 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 		map[string]interface{}{"name": "GOMODCACHE", "value": GoModCachePath},
 		map[string]interface{}{"name": "TMPDIR", "value": TmpDirPath},
 	}
+
+	if len(opt.LLMExtensions) > 0 {
+		exts, err := json.Marshal(opt.LLMExtensions)
+		if err == nil {
+			env = append(env, map[string]interface{}{
+				"name":  "AGENT_LLM_EXTENSIONS",
+				"value": string(exts),
+			})
+		}
+	}
+
 
 	image := opt.Image
 	var cmd []string

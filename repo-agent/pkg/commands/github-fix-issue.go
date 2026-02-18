@@ -2,11 +2,13 @@ package commands
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
+	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks"
@@ -27,6 +29,7 @@ type GithubFixIssueCommand struct {
 	WorkspaceDir    string
 	TaskDir         string
 	Model           string
+	ExtensionsJSON  string
 
 	// loaded objects
 	issue     *github.Issue
@@ -62,6 +65,7 @@ func BuildGithubFixIssueCommand() *cobra.Command {
 	cmd.Flags().StringVar(&fixCommand.GithubUserEmail, "github-user-email", os.Getenv("GITHUB_USER_EMAIL"), "Github user email")
 	cmd.Flags().StringVar(&fixCommand.GithubUserName, "github-user-name", os.Getenv("GITHUB_USER_NAME"), "Github user name")
 	cmd.Flags().StringVar(&fixCommand.Model, "model", os.Getenv("MODEL"), "Model to use")
+	cmd.Flags().StringVar(&fixCommand.ExtensionsJSON, "extensions", os.Getenv("AGENT_LLM_EXTENSIONS"), "Extensions JSON")
 	cmd.Flags().BoolVar(&fixCommand.InPod, "in-pod", false, "Whether running inside the pod")
 	return cmd
 }
@@ -160,6 +164,15 @@ func (c *GithubFixIssueCommand) Run(ctx context.Context) error {
 		IssueComments: c.issue.IssueComments,
 		PromptFile:    promptPath,
 		Models:        strings.Split(c.Model, ","),
+	}
+
+	if c.ExtensionsJSON != "" {
+		var extensions []reviewv1alpha1.GeminiExtension
+		if err := json.Unmarshal([]byte(c.ExtensionsJSON), &extensions); err != nil {
+			log.Error(err, "failed to unmarshal extensions JSON")
+		} else {
+			task.Extensions = extensions
+		}
 	}
 
 	apikey, err := GetGeminiAPIKey(c.sandboxID)

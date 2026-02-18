@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"encoding/json"
+	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
 	"github.com/bluekeyes/go-gitdiff/gitdiff"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/agentoutput"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
@@ -51,6 +53,7 @@ type ReviewCommand struct {
 	ExpectedComments  int
 	IgnoreFiles       []string
 	SeverityThreshold string
+	Extensions        []reviewv1alpha1.GeminiExtension
 
 	// output
 	TaskDir         string
@@ -152,6 +155,17 @@ func (c *ReviewCommand) InitDefaults() {
 	}
 	if c.SeverityThreshold == "" {
 		c.SeverityThreshold = os.Getenv("SEVERITY_THRESHOLD")
+	}
+	if len(c.Extensions) == 0 {
+		extensionsJSON := os.Getenv("AGENT_LLM_EXTENSIONS")
+		if extensionsJSON != "" {
+			var extensions []reviewv1alpha1.GeminiExtension
+			if err := json.Unmarshal([]byte(extensionsJSON), &extensions); err != nil {
+				klog.Infof("Warning: failed to unmarshal AGENT_LLM_EXTENSIONS: %v", err)
+			} else {
+				c.Extensions = extensions
+			}
+		}
 	}
 }
 
@@ -300,6 +314,7 @@ func (c *ReviewCommand) Run(ctx context.Context) error {
 		WorkspacesDir:        c.WorkspaceDir,
 		TokensDir:            c.TokensDir,
 		RepoDir:              repoDir,
+		Extensions:           c.Extensions,
 	})
 	if err != nil {
 		updateState("error", err.Error())

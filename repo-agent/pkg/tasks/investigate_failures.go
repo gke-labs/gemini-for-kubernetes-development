@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 
+	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 )
 
@@ -31,6 +32,7 @@ type InvestigateFailuresModel struct {
 	PromptFile        string
 	Models            []string
 	FailedRuns        []FailedRun
+	Extensions        []reviewv1alpha1.GeminiExtension
 }
 
 func (m *InvestigateFailuresModel) Name() string {

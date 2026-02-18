@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 
+	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 )
 
@@ -15,6 +16,7 @@ type IterateModel struct {
 	AgentPrompt string
 	PromptFile  string
 	Models      []string
+	Extensions  []reviewv1alpha1.GeminiExtension
 }
 
 func (m *IterateModel) Name() string {

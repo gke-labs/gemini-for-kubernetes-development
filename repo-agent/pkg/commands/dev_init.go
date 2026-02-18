@@ -2,11 +2,13 @@ package commands
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
+	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks"
@@ -30,6 +32,7 @@ type DevInitCommand struct {
 	WorkspaceDir    string
 	TaskDir         string
 	Model           string
+	ExtensionsJSON  string
 
 	// loaded objects
 	repo      *github.Repository
@@ -63,6 +66,7 @@ func BuildDevInitCommand() *cobra.Command {
 	cmd.Flags().StringVar(&initCommand.GithubUserEmail, "github-user-email", os.Getenv("GITHUB_USER_EMAIL"), "Github user email")
 	cmd.Flags().StringVar(&initCommand.GithubUserName, "github-user-name", os.Getenv("GITHUB_USER_NAME"), "Github user name")
 	cmd.Flags().StringVar(&initCommand.Model, "model", os.Getenv("MODEL"), "Model to use")
+	cmd.Flags().StringVar(&initCommand.ExtensionsJSON, "extensions", os.Getenv("AGENT_LLM_EXTENSIONS"), "Extensions JSON")
 	cmd.Flags().BoolVar(&initCommand.InPod, "in-pod", false, "Whether running inside the pod")
 	return cmd
 }

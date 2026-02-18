@@ -58,6 +58,24 @@ type LLMConfig struct {
 	// additional configuration for the LLM agent, such as tool schemas and
 	// model configurations.
 	ConfigdirRef string `json:"configdirRef,omitempty"`
+
+	// Extensions is a list of gemini-cli extensions to install in the sandbox
+	// before running the agent. Only applicable when provider is "gemini-cli".
+	// Each entry specifies a source (GitHub URL or extension name) and optional
+	// installation parameters.
+	// +kubebuilder:validation:Optional
+	Extensions []GeminiExtension `json:"extensions,omitempty"`
+}
+
+type GeminiExtension struct {
+	// Source is the GitHub URL or local path of the extension.
+	// e.g., "https://github.com/gemini-cli-extensions/workspace"
+	// +kubebuilder:validation:Required
+	Source string `json:"source"`
+
+	// Ref is the git ref (branch, tag, or commit) to install.
+	// +kubebuilder:validation:Optional
+	Ref string `json:"ref,omitempty"`
 }
 
 type PRReviewSpec struct {
