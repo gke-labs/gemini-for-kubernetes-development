@@ -161,21 +161,24 @@ function Settings({ onBack }) {
                 </div>
 
                 <div className="form-group">
-                    <label htmlFor="geminiKey">Gemini API Key:</label>
-                    <div className="input-status-wrapper">
-                        <input
-                            type="password"
+                    <label htmlFor="geminiKey">Gemini API Key(s):</label>
+                    <div className="input-status-wrapper" style={{ display: 'flex', flexDirection: 'column' }}>
+                        <textarea
                             id="geminiKey"
                             value={geminiKey}
                             onChange={(e) => setGeminiKey(e.target.value)}
-                            placeholder={status.gemini_api_key_set ? "(Currently set - leave blank to keep)" : "Enter new API Key"}
+                            placeholder={status.gemini_api_key_set ? "(Currently set - leave blank to keep)" : "Enter one or more API Keys (one per line)"}
+                            rows={3}
+                            className="form-control"
+                            style={{ width: '100%', marginBottom: '10px', padding: '10px', borderRadius: '4px', border: '1px solid #ccc' }}
                         />
-                         <span className={`status-badge ${status.gemini_api_key_set ? 'set' : 'missing'}`}>
+                         <span className={`status-badge ${status.gemini_api_key_set ? 'set' : 'missing'}`} style={{ alignSelf: 'flex-start' }}>
                             {status.gemini_api_key_set ? '✅ Configured' : '⚠️ Not Set'}
                         </span>
                     </div>
                     <p style={{ fontSize: '0.9rem', marginTop: '5px' }}>
                         Required for AI-powered reviews and triage. 
+                        You can enter multiple keys (one per line) to pool quota across multiple GCP projects.
                         Check your <a href="https://ai.dev/rate-limit" target="_blank" rel="noopener noreferrer">token usage</a>.
                     </p>
                 </div>

@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tokens"
 	"k8s.io/klog/v2"
 )
 
@@ -87,11 +88,9 @@ func (g *Gemini) Setup() error {
 	}
 
 	geminiTokenFile := filepath.Join(g.TokensDir, "gemini")
-	geminiKey, err := os.ReadFile(geminiTokenFile)
-	if err != nil {
-		return fmt.Errorf("failed to read %s: %v", geminiTokenFile, err)
+	if _, err := os.Stat(geminiTokenFile); err != nil {
+		return fmt.Errorf("failed to find gemini token file %s: %v", geminiTokenFile, err)
 	}
-	os.Setenv("GEMINI_API_KEY", string(geminiKey))
 	return nil
 }
 
@@ -166,6 +165,14 @@ func (g *Gemini) ExpandPrompt(prompt string) (string, error) {
 
 func (g *Gemini) Run(agentPrompt string) ([]byte, error) {
 	klog.Info("running gemini")
+
+	// Pick a key for this run
+	key, err := tokens.GetGeminiAPIKey("")
+	if err == nil {
+		os.Setenv("GEMINI_API_KEY", key)
+	} else {
+		klog.Infof("Warning: failed to get Gemini API key for rotation: %v", err)
+	}
 
 	stdout, stderr, err := g.Executor.Run("gemini", "-y", "-p", agentPrompt)
 	if err != nil {

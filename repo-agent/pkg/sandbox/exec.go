@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tokens"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -113,6 +114,9 @@ func (e *LocalExecutor) Exec(opts ExecOptions) error {
 	env := os.Environ()
 	if len(opts.Env) > 0 {
 		for k, v := range opts.Env {
+			if k == "GEMINI_API_KEY" {
+				v = tokens.PickKey(v, e.Name)
+			}
 			env = append(env, fmt.Sprintf("%s=%s", k, v))
 		}
 	}
@@ -135,7 +139,12 @@ func (e *LocalExecutor) Exec(opts ExecOptions) error {
 	// Filter secrets from logging?
 	redactedCommand := strings.Join(opts.Command, " ")
 	for _, v := range opts.Secrets {
-		redactedCommand = strings.ReplaceAll(redactedCommand, v, "****")
+		for _, line := range strings.Split(v, "\n") {
+			line = strings.TrimSpace(line)
+			if line != "" {
+				redactedCommand = strings.ReplaceAll(redactedCommand, line, "****")
+			}
+		}
 	}
 
 	log.Info("Executing local command", "command", redactedCommand, "dir", cmd.Dir)
@@ -182,13 +191,21 @@ func ExecInPod(ctx context.Context, kube *clients.KubernetesClient, podID types.
 
 	redactedCommand := strings.Join(opts.Command, " ")
 	for _, v := range opts.Secrets {
-		redactedCommand = strings.ReplaceAll(redactedCommand, v, "****")
+		for _, line := range strings.Split(v, "\n") {
+			line = strings.TrimSpace(line)
+			if line != "" {
+				redactedCommand = strings.ReplaceAll(redactedCommand, line, "****")
+			}
+		}
 	}
 
 	command := opts.Command
 	if len(opts.Env) > 0 {
 		envCommands := []string{}
 		for k, v := range opts.Env {
+			if k == "GEMINI_API_KEY" {
+				v = tokens.PickKey(v, podID.Name)
+			}
 			envCommands = append(envCommands, fmt.Sprintf("export %s=%q", k, v))
 		}
 		// Prepend the env commands to the original command

@@ -62,12 +62,6 @@ func TestGemini_Setup(t *testing.T) {
 		if err := g.Setup(); err != nil {
 			t.Fatalf("Gemini.Setup() failed: %v", err)
 		}
-
-		// Check if the environment variable is set
-		apiKey := os.Getenv("GEMINI_API_KEY")
-		if apiKey != "test-api-key" {
-			t.Errorf("Expected GEMINI_API_KEY to be 'test-api-key', but got '%s'", apiKey)
-		}
 	})
 
 	t.Run("read token error", func(t *testing.T) {
@@ -114,6 +108,9 @@ func (e *MockCommandExecutor) Run(command string, args ...string) ([]byte, []byt
 }
 
 func TestGemini_Run(t *testing.T) {
+	os.Setenv("GEMINI_API_KEY", "test-key")
+	defer os.Unsetenv("GEMINI_API_KEY")
+
 	t.Run("success", func(t *testing.T) {
 		// Create a mock executor
 		mockExecutor := &MockCommandExecutor{
