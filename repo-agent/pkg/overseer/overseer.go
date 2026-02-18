@@ -82,6 +82,26 @@ func newOverseerSandbox(repoWatch *reviewv1alpha1.RepoWatch, name string, user *
 			},
 		},
 		map[string]interface{}{
+			"name": "MANUAL_PAT",
+			"valueFrom": map[string]interface{}{
+				"secretKeyRef": map[string]interface{}{
+					"name":     githubSecretName,
+					"key":      "manual_pat",
+					"optional": true,
+				},
+			},
+		},
+		map[string]interface{}{
+			"name": "OAUTH_PAT",
+			"valueFrom": map[string]interface{}{
+				"secretKeyRef": map[string]interface{}{
+					"name":     githubSecretName,
+					"key":      "oauth_pat",
+					"optional": true,
+				},
+			},
+		},
+		map[string]interface{}{
 			"name": "GITHUB_USER_TOKEN",
 			"valueFrom": map[string]interface{}{
 				"secretKeyRef": map[string]interface{}{
