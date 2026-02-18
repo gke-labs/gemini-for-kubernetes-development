@@ -49,11 +49,14 @@ func (c *ReviewDaemonCommand) Run(ctx context.Context) error {
 	// Ensure cache and tmp directories exist on /workspaces
 	// This is important for Go builds to avoid ephemeral storage exhaustion.
 	dirs := []string{
-		"/workspaces/.cache/go-build",
-		"/workspaces/.cache/mod",
-		"/workspaces/.tmp",
+		os.Getenv("GOCACHE"),
+		os.Getenv("GOMODCACHE"),
+		os.Getenv("TMPDIR"),
 	}
 	for _, dir := range dirs {
+		if dir == "" {
+			continue
+		}
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			log.Error(err, "failed to create directory", "path", dir)
 		}
