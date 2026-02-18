@@ -163,6 +163,15 @@ func (c *DevInitCommand) Run(ctx context.Context) error {
 		Models:       strings.Split(c.Model, ","),
 	}
 
+	if c.ExtensionsJSON != "" {
+		var extensions []reviewv1alpha1.GeminiExtension
+		if err := json.Unmarshal([]byte(c.ExtensionsJSON), &extensions); err != nil {
+			log.Error(err, "failed to unmarshal extensions JSON")
+		} else {
+			task.Extensions = extensions
+		}
+	}
+
 	apikey, err := GetGeminiAPIKey(c.sandboxID)
 	if err != nil {
 		log.Info("Gemini API Key not found, agent execution will likely fail if prompt is provided", "err", err)

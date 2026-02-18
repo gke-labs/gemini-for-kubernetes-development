@@ -179,7 +179,6 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 		}
 	}
 
-
 	image := opt.Image
 	var cmd []string
 	if image == "" {
