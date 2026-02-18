@@ -10,20 +10,31 @@ import (
 
 var _ Task = &InvestigateFailuresModel{}
 
+// FailedRun holds information about a failed workflow run.
 type FailedRun struct {
-	ID         int64
-	Name       string
-	URL        string
-	HeadSHA    string
+	// ID is the unique identifier of the workflow run.
+	ID int64
+	// Name is the name of the workflow.
+	Name string
+	// URL is the web URL for the workflow run.
+	URL string
+	// HeadSHA is the SHA of the commit the workflow ran on.
+	HeadSHA string
+	// FailedJobs is a list of jobs that failed within this run.
 	FailedJobs []FailedJob
 }
 
+// FailedJob holds information about a failed job within a workflow run.
 type FailedJob struct {
-	ID      int64
-	Name    string
-	LogPath string // Path to the downloaded log file in the sandbox
+	// ID is the unique identifier of the job.
+	ID int64
+	// Name is the name of the job.
+	Name string
+	// LogPath is the path to the downloaded log file in the sandbox.
+	LogPath string
 }
 
+// InvestigateFailuresModel is the data model for the investigate-failures task.
 type InvestigateFailuresModel struct {
 	Repo              *github.Repository
 	PullRequest       *github.PullRequest
@@ -32,6 +43,7 @@ type InvestigateFailuresModel struct {
 	PromptFile        string
 	Models            []string
 	FailedRuns        []FailedRun
+	// Extensions is a list of gemini-cli extensions to install.
 	Extensions        []reviewv1alpha1.GeminiExtension
 }
 

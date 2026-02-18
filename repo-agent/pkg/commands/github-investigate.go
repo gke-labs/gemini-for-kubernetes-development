@@ -30,6 +30,7 @@ type GithubInvestigateCommand struct {
 	WorkspaceDir    string
 	TaskDir         string
 	Model           string
+	// ExtensionsJSON is a JSON string containing gemini-cli extensions to install.
 	ExtensionsJSON  string
 
 	// loaded objects

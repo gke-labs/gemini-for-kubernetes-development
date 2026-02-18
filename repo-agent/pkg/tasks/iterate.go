@@ -16,6 +16,7 @@ type IterateModel struct {
 	AgentPrompt string
 	PromptFile  string
 	Models      []string
+	// Extensions is a list of gemini-cli extensions to install.
 	Extensions  []reviewv1alpha1.GeminiExtension
 }
 

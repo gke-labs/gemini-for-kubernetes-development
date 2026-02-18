@@ -42,6 +42,7 @@ type AgentSandboxOptions struct {
 	Resources   corev1.ResourceRequirements
 	DindSupport string
 
+	// LLMExtensions is a list of gemini-cli extensions to install.
 	LLMExtensions []reviewv1alpha1.GeminiExtension
 }
 

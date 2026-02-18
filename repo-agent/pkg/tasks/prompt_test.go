@@ -31,6 +31,7 @@ type MockUser struct {
 	Name   string
 }
 
+// MockExtension is a mock for GeminiExtension.
 type MockExtension struct {
 	Source string
 	Ref    string
@@ -43,6 +44,7 @@ type MockModel struct {
 	Models        []string
 	User          MockUser
 	PromptFile    string
+	// Extensions is a list of mock extensions.
 	Extensions    []MockExtension
 }
 

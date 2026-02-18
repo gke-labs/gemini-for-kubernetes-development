@@ -26,6 +26,7 @@ type GithubTriageIssueCommand struct {
 	TaskDir         string
 	Model           string
 	GithubUserToken string
+	// ExtensionsJSON is a JSON string containing gemini-cli extensions to install.
 	ExtensionsJSON  string
 
 	// loaded objects

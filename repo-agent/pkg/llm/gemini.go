@@ -32,6 +32,7 @@ import (
 var _ Provider = &Gemini{}
 
 type Gemini struct {
+	// Executor is the command executor used to run the gemini-cli.
 	Executor   CommandExecutor
 	processors []PostProcessor
 	ProviderConfig

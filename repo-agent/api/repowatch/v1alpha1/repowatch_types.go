@@ -67,6 +67,8 @@ type LLMConfig struct {
 	Extensions []GeminiExtension `json:"extensions,omitempty"`
 }
 
+// GeminiExtension defines the configuration for a gemini-cli extension to be
+// installed in the sandbox.
 type GeminiExtension struct {
 	// Source is the GitHub URL or local path of the extension.
 	// e.g., "https://github.com/gemini-cli-extensions/workspace"

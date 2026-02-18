@@ -17,6 +17,7 @@ type TriageIssueModel struct {
 	PromptFile    string
 	Models        []string
 	AgentName     string
+	// Extensions is a list of gemini-cli extensions to install.
 	Extensions    []reviewv1alpha1.GeminiExtension
 }
 

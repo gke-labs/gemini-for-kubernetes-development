@@ -18,12 +18,14 @@ import (
 	"os/exec"
 )
 
+// CommandExecutor defines the interface for running shell commands.
 type CommandExecutor interface {
+	// Run executes a command with the given arguments and returns stdout, stderr, and error.
 	Run(command string, args ...string) ([]byte, []byte, error)
 }
 
-// RealCommandExecutor is a real implementation of CommandExecutor that runs commands.
-
+// RealCommandExecutor is a real implementation of CommandExecutor that runs commands
+// using os/exec.
 type RealCommandExecutor struct{}
 
 func (e *RealCommandExecutor) Run(command string, args ...string) ([]byte, []byte, error) {
