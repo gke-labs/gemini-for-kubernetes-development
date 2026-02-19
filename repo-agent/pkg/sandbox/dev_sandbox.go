@@ -51,6 +51,10 @@ type DevSandboxOptions struct {
 
 	DindSupport string
 
+	// Resources
+	Resources     corev1.ResourceRequirements
+	WorkspaceSize string
+
 	// Idea Exploration
 	IdeaID         string
 	Approach       string

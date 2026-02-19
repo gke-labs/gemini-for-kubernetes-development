@@ -185,13 +185,44 @@ func TestNewAgentSandbox(t *testing.T) {
 					resources := vSpec["resources"].(map[string]interface{})
 					requests := resources["requests"].(map[string]interface{})
 					storage := requests["storage"].(string)
-					if storage != "20Gi" {
-						t.Errorf("expected storage 20Gi, got %s", storage)
+					if storage != "10Gi" {
+						t.Errorf("expected storage 10Gi, got %s", storage)
 					}
 					break
 				}
 			}
 			if !foundWorkspacesPVC {
+				t.Errorf("workspaces-pvc not found in volumeClaimTemplates")
+			}
+
+			// Test parameterized storage
+			optWithStorage := AgentSandboxOptions{
+				DevSandboxOptions: DevSandboxOptions{
+					Name:          "test-storage",
+					Namespace:     "default",
+					WorkspaceSize: "30Gi",
+				},
+			}
+			sandboxWithStorage, _ := NewAgentSandbox(optWithStorage)
+			specWithStorage := sandboxWithStorage.Object["spec"].(map[string]interface{})
+			vctWithStorage := specWithStorage["volumeClaimTemplates"].([]interface{})
+			foundWorkspacesPVCWithStorage := false
+			for _, v := range vctWithStorage {
+				template := v.(map[string]interface{})
+				metadata := template["metadata"].(map[string]interface{})
+				if metadata["name"] == "workspaces-pvc" {
+					foundWorkspacesPVCWithStorage = true
+					vSpec := template["spec"].(map[string]interface{})
+					resources := vSpec["resources"].(map[string]interface{})
+					requests := resources["requests"].(map[string]interface{})
+					storage := requests["storage"].(string)
+					if storage != "30Gi" {
+						t.Errorf("expected storage 30Gi, got %s", storage)
+					}
+					break
+				}
+			}
+			if !foundWorkspacesPVCWithStorage {
 				t.Errorf("workspaces-pvc not found in volumeClaimTemplates")
 			}
 		})

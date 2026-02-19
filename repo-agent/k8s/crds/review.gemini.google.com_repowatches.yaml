@@ -90,6 +90,16 @@ spec:
                     type: integer
                   maxSandboxes:
                     type: integer
+                  resources:
+                    properties:
+                      cpuRequest:
+                        type: string
+                      memoryRequest:
+                        type: string
+                      workspaceSize:
+                        default: 10Gi
+                        type: string
+                    type: object
                 required:
                 - maxActiveSandboxes
                 - maxSandboxes
@@ -167,6 +177,16 @@ spec:
                     items:
                       type: string
                     type: array
+                  resources:
+                    properties:
+                      cpuRequest:
+                        type: string
+                      memoryRequest:
+                        type: string
+                      workspaceSize:
+                        default: 10Gi
+                        type: string
+                    type: object
                   robotAccount:
                     type: string
                 required:
@@ -240,6 +260,16 @@ spec:
                     items:
                       type: integer
                     type: array
+                  resources:
+                    properties:
+                      cpuRequest:
+                        type: string
+                      memoryRequest:
+                        type: string
+                      workspaceSize:
+                        default: 10Gi
+                        type: string
+                    type: object
                   reviewShutdownAfterMinutes:
                     type: integer
                   robotAccount:

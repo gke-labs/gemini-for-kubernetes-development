@@ -36,8 +36,6 @@ type AgentSandboxOptions struct {
 	BotName  string
 	BotEmail string
 
-	// Resources
-	Resources   corev1.ResourceRequirements
 	DindSupport string
 }
 
@@ -205,6 +203,11 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 	}
 
 	// Construct unstructured Sandbox
+	workspaceSize := opt.WorkspaceSize
+	if workspaceSize == "" {
+		workspaceSize = "10Gi"
+	}
+
 	sandbox := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "agents.x-k8s.io/v1alpha1",
@@ -348,7 +351,7 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 							"accessModes": []interface{}{"ReadWriteOnce"},
 							"resources": map[string]interface{}{
 								"requests": map[string]interface{}{
-									"storage": "20Gi",
+									"storage": workspaceSize,
 								},
 							},
 						},

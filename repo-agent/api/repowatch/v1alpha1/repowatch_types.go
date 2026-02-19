@@ -118,6 +118,26 @@ type PRReviewSpec struct {
 	// RobotAccount to use for this handler.
 	// +kubebuilder:validation:Optional
 	RobotAccount string `json:"robotAccount,omitempty"`
+
+	// Resources defines the resource requirements for the sandbox.
+	// +kubebuilder:validation:Optional
+	Resources *SandboxResources `json:"resources,omitempty"`
+}
+
+// SandboxResources defines the resource requirements for the sandbox.
+type SandboxResources struct {
+	// WorkspaceSize defines the size of the /workspaces volume.
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default="10Gi"
+	WorkspaceSize string `json:"workspaceSize,omitempty"`
+
+	// CPURequest defines the CPU request for the sandbox.
+	// +kubebuilder:validation:Optional
+	CPURequest string `json:"cpuRequest,omitempty"`
+
+	// MemoryRequest defines the memory request for the sandbox.
+	// +kubebuilder:validation:Optional
+	MemoryRequest string `json:"memoryRequest,omitempty"`
 }
 
 // IdeaSpec defines the configuration for an idea/exploration.
@@ -175,6 +195,10 @@ type DevSpec struct {
 	// +kubebuilder:default=none
 	// +kubebuilder:validation:Optional
 	DindSupport string `json:"dindSupport,omitempty"`
+
+	// Resources defines the resource requirements for the sandbox.
+	// +kubebuilder:validation:Optional
+	Resources *SandboxResources `json:"resources,omitempty"`
 }
 
 type IssueHandlerSpec struct {
@@ -254,6 +278,10 @@ type IssueSpec struct {
 	// Handlers configuration for Bugs
 	// +kubebuilder:validation:Optional
 	Handlers []IssueHandlerSpec `json:"handlers,omitempty"`
+
+	// Resources defines the resource requirements for the sandbox.
+	// +kubebuilder:validation:Optional
+	Resources *SandboxResources `json:"resources,omitempty"`
 }
 
 // OverseerSpec defines the configuration for the Overseer agent.

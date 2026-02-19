@@ -1038,6 +1038,30 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 		ephemeralStorage = resource.MustParse("40Gi")
 	}
 
+	resources := corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("2000m"),
+			corev1.ResourceMemory: resource.MustParse("2Gi"),
+			"ephemeral-storage":   ephemeralStorage,
+		},
+		Limits: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("4000m"),
+			corev1.ResourceMemory: resource.MustParse("6Gi"),
+			"ephemeral-storage":   ephemeralStorage,
+		},
+	}
+
+	workspaceSize := ""
+	if repoWatch.Spec.Issue.Resources != nil {
+		if repoWatch.Spec.Issue.Resources.CPURequest != "" {
+			resources.Requests[corev1.ResourceCPU] = resource.MustParse(repoWatch.Spec.Issue.Resources.CPURequest)
+		}
+		if repoWatch.Spec.Issue.Resources.MemoryRequest != "" {
+			resources.Requests[corev1.ResourceMemory] = resource.MustParse(repoWatch.Spec.Issue.Resources.MemoryRequest)
+		}
+		workspaceSize = repoWatch.Spec.Issue.Resources.WorkspaceSize
+	}
+
 	opt := sandbox.AgentSandboxOptions{
 		DevSandboxOptions: sandbox.DevSandboxOptions{
 			Name:      name,
@@ -1069,6 +1093,8 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 			HTTPEnabled:           true,
 			Replicas:              1,
 			ServiceAccountName:    "issue-sandbox",
+			Resources:             resources,
+			WorkspaceSize:         workspaceSize,
 		},
 		DindSupport: repoWatch.Spec.Issue.DindSupport,
 		IssueID:     fmt.Sprintf("%d", *issue.Number),
@@ -1078,18 +1104,6 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 		BotLogin: botLogin,
 		BotName:  botName,
 		BotEmail: botEmail,
-		Resources: corev1.ResourceRequirements{
-			Requests: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("2000m"),
-				corev1.ResourceMemory: resource.MustParse("2Gi"),
-				"ephemeral-storage":   ephemeralStorage,
-			},
-			Limits: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("4000m"),
-				corev1.ResourceMemory: resource.MustParse("6Gi"),
-				"ephemeral-storage":   ephemeralStorage,
-			},
-		},
 	}
 
 	sb, svc := sandbox.NewAgentSandbox(opt)
@@ -1185,6 +1199,21 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 
 	log.Info("Generated Sandbox for PR", "pr", *pr, "llm.provider", repoWatch.Spec.Review.LLM.Provider)
 
+	workspaceSize := "10Gi"
+	if repoWatch.Spec.Review.Resources != nil && repoWatch.Spec.Review.Resources.WorkspaceSize != "" {
+		workspaceSize = repoWatch.Spec.Review.Resources.WorkspaceSize
+	}
+
+	cpuRequest := "2000m"
+	if repoWatch.Spec.Review.Resources != nil && repoWatch.Spec.Review.Resources.CPURequest != "" {
+		cpuRequest = repoWatch.Spec.Review.Resources.CPURequest
+	}
+
+	memoryRequest := "2Gi"
+	if repoWatch.Spec.Review.Resources != nil && repoWatch.Spec.Review.Resources.MemoryRequest != "" {
+		memoryRequest = repoWatch.Spec.Review.Resources.MemoryRequest
+	}
+
 	sandbox := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "agents.x-k8s.io/v1alpha1",
@@ -1258,9 +1287,13 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 								}(),
 								"resources": map[string]interface{}{
 									"limits": map[string]interface{}{
+										"cpu":               "4000m",
+										"memory":            "6Gi",
 										"ephemeral-storage": "6Gi",
 									},
 									"requests": map[string]interface{}{
+										"cpu":               cpuRequest,
+										"memory":            memoryRequest,
 										"ephemeral-storage": "6Gi",
 									},
 								},
@@ -1356,7 +1389,7 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 							"accessModes": []interface{}{"ReadWriteOnce"},
 							"resources": map[string]interface{}{
 								"requests": map[string]interface{}{
-									"storage": "20Gi",
+									"storage": workspaceSize,
 								},
 							},
 						},
@@ -1753,6 +1786,22 @@ func (r *Reconciler) createDevSandbox(ctx context.Context, user *github.User, re
 		Replicas:           1,
 		ServiceAccountName: "issue-sandbox",
 		DindSupport:        repoWatch.Spec.Dev.DindSupport,
+	}
+
+	if repoWatch.Spec.Dev.Resources != nil {
+		if repoWatch.Spec.Dev.Resources.CPURequest != "" {
+			if opts.Resources.Requests == nil {
+				opts.Resources.Requests = make(corev1.ResourceList)
+			}
+			opts.Resources.Requests[corev1.ResourceCPU] = resource.MustParse(repoWatch.Spec.Dev.Resources.CPURequest)
+		}
+		if repoWatch.Spec.Dev.Resources.MemoryRequest != "" {
+			if opts.Resources.Requests == nil {
+				opts.Resources.Requests = make(corev1.ResourceList)
+			}
+			opts.Resources.Requests[corev1.ResourceMemory] = resource.MustParse(repoWatch.Spec.Dev.Resources.MemoryRequest)
+		}
+		opts.WorkspaceSize = repoWatch.Spec.Dev.Resources.WorkspaceSize
 	}
 
 	sb, svc := sandbox.NewDevSandbox(opts)
