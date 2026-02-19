@@ -7,4 +7,7 @@ use (
 	./repo-agent
 )
 
+// We need this replace because repo-agent requires agentsandboxes using a pseudo-version
+// that does not exist on the network. go.work 'use' should handle this, but the go tool
+// sometimes fails to resolve the version before applying the workspace override.
 replace github.com/gke-labs/gemini-for-kubernetes-development/agentsandboxes v0.0.0-00010101000000-000000000000 => ./agentsandboxes
