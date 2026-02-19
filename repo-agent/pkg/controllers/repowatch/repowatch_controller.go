@@ -1356,7 +1356,7 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 							"accessModes": []interface{}{"ReadWriteOnce"},
 							"resources": map[string]interface{}{
 								"requests": map[string]interface{}{
-									"storage": "10Gi",
+									"storage": "20Gi",
 								},
 							},
 						},

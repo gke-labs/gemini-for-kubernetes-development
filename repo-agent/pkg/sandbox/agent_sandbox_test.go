@@ -169,6 +169,31 @@ func TestNewAgentSandbox(t *testing.T) {
 					t.Errorf("%s env var not found", name)
 				}
 			}
+
+			// Check volumeClaimTemplates
+			vct := spec["volumeClaimTemplates"].([]interface{})
+			if len(vct) == 0 {
+				t.Errorf("expected volumeClaimTemplates to be non-empty")
+			}
+			foundWorkspacesPVC := false
+			for _, v := range vct {
+				template := v.(map[string]interface{})
+				metadata := template["metadata"].(map[string]interface{})
+				if metadata["name"] == "workspaces-pvc" {
+					foundWorkspacesPVC = true
+					vSpec := template["spec"].(map[string]interface{})
+					resources := vSpec["resources"].(map[string]interface{})
+					requests := resources["requests"].(map[string]interface{})
+					storage := requests["storage"].(string)
+					if storage != "20Gi" {
+						t.Errorf("expected storage 20Gi, got %s", storage)
+					}
+					break
+				}
+			}
+			if !foundWorkspacesPVC {
+				t.Errorf("workspaces-pvc not found in volumeClaimTemplates")
+			}
 		})
 	}
 }
