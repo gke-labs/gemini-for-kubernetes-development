@@ -4,6 +4,8 @@ WORKDIR /app
 # Copy the Go Modules manifests
 COPY go.work go.work
 COPY go.work.sum go.work.sum
+COPY go.mod go.mod
+COPY go.sum go.sum
 COPY repo-agent/go.mod repo-agent/go.mod
 COPY repo-agent/go.sum repo-agent/go.sum
 COPY agentsandboxes/go.mod agentsandboxes/go.mod

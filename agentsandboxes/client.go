@@ -251,35 +251,6 @@ func (c *Client) Get(ctx context.Context, name string) (*Sandbox, error) {
 	}, nil
 }
 
-// PodIDForSandbox finds the pod ID for the given sandbox name.
-func (c *Client) PodIDForSandbox(ctx context.Context, name string) (types.NamespacedName, error) {
-	labelSelector := fmt.Sprintf("sandbox=devc-%s", name)
-	pods, err := c.kube.CoreV1().Pods(c.ns).List(ctx, metav1.ListOptions{
-		LabelSelector: labelSelector,
-	})
-	if err != nil {
-		return types.NamespacedName{}, fmt.Errorf("listing pods for sandbox %q: %w", name, err)
-	}
-
-	if len(pods.Items) == 0 {
-		return types.NamespacedName{}, fmt.Errorf("no pod found for sandbox %q", name)
-	}
-
-	// Pick the first running pod
-	var pod *corev1.Pod
-	for i := range pods.Items {
-		if pods.Items[i].Status.Phase == corev1.PodRunning {
-			pod = &pods.Items[i]
-			break
-		}
-	}
-	if pod == nil {
-		pod = &pods.Items[0]
-	}
-
-	return types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, nil
-}
-
 // ExecOptions holds options for executing a command in a sandbox.
 type ExecOptions struct {
 	Command []string

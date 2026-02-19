@@ -73,5 +73,4 @@ def get_repo_root():
 
 def go_tool_args(*args):
     """ Constructs command line arguments to run a go tool """
-    repo_root = get_repo_root()
-    return ["go", "tool", f"-modfile={repo_root}/dev/tools/go.mod", *args]
+    return ["go", "tool", *args]
