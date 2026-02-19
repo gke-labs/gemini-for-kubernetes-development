@@ -14,19 +14,22 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package main
+package commands
 
 import (
-	"fmt"
-	"os"
-
-	"github.com/gke-labs/gemini-for-kubernetes-development/agentsandboxes/pkg/commands"
+	"github.com/spf13/cobra"
 )
 
-func main() {
-	rootCmd := commands.BuildRootCommand()
-	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+// BuildRootCommand builds the root cobra command for agentsandboxes.
+func BuildRootCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "agentsandboxes",
+		Short: "CLI for managing agent sandboxes",
 	}
+
+	cmd.AddCommand(BuildListCommand())
+	cmd.AddCommand(BuildCreateCommand())
+	cmd.AddCommand(BuildDeleteCommand())
+
+	return cmd
 }
