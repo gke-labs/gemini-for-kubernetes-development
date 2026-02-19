@@ -30,6 +30,7 @@ func BuildRootCommand() *cobra.Command {
 	cmd.AddCommand(BuildListCommand())
 	cmd.AddCommand(BuildCreateCommand())
 	cmd.AddCommand(BuildDeleteCommand())
+	cmd.AddCommand(BuildThreadsCommand())
 
 	return cmd
 }

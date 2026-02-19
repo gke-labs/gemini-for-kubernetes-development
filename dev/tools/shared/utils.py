@@ -42,27 +42,24 @@ def get_full_image_name(args, image_id):
 
 
 def run_go_command(*args, **kwargs):
-  """ Runs a Go command with GOWORK=off """
+  """ Runs a Go command """
   env = os.environ.copy()
-  env["GOWORK"] = "off"
   if "env" in kwargs:
     env.update(kwargs["env"])
   kwargs["env"] = env
   return subprocess.run(*args, **kwargs)
 
 def check_output_go_command(*args, **kwargs):
-  """ Runs a Go command with GOWORK=off """
+  """ Runs a Go command """
   env = os.environ.copy()
-  env["GOWORK"] = "off"
   if "env" in kwargs:
     env.update(kwargs["env"])
   kwargs["env"] = env
   return subprocess.check_output(*args, **kwargs)
 
 def check_go_command(*args, **kwargs):
-  """ Runs a Go command with GOWORK=off """
+  """ Runs a Go command """
   env = os.environ.copy()
-  env["GOWORK"] = "off"
   if "env" in kwargs:
     env.update(kwargs["env"])
   kwargs["env"] = env
@@ -76,5 +73,4 @@ def get_repo_root():
 
 def go_tool_args(*args):
     """ Constructs command line arguments to run a go tool """
-    repo_root = get_repo_root()
-    return ["go", "tool", f"-modfile={repo_root}/dev/tools/go.mod", *args]
+    return ["go", "tool", *args]

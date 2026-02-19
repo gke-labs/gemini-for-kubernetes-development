@@ -1,9 +1,9 @@
 # Build stage
 FROM node:18-alpine AS builder
 WORKDIR /app
-COPY review-ui/ui/package.json ./
+COPY repo-agent/review-ui/ui/package.json ./
 RUN npm install
-COPY review-ui/ui/ .
+COPY repo-agent/review-ui/ui/ .
 ARG VERSION=unknown
 RUN REACT_APP_GIT_SHA=$VERSION npm run build
 

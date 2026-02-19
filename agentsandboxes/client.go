@@ -18,16 +18,22 @@ package agentsandboxes
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"net/http"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/agentsandboxes/pkg/threads"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/tools/remotecommand"
 	sandboxapi "sigs.k8s.io/agent-sandbox/api/v1alpha1"
 )
 
@@ -37,6 +43,7 @@ var (
 
 // Client is a client for managing agent sandboxes.
 type Client struct {
+	config  *rest.Config
 	kube    kubernetes.Interface
 	dynamic dynamic.Interface
 	ns      string
@@ -83,10 +90,16 @@ func NewClientFromConfigAndClient(config *rest.Config, httpClient *http.Client, 
 	}
 
 	return &Client{
+		config:  config,
 		kube:    kube,
 		dynamic: dyn,
 		ns:      namespace,
 	}, nil
+}
+
+// Namespace returns the namespace the client is configured with.
+func (c *Client) Namespace() string {
+	return c.ns
 }
 
 // List returns a list of sandboxes in the client's namespace.
@@ -236,4 +249,68 @@ func (c *Client) Get(ctx context.Context, name string) (*Sandbox, error) {
 		Namespace: res.Namespace,
 		Status:    res.Status,
 	}, nil
+}
+
+// ExecOptions holds options for executing a command in a sandbox.
+type ExecOptions struct {
+	Command []string
+	Stdout  io.Writer
+	Stderr  io.Writer
+	Stdin   io.Reader
+}
+
+// Exec executes a command in the specified sandbox.
+func (c *Client) Exec(ctx context.Context, podID types.NamespacedName, opts ExecOptions) error {
+	req := c.kube.CoreV1().RESTClient().Post().
+		Resource("pods").
+		Name(podID.Name).
+		Namespace(podID.Namespace).
+		SubResource("exec").
+		VersionedParams(&corev1.PodExecOptions{
+			Command: opts.Command,
+			Stdin:   opts.Stdin != nil,
+			Stdout:  opts.Stdout != nil,
+			Stderr:  opts.Stderr != nil,
+			TTY:     false,
+		}, scheme.ParameterCodec)
+
+	exec, err := remotecommand.NewSPDYExecutor(c.config, "POST", req.URL())
+	if err != nil {
+		return fmt.Errorf("creating executor: %w", err)
+	}
+
+	err = exec.StreamWithContext(ctx, remotecommand.StreamOptions{
+		Stdin:  opts.Stdin,
+		Stdout: opts.Stdout,
+		Stderr: opts.Stderr,
+		Tty:    false,
+	})
+	if err != nil {
+		return fmt.Errorf("streaming command: %w", err)
+	}
+
+	return nil
+}
+
+// SandboxExecutor implements threads.Executor using the Client.
+type SandboxExecutor struct {
+	Client *Client
+	PodID  types.NamespacedName
+}
+
+// Exec executes a command in the sandbox.
+func (e *SandboxExecutor) Exec(ctx context.Context, opts threads.ExecOptions) error {
+	return e.Client.Exec(ctx, e.PodID, ExecOptions{
+		Command: opts.Command,
+		Stdout:  opts.Stdout,
+		Stderr:  opts.Stderr,
+	})
+}
+
+// Executor returns an executor for the specified sandbox.
+func (c *Client) Executor(podID types.NamespacedName) *SandboxExecutor {
+	return &SandboxExecutor{
+		Client: c,
+		PodID:  podID,
+	}
 }

@@ -1,14 +1,25 @@
 FROM golang:1.25.7 AS builder
 
 WORKDIR /app
+# Copy the Go Modules manifests
+COPY go.work go.work
+COPY go.work.sum go.work.sum
 COPY go.mod go.mod
 COPY go.sum go.sum
-RUN go mod download
+COPY repo-agent/go.mod repo-agent/go.mod
+COPY repo-agent/go.sum repo-agent/go.sum
+COPY agentsandboxes/go.mod agentsandboxes/go.mod
+COPY agentsandboxes/go.sum agentsandboxes/go.sum
+COPY dev/tools/go.mod dev/tools/go.mod
+COPY dev/tools/go.sum dev/tools/go.sum
 
-# Copy the go source
-COPY api/ api/
-COPY pkg/ pkg/
-COPY cmd/overseer-cli/ cmd/overseer-cli/
+# Copy the source code
+COPY agentsandboxes/ agentsandboxes/
+COPY repo-agent/pkg/ repo-agent/pkg/
+COPY repo-agent/api/ repo-agent/api/
+COPY repo-agent/cmd/overseer-cli/ repo-agent/cmd/overseer-cli/
+
+WORKDIR /app/repo-agent
 RUN go build -o overseer-cli ./cmd/overseer-cli/main.go
 
 FROM node:20-slim
@@ -35,9 +46,9 @@ RUN npm install -g @google/gemini-cli
 
 WORKDIR /workspaces
 
-COPY --from=builder /app/overseer-cli /usr/local/bin/overseer-cli
-COPY images/overseer/run.sh /workspaces/run.sh
-COPY images/overseer/system_prompt.txt /workspaces/system_prompt.txt
+COPY --from=builder /app/repo-agent/overseer-cli /usr/local/bin/overseer-cli
+COPY repo-agent/images/overseer/run.sh /workspaces/run.sh
+COPY repo-agent/images/overseer/system_prompt.txt /workspaces/system_prompt.txt
 RUN chmod +x /workspaces/run.sh
 
 ENTRYPOINT ["/workspaces/run.sh"]

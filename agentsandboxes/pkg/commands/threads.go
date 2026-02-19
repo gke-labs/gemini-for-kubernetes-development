@@ -14,12 +14,21 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package sandbox
+package commands
 
 import (
-	"github.com/gke-labs/gemini-for-kubernetes-development/agentsandboxes/pkg/threads"
+	"github.com/spf13/cobra"
 )
 
-type ThreadInfo = threads.ThreadInfo
-type ThreadMessage = threads.ThreadMessage
-type ToolCall = threads.ToolCall
+// BuildThreadsCommand builds the cobra command for threads.
+func BuildThreadsCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "threads",
+		Short: "Manage LLM threads in sandboxes",
+	}
+
+	cmd.AddCommand(BuildThreadsListCommand())
+	cmd.AddCommand(BuildThreadsGetCommand())
+
+	return cmd
+}

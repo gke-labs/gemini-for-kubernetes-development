@@ -81,7 +81,6 @@ create-kind:
 .PHONY: build-and-push-repo-agent
 build-and-push-repo-agent:
 	../dev/tools/push-images --image-prefix=$(REGISTRY) $(KIND_CLUSTER_ARG) \
-	--working-dir . \
 	--skip generic-golang \
 	--skip dind-golang \
 	--skip github-mcp-server

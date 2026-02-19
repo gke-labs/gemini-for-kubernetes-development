@@ -3,25 +3,32 @@ FROM golang:1.25.7 as builder
 
 WORKDIR /workspace
 # Copy the Go Modules manifests
+COPY go.work go.work
+COPY go.work.sum go.work.sum
 COPY go.mod go.mod
 COPY go.sum go.sum
-# cache deps before building and copying source so that we don't need to re-download as much
-# and so that source changes don't invalidate our downloaded layer
-RUN go mod download
+COPY repo-agent/go.mod repo-agent/go.mod
+COPY repo-agent/go.sum repo-agent/go.sum
+COPY agentsandboxes/go.mod agentsandboxes/go.mod
+COPY agentsandboxes/go.sum agentsandboxes/go.sum
+COPY dev/tools/go.mod dev/tools/go.mod
+COPY dev/tools/go.sum dev/tools/go.sum
 
-# Copy the go source
-COPY cmd/configdir-controller/main.go cmd/configdir-controller/main.go
-COPY pkg/ pkg/
-COPY api/ api/
+# Copy the source code
+COPY agentsandboxes/ agentsandboxes/
+COPY repo-agent/pkg/ repo-agent/pkg/
+COPY repo-agent/api/ repo-agent/api/
+COPY repo-agent/cmd/configdir-controller/ repo-agent/cmd/configdir-controller/
 
 # Build
+WORKDIR /workspace/repo-agent
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -a -o manager cmd/configdir-controller/main.go
 
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
 FROM gcr.io/distroless/static:nonroot
 WORKDIR /
-COPY --from=builder /workspace/manager .
+COPY --from=builder /workspace/repo-agent/manager .
 USER 65532:65532
 
 ENTRYPOINT ["/manager"]

@@ -31,4 +31,10 @@ agentsandboxes list
 
 # Create a sandbox
 agentsandboxes create my-sandbox --image my-image
+
+# List threads in a sandbox
+agentsandboxes threads list my-sandbox
+
+# Get a specific thread
+agentsandboxes threads get my-sandbox <thread-id>
 ```
