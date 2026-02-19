@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -51,19 +54,20 @@ func main() {
 
 func buildIssueCommand() *cobra.Command {
 	var number int
+	var prNumber int
 	var taskType string
 
 	cmd := &cobra.Command{
 		Use:   "issue",
 		Short: "Create/ensure sandbox and task for an issue",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runIssue(context.Background(), number, taskType)
+			return runIssue(context.Background(), number, prNumber, taskType)
 		},
 	}
 
 	cmd.Flags().IntVar(&number, "number", 0, "Issue number")
+	cmd.Flags().IntVar(&prNumber, "pr", 0, "PR number to extract issue from")
 	cmd.Flags().StringVar(&taskType, "task", "fix-issue", "Task type (e.g., fix-issue, triage-issue, investigate-failures)")
-	_ = cmd.MarkFlagRequired("number")
 
 	return cmd
 }
@@ -87,7 +91,7 @@ func buildPRCommand() *cobra.Command {
 	return cmd
 }
 
-func runIssue(ctx context.Context, number int, taskType string) error {
+func runIssue(ctx context.Context, number int, prNumber int, taskType string) error {
 	if repoWatchName == "" || namespace == "" {
 		return fmt.Errorf("REPOWATCH_NAME and NAMESPACE environment variables must be set")
 	}
@@ -131,6 +135,19 @@ func runIssue(ctx context.Context, number int, taskType string) error {
 	owner, repo, err := parseRepoURL(repoWatch.Spec.RepoURL)
 	if err != nil {
 		return fmt.Errorf("failed to parse RepoURL: %w", err)
+	}
+
+	if number == 0 && prNumber != 0 {
+		fmt.Printf("Resolving issue from PR %d...\n", prNumber)
+		number, err = resolveIssueFromPR(ctx, owner, repo, prNumber)
+		if err != nil {
+			return fmt.Errorf("failed to resolve issue from PR: %w", err)
+		}
+		fmt.Printf("Resolved to issue %d\n", number)
+	}
+
+	if number == 0 {
+		return fmt.Errorf("either --number or --pr must be provided")
 	}
 
 	issue, _, err := ghClient.Issues.Get(ctx, owner, repo, number)
@@ -397,6 +414,7 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 	}
 
 	sb, svc := sandbox.NewAgentSandbox(opt)
+	sb.SetName(name) // Resource name should not have devc- prefix for PRs to match controller
 
 	_, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(repoWatch.Namespace).Create(ctx, sb, metav1.CreateOptions{})
 	if err != nil {
@@ -416,4 +434,24 @@ func randString(n int) string {
 		b[i] = letterBytes[seededRand.Intn(len(letterBytes))]
 	}
 	return string(b)
+}
+
+func resolveIssueFromPR(ctx context.Context, owner, repo string, prNumber int) (int, error) {
+	// Try using gh CLI to get closing issues
+	cmd := exec.CommandContext(ctx, "gh", "pr", "view", fmt.Sprintf("%d", prNumber), "--repo", fmt.Sprintf("%s/%s", owner, repo), "--json", "closingIssuesReferences")
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	if err := cmd.Run(); err == nil {
+		var result struct {
+			ClosingIssuesReferences []struct {
+				Number int `json:"number"`
+			} `json:"closingIssuesReferences"`
+		}
+		if err := json.Unmarshal(stdout.Bytes(), &result); err == nil && len(result.ClosingIssuesReferences) > 0 {
+			return result.ClosingIssuesReferences[0].Number, nil
+		}
+	}
+
+	// Fallback: just return the PR number as its own issue number
+	return prNumber, nil
 }
