@@ -2,11 +2,13 @@ package commands
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
+	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks"
@@ -28,6 +30,7 @@ type GithubInvestigateCommand struct {
 	WorkspaceDir    string
 	TaskDir         string
 	Model           string
+	ExtensionsJSON  string
 
 	// loaded objects
 	repo        *github.Repository
@@ -69,6 +72,7 @@ func BuildGithubInvestigateCommand() *cobra.Command {
 	cmd.Flags().StringVar(&c.GithubUserEmail, "github-user-email", os.Getenv("GITHUB_USER_EMAIL"), "Github user email")
 	cmd.Flags().StringVar(&c.GithubUserName, "github-user-name", os.Getenv("GITHUB_USER_NAME"), "Github user name")
 	cmd.Flags().StringVar(&c.Model, "model", os.Getenv("MODEL"), "Model to use")
+	cmd.Flags().StringVar(&c.ExtensionsJSON, "extensions", os.Getenv("AGENT_LLM_EXTENSIONS"), "Extensions JSON")
 	cmd.Flags().BoolVar(&c.InPod, "in-pod", false, "Whether running inside the pod")
 
 	return cmd
@@ -236,6 +240,15 @@ func (c *GithubInvestigateCommand) Run(ctx context.Context) error {
 		User:        c.user,
 		Models:      strings.Split(c.Model, ","),
 		FailedRuns:  c.failedRuns,
+	}
+
+	if c.ExtensionsJSON != "" {
+		var extensions []reviewv1alpha1.Extension
+		if err := json.Unmarshal([]byte(c.ExtensionsJSON), &extensions); err != nil {
+			log.Error(err, "failed to unmarshal extensions JSON")
+		} else {
+			task.Extensions = extensions
+		}
 	}
 
 	apikey, err := GetGeminiAPIKey(c.sandboxID)
