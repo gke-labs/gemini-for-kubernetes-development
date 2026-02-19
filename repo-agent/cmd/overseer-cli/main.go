@@ -252,7 +252,7 @@ func runPR(ctx context.Context, number int, taskType string) error {
 		return fmt.Errorf("failed to get PR %d: %w", number, err)
 	}
 
-	sandboxName := fmt.Sprintf("devc-%s-pr-%d", repoWatch.Name, number)
+	sandboxName := fmt.Sprintf("%s-pr-%d", repoWatch.Name, number)
 
 	// Check if sandbox exists
 	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
@@ -305,7 +305,7 @@ func parseRepoURL(url string) (string, string, error) {
 
 func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, repoWatch *reviewv1alpha1.RepoWatch, issue *githubv39.Issue) error {
 	// Replicate logic from repowatch_controller.go:createIssueSandbox
-	name := fmt.Sprintf("devc-%s-issue-%d", repoWatch.Name, issue.GetNumber())
+	name := fmt.Sprintf("%s-issue-%d", repoWatch.Name, issue.GetNumber())
 	cloneURL := strings.Replace(issue.GetRepositoryURL(), "api.github.com/repos", "github.com", 1) + ".git"
 
 	// We need to fetch user info. In Overseer, we might just use env vars.
@@ -367,7 +367,7 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 
 func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, repoWatch *reviewv1alpha1.RepoWatch, pr *githubv39.PullRequest) error {
 	// Replicate logic from repowatch_controller.go:createPRSandbox
-	name := fmt.Sprintf("devc-%s-pr-%d", repoWatch.Name, pr.GetNumber())
+	name := fmt.Sprintf("%s-pr-%d", repoWatch.Name, pr.GetNumber())
 	cloneURL := pr.GetBase().GetRepo().GetCloneURL()
 
 	userLogin := os.Getenv("GITHUB_USER_ID")
@@ -414,6 +414,7 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 	}
 
 	sb, svc := sandbox.NewAgentSandbox(opt)
+	sb.SetName(name) // Resource name should not have devc- prefix for PRs to match controller
 
 	_, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(repoWatch.Namespace).Create(ctx, sb, metav1.CreateOptions{})
 	if err != nil {

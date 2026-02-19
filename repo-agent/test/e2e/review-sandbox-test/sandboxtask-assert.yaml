@@ -4,7 +4,7 @@ metadata:
   namespace: repo-agent-system
   labels:
     review.gemini.google.com/repowatch: rst-gfkd
-  (starts_with(name, 'devc-rst-gfkd-pr-')): true
+  (starts_with(name, 'rst-gfkd-pr-')): true
   # Safe navigation: if agentDraft is null/missing, this returns false instead of erroring
   (contains(annotations.agentDraft || '', 'Response from Dummy LLM')): true
 status:

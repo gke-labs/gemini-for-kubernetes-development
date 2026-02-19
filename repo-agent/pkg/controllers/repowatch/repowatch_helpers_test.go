@@ -71,7 +71,7 @@ func TestCreateOrUpdateReviewSandboxes(t *testing.T) {
 			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
 			"kind":       "ReviewSandbox",
 			"metadata": map[string]interface{}{
-				"name":              fmt.Sprintf("devc-%s-pr-%d", repoWatch.Name, pr4Num),
+				"name":              fmt.Sprintf("%s-pr-%d", repoWatch.Name, pr4Num),
 				"namespace":         "default",
 				"creationTimestamp": time.Now().Add(-61 * time.Minute).Format(time.RFC3339),
 				"ownerReferences": []interface{}{

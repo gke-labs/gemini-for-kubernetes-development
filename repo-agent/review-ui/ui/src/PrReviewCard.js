@@ -708,7 +708,7 @@ function PrReviewCard({
   const lastDragTargetRef = useRef(null);
 
   const isCollapsed = collapsedReviews[pr.id];
-  const repoName = propRepoName || (pr.sandbox ? pr.sandbox.split('-pr-')[0].replace(/^devc-/, '') : '');
+  const repoName = propRepoName || (pr.sandbox ? pr.sandbox.split('-pr-')[0] : '');
 
   const handleSaveTaskDraft = (taskName, draft) => {
       if (!repoName) return;

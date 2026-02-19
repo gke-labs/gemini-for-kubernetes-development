@@ -615,7 +615,7 @@ func (r *Reconciler) reconcileReviewSandboxesInternal(ctx context.Context, repoW
 	allPRs := append(explicitPRs, prs...)
 
 	for _, pr := range allPRs {
-		sandboxName := fmt.Sprintf("devc-%s-pr-%d", repoWatch.Name, *pr.Number)
+		sandboxName := fmt.Sprintf("%s-pr-%d", repoWatch.Name, *pr.Number)
 		sandboxExists := false
 		var existingSandbox *unstructured.Unstructured
 
@@ -977,7 +977,7 @@ func (r *Reconciler) isIssueMatch(issue *github.Issue, handler reviewv1alpha1.Is
 func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, issue *github.Issue) (*unstructured.Unstructured, error) {
 	log := log.FromContext(ctx)
 	// Base name matches the issue identifier
-	name := fmt.Sprintf("devc-%s-issue-%d", repoWatch.Name, *issue.Number)
+	name := fmt.Sprintf("%s-issue-%d", repoWatch.Name, *issue.Number)
 
 	cloneURL := strings.Replace(*issue.RepositoryURL, "api.github.com/repos", "github.com", 1) + ".git"
 	repoParts := strings.Split(cloneURL, "/")
@@ -1170,7 +1170,7 @@ func (r *Reconciler) generateIssueHandlerPrompt(handler reviewv1alpha1.IssueHand
 // sandbox.
 func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, pr *github.PullRequest) error {
 	log := log.FromContext(ctx)
-	sandboxName := fmt.Sprintf("devc-%s-pr-%d", repoWatch.Name, *pr.Number)
+	sandboxName := fmt.Sprintf("%s-pr-%d", repoWatch.Name, *pr.Number)
 
 	prompt := repoWatch.Spec.Review.LLM.Prompt
 
@@ -1212,7 +1212,7 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 				"podTemplate": map[string]interface{}{
 					"metadata": map[string]interface{}{
 						"labels": map[string]interface{}{
-							"sandbox": sandboxName,
+							"sandbox": fmt.Sprintf("devc-%s", sandboxName),
 						},
 					},
 					"spec": map[string]interface{}{
@@ -1374,7 +1374,7 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 		return err
 	}
 
-	serviceName := fmt.Sprintf("%s-lb", sandboxName)
+	serviceName := fmt.Sprintf("devc-%s-lb", sandboxName)
 	service := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "v1",
@@ -1385,7 +1385,7 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 			},
 			"spec": map[string]interface{}{
 				"selector": map[string]interface{}{
-					"sandbox": sandboxName,
+					"sandbox": fmt.Sprintf("devc-%s", sandboxName),
 				},
 				"ports": []interface{}{
 					map[string]interface{}{
@@ -1684,7 +1684,7 @@ func (r *Reconciler) reconcileDevSandboxesInternal(ctx context.Context, user *gi
 		// hashing ensures we don't exceed this limit
 		fullSuffix := fmt.Sprintf("dev-%s-%s", forkRepo, safeBranchName)
 		hashedSuffix := NameHash(fullSuffix)
-		sandboxName := fmt.Sprintf("devc-%s-dev", hashedSuffix)
+		sandboxName := fmt.Sprintf("%s-dev", hashedSuffix)
 
 		// Check if sandbox exists
 		sandboxExists := false
