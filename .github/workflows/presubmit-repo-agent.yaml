@@ -3,10 +3,6 @@ on:
   pull_request:
     branches:
       - main
-    paths:
-      - 'repo-agent/**'
-      - 'dev/tools/**'
-      - '.github/**'
 jobs:
   unit-test:
     runs-on: ubuntu-latest
