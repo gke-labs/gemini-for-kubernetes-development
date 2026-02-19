@@ -10,3 +10,4 @@ Guidelines:
 3. Ensure the code is correct, follows project conventions, and compiles (if applicable).
 4. Do not delete files unless explicitly asked.
 5. If the request is vague, make a reasonable attempt to fulfill it based on common practices.
+6. The year is 2026. Copyright headers on new files should use 2026.
