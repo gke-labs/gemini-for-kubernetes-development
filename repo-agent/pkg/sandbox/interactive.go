@@ -1,7 +1,6 @@
 package sandbox
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,6 +8,7 @@ import (
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
+	"github.com/gke-labs/gemini-for-kubernetes-development/agentsandboxes/pkg/threads"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -303,71 +303,35 @@ func (s *IssueSandbox) ReadFile(path string) ([]byte, error) {
 }
 
 func (s *IssueSandbox) ListThreads() ([]ThreadInfo, error) {
-	return ListThreads(s.executor)
+	return threads.ListThreads(executorWrapper{s.executor})
 }
 
 func ListThreads(executor Executor) ([]ThreadInfo, error) {
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-
-	opts := ExecOptions{
-		Command: []string{RepoSandboxBinary, "threads", "agent"},
-		Stdout:  &stdout,
-		Stderr:  &stderr,
-	}
-
-	if err := executor.Exec(opts); err != nil {
-		return nil, fmt.Errorf("failed to list threads via agent: %w, stderr: %s", err, stderr.String())
-	}
-
-	var threads []ThreadInfo
-	if err := json.Unmarshal(stdout.Bytes(), &threads); err != nil {
-		return nil, fmt.Errorf("failed to parse threads agent output: %w", err)
-	}
-	return threads, nil
+	return threads.ListThreads(executorWrapper{executor})
 }
 
 func (s *IssueSandbox) GetThreadMessages(threadID string) ([]ThreadMessage, error) {
-	return GetThreadMessages(s.executor, threadID)
+	return threads.GetThreadMessages(executorWrapper{s.executor}, threadID)
 }
 
 func GetThread(executor Executor, threadID string, includeMessages bool) (*ThreadInfo, error) {
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-
-	args := []string{RepoSandboxBinary, "threads", "agent", fmt.Sprintf("--thread-id=%s", threadID)}
-	if includeMessages {
-		args = append(args, "--include-messages=true")
-	}
-
-	opts := ExecOptions{
-		Command: args,
-		Stdout:  &stdout,
-		Stderr:  &stderr,
-	}
-
-	if err := executor.Exec(opts); err != nil {
-		return nil, fmt.Errorf("failed to get thread via agent: %w, stderr: %s", err, stderr.String())
-	}
-
-	var threads []ThreadInfo
-	if err := json.Unmarshal(stdout.Bytes(), &threads); err != nil {
-		return nil, fmt.Errorf("failed to parse threads agent output: %w", err)
-	}
-
-	if len(threads) == 0 {
-		return nil, fmt.Errorf("thread with ID %q not found", threadID)
-	}
-
-	return &threads[0], nil
+	return threads.GetThread(executorWrapper{executor}, threadID, includeMessages)
 }
 
 func GetThreadMessages(executor Executor, threadID string) ([]ThreadMessage, error) {
-	thread, err := GetThread(executor, threadID, true)
-	if err != nil {
-		return nil, err
-	}
-	return thread.Messages, nil
+	return threads.GetThreadMessages(executorWrapper{executor}, threadID)
+}
+
+type executorWrapper struct {
+	inner Executor
+}
+
+func (w executorWrapper) Exec(opts threads.ExecOptions) error {
+	return w.inner.Exec(ExecOptions{
+		Command: opts.Command,
+		Stdout:  opts.Stdout,
+		Stderr:  opts.Stderr,
+	})
 }
 
 func (s *IssueSandbox) ConfigureGemini(ctx context.Context) error {

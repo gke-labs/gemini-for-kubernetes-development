@@ -9,6 +9,7 @@ require (
 	github.com/creack/pty v1.1.24
 	github.com/gin-contrib/sessions v1.0.4
 	github.com/gin-gonic/gin v1.11.0
+	github.com/gke-labs/gemini-for-kubernetes-development/agentsandboxes v0.0.0-00010101000000-000000000000
 	github.com/google/cel-go v0.26.1
 	github.com/google/go-cmp v0.7.0
 	github.com/google/go-github/v39 v39.2.0
@@ -164,3 +165,5 @@ require (
 )
 
 tool sigs.k8s.io/controller-tools/cmd/controller-gen
+
+replace github.com/gke-labs/gemini-for-kubernetes-development/agentsandboxes => ../agentsandboxes
