@@ -31,6 +31,11 @@ type MockUser struct {
 	Name   string
 }
 
+type MockExtension struct {
+	Source string
+	Ref    string
+}
+
 type MockModel struct {
 	Issue         MockIssue
 	Repo          MockRepo
@@ -38,6 +43,7 @@ type MockModel struct {
 	Models        []string
 	User          MockUser
 	PromptFile    string
+	Extensions    []MockExtension
 }
 
 func TestFixIssuePromptTemplate(t *testing.T) {
