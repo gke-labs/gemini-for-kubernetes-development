@@ -97,6 +97,11 @@ func NewClientFromConfigAndClient(config *rest.Config, httpClient *http.Client, 
 	}, nil
 }
 
+// Namespace returns the namespace the client is configured with.
+func (c *Client) Namespace() string {
+	return c.ns
+}
+
 // List returns a list of sandboxes in the client's namespace.
 func (c *Client) List(ctx context.Context) ([]*Sandbox, error) {
 	list, err := c.dynamic.Resource(sandboxGVR).Namespace(c.ns).List(ctx, metav1.ListOptions{})

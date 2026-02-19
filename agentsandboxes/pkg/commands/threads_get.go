@@ -24,6 +24,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/agentsandboxes"
 	"github.com/gke-labs/gemini-for-kubernetes-development/agentsandboxes/pkg/threads"
 	"github.com/spf13/cobra"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 // ThreadsGetOptions holds options for the threads get command.
@@ -61,9 +62,9 @@ func RunThreadsGet(ctx context.Context, opt ThreadsGetOptions) error {
 		return err
 	}
 
-	podID, err := client.PodIDForSandbox(ctx, opt.SandboxName)
-	if err != nil {
-		return err
+	podID := types.NamespacedName{
+		Namespace: client.Namespace(),
+		Name:      opt.SandboxName,
 	}
 
 	executor := client.Executor(podID)

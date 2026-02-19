@@ -42,27 +42,24 @@ def get_full_image_name(args, image_id):
 
 
 def run_go_command(*args, **kwargs):
-  """ Runs a Go command with GOWORK=off """
+  """ Runs a Go command """
   env = os.environ.copy()
-  env["GOWORK"] = "off"
   if "env" in kwargs:
     env.update(kwargs["env"])
   kwargs["env"] = env
   return subprocess.run(*args, **kwargs)
 
 def check_output_go_command(*args, **kwargs):
-  """ Runs a Go command with GOWORK=off """
+  """ Runs a Go command """
   env = os.environ.copy()
-  env["GOWORK"] = "off"
   if "env" in kwargs:
     env.update(kwargs["env"])
   kwargs["env"] = env
   return subprocess.check_output(*args, **kwargs)
 
 def check_go_command(*args, **kwargs):
-  """ Runs a Go command with GOWORK=off """
+  """ Runs a Go command """
   env = os.environ.copy()
-  env["GOWORK"] = "off"
   if "env" in kwargs:
     env.update(kwargs["env"])
   kwargs["env"] = env

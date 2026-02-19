@@ -97,6 +97,10 @@ def main(args):
     images_dir = os.path.join(working_dir, "images")
 
     if not os.path.isdir(images_dir):
+        # Also check repo-agent/images
+        images_dir = os.path.join(working_dir, "repo-agent", "images")
+
+    if not os.path.isdir(images_dir):
         print("images directory not found")
         return
 
