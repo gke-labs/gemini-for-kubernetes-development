@@ -1,5 +1,5 @@
 # Build the gh CLI
-FROM golang:1.25 AS build-gh
+FROM golang:1.25.7 AS build-gh
 RUN GOBIN=/bin go install github.com/cli/cli/v2/cmd/gh@v2.82.1
 
 # -----------------------
@@ -33,7 +33,7 @@ RUN apt-get update && \
 # ------- Install go -------
 #RUN apt-get update && apt-get install -y golang-go
 ## wget -c https://go.dev/dl/go1.25.0.linux-amd64.tar.gz
-ENV GO_VERSION=1.25.0
+ENV GO_VERSION=1.25.7
 ENV ARCH=amd64
 
 # Download, extract, and set up environment variables
