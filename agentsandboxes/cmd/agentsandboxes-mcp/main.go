@@ -48,7 +48,7 @@ func main() {
 
 type emptyInput struct{}
 
-func listSandboxesHandler(ctx context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, any, error) {
+func listSandboxesHandler(ctx context.Context, req *mcp.CallToolRequest, args emptyInput) (*mcp.CallToolResult, any, error) {
 	client, err := agentsandboxes.NewClient()
 	if err != nil {
 		return nil, nil, err
@@ -76,7 +76,7 @@ type createSandboxInput struct {
 	Image string `json:"image,omitempty" jsonschema:"The container image for the sandbox"`
 }
 
-func createSandboxHandler(ctx context.Context, _ *mcp.CallToolRequest, args createSandboxInput) (*mcp.CallToolResult, any, error) {
+func createSandboxHandler(ctx context.Context, req *mcp.CallToolRequest, args createSandboxInput) (*mcp.CallToolResult, any, error) {
 	client, err := agentsandboxes.NewClient()
 	if err != nil {
 		return nil, nil, err
