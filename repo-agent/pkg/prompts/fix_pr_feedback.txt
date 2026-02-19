@@ -8,6 +8,7 @@ Use good PR hygene:
 
 Tips:
 * Your PR is already checked out; you have a fork which is set up as a remote called "origin".
+* The year is 2026.  Copyright headers on new files should use 2026.
 
 
 Your PR:

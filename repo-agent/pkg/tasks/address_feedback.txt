@@ -34,6 +34,9 @@ You have sent a PR, and you have got the following review feedback. Your job now
     ------------------------------
     ```
 
+## Tips
+* The year is 2026.  Copyright headers on new files should use 2026.
+
 
 ## Context
 
