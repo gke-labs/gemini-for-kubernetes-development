@@ -20,6 +20,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 
 	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
+	sandboxtaskv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
+	pkgapi "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/api"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
@@ -75,23 +77,91 @@ func buildIssueCommand() *cobra.Command {
 func buildPRCommand() *cobra.Command {
 	var number int
 	var taskType string
+	var submit bool
 
 	cmd := &cobra.Command{
 		Use:   "pr",
 		Short: "Create/ensure sandbox and task for a PR",
 		RunE: func(_ *cobra.Command, _ []string) error {
+			if submit {
+				return runSubmitReview(context.Background(), number)
+			}
 			return runPR(context.Background(), number, taskType)
 		},
 	}
 
 	cmd.Flags().IntVar(&number, "number", 0, "PR number")
 	cmd.Flags().StringVar(&taskType, "task", "review", "Task type (e.g., review, address-feedback)")
+	cmd.Flags().BoolVar(&submit, "submit", false, "Submit the agent draft as review")
 	_ = cmd.MarkFlagRequired("number")
 
 	return cmd
 }
 
-func runIssue(ctx context.Context, number int, prNumber int, taskType string) error {
+func runSubmitReview(ctx context.Context, number int) error {
+	if repoWatchName == "" || namespace == "" {
+		return fmt.Errorf("REPOWATCH_NAME and NAMESPACE environment variables must be set")
+	}
+
+	cfg, err := config.GetConfig()
+	if err != nil {
+		return fmt.Errorf("unable to get kubeconfig: %w", err)
+	}
+
+	dynClient, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("unable to create dynamic client: %w", err)
+	}
+
+	clientset, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("unable to create clientset: %w", err)
+	}
+
+	kubeClient := &clients.KubernetesClient{
+		DynamicClient: dynClient,
+		Clientset:     clientset,
+	}
+	manager := k8s.NewManager(kubeClient)
+
+	sandboxName := fmt.Sprintf("%s-pr-%d", repoWatchName, number)
+
+	// List Sandbox Tasks to find the latest review task
+	tasks, err := manager.ListSandboxTasks(ctx, namespace, sandboxName)
+	if err != nil {
+		return fmt.Errorf("failed to list tasks for sandbox %s: %w", sandboxName, err)
+	}
+
+	var latestReviewTask *sandboxtaskv1alpha1.SandboxTask
+	for i := range tasks.Items {
+		task := &tasks.Items[i]
+		if task.Spec.Type == "review" {
+			if latestReviewTask == nil || task.CreationTimestamp.After(latestReviewTask.CreationTimestamp.Time) {
+				latestReviewTask = task
+			}
+		}
+	}
+
+	if latestReviewTask == nil {
+		return fmt.Errorf("no review task found for sandbox %s", sandboxName)
+	}
+
+	draft := latestReviewTask.GetAnnotations()["agentDraft"]
+	if draft == "" {
+		return fmt.Errorf("no agentDraft found in task %s", latestReviewTask.Name)
+	}
+
+	fmt.Printf("Submitting agent draft from task %s as review for PR %d...\n", latestReviewTask.Name, number)
+	err = pkgapi.SubmitReviewDraft(ctx, manager, namespace, repoWatchName, fmt.Sprintf("%d", number), draft)
+	if err != nil {
+		return fmt.Errorf("failed to submit review: %w", err)
+	}
+
+	fmt.Println("Done.")
+	return nil
+}
+
+func runIssue(ctx context.Context, number int, taskType string) error {
 	if repoWatchName == "" || namespace == "" {
 		return fmt.Errorf("REPOWATCH_NAME and NAMESPACE environment variables must be set")
 	}

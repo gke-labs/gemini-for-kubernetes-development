@@ -14,6 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 	"github.com/google/go-github/v39/github"
 	yaml "go.yaml.in/yaml/v3"
@@ -224,7 +225,6 @@ func (s *Server) saveTaskDraft(c *gin.Context) {
 }
 
 func (s *Server) submitReview(c *gin.Context) {
-	log := klog.FromContext(c.Request.Context())
 	namespace := s.Auth.GetNamespaceFromContext(c)
 	repo := c.Param("repo")
 	prID := c.Param("id")
@@ -236,10 +236,20 @@ func (s *Server) submitReview(c *gin.Context) {
 		return
 	}
 
-	ctx := c.Request.Context()
-	log.Info("Submitting review for PR", "prID", prID, "repo", repo, "review", payload.Review)
+	err := SubmitReviewDraft(c.Request.Context(), s.K8sManager, namespace, repo, prID, payload.Review)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to submit review", "details": err.Error()})
+		return
+	}
 
-	sandboxName := fmt.Sprintf("%s-pr-%s", repo, prID)
+	c.Status(http.StatusOK)
+}
+
+func SubmitReviewDraft(ctx context.Context, k8sManager *k8s.Manager, namespace, repoWatchName, prID, review string) error {
+	log := klog.FromContext(ctx)
+	log.Info("Submitting review for PR", "prID", prID, "repo", repoWatchName)
+
+	sandboxName := fmt.Sprintf("%s-pr-%s", repoWatchName, prID)
 	gvr := schema.GroupVersionResource{
 		Group:    "agents.x-k8s.io",
 		Version:  "v1alpha1",
@@ -247,14 +257,12 @@ func (s *Server) submitReview(c *gin.Context) {
 	}
 
 	// Get Sandbox to check agentDraft
-	sandbox, err := s.K8sManager.Client.Resource(gvr).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
+	sandbox, err := k8sManager.Client.Resource(gvr).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
 	if err != nil {
 		log.Info("Failed to get sandbox", "name", sandboxName, "err", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get sandbox"})
-		return
+		return fmt.Errorf("failed to get sandbox %s: %w", sandboxName, err)
 	}
 
-	draft := payload.Review
 	agentDraft := ""
 	if annotations := sandbox.GetAnnotations(); annotations != nil {
 		if val, ok := annotations["agentDraft"]; ok {
@@ -263,27 +271,25 @@ func (s *Server) submitReview(c *gin.Context) {
 	}
 
 	// Get RepoWatch to get repoURL and secret ref
-	repoWatch, err := s.K8sManager.GetRepoWatch(ctx, namespace, repo)
+	repoWatch, err := k8sManager.GetRepoWatch(ctx, namespace, repoWatchName)
 	if err != nil {
-		log.Info("Failed to get repowatch", "repo", repo, "err", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get repowatch config"})
-		return
+		log.Info("Failed to get repowatch", "repo", repoWatchName, "err", err)
+		return fmt.Errorf("failed to get repowatch config %s: %w", repoWatchName, err)
 	}
 
-	if draft != agentDraft {
+	if review != agentDraft {
 		if sandboxName != "" {
-			if err := s.K8sManager.UpdateReviewSandboxUserDraft(ctx, namespace, sandboxName, draft); err != nil {
-				log.Info("Failed to update reviewsandbox userDraft for PR", "prID", prID, "repo", repo, "err", err)
+			if err := k8sManager.UpdateReviewSandboxUserDraft(ctx, namespace, sandboxName, review); err != nil {
+				log.Info("Failed to update reviewsandbox userDraft for PR", "prID", prID, "repo", repoWatchName, "err", err)
 			}
 		}
 	}
 
 	// Get GitHub token from secret
-	token, err := s.K8sManager.GetGitHubToken(ctx, repoWatch)
+	token, err := k8sManager.GetGitHubToken(ctx, repoWatch)
 	if err != nil {
-		log.Info("Failed to get github token for repo", "repo", repo, "err", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get github token"})
-		return
+		log.Info("Failed to get github token for repo", "repo", repoWatchName, "err", err)
+		return fmt.Errorf("failed to get github token: %w", err)
 	}
 
 	// Create GitHub client
@@ -293,31 +299,28 @@ func (s *Server) submitReview(c *gin.Context) {
 	repoURL, found, err := unstructured.NestedString(repoWatch.Object, "spec", "repoURL")
 	if err != nil || !found {
 		log.Info("repoURL not found in RepoWatch CR", "name", repoWatch.GetName())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "repoURL not found in RepoWatch CR"})
-		return
+		return fmt.Errorf("repoURL not found in RepoWatch CR")
 	}
 	owner, repoName, err := parseRepoURL(repoURL)
 	if err != nil {
 		log.Info("Failed to parse repo url", "url", repoURL, "err", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse repo url"})
-		return
+		return fmt.Errorf("failed to parse repo url: %w", err)
 	}
 
 	// Get PR number
 	prNumber, err := strconv.Atoi(prID)
 	if err != nil {
 		log.Info("Failed to parse prID", "prID", prID, "err", err)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid pr id"})
-		return
+		return fmt.Errorf("invalid pr id %s: %w", prID, err)
 	}
 
 	// Try Unmarshalling the yaml review payload into PullRequestReviewRequest
 	agentOutput := &models.ReviewAgentOutput{}
 	reviewRequest := &github.PullRequestReviewRequest{}
-	err = yaml.Unmarshal([]byte(payload.Review), &agentOutput)
+	err = yaml.Unmarshal([]byte(review), &agentOutput)
 	if err != nil {
 		log.Info("Failed to unmarshal review payload", "err", err)
-		reviewRequest.Body = github.String(payload.Review)
+		reviewRequest.Body = github.String(review)
 	} else {
 		reviewRequest = agentOutput.Review.ToGitHubReviewRequest()
 	}
@@ -326,28 +329,30 @@ func (s *Server) submitReview(c *gin.Context) {
 	reviewRequest.Event = nil
 
 	log.Info("reviewRequest being created", "request", reviewRequest)
-	review, resp, err := client.PullRequests.CreateReview(ctx, owner, repoName, prNumber, reviewRequest)
+	ghReview, resp, err := client.PullRequests.CreateReview(ctx, owner, repoName, prNumber, reviewRequest)
 	if err != nil {
-		log.Info("response", "resp", resp)
+		if resp != nil {
+			log.Info("github response", "status", resp.Status)
+		}
 		log.Info("Failed to create review on PR", "prNumber", prNumber, "err", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create review on github", "details": err.Error()})
-		return
+		return fmt.Errorf("failed to create review on github: %w", err)
 	}
-	log.Info("review created", "review", review)
+	log.Info("review created", "reviewID", ghReview.GetID())
 
-	if err := s.K8sManager.UpdateReviewSandboxAnnotation(ctx, namespace, sandboxName, "reviewState", "submitted"); err != nil {
-		log.Info("Failed to update reviewsandbox reviewState", "prID", prID, "repo", repo, "err", err)
+	if err := k8sManager.UpdateReviewSandboxAnnotation(ctx, namespace, sandboxName, "reviewState", "submitted"); err != nil {
+		log.Info("Failed to update reviewsandbox reviewState", "prID", prID, "repo", repoWatchName, "err", err)
 	}
 
 	// scale down sandbox
-	err = s.K8sManager.ScaledownSandbox(ctx, namespace, repo, prID)
+	err = k8sManager.ScaledownSandbox(ctx, namespace, repoWatchName, prID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scaledown Sandbox after review submission", "details": err.Error()})
-		return
+		log.Info("Failed to scaledown Sandbox after review submission", "err", err)
+		return fmt.Errorf("failed to scaledown sandbox: %w", err)
 	}
 
-	c.Status(http.StatusOK)
+	return nil
 }
+
 
 func (s *Server) deletePR(c *gin.Context) {
 	namespace := s.Auth.GetNamespaceFromContext(c)
