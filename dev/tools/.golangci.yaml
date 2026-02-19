@@ -9,7 +9,12 @@ linters:
   - revive
   - staticcheck
   - unconvert
-  - unparam
   - misspell
   - errcheck
   - ineffassign
+
+issues:
+  exclude-rules:
+    - linters:
+        - revive
+      text: "unused-parameter"

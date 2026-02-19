@@ -83,7 +83,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	return ctrl.Result{}, nil
 }
 
-func (r *Reconciler) startWatcher(_ context.Context, gvk schema.GroupVersionKind) error {
+func (r *Reconciler) startWatcher(ctx context.Context, gvk schema.GroupVersionKind) error {
 	log.Log.Info("Starting watcher for GVK", "gvk", gvk)
 
 	dr := &DynamicResourceReconciler{

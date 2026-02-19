@@ -112,7 +112,7 @@ func TestDynamicResourceReconciler_Reconcile(t *testing.T) {
 	uploaded := false
 	var uploadedBucket, uploadedPath string
 	mockGCS := &MockUploader{
-		UploadFunc: func(_ context.Context, bucket, path string, _ []byte) error {
+		UploadFunc: func(ctx context.Context, bucket, path string, _ []byte) error {
 			uploaded = true
 			uploadedBucket = bucket
 			uploadedPath = path
