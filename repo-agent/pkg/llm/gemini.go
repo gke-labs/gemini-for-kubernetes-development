@@ -167,24 +167,51 @@ func (g *Gemini) ExpandPrompt(prompt string) (string, error) {
 func (g *Gemini) Run(agentPrompt string) ([]byte, error) {
 	klog.Info("running gemini")
 
-	stdout, stderr, err := g.Executor.Run("gemini", "-y", "-p", agentPrompt)
-	if err != nil {
+	rawKeys := os.Getenv("GEMINI_API_KEY")
+	keys := strings.FieldsFunc(rawKeys, func(r rune) bool {
+		return r == ',' || r == ' ' || r == '\n' || r == '\r' || r == '\t'
+	})
+
+	if len(keys) == 0 {
+		return nil, fmt.Errorf("no Gemini API keys available")
+	}
+
+	var lastErr error
+	var lastStderr []byte
+	for _, key := range keys {
+		if len(keys) > 1 {
+			klog.Infof("Trying gemini with API key prefix: %s...", key[:4])
+		}
+		os.Setenv("GEMINI_API_KEY", key)
+		stdout, stderr, err := g.Executor.Run("gemini", "-y", "-p", agentPrompt)
+		if err == nil {
+			output := stdout
+			for _, p := range g.processors {
+				output, err = p(output)
+				if err != nil {
+					return nil, err
+				}
+			}
+			return output, nil
+		}
+
+		lastErr = err
+		lastStderr = stderr
 		klog.Infof("gemini command failed: %v. Stderr: %s", err, string(stderr))
-		if strings.Contains(string(stderr), "[API Error: You have exhausted your daily quota on this model.]") {
-			return nil, &QuotaError{Err: err}
+		if strings.Contains(string(stderr), "[API Error: You have exhausted your daily quota on this model.]") ||
+			strings.Contains(string(stderr), "You exceeded your current quota") {
+			klog.Infof("gemini quota exceeded, retrying with next key if available...")
+			continue
 		}
-		return nil, err
+		// If it's not a quota error, don't retry with other keys
+		break
 	}
 
-	output := stdout
-	for _, p := range g.processors {
-		output, err = p(output)
-		if err != nil {
-			return nil, err
-		}
+	if strings.Contains(string(lastStderr), "[API Error: You have exhausted your daily quota on this model.]") ||
+		strings.Contains(string(lastStderr), "You exceeded your current quota") {
+		return nil, &QuotaError{Err: lastErr}
 	}
-
-	return output, nil
+	return nil, lastErr
 }
 
 func StripUnillStartIndicator(outputStartIndicator string) PostProcessor {

@@ -34,16 +34,19 @@ function runGemini {
     export GEMINI_API_KEY="${GEMINI_API_KEY}"
     
     MODELS=( {{ range .Models }}"{{ . }}" {{ end }} )
+    API_KEYS=( $(echo $GEMINI_API_KEY | tr ',' ' ') )
     SUCCESS=false
     for MODEL in "${MODELS[@]}"; do
-        echo "Trying model: $MODEL"
-        if gemini --yolo --model "$MODEL" < ${PROMPT_FILE} > "$(dirname "${PROMPT_FILE}")/raw-agent-output.txt" 2>&1; then
-             echo "Gemini execution successful with model: $MODEL"
-             SUCCESS=true
-             break
-        else
-             echo "Gemini execution failed with model: $MODEL. Retrying with next model..."
-        fi
+        for API_KEY in "${API_KEYS[@]}"; do
+            echo "Trying model: $MODEL with API key: ${API_KEY:0:4}..."
+            if export GEMINI_API_KEY="${API_KEY}" && gemini --yolo --model "$MODEL" < ${PROMPT_FILE} > "$(dirname "${PROMPT_FILE}")/raw-agent-output.txt" 2>&1; then
+                 echo "Gemini execution successful with model: $MODEL"
+                 SUCCESS=true
+                 break 2
+            else
+                 echo "Gemini execution failed with model: $MODEL and API key: ${API_KEY:0:4}. Retrying..."
+            fi
+        done
     done
 
     if [ "$SUCCESS" = false ]; then

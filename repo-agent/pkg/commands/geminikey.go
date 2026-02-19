@@ -21,6 +21,8 @@ func GetGeminiAPIKey(seed string) (string, error) {
 	if s == "" {
 		return "", fmt.Errorf("GEMINI_API_KEY environment variable is not set")
 	}
+
+	var rawKey string
 	if suffix, ok := strings.CutPrefix(s, "exec:"); ok {
 		cmdParts := strings.Fields(suffix)
 		if len(cmdParts) == 0 {
@@ -44,7 +46,15 @@ func GetGeminiAPIKey(seed string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return strings.TrimSpace(string(out)), nil
+		rawKey = strings.TrimSpace(string(out))
+	} else {
+		rawKey = s
 	}
-	return s, nil
+
+	// Normalize multiple keys (comma, space, or newline separated) to comma separated
+	keys := strings.FieldsFunc(rawKey, func(r rune) bool {
+		return r == ',' || r == ' ' || r == '\n' || r == '\r' || r == '\t'
+	})
+
+	return strings.Join(keys, ","), nil
 }
