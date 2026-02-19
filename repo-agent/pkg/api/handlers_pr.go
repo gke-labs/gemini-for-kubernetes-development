@@ -353,7 +353,6 @@ func SubmitReviewDraft(ctx context.Context, k8sManager *k8s.Manager, namespace, 
 	return nil
 }
 
-
 func (s *Server) deletePR(c *gin.Context) {
 	namespace := s.Auth.GetNamespaceFromContext(c)
 	repo := c.Param("repo")
