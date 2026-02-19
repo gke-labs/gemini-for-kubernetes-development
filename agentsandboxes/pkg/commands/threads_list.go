@@ -58,8 +58,13 @@ func RunThreadsList(ctx context.Context, opt ThreadsListOptions) error {
 		return err
 	}
 
-	executor := client.Executor(ctx, opt.SandboxName)
-	list, err := threads.ListThreads(executor)
+	podID, err := client.PodIDForSandbox(ctx, opt.SandboxName)
+	if err != nil {
+		return err
+	}
+
+	executor := client.Executor(podID)
+	list, err := threads.ListThreads(ctx, executor)
 	if err != nil {
 		return err
 	}

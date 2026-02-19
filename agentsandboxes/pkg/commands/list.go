@@ -40,7 +40,7 @@ func BuildListCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List agent sandboxes",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			return RunList(cmd.Context(), opt)
 		},
 	}
@@ -48,7 +48,7 @@ func BuildListCommand() *cobra.Command {
 }
 
 // RunList executes the list logic.
-func RunList(ctx context.Context, opt ListOptions) error {
+func RunList(ctx context.Context, _ ListOptions) error {
 	client, err := agentsandboxes.NewClient()
 	if err != nil {
 		return err

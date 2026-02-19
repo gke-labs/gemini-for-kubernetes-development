@@ -165,5 +165,3 @@ require (
 )
 
 tool sigs.k8s.io/controller-tools/cmd/controller-gen
-
-replace github.com/gke-labs/gemini-for-kubernetes-development/agentsandboxes => ../agentsandboxes

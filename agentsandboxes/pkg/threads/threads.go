@@ -18,6 +18,7 @@ package threads
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -27,7 +28,7 @@ const RepoSandboxBinary = "/opt/repo-agent/repo-sandbox"
 
 // Executor defines the interface for executing commands in a sandbox.
 type Executor interface {
-	Exec(opts ExecOptions) error
+	Exec(ctx context.Context, opts ExecOptions) error
 }
 
 // ExecOptions holds options for executing a command.
@@ -38,7 +39,7 @@ type ExecOptions struct {
 }
 
 // ListThreads lists LLM threads in the sandbox.
-func ListThreads(executor Executor) ([]ThreadInfo, error) {
+func ListThreads(ctx context.Context, executor Executor) ([]ThreadInfo, error) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
@@ -48,7 +49,7 @@ func ListThreads(executor Executor) ([]ThreadInfo, error) {
 		Stderr:  &stderr,
 	}
 
-	if err := executor.Exec(opts); err != nil {
+	if err := executor.Exec(ctx, opts); err != nil {
 		return nil, fmt.Errorf("failed to list threads: %w, stderr: %s", err, stderr.String())
 	}
 
@@ -60,7 +61,7 @@ func ListThreads(executor Executor) ([]ThreadInfo, error) {
 }
 
 // GetThread gets a specific LLM thread in the sandbox.
-func GetThread(executor Executor, threadID string, includeMessages bool) (*ThreadInfo, error) {
+func GetThread(ctx context.Context, executor Executor, threadID string, includeMessages bool) (*ThreadInfo, error) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
@@ -75,7 +76,7 @@ func GetThread(executor Executor, threadID string, includeMessages bool) (*Threa
 		Stderr:  &stderr,
 	}
 
-	if err := executor.Exec(opts); err != nil {
+	if err := executor.Exec(ctx, opts); err != nil {
 		return nil, fmt.Errorf("failed to get thread: %w, stderr: %s", err, stderr.String())
 	}
 
@@ -92,8 +93,8 @@ func GetThread(executor Executor, threadID string, includeMessages bool) (*Threa
 }
 
 // GetThreadMessages gets the messages for a specific LLM thread in the sandbox.
-func GetThreadMessages(executor Executor, threadID string) ([]ThreadMessage, error) {
-	thread, err := GetThread(executor, threadID, true)
+func GetThreadMessages(ctx context.Context, executor Executor, threadID string) ([]ThreadMessage, error) {
+	thread, err := GetThread(ctx, executor, threadID, true)
 	if err != nil {
 		return nil, err
 	}

@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/agentsandboxes/pkg/threads"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
-	"github.com/gke-labs/gemini-for-kubernetes-development/agentsandboxes/pkg/threads"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -302,31 +302,31 @@ func (s *IssueSandbox) ReadFile(path string) ([]byte, error) {
 	return s.executor.ReadFile(path)
 }
 
-func (s *IssueSandbox) ListThreads() ([]ThreadInfo, error) {
-	return threads.ListThreads(executorWrapper{s.executor})
+func (s *IssueSandbox) ListThreads(ctx context.Context) ([]ThreadInfo, error) {
+	return threads.ListThreads(ctx, executorWrapper{s.executor})
 }
 
-func ListThreads(executor Executor) ([]ThreadInfo, error) {
-	return threads.ListThreads(executorWrapper{executor})
+func ListThreads(ctx context.Context, executor Executor) ([]ThreadInfo, error) {
+	return threads.ListThreads(ctx, executorWrapper{executor})
 }
 
-func (s *IssueSandbox) GetThreadMessages(threadID string) ([]ThreadMessage, error) {
-	return threads.GetThreadMessages(executorWrapper{s.executor}, threadID)
+func (s *IssueSandbox) GetThreadMessages(ctx context.Context, threadID string) ([]ThreadMessage, error) {
+	return threads.GetThreadMessages(ctx, executorWrapper{s.executor}, threadID)
 }
 
-func GetThread(executor Executor, threadID string, includeMessages bool) (*ThreadInfo, error) {
-	return threads.GetThread(executorWrapper{executor}, threadID, includeMessages)
+func GetThread(ctx context.Context, executor Executor, threadID string, includeMessages bool) (*ThreadInfo, error) {
+	return threads.GetThread(ctx, executorWrapper{executor}, threadID, includeMessages)
 }
 
-func GetThreadMessages(executor Executor, threadID string) ([]ThreadMessage, error) {
-	return threads.GetThreadMessages(executorWrapper{executor}, threadID)
+func GetThreadMessages(ctx context.Context, executor Executor, threadID string) ([]ThreadMessage, error) {
+	return threads.GetThreadMessages(ctx, executorWrapper{executor}, threadID)
 }
 
 type executorWrapper struct {
 	inner Executor
 }
 
-func (w executorWrapper) Exec(opts threads.ExecOptions) error {
+func (w executorWrapper) Exec(_ context.Context, opts threads.ExecOptions) error {
 	return w.inner.Exec(ExecOptions{
 		Command: opts.Command,
 		Stdout:  opts.Stdout,

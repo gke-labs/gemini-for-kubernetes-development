@@ -27,6 +27,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -245,28 +246,18 @@ func (c *Client) Get(ctx context.Context, name string) (*Sandbox, error) {
 	}, nil
 }
 
-// ExecOptions holds options for executing a command in a sandbox.
-type ExecOptions struct {
-	Command []string
-	Stdout  io.Writer
-	Stderr  io.Writer
-	Stdin   io.Reader
-}
-
-// Exec executes a command in the specified sandbox.
-func (c *Client) Exec(ctx context.Context, name string, opts ExecOptions) error {
-	// Find the pod for the sandbox
-	// We use the same labeling convention as repo-agent
+// PodIDForSandbox finds the pod ID for the given sandbox name.
+func (c *Client) PodIDForSandbox(ctx context.Context, name string) (types.NamespacedName, error) {
 	labelSelector := fmt.Sprintf("sandbox=devc-%s", name)
 	pods, err := c.kube.CoreV1().Pods(c.ns).List(ctx, metav1.ListOptions{
 		LabelSelector: labelSelector,
 	})
 	if err != nil {
-		return fmt.Errorf("listing pods for sandbox %q: %w", name, err)
+		return types.NamespacedName{}, fmt.Errorf("listing pods for sandbox %q: %w", name, err)
 	}
 
 	if len(pods.Items) == 0 {
-		return fmt.Errorf("no pod found for sandbox %q", name)
+		return types.NamespacedName{}, fmt.Errorf("no pod found for sandbox %q", name)
 	}
 
 	// Pick the first running pod
@@ -281,10 +272,23 @@ func (c *Client) Exec(ctx context.Context, name string, opts ExecOptions) error 
 		pod = &pods.Items[0]
 	}
 
+	return types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, nil
+}
+
+// ExecOptions holds options for executing a command in a sandbox.
+type ExecOptions struct {
+	Command []string
+	Stdout  io.Writer
+	Stderr  io.Writer
+	Stdin   io.Reader
+}
+
+// Exec executes a command in the specified sandbox.
+func (c *Client) Exec(ctx context.Context, podID types.NamespacedName, opts ExecOptions) error {
 	req := c.kube.CoreV1().RESTClient().Post().
 		Resource("pods").
-		Name(pod.Name).
-		Namespace(pod.Namespace).
+		Name(podID.Name).
+		Namespace(podID.Namespace).
 		SubResource("exec").
 		VersionedParams(&corev1.PodExecOptions{
 			Command: opts.Command,
@@ -314,14 +318,13 @@ func (c *Client) Exec(ctx context.Context, name string, opts ExecOptions) error 
 
 // SandboxExecutor implements threads.Executor using the Client.
 type SandboxExecutor struct {
-	Client      *Client
-	SandboxName string
-	Ctx         context.Context
+	Client *Client
+	PodID  types.NamespacedName
 }
 
 // Exec executes a command in the sandbox.
-func (e *SandboxExecutor) Exec(opts threads.ExecOptions) error {
-	return e.Client.Exec(e.Ctx, e.SandboxName, ExecOptions{
+func (e *SandboxExecutor) Exec(ctx context.Context, opts threads.ExecOptions) error {
+	return e.Client.Exec(ctx, e.PodID, ExecOptions{
 		Command: opts.Command,
 		Stdout:  opts.Stdout,
 		Stderr:  opts.Stderr,
@@ -329,10 +332,9 @@ func (e *SandboxExecutor) Exec(opts threads.ExecOptions) error {
 }
 
 // Executor returns an executor for the specified sandbox.
-func (c *Client) Executor(ctx context.Context, name string) *SandboxExecutor {
+func (c *Client) Executor(podID types.NamespacedName) *SandboxExecutor {
 	return &SandboxExecutor{
-		Client:      c,
-		SandboxName: name,
-		Ctx:         ctx,
+		Client: c,
+		PodID:  podID,
 	}
 }

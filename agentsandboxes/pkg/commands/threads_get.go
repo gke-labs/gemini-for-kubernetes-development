@@ -61,8 +61,13 @@ func RunThreadsGet(ctx context.Context, opt ThreadsGetOptions) error {
 		return err
 	}
 
-	executor := client.Executor(ctx, opt.SandboxName)
-	thread, err := threads.GetThread(executor, opt.ThreadID, true)
+	podID, err := client.PodIDForSandbox(ctx, opt.SandboxName)
+	if err != nil {
+		return err
+	}
+
+	executor := client.Executor(podID)
+	thread, err := threads.GetThread(ctx, executor, opt.ThreadID, true)
 	if err != nil {
 		return err
 	}
