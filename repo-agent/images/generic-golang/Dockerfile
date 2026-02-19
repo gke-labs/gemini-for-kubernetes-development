@@ -1,6 +1,6 @@
 # --------------------------------
 # Build the repo-sandbox binary
-FROM golang:1.25 AS build-repo-sandbox
+FROM golang:1.25.7 AS build-repo-sandbox
 WORKDIR /app
 
 # Copy the Go Modules manifests
@@ -23,14 +23,14 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -v -o /repo-sandbox ./cmd
 # --------------------------------
 
 # Build the gh CLI
-FROM golang:1.25 AS build-gh
+FROM golang:1.25.7 AS build-gh
 RUN GOBIN=/bin go install github.com/cli/cli/v2/cmd/gh@v2.82.1
 
 
 # --------------------------------
 
 # Main image
-FROM golang:1.25
+FROM golang:1.25.7
 ENV GOTOOLCHAIN=auto
 
 # We want a functional python, because gemini-cli likes to use python
