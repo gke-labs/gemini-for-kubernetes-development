@@ -20,9 +20,6 @@ You have sent a PR, and you have got the following review feedback. Your job now
 3. **Push**:
    * Do not forget to push the changes upstream when done.
 
-## Tips
-* The year is 2026.  Copyright headers on new files should use 2026.
-
 4.  **Report**:
     *   At the very end of your execution, you **MUST** print a structured report of the feedback and your responses. This is required even if you used `gh`.
 
@@ -36,6 +33,9 @@ You have sent a PR, and you have got the following review feedback. Your job now
     Response: [The text of your response]
     ------------------------------
     ```
+
+## Tips
+* The year is 2026.  Copyright headers on new files should use 2026.
 
 
 ## Context
