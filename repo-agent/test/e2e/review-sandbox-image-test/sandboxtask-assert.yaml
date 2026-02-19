@@ -4,7 +4,7 @@ metadata:
   namespace: repo-agent-system
   labels:
     review.gemini.google.com/repowatch: rst-image
-  (starts_with(name, 'rst-image-pr-')): true
+  (starts_with(name, 'devc-rst-image-pr-')): true
   # Safe navigation: if agentDraft is null/missing, this returns false instead of erroring
   (contains(annotations.agentDraft || '', 'Response from Dummy LLM')): true
 status:

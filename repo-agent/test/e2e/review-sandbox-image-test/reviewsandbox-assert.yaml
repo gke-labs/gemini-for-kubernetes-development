@@ -3,7 +3,7 @@ kind: Sandbox
 metadata:
   labels:
     review.gemini.google.com/repowatch: rst-image
-  (starts_with(name, 'rst-image-pr-')): true
+  (starts_with(name, 'devc-rst-image-pr-')): true
   namespace: repo-agent-system
   ownerReferences:
   - apiVersion: review.gemini.google.com/v1alpha1

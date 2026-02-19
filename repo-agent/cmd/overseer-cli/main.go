@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -51,19 +54,20 @@ func main() {
 
 func buildIssueCommand() *cobra.Command {
 	var number int
+	var prNumber int
 	var taskType string
 
 	cmd := &cobra.Command{
 		Use:   "issue",
 		Short: "Create/ensure sandbox and task for an issue",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runIssue(context.Background(), number, taskType)
+			return runIssue(context.Background(), number, prNumber, taskType)
 		},
 	}
 
 	cmd.Flags().IntVar(&number, "number", 0, "Issue number")
+	cmd.Flags().IntVar(&prNumber, "pr", 0, "PR number to extract issue from")
 	cmd.Flags().StringVar(&taskType, "task", "fix-issue", "Task type (e.g., fix-issue, triage-issue, investigate-failures)")
-	_ = cmd.MarkFlagRequired("number")
 
 	return cmd
 }
@@ -87,7 +91,7 @@ func buildPRCommand() *cobra.Command {
 	return cmd
 }
 
-func runIssue(ctx context.Context, number int, taskType string) error {
+func runIssue(ctx context.Context, number int, prNumber int, taskType string) error {
 	if repoWatchName == "" || namespace == "" {
 		return fmt.Errorf("REPOWATCH_NAME and NAMESPACE environment variables must be set")
 	}
@@ -131,6 +135,19 @@ func runIssue(ctx context.Context, number int, taskType string) error {
 	owner, repo, err := parseRepoURL(repoWatch.Spec.RepoURL)
 	if err != nil {
 		return fmt.Errorf("failed to parse RepoURL: %w", err)
+	}
+
+	if number == 0 && prNumber != 0 {
+		fmt.Printf("Resolving issue from PR %d...\n", prNumber)
+		number, err = resolveIssueFromPR(ctx, owner, repo, prNumber)
+		if err != nil {
+			return fmt.Errorf("failed to resolve issue from PR: %w", err)
+		}
+		fmt.Printf("Resolved to issue %d\n", number)
+	}
+
+	if number == 0 {
+		return fmt.Errorf("either --number or --pr must be provided")
 	}
 
 	issue, _, err := ghClient.Issues.Get(ctx, owner, repo, number)
@@ -235,7 +252,7 @@ func runPR(ctx context.Context, number int, taskType string) error {
 		return fmt.Errorf("failed to get PR %d: %w", number, err)
 	}
 
-	sandboxName := fmt.Sprintf("%s-pr-%d", repoWatch.Name, number)
+	sandboxName := fmt.Sprintf("devc-%s-pr-%d", repoWatch.Name, number)
 
 	// Check if sandbox exists
 	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
@@ -288,7 +305,7 @@ func parseRepoURL(url string) (string, string, error) {
 
 func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, repoWatch *reviewv1alpha1.RepoWatch, issue *githubv39.Issue) error {
 	// Replicate logic from repowatch_controller.go:createIssueSandbox
-	name := fmt.Sprintf("%s-issue-%d", repoWatch.Name, issue.GetNumber())
+	name := fmt.Sprintf("devc-%s-issue-%d", repoWatch.Name, issue.GetNumber())
 	cloneURL := strings.Replace(issue.GetRepositoryURL(), "api.github.com/repos", "github.com", 1) + ".git"
 
 	// We need to fetch user info. In Overseer, we might just use env vars.
@@ -350,7 +367,7 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 
 func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, repoWatch *reviewv1alpha1.RepoWatch, pr *githubv39.PullRequest) error {
 	// Replicate logic from repowatch_controller.go:createPRSandbox
-	name := fmt.Sprintf("%s-pr-%d", repoWatch.Name, pr.GetNumber())
+	name := fmt.Sprintf("devc-%s-pr-%d", repoWatch.Name, pr.GetNumber())
 	cloneURL := pr.GetBase().GetRepo().GetCloneURL()
 
 	userLogin := os.Getenv("GITHUB_USER_ID")
@@ -416,4 +433,24 @@ func randString(n int) string {
 		b[i] = letterBytes[seededRand.Intn(len(letterBytes))]
 	}
 	return string(b)
+}
+
+func resolveIssueFromPR(ctx context.Context, owner, repo string, prNumber int) (int, error) {
+	// Try using gh CLI to get closing issues
+	cmd := exec.CommandContext(ctx, "gh", "pr", "view", fmt.Sprintf("%d", prNumber), "--repo", fmt.Sprintf("%s/%s", owner, repo), "--json", "closingIssuesReferences")
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	if err := cmd.Run(); err == nil {
+		var result struct {
+			ClosingIssuesReferences []struct {
+				Number int `json:"number"`
+			} `json:"closingIssuesReferences"`
+		}
+		if err := json.Unmarshal(stdout.Bytes(), &result); err == nil && len(result.ClosingIssuesReferences) > 0 {
+			return result.ClosingIssuesReferences[0].Number, nil
+		}
+	}
+
+	// Fallback: just return the PR number as its own issue number
+	return prNumber, nil
 }

@@ -154,7 +154,7 @@ func (m *Manager) UpdateSecret(ctx context.Context, namespace, name string, data
 
 func (m *Manager) ScaledownSandbox(ctx context.Context, namespace, repo, prID string) error {
 	log := klog.FromContext(ctx)
-	sandboxName := fmt.Sprintf("%s-pr-%s", repo, prID)
+	sandboxName := fmt.Sprintf("devc-%s-pr-%s", repo, prID)
 
 	log.Info("Scaling down sandbox", "name", sandboxName)
 
@@ -378,7 +378,7 @@ func (m *Manager) ScaledownDevSandboxHelper(ctx context.Context, namespace, name
 
 func (m *Manager) ScaleupSandbox(ctx context.Context, namespace, repo, prID, annotationValue string) error {
 	log := klog.FromContext(ctx)
-	sandboxName := fmt.Sprintf("%s-pr-%s", repo, prID)
+	sandboxName := fmt.Sprintf("devc-%s-pr-%s", repo, prID)
 
 	log.Info("Scaling up sandbox", "name", sandboxName)
 

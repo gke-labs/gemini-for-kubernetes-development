@@ -43,8 +43,7 @@ type AgentSandboxOptions struct {
 
 // NewAgentSandbox creates a new Sandbox (unstructured) and Service object.
 func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *corev1.Service) {
-	name := opt.Name
-	sandboxName := "devc-" + name
+	sandboxName := opt.Name
 
 	if opt.DevcontainerConfigRef == "" {
 		opt.DevcontainerConfigRef = "devcontainer-json"

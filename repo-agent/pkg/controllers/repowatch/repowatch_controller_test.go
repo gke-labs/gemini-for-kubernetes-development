@@ -1410,7 +1410,7 @@ func TestReconcile_MultipleRepoWatchesSameRepo(t *testing.T) {
 	// Validate Sandbox A
 	sandboxA := &unstructured.Unstructured{}
 	sandboxA.SetGroupVersionKind(sandboxList.GroupVersionKind())
-	sandboxAName := types.NamespacedName{Name: fmt.Sprintf("%s-pr-%d", repoWatchA.Name, prNumber), Namespace: "default"}
+	sandboxAName := types.NamespacedName{Name: fmt.Sprintf("devc-%s-pr-%d", repoWatchA.Name, prNumber), Namespace: "default"}
 	g.Expect(r.Client.Get(context.Background(), sandboxAName, sandboxA)).To(gomega.Succeed())
 
 	// Check AGENT_NAME env var for provider
@@ -1434,7 +1434,7 @@ func TestReconcile_MultipleRepoWatchesSameRepo(t *testing.T) {
 	// Validate Sandbox B
 	sandboxB := &unstructured.Unstructured{}
 	sandboxB.SetGroupVersionKind(sandboxList.GroupVersionKind())
-	sandboxBName := types.NamespacedName{Name: fmt.Sprintf("%s-pr-%d", repoWatchB.Name, prNumber), Namespace: "default"}
+	sandboxBName := types.NamespacedName{Name: fmt.Sprintf("devc-%s-pr-%d", repoWatchB.Name, prNumber), Namespace: "default"}
 	g.Expect(r.Client.Get(context.Background(), sandboxBName, sandboxB)).To(gomega.Succeed())
 
 	containersB, foundB, errB := unstructured.NestedSlice(sandboxB.Object, "spec", "podTemplate", "spec", "containers")
