@@ -25,7 +25,8 @@ function Review({
   handleScaleDown,
   handleAddPR,
   lastUpdated,
-  onRefresh
+  onRefresh,
+  showToast,
 }) {
   const [selectedPrId, setSelectedPrId] = useState(null);
   const [isPendingOpen, setIsPendingOpen] = useState(false);
@@ -135,13 +136,13 @@ function Review({
   const selectedPr = allItems.find(p => p.id === selectedPrId);
 
   const getReviewFlairColor = (flairText) => {
-    if (!flairText) return '#3e7f67ff';
+    if (!flairText) return '#3b82f6';
     const text = flairText.toLowerCase();
-    if (text === 'done' || text === 'review ready') return 'green';
-    if (text.includes('reviewing')) return 'orange';
-    if (text.includes('error')) return '#9e2a2aff';
-    if (text === 'submitted' || text === 'review draft created') return '#3f5398ff';
-    return '#cd9945ff'; // Default color
+    if (text === 'done' || text === 'review ready') return '#22c55e';
+    if (text.includes('reviewing') || text.includes('generating')) return '#f59e0b';
+    if (text.includes('error')) return '#ef4444';
+    if (text === 'submitted' || text === 'review draft created') return '#3b82f6';
+    return '#f59e0b';
   };
 
   const renderSidebarItem = (item) => {
@@ -167,7 +168,7 @@ function Review({
               <div className="sidebar-item-header">
                   <span className="sidebar-id">#{item.id}</span>
                   {flairText && item.type === 'active' && (
-                      <span className="sidebar-flair" style={{ backgroundColor: getReviewFlairColor(flairText) }}>
+                      <span className={`sidebar-flair ${flairText.toLowerCase().includes('generating') || flairText.toLowerCase().includes('reviewing') ? 'status-badge-running' : ''}`} style={{ backgroundColor: getReviewFlairColor(flairText) + '1a', color: getReviewFlairColor(flairText), padding: '2px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '700', textTransform: 'uppercase' }}>
                           {flairText}
                       </span>
                   )}
@@ -184,35 +185,78 @@ function Review({
   return (
     <div className="review-container">
         <div className="review-sidebar">
+            {/* Section header with count */}
+            <div className="sidebar-section-header">
+                <span className="sidebar-section-title">Active Reviews</span>
+                <span className="sidebar-section-count">{activeList.length}</span>
+            </div>
             <div className="sidebar-section">
+                {!lastUpdated && activeList.length === 0 && prs.length === 0 && (
+                    <>
+                        {[1,2,3].map(i => (
+                            <div key={i} className="skeleton-sidebar-item" style={{animationDelay: `${i * 100}ms`}}>
+                                <div className="skeleton skeleton-line short" style={{marginBottom: '8px'}}></div>
+                                <div className="skeleton skeleton-line medium"></div>
+                            </div>
+                        ))}
+                    </>
+                )}
                 {activeList.map(renderSidebarItem)}
-                <div className="sidebar-item add-pr" onClick={() => handleAddPR()} style={{textAlign: 'center', cursor: 'pointer', color: 'var(--text-secondary)', border: '1px dashed var(--border-color)'}}>
-                    + Add PR
+                <div className="sidebar-item add-pr" onClick={() => handleAddPR()} style={{textAlign: 'center', cursor: 'pointer', color: 'var(--color-primary)', border: '1px dashed var(--color-primary)', borderRadius: '8px', margin: '8px 12px', opacity: 0.7}}>
+                    <span className="material-symbols-outlined" style={{fontSize: '16px', marginRight: '4px'}}>add</span> Add PR
                 </div>
             </div>
-            {(pendingList.length > 0 || excludedList.length > 0) && <hr className="sidebar-divider" />}
             <div className="sidebar-section">
                 {pendingList.length > 0 && (
                     <>
-                        <h5 className="sidebar-header clickable" onClick={() => setIsPendingOpen(!isPendingOpen)} style={{cursor: 'pointer'}}>
-                           {isPendingOpen ? '▼' : '▶'} Pending
-                        </h5>
+                        <div className="sidebar-section-header" onClick={() => setIsPendingOpen(!isPendingOpen)} style={{cursor: 'pointer'}}>
+                            <span style={{display: 'flex', alignItems: 'center', gap: '4px'}}>
+                                <span className="material-symbols-outlined" style={{fontSize: '16px', color: 'var(--text-muted)'}}>{isPendingOpen ? 'expand_more' : 'chevron_right'}</span>
+                                <span className="sidebar-section-title">Pending</span>
+                            </span>
+                            <span className="sidebar-section-count">{pendingList.length}</span>
+                        </div>
                         {isPendingOpen && pendingList.map(renderSidebarItem)}
                     </>
                 )}
-                
+
                 {excludedList.length > 0 && (
                     <>
-                        <h5 className="sidebar-header clickable" onClick={() => setIsExcludedOpen(!isExcludedOpen)} style={{cursor: 'pointer'}}>
-                           {isExcludedOpen ? '▼' : '▶'} Excluded
-                        </h5>
+                        <div className="sidebar-section-header" onClick={() => setIsExcludedOpen(!isExcludedOpen)} style={{cursor: 'pointer'}}>
+                            <span style={{display: 'flex', alignItems: 'center', gap: '4px'}}>
+                                <span className="material-symbols-outlined" style={{fontSize: '16px', color: 'var(--text-muted)'}}>{isExcludedOpen ? 'expand_more' : 'chevron_right'}</span>
+                                <span className="sidebar-section-title">Excluded</span>
+                            </span>
+                            <span className="sidebar-section-count">{excludedList.length}</span>
+                        </div>
                         {isExcludedOpen && excludedList.map(renderSidebarItem)}
                     </>
                 )}
             </div>
         </div>
         <div className="review-main">
-            {selectedPr ? (
+            {!lastUpdated && !selectedPr && prs.length === 0 && activeList.length === 0 ? (
+                <div style={{padding: '24px'}}>
+                    {/* Skeleton: PR header card */}
+                    <div style={{border: '1px solid var(--border-color)', borderRadius: '12px', padding: '20px', marginBottom: '16px'}}>
+                        <div style={{display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px'}}>
+                            <div className="skeleton" style={{width: '60px', height: '16px', borderRadius: '4px'}}></div>
+                            <div className="skeleton" style={{width: '200px', height: '16px', borderRadius: '4px'}}></div>
+                            <div style={{marginLeft: 'auto'}} className="skeleton" ><div style={{width: '80px', height: '24px', borderRadius: '4px'}}></div></div>
+                        </div>
+                        <div className="skeleton skeleton-line long" style={{marginBottom: '8px'}}></div>
+                        <div className="skeleton skeleton-line medium"></div>
+                    </div>
+                    {/* Skeleton: Task card */}
+                    <div style={{border: '1px solid var(--border-color)', borderRadius: '12px', padding: '20px', marginBottom: '16px'}}>
+                        <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '16px'}}>
+                            <div className="skeleton" style={{width: '120px', height: '14px', borderRadius: '4px'}}></div>
+                            <div className="skeleton" style={{width: '60px', height: '14px', borderRadius: '4px'}}></div>
+                        </div>
+                        <div className="skeleton" style={{height: '80px', borderRadius: '8px'}}></div>
+                    </div>
+                </div>
+            ) : selectedPr ? (
                 <PrReviewCard
                     key={selectedPr.id}
                     pr={selectedPr}
@@ -240,6 +284,7 @@ function Review({
                     lastUpdated={lastUpdated}
                     repoName={activeRepo.name}
                     onRefresh={onRefresh}
+                    showToast={showToast}
                 />
             ) : (
                 <div className="empty-state">

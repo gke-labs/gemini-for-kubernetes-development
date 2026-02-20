@@ -11,6 +11,7 @@ function DevCard({
   handleScaleDown,
   handleFork,
   repoName,
+  showToast,
 }) {
   const [flairText, setFlairText] = useState('');
   const [tasks, setTasks] = useState([]);
@@ -18,13 +19,13 @@ function DevCard({
   const [showTerminal, setShowTerminal] = useState(false);
 
   const getFlairColor = (text) => {
-    if (!text) return '#cd9945ff';
+    if (!text) return '#f59e0b';
     const lower = text.toLowerCase();
-    if (lower.includes('ready') || lower.includes('completed') || lower.includes('submitted')) return 'green';
-    if (lower.includes('running')) return 'orange';
-    if (lower.includes('provisioning')) return '#2196F3';
-    if (lower.includes('error') || lower.includes('failed')) return '#9e2a2aff';
-    return '#cd9945ff';
+    if (lower.includes('ready') || lower.includes('completed') || lower.includes('submitted')) return '#22c55e';
+    if (lower.includes('running')) return '#f59e0b';
+    if (lower.includes('provisioning')) return '#3b82f6';
+    if (lower.includes('error') || lower.includes('failed')) return '#ef4444';
+    return '#f59e0b';
   };
 
   const getTaskStatus = (task) => {
@@ -80,10 +81,10 @@ function DevCard({
       })
       .then(res => {
           if (res.ok) {
-              alert(`Task ${taskType} started!`);
+              if (showToast) showToast(`Task ${taskType} started!`, 'success');
               fetchTasks();
           } else {
-              res.text().then(t => alert("Failed to create task: " + t));
+              res.text().then(t => { if (showToast) showToast("Failed to create task: " + t, 'error'); });
           }
       })
       .catch(err => console.error("Failed to create task", err));
@@ -122,8 +123,8 @@ function DevCard({
             </div>
           )}
           {flairText && sandbox.agentState !== 'provisioning' && (
-            <span 
-              style={{ marginRight: '10px', backgroundColor: getFlairColor(flairText), color: 'white', padding: '5px 10px', borderRadius: '5px', fontSize: 'small' }}
+            <span
+              style={{ marginRight: '10px', backgroundColor: getFlairColor(flairText) + '1a', color: getFlairColor(flairText), padding: '2px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '700', textTransform: 'uppercase' }}
               title={sandbox.agentStateMessage || ''}
             >
               {flairText}
@@ -138,7 +139,7 @@ function DevCard({
                     color: 'var(--text-primary)', 
                     padding: '4px 8px', 
                     border: '1px solid var(--border-color)',
-                    fontFamily: 'monospace',
+                    fontFamily: 'var(--font-mono)',
                     fontWeight: 'bold'
                 }}
                 onClick={(e) => { e.stopPropagation(); setShowTerminal(!showTerminal); }}
@@ -147,7 +148,7 @@ function DevCard({
                 &gt;_
               </button>
               {sandbox.agentState === 'provisioning' ? (
-                <span className="pr-sandbox" style={{backgroundColor: 'var(--text-link)', color: 'white', cursor: 'default'}} title={sandbox.agentStateMessage || ''}>
+                <span className="pr-sandbox" style={{backgroundColor: '#3b82f6', color: 'white', cursor: 'default', animation: 'pulse-subtle 2s ease-in-out infinite'}} title={sandbox.agentStateMessage || ''}>
                   Sandbox Provisioning...
                 </span>
               ) : (
@@ -193,37 +194,47 @@ function DevCard({
       <div style={{padding: '10px'}}>
         {tasks.length > 0 && (
             tasks.slice().reverse().map((task, index) => (
-                <TaskCard 
-                    key={task.name} 
-                    task={task} 
-                    repoName={repoName} 
+                <TaskCard
+                    key={task.name}
+                    task={task}
+                    repoName={repoName}
                     parentId={sandbox.name}
                     parentType="dev"
                     defaultCollapsed={index !== tasks.length - 1}
+                    showToast={showToast}
                 />
             ))
         )}
         
-        {/* Only show task creation buttons if sandbox is active (green) */}
+        {/* Sticky-style action bar for sandbox interactions */}
         {getSandboxStatusClass(sandbox) === 'green' && (
-            <div style={{padding: '10px', borderTop: '1px solid var(--border-color)', marginTop: '10px'}}>
-                <div style={{display: 'flex', gap: '10px', flexDirection: 'column'}}>
-                     <div style={{display: 'flex', gap: '5px'}}>
-                        <textarea 
-                            value={iteratePrompt} 
-                            onChange={(e) => setIteratePrompt(e.target.value)} 
-                            placeholder="Describe changes to iterate on..."
-                            style={{flexGrow: 1, minHeight: '60px', padding: '5px', borderRadius: '4px', border: '1px solid var(--border-color)'}}
-                        />
-                        <button className="btn" onClick={() => {
-                            if (!iteratePrompt.trim()) return;
-                            handleCreateTask('iterate', iteratePrompt);
-                            setIteratePrompt('');
-                        }}>Iterate</button>
-                     </div>
-                     <div style={{display: 'flex', gap: '10px'}}>
-                        {/* Add buttons for standard dev tasks here if needed, e.g., "Run Build", "Run Tests" */}
-                        <button className="btn" onClick={() => handleCreateTask('generic-task', 'Analyze the codebase structure')}>Analyze Codebase</button>
+            <div style={{padding: '16px', borderTop: '1px solid var(--border-color)', marginTop: '10px'}}>
+                <div style={{backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '8px', boxShadow: 'var(--shadow-card)'}}>
+                    <textarea
+                        value={iteratePrompt}
+                        onChange={(e) => setIteratePrompt(e.target.value)}
+                        placeholder="Describe the changes you want to iterate on..."
+                        style={{width: '100%', minHeight: '60px', padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: 'transparent', color: 'var(--text-primary)', fontFamily: 'var(--font-ui)', fontSize: '14px', resize: 'none', outline: 'none', boxSizing: 'border-box'}}
+                    />
+                    <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: '1px solid var(--border-color)', paddingTop: '8px', marginTop: '4px'}}>
+                        <div style={{display: 'flex', gap: '4px'}}>
+                            <button className="header-icon-btn" style={{width: '32px', height: '32px'}} title="Attach context">
+                                <span className="material-symbols-outlined" style={{fontSize: '18px'}}>attach_file</span>
+                            </button>
+                        </div>
+                        <div style={{display: 'flex', gap: '8px'}}>
+                            <button className="btn btn-secondary" style={{padding: '8px 16px', fontSize: '13px', borderColor: 'var(--border-color-input)'}} onClick={() => handleCreateTask('generic-task', 'Analyze the codebase structure')}>
+                                Analyze Codebase
+                            </button>
+                            <button className="btn btn-submit" style={{padding: '8px 24px', fontSize: '13px'}} onClick={() => {
+                                if (!iteratePrompt.trim()) return;
+                                handleCreateTask('iterate', iteratePrompt);
+                                setIteratePrompt('');
+                            }}>
+                                Iterate
+                                <span className="material-symbols-outlined" style={{fontSize: '16px'}}>send</span>
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>

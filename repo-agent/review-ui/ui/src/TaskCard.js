@@ -7,6 +7,7 @@ function TaskCard({
     parentType, // 'issues' or 'dev' or 'prs'
     handleScaleUp,
     defaultCollapsed = false,
+    showToast,
 }) {
     const [localDraft, setLocalDraft] = useState(task.userDraft || task.agentDraft || '');
     const [isCollapsed, setIsCollapsed] = useState(defaultCollapsed);
@@ -74,10 +75,11 @@ function TaskCard({
 
     const getStatusColor = (text) => {
         const t = text.toLowerCase();
-        if (t === 'ready' || t === 'completed') return 'green';
-        if (t === 'running') return 'orange';
-        if (t === 'failed') return '#9e2a2aff';
-        return '#cd9945ff';
+        if (t === 'ready' || t === 'completed') return '#22c55e';
+        if (t === 'running') return '#f59e0b';
+        if (t === 'failed') return '#ef4444';
+        if (t === 'submitted') return '#3b82f6';
+        return '#f59e0b';
     };
 
     const handleSaveDraft = () => {
@@ -104,50 +106,54 @@ function TaskCard({
             })
             .then(res => {
                 if (res.ok) {
-                    alert("Comment submitted!");
+                    if (showToast) showToast("Comment submitted!", 'success');
                 } else {
-                    res.text().then(t => alert("Failed to submit: " + t));
+                    res.text().then(t => { if (showToast) showToast("Failed to submit: " + t, 'error'); });
                 }
             })
             .catch(err => console.error("Failed to submit comment", err));
         } else {
-            // For Dev/PR tasks, we might not have a direct "submit comment" equivalent that posts to GitHub yet
-            // or we might want to just save it as a note or trigger some other action.
-            // For now, let's just alert
-            alert("Submission for this task type is not yet implemented.");
+            if (showToast) showToast("Submission for this task type is not yet implemented.", 'info');
         }
     };
     const isSubmittable = task.agentDraftType === 'submittable';
     return (
-        <div style={{border: '1px solid var(--border-color)', borderRadius: '5px', margin: '10px 0', backgroundColor: 'var(--bg-review-section)'}}>
-            <div 
-                style={{padding: '10px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', backgroundColor: 'var(--bg-hover)'}}
+        <div className="card-animate-in" style={{border: '1px solid var(--border-color)', borderRadius: '12px', margin: '10px 0', backgroundColor: 'var(--bg-review-section)', overflow: 'hidden'}}>
+            {/* Task header with icon */}
+            <div
+                style={{padding: '12px 16px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', backgroundColor: 'var(--bg-hover)'}}
                 onClick={() => setIsCollapsed(!isCollapsed)}
             >
-                <div>
-                    <strong>{task.type.toUpperCase()}</strong>
-                    <span style={{ fontSize: 'small', color: 'var(--text-secondary)', marginLeft: '10px' }}>
+                <div style={{display: 'flex', alignItems: 'center', gap: '10px'}}>
+                    <span className="material-symbols-outlined" style={{fontSize: '20px', color: task.type === 'triage-issue' ? '#f59e0b' : task.type === 'fix-issue' ? '#22c55e' : 'var(--color-primary)'}}>
+                        {task.type === 'triage-issue' ? 'troubleshoot' : task.type === 'fix-issue' ? 'auto_fix_high' : task.type === 'iterate' ? 'sync' : 'task'}
+                    </span>
+                    <strong style={{fontSize: '13px'}}>{task.type.toUpperCase()}</strong>
+                    <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
                         {new Date(task.creationTimestamp).toLocaleString()}
                     </span>
+                    <span className="material-symbols-outlined" style={{fontSize: '16px', color: 'var(--text-muted)'}}>{isCollapsed ? 'chevron_right' : 'expand_more'}</span>
                 </div>
-                <span 
-                    style={{ backgroundColor: getStatusColor(statusText), color: 'white', padding: '2px 8px', borderRadius: '4px', fontSize: 'small' }}
+                <span
+                    className={statusText.toLowerCase() === 'running' ? 'status-badge-running' : ''}
+                    style={{ backgroundColor: getStatusColor(statusText) + '1a', color: getStatusColor(statusText), padding: '2px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '700', textTransform: 'uppercase' }}
                     title={task.agentStateMessage}
                 >
                     {statusText}
                 </span>
             </div>
-            
+
             {!isCollapsed && (
-                <div style={{padding: '15px'}}>
-                    <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '10px 0', gap: '10px' }}>
-                        <button className="btn" onClick={() => setShowLogs(!showLogs)}>
+                <div style={{padding: '16px'}}>
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', paddingBottom: '12px', gap: '10px' }}>
+                        <button className="btn btn-secondary" style={{padding: '6px 12px', fontSize: '12px'}} onClick={() => setShowLogs(!showLogs)}>
+                            <span className="material-symbols-outlined" style={{fontSize: '16px'}}>{showLogs ? 'visibility_off' : 'terminal'}</span>
                             {showLogs ? 'Hide Logs' : 'View Logs'}
                         </button>
                     </div>
                     {showLogs && (
-                        <div className="logs-display" style={{backgroundColor: '#333', color: '#fff', padding: '10px', borderRadius: '5px', marginBottom: '10px', maxHeight: '300px', overflowY: 'auto'}}>
-                            <pre style={{margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'monospace'}}>{logs || 'Loading logs...'}</pre>
+                        <div className="logs-display">
+                            <pre>{logs || 'Loading logs...'}</pre>
                         </div>
                     )}
                     {isSubmittable ? (
@@ -167,14 +173,14 @@ function TaskCard({
                         </>
                     ) : (
                          localDraft && <div style={{
-                            backgroundColor: 'var(--bg-secondary)', 
-                            padding: '10px', 
-                            borderRadius: '5px', 
+                            backgroundColor: 'var(--bg-secondary)',
+                            padding: '10px',
+                            borderRadius: '8px',
                             marginBottom: '10px',
                             border: '1px solid var(--border-color)',
                             overflowX: 'auto'
                         }}>
-                             <pre style={{margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'monospace'}}>{localDraft}</pre>
+                             <pre style={{margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'var(--font-mono)', fontSize: '13px'}}>{localDraft}</pre>
                         </div>
                     )}
                 </div>

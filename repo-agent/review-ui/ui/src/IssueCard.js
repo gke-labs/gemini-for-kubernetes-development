@@ -19,6 +19,7 @@ function IssueCard({
   handleIssueSubmit,
   handleAddIssue,
   availableModels = [],
+  showToast,
 }) {
   const [isCollapsed, setIsCollapsed] = useState(!isMainView);
   const [tasks, setTasks] = useState([]);
@@ -47,10 +48,10 @@ function IssueCard({
       })
       .then(res => {
           if (res.ok) {
-              alert(`Task ${taskType} started!`);
+              if (showToast) showToast(`Task ${taskType} started!`, 'success');
               fetchTasks();
           } else {
-              res.text().then(t => alert("Failed to create task: " + t));
+              res.text().then(t => { if (showToast) showToast("Failed to create task: " + t, 'error'); });
           }
       })
       .catch(err => console.error("Failed to create task", err));
@@ -66,7 +67,7 @@ function IssueCard({
 
   if (issue.type === 'pending' || issue.type === 'excluded') {
       return (
-        <div className="pr-card" style={{opacity: 0.6, border: '1px dashed #ccc'}}>
+        <div className="pr-card" style={{opacity: 0.6, border: '1px dashed var(--border-color)'}}>
              <div className="pr-card-header" style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 20px'}}>
                 <h3 style={{margin: 0}}>
                   {issue.htmlURL ? (
@@ -133,7 +134,7 @@ function IssueCard({
                     color: 'var(--text-primary)', 
                     padding: '4px 8px', 
                     border: '1px solid var(--border-color)',
-                    fontFamily: 'monospace',
+                    fontFamily: 'var(--font-mono)',
                     fontWeight: 'bold'
                 }}
                 onClick={(e) => { e.stopPropagation(); setShowTerminal(!showTerminal); }}
@@ -142,7 +143,7 @@ function IssueCard({
                 &gt;_
               </button>
               {issue.agentState === 'provisioning' ? (
-                <span className="pr-sandbox" style={{backgroundColor: '#2196F3', color: 'white', cursor: 'default'}}>
+                <span className="pr-sandbox" style={{backgroundColor: '#3b82f6', color: 'white', cursor: 'default', animation: 'pulse-subtle 2s ease-in-out infinite'}}>
                   Sandbox Provisioning
                 </span>
               ) : (
@@ -185,81 +186,75 @@ function IssueCard({
         <div style={{padding: '10px'}}>
             {tasks.length > 0 ? (
                 tasks.slice().reverse().map((task, index) => (
-                    <TaskCard 
-                        key={task.name} 
-                        task={task} 
-                        repoName={repoName} 
+                    <TaskCard
+                        key={task.name}
+                        task={task}
+                        repoName={repoName}
                         parentId={issue.id}
                         parentType="issues"
                         defaultCollapsed={index !== tasks.length - 1}
+                        showToast={showToast}
                     />
                 ))
             ) : (
                 <p>No tasks found. Tasks should appear shortly if the sandbox is active.</p>
             )}
             
-            <div style={{padding: '10px', borderTop: '1px solid var(--border-color)', marginTop: '10px'}}>
-                <div style={{display: 'flex', gap: '10px', flexDirection: 'column'}}>
-                     {getSandboxStatusClass(issue) === 'green' && (
-                         <div style={{display: 'flex', gap: '5px'}}>
-                            <textarea 
-                                value={iteratePrompt} 
-                                onChange={(e) => setIteratePrompt(e.target.value)} 
-                                placeholder="Describe changes to iterate on..."
-                                style={{flexGrow: 1, minHeight: '60px', padding: '5px', borderRadius: '4px', border: '1px solid var(--border-color)'}}
+            {/* Sticky-style action bar */}
+            <div style={{padding: '16px', borderTop: '1px solid var(--border-color)', marginTop: '10px'}}>
+                <div style={{backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '8px', boxShadow: 'var(--shadow-card)'}}>
+                    {getSandboxStatusClass(issue) === 'green' && (
+                        <div>
+                            <textarea
+                                value={iteratePrompt}
+                                onChange={(e) => setIteratePrompt(e.target.value)}
+                                placeholder="Describe how to iterate on this fix..."
+                                style={{width: '100%', minHeight: '50px', padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: 'transparent', color: 'var(--text-primary)', fontFamily: 'var(--font-ui)', fontSize: '14px', resize: 'none', outline: 'none', boxSizing: 'border-box'}}
                             />
-                            <button className="btn" onClick={() => {
-                                if (!iteratePrompt.trim()) return;
-                                handleCreateTask('iterate', iteratePrompt, selectedModel ? { model: selectedModel } : {});
-                                setIteratePrompt('');
-                            }}>Iterate</button>
-                         </div>
-                     )}
-                    <div style={{display: 'flex', gap: '10px', alignItems: 'center'}}>
-                        {availableModels && availableModels.length > 0 && (
-                            <div style={{display: 'flex', alignItems: 'center', gap: '5px'}}>
-                                <label style={{fontSize: 'small', color: 'var(--text-secondary)'}}>Model:</label>
-                                <select 
-                                    value={selectedModel} 
-                                    onChange={(e) => setSelectedModel(e.target.value)}
-                                    style={{padding: '4px', borderRadius: '4px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-primary)', color: 'var(--text-primary)'}}
-                                >
-                                    <option value="">Default (All)</option>
-                                    {availableModels.map(m => <option key={m} value={m}>{m}</option>)}
-                                </select>
-                            </div>
-                        )}
-                        <button className="btn" onClick={() => handleCreateTask('triage-issue', '', selectedModel ? { model: selectedModel } : {})}>Triage</button>
-                        <button className="btn" onClick={() => {
-                            const fixTask = tasks.find(t => t.type === 'fix-issue');
-                            if (!fixTask || !fixTask.agentDraft) {
-                                alert("No 'fix-issue' task with a draft found to extract PR ID.");
-                                return;
-                            }
-                            const match = fixTask.agentDraft.match(/\/pull\/(\d+)/);
-                            if (!match) {
-                                alert("Could not extract PR ID from fix-issue draft.");
-                                return;
-                            }
-                            const params = { PULL_REQUEST_ID: match[1] };
-                            if (selectedModel) params.model = selectedModel;
-                            handleCreateTask('address-feedback', '', params);
-                        }}>Address Feedback</button>
-                        <button className="btn" onClick={() => {
-                            const fixTask = tasks.find(t => t.type === 'fix-issue');
-                            if (!fixTask || !fixTask.agentDraft) {
-                                alert("No 'fix-issue' task with a draft found to extract PR ID.");
-                                return;
-                            }
-                            const match = fixTask.agentDraft.match(/\/pull\/(\d+)/);
-                            if (!match) {
-                                alert("Could not extract PR ID from fix-issue draft.");
-                                return;
-                            }
-                            const params = { PULL_REQUEST_ID: match[1] };
-                            if (selectedModel) params.model = selectedModel;
-                            handleCreateTask('investigate-failures', '', params);
-                        }}>Investigate Failures</button>
+                        </div>
+                    )}
+                    <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: getSandboxStatusClass(issue) === 'green' ? '1px solid var(--border-color)' : 'none', paddingTop: '8px'}}>
+                        <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+                            {availableModels && availableModels.length > 0 && (
+                                <div style={{display: 'flex', alignItems: 'center', gap: '4px'}}>
+                                    <span style={{fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)'}}>Model:</span>
+                                    <select
+                                        value={selectedModel}
+                                        onChange={(e) => setSelectedModel(e.target.value)}
+                                        style={{padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-input)', color: 'var(--text-primary)', fontSize: '11px', fontFamily: 'var(--font-ui)'}}
+                                    >
+                                        <option value="">Default</option>
+                                        {availableModels.map(m => <option key={m} value={m}>{m}</option>)}
+                                    </select>
+                                </div>
+                            )}
+                        </div>
+                        <div style={{display: 'flex', gap: '8px', flexWrap: 'wrap'}}>
+                            <button className="btn btn-secondary" style={{padding: '8px 12px', fontSize: '12px', fontWeight: 700}} onClick={() => handleCreateTask('triage-issue', '', selectedModel ? { model: selectedModel } : {})}>
+                                Triage
+                            </button>
+                            <button className="btn btn-secondary" style={{padding: '8px 12px', fontSize: '12px', fontWeight: 700}} onClick={() => {
+                                const fixTask = tasks.find(t => t.type === 'fix-issue');
+                                if (!fixTask || !fixTask.agentDraft) { if (showToast) showToast("No fix-issue task with draft found.", 'info'); return; }
+                                const match = fixTask.agentDraft.match(/\/pull\/(\d+)/);
+                                if (!match) { if (showToast) showToast("Could not extract PR ID.", 'error'); return; }
+                                const params = { PULL_REQUEST_ID: match[1] };
+                                if (selectedModel) params.model = selectedModel;
+                                handleCreateTask('investigate-failures', '', params);
+                            }}>
+                                Investigate
+                            </button>
+                            {getSandboxStatusClass(issue) === 'green' && (
+                                <button className="btn btn-submit" style={{padding: '8px 16px', fontSize: '13px'}} onClick={() => {
+                                    if (!iteratePrompt.trim()) return;
+                                    handleCreateTask('iterate', iteratePrompt, selectedModel ? { model: selectedModel } : {});
+                                    setIteratePrompt('');
+                                }}>
+                                    Iterate
+                                    <span className="material-symbols-outlined" style={{fontSize: '16px'}}>send</span>
+                                </button>
+                            )}
+                        </div>
                     </div>
                 </div>
             </div>
