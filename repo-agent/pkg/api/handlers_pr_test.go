@@ -32,7 +32,7 @@ func TestCreatePRTask(t *testing.T) {
 		gvrSandbox:     "SandboxList",
 		gvrRepoWatch:   "RepoWatchList",
 	})
-	k8sClient := kubernetesfake.NewSimpleClientset()
+	k8sClient := kubernetesfake.NewClientset()
 
 	dynamicClient.PrependReactor("patch", "sandboxes", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
 		patchAction := action.(k8stesting.PatchAction)
