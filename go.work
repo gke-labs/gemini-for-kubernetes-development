@@ -5,4 +5,5 @@ use (
 	./agentsandboxes
 	./dev/tools
 	./repo-agent
+	./services/container-registry
 )
