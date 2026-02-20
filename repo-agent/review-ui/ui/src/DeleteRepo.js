@@ -60,7 +60,7 @@ function DeleteRepo({ repo, onRepoDeleted }) {
                 value={confirmationName}
                 onChange={(e) => setConfirmationName(e.target.value)}
                 placeholder={repo.name}
-                style={{ padding: '5px', borderRadius: '4px', border: '1px solid var(--border-color)' }}
+                style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-input)', color: 'var(--text-primary)' }}
             />
             <button
                 className="btn btn-delete"

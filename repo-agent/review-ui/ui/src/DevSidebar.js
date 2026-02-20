@@ -1,34 +1,24 @@
 import React, { useState } from 'react';
 
-// --- Icons ---
+// --- Icons (Material Symbols) ---
 const ChevronRight = () => (
-  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style={{opacity: 0.8}}>
-    <path fillRule="evenodd" d="M6.22 3.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06L9.94 8 6.22 4.28a.75.75 0 0 1 0-1.06z"/>
-  </svg>
+  <span className="material-symbols-outlined" style={{fontSize: '18px', opacity: 0.5}}>chevron_right</span>
 );
 
 const ChevronDown = () => (
-  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style={{opacity: 0.8}}>
-    <path fillRule="evenodd" d="M3.22 6.22a.75.75 0 0 1 1.06 0L8 9.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0l-4.25-4.25a.75.75 0 0 1 0-1.06z"/>
-  </svg>
+  <span className="material-symbols-outlined" style={{fontSize: '18px', opacity: 0.5}}>expand_more</span>
 );
 
 const FolderIcon = ({ open }) => (
-  <svg width="16" height="16" viewBox="0 0 16 16" fill={open ? "#54aeff" : "#8094a8"} style={{marginRight: '6px'}}>
-    <path d="M1.75 1A1.75 1.75 0 0 0 0 2.75v10.5C0 14.216.784 15 1.75 15h12.5A1.75 1.75 0 0 0 16 13.25v-8.5A1.75 1.75 0 0 0 14.25 3H7.5a.25.25 0 0 1-.2-.1l-.9-1.2C6.07 1.26 5.55 1 5 1H1.75z"/>
-  </svg>
+  <span className="material-symbols-outlined" style={{fontSize: '18px', color: open ? 'var(--color-primary)' : 'rgba(234, 179, 8, 0.6)', marginRight: '6px'}}>folder</span>
 );
 
 const FileIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 16 16" fill="#6a737d" style={{marginRight: '6px'}}>
-    <path d="M2 1.75C2 .784 2.784 0 3.75 0h6.586c.464 0 .909.184 1.237.513l2.914 2.914c.329.328.513.773.513 1.237v9.586A1.75 1.75 0 0 1 13.25 16h-9.5A1.75 1.75 0 0 1 2 14.25V1.75zm1.75-.25a.25.25 0 0 0-.25.25v12.5c0 .138.112.25.25.25h9.5a.25.25 0 0 0 .25-.25V6h-2.75A1.75 1.75 0 0 1 9 4.25V1.5H3.75z"/>
-  </svg>
+  <span className="material-symbols-outlined" style={{fontSize: '18px', color: 'rgba(96, 165, 250, 0.6)', marginRight: '6px'}}>description</span>
 );
 
 const PlusIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
-    <path d="M7.75 2a.75.75 0 0 1 .75.75V7h4.25a.75.75 0 0 1 0 1.5H8.5v4.25a.75.75 0 0 1-1.5 0V8.5H2.75a.75.75 0 0 1 0-1.5H7V2.75A.75.75 0 0 1 7.75 2z"/>
-  </svg>
+  <span className="material-symbols-outlined" style={{fontSize: '18px'}}>add</span>
 );
 
 // --- Tree Node ---
@@ -116,11 +106,11 @@ const ExplorationNode = ({ ideaID, description, isExpanded, onToggle, onAddAppro
                     {ideaID}
                     {description && (
                         <span style={{
-                            fontSize: '0.85em',
-                            color: '#6a737d',
+                            fontSize: '11px',
+                            color: 'var(--text-muted)',
                             fontWeight: 'normal',
                             marginLeft: '8px',
-                            fontFamily: 'monospace'
+                            fontFamily: 'var(--font-mono)'
                         }}>
                             {description}
                         </span>
@@ -211,14 +201,16 @@ function DevSidebar({
     return (
         <div className="dev-sidebar">
             <div className="sidebar-header-row">
-                <span className="sidebar-header-title">EXPLORATIONS</span>
-                <button 
-                    className="sidebar-header-btn" 
-                    onClick={onAddExploration} 
-                    title="New Exploration"
-                >
-                    <PlusIcon />
-                </button>
+                <span className="sidebar-header-title">Explorations</span>
+                <div style={{display: 'flex', gap: '4px'}}>
+                    <button
+                        className="sidebar-header-btn"
+                        onClick={onAddExploration}
+                        title="New Exploration"
+                    >
+                        <span className="material-symbols-outlined" style={{fontSize: '18px'}}>create_new_folder</span>
+                    </button>
+                </div>
             </div>
             
             <div className="sidebar-tree-content">
