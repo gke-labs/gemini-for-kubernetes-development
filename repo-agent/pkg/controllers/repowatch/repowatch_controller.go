@@ -50,11 +50,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/overseer/pkg/overseer"
 	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
 	sandboxtaskv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	pkg_github "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/overseer"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/prompts"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 )

@@ -9,6 +9,8 @@ COPY go.mod go.mod
 COPY go.sum go.sum
 COPY repo-agent/go.mod repo-agent/go.mod
 COPY repo-agent/go.sum repo-agent/go.sum
+COPY overseer/go.mod overseer/go.mod
+COPY overseer/go.sum overseer/go.sum
 COPY agentsandboxes/go.mod agentsandboxes/go.mod
 COPY agentsandboxes/go.sum agentsandboxes/go.sum
 COPY dev/tools/go.mod dev/tools/go.mod
@@ -18,6 +20,7 @@ COPY services/container-registry/go.sum services/container-registry/go.sum
 
 # Copy the source code
 COPY agentsandboxes/ agentsandboxes/
+COPY overseer/ overseer/
 COPY repo-agent/pkg/ repo-agent/pkg/
 COPY repo-agent/api/ repo-agent/api/
 COPY repo-agent/cmd/syncer-controller/ repo-agent/cmd/syncer-controller/

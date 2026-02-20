@@ -80,7 +80,9 @@ create-kind:
 # github presubmits builds and pushed this image separately
 .PHONY: build-and-push-repo-agent
 build-and-push-repo-agent:
+	../dev/tools/push-images --image-prefix=$(REGISTRY) $(KIND_CLUSTER_ARG) --working-dir ../overseer
 	../dev/tools/push-images --image-prefix=$(REGISTRY) $(KIND_CLUSTER_ARG) \
+	--working-dir . \
 	--skip generic-golang \
 	--skip dind-golang \
 	--skip github-mcp-server
@@ -89,6 +91,7 @@ build-and-push-repo-agent:
 install-repo-agent:
 	# Using crd yaml directly due to KRO bug with status fields not being created
 	# cp cmd/repo-sandbox/sandbox-task-rgd.yaml k8s/
+	../dev/tools/deploy-to-kube --image-prefix=$(REGISTRY) --working-dir ../overseer
 	../dev/tools/deploy-to-kube --image-prefix=$(REGISTRY) --working-dir . \
 	--replace .spec.installationName=${CLUSTER_NAME} \
 	--replace .spec.gatewayClassName=${GW_CLASS} \
@@ -206,15 +209,21 @@ port-forward:
 install-repo-agent-latest: install-dep-packages create-secrets
 	../dev/tools/deploy-to-kube --image-prefix=ghcr.io/gke-labs/gemini-for-kubernetes-development/ \
 	--image-tag=latest \
+	--working-dir ../overseer --output-file=bin/overseer-manifest.yaml
+	../dev/tools/deploy-to-kube --image-prefix=ghcr.io/gke-labs/gemini-for-kubernetes-development/ \
+	--image-tag=latest \
 	--replace .spec.installationName=${CLUSTER_NAME} \
 	--replace .spec.gatewayClassName=${GW_CLASS} \
 	--working-dir . --output-file=bin/repo-agent-manifest.yaml
+	kubectl apply -f bin/overseer-manifest.yaml
 	kubectl apply -f bin/repo-agent-manifest.yaml
 
 .PHONY: uninstall-repo-agent-latest
 uninstall-repo-agent-latest:
+	../dev/tools/deploy-to-kube --image-prefix=ghcr.io/gke-labs/gemini-for-kubernetes-development/ --image-tag=latest --working-dir ../overseer --output-file=bin/overseer-manifest.yaml
 	../dev/tools/deploy-to-kube --image-prefix=ghcr.io/gke-labs/gemini-for-kubernetes-development/ --image-tag=latest --working-dir . --output-file=bin/repo-agent-manifest.yaml
 	kubectl delete -f bin/repo-agent-manifest.yaml || true
+	kubectl delete -f bin/overseer-manifest.yaml || true
 	${MAKE} uninstall-dep-packages
 	kubectl delete crd issuesandboxes.custom.agents.x-k8s.io --wait=false || true
 	kubectl patch crd issuesandboxes.custom.agents.x-k8s.io --type=json -p='[{"op":"remove", "path":"/metadata/finalizers", "value":["customresourcecleanup.apiextensions.k8s.io"]}]' || true
