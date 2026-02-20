@@ -1622,9 +1622,9 @@ func (r *Reconciler) reconcileDevSandboxesInternal(ctx context.Context, user *gi
 	// 6. List Existing DevSandboxes
 	sandboxList := &unstructured.UnstructuredList{}
 	sandboxGVK := schema.GroupVersionKind{
-		Group:   "custom.agents.x-k8s.io",
+		Group:   "agents.x-k8s.io",
 		Version: "v1alpha1",
-		Kind:    "IssueSandbox",
+		Kind:    "Sandbox",
 	}
 	sandboxList.SetGroupVersionKind(sandboxGVK)
 	if err := r.List(ctx, sandboxList, client.InNamespace(repoWatch.Namespace), client.MatchingLabels{"sandbox.gemini.google.com/type": "dev"}); err != nil {

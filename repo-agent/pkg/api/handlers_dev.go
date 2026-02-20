@@ -370,6 +370,8 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 		Namespace: namespace,
 		Labels: map[string]string{
 			"review.gemini.google.com/repowatch": repo,
+			"sandbox.gemini.google.com/type":     "dev",
+			"sandbox-type":                       "dev",
 		},
 		Annotations: annotations,
 		CloneURL:    forkCloneURL,
