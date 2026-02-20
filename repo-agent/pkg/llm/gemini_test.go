@@ -21,6 +21,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
 )
 
 func TestGemini_Setup(t *testing.T) {
@@ -111,6 +113,240 @@ func (e *MockCommandExecutor) Run(command string, args ...string) ([]byte, []byt
 	e.Command = command
 	e.Args = args
 	return e.Output, e.Stderr, e.Err
+}
+
+// RecordingCommandExecutor records all calls for verification in tests.
+type RecordingCommandExecutor struct {
+	Calls []RecordedCall
+	// Err is returned for all calls if set
+	Err    error
+	Stderr []byte
+}
+
+type RecordedCall struct {
+	Command string
+	Args    []string
+}
+
+func (e *RecordingCommandExecutor) Run(command string, args ...string) ([]byte, []byte, error) {
+	e.Calls = append(e.Calls, RecordedCall{Command: command, Args: args})
+	return []byte("ok"), e.Stderr, e.Err
+}
+
+func TestGemini_Setup_Extensions(t *testing.T) {
+	// Helper to set up a valid Gemini Setup environment (tokens, workspace)
+	setupEnv := func(t *testing.T) (string, string) {
+		t.Helper()
+		tmpDir := t.TempDir()
+		workspacesDir := filepath.Join(tmpDir, "workspaces")
+		tokensDir := filepath.Join(tmpDir, "tokens")
+		if err := os.MkdirAll(workspacesDir, 0755); err != nil {
+			t.Fatalf("Failed to create workspaces dir: %v", err)
+		}
+		if err := os.MkdirAll(tokensDir, 0755); err != nil {
+			t.Fatalf("Failed to create tokens dir: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(tokensDir, "gemini"), []byte("test-key"), 0644); err != nil {
+			t.Fatalf("Failed to write gemini token: %v", err)
+		}
+		return workspacesDir, tokensDir
+	}
+
+	t.Run("no extensions", func(t *testing.T) {
+		workspacesDir, tokensDir := setupEnv(t)
+		executor := &RecordingCommandExecutor{}
+		g := &Gemini{
+			Executor:       executor,
+			ProviderConfig: ProviderConfig{WorkspacesDir: workspacesDir, TokensDir: tokensDir},
+		}
+		if err := g.Setup(); err != nil {
+			t.Fatalf("Setup() failed: %v", err)
+		}
+		if len(executor.Calls) != 0 {
+			t.Errorf("Expected 0 executor calls, got %d", len(executor.Calls))
+		}
+	})
+
+	t.Run("single extension without ref", func(t *testing.T) {
+		workspacesDir, tokensDir := setupEnv(t)
+		executor := &RecordingCommandExecutor{}
+		g := &Gemini{
+			Executor: executor,
+			ProviderConfig: ProviderConfig{
+				WorkspacesDir: workspacesDir,
+				TokensDir:     tokensDir,
+				Extensions: []reviewv1alpha1.Extension{
+					{Source: "https://github.com/example/ext1"},
+				},
+			},
+		}
+		if err := g.Setup(); err != nil {
+			t.Fatalf("Setup() failed: %v", err)
+		}
+		if len(executor.Calls) != 1 {
+			t.Fatalf("Expected 1 executor call, got %d", len(executor.Calls))
+		}
+		call := executor.Calls[0]
+		if call.Command != "gemini" {
+			t.Errorf("Expected command 'gemini', got %q", call.Command)
+		}
+		expectedArgs := []string{"extensions", "install", "https://github.com/example/ext1", "--consent"}
+		if len(call.Args) != len(expectedArgs) {
+			t.Fatalf("Expected %d args, got %d: %v", len(expectedArgs), len(call.Args), call.Args)
+		}
+		for i, arg := range expectedArgs {
+			if call.Args[i] != arg {
+				t.Errorf("Arg[%d]: expected %q, got %q", i, arg, call.Args[i])
+			}
+		}
+	})
+
+	t.Run("single extension with ref", func(t *testing.T) {
+		workspacesDir, tokensDir := setupEnv(t)
+		executor := &RecordingCommandExecutor{}
+		g := &Gemini{
+			Executor: executor,
+			ProviderConfig: ProviderConfig{
+				WorkspacesDir: workspacesDir,
+				TokensDir:     tokensDir,
+				Extensions: []reviewv1alpha1.Extension{
+					{Source: "https://github.com/example/ext1", Ref: "v1.0.0"},
+				},
+			},
+		}
+		if err := g.Setup(); err != nil {
+			t.Fatalf("Setup() failed: %v", err)
+		}
+		if len(executor.Calls) != 1 {
+			t.Fatalf("Expected 1 executor call, got %d", len(executor.Calls))
+		}
+		call := executor.Calls[0]
+		expectedArgs := []string{"extensions", "install", "https://github.com/example/ext1", "--consent", "--ref", "v1.0.0"}
+		if len(call.Args) != len(expectedArgs) {
+			t.Fatalf("Expected %d args, got %d: %v", len(expectedArgs), len(call.Args), call.Args)
+		}
+		for i, arg := range expectedArgs {
+			if call.Args[i] != arg {
+				t.Errorf("Arg[%d]: expected %q, got %q", i, arg, call.Args[i])
+			}
+		}
+	})
+
+	t.Run("multiple extensions", func(t *testing.T) {
+		workspacesDir, tokensDir := setupEnv(t)
+		executor := &RecordingCommandExecutor{}
+		g := &Gemini{
+			Executor: executor,
+			ProviderConfig: ProviderConfig{
+				WorkspacesDir: workspacesDir,
+				TokensDir:     tokensDir,
+				Extensions: []reviewv1alpha1.Extension{
+					{Source: "https://github.com/example/ext1"},
+					{Source: "https://github.com/example/ext2", Ref: "main"},
+					{Source: "https://github.com/example/ext3", Ref: "abc123"},
+				},
+			},
+		}
+		if err := g.Setup(); err != nil {
+			t.Fatalf("Setup() failed: %v", err)
+		}
+		if len(executor.Calls) != 3 {
+			t.Fatalf("Expected 3 executor calls, got %d", len(executor.Calls))
+		}
+
+		// Verify first call (no ref)
+		if executor.Calls[0].Args[2] != "https://github.com/example/ext1" {
+			t.Errorf("Call 0: expected source 'ext1', got %q", executor.Calls[0].Args[2])
+		}
+		if len(executor.Calls[0].Args) != 4 {
+			t.Errorf("Call 0: expected 4 args (no ref), got %d", len(executor.Calls[0].Args))
+		}
+
+		// Verify second call (with ref "main")
+		if executor.Calls[1].Args[2] != "https://github.com/example/ext2" {
+			t.Errorf("Call 1: expected source 'ext2', got %q", executor.Calls[1].Args[2])
+		}
+		if len(executor.Calls[1].Args) != 6 || executor.Calls[1].Args[5] != "main" {
+			t.Errorf("Call 1: expected ref 'main', got args %v", executor.Calls[1].Args)
+		}
+
+		// Verify third call (with ref "abc123")
+		if executor.Calls[2].Args[2] != "https://github.com/example/ext3" {
+			t.Errorf("Call 2: expected source 'ext3', got %q", executor.Calls[2].Args[2])
+		}
+		if len(executor.Calls[2].Args) != 6 || executor.Calls[2].Args[5] != "abc123" {
+			t.Errorf("Call 2: expected ref 'abc123', got args %v", executor.Calls[2].Args)
+		}
+	})
+
+	t.Run("extension install failure", func(t *testing.T) {
+		workspacesDir, tokensDir := setupEnv(t)
+		executor := &RecordingCommandExecutor{
+			Err:    errors.New("install failed"),
+			Stderr: []byte("permission denied"),
+		}
+		g := &Gemini{
+			Executor: executor,
+			ProviderConfig: ProviderConfig{
+				WorkspacesDir: workspacesDir,
+				TokensDir:     tokensDir,
+				Extensions: []reviewv1alpha1.Extension{
+					{Source: "https://github.com/example/bad-ext"},
+				},
+			},
+		}
+		err := g.Setup()
+		if err == nil {
+			t.Fatal("Setup() should have failed when extension install fails")
+		}
+		if !bytes.Contains([]byte(err.Error()), []byte("failed to install extension")) {
+			t.Errorf("Error should mention 'failed to install extension', got: %v", err)
+		}
+		if !bytes.Contains([]byte(err.Error()), []byte("permission denied")) {
+			t.Errorf("Error should include stderr content, got: %v", err)
+		}
+	})
+
+	t.Run("second extension fails stops early", func(t *testing.T) {
+		workspacesDir, tokensDir := setupEnv(t)
+		callCount := 0
+		// Use a custom executor that fails on the second call
+		executor := &FailOnNthCallExecutor{FailOnCall: 2}
+		g := &Gemini{
+			Executor: executor,
+			ProviderConfig: ProviderConfig{
+				WorkspacesDir: workspacesDir,
+				TokensDir:     tokensDir,
+				Extensions: []reviewv1alpha1.Extension{
+					{Source: "https://github.com/example/ext1"},
+					{Source: "https://github.com/example/ext2"},
+					{Source: "https://github.com/example/ext3"},
+				},
+			},
+		}
+		err := g.Setup()
+		if err == nil {
+			t.Fatal("Setup() should have failed")
+		}
+		callCount = len(executor.Calls)
+		if callCount != 2 {
+			t.Errorf("Expected 2 calls (stop at failure), got %d", callCount)
+		}
+	})
+}
+
+// FailOnNthCallExecutor fails on the Nth call.
+type FailOnNthCallExecutor struct {
+	FailOnCall int
+	Calls      []RecordedCall
+}
+
+func (e *FailOnNthCallExecutor) Run(command string, args ...string) ([]byte, []byte, error) {
+	e.Calls = append(e.Calls, RecordedCall{Command: command, Args: args})
+	if len(e.Calls) == e.FailOnCall {
+		return nil, []byte("error on call"), errors.New("command failed")
+	}
+	return []byte("ok"), nil, nil
 }
 
 func TestGemini_Run(t *testing.T) {

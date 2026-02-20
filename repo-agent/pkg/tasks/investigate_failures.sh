@@ -129,6 +129,13 @@ function runGemini {
     fi
 }
 
+function installExtensions {
+    echo "Installing extensions..."
+    {{- range .Extensions }}
+    gemini extensions install "{{ .Source }}" {{ if .Ref }}--ref "{{ .Ref }}"{{ end }} --consent
+    {{- end }}
+}
+
 # Main execution
 setupGit
 setupGitRepos
@@ -137,4 +144,5 @@ sleep 5
 checkoutPRBranch
 fetchLogs
 configureGemini
+installExtensions
 runGemini

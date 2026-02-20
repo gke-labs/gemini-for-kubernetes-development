@@ -56,6 +56,14 @@ function runGemini {
     grep "^/kind " "$(dirname "${PROMPT_FILE}")/raw-agent-output.txt" > "$(dirname "${PROMPT_FILE}")/agent-output.txt" || true
 }
 
+function installExtensions {
+    echo "Installing extensions..."
+    {{- range .Extensions }}
+    gemini extensions install "{{ .Source }}" {{ if .Ref }}--ref "{{ .Ref }}"{{ end }} --consent
+    {{- end }}
+}
+
 # Main execution
 configureGemini
+installExtensions
 runGemini

@@ -18,6 +18,7 @@ package repowatch
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"hash/fnv"
@@ -1070,10 +1071,11 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 			Replicas:              1,
 			ServiceAccountName:    "issue-sandbox",
 		},
-		DindSupport: repoWatch.Spec.Issue.DindSupport,
-		IssueID:     fmt.Sprintf("%d", *issue.Number),
-		IssueTitle:  *issue.Title,
-		IssueRepo:   repoWatch.GetName(),
+		DindSupport:   repoWatch.Spec.Issue.DindSupport,
+		LLMExtensions: repoWatch.Spec.Issue.LLM.Extensions,
+		IssueID:       fmt.Sprintf("%d", *issue.Number),
+		IssueTitle:    *issue.Title,
+		IssueRepo:     repoWatch.GetName(),
 		//Handler:    "", // Handled per task?
 		BotLogin: botLogin,
 		BotName:  botName,
@@ -1147,6 +1149,10 @@ func (r *Reconciler) ensureIssueTask(ctx context.Context, repoWatch *reviewv1alp
 	}
 	if repoWatch.Spec.Issue.LLM.ConfigdirRef != "" {
 		params["AGENT_LLM_CONFIGDIR"] = repoWatch.Spec.Issue.LLM.ConfigdirRef
+	}
+	if len(repoWatch.Spec.Issue.LLM.Extensions) > 0 {
+		exts, _ := json.Marshal(repoWatch.Spec.Issue.LLM.Extensions)
+		params["AGENT_LLM_EXTENSIONS"] = string(exts)
 	}
 	if len(repoWatch.Spec.Issue.Models) > 0 {
 		params["model"] = strings.Join(repoWatch.Spec.Issue.Models, ",")
@@ -1272,6 +1278,16 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 									map[string]interface{}{"name": "MAX_REVIEW_FILES", "value": strconv.Itoa(repoWatch.Spec.Review.MaxReviewFiles)},
 									map[string]interface{}{"name": "IGNORE_FILES", "value": strings.Join(repoWatch.Spec.Review.IgnoreFiles, ",")},
 									map[string]interface{}{"name": "AGENT_NAME", "value": repoWatch.Spec.Review.LLM.Provider},
+									map[string]interface{}{
+										"name": "AGENT_LLM_EXTENSIONS",
+										"value": func() string {
+											if len(repoWatch.Spec.Review.LLM.Extensions) == 0 {
+												return ""
+											}
+											exts, _ := json.Marshal(repoWatch.Spec.Review.LLM.Extensions)
+											return string(exts)
+										}(),
+									},
 									map[string]interface{}{"name": "GIT_CLONE_URL", "value": fmt.Sprintf("%s#refs/heads/%s", *pr.Head.Repo.CloneURL, *pr.Head.Ref)},
 									map[string]interface{}{"name": "ENVBUILDER_GIT_URL", "value": fmt.Sprintf("%s#refs/heads/%s", *pr.Head.Repo.CloneURL, *pr.Head.Ref)},
 									map[string]interface{}{"name": "GIT_DIFF_URL", "value": *pr.DiffURL},
@@ -1784,6 +1800,10 @@ func (r *Reconciler) createDevSandbox(ctx context.Context, user *github.User, re
 	if repoWatch.Spec.Dev.LLM.Prompt != "" {
 		params["AGENT_PROMPT"] = repoWatch.Spec.Dev.LLM.Prompt
 	}
+	if len(repoWatch.Spec.Dev.LLM.Extensions) > 0 {
+		exts, _ := json.Marshal(repoWatch.Spec.Dev.LLM.Extensions)
+		params["AGENT_LLM_EXTENSIONS"] = string(exts)
+	}
 
 	return r.createSandboxTask(ctx, repoWatch, sb, sb.GetName(), "", "dev-setup", params)
 }
@@ -2055,6 +2075,10 @@ func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *revi
 		}
 		if repoWatch.Spec.Issue.LLM.ConfigdirRef != "" {
 			params["AGENT_LLM_CONFIGDIR"] = repoWatch.Spec.Issue.LLM.ConfigdirRef
+		}
+		if len(repoWatch.Spec.Issue.LLM.Extensions) > 0 {
+			exts, _ := json.Marshal(repoWatch.Spec.Issue.LLM.Extensions)
+			params["AGENT_LLM_EXTENSIONS"] = string(exts)
 		}
 		if len(repoWatch.Spec.Issue.Models) > 0 {
 			params["model"] = strings.Join(repoWatch.Spec.Issue.Models, ",")

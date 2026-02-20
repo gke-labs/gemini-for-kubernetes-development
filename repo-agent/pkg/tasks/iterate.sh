@@ -15,6 +15,29 @@ export GITHUB_USER_NAME="{{ .User.Name }}"
 
 
 
+function configureGemini {
+    echo "Running configureGemini..."
+    echo "creating /root/.gemini directory"
+    mkdir -p /root/.gemini
+
+    echo "writing gemini config"
+    cat <<EOF > /root/.gemini/settings.json
+{
+  "general": {
+    "enableAutoUpdate": false,
+    "retryFetchErrors": true
+  }
+}
+EOF
+}
+
+function installExtensions {
+    echo "Installing extensions..."
+    {{- range .Extensions }}
+    gemini extensions install "{{ .Source }}" {{ if .Ref }}--ref "{{ .Ref }}"{{ end }} --consent
+    {{- end }}
+}
+
 function runGemini {
     # Only run gemini if a prompt was actually provided in env or prompt file is non-empty
     if [ -s "${PROMPT_FILE}" ]; then
@@ -71,5 +94,7 @@ function commitAndPush {
 # Assumes repo is already cloned/ready in workspace by previous tasks or init
 # HACK: Avoid git lock issues
 sleep 5
+configureGemini
+installExtensions
 runGemini
 commitAndPush

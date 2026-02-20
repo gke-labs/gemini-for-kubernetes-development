@@ -92,6 +92,21 @@ func (g *Gemini) Setup() error {
 		return fmt.Errorf("failed to read %s: %v", geminiTokenFile, err)
 	}
 	os.Setenv("GEMINI_API_KEY", string(geminiKey))
+
+	// Install extensions
+	for _, ext := range g.Extensions {
+		klog.Infof("Installing gemini extension: %s (ref: %s)", ext.Source, ext.Ref)
+		args := []string{"extensions", "install", ext.Source, "--consent"}
+		if ext.Ref != "" {
+			args = append(args, "--ref", ext.Ref)
+		}
+		stdout, stderr, err := g.Executor.Run("gemini", args...)
+		if err != nil {
+			return fmt.Errorf("failed to install extension %s: %v. Stderr: %s", ext.Source, err, string(stderr))
+		}
+		klog.Infof("Successfully installed extension %s. Stdout: %s", ext.Source, string(stdout))
+	}
+
 	return nil
 }
 

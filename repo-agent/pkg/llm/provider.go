@@ -17,6 +17,8 @@ package llm
 import (
 	"bytes"
 	"fmt"
+
+	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
 )
 
 const (
@@ -34,6 +36,7 @@ type ProviderConfig struct {
 	RepoDir              string
 	TokensDir            string
 	OutputStartIndicator string
+	Extensions           []reviewv1alpha1.Extension
 }
 
 // Provider defines the interface for interacting with an LLM.

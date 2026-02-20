@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 
+	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 )
 
@@ -16,6 +17,7 @@ type FixIssueModel struct {
 	User          *github.User
 	PromptFile    string
 	Models        []string
+	Extensions    []reviewv1alpha1.Extension
 }
 
 func (m *FixIssueModel) Name() string {

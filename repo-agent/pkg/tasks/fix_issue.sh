@@ -131,6 +131,13 @@ function configureGemini {
 EOF
 }
 
+function installExtensions {
+    echo "Installing extensions..."
+    {{- range .Extensions }}
+    gemini extensions install "{{ .Source }}" {{ if .Ref }}--ref "{{ .Ref }}"{{ end }} --consent
+    {{- end }}
+}
+
 function runGemini {
     echo "running gemini in yolo mode"
     pushd "/workspaces/${REPO_NAME}" > /dev/null
@@ -180,5 +187,6 @@ sleep 5
 checkForExistingPR
 checkoutNewBranch
 configureGemini
+installExtensions
 runGemini
 recordPRLink
