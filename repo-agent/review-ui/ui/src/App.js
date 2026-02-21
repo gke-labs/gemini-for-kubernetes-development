@@ -150,7 +150,7 @@ function App() {
 
   // Check authentication status on load
   useEffect(() => {
-    fetch('/api/auth/status')
+    const authPromise = fetch('/api/auth/status')
       .then(res => {
         if (res.ok) return res.json();
         throw new Error("Not authenticated");
@@ -158,19 +158,21 @@ function App() {
       .then(data => {
         setIsAuthenticated(true);
         setUser(data.user);
-        setIsLoadingAuth(false);
       })
       .catch(() => {
         setIsAuthenticated(false);
-        setIsLoadingAuth(false);
       });
-      
-    fetch('/api/auth/providers')
+
+    const providersPromise = fetch('/api/auth/providers')
       .then(res => res.json())
       .then(data => {
         setGithubAuthEnabled(data.github);
       })
       .catch(err => console.error("Failed to fetch auth providers:", err));
+
+    Promise.all([authPromise, providersPromise]).then(() => {
+      setIsLoadingAuth(false);
+    });
   }, []);
 
   useEffect(() => {
@@ -1468,6 +1470,8 @@ function App() {
           <div className="header-avatar" title={user || (isGuest ? 'Guest' : '')}>
             {(user || 'G').substring(0, 2).toUpperCase()}
           </div>
+          {user && <span style={{fontSize: '13px', color: 'var(--text-secondary)', fontWeight: 500}}>{user}</span>}
+          {isGuest && <span style={{fontSize: '13px', color: 'var(--text-muted)', fontWeight: 500}}>Guest</span>}
         </div>
       </header>
       
