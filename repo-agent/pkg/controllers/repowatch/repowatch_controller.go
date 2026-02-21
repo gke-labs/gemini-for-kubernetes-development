@@ -1046,6 +1046,7 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 			Labels: map[string]string{
 				"review.gemini.google.com/repowatch": repoWatch.Name,
 				"sandbox.gemini.google.com/type":     "issue",
+				"sandbox-type":                       "issue",
 			},
 			Annotations: map[string]string{
 				"agentState": "provisioning",
@@ -1200,6 +1201,8 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 				"namespace": repoWatch.Namespace,
 				"labels": map[string]interface{}{
 					"review.gemini.google.com/repowatch": repoWatch.Name,
+					"sandbox.gemini.google.com/type":     "review",
+					"sandbox-type":                       "review",
 				},
 				"annotations": map[string]interface{}{
 					"agentState":  "provisioning",
@@ -1744,6 +1747,8 @@ func (r *Reconciler) createDevSandbox(ctx context.Context, user *github.User, re
 		Namespace: repoWatch.Namespace,
 		Labels: map[string]string{
 			"review.gemini.google.com/repowatch": repoWatch.Name,
+			"sandbox.gemini.google.com/type":     "dev",
+			"sandbox-type":                       "dev",
 		},
 		CloneURL: cloneURL,
 		HTMLURL:  fmt.Sprintf("https://github.com/%s/%s", forkOwner, forkRepo),

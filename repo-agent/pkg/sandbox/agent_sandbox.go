@@ -103,6 +103,16 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 		labels["sandbox.gemini.google.com/type"] = "issue"
 	}
 
+	if opt.IdeaID != "" {
+		labels["repo-agent.gemini.google.com/idea-id"] = opt.IdeaID
+	}
+	if opt.Approach != "" {
+		labels["repo-agent.gemini.google.com/approach"] = opt.Approach
+	}
+	if opt.ParentApproach != "" {
+		labels["repo-agent.gemini.google.com/parent-approach"] = opt.ParentApproach
+	}
+
 	// Environment variables
 	env := []interface{}{
 		map[string]interface{}{"name": "NAMESPACE", "value": opt.Namespace},
