@@ -80,7 +80,7 @@ create-kind:
 # github presubmits builds and pushed this image separately
 .PHONY: build-and-push-repo-agent
 build-and-push-repo-agent:
-	../dev/tools/push-images --image-prefix=$(REGISTRY) $(KIND_CLUSTER_ARG) --working-dir ../overseer
+	$(MAKE) -C ../overseer push-images REGISTRY=$(REGISTRY) KIND_CLUSTER=$(KIND_CLUSTER)
 	../dev/tools/push-images --image-prefix=$(REGISTRY) $(KIND_CLUSTER_ARG) \
 	--working-dir . \
 	--skip generic-golang \
@@ -91,7 +91,7 @@ build-and-push-repo-agent:
 install-repo-agent:
 	# Using crd yaml directly due to KRO bug with status fields not being created
 	# cp cmd/repo-sandbox/sandbox-task-rgd.yaml k8s/
-	../dev/tools/deploy-to-kube --image-prefix=$(REGISTRY) --working-dir ../overseer
+	$(MAKE) -C ../overseer deploy REGISTRY=$(REGISTRY)
 	../dev/tools/deploy-to-kube --image-prefix=$(REGISTRY) --working-dir . \
 	--replace .spec.installationName=${CLUSTER_NAME} \
 	--replace .spec.gatewayClassName=${GW_CLASS} \
@@ -207,9 +207,7 @@ port-forward:
 # non-ephemeral (GKE) cluster install targets
 .PHONY: install-repo-agent-latest
 install-repo-agent-latest: install-dep-packages create-secrets
-	../dev/tools/deploy-to-kube --image-prefix=ghcr.io/gke-labs/gemini-for-kubernetes-development/ \
-	--image-tag=latest \
-	--working-dir ../overseer --output-file=bin/overseer-manifest.yaml
+	$(MAKE) -C ../overseer deploy REGISTRY=ghcr.io/gke-labs/gemini-for-kubernetes-development/ DEPLOY_ARGS="--image-tag=latest --output-file=$(CURDIR)/bin/overseer-manifest.yaml"
 	../dev/tools/deploy-to-kube --image-prefix=ghcr.io/gke-labs/gemini-for-kubernetes-development/ \
 	--image-tag=latest \
 	--replace .spec.installationName=${CLUSTER_NAME} \
@@ -220,7 +218,7 @@ install-repo-agent-latest: install-dep-packages create-secrets
 
 .PHONY: uninstall-repo-agent-latest
 uninstall-repo-agent-latest:
-	../dev/tools/deploy-to-kube --image-prefix=ghcr.io/gke-labs/gemini-for-kubernetes-development/ --image-tag=latest --working-dir ../overseer --output-file=bin/overseer-manifest.yaml
+	$(MAKE) -C ../overseer deploy REGISTRY=ghcr.io/gke-labs/gemini-for-kubernetes-development/ DEPLOY_ARGS="--image-tag=latest --output-file=$(CURDIR)/bin/overseer-manifest.yaml"
 	../dev/tools/deploy-to-kube --image-prefix=ghcr.io/gke-labs/gemini-for-kubernetes-development/ --image-tag=latest --working-dir . --output-file=bin/repo-agent-manifest.yaml
 	kubectl delete -f bin/repo-agent-manifest.yaml || true
 	kubectl delete -f bin/overseer-manifest.yaml || true
@@ -257,6 +255,7 @@ reload: build-and-push-repo-agent install-repo-agent
 .PHONY: clean
 clean:
 	rm -rf bin
+	$(MAKE) -C ../overseer clean
 
 ##@ E2E Tests
 
