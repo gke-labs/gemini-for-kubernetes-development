@@ -325,10 +325,24 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		user.Email = github.String(githubConfig["email"])
 	}
 
+	// List Pods to check for status/eviction
+	podList := &corev1.PodList{}
+	if err := r.List(ctx, podList, client.InNamespace(repoWatch.Namespace)); err != nil {
+		log.Error(err, "unable to list pods")
+	}
+	podsBySandbox := make(map[string]*corev1.Pod)
+	for i := range podList.Items {
+		pod := &podList.Items[i]
+		// Sandboxes create Pods with label sandbox=devc-<SandboxName>
+		if sandboxLabel, ok := pod.Labels["sandbox"]; ok {
+			podsBySandbox[sandboxLabel] = pod
+		}
+	}
+
 	var reconcileErr error
 	// Reconcile Reviews for Pull Requests
 	log.Info("reconciling reviews")
-	if err := r.reconcileReviews(ctx, repoWatch, ghClient, owner, repo, user); err != nil {
+	if err := r.reconcileReviews(ctx, repoWatch, ghClient, owner, repo, user, podsBySandbox); err != nil {
 		log.Error(err, "unable to reconcile reviews")
 		reconcileErr = errors.Join(reconcileErr, err)
 		// Continue to next reconciliation
@@ -336,7 +350,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 
 	log.Info("reconciling issues")
 	// Reconcile Issues
-	if err := r.reconcileIssues(ctx, repoWatch, ghClient, owner, repo, user); err != nil {
+	if err := r.reconcileIssues(ctx, repoWatch, ghClient, owner, repo, user, podsBySandbox); err != nil {
 		log.Error(err, "unable to reconcile issues")
 		reconcileErr = errors.Join(reconcileErr, err)
 		// Continue to next reconciliation
@@ -344,7 +358,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 
 	log.Info("reconciling dev sandboxes")
 	// Reconcile Dev Sandboxes
-	if err := r.reconcileDevSandboxes(ctx, user, repoWatch, ghClient, repo); err != nil {
+	if err := r.reconcileDevSandboxes(ctx, user, repoWatch, ghClient, repo, podsBySandbox); err != nil {
 		log.Error(err, "unable to reconcile dev sandboxes")
 		reconcileErr = errors.Join(reconcileErr, err)
 		// Continue to next reconciliation
@@ -380,7 +394,7 @@ func (r *Reconciler) setAuthCondition(ctx context.Context, repoWatch *reviewv1al
 	}
 }
 
-func (r *Reconciler) reconcileReviews(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, ghClient *github.Client, owner string, repo string, user *github.User) error {
+func (r *Reconciler) reconcileReviews(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, ghClient *github.Client, owner string, repo string, user *github.User, podsBySandbox map[string]*corev1.Pod) error {
 	log := log.FromContext(ctx)
 
 	explicitPRs := r.getExplicitPRs(ctx, ghClient, repoWatch, owner, repo)
@@ -421,7 +435,7 @@ func (r *Reconciler) reconcileReviews(ctx context.Context, repoWatch *reviewv1al
 		return err
 	}
 
-	watchedPRs, pendingPRs, activeSandboxes := r.reconcileReviewSandboxesInternal(ctx, repoWatch, explicitPRs, prs, sandboxList)
+	watchedPRs, pendingPRs, activeSandboxes := r.reconcileReviewSandboxesInternal(ctx, repoWatch, explicitPRs, prs, sandboxList, podsBySandbox)
 
 	repoWatch.Status.ActiveSandboxCount = activeSandboxes
 	repoWatch.Status.ReviewSandboxes = watchedPRs
@@ -574,7 +588,7 @@ func (r *Reconciler) excludePRs(prs []*github.PullRequest, repoWatch *reviewv1al
 	return filteredPRs
 }
 
-func (r *Reconciler) reconcileReviewSandboxesInternal(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, explicitPRs []*github.PullRequest, prs []*github.PullRequest, sandboxes *unstructured.UnstructuredList) ([]reviewv1alpha1.WatchedPR, []int, int) {
+func (r *Reconciler) reconcileReviewSandboxesInternal(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, explicitPRs []*github.PullRequest, prs []*github.PullRequest, sandboxes *unstructured.UnstructuredList, podsBySandbox map[string]*corev1.Pod) ([]reviewv1alpha1.WatchedPR, []int, int) {
 	log := log.FromContext(ctx)
 
 	ownedSandboxes := getOwnedSandboxes(sandboxes.Items, repoWatch.UID)
@@ -648,10 +662,15 @@ func (r *Reconciler) reconcileReviewSandboxesInternal(ctx context.Context, repoW
 				activeSandboxes--
 			}
 
+			sandboxStatus, err := r.reconcileSandboxPodStatus(ctx, existingSandbox, podsBySandbox, scaledDown)
+			if err != nil {
+				log.Error(err, "unable to reconcile sandbox pod status", "pr", *pr.Number)
+			}
+
 			watchedPRs = append(watchedPRs, reviewv1alpha1.WatchedPR{
 				Number:      *pr.Number,
 				SandboxName: sandboxName,
-				Status:      "Active",
+				Status:      sandboxStatus,
 				ScaledDown:  scaledDown,
 			})
 		} else {
@@ -682,7 +701,7 @@ func (r *Reconciler) reconcileReviewSandboxesInternal(ctx context.Context, repoW
 	return watchedPRs, pendingPRs, activeSandboxes
 }
 
-func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, ghClient *github.Client, owner string, repo string, user *github.User) error {
+func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, ghClient *github.Client, owner string, repo string, user *github.User, podsBySandbox map[string]*corev1.Pod) error {
 	log := log.FromContext(ctx)
 	if repoWatch.Spec.Issue == nil {
 		return nil
@@ -725,20 +744,6 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 	}
 
 	ownedSandboxes := getOwnedSandboxes(sandboxList.Items, repoWatch.UID)
-
-	// List Pods to check for eviction
-	podList := &corev1.PodList{}
-	if err := r.List(ctx, podList, client.InNamespace(repoWatch.Namespace), client.MatchingLabels{"sandbox-type": "issue"}); err != nil {
-		log.Error(err, "unable to list pods")
-	}
-	podsBySandbox := make(map[string]*corev1.Pod)
-	for i := range podList.Items {
-		pod := &podList.Items[i]
-		// RGD creates Pod with label sandbox=devc-<IssueSandboxName>
-		if sandboxLabel, ok := pod.Labels["sandbox"]; ok {
-			podsBySandbox[sandboxLabel] = pod
-		}
-	}
 
 	// 3. Process Issues
 	activeSandboxes := 0
@@ -809,50 +814,9 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 				activeSandboxes--
 			}
 
-			// Check if pod is evicted or has other status
-			podName := existingSandbox.GetName()
-			pod := podsBySandbox[podName]
-			sandboxStatus := "Active"
-			if scaledDown {
-				sandboxStatus = "ScaledDown"
-			}
-
-			podStatusStr := ""
-			if pod != nil {
-				if pod.Status.Reason == "Evicted" {
-					podStatusStr = "Evicted"
-				} else if pod.Status.Phase == corev1.PodFailed {
-					podStatusStr = fmt.Sprintf("fail: %s", pod.Status.Reason)
-				} else {
-					podStatusStr = string(pod.Status.Phase)
-				}
-				sandboxStatus = podStatusStr
-			}
-
-			updateAnnotation := false
-			annotations := existingSandbox.GetAnnotations()
-			if annotations == nil {
-				annotations = make(map[string]string)
-			}
-
-			shouldPersist := podStatusStr != ""
-			if shouldPersist {
-				if annotations["sandbox.gemini.google.com/pod-status"] != podStatusStr {
-					annotations["sandbox.gemini.google.com/pod-status"] = podStatusStr
-					updateAnnotation = true
-				}
-			} else {
-				if _, ok := annotations["sandbox.gemini.google.com/pod-status"]; ok {
-					delete(annotations, "sandbox.gemini.google.com/pod-status")
-					updateAnnotation = true
-				}
-			}
-
-			if updateAnnotation {
-				existingSandbox.SetAnnotations(annotations)
-				if err := r.Update(ctx, existingSandbox); err != nil {
-					log.Error(err, "failed to update sandbox annotation for pod status")
-				}
+			sandboxStatus, err := r.reconcileSandboxPodStatus(ctx, existingSandbox, podsBySandbox, scaledDown)
+			if err != nil {
+				log.Error(err, "unable to reconcile sandbox pod status", "issue", *issue.Number)
 			}
 
 			// Ensure tasks exist for applicable handlers
@@ -1486,7 +1450,7 @@ func randString(n int) string {
 	return string(b)
 }
 
-func (r *Reconciler) reconcileDevSandboxes(ctx context.Context, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, ghClient *github.Client, upstreamRepo string) error {
+func (r *Reconciler) reconcileDevSandboxes(ctx context.Context, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, ghClient *github.Client, upstreamRepo string, podsBySandbox map[string]*corev1.Pod) error {
 	log := log.FromContext(ctx)
 
 	if repoWatch.Spec.Dev.MaxSandboxes == 0 {
@@ -1511,7 +1475,7 @@ func (r *Reconciler) reconcileDevSandboxes(ctx context.Context, user *github.Use
 		return err
 	}
 
-	watchedDevSandboxes, pendingDevBranches, err := r.reconcileDevSandboxesInternal(ctx, user, repoWatch, branches, forkOwner, forkRepo)
+	watchedDevSandboxes, pendingDevBranches, err := r.reconcileDevSandboxesInternal(ctx, user, repoWatch, branches, forkOwner, forkRepo, podsBySandbox)
 	if err != nil {
 		return err
 	}
@@ -1617,7 +1581,7 @@ func (r *Reconciler) getDevCandidateBranches(ctx context.Context, ghClient *gith
 	return sortedBranches, nil
 }
 
-func (r *Reconciler) reconcileDevSandboxesInternal(ctx context.Context, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, branches []*github.Branch, forkOwner, forkRepo string) ([]reviewv1alpha1.DevSandbox, []string, error) {
+func (r *Reconciler) reconcileDevSandboxesInternal(ctx context.Context, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, branches []*github.Branch, forkOwner, forkRepo string, podsBySandbox map[string]*corev1.Pod) ([]reviewv1alpha1.DevSandbox, []string, error) {
 	log := log.FromContext(ctx)
 	// 6. List Existing DevSandboxes
 	sandboxList := &unstructured.UnstructuredList{}
@@ -1678,10 +1642,16 @@ func (r *Reconciler) reconcileDevSandboxesInternal(ctx context.Context, user *gi
 		if !scaledDown {
 			activeSandboxes++
 		}
+
+		sandboxStatus, err := r.reconcileSandboxPodStatus(ctx, &sandbox, podsBySandbox, scaledDown)
+		if err != nil {
+			log.Error(err, "unable to reconcile sandbox pod status", "sandbox", sandbox.GetName())
+		}
+
 		watchedDevSandboxes = append(watchedDevSandboxes, reviewv1alpha1.DevSandbox{
 			BranchName:  branch,
 			SandboxName: sandbox.GetName(),
-			Status:      "Active",
+			Status:      sandboxStatus,
 			ScaledDown:  scaledDown,
 		})
 
@@ -2215,4 +2185,55 @@ func (r *Reconciler) reconcileOverseer(ctx context.Context, repoWatch *reviewv1a
 		return r.Status().Update(ctx, repoWatch)
 	}
 	return nil
+}
+
+func (r *Reconciler) reconcileSandboxPodStatus(ctx context.Context, sandbox *unstructured.Unstructured, podsBySandbox map[string]*corev1.Pod, scaledDown bool) (string, error) {
+	log := log.FromContext(ctx)
+	podName := sandbox.GetName()
+	pod := podsBySandbox[podName]
+	sandboxStatus := "Active"
+	if scaledDown {
+		sandboxStatus = "ScaledDown"
+	}
+
+	podStatusStr := ""
+	if pod != nil {
+		if pod.Status.Reason == "Evicted" {
+			podStatusStr = fmt.Sprintf("Evicted: %s", pod.Status.Message)
+		} else if pod.Status.Phase == corev1.PodFailed {
+			podStatusStr = fmt.Sprintf("fail: %s", pod.Status.Reason)
+		} else {
+			podStatusStr = string(pod.Status.Phase)
+		}
+		sandboxStatus = podStatusStr
+	}
+
+	updateAnnotation := false
+	annotations := sandbox.GetAnnotations()
+	if annotations == nil {
+		annotations = make(map[string]string)
+	}
+
+	shouldPersist := podStatusStr != ""
+	if shouldPersist {
+		if annotations["sandbox.gemini.google.com/pod-status"] != podStatusStr {
+			annotations["sandbox.gemini.google.com/pod-status"] = podStatusStr
+			updateAnnotation = true
+		}
+	} else {
+		if _, ok := annotations["sandbox.gemini.google.com/pod-status"]; ok {
+			delete(annotations, "sandbox.gemini.google.com/pod-status")
+			updateAnnotation = true
+		}
+	}
+
+	if updateAnnotation {
+		sandbox.SetAnnotations(annotations)
+		if err := r.Update(ctx, sandbox); err != nil {
+			log.Error(err, "failed to update sandbox annotation for pod status", "sandbox", sandbox.GetName())
+			return sandboxStatus, err
+		}
+	}
+
+	return sandboxStatus, nil
 }

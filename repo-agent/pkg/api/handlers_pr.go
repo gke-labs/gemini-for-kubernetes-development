@@ -141,6 +141,7 @@ func (s *Server) listPRsFromK8s(ctx context.Context, namespace, repo string) ([]
 		agentState := ""
 		agentStateMessage := ""
 		reviewState := ""
+		sandboxStatus := ""
 		var labels []string
 
 		if val, ok := annotations["userDraft"]; ok {
@@ -158,6 +159,9 @@ func (s *Server) listPRsFromK8s(ctx context.Context, namespace, repo string) ([]
 		if val, ok := annotations["reviewState"]; ok {
 			reviewState = val
 		}
+		if val, ok := annotations["sandbox.gemini.google.com/pod-status"]; ok {
+			sandboxStatus = val
+		}
 		if val, ok := annotations["agentLabels"]; ok {
 			_ = json.Unmarshal([]byte(val), &labels)
 		}
@@ -174,6 +178,7 @@ func (s *Server) listPRsFromK8s(ctx context.Context, namespace, repo string) ([]
 			AgentState:        agentState,
 			AgentStateMessage: agentStateMessage,
 			ReviewState:       reviewState,
+			SandboxStatus:     sandboxStatus,
 			Labels:            labels,
 		}
 		prs = append(prs, pr)

@@ -121,8 +121,9 @@ func TestReconciler_ReconcileIssues_PodEvicted(t *testing.T) {
 			},
 		},
 		Status: corev1.PodStatus{
-			Phase:  corev1.PodFailed,
-			Reason: "Evicted",
+			Phase:   corev1.PodFailed,
+			Reason:  "Evicted",
+			Message: "The node was low on resource: ephemeral-storage",
 		},
 	}
 
@@ -146,7 +147,7 @@ func TestReconciler_ReconcileIssues_PodEvicted(t *testing.T) {
 	g.Expect(fakeClient.Get(context.Background(), types.NamespacedName{Name: repoWatch.Name, Namespace: repoWatch.Namespace}, fetchedRepoWatch)).To(gomega.Succeed())
 
 	g.Expect(fetchedRepoWatch.Status.IssueSandboxes["default"]).To(gomega.HaveLen(1))
-	g.Expect(fetchedRepoWatch.Status.IssueSandboxes["default"][0].Status).To(gomega.Equal("Evicted"))
+	g.Expect(fetchedRepoWatch.Status.IssueSandboxes["default"][0].Status).To(gomega.Equal("Evicted: The node was low on resource: ephemeral-storage"))
 
 	// Verify Annotation
 	fetchedSandbox := &unstructured.Unstructured{}
@@ -155,7 +156,7 @@ func TestReconciler_ReconcileIssues_PodEvicted(t *testing.T) {
 
 	ann := fetchedSandbox.GetAnnotations()
 	g.Expect(ann).NotTo(gomega.BeNil())
-	g.Expect(ann["sandbox.gemini.google.com/pod-status"]).To(gomega.Equal("Evicted"))
+	g.Expect(ann["sandbox.gemini.google.com/pod-status"]).To(gomega.Equal("Evicted: The node was low on resource: ephemeral-storage"))
 }
 
 func TestReconciler_ReconcileIssues_PodFailedOOM(t *testing.T) {

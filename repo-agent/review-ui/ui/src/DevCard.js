@@ -166,6 +166,15 @@ function DevCard({
                   &#9654;
                </button>
              </div>
+          ) : getSandboxStatusClass(sandbox) === 'red' ? (
+            <div style={{display: 'flex', alignItems: 'center', gap: '5px'}}>
+              <span className={`pr-sandbox ${getSandboxStatusClass(sandbox)}`} title={sandbox.sandboxStatus || 'Error'}>
+                {sandbox.sandboxStatus?.startsWith('Evicted') ? 'Evicted' : (sandbox.sandboxStatus || 'Error')}
+              </span>
+              <button className="btn btn-sm pr-sandbox green" style={{padding: '4px 10px', fontSize: '14px'}} onClick={(e) => { e.stopPropagation(); handleScaleUp(sandbox.name); }} title="Restart/Reprovision Sandbox">
+                  &#8635;
+               </button>
+            </div>
           ) : (
             <span className={`pr-sandbox ${getSandboxStatusClass(sandbox)}`}>Sandbox: Not created</span>
           )}
