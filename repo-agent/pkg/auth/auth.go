@@ -150,7 +150,7 @@ func (a *Authenticator) Callback(c *gin.Context) {
 	}
 
 	// Update the secret with the user's token and info
-	if err := a.updateUserSecret(c.Request.Context(), ghUser, token, user); err != nil {
+	if err := a.updateUserSecret(c.Request.Context(), ghUser, token, user, client); err != nil {
 		log.Info("Failed to update user secret", "err", err)
 		c.String(http.StatusInternalServerError, "Failed to update user secret")
 		return
@@ -168,7 +168,7 @@ func (a *Authenticator) Callback(c *gin.Context) {
 	c.Redirect(http.StatusTemporaryRedirect, "/")
 }
 
-func (a *Authenticator) updateUserSecret(ctx context.Context, namespace string, token *oauth2.Token, user *github.User) error {
+func (a *Authenticator) updateUserSecret(ctx context.Context, namespace string, token *oauth2.Token, user *github.User, client *github.Client) error {
 	data := map[string][]byte{
 		k8s.OAuthPATKey: []byte(token.AccessToken),
 	}
@@ -184,6 +184,17 @@ func (a *Authenticator) updateUserSecret(ctx context.Context, namespace string, 
 	}
 	if user.Email != nil {
 		data["email"] = []byte(*user.Email)
+	} else {
+		// Public email not set - fetch primary email via /user/emails (requires user:email scope)
+		emails, _, err := client.Users.ListEmails(ctx, nil)
+		if err == nil {
+			for _, e := range emails {
+				if e.GetPrimary() {
+					data["email"] = []byte(e.GetEmail())
+					break
+				}
+			}
+		}
 	}
 	return a.K8sManager.UpdateSecret(ctx, namespace, k8s.GithubSecretName, data, nil)
 }
