@@ -13,9 +13,11 @@ import (
 )
 
 type Usage struct {
-	Model string `json:"model"`
-	Total int64  `json:"total"`
-	Limit int64  `json:"limit"` // Optional, if we can find it
+	Model          string            `json:"model"`
+	Total          int64             `json:"total"`
+	Limit          int64             `json:"limit,omitempty"`
+	MetricLabels   map[string]string `json:"metric_labels,omitempty"`
+	ResourceLabels map[string]string `json:"resource_labels,omitempty"`
 }
 
 type Checker struct {
@@ -96,8 +98,10 @@ func (c *Checker) GetUsage(ctx context.Context) ([]Usage, error) {
 		}
 
 		usages = append(usages, Usage{
-			Model: model,
-			Total: total,
+			Model:          model,
+			Total:          total,
+			MetricLabels:   resp.Metric.Labels,
+			ResourceLabels: resp.Resource.Labels,
 		})
 	}
 
