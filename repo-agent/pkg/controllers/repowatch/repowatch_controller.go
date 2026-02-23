@@ -1046,6 +1046,7 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 			Labels: map[string]string{
 				"review.gemini.google.com/repowatch": repoWatch.Name,
 				"sandbox.gemini.google.com/type":     "issue",
+				"sandbox-type":                       "issue",
 			},
 			Annotations: map[string]string{
 				"agentState": "provisioning",
@@ -1200,6 +1201,8 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 				"namespace": repoWatch.Namespace,
 				"labels": map[string]interface{}{
 					"review.gemini.google.com/repowatch": repoWatch.Name,
+					"sandbox.gemini.google.com/type":     "review",
+					"sandbox-type":                       "review",
 				},
 				"annotations": map[string]interface{}{
 					"agentState":  "provisioning",
@@ -1622,9 +1625,9 @@ func (r *Reconciler) reconcileDevSandboxesInternal(ctx context.Context, user *gi
 	// 6. List Existing DevSandboxes
 	sandboxList := &unstructured.UnstructuredList{}
 	sandboxGVK := schema.GroupVersionKind{
-		Group:   "custom.agents.x-k8s.io",
+		Group:   "agents.x-k8s.io",
 		Version: "v1alpha1",
-		Kind:    "IssueSandbox",
+		Kind:    "Sandbox",
 	}
 	sandboxList.SetGroupVersionKind(sandboxGVK)
 	if err := r.List(ctx, sandboxList, client.InNamespace(repoWatch.Namespace), client.MatchingLabels{"sandbox.gemini.google.com/type": "dev"}); err != nil {
@@ -1744,6 +1747,8 @@ func (r *Reconciler) createDevSandbox(ctx context.Context, user *github.User, re
 		Namespace: repoWatch.Namespace,
 		Labels: map[string]string{
 			"review.gemini.google.com/repowatch": repoWatch.Name,
+			"sandbox.gemini.google.com/type":     "dev",
+			"sandbox-type":                       "dev",
 		},
 		CloneURL: cloneURL,
 		HTMLURL:  fmt.Sprintf("https://github.com/%s/%s", forkOwner, forkRepo),
