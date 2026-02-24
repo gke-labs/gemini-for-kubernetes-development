@@ -1586,9 +1586,9 @@ func (r *Reconciler) reconcileDevSandboxesInternal(ctx context.Context, user *gi
 	// 6. List Existing DevSandboxes
 	sandboxList := &unstructured.UnstructuredList{}
 	sandboxGVK := schema.GroupVersionKind{
-		Group:   "custom.agents.x-k8s.io",
+		Group:   "agents.x-k8s.io",
 		Version: "v1alpha1",
-		Kind:    "IssueSandbox",
+		Kind:    "Sandbox",
 	}
 	sandboxList.SetGroupVersionKind(sandboxGVK)
 	if err := r.List(ctx, sandboxList, client.InNamespace(repoWatch.Namespace), client.MatchingLabels{"sandbox.gemini.google.com/type": "dev"}); err != nil {
@@ -2199,9 +2199,21 @@ func (r *Reconciler) reconcileSandboxPodStatus(ctx context.Context, sandbox *uns
 	podStatusStr := ""
 	if pod != nil {
 		if pod.Status.Reason == "Evicted" {
-			podStatusStr = fmt.Sprintf("Evicted: %s", pod.Status.Message)
+			if pod.Status.Message != "" {
+				podStatusStr = fmt.Sprintf("Evicted: %s", pod.Status.Message)
+			} else {
+				podStatusStr = "Evicted"
+			}
 		} else if pod.Status.Phase == corev1.PodFailed {
 			podStatusStr = fmt.Sprintf("fail: %s", pod.Status.Reason)
+		} else if pod.Status.Phase == corev1.PodPending {
+			podStatusStr = "Pending"
+			for _, cond := range pod.Status.Conditions {
+				if cond.Type == corev1.PodScheduled && cond.Status == corev1.ConditionFalse {
+					podStatusStr = fmt.Sprintf("Pending: %s", cond.Message)
+					break
+				}
+			}
 		} else {
 			podStatusStr = string(pod.Status.Phase)
 		}
