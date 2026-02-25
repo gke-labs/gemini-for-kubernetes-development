@@ -82,7 +82,8 @@ create-kind:
 build-and-push-repo-agent:
 	$(MAKE) -C ../overseer push-images REGISTRY=$(REGISTRY) KIND_CLUSTER=$(KIND_CLUSTER)
 	../dev/tools/push-images --image-prefix=$(REGISTRY) $(KIND_CLUSTER_ARG) \
-	--working-dir . \
+	--working-dir .. \
+	--images-dir images \
 	--skip generic-golang \
 	--skip dind-golang \
 	--skip github-mcp-server

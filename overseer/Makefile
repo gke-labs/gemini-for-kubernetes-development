@@ -30,7 +30,7 @@ lint-go:
 
 .PHONY: push-images
 push-images:
-	../dev/tools/push-images --image-prefix=$(REGISTRY) $(KIND_CLUSTER_ARG) --working-dir .
+	../dev/tools/push-images --image-prefix=$(REGISTRY) $(KIND_CLUSTER_ARG) --working-dir .. --images-dir images
 
 .PHONY: deploy
 deploy:
