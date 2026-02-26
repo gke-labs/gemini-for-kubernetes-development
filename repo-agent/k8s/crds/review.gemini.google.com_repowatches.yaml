@@ -101,6 +101,9 @@ spec:
                     type: integer
                   maxSandboxes:
                     type: integer
+                  workspaceDiskSize:
+                    default: 10Gi
+                    type: string
                 required:
                 - maxActiveSandboxes
                 - maxSandboxes
@@ -191,6 +194,9 @@ spec:
                     type: array
                   robotAccount:
                     type: string
+                  workspaceDiskSize:
+                    default: 10Gi
+                    type: string
                 required:
                 - maxActiveSandboxes
                 type: object
@@ -276,6 +282,9 @@ spec:
                   reviewShutdownAfterMinutes:
                     type: integer
                   robotAccount:
+                    type: string
+                  workspaceDiskSize:
+                    default: 10Gi
                     type: string
                 required:
                 - maxActiveSandboxes

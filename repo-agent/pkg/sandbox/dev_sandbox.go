@@ -51,6 +51,9 @@ type DevSandboxOptions struct {
 
 	DindSupport string
 
+	// WorkspaceDiskSize specifies the disk size for the workspace PVC.
+	WorkspaceDiskSize string
+
 	// Idea Exploration
 	IdeaID         string
 	Approach       string
