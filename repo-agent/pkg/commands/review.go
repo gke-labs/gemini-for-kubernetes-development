@@ -374,6 +374,7 @@ func (c *ReviewCommand) Run(ctx context.Context) error {
 	maxRuns := 3
 	maxSuccessfulRuns := 2
 	successfulRuns := 0
+	var accumulatedUsage *llm.Stats
 
 	for i := 0; i < maxRuns; i++ {
 		log.Info("Running Agent", "agent", c.AgentName, "attempt", i+1, "maxRuns", maxRuns, "successfulRuns", successfulRuns)
@@ -421,7 +422,8 @@ func (c *ReviewCommand) Run(ctx context.Context) error {
 		}
 
 		// RUN THE AGENT
-		output, err := provider.Run(currentPrompt)
+		output, usage, err := provider.Run(currentPrompt)
+		accumulatedUsage = mergeStats(accumulatedUsage, usage)
 		if err != nil {
 			var quotaErr *llm.QuotaError
 			if errors.As(err, &quotaErr) {
@@ -521,7 +523,8 @@ func (c *ReviewCommand) Run(ctx context.Context) error {
 	// If more than one successful run, accumalatedAgentOutput has duplicated text in Note and Review.Body, so dedupe and combine them.
 	if successfulRuns > 1 {
 		log.Info("Deduplicating and combining agent output text from multiple runs.")
-		combinedNote, err := dedupeAndCombineText(provider, accumulatedAgentOutput.Note)
+		combinedNote, noteUsage, err := dedupeAndCombineText(provider, accumulatedAgentOutput.Note)
+		accumulatedUsage = mergeStats(accumulatedUsage, noteUsage)
 		if err != nil {
 			log.Info("Failed to dedupe and combine Note. Using original Note.", "error", err)
 			combinedNote = accumulatedAgentOutput.Note
@@ -530,7 +533,8 @@ func (c *ReviewCommand) Run(ctx context.Context) error {
 		}
 		accumulatedAgentOutput.Note = combinedNote
 
-		combinedBody, err := dedupeAndCombineText(provider, *accumulatedAgentOutput.Review.Body)
+		combinedBody, bodyUsage, err := dedupeAndCombineText(provider, *accumulatedAgentOutput.Review.Body)
+		accumulatedUsage = mergeStats(accumulatedUsage, bodyUsage)
 		if err != nil {
 			log.Info("Failed to dedupe and combine Body. Using original Body.", "error", err)
 		} else {
@@ -562,8 +566,45 @@ func (c *ReviewCommand) Run(ctx context.Context) error {
 	}
 	log.Info("Wrote agent output", "filename", filename)
 
+	// Write stats for task runner to pick up.
+	if accumulatedUsage != nil {
+		usageJSON, err := json.Marshal(accumulatedUsage)
+		if err != nil {
+			log.Error(err, "Failed to marshal stats")
+		} else {
+			if err := os.WriteFile(c.taskPath("llm-usage.json"), usageJSON, 0644); err != nil {
+				log.Error(err, "Failed to write llm-usage.json")
+			}
+		}
+	}
+
 	updateState("review ready", "")
 	return nil
+}
+
+// mergeStats merges two llm.Stats values, summing all counters per model.
+func mergeStats(accumulated, newUsage *llm.Stats) *llm.Stats {
+	if newUsage == nil {
+		return accumulated
+	}
+	if accumulated == nil {
+		accumulated = &llm.Stats{
+			Models: make(map[string]llm.ModelUsage),
+		}
+	}
+	for model, newData := range newUsage.Models {
+		existing := accumulated.Models[model]
+		existing.API.TotalRequests += newData.API.TotalRequests
+		existing.API.TotalErrors += newData.API.TotalErrors
+		existing.API.TotalLatencyMs += newData.API.TotalLatencyMs
+		existing.Tokens.Input += newData.Tokens.Input
+		existing.Tokens.Output += newData.Tokens.Output
+		existing.Tokens.Total += newData.Tokens.Total
+		existing.Tokens.Cached += newData.Tokens.Cached
+		existing.Tokens.Thoughts += newData.Tokens.Thoughts
+		accumulated.Models[model] = existing
+	}
+	return accumulated
 }
 
 func uniqueStrings(input []string) []string {
@@ -734,20 +775,20 @@ func parseDiffFromURL(url string) ([]*gitdiff.File, error) {
 	return files, nil
 }
 
-func dedupeAndCombineText(provider llm.Provider, text string) (string, error) {
+func dedupeAndCombineText(provider llm.Provider, text string) (string, *llm.Stats, error) {
 	// We get text with sections separated by '---'
 	prompt := fmt.Sprintf("The following text contains multiple sections separated by '---'. Please deduplicate and combine them into a single coherent section of text. Return only the result.\n\n%s", text)
 
-	output, err := provider.Run(prompt)
+	output, usage, err := provider.Run(prompt)
 	if err != nil {
 		var quotaErr *llm.QuotaError
 		if errors.As(err, &quotaErr) {
-			return "", quotaErr
+			return "", nil, quotaErr
 		}
-		return "", err
+		return "", nil, err
 	}
 
-	return string(output), nil
+	return string(output), usage, nil
 }
 
 func shouldIgnoreFile(path string, ignorePatterns []string) bool {

@@ -4,6 +4,7 @@ package sandbox
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -123,7 +124,7 @@ func RunAgent(ctx context.Context, cfg Config) error {
 	}
 
 	// Execute the LLM agent.
-	output, err := provider.Run(cfg.AgentPrompt)
+	output, usage, err := provider.Run(cfg.AgentPrompt)
 	if err != nil {
 		var quotaErr *llm.QuotaError
 		if errors.As(err, &quotaErr) {
@@ -136,6 +137,18 @@ func RunAgent(ctx context.Context, cfg Config) error {
 	}
 	if err := os.WriteFile(cfg.taskPath("agent-output.txt"), output, 0644); err != nil {
 		return fmt.Errorf("failed to write agent-output.txt: %w", err)
+	}
+
+	// Write stats for the task runner to pick up.
+	if usage != nil {
+		usageJSON, err := json.Marshal(usage)
+		if err != nil {
+			log.Error(err, "Failed to marshal stats")
+		} else {
+			if writeErr := os.WriteFile(cfg.taskPath("llm-usage.json"), usageJSON, 0644); writeErr != nil {
+				log.Error(writeErr, "Failed to write llm-usage.json")
+			}
+		}
 	}
 
 	// Report the agent's output as a draft response.

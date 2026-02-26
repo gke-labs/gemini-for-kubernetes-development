@@ -37,6 +37,38 @@ type SandboxTaskSpec struct {
 	Script string `json:"script,omitempty"`
 }
 
+// ModelUsage captures usage statistics for a single model.
+type ModelUsage struct {
+	// TotalRequests is the number of API calls made.
+	// +optional
+	TotalRequests int64 `json:"totalRequests,omitempty"`
+	// TotalErrors is the number of API errors.
+	// +optional
+	TotalErrors int64 `json:"totalErrors,omitempty"`
+	// TotalLatencyMs is the total API latency in milliseconds.
+	// +optional
+	TotalLatencyMs int64 `json:"totalLatencyMs,omitempty"`
+	// InputTokens is the number of input tokens consumed.
+	// +optional
+	InputTokens int64 `json:"inputTokens,omitempty"`
+	// OutputTokens is the number of output tokens generated.
+	// +optional
+	OutputTokens int64 `json:"outputTokens,omitempty"`
+	// TotalTokens is the total tokens consumed.
+	// +optional
+	TotalTokens int64 `json:"totalTokens,omitempty"`
+	// CachedTokens is the number of cached tokens.
+	// +optional
+	CachedTokens int64 `json:"cachedTokens,omitempty"`
+}
+
+// Stats captures aggregated LLM usage statistics for a task.
+type Stats struct {
+	// Models contains per-model usage statistics.
+	// +optional
+	Models map[string]ModelUsage `json:"models,omitempty"`
+}
+
 // SandboxTaskStatus defines the observed state of SandboxTask
 type SandboxTaskStatus struct {
 	// TaskState represents the current state of the task (Pending, Running, Completed, Failed)
@@ -47,6 +79,10 @@ type SandboxTaskStatus struct {
 	// Result of the task execution
 	// +optional
 	Result string `json:"result,omitempty"`
+
+	// Stats captures the LLM usage for this task.
+	// +optional
+	Stats *Stats `json:"stats,omitempty"`
 }
 
 //+kubebuilder:object:root=true

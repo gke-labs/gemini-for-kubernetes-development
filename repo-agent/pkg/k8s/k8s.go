@@ -504,11 +504,17 @@ func (m *Manager) ListSandboxTasks(ctx context.Context, namespace, sandboxName s
 		Version:  "v1alpha1",
 		Resource: "sandboxtasks",
 	}
+
+	labelSelector := ""
+	if sandboxName != "" {
+		labelSelector = fmt.Sprintf("sandbox.gemini.google.com/sandbox-name=%s", sandboxName)
+	}
+
 	unstructuredList, err := m.Client.Resource(gvr).Namespace(namespace).List(ctx, v1.ListOptions{
-		LabelSelector: fmt.Sprintf("sandbox.gemini.google.com/sandbox-name=%s", sandboxName),
+		LabelSelector: labelSelector,
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to list sandboxtasks: %w", err)
 	}
 
 	taskList := &sandboxtaskv1alpha1.SandboxTaskList{}
@@ -516,6 +522,7 @@ func (m *Manager) ListSandboxTasks(ctx context.Context, namespace, sandboxName s
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert unstructured list to SandboxTaskList: %w", err)
 	}
+
 	return taskList, nil
 }
 
@@ -606,7 +613,7 @@ func (m *Manager) CreateSandboxTask(ctx context.Context, namespace, sandboxName,
 	return err
 }
 
-func (m *Manager) UpdateSandboxTaskStatus(ctx context.Context, namespace, taskName, state, result string) error {
+func (m *Manager) UpdateSandboxTaskStatus(ctx context.Context, namespace, taskName, state, result string, stats *sandboxtaskv1alpha1.Stats) error {
 	klog.Infof("Updating task %s status to %s", taskName, state)
 
 	timestamp := time.Now().UTC().Format(time.RFC3339)
@@ -625,15 +632,25 @@ func (m *Manager) UpdateSandboxTaskStatus(ctx context.Context, namespace, taskNa
 		}
 	}
 
+	statusMap := map[string]interface{}{
+		"taskState": state,
+		"result":    result,
+	}
+	if stats != nil {
+		usageMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(stats)
+		if err != nil {
+			klog.Warningf("Failed to convert stats to unstructured: %v", err)
+		} else {
+			statusMap["stats"] = usageMap
+		}
+	}
+
 	applyObj := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
 			"kind":       "SandboxTask",
 			"metadata":   metadata,
-			"status": map[string]interface{}{
-				"taskState": state,
-				"result":    result,
-			},
+			"status":     statusMap,
 		},
 	}
 
