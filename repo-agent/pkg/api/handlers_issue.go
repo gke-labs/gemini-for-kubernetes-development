@@ -82,6 +82,7 @@ func (s *Server) getIssueTasks(c *gin.Context) {
 			UserDraft:         tUserDraft,
 			AgentState:        tAgentState,
 			AgentStateMessage: tAgentStateMessage,
+			Stats:             convertStats(taskItem.Status.Stats),
 		})
 	}
 	// Sort tasks by creation timestamp (newest first)

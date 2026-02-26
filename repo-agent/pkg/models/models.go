@@ -63,6 +63,22 @@ type Condition struct {
 	LastTransitionTime string `json:"lastTransitionTime,omitempty"`
 }
 
+// ModelUsage captures usage statistics for a single LLM model.
+type ModelUsage struct {
+	TotalRequests  int64 `json:"totalRequests,omitempty"`
+	TotalErrors    int64 `json:"totalErrors,omitempty"`
+	TotalLatencyMs int64 `json:"totalLatencyMs,omitempty"`
+	InputTokens    int64 `json:"inputTokens,omitempty"`
+	OutputTokens   int64 `json:"outputTokens,omitempty"`
+	TotalTokens    int64 `json:"totalTokens,omitempty"`
+	CachedTokens   int64 `json:"cachedTokens,omitempty"`
+}
+
+// Stats captures aggregated LLM statistics for a task.
+type Stats struct {
+	Models map[string]ModelUsage `json:"models,omitempty"`
+}
+
 // Task represents a sandbox task
 type Task struct {
 	Name              string `json:"name"`
@@ -75,6 +91,7 @@ type Task struct {
 	UserDraft         string `json:"userDraft,omitempty"`
 	AgentState        string `json:"agentState,omitempty"`
 	AgentStateMessage string `json:"agentStateMessage,omitempty"`
+	Stats             *Stats `json:"stats,omitempty"`
 }
 
 // PR represents a pull request

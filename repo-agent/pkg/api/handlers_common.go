@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	sandboxtaskv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
 	pkgk8s "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -75,6 +76,28 @@ func extractConditions(obj *unstructured.Unstructured) []models.Condition {
 		})
 	}
 	return conditions
+}
+
+// convertStats converts CRD-level Stats to the API model Stats.
+func convertStats(crdStats *sandboxtaskv1alpha1.Stats) *models.Stats {
+	if crdStats == nil || len(crdStats.Models) == 0 {
+		return nil
+	}
+	stats := &models.Stats{
+		Models: make(map[string]models.ModelUsage, len(crdStats.Models)),
+	}
+	for model, data := range crdStats.Models {
+		stats.Models[model] = models.ModelUsage{
+			TotalRequests:  data.TotalRequests,
+			TotalErrors:    data.TotalErrors,
+			TotalLatencyMs: data.TotalLatencyMs,
+			InputTokens:    data.InputTokens,
+			OutputTokens:   data.OutputTokens,
+			TotalTokens:    data.TotalTokens,
+			CachedTokens:   data.CachedTokens,
+		}
+	}
+	return stats
 }
 
 func (s *Server) ensureGeminiKeySet(c *gin.Context, namespace string) bool {
