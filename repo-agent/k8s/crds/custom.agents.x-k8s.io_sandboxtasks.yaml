@@ -15,12 +15,11 @@ spec:
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - description: The state of a ResourceGraphDefinition instance
-      jsonPath: .status.state
+    - description: The state of the sandbox task
+      jsonPath: .status.taskState
       name: State
       type: string
-    - description: Whether a ResourceGraphDefinition instance have all it's subresources
-        ready
+    - description: Whether a sandbox task has all its subresources ready
       jsonPath: .status.conditions[?(@.type=="InstanceSynced")].status
       name: Synced
       type: string
