@@ -51,8 +51,8 @@ type SandboxTaskStatus struct {
 
 //+kubebuilder:object:root=true
 //+kubebuilder:subresource:status
-//+kubebuilder:printcolumn:name="State",type="string",JSONPath=".status.state",description="The state of a ResourceGraphDefinition instance"
-//+kubebuilder:printcolumn:name="Synced",type="string",JSONPath=".status.conditions[?(@.type==\"InstanceSynced\")].status",description="Whether a ResourceGraphDefinition instance have all it's subresources ready"
+//+kubebuilder:printcolumn:name="State",type="string",JSONPath=".status.taskState",description="The state of the sandbox task"
+//+kubebuilder:printcolumn:name="Synced",type="string",JSONPath=".status.conditions[?(@.type==\"InstanceSynced\")].status",description="Whether a sandbox task has all its subresources ready"
 //+kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp",description="Age of the resource"
 
 // SandboxTask is the Schema for the sandboxtasks API
