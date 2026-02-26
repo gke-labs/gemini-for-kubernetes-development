@@ -1,6 +1,98 @@
 package commands
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/bluekeyes/go-gitdiff/gitdiff"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
+)
+
+func TestIsCommentValid(t *testing.T) {
+	tests := []struct {
+		name      string
+		comment   *models.DraftReviewComment
+		diffFiles []*gitdiff.File
+		want      bool
+	}{
+		{
+			name: "valid comment with side RIGHT",
+			comment: func() *models.DraftReviewComment {
+				path := "file.go"
+				line := 10
+				side := "RIGHT"
+				return &models.DraftReviewComment{Path: &path, Line: &line, Side: &side}
+			}(),
+			diffFiles: []*gitdiff.File{
+				{
+					NewName: "file.go",
+					TextFragments: []*gitdiff.TextFragment{
+						{NewPosition: 1, NewLines: 20},
+					},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "valid comment with nil side (defaults to RIGHT)",
+			comment: func() *models.DraftReviewComment {
+				path := "file.go"
+				line := 10
+				return &models.DraftReviewComment{Path: &path, Line: &line, Side: nil}
+			}(),
+			diffFiles: []*gitdiff.File{
+				{
+					NewName: "file.go",
+					TextFragments: []*gitdiff.TextFragment{
+						{NewPosition: 1, NewLines: 20},
+					},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "valid comment with side LEFT",
+			comment: func() *models.DraftReviewComment {
+				path := "file.go"
+				line := 5
+				side := "LEFT"
+				return &models.DraftReviewComment{Path: &path, Line: &line, Side: &side}
+			}(),
+			diffFiles: []*gitdiff.File{
+				{
+					NewName: "file.go",
+					TextFragments: []*gitdiff.TextFragment{
+						{OldPosition: 1, OldLines: 10, NewPosition: 1, NewLines: 20},
+					},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "invalid comment (path missing)",
+			comment: func() *models.DraftReviewComment {
+				line := 10
+				return &models.DraftReviewComment{Path: nil, Line: &line}
+			}(),
+			diffFiles: []*gitdiff.File{
+				{
+					NewName: "file.go",
+					TextFragments: []*gitdiff.TextFragment{
+						{NewPosition: 1, NewLines: 20},
+					},
+				},
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isCommentValid(tt.comment, tt.diffFiles); got != tt.want {
+				t.Errorf("isCommentValid() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
 
 func TestShouldIgnoreFile(t *testing.T) {
 	tests := []struct {

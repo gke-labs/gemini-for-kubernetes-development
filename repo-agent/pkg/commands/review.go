@@ -647,10 +647,14 @@ func isCommentValid(comment *models.DraftReviewComment, diffFiles []*gitdiff.Fil
 	if comment.Path == nil || comment.Line == nil {
 		return false // Invalid comment if path or line is missing
 	}
+	side := "RIGHT"
+	if comment.Side != nil {
+		side = *comment.Side
+	}
 	for _, file := range diffFiles {
 		if file.NewName == *comment.Path {
 			for _, fragment := range file.TextFragments {
-				if *comment.Side == "RIGHT" {
+				if side == "RIGHT" {
 					if fragment.NewPosition <= int64(*comment.Line) && int64(*comment.Line) <= fragment.NewPosition+fragment.NewLines {
 						return true
 					}
