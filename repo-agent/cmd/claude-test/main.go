@@ -76,10 +76,13 @@ func main() {
 
 	fmt.Printf("Sending prompt to Claude: %q\n", prompt)
 
-	resp, err := claude.Run(prompt)
+	resp, usage, err := claude.Run(prompt)
 	if err != nil {
 		klog.Fatalf("failed to run claude: %v", err)
 	}
 
 	fmt.Printf("Response from Claude: %s\n", string(resp))
+	if usage != nil {
+		fmt.Printf("LLM Usage: %+v\n", usage)
+	}
 }
