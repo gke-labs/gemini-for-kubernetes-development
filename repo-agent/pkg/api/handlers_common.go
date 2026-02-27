@@ -95,6 +95,7 @@ func convertStats(crdStats *sandboxtaskv1alpha1.Stats) *models.Stats {
 			OutputTokens:   data.OutputTokens,
 			TotalTokens:    data.TotalTokens,
 			CachedTokens:   data.CachedTokens,
+			ThoughtTokens:  data.ThoughtTokens,
 		}
 	}
 	return stats

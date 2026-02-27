@@ -60,6 +60,9 @@ type ModelUsage struct {
 	// CachedTokens is the number of cached tokens.
 	// +optional
 	CachedTokens int64 `json:"cachedTokens,omitempty"`
+	// ThoughtTokens is the number of reasoning/thinking tokens consumed.
+	// +optional
+	ThoughtTokens int64 `json:"thoughtTokens,omitempty"`
 }
 
 // Stats captures aggregated LLM usage statistics for a task.

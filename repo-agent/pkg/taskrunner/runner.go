@@ -272,11 +272,19 @@ func (tr *TaskRunner) updateTaskStatus(ctx context.Context, task *sandboxtaskv1a
 }
 
 func (tr *TaskRunner) readStats(taskDir string) *sandboxtaskv1alpha1.Stats {
-	data, err := os.ReadFile(filepath.Join(taskDir, "llm-usage.json"))
+	usagePath := filepath.Join(taskDir, "llm-usage.json")
+	data, err := os.ReadFile(usagePath)
 	if err != nil {
 		klog.V(2).Infof("No llm-usage.json found in %s: %v", taskDir, err)
 		return nil
 	}
+
+	// Clean up the file after reading to avoid disk accumulation.
+	defer func() {
+		if err := os.Remove(usagePath); err != nil {
+			klog.Warningf("Failed to remove llm-usage.json after reading: %v", err)
+		}
+	}()
 
 	// The file is written by the llm package as llm.Stats, convert to CRD type.
 	var usage llm.Stats
@@ -301,6 +309,7 @@ func (tr *TaskRunner) readStats(taskDir string) *sandboxtaskv1alpha1.Stats {
 			OutputTokens:   data.Tokens.Output,
 			TotalTokens:    data.Tokens.Total,
 			CachedTokens:   data.Tokens.Cached,
+			ThoughtTokens:  data.Tokens.Thoughts,
 		}
 	}
 	return crdUsage

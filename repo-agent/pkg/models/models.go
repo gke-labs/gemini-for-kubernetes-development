@@ -72,6 +72,7 @@ type ModelUsage struct {
 	OutputTokens   int64 `json:"outputTokens,omitempty"`
 	TotalTokens    int64 `json:"totalTokens,omitempty"`
 	CachedTokens   int64 `json:"cachedTokens,omitempty"`
+	ThoughtTokens  int64 `json:"thoughtTokens,omitempty"`
 }
 
 // Stats captures aggregated LLM statistics for a task.

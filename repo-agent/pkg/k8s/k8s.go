@@ -639,10 +639,9 @@ func (m *Manager) UpdateSandboxTaskStatus(ctx context.Context, namespace, taskNa
 	if stats != nil {
 		usageMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(stats)
 		if err != nil {
-			klog.Warningf("Failed to convert stats to unstructured: %v", err)
-		} else {
-			statusMap["stats"] = usageMap
+			return fmt.Errorf("failed to convert stats to unstructured: %w", err)
 		}
+		statusMap["stats"] = usageMap
 	}
 
 	applyObj := &unstructured.Unstructured{

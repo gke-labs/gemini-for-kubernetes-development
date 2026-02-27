@@ -783,9 +783,9 @@ func dedupeAndCombineText(provider llm.Provider, text string) (string, *llm.Stat
 	if err != nil {
 		var quotaErr *llm.QuotaError
 		if errors.As(err, &quotaErr) {
-			return "", nil, quotaErr
+			return "", usage, quotaErr
 		}
-		return "", nil, err
+		return "", usage, err
 	}
 
 	return string(output), usage, nil

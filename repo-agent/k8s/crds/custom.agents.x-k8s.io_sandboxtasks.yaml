@@ -71,6 +71,9 @@ spec:
                         outputTokens:
                           format: int64
                           type: integer
+                        thoughtTokens:
+                          format: int64
+                          type: integer
                         totalErrors:
                           format: int64
                           type: integer
