@@ -89,7 +89,7 @@ func (c *Claude) ExpandPrompt(prompt string) (string, error) {
 	return prompt, nil
 }
 
-func (c *Claude) Run(prompt string) ([]byte, error) {
+func (c *Claude) Run(prompt string) ([]byte, *Stats, error) {
 	klog.Infof("Claude provider called with prompt: %s", prompt)
 
 	requestBody, err := json.Marshal(map[string]interface{}{
@@ -103,7 +103,7 @@ func (c *Claude) Run(prompt string) ([]byte, error) {
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request body: %w", err)
+		return nil, nil, fmt.Errorf("failed to marshal request body: %w", err)
 	}
 
 	url := c.URL
@@ -112,7 +112,7 @@ func (c *Claude) Run(prompt string) ([]byte, error) {
 	}
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(requestBody))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -125,40 +125,63 @@ func (c *Claude) Run(prompt string) ([]byte, error) {
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to make request: %w", err)
+		return nil, nil, fmt.Errorf("failed to make request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
+		return nil, nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		klog.Infof("Claude API request failed with status %d: %s", resp.StatusCode, string(body))
-		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
+		return nil, nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
 	var response struct {
 		Content []struct {
 			Text string `json:"text"`
 		} `json:"content"`
+		Usage struct {
+			InputTokens  int64 `json:"input_tokens"`
+			OutputTokens int64 `json:"output_tokens"`
+		} `json:"usage"`
+		Model string `json:"model"`
 	}
 	if err := json.Unmarshal(body, &response); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response body: %w", err)
+		return nil, nil, fmt.Errorf("failed to unmarshal response body: %w", err)
 	}
 
 	if len(response.Content) == 0 {
-		return nil, fmt.Errorf("no content in response")
+		return nil, nil, fmt.Errorf("no content in response")
 	}
 
 	output := []byte(response.Content[0].Text)
 	for _, p := range c.postProcessors {
 		output, err = p(output)
 		if err != nil {
-			return nil, fmt.Errorf("failed to apply post-processor: %w", err)
+			return nil, nil, fmt.Errorf("failed to apply post-processor: %w", err)
 		}
 	}
 
-	return output, nil
+	// Extract usage from Claude's response
+	model := response.Model
+	if model == "" {
+		model = defaultClaudeModel
+	}
+	usage := &Stats{
+		Models: map[string]ModelUsage{
+			model: {
+				API: APIUsage{TotalRequests: 1},
+				Tokens: TokenUsage{
+					Input:  response.Usage.InputTokens,
+					Output: response.Usage.OutputTokens,
+					Total:  response.Usage.InputTokens + response.Usage.OutputTokens,
+				},
+			},
+		},
+	}
+
+	return output, usage, nil
 }

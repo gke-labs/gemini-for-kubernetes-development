@@ -62,7 +62,7 @@ func (d *Dummy) response(prompt string) []byte {
 	return []byte("Response from Dummy LLM. This is a test")
 }
 
-func (d *Dummy) Run(prompt string) ([]byte, error) {
+func (d *Dummy) Run(prompt string) ([]byte, *Stats, error) {
 	var err error
 	klog.Infof("Dummy provider running with prompt")
 	// sleep to simulate processing time
@@ -71,10 +71,18 @@ func (d *Dummy) Run(prompt string) ([]byte, error) {
 	for _, p := range d.processors {
 		output, err = p(output)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
-	return output, nil
+	usage := &Stats{
+		Models: map[string]ModelUsage{
+			"dummy": {
+				API:    APIUsage{TotalRequests: 1},
+				Tokens: TokenUsage{Input: 100, Output: 50, Total: 150},
+			},
+		},
+	}
+	return output, usage, nil
 }
 
 func (d *Dummy) AddPostProcessor(p PostProcessor) {

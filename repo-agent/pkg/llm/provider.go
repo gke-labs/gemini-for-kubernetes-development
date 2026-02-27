@@ -44,11 +44,38 @@ type Provider interface {
 	Setup() error
 	Cleanup() error
 	ExpandPrompt(prompt string) (string, error)
-	Run(prompt string) ([]byte, error)
+	Run(prompt string) ([]byte, *Stats, error)
 	// AddPostProcessor adds a post-processing function to the provider.
 	// These functions are applied sequentially to the LLM's raw output.
 	AddPostProcessor(p PostProcessor)
 	QuotaCheck() bool
+}
+
+// Stats captures usage statistics from an LLM invocation.
+type Stats struct {
+	Models map[string]ModelUsage `json:"models,omitempty"`
+}
+
+// ModelUsage captures per-model usage statistics.
+type ModelUsage struct {
+	API    APIUsage   `json:"api"`
+	Tokens TokenUsage `json:"tokens"`
+}
+
+// APIUsage captures API call statistics for a model.
+type APIUsage struct {
+	TotalRequests  int64 `json:"totalRequests"`
+	TotalErrors    int64 `json:"totalErrors"`
+	TotalLatencyMs int64 `json:"totalLatencyMs"`
+}
+
+// TokenUsage captures token consumption for a model.
+type TokenUsage struct {
+	Input    int64 `json:"input"`
+	Output   int64 `json:"output"`
+	Total    int64 `json:"total"`
+	Cached   int64 `json:"cached"`
+	Thoughts int64 `json:"thoughts"`
 }
 
 // QuotaError is returned by Run() when the LLM API returns an "Out of Quota" error.

@@ -2,6 +2,7 @@ package taskrunner
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -14,6 +15,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/agentserver"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/llm"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 	"k8s.io/klog/v2"
 )
@@ -118,7 +120,7 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 	klog.Infof("Processing task: %s", taskName)
 
 	// Update status to Running
-	tr.updateTaskStatus(ctx, task, "Running", "")
+	tr.updateTaskStatus(ctx, task, "Running", "", nil)
 
 	taskType := task.Spec.Type
 	params := task.Spec.Params
@@ -130,7 +132,7 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 	f, err := os.Create(logFile)
 	if err != nil {
 		klog.Errorf("Failed to create log file: %v", err)
-		tr.updateTaskStatus(ctx, task, "Failed", fmt.Sprintf("failed to create log file: %v", err))
+		tr.updateTaskStatus(ctx, task, "Failed", fmt.Sprintf("failed to create log file: %v", err), nil)
 		return
 	}
 	defer f.Close()
@@ -222,19 +224,19 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 			cmd = exec.Command("/bin/sh", "-c", command)
 			cmd.Env = os.Environ()
 		} else {
-			tr.updateTaskStatus(ctx, task, "Failed", "missing 'command' param")
+			tr.updateTaskStatus(ctx, task, "Failed", "missing 'command' param", nil)
 			return
 		}
 
 	default:
 		klog.Warningf("Unknown task type: %s", taskType)
-		tr.updateTaskStatus(ctx, task, "Failed", "unknown task type")
+		tr.updateTaskStatus(ctx, task, "Failed", "unknown task type", nil)
 		return
 	}
 
 	taskDir, err := tr.createTaskDir(taskName)
 	if err != nil {
-		tr.updateTaskStatus(ctx, task, "Failed", err.Error())
+		tr.updateTaskStatus(ctx, task, "Failed", err.Error(), nil)
 		return
 	}
 	cmd.Env = append(cmd.Env, fmt.Sprintf("NAME=%s", taskName))
@@ -245,24 +247,70 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 	klog.Infof("Starting command for task %s", taskName)
 	if err := cmd.Start(); err != nil {
 		klog.Errorf("Failed to start command: %v", err)
-		tr.updateTaskStatus(ctx, task, "Failed", err.Error())
+		tr.updateTaskStatus(ctx, task, "Failed", err.Error(), nil)
 		return
 	}
 
 	if err := cmd.Wait(); err != nil {
 		klog.Errorf("Command failed: %v", err)
-		tr.updateTaskStatus(ctx, task, "Failed", err.Error())
+		usage := tr.readStats(taskDir)
+		tr.updateTaskStatus(ctx, task, "Failed", err.Error(), usage)
 		_ = tr.ao.SetAgentState(ctx, "Failed "+taskType, err.Error())
 	} else {
 		klog.Infof("Task %s completed successfully", taskName)
-		tr.updateTaskStatus(ctx, task, "Completed", "")
+		usage := tr.readStats(taskDir)
+		tr.updateTaskStatus(ctx, task, "Completed", "", usage)
 		// Set sandbox state to Running Task
 		_ = tr.ao.SetAgentState(ctx, taskType+" Ready", "")
 	}
 }
 
-func (tr *TaskRunner) updateTaskStatus(ctx context.Context, task *sandboxtaskv1alpha1.SandboxTask, state, result string) {
-	if err := tr.manager.UpdateSandboxTaskStatus(ctx, tr.namespace, task.GetName(), state, result); err != nil {
+func (tr *TaskRunner) updateTaskStatus(ctx context.Context, task *sandboxtaskv1alpha1.SandboxTask, state, result string, stats *sandboxtaskv1alpha1.Stats) {
+	if err := tr.manager.UpdateSandboxTaskStatus(ctx, tr.namespace, task.GetName(), state, result, stats); err != nil {
 		klog.Errorf("Failed to update task status: %v", err)
 	}
+}
+
+func (tr *TaskRunner) readStats(taskDir string) *sandboxtaskv1alpha1.Stats {
+	usagePath := filepath.Join(taskDir, "llm-usage.json")
+	data, err := os.ReadFile(usagePath)
+	if err != nil {
+		klog.V(2).Infof("No llm-usage.json found in %s: %v", taskDir, err)
+		return nil
+	}
+
+	// Clean up the file after reading to avoid disk accumulation.
+	defer func() {
+		if err := os.Remove(usagePath); err != nil {
+			klog.Warningf("Failed to remove llm-usage.json after reading: %v", err)
+		}
+	}()
+
+	// The file is written by the llm package as llm.Stats, convert to CRD type.
+	var usage llm.Stats
+	if err := json.Unmarshal(data, &usage); err != nil {
+		klog.Warningf("Failed to unmarshal llm-usage.json: %v", err)
+		return nil
+	}
+
+	if len(usage.Models) == 0 {
+		return nil
+	}
+
+	crdUsage := &sandboxtaskv1alpha1.Stats{
+		Models: make(map[string]sandboxtaskv1alpha1.ModelUsage, len(usage.Models)),
+	}
+	for model, data := range usage.Models {
+		crdUsage.Models[model] = sandboxtaskv1alpha1.ModelUsage{
+			TotalRequests:  data.API.TotalRequests,
+			TotalErrors:    data.API.TotalErrors,
+			TotalLatencyMs: data.API.TotalLatencyMs,
+			InputTokens:    data.Tokens.Input,
+			OutputTokens:   data.Tokens.Output,
+			TotalTokens:    data.Tokens.Total,
+			CachedTokens:   data.Tokens.Cached,
+			ThoughtTokens:  data.Tokens.Thoughts,
+		}
+	}
+	return crdUsage
 }

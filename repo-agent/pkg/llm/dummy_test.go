@@ -7,13 +7,22 @@ import (
 func TestDummy_Run(t *testing.T) {
 	d := &Dummy{}
 	prompt := "hello"
-	output, err := d.Run(prompt)
+	output, usage, err := d.Run(prompt)
 	if err != nil {
 		t.Fatalf("Dummy.Run failed: %v", err)
 	}
 	expected := "Response from Dummy LLM. This is a test"
 	if string(output) != expected {
 		t.Errorf("expected %q, got %q", expected, string(output))
+	}
+	if usage == nil {
+		t.Fatal("Expected non-nil usage from Dummy provider")
+	}
+	if len(usage.Models) != 1 {
+		t.Fatalf("Expected 1 model in usage, got %d", len(usage.Models))
+	}
+	if _, ok := usage.Models["dummy"]; !ok {
+		t.Error("Expected usage for model 'dummy'")
 	}
 }
 

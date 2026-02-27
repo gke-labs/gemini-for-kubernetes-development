@@ -57,6 +57,38 @@ spec:
             properties:
               result:
                 type: string
+              stats:
+                properties:
+                  models:
+                    additionalProperties:
+                      properties:
+                        cachedTokens:
+                          format: int64
+                          type: integer
+                        inputTokens:
+                          format: int64
+                          type: integer
+                        outputTokens:
+                          format: int64
+                          type: integer
+                        thoughtTokens:
+                          format: int64
+                          type: integer
+                        totalErrors:
+                          format: int64
+                          type: integer
+                        totalLatencyMs:
+                          format: int64
+                          type: integer
+                        totalRequests:
+                          format: int64
+                          type: integer
+                        totalTokens:
+                          format: int64
+                          type: integer
+                      type: object
+                    type: object
+                type: object
               taskState:
                 default: Pending
                 type: string

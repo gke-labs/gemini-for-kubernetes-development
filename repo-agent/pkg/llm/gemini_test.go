@@ -349,11 +349,55 @@ func (e *FailOnNthCallExecutor) Run(command string, args ...string) ([]byte, []b
 	return []byte("ok"), nil, nil
 }
 
+func makeGeminiJSONOutput(response string) []byte {
+	envelope := geminiJSONOutput{
+		SessionID: "test-session",
+		Response:  response,
+		Stats: geminiStatsJSON{
+			Models: map[string]struct {
+				API struct {
+					TotalRequests  int64 `json:"totalRequests"`
+					TotalErrors    int64 `json:"totalErrors"`
+					TotalLatencyMs int64 `json:"totalLatencyMs"`
+				} `json:"api"`
+				Tokens struct {
+					Input      int64 `json:"input"`
+					Prompt     int64 `json:"prompt"`
+					Candidates int64 `json:"candidates"`
+					Total      int64 `json:"total"`
+					Cached     int64 `json:"cached"`
+					Thoughts   int64 `json:"thoughts"`
+					Tool       int64 `json:"tool"`
+				} `json:"tokens"`
+			}{
+				"gemini-2.5-pro": {
+					API: struct {
+						TotalRequests  int64 `json:"totalRequests"`
+						TotalErrors    int64 `json:"totalErrors"`
+						TotalLatencyMs int64 `json:"totalLatencyMs"`
+					}{TotalRequests: 3, TotalErrors: 0, TotalLatencyMs: 5000},
+					Tokens: struct {
+						Input      int64 `json:"input"`
+						Prompt     int64 `json:"prompt"`
+						Candidates int64 `json:"candidates"`
+						Total      int64 `json:"total"`
+						Cached     int64 `json:"cached"`
+						Thoughts   int64 `json:"thoughts"`
+						Tool       int64 `json:"tool"`
+					}{Input: 100, Candidates: 50, Total: 150},
+				},
+			},
+		},
+	}
+	data, _ := json.Marshal(envelope)
+	return data
+}
+
 func TestGemini_Run(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
-		// Create a mock executor
+		// Create a mock executor that returns JSON envelope with yaml content
 		mockExecutor := &MockCommandExecutor{
-			Output: []byte("```yaml\nfoo: bar\n```"),
+			Output: makeGeminiJSONOutput("```yaml\nfoo: bar\n```"),
 			Err:    nil,
 		}
 
@@ -362,35 +406,56 @@ func TestGemini_Run(t *testing.T) {
 		tg.AddPostProcessor(StripYAMLMarkers)
 
 		// Run the provider
-		output, err := tg.Run("test prompt")
+		output, usage, err := tg.Run("test prompt")
 		if err != nil {
 			t.Fatalf("Gemini.Run() failed: %v", err)
 		}
 
-		// Check the output
+		// Check the output (post-processor strips YAML markers from the response field)
 		expectedOutput := []byte("foo: bar")
 		if !bytes.Equal(output, expectedOutput) {
 			t.Errorf("Expected output %q, but got %q", expectedOutput, output)
+		}
+
+		// Check usage was extracted
+		if usage == nil {
+			t.Fatal("Expected non-nil usage")
+		}
+		if len(usage.Models) != 1 {
+			t.Fatalf("Expected 1 model in usage, got %d", len(usage.Models))
+		}
+		modelUsage, ok := usage.Models["gemini-2.5-pro"]
+		if !ok {
+			t.Fatal("Expected usage for model 'gemini-2.5-pro'")
+		}
+		if modelUsage.API.TotalRequests != 3 {
+			t.Errorf("Expected 3 total requests, got %d", modelUsage.API.TotalRequests)
+		}
+		if modelUsage.Tokens.Input != 100 {
+			t.Errorf("Expected 100 input tokens, got %d", modelUsage.Tokens.Input)
 		}
 
 		// Check if the command was called correctly
 		if mockExecutor.Command != "gemini" {
 			t.Errorf("Expected command to be 'gemini', but got '%s'", mockExecutor.Command)
 		}
-		if len(mockExecutor.Args) != 3 {
-			t.Fatalf("Expected 3 arguments, but got %d", len(mockExecutor.Args))
+		if len(mockExecutor.Args) != 5 {
+			t.Fatalf("Expected 5 arguments, but got %d: %v", len(mockExecutor.Args), mockExecutor.Args)
 		}
 		if mockExecutor.Args[0] != "-y" {
 			t.Errorf("Expected first argument to be '-y', but got '%s'", mockExecutor.Args[0])
 		}
-		if mockExecutor.Args[1] != "-p" {
-			t.Errorf("Expected second argument to be '-p', but got '%s'", mockExecutor.Args[1])
+		if mockExecutor.Args[1] != "--output-format" {
+			t.Errorf("Expected second argument to be '--output-format', but got '%s'", mockExecutor.Args[1])
 		}
-		if mockExecutor.Args[2] != "test prompt" {
-			t.Errorf("Expected third argument to be 'test prompt', but got '%s'", mockExecutor.Args[2])
+		if mockExecutor.Args[2] != "json" {
+			t.Errorf("Expected third argument to be 'json', but got '%s'", mockExecutor.Args[2])
 		}
-		if len(mockExecutor.Stderr) > 0 {
-			t.Errorf("Expected empty stderr, but got %q", string(mockExecutor.Stderr))
+		if mockExecutor.Args[3] != "-p" {
+			t.Errorf("Expected fourth argument to be '-p', but got '%s'", mockExecutor.Args[3])
+		}
+		if mockExecutor.Args[4] != "test prompt" {
+			t.Errorf("Expected fifth argument to be 'test prompt', but got '%s'", mockExecutor.Args[4])
 		}
 	})
 
@@ -406,7 +471,7 @@ func TestGemini_Run(t *testing.T) {
 		g := &Gemini{Executor: mockExecutor}
 
 		// Run the provider
-		_, err := g.Run("test prompt")
+		_, _, err := g.Run("test prompt")
 		if err == nil {
 			t.Fatal("Gemini.Run() should have failed, but it didn't")
 		}
@@ -427,7 +492,7 @@ func TestGemini_Run(t *testing.T) {
 		g := &Gemini{Executor: mockExecutor}
 
 		// Run the provider
-		_, err := g.Run("test prompt")
+		_, _, err := g.Run("test prompt")
 		if err == nil {
 			t.Fatal("Gemini.Run() should have failed with quota error, but it didn't")
 		}
@@ -438,9 +503,9 @@ func TestGemini_Run(t *testing.T) {
 	})
 
 	t.Run("post-processor error", func(t *testing.T) {
-		// Create a mock executor
+		// Create a mock executor that returns valid JSON envelope
 		mockExecutor := &MockCommandExecutor{
-			Output: []byte("some output"),
+			Output: makeGeminiJSONOutput("some output"),
 			Stderr: nil,
 			Err:    nil,
 		}
@@ -452,12 +517,24 @@ func TestGemini_Run(t *testing.T) {
 		})
 
 		// Run the provider
-		_, err := g.Run("test prompt")
+		_, _, err := g.Run("test prompt")
 		if err == nil {
 			t.Fatal("Gemini.Run() should have failed due to post-processor error, but it didn't")
 		}
 		if err.Error() != "post-processing failed" {
 			t.Errorf("Expected error 'post-processing failed', but got '%v'", err)
+		}
+	})
+
+	t.Run("no JSON in output", func(t *testing.T) {
+		mockExecutor := &MockCommandExecutor{
+			Output: []byte("not json at all"),
+			Err:    nil,
+		}
+		g := &Gemini{Executor: mockExecutor}
+		_, _, err := g.Run("test prompt")
+		if err == nil {
+			t.Fatal("Gemini.Run() should have failed when no JSON in output")
 		}
 	})
 }

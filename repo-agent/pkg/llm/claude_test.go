@@ -51,7 +51,7 @@ func TestClaudeRun(t *testing.T) {
 		DoFunc: func(_ *http.Request) (*http.Response, error) {
 			return &http.Response{
 				StatusCode: http.StatusOK,
-				Body:       io.NopCloser(bytes.NewBufferString(`{"content":[{"text":"Hello!"}]}`)),
+				Body:       io.NopCloser(bytes.NewBufferString(`{"content":[{"text":"Hello!"}],"usage":{"input_tokens":10,"output_tokens":5},"model":"claude-sonnet-4-5"}`)),
 			}, nil
 		},
 	}
@@ -59,7 +59,7 @@ func TestClaudeRun(t *testing.T) {
 	c := &Claude{apiKey: "test-key", client: mockClient}
 	prompt := "test prompt"
 
-	resp, err := c.Run(prompt)
+	resp, usage, err := c.Run(prompt)
 	if err != nil {
 		t.Fatalf("TestClaudeRun (success) failed: %v", err)
 	}
@@ -69,12 +69,29 @@ func TestClaudeRun(t *testing.T) {
 		t.Errorf("TestClaudeRun (success): Expected %q, got %q", expected, string(resp))
 	}
 
+	if usage == nil {
+		t.Fatal("Expected non-nil usage")
+	}
+	if len(usage.Models) != 1 {
+		t.Fatalf("Expected 1 model in usage, got %d", len(usage.Models))
+	}
+	modelUsage, ok := usage.Models["claude-sonnet-4-5"]
+	if !ok {
+		t.Fatal("Expected usage for model 'claude-sonnet-4-5'")
+	}
+	if modelUsage.Tokens.Input != 10 {
+		t.Errorf("Expected 10 input tokens, got %d", modelUsage.Tokens.Input)
+	}
+	if modelUsage.Tokens.Output != 5 {
+		t.Errorf("Expected 5 output tokens, got %d", modelUsage.Tokens.Output)
+	}
+
 	// Test case 2: API call fails (network error)
 	mockClient.DoFunc = func(_ *http.Request) (*http.Response, error) {
 		return nil, fmt.Errorf("network error")
 	}
 
-	_, err = c.Run(prompt)
+	_, _, err = c.Run(prompt)
 	if err == nil || !strings.Contains(err.Error(), "failed to make request: network error") {
 		t.Errorf("TestClaudeRun (network error): Expected network error, got %v", err)
 	}
@@ -87,7 +104,7 @@ func TestClaudeRun(t *testing.T) {
 		}, nil
 	}
 
-	_, err = c.Run(prompt)
+	_, _, err = c.Run(prompt)
 	if err == nil || !strings.Contains(err.Error(), "request failed with status 500: {\"error\":\"internal server error\"}") {
 		t.Errorf("TestClaudeRun (non-200 status): Expected status 500 error, got %v", err)
 	}
@@ -100,7 +117,7 @@ func TestClaudeRun(t *testing.T) {
 		}, nil
 	}
 
-	_, err = c.Run(prompt)
+	_, _, err = c.Run(prompt)
 	if err == nil || !strings.Contains(err.Error(), "failed to unmarshal response body") {
 		t.Errorf("TestClaudeRun (invalid JSON): Expected unmarshal error, got %v", err)
 	}
@@ -113,7 +130,7 @@ func TestClaudeRun(t *testing.T) {
 		}, nil
 	}
 
-	_, err = c.Run(prompt)
+	_, _, err = c.Run(prompt)
 	if err == nil || !strings.Contains(err.Error(), "no content in response") {
 		t.Errorf("TestClaudeRun (empty content): Expected 'no content' error, got %v", err)
 	}
@@ -126,14 +143,14 @@ func TestClaudeRun(t *testing.T) {
 		}, nil
 	}
 
-	_, err = c.Run(prompt)
+	_, _, err = c.Run(prompt)
 	if err == nil || !strings.Contains(err.Error(), "failed to read response body: simulated read error") {
 		t.Errorf("TestClaudeRun (io.ReadAll error): Expected read error, got %v", err)
 	}
 
 	// Test case 7: http.NewRequest fails
 	c.URL = "://invalid-url"
-	_, err = c.Run(prompt)
+	_, _, err = c.Run(prompt)
 	if err == nil || !strings.Contains(err.Error(), "failed to create request") {
 		t.Errorf("TestClaudeRun (http.NewRequest error): Expected create request error, got %v", err)
 	}
@@ -272,7 +289,7 @@ func TestClaudeRunWithPostProcessor(t *testing.T) {
 		return []byte(string(originalInput) + " World!"), nil
 	})
 
-	resp, err := c.Run(prompt)
+	resp, _, err := c.Run(prompt)
 	if err != nil {
 		t.Fatalf("TestClaudeRunWithPostProcessor failed: %v", err)
 	}
@@ -301,7 +318,7 @@ func TestClaudeRunWithFailingPostProcessor(t *testing.T) {
 		return nil, fmt.Errorf("post-processor error")
 	})
 
-	_, err := c.Run(prompt)
+	_, _, err := c.Run(prompt)
 	if err == nil || !strings.Contains(err.Error(), "failed to apply post-processor: post-processor error") {
 		t.Errorf("TestClaudeRunWithFailingPostProcessor: Expected post-processor error, got %v", err)
 	}
@@ -323,7 +340,7 @@ func TestClaudeRunWithStripYAMLMarkers(t *testing.T) {
 	// Add the StripYAMLMarkers post-processor
 	c.AddPostProcessor(StripYAMLMarkers)
 
-	resp, err := c.Run(prompt)
+	resp, _, err := c.Run(prompt)
 	if err != nil {
 		t.Fatalf("TestClaudeRunWithStripYAMLMarkers failed: %v", err)
 	}
