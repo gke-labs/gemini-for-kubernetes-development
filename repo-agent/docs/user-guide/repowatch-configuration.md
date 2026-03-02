@@ -32,6 +32,9 @@ review:
   # Maximum total number of sandboxes (active + inactive)
   maxSandboxes: 5
   
+  # Disk size for the workspace volume (default: 10Gi)
+  workspaceDiskSize: 20Gi
+  
   # Configuration for the LLM (Large Language Model)
   llm:
     provider: gemini-cli
@@ -51,6 +54,7 @@ review:
 *   **`reviewShutdownAfterMinutes`**: How long to keep the sandbox running after the review is complete (in minutes).
 *   **`maxActiveSandboxes`**: The maximum number of concurrent sandboxes to run for reviews. This helps manage resource usage.
 *   **`maxSandboxes`**: The maximum total number of sandboxes (active + inactive) to keep.
+*   **`workspaceDiskSize`**: (Optional) The disk size for the workspace PVC (e.g., `10Gi`, `20Gi`). Defaults to `10Gi`.
 *   **`llm`**:
     *   **`provider`**: The LLM provider to use (e.g., `gemini-cli`, `vertex-ai`).
     *   **`apiKeySecretRef`**: The name of the Secret containing the API key for the LLM.
@@ -77,6 +81,9 @@ issue:
   # Optional: How long the sandbox remains active after an issue is processed.
   issueShutdownAfterMinutes: 300
   
+  # Disk size for the workspace volume (default: 10Gi)
+  workspaceDiskSize: 10Gi
+  
   # Configuration for the LLM (Large Language Model)
   llm:
     provider: gemini-cli
@@ -99,6 +106,7 @@ issue:
 *   **`maxSandboxes`**: The maximum total number of sandboxes (active + inactive) to keep.
 *   **`robotAccount`**: (Optional) Name of the GitHub user account used by the bot. If not set, the PR is created in the user's name.
 *   **`issueShutdownAfterMinutes`**: (Optional) How long to keep the sandbox active after processing (in minutes).
+*   **`workspaceDiskSize`**: (Optional) The disk size for the workspace PVC (e.g., `10Gi`, `20Gi`). Defaults to `10Gi`.
 *   **`handlers`**: A list of handler configurations.
     *   **`name`**: A unique name for the handler.
     *   **`labels`**: A list of GitHub labels. The handler will only process issues that have at least one of these labels.
