@@ -179,11 +179,16 @@ func (a *Authenticator) updateUserSecret(ctx context.Context, namespace string, 
 	if !token.Expiry.IsZero() {
 		data["expiry"] = []byte(token.Expiry.Format(time.RFC3339))
 	}
-	if user.Name != nil {
+	if user.Name != nil && *user.Name != "" {
 		data["name"] = []byte(*user.Name)
+	} else {
+		data["name"] = nil
 	}
-	if user.Email != nil {
+
+	emailSet := false
+	if user.Email != nil && *user.Email != "" {
 		data["email"] = []byte(*user.Email)
+		emailSet = true
 	} else {
 		// Public email not set - fetch primary email via /user/emails (requires user:email scope)
 		emails, _, err := client.Users.ListEmails(ctx, nil)
@@ -191,10 +196,14 @@ func (a *Authenticator) updateUserSecret(ctx context.Context, namespace string, 
 			for _, e := range emails {
 				if e.GetPrimary() {
 					data["email"] = []byte(e.GetEmail())
+					emailSet = true
 					break
 				}
 			}
 		}
+	}
+	if !emailSet {
+		data["email"] = nil
 	}
 	return a.K8sManager.UpdateSecret(ctx, namespace, k8s.GithubSecretName, data, nil)
 }
