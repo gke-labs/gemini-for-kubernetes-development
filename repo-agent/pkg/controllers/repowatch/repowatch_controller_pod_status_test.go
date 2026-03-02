@@ -402,4 +402,3 @@ func TestReconciler_ReconcileIssues_PodPendingScheduled(t *testing.T) {
 	g.Expect(ann).NotTo(gomega.BeNil())
 	g.Expect(ann["sandbox.gemini.google.com/pod-status"]).To(gomega.Equal("Pending: 0/1 nodes are available: 1 insufficient cpu."))
 }
-
