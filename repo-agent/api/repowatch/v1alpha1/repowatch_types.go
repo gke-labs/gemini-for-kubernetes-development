@@ -127,6 +127,11 @@ type PRReviewSpec struct {
 	// +kubebuilder:validation:Optional
 	AssignedToSelf bool `json:"assignedToSelf,omitempty"`
 
+	// WorkspaceDiskSize specifies the disk size for the workspace PVC.
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default="10Gi"
+	WorkspaceDiskSize string `json:"workspaceDiskSize,omitempty"`
+
 	// Assignees to filter PRs for this handler
 	// +kubebuilder:validation:Optional
 	Assignees []string `json:"assignees,omitempty"`
@@ -191,6 +196,11 @@ type DevSpec struct {
 	// +kubebuilder:default=none
 	// +kubebuilder:validation:Optional
 	DindSupport string `json:"dindSupport,omitempty"`
+
+	// WorkspaceDiskSize specifies the disk size for the workspace PVC.
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default="10Gi"
+	WorkspaceDiskSize string `json:"workspaceDiskSize,omitempty"`
 }
 
 type IssueHandlerSpec struct {
@@ -262,6 +272,11 @@ type IssueSpec struct {
 	// +kubebuilder:default=none
 	// +kubebuilder:validation:Optional
 	DindSupport string `json:"dindSupport,omitempty"`
+
+	// WorkspaceDiskSize specifies the disk size for the workspace PVC.
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default="10Gi"
+	WorkspaceDiskSize string `json:"workspaceDiskSize,omitempty"`
 
 	// Models specifies a list of models to use for the issue handler.
 	// +kubebuilder:validation:Optional

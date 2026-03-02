@@ -6,8 +6,9 @@ import (
 
 func TestNewAgentSandbox(t *testing.T) {
 	tests := []struct {
-		name        string
-		dindSupport string
+		name              string
+		dindSupport       string
+		workspaceDiskSize string
 	}{
 		{
 			name:        "DindSupportNone",
@@ -25,20 +26,57 @@ func TestNewAgentSandbox(t *testing.T) {
 			name:        "DindSupportPrivileged",
 			dindSupport: DindSupportPrivileged,
 		},
+		{
+			name:              "WorkspaceDiskSizeCustom",
+			workspaceDiskSize: "30Gi",
+		},
+		{
+			name:              "WorkspaceDiskSizeDefault",
+			workspaceDiskSize: "",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			opt := AgentSandboxOptions{
 				DevSandboxOptions: DevSandboxOptions{
-					Name:      "test",
-					Namespace: "default",
+					Name:              "test",
+					Namespace:         "default",
+					WorkspaceDiskSize: tt.workspaceDiskSize,
 				},
 				DindSupport: tt.dindSupport,
 			}
 			sandbox, _ := NewAgentSandbox(opt)
 
 			spec := sandbox.Object["spec"].(map[string]interface{})
+
+			// Check WorkspaceDiskSize
+			volumeClaimTemplates := spec["volumeClaimTemplates"].([]interface{})
+			foundWorkspacesPVC := false
+			for _, vct := range volumeClaimTemplates {
+				vctMap := vct.(map[string]interface{})
+				metadata := vctMap["metadata"].(map[string]interface{})
+				if metadata["name"] == "workspaces-pvc" {
+					foundWorkspacesPVC = true
+					vctSpec := vctMap["spec"].(map[string]interface{})
+					resources := vctSpec["resources"].(map[string]interface{})
+					requests := resources["requests"].(map[string]interface{})
+					storage := requests["storage"].(string)
+
+					expectedStorage := "10Gi"
+					if tt.workspaceDiskSize != "" {
+						expectedStorage = tt.workspaceDiskSize
+					}
+					if storage != expectedStorage {
+						t.Errorf("expected storage %s, got %s", expectedStorage, storage)
+					}
+					break
+				}
+			}
+			if !foundWorkspacesPVC {
+				t.Errorf("workspaces-pvc volumeClaimTemplate not found")
+			}
+
 			podTemplate := spec["podTemplate"].(map[string]interface{})
 			podSpec := podTemplate["spec"].(map[string]interface{})
 

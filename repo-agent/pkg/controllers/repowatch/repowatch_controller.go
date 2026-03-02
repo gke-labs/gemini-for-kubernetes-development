@@ -1071,6 +1071,7 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 			HTTPEnabled:           true,
 			Replicas:              1,
 			ServiceAccountName:    "issue-sandbox",
+			WorkspaceDiskSize:     repoWatch.Spec.Issue.WorkspaceDiskSize,
 		},
 		DindSupport:   repoWatch.Spec.Issue.DindSupport,
 		LLMExtensions: repoWatch.Spec.Issue.LLM.Extensions,
@@ -1375,7 +1376,12 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 							"accessModes": []interface{}{"ReadWriteOnce"},
 							"resources": map[string]interface{}{
 								"requests": map[string]interface{}{
-									"storage": "10Gi",
+									"storage": func() string {
+										if repoWatch.Spec.Review.WorkspaceDiskSize != "" {
+											return repoWatch.Spec.Review.WorkspaceDiskSize
+										}
+										return "10Gi"
+									}(),
 								},
 							},
 						},
@@ -1774,6 +1780,7 @@ func (r *Reconciler) createDevSandbox(ctx context.Context, user *github.User, re
 		Replicas:           1,
 		ServiceAccountName: "issue-sandbox",
 		DindSupport:        repoWatch.Spec.Dev.DindSupport,
+		WorkspaceDiskSize:  repoWatch.Spec.Dev.WorkspaceDiskSize,
 	}
 
 	sb, svc := sandbox.NewDevSandbox(opts)

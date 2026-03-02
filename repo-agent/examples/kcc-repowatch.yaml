@@ -14,3 +14,4 @@ spec:
       configdirRef: kcc-review-gemini-config
     maxActiveSandboxes: 1
     devcontainerConfigRef: devcontainer-json
+    workspaceDiskSize: 20Gi

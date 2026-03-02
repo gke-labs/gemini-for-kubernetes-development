@@ -372,7 +372,12 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 							"accessModes": []interface{}{"ReadWriteOnce"},
 							"resources": map[string]interface{}{
 								"requests": map[string]interface{}{
-									"storage": "10Gi",
+									"storage": func() string {
+										if opt.WorkspaceDiskSize != "" {
+											return opt.WorkspaceDiskSize
+										}
+										return "10Gi"
+									}(),
 								},
 							},
 						},
