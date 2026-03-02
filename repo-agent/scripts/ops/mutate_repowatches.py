@@ -225,7 +225,7 @@ def main():
         "migrate-issues-taskbased-022026": fix_issues_spec,
         "set-dev-maxcounts-0": disable_dev_sandboxes,
         "inject-issue-model-list-02122026": inject_issue_model_list,
-        "set-kcc-workspace-disk-size-20Gi": set_kcc_workspace_disk_size,
+        "set-kcc-workspace-disk-size-20Gi-030126": set_kcc_workspace_disk_size,
     }
 
     if not args.mutator:
