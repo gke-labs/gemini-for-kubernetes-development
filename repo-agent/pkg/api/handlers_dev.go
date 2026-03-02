@@ -116,6 +116,7 @@ func (s *Server) listDevSandboxesFromK8s(ctx context.Context, namespace, repo st
 
 			agentState := ""
 			agentStateMessage := ""
+			sandboxStatus := ""
 			var labels []string
 
 			if val, ok := annotations["agentState"]; ok {
@@ -123,6 +124,9 @@ func (s *Server) listDevSandboxesFromK8s(ctx context.Context, namespace, repo st
 			}
 			if val, ok := annotations["agentStateMessage"]; ok {
 				agentStateMessage = val
+			}
+			if val, ok := annotations["sandbox.gemini.google.com/pod-status"]; ok {
+				sandboxStatus = val
 			}
 			if val, ok := annotations["agentLabels"]; ok {
 				_ = json.Unmarshal([]byte(val), &labels)
@@ -155,6 +159,7 @@ func (s *Server) listDevSandboxesFromK8s(ctx context.Context, namespace, repo st
 				SandboxReplica:    fmt.Sprintf("%d", replicas),
 				AgentState:        agentState,
 				AgentStateMessage: agentStateMessage,
+				SandboxStatus:     sandboxStatus,
 				Labels:            labels,
 				IdeaID:            ideaID,
 				Approach:          approach,

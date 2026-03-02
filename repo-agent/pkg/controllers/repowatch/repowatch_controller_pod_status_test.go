@@ -121,8 +121,9 @@ func TestReconciler_ReconcileIssues_PodEvicted(t *testing.T) {
 			},
 		},
 		Status: corev1.PodStatus{
-			Phase:  corev1.PodFailed,
-			Reason: "Evicted",
+			Phase:   corev1.PodFailed,
+			Reason:  "Evicted",
+			Message: "The node was low on resource: ephemeral-storage",
 		},
 	}
 
@@ -146,7 +147,7 @@ func TestReconciler_ReconcileIssues_PodEvicted(t *testing.T) {
 	g.Expect(fakeClient.Get(context.Background(), types.NamespacedName{Name: repoWatch.Name, Namespace: repoWatch.Namespace}, fetchedRepoWatch)).To(gomega.Succeed())
 
 	g.Expect(fetchedRepoWatch.Status.IssueSandboxes["default"]).To(gomega.HaveLen(1))
-	g.Expect(fetchedRepoWatch.Status.IssueSandboxes["default"][0].Status).To(gomega.Equal("Evicted"))
+	g.Expect(fetchedRepoWatch.Status.IssueSandboxes["default"][0].Status).To(gomega.Equal("Evicted: The node was low on resource: ephemeral-storage"))
 
 	// Verify Annotation
 	fetchedSandbox := &unstructured.Unstructured{}
@@ -155,7 +156,7 @@ func TestReconciler_ReconcileIssues_PodEvicted(t *testing.T) {
 
 	ann := fetchedSandbox.GetAnnotations()
 	g.Expect(ann).NotTo(gomega.BeNil())
-	g.Expect(ann["sandbox.gemini.google.com/pod-status"]).To(gomega.Equal("Evicted"))
+	g.Expect(ann["sandbox.gemini.google.com/pod-status"]).To(gomega.Equal("Evicted: The node was low on resource: ephemeral-storage"))
 }
 
 func TestReconciler_ReconcileIssues_PodFailedOOM(t *testing.T) {
@@ -275,4 +276,129 @@ func TestReconciler_ReconcileIssues_PodFailedOOM(t *testing.T) {
 	ann := fetchedSandbox.GetAnnotations()
 	g.Expect(ann).NotTo(gomega.BeNil())
 	g.Expect(ann["sandbox.gemini.google.com/pod-status"]).To(gomega.Equal("fail: OOMKilled"))
+}
+
+func TestReconciler_ReconcileIssues_PodPendingScheduled(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	s := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(s)
+	_ = reviewv1alpha1.AddToScheme(s)
+	_ = sandboxtaskv1alpha1.AddToScheme(s)
+
+	// Setup Mock GitHub
+	mockHTTPClient := &http.Client{
+		Transport: &mockRoundTripper{
+			responses: map[string]func() *http.Response{
+				"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=created&state=open": func() *http.Response {
+					return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`[]`))}
+				},
+				"https://api.github.com/repos/test/repo/issues?per_page=100&state=open": func() *http.Response {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body: io.NopCloser(strings.NewReader(`[
+                                            {"number": 1, "html_url": "https://github.com/test/repo/issues/1", "title": "Issue 1", "repository_url": "https://api.github.com/repos/test/repo"}
+                                        ]`)),
+					}
+				},
+				"https://api.github.com/user": func() *http.Response {
+					return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"login": "test-user"}`))}
+				},
+			},
+		},
+	}
+	ghClient := clients.NewGitHubClientFromHTTP(mockHTTPClient)
+
+	// Objects
+	repoWatch := &reviewv1alpha1.RepoWatch{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-repowatch-pending", Namespace: "default", UID: "uid-3"},
+		Spec: reviewv1alpha1.RepoWatchSpec{
+			RepoURL:          "https://github.com/test/repo",
+			GithubSecretName: "github-secret",
+			Issue: &reviewv1alpha1.IssueSpec{
+				Handlers: []reviewv1alpha1.IssueHandlerSpec{{Name: "default"}},
+			},
+		},
+	}
+
+	// Existing Sandbox
+	sandboxName := "devc-test-repowatch-pending-issue-1"
+	issueSandbox := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "agents.x-k8s.io/v1alpha1",
+			"kind":       "Sandbox",
+			"metadata": map[string]interface{}{
+				"name":      sandboxName,
+				"namespace": "default",
+				"labels": map[string]interface{}{
+					"sandbox.gemini.google.com/type": "issue",
+				},
+				"ownerReferences": []interface{}{
+					map[string]interface{}{
+						"apiVersion": "review.gemini.google.com/v1alpha1",
+						"kind":       "RepoWatch",
+						"name":       repoWatch.Name,
+						"uid":        string(repoWatch.UID),
+					},
+				},
+			},
+			"spec": map[string]interface{}{
+				"replicas": int64(1),
+			},
+		},
+	}
+
+	// Pending Pod with scheduling error
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      sandboxName + "-pod",
+			Namespace: "default",
+			Labels: map[string]string{
+				"sandbox":      sandboxName,
+				"sandbox-type": "issue",
+			},
+		},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodPending,
+			Conditions: []corev1.PodCondition{
+				{
+					Type:    corev1.PodScheduled,
+					Status:  corev1.ConditionFalse,
+					Reason:  "Unschedulable",
+					Message: "0/1 nodes are available: 1 insufficient cpu.",
+				},
+			},
+		},
+	}
+
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "github-secret", Namespace: "default"}, Data: map[string][]byte{"pat": []byte("test-pat")}}
+
+	fakeClient := clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, issueSandbox, pod, secret).WithStatusSubresource(repoWatch).Build()
+
+	r := &Reconciler{
+		Client: fakeClient,
+		Scheme: s,
+		NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
+			return ghClient, map[string]string{"pat": "test-pat"}, nil
+		},
+	}
+
+	_, err := r.Reconcile(context.Background(), reconcile.Request{NamespacedName: types.NamespacedName{Name: repoWatch.Name, Namespace: repoWatch.Namespace}})
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	// Verify RepoWatch status
+	fetchedRepoWatch := &reviewv1alpha1.RepoWatch{}
+	g.Expect(fakeClient.Get(context.Background(), types.NamespacedName{Name: repoWatch.Name, Namespace: repoWatch.Namespace}, fetchedRepoWatch)).To(gomega.Succeed())
+
+	g.Expect(fetchedRepoWatch.Status.IssueSandboxes["default"]).To(gomega.HaveLen(1))
+	g.Expect(fetchedRepoWatch.Status.IssueSandboxes["default"][0].Status).To(gomega.Equal("Pending: 0/1 nodes are available: 1 insufficient cpu."))
+
+	// Verify Annotation
+	fetchedSandbox := &unstructured.Unstructured{}
+	fetchedSandbox.SetGroupVersionKind(schema.GroupVersionKind{Group: "agents.x-k8s.io", Version: "v1alpha1", Kind: "Sandbox"})
+	g.Expect(fakeClient.Get(context.Background(), types.NamespacedName{Name: sandboxName, Namespace: "default"}, fetchedSandbox)).To(gomega.Succeed())
+
+	ann := fetchedSandbox.GetAnnotations()
+	g.Expect(ann).NotTo(gomega.BeNil())
+	g.Expect(ann["sandbox.gemini.google.com/pod-status"]).To(gomega.Equal("Pending: 0/1 nodes are available: 1 insufficient cpu."))
 }

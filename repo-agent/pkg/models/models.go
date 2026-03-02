@@ -109,6 +109,7 @@ type PR struct {
 	AgentState        string   `json:"agentState,omitempty"`
 	AgentStateMessage string   `json:"agentStateMessage,omitempty"`
 	ReviewState       string   `json:"reviewState,omitempty"`
+	SandboxStatus     string   `json:"sandboxStatus,omitempty"`
 	Labels            []string `json:"labels,omitempty"`
 	Tasks             []Task   `json:"tasks,omitempty"`
 }
@@ -183,6 +184,7 @@ type DevSandbox struct {
 	Branch            string   `json:"branch,omitempty"`
 	AgentState        string   `json:"agentState,omitempty"`
 	AgentStateMessage string   `json:"agentStateMessage,omitempty"`
+	SandboxStatus     string   `json:"sandboxStatus,omitempty"`
 	Labels            []string `json:"labels,omitempty"`
 	IdeaID            string   `json:"ideaID,omitempty"`
 	Approach          string   `json:"approach,omitempty"`

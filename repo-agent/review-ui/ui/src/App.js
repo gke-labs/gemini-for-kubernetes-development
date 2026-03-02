@@ -807,7 +807,7 @@ function App() {
     if (!item.sandbox) {
       return 'grey';
     }
-    if (item.sandboxStatus && (item.sandboxStatus === 'Evicted' || item.sandboxStatus.startsWith('fail:') || item.sandboxStatus === 'Failed')) {
+    if (item.sandboxStatus && (item.sandboxStatus.startsWith('Evicted') || item.sandboxStatus.startsWith('fail:') || item.sandboxStatus === 'Failed')) {
       return 'red';
     }
     if (item.sandboxReplica === "0") {

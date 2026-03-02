@@ -906,6 +906,15 @@ function PrReviewCard({
                   &#9654;
                </button>
              </div>
+          ) : getSandboxStatusClass(pr) === 'red' ? (
+            <div style={{display: 'flex', alignItems: 'center', gap: '5px'}}>
+              <span className={`pr-sandbox ${getSandboxStatusClass(pr)}`} title={pr.sandboxStatus || 'Error'}>
+                {pr.sandboxStatus?.startsWith('Evicted') ? 'Evicted' : (pr.sandboxStatus || 'Error')}
+              </span>
+              <button className="btn btn-sm pr-sandbox green" style={{padding: '4px 10px', fontSize: '14px'}} onClick={(e) => { e.stopPropagation(); handleScaleUp(pr.id, true); }} title="Restart/Reprovision Sandbox">
+                  &#8635;
+               </button>
+            </div>
           ) : (
             <span className={`pr-sandbox ${getSandboxStatusClass(pr)}`}>Sandbox: Not created</span>
           )}
