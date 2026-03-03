@@ -13,16 +13,21 @@ import (
 
 	"github.com/spf13/cobra"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
+	"sigs.k8s.io/yaml"
 
 	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
+	sandboxtaskv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 	githubv39 "github.com/google/go-github/v39/github"
 )
@@ -75,17 +80,19 @@ func buildIssueCommand() *cobra.Command {
 func buildPRCommand() *cobra.Command {
 	var number int
 	var taskType string
+	var submit bool
 
 	cmd := &cobra.Command{
 		Use:   "pr",
 		Short: "Create/ensure sandbox and task for a PR",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runPR(context.Background(), number, taskType)
+			return runPR(context.Background(), number, taskType, submit)
 		},
 	}
 
 	cmd.Flags().IntVar(&number, "number", 0, "PR number")
 	cmd.Flags().StringVar(&taskType, "task", "review", "Task type (e.g., review, address-feedback)")
+	cmd.Flags().BoolVar(&submit, "submit", false, "Submit agent draft from task as review")
 	_ = cmd.MarkFlagRequired("number")
 
 	return cmd
@@ -200,7 +207,7 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string) er
 	return nil
 }
 
-func runPR(ctx context.Context, number int, taskType string) error {
+func runPR(ctx context.Context, number int, taskType string, submit bool) error {
 	// Similar to runIssue but for PRs
 	if repoWatchName == "" || namespace == "" {
 		return fmt.Errorf("REPOWATCH_NAME and NAMESPACE environment variables must be set")
@@ -226,6 +233,11 @@ func runPR(ctx context.Context, number int, taskType string) error {
 		Clientset:     clientset,
 	}
 	manager := k8s.NewManager(kubeClient)
+
+	if submit {
+		fmt.Printf("Submitting agent draft for PR %d...\n", number)
+		return submitAgentDraft(ctx, manager, kubeClient, namespace, repoWatchName, number)
+	}
 
 	rwUnstructured, err := manager.GetRepoWatch(ctx, namespace, repoWatchName)
 	if err != nil {
@@ -287,6 +299,110 @@ func runPR(ctx context.Context, number int, taskType string) error {
 	err = manager.CreateSandboxTask(ctx, namespace, sandboxName, "Sandbox", taskType, params)
 	if err != nil {
 		return fmt.Errorf("failed to create sandbox task: %w", err)
+	}
+
+	fmt.Println("Done.")
+	return nil
+}
+
+func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *clients.KubernetesClient, namespace, repoWatchName string, prNumber int) error {
+	rwUnstructured, err := manager.GetRepoWatch(ctx, namespace, repoWatchName)
+	if err != nil {
+		return fmt.Errorf("failed to get RepoWatch %s: %w", repoWatchName, err)
+	}
+
+	sandboxName := fmt.Sprintf("%s-pr-%d", repoWatchName, prNumber)
+
+	taskList, err := manager.ListSandboxTasks(ctx, namespace, sandboxName)
+	if err != nil {
+		return fmt.Errorf("failed to list tasks for sandbox %s: %w", sandboxName, err)
+	}
+
+	var latestReviewTask *sandboxtaskv1alpha1.SandboxTask
+	for i := range taskList.Items {
+		task := &taskList.Items[i]
+		if task.Spec.Type == "review" && task.Status.TaskState == "Completed" {
+			if latestReviewTask == nil || task.CreationTimestamp.After(latestReviewTask.CreationTimestamp.Time) {
+				latestReviewTask = task
+			}
+		}
+	}
+
+	if latestReviewTask == nil {
+		return fmt.Errorf("no completed review task found for sandbox %s", sandboxName)
+	}
+
+	// Get the task again as Unstructured to read annotations
+	gvr := schema.GroupVersionResource{
+		Group:    "custom.agents.x-k8s.io",
+		Version:  "v1alpha1",
+		Resource: "sandboxtasks",
+	}
+	taskUnstructured, err := kubeClient.DynamicClient.Resource(gvr).Namespace(namespace).Get(ctx, latestReviewTask.Name, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to get task %s: %w", latestReviewTask.Name, err)
+	}
+
+	annotations := taskUnstructured.GetAnnotations()
+	draft, ok := annotations["agentDraft"]
+	if !ok {
+		return fmt.Errorf("no agentDraft annotation found on task %s", latestReviewTask.Name)
+	}
+
+	// Get GitHub token from secret
+	token, err := manager.GetGitHubToken(ctx, rwUnstructured)
+	if err != nil {
+		return fmt.Errorf("failed to get github token: %w", err)
+	}
+
+	// Create GitHub client
+	client := clients.NewGitHubClient(ctx, token)
+
+	// Parse repo URL
+	repoURL, found, err := unstructured.NestedString(rwUnstructured.Object, "spec", "repoURL")
+	if err != nil || !found {
+		return fmt.Errorf("repoURL not found in RepoWatch %s", repoWatchName)
+	}
+	owner, repoName, err := parseRepoURL(repoURL)
+	if err != nil {
+		return fmt.Errorf("failed to parse repo URL %s: %w", repoURL, err)
+	}
+
+	// Try Unmarshalling the yaml review payload into PullRequestReviewRequest
+	agentOutput := &models.ReviewAgentOutput{}
+	reviewRequest := &githubv39.PullRequestReviewRequest{}
+	err = yaml.Unmarshal([]byte(draft), &agentOutput)
+	if err != nil || agentOutput.Review == nil {
+		if err != nil {
+			fmt.Printf("Warning: failed to unmarshal review payload as YAML, using as plain body: %v\n", err)
+		} else {
+			fmt.Printf("Warning: review field missing in YAML, using draft as plain body\n")
+		}
+		reviewRequest.Body = githubv39.String(draft)
+	} else {
+		reviewRequest = agentOutput.Review.ToGitHubReviewRequest()
+	}
+
+	// Not setting event sets it as a draft
+	reviewRequest.Event = nil
+
+	fmt.Printf("Creating review on GitHub for %s/%s PR %d...\n", owner, repoName, prNumber)
+	review, _, err := client.PullRequests.CreateReview(ctx, owner, repoName, prNumber, reviewRequest)
+	if err != nil {
+		return fmt.Errorf("failed to create review on GitHub: %w", err)
+	}
+	fmt.Printf("Successfully created review: %s\n", review.GetHTMLURL())
+
+	// Update sandbox reviewState
+	if err := manager.UpdateReviewSandboxAnnotation(ctx, namespace, sandboxName, "reviewState", "submitted"); err != nil {
+		fmt.Printf("Warning: failed to update reviewState annotation: %v\n", err)
+	}
+
+	// scale down sandbox
+	fmt.Printf("Scaling down sandbox %s...\n", sandboxName)
+	err = manager.ScaledownSandbox(ctx, namespace, repoWatchName, fmt.Sprintf("%d", prNumber))
+	if err != nil {
+		fmt.Printf("Warning: failed to scaledown sandbox: %v\n", err)
 	}
 
 	fmt.Println("Done.")
