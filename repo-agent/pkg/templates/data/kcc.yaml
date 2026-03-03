@@ -291,7 +291,7 @@ spec:
     issueShutdownAfterMinutes: 300
     image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
     llm:
-        apiKeySecretRef: gemini-vscode-tokens
+      apiKeySecretRef: gemini-vscode-tokens
     models:
     - gemini-3-flash-preview
     - gemini-3-pro-preview
