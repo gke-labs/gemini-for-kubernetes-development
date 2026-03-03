@@ -57,17 +57,25 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Google Auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ secrets.GKE_CLUSTER }}
+          location: ${{ secrets.GKE_ZONE }}
+
       - name: Deploy to Staging
-        env:
-          KUBECONFIG_CONTENT: ${{ secrets.STAGING_KUBECONFIG }}
         run: |
-          mkdir -p ~/.kube
-          echo "$KUBECONFIG_CONTENT" > ~/.kube/config
-          chmod 600 ~/.kube/config
           chmod +x ./dev/tools/deploy-to-kube
           # Deploy repo-agent manifests
           ./dev/tools/deploy-to-kube --image-prefix=ghcr.io/gke-labs/gemini-for-kubernetes-development/ --image-tag=${{ github.sha }} --working-dir repo-agent/
