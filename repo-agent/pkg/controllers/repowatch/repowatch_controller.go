@@ -1604,6 +1604,8 @@ func (r *Reconciler) reconcileDevSandboxesInternal(ctx context.Context, user *gi
 		return nil, nil, fmt.Errorf("listing dev sandboxes: %w", err)
 	}
 
+	ownedSandboxes := getOwnedSandboxes(sandboxList.Items, repoWatch.UID)
+
 	activeSandboxes := 0
 	watchedDevSandboxes := []reviewv1alpha1.DevSandbox{}
 	pendingDevBranches := []string{}
@@ -1614,22 +1616,11 @@ func (r *Reconciler) reconcileDevSandboxesInternal(ctx context.Context, user *gi
 		desiredBranches[b.GetName()] = true
 	}
 
-	for _, sandbox := range sandboxList.Items {
-		isOwned := false
-		for _, ownerRef := range sandbox.GetOwnerReferences() {
-			if ownerRef.UID == repoWatch.UID {
-				isOwned = true
-				break
-			}
-		}
-		if !isOwned {
-			continue
-		}
-
-		// Get branch from spec
-		branch, found, err := unstructured.NestedString(sandbox.Object, "spec", "destination", "branch")
-		if err != nil || !found {
-			log.Error(err, "unable to get branch from sandbox", "sandbox", sandbox.GetName())
+	for _, sandbox := range ownedSandboxes {
+		// Get branch from annotations
+		branch := sandbox.GetAnnotations()["sandbox.gemini.google.com/branch"]
+		if branch == "" {
+			log.Error(nil, "unable to get branch from sandbox annotations", "sandbox", sandbox.GetName())
 			continue
 		}
 

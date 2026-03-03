@@ -560,14 +560,24 @@ function TaskReviewCard({
                         {taskCollapsed ? 'click to expand' : 'click to collapse'}
                     </span>
                 </div>
-                 {reviewFlairText && (
-                    <span 
-                    style={{ marginRight: '10px', backgroundColor: getReviewFlairColor(reviewFlairText), color: 'white', padding: '5px 10px', borderRadius: '5px', fontSize: 'small' }}
-                    title={task.agentStateMessage || ''}
-                    >
-                    {reviewFlairText}
-                    </span>
-                )}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    {task.stats?.models && (() => {
+                        const totalReqs = Object.values(task.stats.models).reduce((sum, m) => sum + (m.totalRequests || 0), 0);
+                        return totalReqs > 0 ? (
+                            <span style={{ fontSize: 'small', color: 'var(--text-secondary)', fontFamily: 'monospace' }}>
+                                {totalReqs} {totalReqs === 1 ? 'req' : 'reqs'}
+                            </span>
+                        ) : null;
+                    })()}
+                    {reviewFlairText && (
+                        <span
+                        style={{ backgroundColor: getReviewFlairColor(reviewFlairText), color: 'white', padding: '5px 10px', borderRadius: '5px', fontSize: 'small' }}
+                        title={task.agentStateMessage || ''}
+                        >
+                        {reviewFlairText}
+                        </span>
+                    )}
+                </div>
             </div>
             
             {!taskCollapsed && (
@@ -583,6 +593,37 @@ function TaskReviewCard({
                      {showLogs && (
                         <div className="logs-display" style={{backgroundColor: '#333', color: '#fff', padding: '10px', borderRadius: '5px', marginBottom: '10px', maxHeight: '300px', overflowY: 'auto'}}>
                             <pre style={{margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'monospace'}}>{logs || 'Loading logs...'}</pre>
+                        </div>
+                     )}
+                     {task.stats?.models && Object.keys(task.stats.models).length > 0 && (
+                        <div style={{ marginBottom: '10px', border: '1px solid var(--border-color)', borderRadius: '5px', overflow: 'hidden' }}>
+                            <div style={{ padding: '6px 10px', backgroundColor: 'var(--bg-secondary)', borderBottom: '1px solid var(--border-color)', fontSize: 'small', fontWeight: 'bold' }}>
+                                Model Usage
+                            </div>
+                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'small', fontFamily: 'monospace' }}>
+                                <thead>
+                                    <tr style={{ backgroundColor: 'var(--bg-secondary)', textAlign: 'right' }}>
+                                        <th style={{ padding: '6px 10px', textAlign: 'left', borderBottom: '1px solid var(--border-color)' }}>Model</th>
+                                        <th style={{ padding: '6px 10px', borderBottom: '1px solid var(--border-color)' }}>Reqs</th>
+                                        <th style={{ padding: '6px 10px', borderBottom: '1px solid var(--border-color)' }}>Input</th>
+                                        <th style={{ padding: '6px 10px', borderBottom: '1px solid var(--border-color)' }}>Output</th>
+                                        <th style={{ padding: '6px 10px', borderBottom: '1px solid var(--border-color)' }}>Thinking</th>
+                                        <th style={{ padding: '6px 10px', borderBottom: '1px solid var(--border-color)' }}>Total</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {Object.entries(task.stats.models).map(([model, usage]) => (
+                                        <tr key={model}>
+                                            <td style={{ padding: '6px 10px', borderBottom: '1px solid var(--border-color)' }}>{model}</td>
+                                            <td style={{ padding: '6px 10px', textAlign: 'right', borderBottom: '1px solid var(--border-color)' }}>{(usage.totalRequests || 0).toLocaleString()}</td>
+                                            <td style={{ padding: '6px 10px', textAlign: 'right', borderBottom: '1px solid var(--border-color)' }}>{(usage.inputTokens || 0).toLocaleString()}</td>
+                                            <td style={{ padding: '6px 10px', textAlign: 'right', borderBottom: '1px solid var(--border-color)' }}>{(usage.outputTokens || 0).toLocaleString()}</td>
+                                            <td style={{ padding: '6px 10px', textAlign: 'right', borderBottom: '1px solid var(--border-color)' }}>{(usage.thoughtTokens || 0).toLocaleString()}</td>
+                                            <td style={{ padding: '6px 10px', textAlign: 'right', borderBottom: '1px solid var(--border-color)' }}>{(usage.totalTokens || 0).toLocaleString()}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
                         </div>
                      )}
                      {isSubmitted ? (
