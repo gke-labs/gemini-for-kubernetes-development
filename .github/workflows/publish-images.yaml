@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 jobs:
   build-and-publish:
@@ -21,6 +22,7 @@ jobs:
           - syncer
           - generic-golang
           - dind-golang
+          - overseer
     permissions:
       contents: read
       packages: write
@@ -41,11 +43,33 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
-          context: repo-agent/
-          file: repo-agent/images/${{ matrix.image_name }}/Dockerfile
+          context: .
+          file: ${{ matrix.image_name == 'overseer' && 'overseer/images/overseer/Dockerfile' || format('repo-agent/images/{0}/Dockerfile', matrix.image_name) }}
           build-args: |
             VERSION=${{ github.sha }}
           push: true
           tags: |
             ghcr.io/gke-labs/gemini-for-kubernetes-development/${{ matrix.image_name }}:latest
             ghcr.io/gke-labs/gemini-for-kubernetes-development/${{ matrix.image_name }}:${{ github.sha }}
+
+  deploy-staging:
+    needs: build-and-publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy to Staging
+        env:
+          KUBECONFIG_CONTENT: ${{ secrets.STAGING_KUBECONFIG }}
+        run: |
+          mkdir -p ~/.kube
+          echo "$KUBECONFIG_CONTENT" > ~/.kube/config
+          chmod 600 ~/.kube/config
+          chmod +x ./dev/tools/deploy-to-kube
+          # Deploy repo-agent manifests
+          ./dev/tools/deploy-to-kube --image-prefix=ghcr.io/gke-labs/gemini-for-kubernetes-development/ --image-tag=${{ github.sha }} --working-dir repo-agent/
+          # Deploy overseer manifests (RBAC)
+          ./dev/tools/deploy-to-kube --image-prefix=ghcr.io/gke-labs/gemini-for-kubernetes-development/ --image-tag=${{ github.sha }} --working-dir overseer/
