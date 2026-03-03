@@ -326,3 +326,84 @@ func TestReconcileIssueHandlerSandboxes_MaxSandboxes(t *testing.T) {
 	g.Expect(fetchedRepoWatch.Status.PendingIssues[handlerName]).To(gomega.HaveLen(1))
 	g.Expect(fetchedRepoWatch.Status.PendingIssues[handlerName][0]).To(gomega.Equal(3))
 }
+
+// TestReconcileDevSandboxes_MaxSandboxes verifies that the MaxSandboxes limit is respected for Dev sandboxes.
+func TestReconcileDevSandboxes_MaxSandboxes(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	s := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(s)
+	_ = reviewv1alpha1.AddToScheme(s)
+
+	repoWatch := &reviewv1alpha1.RepoWatch{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-repowatch",
+			Namespace: "default",
+			UID:       "test-uid",
+		},
+		Spec: reviewv1alpha1.RepoWatchSpec{
+			Dev: reviewv1alpha1.DevSpec{
+				MaxActiveSandboxes: 1,
+				MaxSandboxes:       1,
+			},
+		},
+	}
+
+	// 1. Existing Dev Sandbox (feature-1)
+	existingSandbox := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "agents.x-k8s.io/v1alpha1",
+			"kind":       "Sandbox",
+			"metadata": map[string]interface{}{
+				"name":      "feature-1-dev",
+				"namespace": "default",
+				"labels": map[string]interface{}{
+					"sandbox.gemini.google.com/type": "dev",
+				},
+				"annotations": map[string]interface{}{
+					"sandbox.gemini.google.com/branch": "feature-1",
+				},
+				"ownerReferences": []interface{}{
+					map[string]interface{}{
+						"apiVersion": "review.gemini.google.com/v1alpha1",
+						"kind":       "RepoWatch",
+						"name":       "test-repowatch",
+						"uid":        "test-uid",
+						"controller": true,
+						"blockOwnerDeletion": true,
+					},
+				},
+			},
+			"spec": map[string]interface{}{
+				"replicas": int64(1),
+			},
+		},
+	}
+
+	r := &Reconciler{
+		Client: clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, existingSandbox).WithStatusSubresource(repoWatch).Build(),
+		Scheme: s,
+	}
+
+	// Both feature-1 and feature-2 are candidate branches
+	branches := []*github.Branch{
+		{Name: github.String("feature-1")},
+		{Name: github.String("feature-2")},
+	}
+
+	watched, pending, err := r.reconcileDevSandboxesInternal(context.Background(), &github.User{Login: github.String("test-user")}, repoWatch, branches, "test-owner", "test-repo", nil)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	// feature-1 should be found
+	foundExisting := false
+	for _, ws := range watched {
+		if ws.SandboxName == "feature-1-dev" {
+			foundExisting = true
+		}
+	}
+	g.Expect(foundExisting).To(gomega.BeTrue())
+
+	// feature-2 should be pending
+	g.Expect(pending).To(gomega.ContainElement("feature-2"))
+	g.Expect(watched).To(gomega.HaveLen(1))
+}
