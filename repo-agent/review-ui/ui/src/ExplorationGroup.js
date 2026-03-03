@@ -11,7 +11,8 @@ function ExplorationGroup({
     onFork,
     namespace,
     getSandboxStatusClass,
-    repoName
+    repoName,
+    showToast,
 }) {
     const [isExpanded, setIsExpanded] = useState(true);
 
@@ -55,41 +56,39 @@ function ExplorationGroup({
     }, [sandboxes]);
 
     return (
-        <div className="exploration-group" style={{ marginBottom: '20px', border: '1px solid var(--border-color)', borderRadius: '8px', backgroundColor: 'var(--bg-card)', boxShadow: 'var(--shadow-card)' }}>
-            <div 
-                className="exploration-header" 
-                style={{ 
-                    padding: '15px', 
-                    borderBottom: isExpanded ? '1px solid var(--border-color)' : 'none', 
-                    display: 'flex', 
-                    justifyContent: 'space-between', 
-                    alignItems: 'center', 
+        <div className="exploration-group" style={{ marginBottom: '20px', border: '1px solid var(--border-color)', borderRadius: '12px', backgroundColor: 'var(--bg-card)', boxShadow: 'var(--shadow-card)', overflow: 'hidden' }}>
+            <div
+                className="exploration-header"
+                style={{
+                    padding: '12px 16px',
+                    borderBottom: isExpanded ? '1px solid var(--border-color)' : 'none',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
                     cursor: 'pointer',
-                    backgroundColor: 'var(--bg-header)' 
+                    backgroundColor: 'var(--bg-header)'
                 }}
                 onClick={() => setIsExpanded(!isExpanded)}
             >
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <span style={{ fontSize: '1.2rem', fontWeight: 'bold' }}>📂 {ideaID}</span>
-                    <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', backgroundColor: 'var(--bg-secondary)', padding: '2px 8px', borderRadius: '12px' }}>
-                        {sandboxes.length} approach{sandboxes.length !== 1 ? 'es' : ''}
+                    <span className="material-symbols-outlined" style={{fontSize: '18px', color: 'var(--text-muted)'}}>{isExpanded ? 'expand_more' : 'chevron_right'}</span>
+                    <span className="material-symbols-outlined" style={{fontSize: '20px', color: isExpanded ? 'var(--color-primary)' : 'rgba(234, 179, 8, 0.6)'}}>folder</span>
+                    <span style={{ fontSize: '14px', fontWeight: 700 }}>{ideaID}</span>
+                    <span className="sidebar-section-count">
+                        {sandboxes.length}
                     </span>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                     <button 
-                        className="btn" 
-                        onClick={(e) => { 
-                            e.stopPropagation(); 
-                            onAddApproach(ideaID); 
-                        }} 
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                     <button
+                        className="sidebar-header-btn"
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onAddApproach(ideaID);
+                        }}
                         title="Add new approach"
-                        style={{ fontSize: '1.2rem', width: '36px', height: '36px', borderRadius: '18px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                     >
-                        +
+                        <span className="material-symbols-outlined" style={{fontSize: '18px'}}>add</span>
                     </button>
-                    <span style={{ color: 'var(--text-secondary)' }}>
-                        {isExpanded ? '▲' : '▼'}
-                    </span>
                 </div>
             </div>
             
@@ -114,6 +113,7 @@ function ExplorationGroup({
                                 handleScaleDown={onScaleDown}
                                 handleFork={onFork}
                                 repoName={repoName}
+                                showToast={showToast}
                             />
                         </div>
                     ))}

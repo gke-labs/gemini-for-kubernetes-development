@@ -191,13 +191,13 @@ function TaskReviewCard({
     };
 
     const getReviewFlairColor = (flairText) => {
-        if (!flairText) return '#3e7f67ff';
+        if (!flairText) return '#3b82f6';
         const text = flairText.toLowerCase();
-        if (text === 'done' || text === 'review ready' || text === 'completed') return 'green';
-        if (text.includes('reviewing') || text === 'running') return 'orange';
-        if (text.includes('error') || text === 'failed') return '#9e2a2aff';
-        if (text === 'submitted' || text === 'review draft created') return '#3f5398ff';
-        return '#cd9945ff'; // Default color
+        if (text === 'done' || text === 'review ready' || text === 'completed' || text === 'ready') return '#22c55e';
+        if (text.includes('reviewing') || text === 'running' || text.includes('running')) return '#f59e0b';
+        if (text.includes('error') || text === 'failed' || text.includes('failed')) return '#ef4444';
+        if (text === 'submitted' || text === 'review draft created') return '#3b82f6';
+        return '#f59e0b';
     };
 
     useEffect(() => {
@@ -492,7 +492,7 @@ function TaskReviewCard({
                   <div className="diff-file-header" onClick={toggleFileCollapse} style={{ cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
                     {path}
                     {fileComments.length > 0 && (
-                      <span style={{ marginLeft: '10px', backgroundColor: 'orange', borderRadius: '50%', width: '20px', height: '20px', display: 'flex', justifyContent: 'center', alignItems: 'center', color: 'white', fontSize: 'small' }}>
+                      <span style={{ marginLeft: '10px', backgroundColor: '#f59e0b', borderRadius: '50%', width: '20px', height: '20px', display: 'flex', justifyContent: 'center', alignItems: 'center', color: 'white', fontSize: '11px', fontWeight: '700' }}>
                         {fileComments.length}
                       </span>
                     )}
@@ -549,40 +549,47 @@ function TaskReviewCard({
       };
 
     return (
-        <div style={{border: '1px solid var(--border-color)', borderRadius: '5px', margin: '10px 0', backgroundColor: 'var(--bg-review-section)'}}>
-            <div 
-                style={{padding: '10px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', backgroundColor: 'var(--bg-hover)'}}
+        <div className="card-animate-in" style={{border: '1px solid var(--border-color)', borderRadius: '12px', margin: '10px 0', backgroundColor: 'var(--bg-review-section)', overflow: 'hidden'}}>
+            {/* Task header with icon */}
+            <div
+                style={{padding: '12px 16px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', backgroundColor: 'var(--bg-hover)'}}
                 onClick={() => setTaskCollapsed(!taskCollapsed)}
             >
-                <div>
-                    <strong>{task.type.toUpperCase()}</strong> - {new Date(task.creationTimestamp).toLocaleString()}
-                    <span style={{ marginLeft: '10px', fontSize: 'small', color: 'var(--text-secondary)' }}>
-                        {taskCollapsed ? 'click to expand' : 'click to collapse'}
+                <div style={{display: 'flex', alignItems: 'center', gap: '10px'}}>
+                    <span className="material-symbols-outlined" style={{fontSize: '20px', color: 'var(--color-primary)'}}>edit_note</span>
+                    <strong style={{fontSize: '13px'}}>{task.type.toUpperCase()}</strong>
+                    <span style={{fontSize: '11px', color: 'var(--text-muted)'}}>
+                        {new Date(task.creationTimestamp).toLocaleString()}
                     </span>
+                    <span className="material-symbols-outlined" style={{fontSize: '16px', color: 'var(--text-muted)'}}>{taskCollapsed ? 'chevron_right' : 'expand_more'}</span>
                 </div>
                  {reviewFlairText && (
-                    <span 
-                    style={{ marginRight: '10px', backgroundColor: getReviewFlairColor(reviewFlairText), color: 'white', padding: '5px 10px', borderRadius: '5px', fontSize: 'small' }}
+                    <span
+                    className={reviewFlairText.toLowerCase().includes('generating') || reviewFlairText.toLowerCase().includes('reviewing') ? 'status-badge-running' : ''}
+                    style={{ backgroundColor: getReviewFlairColor(reviewFlairText) + '1a', color: getReviewFlairColor(reviewFlairText), padding: '2px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '700', textTransform: 'uppercase' }}
                     title={task.agentStateMessage || ''}
                     >
                     {reviewFlairText}
                     </span>
                 )}
             </div>
-            
+
             {!taskCollapsed && (
-                <div style={{padding: '15px'}}>
-                     <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '10px 0', gap: '10px' }}>
-                        <button className="btn" onClick={() => setShowLogs(!showLogs)}>
+                <div style={{padding: '16px'}}>
+                     {/* Toolbar with logs toggle and mode toggle pill */}
+                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingBottom: '12px', borderBottom: '1px solid var(--border-color)', marginBottom: '16px' }}>
+                        <button className="btn btn-secondary" style={{padding: '6px 12px', fontSize: '12px'}} onClick={() => setShowLogs(!showLogs)}>
+                            <span className="material-symbols-outlined" style={{fontSize: '16px'}}>{showLogs ? 'visibility_off' : 'terminal'}</span>
                             {showLogs ? 'Hide Logs' : 'View Logs'}
                         </button>
-                        <button className="btn" onClick={() => toggleReviewView(prId)}>
-                        {reviewViewModes[prId] === 'structured' ? 'View as YAML' : 'View as Structured'}
-                        </button>
+                        <div className="mode-toggle-pill">
+                            <button className={reviewViewModes[prId] === 'structured' ? 'active' : ''} onClick={() => { if (reviewViewModes[prId] !== 'structured') toggleReviewView(prId); }}>Structured</button>
+                            <button className={reviewViewModes[prId] !== 'structured' ? 'active' : ''} onClick={() => { if (reviewViewModes[prId] === 'structured') toggleReviewView(prId); }}>YAML</button>
+                        </div>
                     </div>
                      {showLogs && (
-                        <div className="logs-display" style={{backgroundColor: '#333', color: '#fff', padding: '10px', borderRadius: '5px', marginBottom: '10px', maxHeight: '300px', overflowY: 'auto'}}>
-                            <pre style={{margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'monospace'}}>{logs || 'Loading logs...'}</pre>
+                        <div className="logs-display">
+                            <pre>{logs || 'Loading logs...'}</pre>
                         </div>
                      )}
                      {isSubmitted ? (
@@ -611,25 +618,31 @@ function TaskReviewCard({
                     ) : (
                         reviewViewModes[prId] === 'structured' ? (
                         <div className="review-form">
-                            <div className="review-section">
-                            <h4>Note to Reviewer</h4>
-                            <textarea
-                                className="review-textarea"
-                                value={localDraft?.note || ''}
-                                onChange={(e) => handleLocalStructuredChange('note', e.target.value)}
-                                onBlur={saveTaskDraft}
-                                placeholder="A description of the changes as a note to the reviewer..."
-                            ></textarea>
-                            </div>
-                            <div className="review-section">
-                            <h4>GitHub Review</h4>
-                            <textarea
-                                className="review-textarea"
-                                value={localDraft?.review?.body || ''}
-                                onChange={(e) => handleLocalStructuredChange('review.body', e.target.value)}
-                                onBlur={saveTaskDraft}
-                                placeholder="Overall review comment for the PR..."
-                            ></textarea>
+                            <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px'}}>
+                                <div className="review-section">
+                                    <label className="section-label">Note to Reviewer</label>
+                                    <div style={{
+                                        backgroundColor: 'var(--bg-secondary)',
+                                        padding: '12px',
+                                        borderRadius: '8px',
+                                        minHeight: '96px',
+                                        border: '1px solid var(--border-color)',
+                                        overflowX: 'auto'
+                                    }}>
+                                        <pre style={{margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'var(--font-mono)', fontSize: '13px', color: 'var(--text-primary)'}}>{localDraft?.note || 'No notes.'}</pre>
+                                    </div>
+                                </div>
+                                <div className="review-section">
+                                    <label className="section-label">GitHub Review</label>
+                                    <textarea
+                                        className="review-textarea"
+                                        value={localDraft?.review?.body || ''}
+                                        onChange={(e) => handleLocalStructuredChange('review.body', e.target.value)}
+                                        onBlur={saveTaskDraft}
+                                        placeholder="Overall review comment for the PR..."
+                                        style={{minHeight: '96px'}}
+                                    ></textarea>
+                                </div>
                             </div>
                         </div>
                         ) : (
@@ -638,7 +651,7 @@ function TaskReviewCard({
                             <h4>Review YAML</h4>
                             <textarea
                                 className="review-textarea yaml-editor"
-                                style={{ height: '300px', fontFamily: 'monospace' }}
+                                style={{ height: '300px' }}
                                 value={localYaml || ''}
                                 onChange={(e) => handleLocalYamlChange(e.target.value)}
                                 onBlur={saveTaskDraft}
@@ -696,6 +709,7 @@ function PrReviewCard({
   lastUpdated,
   repoName: propRepoName,
   onRefresh,
+  showToast,
 }) {
   const [diff, setDiff] = useState(null);
   const [diffError, setDiffError] = useState(null);
@@ -728,11 +742,10 @@ function PrReviewCard({
       })
       .then(res => {
           if (res.ok) {
-              alert("Review submitted!");
-              // potentially trigger a refresh or update UI state
+              if (showToast) showToast("Review submitted!", 'success');
               if (onRefresh) onRefresh();
           } else {
-              res.text().then(t => alert("Failed to submit: " + t));
+              res.text().then(t => { if (showToast) showToast("Failed to submit: " + t, 'error'); });
           }
       })
       .catch(err => console.error("Failed to submit task draft", err));
@@ -772,7 +785,7 @@ function PrReviewCard({
               setExpectedComments(0);
               fetchTasks();
           } else {
-              res.text().then(t => alert("Failed to create task: " + t));
+              res.text().then(t => { if (showToast) showToast("Failed to create task: " + t, 'error'); });
           }
       })
       .catch(err => console.error("Failed to create task", err));
@@ -824,7 +837,7 @@ function PrReviewCard({
 
   if (pr.type === 'pending' || pr.type === 'excluded') {
     return (
-      <div className="pr-card" style={{opacity: 0.6, border: '1px dashed #ccc'}}>
+      <div className="pr-card" style={{opacity: 0.6, border: '1px dashed var(--border-color)'}}>
            <div className="pr-card-header" style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 20px'}}>
               <h3 style={{margin: 0}}>
                 {pr.htmlURL ? (
@@ -887,7 +900,7 @@ function PrReviewCard({
           {getSandboxStatusClass(pr) === 'green' ? (
             <div style={{display: 'flex', alignItems: 'center', gap: '5px'}}>
               {pr.agentState === 'provisioning' ? (
-                <span className="pr-sandbox" style={{backgroundColor: '#2196F3', color: 'white', cursor: 'default'}}>
+                <span className="pr-sandbox" style={{backgroundColor: '#3b82f6', color: 'white', cursor: 'default', animation: 'pulse-subtle 2s ease-in-out infinite'}}>
                   Sandbox Provisioning
                 </span>
               ) : (
@@ -957,39 +970,50 @@ function PrReviewCard({
             ))}
 
             {!isSubmitted && (
-                <div style={{padding: '10px', borderTop: '1px solid var(--border-color)', marginTop: '10px'}}>
+                <div style={{padding: '16px', borderTop: '1px solid var(--border-color)', marginTop: '10px'}}>
                     {!showNewTaskForm ? (
-                        <button className="btn" onClick={() => setShowNewTaskForm(true)}>Review Again</button>
+                        <button className="btn btn-secondary" onClick={() => setShowNewTaskForm(true)} style={{display: 'flex', alignItems: 'center', gap: '6px'}}>
+                            <span className="material-symbols-outlined" style={{fontSize: '18px'}}>refresh</span>
+                            Run AI Review Again
+                        </button>
                     ) : (
-                        <div className="new-task-form" style={{padding: '10px', backgroundColor: 'var(--bg-secondary)', borderRadius: '5px'}}>
-                            <h4>Request New Review Task</h4>
-                            <div style={{marginBottom: '10px'}}>
-                                <label style={{marginRight: '10px', display: 'block', marginBottom: '5px'}}>
-                                    Expected Comments: {expectedComments === 0 ? 'Auto' : expectedComments}
-                                </label>
-                                <input 
-                                    type="range" 
-                                    min="0" 
-                                    max="50" 
-                                    value={expectedComments} 
-                                    onChange={(e) => setExpectedComments(parseInt(e.target.value))}
-                                    style={{width: '100%'}}
-                                />
-                                <div style={{display: 'flex', justifyContent: 'space-between', fontSize: 'small', color: 'var(--text-secondary)'}}>
-                                    <span>Auto</span>
-                                    <span>50</span>
+                        <div style={{padding: '24px', backgroundColor: 'var(--color-primary-subtle)', borderRadius: '12px', border: '1px solid var(--color-primary-glow)'}}>
+                            <div style={{display: 'flex', flexDirection: 'column', gap: '20px'}}>
+                                {/* Slider section */}
+                                <div>
+                                    <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '12px'}}>
+                                        <h4 style={{margin: 0, fontSize: '13px', fontWeight: 700}}>Review Confidence</h4>
+                                        <span style={{color: 'var(--color-primary)', fontWeight: 700, fontSize: '14px'}}>{expectedComments === 0 ? 'Auto' : expectedComments}</span>
+                                    </div>
+                                    <input
+                                        type="range"
+                                        min="0"
+                                        max="50"
+                                        value={expectedComments}
+                                        onChange={(e) => setExpectedComments(parseInt(e.target.value))}
+                                    />
+                                    <div style={{display: 'flex', justifyContent: 'space-between', marginTop: '4px', fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)'}}>
+                                        <span>Auto</span>
+                                        <span>Optimal</span>
+                                        <span>Maximum</span>
+                                    </div>
                                 </div>
-                            </div>
-                            <textarea 
-                                className="review-textarea"
-                                value={newTaskPrompt}
-                                onChange={(e) => setNewTaskPrompt(e.target.value)}
-                                placeholder="Enter custom instructions for the agent (optional)..."
-                                style={{width: '100%', marginBottom: '10px'}}
-                            />
-                            <div>
-                                <button className="btn btn-submit" onClick={handleCreateTask}>Start Task</button>
-                                <button className="btn" style={{marginLeft: '10px', backgroundColor: 'var(--status-grey)'}} onClick={() => setShowNewTaskForm(false)}>Cancel</button>
+                                {/* Prompt textarea */}
+                                <textarea
+                                    className="review-textarea"
+                                    value={newTaskPrompt}
+                                    onChange={(e) => setNewTaskPrompt(e.target.value)}
+                                    placeholder="Custom instructions for the agent (optional)..."
+                                    style={{width: '100%', minHeight: '80px', boxSizing: 'border-box'}}
+                                />
+                                {/* Actions */}
+                                <div style={{display: 'flex', justifyContent: 'flex-end', gap: '8px'}}>
+                                    <button className="btn btn-secondary" onClick={() => setShowNewTaskForm(false)}>Cancel</button>
+                                    <button className="btn btn-submit" onClick={handleCreateTask} style={{display: 'flex', alignItems: 'center', gap: '6px'}}>
+                                        <span className="material-symbols-outlined" style={{fontSize: '18px'}}>refresh</span>
+                                        Run AI Review Again
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     )}
@@ -1002,13 +1026,13 @@ function PrReviewCard({
                 <h4>Curl Command</h4>
                 <textarea
                     className="review-textarea"
-                    style={{height: '150px', fontFamily: 'monospace', width: '100%'}}
+                    style={{height: '150px', width: '100%'}}
                     value={curlCommand}
                     readOnly
                 />
                 <button className="btn" style={{marginTop: '5px'}} onClick={() => {
                     navigator.clipboard.writeText(curlCommand);
-                    alert("Copied to clipboard!");
+                    if (showToast) showToast("Copied to clipboard!", 'success');
                 }}>Copy to Clipboard</button>
                 <button className="btn" style={{marginTop: '5px', marginLeft: '10px'}} onClick={() => setCurlCommand(null)}>Close</button>
                 </div>

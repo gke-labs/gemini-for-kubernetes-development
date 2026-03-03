@@ -44,6 +44,7 @@ function App() {
   const [yamlDrafts, setYamlDrafts] = useState({});
   const [lastUpdated, setLastUpdated] = useState(null);
   const [hasInstructionDraft, setHasInstructionDraft] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   
   // Dev Sandbox Sidebar State
   const [sidebarWidth, setSidebarWidth] = useState(400);
@@ -72,6 +73,35 @@ function App() {
   const [feedbackText, setFeedbackText] = useState('');
   const [feedbackImage, setFeedbackImage] = useState('');
   const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
+
+  // Toast notifications (replacing alert())
+  const [toasts, setToasts] = useState([]);
+  const showToast = useCallback((message, type = 'info') => {
+    const id = Date.now();
+    setToasts(prev => [...prev, { id, message, type }]);
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 4000);
+  }, []);
+
+  const dismissToast = useCallback((id) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
+  }, []);
+
+  // Prompt modal (replacing window.prompt for Add PR)
+  const [promptModalOpen, setPromptModalOpen] = useState(false);
+  const [promptInput, setPromptInput] = useState('');
+
+  // Confirm modal (replacing window.confirm)
+  const [confirmModal, setConfirmModal] = useState({ open: false, message: '', onConfirm: null, onCancel: null });
+  const showConfirm = useCallback((message) => {
+    return new Promise((resolve) => {
+      setConfirmModal({
+        open: true,
+        message,
+        onConfirm: () => { setConfirmModal({ open: false, message: '', onConfirm: null, onCancel: null }); resolve(true); },
+        onCancel: () => { setConfirmModal({ open: false, message: '', onConfirm: null, onCancel: null }); resolve(false); },
+      });
+    });
+  }, []);
 
 
   useEffect(() => {
@@ -120,7 +150,7 @@ function App() {
 
   // Check authentication status on load
   useEffect(() => {
-    fetch('/api/auth/status')
+    const authPromise = fetch('/api/auth/status')
       .then(res => {
         if (res.ok) return res.json();
         throw new Error("Not authenticated");
@@ -128,19 +158,21 @@ function App() {
       .then(data => {
         setIsAuthenticated(true);
         setUser(data.user);
-        setIsLoadingAuth(false);
       })
       .catch(() => {
         setIsAuthenticated(false);
-        setIsLoadingAuth(false);
       });
-      
-    fetch('/api/auth/providers')
+
+    const providersPromise = fetch('/api/auth/providers')
       .then(res => res.json())
       .then(data => {
         setGithubAuthEnabled(data.github);
       })
       .catch(err => console.error("Failed to fetch auth providers:", err));
+
+    Promise.all([authPromise, providersPromise]).then(() => {
+      setIsLoadingAuth(false);
+    });
   }, []);
 
   useEffect(() => {
@@ -421,6 +453,7 @@ function App() {
     setPrs([]);
     setIssues([]);
     setDevSandboxes([]);
+    setLastUpdated(null);
     if (repo) {
       if (repo.review) {
         setActiveSubTab({ repo: repoName, name: 'review' });
@@ -440,33 +473,31 @@ function App() {
   };
 
   const handleAddPR = (prId = null) => {
-    let prNumber;
-    
     if (prId) {
-        prNumber = parseInt(prId);
+        submitAddPR(String(prId));
     } else {
-        const input = window.prompt("Enter PR URL or Number:");
-        if (!input) return;
+        setPromptInput('');
+        setPromptModalOpen(true);
+    }
+  };
 
-        prNumber = parseInt(input);
-        if (isNaN(prNumber)) {
-          // Try to parse URL
-          // e.g., https://github.com/owner/repo/pull/123
-          try {
-            const url = new URL(input);
-            const parts = url.pathname.split('/');
-            const pullIndex = parts.indexOf('pull');
-            if (pullIndex !== -1 && pullIndex + 1 < parts.length) {
-                prNumber = parseInt(parts[pullIndex + 1]);
-            }
-          } catch (e) {
-            // ignore
-          }
+  const submitAddPR = (input) => {
+    let prNumber = parseInt(input);
+    if (isNaN(prNumber)) {
+      try {
+        const url = new URL(input);
+        const parts = url.pathname.split('/');
+        const pullIndex = parts.indexOf('pull');
+        if (pullIndex !== -1 && pullIndex + 1 < parts.length) {
+            prNumber = parseInt(parts[pullIndex + 1]);
         }
+      } catch (e) {
+        // ignore
+      }
     }
 
     if (isNaN(prNumber) || !prNumber) {
-        alert("Invalid PR number or URL");
+        showToast("Invalid PR number or URL", 'error');
         return;
     }
 
@@ -477,13 +508,12 @@ function App() {
     })
     .then(res => {
         if (res.ok) {
-            alert(`PR #${prNumber} has been added to watch list. It may take a few moments to appear.`);
-            fetchRepos(); // Refresh repos to update lists
+            showToast(`PR #${prNumber} has been added to watch list. It may take a few moments to appear.`, 'success');
+            fetchRepos();
         } else {
             res.json().then(data => {
                 const errorMsg = data.error || res.statusText;
-                const hint = "\n\nTip: If this is a private repo or organization-restricted, you may need a manual GitHub Classic PAT with 'repo' permissions in 'Settings'.";
-                alert("Failed to add PR: " + errorMsg + hint);
+                showToast("Failed to add PR: " + errorMsg, 'error');
             });
         }
     })
@@ -510,12 +540,9 @@ function App() {
                }
            });
            
-           // Show alert slightly deferred to allow UI render
-           setTimeout(() => {
-                alert("PR Sandbox deleted. It will disappear from the list shortly.");
-           }, 50);
+           showToast("PR Sandbox deleted. It will disappear from the list shortly.", 'success');
         } else {
-          alert("Failed to delete PR sandbox");
+          showToast("Failed to delete PR sandbox", 'error');
         }
       })
       .catch(err => console.error("Failed to delete PR:", err));
@@ -573,7 +600,7 @@ function App() {
         setDrafts(prev => ({ ...prev, [id]: parsedDraft }));
         setReviewViewModes(prev => ({ ...prev, [id]: 'structured' }));
       } catch (e) {
-        alert('Invalid YAML. Please fix it before switching view.');
+        showToast('Invalid YAML. Please fix it before switching view.', 'error');
         console.error("YAML parse error on view switch:", e);
       }
     } else {
@@ -597,7 +624,7 @@ function App() {
         body: JSON.stringify({ draft })
       }).catch(err => console.error("Failed to save draft:", err));
     } catch (e) {
-      alert('Invalid YAML, not saving.');
+      showToast('Invalid YAML, not saving.', 'error');
       console.error("YAML parse error on blur:", e);
     }
   };
@@ -608,7 +635,7 @@ function App() {
       try {
         review = yaml.load(yamlDrafts[id]);
       } catch (e) {
-        alert('Invalid YAML. Please fix it before submitting.');
+        showToast('Invalid YAML. Please fix it before submitting.', 'error');
         return;
       }
     } else {
@@ -616,7 +643,7 @@ function App() {
     }
 
     if (!review || (!review.review.body?.trim() && (!review.review.comments || review.review.comments.length === 0))) {
-      alert("Please leave a review comment before Submitting.");
+      showToast("Please leave a review comment before Submitting.", 'info');
       return;
     }
     const reviewYAML = yaml.dump(review);
@@ -631,9 +658,8 @@ function App() {
       } else {
         res.json().then(data => {
             const errorMsg = data.error || res.statusText;
-            const details = data.details ? "\nDetails: " + data.details : "";
-            const hint = "\n\nTip: This often happens if the GitHub token has insufficient permissions for this organization. Go to 'Settings' and provide a manual GitHub Classic PAT with 'repo' (read/write) permissions.";
-            alert("Failed to submit PR review: " + errorMsg + details + hint);
+            const details = data.details ? " Details: " + data.details : "";
+            showToast("Failed to submit PR review: " + errorMsg + details, 'error');
         });
       }
     })
@@ -646,7 +672,7 @@ function App() {
       try {
         review = yaml.load(yamlDrafts[id]);
       } catch (e) {
-        alert('Invalid YAML. Please fix it before exporting.');
+        showToast('Invalid YAML. Please fix it before exporting.', 'error');
         return;
       }
     } else {
@@ -654,7 +680,7 @@ function App() {
     }
 
     if (!review || (!review.review.body?.trim() && (!review.review.comments || review.review.comments.length === 0))) {
-      alert("Please leave a review comment before Exporting.");
+      showToast("Please leave a review comment before Exporting.", 'info');
       return;
     }
 
@@ -662,7 +688,7 @@ function App() {
       const url = new URL(activeRepo.url);
       const pathParts = url.pathname.split('/').filter(p => p);
       if (pathParts.length < 2) {
-        alert("Invalid repo URL format");
+        showToast("Invalid repo URL format", 'error');
         return;
       }
       const owner = pathParts[0];
@@ -703,7 +729,7 @@ function App() {
       }
     } catch (e) {
       console.error("Failed to generate curl command:", e);
-      alert("Failed to generate curl command: " + e.message);
+      showToast("Failed to generate curl command: " + e.message, 'error');
     }
   };
 
@@ -719,7 +745,7 @@ function App() {
   const handleIssueSubmit = (issueId) => {
     const comment = drafts[issueId];
     if (!comment.trim()) {
-      alert("Please leave a comment before Submitting.");
+      showToast("Please leave a comment before Submitting.", 'info');
       return;
     }
     fetch(`/api/repo/${activeRepo.name}/issues/${issueId}/submitcomment`, {
@@ -733,9 +759,8 @@ function App() {
       } else {
         res.json().then(data => {
             const errorMsg = data.error || res.statusText;
-            const details = data.details ? "\nDetails: " + data.details : "";
-            const hint = "\n\nTip: This often happens if the GitHub token has insufficient permissions for this organization. Go to 'Settings' and provide a manual GitHub Classic PAT with 'repo' (read/write) permissions.";
-            alert("Failed to submit issue comment: " + errorMsg + details + hint);
+            const details = data.details ? " Details: " + data.details : "";
+            showToast("Failed to submit issue comment: " + errorMsg + details, 'error');
         });
       }
     })
@@ -769,12 +794,9 @@ function App() {
                 }
             });
           }
-          // Show alert slightly deferred to allow UI render
-          setTimeout(() => {
-               alert("Issue Sandbox deleted. It will disappear from the list shortly.");
-          }, 50);
+          showToast("Issue Sandbox deleted. It will disappear from the list shortly.", 'success');
         } else {
-          alert("Failed to delete issue sandbox");
+          showToast("Failed to delete issue sandbox", 'error');
         }
       })
       .catch(err => console.error("Failed to delete issue:", err));
@@ -838,7 +860,7 @@ function App() {
           // Refresh PRs to update status
           fetchRepos();
         } else {
-          alert("Failed to scale up sandbox");
+          showToast("Failed to scale up sandbox", 'error');
         }
       })
       .catch(err => console.error("Failed to scale up sandbox:", err));
@@ -851,7 +873,7 @@ function App() {
           // Refresh PRs to update status
           fetchRepos();
         } else {
-          alert("Failed to scale down sandbox");
+          showToast("Failed to scale down sandbox", 'error');
         }
       })
       .catch(err => console.error("Failed to scale down sandbox:", err));
@@ -868,7 +890,7 @@ function App() {
           // Refresh Issues
           fetchRepos(); // This might be overkill but ensures consistency. Ideally we just re-fetch issues.
         } else {
-          alert("Failed to scale up issue sandbox");
+          showToast("Failed to scale up issue sandbox", 'error');
         }
       })
       .catch(err => console.error("Failed to scale up issue sandbox:", err));
@@ -880,7 +902,7 @@ function App() {
         if (res.ok) {
            fetchRepos();
         } else {
-          alert("Failed to scale down issue sandbox");
+          showToast("Failed to scale down issue sandbox", 'error');
         }
       })
       .catch(err => console.error("Failed to scale down issue sandbox:", err));
@@ -910,15 +932,12 @@ function App() {
                  }
             });
 
-           // Show alert slightly deferred to allow UI render
-           setTimeout(() => {
-                alert("Dev Sandbox deleted. It will disappear from the list shortly.");
-           }, 50);
+           showToast("Dev Sandbox deleted. It will disappear from the list shortly.", 'success');
         } else {
             res.json().then(data => {
-                alert("Failed to delete dev sandbox: " + (data.error || res.statusText));
+                showToast("Failed to delete dev sandbox: " + (data.error || res.statusText), 'error');
             }).catch(() => {
-                alert("Failed to delete dev sandbox");
+                showToast("Failed to delete dev sandbox", 'error');
             });
         }
       })
@@ -933,7 +952,7 @@ function App() {
             if (res.ok) {
                 fetchRepos(); // Refresh to get updated status
             } else {
-                alert("Failed to scale up dev sandbox");
+                showToast("Failed to scale up dev sandbox", 'error');
             }
         })
         .catch(err => console.error("Failed to scale up dev sandbox:", err));
@@ -945,7 +964,7 @@ function App() {
               if (res.ok) {
                   fetchRepos(); // Refresh to get updated status
               } else {
-                  alert("Failed to scale down dev sandbox");
+                  showToast("Failed to scale down dev sandbox", 'error');
               }
           })
           .catch(err => console.error("Failed to scale down dev sandbox:", err));
@@ -961,7 +980,7 @@ function App() {
           if (res.ok) {
               fetchRepos(); // Refresh to show new sandbox
           } else {
-              res.json().then(data => alert("Failed to create dev sandbox: " + data.error));
+              res.json().then(data => showToast("Failed to create dev sandbox: " + data.error, 'error'));
           }
       })
       .catch(err => console.error("Failed to create dev sandbox:", err));
@@ -989,7 +1008,7 @@ function App() {
         setNewExplorationIdea('');
         setNewExplorationDescription('');
     } else {
-        alert("Idea Name is required.");
+        showToast("Idea Name is required.", 'info');
     }
   };
 
@@ -1015,7 +1034,7 @@ function App() {
           setBaseBranchForFork('');
           setParentApproachForFork('');
       } else {
-          alert("Approach Name is required.");
+          showToast("Approach Name is required.", 'info');
       }
   };
 
@@ -1041,7 +1060,7 @@ function App() {
       } else {
           // If forking an ungrouped sandbox, maybe start a new exploration based on it?
           // For now, let's just alert not supported or implement basic branching
-          alert("Forking ungrouped sandboxes into new explorations is not yet supported via this button.");
+          showToast("Forking ungrouped sandboxes into new explorations is not yet supported via this button.", 'info');
       }
   };
 
@@ -1096,7 +1115,7 @@ function App() {
     .then(res => {
         if (res.ok) {
             res.json().then(data => {
-                alert(`Feedback submitted successfully!`);
+                showToast("Feedback submitted successfully!", 'success');
                 if (data.issue_url) {
                     window.open(data.issue_url, '_blank');
                 }
@@ -1106,10 +1125,10 @@ function App() {
                 setFeedbackImage('');
             });
         } else {
-            res.json().then(data => alert("Failed to submit feedback: " + (data.error || res.statusText)));
+            res.json().then(data => showToast("Failed to submit feedback: " + (data.error || res.statusText), 'error'));
         }
     })
-    .catch(err => alert("Failed to submit feedback: " + err))
+    .catch(err => showToast("Failed to submit feedback: " + err, 'error'))
     .finally(() => setIsSubmittingFeedback(false));
   };
 
@@ -1143,6 +1162,7 @@ function App() {
           handleAddPR={handleAddPR}
           lastUpdated={lastUpdated}
           onRefresh={() => refreshData(true)}
+          showToast={showToast}
         />
       );
     } else if (activeSubTab.name === 'dev') {
@@ -1206,6 +1226,7 @@ function App() {
                             handleScaleDown={handleDevScaleDown}
                             handleFork={handleForkDevInstance}
                             repoName={activeRepo.name}
+                            showToast={showToast}
                         />
                     ) : (
                         <div style={{textAlign: 'center', marginTop: '50px', color: 'var(--text-secondary)'}}>
@@ -1222,11 +1243,11 @@ function App() {
                     <div className="modal-overlay" onClick={() => setDevModalOpen(false)}>
                         <div className="modal-content" onClick={(e) => e.stopPropagation()}>
                             <h4>New Dev Sandbox (Branch)</h4>
-                            <input type="text" placeholder="Branch Name" value={newDevBranch} onChange={(e) => setNewDevBranch(e.target.value)} style={{padding: '5px', border: '1px solid #ccc'}} />
-                            <textarea placeholder="Prompt (optional)" value={newDevPrompt} onChange={(e) => setNewDevPrompt(e.target.value)} rows="15" style={{padding: '5px', border: '1px solid #ccc'}} />
+                            <input type="text" placeholder="Branch Name" value={newDevBranch} onChange={(e) => setNewDevBranch(e.target.value)} style={{padding: '12px', border: '1px solid var(--border-color)', borderRadius: '8px', backgroundColor: 'var(--bg-input)', color: 'var(--text-primary)'}} />
+                            <textarea placeholder="Prompt (optional)" value={newDevPrompt} onChange={(e) => setNewDevPrompt(e.target.value)} rows="15" style={{padding: '12px', border: '1px solid var(--border-color)', borderRadius: '8px', backgroundColor: 'var(--bg-input)', color: 'var(--text-primary)'}} />
                             <div style={{display: 'flex', justifyContent: 'flex-end', gap: '10px'}}>
-                                <button className="btn" onClick={() => setDevModalOpen(false)} style={{backgroundColor: '#ccc', color: 'black'}}>Cancel</button>
-                                <button className="btn" onClick={submitDevCreate} style={{backgroundColor: '#007bff', color: 'white'}}>Create</button>
+                                <button className="btn" onClick={() => setDevModalOpen(false)} style={{backgroundColor: 'var(--bg-secondary)', color: 'var(--text-primary)'}}>Cancel</button>
+                                <button className="btn" onClick={submitDevCreate} style={{backgroundColor: 'var(--color-primary)', color: 'white'}}>Create</button>
                             </div>
                         </div>
                     </div>
@@ -1238,15 +1259,15 @@ function App() {
                                 <h4>Start New Exploration</h4>
                                 <div className="form-group">
                                     <label>Exploration Name (e.g., optimize-db)</label>
-                                    <input type="text" value={newExplorationIdea} onChange={(e) => setNewExplorationIdea(e.target.value)} style={{padding: '5px', border: '1px solid #ccc'}} />
+                                    <input type="text" value={newExplorationIdea} onChange={(e) => setNewExplorationIdea(e.target.value)} style={{padding: '12px', border: '1px solid var(--border-color)', borderRadius: '8px', backgroundColor: 'var(--bg-input)', color: 'var(--text-primary)'}} />
                                 </div>
                                 <div className="form-group">
                                     <label>Description</label>
-                                    <textarea value={newExplorationDescription} onChange={(e) => setNewExplorationDescription(e.target.value)} rows="5" style={{padding: '5px', border: '1px solid #ccc'}} />
+                                    <textarea value={newExplorationDescription} onChange={(e) => setNewExplorationDescription(e.target.value)} rows="5" style={{padding: '12px', border: '1px solid var(--border-color)', borderRadius: '8px', backgroundColor: 'var(--bg-input)', color: 'var(--text-primary)'}} />
                                 </div>
                                 <div style={{display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '15px'}}>
-                                    <button className="btn" onClick={() => setExplorationModalOpen(false)} style={{backgroundColor: '#ccc', color: 'black'}}>Cancel</button>
-                                    <button className="btn" onClick={submitExplorationCreate} style={{backgroundColor: '#007bff', color: 'white'}}>Create Exploration</button>
+                                    <button className="btn" onClick={() => setExplorationModalOpen(false)} style={{backgroundColor: 'var(--bg-secondary)', color: 'var(--text-primary)'}}>Cancel</button>
+                                    <button className="btn" onClick={submitExplorationCreate} style={{backgroundColor: 'var(--color-primary)', color: 'white'}}>Create Exploration</button>
                                 </div>
                             </div>
                         </div>
@@ -1258,15 +1279,15 @@ function App() {
                                 <h4>Add Approach to {targetIdeaID}</h4>
                                 <div className="form-group">
                                     <label>Approach Name (e.g., attempt-2)</label>
-                                    <input type="text" value={newApproachName} onChange={(e) => setNewApproachName(e.target.value)} style={{padding: '5px', border: '1px solid #ccc'}} />
+                                    <input type="text" value={newApproachName} onChange={(e) => setNewApproachName(e.target.value)} style={{padding: '12px', border: '1px solid var(--border-color)', borderRadius: '8px', backgroundColor: 'var(--bg-input)', color: 'var(--text-primary)'}} />
                                 </div>
                                 <div className="form-group">
                                     <label>Prompt (Instructions for Agent)</label>
-                                    <textarea value={newApproachPrompt} onChange={(e) => setNewApproachPrompt(e.target.value)} rows="10" style={{padding: '5px', border: '1px solid #ccc'}} />
+                                    <textarea value={newApproachPrompt} onChange={(e) => setNewApproachPrompt(e.target.value)} rows="10" style={{padding: '12px', border: '1px solid var(--border-color)', borderRadius: '8px', backgroundColor: 'var(--bg-input)', color: 'var(--text-primary)'}} />
                                 </div>
                                 <div style={{display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '15px'}}>
-                                    <button className="btn" onClick={() => setApproachModalOpen(false)} style={{backgroundColor: '#ccc', color: 'black'}}>Cancel</button>
-                                    <button className="btn" onClick={submitApproachCreate} style={{backgroundColor: '#007bff', color: 'white'}}>Create Approach</button>
+                                    <button className="btn" onClick={() => setApproachModalOpen(false)} style={{backgroundColor: 'var(--bg-secondary)', color: 'var(--text-primary)'}}>Cancel</button>
+                                    <button className="btn" onClick={submitApproachCreate} style={{backgroundColor: 'var(--color-primary)', color: 'white'}}>Create Approach</button>
                                 </div>
                             </div>
                         </div>
@@ -1289,6 +1310,8 @@ function App() {
           namespace={namespace}
           handleScaleUp={handleIssueScaleUp}
           handleScaleDown={handleIssueScaleDown}
+          lastUpdated={lastUpdated}
+          showToast={showToast}
         />
       );
     }
@@ -1308,7 +1331,7 @@ function App() {
         ))}
         <button className="tab-btn add-repo-btn" onClick={() => {
           if (!isGeminiKeySet && !isGuest) {
-            alert("Please set your Gemini API Key in Settings before adding a repository.");
+            showToast("Please set your Gemini API Key in Settings before adding a repository.", 'info');
             setView('settings');
           } else {
             setView('add_repo');
@@ -1321,24 +1344,27 @@ function App() {
             {repos.find(r => r.name === activeRepo.name)?.review && (
                 <button
                 className={`sub-tab-btn ${activeSubTab.name === 'review' ? 'active' : ''}`}
-                onClick={() => setActiveSubTab({ repo: activeRepo.name, name: 'review' })}
+                onClick={() => { setLastUpdated(null); setActiveSubTab({ repo: activeRepo.name, name: 'review' }); }}
                 >
+                <span className="material-symbols-outlined">rate_review</span>
                 Review
                 </button>
             )}
             {repos.find(r => r.name === activeRepo.name)?.issue && (
                 <button
                 className={`sub-tab-btn ${activeSubTab.name === 'issues' ? 'active' : ''}`}
-                onClick={() => setActiveSubTab({ repo: activeRepo.name, name: 'issues' })}
+                onClick={() => { setLastUpdated(null); setActiveSubTab({ repo: activeRepo.name, name: 'issues' }); }}
                 >
+                <span className="material-symbols-outlined">bug_report</span>
                 Issues
                 </button>
             )}
             {repos.find(r => r.name === activeRepo.name)?.dev && (
                 <button
                 className={`sub-tab-btn ${activeSubTab.name === 'dev' ? 'active' : ''}`}
-                onClick={() => setActiveSubTab({ repo: activeRepo.name, name: 'dev' })}
+                onClick={() => { setLastUpdated(null); setActiveSubTab({ repo: activeRepo.name, name: 'dev' }); }}
                 >
+                <span className="material-symbols-outlined">code</span>
                 Dev
                 </button>
             )}
@@ -1349,7 +1375,9 @@ function App() {
                         Filter: {activeRepo.review.assignees.join(', ')}
                     </span>
                 )}
-                <button className="btn btn-refresh-lg" onClick={() => refreshData(true)} title="Refresh now">↻</button>
+                <button className="btn btn-refresh-lg" onClick={() => { setIsRefreshing(true); refreshData(true); setTimeout(() => setIsRefreshing(false), 1000); }} title="Refresh now">
+                    <span className={`material-symbols-outlined ${isRefreshing ? 'spinning' : ''}`} style={{fontSize: '18px'}}>refresh</span>
+                </button>
                 {lastUpdated && <span className={`last-updated ${Date.now() - lastUpdated > 60000 ? 'stale' : ''}`}>Updated {lastUpdated.toLocaleTimeString()}</span>}
                 <button className="btn" onClick={() => setView('update_repo')} style={{marginLeft: '10px', marginRight: '10px'}}>
                     Repo Settings
@@ -1364,30 +1392,53 @@ function App() {
     </>
   );
 
-  if (isLoadingAuth) return <div className="App"><header className="App-header"><h1>Loading...</h1></header></div>;
+  if (isLoadingAuth) return (
+    <div className="App">
+      <div className="loading-screen">
+        <div className="loading-spinner"></div>
+        <p style={{color: 'var(--text-muted)', fontSize: '14px', fontWeight: 500}}>Loading Repo Agent...</p>
+      </div>
+    </div>
+  );
 
   if (!isAuthenticated && !isGuest) {
     return (
       <div className="App">
-        <header className="App-header">
-          <h1>Repo Agent</h1>
-          <div className="theme-switch-wrapper">
-            <label className="theme-switch" htmlFor="checkbox"><input type="checkbox" id="checkbox" onChange={toggleTheme} checked={theme === 'dark'} /><div className="slider round"></div></label>
+        <div className="login-page-wrapper">
+          <main className="login-container">
+            <div className="login-logo">
+              <div className="login-logo-icon">
+                <span className="material-symbols-outlined">terminal</span>
+              </div>
+            </div>
+            <h2 style={{fontSize: '24px', fontWeight: 700, letterSpacing: '-0.02em', marginBottom: '4px'}}>Repo Agent</h2>
+            <p className="login-tagline">AI-powered repository management</p>
+            <div className="login-actions">
+              {githubAuthEnabled ? (
+                  <>
+                  <button className="btn btn-submit" onClick={() => handleLogin('readwrite')} style={{width: '100%', justifyContent: 'center', padding: '12px 16px', boxShadow: '0 4px 14px var(--color-primary-glow)'}}>
+                    <span className="material-symbols-outlined" style={{fontSize: '20px'}}>code</span>
+                    Sign in with GitHub (Read-Write)
+                  </button>
+                  <button className="btn btn-secondary" onClick={() => handleLogin('readonly')} style={{width: '100%', justifyContent: 'center', padding: '12px 16px'}}>
+                    <span className="material-symbols-outlined" style={{fontSize: '20px'}}>visibility</span>
+                    Sign in with GitHub (Read-Only)
+                  </button>
+                  </>
+              ) : (
+                  <button className="btn btn-submit" onClick={handleGuestLogin} style={{width: '100%', justifyContent: 'center', padding: '12px 16px'}}>Continue</button>
+              )}
+            </div>
+            <div style={{marginTop: '24px'}}>
+              <div className="theme-switch-wrapper" style={{justifyContent: 'center'}}>
+                <label className="theme-switch" htmlFor="checkbox"><input type="checkbox" id="checkbox" onChange={toggleTheme} checked={theme === 'dark'} /><div className="slider round"></div></label>
+              </div>
+            </div>
+          </main>
+          <div style={{marginTop: '32px', display: 'flex', justifyContent: 'center', gap: '16px', fontSize: '12px', color: 'var(--text-muted)'}}>
+            <span>Powered by AI</span>
           </div>
-        </header>
-        <main className="login-container">
-          <h2>Welcome to Repo Agent</h2>
-          <div className="login-actions">
-            {githubAuthEnabled ? (
-                <>
-                <button className="btn btn-submit" onClick={() => handleLogin('readwrite')} style={{backgroundColor: '#0366d6', marginRight: '10px'}}>Login with GitHub (Read-Write)</button>
-                <button className="btn btn-submit" onClick={() => handleLogin('readonly')} style={{backgroundColor: '#6f42c1'}}>Login with GitHub (Read-Only)</button>
-                </>
-            ) : (
-                <button className="btn btn-submit" onClick={handleGuestLogin}>Continue</button>
-            )}
-          </div>
-        </main>
+        </div>
       </div>
     );
   }
@@ -1395,16 +1446,32 @@ function App() {
   return (
     <div className="App">
       <header className="App-header">
-        <h1><a href="/" onClick={(e) => { e.preventDefault(); setView('dashboard'); }}>Repo Agent</a></h1>
+        <div style={{display: 'flex', alignItems: 'center'}}>
+          <h1 style={{display: 'flex', alignItems: 'center'}}>
+            <a href="/" onClick={(e) => { e.preventDefault(); setView('dashboard'); }} style={{display: 'flex', alignItems: 'center'}}>
+              <span className="header-logo-icon"><span className="material-symbols-outlined">terminal</span></span>
+              Repo Agent
+            </a>
+          </h1>
+        </div>
         <div className="header-right">
-          {user && <span className="user-greeting">Hi, {user}</span>}
-          {isGuest && <span className="user-greeting">Guest</span>}
-          <button className="btn" onClick={handleFeedbackClick} style={{marginRight: '10px', backgroundColor: '#28a745'}}>Feedback</button>
-          <button className="btn" onClick={() => setView('settings')} style={{marginRight: '10px'}}>Settings</button>
-          <button className="btn btn-delete" onClick={handleLogout} style={{marginRight: '20px'}}>Logout</button>
-          <div className="theme-switch-wrapper">
-            <label className="theme-switch" htmlFor="checkbox"><input type="checkbox" id="checkbox" onChange={toggleTheme} checked={theme === 'dark'} /><div className="slider round"></div></label>
+          <button className="header-icon-btn" onClick={handleFeedbackClick} title="Send Feedback">
+            <span className="material-symbols-outlined">feedback</span>
+          </button>
+          <button className="header-icon-btn" onClick={() => setView('settings')} title="Settings">
+            <span className="material-symbols-outlined">settings</span>
+          </button>
+          <button className="header-icon-btn" onClick={toggleTheme} title="Toggle theme">
+            <span className="material-symbols-outlined">{theme === 'dark' ? 'light_mode' : 'dark_mode'}</span>
+          </button>
+          <button className="header-icon-btn" onClick={handleLogout} title="Logout" style={{color: 'var(--text-danger)'}}>
+            <span className="material-symbols-outlined">logout</span>
+          </button>
+          <div className="header-avatar" title={user || (isGuest ? 'Guest' : '')}>
+            {(user || 'G').substring(0, 2).toUpperCase()}
           </div>
+          {user && <span style={{fontSize: '13px', color: 'var(--text-secondary)', fontWeight: 500}}>{user}</span>}
+          {isGuest && <span style={{fontSize: '13px', color: 'var(--text-muted)', fontWeight: 500}}>Guest</span>}
         </div>
       </header>
       
@@ -1415,15 +1482,15 @@ function App() {
       )}
 
       {activeRepo && activeRepo.conditions && activeRepo.conditions.filter(c => c.status === 'False').map((c, i) => (
-        <div key={i} className="warning-banner" style={{ backgroundColor: '#fdecea', color: '#721c24', borderColor: '#f5c6cb' }}>
+        <div key={i} className="warning-banner" style={{ backgroundColor: 'rgba(239,68,68,0.1)', color: 'var(--status-red)', borderColor: 'rgba(239,68,68,0.2)' }}>
           <strong>⚠️ {c.type}:</strong> {c.message} <span style={{ opacity: 0.7, fontSize: 'small' }}>({c.reason}{c.lastTransitionTime ? ` — ${new Date(c.lastTransitionTime).toLocaleString()}` : ''})</span>
         </div>
       ))}
 
       {view === 'dashboard' && renderDashboard()}
-      {view === 'settings' && <Settings onBack={() => setView('dashboard')} />}
+      {view === 'settings' && <Settings onBack={() => setView('dashboard')} showConfirm={showConfirm} />}
       {view === 'add_repo' && <AddRepo onCancel={() => setView('dashboard')} onRepoAdded={() => { fetchRepos(); setView('dashboard'); }} />}
-      {view === 'update_repo' && <UpdateRepo repo={activeRepo} onCancel={() => setView('dashboard')} onRepoUpdated={() => { fetchRepos(); setView('dashboard'); }} onRepoDeleted={handleRepoDeleted} />}
+      {view === 'update_repo' && <UpdateRepo repo={activeRepo} onCancel={() => setView('dashboard')} onRepoUpdated={() => { fetchRepos(); setView('dashboard'); }} onRepoDeleted={handleRepoDeleted} showConfirm={showConfirm} />}
 
       {feedbackModalOpen && (
         <div className="modal-overlay" onClick={() => setFeedbackModalOpen(false)}>
@@ -1431,7 +1498,7 @@ function App() {
                 <h4>Send Feedback</h4>
                 {feedbackImage && (
                     <>
-                        <div style={{border: '1px solid #ccc', padding: '5px', maxHeight: '300px', overflow: 'hidden'}}>
+                        <div style={{border: '1px solid var(--border-color)', padding: '5px', maxHeight: '300px', overflow: 'hidden', borderRadius: '8px'}}>
                             <img 
                                 src={feedbackImage} 
                                 alt="Screenshot" 
@@ -1445,7 +1512,7 @@ function App() {
                                 }}
                             />
                         </div>
-                        <p style={{fontSize: '0.9em', color: '#555', marginTop: '5px', marginBottom: '5px'}}>
+                        <p style={{fontSize: '12px', color: 'var(--text-muted)', marginTop: '5px', marginBottom: '5px'}}>
                            <strong>Note:</strong> The screenshot has been opened in a new tab. You can also click the image above to open it again. Please copy and manually paste the screenshot into the GitHub issue that will be created after you click "Send Feedback".
                         </p>
                     </>
@@ -1455,18 +1522,18 @@ function App() {
                     placeholder="Title" 
                     value={feedbackTitle} 
                     onChange={(e) => setFeedbackTitle(e.target.value)} 
-                    style={{padding: '5px', border: '1px solid #ccc'}} 
+                    style={{padding: '12px', border: '1px solid var(--border-color)', borderRadius: '8px', backgroundColor: 'var(--bg-input)', color: 'var(--text-primary)'}} 
                 />
                 <textarea 
                     placeholder="Describe your issue or feedback..." 
                     value={feedbackText} 
                     onChange={(e) => setFeedbackText(e.target.value)} 
                     rows="5" 
-                    style={{padding: '5px', border: '1px solid #ccc'}} 
+                    style={{padding: '12px', border: '1px solid var(--border-color)', borderRadius: '8px', backgroundColor: 'var(--bg-input)', color: 'var(--text-primary)'}} 
                 />
                 <div style={{display: 'flex', justifyContent: 'flex-end', gap: '10px'}}>
-                    <button className="btn" onClick={() => setFeedbackModalOpen(false)} style={{backgroundColor: '#ccc', color: 'black'}}>Cancel</button>
-                    <button className="btn" onClick={submitFeedback} disabled={isSubmittingFeedback} style={{backgroundColor: '#007bff', color: 'white'}}>
+                    <button className="btn" onClick={() => setFeedbackModalOpen(false)} style={{backgroundColor: 'var(--bg-secondary)', color: 'var(--text-primary)'}}>Cancel</button>
+                    <button className="btn" onClick={submitFeedback} disabled={isSubmittingFeedback} style={{backgroundColor: 'var(--color-primary)', color: 'white'}}>
                         {isSubmittingFeedback ? 'Sending...' : 'Send Feedback'}
                     </button>
                 </div>
@@ -1474,9 +1541,58 @@ function App() {
         </div>
       )}
 
-      <footer style={{ textAlign: 'center', padding: '10px', marginTop: '20px', color: '#888', fontSize: '0.8em' }}>
+      <footer style={{ textAlign: 'center', padding: '10px', marginTop: '20px', color: 'var(--text-muted)', fontSize: '12px' }}>
         Repo Agent UI {process.env.REACT_APP_GIT_SHA ? `(${process.env.REACT_APP_GIT_SHA.substring(0, 7)})` : ''}
       </footer>
+
+      {/* Prompt Modal (Add PR) */}
+      {promptModalOpen && (
+        <div className="modal-overlay" onClick={() => setPromptModalOpen(false)}>
+          <div className="confirm-modal-content" onClick={(e) => e.stopPropagation()}>
+            <h4 style={{margin: 0}}>Add PR</h4>
+            <p>Enter a PR URL or number:</p>
+            <input
+              type="text"
+              value={promptInput}
+              onChange={(e) => setPromptInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') { setPromptModalOpen(false); submitAddPR(promptInput); } }}
+              placeholder="e.g. 123 or https://github.com/owner/repo/pull/123"
+              autoFocus
+              style={{padding: '12px', border: '1px solid var(--border-color-input)', borderRadius: '8px', backgroundColor: 'var(--bg-input)', color: 'var(--text-primary)', fontSize: '14px', fontFamily: 'var(--font-ui)'}}
+            />
+            <div className="confirm-modal-actions">
+              <button className="btn btn-secondary" onClick={() => setPromptModalOpen(false)}>Cancel</button>
+              <button className="btn btn-submit" onClick={() => { setPromptModalOpen(false); submitAddPR(promptInput); }}>Add</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirm Modal */}
+      {confirmModal.open && (
+        <div className="modal-overlay" onClick={confirmModal.onCancel}>
+          <div className="confirm-modal-content" onClick={(e) => e.stopPropagation()}>
+            <h4 style={{margin: 0}}>Confirm</h4>
+            <p>{confirmModal.message}</p>
+            <div className="confirm-modal-actions">
+              <button className="btn btn-secondary" onClick={confirmModal.onCancel}>Cancel</button>
+              <button className="btn btn-submit" onClick={confirmModal.onConfirm}>Confirm</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Toast Notifications */}
+      <div className="toast-container">
+        {toasts.map(t => (
+          <div key={t.id} className={`toast ${t.type}`} onClick={() => dismissToast(t.id)}>
+            <span className="material-symbols-outlined" style={{fontSize:'16px'}}>
+              {t.type === 'success' ? 'check_circle' : t.type === 'error' ? 'error' : 'info'}
+            </span>
+            {t.message}
+          </div>
+        ))}
+      </div>
 
     </div>
   );

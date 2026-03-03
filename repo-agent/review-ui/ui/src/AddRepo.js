@@ -314,59 +314,82 @@ function AddRepo({ onCancel, onRepoAdded }) {
         });
     };
 
+    const padCount = (n) => String(n).padStart(2, '0');
+
     return (
-        <div className="add-repo-container">
-            <h2>Watch New Repository</h2>
-            <p>Enter the full GitHub URL of the repository you want to watch for PRs and Issues.</p>
-            
-            {error && <div className="message error">{error}</div>}
+        <div className="add-repo-container" style={{maxWidth: '640px'}}>
+            {/* Header */}
+            <div style={{padding: '32px 32px 24px', borderBottom: '1px solid var(--border-color)'}}>
+                <h2 style={{margin: '0 0 8px', fontSize: '24px', fontWeight: 800, letterSpacing: '-0.02em'}}>Watch New Repository</h2>
+                <p style={{margin: 0, color: 'var(--text-muted)', fontSize: '14px'}}>Enter the full GitHub URL of the repository you want to watch for PRs and Issues.</p>
+            </div>
 
-            <form onSubmit={handleSubmit} className="add-repo-form">
+            {/* Mode Toggle */}
+            <div style={{padding: '24px 32px 0'}}>
+                <div className="mode-toggle-pill">
+                    <button className={!yamlMode ? 'active' : ''} onClick={() => setYamlMode(false)} disabled={isLoading}>Simple</button>
+                    <button className={yamlMode ? 'active' : ''} onClick={() => yamlMode ? setYamlMode(false) : handleSwitchToYaml()} disabled={isLoading}>YAML</button>
+                </div>
+            </div>
+
+            {error && <div className="message error" style={{margin: '16px 32px 0'}}>{error}</div>}
+
+            <form onSubmit={handleSubmit} style={{padding: '24px 32px 32px'}}>
                 {!yamlMode && (
-                    <>
-                        <div className="form-group">
-                            <label htmlFor="templateSelect">Repository:</label>
-                            <select 
-                                id="templateSelect"
-                                value={selectedTemplateId}
-                                onChange={handleTemplateChange}
-                                disabled={isLoading}
-                            >
-                                <option value="">New (Custom)</option>
-                                {templates.filter(t => t.id !== 'default').map(t => (
-                                    <option key={t.id} value={t.id}>{t.name}</option>
-                                ))}
-                            </select>
-                            <small>Choose a configuration template or start fresh.</small>
+                    <div style={{display: 'flex', flexDirection: 'column', gap: '24px'}}>
+                        {/* Grid: Template + Name */}
+                        <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px'}}>
+                            <div className="form-group">
+                                <label style={{fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)'}}>Repository:</label>
+                                <select
+                                    id="templateSelect"
+                                    value={selectedTemplateId}
+                                    onChange={handleTemplateChange}
+                                    disabled={isLoading}
+                                    style={{width: '100%', padding: '12px 16px', backgroundColor: 'var(--bg-input)', border: '1px solid var(--border-color-input)', borderRadius: '8px', color: 'var(--text-primary)', fontSize: '14px', fontFamily: 'var(--font-ui)'}}
+                                >
+                                    <option value="">New (Custom)</option>
+                                    {templates.filter(t => t.id !== 'default').map(t => (
+                                        <option key={t.id} value={t.id}>{t.name}</option>
+                                    ))}
+                                </select>
+                                <small>Choose a configuration template or start fresh.</small>
+                            </div>
+                            <div className="form-group">
+                                <label style={{fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)'}}>Name (Optional):</label>
+                                <input
+                                    type="text"
+                                    id="repoName"
+                                    value={name}
+                                    onChange={(e) => setName(e.target.value)}
+                                    placeholder="Custom name for this watch"
+                                    disabled={isLoading}
+                                    style={{width: '100%', padding: '12px 16px', boxSizing: 'border-box'}}
+                                />
+                                <small>Leave blank to use the repository name.</small>
+                            </div>
                         </div>
 
+                        {/* Repo URL with icon */}
                         <div className="form-group">
-                            <label htmlFor="repoUrl">Repository URL:</label>
-                            <input
-                                type="text"
-                                id="repoUrl"
-                                value={url}
-                                onChange={(e) => setUrl(e.target.value)}
-                                placeholder="https://github.com/owner/repo"
-                                disabled={isLoading}
-                            />
+                            <label style={{fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)'}}>Repository URL:</label>
+                            <div style={{position: 'relative'}}>
+                                <span className="material-symbols-outlined" style={{position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', fontSize: '20px'}}>link</span>
+                                <input
+                                    type="text"
+                                    id="repoUrl"
+                                    value={url}
+                                    onChange={(e) => setUrl(e.target.value)}
+                                    placeholder="https://github.com/owner/repo"
+                                    disabled={isLoading}
+                                    style={{width: '100%', paddingLeft: '48px', paddingRight: '16px', paddingTop: '12px', paddingBottom: '12px', boxSizing: 'border-box'}}
+                                />
+                            </div>
                         </div>
 
+                        {/* Assignees */}
                         <div className="form-group">
-                            <label htmlFor="repoName">Name (Optional):</label>
-                            <input
-                                type="text"
-                                id="repoName"
-                                value={name}
-                                onChange={(e) => setName(e.target.value)}
-                                placeholder="Custom name for this watch"
-                                disabled={isLoading}
-                            />
-                            <small>Leave blank to use the repository name.</small>
-                        </div>
-
-                        <div className="form-group">
-                            <label htmlFor="assignees">Assignees (Optional):</label>
+                            <label style={{fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)'}}>Assignees (Optional):</label>
                             <input
                                 type="text"
                                 id="assignees"
@@ -374,60 +397,59 @@ function AddRepo({ onCancel, onRepoAdded }) {
                                 onChange={(e) => setAssignees(e.target.value)}
                                 placeholder="e.g. username1, username2"
                                 disabled={isLoading}
+                                style={{width: '100%', padding: '12px 16px', boxSizing: 'border-box'}}
                             />
                             <small>Only watch PRs assigned to these users. Leave blank to watch all PRs.</small>
                         </div>
 
-                        <div className="form-group">
-                            <label htmlFor="reviewMax">Review Sandbox Max Count: {reviewMaxActiveSandboxes}</label>
-                            <input
-                                type="range"
-                                id="reviewMax"
-                                min="0"
-                                max="15"
-                                value={reviewMaxActiveSandboxes}
-                                onChange={(e) => setReviewMaxActiveSandboxes(parseInt(e.target.value))}
-                                disabled={isLoading}
-                                style={{width: '100%'}}
-                            />
-                            <small>Maximum number of concurrent review sandboxes.</small>
+                        {/* Sandbox Sliders */}
+                        <div style={{paddingTop: '16px', borderTop: '1px solid var(--border-color)'}}>
+                            <h4 style={{margin: '0 0 16px', fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)'}}>Sandbox Instances</h4>
+                            <div style={{display: 'flex', flexDirection: 'column', gap: '16px'}}>
+                                {/* Review slider */}
+                                <div>
+                                    <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px'}}>
+                                        <label style={{fontSize: '13px', fontWeight: 500, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '6px'}}>
+                                            <span className="material-symbols-outlined" style={{fontSize: '16px', color: 'var(--color-primary)'}}>visibility</span>
+                                            Review Sandbox Max Count
+                                        </label>
+                                        <span style={{fontSize: '12px', fontWeight: 700, padding: '2px 8px', backgroundColor: 'var(--bg-secondary)', borderRadius: '4px', fontFamily: 'var(--font-mono)'}}>{padCount(reviewMaxActiveSandboxes)}</span>
+                                    </div>
+                                    <input type="range" id="reviewMax" min="0" max="15" value={reviewMaxActiveSandboxes} onChange={(e) => setReviewMaxActiveSandboxes(parseInt(e.target.value))} disabled={isLoading} />
+                                    <small>Maximum number of concurrent review sandboxes.</small>
+                                </div>
+                                {/* Issue slider */}
+                                <div>
+                                    <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px'}}>
+                                        <label style={{fontSize: '13px', fontWeight: 500, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '6px'}}>
+                                            <span className="material-symbols-outlined" style={{fontSize: '16px', color: 'var(--color-primary)'}}>bug_report</span>
+                                            Issue Sandbox Max Count
+                                        </label>
+                                        <span style={{fontSize: '12px', fontWeight: 700, padding: '2px 8px', backgroundColor: 'var(--bg-secondary)', borderRadius: '4px', fontFamily: 'var(--font-mono)'}}>{padCount(issueMaxActiveSandboxes)}</span>
+                                    </div>
+                                    <input type="range" id="issueMax" min="0" max="15" value={issueMaxActiveSandboxes} onChange={(e) => setIssueMaxActiveSandboxes(parseInt(e.target.value))} disabled={isLoading} />
+                                    <small>Maximum number of concurrent issue sandboxes.</small>
+                                </div>
+                                {/* Dev slider */}
+                                <div>
+                                    <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px'}}>
+                                        <label style={{fontSize: '13px', fontWeight: 500, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '6px'}}>
+                                            <span className="material-symbols-outlined" style={{fontSize: '16px', color: 'var(--color-primary)'}}>code</span>
+                                            Dev Sandbox Max Count
+                                        </label>
+                                        <span style={{fontSize: '12px', fontWeight: 700, padding: '2px 8px', backgroundColor: 'var(--bg-secondary)', borderRadius: '4px', fontFamily: 'var(--font-mono)'}}>{padCount(devMaxActiveSandboxes)}</span>
+                                    </div>
+                                    <input type="range" id="devMax" min="0" max="15" value={devMaxActiveSandboxes} onChange={(e) => setDevMaxActiveSandboxes(parseInt(e.target.value))} disabled={isLoading} />
+                                    <small>Maximum number of concurrent dev sandboxes.</small>
+                                </div>
+                            </div>
                         </div>
-
-                        <div className="form-group">
-                            <label htmlFor="issueMax">Issue Sandbox Max Count: {issueMaxActiveSandboxes}</label>
-                            <input
-                                type="range"
-                                id="issueMax"
-                                min="0"
-                                max="15"
-                                value={issueMaxActiveSandboxes}
-                                onChange={(e) => setIssueMaxActiveSandboxes(parseInt(e.target.value))}
-                                disabled={isLoading}
-                                style={{width: '100%'}}
-                            />
-                            <small>Maximum number of concurrent issue sandboxes.</small>
-                        </div>
-
-                        <div className="form-group">
-                            <label htmlFor="devMax">Dev Sandbox Max Count: {devMaxActiveSandboxes}</label>
-                            <input
-                                type="range"
-                                id="devMax"
-                                min="0"
-                                max="15"
-                                value={devMaxActiveSandboxes}
-                                onChange={(e) => setDevMaxActiveSandboxes(parseInt(e.target.value))}
-                                disabled={isLoading}
-                                style={{width: '100%'}}
-                            />
-                            <small>Maximum number of concurrent dev sandboxes.</small>
-                        </div>
-                    </>
+                    </div>
                 )}
 
                 {yamlMode && (
                     <div className="form-group">
-                        <label htmlFor="repoYaml">RepoWatch YAML:</label>
+                        <label style={{fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)'}}>RepoWatch YAML:</label>
                         <textarea
                             id="repoYaml"
                             value={yamlContent}
@@ -435,27 +457,18 @@ function AddRepo({ onCancel, onRepoAdded }) {
                             className="yaml-editor"
                             rows={15}
                             disabled={isLoading}
-                            style={{fontFamily: 'monospace', width: '100%', whiteSpace: 'pre'}}
+                            style={{width: '100%', whiteSpace: 'pre', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-color-input)', backgroundColor: 'var(--bg-input)', color: 'var(--text-primary)', boxSizing: 'border-box'}}
                         />
                     </div>
                 )}
 
-                <div className="form-actions">
-                    <button type="submit" className="btn btn-submit" disabled={isLoading}>
+                {/* Action Footer */}
+                <div style={{display: 'flex', alignItems: 'center', gap: '16px', paddingTop: '24px', marginTop: '24px'}}>
+                    <button type="submit" className="btn btn-submit" disabled={isLoading} style={{flex: 1, justifyContent: 'center', padding: '16px', borderRadius: '12px', fontSize: '14px'}}>
+                        <span className="material-symbols-outlined" style={{fontSize: '18px'}}>rocket_launch</span>
                         {isLoading ? 'Adding...' : 'Start Watching'}
                     </button>
-                    
-                    {!yamlMode ? (
-                        <button type="button" className="btn" onClick={handleSwitchToYaml} disabled={isLoading}>
-                            Advanced YAML
-                        </button>
-                    ) : (
-                        <button type="button" className="btn" onClick={() => setYamlMode(false)} disabled={isLoading}>
-                            Simple Mode
-                        </button>
-                    )}
-
-                    <button type="button" className="btn" onClick={onCancel} disabled={isLoading}>
+                    <button type="button" className="btn" onClick={onCancel} disabled={isLoading} style={{padding: '16px 24px', borderRadius: '12px', color: 'var(--text-muted)'}}>
                         Cancel
                     </button>
                 </div>

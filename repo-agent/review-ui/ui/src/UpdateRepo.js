@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import yaml from 'js-yaml';
 import DeleteRepo from './DeleteRepo';
 
-function UpdateRepo({ repo, onCancel, onRepoUpdated, onRepoDeleted }) {
+function UpdateRepo({ repo, onCancel, onRepoUpdated, onRepoDeleted, showConfirm }) {
     const [activeTab, setActiveTab] = useState('config'); // 'config' or 'instructions'
     const [yamlContent, setYamlContent] = useState('');
     const [originalYamlContent, setOriginalYamlContent] = useState('');
@@ -160,30 +160,42 @@ function UpdateRepo({ repo, onCancel, onRepoUpdated, onRepoDeleted }) {
 
     return (
         <div className="add-repo-container" style={{maxWidth: '1000px'}}>
-            <h2>Repository Settings: {repo.name}</h2>
-            
-            <div className="repo-tabs" style={{justifyContent: 'flex-start', marginBottom: '20px'}}>
-                <button 
-                    className={`tab-btn ${activeTab === 'config' ? 'active' : ''}`}
+            {/* Header with icon */}
+            <div style={{padding: '24px 32px', borderBottom: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: '12px'}}>
+                <span className="material-symbols-outlined" style={{fontSize: '24px', color: 'var(--color-primary)'}}>tune</span>
+                <div>
+                    <h2 style={{margin: 0, fontSize: '18px', fontWeight: 700}}>Repository Settings</h2>
+                    <span style={{fontSize: '13px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)'}}>{repo.name}</span>
+                </div>
+            </div>
+
+            {/* Tab navigation with icons */}
+            <div style={{padding: '0 32px', borderBottom: '1px solid var(--border-color)', display: 'flex', gap: '0'}}>
+                <button
+                    className={`sub-tab-btn ${activeTab === 'config' ? 'active' : ''}`}
                     onClick={() => setActiveTab('config')}
+                    style={{flexDirection: 'row', gap: '8px', padding: '16px 24px', borderBottom: activeTab === 'config' ? '3px solid var(--color-primary)' : '3px solid transparent'}}
                 >
+                    <span className="material-symbols-outlined" style={{fontSize: '18px'}}>code</span>
                     Configuration
                 </button>
-                <button 
-                    className={`tab-btn ${activeTab === 'instructions' ? 'active' : ''}`}
+                <button
+                    className={`sub-tab-btn ${activeTab === 'instructions' ? 'active' : ''}`}
                     onClick={() => setActiveTab('instructions')}
+                    style={{flexDirection: 'row', gap: '8px', padding: '16px 24px', borderBottom: activeTab === 'instructions' ? '3px solid var(--color-primary)' : '3px solid transparent'}}
                 >
+                    <span className="material-symbols-outlined" style={{fontSize: '18px'}}>description</span>
                     User Instructions
-                    {hasDraft && <span style={{marginLeft: '5px', color: 'var(--status-yellow)'}}>●</span>} 
+                    {hasDraft && <span style={{marginLeft: '4px', width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--status-yellow)', display: 'inline-block'}}></span>}
                 </button>
             </div>
 
             {activeTab === 'config' && (
-                <>
+                <div style={{padding: '24px 32px'}}>
                     {error && <div className="message error">{error}</div>}
-                    <form onSubmit={handleConfigSubmit} className="add-repo-form">
+                    <form onSubmit={handleConfigSubmit} className="add-repo-form" style={{marginTop: 0}}>
                         <div className="form-group">
-                            <label htmlFor="repoYaml">RepoWatch Spec (YAML):</label>
+                            <label htmlFor="repoYaml" style={{fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)'}}>RepoWatch Spec (YAML)</label>
                             <textarea
                                 id="repoYaml"
                                 value={yamlContent}
@@ -191,7 +203,7 @@ function UpdateRepo({ repo, onCancel, onRepoUpdated, onRepoDeleted }) {
                                 className="yaml-editor"
                                 rows={20}
                                 disabled={isLoading}
-                                style={{fontFamily: 'monospace', width: '100%', whiteSpace: 'pre'}}
+                                style={{width: '100%', whiteSpace: 'pre'}}
                             />
                         </div>
                         <div className="form-actions">
@@ -203,11 +215,11 @@ function UpdateRepo({ repo, onCancel, onRepoUpdated, onRepoDeleted }) {
                             </button>
                         </div>
                     </form>
-                </>
+                </div>
             )}
 
             {activeTab === 'instructions' && (
-                <div className="instructions-container">
+                <div className="instructions-container" style={{padding: '24px 32px'}}>
                     {instructionsError && <div className="message error">{instructionsError}</div>}
                     
                     <div style={{display: 'flex', gap: '20px', flexDirection: 'column'}}>
@@ -219,14 +231,20 @@ function UpdateRepo({ repo, onCancel, onRepoUpdated, onRepoDeleted }) {
                                 className="yaml-editor"
                                 rows={20}
                                 disabled={isInstructionsLoading}
-                                style={{fontFamily: 'monospace', width: '100%', whiteSpace: 'pre'}}
+                                style={{width: '100%', whiteSpace: 'pre'}}
                                 placeholder="No user instructions defined."
                             />
                              <div className="form-actions" style={{marginTop: '10px'}}>
-                                <button 
-                                    className="btn btn-submit" 
-                                    onClick={() => handleInstructionAction('publish')}
-                                    disabled={isInstructionsLoading || (hasDraft && !window.confirm("This will overwrite current instructions with the content in this box and DISCARD the draft. Are you sure?"))}
+                                <button
+                                    className="btn btn-submit"
+                                    onClick={async () => {
+                                        if (hasDraft) {
+                                            const confirmed = await showConfirm("This will overwrite current instructions with the content in this box and DISCARD the draft. Are you sure?");
+                                            if (!confirmed) return;
+                                        }
+                                        handleInstructionAction('publish');
+                                    }}
+                                    disabled={isInstructionsLoading}
                                     title="Save changes to current instructions directly"
                                 >
                                     Update Current
@@ -279,10 +297,11 @@ function UpdateRepo({ repo, onCancel, onRepoUpdated, onRepoDeleted }) {
                                     >
                                         Save Draft
                                     </button>
-                                    <button 
-                                        className="btn btn-delete" 
-                                        onClick={() => {
-                                            if (window.confirm("Are you sure you want to discard this draft?")) {
+                                    <button
+                                        className="btn btn-delete"
+                                        onClick={async () => {
+                                            const confirmed = await showConfirm("Are you sure you want to discard this draft?");
+                                            if (confirmed) {
                                                 handleInstructionAction('discard_draft');
                                             }
                                         }}
@@ -302,12 +321,16 @@ function UpdateRepo({ repo, onCancel, onRepoUpdated, onRepoDeleted }) {
                 </div>
             )}
             
-            <div style={{marginTop: '40px', borderTop: '1px solid var(--border-color)', paddingTop: '20px'}}>
-                <h3>Danger Zone</h3>
+            {/* Danger Zone Footer */}
+            <div style={{padding: '24px 32px', borderTop: '1px solid var(--border-color)'}}>
+                <h4 style={{margin: '0 0 12px', fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-danger)', display: 'flex', alignItems: 'center', gap: '6px'}}>
+                    <span className="material-symbols-outlined" style={{fontSize: '16px'}}>warning</span>
+                    Danger Zone
+                </h4>
                 <div className="danger-zone">
                     <div>
                         <strong>Delete repowatch</strong>
-                        <p style={{margin: '5px 0 0 0', fontSize: '0.9em', color: 'var(--text-secondary)'}}>
+                        <p style={{margin: '5px 0 0 0', fontSize: '13px', color: 'var(--text-secondary)'}}>
                             Unsubmitted reviews would be deleted. You can always add the repo again.
                         </p>
                     </div>

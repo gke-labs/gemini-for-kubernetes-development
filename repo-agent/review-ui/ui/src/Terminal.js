@@ -12,8 +12,10 @@ const SandboxTerminal = ({ namespace, sandboxName }) => {
         const term = new Terminal({
             cursorBlink: true,
             theme: {
-                background: '#1e1e1e',
-            }
+                background: '#0d0912',
+            },
+            fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+            fontSize: 13,
         });
         const fitAddon = new FitAddon();
         term.loadAddon(fitAddon);
@@ -87,17 +89,28 @@ const SandboxTerminal = ({ namespace, sandboxName }) => {
     }, [namespace, sandboxName]);
 
     return (
-        <div 
-            ref={terminalRef} 
-            style={{ 
-                width: '100%', 
-                height: '600px', 
-                backgroundColor: '#1e1e1e', 
-                padding: '10px',
-                resize: 'vertical',
-                overflow: 'hidden'
-            }} 
-        />
+        <div style={{borderRadius: '12px', overflow: 'hidden', border: '1px solid rgba(255,255,255,0.1)', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)'}}>
+            <div className="terminal-chrome">
+                <div className="terminal-dots">
+                    <div className="terminal-dot red"></div>
+                    <div className="terminal-dot yellow"></div>
+                    <div className="terminal-dot green"></div>
+                </div>
+                <span className="terminal-title">terminal — {sandboxName}</span>
+                <div style={{width: '48px'}}></div>
+            </div>
+            <div
+                ref={terminalRef}
+                style={{
+                    width: '100%',
+                    height: '600px',
+                    backgroundColor: 'var(--bg-terminal)',
+                    padding: '10px',
+                    resize: 'vertical',
+                    overflow: 'hidden',
+                }}
+            />
+        </div>
     );
 };
 
