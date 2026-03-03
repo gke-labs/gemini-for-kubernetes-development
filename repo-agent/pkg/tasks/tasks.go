@@ -2,12 +2,14 @@ package tasks
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/agentoutput"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/llm"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/klog/v2"
@@ -80,6 +82,9 @@ func RunTask(ctx context.Context, t Task, sb *sandbox.IssueSandbox, taskDir stri
 	}
 	log.Info("Completed pre-script in sandbox", "sandbox", sb.GetSandboxID())
 
+	// Process gemini JSON output: extract response text and LLM usage stats.
+	processGeminiOutput(ctx, sb, taskDir)
+
 	// Run the post-script if it exists
 	if postScriptPath != "" {
 		log.Info("running post-script in sandbox", "sandbox", sb.GetSandboxID())
@@ -127,4 +132,47 @@ func RunTask(ctx context.Context, t Task, sb *sandbox.IssueSandbox, taskDir stri
 	}
 
 	return nil
+}
+
+// processGeminiOutput reads the gemini CLI JSON output (written when using
+// --output-format json), extracts the response text to raw-agent-output.txt
+// (for post-script processing) and the LLM usage stats to llm-usage.json
+// (for the task runner to pick up).
+func processGeminiOutput(ctx context.Context, sb *sandbox.IssueSandbox, taskDir string) {
+	log := klog.FromContext(ctx)
+	geminiOutputPath := taskPath(taskDir, "gemini-output.json")
+	data, err := sb.ReadFile(geminiOutputPath)
+	if err != nil || len(data) == 0 {
+		log.V(2).Info("No gemini-output.json found (skipping)", "path", geminiOutputPath)
+		return
+	}
+
+	response, stats, err := llm.ParseGeminiOutput(data)
+	if err != nil {
+		log.Error(err, "Failed to parse gemini output")
+		return
+	}
+
+	// Write response text so post-scripts can process it (e.g. triage grep).
+	if response != "" {
+		responsePath := taskPath(taskDir, "raw-agent-output.txt")
+		if err := os.WriteFile(responsePath, []byte(response), 0644); err != nil {
+			log.Error(err, "Failed to write raw-agent-output.txt", "path", responsePath)
+		}
+	}
+
+	if stats == nil {
+		return
+	}
+	statsJSON, err := json.Marshal(stats)
+	if err != nil {
+		log.Error(err, "Failed to marshal LLM stats")
+		return
+	}
+	usagePath := taskPath(taskDir, "llm-usage.json")
+	if err := os.WriteFile(usagePath, statsJSON, 0644); err != nil {
+		log.Error(err, "Failed to write llm-usage.json", "path", usagePath)
+	} else {
+		log.Info("Wrote LLM usage stats", "path", usagePath)
+	}
 }

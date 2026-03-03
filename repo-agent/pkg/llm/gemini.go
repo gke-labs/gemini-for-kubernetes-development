@@ -231,6 +231,17 @@ func convertGeminiStats(stats geminiStatsJSON) *Stats {
 	return usage
 }
 
+// ParseGeminiOutput parses the raw JSON output from the gemini CLI
+// (when run with --output-format json) and returns the response text
+// and LLM usage stats.
+func ParseGeminiOutput(data []byte) (string, *Stats, error) {
+	var output geminiJSONOutput
+	if err := json.Unmarshal(data, &output); err != nil {
+		return "", nil, fmt.Errorf("failed to parse gemini output: %w", err)
+	}
+	return output.Response, convertGeminiStats(output.Stats), nil
+}
+
 func (g *Gemini) Run(agentPrompt string) ([]byte, *Stats, error) {
 	klog.Info("running gemini")
 
