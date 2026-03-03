@@ -67,7 +67,7 @@ jobs:
           credentials_json: ${{ secrets.GKE_SA_KEY }}
 
       - name: Set up GKE credentials
-        uses: google-github-actions/get-gke-credentials@v2
+        uses: google-github-actions/get-gke-credentials@v3
         with:
           cluster_name: ${{ secrets.GKE_STAGING_CLUSTER }}
           location: ${{ secrets.GKE_ZONE }}
