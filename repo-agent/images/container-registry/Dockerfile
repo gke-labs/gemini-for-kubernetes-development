@@ -1,0 +1,1 @@
+../../../../services/container-registry/Dockerfile
