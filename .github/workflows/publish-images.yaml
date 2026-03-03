@@ -41,7 +41,7 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
-          context: repo-agent/
+          context: .
           file: repo-agent/images/${{ matrix.image_name }}/Dockerfile
           build-args: |
             VERSION=${{ github.sha }}
