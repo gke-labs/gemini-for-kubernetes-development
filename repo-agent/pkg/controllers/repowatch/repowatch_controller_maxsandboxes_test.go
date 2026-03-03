@@ -365,11 +365,11 @@ func TestReconcileDevSandboxes_MaxSandboxes(t *testing.T) {
 				},
 				"ownerReferences": []interface{}{
 					map[string]interface{}{
-						"apiVersion": "review.gemini.google.com/v1alpha1",
-						"kind":       "RepoWatch",
-						"name":       "test-repowatch",
-						"uid":        "test-uid",
-						"controller": true,
+						"apiVersion":         "review.gemini.google.com/v1alpha1",
+						"kind":               "RepoWatch",
+						"name":               "test-repowatch",
+						"uid":                "test-uid",
+						"controller":         true,
 						"blockOwnerDeletion": true,
 					},
 				},
