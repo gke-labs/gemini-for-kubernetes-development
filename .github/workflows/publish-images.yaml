@@ -81,7 +81,10 @@ jobs:
           ./dev/tools/deploy-to-kube --image-prefix=ghcr.io/gke-labs/gemini-for-kubernetes-development/ --image-tag=${{ github.sha }} --working-dir overseer/
 
           # Bounce the pods after installing
-          kubectl rollout restart statefulset -n repo-agent-system
-          kubectl rollout status  statefulset  -n repo-agent-system
-          kubectl rollout restart deployment -n repo-agent-system
-          kubectl rollout status  deployment  -n repo-agent-system
+          kubectl rollout restart statefulset/repowatch-controller -n repo-agent-system
+          kubectl rollout status  statefulset/repowatch-controller -n repo-agent-system
+          kubectl rollout restart deployment/pr-review-api deployment/pr-review-ui deployment/syncer deployment/registry -n repo-agent-system
+          kubectl rollout status  deployment/pr-review-api -n repo-agent-system
+          kubectl rollout status  deployment/pr-review-ui -n repo-agent-system
+          kubectl rollout status  deployment/syncer -n repo-agent-system
+          kubectl rollout status  deployment/registry -n repo-agent-system
