@@ -79,3 +79,9 @@ jobs:
           ./dev/tools/deploy-to-kube --image-prefix=ghcr.io/gke-labs/gemini-for-kubernetes-development/ --image-tag=${{ github.sha }} --working-dir repo-agent/ --replace .spec.installationName=${{ secrets.GKE_STAGING_CLUSTER }} --replace .spec.gatewayClassName=gke-l7-regional-external-managed
           # Deploy overseer manifests (RBAC)
           ./dev/tools/deploy-to-kube --image-prefix=ghcr.io/gke-labs/gemini-for-kubernetes-development/ --image-tag=${{ github.sha }} --working-dir overseer/
+
+          # Bounce the pods after installing
+          kubectl rollout restart statefulset -n repo-agent-system
+          kubectl rollout status  statefulset  -n repo-agent-system
+          kubectl rollout restart deployment -n repo-agent-system
+          kubectl rollout status  deployment  -n repo-agent-system
