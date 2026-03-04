@@ -33,7 +33,7 @@ type GithubInvestigateCommand struct {
 	repo        *github.Repository
 	pullRequest *github.PullRequest
 	user        *github.User
-	sandbox     *sandbox.IssueSandbox
+	sandbox     *sandbox.Sandbox
 	sandboxID   string
 	failedRuns  []tasks.FailedRun
 }
@@ -180,7 +180,7 @@ func (c *GithubInvestigateCommand) loadSandbox(ctx context.Context) error {
 			issue, _ = githubAPI.GetIssue(ctx, c.URL, false)
 		}
 
-		sb, err := sandbox.NewIssueSandbox(ctx, c.InPod, c.repo, issue, "")
+		sb, err := sandbox.NewSandbox(ctx, c.InPod, c.repo, issue, "")
 		if err != nil {
 			return err
 		}

@@ -1,12 +1,20 @@
-apiVersion: custom.agents.x-k8s.io/v1alpha1
-kind: ReviewSandbox
+apiVersion: agents.x-k8s.io/v1alpha1
+kind: Sandbox
 metadata:
-  name: demo
+  name: demo-review
 spec:
-  prompt: "You are an expert kubernetes developer who is helping with code reviews. Please look at the most recent commit and provide a review feedback. Would you approve it ?"
-  source:
-    cloneURL: https://github.com/kubernetes-sigs/agent-sandbox.git
-    pr: "1"
-    repo: agent-sandbox
-    htmlURL: https://github.com/kubernetes-sigs/agent-sandbox/pull/1
-    title: "Add a simple README file"
+  # replicas specifies the number of instances of the sandbox.
+  replicas: 1
+  # podTemplate describes the pod that will be created.
+  podTemplate:
+    spec:
+      containers:
+        - name: agent
+          image: gcr.io/justinsb-knotai-dev/generic-golang:latest
+          env:
+            - name: CLONE_REPOS
+              value: "https://github.com/kubernetes-sigs/agent-sandbox.git"
+  # Optional: annotations for the sandbox
+  annotations:
+    repo-agent.labs.gke.io/clone-repos: "https://github.com/kubernetes-sigs/agent-sandbox.git"
+    prompt: "You are an expert kubernetes developer who is helping with code reviews. Please look at the most recent commit and provide a review feedback. Would you approve it ?"

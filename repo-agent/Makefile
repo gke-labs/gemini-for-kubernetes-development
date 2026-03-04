@@ -187,12 +187,11 @@ apply-examples: apply-common-for-examples
 	kubectl apply -f examples/k8s-configdir.yaml -n $(NAMESPACE)
 	kubectl apply -f examples/k8s-repowatch.yaml -n $(NAMESPACE)
 	sleep 5
-	kubectl get reviewsandboxes -A
-	kubectl get issuesandboxes -A
+	kubectl get sandboxes -A
 
 .PHONY: delete-instance
 delete-instance:
-	kubectl delete reviewsandbox demo
+	kubectl delete sandbox demo-review
 
 .PHONY: port-forward
 port-forward:

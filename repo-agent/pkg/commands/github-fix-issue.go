@@ -32,7 +32,7 @@ type GithubFixIssueCommand struct {
 	issue     *github.Issue
 	repo      *github.Repository
 	user      *github.User
-	sandbox   *sandbox.IssueSandbox
+	sandbox   *sandbox.Sandbox
 	sandboxID string
 }
 
@@ -127,7 +127,7 @@ func (c *GithubFixIssueCommand) loadGithubObjects(ctx context.Context) error {
 }
 
 func (c *GithubFixIssueCommand) loadSandbox(ctx context.Context) error {
-	sb, err := sandbox.NewIssueSandbox(ctx, c.InPod, c.repo, c.issue, "")
+	sb, err := sandbox.NewSandbox(ctx, c.InPod, c.repo, c.issue, "")
 	if err != nil {
 		return err
 	}

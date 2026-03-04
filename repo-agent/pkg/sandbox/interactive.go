@@ -21,14 +21,14 @@ import (
 
 const RepoSandboxBinary = "/repo-agent/repo-sandbox"
 
-// IssueSandbox represents an agent sandbox being used to fix a GitHub issue.
-type IssueSandbox struct {
+// Sandbox represents an agent sandbox being used to fix a GitHub issue or review a PR.
+type Sandbox struct {
 	repo     *github.Repository
 	issue    *github.Issue
 	executor Executor
 }
 
-func NewIssueSandbox(ctx context.Context, local bool, repo *github.Repository, issue *github.Issue, branch string) (*IssueSandbox, error) {
+func NewSandbox(ctx context.Context, local bool, repo *github.Repository, issue *github.Issue, branch string) (*Sandbox, error) {
 	log := klog.FromContext(ctx)
 
 	kube, err := clients.NewKubernetesClient()
@@ -44,7 +44,7 @@ func NewIssueSandbox(ctx context.Context, local bool, repo *github.Repository, i
 		} else {
 			name = fmt.Sprintf("%s/branch/%s", name, branch)
 		}
-		return &IssueSandbox{
+		return &Sandbox{
 			repo:  repo,
 			issue: issue,
 			executor: &LocalExecutor{
@@ -74,14 +74,14 @@ func NewIssueSandbox(ctx context.Context, local bool, repo *github.Repository, i
 	return sb, nil
 }
 
-// NewSandboxFromPodID creates an IssueSandbox from a specific pod ID.
+// NewSandboxFromPodID creates a Sandbox from a specific pod ID.
 // This is useful when reusing an existing sandbox.
-func NewSandboxFromPodID(ctx context.Context, podID types.NamespacedName) (*IssueSandbox, error) {
+func NewSandboxFromPodID(ctx context.Context, podID types.NamespacedName) (*Sandbox, error) {
 	kube, err := clients.NewKubernetesClient()
 	if err != nil {
 		return nil, err
 	}
-	return &IssueSandbox{
+	return &Sandbox{
 		executor: &PodExecutor{
 			Ctx:   ctx,
 			Kube:  kube,
@@ -91,22 +91,22 @@ func NewSandboxFromPodID(ctx context.Context, podID types.NamespacedName) (*Issu
 }
 
 // GetPodID returns the pod ID of the sandbox if it is running in a pod.
-func (s *IssueSandbox) GetPodID() types.NamespacedName {
+func (s *Sandbox) GetPodID() types.NamespacedName {
 	if podExecutor, ok := s.executor.(*PodExecutor); ok {
 		return podExecutor.PodID
 	}
 	return types.NamespacedName{}
 }
 
-func (s *IssueSandbox) GetSandboxID() string {
+func (s *Sandbox) GetSandboxID() string {
 	return s.executor.ID()
 }
 
-func (s *IssueSandbox) Exec(opts ExecOptions) error {
+func (s *Sandbox) Exec(opts ExecOptions) error {
 	return s.executor.Exec(opts)
 }
 
-func (s *IssueSandbox) MkdirAll(path string) error {
+func (s *Sandbox) MkdirAll(path string) error {
 	opts := ExecOptions{
 		Command: []string{"mkdir", "-p", path},
 	}
@@ -116,21 +116,21 @@ func (s *IssueSandbox) MkdirAll(path string) error {
 	return nil
 }
 
-func (s *IssueSandbox) WriteFile(path string, data []byte) error {
+func (s *Sandbox) WriteFile(path string, data []byte) error {
 	if err := s.executor.WriteFile(path, data); err != nil {
 		return fmt.Errorf("writing file %q: %w", path, err)
 	}
 	return nil
 }
 
-func (s *IssueSandbox) WriteXFile(path string, data []byte) error {
+func (s *Sandbox) WriteXFile(path string, data []byte) error {
 	if err := s.executor.WriteXFile(path, data); err != nil {
 		return fmt.Errorf("writing executable script %q: %w", path, err)
 	}
 	return nil
 }
 
-func LaunchSandbox(ctx context.Context, kube *clients.KubernetesClient, repo *github.Repository, issue *github.Issue, branch string) (*IssueSandbox, error) {
+func LaunchSandbox(ctx context.Context, kube *clients.KubernetesClient, repo *github.Repository, issue *github.Issue, branch string) (*Sandbox, error) {
 	log := klog.FromContext(ctx)
 
 	sandboxName := NameForSandbox(repo, issue, branch)
@@ -198,7 +198,7 @@ func LaunchSandbox(ctx context.Context, kube *clients.KubernetesClient, repo *gi
 		return nil, err
 	}
 
-	return &IssueSandbox{
+	return &Sandbox{
 		repo:  repo,
 		issue: issue,
 		executor: &PodExecutor{
@@ -225,7 +225,7 @@ func NameForSandbox(repo *github.Repository, issue *github.Issue, branch string)
 	return sandboxName
 }
 
-func FindSandbox(ctx context.Context, kube *clients.KubernetesClient, repo *github.Repository, issue *github.Issue, branch string) (*IssueSandbox, bool, error) {
+func FindSandbox(ctx context.Context, kube *clients.KubernetesClient, repo *github.Repository, issue *github.Issue, branch string) (*Sandbox, bool, error) {
 	sandboxName := NameForSandbox(repo, issue, branch)
 
 	podIDPtr, err := FindSandboxPod(ctx, sandboxName)
@@ -237,7 +237,7 @@ func FindSandbox(ctx context.Context, kube *clients.KubernetesClient, repo *gith
 		return nil, false, nil
 	}
 
-	return &IssueSandbox{
+	return &Sandbox{
 		repo:  repo,
 		issue: issue,
 		executor: &PodExecutor{
@@ -247,6 +247,7 @@ func FindSandbox(ctx context.Context, kube *clients.KubernetesClient, repo *gith
 		},
 	}, true, nil
 }
+
 
 // FindSandboxPod finds the pod for the given sandbox name.
 // If the pod is not found, it returns (nil, nil)
@@ -298,11 +299,11 @@ func FindSandboxPodInNamespace(ctx context.Context, sandboxName, namespace strin
 	return podID, nil
 }
 
-func (s *IssueSandbox) ReadFile(path string) ([]byte, error) {
+func (s *Sandbox) ReadFile(path string) ([]byte, error) {
 	return s.executor.ReadFile(path)
 }
 
-func (s *IssueSandbox) ListThreads() ([]ThreadInfo, error) {
+func (s *Sandbox) ListThreads() ([]ThreadInfo, error) {
 	return ListThreads(s.executor)
 }
 
@@ -327,7 +328,7 @@ func ListThreads(executor Executor) ([]ThreadInfo, error) {
 	return threads, nil
 }
 
-func (s *IssueSandbox) GetThreadMessages(threadID string) ([]ThreadMessage, error) {
+func (s *Sandbox) GetThreadMessages(threadID string) ([]ThreadMessage, error) {
 	return GetThreadMessages(s.executor, threadID)
 }
 
@@ -370,7 +371,7 @@ func GetThreadMessages(executor Executor, threadID string) ([]ThreadMessage, err
 	return thread.Messages, nil
 }
 
-func (s *IssueSandbox) ConfigureGemini(ctx context.Context) error {
+func (s *Sandbox) ConfigureGemini(ctx context.Context) error {
 	log := klog.FromContext(ctx)
 
 	// Configure gemini

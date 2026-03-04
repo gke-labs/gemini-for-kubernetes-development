@@ -68,8 +68,8 @@ func TestCreateOrUpdateReviewSandboxes(t *testing.T) {
 	pr4 := &github.PullRequest{Number: &pr4Num}
 	oldSandbox := &unstructured.Unstructured{
 		Object: map[string]interface{}{
-			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
-			"kind":       "ReviewSandbox",
+			"apiVersion": "agents.x-k8s.io/v1alpha1",
+			"kind":       "Sandbox",
 			"metadata": map[string]interface{}{
 				"name":              fmt.Sprintf("%s-pr-%d", repoWatch.Name, pr4Num),
 				"namespace":         "default",
@@ -106,7 +106,7 @@ func TestCreateOrUpdateReviewSandboxes(t *testing.T) {
 
 	// Verify scale down
 	updatedSandbox := &unstructured.Unstructured{}
-	updatedSandbox.SetGroupVersionKind(schema.GroupVersionKind{Group: "custom.agents.x-k8s.io", Version: "v1alpha1", Kind: "ReviewSandbox"})
+	updatedSandbox.SetGroupVersionKind(schema.GroupVersionKind{Group: "agents.x-k8s.io", Version: "v1alpha1", Kind: "Sandbox"})
 	g.Expect(r.Client.Get(context.Background(), types.NamespacedName{Name: oldSandbox.GetName(), Namespace: "default"}, updatedSandbox)).To(gomega.Succeed())
 	replicas, _, _ := unstructured.NestedInt64(updatedSandbox.Object, "spec", "replicas")
 	g.Expect(replicas).To(gomega.Equal(int64(0)))
@@ -118,8 +118,8 @@ func TestCleanupClosedPRSandboxes(t *testing.T) {
 
 	closedPRSandbox := &unstructured.Unstructured{
 		Object: map[string]interface{}{
-			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
-			"kind":       "ReviewSandbox",
+			"apiVersion": "agents.x-k8s.io/v1alpha1",
+			"kind":       "Sandbox",
 			"metadata": map[string]interface{}{
 				"name":      "test-repowatch-pr-2",
 				"namespace": "default",
@@ -145,9 +145,9 @@ func TestCleanupClosedPRSandboxes(t *testing.T) {
 
 	sandboxList := &unstructured.UnstructuredList{}
 	sandboxList.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   "custom.agents.x-k8s.io",
+		Group:   "agents.x-k8s.io",
 		Version: "v1alpha1",
-		Kind:    "ReviewSandbox",
+		Kind:    "Sandbox",
 	})
 	g.Expect(r.Client.List(context.Background(), sandboxList)).To(gomega.Succeed())
 	g.Expect(sandboxList.Items).To(gomega.HaveLen(0))

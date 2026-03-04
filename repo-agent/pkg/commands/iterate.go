@@ -32,7 +32,7 @@ type IterateCommand struct {
 	// loaded objects
 	repo      *github.Repository
 	user      *github.User
-	sandbox   *sandbox.IssueSandbox // Reusing IssueSandbox struct as it fits dev sandbox needs
+	sandbox   *sandbox.Sandbox
 	sandboxID string
 }
 
@@ -117,7 +117,7 @@ func (c *IterateCommand) loadGithubObjects(ctx context.Context) error {
 
 func (c *IterateCommand) loadSandbox(ctx context.Context) error {
 	// Let's pass nil for issue.
-	sb, err := sandbox.NewIssueSandbox(ctx, c.InPod, c.repo, nil, c.BranchName)
+	sb, err := sandbox.NewSandbox(ctx, c.InPod, c.repo, nil, c.BranchName)
 	if err != nil {
 		return err
 	}

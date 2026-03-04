@@ -25,7 +25,7 @@ func taskPath(taskDir string, name string) string {
 	return filepath.Join(taskDir, name)
 }
 
-func RunTask(ctx context.Context, t Task, sb *sandbox.IssueSandbox, taskDir string, env map[string]string) error {
+func RunTask(ctx context.Context, t Task, sb *sandbox.Sandbox, taskDir string, env map[string]string) error {
 	log := klog.FromContext(ctx)
 	// Implementation of task execution logic would go here.
 	taskScript, err := t.PreScript()

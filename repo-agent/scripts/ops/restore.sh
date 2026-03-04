@@ -41,7 +41,6 @@ apply_resource() {
 }
 
 apply_resource "${BACKUP_DIR}/repowatches.yaml" "RepoWatches"
-apply_resource "${BACKUP_DIR}/reviewsandboxes.yaml" "ReviewSandboxes"
-apply_resource "${BACKUP_DIR}/issuesandboxes.yaml" "IssueSandboxes"
+apply_resource "${BACKUP_DIR}/sandboxes.yaml" "Sandboxes"
 
 echo "Restore operation completed."

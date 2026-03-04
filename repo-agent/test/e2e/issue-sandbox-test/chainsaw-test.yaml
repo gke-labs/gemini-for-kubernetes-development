@@ -46,7 +46,7 @@ spec:
     try:
     - assert:
         timeout: 20m
-        file: issuesandbox-assert.yaml
+        file: sandbox-assert.yaml
     catch:
     - describe:
         apiVersion: agents.x-k8s.io/v1alpha1

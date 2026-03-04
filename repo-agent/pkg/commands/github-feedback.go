@@ -40,7 +40,7 @@ type GithubFeedbackCommand struct {
 	prComments    []github.PullRequestComment
 	prReviews     []github.PullRequestReview
 	user          *github.User
-	sandbox       *sandbox.IssueSandbox
+	sandbox       *sandbox.Sandbox
 	sandboxID     string
 }
 
@@ -188,7 +188,7 @@ func (c *GithubFeedbackCommand) loadGithubObjects(ctx context.Context) error {
 func (c *GithubFeedbackCommand) loadSandbox(ctx context.Context) error {
 	if c.InPod {
 		var err error
-		sb, err := sandbox.NewIssueSandbox(ctx, c.InPod, c.repo, c.issue, "")
+		sb, err := sandbox.NewSandbox(ctx, c.InPod, c.repo, c.issue, "")
 		if err != nil {
 			return err
 		}

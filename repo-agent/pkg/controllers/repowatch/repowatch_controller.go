@@ -1596,9 +1596,9 @@ func (r *Reconciler) reconcileDevSandboxesInternal(ctx context.Context, user *gi
 	// 6. List Existing DevSandboxes
 	sandboxList := &unstructured.UnstructuredList{}
 	sandboxGVK := schema.GroupVersionKind{
-		Group:   "custom.agents.x-k8s.io",
+		Group:   "agents.x-k8s.io",
 		Version: "v1alpha1",
-		Kind:    "IssueSandbox",
+		Kind:    "Sandbox",
 	}
 	sandboxList.SetGroupVersionKind(sandboxGVK)
 	if err := r.List(ctx, sandboxList, client.InNamespace(repoWatch.Namespace), client.MatchingLabels{"sandbox.gemini.google.com/type": "dev"}); err != nil {
@@ -1779,10 +1779,17 @@ func (r *Reconciler) createDevSandbox(ctx context.Context, user *github.User, re
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *Reconciler) SetupWithManager(mgr ctrl.Manager, concurrency int) error {
+	sandbox := &unstructured.Unstructured{}
+	sandbox.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "agents.x-k8s.io",
+		Version: "v1alpha1",
+		Kind:    "Sandbox",
+	})
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&reviewv1alpha1.RepoWatch{}).
 		WithOptions(controller.Options{MaxConcurrentReconciles: concurrency}).
-		// Owns(&reviewv1alpha1.ReviewSandbox{}).
+		Owns(sandbox).
 		Complete(r)
 }
 

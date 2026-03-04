@@ -29,7 +29,7 @@ type GithubTriageIssueCommand struct {
 	issue *github.Issue
 	// TODO(barney-s): do we need repo ?
 	repo      *github.Repository
-	sandbox   *sandbox.IssueSandbox
+	sandbox   *sandbox.Sandbox
 	sandboxID string
 }
 
@@ -113,7 +113,7 @@ func (c *GithubTriageIssueCommand) loadGithubObjects(ctx context.Context) error 
 }
 
 func (c *GithubTriageIssueCommand) loadSandbox(ctx context.Context) error {
-	sb, err := sandbox.NewIssueSandbox(ctx, c.InPod, c.repo, c.issue, "")
+	sb, err := sandbox.NewSandbox(ctx, c.InPod, c.repo, c.issue, "")
 	if err != nil {
 		return err
 	}

@@ -123,7 +123,7 @@ func main() {
 			continue
 		}
 
-		if u.GetKind() != "ReviewSandbox" {
+		if u.GetKind() != "ReviewSandbox" && u.GetKind() != "Sandbox" {
 			continue
 		}
 
@@ -142,12 +142,18 @@ func main() {
 		}
 
 		// Extract PR Info
+		var prURL string
 		spec, _, _ := unstructured.NestedMap(u.Object, "spec")
 		source, _, _ := unstructured.NestedMap(spec, "source")
-		prURL, _, _ := unstructured.NestedString(source, "htmlURL")
+		prURL, _, _ = unstructured.NestedString(source, "htmlURL")
 
 		if prURL == "" {
-			klog.Infof("No htmlURL in source spec for %s", attrs.Name)
+			// Try annotations for new Sandbox format
+			prURL = annotations["htmlURL"]
+		}
+
+		if prURL == "" {
+			klog.Infof("No htmlURL in source spec or annotations for %s", attrs.Name)
 			continue
 		}
 
