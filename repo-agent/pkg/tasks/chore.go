@@ -9,6 +9,8 @@ var _ Task = &ChoreModel{}
 
 type ChoreModel struct {
 	AgentPrompt string
+	ChoreName   string
+	ChoreFile   string
 	RepoName    string
 	PromptFile  string
 }

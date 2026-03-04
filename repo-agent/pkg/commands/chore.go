@@ -16,6 +16,8 @@ import (
 type ChoreCommand struct {
 	// Configurable options
 	AgentPrompt  string
+	ChoreName    string
+	ChoreFile    string
 	InPod        bool
 	WorkspaceDir string
 	TaskDir      string
@@ -41,6 +43,8 @@ func BuildChoreCommand() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&choreCommand.AgentPrompt, "prompt", os.Getenv("AGENT_PROMPT"), "Chore prompt")
+	cmd.Flags().StringVar(&choreCommand.ChoreName, "name", os.Getenv("CHORE_NAME"), "Chore name")
+	cmd.Flags().StringVar(&choreCommand.ChoreFile, "file", os.Getenv("CHORE_FILE"), "Chore definition file path")
 	cmd.Flags().StringVar(&choreCommand.RepoName, "repo", os.Getenv("REPO"), "Repository name")
 	cmd.Flags().BoolVar(&choreCommand.InPod, "in-pod", false, "Whether running inside the pod")
 	return cmd
@@ -90,6 +94,8 @@ func (c *ChoreCommand) Run(ctx context.Context) error {
 	promptPath := c.taskPath("agent-prompt.txt")
 	task := tasks.ChoreModel{
 		AgentPrompt: c.AgentPrompt,
+		ChoreName:    c.ChoreName,
+		ChoreFile:    c.ChoreFile,
 		RepoName:    c.RepoName,
 		PromptFile:  promptPath,
 	}

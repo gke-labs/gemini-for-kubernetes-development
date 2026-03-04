@@ -194,6 +194,7 @@ func runChore(ctx context.Context, name string, file string) error {
 	params := map[string]string{
 		"AGENT_PROMPT": chore.Prompt,
 		"CHORE_NAME":   chore.Name,
+		"CHORE_FILE":   file,
 	}
 
 	// Add other params from repoWatch if applicable
