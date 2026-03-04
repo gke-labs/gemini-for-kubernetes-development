@@ -1,0 +1,75 @@
+#!/bin/bash
+
+# Copyright 2026 The Gemini For Kubernetes Development Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+set -o errexit
+set -o nounset
+set -o pipefail
+
+# This script automates the upgrade process for repo-agent.
+# It follows these steps:
+# 1. Cleanup old resources
+# 2. Upgrade the installation
+# 3. Scale down controllers
+# 4. Run post-upgrade mutations (if any)
+# 5. Scale up controllers
+
+REPO_AGENT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "${REPO_AGENT_ROOT}"
+
+cleanup() {
+  echo "--- Step 1: Cleanup ---"
+  # Rarely cleanups are required.
+  ./scripts/ops/scaledown_and_clean.py --types=issuesandboxes --apply
+  ./scripts/ops/scaledown_and_clean.py --types=devsandboxes --apply
+}
+
+upgrade() {
+  echo "--- Step 2: Upgrade ---"
+  # This applies new manifests and restarts the components.
+  # We use the latest images.
+  make update-repo-agent-latest
+}
+
+scaledown() {
+  echo "--- Step 3: Scale down ---"
+  # Step 2 might have scaled it back up during rollout.
+  # We scale it down again to ensure it's safe for mutations.
+  kubectl scale sts -n repo-agent-system repowatch-controller --replicas=0
+}
+
+mutations() {
+  echo "--- Step 4: Mutations ---"
+  # The upgrade script is expected to be modified when we have new migrations to be done.
+  # Example:
+  # ./scripts/ops/mutate_repowatches.py --mutator migrate-issues-taskbased-022026
+  
+  echo "No mutations defined for this upgrade yet."
+  echo "Modify this function in $0 if you have specific migrations to run."
+}
+
+scaleup() {
+  echo "--- Step 5: Scale up ---"
+  kubectl scale sts -n repo-agent-system repowatch-controller --replicas=1
+}
+
+# Run the upgrade process
+cleanup
+upgrade
+scaledown
+mutations
+scaleup
+
+echo "Upgrade completed successfully!"
