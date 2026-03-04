@@ -51,6 +51,7 @@ type ReviewCommand struct {
 	ExpectedComments  int
 	IgnoreFiles       []string
 	SeverityThreshold string
+	Model             string
 
 	// output
 	TaskDir         string
@@ -153,6 +154,12 @@ func (c *ReviewCommand) InitDefaults() {
 	if c.SeverityThreshold == "" {
 		c.SeverityThreshold = os.Getenv("SEVERITY_THRESHOLD")
 	}
+	if c.Model == "" {
+		c.Model = os.Getenv("model")
+	}
+	if c.Model == "" {
+		c.Model = os.Getenv("MODEL")
+	}
 }
 
 func BuildReviewCommand() *cobra.Command {
@@ -179,6 +186,7 @@ func BuildReviewCommand() *cobra.Command {
 	cmd.Flags().IntVar(&reviewCommand.ExpectedComments, "expected-comments", 0, "Expected number of comments")
 	cmd.Flags().StringSliceVar(&reviewCommand.IgnoreFiles, "ignore-files", nil, "Comma separated list of glob patterns to ignore")
 	cmd.Flags().StringVar(&reviewCommand.SeverityThreshold, "severity-threshold", os.Getenv("SEVERITY_THRESHOLD"), "Severity threshold for review comments")
+	cmd.Flags().StringVar(&reviewCommand.Model, "model", os.Getenv("MODEL"), "Model to use")
 
 	return cmd
 }
@@ -296,6 +304,7 @@ func (c *ReviewCommand) Run(ctx context.Context) error {
 
 	provider, err := llm.NewLLMProvider(llm.ProviderConfig{
 		Name:                 c.AgentName,
+		ModelName:            c.Model,
 		OutputStartIndicator: "note:",
 		WorkspacesDir:        c.WorkspaceDir,
 		TokensDir:            c.TokensDir,

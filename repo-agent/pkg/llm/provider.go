@@ -30,6 +30,7 @@ type PostProcessor func([]byte) ([]byte, error)
 // ProviderConfig holds the configuration for an LLM provider.
 type ProviderConfig struct {
 	Name                 string
+	ModelName            string
 	WorkspacesDir        string
 	RepoDir              string
 	TokensDir            string

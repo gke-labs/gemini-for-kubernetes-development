@@ -75,13 +75,13 @@ func (g *Gemini) Setup() error {
 
 	// Ensure root settings.json has previewFeatures
 	// We force previewFeatures to true to enable experimental capabilities required by the agent.
-	if err := ensureSettings(repoGeminiConfigDir); err != nil {
+	if err := ensureSettings(repoGeminiConfigDir, g.ModelName); err != nil {
 		klog.Infof("Warning: failed to ensure .gemini/settings.json: %v", err)
 	}
 	// Ensure home directory settings.json has previewFeatures
 	homeDir, err := os.UserHomeDir()
 	if err == nil {
-		if err := ensureSettings(filepath.Join(homeDir, ".gemini")); err != nil {
+		if err := ensureSettings(filepath.Join(homeDir, ".gemini"), g.ModelName); err != nil {
 			klog.Infof("Warning: failed to ensure ~/.gemini/settings.json: %v", err)
 		}
 	}
@@ -95,7 +95,7 @@ func (g *Gemini) Setup() error {
 	return nil
 }
 
-func ensureSettings(geminiDir string) error {
+func ensureSettings(geminiDir string, modelName string) error {
 	settingsPath := filepath.Join(geminiDir, "settings.json")
 	if err := os.MkdirAll(geminiDir, 0755); err != nil {
 		return fmt.Errorf("failed to create .gemini directory: %v", err)
@@ -122,7 +122,11 @@ func ensureSettings(geminiDir string) error {
 		settings["general"] = general
 	}
 	general["previewFeatures"] = true
-	if model, ok := settings["model"]; !ok {
+	if modelName != "" {
+		settings["model"] = map[string]interface{}{
+			"name": modelName,
+		}
+	} else if model, ok := settings["model"]; !ok {
 		// if model is unset, set it to gemini-3-pro-preview
 		settings["model"] = map[string]interface{}{
 			"name": "gemini-3-pro-preview",

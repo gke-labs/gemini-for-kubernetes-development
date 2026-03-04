@@ -92,8 +92,13 @@ func (c *Claude) ExpandPrompt(prompt string) (string, error) {
 func (c *Claude) Run(prompt string) ([]byte, error) {
 	klog.Infof("Claude provider called with prompt: %s", prompt)
 
+	model := c.ModelName
+	if model == "" {
+		model = defaultClaudeModel
+	}
+
 	requestBody, err := json.Marshal(map[string]interface{}{
-		"model":      defaultClaudeModel,
+		"model":      model,
 		"max_tokens": defaultClaudeMaxTokens,
 		"messages": []map[string]string{
 			{
