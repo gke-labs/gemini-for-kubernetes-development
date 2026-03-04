@@ -62,7 +62,7 @@ func TestBlobUpload(t *testing.T) {
 	}
 
 	name := "test-repo"
-	
+
 	// 1. Initiate upload
 	req, _ := http.NewRequest("POST", "/v2/"+name+"/blobs/uploads/", nil)
 	rr := httptest.NewRecorder()

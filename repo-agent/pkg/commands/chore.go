@@ -94,8 +94,8 @@ func (c *ChoreCommand) Run(ctx context.Context) error {
 	promptPath := c.taskPath("agent-prompt.txt")
 	task := tasks.ChoreModel{
 		AgentPrompt: c.AgentPrompt,
-		ChoreName:    c.ChoreName,
-		ChoreFile:    c.ChoreFile,
+		ChoreName:   c.ChoreName,
+		ChoreFile:   c.ChoreFile,
 		RepoName:    c.RepoName,
 		PromptFile:  promptPath,
 	}
