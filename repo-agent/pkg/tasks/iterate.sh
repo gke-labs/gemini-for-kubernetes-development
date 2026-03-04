@@ -28,8 +28,22 @@ function setupGit {
     echo "Configuring global git ignore"
     git config --global core.excludesfile /root/.gitignore_global
     cat <<EOF > /root/.gitignore_global
+# Common binaries and build artifacts
 manager
-bin/
+[Bb]in/
+[Oo]bj/
+[Bb]uild/
+[Dd]ist/
+[Tt]arget/
+_output/
+*.exe
+*.so
+*.dylib
+*.test
+*.a
+*.o
+*.pyc
+.DS_Store
 EOF
 }
 

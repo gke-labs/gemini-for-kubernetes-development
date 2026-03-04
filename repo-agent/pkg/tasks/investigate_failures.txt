@@ -24,6 +24,8 @@ The following workflows have failed:
    - If the failure is caused by the code in the PR, attempt to fix it.
    - Make code changes, run tests (if you can verify locally), and commit the changes.
    - If the failure is a flake or infrastructure issue, DO NOT change the code.
+   - **Avoid committing or pushing large binary files.** Build artifacts (like the `manager` binary in many controller projects) should be cleaned up before committing or added to `.gitignore`.
+   - **Cleaning up:** If you run build commands (like `make`, `go build`, `go test`), ensure you clean up any generated binaries or artifacts before committing. Use `make clean` if available, or manually remove them.
 
 3. **Report**:
    - Provide a summary of your investigation.
