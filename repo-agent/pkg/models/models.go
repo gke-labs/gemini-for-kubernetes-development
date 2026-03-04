@@ -1,7 +1,11 @@
 package models
 
 import (
+	"fmt"
+	"strconv"
+
 	"github.com/google/go-github/v39/github"
+	"gopkg.in/yaml.v3"
 )
 
 // DraftReviewComment defines the structure for a review comment with severity
@@ -14,6 +18,73 @@ type DraftReviewComment struct {
 	StartLine *int    `yaml:"start_line,omitempty" json:"start_line,omitempty"`
 	StartSide *string `yaml:"start_side,omitempty" json:"start_side,omitempty"`
 	Severity  string  `yaml:"severity,omitempty" json:"severity,omitempty"`
+}
+
+// UnmarshalYAML implements custom unmarshaling for DraftReviewComment to handle
+// line numbers (and other int fields) that might be provided as strings by LLMs.
+func (c *DraftReviewComment) UnmarshalYAML(value *yaml.Node) error {
+	type Alias DraftReviewComment
+	aux := &struct {
+		Line      yaml.Node `yaml:"line"`
+		Position  yaml.Node `yaml:"position"`
+		StartLine yaml.Node `yaml:"start_line"`
+		*Alias
+	}{
+		Alias: (*Alias)(c),
+	}
+	if err := value.Decode(&aux); err != nil {
+		return err
+	}
+
+	// Handle Line
+	if aux.Line.Kind != 0 {
+		if val, err := nodeToIntPtr(&aux.Line); err != nil {
+			return fmt.Errorf("line: %w", err)
+		} else {
+			c.Line = val
+		}
+	}
+	// Handle Position
+	if aux.Position.Kind != 0 {
+		if val, err := nodeToIntPtr(&aux.Position); err != nil {
+			return fmt.Errorf("position: %w", err)
+		} else {
+			c.Position = val
+		}
+	}
+	// Handle StartLine
+	if aux.StartLine.Kind != 0 {
+		if val, err := nodeToIntPtr(&aux.StartLine); err != nil {
+			return fmt.Errorf("start_line: %w", err)
+		} else {
+			c.StartLine = val
+		}
+	}
+
+	return nil
+}
+
+func nodeToIntPtr(node *yaml.Node) (*int, error) {
+	// Try to decode as int first
+	var i int
+	if err := node.Decode(&i); err == nil {
+		return &i, nil
+	}
+
+	// If that fails, try to decode as string and convert to int
+	var s string
+	if err := node.Decode(&s); err == nil {
+		if s == "" {
+			return nil, nil
+		}
+		i, err := strconv.Atoi(s)
+		if err != nil {
+			return nil, err
+		}
+		return &i, nil
+	}
+
+	return nil, fmt.Errorf("failed to decode as int or string")
 }
 
 // PullRequestReviewRequest defines the structure for a review request

@@ -85,7 +85,7 @@ Output:
 ---------------------
 class DraftReviewComment(BaseModel):
     path: str = Field(description="The file path of the relevant file")
-    line: str = Field(description="line no where the comment is anchored. should be within the line range in the diff")
+    line: int = Field(description="line no where the comment is anchored. should be within the line range in the diff")
     body: str = Field(description="detailed review comment for the line")
     side: str = Field(description="RIGHT|LEFT. RIGHT if commenting on additions starting with '+', LEFT if commenting on deletions starting with '-'.")
     severity: str = Field(description="severity of the comment. one of [LOW, MEDIUM, HIGH]")
