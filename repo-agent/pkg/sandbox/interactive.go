@@ -38,12 +38,18 @@ func NewIssueSandbox(ctx context.Context, local bool, repo *github.Repository, i
 
 	if local {
 		log.Info("Using local executor for sandbox")
-		name := fmt.Sprintf("local-%s", repo.Name())
-		if issue != nil {
-			name = fmt.Sprintf("%s/issue/%d", name, issue.Number())
-		} else {
-			name = fmt.Sprintf("%s/branch/%s", name, branch)
+		name := "local"
+		if repo != nil {
+			name = fmt.Sprintf("local-%s", repo.Name())
+			if issue != nil {
+				name = fmt.Sprintf("%s/issue/%d", name, issue.Number())
+			} else {
+				name = fmt.Sprintf("%s/branch/%s", name, branch)
+			}
+		} else if branch != "" {
+			name = fmt.Sprintf("local/branch/%s", branch)
 		}
+
 		return &IssueSandbox{
 			repo:  repo,
 			issue: issue,
@@ -58,7 +64,11 @@ func NewIssueSandbox(ctx context.Context, local bool, repo *github.Repository, i
 	if issue != nil {
 		issueStr = issue.String()
 	}
-	log.Info("Looking for existing sandbox", "repo", repo.CloneURL(), "issue", issueStr, "branch", branch)
+	repoURL := "nil"
+	if repo != nil {
+		repoURL = repo.CloneURL()
+	}
+	log.Info("Looking for existing sandbox", "repo", repoURL, "issue", issueStr, "branch", branch)
 
 	sb, found, err := FindSandbox(ctx, kube, repo, issue, branch)
 	if err != nil {
@@ -211,14 +221,21 @@ func LaunchSandbox(ctx context.Context, kube *clients.KubernetesClient, repo *gi
 
 func NameForSandbox(repo *github.Repository, issue *github.Issue, branch string) string {
 	var sandboxName string
-	if issue != nil {
+	if issue != nil && repo != nil {
 		sandboxName = fmt.Sprintf("github-%s-%s-%d", repo.Owner(), repo.Name(), issue.Number())
-	} else {
+	} else if repo != nil {
 		// Fallback for dev sandboxes without issue
 		// Sanitize branch name
 		safeBranch := strings.ReplaceAll(branch, "/", "-")
 		safeBranch = strings.ReplaceAll(safeBranch, "_", "-")
 		sandboxName = fmt.Sprintf("github-%s-%s-%s", repo.Owner(), repo.Name(), safeBranch)
+	} else {
+		// Chore or other generic sandboxes
+		if branch != "" {
+			sandboxName = fmt.Sprintf("generic-%s", strings.ReplaceAll(branch, "/", "-"))
+		} else {
+			sandboxName = "generic-sandbox"
+		}
 	}
 	sandboxName = strings.ToLower(sandboxName) // Repos can have capital letters, but k8s names must be lowercase
 
