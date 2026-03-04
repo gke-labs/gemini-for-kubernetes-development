@@ -50,6 +50,7 @@ func main() {
 
 	rootCmd.AddCommand(buildIssueCommand())
 	rootCmd.AddCommand(buildPRCommand())
+	rootCmd.AddCommand(buildChoreCommand())
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -96,6 +97,222 @@ func buildPRCommand() *cobra.Command {
 	_ = cmd.MarkFlagRequired("number")
 
 	return cmd
+}
+
+func buildChoreCommand() *cobra.Command {
+	var name string
+	var file string
+
+	cmd := &cobra.Command{
+		Use:   "chore",
+		Short: "Create/ensure sandbox and task for a chore",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			return runChore(context.Background(), name, file)
+		},
+	}
+
+	cmd.Flags().StringVar(&name, "name", "", "Chore name")
+	cmd.Flags().StringVar(&file, "file", "", "Chore definition file path")
+	_ = cmd.MarkFlagRequired("file")
+
+	return cmd
+}
+
+type ChoreDefinition struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Schedule    string `json:"schedule"`
+	Prompt      string `json:"-"`
+}
+
+func runChore(ctx context.Context, name string, file string) error {
+	if repoWatchName == "" || namespace == "" {
+		return fmt.Errorf("REPOWATCH_NAME and NAMESPACE environment variables must be set")
+	}
+
+	chore, err := parseChore(file)
+	if err != nil {
+		return err
+	}
+	if name != "" {
+		chore.Name = name
+	}
+	if chore.Name == "" {
+		return fmt.Errorf("chore name is required (either in frontmatter or via --name)")
+	}
+
+	cfg, err := config.GetConfig()
+	if err != nil {
+		return fmt.Errorf("unable to get kubeconfig: %w", err)
+	}
+
+	dynClient, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("unable to create dynamic client: %w", err)
+	}
+
+	clientset, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("unable to create clientset: %w", err)
+	}
+
+	kubeClient := &clients.KubernetesClient{
+		DynamicClient: dynClient,
+		Clientset:     clientset,
+	}
+	manager := k8s.NewManager(kubeClient)
+
+	rwUnstructured, err := manager.GetRepoWatch(ctx, namespace, repoWatchName)
+	if err != nil {
+		return fmt.Errorf("failed to get RepoWatch %s: %w", repoWatchName, err)
+	}
+
+	var repoWatch reviewv1alpha1.RepoWatch
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(rwUnstructured.Object, &repoWatch); err != nil {
+		return fmt.Errorf("failed to convert RepoWatch: %w", err)
+	}
+
+	sandboxName := fmt.Sprintf("chore-%s-%s", repoWatch.Name, slugify(chore.Name))
+
+	// Check if sandbox exists
+	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			// Create Sandbox
+			fmt.Printf("Creating sandbox %s...\n", sandboxName)
+			if err := createChoreSandbox(ctx, kubeClient, &repoWatch, chore, sandboxName); err != nil {
+				return fmt.Errorf("failed to create chore sandbox: %w", err)
+			}
+		} else {
+			return fmt.Errorf("failed to check if sandbox exists: %w", err)
+		}
+	}
+
+	// Create Task
+	taskType := "chore"
+	fmt.Printf("Creating task %s for sandbox %s...\n", taskType, sandboxName)
+	params := map[string]string{
+		"AGENT_PROMPT": chore.Prompt,
+		"CHORE_NAME":   chore.Name,
+	}
+
+	// Add other params from repoWatch if applicable
+	if repoWatch.Spec.Issue != nil {
+		if repoWatch.Spec.Issue.LLM.Provider != "" {
+			params["AGENT_LLM_PROVIDER"] = repoWatch.Spec.Issue.LLM.Provider
+		}
+		if repoWatch.Spec.Issue.LLM.APIKeySecretRef != "" {
+			params["AGENT_LLM_API_KEY_SECRET"] = repoWatch.Spec.Issue.LLM.APIKeySecretRef
+		}
+		if repoWatch.Spec.Issue.LLM.ConfigdirRef != "" {
+			params["AGENT_LLM_CONFIGDIR"] = repoWatch.Spec.Issue.LLM.ConfigdirRef
+		}
+	}
+
+	err = manager.CreateSandboxTask(ctx, namespace, sandboxName, "Sandbox", taskType, params)
+	if err != nil {
+		return fmt.Errorf("failed to create sandbox task: %w", err)
+	}
+
+	fmt.Println("Done.")
+	return nil
+}
+
+func parseChore(path string) (*ChoreDefinition, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	parts := strings.SplitN(string(data), "---", 3)
+	if len(parts) < 3 {
+		return nil, fmt.Errorf("invalid chore format in %s: missing frontmatter", path)
+	}
+
+	var chore ChoreDefinition
+	if err := yaml.Unmarshal([]byte(parts[1]), &chore); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal frontmatter in %s: %w", path, err)
+	}
+
+	chore.Prompt = strings.TrimSpace(parts[2])
+	return &chore, nil
+}
+
+func slugify(s string) string {
+	s = strings.ToLower(s)
+	s = strings.ReplaceAll(s, " ", "-")
+	var res strings.Builder
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
+			res.WriteRune(r)
+		}
+	}
+	return res.String()
+}
+
+func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, repoWatch *reviewv1alpha1.RepoWatch, chore *ChoreDefinition, sandboxName string) error {
+	cloneURL := repoWatch.Spec.RepoURL
+	if !strings.HasSuffix(cloneURL, ".git") {
+		cloneURL += ".git"
+	}
+
+	userLogin := os.Getenv("GITHUB_USER_ID")
+	userName := os.Getenv("GITHUB_USER_NAME")
+	userEmail := os.Getenv("GITHUB_USER_EMAIL")
+
+	apiKeySecretName := ""
+	if repoWatch.Spec.Issue != nil {
+		apiKeySecretName = repoWatch.Spec.Issue.LLM.APIKeySecretRef
+	}
+	if apiKeySecretName == "" {
+		apiKeySecretName = "gemini-api-key"
+	}
+
+	opt := sandbox.AgentSandboxOptions{
+		DevSandboxOptions: sandbox.DevSandboxOptions{
+			Name:      strings.TrimPrefix(sandboxName, "devc-"), // NewAgentSandbox prepends devc-
+			Namespace: repoWatch.Namespace,
+			Labels: map[string]string{
+				"review.gemini.google.com/repowatch": repoWatch.Name,
+				"sandbox.gemini.google.com/type":     "chore",
+				"chore.gemini.google.com/name":       slugify(chore.Name),
+			},
+			CloneURL:            cloneURL,
+			HTMLURL:             strings.TrimSuffix(repoWatch.Spec.RepoURL, ".git"),
+			Branch:              "main", // Default branch for chores
+			Origin:              fmt.Sprintf("github.com/%s/%s", userLogin, repoWatch.Name),
+			PushEnabled:         true,
+			UserLogin:           userLogin,
+			UserName:            userName,
+			UserEmail:           userEmail,
+			LLMAPIKeySecretName: apiKeySecretName,
+			GithubSecretName:    repoWatch.Spec.GithubSecretName,
+			RepoSandboxImage:    os.Getenv("REPO_SANDBOX_IMAGE"),
+			ConfigDirImage:      os.Getenv("CONFIG_DIR_IMAGE"),
+			HTTPEnabled:         true,
+			Replicas:            1,
+			ServiceAccountName:  "issue-sandbox",
+		},
+		IssueRepo: repoWatch.Name,
+	}
+
+	if repoWatch.Spec.Issue != nil {
+		opt.LLMProvider = repoWatch.Spec.Issue.LLM.Provider
+		opt.LLMConfigdirRef = repoWatch.Spec.Issue.LLM.ConfigdirRef
+		opt.Image = repoWatch.Spec.Issue.Image
+		opt.DevcontainerConfigRef = repoWatch.Spec.Issue.DevcontainerConfigRef
+	}
+
+	sb, svc := sandbox.NewAgentSandbox(opt)
+	sb.SetName(sandboxName)
+
+	_, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(repoWatch.Namespace).Create(ctx, sb, metav1.CreateOptions{})
+	if err != nil {
+		return err
+	}
+
+	_, err = kubeClient.Clientset.CoreV1().Services(repoWatch.Namespace).Create(ctx, svc, metav1.CreateOptions{})
+	return err
 }
 
 func runIssue(ctx context.Context, number int, prNumber int, taskType string) error {

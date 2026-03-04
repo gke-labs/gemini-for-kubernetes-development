@@ -139,6 +139,12 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 
 	var cmd *exec.Cmd
 
+	taskDir, err := tr.createTaskDir(taskName)
+	if err != nil {
+		tr.updateTaskStatus(ctx, task, "Failed", err.Error(), nil)
+		return
+	}
+
 	switch taskType {
 	case "review":
 		cmd = exec.Command(sandbox.RepoSandboxBinary, "review")
@@ -206,6 +212,30 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
 		}
 
+	case "chore":
+		prompt := params["AGENT_PROMPT"]
+		promptFile := filepath.Join(taskDir, "chore-prompt.txt")
+		if err := os.WriteFile(promptFile, []byte(prompt), 0644); err != nil {
+			tr.updateTaskStatus(ctx, task, "Failed", fmt.Sprintf("failed to write prompt: %v", err), nil)
+			return
+		}
+
+		repoName := os.Getenv("REPO")
+		repoDir := filepath.Join("/workspaces", repoName)
+
+		cmd = exec.Command("gemini", "--yolo")
+		cmd.Dir = repoDir
+		fPrompt, err := os.Open(promptFile)
+		if err != nil {
+			tr.updateTaskStatus(ctx, task, "Failed", fmt.Sprintf("failed to open prompt file: %v", err), nil)
+			return
+		}
+		cmd.Stdin = fPrompt
+		cmd.Env = os.Environ()
+		for k, v := range params {
+			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
+		}
+
 	case "issue":
 		cmd = exec.Command(sandbox.RepoSandboxBinary, "dev")
 		// Map params to env vars
@@ -234,11 +264,6 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		return
 	}
 
-	taskDir, err := tr.createTaskDir(taskName)
-	if err != nil {
-		tr.updateTaskStatus(ctx, task, "Failed", err.Error(), nil)
-		return
-	}
 	cmd.Env = append(cmd.Env, fmt.Sprintf("NAME=%s", taskName))
 	cmd.Env = append(cmd.Env, fmt.Sprintf("TASKDIR=%s", taskDir))
 	cmd.Stdout = f
