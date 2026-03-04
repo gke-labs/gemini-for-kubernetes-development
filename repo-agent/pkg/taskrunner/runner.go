@@ -213,25 +213,10 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		}
 
 	case "chore":
-		prompt := params["AGENT_PROMPT"]
-		promptFile := filepath.Join(taskDir, "chore-prompt.txt")
-		if err := os.WriteFile(promptFile, []byte(prompt), 0644); err != nil {
-			tr.updateTaskStatus(ctx, task, "Failed", fmt.Sprintf("failed to write prompt: %v", err), nil)
-			return
-		}
-
-		repoName := os.Getenv("REPO")
-		repoDir := filepath.Join("/workspaces", repoName)
-
-		cmd = exec.Command("gemini", "--yolo")
-		cmd.Dir = repoDir
-		fPrompt, err := os.Open(promptFile)
-		if err != nil {
-			tr.updateTaskStatus(ctx, task, "Failed", fmt.Sprintf("failed to open prompt file: %v", err), nil)
-			return
-		}
-		cmd.Stdin = fPrompt
+		cmd = exec.Command(sandbox.RepoSandboxBinary, "chore", "--in-pod=true")
+		// Map params to env vars
 		cmd.Env = os.Environ()
+		// Inject params into env
 		for k, v := range params {
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
 		}
