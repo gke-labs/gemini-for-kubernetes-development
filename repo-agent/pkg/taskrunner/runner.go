@@ -139,6 +139,12 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 
 	var cmd *exec.Cmd
 
+	taskDir, err := tr.createTaskDir(taskName)
+	if err != nil {
+		tr.updateTaskStatus(ctx, task, "Failed", err.Error(), nil)
+		return
+	}
+
 	switch taskType {
 	case "review":
 		cmd = exec.Command(sandbox.RepoSandboxBinary, "review")
@@ -206,6 +212,15 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
 		}
 
+	case "chore":
+		cmd = exec.Command(sandbox.RepoSandboxBinary, "chore", "--in-pod=true")
+		// Map params to env vars
+		cmd.Env = os.Environ()
+		// Inject params into env
+		for k, v := range params {
+			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
+		}
+
 	case "issue":
 		cmd = exec.Command(sandbox.RepoSandboxBinary, "dev")
 		// Map params to env vars
@@ -234,11 +249,6 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		return
 	}
 
-	taskDir, err := tr.createTaskDir(taskName)
-	if err != nil {
-		tr.updateTaskStatus(ctx, task, "Failed", err.Error(), nil)
-		return
-	}
 	cmd.Env = append(cmd.Env, fmt.Sprintf("NAME=%s", taskName))
 	cmd.Env = append(cmd.Env, fmt.Sprintf("TASKDIR=%s", taskDir))
 	cmd.Stdout = f

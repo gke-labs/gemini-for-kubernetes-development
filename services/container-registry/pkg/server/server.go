@@ -29,8 +29,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/google/uuid"
 	"github.com/gke-labs/gemini-for-kubernetes-development/services/container-registry/pkg/blobstore"
+	"github.com/google/uuid"
 )
 
 type Server struct {
@@ -55,7 +55,7 @@ func NewServer(root string) (*Server, error) {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v2/", s.handleV2)
-	
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("%s %s", r.Method, r.URL.Path)
 		w.Header().Set("Docker-Distribution-API-Version", "registry/2.0")
@@ -151,7 +151,7 @@ func (s *Server) handleTags(name string, w http.ResponseWriter, r *http.Request)
 
 func (s *Server) handleBlobUpload(name string, w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/v2/"+name+"/blobs/uploads/"), "/")
-	
+
 	switch r.Method {
 	case http.MethodPost:
 		// Start upload
@@ -257,7 +257,7 @@ func (s *Server) handleBlobUpload(name string, w http.ResponseWriter, r *http.Re
 
 func (s *Server) handleBlob(name string, w http.ResponseWriter, r *http.Request) {
 	digest := strings.TrimPrefix(r.URL.Path, "/v2/"+name+"/blobs/")
-	
+
 	switch r.Method {
 	case http.MethodGet, http.MethodHead:
 		exists, err := s.blobs.Exists(digest)
@@ -307,7 +307,7 @@ func (s *Server) handleManifest(name string, w http.ResponseWriter, r *http.Requ
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		
+
 		data, err := io.ReadAll(r.Body)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -357,7 +357,7 @@ func (s *Server) handleManifest(name string, w http.ResponseWriter, r *http.Requ
 		}
 
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
-		
+
 		if r.Method == http.MethodGet {
 			w.Write(data)
 		} else {
