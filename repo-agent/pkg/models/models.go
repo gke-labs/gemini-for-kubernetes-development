@@ -24,12 +24,13 @@ import (
 
 // DraftReviewComment defines the structure for a review comment with severity
 type DraftReviewComment struct {
-	Path      string  `yaml:"path" json:"path"`
-	Line      *int    `yaml:"line,omitempty" json:"line,omitempty"`
+	Path      *string `yaml:"path,omitempty" json:"path,omitempty"`
 	Position  *int    `yaml:"position,omitempty" json:"position,omitempty"`
-	Body      string  `yaml:"body" json:"body"`
+	Body      *string `yaml:"body,omitempty" json:"body,omitempty"`
+	Line      *int    `yaml:"line,omitempty" json:"line,omitempty"`
 	Side      *string `yaml:"side,omitempty" json:"side,omitempty"`
 	StartLine *int    `yaml:"start_line,omitempty" json:"start_line,omitempty"`
+	StartSide *string `yaml:"start_side,omitempty" json:"start_side,omitempty"`
 	Severity  string  `yaml:"severity,omitempty" json:"severity,omitempty"`
 }
 
@@ -111,79 +112,171 @@ type PullRequestReviewRequest struct {
 	Comments []*DraftReviewComment `yaml:"comments,omitempty" json:"comments,omitempty"`
 }
 
-// RepositoryWatchConfig defines the configuration for watching a repository
-type RepositoryWatchConfig struct {
-	Owner      string `yaml:"owner" json:"owner"`
-	Repo       string `yaml:"repo" json:"repo"`
-	Branch     string `yaml:"branch,omitempty" json:"branch,omitempty"`
-	ReviewTask bool   `yaml:"review_task,omitempty" json:"review_task,omitempty"`
+// ReviewAgentOutput defines the structure for the agent's YAML output.
+type ReviewAgentOutput struct {
+	Note   string                    `yaml:"note"`
+	Review *PullRequestReviewRequest `yaml:"review"`
+	Labels []string                  `yaml:"labels,omitempty"`
 }
 
-// SandboxTask defines the structure for a task to be executed in a sandbox
-type SandboxTask struct {
-	ID          string `yaml:"id" json:"id"`
-	Type        string `yaml:"type" json:"type"`
-	Status      string `yaml:"status" json:"status"`
-	Description string `yaml:"description,omitempty" json:"description,omitempty"`
-}
-
-// PullRequestInfo contains information about a Pull Request
-type PullRequestInfo struct {
-	Number int    `json:"number"`
-	Title  string `json:"title"`
-	Body   string `json:"body"`
-	Head   string `json:"head"`
-	Base   string `json:"base"`
-}
-
-// ReviewResult contains the results of an automated review
-type ReviewResult struct {
-	Comments []*DraftReviewComment `json:"comments"`
-}
-
-// IssueInfo contains information about an Issue
-type IssueInfo struct {
-	Number int    `json:"number"`
-	Title  string `json:"title"`
-	Body   string `json:"body"`
-}
-
-// UserConfig contains configuration for a user
-type UserConfig struct {
-	GithubToken string `json:"github_token"`
-}
-
-// PullRequestFile contains information about a file in a Pull Request
-type PullRequestFile struct {
-	Path      string `json:"path"`
-	Patch     string `json:"patch"`
-	Status    string `json:"status"`
-	Additions int    `json:"additions"`
-	Deletions int    `json:"deletions"`
-	Changes   int    `json:"changes"`
-}
-
-// PullRequestReview contains information about a Pull Request Review
-type PullRequestReview struct {
-	ID      int64  `json:"id"`
-	User    string `json:"user"`
-	Body    string `json:"body"`
-	State   string `json:"state"`
-	HTMLURL string `json:"html_url"`
-}
-
-// ConvertToGithubDraftReviewComments converts DraftReviewComment to github.DraftReviewComment
-func ConvertToGithubDraftReviewComments(comments []*DraftReviewComment) []*github.DraftReviewComment {
-	var ghComments []*github.DraftReviewComment
-	for _, c := range comments {
-		ghComments = append(ghComments, &github.DraftReviewComment{
-			Path:      &c.Path,
-			Line:      c.Line,
+// ToGitHubReviewRequest converts the internal PullRequestReviewRequest to the GitHub API struct
+func (r *PullRequestReviewRequest) ToGitHubReviewRequest() *github.PullRequestReviewRequest {
+	if r == nil {
+		return nil
+	}
+	var comments []*github.DraftReviewComment
+	for _, c := range r.Comments {
+		comments = append(comments, &github.DraftReviewComment{
+			Path:      c.Path,
 			Position:  c.Position,
-			Body:      &c.Body,
+			Body:      c.Body,
+			Line:      c.Line,
 			Side:      c.Side,
 			StartLine: c.StartLine,
+			StartSide: c.StartSide,
 		})
 	}
-	return ghComments
+	return &github.PullRequestReviewRequest{
+		Body:     r.Body,
+		Event:    r.Event,
+		Comments: comments,
+	}
+}
+
+// Condition represents a Kubernetes-style status condition
+type Condition struct {
+	Type               string `json:"type"`
+	Status             string `json:"status"`
+	Reason             string `json:"reason,omitempty"`
+	Message            string `json:"message,omitempty"`
+	LastTransitionTime string `json:"lastTransitionTime,omitempty"`
+}
+
+// ModelUsage captures usage statistics for a single LLM model.
+type ModelUsage struct {
+	TotalRequests  int64 `json:"totalRequests,omitempty"`
+	TotalErrors    int64 `json:"totalErrors,omitempty"`
+	TotalLatencyMs int64 `json:"totalLatencyMs,omitempty"`
+	InputTokens    int64 `json:"inputTokens,omitempty"`
+	OutputTokens   int64 `json:"outputTokens,omitempty"`
+	TotalTokens    int64 `json:"totalTokens,omitempty"`
+	CachedTokens   int64 `json:"cachedTokens,omitempty"`
+	ThoughtTokens  int64 `json:"thoughtTokens,omitempty"`
+}
+
+// Stats captures aggregated LLM statistics for a task.
+type Stats struct {
+	Models map[string]ModelUsage `json:"models,omitempty"`
+}
+
+// Task represents a sandbox task
+type Task struct {
+	Name              string `json:"name"`
+	Type              string `json:"type"`
+	TaskState         string `json:"taskState"` // from status.taskState
+	Result            string `json:"result"`    // from status.result
+	CreationTimestamp string `json:"creationTimestamp"`
+	AgentDraft        string `json:"agentDraft,omitempty"`
+	AgentDraftType    string `json:"agentDraftType,omitempty"`
+	UserDraft         string `json:"userDraft,omitempty"`
+	AgentState        string `json:"agentState,omitempty"`
+	AgentStateMessage string `json:"agentStateMessage,omitempty"`
+	Stats             *Stats `json:"stats,omitempty"`
+}
+
+// PR represents a pull request
+type PR struct {
+	ID                string   `json:"id"`
+	Title             string   `json:"title"`
+	Draft             string   `json:"draft,omitempty"`
+	Sandbox           string   `json:"sandbox,omitempty"`
+	SandboxReplica    string   `json:"sandboxReplica,omitempty"`
+	Review            string   `json:"review,omitempty"`
+	HTMLURL           string   `json:"htmlURL,omitempty"`
+	DiffURL           string   `json:"diffURL,omitempty"`
+	AgentDraft        string   `json:"agentDraft,omitempty"`
+	AgentState        string   `json:"agentState,omitempty"`
+	AgentStateMessage string   `json:"agentStateMessage,omitempty"`
+	ReviewState       string   `json:"reviewState,omitempty"`
+	SandboxStatus     string   `json:"sandboxStatus,omitempty"`
+	Labels            []string `json:"labels,omitempty"`
+	Tasks             []Task   `json:"tasks,omitempty"`
+}
+
+// Issue represents a GitHub issue
+type Issue struct {
+	ID                string   `json:"id"`
+	Title             string   `json:"title"`
+	Draft             string   `json:"draft,omitempty"`
+	Sandbox           string   `json:"sandbox,omitempty"`
+	SandboxReplica    string   `json:"sandboxReplica,omitempty"`
+	Comment           string   `json:"comment,omitempty"`
+	HTMLURL           string   `json:"htmlURL,omitempty"`
+	BranchURL         string   `json:"branchURL,omitempty"`
+	PushBranch        bool     `json:"pushBranch"`
+	AgentDraft        string   `json:"agentDraft,omitempty"`
+	AgentState        string   `json:"agentState,omitempty"`
+	AgentStateMessage string   `json:"agentStateMessage,omitempty"`
+	SandboxStatus     string   `json:"sandboxStatus,omitempty"`
+	Labels            []string `json:"labels,omitempty"`
+}
+
+// Repo represents a repository with its configuration
+type Repo struct {
+	Name                string        `json:"name"`
+	Namespace           string        `json:"namespace"`
+	URL                 string        `json:"url"`
+	Review              *ReviewConfig `json:"review,omitempty"`
+	Issue               *IssueConfig  `json:"issue,omitempty"`
+	Dev                 *DevConfig    `json:"dev,omitempty"`
+	PendingPRs          []int64       `json:"pendingPRs,omitempty"`
+	ExcludePullRequests []int64       `json:"excludePullRequests,omitempty"`
+	PendingDevBranches  []string      `json:"pendingDevBranches,omitempty"`
+	ExcludeBranches     []string      `json:"excludeBranches,omitempty"`
+	PendingIssues       []int64       `json:"pendingIssues,omitempty"`
+	ExcludeIssues       []int64       `json:"excludeIssues,omitempty"`
+	Conditions          []Condition   `json:"conditions,omitempty"`
+}
+
+// ReviewConfig holds configuration for PR reviews
+type ReviewConfig struct {
+	MaxActiveSandboxes int64    `json:"maxActiveSandboxes"`
+	Assignees          []string `json:"assignees,omitempty"`
+	Models             []string `json:"models,omitempty"`
+}
+
+// IssueConfig holds configuration for issues
+type IssueConfig struct {
+	MaxActiveSandboxes int64          `json:"maxActiveSandboxes"`
+	Handlers           []IssueHandler `json:"handlers,omitempty"`
+	Issues             []int64        `json:"issues,omitempty"`
+	Models             []string       `json:"models,omitempty"`
+}
+
+// IssueHandler holds configuration for an issue handler
+type IssueHandler struct {
+	Name       string `json:"name"`
+	PushBranch bool   `json:"pushBranch"`
+}
+
+// DevConfig holds configuration for dev sandboxes
+type DevConfig struct {
+	MaxActiveSandboxes int64 `json:"maxActiveSandboxes"`
+}
+
+// DevSandbox represents a dev sandbox
+type DevSandbox struct {
+	Name              string   `json:"name"`
+	Description       string   `json:"description,omitempty"`
+	Sandbox           string   `json:"sandbox,omitempty"`
+	SandboxReplica    string   `json:"sandboxReplica,omitempty"`
+	BranchURL         string   `json:"branchURL,omitempty"`
+	Branch            string   `json:"branch,omitempty"`
+	AgentState        string   `json:"agentState,omitempty"`
+	AgentStateMessage string   `json:"agentStateMessage,omitempty"`
+	SandboxStatus     string   `json:"sandboxStatus,omitempty"`
+	Labels            []string `json:"labels,omitempty"`
+	IdeaID            string   `json:"ideaID,omitempty"`
+	Approach          string   `json:"approach,omitempty"`
+	ParentApproach    string   `json:"parentApproach,omitempty"`
 }
