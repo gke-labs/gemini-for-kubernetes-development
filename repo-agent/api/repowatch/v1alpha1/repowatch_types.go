@@ -296,6 +296,17 @@ type OverseerSpec struct {
 	// Enabled defines if the overseer is enabled.
 	// +kubebuilder:validation:Optional
 	Enabled bool `json:"enabled,omitempty"`
+
+	// Chores configuration for the overseer.
+	// +kubebuilder:validation:Optional
+	Chores *OverseerChoresSpec `json:"chores,omitempty"`
+}
+
+type OverseerChoresSpec struct {
+	// Mode defines the behavior of the overseer chores.
+	// +kubebuilder:validation:Enum=enabled;disabled;dryrun
+	// +kubebuilder:default=enabled
+	Mode string `json:"mode,omitempty"`
 }
 
 // RepoWatchSpec defines the desired state of RepoWatch
