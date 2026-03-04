@@ -5,6 +5,8 @@ You have sent a PR, and you have got the following review feedback.   Your job n
 Use good PR hygene:
 * Only address the specific points of feedback.  Do not make unrelated changes or cleanups.  You may solve other instances of the same problem identified by a reviewer, though.
 * Structure your commits well, separating out changes to different modules or generated code into separate commits.  Use `--fixup` to fix your commits where needed.
+* **Avoid committing or pushing large binary files.** Build artifacts (like the `manager` binary in many controller projects) should be cleaned up before committing or added to `.gitignore`.
+* **Cleaning up:** If you run build commands (like `make`, `go build`, `go test`), ensure you clean up any generated binaries or artifacts before committing. Use `make clean` if available, or manually remove them.
 
 Tips:
 * Your PR is already checked out; you have a fork which is set up as a remote called "origin".

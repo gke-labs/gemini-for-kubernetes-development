@@ -58,6 +58,11 @@ _output/
 *.a
 *.o
 *.pyc
+*.dll
+*.bin
+node_modules/
+__pycache__/
+.cache/
 .DS_Store
 EOF
 }
