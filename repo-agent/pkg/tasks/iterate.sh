@@ -15,6 +15,24 @@ export GITHUB_USER_NAME="{{ .User.Name }}"
 
 
 
+function setupGit {
+    echo "Running setupGit..."
+    # Config global user if not set
+    if [ -n "$GITHUB_USER_EMAIL" ]; then
+        git config --global user.email "$GITHUB_USER_EMAIL"
+    fi
+    if [ -n "$GITHUB_USER_NAME" ]; then
+        git config --global user.name "$GITHUB_USER_NAME"
+    fi
+
+    echo "Configuring global git ignore"
+    git config --global core.excludesfile /root/.gitignore_global
+    cat <<EOF > /root/.gitignore_global
+manager
+bin/
+EOF
+}
+
 function configureGemini {
     echo "Running configureGemini..."
     echo "creating /root/.gemini directory"
@@ -94,6 +112,7 @@ function commitAndPush {
 # Assumes repo is already cloned/ready in workspace by previous tasks or init
 # HACK: Avoid git lock issues
 sleep 5
+setupGit
 configureGemini
 installExtensions
 runGemini
