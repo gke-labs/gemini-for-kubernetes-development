@@ -1245,6 +1245,7 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 									map[string]interface{}{"name": "PRID", "value": fmt.Sprintf("%d", *pr.Number)},
 									map[string]interface{}{"name": "MAX_REVIEW_FILES", "value": strconv.Itoa(repoWatch.Spec.Review.MaxReviewFiles)},
 									map[string]interface{}{"name": "IGNORE_FILES", "value": strings.Join(repoWatch.Spec.Review.IgnoreFiles, ",")},
+									map[string]interface{}{"name": "SEVERITY_THRESHOLD", "value": repoWatch.Spec.Review.SeverityThreshold},
 									map[string]interface{}{"name": "AGENT_NAME", "value": repoWatch.Spec.Review.LLM.Provider},
 									map[string]interface{}{
 										"name": "AGENT_LLM_EXTENSIONS",

@@ -283,6 +283,13 @@ spec:
                     type: integer
                   robotAccount:
                     type: string
+                  severityThreshold:
+                    enum:
+                    - LOW
+                    - MEDIUM
+                    - HIGH
+                    - CRITICAL
+                    type: string
                   workspaceDiskSize:
                     default: 10Gi
                     type: string

@@ -11,6 +11,8 @@ func TestGetSeverityLevel(t *testing.T) {
 		severity string
 		want     int
 	}{
+		{"CRITICAL", 4},
+		{"Critical", 4},
 		{"HIGH", 3},
 		{"High", 3},
 		{"medium", 2},
@@ -38,12 +40,14 @@ func TestFilterComments(t *testing.T) {
 		return filtered
 	}
 
+	critical := "CRITICAL"
 	high := "HIGH"
 	medium := "MEDIUM"
 	low := "LOW"
 	empty := ""
 
 	comments := []*models.DraftReviewComment{
+		{Severity: critical},
 		{Severity: high},
 		{Severity: medium},
 		{Severity: low},
@@ -54,10 +58,11 @@ func TestFilterComments(t *testing.T) {
 		threshold string
 		want      int
 	}{
-		{"HIGH", 1},
-		{"MEDIUM", 3},
-		{"LOW", 4},
-		{"", 3},
+		{"CRITICAL", 1},
+		{"HIGH", 2},
+		{"MEDIUM", 4},
+		{"LOW", 5},
+		{"", 4},
 	}
 
 	for _, tt := range tests {
