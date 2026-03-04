@@ -8,6 +8,16 @@ else
     PROMPT="${AGENT_PROMPT:-You are the Overseer. Monitor the repository and orchestrate agents.}"
 fi
 
+if [ "$CHORES_MODE" = "disabled" ]; then
+    echo "Chores are disabled, removing chores section from prompt..."
+    # Remove the "Manage Chores" section (Section 4)
+    # It starts with "4.  **Manage Chores**:" and ends before the next blank line
+    PROMPT=$(echo "$PROMPT" | sed '/4.  \*\*Manage Chores\*\*:/,/^$/d')
+    # Remove the "Running a chore:" example block
+    # We use a pattern that matches the start of the example and then the closing backticks
+    PROMPT=$(echo "$PROMPT" | sed '/Running a chore:/,/^```$/d')
+fi
+
 if [ -z "$REPO_URL" ]; then
   echo "REPO_URL environment variable is not set"
   exit 1

@@ -137,6 +137,13 @@ func newOverseerSandbox(repoWatch *reviewv1alpha1.RepoWatch, name string, user *
 		},
 	}
 
+	if repoWatch.Spec.Overseer != nil && repoWatch.Spec.Overseer.Chores != nil && repoWatch.Spec.Overseer.Chores.Mode != "" {
+		env = append(env, map[string]interface{}{
+			"name":  "CHORES_MODE",
+			"value": repoWatch.Spec.Overseer.Chores.Mode,
+		})
+	}
+
 	if user != nil {
 		env = append(env, map[string]interface{}{
 			"name":  "GITHUB_USER_ID",
