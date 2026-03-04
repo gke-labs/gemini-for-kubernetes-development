@@ -153,6 +153,7 @@ type Repo struct {
 type ReviewConfig struct {
 	MaxActiveSandboxes int64    `json:"maxActiveSandboxes"`
 	Assignees          []string `json:"assignees,omitempty"`
+	Models             []string `json:"models,omitempty"`
 }
 
 // IssueConfig holds configuration for issues

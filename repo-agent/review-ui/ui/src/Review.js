@@ -240,6 +240,7 @@ function Review({
                     lastUpdated={lastUpdated}
                     repoName={activeRepo.name}
                     onRefresh={onRefresh}
+                    availableModels={activeRepo.review?.models}
                 />
             ) : (
                 <div className="empty-state">

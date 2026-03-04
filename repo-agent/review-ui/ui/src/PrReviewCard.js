@@ -737,6 +737,7 @@ function PrReviewCard({
   lastUpdated,
   repoName: propRepoName,
   onRefresh,
+  availableModels = [],
 }) {
   const [diff, setDiff] = useState(null);
   const [diffError, setDiffError] = useState(null);
@@ -746,7 +747,16 @@ function PrReviewCard({
   const [showNewTaskForm, setShowNewTaskForm] = useState(false);
   const [newTaskPrompt, setNewTaskPrompt] = useState('');
   const [expectedComments, setExpectedComments] = useState(0);
+  const [selectedModel, setSelectedModel] = useState('gemini-3-pro-preview');
   const lastDragTargetRef = useRef(null);
+
+  const reviewModels = (availableModels && availableModels.length > 0) ? availableModels : [
+    'gemini-3-pro-preview',
+    'gemini-3-flash-preview',
+    'gemini-2.0-pro-exp-02-05',
+    'gemini-2.0-flash-exp'
+  ];
+
 
   const isCollapsed = collapsedReviews[pr.id];
   const repoName = propRepoName || (pr.sandbox ? pr.sandbox.split('-pr-')[0] : '');
@@ -804,7 +814,11 @@ function PrReviewCard({
       fetch(`/api/repo/${repoName}/prs/${pr.id}/tasks`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt: newTaskPrompt, expectedComments: expectedComments })
+          body: JSON.stringify({ 
+              prompt: newTaskPrompt, 
+              expectedComments: expectedComments,
+              model: selectedModel
+          })
       })
       .then(res => {
           if (res.ok) {
@@ -1020,6 +1034,16 @@ function PrReviewCard({
                                     <span>Auto</span>
                                     <span>50</span>
                                 </div>
+                            </div>
+                            <div style={{marginBottom: '10px'}}>
+                                <label style={{fontSize: 'small', color: 'var(--text-secondary)', display: 'block', marginBottom: '5px'}}>Model:</label>
+                                <select 
+                                    value={selectedModel} 
+                                    onChange={(e) => setSelectedModel(e.target.value)}
+                                    style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-primary)', color: 'var(--text-primary)'}}
+                                >
+                                    {reviewModels.map(m => <option key={m} value={m}>{m}</option>)}
+                                </select>
                             </div>
                             <textarea 
                                 className="review-textarea"

@@ -145,4 +145,66 @@ func TestCreatePRTask(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("Create task with explicit model", func(t *testing.T) {
+		// Create the Sandbox for a different PR
+		sandbox := &unstructured.Unstructured{
+			Object: map[string]interface{}{
+				"apiVersion": "agents.x-k8s.io/v1alpha1",
+				"kind":       "Sandbox",
+				"metadata": map[string]interface{}{
+					"name":      "test-repo-pr-124",
+					"namespace": "default",
+				},
+			},
+		}
+		_, err := dynamicClient.Resource(gvrSandbox).Namespace("default").Create(context.Background(), sandbox, v1.CreateOptions{})
+		if err != nil {
+			t.Fatalf("Failed to create review sandbox: %v", err)
+		}
+
+		payload := map[string]string{
+			"prompt": "Test Model Prompt",
+			"model":  "test-model",
+		}
+		jsonValue, _ := json.Marshal(payload)
+		req, _ := http.NewRequest("POST", "/repo/test-repo/prs/124/tasks", bytes.NewBuffer(jsonValue))
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d. Body: %s", w.Code, w.Body.String())
+		}
+
+		gvr := schema.GroupVersionResource{
+			Group:    "custom.agents.x-k8s.io",
+			Version:  "v1alpha1",
+			Resource: "sandboxtasks",
+		}
+		list, err := dynamicClient.Resource(gvr).Namespace("default").List(context.Background(), v1.ListOptions{})
+		if err != nil {
+			t.Fatalf("Failed to list tasks: %v", err)
+		}
+		// Should be 2 tasks now (one from previous test case)
+		if len(list.Items) < 1 {
+			t.Errorf("Expected at least 1 task, got %d", len(list.Items))
+		} else {
+			// Find the task with our prompt
+			var foundTask *unstructured.Unstructured
+			for _, item := range list.Items {
+				params, _, _ := unstructured.NestedMap(item.Object, "spec", "params")
+				if params["AGENT_PROMPT"] == "Test Model Prompt" {
+					foundTask = &item
+					break
+				}
+			}
+			if foundTask == nil {
+				t.Fatalf("Task with prompt 'Test Model Prompt' not found")
+			}
+			params, _, _ := unstructured.NestedMap(foundTask.Object, "spec", "params")
+			if params["model"] != "test-model" {
+				t.Errorf("Expected model 'test-model', got %v", params["model"])
+			}
+		}
+	})
 }

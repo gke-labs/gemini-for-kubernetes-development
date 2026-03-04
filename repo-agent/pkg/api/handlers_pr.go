@@ -414,6 +414,7 @@ func (s *Server) createPRTask(c *gin.Context) {
 	var payload struct {
 		Prompt           string `json:"prompt"`
 		ExpectedComments int    `json:"expectedComments"`
+		Model            string `json:"model"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -455,6 +456,16 @@ func (s *Server) createPRTask(c *gin.Context) {
 
 	if payload.ExpectedComments > 0 {
 		params["EXPECTED_COMMENTS"] = strconv.Itoa(payload.ExpectedComments)
+	}
+
+	if payload.Model != "" {
+		params["model"] = payload.Model
+	} else {
+		// Inject Models from RepoWatch if not already specified
+		models, found, err := unstructured.NestedStringSlice(rw.Object, "spec", "review", "models")
+		if err == nil && found && len(models) > 0 {
+			params["model"] = strings.Join(models, ",")
+		}
 	}
 
 	err = s.K8sManager.CreateSandboxTask(c.Request.Context(), namespace, sandboxName, "Sandbox", "review", params)

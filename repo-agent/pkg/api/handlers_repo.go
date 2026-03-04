@@ -631,6 +631,9 @@ func (s *Server) getRepos(c *gin.Context) {
 			if assignees, found, err := unstructured.NestedStringSlice(repoWatch.Object, "spec", "review", "assignees"); err == nil && found {
 				repo.Review.Assignees = assignees
 			}
+			if models, found, err := unstructured.NestedStringSlice(repoWatch.Object, "spec", "review", "models"); err == nil && found {
+				repo.Review.Models = models
+			}
 		}
 
 		// Extract PendingPRs
@@ -827,6 +830,9 @@ func (s *Server) getRepo(c *gin.Context) {
 		repo.Review = &models.ReviewConfig{MaxActiveSandboxes: maxActiveSandboxes}
 		if assignees, found, err := unstructured.NestedStringSlice(repoWatch.Object, "spec", "review", "assignees"); err == nil && found {
 			repo.Review.Assignees = assignees
+		}
+		if models, found, err := unstructured.NestedStringSlice(repoWatch.Object, "spec", "review", "models"); err == nil && found {
+			repo.Review.Models = models
 		}
 	}
 
