@@ -85,12 +85,12 @@ function runChore {
             git diff > /tmp/chore_diff.txt
             
             COMMIT_MSG=$(gemini "Generate a concise, meaningful commit message for the following changes.
-The changes are part of a chore named '${CHORE_NAME}'.
+The changes are part of a chore named '${CHORE_NAME}' (defined in ${CHORE_FILE}).
 
 DIFF:
 $(cat /tmp/chore_diff.txt | head -c 2000)
 
-The commit message should be prefixed with 'chore: ' and should mention it was automatically generated.
+The commit message should be prefixed with 'chore: ' and should explicitly mention it was automatically generated as part of a chore.
 Only output the commit message itself.")
             
             if [ -z "$COMMIT_MSG" ]; then
@@ -119,12 +119,12 @@ Only output the commit message itself.")
 ### Changes
 ${COMMIT_MSG}"
 
-        # Try to create PR, if it fails (e.g. no changes compared to base branch after all), we just log it
-        if gh pr create --title "chore: ${CHORE_NAME}" --body "${PR_BODY}" --head "${BRANCH_NAME}" --base "${BASE_BRANCH}"; then
-             # Record the PR link for the task output
-            gh pr view --json url --jq .url > "$(dirname "${PROMPT_FILE}")/agent-output.txt"
+        # Try to create PR
+        PR_URL=$(gh pr create --title "chore: ${CHORE_NAME}" --body "${PR_BODY}" --head "${BRANCH_NAME}" --base "${BASE_BRANCH}" || true)
+        if [ -n "$PR_URL" ]; then
+            echo "$PR_URL" > "$(dirname "${PROMPT_FILE}")/agent-output.txt"
         else
-            echo "Failed to create PR. Maybe no changes compared to base branch?"
+            echo "Failed to create PR or no changes compared to base branch."
         fi
     else
         echo "No changes detected, no PR created."
