@@ -4,6 +4,13 @@ set -e
 # Default prompt from file
 if [ -f "/workspaces/system_prompt.txt" ]; then
     PROMPT=$(cat /workspaces/system_prompt.txt)
+    if [ "$CHORES_MODE" == "disabled" ]; then
+        echo "Chores are disabled. Removing chores section from system prompt."
+        # Remove Manage Chores section
+        PROMPT=$(echo "$PROMPT" | perl -0777 -pe 's/4\.\s+\*\*Manage Chores\*\*:.*?(?=\*\*Tool Usage Examples:\*\*|Guiding principles:)/ /gs')
+        # Remove Running a chore example
+        PROMPT=$(echo "$PROMPT" | perl -0777 -pe 's/Running a chore:.*?\n```bash\noverseer-cli chore --file .*?\n```/ /gs')
+    fi
 else
     PROMPT="${AGENT_PROMPT:-You are the Overseer. Monitor the repository and orchestrate agents.}"
 fi

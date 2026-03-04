@@ -126,6 +126,12 @@ type ChoreDefinition struct {
 }
 
 func runChore(ctx context.Context, name string, file string) error {
+	choresMode := os.Getenv("CHORES_MODE")
+	if choresMode == "disabled" {
+		fmt.Println("Chores are disabled. Skipping.")
+		return nil
+	}
+
 	if repoWatchName == "" || namespace == "" {
 		return fmt.Errorf("REPOWATCH_NAME and NAMESPACE environment variables must be set")
 	}
@@ -139,6 +145,11 @@ func runChore(ctx context.Context, name string, file string) error {
 	}
 	if chore.Name == "" {
 		return fmt.Errorf("chore name is required (either in frontmatter or via --name)")
+	}
+
+	if choresMode == "dryrun" {
+		fmt.Printf("DRYRUN: would create sandbox and task for chore %s (file: %s)\n", chore.Name, file)
+		return nil
 	}
 
 	cfg, err := config.GetConfig()

@@ -37,6 +37,7 @@ RUN apt-get update && \
     jq \
     gh \
     procps \
+    perl \
     ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
