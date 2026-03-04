@@ -1,21 +1,23 @@
 #!/bin/bash
 set -e
 
-# Default prompt from file
-if [ -f "/workspaces/system_prompt.txt" ]; then
-    PROMPT=$(cat /workspaces/system_prompt.txt)
+# Default prompt from files
+if [ -d "/workspaces/prompt" ]; then
+    PROMPT_FILE=$(mktemp)
+    cat /workspaces/prompt/01-header.txt >> "$PROMPT_FILE"
+    if [ "$CHORES_MODE" != "disabled" ]; then
+        cat /workspaces/prompt/02-chores.txt >> "$PROMPT_FILE"
+    fi
+    cat /workspaces/prompt/03-examples-header.txt >> "$PROMPT_FILE"
+    cat /workspaces/prompt/04-examples-tasks.txt >> "$PROMPT_FILE"
+    if [ "$CHORES_MODE" != "disabled" ]; then
+        cat /workspaces/prompt/05-examples-chores.txt >> "$PROMPT_FILE"
+    fi
+    cat /workspaces/prompt/06-footer.txt >> "$PROMPT_FILE"
+    PROMPT=$(cat "$PROMPT_FILE")
+    rm -f "$PROMPT_FILE"
 else
     PROMPT="${AGENT_PROMPT:-You are the Overseer. Monitor the repository and orchestrate agents.}"
-fi
-
-if [ "$CHORES_MODE" = "disabled" ]; then
-    echo "Chores are disabled, removing chores section from prompt..."
-    # Remove the "Manage Chores" section (Section 4)
-    # It starts with "4.  **Manage Chores**:" and ends before the next blank line
-    PROMPT=$(echo "$PROMPT" | sed '/4.  \*\*Manage Chores\*\*:/,/^$/d')
-    # Remove the "Running a chore:" example block
-    # We use a pattern that matches the start of the example and then the closing backticks
-    PROMPT=$(echo "$PROMPT" | sed '/Running a chore:/,/^```$/d')
 fi
 
 if [ -z "$REPO_URL" ]; then
