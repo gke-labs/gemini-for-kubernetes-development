@@ -87,3 +87,30 @@ spec:
         kind: SandboxTask
         namespace: repo-agent-system
         selector: review.gemini.google.com/repowatch=ist-gfkd
+    - script:
+        content: |
+          echo "=== Sandbox Pod Status ==="
+          SANDBOX_NAME=$(kubectl get sandbox -n repo-agent-system -l review.gemini.google.com/repowatch=ist-gfkd -o jsonpath='{.items[0].metadata.name}')
+          if [ -z "$SANDBOX_NAME" ]; then
+            echo "No Sandbox found!"
+            exit 0
+          fi
+          echo "Sandbox: $SANDBOX_NAME"
+
+          POD_NAME=$(kubectl get pod -n repo-agent-system -l sandbox=$SANDBOX_NAME -o jsonpath='{.items[0].metadata.name}')
+          if [ -z "$POD_NAME" ]; then
+            echo "Pod not found for sandbox $SANDBOX_NAME"
+            kubectl get pods -n repo-agent-system
+            exit 0
+          fi
+
+          echo "--- Pod Status ---"
+          kubectl get pod -n repo-agent-system "$POD_NAME" -o wide
+          echo "--- Pod Describe ---"
+          kubectl describe pod -n repo-agent-system "$POD_NAME"
+          echo "--- Pod Logs (sandbox container) ---"
+          kubectl logs -n repo-agent-system "$POD_NAME" -c sandbox --tail=100 || echo "Could not fetch sandbox logs"
+          echo "--- Pod Logs (repo-sandbox container) ---"
+          kubectl logs -n repo-agent-system "$POD_NAME" -c repo-sandbox --tail=100 || echo "Could not fetch repo-sandbox logs"
+          echo "--- Events ---"
+          kubectl get events -n repo-agent-system --sort-by='.lastTimestamp' --field-selector involvedObject.name="$POD_NAME" || true
