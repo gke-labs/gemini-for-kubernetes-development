@@ -1,19 +1,94 @@
 package models
 
 import (
+	"encoding/json"
+	"fmt"
+	"strconv"
+
 	"github.com/google/go-github/v39/github"
+	"gopkg.in/yaml.v3"
 )
+
+// IntOrString is a type that can unmarshal from both JSON/YAML numbers and strings.
+type IntOrString int
+
+func (ios *IntOrString) UnmarshalJSON(data []byte) error {
+	if len(data) > 0 && data[0] == '"' {
+		var s string
+		if err := json.Unmarshal(data, &s); err != nil {
+			return err
+		}
+		val, err := strconv.Atoi(s)
+		if err != nil {
+			return err
+		}
+		*ios = IntOrString(val)
+		return nil
+	}
+	var i int
+	if err := json.Unmarshal(data, &i); err != nil {
+		return err
+	}
+	*ios = IntOrString(i)
+	return nil
+}
+
+func (ios *IntOrString) UnmarshalYAML(value *yaml.Node) error {
+	var i int
+	if err := value.Decode(&i); err == nil {
+		*ios = IntOrString(i)
+		return nil
+	}
+	var s string
+	if err := value.Decode(&s); err == nil {
+		val, err := strconv.Atoi(s)
+		if err != nil {
+			return err
+		}
+		*ios = IntOrString(val)
+		return nil
+	}
+	return fmt.Errorf("line %d: cannot unmarshal %s into int or string", value.Line, value.ShortTag())
+}
+
+func (ios *IntOrString) Int() *int {
+	if ios == nil {
+		return nil
+	}
+	i := int(*ios)
+	return &i
+}
+
+func (ios *IntOrString) EqualInt(other *int) bool {
+	if ios == nil && other == nil {
+		return true
+	}
+	if ios == nil || other == nil {
+		return false
+	}
+	return int(*ios) == *other
+}
+
+func (ios *IntOrString) Equal(other *IntOrString) bool {
+	if ios == nil && other == nil {
+		return true
+	}
+	if ios == nil || other == nil {
+		return false
+	}
+	return int(*ios) == int(*other)
+}
 
 // DraftReviewComment defines the structure for a review comment with severity
 type DraftReviewComment struct {
-	Path      *string `yaml:"path,omitempty" json:"path,omitempty"`
-	Position  *int    `yaml:"position,omitempty" json:"position,omitempty"`
-	Body      *string `yaml:"body,omitempty" json:"body,omitempty"`
-	Line      *int    `yaml:"line,omitempty" json:"line,omitempty"`
-	Side      *string `yaml:"side,omitempty" json:"side,omitempty"`
-	StartLine *int    `yaml:"start_line,omitempty" json:"start_line,omitempty"`
-	StartSide *string `yaml:"start_side,omitempty" json:"start_side,omitempty"`
-	Severity  string  `yaml:"severity,omitempty" json:"severity,omitempty"`
+	Path      *string      `yaml:"path,omitempty" json:"path,omitempty"`
+	Position  *IntOrString `yaml:"position,omitempty" json:"position,omitempty"`
+	Body      *string      `yaml:"body,omitempty" json:"body,omitempty"`
+	Line      *IntOrString `yaml:"line,omitempty" json:"line,omitempty"`
+	Side      *string      `yaml:"side,omitempty" json:"side,omitempty"`
+	StartLine *IntOrString `yaml:"start_line,omitempty" json:"start_line,omitempty"`
+	StartSide *string      `yaml:"start_side,omitempty" json:"start_side,omitempty"`
+	Severity  string       `yaml:"severity,omitempty" json:"severity,omitempty"`
 }
 
 // PullRequestReviewRequest defines the structure for a review request
@@ -39,11 +114,11 @@ func (r *PullRequestReviewRequest) ToGitHubReviewRequest() *github.PullRequestRe
 	for _, c := range r.Comments {
 		comments = append(comments, &github.DraftReviewComment{
 			Path:      c.Path,
-			Position:  c.Position,
+			Position:  c.Position.Int(),
 			Body:      c.Body,
-			Line:      c.Line,
+			Line:      c.Line.Int(),
 			Side:      c.Side,
-			StartLine: c.StartLine,
+			StartLine: c.StartLine.Int(),
 			StartSide: c.StartSide,
 		})
 	}

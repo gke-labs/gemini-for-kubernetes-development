@@ -637,14 +637,14 @@ func isDuplicateCommentExact(newComment *models.DraftReviewComment, existingComm
 			continue
 		}
 		if *newComment.Path == *existingComment.Path &&
-			*newComment.Line == *existingComment.Line &&
+			newComment.Line.EqualInt(existingComment.Line) &&
 			*newComment.Body == *existingComment.Body {
 			return true
 		}
 	}
 	for _, existingComment := range accumulatedComments {
 		if *newComment.Path == *existingComment.Path &&
-			*newComment.Line == *existingComment.Line &&
+			newComment.Line.Equal(existingComment.Line) &&
 			*newComment.Body == *existingComment.Body {
 			return true
 		}

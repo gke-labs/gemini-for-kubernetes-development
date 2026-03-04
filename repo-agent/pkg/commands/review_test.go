@@ -18,7 +18,7 @@ func TestIsCommentValid(t *testing.T) {
 			name: "valid comment with side RIGHT",
 			comment: func() *models.DraftReviewComment {
 				path := "file.go"
-				line := 10
+				line := models.IntOrString(10)
 				side := "RIGHT"
 				return &models.DraftReviewComment{Path: &path, Line: &line, Side: &side}
 			}(),
@@ -36,7 +36,7 @@ func TestIsCommentValid(t *testing.T) {
 			name: "valid comment with nil side (defaults to RIGHT)",
 			comment: func() *models.DraftReviewComment {
 				path := "file.go"
-				line := 10
+				line := models.IntOrString(10)
 				return &models.DraftReviewComment{Path: &path, Line: &line, Side: nil}
 			}(),
 			diffFiles: []*gitdiff.File{
@@ -53,7 +53,7 @@ func TestIsCommentValid(t *testing.T) {
 			name: "valid comment with side LEFT",
 			comment: func() *models.DraftReviewComment {
 				path := "file.go"
-				line := 5
+				line := models.IntOrString(5)
 				side := "LEFT"
 				return &models.DraftReviewComment{Path: &path, Line: &line, Side: &side}
 			}(),
@@ -70,7 +70,7 @@ func TestIsCommentValid(t *testing.T) {
 		{
 			name: "invalid comment (path missing)",
 			comment: func() *models.DraftReviewComment {
-				line := 10
+				line := models.IntOrString(10)
 				return &models.DraftReviewComment{Path: nil, Line: &line}
 			}(),
 			diffFiles: []*gitdiff.File{
