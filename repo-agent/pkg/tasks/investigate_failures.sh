@@ -50,6 +50,13 @@ EOF
 
     echo "running gh auth setup-git"
     gh auth setup-git
+
+    echo "Configuring global git ignore"
+    git config --global core.excludesfile /root/.gitignore_global
+    cat <<EOF > /root/.gitignore_global
+manager
+bin/
+EOF
 }
 
 function setupGitRepos {
