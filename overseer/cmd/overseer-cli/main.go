@@ -277,7 +277,7 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 
 	opt := sandbox.AgentSandboxOptions{
 		DevSandboxOptions: sandbox.DevSandboxOptions{
-			Name:      strings.TrimPrefix(sandboxName, "devc-"), // NewAgentSandbox prepends devc-
+			Name:      sandboxName,
 			Namespace: repoWatch.Namespace,
 			Labels: map[string]string{
 				"review.gemini.google.com/repowatch": repoWatch.Name,
@@ -300,7 +300,8 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 			Replicas:            1,
 			ServiceAccountName:  "issue-sandbox",
 		},
-		IssueRepo: repoWatch.Name,
+		IssueRepo:      repoWatch.Name,
+		SkipDevcPrefix: true,
 	}
 
 	if repoWatch.Spec.Issue != nil {
@@ -764,9 +765,10 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 			Replicas:              1,
 			ServiceAccountName:    "review-sandbox",
 		},
-		IssueID:    fmt.Sprintf("%d", pr.GetNumber()),
-		IssueTitle: pr.GetTitle(),
-		IssueRepo:  repoWatch.Name,
+		IssueID:        fmt.Sprintf("%d", pr.GetNumber()),
+		IssueTitle:     pr.GetTitle(),
+		IssueRepo:      repoWatch.Name,
+		SkipDevcPrefix: true,
 	}
 
 	sb, svc := sandbox.NewAgentSandbox(opt)
