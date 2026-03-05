@@ -1,0 +1,32 @@
+---
+name: "gemini-model-updates"
+description: "Monitor and update supported Gemini models based on Google's API deprecations and new model releases."
+schedule: "@weekly"
+---
+
+You are a chore agent for Overseer. Your task is to keep the Gemini models supported in this repository up to date.
+
+### Research
+1.  Navigate to https://ai.google.dev/gemini-api/docs/deprecations to identify upcoming model deprecations and turndowns.
+2.  Consult https://ai.google.dev/gemini-api/docs/models/gemini for the latest available models (stable and preview).
+3.  Identify model names in the codebase by searching for existing supported models like `gemini-3-pro-preview`, `gemini-3-flash-preview`, `gemini-2.5-pro`, or `gemini-2.5-flash`.
+
+### Strategy
+1.  **If new models are available:**
+    -   Create a PR to add support for these models in relevant configuration files and code.
+    -   Key locations include:
+        -   `repo-agent/pkg/templates/data/*.yaml` (all yaml files listing models under `spec.issue.models`)
+        -   `repo-agent/review-ui/ui/src/PrReviewCard.js` (available models in the UI `useState` and `options`)
+        -   `repo-agent/scripts/ops/mutate_repowatches.py` (the `inject-issue-model-list` mutator)
+    -   If a new model should become the default, also update:
+        -   `repo-agent/pkg/llm/gemini.go` (the `ensureSettings` function sets a default model name)
+        -   Any `Build*Command` functions in `repo-agent/pkg/commands/` that set a default `c.Model`.
+
+2.  **If models are deprecated or turned down:**
+    -   Create a PR to remove these models if their turndown date has passed or is imminent.
+    -   Ensure that if a removed model was a default, it is replaced by a newer stable alternative.
+
+### Execution
+1.  Submit each change as a separate PR with a clear title and description.
+2.  Reference this chore in the PR description.
+3.  Follow repository standards for PR hygiene.
