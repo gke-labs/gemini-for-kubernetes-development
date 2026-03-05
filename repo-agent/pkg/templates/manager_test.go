@@ -10,7 +10,7 @@ import (
 )
 
 func TestManagerList(t *testing.T) {
-	clientset := fake.NewSimpleClientset()
+	clientset := fake.NewClientset()
 	m := NewManager(clientset)
 
 	templates, err := m.List(context.Background(), "default")
