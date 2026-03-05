@@ -327,6 +327,16 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string) er
 		return fmt.Errorf("REPOWATCH_NAME and NAMESPACE environment variables must be set")
 	}
 
+	repoMode := os.Getenv("REPO_MODE")
+	if repoMode == "dryrun" {
+		if number != 0 {
+			fmt.Printf("[dryrun] Would create/ensure sandbox and task %s for issue %d in RepoWatch %s\n", taskType, number, repoWatchName)
+		} else if prNumber != 0 {
+			fmt.Printf("[dryrun] Would create/ensure sandbox and task %s for issue from PR %d in RepoWatch %s\n", taskType, prNumber, repoWatchName)
+		}
+		return nil
+	}
+
 	cfg, err := config.GetConfig()
 	if err != nil {
 		return fmt.Errorf("unable to get kubeconfig: %w", err)
@@ -435,6 +445,12 @@ func runPR(ctx context.Context, number int, taskType string, submit bool) error 
 	// Similar to runIssue but for PRs
 	if repoWatchName == "" || namespace == "" {
 		return fmt.Errorf("REPOWATCH_NAME and NAMESPACE environment variables must be set")
+	}
+
+	repoMode := os.Getenv("REPO_MODE")
+	if repoMode == "dryrun" {
+		fmt.Printf("[dryrun] Would create/ensure sandbox and task %s for PR %d in RepoWatch %s\n", taskType, number, repoWatchName)
+		return nil
 	}
 
 	cfg, err := config.GetConfig()

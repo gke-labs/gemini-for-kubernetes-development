@@ -296,6 +296,15 @@ type ChoresSpec struct {
 	Mode string `json:"mode,omitempty"`
 }
 
+// RepoSpec defines the configuration for Overseer repo (issue and PR handling).
+type RepoSpec struct {
+	// Mode defines the mode for repo handling (issue and PR handling).
+	// +kubebuilder:validation:Enum=enabled;disabled;dryrun
+	// +kubebuilder:default=enabled
+	// +kubebuilder:validation:Optional
+	Mode string `json:"mode,omitempty"`
+}
+
 // OverseerSpec defines the configuration for the Overseer agent.
 type OverseerSpec struct {
 	// Image to use for the overseer.
@@ -309,6 +318,10 @@ type OverseerSpec struct {
 	// Chores configuration
 	// +kubebuilder:validation:Optional
 	Chores *ChoresSpec `json:"chores,omitempty"`
+
+	// Repo configuration
+	// +kubebuilder:validation:Optional
+	Repo *RepoSpec `json:"repo,omitempty"`
 }
 
 // RepoWatchSpec defines the desired state of RepoWatch
