@@ -206,21 +206,25 @@ port-forward:
 	# kubectl port-forward -n repo-agent-system --address 0.0.0.0 service/devc-agent-sandbox-pr-102-lb  13338:13338
 
 # non-ephemeral (GKE) cluster install targets
-.PHONY: install-repo-agent-latest
-install-repo-agent-latest: install-dep-packages create-secrets
+.PHONY: manifest-latest
+manifest-latest:
 	$(MAKE) -C ../overseer deploy REGISTRY=ghcr.io/gke-labs/gemini-for-kubernetes-development/ DEPLOY_ARGS="--image-tag=latest --output-file=$(CURDIR)/bin/overseer-manifest.yaml"
 	../dev/tools/deploy-to-kube --image-prefix=ghcr.io/gke-labs/gemini-for-kubernetes-development/ \
 	--image-tag=latest \
 	--replace .spec.installationName=${CLUSTER_NAME} \
 	--replace .spec.gatewayClassName=${GW_CLASS} \
 	--working-dir . --output-file=bin/repo-agent-manifest.yaml
+
+.PHONY: deploy-repo-agent-latest
+deploy-repo-agent-latest: manifest-latest
 	kubectl apply -f bin/overseer-manifest.yaml
 	kubectl apply -f bin/repo-agent-manifest.yaml
 
+.PHONY: install-repo-agent-latest
+install-repo-agent-latest: install-dep-packages create-secrets deploy-repo-agent-latest
+
 .PHONY: uninstall-repo-agent-latest
-uninstall-repo-agent-latest:
-	$(MAKE) -C ../overseer deploy REGISTRY=ghcr.io/gke-labs/gemini-for-kubernetes-development/ DEPLOY_ARGS="--image-tag=latest --output-file=$(CURDIR)/bin/overseer-manifest.yaml"
-	../dev/tools/deploy-to-kube --image-prefix=ghcr.io/gke-labs/gemini-for-kubernetes-development/ --image-tag=latest --working-dir . --output-file=bin/repo-agent-manifest.yaml
+uninstall-repo-agent-latest: manifest-latest
 	kubectl delete -f bin/repo-agent-manifest.yaml || true
 	kubectl delete -f bin/overseer-manifest.yaml || true
 	${MAKE} uninstall-dep-packages
@@ -236,7 +240,7 @@ reinstall-repo-agent-latest: uninstall-repo-agent-latest install-repo-agent-late
 # Dev targets
 
 .PHONY: update-repo-agent-latest
-update-repo-agent-latest: install-repo-agent-latest
+update-repo-agent-latest: deploy-repo-agent-latest
 	kubectl rollout restart statefulset -n repo-agent-system
 	kubectl rollout status  statefulset  -n repo-agent-system
 	kubectl rollout restart deployment -n repo-agent-system
