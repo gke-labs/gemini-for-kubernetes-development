@@ -1,0 +1,63 @@
+apiVersion: review.gemini.google.com/v1alpha1
+kind: RepoWatch
+metadata:
+  name: gateway-api-reference-implementation
+spec:
+  repoURL: https://github.com/gke-labs/gateway-api-reference-implementation
+  pollIntervalSeconds: 300
+  githubSecretName: github-pat
+  dev:
+    maxActiveSandboxes: 0
+    maxSandboxes: 0
+    image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
+    llm:
+      apiKeySecretRef: gemini-vscode-tokens
+  review:
+    reviewShutdownAfterMinutes: 30
+    image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
+    llm:
+      configdirRef: gateway-api-ref-impl-gemini-config
+      apiKeySecretRef: gemini-vscode-tokens
+      prompt: >-
+        You are an expert kubernetes developer who is helping with code reviews.
+        This repo you are working on is the Gateway API reference implementation.
+        Please look at the most recent commits and provide a review feedback.
+        Would you approve it ? Please pay attention to the following: 1. Does
+        the fix resolve the original problem. 2. Look for linked issues to
+        understand the original problem. 3. Are there tests to check the fix.
+
+        Read @.gemini/user-instructions.json for specific review instructions tuned for this repository.
+
+    maxActiveSandboxes: 1
+    maxSandboxes: 1
+  issue:
+    robotAccount: codebot-robot
+    maxActiveSandboxes: 6
+    maxSandboxes: 6
+    issueShutdownAfterMinutes: 300
+    image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
+    llm:
+        apiKeySecretRef: gemini-vscode-tokens
+    models:
+    - gemini-3-flash-preview
+    - gemini-3-pro-preview
+    - gemini-2.5-pro
+    - gemini-2.5-flash
+    handlers:
+    - name: fix
+      taskType: fix-issue
+      labels:
+        - "repo-agent"
+      prompt: |
+          Fix this issue
+---
+apiVersion: configdir.gke.io/v1alpha1
+kind: ConfigDir
+metadata:
+  name: gateway-api-ref-impl-gemini-config
+spec:
+  files:
+  - path: .gemini/user-instructions.json
+    source:
+      inline: |
+        ""
