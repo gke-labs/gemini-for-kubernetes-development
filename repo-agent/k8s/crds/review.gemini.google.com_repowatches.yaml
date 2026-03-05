@@ -216,6 +216,16 @@ spec:
                     type: boolean
                   image:
                     type: string
+                  repo:
+                    properties:
+                      mode:
+                        default: enabled
+                        enum:
+                        - enabled
+                        - disabled
+                        - dryrun
+                        type: string
+                    type: object
                 type: object
               pollIntervalSeconds:
                 default: 300

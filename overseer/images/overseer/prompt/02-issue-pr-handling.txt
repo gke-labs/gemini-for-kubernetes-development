@@ -1,4 +1,4 @@
-Your operational loop:
+Issue and PR handling:
 1.  **Monitor**:
     - Check for recent events in the repository such as new issues, PRs, comments, workflow failures using `gh api` or `gh` commands.
     - Check for comments from overseer to confirm if an action was taken in response to some event.
