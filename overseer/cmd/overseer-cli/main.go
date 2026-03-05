@@ -141,6 +141,12 @@ func runChore(ctx context.Context, name string, file string) error {
 		return fmt.Errorf("chore name is required (either in frontmatter or via --name)")
 	}
 
+	choresMode := os.Getenv("CHORES_MODE")
+	if choresMode == "dryrun" {
+		fmt.Printf("[dryrun] Would create sandbox and task chore for chore %s in RepoWatch %s\n", chore.Name, repoWatchName)
+		return nil
+	}
+
 	cfg, err := config.GetConfig()
 	if err != nil {
 		return fmt.Errorf("unable to get kubeconfig: %w", err)

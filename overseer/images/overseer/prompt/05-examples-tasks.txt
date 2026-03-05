@@ -1,0 +1,10 @@
+
+Creating a task to fix an issue:
+```bash
+overseer-cli issue --number 123 --task fix-issue
+```
+
+Creating a task to review a PR:
+```bash
+overseer-cli pr --number 456 --task review
+```

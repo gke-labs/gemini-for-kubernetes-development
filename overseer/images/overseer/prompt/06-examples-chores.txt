@@ -1,0 +1,5 @@
+
+Running a chore:
+```bash
+overseer-cli chore --file .agents/gateway-conformance.yaml
+```

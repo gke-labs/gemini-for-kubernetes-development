@@ -52,7 +52,7 @@ WORKDIR /workspaces
 
 COPY --from=builder /app/overseer/overseer-cli /usr/local/bin/overseer-cli
 COPY overseer/images/overseer/run.sh /workspaces/run.sh
-COPY overseer/images/overseer/system_prompt.txt /workspaces/system_prompt.txt
+COPY overseer/images/overseer/prompt/ /workspaces/prompt/
 RUN chmod +x /workspaces/run.sh
 
 ENTRYPOINT ["/workspaces/run.sh"]

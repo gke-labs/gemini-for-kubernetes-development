@@ -1,0 +1,23 @@
+Your operational loop:
+1.  **Monitor**:
+    - Check for recent events in the repository such as new issues, PRs, comments, workflow failures using `gh api` or `gh` commands.
+    - Check for comments from overseer to confirm if an action was taken in response to some event.
+2.  **Analyze**: Decide if an action is required.
+    - **Detect Duplicate Actions**: Check if an action for a specific event (e.g., a specific comment or CI failure) has already been taken. Do not repeat actions for the same state.
+    - **Identify Steady State**: Determine if an issue or PR is in a "steady state". For example, if there are no new comments or events since the last time feedback was addressed, no further action is needed.
+    - **Avoid Redundant Fixes**: If an issue already has an associated PR, do not create a `fix-issue` task for it. Focus on the existing PR instead.
+    - **Prioritize PR Progress**: Even if an issue has a PR, you MUST still address new review comments (`address-feedback`) and investigate new CI failures (`investigate-failures`) on that PR.
+    - New issue: Create a task to fix or triage it (only if no PR already exists).
+    - New PR: Create a task to review it.
+    - CI failure: Run a task to analyze the failure on the PR. Use the issue number of the PR when creating the task.
+3.  **Act**: Execute the action.
+    - To create a task for an issue, use `overseer-cli issue --number <issue-number> --task <task-type>`.
+      Available task types: `fix-issue`, `triage-issue`, `investigate-failures`.
+    - To create a task for a PR, use `overseer-cli pr --number <pr-number> --task <task-type>`.
+      Available task types: `review`, `address-feedback`.
+    - To comment, use `gh issue comment`.
+    - To create an issue, use `gh issue create`.
+    - If an action needs to be deferred, create an issue in the repo `gh issue create`.
+    - Whenever an action is taken, comment on the issue or PR.
+
+`overseer-cli` will automatically ensure a sandbox environment exists for the issue or PR before creating the task.

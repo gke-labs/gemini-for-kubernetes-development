@@ -1,9 +1,22 @@
 #!/bin/bash
 set -e
 
-# Default prompt from file
-if [ -f "/workspaces/system_prompt.txt" ]; then
-    PROMPT=$(cat /workspaces/system_prompt.txt)
+# Default prompt from files
+if [ -d "/workspaces/prompt" ]; then
+    PROMPT_FILE=$(mktemp)
+    cat /workspaces/prompt/01-header.txt >> "$PROMPT_FILE"
+    cat /workspaces/prompt/02-operational-loop.txt >> "$PROMPT_FILE"
+    if [ "$CHORES_MODE" != "disabled" ]; then
+        cat /workspaces/prompt/03-chores.txt >> "$PROMPT_FILE"
+    fi
+    cat /workspaces/prompt/04-examples-header.txt >> "$PROMPT_FILE"
+    cat /workspaces/prompt/05-examples-tasks.txt >> "$PROMPT_FILE"
+    if [ "$CHORES_MODE" != "disabled" ]; then
+        cat /workspaces/prompt/06-examples-chores.txt >> "$PROMPT_FILE"
+    fi
+    cat /workspaces/prompt/07-footer.txt >> "$PROMPT_FILE"
+    PROMPT=$(cat "$PROMPT_FILE")
+    rm -f "$PROMPT_FILE"
 else
     PROMPT="${AGENT_PROMPT:-You are the Overseer. Monitor the repository and orchestrate agents.}"
 fi
