@@ -55,7 +55,13 @@ spec:
             type: object
           status:
             properties:
+              completionTime:
+                format: date-time
+                type: string
               result:
+                type: string
+              startTime:
+                format: date-time
                 type: string
               stats:
                 properties:

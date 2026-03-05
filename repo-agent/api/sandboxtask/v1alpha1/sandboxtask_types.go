@@ -79,6 +79,14 @@ type SandboxTaskStatus struct {
 	// +kubebuilder:default="Pending"
 	TaskState string `json:"taskState,omitempty"`
 
+	// StartTime is the time when the task started running
+	// +optional
+	StartTime *metav1.Time `json:"startTime,omitempty"`
+
+	// CompletionTime is the time when the task finished execution
+	// +optional
+	CompletionTime *metav1.Time `json:"completionTime,omitempty"`
+
 	// Result of the task execution
 	// +optional
 	Result string `json:"result,omitempty"`

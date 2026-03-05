@@ -3,6 +3,7 @@ package k8s
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/util/retry"
@@ -616,26 +618,20 @@ func (m *Manager) CreateSandboxTask(ctx context.Context, namespace, sandboxName,
 func (m *Manager) UpdateSandboxTaskStatus(ctx context.Context, namespace, taskName, state, result string, stats *sandboxtaskv1alpha1.Stats) error {
 	klog.Infof("Updating task %s status to %s", taskName, state)
 
-	timestamp := time.Now().UTC().Format(time.RFC3339)
-	metadata := map[string]interface{}{
-		"name":      taskName,
-		"namespace": namespace,
-	}
-
-	if state == "Running" {
-		metadata["annotations"] = map[string]interface{}{
-			"sandbox.gemini.google.com/start-time": timestamp,
-		}
-	} else if state == "Completed" || state == "Failed" {
-		metadata["annotations"] = map[string]interface{}{
-			"sandbox.gemini.google.com/completion-time": timestamp,
-		}
-	}
+	now := v1.Now()
+	timestamp := now.UTC().Format(time.RFC3339)
 
 	statusMap := map[string]interface{}{
 		"taskState": state,
 		"result":    result,
 	}
+
+	if state == "Running" {
+		statusMap["startTime"] = timestamp
+	} else if state == "Completed" || state == "Failed" {
+		statusMap["completionTime"] = timestamp
+	}
+
 	if stats != nil {
 		usageMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(stats)
 		if err != nil {
@@ -644,13 +640,13 @@ func (m *Manager) UpdateSandboxTaskStatus(ctx context.Context, namespace, taskNa
 		statusMap["stats"] = usageMap
 	}
 
-	applyObj := &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
-			"kind":       "SandboxTask",
-			"metadata":   metadata,
-			"status":     statusMap,
-		},
+	patch := map[string]interface{}{
+		"status": statusMap,
+	}
+
+	patchBytes, err := json.Marshal(patch)
+	if err != nil {
+		return fmt.Errorf("failed to marshal patch: %w", err)
 	}
 
 	gvr := schema.GroupVersionResource{
@@ -659,6 +655,6 @@ func (m *Manager) UpdateSandboxTaskStatus(ctx context.Context, namespace, taskNa
 		Resource: "sandboxtasks",
 	}
 
-	_, err := m.Client.Resource(gvr).Namespace(namespace).ApplyStatus(ctx, taskName, applyObj, v1.ApplyOptions{FieldManager: "task-runner", Force: true})
+	_, err = m.Client.Resource(gvr).Namespace(namespace).Patch(ctx, taskName, types.MergePatchType, patchBytes, v1.PatchOptions{}, "status")
 	return err
 }

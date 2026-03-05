@@ -91,7 +91,7 @@ func (tr *TaskRunner) processPendingTasks(ctx context.Context) {
 
 	for _, task := range tasks.Items {
 		taskState := task.Status.TaskState
-		if taskState == "" || taskState == "Pending" {
+		if taskState == "" || taskState == "Pending" || taskState == "Running" {
 			tr.executeTask(ctx, &task)
 			// Process one task at a time for now
 			return
