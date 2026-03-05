@@ -5,15 +5,16 @@ set -e
 if [ -d "/workspaces/prompt" ]; then
     PROMPT_FILE=$(mktemp)
     cat /workspaces/prompt/01-header.txt >> "$PROMPT_FILE"
+    cat /workspaces/prompt/02-operational-loop.txt >> "$PROMPT_FILE"
     if [ "$CHORES_MODE" != "disabled" ]; then
-        cat /workspaces/prompt/02-chores.txt >> "$PROMPT_FILE"
+        cat /workspaces/prompt/03-chores.txt >> "$PROMPT_FILE"
     fi
-    cat /workspaces/prompt/03-examples-header.txt >> "$PROMPT_FILE"
-    cat /workspaces/prompt/04-examples-tasks.txt >> "$PROMPT_FILE"
+    cat /workspaces/prompt/04-examples-header.txt >> "$PROMPT_FILE"
+    cat /workspaces/prompt/05-examples-tasks.txt >> "$PROMPT_FILE"
     if [ "$CHORES_MODE" != "disabled" ]; then
-        cat /workspaces/prompt/05-examples-chores.txt >> "$PROMPT_FILE"
+        cat /workspaces/prompt/06-examples-chores.txt >> "$PROMPT_FILE"
     fi
-    cat /workspaces/prompt/06-footer.txt >> "$PROMPT_FILE"
+    cat /workspaces/prompt/07-footer.txt >> "$PROMPT_FILE"
     PROMPT=$(cat "$PROMPT_FILE")
     rm -f "$PROMPT_FILE"
 else
