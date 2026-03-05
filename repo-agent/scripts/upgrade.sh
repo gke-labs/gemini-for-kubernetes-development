@@ -39,8 +39,8 @@ cleanup() {
 upgrade() {
   echo "--- Upgrade ---"
   # This applies new manifests and restarts the components.
-  # We use the latest images.
-  make update-repo-agent-latest
+  # We use the latest images by default, or a specific tag if provided.
+  make update-repo-agent-latest IMAGE_TAG="${IMAGE_TAG:-latest}" SKIP_PREQS="${SKIP_PREQS:-false}"
 }
 
 scaledown() {
