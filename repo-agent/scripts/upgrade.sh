@@ -20,53 +20,52 @@ set -o pipefail
 
 # This script automates the upgrade process for repo-agent.
 # It follows these steps:
-# 1. Cleanup old resources
-# 2. Upgrade the installation
-# 3. Scale down controllers
-# 4. Run post-upgrade mutations (if any)
-# 5. Scale up controllers
+# - Cleanup old resources
+# - Upgrade the installation
+# - Scale down controllers
+# - Run post-upgrade mutations (if any)
+# - Scale up controllers
 
 REPO_AGENT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_AGENT_ROOT}"
 
 cleanup() {
-  echo "--- Step 1: Cleanup ---"
+  echo "--- Cleanup ---"
   # Rarely cleanups are required.
   ./scripts/ops/scaledown_and_clean.py --types=issuesandboxes --apply
   ./scripts/ops/scaledown_and_clean.py --types=devsandboxes --apply
 }
 
 upgrade() {
-  echo "--- Step 2: Upgrade ---"
+  echo "--- Upgrade ---"
   # This applies new manifests and restarts the components.
   # We use the latest images.
   make update-repo-agent-latest
 }
 
 scaledown() {
-  echo "--- Step 3: Scale down ---"
+  echo "--- Scale down ---"
   # Step 2 might have scaled it back up during rollout.
   # We scale it down again to ensure it's safe for mutations.
   kubectl scale sts -n repo-agent-system repowatch-controller --replicas=0
 }
 
 mutations() {
-  echo "--- Step 4: Mutations ---"
+  echo "--- Mutations ---"
   # The upgrade script is expected to be modified when we have new migrations to be done.
   # Example:
-  # ./scripts/ops/mutate_repowatches.py --mutator migrate-issues-taskbased-022026
+  # ./scripts/ops/mutate_repowatches.py --mutator set-kcc-workspace-disk-size-20Gi-030126 --apply
   
-  echo "No mutations defined for this upgrade yet."
-  echo "Modify this function in $0 if you have specific migrations to run."
+  ./scripts/ops/mutate_repowatches.py --mutator set-kcc-workspace-disk-size-20Gi-030126 --apply
 }
 
 scaleup() {
-  echo "--- Step 5: Scale up ---"
+  echo "--- Scale up ---"
   kubectl scale sts -n repo-agent-system repowatch-controller --replicas=1
 }
 
 # Run the upgrade process
-cleanup
+# cleanup
 upgrade
 scaledown
 mutations
