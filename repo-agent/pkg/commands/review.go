@@ -467,6 +467,19 @@ func (c *ReviewCommand) Run(ctx context.Context) error {
 			// Restore/Merge labels
 			accumulatedAgentOutput.Labels = append(accumulatedAgentOutput.Labels, existingLabels...)
 			accumulatedAgentOutput.Labels = uniqueStrings(accumulatedAgentOutput.Labels)
+
+			// Filter comments by severity threshold on the first run too
+			if c.SeverityThreshold != "" && accumulatedAgentOutput.Review != nil {
+				var filtered []*models.DraftReviewComment
+				for _, comment := range accumulatedAgentOutput.Review.Comments {
+					if getSeverityLevel(comment.Severity) >= getSeverityLevel(c.SeverityThreshold) {
+						filtered = append(filtered, comment)
+					} else if comment.Path != nil {
+						log.Info("Filtering out comment below severity threshold", "file", *comment.Path, "severity", comment.Severity, "threshold", c.SeverityThreshold)
+					}
+				}
+				accumulatedAgentOutput.Review.Comments = filtered
+			}
 		} else {
 			for _, newComment := range agentOutput.Review.Comments {
 				if newComment == nil || newComment.Path == nil || newComment.Line == nil || newComment.Body == nil {
@@ -839,6 +852,8 @@ func filterDiffFiles(repoDir string, diffFiles []*gitdiff.File, ignoreFiles []st
 
 func getSeverityLevel(severity string) int {
 	switch strings.ToLower(severity) {
+	case "critical":
+		return 4
 	case "high":
 		return 3
 	case "medium":

@@ -88,7 +88,7 @@ class DraftReviewComment(BaseModel):
     line: int = Field(description="line no where the comment is anchored. should be within the line range in the diff")
     body: str = Field(description="detailed review comment for the line")
     side: str = Field(description="RIGHT|LEFT. RIGHT if commenting on additions starting with '+', LEFT if commenting on deletions starting with '-'.")
-    severity: str = Field(description="severity of the comment. one of [LOW, MEDIUM, HIGH]")
+    severity: str = Field(description="severity of the comment. one of [LOW, MEDIUM, HIGH, CRITICAL]. LOW: style, naming, minor suggestions — nice-to-have improvements. MEDIUM: missing edge cases, maintainability concerns — should fix. HIGH: bugs, security vulnerabilities, data loss risks — must fix before merge. CRITICAL: breaking changes, security exploits, production outages — blocks merge.")
 
 class PullRequestReviewRequest(BaseModel):
     body: str = Field(description="The body text of the pull request review.")

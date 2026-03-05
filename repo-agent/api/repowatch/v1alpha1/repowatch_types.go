@@ -104,6 +104,12 @@ type PRReviewSpec struct {
 	// +kubebuilder:validation:Optional
 	IgnoreFiles []string `json:"ignoreFiles,omitempty"`
 
+	// SeverityThreshold sets the minimum severity level for review comments to be posted.
+	// Comments below this threshold will be filtered out. Valid values: "LOW", "MEDIUM", "HIGH".
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:Enum=LOW;MEDIUM;HIGH;CRITICAL
+	SeverityThreshold string `json:"severityThreshold,omitempty"`
+
 	// The time in minutes after which a review sandbox will be scaled down to 0 replicas.
 	// +kubebuilder:validation:Optional
 	ReviewShutdownAfterMinutes int `json:"reviewShutdownAfterMinutes,omitempty"`
