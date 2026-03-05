@@ -52,36 +52,9 @@ jobs:
             ghcr.io/gke-labs/gemini-for-kubernetes-development/${{ matrix.image_name }}:latest
             ghcr.io/gke-labs/gemini-for-kubernetes-development/${{ matrix.image_name }}:${{ github.sha }}
 
-  deploy-staging:
+  trigger-deploy:
     needs: build-and-publish
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Google Auth
-        uses: google-github-actions/auth@v3
-        with:
-          credentials_json: ${{ secrets.GKE_SA_KEY }}
-
-      - name: Set up GKE credentials
-        uses: google-github-actions/get-gke-credentials@v3
-        with:
-          cluster_name: ${{ secrets.GKE_STAGING_CLUSTER }}
-          location: ${{ secrets.GKE_ZONE }}
-
-      - name: Deploy to Staging
-        run: |
-          chmod +x ./dev/tools/deploy-to-kube
-          # Deploy repo-agent manifests
-          ./dev/tools/deploy-to-kube --image-prefix=ghcr.io/gke-labs/gemini-for-kubernetes-development/ --image-tag=${{ github.sha }} --working-dir repo-agent/ --replace .spec.installationName=${{ secrets.GKE_STAGING_CLUSTER }} --replace .spec.gatewayClassName=gke-l7-regional-external-managed
-          # Deploy overseer manifests (RBAC)
-          ./dev/tools/deploy-to-kube --image-prefix=ghcr.io/gke-labs/gemini-for-kubernetes-development/ --image-tag=${{ github.sha }} --working-dir overseer/
-
-          # Bounce the pods after installing
-          kubectl rollout restart statefulset -n repo-agent-system
-          kubectl rollout status  statefulset -n repo-agent-system
-          kubectl rollout restart deployment -n repo-agent-system
-          kubectl rollout status  deployment -n repo-agent-system
+    uses: ./.github/workflows/deploy-staging.yaml
+    with:
+      image_tag: ${{ github.sha }}
+    secrets: inherit

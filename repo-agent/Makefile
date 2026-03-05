@@ -3,9 +3,9 @@ KIND_CLUSTER ?= repo-agent
 REGISTRY ?= kind.local/
 NAMESPACE ?= default
 LOCAL_PORT ?= 13380
-CLUSTER_NAME != kubectl config view --minify --output 'jsonpath={.clusters[0].name}'
-INSTALL_ENVOY = $(if $(filter kind%,$(CLUSTER_NAME)),yes,no)
-GW_CLASS = $(if $(filter kind%,$(CLUSTER_NAME)),repo-agent-gatewayclass,gke-l7-regional-external-managed)
+CLUSTER_NAME ?= $(shell kubectl config view --minify --output 'jsonpath={.clusters[0].name}')
+INSTALL_ENVOY ?= $(if $(filter kind%,$(CLUSTER_NAME)),yes,no)
+GW_CLASS ?= $(if $(filter kind%,$(CLUSTER_NAME)),repo-agent-gatewayclass,gke-l7-regional-external-managed)
 LLM_PROVIDER ?= gemini-cli
 DEFAULT_LLM_PROVIDER = $(if $(filter kind%,$(CLUSTER_NAME)),$(LLM_PROVIDER),gemini-cli)
 
@@ -205,12 +205,19 @@ port-forward:
 	done
 	# kubectl port-forward -n repo-agent-system --address 0.0.0.0 service/devc-agent-sandbox-pr-102-lb  13338:13338
 
+IMAGE_TAG ?= latest
+SKIP_PREQS ?= false
+
 # non-ephemeral (GKE) cluster install targets
 .PHONY: install-repo-agent-latest
-install-repo-agent-latest: install-dep-packages create-secrets
-	$(MAKE) -C ../overseer deploy REGISTRY=ghcr.io/gke-labs/gemini-for-kubernetes-development/ DEPLOY_ARGS="--image-tag=latest --output-file=$(CURDIR)/bin/overseer-manifest.yaml"
+install-repo-agent-latest:
+	@if [ "$(SKIP_PREQS)" != "true" ]; then \
+		$(MAKE) install-dep-packages create-secrets; \
+	fi
+	@mkdir -p bin
+	$(MAKE) -C ../overseer deploy REGISTRY=ghcr.io/gke-labs/gemini-for-kubernetes-development/ DEPLOY_ARGS="--image-tag=$(IMAGE_TAG) --output-file=$(CURDIR)/bin/overseer-manifest.yaml"
 	../dev/tools/deploy-to-kube --image-prefix=ghcr.io/gke-labs/gemini-for-kubernetes-development/ \
-	--image-tag=latest \
+	--image-tag=$(IMAGE_TAG) \
 	--replace .spec.installationName=${CLUSTER_NAME} \
 	--replace .spec.gatewayClassName=${GW_CLASS} \
 	--working-dir . --output-file=bin/repo-agent-manifest.yaml
@@ -219,8 +226,8 @@ install-repo-agent-latest: install-dep-packages create-secrets
 
 .PHONY: uninstall-repo-agent-latest
 uninstall-repo-agent-latest:
-	$(MAKE) -C ../overseer deploy REGISTRY=ghcr.io/gke-labs/gemini-for-kubernetes-development/ DEPLOY_ARGS="--image-tag=latest --output-file=$(CURDIR)/bin/overseer-manifest.yaml"
-	../dev/tools/deploy-to-kube --image-prefix=ghcr.io/gke-labs/gemini-for-kubernetes-development/ --image-tag=latest --working-dir . --output-file=bin/repo-agent-manifest.yaml
+	$(MAKE) -C ../overseer deploy REGISTRY=ghcr.io/gke-labs/gemini-for-kubernetes-development/ DEPLOY_ARGS="--image-tag=$(IMAGE_TAG) --output-file=$(CURDIR)/bin/overseer-manifest.yaml"
+	../dev/tools/deploy-to-kube --image-prefix=ghcr.io/gke-labs/gemini-for-kubernetes-development/ --image-tag=$(IMAGE_TAG) --working-dir . --output-file=bin/repo-agent-manifest.yaml
 	kubectl delete -f bin/repo-agent-manifest.yaml || true
 	kubectl delete -f bin/overseer-manifest.yaml || true
 	${MAKE} uninstall-dep-packages
