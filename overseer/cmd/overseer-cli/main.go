@@ -648,7 +648,7 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 	fmt.Printf("Successfully created review: %s\n", review.GetHTMLURL())
 
 	// Update sandbox reviewState
-	if err := manager.UpdateReviewSandboxAnnotation(ctx, namespace, sandboxName, "reviewState", "submitted"); err != nil {
+	if err := manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "reviewState", "submitted"); err != nil {
 		fmt.Printf("Warning: failed to update reviewState annotation: %v\n", err)
 	}
 
