@@ -536,3 +536,133 @@ func (s *Server) createIssueTask(c *gin.Context) {
 
 	c.Status(http.StatusOK)
 }
+
+func (s *Server) getIssueCommits(c *gin.Context) {
+	log := klog.FromContext(c.Request.Context())
+	namespace := s.Auth.GetNamespaceFromContext(c)
+	repo := c.Param("repo")
+	issueID := c.Param("issue_id")
+
+	repoWatch, err := s.K8sManager.GetRepoWatch(c.Request.Context(), namespace, repo)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get RepoWatch"})
+		return
+	}
+
+	token, err := s.K8sManager.GetGitHubToken(c.Request.Context(), repoWatch)
+	if err != nil {
+		log.Info("Failed to get github token", "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get GitHub token"})
+		return
+	}
+
+	client := clients.NewGitHubClient(c.Request.Context(), token)
+
+	sandboxName := fmt.Sprintf("devc-%s-issue-%s", repo, issueID)
+	gvr := schema.GroupVersionResource{
+		Group:    "agents.x-k8s.io",
+		Version:  "v1alpha1",
+		Resource: "sandboxes",
+	}
+	sandbox, err := s.K8sManager.Client.Resource(gvr).Namespace(namespace).Get(c.Request.Context(), sandboxName, v1.GetOptions{})
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Issue sandbox not found"})
+		return
+	}
+
+	branch, found, _ := unstructured.NestedString(sandbox.Object, "metadata", "annotations", "sandbox.gemini.google.com/branch")
+	if !found || branch == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No branch found for this issue"})
+		return
+	}
+
+	originUser, found, _ := unstructured.NestedString(sandbox.Object, "metadata", "annotations", "sandbox.gemini.google.com/user-login")
+	if !found || originUser == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No origin user found for this issue"})
+		return
+	}
+
+	repoURL, found, _ := unstructured.NestedString(repoWatch.Object, "spec", "repoURL")
+	if !found {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "RepoURL not found"})
+		return
+	}
+	_, repoName, err := parseRepoURL(repoURL)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid RepoURL"})
+		return
+	}
+
+	commits, _, err := client.Repositories.ListCommits(c.Request.Context(), originUser, repoName, &github.CommitsListOptions{
+		SHA: branch,
+	})
+	if err != nil {
+		log.Info("Failed to list issue commits", "issueID", issueID, "branch", branch, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list commits"})
+		return
+	}
+
+	var result []gin.H
+	for _, commit := range commits {
+		sha := commit.GetSHA()
+		message := ""
+		if commit.Commit != nil {
+			message = commit.Commit.GetMessage()
+		}
+		authorName := ""
+		authorDate := time.Time{}
+		if commit.Commit != nil && commit.Commit.Author != nil {
+			authorName = commit.Commit.Author.GetName()
+			authorDate = commit.Commit.Author.GetDate()
+		}
+		if authorName == "" && commit.Author != nil {
+			authorName = commit.Author.GetLogin()
+		}
+
+		result = append(result, gin.H{
+			"sha":     sha,
+			"message": message,
+			"author":  authorName,
+			"date":    authorDate,
+		})
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+
+func (s *Server) rollbackIssue(c *gin.Context) {
+	namespace := s.Auth.GetNamespaceFromContext(c)
+	repo := c.Param("repo")
+	issueID := c.Param("issue_id")
+
+	var payload struct {
+		CommitSHA string `json:"commitSha"`
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if payload.CommitSHA == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "commitSha is required"})
+		return
+	}
+
+	sandboxName := fmt.Sprintf("devc-%s-issue-%s", repo, issueID)
+	params := map[string]string{
+		"COMMIT_SHA": payload.CommitSHA,
+	}
+
+	err := s.K8sManager.CreateSandboxTask(c.Request.Context(), namespace, sandboxName, "Sandbox", "rollback", params)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create rollback task", "details": err.Error()})
+		return
+	}
+
+	// Scale up the sandbox so it can process the task
+	if err := s.K8sManager.ScaleupIssueSandbox(c.Request.Context(), namespace, repo, issueID, "", ""); err != nil {
+		klog.Warningf("Failed to scale up issue sandbox after rollback task creation: %v", err)
+	}
+
+	c.Status(http.StatusOK)
+}
