@@ -649,5 +649,3 @@ func (s *Server) getPRCommits(c *gin.Context) {
 
 	c.JSON(http.StatusOK, result)
 }
-
-
