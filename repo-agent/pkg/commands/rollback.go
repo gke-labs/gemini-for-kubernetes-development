@@ -24,6 +24,12 @@ func (o *RollbackOptions) InitDefaults() {
 		o.Branch = os.Getenv("BRANCH_NAME")
 	}
 	if o.Branch == "" {
+		o.Branch = os.Getenv("ISSUE_BRANCH")
+	}
+	if o.Branch == "" {
+		o.Branch = os.Getenv("DEV_BRANCH")
+	}
+	if o.Branch == "" {
 		cloneURL := os.Getenv("GIT_CLONE_URL")
 		if cloneURL != "" && strings.Contains(cloneURL, "#refs/heads/") {
 			parts := strings.SplitN(cloneURL, "#refs/heads/", 2)

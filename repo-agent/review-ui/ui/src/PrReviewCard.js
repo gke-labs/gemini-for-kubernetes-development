@@ -745,8 +745,6 @@ function PrReviewCard({
   const [curlCommand, setCurlCommand] = useState(null);
   const [tasks, setTasks] = useState([]);
   const [showNewTaskForm, setShowNewTaskForm] = useState(false);
-  const [showRollbackUI, setShowRollbackUI] = useState(false);
-  const [commits, setCommits] = useState([]);
   const [newTaskPrompt, setNewTaskPrompt] = useState('');
   const [expectedComments, setExpectedComments] = useState(0);
   const [selectedModel, setSelectedModel] = useState('gemini-3.1-pro-preview');
@@ -805,40 +803,7 @@ function PrReviewCard({
         .catch(err => console.error("Failed to fetch tasks:", err));
   };
 
-  const fetchCommits = () => {
-    if (pr.type === 'pending' || pr.type === 'excluded') return;
-    if (!repoName) return;
 
-    fetch(`/api/repo/${repoName}/prs/${pr.id}/commits`)
-        .then(res => res.json())
-        .then(data => {
-            if (Array.isArray(data)) {
-                setCommits(data);
-            }
-        })
-        .catch(err => console.error("Failed to fetch commits:", err));
-  };
-
-  const handleRollback = (sha) => {
-    if (!repoName) return;
-    if (!window.confirm(`Are you sure you want to rollback to commit ${sha.substring(0, 7)}? This will perform a force push.`)) return;
-
-    fetch(`/api/repo/${repoName}/prs/${pr.id}/rollback`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ commitSha: sha })
-    })
-    .then(res => {
-        if (res.ok) {
-            alert("Rollback task created!");
-            setShowRollbackUI(false);
-            fetchTasks();
-        } else {
-            res.text().then(t => alert("Failed to rollback: " + t));
-        }
-    })
-    .catch(err => console.error("Failed to rollback", err));
-  };
 
   useEffect(() => {
     fetchTasks();
@@ -1054,9 +1019,6 @@ function PrReviewCard({
                         {!showNewTaskForm && (
                             <button className="btn" onClick={() => setShowNewTaskForm(true)}>Review Again</button>
                         )}
-                        {!showRollbackUI && (
-                            <button className="btn" style={{backgroundColor: 'var(--status-grey)'}} onClick={() => { setShowRollbackUI(true); fetchCommits(); }}>Rollback to previous commit</button>
-                        )}
                     </div>
 
                     {showNewTaskForm && (
@@ -1103,51 +1065,7 @@ function PrReviewCard({
                         </div>
                     )}
 
-                    {showRollbackUI && (
-                        <div className="new-task-form" style={{padding: '10px', backgroundColor: 'var(--bg-secondary)', borderRadius: '5px'}}>
-                            <h4>Rollback to Previous Commit</h4>
-                            <p style={{fontSize: 'small', color: 'var(--text-secondary)', marginBottom: '10px'}}>
-                                Select a commit to rollback the PR branch to. This will perform a <strong>force push</strong>.
-                            </p>
-                            <div style={{maxHeight: '300px', overflowY: 'auto', border: '1px solid var(--border-color)', borderRadius: '4px', backgroundColor: 'var(--bg-primary)'}}>
-                                {commits.length === 0 ? (
-                                    <div style={{padding: '10px', textAlign: 'center'}}>Loading commits...</div>
-                                ) : (
-                                    commits.map((commit) => (
-                                        <div 
-                                            key={commit.sha} 
-                                            style={{
-                                                padding: '10px', 
-                                                borderBottom: '1px solid var(--border-color)', 
-                                                display: 'flex', 
-                                                justifyContent: 'space-between', 
-                                                alignItems: 'center',
-                                                cursor: 'pointer'
-                                            }}
-                                            onClick={() => handleRollback(commit.sha)}
-                                            onMouseOver={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-hover)'}
-                                            onMouseOut={(e) => e.currentTarget.style.backgroundColor = ''}
-                                        >
-                                            <div style={{overflow: 'hidden'}}>
-                                                <div style={{fontWeight: 'bold', fontSize: 'small', textOverflow: 'ellipsis', whiteSpace: 'nowrap', overflow: 'hidden'}} title={commit.message}>
-                                                    {commit.message}
-                                                </div>
-                                                <div style={{fontSize: 'x-small', color: 'var(--text-secondary)'}}>
-                                                    {commit.author} on {new Date(commit.date).toLocaleString()}
-                                                </div>
-                                            </div>
-                                            <div style={{fontFamily: 'monospace', fontSize: 'x-small', backgroundColor: 'var(--bg-secondary)', padding: '2px 4px', borderRadius: '3px', marginLeft: '10px'}}>
-                                                {commit.sha.substring(0, 7)}
-                                            </div>
-                                        </div>
-                                    ))
-                                )}
-                            </div>
-                            <div style={{marginTop: '10px'}}>
-                                <button className="btn" style={{backgroundColor: 'var(--status-grey)'}} onClick={() => setShowRollbackUI(false)}>Cancel</button>
-                            </div>
-                        </div>
-                    )}
+
                 </div>
             )}
             
