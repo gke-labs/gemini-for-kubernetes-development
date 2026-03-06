@@ -42,7 +42,7 @@ spec:
     try:
     - assert:
         timeout: 20m
-        file: reviewsandbox-assert.yaml
+        file: sandbox-assert.yaml
     catch:
     # 1. Describe the Sandbox to see why it might be stuck (Status/Events)
     - describe:

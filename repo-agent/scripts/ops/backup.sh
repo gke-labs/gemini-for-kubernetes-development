@@ -14,12 +14,8 @@ echo "Backing up resources to ${BACKUP_DIR}..."
 echo "Backing up RepoWatches..."
 kubectl get repowatches -A -o yaml > "${BACKUP_DIR}/repowatches.yaml" || echo "Warning: Failed to backup RepoWatches"
 
-# Backup ReviewSandbox
-echo "Backing up ReviewSandboxes..."
-kubectl get reviewsandboxes -A -o yaml > "${BACKUP_DIR}/reviewsandboxes.yaml" || echo "Warning: Failed to backup ReviewSandboxes"
-
-# Backup IssueSandbox
-echo "Backing up IssueSandboxes..."
-kubectl get issuesandboxes -A -o yaml > "${BACKUP_DIR}/issuesandboxes.yaml" || echo "Warning: Failed to backup IssueSandboxes"
+# Backup Sandbox
+echo "Backing up Sandboxes..."
+kubectl get sandboxes -A -o yaml > "${BACKUP_DIR}/sandboxes.yaml" || echo "Warning: Failed to backup Sandboxes"
 
 echo "Backup complete: ${BACKUP_DIR}"

@@ -1,12 +1,23 @@
-apiVersion: custom.agents.x-k8s.io/v1alpha1
-kind: ReviewSandbox
+apiVersion: agents.x-k8s.io/v1alpha1
+kind: Sandbox
 metadata:
   name: demo
 spec:
-  prompt: "You are an expert kubernetes developer who is helping with code reviews. Please look at the most recent commit and provide a review feedback. Would you approve it ?"
-  source:
-    cloneURL: https://github.com/kubernetes-sigs/agent-sandbox.git
+  replicas: 1
+  podTemplate:
+    spec:
+      containers:
+      - name: agent
+        image: repo-sandbox
+        env:
+        - name: AGENT_PROMPT
+          value: "You are an expert kubernetes developer who is helping with code reviews. Please look at the most recent commit and provide a review feedback. Would you approve it ?"
+  annotations:
+    agentState: "provisioning"
+    reviewState: ""
+    # Source info injected as annotations for UI
     pr: "1"
-    repo: agent-sandbox
-    htmlURL: https://github.com/kubernetes-sigs/agent-sandbox/pull/1
     title: "Add a simple README file"
+    repo: "agent-sandbox"
+    htmlURL: "https://github.com/kubernetes-sigs/agent-sandbox/pull/1"
+    cloneURL: "https://github.com/kubernetes-sigs/agent-sandbox.git"

@@ -222,7 +222,7 @@ func (s *Server) saveIssueDraft(c *gin.Context) {
 	}
 
 	sandboxName := fmt.Sprintf("%s-issue-%s", repo, issueID)
-	err := s.K8sManager.UpdateDevSandboxAnnotation(c.Request.Context(), namespace, sandboxName, "userDraft", payload.Draft)
+	err := s.K8sManager.UpdateSandboxUserDraft(c.Request.Context(), namespace, sandboxName, payload.Draft)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save draft", "details": err.Error()})
 		return
@@ -279,8 +279,8 @@ func (s *Server) submitIssueComment(c *gin.Context) {
 
 	if draft != agentDraft {
 		if sandboxName != "" {
-			if err := s.K8sManager.UpdateDevSandboxAnnotation(ctx, namespace, sandboxName, "userDraft", draft); err != nil {
-				log.Info("Failed to update issuesandbox userDraft", "issueID", issueID, "repo", repo, "err", err)
+			if err := s.K8sManager.UpdateSandboxUserDraft(ctx, namespace, sandboxName, draft); err != nil {
+				log.Info("Failed to update sandbox userDraft", "issueID", issueID, "repo", repo, "err", err)
 			}
 		}
 	}
@@ -322,8 +322,8 @@ func (s *Server) submitIssueComment(c *gin.Context) {
 		return
 	}
 
-	if err := s.K8sManager.UpdateDevSandboxAnnotation(ctx, namespace, sandboxName, "issueCommentSubmitted", "true"); err != nil {
-		log.Info("Failed to update issuesandbox issueCommentSubmitted", "issueID", issueID, "repo", repo, "err", err)
+	if err := s.K8sManager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "issueCommentSubmitted", "true"); err != nil {
+		log.Info("Failed to update sandbox issueCommentSubmitted", "issueID", issueID, "repo", repo, "err", err)
 	}
 
 	err = s.K8sManager.ScaledownIssueSandbox(ctx, namespace, repo, issueID, "")

@@ -495,7 +495,7 @@ func (s *Server) scaleDownDevSandbox(c *gin.Context) {
 		return
 	}
 
-	if err := s.K8sManager.UpdateDevSandboxAnnotation(c.Request.Context(), namespace, resourceName, "agentState", "sandbox paused"); err != nil {
+	if err := s.K8sManager.UpdateSandboxAnnotation(c.Request.Context(), namespace, resourceName, "agentState", "sandbox paused"); err != nil {
 		log.Info("Failed to update dev sandbox annotation", "err", err)
 	}
 

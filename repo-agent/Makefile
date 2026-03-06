@@ -191,12 +191,11 @@ apply-examples: apply-common-for-examples
 	kubectl apply -f examples/k8s-configdir.yaml -n $(NAMESPACE)
 	kubectl apply -f examples/k8s-repowatch.yaml -n $(NAMESPACE)
 	sleep 5
-	kubectl get reviewsandboxes -A
-	kubectl get issuesandboxes -A
+	kubectl get sandboxes -A
 
 .PHONY: delete-instance
 delete-instance:
-	kubectl delete reviewsandbox demo
+	kubectl delete sandbox demo
 
 .PHONY: port-forward
 port-forward:
@@ -231,12 +230,8 @@ uninstall-repo-agent-latest:
 	kubectl delete -f bin/repo-agent-manifest.yaml || true
 	kubectl delete -f bin/overseer-manifest.yaml || true
 	${MAKE} uninstall-dep-packages
-	kubectl delete crd issuesandboxes.custom.agents.x-k8s.io --wait=false || true
-	kubectl patch crd issuesandboxes.custom.agents.x-k8s.io --type=json -p='[{"op":"remove", "path":"/metadata/finalizers", "value":["customresourcecleanup.apiextensions.k8s.io"]}]' || true
-	kubectl delete crd reviewsandboxes.custom.agents.x-k8s.io --wait=false || true
-	kubectl patch crd reviewsandboxes.custom.agents.x-k8s.io --type=json -p='[{"op":"remove", "path":"/metadata/finalizers", "value":["customresourcecleanup.apiextensions.k8s.io"]}]' || true
-	kubectl delete crd devsandboxes.custom.agents.x-k8s.io --wait=false || true
-	kubectl patch crd devsandboxes.custom.agents.x-k8s.io --type=json -p='[{"op":"remove", "path":"/metadata/finalizers", "value":["customresourcecleanup.apiextensions.k8s.io"]}]' || true
+	kubectl delete crd sandboxes.agents.x-k8s.io --wait=false || true
+	kubectl patch crd sandboxes.agents.x-k8s.io --type=json -p='[{"op":"remove", "path":"/metadata/finalizers", "value":["customresourcecleanup.apiextensions.k8s.io"]}]' || true
 
 .PHONY: reinstall-repo-agent-latest
 reinstall-repo-agent-latest: uninstall-repo-agent-latest install-repo-agent-latest
