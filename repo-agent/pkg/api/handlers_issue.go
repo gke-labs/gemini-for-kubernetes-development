@@ -152,8 +152,11 @@ func (s *Server) listIssuesFromK8s(ctx context.Context, namespace, repo string) 
 			cloneURL = "https://github.com/noorg/norepo.git"
 		}
 
-		repoParts := strings.Split(strings.TrimSuffix(cloneURL, ".git"), "/")
-		repoName := repoParts[len(repoParts)-1]
+		_, repoName, err := parseRepoURL(cloneURL)
+		if err != nil {
+			log.Info("Failed to parse clone URL", "url", cloneURL, "err", err)
+			repoName = "norepo"
+		}
 
 		branchURL := fmt.Sprintf("https://github.com/%s/%s/tree/%s", login, repoName, branch)
 
@@ -576,24 +579,19 @@ func (s *Server) getIssueCommits(c *gin.Context) {
 		return
 	}
 
-	originUser, found, _ := unstructured.NestedString(sandbox.Object, "metadata", "annotations", "sandbox.gemini.google.com/user-login")
-	if !found || originUser == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "No origin user found for this issue"})
+	cloneURL, found, _ := unstructured.NestedString(sandbox.Object, "metadata", "annotations", "sandbox.gemini.google.com/clone-url")
+	if !found || cloneURL == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No clone URL found for this issue"})
 		return
 	}
 
-	repoURL, found, _ := unstructured.NestedString(repoWatch.Object, "spec", "repoURL")
-	if !found {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "RepoURL not found"})
-		return
-	}
-	_, repoName, err := parseRepoURL(repoURL)
+	owner, repoName, err := parseRepoURL(cloneURL)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid RepoURL"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid Clone URL"})
 		return
 	}
 
-	commits, _, err := client.Repositories.ListCommits(c.Request.Context(), originUser, repoName, &github.CommitsListOptions{
+	commits, _, err := client.Repositories.ListCommits(c.Request.Context(), owner, repoName, &github.CommitsListOptions{
 		SHA: branch,
 	})
 	if err != nil {
