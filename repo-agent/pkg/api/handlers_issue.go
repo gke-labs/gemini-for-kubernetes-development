@@ -593,6 +593,24 @@ func (s *Server) getIssueCommits(c *gin.Context) {
 		return
 	}
 
+	// Use origin annotation if available, as it points to the actual fork used by the agent
+	origin, foundOrigin, _ := unstructured.NestedString(sandbox.Object, "metadata", "annotations", "sandbox.gemini.google.com/origin")
+	if foundOrigin && origin != "" {
+		// Try to parse origin which might be github.com/owner/repo or https://github.com/owner/repo
+		u := origin
+		if !strings.Contains(u, "://") {
+			u = "https://" + u
+		}
+		if parsedURL, err := url.Parse(u); err == nil {
+			parts := strings.Split(strings.Trim(parsedURL.Path, "/"), "/")
+			if len(parts) == 2 {
+				originUser = parts[0]
+				repoName = parts[1]
+			}
+		}
+	}
+	repoName = strings.TrimSuffix(repoName, ".git")
+
 	commits, _, err := client.Repositories.ListCommits(c.Request.Context(), originUser, repoName, &github.CommitsListOptions{
 		SHA: branch,
 	})

@@ -219,6 +219,7 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 	opt.Annotations["sandbox.gemini.google.com/html-url"] = opt.HTMLURL
 	opt.Annotations["sandbox.gemini.google.com/clone-url"] = opt.CloneURL
 	opt.Annotations["sandbox.gemini.google.com/user-login"] = opt.UserLogin
+	opt.Annotations["sandbox.gemini.google.com/origin"] = opt.Origin
 	opt.Annotations["sandbox.gemini.google.com/branch"] = opt.Branch
 	opt.Annotations["sandbox.gemini.google.com/push-enabled"] = strconv.FormatBool(opt.PushEnabled)
 
