@@ -49,7 +49,15 @@ func (m *TriageIssueModel) Prompt() ([]byte, error) {
 }
 
 func (m *TriageIssueModel) PostScript() ([]byte, error) {
-	return nil, nil
+	tmpl, err := getScriptTemplate("triage_issue_post.sh")
+	if err != nil {
+		return nil, err
+	}
+	var w bytes.Buffer
+	if err := tmpl.Execute(&w, m); err != nil {
+		return nil, fmt.Errorf("failed to execute post-script template: %w", err)
+	}
+	return w.Bytes(), nil
 }
 
 func (m *TriageIssueModel) DraftState() string {
