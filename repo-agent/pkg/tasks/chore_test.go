@@ -26,7 +26,7 @@ func TestChoreScriptTemplate(t *testing.T) {
 	}
 
 	script := w.String()
-	
+
 	expectedRepoName := `export REPO_NAME="test-repo"`
 	if !bytes.Contains(w.Bytes(), []byte(expectedRepoName)) {
 		t.Errorf("Script does not contain expected REPO_NAME. Got:\n%s", script)
