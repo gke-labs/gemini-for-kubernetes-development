@@ -558,6 +558,16 @@ func (s *Server) getIssueCommits(c *gin.Context) {
 
 	client := clients.NewGitHubClient(c.Request.Context(), token)
 
+	// Get the authenticated user (bot or user) associated with the token
+	authUser, _, err := client.Users.Get(c.Request.Context(), "")
+	if err != nil {
+		log.Info("Failed to get authenticated user", "err", err)
+	}
+	var authUserLogin string
+	if authUser != nil {
+		authUserLogin = authUser.GetLogin()
+	}
+
 	sandboxName := fmt.Sprintf("devc-%s-issue-%s", repo, issueID)
 	gvr := schema.GroupVersionResource{
 		Group:    "agents.x-k8s.io",
@@ -614,6 +624,16 @@ func (s *Server) getIssueCommits(c *gin.Context) {
 	commits, resp, err := client.Repositories.ListCommits(c.Request.Context(), originUser, repoName, &github.CommitsListOptions{
 		SHA: branch,
 	})
+	if err != nil {
+		if resp != nil && resp.StatusCode == http.StatusNotFound && authUserLogin != "" && authUserLogin != originUser {
+			// Try again with the authenticated user (bot) if it's different
+			log.Info("Retrying commit list with authUserLogin", "originUser", originUser, "authUserLogin", authUserLogin)
+			commits, resp, err = client.Repositories.ListCommits(c.Request.Context(), authUserLogin, repoName, &github.CommitsListOptions{
+				SHA: branch,
+			})
+		}
+	}
+
 	if err != nil {
 		if resp != nil && resp.StatusCode == http.StatusNotFound {
 			c.JSON(http.StatusOK, []gin.H{})
