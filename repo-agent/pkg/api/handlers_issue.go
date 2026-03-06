@@ -611,10 +611,14 @@ func (s *Server) getIssueCommits(c *gin.Context) {
 	}
 	repoName = strings.TrimSuffix(repoName, ".git")
 
-	commits, _, err := client.Repositories.ListCommits(c.Request.Context(), originUser, repoName, &github.CommitsListOptions{
+	commits, resp, err := client.Repositories.ListCommits(c.Request.Context(), originUser, repoName, &github.CommitsListOptions{
 		SHA: branch,
 	})
 	if err != nil {
+		if resp != nil && resp.StatusCode == http.StatusNotFound {
+			c.JSON(http.StatusOK, []gin.H{})
+			return
+		}
 		log.Info("Failed to list issue commits", "issueID", issueID, "branch", branch, "err", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list commits"})
 		return
