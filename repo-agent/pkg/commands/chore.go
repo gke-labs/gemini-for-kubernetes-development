@@ -22,6 +22,8 @@ type ChoreCommand struct {
 	WorkspaceDir string
 	TaskDir      string
 	RepoName     string
+	CloneURL     string
+	RepoOwner    string
 
 	// loaded objects
 	sandbox   *sandbox.IssueSandbox
@@ -46,6 +48,8 @@ func BuildChoreCommand() *cobra.Command {
 	cmd.Flags().StringVar(&choreCommand.ChoreName, "name", os.Getenv("CHORE_NAME"), "Chore name")
 	cmd.Flags().StringVar(&choreCommand.ChoreFile, "file", os.Getenv("CHORE_FILE"), "Chore definition file path")
 	cmd.Flags().StringVar(&choreCommand.RepoName, "repo", os.Getenv("REPO"), "Repository name")
+	cmd.Flags().StringVar(&choreCommand.CloneURL, "clone-url", os.Getenv("CLONE_URL"), "Repository clone URL")
+	cmd.Flags().StringVar(&choreCommand.RepoOwner, "repo-owner", os.Getenv("REPO_OWNER"), "Repository owner")
 	cmd.Flags().BoolVar(&choreCommand.InPod, "in-pod", false, "Whether running inside the pod")
 	return cmd
 }
@@ -97,6 +101,8 @@ func (c *ChoreCommand) Run(ctx context.Context) error {
 		ChoreName:   c.ChoreName,
 		ChoreFile:   c.ChoreFile,
 		RepoName:    c.RepoName,
+		CloneURL:    c.CloneURL,
+		RepoOwner:   c.RepoOwner,
 		PromptFile:  promptPath,
 	}
 

@@ -180,6 +180,11 @@ func runChore(ctx context.Context, name string, file string) error {
 
 	sandboxName := fmt.Sprintf("chore-%s-%s", repoWatch.Name, slugify(chore.Name))
 
+	owner, repo, err := parseRepoURL(repoWatch.Spec.RepoURL)
+	if err != nil {
+		return fmt.Errorf("failed to parse RepoURL: %w", err)
+	}
+
 	// Check if sandbox exists
 	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
 	if err != nil {
@@ -201,6 +206,9 @@ func runChore(ctx context.Context, name string, file string) error {
 		"AGENT_PROMPT": chore.Prompt,
 		"CHORE_NAME":   chore.Name,
 		"CHORE_FILE":   file,
+		"REPO_OWNER":   owner,
+		"REPO_NAME":    repo,
+		"CLONE_URL":    repoWatch.Spec.RepoURL,
 	}
 
 	// Add other params from repoWatch if applicable
@@ -263,6 +271,11 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 		cloneURL += ".git"
 	}
 
+	_, repo, err := parseRepoURL(repoWatch.Spec.RepoURL)
+	if err != nil {
+		return fmt.Errorf("failed to parse RepoURL: %w", err)
+	}
+
 	userLogin := os.Getenv("GITHUB_USER_ID")
 	userName := os.Getenv("GITHUB_USER_NAME")
 	userEmail := os.Getenv("GITHUB_USER_EMAIL")
@@ -287,7 +300,7 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 			CloneURL:            cloneURL,
 			HTMLURL:             strings.TrimSuffix(repoWatch.Spec.RepoURL, ".git"),
 			Branch:              "main", // Default branch for chores
-			Origin:              fmt.Sprintf("github.com/%s/%s", userLogin, repoWatch.Name),
+			Origin:              fmt.Sprintf("github.com/%s/%s", userLogin, repo),
 			PushEnabled:         true,
 			UserLogin:           userLogin,
 			UserName:            userName,
@@ -300,7 +313,7 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 			Replicas:            1,
 			ServiceAccountName:  "issue-sandbox",
 		},
-		IssueRepo:      repoWatch.Name,
+		IssueRepo:      repo,
 		SkipDevcPrefix: true,
 	}
 
@@ -314,7 +327,7 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 	sb, svc := sandbox.NewAgentSandbox(opt)
 	sb.SetName(sandboxName)
 
-	_, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(repoWatch.Namespace).Create(ctx, sb, metav1.CreateOptions{})
+	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(repoWatch.Namespace).Create(ctx, sb, metav1.CreateOptions{})
 	if err != nil {
 		return err
 	}

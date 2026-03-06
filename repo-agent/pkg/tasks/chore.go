@@ -12,6 +12,8 @@ type ChoreModel struct {
 	ChoreName   string
 	ChoreFile   string
 	RepoName    string
+	CloneURL    string
+	RepoOwner   string
 	PromptFile  string
 }
 
