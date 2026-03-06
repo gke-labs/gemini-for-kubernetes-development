@@ -575,3 +575,114 @@ func (s *Server) getTaskLogs(c *gin.Context) {
 
 	proxy.ServeHTTP(c.Writer, c.Request)
 }
+
+func (s *Server) getPRCommits(c *gin.Context) {
+	log := klog.FromContext(c.Request.Context())
+	namespace := s.Auth.GetNamespaceFromContext(c)
+	repo := c.Param("repo")
+	prIDStr := c.Param("id")
+
+	prID, err := strconv.Atoi(prIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid PR ID"})
+		return
+	}
+
+	repoWatch, err := s.K8sManager.GetRepoWatch(c.Request.Context(), namespace, repo)
+	if err != nil {
+		log.Info("Failed to get RepoWatch", "namespace", namespace, "name", repo, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get RepoWatch"})
+		return
+	}
+
+	token, err := s.K8sManager.GetGitHubToken(c.Request.Context(), repoWatch)
+	if err != nil {
+		log.Info("Failed to get github token", "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get GitHub token"})
+		return
+	}
+
+	client := clients.NewGitHubClient(c.Request.Context(), token)
+
+	repoURL, found, _ := unstructured.NestedString(repoWatch.Object, "spec", "repoURL")
+	if !found {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "RepoURL not found"})
+		return
+	}
+	owner, repoName, err := parseRepoURL(repoURL)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid RepoURL"})
+		return
+	}
+
+	commits, _, err := client.PullRequests.ListCommits(c.Request.Context(), owner, repoName, prID, nil)
+	if err != nil {
+		log.Info("Failed to list PR commits", "prID", prID, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list PR commits"})
+		return
+	}
+
+	var result []gin.H
+	for _, commit := range commits {
+		sha := commit.GetSHA()
+		message := ""
+		if commit.Commit != nil {
+			message = commit.Commit.GetMessage()
+		}
+		authorName := ""
+		authorDate := time.Time{}
+		if commit.Commit != nil && commit.Commit.Author != nil {
+			authorName = commit.Commit.Author.GetName()
+			authorDate = commit.Commit.Author.GetDate()
+		}
+		if authorName == "" && commit.Author != nil {
+			authorName = commit.Author.GetLogin()
+		}
+
+		result = append(result, gin.H{
+			"sha":     sha,
+			"message": message,
+			"author":  authorName,
+			"date":    authorDate,
+		})
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+
+func (s *Server) rollbackPR(c *gin.Context) {
+	namespace := s.Auth.GetNamespaceFromContext(c)
+	repo := c.Param("repo")
+	prID := c.Param("id")
+
+	var payload struct {
+		CommitSHA string `json:"commitSha"`
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if payload.CommitSHA == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "commitSha is required"})
+		return
+	}
+
+	sandboxName := fmt.Sprintf("%s-pr-%s", repo, prID)
+	params := map[string]string{
+		"COMMIT_SHA": payload.CommitSHA,
+	}
+
+	err := s.K8sManager.CreateSandboxTask(c.Request.Context(), namespace, sandboxName, "Sandbox", "rollback", params)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create rollback task", "details": err.Error()})
+		return
+	}
+
+	// Scale up the sandbox so it can process the task
+	if err := s.K8sManager.ScaleupSandbox(c.Request.Context(), namespace, repo, prID, ""); err != nil {
+		klog.Warningf("Failed to scale up sandbox after rollback task creation: %v", err)
+	}
+
+	c.Status(http.StatusOK)
+}

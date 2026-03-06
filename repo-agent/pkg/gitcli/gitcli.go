@@ -161,3 +161,9 @@ func Push(remote, branch string, force bool) error {
 	_, err := runCommand(args...)
 	return err
 }
+
+// ResetHard performs a git reset --hard to the specified target (commit hash or branch).
+func ResetHard(target string) error {
+	_, err := runCommand("reset", "--hard", target)
+	return err
+}
