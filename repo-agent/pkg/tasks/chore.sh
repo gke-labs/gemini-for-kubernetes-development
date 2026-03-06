@@ -3,6 +3,8 @@ set -e
 set -x
 
 export REPO_NAME="{{ .RepoName }}"
+export REPO_OWNER="{{ .RepoOwner }}"
+export CLONE_URL="{{ .CloneURL }}"
 export CHORE_NAME="{{ .ChoreName }}"
 export CHORE_FILE="{{ .ChoreFile }}"
 export PROMPT_FILE="{{ .PromptFile }}"
@@ -47,6 +49,30 @@ EOF
     fi
 
     gh auth setup-git
+}
+
+function setupGitRepos {
+    echo "Running setupGitRepos..."
+    if [ -d "/workspaces/${REPO_NAME}" ]; then
+        echo "Repository already exists at /workspaces/${REPO_NAME}"
+        return
+    fi
+    
+    echo "cloning repository"
+    # Clone into the specific REPO_NAME directory to ensure consistency
+    git clone "${CLONE_URL}" "/workspaces/${REPO_NAME}"
+
+    echo "running gh repo fork"
+    (cd "/workspaces/${REPO_NAME}" && gh repo fork --remote || true)
+
+    echo "running gh repo set-default"
+    (cd "/workspaces/${REPO_NAME}" && gh repo set-default "${CLONE_URL}" || true)
+
+    echo "running git config local user.email"
+    (cd "/workspaces/${REPO_NAME}" && git config user.email "${GITHUB_USER_EMAIL}" || true)
+
+    echo "running git config local user.name"
+    (cd "/workspaces/${REPO_NAME}" && git config user.name "${GITHUB_USER_NAME}" || true)
 }
 
 function runChore {
@@ -134,4 +160,5 @@ ${COMMIT_MSG}"
 }
 
 setupGit
+setupGitRepos
 runChore
