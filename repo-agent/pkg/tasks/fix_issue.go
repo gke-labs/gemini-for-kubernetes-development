@@ -18,6 +18,7 @@ type FixIssueModel struct {
 	PromptFile    string
 	Models        []string
 	Extensions    []reviewv1alpha1.Extension
+	Branch        string
 }
 
 func (m *FixIssueModel) Name() string {
