@@ -68,6 +68,8 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 		api.GET("/repo/:repo/prs/:id/tasks", s.getPRTasks)
 		api.GET("/repo/:repo/prs/:id/tasks/:taskID/logs", s.getTaskLogs)
 		api.GET("/repo/:repo/prs/:id/details", s.getPRDetails)
+		api.GET("/repo/:repo/prs/:id/commits", s.getPRCommits)
+		api.POST("/repo/:repo/prs/:id/rollback", s.rollbackPR)
 		api.POST("/repo/:repo/prs/:id/tasks", s.createPRTask)
 		api.POST("/repo/:repo/tasks/:taskID/draft", s.saveTaskDraft)
 		api.POST("/repo/:repo/prs/:id/draft", s.saveDraft)

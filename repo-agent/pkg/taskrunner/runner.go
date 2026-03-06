@@ -221,6 +221,15 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
 		}
 
+	case "rollback":
+		cmd = exec.Command(sandbox.RepoSandboxBinary, "rollback", "--in-pod=true")
+		// Map params to env vars
+		cmd.Env = os.Environ()
+		// Inject params into env
+		for k, v := range params {
+			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
+		}
+
 	case "issue":
 		cmd = exec.Command(sandbox.RepoSandboxBinary, "dev")
 		// Map params to env vars
