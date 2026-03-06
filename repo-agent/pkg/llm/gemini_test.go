@@ -581,7 +581,7 @@ func TestEnsureSettings(t *testing.T) {
     "previewFeatures": true
   },
   "model": {
-    "name": "gemini-3-pro-preview"
+    "name": "gemini-3.1-pro-preview"
   }
 }`
 		if string(data) != expected {
@@ -629,9 +629,10 @@ func TestEnsureSettings(t *testing.T) {
 			t.Errorf("Expected 'general.previewFeatures' to be true, got %v", general["previewFeatures"])
 		}
 		model := settings["model"].(map[string]interface{})
-		if model["name"] != "gemini-3-pro-preview" {
-			t.Errorf("Expected 'model.name' to be 'gemini-3-pro-preview', got %v", model["name"])
+		if model["name"] != "gemini-3.1-pro-preview" {
+			t.Errorf("Expected 'model.name' to be 'gemini-3.1-pro-preview', got %v", model["name"])
 		}
+
 	})
 
 	t.Run("does not override existing model", func(t *testing.T) {
