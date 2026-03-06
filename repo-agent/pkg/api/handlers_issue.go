@@ -318,10 +318,11 @@ func (s *Server) submitIssueComment(c *gin.Context) {
 	body := payload.Comment
 	if s.MetadataEnabled {
 		metadata := github.TraceabilityMetadata{
-			Enabled:   true,
-			Sandbox:   sandboxName,
-			RepoWatch: repo,
-			TaskType:  "issue-comment",
+			Enabled:          true,
+			Sandbox:          sandboxName,
+			RepoWatch:        repo,
+			TaskType:         "issue-comment",
+			InstallationName: s.InstallationName,
 		}
 		body += metadata.FormatHTMLComment()
 	}

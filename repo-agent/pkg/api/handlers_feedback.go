@@ -60,8 +60,9 @@ func (s *Server) submitFeedback(c *gin.Context) {
 
 	if s.MetadataEnabled {
 		metadata := github.TraceabilityMetadata{
-			Enabled:  true,
-			TaskType: "feedback",
+			Enabled:          true,
+			TaskType:         "feedback",
+			InstallationName: s.InstallationName,
 		}
 		body += metadata.FormatHTMLComment()
 	}

@@ -125,6 +125,7 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 		map[string]interface{}{"name": "NAMESPACE", "value": opt.Namespace},
 		map[string]interface{}{"name": "NAME", "value": sandboxName},
 		map[string]interface{}{"name": "REPO", "value": opt.IssueRepo},
+		map[string]interface{}{"name": "INSTALLATION_NAME", "value": opt.InstallationName},
 		map[string]interface{}{"name": "HANDLER", "value": opt.Handler},
 		map[string]interface{}{"name": "AGENT_NAME", "value": opt.LLMProvider},
 		map[string]interface{}{"name": "AGENT_PROMPT", "value": opt.Prompt},

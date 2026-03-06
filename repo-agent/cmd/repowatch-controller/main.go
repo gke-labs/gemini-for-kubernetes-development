@@ -92,6 +92,7 @@ func main() {
 		},
 		RepoSandboxImage: os.Getenv("REPO_SANDBOX_IMAGE"),
 		ConfigDirImage:   os.Getenv("CONFIGDIR_CLI_IMAGE"),
+		InstallationName: os.Getenv("INSTALLATION_NAME"),
 	}).SetupWithManager(mgr, concurrentReconciles); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "RepoWatch")
 		os.Exit(1)

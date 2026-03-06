@@ -18,7 +18,7 @@ import (
 )
 
 // Reconcile ensures the Overseer sandbox is running for the given RepoWatch.
-func Reconcile(ctx context.Context, c client.Client, repoWatch *reviewv1alpha1.RepoWatch, user *pkg_github.User, repoSandboxImage, configDirImage string) error {
+func Reconcile(ctx context.Context, c client.Client, repoWatch *reviewv1alpha1.RepoWatch, user *pkg_github.User, repoSandboxImage, configDirImage, installationName string) error {
 	log := log.FromContext(ctx)
 
 	if repoWatch.Spec.Overseer == nil || !repoWatch.Spec.Overseer.Enabled {
@@ -40,7 +40,7 @@ func Reconcile(ctx context.Context, c client.Client, repoWatch *reviewv1alpha1.R
 		if errors.IsNotFound(err) {
 			// Create
 			log.Info("Creating Overseer sandbox", "name", overseerName)
-			newSandbox := newOverseerSandbox(repoWatch, overseerName, user, repoSandboxImage, configDirImage)
+			newSandbox := newOverseerSandbox(repoWatch, overseerName, user, repoSandboxImage, configDirImage, installationName)
 			if err := controllerutil.SetControllerReference(repoWatch, newSandbox, c.Scheme()); err != nil {
 				return err
 			}
@@ -53,7 +53,7 @@ func Reconcile(ctx context.Context, c client.Client, repoWatch *reviewv1alpha1.R
 	return nil
 }
 
-func newOverseerSandbox(repoWatch *reviewv1alpha1.RepoWatch, name string, user *pkg_github.User, repoSandboxImage, configDirImage string) *unstructured.Unstructured {
+func newOverseerSandbox(repoWatch *reviewv1alpha1.RepoWatch, name string, user *pkg_github.User, repoSandboxImage, configDirImage, installationName string) *unstructured.Unstructured {
 	// Construct the unstructured Sandbox
 
 	image := repoWatch.Spec.Overseer.Image
@@ -134,6 +134,10 @@ func newOverseerSandbox(repoWatch *reviewv1alpha1.RepoWatch, name string, user *
 		map[string]interface{}{
 			"name":  "CONFIG_DIR_IMAGE",
 			"value": configDirImage,
+		},
+		map[string]interface{}{
+			"name":  "INSTALLATION_NAME",
+			"value": installationName,
 		},
 	}
 

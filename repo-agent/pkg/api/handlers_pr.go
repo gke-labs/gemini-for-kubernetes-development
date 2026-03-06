@@ -327,10 +327,11 @@ func (s *Server) submitReview(c *gin.Context) {
 		body := payload.Review
 		if s.MetadataEnabled {
 			metadata := github.TraceabilityMetadata{
-				Enabled:   true,
-				Sandbox:   sandboxName,
-				RepoWatch: repo,
-				TaskType:  "pr-review",
+				Enabled:          true,
+				Sandbox:          sandboxName,
+				RepoWatch:        repo,
+				TaskType:         "pr-review",
+				InstallationName: s.InstallationName,
 			}
 			body += metadata.FormatHTMLComment()
 		}
@@ -339,10 +340,11 @@ func (s *Server) submitReview(c *gin.Context) {
 		reviewRequest = agentOutput.Review.ToGitHubReviewRequest()
 		if s.MetadataEnabled && reviewRequest.Body != nil {
 			metadata := github.TraceabilityMetadata{
-				Enabled:   true,
-				Sandbox:   sandboxName,
-				RepoWatch: repo,
-				TaskType:  "pr-review",
+				Enabled:          true,
+				Sandbox:          sandboxName,
+				RepoWatch:        repo,
+				TaskType:         "pr-review",
+				InstallationName: s.InstallationName,
 			}
 			body := *reviewRequest.Body + metadata.FormatHTMLComment()
 			reviewRequest.Body = &body

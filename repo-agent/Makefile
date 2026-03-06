@@ -95,6 +95,7 @@ install-repo-agent:
 	$(MAKE) -C ../overseer deploy REGISTRY=$(REGISTRY)
 	../dev/tools/deploy-to-kube --image-prefix=$(REGISTRY) --working-dir . \
 	--replace .spec.installationName=${CLUSTER_NAME} \
+	--replace .data.INSTALLATION_NAME=${CLUSTER_NAME} \
 	--replace .spec.gatewayClassName=${GW_CLASS} \
 	--replace .spec.versions[].schema.openAPIV3Schema.properties.spec.properties.dev.properties.llm.properties.provider.default=${DEFAULT_LLM_PROVIDER} \
 	--replace .spec.versions[].schema.openAPIV3Schema.properties.spec.properties.review.properties.llm.properties.provider.default=${DEFAULT_LLM_PROVIDER} \
@@ -218,6 +219,7 @@ install-repo-agent-latest:
 	../dev/tools/deploy-to-kube --image-prefix=ghcr.io/gke-labs/gemini-for-kubernetes-development/ \
 	--image-tag=$(IMAGE_TAG) \
 	--replace .spec.installationName=${CLUSTER_NAME} \
+	--replace .data.INSTALLATION_NAME=${CLUSTER_NAME} \
 	--replace .spec.gatewayClassName=${GW_CLASS} \
 	--working-dir . --output-file=bin/repo-agent-manifest.yaml
 	kubectl apply -f bin/overseer-manifest.yaml

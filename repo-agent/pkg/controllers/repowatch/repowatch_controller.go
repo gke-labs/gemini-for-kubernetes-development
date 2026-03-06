@@ -252,6 +252,7 @@ type Reconciler struct {
 	NewGithubClient  githubClientFactory
 	RepoSandboxImage string
 	ConfigDirImage   string
+	InstallationName string
 }
 
 //+kubebuilder:rbac:groups=review.gemini.google.com,resources=repowatches,verbs=get;list;watch;create;update;patch;delete
@@ -1032,6 +1033,7 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 			Image:                 repoWatch.Spec.Issue.Image,
 			RepoSandboxImage:      r.RepoSandboxImage,
 			ConfigDirImage:        r.ConfigDirImage,
+			InstallationName:      r.InstallationName,
 			HTTPEnabled:           true,
 			Replicas:              1,
 			ServiceAccountName:    "issue-sandbox",
@@ -1243,6 +1245,7 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 									map[string]interface{}{"name": "NAME", "value": sandboxName},
 									map[string]interface{}{"name": "REPO", "value": repoWatch.GetName()},
 									map[string]interface{}{"name": "PRID", "value": fmt.Sprintf("%d", *pr.Number)},
+									map[string]interface{}{"name": "INSTALLATION_NAME", "value": r.InstallationName},
 									map[string]interface{}{"name": "MAX_REVIEW_FILES", "value": strconv.Itoa(repoWatch.Spec.Review.MaxReviewFiles)},
 									map[string]interface{}{"name": "IGNORE_FILES", "value": strings.Join(repoWatch.Spec.Review.IgnoreFiles, ",")},
 									map[string]interface{}{"name": "SEVERITY_THRESHOLD", "value": repoWatch.Spec.Review.SeverityThreshold},
@@ -1737,8 +1740,9 @@ func (r *Reconciler) createDevSandbox(ctx context.Context, user *github.User, re
 		Image:                 repoWatch.Spec.Dev.Image,
 		RepoSandboxImage:      r.RepoSandboxImage,
 		ConfigDirImage:        r.ConfigDirImage,
+		InstallationName:      r.InstallationName,
 
-		HTTPEnabled:        true,
+		HTTPEnabled: true,
 		Replicas:           1,
 		ServiceAccountName: "issue-sandbox",
 		DindSupport:        repoWatch.Spec.Dev.DindSupport,
@@ -2181,7 +2185,7 @@ func (r *Reconciler) reconcileOverseer(ctx context.Context, repoWatch *reviewv1a
 		UserID: user.GetLogin(),
 		Name:   user.GetName(),
 		Email:  user.GetEmail(),
-	}, r.RepoSandboxImage, r.ConfigDirImage); err != nil {
+	}, r.RepoSandboxImage, r.ConfigDirImage, r.InstallationName); err != nil {
 		return err
 	}
 

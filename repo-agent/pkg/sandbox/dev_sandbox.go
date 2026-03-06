@@ -43,6 +43,9 @@ type DevSandboxOptions struct {
 	RepoSandboxImage string
 	ConfigDirImage   string
 
+	// Traceability
+	InstallationName string
+
 	// Gateway
 	HTTPEnabled bool
 

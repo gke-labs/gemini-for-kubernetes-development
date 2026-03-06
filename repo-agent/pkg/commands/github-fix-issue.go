@@ -33,12 +33,13 @@ type GithubFixIssueCommand struct {
 	ExtensionsJSON  string
 
 	// Traceability metadata
-	TraceSandboxTask    string
-	TraceSandboxTaskUID string
-	TraceSandbox        string
-	TraceRepoWatch      string
-	TraceTaskType       string
-	MetadataEnabled     bool
+	TraceSandboxTask      string
+	TraceSandboxTaskUID   string
+	TraceSandbox          string
+	TraceRepoWatch        string
+	TraceTaskType         string
+	TraceInstallationName string
+	MetadataEnabled       bool
 
 	// loaded objects
 	issue     *github.Issue
@@ -83,6 +84,7 @@ func BuildGithubFixIssueCommand() *cobra.Command {
 	cmd.Flags().StringVar(&fixCommand.TraceSandbox, "trace-sandbox", os.Getenv("SANDBOX"), "Sandbox name for traceability")
 	cmd.Flags().StringVar(&fixCommand.TraceRepoWatch, "repowatch", os.Getenv("REPOWATCH"), "RepoWatch name")
 	cmd.Flags().StringVar(&fixCommand.TraceTaskType, "task-type", os.Getenv("TASK_TYPE"), "Task type")
+	cmd.Flags().StringVar(&fixCommand.TraceInstallationName, "installation-name", os.Getenv("INSTALLATION_NAME"), "Installation name for traceability")
 	cmd.Flags().BoolVar(&fixCommand.MetadataEnabled, "enable-traceability-metadata", os.Getenv("ENABLE_TRACEABILITY_METADATA") == "true", "Enable traceability metadata in GitHub artifacts")
 
 	return cmd
@@ -183,13 +185,14 @@ func (c *GithubFixIssueCommand) Run(ctx context.Context) error {
 		PromptFile:    promptPath,
 		Models:        strings.Split(c.Model, ","),
 		Metadata: github.TraceabilityMetadata{
-			Enabled:        c.MetadataEnabled,
-			SandboxTask:    c.TraceSandboxTask,
-			SandboxTaskUID: c.TraceSandboxTaskUID,
-			Sandbox:        c.TraceSandbox,
-			RepoWatch:      c.TraceRepoWatch,
-			TaskType:       c.TraceTaskType,
-			Timestamp:      time.Now().UTC().Format(time.RFC3339),
+			Enabled:          c.MetadataEnabled,
+			SandboxTask:      c.TraceSandboxTask,
+			SandboxTaskUID:   c.TraceSandboxTaskUID,
+			Sandbox:          c.TraceSandbox,
+			RepoWatch:        c.TraceRepoWatch,
+			TaskType:         c.TraceTaskType,
+			InstallationName: c.TraceInstallationName,
+			Timestamp:        time.Now().UTC().Format(time.RFC3339),
 		},
 	}
 

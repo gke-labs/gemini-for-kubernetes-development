@@ -22,13 +22,14 @@ import (
 )
 
 type TraceabilityMetadata struct {
-	Enabled        bool
-	SandboxTask    string
-	SandboxTaskUID string
-	Sandbox        string
-	RepoWatch      string
-	TaskType       string
-	Timestamp      string
+	Enabled          bool
+	SandboxTask      string
+	SandboxTaskUID   string
+	Sandbox          string
+	RepoWatch        string
+	TaskType         string
+	Timestamp        string
+	InstallationName string
 }
 
 func (m *TraceabilityMetadata) FormatHTMLComment() string {
@@ -42,6 +43,9 @@ func (m *TraceabilityMetadata) FormatHTMLComment() string {
 	}
 
 	metadata := "\n---\n<!-- repo-agent-metadata\n"
+	if m.InstallationName != "" {
+		metadata += fmt.Sprintf("installation-name: %s\n", m.InstallationName)
+	}
 	if m.SandboxTask != "" {
 		metadata += fmt.Sprintf("sandbox-task: %s\n", m.SandboxTask)
 	}

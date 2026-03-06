@@ -34,12 +34,13 @@ type GithubInvestigateCommand struct {
 	ExtensionsJSON  string
 
 	// Traceability metadata
-	TraceSandboxTask    string
-	TraceSandboxTaskUID string
-	TraceSandbox        string
-	TraceRepoWatch      string
-	TraceTaskType       string
-	MetadataEnabled     bool
+	TraceSandboxTask      string
+	TraceSandboxTaskUID   string
+	TraceSandbox          string
+	TraceRepoWatch        string
+	TraceTaskType         string
+	TraceInstallationName string
+	MetadataEnabled       bool
 
 	// loaded objects
 	repo        *github.Repository
@@ -90,6 +91,7 @@ func BuildGithubInvestigateCommand() *cobra.Command {
 	cmd.Flags().StringVar(&c.TraceSandbox, "trace-sandbox", os.Getenv("SANDBOX"), "Sandbox name for traceability")
 	cmd.Flags().StringVar(&c.TraceRepoWatch, "repowatch", os.Getenv("REPOWATCH"), "RepoWatch name")
 	cmd.Flags().StringVar(&c.TraceTaskType, "task-type", os.Getenv("TASK_TYPE"), "Task type")
+	cmd.Flags().StringVar(&c.TraceInstallationName, "installation-name", os.Getenv("INSTALLATION_NAME"), "Installation name for traceability")
 	cmd.Flags().BoolVar(&c.MetadataEnabled, "enable-traceability-metadata", os.Getenv("ENABLE_TRACEABILITY_METADATA") == "true", "Enable traceability metadata in GitHub artifacts")
 
 	return cmd
@@ -258,13 +260,14 @@ func (c *GithubInvestigateCommand) Run(ctx context.Context) error {
 		Models:      strings.Split(c.Model, ","),
 		FailedRuns:  c.failedRuns,
 		Metadata: github.TraceabilityMetadata{
-			Enabled:        c.MetadataEnabled,
-			SandboxTask:    c.TraceSandboxTask,
-			SandboxTaskUID: c.TraceSandboxTaskUID,
-			Sandbox:        c.TraceSandbox,
-			RepoWatch:      c.TraceRepoWatch,
-			TaskType:       c.TraceTaskType,
-			Timestamp:      time.Now().UTC().Format(time.RFC3339),
+			Enabled:          c.MetadataEnabled,
+			SandboxTask:      c.TraceSandboxTask,
+			SandboxTaskUID:   c.TraceSandboxTaskUID,
+			Sandbox:          c.TraceSandbox,
+			RepoWatch:        c.TraceRepoWatch,
+			TaskType:         c.TraceTaskType,
+			InstallationName: c.TraceInstallationName,
+			Timestamp:        time.Now().UTC().Format(time.RFC3339),
 		},
 	}
 

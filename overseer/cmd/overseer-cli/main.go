@@ -309,6 +309,7 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 			GithubSecretName:    repoWatch.Spec.GithubSecretName,
 			RepoSandboxImage:    os.Getenv("REPO_SANDBOX_IMAGE"),
 			ConfigDirImage:      os.Getenv("CONFIG_DIR_IMAGE"),
+			InstallationName:    os.Getenv("INSTALLATION_NAME"),
 			HTTPEnabled:         true,
 			Replicas:            1,
 			ServiceAccountName:  "issue-sandbox",
@@ -640,6 +641,20 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 	// Not setting event sets it as a draft
 	reviewRequest.Event = nil
 
+	if os.Getenv("ENABLE_TRACEABILITY_METADATA") == "true" {
+		metadata := github.TraceabilityMetadata{
+			Enabled:          true,
+			Sandbox:          sandboxName,
+			RepoWatch:        repoWatchName,
+			TaskType:         "pr-review",
+			InstallationName: os.Getenv("INSTALLATION_NAME"),
+		}
+		if reviewRequest.Body != nil {
+			body := *reviewRequest.Body + metadata.FormatHTMLComment()
+			reviewRequest.Body = &body
+		}
+	}
+
 	fmt.Printf("Creating review on GitHub for %s/%s PR %d...\n", owner, repoName, prNumber)
 	review, _, err := client.PullRequests.CreateReview(ctx, owner, repoName, prNumber, reviewRequest)
 	if err != nil {
@@ -715,6 +730,7 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 			Image:                 repoWatch.Spec.Issue.Image,
 			RepoSandboxImage:      os.Getenv("REPO_SANDBOX_IMAGE"),
 			ConfigDirImage:        os.Getenv("CONFIG_DIR_IMAGE"),
+			InstallationName:      os.Getenv("INSTALLATION_NAME"),
 			HTTPEnabled:           true,
 			Replicas:              1,
 			ServiceAccountName:    "issue-sandbox",
@@ -774,6 +790,7 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 			Image:                 repoWatch.Spec.Review.Image,
 			RepoSandboxImage:      os.Getenv("REPO_SANDBOX_IMAGE"),
 			ConfigDirImage:        os.Getenv("CONFIG_DIR_IMAGE"),
+			InstallationName:      os.Getenv("INSTALLATION_NAME"),
 			HTTPEnabled:           true,
 			Replicas:              1,
 			ServiceAccountName:    "review-sandbox",

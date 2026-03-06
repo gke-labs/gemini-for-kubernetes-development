@@ -337,8 +337,12 @@ type RepoWatchSpec struct {
 	// +kubebuilder:validation:Required
 	RepoURL string `json:"repoURL"`
 
+	// InstallationName is the name of the installation (cluster name).
+	// +optional
+	InstallationName string `json:"installationName,omitempty"`
+
 	// Review configuration for PRs
-	// +kubebuilder:validation:Optional
+	// +optional
 	Review PRReviewSpec `json:"review,omitempty"`
 
 	// Issue configuration for Bugs

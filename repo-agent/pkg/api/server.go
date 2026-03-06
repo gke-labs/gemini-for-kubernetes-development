@@ -15,18 +15,20 @@ import (
 )
 
 type Server struct {
-	K8sManager      *k8s.Manager
-	Auth            *auth.Authenticator
-	Templates       *templates.Manager
-	MetadataEnabled bool
+	K8sManager       *k8s.Manager
+	Auth             *auth.Authenticator
+	Templates        *templates.Manager
+	MetadataEnabled  bool
+	InstallationName string
 }
 
 func NewServer(manager *k8s.Manager, authenticator *auth.Authenticator) *Server {
 	return &Server{
-		K8sManager:      manager,
-		Auth:            authenticator,
-		Templates:       templates.NewManager(manager.Clientset),
-		MetadataEnabled: os.Getenv("ENABLE_TRACEABILITY_METADATA") == "true",
+		K8sManager:       manager,
+		Auth:             authenticator,
+		Templates:        templates.NewManager(manager.Clientset),
+		MetadataEnabled:  os.Getenv("ENABLE_TRACEABILITY_METADATA") == "true",
+		InstallationName: os.Getenv("INSTALLATION_NAME"),
 	}
 }
 

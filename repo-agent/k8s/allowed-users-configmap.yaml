@@ -6,3 +6,4 @@ metadata:
 data:
   GITHUB_ALLOWED_USERS: ""
   GITHUB_ADMIN_USERS: ""
+  INSTALLATION_NAME: "will-be-replaced-during-deploy"

@@ -176,6 +176,9 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX=%s", tr.sandboxName))
 		cmd.Env = append(cmd.Env, fmt.Sprintf("REPOWATCH=%s", repoWatchName))
 		cmd.Env = append(cmd.Env, fmt.Sprintf("TASK_TYPE=%s", taskType))
+		if os.Getenv("INSTALLATION_NAME") != "" {
+			cmd.Env = append(cmd.Env, fmt.Sprintf("INSTALLATION_NAME=%s", os.Getenv("INSTALLATION_NAME")))
+		}
 		if os.Getenv("ENABLE_TRACEABILITY_METADATA") == "true" {
 			cmd.Env = append(cmd.Env, "ENABLE_TRACEABILITY_METADATA=true")
 		}
@@ -194,6 +197,9 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX=%s", tr.sandboxName))
 		cmd.Env = append(cmd.Env, fmt.Sprintf("REPOWATCH=%s", repoWatchName))
 		cmd.Env = append(cmd.Env, fmt.Sprintf("TASK_TYPE=%s", taskType))
+		if os.Getenv("INSTALLATION_NAME") != "" {
+			cmd.Env = append(cmd.Env, fmt.Sprintf("INSTALLATION_NAME=%s", os.Getenv("INSTALLATION_NAME")))
+		}
 		if os.Getenv("ENABLE_TRACEABILITY_METADATA") == "true" {
 			cmd.Env = append(cmd.Env, "ENABLE_TRACEABILITY_METADATA=true")
 		}
@@ -203,6 +209,9 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX=%s", tr.sandboxName))
 		cmd.Env = append(cmd.Env, fmt.Sprintf("REPOWATCH=%s", repoWatchName))
 		cmd.Env = append(cmd.Env, fmt.Sprintf("TASK_TYPE=%s", taskType))
+		if os.Getenv("INSTALLATION_NAME") != "" {
+			cmd.Env = append(cmd.Env, fmt.Sprintf("INSTALLATION_NAME=%s", os.Getenv("INSTALLATION_NAME")))
+		}
 		if os.Getenv("ENABLE_TRACEABILITY_METADATA") == "true" {
 			cmd.Env = append(cmd.Env, "ENABLE_TRACEABILITY_METADATA=true")
 		}
@@ -221,6 +230,9 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX=%s", tr.sandboxName))
 		cmd.Env = append(cmd.Env, fmt.Sprintf("REPOWATCH=%s", repoWatchName))
 		cmd.Env = append(cmd.Env, fmt.Sprintf("TASK_TYPE=%s", taskType))
+		if os.Getenv("INSTALLATION_NAME") != "" {
+			cmd.Env = append(cmd.Env, fmt.Sprintf("INSTALLATION_NAME=%s", os.Getenv("INSTALLATION_NAME")))
+		}
 		if os.Getenv("ENABLE_TRACEABILITY_METADATA") == "true" {
 			cmd.Env = append(cmd.Env, "ENABLE_TRACEABILITY_METADATA=true")
 		}
@@ -239,6 +251,9 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX=%s", tr.sandboxName))
 		cmd.Env = append(cmd.Env, fmt.Sprintf("REPOWATCH=%s", repoWatchName))
 		cmd.Env = append(cmd.Env, fmt.Sprintf("TASK_TYPE=%s", taskType))
+		if os.Getenv("INSTALLATION_NAME") != "" {
+			cmd.Env = append(cmd.Env, fmt.Sprintf("INSTALLATION_NAME=%s", os.Getenv("INSTALLATION_NAME")))
+		}
 		if os.Getenv("ENABLE_TRACEABILITY_METADATA") == "true" {
 			cmd.Env = append(cmd.Env, "ENABLE_TRACEABILITY_METADATA=true")
 		}
@@ -257,6 +272,9 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX=%s", tr.sandboxName))
 		cmd.Env = append(cmd.Env, fmt.Sprintf("REPOWATCH=%s", repoWatchName))
 		cmd.Env = append(cmd.Env, fmt.Sprintf("TASK_TYPE=%s", taskType))
+		if os.Getenv("INSTALLATION_NAME") != "" {
+			cmd.Env = append(cmd.Env, fmt.Sprintf("INSTALLATION_NAME=%s", os.Getenv("INSTALLATION_NAME")))
+		}
 		if os.Getenv("ENABLE_TRACEABILITY_METADATA") == "true" {
 			cmd.Env = append(cmd.Env, "ENABLE_TRACEABILITY_METADATA=true")
 		}
@@ -275,6 +293,9 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX=%s", tr.sandboxName))
 		cmd.Env = append(cmd.Env, fmt.Sprintf("REPOWATCH=%s", repoWatchName))
 		cmd.Env = append(cmd.Env, fmt.Sprintf("TASK_TYPE=%s", taskType))
+		if os.Getenv("INSTALLATION_NAME") != "" {
+			cmd.Env = append(cmd.Env, fmt.Sprintf("INSTALLATION_NAME=%s", os.Getenv("INSTALLATION_NAME")))
+		}
 		if os.Getenv("ENABLE_TRACEABILITY_METADATA") == "true" {
 			cmd.Env = append(cmd.Env, "ENABLE_TRACEABILITY_METADATA=true")
 		}
@@ -293,6 +314,9 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX=%s", tr.sandboxName))
 		cmd.Env = append(cmd.Env, fmt.Sprintf("REPOWATCH=%s", repoWatchName))
 		cmd.Env = append(cmd.Env, fmt.Sprintf("TASK_TYPE=%s", taskType))
+		if os.Getenv("INSTALLATION_NAME") != "" {
+			cmd.Env = append(cmd.Env, fmt.Sprintf("INSTALLATION_NAME=%s", os.Getenv("INSTALLATION_NAME")))
+		}
 		if os.Getenv("ENABLE_TRACEABILITY_METADATA") == "true" {
 			cmd.Env = append(cmd.Env, "ENABLE_TRACEABILITY_METADATA=true")
 		}
@@ -311,6 +335,9 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX=%s", tr.sandboxName))
 		cmd.Env = append(cmd.Env, fmt.Sprintf("REPOWATCH=%s", repoWatchName))
 		cmd.Env = append(cmd.Env, fmt.Sprintf("TASK_TYPE=%s", taskType))
+		if os.Getenv("INSTALLATION_NAME") != "" {
+			cmd.Env = append(cmd.Env, fmt.Sprintf("INSTALLATION_NAME=%s", os.Getenv("INSTALLATION_NAME")))
+		}
 		if os.Getenv("ENABLE_TRACEABILITY_METADATA") == "true" {
 			cmd.Env = append(cmd.Env, "ENABLE_TRACEABILITY_METADATA=true")
 		}
@@ -329,6 +356,9 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX=%s", tr.sandboxName))
 		cmd.Env = append(cmd.Env, fmt.Sprintf("REPOWATCH=%s", repoWatchName))
 		cmd.Env = append(cmd.Env, fmt.Sprintf("TASK_TYPE=%s", taskType))
+		if os.Getenv("INSTALLATION_NAME") != "" {
+			cmd.Env = append(cmd.Env, fmt.Sprintf("INSTALLATION_NAME=%s", os.Getenv("INSTALLATION_NAME")))
+		}
 		if os.Getenv("ENABLE_TRACEABILITY_METADATA") == "true" {
 			cmd.Env = append(cmd.Env, "ENABLE_TRACEABILITY_METADATA=true")
 		}
@@ -350,6 +380,9 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX=%s", tr.sandboxName))
 		cmd.Env = append(cmd.Env, fmt.Sprintf("REPOWATCH=%s", repoWatchName))
 		cmd.Env = append(cmd.Env, fmt.Sprintf("TASK_TYPE=%s", taskType))
+		if os.Getenv("INSTALLATION_NAME") != "" {
+			cmd.Env = append(cmd.Env, fmt.Sprintf("INSTALLATION_NAME=%s", os.Getenv("INSTALLATION_NAME")))
+		}
 		if os.Getenv("ENABLE_TRACEABILITY_METADATA") == "true" {
 			cmd.Env = append(cmd.Env, "ENABLE_TRACEABILITY_METADATA=true")
 		}
