@@ -119,7 +119,11 @@ function checkForExistingPR {
 function checkoutNewBranch {
     echo "Running checkoutNewBranch..."
     echo "creating new branch"
-    (cd "/workspaces/${REPO_NAME}" && git checkout -b "issue_${ISSUE_NUMBER}")
+    local branch_name="issue-${ISSUE_NUMBER}"
+    {{- if .Branch }}
+    branch_name="{{ .Branch }}"
+    {{- end }}
+    (cd "/workspaces/${REPO_NAME}" && git checkout -B "$branch_name")
 }
 
 function configureGemini {
