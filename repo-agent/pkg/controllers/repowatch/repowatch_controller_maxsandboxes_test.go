@@ -34,6 +34,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	clientfake "sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -46,6 +47,7 @@ func TestReconcileReviewSandboxes_MaxSandboxes(t *testing.T) {
 	s := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(s)
 	_ = reviewv1alpha1.AddToScheme(s)
+	_ = sandboxv1alpha1.AddToScheme(s)
 
 	repoURL := "https://github.com/test/repo"
 
@@ -71,8 +73,8 @@ func TestReconcileReviewSandboxes_MaxSandboxes(t *testing.T) {
 	// 1. Existing Active Sandbox (PR 1)
 	activeSandbox := &unstructured.Unstructured{
 		Object: map[string]interface{}{
-			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
-			"kind":       "ReviewSandbox",
+			"apiVersion": "agents.x-k8s.io/v1alpha1",
+			"kind":       "Sandbox",
 			"metadata": map[string]interface{}{
 				"name":      "test-repowatch-pr-1",
 				"namespace": "default",
@@ -94,8 +96,8 @@ func TestReconcileReviewSandboxes_MaxSandboxes(t *testing.T) {
 	// 2. Existing Inactive Sandbox (PR 2) - scaled down
 	inactiveSandbox := &unstructured.Unstructured{
 		Object: map[string]interface{}{
-			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
-			"kind":       "ReviewSandbox",
+			"apiVersion": "agents.x-k8s.io/v1alpha1",
+			"kind":       "Sandbox",
 			"metadata": map[string]interface{}{
 				"name":      "test-repowatch-pr-2",
 				"namespace": "default",
@@ -150,9 +152,9 @@ func TestReconcileReviewSandboxes_MaxSandboxes(t *testing.T) {
 	// Verify results
 	sandboxList := &unstructured.UnstructuredList{}
 	sandboxList.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   "custom.agents.x-k8s.io",
+		Group:   "agents.x-k8s.io",
 		Version: "v1alpha1",
-		Kind:    "ReviewSandbox",
+		Kind:    "Sandbox",
 	})
 	g.Expect(r.Client.List(context.Background(), sandboxList)).To(gomega.Succeed())
 	g.Expect(sandboxList.Items).To(gomega.HaveLen(2)) // Should still be 2
@@ -173,6 +175,7 @@ func TestReconcileIssueHandlerSandboxes_MaxSandboxes(t *testing.T) {
 	s := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(s)
 	_ = reviewv1alpha1.AddToScheme(s)
+	_ = sandboxv1alpha1.AddToScheme(s)
 
 	repoURL := "https://github.com/test/repo"
 	handlerName := "testhandler"
@@ -204,10 +207,10 @@ func TestReconcileIssueHandlerSandboxes_MaxSandboxes(t *testing.T) {
 	// 1. Existing Active Sandbox (Issue 1)
 	activeSandbox := &unstructured.Unstructured{
 		Object: map[string]interface{}{
-			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
-			"kind":       "IssueSandbox",
+			"apiVersion": "agents.x-k8s.io/v1alpha1",
+			"kind":       "Sandbox",
 			"metadata": map[string]interface{}{
-				"name":      "test-repowatch-issue-1",
+				"name":      "devc-test-repowatch-issue-1",
 				"namespace": "default",
 				"labels": map[string]interface{}{
 					"sandbox.gemini.google.com/type": "issue",
@@ -230,10 +233,10 @@ func TestReconcileIssueHandlerSandboxes_MaxSandboxes(t *testing.T) {
 	// 2. Existing Inactive Sandbox (Issue 2)
 	inactiveSandbox := &unstructured.Unstructured{
 		Object: map[string]interface{}{
-			"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
-			"kind":       "IssueSandbox",
+			"apiVersion": "agents.x-k8s.io/v1alpha1",
+			"kind":       "Sandbox",
 			"metadata": map[string]interface{}{
-				"name":      "test-repowatch-issue-2",
+				"name":      "devc-test-repowatch-issue-2",
 				"namespace": "default",
 				"labels": map[string]interface{}{
 					"sandbox.gemini.google.com/type": "issue",
@@ -312,9 +315,9 @@ func TestReconcileIssueHandlerSandboxes_MaxSandboxes(t *testing.T) {
 
 	sandboxList := &unstructured.UnstructuredList{}
 	sandboxList.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   "custom.agents.x-k8s.io",
+		Group:   "agents.x-k8s.io",
 		Version: "v1alpha1",
-		Kind:    "IssueSandbox",
+		Kind:    "Sandbox",
 	})
 	g.Expect(r.Client.List(context.Background(), sandboxList)).To(gomega.Succeed())
 	g.Expect(sandboxList.Items).To(gomega.HaveLen(2)) // MaxSandboxes = 2, so Issue 3 should not have a sandbox
@@ -334,6 +337,7 @@ func TestReconcileDevSandboxes_MaxSandboxes(t *testing.T) {
 	s := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(s)
 	_ = reviewv1alpha1.AddToScheme(s)
+	_ = sandboxv1alpha1.AddToScheme(s)
 
 	repoWatch := &reviewv1alpha1.RepoWatch{
 		ObjectMeta: metav1.ObjectMeta{

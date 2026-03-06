@@ -123,8 +123,15 @@ func main() {
 			continue
 		}
 
-		if u.GetKind() != "ReviewSandbox" {
+		if u.GetKind() != "ReviewSandbox" && u.GetKind() != "Sandbox" {
 			continue
+		}
+
+		if u.GetKind() == "Sandbox" {
+			labels := u.GetLabels()
+			if labels["sandbox-type"] != "review" {
+				continue
+			}
 		}
 
 		// Extract Agent Draft
@@ -142,12 +149,19 @@ func main() {
 		}
 
 		// Extract PR Info
+		var prURL string
 		spec, _, _ := unstructured.NestedMap(u.Object, "spec")
 		source, _, _ := unstructured.NestedMap(spec, "source")
-		prURL, _, _ := unstructured.NestedString(source, "htmlURL")
+		if source != nil {
+			prURL, _, _ = unstructured.NestedString(source, "htmlURL")
+		}
+		if prURL == "" {
+			// Fallback to annotations
+			prURL = annotations["htmlURL"]
+		}
 
 		if prURL == "" {
-			klog.Infof("No htmlURL in source spec for %s", attrs.Name)
+			klog.Infof("No htmlURL found in %s", attrs.Name)
 			continue
 		}
 

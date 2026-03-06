@@ -35,6 +35,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	clientfake "sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -47,6 +48,7 @@ func TestReconciler_ReconcileIssues_PodEvicted(t *testing.T) {
 	_ = clientgoscheme.AddToScheme(s)
 	_ = reviewv1alpha1.AddToScheme(s)
 	_ = sandboxtaskv1alpha1.AddToScheme(s)
+	_ = sandboxv1alpha1.AddToScheme(s)
 
 	// Setup Mock GitHub
 	mockHTTPClient := &http.Client{
@@ -166,6 +168,7 @@ func TestReconciler_ReconcileIssues_PodFailedOOM(t *testing.T) {
 	_ = clientgoscheme.AddToScheme(s)
 	_ = reviewv1alpha1.AddToScheme(s)
 	_ = sandboxtaskv1alpha1.AddToScheme(s)
+	_ = sandboxv1alpha1.AddToScheme(s)
 
 	// Setup Mock GitHub
 	mockHTTPClient := &http.Client{
@@ -285,6 +288,7 @@ func TestReconciler_ReconcileIssues_PodPendingScheduled(t *testing.T) {
 	_ = clientgoscheme.AddToScheme(s)
 	_ = reviewv1alpha1.AddToScheme(s)
 	_ = sandboxtaskv1alpha1.AddToScheme(s)
+	_ = sandboxv1alpha1.AddToScheme(s)
 
 	// Setup Mock GitHub
 	mockHTTPClient := &http.Client{

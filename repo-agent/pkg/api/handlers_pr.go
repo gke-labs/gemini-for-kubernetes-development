@@ -200,7 +200,7 @@ func (s *Server) saveDraft(c *gin.Context) {
 	}
 
 	sandboxName := fmt.Sprintf("%s-pr-%s", repo, prID)
-	err := s.K8sManager.UpdateReviewSandboxUserDraft(c.Request.Context(), namespace, sandboxName, payload.Draft)
+	err := s.K8sManager.UpdateSandboxUserDraft(c.Request.Context(), namespace, sandboxName, payload.Draft)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save draft", "details": err.Error()})
 		return
@@ -278,8 +278,8 @@ func (s *Server) submitReview(c *gin.Context) {
 
 	if draft != agentDraft {
 		if sandboxName != "" {
-			if err := s.K8sManager.UpdateReviewSandboxUserDraft(ctx, namespace, sandboxName, draft); err != nil {
-				log.Info("Failed to update reviewsandbox userDraft for PR", "prID", prID, "repo", repo, "err", err)
+			if err := s.K8sManager.UpdateSandboxUserDraft(ctx, namespace, sandboxName, draft); err != nil {
+				log.Info("Failed to update sandbox userDraft for PR", "prID", prID, "repo", repo, "err", err)
 			}
 		}
 	}
@@ -341,8 +341,8 @@ func (s *Server) submitReview(c *gin.Context) {
 	}
 	log.Info("review created", "review", review)
 
-	if err := s.K8sManager.UpdateReviewSandboxAnnotation(ctx, namespace, sandboxName, "reviewState", "submitted"); err != nil {
-		log.Info("Failed to update reviewsandbox reviewState", "prID", prID, "repo", repo, "err", err)
+	if err := s.K8sManager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "reviewState", "submitted"); err != nil {
+		log.Info("Failed to update sandbox reviewState", "prID", prID, "repo", repo, "err", err)
 	}
 
 	// scale down sandbox

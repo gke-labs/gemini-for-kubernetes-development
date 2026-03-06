@@ -190,10 +190,10 @@ func (m *Manager) ScaledownSandbox(ctx context.Context, namespace, repo, prID st
 	return nil
 }
 
-func (m *Manager) UpdateReviewSandboxUserDraft(ctx context.Context, namespace, sandboxName, userDraft string) error {
+func (m *Manager) UpdateSandboxUserDraft(ctx context.Context, namespace, sandboxName, userDraft string) error {
 	sandbox, err := m.Client.Resource(SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
 	if err != nil {
-		return fmt.Errorf("failed to get reviewsandbox %s: %w", sandboxName, err)
+		return fmt.Errorf("failed to get sandbox %s: %w", sandboxName, err)
 	}
 
 	if sandbox.GetAnnotations() == nil {
@@ -205,16 +205,16 @@ func (m *Manager) UpdateReviewSandboxUserDraft(ctx context.Context, namespace, s
 
 	_, err = m.Client.Resource(SandboxGVR).Namespace(namespace).Update(context.TODO(), sandbox, v1.UpdateOptions{})
 	if err != nil {
-		return fmt.Errorf("failed to update reviewsandbox annotation: %w", err)
+		return fmt.Errorf("failed to update sandbox annotation: %w", err)
 	}
 
 	return nil
 }
 
-func (m *Manager) UpdateReviewSandboxAnnotation(ctx context.Context, namespace, sandboxName, key, value string) error {
+func (m *Manager) UpdateSandboxAnnotation(ctx context.Context, namespace, sandboxName, key, value string) error {
 	sandbox, err := m.Client.Resource(SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
 	if err != nil {
-		return fmt.Errorf("failed to get reviewsandbox %s: %w", sandboxName, err)
+		return fmt.Errorf("failed to get sandbox %s: %w", sandboxName, err)
 	}
 
 	if sandbox.GetAnnotations() == nil {
@@ -226,28 +226,7 @@ func (m *Manager) UpdateReviewSandboxAnnotation(ctx context.Context, namespace, 
 
 	_, err = m.Client.Resource(SandboxGVR).Namespace(namespace).Update(ctx, sandbox, v1.UpdateOptions{})
 	if err != nil {
-		return fmt.Errorf("failed to update reviewsandbox annotation: %w", err)
-	}
-
-	return nil
-}
-
-func (m *Manager) UpdateDevSandboxAnnotation(ctx context.Context, namespace, sandboxName, key, value string) error {
-	sandbox, err := m.Client.Resource(SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to get devsandbox %s: %w", sandboxName, err)
-	}
-
-	if sandbox.GetAnnotations() == nil {
-		sandbox.SetAnnotations(make(map[string]string))
-	}
-	annotations := sandbox.GetAnnotations()
-	annotations[key] = value
-	sandbox.SetAnnotations(annotations)
-
-	_, err = m.Client.Resource(SandboxGVR).Namespace(namespace).Update(ctx, sandbox, v1.UpdateOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to update devsandbox annotation: %w", err)
+		return fmt.Errorf("failed to update sandbox annotation: %w", err)
 	}
 
 	return nil
@@ -565,7 +544,7 @@ func (m *Manager) CreateSandboxTask(ctx context.Context, namespace, sandboxName,
 	// Determine the GVR for the sandbox owner
 	var ownerGVR schema.GroupVersionResource
 	switch sandboxKind {
-	case "Sandbox", "ReviewSandbox", "IssueSandbox":
+	case "Sandbox":
 		ownerGVR = SandboxGVR
 	default:
 		return fmt.Errorf("unknown sandbox kind: %s", sandboxKind)
