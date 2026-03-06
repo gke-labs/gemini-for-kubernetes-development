@@ -49,7 +49,7 @@ func parseRepoURL(repoURL string) (string, string, error) {
 	if len(parts) != 2 {
 		return "", "", fmt.Errorf("invalid repo url: %s", repoURL)
 	}
-	return parts[0], parts[1], nil
+	return parts[0], strings.TrimSuffix(parts[1], ".git"), nil
 }
 
 // TODO this is k8s specific. we need to generalize it later.

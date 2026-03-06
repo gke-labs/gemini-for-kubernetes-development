@@ -153,7 +153,7 @@ func parseRepoURL(repoURL string) (string, string, error) {
 	if len(parts) != 2 {
 		return "", "", fmt.Errorf("invalid repo url: %s", repoURL)
 	}
-	return parts[0], parts[1], nil
+	return parts[0], strings.TrimSuffix(parts[1], ".git"), nil
 }
 
 func NewGithubClient(ctx context.Context, k8sClient client.Client, repoWatch *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
