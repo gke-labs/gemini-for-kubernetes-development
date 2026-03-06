@@ -9,6 +9,16 @@ export CHORE_NAME="{{ .ChoreName }}"
 export CHORE_FILE="{{ .ChoreFile }}"
 export PROMPT_FILE="{{ .PromptFile }}"
 
+# Traceability metadata
+export INSTALLATION_NAME="{{ .Metadata.InstallationName }}"
+export SANDBOX_TASK="{{ .Metadata.SandboxTask }}"
+export SANDBOX_TASK_UID="{{ .Metadata.SandboxTaskUID }}"
+export SANDBOX="{{ .Metadata.Sandbox }}"
+export REPOWATCH="{{ .Metadata.RepoWatch }}"
+export TASK_TYPE="{{ .Metadata.TaskType }}"
+export METADATA_ENABLED="{{ .Metadata.Enabled }}"
+export METADATA_TIMESTAMP="{{ .Metadata.Timestamp }}"
+
 # Use environment variables if they are set, otherwise use defaults
 # These should be set in the AgentSandbox pod
 export GITHUB_USER_ID="${GITHUB_USER_ID:-${GITHUB_USER_LOGIN}}"
@@ -144,6 +154,40 @@ Only output the commit message itself.")
 ---
 ### Changes
 ${COMMIT_MSG}"
+
+        if [ "$METADATA_ENABLED" = "true" ]; then
+            PR_BODY="${PR_BODY}
+
+---
+<!-- repo-agent-metadata"
+            if [ -n "$INSTALLATION_NAME" ]; then
+                PR_BODY="${PR_BODY}
+installation-name: ${INSTALLATION_NAME}"
+            fi
+            if [ -n "$SANDBOX_TASK" ]; then
+                PR_BODY="${PR_BODY}
+sandbox-task: ${SANDBOX_TASK}"
+            fi
+            if [ -n "$SANDBOX_TASK_UID" ]; then
+                PR_BODY="${PR_BODY}
+sandbox-task-uid: ${SANDBOX_TASK_UID}"
+            fi
+            if [ -n "$SANDBOX" ]; then
+                PR_BODY="${PR_BODY}
+sandbox: ${SANDBOX}"
+            fi
+            if [ -n "$REPOWATCH" ]; then
+                PR_BODY="${PR_BODY}
+repowatch: ${REPOWATCH}"
+            fi
+            if [ -n "$TASK_TYPE" ]; then
+                PR_BODY="${PR_BODY}
+task-type: ${TASK_TYPE}"
+            fi
+            PR_BODY="${PR_BODY}
+timestamp: ${METADATA_TIMESTAMP}
+-->"
+        fi
 
         # Try to create PR
         PR_URL=$(gh pr create --title "chore: ${CHORE_NAME}" --body "${PR_BODY}" --head "${BRANCH_NAME}" --base "${BASE_BRANCH}" || true)

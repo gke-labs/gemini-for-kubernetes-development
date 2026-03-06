@@ -50,6 +50,7 @@ The following workflows have failed:
 
 ---
 <!-- repo-agent-metadata
+{{ if .Metadata.InstallationName -}}installation-name: {{ .Metadata.InstallationName }}{{ end }}
 {{ if .Metadata.SandboxTask -}}sandbox-task: {{ .Metadata.SandboxTask }}{{ end }}
 {{ if .Metadata.SandboxTaskUID -}}sandbox-task-uid: {{ .Metadata.SandboxTaskUID }}{{ end }}
 {{ if .Metadata.Sandbox -}}sandbox: {{ .Metadata.Sandbox }}{{ end }}

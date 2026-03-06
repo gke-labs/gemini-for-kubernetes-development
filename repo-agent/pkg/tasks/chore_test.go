@@ -3,6 +3,8 @@ package tasks
 import (
 	"bytes"
 	"testing"
+
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 )
 
 func TestChoreScriptTemplate(t *testing.T) {
@@ -18,6 +20,12 @@ func TestChoreScriptTemplate(t *testing.T) {
 		ChoreName:  "Test Chore",
 		ChoreFile:  ".agents/test.md",
 		PromptFile: "prompt.txt",
+		Metadata: github.TraceabilityMetadata{
+			Enabled:          true,
+			InstallationName: "test-cluster",
+			SandboxTask:      "ns/task",
+			Timestamp:        "2026-03-06T12:00:00Z",
+		},
 	}
 
 	var w bytes.Buffer
@@ -30,6 +38,16 @@ func TestChoreScriptTemplate(t *testing.T) {
 	expectedRepoName := `export REPO_NAME="test-repo"`
 	if !bytes.Contains(w.Bytes(), []byte(expectedRepoName)) {
 		t.Errorf("Script does not contain expected REPO_NAME. Got:\n%s", script)
+	}
+
+	expectedMetadata := `export INSTALLATION_NAME="test-cluster"`
+	if !bytes.Contains(w.Bytes(), []byte(expectedMetadata)) {
+		t.Errorf("Script does not contain expected metadata. Got:\n%s", script)
+	}
+
+	expectedTimestamp := `export METADATA_TIMESTAMP="2026-03-06T12:00:00Z"`
+	if !bytes.Contains(w.Bytes(), []byte(expectedTimestamp)) {
+		t.Errorf("Script does not contain expected metadata timestamp. Got:\n%s", script)
 	}
 
 	expectedCloneURL := `export CLONE_URL="https://github.com/test-owner/test-repo.git"`

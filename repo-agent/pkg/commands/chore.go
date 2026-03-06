@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks"
 	"github.com/spf13/cobra"
@@ -24,6 +26,15 @@ type ChoreCommand struct {
 	RepoName     string
 	CloneURL     string
 	RepoOwner    string
+
+	// Traceability metadata
+	TraceSandboxTask      string
+	TraceSandboxTaskUID   string
+	TraceSandbox          string
+	TraceRepoWatch        string
+	TraceTaskType         string
+	TraceInstallationName string
+	MetadataEnabled       bool
 
 	// loaded objects
 	sandbox   *sandbox.IssueSandbox
@@ -51,8 +62,19 @@ func BuildChoreCommand() *cobra.Command {
 	cmd.Flags().StringVar(&choreCommand.CloneURL, "clone-url", os.Getenv("CLONE_URL"), "Repository clone URL")
 	cmd.Flags().StringVar(&choreCommand.RepoOwner, "repo-owner", os.Getenv("REPO_OWNER"), "Repository owner")
 	cmd.Flags().BoolVar(&choreCommand.InPod, "in-pod", false, "Whether running inside the pod")
+
+	// Traceability metadata flags
+	cmd.Flags().StringVar(&choreCommand.TraceSandboxTask, "sandbox-task", os.Getenv("SANDBOX_TASK"), "Sandbox task name (namespace/name)")
+	cmd.Flags().StringVar(&choreCommand.TraceSandboxTaskUID, "sandbox-task-uid", os.Getenv("SANDBOX_TASK_UID"), "Sandbox task UID")
+	cmd.Flags().StringVar(&choreCommand.TraceSandbox, "trace-sandbox", os.Getenv("SANDBOX"), "Sandbox name for traceability")
+	cmd.Flags().StringVar(&choreCommand.TraceRepoWatch, "repowatch", os.Getenv("REPOWATCH"), "RepoWatch name")
+	cmd.Flags().StringVar(&choreCommand.TraceTaskType, "task-type", os.Getenv("TASK_TYPE"), "Task type")
+	cmd.Flags().StringVar(&choreCommand.TraceInstallationName, "installation-name", os.Getenv("INSTALLATION_NAME"), "Installation name for traceability")
+	cmd.Flags().BoolVar(&choreCommand.MetadataEnabled, "enable-traceability-metadata", os.Getenv("ENABLE_TRACEABILITY_METADATA") == "true", "Enable traceability metadata in GitHub artifacts")
+
 	return cmd
 }
+
 
 func (c *ChoreCommand) InitDefaults() {
 	if c.WorkspaceDir == "" {
@@ -104,6 +126,16 @@ func (c *ChoreCommand) Run(ctx context.Context) error {
 		CloneURL:    c.CloneURL,
 		RepoOwner:   c.RepoOwner,
 		PromptFile:  promptPath,
+		Metadata: github.TraceabilityMetadata{
+			Enabled:          c.MetadataEnabled,
+			SandboxTask:      c.TraceSandboxTask,
+			SandboxTaskUID:   c.TraceSandboxTaskUID,
+			Sandbox:          c.TraceSandbox,
+			RepoWatch:        c.TraceRepoWatch,
+			TaskType:         c.TraceTaskType,
+			InstallationName: c.TraceInstallationName,
+			Timestamp:        time.Now().UTC().Format(time.RFC3339),
+		},
 	}
 
 	apikey, err := GetGeminiAPIKey(c.sandboxID)
