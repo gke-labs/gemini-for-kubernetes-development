@@ -14,6 +14,14 @@ export GITHUB_USER_EMAIL={{ .User.Email }}
 export GITHUB_USER_NAME="{{ .User.Name }}"
 export PR_NUMBER={{ .PullRequest.Number }}
 
+# Traceability metadata
+export SANDBOX_TASK="{{ .Metadata.SandboxTask }}"
+export SANDBOX_TASK_UID="{{ .Metadata.SandboxTaskUID }}"
+export SANDBOX="{{ .Metadata.Sandbox }}"
+export REPOWATCH="{{ .Metadata.RepoWatch }}"
+export TASK_TYPE="{{ .Metadata.TaskType }}"
+export METADATA_ENABLED="{{ .Metadata.Enabled }}"
+
 function setupGit {
     echo "Running setupGit..."
     echo "creating /root/.config/gh directory"

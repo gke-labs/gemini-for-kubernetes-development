@@ -7,8 +7,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
-	"github.com/google/go-github/v39/github"
+	githubv39 "github.com/google/go-github/v39/github"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
 )
@@ -56,13 +57,22 @@ func (s *Server) submitFeedback(c *gin.Context) {
 	repo := "gemini-for-kubernetes-development"
 	title := fmt.Sprintf("[repo-agent] %s", payload.Title)
 	body := fmt.Sprintf("User: %s\n\n%s", namespace, payload.Text)
+
+	if s.MetadataEnabled {
+		metadata := github.TraceabilityMetadata{
+			Enabled:  true,
+			TaskType: "feedback",
+		}
+		body += metadata.FormatHTMLComment()
+	}
+
 	labels := []string{"feedback"}
 
 	if payload.Image != "" {
 		body += "\n\n[Screenshot attached in request but ignored due to missing image host configuration]"
 	}
 
-	req := &github.IssueRequest{
+	req := &githubv39.IssueRequest{
 		Title:  &title,
 		Body:   &body,
 		Labels: &labels,

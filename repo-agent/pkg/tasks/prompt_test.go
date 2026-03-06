@@ -36,6 +36,16 @@ type MockExtension struct {
 	Ref    string
 }
 
+type MockMetadata struct {
+	Enabled        bool
+	SandboxTask    string
+	SandboxTaskUID string
+	Sandbox        string
+	RepoWatch      string
+	TaskType       string
+	Timestamp      string
+}
+
 type MockModel struct {
 	Issue         MockIssue
 	Repo          MockRepo
@@ -44,6 +54,7 @@ type MockModel struct {
 	User          MockUser
 	PromptFile    string
 	Extensions    []MockExtension
+	Metadata      MockMetadata
 }
 
 func TestFixIssuePromptTemplate(t *testing.T) {

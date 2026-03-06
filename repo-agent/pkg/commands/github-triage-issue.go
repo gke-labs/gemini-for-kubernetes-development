@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
@@ -27,6 +28,14 @@ type GithubTriageIssueCommand struct {
 	Model           string
 	GithubUserToken string
 	ExtensionsJSON  string
+
+	// Traceability metadata
+	TraceSandboxTask    string
+	TraceSandboxTaskUID string
+	TraceSandbox        string
+	TraceRepoWatch      string
+	TraceTaskType       string
+	MetadataEnabled     bool
 
 	// loaded objects
 	issue *github.Issue
@@ -61,6 +70,15 @@ func BuildGithubTriageIssueCommand() *cobra.Command {
 	cmd.Flags().StringVar(&triageCommand.Model, "model", os.Getenv("MODEL"), "Model to use")
 	cmd.Flags().StringVar(&triageCommand.ExtensionsJSON, "extensions", os.Getenv("AGENT_LLM_EXTENSIONS"), "Extensions JSON")
 	cmd.Flags().BoolVar(&triageCommand.InPod, "in-pod", false, "Whether running inside the pod")
+
+	// Traceability metadata flags
+	cmd.Flags().StringVar(&triageCommand.TraceSandboxTask, "sandbox-task", os.Getenv("SANDBOX_TASK"), "Sandbox task name (namespace/name)")
+	cmd.Flags().StringVar(&triageCommand.TraceSandboxTaskUID, "sandbox-task-uid", os.Getenv("SANDBOX_TASK_UID"), "Sandbox task UID")
+	cmd.Flags().StringVar(&triageCommand.TraceSandbox, "trace-sandbox", os.Getenv("SANDBOX"), "Sandbox name for traceability")
+	cmd.Flags().StringVar(&triageCommand.TraceRepoWatch, "repowatch", os.Getenv("REPOWATCH"), "RepoWatch name")
+	cmd.Flags().StringVar(&triageCommand.TraceTaskType, "task-type", os.Getenv("TASK_TYPE"), "Task type")
+	cmd.Flags().BoolVar(&triageCommand.MetadataEnabled, "enable-traceability-metadata", os.Getenv("ENABLE_TRACEABILITY_METADATA") == "true", "Enable traceability metadata in GitHub artifacts")
+
 	return cmd
 }
 
@@ -148,6 +166,15 @@ func (c *GithubTriageIssueCommand) Run(ctx context.Context) error {
 		PromptFile: promptPath,
 		Models:     strings.Split(c.Model, ","),
 		AgentName:  c.AgentName,
+		Metadata: github.TraceabilityMetadata{
+			Enabled:        c.MetadataEnabled,
+			SandboxTask:    c.TraceSandboxTask,
+			SandboxTaskUID: c.TraceSandboxTaskUID,
+			Sandbox:        c.TraceSandbox,
+			RepoWatch:      c.TraceRepoWatch,
+			TaskType:       c.TraceTaskType,
+			Timestamp:      time.Now().UTC().Format(time.RFC3339),
+		},
 	}
 
 	if c.ExtensionsJSON != "" {

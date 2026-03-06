@@ -7,6 +7,14 @@ set -e
 
 export PROMPT_FILE="{{ .PromptFile }}"
 
+# Traceability metadata
+export SANDBOX_TASK="{{ .Metadata.SandboxTask }}"
+export SANDBOX_TASK_UID="{{ .Metadata.SandboxTaskUID }}"
+export SANDBOX="{{ .Metadata.Sandbox }}"
+export REPOWATCH="{{ .Metadata.RepoWatch }}"
+export TASK_TYPE="{{ .Metadata.TaskType }}"
+export METADATA_ENABLED="{{ .Metadata.Enabled }}"
+
 function configureGemini {
     echo "Running configureGemini..."
     echo "creating /root/.gemini directory"

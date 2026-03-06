@@ -18,6 +18,7 @@ type TriageIssueModel struct {
 	Models        []string
 	AgentName     string
 	Extensions    []reviewv1alpha1.Extension
+	Metadata      github.TraceabilityMetadata
 }
 
 func (m *TriageIssueModel) Name() string {

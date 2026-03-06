@@ -17,6 +17,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/llm"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
 )
 
@@ -119,6 +120,18 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 	taskName := task.GetName()
 	klog.Infof("Processing task: %s", taskName)
 
+	// Fetch sandbox to get RepoWatch name
+	sandboxObj, err := tr.manager.Client.Resource(k8s.SandboxGVR).Namespace(tr.namespace).Get(ctx, tr.sandboxName, metav1.GetOptions{})
+	repoWatchName := ""
+	if err == nil {
+		labels := sandboxObj.GetLabels()
+		if labels != nil {
+			repoWatchName = labels["review.gemini.google.com/repowatch"]
+		}
+	} else {
+		klog.Warningf("Failed to get sandbox %s to find RepoWatch name: %v", tr.sandboxName, err)
+	}
+
 	// Update status to Running
 	tr.updateTaskStatus(ctx, task, "Running", "", nil)
 
@@ -157,6 +170,15 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		for k, v := range params {
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
 		}
+		// Add traceability metadata
+		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX_TASK=%s/%s", task.Namespace, task.Name))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX_TASK_UID=%s", task.UID))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX=%s", tr.sandboxName))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("REPOWATCH=%s", repoWatchName))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("TASK_TYPE=%s", taskType))
+		if os.Getenv("ENABLE_TRACEABILITY_METADATA") == "true" {
+			cmd.Env = append(cmd.Env, "ENABLE_TRACEABILITY_METADATA=true")
+		}
 
 	case "fix-issue":
 		cmd = exec.Command(sandbox.RepoSandboxBinary, "github-fix-issue", "--in-pod=true")
@@ -165,6 +187,24 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		// Inject params into env
 		for k, v := range params {
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
+		}
+		// Add traceability metadata
+		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX_TASK=%s/%s", task.Namespace, task.Name))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX_TASK_UID=%s", task.UID))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX=%s", tr.sandboxName))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("REPOWATCH=%s", repoWatchName))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("TASK_TYPE=%s", taskType))
+		if os.Getenv("ENABLE_TRACEABILITY_METADATA") == "true" {
+			cmd.Env = append(cmd.Env, "ENABLE_TRACEABILITY_METADATA=true")
+		}
+		// Add traceability metadata
+		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX_TASK=%s/%s", task.Namespace, task.Name))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX_TASK_UID=%s", task.UID))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX=%s", tr.sandboxName))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("REPOWATCH=%s", repoWatchName))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("TASK_TYPE=%s", taskType))
+		if os.Getenv("ENABLE_TRACEABILITY_METADATA") == "true" {
+			cmd.Env = append(cmd.Env, "ENABLE_TRACEABILITY_METADATA=true")
 		}
 
 	case "address-feedback":
@@ -175,6 +215,15 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		for k, v := range params {
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
 		}
+		// Add traceability metadata
+		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX_TASK=%s/%s", task.Namespace, task.Name))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX_TASK_UID=%s", task.UID))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX=%s", tr.sandboxName))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("REPOWATCH=%s", repoWatchName))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("TASK_TYPE=%s", taskType))
+		if os.Getenv("ENABLE_TRACEABILITY_METADATA") == "true" {
+			cmd.Env = append(cmd.Env, "ENABLE_TRACEABILITY_METADATA=true")
+		}
 
 	case "investigate-failures":
 		cmd = exec.Command(sandbox.RepoSandboxBinary, "github-investigate", "--in-pod=true")
@@ -183,6 +232,15 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		// Inject params into env
 		for k, v := range params {
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
+		}
+		// Add traceability metadata
+		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX_TASK=%s/%s", task.Namespace, task.Name))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX_TASK_UID=%s", task.UID))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX=%s", tr.sandboxName))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("REPOWATCH=%s", repoWatchName))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("TASK_TYPE=%s", taskType))
+		if os.Getenv("ENABLE_TRACEABILITY_METADATA") == "true" {
+			cmd.Env = append(cmd.Env, "ENABLE_TRACEABILITY_METADATA=true")
 		}
 
 	case "triage-issue":
@@ -193,6 +251,15 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		for k, v := range params {
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
 		}
+		// Add traceability metadata
+		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX_TASK=%s/%s", task.Namespace, task.Name))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX_TASK_UID=%s", task.UID))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX=%s", tr.sandboxName))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("REPOWATCH=%s", repoWatchName))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("TASK_TYPE=%s", taskType))
+		if os.Getenv("ENABLE_TRACEABILITY_METADATA") == "true" {
+			cmd.Env = append(cmd.Env, "ENABLE_TRACEABILITY_METADATA=true")
+		}
 
 	case "dev-setup":
 		cmd = exec.Command(sandbox.RepoSandboxBinary, "dev-init", "--in-pod=true")
@@ -201,6 +268,15 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		// Inject params into env
 		for k, v := range params {
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
+		}
+		// Add traceability metadata
+		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX_TASK=%s/%s", task.Namespace, task.Name))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX_TASK_UID=%s", task.UID))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX=%s", tr.sandboxName))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("REPOWATCH=%s", repoWatchName))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("TASK_TYPE=%s", taskType))
+		if os.Getenv("ENABLE_TRACEABILITY_METADATA") == "true" {
+			cmd.Env = append(cmd.Env, "ENABLE_TRACEABILITY_METADATA=true")
 		}
 
 	case "iterate":
@@ -211,6 +287,15 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		for k, v := range params {
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
 		}
+		// Add traceability metadata
+		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX_TASK=%s/%s", task.Namespace, task.Name))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX_TASK_UID=%s", task.UID))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX=%s", tr.sandboxName))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("REPOWATCH=%s", repoWatchName))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("TASK_TYPE=%s", taskType))
+		if os.Getenv("ENABLE_TRACEABILITY_METADATA") == "true" {
+			cmd.Env = append(cmd.Env, "ENABLE_TRACEABILITY_METADATA=true")
+		}
 
 	case "chore":
 		cmd = exec.Command(sandbox.RepoSandboxBinary, "chore", "--in-pod=true")
@@ -220,6 +305,15 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		for k, v := range params {
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
 		}
+		// Add traceability metadata
+		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX_TASK=%s/%s", task.Namespace, task.Name))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX_TASK_UID=%s", task.UID))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX=%s", tr.sandboxName))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("REPOWATCH=%s", repoWatchName))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("TASK_TYPE=%s", taskType))
+		if os.Getenv("ENABLE_TRACEABILITY_METADATA") == "true" {
+			cmd.Env = append(cmd.Env, "ENABLE_TRACEABILITY_METADATA=true")
+		}
 
 	case "rollback":
 		cmd = exec.Command(sandbox.RepoSandboxBinary, "rollback", "--in-pod=true")
@@ -228,6 +322,15 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		// Inject params into env
 		for k, v := range params {
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
+		}
+		// Add traceability metadata
+		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX_TASK=%s/%s", task.Namespace, task.Name))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX_TASK_UID=%s", task.UID))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX=%s", tr.sandboxName))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("REPOWATCH=%s", repoWatchName))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("TASK_TYPE=%s", taskType))
+		if os.Getenv("ENABLE_TRACEABILITY_METADATA") == "true" {
+			cmd.Env = append(cmd.Env, "ENABLE_TRACEABILITY_METADATA=true")
 		}
 
 	case "issue":
@@ -240,6 +343,15 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		// Inject params into env
 		for k, v := range params {
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
+		}
+		// Add traceability metadata
+		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX_TASK=%s/%s", task.Namespace, task.Name))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX_TASK_UID=%s", task.UID))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX=%s", tr.sandboxName))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("REPOWATCH=%s", repoWatchName))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("TASK_TYPE=%s", taskType))
+		if os.Getenv("ENABLE_TRACEABILITY_METADATA") == "true" {
+			cmd.Env = append(cmd.Env, "ENABLE_TRACEABILITY_METADATA=true")
 		}
 
 	// TODO (barney-s): Pending decision: Should we support script tasks ?

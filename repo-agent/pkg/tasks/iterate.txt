@@ -12,3 +12,16 @@ Guidelines:
 5. **Cleaning up:** If you run build commands (like `make`, `go build`, `go test`), ensure you clean up any generated binaries or artifacts before committing. Use `make clean` if available, or manually remove them.
 6. Do not delete files unless explicitly asked.
 7. If the request is vague, make a reasonable attempt to fulfill it based on common practices.
+{{ if .Metadata.Enabled -}}
+8. You MUST include the following metadata footer at the VERY end of your GitHub responses (bodies) if you create any. This should be formatted exactly as shown, including the horizontal rule and the HTML comment:
+
+---
+<!-- repo-agent-metadata
+{{ if .Metadata.SandboxTask -}}sandbox-task: {{ .Metadata.SandboxTask }}{{ end }}
+{{ if .Metadata.SandboxTaskUID -}}sandbox-task-uid: {{ .Metadata.SandboxTaskUID }}{{ end }}
+{{ if .Metadata.Sandbox -}}sandbox: {{ .Metadata.Sandbox }}{{ end }}
+{{ if .Metadata.RepoWatch -}}repowatch: {{ .Metadata.RepoWatch }}{{ end }}
+{{ if .Metadata.TaskType -}}task-type: {{ .Metadata.TaskType }}{{ end }}
+timestamp: {{ .Metadata.Timestamp }}
+-->
+{{- end }}

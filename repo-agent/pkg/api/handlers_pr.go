@@ -14,8 +14,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
-	"github.com/google/go-github/v39/github"
+	githubv39 "github.com/google/go-github/v39/github"
 	yaml "go.yaml.in/yaml/v3"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -319,13 +320,33 @@ func (s *Server) submitReview(c *gin.Context) {
 
 	// Try Unmarshalling the yaml review payload into PullRequestReviewRequest
 	agentOutput := &models.ReviewAgentOutput{}
-	reviewRequest := &github.PullRequestReviewRequest{}
+	reviewRequest := &githubv39.PullRequestReviewRequest{}
 	err = yaml.Unmarshal([]byte(payload.Review), &agentOutput)
 	if err != nil {
 		log.Info("Failed to unmarshal review payload", "err", err)
-		reviewRequest.Body = github.String(payload.Review)
+		body := payload.Review
+		if s.MetadataEnabled {
+			metadata := github.TraceabilityMetadata{
+				Enabled:   true,
+				Sandbox:   sandboxName,
+				RepoWatch: repo,
+				TaskType:  "pr-review",
+			}
+			body += metadata.FormatHTMLComment()
+		}
+		reviewRequest.Body = githubv39.String(body)
 	} else {
 		reviewRequest = agentOutput.Review.ToGitHubReviewRequest()
+		if s.MetadataEnabled && reviewRequest.Body != nil {
+			metadata := github.TraceabilityMetadata{
+				Enabled:   true,
+				Sandbox:   sandboxName,
+				RepoWatch: repo,
+				TaskType:  "pr-review",
+			}
+			body := *reviewRequest.Body + metadata.FormatHTMLComment()
+			reviewRequest.Body = &body
+		}
 	}
 
 	// Not setting event sets it as a draft

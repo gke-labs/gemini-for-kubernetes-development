@@ -14,8 +14,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
-	"github.com/google/go-github/v39/github"
+	githubv39 "github.com/google/go-github/v39/github"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -314,7 +315,18 @@ func (s *Server) submitIssueComment(c *gin.Context) {
 		return
 	}
 
-	comment := &github.IssueComment{Body: &payload.Comment}
+	body := payload.Comment
+	if s.MetadataEnabled {
+		metadata := github.TraceabilityMetadata{
+			Enabled:   true,
+			Sandbox:   sandboxName,
+			RepoWatch: repo,
+			TaskType:  "issue-comment",
+		}
+		body += metadata.FormatHTMLComment()
+	}
+
+	comment := &githubv39.IssueComment{Body: &body}
 	_, _, err = client.Issues.CreateComment(ctx, owner, repoName, issueNumber, comment)
 	if err != nil {
 		log.Info("Failed to create comment on Issue", "issueNumber", issueNumber, "err", err)
@@ -593,7 +605,7 @@ func (s *Server) getIssueCommits(c *gin.Context) {
 		return
 	}
 
-	commits, _, err := client.Repositories.ListCommits(c.Request.Context(), originUser, repoName, &github.CommitsListOptions{
+	commits, _, err := client.Repositories.ListCommits(c.Request.Context(), originUser, repoName, &githubv39.CommitsListOptions{
 		SHA: branch,
 	})
 	if err != nil {

@@ -34,6 +34,14 @@ type GithubFeedbackCommand struct {
 	Model           string
 	ExtensionsJSON  string
 
+	// Traceability metadata
+	TraceSandboxTask    string
+	TraceSandboxTaskUID string
+	TraceSandbox        string
+	TraceRepoWatch      string
+	TraceTaskType       string
+	MetadataEnabled     bool
+
 	// loaded objects
 	issue         *github.Issue
 	repo          *github.Repository
@@ -80,6 +88,14 @@ func BuildGithubFeedbackCommand() *cobra.Command {
 	cmd.Flags().StringVar(&c.Model, "model", os.Getenv("MODEL"), "Model to use")
 	cmd.Flags().StringVar(&c.ExtensionsJSON, "extensions", os.Getenv("AGENT_LLM_EXTENSIONS"), "Extensions JSON")
 	cmd.Flags().BoolVar(&c.InPod, "in-pod", false, "Whether running inside the pod")
+
+	// Traceability metadata flags
+	cmd.Flags().StringVar(&c.TraceSandboxTask, "sandbox-task", os.Getenv("SANDBOX_TASK"), "Sandbox task name (namespace/name)")
+	cmd.Flags().StringVar(&c.TraceSandboxTaskUID, "sandbox-task-uid", os.Getenv("SANDBOX_TASK_UID"), "Sandbox task UID")
+	cmd.Flags().StringVar(&c.TraceSandbox, "trace-sandbox", os.Getenv("SANDBOX"), "Sandbox name for traceability")
+	cmd.Flags().StringVar(&c.TraceRepoWatch, "repowatch", os.Getenv("REPOWATCH"), "RepoWatch name")
+	cmd.Flags().StringVar(&c.TraceTaskType, "task-type", os.Getenv("TASK_TYPE"), "Task type")
+	cmd.Flags().BoolVar(&c.MetadataEnabled, "enable-traceability-metadata", os.Getenv("ENABLE_TRACEABILITY_METADATA") == "true", "Enable traceability metadata in GitHub artifacts")
 
 	return cmd
 }
@@ -272,6 +288,15 @@ func (c *GithubFeedbackCommand) Run(ctx context.Context) error {
 		PromptFile:            promptPath,
 		User:                  c.user,
 		Models:                strings.Split(c.Model, ","),
+		Metadata: github.TraceabilityMetadata{
+			Enabled:        c.MetadataEnabled,
+			SandboxTask:    c.TraceSandboxTask,
+			SandboxTaskUID: c.TraceSandboxTaskUID,
+			Sandbox:        c.TraceSandbox,
+			RepoWatch:      c.TraceRepoWatch,
+			TaskType:       c.TraceTaskType,
+			Timestamp:      time.Now().UTC().Format(time.RFC3339),
+		},
 	}
 
 	if c.ExtensionsJSON != "" {
