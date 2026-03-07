@@ -1,6 +1,7 @@
 keys-e2e.sh
 keys-local.sh
 keys-preview.sh
+keys-preview-std.sh
 keys-staging.sh
 bin/
 review-ui/ui/build/
