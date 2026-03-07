@@ -47,7 +47,9 @@ type flatStats struct {
 	InputTokens  int64 `json:"input_tokens"`
 	OutputTokens int64 `json:"output_tokens"`
 	Cached       int64 `json:"cached"`
+	Input        int64 `json:"input"`
 	DurationMs   int64 `json:"duration_ms"`
+	ToolCalls    int64 `json:"tool_calls"`
 }
 
 func main() {
@@ -113,33 +115,23 @@ func main() {
 				model = "gemini-cli"
 			}
 
-			// We need to use the internal structure that GeminiStatsJSON expects
+			// Use exported llm types to avoid duplication
 			stats := llm.GeminiStatsJSON{
-				Models: make(map[string]struct {
-					API struct {
-						TotalRequests  int64 `json:"totalRequests"`
-						TotalErrors    int64 `json:"totalErrors"`
-						TotalLatencyMs int64 `json:"totalLatencyMs"`
-					} `json:"api"`
-					Tokens struct {
-						Input      int64 `json:"input"`
-						Prompt     int64 `json:"prompt"`
-						Candidates int64 `json:"candidates"`
-						Total      int64 `json:"total"`
-						Cached     int64 `json:"cached"`
-						Thoughts   int64 `json:"thoughts"`
-						Tool       int64 `json:"tool"`
-					} `json:"tokens"`
-				}),
+				Models: make(map[string]llm.GeminiModelStatsJSON),
 			}
 
-			mStats := stats.Models[model]
-			mStats.API.TotalRequests = 1
-			mStats.API.TotalLatencyMs = finalStats.DurationMs
-			mStats.Tokens.Input = finalStats.InputTokens
-			mStats.Tokens.Candidates = finalStats.OutputTokens
-			mStats.Tokens.Total = finalStats.TotalTokens
-			mStats.Tokens.Cached = finalStats.Cached
+			mStats := llm.GeminiModelStatsJSON{
+				API: llm.GeminiAPIStatsJSON{
+					TotalRequests:  finalStats.ToolCalls + 1,
+					TotalLatencyMs: finalStats.DurationMs,
+				},
+				Tokens: llm.GeminiTokenStatsJSON{
+					Input:      finalStats.Input, // non-cached input
+					Candidates: finalStats.OutputTokens,
+					Total:      finalStats.TotalTokens,
+					Cached:     finalStats.Cached,
+				},
+			}
 
 			stats.Models[model] = mStats
 			output.Stats = stats

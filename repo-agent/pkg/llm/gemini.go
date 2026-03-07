@@ -186,23 +186,29 @@ type GeminiJSONOutput struct {
 	Stats     GeminiStatsJSON `json:"stats"`
 }
 
+type GeminiAPIStatsJSON struct {
+	TotalRequests  int64 `json:"totalRequests"`
+	TotalErrors    int64 `json:"totalErrors"`
+	TotalLatencyMs int64 `json:"totalLatencyMs"`
+}
+
+type GeminiTokenStatsJSON struct {
+	Input      int64 `json:"input"`
+	Prompt     int64 `json:"prompt"`
+	Candidates int64 `json:"candidates"`
+	Total      int64 `json:"total"`
+	Cached     int64 `json:"cached"`
+	Thoughts   int64 `json:"thoughts"`
+	Tool       int64 `json:"tool"`
+}
+
+type GeminiModelStatsJSON struct {
+	API    GeminiAPIStatsJSON   `json:"api"`
+	Tokens GeminiTokenStatsJSON `json:"tokens"`
+}
+
 type GeminiStatsJSON struct {
-	Models map[string]struct {
-		API struct {
-			TotalRequests  int64 `json:"totalRequests"`
-			TotalErrors    int64 `json:"totalErrors"`
-			TotalLatencyMs int64 `json:"totalLatencyMs"`
-		} `json:"api"`
-		Tokens struct {
-			Input      int64 `json:"input"`
-			Prompt     int64 `json:"prompt"`
-			Candidates int64 `json:"candidates"`
-			Total      int64 `json:"total"`
-			Cached     int64 `json:"cached"`
-			Thoughts   int64 `json:"thoughts"`
-			Tool       int64 `json:"tool"`
-		} `json:"tokens"`
-	} `json:"models"`
+	Models map[string]GeminiModelStatsJSON `json:"models"`
 }
 
 func convertGeminiStats(stats GeminiStatsJSON) *Stats {

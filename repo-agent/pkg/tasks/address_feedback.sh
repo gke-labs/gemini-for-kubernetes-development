@@ -1,5 +1,6 @@
 #!/bin/bash
 set -e
+set -o pipefail
 #set -x
 
 # It expects the following environment variables to be set:
