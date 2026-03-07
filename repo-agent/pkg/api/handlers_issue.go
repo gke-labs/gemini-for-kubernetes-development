@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
+	pkg_github "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 	"github.com/google/go-github/v39/github"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -580,57 +582,105 @@ func (s *Server) getIssueCommits(c *gin.Context) {
 		return
 	}
 
-	branch, found, _ := unstructured.NestedString(sandbox.Object, "metadata", "annotations", "sandbox.gemini.google.com/branch")
-	if !found || branch == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "No branch found for this issue"})
-		return
-	}
-
-	originUser, found, _ := unstructured.NestedString(sandbox.Object, "metadata", "annotations", "sandbox.gemini.google.com/user-login")
-	if !found || originUser == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "No origin user found for this issue"})
-		return
-	}
-
 	repoURL, found, _ := unstructured.NestedString(repoWatch.Object, "spec", "repoURL")
 	if !found {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "RepoURL not found"})
 		return
 	}
-	_, repoName, err := parseRepoURL(repoURL)
+	owner, repoName, err := parseRepoURL(repoURL)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid RepoURL"})
 		return
 	}
 
-	// Use origin annotation if available, as it points to the actual fork used by the agent
-	origin, foundOrigin, _ := unstructured.NestedString(sandbox.Object, "metadata", "annotations", "sandbox.gemini.google.com/origin")
-	if foundOrigin && origin != "" {
-		// Try to parse origin which might be github.com/owner/repo or https://github.com/owner/repo
-		u := origin
-		if !strings.Contains(u, "://") {
-			u = "https://" + u
-		}
-		if parsedURL, err := url.Parse(u); err == nil {
-			parts := strings.Split(strings.Trim(parsedURL.Path, "/"), "/")
-			if len(parts) == 2 {
-				originUser = parts[0]
-				repoName = parts[1]
+	// Try to find a linked PR
+	var linkedPR *github.PullRequest
+	prURLRegex := regexp.MustCompile(`https://github\.com/[\w-]+/[\w-]+/pull/\d+`)
+
+	// 1. Check sandbox annotations for agentDraft
+	if agentDraft, _, _ := unstructured.NestedString(sandbox.Object, "metadata", "annotations", "agentDraft"); agentDraft != "" {
+		matches := prURLRegex.FindAllString(agentDraft, -1)
+		for _, match := range matches {
+			if prRef, err := pkg_github.ParsePullRequestURL(match); err == nil {
+				if p, _, err := client.PullRequests.Get(c.Request.Context(), prRef.Repo.Owner, prRef.Repo.Name, prRef.PullRequestNumber); err == nil {
+					linkedPR = p
+					break
+				}
 			}
 		}
 	}
-	repoName = strings.TrimSuffix(repoName, ".git")
 
-	commits, resp, err := client.Repositories.ListCommits(c.Request.Context(), originUser, repoName, &github.CommitsListOptions{
-		SHA: branch,
-	})
-	if err != nil {
-		if resp != nil && resp.StatusCode == http.StatusNotFound && authUserLogin != "" && authUserLogin != originUser {
-			// Try again with the authenticated user (bot) if it's different
-			log.Info("Retrying commit list with authUserLogin", "originUser", originUser, "authUserLogin", authUserLogin)
-			commits, resp, err = client.Repositories.ListCommits(c.Request.Context(), authUserLogin, repoName, &github.CommitsListOptions{
-				SHA: branch,
-			})
+	// 2. Check SandboxTasks if not found in sandbox annotation
+	if linkedPR == nil {
+		if taskList, err := s.K8sManager.ListSandboxTasks(c.Request.Context(), namespace, sandboxName); err == nil {
+			for _, taskItem := range taskList.Items {
+				if tAgentDraft := taskItem.GetAnnotations()["agentDraft"]; tAgentDraft != "" {
+					matches := prURLRegex.FindAllString(tAgentDraft, -1)
+					for _, match := range matches {
+						if prRef, err := pkg_github.ParsePullRequestURL(match); err == nil {
+							if p, _, err := client.PullRequests.Get(c.Request.Context(), prRef.Repo.Owner, prRef.Repo.Name, prRef.PullRequestNumber); err == nil {
+								linkedPR = p
+								break
+							}
+						}
+					}
+				}
+				if linkedPR != nil {
+					break
+				}
+			}
+		}
+	}
+
+	var commits []*github.RepositoryCommit
+	var resp *github.Response
+
+	if linkedPR != nil {
+		log.Info("Found linked PR for issue, fetching PR commits", "issueID", issueID, "prNumber", linkedPR.GetNumber())
+		commits, resp, err = client.PullRequests.ListCommits(c.Request.Context(), owner, repoName, linkedPR.GetNumber(), nil)
+	} else {
+		// Fallback to branch-based logic
+		branch, found, _ := unstructured.NestedString(sandbox.Object, "metadata", "annotations", "sandbox.gemini.google.com/branch")
+		if !found || branch == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "No branch found for this issue and no linked PR found"})
+			return
+		}
+
+		originUser, found, _ := unstructured.NestedString(sandbox.Object, "metadata", "annotations", "sandbox.gemini.google.com/user-login")
+		if !found || originUser == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "No origin user found for this issue"})
+			return
+		}
+
+		// Use origin annotation if available, as it points to the actual fork used by the agent
+		origin, foundOrigin, _ := unstructured.NestedString(sandbox.Object, "metadata", "annotations", "sandbox.gemini.google.com/origin")
+		if foundOrigin && origin != "" {
+			// Try to parse origin which might be github.com/owner/repo or https://github.com/owner/repo
+			u := origin
+			if !strings.Contains(u, "://") {
+				u = "https://" + u
+			}
+			if parsedURL, err := url.Parse(u); err == nil {
+				parts := strings.Split(strings.Trim(parsedURL.Path, "/"), "/")
+				if len(parts) == 2 {
+					originUser = parts[0]
+					repoName = parts[1]
+				}
+			}
+		}
+		repoName = strings.TrimSuffix(repoName, ".git")
+
+		commits, resp, err = client.Repositories.ListCommits(c.Request.Context(), originUser, repoName, &github.CommitsListOptions{
+			SHA: branch,
+		})
+		if err != nil {
+			if resp != nil && resp.StatusCode == http.StatusNotFound && authUserLogin != "" && authUserLogin != originUser {
+				// Try again with the authenticated user (bot) if it's different
+				log.Info("Retrying commit list with authUserLogin", "originUser", originUser, "authUserLogin", authUserLogin)
+				commits, resp, err = client.Repositories.ListCommits(c.Request.Context(), authUserLogin, repoName, &github.CommitsListOptions{
+					SHA: branch,
+				})
+			}
 		}
 	}
 
@@ -639,7 +689,7 @@ func (s *Server) getIssueCommits(c *gin.Context) {
 			c.JSON(http.StatusOK, []gin.H{})
 			return
 		}
-		log.Info("Failed to list issue commits", "issueID", issueID, "branch", branch, "err", err)
+		log.Info("Failed to list issue commits", "issueID", issueID, "err", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list commits"})
 		return
 	}
