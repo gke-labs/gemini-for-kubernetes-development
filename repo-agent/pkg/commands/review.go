@@ -624,8 +624,8 @@ func uniqueStrings(input []string) []string {
 	return sets.NewString(input...).List()
 }
 
-func getExistingComments(ctx context.Context, client *github.Client, owner, repo string, prNumber int) ([]*github.PullRequestComment, error) {
-	var allComments []*github.PullRequestComment
+func getExistingComments(ctx context.Context, client *github.Client, owner, repo string, prNumber int) ([]*MinimalComment, error) {
+	var allComments []*MinimalComment
 	opts := &github.PullRequestListCommentsOptions{
 		ListOptions: github.ListOptions{PerPage: 100},
 	}
@@ -634,7 +634,15 @@ func getExistingComments(ctx context.Context, client *github.Client, owner, repo
 		if err != nil {
 			return nil, err
 		}
-		allComments = append(allComments, comments...)
+		for _, c := range comments {
+			allComments = append(allComments, &MinimalComment{
+				Path:      c.Path,
+				Body:      c.Body,
+				Line:      c.Line,
+				Side:      c.Side,
+				StartLine: c.StartLine,
+			})
+		}
 		if resp.NextPage == 0 {
 			break
 		}
@@ -643,10 +651,21 @@ func getExistingComments(ctx context.Context, client *github.Client, owner, repo
 	return allComments, nil
 }
 
+type MinimalComment struct {
+	Path      *string `yaml:"path,omitempty"`
+	Body      *string `yaml:"body,omitempty"`
+	Line      *int    `yaml:"line,omitempty"`
+	Side      *string `yaml:"side,omitempty"`
+	StartLine *int    `yaml:"start_line,omitempty"`
+}
+
 // TODO improve duplicate detection to fuzzy matching
-func isDuplicateCommentExact(newComment *models.DraftReviewComment, existingComments []*github.PullRequestComment, accumulatedComments []*models.DraftReviewComment) bool {
+func isDuplicateCommentExact(newComment *models.DraftReviewComment, existingComments []*MinimalComment, accumulatedComments []*models.DraftReviewComment) bool {
 	for _, existingComment := range existingComments {
 		if existingComment == nil {
+			continue
+		}
+		if existingComment.Path == nil || existingComment.Line == nil || existingComment.Body == nil {
 			continue
 		}
 		if *newComment.Path == *existingComment.Path &&
@@ -656,6 +675,12 @@ func isDuplicateCommentExact(newComment *models.DraftReviewComment, existingComm
 		}
 	}
 	for _, existingComment := range accumulatedComments {
+		if existingComment == nil {
+			continue
+		}
+		if existingComment.Path == nil || existingComment.Line == nil || existingComment.Body == nil {
+			continue
+		}
 		if *newComment.Path == *existingComment.Path &&
 			*newComment.Line == *existingComment.Line &&
 			*newComment.Body == *existingComment.Body {
