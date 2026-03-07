@@ -112,7 +112,7 @@ func main() {
 			if model == "" {
 				model = "gemini-cli"
 			}
-			
+
 			// We need to use the internal structure that GeminiStatsJSON expects
 			stats := llm.GeminiStatsJSON{
 				Models: make(map[string]struct {
@@ -140,7 +140,7 @@ func main() {
 			mStats.Tokens.Candidates = finalStats.OutputTokens
 			mStats.Tokens.Total = finalStats.TotalTokens
 			mStats.Tokens.Cached = finalStats.Cached
-			
+
 			stats.Models[model] = mStats
 			output.Stats = stats
 		}
