@@ -179,33 +179,39 @@ func (g *Gemini) ExpandPrompt(prompt string) (string, error) {
 	return expandCommands(prompt, ".gemini")
 }
 
-// geminiJSONOutput represents the JSON envelope from `gemini --output-format json`.
-type geminiJSONOutput struct {
+// GeminiJSONOutput represents the JSON envelope from `gemini --output-format json`.
+type GeminiJSONOutput struct {
 	SessionID string          `json:"session_id"`
 	Response  string          `json:"response"`
-	Stats     geminiStatsJSON `json:"stats"`
+	Stats     GeminiStatsJSON `json:"stats"`
 }
 
-type geminiStatsJSON struct {
-	Models map[string]struct {
-		API struct {
-			TotalRequests  int64 `json:"totalRequests"`
-			TotalErrors    int64 `json:"totalErrors"`
-			TotalLatencyMs int64 `json:"totalLatencyMs"`
-		} `json:"api"`
-		Tokens struct {
-			Input      int64 `json:"input"`
-			Prompt     int64 `json:"prompt"`
-			Candidates int64 `json:"candidates"`
-			Total      int64 `json:"total"`
-			Cached     int64 `json:"cached"`
-			Thoughts   int64 `json:"thoughts"`
-			Tool       int64 `json:"tool"`
-		} `json:"tokens"`
-	} `json:"models"`
+type GeminiAPIStatsJSON struct {
+	TotalRequests  int64 `json:"totalRequests"`
+	TotalErrors    int64 `json:"totalErrors"`
+	TotalLatencyMs int64 `json:"totalLatencyMs"`
 }
 
-func convertGeminiStats(stats geminiStatsJSON) *Stats {
+type GeminiTokenStatsJSON struct {
+	Input      int64 `json:"input"`
+	Prompt     int64 `json:"prompt"`
+	Candidates int64 `json:"candidates"`
+	Total      int64 `json:"total"`
+	Cached     int64 `json:"cached"`
+	Thoughts   int64 `json:"thoughts"`
+	Tool       int64 `json:"tool"`
+}
+
+type GeminiModelStatsJSON struct {
+	API    GeminiAPIStatsJSON   `json:"api"`
+	Tokens GeminiTokenStatsJSON `json:"tokens"`
+}
+
+type GeminiStatsJSON struct {
+	Models map[string]GeminiModelStatsJSON `json:"models"`
+}
+
+func convertGeminiStats(stats GeminiStatsJSON) *Stats {
 	if len(stats.Models) == 0 {
 		return nil
 	}
@@ -235,7 +241,7 @@ func convertGeminiStats(stats geminiStatsJSON) *Stats {
 // (when run with --output-format json) and returns the response text
 // and LLM usage stats.
 func ParseGeminiOutput(data []byte) (string, *Stats, error) {
-	var output geminiJSONOutput
+	var output GeminiJSONOutput
 	if err := json.Unmarshal(data, &output); err != nil {
 		return "", nil, fmt.Errorf("failed to parse gemini output: %w", err)
 	}
@@ -255,7 +261,7 @@ func (g *Gemini) Run(agentPrompt string) ([]byte, *Stats, error) {
 	}
 
 	// Parse the JSON envelope from gemini --output-format json
-	var envelope geminiJSONOutput
+	var envelope GeminiJSONOutput
 	// Find first '{' to skip any non-JSON prefix warnings
 	idx := bytes.IndexByte(stdout, '{')
 	if idx == -1 {

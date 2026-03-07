@@ -350,41 +350,22 @@ func (e *FailOnNthCallExecutor) Run(command string, args ...string) ([]byte, []b
 }
 
 func makeGeminiJSONOutput(response string) []byte {
-	envelope := geminiJSONOutput{
+	envelope := GeminiJSONOutput{
 		SessionID: "test-session",
 		Response:  response,
-		Stats: geminiStatsJSON{
-			Models: map[string]struct {
-				API struct {
-					TotalRequests  int64 `json:"totalRequests"`
-					TotalErrors    int64 `json:"totalErrors"`
-					TotalLatencyMs int64 `json:"totalLatencyMs"`
-				} `json:"api"`
-				Tokens struct {
-					Input      int64 `json:"input"`
-					Prompt     int64 `json:"prompt"`
-					Candidates int64 `json:"candidates"`
-					Total      int64 `json:"total"`
-					Cached     int64 `json:"cached"`
-					Thoughts   int64 `json:"thoughts"`
-					Tool       int64 `json:"tool"`
-				} `json:"tokens"`
-			}{
+		Stats: GeminiStatsJSON{
+			Models: map[string]GeminiModelStatsJSON{
 				"gemini-2.5-pro": {
-					API: struct {
-						TotalRequests  int64 `json:"totalRequests"`
-						TotalErrors    int64 `json:"totalErrors"`
-						TotalLatencyMs int64 `json:"totalLatencyMs"`
-					}{TotalRequests: 3, TotalErrors: 0, TotalLatencyMs: 5000},
-					Tokens: struct {
-						Input      int64 `json:"input"`
-						Prompt     int64 `json:"prompt"`
-						Candidates int64 `json:"candidates"`
-						Total      int64 `json:"total"`
-						Cached     int64 `json:"cached"`
-						Thoughts   int64 `json:"thoughts"`
-						Tool       int64 `json:"tool"`
-					}{Input: 100, Candidates: 50, Total: 150},
+					API: GeminiAPIStatsJSON{
+						TotalRequests:  3,
+						TotalErrors:    0,
+						TotalLatencyMs: 5000,
+					},
+					Tokens: GeminiTokenStatsJSON{
+						Input:      100,
+						Candidates: 50,
+						Total:      150,
+					},
 				},
 			},
 		},

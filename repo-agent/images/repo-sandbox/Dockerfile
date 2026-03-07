@@ -24,11 +24,14 @@ COPY overseer/ overseer/
 COPY repo-agent/pkg/ repo-agent/pkg/
 COPY repo-agent/api/ repo-agent/api/
 COPY repo-agent/cmd/repo-sandbox/ repo-agent/cmd/repo-sandbox/
+COPY repo-agent/cmd/gemini-stream-processor/ repo-agent/cmd/gemini-stream-processor/
 
 WORKDIR /app/repo-agent
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -v -o /repo-sandbox ./cmd/repo-sandbox/
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -v -o /gemini-stream-processor ./cmd/gemini-stream-processor/
 
 # Envbuilder root
 FROM ghcr.io/coder/envbuilder
 COPY --from=builder /repo-sandbox /repo-agent/repo-sandbox
+COPY --from=builder /gemini-stream-processor /usr/local/bin/gemini-stream-processor
 ENV KANIKO_DIR=/.envbuilder
