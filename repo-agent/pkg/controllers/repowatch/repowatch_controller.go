@@ -1033,7 +1033,7 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 			Image:                 repoWatch.Spec.Issue.Image,
 			RepoSandboxImage:      r.RepoSandboxImage,
 			ConfigDirImage:        r.ConfigDirImage,
-			InstallationName:      r.InstallationName,
+			InstallationName:      r.getInstallationName(repoWatch),
 			HTTPEnabled:           true,
 			Replicas:              1,
 			ServiceAccountName:    "issue-sandbox",
@@ -1245,7 +1245,7 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 									map[string]interface{}{"name": "NAME", "value": sandboxName},
 									map[string]interface{}{"name": "REPO", "value": repoWatch.GetName()},
 									map[string]interface{}{"name": "PRID", "value": fmt.Sprintf("%d", *pr.Number)},
-									map[string]interface{}{"name": "INSTALLATION_NAME", "value": r.InstallationName},
+									map[string]interface{}{"name": "INSTALLATION_NAME", "value": r.getInstallationName(repoWatch)},
 									map[string]interface{}{"name": "MAX_REVIEW_FILES", "value": strconv.Itoa(repoWatch.Spec.Review.MaxReviewFiles)},
 									map[string]interface{}{"name": "IGNORE_FILES", "value": strings.Join(repoWatch.Spec.Review.IgnoreFiles, ",")},
 									map[string]interface{}{"name": "SEVERITY_THRESHOLD", "value": repoWatch.Spec.Review.SeverityThreshold},
@@ -1740,7 +1740,7 @@ func (r *Reconciler) createDevSandbox(ctx context.Context, user *github.User, re
 		Image:                 repoWatch.Spec.Dev.Image,
 		RepoSandboxImage:      r.RepoSandboxImage,
 		ConfigDirImage:        r.ConfigDirImage,
-		InstallationName:      r.InstallationName,
+		InstallationName:      r.getInstallationName(repoWatch),
 
 		HTTPEnabled: true,
 		Replicas:           1,
@@ -2177,6 +2177,14 @@ func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client
 	return found, latestFeedbackTime, nil
 }
 
+func (r *Reconciler) getInstallationName(repoWatch *reviewv1alpha1.RepoWatch) string {
+	if repoWatch.Spec.InstallationName != "" {
+		return repoWatch.Spec.InstallationName
+	}
+	return r.InstallationName
+}
+
+// reconcileOverseer reconciles the Overseer component for a RepoWatch.
 func (r *Reconciler) reconcileOverseer(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, user *github.User) error {
 	log := log.FromContext(ctx)
 
@@ -2185,7 +2193,7 @@ func (r *Reconciler) reconcileOverseer(ctx context.Context, repoWatch *reviewv1a
 		UserID: user.GetLogin(),
 		Name:   user.GetName(),
 		Email:  user.GetEmail(),
-	}, r.RepoSandboxImage, r.ConfigDirImage, r.InstallationName); err != nil {
+	}, r.RepoSandboxImage, r.ConfigDirImage, r.getInstallationName(repoWatch)); err != nil {
 		return err
 	}
 

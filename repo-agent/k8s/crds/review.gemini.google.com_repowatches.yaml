@@ -110,6 +110,8 @@ spec:
                 type: object
               githubSecretName:
                 type: string
+              installationName:
+                type: string
               issue:
                 properties:
                   assignedToSelf:

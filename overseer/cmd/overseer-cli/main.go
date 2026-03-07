@@ -265,6 +265,13 @@ func slugify(s string) string {
 	return res.String()
 }
 
+func getInstallationName(repoWatch *reviewv1alpha1.RepoWatch) string {
+	if repoWatch != nil && repoWatch.Spec.InstallationName != "" {
+		return repoWatch.Spec.InstallationName
+	}
+	return os.Getenv("INSTALLATION_NAME")
+}
+
 func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, repoWatch *reviewv1alpha1.RepoWatch, chore *ChoreDefinition, sandboxName string) error {
 	cloneURL := repoWatch.Spec.RepoURL
 	if !strings.HasSuffix(cloneURL, ".git") {
@@ -309,7 +316,7 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 			GithubSecretName:    repoWatch.Spec.GithubSecretName,
 			RepoSandboxImage:    os.Getenv("REPO_SANDBOX_IMAGE"),
 			ConfigDirImage:      os.Getenv("CONFIG_DIR_IMAGE"),
-			InstallationName:    os.Getenv("INSTALLATION_NAME"),
+			InstallationName:    getInstallationName(repoWatch),
 			HTTPEnabled:         true,
 			Replicas:            1,
 			ServiceAccountName:  "issue-sandbox",
@@ -642,12 +649,17 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 	reviewRequest.Event = nil
 
 	if os.Getenv("ENABLE_TRACEABILITY_METADATA") == "true" {
+		installationName, _, _ := unstructured.NestedString(rwUnstructured.Object, "spec", "installationName")
+		if installationName == "" {
+			installationName = os.Getenv("INSTALLATION_NAME")
+		}
+
 		metadata := github.TraceabilityMetadata{
 			Enabled:          true,
 			Sandbox:          sandboxName,
 			RepoWatch:        repoWatchName,
 			TaskType:         "pr-review",
-			InstallationName: os.Getenv("INSTALLATION_NAME"),
+			InstallationName: installationName,
 		}
 		if reviewRequest.Body != nil {
 			body := *reviewRequest.Body + metadata.FormatHTMLComment()
@@ -730,7 +742,7 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 			Image:                 repoWatch.Spec.Issue.Image,
 			RepoSandboxImage:      os.Getenv("REPO_SANDBOX_IMAGE"),
 			ConfigDirImage:        os.Getenv("CONFIG_DIR_IMAGE"),
-			InstallationName:      os.Getenv("INSTALLATION_NAME"),
+			InstallationName:      getInstallationName(repoWatch),
 			HTTPEnabled:           true,
 			Replicas:              1,
 			ServiceAccountName:    "issue-sandbox",
@@ -790,7 +802,7 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 			Image:                 repoWatch.Spec.Review.Image,
 			RepoSandboxImage:      os.Getenv("REPO_SANDBOX_IMAGE"),
 			ConfigDirImage:        os.Getenv("CONFIG_DIR_IMAGE"),
-			InstallationName:      os.Getenv("INSTALLATION_NAME"),
+			InstallationName:      getInstallationName(repoWatch),
 			HTTPEnabled:           true,
 			Replicas:              1,
 			ServiceAccountName:    "review-sandbox",

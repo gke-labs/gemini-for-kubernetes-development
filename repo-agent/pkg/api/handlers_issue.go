@@ -317,12 +317,16 @@ func (s *Server) submitIssueComment(c *gin.Context) {
 
 	body := payload.Comment
 	if s.MetadataEnabled {
+		installationName, _, _ := unstructured.NestedString(repoWatch.Object, "spec", "installationName")
+		if installationName == "" {
+			installationName = s.InstallationName
+		}
 		metadata := github.TraceabilityMetadata{
 			Enabled:          true,
 			Sandbox:          sandboxName,
 			RepoWatch:        repo,
 			TaskType:         "issue-comment",
-			InstallationName: s.InstallationName,
+			InstallationName: installationName,
 		}
 		body += metadata.FormatHTMLComment()
 	}

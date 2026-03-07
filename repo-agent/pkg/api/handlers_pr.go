@@ -321,6 +321,12 @@ func (s *Server) submitReview(c *gin.Context) {
 	// Try Unmarshalling the yaml review payload into PullRequestReviewRequest
 	agentOutput := &models.ReviewAgentOutput{}
 	reviewRequest := &githubv39.PullRequestReviewRequest{}
+
+	installationName, _, _ := unstructured.NestedString(repoWatch.Object, "spec", "installationName")
+	if installationName == "" {
+		installationName = s.InstallationName
+	}
+
 	err = yaml.Unmarshal([]byte(payload.Review), &agentOutput)
 	if err != nil {
 		log.Info("Failed to unmarshal review payload", "err", err)
@@ -331,7 +337,7 @@ func (s *Server) submitReview(c *gin.Context) {
 				Sandbox:          sandboxName,
 				RepoWatch:        repo,
 				TaskType:         "pr-review",
-				InstallationName: s.InstallationName,
+				InstallationName: installationName,
 			}
 			body += metadata.FormatHTMLComment()
 		}
@@ -344,7 +350,7 @@ func (s *Server) submitReview(c *gin.Context) {
 				Sandbox:          sandboxName,
 				RepoWatch:        repo,
 				TaskType:         "pr-review",
-				InstallationName: s.InstallationName,
+				InstallationName: installationName,
 			}
 			body := *reviewRequest.Body + metadata.FormatHTMLComment()
 			reviewRequest.Body = &body
