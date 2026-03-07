@@ -350,10 +350,10 @@ func (e *FailOnNthCallExecutor) Run(command string, args ...string) ([]byte, []b
 }
 
 func makeGeminiJSONOutput(response string) []byte {
-	envelope := geminiJSONOutput{
+	envelope := GeminiJSONOutput{
 		SessionID: "test-session",
 		Response:  response,
-		Stats: geminiStatsJSON{
+		Stats: GeminiStatsJSON{
 			Models: map[string]struct {
 				API struct {
 					TotalRequests  int64 `json:"totalRequests"`
