@@ -121,6 +121,14 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 	}
 
 	// Environment variables
+	userName := opt.UserName
+	if userName == "" {
+		userName = opt.UserLogin
+	}
+	if userName == "" {
+		userName = "Unknown User"
+	}
+
 	env := []interface{}{
 		map[string]interface{}{"name": "NAMESPACE", "value": opt.Namespace},
 		map[string]interface{}{"name": "NAME", "value": sandboxName},
@@ -136,9 +144,9 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 		map[string]interface{}{"name": "ISSUE_URL", "value": opt.HTMLURL},
 		map[string]interface{}{"name": "GITHUB_USER_ORIGIN", "value": opt.Origin},
 		map[string]interface{}{"name": "GITHUB_USER_LOGIN", "value": opt.UserLogin},
-		map[string]interface{}{"name": "GITHUB_USER_NAME", "value": opt.UserName},
+		map[string]interface{}{"name": "GITHUB_USER_NAME", "value": userName},
 		map[string]interface{}{"name": "GITHUB_USER_EMAIL", "value": opt.UserEmail},
-		map[string]interface{}{"name": "GIT_AUTHOR_NAME", "value": opt.UserName},
+		map[string]interface{}{"name": "GIT_AUTHOR_NAME", "value": userName},
 		map[string]interface{}{"name": "GIT_AUTHOR_EMAIL", "value": opt.UserEmail},
 		map[string]interface{}{"name": "GITHUB_BOT_LOGIN", "value": opt.BotLogin},
 		map[string]interface{}{"name": "GITHUB_BOT_NAME", "value": opt.BotName},

@@ -278,6 +278,9 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 
 	userLogin := os.Getenv("GITHUB_USER_ID")
 	userName := os.Getenv("GITHUB_USER_NAME")
+	if userName == "" {
+		userName = userLogin
+	}
 	userEmail := os.Getenv("GITHUB_USER_EMAIL")
 
 	apiKeySecretName := ""
@@ -681,6 +684,9 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 	// We need to fetch user info. In Overseer, we might just use env vars.
 	userLogin := os.Getenv("GITHUB_USER_ID")
 	userName := os.Getenv("GITHUB_USER_NAME")
+	if userName == "" {
+		userName = userLogin
+	}
 	userEmail := os.Getenv("GITHUB_USER_EMAIL")
 
 	branchName := fmt.Sprintf("issue-%d-%s", issue.GetNumber(), randString(4))
@@ -742,6 +748,9 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 
 	userLogin := os.Getenv("GITHUB_USER_ID")
 	userName := os.Getenv("GITHUB_USER_NAME")
+	if userName == "" {
+		userName = userLogin
+	}
 	userEmail := os.Getenv("GITHUB_USER_EMAIL")
 
 	apiKeySecretName := repoWatch.Spec.Review.LLM.APIKeySecretRef

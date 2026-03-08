@@ -950,6 +950,9 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 
 	userLogin := user.GetLogin()
 	userName := user.GetName()
+	if userName == "" {
+		userName = userLogin
+	}
 	userEmail := user.GetEmail()
 
 	// Default bot info to empty (or current user if not using robot account)
@@ -1710,6 +1713,13 @@ func (r *Reconciler) createDevSandbox(ctx context.Context, user *github.User, re
 	cloneURL := fmt.Sprintf("https://github.com/%s/%s.git", forkOwner, forkRepo)
 	originURL := fmt.Sprintf("github.com/%s/%s.git", forkOwner, forkRepo)
 
+	userLogin := user.GetLogin()
+	userName := user.GetName()
+	if userName == "" {
+		userName = userLogin
+	}
+	userEmail := user.GetEmail()
+
 	opts := sandbox.DevSandboxOptions{
 		Name:      sandboxName,
 		Namespace: repoWatch.Namespace,
@@ -1724,9 +1734,9 @@ func (r *Reconciler) createDevSandbox(ctx context.Context, user *github.User, re
 		Branch:      branchName,
 		Origin:      originURL,
 		PushEnabled: true,
-		UserLogin:   user.GetLogin(),
-		UserName:    user.GetName(),
-		UserEmail:   user.GetEmail(),
+		UserLogin:   userLogin,
+		UserName:    userName,
+		UserEmail:   userEmail,
 
 		LLMProvider:         repoWatch.Spec.Dev.LLM.Provider,
 		LLMConfigdirRef:     repoWatch.Spec.Dev.LLM.ConfigdirRef,
