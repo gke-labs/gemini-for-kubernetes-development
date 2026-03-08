@@ -12,6 +12,7 @@ export REMOTE="{{ .Remote }}"
 export GITHUB_USER_ID="{{ .User.UserID }}"
 export GITHUB_USER_EMAIL="{{ .User.Email }}"
 export GITHUB_USER_NAME="{{ .User.Name }}"
+export PR_NUMBER={{ .PullRequestID }}
 
 function setupGit {
     echo "Running setupGit..."
@@ -69,31 +70,27 @@ function setupGitRepos {
     popd > /dev/null
 }
 
+function checkoutPRBranch {
+    echo "Running checkoutPRBranch..."
+    echo "checking out PR #${PR_NUMBER}"
+    (cd "/workspaces/${REPO_NAME}" && gh pr checkout ${PR_NUMBER})
+}
+
 function runRollback {
-    echo "Running rollback to ${COMMIT_SHA} on branch ${BRANCH}..."
+    echo "Running rollback to ${COMMIT_SHA} ..."
     pushd "/workspaces/${REPO_NAME}" > /dev/null
-
-    # Ensure we have the latest from remote
-    git fetch "${REMOTE}"
-
-    # Checkout the branch if it's not already checked out
-    # If the branch doesn't exist locally, create it from the remote
-    if git rev-parse --verify "${BRANCH}" >/dev/null 2>&1; then
-        git checkout "${BRANCH}"
-    else
-        git checkout -b "${BRANCH}" "${REMOTE}/${BRANCH}" || git checkout -b "${BRANCH}"
-    fi
 
     # Perform the hard reset
     git reset --hard "${COMMIT_SHA}"
 
     # Force push to the remote
     # We use -u to set upstream which might help with the refspec error
-    git push --force -u "${REMOTE}" "${BRANCH}"
+    git push --force -u "${REMOTE}"
 
     popd > /dev/null
 }
 
 setupGit
 setupGitRepos
+checkoutPRBranch
 runRollback
