@@ -728,7 +728,8 @@ func (s *Server) rollbackIssue(c *gin.Context) {
 	issueID := c.Param("issue_id")
 
 	var payload struct {
-		CommitSHA string `json:"commitSha"`
+		CommitSHA     string `json:"commitSha"`
+		PullRequestID string `json:"pullRequestId"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -742,7 +743,8 @@ func (s *Server) rollbackIssue(c *gin.Context) {
 
 	sandboxName := fmt.Sprintf("devc-%s-issue-%s", repo, issueID)
 	params := map[string]string{
-		"COMMIT_SHA": payload.CommitSHA,
+		"COMMIT_SHA":      payload.CommitSHA,
+		"PULL_REQUEST_ID": payload.PullRequestID,
 	}
 
 	err := s.K8sManager.CreateSandboxTask(c.Request.Context(), namespace, sandboxName, "Sandbox", "rollback", params)

@@ -10,11 +10,13 @@ import (
 var _ Task = &RollbackModel{}
 
 type RollbackModel struct {
-	Repo      *github.Repository
-	User      *github.User
-	CommitSHA string
-	Branch    string
-	Remote    string
+	PullRequestID int
+	Repo          *github.Repository
+	PullRequest   *github.PullRequest
+	User          *github.User
+	CommitSHA     string
+	Branch        string
+	Remote        string
 }
 
 func (m *RollbackModel) PreScript() ([]byte, error) {

@@ -52,14 +52,37 @@ function IssueCard({
         .catch(err => console.error("Failed to fetch commits:", err));
   };
 
+  const getPRId = () => {
+    let prId = "";
+    const fixTask = tasks.find(t => t.type === 'fix-issue');
+    if (fixTask && fixTask.agentDraft) {
+        const match = fixTask.agentDraft.match(/\/pull\/(\d+)/);
+        if (match) {
+            prId = match[1];
+        }
+    }
+    if (!prId && iteratePrompt) {
+        const match = iteratePrompt.match(/\/pull\/(\d+)/);
+        if (match) {
+            prId = match[1];
+        }
+    }
+    return prId;
+  };
+
   const handleRollback = (sha) => {
     if (!repoName || !issue.id) return;
+    const prId = getPRId();
+    if (!prId) {
+        alert("No PR ID found. Please ensure a 'fix-issue' task has completed with a PR link, or paste the PR link into the iteration textbox.");
+        return;
+    }
     if (!window.confirm(`Are you sure you want to rollback to commit ${sha.substring(0, 7)}? This will perform a force push.`)) return;
 
     fetch(`/api/repo/${repoName}/issues/${issue.id}/rollback`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ commitSha: sha })
+        body: JSON.stringify({ commitSha: sha, pullRequestId: prId })
     })
     .then(res => {
         if (res.ok) {
@@ -271,21 +294,7 @@ function IssueCard({
                             <button className="btn" style={{backgroundColor: 'var(--status-grey)'}} onClick={() => { setShowRollbackUI(true); fetchCommits(); }}>Rollback to previous commit</button>
                         )}
                         <button className="btn" onClick={() => {
-                            let prId = "";
-                            const fixTask = tasks.find(t => t.type === 'fix-issue');
-                            if (fixTask && fixTask.agentDraft) {
-                                const match = fixTask.agentDraft.match(/\/pull\/(\d+)/);
-                                if (match) {
-                                    prId = match[1];
-                                }
-                            }
-                            
-                            if (!prId && iteratePrompt) {
-                                const match = iteratePrompt.match(/\/pull\/(\d+)/);
-                                if (match) {
-                                    prId = match[1];
-                                }
-                            }
+                            const prId = getPRId();
 
                             if (!prId) {
                                 alert("No PR ID found. Please ensure a 'fix-issue' task has completed with a PR link, or paste the PR link into the iteration textbox.");
@@ -296,21 +305,7 @@ function IssueCard({
                             handleCreateTask('address-feedback', '', params);
                         }}>Address Feedback</button>
                         <button className="btn" onClick={() => {
-                            let prId = "";
-                            const fixTask = tasks.find(t => t.type === 'fix-issue');
-                            if (fixTask && fixTask.agentDraft) {
-                                const match = fixTask.agentDraft.match(/\/pull\/(\d+)/);
-                                if (match) {
-                                    prId = match[1];
-                                }
-                            }
-
-                            if (!prId && iteratePrompt) {
-                                const match = iteratePrompt.match(/\/pull\/(\d+)/);
-                                if (match) {
-                                    prId = match[1];
-                                }
-                            }
+                            const prId = getPRId();
 
                             if (!prId) {
                                 alert("No PR ID found. Please ensure a 'fix-issue' task has completed with a PR link, or paste the PR link into the iteration textbox.");

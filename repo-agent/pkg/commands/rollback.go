@@ -15,6 +15,7 @@ import (
 
 type RollbackOptions struct {
 	RepoURL         string
+	PullRequestID   int
 	CommitSHA       string
 	Branch          string
 	Remote          string
@@ -60,6 +61,14 @@ func (o *RollbackOptions) InitDefaults() {
 			o.Branch = parts[1]
 		}
 	}
+	if o.PullRequestID == 0 {
+		prid := os.Getenv("PULL_REQUEST_ID")
+		if prid != "" {
+			if _, err := fmt.Sscanf(prid, "%d", &o.PullRequestID); err != nil {
+				o.PullRequestID = 0
+			}
+		}
+	}
 	if o.Remote == "" {
 		o.Remote = "origin"
 	}
@@ -92,6 +101,9 @@ func BuildRollbackCommand() *cobra.Command {
 		Short: "Rollback to a previous commit",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.InitDefaults()
+			if opts.PullRequestID == 0 {
+				return fmt.Errorf("--pull-request is required")
+			}
 			return RunRollback(cmd.Context(), opts)
 		},
 	}
@@ -167,11 +179,12 @@ func RunRollback(ctx context.Context, opts RollbackOptions) error {
 	}
 
 	task := tasks.RollbackModel{
-		Repo:      opts.repo,
-		User:      opts.user,
-		CommitSHA: opts.CommitSHA,
-		Branch:    opts.Branch,
-		Remote:    opts.Remote,
+		PullRequestID: opts.PullRequestID,
+		Repo:          opts.repo,
+		User:          opts.user,
+		CommitSHA:     opts.CommitSHA,
+		Branch:        opts.Branch,
+		Remote:        opts.Remote,
 	}
 
 	env := map[string]string{
