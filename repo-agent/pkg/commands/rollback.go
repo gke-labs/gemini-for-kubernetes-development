@@ -102,43 +102,43 @@ func BuildRollbackCommand() *cobra.Command {
 	return cmd
 }
 
-func (c *RollbackOptions) loadGithubObjects(ctx context.Context) error {
+func (o *RollbackOptions) loadGithubObjects(ctx context.Context) error {
 	// Get github token
 	token, err := github.GetGithubToken(ctx)
 	if err != nil {
 		return err
 	}
-	c.GithubUserToken = token
+	o.GithubUserToken = token
 
 	githubAPI, err := github.NewClient(context.Background())
 	if err != nil {
 		return err
 	}
 
-	c.repo, err = githubAPI.GetRepositoryFromHTMLUrl(ctx, c.RepoURL)
+	o.repo, err = githubAPI.GetRepositoryFromHTMLUrl(ctx, o.RepoURL)
 	if err != nil {
 		return err
 	}
 
 	user := github.User{
-		UserID: c.GithubUserLogin,
-		Email:  c.GithubUserEmail,
-		Name:   c.GithubUserName,
-		Token:  c.GithubUserToken,
+		UserID: o.GithubUserLogin,
+		Email:  o.GithubUserEmail,
+		Name:   o.GithubUserName,
+		Token:  o.GithubUserToken,
 	}
 
-	c.user = &user
+	o.user = &user
 	return nil
 }
 
-func (c *RollbackOptions) loadSandbox(ctx context.Context) error {
+func (o *RollbackOptions) loadSandbox(ctx context.Context) error {
 	// Pass nil for issue as rollback doesn't need an issue.
-	sb, err := sandbox.NewIssueSandbox(ctx, c.InPod, c.repo, nil, c.Branch)
+	sb, err := sandbox.NewIssueSandbox(ctx, o.InPod, o.repo, nil, o.Branch)
 	if err != nil {
 		return err
 	}
-	c.sandbox = sb
-	c.sandboxID = sb.GetSandboxID()
+	o.sandbox = sb
+	o.sandboxID = sb.GetSandboxID()
 	return nil
 }
 
@@ -177,8 +177,8 @@ func RunRollback(ctx context.Context, opts RollbackOptions) error {
 	env := map[string]string{
 		"GITHUB_USER_TOKEN": opts.GithubUserToken,
 	}
-	
-	// Try to get Gemini API key, though rollback might not need it, 
+
+	// Try to get Gemini API key, though rollback might not need it,
 	// but it's good practice for tasks.
 	if apikey, err := GetGeminiAPIKey(opts.sandboxID); err == nil {
 		env["GEMINI_API_KEY"] = apikey
