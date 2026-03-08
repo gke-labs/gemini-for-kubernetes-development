@@ -319,6 +319,9 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 	} else {
 		log.Info("Failed to get github secret for user", "user", namespace, "err", err)
 	}
+	if userName == "" {
+		userName = namespace
+	}
 
 	// Sanitize branch name for K8s resource name to match controller logic
 	// We replace special characters and hash the result to ensure the K8s resource name
