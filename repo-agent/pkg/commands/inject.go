@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
@@ -38,6 +39,31 @@ func inject(destDir string) error {
 
 	dest := filepath.Join(destDir, filepath.Base(src))
 
+	if err := copyFile(src, dest); err != nil {
+		return err
+	}
+	fmt.Printf("Successfully injected %s to %s\n", src, dest)
+
+	// Inject gemini-stream-processor if found
+	gspSrc, err := exec.LookPath("gemini-stream-processor")
+	if err != nil {
+		// Fallback to checking the exact path in the docker image
+		if _, err := os.Stat("/usr/local/bin/gemini-stream-processor"); err == nil {
+			gspSrc = "/usr/local/bin/gemini-stream-processor"
+		}
+	}
+	if gspSrc != "" {
+		gspDest := filepath.Join(destDir, "gemini-stream-processor")
+		if err := copyFile(gspSrc, gspDest); err != nil {
+			return err
+		}
+		fmt.Printf("Successfully injected %s to %s\n", gspSrc, gspDest)
+	}
+
+	return nil
+}
+
+func copyFile(src, dest string) error {
 	sourceFile, err := os.Open(src)
 	if err != nil {
 		return fmt.Errorf("failed to open source file: %w", err)
@@ -58,6 +84,5 @@ func inject(destDir string) error {
 		return fmt.Errorf("failed to chmod destination file: %w", err)
 	}
 
-	fmt.Printf("Successfully injected %s to %s\n", src, dest)
 	return nil
 }

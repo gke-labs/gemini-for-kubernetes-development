@@ -38,7 +38,7 @@ function runGemini {
     SUCCESS=false
     for MODEL in "${MODELS[@]}"; do
         echo "Trying model: $MODEL"
-        if gemini --yolo --model "$MODEL" --output-format stream-json < ${PROMPT_FILE} | gemini-stream-processor --output "$(dirname "${PROMPT_FILE}")/gemini-output.json"; then
+        if gemini --yolo --model "$MODEL" --output-format stream-json < ${PROMPT_FILE} | /opt/repo-agent/gemini-stream-processor --output "$(dirname "${PROMPT_FILE}")/gemini-output.json"; then
              echo "Gemini execution successful with model: $MODEL"
              SUCCESS=true
              break
