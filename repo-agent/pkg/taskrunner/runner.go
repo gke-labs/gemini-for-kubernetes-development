@@ -222,7 +222,7 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		}
 
 	case "rollback":
-		cmd = exec.Command(sandbox.RepoSandboxBinary, "rollback")
+		cmd = exec.Command(sandbox.RepoSandboxBinary, "rollback", "--in-pod=true")
 		// Map params to env vars
 		cmd.Env = os.Environ()
 		// Inject params into env
