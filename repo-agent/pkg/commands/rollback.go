@@ -7,18 +7,41 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/gitcli"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks"
 	"github.com/spf13/cobra"
+	"k8s.io/klog/v2"
 )
 
 type RollbackOptions struct {
-	CommitSHA string
-	Branch    string
-	Remote    string
+	RepoURL         string
+	CommitSHA       string
+	Branch          string
+	Remote          string
+	GithubUserLogin string
+	GithubUserEmail string
+	GithubUserName  string
+	GithubUserToken string
+	InPod           bool
+	WorkspaceDir    string
+	TaskDir         string
+
+	// loaded objects
+	repo      *github.Repository
+	user      *github.User
+	sandbox   *sandbox.IssueSandbox
+	sandboxID string
 }
 
 func (o *RollbackOptions) InitDefaults() {
+	if o.RepoURL == "" {
+		o.RepoURL = os.Getenv("GIT_HTML_URL")
+	}
+	if o.RepoURL == "" {
+		o.RepoURL = os.Getenv("REPO")
+	}
+
 	if o.CommitSHA == "" {
 		o.CommitSHA = os.Getenv("COMMIT_SHA")
 	}
@@ -41,6 +64,26 @@ func (o *RollbackOptions) InitDefaults() {
 	if o.Remote == "" {
 		o.Remote = "origin"
 	}
+
+	if o.WorkspaceDir == "" {
+		o.WorkspaceDir = "/workspaces"
+	}
+	if o.TaskDir == "" {
+		o.TaskDir = os.Getenv("TASKDIR")
+	}
+	if o.TaskDir == "" {
+		o.TaskDir = o.WorkspaceDir
+	}
+
+	if o.GithubUserLogin == "" {
+		o.GithubUserLogin = os.Getenv("GITHUB_USER_LOGIN")
+	}
+	if o.GithubUserEmail == "" {
+		o.GithubUserEmail = os.Getenv("GITHUB_USER_EMAIL")
+	}
+	if o.GithubUserName == "" {
+		o.GithubUserName = os.Getenv("GITHUB_USER_NAME")
+	}
 }
 
 func BuildRollbackCommand() *cobra.Command {
@@ -55,66 +98,98 @@ func BuildRollbackCommand() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&opts.CommitSHA, "commit-sha", "", "Commit SHA to rollback to")
 	cmd.Flags().StringVar(&opts.Branch, "branch", "", "Branch name")
+	cmd.Flags().StringVar(&opts.RepoURL, "repo-url", "", "GitHub repo URL")
+	cmd.Flags().BoolVar(&opts.InPod, "in-pod", false, "Whether running inside the pod")
 	return cmd
 }
 
+func (c *RollbackOptions) loadGithubObjects(ctx context.Context) error {
+	// Get github token
+	token, err := github.GetGithubToken(ctx)
+	if err != nil {
+		return err
+	}
+	c.GithubUserToken = token
+
+	githubAPI, err := github.NewClient(context.Background())
+	if err != nil {
+		return err
+	}
+
+	c.repo, err = githubAPI.GetRepositoryFromHTMLUrl(ctx, c.RepoURL)
+	if err != nil {
+		return err
+	}
+
+	user := github.User{
+		UserID: c.GithubUserLogin,
+		Email:  c.GithubUserEmail,
+		Name:   c.GithubUserName,
+		Token:  c.GithubUserToken,
+	}
+
+	c.user = &user
+	return nil
+}
+
+func (c *RollbackOptions) loadSandbox(ctx context.Context) error {
+	// Pass nil for issue as rollback doesn't need an issue.
+	sb, err := sandbox.NewIssueSandbox(ctx, c.InPod, c.repo, nil, c.Branch)
+	if err != nil {
+		return err
+	}
+	c.sandbox = sb
+	c.sandboxID = sb.GetSandboxID()
+	return nil
+}
+
 func RunRollback(ctx context.Context, opts RollbackOptions) error {
+	log := klog.FromContext(ctx)
+	log.Info("Starting rollback task", "taskdir", opts.TaskDir)
+
 	if opts.CommitSHA == "" {
 		return fmt.Errorf("commit-sha is required")
 	}
 	if opts.Branch == "" {
 		return fmt.Errorf("branch is required")
 	}
-
-	// 1. Try to find the repository directory
-	repoDir := ""
-
-	// Strategy 1: Use REPO or GIT_HTML_URL env vars
-	repoEnv := os.Getenv("REPO")
-	if repoEnv == "" {
-		repoEnv = os.Getenv("GIT_HTML_URL")
-	}
-	if repoEnv != "" {
-		if repo, err := github.ParseRepo(repoEnv); err == nil {
-			dir := filepath.Join("/workspaces", repo.FilesystemName())
-			if _, err := os.Stat(dir); err == nil {
-				repoDir = dir
-			}
-		}
+	if opts.RepoURL == "" {
+		return fmt.Errorf("repo-url is required")
 	}
 
-	// Strategy 2: Fallback to searching /workspaces for any .git repo
-	if repoDir == "" {
-		matches, _ := filepath.Glob("/workspaces/*")
-		for _, match := range matches {
-			if info, err := os.Stat(filepath.Join(match, ".git")); err == nil && info.IsDir() {
-				repoDir = match
-				break
-			}
-		}
+	err := opts.loadGithubObjects(ctx)
+	if err != nil {
+		return err
 	}
 
-	if repoDir != "" {
-		fmt.Printf("Changing directory to %s\n", repoDir)
-		if err := os.Chdir(repoDir); err != nil {
-			return fmt.Errorf("failed to change directory to %s: %w", repoDir, err)
-		}
-	} else {
-		fmt.Println("Warning: Could not determine repository directory, running in current directory")
+	err = opts.loadSandbox(ctx)
+	if err != nil {
+		return err
 	}
 
-	fmt.Printf("Rolling back to commit %s on branch %s\n", opts.CommitSHA, opts.Branch)
-
-	// 2. git reset --hard <commit-sha>
-	if err := gitcli.ResetHard(opts.CommitSHA); err != nil {
-		return fmt.Errorf("failed to git reset --hard: %w", err)
+	task := tasks.RollbackModel{
+		Repo:      opts.repo,
+		User:      opts.user,
+		CommitSHA: opts.CommitSHA,
+		Branch:    opts.Branch,
+		Remote:    opts.Remote,
 	}
 
-	// 3. git push --force origin <branch>
-	if err := gitcli.Push(opts.Remote, opts.Branch, true); err != nil {
-		return fmt.Errorf("failed to git push --force: %w", err)
+	env := map[string]string{
+		"GITHUB_USER_TOKEN": opts.GithubUserToken,
+	}
+	
+	// Try to get Gemini API key, though rollback might not need it, 
+	// but it's good practice for tasks.
+	if apikey, err := GetGeminiAPIKey(opts.sandboxID); err == nil {
+		env["GEMINI_API_KEY"] = apikey
 	}
 
-	fmt.Println("Rollback completed successfully")
+	err = tasks.RunTask(ctx, &task, opts.sandbox, opts.TaskDir, env)
+	if err != nil {
+		return fmt.Errorf("running rollback task: %w", err)
+	}
+
+	fmt.Println("Rollback task completed successfully")
 	return nil
 }
