@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/gitcli"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 	"github.com/spf13/cobra"
 )
 
@@ -64,14 +66,51 @@ func RunRollback(ctx context.Context, opts RollbackOptions) error {
 		return fmt.Errorf("branch is required")
 	}
 
+	// 1. Try to find the repository directory
+	repoDir := ""
+
+	// Strategy 1: Use REPO or GIT_HTML_URL env vars
+	repoEnv := os.Getenv("REPO")
+	if repoEnv == "" {
+		repoEnv = os.Getenv("GIT_HTML_URL")
+	}
+	if repoEnv != "" {
+		if repo, err := github.ParseRepo(repoEnv); err == nil {
+			dir := filepath.Join("/workspaces", repo.FilesystemName())
+			if _, err := os.Stat(dir); err == nil {
+				repoDir = dir
+			}
+		}
+	}
+
+	// Strategy 2: Fallback to searching /workspaces for any .git repo
+	if repoDir == "" {
+		matches, _ := filepath.Glob("/workspaces/*")
+		for _, match := range matches {
+			if info, err := os.Stat(filepath.Join(match, ".git")); err == nil && info.IsDir() {
+				repoDir = match
+				break
+			}
+		}
+	}
+
+	if repoDir != "" {
+		fmt.Printf("Changing directory to %s\n", repoDir)
+		if err := os.Chdir(repoDir); err != nil {
+			return fmt.Errorf("failed to change directory to %s: %w", repoDir, err)
+		}
+	} else {
+		fmt.Println("Warning: Could not determine repository directory, running in current directory")
+	}
+
 	fmt.Printf("Rolling back to commit %s on branch %s\n", opts.CommitSHA, opts.Branch)
 
-	// 1. git reset --hard <commit-sha>
+	// 2. git reset --hard <commit-sha>
 	if err := gitcli.ResetHard(opts.CommitSHA); err != nil {
 		return fmt.Errorf("failed to git reset --hard: %w", err)
 	}
 
-	// 2. git push --force origin <branch>
+	// 3. git push --force origin <branch>
 	if err := gitcli.Push(opts.Remote, opts.Branch, true); err != nil {
 		return fmt.Errorf("failed to git push --force: %w", err)
 	}
