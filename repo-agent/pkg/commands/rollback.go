@@ -10,6 +10,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/gitcli"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 	"github.com/spf13/cobra"
+	"k8s.io/klog/v2"
 )
 
 type RollbackOptions struct {
@@ -59,6 +60,8 @@ func BuildRollbackCommand() *cobra.Command {
 }
 
 func RunRollback(ctx context.Context, opts RollbackOptions) error {
+	log := klog.FromContext(ctx)
+
 	if opts.CommitSHA == "" {
 		return fmt.Errorf("commit-sha is required")
 	}
@@ -67,43 +70,23 @@ func RunRollback(ctx context.Context, opts RollbackOptions) error {
 	}
 
 	// 1. Try to find the repository directory
-	repoDir := ""
-
-	// Strategy 1: Use REPO or GIT_HTML_URL env vars
-	repoEnv := os.Getenv("REPO")
-	if repoEnv == "" {
-		repoEnv = os.Getenv("GIT_HTML_URL")
-	}
-	if repoEnv != "" {
-		if repo, err := github.ParseRepo(repoEnv); err == nil {
-			dir := filepath.Join("/workspaces", repo.FilesystemName())
-			if _, err := os.Stat(dir); err == nil {
-				repoDir = dir
-			}
-		}
-	}
-
-	// Strategy 2: Fallback to searching /workspaces for any .git repo
-	if repoDir == "" {
-		matches, _ := filepath.Glob("/workspaces/*")
-		for _, match := range matches {
-			if info, err := os.Stat(filepath.Join(match, ".git")); err == nil && info.IsDir() {
-				repoDir = match
-				break
-			}
-		}
-	}
+	repoDir := findRepoDir(ctx)
 
 	if repoDir != "" {
-		fmt.Printf("Changing directory to %s\n", repoDir)
+		log.Info("Changing directory to repository", "dir", repoDir)
 		if err := os.Chdir(repoDir); err != nil {
 			return fmt.Errorf("failed to change directory to %s: %w", repoDir, err)
 		}
 	} else {
-		fmt.Println("Warning: Could not determine repository directory, running in current directory")
+		// If we couldn't find it, check if we are already in one
+		if _, err := gitcli.GetHeadCommitID(); err != nil {
+			log.Info("Could not determine repository directory and current directory is not a git repository")
+		} else {
+			log.Info("Running in current directory (already a git repository)")
+		}
 	}
 
-	fmt.Printf("Rolling back to commit %s on branch %s\n", opts.CommitSHA, opts.Branch)
+	log.Info("Rolling back", "commit", opts.CommitSHA, "branch", opts.Branch)
 
 	// 2. git reset --hard <commit-sha>
 	if err := gitcli.ResetHard(opts.CommitSHA); err != nil {
@@ -115,6 +98,58 @@ func RunRollback(ctx context.Context, opts RollbackOptions) error {
 		return fmt.Errorf("failed to git push --force: %w", err)
 	}
 
-	fmt.Println("Rollback completed successfully")
+	log.Info("Rollback completed successfully")
 	return nil
 }
+
+func findRepoDir(ctx context.Context) string {
+	// Strategy 0: Check if current directory is a git repo
+	if info, err := os.Stat(".git"); err == nil && info.IsDir() {
+		return "."
+	}
+
+	// Strategy 1: Use CLONE_REPOS env var
+	cloneRepos := os.Getenv("CLONE_REPOS")
+	if cloneRepos != "" {
+		for _, cloneRepo := range strings.Split(cloneRepos, ";") {
+			tokens := strings.Split(cloneRepo, "=")
+			if len(tokens) == 2 {
+				dir := tokens[0]
+				if info, err := os.Stat(filepath.Join(dir, ".git")); err == nil && info.IsDir() {
+					return dir
+				}
+			}
+		}
+	}
+
+	// Strategy 2: Use REPO or GIT_HTML_URL env vars
+	repoEnv := os.Getenv("REPO")
+	if repoEnv == "" {
+		repoEnv = os.Getenv("GIT_HTML_URL")
+	}
+	if repoEnv != "" {
+		if repo, err := github.ParseRepo(repoEnv); err == nil {
+			// Check /workspaces/<repo>
+			dir := filepath.Join("/workspaces", repo.FilesystemName())
+			if info, err := os.Stat(filepath.Join(dir, ".git")); err == nil && info.IsDir() {
+				return dir
+			}
+		}
+	}
+
+	// Strategy 3: Check /workspaces itself
+	if info, err := os.Stat("/workspaces/.git"); err == nil && info.IsDir() {
+		return "/workspaces"
+	}
+
+	// Strategy 4: Fallback to searching /workspaces/* for any .git repo
+	matches, _ := filepath.Glob("/workspaces/*")
+	for _, match := range matches {
+		if info, err := os.Stat(filepath.Join(match, ".git")); err == nil && info.IsDir() {
+			return match
+		}
+	}
+
+	return ""
+}
+
