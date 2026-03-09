@@ -19,8 +19,8 @@ Issue and PR handling:
       Available task types: `review`, `address-feedback`, `investigate-failures`.
     - To submit a completed review for a PR, use `overseer-cli pr --number <pr-number> --submit`.
     - To comment, use `gh issue comment`.
-    - To create an issue, use `gh issue create`.
-    - If an action needs to be deferred, create an issue in the repo `gh issue create`.
+    - To create an issue, use `gh issue create --label "overseer"`.
+    - If an action needs to be deferred, create an issue in the repo using `gh issue create --label "overseer"`.
     - Whenever an action is taken, comment on the issue or PR.
 
 `overseer-cli` will automatically ensure a sandbox environment exists for the issue or PR before creating the task.

@@ -150,7 +150,7 @@ Only output the commit message itself.")
 ${COMMIT_MSG}"
 
         # Try to create PR
-        PR_URL=$(gh pr create --title "chore: ${CHORE_NAME}" --body "${PR_BODY}" --head "${FORK_OWNER}:${BRANCH_NAME}" --base "${BASE_BRANCH}" || true)
+        PR_URL=$(gh pr create --title "chore: ${CHORE_NAME}" --body "${PR_BODY}" --head "${FORK_OWNER}:${BRANCH_NAME}" --base "${BASE_BRANCH}" --label "overseer" || true)
         if [ -n "$PR_URL" ]; then
             echo "$PR_URL" > "$(dirname "${PROMPT_FILE}")/agent-output.txt"
         else
