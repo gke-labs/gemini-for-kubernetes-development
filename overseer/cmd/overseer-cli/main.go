@@ -73,7 +73,7 @@ func buildIssueCommand() *cobra.Command {
 
 	cmd.Flags().IntVar(&number, "number", 0, "Issue number")
 	cmd.Flags().IntVar(&prNumber, "pr", 0, "PR number to extract issue from")
-	cmd.Flags().StringVar(&taskType, "task", "fix-issue", "Task type (e.g., fix-issue, triage-issue, investigate-failures)")
+	cmd.Flags().StringVar(&taskType, "task", "fix-issue", "Task type (e.g., fix-issue, triage-issue)")
 
 	return cmd
 }
@@ -92,7 +92,7 @@ func buildPRCommand() *cobra.Command {
 	}
 
 	cmd.Flags().IntVar(&number, "number", 0, "PR number")
-	cmd.Flags().StringVar(&taskType, "task", "review", "Task type (e.g., review, address-feedback)")
+	cmd.Flags().StringVar(&taskType, "task", "review", "Task type (e.g., review, address-feedback, investigate-failures)")
 	cmd.Flags().BoolVar(&submit, "submit", false, "Submit agent draft from task as review")
 	_ = cmd.MarkFlagRequired("number")
 

@@ -13,3 +13,8 @@ Submitting a completed PR review:
 ```bash
 overseer-cli pr --number 456 --submit
 ```
+
+Creating a task to investigate PR failures:
+```bash
+overseer-cli pr --number 456 --task investigate-failures
+```
