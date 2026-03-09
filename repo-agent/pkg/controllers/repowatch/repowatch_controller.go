@@ -796,6 +796,11 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 				log.Error(err, "unable to reconcile issue feedback", "issue", *issue.Number)
 			}
 
+			// Check for PR failures
+			if err := r.reconcilePRFailures(ctx, repoWatch, existingSandbox, issue, ghClient); err != nil {
+				log.Error(err, "unable to reconcile PR failures", "issue", *issue.Number)
+			}
+
 			// Manage lifecycle (pause/unpause)
 			shutdownDuration := time.Minute * time.Duration(repoWatch.Spec.Issue.IssueShutdownAfterMinutes)
 			wasScaled, err := r.manageSandboxLifecycle(ctx, existingSandbox, shutdownDuration)
@@ -1966,12 +1971,13 @@ func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *revi
 	var lastAddressFeedbackTaskTime time.Time
 
 	for _, task := range tasks.Items {
-		if task.Spec.Type == "address-feedback" {
-			state := task.Status.TaskState
-			if state == "" || state == "Pending" || state == "Running" {
-				activeTaskExists = true
-			}
+		// If ANY task is active, skip creating a new one
+		state := task.Status.TaskState
+		if state == "" || state == "Pending" || state == "Running" {
+			activeTaskExists = true
+		}
 
+		if task.Spec.Type == "address-feedback" {
 			// Track the latest address-feedback task
 			if task.CreationTimestamp.Time.After(lastAddressFeedbackTaskTime) {
 				lastAddressFeedbackTaskTime = task.CreationTimestamp.Time
@@ -2081,6 +2087,144 @@ func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *revi
 		}
 
 		return r.createSandboxTask(ctx, repoWatch, sandbox, sandbox.GetName(), "", "address-feedback", params)
+	}
+
+	return nil
+}
+
+func (r *Reconciler) reconcilePRFailures(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, sandbox *unstructured.Unstructured, issue *github.Issue, ghClient *github.Client) error {
+	log := log.FromContext(ctx)
+
+	// Check if we have an active task
+	tasks := &sandboxtaskv1alpha1.SandboxTaskList{}
+	if err := r.List(ctx, tasks, client.InNamespace(sandbox.GetNamespace()), client.MatchingLabels{"sandbox.gemini.google.com/sandbox-name": sandbox.GetName()}); err != nil {
+		return err
+	}
+
+	if len(tasks.Items) == 0 {
+		return nil
+	}
+
+	activeTaskExists := false
+	var lastInvestigateFailuresTaskTime time.Time
+
+	for _, task := range tasks.Items {
+		// If ANY task is active, skip creating a new one
+		state := task.Status.TaskState
+		if state == "" || state == "Pending" || state == "Running" {
+			activeTaskExists = true
+		}
+
+		if task.Spec.Type == "investigate-failures" {
+			// Track the latest investigate-failures task
+			if task.CreationTimestamp.Time.After(lastInvestigateFailuresTaskTime) {
+				lastInvestigateFailuresTaskTime = task.CreationTimestamp.Time
+			}
+		}
+	}
+
+	if activeTaskExists {
+		return nil
+	}
+
+	owner, repo, err := parseRepoURL(repoWatch.Spec.RepoURL)
+	if err != nil {
+		return err
+	}
+
+	pr, err := r.getLinkedPRFromSandbox(ctx, ghClient, sandbox)
+	if err != nil {
+		return err
+	}
+	if pr == nil {
+		return nil
+	}
+
+	if pr.GetState() != "open" {
+		return nil
+	}
+
+	// Check for failures on the latest commit (HEAD)
+	sha := pr.GetHead().GetSHA()
+
+	// 1. Check Statuses
+	combinedStatus, _, err := ghClient.Repositories.GetCombinedStatus(ctx, owner, repo, sha, nil)
+	if err != nil {
+		log.Error(err, "unable to get combined status", "sha", sha)
+		return nil
+	}
+
+	failed := false
+	if combinedStatus.GetState() == "failure" || combinedStatus.GetState() == "error" {
+		failed = true
+	}
+
+	// 2. Check CheckRuns
+	if !failed {
+		checkRuns, _, err := ghClient.Checks.ListCheckRunsForRef(ctx, owner, repo, sha, nil)
+		if err != nil {
+			log.Error(err, "unable to list check runs", "sha", sha)
+			return nil
+		}
+		for _, cr := range checkRuns.CheckRuns {
+			if cr.GetConclusion() == "failure" || cr.GetConclusion() == "timed_out" || cr.GetConclusion() == "action_required" {
+				failed = true
+				break
+			}
+		}
+	}
+
+	if failed {
+		// Get head commit time to avoid re-triggering for the same commit if we already tried
+		commit, _, err := ghClient.Repositories.GetCommit(ctx, owner, repo, sha, nil)
+		if err != nil {
+			log.Error(err, "unable to get head commit", "sha", sha)
+			return nil
+		}
+		latestCommitTime := commit.GetCommit().GetCommitter().GetDate()
+
+		if !lastInvestigateFailuresTaskTime.IsZero() && lastInvestigateFailuresTaskTime.After(latestCommitTime) {
+			log.Info("Skipping investigate-failures: last attempt was after latest commit", "pr", *pr.Number, "lastAttempt", lastInvestigateFailuresTaskTime, "latestCommit", latestCommitTime)
+			return nil
+		}
+
+		log.Info("Found failures on latest commit, creating investigate-failures task", "pr", pr.Number, "sha", sha)
+		params := map[string]string{
+			"PULL_REQUEST_ID": fmt.Sprintf("%d", *pr.Number),
+			"ISSUE_URL":       *issue.HTMLURL,
+			"AGENT_PROMPT":    repoWatch.Spec.Issue.LLM.Prompt,
+		}
+		// Add LLM params
+		if repoWatch.Spec.Issue.LLM.Provider != "" {
+			params["AGENT_LLM_PROVIDER"] = repoWatch.Spec.Issue.LLM.Provider
+		}
+		if repoWatch.Spec.Issue.LLM.APIKeySecretRef != "" {
+			params["AGENT_LLM_API_KEY_SECRET"] = repoWatch.Spec.Issue.LLM.APIKeySecretRef
+		}
+		if repoWatch.Spec.Issue.LLM.ConfigdirRef != "" {
+			params["AGENT_LLM_CONFIGDIR"] = repoWatch.Spec.Issue.LLM.ConfigdirRef
+		}
+		if len(repoWatch.Spec.Issue.LLM.Extensions) > 0 {
+			exts, _ := json.Marshal(repoWatch.Spec.Issue.LLM.Extensions)
+			params["AGENT_LLM_EXTENSIONS"] = string(exts)
+		}
+		if len(repoWatch.Spec.Issue.Models) > 0 {
+			params["model"] = strings.Join(repoWatch.Spec.Issue.Models, ",")
+		}
+
+		// Ensure sandbox is scaled up
+		replicas, found, err := unstructured.NestedInt64(sandbox.Object, "spec", "replicas")
+		if err != nil || !found || replicas == 0 {
+			if err := unstructured.SetNestedField(sandbox.Object, int64(1), "spec", "replicas"); err != nil {
+				log.Error(err, "unable to set replicas to 1")
+			} else {
+				if err := r.Update(ctx, sandbox); err != nil {
+					log.Error(err, "unable to scale up sandbox")
+				}
+			}
+		}
+
+		return r.createSandboxTask(ctx, repoWatch, sandbox, sandbox.GetName(), "", "investigate-failures", params)
 	}
 
 	return nil
