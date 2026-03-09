@@ -442,14 +442,14 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string) er
 
 	// Check limit only if we need to create or activate a sandbox
 	if !sandboxIsActive && repoWatch.Spec.Overseer != nil && repoWatch.Spec.Overseer.MaxActiveIssues != nil {
-		max := *repoWatch.Spec.Overseer.MaxActiveIssues
+		maxIssues := *repoWatch.Spec.Overseer.MaxActiveIssues
 		activeCount, err := countActiveSandboxes(ctx, kubeClient.DynamicClient, namespace, repoWatchName, "issue")
 		if err != nil {
 			return fmt.Errorf("failed to count active issue sandboxes: %w", err)
 		}
-		if int32(activeCount) >= max {
+		if int32(activeCount) >= maxIssues {
 			// Instead of returning nil, return an error so overseer logs it and skips
-			return fmt.Errorf("limit_reached: max active issues limit (%d) reached (currently %d active)", max, activeCount)
+			return fmt.Errorf("limit_reached: max active issues limit (%d) reached (currently %d active)", maxIssues, activeCount)
 		}
 	}
 
@@ -571,13 +571,13 @@ func runPR(ctx context.Context, number int, taskType string, submit bool) error 
 
 	// Check limit only if we need to create or activate a sandbox
 	if !sandboxIsActive && repoWatch.Spec.Overseer != nil && repoWatch.Spec.Overseer.MaxActiveReviews != nil {
-		max := *repoWatch.Spec.Overseer.MaxActiveReviews
+		maxReviews := *repoWatch.Spec.Overseer.MaxActiveReviews
 		activeCount, err := countActiveSandboxes(ctx, kubeClient.DynamicClient, namespace, repoWatchName, "review")
 		if err != nil {
 			return fmt.Errorf("failed to count active review sandboxes: %w", err)
 		}
-		if int32(activeCount) >= max {
-			return fmt.Errorf("limit_reached: max active reviews limit (%d) reached (currently %d active)", max, activeCount)
+		if int32(activeCount) >= maxReviews {
+			return fmt.Errorf("limit_reached: max active reviews limit (%d) reached (currently %d active)", maxReviews, activeCount)
 		}
 	}
 
@@ -715,8 +715,8 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 		reviewRequest = agentOutput.Review.ToGitHubReviewRequest()
 	}
 
-	// Not setting event sets it as a draft
-	reviewRequest.Event = nil
+	// Set event to COMMENT to submit directly instead of creating a draft
+	reviewRequest.Event = githubv39.String("COMMENT")
 
 	fmt.Printf("Creating review on GitHub for %s/%s PR %d...\n", owner, repoName, prNumber)
 	review, _, err := client.PullRequests.CreateReview(ctx, owner, repoName, prNumber, reviewRequest)
@@ -849,7 +849,7 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 	githubSecretName := repoWatch.Spec.GithubSecretName
 	if repoWatch.Spec.Review.RobotAccount != "" {
 		githubSecretName = repoWatch.Spec.Review.RobotAccount
-		
+
 		// In overseer we don't have direct access to the secret content like repowatch controller does,
 		// but overseer pod itself is injected with these if they are set on the overseer spec.
 		// Alternatively, if the overseer pod shares the same robot account, they should be in env vars.
@@ -869,7 +869,8 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 			BotLogin:              botLogin,
 			BotName:               botName,
 			BotEmail:              botEmail,
-			LLMProvider:           repoWatch.Spec.Review.LLM.Provider,			LLMConfigdirRef:       repoWatch.Spec.Review.LLM.ConfigdirRef,
+			LLMProvider:           repoWatch.Spec.Review.LLM.Provider,
+			LLMConfigdirRef:       repoWatch.Spec.Review.LLM.ConfigdirRef,
 			LLMAPIKeySecretName:   apiKeySecretName,
 			Prompt:                repoWatch.Spec.Review.LLM.Prompt,
 			GithubSecretName:      githubSecretName,

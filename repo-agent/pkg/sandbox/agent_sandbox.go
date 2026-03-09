@@ -22,6 +22,7 @@ const (
 	GoModCachePath = "/workspaces/.cache/mod"
 	TmpDirPath     = "/workspaces/.tmp"
 )
+
 // AgentSandboxOptions holds options for creating an AgentSandbox.
 // It is a superset of DevSandboxOptions.
 type AgentSandboxOptions struct {

@@ -7,6 +7,8 @@ spec:
   pollIntervalSeconds: 300
   githubSecretName: github-pat
   overseer:
+    maxActiveReviews: 3
+    maxActiveIssues: 3
     robotAccount: codebot-robot
     enabled: true
     chores:
