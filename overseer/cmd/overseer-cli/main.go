@@ -437,8 +437,9 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string) er
 	// Create Task
 	fmt.Printf("Creating task %s for sandbox %s...\n", taskType, sandboxName)
 	params := map[string]string{
-		"ISSUE_URL":    issue.GetHTMLURL(),
-		"AGENT_PROMPT": repoWatch.Spec.Issue.LLM.Prompt,
+		"ISSUE_URL":       issue.GetHTMLURL(),
+		"PULL_REQUEST_ID": fmt.Sprintf("%d", prNumber),
+		"AGENT_PROMPT":    repoWatch.Spec.Issue.LLM.Prompt,
 	}
 	// Add other params if needed, similar to repowatch_controller.go
 	if repoWatch.Spec.Issue.LLM.Provider != "" {
@@ -546,6 +547,7 @@ func runPR(ctx context.Context, number int, taskType string, submit bool) error 
 	fmt.Printf("Creating task %s for sandbox %s...\n", taskType, sandboxName)
 	params := map[string]string{
 		"PULL_REQUEST_ID": fmt.Sprintf("%d", number),
+		"ISSUE_URL":       pr.GetHTMLURL(),
 		"AGENT_PROMPT":    repoWatch.Spec.Review.LLM.Prompt,
 	}
 	if repoWatch.Spec.Review.LLM.Provider != "" {
