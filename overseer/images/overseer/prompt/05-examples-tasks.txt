@@ -8,3 +8,8 @@ Creating a task to review a PR:
 ```bash
 overseer-cli pr --number 456 --task review
 ```
+
+Submitting a completed PR review:
+```bash
+overseer-cli pr --number 456 --submit
+```

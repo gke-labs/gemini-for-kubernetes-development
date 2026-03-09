@@ -575,6 +575,15 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 
 	sandboxName := fmt.Sprintf("%s-pr-%d", repoWatchName, prNumber)
 
+	sandboxUnstructured, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
+	if err == nil {
+		annotations := sandboxUnstructured.GetAnnotations()
+		if annotations != nil && annotations["reviewState"] == "submitted" {
+			fmt.Printf("Review for PR %d already submitted.\n", prNumber)
+			return nil
+		}
+	}
+
 	taskList, err := manager.ListSandboxTasks(ctx, namespace, sandboxName)
 	if err != nil {
 		return fmt.Errorf("failed to list tasks for sandbox %s: %w", sandboxName, err)
