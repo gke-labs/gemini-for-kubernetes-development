@@ -64,12 +64,13 @@ func parseIssueURL(url string) (owner string, repo string, number int, err error
 	u := strings.TrimPrefix(url, "https://")
 	tokens := strings.Split(u, "/")
 	// e.g. https://github.com/GoogleCloudPlatform/k8s-config-connector/issues/6010
-	if len(tokens) == 5 && tokens[0] == "github.com" && tokens[3] == "issues" {
+	// or https://github.com/gke-labs/gateway-api-reference-implementation/pull/92
+	if len(tokens) >= 5 && tokens[0] == "github.com" && (tokens[3] == "issues" || tokens[3] == "pull") {
 		owner := tokens[1]
 		repo := tokens[2]
 		number, err := strconv.Atoi(tokens[4])
 		if err != nil {
-			return "", "", 0, fmt.Errorf("invalid issue number %q: %w", tokens[4], err)
+			return "", "", 0, fmt.Errorf("invalid issue/pr number %q: %w", tokens[4], err)
 		}
 		return owner, repo, number, nil
 	}
