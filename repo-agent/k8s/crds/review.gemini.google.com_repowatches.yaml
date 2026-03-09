@@ -226,6 +226,8 @@ spec:
                         - dryrun
                         type: string
                     type: object
+                  robotAccount:
+                    type: string
                 type: object
               pollIntervalSeconds:
                 default: 300

@@ -291,6 +291,11 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 		apiKeySecretName = "gemini-api-key"
 	}
 
+	githubSecretName := repoWatch.Spec.GithubSecretName
+	if repoWatch.Spec.Overseer != nil && repoWatch.Spec.Overseer.RobotAccount != "" {
+		githubSecretName = repoWatch.Spec.Overseer.RobotAccount
+	}
+
 	opt := sandbox.AgentSandboxOptions{
 		DevSandboxOptions: sandbox.DevSandboxOptions{
 			Name:      sandboxName,
@@ -309,7 +314,7 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 			UserName:            userName,
 			UserEmail:           userEmail,
 			LLMAPIKeySecretName: apiKeySecretName,
-			GithubSecretName:    repoWatch.Spec.GithubSecretName,
+			GithubSecretName:    githubSecretName,
 			RepoSandboxImage:    os.Getenv("REPO_SANDBOX_IMAGE"),
 			ConfigDirImage:      os.Getenv("CONFIG_DIR_IMAGE"),
 			HTTPEnabled:         true,
@@ -696,6 +701,10 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 		apiKeySecretName = "gemini-api-key"
 	}
 
+	githubSecretName := repoWatch.Spec.GithubSecretName
+	if repoWatch.Spec.Issue != nil && repoWatch.Spec.Issue.RobotAccount != "" {
+		githubSecretName = repoWatch.Spec.Issue.RobotAccount
+	}
 	opt := sandbox.AgentSandboxOptions{
 		DevSandboxOptions: sandbox.DevSandboxOptions{
 			Name:      name,
@@ -716,7 +725,7 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 			LLMConfigdirRef:       repoWatch.Spec.Issue.LLM.ConfigdirRef,
 			LLMAPIKeySecretName:   apiKeySecretName,
 			Prompt:                repoWatch.Spec.Issue.LLM.Prompt,
-			GithubSecretName:      repoWatch.Spec.GithubSecretName,
+			GithubSecretName:      githubSecretName,
 			DevcontainerConfigRef: repoWatch.Spec.Issue.DevcontainerConfigRef,
 			Image:                 repoWatch.Spec.Issue.Image,
 			RepoSandboxImage:      os.Getenv("REPO_SANDBOX_IMAGE"),
@@ -758,6 +767,11 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 		apiKeySecretName = "gemini-api-key"
 	}
 
+	githubSecretName := repoWatch.Spec.GithubSecretName
+	if repoWatch.Spec.Review.RobotAccount != "" {
+		githubSecretName = repoWatch.Spec.Review.RobotAccount
+	}
+
 	opt := sandbox.AgentSandboxOptions{
 		DevSandboxOptions: sandbox.DevSandboxOptions{
 			Name:      name,
@@ -778,7 +792,7 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 			LLMConfigdirRef:       repoWatch.Spec.Review.LLM.ConfigdirRef,
 			LLMAPIKeySecretName:   apiKeySecretName,
 			Prompt:                repoWatch.Spec.Review.LLM.Prompt,
-			GithubSecretName:      repoWatch.Spec.GithubSecretName,
+			GithubSecretName:      githubSecretName,
 			DevcontainerConfigRef: repoWatch.Spec.Review.DevcontainerConfigRef,
 			Image:                 repoWatch.Spec.Review.Image,
 			RepoSandboxImage:      os.Getenv("REPO_SANDBOX_IMAGE"),

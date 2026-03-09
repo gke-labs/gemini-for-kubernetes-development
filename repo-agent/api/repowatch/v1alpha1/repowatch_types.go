@@ -328,6 +328,10 @@ type OverseerSpec struct {
 	// Repo configuration
 	// +kubebuilder:validation:Optional
 	Repo *RepoSpec `json:"repo,omitempty"`
+
+	// RobotAccount to use for the overseer.
+	// +kubebuilder:validation:Optional
+	RobotAccount string `json:"robotAccount,omitempty"`
 }
 
 // RepoWatchSpec defines the desired state of RepoWatch

@@ -2187,11 +2187,42 @@ func (r *Reconciler) reconcileOverseer(ctx context.Context, repoWatch *reviewv1a
 	log := log.FromContext(ctx)
 
 	log.Info("reconciling overseer", "enabled", repoWatch.Spec.Overseer != nil && repoWatch.Spec.Overseer.Enabled)
-	if err := overseer.Reconcile(ctx, r.Client, repoWatch, &pkg_github.User{
+
+	overseerUser := &pkg_github.User{
 		UserID: user.GetLogin(),
 		Name:   user.GetName(),
 		Email:  user.GetEmail(),
-	}, r.RepoSandboxImage, r.ConfigDirImage); err != nil {
+	}
+
+	overseerWatch := repoWatch.DeepCopy()
+
+	if overseerWatch.Spec.Overseer != nil && overseerWatch.Spec.Overseer.RobotAccount != "" {
+		githubSecretName := overseerWatch.Spec.Overseer.RobotAccount
+		if err := r.ensureRobotSecret(ctx, overseerWatch.Namespace, githubSecretName); err != nil {
+			log.Error(err, "failed to ensure robot secret", "secret", githubSecretName)
+			return err
+		}
+
+		secret := &corev1.Secret{}
+		if err := r.Get(ctx, types.NamespacedName{Name: githubSecretName, Namespace: overseerWatch.Namespace}, secret); err != nil {
+			log.Error(err, "failed to get robot secret", "secret", githubSecretName)
+			return err
+		}
+
+		if len(secret.Data["userid"]) > 0 {
+			overseerUser.UserID = string(secret.Data["userid"])
+		}
+		if len(secret.Data["name"]) > 0 {
+			overseerUser.Name = string(secret.Data["name"])
+		}
+		if len(secret.Data["email"]) > 0 {
+			overseerUser.Email = string(secret.Data["email"])
+		}
+
+		overseerWatch.Spec.GithubSecretName = githubSecretName
+	}
+
+	if err := overseer.Reconcile(ctx, r.Client, overseerWatch, overseerUser, r.RepoSandboxImage, r.ConfigDirImage); err != nil {
 		return err
 	}
 
