@@ -283,6 +283,10 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 	}
 	userEmail := os.Getenv("GITHUB_USER_EMAIL")
 
+	botLogin := os.Getenv("GITHUB_BOT_LOGIN")
+	botName := os.Getenv("GITHUB_BOT_NAME")
+	botEmail := os.Getenv("GITHUB_BOT_EMAIL")
+
 	apiKeySecretName := ""
 	if repoWatch.Spec.Issue != nil {
 		apiKeySecretName = repoWatch.Spec.Issue.LLM.APIKeySecretRef
@@ -313,6 +317,9 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 			UserLogin:           userLogin,
 			UserName:            userName,
 			UserEmail:           userEmail,
+			BotLogin:            botLogin,
+			BotName:             botName,
+			BotEmail:            botEmail,
 			LLMAPIKeySecretName: apiKeySecretName,
 			GithubSecretName:    githubSecretName,
 			RepoSandboxImage:    os.Getenv("REPO_SANDBOX_IMAGE"),
@@ -757,6 +764,10 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 	}
 	userEmail := os.Getenv("GITHUB_USER_EMAIL")
 
+	botLogin := os.Getenv("GITHUB_BOT_LOGIN")
+	botName := os.Getenv("GITHUB_BOT_NAME")
+	botEmail := os.Getenv("GITHUB_BOT_EMAIL")
+
 	branchName := fmt.Sprintf("issue-%d-%s", issue.GetNumber(), randString(4))
 
 	apiKeySecretName := repoWatch.Spec.Issue.LLM.APIKeySecretRef
@@ -784,6 +795,9 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 			UserLogin:             userLogin,
 			UserName:              userName,
 			UserEmail:             userEmail,
+			BotLogin:              botLogin,
+			BotName:               botName,
+			BotEmail:              botEmail,
 			LLMProvider:           repoWatch.Spec.Issue.LLM.Provider,
 			LLMConfigdirRef:       repoWatch.Spec.Issue.LLM.ConfigdirRef,
 			LLMAPIKeySecretName:   apiKeySecretName,
@@ -816,6 +830,17 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, repoWatch *reviewv1alpha1.RepoWatch, pr *githubv39.PullRequest) error {
 	name := fmt.Sprintf("%s-pr-%d", repoWatch.Name, pr.GetNumber())
 
+	userLogin := os.Getenv("GITHUB_USER_ID")
+	userName := os.Getenv("GITHUB_USER_NAME")
+	if userName == "" {
+		userName = userLogin
+	}
+	userEmail := os.Getenv("GITHUB_USER_EMAIL")
+
+	botLogin := os.Getenv("GITHUB_BOT_LOGIN")
+	botName := os.Getenv("GITHUB_BOT_NAME")
+	botEmail := os.Getenv("GITHUB_BOT_EMAIL")
+
 	apiKeySecretName := repoWatch.Spec.Review.LLM.APIKeySecretRef
 	if apiKeySecretName == "" {
 		apiKeySecretName = "gemini-api-key"
@@ -824,6 +849,10 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 	githubSecretName := repoWatch.Spec.GithubSecretName
 	if repoWatch.Spec.Review.RobotAccount != "" {
 		githubSecretName = repoWatch.Spec.Review.RobotAccount
+		
+		// In overseer we don't have direct access to the secret content like repowatch controller does,
+		// but overseer pod itself is injected with these if they are set on the overseer spec.
+		// Alternatively, if the overseer pod shares the same robot account, they should be in env vars.
 	}
 
 	opt := sandbox.ReviewSandboxOptions{
@@ -834,8 +863,13 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 				"review.gemini.google.com/repowatch": repoWatch.Name,
 				"sandbox.gemini.google.com/type":     "review",
 			},
-			LLMProvider:           repoWatch.Spec.Review.LLM.Provider,
-			LLMConfigdirRef:       repoWatch.Spec.Review.LLM.ConfigdirRef,
+			UserLogin:             userLogin,
+			UserName:              userName,
+			UserEmail:             userEmail,
+			BotLogin:              botLogin,
+			BotName:               botName,
+			BotEmail:              botEmail,
+			LLMProvider:           repoWatch.Spec.Review.LLM.Provider,			LLMConfigdirRef:       repoWatch.Spec.Review.LLM.ConfigdirRef,
 			LLMAPIKeySecretName:   apiKeySecretName,
 			Prompt:                repoWatch.Spec.Review.LLM.Prompt,
 			GithubSecretName:      githubSecretName,

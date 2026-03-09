@@ -78,6 +78,14 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 		command = []interface{}{RepoSandboxBinary, "review-daemon"}
 	}
 
+	userName := opt.UserName
+	if userName == "" {
+		userName = opt.UserLogin
+	}
+	if userName == "" {
+		userName = "Unknown User"
+	}
+
 	env := []interface{}{
 		map[string]interface{}{"name": "NAMESPACE", "value": opt.Namespace},
 		map[string]interface{}{"name": "NAME", "value": sandboxName},
@@ -87,6 +95,14 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 		map[string]interface{}{"name": "IGNORE_FILES", "value": strings.Join(opt.IgnoreFiles, ",")},
 		map[string]interface{}{"name": "SEVERITY_THRESHOLD", "value": opt.SeverityThreshold},
 		map[string]interface{}{"name": "AGENT_NAME", "value": opt.LLMProvider},
+		map[string]interface{}{"name": "GITHUB_USER_LOGIN", "value": opt.UserLogin},
+		map[string]interface{}{"name": "GITHUB_USER_NAME", "value": userName},
+		map[string]interface{}{"name": "GITHUB_USER_EMAIL", "value": opt.UserEmail},
+		map[string]interface{}{"name": "GIT_AUTHOR_NAME", "value": userName},
+		map[string]interface{}{"name": "GIT_AUTHOR_EMAIL", "value": opt.UserEmail},
+		map[string]interface{}{"name": "GITHUB_BOT_LOGIN", "value": opt.BotLogin},
+		map[string]interface{}{"name": "GITHUB_BOT_NAME", "value": opt.BotName},
+		map[string]interface{}{"name": "GITHUB_BOT_EMAIL", "value": opt.BotEmail},
 	}
 
 	if len(opt.LLMExtensions) > 0 {

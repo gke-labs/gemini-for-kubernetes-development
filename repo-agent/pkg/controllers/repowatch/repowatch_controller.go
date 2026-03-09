@@ -435,7 +435,7 @@ func (r *Reconciler) reconcileReviews(ctx context.Context, repoWatch *reviewv1al
 		return err
 	}
 
-	watchedPRs, pendingPRs, activeSandboxes := r.reconcileReviewSandboxesInternal(ctx, repoWatch, explicitPRs, prs, sandboxList, podsBySandbox)
+	watchedPRs, pendingPRs, activeSandboxes := r.reconcileReviewSandboxesInternal(ctx, user, repoWatch, explicitPRs, prs, sandboxList, podsBySandbox)
 
 	repoWatch.Status.ActiveSandboxCount = activeSandboxes
 	repoWatch.Status.ReviewSandboxes = watchedPRs
@@ -588,7 +588,7 @@ func (r *Reconciler) excludePRs(prs []*github.PullRequest, repoWatch *reviewv1al
 	return filteredPRs
 }
 
-func (r *Reconciler) reconcileReviewSandboxesInternal(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, explicitPRs []*github.PullRequest, prs []*github.PullRequest, sandboxes *unstructured.UnstructuredList, podsBySandbox map[string]*corev1.Pod) ([]reviewv1alpha1.WatchedPR, []int, int) {
+func (r *Reconciler) reconcileReviewSandboxesInternal(ctx context.Context, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, explicitPRs []*github.PullRequest, prs []*github.PullRequest, sandboxes *unstructured.UnstructuredList, podsBySandbox map[string]*corev1.Pod) ([]reviewv1alpha1.WatchedPR, []int, int) {
 	log := log.FromContext(ctx)
 
 	ownedSandboxes := getOwnedSandboxes(sandboxes.Items, repoWatch.UID)
@@ -681,7 +681,7 @@ func (r *Reconciler) reconcileReviewSandboxesInternal(ctx context.Context, repoW
 			if prIsExplicit || (activeSandboxes < repoWatch.Spec.Review.MaxActiveSandboxes) &&
 				(repoWatch.Spec.Review.MaxSandboxes == 0 || totalSandboxes < repoWatch.Spec.Review.MaxSandboxes) {
 				log.Info("creating sandbox for PR", "pr", *pr.Number)
-				if err := r.createReviewSandboxForPR(ctx, repoWatch, pr); err != nil {
+				if err := r.createReviewSandboxForPR(ctx, user, repoWatch, pr); err != nil {
 					log.Error(err, "unable to create sandbox for PR", "pr", *pr.Number)
 				} else {
 					activeSandboxes++
@@ -1026,6 +1026,9 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 			UserLogin:             userLogin,
 			UserName:              userName,
 			UserEmail:             userEmail,
+			BotLogin:              botLogin,
+			BotName:               botName,
+			BotEmail:              botEmail,
 			LLMProvider:           repoWatch.Spec.Issue.LLM.Provider,
 			LLMConfigdirRef:       repoWatch.Spec.Issue.LLM.ConfigdirRef,
 			LLMAPIKeySecretName:   apiKeySecretName,
@@ -1046,11 +1049,7 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 		IssueTitle:    *issue.Title,
 		IssueRepo:     repoWatch.GetName(),
 		//Handler:    "", // Handled per task?
-		BotLogin: botLogin,
-		BotName:  botName,
-		BotEmail: botEmail,
-		Resources: corev1.ResourceRequirements{
-			Requests: corev1.ResourceList{
+		Resources: corev1.ResourceRequirements{			Requests: corev1.ResourceList{
 				corev1.ResourceCPU:    resource.MustParse("2000m"),
 				corev1.ResourceMemory: resource.MustParse("2Gi"),
 				"ephemeral-storage":   ephemeralStorage,
@@ -1143,18 +1142,44 @@ func (r *Reconciler) generateIssueHandlerPrompt(handler reviewv1alpha1.IssueHand
 // createReviewSandboxForPR creates a ReviewSandbox for a pull request.
 // It uses the LLM configuration from the RepoWatch CRD to configure the
 // sandbox.
-func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, pr *github.PullRequest) error {
+func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, pr *github.PullRequest) error {
 	log := log.FromContext(ctx)
 	sandboxName := fmt.Sprintf("%s-pr-%d", repoWatch.Name, *pr.Number)
 
 	prompt := repoWatch.Spec.Review.LLM.Prompt
 
+	userLogin := user.GetLogin()
+	userName := user.GetName()
+	if userName == "" {
+		userName = userLogin
+	}
+	userEmail := user.GetEmail()
+
 	githubSecretName := repoWatch.Spec.GithubSecretName
+	botLogin := ""
+	botName := ""
+	botEmail := ""
 	if repoWatch.Spec.Review.RobotAccount != "" {
 		githubSecretName = repoWatch.Spec.Review.RobotAccount
 		if err := r.ensureRobotSecret(ctx, repoWatch.Namespace, githubSecretName); err != nil {
 			log.Error(err, "failed to ensure robot secret", "secret", githubSecretName)
 			return err
+		}
+
+		secret := &corev1.Secret{}
+		if err := r.Get(ctx, types.NamespacedName{Name: githubSecretName, Namespace: repoWatch.Namespace}, secret); err != nil {
+			log.Error(err, "failed to get robot secret", "secret", githubSecretName)
+			return err
+		}
+
+		if len(secret.Data["userid"]) > 0 {
+			botLogin = string(secret.Data["userid"])
+		}
+		if len(secret.Data["name"]) > 0 {
+			botName = string(secret.Data["name"])
+		}
+		if len(secret.Data["email"]) > 0 {
+			botEmail = string(secret.Data["email"])
 		}
 	}
 
@@ -1168,8 +1193,13 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 				"review.gemini.google.com/repowatch": repoWatch.Name,
 				"sandbox.gemini.google.com/type":     "review",
 			},
-			LLMProvider:           repoWatch.Spec.Review.LLM.Provider,
-			LLMConfigdirRef:       repoWatch.Spec.Review.LLM.ConfigdirRef,
+			UserLogin:             userLogin,
+			UserName:              userName,
+			UserEmail:             userEmail,
+			BotLogin:              botLogin,
+			BotName:               botName,
+			BotEmail:              botEmail,
+			LLMProvider:           repoWatch.Spec.Review.LLM.Provider,			LLMConfigdirRef:       repoWatch.Spec.Review.LLM.ConfigdirRef,
 			LLMAPIKeySecretName:   repoWatch.Spec.Review.LLM.APIKeySecretRef,
 			Prompt:                repoWatch.Spec.Review.LLM.Prompt,
 			GithubSecretName:      githubSecretName,

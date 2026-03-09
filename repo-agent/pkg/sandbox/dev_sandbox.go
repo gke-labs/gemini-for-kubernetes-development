@@ -24,6 +24,11 @@ type DevSandboxOptions struct {
 	UserName    string
 	UserEmail   string
 
+	// Bot info
+	BotLogin string
+	BotName  string
+	BotEmail string
+
 	// User Config
 	DotFilesRepo string
 
