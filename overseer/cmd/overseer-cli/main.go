@@ -751,16 +751,7 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 }
 
 func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, repoWatch *reviewv1alpha1.RepoWatch, pr *githubv39.PullRequest) error {
-	// Replicate logic from repowatch_controller.go:createPRSandbox
 	name := fmt.Sprintf("%s-pr-%d", repoWatch.Name, pr.GetNumber())
-	cloneURL := pr.GetBase().GetRepo().GetCloneURL()
-
-	userLogin := os.Getenv("GITHUB_USER_ID")
-	userName := os.Getenv("GITHUB_USER_NAME")
-	if userName == "" {
-		userName = userLogin
-	}
-	userEmail := os.Getenv("GITHUB_USER_EMAIL")
 
 	apiKeySecretName := repoWatch.Spec.Review.LLM.APIKeySecretRef
 	if apiKeySecretName == "" {
@@ -772,22 +763,13 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 		githubSecretName = repoWatch.Spec.Review.RobotAccount
 	}
 
-	opt := sandbox.AgentSandboxOptions{
+	opt := sandbox.ReviewSandboxOptions{
 		DevSandboxOptions: sandbox.DevSandboxOptions{
 			Name:      name,
 			Namespace: repoWatch.Namespace,
 			Labels: map[string]string{
 				"review.gemini.google.com/repowatch": repoWatch.Name,
-				"sandbox.gemini.google.com/type":     "review",
 			},
-			CloneURL:              cloneURL,
-			HTMLURL:               pr.GetHTMLURL(),
-			Branch:                pr.GetHead().GetRef(),
-			Origin:                pr.GetHead().GetRepo().GetCloneURL(),
-			PushEnabled:           false,
-			UserLogin:             userLogin,
-			UserName:              userName,
-			UserEmail:             userEmail,
 			LLMProvider:           repoWatch.Spec.Review.LLM.Provider,
 			LLMConfigdirRef:       repoWatch.Spec.Review.LLM.ConfigdirRef,
 			LLMAPIKeySecretName:   apiKeySecretName,
@@ -801,14 +783,21 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 			Replicas:              1,
 			ServiceAccountName:    "review-sandbox",
 		},
-		IssueID:        fmt.Sprintf("%d", pr.GetNumber()),
-		IssueTitle:     pr.GetTitle(),
-		IssueRepo:      repoWatch.Name,
-		SkipDevcPrefix: true,
+		PRNumber:          pr.GetNumber(),
+		PRTitle:           pr.GetTitle(),
+		PRHTMLURL:         pr.GetHTMLURL(),
+		PRDiffURL:         pr.GetDiffURL(),
+		PRCloneURL:        fmt.Sprintf("%s#refs/heads/%s", pr.GetHead().GetRepo().GetCloneURL(), pr.GetHead().GetRef()),
+		RepoName:          repoWatch.Name,
+		MaxReviewFiles:    repoWatch.Spec.Review.MaxReviewFiles,
+		IgnoreFiles:       repoWatch.Spec.Review.IgnoreFiles,
+		SeverityThreshold: repoWatch.Spec.Review.SeverityThreshold,
+		LLMExtensions:     repoWatch.Spec.Review.LLM.Extensions,
+		WorkspaceDiskSize: repoWatch.Spec.Review.WorkspaceDiskSize,
+		SkipDevcPrefix:    true,
 	}
 
-	sb, svc := sandbox.NewAgentSandbox(opt)
-	sb.SetName(name) // Resource name should not have devc- prefix for PRs to match controller
+	sb, svc := sandbox.NewReviewSandbox(opt)
 
 	_, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(repoWatch.Namespace).Create(ctx, sb, metav1.CreateOptions{})
 	if err != nil {
