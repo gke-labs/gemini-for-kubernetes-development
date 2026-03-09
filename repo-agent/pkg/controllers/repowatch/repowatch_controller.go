@@ -1166,6 +1166,7 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *re
 			Namespace: repoWatch.Namespace,
 			Labels: map[string]string{
 				"review.gemini.google.com/repowatch": repoWatch.Name,
+				"sandbox.gemini.google.com/type":     "review",
 			},
 			LLMProvider:           repoWatch.Spec.Review.LLM.Provider,
 			LLMConfigdirRef:       repoWatch.Spec.Review.LLM.ConfigdirRef,

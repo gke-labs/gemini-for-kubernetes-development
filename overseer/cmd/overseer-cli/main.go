@@ -420,17 +420,37 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string) er
 
 	sandboxName := fmt.Sprintf("devc-%s-issue-%d", repoWatch.Name, number)
 
-	// Check if sandbox exists
-	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
-	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			// Create Sandbox
-			fmt.Printf("Creating sandbox %s...\n", sandboxName)
-			if err := createIssueSandbox(ctx, kubeClient, &repoWatch, issue); err != nil {
-				return fmt.Errorf("failed to create issue sandbox: %w", err)
-			}
-		} else {
-			return fmt.Errorf("failed to check if sandbox exists: %w", err)
+	var sandboxExists bool
+	var sandboxIsActive bool
+	sandboxUnstructured, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
+	if err == nil {
+		sandboxExists = true
+		replicas, found, err := unstructured.NestedInt64(sandboxUnstructured.Object, "spec", "replicas")
+		if err == nil && (!found || replicas > 0) {
+			sandboxIsActive = true
+		}
+	} else if !strings.Contains(err.Error(), "not found") {
+		return fmt.Errorf("failed to check if sandbox exists: %w", err)
+	}
+
+	// Check limit only if we need to create or activate a sandbox
+	if !sandboxIsActive && repoWatch.Spec.Overseer != nil && repoWatch.Spec.Overseer.MaxActiveIssues != nil {
+		max := *repoWatch.Spec.Overseer.MaxActiveIssues
+		activeCount, err := countActiveSandboxes(ctx, kubeClient.DynamicClient, namespace, repoWatchName, "issue")
+		if err != nil {
+			return fmt.Errorf("failed to count active issue sandboxes: %w", err)
+		}
+		if int32(activeCount) >= max {
+			// Instead of returning nil, return an error so overseer logs it and skips
+			return fmt.Errorf("limit_reached: max active issues limit (%d) reached (currently %d active)", max, activeCount)
+		}
+	}
+
+	// Create Sandbox if it doesn't exist
+	if !sandboxExists {
+		fmt.Printf("Creating sandbox %s...\n", sandboxName)
+		if err := createIssueSandbox(ctx, kubeClient, &repoWatch, issue); err != nil {
+			return fmt.Errorf("failed to create issue sandbox: %w", err)
 		}
 	}
 
@@ -529,17 +549,36 @@ func runPR(ctx context.Context, number int, taskType string, submit bool) error 
 
 	sandboxName := fmt.Sprintf("%s-pr-%d", repoWatch.Name, number)
 
-	// Check if sandbox exists
-	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
-	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			// Create Sandbox
-			fmt.Printf("Creating sandbox %s...\n", sandboxName)
-			if err := createPRSandbox(ctx, kubeClient, &repoWatch, pr); err != nil {
-				return fmt.Errorf("failed to create PR sandbox: %w", err)
-			}
-		} else {
-			return fmt.Errorf("failed to check if sandbox exists: %w", err)
+	var sandboxExists bool
+	var sandboxIsActive bool
+	sandboxUnstructured, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
+	if err == nil {
+		sandboxExists = true
+		replicas, found, err := unstructured.NestedInt64(sandboxUnstructured.Object, "spec", "replicas")
+		if err == nil && (!found || replicas > 0) {
+			sandboxIsActive = true
+		}
+	} else if !strings.Contains(err.Error(), "not found") {
+		return fmt.Errorf("failed to check if sandbox exists: %w", err)
+	}
+
+	// Check limit only if we need to create or activate a sandbox
+	if !sandboxIsActive && repoWatch.Spec.Overseer != nil && repoWatch.Spec.Overseer.MaxActiveReviews != nil {
+		max := *repoWatch.Spec.Overseer.MaxActiveReviews
+		activeCount, err := countActiveSandboxes(ctx, kubeClient.DynamicClient, namespace, repoWatchName, "review")
+		if err != nil {
+			return fmt.Errorf("failed to count active review sandboxes: %w", err)
+		}
+		if int32(activeCount) >= max {
+			return fmt.Errorf("limit_reached: max active reviews limit (%d) reached (currently %d active)", max, activeCount)
+		}
+	}
+
+	// Create Sandbox if it doesn't exist
+	if !sandboxExists {
+		fmt.Printf("Creating sandbox %s...\n", sandboxName)
+		if err := createPRSandbox(ctx, kubeClient, &repoWatch, pr); err != nil {
+			return fmt.Errorf("failed to create PR sandbox: %w", err)
 		}
 	}
 
@@ -780,9 +819,9 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 			Namespace: repoWatch.Namespace,
 			Labels: map[string]string{
 				"review.gemini.google.com/repowatch": repoWatch.Name,
+				"sandbox.gemini.google.com/type":     "review",
 			},
-			LLMProvider:           repoWatch.Spec.Review.LLM.Provider,
-			LLMConfigdirRef:       repoWatch.Spec.Review.LLM.ConfigdirRef,
+			LLMProvider:           repoWatch.Spec.Review.LLM.Provider,			LLMConfigdirRef:       repoWatch.Spec.Review.LLM.ConfigdirRef,
 			LLMAPIKeySecretName:   apiKeySecretName,
 			Prompt:                repoWatch.Spec.Review.LLM.Prompt,
 			GithubSecretName:      githubSecretName,
@@ -849,3 +888,24 @@ func resolveIssueFromPR(ctx context.Context, owner, repo string, prNumber int) (
 	// Fallback: just return the PR number as its own issue number
 	return prNumber, nil
 }
+
+func countActiveSandboxes(ctx context.Context, dynClient dynamic.Interface, namespace, repowatchName, sandboxType string) (int, error) {
+	labelSelector := fmt.Sprintf("review.gemini.google.com/repowatch=%s,sandbox.gemini.google.com/type=%s", repowatchName, sandboxType)
+	listOptions := metav1.ListOptions{
+		LabelSelector: labelSelector,
+	}
+	sandboxList, err := dynClient.Resource(k8s.SandboxGVR).Namespace(namespace).List(ctx, listOptions)
+	if err != nil {
+		return 0, err
+	}
+	activeCount := 0
+	for _, item := range sandboxList.Items {
+		replicas, found, err := unstructured.NestedInt64(item.Object, "spec", "replicas")
+		if err == nil && found && replicas == 0 {
+			continue
+		}
+		activeCount++
+	}
+	return activeCount, nil
+}
+

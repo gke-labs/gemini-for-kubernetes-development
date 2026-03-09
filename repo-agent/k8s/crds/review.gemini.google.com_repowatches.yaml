@@ -216,6 +216,12 @@ spec:
                     type: boolean
                   image:
                     type: string
+                  maxActiveIssues:
+                    format: int32
+                    type: integer
+                  maxActiveReviews:
+                    format: int32
+                    type: integer
                   repo:
                     properties:
                       mode:
