@@ -9,11 +9,11 @@ set -x
 
 export REPO_OWNER="{{ .Repo.Owner }}"
 export REPO_NAME="{{ .Repo.Name }}"
-export CLONE_URL={{ .Repo.CloneURL }}
+export CLONE_URL="{{ .Repo.CloneURL }}"
 export ISSUE_NUMBER={{ .Issue.Number }}
 export PROMPT_FILE="{{ .PromptFile }}"
-export GITHUB_USER_ID={{ .User.UserID }}
-export GITHUB_USER_EMAIL={{ .User.Email }}
+export GITHUB_USER_ID="{{ .User.UserID }}"
+export GITHUB_USER_EMAIL="{{ .User.Email }}"
 export GITHUB_USER_NAME="{{ .User.Name }}"
 
 function setupGit {
@@ -41,14 +41,14 @@ EOF
     if [ -n "$GITHUB_BOT_EMAIL" ]; then
         git config --global user.email "${GITHUB_BOT_EMAIL}"
     else
-        git config --global user.email ${GITHUB_USER_EMAIL}
+        git config --global user.email "${GITHUB_USER_EMAIL}"
     fi
 
     echo "running git config user.name"
     if [ -n "$GITHUB_BOT_NAME" ]; then
         git config --global user.name "${GITHUB_BOT_NAME}"
     else
-        git config --global user.name ${GITHUB_USER_NAME}
+        git config --global user.name "${GITHUB_USER_NAME}"
     fi
 
     echo "running gh auth setup-git"
