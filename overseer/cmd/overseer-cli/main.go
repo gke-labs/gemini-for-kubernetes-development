@@ -661,8 +661,21 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 		return fmt.Errorf("no agentDraft annotation found on task %s", latestReviewTask.Name)
 	}
 
+	var repoWatch reviewv1alpha1.RepoWatch
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(rwUnstructured.Object, &repoWatch); err != nil {
+		return fmt.Errorf("failed to convert RepoWatch: %w", err)
+	}
+
+	githubSecretName := repoWatch.Spec.GithubSecretName
+	if repoWatch.Spec.Overseer.RobotAccount != "" {
+		githubSecretName = repoWatch.Spec.Overseer.RobotAccount
+	}
+
+	rwUnstructuredCopy := rwUnstructured.DeepCopy()
+	_ = unstructured.SetNestedField(rwUnstructuredCopy.Object, githubSecretName, "spec", "githubSecretName")
+
 	// Get GitHub token from secret
-	token, err := manager.GetGitHubToken(ctx, rwUnstructured)
+	token, err := manager.GetGitHubToken(ctx, rwUnstructuredCopy)
 	if err != nil {
 		return fmt.Errorf("failed to get github token: %w", err)
 	}
@@ -821,7 +834,8 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 				"review.gemini.google.com/repowatch": repoWatch.Name,
 				"sandbox.gemini.google.com/type":     "review",
 			},
-			LLMProvider:           repoWatch.Spec.Review.LLM.Provider,			LLMConfigdirRef:       repoWatch.Spec.Review.LLM.ConfigdirRef,
+			LLMProvider:           repoWatch.Spec.Review.LLM.Provider,
+			LLMConfigdirRef:       repoWatch.Spec.Review.LLM.ConfigdirRef,
 			LLMAPIKeySecretName:   apiKeySecretName,
 			Prompt:                repoWatch.Spec.Review.LLM.Prompt,
 			GithubSecretName:      githubSecretName,
@@ -908,4 +922,3 @@ func countActiveSandboxes(ctx context.Context, dynClient dynamic.Interface, name
 	}
 	return activeCount, nil
 }
-
