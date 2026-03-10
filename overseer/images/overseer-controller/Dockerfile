@@ -1,0 +1,38 @@
+FROM golang:1.25.7 AS builder
+
+WORKDIR /app
+# Copy the Go Modules manifests
+COPY go.work go.work
+COPY go.work.sum go.work.sum
+COPY go.mod go.mod
+COPY go.sum go.sum
+COPY repo-agent/go.mod repo-agent/go.mod
+COPY repo-agent/go.sum repo-agent/go.sum
+COPY overseer/go.mod overseer/go.mod
+COPY overseer/go.sum overseer/go.sum
+COPY agentsandboxes/go.mod agentsandboxes/go.mod
+COPY agentsandboxes/go.sum agentsandboxes/go.sum
+COPY dev/tools/go.mod dev/tools/go.mod
+COPY dev/tools/go.sum dev/tools/go.sum
+COPY services/container-registry/go.mod services/container-registry/go.mod
+COPY services/container-registry/go.sum services/container-registry/go.sum
+
+# Copy the source code
+COPY agentsandboxes/ agentsandboxes/
+COPY repo-agent/pkg/ repo-agent/pkg/
+COPY repo-agent/api/ repo-agent/api/
+COPY overseer/ overseer/
+
+WORKDIR /app/overseer
+RUN go build -o overseer-controller ./cmd/overseer-controller/main.go
+
+FROM debian:bookworm-slim
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /app/overseer/overseer-controller /usr/local/bin/overseer-controller
+
+ENTRYPOINT ["/usr/local/bin/overseer-controller"]

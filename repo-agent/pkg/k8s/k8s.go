@@ -211,6 +211,19 @@ func (m *Manager) UpdateSandboxUserDraft(ctx context.Context, namespace, sandbox
 	return nil
 }
 
+func (m *Manager) GetSandboxAnnotation(ctx context.Context, namespace, sandboxName, key string) (string, error) {
+	sandbox, err := m.Client.Resource(SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
+	if err != nil {
+		return "", fmt.Errorf("failed to get sandbox %s: %w", sandboxName, err)
+	}
+
+	annotations := sandbox.GetAnnotations()
+	if annotations == nil {
+		return "", nil
+	}
+	return annotations[key], nil
+}
+
 func (m *Manager) UpdateSandboxAnnotation(ctx context.Context, namespace, sandboxName, key, value string) error {
 	sandbox, err := m.Client.Resource(SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
 	if err != nil {
@@ -280,6 +293,19 @@ func (m *Manager) GetRepoWatch(ctx context.Context, namespace, name string) (*un
 		return nil, err
 	}
 	return repoWatch, nil
+}
+
+func (m *Manager) GetOverseer(ctx context.Context, name string) (*unstructured.Unstructured, error) {
+	gvr := schema.GroupVersionResource{
+		Group:    "overseer.gemini.google.com",
+		Version:  "v1alpha1",
+		Resource: "overseers",
+	}
+	overseer, err := m.Client.Resource(gvr).Get(ctx, name, v1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return overseer, nil
 }
 
 func (m *Manager) ScaledownIssueSandbox(ctx context.Context, namespace, repo, issueID, handler string) error {

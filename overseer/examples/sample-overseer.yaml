@@ -1,0 +1,13 @@
+apiVersion: overseer.gemini.google.com/v1alpha1
+kind: Overseer
+metadata:
+  name: sample-repo
+spec:
+  repoURL: https://github.com/gke-labs/gemini-for-kubernetes-development.git
+  githubSecretName: github-pat
+  chores:
+    mode: enabled
+  repo:
+    mode: enabled
+  maxActiveReviews: 5
+  maxActiveIssues: 5

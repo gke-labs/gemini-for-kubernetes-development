@@ -14,7 +14,6 @@ import (
 	"github.com/spf13/cobra"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
@@ -22,8 +21,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/yaml"
 
-	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
-	sandboxtaskv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
@@ -34,6 +31,7 @@ import (
 
 var (
 	repoWatchName string
+	overseerName  string
 	namespace     string
 )
 
@@ -41,6 +39,7 @@ func main() {
 	klog.InitFlags(nil)
 
 	repoWatchName = os.Getenv("REPOWATCH_NAME")
+	overseerName = os.Getenv("OVERSEER_NAME")
 	namespace = os.Getenv("NAMESPACE")
 
 	rootCmd := &cobra.Command{
@@ -125,9 +124,118 @@ type ChoreDefinition struct {
 	Prompt      string `json:"-"`
 }
 
+func getManager() (*k8s.Manager, *clients.KubernetesClient, error) {
+	cfg, err := config.GetConfig()
+	if err != nil {
+		return nil, nil, fmt.Errorf("unable to get kubeconfig: %w", err)
+	}
+
+	dynClient, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return nil, nil, fmt.Errorf("unable to create dynamic client: %w", err)
+	}
+
+	clientset, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return nil, nil, fmt.Errorf("unable to create clientset: %w", err)
+	}
+
+	kubeClient := &clients.KubernetesClient{
+		DynamicClient: dynClient,
+		Clientset:     clientset,
+	}
+	return k8s.NewManager(kubeClient), kubeClient, nil
+}
+
+type RepoConfig struct {
+	Name             string
+	Namespace        string
+	RepoURL          string
+	GithubSecretName string
+	RobotAccount     string
+	MaxActiveIssues  *int32
+	MaxActiveReviews *int32
+}
+
+func getRepoConfig(ctx context.Context, manager *k8s.Manager) (*RepoConfig, error) {
+	if overseerName != "" {
+		u, err := manager.GetOverseer(ctx, overseerName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get Overseer %s: %w", overseerName, err)
+		}
+
+		repoURL, _, _ := unstructured.NestedString(u.Object, "spec", "repoURL")
+		githubSecretName, _, _ := unstructured.NestedString(u.Object, "spec", "githubSecretName")
+		robotAccount, _, _ := unstructured.NestedString(u.Object, "spec", "robotAccount")
+
+		var maxActiveIssues *int32
+		if val, found, _ := unstructured.NestedInt64(u.Object, "spec", "maxActiveIssues"); found {
+			v := int32(val)
+			maxActiveIssues = &v
+		}
+
+		var maxActiveReviews *int32
+		if val, found, _ := unstructured.NestedInt64(u.Object, "spec", "maxActiveReviews"); found {
+			v := int32(val)
+			maxActiveReviews = &v
+		}
+
+		return &RepoConfig{
+			Name:             overseerName,
+			Namespace:        namespace,
+			RepoURL:          repoURL,
+			GithubSecretName: githubSecretName,
+			RobotAccount:     robotAccount,
+			MaxActiveIssues:  maxActiveIssues,
+			MaxActiveReviews: maxActiveReviews,
+		}, nil
+	}
+
+	if repoWatchName != "" && namespace != "" {
+		u, err := manager.GetRepoWatch(ctx, namespace, repoWatchName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get RepoWatch %s: %w", repoWatchName, err)
+		}
+
+		repoURL, _, _ := unstructured.NestedString(u.Object, "spec", "repoURL")
+		githubSecretName, _, _ := unstructured.NestedString(u.Object, "spec", "githubSecretName")
+		robotAccount, _, _ := unstructured.NestedString(u.Object, "spec", "overseer", "robotAccount")
+
+		var maxActiveIssues *int32
+		if val, found, _ := unstructured.NestedInt64(u.Object, "spec", "overseer", "maxActiveIssues"); found {
+			v := int32(val)
+			maxActiveIssues = &v
+		}
+
+		var maxActiveReviews *int32
+		if val, found, _ := unstructured.NestedInt64(u.Object, "spec", "overseer", "maxActiveReviews"); found {
+			v := int32(val)
+			maxActiveReviews = &v
+		}
+
+		return &RepoConfig{
+			Name:             repoWatchName,
+			Namespace:        namespace,
+			RepoURL:          repoURL,
+			GithubSecretName: githubSecretName,
+			RobotAccount:     robotAccount,
+			MaxActiveIssues:  maxActiveIssues,
+			MaxActiveReviews: maxActiveReviews,
+		}, nil
+	}
+
+	return nil, fmt.Errorf("either OVERSEER_NAME or (REPOWATCH_NAME and NAMESPACE) environment variables must be set")
+}
+
 func runChore(ctx context.Context, name string, file string) error {
-	if repoWatchName == "" || namespace == "" {
-		return fmt.Errorf("REPOWATCH_NAME and NAMESPACE environment variables must be set")
+	manager, kubeClient, err := getManager()
+	if err != nil {
+		return err
+	}
+
+	repoConfig, err := getRepoConfig(ctx, manager)
+	if err != nil {
+		return err
 	}
 
 	chore, err := parseChore(file)
@@ -143,88 +251,33 @@ func runChore(ctx context.Context, name string, file string) error {
 
 	choresMode := os.Getenv("CHORES_MODE")
 	if choresMode == "dryrun" {
-		fmt.Printf("[dryrun] Would create sandbox and task chore for chore %s in RepoWatch %s\n", chore.Name, repoWatchName)
+		fmt.Printf("[dryrun] Would create sandbox and task chore for chore %s in %s\n", chore.Name, repoConfig.Name)
 		return nil
 	}
 
-	cfg, err := config.GetConfig()
-	if err != nil {
-		return fmt.Errorf("unable to get kubeconfig: %w", err)
-	}
-
-	dynClient, err := dynamic.NewForConfig(cfg)
-	if err != nil {
-		return fmt.Errorf("unable to create dynamic client: %w", err)
-	}
-
-	clientset, err := kubernetes.NewForConfig(cfg)
-	if err != nil {
-		return fmt.Errorf("unable to create clientset: %w", err)
-	}
-
-	kubeClient := &clients.KubernetesClient{
-		DynamicClient: dynClient,
-		Clientset:     clientset,
-	}
-	manager := k8s.NewManager(kubeClient)
-
-	rwUnstructured, err := manager.GetRepoWatch(ctx, namespace, repoWatchName)
-	if err != nil {
-		return fmt.Errorf("failed to get RepoWatch %s: %w", repoWatchName, err)
-	}
-
-	var repoWatch reviewv1alpha1.RepoWatch
-	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(rwUnstructured.Object, &repoWatch); err != nil {
-		return fmt.Errorf("failed to convert RepoWatch: %w", err)
-	}
-
-	sandboxName := fmt.Sprintf("chore-%s-%s", repoWatch.Name, slugify(chore.Name))
-
-	owner, repo, err := parseRepoURL(repoWatch.Spec.RepoURL)
-	if err != nil {
-		return fmt.Errorf("failed to parse RepoURL: %w", err)
-	}
-
-	// Check if sandbox exists
+	sandboxName := fmt.Sprintf("devc-%s-chore-%s", repoConfig.Name, slugify(chore.Name))
+	var sandboxExists bool
 	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
-	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			// Create Sandbox
-			fmt.Printf("Creating sandbox %s...\n", sandboxName)
-			if err := createChoreSandbox(ctx, kubeClient, &repoWatch, chore, sandboxName); err != nil {
-				return fmt.Errorf("failed to create chore sandbox: %w", err)
-			}
-		} else {
-			return fmt.Errorf("failed to check if sandbox exists: %w", err)
+	if err == nil {
+		sandboxExists = true
+	} else if !strings.Contains(err.Error(), "not found") {
+		return fmt.Errorf("failed to check if sandbox exists: %w", err)
+	}
+
+	if !sandboxExists {
+		fmt.Printf("Creating sandbox %s...\n", sandboxName)
+		if err := createChoreSandbox(ctx, kubeClient, repoConfig, chore, sandboxName); err != nil {
+			return fmt.Errorf("failed to create sandbox: %w", err)
 		}
 	}
 
-	// Create Task
-	taskType := "chore"
-	fmt.Printf("Creating task %s for sandbox %s...\n", taskType, sandboxName)
+	taskName := fmt.Sprintf("%s-chore", sandboxName)
+	fmt.Printf("Ensuring task %s...\n", taskName)
 	params := map[string]string{
 		"AGENT_PROMPT": chore.Prompt,
-		"CHORE_NAME":   chore.Name,
-		"CHORE_FILE":   file,
-		"REPO_OWNER":   owner,
-		"REPO_NAME":    repo,
-		"CLONE_URL":    repoWatch.Spec.RepoURL,
 	}
 
-	// Add other params from repoWatch if applicable
-	if repoWatch.Spec.Issue != nil {
-		if repoWatch.Spec.Issue.LLM.Provider != "" {
-			params["AGENT_LLM_PROVIDER"] = repoWatch.Spec.Issue.LLM.Provider
-		}
-		if repoWatch.Spec.Issue.LLM.APIKeySecretRef != "" {
-			params["AGENT_LLM_API_KEY_SECRET"] = repoWatch.Spec.Issue.LLM.APIKeySecretRef
-		}
-		if repoWatch.Spec.Issue.LLM.ConfigdirRef != "" {
-			params["AGENT_LLM_CONFIGDIR"] = repoWatch.Spec.Issue.LLM.ConfigdirRef
-		}
-	}
-
-	err = manager.CreateSandboxTask(ctx, namespace, sandboxName, "Sandbox", taskType, params)
+	err = manager.CreateSandboxTask(ctx, namespace, sandboxName, "Sandbox", "chore", params)
 	if err != nil {
 		return fmt.Errorf("failed to create sandbox task: %w", err)
 	}
@@ -265,13 +318,13 @@ func slugify(s string) string {
 	return res.String()
 }
 
-func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, repoWatch *reviewv1alpha1.RepoWatch, chore *ChoreDefinition, sandboxName string) error {
-	cloneURL := repoWatch.Spec.RepoURL
+func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, repoConfig *RepoConfig, chore *ChoreDefinition, sandboxName string) error {
+	cloneURL := repoConfig.RepoURL
 	if !strings.HasSuffix(cloneURL, ".git") {
 		cloneURL += ".git"
 	}
 
-	_, repo, err := parseRepoURL(repoWatch.Spec.RepoURL)
+	_, repo, err := parseRepoURL(repoConfig.RepoURL)
 	if err != nil {
 		return fmt.Errorf("failed to parse RepoURL: %w", err)
 	}
@@ -287,30 +340,20 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 	botName := os.Getenv("GITHUB_BOT_NAME")
 	botEmail := os.Getenv("GITHUB_BOT_EMAIL")
 
-	apiKeySecretName := ""
-	if repoWatch.Spec.Issue != nil {
-		apiKeySecretName = repoWatch.Spec.Issue.LLM.APIKeySecretRef
-	}
-	if apiKeySecretName == "" {
-		apiKeySecretName = "gemini-api-key"
-	}
-
-	githubSecretName := repoWatch.Spec.GithubSecretName
-	if repoWatch.Spec.Overseer != nil && repoWatch.Spec.Overseer.RobotAccount != "" {
-		githubSecretName = repoWatch.Spec.Overseer.RobotAccount
-	}
+	apiKeySecretName := "gemini-api-key"
+	githubSecretName := repoConfig.GithubSecretName
 
 	opt := sandbox.AgentSandboxOptions{
 		DevSandboxOptions: sandbox.DevSandboxOptions{
 			Name:      sandboxName,
-			Namespace: repoWatch.Namespace,
+			Namespace: namespace,
 			Labels: map[string]string{
-				"review.gemini.google.com/repowatch": repoWatch.Name,
-				"sandbox.gemini.google.com/type":     "chore",
-				"chore.gemini.google.com/name":       slugify(chore.Name),
+				"overseer.gemini.google.com/overseer": repoConfig.Name,
+				"sandbox.gemini.google.com/type":      "chore",
+				"chore.gemini.google.com/name":        slugify(chore.Name),
 			},
 			CloneURL:            cloneURL,
-			HTMLURL:             strings.TrimSuffix(repoWatch.Spec.RepoURL, ".git"),
+			HTMLURL:             strings.TrimSuffix(repoConfig.RepoURL, ".git"),
 			Branch:              "main", // Default branch for chores
 			Origin:              fmt.Sprintf("github.com/%s/%s", userLogin, repo),
 			PushEnabled:         true,
@@ -332,69 +375,37 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 		SkipDevcPrefix: true,
 	}
 
-	if repoWatch.Spec.Issue != nil {
-		opt.LLMProvider = repoWatch.Spec.Issue.LLM.Provider
-		opt.LLMConfigdirRef = repoWatch.Spec.Issue.LLM.ConfigdirRef
-		opt.Image = repoWatch.Spec.Issue.Image
-		opt.DevcontainerConfigRef = repoWatch.Spec.Issue.DevcontainerConfigRef
-	}
-
 	sb, svc := sandbox.NewAgentSandbox(opt)
 	sb.SetName(sandboxName)
 
-	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(repoWatch.Namespace).Create(ctx, sb, metav1.CreateOptions{})
+	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sb, metav1.CreateOptions{})
 	if err != nil {
 		return err
 	}
 
-	_, err = kubeClient.Clientset.CoreV1().Services(repoWatch.Namespace).Create(ctx, svc, metav1.CreateOptions{})
+	_, err = kubeClient.Clientset.CoreV1().Services(namespace).Create(ctx, svc, metav1.CreateOptions{})
 	return err
 }
 
 func runIssue(ctx context.Context, number int, prNumber int, taskType string) error {
-	if repoWatchName == "" || namespace == "" {
-		return fmt.Errorf("REPOWATCH_NAME and NAMESPACE environment variables must be set")
+	manager, kubeClient, err := getManager()
+	if err != nil {
+		return err
+	}
+
+	repoConfig, err := getRepoConfig(ctx, manager)
+	if err != nil {
+		return err
 	}
 
 	repoMode := os.Getenv("REPO_MODE")
 	if repoMode == "dryrun" {
 		if number != 0 {
-			fmt.Printf("[dryrun] Would create/ensure sandbox and task %s for issue %d in RepoWatch %s\n", taskType, number, repoWatchName)
+			fmt.Printf("[dryrun] Would create/ensure sandbox and task %s for issue %d in %s\n", taskType, number, repoConfig.Name)
 		} else if prNumber != 0 {
-			fmt.Printf("[dryrun] Would create/ensure sandbox and task %s for issue from PR %d in RepoWatch %s\n", taskType, prNumber, repoWatchName)
+			fmt.Printf("[dryrun] Would create/ensure sandbox and task %s for issue from PR %d in %s\n", taskType, prNumber, repoConfig.Name)
 		}
 		return nil
-	}
-
-	cfg, err := config.GetConfig()
-	if err != nil {
-		return fmt.Errorf("unable to get kubeconfig: %w", err)
-	}
-
-	dynClient, err := dynamic.NewForConfig(cfg)
-	if err != nil {
-		return fmt.Errorf("unable to create dynamic client: %w", err)
-	}
-
-	clientset, err := kubernetes.NewForConfig(cfg)
-	if err != nil {
-		return fmt.Errorf("unable to create clientset: %w", err)
-	}
-
-	kubeClient := &clients.KubernetesClient{
-		DynamicClient: dynClient,
-		Clientset:     clientset,
-	}
-	manager := k8s.NewManager(kubeClient)
-
-	rwUnstructured, err := manager.GetRepoWatch(ctx, namespace, repoWatchName)
-	if err != nil {
-		return fmt.Errorf("failed to get RepoWatch %s: %w", repoWatchName, err)
-	}
-
-	var repoWatch reviewv1alpha1.RepoWatch
-	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(rwUnstructured.Object, &repoWatch); err != nil {
-		return fmt.Errorf("failed to convert RepoWatch: %w", err)
 	}
 
 	ghClient, err := github.NewClient(ctx)
@@ -402,7 +413,7 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string) er
 		return fmt.Errorf("failed to create github client: %w", err)
 	}
 
-	owner, repo, err := parseRepoURL(repoWatch.Spec.RepoURL)
+	owner, repo, err := parseRepoURL(repoConfig.RepoURL)
 	if err != nil {
 		return fmt.Errorf("failed to parse RepoURL: %w", err)
 	}
@@ -425,7 +436,7 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string) er
 		return fmt.Errorf("failed to get issue %d: %w", number, err)
 	}
 
-	sandboxName := fmt.Sprintf("devc-%s-issue-%d", repoWatch.Name, number)
+	sandboxName := fmt.Sprintf("devc-%s-issue-%d", repoConfig.Name, number)
 
 	var sandboxExists bool
 	var sandboxIsActive bool
@@ -441,102 +452,68 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string) er
 	}
 
 	// Check limit only if we need to create or activate a sandbox
-	if !sandboxIsActive && repoWatch.Spec.Overseer != nil && repoWatch.Spec.Overseer.MaxActiveIssues != nil {
-		maxIssues := *repoWatch.Spec.Overseer.MaxActiveIssues
-		activeCount, err := countActiveSandboxes(ctx, kubeClient.DynamicClient, namespace, repoWatchName, "issue")
+	if !sandboxIsActive && repoConfig.MaxActiveIssues != nil {
+		maxIssues := *repoConfig.MaxActiveIssues
+		activeCount, err := countActiveSandboxes(ctx, kubeClient.DynamicClient, namespace, repoConfig.Name, "issue")
 		if err != nil {
 			return fmt.Errorf("failed to count active issue sandboxes: %w", err)
 		}
 		if int32(activeCount) >= maxIssues {
-			// Instead of returning nil, return an error so overseer logs it and skips
 			return fmt.Errorf("limit_reached: max active issues limit (%d) reached (currently %d active)", maxIssues, activeCount)
 		}
 	}
 
-	// Create Sandbox if it doesn't exist
 	if !sandboxExists {
 		fmt.Printf("Creating sandbox %s...\n", sandboxName)
-		if err := createIssueSandbox(ctx, kubeClient, &repoWatch, issue); err != nil {
-			return fmt.Errorf("failed to create issue sandbox: %w", err)
+		if err := createIssueSandbox(ctx, kubeClient, repoConfig, issue, sandboxName); err != nil {
+			return fmt.Errorf("failed to create sandbox: %w", err)
+		}
+	} else if !sandboxIsActive {
+		fmt.Printf("Activating sandbox %s...\n", sandboxName)
+		// Scale up
+		sandboxUpdate := &unstructured.Unstructured{
+			Object: map[string]interface{}{
+				"apiVersion": "agents.x-k8s.io/v1alpha1",
+				"kind":       "Sandbox",
+				"metadata": map[string]interface{}{
+					"name":      sandboxName,
+					"namespace": namespace,
+				},
+				"spec": map[string]interface{}{
+					"replicas": int64(1),
+				},
+			},
+		}
+		_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Apply(ctx, sandboxName, sandboxUpdate, metav1.ApplyOptions{FieldManager: "overseer-cli", Force: true})
+		if err != nil {
+			return fmt.Errorf("failed to scale up sandbox: %w", err)
 		}
 	}
 
-	// Create Task
-	fmt.Printf("Creating task %s for sandbox %s...\n", taskType, sandboxName)
-	params := map[string]string{
-		"ISSUE_URL":       issue.GetHTMLURL(),
-		"PULL_REQUEST_ID": fmt.Sprintf("%d", prNumber),
-		"AGENT_PROMPT":    repoWatch.Spec.Issue.LLM.Prompt,
-	}
-	// Add other params if needed, similar to repowatch_controller.go
-	if repoWatch.Spec.Issue.LLM.Provider != "" {
-		params["AGENT_LLM_PROVIDER"] = repoWatch.Spec.Issue.LLM.Provider
-	}
-	if repoWatch.Spec.Issue.LLM.APIKeySecretRef != "" {
-		params["AGENT_LLM_API_KEY_SECRET"] = repoWatch.Spec.Issue.LLM.APIKeySecretRef
-	}
-	if repoWatch.Spec.Issue.LLM.ConfigdirRef != "" {
-		params["AGENT_LLM_CONFIGDIR"] = repoWatch.Spec.Issue.LLM.ConfigdirRef
-	}
-	if len(repoWatch.Spec.Issue.Models) > 0 {
-		params["model"] = strings.Join(repoWatch.Spec.Issue.Models, ",")
-	}
-
-	err = manager.CreateSandboxTask(ctx, namespace, sandboxName, "Sandbox", taskType, params)
-	if err != nil {
-		return fmt.Errorf("failed to create sandbox task: %w", err)
-	}
-
-	fmt.Println("Done.")
-	return nil
+	taskName := fmt.Sprintf("%s-%s", sandboxName, taskType)
+	fmt.Printf("Ensuring task %s...\n", taskName)
+	return ensureTask(ctx, kubeClient, repoConfig, sandboxName, taskName, taskType)
 }
 
 func runPR(ctx context.Context, number int, taskType string, submit bool) error {
-	// Similar to runIssue but for PRs
-	if repoWatchName == "" || namespace == "" {
-		return fmt.Errorf("REPOWATCH_NAME and NAMESPACE environment variables must be set")
+	manager, kubeClient, err := getManager()
+	if err != nil {
+		return err
+	}
+
+	repoConfig, err := getRepoConfig(ctx, manager)
+	if err != nil {
+		return err
 	}
 
 	repoMode := os.Getenv("REPO_MODE")
 	if repoMode == "dryrun" {
-		fmt.Printf("[dryrun] Would create/ensure sandbox and task %s for PR %d in RepoWatch %s\n", taskType, number, repoWatchName)
+		fmt.Printf("[dryrun] Would create/ensure sandbox and task %s for PR %d in %s\n", taskType, number, repoConfig.Name)
 		return nil
 	}
 
-	cfg, err := config.GetConfig()
-	if err != nil {
-		return fmt.Errorf("unable to get kubeconfig: %w", err)
-	}
-
-	dynClient, err := dynamic.NewForConfig(cfg)
-	if err != nil {
-		return fmt.Errorf("unable to create dynamic client: %w", err)
-	}
-
-	clientset, err := kubernetes.NewForConfig(cfg)
-	if err != nil {
-		return fmt.Errorf("unable to create clientset: %w", err)
-	}
-
-	kubeClient := &clients.KubernetesClient{
-		DynamicClient: dynClient,
-		Clientset:     clientset,
-	}
-	manager := k8s.NewManager(kubeClient)
-
 	if submit {
-		fmt.Printf("Submitting agent draft for PR %d...\n", number)
-		return submitAgentDraft(ctx, manager, kubeClient, namespace, repoWatchName, number)
-	}
-
-	rwUnstructured, err := manager.GetRepoWatch(ctx, namespace, repoWatchName)
-	if err != nil {
-		return fmt.Errorf("failed to get RepoWatch %s: %w", repoWatchName, err)
-	}
-
-	var repoWatch reviewv1alpha1.RepoWatch
-	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(rwUnstructured.Object, &repoWatch); err != nil {
-		return fmt.Errorf("failed to convert RepoWatch: %w", err)
+		return submitAgentDraft(ctx, manager, kubeClient, repoConfig, number)
 	}
 
 	ghClient, err := github.NewClient(ctx)
@@ -544,7 +521,7 @@ func runPR(ctx context.Context, number int, taskType string, submit bool) error 
 		return fmt.Errorf("failed to create github client: %w", err)
 	}
 
-	owner, repo, err := parseRepoURL(repoWatch.Spec.RepoURL)
+	owner, repo, err := parseRepoURL(repoConfig.RepoURL)
 	if err != nil {
 		return fmt.Errorf("failed to parse RepoURL: %w", err)
 	}
@@ -554,7 +531,7 @@ func runPR(ctx context.Context, number int, taskType string, submit bool) error 
 		return fmt.Errorf("failed to get PR %d: %w", number, err)
 	}
 
-	sandboxName := fmt.Sprintf("%s-pr-%d", repoWatch.Name, number)
+	sandboxName := fmt.Sprintf("devc-%s-pr-%d", repoConfig.Name, number)
 
 	var sandboxExists bool
 	var sandboxIsActive bool
@@ -570,9 +547,9 @@ func runPR(ctx context.Context, number int, taskType string, submit bool) error 
 	}
 
 	// Check limit only if we need to create or activate a sandbox
-	if !sandboxIsActive && repoWatch.Spec.Overseer != nil && repoWatch.Spec.Overseer.MaxActiveReviews != nil {
-		maxReviews := *repoWatch.Spec.Overseer.MaxActiveReviews
-		activeCount, err := countActiveSandboxes(ctx, kubeClient.DynamicClient, namespace, repoWatchName, "review")
+	if !sandboxIsActive && repoConfig.MaxActiveReviews != nil {
+		maxReviews := *repoConfig.MaxActiveReviews
+		activeCount, err := countActiveSandboxes(ctx, kubeClient.DynamicClient, namespace, repoConfig.Name, "review")
 		if err != nil {
 			return fmt.Errorf("failed to count active review sandboxes: %w", err)
 		}
@@ -581,123 +558,56 @@ func runPR(ctx context.Context, number int, taskType string, submit bool) error 
 		}
 	}
 
-	// Create Sandbox if it doesn't exist
 	if !sandboxExists {
 		fmt.Printf("Creating sandbox %s...\n", sandboxName)
-		if err := createPRSandbox(ctx, kubeClient, &repoWatch, pr); err != nil {
-			return fmt.Errorf("failed to create PR sandbox: %w", err)
+		if err := createPRSandbox(ctx, kubeClient, repoConfig, pr, sandboxName); err != nil {
+			return fmt.Errorf("failed to create sandbox: %w", err)
+		}
+	} else if !sandboxIsActive {
+		fmt.Printf("Activating sandbox %s...\n", sandboxName)
+		// Scale up
+		sandboxUpdate := &unstructured.Unstructured{
+			Object: map[string]interface{}{
+				"apiVersion": "agents.x-k8s.io/v1alpha1",
+				"kind":       "Sandbox",
+				"metadata": map[string]interface{}{
+					"name":      sandboxName,
+					"namespace": namespace,
+				},
+				"spec": map[string]interface{}{
+					"replicas": int64(1),
+				},
+			},
+		}
+		_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Apply(ctx, sandboxName, sandboxUpdate, metav1.ApplyOptions{FieldManager: "overseer-cli", Force: true})
+		if err != nil {
+			return fmt.Errorf("failed to scale up sandbox: %w", err)
 		}
 	}
 
-	// Create Task
-	fmt.Printf("Creating task %s for sandbox %s...\n", taskType, sandboxName)
-	params := map[string]string{
-		"PULL_REQUEST_ID": fmt.Sprintf("%d", number),
-		"ISSUE_URL":       pr.GetHTMLURL(),
-		"AGENT_PROMPT":    repoWatch.Spec.Review.LLM.Prompt,
-	}
-	if repoWatch.Spec.Review.LLM.Provider != "" {
-		params["AGENT_LLM_PROVIDER"] = repoWatch.Spec.Review.LLM.Provider
-	}
-	if repoWatch.Spec.Review.LLM.APIKeySecretRef != "" {
-		params["AGENT_LLM_API_KEY_SECRET"] = repoWatch.Spec.Review.LLM.APIKeySecretRef
-	}
-	if repoWatch.Spec.Review.LLM.ConfigdirRef != "" {
-		params["AGENT_LLM_CONFIGDIR"] = repoWatch.Spec.Review.LLM.ConfigdirRef
-	}
-
-	err = manager.CreateSandboxTask(ctx, namespace, sandboxName, "Sandbox", taskType, params)
-	if err != nil {
-		return fmt.Errorf("failed to create sandbox task: %w", err)
-	}
-
-	fmt.Println("Done.")
-	return nil
+	taskName := fmt.Sprintf("%s-%s", sandboxName, taskType)
+	fmt.Printf("Ensuring task %s...\n", taskName)
+	return ensureTask(ctx, kubeClient, repoConfig, sandboxName, taskName, taskType)
 }
 
-func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *clients.KubernetesClient, namespace, repoWatchName string, prNumber int) error {
-	rwUnstructured, err := manager.GetRepoWatch(ctx, namespace, repoWatchName)
+func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *clients.KubernetesClient, repoConfig *RepoConfig, prNumber int) error {
+	sandboxName := fmt.Sprintf("devc-%s-pr-%d", repoConfig.Name, prNumber)
+	draft, err := manager.GetSandboxAnnotation(ctx, namespace, sandboxName, "sandbox.gemini.google.com/agent-draft")
 	if err != nil {
-		return fmt.Errorf("failed to get RepoWatch %s: %w", repoWatchName, err)
+		return fmt.Errorf("failed to get agent draft from sandbox %s: %w", sandboxName, err)
+	}
+	if draft == "" {
+		return fmt.Errorf("no agent draft found in sandbox %s", sandboxName)
 	}
 
-	sandboxName := fmt.Sprintf("%s-pr-%d", repoWatchName, prNumber)
-
-	sandboxUnstructured, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
-	if err == nil {
-		annotations := sandboxUnstructured.GetAnnotations()
-		if annotations != nil && annotations["reviewState"] == "submitted" {
-			fmt.Printf("Review for PR %d already submitted.\n", prNumber)
-			return nil
-		}
-	}
-
-	taskList, err := manager.ListSandboxTasks(ctx, namespace, sandboxName)
+	owner, repo, err := parseRepoURL(repoConfig.RepoURL)
 	if err != nil {
-		return fmt.Errorf("failed to list tasks for sandbox %s: %w", sandboxName, err)
+		return fmt.Errorf("failed to parse RepoURL: %w", err)
 	}
 
-	var latestReviewTask *sandboxtaskv1alpha1.SandboxTask
-	for i := range taskList.Items {
-		task := &taskList.Items[i]
-		if task.Spec.Type == "review" && task.Status.TaskState == "Completed" {
-			if latestReviewTask == nil || task.CreationTimestamp.After(latestReviewTask.CreationTimestamp.Time) {
-				latestReviewTask = task
-			}
-		}
-	}
-
-	if latestReviewTask == nil {
-		return fmt.Errorf("no completed review task found for sandbox %s", sandboxName)
-	}
-
-	// Get the task again as Unstructured to read annotations
-	gvr := schema.GroupVersionResource{
-		Group:    "custom.agents.x-k8s.io",
-		Version:  "v1alpha1",
-		Resource: "sandboxtasks",
-	}
-	taskUnstructured, err := kubeClient.DynamicClient.Resource(gvr).Namespace(namespace).Get(ctx, latestReviewTask.Name, metav1.GetOptions{})
+	ghClient, err := github.NewClient(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to get task %s: %w", latestReviewTask.Name, err)
-	}
-
-	annotations := taskUnstructured.GetAnnotations()
-	draft, ok := annotations["agentDraft"]
-	if !ok {
-		return fmt.Errorf("no agentDraft annotation found on task %s", latestReviewTask.Name)
-	}
-
-	var repoWatch reviewv1alpha1.RepoWatch
-	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(rwUnstructured.Object, &repoWatch); err != nil {
-		return fmt.Errorf("failed to convert RepoWatch: %w", err)
-	}
-
-	githubSecretName := repoWatch.Spec.GithubSecretName
-	if repoWatch.Spec.Overseer.RobotAccount != "" {
-		githubSecretName = repoWatch.Spec.Overseer.RobotAccount
-	}
-
-	rwUnstructuredCopy := rwUnstructured.DeepCopy()
-	_ = unstructured.SetNestedField(rwUnstructuredCopy.Object, githubSecretName, "spec", "githubSecretName")
-
-	// Get GitHub token from secret
-	token, err := manager.GetGitHubToken(ctx, rwUnstructuredCopy)
-	if err != nil {
-		return fmt.Errorf("failed to get github token: %w", err)
-	}
-
-	// Create GitHub client
-	client := clients.NewGitHubClient(ctx, token)
-
-	// Parse repo URL
-	repoURL, found, err := unstructured.NestedString(rwUnstructured.Object, "spec", "repoURL")
-	if err != nil || !found {
-		return fmt.Errorf("repoURL not found in RepoWatch %s", repoWatchName)
-	}
-	owner, repoName, err := parseRepoURL(repoURL)
-	if err != nil {
-		return fmt.Errorf("failed to parse repo URL %s: %w", repoURL, err)
+		return fmt.Errorf("failed to create github client: %w", err)
 	}
 
 	// Try Unmarshalling the yaml review payload into PullRequestReviewRequest
@@ -718,8 +628,8 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 	// Set event to COMMENT to submit directly instead of creating a draft
 	reviewRequest.Event = githubv39.String("COMMENT")
 
-	fmt.Printf("Creating review on GitHub for %s/%s PR %d...\n", owner, repoName, prNumber)
-	review, _, err := client.PullRequests.CreateReview(ctx, owner, repoName, prNumber, reviewRequest)
+	fmt.Printf("Creating review on GitHub for %s/%s PR %d...\n", owner, repo, prNumber)
+	review, _, err := ghClient.PullRequests.CreateReview(ctx, owner, repo, prNumber, reviewRequest)
 	if err != nil {
 		return fmt.Errorf("failed to create review on GitHub: %w", err)
 	}
@@ -744,12 +654,9 @@ func parseRepoURL(url string) (string, string, error) {
 	return parts[len(parts)-2], parts[len(parts)-1], nil
 }
 
-func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, repoWatch *reviewv1alpha1.RepoWatch, issue *githubv39.Issue) error {
-	// Replicate logic from repowatch_controller.go:createIssueSandbox
-	name := fmt.Sprintf("%s-issue-%d", repoWatch.Name, issue.GetNumber())
+func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, repoConfig *RepoConfig, issue *githubv39.Issue, sandboxName string) error {
 	cloneURL := strings.Replace(issue.GetRepositoryURL(), "api.github.com/repos", "github.com", 1) + ".git"
 
-	// We need to fetch user info. In Overseer, we might just use env vars.
 	userLogin := os.Getenv("GITHUB_USER_ID")
 	userName := os.Getenv("GITHUB_USER_NAME")
 	if userName == "" {
@@ -763,66 +670,53 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 
 	branchName := fmt.Sprintf("issue-%d-%s", issue.GetNumber(), randString(4))
 
-	apiKeySecretName := repoWatch.Spec.Issue.LLM.APIKeySecretRef
-	if apiKeySecretName == "" {
-		apiKeySecretName = "gemini-api-key"
-	}
+	apiKeySecretName := "gemini-api-key"
+	githubSecretName := repoConfig.GithubSecretName
 
-	githubSecretName := repoWatch.Spec.GithubSecretName
-	if repoWatch.Spec.Issue != nil && repoWatch.Spec.Issue.RobotAccount != "" {
-		githubSecretName = repoWatch.Spec.Issue.RobotAccount
-	}
 	opt := sandbox.AgentSandboxOptions{
 		DevSandboxOptions: sandbox.DevSandboxOptions{
-			Name:      name,
-			Namespace: repoWatch.Namespace,
+			Name:      sandboxName,
+			Namespace: namespace,
 			Labels: map[string]string{
-				"review.gemini.google.com/repowatch": repoWatch.Name,
-				"sandbox.gemini.google.com/type":     "issue",
+				"overseer.gemini.google.com/overseer": repoConfig.Name,
+				"sandbox.gemini.google.com/type":      "issue",
 			},
-			CloneURL:              cloneURL,
-			HTMLURL:               issue.GetHTMLURL(),
-			Branch:                branchName,
-			Origin:                fmt.Sprintf("github.com/%s/%s", userLogin, repoWatch.Name), // simplified
-			PushEnabled:           false,
-			UserLogin:             userLogin,
-			UserName:              userName,
-			UserEmail:             userEmail,
-			BotLogin:              botLogin,
-			BotName:               botName,
-			BotEmail:              botEmail,
-			LLMProvider:           repoWatch.Spec.Issue.LLM.Provider,
-			LLMConfigdirRef:       repoWatch.Spec.Issue.LLM.ConfigdirRef,
-			LLMAPIKeySecretName:   apiKeySecretName,
-			Prompt:                repoWatch.Spec.Issue.LLM.Prompt,
-			GithubSecretName:      githubSecretName,
-			DevcontainerConfigRef: repoWatch.Spec.Issue.DevcontainerConfigRef,
-			Image:                 repoWatch.Spec.Issue.Image,
-			RepoSandboxImage:      os.Getenv("REPO_SANDBOX_IMAGE"),
-			ConfigDirImage:        os.Getenv("CONFIG_DIR_IMAGE"),
-			HTTPEnabled:           true,
-			Replicas:              1,
-			ServiceAccountName:    "issue-sandbox",
+			CloneURL:            cloneURL,
+			HTMLURL:             issue.GetHTMLURL(),
+			Branch:              branchName,
+			Origin:              fmt.Sprintf("github.com/%s/%s", userLogin, repoConfig.Name),
+			PushEnabled:         false,
+			UserLogin:           userLogin,
+			UserName:            userName,
+			UserEmail:           userEmail,
+			BotLogin:            botLogin,
+			BotName:             botName,
+			BotEmail:            botEmail,
+			LLMAPIKeySecretName: apiKeySecretName,
+			GithubSecretName:    githubSecretName,
+			RepoSandboxImage:    os.Getenv("REPO_SANDBOX_IMAGE"),
+			ConfigDirImage:      os.Getenv("CONFIG_DIR_IMAGE"),
+			HTTPEnabled:         true,
+			Replicas:            1,
+			ServiceAccountName:  "issue-sandbox",
 		},
 		IssueID:    fmt.Sprintf("%d", issue.GetNumber()),
 		IssueTitle: issue.GetTitle(),
-		IssueRepo:  repoWatch.Name,
+		IssueRepo:  repoConfig.Name,
 	}
 
 	sb, svc := sandbox.NewAgentSandbox(opt)
 
-	_, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(repoWatch.Namespace).Create(ctx, sb, metav1.CreateOptions{})
+	_, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sb, metav1.CreateOptions{})
 	if err != nil {
 		return err
 	}
 
-	_, err = kubeClient.Clientset.CoreV1().Services(repoWatch.Namespace).Create(ctx, svc, metav1.CreateOptions{})
+	_, err = kubeClient.Clientset.CoreV1().Services(namespace).Create(ctx, svc, metav1.CreateOptions{})
 	return err
 }
 
-func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, repoWatch *reviewv1alpha1.RepoWatch, pr *githubv39.PullRequest) error {
-	name := fmt.Sprintf("%s-pr-%d", repoWatch.Name, pr.GetNumber())
-
+func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, repoConfig *RepoConfig, pr *githubv39.PullRequest, sandboxName string) error {
 	userLogin := os.Getenv("GITHUB_USER_ID")
 	userName := os.Getenv("GITHUB_USER_NAME")
 	if userName == "" {
@@ -834,70 +728,84 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 	botName := os.Getenv("GITHUB_BOT_NAME")
 	botEmail := os.Getenv("GITHUB_BOT_EMAIL")
 
-	apiKeySecretName := repoWatch.Spec.Review.LLM.APIKeySecretRef
-	if apiKeySecretName == "" {
-		apiKeySecretName = "gemini-api-key"
-	}
-
-	githubSecretName := repoWatch.Spec.GithubSecretName
-	if repoWatch.Spec.Overseer.RobotAccount != "" {
-		githubSecretName = repoWatch.Spec.Overseer.RobotAccount
-
-		// In overseer we don't have direct access to the secret content like repowatch controller does,
-		// but overseer pod itself is injected with these if they are set on the overseer spec.
-		// Alternatively, if the overseer pod shares the same robot account, they should be in env vars.
-	}
+	apiKeySecretName := "gemini-api-key"
+	githubSecretName := repoConfig.GithubSecretName
 
 	opt := sandbox.ReviewSandboxOptions{
 		DevSandboxOptions: sandbox.DevSandboxOptions{
-			Name:      name,
-			Namespace: repoWatch.Namespace,
+			Name:      sandboxName,
+			Namespace: namespace,
 			Labels: map[string]string{
-				"review.gemini.google.com/repowatch": repoWatch.Name,
-				"sandbox.gemini.google.com/type":     "review",
+				"overseer.gemini.google.com/overseer": repoConfig.Name,
+				"sandbox.gemini.google.com/type":      "review",
 			},
-			UserLogin:             userLogin,
-			UserName:              userName,
-			UserEmail:             userEmail,
-			BotLogin:              botLogin,
-			BotName:               botName,
-			BotEmail:              botEmail,
-			LLMProvider:           repoWatch.Spec.Review.LLM.Provider,
-			LLMConfigdirRef:       repoWatch.Spec.Review.LLM.ConfigdirRef,
-			LLMAPIKeySecretName:   apiKeySecretName,
-			Prompt:                repoWatch.Spec.Review.LLM.Prompt,
-			GithubSecretName:      githubSecretName,
-			DevcontainerConfigRef: repoWatch.Spec.Review.DevcontainerConfigRef,
-			Image:                 repoWatch.Spec.Review.Image,
-			RepoSandboxImage:      os.Getenv("REPO_SANDBOX_IMAGE"),
-			ConfigDirImage:        os.Getenv("CONFIG_DIR_IMAGE"),
-			HTTPEnabled:           true,
-			Replicas:              1,
-			ServiceAccountName:    "review-sandbox",
+			UserLogin:           userLogin,
+			UserName:            userName,
+			UserEmail:           userEmail,
+			BotLogin:            botLogin,
+			BotName:             botName,
+			BotEmail:            botEmail,
+			LLMAPIKeySecretName: apiKeySecretName,
+			GithubSecretName:    githubSecretName,
+			RepoSandboxImage:    os.Getenv("REPO_SANDBOX_IMAGE"),
+			ConfigDirImage:      os.Getenv("CONFIG_DIR_IMAGE"),
+			HTTPEnabled:         true,
+			Replicas:            1,
+			ServiceAccountName:  "review-sandbox",
 		},
-		PRNumber:          pr.GetNumber(),
-		PRTitle:           pr.GetTitle(),
-		PRHTMLURL:         pr.GetHTMLURL(),
-		PRDiffURL:         pr.GetDiffURL(),
-		PRCloneURL:        fmt.Sprintf("%s#refs/heads/%s", pr.GetHead().GetRepo().GetCloneURL(), pr.GetHead().GetRef()),
-		RepoName:          repoWatch.Name,
-		MaxReviewFiles:    repoWatch.Spec.Review.MaxReviewFiles,
-		IgnoreFiles:       repoWatch.Spec.Review.IgnoreFiles,
-		SeverityThreshold: repoWatch.Spec.Review.SeverityThreshold,
-		LLMExtensions:     repoWatch.Spec.Review.LLM.Extensions,
-		WorkspaceDiskSize: repoWatch.Spec.Review.WorkspaceDiskSize,
-		SkipDevcPrefix:    true,
+		PRNumber:       pr.GetNumber(),
+		PRTitle:        pr.GetTitle(),
+		PRHTMLURL:      pr.GetHTMLURL(),
+		PRDiffURL:      pr.GetDiffURL(),
+		PRCloneURL:     fmt.Sprintf("%s#refs/heads/%s", pr.GetHead().GetRepo().GetCloneURL(), pr.GetHead().GetRef()),
+		RepoName:       repoConfig.Name,
+		SkipDevcPrefix: true,
 	}
 
 	sb, svc := sandbox.NewReviewSandbox(opt)
 
-	_, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(repoWatch.Namespace).Create(ctx, sb, metav1.CreateOptions{})
+	_, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sb, metav1.CreateOptions{})
 	if err != nil {
 		return err
 	}
 
-	_, err = kubeClient.Clientset.CoreV1().Services(repoWatch.Namespace).Create(ctx, svc, metav1.CreateOptions{})
+	_, err = kubeClient.Clientset.CoreV1().Services(namespace).Create(ctx, svc, metav1.CreateOptions{})
 	return err
+}
+
+func ensureTask(ctx context.Context, kubeClient *clients.KubernetesClient, repoConfig *RepoConfig, sandboxName, taskName, taskType string) error {
+	manager := k8s.NewManager(kubeClient)
+
+	// Check if task exists
+	gvr := schema.GroupVersionResource{
+		Group:    "custom.agents.x-k8s.io",
+		Version:  "v1alpha1",
+		Resource: "sandboxtasks",
+	}
+	_, err := kubeClient.DynamicClient.Resource(gvr).Namespace(namespace).Get(ctx, taskName, metav1.GetOptions{})
+	if err == nil {
+		fmt.Printf("Task %s already exists.\n", taskName)
+		return nil
+	} else if !strings.Contains(err.Error(), "not found") {
+		return fmt.Errorf("failed to check if task exists: %w", err)
+	}
+
+	params := map[string]string{}
+	if strings.Contains(taskName, "pr") {
+		prNumber := strings.Split(strings.Split(taskName, "-pr-")[1], "-")[0]
+		params["PULL_REQUEST_ID"] = prNumber
+	} else if strings.Contains(taskName, "issue") {
+		issueNumber := strings.Split(strings.Split(taskName, "-issue-")[1], "-")[0]
+		params["ISSUE_ID"] = issueNumber
+	}
+
+	err = manager.CreateSandboxTask(ctx, namespace, sandboxName, "Sandbox", taskType, params)
+	if err != nil {
+		return fmt.Errorf("failed to create sandbox task: %w", err)
+	}
+
+	fmt.Printf("Successfully created task %s\n", taskName)
+	return nil
 }
 
 var letterBytes = "abcdefghijklmnopqrstuvwxyz0123456789"
@@ -912,7 +820,6 @@ func randString(n int) string {
 }
 
 func resolveIssueFromPR(ctx context.Context, owner, repo string, prNumber int) (int, error) {
-	// Try using gh CLI to get closing issues
 	cmd := exec.CommandContext(ctx, "gh", "pr", "view", fmt.Sprintf("%d", prNumber), "--repo", fmt.Sprintf("%s/%s", owner, repo), "--json", "closingIssuesReferences")
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
@@ -927,12 +834,17 @@ func resolveIssueFromPR(ctx context.Context, owner, repo string, prNumber int) (
 		}
 	}
 
-	// Fallback: just return the PR number as its own issue number
 	return prNumber, nil
 }
 
-func countActiveSandboxes(ctx context.Context, dynClient dynamic.Interface, namespace, repowatchName, sandboxType string) (int, error) {
-	labelSelector := fmt.Sprintf("review.gemini.google.com/repowatch=%s,sandbox.gemini.google.com/type=%s", repowatchName, sandboxType)
+func countActiveSandboxes(ctx context.Context, dynClient dynamic.Interface, namespace, resourceName, sandboxType string) (int, error) {
+	labelSelector := ""
+	if overseerName != "" {
+		labelSelector = fmt.Sprintf("overseer.gemini.google.com/overseer=%s,sandbox.gemini.google.com/type=%s", resourceName, sandboxType)
+	} else {
+		labelSelector = fmt.Sprintf("review.gemini.google.com/repowatch=%s,sandbox.gemini.google.com/type=%s", resourceName, sandboxType)
+	}
+
 	listOptions := metav1.ListOptions{
 		LabelSelector: labelSelector,
 	}
