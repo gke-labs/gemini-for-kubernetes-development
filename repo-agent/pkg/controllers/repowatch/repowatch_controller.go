@@ -2062,6 +2062,8 @@ func (r *Reconciler) reconcileOverseer(ctx context.Context, repoWatch *reviewv1a
 		return err
 	}
 
+	repoWatch.Status.OverseerStatus = overseerWatch.Status.OverseerStatus
+
 	if repoWatch.Spec.Overseer != nil && repoWatch.Spec.Overseer.Enabled {
 		return r.Status().Update(ctx, repoWatch)
 	}
