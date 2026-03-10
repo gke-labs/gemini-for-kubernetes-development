@@ -34,7 +34,7 @@ func TestReconciler_ExcludeLabels(t *testing.T) {
 	_ = sandboxtaskv1alpha1.AddToScheme(s)
 	_ = sandboxv1alpha1.AddToScheme(s)
 
-	// Mock PRs: 
+	// Mock PRs:
 	// PR 1: has label "needs-triage"
 	// PR 2: has labels "needs-triage" and "do-not-merge/work-in-progress"
 	// PR 3: has label "other"
@@ -91,8 +91,8 @@ func TestReconciler_ExcludeLabels(t *testing.T) {
 			GithubSecretName: "github-secret",
 			Review: reviewv1alpha1.PRReviewSpec{
 				MaxActiveSandboxes: 10,
-				Labels: [][]string{{"needs-triage"}},
-				ExcludeLabels: []string{"do-not-merge/work-in-progress"},
+				Labels:             [][]string{{"needs-triage"}},
+				ExcludeLabels:      []string{"do-not-merge/work-in-progress"},
 				LLM: reviewv1alpha1.LLMConfig{
 					APIKeySecretRef: "llm-secret",
 				},
@@ -101,8 +101,8 @@ func TestReconciler_ExcludeLabels(t *testing.T) {
 				MaxActiveSandboxes: 10,
 				Handlers: []reviewv1alpha1.IssueHandlerSpec{
 					{
-						Name:   "triage",
-						Labels: []string{"needs-triage"},
+						Name:          "triage",
+						Labels:        []string{"needs-triage"},
 						ExcludeLabels: []string{"triage/accepted"},
 					},
 				},
@@ -121,7 +121,7 @@ func TestReconciler_ExcludeLabels(t *testing.T) {
 	g.Expect(fakeClient.Create(context.Background(), secret)).To(gomega.Succeed())
 
 	req := reconcile.Request{NamespacedName: types.NamespacedName{Name: objName, Namespace: objNamespace}}
-	
+
 	// Reconcile
 	_, err := r.Reconcile(context.Background(), req)
 	g.Expect(err).NotTo(gomega.HaveOccurred())
@@ -150,12 +150,12 @@ func TestReconciler_ExcludeLabels(t *testing.T) {
 		Kind:    "Sandbox",
 	})
 	g.Expect(fakeClient.List(context.Background(), sandboxList)).To(gomega.Succeed())
-	
+
 	sandboxNames := []string{}
 	for _, item := range sandboxList.Items {
 		sandboxNames = append(sandboxNames, item.GetName())
 	}
-	
+
 	g.Expect(sandboxNames).To(gomega.ContainElement(gomega.ContainSubstring("pr-1")))
 	g.Expect(sandboxNames).To(gomega.ContainElement(gomega.ContainSubstring("issue-10")))
 	g.Expect(sandboxNames).ToNot(gomega.ContainElement(gomega.ContainSubstring("pr-2")))
@@ -250,7 +250,7 @@ func TestReconciler_ExcludeLabelsOnly(t *testing.T) {
 	g.Expect(fakeClient.Create(context.Background(), secret)).To(gomega.Succeed())
 
 	req := reconcile.Request{NamespacedName: types.NamespacedName{Name: objName, Namespace: objNamespace}}
-	
+
 	// Reconcile
 	_, err := r.Reconcile(context.Background(), req)
 	g.Expect(err).NotTo(gomega.HaveOccurred())
