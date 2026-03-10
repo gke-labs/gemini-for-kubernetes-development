@@ -34,12 +34,6 @@ type AgentSandboxOptions struct {
 	IssueRepo  string
 	Handler    string
 
-	// Bot info
-	BotLogin string
-	BotName  string
-	BotEmail string
-
-	// Resources
 	Resources   corev1.ResourceRequirements
 	DindSupport string
 

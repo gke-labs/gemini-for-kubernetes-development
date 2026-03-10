@@ -216,6 +216,12 @@ spec:
                     type: boolean
                   image:
                     type: string
+                  maxActiveIssues:
+                    format: int32
+                    type: integer
+                  maxActiveReviews:
+                    format: int32
+                    type: integer
                   repo:
                     properties:
                       mode:
@@ -226,6 +232,8 @@ spec:
                         - dryrun
                         type: string
                     type: object
+                  robotAccount:
+                    type: string
                 type: object
               pollIntervalSeconds:
                 default: 300

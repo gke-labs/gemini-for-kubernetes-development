@@ -1,11 +1,18 @@
 apiVersion: review.gemini.google.com/v1alpha1
 kind: RepoWatch
 metadata:
-  name: gateway-api-reference-implementation
+  name: gwapi-ref
 spec:
   repoURL: https://github.com/gke-labs/gateway-api-reference-implementation
   pollIntervalSeconds: 300
   githubSecretName: github-pat
+  overseer:
+    maxActiveReviews: 3
+    maxActiveIssues: 3
+    robotAccount: codebot-robot
+    enabled: true
+    chores:
+      mode: enabled
   dev:
     maxActiveSandboxes: 0
     maxSandboxes: 0
@@ -13,7 +20,7 @@ spec:
     llm:
       apiKeySecretRef: gemini-vscode-tokens
   review:
-    reviewShutdownAfterMinutes: 30
+    reviewShutdownAfterMinutes: 0
     image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
     llm:
       configdirRef: gateway-api-ref-impl-gemini-config

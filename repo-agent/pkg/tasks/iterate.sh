@@ -8,10 +8,10 @@ set -x
 # - GITHUB_USER_TOKEN
 
 export REPO_NAME="{{ .Repo.Name }}"
-export CLONE_URL={{ .Repo.CloneURL }}
+export CLONE_URL="{{ .Repo.CloneURL }}"
 export PROMPT_FILE="{{ .PromptFile }}"
-export GITHUB_USER_ID={{ .User.UserID }}
-export GITHUB_USER_EMAIL={{ .User.Email }}
+export GITHUB_USER_ID="{{ .User.UserID }}"
+export GITHUB_USER_EMAIL="{{ .User.Email }}"
 export GITHUB_USER_NAME="{{ .User.Name }}"
 
 

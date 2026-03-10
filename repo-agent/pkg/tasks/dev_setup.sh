@@ -8,12 +8,12 @@ set -x
 # - GITHUB_USER_TOKEN
 
 export REPO_NAME="{{ .Repo.Name }}"
-export CLONE_URL={{ .Repo.CloneURL }}
+export CLONE_URL="{{ .Repo.CloneURL }}"
 export BRANCH_NAME="{{ .BranchName }}"
 export SOURCE_BRANCH="{{ .SourceBranch }}"
 export PROMPT_FILE="{{ .PromptFile }}"
-export GITHUB_USER_ID={{ .User.UserID }}
-export GITHUB_USER_EMAIL={{ .User.Email }}
+export GITHUB_USER_ID="{{ .User.UserID }}"
+export GITHUB_USER_EMAIL="{{ .User.Email }}"
 export GITHUB_USER_NAME="{{ .User.Name }}"
 
 function setupGit {
@@ -33,10 +33,10 @@ github.com:
 EOF
 
     echo "running git config user.email"
-    git config --global user.email ${GITHUB_USER_EMAIL}
+    git config --global user.email "${GITHUB_USER_EMAIL}"
 
     echo "running git config user.name"
-    git config --global user.name ${GITHUB_USER_NAME}
+    git config --global user.name "${GITHUB_USER_NAME}"
 
     echo "running gh auth setup-git"
     gh auth setup-git

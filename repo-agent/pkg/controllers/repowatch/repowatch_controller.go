@@ -435,7 +435,7 @@ func (r *Reconciler) reconcileReviews(ctx context.Context, repoWatch *reviewv1al
 		return err
 	}
 
-	watchedPRs, pendingPRs, activeSandboxes := r.reconcileReviewSandboxesInternal(ctx, repoWatch, explicitPRs, prs, sandboxList, podsBySandbox)
+	watchedPRs, pendingPRs, activeSandboxes := r.reconcileReviewSandboxesInternal(ctx, user, repoWatch, explicitPRs, prs, sandboxList, podsBySandbox)
 
 	repoWatch.Status.ActiveSandboxCount = activeSandboxes
 	repoWatch.Status.ReviewSandboxes = watchedPRs
@@ -588,7 +588,7 @@ func (r *Reconciler) excludePRs(prs []*github.PullRequest, repoWatch *reviewv1al
 	return filteredPRs
 }
 
-func (r *Reconciler) reconcileReviewSandboxesInternal(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, explicitPRs []*github.PullRequest, prs []*github.PullRequest, sandboxes *unstructured.UnstructuredList, podsBySandbox map[string]*corev1.Pod) ([]reviewv1alpha1.WatchedPR, []int, int) {
+func (r *Reconciler) reconcileReviewSandboxesInternal(ctx context.Context, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, explicitPRs []*github.PullRequest, prs []*github.PullRequest, sandboxes *unstructured.UnstructuredList, podsBySandbox map[string]*corev1.Pod) ([]reviewv1alpha1.WatchedPR, []int, int) {
 	log := log.FromContext(ctx)
 
 	ownedSandboxes := getOwnedSandboxes(sandboxes.Items, repoWatch.UID)
@@ -681,7 +681,7 @@ func (r *Reconciler) reconcileReviewSandboxesInternal(ctx context.Context, repoW
 			if prIsExplicit || (activeSandboxes < repoWatch.Spec.Review.MaxActiveSandboxes) &&
 				(repoWatch.Spec.Review.MaxSandboxes == 0 || totalSandboxes < repoWatch.Spec.Review.MaxSandboxes) {
 				log.Info("creating sandbox for PR", "pr", *pr.Number)
-				if err := r.createReviewSandboxForPR(ctx, repoWatch, pr); err != nil {
+				if err := r.createReviewSandboxForPR(ctx, user, repoWatch, pr); err != nil {
 					log.Error(err, "unable to create sandbox for PR", "pr", *pr.Number)
 				} else {
 					activeSandboxes++
@@ -1031,6 +1031,9 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 			UserLogin:             userLogin,
 			UserName:              userName,
 			UserEmail:             userEmail,
+			BotLogin:              botLogin,
+			BotName:               botName,
+			BotEmail:              botEmail,
 			LLMProvider:           repoWatch.Spec.Issue.LLM.Provider,
 			LLMConfigdirRef:       repoWatch.Spec.Issue.LLM.ConfigdirRef,
 			LLMAPIKeySecretName:   apiKeySecretName,
@@ -1051,15 +1054,11 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 		IssueTitle:    *issue.Title,
 		IssueRepo:     repoWatch.GetName(),
 		//Handler:    "", // Handled per task?
-		BotLogin: botLogin,
-		BotName:  botName,
-		BotEmail: botEmail,
-		Resources: corev1.ResourceRequirements{
-			Requests: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("2000m"),
-				corev1.ResourceMemory: resource.MustParse("2Gi"),
-				"ephemeral-storage":   ephemeralStorage,
-			},
+		Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("2000m"),
+			corev1.ResourceMemory: resource.MustParse("2Gi"),
+			"ephemeral-storage":   ephemeralStorage,
+		},
 			Limits: corev1.ResourceList{
 				corev1.ResourceCPU:    resource.MustParse("4000m"),
 				corev1.ResourceMemory: resource.MustParse("6Gi"),
@@ -1148,273 +1147,110 @@ func (r *Reconciler) generateIssueHandlerPrompt(handler reviewv1alpha1.IssueHand
 // createReviewSandboxForPR creates a ReviewSandbox for a pull request.
 // It uses the LLM configuration from the RepoWatch CRD to configure the
 // sandbox.
-func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, pr *github.PullRequest) error {
+func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, pr *github.PullRequest) error {
 	log := log.FromContext(ctx)
 	sandboxName := fmt.Sprintf("%s-pr-%d", repoWatch.Name, *pr.Number)
 
 	prompt := repoWatch.Spec.Review.LLM.Prompt
 
+	userLogin := user.GetLogin()
+	userName := user.GetName()
+	if userName == "" {
+		userName = userLogin
+	}
+	userEmail := user.GetEmail()
+
 	githubSecretName := repoWatch.Spec.GithubSecretName
+	botLogin := ""
+	botName := ""
+	botEmail := ""
 	if repoWatch.Spec.Review.RobotAccount != "" {
 		githubSecretName = repoWatch.Spec.Review.RobotAccount
 		if err := r.ensureRobotSecret(ctx, repoWatch.Namespace, githubSecretName); err != nil {
 			log.Error(err, "failed to ensure robot secret", "secret", githubSecretName)
 			return err
 		}
+
+		secret := &corev1.Secret{}
+		if err := r.Get(ctx, types.NamespacedName{Name: githubSecretName, Namespace: repoWatch.Namespace}, secret); err != nil {
+			log.Error(err, "failed to get robot secret", "secret", githubSecretName)
+			return err
+		}
+
+		if len(secret.Data["userid"]) > 0 {
+			botLogin = string(secret.Data["userid"])
+		}
+		if len(secret.Data["name"]) > 0 {
+			botName = string(secret.Data["name"])
+		}
+		if len(secret.Data["email"]) > 0 {
+			botEmail = string(secret.Data["email"])
+		}
 	}
 
 	log.Info("Generated Sandbox for PR", "pr", *pr, "llm.provider", repoWatch.Spec.Review.LLM.Provider)
 
-	sandbox := &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"apiVersion": "agents.x-k8s.io/v1alpha1",
-			"kind":       "Sandbox",
-			"metadata": map[string]interface{}{
-				"name":      sandboxName,
-				"namespace": repoWatch.Namespace,
-				"labels": map[string]interface{}{
-					"review.gemini.google.com/repowatch": repoWatch.Name,
-					"sandbox.gemini.google.com/type":     "review",
-					"sandbox-type":                       "review",
-				},
-				"annotations": map[string]interface{}{
-					"agentState":  "provisioning",
-					"reviewState": "",
-					// Source info injected as annotations for UI
-					"pr":       fmt.Sprintf("%d", *pr.Number),
-					"title":    *pr.Title,
-					"repo":     repoWatch.GetName(),
-					"htmlURL":  *pr.HTMLURL,
-					"diffURL":  *pr.DiffURL,
-					"cloneURL": fmt.Sprintf("%s#refs/heads/%s", *pr.Head.Repo.CloneURL, *pr.Head.Ref),
-				},
+	opt := sandbox.ReviewSandboxOptions{
+		DevSandboxOptions: sandbox.DevSandboxOptions{
+			Name:      sandboxName,
+			Namespace: repoWatch.Namespace,
+			Labels: map[string]string{
+				"review.gemini.google.com/repowatch": repoWatch.Name,
+				"sandbox.gemini.google.com/type":     "review",
 			},
-			"spec": map[string]interface{}{
-				"replicas": int64(1),
-				"podTemplate": map[string]interface{}{
-					"metadata": map[string]interface{}{
-						"labels": map[string]interface{}{
-							"sandbox": fmt.Sprintf("devc-%s", sandboxName),
-						},
-					},
-					"spec": map[string]interface{}{
-						"serviceAccountName": "review-sandbox",
-						"initContainers": []interface{}{
-							map[string]interface{}{
-								"name":  "gemini-configs",
-								"image": r.ConfigDirImage,
-								"args":  []interface{}{"--directory", "/workspaces", "--namespace", repoWatch.Namespace, "--name", repoWatch.Spec.Review.LLM.ConfigdirRef, "--ignore-not-found-error"},
-								"volumeMounts": []interface{}{
-									map[string]interface{}{
-										"name":      "workspaces-pvc",
-										"mountPath": "/workspaces",
-									},
-								},
-							},
-							map[string]interface{}{
-								"name":    "inject-agent",
-								"image":   r.RepoSandboxImage,
-								"command": []interface{}{"/repo-agent/repo-sandbox", "inject", "--path", "/opt/repo-agent"},
-								"volumeMounts": []interface{}{
-									map[string]interface{}{
-										"name":      "agent-bin",
-										"mountPath": "/opt/repo-agent",
-									},
-								},
-							},
-						},
-						"containers": []interface{}{
-							map[string]interface{}{
-								"name": "sandbox",
-								"image": func() string {
-									if repoWatch.Spec.Review.Image != "" {
-										return repoWatch.Spec.Review.Image
-									}
-									return r.RepoSandboxImage
-								}(),
-								"command": func() []interface{} {
-									if repoWatch.Spec.Review.Image != "" {
-										return []interface{}{sandbox.RepoSandboxBinary, "review-daemon"}
-									}
-									return []interface{}{}
-								}(),
-								"resources": map[string]interface{}{
-									"limits": map[string]interface{}{
-										"ephemeral-storage": "6Gi",
-									},
-									"requests": map[string]interface{}{
-										"ephemeral-storage": "6Gi",
-									},
-								},
-								"env": []interface{}{
-									map[string]interface{}{"name": "NAMESPACE", "value": repoWatch.Namespace},
-									map[string]interface{}{"name": "NAME", "value": sandboxName},
-									map[string]interface{}{"name": "REPO", "value": repoWatch.GetName()},
-									map[string]interface{}{"name": "PRID", "value": fmt.Sprintf("%d", *pr.Number)},
-									map[string]interface{}{"name": "MAX_REVIEW_FILES", "value": strconv.Itoa(repoWatch.Spec.Review.MaxReviewFiles)},
-									map[string]interface{}{"name": "IGNORE_FILES", "value": strings.Join(repoWatch.Spec.Review.IgnoreFiles, ",")},
-									map[string]interface{}{"name": "SEVERITY_THRESHOLD", "value": repoWatch.Spec.Review.SeverityThreshold},
-									map[string]interface{}{"name": "AGENT_NAME", "value": repoWatch.Spec.Review.LLM.Provider},
-									map[string]interface{}{
-										"name": "AGENT_LLM_EXTENSIONS",
-										"value": func() string {
-											if len(repoWatch.Spec.Review.LLM.Extensions) == 0 {
-												return ""
-											}
-											exts, _ := json.Marshal(repoWatch.Spec.Review.LLM.Extensions)
-											return string(exts)
-										}(),
-									},
-									map[string]interface{}{"name": "GIT_CLONE_URL", "value": fmt.Sprintf("%s#refs/heads/%s", *pr.Head.Repo.CloneURL, *pr.Head.Ref)},
-									map[string]interface{}{"name": "ENVBUILDER_GIT_URL", "value": fmt.Sprintf("%s#refs/heads/%s", *pr.Head.Repo.CloneURL, *pr.Head.Ref)},
-									map[string]interface{}{"name": "GIT_DIFF_URL", "value": *pr.DiffURL},
-									map[string]interface{}{"name": "GIT_HTML_URL", "value": *pr.HTMLURL},
-									map[string]interface{}{
-										"name": "GITHUB_TOKEN",
-										"valueFrom": map[string]interface{}{
-											"secretKeyRef": map[string]interface{}{
-												"name":     githubSecretName,
-												"key":      "pat",
-												"optional": true,
-											},
-										},
-									},
-									map[string]interface{}{
-										"name": "MANUAL_PAT",
-										"valueFrom": map[string]interface{}{
-											"secretKeyRef": map[string]interface{}{
-												"name":     githubSecretName,
-												"key":      "manual_pat",
-												"optional": true,
-											},
-										},
-									},
-									map[string]interface{}{
-										"name": "OAUTH_PAT",
-										"valueFrom": map[string]interface{}{
-											"secretKeyRef": map[string]interface{}{
-												"name":     githubSecretName,
-												"key":      "oauth_pat",
-												"optional": true,
-											},
-										},
-									},
-									map[string]interface{}{"name": "ENVBUILDER_CACHE_REPO", "value": "registry.repo-agent-system.svc.cluster.local:5000/envbuilder-cache"},
-									map[string]interface{}{"name": "ENVBUILDER_DEVCONTAINER_DIR", "value": "/"},
-									map[string]interface{}{"name": "ENVBUILDER_GIT_CLONE_SINGLE_BRANCH", "value": "true"},
-									map[string]interface{}{"name": "ENVBUILDER_INIT_SCRIPT", "value": sandbox.RepoSandboxBinary + " review-daemon"},
-									map[string]interface{}{"name": "ENVBUILDER_IGNORE_PATHS", "value": "/var/run,/product_uuid,/product_name,/tokens,/repo-agent/"},
-									map[string]interface{}{"name": "GOCACHE", "value": sandbox.GoCachePath},
-									map[string]interface{}{"name": "GOMODCACHE", "value": sandbox.GoModCachePath},
-									map[string]interface{}{"name": "TMPDIR", "value": sandbox.TmpDirPath},
-								},
-								"volumeMounts": []interface{}{
-									map[string]interface{}{"name": "workspaces-pvc", "mountPath": "/workspaces"},
-									map[string]interface{}{"name": "tokens-secret", "mountPath": "/tokens", "readOnly": true},
-									map[string]interface{}{"name": "devcontainer-config", "mountPath": "/devcontainer.json", "subPath": "devcontainer.json"},
-									map[string]interface{}{"name": "agent-bin", "mountPath": "/opt/repo-agent"},
-								},
-								"ports": []interface{}{
-									map[string]interface{}{"containerPort": int64(13337)},
-									map[string]interface{}{"containerPort": int64(13339)},
-								},
-							},
-						},
-						"volumes": []interface{}{
-							map[string]interface{}{"name": "agent-bin", "emptyDir": map[string]interface{}{}},
-							map[string]interface{}{
-								"name": "devcontainer-config",
-								"configMap": map[string]interface{}{
-									"name": func() string {
-										if repoWatch.Spec.Review.DevcontainerConfigRef != "" {
-											return repoWatch.Spec.Review.DevcontainerConfigRef
-										}
-										return "devcontainer-json"
-									}(),
-								},
-							},
-							map[string]interface{}{
-								"name": "tokens-secret",
-								"secret": map[string]interface{}{
-									"secretName": repoWatch.Spec.Review.LLM.APIKeySecretRef,
-								},
-							},
-						},
-					},
-				},
-				"volumeClaimTemplates": []interface{}{
-					map[string]interface{}{
-						"metadata": map[string]interface{}{"name": "workspaces-pvc"},
-						"spec": map[string]interface{}{
-							"accessModes": []interface{}{"ReadWriteOnce"},
-							"resources": map[string]interface{}{
-								"requests": map[string]interface{}{
-									"storage": func() string {
-										if repoWatch.Spec.Review.WorkspaceDiskSize != "" {
-											return repoWatch.Spec.Review.WorkspaceDiskSize
-										}
-										return "10Gi"
-									}(),
-								},
-							},
-						},
-					},
-				},
-			},
+			UserLogin:   userLogin,
+			UserName:    userName,
+			UserEmail:   userEmail,
+			BotLogin:    botLogin,
+			BotName:     botName,
+			BotEmail:    botEmail,
+			LLMProvider: repoWatch.Spec.Review.LLM.Provider, LLMConfigdirRef: repoWatch.Spec.Review.LLM.ConfigdirRef,
+			LLMAPIKeySecretName:   repoWatch.Spec.Review.LLM.APIKeySecretRef,
+			Prompt:                repoWatch.Spec.Review.LLM.Prompt,
+			GithubSecretName:      githubSecretName,
+			DevcontainerConfigRef: repoWatch.Spec.Review.DevcontainerConfigRef,
+			Image:                 repoWatch.Spec.Review.Image,
+			RepoSandboxImage:      r.RepoSandboxImage,
+			ConfigDirImage:        r.ConfigDirImage,
+			HTTPEnabled:           true,
+			Replicas:              1,
+			ServiceAccountName:    "review-sandbox",
 		},
+		PRNumber:          *pr.Number,
+		PRTitle:           *pr.Title,
+		PRHTMLURL:         *pr.HTMLURL,
+		PRDiffURL:         *pr.DiffURL,
+		PRCloneURL:        fmt.Sprintf("%s#refs/heads/%s", *pr.Head.Repo.CloneURL, *pr.Head.Ref),
+		RepoName:          repoWatch.GetName(),
+		MaxReviewFiles:    repoWatch.Spec.Review.MaxReviewFiles,
+		IgnoreFiles:       repoWatch.Spec.Review.IgnoreFiles,
+		SeverityThreshold: repoWatch.Spec.Review.SeverityThreshold,
+		LLMExtensions:     repoWatch.Spec.Review.LLM.Extensions,
+		WorkspaceDiskSize: repoWatch.Spec.Review.WorkspaceDiskSize,
+		SkipDevcPrefix:    true,
 	}
 
-	if err := controllerutil.SetControllerReference(repoWatch, sandbox, r.Scheme); err != nil {
+	sb, svc := sandbox.NewReviewSandbox(opt)
+
+	if err := controllerutil.SetControllerReference(repoWatch, sb, r.Scheme); err != nil {
 		return err
 	}
 
-	if err := r.Create(ctx, sandbox); err != nil {
+	if err := r.Create(ctx, sb); err != nil {
 		return err
 	}
 
-	serviceName := fmt.Sprintf("devc-%s-lb", sandboxName)
-	service := &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"apiVersion": "v1",
-			"kind":       "Service",
-			"metadata": map[string]interface{}{
-				"name":      serviceName,
-				"namespace": repoWatch.Namespace,
-			},
-			"spec": map[string]interface{}{
-				"selector": map[string]interface{}{
-					"sandbox": fmt.Sprintf("devc-%s", sandboxName),
-				},
-				"ports": []interface{}{
-					map[string]interface{}{
-						"name":        "code-server",
-						"protocol":    "TCP",
-						"port":        int64(13338),
-						"targetPort":  int64(13337),
-						"appProtocol": "kubernetes.io/ws",
-					},
-					map[string]interface{}{
-						"name":       "agent-server",
-						"protocol":   "TCP",
-						"port":       int64(13339),
-						"targetPort": int64(13339),
-					},
-				},
-			},
-		},
-	}
-
-	if err := controllerutil.SetControllerReference(repoWatch, service, r.Scheme); err != nil {
+	if err := controllerutil.SetControllerReference(repoWatch, svc, r.Scheme); err != nil {
 		log.Error(err, "failed to set owner ref on service")
 	}
 
-	if err := r.Create(ctx, service); err != nil {
+	if err := r.Create(ctx, svc); err != nil {
 		if !apierrors.IsAlreadyExists(err) {
 			return err
 		}
 	}
 
-	if err := r.createSandboxTask(ctx, repoWatch, sandbox, sandboxName, "", "review", map[string]string{
+	if err := r.createSandboxTask(ctx, repoWatch, sb, sandboxName, "", "review", map[string]string{
 		"AGENT_PROMPT": prompt,
 	}); err != nil {
 		log.Error(err, "unable to create initial review task for sandbox", "sandbox", sandboxName)
@@ -2331,13 +2167,46 @@ func (r *Reconciler) reconcileOverseer(ctx context.Context, repoWatch *reviewv1a
 	log := log.FromContext(ctx)
 
 	log.Info("reconciling overseer", "enabled", repoWatch.Spec.Overseer != nil && repoWatch.Spec.Overseer.Enabled)
-	if err := overseer.Reconcile(ctx, r.Client, repoWatch, &pkg_github.User{
+
+	overseerUser := &pkg_github.User{
 		UserID: user.GetLogin(),
 		Name:   user.GetName(),
 		Email:  user.GetEmail(),
-	}, r.RepoSandboxImage, r.ConfigDirImage); err != nil {
+	}
+
+	overseerWatch := repoWatch.DeepCopy()
+
+	if overseerWatch.Spec.Overseer != nil && overseerWatch.Spec.Overseer.RobotAccount != "" {
+		githubSecretName := overseerWatch.Spec.Overseer.RobotAccount
+		if err := r.ensureRobotSecret(ctx, overseerWatch.Namespace, githubSecretName); err != nil {
+			log.Error(err, "failed to ensure robot secret", "secret", githubSecretName)
+			return err
+		}
+
+		secret := &corev1.Secret{}
+		if err := r.Get(ctx, types.NamespacedName{Name: githubSecretName, Namespace: overseerWatch.Namespace}, secret); err != nil {
+			log.Error(err, "failed to get robot secret", "secret", githubSecretName)
+			return err
+		}
+
+		if len(secret.Data["userid"]) > 0 {
+			overseerUser.UserID = string(secret.Data["userid"])
+		}
+		if len(secret.Data["name"]) > 0 {
+			overseerUser.Name = string(secret.Data["name"])
+		}
+		if len(secret.Data["email"]) > 0 {
+			overseerUser.Email = string(secret.Data["email"])
+		}
+
+		overseerWatch.Spec.GithubSecretName = githubSecretName
+	}
+
+	if err := overseer.Reconcile(ctx, r.Client, overseerWatch, overseerUser, r.RepoSandboxImage, r.ConfigDirImage); err != nil {
 		return err
 	}
+
+	repoWatch.Status.OverseerStatus = overseerWatch.Status.OverseerStatus
 
 	if repoWatch.Spec.Overseer != nil && repoWatch.Spec.Overseer.Enabled {
 		return r.Status().Update(ctx, repoWatch)

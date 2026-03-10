@@ -328,6 +328,18 @@ type OverseerSpec struct {
 	// Repo configuration
 	// +kubebuilder:validation:Optional
 	Repo *RepoSpec `json:"repo,omitempty"`
+
+	// MaxActiveReviews limits the number of concurrent review sandboxes.
+	// +kubebuilder:validation:Optional
+	MaxActiveReviews *int32 `json:"maxActiveReviews,omitempty"`
+
+	// MaxActiveIssues limits the number of concurrent issue sandboxes.
+	// +kubebuilder:validation:Optional
+	MaxActiveIssues *int32 `json:"maxActiveIssues,omitempty"`
+
+	// RobotAccount to use for the overseer.
+	// +kubebuilder:validation:Optional
+	RobotAccount string `json:"robotAccount,omitempty"`
 }
 
 // RepoWatchSpec defines the desired state of RepoWatch

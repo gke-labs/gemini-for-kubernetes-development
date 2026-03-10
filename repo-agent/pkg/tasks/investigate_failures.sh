@@ -7,12 +7,24 @@ set -o pipefail
 # - GITHUB_USER_TOKEN
 
 export REPO_NAME="{{ .Repo.Name }}"
-export CLONE_URL={{ .Repo.CloneURL }}
+export CLONE_URL="{{ .Repo.CloneURL }}"
 export PROMPT_FILE="{{ .PromptFile }}"
-export GITHUB_USER_ID={{ .User.UserID }}
-export GITHUB_USER_EMAIL={{ .User.Email }}
+export GITHUB_USER_ID="{{ .User.UserID }}"
+export GITHUB_USER_EMAIL="{{ .User.Email }}"
 export GITHUB_USER_NAME="{{ .User.Name }}"
 export PR_NUMBER={{ .PullRequest.Number }}
+
+export GITHUB_USER_TOKEN="${GITHUB_USER_TOKEN:-${GITHUB_TOKEN}}"
+if [ -z "$GITHUB_USER_TOKEN" ]; then
+    # Try other common names
+    GITHUB_USER_TOKEN="${MANUAL_PAT:-${OAUTH_PAT}}"
+fi
+
+if [ -n "${GITHUB_BOT_LOGIN}" ]; then
+    if [ -n "${GITHUB_BOT_TOKEN}" ] || [ -n "${GITHUB_BOT_OAUTH_PAT}" ] || [ -n "${GITHUB_BOT_MANUAL_PAT}" ]; then
+        GITHUB_USER_TOKEN="${GITHUB_BOT_TOKEN:-${GITHUB_BOT_MANUAL_PAT:-${GITHUB_BOT_OAUTH_PAT}}}"
+    fi
+fi
 
 function setupGit {
     echo "Running setupGit..."
@@ -39,14 +51,14 @@ EOF
     if [ -n "$GITHUB_BOT_EMAIL" ]; then
         git config --global user.email "${GITHUB_BOT_EMAIL}"
     else
-        git config --global user.email ${GITHUB_USER_EMAIL}
+        git config --global user.email "${GITHUB_USER_EMAIL}"
     fi
 
     echo "running git config user.name"
     if [ -n "$GITHUB_BOT_NAME" ]; then
         git config --global user.name "${GITHUB_BOT_NAME}"
     else
-        git config --global user.name ${GITHUB_USER_NAME}
+        git config --global user.name "${GITHUB_USER_NAME}"
     fi
 
     echo "running gh auth setup-git"
@@ -72,6 +84,12 @@ function setupGitRepos {
         # Optional: fetch latest changes
         (cd "/workspaces/${REPO_NAME}" && git fetch origin)
     fi
+
+    echo "running gh repo fork"
+    (cd "/workspaces/${REPO_NAME}" && gh repo fork --remote || true)
+
+    echo "running gh repo set-default"
+    (cd "/workspaces/${REPO_NAME}" && gh repo set-default "${CLONE_URL}" || true)
 }
 
 function checkoutPRBranch {

@@ -73,7 +73,7 @@ func buildIssueCommand() *cobra.Command {
 
 	cmd.Flags().IntVar(&number, "number", 0, "Issue number")
 	cmd.Flags().IntVar(&prNumber, "pr", 0, "PR number to extract issue from")
-	cmd.Flags().StringVar(&taskType, "task", "fix-issue", "Task type (e.g., fix-issue, triage-issue, investigate-failures)")
+	cmd.Flags().StringVar(&taskType, "task", "fix-issue", "Task type (e.g., fix-issue, triage-issue)")
 
 	return cmd
 }
@@ -92,7 +92,7 @@ func buildPRCommand() *cobra.Command {
 	}
 
 	cmd.Flags().IntVar(&number, "number", 0, "PR number")
-	cmd.Flags().StringVar(&taskType, "task", "review", "Task type (e.g., review, address-feedback)")
+	cmd.Flags().StringVar(&taskType, "task", "review", "Task type (e.g., review, address-feedback, investigate-failures)")
 	cmd.Flags().BoolVar(&submit, "submit", false, "Submit agent draft from task as review")
 	_ = cmd.MarkFlagRequired("number")
 
@@ -283,12 +283,21 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 	}
 	userEmail := os.Getenv("GITHUB_USER_EMAIL")
 
+	botLogin := os.Getenv("GITHUB_BOT_LOGIN")
+	botName := os.Getenv("GITHUB_BOT_NAME")
+	botEmail := os.Getenv("GITHUB_BOT_EMAIL")
+
 	apiKeySecretName := ""
 	if repoWatch.Spec.Issue != nil {
 		apiKeySecretName = repoWatch.Spec.Issue.LLM.APIKeySecretRef
 	}
 	if apiKeySecretName == "" {
 		apiKeySecretName = "gemini-api-key"
+	}
+
+	githubSecretName := repoWatch.Spec.GithubSecretName
+	if repoWatch.Spec.Overseer != nil && repoWatch.Spec.Overseer.RobotAccount != "" {
+		githubSecretName = repoWatch.Spec.Overseer.RobotAccount
 	}
 
 	opt := sandbox.AgentSandboxOptions{
@@ -308,8 +317,11 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 			UserLogin:           userLogin,
 			UserName:            userName,
 			UserEmail:           userEmail,
+			BotLogin:            botLogin,
+			BotName:             botName,
+			BotEmail:            botEmail,
 			LLMAPIKeySecretName: apiKeySecretName,
-			GithubSecretName:    repoWatch.Spec.GithubSecretName,
+			GithubSecretName:    githubSecretName,
 			RepoSandboxImage:    os.Getenv("REPO_SANDBOX_IMAGE"),
 			ConfigDirImage:      os.Getenv("CONFIG_DIR_IMAGE"),
 			HTTPEnabled:         true,
@@ -415,25 +427,46 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string) er
 
 	sandboxName := fmt.Sprintf("devc-%s-issue-%d", repoWatch.Name, number)
 
-	// Check if sandbox exists
-	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
-	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			// Create Sandbox
-			fmt.Printf("Creating sandbox %s...\n", sandboxName)
-			if err := createIssueSandbox(ctx, kubeClient, &repoWatch, issue); err != nil {
-				return fmt.Errorf("failed to create issue sandbox: %w", err)
-			}
-		} else {
-			return fmt.Errorf("failed to check if sandbox exists: %w", err)
+	var sandboxExists bool
+	var sandboxIsActive bool
+	sandboxUnstructured, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
+	if err == nil {
+		sandboxExists = true
+		replicas, found, err := unstructured.NestedInt64(sandboxUnstructured.Object, "spec", "replicas")
+		if err == nil && (!found || replicas > 0) {
+			sandboxIsActive = true
+		}
+	} else if !strings.Contains(err.Error(), "not found") {
+		return fmt.Errorf("failed to check if sandbox exists: %w", err)
+	}
+
+	// Check limit only if we need to create or activate a sandbox
+	if !sandboxIsActive && repoWatch.Spec.Overseer != nil && repoWatch.Spec.Overseer.MaxActiveIssues != nil {
+		maxIssues := *repoWatch.Spec.Overseer.MaxActiveIssues
+		activeCount, err := countActiveSandboxes(ctx, kubeClient.DynamicClient, namespace, repoWatchName, "issue")
+		if err != nil {
+			return fmt.Errorf("failed to count active issue sandboxes: %w", err)
+		}
+		if int32(activeCount) >= maxIssues {
+			// Instead of returning nil, return an error so overseer logs it and skips
+			return fmt.Errorf("limit_reached: max active issues limit (%d) reached (currently %d active)", maxIssues, activeCount)
+		}
+	}
+
+	// Create Sandbox if it doesn't exist
+	if !sandboxExists {
+		fmt.Printf("Creating sandbox %s...\n", sandboxName)
+		if err := createIssueSandbox(ctx, kubeClient, &repoWatch, issue); err != nil {
+			return fmt.Errorf("failed to create issue sandbox: %w", err)
 		}
 	}
 
 	// Create Task
 	fmt.Printf("Creating task %s for sandbox %s...\n", taskType, sandboxName)
 	params := map[string]string{
-		"ISSUE_URL":    issue.GetHTMLURL(),
-		"AGENT_PROMPT": repoWatch.Spec.Issue.LLM.Prompt,
+		"ISSUE_URL":       issue.GetHTMLURL(),
+		"PULL_REQUEST_ID": fmt.Sprintf("%d", prNumber),
+		"AGENT_PROMPT":    repoWatch.Spec.Issue.LLM.Prompt,
 	}
 	// Add other params if needed, similar to repowatch_controller.go
 	if repoWatch.Spec.Issue.LLM.Provider != "" {
@@ -523,17 +556,36 @@ func runPR(ctx context.Context, number int, taskType string, submit bool) error 
 
 	sandboxName := fmt.Sprintf("%s-pr-%d", repoWatch.Name, number)
 
-	// Check if sandbox exists
-	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
-	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			// Create Sandbox
-			fmt.Printf("Creating sandbox %s...\n", sandboxName)
-			if err := createPRSandbox(ctx, kubeClient, &repoWatch, pr); err != nil {
-				return fmt.Errorf("failed to create PR sandbox: %w", err)
-			}
-		} else {
-			return fmt.Errorf("failed to check if sandbox exists: %w", err)
+	var sandboxExists bool
+	var sandboxIsActive bool
+	sandboxUnstructured, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
+	if err == nil {
+		sandboxExists = true
+		replicas, found, err := unstructured.NestedInt64(sandboxUnstructured.Object, "spec", "replicas")
+		if err == nil && (!found || replicas > 0) {
+			sandboxIsActive = true
+		}
+	} else if !strings.Contains(err.Error(), "not found") {
+		return fmt.Errorf("failed to check if sandbox exists: %w", err)
+	}
+
+	// Check limit only if we need to create or activate a sandbox
+	if !sandboxIsActive && repoWatch.Spec.Overseer != nil && repoWatch.Spec.Overseer.MaxActiveReviews != nil {
+		maxReviews := *repoWatch.Spec.Overseer.MaxActiveReviews
+		activeCount, err := countActiveSandboxes(ctx, kubeClient.DynamicClient, namespace, repoWatchName, "review")
+		if err != nil {
+			return fmt.Errorf("failed to count active review sandboxes: %w", err)
+		}
+		if int32(activeCount) >= maxReviews {
+			return fmt.Errorf("limit_reached: max active reviews limit (%d) reached (currently %d active)", maxReviews, activeCount)
+		}
+	}
+
+	// Create Sandbox if it doesn't exist
+	if !sandboxExists {
+		fmt.Printf("Creating sandbox %s...\n", sandboxName)
+		if err := createPRSandbox(ctx, kubeClient, &repoWatch, pr); err != nil {
+			return fmt.Errorf("failed to create PR sandbox: %w", err)
 		}
 	}
 
@@ -541,6 +593,7 @@ func runPR(ctx context.Context, number int, taskType string, submit bool) error 
 	fmt.Printf("Creating task %s for sandbox %s...\n", taskType, sandboxName)
 	params := map[string]string{
 		"PULL_REQUEST_ID": fmt.Sprintf("%d", number),
+		"ISSUE_URL":       pr.GetHTMLURL(),
 		"AGENT_PROMPT":    repoWatch.Spec.Review.LLM.Prompt,
 	}
 	if repoWatch.Spec.Review.LLM.Provider != "" {
@@ -569,6 +622,15 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 	}
 
 	sandboxName := fmt.Sprintf("%s-pr-%d", repoWatchName, prNumber)
+
+	sandboxUnstructured, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
+	if err == nil {
+		annotations := sandboxUnstructured.GetAnnotations()
+		if annotations != nil && annotations["reviewState"] == "submitted" {
+			fmt.Printf("Review for PR %d already submitted.\n", prNumber)
+			return nil
+		}
+	}
 
 	taskList, err := manager.ListSandboxTasks(ctx, namespace, sandboxName)
 	if err != nil {
@@ -606,8 +668,21 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 		return fmt.Errorf("no agentDraft annotation found on task %s", latestReviewTask.Name)
 	}
 
+	var repoWatch reviewv1alpha1.RepoWatch
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(rwUnstructured.Object, &repoWatch); err != nil {
+		return fmt.Errorf("failed to convert RepoWatch: %w", err)
+	}
+
+	githubSecretName := repoWatch.Spec.GithubSecretName
+	if repoWatch.Spec.Overseer.RobotAccount != "" {
+		githubSecretName = repoWatch.Spec.Overseer.RobotAccount
+	}
+
+	rwUnstructuredCopy := rwUnstructured.DeepCopy()
+	_ = unstructured.SetNestedField(rwUnstructuredCopy.Object, githubSecretName, "spec", "githubSecretName")
+
 	// Get GitHub token from secret
-	token, err := manager.GetGitHubToken(ctx, rwUnstructured)
+	token, err := manager.GetGitHubToken(ctx, rwUnstructuredCopy)
 	if err != nil {
 		return fmt.Errorf("failed to get github token: %w", err)
 	}
@@ -640,8 +715,8 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 		reviewRequest = agentOutput.Review.ToGitHubReviewRequest()
 	}
 
-	// Not setting event sets it as a draft
-	reviewRequest.Event = nil
+	// Set event to COMMENT to submit directly instead of creating a draft
+	reviewRequest.Event = githubv39.String("COMMENT")
 
 	fmt.Printf("Creating review on GitHub for %s/%s PR %d...\n", owner, repoName, prNumber)
 	review, _, err := client.PullRequests.CreateReview(ctx, owner, repoName, prNumber, reviewRequest)
@@ -653,13 +728,6 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 	// Update sandbox reviewState
 	if err := manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "reviewState", "submitted"); err != nil {
 		fmt.Printf("Warning: failed to update reviewState annotation: %v\n", err)
-	}
-
-	// scale down sandbox
-	fmt.Printf("Scaling down sandbox %s...\n", sandboxName)
-	err = manager.ScaledownSandbox(ctx, namespace, repoWatchName, fmt.Sprintf("%d", prNumber))
-	if err != nil {
-		fmt.Printf("Warning: failed to scaledown sandbox: %v\n", err)
 	}
 
 	fmt.Println("Done.")
@@ -689,6 +757,10 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 	}
 	userEmail := os.Getenv("GITHUB_USER_EMAIL")
 
+	botLogin := os.Getenv("GITHUB_BOT_LOGIN")
+	botName := os.Getenv("GITHUB_BOT_NAME")
+	botEmail := os.Getenv("GITHUB_BOT_EMAIL")
+
 	branchName := fmt.Sprintf("issue-%d-%s", issue.GetNumber(), randString(4))
 
 	apiKeySecretName := repoWatch.Spec.Issue.LLM.APIKeySecretRef
@@ -696,6 +768,10 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 		apiKeySecretName = "gemini-api-key"
 	}
 
+	githubSecretName := repoWatch.Spec.GithubSecretName
+	if repoWatch.Spec.Issue != nil && repoWatch.Spec.Issue.RobotAccount != "" {
+		githubSecretName = repoWatch.Spec.Issue.RobotAccount
+	}
 	opt := sandbox.AgentSandboxOptions{
 		DevSandboxOptions: sandbox.DevSandboxOptions{
 			Name:      name,
@@ -712,11 +788,14 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 			UserLogin:             userLogin,
 			UserName:              userName,
 			UserEmail:             userEmail,
+			BotLogin:              botLogin,
+			BotName:               botName,
+			BotEmail:              botEmail,
 			LLMProvider:           repoWatch.Spec.Issue.LLM.Provider,
 			LLMConfigdirRef:       repoWatch.Spec.Issue.LLM.ConfigdirRef,
 			LLMAPIKeySecretName:   apiKeySecretName,
 			Prompt:                repoWatch.Spec.Issue.LLM.Prompt,
-			GithubSecretName:      repoWatch.Spec.GithubSecretName,
+			GithubSecretName:      githubSecretName,
 			DevcontainerConfigRef: repoWatch.Spec.Issue.DevcontainerConfigRef,
 			Image:                 repoWatch.Spec.Issue.Image,
 			RepoSandboxImage:      os.Getenv("REPO_SANDBOX_IMAGE"),
@@ -742,9 +821,7 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 }
 
 func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, repoWatch *reviewv1alpha1.RepoWatch, pr *githubv39.PullRequest) error {
-	// Replicate logic from repowatch_controller.go:createPRSandbox
 	name := fmt.Sprintf("%s-pr-%d", repoWatch.Name, pr.GetNumber())
-	cloneURL := pr.GetBase().GetRepo().GetCloneURL()
 
 	userLogin := os.Getenv("GITHUB_USER_ID")
 	userName := os.Getenv("GITHUB_USER_NAME")
@@ -753,12 +830,25 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 	}
 	userEmail := os.Getenv("GITHUB_USER_EMAIL")
 
+	botLogin := os.Getenv("GITHUB_BOT_LOGIN")
+	botName := os.Getenv("GITHUB_BOT_NAME")
+	botEmail := os.Getenv("GITHUB_BOT_EMAIL")
+
 	apiKeySecretName := repoWatch.Spec.Review.LLM.APIKeySecretRef
 	if apiKeySecretName == "" {
 		apiKeySecretName = "gemini-api-key"
 	}
 
-	opt := sandbox.AgentSandboxOptions{
+	githubSecretName := repoWatch.Spec.GithubSecretName
+	if repoWatch.Spec.Overseer.RobotAccount != "" {
+		githubSecretName = repoWatch.Spec.Overseer.RobotAccount
+
+		// In overseer we don't have direct access to the secret content like repowatch controller does,
+		// but overseer pod itself is injected with these if they are set on the overseer spec.
+		// Alternatively, if the overseer pod shares the same robot account, they should be in env vars.
+	}
+
+	opt := sandbox.ReviewSandboxOptions{
 		DevSandboxOptions: sandbox.DevSandboxOptions{
 			Name:      name,
 			Namespace: repoWatch.Namespace,
@@ -766,19 +856,17 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 				"review.gemini.google.com/repowatch": repoWatch.Name,
 				"sandbox.gemini.google.com/type":     "review",
 			},
-			CloneURL:              cloneURL,
-			HTMLURL:               pr.GetHTMLURL(),
-			Branch:                pr.GetHead().GetRef(),
-			Origin:                pr.GetHead().GetRepo().GetCloneURL(),
-			PushEnabled:           false,
 			UserLogin:             userLogin,
 			UserName:              userName,
 			UserEmail:             userEmail,
+			BotLogin:              botLogin,
+			BotName:               botName,
+			BotEmail:              botEmail,
 			LLMProvider:           repoWatch.Spec.Review.LLM.Provider,
 			LLMConfigdirRef:       repoWatch.Spec.Review.LLM.ConfigdirRef,
 			LLMAPIKeySecretName:   apiKeySecretName,
 			Prompt:                repoWatch.Spec.Review.LLM.Prompt,
-			GithubSecretName:      repoWatch.Spec.GithubSecretName,
+			GithubSecretName:      githubSecretName,
 			DevcontainerConfigRef: repoWatch.Spec.Review.DevcontainerConfigRef,
 			Image:                 repoWatch.Spec.Review.Image,
 			RepoSandboxImage:      os.Getenv("REPO_SANDBOX_IMAGE"),
@@ -787,14 +875,21 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 			Replicas:              1,
 			ServiceAccountName:    "review-sandbox",
 		},
-		IssueID:        fmt.Sprintf("%d", pr.GetNumber()),
-		IssueTitle:     pr.GetTitle(),
-		IssueRepo:      repoWatch.Name,
-		SkipDevcPrefix: true,
+		PRNumber:          pr.GetNumber(),
+		PRTitle:           pr.GetTitle(),
+		PRHTMLURL:         pr.GetHTMLURL(),
+		PRDiffURL:         pr.GetDiffURL(),
+		PRCloneURL:        fmt.Sprintf("%s#refs/heads/%s", pr.GetHead().GetRepo().GetCloneURL(), pr.GetHead().GetRef()),
+		RepoName:          repoWatch.Name,
+		MaxReviewFiles:    repoWatch.Spec.Review.MaxReviewFiles,
+		IgnoreFiles:       repoWatch.Spec.Review.IgnoreFiles,
+		SeverityThreshold: repoWatch.Spec.Review.SeverityThreshold,
+		LLMExtensions:     repoWatch.Spec.Review.LLM.Extensions,
+		WorkspaceDiskSize: repoWatch.Spec.Review.WorkspaceDiskSize,
+		SkipDevcPrefix:    true,
 	}
 
-	sb, svc := sandbox.NewAgentSandbox(opt)
-	sb.SetName(name) // Resource name should not have devc- prefix for PRs to match controller
+	sb, svc := sandbox.NewReviewSandbox(opt)
 
 	_, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(repoWatch.Namespace).Create(ctx, sb, metav1.CreateOptions{})
 	if err != nil {
@@ -834,4 +929,24 @@ func resolveIssueFromPR(ctx context.Context, owner, repo string, prNumber int) (
 
 	// Fallback: just return the PR number as its own issue number
 	return prNumber, nil
+}
+
+func countActiveSandboxes(ctx context.Context, dynClient dynamic.Interface, namespace, repowatchName, sandboxType string) (int, error) {
+	labelSelector := fmt.Sprintf("review.gemini.google.com/repowatch=%s,sandbox.gemini.google.com/type=%s", repowatchName, sandboxType)
+	listOptions := metav1.ListOptions{
+		LabelSelector: labelSelector,
+	}
+	sandboxList, err := dynClient.Resource(k8s.SandboxGVR).Namespace(namespace).List(ctx, listOptions)
+	if err != nil {
+		return 0, err
+	}
+	activeCount := 0
+	for _, item := range sandboxList.Items {
+		replicas, found, err := unstructured.NestedInt64(item.Object, "spec", "replicas")
+		if err == nil && found && replicas == 0 {
+			continue
+		}
+		activeCount++
+	}
+	return activeCount, nil
 }
