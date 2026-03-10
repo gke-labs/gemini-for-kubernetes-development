@@ -133,6 +133,10 @@ spec:
                       properties:
                         comment:
                           type: boolean
+                        excludeLabels:
+                          items:
+                            type: string
+                          type: array
                         labels:
                           items:
                             type: string
@@ -243,6 +247,10 @@ spec:
                     type: array
                   devcontainerConfigRef:
                     type: string
+                  excludeLabels:
+                    items:
+                      type: string
+                    type: array
                   excludePullRequests:
                     items:
                       type: integer
