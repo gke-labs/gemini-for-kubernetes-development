@@ -488,10 +488,27 @@ func (r *Reconciler) listOpenPRs(ctx context.Context, ghClient *github.Client, o
 }
 
 func (r *Reconciler) filterPRsByLabels(prs []*github.PullRequest, repoWatch *reviewv1alpha1.RepoWatch) []*github.PullRequest {
-	// Filter by Labels
-	if len(repoWatch.Spec.Review.Labels) > 0 {
-		var filteredPRs []*github.PullRequest
-		for _, pr := range prs {
+	var filteredPRs []*github.PullRequest
+	for _, pr := range prs {
+		// Check ExcludeLabels first
+		excluded := false
+		for _, excludeLabel := range repoWatch.Spec.Review.ExcludeLabels {
+			for _, prLabel := range pr.Labels {
+				if prLabel.Name != nil && *prLabel.Name == excludeLabel {
+					excluded = true
+					break
+				}
+			}
+			if excluded {
+				break
+			}
+		}
+		if excluded {
+			continue
+		}
+
+		// Filter by Labels (Include)
+		if len(repoWatch.Spec.Review.Labels) > 0 {
 			matches := false
 			for _, labelSet := range repoWatch.Spec.Review.Labels {
 				labelSetMatches := true
@@ -516,10 +533,12 @@ func (r *Reconciler) filterPRsByLabels(prs []*github.PullRequest, repoWatch *rev
 			if matches {
 				filteredPRs = append(filteredPRs, pr)
 			}
+		} else {
+			// No include labels specified, so all non-excluded PRs match
+			filteredPRs = append(filteredPRs, pr)
 		}
-		return filteredPRs
 	}
-	return prs
+	return filteredPRs
 }
 
 func (r *Reconciler) filterPRsByAssignees(prs []*github.PullRequest, repoWatch *reviewv1alpha1.RepoWatch, user *github.User) []*github.PullRequest {
@@ -923,6 +942,16 @@ func (r *Reconciler) isIssueMatch(issue *github.Issue, handler reviewv1alpha1.Is
 	}
 
 	// Check labels
+	if len(handler.ExcludeLabels) > 0 {
+		for _, label := range issue.Labels {
+			for _, exLabel := range handler.ExcludeLabels {
+				if label.Name != nil && *label.Name == exLabel {
+					return false
+				}
+			}
+		}
+	}
+
 	if len(handler.Labels) > 0 {
 		hasLabel := false
 		for _, label := range issue.Labels {
