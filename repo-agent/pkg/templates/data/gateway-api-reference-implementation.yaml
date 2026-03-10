@@ -20,7 +20,7 @@ spec:
     llm:
       apiKeySecretRef: gemini-vscode-tokens
   review:
-    reviewShutdownAfterMinutes: 30
+    reviewShutdownAfterMinutes: 0
     image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
     llm:
       configdirRef: gateway-api-ref-impl-gemini-config

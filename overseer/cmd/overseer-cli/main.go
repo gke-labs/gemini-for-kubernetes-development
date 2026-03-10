@@ -730,13 +730,6 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 		fmt.Printf("Warning: failed to update reviewState annotation: %v\n", err)
 	}
 
-	// scale down sandbox
-	fmt.Printf("Scaling down sandbox %s...\n", sandboxName)
-	err = manager.ScaledownSandbox(ctx, namespace, repoWatchName, fmt.Sprintf("%d", prNumber))
-	if err != nil {
-		fmt.Printf("Warning: failed to scaledown sandbox: %v\n", err)
-	}
-
 	fmt.Println("Done.")
 	return nil
 }
@@ -847,8 +840,8 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 	}
 
 	githubSecretName := repoWatch.Spec.GithubSecretName
-	if repoWatch.Spec.Review.RobotAccount != "" {
-		githubSecretName = repoWatch.Spec.Review.RobotAccount
+	if repoWatch.Spec.Overseer.RobotAccount != "" {
+		githubSecretName = repoWatch.Spec.Overseer.RobotAccount
 
 		// In overseer we don't have direct access to the secret content like repowatch controller does,
 		// but overseer pod itself is injected with these if they are set on the overseer spec.
