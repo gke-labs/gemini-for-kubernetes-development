@@ -1,0 +1,92 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: overseer-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: overseer-controller
+  namespace: overseer-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: overseer-controller
+rules:
+- apiGroups: ["overseer.gemini.google.com"]
+  resources: ["overseers"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["overseer.gemini.google.com"]
+  resources: ["overseers/status"]
+  verbs: ["get", "update", "patch"]
+- apiGroups: ["overseer.gemini.google.com"]
+  resources: ["overseers/finalizers"]
+  verbs: ["update"]
+- apiGroups: [""]
+  resources: ["namespaces"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: [""]
+  resources: ["serviceaccounts"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["rbac.authorization.k8s.io"]
+  resources: ["rolebindings"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["rbac.authorization.k8s.io"]
+  resources: ["clusterrolebindings"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["agents.x-k8s.io"]
+  resources: ["sandboxes"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: overseer-controller-binding
+subjects:
+- kind: ServiceAccount
+  name: overseer-controller
+  namespace: overseer-system
+roleRef:
+  kind: ClusterRole
+  name: overseer-controller
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: overseer-controller
+  namespace: overseer-system
+  labels:
+    app: overseer-controller
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: overseer-controller
+  template:
+    metadata:
+      labels:
+        app: overseer-controller
+    spec:
+      serviceAccountName: overseer-controller
+      containers:
+      - name: overseer-controller
+        image: ko://github.com/gke-labs/gemini-for-kubernetes-development/overseer/images/overseer-controller
+        env:
+        - name: REPO_SANDBOX_IMAGE
+          value: ko://github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/images/repo-sandbox
+        - name: CONFIG_DIR_IMAGE
+          value: ko://github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/images/configdir-cli
+        - name: OVERSEER_IMAGE
+          value: ko://github.com/gke-labs/gemini-for-kubernetes-development/overseer/images/overseer
+        resources:
+          limits:
+            cpu: 500m
+            memory: 512Mi
+          requests:
+            cpu: 100m
+            memory: 128Mi
