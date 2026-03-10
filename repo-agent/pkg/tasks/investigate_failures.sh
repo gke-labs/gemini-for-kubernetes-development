@@ -14,6 +14,12 @@ export GITHUB_USER_EMAIL="{{ .User.Email }}"
 export GITHUB_USER_NAME="{{ .User.Name }}"
 export PR_NUMBER={{ .PullRequest.Number }}
 
+export GITHUB_USER_TOKEN="${GITHUB_USER_TOKEN:-${GITHUB_TOKEN}}"
+if [ -z "$GITHUB_USER_TOKEN" ]; then
+    # Try other common names
+    GITHUB_USER_TOKEN="${MANUAL_PAT:-${OAUTH_PAT}}"
+fi
+
 function setupGit {
     echo "Running setupGit..."
     echo "creating /root/.config/gh directory"
@@ -72,6 +78,12 @@ function setupGitRepos {
         # Optional: fetch latest changes
         (cd "/workspaces/${REPO_NAME}" && git fetch origin)
     fi
+
+    echo "running gh repo fork"
+    (cd "/workspaces/${REPO_NAME}" && gh repo fork --remote || true)
+
+    echo "running gh repo set-default"
+    (cd "/workspaces/${REPO_NAME}" && gh repo set-default "${CLONE_URL}" || true)
 }
 
 function checkoutPRBranch {
