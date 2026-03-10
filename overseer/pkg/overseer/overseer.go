@@ -205,6 +205,36 @@ func newOverseerSandbox(repoWatch *reviewv1alpha1.RepoWatch, name string, user *
 				},
 			},
 		})
+		env = append(env, map[string]interface{}{
+			"name": "GITHUB_BOT_TOKEN",
+			"valueFrom": map[string]interface{}{
+				"secretKeyRef": map[string]interface{}{
+					"name":     botSecretName,
+					"key":      "pat",
+					"optional": true,
+				},
+			},
+		})
+		env = append(env, map[string]interface{}{
+			"name": "GITHUB_BOT_OAUTH_PAT",
+			"valueFrom": map[string]interface{}{
+				"secretKeyRef": map[string]interface{}{
+					"name":     botSecretName,
+					"key":      "oauth_pat",
+					"optional": true,
+				},
+			},
+		})
+		env = append(env, map[string]interface{}{
+			"name": "GITHUB_BOT_MANUAL_PAT",
+			"valueFrom": map[string]interface{}{
+				"secretKeyRef": map[string]interface{}{
+					"name":     botSecretName,
+					"key":      "manual_pat",
+					"optional": true,
+				},
+			},
+		})
 	}
 
 	// Pod Template Spec
