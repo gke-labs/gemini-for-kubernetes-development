@@ -166,6 +166,47 @@ func newOverseerSandbox(repoWatch *reviewv1alpha1.RepoWatch, name string, user *
 		})
 	}
 
+	botSecretName := repoWatch.Spec.Overseer.RobotAccount
+	if botSecretName == "" && repoWatch.Spec.Review.RobotAccount != "" {
+		botSecretName = repoWatch.Spec.Review.RobotAccount
+	}
+	if botSecretName == "" && repoWatch.Spec.Issue != nil && repoWatch.Spec.Issue.RobotAccount != "" {
+		botSecretName = repoWatch.Spec.Issue.RobotAccount
+	}
+
+	if botSecretName != "" {
+		env = append(env, map[string]interface{}{
+			"name": "GITHUB_BOT_LOGIN",
+			"valueFrom": map[string]interface{}{
+				"secretKeyRef": map[string]interface{}{
+					"name":     botSecretName,
+					"key":      "userid",
+					"optional": true,
+				},
+			},
+		})
+		env = append(env, map[string]interface{}{
+			"name": "GITHUB_BOT_NAME",
+			"valueFrom": map[string]interface{}{
+				"secretKeyRef": map[string]interface{}{
+					"name":     botSecretName,
+					"key":      "name",
+					"optional": true,
+				},
+			},
+		})
+		env = append(env, map[string]interface{}{
+			"name": "GITHUB_BOT_EMAIL",
+			"valueFrom": map[string]interface{}{
+				"secretKeyRef": map[string]interface{}{
+					"name":     botSecretName,
+					"key":      "email",
+					"optional": true,
+				},
+			},
+		})
+	}
+
 	// Pod Template Spec
 	podSpec := map[string]interface{}{
 		"serviceAccountName": "overseer",
