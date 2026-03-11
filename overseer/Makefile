@@ -13,7 +13,7 @@ all: lint-go test-unit build
 
 .PHONY: generate
 generate:
-	@echo "No generation needed for overseer."
+	../dev/tools/fix-go-generate --working-dir ./pkg/api
 
 .PHONY: build
 build: generate
