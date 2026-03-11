@@ -128,6 +128,11 @@ type PRReviewSpec struct {
 	// +kubebuilder:validation:Optional
 	Labels [][]string `json:"labels"`
 
+	// ExcludeLabels specifies labels that should cause a PR to be skipped.
+	// PRs with any of these labels will not have sandboxes created for them.
+	// +kubebuilder:validation:Optional
+	ExcludeLabels []string `json:"excludeLabels,omitempty"`
+
 	// Assigned to self when selecting PRs for review
 	// If true, only PRs assigned to the user associated with the GitHub token will be considered in addition to the Asignees list.
 	// +kubebuilder:validation:Optional
@@ -217,6 +222,11 @@ type IssueHandlerSpec struct {
 	// Labels to filter issues for this handler
 	// +kubebuilder:validation:Optional
 	Labels []string `json:"labels"`
+
+	// ExcludeLabels specifies labels that should cause an issue to be skipped.
+	// Issues with any of these labels will not be processed by this handler.
+	// +kubebuilder:validation:Optional
+	ExcludeLabels []string `json:"excludeLabels,omitempty"`
 
 	// Prompt is the prompt to use for the LLM.
 	// +kubebuilder:validation:Optional

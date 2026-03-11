@@ -488,10 +488,29 @@ func (r *Reconciler) listOpenPRs(ctx context.Context, ghClient *github.Client, o
 }
 
 func (r *Reconciler) filterPRsByLabels(prs []*github.PullRequest, repoWatch *reviewv1alpha1.RepoWatch) []*github.PullRequest {
-	// Filter by Labels
-	if len(repoWatch.Spec.Review.Labels) > 0 {
-		var filteredPRs []*github.PullRequest
-		for _, pr := range prs {
+	var filteredPRs []*github.PullRequest
+	for _, pr := range prs {
+		// Filter by ExcludeLabels first
+		if len(repoWatch.Spec.Review.ExcludeLabels) > 0 {
+			excluded := false
+			for _, excludeLabel := range repoWatch.Spec.Review.ExcludeLabels {
+				for _, prLabel := range pr.Labels {
+					if prLabel.Name != nil && *prLabel.Name == excludeLabel {
+						excluded = true
+						break
+					}
+				}
+				if excluded {
+					break
+				}
+			}
+			if excluded {
+				continue
+			}
+		}
+
+		// Filter by Labels
+		if len(repoWatch.Spec.Review.Labels) > 0 {
 			matches := false
 			for _, labelSet := range repoWatch.Spec.Review.Labels {
 				labelSetMatches := true
@@ -516,10 +535,12 @@ func (r *Reconciler) filterPRsByLabels(prs []*github.PullRequest, repoWatch *rev
 			if matches {
 				filteredPRs = append(filteredPRs, pr)
 			}
+		} else {
+			// No positive labels specified, so it matches by default (after passing exclusion)
+			filteredPRs = append(filteredPRs, pr)
 		}
-		return filteredPRs
 	}
-	return prs
+	return filteredPRs
 }
 
 func (r *Reconciler) filterPRsByAssignees(prs []*github.PullRequest, repoWatch *reviewv1alpha1.RepoWatch, user *github.User) []*github.PullRequest {
@@ -918,6 +939,17 @@ func (r *Reconciler) isIssueMatch(issue *github.Issue, handler reviewv1alpha1.Is
 		for _, included := range repoWatch.Spec.Issue.Issues {
 			if *issue.Number == included {
 				return true
+			}
+		}
+	}
+
+	// Check labels
+	if len(handler.ExcludeLabels) > 0 {
+		for _, label := range issue.Labels {
+			for _, excludeLabel := range handler.ExcludeLabels {
+				if label.Name != nil && *label.Name == excludeLabel {
+					return false
+				}
 			}
 		}
 	}
