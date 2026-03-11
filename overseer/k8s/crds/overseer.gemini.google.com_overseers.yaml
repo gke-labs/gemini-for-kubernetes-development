@@ -38,12 +38,6 @@ spec:
                 type: object
               geminiAPIKeySecretName:
                 type: string
-              geminiAPIKeySecretNamespace:
-                type: string
-              githubSecretName:
-                type: string
-              githubSecretNamespace:
-                type: string
               image:
                 type: string
               maxActiveIssues:
@@ -71,6 +65,8 @@ spec:
             type: object
           status:
             properties:
+              message:
+                type: string
               overseerStatus:
                 type: string
             type: object

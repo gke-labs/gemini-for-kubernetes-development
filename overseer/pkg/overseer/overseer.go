@@ -39,7 +39,13 @@ func ReconcileOverseer(ctx context.Context, c client.Client, o *overseerv1alpha1
 	log := log.FromContext(ctx)
 
 	overseerName := fmt.Sprintf("overseer-%s", o.Name)
+	if len(overseerName) > 63 {
+		overseerName = overseerName[:63]
+	}
 	namespace := fmt.Sprintf("overseer-%s", o.Name)
+	if len(namespace) > 63 {
+		namespace = namespace[:63]
+	}
 
 	// Define the sandbox object
 	sandbox := &unstructured.Unstructured{}
@@ -351,7 +357,7 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 		apiKeySecretName = "gemini-api-key"
 	}
 
-	githubSecretName := o.Spec.GithubSecretName
+	githubSecretName := o.Spec.RobotAccount
 
 	env := []interface{}{
 		map[string]interface{}{

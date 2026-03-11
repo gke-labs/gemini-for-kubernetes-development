@@ -64,6 +64,9 @@ func (r *OverseerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 	// 1. Ensure Namespace exists
 	nsName := fmt.Sprintf("overseer-%s", overseerObj.Name)
+	if len(nsName) > 63 {
+		nsName = nsName[:63]
+	}
 	ns := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: nsName,
@@ -85,9 +88,16 @@ func (r *OverseerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{}, err
 	}
 
-	// 3. Ensure secrets are present in the target namespace if specified
+	// 3. Ensure secrets are present in the target namespace
 	if err := r.ensureSecrets(ctx, &overseerObj, nsName); err != nil {
 		return ctrl.Result{}, err
+	}
+
+	if overseerObj.Status.OverseerStatus == "Error" {
+		if err := r.Status().Update(ctx, &overseerObj); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
 	}
 
 	// 4. Reconcile Sandbox
@@ -95,7 +105,7 @@ func (r *OverseerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{}, err
 	}
 
-	// 4. Update status
+	// 5. Update status
 	if err := r.Status().Update(ctx, &overseerObj); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -183,13 +193,28 @@ func (r *OverseerReconciler) ensureOverseerRBAC(ctx context.Context, o *overseer
 }
 
 func (r *OverseerReconciler) ensureSecrets(ctx context.Context, o *overseerv1alpha1.Overseer, targetNamespace string) error {
-	if o.Spec.GithubSecretName != "" && o.Spec.GithubSecretNamespace != "" && o.Spec.GithubSecretNamespace != targetNamespace {
-		if err := r.copySecret(ctx, o.Spec.GithubSecretName, o.Spec.GithubSecretNamespace, targetNamespace); err != nil {
+	secretsToCopy := []string{o.Spec.RobotAccount, o.Spec.GeminiAPIKeySecretName}
+	for _, name := range secretsToCopy {
+		if name == "" {
+			continue
+		}
+		// check if secret exists in targetNamespace
+		s := &corev1.Secret{}
+		err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: targetNamespace}, s)
+		if err == nil {
+			// Found it.
+			continue
+		}
+		if !errors.IsNotFound(err) {
 			return err
 		}
-	}
-	if o.Spec.GeminiAPIKeySecretName != "" && o.Spec.GeminiAPIKeySecretNamespace != "" && o.Spec.GeminiAPIKeySecretNamespace != targetNamespace {
-		if err := r.copySecret(ctx, o.Spec.GeminiAPIKeySecretName, o.Spec.GeminiAPIKeySecretNamespace, targetNamespace); err != nil {
+		// Not found, try copying from overseer-system
+		if err := r.copySecret(ctx, name, "overseer-system", targetNamespace); err != nil {
+			if errors.IsNotFound(err) {
+				o.Status.OverseerStatus = "Error"
+				o.Status.Message = fmt.Sprintf("Secret %s not found in %s or overseer-system", name, targetNamespace)
+				return nil // Don't return error to stop reconcile but update status
+			}
 			return err
 		}
 	}

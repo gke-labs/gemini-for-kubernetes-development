@@ -69,21 +69,9 @@ type OverseerSpec struct {
 	// +kubebuilder:validation:Optional
 	RobotAccount string `json:"robotAccount,omitempty"`
 
-	// GithubSecretName is the name of the secret containing GitHub credentials.
-	// +kubebuilder:validation:Optional
-	GithubSecretName string `json:"githubSecretName,omitempty"`
-
-	// GithubSecretNamespace is the namespace of the secret containing GitHub credentials.
-	// +kubebuilder:validation:Optional
-	GithubSecretNamespace string `json:"githubSecretNamespace,omitempty"`
-
 	// GeminiAPIKeySecretName is the name of the secret containing the Gemini API key.
 	// +kubebuilder:validation:Optional
 	GeminiAPIKeySecretName string `json:"geminiAPIKeySecretName,omitempty"`
-
-	// GeminiAPIKeySecretNamespace is the namespace of the secret containing the Gemini API key.
-	// +kubebuilder:validation:Optional
-	GeminiAPIKeySecretNamespace string `json:"geminiAPIKeySecretNamespace,omitempty"`
 }
 
 // OverseerStatus defines the observed state of Overseer
@@ -91,6 +79,10 @@ type OverseerStatus struct {
 	// OverseerStatus defines the status of the overseer.
 	// +kubebuilder:validation:Optional
 	OverseerStatus string `json:"overseerStatus,omitempty"`
+
+	// Message provides more details about the status.
+	// +kubebuilder:validation:Optional
+	Message string `json:"message,omitempty"`
 }
 
 // +kubebuilder:object:root=true
