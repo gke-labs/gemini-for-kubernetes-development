@@ -1,0 +1,12 @@
+apiVersion: overseer.gemini.google.com/v1alpha1
+kind: Overseer
+metadata:
+  name: gwapi-ref
+spec:
+  repoURL: https://github.com/gke-labs/gateway-api-reference-implementation
+  robotAccount: codebot-robot
+  maxActiveReviews: 3
+  maxActiveIssues: 3
+  chores:
+    mode: enabled
+  geminiAPIKeySecretName: gemini-vscode-tokens
