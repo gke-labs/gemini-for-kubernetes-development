@@ -347,10 +347,7 @@ func newOverseerSandbox(repoWatch *reviewv1alpha1.RepoWatch, name string, user *
 }
 
 func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespace, repoSandboxImage, configDirImage string) *unstructured.Unstructured {
-	image := o.Spec.Image
-	if image == "" {
-		image = os.Getenv("OVERSEER_IMAGE")
-	}
+	image := os.Getenv("OVERSEER_IMAGE")
 
 	apiKeySecretName := o.Spec.GeminiAPIKeySecretName
 	if apiKeySecretName == "" {
@@ -409,12 +406,8 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 			"value": o.Name,
 		},
 		map[string]interface{}{
-			"name": "NAMESPACE",
-			"valueFrom": map[string]interface{}{
-				"fieldRef": map[string]interface{}{
-					"fieldPath": "metadata.namespace",
-				},
-			},
+			"name":  "NAMESPACE",
+			"value": namespace,
 		},
 		map[string]interface{}{
 			"name":  "REPO_SANDBOX_IMAGE",

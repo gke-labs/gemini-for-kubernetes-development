@@ -54,6 +54,8 @@ type OverseerReconciler struct {
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=agents.x-k8s.io,resources=sandboxes,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=custom.agents.x-k8s.io,resources=sandboxtasks,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=custom.agents.x-k8s.io,resources=sandboxtasks/status,verbs=get;list;watch;update;patch
+//+kubebuilder:rbac:groups=configdir.gke.io,resources=configdirs;configfiles,verbs=get;list;watch
 //+kubebuilder:rbac:groups=review.gemini.google.com,resources=repowatches,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
@@ -186,6 +188,79 @@ func (r *OverseerReconciler) ensureOverseerRBAC(ctx context.Context, o *overseer
 				Namespace: namespace,
 			})
 			if err := r.Update(ctx, crb); err != nil {
+				return err
+			}
+		}
+	} else if !errors.IsNotFound(err) {
+		return err
+	}
+
+	// --- Overseer Sandbox ---
+	saSandbox := &corev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "overseer-sandbox",
+			Namespace: namespace,
+		},
+	}
+	if err := r.Get(ctx, types.NamespacedName{Name: "overseer-sandbox", Namespace: namespace}, saSandbox); err != nil {
+		if errors.IsNotFound(err) {
+			log.Info("Creating ServiceAccount for overseer sandbox", "namespace", namespace)
+			if err := r.Create(ctx, saSandbox); err != nil {
+				return err
+			}
+		} else {
+			return err
+		}
+	}
+
+	// RoleBinding to the cluster role "overseer-sandbox"
+	rbSandbox := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "overseer-sandbox-binding",
+			Namespace: namespace,
+		},
+		Subjects: []rbacv1.Subject{
+			{
+				Kind:      "ServiceAccount",
+				Name:      "overseer-sandbox",
+				Namespace: namespace,
+			},
+		},
+		RoleRef: rbacv1.RoleRef{
+			Kind:     "ClusterRole",
+			Name:     "overseer-sandbox",
+			APIGroup: "rbac.authorization.k8s.io",
+		},
+	}
+	if err := r.Get(ctx, types.NamespacedName{Name: "overseer-sandbox-binding", Namespace: namespace}, rbSandbox); err != nil {
+		if errors.IsNotFound(err) {
+			log.Info("Creating RoleBinding for overseer sandbox", "namespace", namespace)
+			if err := r.Create(ctx, rbSandbox); err != nil {
+				return err
+			}
+		} else {
+			return err
+		}
+	}
+
+	// Add to ClusterRoleBinding "overseer-sandbox"
+	crbSandbox := &rbacv1.ClusterRoleBinding{}
+	if err := r.Get(ctx, types.NamespacedName{Name: "overseer-sandbox"}, crbSandbox); err == nil {
+		found := false
+		for _, s := range crbSandbox.Subjects {
+			if s.Kind == "ServiceAccount" && s.Name == "overseer-sandbox" && s.Namespace == namespace {
+				found = true
+				break
+			}
+		}
+		if !found {
+			log.Info("Adding ServiceAccount to overseer-sandbox ClusterRoleBinding", "namespace", namespace)
+			crbSandbox.Subjects = append(crbSandbox.Subjects, rbacv1.Subject{
+				Kind:      "ServiceAccount",
+				Name:      "overseer-sandbox",
+				Namespace: namespace,
+			})
+			if err := r.Update(ctx, crbSandbox); err != nil {
 				return err
 			}
 		}

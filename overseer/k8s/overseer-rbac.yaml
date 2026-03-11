@@ -9,6 +9,9 @@ kind: ClusterRole
 metadata:
   name: overseer
 rules:
+- apiGroups: ["overseer.gemini.google.com"]
+  resources: ["overseers"]
+  verbs: ["get", "list", "watch"]
 - apiGroups: ["review.gemini.google.com"]
   resources: ["repowatches"]
   verbs: ["get", "list"]

@@ -187,7 +187,7 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 						},
 					},
 					"spec": map[string]interface{}{
-						"serviceAccountName": "review-sandbox",
+						"serviceAccountName": opt.ServiceAccountName,
 						"initContainers": []interface{}{
 							map[string]interface{}{
 								"name":  "gemini-configs",

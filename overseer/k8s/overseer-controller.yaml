@@ -42,8 +42,11 @@ rules:
   resources: ["services"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 - apiGroups: ["custom.agents.x-k8s.io"]
-  resources: ["sandboxtasks"]
+  resources: ["sandboxtasks", "sandboxtasks/status"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["configdir.gke.io"]
+  resources: ["configdirs", "configfiles"]
+  verbs: ["get", "list", "watch"]
 - apiGroups: ["review.gemini.google.com"]
   resources: ["repowatches"]
   verbs: ["get", "list", "watch"]
@@ -91,7 +94,7 @@ spec:
         - name: CONFIG_DIR_IMAGE
           value: ko://github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/images/configdir-cli
         - name: OVERSEER_IMAGE
-          value: ko://github.com/gke-labs/gemini-for-kubernetes-development/overseer/images/overseer
+          value: ko://overseer/images/overseer
         resources:
           limits:
             cpu: 500m
