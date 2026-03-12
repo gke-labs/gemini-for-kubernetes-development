@@ -9,6 +9,7 @@
     Run the following command to build the project, create a KinD cluster, and deploy the application:
 
     ```bash
+    cd repo-agent
     make
     ```
 
@@ -25,7 +26,11 @@
     make port-forward
     ```
 
-    The UI can be accessed at `http://localhost:13380`.
+    The UI can be accessed at `http://localhost:13380` (if running on Cloudtop, use your remote device name instead of `localhost`, e.g., `http://x.c.googlers.com:13380`).
+
+    **Note:** After opening the UI with your Cloudtop URL, you will need to log in via GitHub. To enable this, update your OAuth App configuration in your GitHub Developer settings:
+    1. Copy the URL link from the UI (it will look something like `http://b2607f8b04800100000a6ad79ac11e1f43444000000000000000001.proxy.googlers.com/`) and paste it into the **Homepage URL** field.
+    2. For the **Authorization callback URL**, paste the same link and append `api/auth/callback` at the end.
 
 5.  **Apply Example Configurations:**
 
