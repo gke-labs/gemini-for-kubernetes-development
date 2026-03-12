@@ -51,10 +51,6 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 		sandboxName = "devc-" + name
 	}
 
-	if opt.DevcontainerConfigRef == "" {
-		opt.DevcontainerConfigRef = "devcontainer-json"
-	}
-
 	// Default resources if not set
 	resources := opt.Resources
 	if resources.Requests == nil {
@@ -331,8 +327,10 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 									vm := []interface{}{
 										map[string]interface{}{"name": "workspaces-pvc", "mountPath": "/workspaces"},
 										map[string]interface{}{"name": "tokens-secret", "mountPath": "/tokens", "readOnly": true},
-										map[string]interface{}{"name": "devcontainer-config", "mountPath": "/devcontainer.json", "subPath": "devcontainer.json"},
 										map[string]interface{}{"name": "agent-bin", "mountPath": "/opt/repo-agent"},
+									}
+									if opt.DevcontainerConfigRef != "" {
+										vm = append(vm, map[string]interface{}{"name": "devcontainer-config", "mountPath": "/devcontainer.json", "subPath": "devcontainer.json"})
 									}
 									if opt.DindSupport != "" && opt.DindSupport != DindSupportNone {
 										vm = append(vm, map[string]interface{}{"name": "docker", "mountPath": "/var/lib/docker"})
@@ -352,17 +350,19 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 									"emptyDir": map[string]interface{}{},
 								},
 								map[string]interface{}{
-									"name": "devcontainer-config",
-									"configMap": map[string]interface{}{
-										"name": opt.DevcontainerConfigRef,
-									},
-								},
-								map[string]interface{}{
 									"name": "tokens-secret",
 									"secret": map[string]interface{}{
 										"secretName": opt.LLMAPIKeySecretName,
 									},
 								},
+							}
+							if opt.DevcontainerConfigRef != "" {
+								v = append(v, map[string]interface{}{
+									"name": "devcontainer-config",
+									"configMap": map[string]interface{}{
+										"name": opt.DevcontainerConfigRef,
+									},
+								})
 							}
 							if opt.DindSupport != "" && opt.DindSupport != DindSupportNone {
 								v = append(v, map[string]interface{}{
