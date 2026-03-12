@@ -641,6 +641,9 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 
 	rwUnstructuredCopy := rwUnstructured.DeepCopy()
 	_ = unstructured.SetNestedField(rwUnstructuredCopy.Object, githubSecretName, "spec", "githubSecretName")
+	// workaround since GetGithubToken expects the secret name to be in the spec, but our unstructured doesn't have it set there
+	// all requires namespace
+	_ = unstructured.SetNestedField(rwUnstructuredCopy.Object, namespace, "metadata", "namespace")
 
 	// Get GitHub token from secret
 	token, err := manager.GetGitHubToken(ctx, rwUnstructuredCopy)
