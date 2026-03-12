@@ -58,6 +58,7 @@ create-secrets:
 .PHONY: install-dep-packages
 install-dep-packages:
 	../dev/tools/install-agent-sandbox
+	kubectl apply -f ../repo-agent/k8s/crds/ || true
 
 .PHONY: uninstall-dep-packages
 uninstall-dep-packages:

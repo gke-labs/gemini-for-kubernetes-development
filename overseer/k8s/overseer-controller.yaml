@@ -90,9 +90,9 @@ spec:
         image: ko://github.com/gke-labs/gemini-for-kubernetes-development/overseer/images/overseer-controller
         env:
         - name: REPO_SANDBOX_IMAGE
-          value: ko://github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/images/repo-sandbox
+          value: ghcr.io/gke-labs/gemini-for-kubernetes-development/repo-sandbox:latest
         - name: CONFIG_DIR_IMAGE
-          value: ko://github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/images/configdir-cli
+          value: ghcr.io/gke-labs/gemini-for-kubernetes-development/configdir-cli:latest
         - name: OVERSEER_IMAGE
           value: ko://overseer/images/overseer
         resources:
