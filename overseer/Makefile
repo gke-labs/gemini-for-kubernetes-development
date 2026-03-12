@@ -105,8 +105,8 @@ uninstall-latest:
 
 .PHONY: update-latest
 update-latest: install-latest
-	kubectl rollout restart statefulset -n overseer-system
-	kubectl rollout status  statefulset  -n overseer-system
+	kubectl rollout restart statefulset -n overseer-system || true
+	kubectl rollout status  statefulset  -n overseer-system || true
 	kubectl rollout restart deployment -n overseer-system
 	kubectl rollout status  deployment  -n overseer-system
 
