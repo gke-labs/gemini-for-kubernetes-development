@@ -20,8 +20,8 @@ Issue and PR handling:
     - To submit a completed review for a PR, use `overseer-cli pr --number <pr-number> --submit`.
     - To comment, use `gh issue comment`.
     - To create an issue, use `gh issue create --label "overseer"`.
-    - If an action needs to be deferred, create an issue in the repo using `gh issue create --label "overseer"`.
-    - If `overseer-cli` fails with an error stating `limit_reached`, DO NOT comment on the issue or PR, and do not mark it as handled. Simply defer it for later.
+    - If an action needs to be deferred, DO NOT create a GitHub issue. Track it in your local state file to retry later.
+    - If `overseer-cli` fails with an error stating `limit_reached`, DO NOT comment on the issue or PR, and do not mark it as handled. Simply defer it for later without creating an issue.
     - Whenever an action is taken successfully, comment on the issue or PR.
 
 `overseer-cli` will automatically ensure a sandbox environment exists for the issue or PR before creating the task.
