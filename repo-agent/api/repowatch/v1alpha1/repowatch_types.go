@@ -303,55 +303,6 @@ type IssueSpec struct {
 	Handlers []IssueHandlerSpec `json:"handlers,omitempty"`
 }
 
-// ChoresSpec defines the configuration for Overseer chores.
-type ChoresSpec struct {
-	// Mode defines the mode for chores.
-	// +kubebuilder:validation:Enum=enabled;disabled;dryrun
-	// +kubebuilder:default=enabled
-	// +kubebuilder:validation:Optional
-	Mode string `json:"mode,omitempty"`
-}
-
-// RepoSpec defines the configuration for Overseer repo (issue and PR handling).
-type RepoSpec struct {
-	// Mode defines the mode for repo handling (issue and PR handling).
-	// +kubebuilder:validation:Enum=enabled;disabled;dryrun
-	// +kubebuilder:default=enabled
-	// +kubebuilder:validation:Optional
-	Mode string `json:"mode,omitempty"`
-}
-
-// OverseerSpec defines the configuration for the Overseer agent.
-type OverseerSpec struct {
-	// Image to use for the overseer.
-	// +kubebuilder:validation:Optional
-	Image string `json:"image,omitempty"`
-
-	// Enabled defines if the overseer is enabled.
-	// +kubebuilder:validation:Optional
-	Enabled bool `json:"enabled,omitempty"`
-
-	// Chores configuration
-	// +kubebuilder:validation:Optional
-	Chores *ChoresSpec `json:"chores,omitempty"`
-
-	// Repo configuration
-	// +kubebuilder:validation:Optional
-	Repo *RepoSpec `json:"repo,omitempty"`
-
-	// MaxActiveReviews limits the number of concurrent review sandboxes.
-	// +kubebuilder:validation:Optional
-	MaxActiveReviews *int32 `json:"maxActiveReviews,omitempty"`
-
-	// MaxActiveIssues limits the number of concurrent issue sandboxes.
-	// +kubebuilder:validation:Optional
-	MaxActiveIssues *int32 `json:"maxActiveIssues,omitempty"`
-
-	// RobotAccount to use for the overseer.
-	// +kubebuilder:validation:Optional
-	RobotAccount string `json:"robotAccount,omitempty"`
-}
-
 // RepoWatchSpec defines the desired state of RepoWatch
 type RepoWatchSpec struct {
 	// The full URL of the GitHub repository to watch.
@@ -370,10 +321,6 @@ type RepoWatchSpec struct {
 	// Dev configuration for development sandboxes
 	// +kubebuilder:validation:Optional
 	Dev DevSpec `json:"dev,omitempty"`
-
-	// Overseer configuration
-	// +kubebuilder:validation:Optional
-	Overseer *OverseerSpec `json:"overseer,omitempty"`
 
 	// Secret containing the GitHub Personal Access Token (PAT) for accessing the repo.
 	// +kubebuilder:validation:Required
@@ -410,9 +357,6 @@ type RepoWatchStatus struct {
 
 	// +optional
 	PendingDevBranches []string `json:"pendingDevBranches,omitempty"`
-
-	// +optional
-	OverseerStatus string `json:"overseerStatus,omitempty"`
 }
 
 // WatchedPR defines the state of a watched PR

@@ -50,7 +50,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	"github.com/gke-labs/gemini-for-kubernetes-development/overseer/pkg/overseer"
 	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
 	sandboxtaskv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
@@ -362,12 +361,6 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		log.Error(err, "unable to reconcile dev sandboxes")
 		reconcileErr = errors.Join(reconcileErr, err)
 		// Continue to next reconciliation
-	}
-
-	log.Info("reconciling overseer")
-	if err := r.reconcileOverseer(ctx, repoWatch, user); err != nil {
-		log.Error(err, "unable to reconcile overseer")
-		reconcileErr = errors.Join(reconcileErr, err)
 	}
 
 	return ctrl.Result{RequeueAfter: time.Second * time.Duration(repoWatch.Spec.PollIntervalSeconds)}, reconcileErr
@@ -2193,57 +2186,6 @@ func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client
 	}
 
 	return found, latestFeedbackTime, nil
-}
-
-func (r *Reconciler) reconcileOverseer(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, user *github.User) error {
-	log := log.FromContext(ctx)
-
-	log.Info("reconciling overseer", "enabled", repoWatch.Spec.Overseer != nil && repoWatch.Spec.Overseer.Enabled)
-
-	overseerUser := &pkg_github.User{
-		UserID: user.GetLogin(),
-		Name:   user.GetName(),
-		Email:  user.GetEmail(),
-	}
-
-	overseerWatch := repoWatch.DeepCopy()
-
-	if overseerWatch.Spec.Overseer != nil && overseerWatch.Spec.Overseer.RobotAccount != "" {
-		githubSecretName := overseerWatch.Spec.Overseer.RobotAccount
-		if err := r.ensureRobotSecret(ctx, overseerWatch.Namespace, githubSecretName); err != nil {
-			log.Error(err, "failed to ensure robot secret", "secret", githubSecretName)
-			return err
-		}
-
-		secret := &corev1.Secret{}
-		if err := r.Get(ctx, types.NamespacedName{Name: githubSecretName, Namespace: overseerWatch.Namespace}, secret); err != nil {
-			log.Error(err, "failed to get robot secret", "secret", githubSecretName)
-			return err
-		}
-
-		if len(secret.Data["userid"]) > 0 {
-			overseerUser.UserID = string(secret.Data["userid"])
-		}
-		if len(secret.Data["name"]) > 0 {
-			overseerUser.Name = string(secret.Data["name"])
-		}
-		if len(secret.Data["email"]) > 0 {
-			overseerUser.Email = string(secret.Data["email"])
-		}
-
-		overseerWatch.Spec.GithubSecretName = githubSecretName
-	}
-
-	if err := overseer.Reconcile(ctx, r.Client, overseerWatch, overseerUser, r.RepoSandboxImage, r.ConfigDirImage); err != nil {
-		return err
-	}
-
-	repoWatch.Status.OverseerStatus = overseerWatch.Status.OverseerStatus
-
-	if repoWatch.Spec.Overseer != nil && repoWatch.Spec.Overseer.Enabled {
-		return r.Status().Update(ctx, repoWatch)
-	}
-	return nil
 }
 
 func (r *Reconciler) reconcileSandboxPodStatus(ctx context.Context, sandbox *unstructured.Unstructured, podsBySandbox map[string]*corev1.Pod, scaledDown bool) (string, error) {

@@ -6,13 +6,6 @@ spec:
   repoURL: https://github.com/gke-labs/gateway-api-reference-implementation
   pollIntervalSeconds: 300
   githubSecretName: github-pat
-  overseer:
-    maxActiveReviews: 3
-    maxActiveIssues: 3
-    robotAccount: codebot-robot
-    enabled: true
-    chores:
-      mode: enabled
   dev:
     maxActiveSandboxes: 0
     maxSandboxes: 0
