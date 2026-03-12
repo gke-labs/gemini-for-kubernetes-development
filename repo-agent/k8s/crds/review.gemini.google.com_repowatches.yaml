@@ -204,41 +204,6 @@ spec:
                 required:
                 - maxActiveSandboxes
                 type: object
-              overseer:
-                properties:
-                  chores:
-                    properties:
-                      mode:
-                        default: enabled
-                        enum:
-                        - enabled
-                        - disabled
-                        - dryrun
-                        type: string
-                    type: object
-                  enabled:
-                    type: boolean
-                  image:
-                    type: string
-                  maxActiveIssues:
-                    format: int32
-                    type: integer
-                  maxActiveReviews:
-                    format: int32
-                    type: integer
-                  repo:
-                    properties:
-                      mode:
-                        default: enabled
-                        enum:
-                        - enabled
-                        - disabled
-                        - dryrun
-                        type: string
-                    type: object
-                  robotAccount:
-                    type: string
-                type: object
               pollIntervalSeconds:
                 default: 300
                 minimum: 30
@@ -412,8 +377,6 @@ spec:
                     type: object
                   type: array
                 type: object
-              overseerStatus:
-                type: string
               pendingDevBranches:
                 items:
                   type: string

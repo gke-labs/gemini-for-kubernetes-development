@@ -20,7 +20,6 @@ COPY services/container-registry/go.sum services/container-registry/go.sum
 
 # Copy the source code
 COPY agentsandboxes/ agentsandboxes/
-COPY overseer/ overseer/
 COPY repo-agent/api/ repo-agent/api/
 COPY repo-agent/cmd/configdir-cli/ repo-agent/cmd/configdir-cli/
 

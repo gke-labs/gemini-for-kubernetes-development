@@ -73,8 +73,6 @@ spec:
           value: ko://repo-agent/images/repo-sandbox
         - name: CONFIGDIR_CLI_IMAGE
           value: ko://repo-agent/configdir/cmd/configdir-cli
-        - name: OVERSEER_IMAGE
-          value: ko://overseer/images/overseer
         - name: GITHUB_CLIENT_ID
           valueFrom:
             secretKeyRef:

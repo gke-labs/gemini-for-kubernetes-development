@@ -80,7 +80,6 @@ create-kind:
 # github presubmits builds and pushed this image separately
 .PHONY: build-and-push-repo-agent
 build-and-push-repo-agent:
-	$(MAKE) -C ../overseer push-images REGISTRY=$(REGISTRY) KIND_CLUSTER=$(KIND_CLUSTER)
 	../dev/tools/push-images --image-prefix=$(REGISTRY) $(KIND_CLUSTER_ARG) \
 	--working-dir .. \
 	--images-dir images \
@@ -92,7 +91,6 @@ build-and-push-repo-agent:
 install-repo-agent:
 	# Using crd yaml directly due to KRO bug with status fields not being created
 	# cp cmd/repo-sandbox/sandbox-task-rgd.yaml k8s/
-	$(MAKE) -C ../overseer install REGISTRY=$(REGISTRY)
 	../dev/tools/deploy-to-kube --image-prefix=$(REGISTRY) --working-dir . \
 	--replace .spec.installationName=${CLUSTER_NAME} \
 	--replace .spec.gatewayClassName=${GW_CLASS} \
@@ -214,18 +212,15 @@ install-repo-agent-latest:
 		$(MAKE) install-dep-packages create-secrets; \
 	fi
 	@mkdir -p bin
-	$(MAKE) -C ../overseer install-latest IMAGE_TAG=latest SKIP_PREQS=true
 	../dev/tools/deploy-to-kube --image-prefix=ghcr.io/gke-labs/gemini-for-kubernetes-development/ \
 	--image-tag=$(IMAGE_TAG) \
 	--replace .spec.installationName=${CLUSTER_NAME} \
 	--replace .spec.gatewayClassName=${GW_CLASS} \
 	--working-dir . --output-file=bin/repo-agent-manifest.yaml
-	kubectl apply -f bin/overseer-manifest.yaml
 	kubectl apply -f bin/repo-agent-manifest.yaml
 
 .PHONY: uninstall-repo-agent-latest
 uninstall-repo-agent-latest:
-	$(MAKE) -C ../overseer uninstall-latest IMAGE_TAG=latest SKIP_PREQS=true
 	../dev/tools/deploy-to-kube --image-prefix=ghcr.io/gke-labs/gemini-for-kubernetes-development/ --image-tag=$(IMAGE_TAG) --working-dir . --output-file=bin/repo-agent-manifest.yaml
 	kubectl delete -f bin/repo-agent-manifest.yaml || true
 	${MAKE} uninstall-dep-packages
@@ -257,7 +252,6 @@ reload: build-and-push-repo-agent install-repo-agent
 .PHONY: clean
 clean:
 	rm -rf bin
-	$(MAKE) -C ../overseer clean
 
 ##@ E2E Tests
 
