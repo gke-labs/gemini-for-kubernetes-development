@@ -43,3 +43,12 @@ jobs:
           SKIP_PREQS: 'true'
           CLUSTER_NAME: ${{ secrets.GKE_STAGING_CLUSTER }}
           GW_CLASS: 'gke-l7-regional-external-managed'
+
+      - name: Deploy Overseer to Staging
+        run: |
+          chmod +x ./overseer/scripts/upgrade.sh
+          ./overseer/scripts/upgrade.sh
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          SKIP_PREQS: 'true'
+          CLUSTER_NAME: ${{ secrets.GKE_STAGING_CLUSTER }}
