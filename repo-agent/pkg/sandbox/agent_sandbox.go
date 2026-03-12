@@ -274,24 +274,28 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 							}
 							return nil
 						}(),
-						"initContainers": []interface{}{
-							map[string]interface{}{
-								"name":  "gemini-configs",
-								"image": opt.ConfigDirImage,
-								"args":  []interface{}{"--directory", "/workspaces", "--namespace", opt.Namespace, "--name", opt.LLMConfigdirRef, "--ignore-not-found-error"},
-								"volumeMounts": []interface{}{
-									map[string]interface{}{"name": "workspaces-pvc", "mountPath": "/workspaces"},
-								},
-							},
-							map[string]interface{}{
+						"initContainers": func() []interface{} {
+							containers := []interface{}{}
+							if opt.LLMConfigdirRef != "" {
+								containers = append(containers, map[string]interface{}{
+									"name":  "gemini-configs",
+									"image": opt.ConfigDirImage,
+									"args":  []interface{}{"--directory", "/workspaces", "--namespace", opt.Namespace, "--name", opt.LLMConfigdirRef, "--ignore-not-found-error"},
+									"volumeMounts": []interface{}{
+										map[string]interface{}{"name": "workspaces-pvc", "mountPath": "/workspaces"},
+									},
+								})
+							}
+							containers = append(containers, map[string]interface{}{
 								"name":    "inject-agent",
 								"image":   opt.RepoSandboxImage,
 								"command": []interface{}{"/repo-agent/repo-sandbox", "inject", "--path", "/opt/repo-agent"},
 								"volumeMounts": []interface{}{
 									map[string]interface{}{"name": "agent-bin", "mountPath": "/opt/repo-agent"},
 								},
-							},
-						},
+							})
+							return containers
+						}(),
 						"containers": []interface{}{
 							map[string]interface{}{
 								"name":    "sandbox",
