@@ -1,4 +1,4 @@
-KIND_CLUSTER ?= repo-agent
+KIND_CLUSTER ?= overseer-agent
 REGISTRY ?= kind.local/
 
 # if REGISTRY is kind.local/, then we are deploying to kind
@@ -9,7 +9,15 @@ KIND_CLUSTER_ARG=
 endif
 
 .PHONY: all
-all: lint-go test-unit build
+all: check-prereqs generate lint-go test-unit create-kind install-dep-packages create-secrets push-images install
+
+.PHONY: check-prereqs
+check-prereqs:
+	@echo "Checking for prerequisites..."
+	@command -v kind >/dev/null 2>&1 || { echo >&2 "kind not found. Please install it. https://kind.sigs.k8s.io/docs/user/quick-start/#installation"; exit 1; }
+	@command -v kubectl >/dev/null 2>&1 || { echo >&2 "kubectl not found. Please install it. https://kubernetes.io/docs/tasks/tools/install-kubectl/"; exit 1; }
+	@command -v helm >/dev/null 2>&1 || { echo >&2 "helm not found. Please install it. https://helm.sh/docs/intro/install/"; exit 1; }
+	@echo "All prerequisites are installed."
 
 .PHONY: generate
 generate:
@@ -28,13 +36,82 @@ test-unit:
 lint-go:
 	../dev/tools/lint-go --working-dir ./
 
+.PHONY: create-secrets
+create-secrets:
+	@if [ -z "${GEMINI_API_KEY}" ]; then \
+		echo "Error: GEMINI_API_KEY is not set." >&2; \
+		exit 1; \
+	fi
+	@if [ -z "${ROBOT1_GH_PAT}" ]; then \
+		echo "Error: ROBOT1_GH_PAT is not set." >&2; \
+		exit 1; \
+	fi
+	kubectl create namespace overseer-system || true
+	@kubectl create secret -n overseer-system generic gemini-vscode-tokens --from-literal=gemini=${GEMINI_API_KEY} --dry-run=client -o yaml | kubectl apply -f -
+	@kubectl create secret -n overseer-system generic ${ROBOT1_GH_USERID} \
+		--from-literal=pat="${ROBOT1_GH_PAT}" \
+		--from-literal=name="${ROBOT1_GH_NAME}" \
+		--from-literal=userid="${ROBOT1_GH_USERID}" \
+		--from-literal=email="${ROBOT1_GH_EMAIL}" \
+		--dry-run=client -o yaml | kubectl apply -f -
+
+.PHONY: install-dep-packages
+install-dep-packages:
+	../dev/tools/install-agent-sandbox
+
+.PHONY: uninstall-dep-packages
+uninstall-dep-packages:
+	../dev/tools/install-agent-sandbox --uninstall || true
+
+.PHONY: create-kind
+create-kind:
+	@../dev/tools/limit-docker-log-size --check || echo "*** docker log config is missing. Adding it. Requires sudo"
+	../dev/tools/limit-docker-log-size --check || sudo ../dev/tools/limit-docker-log-size || true
+	../dev/tools/create-kind-cluster --recreate ${KIND_CLUSTER} --kubeconfig bin/KUBECONFIG
+
+.PHONY: install
+install:
+	../dev/tools/deploy-to-kube --image-prefix=$(REGISTRY) --working-dir .
+
+IMAGE_TAG ?= latest
+SKIP_PREQS ?= false
+
+# non-ephemeral (GKE) cluster install targets
+.PHONY: install-latest
+install-latest:
+	@if [ "$(SKIP_PREQS)" != "true" ]; then \
+		$(MAKE) install-dep-packages create-secrets; \
+	fi
+	@mkdir -p bin
+	../dev/tools/deploy-to-kube \
+	--image-prefix=ghcr.io/gke-labs/gemini-for-kubernetes-development/ \
+	--image-tag=$(IMAGE_TAG) \
+	--output-file=$(CURDIR)/bin/overseer-manifest.yaml
+	kubectl apply -f bin/overseer-manifest.yaml
+
+.PHONY: uninstall-latest
+uninstall-latest:
+	../dev/tools/deploy-to-kube \
+	--image-prefix=ghcr.io/gke-labs/gemini-for-kubernetes-development/ \
+	--image-tag=$(IMAGE_TAG) \
+	--output-file=$(CURDIR)/bin/overseer-manifest.yaml
+	kubectl delete -f bin/overseer-manifest.yaml || true
+	@if [ "$(SKIP_PREQS)" != "true" ]; then \
+	  ${MAKE} uninstall-dep-packages; \
+	  kubectl delete crd sandboxes.agents.x-k8s.io --wait=false || true
+	  kubectl patch crd sandboxes.agents.x-k8s.io --type=json -p='[{"op":"remove", "path":"/metadata/finalizers", "value":["customresourcecleanup.apiextensions.k8s.io"]}]' || true
+	fi
+
+.PHONY: update-latest
+update-latest: install-latest
+	kubectl rollout restart statefulset -n overseer-system
+	kubectl rollout status  statefulset  -n overseer-system
+	kubectl rollout restart deployment -n overseer-system
+	kubectl rollout status  deployment  -n overseer-system
+
 .PHONY: push-images
 push-images:
 	../dev/tools/push-images --image-prefix=$(REGISTRY) $(KIND_CLUSTER_ARG) --working-dir .. --images-dir images
-
-.PHONY: deploy
-deploy:
-	../dev/tools/deploy-to-kube --image-prefix=$(REGISTRY) --working-dir . $(DEPLOY_ARGS)
 
 .PHONY: clean
 clean:
