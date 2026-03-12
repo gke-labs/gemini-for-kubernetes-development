@@ -40,10 +40,6 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 		sandboxName = "devc-" + name
 	}
 
-	if opt.DevcontainerConfigRef == "" {
-		opt.DevcontainerConfigRef = "devcontainer-json"
-	}
-
 	labels := make(map[string]interface{})
 	for k, v := range opt.Labels {
 		labels[k] = v
@@ -168,6 +164,37 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 		workspaceDiskSize = "10Gi"
 	}
 
+	volumeMounts := []interface{}{
+		map[string]interface{}{"name": "workspaces-pvc", "mountPath": "/workspaces"},
+		map[string]interface{}{"name": "tokens-secret", "mountPath": "/tokens", "readOnly": true},
+		map[string]interface{}{"name": "agent-bin", "mountPath": "/opt/repo-agent"},
+	}
+	if opt.DevcontainerConfigRef != "" {
+		volumeMounts = append(volumeMounts, map[string]interface{}{
+			"name":      "devcontainer-config",
+			"mountPath": "/devcontainer.json",
+			"subPath":   "devcontainer.json",
+		})
+	}
+
+	volumes := []interface{}{
+		map[string]interface{}{"name": "agent-bin", "emptyDir": map[string]interface{}{}},
+		map[string]interface{}{
+			"name": "tokens-secret",
+			"secret": map[string]interface{}{
+				"secretName": opt.LLMAPIKeySecretName,
+			},
+		},
+	}
+	if opt.DevcontainerConfigRef != "" {
+		volumes = append(volumes, map[string]interface{}{
+			"name": "devcontainer-config",
+			"configMap": map[string]interface{}{
+				"name": opt.DevcontainerConfigRef,
+			},
+		})
+	}
+
 	sandbox := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "agents.x-k8s.io/v1alpha1",
@@ -187,20 +214,23 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 						},
 					},
 					"spec": map[string]interface{}{
-						"serviceAccountName": "review-sandbox",
-						"initContainers": []interface{}{
-							map[string]interface{}{
-								"name":  "gemini-configs",
-								"image": opt.ConfigDirImage,
-								"args":  []interface{}{"--directory", "/workspaces", "--namespace", opt.Namespace, "--name", opt.LLMConfigdirRef, "--ignore-not-found-error"},
-								"volumeMounts": []interface{}{
-									map[string]interface{}{
-										"name":      "workspaces-pvc",
-										"mountPath": "/workspaces",
+						"serviceAccountName": opt.ServiceAccountName,
+						"initContainers": func() []interface{} {
+							containers := []interface{}{}
+							if opt.LLMConfigdirRef != "" {
+								containers = append(containers, map[string]interface{}{
+									"name":  "gemini-configs",
+									"image": opt.ConfigDirImage,
+									"args":  []interface{}{"--directory", "/workspaces", "--namespace", opt.Namespace, "--name", opt.LLMConfigdirRef, "--ignore-not-found-error"},
+									"volumeMounts": []interface{}{
+										map[string]interface{}{
+											"name":      "workspaces-pvc",
+											"mountPath": "/workspaces",
+										},
 									},
-								},
-							},
-							map[string]interface{}{
+								})
+							}
+							containers = append(containers, map[string]interface{}{
 								"name":    "inject-agent",
 								"image":   opt.RepoSandboxImage,
 								"command": []interface{}{"/repo-agent/repo-sandbox", "inject", "--path", "/opt/repo-agent"},
@@ -210,8 +240,9 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 										"mountPath": "/opt/repo-agent",
 									},
 								},
-							},
-						},
+							})
+							return containers
+						}(),
 						"containers": []interface{}{
 							map[string]interface{}{
 								"name":    "sandbox",
@@ -225,34 +256,15 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 										"ephemeral-storage": "6Gi",
 									},
 								},
-								"env": env,
-								"volumeMounts": []interface{}{
-									map[string]interface{}{"name": "workspaces-pvc", "mountPath": "/workspaces"},
-									map[string]interface{}{"name": "tokens-secret", "mountPath": "/tokens", "readOnly": true},
-									map[string]interface{}{"name": "devcontainer-config", "mountPath": "/devcontainer.json", "subPath": "devcontainer.json"},
-									map[string]interface{}{"name": "agent-bin", "mountPath": "/opt/repo-agent"},
-								},
+								"env":          env,
+								"volumeMounts": volumeMounts,
 								"ports": []interface{}{
 									map[string]interface{}{"containerPort": int64(13337)},
 									map[string]interface{}{"containerPort": int64(13339)},
 								},
 							},
 						},
-						"volumes": []interface{}{
-							map[string]interface{}{"name": "agent-bin", "emptyDir": map[string]interface{}{}},
-							map[string]interface{}{
-								"name": "devcontainer-config",
-								"configMap": map[string]interface{}{
-									"name": opt.DevcontainerConfigRef,
-								},
-							},
-							map[string]interface{}{
-								"name": "tokens-secret",
-								"secret": map[string]interface{}{
-									"secretName": opt.LLMAPIKeySecretName,
-								},
-							},
-						},
+						"volumes": volumes,
 					},
 				},
 				"volumeClaimTemplates": []interface{}{

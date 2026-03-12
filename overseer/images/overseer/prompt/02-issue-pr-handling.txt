@@ -10,7 +10,7 @@ Issue and PR handling:
     - **Prioritize PR Progress**: Even if an issue has a PR, you MUST still address new review comments (`address-feedback`) and investigate new CI failures (`investigate-failures`) on that PR.
     - New issue: Create a task to fix or triage it (only if no PR already exists).
     - New PR: Create a task to review it.
-    - Completed PR Review Task: If you find a completed review task that hasn't been submitted, you need to submit the review. Extract the PR number from the sandbox name (e.g., `<repowatch-name>-pr-<pr-number>`).
+    - Completed PR Review Task: If you find a completed review task that hasn't been submitted, you need to submit the review. Extract the PR number from the sandbox name (e.g., `<overseer-name>-pr-<pr-number>`).
     - CI failure: Run a task to analyze the failure on the PR using `overseer-cli pr --number <pr-number> --task investigate-failures`.
 3.  **Act**: Execute the action.
     - To create a task for an issue, use `overseer-cli issue --number <issue-number> --task <task-type>`.

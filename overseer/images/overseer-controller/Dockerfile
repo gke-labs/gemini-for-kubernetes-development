@@ -24,7 +24,7 @@ COPY repo-agent/api/ repo-agent/api/
 COPY overseer/ overseer/
 
 WORKDIR /app/overseer
-RUN go build -o overseer-controller ./cmd/overseer-controller/main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -o overseer-controller ./cmd/overseer-controller/main.go
 
 FROM gcr.io/distroless/static:nonroot
 WORKDIR /

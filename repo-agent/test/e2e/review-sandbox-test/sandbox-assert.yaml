@@ -20,7 +20,6 @@ spec:
     spec:
       serviceAccountName: review-sandbox
       initContainers:
-      - name: gemini-configs
       - name: inject-agent
       containers:
       - name: sandbox

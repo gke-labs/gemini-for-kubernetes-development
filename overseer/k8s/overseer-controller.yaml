@@ -38,6 +38,18 @@ rules:
 - apiGroups: [""]
   resources: ["secrets"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: [""]
+  resources: ["services"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["custom.agents.x-k8s.io"]
+  resources: ["sandboxtasks", "sandboxtasks/status"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["configdir.gke.io"]
+  resources: ["configdirs", "configfiles"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["review.gemini.google.com"]
+  resources: ["repowatches"]
+  verbs: ["get", "list", "watch"]
 - apiGroups: ["agents.x-k8s.io"]
   resources: ["sandboxes"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
@@ -78,11 +90,11 @@ spec:
         image: ko://github.com/gke-labs/gemini-for-kubernetes-development/overseer/images/overseer-controller
         env:
         - name: REPO_SANDBOX_IMAGE
-          value: ko://github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/images/repo-sandbox
+          value: ghcr.io/gke-labs/gemini-for-kubernetes-development/repo-sandbox:latest
         - name: CONFIG_DIR_IMAGE
-          value: ko://github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/images/configdir-cli
+          value: ghcr.io/gke-labs/gemini-for-kubernetes-development/configdir-cli:latest
         - name: OVERSEER_IMAGE
-          value: ko://github.com/gke-labs/gemini-for-kubernetes-development/overseer/images/overseer
+          value: ko://overseer/images/overseer
         resources:
           limits:
             cpu: 500m

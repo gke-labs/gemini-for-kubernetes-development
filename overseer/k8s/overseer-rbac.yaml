@@ -2,13 +2,21 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: overseer
-  namespace: repo-agent-system
+  namespace: overseer-system
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: overseer-system
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: overseer
 rules:
+- apiGroups: ["overseer.gemini.google.com"]
+  resources: ["overseers"]
+  verbs: ["get", "list", "watch"]
 - apiGroups: ["review.gemini.google.com"]
   resources: ["repowatches"]
   verbs: ["get", "list"]
@@ -32,7 +40,7 @@ metadata:
 subjects:
 - kind: ServiceAccount
   name: overseer
-  namespace: repo-agent-system
+  namespace: overseer-system
 roleRef:
   kind: ClusterRole
   name: overseer

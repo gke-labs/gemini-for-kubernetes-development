@@ -48,10 +48,15 @@ type OverseerReconciler struct {
 //+kubebuilder:rbac:groups=overseer.gemini.google.com,resources=overseers/finalizers,verbs=update
 //+kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterrolebindings,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=agents.x-k8s.io,resources=sandboxes,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=custom.agents.x-k8s.io,resources=sandboxtasks,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=custom.agents.x-k8s.io,resources=sandboxtasks/status,verbs=get;list;watch;update;patch
+//+kubebuilder:rbac:groups=configdir.gke.io,resources=configdirs;configfiles,verbs=get;list;watch
+//+kubebuilder:rbac:groups=review.gemini.google.com,resources=repowatches,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -190,6 +195,79 @@ func (r *OverseerReconciler) ensureOverseerRBAC(ctx context.Context, o *overseer
 		return err
 	}
 
+	// --- Overseer Sandbox ---
+	saSandbox := &corev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "overseer-sandbox",
+			Namespace: namespace,
+		},
+	}
+	if err := r.Get(ctx, types.NamespacedName{Name: "overseer-sandbox", Namespace: namespace}, saSandbox); err != nil {
+		if errors.IsNotFound(err) {
+			log.Info("Creating ServiceAccount for overseer sandbox", "namespace", namespace)
+			if err := r.Create(ctx, saSandbox); err != nil {
+				return err
+			}
+		} else {
+			return err
+		}
+	}
+
+	// RoleBinding to the cluster role "overseer-sandbox"
+	rbSandbox := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "overseer-sandbox-binding",
+			Namespace: namespace,
+		},
+		Subjects: []rbacv1.Subject{
+			{
+				Kind:      "ServiceAccount",
+				Name:      "overseer-sandbox",
+				Namespace: namespace,
+			},
+		},
+		RoleRef: rbacv1.RoleRef{
+			Kind:     "ClusterRole",
+			Name:     "overseer-sandbox",
+			APIGroup: "rbac.authorization.k8s.io",
+		},
+	}
+	if err := r.Get(ctx, types.NamespacedName{Name: "overseer-sandbox-binding", Namespace: namespace}, rbSandbox); err != nil {
+		if errors.IsNotFound(err) {
+			log.Info("Creating RoleBinding for overseer sandbox", "namespace", namespace)
+			if err := r.Create(ctx, rbSandbox); err != nil {
+				return err
+			}
+		} else {
+			return err
+		}
+	}
+
+	// Add to ClusterRoleBinding "overseer-sandbox"
+	crbSandbox := &rbacv1.ClusterRoleBinding{}
+	if err := r.Get(ctx, types.NamespacedName{Name: "overseer-sandbox"}, crbSandbox); err == nil {
+		found := false
+		for _, s := range crbSandbox.Subjects {
+			if s.Kind == "ServiceAccount" && s.Name == "overseer-sandbox" && s.Namespace == namespace {
+				found = true
+				break
+			}
+		}
+		if !found {
+			log.Info("Adding ServiceAccount to overseer-sandbox ClusterRoleBinding", "namespace", namespace)
+			crbSandbox.Subjects = append(crbSandbox.Subjects, rbacv1.Subject{
+				Kind:      "ServiceAccount",
+				Name:      "overseer-sandbox",
+				Namespace: namespace,
+			})
+			if err := r.Update(ctx, crbSandbox); err != nil {
+				return err
+			}
+		}
+	} else if !errors.IsNotFound(err) {
+		return err
+	}
+
 	return nil
 }
 
@@ -209,11 +287,11 @@ func (r *OverseerReconciler) ensureSecrets(ctx context.Context, o *overseerv1alp
 		if !errors.IsNotFound(err) {
 			return err
 		}
-		// Not found, try copying from overseer-system
-		if err := r.copySecret(ctx, name, "overseer-system", targetNamespace); err != nil {
+		// Not found, try copying from fallback namespaces
+		if err := r.copySecret(ctx, name, []string{"overseer-system", "repo-agent-system"}, targetNamespace); err != nil {
 			if errors.IsNotFound(err) {
 				o.Status.OverseerStatus = "Error"
-				o.Status.Message = fmt.Sprintf("Secret %s not found in %s or overseer-system", name, targetNamespace)
+				o.Status.Message = fmt.Sprintf("Secret %s not found in %s, overseer-system, or repo-agent-system", name, targetNamespace)
 				return nil // Don't return error to stop reconcile but update status
 			}
 			return err
@@ -222,12 +300,30 @@ func (r *OverseerReconciler) ensureSecrets(ctx context.Context, o *overseerv1alp
 	return nil
 }
 
-func (r *OverseerReconciler) copySecret(ctx context.Context, name, fromNamespace, toNamespace string) error {
+func (r *OverseerReconciler) copySecret(ctx context.Context, name string, fromNamespaces []string, toNamespace string) error {
 	log := log.FromContext(ctx)
 
-	sourceSecret := &corev1.Secret{}
-	if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: fromNamespace}, sourceSecret); err != nil {
-		return err
+	var sourceSecret *corev1.Secret
+	var lastErr error
+
+	for _, fromNs := range fromNamespaces {
+		secret := &corev1.Secret{}
+		err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: fromNs}, secret)
+		if err == nil {
+			sourceSecret = secret
+			break
+		}
+		if !errors.IsNotFound(err) {
+			return err
+		}
+		lastErr = err
+	}
+
+	if sourceSecret == nil {
+		if lastErr != nil {
+			return lastErr
+		}
+		return fmt.Errorf("secret not found in any of the provided namespaces")
 	}
 
 	targetSecret := &corev1.Secret{
@@ -243,7 +339,7 @@ func (r *OverseerReconciler) copySecret(ctx context.Context, name, fromNamespace
 	err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: toNamespace}, existingSecret)
 	if err != nil {
 		if errors.IsNotFound(err) {
-			log.Info("Copying secret", "name", name, "from", fromNamespace, "to", toNamespace)
+			log.Info("Copying secret", "name", name, "from", sourceSecret.Namespace, "to", toNamespace)
 			return r.Create(ctx, targetSecret)
 		}
 		return err

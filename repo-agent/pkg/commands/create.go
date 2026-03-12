@@ -51,7 +51,7 @@ func BuildCreateCommand() *cobra.Command {
 	cmd.Flags().StringVar(&opt.Namespace, "namespace", "default", "Namespace to create the sandbox in")
 	cmd.Flags().StringVar(&opt.LLMProvider, "llm-provider", "gemini-cli", "LLM provider to use")
 	cmd.Flags().StringVar(&opt.LLMSecret, "llm-secret", "", "LLM k8s secret to use")
-	cmd.Flags().StringVar(&opt.DevcontainerConfigRef, "devcontainer-config-ref", "devcontainer-json", "Devcontainer config ref to use")
+	cmd.Flags().StringVar(&opt.DevcontainerConfigRef, "devcontainer-config-ref", "", "Devcontainer config ref to use")
 	cmd.Flags().StringVar(&opt.GithubLogin, "github-login", "", "GitHub login to use")
 	cmd.Flags().StringVar(&opt.Image, "image", "", "Custom Docker image to use instead of devcontainer-config-ref")
 

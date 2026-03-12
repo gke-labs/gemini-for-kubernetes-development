@@ -36,9 +36,24 @@ spec:
                     - dryrun
                     type: string
                 type: object
+              configdirRef:
+                type: string
+              extensions:
+                items:
+                  properties:
+                    ref:
+                      type: string
+                    source:
+                      type: string
+                  required:
+                  - source
+                  type: object
+                type: array
               geminiAPIKeySecretName:
                 type: string
               image:
+                type: string
+              issuePrompt:
                 type: string
               maxActiveIssues:
                 format: int32
@@ -58,7 +73,29 @@ spec:
                 type: object
               repoURL:
                 type: string
+              review:
+                properties:
+                  ignoreFiles:
+                    items:
+                      type: string
+                    type: array
+                  maxReviewFiles:
+                    default: 150
+                    type: integer
+                  prompt:
+                    type: string
+                  severityThreshold:
+                    enum:
+                    - LOW
+                    - MEDIUM
+                    - HIGH
+                    - CRITICAL
+                    type: string
+                type: object
               robotAccount:
+                type: string
+              workspaceDiskSize:
+                default: 10Gi
                 type: string
             required:
             - repoURL

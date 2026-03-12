@@ -17,6 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
+	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -38,16 +39,34 @@ type RepoSpec struct {
 	Mode string `json:"mode,omitempty"`
 }
 
+type ReviewSpec struct {
+	// Prompt is the prompt to use for the LLM. This can be a simple string or
+	// a Go template that will be populated with information about the pull
+	// request or issue.
+	Prompt string `json:"prompt,omitempty"`
+
+	// The maximum number of files to review in a PR.
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=150
+	MaxReviewFiles int `json:"maxReviewFiles,omitempty"`
+
+	// IgnoreFiles specifies a list of glob patterns for files that should be ignored during review.
+	// +kubebuilder:validation:Optional
+	IgnoreFiles []string `json:"ignoreFiles,omitempty"`
+
+	// SeverityThreshold sets the minimum severity level for review comments to be posted.
+	// Comments below this threshold will be filtered out. Valid values: "LOW", "MEDIUM", "HIGH".
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:Enum=LOW;MEDIUM;HIGH;CRITICAL
+	SeverityThreshold string `json:"severityThreshold,omitempty"`
+}
+
 // OverseerSpec defines the desired state of Overseer
 type OverseerSpec struct {
 	// The full URL of the GitHub repository to watch.
 	// e.g., https://github.com/owner/repo
 	// +kubebuilder:validation:Required
 	RepoURL string `json:"repoURL"`
-
-	// Image to use for the overseer.
-	// +kubebuilder:validation:Optional
-	Image string `json:"image,omitempty"`
 
 	// Chores configuration
 	// +kubebuilder:validation:Optional
@@ -56,6 +75,34 @@ type OverseerSpec struct {
 	// Repo configuration
 	// +kubebuilder:validation:Optional
 	Repo *RepoSpec `json:"repo,omitempty"`
+
+	// ConfigdirRef is a reference to a ConfigDir resource that contains
+	// additional configuration for the LLM agent, such as tool schemas and
+	// model configurations.
+	ConfigdirRef string `json:"configdirRef,omitempty"`
+
+	// Image to use for the development sandbox. If set, this overrides the devcontainer image.
+	// +kubebuilder:validation:Optional
+	Image string `json:"image,omitempty"`
+
+	// Issue prompt for issue handling
+	// +kubebuilder:validation:Optional
+	IssuePrompt string `json:"issuePrompt,omitempty"`
+
+	// WorkspaceDiskSize specifies the disk size for the workspace PVC.
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default="10Gi"
+	WorkspaceDiskSize string `json:"workspaceDiskSize,omitempty"`
+
+	// Extensions is a list of extensions to install in the sandbox
+	// before running the agent. Each entry specifies a source
+	// (GitHub URL or extension name) and optional ref.
+	// +kubebuilder:validation:Optional
+	Extensions []reviewv1alpha1.Extension `json:"extensions,omitempty"`
+
+	// Review configuration for PRs
+	// +kubebuilder:validation:Optional
+	Review *ReviewSpec `json:"review,omitempty"`
 
 	// MaxActiveReviews limits the number of concurrent review sandboxes.
 	// +kubebuilder:validation:Optional
