@@ -36,7 +36,7 @@ This will automatically check prerequisites, create a `kind` cluster named `over
 
 ### 3. Watch a Repository
 
-To instruct Overseer to start watching a repository, create an `Overseer` Custom Resource (CR). 
+To instruct Overseer to start watching a repository, create an `Overseer` Custom Resource (CR).
 
 Here is an example that watches a repo, enables background chores, and disables automatic PR/issue handling. Create a file named `my-overseer.yaml`:
 
@@ -49,7 +49,8 @@ spec:
   repoURL: https://github.com/your-org/your-repo
   robotAccount: your-github-username # Must match ROBOT1_GH_USERID
   geminiAPIKeySecretName: gemini-vscode-tokens
-  # Enable chores
+  # Enable chores. This looks for .agents/<chore files>
+  # and for each chore file we start a sandbox to run the agent in it.
   chores:
     mode: enabled
   # Disable Issue/PR handling
@@ -65,7 +66,40 @@ Apply it to your cluster:
 kubectl apply -f my-overseer.yaml
 ```
 
-### 4. View Logs
+### 4. Using ConfigDir
+
+You can optionally inject custom agent instructions or context files (such as `.agents/file.md`) directly into the repository sandbox by defining a `ConfigDir` resource and referencing it in the `Overseer` spec. This is particularly useful for adding chore definitions without committing them directly to the repository.
+
+Here is an example of defining a `ConfigDir` and referencing it:
+
+```yaml
+apiVersion: configdir.gke.io/v1alpha1
+kind: ConfigDir
+metadata:
+  name: my-agent-config
+spec:
+  files:
+  - path: .agents/file.md
+    source:
+      inline: |
+        # Custom Agent Instructions
+        These are project-specific guidelines for the agent...
+---
+apiVersion: overseer.gemini.google.com/v1alpha1
+kind: Overseer
+metadata:
+  name: my-repo-agent
+spec:
+  repoURL: https://github.com/your-org/your-repo
+  robotAccount: your-github-username
+  geminiAPIKeySecretName: gemini-vscode-tokens
+  # Inject the ConfigDir defined above
+  configdirRef: my-agent-config
+  chores:
+    mode: enabled
+```
+
+### 5. View Logs
 
 **Overseer Controller Logs:**
 The controller manages the lifecycle of the Overseer sandboxes.
