@@ -85,6 +85,7 @@ install-latest:
 	fi
 	@mkdir -p bin
 	../dev/tools/deploy-to-kube \
+	--working-dir=. \
 	--image-prefix=ghcr.io/gke-labs/gemini-for-kubernetes-development/ \
 	--image-tag=$(IMAGE_TAG) \
 	--output-file=$(CURDIR)/bin/overseer-manifest.yaml
@@ -93,6 +94,7 @@ install-latest:
 .PHONY: uninstall-latest
 uninstall-latest:
 	../dev/tools/deploy-to-kube \
+	--working-dir=. \
 	--image-prefix=ghcr.io/gke-labs/gemini-for-kubernetes-development/ \
 	--image-tag=$(IMAGE_TAG) \
 	--output-file=$(CURDIR)/bin/overseer-manifest.yaml
