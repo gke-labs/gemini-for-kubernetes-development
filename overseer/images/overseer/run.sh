@@ -92,6 +92,13 @@ fi
 
 cd "$REPO_NAME"
 
+if [ -d "/configdir" ] && [ "$(ls -A /configdir)" ]; then
+  echo "Injecting configdir files into repository..."
+  shopt -s dotglob
+  cp -R /configdir/* .
+  shopt -u dotglob
+fi
+
 # Loop
 while true; do
   echo "$(date): Running Overseer cycle..."

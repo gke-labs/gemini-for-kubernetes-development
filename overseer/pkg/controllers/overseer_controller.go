@@ -25,7 +25,9 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -104,6 +106,26 @@ func (r *OverseerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
+	}
+
+	// Wait for ConfigDir to exist if referenced
+	if overseerObj.Spec.ConfigdirRef != "" {
+		configDir := &unstructured.Unstructured{}
+		configDir.SetGroupVersionKind(schema.GroupVersionKind{
+			Group:   "configdir.gke.io",
+			Version: "v1alpha1",
+			Kind:    "ConfigDir",
+		})
+
+		// Let's look in the target namespace (nsName).
+		err := r.Get(ctx, types.NamespacedName{Name: overseerObj.Spec.ConfigdirRef, Namespace: nsName}, configDir)
+		if err != nil {
+			if errors.IsNotFound(err) {
+				log.Info("ConfigDir not found, waiting for it to be created", "name", overseerObj.Spec.ConfigdirRef, "namespace", nsName)
+				return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+			}
+			return ctrl.Result{}, err
+		}
 	}
 
 	// 4. Reconcile Sandbox
