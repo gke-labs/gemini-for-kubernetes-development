@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -260,8 +261,8 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 
 	cmd.Env = append(cmd.Env, fmt.Sprintf("NAME=%s", taskName))
 	cmd.Env = append(cmd.Env, fmt.Sprintf("TASKDIR=%s", taskDir))
-	cmd.Stdout = f
-	cmd.Stderr = f
+	cmd.Stdout = io.MultiWriter(f, os.Stdout)
+	cmd.Stderr = io.MultiWriter(f, os.Stderr)
 
 	klog.Infof("Starting command for task %s", taskName)
 	if err := cmd.Start(); err != nil {
