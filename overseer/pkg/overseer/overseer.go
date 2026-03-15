@@ -244,6 +244,33 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 		},
 	}
 
+	if o.Spec.ConfigdirRef != "" {
+		podSpec["initContainers"] = []interface{}{
+			map[string]interface{}{
+				"name":  "gemini-configs",
+				"image": configDirImage,
+				"args":  []interface{}{"--directory", "/configdir", "--namespace", namespace, "--name", o.Spec.ConfigdirRef, "--ignore-not-found-error"},
+				"volumeMounts": []interface{}{
+					map[string]interface{}{"name": "configdir-vol", "mountPath": "/configdir"},
+				},
+			},
+		}
+
+		podSpec["volumes"] = []interface{}{
+			map[string]interface{}{
+				"name":     "configdir-vol",
+				"emptyDir": map[string]interface{}{},
+			},
+		}
+
+		// Also mount configdir-vol to the main container
+		containers := podSpec["containers"].([]interface{})
+		mainContainer := containers[0].(map[string]interface{})
+		mainContainer["volumeMounts"] = []interface{}{
+			map[string]interface{}{"name": "configdir-vol", "mountPath": "/configdir"},
+		}
+	}
+
 	u := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "agents.x-k8s.io/v1alpha1",
