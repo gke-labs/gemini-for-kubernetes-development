@@ -115,6 +115,11 @@ update-latest: install-latest
 .PHONY: push-images
 push-images:
 	../dev/tools/push-images --image-prefix=$(REGISTRY) $(KIND_CLUSTER_ARG) --working-dir .. --images-dir images
+	../dev/tools/push-images --image-prefix=$(REGISTRY) $(KIND_CLUSTER_ARG) \
+	--working-dir .. \
+	--images-dir ../repo-agent/images \
+	--only repo-sandbox \
+	--only configdir-cli
 
 .PHONY: clean
 clean:

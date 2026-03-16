@@ -119,6 +119,10 @@ def main(args):
                 print(f"skipping image {service_name}")
                 continue
 
+            if args.only_images and service_name not in args.only_images:
+                print(f"excluding image {service_name}")
+                continue
+
             image_name = utils.get_full_image_name(args, service_name)
 
             print(f"create Docker buildx builder for {service_name}")
@@ -154,6 +158,12 @@ if __name__ == "__main__":
                         dest="skipped_images",
                         action="append",
                         help="Image name (folder name) to skip. Can be repeated.",
+                        type=str,
+                        default=[])
+    parser.add_argument("--only",
+                        dest="only_images",
+                        action="append",
+                        help="Image name (folder name) to include. Can be repeated.",
                         type=str,
                         default=[])
     args = parser.parse_args()

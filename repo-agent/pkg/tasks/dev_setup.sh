@@ -49,6 +49,17 @@ bin/
 EOF
 }
 
+function injectConfigDirData {
+    pushd "/workspaces/${REPO_NAME}" > /dev/null
+    if [ -d "/configdir" ] && [ "$(ls -A /configdir)" ]; then
+      echo "Injecting configdir files into repository..."
+      shopt -s dotglob
+      cp -R /configdir/* .
+      shopt -u dotglob
+    fi
+    popd > /dev/null
+}
+
 function setupGitRepos {
     echo "Running setupGitRepos..."
     
@@ -155,5 +166,6 @@ setupGitRepos
 sleep 5
 checkoutBranch
 configureGemini
+injectConfigDirData
 installExtensions
 #runGemini

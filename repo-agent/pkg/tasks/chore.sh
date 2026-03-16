@@ -84,6 +84,17 @@ function setupGitRepos {
     fi
 }
 
+function injectConfigDirData {
+    pushd "/workspaces/${REPO_NAME}" > /dev/null
+    if [ -d "/configdir" ] && [ "$(ls -A /configdir)" ]; then
+      echo "Injecting configdir files into repository..."
+      shopt -s dotglob
+      cp -R /configdir/* .
+      shopt -u dotglob
+    fi
+    popd > /dev/null
+}
+
 function runChore {
     pushd "/workspaces/${REPO_NAME}" > /dev/null
     
@@ -173,4 +184,5 @@ ${COMMIT_MSG}"
 
 setupGit
 setupGitRepos
+injectConfigDirData
 runChore
