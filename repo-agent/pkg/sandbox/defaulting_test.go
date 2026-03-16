@@ -15,11 +15,11 @@ func TestNewAgentSandbox_Defaulting(t *testing.T) {
 	}()
 
 	tests := []struct {
-		name                 string
-		optRepoSandboxImage  string
-		optConfigDirImage    string
-		expectedRepoSandbox  string
-		expectedConfigDir    string
+		name                string
+		optRepoSandboxImage string
+		optConfigDirImage   string
+		expectedRepoSandbox string
+		expectedConfigDir   string
 	}{
 		{
 			name:                "DefaultFromEnv",
@@ -94,11 +94,11 @@ func TestNewReviewSandbox_Defaulting(t *testing.T) {
 	}()
 
 	tests := []struct {
-		name                 string
-		optRepoSandboxImage  string
-		optConfigDirImage    string
-		expectedRepoSandbox  string
-		expectedConfigDir    string
+		name                string
+		optRepoSandboxImage string
+		optConfigDirImage   string
+		expectedRepoSandbox string
+		expectedConfigDir   string
 	}{
 		{
 			name:                "DefaultFromEnv",
