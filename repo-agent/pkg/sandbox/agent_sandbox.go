@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"encoding/json"
+	"os"
 	"strconv"
 	"strings"
 
@@ -45,6 +46,13 @@ type AgentSandboxOptions struct {
 
 // NewAgentSandbox creates a new Sandbox (unstructured) and Service object.
 func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *corev1.Service) {
+	if opt.RepoSandboxImage == "" {
+		opt.RepoSandboxImage = os.Getenv("REPO_SANDBOX_IMAGE")
+	}
+	if opt.ConfigDirImage == "" {
+		opt.ConfigDirImage = os.Getenv("CONFIGDIR_CLI_IMAGE")
+	}
+
 	name := opt.Name
 	sandboxName := name
 	if !opt.SkipDevcPrefix && !strings.HasPrefix(name, "devc-") {

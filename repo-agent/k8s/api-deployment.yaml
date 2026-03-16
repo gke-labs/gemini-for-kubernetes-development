@@ -50,3 +50,7 @@ spec:
               name: allowed-users
               key: GITHUB_ADMIN_USERS
               optional: true
+        - name: REPO_SANDBOX_IMAGE
+          value: ko://repo-agent/images/repo-sandbox
+        - name: CONFIGDIR_CLI_IMAGE
+          value: ko://repo-agent/configdir/cmd/configdir-cli

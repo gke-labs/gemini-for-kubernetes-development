@@ -3,6 +3,7 @@ package sandbox
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 
@@ -34,6 +35,13 @@ type ReviewSandboxOptions struct {
 
 // NewReviewSandbox creates a new Sandbox (unstructured) and Service object for PR reviews.
 func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *corev1.Service) {
+	if opt.RepoSandboxImage == "" {
+		opt.RepoSandboxImage = os.Getenv("REPO_SANDBOX_IMAGE")
+	}
+	if opt.ConfigDirImage == "" {
+		opt.ConfigDirImage = os.Getenv("CONFIGDIR_CLI_IMAGE")
+	}
+
 	name := opt.Name
 	sandboxName := name
 	if !opt.SkipDevcPrefix && !strings.HasPrefix(name, "devc-") {
