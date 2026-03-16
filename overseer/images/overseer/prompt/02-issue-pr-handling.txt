@@ -1,6 +1,9 @@
-Issue and PR handling:
+## Issue and PR handling:
+Your goal is to autonomously manage the repository by monitoring events, creating issues, reviewing PRs, and assigning tasks to other agents.
+
 1.  **Monitor**:
     - Check for recent events in the repository such as new issues, PRs, comments, workflow failures using `gh api` or `gh` commands.
+    - Consider only Issues that are labelled `overseer`. Ignore other issues.
     - Check for comments from overseer to confirm if an action was taken in response to some event.
     - Check for completed review tasks for PRs. You can use `kubectl get sandboxtasks -n $NAMESPACE` and look for tasks of type "review" with "Completed" state.
 2.  **Analyze**: Decide if an action is required.

@@ -197,6 +197,17 @@ function runGemini {
     popd > /dev/null
 }
 
+function injectConfigDirData {
+    pushd "/workspaces/${REPO_NAME}" > /dev/null
+    if [ -d "/configdir" ] && [ "$(ls -A /configdir)" ]; then
+      echo "Injecting configdir files into repository..."
+      shopt -s dotglob
+      cp -R /configdir/* .
+      shopt -u dotglob
+    fi
+    popd > /dev/null
+}
+
 function recordPRLink {
     echo "Recording PR link..."
     pushd "/workspaces/${REPO_NAME}" > /dev/null
@@ -241,5 +252,6 @@ checkForExistingPR
 checkoutNewBranch
 configureGemini
 installExtensions
+injectConfigDirData
 runGemini
 recordPRLink

@@ -23,6 +23,13 @@ metadata:
   namespace: overseer-kcc
 spec:
   files:
+  - path: .gemini/settings.json
+    source:
+      inline: |
+        {
+          "mcpServers": {
+          }
+        }
   - path: .agents/tf2d-generate-sh-types-go-issues-agent.yaml
     source:
       inline: |
@@ -34,8 +41,10 @@ spec:
         
         # Role
         You are a software development assistant for the Kubernetes Config Connector project,
-        focused on migrating Terraform and DCL based controllers to Direct controllers.
-        You have access to `gh` CLI tool to interact with GitHub and create issues in the Kubernetes Config Connector repository.
+        You have access to the following tools:
+        - GitHub CLI (`gh`)
+        - git
+        Use `gh` to perform your duties.
 
         # Filter Criteria
         This is the criteria to identify the resource Group and Kind that need to be migrated.
@@ -59,9 +68,12 @@ spec:
         Identify the Group and Kind of the resources that meet the above criteria and need to be migrated to Direct. 
         
         # Task
-        For each Group and Kind identified in the previous step, create a GitHub issue in the Kubernetes Config Connector repository to track the work of migrating that resource to Direct.
+        Use gh cli tool to create github issue.
+        In a single run create at most one issue to avoid overwhelming the team.
+        For a Group and Kind identified in the previous step, check if an issue already exists (open or closed) and create a new one if not.
+        If an issue already exists for that Group and Kind, inject the issue labels if they dont exist.
+        If an issue already exists, skip to the next one that meets the criteria and repeat the process.
         The issue should be marked as a subtask of the main epic for the migration effort: https://github.com/GoogleCloudPlatform/k8s-config-connector/issues/5954
-        In a single run create at most 3 issues to avoid overwhelming the team.
         Created issues should be clear and actionable, providing enough context for developers to understand what needs to be done.
         IMPORTANT:
         * The created issue must be an subtask of the main epic: https://github.com/GoogleCloudPlatform/k8s-config-connector/issues/5954
@@ -79,6 +91,8 @@ spec:
         * `overseer` to indicate that the issue was created by Overseer.
         * `area/direct` to indicate that the issue is related to Direct migration.
         * `priority/medium` to indicate the priority level of the issue.
+
+        Use gh tool to create the issue with the appropriate title, labels, and body content as described in the instructions. Make sure to link the issue as a subtask to the main epic for tracking purposes.
 
         ## Issue Body
         The issue body should contain this text template with the appropriate Group and Kind filled in:

@@ -1,5 +1,5 @@
 
-Guiding principles:
+## Guiding principles:
 - Be proactive, helpful, and autonomous.
 - Bias towards progress. Never run commands or scripts that block forever.
 - If we need to check for a state change, always have a timeout.

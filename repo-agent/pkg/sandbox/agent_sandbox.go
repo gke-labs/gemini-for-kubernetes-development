@@ -280,9 +280,9 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 								containers = append(containers, map[string]interface{}{
 									"name":  "gemini-configs",
 									"image": opt.ConfigDirImage,
-									"args":  []interface{}{"--directory", "/workspaces", "--namespace", opt.Namespace, "--name", opt.LLMConfigdirRef, "--ignore-not-found-error"},
+									"args":  []interface{}{"--directory", "/configdir", "--namespace", opt.Namespace, "--name", opt.LLMConfigdirRef, "--ignore-not-found-error"},
 									"volumeMounts": []interface{}{
-										map[string]interface{}{"name": "workspaces-pvc", "mountPath": "/workspaces"},
+										map[string]interface{}{"name": "configdir-vol", "mountPath": "/configdir"},
 									},
 								})
 							}
@@ -329,6 +329,7 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 								"env": env,
 								"volumeMounts": func() []interface{} {
 									vm := []interface{}{
+										map[string]interface{}{"name": "configdir-vol", "mountPath": "/configdir"},
 										map[string]interface{}{"name": "workspaces-pvc", "mountPath": "/workspaces"},
 										map[string]interface{}{"name": "tokens-secret", "mountPath": "/tokens", "readOnly": true},
 										map[string]interface{}{"name": "agent-bin", "mountPath": "/opt/repo-agent"},
@@ -349,6 +350,10 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 						},
 						"volumes": func() []interface{} {
 							v := []interface{}{
+								map[string]interface{}{
+									"name":     "configdir-vol",
+									"emptyDir": map[string]interface{}{},
+								},
 								map[string]interface{}{
 									"name":     "agent-bin",
 									"emptyDir": map[string]interface{}{},

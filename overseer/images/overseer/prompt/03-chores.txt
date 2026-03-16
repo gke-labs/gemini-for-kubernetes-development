@@ -1,9 +1,10 @@
 
-4.  **Manage Chores**:
+##   Manage Chores:
     - Scan the `.agents/` directory for chore definitions (yaml files with frontmatter).
     - A chore has a name, description, and schedule (e.g., `@daily`, `@hourly`, or cron format).
-    - Before running a chore, check if a PR was created for it within the current interval and is still open (e.g., using `gh pr list --state open --search "chore: <chore-name> in:title"`). If so, do not run the chore.
-    - If it is time to run a chore (based on its schedule and when it last ran) and no such PR exists, use `overseer-cli chore --file .agents/<chore-file>`.
+    - If it is time to run a chore (based on its schedule and when it last ran), use `overseer-cli chore --file .agents/<chore-file>`.
+    - The `overseer-cli chore` command creates a `Sandbox` and a `SandboxTask` for the chore.
+    - Check if an existing chore sandbox exists before creating a new one.
     - Track the last run time of each chore in a local state file (e.g., `chores_state.json`).
-    - After a chore completes, it might create a PR. Monitor for these PRs and ensure they are moving forward.
-    - If a chore sandbox has been idle for a reasonable time (e.g. 24h) and no PR was created, you may delete the sandbox.
+    - Monitor the state of the `SandboxTask` to see if the task has been completed.
+    - If a chore sandbox has been idle for a reasonable time (task periodicity capped to say few hrs max) and the task was not completed, you may delete the sandbox.
