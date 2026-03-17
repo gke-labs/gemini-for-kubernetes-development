@@ -28,6 +28,14 @@ spec:
             properties:
               chores:
                 properties:
+                  exclude:
+                    items:
+                      type: string
+                    type: array
+                  include:
+                    items:
+                      type: string
+                    type: array
                   mode:
                     default: enabled
                     enum:

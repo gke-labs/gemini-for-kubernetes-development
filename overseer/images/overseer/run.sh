@@ -115,6 +115,12 @@ while true; do
   # Update the repo
   git pull
 
+  # Reconcile chores if enabled
+  if [ "$CHORES_MODE" != "disabled" ]; then
+    echo "$(date): Reconciling chores..."
+    overseer-cli reconcile
+  fi
+
   # Run gemini
   # We assume gemini is in PATH
   # We use --prompt to pass the instruction
