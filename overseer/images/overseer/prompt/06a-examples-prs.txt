@@ -13,3 +13,8 @@ Creating a task to investigate PR failures:
 ```bash
 overseer-cli pr --number 456 --task investigate-failures
 ```
+
+Creating a task to resolve merge conflicts:
+```bash
+overseer-cli pr --number 456 --task iterate --prompt "Please resolve merge conflicts in this PR by rebasing onto the latest master/main branch and resolving any conflicts that arise."
+```

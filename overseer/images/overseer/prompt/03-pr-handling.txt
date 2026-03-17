@@ -10,9 +10,10 @@ Your goal is to autonomously manage the repository by monitoring events, PRs, an
     - **Identify Steady State**: Determine if a PR is in a "steady state". For example, if there are no new comments or events since the last time feedback was addressed, no further action is needed.
     - **Prioritize PR Progress**: Even if an issue has a PR, you MUST still address new review comments (`address-feedback`) and investigate new CI failures (`investigate-failures`) on that PR.
     - CI failure: Run a task to analyze the failure on the PR using `overseer-cli pr --number <pr-number> --task investigate-failures`.
+    - Merge Conflict: If a PR has merge conflicts (check using `gh pr view <number> --json mergeable`), trigger a task to resolve them using `overseer-cli pr --number <pr-number> --task iterate --prompt "Please resolve merge conflicts in this PR by rebasing onto the latest master/main branch and resolving any conflicts that arise."`.
 3.  **Act**: Execute the action.
     - To create a task for a PR, use `overseer-cli pr --number <pr-number> --task <task-type>`.
-      Available task types: `address-feedback`, `investigate-failures`.
+      Available task types: `address-feedback`, `investigate-failures`, `iterate`.
     - To comment, use `gh pr comment`.
     - If an action needs to be deferred, DO NOT create a GitHub issue. Track it in your local state file to retry later.
     - If `overseer-cli` fails with an error stating `limit_reached`, DO NOT comment on the PR, and do not mark it as handled. Simply defer it for later.
