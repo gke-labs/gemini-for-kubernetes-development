@@ -196,7 +196,8 @@ func runChore(ctx context.Context, name string, file string) error {
 	if !isChoreAllowed(overseer.Spec.Chores, chore.Name) {
 		choresMode := os.Getenv("CHORES_MODE")
 		if choresMode == "dryrun" {
-			fmt.Printf("[dryrun] Would delete sandbox %s for excluded/not-included chore %s\n", sandboxName, chore.Name)
+			fmt.Printf("[dryrun] Ensuring sandbox %s is deleted for excluded/not-included chore %s\n", sandboxName, chore.Name)
+			_ = deleteChoreSandbox(ctx, kubeClient, namespace, sandboxName)
 			return nil
 		}
 		fmt.Printf("Chore %s is excluded or not included. Ensuring sandbox is deleted.\n", chore.Name)
@@ -979,17 +980,20 @@ func runReconcile(ctx context.Context) error {
 
 	// 1. Get current chores in .agents/
 	currentChores := make(map[string]bool)
-	files, err := os.ReadDir(".agents")
-	if err == nil {
-		for _, f := range files {
-			if f.IsDir() {
-				continue
-			}
-			if strings.HasSuffix(f.Name(), ".yaml") || strings.HasSuffix(f.Name(), ".yml") || strings.HasSuffix(f.Name(), ".md") {
-				chore, err := parseChore(".agents/" + f.Name())
-				if err == nil && chore.Name != "" {
-					if isChoreAllowed(overseer.Spec.Chores, chore.Name) {
-						currentChores[slugify(chore.Name)] = true
+	choresMode := os.Getenv("CHORES_MODE")
+	if choresMode != "disabled" && choresMode != "dryrun" {
+		files, err := os.ReadDir(".agents")
+		if err == nil {
+			for _, f := range files {
+				if f.IsDir() {
+					continue
+				}
+				if strings.HasSuffix(f.Name(), ".yaml") || strings.HasSuffix(f.Name(), ".yml") || strings.HasSuffix(f.Name(), ".md") {
+					chore, err := parseChore(".agents/" + f.Name())
+					if err == nil && chore.Name != "" {
+						if isChoreAllowed(overseer.Spec.Chores, chore.Name) {
+							currentChores[slugify(chore.Name)] = true
+						}
 					}
 				}
 			}
@@ -1006,17 +1010,16 @@ func runReconcile(ctx context.Context) error {
 		return fmt.Errorf("failed to list chore sandboxes: %w", err)
 	}
 
-	// 3. Delete sandboxes for chores that are no longer present or are excluded
-	choresMode := os.Getenv("CHORES_MODE")
+	// 3. Delete sandboxes for chores that are no longer present or are excluded (or if all chores are effectively disallowed due to mode)
 	for _, item := range sandboxList.Items {
 		choreSlug, found, _ := unstructured.NestedString(item.Object, "metadata", "labels", "chore.gemini.google.com/name")
 		if found {
 			if !currentChores[choreSlug] {
-				if choresMode == "dryrun" {
-					fmt.Printf("[dryrun] Would delete sandbox %s for chore %s (no longer present or excluded)\n", item.GetName(), choreSlug)
-					continue
+				reason := "no longer present or is excluded"
+				if choresMode == "disabled" || choresMode == "dryrun" {
+					reason = fmt.Sprintf("chores are %s", choresMode)
 				}
-				fmt.Printf("Chore %s is no longer present or is excluded. Deleting sandbox %s.\n", choreSlug, item.GetName())
+				fmt.Printf("Chore %s %s. Deleting sandbox %s.\n", choreSlug, reason, item.GetName())
 				if err := deleteChoreSandbox(ctx, kubeClient, namespace, item.GetName()); err != nil {
 					fmt.Printf("Warning: failed to delete sandbox %s: %v\n", item.GetName(), err)
 				}
