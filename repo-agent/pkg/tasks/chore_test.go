@@ -41,4 +41,19 @@ func TestChoreScriptTemplate(t *testing.T) {
 	if !bytes.Contains(w.Bytes(), []byte(expectedCloneCmd)) {
 		t.Errorf("Script does not contain expected git clone command. Got:\n%s", script)
 	}
+
+	expectedRunGemini := `function runGemini {`
+	if !bytes.Contains(w.Bytes(), []byte(expectedRunGemini)) {
+		t.Errorf("Script does not contain expected runGemini function. Got:\n%s", script)
+	}
+
+	expectedRestoreConfigDirFiles := `function restoreConfigDirFiles {`
+	if !bytes.Contains(w.Bytes(), []byte(expectedRestoreConfigDirFiles)) {
+		t.Errorf("Script does not contain expected restoreConfigDirFiles function. Got:\n%s", script)
+	}
+
+	expectedCommitChanges := `function commitChanges {`
+	if !bytes.Contains(w.Bytes(), []byte(expectedCommitChanges)) {
+		t.Errorf("Script does not contain expected commitChanges function. Got:\n%s", script)
+	}
 }

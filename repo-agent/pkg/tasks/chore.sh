@@ -95,18 +95,7 @@ function injectConfigDirData {
     popd > /dev/null
 }
 
-function runChore {
-    pushd "/workspaces/${REPO_NAME}" > /dev/null
-    
-    # Identify the base branch (usually main or master)
-    BASE_BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null || echo "main")
-    
-    # Create a unique branch for this chore run
-    SLUGIFIED_NAME=$(echo "${CHORE_NAME}" | tr '[:upper:]' '[:lower:]' | tr -c '[:alnum:]' '-' | sed 's/^-//;s/-$//')
-    BRANCH_NAME="chore/${SLUGIFIED_NAME}-$(date +%Y%m%d-%H%M%S)"
-    
-    git checkout -b "${BRANCH_NAME}"
-
+function runGemini {
     echo "Running gemini for chore: ${CHORE_NAME}"
     set +x
     export GEMINI_API_KEY="${GEMINI_API_KEY}"
@@ -117,7 +106,29 @@ function runChore {
         echo "Gemini execution encountered errors, but we will check for changes anyway."
     fi
     set -x
+}
 
+function restoreConfigDirFiles {
+    if [ -d "/configdir" ] && [ "$(ls -A /configdir)" ]; then
+      echo "Restoring files changed by configdir injection..."
+      pushd "/configdir" > /dev/null
+      find . -type f -print0 | while IFS= read -r -d '' file; do
+          rel_file="${file#./}"
+          pushd "/workspaces/${REPO_NAME}" > /dev/null
+          if git rev-parse --verify "${BASE_BRANCH}:${rel_file}" >/dev/null 2>&1; then
+              echo "Restoring tracked file: $rel_file"
+              git checkout "${BASE_BRANCH}" -- "$rel_file"
+          else
+              echo "Removing untracked file: $rel_file"
+              rm -f "$rel_file"
+          fi
+          popd > /dev/null
+      done
+      popd > /dev/null
+    fi
+}
+
+function commitChanges {
     # Check for changes (uncommitted or committed on this branch)
     # If gemini --yolo committed, we can check changes against BASE_BRANCH
     if [ -n "$(git status --porcelain)" ] || [ "$(git rev-parse HEAD)" != "$(git rev-parse ${BASE_BRANCH})" ]; then
@@ -178,7 +189,26 @@ ${COMMIT_MSG}"
         echo "No changes detected, no PR created."
         echo "No changes detected, no PR created." > "$(dirname "${PROMPT_FILE}")/agent-output.txt"
     fi
+}
 
+function runChore {
+    pushd "/workspaces/${REPO_NAME}" > /dev/null
+    
+    # Identify the base branch (usually main or master)
+    BASE_BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null || echo "main")
+    
+    # Create a unique branch for this chore run
+    SLUGIFIED_NAME=$(echo "${CHORE_NAME}" | tr '[:upper:]' '[:lower:]' | tr -c '[:alnum:]' '-' | sed 's/^-//;s/-$//')
+    BRANCH_NAME="chore/${SLUGIFIED_NAME}-$(date +%Y%m%d-%H%M%S)"
+    
+    git checkout -b "${BRANCH_NAME}"
+
+    runGemini
+    
+    restoreConfigDirFiles
+
+    commitChanges
+    
     popd > /dev/null
 }
 
