@@ -63,7 +63,21 @@ spec:
                 type: integer
               repo:
                 properties:
-                  mode:
+                  issueMode:
+                    default: enabled
+                    enum:
+                    - enabled
+                    - disabled
+                    - dryrun
+                    type: string
+                  prMode:
+                    default: enabled
+                    enum:
+                    - enabled
+                    - disabled
+                    - dryrun
+                    type: string
+                  reviewMode:
                     default: enabled
                     enum:
                     - enabled

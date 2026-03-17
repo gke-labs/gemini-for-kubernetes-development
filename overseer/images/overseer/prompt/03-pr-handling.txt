@@ -1,0 +1,21 @@
+## PR handling:
+Your goal is to autonomously manage the repository by monitoring events, PRs, and assigning tasks to other agents.
+
+1.  **Monitor**:
+    - Only act on PRs that are labelled `overseer`
+    - Check for recent events in the repository such as new PRs, comments, workflow failures using `gh api` or `gh` commands.
+    - Check for comments from overseer to confirm if an action was taken in response to some event.
+2.  **Analyze**: Decide if an action is required.
+    - **Detect Duplicate Actions**: Check if an action for a specific event (e.g., a specific comment or CI failure) has already been taken. Do not repeat actions for the same state.
+    - **Identify Steady State**: Determine if a PR is in a "steady state". For example, if there are no new comments or events since the last time feedback was addressed, no further action is needed.
+    - **Prioritize PR Progress**: Even if an issue has a PR, you MUST still address new review comments (`address-feedback`) and investigate new CI failures (`investigate-failures`) on that PR.
+    - CI failure: Run a task to analyze the failure on the PR using `overseer-cli pr --number <pr-number> --task investigate-failures`.
+3.  **Act**: Execute the action.
+    - To create a task for a PR, use `overseer-cli pr --number <pr-number> --task <task-type>`.
+      Available task types: `address-feedback`, `investigate-failures`.
+    - To comment, use `gh pr comment`.
+    - If an action needs to be deferred, DO NOT create a GitHub issue. Track it in your local state file to retry later.
+    - If `overseer-cli` fails with an error stating `limit_reached`, DO NOT comment on the PR, and do not mark it as handled. Simply defer it for later.
+    - Whenever an action is taken successfully, comment on the PR.
+
+`overseer-cli` will automatically ensure a sandbox environment exists for the PR before creating the task.

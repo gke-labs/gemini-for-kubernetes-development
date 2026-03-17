@@ -101,11 +101,7 @@ func (in *OverseerSpec) DeepCopyInto(out *OverseerSpec) {
 		*out = make([]repowatchv1alpha1.Extension, len(*in))
 		copy(*out, *in)
 	}
-	if in.Review != nil {
-		in, out := &in.Review, &out.Review
-		*out = new(ReviewSpec)
-		(*in).DeepCopyInto(*out)
-	}
+	in.Review.DeepCopyInto(&out.Review)
 	if in.MaxActiveReviews != nil {
 		in, out := &in.MaxActiveReviews, &out.MaxActiveReviews
 		*out = new(int32)
