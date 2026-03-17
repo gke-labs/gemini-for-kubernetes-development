@@ -124,7 +124,7 @@ func RunCreate(ctx context.Context, opt CreateOptions) error {
 		HTMLURL:  htmlURL,
 		Branch:   opt.Branch,
 		// Default service account for CLI created sandboxes
-		ServiceAccountName: "dev-sandbox",
+		ServiceAccountName: "issue-sandbox",
 		DotFilesRepo:       opt.Dotfiles,
 
 		Origin:      originURL,

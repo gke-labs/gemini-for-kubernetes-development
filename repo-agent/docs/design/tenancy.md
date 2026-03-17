@@ -38,7 +38,6 @@ The application uses [Gorilla Sessions](https://github.com/gorilla/sessions) to 
 When a user's namespace is bootstrapped, the following Service Accounts are created within it:
 *   `review-sandbox`
 *   `issue-sandbox`
-*   `dev-sandbox`
 
 These Service Accounts are bound to corresponding **ClusterRoles** (e.g., `review-sandbox`, `configdir-controller`), granting the sandboxes specific permissions needed to operate (like reading secrets or syncing config directories) *only within their namespace*.
 
