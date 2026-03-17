@@ -405,6 +405,8 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 		HTTPEnabled: true,
 		Replicas:    1,
 
+		ServiceAccountName: "dev-sandbox",
+
 		IdeaID:         req.IdeaID,
 		Approach:       req.Approach,
 		ParentApproach: req.ParentApproach,
