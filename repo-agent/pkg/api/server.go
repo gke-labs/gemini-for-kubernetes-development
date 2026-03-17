@@ -98,6 +98,18 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 		api.GET("/repo/:repo/dev/:name/tasks/:taskID/logs", s.getDevTaskLogs)
 		api.POST("/feedback", s.submitFeedback)
 		api.GET("/proxy", s.proxy)
+
+		// Overseer routes (admin only)
+		overseer := api.Group("/overseers")
+		overseer.Use(s.Auth.AdminMiddleware())
+		{
+			overseer.GET("", s.getOverseers)
+			overseer.GET("/:name", s.getOverseer)
+			overseer.GET("/:name/chores", s.getOverseerChores)
+			overseer.GET("/:name/logs", s.getOverseerLogs)
+			overseer.GET("/:name/chores/:choreName/logs", s.getChoreLogs)
+			overseer.GET("/:name/chores/:choreName/tasks", s.getChoreTasks)
+		}
 	}
 
 	// Protected terminal routes (WebSocket)
