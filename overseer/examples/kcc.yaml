@@ -13,7 +13,9 @@ spec:
   image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
   configdirRef: kcc-agents
   repo:
-    mode: disabled
+    issueMode: disabled
+    prMode: enabled
+    reviewMode: disabled
 
 ---
 apiVersion: configdir.gke.io/v1alpha1

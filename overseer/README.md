@@ -57,7 +57,9 @@ spec:
   # this is important if you dont want overseer to start sending PRs and reviews on a 
   # public repo
   repo:
-    mode: disabled
+    issueMode: disabled
+    prMode: disabled
+    reviewMode: disabled
 ```
 
 Apply it to your cluster:

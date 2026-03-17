@@ -341,8 +341,8 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string) er
 		return fmt.Errorf("OVERSEER_NAME and NAMESPACE environment variables must be set")
 	}
 
-	repoMode := os.Getenv("REPO_MODE")
-	if repoMode == "dryrun" {
+	issueMode := os.Getenv("ISSUE_MODE")
+	if issueMode == "dryrun" {
 		if number != 0 {
 			fmt.Printf("[dryrun] Would create/ensure sandbox and task %s for issue %d in Overseer %s\n", taskType, number, overseerName)
 		} else if prNumber != 0 {
@@ -470,8 +470,14 @@ func runPR(ctx context.Context, number int, taskType string, submit bool) error 
 		return fmt.Errorf("OVERSEER_NAME and NAMESPACE environment variables must be set")
 	}
 
-	repoMode := os.Getenv("REPO_MODE")
-	if repoMode == "dryrun" {
+	mode := ""
+	if submit || taskType == "review" {
+		mode = os.Getenv("REVIEW_MODE")
+	} else {
+		mode = os.Getenv("PR_MODE")
+	}
+
+	if mode == "dryrun" {
 		fmt.Printf("[dryrun] Would create/ensure sandbox and task %s for PR %d in Overseer %s\n", taskType, number, overseerName)
 		return nil
 	}

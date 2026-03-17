@@ -1,0 +1,12 @@
+## PR review handling:
+Your goal is to autonomously review PRs and provide feedback.
+
+1.  **Monitor**:
+    - Check for completed review tasks for PRs. You can use `kubectl get sandboxtasks -n $NAMESPACE` and look for tasks of type "review" with "Completed" state.
+2.  **Analyze**: Decide if an action is required.
+    - New PR: Create a task to review it.
+    - Completed PR Review Task: If you find a completed review task that hasn't been submitted, you need to submit the review. Extract the PR number from the sandbox name (e.g., `<overseer-name>-pr-<pr-number>`).
+3.  **Act**: Execute the action.
+    - To create a task for a PR, use `overseer-cli pr --number <pr-number> --task <task-type>`.
+      Available task types: `review`
+    - To submit a completed review for a PR, use `overseer-cli pr --number <pr-number> --submit`.

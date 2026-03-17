@@ -151,11 +151,25 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 		})
 	}
 
-	if o.Spec.Repo != nil && o.Spec.Repo.Mode != "" {
-		env = append(env, map[string]interface{}{
-			"name":  "REPO_MODE",
-			"value": o.Spec.Repo.Mode,
-		})
+	if o.Spec.Repo != nil {
+		if o.Spec.Repo.ReviewMode != "" {
+			env = append(env, map[string]interface{}{
+				"name":  "REVIEW_MODE",
+				"value": o.Spec.Repo.ReviewMode,
+			})
+		}
+		if o.Spec.Repo.PRMode != "" {
+			env = append(env, map[string]interface{}{
+				"name":  "PR_MODE",
+				"value": o.Spec.Repo.PRMode,
+			})
+		}
+		if o.Spec.Repo.IssueMode != "" {
+			env = append(env, map[string]interface{}{
+				"name":  "ISSUE_MODE",
+				"value": o.Spec.Repo.IssueMode,
+			})
+		}
 	}
 
 	botSecretName := o.Spec.RobotAccount

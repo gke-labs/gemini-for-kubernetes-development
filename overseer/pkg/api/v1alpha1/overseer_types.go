@@ -32,11 +32,23 @@ type ChoresSpec struct {
 
 // RepoSpec defines the configuration for Overseer repo (issue and PR handling).
 type RepoSpec struct {
-	// Mode defines the mode for repo handling (issue and PR handling).
+	// ReviewMode defines the mode for handling PR reviews.
 	// +kubebuilder:validation:Enum=enabled;disabled;dryrun
 	// +kubebuilder:default=enabled
 	// +kubebuilder:validation:Optional
-	Mode string `json:"mode,omitempty"`
+	ReviewMode string `json:"reviewMode,omitempty"`
+
+	// PRMode defines the mode for handling PRs.
+	// +kubebuilder:validation:Enum=enabled;disabled;dryrun
+	// +kubebuilder:default=enabled
+	// +kubebuilder:validation:Optional
+	PRMode string `json:"prMode,omitempty"`
+
+	// IssueMode defines the mode for handling issues.
+	// +kubebuilder:validation:Enum=enabled;disabled;dryrun
+	// +kubebuilder:default=enabled
+	// +kubebuilder:validation:Optional
+	IssueMode string `json:"issueMode,omitempty"`
 }
 
 type ReviewSpec struct {
@@ -102,7 +114,7 @@ type OverseerSpec struct {
 
 	// Review configuration for PRs
 	// +kubebuilder:validation:Optional
-	Review *ReviewSpec `json:"review,omitempty"`
+	Review ReviewSpec `json:"review"`
 
 	// MaxActiveReviews limits the number of concurrent review sandboxes.
 	// +kubebuilder:validation:Optional
