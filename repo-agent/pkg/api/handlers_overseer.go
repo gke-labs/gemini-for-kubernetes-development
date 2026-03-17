@@ -21,7 +21,7 @@ func (s *Server) getOverseers(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list overseers"})
 		return
 	}
-	
+
 	items := make([]map[string]interface{}, len(overseers.Items))
 	for i, ov := range overseers.Items {
 		items[i] = ov.Object
@@ -49,7 +49,7 @@ func (s *Server) getOverseerChores(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list chore sandboxes"})
 		return
 	}
-	
+
 	items := make([]map[string]interface{}, len(sandboxes.Items))
 	for i, sb := range sandboxes.Items {
 		items[i] = sb.Object
@@ -60,7 +60,7 @@ func (s *Server) getOverseerChores(c *gin.Context) {
 func (s *Server) getOverseerLogs(c *gin.Context) {
 	name := c.Param("name")
 	namespace := fmt.Sprintf("overseer-%s", name)
-	
+
 	// Find pod by label
 	pods, err := s.K8sManager.Clientset.CoreV1().Pods(namespace).List(c.Request.Context(), v1.ListOptions{
 		LabelSelector: fmt.Sprintf("sandbox=overseer-%s", name),
@@ -95,8 +95,8 @@ func (s *Server) getChoreLogs(c *gin.Context) {
 	taskID := c.Query("taskID")
 
 	namespace := fmt.Sprintf("overseer-%s", overseerName)
-	
-	// If taskID is provided, proxy to agentserver. 
+
+	// If taskID is provided, proxy to agentserver.
 	// Otherwise, return pod logs.
 
 	if taskID != "" {
@@ -139,7 +139,9 @@ func (s *Server) getChoreLogs(c *gin.Context) {
 	defer readCloser.Close()
 
 	c.Header("Content-Type", "text/plain")
-	io.Copy(c.Writer, readCloser)
+	if _, err := io.Copy(c.Writer, readCloser); err != nil {
+		klog.Errorf("failed to copy logs to response: %v", err)
+	}
 }
 
 func (s *Server) getChoreTasks(c *gin.Context) {

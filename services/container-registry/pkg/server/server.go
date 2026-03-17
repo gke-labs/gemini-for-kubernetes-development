@@ -287,7 +287,9 @@ func (s *Server) handleBlob(name string, w http.ResponseWriter, r *http.Request)
 				return
 			}
 			defer f.Close()
-			io.Copy(w, f)
+			if _, err := io.Copy(w, f); err != nil {
+				log.Printf("failed to copy blob to response: %v", err)
+			}
 		} else {
 			w.WriteHeader(http.StatusOK)
 		}
