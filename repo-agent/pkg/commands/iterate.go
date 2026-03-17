@@ -21,6 +21,7 @@ type IterateCommand struct {
 	// Configurable options
 	RepoURL         string
 	BranchName      string
+	PRID            string
 	AgentPrompt     string
 	GithubUserLogin string
 	GithubUserEmail string
@@ -58,6 +59,7 @@ func BuildIterateCommand() *cobra.Command {
 
 	cmd.Flags().StringVar(&iterCommand.RepoURL, "repo-url", os.Getenv("GIT_HTML_URL"), "GitHub repo URL")
 	cmd.Flags().StringVar(&iterCommand.BranchName, "branch-name", os.Getenv("BRANCH_NAME"), "Branch name")
+	cmd.Flags().StringVar(&iterCommand.PRID, "pr-id", "", "PR ID")
 	cmd.Flags().StringVar(&iterCommand.AgentPrompt, "agent-prompt", os.Getenv("AGENT_PROMPT"), "Agent prompt")
 	cmd.Flags().StringVar(&iterCommand.GithubUserLogin, "github-user-login", os.Getenv("GITHUB_USER_LOGIN"), "Github user login")
 	cmd.Flags().StringVar(&iterCommand.GithubUserEmail, "github-user-email", os.Getenv("GITHUB_USER_EMAIL"), "Github user email")
@@ -69,6 +71,12 @@ func BuildIterateCommand() *cobra.Command {
 }
 
 func (c *IterateCommand) InitDefaults() {
+	if c.PRID == "" {
+		c.PRID = os.Getenv("PRID")
+	}
+	if c.PRID == "" {
+		c.PRID = os.Getenv("PULL_REQUEST_ID")
+	}
 	if c.WorkspaceDir == "" {
 		c.WorkspaceDir = "/workspaces"
 	}
@@ -150,6 +158,8 @@ func (c *IterateCommand) Run(ctx context.Context) error {
 		Repo:        c.repo,
 		User:        c.user,
 		AgentPrompt: c.AgentPrompt,
+		BranchName:  c.BranchName,
+		PRID:        c.PRID,
 		PromptFile:  promptPath,
 		Models:      strings.Split(c.Model, ","),
 	}
