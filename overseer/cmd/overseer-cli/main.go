@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -57,6 +58,7 @@ func main() {
 	rootCmd.AddCommand(buildIssueCommand())
 	rootCmd.AddCommand(buildPRCommand())
 	rootCmd.AddCommand(buildChoreCommand())
+	rootCmd.AddCommand(buildReconcileCommand())
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -124,6 +126,17 @@ func buildChoreCommand() *cobra.Command {
 	return cmd
 }
 
+func buildReconcileCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "reconcile",
+		Short: "Reconcile chores: delete sandboxes for chores that are excluded or no longer present",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			return runReconcile(context.Background())
+		},
+	}
+	return cmd
+}
+
 type ChoreDefinition struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
@@ -145,12 +158,6 @@ func runChore(ctx context.Context, name string, file string) error {
 	}
 	if chore.Name == "" {
 		return fmt.Errorf("chore name is required (either in frontmatter or via --name)")
-	}
-
-	choresMode := os.Getenv("CHORES_MODE")
-	if choresMode == "dryrun" {
-		fmt.Printf("[dryrun] Would create sandbox and task chore for chore %s in Overseer %s\n", chore.Name, overseerName)
-		return nil
 	}
 
 	cfg, err := config.GetConfig()
@@ -185,6 +192,23 @@ func runChore(ctx context.Context, name string, file string) error {
 	}
 
 	sandboxName := fmt.Sprintf("chore-%s-%s", overseer.Name, slugify(chore.Name))
+
+	if !isChoreAllowed(overseer.Spec.Chores, chore.Name) {
+		choresMode := os.Getenv("CHORES_MODE")
+		if choresMode == "dryrun" {
+			fmt.Printf("[dryrun] Ensuring sandbox %s is deleted for excluded/not-included chore %s\n", sandboxName, chore.Name)
+			_ = deleteChoreSandbox(ctx, kubeClient, namespace, sandboxName)
+			return nil
+		}
+		fmt.Printf("Chore %s is excluded or not included. Ensuring sandbox is deleted.\n", chore.Name)
+		return deleteChoreSandbox(ctx, kubeClient, namespace, sandboxName)
+	}
+
+	choresMode := os.Getenv("CHORES_MODE")
+	if choresMode == "dryrun" {
+		fmt.Printf("[dryrun] Would create sandbox and task chore for chore %s in Overseer %s\n", chore.Name, overseerName)
+		return nil
+	}
 
 	owner, repo, err := parseRepoURL(overseer.Spec.RepoURL)
 	if err != nil {
@@ -917,4 +941,133 @@ func getOverseer(ctx context.Context, dynClient dynamic.Interface, name string) 
 		Resource: "overseers",
 	}
 	return dynClient.Resource(gvr).Get(ctx, name, metav1.GetOptions{})
+}
+
+func runReconcile(ctx context.Context) error {
+	if overseerName == "" || namespace == "" {
+		return fmt.Errorf("OVERSEER_NAME and NAMESPACE environment variables must be set")
+	}
+
+	cfg, err := config.GetConfig()
+	if err != nil {
+		return fmt.Errorf("unable to get kubeconfig: %w", err)
+	}
+
+	dynClient, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("unable to create dynamic client: %w", err)
+	}
+
+	clientset, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("unable to create clientset: %w", err)
+	}
+
+	kubeClient := &clients.KubernetesClient{
+		DynamicClient: dynClient,
+		Clientset:     clientset,
+	}
+
+	rwUnstructured, err := getOverseer(ctx, kubeClient.DynamicClient, overseerName)
+	if err != nil {
+		return fmt.Errorf("failed to get Overseer %s: %w", overseerName, err)
+	}
+
+	var overseer overseerv1alpha1.Overseer
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(rwUnstructured.Object, &overseer); err != nil {
+		return fmt.Errorf("failed to convert Overseer: %w", err)
+	}
+
+	// 1. Get current chores in .agents/
+	currentChores := make(map[string]bool)
+	choresMode := os.Getenv("CHORES_MODE")
+	if choresMode != "disabled" && choresMode != "dryrun" {
+		files, err := os.ReadDir(".agents")
+		if err == nil {
+			for _, f := range files {
+				if f.IsDir() {
+					continue
+				}
+				if strings.HasSuffix(f.Name(), ".yaml") || strings.HasSuffix(f.Name(), ".yml") || strings.HasSuffix(f.Name(), ".md") {
+					chore, err := parseChore(".agents/" + f.Name())
+					if err == nil && chore.Name != "" {
+						if isChoreAllowed(overseer.Spec.Chores, chore.Name) {
+							currentChores[slugify(chore.Name)] = true
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// 2. List all chore sandboxes
+	labelSelector := fmt.Sprintf("review.gemini.google.com/overseer=%s,sandbox.gemini.google.com/type=chore", overseer.Name)
+	listOptions := metav1.ListOptions{
+		LabelSelector: labelSelector,
+	}
+	sandboxList, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).List(ctx, listOptions)
+	if err != nil {
+		return fmt.Errorf("failed to list chore sandboxes: %w", err)
+	}
+
+	// 3. Delete sandboxes for chores that are no longer present or are excluded (or if all chores are effectively disallowed due to mode)
+	for _, item := range sandboxList.Items {
+		choreSlug, found, _ := unstructured.NestedString(item.Object, "metadata", "labels", "chore.gemini.google.com/name")
+		if found {
+			if !currentChores[choreSlug] {
+				reason := "no longer present or is excluded"
+				if choresMode == "disabled" || choresMode == "dryrun" {
+					reason = fmt.Sprintf("chores are %s", choresMode)
+				}
+				fmt.Printf("Chore %s %s. Deleting sandbox %s.\n", choreSlug, reason, item.GetName())
+				if err := deleteChoreSandbox(ctx, kubeClient, namespace, item.GetName()); err != nil {
+					fmt.Printf("Warning: failed to delete sandbox %s: %v\n", item.GetName(), err)
+				}
+			}
+		}
+	}
+
+	fmt.Println("Reconciliation complete.")
+	return nil
+}
+
+func isChoreAllowed(spec *overseerv1alpha1.ChoresSpec, name string) bool {
+	if spec == nil {
+		return true
+	}
+	if len(spec.Exclude) > 0 {
+		for _, e := range spec.Exclude {
+			if e == name {
+				return false
+			}
+		}
+	}
+	if len(spec.Include) > 0 {
+		for _, i := range spec.Include {
+			if i == name {
+				return true
+			}
+		}
+		return false
+	}
+	return true
+}
+
+func deleteChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, sandboxName string) error {
+	fmt.Printf("Deleting sandbox %s...\n", sandboxName)
+	err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Delete(ctx, sandboxName, metav1.DeleteOptions{})
+	if err != nil && !errors.IsNotFound(err) {
+		// handle string check if errors package is not behaving as expected with dynamic client
+		if !strings.Contains(err.Error(), "not found") {
+			return err
+		}
+	}
+	// Also delete service
+	err = kubeClient.Clientset.CoreV1().Services(namespace).Delete(ctx, sandboxName, metav1.DeleteOptions{})
+	if err != nil && !errors.IsNotFound(err) {
+		if !strings.Contains(err.Error(), "not found") {
+			return err
+		}
+	}
+	return nil
 }

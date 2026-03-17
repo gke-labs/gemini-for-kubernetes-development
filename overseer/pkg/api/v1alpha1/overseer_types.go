@@ -28,6 +28,15 @@ type ChoresSpec struct {
 	// +kubebuilder:default=enabled
 	// +kubebuilder:validation:Optional
 	Mode string `json:"mode,omitempty"`
+
+	// Include specifies a list of chore names to include.
+	// If present, only chores in this list will be started.
+	// +kubebuilder:validation:Optional
+	Include []string `json:"include,omitempty"`
+
+	// Exclude specifies a list of chore names to exclude.
+	// +kubebuilder:validation:Optional
+	Exclude []string `json:"exclude,omitempty"`
 }
 
 // RepoSpec defines the configuration for Overseer repo (issue and PR handling).
