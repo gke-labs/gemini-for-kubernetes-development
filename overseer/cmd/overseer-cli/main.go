@@ -70,18 +70,20 @@ func buildIssueCommand() *cobra.Command {
 	var number int
 	var prNumber int
 	var taskType string
+	var prompt string
 
 	cmd := &cobra.Command{
 		Use:   "issue",
 		Short: "Create/ensure sandbox and task for an issue",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runIssue(context.Background(), number, prNumber, taskType)
+			return runIssue(context.Background(), number, prNumber, taskType, prompt)
 		},
 	}
 
 	cmd.Flags().IntVar(&number, "number", 0, "Issue number")
 	cmd.Flags().IntVar(&prNumber, "pr", 0, "PR number to extract issue from")
 	cmd.Flags().StringVar(&taskType, "task", "fix-issue", "Task type (e.g., fix-issue, triage-issue)")
+	cmd.Flags().StringVar(&prompt, "prompt", "", "Custom prompt for the task")
 
 	return cmd
 }
@@ -90,18 +92,20 @@ func buildPRCommand() *cobra.Command {
 	var number int
 	var taskType string
 	var submit bool
+	var prompt string
 
 	cmd := &cobra.Command{
 		Use:   "pr",
 		Short: "Create/ensure sandbox and task for a PR",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runPR(context.Background(), number, taskType, submit)
+			return runPR(context.Background(), number, taskType, submit, prompt)
 		},
 	}
 
 	cmd.Flags().IntVar(&number, "number", 0, "PR number")
 	cmd.Flags().StringVar(&taskType, "task", "review", "Task type (e.g., review, address-feedback, investigate-failures)")
 	cmd.Flags().BoolVar(&submit, "submit", false, "Submit agent draft from task as review")
+	cmd.Flags().StringVar(&prompt, "prompt", "", "Custom prompt for the task")
 	_ = cmd.MarkFlagRequired("number")
 
 	return cmd
@@ -360,7 +364,7 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 	return err
 }
 
-func runIssue(ctx context.Context, number int, prNumber int, taskType string) error {
+func runIssue(ctx context.Context, number int, prNumber int, taskType string, customPrompt string) error {
 	if overseerName == "" || namespace == "" {
 		return fmt.Errorf("OVERSEER_NAME and NAMESPACE environment variables must be set")
 	}
@@ -472,10 +476,15 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string) er
 
 	// Create Task
 	fmt.Printf("Creating task %s for sandbox %s...\n", taskType, sandboxName)
+	agentPrompt := customPrompt
+	if agentPrompt == "" {
+		agentPrompt = overseer.Spec.IssuePrompt
+	}
+
 	params := map[string]string{
 		"ISSUE_URL":       issue.GetHTMLURL(),
 		"PULL_REQUEST_ID": fmt.Sprintf("%d", prNumber),
-		"AGENT_PROMPT":    overseer.Spec.IssuePrompt,
+		"AGENT_PROMPT":    agentPrompt,
 	}
 	params["model"] = strings.Join(IssueModelsOrder, ",")
 
@@ -488,7 +497,7 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string) er
 	return nil
 }
 
-func runPR(ctx context.Context, number int, taskType string, submit bool) error {
+func runPR(ctx context.Context, number int, taskType string, submit bool, customPrompt string) error {
 	// Similar to runIssue but for PRs
 	if overseerName == "" || namespace == "" {
 		return fmt.Errorf("OVERSEER_NAME and NAMESPACE environment variables must be set")
@@ -594,10 +603,15 @@ func runPR(ctx context.Context, number int, taskType string, submit bool) error 
 
 	// Create Task
 	fmt.Printf("Creating task %s for sandbox %s...\n", taskType, sandboxName)
+	agentPrompt := customPrompt
+	if agentPrompt == "" {
+		agentPrompt = overseer.Spec.Review.Prompt
+	}
+
 	params := map[string]string{
 		"PULL_REQUEST_ID": fmt.Sprintf("%d", number),
 		"ISSUE_URL":       pr.GetHTMLURL(),
-		"AGENT_PROMPT":    overseer.Spec.Review.Prompt,
+		"AGENT_PROMPT":    agentPrompt,
 	}
 
 	err = manager.CreateSandboxTask(ctx, namespace, sandboxName, "Sandbox", taskType, params)
