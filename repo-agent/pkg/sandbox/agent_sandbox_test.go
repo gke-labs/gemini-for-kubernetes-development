@@ -6,9 +6,10 @@ import (
 
 func TestNewAgentSandbox(t *testing.T) {
 	tests := []struct {
-		name              string
-		dindSupport       string
-		workspaceDiskSize string
+		name               string
+		dindSupport        string
+		workspaceDiskSize  string
+		serviceAccountName string
 	}{
 		{
 			name:        "DindSupportNone",
@@ -34,15 +35,20 @@ func TestNewAgentSandbox(t *testing.T) {
 			name:              "WorkspaceDiskSizeDefault",
 			workspaceDiskSize: "",
 		},
+		{
+			name:               "ServiceAccountName",
+			serviceAccountName: "test-sa",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			opt := AgentSandboxOptions{
 				DevSandboxOptions: DevSandboxOptions{
-					Name:              "test",
-					Namespace:         "default",
-					WorkspaceDiskSize: tt.workspaceDiskSize,
+					Name:               "test",
+					Namespace:          "default",
+					WorkspaceDiskSize:  tt.workspaceDiskSize,
+					ServiceAccountName: tt.serviceAccountName,
 				},
 				DindSupport: tt.dindSupport,
 			}
@@ -79,6 +85,14 @@ func TestNewAgentSandbox(t *testing.T) {
 
 			podTemplate := spec["podTemplate"].(map[string]interface{})
 			podSpec := podTemplate["spec"].(map[string]interface{})
+
+			// Check ServiceAccountName
+			saName := podSpec["serviceAccountName"]
+			if tt.serviceAccountName != "" {
+				if saName != tt.serviceAccountName {
+					t.Errorf("expected serviceAccountName %s, got %v", tt.serviceAccountName, saName)
+				}
+			}
 
 			// Check runtimeClassName
 			runtimeClassName := podSpec["runtimeClassName"]
