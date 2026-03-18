@@ -38,6 +38,11 @@ var (
 		Version:  "v1alpha1",
 		Resource: "sandboxes",
 	}
+	OverseerGVR = schema.GroupVersionResource{
+		Group:    "overseer.gemini.google.com",
+		Version:  "v1alpha1",
+		Resource: "overseers",
+	}
 )
 
 type Manager struct {
@@ -48,6 +53,20 @@ type Manager struct {
 
 func NewManager(kube *clients.KubernetesClient) *Manager {
 	return &Manager{Client: kube.DynamicClient, Clientset: kube.Clientset, KubeClient: kube}
+}
+
+func (m *Manager) ListOverseers(ctx context.Context) (*unstructured.UnstructuredList, error) {
+	return m.Client.Resource(OverseerGVR).List(ctx, v1.ListOptions{})
+}
+
+func (m *Manager) GetOverseer(ctx context.Context, name string) (*unstructured.Unstructured, error) {
+	return m.Client.Resource(OverseerGVR).Get(ctx, name, v1.GetOptions{})
+}
+
+func (m *Manager) ListSandboxes(ctx context.Context, namespace string, labelSelector string) (*unstructured.UnstructuredList, error) {
+	return m.Client.Resource(SandboxGVR).Namespace(namespace).List(ctx, v1.ListOptions{
+		LabelSelector: labelSelector,
+	})
 }
 
 func (m *Manager) GetConfigDir(ctx context.Context, namespace, name string) (*unstructured.Unstructured, error) {

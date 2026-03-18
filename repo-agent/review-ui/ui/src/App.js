@@ -12,13 +12,15 @@ import AddRepo from './AddRepo';
 import DeleteRepo from './DeleteRepo';
 import Settings from './Settings';
 import UpdateRepo from './UpdateRepo';
+import Overseer from './Overseer';
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isGuest, setIsGuest] = useState(false);
   const [isLoadingAuth, setIsLoadingAuth] = useState(true);
   const [user, setUser] = useState(null);
-  const [view, setView] = useState('dashboard'); // 'dashboard', 'settings', 'add_repo'
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [view, setView] = useState('dashboard'); // 'dashboard', 'settings', 'add_repo', 'overseer'
   const [githubAuthEnabled, setGithubAuthEnabled] = useState(false);
   const [showGithubConfig, setShowGithubConfig] = useState(false);
   const [githubClientId, setGithubClientId] = useState('');
@@ -128,6 +130,7 @@ function App() {
       .then(data => {
         setIsAuthenticated(true);
         setUser(data.user);
+        setIsAdmin(data.isAdmin);
         setIsLoadingAuth(false);
       })
       .catch(() => {
@@ -1399,6 +1402,11 @@ function App() {
         <div className="header-right">
           {user && <span className="user-greeting">Hi, {user}</span>}
           {isGuest && <span className="user-greeting">Guest</span>}
+          {isAdmin && (
+            <button className="btn" onClick={() => setView('overseer')} style={{marginRight: '10px', backgroundColor: '#6f42c1', color: 'white'}}>
+                Overseer
+            </button>
+          )}
           <button className="btn" onClick={handleFeedbackClick} style={{marginRight: '10px', backgroundColor: '#28a745'}}>Feedback</button>
           <button className="btn" onClick={() => setView('settings')} style={{marginRight: '10px'}}>Settings</button>
           <button className="btn btn-delete" onClick={handleLogout} style={{marginRight: '20px'}}>Logout</button>
@@ -1421,6 +1429,7 @@ function App() {
       ))}
 
       {view === 'dashboard' && renderDashboard()}
+      {view === 'overseer' && <Overseer onBack={() => setView('dashboard')} />}
       {view === 'settings' && <Settings onBack={() => setView('dashboard')} />}
       {view === 'add_repo' && <AddRepo onCancel={() => setView('dashboard')} onRepoAdded={() => { fetchRepos(); setView('dashboard'); }} />}
       {view === 'update_repo' && <UpdateRepo repo={activeRepo} onCancel={() => setView('dashboard')} onRepoUpdated={() => { fetchRepos(); setView('dashboard'); }} onRepoDeleted={handleRepoDeleted} />}

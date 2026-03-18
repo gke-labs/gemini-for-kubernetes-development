@@ -330,6 +330,18 @@ func (a *Authenticator) UpdateGithubConfig(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
+func (a *Authenticator) AdminMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		user := a.GetUserFromContext(c)
+		if user == "" || !a.IsUserAdmin(user) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Only admins can access this resource"})
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
 func (a *Authenticator) Middleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		log := klog.FromContext(c.Request.Context())
