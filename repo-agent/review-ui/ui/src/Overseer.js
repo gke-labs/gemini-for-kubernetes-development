@@ -3,6 +3,7 @@ import './App.css';
 
 const Overseer = ({ onBack }) => {
     const [overseers, setOverseers] = useState([]);
+    const [error, setError] = useState(null);
     const [activeOverseer, setActiveOverseer] = useState(null);
     const [chores, setChores] = useState([]);
     const [activeChore, setActiveChore] = useState(null);
@@ -16,14 +17,29 @@ const Overseer = ({ onBack }) => {
 
     const fetchOverseers = useCallback(() => {
         fetch('/api/overseers')
-            .then(res => res.json())
+            .then(async res => {
+                if (!res.ok) {
+                    let errMsg = `HTTP error ${res.status}`;
+                    try {
+                        const errData = await res.json();
+                        if (errData && errData.error) errMsg = errData.error;
+                    } catch (e) {}
+                    throw new Error(errMsg);
+                }
+                return res.json();
+            })
             .then(data => {
+                setError(null);
                 setOverseers(data || []);
                 if (data && data.length > 0 && !activeOverseer) {
                     setActiveOverseer(data[0]);
                 }
             })
-            .catch(err => console.error("Failed to fetch overseers:", err));
+            .catch(err => {
+                console.error("Failed to fetch overseers:", err);
+                setError(err.message);
+                setOverseers([]);
+            });
     }, [activeOverseer]);
 
     useEffect(() => {
@@ -33,9 +49,15 @@ const Overseer = ({ onBack }) => {
     const fetchChores = useCallback(() => {
         if (!activeOverseer) return;
         fetch(`/api/overseers/${activeOverseer.metadata.name}/chores`)
-            .then(res => res.json())
+            .then(res => {
+                if (!res.ok) throw new Error("Failed to fetch chores");
+                return res.json();
+            })
             .then(data => setChores(data || []))
-            .catch(err => console.error("Failed to fetch chores:", err));
+            .catch(err => {
+                console.error("Failed to fetch chores:", err);
+                setChores([]);
+            });
     }, [activeOverseer]);
 
     useEffect(() => {
@@ -55,14 +77,20 @@ const Overseer = ({ onBack }) => {
     const fetchChoreTasks = useCallback(() => {
         if (!activeOverseer || !activeChore) return;
         fetch(`/api/overseers/${activeOverseer.metadata.name}/chores/${activeChore.metadata.name}/tasks`)
-            .then(res => res.json())
+            .then(res => {
+                if (!res.ok) throw new Error("Failed to fetch chore tasks");
+                return res.json();
+            })
             .then(data => {
                 setTasks(data || []);
                 if (data && data.length > 0 && !activeTask) {
                     setActiveTask(data[0]);
                 }
             })
-            .catch(err => console.error("Failed to fetch chore tasks:", err));
+            .catch(err => {
+                console.error("Failed to fetch chore tasks:", err);
+                setTasks([]);
+            });
     }, [activeOverseer, activeChore, activeTask]);
 
     const fetchChoreLogs = useCallback(() => {
@@ -154,7 +182,7 @@ const Overseer = ({ onBack }) => {
                                     style={{ paddingLeft: '25px' }}
                                 >
                                     <span className="tree-icon">⚙️</span>
-                                    <span className="tree-label">{chore.metadata.labels['chore.gemini.google.com/name'] || chore.metadata.name}</span>
+                                    <span className="tree-label">{chore.metadata.labels?.['chore.gemini.google.com/name'] || chore.metadata.name}</span>
                                 </div>
                             ))}
                         </div>
@@ -163,9 +191,14 @@ const Overseer = ({ onBack }) => {
             </div>
 
             <div className="dev-main">
+                {error && (
+                    <div className="warning-banner" style={{ backgroundColor: '#fdecea', color: '#721c24', borderColor: '#f5c6cb', marginBottom: '20px', padding: '10px', borderRadius: '4px', border: '1px solid #f5c6cb' }}>
+                        <strong>Error fetching overseers:</strong> {error}
+                    </div>
+                )}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
                     <h2>
-                        {showOverseerLogs ? `Overseer: ${activeOverseer?.metadata.name}` : `Chore: ${activeChore?.metadata.labels['chore.gemini.google.com/name'] || activeChore?.metadata.name}`}
+                        {showOverseerLogs ? `Overseer: ${activeOverseer?.metadata.name}` : `Chore: ${activeChore?.metadata?.labels?.['chore.gemini.google.com/name'] || activeChore?.metadata.name}`}
                     </h2>
                     <button className="btn" onClick={onBack}>Back to Dashboard</button>
                 </div>
