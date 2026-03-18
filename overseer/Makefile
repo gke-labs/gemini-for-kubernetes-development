@@ -112,9 +112,13 @@ update-latest: install-latest
 	kubectl rollout restart deployment -n overseer-system
 	kubectl rollout status  deployment  -n overseer-system
 
-.PHONY: push-images
-push-images:
+
+.PHONY: push-images-overseer
+push-images-overseer:
 	../dev/tools/push-images --image-prefix=$(REGISTRY) $(KIND_CLUSTER_ARG) --working-dir .. --images-dir images
+
+.PHONY: push-images
+push-images: push-images-overseer
 	../dev/tools/push-images --image-prefix=$(REGISTRY) $(KIND_CLUSTER_ARG) \
 	--working-dir .. \
 	--images-dir ../repo-agent/images \
