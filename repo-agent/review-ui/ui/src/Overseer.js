@@ -22,9 +22,10 @@ const Overseer = ({ onBack, getSandboxStatusClass, namespace: userNamespace }) =
     const [error, setError] = useState(null);
     const [activeOverseer, setActiveOverseer] = useState(null);
     const [chores, setChores] = useState([]);
+    const [sandboxes, setSandboxes] = useState([]);
     const [activeChore, setActiveChore] = useState(null);
     const [tasks, setTasks] = useState([]);
-    const [activeTask, setActiveTask] = useState(null);
+    
     const [logs, setLogs] = useState('');
     const [loading, setLoading] = useState(false);
     const [showOverseerLogs, setShowOverseerLogs] = useState(false);
@@ -63,6 +64,20 @@ const Overseer = ({ onBack, getSandboxStatusClass, namespace: userNamespace }) =
         fetchOverseers();
     }, [fetchOverseers]);
 
+    const fetchSandboxes = useCallback(() => {
+        if (!activeOverseer) return;
+        fetch(`/api/overseers/${activeOverseer.metadata.name}/sandboxes`)
+            .then(res => {
+                if (!res.ok) throw new Error("Failed to fetch sandboxes");
+                return res.json();
+            })
+            .then(data => setSandboxes(data || []))
+            .catch(err => {
+                console.error("Failed to fetch sandboxes:", err);
+                setSandboxes([]);
+            });
+    }, [activeOverseer]);
+
     const fetchChores = useCallback(() => {
         if (!activeOverseer) return;
         fetch(`/api/overseers/${activeOverseer.metadata.name}/chores`)
@@ -79,7 +94,8 @@ const Overseer = ({ onBack, getSandboxStatusClass, namespace: userNamespace }) =
 
     useEffect(() => {
         fetchChores();
-        const interval = setInterval(fetchChores, 10000);
+        fetchSandboxes();
+        const interval = setInterval(() => { fetchChores(); fetchSandboxes(); }, 10000);
         return () => clearInterval(interval);
     }, [fetchChores]);
 
@@ -100,23 +116,15 @@ const Overseer = ({ onBack, getSandboxStatusClass, namespace: userNamespace }) =
             })
             .then(data => {
                 setTasks(data || []);
-                if (data && data.length > 0 && !activeTask) {
-                    setActiveTask(data[0]);
-                }
+                
             })
             .catch(err => {
                 console.error("Failed to fetch chore tasks:", err);
                 setTasks([]);
             });
-    }, [activeOverseer, activeChore, activeTask]);
+    }, [activeOverseer, activeChore]);
 
-    const fetchChoreLogs = useCallback(() => {
-        if (!activeOverseer || !activeChore || !activeTask) return;
-        fetch(`/api/overseers/${activeOverseer.metadata.name}/chores/${activeChore.metadata.name}/logs?taskID=${activeTask.metadata.name}`)
-            .then(res => res.text())
-            .then(data => setLogs(data))
-            .catch(err => console.error("Failed to fetch chore logs:", err));
-    }, [activeOverseer, activeChore, activeTask]);
+    
 
     useEffect(() => {
         if (logIntervalRef.current) clearInterval(logIntervalRef.current);
@@ -124,9 +132,6 @@ const Overseer = ({ onBack, getSandboxStatusClass, namespace: userNamespace }) =
         if (showOverseerLogs) {
             fetchOverseerLogs();
             logIntervalRef.current = setInterval(fetchOverseerLogs, 5000);
-        } else if (activeChore && activeTask) {
-            fetchChoreLogs();
-            logIntervalRef.current = setInterval(fetchChoreLogs, 5000);
         } else {
             setLogs('');
         }
@@ -134,7 +139,7 @@ const Overseer = ({ onBack, getSandboxStatusClass, namespace: userNamespace }) =
         return () => {
             if (logIntervalRef.current) clearInterval(logIntervalRef.current);
         };
-    }, [showOverseerLogs, activeChore, activeTask, fetchOverseerLogs, fetchChoreLogs]);
+    }, [showOverseerLogs, fetchOverseerLogs]);
 
     useEffect(() => {
         if (activeChore) {
@@ -207,6 +212,22 @@ const Overseer = ({ onBack, getSandboxStatusClass, namespace: userNamespace }) =
                                                 <span className="tree-label">{chore.metadata.labels?.['chore.gemini.google.com/name'] || chore.metadata.name}</span>
                                             </div>
                                         ))}
+                                        {sandboxes.map(sb => {
+                                            const type = sb.metadata.labels?.['sandbox-type'] || 'dev';
+                                            const icon = type === 'review' ? '🔄' : type === 'issue' ? '🐞' : '🛠️';
+                                            const name = sb.metadata.labels?.['chore.gemini.google.com/name'] || sb.metadata.name;
+                                            return (
+                                                <div 
+                                                    key={sb.metadata.name}
+                                                    className={`sidebar-tree-row ${activeChore?.metadata.name === sb.metadata.name ? 'active' : ''}`}
+                                                    onClick={() => handleChoreClick(sb)}
+                                                    style={{ paddingLeft: '35px' }}
+                                                >
+                                                    <span className="tree-icon">{icon}</span>
+                                                    <span className="tree-label">{name}</span>
+                                                </div>
+                                            );
+                                        })}
                                     </>
                                 )}
                             </React.Fragment>

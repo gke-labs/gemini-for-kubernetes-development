@@ -39,6 +39,33 @@ func (s *Server) getOverseer(c *gin.Context) {
 	c.JSON(http.StatusOK, overseer.Object)
 }
 
+func (s *Server) getOverseerSandboxes(c *gin.Context) {
+	name := c.Param("name")
+	namespace := fmt.Sprintf("overseer-%s", name)
+	
+	// Get all sandboxes in the namespace
+	sandboxes, err := s.K8sManager.ListSandboxes(c.Request.Context(), namespace, "")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list sandboxes"})
+		return
+	}
+
+	items := make([]map[string]interface{}, 0)
+	for _, sb := range sandboxes.Items {
+		labels := sb.GetLabels()
+		sType := labels["sandbox.gemini.google.com/type"]
+		if sType == "" {
+			sType = labels["sandbox-type"]
+		}
+		// Skip agent and chore, since they are handled elsewhere
+		if sType == "agent" || sType == "chore" || sType == "overseer" {
+			continue
+		}
+		items = append(items, sb.Object)
+	}
+	c.JSON(http.StatusOK, items)
+}
+
 func (s *Server) getOverseerChores(c *gin.Context) {
 	name := c.Param("name")
 	// Chores are sandboxes in the overseer namespace with specific labels
