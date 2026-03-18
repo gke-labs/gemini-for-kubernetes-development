@@ -91,7 +91,7 @@ func (s *Server) getOverseerLogs(c *gin.Context) {
 
 func (s *Server) getChoreLogs(c *gin.Context) {
 	overseerName := c.Param("name")
-	choreSandboxName := c.Param("choreName")
+	choreSandboxName := c.Param("name")
 	taskID := c.Query("taskID")
 
 	namespace := fmt.Sprintf("overseer-%s", overseerName)
@@ -155,4 +155,31 @@ func (s *Server) getChoreTasks(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, tasks.Items)
+}
+
+
+func (s *Server) getChoreTaskLogs(c *gin.Context) {
+	// Re-uses getChoreLogs logic but fits the TaskCard route pattern
+	overseerName := c.Param("repo")
+	choreSandboxName := c.Param("name")
+	taskID := c.Param("taskID")
+
+	namespace := fmt.Sprintf("overseer-%s", overseerName)
+
+	serviceName := fmt.Sprintf("%s-lb", choreSandboxName)
+	targetURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:13339", serviceName, namespace)
+
+	proxyURL, err := url.Parse(targetURL)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid target URL"})
+		return
+	}
+
+	proxy := httputil.NewSingleHostReverseProxy(proxyURL)
+	proxy.Director = func(req *http.Request) {
+		req.URL.Scheme = proxyURL.Scheme
+		req.URL.Host = proxyURL.Host
+		req.URL.Path = fmt.Sprintf("/logs/%s", taskID)
+	}
+	proxy.ServeHTTP(c.Writer, c.Request)
 }

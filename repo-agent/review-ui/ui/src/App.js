@@ -1429,7 +1429,7 @@ function App() {
       ))}
 
       {view === 'dashboard' && renderDashboard()}
-      {view === 'overseer' && <Overseer onBack={() => setView('dashboard')} />}
+      {view === 'overseer' && <Overseer onBack={() => setView('dashboard')} getSandboxStatusClass={getSandboxStatusClass} namespace={user || 'default'} />}
       {view === 'settings' && <Settings onBack={() => setView('dashboard')} />}
       {view === 'add_repo' && <AddRepo onCancel={() => setView('dashboard')} onRepoAdded={() => { fetchRepos(); setView('dashboard'); }} />}
       {view === 'update_repo' && <UpdateRepo repo={activeRepo} onCancel={() => setView('dashboard')} onRepoUpdated={() => { fetchRepos(); setView('dashboard'); }} onRepoDeleted={handleRepoDeleted} />}

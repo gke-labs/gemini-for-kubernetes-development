@@ -287,6 +287,9 @@ func FindSandboxPodInNamespace(ctx context.Context, sandboxName, namespace strin
 	// The sandbox name in the RGD is devc-<name>
 	// And the pods have label sandbox=devc-<name>
 	labelSelector := fmt.Sprintf("sandbox=devc-%s", sandboxName)
+	if strings.HasPrefix(sandboxName, "chore-") || strings.HasPrefix(sandboxName, "devc-") || strings.Contains(sandboxName, "-pr-") {
+		labelSelector = fmt.Sprintf("sandbox=%s", sandboxName)
+	}
 	pods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: labelSelector,
 	})

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"k8s.io/klog/v2"
@@ -27,8 +28,15 @@ func (s *Server) proxySandbox(c *gin.Context) {
 		return
 	}
 
-	// The sandbox service name pattern from RGD: devc-<name>-lb
+	// Dev sandboxes have 'devc-' prefix trimmed in getDevSandboxes, but Issue/Chore sandboxes do not.
+	// We need to resolve the correct service name.
 	targetHost := fmt.Sprintf("devc-%s-lb.%s.svc.cluster.local:13338", name, namespace)
+
+	// If the name already starts with a prefix indicating it's not trimmed (like 'chore-' or 'devc-' or 'kcc-pr'),
+	// we shouldn't prepend 'devc-'
+	if strings.HasPrefix(name, "chore-") || strings.HasPrefix(name, "devc-") || strings.Contains(name, "-pr-") {
+		targetHost = fmt.Sprintf("%s-lb.%s.svc.cluster.local:13338", name, namespace)
+	}
 
 	targetURL := &url.URL{
 		Scheme: "http",

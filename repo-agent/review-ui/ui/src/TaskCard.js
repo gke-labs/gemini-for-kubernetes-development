@@ -125,7 +125,7 @@ function TaskCard({
                 onClick={() => setIsCollapsed(!isCollapsed)}
             >
                 <div>
-                    <strong>{task.type.toUpperCase()}</strong>
+                    <strong>{(task.type || 'Unknown').toUpperCase()}</strong>
                     <span style={{ fontSize: 'small', color: 'var(--text-secondary)', marginLeft: '10px' }}>
                         {new Date(task.creationTimestamp).toLocaleString()}
                     </span>

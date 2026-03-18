@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import './App.css';
+import TaskCard from './TaskCard';
+import SandboxTerminal from './Terminal';
 
 
 const ChevronRight = () => (
@@ -14,7 +16,7 @@ const ChevronDown = () => (
   </svg>
 );
 
-const Overseer = ({ onBack }) => {
+const Overseer = ({ onBack, getSandboxStatusClass, namespace: userNamespace }) => {
 
     const [overseers, setOverseers] = useState([]);
     const [error, setError] = useState(null);
@@ -26,6 +28,7 @@ const Overseer = ({ onBack }) => {
     const [logs, setLogs] = useState('');
     const [loading, setLoading] = useState(false);
     const [showOverseerLogs, setShowOverseerLogs] = useState(false);
+    const [showTerminal, setShowTerminal] = useState(false);
 
     const logIntervalRef = useRef(null);
 
@@ -225,33 +228,111 @@ const Overseer = ({ onBack }) => {
                     <button className="btn" onClick={onBack}>Back to Dashboard</button>
                 </div>
 
-                {!showOverseerLogs && activeChore && (
-                    <div style={{ marginBottom: '20px' }}>
-                        <h4>Tasks</h4>
-                        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '20px' }}>
-                            {tasks.map(task => (
-                                <button 
-                                    key={task.metadata.name}
-                                    className={`btn btn-sm ${activeTask?.metadata.name === task.metadata.name ? 'btn-submit' : ''}`}
-                                    onClick={() => setActiveTask(task)}
-                                    style={{ backgroundColor: activeTask?.metadata.name === task.metadata.name ? '' : 'var(--bg-secondary)', color: activeTask?.metadata.name === task.metadata.name ? '' : 'var(--text-primary)' }}
-                                >
-                                    {task.spec.type} ({new Date(task.metadata.creationTimestamp).toLocaleTimeString()})
-                                </button>
-                            ))}
-                            {tasks.length === 0 && <p>No tasks found for this chore.</p>}
+                {showOverseerLogs ? (
+                    <div className="logs-container" style={{ textAlign: 'left' }}>
+                        <h4>Logs</h4>
+                        <div className="logs-display" style={{ backgroundColor: '#1e1e1e', color: '#d4d4d4', padding: '15px', borderRadius: '5px', height: '600px', overflowY: 'auto', fontFamily: '"Consolas", "Monaco", "Courier New", monospace', fontSize: '13px', lineHeight: '1.5' }}>
+                            <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>
+                                {logs || 'Loading logs...'}
+                            </pre>
                         </div>
                     </div>
-                )}
+                ) : activeChore ? (
+                    <div className="pr-card" style={{ marginBottom: '20px' }}>
+                        <div className="pr-card-header">
+                            <h3>{activeChore.metadata?.labels?.['chore.gemini.google.com/name'] || activeChore.metadata.name}</h3>
+                            <div className="pr-card-actions-header">
+                                {(() => {
+                                    if (!getSandboxStatusClass) return null;
+                                    const overseerNamespace = `overseer-${activeOverseer?.metadata.name}`;
+                                    const mappedChore = {
+                                        sandbox: activeChore.metadata.name,
+                                        sandboxStatus: activeChore.status?.conditions?.[0]?.message || '',
+                                        agentState: activeChore.metadata?.annotations?.agentState || ''
+                                    };
+                                    return (
+                                    <React.Fragment>
+                                        {getSandboxStatusClass(mappedChore) === 'green' ? (
+                                            <div style={{display: 'flex', alignItems: 'center', gap: '5px'}}>
+                                                <button 
+                                                    className="btn btn-sm" 
+                                                    style={{
+                                                        backgroundColor: showTerminal ? 'var(--bg-active)' : 'transparent', 
+                                                        color: 'var(--text-primary)', 
+                                                        padding: '4px 8px', 
+                                                        border: '1px solid var(--border-color)',
+                                                        fontFamily: 'monospace',
+                                                        fontWeight: 'bold'
+                                                    }}
+                                                    onClick={(e) => { e.stopPropagation(); setShowTerminal(!showTerminal); }}
+                                                    title={showTerminal ? "Hide Terminal" : "Show Terminal"}
+                                                >
+                                                    &gt;_
+                                                </button>
+                                                {activeChore.status?.state === 'provisioning' ? (
+                                                    <span className="pr-sandbox" style={{backgroundColor: 'var(--text-link)', color: 'white', cursor: 'default'}}>
+                                                    Sandbox Provisioning...
+                                                    </span>
+                                                ) : (
+                                                    <a href={`/sandbox/${overseerNamespace}/${activeChore.metadata.name}/`} target="_blank" rel="noopener noreferrer" className={`pr-sandbox ${getSandboxStatusClass(mappedChore)}`}>
+                                                    Sandbox
+                                                    </a>
+                                                )}
+                                            </div>
+                                        ) : getSandboxStatusClass(mappedChore) === 'yellow' ? (
+                                            <div style={{display: 'flex', alignItems: 'center', gap: '5px'}}>
+                                                <span className={`pr-sandbox ${getSandboxStatusClass(mappedChore)}`}>Sandbox</span>
+                                            </div>
+                                        ) : getSandboxStatusClass(mappedChore) === 'red' ? (
+                                            <div style={{display: 'flex', alignItems: 'center', gap: '5px'}}>
+                                                <span className={`pr-sandbox ${getSandboxStatusClass(mappedChore)}`} title={activeChore.status?.message || 'Error'}>
+                                                    {activeChore.status?.message?.startsWith('Evicted') ? 'Evicted' : (activeChore.status?.message || 'Error')}
+                                                </span>
+                                            </div>
+                                        ) : (
+                                            <span className={`pr-sandbox ${getSandboxStatusClass(mappedChore)}`}>Sandbox: Not created</span>
+                                        )}
+                                    </React.Fragment>
+                                    );
+                                })()}
+                            </div>
+                        </div>
 
-                <div className="logs-container" style={{ textAlign: 'left' }}>
-                    <h4>Logs</h4>
-                    <div className="logs-display" style={{ backgroundColor: '#1e1e1e', color: '#d4d4d4', padding: '15px', borderRadius: '5px', height: '600px', overflowY: 'auto', fontFamily: '"Consolas", "Monaco", "Courier New", monospace', fontSize: '13px', lineHeight: '1.5' }}>
-                        <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>
-                            {logs || 'Loading logs...'}
-                        </pre>
+                        {showTerminal && getSandboxStatusClass && getSandboxStatusClass({
+                            sandbox: activeChore.metadata.name,
+                            sandboxStatus: activeChore.status?.conditions?.[0]?.message || '',
+                            agentState: activeChore.metadata?.annotations?.agentState || ''
+                        }) === 'green' && (
+                            <div style={{ borderBottom: '1px solid var(--border-color)' }}>
+                                <SandboxTerminal namespace={`overseer-${activeOverseer?.metadata.name}`} sandboxName={activeChore.metadata.name} />
+                            </div>
+                        )}
+
+                        <div style={{padding: '10px'}}>
+                            {tasks.length > 0 ? (
+                                tasks.slice().reverse().map((task, index) => (
+                                    <TaskCard 
+                                        key={task.metadata.name} 
+                                        task={{
+                                            name: task.metadata.name,
+                                            type: task.spec.type,
+                                            creationTimestamp: task.metadata.creationTimestamp,
+                                            agentStateMessage: task.status?.message || '',
+                                            agentState: task.status?.state || '',
+                                            result: task.status?.result || ''
+                                        }} 
+                                        repoName={activeOverseer?.metadata.name} 
+                                        parentId={activeChore.metadata.name}
+                                        parentType="chores"
+                                        defaultCollapsed={index !== tasks.length - 1}
+                                    />
+                                ))
+                            ) : (
+                                <p style={{color: 'var(--text-muted)'}}>No tasks found for this chore.</p>
+                            )}
+                        </div>
                     </div>
-                </div>
+                ) : null}
             </div>
         </div>
     );
