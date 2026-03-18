@@ -46,6 +46,9 @@ spec:
                 type: object
               configdirRef:
                 type: string
+              ephemeralStorage:
+                default: 10Gi
+                type: string
               extensions:
                 items:
                   properties:
