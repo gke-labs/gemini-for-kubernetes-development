@@ -115,6 +115,11 @@ type OverseerSpec struct {
 	// +kubebuilder:default="10Gi"
 	WorkspaceDiskSize string `json:"workspaceDiskSize,omitempty"`
 
+	// EphemeralStorage specifies the ephemeral storage size for the overseer pod.
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default="10Gi"
+	EphemeralStorage string `json:"ephemeralStorage,omitempty"`
+
 	// Extensions is a list of extensions to install in the sandbox
 	// before running the agent. Each entry specifies a source
 	// (GitHub URL or extension name) and optional ref.

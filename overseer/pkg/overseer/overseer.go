@@ -236,6 +236,11 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 		})
 	}
 
+	ephemeralStorage := o.Spec.EphemeralStorage
+	if ephemeralStorage == "" {
+		ephemeralStorage = "10Gi"
+	}
+
 	podSpec := map[string]interface{}{
 		"serviceAccountName": "overseer",
 		"containers": []interface{}{
@@ -246,12 +251,14 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 				"env":     env,
 				"resources": map[string]interface{}{
 					"requests": map[string]interface{}{
-						"cpu":    "1000m",
-						"memory": "1Gi",
+						"cpu":               "1000m",
+						"memory":            "1Gi",
+						"ephemeral-storage": ephemeralStorage,
 					},
 					"limits": map[string]interface{}{
-						"cpu":    "2000m",
-						"memory": "2Gi",
+						"cpu":               "2000m",
+						"memory":            "2Gi",
+						"ephemeral-storage": ephemeralStorage,
 					},
 				},
 			},
