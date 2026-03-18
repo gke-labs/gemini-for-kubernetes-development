@@ -1,7 +1,21 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import './App.css';
 
+
+const ChevronRight = () => (
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style={{opacity: 0.8}}>
+    <path fillRule="evenodd" d="M6.22 3.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06L9.94 8 6.22 4.28a.75.75 0 0 1 0-1.06z"/>
+  </svg>
+);
+
+const ChevronDown = () => (
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style={{opacity: 0.8}}>
+    <path fillRule="evenodd" d="M3.22 6.22a.75.75 0 0 1 1.06 0L8 9.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0l-4.25-4.25a.75.75 0 0 1 0-1.06z"/>
+  </svg>
+);
+
 const Overseer = ({ onBack }) => {
+
     const [overseers, setOverseers] = useState([]);
     const [error, setError] = useState(null);
     const [activeOverseer, setActiveOverseer] = useState(null);
@@ -128,10 +142,17 @@ const Overseer = ({ onBack }) => {
     }, [activeChore, fetchChoreTasks]);
 
     const handleOverseerClick = (ov) => {
-        setActiveOverseer(ov);
-        setActiveChore(null);
-        setActiveTask(null);
-        setShowOverseerLogs(true);
+        if (activeOverseer?.metadata.name === ov.metadata.name) {
+            setActiveOverseer(null);
+            setActiveChore(null);
+            setActiveTask(null);
+            setShowOverseerLogs(false);
+        } else {
+            setActiveOverseer(ov);
+            setActiveChore(null);
+            setActiveTask(null);
+            setShowOverseerLogs(true);
+        }
     };
 
     const handleChoreClick = (chore) => {
@@ -142,52 +163,53 @@ const Overseer = ({ onBack }) => {
 
     return (
         <div className="dev-layout" style={{ height: 'calc(100vh - 80px)' }}>
-            <div className="dev-sidebar" style={{ width: '300px', borderRight: '1px solid var(--border-color)' }}>
+            <div className="dev-sidebar" style={{ width: '300px', borderRight: '1px solid var(--border-color)', overflowY: 'auto' }}>
                 <div className="sidebar-header-row">
                     <span className="sidebar-header-title">Overseer Repos</span>
                 </div>
                 <div className="sidebar-tree-content">
-                    {overseers.map(ov => (
-                        <div 
-                            key={ov.metadata.name} 
-                            className={`sidebar-tree-row root-row ${activeOverseer?.metadata.name === ov.metadata.name ? 'active' : ''}`}
-                            onClick={() => handleOverseerClick(ov)}
-                        >
-                            <span className="tree-icon">📂</span>
-                            <span className="tree-label">{ov.metadata.name}</span>
-                        </div>
-                    ))}
-                </div>
-
-                {activeOverseer && (
-                    <>
-                        <div className="sidebar-header-row" style={{ marginTop: '20px' }}>
-                            <span className="sidebar-header-title">Components</span>
-                        </div>
-                        <div className="sidebar-tree-content">
-                            <div 
-                                className={`sidebar-tree-row ${showOverseerLogs ? 'active' : ''}`}
-                                onClick={() => { setShowOverseerLogs(true); setActiveChore(null); }}
-                            >
-                                <span className="tree-icon">🤖</span>
-                                <span className="tree-label">Overseer Agent</span>
-                            </div>
-                            <div className="sidebar-header" style={{ paddingLeft: '15px', marginTop: '10px' }}>Chores</div>
-                            {chores.length === 0 && <div style={{ paddingLeft: '35px', fontSize: '0.8rem', color: 'var(--text-muted)' }}>No chores found</div>}
-                            {chores.map(chore => (
+                    {overseers.map(ov => {
+                        const isExpanded = activeOverseer?.metadata.name === ov.metadata.name;
+                        return (
+                            <React.Fragment key={ov.metadata.name}>
                                 <div 
-                                    key={chore.metadata.name}
-                                    className={`sidebar-tree-row ${activeChore?.metadata.name === chore.metadata.name ? 'active' : ''}`}
-                                    onClick={() => handleChoreClick(chore)}
-                                    style={{ paddingLeft: '25px' }}
+                                    className={`sidebar-tree-row root-row ${isExpanded && showOverseerLogs && !activeChore ? 'active' : ''}`}
+                                    onClick={() => handleOverseerClick(ov)}
                                 >
-                                    <span className="tree-icon">⚙️</span>
-                                    <span className="tree-label">{chore.metadata.labels?.['chore.gemini.google.com/name'] || chore.metadata.name}</span>
+                                    <span className="tree-expander">
+                                        {isExpanded ? <ChevronDown /> : <ChevronRight />}
+                                    </span>
+                                    <span className="tree-icon">📂</span>
+                                    <span className="tree-label">{ov.metadata.name}</span>
                                 </div>
-                            ))}
-                        </div>
-                    </>
-                )}
+                                {isExpanded && (
+                                    <>
+                                        <div 
+                                            className={`sidebar-tree-row ${showOverseerLogs ? 'active' : ''}`}
+                                            onClick={() => { setShowOverseerLogs(true); setActiveChore(null); }}
+                                            style={{ paddingLeft: '35px' }}
+                                        >
+                                            <span className="tree-icon">🤖</span>
+                                            <span className="tree-label">Overseer Agent</span>
+                                        </div>
+                                        {chores.length === 0 && <div style={{ paddingLeft: '35px', fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '5px' }}>No chores found</div>}
+                                        {chores.map(chore => (
+                                            <div 
+                                                key={chore.metadata.name}
+                                                className={`sidebar-tree-row ${activeChore?.metadata.name === chore.metadata.name ? 'active' : ''}`}
+                                                onClick={() => handleChoreClick(chore)}
+                                                style={{ paddingLeft: '35px' }}
+                                            >
+                                                <span className="tree-icon">⚙️</span>
+                                                <span className="tree-label">{chore.metadata.labels?.['chore.gemini.google.com/name'] || chore.metadata.name}</span>
+                                            </div>
+                                        ))}
+                                    </>
+                                )}
+                            </React.Fragment>
+                        );
+                    })}
+                </div>
             </div>
 
             <div className="dev-main">
@@ -198,7 +220,7 @@ const Overseer = ({ onBack }) => {
                 )}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
                     <h2>
-                        {showOverseerLogs ? `Overseer: ${activeOverseer?.metadata.name}` : `Chore: ${activeChore?.metadata?.labels?.['chore.gemini.google.com/name'] || activeChore?.metadata.name}`}
+                        {!activeOverseer ? "Select an item" : showOverseerLogs ? `Overseer: ${activeOverseer.metadata.name}` : `Chore: ${activeChore?.metadata?.labels?.['chore.gemini.google.com/name'] || activeChore?.metadata.name}`}
                     </h2>
                     <button className="btn" onClick={onBack}>Back to Dashboard</button>
                 </div>

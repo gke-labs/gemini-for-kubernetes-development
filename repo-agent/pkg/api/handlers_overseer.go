@@ -100,7 +100,7 @@ func (s *Server) getChoreLogs(c *gin.Context) {
 	// Otherwise, return pod logs.
 
 	if taskID != "" {
-		serviceName := fmt.Sprintf("devc-%s-lb", choreSandboxName)
+		serviceName := fmt.Sprintf("%s-lb", choreSandboxName)
 		targetURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:13339", serviceName, namespace)
 
 		proxyURL, err := url.Parse(targetURL)
