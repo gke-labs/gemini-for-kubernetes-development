@@ -222,9 +222,9 @@ const Overseer = ({ onBack }) => {
                     </div>
                 )}
 
-                <div className="logs-container">
+                <div className="logs-container" style={{ textAlign: 'left' }}>
                     <h4>Logs</h4>
-                    <div className="logs-display" style={{ backgroundColor: '#1e1e1e', color: '#d4d4d4', padding: '15px', borderRadius: '5px', height: '600px', overflowY: 'auto', fontFamily: 'monospace', fontSize: '13px', lineHeight: '1.5' }}>
+                    <div className="logs-display" style={{ backgroundColor: '#1e1e1e', color: '#d4d4d4', padding: '15px', borderRadius: '5px', height: '600px', overflowY: 'auto', fontFamily: '"Consolas", "Monaco", "Courier New", monospace', fontSize: '13px', lineHeight: '1.5' }}>
                         <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>
                             {logs || 'Loading logs...'}
                         </pre>
