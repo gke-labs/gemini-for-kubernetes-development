@@ -32,8 +32,8 @@ cd "${REPO_AGENT_ROOT}"
 cleanup() {
   echo "--- Cleanup ---"
   # Rarely cleanups are required.
-  ./scripts/ops/scaledown_and_clean.py --types=issuesandboxes --apply
-  ./scripts/ops/scaledown_and_clean.py --types=devsandboxes --apply
+  ./scripts/ops/scaledown_and_clean.py --types=sandboxes --apply
+  ./scripts/ops/scaledown_and_clean.py --types=sandboxtasks --apply
 }
 
 upgrade() {
@@ -53,10 +53,10 @@ scaledown() {
 mutations() {
   echo "--- Mutations ---"
   # The upgrade script is expected to be modified when we have new migrations to be done.
-  # Example:
-  # ./scripts/ops/mutate_repowatches.py --mutator set-kcc-workspace-disk-size-20Gi-030126 --apply
-  
-  ./scripts/ops/mutate_repowatches.py --mutator set-kcc-workspace-disk-size-20Gi-030126 --apply
+
+  # 3/1
+  #./scripts/ops/mutate_repowatches.py --mutator set-kcc-workspace-disk-size-20Gi-030126 --apply
+  echo "No mutations to run."
 }
 
 scaleup() {
@@ -65,7 +65,7 @@ scaleup() {
 }
 
 # Run the upgrade process
-# cleanup
+cleanup ## required for https://github.com/gke-labs/gemini-for-kubernetes-development/pull/803 which removed devc- prefix from service,Sandbox,pods
 upgrade
 scaledown
 mutations
