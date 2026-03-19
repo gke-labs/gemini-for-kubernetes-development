@@ -43,7 +43,7 @@ def main():
         print(f"Warning: Failed to scale down repowatch-controller: {e}")
         print("Continuing...")
 
-    all_resource_types = ["issuesandboxes", "reviewsandboxes", "devsandboxes", "sandboxes"]
+    all_resource_types = ["sandboxes", "sandboxtasks"]
     
     if args.types:
         resource_types = [t.strip() for t in args.types.split(",") if t.strip()]
