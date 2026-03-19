@@ -15,17 +15,17 @@ import (
 )
 
 type Server struct {
-	K8sManager *k8s.Manager
-	Auth       *auth.Authenticator
-	Templates  *templates.Manager
+	K8sManager           *k8s.Manager
+	Auth                 *auth.Authenticator
+	Templates            *templates.Manager
 	TraceabilityMetadata bool
 }
 
 func NewServer(manager *k8s.Manager, authenticator *auth.Authenticator) *Server {
 	return &Server{
-		K8sManager: manager,
-		Auth:       authenticator,
-		Templates:  templates.NewManager(manager.Clientset),
+		K8sManager:           manager,
+		Auth:                 authenticator,
+		Templates:            templates.NewManager(manager.Clientset),
 		TraceabilityMetadata: os.Getenv("TRACEABILITY_METADATA_ENABLED") == "true",
 	}
 }

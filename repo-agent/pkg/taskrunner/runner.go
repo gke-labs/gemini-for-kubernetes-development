@@ -22,10 +22,10 @@ import (
 )
 
 type TaskRunner struct {
-	manager     *k8s.Manager
-	namespace   string
-	sandboxName string
-	ao          *agentoutput.AgentOutput
+	manager              *k8s.Manager
+	namespace            string
+	sandboxName          string
+	ao                   *agentoutput.AgentOutput
 	traceabilityMetadata bool
 }
 
@@ -61,10 +61,10 @@ func NewTaskRunner(ao *agentoutput.AgentOutput) (*TaskRunner, error) {
 	}
 
 	return &TaskRunner{
-		manager:     k8s.NewManager(kubeClient),
-		namespace:   ns,
-		sandboxName: name,
-		ao:          ao,
+		manager:              k8s.NewManager(kubeClient),
+		namespace:            ns,
+		sandboxName:          name,
+		ao:                   ao,
 		traceabilityMetadata: traceabilityMetadata,
 	}, nil
 }

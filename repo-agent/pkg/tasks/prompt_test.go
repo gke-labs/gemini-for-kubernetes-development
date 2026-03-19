@@ -5,6 +5,8 @@ import (
 	"os"
 	"testing"
 	"text/template"
+
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 )
 
 type MockIssue struct{}
@@ -45,6 +47,7 @@ type MockModel struct {
 	PromptFile    string
 	Extensions    []MockExtension
 	Branch        string
+	Metadata      github.Metadata
 }
 
 func TestFixIssuePromptTemplate(t *testing.T) {
