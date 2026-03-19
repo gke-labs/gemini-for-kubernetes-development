@@ -33,7 +33,7 @@ const Overseer = ({ onBack, getSandboxStatusClass, namespace: userNamespace }) =
 
     const logIntervalRef = useRef(null);
 
-    const fetchOverseers = useCallback(() => {
+        const fetchOverseers = useCallback(() => {
         fetch('/api/overseers')
             .then(async res => {
                 if (!res.ok) {
@@ -49,16 +49,22 @@ const Overseer = ({ onBack, getSandboxStatusClass, namespace: userNamespace }) =
             .then(data => {
                 setError(null);
                 setOverseers(data || []);
-                if (data && data.length > 0 && !activeOverseer) {
-                    setActiveOverseer(data[0]);
-                }
+                setActiveOverseer(prev => {
+                    if (data && data.length > 0 && !prev) {
+                        return data[0];
+                    } else if (prev) {
+                        const updated = (data || []).find(o => o.metadata.name === prev.metadata.name);
+                        return updated || prev;
+                    }
+                    return prev;
+                });
             })
             .catch(err => {
                 console.error("Failed to fetch overseers:", err);
                 setError(err.message);
                 setOverseers([]);
             });
-    }, [activeOverseer]);
+    }, []);
 
     useEffect(() => {
         fetchOverseers();
@@ -163,6 +169,37 @@ const Overseer = ({ onBack, getSandboxStatusClass, namespace: userNamespace }) =
         }
     };
 
+
+    const handlePauseChore = (choreName) => {
+        if (!activeOverseer) return;
+        fetch(`/api/overseers/${activeOverseer.metadata.name}/chores/${choreName}/pause`, { method: 'POST' })
+            .then(res => {
+                if (res.ok) {
+                    fetchChores();
+                    fetchOverseers();
+                    setActiveChore(null);
+                } else {
+                    alert("Failed to pause chore");
+                }
+            })
+            .catch(err => console.error("Failed to pause chore:", err));
+    };
+
+    const handleResumeChore = (choreName) => {
+        if (!activeOverseer) return;
+        fetch(`/api/overseers/${activeOverseer.metadata.name}/chores/${choreName}/resume`, { method: 'POST' })
+            .then(res => {
+                if (res.ok) {
+                    fetchChores();
+                    fetchOverseers();
+                    setActiveChore(null);
+                } else {
+                    alert("Failed to resume chore");
+                }
+            })
+            .catch(err => console.error("Failed to resume chore:", err));
+    };
+
     const handleChoreClick = (chore) => {
         setActiveChore(chore);
         
@@ -212,6 +249,22 @@ const Overseer = ({ onBack, getSandboxStatusClass, namespace: userNamespace }) =
                                                 <span className="tree-label">{chore.metadata.labels?.['chore.gemini.google.com/name'] || chore.metadata.name}</span>
                                             </div>
                                         ))}
+                                        
+                                        {(() => {
+                                            const excluded = activeOverseer.spec?.chores?.exclude || [];
+                                            return excluded.map(choreName => (
+                                                <div 
+                                                    key={choreName}
+                                                    className={`sidebar-tree-row ${activeChore?.metadata?.name === choreName ? 'active' : ''}`}
+                                                    onClick={() => handleChoreClick({ metadata: { name: choreName, isExcluded: true } })}
+                                                    style={{ paddingLeft: '35px', opacity: 0.6 }}
+                                                >
+                                                    <span className="tree-icon">⏸️</span>
+                                                    <span className="tree-label">{choreName} (Paused)</span>
+                                                </div>
+                                            ));
+                                        })()}
+
                                         {sandboxes.map(sb => {
                                             const type = sb.metadata.labels?.['sandbox-type'] || 'dev';
                                             const icon = type === 'review' ? '🔄' : type === 'issue' ? '🐞' : '🛠️';
@@ -263,8 +316,19 @@ const Overseer = ({ onBack, getSandboxStatusClass, namespace: userNamespace }) =
                         <div className="pr-card-header">
                             <h3>{activeChore.metadata?.labels?.['chore.gemini.google.com/name'] || activeChore.metadata.name}</h3>
                             <div className="pr-card-actions-header">
+                                
+                                            {activeChore.metadata.isExcluded ? (
+                                                <button className="btn btn-sm" style={{backgroundColor: 'var(--status-green)', color: 'white'}} onClick={(e) => { e.stopPropagation(); handleResumeChore(activeChore.metadata.name); }}>
+                                                    ▶ Resume Chore
+                                                </button>
+                                            ) : (
+                                                <button className="btn btn-sm" style={{backgroundColor: 'var(--status-yellow)', color: 'black'}} onClick={(e) => { e.stopPropagation(); handlePauseChore(activeChore.metadata.name); }}>
+                                                    ⏸ Pause Chore
+                                                </button>
+                                            )}
+
                                 {(() => {
-                                    if (!getSandboxStatusClass) return null;
+                                    if (!getSandboxStatusClass || activeChore.metadata.isExcluded) return null;
                                     const overseerNamespace = `overseer-${activeOverseer?.metadata.name}`;
                                     const mappedChore = {
                                         sandbox: activeChore.metadata.name,
@@ -323,14 +387,16 @@ const Overseer = ({ onBack, getSandboxStatusClass, namespace: userNamespace }) =
                             sandbox: activeChore.metadata.name,
                             sandboxStatus: activeChore.status?.conditions?.[0]?.message || '',
                             agentState: activeChore.metadata?.annotations?.agentState || ''
-                        }) === 'green' && (
+                        }) === 'green' && !activeChore.metadata.isExcluded && (
                             <div style={{ borderBottom: '1px solid var(--border-color)' }}>
                                 <SandboxTerminal namespace={`overseer-${activeOverseer?.metadata.name}`} sandboxName={activeChore.metadata.name} />
                             </div>
                         )}
 
                         <div style={{padding: '10px'}}>
-                            {tasks.length > 0 ? (
+                            {activeChore.metadata.isExcluded ? (
+                                <p style={{color: 'var(--text-muted)'}}>This chore is currently paused.</p>
+                            ) : tasks.length > 0 ? (
                                 tasks.slice().reverse().map((task, index) => (
                                     <TaskCard 
                                         key={task.metadata.name} 
