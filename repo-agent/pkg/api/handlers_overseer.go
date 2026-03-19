@@ -8,8 +8,10 @@ import (
 	"net/url"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/klog/v2"
 )
 
@@ -208,4 +210,100 @@ func (s *Server) getChoreTaskLogs(c *gin.Context) {
 		req.URL.Path = fmt.Sprintf("/logs/%s", taskID)
 	}
 	proxy.ServeHTTP(c.Writer, c.Request)
+}
+
+func (s *Server) pauseChore(c *gin.Context) {
+	overseerName := c.Param("name")
+	choreName := c.Param("choreName")
+	namespace := fmt.Sprintf("overseer-%s", overseerName)
+
+	overseer, err := s.K8sManager.GetOverseer(c.Request.Context(), overseerName)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get overseer"})
+		return
+	}
+
+	realChoreName := choreName
+	sandbox, err := s.K8sManager.Client.Resource(k8s.SandboxGVR).Namespace(namespace).Get(c.Request.Context(), choreName, v1.GetOptions{})
+	if err == nil {
+		labelName, found, _ := unstructured.NestedString(sandbox.Object, "metadata", "labels", "chore.gemini.google.com/name")
+		if found && labelName != "" {
+			realChoreName = labelName
+		}
+	}
+
+	excludeList, found, err := unstructured.NestedStringSlice(overseer.Object, "spec", "chores", "exclude")
+	if err != nil || !found {
+		excludeList = []string{}
+	}
+
+	exists := false
+	for _, e := range excludeList {
+		if e == realChoreName {
+			exists = true
+			break
+		}
+	}
+
+	if !exists {
+		excludeList = append(excludeList, realChoreName)
+		if err := unstructured.SetNestedStringSlice(overseer.Object, excludeList, "spec", "chores", "exclude"); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to set exclude list"})
+			return
+		}
+		_, err = s.K8sManager.Client.Resource(k8s.OverseerGVR).Update(c.Request.Context(), overseer, v1.UpdateOptions{})
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update overseer"})
+			return
+		}
+	}
+
+	err = s.K8sManager.Client.Resource(k8s.SandboxGVR).Namespace(namespace).Delete(c.Request.Context(), choreName, v1.DeleteOptions{})
+	if err != nil {
+		klog.Errorf("Failed to delete sandbox %s: %v", choreName, err)
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Chore paused"})
+}
+
+func (s *Server) resumeChore(c *gin.Context) {
+	overseerName := c.Param("name")
+	choreName := c.Param("choreName")
+
+	overseer, err := s.K8sManager.GetOverseer(c.Request.Context(), overseerName)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get overseer"})
+		return
+	}
+
+	excludeList, found, err := unstructured.NestedStringSlice(overseer.Object, "spec", "chores", "exclude")
+	if !found || err != nil {
+		c.JSON(http.StatusOK, gin.H{"message": "Chore already active"})
+		return
+	}
+
+	newList := make([]string, 0)
+	for _, e := range excludeList {
+		if e != choreName {
+			newList = append(newList, e)
+		}
+	}
+
+	if len(newList) != len(excludeList) {
+		if len(newList) == 0 {
+			unstructured.RemoveNestedField(overseer.Object, "spec", "chores", "exclude")
+		} else {
+			if err := unstructured.SetNestedStringSlice(overseer.Object, newList, "spec", "chores", "exclude"); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to set exclude list"})
+				return
+			}
+		}
+		_, err = s.K8sManager.Client.Resource(k8s.OverseerGVR).Update(c.Request.Context(), overseer, v1.UpdateOptions{})
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update overseer"})
+			return
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Chore resumed"})
 }

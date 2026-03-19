@@ -111,6 +111,8 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 			overseer.GET("/:name/logs", s.getOverseerLogs)
 			overseer.GET("/:name/chores/:choreName/logs", s.getChoreLogs)
 			overseer.GET("/:name/chores/:choreName/tasks", s.getChoreTasks)
+			overseer.POST("/:name/chores/:choreName/pause", s.pauseChore)
+			overseer.POST("/:name/chores/:choreName/resume", s.resumeChore)
 		}
 	}
 
