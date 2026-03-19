@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks"
 	"github.com/spf13/cobra"
@@ -104,6 +105,15 @@ func (c *ChoreCommand) Run(ctx context.Context) error {
 		CloneURL:    c.CloneURL,
 		RepoOwner:   c.RepoOwner,
 		PromptFile:  promptPath,
+		Metadata: github.Metadata{
+			Enabled:        os.Getenv("TRACEABILITY_METADATA_ENABLED") == "true",
+			SandboxTask:    fmt.Sprintf("%s/%s", os.Getenv("SANDBOX_NAMESPACE"), os.Getenv("SANDBOX_TASK_NAME")),
+			SandboxTaskUID: os.Getenv("SANDBOX_TASK_UID"),
+			Sandbox:        os.Getenv("SANDBOX_NAME"),
+			RepoWatch:      os.Getenv("REPOWATCH_NAME"),
+			TaskType:       "chore",
+			Timestamp:      os.Getenv("TIMESTAMP"),
+		},
 	}
 
 	apikey, err := GetGeminiAPIKey(c.sandboxID)

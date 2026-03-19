@@ -33,6 +33,7 @@ type InvestigateFailuresModel struct {
 	Models            []string
 	FailedRuns        []FailedRun
 	Extensions        []reviewv1alpha1.Extension
+	Metadata          github.Metadata
 }
 
 func (m *InvestigateFailuresModel) Name() string {

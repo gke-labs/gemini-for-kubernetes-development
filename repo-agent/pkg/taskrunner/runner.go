@@ -26,6 +26,7 @@ type TaskRunner struct {
 	namespace   string
 	sandboxName string
 	ao          *agentoutput.AgentOutput
+	traceabilityMetadata bool
 }
 
 func NewTaskRunner(ao *agentoutput.AgentOutput) (*TaskRunner, error) {
@@ -36,6 +37,7 @@ func NewTaskRunner(ao *agentoutput.AgentOutput) (*TaskRunner, error) {
 
 	ns := os.Getenv("NAMESPACE")
 	name := os.Getenv("NAME")
+	traceabilityMetadata := os.Getenv("TRACEABILITY_METADATA_ENABLED") == "true"
 
 	if ns == "" || name == "" {
 		return nil, fmt.Errorf("NAMESPACE and NAME environment variables must be set")
@@ -63,6 +65,7 @@ func NewTaskRunner(ao *agentoutput.AgentOutput) (*TaskRunner, error) {
 		namespace:   ns,
 		sandboxName: name,
 		ao:          ao,
+		traceabilityMetadata: traceabilityMetadata,
 	}, nil
 }
 
@@ -261,6 +264,19 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 
 	cmd.Env = append(cmd.Env, fmt.Sprintf("NAME=%s", taskName))
 	cmd.Env = append(cmd.Env, fmt.Sprintf("TASKDIR=%s", taskDir))
+
+	// Inject traceability metadata
+	if tr.traceabilityMetadata {
+		cmd.Env = append(cmd.Env, fmt.Sprintf("TRACEABILITY_METADATA_ENABLED=%v", tr.traceabilityMetadata))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX_TASK_NAME=%s", task.GetName()))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX_TASK_UID=%s", string(task.GetUID())))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX_NAME=%s", tr.sandboxName))
+		cmd.Env = append(cmd.Env, fmt.Sprintf("SANDBOX_NAMESPACE=%s", tr.namespace))
+		if repowatch := task.Labels["review.gemini.google.com/repowatch"]; repowatch != "" {
+			cmd.Env = append(cmd.Env, fmt.Sprintf("REPOWATCH_NAME=%s", repowatch))
+		}
+		cmd.Env = append(cmd.Env, fmt.Sprintf("TIMESTAMP=%s", time.Now().Format(time.RFC3339)))
+	}
 	cmd.Stdout = io.MultiWriter(f, os.Stdout)
 	cmd.Stderr = io.MultiWriter(f, os.Stderr)
 

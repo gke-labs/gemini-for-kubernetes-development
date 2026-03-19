@@ -22,6 +22,7 @@ type AddressFeedbackModel struct {
 	PromptFile            string
 	Models                []string
 	Extensions            []reviewv1alpha1.Extension
+	Metadata              github.Metadata
 }
 
 func (m *AddressFeedbackModel) Name() string {

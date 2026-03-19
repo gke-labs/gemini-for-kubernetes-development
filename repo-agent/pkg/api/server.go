@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"net/http"
+	"os"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/auth"
@@ -17,6 +18,7 @@ type Server struct {
 	K8sManager *k8s.Manager
 	Auth       *auth.Authenticator
 	Templates  *templates.Manager
+	TraceabilityMetadata bool
 }
 
 func NewServer(manager *k8s.Manager, authenticator *auth.Authenticator) *Server {
@@ -24,6 +26,7 @@ func NewServer(manager *k8s.Manager, authenticator *auth.Authenticator) *Server 
 		K8sManager: manager,
 		Auth:       authenticator,
 		Templates:  templates.NewManager(manager.Clientset),
+		TraceabilityMetadata: os.Getenv("TRACEABILITY_METADATA_ENABLED") == "true",
 	}
 }
 

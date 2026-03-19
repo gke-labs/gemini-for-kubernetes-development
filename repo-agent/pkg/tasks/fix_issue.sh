@@ -16,6 +16,12 @@ export GITHUB_USER_ID="{{ .User.UserID }}"
 export GITHUB_USER_EMAIL="{{ .User.Email }}"
 export GITHUB_USER_NAME="{{ .User.Name }}"
 
+export SANDBOX_TASK="{{ .Metadata.SandboxTask }}"
+export SANDBOX_TASK_UID="{{ .Metadata.SandboxTaskUID }}"
+export SANDBOX_NAME="{{ .Metadata.Sandbox }}"
+export REPOWATCH_NAME="{{ .Metadata.RepoWatch }}"
+export TIMESTAMP="{{ .Metadata.Timestamp }}"
+
 export GITHUB_USER_TOKEN="${GITHUB_USER_TOKEN:-${GITHUB_TOKEN}}"
 if [ -z "$GITHUB_USER_TOKEN" ]; then
     # Try other common names

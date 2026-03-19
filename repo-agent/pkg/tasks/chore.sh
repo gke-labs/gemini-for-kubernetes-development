@@ -175,7 +175,17 @@ Only output the commit message itself.")
 
 ---
 ### Changes
-${COMMIT_MSG}"
+${COMMIT_MSG}
+
+---
+<!-- repo-agent-metadata
+sandbox-task: {{ .Metadata.SandboxTask }}
+sandbox-task-uid: {{ .Metadata.SandboxTaskUID }}
+sandbox: {{ .Metadata.Sandbox }}
+repowatch: {{ .Metadata.RepoWatch }}
+task-type: chore
+timestamp: {{ .Metadata.Timestamp }}
+-->"
 
         # Try to create PR
         PR_URL=$(gh pr create --title "chore: ${CHORE_NAME}" --body "${PR_BODY}" --head "${FORK_OWNER}:${BRANCH_NAME}" --base "${BASE_BRANCH}" --label "overseer" || true)

@@ -165,6 +165,15 @@ func (c *GithubFixIssueCommand) Run(ctx context.Context) error {
 		PromptFile:    promptPath,
 		Models:        strings.Split(c.Model, ","),
 		Branch:        os.Getenv("ISSUE_BRANCH"),
+		Metadata: github.Metadata{
+			Enabled:        os.Getenv("TRACEABILITY_METADATA_ENABLED") == "true",
+			SandboxTask:    fmt.Sprintf("%s/%s", os.Getenv("SANDBOX_NAMESPACE"), os.Getenv("SANDBOX_TASK_NAME")),
+			SandboxTaskUID: os.Getenv("SANDBOX_TASK_UID"),
+			Sandbox:        os.Getenv("SANDBOX_NAME"),
+			RepoWatch:      os.Getenv("REPOWATCH_NAME"),
+			TaskType:       "fix-issue",
+			Timestamp:      os.Getenv("TIMESTAMP"),
+		},
 	}
 
 	if c.ExtensionsJSON != "" {
