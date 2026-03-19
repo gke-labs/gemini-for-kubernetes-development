@@ -149,7 +149,7 @@ func (s *Server) listDevSandboxesFromK8s(ctx context.Context, namespace, repo st
 				}
 			}
 
-			name := strings.TrimPrefix(item.GetName(), "devc-")
+			name := item.GetName()
 
 			sandbox := models.DevSandbox{
 				Name:              name,
@@ -465,7 +465,7 @@ func (s *Server) deleteDevSandbox(c *gin.Context) {
 	name := c.Param("name") // This is the sandbox name
 	ctx := c.Request.Context()
 
-	resourceName := "devc-" + name
+	resourceName := name
 	if err := s.K8sManager.ScaledownDevSandboxHelper(ctx, namespace, resourceName); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete dev sandbox", "details": err.Error()})
 		return
@@ -479,7 +479,7 @@ func (s *Server) scaleUpDevSandbox(c *gin.Context) {
 	namespace := s.Auth.GetNamespaceFromContext(c)
 	name := c.Param("name")
 
-	resourceName := "devc-" + name
+	resourceName := name
 	if err := s.K8sManager.ScaleupDevSandboxHelper(c.Request.Context(), namespace, resourceName); err != nil {
 		log.Info("Failed to scale up dev sandbox", "name", name, "err", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scale up dev sandbox"})
@@ -494,7 +494,7 @@ func (s *Server) scaleDownDevSandbox(c *gin.Context) {
 	namespace := s.Auth.GetNamespaceFromContext(c)
 	name := c.Param("name")
 
-	resourceName := "devc-" + name
+	resourceName := name
 	if err := s.K8sManager.ScaledownDevSandboxHelper(c.Request.Context(), namespace, resourceName); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scale down dev sandbox", "details": err.Error()})
 		return
@@ -510,7 +510,7 @@ func (s *Server) getDevTasks(c *gin.Context) {
 	namespace := s.Auth.GetNamespaceFromContext(c)
 	sandboxName := c.Param("name")
 
-	resourceName := "devc-" + sandboxName
+	resourceName := sandboxName
 	taskList, err := s.K8sManager.ListSandboxTasks(c.Request.Context(), namespace, resourceName)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list tasks", "details": err.Error()})
@@ -584,7 +584,7 @@ func (s *Server) createDevTask(c *gin.Context) {
 		params[k] = v
 	}
 
-	resourceName := "devc-" + sandboxName
+	resourceName := sandboxName
 	err := s.K8sManager.CreateSandboxTask(c.Request.Context(), namespace, resourceName, "Sandbox", taskType, params)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create task", "details": err.Error()})
@@ -606,8 +606,7 @@ func (s *Server) getDevTaskLogs(c *gin.Context) {
 	sandboxName := c.Param("name")
 	taskID := c.Param("taskID")
 
-	// Service name logic must match KRO's RGD: devc-${schema.metadata.name}-lb
-	serviceName := fmt.Sprintf("devc-%s-lb", sandboxName)
+	serviceName := fmt.Sprintf("%s-lb", sandboxName)
 
 	targetURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:13339", serviceName, namespace)
 

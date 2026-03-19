@@ -344,8 +344,7 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 			WorkspaceDiskSize:   overseer.Spec.WorkspaceDiskSize,
 			ServiceAccountName:  "overseer-sandbox",
 		},
-		IssueRepo:      repo,
-		SkipDevcPrefix: true,
+		IssueRepo: repo,
 	}
 
 	opt.LLMProvider = "gemini-cli"
@@ -438,7 +437,7 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 		return fmt.Errorf("failed to get issue %d: %w", number, err)
 	}
 
-	sandboxName := fmt.Sprintf("devc-%s-issue-%d", overseer.Name, number)
+	sandboxName := fmt.Sprintf("%s-issue-%d", overseer.Name, number)
 
 	var sandboxExists bool
 	var sandboxIsActive bool
@@ -883,7 +882,6 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 		SeverityThreshold: overseer.Spec.Review.SeverityThreshold,
 		LLMExtensions:     overseer.Spec.Extensions,
 		WorkspaceDiskSize: overseer.Spec.WorkspaceDiskSize,
-		SkipDevcPrefix:    true,
 	}
 
 	sb, svc := sandbox.NewReviewSandbox(opt)

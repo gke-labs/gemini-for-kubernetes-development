@@ -27,8 +27,8 @@ func (s *Server) proxySandbox(c *gin.Context) {
 		return
 	}
 
-	// The sandbox service name pattern from RGD: devc-<name>-lb
-	targetHost := fmt.Sprintf("devc-%s-lb.%s.svc.cluster.local:13338", name, namespace)
+	// We need to resolve the correct service name.
+	targetHost := fmt.Sprintf("%s-lb.%s.svc.cluster.local:13338", name, namespace)
 
 	targetURL := &url.URL{
 		Scheme: "http",

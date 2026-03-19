@@ -332,7 +332,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	podsBySandbox := make(map[string]*corev1.Pod)
 	for i := range podList.Items {
 		pod := &podList.Items[i]
-		// Sandboxes create Pods with label sandbox=devc-<SandboxName>
+		// Sandboxes create Pods with label sandbox=<SandboxName>
 		if sandboxLabel, ok := pod.Labels["sandbox"]; ok {
 			podsBySandbox[sandboxLabel] = pod
 		}
@@ -790,7 +790,7 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 			continue
 		}
 
-		sandboxName := fmt.Sprintf("devc-%s-issue-%d", repoWatch.Name, *issue.Number)
+		sandboxName := fmt.Sprintf("%s-issue-%d", repoWatch.Name, *issue.Number)
 		validSandboxNames[sandboxName] = true
 
 		// Check if sandbox exists
@@ -1252,7 +1252,6 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, user *github.
 		SeverityThreshold: repoWatch.Spec.Review.SeverityThreshold,
 		LLMExtensions:     repoWatch.Spec.Review.LLM.Extensions,
 		WorkspaceDiskSize: repoWatch.Spec.Review.WorkspaceDiskSize,
-		SkipDevcPrefix:    true,
 	}
 
 	sb, svc := sandbox.NewReviewSandbox(opt)

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"strconv"
-	"strings"
 
 	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
@@ -39,9 +38,6 @@ type AgentSandboxOptions struct {
 	DindSupport string
 
 	LLMExtensions []reviewv1alpha1.Extension
-
-	// SkipDevcPrefix prevents prepending "devc-" to the sandbox name.
-	SkipDevcPrefix bool
 }
 
 // NewAgentSandbox creates a new Sandbox (unstructured) and Service object.
@@ -55,9 +51,6 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 
 	name := opt.Name
 	sandboxName := name
-	if !opt.SkipDevcPrefix && !strings.HasPrefix(name, "devc-") {
-		sandboxName = "devc-" + name
-	}
 
 	// Default resources if not set
 	resources := opt.Resources

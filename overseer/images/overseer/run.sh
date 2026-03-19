@@ -117,7 +117,7 @@ while true; do
 
   # Reconcile chores if enabled
   if [ "$CHORES_MODE" != "disabled" ]; then
-    echo "$(date): Reconciling chores..."
+    echo "$(date): running overseer-cli reconcile ..."
     overseer-cli reconcile
   fi
 

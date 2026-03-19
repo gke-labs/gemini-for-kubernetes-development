@@ -4,7 +4,7 @@ metadata:
   labels:
     review.gemini.google.com/repowatch: ist-gfkd
     sandbox.gemini.google.com/type: issue
-  (starts_with(name, 'devc-ist-gfkd-issue-')): true
+  (starts_with(name, 'ist-gfkd-issue-')): true
   namespace: repo-agent-system
   ownerReferences:
   - apiVersion: review.gemini.google.com/v1alpha1

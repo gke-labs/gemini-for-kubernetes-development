@@ -545,8 +545,7 @@ func (s *Server) getTaskLogs(c *gin.Context) {
 	taskID := c.Param("taskID")
 
 	sandboxName := fmt.Sprintf("%s-pr-%s", repo, prID)
-	// Service name logic must match KRO's RGD: devc-${schema.metadata.name}-lb
-	serviceName := fmt.Sprintf("devc-%s-lb", sandboxName)
+	serviceName := fmt.Sprintf("%s-lb", sandboxName)
 
 	targetURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:13339", serviceName, namespace)
 

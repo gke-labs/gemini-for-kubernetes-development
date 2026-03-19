@@ -98,6 +98,10 @@ install-repo-agent:
 	--replace .spec.versions[].schema.openAPIV3Schema.properties.spec.properties.review.properties.llm.properties.provider.default=${DEFAULT_LLM_PROVIDER} \
 	--replace .spec.versions[].schema.openAPIV3Schema.properties.spec.properties.issueHandlers.items.properties.llm.properties.provider.default=${DEFAULT_LLM_PROVIDER}
 
+.PHONY: install-overseer
+install-overseer:
+	(cd ../overseer && KIND_CLUSTER=${KIND_CLUSTER} $(MAKE) push-images-overseer install)
+
 bin/tls.crt:
 	openssl req -x509 -nodes -days 365 -newkey rsa:2048  -keyout bin/tls.key -out bin/tls.crt  -subj "/CN=repo-agent"
 
@@ -200,7 +204,7 @@ port-forward:
 	while true; do \
 	ENVOY_SERVICE=$$(kubectl get svc -n envoy-gateway-system --selector=gateway.envoyproxy.io/owning-gateway-namespace=repo-agent-system,gateway.envoyproxy.io/owning-gateway-name=repo-agent-gateway -o jsonpath='{.items[0].metadata.name}') && kubectl port-forward -n envoy-gateway-system --address 0.0.0.0 service/$${ENVOY_SERVICE} $(LOCAL_PORT):80;\
 	done
-	# kubectl port-forward -n repo-agent-system --address 0.0.0.0 service/devc-agent-sandbox-pr-102-lb  13338:13338
+	# kubectl port-forward -n repo-agent-system --address 0.0.0.0 service/agent-sandbox-pr-102-lb  13338:13338
 
 IMAGE_TAG ?= latest
 SKIP_PREQS ?= false
@@ -242,6 +246,20 @@ update-repo-agent-latest: install-repo-agent-latest
 show-url:
 	@IP_ADDR=`kubectl get gateway -n repo-agent-system repo-agent-gateway -o json | jq -r ".status.addresses[0].value"`; \
 	echo; echo; echo -e "\e[1;34m REPO AGENT: https://$$IP_ADDR \e[0m"; echo; echo;
+
+
+.PHONY: reload-ui
+reload-ui:
+	../dev/tools/push-images --image-prefix=$(REGISTRY) $(KIND_CLUSTER_ARG) --working-dir .. --images-dir images \
+	--only review-api \
+	--only review-ui
+	$(MAKE) install-repo-agent
+	kubectl rollout restart statefulset -n repo-agent-system
+	kubectl rollout status  statefulset  -n repo-agent-system
+	kubectl rollout restart deployment -n repo-agent-system
+	kubectl rollout status  deployment  -n repo-agent-system
+	sleep 5
+	make port-forward
 
 .PHONY: reload
 reload: build-and-push-repo-agent install-repo-agent

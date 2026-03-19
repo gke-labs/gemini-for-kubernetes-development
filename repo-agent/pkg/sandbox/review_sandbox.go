@@ -44,9 +44,6 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 
 	name := opt.Name
 	sandboxName := name
-	if !opt.SkipDevcPrefix && !strings.HasPrefix(name, "devc-") {
-		sandboxName = "devc-" + name
-	}
 
 	labels := make(map[string]interface{})
 	for k, v := range opt.Labels {
@@ -218,7 +215,7 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 				"podTemplate": map[string]interface{}{
 					"metadata": map[string]interface{}{
 						"labels": map[string]interface{}{
-							"sandbox": fmt.Sprintf("devc-%s", sandboxName),
+							"sandbox": sandboxName,
 						},
 					},
 					"spec": map[string]interface{}{
@@ -292,7 +289,7 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 		},
 	}
 
-	serviceName := fmt.Sprintf("devc-%s-lb", sandboxName)
+	serviceName := fmt.Sprintf("%s-lb", sandboxName)
 	service := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "v1",
@@ -303,7 +300,7 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 			},
 			"spec": map[string]interface{}{
 				"selector": map[string]interface{}{
-					"sandbox": fmt.Sprintf("devc-%s", sandboxName),
+					"sandbox": sandboxName,
 				},
 				"ports": []interface{}{
 					map[string]interface{}{

@@ -210,7 +210,7 @@ func TestReconcileIssueHandlerSandboxes_MaxSandboxes(t *testing.T) {
 			"apiVersion": "agents.x-k8s.io/v1alpha1",
 			"kind":       "Sandbox",
 			"metadata": map[string]interface{}{
-				"name":      "devc-test-repowatch-issue-1",
+				"name":      "test-repowatch-issue-1",
 				"namespace": "default",
 				"labels": map[string]interface{}{
 					"sandbox.gemini.google.com/type": "issue",
@@ -236,7 +236,7 @@ func TestReconcileIssueHandlerSandboxes_MaxSandboxes(t *testing.T) {
 			"apiVersion": "agents.x-k8s.io/v1alpha1",
 			"kind":       "Sandbox",
 			"metadata": map[string]interface{}{
-				"name":      "devc-test-repowatch-issue-2",
+				"name":      "test-repowatch-issue-2",
 				"namespace": "default",
 				"labels": map[string]interface{}{
 					"sandbox.gemini.google.com/type": "issue",

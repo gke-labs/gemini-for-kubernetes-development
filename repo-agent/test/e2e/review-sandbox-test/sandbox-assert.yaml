@@ -16,7 +16,7 @@ spec:
   podTemplate:
     metadata:
       labels:
-        (starts_with(sandbox, 'devc-rst-gfkd-pr-')): true
+        (starts_with(sandbox, 'rst-gfkd-pr-')): true
     spec:
       serviceAccountName: review-sandbox
       initContainers:

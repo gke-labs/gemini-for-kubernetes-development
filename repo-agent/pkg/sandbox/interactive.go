@@ -172,7 +172,7 @@ func LaunchSandbox(ctx context.Context, kube *clients.KubernetesClient, repo *gi
 
 	sandbox.Spec.PodTemplate.ObjectMeta.Labels = map[string]string{
 		// This enables FindSandboxPod to work, even if we are launching the dev sandbox directly
-		"sandbox": "devc-" + sandboxName,
+		"sandbox": sandboxName,
 	}
 
 	sandbox.Annotations = map[string]string{
@@ -284,9 +284,8 @@ func FindSandboxPodInNamespace(ctx context.Context, sandboxName, namespace strin
 		namespace = kube.CurrentNamespace
 	}
 
-	// The sandbox name in the RGD is devc-<name>
-	// And the pods have label sandbox=devc-<name>
-	labelSelector := fmt.Sprintf("sandbox=devc-%s", sandboxName)
+	// And the pods have label sandbox=<name>
+	labelSelector := fmt.Sprintf("sandbox=%s", sandboxName)
 	pods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: labelSelector,
 	})

@@ -39,6 +39,33 @@ func (s *Server) getOverseer(c *gin.Context) {
 	c.JSON(http.StatusOK, overseer.Object)
 }
 
+func (s *Server) getOverseerSandboxes(c *gin.Context) {
+	name := c.Param("name")
+	namespace := fmt.Sprintf("overseer-%s", name)
+
+	// Get all sandboxes in the namespace
+	sandboxes, err := s.K8sManager.ListSandboxes(c.Request.Context(), namespace, "")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list sandboxes"})
+		return
+	}
+
+	items := make([]map[string]interface{}, 0)
+	for _, sb := range sandboxes.Items {
+		labels := sb.GetLabels()
+		sType := labels["sandbox.gemini.google.com/type"]
+		if sType == "" {
+			sType = labels["sandbox-type"]
+		}
+		// Skip agent and chore, since they are handled elsewhere
+		if sType == "agent" || sType == "chore" || sType == "overseer" {
+			continue
+		}
+		items = append(items, sb.Object)
+	}
+	c.JSON(http.StatusOK, items)
+}
+
 func (s *Server) getOverseerChores(c *gin.Context) {
 	name := c.Param("name")
 	// Chores are sandboxes in the overseer namespace with specific labels
@@ -91,7 +118,7 @@ func (s *Server) getOverseerLogs(c *gin.Context) {
 
 func (s *Server) getChoreLogs(c *gin.Context) {
 	overseerName := c.Param("name")
-	choreSandboxName := c.Param("choreName")
+	choreSandboxName := c.Param("name")
 	taskID := c.Query("taskID")
 
 	namespace := fmt.Sprintf("overseer-%s", overseerName)
@@ -100,7 +127,7 @@ func (s *Server) getChoreLogs(c *gin.Context) {
 	// Otherwise, return pod logs.
 
 	if taskID != "" {
-		serviceName := fmt.Sprintf("devc-%s-lb", choreSandboxName)
+		serviceName := fmt.Sprintf("%s-lb", choreSandboxName)
 		targetURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:13339", serviceName, namespace)
 
 		proxyURL, err := url.Parse(targetURL)
@@ -155,4 +182,30 @@ func (s *Server) getChoreTasks(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, tasks.Items)
+}
+
+func (s *Server) getChoreTaskLogs(c *gin.Context) {
+	// Re-uses getChoreLogs logic but fits the TaskCard route pattern
+	overseerName := c.Param("repo")
+	choreSandboxName := c.Param("name")
+	taskID := c.Param("taskID")
+
+	namespace := fmt.Sprintf("overseer-%s", overseerName)
+
+	serviceName := fmt.Sprintf("%s-lb", choreSandboxName)
+	targetURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:13339", serviceName, namespace)
+
+	proxyURL, err := url.Parse(targetURL)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid target URL"})
+		return
+	}
+
+	proxy := httputil.NewSingleHostReverseProxy(proxyURL)
+	proxy.Director = func(req *http.Request) {
+		req.URL.Scheme = proxyURL.Scheme
+		req.URL.Host = proxyURL.Host
+		req.URL.Path = fmt.Sprintf("/logs/%s", taskID)
+	}
+	proxy.ServeHTTP(c.Writer, c.Request)
 }

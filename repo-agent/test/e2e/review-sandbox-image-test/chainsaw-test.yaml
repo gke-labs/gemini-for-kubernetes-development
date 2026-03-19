@@ -61,7 +61,7 @@ spec:
           fi
           echo "Found Sandbox: $RS_NAME"
           # 2. Find the Pod using the label selector
-          POD_LABEL="sandbox=devc-$RS_NAME"
+          POD_LABEL="sandbox=$RS_NAME"
           echo "Looking for Pod with label: $POD_LABEL"
           POD_NAME=$(kubectl get pod -n repo-agent-system -l "$POD_LABEL" -o jsonpath='{.items[0].metadata.name}')
 
@@ -90,7 +90,7 @@ spec:
         content: |
           RS_NAME=$(kubectl get sandbox -n repo-agent-system -l review.gemini.google.com/repowatch=rst-image -o jsonpath='{.items[0].metadata.name}')
           if [ -n "$RS_NAME" ]; then
-            POD_LABEL="sandbox=devc-$RS_NAME"
+            POD_LABEL="sandbox=$RS_NAME"
             POD_NAME=$(kubectl get pod -n repo-agent-system -l "$POD_LABEL" -o jsonpath='{.items[0].metadata.name}')
             if [ -n "$POD_NAME" ]; then
               echo "--- Logs for Pod $POD_NAME (container: sandbox) ---"
