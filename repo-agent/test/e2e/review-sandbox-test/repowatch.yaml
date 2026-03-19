@@ -8,7 +8,7 @@ spec:
   review:
     maxSandboxes: 1
     maxActiveSandboxes: 1
-    devcontainerConfigRef: minimal-devcontainer
+    devcontainerConfigRef: rst-minimal-devcontainer
     maxReviewFiles: 1000
     llm:
       apiKeySecretRef: dummy-provider-token

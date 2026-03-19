@@ -13,7 +13,7 @@ spec:
     maxSandboxes: 1
     maxActiveSandboxes: 1
     issueShutdownAfterMinutes: 30
-    devcontainerConfigRef: minimal-devcontainer
+    devcontainerConfigRef: ist-minimal-devcontainer
     llm:
       apiKeySecretRef: dummy-provider-token
       provider: dummy

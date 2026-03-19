@@ -2,7 +2,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: minimal-devcontainer
+  name: ist-minimal-devcontainer
   namespace: repo-agent-system
 data:
   devcontainer.json: |
