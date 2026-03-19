@@ -86,7 +86,7 @@ func TestReconciler_ReconcileIssues_PodEvicted(t *testing.T) {
 	}
 
 	// Existing Sandbox
-	sandboxName := "devc-test-repowatch-issue-1"
+	sandboxName := "test-repowatch-issue-1"
 	issueSandbox := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "agents.x-k8s.io/v1alpha1",
@@ -206,7 +206,7 @@ func TestReconciler_ReconcileIssues_PodFailedOOM(t *testing.T) {
 	}
 
 	// Existing Sandbox
-	sandboxName := "devc-test-repowatch-oom-issue-1"
+	sandboxName := "test-repowatch-oom-issue-1"
 	issueSandbox := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "agents.x-k8s.io/v1alpha1",
@@ -326,7 +326,7 @@ func TestReconciler_ReconcileIssues_PodPendingScheduled(t *testing.T) {
 	}
 
 	// Existing Sandbox
-	sandboxName := "devc-test-repowatch-pending-issue-1"
+	sandboxName := "test-repowatch-pending-issue-1"
 	issueSandbox := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "agents.x-k8s.io/v1alpha1",

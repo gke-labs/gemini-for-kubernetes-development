@@ -42,7 +42,7 @@ func (s *Server) getOverseer(c *gin.Context) {
 func (s *Server) getOverseerSandboxes(c *gin.Context) {
 	name := c.Param("name")
 	namespace := fmt.Sprintf("overseer-%s", name)
-	
+
 	// Get all sandboxes in the namespace
 	sandboxes, err := s.K8sManager.ListSandboxes(c.Request.Context(), namespace, "")
 	if err != nil {
@@ -183,7 +183,6 @@ func (s *Server) getChoreTasks(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, tasks.Items)
 }
-
 
 func (s *Server) getChoreTaskLogs(c *gin.Context) {
 	// Re-uses getChoreLogs logic but fits the TaskCard route pattern

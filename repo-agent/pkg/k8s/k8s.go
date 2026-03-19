@@ -305,9 +305,9 @@ func (m *Manager) ScaledownIssueSandbox(ctx context.Context, namespace, repo, is
 	log := klog.FromContext(ctx)
 	var sandboxName string
 	if handler != "" {
-		sandboxName = fmt.Sprintf("devc-%s-issue-%s-%s", repo, issueID, handler)
+		sandboxName = fmt.Sprintf("%s-issue-%s-%s", repo, issueID, handler)
 	} else {
-		sandboxName = fmt.Sprintf("devc-%s-issue-%s", repo, issueID)
+		sandboxName = fmt.Sprintf("%s-issue-%s", repo, issueID)
 	}
 
 	log.Info("Scaling down issue sandbox", "name", sandboxName)
@@ -422,7 +422,7 @@ func (m *Manager) ScaleupSandbox(ctx context.Context, namespace, repo, prID, ann
 
 func (m *Manager) ScaleupIssueSandbox(ctx context.Context, namespace, repo, issueID, handler, annotationValue string) error {
 	log := klog.FromContext(ctx)
-	sandboxName := fmt.Sprintf("devc-%s-issue-%s", repo, issueID)
+	sandboxName := fmt.Sprintf("%s-issue-%s", repo, issueID)
 
 	log.Info("Scaling up issue sandbox", "name", sandboxName, "handler", handler, "annotationValue", annotationValue)
 

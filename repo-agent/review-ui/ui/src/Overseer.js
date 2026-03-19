@@ -153,19 +153,19 @@ const Overseer = ({ onBack, getSandboxStatusClass, namespace: userNamespace }) =
         if (activeOverseer?.metadata.name === ov.metadata.name) {
             setActiveOverseer(null);
             setActiveChore(null);
-            setActiveTask(null);
+            
             setShowOverseerLogs(false);
         } else {
             setActiveOverseer(ov);
             setActiveChore(null);
-            setActiveTask(null);
+            
             setShowOverseerLogs(true);
         }
     };
 
     const handleChoreClick = (chore) => {
         setActiveChore(chore);
-        setActiveTask(null);
+        
         setShowOverseerLogs(false);
     };
 

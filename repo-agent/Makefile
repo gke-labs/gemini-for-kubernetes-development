@@ -204,7 +204,7 @@ port-forward:
 	while true; do \
 	ENVOY_SERVICE=$$(kubectl get svc -n envoy-gateway-system --selector=gateway.envoyproxy.io/owning-gateway-namespace=repo-agent-system,gateway.envoyproxy.io/owning-gateway-name=repo-agent-gateway -o jsonpath='{.items[0].metadata.name}') && kubectl port-forward -n envoy-gateway-system --address 0.0.0.0 service/$${ENVOY_SERVICE} $(LOCAL_PORT):80;\
 	done
-	# kubectl port-forward -n repo-agent-system --address 0.0.0.0 service/devc-agent-sandbox-pr-102-lb  13338:13338
+	# kubectl port-forward -n repo-agent-system --address 0.0.0.0 service/agent-sandbox-pr-102-lb  13338:13338
 
 IMAGE_TAG ?= latest
 SKIP_PREQS ?= false

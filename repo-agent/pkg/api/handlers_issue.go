@@ -44,7 +44,7 @@ func (s *Server) getIssueTasks(c *gin.Context) {
 	repo := c.Param("repo")
 	issueID := c.Param("issue_id")
 
-	sandboxName := fmt.Sprintf("devc-%s-issue-%s", repo, issueID)
+	sandboxName := fmt.Sprintf("%s-issue-%s", repo, issueID)
 
 	taskList, err := s.K8sManager.ListSandboxTasks(c.Request.Context(), namespace, sandboxName)
 	if err != nil {
@@ -144,7 +144,7 @@ func (s *Server) listIssuesFromK8s(ctx context.Context, namespace, repo string) 
 		if issueID == "" {
 			// Fallback or skip? It might be an old sandbox or failed creation?
 			// Try to parse from name if possible?
-			// Sandbox name: devc-repo-issue-123.
+			// Sandbox name: repo-issue-123.
 			// RepoWatch name: repo.
 			// Issue ID is suffix.
 			continue
@@ -188,7 +188,7 @@ func (s *Server) listIssuesFromK8s(ctx context.Context, namespace, repo string) 
 			comment = draft
 		}
 
-		name := strings.TrimPrefix(item.GetName(), "devc-")
+		name := item.GetName()
 
 		issue := models.Issue{
 			ID:                issueID,
@@ -249,7 +249,7 @@ func (s *Server) submitIssueComment(c *gin.Context) {
 	ctx := c.Request.Context()
 	log.Info("Submitting comment for Issue", "issueID", issueID, "repo", repo, "comment", payload.Comment)
 
-	sandboxName := fmt.Sprintf("devc-%s-issue-%s", repo, issueID)
+	sandboxName := fmt.Sprintf("%s-issue-%s", repo, issueID)
 	gvr := schema.GroupVersionResource{
 		Group:    "agents.x-k8s.io",
 		Version:  "v1alpha1",
@@ -449,8 +449,7 @@ func (s *Server) getIssueTaskLogs(c *gin.Context) {
 	taskID := c.Param("taskID")
 
 	sandboxName := fmt.Sprintf("%s-issue-%s", repo, issueID)
-	// Service name logic must match KRO's RGD: devc-${schema.metadata.name}-lb
-	serviceName := fmt.Sprintf("devc-%s-lb", sandboxName)
+	serviceName := fmt.Sprintf("%s-lb", sandboxName)
 
 	targetURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:13339", serviceName, namespace)
 
@@ -493,7 +492,7 @@ func (s *Server) createIssueTask(c *gin.Context) {
 		return
 	}
 
-	sandboxName := fmt.Sprintf("devc-%s-issue-%s", repo, issueID)
+	sandboxName := fmt.Sprintf("%s-issue-%s", repo, issueID)
 
 	// Fetch RepoWatch to get latest config
 	rw, err := s.K8sManager.GetRepoWatch(c.Request.Context(), namespace, repo)
@@ -570,7 +569,7 @@ func (s *Server) getIssueCommits(c *gin.Context) {
 		authUserLogin = authUser.GetLogin()
 	}
 
-	sandboxName := fmt.Sprintf("devc-%s-issue-%s", repo, issueID)
+	sandboxName := fmt.Sprintf("%s-issue-%s", repo, issueID)
 	gvr := schema.GroupVersionResource{
 		Group:    "agents.x-k8s.io",
 		Version:  "v1alpha1",
@@ -741,7 +740,7 @@ func (s *Server) rollbackIssue(c *gin.Context) {
 		return
 	}
 
-	sandboxName := fmt.Sprintf("devc-%s-issue-%s", repo, issueID)
+	sandboxName := fmt.Sprintf("%s-issue-%s", repo, issueID)
 	params := map[string]string{
 		"COMMIT_SHA":      payload.CommitSHA,
 		"PULL_REQUEST_ID": payload.PullRequestID,

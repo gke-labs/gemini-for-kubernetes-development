@@ -4,7 +4,7 @@ metadata:
   namespace: repo-agent-system
   labels:
     review.gemini.google.com/repowatch: ist-image
-  (starts_with(name, 'devc-ist-image-issue-')): true
+  (starts_with(name, 'ist-image-issue-')): true
   (contains(name, 'triage')): true
 status:
   (taskState == 'Completed'): true

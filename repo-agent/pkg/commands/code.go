@@ -54,7 +54,7 @@ func RunCode(ctx context.Context, opt RunCodeOptions) error {
 	}
 
 	sshConfigPath := filepath.Join(homeDir, ".ssh", "config")
-	sshHost := fmt.Sprintf("devc-%s", opt.SandboxName)
+	sshHost := opt.SandboxName
 
 	if err := updateSSHConfig(ctx, sshConfigPath, sshHost, *podID); err != nil {
 		return fmt.Errorf("failed to update ssh config: %w", err)
