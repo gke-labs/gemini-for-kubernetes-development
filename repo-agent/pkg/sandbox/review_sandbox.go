@@ -92,7 +92,6 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 		map[string]interface{}{"name": "NAME", "value": sandboxName},
 		map[string]interface{}{"name": "REPO", "value": opt.RepoName},
 		map[string]interface{}{"name": "PRID", "value": fmt.Sprintf("%d", opt.PRNumber)},
-		map[string]interface{}{"name": "MAX_REVIEW_FILES", "value": strconv.Itoa(opt.MaxReviewFiles)},
 		map[string]interface{}{"name": "IGNORE_FILES", "value": strings.Join(opt.IgnoreFiles, ",")},
 		map[string]interface{}{"name": "SEVERITY_THRESHOLD", "value": opt.SeverityThreshold},
 		map[string]interface{}{"name": "AGENT_NAME", "value": opt.LLMProvider},
@@ -104,6 +103,10 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 		map[string]interface{}{"name": "GITHUB_BOT_LOGIN", "value": opt.BotLogin},
 		map[string]interface{}{"name": "GITHUB_BOT_NAME", "value": opt.BotName},
 		map[string]interface{}{"name": "GITHUB_BOT_EMAIL", "value": opt.BotEmail},
+	}
+
+	if opt.MaxReviewFiles > 0 {
+		env = append(env, map[string]interface{}{"name": "MAX_REVIEW_FILES", "value": strconv.Itoa(opt.MaxReviewFiles)})
 	}
 
 	if len(opt.LLMExtensions) > 0 {

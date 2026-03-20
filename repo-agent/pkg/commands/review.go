@@ -126,8 +126,8 @@ func (c *ReviewCommand) InitDefaults() {
 		maxReviewFilesStr := os.Getenv("MAX_REVIEW_FILES")
 		if maxReviewFilesStr != "" {
 			val, err := strconv.Atoi(maxReviewFilesStr)
-			if err != nil {
-				klog.Infof("Invalid MAX_REVIEW_FILES value '%s', using default %d: %v", maxReviewFilesStr, DefaultMaxReviewFiles, err)
+			if err != nil || val == 0 {
+				klog.Infof("Invalid or zero MAX_REVIEW_FILES value '%s', using default %d: %v", maxReviewFilesStr, DefaultMaxReviewFiles, err)
 				c.MaxReviewFiles = DefaultMaxReviewFiles
 			} else {
 				c.MaxReviewFiles = val
