@@ -753,8 +753,10 @@ function PrReviewCard({
   const reviewModels = (availableModels && availableModels.length > 0) ? availableModels : [
     'gemini-3.1-pro-preview',
     'gemini-3-flash-preview',
-    'gemini-2.0-pro-exp-02-05',
-    'gemini-2.0-flash-exp'
+    'gemini-3.1-flash-lite-preview',
+    'gemini-2.5-pro',
+    'gemini-2.5-flash',
+    'gemini-2.5-flash-lite'
   ];
 
 
