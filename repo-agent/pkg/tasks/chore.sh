@@ -109,6 +109,7 @@ function runGemini {
 }
 
 function restoreConfigDirFiles {
+    BASE_BRANCH=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name)
     if [ -d "/configdir" ] && [ "$(ls -A /configdir)" ]; then
       echo "Restoring files changed by configdir injection..."
       pushd "/configdir" > /dev/null
@@ -129,6 +130,7 @@ function restoreConfigDirFiles {
 }
 
 function commitChanges {
+    BASE_BRANCH=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name)
     # Check for changes (uncommitted or committed on this branch)
     # If gemini --yolo committed, we can check changes against BASE_BRANCH
     if [ -n "$(git status --porcelain)" ] || [ "$(git rev-parse HEAD)" != "$(git rev-parse ${BASE_BRANCH})" ]; then
@@ -195,19 +197,26 @@ function runChore {
     pushd "/workspaces/${REPO_NAME}" > /dev/null
     
     # Identify the base branch (usually main or master)
-    BASE_BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null || echo "main")
+    BASE_BRANCH=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name)
     
     # Create a unique branch for this chore run
     SLUGIFIED_NAME=$(echo "${CHORE_NAME}" | tr '[:upper:]' '[:lower:]' | tr -c '[:alnum:]' '-' | sed 's/^-//;s/-$//')
     BRANCH_NAME="chore/${SLUGIFIED_NAME}-$(date +%Y%m%d-%H%M%S)"
     
+    # start from base branch
+    git checkout "${BASE_BRANCH}"
     git checkout -b "${BRANCH_NAME}"
 
     runGemini
     
     restoreConfigDirFiles
 
-    commitChanges
+    if [ "{{ .SkipPR }}" = "true" ]; then
+        echo "SkipPR is true, skipping commit and push."
+        echo "Chore executed successfully without creating a PR." > "$(dirname "${PROMPT_FILE}")/agent-output.txt"
+    else
+        commitChanges
+    fi
     
     popd > /dev/null
 }

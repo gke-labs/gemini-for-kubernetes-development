@@ -18,6 +18,7 @@ func TestChoreScriptTemplate(t *testing.T) {
 		ChoreName:  "Test Chore",
 		ChoreFile:  ".agents/test.md",
 		PromptFile: "prompt.txt",
+		SkipPR:     true,
 	}
 
 	var w bytes.Buffer

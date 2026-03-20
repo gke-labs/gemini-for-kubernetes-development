@@ -43,6 +43,7 @@ type DevSandboxOptions struct {
 	GithubSecretName      string
 	DevcontainerConfigRef string
 	Image                 string
+	OverseerName          string
 
 	// System Images
 	RepoSandboxImage string

@@ -41,6 +41,9 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 	if opt.ConfigDirImage == "" {
 		opt.ConfigDirImage = os.Getenv("CONFIGDIR_CLI_IMAGE")
 	}
+	if opt.OverseerName == "" {
+		opt.OverseerName = os.Getenv("OVERSEER_NAME")
+	}
 
 	name := opt.Name
 	sandboxName := name

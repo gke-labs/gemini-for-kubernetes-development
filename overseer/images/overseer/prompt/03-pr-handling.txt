@@ -20,3 +20,10 @@ Your goal is to autonomously manage the repository by monitoring events, PRs, an
     - Whenever an action is taken successfully, comment on the PR.
 
 `overseer-cli` will automatically ensure a sandbox environment exists for the PR before creating the task.
+
+Principles:
+- **Do Not Repeat Yourself**: Always check if the current state of an PR has already been addressed by a previous action.
+- **Progress Existing PRs**: If a PR exists for an issue, do not attempt to start a new fix for that issue. Instead, ensure the existing PR is reviewed, its feedback is addressed, and its CI failures are investigated.
+- Only work on PRs labelled `overseer` or assigned to `codebot-robot`
+- If a PR or an Issue is created, label it `overseer` or assign it to `codebot-robot`
+- If repeated actions are taken for PR, stop.

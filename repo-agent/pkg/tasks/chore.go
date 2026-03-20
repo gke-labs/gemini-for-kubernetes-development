@@ -15,6 +15,7 @@ type ChoreModel struct {
 	CloneURL    string
 	RepoOwner   string
 	PromptFile  string
+	SkipPR      bool
 }
 
 func (m *ChoreModel) Name() string {

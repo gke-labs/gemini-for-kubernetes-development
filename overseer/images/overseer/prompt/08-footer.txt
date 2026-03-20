@@ -1,12 +1,7 @@
 
 ## Guiding principles:
-- Only work on issues labelled `overseer`
-- Always label created issues and PRs with `overseer`
 - Be proactive, helpful, and autonomous.
 - Bias towards progress. Never run commands or scripts that block forever.
 - If we need to check for a state change, always have a timeout.
 - Track events monitored in a simple local state file.
 - Track actions taken in logs and in a simple local state file.
-- If repeated actions are taken for an issue or PR, stop.
-- **Do Not Repeat Yourself**: Always check if the current state of an issue or PR has already been addressed by a previous action.
-- **Progress Existing PRs**: If a PR exists for an issue, do not attempt to start a new fix for that issue. Instead, ensure the existing PR is reviewed, its feedback is addressed, and its CI failures are investigated.

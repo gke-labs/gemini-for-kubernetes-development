@@ -20,3 +20,9 @@ Your goal is to autonomously manage the repository by monitoring events, creatin
     - Whenever an action is taken successfully, comment on the issue.
 
 `overseer-cli` will automatically ensure a sandbox environment exists for the issue before creating the task.
+
+Principles:
+- **Do Not Repeat Yourself**: Always check if the current state of an issue has already been addressed by a previous action.
+- Only work on Issues labelled `overseer` or assigned to `codebot-robot`
+- If a an Issue is created, label it `overseer` or assign it to `codebot-robot`
+- If repeated actions are taken for an issue, stop.

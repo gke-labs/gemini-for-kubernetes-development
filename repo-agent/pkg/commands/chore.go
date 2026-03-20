@@ -24,6 +24,7 @@ type ChoreCommand struct {
 	RepoName     string
 	CloneURL     string
 	RepoOwner    string
+	SkipPR       bool
 
 	// loaded objects
 	sandbox   *sandbox.IssueSandbox
@@ -50,6 +51,7 @@ func BuildChoreCommand() *cobra.Command {
 	cmd.Flags().StringVar(&choreCommand.RepoName, "repo", os.Getenv("REPO"), "Repository name")
 	cmd.Flags().StringVar(&choreCommand.CloneURL, "clone-url", os.Getenv("CLONE_URL"), "Repository clone URL")
 	cmd.Flags().StringVar(&choreCommand.RepoOwner, "repo-owner", os.Getenv("REPO_OWNER"), "Repository owner")
+	cmd.Flags().BoolVar(&choreCommand.SkipPR, "skip-pr", os.Getenv("SKIP_PR") == "true", "Skip PR creation")
 	cmd.Flags().BoolVar(&choreCommand.InPod, "in-pod", false, "Whether running inside the pod")
 	return cmd
 }
@@ -104,6 +106,7 @@ func (c *ChoreCommand) Run(ctx context.Context) error {
 		CloneURL:    c.CloneURL,
 		RepoOwner:   c.RepoOwner,
 		PromptFile:  promptPath,
+		SkipPR:      c.SkipPR,
 	}
 
 	apikey, err := GetGeminiAPIKey(c.sandboxID)
