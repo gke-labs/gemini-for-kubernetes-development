@@ -355,7 +355,7 @@ func makeGeminiJSONOutput(response string) []byte {
 		Response:  response,
 		Stats: GeminiStatsJSON{
 			Models: map[string]GeminiModelStatsJSON{
-				"gemini-2.5-pro": {
+				"gemini-3.1-pro-preview": {
 					API: GeminiAPIStatsJSON{
 						TotalRequests:  3,
 						TotalErrors:    0,
@@ -405,9 +405,9 @@ func TestGemini_Run(t *testing.T) {
 		if len(usage.Models) != 1 {
 			t.Fatalf("Expected 1 model in usage, got %d", len(usage.Models))
 		}
-		modelUsage, ok := usage.Models["gemini-2.5-pro"]
+		modelUsage, ok := usage.Models["gemini-3.1-pro-preview"]
 		if !ok {
-			t.Fatal("Expected usage for model 'gemini-2.5-pro'")
+			t.Fatal("Expected usage for model 'gemini-3.1-pro-preview'")
 		}
 		if modelUsage.API.TotalRequests != 3 {
 			t.Errorf("Expected 3 total requests, got %d", modelUsage.API.TotalRequests)
