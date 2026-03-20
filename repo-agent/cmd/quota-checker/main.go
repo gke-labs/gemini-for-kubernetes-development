@@ -90,7 +90,7 @@ func run(ctx context.Context) error {
 
 		fmt.Println("---")
 		fmt.Printf("Metric: %v\n", resp.Metric.Labels)
-		// if resp.Metric.Labels["model"] != "gemini-3.1-pro" {
+		// if resp.Metric.Labels["model"] != "gemini-3.1-pro-preview" {
 		// 	fmt.Printf("skipping model %v\n", resp.Resource.Labels["model"])
 		// 	continue
 		// }
