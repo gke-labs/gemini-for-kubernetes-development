@@ -146,8 +146,7 @@ def inject_issue_model_list(repowatch):
         target_models = [
             "gemini-3-flash-preview",
             "gemini-3.1-pro-preview",
-            "gemini-2.5-pro",
-            "gemini-2.5-flash"
+            "gemini-3.1-flash-lite-preview"
         ]
         
         current_models = spec["issue"].get("models")
