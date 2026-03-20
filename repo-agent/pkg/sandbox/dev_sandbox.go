@@ -59,6 +59,9 @@ type DevSandboxOptions struct {
 	// WorkspaceDiskSize specifies the disk size for the workspace PVC.
 	WorkspaceDiskSize string
 
+	// GithubTraceability enables adding traceability metadata to GitHub artifacts.
+	GithubTraceability bool
+
 	// Idea Exploration
 	IdeaID         string
 	Approach       string

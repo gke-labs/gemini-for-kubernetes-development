@@ -183,6 +183,7 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 		map[string]interface{}{"name": "GOCACHE", "value": GoCachePath},
 		map[string]interface{}{"name": "GOMODCACHE", "value": GoModCachePath},
 		map[string]interface{}{"name": "TMPDIR", "value": TmpDirPath},
+		map[string]interface{}{"name": "GITHUB_TRACEABILITY", "value": strconv.FormatBool(opt.GithubTraceability)},
 	}
 
 	if len(opt.LLMExtensions) > 0 {

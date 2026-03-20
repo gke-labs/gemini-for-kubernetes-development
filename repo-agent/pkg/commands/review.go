@@ -355,6 +355,15 @@ func (c *ReviewCommand) Run(ctx context.Context) error {
 		PullRequest: *pr,
 		Prompt:      rawAgentPrompt,
 		IgnoreFiles: c.IgnoreFiles,
+
+		// Traceability metadata
+		GithubTraceability: os.Getenv("GITHUB_TRACEABILITY") == "true",
+		SandboxTaskName:    os.Getenv("SANDBOX_TASK_NAME"),
+		SandboxTaskUID:     os.Getenv("SANDBOX_TASK_UID"),
+		SandboxName:        os.Getenv("SANDBOX_NAME"),
+		RepoWatchName:      os.Getenv("REPOWATCH_NAME"),
+		Namespace:          os.Getenv("NAMESPACE"),
+		Timestamp:          time.Now().Format(time.RFC3339),
 	}
 	expandedPrompt, err := prompts.ExpandReviewPrompt(model)
 	if err != nil {

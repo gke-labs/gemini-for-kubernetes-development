@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
@@ -240,6 +241,15 @@ func (c *GithubInvestigateCommand) Run(ctx context.Context) error {
 		User:        c.user,
 		Models:      strings.Split(c.Model, ","),
 		FailedRuns:  c.failedRuns,
+
+		// Traceability metadata
+		GithubTraceability: os.Getenv("GITHUB_TRACEABILITY") == "true",
+		SandboxTaskName:    os.Getenv("SANDBOX_TASK_NAME"),
+		SandboxTaskUID:     os.Getenv("SANDBOX_TASK_UID"),
+		SandboxName:        os.Getenv("SANDBOX_NAME"),
+		RepoWatchName:      os.Getenv("REPOWATCH_NAME"),
+		Namespace:          os.Getenv("NAMESPACE"),
+		Timestamp:          time.Now().Format(time.RFC3339),
 	}
 
 	if c.ExtensionsJSON != "" {

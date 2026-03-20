@@ -45,6 +45,16 @@ type MockModel struct {
 	PromptFile    string
 	Extensions    []MockExtension
 	Branch        string
+
+	// Traceability metadata
+	GithubTraceability bool
+	SandboxTaskName    string
+	SandboxTaskUID     string
+	SandboxName        string
+	RepoWatchName      string
+	Namespace          string
+	Name               string
+	Timestamp          string
 }
 
 func TestFixIssuePromptTemplate(t *testing.T) {

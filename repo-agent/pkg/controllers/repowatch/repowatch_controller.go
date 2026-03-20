@@ -251,6 +251,8 @@ type Reconciler struct {
 	NewGithubClient  githubClientFactory
 	RepoSandboxImage string
 	ConfigDirImage   string
+
+	GithubTraceability bool
 }
 
 //+kubebuilder:rbac:groups=review.gemini.google.com,resources=repowatches,verbs=get;list;watch;create;update;patch;delete
@@ -1072,6 +1074,7 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 			Replicas:              1,
 			ServiceAccountName:    "issue-sandbox",
 			WorkspaceDiskSize:     repoWatch.Spec.Issue.WorkspaceDiskSize,
+			GithubTraceability:    r.GithubTraceability,
 		},
 		DindSupport:   repoWatch.Spec.Issue.DindSupport,
 		LLMExtensions: repoWatch.Spec.Issue.LLM.Extensions,
@@ -1240,6 +1243,7 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, user *github.
 			HTTPEnabled:           true,
 			Replicas:              1,
 			ServiceAccountName:    "review-sandbox",
+			GithubTraceability:    r.GithubTraceability,
 		},
 		PRNumber:          *pr.Number,
 		PRTitle:           *pr.Title,
@@ -1618,6 +1622,7 @@ func (r *Reconciler) createDevSandbox(ctx context.Context, user *github.User, re
 		ServiceAccountName: "issue-sandbox",
 		DindSupport:        repoWatch.Spec.Dev.DindSupport,
 		WorkspaceDiskSize:  repoWatch.Spec.Dev.WorkspaceDiskSize,
+		GithubTraceability: r.GithubTraceability,
 	}
 
 	sb, svc := sandbox.NewDevSandbox(opts)

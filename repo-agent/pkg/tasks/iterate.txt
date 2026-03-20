@@ -12,3 +12,17 @@ Guidelines:
 5. **Cleaning up:** If you run build commands (like `make`, `go build`, `go test`), ensure you clean up any generated binaries or artifacts before committing. Use `make clean` if available, or manually remove them.
 6. Do not delete files unless explicitly asked.
 7. If the request is vague, make a reasonable attempt to fulfill it based on common practices.
+
+{{- if .GithubTraceability }}
+* If you are asked to create a PR or post a comment on GitHub, you MUST append the following metadata footer (as an HTML comment):
+
+---
+<!-- repo-agent-metadata
+sandbox-task: {{ .Namespace }}/{{ .SandboxTaskName }}
+sandbox-task-uid: {{ .SandboxTaskUID }}
+sandbox: {{ .SandboxName }}
+repowatch: {{ .RepoWatchName }}
+task-type: {{ .Name }}
+timestamp: {{ .Timestamp }}
+-->
+{{- end }}

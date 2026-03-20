@@ -22,6 +22,15 @@ type AddressFeedbackModel struct {
 	PromptFile            string
 	Models                []string
 	Extensions            []reviewv1alpha1.Extension
+
+	// Traceability metadata
+	GithubTraceability bool
+	SandboxTaskName    string
+	SandboxTaskUID     string
+	SandboxName        string
+	RepoWatchName      string
+	Namespace          string
+	Timestamp          string
 }
 
 func (m *AddressFeedbackModel) Name() string {

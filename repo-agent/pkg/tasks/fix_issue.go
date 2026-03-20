@@ -19,6 +19,15 @@ type FixIssueModel struct {
 	Models        []string
 	Extensions    []reviewv1alpha1.Extension
 	Branch        string
+
+	// Traceability metadata
+	GithubTraceability bool
+	SandboxTaskName    string
+	SandboxTaskUID     string
+	SandboxName        string
+	RepoWatchName      string
+	Namespace          string
+	Timestamp          string
 }
 
 func (m *FixIssueModel) Name() string {

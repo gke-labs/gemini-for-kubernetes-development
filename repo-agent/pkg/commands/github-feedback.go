@@ -272,6 +272,15 @@ func (c *GithubFeedbackCommand) Run(ctx context.Context) error {
 		PromptFile:            promptPath,
 		User:                  c.user,
 		Models:                strings.Split(c.Model, ","),
+
+		// Traceability metadata
+		GithubTraceability: os.Getenv("GITHUB_TRACEABILITY") == "true",
+		SandboxTaskName:    os.Getenv("SANDBOX_TASK_NAME"),
+		SandboxTaskUID:     os.Getenv("SANDBOX_TASK_UID"),
+		SandboxName:        os.Getenv("SANDBOX_NAME"),
+		RepoWatchName:      os.Getenv("REPOWATCH_NAME"),
+		Namespace:          os.Getenv("NAMESPACE"),
+		Timestamp:          time.Now().Format(time.RFC3339),
 	}
 
 	if c.ExtensionsJSON != "" {

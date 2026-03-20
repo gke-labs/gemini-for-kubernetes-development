@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
@@ -57,6 +58,11 @@ func (s *Server) submitFeedback(c *gin.Context) {
 	title := fmt.Sprintf("[repo-agent] %s", payload.Title)
 	body := fmt.Sprintf("User: %s\n\n%s", namespace, payload.Text)
 	labels := []string{"feedback"}
+
+	if s.GithubTraceability {
+		body += fmt.Sprintf("\n\n---\n<!-- repo-agent-metadata\ntask-type: feedback\nnamespace: %s\ntimestamp: %s\n-->",
+			namespace, time.Now().UTC().Format(time.RFC3339))
+	}
 
 	if payload.Image != "" {
 		body += "\n\n[Screenshot attached in request but ignored due to missing image host configuration]"

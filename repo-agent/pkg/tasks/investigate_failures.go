@@ -33,6 +33,15 @@ type InvestigateFailuresModel struct {
 	Models            []string
 	FailedRuns        []FailedRun
 	Extensions        []reviewv1alpha1.Extension
+
+	// Traceability metadata
+	GithubTraceability bool
+	SandboxTaskName    string
+	SandboxTaskUID     string
+	SandboxName        string
+	RepoWatchName      string
+	Namespace          string
+	Timestamp          string
 }
 
 func (m *InvestigateFailuresModel) Name() string {

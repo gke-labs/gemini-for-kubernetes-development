@@ -12,6 +12,15 @@ type ReviewPromptModel struct {
 	github.PullRequest
 	Prompt      string
 	IgnoreFiles []string
+
+	// Traceability metadata
+	GithubTraceability bool
+	SandboxTaskName    string
+	SandboxTaskUID     string
+	SandboxName        string
+	RepoWatchName      string
+	Namespace          string
+	Timestamp          string
 }
 
 // ExpandReviewPrompt expands the review prompt template with the provided model.

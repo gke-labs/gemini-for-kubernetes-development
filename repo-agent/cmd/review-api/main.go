@@ -53,6 +53,7 @@ func main() {
 
 	// API Server
 	server := api.NewServer(k8sManager, authenticator)
+	server.GithubTraceability = os.Getenv("GITHUB_TRACEABILITY") == "true"
 
 	// Gin router
 	router := gin.Default()

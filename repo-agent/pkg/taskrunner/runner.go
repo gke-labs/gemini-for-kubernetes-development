@@ -18,6 +18,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/llm"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
 )
 
@@ -128,6 +129,24 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 
 	// Set sandbox state to Running Task
 	_ = tr.ao.SetAgentState(ctx, "Working on "+taskType, "")
+
+	// Gather traceability metadata
+	repoWatchName := ""
+	sbObj, err := tr.manager.Client.Resource(k8s.SandboxGVR).Namespace(tr.namespace).Get(ctx, tr.sandboxName, v1.GetOptions{})
+	if err == nil {
+		labels := sbObj.GetLabels()
+		if labels != nil {
+			repoWatchName = labels["review.gemini.google.com/repowatch"]
+		}
+	}
+
+	traceabilityEnv := []string{
+		fmt.Sprintf("SANDBOX_TASK_NAME=%s", taskName),
+		fmt.Sprintf("SANDBOX_TASK_UID=%s", string(task.GetUID())),
+		fmt.Sprintf("SANDBOX_NAME=%s", tr.sandboxName),
+		fmt.Sprintf("REPOWATCH_NAME=%s", repoWatchName),
+		fmt.Sprintf("TASK_TYPE=%s", taskType),
+	}
 
 	logFile := filepath.Join(agentserver.LogsDirectory, taskName+".log")
 	f, err := os.Create(logFile)
@@ -257,6 +276,17 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		klog.Warningf("Unknown task type: %s", taskType)
 		tr.updateTaskStatus(ctx, task, "Failed", "unknown task type", nil)
 		return
+	}
+
+	if cmd != nil {
+		if cmd.Env == nil {
+			cmd.Env = os.Environ()
+		}
+		cmd.Env = append(cmd.Env, traceabilityEnv...)
+		// Also pass GITHUB_TRACEABILITY if set in current environment
+		if val := os.Getenv("GITHUB_TRACEABILITY"); val != "" {
+			cmd.Env = append(cmd.Env, "GITHUB_TRACEABILITY="+val)
+		}
 	}
 
 	cmd.Env = append(cmd.Env, fmt.Sprintf("NAME=%s", taskName))
