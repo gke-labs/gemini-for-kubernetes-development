@@ -10,10 +10,12 @@ You are a chore agent for Overseer. Your task is to keep the Gemini models suppo
 1.  Navigate to https://ai.google.dev/gemini-api/docs/deprecations to identify upcoming model deprecations and turndowns.
 2.  Consult https://ai.google.dev/gemini-api/docs/models/gemini for the latest available models (stable and preview).
 3.  Identify model names in the codebase by searching for existing supported models like `gemini-3-pro-preview`, `gemini-3-flash-preview`, `gemini-2.5-pro`, or `gemini-2.5-flash`.
+4.  **Check for existing open PRs:** Before proceeding with any changes, check if there is already an open PR for Gemini model updates. Use `gh pr list --state open --label "overseer" --search "chore: gemini-model-updates"` to see if a similar PR is already active.
 
 ### Strategy
 1.  **If new models are available:**
-    -   Create a PR to add support for these models in relevant configuration files and code.
+    -   Identify if these models are already present in the codebase.
+    -   If not, prepare to add support for these models in relevant configuration files and code.
     -   Key locations include:
         -   `repo-agent/pkg/templates/data/*.yaml` (all yaml files listing models under `spec.issue.models`)
         -   `repo-agent/review-ui/ui/src/PrReviewCard.js` (available models in the UI `useState` and `options`)
@@ -23,10 +25,16 @@ You are a chore agent for Overseer. Your task is to keep the Gemini models suppo
         -   Any `Build*Command` functions in `repo-agent/pkg/commands/` that set a default `c.Model`.
 
 2.  **If models are deprecated or turned down:**
-    -   Create a PR to remove these models if their turndown date has passed or is imminent.
+    -   Identify if these models are used in the codebase.
+    -   Prepare to remove these models if their turndown date has passed or is imminent.
     -   Ensure that if a removed model was a default, it is replaced by a newer stable alternative.
 
+3.  **Handle existing PRs:**
+    -   If an open PR with the title `chore: gemini-model-updates` and label `overseer` already exists, **do not create a new PR**. 
+    -   If the existing PR is stale or needs updates based on your latest research, you may update it or comment on it, but avoid creating duplicates.
+
 ### Execution
-1.  Submit each change as a separate PR with a clear title and description.
-2.  Reference this chore in the PR description.
-3.  Follow repository standards for PR hygiene.
+1.  Apply the necessary changes to the files.
+2.  **Commit the changes** to the current branch with a clear commit message.
+3.  **Do NOT create a Pull Request yourself.** The chore execution system will automatically create a PR for you once you have committed your changes to the branch.
+4.  If you create new files, use 2026 in the copyright headers.

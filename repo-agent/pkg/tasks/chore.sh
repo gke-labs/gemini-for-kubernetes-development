@@ -180,9 +180,14 @@ Only output the commit message itself.")
 ${COMMIT_MSG}"
 
         # Try to create PR
-        PR_URL=$(gh pr create --title "chore: ${CHORE_NAME}" --body "${PR_BODY}" --head "${FORK_OWNER}:${BRANCH_NAME}" --base "${BASE_BRANCH}" --label "overseer" || true)
-        if [ -n "$PR_URL" ]; then
+        # Split creation and labeling to be more robust. 
+        # Adding a retry loop or explicit error checking could also help.
+        PR_URL=$(gh pr create --title "chore: ${CHORE_NAME}" --body "${PR_BODY}" --head "${FORK_OWNER}:${BRANCH_NAME}" --base "${BASE_BRANCH}" || true)
+        
+        if [ -n "$PR_URL" ] && [[ "$PR_URL" == http* ]]; then
             echo "$PR_URL" > "$(dirname "${PROMPT_FILE}")/agent-output.txt"
+            # Add label after creation
+            gh pr edit "$PR_URL" --add-label "overseer" || echo "Warning: failed to add label overseer to $PR_URL"
         else
             echo "Failed to create PR or no changes compared to base branch."
             echo "Failed to create PR" > "$(dirname "${PROMPT_FILE}")/agent-output.txt"
@@ -198,6 +203,15 @@ function runChore {
     
     # Identify the base branch (usually main or master)
     BASE_BRANCH=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name)
+
+    # Check for existing open PRs for this chore
+    EXISTING_PR=$(gh pr list --state open --search "chore: ${CHORE_NAME}" --json url --jq '.[0].url')
+    if [ -n "$EXISTING_PR" ]; then
+        echo "An open PR already exists for chore ${CHORE_NAME}: ${EXISTING_PR}"
+        echo "An open PR already exists for chore ${CHORE_NAME}: ${EXISTING_PR}" > "$(dirname "${PROMPT_FILE}")/agent-output.txt"
+        popd > /dev/null
+        return
+    fi
     
     # Create a unique branch for this chore run
     SLUGIFIED_NAME=$(echo "${CHORE_NAME}" | tr '[:upper:]' '[:lower:]' | tr -c '[:alnum:]' '-' | sed 's/^-//;s/-$//')
