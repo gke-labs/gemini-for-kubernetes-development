@@ -571,6 +571,7 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 	}
 
 	sandboxName := fmt.Sprintf("%s-pr-%d", overseer.Name, number)
+	headSHA := pr.GetHead().GetSHA()
 
 	var sandboxExists bool
 	var sandboxIsActive bool
@@ -597,6 +598,22 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 		}
 	}
 
+	// Check if a task for this SHA already exists (only for review tasks)
+	if taskType == "review" {
+		taskList, err := manager.ListSandboxTasks(ctx, namespace, sandboxName)
+		if err == nil {
+			for i := range taskList.Items {
+				task := &taskList.Items[i]
+				if task.Spec.Type == "review" && task.Spec.Params["HEAD_SHA"] == headSHA {
+					if task.Status.TaskState == "Completed" || task.Status.TaskState == "Running" || task.Status.TaskState == "Pending" {
+						fmt.Printf("Review task for SHA %s already exists in state %s. Skipping.\n", headSHA, task.Status.TaskState)
+						return nil
+					}
+				}
+			}
+		}
+	}
+
 	// Create Sandbox if it doesn't exist
 	if !sandboxExists {
 		fmt.Printf("Creating sandbox %s...\n", sandboxName)
@@ -616,6 +633,7 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 		"PULL_REQUEST_ID": fmt.Sprintf("%d", number),
 		"ISSUE_URL":       pr.GetHTMLURL(),
 		"AGENT_PROMPT":    agentPrompt,
+		"HEAD_SHA":        headSHA,
 	}
 
 	err = manager.CreateSandboxTask(ctx, namespace, sandboxName, "Sandbox", taskType, params)
@@ -634,15 +652,6 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 	}
 
 	sandboxName := fmt.Sprintf("%s-pr-%d", overseerName, prNumber)
-
-	sandboxUnstructured, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
-	if err == nil {
-		annotations := sandboxUnstructured.GetAnnotations()
-		if annotations != nil && annotations["reviewState"] == "submitted" {
-			fmt.Printf("Review for PR %d already submitted.\n", prNumber)
-			return nil
-		}
-	}
 
 	taskList, err := manager.ListSandboxTasks(ctx, namespace, sandboxName)
 	if err != nil {
@@ -663,6 +672,25 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 		return fmt.Errorf("no completed review task found for sandbox %s", sandboxName)
 	}
 
+	currentSHA := latestReviewTask.Spec.Params["HEAD_SHA"]
+
+	sandboxUnstructured, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
+	if err == nil {
+		annotations := sandboxUnstructured.GetAnnotations()
+		if annotations != nil {
+			if state, ok := annotations["reviewState"]; ok {
+				if state == "submitted" {
+					fmt.Printf("Review for PR %d already submitted (legacy).\n", prNumber)
+					return nil
+				}
+				if currentSHA != "" && state == "submitted:"+currentSHA {
+					fmt.Printf("Review for PR %d and SHA %s already submitted.\n", prNumber, currentSHA)
+					return nil
+				}
+			}
+		}
+	}
+
 	// Get the task again as Unstructured to read annotations
 	gvr := schema.GroupVersionResource{
 		Group:    "custom.agents.x-k8s.io",
@@ -673,6 +701,7 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 	if err != nil {
 		return fmt.Errorf("failed to get task %s: %w", latestReviewTask.Name, err)
 	}
+
 
 	annotations := taskUnstructured.GetAnnotations()
 	draft, ok := annotations["agentDraft"]
@@ -741,7 +770,11 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 	fmt.Printf("Successfully created review: %s\n", review.GetHTMLURL())
 
 	// Update sandbox reviewState
-	if err := manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "reviewState", "submitted"); err != nil {
+	reviewState := "submitted"
+	if currentSHA != "" {
+		reviewState = "submitted:" + currentSHA
+	}
+	if err := manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "reviewState", reviewState); err != nil {
 		fmt.Printf("Warning: failed to update reviewState annotation: %v\n", err)
 	}
 
