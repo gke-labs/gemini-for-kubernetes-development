@@ -702,7 +702,6 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 		return fmt.Errorf("failed to get task %s: %w", latestReviewTask.Name, err)
 	}
 
-
 	annotations := taskUnstructured.GetAnnotations()
 	draft, ok := annotations["agentDraft"]
 	if !ok {
