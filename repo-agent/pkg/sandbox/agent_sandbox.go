@@ -185,6 +185,15 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 		map[string]interface{}{"name": "TMPDIR", "value": TmpDirPath},
 	}
 
+	if opt.OverseerName != "" {
+		env = append(env, map[string]interface{}{"name": "OVERSEER_NAME", "value": opt.OverseerName})
+	}
+	if opt.RepoSandboxImage != "" {
+		env = append(env, map[string]interface{}{"name": "REPO_SANDBOX_IMAGE", "value": opt.RepoSandboxImage})
+	}
+	if opt.ConfigDirImage != "" {
+		env = append(env, map[string]interface{}{"name": "CONFIG_DIR_IMAGE", "value": opt.ConfigDirImage})
+	}
 	if len(opt.LLMExtensions) > 0 {
 		exts, err := json.Marshal(opt.LLMExtensions)
 		if err == nil {

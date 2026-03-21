@@ -145,6 +145,7 @@ type ChoreDefinition struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Schedule    string `json:"schedule"`
+	SkipPR      bool   `json:"skipPR,omitempty"`
 	Prompt      string `json:"-"`
 }
 
@@ -244,6 +245,9 @@ func runChore(ctx context.Context, name string, file string) error {
 		"REPO_NAME":    repo,
 		"CLONE_URL":    overseer.Spec.RepoURL,
 	}
+	if chore.SkipPR {
+		params["SKIP_PR"] = "true"
+	}
 
 	err = manager.CreateSandboxTask(ctx, namespace, sandboxName, "Sandbox", taskType, params)
 	if err != nil {
@@ -337,6 +341,7 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 			BotEmail:            botEmail,
 			LLMAPIKeySecretName: apiKeySecretName,
 			GithubSecretName:    githubSecretName,
+			OverseerName:        overseerName,
 			RepoSandboxImage:    os.Getenv("REPO_SANDBOX_IMAGE"),
 			ConfigDirImage:      os.Getenv("CONFIG_DIR_IMAGE"),
 			HTTPEnabled:         true,
@@ -680,18 +685,21 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 		return fmt.Errorf("failed to convert Overseer: %w", err)
 	}
 
-	githubSecretName := overseer.Spec.RobotAccount
+	token := os.Getenv("GITHUB_TOKEN")
+	if token == "" {
+		githubSecretName := overseer.Spec.RobotAccount
 
-	rwUnstructuredCopy := rwUnstructured.DeepCopy()
-	_ = unstructured.SetNestedField(rwUnstructuredCopy.Object, githubSecretName, "spec", "githubSecretName")
-	// workaround since GetGithubToken expects the secret name to be in the spec, but our unstructured doesn't have it set there
-	// all requires namespace
-	_ = unstructured.SetNestedField(rwUnstructuredCopy.Object, namespace, "metadata", "namespace")
+		rwUnstructuredCopy := rwUnstructured.DeepCopy()
+		_ = unstructured.SetNestedField(rwUnstructuredCopy.Object, githubSecretName, "spec", "githubSecretName")
+		// workaround since GetGithubToken expects the secret name to be in the spec, but our unstructured doesn't have it set there
+		// all requires namespace
+		_ = unstructured.SetNestedField(rwUnstructuredCopy.Object, namespace, "metadata", "namespace")
 
-	// Get GitHub token from secret
-	token, err := manager.GetGitHubToken(ctx, rwUnstructuredCopy)
-	if err != nil {
-		return fmt.Errorf("failed to get github token: %w", err)
+		// Get GitHub token from secret
+		token, err = manager.GetGitHubToken(ctx, rwUnstructuredCopy)
+		if err != nil {
+			return fmt.Errorf("failed to get github token: %w", err)
+		}
 	}
 
 	// Create GitHub client
@@ -843,6 +851,10 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 		apiKeySecretName = "gemini-api-key"
 	}
 
+	maxReviewFiles := overseer.Spec.Review.MaxReviewFiles
+	if maxReviewFiles == 0 {
+		maxReviewFiles = 150
+	}
 	githubSecretName := overseer.Spec.RobotAccount
 	opt := sandbox.ReviewSandboxOptions{
 		DevSandboxOptions: sandbox.DevSandboxOptions{
@@ -877,7 +889,7 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 		PRDiffURL:         pr.GetDiffURL(),
 		PRCloneURL:        fmt.Sprintf("%s#refs/heads/%s", pr.GetHead().GetRepo().GetCloneURL(), pr.GetHead().GetRef()),
 		RepoName:          overseer.Name,
-		MaxReviewFiles:    overseer.Spec.Review.MaxReviewFiles,
+		MaxReviewFiles:    maxReviewFiles,
 		IgnoreFiles:       overseer.Spec.Review.IgnoreFiles,
 		SeverityThreshold: overseer.Spec.Review.SeverityThreshold,
 		LLMExtensions:     overseer.Spec.Extensions,
