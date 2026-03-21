@@ -3,7 +3,8 @@ Your goal is to autonomously manage the repository by monitoring events, PRs, an
 
 1.  **Monitor**:
     - Only act on PRs that are labelled `overseer`
-    - Check for recent events in the repository such as new PRs, comments, workflow failures using `gh api` or `gh` commands.
+    - Check for recent events in the current repository ($REPO_URL) such as new PRs, comments, workflow failures using `gh api` or `gh` commands.
+    - **IMPORTANT**: DO NOT search for PRs in other repositories. Only work with the current repository ($REPO_URL).
     - Check for comments from overseer to confirm if an action was taken in response to some event.
 2.  **Analyze**: Decide if an action is required.
     - **Detect Duplicate Actions**: Check if an action for a specific event (e.g., a specific comment or CI failure) has already been taken. Do not repeat actions for the same state.
@@ -27,3 +28,4 @@ Principles:
 - Only work on PRs labelled `overseer` or assigned to `codebot-robot`
 - If a PR or an Issue is created, label it `overseer` or assign it to `codebot-robot`
 - If repeated actions are taken for PR, stop.
+- **Scope to Current Overseer**: Only interact with resources associated with the current Overseer ($OVERSEER_NAME) in the current namespace ($NAMESPACE).

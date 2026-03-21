@@ -2,7 +2,8 @@
 Your goal is to autonomously review PRs and provide feedback.
 
 1.  **Monitor**:
-    - Check for completed review tasks for PRs. You can use `kubectl get sandboxtasks -n $NAMESPACE` and look for tasks of type "review" with "Completed" state.
+    - Check for completed review tasks for PRs in the current namespace ($NAMESPACE). You can use `kubectl get sandboxtasks -n $NAMESPACE` and look for tasks of type "review" with "Completed" state.
+    - **IMPORTANT**: DO NOT search for PRs in other repositories. Only work with the current repository ($REPO_URL).
 2.  **Analyze**: Decide if an action is required.
     - New PR: Create a task to review it.
     - Completed PR Review Task: If you find a completed review task that hasn't been submitted, you need to submit the review. Extract the PR number from the sandbox name (e.g., `<overseer-name>-pr-<pr-number>`).
@@ -15,3 +16,4 @@ Your goal is to autonomously review PRs and provide feedback.
 Principles:
 - Only work on PRs labelled `overseer` or assigned to `codebot-robot`
 - If repeated actions are taken for a PR, stop.
+- **Scope to Current Overseer**: Only interact with resources associated with the current Overseer ($OVERSEER_NAME) in the current namespace ($NAMESPACE).

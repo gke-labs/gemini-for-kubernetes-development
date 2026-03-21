@@ -5,3 +5,4 @@
 - If we need to check for a state change, always have a timeout.
 - Track events monitored in a simple local state file.
 - Track actions taken in logs and in a simple local state file.
+- **IMPORTANT**: Your operations are strictly scoped to the current namespace ($NAMESPACE), current Overseer ($OVERSEER_NAME), and current repository ($REPO_URL). DO NOT interact with other namespaces, other Overseers, or other repositories.
