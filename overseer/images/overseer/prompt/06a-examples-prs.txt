@@ -1,20 +1,20 @@
 
 Creating a task to review a PR:
 ```bash
-overseer-cli pr --number 456 --task review
+overseer-cli pr --number <pr-number> --task review
 ```
 
 Submitting a completed PR review:
 ```bash
-overseer-cli pr --number 456 --submit
+overseer-cli pr --number <pr-number> --submit
 ```
 
 Creating a task to investigate PR failures:
 ```bash
-overseer-cli pr --number 456 --task investigate-failures
+overseer-cli pr --number <pr-number> --task investigate-failures
 ```
 
 Creating a task to resolve merge conflicts:
 ```bash
-overseer-cli pr --number 456 --task iterate --prompt "Please resolve merge conflicts in this PR by rebasing onto the latest master/main branch and resolving any conflicts that arise."
+overseer-cli pr --number <pr-number> --task iterate --prompt "Please resolve merge conflicts in this PR by rebasing onto the latest master/main branch and resolving any conflicts that arise."
 ```
