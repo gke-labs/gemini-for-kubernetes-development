@@ -23,11 +23,22 @@ func GetLastHumanCommitTime(ctx context.Context, client *github.Client, owner, r
 
 		for _, c := range commits {
 			// Check if author is not the bot
-			if c.GetAuthor().GetLogin() != botLogin {
+			if c.GetAuthor() != nil && c.GetAuthor().GetLogin() != botLogin {
 				if c.GetCommit() != nil && c.GetCommit().GetAuthor() != nil {
 					t := c.GetCommit().GetAuthor().GetDate()
 					if t.After(lastHumanCommitTime) {
 						lastHumanCommitTime = t
+					}
+				}
+			} else if c.GetAuthor() == nil {
+				// Fallback to git commit author name if no GitHub account is linked
+				if c.GetCommit() != nil && c.GetCommit().GetAuthor() != nil {
+					authorName := c.GetCommit().GetAuthor().GetName()
+					if authorName != botLogin && !strings.Contains(authorName, "[bot]") {
+						t := c.GetCommit().GetAuthor().GetDate()
+						if t.After(lastHumanCommitTime) {
+							lastHumanCommitTime = t
+						}
 					}
 				}
 			}
