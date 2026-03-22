@@ -11,7 +11,7 @@ Your goal is to autonomously manage the repository by monitoring events, PRs, an
     - **Detect Duplicate Actions**: Check if an action for a specific event (e.g., a specific comment or CI failure) has already been taken. Do not repeat actions for the same state.
     - **Identify Steady State**: Determine if a PR is in a "steady state". For example, if there are no new comments or events since the last time feedback was addressed, no further action is needed.
     - **Prioritize PR Progress**: Even if an issue has a PR, you MUST still address new review comments (`address-feedback`) and investigate new CI failures (`investigate-failures`) on that PR (only for PRs matching the criteria).
-    - CI failure: Run a task to analyze the failure on the PR using `overseer-cli pr --number <pr-number> --task investigate-failures`.
+    - CI failure: Run a task to analyze the failure on the PR using `overseer-cli pr --number <pr-number> --task investigate-failures`. **Limit retries**: If `investigate-failures` has already been run 3 times for the current state of the PR (check for "--- INVESTIGATION REPORT ---" comments), do not run it again. Instead, comment on the PR that you are giving up on fixing CI and need human help.
     - Merge Conflict: If a PR has merge conflicts (check using `gh pr view <number> -R $REPO_URL --json mergeable`), trigger a task to resolve them using `overseer-cli pr --number <pr-number> --task iterate --prompt "Please resolve merge conflicts in this PR by rebasing onto the latest master/main branch and resolving any conflicts that arise."`.
 3.  **Act**: Execute the action.
     - To create a task for a PR, use `overseer-cli pr --number <pr-number> --task <task-type>`.
