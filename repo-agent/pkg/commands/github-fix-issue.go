@@ -7,10 +7,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks"
 	"github.com/spf13/cobra"
@@ -168,13 +168,7 @@ func (c *GithubFixIssueCommand) Run(ctx context.Context) error {
 		Branch:        os.Getenv("ISSUE_BRANCH"),
 
 		// Traceability metadata
-		GithubTraceability: os.Getenv("GITHUB_TRACEABILITY") == "true",
-		SandboxTaskName:    os.Getenv("SANDBOX_TASK_NAME"),
-		SandboxTaskUID:     os.Getenv("SANDBOX_TASK_UID"),
-		SandboxName:        os.Getenv("SANDBOX_NAME"),
-		RepoWatchName:      os.Getenv("REPOWATCH_NAME"),
-		Namespace:          os.Getenv("NAMESPACE"),
-		Timestamp:          time.Now().UTC().Format(time.RFC3339),
+		TraceabilityMetadata: models.GetTraceabilityMetadata(),
 	}
 
 	if c.ExtensionsJSON != "" {

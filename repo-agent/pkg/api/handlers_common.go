@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	sandboxtaskv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
@@ -49,6 +50,26 @@ func (s *Server) proxy(c *gin.Context) {
 	}
 
 	c.String(resp.StatusCode, string(body))
+}
+
+// appendTraceabilityFooter appends traceability metadata to the given body if not present.
+func appendTraceabilityFooter(body string, namespace, sandbox, repowatch, taskType string) string {
+	if strings.Contains(body, "<!-- repo-agent-metadata") {
+		return body
+	}
+	
+	sanitize := func(s string) string {
+		return strings.ReplaceAll(s, "-->", "")
+	}
+
+	footer := fmt.Sprintf("\n\n---\n<!-- repo-agent-metadata\nnamespace: %s\nsandbox: %s\nrepowatch: %s\ntask-type: %s\ntimestamp: %s\n-->",
+		sanitize(namespace),
+		sanitize(sandbox),
+		sanitize(repowatch),
+		sanitize(taskType),
+		time.Now().UTC().Format(time.RFC3339))
+		
+	return body + footer
 }
 
 // extractConditions converts unstructured Kubernetes conditions to the API model format.

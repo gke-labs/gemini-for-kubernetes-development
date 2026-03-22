@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
@@ -65,9 +63,7 @@ func (s *Server) submitFeedback(c *gin.Context) {
 	}
 
 	if s.GithubTraceability {
-		safeNamespace := strings.ReplaceAll(namespace, "-->", "")
-		body += fmt.Sprintf("\n\n---\n<!-- repo-agent-metadata\ntask-type: feedback\nnamespace: %s\ntimestamp: %s\n-->",
-			safeNamespace, time.Now().UTC().Format(time.RFC3339))
+		body = appendTraceabilityFooter(body, namespace, "", "", "feedback")
 	}
 
 	req := &github.IssueRequest{

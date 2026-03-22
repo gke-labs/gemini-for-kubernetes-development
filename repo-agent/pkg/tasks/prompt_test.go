@@ -5,6 +5,8 @@ import (
 	"os"
 	"testing"
 	"text/template"
+
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 )
 
 type MockIssue struct{}
@@ -46,14 +48,7 @@ type MockModel struct {
 	Extensions    []MockExtension
 	Branch        string
 
-	// Traceability metadata
-	GithubTraceability bool
-	SandboxTaskName    string
-	SandboxTaskUID     string
-	SandboxName        string
-	RepoWatchName      string
-	Namespace          string
-	Timestamp          string
+	models.TraceabilityMetadata
 }
 
 func (m MockModel) Name() string {

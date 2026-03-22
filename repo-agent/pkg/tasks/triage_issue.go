@@ -6,6 +6,7 @@ import (
 
 	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 )
 
 var _ Task = &TriageIssueModel{}
@@ -19,14 +20,7 @@ type TriageIssueModel struct {
 	AgentName     string
 	Extensions    []reviewv1alpha1.Extension
 
-	// Traceability metadata
-	GithubTraceability bool
-	SandboxTaskName    string
-	SandboxTaskUID     string
-	SandboxName        string
-	RepoWatchName      string
-	Namespace          string
-	Timestamp          string
+	models.TraceabilityMetadata
 }
 
 func (m *TriageIssueModel) Name() string {

@@ -6,6 +6,7 @@ import (
 
 	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 )
 
 var _ Task = &IterateModel{}
@@ -20,14 +21,7 @@ type IterateModel struct {
 	Models      []string
 	Extensions  []reviewv1alpha1.Extension
 
-	// Traceability metadata
-	GithubTraceability bool
-	SandboxTaskName    string
-	SandboxTaskUID     string
-	SandboxName        string
-	RepoWatchName      string
-	Namespace          string
-	Timestamp          string
+	models.TraceabilityMetadata
 }
 
 func (m *IterateModel) Name() string {

@@ -6,6 +6,7 @@ import (
 	"text/template"
 
 	"github.com/google/go-github/v39/github"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 )
 
 type ReviewPromptModel struct {
@@ -13,14 +14,7 @@ type ReviewPromptModel struct {
 	Prompt      string
 	IgnoreFiles []string
 
-	// Traceability metadata
-	GithubTraceability bool
-	SandboxTaskName    string
-	SandboxTaskUID     string
-	SandboxName        string
-	RepoWatchName      string
-	Namespace          string
-	Timestamp          string
+	models.TraceabilityMetadata
 }
 
 // ExpandReviewPrompt expands the review prompt template with the provided model.

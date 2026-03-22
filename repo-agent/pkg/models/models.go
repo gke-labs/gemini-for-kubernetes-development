@@ -1,8 +1,37 @@
 package models
 
 import (
+	"os"
+	"strconv"
+	"time"
+
 	"github.com/google/go-github/v39/github"
 )
+
+// TraceabilityMetadata encapsulates the metadata used for tracing bot actions.
+type TraceabilityMetadata struct {
+	GithubTraceability bool
+	SandboxTaskName    string
+	SandboxTaskUID     string
+	SandboxName        string
+	RepoWatchName      string
+	Namespace          string
+	Timestamp          string
+}
+
+// GetTraceabilityMetadata retrieves the traceability metadata from environment variables.
+func GetTraceabilityMetadata() TraceabilityMetadata {
+	githubTraceability, _ := strconv.ParseBool(os.Getenv("GITHUB_TRACEABILITY"))
+	return TraceabilityMetadata{
+		GithubTraceability: githubTraceability,
+		SandboxTaskName:    os.Getenv("SANDBOX_TASK_NAME"),
+		SandboxTaskUID:     os.Getenv("SANDBOX_TASK_UID"),
+		SandboxName:        os.Getenv("SANDBOX_NAME"),
+		RepoWatchName:      os.Getenv("REPOWATCH_NAME"),
+		Namespace:          os.Getenv("NAMESPACE"),
+		Timestamp:          time.Now().UTC().Format(time.RFC3339),
+	}
+}
 
 // DraftReviewComment defines the structure for a review comment with severity
 type DraftReviewComment struct {
