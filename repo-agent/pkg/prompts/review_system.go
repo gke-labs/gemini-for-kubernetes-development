@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"text/template"
 
-	"github.com/google/go-github/v39/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
+	"github.com/google/go-github/v39/github"
 )
 
 type ReviewPromptModel struct {

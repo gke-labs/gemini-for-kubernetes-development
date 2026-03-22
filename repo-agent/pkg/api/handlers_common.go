@@ -57,7 +57,7 @@ func appendTraceabilityFooter(body string, namespace, sandbox, repowatch, taskTy
 	if strings.Contains(body, "<!-- repo-agent-metadata") {
 		return body
 	}
-	
+
 	sanitize := func(s string) string {
 		return strings.ReplaceAll(s, "-->", "")
 	}
@@ -68,7 +68,7 @@ func appendTraceabilityFooter(body string, namespace, sandbox, repowatch, taskTy
 		sanitize(repowatch),
 		sanitize(taskType),
 		time.Now().UTC().Format(time.RFC3339))
-		
+
 	return body + footer
 }
 
