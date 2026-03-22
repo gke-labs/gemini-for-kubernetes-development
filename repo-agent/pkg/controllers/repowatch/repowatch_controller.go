@@ -1005,7 +1005,7 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 		}
 
 		if len(secret.Data["userid"]) > 0 {
-			botLogin = string(secret.Data["userid"])
+			botLogin = strings.TrimSpace(string(secret.Data["userid"]))
 		}
 		if len(secret.Data["name"]) > 0 {
 			botName = string(secret.Data["name"])
@@ -1203,7 +1203,7 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, user *github.
 		}
 
 		if len(secret.Data["userid"]) > 0 {
-			botLogin = string(secret.Data["userid"])
+			botLogin = strings.TrimSpace(string(secret.Data["userid"]))
 		}
 		if len(secret.Data["name"]) > 0 {
 			botName = string(secret.Data["name"])
@@ -2058,10 +2058,15 @@ func (r *Reconciler) reconcilePRFailures(ctx context.Context, repoWatch *reviewv
 			secret := &corev1.Secret{}
 			if err := r.Get(ctx, types.NamespacedName{Name: githubSecretName, Namespace: repoWatch.Namespace}, secret); err == nil {
 				if len(secret.Data["userid"]) > 0 {
-					botLogin = string(secret.Data["userid"])
+					botLogin = strings.TrimSpace(string(secret.Data["userid"]))
 				} else if len(secret.Data["login"]) > 0 {
-					botLogin = string(secret.Data["login"])
+					botLogin = strings.TrimSpace(string(secret.Data["login"]))
 				}
+			} else {
+				if !apierrors.IsNotFound(err) {
+					return fmt.Errorf("getting robot account secret %s: %w", githubSecretName, err)
+				}
+				log.Info("Robot account secret not found, retry limits disabled", "secret", githubSecretName)
 			}
 		}
 
@@ -2072,11 +2077,13 @@ func (r *Reconciler) reconcilePRFailures(ctx context.Context, repoWatch *reviewv
 				return err
 			}
 
-			// investigateFailuresCount counts pending, active, and completed tasks to enforce retry limit
-			investigateFailuresCount := 0
+			// Count active investigate-failures tasks (running or pending)
+			activeTaskCount := 0
 			for _, t := range tasks.Items {
 				if t.Spec.Type == "investigate-failures" && t.CreationTimestamp.Time.After(lastHumanCommitTime) {
-					investigateFailuresCount++
+					if t.Status.TaskState == "Pending" || t.Status.TaskState == "Running" || t.Status.TaskState == "" {
+						activeTaskCount++
+					}
 				}
 			}
 
@@ -2087,11 +2094,25 @@ func (r *Reconciler) reconcilePRFailures(ctx context.Context, repoWatch *reviewv
 				return err
 			}
 
-			if reportCount > investigateFailuresCount {
-				investigateFailuresCount = reportCount
-			}
+			// Total attempts = active tasks + completed reports
+			investigateFailuresCount := activeTaskCount + reportCount
 
 			if investigateFailuresCount >= 2 {
+				// We reached the limit. Let's see if we already notified by checking annotations of the newest task.
+				var newestTask *sandboxtaskv1alpha1.SandboxTask
+				for i := range tasks.Items {
+					t := &tasks.Items[i]
+					if t.Spec.Type == "investigate-failures" && t.CreationTimestamp.Time.After(lastHumanCommitTime) {
+						if newestTask == nil || t.CreationTimestamp.Time.After(newestTask.CreationTimestamp.Time) {
+							newestTask = t
+						}
+					}
+				}
+
+				if newestTask != nil && newestTask.Annotations["overseer.gke.io/limit-reached-notified"] == "true" {
+					return nil // Already notified, don't aggressively recreate if human deletes the comment
+				}
+
 				log.Info("Skipping investigate-failures: too many retries since last human commit", "pr", *pr.Number, "count", investigateFailuresCount, "lastHumanCommit", lastHumanCommitTime)
 
 				if !hasComment {
@@ -2100,6 +2121,16 @@ func (r *Reconciler) reconcilePRFailures(ctx context.Context, repoWatch *reviewv
 					if err != nil {
 						log.Error(err, "unable to post limit-reached comment", "pr", *pr.Number)
 						return err
+					}
+				}
+
+				if newestTask != nil {
+					if newestTask.Annotations == nil {
+						newestTask.Annotations = make(map[string]string)
+					}
+					newestTask.Annotations["overseer.gke.io/limit-reached-notified"] = "true"
+					if err := r.Update(ctx, newestTask); err != nil {
+						log.Error(err, "unable to mark newest task as notified")
 					}
 				}
 				return nil

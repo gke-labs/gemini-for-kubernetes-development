@@ -71,6 +71,7 @@ func buildIssueCommand() *cobra.Command {
 	var prNumber int
 	var taskType string
 	var prompt string
+	var bypassRetryLimit bool
 
 	cmd := &cobra.Command{
 		Use:   "issue",
@@ -84,6 +85,7 @@ func buildIssueCommand() *cobra.Command {
 	cmd.Flags().IntVar(&prNumber, "pr", 0, "PR number to extract issue from")
 	cmd.Flags().StringVar(&taskType, "task", "fix-issue", "Task type (e.g., fix-issue, triage-issue)")
 	cmd.Flags().StringVar(&prompt, "prompt", "", "Custom prompt for the task")
+	cmd.Flags().BoolVar(&bypassRetryLimit, "bypass-retry-limit", false, "Bypass retry limit for investigate-failures task")
 
 	return cmd
 }
@@ -93,12 +95,13 @@ func buildPRCommand() *cobra.Command {
 	var taskType string
 	var submit bool
 	var prompt string
+	var bypassRetryLimit bool
 
 	cmd := &cobra.Command{
 		Use:   "pr",
 		Short: "Create/ensure sandbox and task for a PR",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runPR(context.Background(), number, taskType, submit, prompt)
+			return runPR(context.Background(), number, taskType, submit, prompt, bypassRetryLimit)
 		},
 	}
 
@@ -106,6 +109,7 @@ func buildPRCommand() *cobra.Command {
 	cmd.Flags().StringVar(&taskType, "task", "review", "Task type (e.g., review, address-feedback, investigate-failures)")
 	cmd.Flags().BoolVar(&submit, "submit", false, "Submit agent draft from task as review")
 	cmd.Flags().StringVar(&prompt, "prompt", "", "Custom prompt for the task")
+	cmd.Flags().BoolVar(&bypassRetryLimit, "bypass-retry-limit", false, "Bypass retry limit for investigate-failures task")
 	_ = cmd.MarkFlagRequired("number")
 
 	return cmd
@@ -501,7 +505,7 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 	return nil
 }
 
-func runPR(ctx context.Context, number int, taskType string, submit bool, customPrompt string) error {
+func runPR(ctx context.Context, number int, taskType string, submit bool, customPrompt string, bypassRetryLimit bool) error {
 	// Similar to runIssue but for PRs
 	if overseerName == "" || namespace == "" {
 		return fmt.Errorf("OVERSEER_NAME and NAMESPACE environment variables must be set")
@@ -620,10 +624,15 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 				secret, err := kubeClient.Clientset.CoreV1().Secrets(namespace).Get(ctx, githubSecretName, metav1.GetOptions{})
 				if err == nil {
 					if len(secret.Data["userid"]) > 0 {
-						botLogin = string(secret.Data["userid"])
+						botLogin = strings.TrimSpace(string(secret.Data["userid"]))
 					} else if len(secret.Data["login"]) > 0 {
-						botLogin = string(secret.Data["login"])
+						botLogin = strings.TrimSpace(string(secret.Data["login"]))
 					}
+				} else {
+					if !errors.IsNotFound(err) {
+						return fmt.Errorf("failed to get robot account secret %s: %w", githubSecretName, err)
+					}
+					fmt.Printf("Warning: Robot account secret %s not found. Retry limits for investigate-failures are disabled.\n", githubSecretName)
 				}
 			} else {
 				fmt.Printf("Warning: RobotAccount is not configured in Overseer spec. Retry limits for investigate-failures are disabled.\n")
@@ -634,26 +643,27 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 				if err != nil {
 					fmt.Printf("Warning: failed to get last human commit time for PR %d: %v\n", number, err)
 				} else {
-					// investigateFailuresCount counts pending, active, and completed tasks to enforce retry limit
-					investigateFailuresCount := 0
+					// Count active investigate-failures tasks (running or pending)
+					activeTaskCount := 0
 					for i := range taskList.Items {
 						t := &taskList.Items[i]
 						if t.Spec.Type == "investigate-failures" && t.CreationTimestamp.Time.After(lastHumanCommitTime) {
-							investigateFailuresCount++
+							if t.Status.TaskState == "Pending" || t.Status.TaskState == "Running" || t.Status.TaskState == "" {
+								activeTaskCount++
+							}
 						}
 					}
 
 					// Augment with reports in comments to handle cases where tasks might have been deleted
 					reportCount, hasComment, err := github.GetInvestigationStatsSince(ctx, ghClient.Client, owner, repo, number, lastHumanCommitTime, botLogin)
 					if err != nil {
-						fmt.Printf("Warning: failed to get investigation stats: %v\n", err)
+						return fmt.Errorf("failed to get investigation stats: %w", err)
 					}
 
-					if reportCount > investigateFailuresCount {
-						investigateFailuresCount = reportCount
-					}
+					// Total attempts = active tasks + completed reports
+					investigateFailuresCount := activeTaskCount + reportCount
 
-					if investigateFailuresCount >= 2 {
+					if !bypassRetryLimit && investigateFailuresCount >= 2 {
 						fmt.Printf("Skipping investigate-failures: too many retries (%d) since last human commit (%v)\n", investigateFailuresCount, lastHumanCommitTime)
 
 						if !hasComment {
