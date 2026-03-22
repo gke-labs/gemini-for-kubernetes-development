@@ -598,15 +598,49 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 		}
 	}
 
-	// Check if a task for this SHA already exists (only for review tasks)
-	if taskType == "review" {
-		taskList, err := manager.ListSandboxTasks(ctx, namespace, sandboxName)
-		if err == nil {
+	// Check for existing tasks of the same type
+	taskList, err := manager.ListSandboxTasks(ctx, namespace, sandboxName)
+	if err == nil {
+		if taskType == "review" {
 			for i := range taskList.Items {
 				task := &taskList.Items[i]
 				if task.Spec.Type == "review" && task.Spec.Params["HEAD_SHA"] == headSHA {
 					if task.Status.TaskState == "Completed" || task.Status.TaskState == "Running" || task.Status.TaskState == "Pending" {
 						fmt.Printf("Review task for SHA %s already exists in state %s. Skipping.\n", headSHA, task.Status.TaskState)
+						return nil
+					}
+				}
+			}
+		}
+
+		if taskType == "investigate-failures" {
+			botLogin := overseer.Spec.RobotAccount
+			if botLogin != "" {
+				commits, _, err := ghClient.PullRequests.ListCommits(ctx, owner, repo, number, &githubv39.ListOptions{PerPage: 100})
+				if err != nil {
+					fmt.Printf("Warning: failed to list commits for PR %d: %v\n", number, err)
+				} else {
+					var lastHumanCommitTime time.Time
+					for i := len(commits) - 1; i >= 0; i-- {
+						c := commits[i]
+						if c.GetAuthor().GetLogin() != botLogin {
+							if c.GetCommit() != nil && c.GetCommit().GetCommitter() != nil {
+								lastHumanCommitTime = c.GetCommit().GetCommitter().GetDate()
+								break
+							}
+						}
+					}
+
+					investigateFailuresCount := 0
+					for i := range taskList.Items {
+						t := &taskList.Items[i]
+						if t.Spec.Type == "investigate-failures" && t.CreationTimestamp.Time.After(lastHumanCommitTime) {
+							investigateFailuresCount++
+						}
+					}
+
+					if investigateFailuresCount >= 2 {
+						fmt.Printf("Skipping investigate-failures: too many retries (%d) since last human commit (%v)\n", investigateFailuresCount, lastHumanCommitTime)
 						return nil
 					}
 				}

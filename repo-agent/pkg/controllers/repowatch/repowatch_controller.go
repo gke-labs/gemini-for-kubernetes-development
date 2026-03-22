@@ -2048,6 +2048,38 @@ func (r *Reconciler) reconcilePRFailures(ctx context.Context, repoWatch *reviewv
 			return nil
 		}
 
+		// Limit retries since last human commit to avoid sticky failures causing loops
+		botLogin := repoWatch.Spec.Issue.RobotAccount
+		if botLogin != "" {
+			commits, _, err := ghClient.PullRequests.ListCommits(ctx, owner, repo, *pr.Number, &github.ListOptions{PerPage: 100})
+			if err != nil {
+				log.Error(err, "unable to list commits for PR", "pr", *pr.Number)
+			} else {
+				var lastHumanCommitTime time.Time
+				for i := len(commits) - 1; i >= 0; i-- {
+					c := commits[i]
+					if c.GetAuthor().GetLogin() != botLogin {
+						if c.GetCommit() != nil && c.GetCommit().GetCommitter() != nil {
+							lastHumanCommitTime = c.GetCommit().GetCommitter().GetDate()
+							break
+						}
+					}
+				}
+
+				investigateFailuresCount := 0
+				for _, t := range tasks.Items {
+					if t.Spec.Type == "investigate-failures" && t.CreationTimestamp.Time.After(lastHumanCommitTime) {
+						investigateFailuresCount++
+					}
+				}
+
+				if investigateFailuresCount >= 2 {
+					log.Info("Skipping investigate-failures: too many retries since last human commit", "pr", *pr.Number, "count", investigateFailuresCount, "lastHumanCommit", lastHumanCommitTime)
+					return nil
+				}
+			}
+		}
+
 		log.Info("Found failures on latest commit, creating investigate-failures task", "pr", pr.Number, "sha", sha)
 		params := map[string]string{
 			"PULL_REQUEST_ID": fmt.Sprintf("%d", *pr.Number),
