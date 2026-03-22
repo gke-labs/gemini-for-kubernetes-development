@@ -935,12 +935,12 @@ body.dark-mode .warning-banner {
 
 .active-sandboxes-header {
   margin-top: 10px;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid #ccc;
   padding-bottom: 10px;
-  color: #666;
+  color: #333;
 }
 
 .dark-mode .active-sandboxes-header {
-  border-bottom-color: #444;
+  border-bottom-color: #555;
   color: #ccc;
 }

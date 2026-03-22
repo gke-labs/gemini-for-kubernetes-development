@@ -224,7 +224,7 @@ function DevSidebar({
                     </button>
                 </div>
                 <div style={{fontSize: "0.8em", color: "#666", marginTop: "4px", paddingLeft: "10px"}}>
-                    Active ({activeCount}/{activeRepo?.dev?.maxActiveSandboxes || '?'})
+                    Active ({activeCount}/{activeRepo?.dev?.maxActiveSandboxes ?? '?'})
                 </div>
             </div>
             

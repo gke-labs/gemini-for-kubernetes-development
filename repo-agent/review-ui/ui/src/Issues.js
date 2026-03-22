@@ -257,9 +257,9 @@ function Issues({
     <div className="review-container">
         <div className="review-sidebar">
             <div className="sidebar-section">
-                <h5 className="sidebar-header">
-                    Active ({activeList.length}/{activeRepo.issue?.maxActiveSandboxes || '?'})
-                </h5>
+                <h4 className="sidebar-header">
+                    Active ({activeList.length}/{activeRepo.issue?.maxActiveSandboxes ?? '?'})
+                </h4>
                 {activeList.map(renderSidebarItem)}
                 <div className="sidebar-item add-pr" onClick={() => handleAddIssue()} style={{textAlign: 'center', cursor: 'pointer', color: 'var(--text-secondary)', border: '1px dashed var(--border-color)'}}>
                     + Add Issue
@@ -269,18 +269,18 @@ function Issues({
             <div className="sidebar-section">
                 {pendingList.length > 0 && (
                     <>
-                        <h5 className="sidebar-header clickable" onClick={() => setIsPendingOpen(!isPendingOpen)} style={{cursor: 'pointer'}}>
+                        <h4 className="sidebar-header clickable" onClick={() => setIsPendingOpen(!isPendingOpen)} style={{cursor: 'pointer'}}>
                            {isPendingOpen ? '▼' : '▶'} Pending
-                        </h5>
+                        </h4>
                         {isPendingOpen && pendingList.map(renderSidebarItem)}
                     </>
                 )}
                 
                 {excludedList.length > 0 && (
                     <>
-                        <h5 className="sidebar-header clickable" onClick={() => setIsExcludedOpen(!isExcludedOpen)} style={{cursor: 'pointer'}}>
+                        <h4 className="sidebar-header clickable" onClick={() => setIsExcludedOpen(!isExcludedOpen)} style={{cursor: 'pointer'}}>
                            {isExcludedOpen ? '▼' : '▶'} Excluded
-                        </h5>
+                        </h4>
                         {isExcludedOpen && excludedList.map(renderSidebarItem)}
                     </>
                 )}
