@@ -57,6 +57,7 @@ func GetLastHumanCommitTime(ctx context.Context, client *github.Client, owner, r
 func CountInvestigationReportsSince(ctx context.Context, client *github.Client, owner, repo string, prNumber int, since time.Time) (int, error) {
 	count := 0
 	opts := &github.IssueListCommentsOptions{
+		Since:       &since,
 		ListOptions: github.ListOptions{PerPage: 100},
 	}
 
@@ -86,6 +87,7 @@ func CountInvestigationReportsSince(ctx context.Context, client *github.Client, 
 // HasLimitReachedComment checks if a comment indicating the retry limit was reached has been posted since a given time.
 func HasLimitReachedComment(ctx context.Context, client *github.Client, owner, repo string, prNumber int, since time.Time) (bool, error) {
 	opts := &github.IssueListCommentsOptions{
+		Since:       &since,
 		ListOptions: github.ListOptions{PerPage: 100},
 	}
 
