@@ -2086,7 +2086,7 @@ func (r *Reconciler) reconcilePRFailures(ctx context.Context, repoWatch *reviewv
 				log.Error(err, "unable to check investigation stats", "pr", *pr.Number)
 				return err
 			}
-			
+
 			if reportCount > investigateFailuresCount {
 				investigateFailuresCount = reportCount
 			}

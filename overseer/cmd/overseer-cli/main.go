@@ -648,7 +648,7 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 					if err != nil {
 						fmt.Printf("Warning: failed to get investigation stats: %v\n", err)
 					}
-					
+
 					if reportCount > investigateFailuresCount {
 						investigateFailuresCount = reportCount
 					}
