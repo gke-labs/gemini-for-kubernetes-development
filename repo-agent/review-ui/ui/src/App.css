@@ -940,6 +940,10 @@ body.dark-mode .warning-banner {
   color: #333;
 }
 
+.active-sandboxes-header.mt-30 {
+  margin-top: 30px;
+}
+
 .dark-mode .active-sandboxes-header {
   border-bottom-color: #555;
   color: #ccc;
