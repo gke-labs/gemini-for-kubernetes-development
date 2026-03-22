@@ -16,14 +16,6 @@ export GITHUB_USER_ID="{{ .User.UserID }}"
 export GITHUB_USER_EMAIL="{{ .User.Email }}"
 export GITHUB_USER_NAME="{{ .User.Name }}"
 
-# Traceability metadata
-export SANDBOX_TASK_NAME="${SANDBOX_TASK_NAME}"
-export SANDBOX_TASK_UID="${SANDBOX_TASK_UID}"
-export SANDBOX_NAME="${SANDBOX_NAME}"
-export REPOWATCH_NAME="${REPOWATCH_NAME}"
-export TASK_TYPE="${TASK_TYPE}"
-export GITHUB_TRACEABILITY="${GITHUB_TRACEABILITY}"
-export NAMESPACE="${NAMESPACE}"
 
 export GITHUB_USER_TOKEN="${GITHUB_USER_TOKEN:-${GITHUB_TOKEN}}"
 if [ -z "$GITHUB_USER_TOKEN" ]; then

@@ -20,6 +20,7 @@ import (
 	"context"
 	"flag"
 	"os"
+	"strconv"
 
 	"github.com/google/go-github/v39/github"
 
@@ -84,6 +85,8 @@ func main() {
 		os.Exit(1)
 	}
 
+	githubTraceability, _ := strconv.ParseBool(os.Getenv("GITHUB_TRACEABILITY"))
+
 	if err = (&repowatch.Reconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
@@ -92,7 +95,7 @@ func main() {
 		},
 		RepoSandboxImage:   os.Getenv("REPO_SANDBOX_IMAGE"),
 		ConfigDirImage:     os.Getenv("CONFIGDIR_CLI_IMAGE"),
-		GithubTraceability: os.Getenv("GITHUB_TRACEABILITY") == "true",
+		GithubTraceability: githubTraceability,
 	}).SetupWithManager(mgr, concurrentReconciles); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "RepoWatch")
 		os.Exit(1)

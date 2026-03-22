@@ -329,14 +329,14 @@ func (s *Server) submitReview(c *gin.Context) {
 	}
 
 	if s.GithubTraceability {
-		footer := fmt.Sprintf("\n\n---\n<!-- repo-agent-metadata\nsandbox: %s\nrepowatch: %s\ntask-type: submit-review\ntimestamp: %s\n-->",
-			sandboxName, repo, time.Now().UTC().Format(time.RFC3339))
-		if reviewRequest.Body != nil {
-			body := *reviewRequest.Body + footer
+		if reviewRequest.Body != nil && *reviewRequest.Body != "" && !strings.Contains(*reviewRequest.Body, "<!-- repo-agent-metadata") {
+			footer := fmt.Sprintf("\n\n---\n<!-- repo-agent-metadata\nnamespace: %s\nsandbox: %s\nrepowatch: %s\ntask-type: submit-review\ntimestamp: %s\n-->",
+				namespace, sandboxName, repo, time.Now().UTC().Format(time.RFC3339))
+			// Ensure we break out of any unclosed markdown blocks
+			body := *reviewRequest.Body + "\n```\n" + footer
 			reviewRequest.Body = &body
-		} else {
-			reviewRequest.Body = &footer
 		}
+		// If body is empty, we don't append the footer to avoid creating an empty-looking review comment.
 	}
 
 	// Not setting event sets it as a draft

@@ -19,7 +19,7 @@ Tips:
 * Do not forget to open your pull request using `gh` cli tool when you are done.  Just pushing the branch is not enough.
 * You MUST label the PR `overseer` `gh pr edit <PR_NUMBER> --add-label "overseer"` or  `gh pr create --label "overseer"`
 {{- if .GithubTraceability }}
-* When creating a PR with `gh pr create --body`, you MUST append the following metadata footer to the PR body (as an HTML comment):
+* When creating a PR, you MUST append the following metadata footer to the PR body (as an HTML comment):
 
 ---
 <!-- repo-agent-metadata
@@ -30,6 +30,8 @@ repowatch: {{ .RepoWatchName }}
 task-type: {{ .Name }}
 timestamp: {{ .Timestamp }}
 -->
+
+To avoid syntax errors with multi-line HTML comments in bash, write the PR body (including the footer) to a temporary file (e.g., `pr-body.txt`) and use `gh pr create --body-file pr-body.txt`.
 {{- end }}
 * The year is 2026.  Copyright headers on new files should use 2026.
 

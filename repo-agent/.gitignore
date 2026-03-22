@@ -9,3 +9,5 @@ review-ui/ui/node_modules/
 review-ui/ui/package-lock.json
 training-data/
 user-instructions/
+review-api
+repowatch-controller

@@ -20,11 +20,12 @@ type Server struct {
 	GithubTraceability bool
 }
 
-func NewServer(manager *k8s.Manager, authenticator *auth.Authenticator) *Server {
+func NewServer(manager *k8s.Manager, authenticator *auth.Authenticator, githubTraceability bool) *Server {
 	return &Server{
-		K8sManager: manager,
-		Auth:       authenticator,
-		Templates:  templates.NewManager(manager.Clientset),
+		K8sManager:         manager,
+		Auth:               authenticator,
+		Templates:          templates.NewManager(manager.Clientset),
+		GithubTraceability: githubTraceability,
 	}
 }
 

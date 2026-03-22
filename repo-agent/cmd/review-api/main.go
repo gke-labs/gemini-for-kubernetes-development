@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/gin-contrib/sessions"
@@ -52,8 +53,8 @@ func main() {
 	authenticator := auth.NewAuthenticator(k8sManager, allowedUsers, adminUsers)
 
 	// API Server
-	server := api.NewServer(k8sManager, authenticator)
-	server.GithubTraceability = os.Getenv("GITHUB_TRACEABILITY") == "true"
+	githubTraceability, _ := strconv.ParseBool(os.Getenv("GITHUB_TRACEABILITY"))
+	server := api.NewServer(k8sManager, authenticator, githubTraceability)
 
 	// Gin router
 	router := gin.Default()

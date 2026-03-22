@@ -53,8 +53,11 @@ type MockModel struct {
 	SandboxName        string
 	RepoWatchName      string
 	Namespace          string
-	Name               string
 	Timestamp          string
+}
+
+func (m MockModel) Name() string {
+	return "mock-task"
 }
 
 func TestFixIssuePromptTemplate(t *testing.T) {

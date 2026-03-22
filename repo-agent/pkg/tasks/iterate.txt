@@ -25,4 +25,6 @@ repowatch: {{ .RepoWatchName }}
 task-type: {{ .Name }}
 timestamp: {{ .Timestamp }}
 -->
+
+To avoid syntax errors with multi-line HTML comments in bash, write your complete message (including the footer) to a temporary file (e.g., `body.txt`) and use the `--body-file` flag with the `gh` CLI.
 {{- end }}

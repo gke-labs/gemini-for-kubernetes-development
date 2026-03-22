@@ -171,7 +171,7 @@ func (c *IterateCommand) Run(ctx context.Context) error {
 		SandboxName:        os.Getenv("SANDBOX_NAME"),
 		RepoWatchName:      os.Getenv("REPOWATCH_NAME"),
 		Namespace:          os.Getenv("NAMESPACE"),
-		Timestamp:          time.Now().Format(time.RFC3339),
+		Timestamp:          time.Now().UTC().Format(time.RFC3339),
 	}
 
 	if c.ExtensionsJSON != "" {

@@ -8,14 +8,6 @@ set -o pipefail
 
 export PROMPT_FILE="{{ .PromptFile }}"
 
-# Traceability metadata
-export SANDBOX_TASK_NAME="${SANDBOX_TASK_NAME}"
-export SANDBOX_TASK_UID="${SANDBOX_TASK_UID}"
-export SANDBOX_NAME="${SANDBOX_NAME}"
-export REPOWATCH_NAME="${REPOWATCH_NAME}"
-export TASK_TYPE="${TASK_TYPE}"
-export GITHUB_TRACEABILITY="${GITHUB_TRACEABILITY}"
-export NAMESPACE="${NAMESPACE}"
 
 function configureGemini {
     echo "Running configureGemini..."

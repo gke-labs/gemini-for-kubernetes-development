@@ -15,18 +15,6 @@ Response format:
 Please output your response as a single line starting with the Prow command.
 
 /kind <Category> <concise explanation>
-{{- if .GithubTraceability }}
-
----
-<!-- repo-agent-metadata
-sandbox-task: {{ .Namespace }}/{{ .SandboxTaskName }}
-sandbox-task-uid: {{ .SandboxTaskUID }}
-sandbox: {{ .SandboxName }}
-repowatch: {{ .RepoWatchName }}
-task-type: {{ .Name }}
-timestamp: {{ .Timestamp }}
--->
-{{- end }}
 
 Issue Title: "{{.Issue.Title}}"
 Issue Body: "{{.Issue.Body}}"

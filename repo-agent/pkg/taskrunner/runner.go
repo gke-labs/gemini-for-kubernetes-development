@@ -18,6 +18,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/llm"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
 )
@@ -138,6 +139,8 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		if labels != nil {
 			repoWatchName = labels["review.gemini.google.com/repowatch"]
 		}
+	} else if !apierrors.IsNotFound(err) {
+		klog.Warningf("Failed to get Sandbox %s/%s for traceability metadata: %v", tr.namespace, tr.sandboxName, err)
 	}
 
 	traceabilityEnv := []string{
@@ -278,16 +281,10 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		return
 	}
 
-	if cmd != nil {
-		if cmd.Env == nil {
-			cmd.Env = os.Environ()
-		}
-		cmd.Env = append(cmd.Env, traceabilityEnv...)
-		// Also pass GITHUB_TRACEABILITY if set in current environment
-		if val := os.Getenv("GITHUB_TRACEABILITY"); val != "" {
-			cmd.Env = append(cmd.Env, "GITHUB_TRACEABILITY="+val)
-		}
+	if cmd.Env == nil {
+		cmd.Env = os.Environ()
 	}
+	cmd.Env = append(cmd.Env, traceabilityEnv...)
 
 	cmd.Env = append(cmd.Env, fmt.Sprintf("NAME=%s", taskName))
 	cmd.Env = append(cmd.Env, fmt.Sprintf("TASKDIR=%s", taskDir))
