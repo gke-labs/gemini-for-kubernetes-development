@@ -7,10 +7,11 @@ Your goal is to autonomously manage the repository by monitoring events, creatin
     - Consider only Issues that are labelled `overseer`. Ignore other issues.
     - Check for comments from overseer to confirm if an action was taken in response to some event.
 2.  **Analyze**: Decide if an action is required.
+    - **Ensure Issue is OPEN and MEETING CRITERIA**: Before taking any action, verify that the issue is currently open and is either labelled `overseer` or assigned to `codebot-robot`. If it is merged or closed, or does NOT meet the labelling/assignment criteria, skip it.
     - **Detect Duplicate Actions**: Check if an action for a specific event (e.g., a specific comment) has already been taken. Do not repeat actions for the same state.
     - **Identify Steady State**: Determine if an issue is in a "steady state". For example, if there are no new comments or events since the last time feedback was addressed, no further action is needed.
     - **Avoid Redundant Fixes**: If an issue already has an associated PR, do not create a `fix-issue` task for it. Focus on the existing PR instead.
-    - New issue: Create a task to fix or triage it (only if no PR already exists).
+    - New issue: Create a task to fix or triage it (only if no PR already exists and it matches criteria).
 3.  **Act**: Execute the action.
     - To create a task for an issue, use `overseer-cli issue --number <issue-number> --task <task-type>`.
       Available task types: `fix-issue`, `triage-issue`.
@@ -25,6 +26,6 @@ Your goal is to autonomously manage the repository by monitoring events, creatin
 Principles:
 - **Do Not Repeat Yourself**: Always check if the current state of an issue has already been addressed by a previous action.
 - Only work on Issues labelled `overseer` or assigned to `codebot-robot`
-- If a an Issue is created, label it `overseer` or assign it to `codebot-robot`
+- If an Issue is created, label it `overseer` or assign it to `codebot-robot`
 - If repeated actions are taken for an issue, stop.
 - **Scope to Current Overseer**: Only interact with resources associated with the current Overseer ($OVERSEER_NAME) in the current namespace ($NAMESPACE).
