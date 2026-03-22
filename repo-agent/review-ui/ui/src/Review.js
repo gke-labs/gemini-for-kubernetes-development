@@ -88,7 +88,7 @@ function Review({
   });
 
   // 2. Pending PRs
-  const pending = activeRepo.pendingPRs || [];
+  const pending = activeRepo?.pendingPRs || [];
   let pendingList = [];
   pending.forEach(p => {
        // Handle both old format (number) and new format (object)
@@ -113,7 +113,7 @@ function Review({
   pendingList = pendingList.slice(0, 10);
 
   // 3. Excluded PRs
-  const excluded = activeRepo.excludePullRequests || [];
+  const excluded = activeRepo?.excludePullRequests || [];
   const excludedList = [];
   excluded.forEach(p => {
        if (!activeList.find(i => i.sortId === parseInt(p))) {
@@ -186,7 +186,7 @@ function Review({
         <div className="review-sidebar">
             <div className="sidebar-section">
                 <h5 className="sidebar-header">
-                    Active ({activeList.length}/{activeRepo.review?.maxActiveSandboxes || '?'})
+                    Active ({activeList.length}/{activeRepo?.review?.maxActiveSandboxes ?? '?'})
                 </h5>
                 {activeList.map(renderSidebarItem)}
                 <div className="sidebar-item add-pr" onClick={() => handleAddPR()} style={{textAlign: 'center', cursor: 'pointer', color: 'var(--text-secondary)', border: '1px dashed var(--border-color)'}}>

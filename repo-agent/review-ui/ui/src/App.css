@@ -932,3 +932,15 @@ body.dark-mode .warning-banner {
   background-color: var(--text-danger);
   color: white;
 }
+
+.active-sandboxes-header {
+  margin-top: 10px;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 10px;
+  color: #666;
+}
+
+.dark-mode .active-sandboxes-header {
+  border-bottom-color: #444;
+  color: #ccc;
+}

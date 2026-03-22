@@ -232,9 +232,9 @@ function App() {
   const refreshData = useCallback((merge = false) => {
     if (!isAuthenticated) return;
     if (!activeRepo) return;
-    if (activeSubTab.repo !== activeRepo.name) return;
+    if (activeSubTab?.repo !== activeRepo.name) return;
 
-    if (activeSubTab.name === 'review') {
+    if (activeSubTab?.name === 'review') {
         if (!merge) setIssues([]);
         fetch(`/api/repo/${activeRepo.name}/prs`)
           .then(res => res.json())
@@ -286,7 +286,7 @@ function App() {
             });
           })
           .catch(err => console.error(`Failed to fetch PRs for ${activeRepo.name}:`, err));
-      } else if (activeSubTab.name === 'dev') {
+      } else if (activeSubTab?.name === 'dev') {
         if (!merge) setDevSandboxes([]);
         fetch(`/api/repo/${activeRepo.name}/dev`)
           .then(res => res.json())
@@ -295,7 +295,7 @@ function App() {
             setLastUpdated(new Date());
           })
           .catch(err => console.error(`Failed to fetch dev sandboxes for ${activeRepo.name}:`, err));
-    } else if (activeSubTab.name) {
+    } else if (activeSubTab?.name) {
         if (!merge) setPrs([]);
         let url = `/api/repo/${activeRepo.name}/issues/${activeSubTab.name}`;
         if (activeSubTab.name === 'issues') {
@@ -1112,7 +1112,7 @@ function App() {
   const renderContent = () => {
     if (!activeRepo) return <p>Please select or add a repository to watch.</p>;
     const namespace = user || 'default';
-    if (activeSubTab.name === 'review') {
+    if (activeSubTab?.name === 'review') {
       return (
         <Review
           activeRepo={activeRepo}
@@ -1141,7 +1141,7 @@ function App() {
           onRefresh={() => refreshData(true)}
         />
       );
-    } else if (activeSubTab.name === 'dev') {
+    } else if (activeSubTab?.name === 'dev') {
         const activeList = devSandboxes.map(sandbox => ({...sandbox, type: 'active'}));
         
         // Group by Idea ID
@@ -1318,7 +1318,7 @@ function App() {
             <nav className="sub-tabs">
             {repos.find(r => r.name === activeRepo.name)?.review && (
                 <button
-                className={`sub-tab-btn ${activeSubTab.name === 'review' ? 'active' : ''}`}
+                className={`sub-tab-btn ${activeSubTab?.name === 'review' ? 'active' : ''}`}
                 onClick={() => setActiveSubTab({ repo: activeRepo.name, name: 'review' })}
                 >
                 Review
@@ -1334,7 +1334,7 @@ function App() {
             )}
             {repos.find(r => r.name === activeRepo.name)?.dev && (
                 <button
-                className={`sub-tab-btn ${activeSubTab.name === 'dev' ? 'active' : ''}`}
+                className={`sub-tab-btn ${activeSubTab?.name === 'dev' ? 'active' : ''}`}
                 onClick={() => setActiveSubTab({ repo: activeRepo.name, name: 'dev' })}
                 >
                 Dev
