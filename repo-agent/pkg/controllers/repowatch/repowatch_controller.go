@@ -2080,8 +2080,8 @@ func (r *Reconciler) reconcilePRFailures(ctx context.Context, repoWatch *reviewv
 			// Count active investigate-failures tasks (running or pending)
 			activeTaskCount := 0
 			for _, t := range tasks.Items {
-				if t.Spec.Type == "investigate-failures" && t.CreationTimestamp.Time.After(lastHumanCommitTime) {
-					if t.Status.TaskState == "Pending" || t.Status.TaskState == "Running" || t.Status.TaskState == "" {
+				if t.Spec.Type == "investigate-failures" && t.Spec.Params["PULL_REQUEST_ID"] == fmt.Sprintf("%d", *pr.Number) && t.CreationTimestamp.Time.After(lastHumanCommitTime) {
+					if t.Status.TaskState == "Pending" || t.Status.TaskState == "Running" || t.Status.TaskState == "" || t.Status.TaskState == "Failed" {
 						activeTaskCount++
 					}
 				}
@@ -2102,7 +2102,7 @@ func (r *Reconciler) reconcilePRFailures(ctx context.Context, repoWatch *reviewv
 				var newestTask *sandboxtaskv1alpha1.SandboxTask
 				for i := range tasks.Items {
 					t := &tasks.Items[i]
-					if t.Spec.Type == "investigate-failures" && t.CreationTimestamp.Time.After(lastHumanCommitTime) {
+					if t.Spec.Type == "investigate-failures" && t.Spec.Params["PULL_REQUEST_ID"] == fmt.Sprintf("%d", *pr.Number) && t.CreationTimestamp.Time.After(lastHumanCommitTime) {
 						if newestTask == nil || t.CreationTimestamp.Time.After(newestTask.CreationTimestamp.Time) {
 							newestTask = t
 						}

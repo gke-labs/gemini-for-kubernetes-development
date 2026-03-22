@@ -647,8 +647,8 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 					activeTaskCount := 0
 					for i := range taskList.Items {
 						t := &taskList.Items[i]
-						if t.Spec.Type == "investigate-failures" && t.CreationTimestamp.Time.After(lastHumanCommitTime) {
-							if t.Status.TaskState == "Pending" || t.Status.TaskState == "Running" || t.Status.TaskState == "" {
+						if t.Spec.Type == "investigate-failures" && t.Spec.Params["PULL_REQUEST_ID"] == fmt.Sprintf("%d", number) && t.CreationTimestamp.Time.After(lastHumanCommitTime) {
+							if t.Status.TaskState == "Pending" || t.Status.TaskState == "Running" || t.Status.TaskState == "" || t.Status.TaskState == "Failed" {
 								activeTaskCount++
 							}
 						}
