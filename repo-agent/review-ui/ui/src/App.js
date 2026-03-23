@@ -25,7 +25,8 @@ function App() {
   const [showGithubConfig, setShowGithubConfig] = useState(false);
   const [githubClientId, setGithubClientId] = useState('');
   const [githubClientSecret, setGithubClientSecret] = useState('');
-  const [isGeminiKeySet, setIsGeminiKeySet] = useState(true); // Default to true to avoid flash of warning
+  const [isLLMKeySet, setIsLLMKeySet] = useState(true);
+ // Default to true to avoid flash of warning
   const [configError, setConfigError] = useState('');
 
   const [repos, setRepos] = useState([]);
@@ -151,8 +152,8 @@ function App() {
       fetch('/api/settings')
         .then(res => res.json())
         .then(data => {
-          setIsGeminiKeySet(data.gemini_api_key_set);
-          if (!data.gemini_api_key_set && !hasRedirectedMissingKey.current && isAuthenticated) {
+          setIsLLMKeySet(data.gemini_api_key_set || data.claude_api_key_set);
+          if (!data.gemini_api_key_set && !data.claude_api_key_set && !hasRedirectedMissingKey.current && isAuthenticated) {
             hasRedirectedMissingKey.current = true;
             setView('settings');
           }
@@ -1310,8 +1311,8 @@ function App() {
           </button>
         ))}
         <button className="tab-btn add-repo-btn" onClick={() => {
-          if (!isGeminiKeySet && !isGuest) {
-            alert("Please set your Gemini API Key in Settings before adding a repository.");
+          if (!isLLMKeySet && !isGuest) {
+            alert("Please set an LLM API Key (Gemini or Claude) in Settings before adding a repository.");
             setView('settings');
           } else {
             setView('add_repo');
@@ -1416,9 +1417,9 @@ function App() {
         </div>
       </header>
       
-      {(isAuthenticated || isGuest) && !isGeminiKeySet && (
+      {(isAuthenticated || isGuest) && !isLLMKeySet && (
         <div className="warning-banner">
-          <strong>⚠️ Gemini API Key Missing:</strong> Please configure your Gemini API Key in <a href="#" onClick={(e) => { e.preventDefault(); setView('settings'); }}>Settings</a> to enable code reviews and issue handling.
+          <strong>⚠️ LLM API Key Missing:</strong> Please configure a Gemini or Claude API Key in <a href="#" onClick={(e) => { e.preventDefault(); setView('settings'); }}>Settings</a> to enable code reviews and issue handling.
         </div>
       )}
 

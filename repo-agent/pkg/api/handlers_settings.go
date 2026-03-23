@@ -15,6 +15,7 @@ func (s *Server) getSettings(c *gin.Context) {
 		"manual_pat_set":     false,
 		"oauth_pat_set":      false,
 		"gemini_api_key_set": false,
+		"claude_api_key_set": false,
 		"github_pat_set":     false, // Legacy field for UI compatibility
 	}
 
@@ -41,6 +42,11 @@ func (s *Server) getSettings(c *gin.Context) {
 			settings["gemini_api_key_set"] = true
 		}
 	}
+	if sec, err := s.K8sManager.Clientset.CoreV1().Secrets(namespace).Get(c.Request.Context(), k8s.ClaudeSecretName, v1.GetOptions{}); err == nil {
+		if val, ok := sec.Data["claude"]; ok && len(val) > 0 {
+			settings["claude_api_key_set"] = true
+		}
+	}
 	c.JSON(http.StatusOK, settings)
 }
 
@@ -49,6 +55,7 @@ func (s *Server) updateSettings(c *gin.Context) {
 	var payload struct {
 		GithubPAT    *string `json:"github_pat"` // Use pointer to distinguish between empty string and missing field
 		GeminiAPIKey string  `json:"gemini_api_key"`
+		ClaudeAPIKey string  `json:"claude_api_key"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -89,6 +96,15 @@ func (s *Server) updateSettings(c *gin.Context) {
 		if err != nil {
 			klog.Infof("Failed to update Gemini API Key: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update Gemini API Key"})
+			return
+		}
+	}
+
+	if payload.ClaudeAPIKey != "" {
+		err := s.K8sManager.UpdateSecret(c.Request.Context(), namespace, k8s.ClaudeSecretName, map[string][]byte{"claude": []byte(payload.ClaudeAPIKey)}, nil)
+		if err != nil {
+			klog.Infof("Failed to update Claude API Key: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update Claude API Key"})
 			return
 		}
 	}

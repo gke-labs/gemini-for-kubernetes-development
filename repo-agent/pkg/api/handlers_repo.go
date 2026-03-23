@@ -22,7 +22,7 @@ func (s *Server) createRepoWatch(c *gin.Context) {
 	log := klog.FromContext(c.Request.Context())
 	namespace := s.Auth.GetNamespaceFromContext(c)
 
-	if !s.ensureGeminiKeySet(c, namespace) {
+	if !s.ensureLLMKeySet(c, namespace) {
 		return
 	}
 
