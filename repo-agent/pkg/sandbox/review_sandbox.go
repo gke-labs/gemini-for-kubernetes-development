@@ -72,7 +72,7 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 	annotations["htmlURL"] = opt.PRHTMLURL
 	annotations["diffURL"] = opt.PRDiffURL
 	annotations["cloneURL"] = opt.PRCloneURL
-	annotations["upstreamRepo"] = opt.UpstreamRepo
+	annotations["sandbox.gemini.google.com/upstream-repo"] = opt.UpstreamRepo
 
 	image := opt.Image
 	if image == "" {

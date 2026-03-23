@@ -64,6 +64,8 @@ function injectConfigDirData {
 function setupGitRepos {
     echo "Running setupGitRepos..."
 
+    # CLONE_URL might contain a branch fragment, e.g. https://github.com/user/repo.git#refs/heads/mybranch
+    # We need to extract the actual repository URL and the branch to clone.
     REAL_CLONE_URL="${CLONE_URL}"
     CLONE_BRANCH=""
     if [[ "${CLONE_URL}" == *"#refs/heads/"* ]]; then
@@ -87,8 +89,13 @@ function setupGitRepos {
 
     if [ -n "${UPSTREAM_REPO}" ]; then
         echo "Adding upstream remote..."
-        (cd "/workspaces/${REPO_NAME}" && git remote add upstream "${UPSTREAM_REPO}" || git remote set-url upstream "${UPSTREAM_REPO}")
-        (cd "/workspaces/${REPO_NAME}" && git fetch upstream)
+        (cd "/workspaces/${REPO_NAME}" && \
+            if git remote | grep -q "^upstream$"; then \
+                git remote set-url upstream "${UPSTREAM_REPO}"; \
+            else \
+                git remote add upstream "${UPSTREAM_REPO}"; \
+            fi && \
+            git fetch upstream)
     fi
 }
 
@@ -115,11 +122,11 @@ function checkoutBranch {
              # Try upstream source first
              if git show-ref --verify --quiet "refs/remotes/upstream/${SOURCE_BRANCH}"; then
                  echo "Using upstream/${SOURCE_BRANCH} as source"
-                 git checkout -b "${BRANCH_NAME}" "upstream/${SOURCE_BRANCH}"
+                 git checkout --no-track -b "${BRANCH_NAME}" "upstream/${SOURCE_BRANCH}"
              # Then try origin source
              elif git show-ref --verify --quiet "refs/remotes/origin/${SOURCE_BRANCH}"; then
                  echo "Using origin/${SOURCE_BRANCH} as source"
-                 git checkout -b "${BRANCH_NAME}" "origin/${SOURCE_BRANCH}"
+                 git checkout --no-track -b "${BRANCH_NAME}" "origin/${SOURCE_BRANCH}"
              elif git show-ref --verify --quiet "refs/heads/${SOURCE_BRANCH}"; then
                  git checkout -b "${BRANCH_NAME}" "${SOURCE_BRANCH}"
              else
@@ -127,8 +134,19 @@ function checkoutBranch {
                  git checkout -b "${BRANCH_NAME}"
              fi
         else
-             echo "Creating ${BRANCH_NAME}..."
-             git checkout -b "${BRANCH_NAME}"
+             echo "Creating ${BRANCH_NAME} from default upstream branch if available..."
+             if git remote | grep -q "^upstream$"; then
+                 # Try to use upstream's default branch
+                 git remote set-head upstream -a || true
+                 if git show-ref --verify --quiet refs/remotes/upstream/HEAD; then
+                     echo "Using upstream/HEAD as source"
+                     git checkout --no-track -b "${BRANCH_NAME}" upstream/HEAD
+                 else
+                     git checkout -b "${BRANCH_NAME}"
+                 fi
+             else
+                 git checkout -b "${BRANCH_NAME}"
+             fi
         fi
 
         echo "Pushing ${BRANCH_NAME} to origin..."

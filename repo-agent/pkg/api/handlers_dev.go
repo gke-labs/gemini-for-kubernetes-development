@@ -287,6 +287,10 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "RepoURL not found in RepoWatch"})
 		return
 	}
+	if !strings.HasPrefix(repoURL, "http://") && !strings.HasPrefix(repoURL, "https://") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid RepoURL (must be http/https)"})
+		return
+	}
 
 	repoParts := strings.Split(strings.TrimSuffix(repoURL, ".git"), "/")
 	repoName := repoParts[len(repoParts)-1]
@@ -385,13 +389,12 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 		CloneURL:     forkCloneURL,
 		UpstreamRepo: repoURL,
 		HTMLURL:      forkHTMLURL,
-
-		Branch:      branchName,
-		Origin:      originURL,
-		PushEnabled: true,
-		UserLogin:   namespace,
-		UserName:    userName,
-		UserEmail:   userEmail,
+		Branch:       branchName,
+		Origin:       originURL,
+		PushEnabled:  true,
+		UserLogin:    namespace,
+		UserName:     userName,
+		UserEmail:    userEmail,
 
 		LLMProvider:         llmProvider,
 		LLMConfigdirRef:     configdirRef,
