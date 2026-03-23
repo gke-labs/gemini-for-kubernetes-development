@@ -51,7 +51,7 @@ func TestSettingsHandlers(t *testing.T) {
 		}
 
 		var settings map[string]interface{}
-		json.Unmarshal(w.Body.Bytes(), &settings)
+		_ = json.Unmarshal(w.Body.Bytes(), &settings)
 
 		expected := map[string]interface{}{
 			"manual_pat_set":     false,
@@ -70,9 +70,9 @@ func TestSettingsHandlers(t *testing.T) {
 
 	t.Run("Update and get settings", func(t *testing.T) {
 		payload := map[string]string{
-			"github_pat":      "test-github-pat",
-			"gemini_api_key":  "test-gemini-key",
-			"claude_api_key":  "test-claude-key",
+			"github_pat":     "test-github-pat",
+			"gemini_api_key": "test-gemini-key",
+			"claude_api_key": "test-claude-key",
 		}
 		jsonValue, _ := json.Marshal(payload)
 		req, _ := http.NewRequest("POST", "/settings", bytes.NewBuffer(jsonValue))
@@ -109,7 +109,7 @@ func TestSettingsHandlers(t *testing.T) {
 		r.ServeHTTP(w, req)
 
 		var settings map[string]interface{}
-		json.Unmarshal(w.Body.Bytes(), &settings)
+		_ = json.Unmarshal(w.Body.Bytes(), &settings)
 
 		expected := map[string]interface{}{
 			"manual_pat_set":     true,
@@ -148,36 +148,36 @@ func TestSettingsHandlers(t *testing.T) {
 		}
 	})
 
-    t.Run("OAuth PAT set", func(t *testing.T) {
-        // Manually create a secret with oauth_pat
-        ctx := context.Background()
-        k8sClient.CoreV1().Secrets("default").Delete(ctx, k8s.GithubSecretName, metav1.DeleteOptions{})
-        secret := &corev1.Secret{
-            ObjectMeta: metav1.ObjectMeta{
-                Name: k8s.GithubSecretName,
-                Namespace: "default",
-            },
-            Data: map[string][]byte{
-                k8s.OAuthPATKey: []byte("oauth-token"),
-            },
-        }
-        k8sClient.CoreV1().Secrets("default").Create(ctx, secret, metav1.CreateOptions{})
+	t.Run("OAuth PAT set", func(t *testing.T) {
+		// Manually create a secret with oauth_pat
+		ctx := context.Background()
+		_ = k8sClient.CoreV1().Secrets("default").Delete(ctx, k8s.GithubSecretName, metav1.DeleteOptions{})
+		secret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      k8s.GithubSecretName,
+				Namespace: "default",
+			},
+			Data: map[string][]byte{
+				k8s.OAuthPATKey: []byte("oauth-token"),
+			},
+		}
+		_, _ = k8sClient.CoreV1().Secrets("default").Create(ctx, secret, metav1.CreateOptions{})
 
-        req, _ := http.NewRequest("GET", "/settings", nil)
+		req, _ := http.NewRequest("GET", "/settings", nil)
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
 
 		var settings map[string]interface{}
-		json.Unmarshal(w.Body.Bytes(), &settings)
+		_ = json.Unmarshal(w.Body.Bytes(), &settings)
 
-        if settings["oauth_pat_set"] != true {
-            t.Errorf("Expected oauth_pat_set to be true")
-        }
-        if settings["github_pat_set"] != true {
-            t.Errorf("Expected github_pat_set (legacy) to be true")
-        }
-        if settings["manual_pat_set"] != false {
-            t.Errorf("Expected manual_pat_set to be false")
-        }
-    })
+		if settings["oauth_pat_set"] != true {
+			t.Errorf("Expected oauth_pat_set to be true")
+		}
+		if settings["github_pat_set"] != true {
+			t.Errorf("Expected github_pat_set (legacy) to be true")
+		}
+		if settings["manual_pat_set"] != false {
+			t.Errorf("Expected manual_pat_set to be false")
+		}
+	})
 }

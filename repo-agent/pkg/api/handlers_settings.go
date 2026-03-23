@@ -54,8 +54,8 @@ func (s *Server) updateSettings(c *gin.Context) {
 	namespace := s.Auth.GetNamespaceFromContext(c)
 	var payload struct {
 		GithubPAT    *string `json:"github_pat"` // Use pointer to distinguish between empty string and missing field
-		GeminiAPIKey string  `json:"gemini_api_key"`
-		ClaudeAPIKey string  `json:"claude_api_key"`
+		GeminiAPIKey *string `json:"gemini_api_key"`
+		ClaudeAPIKey *string `json:"claude_api_key"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -91,8 +91,15 @@ func (s *Server) updateSettings(c *gin.Context) {
 		}
 	}
 
-	if payload.GeminiAPIKey != "" {
-		err := s.K8sManager.UpdateSecret(c.Request.Context(), namespace, k8s.GeminiSecretName, map[string][]byte{"gemini": []byte(payload.GeminiAPIKey)}, nil)
+	if payload.GeminiAPIKey != nil {
+		geminiValue := *payload.GeminiAPIKey
+		var data map[string][]byte
+		if geminiValue == "" {
+			data = map[string][]byte{"gemini": nil}
+		} else {
+			data = map[string][]byte{"gemini": []byte(geminiValue)}
+		}
+		err := s.K8sManager.UpdateSecret(c.Request.Context(), namespace, k8s.GeminiSecretName, data, nil)
 		if err != nil {
 			klog.Infof("Failed to update Gemini API Key: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update Gemini API Key"})
@@ -100,14 +107,20 @@ func (s *Server) updateSettings(c *gin.Context) {
 		}
 	}
 
-	if payload.ClaudeAPIKey != "" {
-		err := s.K8sManager.UpdateSecret(c.Request.Context(), namespace, k8s.ClaudeSecretName, map[string][]byte{"claude": []byte(payload.ClaudeAPIKey)}, nil)
+	if payload.ClaudeAPIKey != nil {
+		claudeValue := *payload.ClaudeAPIKey
+		var data map[string][]byte
+		if claudeValue == "" {
+			data = map[string][]byte{"claude": nil}
+		} else {
+			data = map[string][]byte{"claude": []byte(claudeValue)}
+		}
+		err := s.K8sManager.UpdateSecret(c.Request.Context(), namespace, k8s.ClaudeSecretName, data, nil)
 		if err != nil {
 			klog.Infof("Failed to update Claude API Key: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update Claude API Key"})
 			return
 		}
 	}
-
 	c.Status(http.StatusOK)
 }

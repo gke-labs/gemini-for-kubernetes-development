@@ -121,6 +121,44 @@ function Settings({ onBack }) {
         .catch(err => setMessage({ text: 'Error clearing PAT.', type: 'error' }));
     };
 
+    const handleClearGeminiKey = () => {
+        if (!window.confirm("Are you sure you want to clear your Gemini API Key?")) return;
+        
+        fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ gemini_api_key: "" })
+        })
+        .then(res => {
+            if (res.ok) {
+                setMessage({ text: 'Gemini API Key cleared.', type: 'success' });
+                fetch('/api/settings').then(r => r.json()).then(setStatus);
+            } else {
+                throw new Error('Failed to clear Gemini Key');
+            }
+        })
+        .catch(err => setMessage({ text: 'Error clearing Gemini Key.', type: 'error' }));
+    };
+
+    const handleClearClaudeKey = () => {
+        if (!window.confirm("Are you sure you want to clear your Claude API Key?")) return;
+        
+        fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ claude_api_key: "" })
+        })
+        .then(res => {
+            if (res.ok) {
+                setMessage({ text: 'Claude API Key cleared.', type: 'success' });
+                fetch('/api/settings').then(r => r.json()).then(setStatus);
+            } else {
+                throw new Error('Failed to clear Claude Key');
+            }
+        })
+        .catch(err => setMessage({ text: 'Error clearing Claude Key.', type: 'error' }));
+    };
+
     if (isLoading) return <div className="settings-container"><p>Loading settings...</p></div>;
 
     return (
@@ -176,6 +214,9 @@ function Settings({ onBack }) {
                          <span className={`status-badge ${status.gemini_api_key_set ? 'set' : 'missing'}`}>
                             {status.gemini_api_key_set ? '✅ Configured' : '⚠️ Not Set'}
                         </span>
+                        {status.gemini_api_key_set && (
+                            <button type="button" className="btn btn-delete btn-sm" onClick={handleClearGeminiKey} style={{marginLeft: '10px'}}>Clear Key</button>
+                        )}
                     </div>
                     <p style={{ fontSize: '0.9rem', marginTop: '5px' }}>
                         Required for AI-powered reviews and triage. 
@@ -196,6 +237,9 @@ function Settings({ onBack }) {
                          <span className={`status-badge ${status.claude_api_key_set ? 'set' : 'missing'}`}>
                             {status.claude_api_key_set ? '✅ Configured' : '⚠️ Not Set'}
                         </span>
+                        {status.claude_api_key_set && (
+                            <button type="button" className="btn btn-delete btn-sm" onClick={handleClearClaudeKey} style={{marginLeft: '10px'}}>Clear Key</button>
+                        )}
                     </div>
                     <p style={{ fontSize: '0.9rem', marginTop: '5px' }}>
                         Required for Claude-powered reviews and triage.

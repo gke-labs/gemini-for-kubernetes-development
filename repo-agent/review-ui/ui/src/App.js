@@ -25,8 +25,7 @@ function App() {
   const [showGithubConfig, setShowGithubConfig] = useState(false);
   const [githubClientId, setGithubClientId] = useState('');
   const [githubClientSecret, setGithubClientSecret] = useState('');
-  const [isLLMKeySet, setIsLLMKeySet] = useState(true);
- // Default to true to avoid flash of warning
+  const [isLLMKeySet, setIsLLMKeySet] = useState(true); // Default to true to avoid flash of warning
   const [configError, setConfigError] = useState('');
 
   const [repos, setRepos] = useState([]);

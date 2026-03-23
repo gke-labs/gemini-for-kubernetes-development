@@ -10,6 +10,7 @@ import (
 	sandboxtaskv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
 	pkgk8s "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -100,24 +101,32 @@ func convertStats(crdStats *sandboxtaskv1alpha1.Stats) *models.Stats {
 }
 
 func (s *Server) ensureLLMKeySet(c *gin.Context, namespace string) bool {
-	geminiSet := false
-	claudeSet := false
+	ctx := c.Request.Context()
 
-	if sec, err := s.K8sManager.Clientset.CoreV1().Secrets(namespace).Get(c.Request.Context(), pkgk8s.GeminiSecretName, v1.GetOptions{}); err == nil {
-		if val, ok := sec.Data["gemini"]; ok && len(val) > 0 {
-			geminiSet = true
-		}
-	}
-	if sec, err := s.K8sManager.Clientset.CoreV1().Secrets(namespace).Get(c.Request.Context(), pkgk8s.ClaudeSecretName, v1.GetOptions{}); err == nil {
-		if val, ok := sec.Data["claude"]; ok && len(val) > 0 {
-			claudeSet = true
-		}
-	}
-
-	if !geminiSet && !claudeSet {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Neither Gemini nor Claude API Key is configured. Please set at least one in Settings."})
+	// Check Gemini first
+	sec, err := s.K8sManager.Clientset.CoreV1().Secrets(namespace).Get(ctx, pkgk8s.GeminiSecretName, v1.GetOptions{})
+	if err != nil && !k8serrors.IsNotFound(err) {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to check Gemini secret: %v", err)})
 		return false
 	}
+	if err == nil {
+		if val, ok := sec.Data["gemini"]; ok && len(val) > 0 {
+			return true // Gemini is configured, we can proceed
+		}
+	}
 
-	return true
+	// Check Claude if Gemini is not configured
+	sec, err = s.K8sManager.Clientset.CoreV1().Secrets(namespace).Get(ctx, pkgk8s.ClaudeSecretName, v1.GetOptions{})
+	if err != nil && !k8serrors.IsNotFound(err) {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to check Claude secret: %v", err)})
+		return false
+	}
+	if err == nil {
+		if val, ok := sec.Data["claude"]; ok && len(val) > 0 {
+			return true // Claude is configured, we can proceed
+		}
+	}
+
+	c.JSON(http.StatusForbidden, gin.H{"error": "Neither Gemini nor Claude API Key is configured. Please set at least one in Settings."})
+	return false
 }
