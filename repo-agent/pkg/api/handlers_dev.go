@@ -381,10 +381,10 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 			"sandbox.gemini.google.com/type":     "dev",
 			"sandbox-type":                       "dev",
 		},
-		Annotations: annotations,
-		CloneURL:    forkCloneURL,
+		Annotations:  annotations,
+		CloneURL:     forkCloneURL,
 		UpstreamRepo: repoURL,
-		HTMLURL:     forkHTMLURL,
+		HTMLURL:      forkHTMLURL,
 
 		Branch:      branchName,
 		Origin:      originURL,
