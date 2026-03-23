@@ -13,8 +13,9 @@ type DevSandboxOptions struct {
 	Annotations map[string]string
 
 	// Source
-	CloneURL string
-	HTMLURL  string
+	CloneURL     string
+	UpstreamRepo string
+	HTMLURL      string
 
 	// Destination
 	Branch      string

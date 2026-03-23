@@ -1235,6 +1235,7 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, user *github.
 			GithubSecretName:      githubSecretName,
 			DevcontainerConfigRef: repoWatch.Spec.Review.DevcontainerConfigRef,
 			Image:                 repoWatch.Spec.Review.Image,
+			UpstreamRepo:          repoWatch.Spec.RepoURL,
 			RepoSandboxImage:      r.RepoSandboxImage,
 			ConfigDirImage:        r.ConfigDirImage,
 			HTTPEnabled:           true,

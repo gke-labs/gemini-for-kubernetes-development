@@ -139,6 +139,7 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 		map[string]interface{}{"name": "GITHUB_USER_EMAIL", "value": opt.UserEmail},
 		map[string]interface{}{"name": "GIT_AUTHOR_NAME", "value": userName},
 		map[string]interface{}{"name": "GIT_AUTHOR_EMAIL", "value": opt.UserEmail},
+		map[string]interface{}{"name": "UPSTREAM_REPO", "value": opt.UpstreamRepo},
 		map[string]interface{}{"name": "GITHUB_BOT_LOGIN", "value": opt.BotLogin},
 		map[string]interface{}{"name": "GITHUB_BOT_NAME", "value": opt.BotName},
 		map[string]interface{}{"name": "GITHUB_BOT_EMAIL", "value": opt.BotEmail},
@@ -226,6 +227,7 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 	opt.Annotations["sandbox.gemini.google.com/issue-title"] = opt.IssueTitle
 	opt.Annotations["sandbox.gemini.google.com/html-url"] = opt.HTMLURL
 	opt.Annotations["sandbox.gemini.google.com/clone-url"] = opt.CloneURL
+	opt.Annotations["sandbox.gemini.google.com/upstream-repo"] = opt.UpstreamRepo
 	opt.Annotations["sandbox.gemini.google.com/user-login"] = opt.UserLogin
 	opt.Annotations["sandbox.gemini.google.com/bot-login"] = opt.BotLogin
 	opt.Annotations["sandbox.gemini.google.com/origin"] = opt.Origin

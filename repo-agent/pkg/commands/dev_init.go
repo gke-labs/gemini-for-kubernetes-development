@@ -21,6 +21,7 @@ import (
 type DevInitCommand struct {
 	// Configurable options
 	RepoURL         string
+	UpstreamRepo    string
 	BranchName      string
 	SourceBranch    string
 	AgentPrompt     string
@@ -59,6 +60,7 @@ func BuildDevInitCommand() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&initCommand.RepoURL, "repo-url", os.Getenv("REPO_URL"), "GitHub repo URL")
+	cmd.Flags().StringVar(&initCommand.UpstreamRepo, "upstream-repo", os.Getenv("UPSTREAM_REPO"), "GitHub upstream repo URL")
 	cmd.Flags().StringVar(&initCommand.BranchName, "branch-name", os.Getenv("BRANCH_NAME"), "Branch name")
 	cmd.Flags().StringVar(&initCommand.SourceBranch, "source-branch", os.Getenv("SOURCE_BRANCH"), "Source branch name to fork from")
 	cmd.Flags().StringVar(&initCommand.AgentPrompt, "agent-prompt", os.Getenv("AGENT_PROMPT"), "Agent prompt")
@@ -155,6 +157,7 @@ func (c *DevInitCommand) Run(ctx context.Context) error {
 	promptPath := c.taskPath("agent-prompt.txt")
 	task := tasks.DevSetupModel{
 		Repo:         c.repo,
+		UpstreamRepo: c.UpstreamRepo,
 		User:         c.user,
 		BranchName:   c.BranchName,
 		SourceBranch: c.SourceBranch,
