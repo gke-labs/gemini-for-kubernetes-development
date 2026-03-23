@@ -13,7 +13,7 @@ The following workflows have failed:
 {{ end }}
 
 ## Previous Investigations
-Below are the existing comments on the PR. Look for "--- INVESTIGATION REPORT ---" to see what has already been attempted.
+Below are the existing comments on the PR since the last commit. Look for "--- INVESTIGATION REPORT ---" to see what has already been attempted.
 {{ range .IssueComments }}
 - {{ .UserLogin }} at {{ .CreatedAt }}:
 {{ .Body }}
@@ -22,7 +22,7 @@ Below are the existing comments on the PR. Look for "--- INVESTIGATION REPORT --
 ## Instructions
 
 1. **Check for Repeated Failures**:
-   - Count how many "--- INVESTIGATION REPORT ---" comments have already been posted.
+   - Count how many "--- INVESTIGATION REPORT ---" comments have already been posted (only since the last commit).
    - If there are already 3 or more such reports, and you are seeing the same failures, DO NOT attempt to fix them again.
    - If you have already tried to fix the SAME failure in a previous attempt and it didn't work, GIVE UP.
    - In case of giving up, post a final comment stating that you have tried multiple times and the failure seems sticky, and that you are stepping back for human intervention.

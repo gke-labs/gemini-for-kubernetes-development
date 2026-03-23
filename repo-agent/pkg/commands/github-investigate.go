@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
@@ -239,15 +240,34 @@ func (c *GithubInvestigateCommand) Run(ctx context.Context) error {
 		log.Error(err, "failed to get issue comments")
 	}
 
+	commits, err := c.githubAPI.GetPullRequestCommits(ctx, c.repo.Owner(), c.repo.Name(), c.pullRequest.Number())
+	if err != nil {
+		log.Error(err, "failed to get pull request commits")
+	}
+	var lastCommitAt time.Time
+	for _, commit := range commits {
+		if commit.CommittedAt().After(lastCommitAt) {
+			lastCommitAt = commit.CommittedAt()
+		}
+	}
+
+	var filteredComments []github.IssueComment
+	for _, comment := range comments {
+		if comment.CreatedAt().After(lastCommitAt) {
+			filteredComments = append(filteredComments, comment)
+		}
+	}
+
 	promptPath := c.taskPath("agent-prompt.txt")
 	task := tasks.InvestigateFailuresModel{
-		Repo:          c.repo,
-		PullRequest:   c.pullRequest,
-		PromptFile:    promptPath,
-		User:          c.user,
-		Models:        strings.Split(c.Model, ","),
-		FailedRuns:    c.failedRuns,
-		IssueComments: comments,
+		Repo:              c.repo,
+		PullRequest:       c.pullRequest,
+		PromptFile:        promptPath,
+		User:              c.user,
+		Models:            strings.Split(c.Model, ","),
+		FailedRuns:        c.failedRuns,
+		IssueComments:     filteredComments,
+		RepositoryCommits: commits,
 	}
 
 	if c.ExtensionsJSON != "" {
