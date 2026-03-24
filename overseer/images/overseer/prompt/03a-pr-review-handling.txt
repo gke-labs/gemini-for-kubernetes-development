@@ -6,8 +6,8 @@ Your goal is to autonomously review PRs and provide feedback.
     - **IMPORTANT**: DO NOT search for PRs in other repositories. Only work with the current repository ($REPO_URL).
 2.  **Analyze**: Decide if an action is required.
     - **Ensure PR is OPEN and MEETING CRITERIA**: Before taking any action, verify that the PR is currently open and is either labelled `overseer`, assigned to `codebot-robot`, or has a comment containing "Please review @codebot-robot" or "assign @codebot-robot". If it is merged or closed, or does NOT meet the criteria, skip it.
-    - **One Round of Review**: Limit reviews to only one round. If the PR has already been reviewed by `codebot-robot` (check for reviews or comments from the bot), do not trigger another review task, even if there are new commits.
-    - New OPEN PR: If there has been no review yet from `codebot-robot`, create a task to review it (only for PRs matching the criteria).
+    - **One Review per Commit**: Limit reviews to one per commit. If the PR has already been reviewed by `codebot-robot` for the current HEAD commit (check for reviews from the bot for the current SHA), do not trigger another review task.
+    - New OPEN PR: If there has been no review yet from `codebot-robot` for the current HEAD commit, create a task to review it (only for PRs matching the criteria).
     - Completed PR Review Task: If you find a completed review task that hasn't been submitted, you need to submit the review. Extract the PR number from the sandbox name (e.g., `<overseer-name>-pr-<pr-number>`).
     - **Wait for Updates**: If the PR has already been reviewed, skip it and wait for updates (which might be addressed feedback, but not a new review).
 3.  **Act**: Execute the action.
@@ -20,7 +20,7 @@ Your goal is to autonomously review PRs and provide feedback.
 Principles:
 - **Only work on OPEN PRs**: Ignore all PRs that are merged or closed.
 - Only work on PRs labelled `overseer`, assigned to `codebot-robot`, or have a comment containing "Please review @codebot-robot" or "assign @codebot-robot".
-- **Limit reviews to only one round.**
+- **Limit reviews to one per commit.**
 - If repeated actions are taken for a PR, stop.
 - **Scope to Current Overseer**: Only interact with resources associated with the current Overseer ($OVERSEER_NAME) in the current namespace ($NAMESPACE).
 - **IMPORTANT**: If no PRs meet the criteria for action (e.g., they are not labelled `overseer` or assigned to `codebot-robot`), you MUST NOT take any action. Do NOT "test the environment", do NOT create tasks for PRs that do not meet the criteria, and do NOT hallucinate work. If there is nothing to do, simply report that there is nothing to do and stop.

@@ -389,7 +389,10 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 	}
 
 	_, err = kubeClient.Clientset.CoreV1().Services(namespace).Create(ctx, svc, metav1.CreateOptions{})
-	return err
+	if err != nil && !errors.IsAlreadyExists(err) {
+		return err
+	}
+	return nil
 }
 
 func runIssue(ctx context.Context, number int, prNumber int, taskType string, customPrompt string) error {
@@ -637,6 +640,22 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 
 	// Check if a task for this SHA already exists (only for review tasks)
 	if taskType == "review" {
+		// First check GitHub for already submitted reviews for this SHA
+		reviews, _, err := ghClient.PullRequests.ListReviews(ctx, owner, repo, number, nil)
+		if err == nil {
+			botLogin := os.Getenv("GITHUB_BOT_LOGIN")
+			userLogin := os.Getenv("GITHUB_USER_ID")
+			for _, r := range reviews {
+				login := r.GetUser().GetLogin()
+				if (login != "" && (login == botLogin || login == userLogin)) && r.GetCommitID() == headSHA {
+					if r.GetState() != "DISMISSED" {
+						fmt.Printf("Review for SHA %s already submitted to GitHub by %s. Skipping.\n", headSHA, login)
+						return nil
+					}
+				}
+			}
+		}
+
 		taskList, err := manager.ListSandboxTasks(ctx, namespace, sandboxName)
 		if err == nil {
 			for i := range taskList.Items {
@@ -906,7 +925,10 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 	}
 
 	_, err = kubeClient.Clientset.CoreV1().Services(namespace).Create(ctx, svc, metav1.CreateOptions{})
-	return err
+	if err != nil && !errors.IsAlreadyExists(err) {
+		return err
+	}
+	return nil
 }
 
 func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, overseer *overseerv1alpha1.Overseer, pr *githubv39.PullRequest) error {
@@ -988,7 +1010,10 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 	}
 
 	_, err = kubeClient.Clientset.CoreV1().Services(namespace).Create(ctx, svc, metav1.CreateOptions{})
-	return err
+	if err != nil && !errors.IsAlreadyExists(err) {
+		return err
+	}
+	return nil
 }
 
 var letterBytes = "abcdefghijklmnopqrstuvwxyz0123456789"
