@@ -1640,7 +1640,7 @@ func (r *Reconciler) createDevSandbox(ctx context.Context, user *github.User, re
 	}
 
 	params := map[string]string{
-		"REPO_URL":          opts.HTMLURL, // HTMLURL is https://github.com/owner/repo
+		"REPO_URL":          opts.CloneURL, // CloneURL is the upstream repository URL
 		"BRANCH_NAME":       branchName,
 		"GITHUB_USER_LOGIN": opts.UserLogin,
 		"GITHUB_USER_EMAIL": opts.UserEmail,
