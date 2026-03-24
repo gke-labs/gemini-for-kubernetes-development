@@ -101,29 +101,19 @@ func (c *DevInitCommand) loadGithubObjects(ctx context.Context) error {
 	}
 	c.GithubUserToken = token
 
-	ghClient, err := github.NewClient(ctx)
-	if err != nil {
-		return err
+	// Let's parse the name from URL for directory naming
+	// e.g. https://github.com/owner/repo
+	base := filepath.Base(c.RepoURL)
+	if ext := filepath.Ext(base); ext != "" {
+		base = base[:len(base)-len(ext)]
 	}
-	repo, err := ghClient.GetRepositoryFromHTMLUrl(ctx, c.RepoURL)
-	if err != nil {
-		klog.Warningf("failed to get repository info from GitHub API, using fallback: %v", err)
-		// Let's parse the name from URL for directory naming
-		// e.g. https://github.com/owner/repo
-		base := filepath.Base(c.RepoURL)
-		if ext := filepath.Ext(base); ext != "" {
-			base = base[:len(base)-len(ext)]
-		}
 
-		// Construct basic repo object
-		innerRepo := &githubv39.Repository{
-			CloneURL: githubv39.String(c.RepoURL + ".git"),
-			Name:     githubv39.String(base),
-		}
-		c.repo = github.NewRepository(innerRepo)
-	} else {
-		c.repo = repo
+	// Construct basic repo object
+	innerRepo := &githubv39.Repository{
+		CloneURL: githubv39.String(c.RepoURL + ".git"),
+		Name:     githubv39.String(base),
 	}
+	c.repo = github.NewRepository(innerRepo)
 
 	user := github.User{
 		UserID: c.GithubUserLogin,
