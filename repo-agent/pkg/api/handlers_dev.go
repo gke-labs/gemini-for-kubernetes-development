@@ -292,7 +292,12 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 		return
 	}
 
-	repoParts := strings.Split(strings.TrimSuffix(repoURL, ".git"), "/")
+	// Strip any branch fragment from repoURL before parsing
+	baseRepoURL := repoURL
+	if idx := strings.Index(baseRepoURL, "#"); idx != -1 {
+		baseRepoURL = baseRepoURL[:idx]
+	}
+	repoParts := strings.Split(strings.TrimSuffix(baseRepoURL, ".git"), "/")
 	repoName := repoParts[len(repoParts)-1]
 
 	forkCloneURL := fmt.Sprintf("https://github.com/%s/%s.git", namespace, repoName)
@@ -444,7 +449,7 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 	// Create initial dev-setup task
 	taskParams := map[string]string{
 		"REPO_URL":          forkHTMLURL,
-		"UPSTREAM_REPO":     repoURL,
+		"UPSTREAM_REPO":     baseRepoURL,
 		"BRANCH_NAME":       branchName,
 		"GITHUB_USER_LOGIN": namespace,
 		"GITHUB_USER_EMAIL": userEmail,

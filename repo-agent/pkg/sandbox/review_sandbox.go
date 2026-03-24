@@ -105,7 +105,6 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 		map[string]interface{}{"name": "GITHUB_USER_EMAIL", "value": opt.UserEmail},
 		map[string]interface{}{"name": "GIT_AUTHOR_NAME", "value": userName},
 		map[string]interface{}{"name": "GIT_AUTHOR_EMAIL", "value": opt.UserEmail},
-		map[string]interface{}{"name": "UPSTREAM_REPO", "value": opt.UpstreamRepo},
 		map[string]interface{}{"name": "GITHUB_BOT_LOGIN", "value": opt.BotLogin},
 		map[string]interface{}{"name": "GITHUB_BOT_NAME", "value": opt.BotName},
 		map[string]interface{}{"name": "GITHUB_BOT_EMAIL", "value": opt.BotEmail},

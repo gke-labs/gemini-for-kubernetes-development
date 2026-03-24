@@ -110,9 +110,21 @@ func (c *DevInitCommand) loadGithubObjects(ctx context.Context) error {
 		base = base[:len(base)-len(ext)]
 	}
 
+	cloneURL := c.RepoURL
+	if idx := strings.Index(cloneURL, "#"); idx != -1 {
+		baseURL := cloneURL[:idx]
+		fragment := cloneURL[idx:]
+		if !strings.HasSuffix(baseURL, ".git") {
+			baseURL += ".git"
+		}
+		cloneURL = baseURL + fragment
+	} else if !strings.HasSuffix(cloneURL, ".git") {
+		cloneURL += ".git"
+	}
+
 	// Construct basic repo object
 	innerRepo := &githubv39.Repository{
-		CloneURL: githubv39.String(c.RepoURL + ".git"),
+		CloneURL: githubv39.String(cloneURL),
 		Name:     githubv39.String(base),
 	}
 	c.repo = github.NewRepository(innerRepo)

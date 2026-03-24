@@ -8,7 +8,7 @@ set -x
 # - GITHUB_USER_TOKEN
 
 export REPO_NAME="{{ .Repo.Name }}"
-export CLONE_URL="{{ .Repo.CloneURL }}"
+export CLONE_URL="${CLONE_URL:-{{ .Repo.CloneURL }}}"
 export UPSTREAM_REPO="{{ .UpstreamRepo }}"
 export BRANCH_NAME="{{ .BranchName }}"
 export SOURCE_BRANCH="{{ .SourceBranch }}"
@@ -71,6 +71,7 @@ function setupGitRepos {
     if [[ "${CLONE_URL}" == *"#refs/heads/"* ]]; then
         REAL_CLONE_URL="${CLONE_URL%%#refs/heads/*}"
         CLONE_BRANCH="${CLONE_URL##*#refs/heads/}"
+        CLONE_BRANCH="${CLONE_BRANCH%.git}"
     fi
     
     # Check if repo already exists (reuse sandbox case)
@@ -88,12 +89,16 @@ function setupGitRepos {
     fi
 
     if [ -n "${UPSTREAM_REPO}" ]; then
+        REAL_UPSTREAM_REPO="${UPSTREAM_REPO}"
+        if [[ "${UPSTREAM_REPO}" == *"#refs/heads/"* ]]; then
+            REAL_UPSTREAM_REPO="${UPSTREAM_REPO%%#refs/heads/*}"
+        fi
         echo "Adding upstream remote..."
         (cd "/workspaces/${REPO_NAME}" && \
             if git remote | grep -q "^upstream$"; then \
-                git remote set-url upstream "${UPSTREAM_REPO}"; \
+                git remote set-url upstream "${REAL_UPSTREAM_REPO}"; \
             else \
-                git remote add upstream "${UPSTREAM_REPO}"; \
+                git remote add upstream "${REAL_UPSTREAM_REPO}"; \
             fi && \
             git fetch upstream)
     fi
