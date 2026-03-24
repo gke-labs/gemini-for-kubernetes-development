@@ -23,3 +23,10 @@ func (r *Repository) Name() string {
 func (r *Repository) Owner() string {
 	return r.repository.GetOwner().GetLogin()
 }
+
+func (r *Repository) ParentCloneURL() string {
+	if r.repository.GetFork() && r.repository.Parent != nil {
+		return r.repository.Parent.GetCloneURL()
+	}
+	return ""
+}

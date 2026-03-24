@@ -9,6 +9,7 @@ set -x
 
 export REPO_NAME="{{ .Repo.Name }}"
 export CLONE_URL="{{ .Repo.CloneURL }}"
+export UPSTREAM_URL="{{ .Repo.ParentCloneURL }}"
 export BRANCH_NAME="{{ .BranchName }}"
 export SOURCE_BRANCH="{{ .SourceBranch }}"
 export PROMPT_FILE="{{ .PromptFile }}"
@@ -65,12 +66,21 @@ function setupGitRepos {
     
     # Check if repo already exists (reuse sandbox case)
     if [ ! -d "/workspaces/${REPO_NAME}" ]; then
-        echo "cloning repository"
-        (cd /workspaces/ && git clone ${CLONE_URL})
+        if [ -n "${UPSTREAM_URL}" ]; then
+            echo "Upstream URL found: ${UPSTREAM_URL}. Using gh repo fork and clone."
+            (cd /workspaces && gh repo fork "${UPSTREAM_URL}" --clone -- --depth=1)
+        else
+            echo "cloning repository from ${CLONE_URL}"
+            (cd /workspaces/ && git clone --depth=1 ${CLONE_URL})
+        fi
     else
         echo "repository already exists"
-        # Optional: fetch latest changes
-        (cd "/workspaces/${REPO_NAME}" && git fetch origin)
+        if [ -n "${UPSTREAM_URL}" ]; then
+             echo "Syncing with upstream..."
+             (cd "/workspaces/${REPO_NAME}" && gh repo sync)
+        else
+             (cd "/workspaces/${REPO_NAME}" && git fetch origin)
+        fi
     fi
 }
 
@@ -82,16 +92,24 @@ function checkoutBranch {
     if git show-ref --verify --quiet "refs/heads/${BRANCH_NAME}"; then
         echo "Branch ${BRANCH_NAME} exists locally, checking out..."
         git checkout "${BRANCH_NAME}"
-    # Check if branch exists remotely
+    # Check if branch exists remotely on origin
     elif git show-ref --verify --quiet "refs/remotes/origin/${BRANCH_NAME}"; then
-        echo "Branch ${BRANCH_NAME} exists remotely, checking out..."
+        echo "Branch ${BRANCH_NAME} exists remotely on origin, checking out..."
         git checkout "${BRANCH_NAME}"
     else
         echo "Branch ${BRANCH_NAME} does not exist."
+        # Always try to ensure we have latest from upstream if it's a fork
+        if [ -n "${UPSTREAM_URL}" ]; then
+             git fetch upstream || true
+        fi
+
         if [ -n "${SOURCE_BRANCH}" ] && [ "${SOURCE_BRANCH}" != "${BRANCH_NAME}" ]; then
              echo "Creating ${BRANCH_NAME} from ${SOURCE_BRANCH}..."
-             # Try remote source first
-             if git show-ref --verify --quiet "refs/remotes/origin/${SOURCE_BRANCH}"; then
+             # Try upstream source first if it's a fork
+             if [ -n "${UPSTREAM_URL}" ] && git show-ref --verify --quiet "refs/remotes/upstream/${SOURCE_BRANCH}"; then
+                 git checkout -b "${BRANCH_NAME}" "upstream/${SOURCE_BRANCH}"
+             # Then origin source
+             elif git show-ref --verify --quiet "refs/remotes/origin/${SOURCE_BRANCH}"; then
                  git checkout -b "${BRANCH_NAME}" "origin/${SOURCE_BRANCH}"
              elif git show-ref --verify --quiet "refs/heads/${SOURCE_BRANCH}"; then
                  git checkout -b "${BRANCH_NAME}" "${SOURCE_BRANCH}"
@@ -101,7 +119,14 @@ function checkoutBranch {
              fi
         else
              echo "Creating ${BRANCH_NAME}..."
-             git checkout -b "${BRANCH_NAME}"
+             # If it's a fork, try to create from upstream's default branch
+             if [ -n "${UPSTREAM_URL}" ]; then
+                 DEFAULT_BRANCH=$(git remote show upstream | sed -n '/HEAD branch/s/.*: //p')
+                 echo "Using upstream default branch: ${DEFAULT_BRANCH}"
+                 git checkout -b "${BRANCH_NAME}" "upstream/${DEFAULT_BRANCH}"
+             else
+                 git checkout -b "${BRANCH_NAME}"
+             fi
         fi
 
         echo "Pushing ${BRANCH_NAME} to origin..."
