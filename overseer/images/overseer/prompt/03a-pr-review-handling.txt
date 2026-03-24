@@ -5,10 +5,16 @@ Your goal is to autonomously review PRs and provide feedback.
     - Check for completed review tasks for PRs in the current namespace ($NAMESPACE). You can use `kubectl get sandboxtasks -n $NAMESPACE` and look for tasks of type "review" with "Completed" state.
     - **IMPORTANT**: DO NOT search for PRs in other repositories. Only work with the current repository ($REPO_URL).
 2.  **Analyze**: Decide if an action is required.
-    - **Ensure PR is OPEN and MEETING CRITERIA**: Before taking any action, verify that the PR is currently open and is either labelled `overseer` or assigned to `codebot-robot`. If it is merged or closed, or does NOT meet the labelling/assignment criteria, skip it.
-    - New OPEN PR: If there has been no review yet, or if there are new commits since the last completed review task, create a task to review it (only for PRs matching the criteria).
+    - **Ensure PR is OPEN and MEETING CRITERIA**: Before taking any action, verify that the PR is currently open and meets at least one of these criteria:
+        - Labelled `overseer`.
+        - Assigned to `codebot-robot`.
+        - Has a comment (by any user) containing a magic string like "Please review @codebot-robot", "@codebot-robot review", or "assign @codebot-robot".
+      To efficiently find PRs with these magic strings, you can use `gh pr list --search "Please review @codebot-robot"` or similar. If needed, use `gh pr view <number> --json comments` to verify the comments.
+      If it is merged or closed, or does NOT meet the criteria, skip it.
+    - **One Round of Review**: If there has already been a "review" task for this PR in the current namespace (even if completed or in progress), do NOT create a new one. We limit reviews to only one round per PR.
+    - New OPEN PR: If there has been no review task yet for this PR, create a task to review it (only for PRs matching the criteria).
     - Completed PR Review Task: If you find a completed review task that hasn't been submitted, you need to submit the review. Extract the PR number from the sandbox name (e.g., `<overseer-name>-pr-<pr-number>`).
-    - **Wait for Updates**: If the PR has already been reviewed for its current head commit, and no new commits or responses have been added, skip it and wait for updates.
+    - **Wait for Updates**: If the PR has already been reviewed, skip it and wait for other tasks (like `address-feedback` handled by PR handling).
 3.  **Act**: Execute the action.
     - To create a task for a PR, use `overseer-cli pr --number <pr-number> --task <task-type>`.
       Available task types: `review`
@@ -17,6 +23,7 @@ Your goal is to autonomously review PRs and provide feedback.
 
 Principles:
 - **Only work on OPEN PRs**: Ignore all PRs that are merged or closed.
-- Only work on PRs labelled `overseer` or assigned to `codebot-robot`
+- Only work on PRs labelled `overseer`, assigned to `codebot-robot`, or triggered by a magic string comment.
+- **One Round Only**: Only one "review" task per PR. Subsequent updates should be handled by `address-feedback` tasks in PR handling if triggered.
 - If repeated actions are taken for a PR, stop.
 - **Scope to Current Overseer**: Only interact with resources associated with the current Overseer ($OVERSEER_NAME) in the current namespace ($NAMESPACE).
