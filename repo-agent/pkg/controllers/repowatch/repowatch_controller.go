@@ -1594,7 +1594,7 @@ func (r *Reconciler) createDevSandbox(ctx context.Context, user *github.User, re
 			"sandbox-type":                       "dev",
 		},
 		CloneURL: cloneURL,
-		HTMLURL:  fmt.Sprintf("https://github.com/%s/%s", forkOwner, forkRepo),
+		HTMLURL:  strings.TrimSuffix(repoWatch.Spec.RepoURL, ".git"),
 
 		Branch:      branchName,
 		Origin:      originURL,

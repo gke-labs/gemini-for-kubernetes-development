@@ -291,12 +291,12 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 	repoParts := strings.Split(strings.TrimSuffix(repoURL, ".git"), "/")
 	repoName := repoParts[len(repoParts)-1]
 
-	forkCloneURL := fmt.Sprintf("https://github.com/%s/%s.git", namespace, repoName)
+	cloneURL := repoURL
 	if req.BaseBranch != "" {
-		forkCloneURL = fmt.Sprintf("%s#refs/heads/%s", forkCloneURL, req.BaseBranch)
+		cloneURL = fmt.Sprintf("%s#refs/heads/%s", repoURL, req.BaseBranch)
 	}
 
-	forkHTMLURL := fmt.Sprintf("https://github.com/%s/%s", namespace, repoName)
+	htmlURL := strings.TrimSuffix(repoURL, ".git")
 	originURL := fmt.Sprintf("github.com/%s/%s.git", namespace, repoName)
 
 	githubSecretName, _, _ := unstructured.NestedString(rw.Object, "spec", "githubSecretName")
@@ -382,8 +382,8 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 			"sandbox-type":                       "dev",
 		},
 		Annotations: annotations,
-		CloneURL:    forkCloneURL,
-		HTMLURL:     forkHTMLURL,
+		CloneURL:    cloneURL,
+		HTMLURL:     htmlURL,
 
 		Branch:      branchName,
 		Origin:      originURL,

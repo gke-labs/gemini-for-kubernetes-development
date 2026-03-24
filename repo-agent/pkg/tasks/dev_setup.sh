@@ -72,6 +72,9 @@ function setupGitRepos {
         echo "Configuring fork..."
         (cd "/workspaces/${REPO_NAME}" && gh repo fork --remote)
 
+        echo "Setting default repository for gh CLI..."
+        (cd "/workspaces/${REPO_NAME}" && gh repo set-default "${CLONE_URL}")
+
         echo "Syncing fork with upstream..."
         # Specify the fork explicitly to avoid 'gh repo set-default' issues
         (cd "/workspaces/${REPO_NAME}" && gh repo sync "${GITHUB_USER_ID}/${REPO_NAME}" --force)
