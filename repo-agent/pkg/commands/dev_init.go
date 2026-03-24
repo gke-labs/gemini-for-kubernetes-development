@@ -103,14 +103,16 @@ func (c *DevInitCommand) loadGithubObjects(ctx context.Context) error {
 
 	// Let's parse the name from URL for directory naming
 	// e.g. https://github.com/owner/repo
-	base := filepath.Base(c.RepoURL)
-	if ext := filepath.Ext(base); ext != "" {
+	cleanURL := strings.Split(c.RepoURL, "#")[0]
+	cleanURL = strings.TrimSuffix(cleanURL, "/")
+	base := filepath.Base(cleanURL)
+	if ext := filepath.Ext(base); ext == ".git" {
 		base = base[:len(base)-len(ext)]
 	}
 
 	// Construct basic repo object
 	innerRepo := &githubv39.Repository{
-		CloneURL: githubv39.String(c.RepoURL + ".git"),
+		CloneURL: githubv39.String(strings.TrimSuffix(cleanURL, ".git") + ".git"),
 		Name:     githubv39.String(base),
 	}
 	c.repo = github.NewRepository(innerRepo)

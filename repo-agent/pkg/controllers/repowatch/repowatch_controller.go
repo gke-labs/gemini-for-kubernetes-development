@@ -1575,7 +1575,7 @@ func (r *Reconciler) reconcileDevSandboxesInternal(ctx context.Context, user *gi
 }
 
 func (r *Reconciler) createDevSandbox(ctx context.Context, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, forkOwner, forkRepo, branchName, sandboxName string) error {
-	cloneURL := fmt.Sprintf("https://github.com/%s/%s.git", forkOwner, forkRepo)
+	cloneURL := strings.TrimSuffix(repoWatch.Spec.RepoURL, ".git") + ".git"
 	originURL := fmt.Sprintf("github.com/%s/%s.git", forkOwner, forkRepo)
 
 	userLogin := user.GetLogin()
@@ -1594,7 +1594,7 @@ func (r *Reconciler) createDevSandbox(ctx context.Context, user *github.User, re
 			"sandbox-type":                       "dev",
 		},
 		CloneURL: cloneURL,
-		HTMLURL:  fmt.Sprintf("https://github.com/%s/%s", forkOwner, forkRepo),
+		HTMLURL:  strings.TrimSuffix(repoWatch.Spec.RepoURL, ".git"),
 
 		Branch:      branchName,
 		Origin:      originURL,
@@ -1640,7 +1640,7 @@ func (r *Reconciler) createDevSandbox(ctx context.Context, user *github.User, re
 	}
 
 	params := map[string]string{
-		"REPO_URL":          opts.HTMLURL, // HTMLURL is https://github.com/owner/repo
+		"REPO_URL":          opts.CloneURL, // CloneURL is the upstream repository URL
 		"BRANCH_NAME":       branchName,
 		"GITHUB_USER_LOGIN": opts.UserLogin,
 		"GITHUB_USER_EMAIL": opts.UserEmail,
