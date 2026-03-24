@@ -67,16 +67,16 @@ function setupGitRepos {
     if [ ! -d "/workspaces/${REPO_NAME}" ]; then
         echo "cloning repository from ${CLONE_URL}"
         (cd /workspaces/ && git clone "${CLONE_URL}" "${REPO_NAME}")
+
+        # Ensure we have the fork and remotes set up correctly
+        echo "Configuring fork..."
+        (cd "/workspaces/${REPO_NAME}" && gh repo fork --remote)
+
+        echo "Syncing with upstream..."
+        (cd "/workspaces/${REPO_NAME}" && gh repo sync --force)
     else
         echo "repository already exists"
     fi
-
-    # Ensure we have the fork and remotes set up correctly
-    echo "Configuring fork..."
-    (cd "/workspaces/${REPO_NAME}" && gh repo fork --remote)
-
-    echo "Syncing with upstream..."
-    (cd "/workspaces/${REPO_NAME}" && gh repo sync --force)
 }
 
 function checkoutBranch {
@@ -96,11 +96,8 @@ function checkoutBranch {
 
         if [ -n "${SOURCE_BRANCH}" ] && [ "${SOURCE_BRANCH}" != "${BRANCH_NAME}" ]; then
              echo "Creating ${BRANCH_NAME} from ${SOURCE_BRANCH}..."
-             # Try upstream source first
-             if git show-ref --verify --quiet "refs/remotes/upstream/${SOURCE_BRANCH}"; then
-                 git checkout -b "${BRANCH_NAME}" "upstream/${SOURCE_BRANCH}"
-             # Then origin source
-             elif git show-ref --verify --quiet "refs/remotes/origin/${SOURCE_BRANCH}"; then
+             # Try origin source
+             if git show-ref --verify --quiet "refs/remotes/origin/${SOURCE_BRANCH}"; then
                  git checkout -b "${BRANCH_NAME}" "origin/${SOURCE_BRANCH}"
              elif git show-ref --verify --quiet "refs/heads/${SOURCE_BRANCH}"; then
                  git checkout -b "${BRANCH_NAME}" "${SOURCE_BRANCH}"
@@ -110,14 +107,7 @@ function checkoutBranch {
              fi
         else
              echo "Creating ${BRANCH_NAME}..."
-             # Try to create from upstream's default branch if available
-             if git remote show upstream >/dev/null 2>&1; then
-                 DEFAULT_BRANCH=$(git remote show upstream | sed -n '/HEAD branch/s/.*: //p')
-                 echo "Using upstream default branch: ${DEFAULT_BRANCH}"
-                 git checkout -b "${BRANCH_NAME}" "upstream/${DEFAULT_BRANCH}"
-             else
-                 git checkout -b "${BRANCH_NAME}"
-             fi
+             git checkout -b "${BRANCH_NAME}"
         fi
 
         echo "Pushing ${BRANCH_NAME} to origin..."
