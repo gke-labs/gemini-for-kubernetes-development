@@ -105,12 +105,8 @@ function checkoutBranch {
         if [ -n "${SOURCE_BRANCH}" ] && [ "${SOURCE_BRANCH}" != "${BRANCH_NAME}" ]; then
              echo "Creating ${BRANCH_NAME} from ${SOURCE_BRANCH}..."
              
-             # Try upstream source first
-             if git show-ref --verify --quiet "refs/remotes/upstream/${SOURCE_BRANCH}"; then
-                 echo "Found ${SOURCE_BRANCH} on upstream."
-                 git checkout -b "${BRANCH_NAME}" "upstream/${SOURCE_BRANCH}"
              # Try origin source
-             elif git show-ref --verify --quiet "refs/remotes/origin/${SOURCE_BRANCH}"; then
+             if git show-ref --verify --quiet "refs/remotes/origin/${SOURCE_BRANCH}"; then
                  echo "Found ${SOURCE_BRANCH} on origin."
                  git checkout -b "${BRANCH_NAME}" "origin/${SOURCE_BRANCH}"
              elif git show-ref --verify --quiet "refs/heads/${SOURCE_BRANCH}"; then

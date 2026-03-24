@@ -287,6 +287,7 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "RepoURL not found in RepoWatch"})
 		return
 	}
+	repoURL = strings.TrimSuffix(repoURL, ".git") + ".git"
 
 	repoParts := strings.Split(strings.TrimSuffix(repoURL, ".git"), "/")
 	repoName := repoParts[len(repoParts)-1]
