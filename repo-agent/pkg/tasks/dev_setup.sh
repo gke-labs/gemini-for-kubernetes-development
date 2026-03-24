@@ -72,10 +72,15 @@ function setupGitRepos {
         echo "Configuring fork..."
         (cd "/workspaces/${REPO_NAME}" && gh repo fork --remote)
 
-        echo "Syncing with upstream..."
-        (cd "/workspaces/${REPO_NAME}" && gh repo sync --force)
+        echo "Syncing fork with upstream..."
+        # Specify the fork explicitly to avoid 'gh repo set-default' issues
+        (cd "/workspaces/${REPO_NAME}" && gh repo sync "${GITHUB_USER_ID}/${REPO_NAME}" --force)
+        
+        # Ensure we have all branches from upstream
+        (cd "/workspaces/${REPO_NAME}" && git fetch upstream)
     else
-        echo "repository already exists"
+        echo "repository already exists, fetching latest changes..."
+        (cd "/workspaces/${REPO_NAME}" && git fetch origin && git fetch upstream)
     fi
 }
 
@@ -96,10 +101,17 @@ function checkoutBranch {
 
         if [ -n "${SOURCE_BRANCH}" ] && [ "${SOURCE_BRANCH}" != "${BRANCH_NAME}" ]; then
              echo "Creating ${BRANCH_NAME} from ${SOURCE_BRANCH}..."
+             
+             # Try upstream source first
+             if git show-ref --verify --quiet "refs/remotes/upstream/${SOURCE_BRANCH}"; then
+                 echo "Found ${SOURCE_BRANCH} on upstream."
+                 git checkout -b "${BRANCH_NAME}" "upstream/${SOURCE_BRANCH}"
              # Try origin source
-             if git show-ref --verify --quiet "refs/remotes/origin/${SOURCE_BRANCH}"; then
+             elif git show-ref --verify --quiet "refs/remotes/origin/${SOURCE_BRANCH}"; then
+                 echo "Found ${SOURCE_BRANCH} on origin."
                  git checkout -b "${BRANCH_NAME}" "origin/${SOURCE_BRANCH}"
              elif git show-ref --verify --quiet "refs/heads/${SOURCE_BRANCH}"; then
+                 echo "Found ${SOURCE_BRANCH} locally."
                  git checkout -b "${BRANCH_NAME}" "${SOURCE_BRANCH}"
              else
                  echo "Source branch ${SOURCE_BRANCH} not found, creating from default..."

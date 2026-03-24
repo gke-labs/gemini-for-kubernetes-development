@@ -439,7 +439,7 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 
 	// Create initial dev-setup task
 	taskParams := map[string]string{
-		"REPO_URL":          forkHTMLURL,
+		"REPO_URL":          repoURL,
 		"BRANCH_NAME":       branchName,
 		"GITHUB_USER_LOGIN": namespace,
 		"GITHUB_USER_EMAIL": userEmail,
