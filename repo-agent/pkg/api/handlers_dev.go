@@ -336,7 +336,7 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 	h := fnv.New32a()
 	h.Write([]byte(fullSuffix))
 	hashedSuffix := fmt.Sprintf("%08x", h.Sum32())
-	sandboxName := fmt.Sprintf("%s-dev", hashedSuffix)
+	sandboxName := fmt.Sprintf("dev-%s", hashedSuffix)
 
 	// Check if branch is in excludeBranches and remove it if so
 	excludeBranches, found, err := unstructured.NestedStringSlice(rw.Object, "spec", "dev", "excludeBranches")
