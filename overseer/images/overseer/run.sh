@@ -21,8 +21,11 @@ if [ -d "/workspaces/prompt" ]; then
     if [ "$ISSUE_MODE" != "disabled" ]; then
         cat /workspaces/prompt/06-examples-issues.txt >> "$PROMPT_FILE"
     fi
-    if [ "$REVIEW_MODE" != "disabled" ] || [ "$PR_MODE" != "disabled" ]; then
+    if [ "$PR_MODE" != "disabled" ]; then
         cat /workspaces/prompt/06a-examples-prs.txt >> "$PROMPT_FILE"
+    fi
+    if [ "$REVIEW_MODE" != "disabled" ]; then
+        cat /workspaces/prompt/06b-examples-prs-review.txt >> "$PROMPT_FILE"
     fi
     if [ "$CHORES_MODE" != "disabled" ]; then
         cat /workspaces/prompt/07-examples-chores.txt >> "$PROMPT_FILE"
