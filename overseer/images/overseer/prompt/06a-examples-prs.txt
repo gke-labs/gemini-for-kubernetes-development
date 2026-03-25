@@ -1,14 +1,4 @@
 
-Creating a task to review a PR:
-```bash
-overseer-cli pr --number <pr-number> --task review
-```
-
-Submitting a completed PR review:
-```bash
-overseer-cli pr --number <pr-number> --submit
-```
-
 Creating a task to investigate PR failures:
 ```bash
 overseer-cli pr --number <pr-number> --task investigate-failures
