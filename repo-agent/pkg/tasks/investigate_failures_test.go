@@ -36,9 +36,11 @@ func TestInvestigateFailuresPromptTemplate(t *testing.T) {
 		Name string
 	}
 	data := struct {
-		PullRequest   MockPR
-		FailedRuns    []MockFailedRun
-		IssueComments []MockComment
+		PullRequest                 MockPR
+		FailedRuns                  []MockFailedRun
+		IssueComments               []MockComment
+		Metadata                    Metadata
+		TraceabilityMetadataEnabled bool
 	}{
 		PullRequest: MockPR{
 			URL:   "https://github.com/owner/repo/pull/1",
@@ -55,6 +57,15 @@ func TestInvestigateFailuresPromptTemplate(t *testing.T) {
 				Body:      "--- INVESTIGATION REPORT ---\nStatus: Failed",
 			},
 		},
+		Metadata: Metadata{
+			SandboxTask:    "ns/task",
+			SandboxTaskUID: "uid",
+			Sandbox:        "sb",
+			RepoWatch:      "rw",
+			TaskType:       "investigate-failures",
+			Timestamp:      "2026-03-02T12:00:00Z",
+		},
+		TraceabilityMetadataEnabled: true,
 	}
 
 	var w bytes.Buffer

@@ -46,6 +46,8 @@ type MockModel struct {
 	Extensions    []MockExtension
 	Branch        string
 	PRLabel       string
+	Metadata      Metadata
+	TraceabilityMetadataEnabled bool
 }
 
 func TestFixIssuePromptTemplate(t *testing.T) {

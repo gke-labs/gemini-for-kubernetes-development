@@ -11,15 +11,15 @@ import (
 var _ Task = &IterateModel{}
 
 type IterateModel struct {
-	Repo        *github.Repository
-	User        *github.User
-	AgentPrompt string
-	BranchName  string
-	PRID        string
-	PromptFile  string
-	Models      []string
-	Extensions  []reviewv1alpha1.Extension
-	Metadata    Metadata
+	Repo                        *github.Repository
+	User                        *github.User
+	AgentPrompt                 string
+	BranchName                  string
+	PRID                        string
+	PromptFile                  string
+	Models                      []string
+	Extensions                  []reviewv1alpha1.Extension
+	Metadata                    Metadata
 	TraceabilityMetadataEnabled bool
 }
 

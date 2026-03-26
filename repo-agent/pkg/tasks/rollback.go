@@ -10,14 +10,14 @@ import (
 var _ Task = &RollbackModel{}
 
 type RollbackModel struct {
-	PullRequestID int
-	Repo          *github.Repository
-	PullRequest   *github.PullRequest
-	User          *github.User
-	CommitSHA     string
-	Branch        string
-	Remote        string
-	Metadata      Metadata
+	PullRequestID               int
+	Repo                        *github.Repository
+	PullRequest                 *github.PullRequest
+	User                        *github.User
+	CommitSHA                   string
+	Branch                      string
+	Remote                      string
+	Metadata                    Metadata
 	TraceabilityMetadataEnabled bool
 }
 

@@ -11,14 +11,14 @@ import (
 var _ Task = &TriageIssueModel{}
 
 type TriageIssueModel struct {
-	Issue         *github.Issue
-	IssueComments []github.IssueComment
-	User          *github.User
-	PromptFile    string
-	Models        []string
-	AgentName     string
-	Extensions    []reviewv1alpha1.Extension
-	Metadata      Metadata
+	Issue                       *github.Issue
+	IssueComments               []github.IssueComment
+	User                        *github.User
+	PromptFile                  string
+	Models                      []string
+	AgentName                   string
+	Extensions                  []reviewv1alpha1.Extension
+	Metadata                    Metadata
 	TraceabilityMetadataEnabled bool
 }
 

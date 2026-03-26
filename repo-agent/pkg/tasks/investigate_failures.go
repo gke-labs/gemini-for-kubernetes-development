@@ -25,16 +25,16 @@ type FailedJob struct {
 }
 
 type InvestigateFailuresModel struct {
-	Repo              *github.Repository
-	PullRequest       *github.PullRequest
-	RepositoryCommits []github.RepositoryCommit
-	User              *github.User
-	PromptFile        string
-	Models            []string
-	FailedRuns        []FailedRun
-	Extensions        []reviewv1alpha1.Extension
-	IssueComments     []github.IssueComment
-	Metadata          Metadata
+	Repo                        *github.Repository
+	PullRequest                 *github.PullRequest
+	RepositoryCommits           []github.RepositoryCommit
+	User                        *github.User
+	PromptFile                  string
+	Models                      []string
+	FailedRuns                  []FailedRun
+	Extensions                  []reviewv1alpha1.Extension
+	IssueComments               []github.IssueComment
+	Metadata                    Metadata
 	TraceabilityMetadataEnabled bool
 }
 

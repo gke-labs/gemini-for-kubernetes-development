@@ -8,15 +8,15 @@ import (
 var _ Task = &ChoreModel{}
 
 type ChoreModel struct {
-	AgentPrompt string
-	ChoreName   string
-	ChoreFile   string
-	RepoName    string
-	CloneURL    string
-	RepoOwner   string
-	PromptFile  string
-	SkipPR      bool
-	Metadata    Metadata
+	AgentPrompt                 string
+	ChoreName                   string
+	ChoreFile                   string
+	RepoName                    string
+	CloneURL                    string
+	RepoOwner                   string
+	PromptFile                  string
+	SkipPR                      bool
+	Metadata                    Metadata
 	TraceabilityMetadataEnabled bool
 }
 

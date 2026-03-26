@@ -262,17 +262,17 @@ func (c *GithubFeedbackCommand) Run(ctx context.Context) error {
 
 	promptPath := c.taskPath("agent-prompt.txt")
 	task := tasks.AddressFeedbackModel{
-		Repo:                  c.repo,
-		PullRequest:           c.pullRequest,
-		RepositoryCommits:     c.repoCommits,
-		IssueComments:         newIssueComments,
-		OldIssueComments:      oldIssueComments,
-		PullRequestReviews:    newPrReviews,
-		OldPullRequestReviews: oldPrReviews,
-		PromptFile:            promptPath,
-		User:                  c.user,
-		Models:                strings.Split(c.Model, ","),
-		Metadata:              GetMetadata(),
+		Repo:                        c.repo,
+		PullRequest:                 c.pullRequest,
+		RepositoryCommits:           c.repoCommits,
+		IssueComments:               newIssueComments,
+		OldIssueComments:            oldIssueComments,
+		PullRequestReviews:          newPrReviews,
+		OldPullRequestReviews:       oldPrReviews,
+		PromptFile:                  promptPath,
+		User:                        c.user,
+		Models:                      strings.Split(c.Model, ","),
+		Metadata:                    GetMetadata(),
 		TraceabilityMetadataEnabled: GetTraceabilityMetadataEnabled(),
 	}
 

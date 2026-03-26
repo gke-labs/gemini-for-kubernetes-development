@@ -11,18 +11,18 @@ import (
 var _ Task = &AddressFeedbackModel{}
 
 type AddressFeedbackModel struct {
-	Repo                  *github.Repository
-	PullRequest           *github.PullRequest
-	RepositoryCommits     []github.RepositoryCommit
-	IssueComments         []github.IssueComment
-	OldIssueComments      []github.IssueComment
-	PullRequestReviews    []github.PullRequestReview
-	OldPullRequestReviews []github.PullRequestReview
-	User                  *github.User
-	PromptFile            string
-	Models                []string
-	Extensions            []reviewv1alpha1.Extension
-	Metadata              Metadata
+	Repo                        *github.Repository
+	PullRequest                 *github.PullRequest
+	RepositoryCommits           []github.RepositoryCommit
+	IssueComments               []github.IssueComment
+	OldIssueComments            []github.IssueComment
+	PullRequestReviews          []github.PullRequestReview
+	OldPullRequestReviews       []github.PullRequestReview
+	User                        *github.User
+	PromptFile                  string
+	Models                      []string
+	Extensions                  []reviewv1alpha1.Extension
+	Metadata                    Metadata
 	TraceabilityMetadataEnabled bool
 }
 

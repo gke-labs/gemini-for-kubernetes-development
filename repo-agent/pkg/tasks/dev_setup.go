@@ -11,15 +11,15 @@ import (
 var _ Task = &DevSetupModel{}
 
 type DevSetupModel struct {
-	Repo         *github.Repository
-	User         *github.User
-	BranchName   string
-	SourceBranch string
-	PromptFile   string
-	AgentPrompt  string
-	Models       []string
-	Extensions   []reviewv1alpha1.Extension
-	Metadata     Metadata
+	Repo                        *github.Repository
+	User                        *github.User
+	BranchName                  string
+	SourceBranch                string
+	PromptFile                  string
+	AgentPrompt                 string
+	Models                      []string
+	Extensions                  []reviewv1alpha1.Extension
+	Metadata                    Metadata
 	TraceabilityMetadataEnabled bool
 }
 
