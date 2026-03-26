@@ -306,6 +306,8 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 	llmProvider, _, _ := unstructured.NestedString(rw.Object, "spec", "dev", "llm", "provider")
 	image, _, _ := unstructured.NestedString(rw.Object, "spec", "dev", "image")
 	devContainerConfigRef, _, _ := unstructured.NestedString(rw.Object, "spec", "dev", "devcontainerConfigRef")
+	dindSupport, _, _ := unstructured.NestedString(rw.Object, "spec", "dev", "dindSupport")
+	workspaceDiskSize, _, _ := unstructured.NestedString(rw.Object, "spec", "dev", "workspaceDiskSize")
 
 	// Fetch user info from secret
 	var userName, userEmail string
@@ -398,8 +400,7 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 		LLMAPIKeySecretName: apiKeySecretRef,
 		Prompt:              req.Prompt,
 
-		GithubSecretName: githubSecretName,
-
+		GithubSecretName:      githubSecretName,
 		DevcontainerConfigRef: devContainerConfigRef,
 		Image:                 image,
 
@@ -408,9 +409,11 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 
 		ServiceAccountName: "issue-sandbox",
 
-		IdeaID:         req.IdeaID,
-		Approach:       req.Approach,
-		ParentApproach: req.ParentApproach,
+		DindSupport:       dindSupport,
+		WorkspaceDiskSize: workspaceDiskSize,
+		IdeaID:            req.IdeaID,
+		Approach:          req.Approach,
+		ParentApproach:    req.ParentApproach,
 	}
 
 	sb, svc := sandbox.NewDevSandbox(opts)
