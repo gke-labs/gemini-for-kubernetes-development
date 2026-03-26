@@ -37,16 +37,16 @@ type MockExtension struct {
 }
 
 type MockModel struct {
-	Issue         MockIssue
-	Repo          MockRepo
-	IssueComments []MockComment
-	Models        []string
-	User          MockUser
-	PromptFile    string
-	Extensions    []MockExtension
-	Branch        string
-	PRLabel       string
-	Metadata      Metadata
+	Issue                       MockIssue
+	Repo                        MockRepo
+	IssueComments               []MockComment
+	Models                      []string
+	User                        MockUser
+	PromptFile                  string
+	Extensions                  []MockExtension
+	Branch                      string
+	PRLabel                     string
+	Metadata                    Metadata
 	TraceabilityMetadataEnabled bool
 }
 

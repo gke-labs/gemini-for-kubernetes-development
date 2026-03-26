@@ -1650,11 +1650,12 @@ func (r *Reconciler) createDevSandbox(ctx context.Context, user *github.User, re
 		RepoSandboxImage:      r.RepoSandboxImage,
 		ConfigDirImage:        r.ConfigDirImage,
 
-		HTTPEnabled:        true,
-		Replicas:           1,
-		ServiceAccountName: "issue-sandbox",
-		DindSupport:        repoWatch.Spec.Dev.DindSupport,
-		WorkspaceDiskSize:  repoWatch.Spec.Dev.WorkspaceDiskSize,
+		HTTPEnabled:                 true,
+		Replicas:                    1,
+		ServiceAccountName:          "issue-sandbox",
+		DindSupport:                 repoWatch.Spec.Dev.DindSupport,
+		WorkspaceDiskSize:           repoWatch.Spec.Dev.WorkspaceDiskSize,
+		TraceabilityMetadataEnabled: r.TraceabilityMetadataEnabled,
 	}
 
 	sb, svc := sandbox.NewDevSandbox(opts)

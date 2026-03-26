@@ -414,6 +414,8 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 		IdeaID:            req.IdeaID,
 		Approach:          req.Approach,
 		ParentApproach:    req.ParentApproach,
+
+		TraceabilityMetadataEnabled: s.TraceabilityMetadataEnabled,
 	}
 
 	sb, svc := sandbox.NewDevSandbox(opts)

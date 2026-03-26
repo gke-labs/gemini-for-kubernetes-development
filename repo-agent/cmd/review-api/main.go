@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/gin-contrib/sessions"
@@ -53,7 +54,7 @@ func main() {
 
 	// API Server
 	server := api.NewServer(k8sManager, authenticator)
-	if os.Getenv("METADATA_TRACEABILITY_ENABLED") == "true" {
+	if b, _ := strconv.ParseBool(os.Getenv("METADATA_TRACEABILITY_ENABLED")); b {
 		server.TraceabilityMetadataEnabled = true
 		klog.Info("Metadata traceability enabled for GitHub issues, PRs, and comments.")
 	}

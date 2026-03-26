@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -37,7 +38,8 @@ func GetMetadataEnv() map[string]string {
 }
 
 func GetTraceabilityMetadataEnabled() bool {
-	return os.Getenv("METADATA_TRACEABILITY_ENABLED") == "true"
+	b, _ := strconv.ParseBool(os.Getenv("METADATA_TRACEABILITY_ENABLED"))
+	return b
 }
 
 // updateSSHConfig updates the user's SSH config to include the sandbox host.
