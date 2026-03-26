@@ -316,7 +316,11 @@ func (s *Server) submitIssueComment(c *gin.Context) {
 		return
 	}
 
-	comment := &github.IssueComment{Body: &payload.Comment}
+	body := payload.Comment
+	if s.TraceabilityMetadataEnabled {
+		body += fmt.Sprintf("\n\n---\n<!-- repo-agent-metadata\nsandbox: %s\nrepowatch: %s\ntask-type: issue-comment\ntimestamp: %s\n-->", sandboxName, repo, time.Now().Format(time.RFC3339))
+	}
+	comment := &github.IssueComment{Body: &body}
 	_, _, err = client.Issues.CreateComment(ctx, owner, repoName, issueNumber, comment)
 	if err != nil {
 		log.Info("Failed to create comment on Issue", "issueNumber", issueNumber, "err", err)

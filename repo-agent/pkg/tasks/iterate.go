@@ -19,6 +19,8 @@ type IterateModel struct {
 	PromptFile  string
 	Models      []string
 	Extensions  []reviewv1alpha1.Extension
+	Metadata    Metadata
+	TraceabilityMetadataEnabled bool
 }
 
 func (m *IterateModel) Name() string {

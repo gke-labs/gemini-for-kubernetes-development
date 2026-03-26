@@ -22,6 +22,15 @@ type Task interface {
 	DraftState() string
 }
 
+type Metadata struct {
+	SandboxTask    string
+	SandboxTaskUID string
+	Sandbox        string
+	RepoWatch      string
+	TaskType       string
+	Timestamp      string
+}
+
 func taskPath(taskDir string, name string) string {
 	// Ensure the task path is correctly joined
 	return filepath.Join(taskDir, name)

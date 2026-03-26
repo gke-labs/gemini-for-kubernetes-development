@@ -194,6 +194,7 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 		map[string]interface{}{"name": "GOMODCACHE", "value": GoModCachePath},
 		map[string]interface{}{"name": "TMPDIR", "value": TmpDirPath},
 		map[string]interface{}{"name": "GOTMPDIR", "value": TmpDirPath},
+		map[string]interface{}{"name": "METADATA_TRACEABILITY_ENABLED", "value": strconv.FormatBool(opt.TraceabilityMetadataEnabled)},
 	)
 
 	if opt.OverseerName != "" {

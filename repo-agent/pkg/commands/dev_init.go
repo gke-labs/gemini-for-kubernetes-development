@@ -156,13 +156,15 @@ func (c *DevInitCommand) Run(ctx context.Context) error {
 
 	promptPath := c.taskPath("agent-prompt.txt")
 	task := tasks.DevSetupModel{
-		Repo:         c.repo,
-		User:         c.user,
-		BranchName:   c.BranchName,
-		SourceBranch: c.SourceBranch,
-		AgentPrompt:  c.AgentPrompt,
-		PromptFile:   promptPath,
-		Models:       strings.Split(c.Model, ","),
+		Repo:                        c.repo,
+		User:                        c.user,
+		BranchName:                  c.BranchName,
+		SourceBranch:                c.SourceBranch,
+		AgentPrompt:                 c.AgentPrompt,
+		PromptFile:                  promptPath,
+		Models:                      strings.Split(c.Model, ","),
+		Metadata:                    GetMetadata(),
+		TraceabilityMetadataEnabled: GetTraceabilityMetadataEnabled(),
 	}
 
 	if c.ExtensionsJSON != "" {
@@ -180,10 +182,10 @@ func (c *DevInitCommand) Run(ctx context.Context) error {
 		apikey = ""
 	}
 
-	env := map[string]string{
-		"GEMINI_API_KEY":    apikey,
-		"GITHUB_USER_TOKEN": c.GithubUserToken,
-	}
+	env := GetMetadataEnv()
+	env["GEMINI_API_KEY"] = apikey
+	env["GITHUB_USER_TOKEN"] = c.GithubUserToken
+
 	err = tasks.RunTask(ctx, &task, c.sandbox, c.TaskDir, env)
 	if err != nil {
 		return fmt.Errorf("running dev-setup task: %w", err)

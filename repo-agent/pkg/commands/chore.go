@@ -99,14 +99,16 @@ func (c *ChoreCommand) Run(ctx context.Context) error {
 
 	promptPath := c.taskPath("agent-prompt.txt")
 	task := tasks.ChoreModel{
-		AgentPrompt: c.AgentPrompt,
-		ChoreName:   c.ChoreName,
-		ChoreFile:   c.ChoreFile,
-		RepoName:    c.RepoName,
-		CloneURL:    c.CloneURL,
-		RepoOwner:   c.RepoOwner,
-		PromptFile:  promptPath,
-		SkipPR:      c.SkipPR,
+		AgentPrompt:                 c.AgentPrompt,
+		ChoreName:                   c.ChoreName,
+		ChoreFile:                   c.ChoreFile,
+		RepoName:                    c.RepoName,
+		CloneURL:                    c.CloneURL,
+		RepoOwner:                   c.RepoOwner,
+		PromptFile:                  promptPath,
+		SkipPR:                      c.SkipPR,
+		Metadata:                    GetMetadata(),
+		TraceabilityMetadataEnabled: GetTraceabilityMetadataEnabled(),
 	}
 
 	apikey, err := GetGeminiAPIKey(c.sandboxID)
@@ -114,9 +116,9 @@ func (c *ChoreCommand) Run(ctx context.Context) error {
 		return err
 	}
 
-	env := map[string]string{
-		"GEMINI_API_KEY": apikey,
-	}
+	env := GetMetadataEnv()
+	env["GEMINI_API_KEY"] = apikey
+
 	err = tasks.RunTask(ctx, &task, c.sandbox, c.TaskDir, env)
 	if err != nil {
 		return fmt.Errorf("running chore task: %w", err)

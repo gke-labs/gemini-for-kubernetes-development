@@ -22,6 +22,8 @@ type AddressFeedbackModel struct {
 	PromptFile            string
 	Models                []string
 	Extensions            []reviewv1alpha1.Extension
+	Metadata              Metadata
+	TraceabilityMetadataEnabled bool
 }
 
 func (m *AddressFeedbackModel) Name() string {

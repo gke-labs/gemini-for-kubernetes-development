@@ -14,9 +14,10 @@ import (
 )
 
 type Server struct {
-	K8sManager *k8s.Manager
-	Auth       *auth.Authenticator
-	Templates  *templates.Manager
+	K8sManager                  *k8s.Manager
+	Auth                        *auth.Authenticator
+	Templates                   *templates.Manager
+	TraceabilityMetadataEnabled bool
 }
 
 func NewServer(manager *k8s.Manager, authenticator *auth.Authenticator) *Server {

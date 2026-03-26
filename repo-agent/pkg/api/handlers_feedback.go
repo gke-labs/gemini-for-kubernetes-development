@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
@@ -56,6 +57,9 @@ func (s *Server) submitFeedback(c *gin.Context) {
 	repo := "gemini-for-kubernetes-development"
 	title := fmt.Sprintf("[repo-agent] %s", payload.Title)
 	body := fmt.Sprintf("User: %s\n\n%s", namespace, payload.Text)
+	if s.TraceabilityMetadataEnabled {
+		body += fmt.Sprintf("\n\n---\n<!-- repo-agent-metadata\ntask-type: feedback\ntimestamp: %s\n-->", time.Now().Format(time.RFC3339))
+	}
 	labels := []string{"feedback"}
 
 	if payload.Image != "" {

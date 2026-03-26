@@ -259,6 +259,8 @@ type Reconciler struct {
 
 	userCacheMu sync.Mutex
 	userCache   map[string]cachedUser
+
+	TraceabilityMetadataEnabled bool
 }
 
 //+kubebuilder:rbac:groups=review.gemini.google.com,resources=repowatches,verbs=get;list;watch;create;update;patch;delete
@@ -1100,12 +1102,13 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 			Image:                 repoWatch.Spec.Issue.Image,
 			RepoSandboxImage:      r.RepoSandboxImage,
 			ConfigDirImage:        r.ConfigDirImage,
-			HTTPEnabled:           true,
-			Replicas:              1,
-			ServiceAccountName:    "issue-sandbox",
-			WorkspaceDiskSize:     repoWatch.Spec.Issue.WorkspaceDiskSize,
-		},
-		DindSupport:   repoWatch.Spec.Issue.DindSupport,
+			HTTPEnabled:                 true,
+			Replicas:                    1,
+			ServiceAccountName:          "issue-sandbox",
+			WorkspaceDiskSize:           repoWatch.Spec.Issue.WorkspaceDiskSize,
+			TraceabilityMetadataEnabled: r.TraceabilityMetadataEnabled,
+			},
+			DindSupport:   repoWatch.Spec.Issue.DindSupport,
 		LLMExtensions: repoWatch.Spec.Issue.LLM.Extensions,
 		IssueID:       fmt.Sprintf("%d", *issue.Number),
 		IssueTitle:    *issue.Title,
@@ -1270,11 +1273,12 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, user *github.
 			Image:                 repoWatch.Spec.Review.Image,
 			RepoSandboxImage:      r.RepoSandboxImage,
 			ConfigDirImage:        r.ConfigDirImage,
-			HTTPEnabled:           true,
-			Replicas:              1,
-			ServiceAccountName:    "review-sandbox",
-		},
-		PRNumber:          *pr.Number,
+			HTTPEnabled:                 true,
+			Replicas:                    1,
+			ServiceAccountName:          "review-sandbox",
+			TraceabilityMetadataEnabled: r.TraceabilityMetadataEnabled,
+			},
+			PRNumber: *pr.Number,
 		PRTitle:           *pr.Title,
 		PRHTMLURL:         *pr.HTMLURL,
 		PRDiffURL:         *pr.DiffURL,

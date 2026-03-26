@@ -17,6 +17,8 @@ type RollbackModel struct {
 	CommitSHA     string
 	Branch        string
 	Remote        string
+	Metadata      Metadata
+	TraceabilityMetadataEnabled bool
 }
 
 func (m *RollbackModel) PreScript() ([]byte, error) {

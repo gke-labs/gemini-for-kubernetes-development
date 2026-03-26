@@ -158,14 +158,16 @@ func (c *GithubFixIssueCommand) Run(ctx context.Context) error {
 
 	promptPath := c.taskPath("agent-prompt.txt")
 	task := tasks.FixIssueModel{
-		Issue:         c.issue,
-		Repo:          c.repo,
-		User:          c.user,
-		IssueComments: c.issue.IssueComments,
-		PromptFile:    promptPath,
-		Models:        strings.Split(c.Model, ","),
-		Branch:        os.Getenv("ISSUE_BRANCH"),
-		PRLabel:       os.Getenv("PR_LABEL"),
+		Issue:                       c.issue,
+		Repo:                        c.repo,
+		User:                        c.user,
+		IssueComments:               c.issue.IssueComments,
+		PromptFile:                  promptPath,
+		Models:                      strings.Split(c.Model, ","),
+		Branch:                      os.Getenv("ISSUE_BRANCH"),
+		PRLabel:                     os.Getenv("PR_LABEL"),
+		Metadata:                    GetMetadata(),
+		TraceabilityMetadataEnabled: GetTraceabilityMetadataEnabled(),
 	}
 
 	if c.ExtensionsJSON != "" {
@@ -182,10 +184,10 @@ func (c *GithubFixIssueCommand) Run(ctx context.Context) error {
 		return err
 	}
 
-	env := map[string]string{
-		"GEMINI_API_KEY":    apikey,
-		"GITHUB_USER_TOKEN": c.GithubUserToken,
-	}
+	env := GetMetadataEnv()
+	env["GEMINI_API_KEY"] = apikey
+	env["GITHUB_USER_TOKEN"] = c.GithubUserToken
+
 	err = tasks.RunTask(ctx, &task, c.sandbox, c.TaskDir, env)
 	if err != nil {
 		return fmt.Errorf("running fix-issue task: %w", err)

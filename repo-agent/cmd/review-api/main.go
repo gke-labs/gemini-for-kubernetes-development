@@ -53,6 +53,10 @@ func main() {
 
 	// API Server
 	server := api.NewServer(k8sManager, authenticator)
+	if os.Getenv("METADATA_TRACEABILITY_ENABLED") == "true" {
+		server.TraceabilityMetadataEnabled = true
+		klog.Info("Metadata traceability enabled for GitHub issues, PRs, and comments.")
+	}
 
 	// Gin router
 	router := gin.Default()

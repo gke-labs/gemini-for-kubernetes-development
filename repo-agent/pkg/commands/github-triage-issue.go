@@ -144,10 +144,12 @@ func (c *GithubTriageIssueCommand) Run(ctx context.Context) error {
 
 	promptPath := c.taskPath("agent-prompt.txt")
 	task := tasks.TriageIssueModel{
-		Issue:      c.issue,
-		PromptFile: promptPath,
-		Models:     strings.Split(c.Model, ","),
-		AgentName:  c.AgentName,
+		Issue:                       c.issue,
+		PromptFile:                  promptPath,
+		Models:                      strings.Split(c.Model, ","),
+		AgentName:                   c.AgentName,
+		Metadata:                    GetMetadata(),
+		TraceabilityMetadataEnabled: GetTraceabilityMetadataEnabled(),
 	}
 
 	if c.ExtensionsJSON != "" {
@@ -169,11 +171,11 @@ func (c *GithubTriageIssueCommand) Run(ctx context.Context) error {
 		}
 	}
 
-	env := map[string]string{
-		"GEMINI_API_KEY": apikey,
-		// Dont need it for the script. leaving a comment here just in case we change the script
-		//"GITHUB_USER_TOKEN": c.GithubUserToken,
-	}
+	env := GetMetadataEnv()
+	env["GEMINI_API_KEY"] = apikey
+	// Dont need it for the script. leaving a comment here just in case we change the script
+	//"GITHUB_USER_TOKEN": c.GithubUserToken,
+
 	err = tasks.RunTask(ctx, &task, c.sandbox, c.TaskDir, env)
 	if err != nil {
 		return fmt.Errorf("running triage-issue task: %w", err)

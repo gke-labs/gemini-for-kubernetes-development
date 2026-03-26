@@ -11,15 +11,17 @@ import (
 var _ Task = &FixIssueModel{}
 
 type FixIssueModel struct {
-	Issue         *github.Issue
-	Repo          *github.Repository
-	IssueComments []github.IssueComment
-	User          *github.User
-	PromptFile    string
-	Models        []string
-	Extensions    []reviewv1alpha1.Extension
-	Branch        string
-	PRLabel       string
+	Issue                       *github.Issue
+	Repo                        *github.Repository
+	IssueComments               []github.IssueComment
+	User                        *github.User
+	PromptFile                  string
+	Models                      []string
+	Extensions                  []reviewv1alpha1.Extension
+	Branch                      string
+	PRLabel                     string
+	Metadata                    Metadata
+	TraceabilityMetadataEnabled bool
 }
 
 func (m *FixIssueModel) Name() string {

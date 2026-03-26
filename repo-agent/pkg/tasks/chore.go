@@ -16,6 +16,8 @@ type ChoreModel struct {
 	RepoOwner   string
 	PromptFile  string
 	SkipPR      bool
+	Metadata    Metadata
+	TraceabilityMetadataEnabled bool
 }
 
 func (m *ChoreModel) Name() string {

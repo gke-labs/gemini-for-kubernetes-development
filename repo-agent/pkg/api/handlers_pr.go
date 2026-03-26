@@ -328,6 +328,15 @@ func (s *Server) submitReview(c *gin.Context) {
 		reviewRequest = agentOutput.Review.ToGitHubReviewRequest()
 	}
 
+	if s.TraceabilityMetadataEnabled {
+		footer := fmt.Sprintf("\n\n---\n<!-- repo-agent-metadata\nsandbox: %s\nrepowatch: %s\ntask-type: pr-review\ntimestamp: %s\n-->", sandboxName, repo, time.Now().Format(time.RFC3339))
+		if reviewRequest.Body == nil {
+			reviewRequest.Body = github.String(footer)
+		} else {
+			*reviewRequest.Body += footer
+		}
+	}
+
 	// Not setting event sets it as a draft
 	reviewRequest.Event = nil
 

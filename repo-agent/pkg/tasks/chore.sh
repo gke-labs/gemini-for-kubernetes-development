@@ -179,6 +179,20 @@ Only output the commit message itself.")
 ### Changes
 ${COMMIT_MSG}"
 
+        {{- if .TraceabilityMetadataEnabled }}
+        PR_BODY="${PR_BODY}
+
+---
+<!-- repo-agent-metadata
+sandbox-task: {{ .Metadata.SandboxTask }}
+sandbox-task-uid: {{ .Metadata.SandboxTaskUID }}
+sandbox: {{ .Metadata.Sandbox }}
+repowatch: {{ .Metadata.RepoWatch }}
+task-type: {{ .Metadata.TaskType }}
+timestamp: {{ .Metadata.Timestamp }}
+-->"
+        {{- end }}
+
         # Try to create PR
         # Split creation and labeling to be more robust. 
         # Adding a retry loop or explicit error checking could also help.

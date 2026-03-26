@@ -272,6 +272,8 @@ func (c *GithubFeedbackCommand) Run(ctx context.Context) error {
 		PromptFile:            promptPath,
 		User:                  c.user,
 		Models:                strings.Split(c.Model, ","),
+		Metadata:              GetMetadata(),
+		TraceabilityMetadataEnabled: GetTraceabilityMetadataEnabled(),
 	}
 
 	if c.ExtensionsJSON != "" {
@@ -288,10 +290,9 @@ func (c *GithubFeedbackCommand) Run(ctx context.Context) error {
 		return err
 	}
 
-	env := map[string]string{
-		"GEMINI_API_KEY":    apikey,
-		"GITHUB_USER_TOKEN": c.GithubUserToken,
-	}
+	env := GetMetadataEnv()
+	env["GEMINI_API_KEY"] = apikey
+	env["GITHUB_USER_TOKEN"] = c.GithubUserToken
 
 	err = tasks.RunTask(ctx, &task, c.sandbox, c.TaskDir, env)
 	if err != nil {

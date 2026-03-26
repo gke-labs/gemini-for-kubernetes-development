@@ -65,6 +65,8 @@ type DevSandboxOptions struct {
 	IdeaID         string
 	Approach       string
 	ParentApproach string
+
+	TraceabilityMetadataEnabled bool
 }
 
 // NewDevSandbox creates a new DevSandbox.

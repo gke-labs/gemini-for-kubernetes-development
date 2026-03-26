@@ -19,6 +19,8 @@ type DevSetupModel struct {
 	AgentPrompt  string
 	Models       []string
 	Extensions   []reviewv1alpha1.Extension
+	Metadata     Metadata
+	TraceabilityMetadataEnabled bool
 }
 
 func (m *DevSetupModel) Name() string {
