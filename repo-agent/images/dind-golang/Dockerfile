@@ -78,4 +78,44 @@ RUN chmod +x /usr/local/bin/start-dockerd.sh
 
 RUN ln -sf /usr/local/go/bin/go /usr/local/bin/go
 
+# -----------------------------------------------------------------------------
+# Development Tools Setup
+# Note: This assumes 'go' is already installed in your base image.
+# -----------------------------------------------------------------------------
+
+# 1. Install APT dependencies (build-essential, curl, jq) + gcloud + kubectl
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    curl \
+    jq \
+    apt-transport-https \
+    ca-certificates \
+    gnupg \
+    # Add GCP apt repository
+ && curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/cloud.google.com.gpg \
+ && echo "deb [signed-by=/usr/share/keyrings/cloud.google.com.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | tee -a /etc/apt/sources.list.d/google-cloud-sdk.list \
+    # Install gcloud and kubectl
+ && apt-get update \
+ && apt-get install -y google-cloud-cli kubectl \
+    # Clean up apt cache to keep image size small
+ && apt-get clean \
+ && rm -rf /var/lib/apt/lists/*
+
+# 2. Install Kustomize
+ENV KUSTOMIZE_VERSION=v5.3.0
+RUN curl -sSfL "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F${KUSTOMIZE_VERSION}/kustomize_${KUSTOMIZE_VERSION}_$(go env GOOS)_$(go env GOARCH).tar.gz" | tar xz \
+ && mv kustomize /usr/local/bin/
+
+# 3. Install yq
+RUN go install github.com/mikefarah/yq/v4@latest \
+ && ln -s $(go env GOPATH)/bin/yq /usr/local/bin/yq
+
+# 4. Install setup-envtest and download assets
+RUN go install sigs.k8s.io/controller-runtime/tools/setup-envtest@release-0.22 \
+ && $(go env GOPATH)/bin/setup-envtest use
+
+# (Optional) Export KUBEBUILDER_ASSETS so it's available for 'go test' automatically.
+# The path below is the default location setup-envtest extracts the binaries to.
+ENV KUBEBUILDER_ASSETS=/root/.local/share/kubebuilder-envtest/k8s/1.35.0-linux-amd64
+
 WORKDIR /workspaces
