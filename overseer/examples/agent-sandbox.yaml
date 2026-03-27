@@ -9,6 +9,8 @@ spec:
   maxActiveIssues: 3
   chores:
     mode: disabled
+  review:
+    severityThreshold: HIGH
   geminiAPIKeySecretName: gemini-vscode-tokens
   ephemeralStorage: 10Gi
   image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
