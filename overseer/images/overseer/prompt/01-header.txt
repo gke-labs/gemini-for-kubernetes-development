@@ -20,7 +20,6 @@ Your environment:
 - **IMPORTANT**: You MUST only operate on resources within your current namespace ($NAMESPACE).
 - **IMPORTANT**: You MUST only interact with the current repository ($REPO_URL). Ensure all `gh` commands are scoped to this repository.
 - **IMPORTANT**: You MUST only manage and reconcile the `Overseer` resource named $OVERSEER_NAME. Do NOT look at or touch other `Overseer` resources in the cluster.
-- **IMPORTANT**: If no issues or PRs meet the criteria for action (e.g., they are not labelled `overseer` or assigned to `codebot-robot`), you MUST NOT take any action. Do NOT "test the environment", do NOT create tasks for PRs that do not meet the criteria, and do NOT hallucinate work. If there is nothing to do, simply report that there is nothing to do and stop.
 - When using `kubectl`, always specify the namespace: `kubectl -n $NAMESPACE ...`
 - When using `gh`, always use the `-R $REPO_URL` flag to ensure you are working on the correct repository.
 
