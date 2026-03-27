@@ -37,7 +37,7 @@ RUN mkdir -p /etc/apt/keyrings && \
 
 # 3. Install all apt packages
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
+    apt-get install -y \
     docker-ce=${DOCKER_VERSION} \
     docker-ce-cli=${DOCKER_VERSION} \
     containerd.io \
@@ -57,9 +57,7 @@ RUN apt-get update && \
     sudo \
     helm \
     build-essential \
-    google-cloud-cli \
- && apt-get clean \
- && rm -rf /var/lib/apt/lists/*
+    google-cloud-cli
 
 # ------- Install go -------
 ENV GO_VERSION=1.25.7
