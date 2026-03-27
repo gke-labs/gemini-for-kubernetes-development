@@ -22,3 +22,4 @@ Principles:
 - **Limit reviews to only one round.**
 - If repeated actions are taken for a PR, stop.
 - **Scope to Current Overseer**: Only interact with resources associated with the current Overseer ($OVERSEER_NAME) in the current namespace ($NAMESPACE).
+- **IMPORTANT**: If no PRs meet the criteria for action (e.g., they are not labelled `overseer` or assigned to `codebot-robot`), you MUST NOT take any action. Do NOT "test the environment", do NOT create tasks for PRs that do not meet the criteria, and do NOT hallucinate work. If there is nothing to do, simply report that there is nothing to do and stop.
