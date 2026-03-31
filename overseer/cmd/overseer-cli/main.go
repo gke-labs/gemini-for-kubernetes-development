@@ -154,6 +154,12 @@ func runChore(ctx context.Context, name string, file string) error {
 		return fmt.Errorf("OVERSEER_NAME and NAMESPACE environment variables must be set")
 	}
 
+	choresMode := os.Getenv("CHORES_MODE")
+	if choresMode == "disabled" {
+		fmt.Printf("Chore handling is disabled (CHORES_MODE=disabled). Skipping.\n")
+		return nil
+	}
+
 	chore, err := parseChore(file)
 	if err != nil {
 		return err
@@ -199,7 +205,6 @@ func runChore(ctx context.Context, name string, file string) error {
 	sandboxName := fmt.Sprintf("chore-%s-%s", overseer.Name, slugify(chore.Name))
 
 	if !isChoreAllowed(overseer.Spec.Chores, chore.Name) {
-		choresMode := os.Getenv("CHORES_MODE")
 		if choresMode == "dryrun" {
 			fmt.Printf("[dryrun] Ensuring sandbox %s is deleted for excluded/not-included chore %s\n", sandboxName, chore.Name)
 			_ = deleteChoreSandbox(ctx, kubeClient, namespace, sandboxName)
@@ -209,7 +214,6 @@ func runChore(ctx context.Context, name string, file string) error {
 		return deleteChoreSandbox(ctx, kubeClient, namespace, sandboxName)
 	}
 
-	choresMode := os.Getenv("CHORES_MODE")
 	if choresMode == "dryrun" {
 		fmt.Printf("[dryrun] Would create sandbox and task chore for chore %s in Overseer %s\n", chore.Name, overseerName)
 		return nil
@@ -374,6 +378,10 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 	}
 
 	issueMode := os.Getenv("ISSUE_MODE")
+	if issueMode == "disabled" {
+		fmt.Printf("Issue handling is disabled (ISSUE_MODE=disabled). Skipping.\n")
+		return nil
+	}
 	if issueMode == "dryrun" {
 		if number != 0 {
 			fmt.Printf("[dryrun] Would create/ensure sandbox and task %s for issue %d in Overseer %s\n", taskType, number, overseerName)
@@ -508,10 +516,18 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 	}
 
 	mode := ""
+	modeName := ""
 	if submit || taskType == "review" {
-		mode = os.Getenv("REVIEW_MODE")
+		modeName = "REVIEW_MODE"
+		mode = os.Getenv(modeName)
 	} else {
-		mode = os.Getenv("PR_MODE")
+		modeName = "PR_MODE"
+		mode = os.Getenv(modeName)
+	}
+
+	if mode == "disabled" {
+		fmt.Printf("PR/Review handling is disabled (%s=disabled). Skipping.\n", modeName)
+		return nil
 	}
 
 	if mode == "dryrun" {
