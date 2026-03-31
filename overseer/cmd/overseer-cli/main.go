@@ -154,7 +154,7 @@ func runChore(ctx context.Context, name string, file string) error {
 		return fmt.Errorf("OVERSEER_NAME and NAMESPACE environment variables must be set")
 	}
 
-	choresMode := os.Getenv("CHORES_MODE")
+	choresMode := strings.TrimSpace(os.Getenv("CHORES_MODE"))
 	if choresMode == "disabled" {
 		fmt.Printf("Chore handling is disabled (CHORES_MODE=disabled). Skipping.\n")
 		return nil
@@ -377,12 +377,12 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 		return fmt.Errorf("OVERSEER_NAME and NAMESPACE environment variables must be set")
 	}
 
-	issueMode := os.Getenv("ISSUE_MODE")
-	if issueMode == "disabled" {
+	issueMode := strings.TrimSpace(os.Getenv("ISSUE_MODE"))
+	switch issueMode {
+	case "disabled":
 		fmt.Printf("Issue handling is disabled (ISSUE_MODE=disabled). Skipping.\n")
 		return nil
-	}
-	if issueMode == "dryrun" {
+	case "dryrun":
 		if number != 0 {
 			fmt.Printf("[dryrun] Would create/ensure sandbox and task %s for issue %d in Overseer %s\n", taskType, number, overseerName)
 		} else if prNumber != 0 {
@@ -515,22 +515,17 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 		return fmt.Errorf("OVERSEER_NAME and NAMESPACE environment variables must be set")
 	}
 
-	mode := ""
-	modeName := ""
+	modeName := "PR_MODE"
 	if submit || taskType == "review" {
 		modeName = "REVIEW_MODE"
-		mode = os.Getenv(modeName)
-	} else {
-		modeName = "PR_MODE"
-		mode = os.Getenv(modeName)
 	}
+	mode := strings.TrimSpace(os.Getenv(modeName))
 
-	if mode == "disabled" {
+	switch mode {
+	case "disabled":
 		fmt.Printf("PR/Review handling is disabled (%s=disabled). Skipping.\n", modeName)
 		return nil
-	}
-
-	if mode == "dryrun" {
+	case "dryrun":
 		fmt.Printf("[dryrun] Would create/ensure sandbox and task %s for PR %d in Overseer %s\n", taskType, number, overseerName)
 		return nil
 	}
