@@ -166,8 +166,8 @@ func (c *GithubFixIssueCommand) Run(ctx context.Context) error {
 		Models:                      strings.Split(c.Model, ","),
 		Branch:                      os.Getenv("ISSUE_BRANCH"),
 		PRLabel:                     os.Getenv("PR_LABEL"),
-		Metadata:                    GetMetadata(),
-		TraceabilityMetadataEnabled: GetTraceabilityMetadataEnabled(),
+		Metadata:                    tasks.GetMetadata(),
+		TraceabilityMetadataEnabled: tasks.GetTraceabilityMetadataEnabled(),
 	}
 
 	if c.ExtensionsJSON != "" {
@@ -184,7 +184,7 @@ func (c *GithubFixIssueCommand) Run(ctx context.Context) error {
 		return err
 	}
 
-	env := GetMetadataEnv()
+	env := tasks.GetMetadataEnv()
 	env["GEMINI_API_KEY"] = apikey
 	env["GITHUB_USER_TOKEN"] = c.GithubUserToken
 

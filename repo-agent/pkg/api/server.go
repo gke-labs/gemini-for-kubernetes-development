@@ -14,9 +14,10 @@ import (
 )
 
 type Server struct {
-	K8sManager                  *k8s.Manager
-	Auth                        *auth.Authenticator
-	Templates                   *templates.Manager
+	K8sManager *k8s.Manager
+	Auth       *auth.Authenticator
+	Templates  *templates.Manager
+	// TraceabilityMetadataEnabled when true will append a metadata footer to GitHub issues, PRs, and comments.
 	TraceabilityMetadataEnabled bool
 }
 

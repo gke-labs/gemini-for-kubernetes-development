@@ -185,11 +185,11 @@ func RunRollback(ctx context.Context, opts RollbackOptions) error {
 		CommitSHA:                   opts.CommitSHA,
 		Branch:                      opts.Branch,
 		Remote:                      opts.Remote,
-		Metadata:                    GetMetadata(),
-		TraceabilityMetadataEnabled: GetTraceabilityMetadataEnabled(),
+		Metadata:                    tasks.GetMetadata(),
+		TraceabilityMetadataEnabled: tasks.GetTraceabilityMetadataEnabled(),
 	}
 
-	env := GetMetadataEnv()
+	env := tasks.GetMetadataEnv()
 	env["GITHUB_USER_TOKEN"] = opts.GithubUserToken
 
 	// Try to get Gemini API key, though rollback might not need it,

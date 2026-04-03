@@ -20,7 +20,6 @@ import (
 	"context"
 	"flag"
 	"os"
-	"strconv"
 
 	"github.com/google/go-github/v39/github"
 
@@ -39,6 +38,7 @@ import (
 	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
 	sandboxtaskv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/controllers/repowatch"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks"
 	//+kubebuilder:scaffold:imports
 )
 
@@ -91,12 +91,9 @@ func main() {
 		NewGithubClient: func(ctx context.Context, k8sClient client.Client, repoWatch *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
 			return repowatch.NewGithubClient(ctx, k8sClient, repoWatch)
 		},
-		RepoSandboxImage: os.Getenv("REPO_SANDBOX_IMAGE"),
-		ConfigDirImage:   os.Getenv("CONFIGDIR_CLI_IMAGE"),
-		TraceabilityMetadataEnabled: func() bool {
-			b, _ := strconv.ParseBool(os.Getenv("METADATA_TRACEABILITY_ENABLED"))
-			return b
-		}(),
+		RepoSandboxImage:            os.Getenv("REPO_SANDBOX_IMAGE"),
+		ConfigDirImage:              os.Getenv("CONFIGDIR_CLI_IMAGE"),
+		TraceabilityMetadataEnabled: tasks.GetTraceabilityMetadataEnabled(),
 	}).SetupWithManager(mgr, concurrentReconciles); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "RepoWatch")
 		os.Exit(1)

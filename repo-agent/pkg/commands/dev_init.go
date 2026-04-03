@@ -163,8 +163,8 @@ func (c *DevInitCommand) Run(ctx context.Context) error {
 		AgentPrompt:                 c.AgentPrompt,
 		PromptFile:                  promptPath,
 		Models:                      strings.Split(c.Model, ","),
-		Metadata:                    GetMetadata(),
-		TraceabilityMetadataEnabled: GetTraceabilityMetadataEnabled(),
+		Metadata:                    tasks.GetMetadata(),
+		TraceabilityMetadataEnabled: tasks.GetTraceabilityMetadataEnabled(),
 	}
 
 	if c.ExtensionsJSON != "" {
@@ -182,7 +182,7 @@ func (c *DevInitCommand) Run(ctx context.Context) error {
 		apikey = ""
 	}
 
-	env := GetMetadataEnv()
+	env := tasks.GetMetadataEnv()
 	env["GEMINI_API_KEY"] = apikey
 	env["GITHUB_USER_TOKEN"] = c.GithubUserToken
 

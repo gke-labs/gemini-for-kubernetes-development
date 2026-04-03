@@ -58,7 +58,12 @@ func (s *Server) submitFeedback(c *gin.Context) {
 	title := fmt.Sprintf("[repo-agent] %s", payload.Title)
 	body := fmt.Sprintf("User: %s\n\n%s", namespace, payload.Text)
 	if s.TraceabilityMetadataEnabled {
-		body += fmt.Sprintf("\n\n---\n<!-- repo-agent-metadata\ntask-type: feedback\ntimestamp: %s\n-->", time.Now().Format(time.RFC3339))
+		footer := fmt.Sprintf("\n\n---\n<!-- repo-agent-metadata\nsandbox-task: n/a\nsandbox-task-uid: n/a\nsandbox: n/a\nrepowatch: n/a\ntask-type: feedback\ntimestamp: %s\n-->", time.Now().Format(time.RFC3339))
+		// GitHub limit is 65536. Leave some room.
+		if len(body)+len(footer) > 65000 {
+			body = body[:65000-len(footer)]
+		}
+		body += footer
 	}
 	labels := []string{"feedback"}
 

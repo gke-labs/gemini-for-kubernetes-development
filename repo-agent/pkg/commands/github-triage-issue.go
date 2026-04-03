@@ -148,8 +148,8 @@ func (c *GithubTriageIssueCommand) Run(ctx context.Context) error {
 		PromptFile:                  promptPath,
 		Models:                      strings.Split(c.Model, ","),
 		AgentName:                   c.AgentName,
-		Metadata:                    GetMetadata(),
-		TraceabilityMetadataEnabled: GetTraceabilityMetadataEnabled(),
+		Metadata:                    tasks.GetMetadata(),
+		TraceabilityMetadataEnabled: tasks.GetTraceabilityMetadataEnabled(),
 	}
 
 	if c.ExtensionsJSON != "" {
@@ -171,7 +171,7 @@ func (c *GithubTriageIssueCommand) Run(ctx context.Context) error {
 		}
 	}
 
-	env := GetMetadataEnv()
+	env := tasks.GetMetadataEnv()
 	env["GEMINI_API_KEY"] = apikey
 	// Dont need it for the script. leaving a comment here just in case we change the script
 	//"GITHUB_USER_TOKEN": c.GithubUserToken,

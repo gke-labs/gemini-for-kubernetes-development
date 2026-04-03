@@ -5,44 +5,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
 )
 
-func GetMetadata() tasks.Metadata {
-	return tasks.Metadata{
-		SandboxTask:    os.Getenv("SANDBOX_TASK_NAME"),
-		SandboxTaskUID: os.Getenv("SANDBOX_TASK_UID"),
-		Sandbox:        os.Getenv("SANDBOX_NAME"),
-		RepoWatch:      os.Getenv("REPO_WATCH_NAME"),
-		TaskType:       os.Getenv("SANDBOX_TASK_TYPE"),
-		Timestamp:      time.Now().Format(time.RFC3339),
-	}
-}
-
-func GetMetadataEnv() map[string]string {
-	return map[string]string{
-		"SANDBOX_TASK_NAME":             os.Getenv("SANDBOX_TASK_NAME"),
-		"SANDBOX_TASK_UID":              os.Getenv("SANDBOX_TASK_UID"),
-		"SANDBOX_NAME":                  os.Getenv("SANDBOX_NAME"),
-		"REPO_WATCH_NAME":               os.Getenv("REPO_WATCH_NAME"),
-		"SANDBOX_TASK_TYPE":             os.Getenv("SANDBOX_TASK_TYPE"),
-		"METADATA_TRACEABILITY_ENABLED": os.Getenv("METADATA_TRACEABILITY_ENABLED"),
-	}
-}
-
-func GetTraceabilityMetadataEnabled() bool {
-	b, _ := strconv.ParseBool(os.Getenv("METADATA_TRACEABILITY_ENABLED"))
-	return b
-}
-
-// updateSSHConfig updates the user's SSH config to include the sandbox host.
 func updateSSHConfig(ctx context.Context, path, host string, podID types.NamespacedName) error {
 	sshDir := filepath.Dir(path)
 	confDir := filepath.Join(sshDir, "config.d", "dev-sandboxes")

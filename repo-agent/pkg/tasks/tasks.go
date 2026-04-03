@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/agentoutput"
@@ -22,6 +24,15 @@ type Task interface {
 	DraftState() string
 }
 
+const (
+	EnvSandboxTaskName            = "SANDBOX_TASK_NAME"
+	EnvSandboxTaskUID             = "SANDBOX_TASK_UID"
+	EnvSandboxName                = "SANDBOX_NAME"
+	EnvRepoWatchName              = "REPO_WATCH_NAME"
+	EnvSandboxTaskType            = "SANDBOX_TASK_TYPE"
+	EnvMetadataTraceabilityEnable = "METADATA_TRACEABILITY_ENABLED"
+)
+
 type Metadata struct {
 	SandboxTask    string
 	SandboxTaskUID string
@@ -29,6 +40,41 @@ type Metadata struct {
 	RepoWatch      string
 	TaskType       string
 	Timestamp      string
+}
+
+func GetMetadata() Metadata {
+	return Metadata{
+		SandboxTask:    os.Getenv(EnvSandboxTaskName),
+		SandboxTaskUID: os.Getenv(EnvSandboxTaskUID),
+		Sandbox:        os.Getenv(EnvSandboxName),
+		RepoWatch:      os.Getenv(EnvRepoWatchName),
+		TaskType:       os.Getenv(EnvSandboxTaskType),
+		Timestamp:      time.Now().Format(time.RFC3339),
+	}
+}
+
+func GetMetadataEnv() map[string]string {
+	return map[string]string{
+		EnvSandboxTaskName:            os.Getenv(EnvSandboxTaskName),
+		EnvSandboxTaskUID:             os.Getenv(EnvSandboxTaskUID),
+		EnvRepoWatchName:              os.Getenv(EnvRepoWatchName),
+		EnvSandboxName:                os.Getenv(EnvSandboxName),
+		EnvSandboxTaskType:            os.Getenv(EnvSandboxTaskType),
+		EnvMetadataTraceabilityEnable: os.Getenv(EnvMetadataTraceabilityEnable),
+	}
+}
+
+func GetTraceabilityMetadataEnabled() bool {
+	val := os.Getenv(EnvMetadataTraceabilityEnable)
+	if val == "" {
+		return false
+	}
+	b, err := strconv.ParseBool(val)
+	if err != nil {
+		klog.Errorf("failed to parse %s=%q as bool: %v", EnvMetadataTraceabilityEnable, val, err)
+		return false
+	}
+	return b
 }
 
 func taskPath(taskDir string, name string) string {

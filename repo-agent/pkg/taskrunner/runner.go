@@ -18,6 +18,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/llm"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks"
 	"k8s.io/klog/v2"
 )
 
@@ -149,13 +150,18 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 	// Prepare environment for subcommands
 	commonEnv := os.Environ()
 	for k, v := range params {
-		commonEnv = append(commonEnv, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
+		upperK := strings.ToUpper(k)
+		switch upperK {
+		case tasks.EnvSandboxTaskName, tasks.EnvSandboxTaskUID, tasks.EnvSandboxName, tasks.EnvRepoWatchName, tasks.EnvSandboxTaskType, tasks.EnvMetadataTraceabilityEnable:
+			klog.Warningf("User parameter %q overrides system traceability metadata", k)
+		}
+		commonEnv = append(commonEnv, fmt.Sprintf("%s=%s", upperK, v))
 	}
-	commonEnv = append(commonEnv, fmt.Sprintf("SANDBOX_TASK_NAME=%s/%s", task.GetNamespace(), task.GetName()))
-	commonEnv = append(commonEnv, fmt.Sprintf("SANDBOX_TASK_UID=%s", task.GetUID()))
-	commonEnv = append(commonEnv, fmt.Sprintf("SANDBOX_NAME=%s", tr.sandboxName))
-	commonEnv = append(commonEnv, fmt.Sprintf("REPO_WATCH_NAME=%s", task.GetLabels()["review.gemini.google.com/repowatch"]))
-	commonEnv = append(commonEnv, fmt.Sprintf("SANDBOX_TASK_TYPE=%s", task.Spec.Type))
+	commonEnv = append(commonEnv, fmt.Sprintf("%s=%s/%s", tasks.EnvSandboxTaskName, task.GetNamespace(), task.GetName()))
+	commonEnv = append(commonEnv, fmt.Sprintf("%s=%s", tasks.EnvSandboxTaskUID, task.GetUID()))
+	commonEnv = append(commonEnv, fmt.Sprintf("%s=%s", tasks.EnvSandboxName, tr.sandboxName))
+	commonEnv = append(commonEnv, fmt.Sprintf("%s=%s", tasks.EnvRepoWatchName, task.GetLabels()["review.gemini.google.com/repowatch"]))
+	commonEnv = append(commonEnv, fmt.Sprintf("%s=%s", tasks.EnvSandboxTaskType, task.Spec.Type))
 
 	switch taskType {
 	case "review":

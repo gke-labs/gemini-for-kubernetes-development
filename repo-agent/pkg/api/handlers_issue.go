@@ -318,7 +318,11 @@ func (s *Server) submitIssueComment(c *gin.Context) {
 
 	body := payload.Comment
 	if s.TraceabilityMetadataEnabled {
-		body += fmt.Sprintf("\n\n---\n<!-- repo-agent-metadata\nsandbox: %s\nrepowatch: %s\ntask-type: issue-comment\ntimestamp: %s\n-->", sandboxName, repo, time.Now().Format(time.RFC3339))
+		footer := fmt.Sprintf("\n\n---\n<!-- repo-agent-metadata\nsandbox-task: n/a\nsandbox-task-uid: n/a\nsandbox: %s\nrepowatch: %s\ntask-type: issue-comment\ntimestamp: %s\n-->", sandboxName, repo, time.Now().Format(time.RFC3339))
+		if len(body)+len(footer) > 65000 {
+			body = body[:65000-len(footer)]
+		}
+		body += footer
 	}
 	comment := &github.IssueComment{Body: &body}
 	_, _, err = client.Issues.CreateComment(ctx, owner, repoName, issueNumber, comment)

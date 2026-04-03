@@ -63,16 +63,31 @@ func TestFixIssuePromptTemplate(t *testing.T) {
 	}
 
 	data := MockModel{
-		Issue:         MockIssue{},
-		Repo:          MockRepo{},
-		IssueComments: []MockComment{{}},
-		Models:        []string{"gemini-test"},
-		User:          MockUser{UserID: "test", Email: "test@test.com", Name: "Test User"},
-		Branch:        "test-branch",
+		Issue:                       MockIssue{},
+		Repo:                        MockRepo{},
+		IssueComments:               []MockComment{{}},
+		Models:                      []string{"gemini-test"},
+		User:                        MockUser{UserID: "test", Email: "test@test.com", Name: "Test User"},
+		Branch:                      "test-branch",
+		TraceabilityMetadataEnabled: true,
+		Metadata: Metadata{
+			SandboxTask:    "ns/task",
+			SandboxTaskUID: "uid",
+			Sandbox:        "sb",
+			RepoWatch:      "rw",
+			TaskType:       "fix-issue",
+			Timestamp:      "2026-03-02T12:00:00Z",
+		},
 	}
 	var w bytes.Buffer
 	if err := tmpl.Execute(&w, data); err != nil {
 		t.Fatalf("Failed to execute template: %v", err)
+	}
+
+	// Verify metadata footer
+	expectedFooter := "<!-- repo-agent-metadata\nsandbox-task: ns/task\nsandbox-task-uid: uid\nsandbox: sb\nrepowatch: rw\ntask-type: fix-issue\ntimestamp: 2026-03-02T12:00:00Z\n-->"
+	if !bytes.Contains(w.Bytes(), []byte(expectedFooter)) {
+		t.Errorf("Prompt does not contain expected metadata footer:\n%s", w.String())
 	}
 
 	// Verify that the new instruction is present

@@ -66,6 +66,8 @@ type DevSandboxOptions struct {
 	Approach       string
 	ParentApproach string
 
+	// TraceabilityMetadataEnabled when true will append a metadata footer to GitHub issues, PRs, and comments.
+	// This is passed to the sandbox as METADATA_TRACEABILITY_ENABLED env var ("true" or "false").
 	TraceabilityMetadataEnabled bool
 }
 

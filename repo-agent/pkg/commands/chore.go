@@ -107,8 +107,8 @@ func (c *ChoreCommand) Run(ctx context.Context) error {
 		RepoOwner:                   c.RepoOwner,
 		PromptFile:                  promptPath,
 		SkipPR:                      c.SkipPR,
-		Metadata:                    GetMetadata(),
-		TraceabilityMetadataEnabled: GetTraceabilityMetadataEnabled(),
+		Metadata:                    tasks.GetMetadata(),
+		TraceabilityMetadataEnabled: tasks.GetTraceabilityMetadataEnabled(),
 	}
 
 	apikey, err := GetGeminiAPIKey(c.sandboxID)
@@ -116,7 +116,7 @@ func (c *ChoreCommand) Run(ctx context.Context) error {
 		return err
 	}
 
-	env := GetMetadataEnv()
+	env := tasks.GetMetadataEnv()
 	env["GEMINI_API_KEY"] = apikey
 
 	err = tasks.RunTask(ctx, &task, c.sandbox, c.TaskDir, env)

@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"os"
-	"strconv"
 	"strings"
 
 	"github.com/gin-contrib/sessions"
@@ -15,6 +14,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/auth"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks"
 
 	"k8s.io/klog/v2"
 )
@@ -51,11 +51,10 @@ func main() {
 
 	// Authenticator
 	authenticator := auth.NewAuthenticator(k8sManager, allowedUsers, adminUsers)
-
 	// API Server
 	server := api.NewServer(k8sManager, authenticator)
-	if b, _ := strconv.ParseBool(os.Getenv("METADATA_TRACEABILITY_ENABLED")); b {
-		server.TraceabilityMetadataEnabled = true
+	server.TraceabilityMetadataEnabled = tasks.GetTraceabilityMetadataEnabled()
+	if server.TraceabilityMetadataEnabled {
 		klog.Info("Metadata traceability enabled for GitHub issues, PRs, and comments.")
 	}
 
