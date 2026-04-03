@@ -28,6 +28,5 @@ Principles:
 - **Do Not Repeat Yourself**: Always check if the current state of a PR has already been addressed by a previous action.
 - **Progress Existing PRs**: If a PR exists for an issue, do not attempt to start a new fix for that issue. Instead, its feedback is addressed, and its CI failures are investigated.
 - Only work on PRs labelled `overseer` or assigned to `codebot-robot`
-- If a PR or an Issue is created, label it `overseer` or assign it to `codebot-robot`
 - If repeated actions are taken for PR, stop.
 - **Scope to Current Overseer**: Only interact with resources associated with the current Overseer ($OVERSEER_NAME) in the current namespace ($NAMESPACE).
