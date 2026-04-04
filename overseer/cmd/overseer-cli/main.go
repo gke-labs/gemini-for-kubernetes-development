@@ -245,6 +245,37 @@ func runChore(ctx context.Context, name string, file string) error {
 		return fmt.Errorf("failed to ensure chore sandbox: %w", err)
 	}
 
+	// Check if a task for this chore already exists
+	taskList, err := manager.ListSandboxTasks(ctx, namespace, sandboxName)
+	if err == nil {
+		for i := range taskList.Items {
+			task := &taskList.Items[i]
+			if task.Spec.Type == "chore" {
+				state := task.Status.TaskState
+				if state == "" {
+					state = "Pending"
+				}
+				if state == "Completed" {
+					klog.Infof("Chore %s: Task already exists in state %s. Skipping.", chore.Name, state)
+					return nil
+				}
+				if state == "Running" || state == "Pending" {
+					if time.Since(task.CreationTimestamp.Time) < 2*time.Hour {
+						klog.Infof("Chore %s: Task already exists in state %s (created %v ago). Skipping.", chore.Name, state, time.Since(task.CreationTimestamp.Time))
+						return nil
+					}
+					klog.Warningf("Chore %s: Found STALE task in state %s (created %v ago). Allowing new task.", chore.Name, state, time.Since(task.CreationTimestamp.Time))
+				}
+				if state == "Failed" {
+					if time.Since(task.CreationTimestamp.Time) < 1*time.Hour {
+						klog.Infof("Chore %s: Task failed recently (%v ago). Skipping for backoff.", chore.Name, time.Since(task.CreationTimestamp.Time))
+						return nil
+					}
+				}
+			}
+		}
+	}
+
 	// Create Task
 	taskType := "chore"
 	klog.Infof("Creating task %s for sandbox %s...", taskType, sandboxName)
@@ -415,7 +446,18 @@ func ensureService(ctx context.Context, clientset kubernetes.Interface, namespac
 	}
 
 	_, err := clientset.CoreV1().Services(namespace).Create(ctx, svc, metav1.CreateOptions{})
-	if err != nil && !errors.IsAlreadyExists(err) {
+	if err != nil {
+		if errors.IsAlreadyExists(err) {
+			// If it exists, ensure it has the owner reference if we have one.
+			existingSvc, getErr := clientset.CoreV1().Services(namespace).Get(ctx, svc.Name, metav1.GetOptions{})
+			if getErr == nil && len(existingSvc.OwnerReferences) == 0 && len(svc.OwnerReferences) > 0 {
+				klog.Infof("Service %s already exists but lacks OwnerReferences. Updating.", svc.Name)
+				existingSvc.OwnerReferences = svc.OwnerReferences
+				_, updateErr := clientset.CoreV1().Services(namespace).Update(ctx, existingSvc, metav1.UpdateOptions{})
+				return updateErr
+			}
+			return nil // Already exists and is fine (or we can't fix it)
+		}
 		return err
 	}
 	return nil
@@ -529,6 +571,37 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 	klog.Infof("Ensuring sandbox %s exists...", sandboxName)
 	if err := createIssueSandbox(ctx, kubeClient, &overseer, issue); err != nil {
 		return fmt.Errorf("failed to ensure issue sandbox: %w", err)
+	}
+
+	// Check if a task of the same type already exists for this issue
+	taskList, err := manager.ListSandboxTasks(ctx, namespace, sandboxName)
+	if err == nil {
+		for i := range taskList.Items {
+			task := &taskList.Items[i]
+			if task.Spec.Type == taskType {
+				state := task.Status.TaskState
+				if state == "" {
+					state = "Pending"
+				}
+				if state == "Completed" {
+					klog.Infof("Issue #%d: Task %s already exists in state %s. Skipping.", number, taskType, state)
+					return nil
+				}
+				if state == "Running" || state == "Pending" {
+					if time.Since(task.CreationTimestamp.Time) < 2*time.Hour {
+						klog.Infof("Issue #%d: Task %s already exists in state %s (created %v ago). Skipping.", number, taskType, state, time.Since(task.CreationTimestamp.Time))
+						return nil
+					}
+					klog.Warningf("Issue #%d: Found STALE task %s in state %s (created %v ago). Allowing new task.", number, taskType, state, time.Since(task.CreationTimestamp.Time))
+				}
+				if state == "Failed" {
+					if time.Since(task.CreationTimestamp.Time) < 1*time.Hour {
+						klog.Infof("Issue #%d: Task %s failed recently (%v ago). Skipping for backoff.", number, taskType, time.Since(task.CreationTimestamp.Time))
+						return nil
+					}
+				}
+			}
+		}
 	}
 
 	// Create Task
@@ -666,9 +739,16 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 					}
 
 					if strings.EqualFold(task.Spec.Params["HEAD_SHA"], headSHA) {
-						if state == "Completed" || state == "Running" || state == "Pending" {
+						if state == "Completed" {
 							klog.Infof("PR #%d: Review task for SHA %s already exists in state %s. Skipping.", number, headSHA, state)
 							return nil
+						}
+						if state == "Running" || state == "Pending" {
+							if time.Since(task.CreationTimestamp.Time) < 2*time.Hour {
+								klog.Infof("PR #%d: Review task for SHA %s already exists in state %s (created %v ago). Skipping.", number, headSHA, state, time.Since(task.CreationTimestamp.Time))
+								return nil
+							}
+							klog.Warningf("PR #%d: Found STALE review task for SHA %s in state %s (created %v ago). Allowing new task.", number, headSHA, state, time.Since(task.CreationTimestamp.Time))
 						}
 						if state == "Failed" {
 							if time.Since(task.CreationTimestamp.Time) < 1*time.Hour {
