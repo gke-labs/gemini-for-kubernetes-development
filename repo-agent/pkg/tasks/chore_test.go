@@ -12,13 +12,13 @@ func TestChoreScriptTemplate(t *testing.T) {
 	}
 
 	data := ChoreModel{
-		RepoName:   "test-repo",
-		RepoOwner:  "test-owner",
-		CloneURL:   "https://github.com/test-owner/test-repo.git",
-		ChoreName:  "Test Chore",
-		ChoreFile:  ".agents/test.md",
-		PromptFile: "prompt.txt",
-		SkipPR:     false,
+		RepoName:                    "test-repo",
+		RepoOwner:                   "test-owner",
+		CloneURL:                    "https://github.com/test-owner/test-repo.git",
+		ChoreName:                   "Test Chore",
+		ChoreFile:                   ".agents/test.md",
+		PromptFile:                  "prompt.txt",
+		SkipPR:                      false,
 		TraceabilityMetadataEnabled: true,
 		Metadata: Metadata{
 			SandboxTask:    "ns/task",
