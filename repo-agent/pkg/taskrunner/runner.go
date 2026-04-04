@@ -162,6 +162,8 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 	commonEnv = append(commonEnv, fmt.Sprintf("%s=%s", tasks.EnvSandboxName, tr.sandboxName))
 	commonEnv = append(commonEnv, fmt.Sprintf("%s=%s", tasks.EnvRepoWatchName, task.GetLabels()["review.gemini.google.com/repowatch"]))
 	commonEnv = append(commonEnv, fmt.Sprintf("%s=%s", tasks.EnvSandboxTaskType, task.Spec.Type))
+	commonEnv = append(commonEnv, fmt.Sprintf("%s=%s", tasks.EnvMetadataTraceabilityEnable, os.Getenv(tasks.EnvMetadataTraceabilityEnable)))
+
 
 	switch taskType {
 	case "review":
