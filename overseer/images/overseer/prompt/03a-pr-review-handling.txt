@@ -6,10 +6,10 @@ Your goal is to autonomously review PRs and provide feedback.
     - **IMPORTANT**: DO NOT search for PRs in other repositories. Only work with the current repository ($REPO_URL).
 2.  **Analyze**: Decide if an action is required.
     - **Ensure PR is OPEN and MEETING CRITERIA**: Before taking any action, verify that the PR is currently open and is either labelled `overseer`, assigned to `codebot-robot`, or has a comment containing "Please review @codebot-robot" or "assign @codebot-robot". If it is merged or closed, or does NOT meet the criteria, skip it.
-    - **One Review per Commit**: Limit reviews to one per commit. You do not need to manually check for existing reviews; simply run `overseer-cli pr --number <pr-number> --task review`. It will safely no-op if the current commit has already been reviewed by $GITHUB_BOT_LOGIN for the current HEAD commit.
-    - Unreviewed Commits: If there has been no review yet from $GITHUB_BOT_LOGIN for the current HEAD commit, create a task to review it (only for PRs matching the criteria).
+    - **One Review per Commit**: Limit reviews to one per commit. You do not need to manually check for existing reviews; simply run `overseer-cli pr --number <pr-number> --task review`. It will safely no-op if the current commit has already been reviewed by $GITHUB_BOT_LOGIN for the remote PR's HEAD SHA.
+    - Unreviewed Commits: If there has been no review yet from $GITHUB_BOT_LOGIN for the remote PR's HEAD SHA, create a task to review it (only for PRs matching the criteria).
     - Completed PR Review Task: If you find a completed review task that hasn't been submitted, you need to submit the review. Extract the PR number from the sandbox name (e.g., `<overseer-name>-pr-<pr-number>`).
-    - **Wait for Updates**: If the PR has already been reviewed for the current SHA, skip it and wait for updates (which might be new commits).
+    - **Wait for Updates**: If the PR has already been reviewed for the remote PR's HEAD SHA, skip it and wait for updates (which might be new commits).
 3.  **Act**: Execute the action.
     - To create a task for a PR, use `overseer-cli pr --number <pr-number> --task review`.
     - To submit a completed review for a PR, use `overseer-cli pr --number <pr-number> --submit`.

@@ -239,18 +239,10 @@ func runChore(ctx context.Context, name string, file string) error {
 		return fmt.Errorf("failed to parse RepoURL: %w", err)
 	}
 
-	// Check if sandbox exists
-	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
-	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			// Create Sandbox
-			klog.Infof("Creating sandbox %s...", sandboxName)
-			if err := createChoreSandbox(ctx, kubeClient, &overseer, chore, sandboxName); err != nil {
-				return fmt.Errorf("failed to create chore sandbox: %w", err)
-			}
-		} else {
-			return fmt.Errorf("failed to check if sandbox exists: %w", err)
-		}
+	// Ensure Sandbox exists and is configured correctly
+	klog.Infof("Ensuring sandbox %s exists...", sandboxName)
+	if err := createChoreSandbox(ctx, kubeClient, &overseer, chore, sandboxName); err != nil {
+		return fmt.Errorf("failed to ensure chore sandbox: %w", err)
 	}
 
 	// Create Task
@@ -384,6 +376,18 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 	sb, svc := sandbox.NewAgentSandbox(opt)
 	sb.SetName(sandboxName)
 
+	if overseer != nil {
+		sb.SetOwnerReferences([]metav1.OwnerReference{
+			{
+				APIVersion: "overseer.gemini.google.com/v1alpha1",
+				Kind:       "Overseer",
+				Name:       overseer.Name,
+				UID:        overseer.UID,
+				Controller: func(b bool) *bool { return &b }(true),
+			},
+		})
+	}
+
 	createdSb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sb, metav1.CreateOptions{})
 	if err != nil && !errors.IsAlreadyExists(err) {
 		return err
@@ -499,11 +503,9 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 
 	sandboxName := fmt.Sprintf("%s-issue-%d", overseer.Name, number)
 
-	var sandboxExists bool
 	var sandboxIsActive bool
 	sandboxUnstructured, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
 	if err == nil {
-		sandboxExists = true
 		replicas, found, err := unstructured.NestedInt64(sandboxUnstructured.Object, "spec", "replicas")
 		if err == nil && (!found || replicas > 0) {
 			sandboxIsActive = true
@@ -525,12 +527,10 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 		}
 	}
 
-	// Create Sandbox if it doesn't exist
-	if !sandboxExists {
-		klog.Infof("Creating sandbox %s...", sandboxName)
-		if err := createIssueSandbox(ctx, kubeClient, &overseer, issue); err != nil {
-			return fmt.Errorf("failed to create issue sandbox: %w", err)
-		}
+	// Ensure Sandbox exists and is configured correctly
+	klog.Infof("Ensuring sandbox %s exists...", sandboxName)
+	if err := createIssueSandbox(ctx, kubeClient, &overseer, issue); err != nil {
+		return fmt.Errorf("failed to ensure issue sandbox: %w", err)
 	}
 
 	// Create Task
@@ -640,11 +640,9 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 	sandboxName := fmt.Sprintf("%s-pr-%d", overseer.Name, number)
 	headSHA := pr.GetHead().GetSHA()
 
-	var sandboxExists bool
 	var sandboxIsActive bool
 	sandboxUnstructured, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
 	if err == nil {
-		sandboxExists = true
 		replicas, found, err := unstructured.NestedInt64(sandboxUnstructured.Object, "spec", "replicas")
 		if err == nil && (!found || replicas > 0) {
 			sandboxIsActive = true
@@ -653,30 +651,39 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 		return fmt.Errorf("failed to check if sandbox exists: %w", err)
 	}
 
-	// Check limit only if we need to create or activate a sandbox
-	if !sandboxIsActive && overseer.Spec.MaxActiveReviews != nil {
-		maxReviews := *overseer.Spec.MaxActiveReviews
-		activeCount, err := countActiveSandboxes(ctx, kubeClient.DynamicClient, namespace, overseerName, "review")
-		if err != nil {
-			return fmt.Errorf("failed to count active review sandboxes: %w", err)
-		}
-		if int32(activeCount) >= maxReviews {
-			return fmt.Errorf("limit_reached: max active reviews limit (%d) reached (currently %d active)", maxReviews, activeCount)
-		}
-	}
-
 	// Check if a task for this SHA already exists (only for review tasks)
+	// We do this BEFORE the limit check so that already-handled PRs don't consume the "active" quota
+	// if they happen to have lingering sandboxes.
 	if taskType == "review" {
 		// 1. Check local Kubernetes first for an actively running or completed task for this SHA
-		// to save GitHub API quota.
+		// to save GitHub API quota and prevent concurrency conflicts.
 		taskList, err := manager.ListSandboxTasks(ctx, namespace, sandboxName)
 		if err == nil {
 			for i := range taskList.Items {
 				task := &taskList.Items[i]
-				if task.Spec.Type == "review" && strings.EqualFold(task.Spec.Params["HEAD_SHA"], headSHA) {
-					if task.Status.TaskState == "Completed" || task.Status.TaskState == "Running" || task.Status.TaskState == "Pending" {
-						klog.Infof("PR #%d: Review task for SHA %s already exists in state %s. Skipping.", number, headSHA, task.Status.TaskState)
-						return nil
+				if task.Spec.Type == "review" {
+					state := task.Status.TaskState
+					if state == "" {
+						state = "Pending"
+					}
+
+					if strings.EqualFold(task.Spec.Params["HEAD_SHA"], headSHA) {
+						if state == "Completed" || state == "Running" || state == "Pending" {
+							klog.Infof("PR #%d: Review task for SHA %s already exists in state %s. Skipping.", number, headSHA, state)
+							return nil
+						}
+						if state == "Failed" {
+							if time.Since(task.CreationTimestamp.Time) < 1*time.Hour {
+								klog.Infof("PR #%d: Review task for SHA %s failed recently (%v ago). Skipping for backoff.", number, headSHA, time.Since(task.CreationTimestamp.Time))
+								return nil
+							}
+						}
+					} else {
+						// Another SHA is being reviewed
+						if state == "Running" || state == "Pending" {
+							klog.Infof("PR #%d: Review task for DIFFERENT SHA %s is currently %s. Skipping to avoid concurrency conflict.", number, task.Spec.Params["HEAD_SHA"], state)
+							return nil
+						}
 					}
 				}
 			}
@@ -685,6 +692,29 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 		// 2. Then check GitHub for already submitted reviews for this SHA
 		if botLogin == "" && userLogin == "" {
 			klog.Warningf("PR #%d: Neither GITHUB_BOT_LOGIN nor GITHUB_USER_ID is set. Cannot reliably identify previous reviews.", number)
+		}
+
+		// Check for reopened events to allow fresh reviews on resurrected PRs
+		var lastReopenedAt *time.Time
+		listEventsOpt := &githubv39.ListOptions{PerPage: 100}
+		for {
+			events, resp, err := ghClient.Issues.ListIssueEvents(ctx, owner, repo, number, listEventsOpt)
+			if err != nil {
+				klog.Warningf("PR #%d: Failed to list events: %v", number, err)
+				break
+			}
+			for _, e := range events {
+				if e.GetEvent() == "reopened" {
+					t := e.GetCreatedAt()
+					if lastReopenedAt == nil || t.After(*lastReopenedAt) {
+						lastReopenedAt = &t
+					}
+				}
+			}
+			if resp.NextPage == 0 {
+				break
+			}
+			listEventsOpt.Page = resp.NextPage
 		}
 
 		listOpt := &githubv39.ListOptions{PerPage: 100}
@@ -707,6 +737,13 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 
 				if isBot && strings.EqualFold(r.GetCommitID(), headSHA) {
 					state := r.GetState()
+					submittedAt := r.GetSubmittedAt()
+
+					if lastReopenedAt != nil && submittedAt.Before(*lastReopenedAt) {
+						klog.Infof("PR #%d: Found historical review for SHA %s, but PR was reopened since then. Proceeding with new review.", number, headSHA)
+						continue
+					}
+
 					// We consider any state (PENDING, COMMENTED, APPROVED, CHANGES_REQUESTED, DISMISSED)
 					// as "already handled" to prevent infinite loops (especially with DISMISSED).
 					klog.Infof("PR #%d: Review for SHA %s already exists on GitHub by %s (state: %s). Skipping.", number, headSHA, login, state)
@@ -720,12 +757,22 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 		}
 	}
 
-	// Create Sandbox if it doesn't exist
-	if !sandboxExists {
-		klog.Infof("Creating sandbox %s...", sandboxName)
-		if err := createPRSandbox(ctx, kubeClient, &overseer, pr); err != nil {
-			return fmt.Errorf("failed to create PR sandbox: %w", err)
+	// Check limit only if we need to create or activate a sandbox
+	if !sandboxIsActive && overseer.Spec.MaxActiveReviews != nil {
+		maxReviews := *overseer.Spec.MaxActiveReviews
+		activeCount, err := countActiveSandboxes(ctx, kubeClient.DynamicClient, namespace, overseerName, "review")
+		if err != nil {
+			return fmt.Errorf("failed to count active review sandboxes: %w", err)
 		}
+		if int32(activeCount) >= maxReviews {
+			return fmt.Errorf("limit_reached: max active reviews limit (%d) reached (currently %d active)", maxReviews, activeCount)
+		}
+	}
+
+	// Ensure Sandbox exists and is configured correctly
+	klog.Infof("Ensuring sandbox %s exists...", sandboxName)
+	if err := createPRSandbox(ctx, kubeClient, &overseer, pr); err != nil {
+		return fmt.Errorf("failed to ensure PR sandbox: %w", err)
 	}
 
 	// Create Task
@@ -969,6 +1016,18 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 
 	sb, svc := sandbox.NewAgentSandbox(opt)
 
+	if overseer != nil {
+		sb.SetOwnerReferences([]metav1.OwnerReference{
+			{
+				APIVersion: "overseer.gemini.google.com/v1alpha1",
+				Kind:       "Overseer",
+				Name:       overseer.Name,
+				UID:        overseer.UID,
+				Controller: func(b bool) *bool { return &b }(true),
+			},
+		})
+	}
+
 	createdSb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sb, metav1.CreateOptions{})
 	if err != nil && !errors.IsAlreadyExists(err) {
 		return err
@@ -1056,6 +1115,18 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 	}
 
 	sb, svc := sandbox.NewReviewSandbox(opt)
+
+	if overseer != nil {
+		sb.SetOwnerReferences([]metav1.OwnerReference{
+			{
+				APIVersion: "overseer.gemini.google.com/v1alpha1",
+				Kind:       "Overseer",
+				Name:       overseer.Name,
+				UID:        overseer.UID,
+				Controller: func(b bool) *bool { return &b }(true),
+			},
+		})
+	}
 
 	createdSb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sb, metav1.CreateOptions{})
 	if err != nil && !errors.IsAlreadyExists(err) {
