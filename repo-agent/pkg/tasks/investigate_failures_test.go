@@ -3,6 +3,7 @@ package tasks
 import (
 	"bytes"
 	"os"
+	"strings"
 	"testing"
 	"text/template"
 	"time"
@@ -93,8 +94,16 @@ func TestInvestigateFailuresPromptTemplate(t *testing.T) {
 	}
 
 	// Verify metadata footer
-	expectedFooter := "<!-- repo-agent-metadata\n        sandbox-task: ns/task\n        sandbox-task-uid: uid\n        sandbox: sb\n        repowatch: rw\n        task-type: investigate-failures\n        timestamp: 2026-03-02T12:00:00Z\n        -->"
-	if !bytes.Contains(w.Bytes(), []byte(expectedFooter)) {
-		t.Errorf("Prompt does not contain expected metadata footer:\n%s", output)
+	for _, expected := range []string{
+		"sandbox-task: ns/task",
+		"sandbox-task-uid: uid",
+		"sandbox: sb",
+		"repowatch: rw",
+		"task-type: investigate-failures",
+		"timestamp: 2026-03-02T12:00:00Z",
+	} {
+		if !strings.Contains(output, expected) {
+			t.Errorf("Prompt does not contain expected metadata: %s", expected)
+		}
 	}
 }

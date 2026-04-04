@@ -329,14 +329,13 @@ func (s *Server) submitReview(c *gin.Context) {
 	}
 
 	if s.TraceabilityMetadataEnabled {
-		footer := fmt.Sprintf("\n\n---\n<!-- repo-agent-metadata\nsandbox-task: n/a\nsandbox-task-uid: n/a\nsandbox: %s\nrepowatch: %s\ntask-type: pr-review\ntimestamp: %s\n-->", sandboxName, repo, time.Now().Format(time.RFC3339))
+		taskName, taskUID := s.getLatestTaskMetadata(ctx, namespace, sandboxName)
+		footer := fmt.Sprintf("\n\n---\n<!-- repo-agent-metadata\nsandbox-task: %s\nsandbox-task-uid: %s\nsandbox: %s\nrepowatch: %s\ntask-type: pr-review\ntimestamp: %s\n-->", taskName, taskUID, sandboxName, repo, time.Now().Format(time.RFC3339))
 		body := ""
 		if reviewRequest.Body != nil {
 			body = *reviewRequest.Body
 		}
-		if len(body)+len(footer) > 65000 {
-			body = body[:65000-len(footer)]
-		}
+		body = truncateString(body, 65000-len(footer))
 		newBody := body + footer
 		reviewRequest.Body = &newBody
 	}

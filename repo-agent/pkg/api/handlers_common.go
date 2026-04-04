@@ -1,10 +1,12 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	sandboxtaskv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
@@ -119,4 +121,40 @@ func (s *Server) ensureGeminiKeySet(c *gin.Context, namespace string) bool {
 	}
 
 	return true
+}
+
+// truncateString safely truncates a string to a byte limit without splitting UTF-8 runes.
+func truncateString(s string, limit int) string {
+	if len(s) <= limit {
+		return s
+	}
+	s = s[:limit]
+	for len(s) > 0 && !utf8.ValidString(s) {
+		s = s[:len(s)-1]
+	}
+	return s
+}
+
+func (s *Server) getLatestTaskMetadata(ctx context.Context, namespace, sandboxName string) (taskName, taskUID string) {
+	taskName = "n/a"
+	taskUID = "n/a"
+	if sandboxName == "" || sandboxName == "n/a" {
+		return
+	}
+	taskList, err := s.K8sManager.ListSandboxTasks(ctx, namespace, sandboxName)
+	if err != nil || taskList == nil || len(taskList.Items) == 0 {
+		return
+	}
+	// Find the latest task by creation timestamp
+	var latestTask *sandboxtaskv1alpha1.SandboxTask
+	for i := range taskList.Items {
+		if latestTask == nil || taskList.Items[i].CreationTimestamp.After(latestTask.CreationTimestamp.Time) {
+			latestTask = &taskList.Items[i]
+		}
+	}
+	if latestTask != nil {
+		taskName = fmt.Sprintf("%s/%s", latestTask.Namespace, latestTask.Name)
+		taskUID = string(latestTask.UID)
+	}
+	return
 }

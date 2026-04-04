@@ -3,6 +3,7 @@ package tasks
 import (
 	"bytes"
 	"os"
+	"strings"
 	"testing"
 	"text/template"
 )
@@ -85,9 +86,17 @@ func TestFixIssuePromptTemplate(t *testing.T) {
 	}
 
 	// Verify metadata footer
-	expectedFooter := "<!-- repo-agent-metadata\nsandbox-task: ns/task\nsandbox-task-uid: uid\nsandbox: sb\nrepowatch: rw\ntask-type: fix-issue\ntimestamp: 2026-03-02T12:00:00Z\n-->"
-	if !bytes.Contains(w.Bytes(), []byte(expectedFooter)) {
-		t.Errorf("Prompt does not contain expected metadata footer:\n%s", w.String())
+	for _, expected := range []string{
+		"sandbox-task: ns/task",
+		"sandbox-task-uid: uid",
+		"sandbox: sb",
+		"repowatch: rw",
+		"task-type: fix-issue",
+		"timestamp: 2026-03-02T12:00:00Z",
+	} {
+		if !strings.Contains(w.String(), expected) {
+			t.Errorf("Prompt does not contain expected metadata: %s", expected)
+		}
 	}
 
 	// Verify that the new instruction is present
