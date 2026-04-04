@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -220,16 +221,16 @@ func runChore(ctx context.Context, name string, file string) error {
 		reason := strings.Join(reasons, " and ")
 
 		if choresMode == "dryrun" {
-			fmt.Printf("[dryrun] Ensuring sandbox %s is deleted for chore %s (%s)\n", sandboxName, chore.Name, reason)
+			klog.Infof("[dryrun] Ensuring sandbox %s is deleted for chore %s (%s)", sandboxName, chore.Name, reason)
 			_ = deleteSandbox(ctx, kubeClient, namespace, sandboxName)
 			return nil
 		}
-		fmt.Printf("Chore %s %s. Ensuring sandbox is deleted.\n", chore.Name, reason)
+		klog.Infof("Chore %s %s. Ensuring sandbox is deleted.", chore.Name, reason)
 		return deleteSandbox(ctx, kubeClient, namespace, sandboxName)
 	}
 
 	if choresMode == "dryrun" {
-		fmt.Printf("[dryrun] Would create sandbox and task chore for chore %s in Overseer %s\n", chore.Name, overseerName)
+		klog.Infof("[dryrun] Would create sandbox and task chore for chore %s in Overseer %s", chore.Name, overseerName)
 		return nil
 	}
 
@@ -243,7 +244,7 @@ func runChore(ctx context.Context, name string, file string) error {
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			// Create Sandbox
-			fmt.Printf("Creating sandbox %s...\n", sandboxName)
+			klog.Infof("Creating sandbox %s...", sandboxName)
 			if err := createChoreSandbox(ctx, kubeClient, &overseer, chore, sandboxName); err != nil {
 				return fmt.Errorf("failed to create chore sandbox: %w", err)
 			}
@@ -254,7 +255,7 @@ func runChore(ctx context.Context, name string, file string) error {
 
 	// Create Task
 	taskType := "chore"
-	fmt.Printf("Creating task %s for sandbox %s...\n", taskType, sandboxName)
+	klog.Infof("Creating task %s for sandbox %s...", taskType, sandboxName)
 	params := map[string]string{
 		"AGENT_PROMPT": chore.Prompt,
 		"CHORE_NAME":   chore.Name,
@@ -272,7 +273,7 @@ func runChore(ctx context.Context, name string, file string) error {
 		return fmt.Errorf("failed to create sandbox task: %w", err)
 	}
 
-	fmt.Println("Done.")
+	klog.Info("Done.")
 	return nil
 }
 
@@ -339,7 +340,7 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 
 	scriptToken, err := getTokenFromScript()
 	if err != nil {
-		fmt.Printf("Warning: failed to get token from script: %v\n", err)
+		klog.Warningf("failed to get token from script: %v", err)
 	}
 
 	opt := sandbox.AgentSandboxOptions{
@@ -383,12 +384,35 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 	sb, svc := sandbox.NewAgentSandbox(opt)
 	sb.SetName(sandboxName)
 
-	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sb, metav1.CreateOptions{})
-	if err != nil {
+	createdSb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sb, metav1.CreateOptions{})
+	if err != nil && !errors.IsAlreadyExists(err) {
 		return err
 	}
 
-	_, err = kubeClient.Clientset.CoreV1().Services(namespace).Create(ctx, svc, metav1.CreateOptions{})
+	if createdSb == nil {
+		createdSb, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to get sandbox after creation: %w", err)
+		}
+	}
+
+	return ensureService(ctx, kubeClient.Clientset, namespace, svc, createdSb)
+}
+
+func ensureService(ctx context.Context, clientset kubernetes.Interface, namespace string, svc *corev1.Service, owner *unstructured.Unstructured) error {
+	if owner != nil {
+		svc.OwnerReferences = []metav1.OwnerReference{
+			{
+				APIVersion: owner.GetAPIVersion(),
+				Kind:       owner.GetKind(),
+				Name:       owner.GetName(),
+				UID:        owner.GetUID(),
+				Controller: func(b bool) *bool { return &b }(true),
+			},
+		}
+	}
+
+	_, err := clientset.CoreV1().Services(namespace).Create(ctx, svc, metav1.CreateOptions{})
 	if err != nil && !errors.IsAlreadyExists(err) {
 		return err
 	}
@@ -407,9 +431,9 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 	}
 	if issueMode == "dryrun" {
 		if number != 0 {
-			fmt.Printf("[dryrun] Would create/ensure sandbox and task %s for issue %d in Overseer %s\n", taskType, number, overseerName)
+			klog.Infof("[dryrun] Would create/ensure sandbox and task %s for issue %d in Overseer %s", taskType, number, overseerName)
 		} else if prNumber != 0 {
-			fmt.Printf("[dryrun] Would create/ensure sandbox and task %s for issue from PR %d in Overseer %s\n", taskType, prNumber, overseerName)
+			klog.Infof("[dryrun] Would create/ensure sandbox and task %s for issue from PR %d in Overseer %s", taskType, prNumber, overseerName)
 		}
 		return nil
 	}
@@ -456,12 +480,12 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 	}
 
 	if number == 0 && prNumber != 0 {
-		fmt.Printf("Resolving issue from PR %d...\n", prNumber)
+		klog.Infof("Resolving issue from PR %d...", prNumber)
 		number, err = resolveIssueFromPR(ctx, owner, repo, prNumber)
 		if err != nil {
 			return fmt.Errorf("failed to resolve issue from PR: %w", err)
 		}
-		fmt.Printf("Resolved to issue %d\n", number)
+		klog.Infof("Resolved to issue %d", number)
 	}
 
 	if number == 0 {
@@ -503,14 +527,14 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 
 	// Create Sandbox if it doesn't exist
 	if !sandboxExists {
-		fmt.Printf("Creating sandbox %s...\n", sandboxName)
+		klog.Infof("Creating sandbox %s...", sandboxName)
 		if err := createIssueSandbox(ctx, kubeClient, &overseer, issue); err != nil {
 			return fmt.Errorf("failed to create issue sandbox: %w", err)
 		}
 	}
 
 	// Create Task
-	fmt.Printf("Creating task %s for sandbox %s...\n", taskType, sandboxName)
+	klog.Infof("Creating task %s for sandbox %s...", taskType, sandboxName)
 	agentPrompt := customPrompt
 	if agentPrompt == "" {
 		agentPrompt = overseer.Spec.IssuePrompt
@@ -529,7 +553,7 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 		return fmt.Errorf("failed to create sandbox task: %w", err)
 	}
 
-	fmt.Println("Done.")
+	klog.Info("Done.")
 	return nil
 }
 
@@ -555,7 +579,7 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 	}
 
 	if mode == "dryrun" {
-		fmt.Printf("[dryrun] Would create/ensure sandbox and task %s for PR %d in Overseer %s\n", taskType, number, overseerName)
+		klog.Infof("[dryrun] Would create/ensure sandbox and task %s for PR %d in Overseer %s", taskType, number, overseerName)
 		return nil
 	}
 
@@ -580,8 +604,11 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 	}
 	manager := k8s.NewManager(kubeClient)
 
+	botLogin := os.Getenv("GITHUB_BOT_LOGIN")
+	userLogin := os.Getenv("GITHUB_USER_ID")
+
 	if submit {
-		fmt.Printf("Submitting agent draft for PR %d...\n", number)
+		klog.Infof("Submitting agent draft for PR %d...", number)
 		return submitAgentDraft(ctx, manager, kubeClient, namespace, overseerName, number)
 	}
 
@@ -640,46 +667,69 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 
 	// Check if a task for this SHA already exists (only for review tasks)
 	if taskType == "review" {
-		// First check GitHub for already submitted reviews for this SHA
-		reviews, _, err := ghClient.PullRequests.ListReviews(ctx, owner, repo, number, nil)
+		// 1. Check local Kubernetes first for an actively running or completed task for this SHA
+		// to save GitHub API quota.
+		taskList, err := manager.ListSandboxTasks(ctx, namespace, sandboxName)
 		if err == nil {
-			botLogin := os.Getenv("GITHUB_BOT_LOGIN")
-			userLogin := os.Getenv("GITHUB_USER_ID")
-			for _, r := range reviews {
-				login := r.GetUser().GetLogin()
-				if (login != "" && (login == botLogin || login == userLogin)) && r.GetCommitID() == headSHA {
-					if r.GetState() != "DISMISSED" {
-						fmt.Printf("Review for SHA %s already submitted to GitHub by %s. Skipping.\n", headSHA, login)
+			for i := range taskList.Items {
+				task := &taskList.Items[i]
+				if task.Spec.Type == "review" && strings.EqualFold(task.Spec.Params["HEAD_SHA"], headSHA) {
+					if task.Status.TaskState == "Completed" || task.Status.TaskState == "Running" || task.Status.TaskState == "Pending" {
+						klog.Infof("PR #%d: Review task for SHA %s already exists in state %s. Skipping.", number, headSHA, task.Status.TaskState)
 						return nil
 					}
 				}
 			}
 		}
 
-		taskList, err := manager.ListSandboxTasks(ctx, namespace, sandboxName)
-		if err == nil {
-			for i := range taskList.Items {
-				task := &taskList.Items[i]
-				if task.Spec.Type == "review" && task.Spec.Params["HEAD_SHA"] == headSHA {
-					if task.Status.TaskState == "Completed" || task.Status.TaskState == "Running" || task.Status.TaskState == "Pending" {
-						fmt.Printf("Review task for SHA %s already exists in state %s. Skipping.\n", headSHA, task.Status.TaskState)
-						return nil
-					}
+		// 2. Then check GitHub for already submitted reviews for this SHA
+		if botLogin == "" && userLogin == "" {
+			klog.Warningf("PR #%d: Neither GITHUB_BOT_LOGIN nor GITHUB_USER_ID is set. Cannot reliably identify previous reviews.", number)
+		}
+
+		listOpt := &githubv39.ListOptions{PerPage: 100}
+		for {
+			reviews, resp, err := ghClient.PullRequests.ListReviews(ctx, owner, repo, number, listOpt)
+			if err != nil {
+				return fmt.Errorf("failed to list reviews for PR %d: %w", number, err)
+			}
+
+			for _, r := range reviews {
+				if r.GetUser() == nil {
+					continue
+				}
+				login := r.GetUser().GetLogin()
+				// Handle [bot] suffix for GitHub Apps
+				loginNoBot := strings.TrimSuffix(login, "[bot]")
+
+				isBot := (botLogin != "" && (strings.EqualFold(login, botLogin) || strings.EqualFold(loginNoBot, botLogin))) ||
+					(userLogin != "" && (strings.EqualFold(login, userLogin) || strings.EqualFold(loginNoBot, userLogin)))
+
+				if isBot && strings.EqualFold(r.GetCommitID(), headSHA) {
+					state := r.GetState()
+					// We consider any state (PENDING, COMMENTED, APPROVED, CHANGES_REQUESTED, DISMISSED)
+					// as "already handled" to prevent infinite loops (especially with DISMISSED).
+					klog.Infof("PR #%d: Review for SHA %s already exists on GitHub by %s (state: %s). Skipping.", number, headSHA, login, state)
+					return nil
 				}
 			}
+			if resp.NextPage == 0 {
+				break
+			}
+			listOpt.Page = resp.NextPage
 		}
 	}
 
 	// Create Sandbox if it doesn't exist
 	if !sandboxExists {
-		fmt.Printf("Creating sandbox %s...\n", sandboxName)
+		klog.Infof("Creating sandbox %s...", sandboxName)
 		if err := createPRSandbox(ctx, kubeClient, &overseer, pr); err != nil {
 			return fmt.Errorf("failed to create PR sandbox: %w", err)
 		}
 	}
 
 	// Create Task
-	fmt.Printf("Creating task %s for sandbox %s...\n", taskType, sandboxName)
+	klog.Infof("Creating task %s for sandbox %s...", taskType, sandboxName)
 	agentPrompt := customPrompt
 	if agentPrompt == "" {
 		agentPrompt = overseer.Spec.Review.Prompt
@@ -697,7 +747,7 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 		return fmt.Errorf("failed to create sandbox task: %w", err)
 	}
 
-	fmt.Println("Done.")
+	klog.Info("Done.")
 	return nil
 }
 
@@ -736,11 +786,11 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 		if annotations != nil {
 			if state, ok := annotations["reviewState"]; ok {
 				if state == "submitted" {
-					fmt.Printf("Review for PR %d already submitted (legacy).\n", prNumber)
+					klog.Infof("Review for PR %d already submitted (legacy).", prNumber)
 					return nil
 				}
 				if currentSHA != "" && state == "submitted:"+currentSHA {
-					fmt.Printf("Review for PR %d and SHA %s already submitted.\n", prNumber, currentSHA)
+					klog.Infof("Review for PR %d and SHA %s already submitted.", prNumber, currentSHA)
 					return nil
 				}
 			}
@@ -805,9 +855,9 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 	err = yaml.Unmarshal([]byte(draft), &agentOutput)
 	if err != nil || agentOutput.Review == nil {
 		if err != nil {
-			fmt.Printf("Warning: failed to unmarshal review payload as YAML, using as plain body: %v\n", err)
+			klog.Warningf("Failed to unmarshal review payload as YAML, using as plain body: %v", err)
 		} else {
-			fmt.Printf("Warning: review field missing in YAML, using draft as plain body\n")
+			klog.Warning("Review field missing in YAML, using draft as plain body")
 		}
 
 		reviewRequest.Body = githubv39.String(draft)
@@ -818,12 +868,12 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 	// Set event to COMMENT to submit directly instead of creating a draft
 	reviewRequest.Event = githubv39.String("COMMENT")
 
-	fmt.Printf("Creating review on GitHub for %s/%s PR %d...\n", owner, repoName, prNumber)
+	klog.Infof("Creating review on GitHub for %s/%s PR %d...", owner, repoName, prNumber)
 	review, _, err := client.PullRequests.CreateReview(ctx, owner, repoName, prNumber, reviewRequest)
 	if err != nil {
 		return fmt.Errorf("failed to create review on GitHub: %w", err)
 	}
-	fmt.Printf("Successfully created review: %s\n", review.GetHTMLURL())
+	klog.Infof("Successfully created review: %s", review.GetHTMLURL())
 
 	// Update sandbox reviewState
 	reviewState := "submitted"
@@ -831,10 +881,10 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 		reviewState = "submitted:" + currentSHA
 	}
 	if err := manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "reviewState", reviewState); err != nil {
-		fmt.Printf("Warning: failed to update reviewState annotation: %v\n", err)
+		klog.Warningf("Failed to update reviewState annotation: %v", err)
 	}
 
-	fmt.Println("Done.")
+	klog.Info("Done.")
 	return nil
 }
 
@@ -876,7 +926,7 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 
 	scriptToken, err := getTokenFromScript()
 	if err != nil {
-		fmt.Printf("Warning: failed to get token from script: %v\n", err)
+		klog.Warningf("failed to get token from script: %v", err)
 	}
 
 	opt := sandbox.AgentSandboxOptions{
@@ -919,16 +969,19 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 
 	sb, svc := sandbox.NewAgentSandbox(opt)
 
-	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sb, metav1.CreateOptions{})
-	if err != nil {
-		return err
-	}
-
-	_, err = kubeClient.Clientset.CoreV1().Services(namespace).Create(ctx, svc, metav1.CreateOptions{})
+	createdSb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sb, metav1.CreateOptions{})
 	if err != nil && !errors.IsAlreadyExists(err) {
 		return err
 	}
-	return nil
+
+	if createdSb == nil {
+		createdSb, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to get sandbox after creation: %w", err)
+		}
+	}
+
+	return ensureService(ctx, kubeClient.Clientset, namespace, svc, createdSb)
 }
 
 func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, overseer *overseerv1alpha1.Overseer, pr *githubv39.PullRequest) error {
@@ -958,7 +1011,7 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 
 	scriptToken, err := getTokenFromScript()
 	if err != nil {
-		fmt.Printf("Warning: failed to get token from script: %v\n", err)
+		klog.Warningf("failed to get token from script: %v", err)
 	}
 
 	opt := sandbox.ReviewSandboxOptions{
@@ -1004,16 +1057,19 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 
 	sb, svc := sandbox.NewReviewSandbox(opt)
 
-	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sb, metav1.CreateOptions{})
-	if err != nil {
-		return err
-	}
-
-	_, err = kubeClient.Clientset.CoreV1().Services(namespace).Create(ctx, svc, metav1.CreateOptions{})
+	createdSb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sb, metav1.CreateOptions{})
 	if err != nil && !errors.IsAlreadyExists(err) {
 		return err
 	}
-	return nil
+
+	if createdSb == nil {
+		createdSb, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to get sandbox after creation: %w", err)
+		}
+	}
+
+	return ensureService(ctx, kubeClient.Clientset, namespace, svc, createdSb)
 }
 
 var letterBytes = "abcdefghijklmnopqrstuvwxyz0123456789"
@@ -1160,15 +1216,15 @@ func runReconcile(ctx context.Context) error {
 				if choresMode == "disabled" || choresMode == "dryrun" {
 					reason = fmt.Sprintf("chores are %s", choresMode)
 				}
-				fmt.Printf("Chore %s %s. Deleting sandbox %s.\n", choreSlug, reason, item.GetName())
+				klog.Infof("Chore %s %s. Deleting sandbox %s.", choreSlug, reason, item.GetName())
 				if err := deleteSandbox(ctx, kubeClient, namespace, item.GetName()); err != nil {
-					fmt.Printf("Warning: failed to delete sandbox %s: %v\n", item.GetName(), err)
+					klog.Warningf("Failed to delete sandbox %s: %v", item.GetName(), err)
 				}
 			}
 		}
 	}
 
-	fmt.Println("Reconciliation complete.")
+	klog.Info("Reconciliation complete.")
 	return nil
 }
 
@@ -1242,7 +1298,7 @@ func runDeleteSandbox(ctx context.Context, sandboxName string) error {
 }
 
 func deleteSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, sandboxName string) error {
-	fmt.Printf("Deleting sandbox %s...\n", sandboxName)
+	klog.Infof("Deleting sandbox %s...", sandboxName)
 	err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Delete(ctx, sandboxName, metav1.DeleteOptions{})
 	if err != nil && !errors.IsNotFound(err) {
 		// handle string check if errors package is not behaving as expected with dynamic client
@@ -1252,7 +1308,7 @@ func deleteSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, na
 	}
 	// Also delete service
 	serviceName := sandboxName + "-lb"
-	fmt.Printf("Deleting service %s...\n", serviceName)
+	klog.Infof("Deleting service %s...", serviceName)
 	err = kubeClient.Clientset.CoreV1().Services(namespace).Delete(ctx, serviceName, metav1.DeleteOptions{})
 	if err != nil && !errors.IsNotFound(err) {
 		if !strings.Contains(err.Error(), "not found") {
