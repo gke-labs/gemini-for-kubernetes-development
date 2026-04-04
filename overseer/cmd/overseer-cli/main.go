@@ -376,17 +376,15 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 	sb, svc := sandbox.NewAgentSandbox(opt)
 	sb.SetName(sandboxName)
 
-	if overseer != nil {
-		sb.SetOwnerReferences([]metav1.OwnerReference{
-			{
-				APIVersion: "overseer.gemini.google.com/v1alpha1",
-				Kind:       "Overseer",
-				Name:       overseer.Name,
-				UID:        overseer.UID,
-				Controller: func(b bool) *bool { return &b }(true),
-			},
-		})
-	}
+	sb.SetOwnerReferences([]metav1.OwnerReference{
+		{
+			APIVersion: "overseer.gemini.google.com/v1alpha1",
+			Kind:       "Overseer",
+			Name:       overseer.Name,
+			UID:        overseer.UID,
+			Controller: func(b bool) *bool { return &b }(true),
+		},
+	})
 
 	createdSb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sb, metav1.CreateOptions{})
 	if err != nil && !errors.IsAlreadyExists(err) {
@@ -1016,17 +1014,15 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 
 	sb, svc := sandbox.NewAgentSandbox(opt)
 
-	if overseer != nil {
-		sb.SetOwnerReferences([]metav1.OwnerReference{
-			{
-				APIVersion: "overseer.gemini.google.com/v1alpha1",
-				Kind:       "Overseer",
-				Name:       overseer.Name,
-				UID:        overseer.UID,
-				Controller: func(b bool) *bool { return &b }(true),
-			},
-		})
-	}
+	sb.SetOwnerReferences([]metav1.OwnerReference{
+		{
+			APIVersion: "overseer.gemini.google.com/v1alpha1",
+			Kind:       "Overseer",
+			Name:       overseer.Name,
+			UID:        overseer.UID,
+			Controller: func(b bool) *bool { return &b }(true),
+		},
+	})
 
 	createdSb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sb, metav1.CreateOptions{})
 	if err != nil && !errors.IsAlreadyExists(err) {
@@ -1116,17 +1112,15 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 
 	sb, svc := sandbox.NewReviewSandbox(opt)
 
-	if overseer != nil {
-		sb.SetOwnerReferences([]metav1.OwnerReference{
-			{
-				APIVersion: "overseer.gemini.google.com/v1alpha1",
-				Kind:       "Overseer",
-				Name:       overseer.Name,
-				UID:        overseer.UID,
-				Controller: func(b bool) *bool { return &b }(true),
-			},
-		})
-	}
+	sb.SetOwnerReferences([]metav1.OwnerReference{
+		{
+			APIVersion: "overseer.gemini.google.com/v1alpha1",
+			Kind:       "Overseer",
+			Name:       overseer.Name,
+			UID:        overseer.UID,
+			Controller: func(b bool) *bool { return &b }(true),
+		},
+	})
 
 	createdSb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sb, metav1.CreateOptions{})
 	if err != nil && !errors.IsAlreadyExists(err) {
