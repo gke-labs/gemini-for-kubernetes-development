@@ -100,7 +100,11 @@ function TaskCard({
             fetch(`/api/repo/${repoName}/issues/${parentId}/submitcomment`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ comment: localDraft })
+                body: JSON.stringify({ 
+                    comment: localDraft,
+                    task_name: task.name,
+                    task_uid: task.uid
+                })
             })
             .then(res => {
                 if (res.ok) {

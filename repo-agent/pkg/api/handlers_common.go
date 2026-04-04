@@ -128,11 +128,20 @@ func truncateString(s string, limit int) string {
 	if len(s) <= limit {
 		return s
 	}
-	s = s[:limit]
-	for len(s) > 0 && !utf8.ValidString(s) {
-		s = s[:len(s)-1]
+	for i := limit; i >= 0; i-- {
+		if utf8.RuneStart(s[i]) {
+			return s[:i]
+		}
 	}
-	return s
+	return ""
+}
+
+func (s *Server) getTaskMetadata(ctx context.Context, namespace, sandboxName, taskName, taskUID string) (string, string) {
+	if taskName != "" && taskUID != "" && taskName != "n/a" && taskUID != "n/a" {
+		return taskName, taskUID
+	}
+	// Fallback to latest
+	return s.getLatestTaskMetadata(ctx, namespace, sandboxName)
 }
 
 func (s *Server) getLatestTaskMetadata(ctx context.Context, namespace, sandboxName string) (taskName, taskUID string) {

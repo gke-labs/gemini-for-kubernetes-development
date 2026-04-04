@@ -83,6 +83,7 @@ type Stats struct {
 // Task represents a sandbox task
 type Task struct {
 	Name              string `json:"name"`
+	UID               string `json:"uid,omitempty"`
 	Type              string `json:"type"`
 	TaskState         string `json:"taskState"` // from status.taskState
 	Result            string `json:"result"`    // from status.result

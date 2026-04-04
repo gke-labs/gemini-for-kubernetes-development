@@ -74,6 +74,7 @@ func (s *Server) getPRTasks(c *gin.Context) {
 
 		tasks = append(tasks, models.Task{
 			Name:              taskItem.GetName(),
+			UID:               string(taskItem.GetUID()),
 			Type:              taskType,
 			TaskState:         taskState,
 			Result:            result,
@@ -235,7 +236,9 @@ func (s *Server) submitReview(c *gin.Context) {
 	repo := c.Param("repo")
 	prID := c.Param("id")
 	var payload struct {
-		Review string
+		Review   string `json:"review"`
+		TaskName string `json:"task_name"`
+		TaskUID  string `json:"task_uid"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -243,7 +246,7 @@ func (s *Server) submitReview(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
-	log.Info("Submitting review for PR", "prID", prID, "repo", repo, "review", payload.Review)
+	log.Info("Submitting review for PR", "prID", prID, "repo", repo, "review", payload.Review, "taskName", payload.TaskName, "taskUID", payload.TaskUID)
 
 	sandboxName := fmt.Sprintf("%s-pr-%s", repo, prID)
 	gvr := schema.GroupVersionResource{
@@ -329,7 +332,7 @@ func (s *Server) submitReview(c *gin.Context) {
 	}
 
 	if s.TraceabilityMetadataEnabled {
-		taskName, taskUID := s.getLatestTaskMetadata(ctx, namespace, sandboxName)
+		taskName, taskUID := s.getTaskMetadata(ctx, namespace, sandboxName, payload.TaskName, payload.TaskUID)
 		footer := fmt.Sprintf("\n\n---\n<!-- repo-agent-metadata\nsandbox-task: %s\nsandbox-task-uid: %s\nsandbox: %s\nrepowatch: %s\ntask-type: pr-review\ntimestamp: %s\n-->", taskName, taskUID, sandboxName, repo, time.Now().Format(time.RFC3339))
 		body := ""
 		if reviewRequest.Body != nil {

@@ -65,6 +65,12 @@ func TestTruncateString(t *testing.T) {
 			limit: 0,
 			want:  "",
 		},
+		{
+			name:  "Invalid byte early",
+			s:     "\xffhello world", // 0xff is invalid UTF-8
+			limit: 5,
+			want:  "\xffhell",
+		},
 	}
 
 	for _, tt := range tests {

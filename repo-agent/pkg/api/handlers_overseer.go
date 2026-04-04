@@ -6,9 +6,11 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -183,7 +185,42 @@ func (s *Server) getChoreTasks(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list chore tasks", "details": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, tasks.Items)
+
+	var modelsTasks []models.Task
+	for _, taskItem := range tasks.Items {
+		taskType := taskItem.Spec.Type
+		taskState := taskItem.Status.TaskState
+		result := taskItem.Status.Result
+
+		tAgentDraft := ""
+		tUserDraft := ""
+		tAgentState := ""
+		tAgentStateMessage := ""
+
+		tAnnotations := taskItem.GetAnnotations()
+		if tAnnotations != nil {
+			tAgentDraft = tAnnotations["agentDraft"]
+			tUserDraft = tAnnotations["userDraft"]
+			tAgentState = tAnnotations["agentState"]
+			tAgentStateMessage = tAnnotations["agentStateMessage"]
+		}
+
+		modelsTasks = append(modelsTasks, models.Task{
+			Name:              taskItem.GetName(),
+			UID:               string(taskItem.GetUID()),
+			Type:              taskType,
+			TaskState:         taskState,
+			Result:            result,
+			CreationTimestamp: taskItem.GetCreationTimestamp().Format(time.RFC3339),
+			AgentDraft:        tAgentDraft,
+			UserDraft:         tUserDraft,
+			AgentState:        tAgentState,
+			AgentStateMessage: tAgentStateMessage,
+			Stats:             convertStats(taskItem.Status.Stats),
+		})
+	}
+
+	c.JSON(http.StatusOK, modelsTasks)
 }
 
 func (s *Server) getChoreTaskLogs(c *gin.Context) {

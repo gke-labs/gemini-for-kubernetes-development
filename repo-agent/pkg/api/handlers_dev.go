@@ -544,6 +544,7 @@ func (s *Server) getDevTasks(c *gin.Context) {
 
 		tasks = append(tasks, models.Task{
 			Name:              taskItem.GetName(),
+			UID:               string(taskItem.GetUID()),
 			Type:              taskType,
 			TaskState:         taskState,
 			Result:            result,
