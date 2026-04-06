@@ -9,7 +9,7 @@
     - Track the last run time of each chore in a local state file (e.g., `chores_state.json`).
     - Monitor the state of the `SandboxTask` to see if the task has been completed.
     - A background `overseer-cli reconcile` process automatically deletes sandboxes for chores that are excluded or no longer present in `.agents/`.
-    - If a chore sandbox has been idle for a reasonable time (task periodicity capped to say few hrs max) and the task was not completed, you may delete the sandbox.
+    - If a chore sandbox has been idle for a reasonable time (task periodicity capped to say few hrs max) and the task was not completed, you may delete the sandbox. When deleting a sandbox, please instruct to use the `overseer-cli delete sandbox <sandbox-name>` command to properly cleanup the sandbox and its `-lb` service as well.
 
 Principles:
 - **Scope to Current Overseer**: Only interact with resources associated with the current Overseer ($OVERSEER_NAME) in the current namespace ($NAMESPACE).

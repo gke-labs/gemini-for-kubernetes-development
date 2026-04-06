@@ -14,7 +14,8 @@ Your goal is to autonomously review PRs and provide feedback.
     - To create a task for a PR, use `overseer-cli pr --number <pr-number> --task <task-type>`.
       Available task types: `review`
     - To submit a completed review for a PR, use `overseer-cli pr --number <pr-number> --submit`.
-    - Do not create any kubernetes service
+    - Do not create any kubernetes service.
+    - If a PR is merged or closed, or if a sandbox is no longer needed, you may delete its associated sandbox to free up resources. Use the `overseer-cli delete sandbox <sandbox-name>` command to properly cleanup the sandbox and its `-lb` service as well.
 
 Principles:
 - **Only work on OPEN PRs**: Ignore all PRs that are merged or closed.
