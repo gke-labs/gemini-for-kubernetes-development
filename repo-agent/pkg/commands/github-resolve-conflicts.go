@@ -80,7 +80,7 @@ func BuildGithubResolveConflictsCommand() *cobra.Command {
 	cmd.Flags().StringVar(&resolveCommand.BaseRef, "base-ref", os.Getenv("BASE_REF"), "Base branch ref")
 	cmd.Flags().StringVar(&resolveCommand.HeadRef, "head-ref", os.Getenv("HEAD_REF"), "Head branch ref")
 	cmd.Flags().BoolVar(&resolveCommand.InPod, "in-pod", false, "Whether running inside the pod")
-	
+
 	return cmd
 }
 
@@ -207,7 +207,7 @@ func (c *GithubResolveConflictsCommand) Run(ctx context.Context) error {
 		"GEMINI_API_KEY":    apikey,
 		"GITHUB_USER_TOKEN": c.GithubUserToken,
 	}
-	
+
 	// Re-use RunTask.
 	err = tasks.RunTask(ctx, &task, c.sandbox, c.TaskDir, env)
 	if err != nil {
