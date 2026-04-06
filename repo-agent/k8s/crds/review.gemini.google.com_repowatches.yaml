@@ -283,6 +283,8 @@ spec:
                     items:
                       type: integer
                     type: array
+                  resolveConflicts:
+                    type: boolean
                   reviewShutdownAfterMinutes:
                     type: integer
                   robotAccount:

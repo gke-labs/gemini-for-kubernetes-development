@@ -460,7 +460,7 @@ func (r *Reconciler) reconcileReviews(ctx context.Context, repoWatch *reviewv1al
 		return err
 	}
 
-	watchedPRs, pendingPRs, activeSandboxes := r.reconcileReviewSandboxesInternal(ctx, user, repoWatch, explicitPRs, prs, sandboxList, podsBySandbox)
+	watchedPRs, pendingPRs, activeSandboxes := r.reconcileReviewSandboxesInternal(ctx, user, repoWatch, ghClient, owner, repo, explicitPRs, prs, sandboxList, podsBySandbox)
 
 	repoWatch.Status.ActiveSandboxCount = activeSandboxes
 	repoWatch.Status.ReviewSandboxes = watchedPRs
@@ -634,7 +634,7 @@ func (r *Reconciler) excludePRs(prs []*github.PullRequest, repoWatch *reviewv1al
 	return filteredPRs
 }
 
-func (r *Reconciler) reconcileReviewSandboxesInternal(ctx context.Context, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, explicitPRs []*github.PullRequest, prs []*github.PullRequest, sandboxes *unstructured.UnstructuredList, podsBySandbox map[string]*corev1.Pod) ([]reviewv1alpha1.WatchedPR, []int, int) {
+func (r *Reconciler) reconcileReviewSandboxesInternal(ctx context.Context, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, ghClient *github.Client, owner, repo string, explicitPRs []*github.PullRequest, prs []*github.PullRequest, sandboxes *unstructured.UnstructuredList, podsBySandbox map[string]*corev1.Pod) ([]reviewv1alpha1.WatchedPR, []int, int) {
 	log := log.FromContext(ctx)
 
 	ownedSandboxes := getOwnedSandboxes(sandboxes.Items, repoWatch.UID)
@@ -711,6 +711,11 @@ func (r *Reconciler) reconcileReviewSandboxesInternal(ctx context.Context, user 
 			sandboxStatus, err := r.reconcileSandboxPodStatus(ctx, existingSandbox, podsBySandbox, scaledDown)
 			if err != nil {
 				log.Error(err, "unable to reconcile sandbox pod status", "pr", *pr.Number)
+			}
+
+			// Check for merge conflicts
+			if err := r.reconcileReviewConflicts(ctx, repoWatch, existingSandbox, pr, ghClient, owner, repo); err != nil {
+				log.Error(err, "unable to reconcile review conflicts", "pr", *pr.Number)
 			}
 
 			watchedPRs = append(watchedPRs, reviewv1alpha1.WatchedPR{
@@ -2281,4 +2286,98 @@ func (r *Reconciler) reconcileSandboxPodStatus(ctx context.Context, sandbox *uns
 	}
 
 	return sandboxStatus, nil
+}
+
+func (r *Reconciler) reconcileReviewConflicts(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, sandbox *unstructured.Unstructured, pr *github.PullRequest, ghClient *github.Client, owner, repo string) error {
+	log := log.FromContext(ctx)
+	if !repoWatch.Spec.Review.ResolveConflicts {
+		return nil
+	}
+
+	// List tasks to check for existing resolve-conflicts task for this SHA
+	tasks := &sandboxtaskv1alpha1.SandboxTaskList{}
+	if err := r.List(ctx, tasks, client.InNamespace(sandbox.GetNamespace()), client.MatchingLabels{"sandbox.gemini.google.com/sandbox-name": sandbox.GetName()}); err != nil {
+		return err
+	}
+
+	activeTaskExists := false
+	var lastSHAResolved string
+	for _, task := range tasks.Items {
+		state := task.Status.TaskState
+		if state == "" || state == "Pending" || state == "Running" {
+			activeTaskExists = true
+		}
+		if task.Spec.Type == "resolve-conflicts" {
+			if sha, ok := task.Spec.Params["HEAD_SHA"]; ok {
+				lastSHAResolved = sha
+			}
+		}
+	}
+
+	if activeTaskExists {
+		return nil
+	}
+
+	// Check mergeability
+	if pr.Mergeable == nil {
+		// Need to fetch full PR object to get mergeability
+		fullPR, _, err := ghClient.PullRequests.Get(ctx, owner, repo, *pr.Number)
+		if err != nil {
+			return err
+		}
+		pr = fullPR
+	}
+
+	// Mergeable is false if there are conflicts
+	if pr.Mergeable != nil && !*pr.Mergeable {
+		headSHA := pr.Head.GetSHA()
+		if headSHA == "" {
+			return nil
+		}
+
+		if lastSHAResolved == headSHA {
+			// Already tried to resolve for this SHA
+			return nil
+		}
+
+		log.Info("Found merge conflicts in PR, creating resolve-conflicts task", "pr", *pr.Number, "sha", headSHA)
+
+		// Ensure sandbox is scaled up
+		replicas, found, err := unstructured.NestedInt64(sandbox.Object, "spec", "replicas")
+		if err != nil || !found || replicas == 0 {
+			if err := unstructured.SetNestedField(sandbox.Object, int64(1), "spec", "replicas"); err != nil {
+				log.Error(err, "unable to set replicas to 1")
+			} else {
+				if err := r.Update(ctx, sandbox); err != nil {
+					log.Error(err, "unable to scale up sandbox")
+				}
+			}
+		}
+
+		params := map[string]string{
+			"HEAD_SHA":     headSHA,
+			"PR_NUMBER":    fmt.Sprintf("%d", *pr.Number),
+			"BASE_REF":     pr.Base.GetRef(),
+			"HEAD_REF":     pr.Head.GetRef(),
+			"AGENT_PROMPT": repoWatch.Spec.Review.LLM.Prompt,
+		}
+		// Add LLM params from ReviewSpec
+		if repoWatch.Spec.Review.LLM.Provider != "" {
+			params["AGENT_LLM_PROVIDER"] = repoWatch.Spec.Review.LLM.Provider
+		}
+		if repoWatch.Spec.Review.LLM.APIKeySecretRef != "" {
+			params["AGENT_LLM_API_KEY_SECRET"] = repoWatch.Spec.Review.LLM.APIKeySecretRef
+		}
+		if repoWatch.Spec.Review.LLM.ConfigdirRef != "" {
+			params["AGENT_LLM_CONFIGDIR"] = repoWatch.Spec.Review.LLM.ConfigdirRef
+		}
+		if len(repoWatch.Spec.Review.LLM.Extensions) > 0 {
+			exts, _ := json.Marshal(repoWatch.Spec.Review.LLM.Extensions)
+			params["AGENT_LLM_EXTENSIONS"] = string(exts)
+		}
+
+		return r.createSandboxTask(ctx, repoWatch, sandbox, sandbox.GetName(), "", "resolve-conflicts", params)
+	}
+
+	return nil
 }

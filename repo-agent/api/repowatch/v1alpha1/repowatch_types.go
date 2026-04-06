@@ -152,6 +152,10 @@ type PRReviewSpec struct {
 	// RobotAccount to use for this handler.
 	// +kubebuilder:validation:Optional
 	RobotAccount string `json:"robotAccount,omitempty"`
+
+	// ResolveConflicts enables automated merge conflict resolution for PRs.
+	// +kubebuilder:validation:Optional
+	ResolveConflicts bool `json:"resolveConflicts,omitempty"`
 }
 
 // IdeaSpec defines the configuration for an idea/exploration.
