@@ -498,6 +498,7 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 		"ISSUE_URL":       issue.GetHTMLURL(),
 		"PULL_REQUEST_ID": fmt.Sprintf("%d", prNumber),
 		"AGENT_PROMPT":    agentPrompt,
+		"PR_LABEL":        "overseer",
 	}
 	params["model"] = strings.Join(IssueModelsOrder, ",")
 

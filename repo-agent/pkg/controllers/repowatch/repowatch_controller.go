@@ -1137,6 +1137,7 @@ func (r *Reconciler) ensureIssueTask(ctx context.Context, repoWatch *reviewv1alp
 		"ISSUEID":      fmt.Sprintf("%d", *issue.Number),
 		"AGENT_PROMPT": prompt,
 		"HANDLER_NAME": handler.Name,
+		"PR_LABEL":     "repo-agent",
 	}
 	//params["GIT_PUSH_ENABLED"] = "true"
 	if repoWatch.Spec.Issue.LLM.Provider != "" {
