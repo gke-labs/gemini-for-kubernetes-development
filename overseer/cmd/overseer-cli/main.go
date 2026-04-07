@@ -59,6 +59,7 @@ func main() {
 	rootCmd.AddCommand(buildPRCommand())
 	rootCmd.AddCommand(buildChoreCommand())
 	rootCmd.AddCommand(buildReconcileCommand())
+	rootCmd.AddCommand(buildDeleteCommand())
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -207,11 +208,11 @@ func runChore(ctx context.Context, name string, file string) error {
 	if !isChoreAllowed(overseer.Spec.Chores, chore.Name) {
 		if choresMode == "dryrun" {
 			fmt.Printf("[dryrun] Ensuring sandbox %s is deleted for excluded/not-included chore %s\n", sandboxName, chore.Name)
-			_ = deleteChoreSandbox(ctx, kubeClient, namespace, sandboxName)
+			_ = deleteSandbox(ctx, kubeClient, namespace, sandboxName)
 			return nil
 		}
 		fmt.Printf("Chore %s is excluded or not included. Ensuring sandbox is deleted.\n", chore.Name)
-		return deleteChoreSandbox(ctx, kubeClient, namespace, sandboxName)
+		return deleteSandbox(ctx, kubeClient, namespace, sandboxName)
 	}
 
 	if choresMode == "dryrun" {
@@ -1092,7 +1093,7 @@ func runReconcile(ctx context.Context) error {
 					reason = fmt.Sprintf("chores are %s", choresMode)
 				}
 				fmt.Printf("Chore %s %s. Deleting sandbox %s.\n", choreSlug, reason, item.GetName())
-				if err := deleteChoreSandbox(ctx, kubeClient, namespace, item.GetName()); err != nil {
+				if err := deleteSandbox(ctx, kubeClient, namespace, item.GetName()); err != nil {
 					fmt.Printf("Warning: failed to delete sandbox %s: %v\n", item.GetName(), err)
 				}
 			}
@@ -1125,7 +1126,54 @@ func isChoreAllowed(spec *overseerv1alpha1.ChoresSpec, name string) bool {
 	return true
 }
 
-func deleteChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, sandboxName string) error {
+func buildDeleteCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "delete",
+		Short: "Delete resources",
+	}
+
+	sandboxCmd := &cobra.Command{
+		Use:   "sandbox [name]",
+		Short: "Delete a sandbox and its associated resources (like the -lb service)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			return runDeleteSandbox(context.Background(), args[0])
+		},
+	}
+	cmd.AddCommand(sandboxCmd)
+
+	return cmd
+}
+
+func runDeleteSandbox(ctx context.Context, sandboxName string) error {
+	if namespace == "" {
+		return fmt.Errorf("NAMESPACE environment variable must be set")
+	}
+
+	cfg, err := config.GetConfig()
+	if err != nil {
+		return fmt.Errorf("unable to get kubeconfig: %w", err)
+	}
+
+	dynClient, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("unable to create dynamic client: %w", err)
+	}
+
+	clientset, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("unable to create clientset: %w", err)
+	}
+
+	kubeClient := &clients.KubernetesClient{
+		DynamicClient: dynClient,
+		Clientset:     clientset,
+	}
+
+	return deleteSandbox(ctx, kubeClient, namespace, sandboxName)
+}
+
+func deleteSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, sandboxName string) error {
 	fmt.Printf("Deleting sandbox %s...\n", sandboxName)
 	err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Delete(ctx, sandboxName, metav1.DeleteOptions{})
 	if err != nil && !errors.IsNotFound(err) {
@@ -1135,7 +1183,9 @@ func deleteChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 		}
 	}
 	// Also delete service
-	err = kubeClient.Clientset.CoreV1().Services(namespace).Delete(ctx, sandboxName, metav1.DeleteOptions{})
+	serviceName := sandboxName + "-lb"
+	fmt.Printf("Deleting service %s...\n", serviceName)
+	err = kubeClient.Clientset.CoreV1().Services(namespace).Delete(ctx, serviceName, metav1.DeleteOptions{})
 	if err != nil && !errors.IsNotFound(err) {
 		if !strings.Contains(err.Error(), "not found") {
 			return err
