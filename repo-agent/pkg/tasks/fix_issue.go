@@ -19,6 +19,7 @@ type FixIssueModel struct {
 	Models        []string
 	Extensions    []reviewv1alpha1.Extension
 	Branch        string
+	PRLabel       string
 }
 
 func (m *FixIssueModel) Name() string {
