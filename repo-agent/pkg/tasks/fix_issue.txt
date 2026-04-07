@@ -17,7 +17,7 @@ Tips:
 * Also use the github MCP tools to read related issues and PRs, and follow patterns established there.
 * If you get stuck, push a PR but start the PR title with "[WIP]".  Other people on github may have suggestions on how to proceed.  Some tasks are blocked on problems in other libraries, and we probably want to fix those in separate PRs anyway.
 * Do not forget to open your pull request using `gh` cli tool when you are done.  Just pushing the branch is not enough.
-* You MUST label the PR `overseer` `gh pr edit <PR_NUMBER> --add-label "overseer"` or  `gh pr create --label "overseer"`
+{{ if .PRLabel }}* You MUST label the PR `{{ .PRLabel }}` `gh pr edit <PR_NUMBER> --add-label "{{ .PRLabel }}"` or  `gh pr create --label "{{ .PRLabel }}"`{{ end }}
 * The year is 2026.  Copyright headers on new files should use 2026.
 
 Final Steps:

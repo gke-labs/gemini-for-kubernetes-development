@@ -522,6 +522,8 @@ func (s *Server) createIssueTask(c *gin.Context) {
 		}
 	}
 
+	params["PR_LABEL"] = "repo-agent"
+
 	err = s.K8sManager.CreateSandboxTask(c.Request.Context(), namespace, sandboxName, "Sandbox", taskType, params)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create task", "details": err.Error()})
