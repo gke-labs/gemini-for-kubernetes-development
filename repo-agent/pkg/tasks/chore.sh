@@ -204,13 +204,17 @@ function runChore {
     # Identify the base branch (usually main or master)
     BASE_BRANCH=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name)
 
-    # Check for existing open PRs for this chore
-    EXISTING_PR=$(gh pr list --state open --search "\"chore: ${CHORE_NAME}\" in:title" --json url --jq '.[0].url')
-    if [ -n "$EXISTING_PR" ]; then
-        echo "An open PR already exists for chore ${CHORE_NAME}: ${EXISTING_PR}"
-        echo "An open PR already exists for chore ${CHORE_NAME}: ${EXISTING_PR}" > "$(dirname "${PROMPT_FILE}")/agent-output.txt"
-        popd > /dev/null
-        return
+    if [ "{{ .SkipPR }}" = "true" ]; then
+        echo "SkipPR is true, skipping PR check."
+    else
+        # Check for existing open PRs for this chore
+        EXISTING_PR=$(gh pr list --state open --search "\"chore: ${CHORE_NAME}\" in:title" --json url --jq '.[0].url')
+        if [ -n "$EXISTING_PR" ]; then
+            echo "An open PR already exists for chore ${CHORE_NAME}: ${EXISTING_PR}"
+            echo "An open PR already exists for chore ${CHORE_NAME}: ${EXISTING_PR}" > "$(dirname "${PROMPT_FILE}")/agent-output.txt"
+            popd > /dev/null
+            return
+        fi
     fi
     
     # Create a unique branch for this chore run
