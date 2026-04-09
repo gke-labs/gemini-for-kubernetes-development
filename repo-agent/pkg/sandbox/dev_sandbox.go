@@ -36,6 +36,7 @@ type DevSandboxOptions struct {
 	LLMProvider         string
 	LLMConfigdirRef     string
 	LLMAPIKeySecretName string
+	LLMAPIKey           string
 	Prompt              string
 
 	// Infra

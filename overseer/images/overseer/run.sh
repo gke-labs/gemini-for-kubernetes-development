@@ -42,6 +42,21 @@ if [ -z "$REPO_URL" ]; then
   exit 1
 fi
 
+function refreshLLMToken {
+    if [ -n "$TOKENSCRIPT_DIR" ] && [ -d "$TOKENSCRIPT_DIR" ]; then
+        for script in "$TOKENSCRIPT_DIR"/*; do
+            if [ -f "$script" ]; then
+                echo "Running tokenscript $script"
+                SCRIPT_TOKEN=$("$script")
+                if [ -n "$SCRIPT_TOKEN" ]; then
+                    export GEMINI_API_KEY="$SCRIPT_TOKEN"
+                    break
+                fi
+            fi
+        done
+    fi
+}
+
 function setupGit {
     echo "Running setupGit..."
     
@@ -115,6 +130,9 @@ fi
 while true; do
   echo "$(date): Running Overseer cycle..."
   
+  # Refresh LLM token
+  refreshLLMToken
+
   # Update the repo
   git pull
 
