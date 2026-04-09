@@ -55,8 +55,8 @@ func ReconcileOverseer(ctx context.Context, c client.Client, o *overseerv1alpha1
 	})
 
 	hasTokenScript := false
-	cm := &corev1.ConfigMap{}
-	if err := c.Get(ctx, types.NamespacedName{Name: "tokenscript", Namespace: namespace}, cm); err == nil {
+	secret := &corev1.Secret{}
+	if err := c.Get(ctx, types.NamespacedName{Name: "tokenscript", Namespace: namespace}, secret); err == nil {
 		hasTokenScript = true
 	} else if !errors.IsNotFound(err) {
 		return err
@@ -305,8 +305,8 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 		// Define the volume
 		volume := map[string]interface{}{
 			"name": "tokenscript-vol",
-			"configMap": map[string]interface{}{
-				"name":        "tokenscript",
+			"secret": map[string]interface{}{
+				"secretName":  "tokenscript",
 				"defaultMode": int32(0755),
 			},
 		}

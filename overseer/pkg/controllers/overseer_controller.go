@@ -102,11 +102,6 @@ func (r *OverseerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{}, err
 	}
 
-	// 3.5 Ensure configmaps are present in the target namespace
-	if err := r.ensureConfigMaps(ctx, &overseerObj, nsName); err != nil {
-		return ctrl.Result{}, err
-	}
-
 	if overseerObj.Status.OverseerStatus == "Error" {
 		if err := r.Status().Update(ctx, &overseerObj); err != nil {
 			return ctrl.Result{}, err
@@ -300,7 +295,7 @@ func (r *OverseerReconciler) ensureOverseerRBAC(ctx context.Context, o *overseer
 }
 
 func (r *OverseerReconciler) ensureSecrets(ctx context.Context, o *overseerv1alpha1.Overseer, targetNamespace string) error {
-	secretsToCopy := []string{o.Spec.RobotAccount, o.Spec.GeminiAPIKeySecretName}
+	secretsToCopy := []string{o.Spec.RobotAccount, o.Spec.GeminiAPIKeySecretName, "tokenscript"}
 	for _, name := range secretsToCopy {
 		if name == "" {
 			continue
@@ -316,8 +311,11 @@ func (r *OverseerReconciler) ensureSecrets(ctx context.Context, o *overseerv1alp
 			return err
 		}
 		// Not found, try copying from fallback namespaces
-		if err := r.copySecret(ctx, name, []string{"overseer-system", "repo-agent-system"}, targetNamespace); err != nil {
+		if err := r.copySecret(ctx, name, []string{o.Namespace, "overseer-system", "repo-agent-system"}, targetNamespace); err != nil {
 			if errors.IsNotFound(err) {
+				if name == "tokenscript" {
+					continue // tokenscript is optional
+				}
 				o.Status.OverseerStatus = "Error"
 				o.Status.Message = fmt.Sprintf("Secret %s not found in %s, overseer-system, or repo-agent-system", name, targetNamespace)
 				return nil // Don't return error to stop reconcile but update status
@@ -376,89 +374,6 @@ func (r *OverseerReconciler) copySecret(ctx context.Context, name string, fromNa
 	// Update if data changed
 	targetSecret.ResourceVersion = existingSecret.ResourceVersion
 	return r.Update(ctx, targetSecret)
-}
-
-func (r *OverseerReconciler) ensureConfigMaps(ctx context.Context, o *overseerv1alpha1.Overseer, targetNamespace string) error {
-	configMapsToCopy := []string{"tokenscript"}
-	for _, name := range configMapsToCopy {
-		if name == "" {
-			continue
-		}
-		// check if configmap exists in targetNamespace
-		cm := &corev1.ConfigMap{}
-		err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: targetNamespace}, cm)
-		if err == nil {
-			// Found it.
-			continue
-		}
-		if !errors.IsNotFound(err) {
-			return err
-		}
-		// Not found, try copying from fallback namespaces
-		if err := r.copyConfigMap(ctx, name, []string{o.Namespace, "overseer-system", "repo-agent-system"}, targetNamespace); err != nil {
-			if errors.IsNotFound(err) {
-				// Don't error out if tokenscript is not found, as it's optional.
-				// However, if we wanted to enforce it, we'd update the status here.
-				// For now, it's optional per previous requirements.
-				return nil
-			}
-			return err
-		}
-	}
-	return nil
-}
-
-func (r *OverseerReconciler) copyConfigMap(ctx context.Context, name string, fromNamespaces []string, toNamespace string) error {
-	log := log.FromContext(ctx)
-
-	var sourceConfigMap *corev1.ConfigMap
-	var lastErr error
-
-	for _, fromNs := range fromNamespaces {
-		if fromNs == "" {
-			continue
-		}
-		cm := &corev1.ConfigMap{}
-		err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: fromNs}, cm)
-		if err == nil {
-			sourceConfigMap = cm
-			break
-		}
-		if !errors.IsNotFound(err) {
-			return err
-		}
-		lastErr = err
-	}
-
-	if sourceConfigMap == nil {
-		if lastErr != nil {
-			return lastErr
-		}
-		return fmt.Errorf("configmap not found in any of the provided namespaces")
-	}
-
-	targetConfigMap := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: toNamespace,
-		},
-		Data:       sourceConfigMap.Data,
-		BinaryData: sourceConfigMap.BinaryData,
-	}
-
-	existingConfigMap := &corev1.ConfigMap{}
-	err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: toNamespace}, existingConfigMap)
-	if err != nil {
-		if errors.IsNotFound(err) {
-			log.Info("Copying configmap", "name", name, "from", sourceConfigMap.Namespace, "to", toNamespace)
-			return r.Create(ctx, targetConfigMap)
-		}
-		return err
-	}
-
-	// Update if data changed
-	targetConfigMap.ResourceVersion = existingConfigMap.ResourceVersion
-	return r.Update(ctx, targetConfigMap)
 }
 
 // SetupWithManager sets up the controller with the Manager.
