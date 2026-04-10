@@ -605,9 +605,16 @@ function App() {
     }
   };
 
-  const handleSubmit = (id) => {
+  const handleSubmit = (id, content = null, taskName = null, taskUID = null) => {
     let review;
-    if (reviewViewModes[id] === 'yaml') {
+    if (content) {
+        try {
+            review = yaml.load(content);
+        } catch (e) {
+            alert('Invalid YAML in content. Please fix it before submitting.');
+            return;
+        }
+    } else if (reviewViewModes[id] === 'yaml') {
       try {
         review = yaml.load(yamlDrafts[id]);
       } catch (e) {
@@ -626,7 +633,11 @@ function App() {
     fetch(`/api/repo/${activeRepo.name}/prs/${id}/submitreview`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ review: reviewYAML })
+      body: JSON.stringify({ 
+          review: reviewYAML,
+          task_name: taskName,
+          task_uid: taskUID
+      })
     })
     .then(res => {
       if (res.ok) {
@@ -719,7 +730,7 @@ function App() {
     }).catch(err => console.error("Failed to save issue draft:", err));
   };
 
-  const handleIssueSubmit = (issueId) => {
+  const handleIssueSubmit = (issueId, taskName = null, taskUID = null) => {
     const comment = drafts[issueId];
     if (!comment.trim()) {
       alert("Please leave a comment before Submitting.");
@@ -728,7 +739,11 @@ function App() {
     fetch(`/api/repo/${activeRepo.name}/issues/${issueId}/submitcomment`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ comment })
+      body: JSON.stringify({ 
+          comment,
+          task_name: taskName,
+          task_uid: taskUID
+      })
     })
     .then(res => {
       if (res.ok) {

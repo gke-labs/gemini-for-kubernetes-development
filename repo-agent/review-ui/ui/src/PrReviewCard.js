@@ -181,12 +181,12 @@ function TaskReviewCard({
     const submitTaskDraft = () => {
          // We need to tell the parent to submit THIS content
          if (handleSubmitTask) {
-             handleSubmitTask(prId, localYaml);
+             handleSubmitTask(prId, localYaml, task.name, task.uid);
          } else {
              // Fallback: update global draft then submit?
              // Or call the existing handleSubmit but we need it to support payload override.
              // Let's assume handleSubmit can take content.
-             handleSubmit(prId, localYaml);
+             handleSubmit(prId, localYaml, task.name, task.uid);
          }
     };
 
@@ -770,12 +770,16 @@ function PrReviewCard({
       }).catch(err => console.error("Failed to save task draft", err));
   };
 
-  const handleSubmitTask = (prId, draft) => {
+  const handleSubmitTask = (prId, draft, taskName, taskUID) => {
       if (!repoName) return;
       fetch(`/api/repo/${repoName}/prs/${pr.id}/submitreview`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ review: draft })
+          body: JSON.stringify({ 
+              review: draft,
+              task_name: taskName,
+              task_uid: taskUID
+          })
       })
       .then(res => {
           if (res.ok) {
