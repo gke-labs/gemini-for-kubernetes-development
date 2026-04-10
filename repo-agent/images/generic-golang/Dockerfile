@@ -47,7 +47,12 @@ ENV GOTOOLCHAIN=auto
 # We want a functional python, because gemini-cli likes to use python
 RUN apt-get update && apt-get install -y python3 python3-pip python3-yaml python-is-python3 python3-venv
 
-RUN apt-get update && apt-get install -y git tmux nodejs npm sudo curl
+RUN apt-get update && apt-get install -y git tmux nodejs npm sudo curl apt-transport-https ca-certificates gnupg jq
+
+# Install Google Cloud CLI
+RUN echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | tee -a /etc/apt/sources.list.d/google-cloud-sdk.list && \
+    curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg && \
+    apt-get update && apt-get install -y google-cloud-cli
 
 RUN npm install -g @google/gemini-cli
 
