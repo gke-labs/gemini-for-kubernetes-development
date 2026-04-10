@@ -71,6 +71,7 @@ func (c *SandboxDaemonCommand) Run(ctx context.Context) error {
 		os.Getenv("GOCACHE"),
 		os.Getenv("GOMODCACHE"),
 		os.Getenv("TMPDIR"),
+		os.Getenv("GOTMPDIR"),
 	}
 	for _, dir := range dirs {
 		if dir == "" {
@@ -80,6 +81,9 @@ func (c *SandboxDaemonCommand) Run(ctx context.Context) error {
 			log.Error(err, "failed to create directory", "path", dir)
 		}
 	}
+
+	// Start periodic cleanup in background
+	go startPeriodicCleanup(ctx)
 
 	var gvr schema.GroupVersionResource
 	if c.IssueID != "" {
