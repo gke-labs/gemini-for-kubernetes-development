@@ -12,6 +12,7 @@ import (
 
 func startPeriodicCleanup(ctx context.Context) {
 	log := klog.FromContext(ctx)
+	log.Info("Starting periodic cleanup task")
 	// Ticker for tmp directory cleanup (every hour)
 	tmpTicker := time.NewTicker(1 * time.Hour)
 	defer tmpTicker.Stop()
