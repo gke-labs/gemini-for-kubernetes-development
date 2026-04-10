@@ -244,6 +244,11 @@ func NewGithubClient(ctx context.Context, k8sClient client.Client, repoWatch *re
 	return clients.NewGitHubClientFromHTTP(tc), githubConfig, nil
 }
 
+type cachedUser struct {
+	user   *github.User
+	expiry time.Time
+}
+
 // Reconciler reconciles a RepoWatch object
 type Reconciler struct {
 	client.Client
@@ -251,6 +256,9 @@ type Reconciler struct {
 	NewGithubClient  githubClientFactory
 	RepoSandboxImage string
 	ConfigDirImage   string
+
+	userCacheMu sync.Mutex
+	userCache   map[string]cachedUser
 }
 
 //+kubebuilder:rbac:groups=review.gemini.google.com,resources=repowatches,verbs=get;list;watch;create;update;patch;delete
@@ -298,20 +306,44 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 
 	// Get the current user
-	user, _, err := ghClient.Users.Get(ctx, "")
-	if err != nil {
-		// If we see this error : "GET https://api.github.com/user: 403 Resource not accessible by integration []"
-		// we are running in a github workflow with a GITHUB_TOKEN that does not have access to read user info.
-		// In this case we just log a warning and set fake user info.
-		if strings.Contains(err.Error(), "403 Resource not accessible by integration") {
-			log.Info("Warning: unable to get current user info due to insufficient permissions. Using fallback user info.")
-			user = &github.User{
-				Login: github.String("fake-user"),
+	var user *github.User
+	cacheKey := repoWatch.Namespace + "/" + repoWatch.Name
+	r.userCacheMu.Lock()
+	if r.userCache == nil {
+		r.userCache = make(map[string]cachedUser)
+	}
+	if cached, ok := r.userCache[cacheKey]; ok && time.Now().Before(cached.expiry) {
+		userCopy := *cached.user
+		user = &userCopy
+	}
+	r.userCacheMu.Unlock()
+
+	if user == nil {
+		var err error
+		user, _, err = ghClient.Users.Get(ctx, "")
+		if err != nil {
+			// If we see this error : "GET https://api.github.com/user: 403 Resource not accessible by integration []"
+			// we are running in a github workflow with a GITHUB_TOKEN that does not have access to read user info.
+			// In this case we just log a warning and set fake user info.
+			if strings.Contains(err.Error(), "403 Resource not accessible by integration") {
+				log.Info("Warning: unable to get current user info due to insufficient permissions. Using fallback user info.")
+				user = &github.User{
+					Login: github.String("fake-user"),
+				}
+			} else {
+				log.Error(err, "unable to get current user")
+				r.setAuthCondition(ctx, repoWatch, metav1.ConditionFalse, "TokenInvalid", err.Error())
+				return ctrl.Result{}, err
 			}
 		} else {
-			log.Error(err, "unable to get current user")
-			r.setAuthCondition(ctx, repoWatch, metav1.ConditionFalse, "TokenInvalid", err.Error())
-			return ctrl.Result{}, err
+			r.userCacheMu.Lock()
+			r.userCache[cacheKey] = cachedUser{
+				user:   user,
+				expiry: time.Now().Add(15 * time.Minute),
+			}
+			r.userCacheMu.Unlock()
+			userCopy := *user
+			user = &userCopy
 		}
 	}
 
