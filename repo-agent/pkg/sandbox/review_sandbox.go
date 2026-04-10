@@ -157,6 +157,16 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 				},
 			},
 		},
+	)
+
+	if opt.LLMAPIKey != "" {
+		env = append(env, map[string]interface{}{
+			"name":  "GEMINI_API_KEY",
+			"value": opt.LLMAPIKey,
+		})
+	}
+
+	env = append(env,
 		map[string]interface{}{"name": "ENVBUILDER_CACHE_REPO", "value": "registry.repo-agent-system.svc.cluster.local:5000/envbuilder-cache"},
 		map[string]interface{}{"name": "ENVBUILDER_DEVCONTAINER_DIR", "value": "/"},
 		map[string]interface{}{"name": "ENVBUILDER_GIT_CLONE_SINGLE_BRANCH", "value": "true"},
@@ -174,8 +184,10 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 
 	volumeMounts := []interface{}{
 		map[string]interface{}{"name": "workspaces-pvc", "mountPath": "/workspaces"},
-		map[string]interface{}{"name": "tokens-secret", "mountPath": "/tokens", "readOnly": true},
 		map[string]interface{}{"name": "agent-bin", "mountPath": "/opt/repo-agent"},
+	}
+	if opt.LLMAPIKey == "" {
+		volumeMounts = append(volumeMounts, map[string]interface{}{"name": "tokens-secret", "mountPath": "/tokens", "readOnly": true})
 	}
 	if opt.DevcontainerConfigRef != "" {
 		volumeMounts = append(volumeMounts, map[string]interface{}{
@@ -187,12 +199,14 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 
 	volumes := []interface{}{
 		map[string]interface{}{"name": "agent-bin", "emptyDir": map[string]interface{}{}},
-		map[string]interface{}{
+	}
+	if opt.LLMAPIKey == "" {
+		volumes = append(volumes, map[string]interface{}{
 			"name": "tokens-secret",
 			"secret": map[string]interface{}{
 				"secretName": opt.LLMAPIKeySecretName,
 			},
-		},
+		})
 	}
 	if opt.DevcontainerConfigRef != "" {
 		volumes = append(volumes, map[string]interface{}{

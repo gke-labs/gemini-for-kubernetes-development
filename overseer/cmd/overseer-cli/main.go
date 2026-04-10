@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -324,6 +325,11 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 
 	githubSecretName := overseer.Spec.RobotAccount
 
+	scriptToken, err := getTokenFromScript()
+	if err != nil {
+		fmt.Printf("Warning: failed to get token from script: %v\n", err)
+	}
+
 	opt := sandbox.AgentSandboxOptions{
 		DevSandboxOptions: sandbox.DevSandboxOptions{
 			Name:      sandboxName,
@@ -346,6 +352,7 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 			BotEmail:            botEmail,
 			LLMAPIKeySecretName: apiKeySecretName,
 			GithubSecretName:    githubSecretName,
+			LLMAPIKey:           scriptToken,
 			OverseerName:        overseerName,
 			RepoSandboxImage:    os.Getenv("REPO_SANDBOX_IMAGE"),
 			ConfigDirImage:      os.Getenv("CONFIG_DIR_IMAGE"),
@@ -834,6 +841,12 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 	}
 
 	githubSecretName := overseer.Spec.RobotAccount
+
+	scriptToken, err := getTokenFromScript()
+	if err != nil {
+		fmt.Printf("Warning: failed to get token from script: %v\n", err)
+	}
+
 	opt := sandbox.AgentSandboxOptions{
 		DevSandboxOptions: sandbox.DevSandboxOptions{
 			Name:      name,
@@ -858,6 +871,7 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 			LLMAPIKeySecretName: apiKeySecretName,
 			Prompt:              overseer.Spec.IssuePrompt,
 			GithubSecretName:    githubSecretName,
+			LLMAPIKey:           scriptToken,
 			Image:               overseer.Spec.Image,
 			RepoSandboxImage:    os.Getenv("REPO_SANDBOX_IMAGE"),
 			ConfigDirImage:      os.Getenv("CONFIG_DIR_IMAGE"),
@@ -873,7 +887,7 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 
 	sb, svc := sandbox.NewAgentSandbox(opt)
 
-	_, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sb, metav1.CreateOptions{})
+	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sb, metav1.CreateOptions{})
 	if err != nil {
 		return err
 	}
@@ -906,6 +920,12 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 		maxReviewFiles = 150
 	}
 	githubSecretName := overseer.Spec.RobotAccount
+
+	scriptToken, err := getTokenFromScript()
+	if err != nil {
+		fmt.Printf("Warning: failed to get token from script: %v\n", err)
+	}
+
 	opt := sandbox.ReviewSandboxOptions{
 		DevSandboxOptions: sandbox.DevSandboxOptions{
 			Name:      name,
@@ -925,6 +945,7 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 			LLMAPIKeySecretName:   apiKeySecretName,
 			Prompt:                overseer.Spec.Review.Prompt,
 			GithubSecretName:      githubSecretName,
+			LLMAPIKey:             scriptToken,
 			DevcontainerConfigRef: "",
 			Image:                 overseer.Spec.Image,
 			RepoSandboxImage:      os.Getenv("REPO_SANDBOX_IMAGE"),
@@ -948,7 +969,7 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 
 	sb, svc := sandbox.NewReviewSandbox(opt)
 
-	_, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sb, metav1.CreateOptions{})
+	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sb, metav1.CreateOptions{})
 	if err != nil {
 		return err
 	}
@@ -1193,4 +1214,35 @@ func deleteSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, na
 		}
 	}
 	return nil
+}
+
+func getTokenFromScript() (string, error) {
+	dir := os.Getenv("TOKENSCRIPT_DIR")
+	if dir == "" {
+		return "", nil
+	}
+
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return "", fmt.Errorf("failed to read tokenscript dir: %w", err)
+	}
+
+	for _, f := range files {
+		if f.IsDir() || strings.HasPrefix(f.Name(), "..") {
+			continue
+		}
+
+		path := filepath.Join(dir, f.Name())
+		cmd := exec.Command(path)
+		var out bytes.Buffer
+		cmd.Stdout = &out
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return "", fmt.Errorf("failed to run tokenscript %s: %w", path, err)
+		}
+
+		return strings.TrimSpace(out.String()), nil
+	}
+
+	return "", nil
 }
