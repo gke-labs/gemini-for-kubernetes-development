@@ -56,7 +56,7 @@ func performTmpCleanup(ctx context.Context) {
 
 func performGoCleanup(ctx context.Context) {
 	log := klog.FromContext(ctx)
-	
+
 	// Check if 'go' command exists
 	if _, err := exec.LookPath("go"); err != nil {
 		return
@@ -75,14 +75,14 @@ func performGoCleanup(ctx context.Context) {
 	if err := cmd.Run(); err != nil {
 		log.Error(err, "failed to run go clean -testcache")
 	}
-	
+
 	// We don't clean modcache by default as it's very disruptive (requires re-downloading)
 	// but we could add it if needed: 'go clean -modcache'
 }
 
 func cleanOldFiles(ctx context.Context, dir string, maxAge time.Duration) {
 	log := klog.FromContext(ctx)
-	
+
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if !os.IsNotExist(err) {
