@@ -159,7 +159,7 @@ func runChore(ctx context.Context, name string, file string) error {
 
 	choresMode := os.Getenv("CHORES_MODE")
 	if choresMode == "disabled" {
-		fmt.Printf("Chore handling is disabled (CHORES_MODE=disabled). Skipping.\n")
+		klog.Infof("Chore handling is disabled (CHORES_MODE=disabled). Skipping.")
 		return nil
 	}
 
@@ -239,13 +239,7 @@ func runChore(ctx context.Context, name string, file string) error {
 		return fmt.Errorf("failed to parse RepoURL: %w", err)
 	}
 
-	// Ensure Sandbox exists and is configured correctly
-	klog.Infof("Ensuring sandbox %s exists...", sandboxName)
-	if err := createChoreSandbox(ctx, kubeClient, &overseer, chore, sandboxName); err != nil {
-		return fmt.Errorf("failed to ensure chore sandbox: %w", err)
-	}
-
-	// Check if a task for this chore already exists
+	// 1. Check if a task for this chore already exists BEFORE creating sandbox
 	taskList, err := manager.ListSandboxTasks(ctx, namespace, sandboxName)
 	if err == nil {
 		for i := range taskList.Items {
@@ -276,7 +270,13 @@ func runChore(ctx context.Context, name string, file string) error {
 		}
 	}
 
-	// Create Task
+	// 2. Ensure Sandbox exists and is configured correctly
+	klog.Infof("Ensuring sandbox %s exists...", sandboxName)
+	if err := createChoreSandbox(ctx, kubeClient, &overseer, chore, sandboxName); err != nil {
+		return fmt.Errorf("failed to ensure chore sandbox: %w", err)
+	}
+
+	// 3. Create Task
 	taskType := "chore"
 	klog.Infof("Creating task %s for sandbox %s...", taskType, sandboxName)
 	params := map[string]string{
@@ -450,13 +450,30 @@ func ensureService(ctx context.Context, clientset kubernetes.Interface, namespac
 		if errors.IsAlreadyExists(err) {
 			// If it exists, ensure it has the owner reference if we have one.
 			existingSvc, getErr := clientset.CoreV1().Services(namespace).Get(ctx, svc.Name, metav1.GetOptions{})
-			if getErr == nil && len(existingSvc.OwnerReferences) == 0 && len(svc.OwnerReferences) > 0 {
-				klog.Infof("Service %s already exists but lacks OwnerReferences. Updating.", svc.Name)
-				existingSvc.OwnerReferences = svc.OwnerReferences
-				_, updateErr := clientset.CoreV1().Services(namespace).Update(ctx, existingSvc, metav1.UpdateOptions{})
-				return updateErr
+			if getErr != nil {
+				return fmt.Errorf("failed to get existing service %s: %w", svc.Name, getErr)
 			}
-			return nil // Already exists and is fine (or we can't fix it)
+
+			if len(svc.OwnerReferences) > 0 {
+				needsUpdate := false
+				if len(existingSvc.OwnerReferences) != 1 {
+					needsUpdate = true
+				} else {
+					existingOwner := existingSvc.OwnerReferences[0]
+					newOwner := svc.OwnerReferences[0]
+					if existingOwner.UID != newOwner.UID {
+						needsUpdate = true
+					}
+				}
+
+				if needsUpdate {
+					klog.Infof("Service %s already exists but has missing or mismatched OwnerReferences. Updating.", svc.Name)
+					existingSvc.OwnerReferences = svc.OwnerReferences
+					_, updateErr := clientset.CoreV1().Services(namespace).Update(ctx, existingSvc, metav1.UpdateOptions{})
+					return updateErr
+				}
+			}
+			return nil // Already exists and is fine
 		}
 		return err
 	}
@@ -470,7 +487,7 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 
 	issueMode := os.Getenv("ISSUE_MODE")
 	if issueMode == "disabled" {
-		fmt.Printf("Issue handling is disabled (ISSUE_MODE=disabled). Skipping.\n")
+		klog.Infof("Issue handling is disabled (ISSUE_MODE=disabled). Skipping.")
 		return nil
 	}
 	if issueMode == "dryrun" {
@@ -550,30 +567,11 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 		if err == nil && (!found || replicas > 0) {
 			sandboxIsActive = true
 		}
-	} else if !strings.Contains(err.Error(), "not found") {
+	} else if !errors.IsNotFound(err) {
 		return fmt.Errorf("failed to check if sandbox exists: %w", err)
 	}
 
-	// Check limit only if we need to create or activate a sandbox
-	if !sandboxIsActive && overseer.Spec.MaxActiveIssues != nil {
-		maxIssues := *overseer.Spec.MaxActiveIssues
-		activeCount, err := countActiveSandboxes(ctx, kubeClient.DynamicClient, namespace, overseerName, "issue")
-		if err != nil {
-			return fmt.Errorf("failed to count active issue sandboxes: %w", err)
-		}
-		if int32(activeCount) >= maxIssues {
-			// Instead of returning nil, return an error so overseer logs it and skips
-			return fmt.Errorf("limit_reached: max active issues limit (%d) reached (currently %d active)", maxIssues, activeCount)
-		}
-	}
-
-	// Ensure Sandbox exists and is configured correctly
-	klog.Infof("Ensuring sandbox %s exists...", sandboxName)
-	if err := createIssueSandbox(ctx, kubeClient, &overseer, issue); err != nil {
-		return fmt.Errorf("failed to ensure issue sandbox: %w", err)
-	}
-
-	// Check if a task of the same type already exists for this issue
+	// 1. Check if a task of the same type already exists for this issue BEFORE creating sandbox
 	taskList, err := manager.ListSandboxTasks(ctx, namespace, sandboxName)
 	if err == nil {
 		for i := range taskList.Items {
@@ -604,7 +602,26 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 		}
 	}
 
-	// Create Task
+	// 2. Check limit only if we need to create or activate a sandbox
+	if !sandboxIsActive && overseer.Spec.MaxActiveIssues != nil {
+		maxIssues := *overseer.Spec.MaxActiveIssues
+		activeCount, err := countActiveSandboxes(ctx, kubeClient.DynamicClient, namespace, overseerName, "issue")
+		if err != nil {
+			return fmt.Errorf("failed to count active issue sandboxes: %w", err)
+		}
+		if int32(activeCount) >= maxIssues {
+			// Instead of returning nil, return an error so overseer logs it and skips
+			return fmt.Errorf("limit_reached: max active issues limit (%d) reached (currently %d active)", maxIssues, activeCount)
+		}
+	}
+
+	// 3. Ensure Sandbox exists and is configured correctly
+	klog.Infof("Ensuring sandbox %s exists...", sandboxName)
+	if err := createIssueSandbox(ctx, kubeClient, &overseer, issue); err != nil {
+		return fmt.Errorf("failed to ensure issue sandbox: %w", err)
+	}
+
+	// 4. Create Task
 	klog.Infof("Creating task %s for sandbox %s...", taskType, sandboxName)
 	agentPrompt := customPrompt
 	if agentPrompt == "" {
@@ -645,7 +662,7 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 	}
 
 	if mode == "disabled" {
-		fmt.Printf("PR/Review handling is disabled (%s=disabled). Skipping.\n", modeName)
+		klog.Infof("PR/Review handling is disabled (%s=disabled). Skipping.", modeName)
 		return nil
 	}
 
@@ -718,7 +735,7 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 		if err == nil && (!found || replicas > 0) {
 			sandboxIsActive = true
 		}
-	} else if !strings.Contains(err.Error(), "not found") {
+	} else if !errors.IsNotFound(err) {
 		return fmt.Errorf("failed to check if sandbox exists: %w", err)
 	}
 
@@ -759,8 +776,11 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 					} else {
 						// Another SHA is being reviewed
 						if state == "Running" || state == "Pending" {
-							klog.Infof("PR #%d: Review task for DIFFERENT SHA %s is currently %s. Skipping to avoid concurrency conflict.", number, task.Spec.Params["HEAD_SHA"], state)
-							return nil
+							if time.Since(task.CreationTimestamp.Time) < 2*time.Hour {
+								klog.Infof("PR #%d: Review task for DIFFERENT SHA %s is currently %s (created %v ago). Skipping to avoid concurrency conflict.", number, task.Spec.Params["HEAD_SHA"], state, time.Since(task.CreationTimestamp.Time))
+								return nil
+							}
+							klog.Warningf("PR #%d: Found STALE review task for DIFFERENT SHA %s in state %s (created %v ago). Allowing new task.", number, task.Spec.Params["HEAD_SHA"], state, time.Since(task.CreationTimestamp.Time))
 						}
 					}
 				}
@@ -769,69 +789,89 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 
 		// 2. Then check GitHub for already submitted reviews for this SHA
 		if botLogin == "" && userLogin == "" {
-			klog.Warningf("PR #%d: Neither GITHUB_BOT_LOGIN nor GITHUB_USER_ID is set. Cannot reliably identify previous reviews.", number)
-		}
+			klog.Warningf("PR #%d: Neither GITHUB_BOT_LOGIN nor GITHUB_USER_ID is set. Skipping GitHub review deduplication.", number)
+		} else {
+			// Check for reopened events to allow fresh reviews on resurrected PRs
+			var lastReopenedAt *time.Time
 
-		// Check for reopened events to allow fresh reviews on resurrected PRs
-		var lastReopenedAt *time.Time
-		listEventsOpt := &githubv39.ListOptions{PerPage: 100}
-		for {
-			events, resp, err := ghClient.Issues.ListIssueEvents(ctx, owner, repo, number, listEventsOpt)
-			if err != nil {
-				klog.Warningf("PR #%d: Failed to list events: %v", number, err)
-				break
-			}
-			for _, e := range events {
-				if e.GetEvent() == "reopened" {
-					t := e.GetCreatedAt()
-					if lastReopenedAt == nil || t.After(*lastReopenedAt) {
+			// Try to get cached lastReopenedAt from sandbox annotations
+			if sandboxUnstructured != nil {
+				annotations := sandboxUnstructured.GetAnnotations()
+				if annotations != nil && annotations["lastReopenedAt"] != "" {
+					t, err := time.Parse(time.RFC3339, annotations["lastReopenedAt"])
+					if err == nil {
 						lastReopenedAt = &t
 					}
 				}
 			}
-			if resp.NextPage == 0 {
-				break
-			}
-			listEventsOpt.Page = resp.NextPage
-		}
 
-		listOpt := &githubv39.ListOptions{PerPage: 100}
-		for {
-			reviews, resp, err := ghClient.PullRequests.ListReviews(ctx, owner, repo, number, listOpt)
-			if err != nil {
-				return fmt.Errorf("failed to list reviews for PR %d: %w", number, err)
-			}
-
-			for _, r := range reviews {
-				if r.GetUser() == nil {
-					continue
+			if lastReopenedAt == nil {
+				listEventsOpt := &githubv39.ListOptions{PerPage: 100}
+				for {
+					events, resp, err := ghClient.Issues.ListIssueEvents(ctx, owner, repo, number, listEventsOpt)
+					if err != nil {
+						klog.Warningf("PR #%d: Failed to list events: %v", number, err)
+						break
+					}
+					for _, e := range events {
+						if e.GetEvent() == "reopened" {
+							t := e.GetCreatedAt()
+							if lastReopenedAt == nil || t.After(*lastReopenedAt) {
+								lastReopenedAt = &t
+							}
+						}
+					}
+					if resp.NextPage == 0 {
+						break
+					}
+					listEventsOpt.Page = resp.NextPage
 				}
-				login := r.GetUser().GetLogin()
-				// Handle [bot] suffix for GitHub Apps
-				loginNoBot := strings.TrimSuffix(login, "[bot]")
 
-				isBot := (botLogin != "" && (strings.EqualFold(login, botLogin) || strings.EqualFold(loginNoBot, botLogin))) ||
-					(userLogin != "" && (strings.EqualFold(login, userLogin) || strings.EqualFold(loginNoBot, userLogin)))
+				// Cache it in sandbox annotations if sandbox exists
+				if lastReopenedAt != nil && sandboxUnstructured != nil {
+					_ = manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "lastReopenedAt", lastReopenedAt.Format(time.RFC3339))
+				}
+			}
 
-				if isBot && strings.EqualFold(r.GetCommitID(), headSHA) {
-					state := r.GetState()
-					submittedAt := r.GetSubmittedAt()
+			listOpt := &githubv39.ListOptions{PerPage: 100}
+		ReviewLoop:
+			for {
+				reviews, resp, err := ghClient.PullRequests.ListReviews(ctx, owner, repo, number, listOpt)
+				if err != nil {
+					return fmt.Errorf("failed to list reviews for PR %d: %w", number, err)
+				}
 
-					if lastReopenedAt != nil && submittedAt.Before(*lastReopenedAt) {
-						klog.Infof("PR #%d: Found historical review for SHA %s, but PR was reopened since then. Proceeding with new review.", number, headSHA)
+				for _, r := range reviews {
+					if r.GetUser() == nil {
 						continue
 					}
+					login := r.GetUser().GetLogin()
+					// Handle [bot] suffix for GitHub Apps
+					loginNoBot := strings.TrimSuffix(login, "[bot]")
 
-					// We consider any state (PENDING, COMMENTED, APPROVED, CHANGES_REQUESTED, DISMISSED)
-					// as "already handled" to prevent infinite loops (especially with DISMISSED).
-					klog.Infof("PR #%d: Review for SHA %s already exists on GitHub by %s (state: %s). Skipping.", number, headSHA, login, state)
-					return nil
+					isBot := (botLogin != "" && (strings.EqualFold(login, botLogin) || strings.EqualFold(loginNoBot, botLogin))) ||
+						(userLogin != "" && (strings.EqualFold(login, userLogin) || strings.EqualFold(loginNoBot, userLogin)))
+
+					if isBot && strings.EqualFold(r.GetCommitID(), headSHA) {
+						state := r.GetState()
+						submittedAt := r.GetSubmittedAt()
+
+						if !submittedAt.IsZero() && lastReopenedAt != nil && submittedAt.Before(*lastReopenedAt) {
+							klog.Infof("PR #%d: Found historical review for SHA %s, but PR was reopened since then. Proceeding with new review.", number, headSHA)
+							continue
+						}
+
+						// We consider any state (PENDING, COMMENTED, APPROVED, CHANGES_REQUESTED, DISMISSED)
+						// as "already handled" to prevent infinite loops (especially with DISMISSED).
+						klog.Infof("PR #%d: Review for SHA %s already exists on GitHub by %s (state: %s). Skipping.", number, headSHA, login, state)
+						return nil
+					}
 				}
+				if resp.NextPage == 0 {
+					break ReviewLoop
+				}
+				listOpt.Page = resp.NextPage
 			}
-			if resp.NextPage == 0 {
-				break
-			}
-			listOpt.Page = resp.NextPage
 		}
 	}
 
