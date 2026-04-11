@@ -67,6 +67,7 @@ Below are the existing comments on the PR since the last commit. Look for "--- I
         {{- if .TraceabilityMetadataEnabled }}
 
         ---
+
         <!-- repo-agent-metadata
         sandbox-task: {{ .Metadata.SandboxTask }}
         sandbox-task-uid: {{ .Metadata.SandboxTaskUID }}

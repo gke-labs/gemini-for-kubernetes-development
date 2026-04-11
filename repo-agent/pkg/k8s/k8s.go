@@ -63,6 +63,10 @@ func (m *Manager) GetOverseer(ctx context.Context, name string) (*unstructured.U
 	return m.Client.Resource(OverseerGVR).Get(ctx, name, v1.GetOptions{})
 }
 
+func (m *Manager) GetSandbox(ctx context.Context, namespace, name string) (*unstructured.Unstructured, error) {
+	return m.Client.Resource(SandboxGVR).Namespace(namespace).Get(ctx, name, v1.GetOptions{})
+}
+
 func (m *Manager) ListSandboxes(ctx context.Context, namespace string, labelSelector string) (*unstructured.UnstructuredList, error) {
 	return m.Client.Resource(SandboxGVR).Namespace(namespace).List(ctx, v1.ListOptions{
 		LabelSelector: labelSelector,

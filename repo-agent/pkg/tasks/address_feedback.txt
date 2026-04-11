@@ -29,6 +29,7 @@ Use good PR hygene:
         {{- if .TraceabilityMetadataEnabled }}
 
         ---
+
         <!-- repo-agent-metadata
         sandbox-task: {{ .Metadata.SandboxTask }}
         sandbox-task-uid: {{ .Metadata.SandboxTaskUID }}
@@ -49,6 +50,7 @@ EOF_OVERSEER_COMMENT
         {{- if .TraceabilityMetadataEnabled }}
 
         ---
+
         <!-- repo-agent-metadata
         sandbox-task: {{ .Metadata.SandboxTask }}
         sandbox-task-uid: {{ .Metadata.SandboxTaskUID }}

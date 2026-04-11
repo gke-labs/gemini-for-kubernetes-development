@@ -31,15 +31,39 @@ const (
 	EnvRepoWatchName              = "REPO_WATCH_NAME"
 	EnvSandboxTaskType            = "SANDBOX_TASK_TYPE"
 	EnvMetadataTraceabilityEnable = "METADATA_TRACEABILITY_ENABLED"
+
+	// Metadata footer keys
+	MetadataKeySandboxTask    = "sandbox-task"
+	MetadataKeySandboxTaskUID = "sandbox-task-uid"
+	MetadataKeySandbox        = "sandbox"
+	MetadataKeyRepoWatch      = "repowatch"
+	MetadataKeyTaskType       = "task-type"
+	MetadataKeyTimestamp      = "timestamp"
+
+	// Task types
+	TaskTypeReview          = "review"
+	TaskTypeFixIssue        = "fix-issue"
+	TaskTypeAddressFeedback = "address-feedback"
+	TaskTypeChore           = "chore"
+	TaskTypeDevSetup        = "dev-setup"
+	TaskTypeFeedback        = "feedback"
+	TaskTypeIssueComment    = "issue-comment"
+	TaskTypePRReview        = "pr-review"
 )
 
 type Metadata struct {
-	SandboxTask    string
-	SandboxTaskUID string
-	Sandbox        string
-	RepoWatch      string
-	TaskType       string
-	Timestamp      string
+	// SandboxTask is the name of the SandboxTask that triggered this action.
+	SandboxTask string `json:"sandboxTask,omitempty"`
+	// SandboxTaskUID is the UID of the SandboxTask that triggered this action.
+	SandboxTaskUID string `json:"sandboxTaskUid,omitempty"`
+	// Sandbox is the name of the Sandbox where the action is being performed.
+	Sandbox string `json:"sandbox,omitempty"`
+	// RepoWatch is the name of the RepoWatch CR associated with this sandbox.
+	RepoWatch string `json:"repoWatch,omitempty"`
+	// TaskType is the type of task being performed (e.g. fix-issue, pr-review).
+	TaskType string `json:"taskType,omitempty"`
+	// Timestamp is the time when the action was performed.
+	Timestamp string `json:"timestamp,omitempty"`
 }
 
 func GetMetadata() Metadata {

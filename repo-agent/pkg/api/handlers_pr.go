@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks"
 	"github.com/google/go-github/v39/github"
 	yaml "go.yaml.in/yaml/v3"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -333,7 +334,14 @@ func (s *Server) submitReview(c *gin.Context) {
 
 	if s.TraceabilityMetadataEnabled {
 		taskName, taskUID := s.getTaskMetadata(ctx, namespace, sandboxName, payload.TaskName, payload.TaskUID)
-		footer := fmt.Sprintf("\n\n---\n<!-- repo-agent-metadata\nsandbox-task: %s\nsandbox-task-uid: %s\nsandbox: %s\nrepowatch: %s\ntask-type: pr-review\ntimestamp: %s\n-->", taskName, taskUID, sandboxName, repo, time.Now().Format(time.RFC3339))
+		repowatchName := s.getRepoWatchName(ctx, namespace, sandboxName)
+		footer := fmt.Sprintf("\n\n---\n\n<!-- repo-agent-metadata\n%s: %s\n%s: %s\n%s: %s\n%s: %s\n%s: %s\n%s: %s\n-->",
+			tasks.MetadataKeySandboxTask, taskName,
+			tasks.MetadataKeySandboxTaskUID, taskUID,
+			tasks.MetadataKeySandbox, sandboxName,
+			tasks.MetadataKeyRepoWatch, repowatchName,
+			tasks.MetadataKeyTaskType, tasks.TaskTypePRReview,
+			tasks.MetadataKeyTimestamp, time.Now().Format(time.RFC3339))
 		body := ""
 		if reviewRequest.Body != nil {
 			body = *reviewRequest.Body

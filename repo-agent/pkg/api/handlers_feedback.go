@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks"
 	"github.com/google/go-github/v39/github"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
@@ -58,7 +59,10 @@ func (s *Server) submitFeedback(c *gin.Context) {
 	title := fmt.Sprintf("[repo-agent] %s", payload.Title)
 	body := fmt.Sprintf("User: %s\n\n%s", namespace, payload.Text)
 	if s.TraceabilityMetadataEnabled {
-		footer := fmt.Sprintf("\n\n---\n<!-- repo-agent-metadata\nsandbox-task: n/a\nsandbox-task-uid: n/a\nsandbox: n/a\nrepowatch: n/a\ntask-type: feedback\ntimestamp: %s\n-->", time.Now().Format(time.RFC3339))
+		footer := fmt.Sprintf("\n\n---\n\n<!-- repo-agent-metadata\n%s: n/a\n%s: n/a\n%s: n/a\n%s: n/a\n%s: %s\n%s: %s\n-->",
+			tasks.MetadataKeySandboxTask, tasks.MetadataKeySandboxTaskUID, tasks.MetadataKeySandbox,
+			tasks.MetadataKeyRepoWatch, tasks.MetadataKeyTaskType, tasks.TaskTypeFeedback,
+			tasks.MetadataKeyTimestamp, time.Now().Format(time.RFC3339))
 		// GitHub limit is 65536. Leave some room.
 		body = truncateString(body, 65000-len(footer))
 		body += footer

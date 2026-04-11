@@ -144,6 +144,22 @@ func (s *Server) getTaskMetadata(ctx context.Context, namespace, sandboxName, ta
 	return s.getLatestTaskMetadata(ctx, namespace, sandboxName)
 }
 
+func (s *Server) getRepoWatchName(ctx context.Context, namespace, sandboxName string) string {
+	if sandboxName == "" || sandboxName == "n/a" {
+		return "n/a"
+	}
+	sb, err := s.K8sManager.GetSandbox(ctx, namespace, sandboxName)
+	if err != nil {
+		klog.V(4).Infof("failed to get sandbox %s/%s to retrieve repowatch label: %v", namespace, sandboxName, err)
+		return "n/a"
+	}
+	repowatch := sb.GetLabels()["review.gemini.google.com/repowatch"]
+	if repowatch == "" {
+		return "n/a"
+	}
+	return repowatch
+}
+
 func (s *Server) getLatestTaskMetadata(ctx context.Context, namespace, sandboxName string) (taskName, taskUID string) {
 	taskName = "n/a"
 	taskUID = "n/a"

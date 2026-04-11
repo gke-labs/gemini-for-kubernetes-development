@@ -17,6 +17,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	pkg_github "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks"
 	"github.com/google/go-github/v39/github"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -322,7 +323,14 @@ func (s *Server) submitIssueComment(c *gin.Context) {
 	body := payload.Comment
 	if s.TraceabilityMetadataEnabled {
 		taskName, taskUID := s.getTaskMetadata(ctx, namespace, sandboxName, payload.TaskName, payload.TaskUID)
-		footer := fmt.Sprintf("\n\n---\n<!-- repo-agent-metadata\nsandbox-task: %s\nsandbox-task-uid: %s\nsandbox: %s\nrepowatch: %s\ntask-type: issue-comment\ntimestamp: %s\n-->", taskName, taskUID, sandboxName, repo, time.Now().Format(time.RFC3339))
+		repowatchName := s.getRepoWatchName(ctx, namespace, sandboxName)
+		footer := fmt.Sprintf("\n\n---\n\n<!-- repo-agent-metadata\n%s: %s\n%s: %s\n%s: %s\n%s: %s\n%s: %s\n%s: %s\n-->",
+			tasks.MetadataKeySandboxTask, taskName,
+			tasks.MetadataKeySandboxTaskUID, taskUID,
+			tasks.MetadataKeySandbox, sandboxName,
+			tasks.MetadataKeyRepoWatch, repowatchName,
+			tasks.MetadataKeyTaskType, tasks.TaskTypeIssueComment,
+			tasks.MetadataKeyTimestamp, time.Now().Format(time.RFC3339))
 		body = truncateString(body, 65000-len(footer))
 		body += footer
 	}

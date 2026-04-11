@@ -183,6 +183,7 @@ ${COMMIT_MSG}"
         PR_BODY="${PR_BODY}
 
 ---
+
 <!-- repo-agent-metadata
 sandbox-task: {{ .Metadata.SandboxTask }}
 sandbox-task-uid: {{ .Metadata.SandboxTaskUID }}
