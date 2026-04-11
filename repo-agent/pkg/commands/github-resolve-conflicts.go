@@ -140,10 +140,10 @@ func (c *GithubResolveConflictsCommand) loadGithubObjects(ctx context.Context) e
 	}
 
 	if c.BaseRef == "" && c.pr != nil {
-		c.BaseRef = c.pr.Base.GetRef()
+		c.BaseRef = c.pr.BaseRef()
 	}
 	if c.HeadRef == "" && c.pr != nil {
-		c.HeadRef = c.pr.Head.GetRef()
+		c.HeadRef = c.pr.HeadRef()
 	}
 
 	if c.BaseRef == "" || c.HeadRef == "" {

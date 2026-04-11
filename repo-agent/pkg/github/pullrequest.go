@@ -76,3 +76,15 @@ func (p *PullRequest) Body() string {
 func (p *PullRequest) HeadRef() string {
 	return p.pr.GetHead().GetRef()
 }
+
+func (p *PullRequest) BaseRef() string {
+	return p.pr.GetBase().GetRef()
+}
+
+func (p *PullRequest) HeadSHA() string {
+	return p.pr.GetHead().GetSHA()
+}
+
+func (p *PullRequest) BaseSHA() string {
+	return p.pr.GetBase().GetSHA()
+}
