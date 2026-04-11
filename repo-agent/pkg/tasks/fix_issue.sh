@@ -80,9 +80,11 @@ function setupGitRepos {
     echo "cloning repository"
     (cd /workspaces/ && git clone ${CLONE_URL})
 
-    (cd "/workspaces/${REPO_NAME}" && gh repo fork --remote)
+    echo "renaming origin to upstream"
+    (cd "/workspaces/${REPO_NAME}" && git remote rename origin upstream)
+
     echo "running gh repo fork"
-    (cd "/workspaces/${REPO_NAME}" && gh repo fork --remote)
+    (cd "/workspaces/${REPO_NAME}" && gh repo fork --remote --remote-name origin)
 
     echo "running gh repo set-default"
     (cd "/workspaces/${REPO_NAME}" && gh repo set-default "${CLONE_URL}")

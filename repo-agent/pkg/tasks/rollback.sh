@@ -51,12 +51,14 @@ function setupGitRepos {
     else
         echo "cloning repository"
         git clone "${CLONE_URL}" "/workspaces/${REPO_NAME}"
+        echo "renaming origin to upstream"
+        (cd "/workspaces/${REPO_NAME}" && git remote rename origin upstream)
     fi
 
     pushd "/workspaces/${REPO_NAME}" > /dev/null
     
     echo "running gh repo fork"
-    gh repo fork --remote || true
+    gh repo fork --remote --remote-name origin || true
 
     echo "running gh repo set-default"
     gh repo set-default "${CLONE_URL}" || true
