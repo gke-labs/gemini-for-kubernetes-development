@@ -91,6 +91,14 @@ func (c *GithubResolveConflictsCommand) InitDefaults() {
 		c.AgentName = "gemini-cli"
 	}
 
+	if c.CustomPrompt == "" {
+		if promptFile := os.Getenv("AGENT_PROMPT_FILE"); promptFile != "" {
+			if data, err := os.ReadFile(promptFile); err == nil {
+				c.CustomPrompt = string(data)
+			}
+		}
+	}
+
 	if c.WorkspaceDir == "" {
 		c.WorkspaceDir = "/workspaces"
 	}
@@ -193,13 +201,13 @@ func (c *GithubResolveConflictsCommand) Run(ctx context.Context) error {
 
 	promptPath := c.taskPath("agent-prompt.txt")
 	task := tasks.ResolveConflictsModel{
-		PullRequest: c.pr,
-		Repo:        c.repo,
-		User:        c.user,
-		PromptFile:  promptPath,
-		Models:      strings.Split(c.Model, ","),
-		BaseRef:     c.BaseRef,
-		HeadRef:     c.HeadRef,
+		PullRequest:  c.pr,
+		Repo:         c.repo,
+		User:         c.user,
+		PromptFile:   promptPath,
+		Models:       strings.Split(c.Model, ","),
+		BaseRef:      c.BaseRef,
+		HeadRef:      c.HeadRef,
 		CustomPrompt: c.CustomPrompt,
 	}
 

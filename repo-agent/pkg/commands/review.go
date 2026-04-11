@@ -114,6 +114,13 @@ func (c *ReviewCommand) InitDefaults() {
 		c.AgentPrompt = os.Getenv("AGENT_PROMPT")
 	}
 	if c.AgentPrompt == "" {
+		if promptFile := os.Getenv("AGENT_PROMPT_FILE"); promptFile != "" {
+			if data, err := os.ReadFile(promptFile); err == nil {
+				c.AgentPrompt = string(data)
+			}
+		}
+	}
+	if c.AgentPrompt == "" {
 		c.AgentPrompt = os.Getenv("prompt")
 	}
 	if c.AgentPrompt == "" {

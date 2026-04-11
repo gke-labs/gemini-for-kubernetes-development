@@ -57,6 +57,14 @@ func BuildChoreCommand() *cobra.Command {
 }
 
 func (c *ChoreCommand) InitDefaults() {
+	if c.AgentPrompt == "" {
+		if promptFile := os.Getenv("AGENT_PROMPT_FILE"); promptFile != "" {
+			if data, err := os.ReadFile(promptFile); err == nil {
+				c.AgentPrompt = string(data)
+			}
+		}
+	}
+
 	if c.WorkspaceDir == "" {
 		c.WorkspaceDir = "/workspaces"
 	}

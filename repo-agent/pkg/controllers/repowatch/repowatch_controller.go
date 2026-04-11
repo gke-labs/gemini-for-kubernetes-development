@@ -2346,6 +2346,13 @@ func (r *Reconciler) reconcileReviewConflicts(ctx context.Context, repoWatch *re
 	if pr.Mergeable != nil && !*pr.Mergeable {
 		log.Info("Found merge conflicts in PR, creating resolve-conflicts task", "pr", *pr.Number, "sha", headSHA)
 
+		baseRef := pr.Base.GetRef()
+		headRef := pr.Head.GetRef()
+		if baseRef == "" || headRef == "" {
+			log.Error(nil, "BaseRef or HeadRef is empty, skipping conflict resolution", "pr", *pr.Number)
+			return nil
+		}
+
 		// Ensure sandbox is scaled up
 		replicas, found, err := unstructured.NestedInt64(sandbox.Object, "spec", "replicas")
 		if err != nil || !found || replicas == 0 {
@@ -2364,8 +2371,8 @@ func (r *Reconciler) reconcileReviewConflicts(ctx context.Context, repoWatch *re
 		params := map[string]string{
 			"HEAD_SHA":     headSHA,
 			"PR_NUMBER":    fmt.Sprintf("%d", *pr.Number),
-			"BASE_REF":     pr.Base.GetRef(),
-			"HEAD_REF":     pr.Head.GetRef(),
+			"BASE_REF":     baseRef,
+			"HEAD_REF":     headRef,
 			"AGENT_PROMPT": repoWatch.Spec.Review.LLM.Prompt,
 		}
 		// Add LLM params from ReviewSpec
