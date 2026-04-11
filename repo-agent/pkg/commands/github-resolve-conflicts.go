@@ -34,6 +34,7 @@ type GithubResolveConflictsCommand struct {
 	ExtensionsJSON  string
 	BaseRef         string
 	HeadRef         string
+	CustomPrompt    string
 
 	// loaded objects
 	pr        *github.PullRequest
@@ -79,6 +80,7 @@ func BuildGithubResolveConflictsCommand() *cobra.Command {
 	cmd.Flags().StringVar(&resolveCommand.ExtensionsJSON, "extensions", os.Getenv("AGENT_LLM_EXTENSIONS"), "Extensions JSON")
 	cmd.Flags().StringVar(&resolveCommand.BaseRef, "base-ref", os.Getenv("BASE_REF"), "Base branch ref")
 	cmd.Flags().StringVar(&resolveCommand.HeadRef, "head-ref", os.Getenv("HEAD_REF"), "Head branch ref")
+	cmd.Flags().StringVar(&resolveCommand.CustomPrompt, "custom-prompt", os.Getenv("AGENT_PROMPT"), "Custom prompt instructions")
 	cmd.Flags().BoolVar(&resolveCommand.InPod, "in-pod", false, "Whether running inside the pod")
 
 	return cmd
@@ -130,11 +132,22 @@ func (c *GithubResolveConflictsCommand) loadGithubObjects(ctx context.Context) e
 		return fmt.Errorf("invalid GIT_HTML_URL format: %s", c.RepoURL)
 	}
 	owner := parts[0]
-	repoName := parts[1]
+	repoName := strings.TrimSuffix(parts[1], ".git")
 
 	c.pr, err = githubAPI.GetPullRequest(ctx, owner, repoName, c.PRNumber)
 	if err != nil {
 		return err
+	}
+
+	if c.BaseRef == "" && c.pr != nil {
+		c.BaseRef = c.pr.Base.GetRef()
+	}
+	if c.HeadRef == "" && c.pr != nil {
+		c.HeadRef = c.pr.Head.GetRef()
+	}
+
+	if c.BaseRef == "" || c.HeadRef == "" {
+		return fmt.Errorf("BaseRef or HeadRef is empty")
 	}
 
 	c.repo, err = githubAPI.GetRepositoryFromHTMLUrl(ctx, c.RepoURL)
@@ -187,6 +200,7 @@ func (c *GithubResolveConflictsCommand) Run(ctx context.Context) error {
 		Models:      strings.Split(c.Model, ","),
 		BaseRef:     c.BaseRef,
 		HeadRef:     c.HeadRef,
+		CustomPrompt: c.CustomPrompt,
 	}
 
 	if c.ExtensionsJSON != "" {

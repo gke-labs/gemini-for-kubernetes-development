@@ -19,7 +19,13 @@ PR Description:
 - Use your tools to list conflicting files.
 - Read the content of conflicting files.
 - Apply the resolution to each file.
+- **Do not commit your changes.** The automation script will handle staging and committing the resolved files.
 - Verify that no conflict markers remain.
 - You can run tests if available to verify your resolution.
+
+{{ if .CustomPrompt }}
+### Additional Instructions
+{{ .CustomPrompt }}
+{{ end }}
 
 {{ .User.Name }}, I will now resolve the conflicts for you.

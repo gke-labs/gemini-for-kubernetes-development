@@ -90,7 +90,9 @@ function attemptMerge {
     echo "Attempting to merge ${BASE_REF} into current branch..."
     cd "/workspaces/${REPO_NAME}"
     git fetch origin "${BASE_REF}"
-    if git merge "origin/${BASE_REF}"; then
+    # Ensure we have the latest of the current branch too
+    git pull origin $(git branch --show-current) || echo "Pull failed, proceeding with current state"
+    if git merge "origin/${BASE_REF}" -m "Merge branch 'origin/${BASE_REF}' into HEAD"; then
         echo "Merge successful without conflicts."
         return 0
     else
@@ -113,6 +115,7 @@ function runGemini {
     SUCCESS=false
     for MODEL in "${MODELS[@]}"; do
         echo "Trying model: $MODEL"
+        # We use --yolo because this runs in a sandboxed pod and we need automated resolution.
         if (cd "/workspaces/${REPO_NAME}" && export GEMINI_API_KEY="${GEMINI_API_KEY}" && gemini --yolo --model "$MODEL" --output-format stream-json < ${PROMPT_FILE} | /opt/repo-agent/gemini-stream-processor --output "$(dirname "${PROMPT_FILE}")/gemini-output.json"); then
              echo "Gemini execution successful with model: $MODEL"
              SUCCESS=true
@@ -126,12 +129,17 @@ function runGemini {
         echo "All models failed to resolve conflicts."
         exit 1
     fi
+
+    echo "Staging and committing resolved files..."
+    cd "/workspaces/${REPO_NAME}"
+    git add .
+    git commit -m "chore: resolve merge conflicts using Gemini" || echo "Nothing to commit"
 }
 
 function verifyResolution {
     echo "Verifying conflict resolution..."
     cd "/workspaces/${REPO_NAME}"
-    if grep -r "<<<<<<<" .; then
+    if grep -r --exclude-dir=.git "<<<<<<<" .; then
         echo "Conflict markers still present! Resolution failed."
         exit 1
     fi
@@ -141,7 +149,7 @@ function verifyResolution {
 function pushChanges {
     echo "Pushing resolved changes..."
     cd "/workspaces/${REPO_NAME}"
-    git push origin HEAD
+    git push
 }
 
 # Main execution

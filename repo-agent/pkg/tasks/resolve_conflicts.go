@@ -11,14 +11,15 @@ import (
 var _ Task = &ResolveConflictsModel{}
 
 type ResolveConflictsModel struct {
-	Repo        *github.Repository
-	PullRequest *github.PullRequest
-	User        *github.User
-	PromptFile  string
-	Models      []string
-	Extensions  []reviewv1alpha1.Extension
-	BaseRef     string
-	HeadRef     string
+	Repo         *github.Repository
+	PullRequest  *github.PullRequest
+	User         *github.User
+	PromptFile   string
+	Models       []string
+	Extensions   []reviewv1alpha1.Extension
+	BaseRef      string
+	HeadRef      string
+	CustomPrompt string
 }
 
 func (m *ResolveConflictsModel) Name() string {

@@ -2294,6 +2294,11 @@ func (r *Reconciler) reconcileReviewConflicts(ctx context.Context, repoWatch *re
 		return nil
 	}
 
+	headSHA := pr.Head.GetSHA()
+	if headSHA == "" {
+		return nil
+	}
+
 	// List tasks to check for existing resolve-conflicts task for this SHA
 	tasks := &sandboxtaskv1alpha1.SandboxTaskList{}
 	if err := r.List(ctx, tasks, client.InNamespace(sandbox.GetNamespace()), client.MatchingLabels{"sandbox.gemini.google.com/sandbox-name": sandbox.GetName()}); err != nil {
@@ -2301,24 +2306,33 @@ func (r *Reconciler) reconcileReviewConflicts(ctx context.Context, repoWatch *re
 	}
 
 	activeTaskExists := false
-	var lastSHAResolved string
+	alreadyAttemptedThisSHA := false
 	for _, task := range tasks.Items {
+		if task.Spec.Type != "resolve-conflicts" {
+			continue
+		}
 		state := task.Status.TaskState
 		if state == "" || state == "Pending" || state == "Running" {
 			activeTaskExists = true
 		}
-		if task.Spec.Type == "resolve-conflicts" {
-			if sha, ok := task.Spec.Params["HEAD_SHA"]; ok {
-				lastSHAResolved = sha
-			}
+		if task.Spec.Params["HEAD_SHA"] == headSHA {
+			alreadyAttemptedThisSHA = true
 		}
 	}
 
-	if activeTaskExists {
+	if activeTaskExists || alreadyAttemptedThisSHA {
+		return nil
+	}
+
+	// Check Sandbox annotations to see if we've already checked this SHA and it was mergeable
+	annotations := sandbox.GetAnnotations()
+	if annotations != nil && annotations["sandbox.gemini.google.com/last-conflict-check-sha"] == headSHA {
 		return nil
 	}
 
 	// Check mergeability
+	// The PullRequests.List API does not return the mergeable field, so we might need to fetch the full PR.
+	// But we only do this if we haven't already recorded checking this SHA.
 	if pr.Mergeable == nil {
 		// Need to fetch full PR object to get mergeability
 		fullPR, _, err := ghClient.PullRequests.Get(ctx, owner, repo, *pr.Number)
@@ -2330,26 +2344,19 @@ func (r *Reconciler) reconcileReviewConflicts(ctx context.Context, repoWatch *re
 
 	// Mergeable is false if there are conflicts
 	if pr.Mergeable != nil && !*pr.Mergeable {
-		headSHA := pr.Head.GetSHA()
-		if headSHA == "" {
-			return nil
-		}
-
-		if lastSHAResolved == headSHA {
-			// Already tried to resolve for this SHA
-			return nil
-		}
-
 		log.Info("Found merge conflicts in PR, creating resolve-conflicts task", "pr", *pr.Number, "sha", headSHA)
 
 		// Ensure sandbox is scaled up
 		replicas, found, err := unstructured.NestedInt64(sandbox.Object, "spec", "replicas")
 		if err != nil || !found || replicas == 0 {
+			// We use a fresh copy of the sandbox for the update to avoid conflicts if possible
+			patch := client.MergeFrom(sandbox.DeepCopy())
 			if err := unstructured.SetNestedField(sandbox.Object, int64(1), "spec", "replicas"); err != nil {
 				log.Error(err, "unable to set replicas to 1")
 			} else {
-				if err := r.Update(ctx, sandbox); err != nil {
-					log.Error(err, "unable to scale up sandbox")
+				if err := r.Patch(ctx, sandbox, patch); err != nil {
+					log.Error(err, "unable to patch sandbox for scale up")
+					// Continue anyway, maybe it's already scaled up or will be
 				}
 			}
 		}
@@ -2376,7 +2383,20 @@ func (r *Reconciler) reconcileReviewConflicts(ctx context.Context, repoWatch *re
 			params["AGENT_LLM_EXTENSIONS"] = string(exts)
 		}
 
-		return r.createSandboxTask(ctx, repoWatch, sandbox, sandbox.GetName(), "", "resolve-conflicts", params)
+		if err := r.createSandboxTask(ctx, repoWatch, sandbox, sandbox.GetName(), "", "resolve-conflicts", params); err != nil {
+			return err
+		}
+	}
+
+	// Update annotation to record that we've checked this SHA
+	patch := client.MergeFrom(sandbox.DeepCopy())
+	if annotations == nil {
+		annotations = make(map[string]string)
+	}
+	annotations["sandbox.gemini.google.com/last-conflict-check-sha"] = headSHA
+	sandbox.SetAnnotations(annotations)
+	if err := r.Patch(ctx, sandbox, patch); err != nil {
+		log.Error(err, "failed to patch sandbox annotation for conflict check", "sandbox", sandbox.GetName())
 	}
 
 	return nil
