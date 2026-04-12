@@ -127,11 +127,18 @@ func (s *Server) ensureGeminiKeySet(c *gin.Context, namespace string) bool {
 // It also ensures that the truncated body doesn't leave an open code block and provides
 // a placeholder for empty content to avoid blank notifications.
 func truncateString(s string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+
 	const fallback = "[Bot-generated content]"
 	const truncatedFallback = "[Bot-generated content (truncated)]"
 
 	if s == "" {
-		return fallback
+		if len(fallback) <= limit {
+			return fallback
+		}
+		return truncateToRuneBoundary(fallback, limit)
 	}
 
 	if len(s) <= limit {
@@ -145,13 +152,7 @@ func truncateString(s string, limit int) string {
 		safeLimit = 0
 	}
 
-	res := ""
-	for i := safeLimit; i >= 0; i-- {
-		if i < len(s) && utf8.RuneStart(s[i]) {
-			res = s[:i]
-			break
-		}
-	}
+	res := truncateToRuneBoundary(s, safeLimit)
 
 	// Check for open code blocks (triple backticks or tildes)
 	if strings.Count(res, "```")%2 != 0 {
@@ -161,22 +162,33 @@ func truncateString(s string, limit int) string {
 		res += "\n~~~"
 	}
 
-	if res == "" && limit > 0 {
+	if res == "" || len(res) > limit {
 		if len(truncatedFallback) <= limit {
 			return truncatedFallback
 		}
 		// Last resort: just cut it
-		for i := limit; i >= 0; i-- {
-			if i < len(s) && utf8.RuneStart(s[i]) {
-				return s[:i]
-			}
-		}
+		return truncateToRuneBoundary(s, limit)
 	}
 	return res
 }
 
+func truncateToRuneBoundary(s string, limit int) string {
+	if len(s) <= limit {
+		return s
+	}
+	for i := limit; i >= 0; i-- {
+		if i < len(s) && utf8.RuneStart(s[i]) {
+			return s[:i]
+		}
+	}
+	return ""
+}
+
 func (s *Server) getTaskMetadata(ctx context.Context, namespace, sandboxName, taskName, taskUID string) (string, string) {
-	if taskName != "" && taskUID != "" && taskName != "n/a" && taskUID != "n/a" {
+	if taskName == "n/a" || taskUID == "n/a" {
+		return "n/a", "n/a"
+	}
+	if taskName != "" && taskUID != "" {
 		return taskName, taskUID
 	}
 	// Fallback to latest

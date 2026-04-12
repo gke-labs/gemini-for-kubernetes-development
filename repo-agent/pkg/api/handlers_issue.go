@@ -735,7 +735,7 @@ func (s *Server) getIssueCommits(c *gin.Context) {
 		return
 	}
 
-	var result []gin.H
+	result := []gin.H{}
 	for _, commit := range commits {
 		sha := commit.GetSHA()
 		message := ""

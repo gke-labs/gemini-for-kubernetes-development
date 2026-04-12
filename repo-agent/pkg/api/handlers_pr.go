@@ -360,7 +360,11 @@ func (s *Server) submitReview(c *gin.Context) {
 	}
 
 	// Check if the review is effectively empty before adding metadata
-	isEmpty := (reviewRequest.Body == nil || *reviewRequest.Body == "") && len(reviewRequest.Comments) == 0
+	bodyForEmptyCheck := ""
+	if reviewRequest.Body != nil {
+		bodyForEmptyCheck = strings.TrimSpace(*reviewRequest.Body)
+	}
+	isEmpty := bodyForEmptyCheck == "" && len(reviewRequest.Comments) == 0
 	if isEmpty {
 		log.Info("Review is empty, skipping submission")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Review is empty"})
@@ -684,7 +688,7 @@ func (s *Server) getPRCommits(c *gin.Context) {
 		return
 	}
 
-	var result []gin.H
+	result := []gin.H{}
 	for _, commit := range commits {
 		sha := commit.GetSHA()
 		message := ""

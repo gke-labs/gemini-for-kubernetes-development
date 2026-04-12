@@ -153,7 +153,7 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		upperK := strings.ToUpper(k)
 		switch upperK {
 		case tasks.EnvSandboxTaskName, tasks.EnvSandboxTaskUID, tasks.EnvSandboxName, tasks.EnvRepoWatchName, tasks.EnvSandboxTaskType, tasks.EnvMetadataTraceabilityEnable:
-			klog.Warningf("System traceability metadata overrides user parameter %q", k)
+			klog.Warningf("System traceability metadata overrides user parameter %q. Using system-defined value instead for security and integrity.", k)
 		}
 		commonEnv = append(commonEnv, fmt.Sprintf("%s=%s", upperK, v))
 	}

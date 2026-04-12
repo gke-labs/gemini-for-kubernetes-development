@@ -60,10 +60,10 @@ func TestTruncateString(t *testing.T) {
 			want:  "世", // safeLimit = 13 - 10 = 3. s[:3] is "世".
 		},
 		{
-			name:  "Empty string",
+			name:  "Empty string with small limit",
 			s:     "",
 			limit: 5,
-			want:  "[Bot-generated content]",
+			want:  "[Bot-",
 		},
 		{
 			name:  "Zero limit",
@@ -182,6 +182,13 @@ func TestGetTaskMetadata(t *testing.T) {
 		gotName, gotUID := server.getTaskMetadata(ctx, namespace, sandboxName, "task1", "uid1")
 		if gotName != "task1" || gotUID != "uid1" {
 			t.Errorf("getTaskMetadata() = (%q, %q), want (%q, %q)", gotName, gotUID, "task1", "uid1")
+		}
+	})
+
+	t.Run("Explicit n/a provided - no fallback", func(t *testing.T) {
+		gotName, gotUID := server.getTaskMetadata(ctx, namespace, sandboxName, "n/a", "n/a")
+		if gotName != "n/a" || gotUID != "n/a" {
+			t.Errorf("getTaskMetadata() with n/a = (%q, %q), want (%q, %q)", gotName, gotUID, "n/a", "n/a")
 		}
 	})
 
