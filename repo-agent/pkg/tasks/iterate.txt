@@ -11,4 +11,20 @@ Guidelines:
 4. **Avoid committing or pushing large binary files.** Build artifacts (like the `manager` binary in many controller projects) should be cleaned up before committing or added to `.gitignore`.
 5. **Cleaning up:** If you run build commands (like `make`, `go build`, `go test`), ensure you clean up any generated binaries or artifacts before committing. Use `make clean` if available, or manually remove them.
 6. Do not delete files unless explicitly asked.
-7. If the request is vague, make a reasonable attempt to fulfill it based on common practices.
+8. If the request is vague, make a reasonable attempt to fulfill it based on common practices.
+{{- if .TraceabilityMetadataEnabled }}
+9. Append the following structured metadata footer as an HTML comment to any GitHub issue, PR, or comment you create:
+```html
+---
+
+<!-- repo-agent-metadata
+sandbox-task: {{ .Metadata.SandboxTask }}
+sandbox-task-uid: {{ .Metadata.SandboxTaskUID }}
+sandbox: {{ .Metadata.Sandbox }}
+repowatch: {{ .Metadata.RepoWatch }}
+task-type: {{ .Metadata.TaskType }}
+timestamp: {{ .Metadata.Timestamp }}
+-->
+```
+{{- end }}
+

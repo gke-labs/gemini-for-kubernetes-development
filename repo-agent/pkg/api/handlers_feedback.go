@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -23,21 +24,34 @@ func (s *Server) submitFeedback(c *gin.Context) {
 	}
 
 	var payload struct {
-		Title string `json:"title"`
-		Text  string `json:"text"`
-		Image string `json:"image"` // base64
+		Title *string `json:"title"`
+		Text  *string `json:"text"`
+		Image *string `json:"image"` // base64
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	if payload.Title == "" {
+	titleText := ""
+	if payload.Title != nil {
+		titleText = *payload.Title
+	}
+	bodyText := ""
+	if payload.Text != nil {
+		bodyText = *payload.Text
+	}
+	imageText := ""
+	if payload.Image != nil {
+		imageText = *payload.Image
+	}
+
+	if titleText == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Title is required"})
 		return
 	}
 
-	if payload.Text == "" {
+	if bodyText == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Text is required"})
 		return
 	}
@@ -56,20 +70,24 @@ func (s *Server) submitFeedback(c *gin.Context) {
 	// Create Issue
 	owner := "gke-labs"
 	repo := "gemini-for-kubernetes-development"
-	title := fmt.Sprintf("[repo-agent] %s", payload.Title)
-	body := fmt.Sprintf("User: %s\n\n%s", namespace, payload.Text)
+	title := fmt.Sprintf("[repo-agent] %s", titleText)
+	body := fmt.Sprintf("User: %s\n\n%s", namespace, bodyText)
 	if s.TraceabilityMetadataEnabled {
-		footer := fmt.Sprintf("\n\n---\n\n<!-- repo-agent-metadata\n%s: n/a\n%s: n/a\n%s: n/a\n%s: n/a\n%s: %s\n%s: %s\n-->",
-			tasks.MetadataKeySandboxTask, tasks.MetadataKeySandboxTaskUID, tasks.MetadataKeySandbox,
-			tasks.MetadataKeyRepoWatch, tasks.MetadataKeyTaskType, tasks.TaskTypeFeedback,
-			tasks.MetadataKeyTimestamp, time.Now().Format(time.RFC3339))
-		// GitHub limit is 65536. Leave some room.
-		body = truncateString(body, 65000-len(footer))
-		body += footer
+		if !strings.Contains(body, "<!-- repo-agent-metadata") {
+			footer := fmt.Sprintf("\n\n---\n\n<!-- repo-agent-metadata\n%s: n/a\n%s: n/a\n%s: n/a\n%s: n/a\n%s: %s\n%s: %s\n-->",
+				tasks.MetadataKeySandboxTask, tasks.MetadataKeySandboxTaskUID, tasks.MetadataKeySandbox,
+				tasks.MetadataKeyRepoWatch, tasks.MetadataKeyTaskType, tasks.TaskTypeFeedback,
+				tasks.MetadataKeyTimestamp, time.Now().Format(time.RFC3339))
+			// GitHub limit is 65536. Leave some room.
+			body = truncateString(body, 65000-len(footer))
+			body += footer
+		}
+	} else {
+		log.V(4).Info("Traceability metadata is disabled, skipping footer")
 	}
 	labels := []string{"feedback"}
 
-	if payload.Image != "" {
+	if imageText != "" {
 		body += "\n\n[Screenshot attached in request but ignored due to missing image host configuration]"
 	}
 

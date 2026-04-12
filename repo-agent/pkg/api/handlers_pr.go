@@ -52,7 +52,7 @@ func (s *Server) getPRTasks(c *gin.Context) {
 		return
 	}
 
-	var tasks []models.Task
+	tasksList := []models.Task{}
 	for _, taskItem := range taskList.Items {
 		taskType := taskItem.Spec.Type
 		taskState := taskItem.Status.TaskState
@@ -73,7 +73,7 @@ func (s *Server) getPRTasks(c *gin.Context) {
 			tAgentStateMessage = tAnnotations["agentStateMessage"]
 		}
 
-		tasks = append(tasks, models.Task{
+		tasksList = append(tasksList, models.Task{
 			Name:              taskItem.GetName(),
 			UID:               string(taskItem.GetUID()),
 			Type:              taskType,
@@ -89,11 +89,11 @@ func (s *Server) getPRTasks(c *gin.Context) {
 		})
 	}
 	// Sort tasks by creation timestamp (newest first)
-	sort.Slice(tasks, func(i, j int) bool {
-		return tasks[i].CreationTimestamp > tasks[j].CreationTimestamp
+	sort.Slice(tasksList, func(i, j int) bool {
+		return tasksList[i].CreationTimestamp > tasksList[j].CreationTimestamp
 	})
 
-	c.JSON(http.StatusOK, tasks)
+	c.JSON(http.StatusOK, tasksList)
 }
 
 func (s *Server) listPRsFromK8s(ctx context.Context, namespace, repo string) ([]models.PR, error) {
@@ -111,7 +111,7 @@ func (s *Server) listPRsFromK8s(ctx context.Context, namespace, repo string) ([]
 		return nil, fmt.Errorf("failed to list Sandbox CRs: %w", err)
 	}
 
-	var prs []models.PR
+	prs := []models.PR{}
 	for _, item := range list.Items {
 		if item.GetDeletionTimestamp() != nil {
 			continue
@@ -194,15 +194,20 @@ func (s *Server) saveDraft(c *gin.Context) {
 	repo := c.Param("repo")
 	prID := c.Param("id")
 	var payload struct {
-		Draft string
+		Draft *string `json:"draft"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
+	draft := ""
+	if payload.Draft != nil {
+		draft = *payload.Draft
+	}
+
 	sandboxName := fmt.Sprintf("%s-pr-%s", repo, prID)
-	err := s.K8sManager.UpdateSandboxUserDraft(c.Request.Context(), namespace, sandboxName, payload.Draft)
+	err := s.K8sManager.UpdateSandboxUserDraft(c.Request.Context(), namespace, sandboxName, draft)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save draft", "details": err.Error()})
 		return
@@ -215,14 +220,19 @@ func (s *Server) saveTaskDraft(c *gin.Context) {
 	namespace := s.Auth.GetNamespaceFromContext(c)
 	taskName := c.Param("taskID")
 	var payload struct {
-		Draft string
+		Draft *string `json:"draft"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	err := s.K8sManager.UpdateSandboxTaskUserDraft(c.Request.Context(), namespace, taskName, payload.Draft)
+	draft := ""
+	if payload.Draft != nil {
+		draft = *payload.Draft
+	}
+
+	err := s.K8sManager.UpdateSandboxTaskUserDraft(c.Request.Context(), namespace, taskName, draft)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save task draft", "details": err.Error()})
 		return
@@ -237,17 +247,30 @@ func (s *Server) submitReview(c *gin.Context) {
 	repo := c.Param("repo")
 	prID := c.Param("id")
 	var payload struct {
-		Review   string `json:"review"`
-		TaskName string `json:"task_name"`
-		TaskUID  string `json:"task_uid"`
+		Review   *string `json:"review"`
+		TaskName *string `json:"task_name"`
+		TaskUID  *string `json:"task_uid"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
+	reviewText := ""
+	if payload.Review != nil {
+		reviewText = *payload.Review
+	}
+	taskNameReq := ""
+	if payload.TaskName != nil {
+		taskNameReq = *payload.TaskName
+	}
+	taskUIDReq := ""
+	if payload.TaskUID != nil {
+		taskUIDReq = *payload.TaskUID
+	}
+
 	ctx := c.Request.Context()
-	log.Info("Submitting review for PR", "prID", prID, "repo", repo, "review", payload.Review, "taskName", payload.TaskName, "taskUID", payload.TaskUID)
+	log.Info("Submitting review for PR", "prID", prID, "repo", repo, "review", reviewText, "taskName", taskNameReq, "taskUID", taskUIDReq)
 
 	sandboxName := fmt.Sprintf("%s-pr-%s", repo, prID)
 	gvr := schema.GroupVersionResource{
@@ -264,7 +287,7 @@ func (s *Server) submitReview(c *gin.Context) {
 		return
 	}
 
-	draft := payload.Review
+	draft := reviewText
 	agentDraft := ""
 	if annotations := sandbox.GetAnnotations(); annotations != nil {
 		if val, ok := annotations["agentDraft"]; ok {
@@ -324,10 +347,10 @@ func (s *Server) submitReview(c *gin.Context) {
 	// Try Unmarshalling the yaml review payload into PullRequestReviewRequest
 	agentOutput := &models.ReviewAgentOutput{}
 	reviewRequest := &github.PullRequestReviewRequest{}
-	err = yaml.Unmarshal([]byte(payload.Review), &agentOutput)
+	err = yaml.Unmarshal([]byte(reviewText), &agentOutput)
 	if err != nil {
 		log.Info("Failed to unmarshal review payload", "err", err)
-		reviewRequest.Body = github.String(payload.Review)
+		reviewRequest.Body = github.String(reviewText)
 	} else {
 		reviewRequest = agentOutput.Review.ToGitHubReviewRequest()
 	}
@@ -336,23 +359,36 @@ func (s *Server) submitReview(c *gin.Context) {
 		reviewRequest = &github.PullRequestReviewRequest{}
 	}
 
+	// Check if the review is effectively empty before adding metadata
+	isEmpty := (reviewRequest.Body == nil || *reviewRequest.Body == "") && len(reviewRequest.Comments) == 0
+	if isEmpty {
+		log.Info("Review is empty, skipping submission")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Review is empty"})
+		return
+	}
+
 	if s.TraceabilityMetadataEnabled {
-		taskName, taskUID := s.getTaskMetadata(ctx, namespace, sandboxName, payload.TaskName, payload.TaskUID)
-		repowatchName := s.getRepoWatchName(ctx, namespace, sandboxName)
-		footer := fmt.Sprintf("\n\n---\n\n<!-- repo-agent-metadata\n%s: %s\n%s: %s\n%s: %s\n%s: %s\n%s: %s\n%s: %s\n-->",
-			tasks.MetadataKeySandboxTask, taskName,
-			tasks.MetadataKeySandboxTaskUID, taskUID,
-			tasks.MetadataKeySandbox, sandboxName,
-			tasks.MetadataKeyRepoWatch, repowatchName,
-			tasks.MetadataKeyTaskType, tasks.TaskTypePRReview,
-			tasks.MetadataKeyTimestamp, time.Now().Format(time.RFC3339))
 		body := ""
 		if reviewRequest.Body != nil {
 			body = *reviewRequest.Body
 		}
-		body = truncateString(body, 65000-len(footer))
-		newBody := body + footer
-		reviewRequest.Body = &newBody
+
+		if !strings.Contains(body, "<!-- repo-agent-metadata") {
+			taskName, taskUID := s.getTaskMetadata(ctx, namespace, sandboxName, taskNameReq, taskUIDReq)
+			repowatchName := s.getRepoWatchName(ctx, namespace, sandboxName)
+			footer := fmt.Sprintf("\n\n---\n\n<!-- repo-agent-metadata\n%s: %s\n%s: %s\n%s: %s\n%s: %s\n%s: %s\n%s: %s\n-->",
+				tasks.MetadataKeySandboxTask, taskName,
+				tasks.MetadataKeySandboxTaskUID, taskUID,
+				tasks.MetadataKeySandbox, sandboxName,
+				tasks.MetadataKeyRepoWatch, repowatchName,
+				tasks.MetadataKeyTaskType, tasks.TaskTypePRReview,
+				tasks.MetadataKeyTimestamp, time.Now().Format(time.RFC3339))
+			body = truncateString(body, 65000-len(footer))
+			newBody := body + footer
+			reviewRequest.Body = &newBody
+		}
+	} else {
+		log.V(4).Info("Traceability metadata is disabled, skipping footer for PR review")
 	}
 
 	// Not setting event sets it as a draft

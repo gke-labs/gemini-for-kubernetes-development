@@ -242,14 +242,27 @@ func (s *Server) updateInstructions(c *gin.Context) {
 	}
 
 	var req struct {
-		Current string `json:"current"`
-		Draft   string `json:"draft"`
-		Action  string `json:"action"` // "save_draft", "publish", "discard_draft"
+		Current *string `json:"current"`
+		Draft   *string `json:"draft"`
+		Action  *string `json:"action"` // "save_draft", "publish", "discard_draft"
 	}
 
 	if err := c.BindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
 		return
+	}
+
+	current := ""
+	if req.Current != nil {
+		current = *req.Current
+	}
+	draft := ""
+	if req.Draft != nil {
+		draft = *req.Draft
+	}
+	action := ""
+	if req.Action != nil {
+		action = *req.Action
 	}
 
 	rw, err := s.K8sManager.GetRepoWatch(c.Request.Context(), namespace, repoName)
@@ -264,9 +277,9 @@ func (s *Server) updateInstructions(c *gin.Context) {
 		return
 	}
 
-	switch req.Action {
+	switch action {
 	case "save_draft":
-		if err := s.K8sManager.UpdateConfigDirFile(c.Request.Context(), namespace, configDirRef, ".gemini/user-instructions.draft.json", req.Draft); err != nil {
+		if err := s.K8sManager.UpdateConfigDirFile(c.Request.Context(), namespace, configDirRef, ".gemini/user-instructions.draft.json", draft); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save draft", "details": err.Error()})
 			return
 		}
@@ -277,7 +290,7 @@ func (s *Server) updateInstructions(c *gin.Context) {
 		}
 	case "publish":
 		// Update current
-		if err := s.K8sManager.UpdateConfigDirFile(c.Request.Context(), namespace, configDirRef, ".gemini/user-instructions.json", req.Current); err != nil {
+		if err := s.K8sManager.UpdateConfigDirFile(c.Request.Context(), namespace, configDirRef, ".gemini/user-instructions.json", current); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update current instructions", "details": err.Error()})
 			return
 		}

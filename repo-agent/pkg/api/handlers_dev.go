@@ -40,7 +40,7 @@ func (s *Server) getDevSandboxes(c *gin.Context) {
 
 func (s *Server) listDevSandboxesFromK8s(ctx context.Context, namespace, repo string) ([]models.DevSandbox, error) {
 	log := klog.FromContext(ctx)
-	var sandboxes []models.DevSandbox
+	sandboxes := []models.DevSandbox{}
 
 	// 1. Fetch RepoWatch to get Ideas
 	if rw, err := s.K8sManager.GetRepoWatch(ctx, namespace, repo); err == nil {
@@ -523,7 +523,7 @@ func (s *Server) getDevTasks(c *gin.Context) {
 		return
 	}
 
-	var tasks []models.Task
+	tasks := []models.Task{}
 	for _, taskItem := range taskList.Items {
 		taskType := taskItem.Spec.Type
 		taskState := taskItem.Status.TaskState

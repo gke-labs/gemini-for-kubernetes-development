@@ -53,7 +53,7 @@ func (s *Server) getIssueTasks(c *gin.Context) {
 		return
 	}
 
-	var tasks []models.Task
+	tasksList := []models.Task{}
 	for _, taskItem := range taskList.Items {
 		taskType := taskItem.Spec.Type
 		taskState := taskItem.Status.TaskState
@@ -74,7 +74,7 @@ func (s *Server) getIssueTasks(c *gin.Context) {
 			tAgentStateMessage = tAnnotations["agentStateMessage"]
 		}
 
-		tasks = append(tasks, models.Task{
+		tasksList = append(tasksList, models.Task{
 			Name:              taskItem.GetName(),
 			UID:               string(taskItem.GetUID()),
 			Type:              taskType,
@@ -90,11 +90,11 @@ func (s *Server) getIssueTasks(c *gin.Context) {
 		})
 	}
 	// Sort tasks by creation timestamp (newest first)
-	sort.Slice(tasks, func(i, j int) bool {
-		return tasks[i].CreationTimestamp > tasks[j].CreationTimestamp
+	sort.Slice(tasksList, func(i, j int) bool {
+		return tasksList[i].CreationTimestamp > tasksList[j].CreationTimestamp
 	})
 
-	c.JSON(http.StatusOK, tasks)
+	c.JSON(http.StatusOK, tasksList)
 }
 
 func (s *Server) listIssuesFromK8s(ctx context.Context, namespace, repo string) ([]models.Issue, error) {
@@ -112,7 +112,7 @@ func (s *Server) listIssuesFromK8s(ctx context.Context, namespace, repo string) 
 		return nil, fmt.Errorf("failed to list Sandbox CRs: %w", err)
 	}
 
-	var issues []models.Issue
+	issues := []models.Issue{}
 	for _, item := range list.Items {
 		// Filter out dev sandboxes
 		labels := item.GetLabels()
@@ -218,15 +218,20 @@ func (s *Server) saveIssueDraft(c *gin.Context) {
 	repo := c.Param("repo")
 	issueID := c.Param("issue_id")
 	var payload struct {
-		Draft string
+		Draft *string `json:"draft"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
+	draft := ""
+	if payload.Draft != nil {
+		draft = *payload.Draft
+	}
+
 	sandboxName := fmt.Sprintf("%s-issue-%s", repo, issueID)
-	err := s.K8sManager.UpdateSandboxUserDraft(c.Request.Context(), namespace, sandboxName, payload.Draft)
+	err := s.K8sManager.UpdateSandboxUserDraft(c.Request.Context(), namespace, sandboxName, draft)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save draft", "details": err.Error()})
 		return
@@ -241,17 +246,30 @@ func (s *Server) submitIssueComment(c *gin.Context) {
 	repo := c.Param("repo")
 	issueID := c.Param("issue_id")
 	var payload struct {
-		Comment  string `json:"comment"`
-		TaskName string `json:"task_name"`
-		TaskUID  string `json:"task_uid"`
+		Comment  *string `json:"comment"`
+		TaskName *string `json:"task_name"`
+		TaskUID  *string `json:"task_uid"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
+	commentText := ""
+	if payload.Comment != nil {
+		commentText = *payload.Comment
+	}
+	taskNameReq := ""
+	if payload.TaskName != nil {
+		taskNameReq = *payload.TaskName
+	}
+	taskUIDReq := ""
+	if payload.TaskUID != nil {
+		taskUIDReq = *payload.TaskUID
+	}
+
 	ctx := c.Request.Context()
-	log.Info("Submitting comment for Issue", "issueID", issueID, "repo", repo, "comment", payload.Comment, "taskName", payload.TaskName, "taskUID", payload.TaskUID)
+	log.Info("Submitting comment for Issue", "issueID", issueID, "repo", repo, "comment", commentText, "taskName", taskNameReq, "taskUID", taskUIDReq)
 
 	sandboxName := fmt.Sprintf("%s-issue-%s", repo, issueID)
 	gvr := schema.GroupVersionResource{
@@ -268,7 +286,7 @@ func (s *Server) submitIssueComment(c *gin.Context) {
 		return
 	}
 
-	draft := payload.Comment
+	draft := commentText
 	agentDraft := ""
 	if annotations := sandbox.GetAnnotations(); annotations != nil {
 		if val, ok := annotations["agentDraft"]; ok {
@@ -320,19 +338,23 @@ func (s *Server) submitIssueComment(c *gin.Context) {
 		return
 	}
 
-	body := payload.Comment
+	body := commentText
 	if s.TraceabilityMetadataEnabled {
-		taskName, taskUID := s.getTaskMetadata(ctx, namespace, sandboxName, payload.TaskName, payload.TaskUID)
-		repowatchName := s.getRepoWatchName(ctx, namespace, sandboxName)
-		footer := fmt.Sprintf("\n\n---\n\n<!-- repo-agent-metadata\n%s: %s\n%s: %s\n%s: %s\n%s: %s\n%s: %s\n%s: %s\n-->",
-			tasks.MetadataKeySandboxTask, taskName,
-			tasks.MetadataKeySandboxTaskUID, taskUID,
-			tasks.MetadataKeySandbox, sandboxName,
-			tasks.MetadataKeyRepoWatch, repowatchName,
-			tasks.MetadataKeyTaskType, tasks.TaskTypeIssueComment,
-			tasks.MetadataKeyTimestamp, time.Now().Format(time.RFC3339))
-		body = truncateString(body, 65000-len(footer))
-		body += footer
+		if !strings.Contains(body, "<!-- repo-agent-metadata") {
+			taskName, taskUID := s.getTaskMetadata(ctx, namespace, sandboxName, taskNameReq, taskUIDReq)
+			repowatchName := s.getRepoWatchName(ctx, namespace, sandboxName)
+			footer := fmt.Sprintf("\n\n---\n\n<!-- repo-agent-metadata\n%s: %s\n%s: %s\n%s: %s\n%s: %s\n%s: %s\n%s: %s\n-->",
+				tasks.MetadataKeySandboxTask, taskName,
+				tasks.MetadataKeySandboxTaskUID, taskUID,
+				tasks.MetadataKeySandbox, sandboxName,
+				tasks.MetadataKeyRepoWatch, repowatchName,
+				tasks.MetadataKeyTaskType, tasks.TaskTypeIssueComment,
+				tasks.MetadataKeyTimestamp, time.Now().Format(time.RFC3339))
+			body = truncateString(body, 65000-len(footer))
+			body += footer
+		}
+	} else {
+		log.V(4).Info("Traceability metadata is disabled, skipping footer for issue comment")
 	}
 	comment := &github.IssueComment{Body: &body}
 	_, _, err = client.Issues.CreateComment(ctx, owner, repoName, issueNumber, comment)

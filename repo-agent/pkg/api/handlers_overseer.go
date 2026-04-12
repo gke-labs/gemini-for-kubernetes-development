@@ -186,7 +186,7 @@ func (s *Server) getChoreTasks(c *gin.Context) {
 		return
 	}
 
-	var modelsTasks []models.Task
+	modelsTasks := []models.Task{}
 	for _, taskItem := range tasks.Items {
 		taskType := taskItem.Spec.Type
 		taskState := taskItem.Status.TaskState

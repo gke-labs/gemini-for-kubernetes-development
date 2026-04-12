@@ -69,7 +69,13 @@ func TestTruncateString(t *testing.T) {
 			name:  "Zero limit",
 			s:     "hello",
 			limit: 0,
-			want:  "[Bot-generated content (truncated)]",
+			want:  "",
+		},
+		{
+			name:  "Tilde code block",
+			s:     "~~~\nsome code\n~~~\nmore text",
+			limit: 15,
+			want:  "~~~\ns\n~~~",
 		},
 	}
 

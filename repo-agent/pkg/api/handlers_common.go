@@ -127,14 +127,19 @@ func (s *Server) ensureGeminiKeySet(c *gin.Context, namespace string) bool {
 // It also ensures that the truncated body doesn't leave an open code block and provides
 // a placeholder for empty content to avoid blank notifications.
 func truncateString(s string, limit int) string {
+	const fallback = "[Bot-generated content]"
+	const truncatedFallback = "[Bot-generated content (truncated)]"
+
 	if s == "" {
-		return "[Bot-generated content]"
+		return fallback
 	}
+
 	if len(s) <= limit {
 		return s
 	}
 
-	// Reserve some space for potential closing code block
+	// Reserve some space for potential closing code blocks (``` or ~~~)
+	// and a newline.
 	safeLimit := limit - 10
 	if safeLimit < 0 {
 		safeLimit = 0
@@ -148,13 +153,24 @@ func truncateString(s string, limit int) string {
 		}
 	}
 
-	// Check for open code blocks (triple backticks)
+	// Check for open code blocks (triple backticks or tildes)
 	if strings.Count(res, "```")%2 != 0 {
 		res += "\n```"
 	}
+	if strings.Count(res, "~~~")%2 != 0 {
+		res += "\n~~~"
+	}
 
-	if res == "" {
-		return "[Bot-generated content (truncated)]"
+	if res == "" && limit > 0 {
+		if len(truncatedFallback) <= limit {
+			return truncatedFallback
+		}
+		// Last resort: just cut it
+		for i := limit; i >= 0; i-- {
+			if i < len(s) && utf8.RuneStart(s[i]) {
+				return s[:i]
+			}
+		}
 	}
 	return res
 }
@@ -164,7 +180,9 @@ func (s *Server) getTaskMetadata(ctx context.Context, namespace, sandboxName, ta
 		return taskName, taskUID
 	}
 	// Fallback to latest
-	return s.getLatestTaskMetadata(ctx, namespace, sandboxName)
+	resName, resUID := s.getLatestTaskMetadata(ctx, namespace, sandboxName)
+	klog.FromContext(ctx).V(4).Info("Task metadata missing in request, falling back to latest task", "sandbox", sandboxName, "taskName", resName, "taskUID", resUID)
+	return resName, resUID
 }
 
 func (s *Server) getRepoWatchName(ctx context.Context, namespace, sandboxName string) string {
