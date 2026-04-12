@@ -83,6 +83,7 @@ function setupGitRepos {
         (cd /workspaces/ && git clone "${CLONE_URL}")
     else
         echo "repository already exists"
+        # Ensure a pristine state before doing anything
         (cd "/workspaces/${REPO_NAME}" && git reset --hard && git clean -fd && git fetch origin)
     fi
 
@@ -91,31 +92,27 @@ function setupGitRepos {
 
 function checkoutPRBranch {
     echo "Running checkoutPRBranch..."
-    (cd "/workspaces/${REPO_NAME}" && gh pr checkout "${PR_NUMBER}")
+    # gh pr checkout handles forks by adding a remote for the fork and setting up tracking.
+    cd "/workspaces/${REPO_NAME}"
+    gh pr checkout "${PR_NUMBER}" --force
+    # Ensure we are up to date with the remote branch
+    git pull --rebase || true
 }
 
-function attemptMerge {
-    echo "Attempting to merge ${BASE_REF} into current branch..."
-    cd "/workspaces/${REPO_NAME}"
-    git fetch origin "${BASE_REF}"
-    # Ensure we have the latest of the current branch too, handling force-pushes
-    local CURRENT_BRANCH
-    CURRENT_BRANCH="$(git branch --show-current)"
-    if [ -n "$CURRENT_BRANCH" ]; then
-        git fetch origin "$CURRENT_BRANCH"
-        git reset --hard "origin/$CURRENT_BRANCH"
-    fi
-    if git merge "origin/${BASE_REF}" -m "Merge branch 'origin/${BASE_REF}' into HEAD"; then
-        echo "Merge successful without conflicts."
-        return 0
-    else
-        echo "Merge conflicts detected. Proceeding with LLM resolution."
+function verifyResolution {
+    echo "Verifying conflict resolution..."
+    # We check for conflict markers excluding the .git directory
+    if grep -r --exclude-dir=.git "^<<<<<<<" .; then
+        echo "Conflict markers still present!"
         return 1
     fi
+    echo "No conflict markers found. Resolution looks good."
+    return 0
 }
 
 function runGemini {
     echo "Running Gemini to resolve conflicts..."
+    cd "/workspaces/${REPO_NAME}"
     
     if [ -n "$GITHUB_BOT_NAME" ]; then
         export GIT_AUTHOR_NAME="$GITHUB_BOT_NAME"
@@ -124,18 +121,63 @@ function runGemini {
         export GIT_COMMITTER_EMAIL="$GITHUB_BOT_EMAIL"
     fi
 
+    # Identify the current branch and its remote (handles forks)
+    local CURRENT_BRANCH
+    CURRENT_BRANCH="$(git branch --show-current)"
+    local REMOTE
+    REMOTE="$(git config "branch.${CURRENT_BRANCH}.remote" || echo "origin")"
+    
+    echo "Current branch: ${CURRENT_BRANCH}, Remote: ${REMOTE}"
+
+    # Ensure we have the latest of the current branch and the base branch
+    git fetch "${REMOTE}" "${CURRENT_BRANCH}"
+    git fetch origin "${BASE_REF}"
+
     MODELS=( {{ range .Models }}"{{ . }}" {{ end }} )
     SUCCESS=false
     for MODEL in "${MODELS[@]}"; do
         echo "Trying model: $MODEL"
+        
+        # Abort any previous merge and reset to clean state
+        git merge --abort || true
+        git reset --hard "HEAD"
+        git clean -fd
+        
+        # Re-attempt merge to get conflicts for the model to work on.
+        # We MUST re-create the conflicts so the model has something to resolve.
+        echo "Attempting to merge origin/${BASE_REF} into ${CURRENT_BRANCH}..."
+        # We use --no-commit to keep it in a merging state if it succeeds, but usually it fails with conflicts.
+        if git merge "origin/${BASE_REF}" --no-commit -m "Merge branch 'origin/${BASE_REF}' into ${CURRENT_BRANCH}"; then
+             echo "Merge successful without conflicts (unexpected in loop)."
+             if verifyResolution; then
+                 SUCCESS=true
+                 break
+             fi
+             # If verification failed even if merge "succeeded", something is wrong, continue to next model
+             git merge --abort || true
+             continue
+        fi
+
+        echo "Conflicts detected. Calling Gemini with model $MODEL..."
         # We use --yolo because this runs in a sandboxed pod and we need automated resolution.
-        if (cd "/workspaces/${REPO_NAME}" && export GEMINI_API_KEY="${GEMINI_API_KEY}" && gemini --yolo --model "$MODEL" --output-format stream-json < "${PROMPT_FILE}" | /opt/repo-agent/gemini-stream-processor --output "$(dirname "${PROMPT_FILE}")/gemini-output.json"); then
+        if (export GEMINI_API_KEY="${GEMINI_API_KEY}" && gemini --yolo --model "$MODEL" --output-format stream-json < "${PROMPT_FILE}" | /opt/repo-agent/gemini-stream-processor --output "$(dirname "${PROMPT_FILE}")/gemini-output.json"); then
              echo "Gemini execution successful with model: $MODEL"
-             SUCCESS=true
-             break
+             
+             if verifyResolution; then
+                 echo "Resolution verified with model: $MODEL. Staging and committing..."
+                 git add .
+                 # Complete the merge commit
+                 git commit -m "chore: resolve merge conflicts using Gemini ($MODEL)" || echo "Nothing to commit"
+                 SUCCESS=true
+                 break
+             else
+                 echo "Resolution verification failed: conflict markers still present with model $MODEL."
+                 # The merge is still in progress (with conflict markers).
+                 # We will reset in the next iteration.
+             fi
         else
-             echo "Gemini execution failed with model: $MODEL. Resetting working tree and retrying with next model..."
-             (cd "/workspaces/${REPO_NAME}" && git reset --hard)
+             echo "Gemini execution failed with model: $MODEL."
+             # Gemini might have left the repo in a messy state.
         fi
     done
     
@@ -143,26 +185,12 @@ function runGemini {
         echo "All models failed to resolve conflicts."
         exit 1
     fi
-
-    echo "Staging and committing resolved files..."
-    cd "/workspaces/${REPO_NAME}"
-    git add .
-    git commit -m "chore: resolve merge conflicts using Gemini" || echo "Nothing to commit"
-}
-
-function verifyResolution {
-    echo "Verifying conflict resolution..."
-    cd "/workspaces/${REPO_NAME}"
-    if grep -r --exclude-dir=.git "^<<<<<<<" .; then
-        echo "Conflict markers still present! Resolution failed."
-        exit 1
-    fi
-    echo "No conflict markers found. Resolution looks good."
 }
 
 function pushChanges {
     echo "Pushing resolved changes..."
     cd "/workspaces/${REPO_NAME}"
+    # Safer push that handles tracking correctly
     git push
 }
 
@@ -171,27 +199,50 @@ setupGit
 setupGitRepos
 sleep 5
 checkoutPRBranch
-if attemptMerge; then
-    pushChanges
-else
-    # Install extensions if any
-    {{- range .Extensions }}
-    gemini extensions install "{{ .Source }}" {{ if .Ref }}--ref "{{ .Ref }}"{{ end }} --consent
-    {{- end }}
-    
-    runGemini
-    verifyResolution
-    # Run tests if available
-    if [ -f "Makefile" ]; then
-        make test
-    elif [ -f "go.mod" ]; then
-        go test ./...
-    elif [ -f "package.json" ]; then
-        if [ -f "yarn.lock" ]; then
-            yarn test
-        else
-            npm test
-        fi
+
+# Attempt initial merge to see if we even need LLM
+cd "/workspaces/${REPO_NAME}"
+# Ensure we have base branch
+git fetch origin "${BASE_REF}"
+echo "Attempting initial merge of origin/${BASE_REF}..."
+if git merge "origin/${BASE_REF}" -m "Merge branch 'origin/${BASE_REF}' into HEAD"; then
+    if verifyResolution; then
+        echo "Merge successful without conflicts."
+        pushChanges
+        exit 0
     fi
-    pushChanges
+    echo "Merge succeeded but conflict markers found? Proceeding to LLM loop."
+    git reset --hard HEAD^ # Undo the merge
 fi
+
+echo "Merge conflicts detected or verification failed. Proceeding with LLM resolution loop."
+
+# Install extensions if any
+{{- range .Extensions }}
+gemini extensions install "{{ .Source }}" {{ if .Ref }}--ref "{{ .Ref }}"{{ end }} --consent
+{{- end }}
+
+runGemini
+
+# Run tests if available
+cd "/workspaces/${REPO_NAME}"
+TEST_FAILED=false
+if [ -f "Makefile" ]; then
+    make test || TEST_FAILED=true
+elif [ -f "go.mod" ]; then
+    go test ./... || TEST_FAILED=true
+elif [ -f "package.json" ]; then
+    if [ -f "yarn.lock" ]; then
+        yarn test || TEST_FAILED=true
+    else
+        npm test || TEST_FAILED=true
+    fi
+fi
+
+if [ "$TEST_FAILED" = true ]; then
+    echo "Tests failed after conflict resolution. Not pushing changes."
+    exit 1
+fi
+
+pushChanges
+

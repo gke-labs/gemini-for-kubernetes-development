@@ -691,7 +691,8 @@ func (r *Reconciler) reconcileReviewSandboxesInternal(ctx context.Context, user 
 		if sandboxExists {
 			// Manage lifecycle (pause/unpause)
 			shutdownDuration := time.Minute * time.Duration(repoWatch.Spec.Review.ReviewShutdownAfterMinutes)
-			wasScaled, err := r.manageSandboxLifecycle(ctx, existingSandbox, shutdownDuration)
+			prIsExplicit := isPRExplicit(*pr.Number, explicitPRs)
+			wasScaled, err := r.manageSandboxLifecycle(ctx, existingSandbox, shutdownDuration, &activeSandboxes, repoWatch.Spec.Review.MaxActiveSandboxes, prIsExplicit)
 			if err != nil {
 				log.Error(err, "unable to manage sandbox lifecycle", "sandbox", existingSandbox.GetName())
 			}
@@ -714,7 +715,7 @@ func (r *Reconciler) reconcileReviewSandboxesInternal(ctx context.Context, user 
 			}
 
 			// Check for merge conflicts
-			if err := r.reconcileReviewConflicts(ctx, repoWatch, existingSandbox, pr, ghClient, owner, repo); err != nil {
+			if err := r.reconcileReviewConflicts(ctx, repoWatch, existingSandbox, pr, ghClient, owner, repo, &activeSandboxes, prIsExplicit); err != nil {
 				log.Error(err, "unable to reconcile review conflicts", "pr", *pr.Number)
 			}
 
@@ -842,19 +843,21 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 		if existingSandbox != nil {
 			log.Info("sandbox found for", "issue", *issue.Number)
 
+			issueIsExplicit := isIssueExplicit(*issue.Number, repoWatch.Spec.Issue.Issues)
+
 			// Check for feedback
-			if err := r.reconcileIssueFeedback(ctx, repoWatch, existingSandbox, issue, ghClient); err != nil {
+			if err := r.reconcileIssueFeedback(ctx, repoWatch, existingSandbox, issue, ghClient, &activeSandboxes, issueIsExplicit); err != nil {
 				log.Error(err, "unable to reconcile issue feedback", "issue", *issue.Number)
 			}
 
 			// Check for PR failures
-			if err := r.reconcilePRFailures(ctx, repoWatch, existingSandbox, issue, ghClient); err != nil {
+			if err := r.reconcilePRFailures(ctx, repoWatch, existingSandbox, issue, ghClient, &activeSandboxes, issueIsExplicit); err != nil {
 				log.Error(err, "unable to reconcile PR failures", "issue", *issue.Number)
 			}
 
 			// Manage lifecycle (pause/unpause)
 			shutdownDuration := time.Minute * time.Duration(repoWatch.Spec.Issue.IssueShutdownAfterMinutes)
-			wasScaled, err := r.manageSandboxLifecycle(ctx, existingSandbox, shutdownDuration)
+			wasScaled, err := r.manageSandboxLifecycle(ctx, existingSandbox, shutdownDuration, &activeSandboxes, repoWatch.Spec.Issue.MaxActiveSandboxes, issueIsExplicit)
 			if err != nil {
 				log.Error(err, "unable to manage sandbox lifecycle", "sandbox", existingSandbox.GetName())
 			}
@@ -1687,6 +1690,9 @@ func (r *Reconciler) createDevSandbox(ctx context.Context, user *github.User, re
 	if repoWatch.Spec.Dev.LLM.Prompt != "" {
 		params["AGENT_PROMPT"] = repoWatch.Spec.Dev.LLM.Prompt
 	}
+	if len(repoWatch.Spec.Dev.Models) > 0 {
+		params["model"] = strings.Join(repoWatch.Spec.Dev.Models, ",")
+	}
 	if len(repoWatch.Spec.Dev.LLM.Extensions) > 0 {
 		exts, _ := json.Marshal(repoWatch.Spec.Dev.LLM.Extensions)
 		params["AGENT_LLM_EXTENSIONS"] = string(exts)
@@ -1741,7 +1747,7 @@ func (r *Reconciler) ensureRobotSecret(ctx context.Context, namespace, secretNam
 	return r.Create(ctx, newSecret)
 }
 
-func (r *Reconciler) unpauseSandboxIfPendingTasks(ctx context.Context, sandbox *unstructured.Unstructured) (bool, error) {
+func (r *Reconciler) unpauseSandboxIfPendingTasks(ctx context.Context, sandbox *unstructured.Unstructured, activeSandboxes *int, maxActive int, isExplicit bool) (bool, error) {
 	log := log.FromContext(ctx)
 
 	// Check if paused (replicas == 0)
@@ -1771,11 +1777,22 @@ func (r *Reconciler) unpauseSandboxIfPendingTasks(ctx context.Context, sandbox *
 	}
 
 	if hasPending {
+		// Check limits
+		if !isExplicit && *activeSandboxes >= maxActive {
+			log.V(2).Info("Skipping sandbox scale-up: MaxActiveSandboxes reached", "sandbox", sandbox.GetName())
+			return false, nil
+		}
+
 		log.Info("Unpausing sandbox due to pending tasks", "sandbox", sandbox.GetName())
+		patch := client.MergeFrom(sandbox.DeepCopy())
 		if err := unstructured.SetNestedField(sandbox.Object, int64(1), "spec", "replicas"); err != nil {
 			return false, err
 		}
-		return true, r.Update(ctx, sandbox)
+		if err := r.Patch(ctx, sandbox, patch); err != nil {
+			return false, err
+		}
+		(*activeSandboxes)++
+		return true, nil
 	}
 	return false, nil
 }
@@ -1814,8 +1831,8 @@ func (r *Reconciler) pauseSandboxIfIdle(ctx context.Context, sandbox *unstructur
 		}
 
 		// Check completion time
-		annotations := task.GetAnnotations()
-		if tsStr, ok := annotations["sandbox.gemini.google.com/completion-time"]; ok {
+		ann := task.GetAnnotations()
+		if tsStr, ok := ann["sandbox.gemini.google.com/completion-time"]; ok {
 			if ts, err := time.Parse(time.RFC3339, tsStr); err == nil {
 				if ts.After(latestTime) {
 					latestTime = ts
@@ -1826,16 +1843,17 @@ func (r *Reconciler) pauseSandboxIfIdle(ctx context.Context, sandbox *unstructur
 
 	if time.Since(latestTime) > shutdownDuration {
 		log.Info("Pausing sandbox (idle)", "sandbox", sandbox.GetName(), "lastActivity", latestTime)
+		patch := client.MergeFrom(sandbox.DeepCopy())
 		if err := unstructured.SetNestedField(sandbox.Object, int64(0), "spec", "replicas"); err != nil {
 			return false, err
 		}
-		return true, r.Update(ctx, sandbox)
+		return true, r.Patch(ctx, sandbox, patch)
 	}
 
 	return false, nil
 }
 
-func (r *Reconciler) manageSandboxLifecycle(ctx context.Context, sandbox *unstructured.Unstructured, shutdownDuration time.Duration) (bool, error) {
+func (r *Reconciler) manageSandboxLifecycle(ctx context.Context, sandbox *unstructured.Unstructured, shutdownDuration time.Duration, activeSandboxes *int, maxActive int, isExplicit bool) (bool, error) {
 	replicas, found, err := unstructured.NestedInt64(sandbox.Object, "spec", "replicas")
 	if err != nil || !found {
 		// If field missing, assume it's running (default behavior usually)
@@ -1843,7 +1861,7 @@ func (r *Reconciler) manageSandboxLifecycle(ctx context.Context, sandbox *unstru
 	}
 
 	if replicas == 0 {
-		return r.unpauseSandboxIfPendingTasks(ctx, sandbox)
+		return r.unpauseSandboxIfPendingTasks(ctx, sandbox, activeSandboxes, maxActive, isExplicit)
 	}
 
 	if shutdownDuration > 0 {
@@ -1852,7 +1870,7 @@ func (r *Reconciler) manageSandboxLifecycle(ctx context.Context, sandbox *unstru
 	return false, nil
 }
 
-func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, sandbox *unstructured.Unstructured, issue *github.Issue, ghClient *github.Client) error {
+func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, sandbox *unstructured.Unstructured, issue *github.Issue, ghClient *github.Client, activeSandboxes *int, issueIsExplicit bool) error {
 	log := log.FromContext(ctx)
 
 	// Check if we have an active address-feedback task
@@ -1975,11 +1993,20 @@ func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *revi
 		// Ensure sandbox is scaled up
 		replicas, found, err := unstructured.NestedInt64(sandbox.Object, "spec", "replicas")
 		if err != nil || !found || replicas == 0 {
+			// Check active sandboxes limit
+			if !issueIsExplicit && *activeSandboxes >= repoWatch.Spec.Issue.MaxActiveSandboxes {
+				log.Info("Skipping address-feedback scale-up: MaxActiveSandboxes reached", "issue", *issue.Number)
+				return nil
+			}
+
+			patch := client.MergeFrom(sandbox.DeepCopy())
 			if err := unstructured.SetNestedField(sandbox.Object, int64(1), "spec", "replicas"); err != nil {
 				log.Error(err, "unable to set replicas to 1")
 			} else {
-				if err := r.Update(ctx, sandbox); err != nil {
-					log.Error(err, "unable to scale up sandbox")
+				if err := r.Patch(ctx, sandbox, patch); err != nil {
+					log.Error(err, "unable to patch sandbox for scale up")
+				} else {
+					(*activeSandboxes)++
 				}
 			}
 		}
@@ -1990,7 +2017,7 @@ func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *revi
 	return nil
 }
 
-func (r *Reconciler) reconcilePRFailures(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, sandbox *unstructured.Unstructured, issue *github.Issue, ghClient *github.Client) error {
+func (r *Reconciler) reconcilePRFailures(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, sandbox *unstructured.Unstructured, issue *github.Issue, ghClient *github.Client, activeSandboxes *int, issueIsExplicit bool) error {
 	log := log.FromContext(ctx)
 
 	// Check if we have an active task
@@ -2113,11 +2140,20 @@ func (r *Reconciler) reconcilePRFailures(ctx context.Context, repoWatch *reviewv
 		// Ensure sandbox is scaled up
 		replicas, found, err := unstructured.NestedInt64(sandbox.Object, "spec", "replicas")
 		if err != nil || !found || replicas == 0 {
+			// Check active sandboxes limit
+			if !issueIsExplicit && *activeSandboxes >= repoWatch.Spec.Issue.MaxActiveSandboxes {
+				log.Info("Skipping investigate-failures scale-up: MaxActiveSandboxes reached", "issue", *issue.Number)
+				return nil
+			}
+
+			patch := client.MergeFrom(sandbox.DeepCopy())
 			if err := unstructured.SetNestedField(sandbox.Object, int64(1), "spec", "replicas"); err != nil {
 				log.Error(err, "unable to set replicas to 1")
 			} else {
-				if err := r.Update(ctx, sandbox); err != nil {
-					log.Error(err, "unable to scale up sandbox")
+				if err := r.Patch(ctx, sandbox, patch); err != nil {
+					log.Error(err, "unable to patch sandbox for scale up")
+				} else {
+					(*activeSandboxes)++
 				}
 			}
 		}
@@ -2288,18 +2324,34 @@ func (r *Reconciler) reconcileSandboxPodStatus(ctx context.Context, sandbox *uns
 	return sandboxStatus, nil
 }
 
-func (r *Reconciler) reconcileReviewConflicts(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, sandbox *unstructured.Unstructured, pr *github.PullRequest, ghClient *github.Client, owner, repo string) error {
+func (r *Reconciler) reconcileReviewConflicts(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, sandbox *unstructured.Unstructured, pr *github.PullRequest, ghClient *github.Client, owner, repo string, activeSandboxes *int, prIsExplicit bool) error {
 	log := log.FromContext(ctx)
 	if !repoWatch.Spec.Review.ResolveConflicts {
 		return nil
 	}
 
 	headSHA := pr.Head.GetSHA()
-	if headSHA == "" {
+	baseRef := pr.Base.GetRef()
+	headRef := pr.Head.GetRef()
+	if headSHA == "" || baseRef == "" || headRef == "" {
 		return nil
 	}
 
-	// List tasks to check for existing resolve-conflicts task for this SHA
+	// To accurately detect if conflicts need re-evaluating when the base branch moves,
+	// we need the current head SHA of the base branch, not just what's in the PR object.
+	baseBranch, _, err := ghClient.Repositories.GetBranch(ctx, owner, repo, baseRef, false)
+	if err != nil {
+		log.Error(err, "unable to get base branch info", "branch", baseRef)
+		return err
+	}
+	baseSHA := baseBranch.GetCommit().GetSHA()
+	if baseSHA == "" {
+		return fmt.Errorf("base branch %s has no commit SHA", baseRef)
+	}
+
+	checkSHA := fmt.Sprintf("%s:%s", headSHA, baseSHA)
+
+	// List tasks to check for existing resolve-conflicts task for this SHA combination
 	tasks := &sandboxtaskv1alpha1.SandboxTaskList{}
 	if err := r.List(ctx, tasks, client.InNamespace(sandbox.GetNamespace()), client.MatchingLabels{"sandbox.gemini.google.com/sandbox-name": sandbox.GetName()}); err != nil {
 		return err
@@ -2311,12 +2363,16 @@ func (r *Reconciler) reconcileReviewConflicts(ctx context.Context, repoWatch *re
 		if task.Spec.Type != "resolve-conflicts" {
 			continue
 		}
-		state := task.Status.TaskState
-		if state == "" || state == "Pending" || state == "Running" {
-			activeTaskExists = true
-		}
-		if task.Spec.Params["HEAD_SHA"] == headSHA {
-			alreadyAttemptedThisSHA = true
+		// If we've already attempted this specific combination of head and base SHAs, skip.
+		if task.Spec.Params["HEAD_SHA"] == headSHA && task.Spec.Params["BASE_SHA"] == baseSHA {
+			state := task.Status.TaskState
+			if state == "" || state == "Pending" || state == "Running" {
+				activeTaskExists = true
+				alreadyAttemptedThisSHA = true
+			} else if state == "Completed" {
+				alreadyAttemptedThisSHA = true
+			}
+			// If it failed, we allow a retry on the next reconcile loop unless the annotation matches.
 		}
 	}
 
@@ -2324,9 +2380,8 @@ func (r *Reconciler) reconcileReviewConflicts(ctx context.Context, repoWatch *re
 		return nil
 	}
 
-	// Check Sandbox annotations to see if we've already checked this SHA and it was mergeable
-	annotations := sandbox.GetAnnotations()
-	if annotations != nil && annotations["sandbox.gemini.google.com/last-conflict-check-sha"] == headSHA {
+	// Check Sandbox annotations to see if we've already checked this SHA combination and it was mergeable
+	if sandbox.GetAnnotations() != nil && sandbox.GetAnnotations()["sandbox.gemini.google.com/last-conflict-check-key"] == checkSHA {
 		return nil
 	}
 
@@ -2350,38 +2405,20 @@ func (r *Reconciler) reconcileReviewConflicts(ctx context.Context, repoWatch *re
 
 	// Mergeable is false if there are conflicts
 	if !*pr.Mergeable {
-		log.Info("Found merge conflicts in PR, creating resolve-conflicts task", "pr", *pr.Number, "sha", headSHA)
-
-		baseRef := pr.Base.GetRef()
-		headRef := pr.Head.GetRef()
-		if baseRef == "" || headRef == "" {
-			log.Error(nil, "BaseRef or HeadRef is empty, skipping conflict resolution", "pr", *pr.Number)
-			return nil
-		}
-
-		// Ensure sandbox is scaled up
-		replicas, found, err := unstructured.NestedInt64(sandbox.Object, "spec", "replicas")
-		if err != nil || !found || replicas == 0 {
-			// We use a fresh copy of the sandbox for the update to avoid conflicts if possible
-			patch := client.MergeFrom(sandbox.DeepCopy())
-			if err := unstructured.SetNestedField(sandbox.Object, int64(1), "spec", "replicas"); err != nil {
-				log.Error(err, "unable to set replicas to 1")
-			} else {
-				if err := r.Patch(ctx, sandbox, patch); err != nil {
-					log.Error(err, "unable to patch sandbox for scale up")
-					// Continue anyway, maybe it's already scaled up or will be
-				}
-			}
-		}
+		log.Info("Found merge conflicts in PR, creating resolve-conflicts task", "pr", *pr.Number, "headSHA", headSHA, "baseSHA", baseSHA)
 
 		params := map[string]string{
 			"HEAD_SHA":     headSHA,
+			"BASE_SHA":     baseSHA,
 			"PR_NUMBER":    fmt.Sprintf("%d", *pr.Number),
 			"BASE_REF":     baseRef,
 			"HEAD_REF":     headRef,
 			"AGENT_PROMPT": repoWatch.Spec.Review.LLM.Prompt,
-			"MODEL":        repoWatch.Spec.Review.LLM.Model,
 		}
+		if len(repoWatch.Spec.Review.Models) > 0 {
+			params["model"] = strings.Join(repoWatch.Spec.Review.Models, ",")
+		}
+
 		// Add LLM params from ReviewSpec
 		if repoWatch.Spec.Review.LLM.Provider != "" {
 			params["AGENT_LLM_PROVIDER"] = repoWatch.Spec.Review.LLM.Provider
@@ -2397,20 +2434,25 @@ func (r *Reconciler) reconcileReviewConflicts(ctx context.Context, repoWatch *re
 			params["AGENT_LLM_EXTENSIONS"] = string(exts)
 		}
 
-		if err := r.createSandboxTask(ctx, repoWatch, sandbox, sandbox.GetName(), fmt.Sprintf("%d", *pr.Number), "resolve-conflicts", params); err != nil {
+		if err := r.createSandboxTask(ctx, repoWatch, sandbox, sandbox.GetName(), "", "resolve-conflicts", params); err != nil {
 			return err
 		}
 	}
 
-	// Update annotation to record that we've checked this SHA
-	patch := client.MergeFrom(sandbox.DeepCopy())
-	if annotations == nil {
-		annotations = make(map[string]string)
-	}
-	annotations["sandbox.gemini.google.com/last-conflict-check-sha"] = headSHA
-	sandbox.SetAnnotations(annotations)
-	if err := r.Patch(ctx, sandbox, patch); err != nil {
-		log.Error(err, "failed to patch sandbox annotation for conflict check", "sandbox", sandbox.GetName())
+	// Update annotation to record that we've checked this SHA combination.
+	// Only update if mergeable. If it's NOT mergeable, we rely on the task existence to avoid re-creating the task,
+	// but we don't set the annotation so that if the task fails, we can retry.
+	if *pr.Mergeable {
+		patch := client.MergeFrom(sandbox.DeepCopy())
+		annotations := sandbox.GetAnnotations()
+		if annotations == nil {
+			annotations = make(map[string]string)
+		}
+		annotations["sandbox.gemini.google.com/last-conflict-check-key"] = checkSHA
+		sandbox.SetAnnotations(annotations)
+		if err := r.Patch(ctx, sandbox, patch); err != nil {
+			log.Error(err, "failed to patch sandbox annotation for conflict check", "sandbox", sandbox.GetName())
+		}
 	}
 
 	return nil
