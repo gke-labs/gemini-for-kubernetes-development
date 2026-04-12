@@ -76,3 +76,30 @@ func ensureSSHConfigLine(ctx context.Context, path, line string) error {
 
 	return os.WriteFile(path, []byte(newConfig), 0644)
 }
+
+// resolveAgentPrompt resolves the agent prompt from the provided string, or from
+// AGENT_PROMPT / AGENT_PROMPT_FILE environment variables.
+func resolveAgentPrompt(currentPrompt string) string {
+	if currentPrompt != "" {
+		return currentPrompt
+	}
+	if prompt := os.Getenv("AGENT_PROMPT"); prompt != "" {
+		return prompt
+	}
+	if promptFile := os.Getenv("AGENT_PROMPT_FILE"); promptFile != "" {
+		data, err := os.ReadFile(promptFile)
+		if err != nil {
+			klog.Warningf("Failed to read AGENT_PROMPT_FILE at %s: %v", promptFile, err)
+		} else {
+			return string(data)
+		}
+	}
+	// Fallbacks used in some commands
+	if prompt := os.Getenv("prompt"); prompt != "" {
+		return prompt
+	}
+	if prompt := os.Getenv("PROMPT"); prompt != "" {
+		return prompt
+	}
+	return ""
+}

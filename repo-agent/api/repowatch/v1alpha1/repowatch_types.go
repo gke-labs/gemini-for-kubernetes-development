@@ -61,6 +61,10 @@ type LLMConfig struct {
 	// model configurations.
 	ConfigdirRef string `json:"configdirRef,omitempty"`
 
+	// Model is the name of the LLM model to use.
+	// +kubebuilder:validation:Optional
+	Model string `json:"model,omitempty"`
+
 	// Extensions is a list of extensions to install in the sandbox
 	// before running the agent. Each entry specifies a source
 	// (GitHub URL or extension name) and optional ref.

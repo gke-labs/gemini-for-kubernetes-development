@@ -2342,8 +2342,14 @@ func (r *Reconciler) reconcileReviewConflicts(ctx context.Context, repoWatch *re
 		pr = fullPR
 	}
 
+	if pr.Mergeable == nil {
+		// GitHub is still computing mergeability, return early and retry next time.
+		log.V(2).Info("Mergeability still being computed by GitHub, retrying later", "pr", *pr.Number)
+		return nil
+	}
+
 	// Mergeable is false if there are conflicts
-	if pr.Mergeable != nil && !*pr.Mergeable {
+	if !*pr.Mergeable {
 		log.Info("Found merge conflicts in PR, creating resolve-conflicts task", "pr", *pr.Number, "sha", headSHA)
 
 		baseRef := pr.Base.GetRef()
@@ -2374,6 +2380,7 @@ func (r *Reconciler) reconcileReviewConflicts(ctx context.Context, repoWatch *re
 			"BASE_REF":     baseRef,
 			"HEAD_REF":     headRef,
 			"AGENT_PROMPT": repoWatch.Spec.Review.LLM.Prompt,
+			"MODEL":        repoWatch.Spec.Review.LLM.Model,
 		}
 		// Add LLM params from ReviewSpec
 		if repoWatch.Spec.Review.LLM.Provider != "" {
@@ -2390,7 +2397,7 @@ func (r *Reconciler) reconcileReviewConflicts(ctx context.Context, repoWatch *re
 			params["AGENT_LLM_EXTENSIONS"] = string(exts)
 		}
 
-		if err := r.createSandboxTask(ctx, repoWatch, sandbox, sandbox.GetName(), "", "resolve-conflicts", params); err != nil {
+		if err := r.createSandboxTask(ctx, repoWatch, sandbox, sandbox.GetName(), fmt.Sprintf("%d", *pr.Number), "resolve-conflicts", params); err != nil {
 			return err
 		}
 	}

@@ -91,13 +91,7 @@ func (c *GithubResolveConflictsCommand) InitDefaults() {
 		c.AgentName = "gemini-cli"
 	}
 
-	if c.CustomPrompt == "" {
-		if promptFile := os.Getenv("AGENT_PROMPT_FILE"); promptFile != "" {
-			if data, err := os.ReadFile(promptFile); err == nil {
-				c.CustomPrompt = string(data)
-			}
-		}
-	}
+	c.CustomPrompt = resolveAgentPrompt(c.CustomPrompt)
 
 	if c.WorkspaceDir == "" {
 		c.WorkspaceDir = "/workspaces"
@@ -214,10 +208,9 @@ func (c *GithubResolveConflictsCommand) Run(ctx context.Context) error {
 	if c.ExtensionsJSON != "" {
 		var extensions []reviewv1alpha1.Extension
 		if err := json.Unmarshal([]byte(c.ExtensionsJSON), &extensions); err != nil {
-			log.Error(err, "failed to unmarshal extensions JSON")
-		} else {
-			task.Extensions = extensions
+			return fmt.Errorf("failed to unmarshal extensions JSON: %w", err)
 		}
+		task.Extensions = extensions
 	}
 
 	apikey, err := GetGeminiAPIKey(c.sandboxID)

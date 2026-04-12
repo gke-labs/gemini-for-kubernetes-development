@@ -60,38 +60,37 @@ EOF
     fi
 
     gh auth setup-git
-    git config --global core.excludesfile /root/.gitignore_global
-    cat <<EOF > /root/.gitignore_global
-manager
-bin/
-EOF
 }
 
 function setupGitRepos {
     echo "Running setupGitRepos..."
-    if [ ! -d "/workspaces/${REPO_NAME}" ]; then
+    if [ ! -d "/workspaces/${REPO_NAME}/.git" ]; then
         echo "cloning repository"
-        (cd /workspaces/ && git clone ${CLONE_URL})
+        (cd /workspaces/ && git clone "${CLONE_URL}")
     else
         echo "repository already exists"
-        (cd "/workspaces/${REPO_NAME}" && git fetch origin)
+        (cd "/workspaces/${REPO_NAME}" && git reset --hard && git clean -fd && git fetch origin)
     fi
 
-    (cd "/workspaces/${REPO_NAME}" && gh repo fork --remote || true)
     (cd "/workspaces/${REPO_NAME}" && gh repo set-default "${CLONE_URL}" || true)
 }
 
 function checkoutPRBranch {
     echo "Running checkoutPRBranch..."
-    (cd "/workspaces/${REPO_NAME}" && gh pr checkout ${PR_NUMBER})
+    (cd "/workspaces/${REPO_NAME}" && gh pr checkout "${PR_NUMBER}")
 }
 
 function attemptMerge {
     echo "Attempting to merge ${BASE_REF} into current branch..."
     cd "/workspaces/${REPO_NAME}"
     git fetch origin "${BASE_REF}"
-    # Ensure we have the latest of the current branch too
-    git pull origin $(git branch --show-current) || echo "Pull failed, proceeding with current state"
+    # Ensure we have the latest of the current branch too, handling force-pushes
+    local CURRENT_BRANCH
+    CURRENT_BRANCH="$(git branch --show-current)"
+    if [ -n "$CURRENT_BRANCH" ]; then
+        git fetch origin "$CURRENT_BRANCH"
+        git reset --hard "origin/$CURRENT_BRANCH"
+    fi
     if git merge "origin/${BASE_REF}" -m "Merge branch 'origin/${BASE_REF}' into HEAD"; then
         echo "Merge successful without conflicts."
         return 0
@@ -116,12 +115,13 @@ function runGemini {
     for MODEL in "${MODELS[@]}"; do
         echo "Trying model: $MODEL"
         # We use --yolo because this runs in a sandboxed pod and we need automated resolution.
-        if (cd "/workspaces/${REPO_NAME}" && export GEMINI_API_KEY="${GEMINI_API_KEY}" && gemini --yolo --model "$MODEL" --output-format stream-json < ${PROMPT_FILE} | /opt/repo-agent/gemini-stream-processor --output "$(dirname "${PROMPT_FILE}")/gemini-output.json"); then
+        if (cd "/workspaces/${REPO_NAME}" && export GEMINI_API_KEY="${GEMINI_API_KEY}" && gemini --yolo --model "$MODEL" --output-format stream-json < "${PROMPT_FILE}" | /opt/repo-agent/gemini-stream-processor --output "$(dirname "${PROMPT_FILE}")/gemini-output.json"); then
              echo "Gemini execution successful with model: $MODEL"
              SUCCESS=true
              break
         else
-             echo "Gemini execution failed with model: $MODEL. Retrying with next model..."
+             echo "Gemini execution failed with model: $MODEL. Resetting working tree and retrying with next model..."
+             (cd "/workspaces/${REPO_NAME}" && git reset --hard)
         fi
     done
     
@@ -169,9 +169,15 @@ else
     verifyResolution
     # Run tests if available
     if [ -f "Makefile" ]; then
-        make test || echo "Tests failed but proceeding with push"
+        make test
     elif [ -f "go.mod" ]; then
-        go test ./... || echo "Tests failed but proceeding with push"
+        go test ./...
+    elif [ -f "package.json" ]; then
+        if [ -f "yarn.lock" ]; then
+            yarn test
+        else
+            npm test
+        fi
     fi
     pushChanges
 fi
