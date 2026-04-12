@@ -200,6 +200,7 @@ func TestReconciler_Reconcile(t *testing.T) {
 		"GOCACHE":    sandbox.GoCachePath,
 		"GOMODCACHE": sandbox.GoModCachePath,
 		"TMPDIR":     sandbox.TmpDirPath,
+		"GOTMPDIR":   sandbox.TmpDirPath,
 	}
 
 	for name, value := range expectedEnv {

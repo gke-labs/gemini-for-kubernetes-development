@@ -175,6 +175,7 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 		map[string]interface{}{"name": "GOCACHE", "value": GoCachePath},
 		map[string]interface{}{"name": "GOMODCACHE", "value": GoModCachePath},
 		map[string]interface{}{"name": "TMPDIR", "value": TmpDirPath},
+		map[string]interface{}{"name": "GOTMPDIR", "value": TmpDirPath},
 	)
 
 	workspaceDiskSize := opt.WorkspaceDiskSize
