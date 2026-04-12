@@ -203,9 +203,8 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 					cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
 				}
 				continue
-			} else {
-				klog.Warningf("Failed to write AGENT_PROMPT to %s: %v", promptPath, err)
 			}
+			klog.Warningf("Failed to write AGENT_PROMPT to %s: %v", promptPath, err)
 		}
 		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
 	}
