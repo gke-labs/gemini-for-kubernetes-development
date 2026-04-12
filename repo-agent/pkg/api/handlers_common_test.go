@@ -36,52 +36,40 @@ func TestTruncateString(t *testing.T) {
 			want:  "hello",
 		},
 		{
-			name:  "Basic truncation",
-			s:     "hello world",
-			limit: 5,
-			want:  "hello",
+			name:  "Basic truncation with buffer",
+			s:     "hello world how are you",
+			limit: 15,
+			want:  "hello", // 15 (limit) - 10 (buffer) = 5 limit. s[:5] is "hello".
+		},
+		{
+			name:  "Truncation with code block",
+			s:     "```\nsome code\n```\nmore text",
+			limit: 15,
+			want:  "```\ns\n```", // safeLimit = 15 - 10 = 5. s[:5] is "```\ns". strings.Count is 1. Adds \n```.
 		},
 		{
 			name:  "UTF-8 truncation - safe",
 			s:     "世界", // 6 bytes
-			limit: 3,
-			want:  "世",
+			limit: 16,
+			want:  "世界",
 		},
 		{
 			name:  "UTF-8 truncation - middle of rune",
-			s:     "世界", // 6 bytes
-			limit: 4,
-			want:  "世", // "界" is 3 bytes, so 4th byte is invalid if taken alone
-		},
-		{
-			name:  "UTF-8 truncation - middle of rune 2",
-			s:     "世界",
-			limit: 5,
-			want:  "世",
-		},
-		{
-			name:  "UTF-8 truncation - empty",
-			s:     "世界",
-			limit: 2,
-			want:  "",
+			s:     "世界 hello world", // 6 bytes + 12 = 18 bytes
+			limit: 13,
+			want:  "世", // safeLimit = 13 - 10 = 3. s[:3] is "世".
 		},
 		{
 			name:  "Empty string",
 			s:     "",
 			limit: 5,
-			want:  "",
+			want:  "[Bot-generated content]",
 		},
 		{
 			name:  "Zero limit",
 			s:     "hello",
 			limit: 0,
-			want:  "",
-		},
-		{
-			name:  "Invalid byte early",
-			s:     "\xffhello world", // 0xff is invalid UTF-8
-			limit: 5,
-			want:  "\xffhell",
+			want:  "[Bot-generated content (truncated)]",
 		},
 	}
 

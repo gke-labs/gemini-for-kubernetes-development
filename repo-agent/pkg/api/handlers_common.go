@@ -124,16 +124,39 @@ func (s *Server) ensureGeminiKeySet(c *gin.Context, namespace string) bool {
 }
 
 // truncateString safely truncates a string to a byte limit without splitting UTF-8 runes.
+// It also ensures that the truncated body doesn't leave an open code block and provides
+// a placeholder for empty content to avoid blank notifications.
 func truncateString(s string, limit int) string {
+	if s == "" {
+		return "[Bot-generated content]"
+	}
 	if len(s) <= limit {
 		return s
 	}
-	for i := limit; i >= 0; i-- {
-		if utf8.RuneStart(s[i]) {
-			return s[:i]
+
+	// Reserve some space for potential closing code block
+	safeLimit := limit - 10
+	if safeLimit < 0 {
+		safeLimit = 0
+	}
+
+	res := ""
+	for i := safeLimit; i >= 0; i-- {
+		if i < len(s) && utf8.RuneStart(s[i]) {
+			res = s[:i]
+			break
 		}
 	}
-	return ""
+
+	// Check for open code blocks (triple backticks)
+	if strings.Count(res, "```")%2 != 0 {
+		res += "\n```"
+	}
+
+	if res == "" {
+		return "[Bot-generated content (truncated)]"
+	}
+	return res
 }
 
 func (s *Server) getTaskMetadata(ctx context.Context, namespace, sandboxName, taskName, taskUID string) (string, string) {
