@@ -667,7 +667,7 @@ function App() {
       review = drafts[id];
     }
 
-    if (!review || (!review.review.body?.trim() && (!review.review.comments || review.review.comments.length === 0))) {
+    if (!review || (!review.review?.body?.trim() && (!review.review?.comments || review.review?.comments?.length === 0))) {
       alert("Please leave a review comment before Exporting.");
       return;
     }

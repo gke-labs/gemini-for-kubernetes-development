@@ -332,6 +332,10 @@ func (s *Server) submitReview(c *gin.Context) {
 		reviewRequest = agentOutput.Review.ToGitHubReviewRequest()
 	}
 
+	if reviewRequest == nil {
+		reviewRequest = &github.PullRequestReviewRequest{}
+	}
+
 	if s.TraceabilityMetadataEnabled {
 		taskName, taskUID := s.getTaskMetadata(ctx, namespace, sandboxName, payload.TaskName, payload.TaskUID)
 		repowatchName := s.getRepoWatchName(ctx, namespace, sandboxName)
@@ -343,9 +347,6 @@ func (s *Server) submitReview(c *gin.Context) {
 			tasks.MetadataKeyTaskType, tasks.TaskTypePRReview,
 			tasks.MetadataKeyTimestamp, time.Now().Format(time.RFC3339))
 		body := ""
-		if reviewRequest == nil {
-			reviewRequest = &github.PullRequestReviewRequest{}
-		}
 		if reviewRequest.Body != nil {
 			body = *reviewRequest.Body
 		}
