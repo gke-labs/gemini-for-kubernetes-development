@@ -139,7 +139,7 @@ function runGemini {
 function verifyResolution {
     echo "Verifying conflict resolution..."
     cd "/workspaces/${REPO_NAME}"
-    if grep -r --exclude-dir=.git "^<<<<<<< " .; then
+    if grep -r --exclude-dir=.git "^<<<<<<<" .; then
         echo "Conflict markers still present! Resolution failed."
         exit 1
     fi
