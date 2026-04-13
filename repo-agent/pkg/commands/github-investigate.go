@@ -9,12 +9,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spf13/cobra"
+	"k8s.io/klog/v2"
+
 	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks"
-	"github.com/spf13/cobra"
-	"k8s.io/klog/v2"
 )
 
 // GithubInvestigateCommand holds options for the RunCode function.
