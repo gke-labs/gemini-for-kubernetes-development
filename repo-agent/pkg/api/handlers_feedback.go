@@ -1,9 +1,9 @@
 package api
 
 import (
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks/metadata"
 	"context"
 	"fmt"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks/metadata"
 	"net/http"
 	"strings"
 	"time"

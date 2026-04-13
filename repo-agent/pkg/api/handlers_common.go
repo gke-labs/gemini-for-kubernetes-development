@@ -180,7 +180,7 @@ func truncateToRuneBoundary(s string, limit int) string {
 	if len(s) <= limit {
 		return s
 	}
-	// This loop is O(1) in practice because utf8.RuneStart will match within 
+	// This loop is O(1) in practice because utf8.RuneStart will match within
 	// a maximum of 4 bytes for any valid UTF-8 string.
 	for i := limit; i >= 0; i-- {
 		if i < len(s) && utf8.RuneStart(s[i]) {
@@ -199,10 +199,10 @@ func (s *Server) getTaskMetadata(ctx context.Context, namespace, sandboxName, ta
 	}
 	// If only one is provided, we still fall back to latest to ensure consistency
 	// or we could use the provided one. Review feedback suggested being more resilient.
-	
+
 	// Fallback to latest
 	resName, resUID := s.getLatestTaskMetadata(ctx, namespace, sandboxName)
-	
+
 	// If the provided values were partially present, prefer them if fallback fails
 	if resName == "n/a" && taskName != "" {
 		resName = taskName
@@ -247,11 +247,11 @@ func (s *Server) getLatestTaskMetadata(ctx context.Context, namespace, sandboxNa
 	if taskList == nil || len(taskList.Items) == 0 {
 		return "n/a", "n/a"
 	}
-	
+
 	// Find the latest task by creation timestamp
 	var latestTask *sandboxtaskv1alpha1.SandboxTask
 	for i := range taskList.Items {
-		// Tie-breaking: if multiple tasks have the exact same CreationTimestamp, 
+		// Tie-breaking: if multiple tasks have the exact same CreationTimestamp,
 		// we pick the first one encountered.
 		if latestTask == nil || taskList.Items[i].CreationTimestamp.After(latestTask.CreationTimestamp.Time) {
 			latestTask = &taskList.Items[i]

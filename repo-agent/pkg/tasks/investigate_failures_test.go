@@ -1,8 +1,8 @@
 package tasks
 
 import (
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks/metadata"
 	"bytes"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks/metadata"
 	"os"
 	"strings"
 	"testing"

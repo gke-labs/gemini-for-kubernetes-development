@@ -1,9 +1,9 @@
 package tasks
 
 import (
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks/metadata"
 	"bytes"
 	"fmt"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks/metadata"
 )
 
 var _ Task = &ChoreModel{}
