@@ -179,7 +179,7 @@ func TestReconciler_TaskOwnerReference(t *testing.T) {
 	taskName := fmt.Sprintf("%s-issue-10-test-handler", repoWatch.Name)
 	// The previous test code had: taskName := fmt.Sprintf("%s-issue-10-test-handler", repoWatch.Name)
 	// Which implies sandboxName was just repoWatch.Name-issue-10 ?
-	// In repowatch_controller.go: sandboxName := fmt.Sprintf("%s-issue-%d", repoWatch.Name, *issue.Number)
+	// In repowatch_controller.go: sandboxName := fmt.Sprintf("%s-issue-%d", repoWatch.Name, issue.GetNumber())
 	// taskName := fmt.Sprintf("%s-%s", sandboxName, handler.Name)
 
 	// I will just replace the IssueSandbox parts for now and assume the task name logic in test matches what the test expects (or maybe the test was failing on task name too but we didn't get there).

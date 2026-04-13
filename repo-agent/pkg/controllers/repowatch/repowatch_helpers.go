@@ -144,7 +144,7 @@ func getOwnedIssueSandboxes(sandboxes []unstructured.Unstructured, ownerUID type
 func (r *Reconciler) sortPRs(ctx context.Context, prs []*github.PullRequest, _ *reviewv1alpha1.RepoWatch, user *github.User) []*github.PullRequest {
 	// Prioritize PRs assigned to the current user
 	log := log.FromContext(ctx)
-	if user == nil || user.Login == nil {
+	if user == nil || user.GetLogin() == "" {
 		log.Error(errors.New("user or user login is nil"), "unable to get current user login for sorting PRs")
 		return prs
 	}
@@ -153,7 +153,7 @@ func (r *Reconciler) sortPRs(ctx context.Context, prs []*github.PullRequest, _ *
 	for _, pr := range prs {
 		isAssigned := false
 		for _, assignee := range pr.Assignees {
-			if assignee.Login != nil && *assignee.Login == *user.Login {
+			if assignee.GetLogin() != "" && assignee.GetLogin() == user.GetLogin() {
 				isAssigned = true
 				break
 			}
@@ -172,7 +172,7 @@ func (r *Reconciler) sortPRs(ctx context.Context, prs []*github.PullRequest, _ *
 // spec's `pullRequests` field.
 func isPRExplicit(prNumber int, explicitPRs []*github.PullRequest) bool {
 	for _, explicitPR := range explicitPRs {
-		if *explicitPR.Number == prNumber {
+		if explicitPR.GetNumber() == prNumber {
 			return true
 		}
 	}

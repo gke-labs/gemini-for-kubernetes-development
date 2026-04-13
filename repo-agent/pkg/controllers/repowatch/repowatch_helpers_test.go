@@ -435,6 +435,6 @@ func TestIsPRExplicit(t *testing.T) {
 
 	explicitPRs := []*github.PullRequest{pr1}
 
-	g.Expect(isPRExplicit(*pr1.Number, explicitPRs)).To(gomega.BeTrue())
-	g.Expect(isPRExplicit(*pr2.Number, explicitPRs)).To(gomega.BeFalse())
+	g.Expect(isPRExplicit(pr1.GetNumber(), explicitPRs)).To(gomega.BeTrue())
+	g.Expect(isPRExplicit(pr2.GetNumber(), explicitPRs)).To(gomega.BeFalse())
 }

@@ -575,8 +575,8 @@ func (r *Reconciler) filterPRsByAssignees(prs []*github.PullRequest, repoWatch *
 		assigneesMap[assignee] = true
 	}
 
-	if repoWatch.Spec.Review.AssignedToSelf && user != nil && user.Login != nil {
-		assigneesMap[*user.Login] = true
+	if repoWatch.Spec.Review.AssignedToSelf && user != nil && user.GetLogin() != "" {
+		assigneesMap[user.GetLogin()] = true
 	}
 
 	if len(assigneesMap) == 0 {
@@ -586,7 +586,7 @@ func (r *Reconciler) filterPRsByAssignees(prs []*github.PullRequest, repoWatch *
 	for _, pr := range prs {
 		matches := false
 		for _, assignee := range pr.Assignees {
-			if assignee.Login != nil && assigneesMap[*assignee.Login] {
+			if assignee.GetLogin() != "" && assigneesMap[assignee.GetLogin()] {
 				matches = true
 				break
 			}
@@ -962,10 +962,10 @@ func (r *Reconciler) isIssueMatch(issue *github.Issue, handler reviewv1alpha1.Is
 		}
 
 		// Check AssignedToSelf
-		if repoWatch.Spec.Issue.AssignedToSelf && user != nil && user.Login != nil {
+		if repoWatch.Spec.Issue.AssignedToSelf && user != nil && user.GetLogin() != "" {
 			isAssigned := false
 			for _, assignee := range issue.Assignees {
-				if assignee.Login != nil && *assignee.Login == *user.Login {
+				if assignee.GetLogin() != "" && assignee.GetLogin() == user.GetLogin() {
 					isAssigned = true
 					break
 				}
@@ -1014,7 +1014,7 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 	// Base name matches the issue identifier
 	name := fmt.Sprintf("%s-issue-%d", repoWatch.Name, issue.GetNumber())
 
-	cloneURL := strings.Replace(*issue.RepositoryURL, "api.github.com/repos", "github.com", 1) + ".git"
+	cloneURL := strings.Replace(issue.GetRepositoryURL(), "api.github.com/repos", "github.com", 1) + ".git"
 	repoParts := strings.Split(cloneURL, "/")
 	repoName := repoParts[len(repoParts)-1]
 
@@ -1062,7 +1062,7 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 	originURL := fmt.Sprintf("github.com/%s/%s", originUser, repoName)
 	branchName := fmt.Sprintf("issue-%d-%s", issue.GetNumber(), randString(4))
 
-	log.Info("Generated sandbox for Issue", "issue", *issue)
+	log.Info("Generated sandbox for Issue", "issue", issue.GetHTMLURL())
 
 	// Determine apiKeySecretName from IssueSpec
 	apiKeySecretName := repoWatch.Spec.Issue.LLM.APIKeySecretRef
@@ -1089,7 +1089,7 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 				"agentState": "provisioning",
 			},
 			CloneURL:              cloneURL,
-			HTMLURL:               *issue.HTMLURL,
+			HTMLURL:               issue.GetHTMLURL(),
 			Branch:                branchName,
 			Origin:                originURL,
 			PushEnabled:           false,
@@ -1116,7 +1116,7 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 		DindSupport:   repoWatch.Spec.Issue.DindSupport,
 		LLMExtensions: repoWatch.Spec.Issue.LLM.Extensions,
 		IssueID:       fmt.Sprintf("%d", issue.GetNumber()),
-		IssueTitle:    *issue.Title,
+		IssueTitle:    issue.GetTitle(),
 		IssueRepo:     repoWatch.GetName(),
 		//Handler:    "", // Handled per task?
 		Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{
@@ -1283,10 +1283,10 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, user *github.
 			ServiceAccountName:    "review-sandbox",
 		},
 		PRNumber:          pr.GetNumber(),
-		PRTitle:           *pr.Title,
-		PRHTMLURL:         *pr.HTMLURL,
-		PRDiffURL:         *pr.DiffURL,
-		PRCloneURL:        fmt.Sprintf("%s#refs/heads/%s", *pr.Head.Repo.CloneURL, *pr.Head.Ref),
+		PRTitle:           pr.GetTitle(),
+		PRHTMLURL:         pr.GetHTMLURL(),
+		PRDiffURL:         pr.GetDiffURL(),
+		PRCloneURL:        fmt.Sprintf("%s#refs/heads/%s", pr.GetHead().GetRepo().GetCloneURL(), pr.GetHead().GetRef()),
 		RepoName:          repoWatch.GetName(),
 		MaxReviewFiles:    repoWatch.Spec.Review.MaxReviewFiles,
 		IgnoreFiles:       repoWatch.Spec.Review.IgnoreFiles,
@@ -1937,46 +1937,46 @@ func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *revi
 	for {
 		commits, resp, err := ghClient.PullRequests.ListCommits(ctx, owner, repo, pr.GetNumber(), opts)
 		if err != nil {
-			log.Error(err, "unable to list commits for PR", "pr", pr.Number)
-			break
-		}
-		for _, commit := range commits {
-			commitsFound = true
-			if t := commit.GetCommit().GetCommitter().GetDate(); t.After(latestCommitTime) {
-				latestCommitTime = t
-				if commit.Author != nil {
-					latestCommitAuthorLogin = commit.Author.GetLogin()
-				}
+			log.Error(err, "unable to list commits for PR", "pr", pr.GetNumber())
+		break
+	}
+	for _, commit := range commits {
+		commitsFound = true
+		if t := commit.GetCommit().GetCommitter().GetDate(); t.After(latestCommitTime) {
+			latestCommitTime = t
+			if commit.Author != nil {
+				latestCommitAuthorLogin = commit.Author.GetLogin()
 			}
 		}
-		if resp.NextPage == 0 {
-			break
-		}
-		opts.Page = resp.NextPage
 	}
+	if resp.NextPage == 0 {
+		break
+	}
+	opts.Page = resp.NextPage
+}
 
-	if !commitsFound {
+if !commitsFound {
+	return nil
+}
+
+// Check for new feedback
+hasNew, latestFeedbackTime, err := r.hasNewFeedback(ctx, ghClient, owner, repo, pr, issue, latestCommitTime, latestCommitAuthorLogin)
+if err != nil {
+	log.Error(err, "checking for new feedback", "pr", pr.GetNumber())
+	return nil
+}
+
+if hasNew {
+	// Check if we have already created a task after the latest feedback
+	if !lastAddressFeedbackTaskTime.IsZero() && lastAddressFeedbackTaskTime.After(latestFeedbackTime) {
+		log.Info("Skipping address-feedback: last attempt was after latest feedback", "pr", pr.GetNumber(), "lastAttempt", lastAddressFeedbackTaskTime, "latestFeedback", latestFeedbackTime)
 		return nil
 	}
 
-	// Check for new feedback
-	hasNew, latestFeedbackTime, err := r.hasNewFeedback(ctx, ghClient, owner, repo, pr, issue, latestCommitTime, latestCommitAuthorLogin)
-	if err != nil {
-		log.Error(err, "checking for new feedback", "pr", pr.Number)
-		return nil
-	}
-
-	if hasNew {
-		// Check if we have already created a task after the latest feedback
-		if !lastAddressFeedbackTaskTime.IsZero() && lastAddressFeedbackTaskTime.After(latestFeedbackTime) {
-			log.Info("Skipping address-feedback: last attempt was after latest feedback", "pr", pr.GetNumber(), "lastAttempt", lastAddressFeedbackTaskTime, "latestFeedback", latestFeedbackTime)
-			return nil
-		}
-
-		log.Info("Found new feedback, creating address-feedback task", "pr", pr.Number)
+	log.Info("Found new feedback, creating address-feedback task", "pr", pr.GetNumber())
 		params := map[string]string{
 			"PULL_REQUEST_ID": fmt.Sprintf("%d", pr.GetNumber()),
-			"ISSUE_URL":       *issue.HTMLURL,
+			"ISSUE_URL":       issue.GetHTMLURL(),
 			"AGENT_PROMPT":    repoWatch.Spec.Issue.LLM.Prompt,
 		}
 		// Add LLM params
@@ -2120,10 +2120,10 @@ func (r *Reconciler) reconcilePRFailures(ctx context.Context, repoWatch *reviewv
 			return nil
 		}
 
-		log.Info("Found failures on latest commit, creating investigate-failures task", "pr", pr.Number, "sha", sha)
+		log.Info("Found failures on latest commit, creating investigate-failures task", "pr", pr.GetNumber(), "sha", sha)
 		params := map[string]string{
 			"PULL_REQUEST_ID": fmt.Sprintf("%d", pr.GetNumber()),
-			"ISSUE_URL":       *issue.HTMLURL,
+			"ISSUE_URL":       issue.GetHTMLURL(),
 			"AGENT_PROMPT":    repoWatch.Spec.Issue.LLM.Prompt,
 		}
 		// Add LLM params
@@ -2422,7 +2422,7 @@ func (r *Reconciler) reconcileReviewConflicts(ctx context.Context, repoWatch *re
 	}
 
 	// Mergeable is false if there are conflicts
-	if !*pr.Mergeable {
+	if !pr.GetMergeable() {
 		if alreadyAttemptedThisSHA {
 			return nil
 		}
@@ -2468,7 +2468,7 @@ func (r *Reconciler) reconcileReviewConflicts(ctx context.Context, repoWatch *re
 	// Update annotation to record that we've checked this SHA combination.
 	// Only update if mergeable. If it's NOT mergeable, we rely on the task existence to avoid re-creating the task,
 	// but we don't set the annotation so that if the task fails, we can retry.
-	if *pr.Mergeable {
+	if pr.GetMergeable() {
 		// Re-fetch sandbox to ensure we have the latest version for patching
 		latestSandbox := &unstructured.Unstructured{}
 		latestSandbox.SetGroupVersionKind(sandbox.GroupVersionKind())

@@ -242,6 +242,14 @@ elif [ -f "package.json" ]; then
     else
         npm install && npm test || TEST_FAILED=true
     fi
+elif [ -f "pyproject.toml" ] || [ -f "requirements.txt" ]; then
+    if [ -f "requirements.txt" ]; then
+        pip install -r requirements.txt || true
+    fi
+    if [ -f "pyproject.toml" ]; then
+        pip install . || true
+    fi
+    pytest || TEST_FAILED=true
 fi
 
 if [ "$TEST_FAILED" = true ]; then
