@@ -2,8 +2,9 @@ package tasks
 
 import (
 	"bytes"
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks/metadata"
 	"testing"
+
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks/metadata"
 )
 
 func TestChoreScriptTemplate(t *testing.T) {
