@@ -2314,9 +2314,25 @@ func (r *Reconciler) reconcileSandboxPodStatus(ctx context.Context, sandbox *uns
 	}
 
 	if updateAnnotation {
-		sandbox.SetAnnotations(annotations)
-		if err := r.Update(ctx, sandbox); err != nil {
-			log.Error(err, "failed to update sandbox annotation for pod status", "sandbox", sandbox.GetName())
+		// Re-fetch sandbox to ensure we have the latest version
+		latestSandbox := &unstructured.Unstructured{}
+		latestSandbox.SetGroupVersionKind(sandbox.GroupVersionKind())
+		if err := r.Get(ctx, types.NamespacedName{Name: sandbox.GetName(), Namespace: sandbox.GetNamespace()}, latestSandbox); err != nil {
+			log.Error(err, "failed to re-fetch sandbox for update", "sandbox", sandbox.GetName())
+			latestSandbox = sandbox
+		}
+
+		latestAnnotations := latestSandbox.GetAnnotations()
+		if latestAnnotations == nil {
+			latestAnnotations = make(map[string]string)
+		}
+		for k, v := range annotations {
+			latestAnnotations[k] = v
+		}
+
+		latestSandbox.SetAnnotations(latestAnnotations)
+		if err := r.Update(ctx, latestSandbox); err != nil {
+			log.Error(err, "failed to update sandbox annotation for pod status", "sandbox", latestSandbox.GetName())
 			return sandboxStatus, err
 		}
 	}
@@ -2437,21 +2453,35 @@ func (r *Reconciler) reconcileReviewConflicts(ctx context.Context, repoWatch *re
 		if err := r.createSandboxTask(ctx, repoWatch, sandbox, sandbox.GetName(), "", "resolve-conflicts", params); err != nil {
 			return err
 		}
+
+		// Ensure sandbox is scaled up if we have capacity
+		if _, err := r.unpauseSandboxIfPendingTasks(ctx, sandbox, activeSandboxes, repoWatch.Spec.Review.MaxActiveSandboxes, prIsExplicit); err != nil {
+			log.Error(err, "unable to unpause sandbox after creating resolve-conflicts task", "sandbox", sandbox.GetName())
+		}
 	}
 
 	// Update annotation to record that we've checked this SHA combination.
 	// Only update if mergeable. If it's NOT mergeable, we rely on the task existence to avoid re-creating the task,
 	// but we don't set the annotation so that if the task fails, we can retry.
 	if *pr.Mergeable {
-		patch := client.MergeFrom(sandbox.DeepCopy())
-		annotations := sandbox.GetAnnotations()
+		// Re-fetch sandbox to ensure we have the latest version for patching
+		latestSandbox := &unstructured.Unstructured{}
+		latestSandbox.SetGroupVersionKind(sandbox.GroupVersionKind())
+		if err := r.Get(ctx, types.NamespacedName{Name: sandbox.GetName(), Namespace: sandbox.GetNamespace()}, latestSandbox); err != nil {
+			log.Error(err, "failed to re-fetch sandbox for patching", "sandbox", sandbox.GetName())
+			// Fallback to using the current sandbox object if re-fetch fails, though Patch might fail if version mismatch
+			latestSandbox = sandbox
+		}
+
+		patch := client.MergeFrom(latestSandbox.DeepCopy())
+		annotations := latestSandbox.GetAnnotations()
 		if annotations == nil {
 			annotations = make(map[string]string)
 		}
 		annotations["sandbox.gemini.google.com/last-conflict-check-key"] = checkSHA
-		sandbox.SetAnnotations(annotations)
-		if err := r.Patch(ctx, sandbox, patch); err != nil {
-			log.Error(err, "failed to patch sandbox annotation for conflict check", "sandbox", sandbox.GetName())
+		latestSandbox.SetAnnotations(annotations)
+		if err := r.Patch(ctx, latestSandbox, patch); err != nil {
+			log.Error(err, "failed to patch sandbox annotation for conflict check", "sandbox", latestSandbox.GetName())
 		}
 	}
 

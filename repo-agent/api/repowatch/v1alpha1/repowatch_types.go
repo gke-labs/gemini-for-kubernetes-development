@@ -61,10 +61,6 @@ type LLMConfig struct {
 	// model configurations.
 	ConfigdirRef string `json:"configdirRef,omitempty"`
 
-	// Model is the name of the LLM model to use.
-	// +kubebuilder:validation:Optional
-	Model string `json:"model,omitempty"`
-
 	// Extensions is a list of extensions to install in the sandbox
 	// before running the agent. Each entry specifies a source
 	// (GitHub URL or extension name) and optional ref.
@@ -157,6 +153,10 @@ type PRReviewSpec struct {
 	// +kubebuilder:validation:Optional
 	RobotAccount string `json:"robotAccount,omitempty"`
 
+	// Models specifies a list of models to use for the review handler.
+	// +kubebuilder:validation:Optional
+	Models []string `json:"models,omitempty"`
+
 	// ResolveConflicts enables automated merge conflict resolution for PRs.
 	// Warning: Enabling this may increase GitHub API usage and consume significant LLM tokens.
 	// +kubebuilder:validation:Optional
@@ -223,6 +223,10 @@ type DevSpec struct {
 	// +kubebuilder:validation:Optional
 	// +kubebuilder:default="10Gi"
 	WorkspaceDiskSize string `json:"workspaceDiskSize,omitempty"`
+
+	// Models specifies a list of models to use for the development handler.
+	// +kubebuilder:validation:Optional
+	Models []string `json:"models,omitempty"`
 }
 
 type IssueHandlerSpec struct {

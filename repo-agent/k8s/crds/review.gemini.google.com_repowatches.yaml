@@ -85,8 +85,6 @@ spec:
                           - source
                           type: object
                         type: array
-                      model:
-                        type: string
                       prompt:
                         type: string
                       provider:
@@ -104,6 +102,10 @@ spec:
                     type: integer
                   maxSandboxes:
                     type: integer
+                  models:
+                    items:
+                      type: string
+                    type: array
                   workspaceDiskSize:
                     default: 10Gi
                     type: string
@@ -179,8 +181,6 @@ spec:
                           - source
                           type: object
                         type: array
-                      model:
-                        type: string
                       prompt:
                         type: string
                       provider:
@@ -263,8 +263,6 @@ spec:
                           - source
                           type: object
                         type: array
-                      model:
-                        type: string
                       prompt:
                         type: string
                       provider:
@@ -285,6 +283,10 @@ spec:
                     type: integer
                   maxSandboxes:
                     type: integer
+                  models:
+                    items:
+                      type: string
+                    type: array
                   pullRequests:
                     items:
                       type: integer
