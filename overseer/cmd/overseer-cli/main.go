@@ -23,6 +23,7 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/yaml"
 
@@ -267,6 +268,8 @@ func runChore(ctx context.Context, name string, file string) error {
 						klog.Infof("Chore %s: Task failed recently (%v ago). Skipping for backoff.", chore.Name, time.Since(task.CreationTimestamp.Time))
 						return nil
 					}
+					klog.Warningf("Chore %s: Found old Failed task (%v ago). Deleting to allow retry.", chore.Name, time.Since(task.CreationTimestamp.Time))
+					_ = manager.DeleteSandboxTask(ctx, namespace, task.Name)
 				}
 			}
 		}
@@ -415,23 +418,59 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 			Kind:       "Overseer",
 			Name:       overseer.Name,
 			UID:        overseer.UID,
-			Controller: func(b bool) *bool { return &b }(true),
+			Controller: ptr.To(true),
 		},
 	})
 
-	createdSb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sb, metav1.CreateOptions{})
-	if err != nil && !errors.IsAlreadyExists(err) {
-		return err
-	}
-
-	if createdSb == nil {
-		createdSb, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
-		if err != nil {
-			return fmt.Errorf("failed to get sandbox after creation: %w", err)
-		}
+	createdSb, err := ensureSandbox(ctx, kubeClient.DynamicClient, namespace, sb)
+	if err != nil {
+		return fmt.Errorf("failed to ensure chore sandbox: %w", err)
 	}
 
 	return ensureService(ctx, kubeClient.Clientset, namespace, svc, createdSb)
+}
+
+func ensureSandbox(ctx context.Context, dynClient dynamic.Interface, namespace string, sb *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+	name := sb.GetName()
+	createdSb, err := dynClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sb, metav1.CreateOptions{})
+	if err == nil {
+		return createdSb, nil
+	}
+	if !errors.IsAlreadyExists(err) {
+		return nil, err
+	}
+
+	// Already exists, update OwnerReferences if missing or mismatched to ensure proper GC
+	existing, err := dynClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get existing sandbox %s: %w", name, err)
+	}
+
+	desiredRefs := sb.GetOwnerReferences()
+	existingRefs := existing.GetOwnerReferences()
+
+	needsUpdate := false
+	if len(existingRefs) != len(desiredRefs) {
+		needsUpdate = true
+	} else {
+		for i := range desiredRefs {
+			if existingRefs[i].UID != desiredRefs[i].UID || existingRefs[i].APIVersion != desiredRefs[i].APIVersion {
+				needsUpdate = true
+				break
+			}
+		}
+	}
+
+	if needsUpdate {
+		existing.SetOwnerReferences(desiredRefs)
+		updated, err := dynClient.Resource(k8s.SandboxGVR).Namespace(namespace).Update(ctx, existing, metav1.UpdateOptions{})
+		if err != nil {
+			return nil, fmt.Errorf("failed to update sandbox %s owner references: %w", name, err)
+		}
+		return updated, nil
+	}
+
+	return existing, nil
 }
 
 func ensureService(ctx context.Context, clientset kubernetes.Interface, namespace string, svc *corev1.Service, owner *unstructured.Unstructured) error {
@@ -442,7 +481,7 @@ func ensureService(ctx context.Context, clientset kubernetes.Interface, namespac
 				Kind:       owner.GetKind(),
 				Name:       owner.GetName(),
 				UID:        owner.GetUID(),
-				Controller: func(b bool) *bool { return &b }(true),
+				Controller: ptr.To(true),
 			},
 		}
 	}
@@ -576,6 +615,8 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 						klog.Infof("Issue #%d: Task %s failed recently (%v ago). Skipping for backoff.", number, taskType, time.Since(task.CreationTimestamp.Time))
 						return nil
 					}
+					klog.Warningf("Issue #%d: Found old Failed task %s (%v ago). Deleting to allow retry.", number, taskType, time.Since(task.CreationTimestamp.Time))
+					_ = manager.DeleteSandboxTask(ctx, namespace, task.Name)
 				}
 			}
 		}
@@ -755,6 +796,8 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 								klog.Infof("PR #%d: Review task for SHA %s failed recently (%v ago). Skipping for backoff.", number, headSHA, time.Since(task.CreationTimestamp.Time))
 								return nil
 							}
+							klog.Warningf("PR #%d: Found old Failed review task for SHA %s (%v ago). Deleting to allow retry.", number, headSHA, time.Since(task.CreationTimestamp.Time))
+							_ = manager.DeleteSandboxTask(ctx, namespace, task.Name)
 						}
 					} else {
 						// Another SHA is being reviewed
@@ -823,25 +866,46 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 			} else {
 				listEventsOpt := &githubv39.ListOptions{PerPage: 100}
 				eventsFetchSuccess = true
-				for {
-					events, resp, err := ghClient.Issues.ListIssueEvents(ctx, owner, repo, number, listEventsOpt)
-					if err != nil {
-						klog.Warningf("PR #%d: Failed to list events: %v", number, err)
-						eventsFetchSuccess = false
-						break
+
+				// Get the first page to find out the last page number (events are chronological)
+				_, resp, err := ghClient.Issues.ListIssueEvents(ctx, owner, repo, number, listEventsOpt)
+				if err != nil {
+					klog.Warningf("PR #%d: Failed to list events: %v", number, err)
+					eventsFetchSuccess = false
+				} else {
+					lastPage := resp.LastPage
+					if lastPage == 0 {
+						lastPage = 1
 					}
-					for _, e := range events {
-						if e.GetEvent() == "reopened" {
-							t := e.GetCreatedAt()
-							if lastReopenedAt == nil || t.After(*lastReopenedAt) {
-								lastReopenedAt = &t
+
+				StopEvents:
+					for p := lastPage; p >= 1; p-- {
+						listEventsOpt.Page = p
+						events, _, err := ghClient.Issues.ListIssueEvents(ctx, owner, repo, number, listEventsOpt)
+						if err != nil {
+							klog.Warningf("PR #%d: Failed to list events on page %d: %v", number, p, err)
+							eventsFetchSuccess = false
+							break StopEvents
+						}
+
+						// Scan events on this page backwards (newest to oldest)
+						for i := len(events) - 1; i >= 0; i-- {
+							e := events[i]
+							createdAt := e.GetCreatedAt()
+
+							// If we reached events older than our last checkpoint, we can stop
+							if eventsLastCheckedAt != nil && !createdAt.After(*eventsLastCheckedAt) {
+								break StopEvents
+							}
+
+							if e.GetEvent() == "reopened" {
+								t := e.GetCreatedAt()
+								if lastReopenedAt == nil || t.After(*lastReopenedAt) {
+									lastReopenedAt = &t
+								}
 							}
 						}
 					}
-					if resp.NextPage == 0 {
-						break
-					}
-					listEventsOpt.Page = resp.NextPage
 				}
 			}
 
@@ -866,19 +930,21 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 					isBot := (botLogin != "" && (strings.EqualFold(login, botLogin) || strings.EqualFold(loginNoBot, botLoginNoBot))) ||
 						(userLogin != "" && (strings.EqualFold(login, userLogin) || strings.EqualFold(loginNoBot, userLoginNoBot)))
 
+					// If shared accounts are used, also verify the hidden signature in the body
 					if isBot && strings.EqualFold(r.GetCommitID(), headSHA) {
-						state := r.GetState()
-						submittedAt := r.GetSubmittedAt()
+						if strings.Contains(r.GetBody(), "<!-- overseer-review -->") {
+							state := r.GetState()
+							submittedAt := r.GetSubmittedAt()
 
-						if !submittedAt.IsZero() && lastReopenedAt != nil && submittedAt.Before(*lastReopenedAt) {
-							klog.Infof("PR #%d: Found historical review for SHA %s, but PR was reopened since then. Proceeding with new review.", number, headSHA)
-							continue
+							if !submittedAt.IsZero() && lastReopenedAt != nil && submittedAt.Before(*lastReopenedAt) {
+								klog.Infof("PR #%d: Found historical automated review for SHA %s, but PR was reopened since then. Proceeding with new review.", number, headSHA)
+								continue
+							}
+
+							klog.Infof("PR #%d: Automated review for SHA %s already exists on GitHub by %s (state: %s). Skipping.", number, headSHA, login, state)
+							return nil
 						}
-
-						// We consider any state (PENDING, COMMENTED, APPROVED, CHANGES_REQUESTED, DISMISSED)
-						// as "already handled" to prevent infinite loops (especially with DISMISSED).
-						klog.Infof("PR #%d: Review for SHA %s already exists on GitHub by %s (state: %s). Skipping.", number, headSHA, login, state)
-						return nil
+						klog.V(2).Infof("PR #%d: Found review by %s for SHA %s, but it lacks the automated signature. Assuming it is a manual review.", number, login, headSHA)
 					}
 				}
 				if resp.NextPage == 0 {
@@ -912,7 +978,7 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 		if lastReopenedAt != nil {
 			_ = manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "lastReopenedAt", lastReopenedAt.Format(time.RFC3339))
 		}
-		_ = manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "eventsLastCheckedAt", time.Now().Format(time.RFC3339))
+		_ = manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "eventsLastCheckedAt", pr.GetUpdatedAt().Format(time.RFC3339))
 	}
 
 	// Create Task
@@ -1055,6 +1121,12 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 	// Set event to COMMENT to submit directly instead of creating a draft
 	reviewRequest.Event = githubv39.String("COMMENT")
 
+	// Add a hidden signature to definitively identify automated reviews
+	signature := "\n\n<!-- overseer-review -->"
+	if reviewRequest.Body != nil {
+		reviewRequest.Body = githubv39.String(*reviewRequest.Body + signature)
+	}
+
 	klog.Infof("Creating review on GitHub for %s/%s PR %d...", owner, repoName, prNumber)
 	review, _, err := client.PullRequests.CreateReview(ctx, owner, repoName, prNumber, reviewRequest)
 	if err != nil {
@@ -1162,20 +1234,13 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 			Kind:       "Overseer",
 			Name:       overseer.Name,
 			UID:        overseer.UID,
-			Controller: func(b bool) *bool { return &b }(true),
+			Controller: ptr.To(true),
 		},
 	})
 
-	createdSb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sb, metav1.CreateOptions{})
-	if err != nil && !errors.IsAlreadyExists(err) {
-		return err
-	}
-
-	if createdSb == nil {
-		createdSb, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
-		if err != nil {
-			return fmt.Errorf("failed to get sandbox after creation: %w", err)
-		}
+	createdSb, err := ensureSandbox(ctx, kubeClient.DynamicClient, namespace, sb)
+	if err != nil {
+		return fmt.Errorf("failed to ensure issue sandbox: %w", err)
 	}
 
 	return ensureService(ctx, kubeClient.Clientset, namespace, svc, createdSb)
@@ -1260,20 +1325,13 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 			Kind:       "Overseer",
 			Name:       overseer.Name,
 			UID:        overseer.UID,
-			Controller: func(b bool) *bool { return &b }(true),
+			Controller: ptr.To(true),
 		},
 	})
 
-	createdSb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sb, metav1.CreateOptions{})
-	if err != nil && !errors.IsAlreadyExists(err) {
-		return err
-	}
-
-	if createdSb == nil {
-		createdSb, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
-		if err != nil {
-			return fmt.Errorf("failed to get sandbox after creation: %w", err)
-		}
+	createdSb, err := ensureSandbox(ctx, kubeClient.DynamicClient, namespace, sb)
+	if err != nil {
+		return fmt.Errorf("failed to ensure PR sandbox: %w", err)
 	}
 
 	return ensureService(ctx, kubeClient.Clientset, namespace, svc, createdSb)
