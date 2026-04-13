@@ -727,18 +727,8 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 
 	sandboxName := fmt.Sprintf("%s-pr-%d", overseer.Name, number)
 	headSHA := pr.GetHead().GetSHA()
-
-	var sandboxIsActive bool
-	var sandboxUnstructured *unstructured.Unstructured
-	sUnstructured, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
-	if err == nil {
-		sandboxUnstructured = sUnstructured
-		replicas, found, err := unstructured.NestedInt64(sandboxUnstructured.Object, "spec", "replicas")
-		if err == nil && (!found || replicas > 0) {
-			sandboxIsActive = true
-		}
-	} else if !errors.IsNotFound(err) {
-		return fmt.Errorf("failed to check if sandbox exists: %w", err)
+	if headSHA == "" {
+		return fmt.Errorf("PR #%d has no head SHA", number)
 	}
 
 	// Check if a task for this SHA already exists (only for review tasks)
@@ -788,7 +778,23 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 				}
 			}
 		}
+	}
 
+	var sandboxIsActive bool
+	var sandboxUnstructured *unstructured.Unstructured
+	sUnstructured, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
+	if err == nil {
+		sandboxUnstructured = sUnstructured
+		replicas, found, err := unstructured.NestedInt64(sandboxUnstructured.Object, "spec", "replicas")
+		if err == nil && (!found || replicas > 0) {
+			sandboxIsActive = true
+		}
+	} else if !errors.IsNotFound(err) {
+		return fmt.Errorf("failed to check if sandbox exists: %w", err)
+	}
+
+	// Check if a task for this SHA already exists (only for review tasks)
+	if taskType == "review" {
 		// 2. Then check GitHub for already submitted reviews for this SHA
 		if botLogin == "" && userLogin == "" {
 			klog.Warningf("PR #%d: Neither GITHUB_BOT_LOGIN nor GITHUB_USER_ID is set. Skipping GitHub review deduplication.", number)
