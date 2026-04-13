@@ -1588,15 +1588,15 @@ func (r *Reconciler) reconcileDevSandboxesInternal(ctx context.Context, user *gi
 		sandboxExists := false
 		sandboxName := newSandboxName
 		for _, ws := range watchedDevSandboxes {
-		        if ws.SandboxName == oldSandboxName {
-		                sandboxExists = true
-		                sandboxName = oldSandboxName
-		                break
-		        }
-		        if ws.SandboxName == newSandboxName {
-		                sandboxExists = true
-		                break
-		        }
+			if ws.SandboxName == oldSandboxName {
+				sandboxExists = true
+				sandboxName = oldSandboxName
+				break
+			}
+			if ws.SandboxName == newSandboxName {
+				sandboxExists = true
+				break
+			}
 		}
 		if sandboxExists {
 			continue
@@ -1938,42 +1938,42 @@ func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *revi
 		commits, resp, err := ghClient.PullRequests.ListCommits(ctx, owner, repo, pr.GetNumber(), opts)
 		if err != nil {
 			log.Error(err, "unable to list commits for PR", "pr", pr.GetNumber())
-		break
-	}
-	for _, commit := range commits {
-		commitsFound = true
-		if t := commit.GetCommit().GetCommitter().GetDate(); t.After(latestCommitTime) {
-			latestCommitTime = t
-			if commit.Author != nil {
-				latestCommitAuthorLogin = commit.Author.GetLogin()
+			break
+		}
+		for _, commit := range commits {
+			commitsFound = true
+			if t := commit.GetCommit().GetCommitter().GetDate(); t.After(latestCommitTime) {
+				latestCommitTime = t
+				if commit.Author != nil {
+					latestCommitAuthorLogin = commit.Author.GetLogin()
+				}
 			}
 		}
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
 	}
-	if resp.NextPage == 0 {
-		break
-	}
-	opts.Page = resp.NextPage
-}
 
-if !commitsFound {
-	return nil
-}
-
-// Check for new feedback
-hasNew, latestFeedbackTime, err := r.hasNewFeedback(ctx, ghClient, owner, repo, pr, issue, latestCommitTime, latestCommitAuthorLogin)
-if err != nil {
-	log.Error(err, "checking for new feedback", "pr", pr.GetNumber())
-	return nil
-}
-
-if hasNew {
-	// Check if we have already created a task after the latest feedback
-	if !lastAddressFeedbackTaskTime.IsZero() && lastAddressFeedbackTaskTime.After(latestFeedbackTime) {
-		log.Info("Skipping address-feedback: last attempt was after latest feedback", "pr", pr.GetNumber(), "lastAttempt", lastAddressFeedbackTaskTime, "latestFeedback", latestFeedbackTime)
+	if !commitsFound {
 		return nil
 	}
 
-	log.Info("Found new feedback, creating address-feedback task", "pr", pr.GetNumber())
+	// Check for new feedback
+	hasNew, latestFeedbackTime, err := r.hasNewFeedback(ctx, ghClient, owner, repo, pr, issue, latestCommitTime, latestCommitAuthorLogin)
+	if err != nil {
+		log.Error(err, "checking for new feedback", "pr", pr.GetNumber())
+		return nil
+	}
+
+	if hasNew {
+		// Check if we have already created a task after the latest feedback
+		if !lastAddressFeedbackTaskTime.IsZero() && lastAddressFeedbackTaskTime.After(latestFeedbackTime) {
+			log.Info("Skipping address-feedback: last attempt was after latest feedback", "pr", pr.GetNumber(), "lastAttempt", lastAddressFeedbackTaskTime, "latestFeedback", latestFeedbackTime)
+			return nil
+		}
+
+		log.Info("Found new feedback, creating address-feedback task", "pr", pr.GetNumber())
 		params := map[string]string{
 			"PULL_REQUEST_ID": fmt.Sprintf("%d", pr.GetNumber()),
 			"ISSUE_URL":       issue.GetHTMLURL(),

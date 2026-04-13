@@ -309,7 +309,7 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 	dindSupportVal, _, _ := unstructured.NestedBool(rw.Object, "spec", "dev", "dindSupport")
 	dindSupport := ""
 	if dindSupportVal {
-	        dindSupport = "true"
+		dindSupport = "true"
 	}
 	workspaceDiskSize, _, _ := unstructured.NestedString(rw.Object, "spec", "dev", "workspaceDiskSize")
 	// Fetch user info from secret
