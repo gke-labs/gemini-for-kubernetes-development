@@ -2392,7 +2392,7 @@ func (r *Reconciler) reconcileReviewConflicts(ctx context.Context, repoWatch *re
 		}
 	}
 
-	if activeTaskExists || alreadyAttemptedThisSHA {
+	if activeTaskExists {
 		return nil
 	}
 
@@ -2421,6 +2421,9 @@ func (r *Reconciler) reconcileReviewConflicts(ctx context.Context, repoWatch *re
 
 	// Mergeable is false if there are conflicts
 	if !*pr.Mergeable {
+		if alreadyAttemptedThisSHA {
+			return nil
+		}
 		log.Info("Found merge conflicts in PR, creating resolve-conflicts task", "pr", *pr.Number, "headSHA", headSHA, "baseSHA", baseSHA)
 
 		params := map[string]string{
