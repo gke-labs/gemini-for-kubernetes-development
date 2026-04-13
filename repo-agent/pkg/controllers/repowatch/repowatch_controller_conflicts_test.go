@@ -116,7 +116,7 @@ func TestReconciler_ReconcileReviewConflicts(t *testing.T) {
 				"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=created&state=open": func() *http.Response {
 					return &http.Response{
 						StatusCode: http.StatusOK,
-						Body:       io.NopCloser(strings.NewReader(fmt.Sprintf(`[{"number": %d, "head": {"repo": {"clone_url": "%s", "html_url": "%s"}, "ref": "feature", "sha": "head-sha"}, "base": {"ref": "main"}, "html_url": "%s/pull/%d", "title": "Test PR"}]`, prNumber, repoURL, repoURL, repoURL, prNumber))),
+						Body:       io.NopCloser(strings.NewReader(fmt.Sprintf(`[{"number": %d, "head": {"repo": {"clone_url": "%s", "html_url": "%s"}, "ref": "feature", "sha": "head-sha"}, "base": {"ref": "main", "sha": "base-sha"}, "html_url": "%s/pull/%d", "title": "Test PR"}]`, prNumber, repoURL, repoURL, repoURL, prNumber))),
 					}
 				},
 				fmt.Sprintf("https://api.github.com/repos/%s/%s/branches/main", owner, repoName): func() *http.Response {
@@ -132,7 +132,7 @@ func TestReconciler_ReconcileReviewConflicts(t *testing.T) {
 							"number": %d,
 							"mergeable": false,
 							"head": {"repo": {"clone_url": "%s", "html_url": "%s"}, "ref": "feature", "sha": "head-sha"},
-							"base": {"ref": "main"},
+							"base": {"ref": "main", "sha": "base-sha"},
 							"html_url": "%s/pull/%d",
 							"title": "Test PR"
 						}`, prNumber, repoURL, repoURL, repoURL, prNumber))),
@@ -236,7 +236,7 @@ func TestReconciler_ReconcileReviewConflicts(t *testing.T) {
 				"number": %d,
 				"mergeable": true,
 				"head": {"repo": {"clone_url": "%s", "html_url": "%s"}, "ref": "feature", "sha": "head-sha"},
-				"base": {"ref": "main"},
+				"base": {"ref": "main", "sha": "base-sha"},
 				"html_url": "%s/pull/%d",
 				"title": "Test PR"
 			}`, prNumber, repoURL, repoURL, repoURL, prNumber))),

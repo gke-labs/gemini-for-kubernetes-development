@@ -70,7 +70,7 @@ func getSuggestedLabels(ctx context.Context, client *github.Client, owner, repo 
 	}
 
 	for _, issue := range result.Issues {
-		log.Info("Found issue", "issueNumber", *issue.Number)
+		log.Info("Found issue", "issueNumber", issue.GetNumber())
 		for _, label := range issue.Labels {
 			if label.Name != nil {
 				log.Info("Issue label", "label", *label.Name)

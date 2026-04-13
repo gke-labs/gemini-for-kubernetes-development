@@ -152,8 +152,9 @@ function runGemini {
         echo "Attempting to merge origin/${BASE_REF} into ${CURRENT_BRANCH}..."
         # We use --no-commit to keep it in a merging state if it succeeds, but usually it fails with conflicts.
         if git merge "origin/${BASE_REF}" --no-commit -m "Merge branch 'origin/${BASE_REF}' into ${CURRENT_BRANCH}"; then
-             echo "Merge successful without conflicts (unexpected in loop)."
+             echo "Merge successful without conflicts (unexpected in loop). Committing..."
              if verifyResolution; then
+                 git commit -m "chore: merge branch 'origin/${BASE_REF}' into ${CURRENT_BRANCH}" || echo "Nothing to commit"
                  SUCCESS=true
                  break
              fi
@@ -245,12 +246,6 @@ fi
 
 if [ "$TEST_FAILED" = true ]; then
     echo "Tests failed after conflict resolution. Not pushing changes."
-    exit 1
-fi
-
-pushChanges
-
-ts failed after conflict resolution. Not pushing changes."
     exit 1
 fi
 

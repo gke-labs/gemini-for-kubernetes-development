@@ -2360,16 +2360,12 @@ func (r *Reconciler) reconcileReviewConflicts(ctx context.Context, repoWatch *re
 		return nil
 	}
 
-	// To accurately detect if conflicts need re-evaluating when the base branch moves,
-	// we need the current head SHA of the base branch, not just what's in the PR object.
-	baseBranch, _, err := ghClient.Repositories.GetBranch(ctx, owner, repo, baseRef, false)
-	if err != nil {
-		log.Error(err, "unable to get base branch info", "branch", baseRef)
-		return err
-	}
-	baseSHA := baseBranch.GetCommit().GetSHA()
+	// We use the base SHA from the PR object to avoid excessive GitHub API calls.
+	// This might be slightly stale if GitHub hasn't re-evaluated mergeability yet,
+	// but it prevents rate limit exhaustion as requested by reviewers.
+	baseSHA := pr.Base.GetSHA()
 	if baseSHA == "" {
-		return fmt.Errorf("base branch %s has no commit SHA", baseRef)
+		return nil
 	}
 
 	checkSHA := fmt.Sprintf("%s:%s", headSHA, baseSHA)
@@ -2392,10 +2388,9 @@ func (r *Reconciler) reconcileReviewConflicts(ctx context.Context, repoWatch *re
 			if state == "" || state == "Pending" || state == "Running" {
 				activeTaskExists = true
 				alreadyAttemptedThisSHA = true
-			} else if state == "Completed" {
+			} else if state == "Completed" || state == "Failed" {
 				alreadyAttemptedThisSHA = true
 			}
-			// If it failed, we allow a retry on the next reconcile loop unless the annotation matches.
 		}
 	}
 

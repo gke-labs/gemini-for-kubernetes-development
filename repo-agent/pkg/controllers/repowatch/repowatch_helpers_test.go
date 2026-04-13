@@ -419,7 +419,7 @@ func TestSortPRs(t *testing.T) {
 
 			g.Expect(len(sorted)).To(gomega.Equal(len(tc.expectedOrder)))
 			for i, pr := range sorted {
-				g.Expect(*pr.Number).To(gomega.Equal(tc.expectedOrder[i]))
+				g.Expect(pr.GetNumber()).To(gomega.Equal(tc.expectedOrder[i]))
 			}
 		})
 	}
