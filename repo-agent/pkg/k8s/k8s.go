@@ -613,6 +613,15 @@ func (m *Manager) CreateSandboxTask(ctx context.Context, namespace, sandboxName,
 	return err
 }
 
+func (m *Manager) DeleteSandboxTask(ctx context.Context, namespace, taskName string) error {
+	gvr := schema.GroupVersionResource{
+		Group:    "custom.agents.x-k8s.io",
+		Version:  "v1alpha1",
+		Resource: "sandboxtasks",
+	}
+	return m.Client.Resource(gvr).Namespace(namespace).Delete(ctx, taskName, v1.DeleteOptions{})
+}
+
 func (m *Manager) UpdateSandboxTaskStatus(ctx context.Context, namespace, taskName, state, result string, stats *sandboxtaskv1alpha1.Stats) error {
 	klog.Infof("Updating task %s status to %s", taskName, state)
 

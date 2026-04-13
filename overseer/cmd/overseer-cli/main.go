@@ -19,6 +19,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
@@ -258,7 +259,8 @@ func runChore(ctx context.Context, name string, file string) error {
 						klog.Infof("Chore %s: Task already exists in state %s (created %v ago). Skipping.", chore.Name, state, time.Since(task.CreationTimestamp.Time))
 						return nil
 					}
-					klog.Warningf("Chore %s: Found STALE task in state %s (created %v ago). Allowing new task.", chore.Name, state, time.Since(task.CreationTimestamp.Time))
+					klog.Warningf("Chore %s: Found STALE task in state %s (created %v ago). Deleting stale task and allowing new one.", chore.Name, state, time.Since(task.CreationTimestamp.Time))
+					_ = manager.DeleteSandboxTask(ctx, namespace, task.Name)
 				}
 				if state == "Failed" {
 					if time.Since(task.CreationTimestamp.Time) < 1*time.Hour {
@@ -445,37 +447,24 @@ func ensureService(ctx context.Context, clientset kubernetes.Interface, namespac
 		}
 	}
 
-	_, err := clientset.CoreV1().Services(namespace).Create(ctx, svc, metav1.CreateOptions{})
+	// Use Server-Side Apply to enforce the desired state (Spec and OwnerReferences).
+	// This also handles Conflict errors and ensures the Service is correctly configured.
+	svc.APIVersion = "v1"
+	svc.Kind = "Service"
+	svc.ManagedFields = nil // Let Kubernetes manage this
+
+	data, err := json.Marshal(svc)
 	if err != nil {
-		if errors.IsAlreadyExists(err) {
-			// If it exists, ensure it has the owner reference if we have one.
-			existingSvc, getErr := clientset.CoreV1().Services(namespace).Get(ctx, svc.Name, metav1.GetOptions{})
-			if getErr != nil {
-				return fmt.Errorf("failed to get existing service %s: %w", svc.Name, getErr)
-			}
+		return fmt.Errorf("failed to marshal service %s: %w", svc.Name, err)
+	}
 
-			if len(svc.OwnerReferences) > 0 {
-				needsUpdate := false
-				if len(existingSvc.OwnerReferences) != 1 {
-					needsUpdate = true
-				} else {
-					existingOwner := existingSvc.OwnerReferences[0]
-					newOwner := svc.OwnerReferences[0]
-					if existingOwner.UID != newOwner.UID {
-						needsUpdate = true
-					}
-				}
-
-				if needsUpdate {
-					klog.Infof("Service %s already exists but has missing or mismatched OwnerReferences. Updating.", svc.Name)
-					existingSvc.OwnerReferences = svc.OwnerReferences
-					_, updateErr := clientset.CoreV1().Services(namespace).Update(ctx, existingSvc, metav1.UpdateOptions{})
-					return updateErr
-				}
-			}
-			return nil // Already exists and is fine
-		}
-		return err
+	force := true
+	_, err = clientset.CoreV1().Services(namespace).Patch(ctx, svc.Name, types.ApplyPatchType, data, metav1.PatchOptions{
+		FieldManager: "overseer",
+		Force:        &force,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to apply service %s: %w", svc.Name, err)
 	}
 	return nil
 }
@@ -579,7 +568,8 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 						klog.Infof("Issue #%d: Task %s already exists in state %s (created %v ago). Skipping.", number, taskType, state, time.Since(task.CreationTimestamp.Time))
 						return nil
 					}
-					klog.Warningf("Issue #%d: Found STALE task %s in state %s (created %v ago). Allowing new task.", number, taskType, state, time.Since(task.CreationTimestamp.Time))
+					klog.Warningf("Issue #%d: Found STALE task %s in state %s (created %v ago). Deleting stale task and allowing new one.", number, taskType, state, time.Since(task.CreationTimestamp.Time))
+					_ = manager.DeleteSandboxTask(ctx, namespace, task.Name)
 				}
 				if state == "Failed" {
 					if time.Since(task.CreationTimestamp.Time) < 1*time.Hour {
@@ -757,7 +747,8 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 								klog.Infof("PR #%d: Review task for SHA %s already exists in state %s (created %v ago). Skipping.", number, headSHA, state, time.Since(task.CreationTimestamp.Time))
 								return nil
 							}
-							klog.Warningf("PR #%d: Found STALE review task for SHA %s in state %s (created %v ago). Allowing new task.", number, headSHA, state, time.Since(task.CreationTimestamp.Time))
+							klog.Warningf("PR #%d: Found STALE review task for SHA %s in state %s (created %v ago). Deleting stale task and allowing new one.", number, headSHA, state, time.Since(task.CreationTimestamp.Time))
+							_ = manager.DeleteSandboxTask(ctx, namespace, task.Name)
 						}
 						if state == "Failed" {
 							if time.Since(task.CreationTimestamp.Time) < 1*time.Hour {
@@ -772,7 +763,8 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 								klog.Infof("PR #%d: Review task for DIFFERENT SHA %s is currently %s (created %v ago). Skipping to avoid concurrency conflict.", number, task.Spec.Params["HEAD_SHA"], state, time.Since(task.CreationTimestamp.Time))
 								return nil
 							}
-							klog.Warningf("PR #%d: Found STALE review task for DIFFERENT SHA %s in state %s (created %v ago). Allowing new task.", number, task.Spec.Params["HEAD_SHA"], state, time.Since(task.CreationTimestamp.Time))
+							klog.Warningf("PR #%d: Found STALE review task for DIFFERENT SHA %s in state %s (created %v ago). Deleting stale task and allowing new one.", number, task.Spec.Params["HEAD_SHA"], state, time.Since(task.CreationTimestamp.Time))
+							_ = manager.DeleteSandboxTask(ctx, namespace, task.Name)
 						}
 					}
 				}
@@ -794,13 +786,15 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 	}
 
 	// Check if a task for this SHA already exists (only for review tasks)
+	var lastReopenedAt *time.Time
+	var eventsFetchSuccess bool
+
 	if taskType == "review" {
 		// 2. Then check GitHub for already submitted reviews for this SHA
 		if botLogin == "" && userLogin == "" {
 			klog.Warningf("PR #%d: Neither GITHUB_BOT_LOGIN nor GITHUB_USER_ID is set. Skipping GitHub review deduplication.", number)
 		} else {
 			// Check for reopened events to allow fresh reviews on resurrected PRs
-			var lastReopenedAt *time.Time
 			var eventsLastCheckedAt *time.Time
 
 			// Try to get cached timestamps from sandbox annotations
@@ -825,12 +819,15 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 			// Skip event pagination if PR hasn't been updated since we last checked
 			if eventsLastCheckedAt != nil && !pr.GetUpdatedAt().After(*eventsLastCheckedAt) {
 				klog.V(4).Infof("PR #%d: No new events since last check at %v. Skipping event pagination.", number, eventsLastCheckedAt)
+				eventsFetchSuccess = true
 			} else {
 				listEventsOpt := &githubv39.ListOptions{PerPage: 100}
+				eventsFetchSuccess = true
 				for {
 					events, resp, err := ghClient.Issues.ListIssueEvents(ctx, owner, repo, number, listEventsOpt)
 					if err != nil {
 						klog.Warningf("PR #%d: Failed to list events: %v", number, err)
+						eventsFetchSuccess = false
 						break
 					}
 					for _, e := range events {
@@ -846,20 +843,11 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 					}
 					listEventsOpt.Page = resp.NextPage
 				}
-
-				// Cache timestamps in sandbox annotations if sandbox exists
-				if sandboxUnstructured != nil {
-					if lastReopenedAt != nil {
-						_ = manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "lastReopenedAt", lastReopenedAt.Format(time.RFC3339))
-					}
-					_ = manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "eventsLastCheckedAt", pr.GetUpdatedAt().Format(time.RFC3339))
-				}
 			}
-
-			listOpt := &githubv39.ListOptions{PerPage: 100}
 
 		ReviewLoop:
 			for {
+				listOpt := &githubv39.ListOptions{PerPage: 100}
 				reviews, resp, err := ghClient.PullRequests.ListReviews(ctx, owner, repo, number, listOpt)
 				if err != nil {
 					return fmt.Errorf("failed to list reviews for PR %d: %w", number, err)
@@ -872,9 +860,11 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 					login := r.GetUser().GetLogin()
 					// Handle [bot] suffix for GitHub Apps
 					loginNoBot := strings.TrimSuffix(login, "[bot]")
+					botLoginNoBot := strings.TrimSuffix(botLogin, "[bot]")
+					userLoginNoBot := strings.TrimSuffix(userLogin, "[bot]")
 
-					isBot := (botLogin != "" && (strings.EqualFold(login, botLogin) || strings.EqualFold(loginNoBot, botLogin))) ||
-						(userLogin != "" && (strings.EqualFold(login, userLogin) || strings.EqualFold(loginNoBot, userLogin)))
+					isBot := (botLogin != "" && (strings.EqualFold(login, botLogin) || strings.EqualFold(loginNoBot, botLoginNoBot))) ||
+						(userLogin != "" && (strings.EqualFold(login, userLogin) || strings.EqualFold(loginNoBot, userLoginNoBot)))
 
 					if isBot && strings.EqualFold(r.GetCommitID(), headSHA) {
 						state := r.GetState()
@@ -915,6 +905,14 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 	klog.Infof("Ensuring sandbox %s exists...", sandboxName)
 	if err := createPRSandbox(ctx, kubeClient, &overseer, pr); err != nil {
 		return fmt.Errorf("failed to ensure PR sandbox: %w", err)
+	}
+
+	// Cache timestamps in sandbox annotations now that sandbox exists
+	if eventsFetchSuccess {
+		if lastReopenedAt != nil {
+			_ = manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "lastReopenedAt", lastReopenedAt.Format(time.RFC3339))
+		}
+		_ = manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "eventsLastCheckedAt", time.Now().Format(time.RFC3339))
 	}
 
 	// Create Task
