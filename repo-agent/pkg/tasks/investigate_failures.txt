@@ -8,12 +8,14 @@ Description:
 
 The following workflows have failed:
 {{ range .FailedRuns }}
-- Run ID: {{ .ID }} ({{ .Name }})
+- Run ID: {{ .ID }}
+- Run Name: {{ .Name }}
+- Run URL: {{ .URL }}
   - Logs are in file: run-{{ .ID }}-failed.log
 {{ end }}
 
 ## Previous Investigations
-Below are the existing comments on the PR since the last commit. Look for "--- INVESTIGATION REPORT ---" to see what has already been attempted.
+Below are the existing comments on the PR since the last commit. Look for "### Investigating" to see what has already been attempted.
 {{ range .IssueComments }}
 - {{ .UserLogin }} at {{ .CreatedAt }}:
 {{ .Body }}
@@ -22,7 +24,7 @@ Below are the existing comments on the PR since the last commit. Look for "--- I
 ## Instructions
 
 1. **Check for Repeated Failures**:
-   - Count how many "--- INVESTIGATION REPORT ---" comments have already been posted (only since the last commit).
+   - Count how many "### Investigating" comments have already been posted (only since the last commit).
    - If there are already 3 or more such reports, and you are seeing the same failures, DO NOT attempt to fix them again.
    - If you have already tried to fix the SAME failure in a previous attempt and it didn't work, GIVE UP.
    - In case of giving up, post a final comment stating that you have tried multiple times and the failure seems sticky, and that you are stepping back for human intervention.
@@ -47,13 +49,12 @@ Below are the existing comments on the PR since the last commit. Look for "--- I
 
    **Format for the Report:**
    ```text
-   --- INVESTIGATION REPORT ---
-   Run ID: [ID]
-   Name: [Name]
-   Cause: [Code Error / Test Failure / Flake / Infrastructure]
+   ### Investigating [Name] failure
+   Run: [ID]([URL])
+   Name: `[Name]`
+   Cause: `[Code Error / Test Failure / Flake / Infrastructure]`
    Details: [Explanation of the failure]
    Action Taken: [Fix applied / None]
-   ----------------------------
    ```
 
 5. **Respond on GitHub**:

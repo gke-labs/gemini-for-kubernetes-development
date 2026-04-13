@@ -771,11 +771,7 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 			fmt.Printf("Warning: review field missing in YAML, using draft as plain body\n")
 		}
 
-		body := draft
-		if strings.Contains(body, "--- INVESTIGATION REPORT ---") {
-			body = "```\n" + body + "\n```"
-		}
-		reviewRequest.Body = githubv39.String(body)
+		reviewRequest.Body = githubv39.String(draft)
 	} else {
 		reviewRequest = agentOutput.Review.ToGitHubReviewRequest()
 	}
