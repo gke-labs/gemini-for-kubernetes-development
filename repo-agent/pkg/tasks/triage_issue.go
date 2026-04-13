@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks/metadata"
 	"bytes"
 	"fmt"
 
@@ -18,7 +19,7 @@ type TriageIssueModel struct {
 	Models                      []string
 	AgentName                   string
 	Extensions                  []reviewv1alpha1.Extension
-	Metadata                    Metadata
+	Metadata                    metadata.Metadata
 	TraceabilityMetadataEnabled bool
 }
 

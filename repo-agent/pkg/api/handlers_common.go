@@ -127,12 +127,12 @@ func (s *Server) ensureGeminiKeySet(c *gin.Context, namespace string) bool {
 // It also ensures that the truncated body doesn't leave an open code block and provides
 // a placeholder for empty content to avoid blank notifications.
 func truncateString(s string, limit int) string {
+	const fallback = "[Bot-generated content]"
+	const truncatedFallback = "[Bot-generated content (truncated)]"
+
 	if limit <= 0 {
 		return ""
 	}
-
-	const fallback = "[Bot-generated content]"
-	const truncatedFallback = "[Bot-generated content (truncated)]"
 
 	if s == "" {
 		if len(fallback) <= limit {
@@ -147,7 +147,8 @@ func truncateString(s string, limit int) string {
 
 	// Reserve some space for potential closing code blocks (``` or ~~~)
 	// and a newline.
-	safeLimit := limit - 10
+	const closingBlockBuffer = 10
+	safeLimit := limit - closingBlockBuffer
 	if safeLimit < 0 {
 		safeLimit = 0
 	}
@@ -166,16 +167,21 @@ func truncateString(s string, limit int) string {
 		if len(truncatedFallback) <= limit {
 			return truncatedFallback
 		}
-		// Last resort: just cut it
+		// Last resort: just cut it as much as we can up to the strict limit
 		return truncateToRuneBoundary(s, limit)
 	}
 	return res
 }
 
 func truncateToRuneBoundary(s string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
 	if len(s) <= limit {
 		return s
 	}
+	// This loop is O(1) in practice because utf8.RuneStart will match within 
+	// a maximum of 4 bytes for any valid UTF-8 string.
 	for i := limit; i >= 0; i-- {
 		if i < len(s) && utf8.RuneStart(s[i]) {
 			return s[:i]
@@ -191,9 +197,21 @@ func (s *Server) getTaskMetadata(ctx context.Context, namespace, sandboxName, ta
 	if taskName != "" && taskUID != "" {
 		return taskName, taskUID
 	}
+	// If only one is provided, we still fall back to latest to ensure consistency
+	// or we could use the provided one. Review feedback suggested being more resilient.
+	
 	// Fallback to latest
 	resName, resUID := s.getLatestTaskMetadata(ctx, namespace, sandboxName)
-	klog.FromContext(ctx).V(4).Info("Task metadata missing in request, falling back to latest task", "sandbox", sandboxName, "taskName", resName, "taskUID", resUID)
+	
+	// If the provided values were partially present, prefer them if fallback fails
+	if resName == "n/a" && taskName != "" {
+		resName = taskName
+	}
+	if resUID == "n/a" && taskUID != "" {
+		resUID = taskUID
+	}
+
+	klog.FromContext(ctx).V(4).Info("Task metadata missing or partial in request, falling back to latest task", "sandbox", sandboxName, "taskName", resName, "taskUID", resUID)
 	return resName, resUID
 }
 
@@ -206,33 +224,41 @@ func (s *Server) getRepoWatchName(ctx context.Context, namespace, sandboxName st
 		klog.V(4).Infof("failed to get sandbox %s/%s to retrieve repowatch label: %v", namespace, sandboxName, err)
 		return "n/a"
 	}
-	repowatch := sb.GetLabels()["review.gemini.google.com/repowatch"]
+	labels := sb.GetLabels()
+	if labels == nil {
+		return "n/a"
+	}
+	repowatch := labels["review.gemini.google.com/repowatch"]
 	if repowatch == "" {
 		return "n/a"
 	}
 	return repowatch
 }
 
-func (s *Server) getLatestTaskMetadata(ctx context.Context, namespace, sandboxName string) (taskName, taskUID string) {
-	taskName = "n/a"
-	taskUID = "n/a"
+func (s *Server) getLatestTaskMetadata(ctx context.Context, namespace, sandboxName string) (string, string) {
 	if sandboxName == "" || sandboxName == "n/a" {
-		return
+		return "n/a", "n/a"
 	}
 	taskList, err := s.K8sManager.ListSandboxTasks(ctx, namespace, sandboxName)
-	if err != nil || taskList == nil || len(taskList.Items) == 0 {
-		return
+	if err != nil {
+		klog.V(4).Infof("failed to list tasks for sandbox %s/%s: %v", namespace, sandboxName, err)
+		return "n/a", "n/a"
 	}
+	if taskList == nil || len(taskList.Items) == 0 {
+		return "n/a", "n/a"
+	}
+	
 	// Find the latest task by creation timestamp
 	var latestTask *sandboxtaskv1alpha1.SandboxTask
 	for i := range taskList.Items {
+		// Tie-breaking: if multiple tasks have the exact same CreationTimestamp, 
+		// we pick the first one encountered.
 		if latestTask == nil || taskList.Items[i].CreationTimestamp.After(latestTask.CreationTimestamp.Time) {
 			latestTask = &taskList.Items[i]
 		}
 	}
 	if latestTask != nil {
-		taskName = fmt.Sprintf("%s/%s", latestTask.Namespace, latestTask.Name)
-		taskUID = string(latestTask.UID)
+		return fmt.Sprintf("%s/%s", latestTask.Namespace, latestTask.Name), string(latestTask.UID)
 	}
-	return
+	return "n/a", "n/a"
 }

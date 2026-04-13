@@ -1,6 +1,7 @@
 package api
 
 import (
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks/metadata"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -52,6 +53,11 @@ func (s *Server) getPRTasks(c *gin.Context) {
 		return
 	}
 
+	// Sort tasks by creation timestamp (newest first)
+	sort.Slice(taskList.Items, func(i, j int) bool {
+		return taskList.Items[i].CreationTimestamp.After(taskList.Items[j].CreationTimestamp.Time)
+	})
+
 	tasksList := []models.Task{}
 	for _, taskItem := range taskList.Items {
 		taskType := taskItem.Spec.Type
@@ -88,10 +94,6 @@ func (s *Server) getPRTasks(c *gin.Context) {
 			Stats:             convertStats(taskItem.Status.Stats),
 		})
 	}
-	// Sort tasks by creation timestamp (newest first)
-	sort.Slice(tasksList, func(i, j int) bool {
-		return tasksList[i].CreationTimestamp > tasksList[j].CreationTimestamp
-	})
 
 	c.JSON(http.StatusOK, tasksList)
 }
@@ -380,14 +382,15 @@ func (s *Server) submitReview(c *gin.Context) {
 		if !strings.Contains(body, "<!-- repo-agent-metadata") {
 			taskName, taskUID := s.getTaskMetadata(ctx, namespace, sandboxName, taskNameReq, taskUIDReq)
 			repowatchName := s.getRepoWatchName(ctx, namespace, sandboxName)
-			footer := fmt.Sprintf("\n\n---\n\n<!-- repo-agent-metadata\n%s: %s\n%s: %s\n%s: %s\n%s: %s\n%s: %s\n%s: %s\n-->",
-				tasks.MetadataKeySandboxTask, taskName,
-				tasks.MetadataKeySandboxTaskUID, taskUID,
-				tasks.MetadataKeySandbox, sandboxName,
-				tasks.MetadataKeyRepoWatch, repowatchName,
-				tasks.MetadataKeyTaskType, tasks.TaskTypePRReview,
-				tasks.MetadataKeyTimestamp, time.Now().Format(time.RFC3339))
-			body = truncateString(body, 65000-len(footer))
+			footer := tasks.GenerateMetadataFooter(metadata.Metadata{
+				SandboxTask:    taskName,
+				SandboxTaskUID: taskUID,
+				Sandbox:        sandboxName,
+				RepoWatch:      repowatchName,
+				TaskType:       metadata.TaskTypePRReview,
+				Timestamp:      time.Now().UTC().Format(time.RFC3339),
+			})
+			body = truncateString(strings.TrimSpace(body), 65000-len(footer))
 			newBody := body + footer
 			reviewRequest.Body = &newBody
 		}

@@ -85,6 +85,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	traceabilityEnabled := tasks.GetTraceabilityMetadataEnabled()
+	if traceabilityEnabled {
+		setupLog.Info("Traceability metadata is enabled for RepoWatch actions")
+	} else {
+		setupLog.Info("Traceability metadata is disabled for RepoWatch actions")
+	}
+
 	if err = (&repowatch.Reconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
@@ -93,7 +100,7 @@ func main() {
 		},
 		RepoSandboxImage:            os.Getenv("REPO_SANDBOX_IMAGE"),
 		ConfigDirImage:              os.Getenv("CONFIGDIR_CLI_IMAGE"),
-		TraceabilityMetadataEnabled: tasks.GetTraceabilityMetadataEnabled(),
+		TraceabilityMetadataEnabled: traceabilityEnabled,
 	}).SetupWithManager(mgr, concurrentReconciles); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "RepoWatch")
 		os.Exit(1)

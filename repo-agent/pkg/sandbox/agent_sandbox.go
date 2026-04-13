@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks/metadata"
 	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -194,7 +195,7 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 		map[string]interface{}{"name": "GOMODCACHE", "value": GoModCachePath},
 		map[string]interface{}{"name": "TMPDIR", "value": TmpDirPath},
 		map[string]interface{}{"name": "GOTMPDIR", "value": TmpDirPath},
-		map[string]interface{}{"name": "METADATA_TRACEABILITY_ENABLED", "value": strconv.FormatBool(opt.TraceabilityMetadataEnabled)},
+		map[string]interface{}{"name": metadata.EnvMetadataTraceabilityEnable, "value": strconv.FormatBool(opt.TraceabilityMetadataEnabled)},
 	)
 
 	if opt.OverseerName != "" {

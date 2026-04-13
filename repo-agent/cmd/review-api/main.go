@@ -56,6 +56,8 @@ func main() {
 	server.TraceabilityMetadataEnabled = tasks.GetTraceabilityMetadataEnabled()
 	if server.TraceabilityMetadataEnabled {
 		klog.Info("Metadata traceability enabled for GitHub issues, PRs, and comments.")
+	} else {
+		klog.Info("Metadata traceability disabled for GitHub issues, PRs, and comments.")
 	}
 
 	// Gin router

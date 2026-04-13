@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,7 +19,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/llm"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks/metadata"
 	"k8s.io/klog/v2"
 )
 
@@ -152,17 +153,18 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 	for k, v := range params {
 		upperK := strings.ToUpper(k)
 		switch upperK {
-		case tasks.EnvSandboxTaskName, tasks.EnvSandboxTaskUID, tasks.EnvSandboxName, tasks.EnvRepoWatchName, tasks.EnvSandboxTaskType, tasks.EnvMetadataTraceabilityEnable:
-			klog.Warningf("System traceability metadata overrides user parameter %q. Using system-defined value instead for security and integrity.", k)
+		case metadata.EnvSandboxTaskName, metadata.EnvSandboxTaskUID, metadata.EnvSandboxName, metadata.EnvRepoWatchName, metadata.EnvSandboxTaskType, metadata.EnvMetadataTraceabilityEnable:
+			klog.Warningf("User parameter %q is overridden by system traceability metadata for security and integrity.", k)
+			continue
 		}
 		commonEnv = append(commonEnv, fmt.Sprintf("%s=%s", upperK, v))
 	}
-	commonEnv = append(commonEnv, fmt.Sprintf("%s=%s/%s", tasks.EnvSandboxTaskName, task.GetNamespace(), task.GetName()))
-	commonEnv = append(commonEnv, fmt.Sprintf("%s=%s", tasks.EnvSandboxTaskUID, task.GetUID()))
-	commonEnv = append(commonEnv, fmt.Sprintf("%s=%s", tasks.EnvSandboxName, tr.sandboxName))
-	commonEnv = append(commonEnv, fmt.Sprintf("%s=%s", tasks.EnvRepoWatchName, task.GetLabels()["review.gemini.google.com/repowatch"]))
-	commonEnv = append(commonEnv, fmt.Sprintf("%s=%s", tasks.EnvSandboxTaskType, task.Spec.Type))
-	commonEnv = append(commonEnv, fmt.Sprintf("%s=%s", tasks.EnvMetadataTraceabilityEnable, os.Getenv(tasks.EnvMetadataTraceabilityEnable)))
+	commonEnv = append(commonEnv, fmt.Sprintf("%s=%s/%s", metadata.EnvSandboxTaskName, task.GetNamespace(), task.GetName()))
+	commonEnv = append(commonEnv, fmt.Sprintf("%s=%s", metadata.EnvSandboxTaskUID, task.GetUID()))
+	commonEnv = append(commonEnv, fmt.Sprintf("%s=%s", metadata.EnvSandboxName, tr.sandboxName))
+	commonEnv = append(commonEnv, fmt.Sprintf("%s=%s", metadata.EnvRepoWatchName, task.GetLabels()["review.gemini.google.com/repowatch"]))
+	commonEnv = append(commonEnv, fmt.Sprintf("%s=%s", metadata.EnvSandboxTaskType, task.Spec.Type))
+	commonEnv = append(commonEnv, fmt.Sprintf("%s=%s", metadata.EnvMetadataTraceabilityEnable, strconv.FormatBool(metadata.GetTraceabilityMetadataEnabled())))
 
 	switch taskType {
 	case "review":

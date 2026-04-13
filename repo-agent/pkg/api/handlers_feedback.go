@@ -1,6 +1,7 @@
 package api
 
 import (
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks/metadata"
 	"context"
 	"fmt"
 	"net/http"
@@ -74,12 +75,16 @@ func (s *Server) submitFeedback(c *gin.Context) {
 	body := fmt.Sprintf("User: %s\n\n%s", namespace, bodyText)
 	if s.TraceabilityMetadataEnabled {
 		if !strings.Contains(body, "<!-- repo-agent-metadata") {
-			footer := fmt.Sprintf("\n\n---\n\n<!-- repo-agent-metadata\n%s: n/a\n%s: n/a\n%s: n/a\n%s: n/a\n%s: %s\n%s: %s\n-->",
-				tasks.MetadataKeySandboxTask, tasks.MetadataKeySandboxTaskUID, tasks.MetadataKeySandbox,
-				tasks.MetadataKeyRepoWatch, tasks.MetadataKeyTaskType, tasks.TaskTypeFeedback,
-				tasks.MetadataKeyTimestamp, time.Now().Format(time.RFC3339))
+			footer := tasks.GenerateMetadataFooter(metadata.Metadata{
+				SandboxTask:    "n/a",
+				SandboxTaskUID: "n/a",
+				Sandbox:        "n/a",
+				RepoWatch:      "n/a",
+				TaskType:       metadata.TaskTypeFeedback,
+				Timestamp:      time.Now().UTC().Format(time.RFC3339),
+			})
 			// GitHub limit is 65536. Leave some room.
-			body = truncateString(body, 65000-len(footer))
+			body = truncateString(strings.TrimSpace(body), 65000-len(footer))
 			body += footer
 		}
 	} else {

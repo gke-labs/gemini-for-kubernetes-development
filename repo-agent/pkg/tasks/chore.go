@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks/metadata"
 	"bytes"
 	"fmt"
 )
@@ -16,7 +17,7 @@ type ChoreModel struct {
 	RepoOwner                   string
 	PromptFile                  string
 	SkipPR                      bool
-	Metadata                    Metadata
+	Metadata                    metadata.Metadata
 	TraceabilityMetadataEnabled bool
 }
 

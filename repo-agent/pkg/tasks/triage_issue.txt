@@ -16,9 +16,7 @@ Please output your response as a single line starting with the Prow command.
 
 /kind <Category> <concise explanation>
 {{- if .TraceabilityMetadataEnabled }}
-
 ---
-
 <!-- repo-agent-metadata
 sandbox-task: {{ .Metadata.SandboxTask }}
 sandbox-task-uid: {{ .Metadata.SandboxTaskUID }}

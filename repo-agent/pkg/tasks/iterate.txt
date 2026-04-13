@@ -16,7 +16,6 @@ Guidelines:
 9. Append the following structured metadata footer as an HTML comment to any GitHub issue, PR, or comment you create:
 ```html
 ---
-
 <!-- repo-agent-metadata
 sandbox-task: {{ .Metadata.SandboxTask }}
 sandbox-task-uid: {{ .Metadata.SandboxTaskUID }}

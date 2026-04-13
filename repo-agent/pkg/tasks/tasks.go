@@ -6,13 +6,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
-	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/agentoutput"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/llm"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks/metadata"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/klog/v2"
 )
@@ -24,81 +23,20 @@ type Task interface {
 	DraftState() string
 }
 
-const (
-	EnvSandboxTaskName            = "SANDBOX_TASK_NAME"
-	EnvSandboxTaskUID             = "SANDBOX_TASK_UID"
-	EnvSandboxName                = "SANDBOX_NAME"
-	EnvRepoWatchName              = "REPO_WATCH_NAME"
-	EnvSandboxTaskType            = "SANDBOX_TASK_TYPE"
-	EnvMetadataTraceabilityEnable = "METADATA_TRACEABILITY_ENABLED"
-
-	// Metadata footer keys
-	MetadataKeySandboxTask    = "sandbox-task"
-	MetadataKeySandboxTaskUID = "sandbox-task-uid"
-	MetadataKeySandbox        = "sandbox"
-	MetadataKeyRepoWatch      = "repowatch"
-	MetadataKeyTaskType       = "task-type"
-	MetadataKeyTimestamp      = "timestamp"
-
-	// Task types
-	TaskTypeReview          = "review"
-	TaskTypeFixIssue        = "fix-issue"
-	TaskTypeAddressFeedback = "address-feedback"
-	TaskTypeChore           = "chore"
-	TaskTypeDevSetup        = "dev-setup"
-	TaskTypeFeedback        = "feedback"
-	TaskTypeIssueComment    = "issue-comment"
-	TaskTypePRReview        = "pr-review"
-)
-
-type Metadata struct {
-	// SandboxTask is the name of the SandboxTask that triggered this action.
-	SandboxTask string `json:"sandboxTask,omitempty"`
-	// SandboxTaskUID is the UID of the SandboxTask that triggered this action.
-	SandboxTaskUID string `json:"sandboxTaskUid,omitempty"`
-	// Sandbox is the name of the Sandbox where the action is being performed.
-	Sandbox string `json:"sandbox,omitempty"`
-	// RepoWatch is the name of the RepoWatch CR associated with this sandbox.
-	RepoWatch string `json:"repoWatch,omitempty"`
-	// TaskType is the type of task being performed (e.g. fix-issue, pr-review).
-	TaskType string `json:"taskType,omitempty"`
-	// Timestamp is the time when the action was performed.
-	Timestamp string `json:"timestamp,omitempty"`
-}
-
-func GetMetadata() Metadata {
-	return Metadata{
-		SandboxTask:    os.Getenv(EnvSandboxTaskName),
-		SandboxTaskUID: os.Getenv(EnvSandboxTaskUID),
-		Sandbox:        os.Getenv(EnvSandboxName),
-		RepoWatch:      os.Getenv(EnvRepoWatchName),
-		TaskType:       os.Getenv(EnvSandboxTaskType),
-		Timestamp:      time.Now().Format(time.RFC3339),
-	}
+func GetMetadata() metadata.Metadata {
+	return metadata.GetMetadata()
 }
 
 func GetMetadataEnv() map[string]string {
-	return map[string]string{
-		EnvSandboxTaskName:            os.Getenv(EnvSandboxTaskName),
-		EnvSandboxTaskUID:             os.Getenv(EnvSandboxTaskUID),
-		EnvRepoWatchName:              os.Getenv(EnvRepoWatchName),
-		EnvSandboxName:                os.Getenv(EnvSandboxName),
-		EnvSandboxTaskType:            os.Getenv(EnvSandboxTaskType),
-		EnvMetadataTraceabilityEnable: os.Getenv(EnvMetadataTraceabilityEnable),
-	}
+	return metadata.GetMetadataEnv()
 }
 
 func GetTraceabilityMetadataEnabled() bool {
-	val := os.Getenv(EnvMetadataTraceabilityEnable)
-	if val == "" {
-		return false
-	}
-	b, err := strconv.ParseBool(val)
-	if err != nil {
-		klog.Errorf("failed to parse %s=%q as bool: %v", EnvMetadataTraceabilityEnable, val, err)
-		return false
-	}
-	return b
+	return metadata.GetTraceabilityMetadataEnabled()
+}
+
+func GenerateMetadataFooter(m metadata.Metadata) string {
+	return metadata.GenerateMetadataFooter(m)
 }
 
 func taskPath(taskDir string, name string) string {

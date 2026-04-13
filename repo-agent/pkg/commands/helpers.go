@@ -12,6 +12,7 @@ import (
 	"k8s.io/klog/v2"
 )
 
+// updateSSHConfig updates the SSH configuration for a dev sandbox.
 func updateSSHConfig(ctx context.Context, path, host string, podID types.NamespacedName) error {
 	sshDir := filepath.Dir(path)
 	confDir := filepath.Join(sshDir, "config.d", "dev-sandboxes")

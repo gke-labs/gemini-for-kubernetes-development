@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks/metadata"
 	"bytes"
 	"fmt"
 
@@ -20,7 +21,7 @@ type FixIssueModel struct {
 	Extensions                  []reviewv1alpha1.Extension
 	Branch                      string
 	PRLabel                     string
-	Metadata                    Metadata
+	Metadata                    metadata.Metadata
 	TraceabilityMetadataEnabled bool
 }
 

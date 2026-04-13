@@ -731,7 +731,7 @@ function App() {
   };
 
   const handleIssueSubmit = (issueId, taskName = null, taskUID = null) => {
-    const comment = drafts[issueId];
+    const comment = drafts[issueId] || "";
     if (!comment.trim()) {
       alert("Please leave a comment before Submitting.");
       return;

@@ -7,7 +7,6 @@ Your task is:
 If you create any GitHub issue, PR, or comment, append the following structured metadata footer as an HTML comment:
 ```html
 ---
-
 <!-- repo-agent-metadata
 sandbox-task: {{ .Metadata.SandboxTask }}
 sandbox-task-uid: {{ .Metadata.SandboxTaskUID }}

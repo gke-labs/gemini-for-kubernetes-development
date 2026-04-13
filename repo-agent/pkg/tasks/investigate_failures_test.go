@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks/metadata"
 	"bytes"
 	"os"
 	"strings"
@@ -40,7 +41,7 @@ func TestInvestigateFailuresPromptTemplate(t *testing.T) {
 		PullRequest                 MockPR
 		FailedRuns                  []MockFailedRun
 		IssueComments               []MockComment
-		Metadata                    Metadata
+		Metadata                    metadata.Metadata
 		TraceabilityMetadataEnabled bool
 	}{
 		PullRequest: MockPR{
@@ -58,7 +59,7 @@ func TestInvestigateFailuresPromptTemplate(t *testing.T) {
 				Body:      "--- INVESTIGATION REPORT ---\nStatus: Failed",
 			},
 		},
-		Metadata: Metadata{
+		Metadata: metadata.Metadata{
 			SandboxTask:    "ns/task",
 			SandboxTaskUID: "uid",
 			Sandbox:        "sb",
@@ -94,6 +95,7 @@ func TestInvestigateFailuresPromptTemplate(t *testing.T) {
 	}
 
 	// Verify metadata footer
+	missing := []string{}
 	for _, expected := range []string{
 		"sandbox-task: ns/task",
 		"sandbox-task-uid: uid",
@@ -103,7 +105,10 @@ func TestInvestigateFailuresPromptTemplate(t *testing.T) {
 		"timestamp: 2026-03-02T12:00:00Z",
 	} {
 		if !strings.Contains(output, expected) {
-			t.Errorf("Prompt does not contain expected metadata: %s", expected)
+			missing = append(missing, expected)
 		}
+	}
+	if len(missing) > 0 {
+		t.Errorf("Prompt missing %d expected metadata strings: %v\nFull prompt:\n%s", len(missing), missing, output)
 	}
 }

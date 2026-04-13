@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks/metadata"
 	"bytes"
 	"testing"
 )
@@ -20,7 +21,7 @@ func TestChoreScriptTemplate(t *testing.T) {
 		PromptFile:                  "prompt.txt",
 		SkipPR:                      false,
 		TraceabilityMetadataEnabled: true,
-		Metadata: Metadata{
+		Metadata: metadata.Metadata{
 			SandboxTask:    "ns/task",
 			SandboxTaskUID: "uid",
 			Sandbox:        "sb",
@@ -37,6 +38,7 @@ func TestChoreScriptTemplate(t *testing.T) {
 
 	script := w.String()
 
+	missing := []string{}
 	for _, expected := range []string{
 		`export REPO_NAME="test-repo"`,
 		`export CLONE_URL="https://github.com/test-owner/test-repo.git"`,
@@ -52,7 +54,10 @@ func TestChoreScriptTemplate(t *testing.T) {
 		"timestamp: 2026-03-02T12:00:00Z",
 	} {
 		if !bytes.Contains(w.Bytes(), []byte(expected)) {
-			t.Errorf("Script does not contain expected string %q. Got:\n%s", expected, script)
+			missing = append(missing, expected)
 		}
+	}
+	if len(missing) > 0 {
+		t.Errorf("Script missing %d expected strings: %v\nFull script:\n%s", len(missing), missing, script)
 	}
 }

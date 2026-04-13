@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks/metadata"
 	"bytes"
 	"os"
 	"strings"
@@ -47,7 +48,7 @@ type MockModel struct {
 	Extensions                  []MockExtension
 	Branch                      string
 	PRLabel                     string
-	Metadata                    Metadata
+	Metadata                    metadata.Metadata
 	TraceabilityMetadataEnabled bool
 }
 
@@ -71,7 +72,7 @@ func TestFixIssuePromptTemplate(t *testing.T) {
 		User:                        MockUser{UserID: "test", Email: "test@test.com", Name: "Test User"},
 		Branch:                      "test-branch",
 		TraceabilityMetadataEnabled: true,
-		Metadata: Metadata{
+		Metadata: metadata.Metadata{
 			SandboxTask:    "ns/task",
 			SandboxTaskUID: "uid",
 			Sandbox:        "sb",
@@ -86,6 +87,7 @@ func TestFixIssuePromptTemplate(t *testing.T) {
 	}
 
 	// Verify metadata footer
+	missing := []string{}
 	for _, expected := range []string{
 		"sandbox-task: ns/task",
 		"sandbox-task-uid: uid",
@@ -95,8 +97,11 @@ func TestFixIssuePromptTemplate(t *testing.T) {
 		"timestamp: 2026-03-02T12:00:00Z",
 	} {
 		if !strings.Contains(w.String(), expected) {
-			t.Errorf("Prompt does not contain expected metadata: %s", expected)
+			missing = append(missing, expected)
 		}
+	}
+	if len(missing) > 0 {
+		t.Errorf("Prompt missing %d expected metadata strings: %v\nFull prompt:\n%s", len(missing), missing, w.String())
 	}
 
 	// Verify that the new instruction is present
