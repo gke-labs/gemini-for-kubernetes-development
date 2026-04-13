@@ -46,7 +46,7 @@ func (r *Reconciler) cleanupClosedPRSandboxes(ctx context.Context, totalSandboxe
 
 		found := false
 		for _, pr := range allOpenPRs {
-			if *pr.Number == prNumber {
+			if pr.GetNumber() == prNumber {
 				found = true
 				break
 			}

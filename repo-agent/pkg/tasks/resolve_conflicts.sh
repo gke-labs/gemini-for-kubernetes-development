@@ -63,14 +63,18 @@ EOF
 
     if [ -n "$GITHUB_BOT_EMAIL" ]; then
         git config --global user.email "${GITHUB_BOT_EMAIL}"
-    else
+    elif [ -n "$GITHUB_USER_EMAIL" ] && [ "$GITHUB_USER_EMAIL" != "<nil>" ] && [ "$GITHUB_USER_EMAIL" != "" ]; then
         git config --global user.email "${GITHUB_USER_EMAIL}"
+    else
+        git config --global user.email "bot@example.com"
     fi
 
     if [ -n "$GITHUB_BOT_NAME" ]; then
         git config --global user.name "${GITHUB_BOT_NAME}"
-    else
+    elif [ -n "$GITHUB_USER_NAME" ] && [ "$GITHUB_USER_NAME" != "<nil>" ] && [ "$GITHUB_USER_NAME" != "" ]; then
         git config --global user.name "${GITHUB_USER_NAME}"
+    else
+        git config --global user.name "Gemini Bot"
     fi
 
     gh auth setup-git
@@ -130,8 +134,8 @@ function runGemini {
     echo "Current branch: ${CURRENT_BRANCH}, Remote: ${REMOTE}"
 
     # Ensure we have the latest of the current branch and the base branch
-    git fetch "${REMOTE}" "${CURRENT_BRANCH}"
-    git fetch origin "${BASE_REF}"
+    git fetch "${REMOTE}" "${CURRENT_BRANCH}" || true
+    git fetch origin "${BASE_REF}" || { echo "Failed to fetch base branch origin/${BASE_REF}. Perhaps it was deleted?"; exit 1; }
 
     MODELS=( {{ range .Models }}"{{ . }}" {{ end }} )
     SUCCESS=false
@@ -203,7 +207,7 @@ checkoutPRBranch
 # Attempt initial merge to see if we even need LLM
 cd "/workspaces/${REPO_NAME}"
 # Ensure we have base branch
-git fetch origin "${BASE_REF}"
+git fetch origin "${BASE_REF}" || { echo "Failed to fetch base branch origin/${BASE_REF}. Perhaps it was deleted?"; exit 1; }
 echo "Attempting initial merge of origin/${BASE_REF}..."
 if git merge "origin/${BASE_REF}" -m "Merge branch 'origin/${BASE_REF}' into HEAD"; then
     if verifyResolution; then
@@ -233,14 +237,20 @@ elif [ -f "go.mod" ]; then
     go test ./... || TEST_FAILED=true
 elif [ -f "package.json" ]; then
     if [ -f "yarn.lock" ]; then
-        yarn test || TEST_FAILED=true
+        yarn install && yarn test || TEST_FAILED=true
     else
-        npm test || TEST_FAILED=true
+        npm install && npm test || TEST_FAILED=true
     fi
 fi
 
 if [ "$TEST_FAILED" = true ]; then
     echo "Tests failed after conflict resolution. Not pushing changes."
+    exit 1
+fi
+
+pushChanges
+
+ts failed after conflict resolution. Not pushing changes."
     exit 1
 fi
 
