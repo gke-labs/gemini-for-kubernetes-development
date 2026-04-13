@@ -560,17 +560,6 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 
 	sandboxName := fmt.Sprintf("%s-issue-%d", overseer.Name, number)
 
-	var sandboxIsActive bool
-	sandboxUnstructured, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
-	if err == nil {
-		replicas, found, err := unstructured.NestedInt64(sandboxUnstructured.Object, "spec", "replicas")
-		if err == nil && (!found || replicas > 0) {
-			sandboxIsActive = true
-		}
-	} else if !errors.IsNotFound(err) {
-		return fmt.Errorf("failed to check if sandbox exists: %w", err)
-	}
-
 	// 1. Check if a task of the same type already exists for this issue BEFORE creating sandbox
 	taskList, err := manager.ListSandboxTasks(ctx, namespace, sandboxName)
 	if err == nil {
@@ -600,6 +589,17 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 				}
 			}
 		}
+	}
+
+	var sandboxIsActive bool
+	sandboxUnstructured, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
+	if err == nil {
+		replicas, found, err := unstructured.NestedInt64(sandboxUnstructured.Object, "spec", "replicas")
+		if err == nil && (!found || replicas > 0) {
+			sandboxIsActive = true
+		}
+	} else if !errors.IsNotFound(err) {
+		return fmt.Errorf("failed to check if sandbox exists: %w", err)
 	}
 
 	// 2. Check limit only if we need to create or activate a sandbox
@@ -729,8 +729,10 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 	headSHA := pr.GetHead().GetSHA()
 
 	var sandboxIsActive bool
-	sandboxUnstructured, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
+	var sandboxUnstructured *unstructured.Unstructured
+	sUnstructured, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
 	if err == nil {
+		sandboxUnstructured = sUnstructured
 		replicas, found, err := unstructured.NestedInt64(sandboxUnstructured.Object, "spec", "replicas")
 		if err == nil && (!found || replicas > 0) {
 			sandboxIsActive = true
@@ -793,19 +795,31 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 		} else {
 			// Check for reopened events to allow fresh reviews on resurrected PRs
 			var lastReopenedAt *time.Time
+			var eventsLastCheckedAt *time.Time
 
-			// Try to get cached lastReopenedAt from sandbox annotations
+			// Try to get cached timestamps from sandbox annotations
 			if sandboxUnstructured != nil {
 				annotations := sandboxUnstructured.GetAnnotations()
-				if annotations != nil && annotations["lastReopenedAt"] != "" {
-					t, err := time.Parse(time.RFC3339, annotations["lastReopenedAt"])
-					if err == nil {
-						lastReopenedAt = &t
+				if annotations != nil {
+					if annotations["lastReopenedAt"] != "" {
+						t, err := time.Parse(time.RFC3339, annotations["lastReopenedAt"])
+						if err == nil {
+							lastReopenedAt = &t
+						}
+					}
+					if annotations["eventsLastCheckedAt"] != "" {
+						t, err := time.Parse(time.RFC3339, annotations["eventsLastCheckedAt"])
+						if err == nil {
+							eventsLastCheckedAt = &t
+						}
 					}
 				}
 			}
 
-			if lastReopenedAt == nil {
+			// Skip event pagination if PR hasn't been updated since we last checked
+			if eventsLastCheckedAt != nil && !pr.GetUpdatedAt().After(*eventsLastCheckedAt) {
+				klog.V(4).Infof("PR #%d: No new events since last check at %v. Skipping event pagination.", number, eventsLastCheckedAt)
+			} else {
 				listEventsOpt := &githubv39.ListOptions{PerPage: 100}
 				for {
 					events, resp, err := ghClient.Issues.ListIssueEvents(ctx, owner, repo, number, listEventsOpt)
@@ -827,13 +841,17 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 					listEventsOpt.Page = resp.NextPage
 				}
 
-				// Cache it in sandbox annotations if sandbox exists
-				if lastReopenedAt != nil && sandboxUnstructured != nil {
-					_ = manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "lastReopenedAt", lastReopenedAt.Format(time.RFC3339))
+				// Cache timestamps in sandbox annotations if sandbox exists
+				if sandboxUnstructured != nil {
+					if lastReopenedAt != nil {
+						_ = manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "lastReopenedAt", lastReopenedAt.Format(time.RFC3339))
+					}
+					_ = manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "eventsLastCheckedAt", pr.GetUpdatedAt().Format(time.RFC3339))
 				}
 			}
 
 			listOpt := &githubv39.ListOptions{PerPage: 100}
+
 		ReviewLoop:
 			for {
 				reviews, resp, err := ghClient.PullRequests.ListReviews(ctx, owner, repo, number, listOpt)
