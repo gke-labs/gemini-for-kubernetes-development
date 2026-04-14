@@ -588,6 +588,73 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 
 	sandboxName := fmt.Sprintf("%s-issue-%d", overseer.Name, number)
 
+	var lastReopenedAt *time.Time
+	var eventsLastCheckedAt *time.Time
+	var sandboxUnstructured *unstructured.Unstructured
+	var eventsFetchSuccess bool
+
+	sUnstructured, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
+	if err == nil {
+		sandboxUnstructured = sUnstructured
+		annotations := sandboxUnstructured.GetAnnotations()
+		if annotations != nil {
+			if annotations["lastReopenedAt"] != "" {
+				t, err := time.Parse(time.RFC3339, annotations["lastReopenedAt"])
+				if err == nil {
+					lastReopenedAt = &t
+				}
+			}
+			if annotations["eventsLastCheckedAt"] != "" {
+				t, err := time.Parse(time.RFC3339, annotations["eventsLastCheckedAt"])
+				if err == nil {
+					eventsLastCheckedAt = &t
+				}
+			}
+		}
+	}
+
+	// Fetch events to check for reopened status
+	if eventsLastCheckedAt != nil && !issue.GetUpdatedAt().After(*eventsLastCheckedAt) {
+		klog.V(4).Infof("Issue #%d: No new events since last check at %v. Skipping event pagination.", number, eventsLastCheckedAt)
+		eventsFetchSuccess = true
+	} else {
+		listEventsOpt := &githubv39.ListOptions{PerPage: 100}
+		eventsFetchSuccess = true
+		_, resp, err := ghClient.Issues.ListIssueEvents(ctx, owner, repo, number, listEventsOpt)
+		if err != nil {
+			klog.Warningf("Issue #%d: Failed to list events: %v", number, err)
+			eventsFetchSuccess = false
+		} else {
+			lastPage := resp.LastPage
+			if lastPage == 0 {
+				lastPage = 1
+			}
+		StopEvents:
+			for p := lastPage; p >= 1; p-- {
+				listEventsOpt.Page = p
+				events, _, err := ghClient.Issues.ListIssueEvents(ctx, owner, repo, number, listEventsOpt)
+				if err != nil {
+					klog.Warningf("Issue #%d: Failed to list events on page %d: %v", number, p, err)
+					eventsFetchSuccess = false
+					break StopEvents
+				}
+				for i := len(events) - 1; i >= 0; i-- {
+					e := events[i]
+					createdAt := e.GetCreatedAt()
+					if eventsLastCheckedAt != nil && !createdAt.After(*eventsLastCheckedAt) {
+						break StopEvents
+					}
+					if e.GetEvent() == "reopened" {
+						t := e.GetCreatedAt()
+						if lastReopenedAt == nil || t.After(*lastReopenedAt) {
+							lastReopenedAt = &t
+						}
+					}
+				}
+			}
+		}
+	}
+
 	// 1. Check if a task of the same type already exists for this issue BEFORE creating sandbox
 	taskList, err := manager.ListSandboxTasks(ctx, namespace, sandboxName)
 	if err == nil {
@@ -599,6 +666,10 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 					state = "Pending"
 				}
 				if state == "Completed" {
+					if lastReopenedAt != nil && task.CreationTimestamp.Before(&metav1.Time{Time: *lastReopenedAt}) {
+						klog.Infof("Issue #%d: Found historical task %s, but issue was reopened since then. Proceeding with new task.", number, taskType)
+						continue
+					}
 					klog.Infof("Issue #%d: Task %s already exists in state %s. Skipping.", number, taskType, state)
 					return nil
 				}
@@ -623,14 +694,11 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 	}
 
 	var sandboxIsActive bool
-	sandboxUnstructured, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
-	if err == nil {
+	if sandboxUnstructured != nil {
 		replicas, found, err := unstructured.NestedInt64(sandboxUnstructured.Object, "spec", "replicas")
 		if err == nil && (!found || replicas > 0) {
 			sandboxIsActive = true
 		}
-	} else if !errors.IsNotFound(err) {
-		return fmt.Errorf("failed to check if sandbox exists: %w", err)
 	}
 
 	// 2. Check limit only if we need to create or activate a sandbox
@@ -650,6 +718,14 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 	klog.Infof("Ensuring sandbox %s exists...", sandboxName)
 	if err := createIssueSandbox(ctx, kubeClient, &overseer, issue); err != nil {
 		return fmt.Errorf("failed to ensure issue sandbox: %w", err)
+	}
+
+	// Cache timestamps in sandbox annotations now that sandbox exists
+	if eventsFetchSuccess {
+		if lastReopenedAt != nil {
+			_ = manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "lastReopenedAt", lastReopenedAt.Format(time.RFC3339))
+		}
+		_ = manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "eventsLastCheckedAt", issue.GetUpdatedAt().Format(time.RFC3339))
 	}
 
 	// 4. Create Task
@@ -757,10 +833,12 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 	}
 
 	sandboxName := fmt.Sprintf("%s-pr-%d", overseer.Name, number)
-	headSHA := pr.GetHead().GetSHA()
-	if headSHA == "" {
+
+	head := pr.GetHead()
+	if head == nil || head.GetSHA() == "" {
 		return fmt.Errorf("PR #%d has no head SHA", number)
 	}
+	headSHA := head.GetSHA()
 
 	// Check if a task for this SHA already exists (only for review tasks)
 	// We do this BEFORE the limit check so that already-handled PRs don't consume the "active" quota
@@ -1276,6 +1354,10 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 		klog.Warningf("failed to get token from script: %v", err)
 	}
 
+	head := pr.GetHead()
+	if head == nil || head.GetRepo() == nil {
+		return fmt.Errorf("PR #%d head or repo is nil", pr.GetNumber())
+	}
 	opt := sandbox.ReviewSandboxOptions{
 		DevSandboxOptions: sandbox.DevSandboxOptions{
 			Name:      name,
@@ -1308,7 +1390,7 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 		PRTitle:           pr.GetTitle(),
 		PRHTMLURL:         pr.GetHTMLURL(),
 		PRDiffURL:         pr.GetDiffURL(),
-		PRCloneURL:        fmt.Sprintf("%s#refs/heads/%s", pr.GetHead().GetRepo().GetCloneURL(), pr.GetHead().GetRef()),
+		PRCloneURL:        fmt.Sprintf("%s#refs/heads/%s", head.GetRepo().GetCloneURL(), head.GetRef()),
 		RepoName:          overseer.Name,
 		MaxReviewFiles:    maxReviewFiles,
 		IgnoreFiles:       overseer.Spec.Review.IgnoreFiles,
