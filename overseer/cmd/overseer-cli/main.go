@@ -1366,13 +1366,13 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 	}
 
 	// Add a hidden signature to definitively identify automated reviews
-	signature := "\n\n<!-- overseer-review -->"
+	signature := "<!-- overseer-review -->"
 	body := ""
 	if reviewRequest.Body != nil {
 		body = *reviewRequest.Body
 	}
-	if !strings.HasSuffix(body, signature) {
-		reviewRequest.Body = githubv39.String(body + signature)
+	if !strings.Contains(body, signature) {
+		reviewRequest.Body = githubv39.String(body + "\n\n" + signature)
 	}
 
 	klog.Infof("Creating review on GitHub for %s/%s PR %d (SHA %s)...", owner, repoName, prNumber, currentSHA)
