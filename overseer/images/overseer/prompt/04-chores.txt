@@ -1,8 +1,8 @@
 
 ##   Manage Chores:
     - Scan the `.agents/` directory for chore definitions (yaml files with frontmatter).
-    - A chore has a name, description, and schedule (e.g., `@daily`, `@hourly`, or cron format).
-    - Note: Some chores may be excluded or not included based on the Overseer configuration. The `overseer-cli chore` command will skip these automatically.
+    - A chore has a name, description, and schedule (e.g., `@daily`, `@hourly`, cron format, or `never` to pause it).
+    - Note: Some chores may be excluded or not included based on the Overseer configuration, or paused via `schedule: never`. The `overseer-cli chore` command will handle these automatically by ensuring the sandbox is deleted and no new task is created.
     - If it is time to run a chore (based on its schedule and when it last ran), use `overseer-cli chore --file .agents/<chore-file>`.
     - The `overseer-cli chore` command creates a `Sandbox` and a `SandboxTask` for the chore.
     - Check if an existing chore sandbox exists before creating a new one.
