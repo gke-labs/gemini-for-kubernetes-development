@@ -159,11 +159,11 @@ while true; do
       sleep 3600
     else
       echo "$(date): Gemini failed with non-quota error. Sleeping for normal interval..."
-      sleep ${POLL_INTERVAL:-300}
+      sleep ${POLL_INTERVAL:-1800}
     fi
   else
     echo "$(date): Cycle complete. Sleeping..."
-    sleep ${POLL_INTERVAL:-300}
+    sleep ${POLL_INTERVAL:-1800}
   fi
   rm -f "$GEMINI_ERR"
 done
