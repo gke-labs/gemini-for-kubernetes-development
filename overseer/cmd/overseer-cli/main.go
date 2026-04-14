@@ -206,7 +206,6 @@ func runChore(ctx context.Context, name string, file string) error {
 
 	conf := loadConfig()
 	choresMode := os.Getenv("CHORES_MODE")
-// ... (rest of the code update will follow in subsequent turns to keep edits surgical)
 	if choresMode == "disabled" {
 		klog.Infof("Chore handling is disabled (CHORES_MODE=disabled). Skipping.")
 		return nil
