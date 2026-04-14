@@ -174,6 +174,37 @@ func isRetryable(err error) bool {
 	return ok
 }
 
+func isGitHubTransient(err error) bool {
+	if err == nil {
+		return false
+	}
+	// Check for rate limit or server errors
+	if githubErr, ok := err.(*githubv39.ErrorResponse); ok {
+		if githubErr.Response != nil {
+			status := githubErr.Response.StatusCode
+			return status == 403 || status == 429 || (status >= 500 && status <= 599)
+		}
+	}
+	// Also check for network timeouts/connection issues
+	errStr := err.Error()
+	return strings.Contains(errStr, "timeout") || strings.Contains(errStr, "connection refused") || strings.Contains(errStr, "EOF")
+}
+
+func patchOwnerReferences(existing []metav1.OwnerReference, newRef metav1.OwnerReference) []metav1.OwnerReference {
+	found := false
+	for i, ref := range existing {
+		if ref.APIVersion == newRef.APIVersion && ref.Kind == newRef.Kind && ref.Name == newRef.Name {
+			existing[i] = newRef
+			found = true
+			break
+		}
+	}
+	if !found {
+		existing = append(existing, newRef)
+	}
+	return existing
+}
+
 type CLIConfig struct {
 	BotLogin  string
 	BotName   string
@@ -189,9 +220,14 @@ func loadConfig() CLIConfig {
 	if userName == "" {
 		userName = userLogin
 	}
+	botLogin := os.Getenv("GITHUB_BOT_LOGIN")
+	botName := os.Getenv("GITHUB_BOT_NAME")
+	if botName == "" {
+		botName = botLogin
+	}
 	return CLIConfig{
-		BotLogin:  os.Getenv("GITHUB_BOT_LOGIN"),
-		BotName:   os.Getenv("GITHUB_BOT_NAME"),
+		BotLogin:  botLogin,
+		BotName:   botName,
 		BotEmail:  os.Getenv("GITHUB_BOT_EMAIL"),
 		UserLogin: userLogin,
 		UserName:  userName,
@@ -298,8 +334,13 @@ func runChore(ctx context.Context, name string, file string) error {
 					state = "Pending"
 				}
 				if state == "Completed" {
-					klog.V(2).Infof("Chore %s: Task already exists in state %s. Skipping.", chore.Name, state)
-					return nil
+					if time.Since(task.CreationTimestamp.Time) < 1*time.Hour {
+						klog.V(2).Infof("Chore %s: Task already exists in state %s (created %v ago). Skipping.", chore.Name, state, time.Since(task.CreationTimestamp.Time))
+						return nil
+					}
+					klog.Infof("Chore %s: Found old Completed task (%v ago). Deleting to allow periodic run.", chore.Name, time.Since(task.CreationTimestamp.Time))
+					_ = manager.DeleteSandboxTask(ctx, namespace, task.Name)
+					// Fall through to create new task
 				}
 				if state == "Running" || state == "Pending" {
 					if time.Since(task.CreationTimestamp.Time) < 2*time.Hour {
@@ -459,11 +500,12 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 
 	sb.SetOwnerReferences([]metav1.OwnerReference{
 		{
-			APIVersion: "overseer.gemini.google.com/v1alpha1",
-			Kind:       "Overseer",
-			Name:       overseer.Name,
-			UID:        overseer.UID,
-			Controller: ptr.To(true),
+			APIVersion:         "overseer.gemini.google.com/v1alpha1",
+			Kind:               "Overseer",
+			Name:               overseer.Name,
+			UID:                overseer.UID,
+			Controller:         ptr.To(true),
+			BlockOwnerDeletion: ptr.To(true),
 		},
 	})
 
@@ -476,8 +518,23 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 }
 
 func ensureSandbox(ctx context.Context, dynClient dynamic.Interface, namespace string, sb *unstructured.Unstructured) (*unstructured.Unstructured, error) {
-	// Use Server-Side Apply to ensure the Sandbox and its OwnerReferences.
-	// This avoids redundant Create/Get/Update calls and robustly handles adoption.
+	// 1. Fetch existing sandbox to merge OwnerReferences without stripping other controllers
+	existing, err := dynClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sb.GetName(), metav1.GetOptions{})
+	if err == nil {
+		newRefs := sb.GetOwnerReferences()
+		if len(newRefs) > 0 {
+			merged := existing.GetOwnerReferences()
+			for _, nr := range newRefs {
+				merged = patchOwnerReferences(merged, nr)
+			}
+			sb.SetOwnerReferences(merged)
+		}
+	} else if !errors.IsNotFound(err) {
+		return nil, fmt.Errorf("failed to fetch existing sandbox %s: %w", sb.GetName(), err)
+	}
+
+	// 2. Use Server-Side Apply to ensure the Sandbox and its merged OwnerReferences.
+	// This avoids redundant Update calls and robustly handles adoption.
 	sb.SetManagedFields(nil)
 	data, err := json.Marshal(sb)
 	if err != nil {
@@ -496,20 +553,46 @@ func ensureSandbox(ctx context.Context, dynClient dynamic.Interface, namespace s
 }
 
 func ensureService(ctx context.Context, clientset kubernetes.Interface, namespace string, svc *corev1.Service, owner *unstructured.Unstructured) error {
-	if owner != nil {
-		svc.OwnerReferences = []metav1.OwnerReference{
-			{
-				APIVersion: owner.GetAPIVersion(),
-				Kind:       owner.GetKind(),
-				Name:       owner.GetName(),
-				UID:        owner.GetUID(),
-				Controller: ptr.To(true),
-			},
+	// 1. Manage OwnerReferences via strategic Update or initial configuration
+	existing, err := clientset.CoreV1().Services(namespace).Get(ctx, svc.Name, metav1.GetOptions{})
+	if err == nil {
+		if owner != nil {
+			newRef := metav1.OwnerReference{
+				APIVersion:         owner.GetAPIVersion(),
+				Kind:               owner.GetKind(),
+				Name:               owner.GetName(),
+				UID:                owner.GetUID(),
+				Controller:         ptr.To(true),
+				BlockOwnerDeletion: ptr.To(true),
+			}
+			existing.OwnerReferences = patchOwnerReferences(existing.OwnerReferences, newRef)
+			// Apply merged references back to our template for SSA
+			svc.OwnerReferences = existing.OwnerReferences
+
+			// Proactively update to handle adoption and avoid GC race conditions
+			_, err = clientset.CoreV1().Services(namespace).Update(ctx, existing, metav1.UpdateOptions{})
+			if err != nil && !errors.IsConflict(err) {
+				return fmt.Errorf("failed to update service owner references: %w", err)
+			}
 		}
+	} else if errors.IsNotFound(err) {
+		if owner != nil {
+			svc.OwnerReferences = []metav1.OwnerReference{
+				{
+					APIVersion:         owner.GetAPIVersion(),
+					Kind:               owner.GetKind(),
+					Name:               owner.GetName(),
+					UID:                owner.GetUID(),
+					Controller:         ptr.To(true),
+					BlockOwnerDeletion: ptr.To(true),
+				},
+			}
+		}
+	} else {
+		return fmt.Errorf("failed to get service %s: %w", svc.Name, err)
 	}
 
-	// Use Server-Side Apply to enforce the desired state (Spec and OwnerReferences).
-	// This also handles Conflict errors and ensures the Service is correctly configured.
+	// 2. Use Server-Side Apply to enforce the desired state (Spec and OwnerReferences).
 	svc.APIVersion = "v1"
 	svc.Kind = "Service"
 	svc.ManagedFields = nil // Let Kubernetes manage this
@@ -606,6 +689,9 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 
 	issue, _, err := ghClient.Issues.Get(ctx, owner, repo, number)
 	if err != nil {
+		if isGitHubTransient(err) {
+			return &RetryableError{Message: fmt.Sprintf("transient error getting issue %d: %v", number, err)}
+		}
 		return fmt.Errorf("failed to get issue %d: %w", number, err)
 	}
 
@@ -623,13 +709,17 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 		if annotations != nil {
 			if annotations["lastReopenedAt"] != "" {
 				t, err := time.Parse(time.RFC3339, annotations["lastReopenedAt"])
-				if err == nil {
+				if err != nil {
+					klog.Warningf("Issue #%d: Failed to parse lastReopenedAt annotation %q: %v", number, annotations["lastReopenedAt"], err)
+				} else {
 					lastReopenedAt = &t
 				}
 			}
 			if annotations["eventsLastCheckedAt"] != "" {
 				t, err := time.Parse(time.RFC3339, annotations["eventsLastCheckedAt"])
-				if err == nil {
+				if err != nil {
+					klog.Warningf("Issue #%d: Failed to parse eventsLastCheckedAt annotation %q: %v", number, annotations["eventsLastCheckedAt"], err)
+				} else {
 					eventsLastCheckedAt = &t
 				}
 			}
@@ -645,6 +735,9 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 		eventsFetchSuccess = true
 		page1Events, resp, err := ghClient.Issues.ListIssueEvents(ctx, owner, repo, number, listEventsOpt)
 		if err != nil {
+			if isGitHubTransient(err) {
+				return &RetryableError{Message: fmt.Sprintf("transient error listing events for issue %d: %v", number, err)}
+			}
 			klog.Warningf("Issue #%d: Failed to list events: %v", number, err)
 			eventsFetchSuccess = false
 		} else {
@@ -861,6 +954,9 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 
 	pr, _, err := ghClient.PullRequests.Get(ctx, owner, repo, number)
 	if err != nil {
+		if isGitHubTransient(err) {
+			return &RetryableError{Message: fmt.Sprintf("transient error getting PR %d: %v", number, err)}
+		}
 		return fmt.Errorf("failed to get PR %d: %w", number, err)
 	}
 
@@ -926,6 +1022,10 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 							klog.Warningf("PR #%d: Found old Failed review task for DIFFERENT SHA %s. Deleting to avoid clutter.", number, task.Spec.Params["HEAD_SHA"])
 							_ = manager.DeleteSandboxTask(ctx, namespace, task.Name)
 						}
+						if state == "Completed" {
+							klog.Warningf("PR #%d: Found old Completed review task for DIFFERENT SHA %s. Deleting to avoid clutter.", number, task.Spec.Params["HEAD_SHA"])
+							_ = manager.DeleteSandboxTask(ctx, namespace, task.Name)
+						}
 					}
 				}
 			}
@@ -963,13 +1063,17 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 				if annotations != nil {
 					if annotations["lastReopenedAt"] != "" {
 						t, err := time.Parse(time.RFC3339, annotations["lastReopenedAt"])
-						if err == nil {
+						if err != nil {
+							klog.Warningf("PR #%d: Failed to parse lastReopenedAt annotation %q: %v", number, annotations["lastReopenedAt"], err)
+						} else {
 							lastReopenedAt = &t
 						}
 					}
 					if annotations["eventsLastCheckedAt"] != "" {
 						t, err := time.Parse(time.RFC3339, annotations["eventsLastCheckedAt"])
-						if err == nil {
+						if err != nil {
+							klog.Warningf("PR #%d: Failed to parse eventsLastCheckedAt annotation %q: %v", number, annotations["eventsLastCheckedAt"], err)
+						} else {
 							eventsLastCheckedAt = &t
 						}
 					}
@@ -987,6 +1091,9 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 				// Get the first page to find out the last page number (events are chronological)
 				page1Events, resp, err := ghClient.Issues.ListIssueEvents(ctx, owner, repo, number, listEventsOpt)
 				if err != nil {
+					if isGitHubTransient(err) {
+						return &RetryableError{Message: fmt.Sprintf("transient error listing events for PR %d: %v", number, err)}
+					}
 					klog.Warningf("PR #%d: Failed to list events: %v", number, err)
 					eventsFetchSuccess = false
 				} else {
@@ -1037,6 +1144,9 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 			for {
 				reviews, resp, err := ghClient.PullRequests.ListReviews(ctx, owner, repo, number, listOpt)
 				if err != nil {
+					if isGitHubTransient(err) {
+						return &RetryableError{Message: fmt.Sprintf("transient error listing reviews for PR %d: %v", number, err)}
+					}
 					return fmt.Errorf("failed to list reviews for PR %d: %w", number, err)
 				}
 
@@ -1064,6 +1174,11 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 
 							if !submittedAt.IsZero() && lastReopenedAt != nil && submittedAt.Before(*lastReopenedAt) {
 								klog.Infof("PR #%d: Found historical automated review for SHA %s, but PR was reopened since then. Proceeding with new review.", number, headSHA)
+								continue
+							}
+
+							if state == "DISMISSED" {
+								klog.Infof("PR #%d: Automated review for SHA %s was DISMISSED. Allowing re-review.", number, headSHA)
 								continue
 							}
 
@@ -1246,6 +1361,9 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 
 	// Set event to COMMENT to submit directly instead of creating a draft
 	reviewRequest.Event = githubv39.String("COMMENT")
+	if currentSHA != "" {
+		reviewRequest.CommitID = githubv39.String(currentSHA)
+	}
 
 	// Add a hidden signature to definitively identify automated reviews
 	signature := "\n\n<!-- overseer-review -->"
@@ -1253,11 +1371,16 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 	if reviewRequest.Body != nil {
 		body = *reviewRequest.Body
 	}
-	reviewRequest.Body = githubv39.String(body + signature)
+	if !strings.HasSuffix(body, signature) {
+		reviewRequest.Body = githubv39.String(body + signature)
+	}
 
-	klog.Infof("Creating review on GitHub for %s/%s PR %d...", owner, repoName, prNumber)
+	klog.Infof("Creating review on GitHub for %s/%s PR %d (SHA %s)...", owner, repoName, prNumber, currentSHA)
 	review, _, err := client.PullRequests.CreateReview(ctx, owner, repoName, prNumber, reviewRequest)
 	if err != nil {
+		if isGitHubTransient(err) {
+			return &RetryableError{Message: fmt.Sprintf("transient error creating review on GitHub: %v", err)}
+		}
 		return fmt.Errorf("failed to create review on GitHub: %w", err)
 	}
 	klog.Infof("Successfully created review: %s", review.GetHTMLURL())
@@ -1354,11 +1477,12 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 
 	sb.SetOwnerReferences([]metav1.OwnerReference{
 		{
-			APIVersion: "overseer.gemini.google.com/v1alpha1",
-			Kind:       "Overseer",
-			Name:       overseer.Name,
-			UID:        overseer.UID,
-			Controller: ptr.To(true),
+			APIVersion:         "overseer.gemini.google.com/v1alpha1",
+			Kind:               "Overseer",
+			Name:               overseer.Name,
+			UID:                overseer.UID,
+			Controller:         ptr.To(true),
+			BlockOwnerDeletion: ptr.To(true),
 		},
 	})
 
@@ -1446,11 +1570,12 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 
 	sb.SetOwnerReferences([]metav1.OwnerReference{
 		{
-			APIVersion: "overseer.gemini.google.com/v1alpha1",
-			Kind:       "Overseer",
-			Name:       overseer.Name,
-			UID:        overseer.UID,
-			Controller: ptr.To(true),
+			APIVersion:         "overseer.gemini.google.com/v1alpha1",
+			Kind:               "Overseer",
+			Name:               overseer.Name,
+			UID:                overseer.UID,
+			Controller:         ptr.To(true),
+			BlockOwnerDeletion: ptr.To(true),
 		},
 	})
 
