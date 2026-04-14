@@ -1090,10 +1090,11 @@ func runReconcile(ctx context.Context) error {
 				if strings.HasSuffix(f.Name(), ".yaml") || strings.HasSuffix(f.Name(), ".yml") || strings.HasSuffix(f.Name(), ".md") {
 					chore, err := parseChore(".agents/" + f.Name())
 					if err == nil && chore.Name != "" {
-							if isChoreAllowed(overseer.Spec.Chores, chore.Name) && strings.ToLower(chore.Schedule) != "never" {
-									currentChores[slugify(chore.Name)] = true
-							}
-					}				}
+						if isChoreAllowed(overseer.Spec.Chores, chore.Name) && strings.ToLower(chore.Schedule) != "never" {
+							currentChores[slugify(chore.Name)] = true
+						}
+					}
+				}
 			}
 		}
 	}
