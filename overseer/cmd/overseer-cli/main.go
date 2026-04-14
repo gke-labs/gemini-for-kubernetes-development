@@ -206,13 +206,17 @@ func runChore(ctx context.Context, name string, file string) error {
 
 	sandboxName := fmt.Sprintf("chore-%s-%s", overseer.Name, slugify(chore.Name))
 
-	if !isChoreAllowed(overseer.Spec.Chores, chore.Name) {
+	if !isChoreAllowed(overseer.Spec.Chores, chore.Name) || chore.Schedule == "never" {
+		reason := "excluded or not included"
+		if chore.Schedule == "never" {
+			reason = "paused (schedule: never)"
+		}
 		if choresMode == "dryrun" {
-			fmt.Printf("[dryrun] Ensuring sandbox %s is deleted for excluded/not-included chore %s\n", sandboxName, chore.Name)
+			fmt.Printf("[dryrun] Ensuring sandbox %s is deleted for chore %s (%s)\n", sandboxName, chore.Name, reason)
 			_ = deleteSandbox(ctx, kubeClient, namespace, sandboxName)
 			return nil
 		}
-		fmt.Printf("Chore %s is excluded or not included. Ensuring sandbox is deleted.\n", chore.Name)
+		fmt.Printf("Chore %s %s. Ensuring sandbox is deleted.\n", chore.Name, reason)
 		return deleteSandbox(ctx, kubeClient, namespace, sandboxName)
 	}
 
@@ -1086,7 +1090,7 @@ func runReconcile(ctx context.Context) error {
 				if strings.HasSuffix(f.Name(), ".yaml") || strings.HasSuffix(f.Name(), ".yml") || strings.HasSuffix(f.Name(), ".md") {
 					chore, err := parseChore(".agents/" + f.Name())
 					if err == nil && chore.Name != "" {
-						if isChoreAllowed(overseer.Spec.Chores, chore.Name) {
+						if isChoreAllowed(overseer.Spec.Chores, chore.Name) && chore.Schedule != "never" {
 							currentChores[slugify(chore.Name)] = true
 						}
 					}
