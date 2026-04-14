@@ -2217,7 +2217,7 @@ func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client
 	}
 	for _, c := range comments {
 		if c.CreatedAt != nil && c.CreatedAt.After(since) {
-			if c.User.GetLogin() == latestCommitAuthorLogin {
+			if c.GetUser().GetLogin() == latestCommitAuthorLogin {
 				continue
 			}
 			found = true
@@ -2234,7 +2234,7 @@ func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client
 	}
 	for _, rev := range reviews {
 		if rev.SubmittedAt != nil && rev.SubmittedAt.After(since) {
-			if rev.User.GetLogin() == latestCommitAuthorLogin {
+			if rev.GetUser().GetLogin() == latestCommitAuthorLogin {
 				continue
 			}
 			found = true
@@ -2255,7 +2255,7 @@ func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client
 		if c.CreatedAt != nil && c.CreatedAt.After(since) {
 			// We use the latest commit author (likely the bot/agent) to filter out
 			// comments made by the agent itself on the issue.
-			if c.User.GetLogin() == latestCommitAuthorLogin {
+			if c.GetUser().GetLogin() == latestCommitAuthorLogin {
 				continue
 			}
 			found = true
@@ -2353,9 +2353,9 @@ func (r *Reconciler) reconcileReviewConflicts(ctx context.Context, repoWatch *re
 		return nil
 	}
 
-	headSHA := pr.Head.GetSHA()
-	baseRef := pr.Base.GetRef()
-	headRef := pr.Head.GetRef()
+	headSHA := pr.GetHead().GetSHA()
+	baseRef := pr.GetBase().GetRef()
+	headRef := pr.GetHead().GetRef()
 	if headSHA == "" || baseRef == "" || headRef == "" {
 		return nil
 	}
@@ -2363,7 +2363,7 @@ func (r *Reconciler) reconcileReviewConflicts(ctx context.Context, repoWatch *re
 	// We use the base SHA from the PR object to avoid excessive GitHub API calls.
 	// This might be slightly stale if GitHub hasn't re-evaluated mergeability yet,
 	// but it prevents rate limit exhaustion as requested by reviewers.
-	baseSHA := pr.Base.GetSHA()
+	baseSHA := pr.GetBase().GetSHA()
 	if baseSHA == "" {
 		return nil
 	}
