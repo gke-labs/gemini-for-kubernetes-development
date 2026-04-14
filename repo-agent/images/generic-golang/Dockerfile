@@ -60,7 +60,7 @@ RUN npm install -g @google/gemini-cli @anthropic-ai/claude-code
 RUN curl -fsSL https://code-server.dev/install.sh | sh
 RUN for i in $(seq 1 5); do \
         code-server --install-extension golang.go --install-extension vscodevim.vim && break || \
-        if [ $i -lt 5 ]; then echo "Extension installation failed, retrying in 10s... ($i/5)" && sleep 10; else exit 1; fi; \
+        if [ $i -lt 5 ]; then echo "Extension installation failed, retrying in 10s... ($i/5)" && sleep 10; else echo "Warning: Extension installation failed after 5 attempts, continuing anyway..." && break; fi; \
     done
 
 COPY --from=build-repo-sandbox /repo-sandbox /repo-agent/repo-sandbox
