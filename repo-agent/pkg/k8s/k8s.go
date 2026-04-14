@@ -619,7 +619,10 @@ func (m *Manager) DeleteSandboxTask(ctx context.Context, namespace, taskName str
 		Version:  "v1alpha1",
 		Resource: "sandboxtasks",
 	}
-	return m.Client.Resource(gvr).Namespace(namespace).Delete(ctx, taskName, v1.DeleteOptions{})
+	propagationPolicy := v1.DeletePropagationForeground
+	return m.Client.Resource(gvr).Namespace(namespace).Delete(ctx, taskName, v1.DeleteOptions{
+		PropagationPolicy: &propagationPolicy,
+	})
 }
 
 func (m *Manager) UpdateSandboxTaskStatus(ctx context.Context, namespace, taskName, state, result string, stats *sandboxtaskv1alpha1.Stats) error {
