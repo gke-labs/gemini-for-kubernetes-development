@@ -888,7 +888,7 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 }
 
 func runPR(ctx context.Context, number int, taskType string, submit bool, customPrompt string) error {
-	// Similar to runIssue but for PRs 
+	// Similar to runIssue but for PRs
 	if overseerName == "" || namespace == "" {
 		return fmt.Errorf("OVERSEER_NAME and NAMESPACE environment variables must be set")
 	}
