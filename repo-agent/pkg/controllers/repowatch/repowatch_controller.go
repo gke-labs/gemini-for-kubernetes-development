@@ -273,6 +273,10 @@ type Reconciler struct {
 //+kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create;update;patch
 //+kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 
+var (
+	errPendingMergeability = errors.New("GitHub is still computing mergeability")
+)
+
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
 
@@ -371,11 +375,18 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 
 	var reconcileErr error
+	var requeueAfter time.Duration
+
 	// Reconcile Reviews for Pull Requests
 	log.Info("reconciling reviews")
 	if err := r.reconcileReviews(ctx, repoWatch, ghClient, owner, repo, user, podsBySandbox); err != nil {
-		log.Error(err, "unable to reconcile reviews")
-		reconcileErr = errors.Join(reconcileErr, err)
+		if errors.Is(err, errPendingMergeability) {
+			log.Info("GitHub is still computing mergeability, requeuing reviews")
+			requeueAfter = 1 * time.Minute
+		} else {
+			log.Error(err, "unable to reconcile reviews")
+			reconcileErr = errors.Join(reconcileErr, err)
+		}
 		// Continue to next reconciliation
 	}
 
@@ -395,7 +406,16 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		// Continue to next reconciliation
 	}
 
-	return ctrl.Result{RequeueAfter: time.Second * time.Duration(repoWatch.Spec.PollIntervalSeconds)}, reconcileErr
+	if reconcileErr != nil {
+		return ctrl.Result{}, reconcileErr
+	}
+
+	pollInterval := time.Second * time.Duration(repoWatch.Spec.PollIntervalSeconds)
+	if requeueAfter > 0 && requeueAfter < pollInterval {
+		return ctrl.Result{RequeueAfter: requeueAfter}, nil
+	}
+
+	return ctrl.Result{RequeueAfter: pollInterval}, nil
 }
 
 // setAuthCondition sets the GitHubAuthentication condition on the RepoWatch status.
@@ -723,8 +743,13 @@ func (r *Reconciler) reconcileReviewSandboxesInternal(ctx context.Context, user 
 
 			// Check for merge conflicts
 			if err := r.reconcileReviewConflicts(ctx, repoWatch, existingSandbox, pr, ghClient, owner, repo, &activeSandboxes, prIsExplicit); err != nil {
-				log.Error(err, "unable to reconcile review conflicts", "pr", pr.GetNumber())
-				reconcileErr = errors.Join(reconcileErr, err)
+				if errors.Is(err, errPendingMergeability) {
+					// Don't log as error, just propagate to trigger requeue
+					reconcileErr = errors.Join(reconcileErr, err)
+				} else {
+					log.Error(err, "unable to reconcile review conflicts", "pr", pr.GetNumber())
+					reconcileErr = errors.Join(reconcileErr, err)
+				}
 			}
 
 			watchedPRs = append(watchedPRs, reviewv1alpha1.WatchedPR{
@@ -2428,7 +2453,7 @@ func (r *Reconciler) reconcileReviewConflicts(ctx context.Context, repoWatch *re
 		// GitHub is still computing mergeability.
 		// We return a small error to trigger a requeue by controller-runtime.
 		log.Info("GitHub is still computing mergeability, requeuing", "pr", pr.GetNumber())
-		return fmt.Errorf("GitHub is still computing mergeability for PR %d", pr.GetNumber())
+		return errPendingMergeability
 	}
 
 	// Mergeable is false if there are conflicts

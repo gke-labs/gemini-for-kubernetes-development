@@ -251,7 +251,9 @@ function runGemini {
              
              if verifyResolution && runTests; then
                  echo "Resolution verified with model: $MODEL. Staging and committing..."
-                 git add -u
+                 # Copy the successful output to a standard location for stats tracking
+                 cp "$(dirname "${PROMPT_FILE}")/gemini-output-${MODEL}.json" "$(dirname "${PROMPT_FILE}")/gemini-output.json" || true
+                 git add .
                  # Complete the merge commit
                  git commit --no-verify -m "chore: resolve merge conflicts using Gemini ($MODEL)" || echo "Nothing to commit"
                  SUCCESS=true
