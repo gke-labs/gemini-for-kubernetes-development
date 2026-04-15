@@ -159,7 +159,7 @@ func RequestLoggerMiddleware() gin.HandlerFunc {
 		klog.Infof("Request Method: %s\n", c.Request.Method)
 		klog.Infof("Request URL: %s\n", c.Request.URL.String())
 		//log.Printf("Request Headers: %v\n", c.Request.Header)
-		klog.Infof("Request Body: %s\n", string(bodyBytes))
+		klog.Infof("Request Body: %s\n", truncateToRuneBoundary(string(bodyBytes), 1000))
 
 		c.Next() // Process the request further
 	}
@@ -174,7 +174,7 @@ func ResponseLoggerMiddleware() gin.HandlerFunc {
 
 		klog.Infof("Response Status: %d\n", c.Writer.Status())
 		klog.Infof("Response Headers: %v\n", c.Writer.Header())
-		klog.Infof("Response Body: %s\n", blw.body.String())
+		klog.Infof("Response Body: %s\n", truncateToRuneBoundary(blw.body.String(), 1000))
 	}
 }
 

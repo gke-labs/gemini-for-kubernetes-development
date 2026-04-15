@@ -3,9 +3,13 @@ package api
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -14,6 +18,7 @@ import (
 	"k8s.io/client-go/dynamic/fake"
 
 	sandboxtaskv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/auth"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 )
 
@@ -193,6 +198,30 @@ func TestGetTaskMetadata(t *testing.T) {
 		}
 	})
 
+	t.Run("Resolve task UID from name", func(t *testing.T) {
+		task := &sandboxtaskv1alpha1.SandboxTask{
+			TypeMeta: metav1.TypeMeta{
+				APIVersion: "custom.agents.x-k8s.io/v1alpha1",
+				Kind:       "SandboxTask",
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "task-to-resolve",
+				Namespace: namespace,
+				UID:       types.UID("resolved-uid"),
+				Labels: map[string]string{
+					"sandbox.gemini.google.com/sandbox-name": sandboxName,
+				},
+			},
+		}
+		unstructuredTask, _ := runtime.DefaultUnstructuredConverter.ToUnstructured(task)
+		_, _ = dynamicClient.Resource(gvrSandboxTask).Namespace(namespace).Create(ctx, &unstructured.Unstructured{Object: unstructuredTask}, metav1.CreateOptions{})
+
+		gotName, gotUID := server.getTaskMetadata(ctx, namespace, sandboxName, "task-to-resolve", "")
+		if gotName != "task-to-resolve" || gotUID != "resolved-uid" {
+			t.Errorf("getTaskMetadata() resolve = (%q, %q), want (%q, %q)", gotName, gotUID, "task-to-resolve", "resolved-uid")
+		}
+	})
+
 	t.Run("Fallback to latest task", func(t *testing.T) {
 		// Create a few tasks
 		now := time.Now()
@@ -221,6 +250,74 @@ func TestGetTaskMetadata(t *testing.T) {
 		expectedUID := "uid-3"
 		if gotName != expectedName || gotUID != expectedUID {
 			t.Errorf("getTaskMetadata() fallback = (%q, %q), want (%q, %q)", gotName, gotUID, expectedName, expectedUID)
+		}
+	})
+}
+
+func TestApplyTraceabilityMetadata(t *testing.T) {
+	scheme := runtime.NewScheme()
+	gvrSandbox := schema.GroupVersionResource{Group: "agents.x-k8s.io", Version: "v1alpha1", Resource: "sandboxes"}
+	gvrRepoWatch := schema.GroupVersionResource{Group: "review.gemini.google.com", Version: "v1alpha1", Resource: "repowatches"}
+
+	dynamicClient := fake.NewSimpleDynamicClientWithCustomListKinds(scheme, map[schema.GroupVersionResource]string{
+		gvrSandbox:   "SandboxList",
+		gvrRepoWatch: "RepoWatchList",
+	})
+
+	manager := &k8s.Manager{
+		Client: dynamicClient,
+	}
+
+	server := &Server{
+		K8sManager: manager,
+	}
+
+	gin.SetMode(gin.TestMode)
+	// Need to mock s.Auth.GetNamespaceFromContext(c)
+	// Authenticator is a struct, let's see how to mock it or just set up context.
+	server.Auth = &auth.Authenticator{}
+
+	body := "Test body"
+	taskType := "test-task"
+	sandboxName := "test-sandbox"
+
+	t.Run("Traceability disabled", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request, _ = http.NewRequest("POST", "/", nil)
+
+		server.TraceabilityMetadataEnabled = false
+		got := server.applyTraceabilityMetadata(c, body, taskType, sandboxName, "n/a", "n/a")
+		if got != body {
+			t.Errorf("applyTraceabilityMetadata() disabled = %q, want %q", got, body)
+		}
+	})
+
+	t.Run("Traceability enabled - adds footer", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request, _ = http.NewRequest("POST", "/", nil)
+
+		server.TraceabilityMetadataEnabled = true
+		got := server.applyTraceabilityMetadata(c, body, taskType, sandboxName, "task1", "uid1")
+		if !strings.Contains(got, "<!-- repo-agent-metadata") {
+			t.Errorf("applyTraceabilityMetadata() enabled = %q, missing footer", got)
+		}
+		if !strings.Contains(got, "task-type: test-task") {
+			t.Errorf("applyTraceabilityMetadata() enabled = %q, missing task-type", got)
+		}
+	})
+
+	t.Run("Traceability enabled - does not duplicate footer", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request, _ = http.NewRequest("POST", "/", nil)
+
+		server.TraceabilityMetadataEnabled = true
+		bodyWithFooter := body + "\n<!-- repo-agent-metadata\n-->"
+		got := server.applyTraceabilityMetadata(c, bodyWithFooter, taskType, sandboxName, "task1", "uid1")
+		if strings.Count(got, "<!-- repo-agent-metadata") != 1 {
+			t.Errorf("applyTraceabilityMetadata() duplicated footer = %q", got)
 		}
 	})
 }

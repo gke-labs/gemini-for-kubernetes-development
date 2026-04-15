@@ -23,7 +23,6 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	pkg_github "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks/metadata"
 )
 
@@ -272,7 +271,7 @@ func (s *Server) submitIssueComment(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
-	log.Info("Submitting comment for Issue", "issueID", issueID, "repo", repo, "comment", commentText, "taskName", taskNameReq, "taskUID", taskUIDReq)
+	log.Info("Submitting comment for Issue", "issueID", issueID, "repo", repo, "comment", truncateToRuneBoundary(commentText, 1000), "taskName", taskNameReq, "taskUID", taskUIDReq)
 
 	sandboxName := fmt.Sprintf("%s-issue-%s", repo, issueID)
 	gvr := schema.GroupVersionResource{
@@ -341,25 +340,7 @@ func (s *Server) submitIssueComment(c *gin.Context) {
 		return
 	}
 
-	body := commentText
-	if s.TraceabilityMetadataEnabled {
-		if !strings.Contains(body, "<!-- repo-agent-metadata") {
-			taskName, taskUID := s.getTaskMetadata(ctx, namespace, sandboxName, taskNameReq, taskUIDReq)
-			repowatchName := s.getRepoWatchName(ctx, namespace, sandboxName)
-			footer := tasks.GenerateMetadataFooter(metadata.Metadata{
-				SandboxTask:    taskName,
-				SandboxTaskUID: taskUID,
-				Sandbox:        sandboxName,
-				RepoWatch:      repowatchName,
-				TaskType:       metadata.TaskTypeIssueComment,
-				Timestamp:      time.Now().UTC().Format(time.RFC3339),
-			})
-			body = truncateString(strings.TrimSpace(body), 65000-len(footer))
-			body += footer
-		}
-	} else {
-		log.V(4).Info("Traceability metadata is disabled, skipping footer for issue comment")
-	}
+	body := s.applyTraceabilityMetadata(c, commentText, metadata.TaskTypeIssueComment, sandboxName, taskNameReq, taskUIDReq)
 	comment := &github.IssueComment{Body: &body}
 	_, _, err = client.Issues.CreateComment(ctx, owner, repoName, issueNumber, comment)
 	if err != nil {

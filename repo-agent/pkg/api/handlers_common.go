@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
@@ -18,6 +19,8 @@ import (
 	sandboxtaskv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
 	pkgk8s "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks/metadata"
 )
 
 // --- Health Check ---
@@ -198,8 +201,20 @@ func (s *Server) getTaskMetadata(ctx context.Context, namespace, sandboxName, ta
 	if taskName != "" && taskUID != "" {
 		return taskName, taskUID
 	}
-	// If only one is provided, we still fall back to latest to ensure consistency
-	// or we could use the provided one. Review feedback suggested being more resilient.
+
+	// If we have a taskName but no UID, try to find the UID in the sandbox's tasks.
+	if taskName != "" && taskUID == "" {
+		taskList, err := s.K8sManager.ListSandboxTasks(ctx, namespace, sandboxName)
+		if err == nil {
+			for i := range taskList.Items {
+				item := &taskList.Items[i]
+				if item.Name == taskName || fmt.Sprintf("%s/%s", item.Namespace, item.Name) == taskName {
+					klog.FromContext(ctx).V(4).Info("Resolved task UID from name", "taskName", taskName, "taskUID", string(item.UID))
+					return taskName, string(item.UID)
+				}
+			}
+		}
+	}
 
 	// Fallback to latest
 	resName, resUID := s.getLatestTaskMetadata(ctx, namespace, sandboxName)
@@ -214,6 +229,37 @@ func (s *Server) getTaskMetadata(ctx context.Context, namespace, sandboxName, ta
 
 	klog.FromContext(ctx).V(4).Info("Task metadata missing or partial in request, falling back to latest task", "sandbox", sandboxName, "taskName", resName, "taskUID", resUID)
 	return resName, resUID
+}
+
+// applyTraceabilityMetadata appends a structured metadata footer to a body string
+// if traceability is enabled and the footer is not already present.
+func (s *Server) applyTraceabilityMetadata(c *gin.Context, body string, taskType string, sandboxName string, taskNameReq string, taskUIDReq string) string {
+	if !s.TraceabilityMetadataEnabled {
+		klog.FromContext(c.Request.Context()).V(4).Info("Traceability metadata is disabled, skipping footer", "taskType", taskType)
+		return body
+	}
+	if strings.Contains(body, "<!-- repo-agent-metadata") {
+		return body
+	}
+
+	ctx := c.Request.Context()
+	namespace := s.Auth.GetNamespaceFromContext(c)
+	if namespace == "" {
+		namespace = "default"
+	}
+
+	taskName, taskUID := s.getTaskMetadata(ctx, namespace, sandboxName, taskNameReq, taskUIDReq)
+	repowatchName := s.getRepoWatchName(ctx, namespace, sandboxName)
+	footer := tasks.GenerateMetadataFooter(metadata.Metadata{
+		SandboxTask:    taskName,
+		SandboxTaskUID: taskUID,
+		Sandbox:        sandboxName,
+		RepoWatch:      repowatchName,
+		TaskType:       taskType,
+		Timestamp:      time.Now().UTC().Format(time.RFC3339),
+	})
+	// GitHub limit is 65536. Leave some room.
+	return truncateString(strings.TrimSpace(body), 65000-len(footer)) + footer
 }
 
 func (s *Server) getRepoWatchName(ctx context.Context, namespace, sandboxName string) string {

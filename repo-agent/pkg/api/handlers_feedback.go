@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/go-github/v39/github"
@@ -14,7 +12,6 @@ import (
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks/metadata"
 )
 
@@ -74,23 +71,7 @@ func (s *Server) submitFeedback(c *gin.Context) {
 	repo := "gemini-for-kubernetes-development"
 	title := fmt.Sprintf("[repo-agent] %s", titleText)
 	body := fmt.Sprintf("User: %s\n\n%s", namespace, bodyText)
-	if s.TraceabilityMetadataEnabled {
-		if !strings.Contains(body, "<!-- repo-agent-metadata") {
-			footer := tasks.GenerateMetadataFooter(metadata.Metadata{
-				SandboxTask:    "n/a",
-				SandboxTaskUID: "n/a",
-				Sandbox:        "n/a",
-				RepoWatch:      "n/a",
-				TaskType:       metadata.TaskTypeFeedback,
-				Timestamp:      time.Now().UTC().Format(time.RFC3339),
-			})
-			// GitHub limit is 65536. Leave some room.
-			body = truncateString(strings.TrimSpace(body), 65000-len(footer))
-			body += footer
-		}
-	} else {
-		log.V(4).Info("Traceability metadata is disabled, skipping footer")
-	}
+	body = s.applyTraceabilityMetadata(c, body, metadata.TaskTypeFeedback, "n/a", "n/a", "n/a")
 	labels := []string{"feedback"}
 
 	if imageText != "" {

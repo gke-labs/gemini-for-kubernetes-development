@@ -22,7 +22,6 @@ import (
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks/metadata"
 )
 
@@ -273,7 +272,7 @@ func (s *Server) submitReview(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
-	log.Info("Submitting review for PR", "prID", prID, "repo", repo, "review", reviewText, "taskName", taskNameReq, "taskUID", taskUIDReq)
+	log.Info("Submitting review for PR", "prID", prID, "repo", repo, "review", truncateToRuneBoundary(reviewText, 1000), "taskName", taskNameReq, "taskUID", taskUIDReq)
 
 	sandboxName := fmt.Sprintf("%s-pr-%s", repo, prID)
 	gvr := schema.GroupVersionResource{
@@ -374,30 +373,12 @@ func (s *Server) submitReview(c *gin.Context) {
 		return
 	}
 
-	if s.TraceabilityMetadataEnabled {
-		body := ""
-		if reviewRequest.Body != nil {
-			body = *reviewRequest.Body
-		}
-
-		if !strings.Contains(body, "<!-- repo-agent-metadata") {
-			taskName, taskUID := s.getTaskMetadata(ctx, namespace, sandboxName, taskNameReq, taskUIDReq)
-			repowatchName := s.getRepoWatchName(ctx, namespace, sandboxName)
-			footer := tasks.GenerateMetadataFooter(metadata.Metadata{
-				SandboxTask:    taskName,
-				SandboxTaskUID: taskUID,
-				Sandbox:        sandboxName,
-				RepoWatch:      repowatchName,
-				TaskType:       metadata.TaskTypePRReview,
-				Timestamp:      time.Now().UTC().Format(time.RFC3339),
-			})
-			body = truncateString(strings.TrimSpace(body), 65000-len(footer))
-			newBody := body + footer
-			reviewRequest.Body = &newBody
-		}
-	} else {
-		log.V(4).Info("Traceability metadata is disabled, skipping footer for PR review")
+	body := ""
+	if reviewRequest.Body != nil {
+		body = *reviewRequest.Body
 	}
+	newBody := s.applyTraceabilityMetadata(c, body, metadata.TaskTypePRReview, sandboxName, taskNameReq, taskUIDReq)
+	reviewRequest.Body = &newBody
 
 	// Not setting event sets it as a draft
 	reviewRequest.Event = nil
