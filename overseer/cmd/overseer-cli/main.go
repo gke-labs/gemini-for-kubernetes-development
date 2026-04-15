@@ -782,11 +782,11 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 	if err == nil {
 		for i := range taskList.Items {
 			task := &taskList.Items[i]
+			state := task.Status.TaskState
+			if state == "" {
+				state = "Pending"
+			}
 			if task.Spec.Type == taskType {
-				state := task.Status.TaskState
-				if state == "" {
-					state = "Pending"
-				}
 				if state == "Completed" {
 					if lastReopenedAt != nil && task.CreationTimestamp.Before(&metav1.Time{Time: *lastReopenedAt}) {
 						klog.Infof("Issue #%d: Found historical task %s, but issue was reopened since then. Proceeding with new task.", number, taskType)
@@ -812,6 +812,17 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 					klog.Warningf("Issue #%d: Found old Failed task %s (%v ago). Deleting to allow retry.", number, taskType, time.Since(task.CreationTimestamp.Time))
 					_ = manager.DeleteSandboxTask(ctx, namespace, task.Name)
 					return &RetryableError{Message: fmt.Sprintf("deleted failed task for issue %d, waiting for backoff/pod termination", number)}
+				}
+			} else {
+				// Different task type in the same sandbox
+				if state == "Running" || state == "Pending" {
+					if time.Since(task.CreationTimestamp.Time) < 2*time.Hour {
+						klog.V(2).Infof("Issue #%d: Task %s is currently %s (created %v ago). Skipping to avoid concurrency conflict.", number, task.Spec.Type, state, time.Since(task.CreationTimestamp.Time))
+						return &RetryableError{Message: fmt.Sprintf("another task %s is running in sandbox for issue %d", task.Spec.Type, number)}
+					}
+					klog.Warningf("Issue #%d: Found STALE task %s in state %s (created %v ago). Deleting stale task and allowing new one.", number, task.Spec.Type, state, time.Since(task.CreationTimestamp.Time))
+					_ = manager.DeleteSandboxTask(ctx, namespace, task.Name)
+					return &RetryableError{Message: fmt.Sprintf("deleted stale task for issue %d, waiting for pod termination", number)}
 				}
 			}
 		}
@@ -1003,134 +1014,136 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 	}
 	headSHA := head.GetSHA()
 
+	// Fetch events to check for reopened status
 	var eventsFetchSuccess bool
-	if taskType == "review" {
-		// Fetch events to check for reopened status
-		if eventsLastCheckedAt != nil && !pr.GetUpdatedAt().After(*eventsLastCheckedAt) {
-			klog.V(4).Infof("PR #%d: No new events since last check at %v. Skipping event pagination.", number, eventsLastCheckedAt)
-			eventsFetchSuccess = true
+	if eventsLastCheckedAt != nil && !pr.GetUpdatedAt().After(*eventsLastCheckedAt) {
+		klog.V(4).Infof("PR #%d: No new events since last check at %v. Skipping event pagination.", number, eventsLastCheckedAt)
+		eventsFetchSuccess = true
+	} else {
+		listEventsOpt := &githubv39.ListOptions{PerPage: 100}
+		eventsFetchSuccess = true
+
+		// Get the first page to find out the last page number (events are chronological)
+		page1Events, resp, err := ghClient.Issues.ListIssueEvents(ctx, owner, repo, number, listEventsOpt)
+		if err != nil {
+			if isGitHubTransient(err) {
+				return &RetryableError{Message: fmt.Sprintf("transient error listing events for PR %d: %v", number, err)}
+			}
+			klog.Warningf("PR #%d: Failed to list events: %v", number, err)
+			eventsFetchSuccess = false
 		} else {
-			listEventsOpt := &githubv39.ListOptions{PerPage: 100}
-			eventsFetchSuccess = true
+			lastPage := resp.LastPage
+			if lastPage == 0 {
+				lastPage = 1
+			}
 
-			// Get the first page to find out the last page number (events are chronological)
-			page1Events, resp, err := ghClient.Issues.ListIssueEvents(ctx, owner, repo, number, listEventsOpt)
-			if err != nil {
-				if isGitHubTransient(err) {
-					return &RetryableError{Message: fmt.Sprintf("transient error listing events for PR %d: %v", number, err)}
+		StopEvents:
+			for p := lastPage; p >= 1; p-- {
+				var events []*githubv39.IssueEvent
+				if p == 1 {
+					events = page1Events
+				} else {
+					listEventsOpt.Page = p
+					var err error
+					events, _, err = ghClient.Issues.ListIssueEvents(ctx, owner, repo, number, listEventsOpt)
+					if err != nil {
+						klog.Warningf("PR #%d: Failed to list events on page %d: %v", number, p, err)
+						eventsFetchSuccess = false
+						break StopEvents
+					}
 				}
-				klog.Warningf("PR #%d: Failed to list events: %v", number, err)
-				eventsFetchSuccess = false
+
+				// Scan events on this page backwards (newest to oldest)
+				for i := len(events) - 1; i >= 0; i-- {
+					e := events[i]
+					createdAt := e.GetCreatedAt()
+
+					// If we reached events older than our last checkpoint, we can stop
+					if eventsLastCheckedAt != nil && createdAt.Before(*eventsLastCheckedAt) {
+						break StopEvents
+					}
+
+					if e.GetEvent() == "reopened" {
+						t := e.GetCreatedAt()
+						if lastReopenedAt == nil || t.After(*lastReopenedAt) {
+							lastReopenedAt = &t
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// 1. Check local Kubernetes first for an actively running or completed task for this SHA
+	// to save GitHub API quota and prevent concurrency conflicts.
+	taskList, err := manager.ListSandboxTasks(ctx, namespace, sandboxName)
+	if err == nil {
+		for i := range taskList.Items {
+			task := &taskList.Items[i]
+			state := task.Status.TaskState
+			if state == "" {
+				state = "Pending"
+			}
+
+			taskSHA := task.Spec.Params["HEAD_SHA"]
+			if task.Spec.Type == taskType && strings.EqualFold(taskSHA, headSHA) {
+				if state == "Completed" {
+					if lastReopenedAt != nil && task.CreationTimestamp.Before(&metav1.Time{Time: *lastReopenedAt}) {
+						klog.Infof("PR #%d: Found historical task %s for SHA %s, but PR was reopened since then. Proceeding with new task.", number, taskType, headSHA)
+						continue
+					}
+					klog.V(2).Infof("PR #%d: Task %s for SHA %s already exists in state %s. Skipping.", number, taskType, headSHA, state)
+					return nil
+				}
+				if state == "Running" || state == "Pending" {
+					if time.Since(task.CreationTimestamp.Time) < 2*time.Hour {
+						klog.V(2).Infof("PR #%d: Task %s for SHA %s already exists in state %s (created %v ago). Skipping.", number, taskType, headSHA, state, time.Since(task.CreationTimestamp.Time))
+						return nil
+					}
+					klog.Warningf("PR #%d: Found STALE task %s for SHA %s in state %s (created %v ago). Deleting stale task and allowing new one.", number, taskType, headSHA, state, time.Since(task.CreationTimestamp.Time))
+					_ = manager.DeleteSandboxTask(ctx, namespace, task.Name)
+					return &RetryableError{Message: fmt.Sprintf("deleted stale task %s for PR %d, waiting for pod termination", taskType, number)}
+				}
+				if state == "Failed" {
+					if lastReopenedAt != nil && task.CreationTimestamp.Before(&metav1.Time{Time: *lastReopenedAt}) {
+						klog.Infof("PR #%d: Found historical failed task %s for SHA %s, but PR was reopened since then. Proceeding with new task.", number, taskType, headSHA)
+						continue
+					}
+					if time.Since(task.CreationTimestamp.Time) < 1*time.Hour {
+						klog.V(2).Infof("PR #%d: Task %s for SHA %s failed recently (%v ago). Skipping for backoff.", number, taskType, headSHA, time.Since(task.CreationTimestamp.Time))
+						return nil
+					}
+					klog.Warningf("PR #%d: Found old Failed task %s for SHA %s (%v ago). Deleting to allow retry.", number, taskType, headSHA, time.Since(task.CreationTimestamp.Time))
+					_ = manager.DeleteSandboxTask(ctx, namespace, task.Name)
+					return &RetryableError{Message: fmt.Sprintf("deleted failed task %s for PR %d, waiting for backoff/pod termination", taskType, number)}
+				}
 			} else {
-				lastPage := resp.LastPage
-				if lastPage == 0 {
-					lastPage = 1
-				}
-
-			StopEvents:
-				for p := lastPage; p >= 1; p-- {
-					var events []*githubv39.IssueEvent
-					if p == 1 {
-						events = page1Events
-					} else {
-						listEventsOpt.Page = p
-						var err error
-						events, _, err = ghClient.Issues.ListIssueEvents(ctx, owner, repo, number, listEventsOpt)
-						if err != nil {
-							klog.Warningf("PR #%d: Failed to list events on page %d: %v", number, p, err)
-							eventsFetchSuccess = false
-							break StopEvents
+				// Different task type or different SHA
+				if state == "Running" || state == "Pending" {
+					if time.Since(task.CreationTimestamp.Time) < 2*time.Hour {
+						conflictMsg := fmt.Sprintf("task %s for DIFFERENT SHA %s", task.Spec.Type, taskSHA)
+						if strings.EqualFold(taskSHA, headSHA) {
+							conflictMsg = fmt.Sprintf("task %s for SAME SHA %s", task.Spec.Type, headSHA)
 						}
+						klog.V(2).Infof("PR #%d: %s is currently %s (created %v ago). Skipping to avoid concurrency conflict.", number, conflictMsg, state, time.Since(task.CreationTimestamp.Time))
+						return &RetryableError{Message: fmt.Sprintf("another task is running in sandbox for PR %d, waiting for it to finish", number)}
 					}
-
-					// Scan events on this page backwards (newest to oldest)
-					for i := len(events) - 1; i >= 0; i-- {
-						e := events[i]
-						createdAt := e.GetCreatedAt()
-
-						// If we reached events older than our last checkpoint, we can stop
-						if eventsLastCheckedAt != nil && createdAt.Before(*eventsLastCheckedAt) {
-							break StopEvents
-						}
-
-						if e.GetEvent() == "reopened" {
-							t := e.GetCreatedAt()
-							if lastReopenedAt == nil || t.After(*lastReopenedAt) {
-								lastReopenedAt = &t
-							}
-						}
+					klog.Warningf("PR #%d: Found STALE task %s for SHA %s in state %s (created %v ago). Deleting stale task and allowing new one.", number, task.Spec.Type, taskSHA, state, time.Since(task.CreationTimestamp.Time))
+					_ = manager.DeleteSandboxTask(ctx, namespace, task.Name)
+					return &RetryableError{Message: fmt.Sprintf("deleted stale task for PR %d, waiting for pod termination", number)}
+				}
+				// Clean up old non-relevant tasks
+				if state == "Completed" || state == "Failed" {
+					if !strings.EqualFold(taskSHA, headSHA) && taskSHA != "" {
+						klog.Warningf("PR #%d: Found old %s task %s for DIFFERENT SHA %s. Deleting to avoid clutter.", number, state, task.Spec.Type, taskSHA)
+						_ = manager.DeleteSandboxTask(ctx, namespace, task.Name)
 					}
 				}
 			}
 		}
+	}
 
-		// 1. Check local Kubernetes first for an actively running or completed task for this SHA
-		// to save GitHub API quota and prevent concurrency conflicts.
-		taskList, err := manager.ListSandboxTasks(ctx, namespace, sandboxName)
-		if err == nil {
-			for i := range taskList.Items {
-				task := &taskList.Items[i]
-				if task.Spec.Type == "review" {
-					state := task.Status.TaskState
-					if state == "" {
-						state = "Pending"
-					}
-
-					if strings.EqualFold(task.Spec.Params["HEAD_SHA"], headSHA) {
-						if state == "Completed" {
-							if lastReopenedAt != nil && task.CreationTimestamp.Before(&metav1.Time{Time: *lastReopenedAt}) {
-								klog.Infof("PR #%d: Found historical review task for SHA %s, but PR was reopened since then. Proceeding with new task.", number, headSHA)
-								continue
-							}
-							klog.V(2).Infof("PR #%d: Review task for SHA %s already exists in state %s. Skipping.", number, headSHA, state)
-							return nil
-						}
-						if state == "Running" || state == "Pending" {
-							if time.Since(task.CreationTimestamp.Time) < 2*time.Hour {
-								klog.V(2).Infof("PR #%d: Review task for SHA %s already exists in state %s (created %v ago). Skipping.", number, headSHA, state, time.Since(task.CreationTimestamp.Time))
-								return nil
-							}
-							klog.Warningf("PR #%d: Found STALE review task for SHA %s in state %s (created %v ago). Deleting stale task and allowing new one.", number, headSHA, state, time.Since(task.CreationTimestamp.Time))
-							_ = manager.DeleteSandboxTask(ctx, namespace, task.Name)
-							return &RetryableError{Message: fmt.Sprintf("deleted stale review task for PR %d, waiting for pod termination", number)}
-						}
-						if state == "Failed" {
-							if lastReopenedAt != nil && task.CreationTimestamp.Before(&metav1.Time{Time: *lastReopenedAt}) {
-								klog.Infof("PR #%d: Found historical failed review task for SHA %s, but PR was reopened since then. Proceeding with new task.", number, headSHA)
-								continue
-							}
-							if time.Since(task.CreationTimestamp.Time) < 1*time.Hour {
-								klog.V(2).Infof("PR #%d: Review task for SHA %s failed recently (%v ago). Skipping for backoff.", number, headSHA, time.Since(task.CreationTimestamp.Time))
-								return nil
-							}
-							klog.Warningf("PR #%d: Found old Failed review task for SHA %s (%v ago). Deleting to allow retry.", number, headSHA, time.Since(task.CreationTimestamp.Time))
-							_ = manager.DeleteSandboxTask(ctx, namespace, task.Name)
-							return &RetryableError{Message: fmt.Sprintf("deleted failed review task for PR %d, waiting for backoff/pod termination", number)}
-						}
-					} else {
-						// Another SHA is being reviewed
-						if state == "Running" || state == "Pending" {
-							if time.Since(task.CreationTimestamp.Time) < 2*time.Hour {
-								klog.V(2).Infof("PR #%d: Review task for DIFFERENT SHA %s is currently %s (created %v ago). Skipping to avoid concurrency conflict.", number, task.Spec.Params["HEAD_SHA"], state, time.Since(task.CreationTimestamp.Time))
-								return &RetryableError{Message: fmt.Sprintf("another SHA is being reviewed for PR %d, waiting for it to finish", number)}
-							}
-							klog.Warningf("PR #%d: Found STALE review task for DIFFERENT SHA %s in state %s (created %v ago). Deleting stale task and allowing new one.", number, task.Spec.Params["HEAD_SHA"], state, time.Since(task.CreationTimestamp.Time))
-							_ = manager.DeleteSandboxTask(ctx, namespace, task.Name)
-							return &RetryableError{Message: fmt.Sprintf("deleted stale review task for PR %d (different SHA), waiting for pod termination", number)}
-						}
-						if state == "Failed" {
-							klog.Warningf("PR #%d: Found old Failed review task for DIFFERENT SHA %s. Deleting to avoid clutter.", number, task.Spec.Params["HEAD_SHA"])
-							_ = manager.DeleteSandboxTask(ctx, namespace, task.Name)
-						}
-						if state == "Completed" {
-							klog.Warningf("PR #%d: Found old Completed review task for DIFFERENT SHA %s. Deleting to avoid clutter.", number, task.Spec.Params["HEAD_SHA"])
-							_ = manager.DeleteSandboxTask(ctx, namespace, task.Name)
-						}
-					}
-				}
-			}
-		}
-
+	if taskType == "review" {
 		// 2. Then check GitHub for already submitted reviews for this SHA
 		if botLogin == "" && userLogin == "" {
 			klog.Warningf("PR #%d: Neither GITHUB_BOT_LOGIN nor GITHUB_USER_ID is set. Skipping GitHub review deduplication.", number)
