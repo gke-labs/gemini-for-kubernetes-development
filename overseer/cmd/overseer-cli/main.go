@@ -962,16 +962,108 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 
 	sandboxName := fmt.Sprintf("%s-pr-%d", overseer.Name, number)
 
+	var lastReopenedAt *time.Time
+	var eventsLastCheckedAt *time.Time
+	var sandboxUnstructured *unstructured.Unstructured
+	var sandboxIsActive bool
+
+	sUnstructured, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
+	if err == nil {
+		sandboxUnstructured = sUnstructured
+		replicas, found, err := unstructured.NestedInt64(sandboxUnstructured.Object, "spec", "replicas")
+		if err == nil && (!found || replicas > 0) {
+			sandboxIsActive = true
+		}
+		annotations := sandboxUnstructured.GetAnnotations()
+		if annotations != nil {
+			if annotations["lastReopenedAt"] != "" {
+				t, err := time.Parse(time.RFC3339, annotations["lastReopenedAt"])
+				if err != nil {
+					klog.Warningf("PR #%d: Failed to parse lastReopenedAt annotation %q: %v", number, annotations["lastReopenedAt"], err)
+				} else {
+					lastReopenedAt = &t
+				}
+			}
+			if annotations["eventsLastCheckedAt"] != "" {
+				t, err := time.Parse(time.RFC3339, annotations["eventsLastCheckedAt"])
+				if err != nil {
+					klog.Warningf("PR #%d: Failed to parse eventsLastCheckedAt annotation %q: %v", number, annotations["eventsLastCheckedAt"], err)
+				} else {
+					eventsLastCheckedAt = &t
+				}
+			}
+		}
+	} else if !errors.IsNotFound(err) {
+		return fmt.Errorf("failed to check if sandbox exists: %w", err)
+	}
+
 	head := pr.GetHead()
 	if head == nil || head.GetSHA() == "" {
 		return fmt.Errorf("PR #%d has no head SHA", number)
 	}
 	headSHA := head.GetSHA()
 
-	// Check if a task for this SHA already exists (only for review tasks)
-	// We do this BEFORE the limit check so that already-handled PRs don't consume the "active" quota
-	// if they happen to have lingering sandboxes.
+	var eventsFetchSuccess bool
 	if taskType == "review" {
+		// Fetch events to check for reopened status
+		if eventsLastCheckedAt != nil && !pr.GetUpdatedAt().After(*eventsLastCheckedAt) {
+			klog.V(4).Infof("PR #%d: No new events since last check at %v. Skipping event pagination.", number, eventsLastCheckedAt)
+			eventsFetchSuccess = true
+		} else {
+			listEventsOpt := &githubv39.ListOptions{PerPage: 100}
+			eventsFetchSuccess = true
+
+			// Get the first page to find out the last page number (events are chronological)
+			page1Events, resp, err := ghClient.Issues.ListIssueEvents(ctx, owner, repo, number, listEventsOpt)
+			if err != nil {
+				if isGitHubTransient(err) {
+					return &RetryableError{Message: fmt.Sprintf("transient error listing events for PR %d: %v", number, err)}
+				}
+				klog.Warningf("PR #%d: Failed to list events: %v", number, err)
+				eventsFetchSuccess = false
+			} else {
+				lastPage := resp.LastPage
+				if lastPage == 0 {
+					lastPage = 1
+				}
+
+			StopEvents:
+				for p := lastPage; p >= 1; p-- {
+					var events []*githubv39.IssueEvent
+					if p == 1 {
+						events = page1Events
+					} else {
+						listEventsOpt.Page = p
+						var err error
+						events, _, err = ghClient.Issues.ListIssueEvents(ctx, owner, repo, number, listEventsOpt)
+						if err != nil {
+							klog.Warningf("PR #%d: Failed to list events on page %d: %v", number, p, err)
+							eventsFetchSuccess = false
+							break StopEvents
+						}
+					}
+
+					// Scan events on this page backwards (newest to oldest)
+					for i := len(events) - 1; i >= 0; i-- {
+						e := events[i]
+						createdAt := e.GetCreatedAt()
+
+						// If we reached events older than our last checkpoint, we can stop
+						if eventsLastCheckedAt != nil && createdAt.Before(*eventsLastCheckedAt) {
+							break StopEvents
+						}
+
+						if e.GetEvent() == "reopened" {
+							t := e.GetCreatedAt()
+							if lastReopenedAt == nil || t.After(*lastReopenedAt) {
+								lastReopenedAt = &t
+							}
+						}
+					}
+				}
+			}
+		}
+
 		// 1. Check local Kubernetes first for an actively running or completed task for this SHA
 		// to save GitHub API quota and prevent concurrency conflicts.
 		taskList, err := manager.ListSandboxTasks(ctx, namespace, sandboxName)
@@ -986,6 +1078,10 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 
 					if strings.EqualFold(task.Spec.Params["HEAD_SHA"], headSHA) {
 						if state == "Completed" {
+							if lastReopenedAt != nil && task.CreationTimestamp.Before(&metav1.Time{Time: *lastReopenedAt}) {
+								klog.Infof("PR #%d: Found historical review task for SHA %s, but PR was reopened since then. Proceeding with new task.", number, headSHA)
+								continue
+							}
 							klog.V(2).Infof("PR #%d: Review task for SHA %s already exists in state %s. Skipping.", number, headSHA, state)
 							return nil
 						}
@@ -999,6 +1095,10 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 							return &RetryableError{Message: fmt.Sprintf("deleted stale review task for PR %d, waiting for pod termination", number)}
 						}
 						if state == "Failed" {
+							if lastReopenedAt != nil && task.CreationTimestamp.Before(&metav1.Time{Time: *lastReopenedAt}) {
+								klog.Infof("PR #%d: Found historical failed review task for SHA %s, but PR was reopened since then. Proceeding with new task.", number, headSHA)
+								continue
+							}
 							if time.Since(task.CreationTimestamp.Time) < 1*time.Hour {
 								klog.V(2).Infof("PR #%d: Review task for SHA %s failed recently (%v ago). Skipping for backoff.", number, headSHA, time.Since(task.CreationTimestamp.Time))
 								return nil
@@ -1030,115 +1130,11 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 				}
 			}
 		}
-	}
 
-	var sandboxIsActive bool
-	var sandboxUnstructured *unstructured.Unstructured
-	sUnstructured, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
-	if err == nil {
-		sandboxUnstructured = sUnstructured
-		replicas, found, err := unstructured.NestedInt64(sandboxUnstructured.Object, "spec", "replicas")
-		if err == nil && (!found || replicas > 0) {
-			sandboxIsActive = true
-		}
-	} else if !errors.IsNotFound(err) {
-		return fmt.Errorf("failed to check if sandbox exists: %w", err)
-	}
-
-	// Check if a task for this SHA already exists (only for review tasks)
-	var lastReopenedAt *time.Time
-	var eventsFetchSuccess bool
-
-	if taskType == "review" {
 		// 2. Then check GitHub for already submitted reviews for this SHA
 		if botLogin == "" && userLogin == "" {
 			klog.Warningf("PR #%d: Neither GITHUB_BOT_LOGIN nor GITHUB_USER_ID is set. Skipping GitHub review deduplication.", number)
 		} else {
-			// Check for reopened events to allow fresh reviews on resurrected PRs
-			var eventsLastCheckedAt *time.Time
-
-			// Try to get cached timestamps from sandbox annotations
-			if sandboxUnstructured != nil {
-				annotations := sandboxUnstructured.GetAnnotations()
-				if annotations != nil {
-					if annotations["lastReopenedAt"] != "" {
-						t, err := time.Parse(time.RFC3339, annotations["lastReopenedAt"])
-						if err != nil {
-							klog.Warningf("PR #%d: Failed to parse lastReopenedAt annotation %q: %v", number, annotations["lastReopenedAt"], err)
-						} else {
-							lastReopenedAt = &t
-						}
-					}
-					if annotations["eventsLastCheckedAt"] != "" {
-						t, err := time.Parse(time.RFC3339, annotations["eventsLastCheckedAt"])
-						if err != nil {
-							klog.Warningf("PR #%d: Failed to parse eventsLastCheckedAt annotation %q: %v", number, annotations["eventsLastCheckedAt"], err)
-						} else {
-							eventsLastCheckedAt = &t
-						}
-					}
-				}
-			}
-
-			// Skip event pagination if PR hasn't been updated since we last checked
-			if eventsLastCheckedAt != nil && !pr.GetUpdatedAt().After(*eventsLastCheckedAt) {
-				klog.V(4).Infof("PR #%d: No new events since last check at %v. Skipping event pagination.", number, eventsLastCheckedAt)
-				eventsFetchSuccess = true
-			} else {
-				listEventsOpt := &githubv39.ListOptions{PerPage: 100}
-				eventsFetchSuccess = true
-
-				// Get the first page to find out the last page number (events are chronological)
-				page1Events, resp, err := ghClient.Issues.ListIssueEvents(ctx, owner, repo, number, listEventsOpt)
-				if err != nil {
-					if isGitHubTransient(err) {
-						return &RetryableError{Message: fmt.Sprintf("transient error listing events for PR %d: %v", number, err)}
-					}
-					klog.Warningf("PR #%d: Failed to list events: %v", number, err)
-					eventsFetchSuccess = false
-				} else {
-					lastPage := resp.LastPage
-					if lastPage == 0 {
-						lastPage = 1
-					}
-
-				StopEvents:
-					for p := lastPage; p >= 1; p-- {
-						var events []*githubv39.IssueEvent
-						if p == 1 {
-							events = page1Events
-						} else {
-							listEventsOpt.Page = p
-							var err error
-							events, _, err = ghClient.Issues.ListIssueEvents(ctx, owner, repo, number, listEventsOpt)
-							if err != nil {
-								klog.Warningf("PR #%d: Failed to list events on page %d: %v", number, p, err)
-								eventsFetchSuccess = false
-								break StopEvents
-							}
-						}
-
-						// Scan events on this page backwards (newest to oldest)
-						for i := len(events) - 1; i >= 0; i-- {
-							e := events[i]
-							createdAt := e.GetCreatedAt()
-
-							// If we reached events older than our last checkpoint, we can stop
-							if eventsLastCheckedAt != nil && createdAt.Before(*eventsLastCheckedAt) {
-								break StopEvents
-							}
-
-							if e.GetEvent() == "reopened" {
-								t := e.GetCreatedAt()
-								if lastReopenedAt == nil || t.After(*lastReopenedAt) {
-									lastReopenedAt = &t
-								}
-							}
-						}
-					}
-				}
-			}
-
 			listOpt := &githubv39.ListOptions{PerPage: 100}
 		ReviewLoop:
 			for {
