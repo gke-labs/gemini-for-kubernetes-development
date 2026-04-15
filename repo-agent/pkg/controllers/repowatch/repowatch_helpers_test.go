@@ -97,7 +97,8 @@ func TestCreateOrUpdateReviewSandboxes(t *testing.T) {
 	// Start with one existing sandbox (oldSandbox)
 	sandboxList := &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*oldSandbox}}
 
-	watched, pending, finalActive := r.reconcileReviewSandboxesInternal(context.Background(), &github.User{Login: github.String("test-user")}, repoWatch, &github.Client{}, "owner", "repo", []*github.PullRequest{}, []*github.PullRequest{pr1, pr2, pr3, pr4}, sandboxList, map[string]*corev1.Pod{})
+	watched, pending, finalActive, err := r.reconcileReviewSandboxesInternal(context.Background(), &github.User{Login: github.String("test-user")}, repoWatch, &github.Client{}, "owner", "repo", []*github.PullRequest{}, []*github.PullRequest{pr1, pr2, pr3, pr4}, sandboxList, map[string]*corev1.Pod{})
+	g.Expect(err).To(gomega.BeNil())
 
 	// Asserts
 	g.Expect(finalActive).To(gomega.Equal(0), "Active count should be 0 because existing sandbox is scaled down and no new one created")

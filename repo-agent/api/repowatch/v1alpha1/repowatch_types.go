@@ -154,7 +154,9 @@ type PRReviewSpec struct {
 	RobotAccount string `json:"robotAccount,omitempty"`
 
 	// Models specifies a list of models to use for the review handler.
+	// If omitted, it defaults to the controller's globally configured default model.
 	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:MinItems=1
 	Models []string `json:"models,omitempty"`
 
 	// ResolveConflicts enables automated merge conflict resolution for PRs.
@@ -225,7 +227,9 @@ type DevSpec struct {
 	WorkspaceDiskSize string `json:"workspaceDiskSize,omitempty"`
 
 	// Models specifies a list of models to use for the development handler.
+	// If omitted, it defaults to the controller's globally configured default model.
 	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:MinItems=1
 	Models []string `json:"models,omitempty"`
 }
 
@@ -310,7 +314,9 @@ type IssueSpec struct {
 	WorkspaceDiskSize string `json:"workspaceDiskSize,omitempty"`
 
 	// Models specifies a list of models to use for the issue handler.
+	// If omitted, it defaults to the controller's globally configured default model.
 	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:MinItems=1
 	Models []string `json:"models,omitempty"`
 
 	// Handlers configuration for Bugs

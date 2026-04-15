@@ -460,13 +460,17 @@ func (r *Reconciler) reconcileReviews(ctx context.Context, repoWatch *reviewv1al
 		return err
 	}
 
-	watchedPRs, pendingPRs, activeSandboxes := r.reconcileReviewSandboxesInternal(ctx, user, repoWatch, ghClient, owner, repo, explicitPRs, prs, sandboxList, podsBySandbox)
+	watchedPRs, pendingPRs, activeSandboxes, err := r.reconcileReviewSandboxesInternal(ctx, user, repoWatch, ghClient, owner, repo, explicitPRs, prs, sandboxList, podsBySandbox)
+	if err != nil {
+		log.Error(err, "errors occurred during review sandbox reconciliation")
+	}
 
 	repoWatch.Status.ActiveSandboxCount = activeSandboxes
 	repoWatch.Status.ReviewSandboxes = watchedPRs
 	repoWatch.Status.PendingPRs = pendingPRs
 
-	return r.Status().Update(ctx, repoWatch)
+	updateErr := r.Status().Update(ctx, repoWatch)
+	return errors.Join(err, updateErr)
 }
 
 func (r *Reconciler) getExplicitPRs(ctx context.Context, ghClient *github.Client, repoWatch *reviewv1alpha1.RepoWatch, owner, repo string) []*github.PullRequest {
@@ -634,8 +638,9 @@ func (r *Reconciler) excludePRs(prs []*github.PullRequest, repoWatch *reviewv1al
 	return filteredPRs
 }
 
-func (r *Reconciler) reconcileReviewSandboxesInternal(ctx context.Context, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, ghClient *github.Client, owner, repo string, explicitPRs []*github.PullRequest, prs []*github.PullRequest, sandboxes *unstructured.UnstructuredList, podsBySandbox map[string]*corev1.Pod) ([]reviewv1alpha1.WatchedPR, []int, int) {
+func (r *Reconciler) reconcileReviewSandboxesInternal(ctx context.Context, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, ghClient *github.Client, owner, repo string, explicitPRs []*github.PullRequest, prs []*github.PullRequest, sandboxes *unstructured.UnstructuredList, podsBySandbox map[string]*corev1.Pod) ([]reviewv1alpha1.WatchedPR, []int, int, error) {
 	log := log.FromContext(ctx)
+	var reconcileErr error
 
 	ownedSandboxes := getOwnedSandboxes(sandboxes.Items, repoWatch.UID)
 
@@ -695,6 +700,7 @@ func (r *Reconciler) reconcileReviewSandboxesInternal(ctx context.Context, user 
 			wasScaled, err := r.manageSandboxLifecycle(ctx, existingSandbox, shutdownDuration, &activeSandboxes, repoWatch.Spec.Review.MaxActiveSandboxes, prIsExplicit)
 			if err != nil {
 				log.Error(err, "unable to manage sandbox lifecycle", "sandbox", existingSandbox.GetName())
+				reconcileErr = errors.Join(reconcileErr, err)
 			}
 
 			// Check if sandbox is scaled down (re-check in case we just updated it or it was already down)
@@ -712,11 +718,13 @@ func (r *Reconciler) reconcileReviewSandboxesInternal(ctx context.Context, user 
 			sandboxStatus, err := r.reconcileSandboxPodStatus(ctx, existingSandbox, podsBySandbox, scaledDown)
 			if err != nil {
 				log.Error(err, "unable to reconcile sandbox pod status", "pr", pr.GetNumber())
+				reconcileErr = errors.Join(reconcileErr, err)
 			}
 
 			// Check for merge conflicts
 			if err := r.reconcileReviewConflicts(ctx, repoWatch, existingSandbox, pr, ghClient, owner, repo, &activeSandboxes, prIsExplicit); err != nil {
 				log.Error(err, "unable to reconcile review conflicts", "pr", pr.GetNumber())
+				reconcileErr = errors.Join(reconcileErr, err)
 			}
 
 			watchedPRs = append(watchedPRs, reviewv1alpha1.WatchedPR{
@@ -735,6 +743,7 @@ func (r *Reconciler) reconcileReviewSandboxesInternal(ctx context.Context, user 
 				log.Info("creating sandbox for PR", "pr", pr.GetNumber())
 				if err := r.createReviewSandboxForPR(ctx, user, repoWatch, pr); err != nil {
 					log.Error(err, "unable to create sandbox for PR", "pr", pr.GetNumber())
+					reconcileErr = errors.Join(reconcileErr, err)
 				} else {
 					activeSandboxes++
 					totalSandboxes++
@@ -750,7 +759,7 @@ func (r *Reconciler) reconcileReviewSandboxesInternal(ctx context.Context, user 
 			}
 		}
 	}
-	return watchedPRs, pendingPRs, activeSandboxes
+	return watchedPRs, pendingPRs, activeSandboxes, reconcileErr
 }
 
 func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, ghClient *github.Client, owner string, repo string, user *github.User, podsBySandbox map[string]*corev1.Pod) error {
@@ -2416,9 +2425,10 @@ func (r *Reconciler) reconcileReviewConflicts(ctx context.Context, repoWatch *re
 	}
 
 	if pr.Mergeable == nil {
-		// GitHub is still computing mergeability, return early and retry next time.
-		log.V(2).Info("Mergeability still being computed by GitHub, retrying later", "pr", pr.GetNumber())
-		return nil
+		// GitHub is still computing mergeability.
+		// We return a small error to trigger a requeue by controller-runtime.
+		log.Info("GitHub is still computing mergeability, requeuing", "pr", pr.GetNumber())
+		return fmt.Errorf("GitHub is still computing mergeability for PR %d", pr.GetNumber())
 	}
 
 	// Mergeable is false if there are conflicts

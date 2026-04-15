@@ -105,6 +105,7 @@ spec:
                   models:
                     items:
                       type: string
+                    minItems: 1
                     type: array
                   workspaceDiskSize:
                     default: 10Gi
@@ -201,6 +202,7 @@ spec:
                   models:
                     items:
                       type: string
+                    minItems: 1
                     type: array
                   robotAccount:
                     type: string
@@ -286,6 +288,7 @@ spec:
                   models:
                     items:
                       type: string
+                    minItems: 1
                     type: array
                   pullRequests:
                     items:

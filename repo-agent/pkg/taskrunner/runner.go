@@ -185,7 +185,7 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 	// Set common environment variables
 	cmd.Env = os.Environ()
 
-	if taskType == "review" || taskType == "issue" {
+	if taskType == "review" || taskType == "issue" || taskType == "resolve-conflicts" {
 		cmd.Env = append(cmd.Env, "AGENT_OUTPUT_GVR_RESOURCE=sandboxtasks")
 		cmd.Env = append(cmd.Env, "AGENT_OUTPUT_GVR_GROUP=custom.agents.x-k8s.io")
 		cmd.Env = append(cmd.Env, "AGENT_OUTPUT_GVR_VERSION=v1alpha1")
@@ -210,6 +210,7 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 	}
 
 	cmd.Env = append(cmd.Env, fmt.Sprintf("NAME=%s", taskName))
+	cmd.Env = append(cmd.Env, fmt.Sprintf("NAMESPACE=%s", tr.namespace))
 	cmd.Env = append(cmd.Env, fmt.Sprintf("TASKDIR=%s", taskDir))
 	cmd.Stdout = io.MultiWriter(f, os.Stdout)
 	cmd.Stderr = io.MultiWriter(f, os.Stderr)
