@@ -206,13 +206,25 @@ func runChore(ctx context.Context, name string, file string) error {
 
 	sandboxName := fmt.Sprintf("chore-%s-%s", overseer.Name, slugify(chore.Name))
 
-	if !isChoreAllowed(overseer.Spec.Chores, chore.Name) {
+	isAllowed := isChoreAllowed(overseer.Spec.Chores, chore.Name)
+	isPaused := strings.EqualFold(chore.Schedule, "never")
+
+	if !isAllowed || isPaused {
+		var reasons []string
+		if !isAllowed {
+			reasons = append(reasons, "excluded by configuration")
+		}
+		if isPaused {
+			reasons = append(reasons, "paused (schedule: never)")
+		}
+		reason := strings.Join(reasons, " and ")
+
 		if choresMode == "dryrun" {
-			fmt.Printf("[dryrun] Ensuring sandbox %s is deleted for excluded/not-included chore %s\n", sandboxName, chore.Name)
+			fmt.Printf("[dryrun] Ensuring sandbox %s is deleted for chore %s (%s)\n", sandboxName, chore.Name, reason)
 			_ = deleteSandbox(ctx, kubeClient, namespace, sandboxName)
 			return nil
 		}
-		fmt.Printf("Chore %s is excluded or not included. Ensuring sandbox is deleted.\n", chore.Name)
+		fmt.Printf("Chore %s %s. Ensuring sandbox is deleted.\n", chore.Name, reason)
 		return deleteSandbox(ctx, kubeClient, namespace, sandboxName)
 	}
 
@@ -1075,6 +1087,7 @@ func runReconcile(ctx context.Context) error {
 
 	// 1. Get current chores in .agents/
 	currentChores := make(map[string]bool)
+	pausedChores := make(map[string]bool)
 	choresMode := os.Getenv("CHORES_MODE")
 	if choresMode != "disabled" && choresMode != "dryrun" {
 		files, err := os.ReadDir(".agents")
@@ -1086,8 +1099,12 @@ func runReconcile(ctx context.Context) error {
 				if strings.HasSuffix(f.Name(), ".yaml") || strings.HasSuffix(f.Name(), ".yml") || strings.HasSuffix(f.Name(), ".md") {
 					chore, err := parseChore(".agents/" + f.Name())
 					if err == nil && chore.Name != "" {
-						if isChoreAllowed(overseer.Spec.Chores, chore.Name) {
+						isAllowed := isChoreAllowed(overseer.Spec.Chores, chore.Name)
+						isPaused := strings.EqualFold(chore.Schedule, "never")
+						if isAllowed && !isPaused {
 							currentChores[slugify(chore.Name)] = true
+						} else if isAllowed && isPaused {
+							pausedChores[slugify(chore.Name)] = true
 						}
 					}
 				}
@@ -1111,6 +1128,9 @@ func runReconcile(ctx context.Context) error {
 		if found {
 			if !currentChores[choreSlug] {
 				reason := "no longer present or is excluded"
+				if pausedChores[choreSlug] {
+					reason = "paused (schedule: never)"
+				}
 				if choresMode == "disabled" || choresMode == "dryrun" {
 					reason = fmt.Sprintf("chores are %s", choresMode)
 				}
