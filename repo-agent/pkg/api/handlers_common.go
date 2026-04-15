@@ -149,25 +149,32 @@ func truncateString(s string, limit int) string {
 		return s
 	}
 
-	// Reserve some space for potential closing code blocks (``` or ~~~)
-	// and a newline.
-	const closingBlockBuffer = 10
-	safeLimit := limit - closingBlockBuffer
-	if safeLimit < 0 {
-		safeLimit = 0
+	res := truncateToRuneBoundary(s, limit)
+
+	for {
+		needsClosing := ""
+		if strings.Count(res, "```")%2 != 0 {
+			needsClosing += "\n```"
+		}
+		if strings.Count(res, "~~~")%2 != 0 {
+			needsClosing += "\n~~~"
+		}
+
+		if needsClosing == "" || len(res)+len(needsClosing) <= limit {
+			res += needsClosing
+			break
+		}
+
+		// If adding closing blocks exceeds the limit, truncate further and re-evaluate
+		newLimit := len(res) - 1
+		if newLimit < 0 {
+			res = ""
+			break
+		}
+		res = truncateToRuneBoundary(res, newLimit)
 	}
 
-	res := truncateToRuneBoundary(s, safeLimit)
-
-	// Check for open code blocks (triple backticks or tildes)
-	if strings.Count(res, "```")%2 != 0 {
-		res += "\n```"
-	}
-	if strings.Count(res, "~~~")%2 != 0 {
-		res += "\n~~~"
-	}
-
-	if res == "" || len(res) > limit {
+	if res == "" {
 		if len(truncatedFallback) <= limit {
 			return truncatedFallback
 		}
@@ -198,9 +205,6 @@ func (s *Server) getTaskMetadata(ctx context.Context, namespace, sandboxName, ta
 	if taskName == "n/a" || taskUID == "n/a" {
 		return "n/a", "n/a"
 	}
-	if taskName != "" && taskUID != "" {
-		return taskName, taskUID
-	}
 
 	// If we have a taskName but no UID, try to find the UID in the sandbox's tasks.
 	if taskName != "" && taskUID == "" {
@@ -208,19 +212,24 @@ func (s *Server) getTaskMetadata(ctx context.Context, namespace, sandboxName, ta
 		if err == nil {
 			for i := range taskList.Items {
 				item := &taskList.Items[i]
-				if item.Name == taskName || fmt.Sprintf("%s/%s", item.Namespace, item.Name) == taskName {
-					klog.FromContext(ctx).V(4).Info("Resolved task UID from name", "taskName", taskName, "taskUID", string(item.UID))
-					return taskName, string(item.UID)
+				fullName := fmt.Sprintf("%s/%s", item.Namespace, item.Name)
+				if item.Name == taskName || fullName == taskName {
+					klog.FromContext(ctx).V(4).Info("Resolved task UID from name", "taskName", fullName, "taskUID", string(item.UID))
+					return fullName, string(item.UID)
 				}
 			}
 		}
 	}
 
+	if taskName != "" && taskUID != "" {
+		return taskName, taskUID
+	}
+
 	// Fallback to latest
 	resName, resUID := s.getLatestTaskMetadata(ctx, namespace, sandboxName)
 
-	// If the provided values were partially present, prefer them if fallback fails
-	if resName == "n/a" && taskName != "" {
+	// Prioritize preserving the explicitly provided taskName over the fallback task name
+	if taskName != "" {
 		resName = taskName
 	}
 	if resUID == "n/a" && taskUID != "" {
@@ -234,12 +243,16 @@ func (s *Server) getTaskMetadata(ctx context.Context, namespace, sandboxName, ta
 // applyTraceabilityMetadata appends a structured metadata footer to a body string
 // if traceability is enabled and the footer is not already present.
 func (s *Server) applyTraceabilityMetadata(c *gin.Context, body string, taskType string, sandboxName string, taskNameReq string, taskUIDReq string) string {
+	const githubLimit = 65536
+	const safetyMargin = 536
+	const limit = githubLimit - safetyMargin
+
 	if !s.TraceabilityMetadataEnabled {
 		klog.FromContext(c.Request.Context()).V(4).Info("Traceability metadata is disabled, skipping footer", "taskType", taskType)
-		return body
+		return truncateString(strings.TrimSpace(body), limit)
 	}
 	if strings.Contains(body, "<!-- repo-agent-metadata") {
-		return body
+		return truncateString(strings.TrimSpace(body), limit)
 	}
 
 	ctx := c.Request.Context()
@@ -258,8 +271,8 @@ func (s *Server) applyTraceabilityMetadata(c *gin.Context, body string, taskType
 		TaskType:       taskType,
 		Timestamp:      time.Now().UTC().Format(time.RFC3339),
 	})
-	// GitHub limit is 65536. Leave some room.
-	return truncateString(strings.TrimSpace(body), 65000-len(footer)) + footer
+
+	return truncateString(strings.TrimSpace(body), limit-len(footer)) + footer
 }
 
 func (s *Server) getRepoWatchName(ctx context.Context, namespace, sandboxName string) string {
@@ -280,6 +293,41 @@ func (s *Server) getRepoWatchName(ctx context.Context, namespace, sandboxName st
 		return "n/a"
 	}
 	return repowatch
+}
+func (s *Server) mapSandboxTaskToModel(taskItem sandboxtaskv1alpha1.SandboxTask) models.Task {
+	taskType := taskItem.Spec.Type
+	taskState := taskItem.Status.TaskState
+	result := taskItem.Status.Result
+
+	tAgentDraft := ""
+	tUserDraft := ""
+	tAgentState := ""
+	tAgentStateMessage := ""
+	tAgentDraftType := ""
+
+	tAnnotations := taskItem.GetAnnotations()
+	if tAnnotations != nil {
+		tAgentDraft = tAnnotations["agentDraft"]
+		tAgentDraftType = tAnnotations["agentDraftType"]
+		tUserDraft = tAnnotations["userDraft"]
+		tAgentState = tAnnotations["agentState"]
+		tAgentStateMessage = tAnnotations["agentStateMessage"]
+	}
+
+	return models.Task{
+		Name:              taskItem.GetName(),
+		UID:               string(taskItem.GetUID()),
+		Type:              taskType,
+		TaskState:         taskState,
+		Result:            result,
+		CreationTimestamp: taskItem.GetCreationTimestamp().Format(time.RFC3339),
+		AgentDraft:        tAgentDraft,
+		AgentDraftType:    tAgentDraftType,
+		UserDraft:         tUserDraft,
+		AgentState:        tAgentState,
+		AgentStateMessage: tAgentStateMessage,
+		Stats:             convertStats(taskItem.Status.Stats),
+	}
 }
 
 func (s *Server) getLatestTaskMetadata(ctx context.Context, namespace, sandboxName string) (string, string) {

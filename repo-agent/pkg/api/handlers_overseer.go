@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"time"
+	"sort"
 
 	"github.com/gin-gonic/gin"
 	corev1 "k8s.io/api/core/v1"
@@ -187,38 +187,14 @@ func (s *Server) getChoreTasks(c *gin.Context) {
 		return
 	}
 
+	// Sort tasks by creation timestamp (newest first)
+	sort.Slice(tasks.Items, func(i, j int) bool {
+		return tasks.Items[i].CreationTimestamp.After(tasks.Items[j].CreationTimestamp.Time)
+	})
+
 	modelsTasks := []models.Task{}
 	for _, taskItem := range tasks.Items {
-		taskType := taskItem.Spec.Type
-		taskState := taskItem.Status.TaskState
-		result := taskItem.Status.Result
-
-		tAgentDraft := ""
-		tUserDraft := ""
-		tAgentState := ""
-		tAgentStateMessage := ""
-
-		tAnnotations := taskItem.GetAnnotations()
-		if tAnnotations != nil {
-			tAgentDraft = tAnnotations["agentDraft"]
-			tUserDraft = tAnnotations["userDraft"]
-			tAgentState = tAnnotations["agentState"]
-			tAgentStateMessage = tAnnotations["agentStateMessage"]
-		}
-
-		modelsTasks = append(modelsTasks, models.Task{
-			Name:              taskItem.GetName(),
-			UID:               string(taskItem.GetUID()),
-			Type:              taskType,
-			TaskState:         taskState,
-			Result:            result,
-			CreationTimestamp: taskItem.GetCreationTimestamp().Format(time.RFC3339),
-			AgentDraft:        tAgentDraft,
-			UserDraft:         tUserDraft,
-			AgentState:        tAgentState,
-			AgentStateMessage: tAgentStateMessage,
-			Stats:             convertStats(taskItem.Status.Stats),
-		})
+		modelsTasks = append(modelsTasks, s.mapSandboxTaskToModel(taskItem))
 	}
 
 	c.JSON(http.StatusOK, modelsTasks)

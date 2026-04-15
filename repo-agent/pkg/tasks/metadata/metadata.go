@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"k8s.io/klog/v2"
@@ -75,12 +76,16 @@ func getEnvWithFallback(key, fallback string) string {
 // GenerateMetadataFooter creates a structured HTML comment footer from metadata.
 func GenerateMetadataFooter(m Metadata) string {
 	return fmt.Sprintf("\n\n---\n\n<!-- repo-agent-metadata\n%s: %s\n%s: %s\n%s: %s\n%s: %s\n%s: %s\n%s: %s\n-->",
-		MetadataKeySandboxTask, m.SandboxTask,
-		MetadataKeySandboxTaskUID, m.SandboxTaskUID,
-		MetadataKeySandbox, m.Sandbox,
-		MetadataKeyRepoWatch, m.RepoWatch,
-		MetadataKeyTaskType, m.TaskType,
-		MetadataKeyTimestamp, m.Timestamp)
+		MetadataKeySandboxTask, sanitize(m.SandboxTask),
+		MetadataKeySandboxTaskUID, sanitize(m.SandboxTaskUID),
+		MetadataKeySandbox, sanitize(m.Sandbox),
+		MetadataKeyRepoWatch, sanitize(m.RepoWatch),
+		MetadataKeyTaskType, sanitize(m.TaskType),
+		MetadataKeyTimestamp, sanitize(m.Timestamp))
+}
+
+func sanitize(s string) string {
+	return strings.ReplaceAll(s, "-->", "")
 }
 
 // GetMetadataEnv returns a map of all metadata environment variables.

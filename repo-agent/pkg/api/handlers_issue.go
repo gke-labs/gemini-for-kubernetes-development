@@ -61,39 +61,7 @@ func (s *Server) getIssueTasks(c *gin.Context) {
 
 	tasksList := []models.Task{}
 	for _, taskItem := range taskList.Items {
-		taskType := taskItem.Spec.Type
-		taskState := taskItem.Status.TaskState
-		result := taskItem.Status.Result
-
-		tAgentDraft := ""
-		tUserDraft := ""
-		tAgentState := ""
-		tAgentStateMessage := ""
-		tAgentDraftType := ""
-
-		tAnnotations := taskItem.GetAnnotations()
-		if tAnnotations != nil {
-			tAgentDraft = tAnnotations["agentDraft"]
-			tAgentDraftType = tAnnotations["agentDraftType"]
-			tUserDraft = tAnnotations["userDraft"]
-			tAgentState = tAnnotations["agentState"]
-			tAgentStateMessage = tAnnotations["agentStateMessage"]
-		}
-
-		tasksList = append(tasksList, models.Task{
-			Name:              taskItem.GetName(),
-			UID:               string(taskItem.GetUID()),
-			Type:              taskType,
-			TaskState:         taskState,
-			Result:            result,
-			CreationTimestamp: taskItem.GetCreationTimestamp().Format(time.RFC3339),
-			AgentDraft:        tAgentDraft,
-			AgentDraftType:    tAgentDraftType,
-			UserDraft:         tUserDraft,
-			AgentState:        tAgentState,
-			AgentStateMessage: tAgentStateMessage,
-			Stats:             convertStats(taskItem.Status.Stats),
-		})
+		tasksList = append(tasksList, s.mapSandboxTaskToModel(taskItem))
 	}
 
 	c.JSON(http.StatusOK, tasksList)

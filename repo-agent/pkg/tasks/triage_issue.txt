@@ -12,10 +12,11 @@ Analyze the issue title and body to determine the most relevant category from th
 6. other: Any issue that does not fit into the above categories.
 
 Response format:
-Please output your response as a single line starting with the Prow command.
+Please output your response starting with the Prow command. If traceability metadata is enabled, append it as a footer.
 
 /kind <Category> <concise explanation>
 {{- if .TraceabilityMetadataEnabled }}
+
 ---
 <!-- repo-agent-metadata
 sandbox-task: {{ .Metadata.SandboxTask }}

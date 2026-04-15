@@ -110,8 +110,14 @@ func TestCreatePRTask(t *testing.T) {
 		payload := map[string]string{
 			"prompt": "Test Prompt",
 		}
-		jsonValue, _ := json.Marshal(payload)
-		req, _ := http.NewRequest("POST", "/repo/test-repo/prs/123/tasks", bytes.NewBuffer(jsonValue))
+		jsonValue, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatalf("Failed to marshal payload: %v", err)
+		}
+		req, err := http.NewRequest("POST", "/repo/test-repo/prs/123/tasks", bytes.NewBuffer(jsonValue))
+		if err != nil {
+			t.Fatalf("Failed to create request: %v", err)
+		}
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
 
@@ -170,8 +176,14 @@ func TestCreatePRTask(t *testing.T) {
 			"prompt": "Test Model Prompt",
 			"model":  "test-model",
 		}
-		jsonValue, _ := json.Marshal(payload)
-		req, _ := http.NewRequest("POST", "/repo/test-repo/prs/124/tasks", bytes.NewBuffer(jsonValue))
+		jsonValue, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatalf("Failed to marshal payload: %v", err)
+		}
+		req, err := http.NewRequest("POST", "/repo/test-repo/prs/124/tasks", bytes.NewBuffer(jsonValue))
+		if err != nil {
+			t.Fatalf("Failed to create request: %v", err)
+		}
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
 
@@ -289,14 +301,22 @@ func TestSubmitReview(t *testing.T) {
 		payload := map[string]string{
 			"review": reviewText,
 		}
-		jsonValue, _ := json.Marshal(payload)
-		req, _ := http.NewRequest("POST", "/repo/test-repo/prs/123/submitreview", bytes.NewBuffer(jsonValue))
+		jsonValue, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatalf("Failed to marshal payload: %v", err)
+		}
+		req, err := http.NewRequest("POST", "/repo/test-repo/prs/123/submitreview", bytes.NewBuffer(jsonValue))
+		if err != nil {
+			t.Fatalf("Failed to create request: %v", err)
+		}
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
 
-		// We expect 500 or 200 depending on GitHub client mock, but we want to ensure it didn't panic
-		// and it reached the point of creating review.
-		// Since we haven't fully mocked GitHub, it might fail, but let's see.
+		// We expect 500 here because the GitHub client is created but fails on the actual API call
+		// since it's not fully mocked at the transport level. But 500 is better than a panic.
+		if w.Code != http.StatusInternalServerError && w.Code != http.StatusOK {
+			t.Errorf("Expected status 500 or 200, got %d. Body: %s", w.Code, w.Body.String())
+		}
 	})
 }
 

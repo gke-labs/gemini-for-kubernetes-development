@@ -158,8 +158,7 @@ func RequestLoggerMiddleware() gin.HandlerFunc {
 
 		klog.Infof("Request Method: %s\n", c.Request.Method)
 		klog.Infof("Request URL: %s\n", c.Request.URL.String())
-		//log.Printf("Request Headers: %v\n", c.Request.Header)
-		klog.Infof("Request Body: %s\n", truncateToRuneBoundary(string(bodyBytes), 1000))
+		klog.Infof("Request Body: %s\n", truncateLogString(string(bodyBytes), 1000))
 
 		c.Next() // Process the request further
 	}
@@ -174,8 +173,15 @@ func ResponseLoggerMiddleware() gin.HandlerFunc {
 
 		klog.Infof("Response Status: %d\n", c.Writer.Status())
 		klog.Infof("Response Headers: %v\n", c.Writer.Header())
-		klog.Infof("Response Body: %s\n", truncateToRuneBoundary(blw.body.String(), 1000))
+		klog.Infof("Response Body: %s\n", truncateLogString(blw.body.String(), 1000))
 	}
+}
+
+func truncateLogString(s string, limit int) string {
+	if len(s) <= limit {
+		return s
+	}
+	return truncateToRuneBoundary(s, limit) + "... (truncated)"
 }
 
 func (s *Server) getInstructions(c *gin.Context) {
@@ -290,6 +296,10 @@ func (s *Server) updateInstructions(c *gin.Context) {
 			return
 		}
 	case "publish":
+		if req.Current == nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "current instructions are required for publish action"})
+			return
+		}
 		// Update current
 		if err := s.K8sManager.UpdateConfigDirFile(c.Request.Context(), namespace, configDirRef, ".gemini/user-instructions.json", current); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update current instructions", "details": err.Error()})

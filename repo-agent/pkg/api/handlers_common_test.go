@@ -45,13 +45,13 @@ func TestTruncateString(t *testing.T) {
 			name:  "Basic truncation with buffer",
 			s:     "hello world how are you",
 			limit: 15,
-			want:  "hello", // 15 (limit) - 10 (buffer) = 5 limit. s[:5] is "hello".
+			want:  "hello world how",
 		},
 		{
 			name:  "Truncation with code block",
 			s:     "```\nsome code\n```\nmore text",
 			limit: 15,
-			want:  "```\ns\n```", // safeLimit = 15 - 10 = 5. s[:5] is "```\ns". strings.Count is 1. Adds \n```.
+			want:  "```\nsome co\n```",
 		},
 		{
 			name:  "UTF-8 truncation - safe",
@@ -63,7 +63,7 @@ func TestTruncateString(t *testing.T) {
 			name:  "UTF-8 truncation - middle of rune",
 			s:     "世界 hello world", // 6 bytes + 12 = 18 bytes
 			limit: 13,
-			want:  "世", // safeLimit = 13 - 10 = 3. s[:3] is "世".
+			want:  "世界 hello ",
 		},
 		{
 			name:  "Empty string with small limit",
@@ -81,7 +81,7 @@ func TestTruncateString(t *testing.T) {
 			name:  "Tilde code block",
 			s:     "~~~\nsome code\n~~~\nmore text",
 			limit: 15,
-			want:  "~~~\ns\n~~~",
+			want:  "~~~\nsome co\n~~~",
 		},
 	}
 
@@ -217,8 +217,9 @@ func TestGetTaskMetadata(t *testing.T) {
 		_, _ = dynamicClient.Resource(gvrSandboxTask).Namespace(namespace).Create(ctx, &unstructured.Unstructured{Object: unstructuredTask}, metav1.CreateOptions{})
 
 		gotName, gotUID := server.getTaskMetadata(ctx, namespace, sandboxName, "task-to-resolve", "")
-		if gotName != "task-to-resolve" || gotUID != "resolved-uid" {
-			t.Errorf("getTaskMetadata() resolve = (%q, %q), want (%q, %q)", gotName, gotUID, "task-to-resolve", "resolved-uid")
+		expectedName := fmt.Sprintf("%s/%s", namespace, "task-to-resolve")
+		if gotName != expectedName || gotUID != "resolved-uid" {
+			t.Errorf("getTaskMetadata() resolve = (%q, %q), want (%q, %q)", gotName, gotUID, expectedName, "resolved-uid")
 		}
 	})
 

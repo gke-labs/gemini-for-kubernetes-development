@@ -524,43 +524,15 @@ func (s *Server) getDevTasks(c *gin.Context) {
 		return
 	}
 
+	// Sort tasks by creation timestamp (newest first)
+	sort.Slice(taskList.Items, func(i, j int) bool {
+		return taskList.Items[i].CreationTimestamp.After(taskList.Items[j].CreationTimestamp.Time)
+	})
+
 	tasks := []models.Task{}
 	for _, taskItem := range taskList.Items {
-		taskType := taskItem.Spec.Type
-		taskState := taskItem.Status.TaskState
-		result := taskItem.Status.Result
-
-		tAgentDraft := ""
-		tUserDraft := ""
-		tAgentState := ""
-		tAgentStateMessage := ""
-
-		tAnnotations := taskItem.GetAnnotations()
-		if tAnnotations != nil {
-			tAgentDraft = tAnnotations["agentDraft"]
-			tUserDraft = tAnnotations["userDraft"]
-			tAgentState = tAnnotations["agentState"]
-			tAgentStateMessage = tAnnotations["agentStateMessage"]
-		}
-
-		tasks = append(tasks, models.Task{
-			Name:              taskItem.GetName(),
-			UID:               string(taskItem.GetUID()),
-			Type:              taskType,
-			TaskState:         taskState,
-			Result:            result,
-			CreationTimestamp: taskItem.GetCreationTimestamp().Format(time.RFC3339),
-			AgentDraft:        tAgentDraft,
-			UserDraft:         tUserDraft,
-			AgentState:        tAgentState,
-			AgentStateMessage: tAgentStateMessage,
-			Stats:             convertStats(taskItem.Status.Stats),
-		})
+		tasks = append(tasks, s.mapSandboxTaskToModel(taskItem))
 	}
-	// Sort tasks by creation timestamp (newest first)
-	sort.Slice(tasks, func(i, j int) bool {
-		return tasks[i].CreationTimestamp > tasks[j].CreationTimestamp
-	})
 
 	c.JSON(http.StatusOK, tasks)
 }

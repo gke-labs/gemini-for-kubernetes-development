@@ -71,12 +71,13 @@ func (s *Server) submitFeedback(c *gin.Context) {
 	repo := "gemini-for-kubernetes-development"
 	title := fmt.Sprintf("[repo-agent] %s", titleText)
 	body := fmt.Sprintf("User: %s\n\n%s", namespace, bodyText)
-	body = s.applyTraceabilityMetadata(c, body, metadata.TaskTypeFeedback, "n/a", "n/a", "n/a")
 	labels := []string{"feedback"}
 
 	if imageText != "" {
 		body += "\n\n[Screenshot attached in request but ignored due to missing image host configuration]"
 	}
+
+	body = s.applyTraceabilityMetadata(c, body, metadata.TaskTypeFeedback, "n/a", "n/a", "n/a")
 
 	req := &github.IssueRequest{
 		Title:  &title,
