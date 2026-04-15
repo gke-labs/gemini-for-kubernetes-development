@@ -83,9 +83,6 @@ func resolveAgentPrompt(currentPrompt string) string {
 	if currentPrompt != "" {
 		return currentPrompt
 	}
-	if prompt := os.Getenv("AGENT_PROMPT"); prompt != "" {
-		return prompt
-	}
 	if promptFile := os.Getenv("AGENT_PROMPT_FILE"); promptFile != "" {
 		data, err := os.ReadFile(promptFile)
 		if err != nil {
@@ -94,8 +91,7 @@ func resolveAgentPrompt(currentPrompt string) string {
 			return string(data)
 		}
 	}
-	// Fallbacks used in some commands
-	if prompt := os.Getenv("prompt"); prompt != "" {
+	if prompt := os.Getenv("AGENT_PROMPT"); prompt != "" {
 		return prompt
 	}
 	if prompt := os.Getenv("PROMPT"); prompt != "" {

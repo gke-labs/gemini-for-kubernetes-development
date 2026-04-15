@@ -2335,7 +2335,7 @@ func (r *Reconciler) reconcileSandboxPodStatus(ctx context.Context, sandbox *uns
 		latestSandbox.SetGroupVersionKind(sandbox.GroupVersionKind())
 		if err := r.Get(ctx, types.NamespacedName{Name: sandbox.GetName(), Namespace: sandbox.GetNamespace()}, latestSandbox); err != nil {
 			log.Error(err, "failed to re-fetch sandbox for update", "sandbox", sandbox.GetName())
-			latestSandbox = sandbox
+			return sandboxStatus, err
 		}
 
 		latestAnnotations := latestSandbox.GetAnnotations()
@@ -2484,8 +2484,7 @@ func (r *Reconciler) reconcileReviewConflicts(ctx context.Context, repoWatch *re
 		latestSandbox.SetGroupVersionKind(sandbox.GroupVersionKind())
 		if err := r.Get(ctx, types.NamespacedName{Name: sandbox.GetName(), Namespace: sandbox.GetNamespace()}, latestSandbox); err != nil {
 			log.Error(err, "failed to re-fetch sandbox for patching", "sandbox", sandbox.GetName())
-			// Fallback to using the current sandbox object if re-fetch fails, though Patch might fail if version mismatch
-			latestSandbox = sandbox
+			return err
 		}
 
 		patch := client.MergeFrom(latestSandbox.DeepCopy())

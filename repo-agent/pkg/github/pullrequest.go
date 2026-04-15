@@ -73,6 +73,14 @@ func (p *PullRequest) Body() string {
 	return p.pr.GetBody()
 }
 
+func (p *PullRequest) TruncatedBody() string {
+	body := p.pr.GetBody()
+	if len(body) > 2000 {
+		return body[:2000] + "... (truncated)"
+	}
+	return body
+}
+
 func (p *PullRequest) HeadRef() string {
 	return p.pr.GetHead().GetRef()
 }

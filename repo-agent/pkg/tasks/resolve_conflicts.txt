@@ -13,7 +13,7 @@ The base branch {{ .BaseRef }} has been merged into the head branch {{ .HeadRef 
 PR Number: {{ .PullRequest.Number }}
 PR Title: {{ .PullRequest.Title }}
 PR Description:
-{{ .PullRequest.Body }}
+{{ .PullRequest.TruncatedBody }}
 
 ### Instructions
 - Use your tools to list conflicting files.

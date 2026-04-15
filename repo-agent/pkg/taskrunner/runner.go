@@ -197,11 +197,6 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 			promptPath := filepath.Join(taskDir, "agent-prompt.txt")
 			if err := os.WriteFile(promptPath, []byte(v), 0644); err == nil {
 				cmd.Env = append(cmd.Env, "AGENT_PROMPT_FILE="+promptPath)
-				// Still pass AGENT_PROMPT if it's reasonable size, but here it's > 1024 so we might want to skip it
-				// to avoid the OS limit. Let's skip it if it's very large.
-				if len(v) < 32768 {
-					cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
-				}
 				continue
 			}
 			klog.Warningf("Failed to write AGENT_PROMPT to %s: %v", promptPath, err)

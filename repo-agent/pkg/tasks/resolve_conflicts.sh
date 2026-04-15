@@ -21,14 +21,14 @@ set -o pipefail
 # - GEMINI_API_KEY
 # - GITHUB_USER_TOKEN
 
-export REPO_NAME="{{ .Repo.Name }}"
-export CLONE_URL="{{ .Repo.CloneURL }}"
-export PROMPT_FILE="{{ .PromptFile }}"
-export GITHUB_USER_ID="{{ .User.UserID }}"
-export GITHUB_USER_EMAIL="{{ .User.Email }}"
-export GITHUB_USER_NAME="{{ .User.Name }}"
+export REPO_NAME={{ printf "%q" .Repo.Name }}
+export CLONE_URL={{ printf "%q" .Repo.CloneURL }}
+export PROMPT_FILE={{ printf "%q" .PromptFile }}
+export GITHUB_USER_ID={{ printf "%q" .User.UserID }}
+export GITHUB_USER_EMAIL={{ printf "%q" .User.Email }}
+export GITHUB_USER_NAME={{ printf "%q" .User.Name }}
 export PR_NUMBER={{ .PullRequest.Number }}
-export BASE_REF="{{ .BaseRef }}"
+export BASE_REF={{ printf "%q" .BaseRef }}
 
 # Disable git hooks for automated operations to prevent local hooks from blocking progress or causing side effects.
 export GIT_CONFIG_PARAMETERS="'core.hooksPath=/dev/null'"
@@ -91,14 +91,14 @@ function setupGitRepos {
         if [ -d "/workspaces/${REPO_NAME}" ]; then
             rm -rf "/workspaces/${REPO_NAME}"
         fi
-        (cd /workspaces/ && git clone "${CLONE_URL}")
+        (cd /workspaces/ && git clone "${CLONE_URL}" "${REPO_NAME}")
     else
         echo "repository already exists"
         # Ensure a pristine state before doing anything
-        (cd "/workspaces/${REPO_NAME}" && git merge --abort || true && git reset --hard && git clean -fd && git fetch origin)
+        (cd "/workspaces/${REPO_NAME}" && git merge --abort || true && git reset --hard && git clean -fdx && git fetch origin)
     fi
 
-    (cd "/workspaces/${REPO_NAME}" && gh repo set-default "${CLONE_URL}" || true)
+    (cd "/workspaces/${REPO_NAME}" && gh repo set-default "{{ .Repo.Owner }}/{{ .Repo.Name }}" || true)
 }
 
 function checkoutPRBranch {
@@ -145,9 +145,9 @@ function runTests {
             (
                 cd "$dir"
                 if [ -f "yarn.lock" ]; then
-                    yarn install && yarn test || exit 1
+                    yarn install --frozen-lockfile && yarn test || exit 1
                 else
-                    npm install && npm test || exit 1
+                    npm ci && npm test || npm install && npm test || exit 1
                 fi
             ) || TEST_FAILED=true
         done
@@ -161,10 +161,10 @@ function runTests {
              (
                  cd "$dir"
                  if [ -f "requirements.txt" ]; then
-                     pip install -r requirements.txt || true
+                     pip install --break-system-packages -r requirements.txt || pip install -r requirements.txt || true
                  fi
                  if [ -f "pyproject.toml" ]; then
-                     pip install . || true
+                     pip install --break-system-packages . || pip install . || true
                  fi
                  if command -v pytest >/dev/null 2>&1; then
                      pytest || python3 -m unittest discover || exit 1
@@ -177,8 +177,12 @@ function runTests {
 
     # Makefile (usually at root)
     if [ -f "Makefile" ]; then
-        echo "Found Makefile, running 'make test'..."
-        make test || TEST_FAILED=true
+        if make -n test &>/dev/null; then
+            echo "Found Makefile with test target, running 'make test'..."
+            make test || TEST_FAILED=true
+        else
+            echo "Found Makefile but no test target, skipping."
+        fi
     fi
     
     if [ "$TEST_FAILED" = true ]; then
@@ -222,7 +226,7 @@ function runGemini {
         # Abort any previous merge and reset to the original pristine state.
         git merge --abort || true
         git reset --hard "$ORIG_HEAD"
-        git clean -fd
+        git clean -fdx
         
         # Re-attempt merge to get conflicts for the model to work on.
         echo "Attempting to merge origin/${BASE_REF} into ${CURRENT_BRANCH}..."
@@ -231,7 +235,7 @@ function runGemini {
              echo "Merge successful without conflicts (unexpected in loop). Verifying..."
              if verifyResolution && runTests; then
                  # If it succeeded without conflicts and passed tests, finalize the commit.
-                 git commit -m "chore: merge branch 'origin/${BASE_REF}' into ${CURRENT_BRANCH}" || echo "Nothing to commit"
+                 git commit --no-verify -m "chore: merge branch 'origin/${BASE_REF}' into ${CURRENT_BRANCH}" || echo "Nothing to commit"
                  SUCCESS=true
                  break
              fi
@@ -242,14 +246,14 @@ function runGemini {
 
         echo "Conflicts detected. Calling Gemini with model $MODEL..."
         # We use --yolo because this runs in a sandboxed pod and we need automated resolution.
-        if (export GEMINI_API_KEY="${GEMINI_API_KEY}" && gemini --yolo --model "$MODEL" --output-format stream-json < "${PROMPT_FILE}" | /opt/repo-agent/gemini-stream-processor --output "$(dirname "${PROMPT_FILE}")/gemini-output.json"); then
+        if (gemini --yolo --model "$MODEL" --output-format stream-json < "${PROMPT_FILE}" | /opt/repo-agent/gemini-stream-processor --output "$(dirname "${PROMPT_FILE}")/gemini-output-${MODEL}.json"); then
              echo "Gemini execution successful with model: $MODEL"
              
              if verifyResolution && runTests; then
                  echo "Resolution verified with model: $MODEL. Staging and committing..."
-                 git add .
+                 git add -u
                  # Complete the merge commit
-                 git commit -m "chore: resolve merge conflicts using Gemini ($MODEL)" || echo "Nothing to commit"
+                 git commit --no-verify -m "chore: resolve merge conflicts using Gemini ($MODEL)" || echo "Nothing to commit"
                  SUCCESS=true
                  break
              else
@@ -279,7 +283,6 @@ function pushChanges {
 # Main execution
 setupGit
 setupGitRepos
-sleep 5
 checkoutPRBranch
 
 # Attempt initial merge to see if we even need LLM
@@ -292,7 +295,7 @@ BEFORE_MERGE_SHA=$(git rev-parse HEAD)
 if git merge "origin/${BASE_REF}" --no-ff --no-commit -m "chore: merge branch 'origin/${BASE_REF}' into HEAD"; then
     if verifyResolution && runTests; then
         echo "Merge successful without conflicts and tests passed."
-        git commit -m "chore: merge branch 'origin/${BASE_REF}' into HEAD" || echo "Nothing to commit"
+        git commit --no-verify -m "chore: merge branch 'origin/${BASE_REF}' into HEAD" || echo "Nothing to commit"
         pushChanges
         exit 0
     fi
@@ -308,7 +311,7 @@ echo "Proceeding with LLM resolution loop."
 
 # Install extensions if any
 {{- range .Extensions }}
-gemini extensions install "{{ .Source }}" {{ if .Ref }}--ref "{{ .Ref }}"{{ end }} --consent
+gemini extensions install "{{ .Source }}" {{ if .Ref }}--ref "{{ .Ref }}"{{ end }} --consent || true
 {{- end }}
 
 runGemini

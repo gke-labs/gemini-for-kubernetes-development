@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -82,7 +83,7 @@ func BuildGithubResolveConflictsCommand() *cobra.Command {
 
 	cmd.Flags().IntVar(&resolveCommand.PRNumber, "pr-number", 0, "Pull request number")
 	if prStr := os.Getenv("PR_NUMBER"); prStr != "" {
-		if val, err := strconv.Atoi(prStr); err == nil {
+		if val, err := strconv.Atoi(strings.TrimSpace(prStr)); err == nil {
 			resolveCommand.PRNumber = val
 		}
 	}
@@ -145,9 +146,13 @@ func (c *GithubResolveConflictsCommand) loadGithubObjects(ctx context.Context) e
 	if c.RepoURL == "" {
 		return fmt.Errorf("GIT_HTML_URL (or --repo-url) not set")
 	}
-	parts := strings.Split(strings.TrimPrefix(c.RepoURL, "https://github.com/"), "/")
+	u, err := url.Parse(c.RepoURL)
+	if err != nil {
+		return fmt.Errorf("invalid RepoURL %q: %w", c.RepoURL, err)
+	}
+	parts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
 	if len(parts) < 2 {
-		return fmt.Errorf("invalid GIT_HTML_URL format: %s", c.RepoURL)
+		return fmt.Errorf("invalid repository path in URL %q", c.RepoURL)
 	}
 	owner := parts[0]
 	repoName := strings.TrimSuffix(parts[1], ".git")
@@ -165,7 +170,7 @@ func (c *GithubResolveConflictsCommand) loadGithubObjects(ctx context.Context) e
 	}
 
 	if c.BaseRef == "" || c.HeadRef == "" {
-		return fmt.Errorf("BaseRef or HeadRef is empty")
+		return fmt.Errorf("BaseRef or HeadRef is empty for PR %d in %s/%s", c.PRNumber, owner, repoName)
 	}
 
 	c.repo, err = githubAPI.GetRepositoryFromHTMLUrl(ctx, c.RepoURL)
@@ -209,13 +214,23 @@ func (c *GithubResolveConflictsCommand) Run(ctx context.Context) error {
 		return err
 	}
 
+	var models []string
+	for _, m := range strings.Split(c.Model, ",") {
+		if trimmed := strings.TrimSpace(m); trimmed != "" {
+			models = append(models, trimmed)
+		}
+	}
+	if len(models) == 0 {
+		return fmt.Errorf("no models provided for conflict resolution")
+	}
+
 	promptPath := c.taskPath("agent-prompt.txt")
 	task := tasks.ResolveConflictsModel{
 		PullRequest:  c.pr,
 		Repo:         c.repo,
 		User:         c.user,
 		PromptFile:   promptPath,
-		Models:       strings.Split(c.Model, ","),
+		Models:       models,
 		BaseRef:      c.BaseRef,
 		HeadRef:      c.HeadRef,
 		CustomPrompt: c.CustomPrompt,
