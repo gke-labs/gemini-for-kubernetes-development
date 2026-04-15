@@ -72,6 +72,9 @@ spec:
               maxActiveReviews:
                 format: int32
                 type: integer
+              pollInterval:
+                default: 30m
+                type: string
               repo:
                 properties:
                   issueMode:
