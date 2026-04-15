@@ -14,7 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/go-github/v39/github"
-	yaml "go.yaml.in/yaml/v3"
+	yaml "gopkg.in/yaml.v3"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -106,7 +106,7 @@ func (s *Server) listPRsFromK8s(ctx context.Context, namespace, repo string) ([]
 		Version:  "v1alpha1",
 		Resource: "sandboxes",
 	}
-	list, err := s.K8sManager.Client.Resource(gvr).Namespace(namespace).List(context.Background(),
+	list, err := s.K8sManager.Client.Resource(gvr).Namespace(namespace).List(ctx,
 		v1.ListOptions{
 			LabelSelector: fmt.Sprintf("review.gemini.google.com/repowatch=%s", repo),
 		})

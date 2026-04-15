@@ -107,7 +107,7 @@ func (s *Server) listIssuesFromK8s(ctx context.Context, namespace, repo string) 
 		Version:  "v1alpha1",
 		Resource: "sandboxes",
 	}
-	list, err := s.K8sManager.Client.Resource(gvr).Namespace(namespace).List(context.Background(),
+	list, err := s.K8sManager.Client.Resource(gvr).Namespace(namespace).List(ctx,
 		v1.ListOptions{
 			LabelSelector: fmt.Sprintf("review.gemini.google.com/repowatch=%s", repo),
 		})
