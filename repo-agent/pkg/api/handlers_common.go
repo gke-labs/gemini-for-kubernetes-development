@@ -200,8 +200,12 @@ func truncateToRuneBoundary(s string, limit int) string {
 	// a maximum of 4 bytes for any valid UTF-8 string.
 	// We start from the byte at the limit and walk backwards to find the
 	// beginning of the last (possibly multi-byte) rune.
-	for i := limit; i >= 0; i-- {
-		if i < len(s) && utf8.RuneStart(s[i]) {
+	start := limit
+	if start >= len(s) {
+		start = len(s) - 1
+	}
+	for i := start; i >= 0; i-- {
+		if utf8.RuneStart(s[i]) {
 			return s[:i]
 		}
 	}
