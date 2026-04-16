@@ -96,7 +96,7 @@ func GetMetadataEnv() map[string]string {
 		EnvRepoWatchName:              os.Getenv(EnvRepoWatchName),
 		EnvSandboxName:                os.Getenv(EnvSandboxName),
 		EnvSandboxTaskType:            os.Getenv(EnvSandboxTaskType),
-		EnvMetadataTraceabilityEnable: os.Getenv(EnvMetadataTraceabilityEnable),
+		EnvMetadataTraceabilityEnable: strconv.FormatBool(GetTraceabilityMetadataEnabled()),
 	}
 }
 

@@ -630,14 +630,14 @@ function App() {
       return;
     }
     const reviewYAML = yaml.dump(review);
+    const payload = { review: reviewYAML };
+    if (taskName) payload.task_name = taskName;
+    if (taskUID) payload.task_uid = taskUID;
+
     fetch(`/api/repo/${activeRepo.name}/prs/${id}/submitreview`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-          review: reviewYAML,
-          task_name: taskName,
-          task_uid: taskUID
-      })
+      body: JSON.stringify(payload)
     })
     .then(res => {
       if (res.ok) {
@@ -736,14 +736,15 @@ function App() {
       alert("Please leave a comment before Submitting.");
       return;
     }
+
+    const payload = { comment };
+    if (taskName) payload.task_name = taskName;
+    if (taskUID) payload.task_uid = taskUID;
+
     fetch(`/api/repo/${activeRepo.name}/issues/${issueId}/submitcomment`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-          comment,
-          task_name: taskName,
-          task_uid: taskUID
-      })
+      body: JSON.stringify(payload)
     })
     .then(res => {
       if (res.ok) {

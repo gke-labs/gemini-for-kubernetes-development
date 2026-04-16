@@ -343,6 +343,10 @@ func (s *Server) getLatestTaskMetadata(ctx context.Context, namespace, sandboxNa
 		return "n/a", "n/a"
 	}
 
+	if len(taskList.Items) > 100 {
+		klog.FromContext(ctx).V(2).Info("Large number of tasks found for sandbox, search might be slow", "sandbox", sandboxName, "count", len(taskList.Items))
+	}
+
 	// Find the latest task by creation timestamp
 	var latestTask *sandboxtaskv1alpha1.SandboxTask
 	for i := range taskList.Items {

@@ -9,7 +9,6 @@ Use good PR hygene:
 * Reference the issue you are solving in the PR description, like "Issue #1234" or "Fixes #1234".  Put this in the commit body, not the first line.
 {{- if .TraceabilityMetadataEnabled }}
 * Append the following structured metadata footer as an HTML comment to the PR description:
-
 ---
 <!-- repo-agent-metadata
 sandbox-task: {{ .Metadata.SandboxTask }}

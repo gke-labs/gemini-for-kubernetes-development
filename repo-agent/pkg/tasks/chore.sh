@@ -181,7 +181,6 @@ ${COMMIT_MSG}"
 
         {{- if .TraceabilityMetadataEnabled }}
         PR_BODY="${PR_BODY}
-
 ---
 <!-- repo-agent-metadata
 sandbox-task: {{ .Metadata.SandboxTask }}
