@@ -187,8 +187,12 @@ func (s *Server) getChoreTasks(c *gin.Context) {
 		return
 	}
 
-	// Sort tasks by creation timestamp (newest first)
+	// Sort tasks by creation timestamp (newest first).
+	// Tie-break with name for stable sorting.
 	sort.Slice(tasks.Items, func(i, j int) bool {
+		if tasks.Items[i].CreationTimestamp.Equal(&tasks.Items[j].CreationTimestamp) {
+			return tasks.Items[i].Name > tasks.Items[j].Name
+		}
 		return tasks.Items[i].CreationTimestamp.After(tasks.Items[j].CreationTimestamp.Time)
 	})
 

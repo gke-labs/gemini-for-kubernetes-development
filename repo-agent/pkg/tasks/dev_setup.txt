@@ -5,6 +5,7 @@ Your task is:
 {{- if .TraceabilityMetadataEnabled }}
 
 If you create any GitHub issue, PR, or comment, append the following structured metadata footer as an HTML comment:
+
 ---
 <!-- repo-agent-metadata
 sandbox-task: {{ .Metadata.SandboxTask }}

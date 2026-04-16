@@ -16,6 +16,7 @@ Please output your response starting with the Prow command. If traceability meta
 
 /kind <Category> <concise explanation>
 {{- if .TraceabilityMetadataEnabled }}
+
 ---
 <!-- repo-agent-metadata
 sandbox-task: {{ .Metadata.SandboxTask }}

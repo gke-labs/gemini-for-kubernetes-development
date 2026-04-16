@@ -165,8 +165,12 @@ func truncateString(s string, limit int) string {
 			break
 		}
 
-		// If adding closing blocks exceeds the limit, truncate further and re-evaluate
-		newLimit := len(res) - 1
+		// If adding closing blocks exceeds the limit, truncate further and re-evaluate.
+		// We jump to the available space minus the closing block to avoid slow O(N) decrement.
+		newLimit := limit - len(needsClosing)
+		if newLimit >= len(res) {
+			newLimit = len(res) - 1
+		}
 		if newLimit < 0 {
 			res = ""
 			break
@@ -191,8 +195,11 @@ func truncateToRuneBoundary(s string, limit int) string {
 	if len(s) <= limit {
 		return s
 	}
+
 	// This loop is O(1) in practice because utf8.RuneStart will match within
 	// a maximum of 4 bytes for any valid UTF-8 string.
+	// We start from the byte at the limit and walk backwards to find the
+	// beginning of the last (possibly multi-byte) rune.
 	for i := limit; i >= 0; i-- {
 		if i < len(s) && utf8.RuneStart(s[i]) {
 			return s[:i]
@@ -202,12 +209,14 @@ func truncateToRuneBoundary(s string, limit int) string {
 }
 
 func (s *Server) getTaskMetadata(ctx context.Context, namespace, sandboxName, taskName, taskUID string) (string, string) {
-	if taskName == "n/a" || taskUID == "n/a" {
-		return "n/a", "n/a"
+	// If BOTH are missing or explicitly n/a, we'll fall back to latest.
+	// If only one is missing or n/a, we try to preserve or resolve the other.
+	if (taskName == "" || taskName == "n/a") && (taskUID == "" || taskUID == "n/a") {
+		return s.getLatestTaskMetadata(ctx, namespace, sandboxName)
 	}
 
 	// If we have a taskName but no UID, try to find the UID in the sandbox's tasks.
-	if taskName != "" && taskUID == "" {
+	if taskName != "" && taskName != "n/a" && (taskUID == "" || taskUID == "n/a") {
 		taskList, err := s.K8sManager.ListSandboxTasks(ctx, namespace, sandboxName)
 		if err == nil {
 			for i := range taskList.Items {
@@ -221,23 +230,23 @@ func (s *Server) getTaskMetadata(ctx context.Context, namespace, sandboxName, ta
 		}
 	}
 
-	if taskName != "" && taskUID != "" {
-		return taskName, taskUID
+	// If we have a taskUID but no name (or name is "n/a"), try to resolve the name.
+	if taskUID != "" && taskUID != "n/a" && (taskName == "" || taskName == "n/a") {
+		taskList, err := s.K8sManager.ListSandboxTasks(ctx, namespace, sandboxName)
+		if err == nil {
+			for i := range taskList.Items {
+				item := &taskList.Items[i]
+				if string(item.UID) == taskUID {
+					fullName := fmt.Sprintf("%s/%s", item.Namespace, item.Name)
+					return fullName, taskUID
+				}
+			}
+		}
+		// If not found, just return what we have
+		return "n/a", taskUID
 	}
 
-	// Fallback to latest
-	resName, resUID := s.getLatestTaskMetadata(ctx, namespace, sandboxName)
-
-	// Prioritize preserving the explicitly provided taskName over the fallback task name
-	if taskName != "" {
-		resName = taskName
-	}
-	if resUID == "n/a" && taskUID != "" {
-		resUID = taskUID
-	}
-
-	klog.FromContext(ctx).V(4).Info("Task metadata missing or partial in request, falling back to latest task", "sandbox", sandboxName, "taskName", resName, "taskUID", resUID)
-	return resName, resUID
+	return taskName, taskUID
 }
 
 // applyTraceabilityMetadata appends a structured metadata footer to a body string

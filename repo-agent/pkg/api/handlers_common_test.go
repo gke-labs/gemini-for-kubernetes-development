@@ -83,6 +83,24 @@ func TestTruncateString(t *testing.T) {
 			limit: 15,
 			want:  "~~~\nsome co\n~~~",
 		},
+		{
+			name:  "UTF-8 boundary - 世 (3 bytes)",
+			s:     "世界",
+			limit: 3,
+			want:  "世",
+		},
+		{
+			name:  "UTF-8 boundary - middle of 世 (limit 2)",
+			s:     "世界",
+			limit: 2,
+			want:  "",
+		},
+		{
+			name:  "UTF-8 boundary - middle of 界 (limit 4)",
+			s:     "世界",
+			limit: 4,
+			want:  "世",
+		},
 	}
 
 	for _, tt := range tests {
@@ -220,6 +238,31 @@ func TestGetTaskMetadata(t *testing.T) {
 		expectedName := fmt.Sprintf("%s/%s", namespace, "task-to-resolve")
 		if gotName != expectedName || gotUID != "resolved-uid" {
 			t.Errorf("getTaskMetadata() resolve = (%q, %q), want (%q, %q)", gotName, gotUID, expectedName, "resolved-uid")
+		}
+	})
+
+	t.Run("Resolve task name from UID", func(t *testing.T) {
+		task := &sandboxtaskv1alpha1.SandboxTask{
+			TypeMeta: metav1.TypeMeta{
+				APIVersion: "custom.agents.x-k8s.io/v1alpha1",
+				Kind:       "SandboxTask",
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "task-with-uid",
+				Namespace: namespace,
+				UID:       types.UID("specific-uid"),
+				Labels: map[string]string{
+					"sandbox.gemini.google.com/sandbox-name": sandboxName,
+				},
+			},
+		}
+		unstructuredTask, _ := runtime.DefaultUnstructuredConverter.ToUnstructured(task)
+		_, _ = dynamicClient.Resource(gvrSandboxTask).Namespace(namespace).Create(ctx, &unstructured.Unstructured{Object: unstructuredTask}, metav1.CreateOptions{})
+
+		gotName, gotUID := server.getTaskMetadata(ctx, namespace, sandboxName, "n/a", "specific-uid")
+		expectedName := fmt.Sprintf("%s/%s", namespace, "task-with-uid")
+		if gotName != expectedName || gotUID != "specific-uid" {
+			t.Errorf("getTaskMetadata() resolve name = (%q, %q), want (%q, %q)", gotName, gotUID, expectedName, "specific-uid")
 		}
 	})
 
