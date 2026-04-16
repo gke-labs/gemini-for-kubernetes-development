@@ -26,6 +26,8 @@ type FailedJob struct {
 
 type InvestigateFailuresModel struct {
 	Repo              *github.Repository
+	RepoOwner         string
+	RepoName          string
 	PullRequest       *github.PullRequest
 	RepositoryCommits []github.RepositoryCommit
 	User              *github.User

@@ -28,6 +28,8 @@ var _ Task = &ResolveConflictsModel{}
 
 type ResolveConflictsModel struct {
 	Repo         *github.Repository
+	RepoOwner    string
+	RepoName     string
 	PullRequest  *github.PullRequest
 	User         *github.User
 	PromptFile   string

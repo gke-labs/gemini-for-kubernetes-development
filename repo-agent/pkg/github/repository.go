@@ -1,6 +1,8 @@
 package github
 
 import (
+	"net/url"
+
 	githubv39 "github.com/google/go-github/v39/github"
 )
 
@@ -22,4 +24,12 @@ func (r *Repository) Name() string {
 
 func (r *Repository) Owner() string {
 	return r.repository.GetOwner().GetLogin()
+}
+
+func (r *Repository) Host() string {
+	u, err := url.Parse(r.CloneURL())
+	if err != nil {
+		return "github.com"
+	}
+	return u.Host
 }

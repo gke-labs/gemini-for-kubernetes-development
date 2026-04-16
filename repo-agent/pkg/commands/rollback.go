@@ -181,6 +181,8 @@ func RunRollback(ctx context.Context, opts RollbackOptions) error {
 	task := tasks.RollbackModel{
 		PullRequestID: opts.PullRequestID,
 		Repo:          opts.repo,
+		RepoOwner:     opts.repo.Owner(),
+		RepoName:      opts.repo.Name(),
 		User:          opts.user,
 		CommitSHA:     opts.CommitSHA,
 		Branch:        opts.Branch,

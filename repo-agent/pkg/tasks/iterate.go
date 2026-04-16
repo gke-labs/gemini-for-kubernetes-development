@@ -12,6 +12,8 @@ var _ Task = &IterateModel{}
 
 type IterateModel struct {
 	Repo        *github.Repository
+	RepoOwner   string
+	RepoName    string
 	User        *github.User
 	AgentPrompt string
 	BranchName  string

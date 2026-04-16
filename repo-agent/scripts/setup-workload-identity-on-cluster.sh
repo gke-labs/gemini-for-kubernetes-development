@@ -2,7 +2,11 @@
 
 set -x
 export PROJECT_ID=$(gcloud config get-value project)
-export REGION=us-central1
+if [[ -z "$PROJECT_ID" ]]; then
+    echo "Error: PROJECT_ID is not set. Please set your default project using 'gcloud config set project <id>'"
+    exit 1
+fi
+export REGION=${REGION:-us-central1}
 
 if [[ -z "$CLUSTER_NAME" ]]; then
     echo "Error: CLUSTER_NAME is not set. Please set it"

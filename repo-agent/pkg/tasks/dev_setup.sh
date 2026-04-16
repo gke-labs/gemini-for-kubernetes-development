@@ -7,7 +7,8 @@ set -x
 # - GEMINI_API_KEY
 # - GITHUB_USER_TOKEN
 
-export REPO_NAME="{{ .Repo.Name }}"
+export REPO_NAME="{{ .RepoName }}"
+export REPO_OWNER="{{ .RepoOwner }}"
 export CLONE_URL="{{ .Repo.CloneURL }}"
 export BRANCH_NAME="{{ .BranchName }}"
 export SOURCE_BRANCH="{{ .SourceBranch }}"

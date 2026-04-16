@@ -160,6 +160,8 @@ func (c *GithubFixIssueCommand) Run(ctx context.Context) error {
 	task := tasks.FixIssueModel{
 		Issue:         c.issue,
 		Repo:          c.repo,
+		RepoOwner:     c.repo.Owner(),
+		RepoName:      c.repo.Name(),
 		User:          c.user,
 		IssueComments: c.issue.IssueComments,
 		PromptFile:    promptPath,

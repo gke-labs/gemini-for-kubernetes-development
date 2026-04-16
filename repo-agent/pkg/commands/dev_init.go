@@ -103,19 +103,25 @@ func (c *DevInitCommand) loadGithubObjects(ctx context.Context) error {
 	}
 	c.GithubUserToken = token
 
-	// Let's parse the name from URL for directory naming
-	// e.g. https://github.com/owner/repo
-	cleanURL := strings.Split(c.RepoURL, "#")[0]
-	cleanURL = strings.TrimSuffix(cleanURL, "/")
-	base := filepath.Base(cleanURL)
-	if ext := filepath.Ext(base); ext == ".git" {
-		base = base[:len(base)-len(ext)]
+	// Construct basic repo object
+	owner, repoName, err := github.ParseHTMLUrl(c.RepoURL)
+	if err != nil {
+		// Fallback for non-standard URLs
+		cleanURL := strings.Split(c.RepoURL, "#")[0]
+		cleanURL = strings.TrimSuffix(cleanURL, "/")
+		repoName = filepath.Base(cleanURL)
+		if ext := filepath.Ext(repoName); ext == ".git" {
+			repoName = repoName[:len(repoName)-len(ext)]
+		}
+		owner = c.GithubUserLogin
 	}
 
-	// Construct basic repo object
 	innerRepo := &githubv39.Repository{
-		CloneURL: githubv39.String(strings.TrimSuffix(cleanURL, ".git") + ".git"),
-		Name:     githubv39.String(base),
+		CloneURL: githubv39.String(strings.TrimSuffix(c.RepoURL, ".git") + ".git"),
+		Name:     githubv39.String(repoName),
+		Owner: &githubv39.User{
+			Login: githubv39.String(owner),
+		},
 	}
 	c.repo = github.NewRepository(innerRepo)
 
@@ -159,6 +165,8 @@ func (c *DevInitCommand) Run(ctx context.Context) error {
 	promptPath := c.taskPath("agent-prompt.txt")
 	task := tasks.DevSetupModel{
 		Repo:         c.repo,
+		RepoOwner:    c.repo.Owner(),
+		RepoName:     c.repo.Name(),
 		User:         c.user,
 		BranchName:   c.BranchName,
 		SourceBranch: c.SourceBranch,
@@ -170,9 +178,10 @@ func (c *DevInitCommand) Run(ctx context.Context) error {
 	if c.ExtensionsJSON != "" {
 		var extensions []reviewv1alpha1.Extension
 		if err := json.Unmarshal([]byte(c.ExtensionsJSON), &extensions); err != nil {
-			return fmt.Errorf("failed to unmarshal extensions JSON: %w", err)
+			log.Error(err, "failed to unmarshal extensions JSON (skipping)", "json", c.ExtensionsJSON)
+		} else {
+			task.Extensions = extensions
 		}
-		task.Extensions = extensions
 	}
 
 	apikey, err := GetGeminiAPIKey(c.sandboxID)

@@ -1189,6 +1189,7 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 }
 
 func (r *Reconciler) ensureIssueTask(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, sandbox client.Object, sandboxName string, issue *github.Issue, handler reviewv1alpha1.IssueHandlerSpec) error {
+	log := log.FromContext(ctx)
 	taskName := fmt.Sprintf("%s-%s", sandboxName, handler.Name) // e.g. repo-issue-123-triage
 
 	// Check if task exists
@@ -1224,7 +1225,11 @@ func (r *Reconciler) ensureIssueTask(ctx context.Context, repoWatch *reviewv1alp
 		params["AGENT_LLM_CONFIGDIR"] = repoWatch.Spec.Issue.LLM.ConfigdirRef
 	}
 	if len(repoWatch.Spec.Issue.LLM.Extensions) > 0 {
-		exts, _ := json.Marshal(repoWatch.Spec.Issue.LLM.Extensions)
+		exts, err := json.Marshal(repoWatch.Spec.Issue.LLM.Extensions)
+		if err != nil {
+			log.Error(err, "unable to marshal extensions")
+			return err
+		}
 		params["AGENT_LLM_EXTENSIONS"] = string(exts)
 	}
 	if len(repoWatch.Spec.Issue.Models) > 0 {
@@ -1657,6 +1662,7 @@ func (r *Reconciler) reconcileDevSandboxesInternal(ctx context.Context, user *gi
 }
 
 func (r *Reconciler) createDevSandbox(ctx context.Context, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, forkOwner, forkRepo, branchName, sandboxName string) error {
+	log := log.FromContext(ctx)
 	cloneURL := strings.TrimSuffix(repoWatch.Spec.RepoURL, ".git") + ".git"
 	originURL := fmt.Sprintf("github.com/%s/%s.git", forkOwner, forkRepo)
 
@@ -1735,7 +1741,11 @@ func (r *Reconciler) createDevSandbox(ctx context.Context, user *github.User, re
 		params["model"] = strings.Join(repoWatch.Spec.Dev.Models, ",")
 	}
 	if len(repoWatch.Spec.Dev.LLM.Extensions) > 0 {
-		exts, _ := json.Marshal(repoWatch.Spec.Dev.LLM.Extensions)
+		exts, err := json.Marshal(repoWatch.Spec.Dev.LLM.Extensions)
+		if err != nil {
+			log.Error(err, "unable to marshal extensions")
+			return err
+		}
 		params["AGENT_LLM_EXTENSIONS"] = string(exts)
 	}
 
@@ -2024,7 +2034,11 @@ func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *revi
 			params["AGENT_LLM_CONFIGDIR"] = repoWatch.Spec.Issue.LLM.ConfigdirRef
 		}
 		if len(repoWatch.Spec.Issue.LLM.Extensions) > 0 {
-			exts, _ := json.Marshal(repoWatch.Spec.Issue.LLM.Extensions)
+			exts, err := json.Marshal(repoWatch.Spec.Issue.LLM.Extensions)
+			if err != nil {
+				log.Error(err, "unable to marshal extensions")
+				return err
+			}
 			params["AGENT_LLM_EXTENSIONS"] = string(exts)
 		}
 		if len(repoWatch.Spec.Issue.Models) > 0 {
@@ -2171,7 +2185,11 @@ func (r *Reconciler) reconcilePRFailures(ctx context.Context, repoWatch *reviewv
 			params["AGENT_LLM_CONFIGDIR"] = repoWatch.Spec.Issue.LLM.ConfigdirRef
 		}
 		if len(repoWatch.Spec.Issue.LLM.Extensions) > 0 {
-			exts, _ := json.Marshal(repoWatch.Spec.Issue.LLM.Extensions)
+			exts, err := json.Marshal(repoWatch.Spec.Issue.LLM.Extensions)
+			if err != nil {
+				log.Error(err, "unable to marshal extensions")
+				return err
+			}
 			params["AGENT_LLM_EXTENSIONS"] = string(exts)
 		}
 		if len(repoWatch.Spec.Issue.Models) > 0 {
@@ -2486,7 +2504,11 @@ func (r *Reconciler) reconcileReviewConflicts(ctx context.Context, repoWatch *re
 			params["AGENT_LLM_CONFIGDIR"] = repoWatch.Spec.Review.LLM.ConfigdirRef
 		}
 		if len(repoWatch.Spec.Review.LLM.Extensions) > 0 {
-			exts, _ := json.Marshal(repoWatch.Spec.Review.LLM.Extensions)
+			exts, err := json.Marshal(repoWatch.Spec.Review.LLM.Extensions)
+			if err != nil {
+				log.Error(err, "unable to marshal extensions")
+				return err
+			}
 			params["AGENT_LLM_EXTENSIONS"] = string(exts)
 		}
 

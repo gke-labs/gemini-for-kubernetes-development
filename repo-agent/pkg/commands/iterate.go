@@ -158,6 +158,8 @@ func (c *IterateCommand) Run(ctx context.Context) error {
 	promptPath := c.taskPath("agent-prompt.txt")
 	task := tasks.IterateModel{
 		Repo:        c.repo,
+		RepoOwner:   c.repo.Owner(),
+		RepoName:    c.repo.Name(),
 		User:        c.user,
 		AgentPrompt: c.AgentPrompt,
 		BranchName:  c.BranchName,
@@ -169,9 +171,10 @@ func (c *IterateCommand) Run(ctx context.Context) error {
 	if c.ExtensionsJSON != "" {
 		var extensions []reviewv1alpha1.Extension
 		if err := json.Unmarshal([]byte(c.ExtensionsJSON), &extensions); err != nil {
-			return fmt.Errorf("failed to unmarshal extensions JSON: %w", err)
+			log.Error(err, "failed to unmarshal extensions JSON (skipping)", "json", c.ExtensionsJSON)
+		} else {
+			task.Extensions = extensions
 		}
-		task.Extensions = extensions
 	}
 
 	apikey, err := GetGeminiAPIKey(c.sandboxID)

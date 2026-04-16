@@ -3,8 +3,8 @@ set -e
 set -o pipefail
 set -x
 
-export REPO_OWNER="{{ .Repo.Owner }}"
-export REPO_NAME="{{ .Repo.Name }}"
+export REPO_OWNER="{{ .RepoOwner }}"
+export REPO_NAME="{{ .RepoName }}"
 export CLONE_URL="{{ .Repo.CloneURL }}"
 export COMMIT_SHA="{{ .CommitSHA }}"
 export BRANCH="{{ .Branch }}"

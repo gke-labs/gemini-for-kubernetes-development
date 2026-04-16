@@ -12,6 +12,8 @@ var _ Task = &RollbackModel{}
 type RollbackModel struct {
 	PullRequestID int
 	Repo          *github.Repository
+	RepoOwner     string
+	RepoName      string
 	PullRequest   *github.PullRequest
 	User          *github.User
 	CommitSHA     string

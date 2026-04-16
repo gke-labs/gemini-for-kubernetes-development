@@ -13,6 +13,8 @@ var _ Task = &FixIssueModel{}
 type FixIssueModel struct {
 	Issue         *github.Issue
 	Repo          *github.Repository
+	RepoOwner     string
+	RepoName      string
 	IssueComments []github.IssueComment
 	User          *github.User
 	PromptFile    string

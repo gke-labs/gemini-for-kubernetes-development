@@ -59,8 +59,8 @@ type Client struct {
 	*githubv39.Client
 }
 
-// parseIssueURL extracts owner, repo, and issue number from a GitHub issue URL.
-func parseIssueURL(url string) (owner string, repo string, number int, err error) {
+// ParseIssueURL extracts owner, repo, and issue number from a GitHub issue URL.
+func ParseIssueURL(url string) (owner string, repo string, number int, err error) {
 	u := strings.TrimPrefix(url, "https://")
 	tokens := strings.Split(u, "/")
 	// e.g. https://github.com/GoogleCloudPlatform/k8s-config-connector/issues/6010
@@ -77,8 +77,8 @@ func parseIssueURL(url string) (owner string, repo string, number int, err error
 	return "", "", 0, fmt.Errorf("issue format %q not recognized", url)
 }
 
-// parseHTMLUrl extracts owner and repo from a GitHub HTML URL.
-func parseHTMLUrl(url string) (owner string, repo string, err error) {
+// ParseHTMLUrl extracts owner and repo from a GitHub HTML URL.
+func ParseHTMLUrl(url string) (owner string, repo string, err error) {
 	u := strings.TrimPrefix(url, "https://")
 	u = strings.TrimSuffix(u, ".git")
 	tokens := strings.Split(u, "/")
@@ -90,7 +90,7 @@ func parseHTMLUrl(url string) (owner string, repo string, err error) {
 
 // GetIssue retrieves an issue and optionally its comments.
 func (c *Client) GetIssue(ctx context.Context, url string, includeComments bool) (*Issue, error) {
-	owner, repo, number, err := parseIssueURL(url)
+	owner, repo, number, err := ParseIssueURL(url)
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +113,7 @@ func (c *Client) GetIssue(ctx context.Context, url string, includeComments bool)
 
 // GetIssueComments retrieves all comments for an issue specified by URL.
 func (c *Client) GetIssueComments(ctx context.Context, url string) ([]IssueComment, error) {
-	owner, repo, number, err := parseIssueURL(url)
+	owner, repo, number, err := ParseIssueURL(url)
 	if err != nil {
 		return nil, err
 	}
@@ -194,7 +194,7 @@ func (c *Client) GetPullRequestReviews(ctx context.Context, owner, repo string, 
 // GetRepositoryFromIssueURL retrieves a repository based on an issue URL.
 func (c *Client) GetRepositoryFromIssueURL(ctx context.Context, url string) (*Repository, error) {
 
-	owner, repo, _, err := parseIssueURL(url)
+	owner, repo, _, err := ParseIssueURL(url)
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +209,7 @@ func (c *Client) GetRepositoryFromIssueURL(ctx context.Context, url string) (*Re
 
 // GetRepositoryFromHTMLUrl retrieves a repository based on its HTML URL.
 func (c *Client) GetRepositoryFromHTMLUrl(ctx context.Context, url string) (*Repository, error) {
-	owner, repo, err := parseHTMLUrl(url)
+	owner, repo, err := ParseHTMLUrl(url)
 	if err != nil {
 		return nil, err
 	}

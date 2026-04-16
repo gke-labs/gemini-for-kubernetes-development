@@ -12,6 +12,8 @@ var _ Task = &AddressFeedbackModel{}
 
 type AddressFeedbackModel struct {
 	Repo                  *github.Repository
+	RepoOwner             string
+	RepoName              string
 	PullRequest           *github.PullRequest
 	RepositoryCommits     []github.RepositoryCommit
 	IssueComments         []github.IssueComment

@@ -39,6 +39,8 @@ type MockExtension struct {
 type MockModel struct {
 	Issue         MockIssue
 	Repo          MockRepo
+	RepoOwner     string
+	RepoName      string
 	IssueComments []MockComment
 	Models        []string
 	User          MockUser
@@ -63,6 +65,8 @@ func TestFixIssuePromptTemplate(t *testing.T) {
 	data := MockModel{
 		Issue:         MockIssue{},
 		Repo:          MockRepo{},
+		RepoOwner:     "owner",
+		RepoName:      "repo",
 		IssueComments: []MockComment{{}},
 		Models:        []string{"gemini-test"},
 		User:          MockUser{UserID: "test", Email: "test@test.com", Name: "Test User"},
@@ -102,6 +106,8 @@ func TestFixIssuePromptTemplate_NoBranch(t *testing.T) {
 	data := MockModel{
 		Issue:         MockIssue{},
 		Repo:          MockRepo{},
+		RepoOwner:     "owner",
+		RepoName:      "repo",
 		IssueComments: []MockComment{{}},
 		Models:        []string{"gemini-test"},
 		User:          MockUser{UserID: "test", Email: "test@test.com", Name: "Test User"},
@@ -134,6 +140,8 @@ func TestFixIssueScriptTemplate(t *testing.T) {
 	data := MockModel{
 		Issue:         MockIssue{},
 		Repo:          MockRepo{},
+		RepoOwner:     "owner",
+		RepoName:      "repo",
 		IssueComments: []MockComment{{}},
 		Models:        []string{"gemini-test-1", "gemini-test-2"},
 		User:          MockUser{UserID: "test", Email: "test@test.com", Name: "Test User"},
@@ -178,6 +186,8 @@ func TestFixIssueScriptTemplate_NoBranch(t *testing.T) {
 	data := MockModel{
 		Issue:         MockIssue{},
 		Repo:          MockRepo{},
+		RepoOwner:     "owner",
+		RepoName:      "repo",
 		IssueComments: []MockComment{{}},
 		Models:        []string{"gemini-test-1", "gemini-test-2"},
 		User:          MockUser{UserID: "test", Email: "test@test.com", Name: "Test User"},

@@ -22,7 +22,7 @@ func TestParseHTMLUrl(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		owner, repo, err := parseHTMLUrl(tt.url)
+		owner, repo, err := ParseHTMLUrl(tt.url)
 		if (err != nil) != tt.err {
 			t.Errorf("parseHTMLUrl(%q) error = %v, wantErr %v", tt.url, err, tt.err)
 			continue
@@ -53,7 +53,7 @@ func TestParseIssueURL(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		owner, repo, number, err := parseIssueURL(tt.url)
+		owner, repo, number, err := ParseIssueURL(tt.url)
 		if (err != nil) != tt.err {
 			t.Errorf("parseIssueURL(%q) error = %v, wantErr %v", tt.url, err, tt.err)
 			continue

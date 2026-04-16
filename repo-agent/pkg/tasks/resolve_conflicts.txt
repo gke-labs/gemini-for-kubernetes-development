@@ -1,6 +1,6 @@
 You are an expert software engineer tasked with resolving merge conflicts in a pull request.
 
-The base branch {{ .BaseRef }} has been merged into the head branch {{ .HeadRef }}, and there are conflicts.
+An attempt to merge the base branch {{ .BaseRef }} into the head branch {{ .HeadRef }} resulted in conflicts.
 
 ### Your Goal
 1. Identify all files with conflict markers (<<<<<<<, =======, >>>>>>>).

@@ -195,11 +195,16 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 	for k, v := range params {
 		if k == "AGENT_PROMPT" && len(v) > 1024 {
 			promptPath := filepath.Join(taskDir, "agent-prompt.txt")
-			if err := os.WriteFile(promptPath, []byte(v), 0644); err == nil {
+			if err := os.WriteFile(promptPath, []byte(v), 0600); err == nil {
 				cmd.Env = append(cmd.Env, "AGENT_PROMPT_FILE="+promptPath)
 				continue
 			}
-			klog.Warningf("Failed to write AGENT_PROMPT to %s: %v", promptPath, err)
+			klog.Errorf("Failed to write AGENT_PROMPT to %s: %v", promptPath, err)
+			// If it's too long and writing to file failed, we cannot proceed as it will likely hit OS env limits.
+			if len(v) > 32768 {
+				tr.updateTaskStatus(ctx, task, "Failed", fmt.Sprintf("Failed to write AGENT_PROMPT to file and it is too long for env: %v", err), nil)
+				return
+			}
 		}
 		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
 	}

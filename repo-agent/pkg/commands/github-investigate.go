@@ -261,6 +261,8 @@ func (c *GithubInvestigateCommand) Run(ctx context.Context) error {
 	promptPath := c.taskPath("agent-prompt.txt")
 	task := tasks.InvestigateFailuresModel{
 		Repo:              c.repo,
+		RepoOwner:         c.repo.Owner(),
+		RepoName:          c.repo.Name(),
 		PullRequest:       c.pullRequest,
 		PromptFile:        promptPath,
 		User:              c.user,

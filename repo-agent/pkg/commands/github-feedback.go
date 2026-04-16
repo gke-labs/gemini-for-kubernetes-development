@@ -263,6 +263,8 @@ func (c *GithubFeedbackCommand) Run(ctx context.Context) error {
 	promptPath := c.taskPath("agent-prompt.txt")
 	task := tasks.AddressFeedbackModel{
 		Repo:                  c.repo,
+		RepoOwner:             c.repo.Owner(),
+		RepoName:              c.repo.Name(),
 		PullRequest:           c.pullRequest,
 		RepositoryCommits:     c.repoCommits,
 		IssueComments:         newIssueComments,

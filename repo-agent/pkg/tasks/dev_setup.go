@@ -12,6 +12,8 @@ var _ Task = &DevSetupModel{}
 
 type DevSetupModel struct {
 	Repo         *github.Repository
+	RepoOwner    string
+	RepoName     string
 	User         *github.User
 	BranchName   string
 	SourceBranch string

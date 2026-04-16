@@ -39,7 +39,6 @@ type GithubResolveConflictsCommand struct {
 	// Configurable options
 	PRNumber        int
 	RepoURL         string
-	AgentName       string
 	GithubUserLogin string
 	GithubUserEmail string
 	GithubUserName  string
@@ -89,7 +88,6 @@ func BuildGithubResolveConflictsCommand() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&resolveCommand.RepoURL, "repo-url", os.Getenv("GIT_HTML_URL"), "GitHub repository URL")
-	cmd.Flags().StringVar(&resolveCommand.AgentName, "agent-name", os.Getenv("AGENT_NAME"), "Agent name")
 	cmd.Flags().StringVar(&resolveCommand.GithubUserLogin, "github-user-login", os.Getenv("GITHUB_USER_LOGIN"), "Github user login")
 	cmd.Flags().StringVar(&resolveCommand.GithubUserEmail, "github-user-email", os.Getenv("GITHUB_USER_EMAIL"), "Github user email")
 	cmd.Flags().StringVar(&resolveCommand.GithubUserName, "github-user-name", os.Getenv("GITHUB_USER_NAME"), "Github user name")
@@ -104,10 +102,6 @@ func BuildGithubResolveConflictsCommand() *cobra.Command {
 }
 
 func (c *GithubResolveConflictsCommand) InitDefaults() {
-	if c.AgentName == "" {
-		c.AgentName = "gemini-cli"
-	}
-
 	c.CustomPrompt = resolveAgentPrompt(c.CustomPrompt)
 
 	if c.WorkspaceDir == "" {
@@ -137,7 +131,7 @@ func (c *GithubResolveConflictsCommand) loadGithubObjects(ctx context.Context) e
 	}
 	c.GithubUserToken = token
 
-	githubAPI, err := github.NewClient(context.Background())
+	githubAPI, err := github.NewClient(ctx)
 	if err != nil {
 		return err
 	}
@@ -228,6 +222,8 @@ func (c *GithubResolveConflictsCommand) Run(ctx context.Context) error {
 	task := tasks.ResolveConflictsModel{
 		PullRequest:  c.pr,
 		Repo:         c.repo,
+		RepoOwner:    c.repo.Owner(),
+		RepoName:     c.repo.Name(),
 		User:         c.user,
 		PromptFile:   promptPath,
 		Models:       models,

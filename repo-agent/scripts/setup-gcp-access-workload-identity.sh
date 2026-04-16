@@ -7,6 +7,10 @@
 set -x
 # 1. Set up variables based on your current environment
 export PROJECT_ID=$(gcloud config get-value project)
+if [[ -z "$PROJECT_ID" ]]; then
+    echo "Error: PROJECT_ID is not set. Please set your default project using 'gcloud config set project <id>'"
+    exit 1
+fi
 export K8S_SA="${K8S_SA:-issue-sandbox}"
 export GCP_SA_NAME="kcc-overseer-sa"
 export GCP_SA_EMAIL="${GCP_SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"

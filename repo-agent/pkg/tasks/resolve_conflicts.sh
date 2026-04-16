@@ -21,7 +21,8 @@ set -o pipefail
 # - GEMINI_API_KEY
 # - GITHUB_USER_TOKEN
 
-export REPO_NAME={{ printf "%q" .Repo.Name }}
+export REPO_NAME={{ printf "%q" .RepoName }}
+export REPO_OWNER={{ printf "%q" .RepoOwner }}
 export CLONE_URL={{ printf "%q" .Repo.CloneURL }}
 export PROMPT_FILE={{ printf "%q" .PromptFile }}
 export GITHUB_USER_ID={{ printf "%q" .User.UserID }}
@@ -55,7 +56,7 @@ function setupGit {
     fi
 
     cat <<EOF > /root/.config/gh/hosts.yml
-github.com:
+{{ .Repo.Host }}:
     users:
         ${GH_USER}:
             oauth_token: ${GITHUB_USER_TOKEN}
@@ -95,10 +96,11 @@ function setupGitRepos {
     else
         echo "repository already exists"
         # Ensure a pristine state before doing anything
-        (cd "/workspaces/${REPO_NAME}" && git merge --abort || true && git reset --hard && git clean -fdx && git fetch origin)
+        # We use git clean -fd (without x) to avoid wiping out toolchains or configs that might be in .gitignore
+        (cd "/workspaces/${REPO_NAME}" && git merge --abort || true && git reset --hard && git clean -fd && git fetch origin)
     fi
 
-    (cd "/workspaces/${REPO_NAME}" && gh repo set-default "{{ .Repo.Owner }}/{{ .Repo.Name }}" || true)
+    (cd "/workspaces/${REPO_NAME}" && gh repo set-default "${REPO_OWNER}/${REPO_NAME}" || true)
 }
 
 function checkoutPRBranch {
@@ -107,13 +109,14 @@ function checkoutPRBranch {
     cd "/workspaces/${REPO_NAME}"
     gh pr checkout "${PR_NUMBER}" --force
     # Ensure we are up to date with the remote branch
-    git pull --rebase || true
+    git pull --rebase
 }
 
 function verifyResolution {
     echo "Verifying conflict resolution..."
-    # We check for conflict markers excluding the .git directory
-    if grep -r --exclude-dir=.git "^<<<<<<<" .; then
+    # We check for conflict markers excluding the .git directory.
+    # We check for all three markers: <<<<<<<, =======, >>>>>>>
+    if grep -rE --exclude-dir=.git "^(<<<<<<<|=======|>>>>>>>)" .; then
         echo "Conflict markers still present!"
         return 1
     fi
@@ -167,7 +170,7 @@ function runTests {
                      pip install --break-system-packages . || pip install . || true
                  fi
                  if command -v pytest >/dev/null 2>&1; then
-                     pytest || python3 -m unittest discover || exit 1
+                     pytest || exit 1
                  else
                      python3 -m unittest discover || exit 1
                  fi
@@ -198,15 +201,17 @@ function runGemini {
     if [ -n "$GITHUB_BOT_NAME" ]; then
         export GIT_AUTHOR_NAME="$GITHUB_BOT_NAME"
         export GIT_COMMITTER_NAME="$GITHUB_BOT_NAME"
-        if [ -n "$GITHUB_BOT_EMAIL" ]; then
-            export GIT_AUTHOR_EMAIL="$GITHUB_BOT_EMAIL"
-            export GIT_COMMITTER_EMAIL="$GITHUB_BOT_EMAIL"
-        fi
+        export GIT_AUTHOR_EMAIL="${GITHUB_BOT_EMAIL:-bot@example.com}"
+        export GIT_COMMITTER_EMAIL="${GITHUB_BOT_EMAIL:-bot@example.com}"
     fi
 
     # Identify the current branch and its remote (handles forks)
     local CURRENT_BRANCH
     CURRENT_BRANCH="$(git branch --show-current)"
+    if [ -z "$CURRENT_BRANCH" ]; then
+        echo "Error: Detached HEAD state detected or unable to identify current branch."
+        exit 1
+    fi
     local REMOTE
     REMOTE="$(git config "branch.${CURRENT_BRANCH}.remote" || echo "origin")"
     
@@ -228,12 +233,13 @@ function runGemini {
         # Abort any previous merge and reset to the original pristine state.
         git merge --abort || true
         git reset --hard "$ORIG_HEAD"
-        git clean -fdx
+        git clean -fd
         
         # Re-attempt merge to get conflicts for the model to work on.
-        echo "Attempting to merge origin/${BASE_REF} into ${CURRENT_BRANCH}..."
+        # We use FETCH_HEAD to ensure we merge exactly what we just fetched.
+        echo "Attempting to merge FETCH_HEAD (origin/${BASE_REF}) into ${CURRENT_BRANCH}..."
         # We use --no-ff to ensure we get a merge commit if it succeeds, and --no-commit to verify before finalizing.
-        if git merge "origin/${BASE_REF}" --no-ff --no-commit -m "chore: merge branch 'origin/${BASE_REF}' into ${CURRENT_BRANCH}"; then
+        if git merge FETCH_HEAD --no-ff --no-commit -m "chore: merge branch 'origin/${BASE_REF}' into ${CURRENT_BRANCH}"; then
              echo "Merge successful without conflicts (unexpected in loop). Verifying..."
              if verifyResolution && runTests; then
                  # If it succeeded without conflicts and passed tests, finalize the commit.
@@ -248,14 +254,15 @@ function runGemini {
 
         echo "Conflicts detected. Calling Gemini with model $MODEL..."
         # We use --yolo because this runs in a sandboxed pod and we need automated resolution.
-        if (gemini --yolo --model "$MODEL" --output-format stream-json < "${PROMPT_FILE}" | /opt/repo-agent/gemini-stream-processor --output "$(dirname "${PROMPT_FILE}")/gemini-output-${MODEL}.json"); then
+        if gemini --yolo --model "$MODEL" --output-format stream-json < "${PROMPT_FILE}" | /opt/repo-agent/gemini-stream-processor --output "$(dirname "${PROMPT_FILE}")/gemini-output-${MODEL}.json"; then
              echo "Gemini execution successful with model: $MODEL"
              
              if verifyResolution && runTests; then
                  echo "Resolution verified with model: $MODEL. Staging and committing..."
                  # Copy the successful output to a standard location for stats tracking
                  cp "$(dirname "${PROMPT_FILE}")/gemini-output-${MODEL}.json" "$(dirname "${PROMPT_FILE}")/gemini-output.json" || true
-                 git add .
+                 # Only stage tracked and unmerged files to avoid garbage.
+                 git add -u
                  # Complete the merge commit
                  git commit --no-verify -m "chore: resolve merge conflicts using Gemini ($MODEL)" || echo "Nothing to commit"
                  SUCCESS=true
@@ -293,10 +300,11 @@ checkoutPRBranch
 cd "/workspaces/${REPO_NAME}"
 # Ensure we have base branch
 git fetch origin "${BASE_REF}" || { echo "Failed to fetch base branch origin/${BASE_REF}. Perhaps it was deleted?"; exit 1; }
-echo "Attempting initial merge of origin/${BASE_REF}..."
+echo "Attempting initial merge of FETCH_HEAD (origin/${BASE_REF})..."
 BEFORE_MERGE_SHA=$(git rev-parse HEAD)
 # Use --no-ff and --no-commit to verify behavioral correctness even for clean merges.
-if git merge "origin/${BASE_REF}" --no-ff --no-commit -m "chore: merge branch 'origin/${BASE_REF}' into HEAD"; then
+# Use FETCH_HEAD to ensure we merge exactly what we just fetched.
+if git merge FETCH_HEAD --no-ff --no-commit -m "chore: merge branch 'origin/${BASE_REF}' into HEAD"; then
     if verifyResolution && runTests; then
         echo "Merge successful without conflicts and tests passed."
         git commit --no-verify -m "chore: merge branch 'origin/${BASE_REF}' into HEAD" || echo "Nothing to commit"
