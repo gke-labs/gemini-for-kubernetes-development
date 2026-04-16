@@ -1,0 +1,143 @@
+package main
+
+import (
+	"errors"
+	"net/http"
+	"testing"
+
+	githubv39 "github.com/google/go-github/v39/github"
+)
+
+func TestIsBot(t *testing.T) {
+	tests := []struct {
+		name      string
+		login     string
+		botLogin  string
+		userLogin string
+		expected  bool
+	}{
+		{
+			name:     "exact match bot",
+			login:    "my-bot",
+			botLogin: "my-bot",
+			expected: true,
+		},
+		{
+			name:     "case insensitive bot",
+			login:    "My-Bot",
+			botLogin: "my-bot",
+			expected: true,
+		},
+		{
+			name:     "bot suffix match",
+			login:    "my-bot[bot]",
+			botLogin: "my-bot",
+			expected: true,
+		},
+		{
+			name:     "bot suffix match botLogin with suffix",
+			login:    "my-bot[bot]",
+			botLogin: "my-bot[bot]",
+			expected: true,
+		},
+		{
+			name:      "user match",
+			login:     "my-user",
+			userLogin: "my-user",
+			expected:  true,
+		},
+		{
+			name:     "no match",
+			login:    "other",
+			botLogin: "my-bot",
+			expected: false,
+		},
+		{
+			name:      "case insensitive user",
+			login:     "My-User",
+			userLogin: "my-user",
+			expected:  true,
+		},
+		{
+			name:     "bot match with suffix in botLogin only",
+			login:    "my-bot",
+			botLogin: "my-bot[bot]",
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isBot(tt.login, tt.botLogin, tt.userLogin); got != tt.expected {
+				t.Errorf("isBot(%q, %q, %q) = %v, want %v", tt.login, tt.botLogin, tt.userLogin, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestIsGitHubTransient(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		expected bool
+	}{
+		{
+			name:     "nil error",
+			err:      nil,
+			expected: false,
+		},
+		{
+			name:     "rate limit error (403)",
+			err:      &githubv39.ErrorResponse{Response: &http.Response{StatusCode: 403}},
+			expected: true,
+		},
+		{
+			name:     "rate limit error (429)",
+			err:      &githubv39.ErrorResponse{Response: &http.Response{StatusCode: 429}},
+			expected: true,
+		},
+		{
+			name:     "server error (500)",
+			err:      &githubv39.ErrorResponse{Response: &http.Response{StatusCode: 500}},
+			expected: true,
+		},
+		{
+			name:     "server error (503)",
+			err:      &githubv39.ErrorResponse{Response: &http.Response{StatusCode: 503}},
+			expected: true,
+		},
+		{
+			name:     "not found (404)",
+			err:      &githubv39.ErrorResponse{Response: &http.Response{StatusCode: 404}},
+			expected: false,
+		},
+		{
+			name:     "timeout error",
+			err:      errors.New("request timed out"),
+			expected: true,
+		},
+		{
+			name:     "connection refused",
+			err:      errors.New("dial tcp 127.0.0.1:443: connect: connection refused"),
+			expected: true,
+		},
+		{
+			name:     "EOF error",
+			err:      errors.New("unexpected EOF"),
+			expected: true,
+		},
+		{
+			name:     "other error",
+			err:      errors.New("something went wrong"),
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isGitHubTransient(tt.err); got != tt.expected {
+				t.Errorf("isGitHubTransient(%v) = %v, want %v", tt.err, got, tt.expected)
+			}
+		})
+	}
+}
