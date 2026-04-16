@@ -932,3 +932,17 @@ body.dark-mode .warning-banner {
   background-color: var(--text-danger);
   color: white;
 }
+
+.btn-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #007bff;
+  text-decoration: underline;
+  cursor: pointer;
+  font: inherit;
+}
+
+.btn-link:hover {
+  color: #0056b3;
+}

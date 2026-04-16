@@ -1,15 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import yaml from 'js-yaml';
 import './App.css';
-import PrReviewCard from './PrReviewCard';
 import Review from './Review';
 import Issues from './Issues';
-import IssueCard from './IssueCard';
 import DevCard from './DevCard';
-import ExplorationGroup from './ExplorationGroup';
 import DevSidebar from './DevSidebar';
 import AddRepo from './AddRepo';
-import DeleteRepo from './DeleteRepo';
 import Settings from './Settings';
 import UpdateRepo from './UpdateRepo';
 import Overseer from './Overseer';
@@ -22,11 +18,9 @@ function App() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [view, setView] = useState('dashboard'); // 'dashboard', 'settings', 'add_repo', 'overseer'
   const [githubAuthEnabled, setGithubAuthEnabled] = useState(false);
-  const [showGithubConfig, setShowGithubConfig] = useState(false);
-  const [githubClientId, setGithubClientId] = useState('');
-  const [githubClientSecret, setGithubClientSecret] = useState('');
+  const [githubClientId] = useState('');
+  const [githubClientSecret] = useState('');
   const [isGeminiKeySet, setIsGeminiKeySet] = useState(true); // Default to true to avoid flash of warning
-  const [configError, setConfigError] = useState('');
 
   const [repos, setRepos] = useState([]);
   const [activeRepo, setActiveRepo] = useState(null);
@@ -180,25 +174,23 @@ function App() {
     }
   }, [activeRepo, isAuthenticated, isGuest]);
 
-  const handleGithubConfigSubmit = (e) => {
-    e.preventDefault();
-    setConfigError('');
-    fetch('/api/auth/github-config', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ client_id: githubClientId, client_secret: githubClientSecret })
-    })
-    .then(async (res) => {
-      if (res.ok) {
-        setGithubAuthEnabled(true);
-        setShowGithubConfig(false);
-      } else {
-        const data = await res.json();
-        throw new Error(data.error || 'Failed to update config');
+  const handleRepoClick = useCallback((repoName, currentRepos = repos) => {
+    setView('dashboard');
+    const repo = currentRepos.find(r => r.name === repoName);
+    setActiveRepo(repo);
+    setPrs([]);
+    setIssues([]);
+    setDevSandboxes([]);
+    if (repo) {
+      if (repo.review) {
+        setActiveSubTab({ repo: repoName, name: 'review' });
+      } else if (repo.issue) {
+        setActiveSubTab({ repo: repoName, name: 'issues' });
+      } else if (repo.dev) {
+        setActiveSubTab({ repo: repoName, name: 'dev' });
       }
-    })
-    .catch(err => setConfigError(err.message));
-  };
+    }
+  }, [repos]);
 
   const fetchRepos = useCallback(() => {
     if (!isAuthenticated && !isGuest) return;
@@ -221,7 +213,7 @@ function App() {
         }
       })
       .catch(err => console.error("Failed to fetch repos:", err));
-  }, [isAuthenticated, isGuest, view]);
+  }, [isAuthenticated, isGuest, view, handleRepoClick]);
 
   useEffect(() => {
     if (isAuthenticated || isGuest) {
@@ -415,24 +407,6 @@ function App() {
         setActiveRepo(null);
       })
       .catch(err => console.error("Failed to logout", err));
-  };
-
-  const handleRepoClick = (repoName, currentRepos = repos) => {
-    setView('dashboard');
-    const repo = currentRepos.find(r => r.name === repoName);
-    setActiveRepo(repo);
-    setPrs([]);
-    setIssues([]);
-    setDevSandboxes([]);
-    if (repo) {
-      if (repo.review) {
-        setActiveSubTab({ repo: repoName, name: 'review' });
-      } else if (repo.issue) {
-        setActiveSubTab({ repo: repoName, name: 'issues' });
-      } else if (repo.dev) {
-        setActiveSubTab({ repo: repoName, name: 'dev' });
-      }
-    }
   };
 
   const handleRepoDeleted = (deletedRepoName) => {
@@ -1191,11 +1165,6 @@ function App() {
             }
         }
 
-        const handleAddDevInstance = (branch) => {
-             setNewDevBranch(branch);
-             setDevModalOpen(true);
-        };
-
         return (
             <div className="dev-layout">
                 <div style={{ width: sidebarWidth, display: 'flex', flexDirection: 'column' }}>
@@ -1434,7 +1403,7 @@ function App() {
       
       {(isAuthenticated || isGuest) && !isGeminiKeySet && (
         <div className="warning-banner">
-          <strong>⚠️ Gemini API Key Missing:</strong> Please configure your Gemini API Key in <a href="#" onClick={(e) => { e.preventDefault(); setView('settings'); }}>Settings</a> to enable code reviews and issue handling.
+          <strong>⚠️ Gemini API Key Missing:</strong> Please configure your Gemini API Key in <button className="btn-link" onClick={(e) => { e.preventDefault(); setView('settings'); }}>Settings</button> to enable code reviews and issue handling.
         </div>
       )}
 
