@@ -1083,8 +1083,8 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 		}
 	}
 
-	// 1. Check local Kubernetes first for an actively running or completed task for this SHA
-	// to save GitHub API quota and prevent concurrency conflicts.
+	// 1. Check local Kubernetes first for an actively running task for this SHA
+	// to prevent concurrency conflicts.
 	taskList, err := manager.ListSandboxTasks(ctx, namespace, sandboxName)
 	if err == nil {
 		for i := range taskList.Items {
@@ -1096,14 +1096,6 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 
 			taskSHA := task.Spec.Params["HEAD_SHA"]
 			if task.Spec.Type == taskType && strings.EqualFold(taskSHA, headSHA) {
-				if state == "Completed" {
-					if lastReopenedAt != nil && task.CreationTimestamp.Before(&metav1.Time{Time: *lastReopenedAt}) {
-						klog.Infof("PR #%d: Found historical task %s for SHA %s, but PR was reopened since then. Proceeding with new task.", number, taskType, headSHA)
-						continue
-					}
-					klog.V(2).Infof("PR #%d: Task %s for SHA %s already exists in state %s. Skipping.", number, taskType, headSHA, state)
-					return nil
-				}
 				if state == "Running" || state == "Pending" {
 					if time.Since(task.CreationTimestamp.Time) < 2*time.Hour {
 						klog.V(2).Infof("PR #%d: Task %s for SHA %s already exists in state %s (created %v ago). Skipping.", number, taskType, headSHA, state, time.Since(task.CreationTimestamp.Time))
@@ -1152,6 +1144,7 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 		}
 	}
 
+	foundReviewOnGitHub := false
 	if taskType == "review" {
 		// 2. Then check GitHub for already submitted reviews for this SHA
 		if botLogin == "" && userLogin == "" {
@@ -1194,7 +1187,8 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 								}
 
 								klog.V(2).Infof("PR #%d: Automated review for SHA %s already exists on GitHub by %s (state: %s). Skipping.", number, headSHA, login, state)
-								return nil
+								foundReviewOnGitHub = true
+								break ReviewLoop
 							}
 							klog.V(2).Infof("PR #%d: Found review by %s for SHA %s, but it lacks the automated signature. Assuming it is a manual review.", number, login, headSHA)
 						}
@@ -1207,6 +1201,44 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 			}
 		}
 	}
+
+	if foundReviewOnGitHub {
+		return nil
+	}
+
+	// 3. Finally check for Completed local tasks.
+	// If it's a review task, we only skip if it's recent (backoff) OR if we can verify the review is on GitHub.
+	// Since we already checked GitHub and found nothing, a Completed task here means the review hasn't reached GitHub yet.
+	if err == nil {
+		for i := range taskList.Items {
+			task := &taskList.Items[i]
+			state := task.Status.TaskState
+			taskSHA := task.Spec.Params["HEAD_SHA"]
+			if task.Spec.Type == taskType && strings.EqualFold(taskSHA, headSHA) && state == "Completed" {
+				if lastReopenedAt != nil && task.CreationTimestamp.Before(&metav1.Time{Time: *lastReopenedAt}) {
+					klog.Infof("PR #%d: Found historical completed task %s for SHA %s, but PR was reopened since then. Proceeding with new task.", number, taskType, headSHA)
+					continue
+				}
+
+				if taskType == "review" {
+					// Review task is Completed but NOT on GitHub.
+					// If it was created recently, we wait for submitAgentDraft to do its job.
+					if time.Since(task.CreationTimestamp.Time) < 30*time.Minute {
+						klog.V(2).Infof("PR #%d: Review task for SHA %s is Completed but not yet on GitHub. Waiting for submission (created %v ago).", number, headSHA, time.Since(task.CreationTimestamp.Time))
+						return nil
+					}
+					// If it's old, it might be stuck (e.g. failed submission). allow retry.
+					klog.Warningf("PR #%d: Review task for SHA %s is Completed but not on GitHub after %v. Deleting to allow retry.", number, headSHA, time.Since(task.CreationTimestamp.Time))
+					_ = manager.DeleteSandboxTask(ctx, namespace, task.Name)
+					return &RetryableError{Message: fmt.Sprintf("deleted stuck completed task for PR %d, waiting for re-trigger", number)}
+				}
+
+				klog.V(2).Infof("PR #%d: Task %s for SHA %s already exists in state %s. Skipping.", number, taskType, headSHA, state)
+				return nil
+			}
+		}
+	}
+
 
 	// Check limit only if we need to create or activate a sandbox
 	if !sandboxIsActive && overseer.Spec.MaxActiveReviews != nil {
@@ -1392,6 +1424,13 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 	if err != nil {
 		if isGitHubTransient(err) {
 			return &RetryableError{Message: fmt.Sprintf("transient error creating review on GitHub: %v", err)}
+		}
+		// If it's 422, it might be invalid line references (e.g. due to rebase/stale draft).
+		// We delete the task so runPR can re-trigger a fresh review.
+		if githubErr, ok := err.(*githubv39.ErrorResponse); ok && githubErr.Response.StatusCode == 422 {
+			klog.Warningf("GitHub rejected review for PR %d with 422 (likely invalid line references or stale draft). Deleting task %s to allow re-trigger.", prNumber, latestReviewTask.Name)
+			_ = manager.DeleteSandboxTask(ctx, namespace, latestReviewTask.Name)
+			return fmt.Errorf("GitHub rejected review (422): %w", err)
 		}
 		return fmt.Errorf("failed to create review on GitHub: %w", err)
 	}
@@ -1826,7 +1865,10 @@ func runDeleteSandbox(ctx context.Context, sandboxName string) error {
 
 func deleteSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, sandboxName string) error {
 	klog.Infof("Deleting sandbox %s...", sandboxName)
-	err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Delete(ctx, sandboxName, metav1.DeleteOptions{})
+	propagationPolicy := metav1.DeletePropagationForeground
+	err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Delete(ctx, sandboxName, metav1.DeleteOptions{
+		PropagationPolicy: &propagationPolicy,
+	})
 	if err != nil && !errors.IsNotFound(err) {
 		// handle string check if errors package is not behaving as expected with dynamic client
 		if !strings.Contains(err.Error(), "not found") {
@@ -1836,7 +1878,9 @@ func deleteSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, na
 	// Also delete service
 	serviceName := sandboxName + "-lb"
 	klog.Infof("Deleting service %s...", serviceName)
-	err = kubeClient.Clientset.CoreV1().Services(namespace).Delete(ctx, serviceName, metav1.DeleteOptions{})
+	err = kubeClient.Clientset.CoreV1().Services(namespace).Delete(ctx, serviceName, metav1.DeleteOptions{
+		PropagationPolicy: &propagationPolicy,
+	})
 	if err != nil && !errors.IsNotFound(err) {
 		if !strings.Contains(err.Error(), "not found") {
 			return err
