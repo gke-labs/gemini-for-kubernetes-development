@@ -101,6 +101,30 @@ func TestTruncateString(t *testing.T) {
 			limit: 4,
 			want:  "世",
 		},
+		{
+			name:  "Multiple code blocks - close all",
+			s:     "```go\nfunc a() {}\n```\nSome text\n```python\ndef b(): pass",
+			limit: 40,
+			want:  "```go\nfunc a() {}\n```\nSome text\n```p\n```",
+		},
+		{
+			name:  "Nested code blocks (rare but possible)",
+			s:     "``\n```go\ncode\n```\n``",
+			limit: 10,
+			want:  "``\n```\n```",
+		},
+		{
+			name:  "Emoji boundary - 4 bytes",
+			s:     "Hello 🌟 world", // 🌟 is 4 bytes
+			limit: 9, // "Hello " (6) + 3 bytes of 🌟
+			want:  "Hello ",
+		},
+		{
+			name:  "Emoji boundary - exact fit",
+			s:     "Hello 🌟 world",
+			limit: 10, // "Hello " (6) + 4 bytes of 🌟
+			want:  "Hello 🌟",
+		},
 	}
 
 	for _, tt := range tests {

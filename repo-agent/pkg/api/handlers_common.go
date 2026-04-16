@@ -356,13 +356,14 @@ func (s *Server) getLatestTaskMetadata(ctx context.Context, namespace, sandboxNa
 		klog.FromContext(ctx).V(2).Info("Large number of tasks found for sandbox, search might be slow", "sandbox", sandboxName, "count", len(taskList.Items))
 	}
 
-	// Find the latest task by creation timestamp
+	// Find the latest task by creation timestamp.
+	// Tie-break with name for stable results.
 	var latestTask *sandboxtaskv1alpha1.SandboxTask
 	for i := range taskList.Items {
-		// Tie-breaking: if multiple tasks have the exact same CreationTimestamp,
-		// we pick the first one encountered.
-		if latestTask == nil || taskList.Items[i].CreationTimestamp.After(latestTask.CreationTimestamp.Time) {
-			latestTask = &taskList.Items[i]
+		item := &taskList.Items[i]
+		if latestTask == nil || item.CreationTimestamp.After(latestTask.CreationTimestamp.Time) ||
+			(item.CreationTimestamp.Equal(&latestTask.CreationTimestamp) && item.Name > latestTask.Name) {
+			latestTask = item
 		}
 	}
 	if latestTask != nil {
