@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math/rand"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -191,13 +193,22 @@ func isGitHubTransient(err error) bool {
 
 	// Also check for network timeouts/connection issues
 	var netErr net.Error
-	if errors.As(err, &netErr) {
-		return netErr.Timeout()
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+
+	// Check for connection refused/reset
+	if errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNABORTED) {
+		return true
 	}
 
 	// Fallback for common transient errors that might not be wrapped as net.Error
 	errStr := err.Error()
-	return strings.Contains(errStr, "timeout") || strings.Contains(errStr, "timed out") || strings.Contains(errStr, "connection refused") || strings.Contains(errStr, "EOF")
+	return strings.Contains(errStr, "timeout") || strings.Contains(errStr, "timed out")
 }
 
 func isBot(login, botLogin, userLogin string) bool {

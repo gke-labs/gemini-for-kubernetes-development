@@ -2,7 +2,10 @@ package main
 
 import (
 	"errors"
+	"io"
+	"net"
 	"net/http"
+	"syscall"
 	"testing"
 
 	githubv39 "github.com/google/go-github/v39/github"
@@ -118,12 +121,17 @@ func TestIsGitHubTransient(t *testing.T) {
 		},
 		{
 			name:     "connection refused",
-			err:      errors.New("dial tcp 127.0.0.1:443: connect: connection refused"),
+			err:      &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED},
 			expected: true,
 		},
 		{
 			name:     "EOF error",
-			err:      errors.New("unexpected EOF"),
+			err:      io.EOF,
+			expected: true,
+		},
+		{
+			name:     "unexpected EOF error",
+			err:      io.ErrUnexpectedEOF,
 			expected: true,
 		},
 		{
