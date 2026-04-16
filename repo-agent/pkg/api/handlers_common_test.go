@@ -116,7 +116,7 @@ func TestTruncateString(t *testing.T) {
 		{
 			name:  "Emoji boundary - 4 bytes",
 			s:     "Hello 🌟 world", // 🌟 is 4 bytes
-			limit: 9, // "Hello " (6) + 3 bytes of 🌟
+			limit: 9,               // "Hello " (6) + 3 bytes of 🌟
 			want:  "Hello ",
 		},
 		{
