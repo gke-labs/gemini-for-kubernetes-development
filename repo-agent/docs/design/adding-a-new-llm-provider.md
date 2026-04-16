@@ -1,277 +1,141 @@
-# Adding a New LLM Provider
+# LLM Provider Architecture & Integration Guide
 
-This document provides a step-by-step guide for developers to extend the Gemini Code Repo Agent by integrating a new Large Language Model (LLM) provider.
+This document describes how the Gemini Code Repo Agent integrates with Large Language Models (LLMs). It covers the high-level "CLI-First" architecture, the dynamic sandbox environment powered by DevContainers, and a step-by-step guide for adding new providers.
 
-The system uses a standard `Provider` interface, which ensures that new providers can be added smoothly. This guide will walk you through implementing this interface, registering your new provider, and making it available for use in `RepoWatch` resources.
+---
 
-## 1. The `Provider` Interface
+## 1. Architectural Strategy: CLI-First
 
-The core of the provider system is the `Provider` interface, located in `pkg/llm/provider.go`. Any new LLM provider must implement this interface.
+The Repo Agent follows a **CLI-First Architecture** for agentic tasks. While raw HTTP APIs are suitable for stateless text generation, complex software engineering tasks (like multi-step code reviews or bug fixing) require specialized "action loops."
+
+### 1.1 Why CLIs?
+Instead of building complex "ReAct" loops or tool-use frameworks in Go, we delegate these behaviors to model-specific CLI binaries like `gemini` (Gemini CLI) and `claude` (Claude Code).
+*   **Optimized Reasoning**: Vendor-provided CLIs are tuned for the specific strengths of their models (e.g., Claude's reasoning loop for terminal interaction).
+*   **Tool-Use Capabilities**: These CLIs handle local tool execution (file reads, shell commands, git operations) natively.
+*   **Reduced Complexity**: The Repo Agent core remains a lightweight orchestrator, while the model logic stays encapsulated within the binary.
+
+### 1.2 Interactive vs. Non-Interactive
+In the Repo Agent, these CLIs are executed in **non-interactive mode** within an ephemeral sandbox.
+*   **Gemini**: Uses `gemini -y --output-format json`.
+*   **Claude**: Uses `claude --print --output-format json`.
+
+---
+
+## 2. Sandbox Environment & CLI Delivery
+
+A critical challenge in the Repo Agent architecture is delivering model-specific CLI binaries (like `claude` or `gemini`) into the ephemeral sandbox where the task executes. The system supports two primary delivery models: **Dynamic Injection** and **Pre-baked "Fat" Images**.
+
+### 2.1 Dynamic Injection (DevContainer Features)
+This model leverages `envbuilder` to construct a development environment at runtime.
+*   **Mechanism**: The sandbox starts from a generic base image (e.g., `ubuntu`). `envbuilder` reads a `devcontainer.json` and dynamically downloads/installs "Features" (modular scripts and binaries) from a remote registry.
+*   **Pros**: Highly flexible and modular. Allows users to "mix and match" tools without rebuilding images.
+*   **Cons**: High runtime latency. The sandbox must clone the repo and install tools (often taking 2-5 minutes) before the agent can start. It also introduces a runtime dependency on external registries.
+
+### 2.2 Pre-baked "Fat" Images (Preferred Approach)
+The **preferred approach** for production and performance-sensitive environments is to use a pre-baked, self-contained image (e.g., `images/generic-golang/Dockerfile`).
+
+*   **Mechanism**: The LLM CLI and all its dependencies (like Node.js for Claude) are installed during the Docker build phase:
+    ```dockerfile
+    RUN npm install -g @anthropic-ai/claude-code
+    ```
+*   **Performance Benefit**: By eliminating the `envbuilder` installation phase, the sandbox enters the "Ready" state in **seconds rather than minutes**. All tools are immediately available in the `$PATH`.
+*   **Reliability**: The sandbox is entirely self-contained. It does not depend on dynamic network requests to a Feature registry at runtime, making it more robust against network flakes or registry outages.
+*   **Configuration**: To use this model, specify the `image` field directly in the `RepoWatch` manifest and omit the `devcontainerConfigRef`:
+    ```yaml
+    review:
+      image: ghcr.io/your-org/generic-golang:latest
+      llm:
+        provider: claude-cli
+    ```
+
+### 2.3 Injection Logic Summary
+When the `RepoWatch` controller reconciles a task:
+1.  If **`spec.review.image`** is set: It uses the specified image and executes `repo-sandbox dev-daemon`. This daemon handles cloning and task execution using the binaries already present in the image.
+2.  If **`spec.review.devcontainerConfigRef`** is set (and no image is specified): It defaults to the `envbuilder` workflow to dynamically assemble the environment.
+
+---
+
+## 3. The `Provider` Interface
+
+All LLM logic in the Go codebase is abstracted behind the `Provider` interface in `pkg/llm/provider.go`.
 
 ```go
-// pkg/llm/provider.go
-
 type Provider interface {
-	Setup(workspacesDir, tokensDir string) error
-	Cleanup(workspacesDir string) error
-	Run(prompt string) ([]byte, error)
+	Setup() error
+	Cleanup() error
+	ExpandPrompt(prompt string) (string, error)
+	Run(prompt string) ([]byte, *Stats, error)
 	AddPostProcessor(p PostProcessor)
+	QuotaCheck() bool
 }
 ```
 
-### Method Explanations
+### Key Methods
+*   **`Setup()`**: Handles authentication. It reads API keys from a mounted secret volume (usually `/tokens/`) and sets the required environment variables (e.g., `ANTHROPIC_API_KEY`).
+*   **`Run(prompt)`**: Executes the CLI binary. It **MUST** request JSON output to enable programmatic parsing of results and token usage.
+*   **`ExpandPrompt()`**: Allows for provider-specific prompt transformations (e.g., expanding custom command macros).
 
--   `Setup(workspacesDir, tokensDir string) error`: This method is called before running the LLM. It is responsible for any necessary setup, such as reading API keys from the `tokensDir` and setting them as environment variables, or preparing configuration files in the `workspacesDir`.
--   `Cleanup(workspacesDir string) error`: This method is called after the LLM run is complete. It should be used to clean up any temporary files or configurations created during the `Setup` phase.
--   `Run(prompt string) ([]byte, error)`: This is the primary method that executes the LLM. It takes the prompt as input and should return the raw output from the LLM as a byte slice.
--   `AddPostProcessor(p PostProcessor)`: This method adds a function to a slice of post-processors that are run sequentially on the raw LLM output. For example, you can add the included `StripYAMLMarkers` post-processor to automatically clean up code blocks.
+---
 
-## 2. Step-by-Step Implementation Guide
+## 4. Case Study: `claude-cli`
 
-Here is how to create a new provider called `MyProvider`.
+The `claude-cli` provider (implemented in `pkg/llm/claude-cli.go`) illustrates the standard integration pattern.
 
-### Step 2.1: Create the Provider File
+### 4.1 Implementation Mechanics
+1.  **Binary**: `@anthropic-ai/claude-code` (via npm).
+2.  **Execution**: It runs `claude --print --output-format json "prompt"`.
+3.  **Parsing**: It expects a JSON envelope:
+    ```json
+    {
+      "result": "...",
+      "modelUsage": {
+        "claude-3-7-sonnet": {
+          "inputTokens": 123,
+          "outputTokens": 456
+        }
+      }
+    }
+    ```
+4.  **Stats Mapping**: The `modelUsage` is mapped to the internal `llm.Stats` struct for observability and usage tracking.
 
-Create a new file for your provider in the `pkg/llm/` directory. For this example, we will call it `pkg/llm/my_provider.go`.
+---
 
-### Step 2.2: Define the Provider Struct and Implement the Interface
+## 5. Adding a New Provider (Developer Guide)
 
-In your new file, define a struct for your provider and implement the methods from the `Provider` interface. You can use the existing `gemini.go` implementation as a template.
+### Step 1: Implement the Logic
+Create `pkg/llm/my-provider.go`. Implement the `Provider` interface. If it's a CLI provider, use the `CommandExecutor` to run the binary.
 
+### Step 2: Register the Provider
+Update the factory function in `pkg/llm/provider.go`:
 ```go
-// pkg/llm/my_provider.go
-
-package llm
-
-import (
-	"fmt"
-	// Add any other necessary imports for your provider's SDK, etc.
-)
-
-// Ensure MyProvider implements the Provider interface.
-var _ Provider = &MyProvider{}
-
-type MyProvider struct {
-	// Add any fields your provider needs, like an API client.
-	processors []PostProcessor
-}
-
-func (m *MyProvider) AddPostProcessor(p PostProcessor) {
-	m.processors = append(m.processors, p)
-}
-
-func (m *MyProvider) Setup(workspacesDir, tokensDir string) error {
-	// TODO: Implement your setup logic.
-	// For example, read an API key from a file in tokensDir and initialize a client.
-	// apiKey, err := os.ReadFile(filepath.Join(tokensDir, "my-provider-key"))
-	// if err != nil {
-	// 	return fmt.Errorf("failed to read API key: %w", err)
-	// }
-	// m.client = myapi.NewClient(string(apiKey))
-	fmt.Println("MyProvider setup complete.")
-	return nil
-}
-
-func (m *MyProvider) Cleanup(workspacesDir string) error {
-	// TODO: Implement your cleanup logic if needed.
-	fmt.Println("MyProvider cleanup complete.")
-	return nil
-}
-
-func (m *MyProvider) Run(prompt string) ([]byte, error) {
-	// TODO: Implement the logic to call your LLM's API.
-	// rawOutput, err := m.client.Generate(prompt)
-	// if err != nil {
-	// 	return nil, err
-	// }
-
-	// This is a placeholder implementation.
-	rawOutput := []byte(fmt.Sprintf("Response from MyProvider for prompt: %s", prompt))
-
-	// Apply any post-processors.
-	var err error
-	for _, p := range m.processors {
-		rawOutput, err = p(rawOutput)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return rawOutput, nil
-}
+case "my-provider":
+    return &MyProvider{...}, nil
 ```
 
-## 3. Registering the New Provider
-
-To make the system aware of your new provider, you must add it to the `NewLLMProvider` factory function located in `pkg/llm/provider.go`.
-
-Modify the `switch` statement to include a new case for your provider. This allows users to select it in their `RepoWatch` manifests.
-
-**File:** `pkg/llm/provider.go`
-
-```diff
- // ... existing code ...
- func NewLLMProvider(name string, outputStartIndicator string) (Provider, error) {
- 	switch name {
- 	case "gemini-cli":
- 		g := &Gemini{Executor: &RealCommandExecutor{}}
- 		g.AddPostProcessor(StripYAMLMarkers)
- 		if outputStartIndicator != "" {
-			g.AddPostProcessor(StripUnillStartIndicator(outputStartIndicator))
-		}
- 		return g, nil
- 	case "claude":
- 		c := &Claude{}
- 		c.AddPostProcessor(StripYAMLMarkers)
- 		return c, nil
-+	case "my-provider": // Add your provider's name here
-+		 m := &MyProvider{}
-+		 m.AddPostProcessor(StripYAMLMarkers) // Optionally add default post-processors
-+		 return m, nil
- 	default:
- 		return nil, fmt.Errorf("unknown provider: %s", name)
- 	}
- }
- // ... existing code ...
+### Step 3: Update API Types
+Add the new provider to the `LLMConfig` enum in `api/repowatch/v1alpha1/repowatch_types.go`:
+```go
+// +kubebuilder:validation:Enum=gemini-cli;claude;claude-cli;my-provider
+Provider string `json:"provider,omitempty"`
 ```
+Then run `make manifests` to regenerate the CRD YAMLs.
 
-## 4. Updating the API Types
+### Step 4: Infrastructure (DevContainer)
+1.  Ensure a DevContainer Feature image exists for your provider (or that it's pre-installed in the base image).
+2.  Update the default `devcontainer-json` ConfigMap in `k8s/configmap-devcontainer.yaml` to include the feature.
 
-To ensure your new provider is a valid option in the `RepoWatch` Custom Resource Definition (CRD), you need to add its name to the `LLMConfig` type definition.
+### Step 5: Secrets
+Update the `Makefile` and `review-api` (if necessary) to handle the provisioning and copying of the required API key secrets.
 
-**File:** `repowatch/api/v1alpha1/repowatch_types.go`
+---
 
-1.  **Add a new constant for your provider's name.**
+## 6. Common Pitfalls & FAQs
 
-    ```diff
-     const (
-     	// GeminiProvider represents the Gemini LLM provider.
-     	GeminiProvider = "gemini-cli"
-     	// ClaudeProvider represents the Claude LLM provider.
-     	ClaudeProvider = "claude"
-    +	// MyProvider represents our new custom provider.
-    +	MyProviderName = "my-provider"
-     )
-    ```
+**Q: Should I use the raw API or the CLI?**
+**A**: If the task requires "doing" things in the repo (editing files, running tests), use the CLI. If it's just a simple text transformation, the raw API is faster.
 
-2.  **Add the name to the `+kubebuilder:validation:Enum` list.** This enforces that only registered provider names can be used in the manifest.
+**Q: How do I handle non-JSON output?**
+**A**: Many CLIs output progress bars or warnings to stdout. Your parser should find the first `{` character to locate the start of the JSON response.
 
-    ```diff
-     // Provider is the name of the LLM provider to use. This field is used to
-     // determine which LLM client to instantiate and how to interact with the
-     // LLM API.
-    -// +kubebuilder:validation:Enum=gemini-cli;claude
-    +// +kubebuilder:validation:Enum=gemini-cli;claude;my-provider
-     // +kubebuilder:default=gemini-cli
-     Provider string `json:"provider,omitempty"`
-    ```
-
-
-## 5. Creating the API Key Secret (Local Development)
-
-For local development and testing, API key secrets are typically created in the `repo-agent-system` namespace using the `create-secrets` target in the `Makefile`. This provides a convenient way to provision secrets from environment variables.
-
-### Step 5.1: Update the `Makefile` `create-secrets` Target
-
-Add a `kubectl create secret` command to the `create-secrets` target in your `Makefile`. This command will create a Kubernetes Secret containing your provider's API key, sourced from an environment variable.
-
-**File:** `Makefile`
-
-```diff
- .PHONY: create-secrets
- create-secrets:
-	kubectl create namespace repo-agent-system || true
-	@kubectl create secret -n repo-agent-system generic gemini-vscode-tokens --from-literal=gemini=${GEMINI_API_KEY} --dry-run=client -o yaml | kubectl apply -f -
-	@kubectl create secret -n repo-agent-system generic github-pat --from-literal=pat="${GITHUB_PAT}" --from-literal=name="`git config --global user.name`" --from-literal=email=`git config --global user.email` --dry-run=client -o yaml | kubectl apply -f -
-	@kubectl create secret -n repo-agent-system generic anthropic-api-key --from-literal=claude=${ANTHROPIC_API_KEY} --dry-run=client -o yaml | kubectl apply -f -
-+	@ifndef MY_PROVIDER_API_KEY
-+	$(warning MY_PROVIDER_API_KEY is not set. MyProvider will not work.)
-+	@else
-+	@kubectl create secret -n repo-agent-system generic my-provider-secret --from-literal=mykey=${MY_PROVIDER_API_KEY} --dry-run=client -o yaml | kubectl apply -f -
-+	@endif
-	# Create github-token secret for the API, optionally including OAuth credentials
-```
-
-### Step 5.2 (Optional): Add `ifndef` Environment Variable Check
-
-It's good practice to add an `ifndef` check at the top of your `Makefile` to provide a warning or error if the environment variable for your new provider's API key is not set. This helps ensure users are aware of missing prerequisites.
-
-**File:** `Makefile` (top section)
-
-```diff
- # Check pre-reqs
-+ifndef MY_PROVIDER_API_KEY
-+$(warning MY_PROVIDER_API_KEY is not set. MyProvider will not work.)
-+endif
-
- ifndef GEMINI_API_KEY
- $(error GEMINI_API_KEY is not set. Please set it before running make.)
- ```
-
-## 6. Making the API Key Available to the Agent
-
-For the new provider's API key to be accessible by the agent sandboxes, its Kubernetes Secret must be copied from the `repo-agent-system` namespace into the user's personal namespace when they first log in. This bootstrapping process is handled by the `review-api` service.
-
-### Step 6.1: Register the Secret in the API Service
-
-**File:** `review-ui/review-api/main.go`
-
-First, define a new constant for your provider's secret name. This secret must be created in the `repo-agent-system` namespace.
-
-```diff
- const (
-	// ... existing constants
-	githubSecretName = "github-pat"
-	geminiSecretName = "gemini-vscode-tokens"
-+	myProviderSecretName = "my-provider-secret" // The name of the secret holding your provider's key
- )
-```
-
-### Step 6.2: Add Secret-Copying Logic
-
-Next, add logic to the `bootstrapNamespace` function to copy this secret into new user namespaces.
-
-**File:** `review-ui/review-api/main.go`
-
-```diff
- func bootstrapNamespace(ctx context.Context, targetNS string) error {
-	// ... existing namespace creation and other secret copies ...
-	if err := copySecret(ctx, systemNamespace, geminiSecretName, targetNS, geminiSecretName); err != nil {
-		log.Printf("Warning: failed to copy default gemini secret: %v", err)
-	}
-+	if err := copySecret(ctx, systemNamespace, myProviderSecretName, targetNS, myProviderSecretName); err != nil {
-+		log.Printf("Warning: failed to copy my-provider secret: %v", err)
-+	}
-
-	if err := setupServiceAccounts(ctx, targetNS); err != nil {
-		log.Printf("Warning: failed to setup service accounts: %v", err)
-	}
-
-	return nil
- }
-```
-
-### Step 6.3: How the Secret is Mounted and Used
-
-This new logic ensures that the secret is available in the user's namespace. The end-to-end flow for the key is as follows:
-
-1.  A user references the secret name in their `RepoWatch` manifest (e.g., `apiKeySecretRef: my-provider-secret`).
-2.  The `repowatch-controller` reads this reference and configures the agent sandbox Pod to mount the specified Secret as a volume.
-3.  The volume is mounted to a known directory inside the agent pod, such as `/etc/llm-tokens/`.
-4.  The `Provider.Setup()` method, which you implemented in Step 2, receives this path in its `tokensDir` argument.
-5.  Your `Setup` logic can now read the key from the file system (e.g., `os.ReadFile(filepath.Join(tokensDir, "your-key-name-in-secret"))`) and use it to configure your LLM client.
-
-## 7. Usage
-
-Once the steps above are complete, users can select your new provider in any `RepoWatch` manifest by setting the `provider` field in the `llm` configuration.
-
-```yaml
-# ... inside a RepoWatch manifest ...
-spec:
-  review:
-    llm:
-      provider: my-provider # Use the new provider
-      apiKeySecretRef: my-provider-api-key-secret
-      prompt: "Please review this pull request."
-# ... rest of the manifest ...
-```
+**Q: What about authentication?**
+**A**: Always use the "Secret-to-Env" pattern. Mount the secret to `/tokens/`, read it in `Setup()`, and set it as an environment variable. Never hardcode keys.
