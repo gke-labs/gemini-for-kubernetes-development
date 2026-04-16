@@ -110,6 +110,13 @@ func NewLLMProvider(cfg ProviderConfig) (Provider, error) {
 		}
 		c.AddPostProcessor(StripYAMLMarkers)
 		return c, nil
+	case "claude-cli":
+		c := &ClaudeCLI{
+			Executor:       &RealCommandExecutor{},
+			ProviderConfig: cfg,
+		}
+		c.AddPostProcessor(StripYAMLMarkers)
+		return c, nil
 	case "dummy":
 		d := &Dummy{
 			ProviderConfig: cfg,

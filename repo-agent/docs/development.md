@@ -1,5 +1,15 @@
 ## Developer Installation from source
 
+### Prerequisites
+
+Ensure you have the following installed:
+- **Go 1.25+**
+- **Docker**
+- **KinD**
+- **kubectl**
+- **Helm**
+- **Node.js 18+ & npm** (Required for LLM CLIs like `gemini` and `claude`)
+
 1.  **Set Environment Variables:**
 
     Follow [these instructions](env-variables.md) to set the required `env` variables.
