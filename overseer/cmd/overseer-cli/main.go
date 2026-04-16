@@ -1239,7 +1239,6 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 		}
 	}
 
-
 	// Check limit only if we need to create or activate a sandbox
 	if !sandboxIsActive && overseer.Spec.MaxActiveReviews != nil {
 		maxReviews := *overseer.Spec.MaxActiveReviews
