@@ -37,7 +37,7 @@ RUN mkdir -p /etc/apt/keyrings && \
 
 # 3. Install all apt packages
 RUN apt-get update && \
-    apt-get install -y \
+    apt-get install -y --no-install-recommends \
     docker-ce=${DOCKER_VERSION} \
     docker-ce-cli=${DOCKER_VERSION} \
     containerd.io \
@@ -57,7 +57,8 @@ RUN apt-get update && \
     sudo \
     helm \
     build-essential \
-    google-cloud-cli
+    google-cloud-cli && \
+    rm -rf /var/lib/apt/lists/*
 
 # ------- Install go -------
 ENV GO_VERSION=1.26.1
@@ -73,7 +74,7 @@ ENV PATH=$PATH:/usr/local/go/bin
 ENV GOTOOLCHAIN=auto
 
 # -------- Install global Node.js packages --------
-RUN npm install -g @google/gemini-cli @anthropic-ai/claude-code
+RUN npm install -g @google/gemini-cli @anthropic-ai/claude-code && npm cache clean --force
 
 # -------- Download binary releases --------
 # Install Kind
@@ -105,7 +106,8 @@ RUN go install github.com/mikefarah/yq/v4@latest && \
 
 # Install setup-envtest and download assets
 RUN go install sigs.k8s.io/controller-runtime/tools/setup-envtest@release-0.22 && \
-    $(go env GOPATH)/bin/setup-envtest use
+    $(go env GOPATH)/bin/setup-envtest use && \
+    go clean -cache -modcache
 
 # (Optional) Export KUBEBUILDER_ASSETS so it's available for 'go test' automatically.
 # The path below is the default location setup-envtest extracts the binaries to.

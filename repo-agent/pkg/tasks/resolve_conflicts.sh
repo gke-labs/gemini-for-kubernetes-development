@@ -197,9 +197,11 @@ function runGemini {
     
     if [ -n "$GITHUB_BOT_NAME" ]; then
         export GIT_AUTHOR_NAME="$GITHUB_BOT_NAME"
-        export GIT_AUTHOR_EMAIL="$GITHUB_BOT_EMAIL"
         export GIT_COMMITTER_NAME="$GITHUB_BOT_NAME"
-        export GIT_COMMITTER_EMAIL="$GITHUB_BOT_EMAIL"
+        if [ -n "$GITHUB_BOT_EMAIL" ]; then
+            export GIT_AUTHOR_EMAIL="$GITHUB_BOT_EMAIL"
+            export GIT_COMMITTER_EMAIL="$GITHUB_BOT_EMAIL"
+        fi
     fi
 
     # Identify the current branch and its remote (handles forks)
@@ -313,7 +315,18 @@ echo "Proceeding with LLM resolution loop."
 
 # Install extensions if any
 {{- range .Extensions }}
-gemini extensions install "{{ .Source }}" {{ if .Ref }}--ref "{{ .Ref }}"{{ end }} --consent || true
+echo "Installing extension: {{ .Source }}"
+for i in $(seq 1 3); do
+    if gemini extensions install "{{ .Source }}" {{ if .Ref }}--ref "{{ .Ref }}"{{ end }} --consent; then
+        break
+    fi
+    if [ $i -lt 3 ]; then
+        echo "Extension installation failed, retrying in 5s... ($i/3)"
+        sleep 5
+    else
+        echo "Warning: Extension installation failed after 3 attempts. Continuing anyway..."
+    fi
+done
 {{- end }}
 
 runGemini
