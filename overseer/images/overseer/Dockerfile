@@ -28,6 +28,9 @@ RUN go build -o overseer-cli ./cmd/overseer-cli/main.go
 
 FROM node:20-slim
 
+# Add apt retries
+RUN echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries
+
 # Install tools
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -46,7 +49,7 @@ RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/s
     mv kubectl /usr/local/bin/
 
 # Install gemini-cli
-RUN npm install -g @google/gemini-cli
+RUN npm install -g @google/gemini-cli && npm cache clean --force
 
 WORKDIR /workspaces
 
