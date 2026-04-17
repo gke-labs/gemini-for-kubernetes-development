@@ -1567,7 +1567,12 @@ func (r *Reconciler) reconcileDevSandboxesInternal(ctx context.Context, user *gi
 
 	for _, sandbox := range ownedSandboxes {
 		// Get branch from annotations
-		branch := sandbox.GetAnnotations()["sandbox.gemini.google.com/branch"]
+		annotations := sandbox.GetAnnotations()
+		if annotations == nil {
+			log.Error(nil, "sandbox has no annotations", "sandbox", sandbox.GetName())
+			continue
+		}
+		branch := annotations["sandbox.gemini.google.com/branch"]
 		if branch == "" {
 			log.Error(nil, "unable to get branch from sandbox annotations", "sandbox", sandbox.GetName())
 			continue
@@ -1853,10 +1858,12 @@ func (r *Reconciler) pauseSandboxIfIdle(ctx context.Context, sandbox *unstructur
 
 	// Check for manual override annotation
 	annotations := sandbox.GetAnnotations()
-	if val, ok := annotations["sandbox.gemini.google.com/prevent-auto-shutdown"]; ok && val == "true" {
-		// Log only at debug level to avoid spam, or Info if occasional
-		log.V(4).Info("Skipping auto-pause due to manual override", "sandbox", sandbox.GetName())
-		return false, nil
+	if annotations != nil {
+		if val, ok := annotations["sandbox.gemini.google.com/prevent-auto-shutdown"]; ok && val == "true" {
+			// Log only at debug level to avoid spam, or Info if occasional
+			log.V(4).Info("Skipping auto-pause due to manual override", "sandbox", sandbox.GetName())
+			return false, nil
+		}
 	}
 
 	// Check if running (replicas > 0)
@@ -1883,10 +1890,12 @@ func (r *Reconciler) pauseSandboxIfIdle(ctx context.Context, sandbox *unstructur
 
 		// Check completion time
 		ann := task.GetAnnotations()
-		if tsStr, ok := ann["sandbox.gemini.google.com/completion-time"]; ok {
-			if ts, err := time.Parse(time.RFC3339, tsStr); err == nil {
-				if ts.After(latestTime) {
-					latestTime = ts
+		if ann != nil {
+			if tsStr, ok := ann["sandbox.gemini.google.com/completion-time"]; ok {
+				if ts, err := time.Parse(time.RFC3339, tsStr); err == nil {
+					if ts.After(latestTime) {
+						latestTime = ts
+					}
 				}
 			}
 		}
@@ -2234,6 +2243,9 @@ func (r *Reconciler) getLinkedPRFromSandbox(ctx context.Context, ghClient *githu
 
 	for _, task := range tasks.Items {
 		annotations := task.GetAnnotations()
+		if annotations == nil {
+			continue
+		}
 		agentDraft, ok := annotations["agentDraft"]
 		if !ok || agentDraft == "" {
 			continue

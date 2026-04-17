@@ -2,11 +2,11 @@ FROM ghcr.io/github/github-mcp-server as build
 
 FROM debian:bookworm-slim
 
-# Add apt retries
-RUN echo 'Acquire::Retries "10";' > /etc/apt/apt.conf.d/80-retries
+# Add apt retries and timeouts
+RUN echo 'Acquire::Retries "10"; Acquire::http::Timeout "60"; Acquire::https::Timeout "60";' > /etc/apt/apt.conf.d/80-retries
 
 # Install socat and necessary tools.
-RUN (apt-get update || (sleep 5 && apt-get update) || (sleep 10 && apt-get update)) && \
+RUN (apt-get update || (sleep 10 && apt-get update) || (sleep 20 && apt-get update) || true) && \
     apt-get install -y --no-install-recommends \
     socat \
     # Needed to find dynamic library dependencies.
