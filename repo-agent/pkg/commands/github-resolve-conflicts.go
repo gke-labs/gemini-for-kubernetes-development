@@ -164,6 +164,7 @@ func (c *GithubResolveConflictsCommand) loadGithubObjects(ctx context.Context) e
 	}
 
 	if c.BaseRef == "" || c.HeadRef == "" {
+		klog.V(4).Infof("PR object: %+v", c.pr)
 		return fmt.Errorf("BaseRef or HeadRef is empty for PR %d in %s/%s", c.PRNumber, owner, repoName)
 	}
 
@@ -235,9 +236,10 @@ func (c *GithubResolveConflictsCommand) Run(ctx context.Context) error {
 	if c.ExtensionsJSON != "" {
 		var extensions []reviewv1alpha1.Extension
 		if err := json.Unmarshal([]byte(c.ExtensionsJSON), &extensions); err != nil {
-			return fmt.Errorf("failed to unmarshal extensions JSON: %w", err)
+			klog.Warningf("failed to unmarshal extensions JSON (skipping): %v", err)
+		} else {
+			task.Extensions = extensions
 		}
-		task.Extensions = extensions
 	}
 
 	apikey, err := GetGeminiAPIKey(c.sandboxID)

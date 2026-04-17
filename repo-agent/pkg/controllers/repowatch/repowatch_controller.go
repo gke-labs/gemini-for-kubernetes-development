@@ -2381,6 +2381,7 @@ func (r *Reconciler) reconcileSandboxPodStatus(ctx context.Context, sandbox *uns
 			return sandboxStatus, err
 		}
 
+		patch := client.MergeFrom(latestSandbox.DeepCopy())
 		latestAnnotations := latestSandbox.GetAnnotations()
 		if latestAnnotations == nil {
 			latestAnnotations = make(map[string]string)
@@ -2390,8 +2391,8 @@ func (r *Reconciler) reconcileSandboxPodStatus(ctx context.Context, sandbox *uns
 		}
 
 		latestSandbox.SetAnnotations(latestAnnotations)
-		if err := r.Update(ctx, latestSandbox); err != nil {
-			log.Error(err, "failed to update sandbox annotation for pod status", "sandbox", latestSandbox.GetName())
+		if err := r.Patch(ctx, latestSandbox, patch); err != nil {
+			log.Error(err, "failed to patch sandbox annotation for pod status", "sandbox", latestSandbox.GetName())
 			return sandboxStatus, err
 		}
 	}
@@ -2434,11 +2435,16 @@ func (r *Reconciler) reconcileReviewConflicts(ctx context.Context, repoWatch *re
 		if task.Spec.Type != "resolve-conflicts" {
 			continue
 		}
+
+		state := task.Status.TaskState
+		// If any resolve-conflicts task is currently active for this sandbox, don't start a new one.
+		if state == "" || state == "Pending" || state == "Running" {
+			activeTaskExists = true
+		}
+
 		// If we've already attempted this specific combination of head and base SHAs, skip.
 		if task.Spec.Params["HEAD_SHA"] == headSHA && task.Spec.Params["BASE_SHA"] == baseSHA {
-			state := task.Status.TaskState
 			if state == "" || state == "Pending" || state == "Running" {
-				activeTaskExists = true
 				alreadyAttemptedThisSHA = true
 			} else if state == "Completed" || state == "Failed" {
 				alreadyAttemptedThisSHA = true
@@ -2470,7 +2476,7 @@ func (r *Reconciler) reconcileReviewConflicts(ctx context.Context, repoWatch *re
 	if pr.Mergeable == nil {
 		// GitHub is still computing mergeability.
 		// We return a small error to trigger a requeue by controller-runtime.
-		log.Info("GitHub is still computing mergeability, requeuing", "pr", pr.GetNumber())
+		log.V(1).Info("GitHub is still computing mergeability, requeuing", "pr", pr.GetNumber())
 		return errPendingMergeability
 	}
 

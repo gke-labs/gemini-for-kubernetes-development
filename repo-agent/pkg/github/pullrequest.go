@@ -75,8 +75,9 @@ func (p *PullRequest) Body() string {
 
 func (p *PullRequest) TruncatedBody() string {
 	body := p.pr.GetBody()
-	if len(body) > 2000 {
-		return body[:2000] + "... (truncated)"
+	runes := []rune(body)
+	if len(runes) > 2000 {
+		return string(runes[:2000]) + "... (truncated)"
 	}
 	return body
 }

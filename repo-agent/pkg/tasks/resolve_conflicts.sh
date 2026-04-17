@@ -97,7 +97,11 @@ function setupGitRepos {
         echo "repository already exists"
         # Ensure a pristine state before doing anything
         # We use git clean -fd (without x) to avoid wiping out toolchains or configs that might be in .gitignore
-        (cd "/workspaces/${REPO_NAME}" && git merge --abort || true && git reset --hard && git clean -fd && git fetch origin)
+        cd "/workspaces/${REPO_NAME}"
+        git merge --abort || true
+        git reset --hard
+        git clean -fd
+        git fetch origin
     fi
 
     (cd "/workspaces/${REPO_NAME}" && gh repo set-default "${REPO_OWNER}/${REPO_NAME}" || true)
@@ -108,8 +112,6 @@ function checkoutPRBranch {
     # gh pr checkout handles forks by adding a remote for the fork and setting up tracking.
     cd "/workspaces/${REPO_NAME}"
     gh pr checkout "${PR_NUMBER}" --force
-    # Ensure we are up to date with the remote branch
-    git pull --rebase
 }
 
 function verifyResolution {
@@ -136,7 +138,7 @@ function runTests {
     # Go
     if find . -maxdepth 2 -name "go.mod" | grep -q .; then
         echo "Found Go project, running tests..."
-        go test ./... || TEST_FAILED=true
+        (go mod tidy && go test ./...) || TEST_FAILED=true
     fi
     
     # Node.js
@@ -163,11 +165,13 @@ function runTests {
              echo "Running tests in $dir"
              (
                  cd "$dir"
+                 # Use a virtual environment for isolation
+                 python3 -m venv venv && source venv/bin/activate
                  if [ -f "requirements.txt" ]; then
-                     pip install --break-system-packages -r requirements.txt || pip install -r requirements.txt || true
+                     pip install -r requirements.txt || true
                  fi
                  if [ -f "pyproject.toml" ]; then
-                     pip install --break-system-packages . || pip install . || true
+                     pip install . || true
                  fi
                  if command -v pytest >/dev/null 2>&1; then
                      pytest || exit 1
@@ -217,8 +221,7 @@ function runGemini {
     
     echo "Current branch: ${CURRENT_BRANCH}, Remote: ${REMOTE}"
 
-    # Ensure we have the latest of the current branch and the base branch
-    git fetch "${REMOTE}" "${CURRENT_BRANCH}" || true
+    # Ensure we have the latest of the base branch
     git fetch origin "${BASE_REF}" || { echo "Failed to fetch base branch origin/${BASE_REF}. Perhaps it was deleted?"; exit 1; }
 
     # Capture the original HEAD before the merge loop to ensure we can always reset to a clean state.

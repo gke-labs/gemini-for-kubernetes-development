@@ -162,6 +162,7 @@ type PRReviewSpec struct {
 	// ResolveConflicts enables automated merge conflict resolution for PRs.
 	// Warning: Enabling this may increase GitHub API usage and consume significant LLM tokens.
 	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=false
 	ResolveConflicts bool `json:"resolveConflicts,omitempty"`
 }
 
