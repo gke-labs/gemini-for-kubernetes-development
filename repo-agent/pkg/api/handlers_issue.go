@@ -615,7 +615,11 @@ func (s *Server) getIssueCommits(c *gin.Context) {
 	if linkedPR == nil {
 		if taskList, err := s.K8sManager.ListSandboxTasks(c.Request.Context(), namespace, sandboxName); err == nil {
 			for _, taskItem := range taskList.Items {
-				if tAgentDraft := taskItem.GetAnnotations()["agentDraft"]; tAgentDraft != "" {
+				tAnnotations := taskItem.GetAnnotations()
+				if tAnnotations == nil {
+					continue
+				}
+				if tAgentDraft := tAnnotations["agentDraft"]; tAgentDraft != "" {
 					matches := prURLRegex.FindAllString(tAgentDraft, -1)
 					for _, match := range matches {
 						if prRef, err := pkg_github.ParsePullRequestURL(match); err == nil {
