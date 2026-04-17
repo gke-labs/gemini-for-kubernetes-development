@@ -14,7 +14,8 @@ ENV DEBIAN_FRONTEND="noninteractive"
 RUN echo 'Acquire::Retries "10";' > /etc/apt/apt.conf.d/80-retries
 
 # 1. Install prerequisites for adding apt repositories
-RUN apt-get update && apt-get -y install --no-install-recommends \
+RUN (apt-get update || (sleep 5 && apt-get update) || (sleep 10 && apt-get update)) && \
+    apt-get -y install --no-install-recommends \
     apt-transport-https \
     ca-certificates \
     curl \
@@ -39,7 +40,7 @@ RUN mkdir -p /etc/apt/keyrings && \
     echo "deb [signed-by=/etc/apt/keyrings/helm.gpg] https://packages.buildkite.com/helm-linux/helm-debian/any/ any main" > /etc/apt/sources.list.d/helm-stable-debian.list
 
 # 3. Install all apt packages
-RUN apt-get update && \
+RUN (apt-get update || (sleep 5 && apt-get update) || (sleep 10 && apt-get update)) && \
     apt-get install -y --no-install-recommends \
     docker-ce=${DOCKER_VERSION} \
     docker-ce-cli=${DOCKER_VERSION} \
