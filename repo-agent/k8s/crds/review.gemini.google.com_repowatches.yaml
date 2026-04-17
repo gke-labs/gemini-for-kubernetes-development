@@ -295,6 +295,7 @@ spec:
                       type: integer
                     type: array
                   resolveConflicts:
+                    default: false
                     type: boolean
                   reviewShutdownAfterMinutes:
                     type: integer
