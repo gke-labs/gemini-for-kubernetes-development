@@ -45,7 +45,7 @@ FROM golang:1.25.7
 ENV GOTOOLCHAIN=auto
 
 # Add apt retries
-RUN echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries
+RUN echo 'Acquire::Retries "10";' > /etc/apt/apt.conf.d/80-retries
 
 # We want a functional python, because gemini-cli likes to use python
 RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-pip python3-yaml python-is-python3 python3-venv && \

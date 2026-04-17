@@ -3,7 +3,7 @@ FROM ghcr.io/github/github-mcp-server as build
 FROM debian:bookworm-slim
 
 # Add apt retries
-RUN echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries
+RUN echo 'Acquire::Retries "10";' > /etc/apt/apt.conf.d/80-retries
 
 # Install socat and necessary tools.
 RUN apt-get update && \

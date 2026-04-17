@@ -39,6 +39,9 @@ dpkg-query -Wf '${Installed-Size}\t${Status;1}\t${Package}\n' | sort -n | tail -
 echo "** Disk usage:"
 df -h
 
+echo "Adding APT retries"
+echo 'Acquire::Retries "10";' | sudo tee /etc/apt/apt.conf.d/80-retries
+
 echo "Removing man-db (to speed up further removals)"
 sudo apt-get remove -y man-db || true
 

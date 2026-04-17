@@ -11,7 +11,7 @@ ARG DOCKER_VERSION="5:27.5.1-1~ubuntu.24.04~noble"
 ENV DEBIAN_FRONTEND="noninteractive"
 
 # Add apt retries
-RUN echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries
+RUN echo 'Acquire::Retries "10";' > /etc/apt/apt.conf.d/80-retries
 
 # 1. Install prerequisites for adding apt repositories
 RUN apt-get update && apt-get -y install --no-install-recommends \
