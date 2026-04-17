@@ -221,9 +221,6 @@ function runGemini {
     
     echo "Current branch: ${CURRENT_BRANCH}, Remote: ${REMOTE}"
 
-    # Ensure we have the latest of the base branch
-    git fetch origin "${BASE_REF}" || { echo "Failed to fetch base branch origin/${BASE_REF}. Perhaps it was deleted?"; exit 1; }
-
     # Capture the original HEAD before the merge loop to ensure we can always reset to a clean state.
     local ORIG_HEAD
     ORIG_HEAD=$(git rev-parse HEAD)
