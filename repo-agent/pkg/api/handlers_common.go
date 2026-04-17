@@ -213,6 +213,10 @@ func truncateToRuneBoundary(s string, limit int) string {
 }
 
 func (s *Server) getTaskMetadata(ctx context.Context, namespace, sandboxName, taskName, taskUID string) (string, string) {
+	if sandboxName == "" || sandboxName == "n/a" {
+		return "n/a", "n/a"
+	}
+
 	// If BOTH are missing or explicitly n/a, we'll fall back to latest.
 	// If only one is missing or n/a, we try to preserve or resolve the other.
 	if (taskName == "" || taskName == "n/a") && (taskUID == "" || taskUID == "n/a") {
@@ -260,12 +264,24 @@ func (s *Server) applyTraceabilityMetadata(c *gin.Context, body string, taskType
 	const safetyMargin = 536
 	const limit = githubLimit - safetyMargin
 
+	body = strings.TrimSpace(body)
+
+	// Identify and remove existing footer to avoid duplication and ensure it's not truncated
+	// if it was already near the limit.
+	if footerStart := strings.LastIndex(body, "<!-- repo-agent-metadata"); footerStart != -1 {
+		footerEnd := strings.Index(body[footerStart:], "-->")
+		if footerEnd != -1 {
+			// Remove the footer and any trailing whitespace
+			body = strings.TrimSpace(body[:footerStart] + body[footerStart+footerEnd+3:])
+		} else {
+			// Malformed footer? Just cut from footerStart
+			body = strings.TrimSpace(body[:footerStart])
+		}
+	}
+
 	if !s.TraceabilityMetadataEnabled {
 		klog.FromContext(c.Request.Context()).V(4).Info("Traceability metadata is disabled, skipping footer", "taskType", taskType)
-		return truncateString(strings.TrimSpace(body), limit)
-	}
-	if strings.Contains(body, "<!-- repo-agent-metadata") {
-		return truncateString(strings.TrimSpace(body), limit)
+		return truncateString(body, limit)
 	}
 
 	ctx := c.Request.Context()
@@ -285,7 +301,7 @@ func (s *Server) applyTraceabilityMetadata(c *gin.Context, body string, taskType
 		Timestamp:      time.Now().UTC().Format(time.RFC3339),
 	})
 
-	return truncateString(strings.TrimSpace(body), limit-len(footer)) + footer
+	return truncateString(body, limit-len(footer)) + footer
 }
 
 func (s *Server) getRepoWatchName(ctx context.Context, namespace, sandboxName string) string {

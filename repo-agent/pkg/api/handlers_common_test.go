@@ -320,6 +320,13 @@ func TestGetTaskMetadata(t *testing.T) {
 			t.Errorf("getTaskMetadata() fallback = (%q, %q), want (%q, %q)", gotName, gotUID, expectedName, expectedUID)
 		}
 	})
+
+	t.Run("Invalid sandbox name - fails fast", func(t *testing.T) {
+		gotName, gotUID := server.getTaskMetadata(ctx, namespace, "", "task1", "uid1")
+		if gotName != "n/a" || gotUID != "n/a" {
+			t.Errorf("getTaskMetadata() with empty sandbox = (%q, %q), want (%q, %q)", gotName, gotUID, "n/a", "n/a")
+		}
+	})
 }
 
 func TestApplyTraceabilityMetadata(t *testing.T) {
@@ -376,16 +383,22 @@ func TestApplyTraceabilityMetadata(t *testing.T) {
 		}
 	})
 
-	t.Run("Traceability enabled - does not duplicate footer", func(t *testing.T) {
+	t.Run("Traceability enabled - replaces existing footer and truncates correctly", func(t *testing.T) {
 		w := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(w)
 		c.Request, _ = http.NewRequest("POST", "/", nil)
 
 		server.TraceabilityMetadataEnabled = true
-		bodyWithFooter := body + "\n<!-- repo-agent-metadata\n-->"
+		bodyWithFooter := body + "\n<!-- repo-agent-metadata\nold-data: some-value\n-->"
 		got := server.applyTraceabilityMetadata(c, bodyWithFooter, taskType, sandboxName, "task1", "uid1")
 		if strings.Count(got, "<!-- repo-agent-metadata") != 1 {
 			t.Errorf("applyTraceabilityMetadata() duplicated footer = %q", got)
+		}
+		if strings.Contains(got, "old-data: some-value") {
+			t.Errorf("applyTraceabilityMetadata() failed to remove old footer: %q", got)
+		}
+		if !strings.Contains(got, "task-type: test-task") {
+			t.Errorf("applyTraceabilityMetadata() missing new metadata: %q", got)
 		}
 	})
 }
