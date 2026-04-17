@@ -72,7 +72,7 @@ function setupGitRepos {
     (cd "/workspaces/${REPO_NAME}" && git remote rename origin upstream)
 
     echo "running gh repo fork"
-    (cd "/workspaces/${REPO_NAME}" && gh repo fork --remote --remote-name origin || true)
+    (cd "/workspaces/${REPO_NAME}" && gh repo fork --remote --remote-name origin || echo 'WARNING: Failed to fork repository. origin remote may be missing.')
 
     echo "running gh repo set-default"
     (cd "/workspaces/${REPO_NAME}" && gh repo set-default "${CLONE_URL}" || true)

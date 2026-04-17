@@ -48,6 +48,8 @@ function setupGitRepos {
     echo "Running setupGitRepos..."
     if [ -d "/workspaces/${REPO_NAME}" ]; then
         echo "Repository already exists at /workspaces/${REPO_NAME}"
+        # Ensure origin is renamed to upstream if it exists and upstream does not
+        (cd "/workspaces/${REPO_NAME}" && git remote get-url upstream >/dev/null 2>&1 || git remote rename origin upstream >/dev/null 2>&1 || true)
     else
         echo "cloning repository"
         git clone "${CLONE_URL}" "/workspaces/${REPO_NAME}"
@@ -58,7 +60,7 @@ function setupGitRepos {
     pushd "/workspaces/${REPO_NAME}" > /dev/null
     
     echo "running gh repo fork"
-    gh repo fork --remote --remote-name origin || true
+    gh repo fork --remote --remote-name origin || echo 'WARNING: Failed to fork repository. origin remote may be missing.'
 
     echo "running gh repo set-default"
     gh repo set-default "${CLONE_URL}" || true

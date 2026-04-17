@@ -73,20 +73,22 @@ function setupGitRepos {
 
         # Ensure we have the fork and remotes set up correctly
         echo "Configuring fork..."
-        (cd "/workspaces/${REPO_NAME}" && gh repo fork --remote --remote-name origin)
+        (cd "/workspaces/${REPO_NAME}" && gh repo fork --remote --remote-name origin || echo 'WARNING: Failed to fork repository. origin remote may be missing.')
 
         echo "Setting default repository for gh CLI..."
-        (cd "/workspaces/${REPO_NAME}" && gh repo set-default "${CLONE_URL}")
+        (cd "/workspaces/${REPO_NAME}" && gh repo set-default "${CLONE_URL}" || true)
 
         echo "Syncing fork with upstream..."
         # Specify the fork explicitly to avoid 'gh repo set-default' issues
-        (cd "/workspaces/${REPO_NAME}" && gh repo sync "${GITHUB_USER_ID}/${REPO_NAME}" --force)
+        (cd "/workspaces/${REPO_NAME}" && gh repo sync "${GITHUB_USER_ID}/${REPO_NAME}" --force || true)
         
         # Ensure we have all branches from upstream
-        (cd "/workspaces/${REPO_NAME}" && git fetch upstream && git fetch origin)
+        (cd "/workspaces/${REPO_NAME}" && git fetch upstream || true && git fetch origin || true)
     else
         echo "repository already exists, fetching latest changes..."
-        (cd "/workspaces/${REPO_NAME}" && git fetch origin && git fetch upstream)
+        # Ensure origin is renamed to upstream if it exists and upstream does not
+        (cd "/workspaces/${REPO_NAME}" && git remote get-url upstream >/dev/null 2>&1 || git remote rename origin upstream >/dev/null 2>&1 || true)
+        (cd "/workspaces/${REPO_NAME}" && git fetch origin || true && git fetch upstream || true)
     fi
 }
 
