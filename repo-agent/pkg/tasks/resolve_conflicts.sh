@@ -31,6 +31,8 @@ export GITHUB_USER_NAME={{ printf "%q" .User.Name }}
 export PR_NUMBER={{ .PullRequest.Number }}
 export BASE_REF={{ printf "%q" .BaseRef }}
 
+TASK_DIR="$(dirname "${PROMPT_FILE}")"
+
 # Disable git hooks for automated operations to prevent local hooks from blocking progress or causing side effects.
 export GIT_CONFIG_PARAMETERS="'core.hooksPath=/dev/null'"
 
@@ -117,8 +119,9 @@ function checkoutPRBranch {
 function verifyResolution {
     echo "Verifying conflict resolution..."
     # We check for conflict markers excluding the .git directory.
-    # We check for all three markers: <<<<<<<, =======, >>>>>>>
-    if grep -rE --exclude-dir=.git "^(<<<<<<<|=======|>>>>>>>)" .; then
+    # We check for the start and end markers: <<<<<<< and >>>>>>>.
+    # We omit ======= because it falsely trips on Markdown headers.
+    if grep -rE --exclude-dir=.git "^(<<<<<<< |>>>>>>> |<{7}$|>{7}$)" .; then
         echo "Conflict markers still present!"
         return 1
     fi
@@ -136,16 +139,17 @@ function runTests {
     # In monorepos, we search for markers in subdirectories too.
     
     # Go
-    if find . -maxdepth 2 -name "go.mod" | grep -q .; then
+    if [ -n "$(find . -maxdepth 2 -name "go.mod" -print -quit)" ]; then
         echo "Found Go project, running tests..."
         (go mod tidy && go test ./...) || TEST_FAILED=true
     fi
     
     # Node.js
-    if find . -maxdepth 2 -name "package.json" | grep -q .; then
+    if [ -n "$(find . -maxdepth 2 -name "package.json" -print -quit)" ]; then
         echo "Found Node.js project, running tests..."
-        # Find all directories with package.json and run tests
-        find . -maxdepth 2 -name "package.json" -exec dirname {} \; | while read -r dir; do
+        # Find all directories with package.json and run tests.
+        # Use process substitution to avoid subshell issues with TEST_FAILED variable.
+        while read -r dir; do
             echo "Running tests in $dir"
             (
                 cd "$dir"
@@ -155,18 +159,20 @@ function runTests {
                     npm ci && npm test || npm install && npm test || exit 1
                 fi
             ) || TEST_FAILED=true
-        done
+        done < <(find . -maxdepth 2 -name "package.json" -exec dirname {} \;)
     fi
     
     # Python
-    if find . -maxdepth 2 -name "pyproject.toml" -o -name "requirements.txt" | grep -q .; then
+    if [ -n "$(find . -maxdepth 2 -name "pyproject.toml" -o -name "requirements.txt" -print -quit)" ]; then
         echo "Found Python project, running tests..."
-        find . -maxdepth 2 -name "pyproject.toml" -o -name "requirements.txt" -exec dirname {} \; | sort -u | while read -r dir; do
+        # Find all directories with python configs.
+        while read -r dir; do
              echo "Running tests in $dir"
              (
                  cd "$dir"
-                 # Use a virtual environment for isolation
-                 python3 -m venv venv && source venv/bin/activate
+                 # Use a virtual environment for isolation, outside the repo to keep it clean.
+                 local VENV_DIR="/tmp/venv-$(echo -n "$dir" | md5sum | cut -d' ' -f1)"
+                 python3 -m venv "$VENV_DIR" && source "$VENV_DIR/bin/activate"
                  if [ -f "requirements.txt" ]; then
                      pip install -r requirements.txt || true
                  fi
@@ -179,7 +185,7 @@ function runTests {
                      python3 -m unittest discover || exit 1
                  fi
              ) || TEST_FAILED=true
-        done
+        done < <(find . -maxdepth 2 -name "pyproject.toml" -o -name "requirements.txt" -exec dirname {} \; | sort -u)
     fi
 
     # Makefile (usually at root)
@@ -254,13 +260,13 @@ function runGemini {
 
         echo "Conflicts detected. Calling Gemini with model $MODEL..."
         # We use --yolo because this runs in a sandboxed pod and we need automated resolution.
-        if gemini --yolo --model "$MODEL" --output-format stream-json < "${PROMPT_FILE}" | /opt/repo-agent/gemini-stream-processor --output "$(dirname "${PROMPT_FILE}")/gemini-output-${MODEL}.json"; then
+        if gemini --yolo --model "$MODEL" --output-format stream-json < "${PROMPT_FILE}" | /opt/repo-agent/gemini-stream-processor --output "${TASK_DIR}/gemini-output-${MODEL}.json"; then
              echo "Gemini execution successful with model: $MODEL"
              
              if verifyResolution && runTests; then
                  echo "Resolution verified with model: $MODEL. Staging and committing..."
                  # Copy the successful output to a standard location for stats tracking
-                 cp "$(dirname "${PROMPT_FILE}")/gemini-output-${MODEL}.json" "$(dirname "${PROMPT_FILE}")/gemini-output.json" || true
+                 cp "${TASK_DIR}/gemini-output-${MODEL}.json" "${TASK_DIR}/gemini-output.json" || true
                  # Only stage tracked and unmerged files to avoid garbage.
                  git add -u
                  # Complete the merge commit

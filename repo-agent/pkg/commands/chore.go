@@ -40,12 +40,14 @@ func BuildChoreCommand() *cobra.Command {
 		Short: "Run a chore using an LLM in a sandbox",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			choreCommand.InitDefaults()
+			if err := choreCommand.InitDefaults(); err != nil {
+				return err
+			}
 			return choreCommand.Run(cmd.Context())
 		},
 	}
 
-	cmd.Flags().StringVar(&choreCommand.AgentPrompt, "prompt", os.Getenv("AGENT_PROMPT"), "Chore prompt")
+	cmd.Flags().StringVar(&choreCommand.AgentPrompt, "prompt", "", "Chore prompt (falls back to AGENT_PROMPT_FILE or AGENT_PROMPT env vars)")
 	cmd.Flags().StringVar(&choreCommand.ChoreName, "name", os.Getenv("CHORE_NAME"), "Chore name")
 	cmd.Flags().StringVar(&choreCommand.ChoreFile, "file", os.Getenv("CHORE_FILE"), "Chore definition file path")
 	cmd.Flags().StringVar(&choreCommand.RepoName, "repo", os.Getenv("REPO"), "Repository name")
@@ -56,8 +58,12 @@ func BuildChoreCommand() *cobra.Command {
 	return cmd
 }
 
-func (c *ChoreCommand) InitDefaults() {
-	c.AgentPrompt = resolveAgentPrompt(c.AgentPrompt)
+func (c *ChoreCommand) InitDefaults() error {
+	prompt, err := resolveAgentPrompt(c.AgentPrompt)
+	if err != nil {
+		return err
+	}
+	c.AgentPrompt = prompt
 
 	if c.WorkspaceDir == "" {
 		c.WorkspaceDir = "/workspaces"
@@ -68,6 +74,7 @@ func (c *ChoreCommand) InitDefaults() {
 	if c.TaskDir == "" {
 		c.TaskDir = c.WorkspaceDir
 	}
+	return nil
 }
 
 func (c *ChoreCommand) taskPath(name string, args ...interface{}) string {

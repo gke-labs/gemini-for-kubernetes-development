@@ -32,7 +32,7 @@ FROM node:20-slim
 RUN echo 'Acquire::Retries "10"; Acquire::http::Timeout "60"; Acquire::https::Timeout "60";' > /etc/apt/apt.conf.d/80-retries
 
 # Install tools
-RUN (apt-get update || (sleep 10 && apt-get update) || (sleep 20 && apt-get update) || true) && \
+RUN (apt-get update || (sleep 10 && apt-get update) || (sleep 20 && apt-get update)) && \
     apt-get install -y --no-install-recommends \
     bash \
     git \

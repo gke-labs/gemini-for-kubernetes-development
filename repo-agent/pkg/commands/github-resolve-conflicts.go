@@ -75,7 +75,9 @@ func BuildGithubResolveConflictsCommand() *cobra.Command {
 			if resolveCommand.PRNumber == 0 {
 				return fmt.Errorf("--pr-number is required")
 			}
-			resolveCommand.InitDefaults()
+			if err := resolveCommand.InitDefaults(); err != nil {
+				return err
+			}
 			return resolveCommand.Run(cmd.Context())
 		},
 	}
@@ -95,14 +97,18 @@ func BuildGithubResolveConflictsCommand() *cobra.Command {
 	cmd.Flags().StringVar(&resolveCommand.ExtensionsJSON, "extensions", os.Getenv("AGENT_LLM_EXTENSIONS"), "Extensions JSON")
 	cmd.Flags().StringVar(&resolveCommand.BaseRef, "base-ref", os.Getenv("BASE_REF"), "Base branch ref")
 	cmd.Flags().StringVar(&resolveCommand.HeadRef, "head-ref", os.Getenv("HEAD_REF"), "Head branch ref")
-	cmd.Flags().StringVar(&resolveCommand.CustomPrompt, "custom-prompt", os.Getenv("AGENT_PROMPT"), "Custom prompt instructions")
+	cmd.Flags().StringVar(&resolveCommand.CustomPrompt, "custom-prompt", "", "Custom prompt instructions (falls back to AGENT_PROMPT_FILE or AGENT_PROMPT env vars)")
 	cmd.Flags().BoolVar(&resolveCommand.InPod, "in-pod", false, "Whether running inside the pod")
 
 	return cmd
 }
 
-func (c *GithubResolveConflictsCommand) InitDefaults() {
-	c.CustomPrompt = resolveAgentPrompt(c.CustomPrompt)
+func (c *GithubResolveConflictsCommand) InitDefaults() error {
+	prompt, err := resolveAgentPrompt(c.CustomPrompt)
+	if err != nil {
+		return err
+	}
+	c.CustomPrompt = prompt
 
 	if c.WorkspaceDir == "" {
 		c.WorkspaceDir = "/workspaces"
@@ -117,6 +123,7 @@ func (c *GithubResolveConflictsCommand) InitDefaults() {
 	if c.Model == "" {
 		c.Model = "gemini-3.1-pro-preview"
 	}
+	return nil
 }
 
 func (c *GithubResolveConflictsCommand) taskPath(name string, args ...interface{}) string {

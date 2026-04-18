@@ -28,7 +28,7 @@ func (r *Repository) Owner() string {
 
 func (r *Repository) Host() string {
 	u, err := url.Parse(r.CloneURL())
-	if err != nil {
+	if err != nil || u.Host == "" {
 		return "github.com"
 	}
 	return u.Host

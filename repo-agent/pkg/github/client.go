@@ -67,7 +67,7 @@ func ParseIssueURL(url string) (owner string, repo string, number int, err error
 	// or https://github.com/gke-labs/gateway-api-reference-implementation/pull/92
 	if len(tokens) >= 5 && tokens[0] == "github.com" && (tokens[3] == "issues" || tokens[3] == "pull") {
 		owner := tokens[1]
-		repo := tokens[2]
+		repo := strings.TrimSuffix(tokens[2], ".git")
 		number, err := strconv.Atoi(tokens[4])
 		if err != nil {
 			return "", "", 0, fmt.Errorf("invalid issue/pr number %q: %w", tokens[4], err)
@@ -80,10 +80,9 @@ func ParseIssueURL(url string) (owner string, repo string, number int, err error
 // ParseHTMLUrl extracts owner and repo from a GitHub HTML URL.
 func ParseHTMLUrl(url string) (owner string, repo string, err error) {
 	u := strings.TrimPrefix(url, "https://")
-	u = strings.TrimSuffix(u, ".git")
 	tokens := strings.Split(u, "/")
 	if len(tokens) >= 3 && tokens[0] == "github.com" {
-		return tokens[1], tokens[2], nil
+		return tokens[1], strings.TrimSuffix(tokens[2], ".git"), nil
 	}
 	return "", "", fmt.Errorf("url format %q not recognized", url)
 }

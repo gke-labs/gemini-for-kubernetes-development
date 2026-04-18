@@ -62,7 +62,7 @@ type ReviewCommand struct {
 	OutputNamespace string
 }
 
-func (c *ReviewCommand) InitDefaults() {
+func (c *ReviewCommand) InitDefaults() error {
 	if c.OutputGVR == nil {
 		if gvrResource := os.Getenv("AGENT_OUTPUT_GVR_RESOURCE"); gvrResource != "" {
 			group := os.Getenv("AGENT_OUTPUT_GVR_GROUP")
@@ -110,7 +110,11 @@ func (c *ReviewCommand) InitDefaults() {
 	if c.AgentName == "" {
 		c.AgentName = os.Getenv("AGENT_NAME")
 	}
-	c.AgentPrompt = resolveAgentPrompt(c.AgentPrompt)
+	prompt, err := resolveAgentPrompt(c.AgentPrompt)
+	if err != nil {
+		return err
+	}
+	c.AgentPrompt = prompt
 	if c.DiffURL == "" {
 		c.DiffURL = os.Getenv("GIT_DIFF_URL")
 	}
@@ -159,6 +163,7 @@ func (c *ReviewCommand) InitDefaults() {
 			}
 		}
 	}
+	return nil
 }
 
 func BuildReviewCommand() *cobra.Command {
@@ -170,7 +175,9 @@ func BuildReviewCommand() *cobra.Command {
 			if len(args) != 0 {
 				return fmt.Errorf("review command does not take any arguments")
 			}
-			reviewCommand.InitDefaults()
+			if err := reviewCommand.InitDefaults(); err != nil {
+				return err
+			}
 			return reviewCommand.Run(cmd.Context())
 		},
 	}
@@ -179,7 +186,7 @@ func BuildReviewCommand() *cobra.Command {
 	cmd.Flags().StringVar(&reviewCommand.UserDotfilesRepo, "user-dotfiles-repo", os.Getenv("USER_DOTFILESREPO"), "User dotfiles repo")
 	cmd.Flags().StringVar(&reviewCommand.CloneURL, "clone-url", os.Getenv("GIT_CLONE_URL"), "Git clone URL")
 	cmd.Flags().StringVar(&reviewCommand.AgentName, "agent-name", os.Getenv("AGENT_NAME"), "Agent name")
-	cmd.Flags().StringVar(&reviewCommand.AgentPrompt, "agent-prompt", os.Getenv("AGENT_PROMPT"), "Agent prompt")
+	cmd.Flags().StringVar(&reviewCommand.AgentPrompt, "agent-prompt", "", "Agent prompt (falls back to AGENT_PROMPT_FILE or AGENT_PROMPT env vars)")
 	cmd.Flags().StringVar(&reviewCommand.DiffURL, "diff-url", os.Getenv("GIT_DIFF_URL"), "Git diff URL")
 	cmd.Flags().IntVar(&reviewCommand.MaxReviewFiles, "max-review-files", 0, "Max review files")
 	cmd.Flags().IntVar(&reviewCommand.ExpectedComments, "expected-comments", 0, "Expected number of comments")

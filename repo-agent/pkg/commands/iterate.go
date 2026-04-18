@@ -52,7 +52,9 @@ func BuildIterateCommand() *cobra.Command {
 			if len(args) != 0 {
 				return fmt.Errorf("command does not take positional arguments")
 			}
-			iterCommand.InitDefaults()
+			if err := iterCommand.InitDefaults(); err != nil {
+				return err
+			}
 			return iterCommand.Run(cmd.Context())
 		},
 	}
@@ -60,7 +62,7 @@ func BuildIterateCommand() *cobra.Command {
 	cmd.Flags().StringVar(&iterCommand.RepoURL, "repo-url", os.Getenv("GIT_HTML_URL"), "GitHub repo URL")
 	cmd.Flags().StringVar(&iterCommand.BranchName, "branch-name", os.Getenv("BRANCH_NAME"), "Branch name")
 	cmd.Flags().StringVar(&iterCommand.PRID, "pr-id", "", "PR ID")
-	cmd.Flags().StringVar(&iterCommand.AgentPrompt, "agent-prompt", os.Getenv("AGENT_PROMPT"), "Agent prompt")
+	cmd.Flags().StringVar(&iterCommand.AgentPrompt, "agent-prompt", "", "Agent prompt (falls back to AGENT_PROMPT_FILE or AGENT_PROMPT env vars)")
 	cmd.Flags().StringVar(&iterCommand.GithubUserLogin, "github-user-login", os.Getenv("GITHUB_USER_LOGIN"), "Github user login")
 	cmd.Flags().StringVar(&iterCommand.GithubUserEmail, "github-user-email", os.Getenv("GITHUB_USER_EMAIL"), "Github user email")
 	cmd.Flags().StringVar(&iterCommand.GithubUserName, "github-user-name", os.Getenv("GITHUB_USER_NAME"), "Github user name")
@@ -70,8 +72,12 @@ func BuildIterateCommand() *cobra.Command {
 	return cmd
 }
 
-func (c *IterateCommand) InitDefaults() {
-	c.AgentPrompt = resolveAgentPrompt(c.AgentPrompt)
+func (c *IterateCommand) InitDefaults() error {
+	prompt, err := resolveAgentPrompt(c.AgentPrompt)
+	if err != nil {
+		return err
+	}
+	c.AgentPrompt = prompt
 
 	if c.PRID == "" {
 		c.PRID = os.Getenv("PRID")
@@ -92,6 +98,7 @@ func (c *IterateCommand) InitDefaults() {
 	if c.Model == "" {
 		c.Model = "gemini-3.1-pro-preview"
 	}
+	return nil
 }
 
 func (c *IterateCommand) taskPath(name string, args ...interface{}) string {
