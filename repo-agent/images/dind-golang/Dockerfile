@@ -17,7 +17,7 @@ RUN sed -i 's/archive.ubuntu.com/mirrors.edge.kernel.org/g' /etc/apt/sources.lis
 RUN echo 'Acquire::Retries "10"; Acquire::http::Timeout "60"; Acquire::https::Timeout "60";' > /etc/apt/apt.conf.d/80-retries
 
 # 1. Install prerequisites for adding apt repositories with robust retries
-RUN apt-get update || (sleep 10 && apt-get update) || (sleep 20 && apt-get update) && \
+RUN (apt-get update || (sleep 10 && apt-get update) || (sleep 20 && apt-get update)) && \
     apt-get -y install --no-install-recommends \
     apt-transport-https \
     ca-certificates \
@@ -43,7 +43,7 @@ RUN mkdir -p /etc/apt/keyrings && \
     echo "deb [signed-by=/etc/apt/keyrings/helm.gpg] https://packages.buildkite.com/helm-linux/helm-debian/any/ any main" > /etc/apt/sources.list.d/helm-stable-debian.list
 
 # 3. Install all apt packages
-RUN apt-get update || (sleep 10 && apt-get update) || (sleep 20 && apt-get update) && \
+RUN (apt-get update || (sleep 10 && apt-get update) || (sleep 20 && apt-get update)) && \
     apt-get install -y --no-install-recommends \
     docker-ce=${DOCKER_VERSION} \
     docker-ce-cli=${DOCKER_VERSION} \

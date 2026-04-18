@@ -72,22 +72,17 @@ func BuildGithubResolveConflictsCommand() *cobra.Command {
 			if len(args) != 0 {
 				return fmt.Errorf("command does not take positional arguments")
 			}
-			if resolveCommand.PRNumber == 0 {
-				return fmt.Errorf("--pr-number is required")
-			}
 			if err := resolveCommand.InitDefaults(); err != nil {
 				return err
+			}
+			if resolveCommand.PRNumber == 0 {
+				return fmt.Errorf("--pr-number is required")
 			}
 			return resolveCommand.Run(cmd.Context())
 		},
 	}
 
 	cmd.Flags().IntVar(&resolveCommand.PRNumber, "pr-number", 0, "Pull request number")
-	if prStr := os.Getenv("PR_NUMBER"); prStr != "" {
-		if val, err := strconv.Atoi(strings.TrimSpace(prStr)); err == nil {
-			resolveCommand.PRNumber = val
-		}
-	}
 
 	cmd.Flags().StringVar(&resolveCommand.RepoURL, "repo-url", os.Getenv("GIT_HTML_URL"), "GitHub repository URL")
 	cmd.Flags().StringVar(&resolveCommand.GithubUserLogin, "github-user-login", os.Getenv("GITHUB_USER_LOGIN"), "Github user login")
@@ -104,6 +99,14 @@ func BuildGithubResolveConflictsCommand() *cobra.Command {
 }
 
 func (c *GithubResolveConflictsCommand) InitDefaults() error {
+	if c.PRNumber == 0 {
+		if prStr := os.Getenv("PR_NUMBER"); prStr != "" {
+			if val, err := strconv.Atoi(strings.TrimSpace(prStr)); err == nil {
+				c.PRNumber = val
+			}
+		}
+	}
+
 	prompt, err := resolveAgentPrompt(c.CustomPrompt)
 	if err != nil {
 		return err

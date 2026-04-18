@@ -152,6 +152,7 @@ function runTests {
         while read -r dir; do
             echo "Running tests in $dir"
             (
+                set -e
                 cd "$dir"
                 if [ -f "yarn.lock" ]; then
                     yarn install --frozen-lockfile && yarn test || exit 1
@@ -169,6 +170,7 @@ function runTests {
         while read -r dir; do
              echo "Running tests in $dir"
              (
+                 set -e
                  cd "$dir"
                  # Use a virtual environment for isolation, outside the repo to keep it clean.
                  local VENV_DIR="/tmp/venv-$(echo -n "$dir" | md5sum | cut -d' ' -f1)"

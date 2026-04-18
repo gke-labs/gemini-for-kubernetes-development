@@ -198,7 +198,7 @@ func (p *AutoPoller) pollOnce(ctx context.Context) error {
 					GithubUserName:  "codebot-robot",
 					GithubUserToken: os.Getenv("CODEBOT_ROBOT_GITHUB_TOKEN"),
 				}
-				// fixIssue.InitDefaults()
+				fixIssue.InitDefaults()
 
 				if err := fixIssue.Run(ctx); err != nil {
 					log.Error(err, "failed to process issue", "issue", issueKey)
