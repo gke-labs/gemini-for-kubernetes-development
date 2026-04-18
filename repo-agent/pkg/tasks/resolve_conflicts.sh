@@ -131,7 +131,8 @@ function verifyResolution {
     fi
     # Supplemental check for conflict markers using grep, 
     # focusing on the start and end markers to avoid false positives with Markdown H1.
-    if grep -rE --exclude-dir=.git "^<{7} |^>{7} " .; then
+    # We look for at least 7 < or > at the start of a line, optionally followed by space.
+    if grep -rE --exclude-dir=.git "^<{7}([[:space:]]|$)|^>{7}([[:space:]]|$)" .; then
         echo "Conflict markers still present!"
         return 1
     fi
@@ -158,8 +159,8 @@ function runTests {
     if [ -n "$(find . -maxdepth 2 -name "package.json" -print -quit)" ]; then
         echo "Found Node.js project, running tests..."
         # Find all directories with package.json and run tests.
-        # Use null-terminated strings for robust path handling.
-        find . -maxdepth 2 -name "package.json" -exec dirname {} \; | sort -u | while read -r dir; do
+        # Use process substitution to avoid subshell issues with TEST_FAILED.
+        while read -r dir; do
             echo "Running tests in $dir"
             (
                 set -e
@@ -170,14 +171,15 @@ function runTests {
                     (npm ci || npm install) && npm test || exit 1
                 fi
             ) || TEST_FAILED=true
-        done
+        done < <(find . -maxdepth 2 -name "package.json" -exec dirname {} \; | sort -u)
     fi
     
     # Python
     if [ -n "$(find . -maxdepth 2 \( -name "pyproject.toml" -o -name "requirements.txt" \) -print -quit)" ]; then
         echo "Found Python project, running tests..."
         # Find all directories with python configs.
-        find . -maxdepth 2 \( -name "pyproject.toml" -o -name "requirements.txt" \) -exec dirname {} \; | sort -u | while read -r dir; do
+        # Use process substitution to avoid subshell issues with TEST_FAILED.
+        while read -r dir; do
              echo "Running tests in $dir"
              (
                  set -e
@@ -197,7 +199,7 @@ function runTests {
                      python3 -m unittest discover || exit 1
                  fi
              ) || TEST_FAILED=true
-        done
+        done < <(find . -maxdepth 2 \( -name "pyproject.toml" -o -name "requirements.txt" \) -exec dirname {} \; | sort -u)
     fi
 
     # Makefile (usually at root)
