@@ -352,7 +352,7 @@ func runChore(ctx context.Context, name string, file string) error {
 				state = "Pending"
 			}
 			if state == "Completed" {
-				if time.Since(task.CreationTimestamp.Time) < 1*time.Hour {
+				if time.Since(task.CreationTimestamp.Time) < 2*time.Minute {
 					klog.V(2).Infof("Chore %s: Task already exists in state %s (created %v ago). Skipping.", chore.Name, state, time.Since(task.CreationTimestamp.Time))
 					return nil
 				}
@@ -535,8 +535,28 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 }
 
 func ensureSandbox(ctx context.Context, dynClient dynamic.Interface, namespace string, sb *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+	// To avoid stripping OwnerReferences from other controllers, we fetch existing ones and merge.
+	existing, err := dynClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sb.GetName(), metav1.GetOptions{})
+	if err == nil {
+		mergedRefs := existing.GetOwnerReferences()
+		for _, newRef := range sb.GetOwnerReferences() {
+			found := false
+			for i, ref := range mergedRefs {
+				if ref.UID == newRef.UID {
+					mergedRefs[i] = newRef
+					found = true
+					break
+				}
+			}
+			if !found {
+				mergedRefs = append(mergedRefs, newRef)
+			}
+		}
+		sb.SetOwnerReferences(mergedRefs)
+	}
+
 	// Use Server-Side Apply to ensure the Sandbox exists and has correct OwnerReferences.
-	// This avoids redundant Get/Update calls and robustly handles adoption.
+	// This robustly handles adoption and state enforcement.
 	sb.SetManagedFields(nil)
 	data, err := json.Marshal(sb)
 	if err != nil {
@@ -555,16 +575,32 @@ func ensureSandbox(ctx context.Context, dynClient dynamic.Interface, namespace s
 }
 
 func ensureService(ctx context.Context, clientset kubernetes.Interface, namespace string, svc *corev1.Service, owner *unstructured.Unstructured) error {
+	// To avoid stripping OwnerReferences from other controllers, we fetch existing ones and merge.
+	existing, err := clientset.CoreV1().Services(namespace).Get(ctx, svc.Name, metav1.GetOptions{})
+	if err == nil {
+		svc.OwnerReferences = existing.OwnerReferences
+	}
+
 	if owner != nil {
-		svc.OwnerReferences = []metav1.OwnerReference{
-			{
-				APIVersion:         owner.GetAPIVersion(),
-				Kind:               owner.GetKind(),
-				Name:               owner.GetName(),
-				UID:                owner.GetUID(),
-				Controller:         ptr.To(true),
-				BlockOwnerDeletion: ptr.To(true),
-			},
+		newRef := metav1.OwnerReference{
+			APIVersion:         owner.GetAPIVersion(),
+			Kind:               owner.GetKind(),
+			Name:               owner.GetName(),
+			UID:                owner.GetUID(),
+			Controller:         ptr.To(true),
+			BlockOwnerDeletion: ptr.To(true),
+		}
+
+		found := false
+		for i, ref := range svc.OwnerReferences {
+			if ref.UID == newRef.UID {
+				svc.OwnerReferences[i] = newRef
+				found = true
+				break
+			}
+		}
+		if !found {
+			svc.OwnerReferences = append(svc.OwnerReferences, newRef)
 		}
 	}
 
@@ -1180,33 +1216,31 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 	// 3. Finally check for Completed local tasks.
 	// If it's a review task, we only skip if it's recent (backoff) OR if we can verify the review is on GitHub.
 	// Since we already checked GitHub and found nothing, a Completed task here means the review hasn't reached GitHub yet.
-	if err == nil {
-		for i := range taskList.Items {
-			task := &taskList.Items[i]
-			state := task.Status.TaskState
-			taskSHA := task.Spec.Params["HEAD_SHA"]
-			if task.Spec.Type == taskType && strings.EqualFold(taskSHA, headSHA) && state == "Completed" {
-				if lastReopenedAt != nil && task.CreationTimestamp.Before(&metav1.Time{Time: *lastReopenedAt}) {
-					klog.Infof("PR #%d: Found historical completed task %s for SHA %s, but PR was reopened since then. Proceeding with new task.", number, taskType, headSHA)
-					continue
-				}
-
-				if taskType == "review" {
-					// Review task is Completed but NOT on GitHub.
-					// If it was created recently, we wait for submitAgentDraft to do its job.
-					if time.Since(task.CreationTimestamp.Time) < 30*time.Minute {
-						klog.V(2).Infof("PR #%d: Review task for SHA %s is Completed but not yet on GitHub. Waiting for submission (created %v ago).", number, headSHA, time.Since(task.CreationTimestamp.Time))
-						return nil
-					}
-					// If it's old, it might be stuck (e.g. failed submission). allow retry.
-					klog.Warningf("PR #%d: Review task for SHA %s is Completed but not on GitHub after %v. Deleting to allow retry.", number, headSHA, time.Since(task.CreationTimestamp.Time))
-					_ = manager.DeleteSandboxTask(ctx, namespace, task.Name)
-					return &RetryableError{Message: fmt.Sprintf("deleted stuck completed task for PR %d, waiting for re-trigger", number)}
-				}
-
-				klog.V(2).Infof("PR #%d: Task %s for SHA %s already exists in state %s. Skipping.", number, taskType, headSHA, state)
-				return nil
+	for i := range taskList.Items {
+		task := &taskList.Items[i]
+		state := task.Status.TaskState
+		taskSHA := task.Spec.Params["HEAD_SHA"]
+		if task.Spec.Type == taskType && strings.EqualFold(taskSHA, headSHA) && state == "Completed" {
+			if lastReopenedAt != nil && task.CreationTimestamp.Before(&metav1.Time{Time: *lastReopenedAt}) {
+				klog.Infof("PR #%d: Found historical completed task %s for SHA %s, but PR was reopened since then. Proceeding with new task.", number, taskType, headSHA)
+				continue
 			}
+
+			if taskType == "review" {
+				// Review task is Completed but NOT on GitHub.
+				// If it was created recently, we wait for submitAgentDraft to do its job.
+				if time.Since(task.CreationTimestamp.Time) < 30*time.Minute {
+					klog.V(2).Infof("PR #%d: Review task for SHA %s is Completed but not yet on GitHub. Waiting for submission (created %v ago).", number, headSHA, time.Since(task.CreationTimestamp.Time))
+					return nil
+				}
+				// If it's old, it might be stuck (e.g. failed submission). allow retry.
+				klog.Warningf("PR #%d: Review task for SHA %s is Completed but not on GitHub after %v. Deleting to allow retry.", number, headSHA, time.Since(task.CreationTimestamp.Time))
+				_ = manager.DeleteSandboxTask(ctx, namespace, task.Name)
+				return &RetryableError{Message: fmt.Sprintf("deleted stuck completed task for PR %d, waiting for re-trigger", number)}
+			}
+
+			klog.V(2).Infof("PR #%d: Task %s for SHA %s already exists in state %s. Skipping.", number, taskType, headSHA, state)
+			return nil
 		}
 	}
 
