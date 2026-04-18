@@ -2,17 +2,18 @@ FROM ghcr.io/github/github-mcp-server as build
 
 FROM debian:bookworm-slim
 
+# Switch to a more reliable mirror
+RUN find /etc/apt/ -type f -name "*.list" -o -name "*.sources" | xargs sed -i 's/archive.ubuntu.com/mirrors.edge.kernel.org/g' || true
+RUN find /etc/apt/ -type f -name "*.list" -o -name "*.sources" | xargs sed -i 's/security.ubuntu.com/mirrors.edge.kernel.org/g' || true
+RUN find /etc/apt/ -type f -name "*.list" -o -name "*.sources" | xargs sed -i 's/deb.debian.org/mirrors.edge.kernel.org/g' || true
+
 # Add apt retries and timeouts
 RUN echo 'Acquire::Retries "10"; Acquire::http::Timeout "60"; Acquire::https::Timeout "60";' > /etc/apt/apt.conf.d/80-retries
 
 # Install socat and necessary tools.
 RUN (apt-get update || (sleep 10 && apt-get update) || (sleep 20 && apt-get update)) && \
-    apt-get install -y --no-install-recommends \
-    socat \
-    # Needed to find dynamic library dependencies.
-    strace \
-    # Clean up APT cache to reduce image size.
-    && rm -rf /var/lib/apt/lists/*
+    (apt-get install -y --no-install-recommends socat strace || (sleep 10 && apt-get install -y --no-install-recommends socat strace)) && \
+    rm -rf /var/lib/apt/lists/*
 
 # Set the working directory
 WORKDIR /server

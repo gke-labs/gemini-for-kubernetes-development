@@ -11,20 +11,21 @@ ARG DOCKER_VERSION="5:27.5.1-1~ubuntu.24.04~noble"
 ENV DEBIAN_FRONTEND="noninteractive"
 
 # Switch to a more reliable mirror
-RUN sed -i 's/archive.ubuntu.com/mirrors.edge.kernel.org/g' /etc/apt/sources.list.d/ubuntu.sources || true
+RUN find /etc/apt/ -type f -name "*.list" -o -name "*.sources" | xargs sed -i 's/archive.ubuntu.com/mirrors.edge.kernel.org/g' || true
+RUN find /etc/apt/ -type f -name "*.list" -o -name "*.sources" | xargs sed -i 's/security.ubuntu.com/mirrors.edge.kernel.org/g' || true
 
 # Add apt retries and timeouts
 RUN echo 'Acquire::Retries "10"; Acquire::http::Timeout "60"; Acquire::https::Timeout "60";' > /etc/apt/apt.conf.d/80-retries
 
 # 1. Install prerequisites for adding apt repositories with robust retries
 RUN (apt-get update || (sleep 10 && apt-get update) || (sleep 20 && apt-get update)) && \
-    apt-get -y install --no-install-recommends \
+    (apt-get -y install --no-install-recommends \
     apt-transport-https \
     ca-certificates \
     curl \
     gnupg \
     wget \
-    jq
+    jq || (sleep 10 && apt-get -y install --no-install-recommends apt-transport-https ca-certificates curl gnupg wget jq))
 
 # 2. Add apt repositories (Docker, NodeSource, Google Cloud, Helm)
 RUN mkdir -p /etc/apt/keyrings && \
@@ -44,7 +45,7 @@ RUN mkdir -p /etc/apt/keyrings && \
 
 # 3. Install all apt packages
 RUN (apt-get update || (sleep 10 && apt-get update) || (sleep 20 && apt-get update)) && \
-    apt-get install -y --no-install-recommends \
+    (apt-get install -y --no-install-recommends \
     docker-ce=${DOCKER_VERSION} \
     docker-ce-cli=${DOCKER_VERSION} \
     containerd.io \
@@ -64,7 +65,27 @@ RUN (apt-get update || (sleep 10 && apt-get update) || (sleep 20 && apt-get upda
     sudo \
     helm \
     build-essential \
-    google-cloud-cli && \
+    google-cloud-cli || (sleep 10 && apt-get install -y --no-install-recommends \
+    docker-ce=${DOCKER_VERSION} \
+    docker-ce-cli=${DOCKER_VERSION} \
+    containerd.io \
+    docker-buildx-plugin \
+    docker-compose-plugin \
+    iproute2 \
+    iptables \
+    nodejs \
+    python3 \
+    python3-pip \
+    python3-yaml \
+    python3-requests \
+    python-is-python3 \
+    python3-venv \
+    git \
+    tmux \
+    sudo \
+    helm \
+    build-essential \
+    google-cloud-cli)) && \
     rm -rf /var/lib/apt/lists/*
 
 # ------- Install go -------
