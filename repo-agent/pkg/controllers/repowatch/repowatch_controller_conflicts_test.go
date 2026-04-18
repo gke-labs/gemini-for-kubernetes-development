@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
 	sandboxtaskv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
@@ -64,6 +65,7 @@ func TestReconciler_ReconcileReviewConflicts(t *testing.T) {
 		Spec: reviewv1alpha1.RepoWatchSpec{
 			RepoURL:          repoURL,
 			GithubSecretName: "github-secret",
+			PollIntervalSeconds: 300,
 			Review: reviewv1alpha1.PRReviewSpec{
 				MaxActiveSandboxes: 1,
 				ResolveConflicts:   true,
@@ -252,4 +254,36 @@ func TestReconciler_ReconcileReviewConflicts(t *testing.T) {
 	g.Expect(fakeClient.Get(context.Background(), types.NamespacedName{Name: existingSandbox.GetName(), Namespace: existingSandbox.GetNamespace()}, updatedSandbox)).To(gomega.Succeed())
 
 	g.Expect(updatedSandbox.GetAnnotations()["sandbox.gemini.google.com/last-conflict-check-key"]).To(gomega.Equal("head-sha:base-sha"))
+
+	// 7. Test pending mergeability case
+	mockHTTPClient.Transport.(*mockRoundTripper).responses["https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=created&state=open"] = func() *http.Response {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(fmt.Sprintf(`[{"number": %d, "head": {"repo": {"clone_url": "%s", "html_url": "%s"}, "ref": "feature", "sha": "new-head-sha"}, "base": {"ref": "main", "sha": "base-sha"}, "html_url": "%s/pull/%d", "title": "Test PR"}]`, prNumber, repoURL, repoURL, repoURL, prNumber))),
+		}
+	}
+	mockHTTPClient.Transport.(*mockRoundTripper).responses[fmt.Sprintf("https://api.github.com/repos/%s/%s/pulls/%d", owner, repoName, prNumber)] = func() *http.Response {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body: io.NopCloser(strings.NewReader(fmt.Sprintf(`{
+				"number": %d,
+				"mergeable": null,
+				"head": {"repo": {"clone_url": "%s", "html_url": "%s"}, "ref": "feature", "sha": "new-head-sha"},
+				"base": {"ref": "main", "sha": "base-sha"},
+				"html_url": "%s/pull/%d",
+				"title": "Test PR"
+			}`, prNumber, repoURL, repoURL, repoURL, prNumber))),
+		}
+	}
+
+	res, err := r.Reconcile(context.Background(), req)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(res.RequeueAfter).To(gomega.Equal(1 * time.Minute))
+
+	updatedSandbox2 := &unstructured.Unstructured{}
+	updatedSandbox2.SetGroupVersionKind(existingSandbox.GroupVersionKind())
+	g.Expect(fakeClient.Get(context.Background(), types.NamespacedName{Name: existingSandbox.GetName(), Namespace: existingSandbox.GetNamespace()}, updatedSandbox2)).To(gomega.Succeed())
+
+	// Annotation should NOT be updated for the new SHA yet
+	g.Expect(updatedSandbox2.GetAnnotations()["sandbox.gemini.google.com/last-conflict-check-key"]).To(gomega.Equal("head-sha:base-sha"))
 }
