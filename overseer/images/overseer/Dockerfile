@@ -28,10 +28,9 @@ RUN go build -o overseer-cli ./cmd/overseer-cli/main.go
 
 FROM node:20-slim
 
-# Switch to a more reliable mirror
+# Switch to a more reliable mirror for Ubuntu images (harmless on Debian)
 RUN find /etc/apt/ -type f -name "*.list" -o -name "*.sources" | xargs sed -i 's/archive.ubuntu.com/mirrors.edge.kernel.org/g' || true
 RUN find /etc/apt/ -type f -name "*.list" -o -name "*.sources" | xargs sed -i 's/security.ubuntu.com/mirrors.edge.kernel.org/g' || true
-RUN find /etc/apt/ -type f -name "*.list" -o -name "*.sources" | xargs sed -i 's/deb.debian.org/mirrors.edge.kernel.org/g' || true
 
 # Add apt retries and timeouts
 RUN echo 'Acquire::Retries "10"; Acquire::http::Timeout "60"; Acquire::https::Timeout "60";' > /etc/apt/apt.conf.d/80-retries
