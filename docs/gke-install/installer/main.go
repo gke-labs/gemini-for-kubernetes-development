@@ -47,9 +47,9 @@ const (
 // Config holds every value the installer needs.
 type Config struct {
 	// GCP / GKE
-	Project  string
-	Cluster  string
-	Region   string
+	Project string
+	Cluster string
+	Region  string
 
 	// Repository to watch
 	RepoURL string
@@ -222,7 +222,7 @@ func maybeInstallKyverno(cfg *Config) error {
 func installHelmDeps(cfg *Config) error {
 	type helmChart struct {
 		name, repo, chart, namespace, version string
-		extraArgs                              []string
+		extraArgs                             []string
 	}
 	charts := []helmChart{
 		{

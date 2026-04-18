@@ -63,8 +63,8 @@ func TestReconciler_ReconcileReviewConflicts(t *testing.T) {
 			UID:       "test-uid",
 		},
 		Spec: reviewv1alpha1.RepoWatchSpec{
-			RepoURL:          repoURL,
-			GithubSecretName: "github-secret",
+			RepoURL:             repoURL,
+			GithubSecretName:    "github-secret",
 			PollIntervalSeconds: 300,
 			Review: reviewv1alpha1.PRReviewSpec{
 				MaxActiveSandboxes: 1,
