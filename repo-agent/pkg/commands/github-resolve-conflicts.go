@@ -82,7 +82,13 @@ func BuildGithubResolveConflictsCommand() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().IntVar(&resolveCommand.PRNumber, "pr-number", 0, "Pull request number")
+	prDefault := 0
+	if prStr := os.Getenv("PR_NUMBER"); prStr != "" {
+		if val, err := strconv.Atoi(strings.TrimSpace(prStr)); err == nil {
+			prDefault = val
+		}
+	}
+	cmd.Flags().IntVar(&resolveCommand.PRNumber, "pr-number", prDefault, "Pull request number")
 
 	cmd.Flags().StringVar(&resolveCommand.RepoURL, "repo-url", os.Getenv("GIT_HTML_URL"), "GitHub repository URL")
 	cmd.Flags().StringVar(&resolveCommand.GithubUserLogin, "github-user-login", os.Getenv("GITHUB_USER_LOGIN"), "Github user login")

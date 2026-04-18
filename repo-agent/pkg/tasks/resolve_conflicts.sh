@@ -31,6 +31,11 @@ export GITHUB_USER_NAME={{ printf "%q" .User.Name }}
 export PR_NUMBER={{ .PullRequest.Number }}
 export BASE_REF={{ printf "%q" .BaseRef }}
 
+if [ -z "${REPO_NAME}" ]; then
+    echo "Error: REPO_NAME environment variable is not set or empty. Aborting to prevent accidental deletion."
+    exit 1
+fi
+
 TASK_DIR="$(dirname "${PROMPT_FILE}")"
 
 # Disable git hooks for automated operations to prevent local hooks from blocking progress or causing side effects.
@@ -118,10 +123,15 @@ function checkoutPRBranch {
 
 function verifyResolution {
     echo "Verifying conflict resolution..."
-    # We check for conflict markers excluding the .git directory.
-    # We check for the start and end markers: <<<<<<< and >>>>>>>.
-    # We omit ======= because it falsely trips on Markdown headers.
-    if grep -rE --exclude-dir=.git "^(<<<<<<< |>>>>>>> |<{7}$|>{7}$)" .; then
+    # Use git diff --check to identify conflict markers.
+    # We ignore whitespace errors to focus solely on markers.
+    if ! git -c core.whitespace=-trailing-space diff --check; then
+        echo "Conflict markers found by git diff --check"
+        return 1
+    fi
+    # Supplemental check for conflict markers using grep, 
+    # focusing on the start and end markers to avoid false positives with Markdown H1.
+    if grep -rE --exclude-dir=.git "^<{7} |^>{7} " .; then
         echo "Conflict markers still present!"
         return 1
     fi
@@ -157,14 +167,14 @@ function runTests {
                 if [ -f "yarn.lock" ]; then
                     yarn install --frozen-lockfile && yarn test || exit 1
                 else
-                    npm ci && npm test || npm install && npm test || exit 1
+                    (npm ci || npm install) && npm test || exit 1
                 fi
             ) || TEST_FAILED=true
-        done < <(find . -maxdepth 2 -name "package.json" -exec dirname {} \;)
+        done < <(find . -maxdepth 2 -name "package.json" -exec dirname {} \; | sort -u)
     fi
     
     # Python
-    if [ -n "$(find . -maxdepth 2 -name "pyproject.toml" -o -name "requirements.txt" -print -quit)" ]; then
+    if [ -n "$(find . -maxdepth 2 \( -name "pyproject.toml" -o -name "requirements.txt" \) -print -quit)" ]; then
         echo "Found Python project, running tests..."
         # Find all directories with python configs.
         while read -r dir; do
@@ -187,7 +197,7 @@ function runTests {
                      python3 -m unittest discover || exit 1
                  fi
              ) || TEST_FAILED=true
-        done < <(find . -maxdepth 2 -name "pyproject.toml" -o -name "requirements.txt" -exec dirname {} \; | sort -u)
+        done < <(find . -maxdepth 2 \( -name "pyproject.toml" -o -name "requirements.txt" \) -exec dirname {} \; | sort -u)
     fi
 
     # Makefile (usually at root)
@@ -247,11 +257,11 @@ function runGemini {
         # We use FETCH_HEAD to ensure we merge exactly what we just fetched.
         echo "Attempting to merge FETCH_HEAD (origin/${BASE_REF}) into ${CURRENT_BRANCH}..."
         # We use --no-ff to ensure we get a merge commit if it succeeds, and --no-commit to verify before finalizing.
-        if git merge FETCH_HEAD --no-ff --no-commit -m "chore: merge branch 'origin/${BASE_REF}' into ${CURRENT_BRANCH}"; then
+        if git merge FETCH_HEAD --no-ff --no-commit; then
              echo "Merge successful without conflicts (unexpected in loop). Verifying..."
              if verifyResolution && runTests; then
                  # If it succeeded without conflicts and passed tests, finalize the commit.
-                 git commit --no-verify -m "chore: merge branch 'origin/${BASE_REF}' into ${CURRENT_BRANCH}" || echo "Nothing to commit"
+                 git commit --no-verify --no-edit || echo "Nothing to commit"
                  SUCCESS=true
                  break
              fi
@@ -271,8 +281,9 @@ function runGemini {
                  cp "${TASK_DIR}/gemini-output-${MODEL}.json" "${TASK_DIR}/gemini-output.json" || true
                  # Only stage tracked and unmerged files to avoid garbage.
                  git add -u
-                 # Complete the merge commit
-                 git commit --no-verify -m "chore: resolve merge conflicts using Gemini ($MODEL)" || echo "Nothing to commit"
+                 # Complete the merge commit. We keep the standard MERGE_MSG but append Gemini info if we can.
+                 # Since --no-edit is safer, we'll use that.
+                 git commit --no-verify --no-edit || echo "Nothing to commit"
                  SUCCESS=true
                  break
              else
@@ -312,10 +323,10 @@ echo "Attempting initial merge of FETCH_HEAD (origin/${BASE_REF})..."
 BEFORE_MERGE_SHA=$(git rev-parse HEAD)
 # Use --no-ff and --no-commit to verify behavioral correctness even for clean merges.
 # Use FETCH_HEAD to ensure we merge exactly what we just fetched.
-if git merge FETCH_HEAD --no-ff --no-commit -m "chore: merge branch 'origin/${BASE_REF}' into HEAD"; then
+if git merge FETCH_HEAD --no-ff --no-commit; then
     if verifyResolution && runTests; then
         echo "Merge successful without conflicts and tests passed."
-        git commit --no-verify -m "chore: merge branch 'origin/${BASE_REF}' into HEAD" || echo "Nothing to commit"
+        git commit --no-verify --no-edit || echo "Nothing to commit"
         pushChanges
         exit 0
     fi

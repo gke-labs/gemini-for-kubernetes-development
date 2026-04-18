@@ -97,7 +97,7 @@ func TestCreateOrUpdateReviewSandboxes(t *testing.T) {
 	// Start with one existing sandbox (oldSandbox)
 	sandboxList := &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*oldSandbox}}
 
-	watched, pending, finalActive, err := r.reconcileReviewSandboxesInternal(context.Background(), &github.User{Login: github.String("test-user")}, repoWatch, &github.Client{}, "owner", "repo", []*github.PullRequest{}, []*github.PullRequest{pr1, pr2, pr3, pr4}, sandboxList, map[string]*corev1.Pod{})
+	watched, pending, finalActive, _, err := r.reconcileReviewSandboxesInternal(context.Background(), &github.User{Login: github.String("test-user")}, repoWatch, &github.Client{}, "owner", "repo", []*github.PullRequest{}, []*github.PullRequest{pr1, pr2, pr3, pr4}, sandboxList, map[string]*corev1.Pod{})
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 
 	// Asserts
