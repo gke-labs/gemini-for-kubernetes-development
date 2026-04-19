@@ -155,7 +155,8 @@ function verifyResolution {
     fi
     # Supplemental check for conflict markers using grep as a secondary verification.
     # Tighten regex to avoid false positives with Markdown headers (e.g. =======)
-    if grep -rE --exclude-dir=.git "^<{7}([[:space:]]|$)|^>{7}([[:space:]]|$)" .; then
+    # Exclude common large directories to optimize search.
+    if grep -rE --exclude-dir={.git,node_modules,venv,.venv,dist,build} "^<{7}([[:space:]]|$)|^>{7}([[:space:]]|$)" .; then
         echo "Conflict markers still present!"
         return 1
     fi
@@ -174,11 +175,19 @@ function runTests {
     
     # Go
     if [ -n "$(find . -maxdepth 2 -name "go.mod" -print -quit)" ]; then
-        echo "Found Go project, running tests (no cache)..."
-        (go mod tidy && go test -count=1 ./...)
-        if [ $? -ne 0 ]; then
-            TEST_FAILED=true
-        fi
+        echo "Found Go project(s), running tests (no cache)..."
+        while read -r dir; do
+            echo "Running tests in Go module at $dir"
+            (
+                set -e
+                cd "$dir"
+                go mod tidy
+                go test -count=1 ./...
+            )
+            if [ $? -ne 0 ]; then
+                TEST_FAILED=true
+            fi
+        done < <(find . -maxdepth 2 -name "go.mod" -exec dirname {} \; | sort -u)
     fi
     
     # Node.js
