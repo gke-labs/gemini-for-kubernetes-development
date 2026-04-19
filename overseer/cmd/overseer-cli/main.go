@@ -206,24 +206,42 @@ func isGitHubTransient(err error) bool {
 		return true
 	}
 
-	// Fallback for common transient errors that might not be wrapped as net.Error
+	// Fallback for common transient errors that might not be wrapped as net.Error.
+	// We use more specific strings to avoid false positives.
 	errStr := strings.ToLower(err.Error())
-	return strings.Contains(errStr, "timeout") || strings.Contains(errStr, "timed out")
+	return strings.Contains(errStr, "connection refused") ||
+		strings.Contains(errStr, "connection reset") ||
+		strings.Contains(errStr, "i/o timeout") ||
+		strings.Contains(errStr, "tls handshake timeout") ||
+		strings.Contains(errStr, "client.timeout exceeded")
 }
 
 func isBot(login, botLogin, userLogin string) bool {
 	if login == "" {
 		return false
 	}
-	// GitHub App bots often have a [bot] suffix.
+	// GitHub App bots often have a [bot] suffix (e.g. my-app[bot]).
 	// We check both with and without suffix for robustness.
 	check := func(target string) bool {
 		if target == "" {
 			return false
 		}
+		// Exact match first
+		if strings.EqualFold(login, target) {
+			return true
+		}
+		// Try trimming standard [bot] suffix from both
 		t1 := strings.ToLower(strings.TrimSuffix(login, "[bot]"))
 		t2 := strings.ToLower(strings.TrimSuffix(target, "[bot]"))
-		return t1 == t2
+		if t1 == t2 {
+			return true
+		}
+		// Custom suffix formats (e.g. my-app[bot]-test)
+		// If login contains [bot], we check if it starts with target (trimmed)
+		if strings.Contains(login, "[bot]") && strings.HasPrefix(strings.ToLower(login), t2) {
+			return true
+		}
+		return false
 	}
 
 	return check(botLogin) || check(userLogin)
@@ -564,13 +582,15 @@ func ensureSandbox(ctx context.Context, dynClient dynamic.Interface, namespace s
 			found := false
 			for i, ref := range mergedRefs {
 				if ref.UID == newRef.UID {
-					// Merge boolean flags instead of overwriting
+					// Merge boolean flags instead of overwriting.
+					// If either is true, keep it true.
 					if newRef.Controller != nil && *newRef.Controller {
 						mergedRefs[i].Controller = ptr.To(true)
 					}
 					if newRef.BlockOwnerDeletion != nil && *newRef.BlockOwnerDeletion {
 						mergedRefs[i].BlockOwnerDeletion = ptr.To(true)
 					}
+					// Update name and apiVersion in case they changed (unlikely for same UID)
 					mergedRefs[i].Name = newRef.Name
 					mergedRefs[i].APIVersion = newRef.APIVersion
 					mergedRefs[i].Kind = newRef.Kind
@@ -587,6 +607,7 @@ func ensureSandbox(ctx context.Context, dynClient dynamic.Interface, namespace s
 
 	// Use Server-Side Apply to ensure the Sandbox exists and has correct OwnerReferences.
 	// For SSA with Unstructured, we should only include the fields we want to manage.
+	// We manage Metadata (specifically OwnerReferences) and Spec.
 	patch := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": sb.GetAPIVersion(),
@@ -636,7 +657,8 @@ func ensureService(ctx context.Context, clientset kubernetes.Interface, namespac
 		found := false
 		for i, ref := range mergedRefs {
 			if ref.UID == newRef.UID {
-				// Merge boolean flags
+				// Merge boolean flags instead of overwriting.
+				// If either is true, keep it true.
 				if newRef.Controller != nil && *newRef.Controller {
 					mergedRefs[i].Controller = ptr.To(true)
 				}
@@ -664,7 +686,11 @@ func ensureService(ctx context.Context, clientset kubernetes.Interface, namespac
 			"name":            svc.Name,
 			"ownerReferences": mergedRefs,
 		},
-		"spec": svc.Spec,
+		"spec": map[string]interface{}{
+			"selector": svc.Spec.Selector,
+			"ports":    svc.Spec.Ports,
+			"type":     svc.Spec.Type,
+		},
 	}
 
 	data, err := json.Marshal(patch)

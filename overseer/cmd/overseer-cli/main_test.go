@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net"
@@ -67,6 +68,18 @@ func TestIsBot(t *testing.T) {
 			botLogin: "my-bot[bot]",
 			expected: true,
 		},
+		{
+			name:     "custom bot suffix match",
+			login:    "my-bot[bot]-test",
+			botLogin: "my-bot",
+			expected: true,
+		},
+		{
+			name:     "another custom bot suffix match",
+			login:    "my-bot[bot]-app-123",
+			botLogin: "my-bot",
+			expected: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -115,13 +128,28 @@ func TestIsGitHubTransient(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:     "timeout error",
-			err:      errors.New("request timed out"),
+			name:     "i/o timeout",
+			err:      errors.New("i/o timeout"),
+			expected: true,
+		},
+		{
+			name:     "tls handshake timeout",
+			err:      errors.New("net/http: TLS handshake timeout"),
+			expected: true,
+		},
+		{
+			name:     "connection reset",
+			err:      syscall.ECONNRESET,
 			expected: true,
 		},
 		{
 			name:     "connection refused",
 			err:      &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED},
+			expected: true,
+		},
+		{
+			name:     "context deadline exceeded",
+			err:      context.DeadlineExceeded,
 			expected: true,
 		},
 		{
@@ -133,6 +161,11 @@ func TestIsGitHubTransient(t *testing.T) {
 			name:     "unexpected EOF error",
 			err:      io.ErrUnexpectedEOF,
 			expected: true,
+		},
+		{
+			name:     "generic timeout should NOT match anymore",
+			err:      errors.New("timeout"),
+			expected: false,
 		},
 		{
 			name:     "other error",
