@@ -33,6 +33,7 @@ export BASE_REF={{ printf "%q" .BaseRef }}
 
 if [ -z "${REPO_NAME}" ]; then
     echo "Error: REPO_NAME environment variable is not set or empty. Aborting to prevent accidental deletion."
+    echo "Context: REPO_OWNER=${REPO_OWNER}, CLONE_URL=${CLONE_URL}, PR_NUMBER=${PR_NUMBER}"
     exit 1
 fi
 
@@ -74,7 +75,7 @@ EOF
 
     if [ -n "$GITHUB_BOT_EMAIL" ]; then
         git config --global user.email "${GITHUB_BOT_EMAIL}"
-    elif [ -n "$GITHUB_USER_EMAIL" ] && [ "$GITHUB_USER_EMAIL" != "<nil>" ] && [ "$GITHUB_USER_EMAIL" != "" ]; then
+    elif [ -n "$GITHUB_USER_EMAIL" ] && [ "$GITHUB_USER_EMAIL" != "" ]; then
         git config --global user.email "${GITHUB_USER_EMAIL}"
     else
         git config --global user.email "bot@example.com"
@@ -95,20 +96,29 @@ function setupGitRepos {
     echo "Running setupGitRepos..."
     if [ ! -d "/workspaces/${REPO_NAME}/.git" ]; then
         echo "cloning repository"
-        # If directory exists but is not a git repo (e.g. leftover from failed run), remove it first.
-        if [ -d "/workspaces/${REPO_NAME}" ]; then
-            rm -rf "/workspaces/${REPO_NAME}"
-        fi
-        (cd /workspaces/ && git clone "${CLONE_URL}" "${REPO_NAME}")
+        # Ensure directory is removed if it exists but is not a git repo (more robust than [ -d ])
+        rm -rf "/workspaces/${REPO_NAME}"
+        (cd /workspaces/ && gh repo clone "${REPO_OWNER}/${REPO_NAME}" "${REPO_NAME}")
     else
         echo "repository already exists"
         # Ensure a pristine state before doing anything
-        # We use git clean -fd (without x) to avoid wiping out toolchains or configs that might be in .gitignore
         cd "/workspaces/${REPO_NAME}"
         git merge --abort || true
         git reset --hard
         git clean -fd
-        git fetch origin
+        
+        # Retry loop for fetch to handle transient network issues
+        for i in {1..3}; do
+            if git fetch origin; then
+                break
+            fi
+            echo "git fetch failed, retrying in 5s... ($i/3)"
+            sleep 5
+            if [ $i -eq 3 ]; then
+                echo "Error: git fetch failed after 3 attempts."
+                exit 1
+            fi
+        done
     fi
 
     (cd "/workspaces/${REPO_NAME}" && gh repo set-default "${REPO_OWNER}/${REPO_NAME}" || true)
@@ -123,15 +133,12 @@ function checkoutPRBranch {
 
 function verifyResolution {
     echo "Verifying conflict resolution..."
-    # Use git diff --check to identify conflict markers.
-    # We ignore whitespace errors to focus solely on markers.
-    if ! git -c core.whitespace=-trailing-space diff --check; then
+    # Use git diff HEAD --check to identify conflict markers in both staged and unstaged changes.
+    if ! git -c core.whitespace=-trailing-space diff HEAD --check; then
         echo "Conflict markers found by git diff --check"
         return 1
     fi
-    # Supplemental check for conflict markers using grep, 
-    # focusing on the start and end markers to avoid false positives with Markdown H1.
-    # We look for at least 7 < or > at the start of a line, optionally followed by space.
+    # Supplemental check for conflict markers using grep as a secondary verification.
     if grep -rE --exclude-dir=.git "^<{7}([[:space:]]|$)|^>{7}([[:space:]]|$)" .; then
         echo "Conflict markers still present!"
         return 1
@@ -151,15 +158,13 @@ function runTests {
     
     # Go
     if [ -n "$(find . -maxdepth 2 -name "go.mod" -print -quit)" ]; then
-        echo "Found Go project, running tests..."
-        (go mod tidy && go test ./...) || TEST_FAILED=true
+        echo "Found Go project, running tests (no cache)..."
+        (go mod tidy && go test -count=1 ./...) || TEST_FAILED=true
     fi
     
     # Node.js
     if [ -n "$(find . -maxdepth 2 -name "package.json" -print -quit)" ]; then
         echo "Found Node.js project, running tests..."
-        # Find all directories with package.json and run tests.
-        # Use process substitution to avoid subshell issues with TEST_FAILED.
         while read -r dir; do
             echo "Running tests in $dir"
             (
@@ -167,8 +172,10 @@ function runTests {
                 cd "$dir"
                 if [ -f "yarn.lock" ]; then
                     yarn install --frozen-lockfile && yarn test || exit 1
+                elif [ -f "package-lock.json" ]; then
+                    npm ci && npm test || exit 1
                 else
-                    (npm ci || npm install) && npm test || exit 1
+                    npm install && npm test || exit 1
                 fi
             ) || TEST_FAILED=true
         done < <(find . -maxdepth 2 -name "package.json" -exec dirname {} \; | sort -u)
@@ -177,26 +184,29 @@ function runTests {
     # Python
     if [ -n "$(find . -maxdepth 2 \( -name "pyproject.toml" -o -name "requirements.txt" \) -print -quit)" ]; then
         echo "Found Python project, running tests..."
-        # Find all directories with python configs.
-        # Use process substitution to avoid subshell issues with TEST_FAILED.
         while read -r dir; do
              echo "Running tests in $dir"
              (
                  set -e
                  cd "$dir"
-                 # Use a virtual environment for isolation, outside the repo to keep it clean.
                  local VENV_DIR="/tmp/venv-$(echo -n "$dir" | md5sum | cut -d' ' -f1)"
                  python3 -m venv "$VENV_DIR" && source "$VENV_DIR/bin/activate"
-                 if [ -f "requirements.txt" ]; then
-                     pip install -r requirements.txt || true
-                 fi
                  if [ -f "pyproject.toml" ]; then
-                     pip install . || true
+                     pip install . || exit 1
+                 elif [ -f "requirements.txt" ]; then
+                     pip install -r requirements.txt || exit 1
                  fi
+                 
                  if command -v pytest >/dev/null 2>&1; then
                      pytest || exit 1
                  else
-                     python3 -m unittest discover || exit 1
+                     # Capture output to check if any tests were found
+                     local UT_OUTPUT
+                     UT_OUTPUT=$(python3 -m unittest discover 2>&1)
+                     echo "$UT_OUTPUT"
+                     if echo "$UT_OUTPUT" | grep -q "Ran 0 tests"; then
+                         echo "Warning: No tests found by unittest discover."
+                     fi
                  fi
              ) || TEST_FAILED=true
         done < <(find . -maxdepth 2 \( -name "pyproject.toml" -o -name "requirements.txt" \) -exec dirname {} \; | sort -u)
@@ -229,17 +239,15 @@ function runGemini {
         export GIT_COMMITTER_EMAIL="${GITHUB_BOT_EMAIL:-bot@example.com}"
     fi
 
-    # Identify the current branch and its remote (handles forks)
+    # Identify the current branch (handles forks)
     local CURRENT_BRANCH
     CURRENT_BRANCH="$(git branch --show-current)"
     if [ -z "$CURRENT_BRANCH" ]; then
         echo "Error: Detached HEAD state detected or unable to identify current branch."
         exit 1
     fi
-    local REMOTE
-    REMOTE="$(git config "branch.${CURRENT_BRANCH}.remote" || echo "origin")"
     
-    echo "Current branch: ${CURRENT_BRANCH}, Remote: ${REMOTE}"
+    echo "Current branch: ${CURRENT_BRANCH}"
 
     # Capture the original HEAD before the merge loop to ensure we can always reset to a clean state.
     local ORIG_HEAD
@@ -256,10 +264,9 @@ function runGemini {
         git clean -fd
         
         # Re-attempt merge to get conflicts for the model to work on.
-        # We use FETCH_HEAD to ensure we merge exactly what we just fetched.
-        echo "Attempting to merge FETCH_HEAD (origin/${BASE_REF}) into ${CURRENT_BRANCH}..."
+        echo "Attempting to merge origin/${BASE_REF} into ${CURRENT_BRANCH}..."
         # We use --no-ff to ensure we get a merge commit if it succeeds, and --no-commit to verify before finalizing.
-        if git merge FETCH_HEAD --no-ff --no-commit; then
+        if git merge "origin/${BASE_REF}" --no-ff --no-commit; then
              echo "Merge successful without conflicts (unexpected in loop). Verifying..."
              if verifyResolution && runTests; then
                  # If it succeeded without conflicts and passed tests, finalize the commit.
@@ -321,11 +328,10 @@ checkoutPRBranch
 cd "/workspaces/${REPO_NAME}"
 # Ensure we have base branch
 git fetch origin "${BASE_REF}" || { echo "Failed to fetch base branch origin/${BASE_REF}. Perhaps it was deleted?"; exit 1; }
-echo "Attempting initial merge of FETCH_HEAD (origin/${BASE_REF})..."
+echo "Attempting initial merge of origin/${BASE_REF}..."
 BEFORE_MERGE_SHA=$(git rev-parse HEAD)
 # Use --no-ff and --no-commit to verify behavioral correctness even for clean merges.
-# Use FETCH_HEAD to ensure we merge exactly what we just fetched.
-if git merge FETCH_HEAD --no-ff --no-commit; then
+if git merge "origin/${BASE_REF}" --no-ff --no-commit; then
     if verifyResolution && runTests; then
         echo "Merge successful without conflicts and tests passed."
         git commit --no-verify --no-edit || echo "Nothing to commit"

@@ -105,14 +105,6 @@ func BuildGithubResolveConflictsCommand() *cobra.Command {
 }
 
 func (c *GithubResolveConflictsCommand) InitDefaults() error {
-	if c.PRNumber == 0 {
-		if prStr := os.Getenv("PR_NUMBER"); prStr != "" {
-			if val, err := strconv.Atoi(strings.TrimSpace(prStr)); err == nil {
-				c.PRNumber = val
-			}
-		}
-	}
-
 	prompt, err := resolveAgentPrompt(c.CustomPrompt)
 	if err != nil {
 		return err
@@ -160,7 +152,7 @@ func (c *GithubResolveConflictsCommand) loadGithubObjects(ctx context.Context) e
 	if err != nil {
 		return fmt.Errorf("invalid RepoURL %q: %w", c.RepoURL, err)
 	}
-	parts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
 	if len(parts) < 2 {
 		return fmt.Errorf("invalid repository path in URL %q", c.RepoURL)
 	}
@@ -180,8 +172,12 @@ func (c *GithubResolveConflictsCommand) loadGithubObjects(ctx context.Context) e
 	}
 
 	if c.BaseRef == "" || c.HeadRef == "" {
+		state := "unknown"
+		if c.pr != nil {
+			state = c.pr.State()
+		}
 		klog.V(4).Infof("PR object: %+v", c.pr)
-		return fmt.Errorf("BaseRef or HeadRef is empty for PR %d in %s/%s", c.PRNumber, owner, repoName)
+		return fmt.Errorf("BaseRef or HeadRef is empty for PR %d (state: %s) in %s/%s", c.PRNumber, state, owner, repoName)
 	}
 
 	c.repo, err = githubAPI.GetRepositoryFromHTMLUrl(ctx, c.RepoURL)
@@ -201,8 +197,18 @@ func (c *GithubResolveConflictsCommand) loadGithubObjects(ctx context.Context) e
 }
 
 func (c *GithubResolveConflictsCommand) loadSandbox(ctx context.Context) error {
-	// Re-use NewIssueSandbox. If in pod, it uses LocalExecutor which is what we want.
-	sb, err := sandbox.NewIssueSandbox(ctx, c.InPod, c.repo, nil, "")
+	if c.InPod {
+		name := "local"
+		if c.repo != nil {
+			name = fmt.Sprintf("local-%s-pr-%d", c.repo.Name(), c.PRNumber)
+		}
+		c.sandbox = sandbox.NewLocalSandbox(ctx, c.repo, name)
+		c.sandboxID = c.sandbox.GetSandboxID()
+		return nil
+	}
+
+	// For non-pod execution, we still need NewIssueSandbox to find/launch a real sandbox
+	sb, err := sandbox.NewIssueSandbox(ctx, false, c.repo, nil, fmt.Sprintf("pr-%d", c.PRNumber))
 	if err != nil {
 		return err
 	}
@@ -226,9 +232,13 @@ func (c *GithubResolveConflictsCommand) Run(ctx context.Context) error {
 	}
 
 	var models []string
+	modelSeen := make(map[string]bool)
 	for _, m := range strings.Split(c.Model, ",") {
 		if trimmed := strings.TrimSpace(m); trimmed != "" {
-			models = append(models, trimmed)
+			if !modelSeen[trimmed] {
+				models = append(models, trimmed)
+				modelSeen[trimmed] = true
+			}
 		}
 	}
 	if len(models) == 0 {

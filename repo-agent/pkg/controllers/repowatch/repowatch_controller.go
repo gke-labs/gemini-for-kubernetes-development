@@ -2472,8 +2472,12 @@ func (r *Reconciler) reconcileReviewConflicts(ctx context.Context, repoWatch *re
 	// But we only do this if we haven't already recorded checking this SHA.
 	if pr.Mergeable == nil {
 		// Need to fetch full PR object to get mergeability
-		fullPR, _, err := ghClient.PullRequests.Get(ctx, owner, repo, pr.GetNumber())
+		fullPR, resp, err := ghClient.PullRequests.Get(ctx, owner, repo, pr.GetNumber())
 		if err != nil {
+			if resp != nil && resp.StatusCode == 404 {
+				log.Info("PR not found (deleted or closed), skipping conflict resolution", "pr", pr.GetNumber())
+				return false, nil
+			}
 			return false, err
 		}
 		pr = fullPR
@@ -2490,7 +2494,7 @@ func (r *Reconciler) reconcileReviewConflicts(ctx context.Context, repoWatch *re
 		if alreadyAttemptedThisSHA {
 			return false, nil
 		}
-		log.Info("Found merge conflicts in PR, creating resolve-conflicts task", "pr", pr.GetNumber(), "headSHA", headSHA, "baseSHA", baseSHA)
+		log.V(1).Info("Found merge conflicts in PR, creating resolve-conflicts task", "pr", pr.GetNumber(), "headSHA", headSHA, "baseSHA", baseSHA)
 
 		params := map[string]string{
 			"HEAD_SHA":     headSHA,
@@ -2528,8 +2532,12 @@ func (r *Reconciler) reconcileReviewConflicts(ctx context.Context, repoWatch *re
 		}
 
 		// Ensure sandbox is scaled up if we have capacity
-		if _, err := r.unpauseSandboxIfPendingTasks(ctx, sandbox, activeSandboxes, repoWatch.Spec.Review.MaxActiveSandboxes, prIsExplicit); err != nil {
+		unpaused, err := r.unpauseSandboxIfPendingTasks(ctx, sandbox, activeSandboxes, repoWatch.Spec.Review.MaxActiveSandboxes, prIsExplicit)
+		if err != nil {
 			log.Error(err, "unable to unpause sandbox after creating resolve-conflicts task", "sandbox", sandbox.GetName())
+		}
+		if !unpaused && !prIsExplicit && *activeSandboxes >= repoWatch.Spec.Review.MaxActiveSandboxes {
+			log.V(2).Info("Sandbox scale-up deferred: MaxActiveSandboxes reached", "sandbox", sandbox.GetName(), "active", *activeSandboxes, "max", repoWatch.Spec.Review.MaxActiveSandboxes)
 		}
 	}
 

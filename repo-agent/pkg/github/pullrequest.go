@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	githubv39 "github.com/google/go-github/v39/github"
 )
@@ -73,10 +74,14 @@ func (p *PullRequest) Body() string {
 	return p.pr.GetBody()
 }
 
+func (p *PullRequest) State() string {
+	return p.pr.GetState()
+}
+
 func (p *PullRequest) TruncatedBody() string {
 	body := p.pr.GetBody()
-	runes := []rune(body)
-	if len(runes) > 2000 {
+	if utf8.RuneCountInString(body) > 2000 {
+		runes := []rune(body)
 		return string(runes[:2000]) + "... (truncated)"
 	}
 	return body

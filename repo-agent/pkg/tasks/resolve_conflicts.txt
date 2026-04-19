@@ -12,8 +12,10 @@ An attempt to merge the base branch {{ .BaseRef }} into the head branch {{ .Head
 ### Context
 PR Number: {{ .PullRequest.Number }}
 PR Title: {{ .PullRequest.Title }}
+{{- if .PullRequest.TruncatedBody }}
 PR Description:
 {{ .PullRequest.TruncatedBody }}
+{{- end }}
 
 ### Instructions
 - Use your tools to list conflicting files.
@@ -21,7 +23,7 @@ PR Description:
 - Apply the resolution to each file.
 - **Do not commit your changes.** The automation script will handle staging and committing the resolved files.
 - Verify that no conflict markers remain.
-- You can run tests if available to verify your resolution.
+- Focus on producing correct file edits; automated tests will be run by the system after your response to verify the resolution.
 
 {{ if .CustomPrompt }}
 ### Additional Instructions
