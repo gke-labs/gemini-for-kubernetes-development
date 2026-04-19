@@ -97,7 +97,7 @@ EOF
 
     if [ -n "$GITHUB_BOT_NAME" ]; then
         git config --global user.name "${GITHUB_BOT_NAME}"
-    elif [ -n "$GITHUB_USER_NAME" ] && [ "$GITHUB_USER_NAME" != "<nil>" ] && [ "$GITHUB_USER_NAME" != "" ]; then
+    elif [ -n "$GITHUB_USER_NAME" ] && [ "$GITHUB_USER_NAME" != "" ]; then
         git config --global user.name "${GITHUB_USER_NAME}"
     else
         git config --global user.name "Gemini Bot"
@@ -233,7 +233,7 @@ function runTests {
              cd "$dir"
              local V_DIR
              V_DIR="/tmp/venv-$(echo -n "$dir" | md5sum | cut -d' ' -f1)"
-             python3 -m venv "$V_DIR"
+             python3 -m venv "$V_DIR" || exit 1
              source "$V_DIR/bin/activate"
              if [ -f "pyproject.toml" ]; then
                  pip install .
@@ -313,10 +313,20 @@ function runGemini {
         git reset --hard "$ORIG_HEAD"
         git clean -fd
         
-        # Re-attempt merge to get conflicts for the model to work on.
-        echo "Attempting to merge base branch into ${CURRENT_BRANCH}..."
-        # Re-fetch to ensure remote branch is fresh for this iteration
-        git fetch origin "${BASE_REF}"
+        # Re-fetch to ensure remote branch is fresh for this iteration with retry loop
+        FETCH_SUCCESS=false
+        for i in {1..3}; do
+            if git fetch origin "${BASE_REF}"; then
+                FETCH_SUCCESS=true
+                break
+            fi
+            echo "git fetch origin ${BASE_REF} failed, retrying in 5s... ($i/3)"
+            sleep 5
+        done
+        if [ "$FETCH_SUCCESS" = false ]; then
+            echo "Error: git fetch origin ${BASE_REF} failed after 3 attempts. Skipping model $MODEL."
+            continue
+        fi
         # We merge from FETCH_HEAD to ensure we are using exactly what we just fetched.
         if git merge FETCH_HEAD --no-ff --no-commit; then
              echo "Merge successful without conflicts (unexpected in loop). Verifying..."
@@ -401,8 +411,20 @@ checkoutPRBranch
 
 # Attempt initial merge to see if we even need LLM
 cd "/workspaces/${REPO_NAME}"
-# Ensure we have base branch
-git fetch origin "${BASE_REF}" || { echo "Failed to fetch base branch. Perhaps it was deleted?"; exit 1; }
+# Ensure we have base branch with retry loop
+FETCH_SUCCESS=false
+for i in {1..3}; do
+    if git fetch origin "${BASE_REF}"; then
+        FETCH_SUCCESS=true
+        break
+    fi
+    echo "git fetch origin ${BASE_REF} failed, retrying in 5s... ($i/3)"
+    sleep 5
+done
+if [ "$FETCH_SUCCESS" = false ]; then
+    echo "Failed to fetch base branch after 3 attempts. Perhaps it was deleted?"
+    exit 1
+fi
 echo "Attempting initial merge of FETCH_HEAD..."
 BEFORE_MERGE_SHA=$(git rev-parse HEAD)
 # Use --no-ff and --no-commit to verify behavioral correctness even for clean merges.
