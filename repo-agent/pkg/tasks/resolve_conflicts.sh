@@ -163,14 +163,16 @@ function runTests {
     fi
     
     # Node.js
-    if [ -n "$(find . -maxdepth 2 -name "package.json" -print -quit)" ]; then
+    if [ -n "$(find . -maxdepth 2 \( -name "package.json" -o -name "pnpm-lock.yaml" -o -name "yarn.lock" \) -print -quit)" ]; then
         echo "Found Node.js project, running tests..."
         while read -r dir; do
             echo "Running tests in $dir"
             (
                 set -e
                 cd "$dir"
-                if [ -f "yarn.lock" ]; then
+                if [ -f "pnpm-lock.yaml" ] && command -v pnpm >/dev/null 2>&1; then
+                    pnpm install --frozen-lockfile && pnpm test || exit 1
+                elif [ -f "yarn.lock" ] && command -v yarn >/dev/null 2>&1; then
                     yarn install --frozen-lockfile && yarn test || exit 1
                 elif [ -f "package-lock.json" ]; then
                     npm ci && npm test || exit 1
@@ -182,7 +184,7 @@ function runTests {
     fi
     
     # Python
-    if [ -n "$(find . -maxdepth 2 \( -name "pyproject.toml" -o -name "requirements.txt" \) -print -quit)" ]; then
+    if [ -n "$(find . -maxdepth 2 \( -name "pyproject.toml" -o -name "requirements.txt" -o -name "setup.py" \) -print -quit)" ]; then
         echo "Found Python project, running tests..."
         while read -r dir; do
              echo "Running tests in $dir"
@@ -192,6 +194,8 @@ function runTests {
                  local VENV_DIR="/tmp/venv-$(echo -n "$dir" | md5sum | cut -d' ' -f1)"
                  python3 -m venv "$VENV_DIR" && source "$VENV_DIR/bin/activate"
                  if [ -f "pyproject.toml" ]; then
+                     pip install . || exit 1
+                 elif [ -f "setup.py" ]; then
                      pip install . || exit 1
                  elif [ -f "requirements.txt" ]; then
                      pip install -r requirements.txt || exit 1
@@ -205,11 +209,11 @@ function runTests {
                      UT_OUTPUT=$(python3 -m unittest discover 2>&1)
                      echo "$UT_OUTPUT"
                      if echo "$UT_OUTPUT" | grep -q "Ran 0 tests"; then
-                         echo "Warning: No tests found by unittest discover."
+                         echo "Warning: No tests found by unittest discover in $dir"
                      fi
                  fi
              ) || TEST_FAILED=true
-        done < <(find . -maxdepth 2 \( -name "pyproject.toml" -o -name "requirements.txt" \) -exec dirname {} \; | sort -u)
+        done < <(find . -maxdepth 2 \( -name "pyproject.toml" -o -name "requirements.txt" -o -name "setup.py" \) -exec dirname {} \; | sort -u)
     fi
 
     # Makefile (usually at root)
