@@ -9,9 +9,9 @@ import (
 
 func TestPullRequest_TruncatedBody(t *testing.T) {
 	tests := []struct {
-		name     string
-		body     string
-		want     string
+		name string
+		body string
+		want string
 	}{
 		{
 			name: "short body",
