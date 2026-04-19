@@ -898,6 +898,14 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 					continue
 				}
 				klog.V(2).Infof("Issue #%d: Task %s already exists in state %s. Skipping.", number, taskType, state)
+				// Cache timestamps in sandbox annotations even if we skip creating a task,
+				// to avoid re-paginating events in the next loop.
+				if eventsFetchSuccess && sandboxName != "" {
+					if lastReopenedAt != nil {
+						_ = manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "lastReopenedAt", lastReopenedAt.Format(time.RFC3339))
+					}
+					_ = manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "eventsLastCheckedAt", issue.GetUpdatedAt().Format(time.RFC3339))
+				}
 				return nil
 			}
 			if state == "Running" || state == "Pending" {
@@ -1321,6 +1329,14 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 	}
 
 	if foundReviewOnGitHub {
+		// Cache timestamps in sandbox annotations even if we skip creating a task,
+		// to avoid re-paginating events in the next loop.
+		if eventsFetchSuccess && sandboxName != "" {
+			if lastReopenedAt != nil {
+				_ = manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "lastReopenedAt", lastReopenedAt.Format(time.RFC3339))
+			}
+			_ = manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "eventsLastCheckedAt", pr.GetUpdatedAt().Format(time.RFC3339))
+		}
 		return nil
 	}
 
@@ -1342,6 +1358,14 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 				// If it was created recently, we wait for submitAgentDraft to do its job.
 				if time.Since(task.CreationTimestamp.Time) < 30*time.Minute {
 					klog.V(2).Infof("PR #%d: Review task for SHA %s is Completed but not yet on GitHub. Waiting for submission (created %v ago).", number, headSHA, time.Since(task.CreationTimestamp.Time))
+					// Cache timestamps in sandbox annotations even if we skip creating a task,
+					// to avoid re-paginating events in the next loop.
+					if eventsFetchSuccess && sandboxName != "" {
+						if lastReopenedAt != nil {
+							_ = manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "lastReopenedAt", lastReopenedAt.Format(time.RFC3339))
+						}
+						_ = manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "eventsLastCheckedAt", pr.GetUpdatedAt().Format(time.RFC3339))
+					}
 					return nil
 				}
 				// If it's old, it might be stuck (e.g. failed submission). allow retry.
@@ -1351,6 +1375,14 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 			}
 
 			klog.V(2).Infof("PR #%d: Task %s for SHA %s already exists in state %s. Skipping.", number, taskType, headSHA, state)
+			// Cache timestamps in sandbox annotations even if we skip creating a task,
+			// to avoid re-paginating events in the next loop.
+			if eventsFetchSuccess && sandboxName != "" {
+				if lastReopenedAt != nil {
+					_ = manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "lastReopenedAt", lastReopenedAt.Format(time.RFC3339))
+				}
+				_ = manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "eventsLastCheckedAt", pr.GetUpdatedAt().Format(time.RFC3339))
+			}
 			return nil
 		}
 	}
