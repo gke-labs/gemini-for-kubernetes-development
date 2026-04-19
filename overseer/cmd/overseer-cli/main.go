@@ -193,7 +193,7 @@ func isGitHubTransient(err error) bool {
 
 	// Also check for network timeouts/connection issues
 	var netErr net.Error
-	if errors.As(err, &netErr) && netErr.Timeout() {
+	if (errors.As(err, &netErr) && netErr.Timeout()) || errors.Is(err, context.DeadlineExceeded) {
 		return true
 	}
 
@@ -207,17 +207,26 @@ func isGitHubTransient(err error) bool {
 	}
 
 	// Fallback for common transient errors that might not be wrapped as net.Error
-	errStr := err.Error()
+	errStr := strings.ToLower(err.Error())
 	return strings.Contains(errStr, "timeout") || strings.Contains(errStr, "timed out")
 }
 
 func isBot(login, botLogin, userLogin string) bool {
-	loginNoBot := strings.TrimSuffix(login, "[bot]")
-	botLoginNoBot := strings.TrimSuffix(botLogin, "[bot]")
-	userLoginNoBot := strings.TrimSuffix(userLogin, "[bot]")
+	if login == "" {
+		return false
+	}
+	// GitHub App bots often have a [bot] suffix.
+	// We check both with and without suffix for robustness.
+	check := func(target string) bool {
+		if target == "" {
+			return false
+		}
+		t1 := strings.ToLower(strings.TrimSuffix(login, "[bot]"))
+		t2 := strings.ToLower(strings.TrimSuffix(target, "[bot]"))
+		return t1 == t2
+	}
 
-	return (botLogin != "" && (strings.EqualFold(login, botLogin) || strings.EqualFold(loginNoBot, botLoginNoBot))) ||
-		(userLogin != "" && (strings.EqualFold(login, userLogin) || strings.EqualFold(loginNoBot, userLoginNoBot)))
+	return check(botLogin) || check(userLogin)
 }
 
 type CLIConfig struct {
@@ -229,7 +238,7 @@ type CLIConfig struct {
 	UserEmail string
 }
 
-func loadConfig() CLIConfig {
+func loadConfig() (CLIConfig, error) {
 	userLogin := os.Getenv("GITHUB_USER_ID")
 	userName := os.Getenv("GITHUB_USER_NAME")
 	if userName == "" {
@@ -240,6 +249,11 @@ func loadConfig() CLIConfig {
 	if botName == "" {
 		botName = botLogin
 	}
+
+	if userLogin == "" && botLogin == "" {
+		return CLIConfig{}, fmt.Errorf("neither GITHUB_USER_ID nor GITHUB_BOT_LOGIN is set")
+	}
+
 	return CLIConfig{
 		BotLogin:  botLogin,
 		BotName:   botName,
@@ -247,7 +261,7 @@ func loadConfig() CLIConfig {
 		UserLogin: userLogin,
 		UserName:  userName,
 		UserEmail: os.Getenv("GITHUB_USER_EMAIL"),
-	}
+	}, nil
 }
 
 func runChore(ctx context.Context, name string, file string) error {
@@ -255,7 +269,10 @@ func runChore(ctx context.Context, name string, file string) error {
 		return fmt.Errorf("OVERSEER_NAME and NAMESPACE environment variables must be set")
 	}
 
-	conf := loadConfig()
+	conf, err := loadConfig()
+	if err != nil {
+		return err
+	}
 	choresMode := os.Getenv("CHORES_MODE")
 	if choresMode == "disabled" {
 		klog.Infof("Chore handling is disabled (CHORES_MODE=disabled). Skipping.")
@@ -351,6 +368,9 @@ func runChore(ctx context.Context, name string, file string) error {
 			if state == "" {
 				state = "Pending"
 			}
+			if task.DeletionTimestamp != nil {
+				return &RetryableError{Message: fmt.Sprintf("task %s for chore %s is still terminating, waiting", task.Name, chore.Name)}
+			}
 			if state == "Completed" {
 				if time.Since(task.CreationTimestamp.Time) < 2*time.Minute {
 					klog.V(2).Infof("Chore %s: Task already exists in state %s (created %v ago). Skipping.", chore.Name, state, time.Since(task.CreationTimestamp.Time))
@@ -366,6 +386,7 @@ func runChore(ctx context.Context, name string, file string) error {
 					return nil
 				}
 				klog.Warningf("Chore %s: Found STALE task in state %s (created %v ago). Deleting stale task and allowing new one.", chore.Name, state, time.Since(task.CreationTimestamp.Time))
+				_ = manager.UpdateSandboxTaskStatus(ctx, namespace, task.Name, "Failed", "Stale task deleted for retry", nil)
 				_ = manager.DeleteSandboxTask(ctx, namespace, task.Name)
 				return &RetryableError{Message: fmt.Sprintf("deleted stale task for chore %s, waiting for pod termination", chore.Name)}
 			}
@@ -383,7 +404,7 @@ func runChore(ctx context.Context, name string, file string) error {
 
 	// 2. Ensure Sandbox exists and is configured correctly
 	klog.Infof("Ensuring sandbox %s exists...", sandboxName)
-	if err := createChoreSandbox(ctx, kubeClient, &overseer, chore, sandboxName, conf); err != nil {
+	if err := createChoreSandbox(ctx, kubeClient, rwUnstructured, &overseer, chore, sandboxName, conf); err != nil {
 		return fmt.Errorf("failed to ensure chore sandbox: %w", err)
 	}
 
@@ -443,7 +464,7 @@ func slugify(s string) string {
 	return res.String()
 }
 
-func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, overseer *overseerv1alpha1.Overseer, chore *ChoreDefinition, sandboxName string, conf CLIConfig) error {
+func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, rwUnstructured *unstructured.Unstructured, overseer *overseerv1alpha1.Overseer, chore *ChoreDefinition, sandboxName string, conf CLIConfig) error {
 	cloneURL := overseer.Spec.RepoURL
 	if !strings.HasSuffix(cloneURL, ".git") {
 		cloneURL += ".git"
@@ -517,8 +538,8 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 
 	sb.SetOwnerReferences([]metav1.OwnerReference{
 		{
-			APIVersion:         "overseer.gemini.google.com/v1alpha1",
-			Kind:               "Overseer",
+			APIVersion:         rwUnstructured.GetAPIVersion(),
+			Kind:               rwUnstructured.GetKind(),
 			Name:               overseer.Name,
 			UID:                overseer.UID,
 			Controller:         ptr.To(true),
@@ -543,7 +564,16 @@ func ensureSandbox(ctx context.Context, dynClient dynamic.Interface, namespace s
 			found := false
 			for i, ref := range mergedRefs {
 				if ref.UID == newRef.UID {
-					mergedRefs[i] = newRef
+					// Merge boolean flags instead of overwriting
+					if newRef.Controller != nil && *newRef.Controller {
+						mergedRefs[i].Controller = ptr.To(true)
+					}
+					if newRef.BlockOwnerDeletion != nil && *newRef.BlockOwnerDeletion {
+						mergedRefs[i].BlockOwnerDeletion = ptr.To(true)
+					}
+					mergedRefs[i].Name = newRef.Name
+					mergedRefs[i].APIVersion = newRef.APIVersion
+					mergedRefs[i].Kind = newRef.Kind
 					found = true
 					break
 				}
@@ -556,11 +586,22 @@ func ensureSandbox(ctx context.Context, dynClient dynamic.Interface, namespace s
 	}
 
 	// Use Server-Side Apply to ensure the Sandbox exists and has correct OwnerReferences.
-	// This robustly handles adoption and state enforcement.
-	sb.SetManagedFields(nil)
-	data, err := json.Marshal(sb)
+	// For SSA with Unstructured, we should only include the fields we want to manage.
+	patch := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": sb.GetAPIVersion(),
+			"kind":       sb.GetKind(),
+			"metadata": map[string]interface{}{
+				"name":            sb.GetName(),
+				"ownerReferences": sb.Object["metadata"].(map[string]interface{})["ownerReferences"],
+			},
+			"spec": sb.Object["spec"],
+		},
+	}
+
+	data, err := json.Marshal(patch)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal sandbox %s: %w", sb.GetName(), err)
+		return nil, fmt.Errorf("failed to marshal sandbox patch %s: %w", sb.GetName(), err)
 	}
 
 	force := true
@@ -576,9 +617,10 @@ func ensureSandbox(ctx context.Context, dynClient dynamic.Interface, namespace s
 
 func ensureService(ctx context.Context, clientset kubernetes.Interface, namespace string, svc *corev1.Service, owner *unstructured.Unstructured) error {
 	// To avoid stripping OwnerReferences from other controllers, we fetch existing ones and merge.
+	var mergedRefs []metav1.OwnerReference
 	existing, err := clientset.CoreV1().Services(namespace).Get(ctx, svc.Name, metav1.GetOptions{})
 	if err == nil {
-		svc.OwnerReferences = existing.OwnerReferences
+		mergedRefs = existing.OwnerReferences
 	}
 
 	if owner != nil {
@@ -592,26 +634,42 @@ func ensureService(ctx context.Context, clientset kubernetes.Interface, namespac
 		}
 
 		found := false
-		for i, ref := range svc.OwnerReferences {
+		for i, ref := range mergedRefs {
 			if ref.UID == newRef.UID {
-				svc.OwnerReferences[i] = newRef
+				// Merge boolean flags
+				if newRef.Controller != nil && *newRef.Controller {
+					mergedRefs[i].Controller = ptr.To(true)
+				}
+				if newRef.BlockOwnerDeletion != nil && *newRef.BlockOwnerDeletion {
+					mergedRefs[i].BlockOwnerDeletion = ptr.To(true)
+				}
+				mergedRefs[i].Name = newRef.Name
+				mergedRefs[i].APIVersion = newRef.APIVersion
+				mergedRefs[i].Kind = newRef.Kind
 				found = true
 				break
 			}
 		}
 		if !found {
-			svc.OwnerReferences = append(svc.OwnerReferences, newRef)
+			mergedRefs = append(mergedRefs, newRef)
 		}
 	}
 
 	// Use Server-Side Apply to enforce the desired state (Spec and OwnerReferences).
-	svc.APIVersion = "v1"
-	svc.Kind = "Service"
-	svc.ManagedFields = nil // Let Kubernetes manage this
+	// For Services, we must only patch managed fields to avoid immutability errors like clusterIP.
+	patch := map[string]interface{}{
+		"apiVersion": "v1",
+		"kind":       "Service",
+		"metadata": map[string]interface{}{
+			"name":            svc.Name,
+			"ownerReferences": mergedRefs,
+		},
+		"spec": svc.Spec,
+	}
 
-	data, err := json.Marshal(svc)
+	data, err := json.Marshal(patch)
 	if err != nil {
-		return fmt.Errorf("failed to marshal service %s: %w", svc.Name, err)
+		return fmt.Errorf("failed to marshal service patch %s: %w", svc.Name, err)
 	}
 
 	force := true
@@ -630,7 +688,10 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 		return fmt.Errorf("OVERSEER_NAME and NAMESPACE environment variables must be set")
 	}
 
-	conf := loadConfig()
+	conf, err := loadConfig()
+	if err != nil {
+		return err
+	}
 	issueMode := os.Getenv("ISSUE_MODE")
 	if issueMode == "disabled" {
 		klog.Infof("Issue handling is disabled (ISSUE_MODE=disabled). Skipping.")
@@ -801,6 +862,9 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 		if state == "" {
 			state = "Pending"
 		}
+		if task.DeletionTimestamp != nil {
+			return &RetryableError{Message: fmt.Sprintf("task %s is still terminating, waiting", task.Name)}
+		}
 		if task.Spec.Type == taskType {
 			if state == "Completed" {
 				if lastReopenedAt != nil && task.CreationTimestamp.Before(&metav1.Time{Time: *lastReopenedAt}) {
@@ -816,6 +880,7 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 					return nil
 				}
 				klog.Warningf("Issue #%d: Found STALE task %s in state %s (created %v ago). Deleting stale task and allowing new one.", number, taskType, state, time.Since(task.CreationTimestamp.Time))
+				_ = manager.UpdateSandboxTaskStatus(ctx, namespace, task.Name, "Failed", "Stale task deleted for retry", nil)
 				_ = manager.DeleteSandboxTask(ctx, namespace, task.Name)
 				return &RetryableError{Message: fmt.Sprintf("deleted stale task for issue %d, waiting for pod termination", number)}
 			}
@@ -836,6 +901,7 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 					return &RetryableError{Message: fmt.Sprintf("another task %s is running in sandbox for issue %d", task.Spec.Type, number)}
 				}
 				klog.Warningf("Issue #%d: Found STALE task %s in state %s (created %v ago). Deleting stale task and allowing new one.", number, task.Spec.Type, state, time.Since(task.CreationTimestamp.Time))
+				_ = manager.UpdateSandboxTaskStatus(ctx, namespace, task.Name, "Failed", "Stale task deleted for retry", nil)
 				_ = manager.DeleteSandboxTask(ctx, namespace, task.Name)
 				return &RetryableError{Message: fmt.Sprintf("deleted stale task for issue %d, waiting for pod termination", number)}
 			}
@@ -865,16 +931,8 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 
 	// 3. Ensure Sandbox exists and is configured correctly
 	klog.Infof("Ensuring sandbox %s exists...", sandboxName)
-	if err := createIssueSandbox(ctx, kubeClient, &overseer, issue, conf); err != nil {
+	if err := createIssueSandbox(ctx, kubeClient, rwUnstructured, &overseer, issue, conf); err != nil {
 		return fmt.Errorf("failed to ensure issue sandbox: %w", err)
-	}
-
-	// Cache timestamps in sandbox annotations now that sandbox exists
-	if eventsFetchSuccess {
-		if lastReopenedAt != nil {
-			_ = manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "lastReopenedAt", lastReopenedAt.Format(time.RFC3339))
-		}
-		_ = manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "eventsLastCheckedAt", issue.GetUpdatedAt().Format(time.RFC3339))
 	}
 
 	// 4. Create Task
@@ -897,6 +955,14 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 		return fmt.Errorf("failed to create sandbox task: %w", err)
 	}
 
+	// Cache timestamps in sandbox annotations now that task is created
+	if eventsFetchSuccess {
+		if lastReopenedAt != nil {
+			_ = manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "lastReopenedAt", lastReopenedAt.Format(time.RFC3339))
+		}
+		_ = manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "eventsLastCheckedAt", issue.GetUpdatedAt().Format(time.RFC3339))
+	}
+
 	klog.Info("Done.")
 	return nil
 }
@@ -907,7 +973,10 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 		return fmt.Errorf("OVERSEER_NAME and NAMESPACE environment variables must be set")
 	}
 
-	conf := loadConfig()
+	conf, err := loadConfig()
+	if err != nil {
+		return err
+	}
 	mode := ""
 	modeName := ""
 	if submit || taskType == "review" {
@@ -948,9 +1017,6 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 		Clientset:     clientset,
 	}
 	manager := k8s.NewManager(kubeClient)
-
-	botLogin := conf.BotLogin
-	userLogin := conf.UserLogin
 
 	if submit {
 		klog.Infof("Submitting agent draft for PR %d...", number)
@@ -1024,7 +1090,8 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 
 	head := pr.GetHead()
 	if head == nil || head.GetSHA() == "" {
-		return fmt.Errorf("PR #%d has no head SHA", number)
+		klog.Warningf("PR #%d has no head SHA. Skipping.", number)
+		return nil
 	}
 	headSHA := head.GetSHA()
 
@@ -1073,6 +1140,7 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 					createdAt := e.GetCreatedAt()
 
 					// If we reached events older than our last checkpoint, we can stop
+					// Note: We use Before to potentially re-process events in the same second, which is safe due to idempotency.
 					if eventsLastCheckedAt != nil && createdAt.Before(*eventsLastCheckedAt) {
 						break StopEvents
 					}
@@ -1101,6 +1169,9 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 		if state == "" {
 			state = "Pending"
 		}
+		if task.DeletionTimestamp != nil {
+			return &RetryableError{Message: fmt.Sprintf("task %s is still terminating, waiting", task.Name)}
+		}
 
 		taskSHA := task.Spec.Params["HEAD_SHA"]
 		if task.Spec.Type == taskType && strings.EqualFold(taskSHA, headSHA) {
@@ -1110,6 +1181,7 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 					return nil
 				}
 				klog.Warningf("PR #%d: Found STALE task %s for SHA %s in state %s (created %v ago). Deleting stale task and allowing new one.", number, taskType, headSHA, state, time.Since(task.CreationTimestamp.Time))
+				_ = manager.UpdateSandboxTaskStatus(ctx, namespace, task.Name, "Failed", "Stale task deleted for retry", nil)
 				_ = manager.DeleteSandboxTask(ctx, namespace, task.Name)
 				return &RetryableError{Message: fmt.Sprintf("deleted stale task %s for PR %d, waiting for pod termination", taskType, number)}
 			}
@@ -1138,12 +1210,14 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 					return &RetryableError{Message: fmt.Sprintf("another task is running in sandbox for PR %d, waiting for it to finish", number)}
 				}
 				klog.Warningf("PR #%d: Found STALE task %s for SHA %s in state %s (created %v ago). Deleting stale task and allowing new one.", number, task.Spec.Type, taskSHA, state, time.Since(task.CreationTimestamp.Time))
+				_ = manager.UpdateSandboxTaskStatus(ctx, namespace, task.Name, "Failed", "Stale task deleted for retry", nil)
 				_ = manager.DeleteSandboxTask(ctx, namespace, task.Name)
 				return &RetryableError{Message: fmt.Sprintf("deleted stale task for PR %d, waiting for pod termination", number)}
 			}
 			// Clean up old non-relevant tasks
 			if state == "Completed" || state == "Failed" {
-				if !strings.EqualFold(taskSHA, headSHA) && taskSHA != "" {
+				// Backward compatibility: handle empty taskSHA (don't delete if we don't know the SHA)
+				if taskSHA != "" && !strings.EqualFold(taskSHA, headSHA) {
 					klog.Warningf("PR #%d: Found old %s task %s for DIFFERENT SHA %s. Deleting to avoid clutter.", number, state, task.Spec.Type, taskSHA)
 					_ = manager.DeleteSandboxTask(ctx, namespace, task.Name)
 				}
@@ -1154,30 +1228,46 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 	foundReviewOnGitHub := false
 	if taskType == "review" {
 		// 2. Then check GitHub for already submitted reviews for this SHA
-		if botLogin == "" && userLogin == "" {
+		if conf.BotLogin == "" && conf.UserLogin == "" {
 			klog.Warningf("PR #%d: Neither GITHUB_BOT_LOGIN nor GITHUB_USER_ID is set. Skipping GitHub review deduplication.", number)
 		} else {
 			listOpt := &githubv39.ListOptions{PerPage: 100}
+			
+			// Find the last page first to iterate backwards (newest reviews first)
+			_, resp, err := ghClient.PullRequests.ListReviews(ctx, owner, repo, number, listOpt)
+			if err != nil {
+				if isGitHubTransient(err) {
+					return &RetryableError{Message: fmt.Sprintf("transient error listing reviews for PR %d: %v", number, err)}
+				}
+				return fmt.Errorf("failed to list reviews for PR %d: %w", number, err)
+			}
+			
+			lastPage := resp.LastPage
+			if lastPage == 0 {
+				lastPage = 1
+			}
+
 		ReviewLoop:
-			for {
-				reviews, resp, err := ghClient.PullRequests.ListReviews(ctx, owner, repo, number, listOpt)
+			for p := lastPage; p >= 1; p-- {
+				listOpt.Page = p
+				reviews, _, err := ghClient.PullRequests.ListReviews(ctx, owner, repo, number, listOpt)
 				if err != nil {
 					if isGitHubTransient(err) {
-						return &RetryableError{Message: fmt.Sprintf("transient error listing reviews for PR %d: %v", number, err)}
+						return &RetryableError{Message: fmt.Sprintf("transient error listing reviews for PR %d on page %d: %v", number, p, err)}
 					}
-					return fmt.Errorf("failed to list reviews for PR %d: %w", number, err)
+					return fmt.Errorf("failed to list reviews for PR %d on page %d: %w", number, p, err)
 				}
 
-				for _, r := range reviews {
+				// Scan reviews on this page backwards (newest to oldest)
+				for i := len(reviews) - 1; i >= 0; i-- {
+					r := reviews[i]
 					if r.GetUser() == nil {
 						continue
 					}
 					login := r.GetUser().GetLogin()
-					if isBot(login, botLogin, userLogin) {
-						// If shared accounts are used, also verify the hidden signature in the body
+					if isBot(login, conf.BotLogin, conf.UserLogin) {
 						if strings.EqualFold(r.GetCommitID(), headSHA) {
 							hasSignature := strings.Contains(r.GetBody(), "<!-- overseer-review -->")
-							// Backward compatibility: if it's from the bot and SHA matches, assume it's automated if it has the legacy signature or empty body
 							isLegacyBot := strings.Contains(r.GetBody(), "generated by Overseer") || r.GetBody() == ""
 							if hasSignature || isLegacyBot {
 								state := r.GetState()
@@ -1189,22 +1279,17 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 								}
 
 								if state == "DISMISSED" {
-									klog.Infof("PR #%d: Automated review for SHA %s was DISMISSED. Allowing re-review.", number, headSHA)
-									continue
+									klog.Infof("PR #%d: Automated review for SHA %s was DISMISSED. Re-reviewing.", number, headSHA)
+									break ReviewLoop // Newest bot review for this SHA was dismissed, so we need a new one
 								}
 
 								klog.V(2).Infof("PR #%d: Automated review for SHA %s already exists on GitHub by %s (state: %s). Skipping.", number, headSHA, login, state)
 								foundReviewOnGitHub = true
 								break ReviewLoop
 							}
-							klog.V(2).Infof("PR #%d: Found review by %s for SHA %s, but it lacks the automated signature. Assuming it is a manual review.", number, login, headSHA)
 						}
 					}
 				}
-				if resp.NextPage == 0 {
-					break ReviewLoop
-				}
-				listOpt.Page = resp.NextPage
 			}
 		}
 	}
@@ -1258,16 +1343,8 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 
 	// Ensure Sandbox exists and is configured correctly
 	klog.Infof("Ensuring sandbox %s exists...", sandboxName)
-	if err := createPRSandbox(ctx, kubeClient, &overseer, pr, conf); err != nil {
+	if err := createPRSandbox(ctx, kubeClient, rwUnstructured, &overseer, pr, conf); err != nil {
 		return fmt.Errorf("failed to ensure PR sandbox: %w", err)
-	}
-
-	// Cache timestamps in sandbox annotations now that sandbox exists
-	if eventsFetchSuccess {
-		if lastReopenedAt != nil {
-			_ = manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "lastReopenedAt", lastReopenedAt.Format(time.RFC3339))
-		}
-		_ = manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "eventsLastCheckedAt", pr.GetUpdatedAt().Format(time.RFC3339))
 	}
 
 	// Create Task
@@ -1287,6 +1364,14 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 	err = manager.CreateSandboxTask(ctx, namespace, sandboxName, "Sandbox", taskType, params)
 	if err != nil {
 		return fmt.Errorf("failed to create sandbox task: %w", err)
+	}
+
+	// Cache timestamps in sandbox annotations now that task is created
+	if eventsFetchSuccess {
+		if lastReopenedAt != nil {
+			_ = manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "lastReopenedAt", lastReopenedAt.Format(time.RFC3339))
+		}
+		_ = manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "eventsLastCheckedAt", pr.GetUpdatedAt().Format(time.RFC3339))
 	}
 
 	klog.Info("Done.")
@@ -1417,11 +1502,15 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 	signature := "<!-- overseer-review -->"
 	body := ""
 	if reviewRequest.Body != nil {
-		body = *reviewRequest.Body
+		body = strings.TrimSpace(*reviewRequest.Body)
 	}
 	if !strings.Contains(body, signature) {
-		reviewRequest.Body = githubv39.String(body + "\n\n" + signature)
+		if body != "" {
+			body += "\n\n"
+		}
+		body += signature
 	}
+	reviewRequest.Body = githubv39.String(body)
 
 	klog.Infof("Creating review on GitHub for %s/%s PR %d (SHA %s)...", owner, repoName, prNumber, currentSHA)
 	review, _, err := client.PullRequests.CreateReview(ctx, owner, repoName, prNumber, reviewRequest)
@@ -1430,10 +1519,23 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 			return &RetryableError{Message: fmt.Sprintf("transient error creating review on GitHub: %v", err)}
 		}
 		// If it's 422, it might be invalid line references (e.g. due to rebase/stale draft).
-		// We delete the task so runPR can re-trigger a fresh review.
+		// We delete the task so runPR can re-trigger a fresh review, up to a limit.
 		var githubErr *githubv39.ErrorResponse
 		if errors.As(err, &githubErr) && githubErr.Response != nil && githubErr.Response.StatusCode == 422 {
-			klog.Warningf("GitHub rejected review for PR %d with 422 (likely invalid line references or stale draft). Deleting task %s to allow re-trigger.", prNumber, latestReviewTask.Name)
+			retryCount := 0
+			if sandboxUnstructured != nil {
+				if val, ok := sandboxUnstructured.GetAnnotations()["failedSubmissions:"+currentSHA]; ok {
+					_, _ = fmt.Sscanf(val, "%d", &retryCount)
+				}
+			}
+
+			if retryCount >= 3 {
+				klog.Errorf("GitHub rejected review for PR %d with 422 repeatedly. SHA: %s. Giving up to avoid infinite loop.", prNumber, currentSHA)
+				return fmt.Errorf("GitHub rejected review (422) after %d retries: %w", retryCount, err)
+			}
+
+			klog.Warningf("GitHub rejected review for PR %d with 422 (likely invalid line references). Deleting task %s to allow re-trigger (retry %d/3).", prNumber, latestReviewTask.Name, retryCount+1)
+			_ = manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "failedSubmissions:"+currentSHA, fmt.Sprintf("%d", retryCount+1))
 			_ = manager.DeleteSandboxTask(ctx, namespace, latestReviewTask.Name)
 			return fmt.Errorf("GitHub rejected review (422): %w", err)
 		}
@@ -1464,7 +1566,7 @@ func parseRepoURL(url string) (string, string, error) {
 	return parts[len(parts)-2], parts[len(parts)-1], nil
 }
 
-func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, overseer *overseerv1alpha1.Overseer, issue *githubv39.Issue, conf CLIConfig) error {
+func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, rwUnstructured *unstructured.Unstructured, overseer *overseerv1alpha1.Overseer, issue *githubv39.Issue, conf CLIConfig) error {
 	// Replicate logic from repowatch_controller.go:createIssueSandbox
 	name := fmt.Sprintf("%s-issue-%d", overseer.Name, issue.GetNumber())
 	cloneURL := strings.Replace(issue.GetRepositoryURL(), "api.github.com/repos", "github.com", 1) + ".git"
@@ -1533,8 +1635,8 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 
 	sb.SetOwnerReferences([]metav1.OwnerReference{
 		{
-			APIVersion:         "overseer.gemini.google.com/v1alpha1",
-			Kind:               "Overseer",
+			APIVersion:         rwUnstructured.GetAPIVersion(),
+			Kind:               rwUnstructured.GetKind(),
 			Name:               overseer.Name,
 			UID:                overseer.UID,
 			Controller:         ptr.To(true),
@@ -1550,7 +1652,7 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 	return ensureService(ctx, kubeClient.Clientset, namespace, svc, createdSb)
 }
 
-func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, overseer *overseerv1alpha1.Overseer, pr *githubv39.PullRequest, conf CLIConfig) error {
+func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, rwUnstructured *unstructured.Unstructured, overseer *overseerv1alpha1.Overseer, pr *githubv39.PullRequest, conf CLIConfig) error {
 	name := fmt.Sprintf("%s-pr-%d", overseer.Name, pr.GetNumber())
 
 	userLogin := conf.UserLogin
@@ -1613,7 +1715,7 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 		PRTitle:           pr.GetTitle(),
 		PRHTMLURL:         pr.GetHTMLURL(),
 		PRDiffURL:         pr.GetDiffURL(),
-		PRCloneURL:        fmt.Sprintf("%s#refs/heads/%s", head.GetRepo().GetCloneURL(), head.GetRef()),
+		PRCloneURL:        fmt.Sprintf("%s#%s", head.GetRepo().GetCloneURL(), head.GetSHA()),
 		RepoName:          overseer.Name,
 		MaxReviewFiles:    maxReviewFiles,
 		IgnoreFiles:       overseer.Spec.Review.IgnoreFiles,
@@ -1626,8 +1728,8 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 
 	sb.SetOwnerReferences([]metav1.OwnerReference{
 		{
-			APIVersion:         "overseer.gemini.google.com/v1alpha1",
-			Kind:               "Overseer",
+			APIVersion:         rwUnstructured.GetAPIVersion(),
+			Kind:               rwUnstructured.GetKind(),
 			Name:               overseer.Name,
 			UID:                overseer.UID,
 			Controller:         ptr.To(true),
