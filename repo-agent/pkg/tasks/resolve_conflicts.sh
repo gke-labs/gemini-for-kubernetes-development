@@ -315,7 +315,18 @@ function runGemini {
         # We merge from FETCH_HEAD to ensure we are using exactly what we just fetched.
         if git merge FETCH_HEAD --no-ff --no-commit; then
              echo "Merge successful without conflicts (unexpected in loop). Verifying..."
-             if verifyResolution && runTests; then
+             set +e
+             verifyResolution
+             V_RES=$?
+             if [ $V_RES -eq 0 ]; then
+                 runTests
+                 T_RES=$?
+             else
+                 T_RES=1
+             fi
+             set -e
+
+             if [ $V_RES -eq 0 ] && [ $T_RES -eq 0 ]; then
                  # If it succeeded without conflicts and passed tests, finalize the commit.
                  # Use --no-edit to preserve standard MERGE_MSG
                  git commit --no-verify --no-edit || echo "Nothing to commit"
@@ -332,7 +343,18 @@ function runGemini {
         if gemini --yolo --model "$MODEL" --output-format stream-json < "${PROMPT_FILE}" | /opt/repo-agent/gemini-stream-processor --output "${TASK_DIR}/gemini-output-${MODEL}.json"; then
              echo "Gemini execution successful with model: $MODEL"
              
-             if verifyResolution && runTests; then
+             set +e
+             verifyResolution
+             V_RES=$?
+             if [ $V_RES -eq 0 ]; then
+                 runTests
+                 T_RES=$?
+             else
+                 T_RES=1
+             fi
+             set -e
+
+             if [ $V_RES -eq 0 ] && [ $T_RES -eq 0 ]; then
                  echo "Resolution verified with model: $MODEL. Staging and committing..."
                  # Copy the successful output to a standard location for stats tracking
                  cp "${TASK_DIR}/gemini-output-${MODEL}.json" "${TASK_DIR}/gemini-output.json" || true
@@ -380,7 +402,17 @@ echo "Attempting initial merge of FETCH_HEAD..."
 BEFORE_MERGE_SHA=$(git rev-parse HEAD)
 # Use --no-ff and --no-commit to verify behavioral correctness even for clean merges.
 if git merge FETCH_HEAD --no-ff --no-commit; then
-    if verifyResolution && runTests; then
+    set +e
+    verifyResolution
+    V_RES=$?
+    if [ $V_RES -eq 0 ]; then
+        runTests
+        T_RES=$?
+    else
+        T_RES=1
+    fi
+    set -e
+    if [ $V_RES -eq 0 ] && [ $T_RES -eq 0 ]; then
         echo "Merge successful without conflicts and tests passed."
         git commit --no-verify --no-edit || echo "Nothing to commit"
         pushChanges
