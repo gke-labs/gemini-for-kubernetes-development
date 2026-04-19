@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"strconv"
@@ -74,31 +75,46 @@ type Client struct {
 }
 
 // ParseIssueURL extracts owner, repo, and issue number from a GitHub issue URL.
-func ParseIssueURL(url string) (owner string, repo string, number int, err error) {
-	u := strings.TrimPrefix(url, "https://")
-	tokens := strings.Split(u, "/")
-	// e.g. https://github.com/GoogleCloudPlatform/k8s-config-connector/issues/6010
-	// or https://github.com/gke-labs/gateway-api-reference-implementation/pull/92
-	if len(tokens) >= 5 && tokens[0] == "github.com" && (tokens[3] == "issues" || tokens[3] == "pull") {
-		owner := tokens[1]
-		repo := strings.TrimSuffix(tokens[2], ".git")
-		number, err := strconv.Atoi(tokens[4])
+func ParseIssueURL(s string) (owner string, repo string, number int, err error) {
+	u, err := url.Parse(s)
+	if err != nil {
+		return "", "", 0, err
+	}
+
+	if u.Host != "github.com" {
+		return "", "", 0, fmt.Errorf("only github.com is supported, got %q", u.Host)
+	}
+
+	// Path should be /owner/repo/issues/number or /owner/repo/pull/number
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) >= 4 && (parts[2] == "issues" || parts[2] == "pull") {
+		owner := parts[0]
+		repo := strings.TrimSuffix(parts[1], ".git")
+		number, err := strconv.Atoi(parts[3])
 		if err != nil {
-			return "", "", 0, fmt.Errorf("invalid issue/pr number %q: %w", tokens[4], err)
+			return "", "", 0, fmt.Errorf("invalid issue/pr number %q: %w", parts[3], err)
 		}
 		return owner, repo, number, nil
 	}
-	return "", "", 0, fmt.Errorf("issue format %q not recognized", url)
+	return "", "", 0, fmt.Errorf("issue/pull-request format %q not recognized", s)
 }
 
 // ParseHTMLUrl extracts owner and repo from a GitHub HTML URL.
-func ParseHTMLUrl(url string) (owner string, repo string, err error) {
-	u := strings.TrimPrefix(url, "https://")
-	tokens := strings.Split(u, "/")
-	if len(tokens) >= 3 && tokens[0] == "github.com" {
-		return tokens[1], strings.TrimSuffix(tokens[2], ".git"), nil
+func ParseHTMLUrl(s string) (owner string, repo string, err error) {
+	u, err := url.Parse(s)
+	if err != nil {
+		return "", "", err
 	}
-	return "", "", fmt.Errorf("url format %q not recognized", url)
+
+	if u.Host != "github.com" {
+		return "", "", fmt.Errorf("only github.com is supported, got %q", u.Host)
+	}
+
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) >= 2 {
+		return parts[0], strings.TrimSuffix(parts[1], ".git"), nil
+	}
+	return "", "", fmt.Errorf("url format %q not recognized", s)
 }
 
 // GetIssue retrieves an issue and optionally its comments.

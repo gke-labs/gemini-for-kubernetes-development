@@ -395,7 +395,11 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 	if pending {
 		log.Info("GitHub is still computing mergeability, requeuing reviews")
-		requeueAfter = 1 * time.Minute
+		interval := repoWatch.Spec.MergeableRetryIntervalSeconds
+		if interval == 0 {
+			interval = 60
+		}
+		requeueAfter = time.Duration(interval) * time.Second
 	}
 
 	log.Info("reconciling issues")
@@ -2067,7 +2071,7 @@ func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *revi
 		if err != nil || !found || replicas == 0 {
 			// Check active sandboxes limit
 			if !issueIsExplicit && *activeSandboxes >= repoWatch.Spec.Issue.MaxActiveSandboxes {
-				log.Info("Skipping address-feedback scale-up: MaxActiveSandboxes reached", "issue", issue.GetNumber())
+				log.V(2).Info("Skipping sandbox scale-up: MaxActiveSandboxes reached", "issue", issue.GetNumber(), "active", *activeSandboxes, "max", repoWatch.Spec.Issue.MaxActiveSandboxes)
 				return nil
 			}
 
@@ -2218,7 +2222,7 @@ func (r *Reconciler) reconcilePRFailures(ctx context.Context, repoWatch *reviewv
 		if err != nil || !found || replicas == 0 {
 			// Check active sandboxes limit
 			if !issueIsExplicit && *activeSandboxes >= repoWatch.Spec.Issue.MaxActiveSandboxes {
-				log.Info("Skipping investigate-failures scale-up: MaxActiveSandboxes reached", "issue", issue.GetNumber())
+				log.V(2).Info("Skipping sandbox scale-up: MaxActiveSandboxes reached", "issue", issue.GetNumber(), "active", *activeSandboxes, "max", repoWatch.Spec.Issue.MaxActiveSandboxes)
 				return nil
 			}
 

@@ -149,16 +149,20 @@ function checkoutPRBranch {
 function verifyResolution {
     echo "Verifying conflict resolution..."
     # Use git diff HEAD --check to identify conflict markers in both staged and unstaged changes.
-    if ! git -c core.whitespace=-trailing-space diff HEAD --check; then
+    # We disable common whitespace checks that might be introduced by the LLM but aren't merge conflicts.
+    if ! git -c core.whitespace=blank-at-eol,-blank-at-eof,-space-before-tab,-trailing-space diff HEAD --check; then
         echo "Conflict markers found by git diff --check"
         return 1
     fi
-    # Supplemental check for conflict markers using grep as a secondary verification.
-    # Tighten regex to avoid false positives with Markdown headers (e.g. =======)
-    # Exclude common large directories to optimize search.
-    if grep -rE --exclude-dir={.git,node_modules,venv,.venv,dist,build} "^<{7}([[:space:]]|$)|^>{7}([[:space:]]|$)" .; then
-        echo "Conflict markers still present!"
-        return 1
+    # Supplemental check for conflict markers using grep as a secondary verification,
+    # specifically targeting only files modified in this merge to ensure performance.
+    local MODIFIED_FILES
+    MODIFIED_FILES=$(git diff --name-only HEAD)
+    if [ -n "$MODIFIED_FILES" ]; then
+        if echo "$MODIFIED_FILES" | xargs grep -E "^<{7}([[:space:]]|$)|^>{7}([[:space:]]|$)" > /dev/null 2>&1; then
+            echo "Conflict markers still present!"
+            return 1
+        fi
     fi
     echo "No conflict markers found. Resolution looks good."
     return 0
@@ -220,19 +224,19 @@ function runTests {
         while read -r dir; do
              echo "Running tests in $dir"
              (
-                 set -e
-                 cd "$dir"
-                 local V_DIR
-                 V_DIR="/tmp/venv-$(echo -n "$dir" | md5sum | cut -d' ' -f1)"
-                 python3 -m venv "$V_DIR" && source "$V_DIR/bin/activate"
-                 if [ -f "pyproject.toml" ]; then
-                     pip install .
-                 elif [ -f "setup.py" ]; then
-                     pip install .
-                 elif [ -f "requirements.txt" ]; then
-                     pip install -r requirements.txt
-                 fi
-                 
+             set -e
+             cd "$dir"
+             local V_DIR
+             V_DIR="/tmp/venv-$(echo -n "$dir" | md5sum | cut -d' ' -f1)"
+             python3 -m venv "$V_DIR"
+             source "$V_DIR/bin/activate"
+             if [ -f "pyproject.toml" ]; then
+                 pip install .
+             elif [ -f "setup.py" ]; then
+                 pip install .
+             elif [ -f "requirements.txt" ]; then
+                 pip install -r requirements.txt
+             fi
                  if command -v pytest >/dev/null 2>&1; then
                      pytest
                  else
@@ -306,9 +310,9 @@ function runGemini {
         
         # Re-attempt merge to get conflicts for the model to work on.
         echo "Attempting to merge base branch into ${CURRENT_BRANCH}..."
-        # Re-fetch to ensure FETCH_HEAD is fresh for this iteration
+        # Re-fetch to ensure remote branch is fresh for this iteration
         git fetch origin "${BASE_REF}"
-        # We use --no-ff to ensure we get a merge commit if it succeeds, and --no-commit to verify before finalizing.
+        # We merge from FETCH_HEAD to ensure we are using exactly what we just fetched.
         if git merge FETCH_HEAD --no-ff --no-commit; then
              echo "Merge successful without conflicts (unexpected in loop). Verifying..."
              if verifyResolution && runTests; then
@@ -317,10 +321,10 @@ function runGemini {
                  git commit --no-verify --no-edit || echo "Nothing to commit"
                  SUCCESS=true
                  break
+             else
+                 echo "Verification failed for clean merge. Exiting as LLM cannot fix broken base/branch."
+                 exit 1
              fi
-             # If verification failed even if merge "succeeded", something is wrong, continue to next model
-             git merge --abort || true
-             continue
         fi
 
         echo "Conflicts detected. Calling Gemini with model $MODEL..."

@@ -366,6 +366,12 @@ type RepoWatchSpec struct {
 	// +kubebuilder:validation:Minimum=30
 	// +kubebuilder:default=300
 	PollIntervalSeconds int `json:"pollIntervalSeconds,omitempty"`
+
+	// How often to retry mergeability check when GitHub is still computing (in seconds).
+	// If not set, it defaults to 60 seconds.
+	// +kubebuilder:validation:Minimum=10
+	// +kubebuilder:default=60
+	MergeableRetryIntervalSeconds int `json:"mergeableRetryIntervalSeconds,omitempty"`
 }
 
 // RepoWatchStatus defines the observed state of RepoWatch

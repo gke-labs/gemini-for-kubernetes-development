@@ -212,6 +212,10 @@ spec:
                 required:
                 - maxActiveSandboxes
                 type: object
+              mergeableRetryIntervalSeconds:
+                default: 60
+                minimum: 10
+                type: integer
               pollIntervalSeconds:
                 default: 300
                 minimum: 30

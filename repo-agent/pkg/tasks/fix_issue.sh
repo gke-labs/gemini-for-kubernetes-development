@@ -116,8 +116,10 @@ function checkForExistingPR {
     pushd "/workspaces/${REPO_NAME}" > /dev/null
 
     # Try to find a PR by the current user first
-    local pr_number=$(gh search prs "${ISSUE_NUMBER}" --state open --repo "${REPO_OWNER}/${REPO_NAME}" --author "${GITHUB_USER_ID}" --json number --jq '.[0] | "\(.number)"' --limit 1)
-    local pr_url=$(gh search prs "${ISSUE_NUMBER}" --state open --repo "${REPO_OWNER}/${REPO_NAME}" --author "${GITHUB_USER_ID}" --json url --jq '.[0] | "\(.url)"' --limit 1)
+    local pr_number
+    pr_number=$(gh search prs "${ISSUE_NUMBER}" --state open --repo "${REPO_OWNER}/${REPO_NAME}" --author "${GITHUB_USER_ID}" --json number --jq '.[0] | "\(.number)"' --limit 1)
+    local pr_url
+    pr_url=$(gh search prs "${ISSUE_NUMBER}" --state open --repo "${REPO_OWNER}/${REPO_NAME}" --author "${GITHUB_USER_ID}" --json url --jq '.[0] | "\(.url)"' --limit 1)
 
     # If not found, look for any PR
     if [ -z "$pr_number" ] || [ "$pr_number" == "null" ]; then
