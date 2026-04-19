@@ -2443,6 +2443,12 @@ func (r *Reconciler) reconcileReviewConflicts(ctx context.Context, repoWatch *re
 
 	checkSHA := fmt.Sprintf("%s:%s", headSHA, baseSHA)
 
+	// Check Sandbox annotations to see if we've already checked this SHA combination and it was mergeable
+	// We do this BEFORE listing tasks to save an unnecessary K8s API call if we already know this SHA is processed.
+	if sandbox.GetAnnotations() != nil && sandbox.GetAnnotations()["sandbox.gemini.google.com/last-conflict-check-key"] == checkSHA {
+		return false, nil
+	}
+
 	// List tasks to check for existing resolve-conflicts task for this SHA combination
 	tasks := &sandboxtaskv1alpha1.SandboxTaskList{}
 	if err := r.List(ctx, tasks, client.InNamespace(sandbox.GetNamespace()), client.MatchingLabels{"sandbox.gemini.google.com/sandbox-name": sandbox.GetName()}); err != nil {
@@ -2473,11 +2479,6 @@ func (r *Reconciler) reconcileReviewConflicts(ctx context.Context, repoWatch *re
 	}
 
 	if activeTaskExists {
-		return false, nil
-	}
-
-	// Check Sandbox annotations to see if we've already checked this SHA combination and it was mergeable
-	if sandbox.GetAnnotations() != nil && sandbox.GetAnnotations()["sandbox.gemini.google.com/last-conflict-check-key"] == checkSHA {
 		return false, nil
 	}
 
