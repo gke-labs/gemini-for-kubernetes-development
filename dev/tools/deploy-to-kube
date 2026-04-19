@@ -97,9 +97,22 @@ def main(args):
 
     all_manifests = ""
     for root, dirs, files in os.walk(manifests_path, topdown=False):
-        # Process files in alphabetical order
-        # TODO: Handle file ordering better so that CRDs and Namespaces are deployed first
-        files.sort()
+        # Sort files to ensure Namespaces, CRDs, and RBAC are applied first
+        def sort_key(filename):
+            priority = 100
+            if "namespace" in filename.lower():
+                priority = 0
+            elif "crd" in filename.lower():
+                priority = 10
+            elif "rbac" in filename.lower():
+                priority = 20
+            elif "serviceaccount" in filename.lower():
+                priority = 30
+            elif "role" in filename.lower():
+                priority = 40
+            return (priority, filename)
+
+        files.sort(key=sort_key)
         for filename in files:
             if not (filename.endswith(".yaml") or filename.endswith(".yml")):
                 continue
