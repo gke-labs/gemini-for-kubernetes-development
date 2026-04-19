@@ -321,10 +321,10 @@ func TestGetTaskMetadata(t *testing.T) {
 		}
 	})
 
-	t.Run("Invalid sandbox name - fails fast", func(t *testing.T) {
+	t.Run("Invalid sandbox name - preserves provided metadata", func(t *testing.T) {
 		gotName, gotUID := server.getTaskMetadata(ctx, namespace, "", "task1", "uid1")
-		if gotName != "n/a" || gotUID != "n/a" {
-			t.Errorf("getTaskMetadata() with empty sandbox = (%q, %q), want (%q, %q)", gotName, gotUID, "n/a", "n/a")
+		if gotName != "task1" || gotUID != "uid1" {
+			t.Errorf("getTaskMetadata() with empty sandbox = (%q, %q), want (%q, %q)", gotName, gotUID, "task1", "uid1")
 		}
 	})
 }

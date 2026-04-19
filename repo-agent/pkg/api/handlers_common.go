@@ -153,6 +153,8 @@ func truncateString(s string, limit int) string {
 
 	for {
 		needsClosing := ""
+		// Order matters for correctly closing nested blocks.
+		// We close triple-backticks first if they were opened.
 		if strings.Count(res, "```")%2 != 0 {
 			needsClosing += "\n```"
 		}
@@ -166,14 +168,14 @@ func truncateString(s string, limit int) string {
 		}
 
 		// If adding closing blocks exceeds the limit, truncate further and re-evaluate.
-		// We jump to the available space minus the closing block to avoid slow O(N) decrement.
+		// We jump to the available space minus the closing block.
 		newLimit := limit - len(needsClosing)
-		if newLimit >= len(res) {
-			newLimit = len(res) - 1
-		}
 		if newLimit < 0 {
-			res = ""
-			break
+			// This branch handles extremely small limits where even a fallback doesn't fit.
+			if len(truncatedFallback) <= limit {
+				return truncatedFallback
+			}
+			return truncateToRuneBoundary(s, limit)
 		}
 		res = truncateToRuneBoundary(res, newLimit)
 	}
@@ -182,7 +184,6 @@ func truncateString(s string, limit int) string {
 		if len(truncatedFallback) <= limit {
 			return truncatedFallback
 		}
-		// Last resort: just cut it as much as we can up to the strict limit
 		return truncateToRuneBoundary(s, limit)
 	}
 	return res
@@ -200,11 +201,7 @@ func truncateToRuneBoundary(s string, limit int) string {
 	// a maximum of 4 bytes for any valid UTF-8 string.
 	// We start from the byte at the limit and walk backwards to find the
 	// beginning of the last (possibly multi-byte) rune.
-	start := limit
-	if start >= len(s) {
-		start = len(s) - 1
-	}
-	for i := start; i >= 0; i-- {
+	for i := limit; i >= 0; i-- {
 		if utf8.RuneStart(s[i]) {
 			return s[:i]
 		}
@@ -214,7 +211,14 @@ func truncateToRuneBoundary(s string, limit int) string {
 
 func (s *Server) getTaskMetadata(ctx context.Context, namespace, sandboxName, taskName, taskUID string) (string, string) {
 	if sandboxName == "" || sandboxName == "n/a" {
-		return "n/a", "n/a"
+		// Even without a sandbox name, preserve explicitly provided metadata.
+		if taskName == "" {
+			taskName = "n/a"
+		}
+		if taskUID == "" {
+			taskUID = "n/a"
+		}
+		return taskName, taskUID
 	}
 
 	// If BOTH are missing or explicitly n/a, we'll fall back to latest.
@@ -270,12 +274,16 @@ func (s *Server) applyTraceabilityMetadata(c *gin.Context, body string, taskType
 	// if it was already near the limit.
 	if footerStart := strings.LastIndex(body, "<!-- repo-agent-metadata"); footerStart != -1 {
 		footerEnd := strings.Index(body[footerStart:], "-->")
+		contentBefore := body[:footerStart]
+		// Also remove the preceding rule if present to avoid stacking them
+		contentBefore = strings.TrimRight(contentBefore, " \t\n\r-")
+
 		if footerEnd != -1 {
 			// Remove the footer and any trailing whitespace
-			body = strings.TrimSpace(body[:footerStart] + body[footerStart+footerEnd+3:])
+			body = strings.TrimSpace(contentBefore + body[footerStart+footerEnd+3:])
 		} else {
 			// Malformed footer? Just cut from footerStart
-			body = strings.TrimSpace(body[:footerStart])
+			body = strings.TrimSpace(contentBefore)
 		}
 	}
 

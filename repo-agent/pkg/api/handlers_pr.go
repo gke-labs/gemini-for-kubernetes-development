@@ -345,12 +345,29 @@ func (s *Server) submitReview(c *gin.Context) {
 		return
 	}
 
+	// If the body is empty but we have inline comments, we skip adding the
+	// metadata footer to the top-level body to avoid cluttering the PR timeline.
+	// Traceability is maintained if at least one comment is present or if a body exists.
 	body := ""
 	if reviewRequest.Body != nil {
-		body = *reviewRequest.Body
+		body = strings.TrimSpace(*reviewRequest.Body)
 	}
-	newBody := s.applyTraceabilityMetadata(c, body, metadata.TaskTypePRReview, sandboxName, taskNameReq, taskUIDReq)
-	reviewRequest.Body = &newBody
+
+	if body != "" || len(reviewRequest.Comments) == 0 {
+		newBody := s.applyTraceabilityMetadata(c, body, metadata.TaskTypePRReview, sandboxName, taskNameReq, taskUIDReq)
+		reviewRequest.Body = &newBody
+	} else {
+		// Only inline comments. Add metadata to the first comment to maintain traceability
+		// without a top-level body.
+		reviewRequest.Body = nil
+		firstComment := reviewRequest.Comments[0]
+		commentBody := ""
+		if firstComment.Body != nil {
+			commentBody = *firstComment.Body
+		}
+		newCommentBody := s.applyTraceabilityMetadata(c, commentBody, metadata.TaskTypePRReview, sandboxName, taskNameReq, taskUIDReq)
+		firstComment.Body = &newCommentBody
+	}
 
 	// Not setting event sets it as a draft
 	reviewRequest.Event = nil

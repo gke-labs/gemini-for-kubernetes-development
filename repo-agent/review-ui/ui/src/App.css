@@ -937,12 +937,12 @@ body.dark-mode .warning-banner {
   background: none;
   border: none;
   padding: 0;
-  color: #007bff;
+  color: var(--text-link);
   text-decoration: underline;
   cursor: pointer;
   font: inherit;
 }
 
 .btn-link:hover {
-  color: #0056b3;
+  filter: brightness(1.2);
 }

@@ -524,8 +524,12 @@ func (s *Server) getDevTasks(c *gin.Context) {
 		return
 	}
 
-	// Sort tasks by creation timestamp (newest first)
+	// Sort tasks by creation timestamp (newest first).
+	// Tie-break with name for stable sorting.
 	sort.Slice(taskList.Items, func(i, j int) bool {
+		if taskList.Items[i].CreationTimestamp.Equal(&taskList.Items[j].CreationTimestamp) {
+			return taskList.Items[i].Name > taskList.Items[j].Name
+		}
 		return taskList.Items[i].CreationTimestamp.After(taskList.Items[j].CreationTimestamp.Time)
 	})
 
