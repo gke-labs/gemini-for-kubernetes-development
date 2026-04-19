@@ -95,32 +95,59 @@ function setupGitRepos {
     # only clone if doesn't exist
     if [ ! -d "/workspaces/${REPO_NAME}" ]; then
         echo "cloning repository"
-        (cd /workspaces/ && git clone ${CLONE_URL})
+        (
+            cd /workspaces/
+            git clone ${CLONE_URL}
+        )
     fi
 
     echo "running gh repo fork --remote"
-    (cd "/workspaces/${REPO_NAME}" && gh repo fork --remote)
-    (cd "/workspaces/${REPO_NAME}" && gh repo fork --remote)
+    (
+        cd "/workspaces/${REPO_NAME}"
+        gh repo fork --remote
+    )
+    (
+        cd "/workspaces/${REPO_NAME}"
+        gh repo fork --remote
+    )
 
     echo "running gh repo set-default"
-    (cd "/workspaces/${REPO_NAME}" && gh repo set-default "${CLONE_URL}")
+    (
+        cd "/workspaces/${REPO_NAME}"
+        gh repo set-default "${CLONE_URL}"
+    )
 
     echo "running git config local user.email"
-    (cd "/workspaces/${REPO_NAME}" && git config user.email "${GITHUB_USER_EMAIL}")
+    (
+        cd "/workspaces/${REPO_NAME}"
+        git config user.email "${GITHUB_USER_EMAIL}"
+    )
 
     echo "running git config local user.name"
-    (cd "/workspaces/${REPO_NAME}" && git config user.name "${GITHUB_USER_NAME}")
+    (
+        cd "/workspaces/${REPO_NAME}"
+        git config user.name "${GITHUB_USER_NAME}"
+    )
 
     if [ -n "$PRID" ] && [ "$PRID" != "null" ]; then
         echo "Checking out PR $PRID"
-        (cd "/workspaces/${REPO_NAME}" && gh pr checkout "$PRID")
+        (
+            cd "/workspaces/${REPO_NAME}"
+            gh pr checkout "$PRID"
+        )
     elif [ -n "$BRANCH_NAME" ]; then
         echo "Checking out branch $BRANCH_NAME"
-        (cd "/workspaces/${REPO_NAME}" && git checkout "$BRANCH_NAME")
+        (
+            cd "/workspaces/${REPO_NAME}"
+            git checkout "$BRANCH_NAME"
+        )
     fi
 
     echo "waiting for checkout to be ready (branch check)"
-    (cd "/workspaces/${REPO_NAME}" && git branch --show-current)
+    (
+        cd "/workspaces/${REPO_NAME}"
+        git branch --show-current
+    )
 }
 
 function configureGemini {
@@ -164,7 +191,11 @@ function runGemini {
         SUCCESS=false
         for MODEL in "${MODELS[@]}"; do
             echo "Trying model: $MODEL"
-            if (cd "/workspaces/${REPO_NAME}" && export GEMINI_API_KEY="${GEMINI_API_KEY}" && gemini --yolo --model "$MODEL" --output-format stream-json < ${PROMPT_FILE} | /opt/repo-agent/gemini-stream-processor --output "$(dirname "${PROMPT_FILE}")/gemini-output.json"); then
+            if (
+                cd "/workspaces/${REPO_NAME}"
+                export GEMINI_API_KEY="${GEMINI_API_KEY}"
+                gemini --yolo --model "$MODEL" --output-format stream-json < ${PROMPT_FILE} | /opt/repo-agent/gemini-stream-processor --output "$(dirname "${PROMPT_FILE}")/gemini-output.json"
+            ); then
                 echo "Gemini execution successful with model: $MODEL"
                 SUCCESS=true
                 break

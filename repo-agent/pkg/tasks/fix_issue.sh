@@ -92,23 +92,44 @@ function setupGitRepos {
     echo "Running setupGitRepos..."
     
     echo "cloning repository"
-    (cd /workspaces/ && git clone ${CLONE_URL})
+    (
+        cd /workspaces/
+        git clone ${CLONE_URL}
+    )
 
-    (cd "/workspaces/${REPO_NAME}" && gh repo fork --remote)
+    (
+        cd "/workspaces/${REPO_NAME}"
+        gh repo fork --remote
+    )
     echo "running gh repo fork"
-    (cd "/workspaces/${REPO_NAME}" && gh repo fork --remote)
+    (
+        cd "/workspaces/${REPO_NAME}"
+        gh repo fork --remote
+    )
 
     echo "running gh repo set-default"
-    (cd "/workspaces/${REPO_NAME}" && gh repo set-default "${CLONE_URL}")
+    (
+        cd "/workspaces/${REPO_NAME}"
+        gh repo set-default "${CLONE_URL}"
+    )
 
     echo "running git config local user.email"
-    (cd "/workspaces/${REPO_NAME}" && git config user.email "${GITHUB_USER_EMAIL}")
+    (
+        cd "/workspaces/${REPO_NAME}"
+        git config user.email "${GITHUB_USER_EMAIL}"
+    )
 
     echo "running git config local user.name"
-    (cd "/workspaces/${REPO_NAME}" && git config user.name "${GITHUB_USER_NAME}")
+    (
+        cd "/workspaces/${REPO_NAME}"
+        git config user.name "${GITHUB_USER_NAME}"
+    )
 
     echo "waiting for checkout to be ready (branch check)"
-    (cd "/workspaces/${REPO_NAME}" && git branch --show-current)
+    (
+        cd "/workspaces/${REPO_NAME}"
+        git branch --show-current
+    )
 }
 
 function checkForExistingPR {
@@ -135,7 +156,8 @@ function checkForExistingPR {
         echo "Found existing PR #${pr_number}"
         gh pr checkout "$pr_number"
 
-        local output_file="$(dirname "${PROMPT_FILE}")/agent-output.txt"
+        local output_file
+        output_file="$(dirname "${PROMPT_FILE}")/agent-output.txt"
 
         echo "We are not generating anything because there is an existing PR." > "$output_file"
         echo "${pr_url}" >> "$output_file"
@@ -148,11 +170,15 @@ function checkForExistingPR {
 function checkoutNewBranch {
     echo "Running checkoutNewBranch..."
     echo "creating new branch"
-    local branch_name="issue-${ISSUE_NUMBER}"
+    local branch_name
+    branch_name="issue-${ISSUE_NUMBER}"
     {{- if .Branch }}
     branch_name="{{ .Branch }}"
     {{- end }}
-    (cd "/workspaces/${REPO_NAME}" && git checkout -B "$branch_name")
+    (
+        cd "/workspaces/${REPO_NAME}"
+        git checkout -B "$branch_name"
+    )
 }
 
 function configureGemini {
@@ -227,7 +253,8 @@ function injectConfigDirData {
 function recordPRLink {
     echo "Recording PR link..."
     pushd "/workspaces/${REPO_NAME}" > /dev/null
-    local output_file="$(dirname "${PROMPT_FILE}")/agent-output.txt"
+    local output_file
+    output_file="$(dirname "${PROMPT_FILE}")/agent-output.txt"
     local pr_url=""
 
     # Try current branch PR status

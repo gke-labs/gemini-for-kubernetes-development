@@ -83,18 +83,30 @@ function setupGitRepos {
     git clone "${CLONE_URL}" "/workspaces/${REPO_NAME}"
 
     echo "running gh repo fork"
-    (cd "/workspaces/${REPO_NAME}" && gh repo fork --remote || true)
+    (
+        cd "/workspaces/${REPO_NAME}"
+        gh repo fork --remote || true
+    )
 
     echo "running gh repo set-default"
-    (cd "/workspaces/${REPO_NAME}" && gh repo set-default "${CLONE_URL}" || true)
+    (
+        cd "/workspaces/${REPO_NAME}"
+        gh repo set-default "${CLONE_URL}" || true
+    )
 
     echo "running git config local user.email"
     if [ -n "$GITHUB_BOT_EMAIL" ]; then
-        (cd "/workspaces/${REPO_NAME}" && git config user.email "${GITHUB_BOT_EMAIL}" || true)
-        (cd "/workspaces/${REPO_NAME}" && git config user.name "${GITHUB_BOT_NAME}" || true)
+        (
+            cd "/workspaces/${REPO_NAME}"
+            git config user.email "${GITHUB_BOT_EMAIL}" || true
+            git config user.name "${GITHUB_BOT_NAME}" || true
+        )
     else
-        (cd "/workspaces/${REPO_NAME}" && git config user.email "${GITHUB_USER_EMAIL}" || true)
-        (cd "/workspaces/${REPO_NAME}" && git config user.name "${GITHUB_USER_NAME}" || true)
+        (
+            cd "/workspaces/${REPO_NAME}"
+            git config user.email "${GITHUB_USER_EMAIL}" || true
+            git config user.name "${GITHUB_USER_NAME}" || true
+        )
     fi
 }
 

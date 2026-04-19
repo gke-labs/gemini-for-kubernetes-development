@@ -136,7 +136,8 @@ function setupGitRepos {
         done
     fi
 
-    (cd "/workspaces/${REPO_NAME}" && gh repo set-default "${REPO_OWNER}/${REPO_NAME}" || true)
+    cd "/workspaces/${REPO_NAME}"
+    gh repo set-default "${REPO_OWNER}/${REPO_NAME}" || true
 }
 
 function checkoutPRBranch {
@@ -203,13 +204,17 @@ function runTests {
                 set -e
                 cd "$dir"
                 if [ -f "pnpm-lock.yaml" ] && command -v pnpm >/dev/null 2>&1; then
-                    pnpm install --frozen-lockfile && pnpm test
+                    pnpm install --frozen-lockfile
+                    pnpm test
                 elif [ -f "yarn.lock" ] && command -v yarn >/dev/null 2>&1; then
-                    yarn install --frozen-lockfile && yarn test
+                    yarn install --frozen-lockfile
+                    yarn test
                 elif [ -f "package-lock.json" ]; then
-                    npm ci && npm test
+                    npm ci
+                    npm test
                 else
-                    npm install && npm test
+                    npm install
+                    npm test
                 fi
             )
             if [ $? -ne 0 ]; then

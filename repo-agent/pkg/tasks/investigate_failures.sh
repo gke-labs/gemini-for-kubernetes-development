@@ -93,24 +93,39 @@ function setupGitRepos {
     # Check if repo already exists (reuse sandbox case)
     if [ ! -d "/workspaces/${REPO_NAME}" ]; then
         echo "cloning repository"
-        (cd /workspaces/ && git clone ${CLONE_URL})
+        (
+            cd /workspaces/
+            git clone ${CLONE_URL}
+        )
     else
         echo "repository already exists"
         # Optional: fetch latest changes
-        (cd "/workspaces/${REPO_NAME}" && git fetch origin)
+        (
+            cd "/workspaces/${REPO_NAME}"
+            git fetch origin
+        )
     fi
 
     echo "running gh repo fork"
-    (cd "/workspaces/${REPO_NAME}" && gh repo fork --remote || true)
+    (
+        cd "/workspaces/${REPO_NAME}"
+        gh repo fork --remote || true
+    )
 
     echo "running gh repo set-default"
-    (cd "/workspaces/${REPO_NAME}" && gh repo set-default "${CLONE_URL}" || true)
+    (
+        cd "/workspaces/${REPO_NAME}"
+        gh repo set-default "${CLONE_URL}" || true
+    )
 }
 
 function checkoutPRBranch {
     echo "Running checkoutPRBranch..."
     echo "checking out PR #${PR_NUMBER}"
-    (cd "/workspaces/${REPO_NAME}" && gh pr checkout ${PR_NUMBER})
+    (
+        cd "/workspaces/${REPO_NAME}"
+        gh pr checkout ${PR_NUMBER}
+    )
 }
 
 function fetchLogs {
@@ -155,7 +170,11 @@ function runGemini {
     SUCCESS=false
     for MODEL in "${MODELS[@]}"; do
         echo "Trying model: $MODEL"
-        if (cd "/workspaces/${REPO_NAME}" && export GEMINI_API_KEY="${GEMINI_API_KEY}" && gemini --yolo --model "$MODEL" --output-format stream-json < ${PROMPT_FILE} | /opt/repo-agent/gemini-stream-processor --output "$(dirname "${PROMPT_FILE}")/gemini-output.json"); then
+        if (
+            cd "/workspaces/${REPO_NAME}"
+            export GEMINI_API_KEY="${GEMINI_API_KEY}"
+            gemini --yolo --model "$MODEL" --output-format stream-json < ${PROMPT_FILE} | /opt/repo-agent/gemini-stream-processor --output "$(dirname "${PROMPT_FILE}")/gemini-output.json"
+        ); then
              echo "Gemini execution successful with model: $MODEL"
              SUCCESS=true
              break
