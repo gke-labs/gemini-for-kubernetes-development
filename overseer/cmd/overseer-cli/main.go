@@ -1232,7 +1232,7 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 			klog.Warningf("PR #%d: Neither GITHUB_BOT_LOGIN nor GITHUB_USER_ID is set. Skipping GitHub review deduplication.", number)
 		} else {
 			listOpt := &githubv39.ListOptions{PerPage: 100}
-			
+
 			// Find the last page first to iterate backwards (newest reviews first)
 			_, resp, err := ghClient.PullRequests.ListReviews(ctx, owner, repo, number, listOpt)
 			if err != nil {
@@ -1241,7 +1241,7 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 				}
 				return fmt.Errorf("failed to list reviews for PR %d: %w", number, err)
 			}
-			
+
 			lastPage := resp.LastPage
 			if lastPage == 0 {
 				lastPage = 1
