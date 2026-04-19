@@ -114,6 +114,18 @@ func TestTruncateString(t *testing.T) {
 			want:  "``\n```\n```",
 		},
 		{
+			name:  "Nested code blocks - correct closure order",
+			s:     "```\n~~~\ncode long long string",
+			limit: 25,
+			want:  "```\n~~~\ncode long\n~~~\n```",
+		},
+		{
+			name:  "Nested code blocks - reverse order",
+			s:     "~~~\n```\ncode long long string",
+			limit: 25,
+			want:  "~~~\n```\ncode long\n```\n~~~",
+		},
+		{
 			name:  "Emoji boundary - 4 bytes",
 			s:     "Hello 🌟 world", // 🌟 is 4 bytes
 			limit: 9,               // "Hello " (6) + 3 bytes of 🌟

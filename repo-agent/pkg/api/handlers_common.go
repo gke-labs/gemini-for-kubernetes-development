@@ -154,12 +154,33 @@ func truncateString(s string, limit int) string {
 	for {
 		needsClosing := ""
 		// Order matters for correctly closing nested blocks.
-		// We close triple-backticks first if they were opened.
-		if strings.Count(res, "```")%2 != 0 {
-			needsClosing += "\n```"
-		}
-		if strings.Count(res, "~~~")%2 != 0 {
-			needsClosing += "\n~~~"
+		// We close the most recently opened block type first.
+		backtickIdx := strings.LastIndex(res, "```")
+		tildeIdx := strings.LastIndex(res, "~~~")
+
+		if backtickIdx != -1 && tildeIdx != -1 {
+			if backtickIdx > tildeIdx {
+				if strings.Count(res, "```")%2 != 0 {
+					needsClosing += "\n```"
+				}
+				if strings.Count(res, "~~~")%2 != 0 {
+					needsClosing += "\n~~~"
+				}
+			} else {
+				if strings.Count(res, "~~~")%2 != 0 {
+					needsClosing += "\n~~~"
+				}
+				if strings.Count(res, "```")%2 != 0 {
+					needsClosing += "\n```"
+				}
+			}
+		} else {
+			if strings.Count(res, "```")%2 != 0 {
+				needsClosing += "\n```"
+			}
+			if strings.Count(res, "~~~")%2 != 0 {
+				needsClosing += "\n~~~"
+			}
 		}
 
 		if needsClosing == "" || len(res)+len(needsClosing) <= limit {

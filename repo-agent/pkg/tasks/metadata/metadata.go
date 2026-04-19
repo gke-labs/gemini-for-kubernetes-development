@@ -86,7 +86,8 @@ func GenerateMetadataFooter(m Metadata) string {
 
 func sanitize(s string) string {
 	s = strings.ReplaceAll(s, "<!--", "")
-	return strings.ReplaceAll(s, "-->", "")
+	s = strings.ReplaceAll(s, "-->", "")
+	return strings.ReplaceAll(s, "\n", " ")
 }
 
 // GetMetadataEnv returns a map of all metadata environment variables.
