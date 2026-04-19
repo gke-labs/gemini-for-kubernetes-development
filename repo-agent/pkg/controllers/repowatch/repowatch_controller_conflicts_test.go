@@ -294,6 +294,15 @@ func TestReconciler_ReconcileReviewConflicts(t *testing.T) {
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(res.RequeueAfter).To(gomega.Equal(1 * time.Minute))
 
+	// 8. Test custom MergeableRetryIntervalSeconds
+	g.Expect(fakeClient.Get(context.Background(), req.NamespacedName, repoWatch)).To(gomega.Succeed())
+	repoWatch.Spec.MergeableRetryIntervalSeconds = 30
+	g.Expect(fakeClient.Update(context.Background(), repoWatch)).To(gomega.Succeed())
+
+	res, err = r.Reconcile(context.Background(), req)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(res.RequeueAfter).To(gomega.Equal(30 * time.Second))
+
 	updatedSandbox2 := &unstructured.Unstructured{}
 	updatedSandbox2.SetGroupVersionKind(existingSandbox.GroupVersionKind())
 	g.Expect(fakeClient.Get(context.Background(), types.NamespacedName{Name: existingSandbox.GetName(), Namespace: existingSandbox.GetNamespace()}, updatedSandbox2)).To(gomega.Succeed())

@@ -60,14 +60,17 @@ RUN (apt-get update || (sleep 10 && apt-get update) || (sleep 20 && apt-get upda
     (apt-get install -y --no-install-recommends git tmux nodejs npm sudo curl apt-transport-https ca-certificates gnupg jq || (sleep 10 && apt-get install -y --no-install-recommends git tmux nodejs npm sudo curl apt-transport-https ca-certificates gnupg jq)) && \
     rm -rf /var/lib/apt/lists/*
 
+RUN npm install -g pnpm yarn @google/gemini-cli @anthropic-ai/claude-code && npm cache clean --force
+
+# Install global Python tools
+RUN pip install --no-cache-dir pytest --break-system-packages
+
 # Install Google Cloud CLI
 RUN echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | tee -a /etc/apt/sources.list.d/google-cloud-sdk.list && \
     curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg && \
     (apt-get update || (sleep 10 && apt-get update) || (sleep 20 && apt-get update)) && \
     (apt-get install -y --no-install-recommends google-cloud-cli || (sleep 10 && apt-get install -y --no-install-recommends google-cloud-cli)) && \
     rm -rf /var/lib/apt/lists/*
-
-RUN npm install -g @google/gemini-cli @anthropic-ai/claude-code && npm cache clean --force
 
 # Install code-server
 RUN curl -fsSL https://code-server.dev/install.sh | sh
