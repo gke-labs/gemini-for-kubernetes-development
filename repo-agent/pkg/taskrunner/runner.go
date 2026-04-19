@@ -209,7 +209,7 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 	for k, v := range params {
 		if k == "AGENT_PROMPT" && len(v) > 1024 {
 			promptPath := filepath.Join(taskDir, "agent-prompt.txt")
-			if err := os.WriteFile(promptPath, []byte(v), 0600); err == nil {
+			if err := os.WriteFile(promptPath, []byte(v), 0644); err == nil {
 				cmd.Env = append(cmd.Env, "AGENT_PROMPT_FILE="+promptPath)
 				continue
 			}
