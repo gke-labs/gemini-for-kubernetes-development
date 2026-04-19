@@ -80,13 +80,14 @@ func (p *PullRequest) State() string {
 
 func (p *PullRequest) TruncatedBody() string {
 	body := p.pr.GetBody()
-	if utf8.RuneCountInString(body) > 2000 {
-		// Find the byte offset of the 2000th rune to avoid allocating a full rune slice for very large strings.
-		byteOffset := 0
-		for i := 0; i < 2000; i++ {
-			_, size := utf8.DecodeRuneInString(body[byteOffset:])
-			byteOffset += size
-		}
+	byteOffset := 0
+	runeCount := 0
+	for runeCount < 2000 && byteOffset < len(body) {
+		_, size := utf8.DecodeRuneInString(body[byteOffset:])
+		byteOffset += size
+		runeCount++
+	}
+	if byteOffset < len(body) {
 		return body[:byteOffset] + "... (truncated)"
 	}
 	return body

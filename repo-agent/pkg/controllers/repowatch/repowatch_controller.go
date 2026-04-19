@@ -2467,6 +2467,27 @@ func (r *Reconciler) reconcileReviewConflicts(ctx context.Context, repoWatch *re
 		return false, nil
 	}
 
+	if alreadyAttemptedThisSHA {
+		// If we've already attempted this SHA combination and it finished,
+		// we should still update the annotation if it was successful (Completed)
+		// so that we stop listing tasks and checking mergeability for this SHA.
+		hasCompletedTask := false
+		for _, task := range tasks.Items {
+			if task.Spec.Type == "resolve-conflicts" && task.Spec.Params["HEAD_SHA"] == headSHA && task.Spec.Params["BASE_SHA"] == baseSHA && task.Status.TaskState == "Completed" {
+				hasCompletedTask = true
+				break
+			}
+		}
+
+		if hasCompletedTask {
+			// Record success in annotation to stop polling.
+			if err := r.updateConflictCheckAnnotation(ctx, sandbox, checkSHA); err != nil {
+				return false, err
+			}
+		}
+		return false, nil
+	}
+
 	// Check mergeability
 	// The PullRequests.List API does not return the mergeable field, so we might need to fetch the full PR.
 	// But we only do this if we haven't already recorded checking this SHA.
@@ -2491,9 +2512,7 @@ func (r *Reconciler) reconcileReviewConflicts(ctx context.Context, repoWatch *re
 
 	// Mergeable is false if there are conflicts
 	if !pr.GetMergeable() {
-		if alreadyAttemptedThisSHA {
-			return false, nil
-		}
+		// alreadyAttemptedThisSHA check moved up, so we know we need to create a task here.
 		log.V(1).Info("Found merge conflicts in PR, creating resolve-conflicts task", "pr", pr.GetNumber(), "headSHA", headSHA, "baseSHA", baseSHA)
 
 		params := map[string]string{
@@ -2545,25 +2564,35 @@ func (r *Reconciler) reconcileReviewConflicts(ctx context.Context, repoWatch *re
 	// Only update if mergeable. If it's NOT mergeable, we rely on the task existence to avoid re-creating the task,
 	// but we don't set the annotation so that if the task fails, we can retry.
 	if pr.GetMergeable() {
-		// Re-fetch sandbox to ensure we have the latest version for patching
-		latestSandbox := &unstructured.Unstructured{}
-		latestSandbox.SetGroupVersionKind(sandbox.GroupVersionKind())
-		if err := r.Get(ctx, types.NamespacedName{Name: sandbox.GetName(), Namespace: sandbox.GetNamespace()}, latestSandbox); err != nil {
-			log.Error(err, "failed to re-fetch sandbox for patching", "sandbox", sandbox.GetName())
+		if err := r.updateConflictCheckAnnotation(ctx, sandbox, checkSHA); err != nil {
 			return false, err
-		}
-
-		patch := client.MergeFrom(latestSandbox.DeepCopy())
-		annotations := latestSandbox.GetAnnotations()
-		if annotations == nil {
-			annotations = make(map[string]string)
-		}
-		annotations["sandbox.gemini.google.com/last-conflict-check-key"] = checkSHA
-		latestSandbox.SetAnnotations(annotations)
-		if err := r.Patch(ctx, latestSandbox, patch); err != nil {
-			log.Error(err, "failed to patch sandbox annotation for conflict check", "sandbox", latestSandbox.GetName())
 		}
 	}
 
 	return false, nil
 }
+
+func (r *Reconciler) updateConflictCheckAnnotation(ctx context.Context, sandbox *unstructured.Unstructured, checkSHA string) error {
+	log := log.FromContext(ctx)
+	// Re-fetch sandbox to ensure we have the latest version for patching
+	latestSandbox := &unstructured.Unstructured{}
+	latestSandbox.SetGroupVersionKind(sandbox.GroupVersionKind())
+	if err := r.Get(ctx, types.NamespacedName{Name: sandbox.GetName(), Namespace: sandbox.GetNamespace()}, latestSandbox); err != nil {
+		log.Error(err, "failed to re-fetch sandbox for patching", "sandbox", sandbox.GetName())
+		return err
+	}
+
+	patch := client.MergeFrom(latestSandbox.DeepCopy())
+	annotations := latestSandbox.GetAnnotations()
+	if annotations == nil {
+		annotations = make(map[string]string)
+	}
+	annotations["sandbox.gemini.google.com/last-conflict-check-key"] = checkSHA
+	latestSandbox.SetAnnotations(annotations)
+	if err := r.Patch(ctx, latestSandbox, patch); err != nil {
+		log.Error(err, "failed to patch sandbox annotation for conflict check", "sandbox", latestSandbox.GetName())
+		return err
+	}
+	return nil
+}
+

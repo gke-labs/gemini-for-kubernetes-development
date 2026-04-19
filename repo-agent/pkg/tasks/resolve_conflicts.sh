@@ -98,7 +98,8 @@ function setupGitRepos {
         echo "cloning repository"
         # Ensure directory is removed if it exists but is not a git repo (more robust than [ -d ])
         rm -rf "/workspaces/${REPO_NAME}"
-        (cd /workspaces/ && gh repo clone "${REPO_OWNER}/${REPO_NAME}" "${REPO_NAME}")
+        # Use gh repo clone for better auth handling
+        gh repo clone "${REPO_OWNER}/${REPO_NAME}" "/workspaces/${REPO_NAME}"
     else
         echo "repository already exists"
         # Ensure a pristine state before doing anything
@@ -139,6 +140,7 @@ function verifyResolution {
         return 1
     fi
     # Supplemental check for conflict markers using grep as a secondary verification.
+    # Tighten regex to avoid false positives with Markdown headers (e.g. =======)
     if grep -rE --exclude-dir=.git "^<{7}([[:space:]]|$)|^>{7}([[:space:]]|$)" .; then
         echo "Conflict markers still present!"
         return 1
@@ -159,7 +161,10 @@ function runTests {
     # Go
     if [ -n "$(find . -maxdepth 2 -name "go.mod" -print -quit)" ]; then
         echo "Found Go project, running tests (no cache)..."
-        (go mod tidy && go test -count=1 ./...) || TEST_FAILED=true
+        (go mod tidy && go test -count=1 ./...)
+        if [ $? -ne 0 ]; then
+            TEST_FAILED=true
+        fi
     fi
     
     # Node.js
@@ -171,15 +176,18 @@ function runTests {
                 set -e
                 cd "$dir"
                 if [ -f "pnpm-lock.yaml" ] && command -v pnpm >/dev/null 2>&1; then
-                    pnpm install --frozen-lockfile && pnpm test || exit 1
+                    pnpm install --frozen-lockfile && pnpm test
                 elif [ -f "yarn.lock" ] && command -v yarn >/dev/null 2>&1; then
-                    yarn install --frozen-lockfile && yarn test || exit 1
+                    yarn install --frozen-lockfile && yarn test
                 elif [ -f "package-lock.json" ]; then
-                    npm ci && npm test || exit 1
+                    npm ci && npm test
                 else
-                    npm install && npm test || exit 1
+                    npm install && npm test
                 fi
-            ) || TEST_FAILED=true
+            )
+            if [ $? -ne 0 ]; then
+                TEST_FAILED=true
+            fi
         done < <(find . -maxdepth 2 -name "package.json" -exec dirname {} \; | sort -u)
     fi
     
@@ -191,18 +199,19 @@ function runTests {
              (
                  set -e
                  cd "$dir"
-                 local VENV_DIR="/tmp/venv-$(echo -n "$dir" | md5sum | cut -d' ' -f1)"
-                 python3 -m venv "$VENV_DIR" && source "$VENV_DIR/bin/activate"
+                 local V_DIR
+                 V_DIR="/tmp/venv-$(echo -n "$dir" | md5sum | cut -d' ' -f1)"
+                 python3 -m venv "$V_DIR" && source "$V_DIR/bin/activate"
                  if [ -f "pyproject.toml" ]; then
-                     pip install . || exit 1
+                     pip install .
                  elif [ -f "setup.py" ]; then
-                     pip install . || exit 1
+                     pip install .
                  elif [ -f "requirements.txt" ]; then
-                     pip install -r requirements.txt || exit 1
+                     pip install -r requirements.txt
                  fi
                  
                  if command -v pytest >/dev/null 2>&1; then
-                     pytest || exit 1
+                     pytest
                  else
                      # Capture output to check if any tests were found
                      local UT_OUTPUT
@@ -212,7 +221,10 @@ function runTests {
                          echo "Warning: No tests found by unittest discover in $dir"
                      fi
                  fi
-             ) || TEST_FAILED=true
+             )
+             if [ $? -ne 0 ]; then
+                 TEST_FAILED=true
+             fi
         done < <(find . -maxdepth 2 \( -name "pyproject.toml" -o -name "requirements.txt" -o -name "setup.py" \) -exec dirname {} \; | sort -u)
     fi
 
@@ -220,7 +232,9 @@ function runTests {
     if [ -f "Makefile" ]; then
         if make -n test &>/dev/null; then
             echo "Found Makefile with test target, running 'make test'..."
-            make test || TEST_FAILED=true
+            if ! make test; then
+                TEST_FAILED=true
+            fi
         else
             echo "Found Makefile but no test target, skipping."
         fi
@@ -268,12 +282,15 @@ function runGemini {
         git clean -fd
         
         # Re-attempt merge to get conflicts for the model to work on.
-        echo "Attempting to merge origin/${BASE_REF} into ${CURRENT_BRANCH}..."
+        echo "Attempting to merge base branch into ${CURRENT_BRANCH}..."
+        # Re-fetch to ensure FETCH_HEAD is fresh for this iteration
+        git fetch origin "${BASE_REF}"
         # We use --no-ff to ensure we get a merge commit if it succeeds, and --no-commit to verify before finalizing.
-        if git merge "origin/${BASE_REF}" --no-ff --no-commit; then
+        if git merge FETCH_HEAD --no-ff --no-commit; then
              echo "Merge successful without conflicts (unexpected in loop). Verifying..."
              if verifyResolution && runTests; then
                  # If it succeeded without conflicts and passed tests, finalize the commit.
+                 # Use --no-edit to preserve standard MERGE_MSG
                  git commit --no-verify --no-edit || echo "Nothing to commit"
                  SUCCESS=true
                  break
@@ -331,11 +348,11 @@ checkoutPRBranch
 # Attempt initial merge to see if we even need LLM
 cd "/workspaces/${REPO_NAME}"
 # Ensure we have base branch
-git fetch origin "${BASE_REF}" || { echo "Failed to fetch base branch origin/${BASE_REF}. Perhaps it was deleted?"; exit 1; }
-echo "Attempting initial merge of origin/${BASE_REF}..."
+git fetch origin "${BASE_REF}" || { echo "Failed to fetch base branch. Perhaps it was deleted?"; exit 1; }
+echo "Attempting initial merge of FETCH_HEAD..."
 BEFORE_MERGE_SHA=$(git rev-parse HEAD)
 # Use --no-ff and --no-commit to verify behavioral correctness even for clean merges.
-if git merge "origin/${BASE_REF}" --no-ff --no-commit; then
+if git merge FETCH_HEAD --no-ff --no-commit; then
     if verifyResolution && runTests; then
         echo "Merge successful without conflicts and tests passed."
         git commit --no-verify --no-edit || echo "Nothing to commit"
