@@ -303,7 +303,7 @@ function runGemini {
     local ORIG_HEAD
     ORIG_HEAD=$(git rev-parse HEAD)
 
-    MODELS=( {{ range .Models }}"{{ . }}" {{ end }} )
+    MODELS=( {{ range .Models }}{{ printf "%q" . }} {{ end }} )
     SUCCESS=false
     for MODEL in "${MODELS[@]}"; do
         echo "Trying model: $MODEL"
@@ -459,7 +459,7 @@ echo "Proceeding with LLM resolution loop."
 {{- range .Extensions }}
 echo "Installing extension: {{ .Source }}"
 for i in $(seq 1 3); do
-    if gemini extensions install "{{ .Source }}" {{ if .Ref }}--ref "{{ .Ref }}"{{ end }} --consent; then
+    if gemini extensions install {{ printf "%q" .Source }} {{ if .Ref }}--ref {{ printf "%q" .Ref }}{{ end }} --consent; then
         break
     fi
     if [ $i -lt 3 ]; then
