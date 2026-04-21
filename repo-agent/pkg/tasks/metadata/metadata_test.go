@@ -25,10 +25,10 @@ func TestGenerateMetadataFooter(t *testing.T) {
 		{
 			name: "Sanitize HTML comments",
 			metadata: Metadata{
-				SandboxTask: "task <!-- with --> comment",
+				SandboxTask: "task <!-- with --> comment and --!> sneaky closure",
 			},
 			contains: []string{
-				"sandbox-task: task  with  comment",
+				"sandbox-task: task <!** with **> comment and **!> sneaky closure",
 			},
 		},
 	}
