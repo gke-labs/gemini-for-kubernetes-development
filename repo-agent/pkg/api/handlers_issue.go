@@ -626,9 +626,8 @@ func (s *Server) getIssueCommits(c *gin.Context) {
 							if p, _, err := client.PullRequests.Get(c.Request.Context(), prRef.Repo.Owner, prRef.Repo.Name, prRef.PullRequestNumber); err == nil {
 								linkedPR = p
 								break
-							} else {
-								log.Error(err, "Failed to get PR details from GitHub", "match", match)
 							}
+							log.Error(err, "Failed to get PR details from GitHub", "match", match)
 						} else {
 							log.Error(err, "Failed to parse PR URL from agentDraft", "match", match)
 						}
