@@ -153,34 +153,28 @@ func truncateString(s string, limit int) string {
 
 	for {
 		needsClosing := ""
-		// Order matters for correctly closing nested blocks.
-		// We close the most recently opened block type first.
-		backtickIdx := strings.LastIndex(res, "```")
-		tildeIdx := strings.LastIndex(res, "~~~")
+		// To correctly handle nested blocks, we scan the string from the beginning.
+		backtickOpen := false
+		tildeOpen := false
 
-		if backtickIdx != -1 && tildeIdx != -1 {
-			if backtickIdx > tildeIdx {
-				if strings.Count(res, "```")%2 != 0 {
-					needsClosing += "\n```"
-				}
-				if strings.Count(res, "~~~")%2 != 0 {
-					needsClosing += "\n~~~"
-				}
+		i := 0
+		for i < len(res) {
+			if !tildeOpen && strings.HasPrefix(res[i:], "```") {
+				backtickOpen = !backtickOpen
+				i += 3
+			} else if !backtickOpen && strings.HasPrefix(res[i:], "~~~") {
+				tildeOpen = !tildeOpen
+				i += 3
 			} else {
-				if strings.Count(res, "~~~")%2 != 0 {
-					needsClosing += "\n~~~"
-				}
-				if strings.Count(res, "```")%2 != 0 {
-					needsClosing += "\n```"
-				}
+				i++
 			}
-		} else {
-			if strings.Count(res, "```")%2 != 0 {
-				needsClosing += "\n```"
-			}
-			if strings.Count(res, "~~~")%2 != 0 {
-				needsClosing += "\n~~~"
-			}
+		}
+
+		if backtickOpen {
+			needsClosing += "\n```"
+		}
+		if tildeOpen {
+			needsClosing += "\n~~~"
 		}
 
 		if needsClosing == "" || len(res)+len(needsClosing) <= limit {
@@ -191,20 +185,23 @@ func truncateString(s string, limit int) string {
 		// If adding closing blocks exceeds the limit, truncate further and re-evaluate.
 		// We jump to the available space minus the closing block.
 		newLimit := limit - len(needsClosing)
-		if newLimit < 0 {
-			// This branch handles extremely small limits where even a fallback doesn't fit.
-			if len(truncatedFallback) <= limit {
-				return truncatedFallback
+		if newLimit <= 0 {
+			// If even the closing tags don't fit, try to just return the closing tags if they fit,
+			// or an empty string.
+			if len(needsClosing) <= limit {
+				return needsClosing
 			}
-			return truncateToRuneBoundary(s, limit)
+			return ""
 		}
 		res = truncateToRuneBoundary(res, newLimit)
 	}
 
-	if res == "" {
+	if res == "" || res == "\n```" || res == "\n~~~" || res == "\n```\n~~~" || res == "\n~~~\n```" {
 		if len(truncatedFallback) <= limit {
 			return truncatedFallback
 		}
+		// Final safety: if even fallback doesn't fit, just return whatever we can from the original string
+		// even if it breaks markdown, because we are extremely constrained.
 		return truncateToRuneBoundary(s, limit)
 	}
 	return res
@@ -260,6 +257,8 @@ func (s *Server) getTaskMetadata(ctx context.Context, namespace, sandboxName, ta
 					return fullName, string(item.UID)
 				}
 			}
+		} else {
+			klog.FromContext(ctx).Error(err, "Failed to list tasks for sandbox to resolve UID", "sandbox", sandboxName)
 		}
 	}
 
@@ -274,6 +273,8 @@ func (s *Server) getTaskMetadata(ctx context.Context, namespace, sandboxName, ta
 					return fullName, taskUID
 				}
 			}
+		} else {
+			klog.FromContext(ctx).Error(err, "Failed to list tasks for sandbox to resolve name", "sandbox", sandboxName)
 		}
 		// If not found, just return what we have
 		return "n/a", taskUID
@@ -296,8 +297,13 @@ func (s *Server) applyTraceabilityMetadata(c *gin.Context, body string, taskType
 	if footerStart := strings.LastIndex(body, "<!-- repo-agent-metadata"); footerStart != -1 {
 		footerEnd := strings.Index(body[footerStart:], "-->")
 		contentBefore := body[:footerStart]
+
 		// Also remove the preceding rule if present to avoid stacking them
-		contentBefore = strings.TrimRight(contentBefore, " \t\n\r-")
+		contentBefore = strings.TrimRight(contentBefore, " \t\n\r")
+		if strings.HasSuffix(contentBefore, "---") {
+			contentBefore = strings.TrimSuffix(contentBefore, "---")
+			contentBefore = strings.TrimRight(contentBefore, " \t\n\r")
+		}
 
 		if footerEnd != -1 {
 			// Remove the footer and any trailing whitespace

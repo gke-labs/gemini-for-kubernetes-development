@@ -136,10 +136,10 @@ func (s *Server) createRepoWatch(c *gin.Context) {
 					obj.SetResourceVersion(existing.GetResourceVersion())
 					_, updateErr := s.K8sManager.Client.Resource(gvr).Namespace(namespace).Update(c.Request.Context(), obj, v1.UpdateOptions{})
 					if updateErr != nil {
-						log.Info("Failed to update existing resource", "kind", gvk.Kind, "err", updateErr)
+						log.Error(updateErr, "Failed to update existing resource", "kind", gvk.Kind, "name", obj.GetName())
 					}
 				} else {
-					log.Info("Failed to get existing resource for update", "kind", gvk.Kind, "err", getErr)
+					log.Error(getErr, "Failed to get existing resource for update", "kind", gvk.Kind, "name", obj.GetName())
 				}
 				continue
 			}

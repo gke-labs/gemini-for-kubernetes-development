@@ -96,7 +96,7 @@ func (s *Server) listIssuesFromK8s(ctx context.Context, namespace, repo string) 
 
 		replicas, found, err := unstructured.NestedInt64(item.Object, "spec", "replicas")
 		if err != nil || !found {
-			log.Info("Replicas (.spec.replicas) not found in Sandbox", "name", item.GetName())
+			log.Error(err, "Replicas (.spec.replicas) not found in Sandbox", "name", item.GetName())
 			continue
 		}
 
@@ -309,6 +309,12 @@ func (s *Server) submitIssueComment(c *gin.Context) {
 	if err != nil {
 		log.Info("Failed to parse issueID", "issueID", issueID, "err", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid issue id"})
+		return
+	}
+
+	if commentText == "" {
+		log.Info("Comment text is empty, skipping submission")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Comment is empty"})
 		return
 	}
 
@@ -610,7 +616,8 @@ func (s *Server) getIssueCommits(c *gin.Context) {
 
 	// 2. Check SandboxTasks if not found in sandbox annotation
 	if linkedPR == nil {
-		if taskList, err := s.K8sManager.ListSandboxTasks(c.Request.Context(), namespace, sandboxName); err == nil {
+		taskList, err := s.K8sManager.ListSandboxTasks(c.Request.Context(), namespace, sandboxName)
+		if err == nil {
 			for _, taskItem := range taskList.Items {
 				if tAgentDraft := taskItem.GetAnnotations()["agentDraft"]; tAgentDraft != "" {
 					matches := prURLRegex.FindAllString(tAgentDraft, -1)
@@ -619,7 +626,11 @@ func (s *Server) getIssueCommits(c *gin.Context) {
 							if p, _, err := client.PullRequests.Get(c.Request.Context(), prRef.Repo.Owner, prRef.Repo.Name, prRef.PullRequestNumber); err == nil {
 								linkedPR = p
 								break
+							} else {
+								log.Error(err, "Failed to get PR details from GitHub", "match", match)
 							}
+						} else {
+							log.Error(err, "Failed to parse PR URL from agentDraft", "match", match)
 						}
 					}
 				}
@@ -627,6 +638,8 @@ func (s *Server) getIssueCommits(c *gin.Context) {
 					break
 				}
 			}
+		} else {
+			log.Error(err, "Failed to list tasks for sandbox to find linked PR", "sandbox", sandboxName)
 		}
 	}
 

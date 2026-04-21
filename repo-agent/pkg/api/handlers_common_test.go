@@ -117,13 +117,13 @@ func TestTruncateString(t *testing.T) {
 			name:  "Nested code blocks - correct closure order",
 			s:     "```\n~~~\ncode long long string",
 			limit: 25,
-			want:  "```\n~~~\ncode long\n~~~\n```",
+			want:  "```\n~~~\ncode long lon\n```",
 		},
 		{
 			name:  "Nested code blocks - reverse order",
 			s:     "~~~\n```\ncode long long string",
 			limit: 25,
-			want:  "~~~\n```\ncode long\n```\n~~~",
+			want:  "~~~\n```\ncode long lon\n~~~",
 		},
 		{
 			name:  "Emoji boundary - 4 bytes",

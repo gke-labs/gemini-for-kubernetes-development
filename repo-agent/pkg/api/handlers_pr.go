@@ -94,7 +94,7 @@ func (s *Server) listPRsFromK8s(ctx context.Context, namespace, repo string) ([]
 		// Get replicas and if it scaled down skip
 		replicas, found, err := unstructured.NestedInt64(item.Object, "spec", "replicas")
 		if err != nil || !found {
-			log.Info("Replicas (.spec.replicas) not found in Sandbox", "name", item.GetName())
+			log.Error(err, "Replicas (.spec.replicas) not found in Sandbox", "name", item.GetName())
 			continue
 		}
 
@@ -362,11 +362,14 @@ func (s *Server) submitReview(c *gin.Context) {
 		reviewRequest.Body = nil
 		firstComment := reviewRequest.Comments[0]
 		commentBody := ""
-		if firstComment.Body != nil {
+		if firstComment != nil && firstComment.Body != nil {
 			commentBody = *firstComment.Body
 		}
+
 		newCommentBody := s.applyTraceabilityMetadata(c, commentBody, metadata.TaskTypePRReview, sandboxName, taskNameReq, taskUIDReq)
-		firstComment.Body = &newCommentBody
+		if firstComment != nil {
+			firstComment.Body = &newCommentBody
+		}
 	}
 
 	// Not setting event sets it as a draft

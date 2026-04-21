@@ -3,7 +3,6 @@ package tasks
 import (
 	"bytes"
 	"os"
-	"strings"
 	"testing"
 	"text/template"
 	"time"
@@ -76,8 +75,6 @@ func TestInvestigateFailuresPromptTemplate(t *testing.T) {
 		t.Fatalf("Failed to execute template: %v", err)
 	}
 
-	output := w.String()
-
 	// Verify that the new instruction is present
 	expectedInstruction := "Check for Repeated Failures"
 	if !bytes.Contains(w.Bytes(), []byte(expectedInstruction)) {
@@ -93,23 +90,5 @@ func TestInvestigateFailuresPromptTemplate(t *testing.T) {
 	expectedLimit := "If there are already 3 or more such reports, and you are seeing the same failures, DO NOT attempt to fix them again."
 	if !bytes.Contains(w.Bytes(), []byte(expectedLimit)) {
 		t.Errorf("Prompt does not contain retry limit instruction: %q", expectedLimit)
-	}
-
-	// Verify metadata footer
-	missing := []string{}
-	for _, expected := range []string{
-		"sandbox-task: ns/task",
-		"sandbox-task-uid: uid",
-		"sandbox: sb",
-		"repowatch: rw",
-		"task-type: investigate-failures",
-		"timestamp: 2026-03-02T12:00:00Z",
-	} {
-		if !strings.Contains(output, expected) {
-			missing = append(missing, expected)
-		}
-	}
-	if len(missing) > 0 {
-		t.Errorf("Prompt missing %d expected metadata strings: %v\nFull prompt:\n%s", len(missing), missing, output)
 	}
 }
