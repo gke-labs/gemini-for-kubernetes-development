@@ -16,12 +16,12 @@
 set -e
 set -x
 
-export REPO_NAME="{{ .RepoName }}"
-export REPO_OWNER="{{ .RepoOwner }}"
-export CLONE_URL="{{ .CloneURL }}"
-export CHORE_NAME="{{ .ChoreName }}"
-export CHORE_FILE="{{ .ChoreFile }}"
-export PROMPT_FILE="{{ .PromptFile }}"
+export REPO_NAME={{ printf "%q" .RepoName }}
+export REPO_OWNER={{ printf "%q" .RepoOwner }}
+export CLONE_URL={{ printf "%q" .CloneURL }}
+export CHORE_NAME={{ printf "%q" .ChoreName }}
+export CHORE_FILE={{ printf "%q" .ChoreFile }}
+export PROMPT_FILE={{ printf "%q" .PromptFile }}
 
 # Use environment variables if they are set, otherwise use defaults
 # These should be set in the AgentSandbox pod

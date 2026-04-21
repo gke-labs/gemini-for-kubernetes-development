@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-export PROMPT_FILE="{{ .PromptFile }}"
+export PROMPT_FILE={{ printf "%q" .PromptFile }}
 
 OUTPUT_DIR="$(dirname "${PROMPT_FILE}")"
 

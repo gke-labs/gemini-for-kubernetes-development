@@ -21,14 +21,14 @@ set -x
 # - GEMINI_API_KEY
 # - GITHUB_USER_TOKEN
 
-export REPO_OWNER="{{ .RepoOwner }}"
-export REPO_NAME="{{ .RepoName }}"
-export CLONE_URL="{{ .Repo.CloneURL }}"
+export REPO_OWNER={{ printf "%q" .RepoOwner }}
+export REPO_NAME={{ printf "%q" .RepoName }}
+export CLONE_URL={{ printf "%q" .Repo.CloneURL }}
 export ISSUE_NUMBER={{ .Issue.Number }}
-export PROMPT_FILE="{{ .PromptFile }}"
-export GITHUB_USER_ID="{{ .User.UserID }}"
-export GITHUB_USER_EMAIL="{{ .User.Email }}"
-export GITHUB_USER_NAME="{{ .User.Name }}"
+export PROMPT_FILE={{ printf "%q" .PromptFile }}
+export GITHUB_USER_ID={{ printf "%q" .User.UserID }}
+export GITHUB_USER_EMAIL={{ printf "%q" .User.Email }}
+export GITHUB_USER_NAME={{ printf "%q" .User.Name }}
 
 export GITHUB_USER_TOKEN="${GITHUB_USER_TOKEN:-${GITHUB_TOKEN}}"
 if [ -z "$GITHUB_USER_TOKEN" ]; then

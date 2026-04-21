@@ -6,7 +6,7 @@ set -o pipefail
 # - GEMINI_API_KEY
 # - GITHUB_USER_TOKEN
 
-export PROMPT_FILE="{{ .PromptFile }}"
+export PROMPT_FILE={{ printf "%q" .PromptFile }}
 
 function configureGemini {
     echo "Running configureGemini..."

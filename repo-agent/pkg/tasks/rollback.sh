@@ -17,15 +17,15 @@ set -e
 set -o pipefail
 set -x
 
-export REPO_OWNER="{{ .RepoOwner }}"
-export REPO_NAME="{{ .RepoName }}"
-export CLONE_URL="{{ .Repo.CloneURL }}"
-export COMMIT_SHA="{{ .CommitSHA }}"
-export BRANCH="{{ .Branch }}"
-export REMOTE="{{ .Remote }}"
-export GITHUB_USER_ID="{{ .User.UserID }}"
-export GITHUB_USER_EMAIL="{{ .User.Email }}"
-export GITHUB_USER_NAME="{{ .User.Name }}"
+export REPO_OWNER={{ printf "%q" .RepoOwner }}
+export REPO_NAME={{ printf "%q" .RepoName }}
+export CLONE_URL={{ printf "%q" .Repo.CloneURL }}
+export COMMIT_SHA={{ printf "%q" .CommitSHA }}
+export BRANCH={{ printf "%q" .Branch }}
+export REMOTE={{ printf "%q" .Remote }}
+export GITHUB_USER_ID={{ printf "%q" .User.UserID }}
+export GITHUB_USER_EMAIL={{ printf "%q" .User.Email }}
+export GITHUB_USER_NAME={{ printf "%q" .User.Name }}
 export PR_NUMBER={{ .PullRequestID }}
 
 function setupGit {
