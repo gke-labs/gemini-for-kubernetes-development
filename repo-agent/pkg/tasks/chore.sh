@@ -14,7 +14,7 @@
 # limitations under the License.
 
 set -e
-set -x
+#set -x
 
 export REPO_NAME={{ printf "%q" .RepoName }}
 export REPO_OWNER={{ printf "%q" .RepoOwner }}
@@ -50,14 +50,16 @@ function setupGit {
         GH_USER="${GITHUB_BOT_LOGIN}"
     fi
 
+    local SAFE_GH_USER=$(printf "%q" "${GH_USER}")
+    local SAFE_TOKEN=$(printf "%q" "${GITHUB_USER_TOKEN}")
     cat <<EOF > /root/.config/gh/hosts.yml
 github.com:
     users:
-        ${GH_USER}:
-            oauth_token: ${GITHUB_USER_TOKEN}
+        ${SAFE_GH_USER}:
+            oauth_token: ${SAFE_TOKEN}
     git_protocol: https
-    oauth_token: ${GITHUB_USER_TOKEN}
-    user: ${GH_USER}
+    oauth_token: ${SAFE_TOKEN}
+    user: ${SAFE_GH_USER}
 EOF
 
     if [ -n "$GITHUB_BOT_EMAIL" ]; then
@@ -126,11 +128,30 @@ function runGemini {
     set +x
     export GEMINI_API_KEY="${GEMINI_API_KEY}"
 
+    # Security: Hide GitHub OAuth token and config directory before executing untrusted code (gemini --yolo)
+    # to prevent token exfiltration.
+    local ORIG_GH_CONFIG_DIR="/root/.config/gh"
+    local TEMP_GH_CONFIG_DIR="/tmp/gh-config-hidden-$(date +%s)"
+    if [ -d "$ORIG_GH_CONFIG_DIR" ]; then
+        mv "$ORIG_GH_CONFIG_DIR" "$TEMP_GH_CONFIG_DIR"
+    fi
+    local ORIG_GITHUB_USER_TOKEN="$GITHUB_USER_TOKEN"
+    local ORIG_GITHUB_TOKEN="$GITHUB_TOKEN"
+    unset GITHUB_USER_TOKEN
+    unset GITHUB_TOKEN
+
     if gemini --yolo < "${PROMPT_FILE}"; then
         echo "Gemini execution successful"
     else
         echo "Gemini execution encountered errors, but we will check for changes anyway."
     fi
+
+    # Security: Restore GitHub config and token after untrusted code execution.
+    if [ -d "$TEMP_GH_CONFIG_DIR" ]; then
+        mv "$TEMP_GH_CONFIG_DIR" "$ORIG_GH_CONFIG_DIR"
+    fi
+    export GITHUB_USER_TOKEN="$ORIG_GITHUB_USER_TOKEN"
+    export GITHUB_TOKEN="$ORIG_GITHUB_TOKEN"
     set -x
 }
 
@@ -169,6 +190,17 @@ function commitChanges {
             # Generate commit message using gemini
             git diff > /tmp/chore_diff.txt
             
+            # Security: Hide GitHub OAuth token and config directory before executing Gemini
+            local ORIG_GH_CONFIG_DIR="/root/.config/gh"
+            local TEMP_GH_CONFIG_DIR="/tmp/gh-config-hidden-msg-$(date +%s)"
+            if [ -d "$ORIG_GH_CONFIG_DIR" ]; then
+                mv "$ORIG_GH_CONFIG_DIR" "$TEMP_GH_CONFIG_DIR"
+            fi
+            local ORIG_GITHUB_USER_TOKEN="$GITHUB_USER_TOKEN"
+            local ORIG_GITHUB_TOKEN="$GITHUB_TOKEN"
+            unset GITHUB_USER_TOKEN
+            unset GITHUB_TOKEN
+
             COMMIT_MSG=$(gemini "Generate a concise, meaningful commit message for the following changes.
 The changes are part of a chore named '${CHORE_NAME}' (defined in ${CHORE_FILE}).
 
@@ -178,6 +210,13 @@ $(cat /tmp/chore_diff.txt | head -c 2000)
 The commit message should be prefixed with 'chore: ' and should explicitly mention it was automatically generated as part of a chore.
 Only output the commit message itself.")
             
+            # Security: Restore GitHub config and token
+            if [ -d "$TEMP_GH_CONFIG_DIR" ]; then
+                mv "$TEMP_GH_CONFIG_DIR" "$ORIG_GH_CONFIG_DIR"
+            fi
+            export GITHUB_USER_TOKEN="$ORIG_GITHUB_USER_TOKEN"
+            export GITHUB_TOKEN="$ORIG_GITHUB_TOKEN"
+
             if [ -z "$COMMIT_MSG" ]; then
                 COMMIT_MSG="chore: automatic updates from ${CHORE_NAME}"
             fi

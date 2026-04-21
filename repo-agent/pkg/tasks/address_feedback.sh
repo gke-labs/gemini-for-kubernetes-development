@@ -28,7 +28,7 @@ export PROMPT_FILE={{ printf "%q" .PromptFile }}
 export GITHUB_USER_ID={{ printf "%q" .User.UserID }}
 export GITHUB_USER_EMAIL={{ printf "%q" .User.Email }}
 export GITHUB_USER_NAME={{ printf "%q" .User.Name }}
-export PR_NUMBER={{ .PullRequest.Number }}
+export PR_NUMBER={{ printf "%q" .PullRequest.Number }}
 
 export GITHUB_USER_TOKEN="${GITHUB_USER_TOKEN:-${GITHUB_TOKEN}}"
 if [ -z "$GITHUB_USER_TOKEN" ]; then
@@ -53,14 +53,16 @@ function setupGit {
     fi
 
     echo "writing gh config"
+    local SAFE_GH_USER=$(printf "%q" "${GH_USER}")
+    local SAFE_TOKEN=$(printf "%q" "${GITHUB_USER_TOKEN}")
     cat <<EOF > /root/.config/gh/hosts.yml
 github.com:
     users:
-        ${GH_USER}:
-            oauth_token: ${GITHUB_USER_TOKEN}
+        ${SAFE_GH_USER}:
+            oauth_token: ${SAFE_TOKEN}
     git_protocol: https
-    oauth_token: ${GITHUB_USER_TOKEN}
-    user: ${GH_USER}
+    oauth_token: ${SAFE_TOKEN}
+    user: ${SAFE_GH_USER}
 EOF
 
     echo "running git config user.email"
@@ -82,7 +84,7 @@ EOF
 
     echo "Configuring global git ignore"
     git config --global core.excludesfile /root/.gitignore_global
-    cat <<EOF > /root/.gitignore_global
+    cat <<'EOF' > /root/.gitignore_global
 manager
 bin/
 EOF
@@ -135,7 +137,7 @@ function configureGemini {
     mkdir -p /root/.gemini
 
     echo "writing gemini config"
-    cat <<EOF > /root/.gemini/settings.json
+    cat <<'EOF' > /root/.gemini/settings.json
 {
   "general": {
     "enableAutoUpdate": false,
@@ -157,6 +159,18 @@ function runGemini {
         export GIT_COMMITTER_EMAIL="$GITHUB_BOT_EMAIL"
     fi
 
+    # Security: Hide GitHub OAuth token and config directory before executing untrusted code (gemini --yolo)
+    # to prevent token exfiltration.
+    local ORIG_GH_CONFIG_DIR="/root/.config/gh"
+    local TEMP_GH_CONFIG_DIR="/tmp/gh-config-hidden-$(date +%s)"
+    if [ -d "$ORIG_GH_CONFIG_DIR" ]; then
+        mv "$ORIG_GH_CONFIG_DIR" "$TEMP_GH_CONFIG_DIR"
+    fi
+    local ORIG_GITHUB_USER_TOKEN="$GITHUB_USER_TOKEN"
+    local ORIG_GITHUB_TOKEN="$GITHUB_TOKEN"
+    unset GITHUB_USER_TOKEN
+    unset GITHUB_TOKEN
+
     MODELS=( {{ range .Models }}{{ printf "%q" . }} {{ end }} )
     SUCCESS=false
     for MODEL in "${MODELS[@]}"; do
@@ -174,6 +188,13 @@ function runGemini {
         fi
     done
     
+    # Security: Restore GitHub config and token after untrusted code execution.
+    if [ -d "$TEMP_GH_CONFIG_DIR" ]; then
+        mv "$TEMP_GH_CONFIG_DIR" "$ORIG_GH_CONFIG_DIR"
+    fi
+    export GITHUB_USER_TOKEN="$ORIG_GITHUB_USER_TOKEN"
+    export GITHUB_TOKEN="$ORIG_GITHUB_TOKEN"
+
     if [ "$SUCCESS" = false ]; then
         echo "All models failed."
         exit 1
@@ -182,9 +203,39 @@ function runGemini {
 
 function installExtensions {
     echo "Installing extensions..."
+
+    # Security: Hide GitHub OAuth token and config directory before executing untrusted code (extensions)
+    local ORIG_GH_CONFIG_DIR="/root/.config/gh"
+    local TEMP_GH_CONFIG_DIR="/tmp/gh-config-hidden-ext-$(date +%s)"
+    if [ -d "$ORIG_GH_CONFIG_DIR" ]; then
+        mv "$ORIG_GH_CONFIG_DIR" "$TEMP_GH_CONFIG_DIR"
+    fi
+    local ORIG_GITHUB_USER_TOKEN="$GITHUB_USER_TOKEN"
+    local ORIG_GITHUB_TOKEN="$GITHUB_TOKEN"
+    unset GITHUB_USER_TOKEN
+    unset GITHUB_TOKEN
+
     {{- range .Extensions }}
-    gemini extensions install {{ printf "%q" .Source }} {{ if .Ref }}--ref {{ printf "%q" .Ref }}{{ end }} --consent
+    echo "Installing extension: {{ printf "%q" .Source }}"
+    for i in $(seq 1 3); do
+        if gemini extensions install {{ printf "%q" .Source }} {{ if .Ref }}--ref {{ printf "%q" .Ref }}{{ end }} --consent; then
+            break
+        fi
+        if [ $i -lt 3 ]; then
+            echo "Extension installation failed, retrying in 5s... ($i/3)"
+            sleep 5
+        else
+            echo "Warning: Extension installation failed after 3 attempts. Continuing anyway..."
+        fi
+    done
     {{- end }}
+
+    # Security: Restore GitHub config and token
+    if [ -d "$TEMP_GH_CONFIG_DIR" ]; then
+        mv "$TEMP_GH_CONFIG_DIR" "$ORIG_GH_CONFIG_DIR"
+    fi
+    export GITHUB_USER_TOKEN="$ORIG_GITHUB_USER_TOKEN"
+    export GITHUB_TOKEN="$ORIG_GITHUB_TOKEN"
 }
 
 # Main execution

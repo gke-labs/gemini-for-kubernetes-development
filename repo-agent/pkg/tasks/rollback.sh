@@ -15,7 +15,7 @@
 
 set -e
 set -o pipefail
-set -x
+#set -x
 
 export REPO_OWNER={{ printf "%q" .RepoOwner }}
 export REPO_NAME={{ printf "%q" .RepoName }}
@@ -37,14 +37,16 @@ function setupGit {
         GH_USER="${GITHUB_BOT_LOGIN}"
     fi
 
+    local SAFE_GH_USER=$(printf "%q" "${GH_USER}")
+    local SAFE_TOKEN=$(printf "%q" "${GITHUB_USER_TOKEN}")
     cat <<EOF > /root/.config/gh/hosts.yml
 github.com:
     users:
-        ${GH_USER}:
-            oauth_token: ${GITHUB_USER_TOKEN}
+        ${SAFE_GH_USER}:
+            oauth_token: ${SAFE_TOKEN}
     git_protocol: https
-    oauth_token: ${GITHUB_USER_TOKEN}
-    user: ${GH_USER}
+    oauth_token: ${SAFE_TOKEN}
+    user: ${SAFE_GH_USER}
 EOF
 
     if [ -n "$GITHUB_BOT_EMAIL" ]; then
@@ -60,11 +62,11 @@ EOF
 
 function setupGitRepos {
     echo "Running setupGitRepos..."
-    if [ -d "/workspaces/${REPO_NAME}" ]; then
-        echo "Repository already exists at /workspaces/${REPO_NAME}"
-    else
+    if [ ! -d "/workspaces/${REPO_NAME}" ]; then
         echo "cloning repository"
         git clone "${CLONE_URL}" "/workspaces/${REPO_NAME}"
+    else
+        echo "Repository already exists at /workspaces/${REPO_NAME}"
     fi
 
     pushd "/workspaces/${REPO_NAME}" > /dev/null
