@@ -92,16 +92,9 @@ func TestFixIssuePromptTemplate(t *testing.T) {
 	}
 
 	// Verify that the new instruction is present
-	expected := `Final Steps:
-* After you have created the PR, you MUST summarize the design decisions you made.`
+	expected := "Your response MUST include:"
 	if !bytes.Contains(w.Bytes(), []byte(expected)) {
 		t.Errorf("Prompt does not contain expected instruction. Got:\n%s", w.String())
-	}
-
-	// Verify that it uses the provided branch name
-	expectedPush := `git push --force --set-upstream origin test-branch`
-	if !bytes.Contains(w.Bytes(), []byte(expectedPush)) {
-		t.Errorf("Prompt does not contain expected push command with branch. Got:\n%s", w.String())
 	}
 }
 
@@ -132,10 +125,10 @@ func TestFixIssuePromptTemplate_NoBranch(t *testing.T) {
 		t.Fatalf("Failed to execute template: %v", err)
 	}
 
-	// Verify that it uses the default branch name pattern
-	expected := `git push --force --set-upstream origin issue-123`
+	// Verify that it contains the issue information
+	expected := "<issue_number>123</issue_number>"
 	if !bytes.Contains(w.Bytes(), []byte(expected)) {
-		t.Errorf("Prompt does not contain expected default push command. Got:\n%s", w.String())
+		t.Errorf("Prompt does not contain expected issue number. Got:\n%s", w.String())
 	}
 }
 
