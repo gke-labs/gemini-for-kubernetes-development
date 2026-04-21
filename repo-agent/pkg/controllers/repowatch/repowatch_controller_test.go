@@ -1296,7 +1296,7 @@ func TestReconcileReviewSandboxes_RespectsExistingActiveSandboxes(t *testing.T) 
 	openPRs := []*github.PullRequest{pr2, pr1}
 
 	// Call reconcile
-	watchedPRs, pendingPRs, activeSandboxes, _, err := r.reconcileReviewSandboxesInternal(context.Background(), &github.User{Login: github.String("test-user")}, repoWatch, &github.Client{}, "owner", "repo", []*github.PullRequest{}, openPRs, existingSandboxList, map[string]*corev1.Pod{})
+	watchedPRs, pendingPRs, activeSandboxes, _, err := r.reconcileReviewSandboxesInternal(context.Background(), &github.User{Login: github.String("test-user")}, repoWatch, &github.Client{}, "owner", "repo", []*github.PullRequest{}, openPRs, existingSandboxList, map[string]*corev1.Pod{}, map[string][]sandboxtaskv1alpha1.SandboxTask{}, "")
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	repoWatch.Status.ReviewSandboxes = watchedPRs
 	repoWatch.Status.PendingPRs = pendingPRs

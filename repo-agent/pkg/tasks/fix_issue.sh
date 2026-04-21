@@ -338,6 +338,62 @@ function recordPRLink {
     popd > /dev/null
 }
 
+function createPullRequest {
+    echo "Creating Pull Request..."
+    pushd "/workspaces/${REPO_NAME}" > /dev/null
+
+    # Check if there are changes
+    if [ -z "$(git status --porcelain)" ]; then
+        echo "No changes detected, skipping PR creation."
+        popd > /dev/null
+        return
+    fi
+
+    echo "Changes detected, committing and pushing..."
+    local branch_name
+    branch_name="issue-${ISSUE_NUMBER}"
+    {{- if .Branch }}
+    branch_name={{ printf "%q" .Branch }}
+    {{- end }}
+
+    # Use a generic commit message if we can't find a better one
+    git add .
+    git commit -m "Fix issue #${ISSUE_NUMBER}" || echo "Nothing to commit"
+    git push --force --set-upstream origin "$branch_name"
+
+    # Extract PR title and body from Gemini output
+    local output_file
+    output_file="$(dirname "${PROMPT_FILE}")/raw-agent-output.txt"
+    
+    if [ -s "$output_file" ]; then
+        # Simple extraction: first non-empty line as title, rest as body
+        local pr_title
+        pr_title=$(grep -m 1 "." "$output_file" | sed 's/^#* //')
+        if [ -z "$pr_title" ]; then
+            pr_title="Fix issue #${ISSUE_NUMBER}"
+        fi
+        
+        # Create PR
+        echo "Creating PR with title: $pr_title"
+        local pr_url
+        pr_url=$(gh pr create --title "$pr_title" --body-file "$output_file" --label "overseer" || gh pr view --json url --jq .url)
+        
+        if [ -n "$pr_url" ]; then
+            echo "Successfully created/found PR: $pr_url"
+            echo "$pr_url" > "$(dirname "${PROMPT_FILE}")/agent-output.txt"
+        fi
+    else
+        echo "Gemini output not found, creating minimal PR..."
+        local pr_url
+        pr_url=$(gh pr create --title "Fix issue #${ISSUE_NUMBER}" --body "Automated fix for issue #${ISSUE_NUMBER}" --label "overseer" || gh pr view --json url --jq .url)
+        if [ -n "$pr_url" ]; then
+            echo "$pr_url" > "$(dirname "${PROMPT_FILE}")/agent-output.txt"
+        fi
+    fi
+
+    popd > /dev/null
+}
+
 # Main execution
 setupGit
 setupGitRepos
@@ -349,4 +405,5 @@ configureGemini
 installExtensions
 injectConfigDirData
 runGemini
+createPullRequest
 recordPRLink

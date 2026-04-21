@@ -158,8 +158,8 @@ func TestReconcileReviewSandboxes_MaxSandboxes(t *testing.T) {
 		},
 	}
 
-	// Call reconcile
-	watchedPRs, pendingPRs, activeSandboxes, _, err := r.reconcileReviewSandboxesInternal(context.Background(), &github.User{Login: github.String("test-user")}, repoWatch, &github.Client{}, "owner", "repo", []*github.PullRequest{}, []*github.PullRequest{pr1, pr2, pr3}, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*activeSandbox, *inactiveSandbox}}, map[string]*corev1.Pod{})
+	// Reconcile
+	watchedPRs, pendingPRs, activeSandboxes, _, err := r.reconcileReviewSandboxesInternal(context.Background(), &github.User{Login: github.String("test-user")}, repoWatch, &github.Client{}, "owner", "repo", []*github.PullRequest{}, []*github.PullRequest{pr1, pr2, pr3}, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*activeSandbox, *inactiveSandbox}}, map[string]*corev1.Pod{}, map[string][]sandboxtaskv1alpha1.SandboxTask{}, "")
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	repoWatch.Status.ReviewSandboxes = watchedPRs
 	repoWatch.Status.PendingPRs = pendingPRs
@@ -412,7 +412,7 @@ func TestReconcileDevSandboxes_MaxSandboxes(t *testing.T) {
 		{Name: github.String("feature-2")},
 	}
 
-	watched, pending, err := r.reconcileDevSandboxesInternal(context.Background(), &github.User{Login: github.String("test-user")}, repoWatch, branches, "test-owner", "test-repo", nil)
+	watched, pending, err := r.reconcileDevSandboxesInternal(context.Background(), &github.User{Login: github.String("test-user")}, repoWatch, branches, "test-owner", "test-repo", map[string]*corev1.Pod{}, map[string][]sandboxtaskv1alpha1.SandboxTask{})
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 
 	// feature-1 should be found

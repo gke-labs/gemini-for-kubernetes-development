@@ -271,7 +271,7 @@ function commitAndPush {
         echo "Changes detected, committing..."
         git add .
         git commit -m "Agent iteration: Apply changes"
-        git push origin HEAD
+        git push
     fi
     popd > /dev/null
 }
