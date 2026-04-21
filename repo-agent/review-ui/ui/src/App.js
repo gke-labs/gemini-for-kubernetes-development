@@ -550,7 +550,7 @@ function App() {
         setDrafts(prev => ({ ...prev, [id]: parsedDraft }));
         setReviewViewModes(prev => ({ ...prev, [id]: 'structured' }));
       } catch (e) {
-        alert('Invalid YAML. Please fix it before switching view.');
+        alert(`Invalid YAML: ${e.message}. Please fix it before switching view.`);
         console.error("YAML parse error on view switch:", e);
       }
     } else {
@@ -574,7 +574,7 @@ function App() {
         body: JSON.stringify({ draft })
       }).catch(err => console.error("Failed to save draft:", err));
     } catch (e) {
-      alert('Invalid YAML, not saving.');
+      alert(`Invalid YAML: ${e.message}, not saving.`);
       console.error("YAML parse error on blur:", e);
     }
   };
@@ -585,14 +585,14 @@ function App() {
         try {
             review = yaml.load(content);
         } catch (e) {
-            alert('Invalid YAML in content. Please fix it before submitting.');
+            alert(`Invalid YAML in content: ${e.message}. Please fix it before submitting.`);
             return;
         }
     } else if (reviewViewModes[id] === 'yaml') {
       try {
         review = yaml.load(yamlDrafts[id]);
       } catch (e) {
-        alert('Invalid YAML. Please fix it before submitting.');
+        alert(`Invalid YAML: ${e.message}. Please fix it before submitting.`);
         return;
       }
     } else {
@@ -634,7 +634,7 @@ function App() {
       try {
         review = yaml.load(yamlDrafts[id]);
       } catch (e) {
-        alert('Invalid YAML. Please fix it before exporting.');
+        alert(`Invalid YAML: ${e.message}. Please fix it before exporting.`);
         return;
       }
     } else {

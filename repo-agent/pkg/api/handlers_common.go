@@ -348,6 +348,9 @@ func (s *Server) getRepoWatchName(ctx context.Context, namespace, sandboxName st
 	}
 	repowatch := labels["review.gemini.google.com/repowatch"]
 	if repowatch == "" {
+		repowatch = labels["review.gemini.google.com/repo"]
+	}
+	if repowatch == "" {
 		return "n/a"
 	}
 	return repowatch
