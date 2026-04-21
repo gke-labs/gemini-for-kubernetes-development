@@ -487,42 +487,44 @@ else
     git merge --abort || true
 fi
 
-echo "Proceeding with LLM resolution loop."
+function installExtensions {
+    echo "Installing extensions..."
 
-# Security: Hide GitHub OAuth token and config directory before executing untrusted code (extensions)
-local ORIG_GH_CONFIG_DIR="/root/.config/gh"
-local TEMP_GH_CONFIG_DIR="/tmp/gh-config-hidden-ext-$(date +%s)"
-if [ -d "$ORIG_GH_CONFIG_DIR" ]; then
-    mv "$ORIG_GH_CONFIG_DIR" "$TEMP_GH_CONFIG_DIR"
-fi
-local ORIG_GITHUB_USER_TOKEN="$GITHUB_USER_TOKEN"
-local ORIG_GITHUB_TOKEN="$GITHUB_TOKEN"
-unset GITHUB_USER_TOKEN
-unset GITHUB_TOKEN
-
-# Install extensions if any
-{{- range .Extensions }}
-echo "Installing extension: {{ printf "%q" .Source }}"
-for i in $(seq 1 3); do
-    if gemini extensions install {{ printf "%q" .Source }} {{ if .Ref }}--ref {{ printf "%q" .Ref }}{{ end }} --consent; then
-        break
+    # Security: Hide GitHub OAuth token and config directory before executing untrusted code (extensions)
+    local ORIG_GH_CONFIG_DIR="/root/.config/gh"
+    local TEMP_GH_CONFIG_DIR="/tmp/gh-config-hidden-ext-$(date +%s)"
+    if [ -d "$ORIG_GH_CONFIG_DIR" ]; then
+        mv "$ORIG_GH_CONFIG_DIR" "$TEMP_GH_CONFIG_DIR"
     fi
-    if [ $i -lt 3 ]; then
-        echo "Extension installation failed, retrying in 5s... ($i/3)"
-        sleep 5
-    else
-        echo "Warning: Extension installation failed after 3 attempts. Continuing anyway..."
+    local ORIG_GITHUB_USER_TOKEN="$GITHUB_USER_TOKEN"
+    local ORIG_GITHUB_TOKEN="$GITHUB_TOKEN"
+    unset GITHUB_USER_TOKEN
+    unset GITHUB_TOKEN
+
+    # Install extensions if any
+    {{- range .Extensions }}
+    echo "Installing extension: {{ printf "%q" .Source }}"
+    for i in $(seq 1 3); do
+        if gemini extensions install {{ printf "%q" .Source }} {{ if .Ref }}--ref {{ printf "%q" .Ref }}{{ end }} --consent; then
+            break
+        fi
+        if [ $i -lt 3 ]; then
+            echo "Extension installation failed, retrying in 5s... ($i/3)"
+            sleep 5
+        else
+            echo "Warning: Extension installation failed after 3 attempts. Continuing anyway..."
+        fi
+    done
+    {{- end }}
+
+    # Security: Restore GitHub config and token
+    if [ -d "$TEMP_GH_CONFIG_DIR" ]; then
+        mv "$TEMP_GH_CONFIG_DIR" "$ORIG_GH_CONFIG_DIR"
     fi
-done
-{{- end }}
+    export GITHUB_USER_TOKEN="$ORIG_GITHUB_USER_TOKEN"
+    export GITHUB_TOKEN="$ORIG_GITHUB_TOKEN"
+}
 
-# Security: Restore GitHub config and token
-if [ -d "$TEMP_GH_CONFIG_DIR" ]; then
-    mv "$TEMP_GH_CONFIG_DIR" "$ORIG_GH_CONFIG_DIR"
-fi
-export GITHUB_USER_TOKEN="$ORIG_GITHUB_USER_TOKEN"
-export GITHUB_TOKEN="$ORIG_GITHUB_TOKEN"
-
+installExtensions
 runGemini
-
 pushChanges

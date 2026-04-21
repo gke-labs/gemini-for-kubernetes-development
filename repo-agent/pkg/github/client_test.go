@@ -31,6 +31,8 @@ func TestParseHTMLUrl(t *testing.T) {
 		{"https://github.com/owner/repo/pull/123", "owner", "repo", false},
 		{"https://github.com/owner/repo/tree/branch", "owner", "repo", false},
 		{"https://github.com/owner/repo/blob/branch/file", "owner", "repo", false},
+		{"git@github.com:owner/repo.git", "owner", "repo", false},
+		{"git@github.com:owner/repo", "owner", "repo", false},
 		{"https://github.com/owner", "", "", true},
 		{"https://google.com/owner/repo", "", "", true},
 	}
@@ -60,6 +62,8 @@ func TestParseIssueURL(t *testing.T) {
 	}{
 		{"https://github.com/owner/repo/issues/123", "owner", "repo", 123, false},
 		{"https://github.com/owner/repo/pull/456", "owner", "repo", 456, false},
+		{"git@github.com:owner/repo/issues/123", "owner", "repo", 123, false},
+		{"git@github.com:owner/repo/pull/456", "owner", "repo", 456, false},
 		{"https://github.com/owner/repo/pull/invalid", "", "", 0, true},
 		{"https://github.com/owner/repo/blob/branch/file", "", "", 0, true},
 		{"https://github.com/owner/repo", "", "", 0, true},

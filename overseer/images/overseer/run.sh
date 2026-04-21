@@ -162,7 +162,7 @@ while true; do
   # We rely on environment variables for auth (GEMINI_API_KEY, GITHUB_TOKEN, etc.)
   
   # Note: If LLM_PROVIDER is set, we might need to adapt.
-  # But for now we assume gemini-cli handles what it handles.
+  # But for now we assume gemini handles what it handles.
   
   # Capture stderr to a file so we can inspect it for quota errors
   GEMINI_ERR=$(mktemp)

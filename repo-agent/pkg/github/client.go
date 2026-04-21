@@ -74,8 +74,25 @@ type Client struct {
 	*githubv39.Client
 }
 
-// ParseIssueURL extracts owner, repo, and issue number from a GitHub issue URL.
+// ParseIssueURL extracts owner, repo, and issue number from a GitHub issue URL or SSH path.
 func ParseIssueURL(s string) (owner string, repo string, number int, err error) {
+	// Handle SSH URLs like git@github.com:owner/repo/issues/123
+	if strings.HasPrefix(s, "git@github.com:") {
+		trimmed := strings.TrimPrefix(s, "git@github.com:")
+		trimmed = strings.TrimSuffix(trimmed, ".git")
+		parts := strings.Split(trimmed, "/")
+		if len(parts) >= 4 && (parts[2] == "issues" || parts[2] == "pull") {
+			owner := parts[0]
+			repo := parts[1]
+			number, err := strconv.Atoi(parts[3])
+			if err != nil {
+				return "", "", 0, fmt.Errorf("invalid issue/pr number %q: %w", parts[3], err)
+			}
+			return owner, repo, number, nil
+		}
+		return "", "", 0, fmt.Errorf("ssh issue/pull-request format %q not recognized", s)
+	}
+
 	u, err := url.Parse(s)
 	if err != nil {
 		return "", "", 0, err
@@ -99,14 +116,25 @@ func ParseIssueURL(s string) (owner string, repo string, number int, err error) 
 	return "", "", 0, fmt.Errorf("issue/pull-request format %q not recognized", s)
 }
 
-// ParseHTMLUrl extracts owner and repo from a GitHub HTML URL.
+// ParseHTMLUrl extracts owner and repo from a GitHub HTML URL or SSH path.
 func ParseHTMLUrl(s string) (owner string, repo string, err error) {
+	// Handle SSH URLs like git@github.com:owner/repo.git
+	if strings.HasPrefix(s, "git@github.com:") {
+		trimmed := strings.TrimPrefix(s, "git@github.com:")
+		trimmed = strings.TrimSuffix(trimmed, ".git")
+		parts := strings.Split(trimmed, "/")
+		if len(parts) >= 2 {
+			return parts[0], parts[1], nil
+		}
+		return "", "", fmt.Errorf("ssh url format %q not recognized", s)
+	}
+
 	u, err := url.Parse(s)
 	if err != nil {
 		return "", "", err
 	}
 
-	if u.Host != "github.com" {
+	if u.Host != "" && u.Host != "github.com" {
 		return "", "", fmt.Errorf("only github.com is supported, got %q", u.Host)
 	}
 
