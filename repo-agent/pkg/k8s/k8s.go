@@ -231,26 +231,32 @@ func (m *Manager) UpdateSandboxUserDraft(ctx context.Context, namespace, sandbox
 }
 
 func (m *Manager) UpdateSandboxAnnotation(ctx context.Context, namespace, sandboxName, key, value string) error {
-	sandbox, err := m.Client.Resource(SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to get sandbox %s: %w", sandboxName, err)
-	}
-
-	if sandbox.GetAnnotations() == nil {
-		sandbox.SetAnnotations(make(map[string]string))
-	}
-	annotations := sandbox.GetAnnotations()
-	annotations[key] = value
-	sandbox.SetAnnotations(annotations)
-
-	_, err = m.Client.Resource(SandboxGVR).Namespace(namespace).Update(ctx, sandbox, v1.UpdateOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to update sandbox annotation: %w", err)
-	}
-
-	return nil
+	return m.UpdateSandboxAnnotations(ctx, namespace, sandboxName, map[string]string{key: value})
 }
 
+func (m *Manager) UpdateSandboxAnnotations(ctx context.Context, namespace, sandboxName string, updates map[string]string) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		sandbox, err := m.Client.Resource(SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to get sandbox %s: %w", sandboxName, err)
+		}
+
+		annotations := sandbox.GetAnnotations()
+		if annotations == nil {
+			annotations = make(map[string]string)
+		}
+		for k, v := range updates {
+			annotations[k] = v
+		}
+		sandbox.SetAnnotations(annotations)
+
+		_, err = m.Client.Resource(SandboxGVR).Namespace(namespace).Update(ctx, sandbox, v1.UpdateOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to update sandbox annotations: %w", err)
+		}
+		return nil
+	})
+}
 func (m *Manager) GetGitHubToken(ctx context.Context, repoWatch *unstructured.Unstructured) (string, error) {
 	secretName, found, err := unstructured.NestedString(repoWatch.Object, "spec", "githubSecretName")
 	if err != nil || !found {

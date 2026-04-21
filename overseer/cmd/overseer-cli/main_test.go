@@ -120,9 +120,15 @@ func TestIsGitHubTransient(t *testing.T) {
 		},
 		{
 			name:     "rate limit error (403)",
-			err:      &githubv39.ErrorResponse{Response: &http.Response{StatusCode: 403}},
+			err:      &githubv39.ErrorResponse{Response: &http.Response{StatusCode: 403}, Message: "API rate limit exceeded"},
 			expected: true,
 		},
+		{
+			name:     "permission error (403)",
+			err:      &githubv39.ErrorResponse{Response: &http.Response{StatusCode: 403}, Message: "Permission denied"},
+			expected: false,
+		},
+
 		{
 			name:     "rate limit error (429)",
 			err:      &githubv39.ErrorResponse{Response: &http.Response{StatusCode: 429}},
