@@ -219,7 +219,7 @@ func isGitHubTransient(err error) bool {
 	// Also check for network timeouts/connection issues
 
 	var netErr net.Error
-	if (errors.As(err, &netErr) && (netErr.Timeout() || netErr.Temporary())) || errors.Is(err, context.DeadlineExceeded) {
+	if (errors.As(err, &netErr) && netErr.Timeout()) || errors.Is(err, context.DeadlineExceeded) {
 		return true
 	}
 	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
