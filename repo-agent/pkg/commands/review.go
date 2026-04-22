@@ -31,6 +31,7 @@ import (
 	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/agentoutput"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
+	pkg_github "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/imagebuilder"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/llm"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
@@ -241,11 +242,11 @@ func (c *ReviewCommand) Run(ctx context.Context) error {
 		return fmt.Errorf("GIT_HTML_URL (or --repo-url) not set")
 	}
 
-	parts := strings.Split(strings.TrimPrefix(c.RepoURL, "https://github.com/"), "/")
-	if len(parts) < 2 {
-		return fmt.Errorf("invalid GIT_HTML_URL format: %s", c.RepoURL)
+	_, repo, err := pkg_github.ParseHTMLUrl(c.RepoURL)
+	if err != nil {
+		return fmt.Errorf("invalid repository URL %q: %w", c.RepoURL, err)
 	}
-	repoDir := filepath.Join(c.WorkspaceDir, parts[1])
+	repoDir := filepath.Join(c.WorkspaceDir, repo)
 
 	ib := imagebuilder.ImageBuilder{
 		DotFilesRepo: c.UserDotfilesRepo,
@@ -346,16 +347,10 @@ func (c *ReviewCommand) Run(ctx context.Context) error {
 	}
 	client := clients.NewGitHubClient(ctx, githubToken)
 
-	// Reuse parts from earlier, but need to be sure about format for PR
 	// c.RepoURL: https://github.com/owner/repo/pull/123
-	if len(parts) < 4 {
-		return fmt.Errorf("invalid GIT_HTML_URL for review: %s", c.RepoURL)
-	}
-	owner := parts[0]
-	repo := parts[1]
-	prNumber, err := strconv.Atoi(parts[3])
+	owner, repo, prNumber, err := pkg_github.ParseIssueURL(c.RepoURL)
 	if err != nil {
-		return fmt.Errorf("failed to parse PR number from GIT_HTML_URL: %w", err)
+		return fmt.Errorf("invalid pull request URL %q: %w", c.RepoURL, err)
 	}
 
 	pr, _, err := client.PullRequests.Get(ctx, owner, repo, prNumber)

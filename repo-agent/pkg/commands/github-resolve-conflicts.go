@@ -34,7 +34,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -162,16 +161,10 @@ func (c *GithubResolveConflictsCommand) loadGithubObjects(ctx context.Context) e
 	if c.RepoURL == "" {
 		return fmt.Errorf("GIT_HTML_URL (or --repo-url) not set")
 	}
-	u, err := url.Parse(c.RepoURL)
+	owner, repoName, err := github.ParseHTMLUrl(c.RepoURL)
 	if err != nil {
-		return fmt.Errorf("invalid RepoURL %q: %w", c.RepoURL, err)
+		return fmt.Errorf("invalid repository URL %q: %w", c.RepoURL, err)
 	}
-	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
-	if len(parts) < 2 {
-		return fmt.Errorf("invalid repository path in URL %q", c.RepoURL)
-	}
-	owner := parts[0]
-	repoName := strings.TrimSuffix(parts[1], ".git")
 
 	c.pr, err = githubAPI.GetPullRequest(ctx, owner, repoName, c.PRNumber)
 	if err != nil {
