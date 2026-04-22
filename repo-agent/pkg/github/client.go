@@ -98,8 +98,8 @@ func ParseIssueURL(s string) (owner string, repo string, number int, err error) 
 		return "", "", 0, err
 	}
 
-	if u.Host != "github.com" {
-		return "", "", 0, fmt.Errorf("only github.com is supported, got %q", u.Host)
+	if h := u.Hostname(); h != "" && h != "github.com" {
+		return "", "", 0, fmt.Errorf("only github.com is supported, got %q", h)
 	}
 
 	// Path should be /owner/repo/issues/number or /owner/repo/pull/number
@@ -134,8 +134,8 @@ func ParseHTMLUrl(s string) (owner string, repo string, err error) {
 		return "", "", err
 	}
 
-	if u.Host != "" && u.Host != "github.com" {
-		return "", "", fmt.Errorf("only github.com is supported, got %q", u.Host)
+	if h := u.Hostname(); h != "" && h != "github.com" {
+		return "", "", fmt.Errorf("only github.com is supported, got %q", h)
 	}
 
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
