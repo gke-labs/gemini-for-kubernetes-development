@@ -241,16 +241,23 @@ func TestAddressFeedbackPromptTemplate(t *testing.T) {
 	}
 
 	data := struct {
-		PullRequest                 MockIssue
-		RepositoryCommits           []struct{ SHA, Message string }
-		OldIssueComments            []MockComment
-		OldPullRequestReviews       []struct{ UserLogin, Body string; PullRequestComments []MockComment }
-		IssueComments               []MockComment
-		PullRequestReviews          []struct{ ID int; UserLogin, Body string; PullRequestComments []MockComment }
+		PullRequest           MockIssue
+		RepositoryCommits     []struct{ SHA, Message string }
+		OldIssueComments      []MockComment
+		OldPullRequestReviews []struct {
+			UserLogin, Body     string
+			PullRequestComments []MockComment
+		}
+		IssueComments      []MockComment
+		PullRequestReviews []struct {
+			ID                  int
+			UserLogin, Body     string
+			PullRequestComments []MockComment
+		}
 		TraceabilityMetadataEnabled bool
 		Metadata                    metadata.Metadata
 	}{
-		PullRequest: MockIssue{},
+		PullRequest:                 MockIssue{},
 		TraceabilityMetadataEnabled: true,
 		Metadata: metadata.Metadata{
 			SandboxTask:    "ns/task",
@@ -302,7 +309,7 @@ func TestTriageIssuePromptTemplate(t *testing.T) {
 		TraceabilityMetadataEnabled bool
 		Metadata                    metadata.Metadata
 	}{
-		Issue: MockIssue{},
+		Issue:                       MockIssue{},
 		TraceabilityMetadataEnabled: true,
 		Metadata: metadata.Metadata{
 			SandboxTask:    "ns/task",
