@@ -151,6 +151,10 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 			"name":  "CONFIG_DIR_IMAGE",
 			"value": configDirImage,
 		},
+		map[string]interface{}{
+			"name":  "POLL_INTERVAL",
+			"value": o.Spec.PollInterval,
+		},
 	}
 
 	if o.Spec.Chores != nil && o.Spec.Chores.Mode != "" {
