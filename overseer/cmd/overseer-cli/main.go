@@ -198,7 +198,13 @@ func isGitHubTransient(err error) bool {
 	if err == nil {
 		return false
 	}
+
 	// Check for rate limit or server errors
+	var rateLimitErr *githubv39.RateLimitError
+	if errors.As(err, &rateLimitErr) {
+		return true
+	}
+
 	var githubErr *githubv39.ErrorResponse
 	if errors.As(err, &githubErr) {
 		if githubErr.Response != nil {
@@ -608,6 +614,9 @@ func ensureSandbox(ctx context.Context, dynClient dynamic.Interface, namespace s
 	// To avoid stripping OwnerReferences from other controllers, we fetch existing ones and merge.
 	existing, err := dynClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sb.GetName(), metav1.GetOptions{})
 	if err == nil {
+		if existing.GetDeletionTimestamp() != nil {
+			return nil, &RetryableError{Message: fmt.Sprintf("sandbox %s is terminating, waiting for cleanup", sb.GetName())}
+		}
 		mergedRefs := existing.GetOwnerReferences()
 		for _, newRef := range sb.GetOwnerReferences() {
 			found := false
@@ -638,13 +647,15 @@ func ensureSandbox(ctx context.Context, dynClient dynamic.Interface, namespace s
 
 	// Use Server-Side Apply to ensure the Sandbox exists and has correct OwnerReferences.
 	// For SSA with Unstructured, we should only include the fields we want to manage.
-	// We manage Metadata (specifically OwnerReferences) and Spec.
+	// We manage Metadata (OwnerReferences, Labels, Annotations) and Spec.
 	patch := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": sb.GetAPIVersion(),
 			"kind":       sb.GetKind(),
 			"metadata": map[string]interface{}{
 				"name":            sb.GetName(),
+				"labels":          sb.GetLabels(),
+				"annotations":     sb.GetAnnotations(),
 				"ownerReferences": sb.GetOwnerReferences(),
 			},
 			"spec": sb.Object["spec"],
@@ -672,6 +683,9 @@ func ensureService(ctx context.Context, clientset kubernetes.Interface, namespac
 	var mergedRefs []metav1.OwnerReference
 	existing, err := clientset.CoreV1().Services(namespace).Get(ctx, svc.Name, metav1.GetOptions{})
 	if err == nil {
+		if existing.DeletionTimestamp != nil {
+			return &RetryableError{Message: fmt.Sprintf("service %s is terminating, waiting for cleanup", svc.Name)}
+		}
 		// Deep copy existing owner references to avoid data races if 'existing' is from a cache.
 		mergedRefs = make([]metav1.OwnerReference, len(existing.OwnerReferences))
 		copy(mergedRefs, existing.OwnerReferences)
@@ -710,13 +724,15 @@ func ensureService(ctx context.Context, clientset kubernetes.Interface, namespac
 		}
 	}
 
-	// Use Server-Side Apply to enforce the desired state (Spec and OwnerReferences).
+	// Use Server-Side Apply to enforce the desired state (Spec, Metadata, and OwnerReferences).
 	// For Services, we must only patch managed fields to avoid immutability errors like clusterIP.
 	patch := map[string]interface{}{
 		"apiVersion": "v1",
 		"kind":       "Service",
 		"metadata": map[string]interface{}{
 			"name":            svc.Name,
+			"labels":          svc.Labels,
+			"annotations":     svc.Annotations,
 			"ownerReferences": mergedRefs,
 		},
 		"spec": map[string]interface{}{
@@ -1273,6 +1289,16 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 		} else {
 			// Different task type or different SHA
 			if state == "Running" || state == "Pending" {
+				if taskSHA != "" && !strings.EqualFold(taskSHA, headSHA) {
+					// It's for a different SHA. Cancel it to avoid wasting LLM tokens.
+					klog.Infof("PR #%d: Task %s for OBSOLETE SHA %s is %s. Canceling to start task for new SHA %s.", number, task.Spec.Type, taskSHA, state, headSHA)
+					_ = manager.UpdateSandboxTaskStatus(ctx, namespace, task.Name, "Failed", "Obsolete SHA task canceled", nil)
+					if err := manager.DeleteSandboxTask(ctx, namespace, task.Name); err != nil {
+						klog.Warningf("Failed to delete obsolete task: %v", err)
+					}
+					return &RetryableError{Message: fmt.Sprintf("canceled obsolete task for PR %d, waiting for pod termination", number)}
+				}
+
 				if time.Since(task.CreationTimestamp.Time) < 2*time.Hour {
 					conflictMsg := fmt.Sprintf("task %s for DIFFERENT SHA %s", task.Spec.Type, taskSHA)
 					if strings.EqualFold(taskSHA, headSHA) {
