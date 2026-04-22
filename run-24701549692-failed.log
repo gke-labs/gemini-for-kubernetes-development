@@ -1,0 +1,392 @@
+lint	UNKNOWN STEP	﻿2026-04-21T02:54:14.0932923Z Current runner version: '2.333.1'
+lint	UNKNOWN STEP	2026-04-21T02:54:14.0956751Z ##[group]Runner Image Provisioner
+lint	UNKNOWN STEP	2026-04-21T02:54:14.0957557Z Hosted Compute Agent
+lint	UNKNOWN STEP	2026-04-21T02:54:14.0958245Z Version: 20260213.493
+lint	UNKNOWN STEP	2026-04-21T02:54:14.0958849Z Commit: 5c115507f6dd24b8de37d8bbe0bb4509d0cc0fa3
+lint	UNKNOWN STEP	2026-04-21T02:54:14.0959571Z Build Date: 2026-02-13T00:28:41Z
+lint	UNKNOWN STEP	2026-04-21T02:54:14.0960648Z Worker ID: {b88bdb29-2f25-459b-8e1d-bf26076d6d2d}
+lint	UNKNOWN STEP	2026-04-21T02:54:14.0961350Z Azure Region: eastus
+lint	UNKNOWN STEP	2026-04-21T02:54:14.0961930Z ##[endgroup]
+lint	UNKNOWN STEP	2026-04-21T02:54:14.0963381Z ##[group]Operating System
+lint	UNKNOWN STEP	2026-04-21T02:54:14.0964097Z Ubuntu
+lint	UNKNOWN STEP	2026-04-21T02:54:14.0964590Z 24.04.4
+lint	UNKNOWN STEP	2026-04-21T02:54:14.0965053Z LTS
+lint	UNKNOWN STEP	2026-04-21T02:54:14.0965569Z ##[endgroup]
+lint	UNKNOWN STEP	2026-04-21T02:54:14.0966089Z ##[group]Runner Image
+lint	UNKNOWN STEP	2026-04-21T02:54:14.0966649Z Image: ubuntu-24.04
+lint	UNKNOWN STEP	2026-04-21T02:54:14.0967225Z Version: 20260413.86.1
+lint	UNKNOWN STEP	2026-04-21T02:54:14.0968433Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260413.86/images/ubuntu/Ubuntu2404-Readme.md
+lint	UNKNOWN STEP	2026-04-21T02:54:14.0970179Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260413.86
+lint	UNKNOWN STEP	2026-04-21T02:54:14.0971086Z ##[endgroup]
+lint	UNKNOWN STEP	2026-04-21T02:54:14.0972234Z ##[group]GITHUB_TOKEN Permissions
+lint	UNKNOWN STEP	2026-04-21T02:54:14.0974361Z Contents: read
+lint	UNKNOWN STEP	2026-04-21T02:54:14.0974929Z Metadata: read
+lint	UNKNOWN STEP	2026-04-21T02:54:14.0975480Z Packages: read
+lint	UNKNOWN STEP	2026-04-21T02:54:14.0976029Z ##[endgroup]
+lint	UNKNOWN STEP	2026-04-21T02:54:14.0977995Z Secret source: None
+lint	UNKNOWN STEP	2026-04-21T02:54:14.0978983Z Prepare workflow directory
+lint	UNKNOWN STEP	2026-04-21T02:54:14.1301800Z Prepare all required actions
+lint	UNKNOWN STEP	2026-04-21T02:54:14.1339687Z Getting action download info
+lint	UNKNOWN STEP	2026-04-21T02:54:14.4534976Z Download action repository 'actions/checkout@v4' (SHA:34e114876b0b11c390a56381ad16ebd13914f8d5)
+lint	UNKNOWN STEP	2026-04-21T02:54:14.6043017Z Download action repository 'actions/setup-go@v5' (SHA:40f1582b2485089dde7abd97c1529aa768e1baff)
+lint	UNKNOWN STEP	2026-04-21T02:54:14.9471942Z Complete job name: lint
+lint	UNKNOWN STEP	2026-04-21T02:54:15.0155838Z ##[group]Run actions/checkout@v4
+lint	UNKNOWN STEP	2026-04-21T02:54:15.0156662Z with:
+lint	UNKNOWN STEP	2026-04-21T02:54:15.0157286Z   repository: gke-labs/gemini-for-kubernetes-development
+lint	UNKNOWN STEP	2026-04-21T02:54:15.0158045Z   token: ***
+lint	UNKNOWN STEP	2026-04-21T02:54:15.0158410Z   ssh-strict: true
+lint	UNKNOWN STEP	2026-04-21T02:54:15.0158803Z   ssh-user: git
+lint	UNKNOWN STEP	2026-04-21T02:54:15.0159190Z   persist-credentials: true
+lint	UNKNOWN STEP	2026-04-21T02:54:15.0159641Z   clean: true
+lint	UNKNOWN STEP	2026-04-21T02:54:15.0160295Z   sparse-checkout-cone-mode: true
+lint	UNKNOWN STEP	2026-04-21T02:54:15.0160816Z   fetch-depth: 1
+lint	UNKNOWN STEP	2026-04-21T02:54:15.0161247Z   fetch-tags: false
+lint	UNKNOWN STEP	2026-04-21T02:54:15.0161629Z   show-progress: true
+lint	UNKNOWN STEP	2026-04-21T02:54:15.0162018Z   lfs: false
+lint	UNKNOWN STEP	2026-04-21T02:54:15.0162368Z   submodules: false
+lint	UNKNOWN STEP	2026-04-21T02:54:15.0162765Z   set-safe-directory: true
+lint	UNKNOWN STEP	2026-04-21T02:54:15.0163474Z ##[endgroup]
+lint	UNKNOWN STEP	2026-04-21T02:54:15.1285446Z Syncing repository: gke-labs/gemini-for-kubernetes-development
+lint	UNKNOWN STEP	2026-04-21T02:54:15.1288212Z ##[group]Getting Git version info
+lint	UNKNOWN STEP	2026-04-21T02:54:15.1289889Z Working directory is '/home/runner/work/gemini-for-kubernetes-development/gemini-for-kubernetes-development'
+lint	UNKNOWN STEP	2026-04-21T02:54:15.1292501Z [command]/usr/bin/git version
+lint	UNKNOWN STEP	2026-04-21T02:54:15.1355447Z git version 2.53.0
+lint	UNKNOWN STEP	2026-04-21T02:54:15.1380699Z ##[endgroup]
+lint	UNKNOWN STEP	2026-04-21T02:54:15.1393953Z Temporarily overriding HOME='/home/runner/work/_temp/8c450a47-cb4c-4ea6-93ab-b52237939f1a' before making global git config changes
+lint	UNKNOWN STEP	2026-04-21T02:54:15.1395516Z Adding repository directory to the temporary git global config as a safe directory
+lint	UNKNOWN STEP	2026-04-21T02:54:15.1400370Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/gemini-for-kubernetes-development/gemini-for-kubernetes-development
+lint	UNKNOWN STEP	2026-04-21T02:54:15.1435537Z Deleting the contents of '/home/runner/work/gemini-for-kubernetes-development/gemini-for-kubernetes-development'
+lint	UNKNOWN STEP	2026-04-21T02:54:15.1439535Z ##[group]Initializing the repository
+lint	UNKNOWN STEP	2026-04-21T02:54:15.1445249Z [command]/usr/bin/git init /home/runner/work/gemini-for-kubernetes-development/gemini-for-kubernetes-development
+lint	UNKNOWN STEP	2026-04-21T02:54:15.1545202Z hint: Using 'master' as the name for the initial branch. This default branch name
+lint	UNKNOWN STEP	2026-04-21T02:54:15.1547644Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+lint	UNKNOWN STEP	2026-04-21T02:54:15.1549136Z hint: to use in all of your new repositories, which will suppress this warning,
+lint	UNKNOWN STEP	2026-04-21T02:54:15.1549930Z hint: call:
+lint	UNKNOWN STEP	2026-04-21T02:54:15.1550561Z hint:
+lint	UNKNOWN STEP	2026-04-21T02:54:15.1551052Z hint: 	git config --global init.defaultBranch <name>
+lint	UNKNOWN STEP	2026-04-21T02:54:15.1551611Z hint:
+lint	UNKNOWN STEP	2026-04-21T02:54:15.1552139Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+lint	UNKNOWN STEP	2026-04-21T02:54:15.1553003Z hint: 'development'. The just-created branch can be renamed via this command:
+lint	UNKNOWN STEP	2026-04-21T02:54:15.1553899Z hint:
+lint	UNKNOWN STEP	2026-04-21T02:54:15.1554270Z hint: 	git branch -m <name>
+lint	UNKNOWN STEP	2026-04-21T02:54:15.1554691Z hint:
+lint	UNKNOWN STEP	2026-04-21T02:54:15.1555254Z hint: Disable this message with "git config set advice.defaultBranchName false"
+lint	UNKNOWN STEP	2026-04-21T02:54:15.1556592Z Initialized empty Git repository in /home/runner/work/gemini-for-kubernetes-development/gemini-for-kubernetes-development/.git/
+lint	UNKNOWN STEP	2026-04-21T02:54:15.1563624Z [command]/usr/bin/git remote add origin https://github.com/gke-labs/gemini-for-kubernetes-development
+lint	UNKNOWN STEP	2026-04-21T02:54:15.1596267Z ##[endgroup]
+lint	UNKNOWN STEP	2026-04-21T02:54:15.1596956Z ##[group]Disabling automatic garbage collection
+lint	UNKNOWN STEP	2026-04-21T02:54:15.1600490Z [command]/usr/bin/git config --local gc.auto 0
+lint	UNKNOWN STEP	2026-04-21T02:54:15.1627616Z ##[endgroup]
+lint	UNKNOWN STEP	2026-04-21T02:54:15.1628242Z ##[group]Setting up auth
+lint	UNKNOWN STEP	2026-04-21T02:54:15.1634817Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+lint	UNKNOWN STEP	2026-04-21T02:54:15.1663627Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+lint	UNKNOWN STEP	2026-04-21T02:54:15.1953897Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+lint	UNKNOWN STEP	2026-04-21T02:54:15.1984833Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+lint	UNKNOWN STEP	2026-04-21T02:54:15.2206591Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+lint	UNKNOWN STEP	2026-04-21T02:54:15.2235751Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+lint	UNKNOWN STEP	2026-04-21T02:54:15.2454758Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+lint	UNKNOWN STEP	2026-04-21T02:54:15.2488522Z ##[endgroup]
+lint	UNKNOWN STEP	2026-04-21T02:54:15.2489330Z ##[group]Fetching the repository
+lint	UNKNOWN STEP	2026-04-21T02:54:15.2497395Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +2f0d9c8bc5776cec9b67e9b82e69d872140d8ef9:refs/remotes/pull/848/merge
+lint	UNKNOWN STEP	2026-04-21T02:54:15.5441036Z From https://github.com/gke-labs/gemini-for-kubernetes-development
+lint	UNKNOWN STEP	2026-04-21T02:54:15.5442307Z  * [new ref]         2f0d9c8bc5776cec9b67e9b82e69d872140d8ef9 -> pull/848/merge
+lint	UNKNOWN STEP	2026-04-21T02:54:15.5470883Z ##[endgroup]
+lint	UNKNOWN STEP	2026-04-21T02:54:15.5472448Z ##[group]Determining the checkout info
+lint	UNKNOWN STEP	2026-04-21T02:54:15.5474079Z ##[endgroup]
+lint	UNKNOWN STEP	2026-04-21T02:54:15.5477801Z [command]/usr/bin/git sparse-checkout disable
+lint	UNKNOWN STEP	2026-04-21T02:54:15.5515129Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+lint	UNKNOWN STEP	2026-04-21T02:54:15.5542917Z ##[group]Checking out the ref
+lint	UNKNOWN STEP	2026-04-21T02:54:15.5546218Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/848/merge
+lint	UNKNOWN STEP	2026-04-21T02:54:15.5941089Z Note: switching to 'refs/remotes/pull/848/merge'.
+lint	UNKNOWN STEP	2026-04-21T02:54:15.5942278Z 
+lint	UNKNOWN STEP	2026-04-21T02:54:15.5943383Z You are in 'detached HEAD' state. You can look around, make experimental
+lint	UNKNOWN STEP	2026-04-21T02:54:15.5945416Z changes and commit them, and you can discard any commits you make in this
+lint	UNKNOWN STEP	2026-04-21T02:54:15.5947008Z state without impacting any branches by switching back to a branch.
+lint	UNKNOWN STEP	2026-04-21T02:54:15.5947980Z 
+lint	UNKNOWN STEP	2026-04-21T02:54:15.5948503Z If you want to create a new branch to retain commits you create, you may
+lint	UNKNOWN STEP	2026-04-21T02:54:15.5950619Z do so (now or later) by using -c with the switch command. Example:
+lint	UNKNOWN STEP	2026-04-21T02:54:15.5951450Z 
+lint	UNKNOWN STEP	2026-04-21T02:54:15.5951765Z   git switch -c <new-branch-name>
+lint	UNKNOWN STEP	2026-04-21T02:54:15.5952285Z 
+lint	UNKNOWN STEP	2026-04-21T02:54:15.5952586Z Or undo this operation with:
+lint	UNKNOWN STEP	2026-04-21T02:54:15.5953064Z 
+lint	UNKNOWN STEP	2026-04-21T02:54:15.5953332Z   git switch -
+lint	UNKNOWN STEP	2026-04-21T02:54:15.5953696Z 
+lint	UNKNOWN STEP	2026-04-21T02:54:15.5954372Z Turn off this advice by setting config variable advice.detachedHead to false
+lint	UNKNOWN STEP	2026-04-21T02:54:15.5955442Z 
+lint	UNKNOWN STEP	2026-04-21T02:54:15.5956604Z HEAD is now at 2f0d9c8 Merge 3e398d7e1304610e3d08cd9be852247a25a1681d into 08fcc39ffa88df2fc2cd654c43944f7d0f1df971
+lint	UNKNOWN STEP	2026-04-21T02:54:15.5959888Z ##[endgroup]
+lint	UNKNOWN STEP	2026-04-21T02:54:15.5986578Z [command]/usr/bin/git log -1 --format=%H
+lint	UNKNOWN STEP	2026-04-21T02:54:15.6007841Z 2f0d9c8bc5776cec9b67e9b82e69d872140d8ef9
+lint	UNKNOWN STEP	2026-04-21T02:54:15.6312484Z ##[group]Run actions/setup-go@v5
+lint	UNKNOWN STEP	2026-04-21T02:54:15.6313506Z with:
+lint	UNKNOWN STEP	2026-04-21T02:54:15.6314223Z   go-version-file: go.mod
+lint	UNKNOWN STEP	2026-04-21T02:54:15.6315693Z   cache-dependency-path: repo-agent/go.sum
+lint	UNKNOWN STEP	overseer/go.sum
+lint	UNKNOWN STEP	dev/tools/go.sum
+lint	UNKNOWN STEP	
+lint	UNKNOWN STEP	2026-04-21T02:54:15.6317322Z   check-latest: false
+lint	UNKNOWN STEP	2026-04-21T02:54:15.6318408Z   token: ***
+lint	UNKNOWN STEP	2026-04-21T02:54:15.6319140Z   cache: true
+lint	UNKNOWN STEP	2026-04-21T02:54:15.6319873Z ##[endgroup]
+lint	UNKNOWN STEP	2026-04-21T02:54:15.8012051Z Setup go version spec 1.25.7
+lint	UNKNOWN STEP	2026-04-21T02:54:15.8023210Z Attempting to download 1.25.7...
+lint	UNKNOWN STEP	2026-04-21T02:54:16.0963090Z matching 1.25.7...
+lint	UNKNOWN STEP	2026-04-21T02:54:16.0999084Z Acquiring 1.25.7 from https://github.com/actions/go-versions/releases/download/1.25.7-21696103256/go-1.25.7-linux-x64.tar.gz
+lint	UNKNOWN STEP	2026-04-21T02:54:16.6631856Z Extracting Go...
+lint	UNKNOWN STEP	2026-04-21T02:54:16.6744281Z [command]/usr/bin/tar xz --warning=no-unknown-keyword --overwrite -C /home/runner/work/_temp/afed5c60-8f91-454d-a8cd-183e75f914de -f /home/runner/work/_temp/0c91c9ff-3e1a-45ba-a5b4-806c2e2b219b
+lint	UNKNOWN STEP	2026-04-21T02:54:18.1105821Z Successfully extracted go to /home/runner/work/_temp/afed5c60-8f91-454d-a8cd-183e75f914de
+lint	UNKNOWN STEP	2026-04-21T02:54:18.1106751Z Adding to the cache ...
+lint	UNKNOWN STEP	2026-04-21T02:54:23.1258034Z Successfully cached go to /opt/hostedtoolcache/go/1.25.7/x64
+lint	UNKNOWN STEP	2026-04-21T02:54:23.1258677Z Added go to the path
+lint	UNKNOWN STEP	2026-04-21T02:54:23.1261592Z Successfully set up Go version 1.25.7
+lint	UNKNOWN STEP	2026-04-21T02:54:23.1463916Z [command]/opt/hostedtoolcache/go/1.25.7/x64/bin/go env GOMODCACHE
+lint	UNKNOWN STEP	2026-04-21T02:54:23.1500297Z [command]/opt/hostedtoolcache/go/1.25.7/x64/bin/go env GOCACHE
+lint	UNKNOWN STEP	2026-04-21T02:54:23.1533225Z /home/runner/go/pkg/mod
+lint	UNKNOWN STEP	2026-04-21T02:54:23.1545082Z /home/runner/.cache/go-build
+lint	UNKNOWN STEP	2026-04-21T02:54:23.2071293Z Cache hit for: setup-go-Linux-x64-ubuntu24-go-1.25.7-192cb23e7f01c5274d9186e0075bce87268b49cb52513dd237e9137b7c5a2d58
+lint	UNKNOWN STEP	2026-04-21T02:54:24.2397413Z Received 184549376 of 248490833 (74.3%), 176.0 MBs/sec
+lint	UNKNOWN STEP	2026-04-21T02:54:24.6254020Z Received 248490833 of 248490833 (100.0%), 171.0 MBs/sec
+lint	UNKNOWN STEP	2026-04-21T02:54:24.6255057Z Cache Size: ~237 MB (248490833 B)
+lint	UNKNOWN STEP	2026-04-21T02:54:24.6295307Z [command]/usr/bin/tar -xf /home/runner/work/_temp/63984c04-ee30-4584-a458-478b63f46d2c/cache.tzst -P -C /home/runner/work/gemini-for-kubernetes-development/gemini-for-kubernetes-development --use-compress-program unzstd
+lint	UNKNOWN STEP	2026-04-21T02:54:27.2817694Z Cache restored successfully
+lint	UNKNOWN STEP	2026-04-21T02:54:27.2932442Z Cache restored from key: setup-go-Linux-x64-ubuntu24-go-1.25.7-192cb23e7f01c5274d9186e0075bce87268b49cb52513dd237e9137b7c5a2d58
+lint	UNKNOWN STEP	2026-04-21T02:54:27.2954905Z go version go1.25.7 linux/amd64
+lint	UNKNOWN STEP	2026-04-21T02:54:27.2955116Z 
+lint	UNKNOWN STEP	2026-04-21T02:54:27.2955400Z ##[group]go env
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3059294Z AR='ar'
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3059612Z CC='gcc'
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3060210Z CGO_CFLAGS='-O2 -g'
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3060605Z CGO_CPPFLAGS=''
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3060971Z CGO_CXXFLAGS='-O2 -g'
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3061335Z CGO_ENABLED='1'
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3061713Z CGO_FFLAGS='-O2 -g'
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3062065Z CGO_LDFLAGS='-O2 -g'
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3062470Z CXX='g++'
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3062774Z GCCGO='gccgo'
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3063078Z GO111MODULE=''
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3063282Z GOAMD64='v1'
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3063459Z GOARCH='amd64'
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3063934Z GOAUTH='netrc'
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3064105Z GOBIN=''
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3064304Z GOCACHE='/home/runner/.cache/go-build'
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3064580Z GOCACHEPROG=''
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3064759Z GODEBUG=''
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3065521Z GOENV='/home/runner/.config/go/env'
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3065779Z GOEXE=''
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3065945Z GOEXPERIMENT=''
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3066138Z GOFIPS140='off'
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3066321Z GOFLAGS=''
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3067031Z GOGCCFLAGS='-fPIC -m64 -pthread -Wl,--no-gc-sections -fmessage-length=0 -ffile-prefix-map=/tmp/go-build2665436100=/tmp/go-build -gno-record-gcc-switches'
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3067706Z GOHOSTARCH='amd64'
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3067906Z GOHOSTOS='linux'
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3068096Z GOINSECURE=''
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3068749Z GOMOD='/home/runner/work/gemini-for-kubernetes-development/gemini-for-kubernetes-development/go.mod'
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3069294Z GOMODCACHE='/home/runner/go/pkg/mod'
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3069552Z GONOPROXY=''
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3069732Z GONOSUMDB=''
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3070150Z GOOS='linux'
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3070495Z GOPATH='/home/runner/go'
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3071078Z GOPRIVATE=''
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3071376Z GOPROXY='https://proxy.golang.org,direct'
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3071713Z GOROOT='/opt/hostedtoolcache/go/1.25.7/x64'
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3071999Z GOSUMDB='sum.golang.org'
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3072223Z GOTELEMETRY='local'
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3072477Z GOTELEMETRYDIR='/home/runner/.config/go/telemetry'
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3072889Z GOTMPDIR=''
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3073162Z GOTOOLCHAIN='auto'
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3073484Z GOTOOLDIR='/opt/hostedtoolcache/go/1.25.7/x64/pkg/tool/linux_amd64'
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3073816Z GOVCS=''
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3073996Z GOVERSION='go1.25.7'
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3074466Z GOWORK='/home/runner/work/gemini-for-kubernetes-development/gemini-for-kubernetes-development/go.work'
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3074972Z PKG_CONFIG='pkg-config'
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3075107Z 
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3075352Z ##[endgroup]
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3322639Z ##[group]Run ./dev/tools/lint-go --working-dir repo-agent/
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3323128Z [36;1m./dev/tools/lint-go --working-dir repo-agent/[0m
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3323488Z [36;1m./dev/tools/lint-go --working-dir overseer/[0m
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3350166Z shell: /usr/bin/bash -e {0}
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3350431Z ##[endgroup]
+lint	UNKNOWN STEP	2026-04-21T02:54:27.3964122Z go: downloading github.com/golangci/golangci-lint v1.64.8
+lint	UNKNOWN STEP	2026-04-21T02:54:27.6884194Z go: downloading github.com/gofrs/flock v0.12.1
+lint	UNKNOWN STEP	2026-04-21T02:54:27.6889597Z go: downloading github.com/hashicorp/go-version v1.7.0
+lint	UNKNOWN STEP	2026-04-21T02:54:27.6916047Z go: downloading github.com/pelletier/go-toml/v2 v2.2.4
+lint	UNKNOWN STEP	2026-04-21T02:54:27.6938952Z go: downloading github.com/santhosh-tekuri/jsonschema/v6 v6.0.1
+lint	UNKNOWN STEP	2026-04-21T02:54:27.6979505Z go: downloading github.com/spf13/viper v1.12.0
+lint	UNKNOWN STEP	2026-04-21T02:54:27.6986530Z go: downloading go.uber.org/automaxprocs v1.6.0
+lint	UNKNOWN STEP	2026-04-21T02:54:27.7437686Z go: downloading github.com/pelletier/go-toml v1.9.5
+lint	UNKNOWN STEP	2026-04-21T02:54:27.7600887Z go: downloading github.com/go-viper/mapstructure/v2 v2.4.0
+lint	UNKNOWN STEP	2026-04-21T02:54:27.7623530Z go: downloading github.com/ldez/grignotin v0.9.0
+lint	UNKNOWN STEP	2026-04-21T02:54:27.7703505Z go: downloading github.com/mitchellh/go-homedir v1.1.0
+lint	UNKNOWN STEP	2026-04-21T02:54:27.7784372Z go: downloading github.com/golangci/plugin-module-register v0.1.1
+lint	UNKNOWN STEP	2026-04-21T02:54:27.7786148Z go: downloading github.com/sirupsen/logrus v1.9.3
+lint	UNKNOWN STEP	2026-04-21T02:54:27.7790564Z go: downloading github.com/stretchr/testify v1.11.1
+lint	UNKNOWN STEP	2026-04-21T02:54:27.7798742Z go: downloading github.com/go-xmlfmt/xmlfmt v1.1.3
+lint	UNKNOWN STEP	2026-04-21T02:54:27.7893563Z go: downloading github.com/golangci/revgrep v0.8.0
+lint	UNKNOWN STEP	2026-04-21T02:54:27.8239151Z go: downloading github.com/mitchellh/mapstructure v1.5.0
+lint	UNKNOWN STEP	2026-04-21T02:54:27.8250763Z go: downloading github.com/spf13/afero v1.12.0
+lint	UNKNOWN STEP	2026-04-21T02:54:27.8251496Z go: downloading github.com/spf13/cast v1.5.0
+lint	UNKNOWN STEP	2026-04-21T02:54:27.8251998Z go: downloading github.com/spf13/jwalterweatherman v1.1.0
+lint	UNKNOWN STEP	2026-04-21T02:54:27.8380909Z go: downloading github.com/rogpeppe/go-internal v1.14.1
+lint	UNKNOWN STEP	2026-04-21T02:54:27.8487927Z go: downloading github.com/alingse/asasalint v0.0.11
+lint	UNKNOWN STEP	2026-04-21T02:54:27.8652495Z go: downloading github.com/tdakkota/asciicheck v0.4.1
+lint	UNKNOWN STEP	2026-04-21T02:54:27.8672662Z go: downloading github.com/breml/bidichk v0.3.2
+lint	UNKNOWN STEP	2026-04-21T02:54:27.8723429Z go: downloading github.com/timakin/bodyclose v0.0.0-20241017074812-ed6a65f985e3
+lint	UNKNOWN STEP	2026-04-21T02:54:27.8741917Z go: downloading github.com/lasiar/canonicalheader v1.1.2
+lint	UNKNOWN STEP	2026-04-21T02:54:27.8812658Z go: downloading github.com/sivchari/containedctx v1.0.3
+lint	UNKNOWN STEP	2026-04-21T02:54:27.8825042Z go: downloading github.com/kkHAIKE/contextcheck v1.1.6
+lint	UNKNOWN STEP	2026-04-21T02:54:27.8831351Z go: downloading github.com/karamaru-alpha/copyloopvar v1.2.1
+lint	UNKNOWN STEP	2026-04-21T02:54:27.8854105Z go: downloading github.com/bkielbasa/cyclop v1.2.3
+lint	UNKNOWN STEP	2026-04-21T02:54:27.8876697Z go: downloading gitlab.com/bosi/decorder v0.4.2
+lint	UNKNOWN STEP	2026-04-21T02:54:27.8901873Z go: downloading github.com/OpenPeeDeeP/depguard/v2 v2.2.1
+lint	UNKNOWN STEP	2026-04-21T02:54:27.8951335Z go: downloading github.com/golangci/dupl v0.0.0-20250308024227-f665c8d69b32
+lint	UNKNOWN STEP	2026-04-21T02:54:27.8952698Z go: downloading github.com/Abirdcfly/dupword v0.1.3
+lint	UNKNOWN STEP	2026-04-21T02:54:27.9056003Z go: downloading github.com/charithe/durationcheck v0.0.10
+lint	UNKNOWN STEP	2026-04-21T02:54:27.9058489Z go: downloading github.com/Djarvur/go-err113 v0.0.0-20210108212216-aea10b59be24
+lint	UNKNOWN STEP	2026-04-21T02:54:27.9059699Z go: downloading github.com/kisielk/errcheck v1.9.0
+lint	UNKNOWN STEP	2026-04-21T02:54:27.9153222Z go: downloading github.com/Antonboom/errname v1.0.0
+lint	UNKNOWN STEP	2026-04-21T02:54:27.9154005Z go: downloading github.com/breml/errchkjson v0.4.0
+lint	UNKNOWN STEP	2026-04-21T02:54:27.9198084Z go: downloading github.com/polyfloyd/go-errorlint v1.7.1
+lint	UNKNOWN STEP	2026-04-21T02:54:27.9271138Z go: downloading github.com/nishanths/exhaustive v0.12.0
+lint	UNKNOWN STEP	2026-04-21T02:54:27.9285381Z go: downloading github.com/GaijinEntertainment/go-exhaustruct/v3 v3.3.1
+lint	UNKNOWN STEP	2026-04-21T02:54:27.9320844Z go: downloading github.com/ldez/exptostd v0.4.2
+lint	UNKNOWN STEP	2026-04-21T02:54:27.9362759Z go: downloading github.com/Crocmagnon/fatcontext v0.7.1
+lint	UNKNOWN STEP	2026-04-21T02:54:27.9462494Z go: downloading github.com/ashanbrown/forbidigo v1.6.0
+lint	UNKNOWN STEP	2026-04-21T02:54:27.9498149Z go: downloading github.com/gostaticanalysis/forcetypeassert v0.2.0
+lint	UNKNOWN STEP	2026-04-21T02:54:27.9512698Z go: downloading github.com/ultraware/funlen v0.2.0
+lint	UNKNOWN STEP	2026-04-21T02:54:27.9613076Z go: downloading github.com/nunnatsa/ginkgolinter v0.19.1
+lint	UNKNOWN STEP	2026-04-21T02:54:27.9630517Z go: downloading 4d63.com/gocheckcompilerdirectives v1.3.0
+lint	UNKNOWN STEP	2026-04-21T02:54:27.9643153Z go: downloading 4d63.com/gochecknoglobals v0.2.2
+lint	UNKNOWN STEP	2026-04-21T02:54:27.9690577Z go: downloading github.com/alecthomas/go-check-sumtype v0.3.1
+lint	UNKNOWN STEP	2026-04-21T02:54:27.9750899Z go: downloading github.com/uudashr/gocognit v1.2.0
+lint	UNKNOWN STEP	2026-04-21T02:54:27.9764730Z go: downloading github.com/jgautheron/goconst v1.7.1
+lint	UNKNOWN STEP	2026-04-21T02:54:27.9809243Z go: downloading github.com/go-critic/go-critic v0.12.0
+lint	UNKNOWN STEP	2026-04-21T02:54:27.9820338Z go: downloading github.com/fzipp/gocyclo v0.6.0
+lint	UNKNOWN STEP	2026-04-21T02:54:27.9820937Z go: downloading github.com/tetafro/godot v1.5.0
+lint	UNKNOWN STEP	2026-04-21T02:54:27.9825711Z go: downloading github.com/matoous/godox v1.1.0
+lint	UNKNOWN STEP	2026-04-21T02:54:27.9925380Z go: downloading github.com/quasilyte/go-ruleguard/dsl v0.3.22
+lint	UNKNOWN STEP	2026-04-21T02:54:27.9934981Z go: downloading github.com/denis-tingaikin/go-header v0.5.0
+lint	UNKNOWN STEP	2026-04-21T02:54:27.9993240Z go: downloading github.com/quasilyte/go-ruleguard v0.4.3-0.20240823090925-0fe6f58b47b1
+lint	UNKNOWN STEP	2026-04-21T02:54:28.0033134Z go: downloading github.com/ldez/gomoddirectives v0.6.1
+lint	UNKNOWN STEP	2026-04-21T02:54:28.0110818Z go: downloading github.com/ryancurrah/gomodguard v1.3.5
+lint	UNKNOWN STEP	2026-04-21T02:54:28.0249675Z go: downloading github.com/golangci/go-printf-func-name v0.1.0
+lint	UNKNOWN STEP	2026-04-21T02:54:28.0327223Z go: downloading honnef.co/go/tools v0.6.1
+lint	UNKNOWN STEP	2026-04-21T02:54:28.0657209Z go: downloading github.com/securego/gosec/v2 v2.22.2
+lint	UNKNOWN STEP	2026-04-21T02:54:28.0809758Z go: downloading github.com/xen0n/gosmopolitan v1.2.2
+lint	UNKNOWN STEP	2026-04-21T02:54:28.0894856Z go: downloading github.com/leonklingele/grouper v1.1.2
+lint	UNKNOWN STEP	2026-04-21T02:54:28.1086478Z go: downloading github.com/uudashr/iface v1.3.1
+lint	UNKNOWN STEP	2026-04-21T02:54:28.1117475Z go: downloading github.com/julz/importas v0.2.0
+lint	UNKNOWN STEP	2026-04-21T02:54:28.1274281Z go: downloading github.com/macabu/inamedparam v0.1.3
+lint	UNKNOWN STEP	2026-04-21T02:54:28.1277891Z go: downloading github.com/gordonklaus/ineffassign v0.1.0
+lint	UNKNOWN STEP	2026-04-21T02:54:28.1278799Z go: downloading github.com/sashamelentyev/interfacebloat v1.1.0
+lint	UNKNOWN STEP	2026-04-21T02:54:28.1337390Z go: downloading github.com/ckaznocha/intrange v0.3.0
+lint	UNKNOWN STEP	2026-04-21T02:54:28.1400500Z go: downloading github.com/butuzov/ireturn v0.3.1
+lint	UNKNOWN STEP	2026-04-21T02:54:28.1402368Z go: downloading github.com/timonwong/loggercheck v0.10.1
+lint	UNKNOWN STEP	2026-04-21T02:54:28.1464282Z go: downloading github.com/yagipy/maintidx v1.0.0
+lint	UNKNOWN STEP	2026-04-21T02:54:28.1596077Z go: downloading github.com/ashanbrown/makezero v1.2.0
+lint	UNKNOWN STEP	2026-04-21T02:54:28.1611572Z go: downloading github.com/butuzov/mirror v1.3.0
+lint	UNKNOWN STEP	2026-04-21T02:54:28.1638869Z go: downloading github.com/golangci/misspell v0.6.0
+lint	UNKNOWN STEP	2026-04-21T02:54:28.1680748Z go: downloading github.com/tommy-muehle/go-mnd/v2 v2.5.1
+lint	UNKNOWN STEP	2026-04-21T02:54:28.1825939Z go: downloading go-simpler.org/musttag v0.13.0
+lint	UNKNOWN STEP	2026-04-21T02:54:28.1934826Z go: downloading github.com/alexkohler/nakedret/v2 v2.0.5
+lint	UNKNOWN STEP	2026-04-21T02:54:28.1946305Z go: downloading github.com/nakabonne/nestif v0.3.1
+lint	UNKNOWN STEP	2026-04-21T02:54:28.3206587Z go: downloading github.com/gostaticanalysis/nilerr v0.1.1
+lint	UNKNOWN STEP	2026-04-21T02:54:28.3213001Z go: downloading github.com/alingse/nilnesserr v0.1.2
+lint	UNKNOWN STEP	2026-04-21T02:54:28.3261807Z go: downloading github.com/Antonboom/nilnil v1.0.1
+lint	UNKNOWN STEP	2026-04-21T02:54:28.3298100Z go: downloading github.com/ssgreg/nlreturn/v2 v2.2.1
+lint	UNKNOWN STEP	2026-04-21T02:54:28.3356854Z go: downloading github.com/sonatard/noctx v0.1.0
+lint	UNKNOWN STEP	2026-04-21T02:54:28.3371171Z go: downloading github.com/firefart/nonamedreturns v1.0.5
+lint	UNKNOWN STEP	2026-04-21T02:54:28.3402634Z go: downloading github.com/stbenjam/no-sprintf-host-port v0.2.0
+lint	UNKNOWN STEP	2026-04-21T02:54:28.3494734Z go: downloading github.com/catenacyber/perfsprint v0.8.2
+lint	UNKNOWN STEP	2026-04-21T02:54:28.3513093Z go: downloading github.com/alexkohler/prealloc v1.0.0
+lint	UNKNOWN STEP	2026-04-21T02:54:28.3523140Z go: downloading github.com/kunwardeep/paralleltest v1.0.10
+lint	UNKNOWN STEP	2026-04-21T02:54:28.3590781Z go: downloading github.com/nishanths/predeclared v0.2.2
+lint	UNKNOWN STEP	2026-04-21T02:54:28.3610811Z go: downloading github.com/ghostiam/protogetter v0.3.9
+lint	UNKNOWN STEP	2026-04-21T02:54:28.3641692Z go: downloading github.com/curioswitch/go-reassign v0.3.0
+lint	UNKNOWN STEP	2026-04-21T02:54:28.3684758Z go: downloading github.com/raeperd/recvcheck v0.2.0
+lint	UNKNOWN STEP	2026-04-21T02:54:28.3710950Z go: downloading github.com/BurntSushi/toml v1.4.1-0.20240526193622-a339e1f7089c
+lint	UNKNOWN STEP	2026-04-21T02:54:28.3770892Z go: downloading github.com/jingyugao/rowserrcheck v1.1.1
+lint	UNKNOWN STEP	2026-04-21T02:54:28.3812747Z go: downloading github.com/mgechev/revive v1.7.0
+lint	UNKNOWN STEP	2026-04-21T02:54:28.4565131Z go: downloading go-simpler.org/sloglint v0.9.0
+lint	UNKNOWN STEP	2026-04-21T02:54:28.4611126Z go: downloading github.com/jjti/go-spancheck v0.6.4
+lint	UNKNOWN STEP	2026-04-21T02:54:28.4611840Z go: downloading github.com/yeya24/promlinter v0.3.0
+lint	UNKNOWN STEP	2026-04-21T02:54:28.4631992Z go: downloading github.com/ryanrolds/sqlclosecheck v0.5.1
+lint	UNKNOWN STEP	2026-04-21T02:54:28.4660574Z go: downloading github.com/4meepo/tagalign v1.4.2
+lint	UNKNOWN STEP	2026-04-21T02:54:28.4689774Z go: downloading github.com/ldez/tagliatelle v0.7.1
+lint	UNKNOWN STEP	2026-04-21T02:54:28.4737230Z go: downloading github.com/sivchari/tenv v1.12.1
+lint	UNKNOWN STEP	2026-04-21T02:54:28.4760792Z go: downloading github.com/maratori/testableexamples v1.0.0
+lint	UNKNOWN STEP	2026-04-21T02:54:28.4761484Z go: downloading github.com/Antonboom/testifylint v1.5.2
+lint	UNKNOWN STEP	2026-04-21T02:54:28.4856317Z go: downloading github.com/kulti/thelper v0.6.3
+lint	UNKNOWN STEP	2026-04-21T02:54:28.4870717Z go: downloading github.com/moricho/tparallel v0.3.2
+lint	UNKNOWN STEP	2026-04-21T02:54:28.4994548Z go: downloading github.com/golangci/unconvert v0.0.0-20240309020433-c5143eacb3ed
+lint	UNKNOWN STEP	2026-04-21T02:54:28.5019240Z go: downloading mvdan.cc/unparam v0.0.0-20240528143540-8a5130ca722f
+lint	UNKNOWN STEP	2026-04-21T02:54:28.5060536Z go: downloading github.com/sashamelentyev/usestdlibvars v1.28.0
+lint	UNKNOWN STEP	2026-04-21T02:54:28.5122325Z go: downloading github.com/ldez/usetesting v0.4.2
+lint	UNKNOWN STEP	2026-04-21T02:54:28.5126539Z go: downloading github.com/blizzy78/varnamelen v0.8.0
+lint	UNKNOWN STEP	2026-04-21T02:54:28.5280825Z go: downloading github.com/sanposhiho/wastedassign/v2 v2.1.0
+lint	UNKNOWN STEP	2026-04-21T02:54:28.5320778Z go: downloading github.com/ultraware/whitespace v0.2.0
+lint	UNKNOWN STEP	2026-04-21T02:54:28.5322093Z go: downloading github.com/tomarrell/wrapcheck/v2 v2.10.0
+lint	UNKNOWN STEP	2026-04-21T02:54:28.5344969Z go: downloading github.com/bombsimon/wsl/v4 v4.5.0
+lint	UNKNOWN STEP	2026-04-21T02:54:28.5384818Z go: downloading github.com/ykadowak/zerologlint v0.1.5
+lint	UNKNOWN STEP	2026-04-21T02:54:28.5530741Z go: downloading github.com/maratori/testpackage v1.1.1
+lint	UNKNOWN STEP	2026-04-21T02:54:28.5552364Z go: downloading github.com/daixiang0/gci v0.13.5
+lint	UNKNOWN STEP	2026-04-21T02:54:28.5688856Z go: downloading github.com/golangci/gofmt v0.0.0-20250106114630-d62b90e6713d
+lint	UNKNOWN STEP	2026-04-21T02:54:28.5701199Z go: downloading mvdan.cc/gofumpt v0.7.0
+lint	UNKNOWN STEP	2026-04-21T02:54:28.5710760Z go: downloading github.com/stretchr/objx v0.5.2
+lint	UNKNOWN STEP	2026-04-21T02:54:28.5979657Z go: downloading github.com/subosito/gotenv v1.4.1
+lint	UNKNOWN STEP	2026-04-21T02:54:28.5987539Z go: downloading github.com/hashicorp/hcl v1.0.0
+lint	UNKNOWN STEP	2026-04-21T02:54:28.6043846Z go: downloading gopkg.in/ini.v1 v1.67.0
+lint	UNKNOWN STEP	2026-04-21T02:54:28.6075285Z go: downloading github.com/magiconair/properties v1.8.6
+lint	UNKNOWN STEP	2026-04-21T02:54:28.6209653Z go: downloading github.com/sourcegraph/go-diff v0.7.0
+lint	UNKNOWN STEP	2026-04-21T02:54:28.6210901Z go: downloading github.com/gostaticanalysis/analysisutil v0.7.1
+lint	UNKNOWN STEP	2026-04-21T02:54:28.6310362Z go: downloading github.com/go-toolsmith/astcast v1.1.0
+lint	UNKNOWN STEP	2026-04-21T02:54:28.6314704Z go: downloading github.com/gobwas/glob v0.2.3
+lint	UNKNOWN STEP	2026-04-21T02:54:28.6338267Z go: downloading github.com/google/go-cmp v0.7.0
+lint	UNKNOWN STEP	2026-04-21T02:54:28.6400708Z go: downloading github.com/Masterminds/semver/v3 v3.4.0
+lint	UNKNOWN STEP	2026-04-21T02:54:28.6401435Z go: downloading github.com/go-toolsmith/astcopy v1.1.0
+lint	UNKNOWN STEP	2026-04-21T02:54:28.6463405Z go: downloading github.com/go-toolsmith/astequal v1.2.0
+lint	UNKNOWN STEP	2026-04-21T02:54:28.6475567Z go: downloading github.com/go-toolsmith/astfmt v1.1.0
+lint	UNKNOWN STEP	2026-04-21T02:54:28.6498863Z go: downloading github.com/go-toolsmith/astp v1.1.0
+lint	UNKNOWN STEP	2026-04-21T02:54:28.6522441Z go: downloading github.com/go-toolsmith/strparse v1.1.0
+lint	UNKNOWN STEP	2026-04-21T02:54:28.6526446Z go: downloading github.com/go-toolsmith/typep v1.1.0
+lint	UNKNOWN STEP	2026-04-21T02:54:28.6528393Z go: downloading github.com/quasilyte/regex/syntax v0.0.0-20210819130434-b3f0c404a727
+lint	UNKNOWN STEP	2026-04-21T02:54:28.6546973Z go: downloading github.com/ccojocar/zxcvbn-go v1.0.2
+lint	UNKNOWN STEP	2026-04-21T02:54:28.6578311Z go: downloading github.com/gostaticanalysis/comment v1.5.0
+lint	UNKNOWN STEP	2026-04-21T02:54:28.6594629Z go: downloading github.com/fatih/structtag v1.2.0
+lint	UNKNOWN STEP	2026-04-21T02:54:28.6676168Z go: downloading github.com/ettle/strcase v0.2.0
+lint	UNKNOWN STEP	2026-04-21T02:54:28.6720688Z go: downloading github.com/hashicorp/go-immutable-radix/v2 v2.1.0
+lint	UNKNOWN STEP	2026-04-21T02:54:28.6730879Z go: downloading github.com/hexops/gotextdiff v1.0.3
+lint	UNKNOWN STEP	2026-04-21T02:54:28.6777101Z go: downloading github.com/hashicorp/go-immutable-radix v1.3.1
+lint	UNKNOWN STEP	2026-04-21T02:54:28.6797814Z go: downloading go.uber.org/zap v1.27.0
+lint	UNKNOWN STEP	2026-04-21T02:54:28.6978168Z go: downloading golang.org/x/exp/typeparams v0.0.0-20250210185358-939b2ce775ac
+lint	UNKNOWN STEP	2026-04-21T02:54:28.7068086Z go: downloading github.com/quasilyte/gogrep v0.5.0
+lint	UNKNOWN STEP	2026-04-21T02:54:28.7193731Z go: downloading github.com/quasilyte/stdinfo v0.0.0-20220114132959-f7386bf02567
+lint	UNKNOWN STEP	2026-04-21T02:54:28.7194268Z go: downloading github.com/chavacava/garif v0.1.0
+lint	UNKNOWN STEP	2026-04-21T02:54:28.7236278Z go: downloading github.com/olekukonko/tablewriter v0.0.5
+lint	UNKNOWN STEP	2026-04-21T02:54:28.7270743Z go: downloading github.com/hashicorp/golang-lru/v2 v2.0.7
+lint	UNKNOWN STEP	2026-04-21T02:54:28.7277735Z go: downloading go.uber.org/multierr v1.11.0
+lint	UNKNOWN STEP	2026-04-21T02:54:28.7365531Z go: downloading github.com/mattn/go-runewidth v0.0.16
+lint	UNKNOWN STEP	2026-04-21T02:54:28.7371561Z go: downloading github.com/hashicorp/golang-lru v0.5.4
+lint	UNKNOWN STEP	2026-04-21T02:54:28.7419285Z go: downloading github.com/rivo/uniseg v0.4.7
+lint	UNKNOWN STEP	2026-04-21T02:57:06.3476215Z ##[error]pkg/api/handlers_issue.go:629:15: superfluous-else: if block ends with a break statement, so drop this else and outdent its block (move short variable declaration to its own line if necessary) (revive)
+lint	UNKNOWN STEP	2026-04-21T02:57:06.3484620Z 							} else {
+lint	UNKNOWN STEP	2026-04-21T02:57:06.3485139Z 								log.Error(err, "Failed to get PR details from GitHub", "match", match)
+lint	UNKNOWN STEP	2026-04-21T02:57:06.3485761Z 							}
+lint	UNKNOWN STEP	2026-04-21T02:57:06.6254951Z using working dir: repo-agent/
+lint	UNKNOWN STEP	2026-04-21T02:57:06.6315014Z ##[error]Process completed with exit code 1.
+lint	UNKNOWN STEP	2026-04-21T02:57:06.6435686Z Post job cleanup.
+lint	UNKNOWN STEP	2026-04-21T02:57:06.7383170Z [command]/usr/bin/git version
+lint	UNKNOWN STEP	2026-04-21T02:57:06.7427782Z git version 2.53.0
+lint	UNKNOWN STEP	2026-04-21T02:57:06.7471726Z Temporarily overriding HOME='/home/runner/work/_temp/952a6ee4-91d9-4af8-86fd-444b37e463cc' before making global git config changes
+lint	UNKNOWN STEP	2026-04-21T02:57:06.7473156Z Adding repository directory to the temporary git global config as a safe directory
+lint	UNKNOWN STEP	2026-04-21T02:57:06.7478306Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/gemini-for-kubernetes-development/gemini-for-kubernetes-development
+lint	UNKNOWN STEP	2026-04-21T02:57:06.7511272Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+lint	UNKNOWN STEP	2026-04-21T02:57:06.7542041Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+lint	UNKNOWN STEP	2026-04-21T02:57:06.7758830Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+lint	UNKNOWN STEP	2026-04-21T02:57:06.7778177Z http.https://github.com/.extraheader
+lint	UNKNOWN STEP	2026-04-21T02:57:06.7790203Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+lint	UNKNOWN STEP	2026-04-21T02:57:06.7819347Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+lint	UNKNOWN STEP	2026-04-21T02:57:06.8034705Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+lint	UNKNOWN STEP	2026-04-21T02:57:06.8064303Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+lint	UNKNOWN STEP	2026-04-21T02:57:06.8426506Z Cleaning up orphan processes
+lint	UNKNOWN STEP	2026-04-21T02:57:06.8708587Z ##[warning]Node.js 20 actions are deprecated. The following actions are running on Node.js 20 and may not work as expected: actions/checkout@v4, actions/setup-go@v5. Actions will be forced to run with Node.js 24 by default starting June 2nd, 2026. Node.js 20 will be removed from the runner on September 16th, 2026. Please check if updated versions of these actions are available that support Node.js 24. To opt into Node.js 24 now, set the FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true environment variable on the runner or in your workflow file. Once Node.js 24 becomes the default, you can temporarily opt out by setting ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
