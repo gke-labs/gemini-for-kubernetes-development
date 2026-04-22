@@ -1804,7 +1804,8 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 
 	head := pr.GetHead()
 	if head == nil || head.GetRepo() == nil {
-		return fmt.Errorf("PR #%d head or repo is nil", pr.GetNumber())
+		klog.Warningf("PR #%d has no head repo info (possibly deleted fork). Skipping sandbox creation.", pr.GetNumber())
+		return nil
 	}
 	opt := sandbox.ReviewSandboxOptions{
 		DevSandboxOptions: sandbox.DevSandboxOptions{

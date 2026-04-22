@@ -88,11 +88,38 @@ func (b *ImageBuilder) InstallDotfilesRepo(ctx context.Context) error {
 func (b *ImageBuilder) GitClone(ctx context.Context, source string, dest string) error {
 	log := klog.FromContext(ctx)
 
-	var branch string
-	if strings.Contains(source, "#refs/heads/") {
-		parts := strings.SplitN(source, "#refs/heads/", 2)
+	var ref string
+	if strings.Contains(source, "#") {
+		parts := strings.SplitN(source, "#", 2)
 		source = parts[0]
-		branch = parts[1]
+		ref = parts[1]
+	}
+
+	// Strip refs/heads/ prefix if present
+	ref = strings.TrimPrefix(ref, "refs/heads/")
+
+	if ref != "" && isSHA(ref) {
+		// Clone then checkout
+		args := []string{"git", "clone", source, dest}
+		cmdString := strings.Join(args, " ")
+		log.Info("cloning git repo for SHA checkout", "source", source, "command", cmdString)
+		cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("cloning git repo %q with %q: %w", source, cmdString, err)
+		}
+
+		checkoutArgs := []string{"git", "-C", dest, "checkout", ref}
+		checkoutCmdString := strings.Join(checkoutArgs, " ")
+		log.Info("checking out specific SHA", "sha", ref, "command", checkoutCmdString)
+		checkoutCmd := exec.CommandContext(ctx, checkoutArgs[0], checkoutArgs[1:]...)
+		checkoutCmd.Stdout = os.Stdout
+		checkoutCmd.Stderr = os.Stderr
+		if err := checkoutCmd.Run(); err != nil {
+			return fmt.Errorf("checking out SHA %q with %q: %w", ref, checkoutCmdString, err)
+		}
+		return nil
 	}
 
 	args := []string{
@@ -100,8 +127,8 @@ func (b *ImageBuilder) GitClone(ctx context.Context, source string, dest string)
 		"clone",
 	}
 
-	if branch != "" {
-		args = append(args, "-b", branch)
+	if ref != "" {
+		args = append(args, "-b", ref)
 	}
 
 	args = append(args, source, dest)
@@ -118,4 +145,16 @@ func (b *ImageBuilder) GitClone(ctx context.Context, source string, dest string)
 	}
 
 	return nil
+}
+
+func isSHA(s string) bool {
+	if len(s) != 40 && len(s) != 64 {
+		return false
+	}
+	for _, r := range s {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+			return false
+		}
+	}
+	return true
 }
