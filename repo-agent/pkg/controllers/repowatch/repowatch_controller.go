@@ -938,8 +938,15 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 }
 
 func (r *Reconciler) isIssueMatch(issue *github.Issue, handler reviewv1alpha1.IssueHandlerSpec, repoWatch *reviewv1alpha1.RepoWatch, user *github.User) bool {
-	// Exclude explicit excludes from IssueSpec
 	if repoWatch.Spec.Issue != nil {
+		// Include explicit includes - bypass other filters
+		for _, included := range repoWatch.Spec.Issue.Issues {
+			if *issue.Number == included {
+				return true
+			}
+		}
+
+		// Exclude explicit excludes from IssueSpec
 		for _, excluded := range repoWatch.Spec.Issue.ExcludeIssues {
 			if *issue.Number == excluded {
 				return false
@@ -957,13 +964,6 @@ func (r *Reconciler) isIssueMatch(issue *github.Issue, handler reviewv1alpha1.Is
 			}
 			if !isAssigned {
 				return false
-			}
-		}
-
-		// Include explicit includes
-		for _, included := range repoWatch.Spec.Issue.Issues {
-			if *issue.Number == included {
-				return true
 			}
 		}
 	}
