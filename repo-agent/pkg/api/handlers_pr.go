@@ -23,7 +23,9 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks/metadata"
+	sandboxtaskv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
 )
+
 
 func (s *Server) getPRs(c *gin.Context) {
 	log := klog.FromContext(c.Request.Context())
@@ -55,15 +57,17 @@ func (s *Server) getPRTasks(c *gin.Context) {
 
 	// Sort tasks by creation timestamp (newest first).
 	// Tie-break with name for stable sorting.
-	sort.Slice(taskList.Items, func(i, j int) bool {
-		if taskList.Items[i].CreationTimestamp.Equal(&taskList.Items[j].CreationTimestamp) {
-			return taskList.Items[i].Name > taskList.Items[j].Name
+	items := make([]sandboxtaskv1alpha1.SandboxTask, len(taskList.Items))
+	copy(items, taskList.Items)
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].CreationTimestamp.Equal(&items[j].CreationTimestamp) {
+			return items[i].Name > items[j].Name
 		}
-		return taskList.Items[i].CreationTimestamp.After(taskList.Items[j].CreationTimestamp.Time)
+		return items[i].CreationTimestamp.After(items[j].CreationTimestamp.Time)
 	})
 
 	tasksList := []models.Task{}
-	for _, taskItem := range taskList.Items {
+	for _, taskItem := range items {
 		tasksList = append(tasksList, s.mapSandboxTaskToModel(taskItem))
 	}
 

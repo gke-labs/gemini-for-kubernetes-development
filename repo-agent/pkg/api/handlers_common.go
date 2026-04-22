@@ -186,12 +186,10 @@ func truncateString(s string, limit int) string {
 		// We jump to the available space minus the closing block.
 		newLimit := limit - len(needsClosing)
 		if newLimit <= 0 {
-			// If even the closing tags don't fit, try to just return the closing tags if they fit,
-			// or an empty string.
-			if len(needsClosing) <= limit {
-				return needsClosing
-			}
-			return ""
+			// If even the closing tags don't fit, or if we would be left with only
+			// closing tags, we should trigger the fallback logic.
+			res = ""
+			break
 		}
 		res = truncateToRuneBoundary(res, newLimit)
 	}
@@ -200,9 +198,8 @@ func truncateString(s string, limit int) string {
 		if len(truncatedFallback) <= limit {
 			return truncatedFallback
 		}
-		// Final safety: if even fallback doesn't fit, just return whatever we can from the original string
-		// even if it breaks markdown, because we are extremely constrained.
-		return truncateToRuneBoundary(s, limit)
+		// Final safety: if even fallback doesn't fit, return truncated fallback.
+		return truncateToRuneBoundary(truncatedFallback, limit)
 	}
 	return res
 }

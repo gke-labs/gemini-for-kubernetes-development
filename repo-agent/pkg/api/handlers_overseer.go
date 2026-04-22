@@ -16,6 +16,7 @@ import (
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
+	sandboxtaskv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
 )
 
 func (s *Server) getOverseers(c *gin.Context) {
@@ -189,15 +190,17 @@ func (s *Server) getChoreTasks(c *gin.Context) {
 
 	// Sort tasks by creation timestamp (newest first).
 	// Tie-break with name for stable sorting.
-	sort.Slice(tasks.Items, func(i, j int) bool {
-		if tasks.Items[i].CreationTimestamp.Equal(&tasks.Items[j].CreationTimestamp) {
-			return tasks.Items[i].Name > tasks.Items[j].Name
+	items := make([]sandboxtaskv1alpha1.SandboxTask, len(tasks.Items))
+	copy(items, tasks.Items)
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].CreationTimestamp.Equal(&items[j].CreationTimestamp) {
+			return items[i].Name > items[j].Name
 		}
-		return tasks.Items[i].CreationTimestamp.After(tasks.Items[j].CreationTimestamp.Time)
+		return items[i].CreationTimestamp.After(items[j].CreationTimestamp.Time)
 	})
 
 	modelsTasks := []models.Task{}
-	for _, taskItem := range tasks.Items {
+	for _, taskItem := range items {
 		modelsTasks = append(modelsTasks, s.mapSandboxTaskToModel(taskItem))
 	}
 

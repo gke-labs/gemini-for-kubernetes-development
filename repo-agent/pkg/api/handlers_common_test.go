@@ -93,7 +93,7 @@ func TestTruncateString(t *testing.T) {
 			name:  "UTF-8 boundary - middle of 世 (limit 2)",
 			s:     "世界",
 			limit: 2,
-			want:  "",
+			want:  "[B",
 		},
 		{
 			name:  "UTF-8 boundary - middle of 界 (limit 4)",
@@ -136,6 +136,24 @@ func TestTruncateString(t *testing.T) {
 			s:     "Hello 🌟 world",
 			limit: 10, // "Hello " (6) + 4 bytes of 🌟
 			want:  "Hello 🌟",
+		},
+		{
+			name:  "Extremely small limit with open block",
+			s:     "```\nsome code",
+			limit: 3,
+			want:  "[Bo", // Should return truncated fallback
+		},
+		{
+			name:  "Limit too small for closing tags but not for fallback",
+			s:     "```\nsome long code string",
+			limit: 20,
+			want:  "```\nsome long co\n```",
+		},
+		{
+			name:  "Limit exactly size of closing tag",
+			s:     "```\nlong code string",
+			limit: 4,
+			want:  "[Bot",
 		},
 	}
 

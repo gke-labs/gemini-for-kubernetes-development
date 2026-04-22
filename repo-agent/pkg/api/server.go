@@ -178,10 +178,11 @@ func ResponseLoggerMiddleware() gin.HandlerFunc {
 }
 
 func truncateLogString(s string, limit int) string {
+	const suffix = "... (truncated)"
 	if len(s) <= limit {
 		return s
 	}
-	return truncateToRuneBoundary(s, limit) + "... (truncated)"
+	return truncateToRuneBoundary(s, limit-len(suffix)) + suffix
 }
 
 func (s *Server) getInstructions(c *gin.Context) {
