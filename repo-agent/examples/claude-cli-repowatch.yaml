@@ -1,0 +1,16 @@
+apiVersion: review.gemini.google.com/v1alpha1
+kind: RepoWatch
+metadata:
+  name: claude-cli
+  namespace: repo-agent-system
+spec:
+  repoURL: https://github.com/your-org/your-repo
+  githubSecretName: github-pat
+  pollIntervalSeconds: 60
+  review:
+    maxActiveSandboxes: 5
+    devcontainerConfigRef: devcontainer-json
+    llm:
+      provider: claude-cli
+      apiKeySecretRef: anthropic-api-key
+      prompt: "Please review this PR for security issues and code quality."
