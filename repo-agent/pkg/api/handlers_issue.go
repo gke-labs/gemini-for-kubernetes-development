@@ -8,7 +8,6 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -59,12 +58,7 @@ func (s *Server) getIssueTasks(c *gin.Context) {
 	// Tie-break with name for stable sorting.
 	items := make([]sandboxtaskv1alpha1.SandboxTask, len(taskList.Items))
 	copy(items, taskList.Items)
-	sort.Slice(items, func(i, j int) bool {
-		if items[i].CreationTimestamp.Equal(&items[j].CreationTimestamp) {
-			return items[i].Name > items[j].Name
-		}
-		return items[i].CreationTimestamp.After(items[j].CreationTimestamp.Time)
-	})
+	SortSandboxTasks(items)
 
 	tasksList := []models.Task{}
 	for _, taskItem := range items {

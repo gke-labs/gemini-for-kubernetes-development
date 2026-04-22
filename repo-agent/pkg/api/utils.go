@@ -7,9 +7,19 @@ import (
 	"sort"
 	"strings"
 
+	sandboxtaskv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
 	"github.com/google/go-github/v39/github"
 	"k8s.io/klog/v2"
 )
+
+func SortSandboxTasks(tasks []sandboxtaskv1alpha1.SandboxTask) {
+	sort.Slice(tasks, func(i, j int) bool {
+		if tasks[i].CreationTimestamp.Equal(&tasks[j].CreationTimestamp) {
+			return tasks[i].Name > tasks[j].Name
+		}
+		return tasks[i].CreationTimestamp.After(tasks[j].CreationTimestamp.Time)
+	})
+}
 
 func fixYAMLIntegers(in interface{}) interface{} {
 	switch v := in.(type) {

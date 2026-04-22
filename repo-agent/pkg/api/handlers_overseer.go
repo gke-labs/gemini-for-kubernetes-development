@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"sort"
 
 	"github.com/gin-gonic/gin"
 	corev1 "k8s.io/api/core/v1"
@@ -192,12 +191,7 @@ func (s *Server) getChoreTasks(c *gin.Context) {
 	// Tie-break with name for stable sorting.
 	items := make([]sandboxtaskv1alpha1.SandboxTask, len(tasks.Items))
 	copy(items, tasks.Items)
-	sort.Slice(items, func(i, j int) bool {
-		if items[i].CreationTimestamp.Equal(&items[j].CreationTimestamp) {
-			return items[i].Name > items[j].Name
-		}
-		return items[i].CreationTimestamp.After(items[j].CreationTimestamp.Time)
-	})
+	SortSandboxTasks(items)
 
 	modelsTasks := []models.Task{}
 	for _, taskItem := range items {

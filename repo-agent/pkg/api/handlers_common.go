@@ -287,7 +287,7 @@ func (s *Server) applyTraceabilityMetadata(c *gin.Context, body string, taskType
 	const safetyMargin = 536
 	const limit = githubLimit - safetyMargin
 
-	body = strings.TrimSpace(body)
+	body = strings.TrimRight(body, " \t\n\r")
 
 	// Identify and remove existing footer to avoid duplication and ensure it's not truncated
 	// if it was already near the limit.
@@ -304,10 +304,10 @@ func (s *Server) applyTraceabilityMetadata(c *gin.Context, body string, taskType
 
 		if footerEnd != -1 {
 			// Remove the footer and any trailing whitespace
-			body = strings.TrimSpace(contentBefore + body[footerStart+footerEnd+3:])
+			body = strings.TrimRight(contentBefore+body[footerStart+footerEnd+3:], " \t\n\r")
 		} else {
 			// Malformed footer? Just cut from footerStart
-			body = strings.TrimSpace(contentBefore)
+			body = strings.TrimRight(contentBefore, " \t\n\r")
 		}
 	}
 
