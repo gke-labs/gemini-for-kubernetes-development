@@ -1,35 +1,37 @@
 #!/bin/bash
+# Copyright 2026.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 set -x
 # 1. Set up variables based on your current environment
 export PROJECT_ID=$(gcloud config get-value project)
-export K8S_SA="issue-sandbox"
-export GCP_SA_NAME="kcc-overseer-sa"
-export GCP_SA_EMAIL="${GCP_SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+export GSA_NAME="repo-agent-sa"
+export WORKLOAD_IDENTITY_POOL="${PROJECT_ID}.svc.id.goog"
+export NAMESPACE="repo-agent"
+export KSA_NAME="repo-agent"
 
-if [[ -z "$K8S_NAMESPACE" ]]; then
-    echo "Error: K8S_NAMESPACE is not set. Please set it"
-    exit 1
-fi
+# 2. Create the GCP Service Account (GSA)
+gcloud iam service-accounts create ${GSA_NAME} \
+    --display-name "Repo Agent GCP Service Account"
 
-# 2. Create the GCP Service Account
-gcloud iam service-accounts create $GCP_SA_NAME \
-    --project=$PROJECT_ID \
-    --display-name="KCC Overseer SA"
+# 3. Assign necessary roles to the GSA
+# For example, to allow it to read from GCR/AR
+gcloud projects add-iam-policy-binding ${PROJECT_ID} \
+    --member "serviceAccount:${GSA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
+    --role "roles/artifactregistry.reader"
 
-# 3. Grant the GCP Service Account broad permissions on the project
-# (The e2e tests create/delete many types of resources)
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-    --member="serviceAccount:${GCP_SA_EMAIL}" \
-    --role="roles/owner"
-
-# 4. Bind the Kubernetes Service Account to the GCP Service Account
-gcloud iam service-accounts add-iam-policy-binding $GCP_SA_EMAIL \
-    --project=$PROJECT_ID \
-    --role="roles/iam.workloadIdentityUser" \
-    --member="serviceAccount:${PROJECT_ID}.svc.id.goog[${K8S_NAMESPACE}/${K8S_SA}]"
-
-# 5. Annotate the Kubernetes Service Account
-kubectl annotate serviceaccount $K8S_SA \
-    --namespace $K8S_NAMESPACE \
-    iam.gke.io/gcp-service-account=$GCP_SA_EMAIL
+# 4. Allow the Kubernetes Service Account (KSA) to impersonate the GSA
+gcloud iam service-accounts add-iam-policy-binding ${GSA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com \
+    --role "roles/iam.workloadIdentityUser" \
+    --member "serviceAccount:${PROJECT_ID}.svc.id.goog[${NAMESPACE}/${KSA_NAME}]"

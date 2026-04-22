@@ -19,3 +19,15 @@ Please output your response starting with the Prow command.
 Issue Title: "{{.Issue.Title}}"
 Issue Body: "{{.Issue.Body}}"
 HTML URL: "{{.Issue.HTMLURL}}"
+{{- if .TraceabilityMetadataEnabled }}
+
+---
+<!-- repo-agent-metadata
+sandbox-task: {{ .Metadata.SandboxTask }}
+sandbox-task-uid: {{ .Metadata.SandboxTaskUID }}
+sandbox: {{ .Metadata.Sandbox }}
+repowatch: {{ .Metadata.RepoWatch }}
+task-type: {{ .Metadata.TaskType }}
+timestamp: {{ .Metadata.Timestamp }}
+-->
+{{- end }}

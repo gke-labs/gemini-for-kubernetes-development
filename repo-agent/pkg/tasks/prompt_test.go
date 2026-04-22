@@ -13,6 +13,7 @@ import (
 type MockIssue struct{}
 
 func (i MockIssue) HTMLURL() string { return "http://url" }
+func (i MockIssue) URL() string     { return "http://url" }
 func (i MockIssue) Number() int     { return 123 }
 func (i MockIssue) Title() string   { return "Title" }
 func (i MockIssue) Body() string    { return "Body" }
@@ -225,5 +226,114 @@ func TestFixIssueScriptTemplate_NoBranch(t *testing.T) {
 	expectedBranch := `local branch_name="issue-${ISSUE_NUMBER}"`
 	if !bytes.Contains(w.Bytes(), []byte(expectedBranch)) {
 		t.Errorf("Script does not contain expected default branch name. Got:\n%s", script)
+	}
+}
+
+func TestAddressFeedbackPromptTemplate(t *testing.T) {
+	content, err := os.ReadFile("address_feedback.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tmpl, err := template.New("test").Parse(string(content))
+	if err != nil {
+		t.Fatalf("Failed to parse template: %v", err)
+	}
+
+	data := struct {
+		PullRequest                 MockIssue
+		RepositoryCommits           []struct{ SHA, Message string }
+		OldIssueComments            []MockComment
+		OldPullRequestReviews       []struct{ UserLogin, Body string; PullRequestComments []MockComment }
+		IssueComments               []MockComment
+		PullRequestReviews          []struct{ ID int; UserLogin, Body string; PullRequestComments []MockComment }
+		TraceabilityMetadataEnabled bool
+		Metadata                    metadata.Metadata
+	}{
+		PullRequest: MockIssue{},
+		TraceabilityMetadataEnabled: true,
+		Metadata: metadata.Metadata{
+			SandboxTask:    "ns/task",
+			SandboxTaskUID: "uid",
+			Sandbox:        "sb",
+			RepoWatch:      "rw",
+			TaskType:       "address-feedback",
+			Timestamp:      "2026-03-02T12:00:00Z",
+		},
+	}
+
+	var w bytes.Buffer
+	if err := tmpl.Execute(&w, data); err != nil {
+		t.Fatalf("Failed to execute template: %v", err)
+	}
+
+	// Verify metadata footer
+	missing := []string{}
+	for _, expected := range []string{
+		"sandbox-task: ns/task",
+		"sandbox-task-uid: uid",
+		"sandbox: sb",
+		"repowatch: rw",
+		"task-type: address-feedback",
+		"timestamp: 2026-03-02T12:00:00Z",
+	} {
+		if !strings.Contains(w.String(), expected) {
+			missing = append(missing, expected)
+		}
+	}
+	if len(missing) > 0 {
+		t.Errorf("Prompt missing %d expected metadata strings: %v\nFull prompt:\n%s", len(missing), missing, w.String())
+	}
+}
+
+func TestTriageIssuePromptTemplate(t *testing.T) {
+	content, err := os.ReadFile("triage_issue.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tmpl, err := template.New("test").Parse(string(content))
+	if err != nil {
+		t.Fatalf("Failed to parse template: %v", err)
+	}
+
+	data := struct {
+		Issue                       MockIssue
+		TraceabilityMetadataEnabled bool
+		Metadata                    metadata.Metadata
+	}{
+		Issue: MockIssue{},
+		TraceabilityMetadataEnabled: true,
+		Metadata: metadata.Metadata{
+			SandboxTask:    "ns/task",
+			SandboxTaskUID: "uid",
+			Sandbox:        "sb",
+			RepoWatch:      "rw",
+			TaskType:       "triage-issue",
+			Timestamp:      "2026-03-02T12:00:00Z",
+		},
+	}
+
+	var w bytes.Buffer
+	if err := tmpl.Execute(&w, data); err != nil {
+		t.Fatalf("Failed to execute template: %v", err)
+	}
+
+	// Verify metadata footer
+	missing := []string{}
+	for _, expected := range []string{
+		"sandbox-task: ns/task",
+		"sandbox-task-uid: uid",
+		"sandbox: sb",
+		"repowatch: rw",
+		"task-type: triage-issue",
+		"timestamp: 2026-03-02T12:00:00Z",
+	} {
+		if !strings.Contains(w.String(), expected) {
+			missing = append(missing, expected)
+		}
+	}
+	if len(missing) > 0 {
+		t.Errorf("Prompt missing %d expected metadata strings: %v\nFull prompt:\n%s", len(missing), missing, w.String())
 	}
 }
