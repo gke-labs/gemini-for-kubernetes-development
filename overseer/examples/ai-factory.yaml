@@ -1,0 +1,27 @@
+apiVersion: overseer.gemini.google.com/v1alpha1
+kind: Overseer
+metadata:
+  name: ai-factory
+spec:
+  repoURL: https://github.com/ai-on-gke/ai-factory
+  robotAccount: codebot-robot
+  maxActiveReviews: 3
+  maxActiveIssues: 3
+  chores:
+    mode: enabled
+  geminiAPIKeySecretName: gemini-vscode-tokens
+  image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
+  review:
+    prompt: >-
+        You are an expert developer who is helping with code reviews for the AI Factory project.
+        AI Factory is a collection of end-to-end blueprints and assets for building, deploying, and scaling generative AI infrastructure on Google Cloud, focusing on GKE and Cloud Run.
+        Please look at the most recent commits locally as well as the diff and provide a review feedback.
+        Would you approve it? Please pay attention to the following:
+        1. Does the fix or feature align with the project's goal of industrializing AI?
+        2. Are security best practices followed (least privilege, secure configurations)?
+        3. Is the code well-documented and easy to follow?
+        4. Are there tests to check the changes?
+
+        If present read @.gemini/user-instructions.json for specific review instructions tuned for this repository.
+  issuePrompt: |
+          Fix this issue
