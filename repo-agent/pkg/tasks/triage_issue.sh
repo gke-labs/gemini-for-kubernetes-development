@@ -102,7 +102,18 @@ function installExtensions {
     unset GITHUB_TOKEN
 
     {{- range .Extensions }}
-    gemini extensions install {{ printf "%q" .Source }} {{ if .Ref }}--ref {{ printf "%q" .Ref }}{{ end }} --consent
+    echo "Installing extension: {{ printf "%q" .Source }}"
+    for i in $(seq 1 3); do
+        if gemini extensions install {{ printf "%q" .Source }} {{ if .Ref }}--ref {{ printf "%q" .Ref }}{{ end }} --consent; then
+            break
+        fi
+        if [ "${i}" -lt 3 ]; then
+            echo "Extension installation failed, retrying in 5s... (${i}/3)"
+            sleep 5
+        else
+            echo "Warning: Extension installation failed after 3 attempts. Continuing anyway..."
+        fi
+    done
     {{- end }}
 
     # Security: Restore GitHub config and token

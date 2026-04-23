@@ -38,6 +38,7 @@ type MockRepo struct{}
 func (r MockRepo) CloneURL() string { return "http://clone" }
 func (r MockRepo) Name() string     { return "repo" }
 func (r MockRepo) Owner() string    { return "owner" }
+func (r MockRepo) Host() string     { return "github.com" }
 
 type MockUser struct {
 	UserID string

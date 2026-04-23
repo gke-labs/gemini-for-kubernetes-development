@@ -57,7 +57,7 @@ function setupGit {
     local SAFE_GH_USER; SAFE_GH_USER=$(printf "%q" "${GH_USER}")
     local SAFE_TOKEN; SAFE_TOKEN=$(printf "%q" "${GITHUB_USER_TOKEN}")
     cat <<EOF > /root/.config/gh/hosts.yml
-github.com:
+{{ .Repo.Host }}:
     users:
         ${SAFE_GH_USER}:
             oauth_token: ${SAFE_TOKEN}
