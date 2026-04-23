@@ -37,8 +37,8 @@ function setupGit {
     mkdir -p /root/.config/gh
 
     echo "writing gh config"
-    local SAFE_GH_USER=$(printf "%q" "${GITHUB_USER_ID}")
-    local SAFE_TOKEN=$(printf "%q" "${GITHUB_USER_TOKEN}")
+    local SAFE_GH_USER; SAFE_GH_USER=$(printf "%q" "${GITHUB_USER_ID}")
+    local SAFE_TOKEN; SAFE_TOKEN=$(printf "%q" "${GITHUB_USER_TOKEN}")
     cat <<EOF > /root/.config/gh/hosts.yml
 github.com:
     users:
@@ -82,23 +82,13 @@ function setupGitRepos {
     
     # Check if repo already exists (reuse sandbox case)
     if [ ! -d "/workspaces/${REPO_NAME}" ]; then
-        echo "cloning repository from ${CLONE_URL}"
-        (
-            cd /workspaces/
-            git clone "${CLONE_URL}" "${REPO_NAME}"
-        )
-
-        # Ensure we have the fork and remotes set up correctly
-        echo "Configuring fork..."
-        (
-            cd "/workspaces/${REPO_NAME}"
-            gh repo fork --remote || true
-        )
+        echo "cloning repository ${REPO_OWNER}/${REPO_NAME}"
+        gh repo clone "${REPO_OWNER}/${REPO_NAME}" "/workspaces/${REPO_NAME}"
 
         echo "Setting default repository for gh CLI..."
         (
             cd "/workspaces/${REPO_NAME}"
-            gh repo set-default "${CLONE_URL}" || true
+            gh repo set-default "${REPO_OWNER}/${REPO_NAME}" || true
         )
 
         echo "Syncing fork with upstream..."
@@ -111,13 +101,25 @@ function setupGitRepos {
         # Ensure we have all branches from upstream
         (
             cd "/workspaces/${REPO_NAME}"
-            git fetch origin
+            for i in $(seq 1 3); do
+                if git fetch origin; then
+                    break
+                fi
+                echo "git fetch failed, retrying in 5s... (${i}/3)"
+                sleep 5
+            done
         )
     else
         echo "repository already exists, fetching latest changes..."
         (
             cd "/workspaces/${REPO_NAME}"
-            git fetch origin
+            for i in $(seq 1 3); do
+                if git fetch origin; then
+                    break
+                fi
+                echo "git fetch failed, retrying in 5s... (${i}/3)"
+                sleep 5
+            done
         )
     fi
 }
@@ -185,41 +187,41 @@ function runGemini {
 
         # Security: Hide GitHub OAuth token and config directory before executing untrusted code (gemini --yolo)
         # to prevent token exfiltration.
-        local ORIG_GH_CONFIG_DIR="/root/.config/gh"
-        local TEMP_GH_CONFIG_DIR="/tmp/gh-config-hidden-$(date +%s)"
-        if [ -d "$ORIG_GH_CONFIG_DIR" ]; then
-            mv "$ORIG_GH_CONFIG_DIR" "$TEMP_GH_CONFIG_DIR"
+        local ORIG_GH_CONFIG_DIR; ORIG_GH_CONFIG_DIR="/root/.config/gh"
+        local TEMP_GH_CONFIG_DIR; TEMP_GH_CONFIG_DIR="/tmp/gh-config-hidden-$(date +%s)"
+        if [ -d "${ORIG_GH_CONFIG_DIR}" ]; then
+            mv "${ORIG_GH_CONFIG_DIR}" "${TEMP_GH_CONFIG_DIR}"
         fi
-        local ORIG_GITHUB_USER_TOKEN="$GITHUB_USER_TOKEN"
-        local ORIG_GITHUB_TOKEN="$GITHUB_TOKEN"
+        local ORIG_GITHUB_USER_TOKEN; ORIG_GITHUB_USER_TOKEN="${GITHUB_USER_TOKEN}"
+        local ORIG_GITHUB_TOKEN; ORIG_GITHUB_TOKEN="${GITHUB_TOKEN}"
         unset GITHUB_USER_TOKEN
         unset GITHUB_TOKEN
 
         MODELS=( {{ range .Models }}{{ printf "%q" . }} {{ end }} )
         SUCCESS=false
         for MODEL in "${MODELS[@]}"; do
-            echo "Trying model: $MODEL"
+            echo "Trying model: ${MODEL}"
             if (
                 cd "/workspaces/${REPO_NAME}"
                 export GEMINI_API_KEY="${GEMINI_API_KEY}"
-                gemini --yolo --model "$MODEL" --output-format stream-json < "${PROMPT_FILE}" | /opt/repo-agent/gemini-stream-processor --output "$(dirname "${PROMPT_FILE}")/gemini-output.json"
+                gemini --yolo --model "${MODEL}" --output-format stream-json < "${PROMPT_FILE}" | /opt/repo-agent/gemini-stream-processor --output "$(dirname "${PROMPT_FILE}")/gemini-output.json"
             ); then
-                 echo "Gemini execution successful with model: $MODEL"
+                 echo "Gemini execution successful with model: ${MODEL}"
                  SUCCESS=true
                  break
             else
-                 echo "Gemini execution failed with model: $MODEL. Retrying with next model..."
+                 echo "Gemini execution failed with model: ${MODEL}. Retrying with next model..."
             fi
         done
         
         # Security: Restore GitHub config and token after untrusted code execution.
-        if [ -d "$TEMP_GH_CONFIG_DIR" ]; then
-            mv "$TEMP_GH_CONFIG_DIR" "$ORIG_GH_CONFIG_DIR"
+        if [ -d "${TEMP_GH_CONFIG_DIR}" ]; then
+            mv "${TEMP_GH_CONFIG_DIR}" "${ORIG_GH_CONFIG_DIR}"
         fi
-        export GITHUB_USER_TOKEN="$ORIG_GITHUB_USER_TOKEN"
-        export GITHUB_TOKEN="$ORIG_GITHUB_TOKEN"
+        export GITHUB_USER_TOKEN="${ORIG_GITHUB_USER_TOKEN}"
+        export GITHUB_TOKEN="${ORIG_GITHUB_TOKEN}"
 
-        if [ "$SUCCESS" = false ]; then
+        if [ "${SUCCESS}" = false ]; then
             echo "All models failed."
             exit 1
         fi
@@ -232,13 +234,13 @@ function installExtensions {
     echo "Installing extensions..."
 
     # Security: Hide GitHub OAuth token and config directory before executing untrusted code (extensions)
-    local ORIG_GH_CONFIG_DIR="/root/.config/gh"
-    local TEMP_GH_CONFIG_DIR="/tmp/gh-config-hidden-ext-$(date +%s)"
-    if [ -d "$ORIG_GH_CONFIG_DIR" ]; then
-        mv "$ORIG_GH_CONFIG_DIR" "$TEMP_GH_CONFIG_DIR"
+    local ORIG_GH_CONFIG_DIR; ORIG_GH_CONFIG_DIR="/root/.config/gh"
+    local TEMP_GH_CONFIG_DIR; TEMP_GH_CONFIG_DIR="/tmp/gh-config-hidden-ext-$(date +%s)"
+    if [ -d "${ORIG_GH_CONFIG_DIR}" ]; then
+        mv "${ORIG_GH_CONFIG_DIR}" "${TEMP_GH_CONFIG_DIR}"
     fi
-    local ORIG_GITHUB_USER_TOKEN="$GITHUB_USER_TOKEN"
-    local ORIG_GITHUB_TOKEN="$GITHUB_TOKEN"
+    local ORIG_GITHUB_USER_TOKEN; ORIG_GITHUB_USER_TOKEN="${GITHUB_USER_TOKEN}"
+    local ORIG_GITHUB_TOKEN; ORIG_GITHUB_TOKEN="${GITHUB_TOKEN}"
     unset GITHUB_USER_TOKEN
     unset GITHUB_TOKEN
 
@@ -248,8 +250,8 @@ function installExtensions {
         if gemini extensions install {{ printf "%q" .Source }} {{ if .Ref }}--ref {{ printf "%q" .Ref }}{{ end }} --consent; then
             break
         fi
-        if [ $i -lt 3 ]; then
-            echo "Extension installation failed, retrying in 5s... ($i/3)"
+        if [ "${i}" -lt 3 ]; then
+            echo "Extension installation failed, retrying in 5s... (${i}/3)"
             sleep 5
         else
             echo "Warning: Extension installation failed after 3 attempts. Continuing anyway..."
@@ -258,11 +260,11 @@ function installExtensions {
     {{- end }}
 
     # Security: Restore GitHub config and token
-    if [ -d "$TEMP_GH_CONFIG_DIR" ]; then
-        mv "$TEMP_GH_CONFIG_DIR" "$ORIG_GH_CONFIG_DIR"
+    if [ -d "${TEMP_GH_CONFIG_DIR}" ]; then
+        mv "${TEMP_GH_CONFIG_DIR}" "${ORIG_GH_CONFIG_DIR}"
     fi
-    export GITHUB_USER_TOKEN="$ORIG_GITHUB_USER_TOKEN"
-    export GITHUB_TOKEN="$ORIG_GITHUB_TOKEN"
+    export GITHUB_USER_TOKEN="${ORIG_GITHUB_USER_TOKEN}"
+    export GITHUB_TOKEN="${ORIG_GITHUB_TOKEN}"
 }
 
 # Main execution

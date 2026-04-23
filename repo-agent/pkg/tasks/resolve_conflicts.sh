@@ -43,7 +43,7 @@ TASK_DIR="$(dirname "${PROMPT_FILE}")"
 export GIT_CONFIG_PARAMETERS="'core.hooksPath=/dev/null'"
 
 export GITHUB_USER_TOKEN="${GITHUB_USER_TOKEN:-${GITHUB_TOKEN}}"
-if [ -z "$GITHUB_USER_TOKEN" ]; then
+if [ -z "${GITHUB_USER_TOKEN}" ]; then
     # Try other common names
     GITHUB_USER_TOKEN="${MANUAL_PAT:-${OAUTH_PAT}}"
 fi
@@ -58,13 +58,13 @@ function setupGit {
     echo "Running setupGit..."
     mkdir -p /root/.config/gh
 
-    local GH_USER="${GITHUB_USER_ID}"
+    local GH_USER; GH_USER="${GITHUB_USER_ID}"
     if [ -n "${GITHUB_BOT_LOGIN}" ]; then
         GH_USER="${GITHUB_BOT_LOGIN}"
     fi
 
-    local SAFE_GH_USER=$(printf "%q" "${GH_USER}")
-    local SAFE_TOKEN=$(printf "%q" "${GITHUB_USER_TOKEN}")
+    local SAFE_GH_USER; SAFE_GH_USER=$(printf "%q" "${GH_USER}")
+    local SAFE_TOKEN; SAFE_TOKEN=$(printf "%q" "${GITHUB_USER_TOKEN}")
     cat <<EOF > /root/.config/gh/hosts.yml
 {{ .Repo.Host }}:
     users:
@@ -75,17 +75,17 @@ function setupGit {
     user: ${SAFE_GH_USER}
 EOF
 
-    if [ -n "$GITHUB_BOT_EMAIL" ]; then
+    if [ -n "${GITHUB_BOT_EMAIL}" ]; then
         git config --global user.email "${GITHUB_BOT_EMAIL}"
-    elif [ -n "$GITHUB_USER_EMAIL" ] && [ "$GITHUB_USER_EMAIL" != "" ]; then
+    elif [ -n "${GITHUB_USER_EMAIL}" ] && [ "${GITHUB_USER_EMAIL}" != "" ]; then
         git config --global user.email "${GITHUB_USER_EMAIL}"
     else
         git config --global user.email "bot@example.com"
     fi
 
-    if [ -n "$GITHUB_BOT_NAME" ]; then
+    if [ -n "${GITHUB_BOT_NAME}" ]; then
         git config --global user.name "${GITHUB_BOT_NAME}"
-    elif [ -n "$GITHUB_USER_NAME" ] && [ "$GITHUB_USER_NAME" != "" ]; then
+    elif [ -n "${GITHUB_USER_NAME}" ] && [ "${GITHUB_USER_NAME}" != "" ]; then
         git config --global user.name "${GITHUB_USER_NAME}"
     else
         git config --global user.name "Gemini Bot"
@@ -115,9 +115,9 @@ function setupGitRepos {
             if git fetch origin; then
                 break
             fi
-            echo "git fetch failed, retrying in 5s... ($i/3)"
+            echo "git fetch failed, retrying in 5s... (${i}/3)"
             sleep 5
-            if [ $i -eq 3 ]; then
+            if [ "${i}" -eq 3 ]; then
                 echo "Error: git fetch failed after 3 attempts."
                 exit 1
             fi
@@ -160,20 +160,20 @@ function runTests {
     
     # Security: Hide GitHub OAuth token and config directory before executing untrusted code (tests)
     # to prevent token exfiltration by malicious PRs.
-    local ORIG_GH_CONFIG_DIR="/root/.config/gh"
-    local TEMP_GH_CONFIG_DIR="/tmp/gh-config-hidden-$(date +%s)"
-    if [ -d "$ORIG_GH_CONFIG_DIR" ]; then
-        mv "$ORIG_GH_CONFIG_DIR" "$TEMP_GH_CONFIG_DIR"
+    local ORIG_GH_CONFIG_DIR; ORIG_GH_CONFIG_DIR="/root/.config/gh"
+    local TEMP_GH_CONFIG_DIR; TEMP_GH_CONFIG_DIR="/tmp/gh-config-hidden-$(date +%s)"
+    if [ -d "${ORIG_GH_CONFIG_DIR}" ]; then
+        mv "${ORIG_GH_CONFIG_DIR}" "${TEMP_GH_CONFIG_DIR}"
     fi
-    local ORIG_GITHUB_USER_TOKEN="$GITHUB_USER_TOKEN"
-    local ORIG_GITHUB_TOKEN="$GITHUB_TOKEN"
+    local ORIG_GITHUB_USER_TOKEN; ORIG_GITHUB_USER_TOKEN="${GITHUB_USER_TOKEN}"
+    local ORIG_GITHUB_TOKEN; ORIG_GITHUB_TOKEN="${GITHUB_TOKEN}"
     unset GITHUB_USER_TOKEN
     unset GITHUB_TOKEN
     # Also unset Gemini key for extra safety
-    local ORIG_GEMINI_API_KEY="$GEMINI_API_KEY"
+    local ORIG_GEMINI_API_KEY; ORIG_GEMINI_API_KEY="${GEMINI_API_KEY}"
     unset GEMINI_API_KEY
 
-    local TEST_FAILED=false
+    local TEST_FAILED; TEST_FAILED=false
     
     # Discovery and execution for multiple frameworks/languages.
     # In monorepos, we search for markers in subdirectories too.
@@ -182,10 +182,10 @@ function runTests {
     if [ -n "$(find . -maxdepth 2 -name "go.mod" -print -quit)" ]; then
         echo "Found Go project(s), running tests (no cache)..."
         while read -r dir; do
-            echo "Running tests in Go module at $dir"
+            echo "Running tests in Go module at ${dir}"
             (
                 set -e
-                cd "$dir"
+                cd "${dir}"
                 go mod tidy
                 go test -count=1 ./...
             )
@@ -199,10 +199,10 @@ function runTests {
     if [ -n "$(find . -maxdepth 2 \( -name "package.json" -o -name "pnpm-lock.yaml" -o -name "yarn.lock" \) -print -quit)" ]; then
         echo "Found Node.js project, running tests..."
         while read -r dir; do
-            echo "Running tests in $dir"
+            echo "Running tests in ${dir}"
             (
                 set -e
-                cd "$dir"
+                cd "${dir}"
                 if [ -f "pnpm-lock.yaml" ] && command -v pnpm >/dev/null 2>&1; then
                     pnpm install --frozen-lockfile
                     pnpm test
@@ -227,14 +227,13 @@ function runTests {
     if [ -n "$(find . -maxdepth 2 \( -name "pyproject.toml" -o -name "requirements.txt" -o -name "setup.py" \) -print -quit)" ]; then
         echo "Found Python project, running tests..."
         while read -r dir; do
-             echo "Running tests in $dir"
+             echo "Running tests in ${dir}"
              (
              set -e
-             cd "$dir"
-             local V_DIR
-             V_DIR="/tmp/venv-$(echo -n "$dir" | md5sum | cut -d' ' -f1)"
-             python3 -m venv "$V_DIR" || exit 1
-             source "$V_DIR/bin/activate"
+             cd "${dir}"
+             local V_DIR; V_DIR="/tmp/venv-$(echo -n "${dir}" | md5sum | cut -d' ' -f1)"
+             python3 -m venv "${V_DIR}" || exit 1
+             source "${V_DIR}/bin/activate"
              if [ -f "pyproject.toml" ]; then
                  pip install .
              elif [ -f "setup.py" ]; then
@@ -246,11 +245,10 @@ function runTests {
                      pytest
                  else
                      # Capture output to check if any tests were found
-                     local UT_OUTPUT
-                     UT_OUTPUT=$(python3 -m unittest discover 2>&1)
-                     echo "$UT_OUTPUT"
-                     if echo "$UT_OUTPUT" | grep -q "Ran 0 tests"; then
-                         echo "Warning: No tests found by unittest discover in $dir"
+                     local UT_OUTPUT; UT_OUTPUT=$(python3 -m unittest discover 2>&1)
+                     echo "${UT_OUTPUT}"
+                     if echo "${UT_OUTPUT}" | grep -q "Ran 0 tests"; then
+                         echo "Warning: No tests found by unittest discover in ${dir}"
                      fi
                  fi
              )
@@ -273,14 +271,14 @@ function runTests {
     fi
     
     # Security: Restore GitHub config and token after untrusted code execution.
-    if [ -d "$TEMP_GH_CONFIG_DIR" ]; then
-        mv "$TEMP_GH_CONFIG_DIR" "$ORIG_GH_CONFIG_DIR"
+    if [ -d "${TEMP_GH_CONFIG_DIR}" ]; then
+        mv "${TEMP_GH_CONFIG_DIR}" "${ORIG_GH_CONFIG_DIR}"
     fi
-    export GITHUB_USER_TOKEN="$ORIG_GITHUB_USER_TOKEN"
-    export GITHUB_TOKEN="$ORIG_GITHUB_TOKEN"
-    export GEMINI_API_KEY="$ORIG_GEMINI_API_KEY"
+    export GITHUB_USER_TOKEN="${ORIG_GITHUB_USER_TOKEN}"
+    export GITHUB_TOKEN="${ORIG_GITHUB_TOKEN}"
+    export GEMINI_API_KEY="${ORIG_GEMINI_API_KEY}"
 
-    if [ "$TEST_FAILED" = true ]; then
+    if [ "${TEST_FAILED}" = true ]; then
         return 1
     fi
     return 0
@@ -291,17 +289,16 @@ function runGemini {
     echo "Running Gemini to resolve conflicts..."
     cd "/workspaces/${REPO_NAME}"
     
-    if [ -n "$GITHUB_BOT_NAME" ]; then
-        export GIT_AUTHOR_NAME="$GITHUB_BOT_NAME"
-        export GIT_COMMITTER_NAME="$GITHUB_BOT_NAME"
+    if [ -n "${GITHUB_BOT_NAME}" ]; then
+        export GIT_AUTHOR_NAME="${GITHUB_BOT_NAME}"
+        export GIT_COMMITTER_NAME="${GITHUB_BOT_NAME}"
         export GIT_AUTHOR_EMAIL="${GITHUB_BOT_EMAIL:-bot@example.com}"
         export GIT_COMMITTER_EMAIL="${GITHUB_BOT_EMAIL:-bot@example.com}"
     fi
 
     # Identify the current branch (handles forks)
-    local CURRENT_BRANCH
-    CURRENT_BRANCH="$(git branch --show-current)"
-    if [ -z "$CURRENT_BRANCH" ]; then
+    local CURRENT_BRANCH; CURRENT_BRANCH="$(git branch --show-current)"
+    if [ -z "${CURRENT_BRANCH}" ]; then
         echo "Error: Detached HEAD state detected or unable to identify current branch."
         exit 1
     fi
@@ -309,29 +306,28 @@ function runGemini {
     echo "Current branch: ${CURRENT_BRANCH}"
 
     # Capture the original HEAD before the merge loop to ensure we can always reset to a clean state.
-    local ORIG_HEAD
-    ORIG_HEAD=$(git rev-parse HEAD)
+    local ORIG_HEAD; ORIG_HEAD=$(git rev-parse HEAD)
 
     # Security: Hide GitHub OAuth token and config directory before executing untrusted code (Gemini)
     # to prevent token exfiltration by malicious PRs or compromised models.
-    local ORIG_GH_CONFIG_DIR="/root/.config/gh"
-    local TEMP_GH_CONFIG_DIR="/tmp/gh-config-hidden-gemini-$(date +%s)"
-    if [ -d "$ORIG_GH_CONFIG_DIR" ]; then
-        mv "$ORIG_GH_CONFIG_DIR" "$TEMP_GH_CONFIG_DIR"
+    local ORIG_GH_CONFIG_DIR; ORIG_GH_CONFIG_DIR="/root/.config/gh"
+    local TEMP_GH_CONFIG_DIR; TEMP_GH_CONFIG_DIR="/tmp/gh-config-hidden-gemini-$(date +%s)"
+    if [ -d "${ORIG_GH_CONFIG_DIR}" ]; then
+        mv "${ORIG_GH_CONFIG_DIR}" "${TEMP_GH_CONFIG_DIR}"
     fi
-    local ORIG_GITHUB_USER_TOKEN="$GITHUB_USER_TOKEN"
-    local ORIG_GITHUB_TOKEN="$GITHUB_TOKEN"
+    local ORIG_GITHUB_USER_TOKEN; ORIG_GITHUB_USER_TOKEN="${GITHUB_USER_TOKEN}"
+    local ORIG_GITHUB_TOKEN; ORIG_GITHUB_TOKEN="${GITHUB_TOKEN}"
     unset GITHUB_USER_TOKEN
     unset GITHUB_TOKEN
 
     MODELS=( {{ range .Models }}{{ printf "%q" . }} {{ end }} )
     SUCCESS=false
     for MODEL in "${MODELS[@]}"; do
-        echo "Trying model: $MODEL"
+        echo "Trying model: ${MODEL}"
         
         # Abort any previous merge and reset to the original pristine state.
         git merge --abort || true
-        git reset --hard "$ORIG_HEAD"
+        git reset --hard "${ORIG_HEAD}"
         git clean -fd
         
         # Re-fetch to ensure remote branch is fresh for this iteration with retry loop
@@ -341,11 +337,11 @@ function runGemini {
                 FETCH_SUCCESS=true
                 break
             fi
-            echo "git fetch origin ${BASE_REF} failed, retrying in 5s... ($i/3)"
+            echo "git fetch origin ${BASE_REF} failed, retrying in 5s... (${i}/3)"
             sleep 5
         done
-        if [ "$FETCH_SUCCESS" = false ]; then
-            echo "Error: git fetch origin ${BASE_REF} failed after 3 attempts. Skipping model $MODEL."
+        if [ "${FETCH_SUCCESS}" = false ]; then
+            echo "Error: git fetch origin ${BASE_REF} failed after 3 attempts. Skipping model ${MODEL}."
             continue
         fi
         # We merge from FETCH_HEAD to ensure we are using exactly what we just fetched.
@@ -354,7 +350,7 @@ function runGemini {
              set +e
              verifyResolution
              V_RES=$?
-             if [ $V_RES -eq 0 ]; then
+             if [ "${V_RES}" -eq 0 ]; then
                  runTests
                  T_RES=$?
              else
@@ -362,7 +358,7 @@ function runGemini {
              fi
              set -e
 
-             if [ $V_RES -eq 0 ] && [ $T_RES -eq 0 ]; then
+             if [ "${V_RES}" -eq 0 ] && [ "${T_RES}" -eq 0 ]; then
                  # If it succeeded without conflicts and passed tests, finalize the commit.
                  # Use --no-edit to preserve standard MERGE_MSG
                  git commit --no-verify --no-edit || echo "Nothing to commit"
@@ -371,24 +367,24 @@ function runGemini {
              else
                  echo "Verification failed for clean merge. Exiting as LLM cannot fix broken base/branch."
                  # Security: Restore GitHub config and token before exiting.
-                 if [ -d "$TEMP_GH_CONFIG_DIR" ]; then
-                     mv "$TEMP_GH_CONFIG_DIR" "$ORIG_GH_CONFIG_DIR"
+                 if [ -d "${TEMP_GH_CONFIG_DIR}" ]; then
+                     mv "${TEMP_GH_CONFIG_DIR}" "${ORIG_GH_CONFIG_DIR}"
                  fi
-                 export GITHUB_USER_TOKEN="$ORIG_GITHUB_USER_TOKEN"
-                 export GITHUB_TOKEN="$ORIG_GITHUB_TOKEN"
+                 export GITHUB_USER_TOKEN="${ORIG_GITHUB_USER_TOKEN}"
+                 export GITHUB_TOKEN="${ORIG_GITHUB_TOKEN}"
                  exit 1
              fi
         fi
 
-        echo "Conflicts detected. Calling Gemini with model $MODEL..."
+        echo "Conflicts detected. Calling Gemini with model ${MODEL}..."
         # We use --yolo because this runs in a sandboxed pod and we need automated resolution.
-        if gemini --yolo --model "$MODEL" --output-format stream-json < "${PROMPT_FILE}" | /opt/repo-agent/gemini-stream-processor --output "${TASK_DIR}/gemini-output-${MODEL}.json"; then
-             echo "Gemini execution successful with model: $MODEL"
+        if gemini --yolo --model "${MODEL}" --output-format stream-json < "${PROMPT_FILE}" | /opt/repo-agent/gemini-stream-processor --output "${TASK_DIR}/gemini-output-${MODEL}.json"; then
+             echo "Gemini execution successful with model: ${MODEL}"
              
              set +e
              verifyResolution
              V_RES=$?
-             if [ $V_RES -eq 0 ]; then
+             if [ "${V_RES}" -eq 0 ]; then
                  runTests
                  T_RES=$?
              else
@@ -396,8 +392,8 @@ function runGemini {
              fi
              set -e
 
-             if [ $V_RES -eq 0 ] && [ $T_RES -eq 0 ]; then
-                 echo "Resolution verified with model: $MODEL. Staging and committing..."
+             if [ "${V_RES}" -eq 0 ] && [ "${T_RES}" -eq 0 ]; then
+                 echo "Resolution verified with model: ${MODEL}. Staging and committing..."
                  # Copy the successful output to a standard location for stats tracking
                  cp "${TASK_DIR}/gemini-output-${MODEL}.json" "${TASK_DIR}/gemini-output.json" || true
                  # Only stage tracked and unmerged files to avoid garbage.
@@ -408,24 +404,24 @@ function runGemini {
                  SUCCESS=true
                  break
              else
-                 echo "Resolution verification or tests failed with model $MODEL."
+                 echo "Resolution verification or tests failed with model ${MODEL}."
                  # The merge is still in progress (with conflict markers or broken code).
                  # We will reset to ORIG_HEAD in the next iteration.
              fi
         else
-             echo "Gemini execution failed with model: $MODEL."
+             echo "Gemini execution failed with model: ${MODEL}."
              # Gemini might have left the repo in a messy state.
         fi
     done
     
     # Security: Restore GitHub config and token after untrusted code execution.
-    if [ -d "$TEMP_GH_CONFIG_DIR" ]; then
-        mv "$TEMP_GH_CONFIG_DIR" "$ORIG_GH_CONFIG_DIR"
+    if [ -d "${TEMP_GH_CONFIG_DIR}" ]; then
+        mv "${TEMP_GH_CONFIG_DIR}" "${ORIG_GH_CONFIG_DIR}"
     fi
-    export GITHUB_USER_TOKEN="$ORIG_GITHUB_USER_TOKEN"
-    export GITHUB_TOKEN="$ORIG_GITHUB_TOKEN"
+    export GITHUB_USER_TOKEN="${ORIG_GITHUB_USER_TOKEN}"
+    export GITHUB_TOKEN="${ORIG_GITHUB_TOKEN}"
 
-    if [ "$SUCCESS" = false ]; then
+    if [ "${SUCCESS}" = false ]; then
         echo "All models failed. Check logs for details."
         exit 1
     fi
@@ -452,10 +448,10 @@ for i in {1..3}; do
         FETCH_SUCCESS=true
         break
     fi
-    echo "git fetch origin ${BASE_REF} failed, retrying in 5s... ($i/3)"
+    echo "git fetch origin ${BASE_REF} failed, retrying in 5s... (${i}/3)"
     sleep 5
 done
-if [ "$FETCH_SUCCESS" = false ]; then
+if [ "${FETCH_SUCCESS}" = false ]; then
     echo "Failed to fetch base branch after 3 attempts. Perhaps it was deleted?"
     exit 1
 fi
@@ -466,14 +462,14 @@ if git merge FETCH_HEAD --no-ff --no-commit; then
     set +e
     verifyResolution
     V_RES=$?
-    if [ $V_RES -eq 0 ]; then
+    if [ "${V_RES}" -eq 0 ]; then
         runTests
         T_RES=$?
     else
         T_RES=1
     fi
     set -e
-    if [ $V_RES -eq 0 ] && [ $T_RES -eq 0 ]; then
+    if [ "${V_RES}" -eq 0 ] && [ "${T_RES}" -eq 0 ]; then
         echo "Merge successful without conflicts and tests passed."
         git commit --no-verify --no-edit || echo "Nothing to commit"
         pushChanges
@@ -481,7 +477,7 @@ if git merge FETCH_HEAD --no-ff --no-commit; then
     fi
     echo "Merge succeeded but conflict markers found or tests failed. Proceeding to LLM loop."
     git merge --abort || true
-    git reset --hard "$BEFORE_MERGE_SHA"
+    git reset --hard "${BEFORE_MERGE_SHA}"
 else
     echo "Initial merge failed with conflicts. Proceeding to LLM loop."
     git merge --abort || true
@@ -491,13 +487,13 @@ function installExtensions {
     echo "Installing extensions..."
 
     # Security: Hide GitHub OAuth token and config directory before executing untrusted code (extensions)
-    local ORIG_GH_CONFIG_DIR="/root/.config/gh"
-    local TEMP_GH_CONFIG_DIR="/tmp/gh-config-hidden-ext-$(date +%s)"
-    if [ -d "$ORIG_GH_CONFIG_DIR" ]; then
-        mv "$ORIG_GH_CONFIG_DIR" "$TEMP_GH_CONFIG_DIR"
+    local ORIG_GH_CONFIG_DIR; ORIG_GH_CONFIG_DIR="/root/.config/gh"
+    local TEMP_GH_CONFIG_DIR; TEMP_GH_CONFIG_DIR="/tmp/gh-config-hidden-ext-$(date +%s)"
+    if [ -d "${ORIG_GH_CONFIG_DIR}" ]; then
+        mv "${ORIG_GH_CONFIG_DIR}" "${TEMP_GH_CONFIG_DIR}"
     fi
-    local ORIG_GITHUB_USER_TOKEN="$GITHUB_USER_TOKEN"
-    local ORIG_GITHUB_TOKEN="$GITHUB_TOKEN"
+    local ORIG_GITHUB_USER_TOKEN; ORIG_GITHUB_USER_TOKEN="${GITHUB_USER_TOKEN}"
+    local ORIG_GITHUB_TOKEN; ORIG_GITHUB_TOKEN="${GITHUB_TOKEN}"
     unset GITHUB_USER_TOKEN
     unset GITHUB_TOKEN
 
@@ -508,8 +504,8 @@ function installExtensions {
         if gemini extensions install {{ printf "%q" .Source }} {{ if .Ref }}--ref {{ printf "%q" .Ref }}{{ end }} --consent; then
             break
         fi
-        if [ $i -lt 3 ]; then
-            echo "Extension installation failed, retrying in 5s... ($i/3)"
+        if [ "${i}" -lt 3 ]; then
+            echo "Extension installation failed, retrying in 5s... (${i}/3)"
             sleep 5
         else
             echo "Warning: Extension installation failed after 3 attempts. Continuing anyway..."
@@ -518,11 +514,11 @@ function installExtensions {
     {{- end }}
 
     # Security: Restore GitHub config and token
-    if [ -d "$TEMP_GH_CONFIG_DIR" ]; then
-        mv "$TEMP_GH_CONFIG_DIR" "$ORIG_GH_CONFIG_DIR"
+    if [ -d "${TEMP_GH_CONFIG_DIR}" ]; then
+        mv "${TEMP_GH_CONFIG_DIR}" "${ORIG_GH_CONFIG_DIR}"
     fi
-    export GITHUB_USER_TOKEN="$ORIG_GITHUB_USER_TOKEN"
-    export GITHUB_TOKEN="$ORIG_GITHUB_TOKEN"
+    export GITHUB_USER_TOKEN="${ORIG_GITHUB_USER_TOKEN}"
+    export GITHUB_TOKEN="${ORIG_GITHUB_TOKEN}"
 }
 
 installExtensions

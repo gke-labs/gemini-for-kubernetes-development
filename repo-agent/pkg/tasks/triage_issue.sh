@@ -50,37 +50,37 @@ function runGemini {
 
     # Security: Hide GitHub OAuth token and config directory before executing untrusted code (gemini --yolo)
     # to prevent token exfiltration.
-    local ORIG_GH_CONFIG_DIR="/root/.config/gh"
-    local TEMP_GH_CONFIG_DIR="/tmp/gh-config-hidden-$(date +%s)"
-    if [ -d "$ORIG_GH_CONFIG_DIR" ]; then
-        mv "$ORIG_GH_CONFIG_DIR" "$TEMP_GH_CONFIG_DIR"
+    local ORIG_GH_CONFIG_DIR; ORIG_GH_CONFIG_DIR="/root/.config/gh"
+    local TEMP_GH_CONFIG_DIR; TEMP_GH_CONFIG_DIR="/tmp/gh-config-hidden-$(date +%s)"
+    if [ -d "${ORIG_GH_CONFIG_DIR}" ]; then
+        mv "${ORIG_GH_CONFIG_DIR}" "${TEMP_GH_CONFIG_DIR}"
     fi
-    local ORIG_GITHUB_USER_TOKEN="$GITHUB_USER_TOKEN"
-    local ORIG_GITHUB_TOKEN="$GITHUB_TOKEN"
+    local ORIG_GITHUB_USER_TOKEN; ORIG_GITHUB_USER_TOKEN="${GITHUB_USER_TOKEN}"
+    local ORIG_GITHUB_TOKEN; ORIG_GITHUB_TOKEN="${GITHUB_TOKEN}"
     unset GITHUB_USER_TOKEN
     unset GITHUB_TOKEN
 
     MODELS=( {{ range .Models }}{{ printf "%q" . }} {{ end }} )
     SUCCESS=false
     for MODEL in "${MODELS[@]}"; do
-        echo "Trying model: $MODEL"
-        if gemini --yolo --model "$MODEL" --output-format stream-json < "${PROMPT_FILE}" | /opt/repo-agent/gemini-stream-processor --output "$(dirname "${PROMPT_FILE}")/gemini-output.json"; then
-             echo "Gemini execution successful with model: $MODEL"
+        echo "Trying model: ${MODEL}"
+        if gemini --yolo --model "${MODEL}" --output-format stream-json < "${PROMPT_FILE}" | /opt/repo-agent/gemini-stream-processor --output "$(dirname "${PROMPT_FILE}")/gemini-output.json"; then
+             echo "Gemini execution successful with model: ${MODEL}"
              SUCCESS=true
              break
         else
-             echo "Gemini execution failed with model: $MODEL. Retrying with next model..."
+             echo "Gemini execution failed with model: ${MODEL}. Retrying with next model..."
         fi
     done
 
     # Security: Restore GitHub config and token after untrusted code execution.
-    if [ -d "$TEMP_GH_CONFIG_DIR" ]; then
-        mv "$TEMP_GH_CONFIG_DIR" "$ORIG_GH_CONFIG_DIR"
+    if [ -d "${TEMP_GH_CONFIG_DIR}" ]; then
+        mv "${TEMP_GH_CONFIG_DIR}" "${ORIG_GH_CONFIG_DIR}"
     fi
-    export GITHUB_USER_TOKEN="$ORIG_GITHUB_USER_TOKEN"
-    export GITHUB_TOKEN="$ORIG_GITHUB_TOKEN"
+    export GITHUB_USER_TOKEN="${ORIG_GITHUB_USER_TOKEN}"
+    export GITHUB_TOKEN="${ORIG_GITHUB_TOKEN}"
 
-    if [ "$SUCCESS" = false ]; then
+    if [ "${SUCCESS}" = false ]; then
         echo "All models failed."
         exit 1
     fi
@@ -91,13 +91,13 @@ function installExtensions {
     echo "Installing extensions..."
 
     # Security: Hide GitHub OAuth token and config directory before executing untrusted code (extensions)
-    local ORIG_GH_CONFIG_DIR="/root/.config/gh"
-    local TEMP_GH_CONFIG_DIR="/tmp/gh-config-hidden-ext-$(date +%s)"
-    if [ -d "$ORIG_GH_CONFIG_DIR" ]; then
-        mv "$ORIG_GH_CONFIG_DIR" "$TEMP_GH_CONFIG_DIR"
+    local ORIG_GH_CONFIG_DIR; ORIG_GH_CONFIG_DIR="/root/.config/gh"
+    local TEMP_GH_CONFIG_DIR; TEMP_GH_CONFIG_DIR="/tmp/gh-config-hidden-ext-$(date +%s)"
+    if [ -d "${ORIG_GH_CONFIG_DIR}" ]; then
+        mv "${ORIG_GH_CONFIG_DIR}" "${TEMP_GH_CONFIG_DIR}"
     fi
-    local ORIG_GITHUB_USER_TOKEN="$GITHUB_USER_TOKEN"
-    local ORIG_GITHUB_TOKEN="$GITHUB_TOKEN"
+    local ORIG_GITHUB_USER_TOKEN; ORIG_GITHUB_USER_TOKEN="${GITHUB_USER_TOKEN}"
+    local ORIG_GITHUB_TOKEN; ORIG_GITHUB_TOKEN="${GITHUB_TOKEN}"
     unset GITHUB_USER_TOKEN
     unset GITHUB_TOKEN
 
@@ -106,11 +106,11 @@ function installExtensions {
     {{- end }}
 
     # Security: Restore GitHub config and token
-    if [ -d "$TEMP_GH_CONFIG_DIR" ]; then
-        mv "$TEMP_GH_CONFIG_DIR" "$ORIG_GH_CONFIG_DIR"
+    if [ -d "${TEMP_GH_CONFIG_DIR}" ]; then
+        mv "${TEMP_GH_CONFIG_DIR}" "${ORIG_GH_CONFIG_DIR}"
     fi
-    export GITHUB_USER_TOKEN="$ORIG_GITHUB_USER_TOKEN"
-    export GITHUB_TOKEN="$ORIG_GITHUB_TOKEN"
+    export GITHUB_USER_TOKEN="${ORIG_GITHUB_USER_TOKEN}"
+    export GITHUB_TOKEN="${ORIG_GITHUB_TOKEN}"
 }
 
 # Main execution

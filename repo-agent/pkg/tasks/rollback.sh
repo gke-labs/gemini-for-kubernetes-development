@@ -26,19 +26,19 @@ export REMOTE={{ printf "%q" .Remote }}
 export GITHUB_USER_ID={{ printf "%q" .User.UserID }}
 export GITHUB_USER_EMAIL={{ printf "%q" .User.Email }}
 export GITHUB_USER_NAME={{ printf "%q" .User.Name }}
-export PR_NUMBER={{ .PullRequestID }}
+export PR_NUMBER={{ printf "%q" .PullRequestID }}
 
 function setupGit {
     echo "Running setupGit..."
     mkdir -p /root/.config/gh
 
-    local GH_USER="${GITHUB_USER_ID}"
+    local GH_USER; GH_USER="${GITHUB_USER_ID}"
     if [ -n "${GITHUB_BOT_LOGIN}" ]; then
         GH_USER="${GITHUB_BOT_LOGIN}"
     fi
 
-    local SAFE_GH_USER=$(printf "%q" "${GH_USER}")
-    local SAFE_TOKEN=$(printf "%q" "${GITHUB_USER_TOKEN}")
+    local SAFE_GH_USER; SAFE_GH_USER=$(printf "%q" "${GH_USER}")
+    local SAFE_TOKEN; SAFE_TOKEN=$(printf "%q" "${GITHUB_USER_TOKEN}")
     cat <<EOF > /root/.config/gh/hosts.yml
 github.com:
     users:
@@ -49,7 +49,7 @@ github.com:
     user: ${SAFE_GH_USER}
 EOF
 
-    if [ -n "$GITHUB_BOT_EMAIL" ]; then
+    if [ -n "${GITHUB_BOT_EMAIL}" ]; then
         git config --global user.email "${GITHUB_BOT_EMAIL}"
         git config --global user.name "${GITHUB_BOT_NAME}"
     else
@@ -63,19 +63,27 @@ EOF
 function setupGitRepos {
     echo "Running setupGitRepos..."
     if [ ! -d "/workspaces/${REPO_NAME}" ]; then
-        echo "cloning repository"
-        git clone "${CLONE_URL}" "/workspaces/${REPO_NAME}"
+        echo "cloning repository ${REPO_OWNER}/${REPO_NAME}"
+        gh repo clone "${REPO_OWNER}/${REPO_NAME}" "/workspaces/${REPO_NAME}"
     else
         echo "Repository already exists at /workspaces/${REPO_NAME}"
+        # Optional: fetch latest changes
+        (
+            cd "/workspaces/${REPO_NAME}"
+            for i in $(seq 1 3); do
+                if git fetch origin; then
+                    break
+                fi
+                echo "git fetch failed, retrying in 5s... ($i/3)"
+                sleep 5
+            done
+        )
     fi
 
     pushd "/workspaces/${REPO_NAME}" > /dev/null
     
-    echo "running gh repo fork"
-    gh repo fork --remote || true
-
     echo "running gh repo set-default"
-    gh repo set-default "${CLONE_URL}" || true
+    gh repo set-default "${REPO_OWNER}/${REPO_NAME}" || true
 
     echo "running git config local user.email"
     git config user.email "${GITHUB_USER_EMAIL}" || true
@@ -91,7 +99,7 @@ function checkoutPRBranch {
     echo "checking out PR #${PR_NUMBER}"
     (
         cd "/workspaces/${REPO_NAME}"
-        gh pr checkout ${PR_NUMBER}
+        gh pr checkout "${PR_NUMBER}" --force
     )
 }
 
