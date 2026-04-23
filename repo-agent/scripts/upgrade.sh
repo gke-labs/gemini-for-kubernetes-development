@@ -32,8 +32,14 @@ cd "${REPO_AGENT_ROOT}"
 cleanup() {
   echo "--- Cleanup ---"
   # Rarely cleanups are required.
-  #./scripts/ops/scaledown_and_clean.py --types=sandboxes --apply
-  #./scripts/ops/scaledown_and_clean.py --types=sandboxtasks --apply
+  # We disable this by default to avoid deleting active sandboxes during upgrades.
+  # Set ENABLE_UPGRADE_CLEANUP=true to re-enable.
+  if [[ "${ENABLE_UPGRADE_CLEANUP:-false}" == "true" ]]; then
+    ./scripts/ops/scaledown_and_clean.py --types=sandboxes --apply
+    ./scripts/ops/scaledown_and_clean.py --types=sandboxtasks --apply
+  else
+    echo "Skipping Sandbox and SandboxTask cleanup. Set ENABLE_UPGRADE_CLEANUP=true to enable."
+  fi
 }
 
 upgrade() {
