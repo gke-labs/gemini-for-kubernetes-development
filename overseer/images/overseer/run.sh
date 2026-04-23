@@ -1,42 +1,6 @@
 #!/bin/bash
 set -e
 
-# Default prompt from files
-if [ -d "/workspaces/prompt" ]; then
-    PROMPT_FILE=$(mktemp)
-    cat /workspaces/prompt/01-header.txt >> "$PROMPT_FILE"
-    if [ "$ISSUE_MODE" != "disabled" ]; then
-        cat /workspaces/prompt/02-issue-handling.txt >> "$PROMPT_FILE"
-    fi
-    if [ "$PR_MODE" != "disabled" ]; then
-        cat /workspaces/prompt/03-pr-handling.txt >> "$PROMPT_FILE"
-    fi
-    if [ "$REVIEW_MODE" != "disabled" ]; then
-        cat /workspaces/prompt/03a-pr-review-handling.txt >> "$PROMPT_FILE"
-    fi
-    if [ "$CHORES_MODE" != "disabled" ]; then
-        cat /workspaces/prompt/04-chores.txt >> "$PROMPT_FILE"
-    fi
-    cat /workspaces/prompt/05-examples-header.txt >> "$PROMPT_FILE"
-    if [ "$ISSUE_MODE" != "disabled" ]; then
-        cat /workspaces/prompt/06-examples-issues.txt >> "$PROMPT_FILE"
-    fi
-    if [ "$PR_MODE" != "disabled" ]; then
-        cat /workspaces/prompt/06a-examples-prs.txt >> "$PROMPT_FILE"
-    fi
-    if [ "$REVIEW_MODE" != "disabled" ]; then
-        cat /workspaces/prompt/06b-examples-prs-review.txt >> "$PROMPT_FILE"
-    fi
-    if [ "$CHORES_MODE" != "disabled" ]; then
-        cat /workspaces/prompt/07-examples-chores.txt >> "$PROMPT_FILE"
-    fi
-    cat /workspaces/prompt/08-footer.txt >> "$PROMPT_FILE"
-    PROMPT=$(cat "$PROMPT_FILE")
-    rm -f "$PROMPT_FILE"
-else
-    PROMPT="${AGENT_PROMPT:-You are the Overseer. Monitor the repository and orchestrate agents.}"
-fi
-
 if [ -z "$REPO_URL" ]; then
   echo "REPO_URL environment variable is not set"
   exit 1
@@ -126,6 +90,17 @@ if [ -d "/configdir" ] && [ "$(ls -A /configdir)" ]; then
   shopt -u dotglob
 fi
 
+# Inject default chores if not present
+if [ -d "/workspaces/chores" ]; then
+    if [ "$ISSUE_MODE" != "disabled" ] || [ "$PR_MODE" != "disabled" ] || [ "$REVIEW_MODE" != "disabled" ]; then
+        if [ ! -f ".agents/repo-management.md" ]; then
+            echo "Injecting default repo-management chore..."
+            mkdir -p .agents
+            cp /workspaces/chores/repo-management.md .agents/repo-management.md
+        fi
+    fi
+fi
+
 # Loop
 while true; do
   echo "$(date): Running Overseer cycle..."
@@ -147,12 +122,28 @@ while true; do
   # We use --prompt to pass the instruction
   # We rely on environment variables for auth (GEMINI_API_KEY, GITHUB_TOKEN, etc.)
   
-  # Note: If LLM_PROVIDER is set, we might need to adapt.
-  # But for now we assume gemini-cli handles what it handles.
+  # Build PROMPT dynamically based on enabled features
+  if [ -d "/workspaces/prompt" ]; then
+    PROMPT_FILE=$(mktemp)
+    cat /workspaces/prompt/01-header.txt >> "$PROMPT_FILE"
+    # Note: Issue, PR, and Review handling are now handled via chores in .agents/
+    if [ "$CHORES_MODE" != "disabled" ]; then
+        cat /workspaces/prompt/04-chores.txt >> "$PROMPT_FILE"
+    fi
+    cat /workspaces/prompt/05-examples-header.txt >> "$PROMPT_FILE"
+    if [ "$CHORES_MODE" != "disabled" ]; then
+        cat /workspaces/prompt/07-examples-chores.txt >> "$PROMPT_FILE"
+    fi
+    cat /workspaces/prompt/08-footer.txt >> "$PROMPT_FILE"
+    CURRENT_PROMPT=$(cat "$PROMPT_FILE")
+    rm -f "$PROMPT_FILE"
+  else
+    CURRENT_PROMPT="${AGENT_PROMPT:-You are the Overseer. Monitor the repository and orchestrate agents.}"
+  fi
   
   # Capture stderr to a file so we can inspect it for quota errors
   GEMINI_ERR=$(mktemp)
-  if ! gemini --yolo "$PROMPT" 2> "$GEMINI_ERR"; then
+  if ! gemini --yolo "$CURRENT_PROMPT" 2> "$GEMINI_ERR"; then
     cat "$GEMINI_ERR" >&2
     if grep -iq "TerminalQuotaError\|Quota exceeded" "$GEMINI_ERR"; then
       echo "$(date): Quota exhausted. Sleeping for 1 hour..."

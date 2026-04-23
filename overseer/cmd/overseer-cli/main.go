@@ -382,6 +382,7 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 
 	sb, svc := sandbox.NewAgentSandbox(opt)
 	sb.SetName(sandboxName)
+	injectOverseerEnvVars(sb)
 
 	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sb, metav1.CreateOptions{})
 	if err != nil {
@@ -899,6 +900,7 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 	}
 
 	sb, svc := sandbox.NewAgentSandbox(opt)
+	injectOverseerEnvVars(sb)
 
 	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sb, metav1.CreateOptions{})
 	if err != nil {
@@ -981,6 +983,7 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 	}
 
 	sb, svc := sandbox.NewReviewSandbox(opt)
+	injectOverseerEnvVars(sb)
 
 	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sb, metav1.CreateOptions{})
 	if err != nil {
@@ -1266,4 +1269,38 @@ func getTokenFromScript() (string, error) {
 	}
 
 	return "", nil
+}
+
+func injectOverseerEnvVars(sb *unstructured.Unstructured) {
+	podSpec, found, err := unstructured.NestedMap(sb.Object, "spec", "podTemplate", "spec")
+	if err != nil || !found {
+		return
+	}
+	containers, found, err := unstructured.NestedSlice(podSpec, "containers")
+	if err != nil || !found || len(containers) == 0 {
+		return
+	}
+	container := containers[0].(map[string]interface{})
+	env, _ := container["env"].([]interface{})
+
+	modes := []string{"PR_MODE", "ISSUE_MODE", "REVIEW_MODE", "CHORES_MODE", "REPO_URL"}
+	for _, m := range modes {
+		if val := os.Getenv(m); val != "" {
+			// Check if already exists
+			exists := false
+			for _, e := range env {
+				if ev, ok := e.(map[string]interface{}); ok && ev["name"] == m {
+					exists = true
+					break
+				}
+			}
+			if !exists {
+				env = append(env, map[string]interface{}{"name": m, "value": val})
+			}
+		}
+	}
+	container["env"] = env
+	containers[0] = container
+	unstructured.SetNestedSlice(podSpec, containers, "containers")
+	unstructured.SetNestedMap(sb.Object, podSpec, "spec", "podTemplate", "spec")
 }
