@@ -38,7 +38,7 @@ func TestChoreScriptTemplate(t *testing.T) {
 		t.Errorf("Script does not contain expected CLONE_URL. Got:\n%s", script)
 	}
 
-	expectedCloneCmd := `git clone "${CLONE_URL}" "/workspaces/${REPO_NAME}"`
+	expectedCloneCmd := `gh repo clone "${CLONE_URL}" "/workspaces/${REPO_NAME}"`
 	if !bytes.Contains(w.Bytes(), []byte(expectedCloneCmd)) {
 		t.Errorf("Script does not contain expected git clone command. Got:\n%s", script)
 	}
