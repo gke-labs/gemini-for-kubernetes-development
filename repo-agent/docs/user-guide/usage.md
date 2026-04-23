@@ -34,7 +34,28 @@ review:
   - "go.sum"
   - "vendor/**"
   - "*.generated.go"
+  # Optional: Only review these files (glob patterns)
+  # If set, ignoreFiles still takes precedence.
+  includeFiles:
+  - "pkg/**"
 ```
+
+### Dynamic Overrides in Pull Requests
+
+You can dynamically override some review settings by adding commands to your Pull Request description. This is useful for adjusting the review scope for a specific PR without changing the global configuration.
+
+Supported commands:
+- `/max-review-files <number>`: Override the maximum number of files to review (e.g., `/max-review-files: 50`).
+- `/ignore-files <patterns>`: Add more glob patterns to ignore, comma-separated (e.g., `/ignore-files: vendor/**, *.md`).
+- `/include-files <patterns>`: Add glob patterns to include, comma-separated (e.g., `/include-files: pkg/api/*.go`).
+
+Commands can use space, colon (`:`), or equals (`=`) as separators.
+
+> **Note on glob patterns:** 
+> - Recursive matching using `**` is only supported when it's at the end of a pattern (e.g., `vendor/**`). 
+> - Patterns **without** a separator (e.g., `*.go`, `go.sum`) match against the filename only, meaning they match in any directory.
+> - Patterns **with** a separator (e.g., `pkg/*.go`, `internal/api/config.yaml`) match against the full path from the repository root. These do **not** match subdirectories recursively. For example, `pkg/*.go` matches `pkg/main.go` but not `pkg/utils/helper.go`.
+> - Patterns like `pkg/**/*.go` are **not supported** and will not work as expected. Use `pkg/**` if you want to include or ignore everything under a directory.
 
 ### The `issueHandlers` section
 

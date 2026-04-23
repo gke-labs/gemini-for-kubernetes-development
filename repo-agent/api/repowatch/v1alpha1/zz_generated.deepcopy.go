@@ -177,6 +177,11 @@ func (in *PRReviewSpec) DeepCopyInto(out *PRReviewSpec) {
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
+	if in.IncludeFiles != nil {
+		in, out := &in.IncludeFiles, &out.IncludeFiles
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	if in.PullRequests != nil {
 		in, out := &in.PullRequests, &out.PullRequests
 		*out = make([]int, len(*in))

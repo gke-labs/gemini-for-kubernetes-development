@@ -93,12 +93,11 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 	}
 	// Ensure sandbox label matches for service selector
 	labels["sandbox"] = sandboxName
-	// Default type to issue if not set
-	if _, ok := labels["sandbox-type"]; !ok {
-		labels["sandbox-type"] = "issue"
-	}
 	if _, ok := labels["sandbox.gemini.google.com/type"]; !ok {
 		labels["sandbox.gemini.google.com/type"] = "issue"
+	}
+	if _, ok := labels["sandbox-type"]; !ok {
+		labels["sandbox-type"] = labels["sandbox.gemini.google.com/type"]
 	}
 
 	if opt.IdeaID != "" {

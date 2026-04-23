@@ -52,6 +52,7 @@ type ReviewCommand struct {
 	MaxReviewFiles    int
 	ExpectedComments  int
 	IgnoreFiles       []string
+	IncludeFiles      []string
 	SeverityThreshold string
 	Extensions        []reviewv1alpha1.Extension
 
@@ -148,10 +149,10 @@ func (c *ReviewCommand) InitDefaults() {
 		}
 	}
 	if len(c.IgnoreFiles) == 0 {
-		ignoreFilesStr := os.Getenv("IGNORE_FILES")
-		if ignoreFilesStr != "" {
-			c.IgnoreFiles = strings.Split(ignoreFilesStr, ",")
-		}
+		c.IgnoreFiles = parseCommaSeparatedEnv("IGNORE_FILES")
+	}
+	if len(c.IncludeFiles) == 0 {
+		c.IncludeFiles = parseCommaSeparatedEnv("INCLUDE_FILES")
 	}
 	if c.SeverityThreshold == "" {
 		c.SeverityThreshold = os.Getenv("SEVERITY_THRESHOLD")
@@ -192,6 +193,7 @@ func BuildReviewCommand() *cobra.Command {
 	cmd.Flags().IntVar(&reviewCommand.MaxReviewFiles, "max-review-files", 0, "Max review files")
 	cmd.Flags().IntVar(&reviewCommand.ExpectedComments, "expected-comments", 0, "Expected number of comments")
 	cmd.Flags().StringSliceVar(&reviewCommand.IgnoreFiles, "ignore-files", nil, "Comma separated list of glob patterns to ignore")
+	cmd.Flags().StringSliceVar(&reviewCommand.IncludeFiles, "include-files", nil, "Comma separated list of glob patterns to include (if set, only these files will be reviewed)")
 	cmd.Flags().StringVar(&reviewCommand.SeverityThreshold, "severity-threshold", os.Getenv("SEVERITY_THRESHOLD"), "Severity threshold for review comments")
 
 	return cmd
@@ -229,10 +231,17 @@ func (c *ReviewCommand) Run(ctx context.Context) error {
 	}
 
 	parts := strings.Split(strings.TrimPrefix(c.RepoURL, "https://github.com/"), "/")
-	if len(parts) < 2 {
-		return fmt.Errorf("invalid GIT_HTML_URL format: %s", c.RepoURL)
+	if len(parts) < 4 {
+		return fmt.Errorf("invalid GIT_HTML_URL for review (expected https://github.com/owner/repo/pull/number): %s", c.RepoURL)
 	}
-	repoDir := filepath.Join(c.WorkspaceDir, parts[1])
+	owner := parts[0]
+	repo := parts[1]
+	prNumber, err := strconv.Atoi(parts[3])
+	if err != nil {
+		return fmt.Errorf("failed to parse PR number from GIT_HTML_URL: %w", err)
+	}
+
+	repoDir := filepath.Join(c.WorkspaceDir, repo)
 
 	ib := imagebuilder.ImageBuilder{
 		DotFilesRepo: c.UserDotfilesRepo,
@@ -259,6 +268,67 @@ func (c *ReviewCommand) Run(ctx context.Context) error {
 	log.Info("Review", "AGENT_NAME", c.AgentName)
 	rawAgentPrompt := c.AgentPrompt
 
+	// Get GitHub client and PR info earlier to support dynamic overrides
+	githubToken := tokens.GetGitHubToken()
+	if githubToken == "" {
+		return fmt.Errorf("GitHub token not found in environment variables (tried MANUAL_PAT, OAUTH_PAT, and GITHUB_TOKEN)")
+	}
+	client := clients.NewGitHubClient(ctx, githubToken)
+
+	pr, _, err := client.PullRequests.Get(ctx, owner, repo, prNumber)
+	if err != nil {
+		updateState("error", err.Error())
+		return fmt.Errorf("failed to get pull request: %w", err)
+	}
+
+	// Support dynamic overrides from PR body
+	effectiveMaxReviewFiles := c.MaxReviewFiles
+	effectiveIgnoreFiles := append([]string{}, c.IgnoreFiles...)
+	effectiveIncludeFiles := append([]string{}, c.IncludeFiles...)
+
+	if pr.Body != nil {
+		maxFiles, ignoreFiles, includeFiles := parseOverrides(*pr.Body)
+		if maxFiles != nil {
+			num := *maxFiles
+			// Cap the override to prevent excessive usage.
+			// If global MaxReviewFiles is set, allow up to 2x global (minimum 500).
+			// If global MaxReviewFiles is 0 (unlimited), we use a high safety limit of 5000 for overrides.
+			hardCap := 5000
+			if c.MaxReviewFiles > 0 {
+				hardCap = 2 * c.MaxReviewFiles
+				if hardCap < 500 {
+					hardCap = 500
+				}
+			}
+
+			if num > hardCap {
+				log.Info("Capping MaxReviewFiles override from PR body", "requested", num, "capped", hardCap)
+				num = hardCap
+			}
+			log.Info("Overriding MaxReviewFiles from PR body", "old", effectiveMaxReviewFiles, "new", num)
+			effectiveMaxReviewFiles = num
+		}
+		if len(ignoreFiles) > 0 {
+			log.Info("Adding IgnoreFiles from PR body", "count", len(ignoreFiles))
+			effectiveIgnoreFiles = append(effectiveIgnoreFiles, ignoreFiles...)
+		}
+		if len(includeFiles) > 0 {
+			// If a global IncludeFiles list exists, we don't want to allow expansion via PR body.
+			// Any PR-provided include patterns should be restricted by the global list.
+			if len(c.IncludeFiles) > 0 {
+				log.Info("Global IncludeFiles set, ignoring expansion from PR body", "count", len(includeFiles))
+			} else {
+				log.Info("Adding IncludeFiles from PR body", "count", len(includeFiles))
+				effectiveIncludeFiles = append(effectiveIncludeFiles, includeFiles...)
+			}
+		}
+	}
+
+	// Deduplicate effectiveIncludeFiles
+	if len(effectiveIncludeFiles) > 0 {
+		effectiveIncludeFiles = uniqueStrings(effectiveIncludeFiles)
+	}
+
 	// save the incoming prompt
 	if err := os.WriteFile(c.taskPath("agent-prompt.txt"), []byte(rawAgentPrompt), 0644); err != nil {
 		log.Error(err, "Failed to write prompt to file")
@@ -282,16 +352,16 @@ func (c *ReviewCommand) Run(ctx context.Context) error {
 			return fmt.Errorf("failed to parse diff from URL: %v", err)
 		}
 
-		// Filter files based on ignore patterns and generated files
-		diffFiles = filterDiffFiles(repoDir, diffFiles, c.IgnoreFiles)
+		// Filter files based on ignore/include patterns and generated files
+		diffFiles = filterDiffFiles(repoDir, diffFiles, effectiveIgnoreFiles, effectiveIncludeFiles)
 
-		if len(diffFiles) > c.MaxReviewFiles {
-			errStr := fmt.Sprintf("Too many files to review: %d (max %d)", len(diffFiles), c.MaxReviewFiles)
+		if len(diffFiles) > effectiveMaxReviewFiles {
+			errStr := fmt.Sprintf("Too many files to review: %d (max %d)", len(diffFiles), effectiveMaxReviewFiles)
 			updateState("Error: Too many files", errStr)
 			return fmt.Errorf("%s", errStr)
 		}
 
-		diffSize := getDiffSize(repoDir, diffFiles, c.IgnoreFiles)
+		diffSize := getDiffSize(diffFiles)
 		diffSizeLabel = fmt.Sprintf("size/%s", diffSize)
 		log.Info("Adding diff size label", "label", diffSizeLabel)
 		// Initialize accumulatedAgentOutput with the size label
@@ -326,35 +396,11 @@ func (c *ReviewCommand) Run(ctx context.Context) error {
 		return err
 	}
 
-	// Get existing comments
-	githubToken := tokens.GetGitHubToken()
-	if githubToken == "" {
-		return fmt.Errorf("GitHub token not found in environment variables (tried MANUAL_PAT, OAUTH_PAT, and GITHUB_TOKEN)")
-	}
-	client := clients.NewGitHubClient(ctx, githubToken)
-
-	// Reuse parts from earlier, but need to be sure about format for PR
-	// c.RepoURL: https://github.com/owner/repo/pull/123
-	if len(parts) < 4 {
-		return fmt.Errorf("invalid GIT_HTML_URL for review: %s", c.RepoURL)
-	}
-	owner := parts[0]
-	repo := parts[1]
-	prNumber, err := strconv.Atoi(parts[3])
-	if err != nil {
-		return fmt.Errorf("failed to parse PR number from GIT_HTML_URL: %w", err)
-	}
-
-	pr, _, err := client.PullRequests.Get(ctx, owner, repo, prNumber)
-	if err != nil {
-		updateState("error", err.Error())
-		return fmt.Errorf("failed to get pull request: %w", err)
-	}
-
 	model := prompts.ReviewPromptModel{
-		PullRequest: *pr,
-		Prompt:      rawAgentPrompt,
-		IgnoreFiles: c.IgnoreFiles,
+		PullRequest:  *pr,
+		Prompt:       rawAgentPrompt,
+		IgnoreFiles:  effectiveIgnoreFiles,
+		IncludeFiles: effectiveIncludeFiles,
 	}
 	expandedPrompt, err := prompts.ExpandReviewPrompt(model)
 	if err != nil {
@@ -468,43 +514,78 @@ func (c *ReviewCommand) Run(ctx context.Context) error {
 			accumulatedAgentOutput.Labels = append(accumulatedAgentOutput.Labels, existingLabels...)
 			accumulatedAgentOutput.Labels = uniqueStrings(accumulatedAgentOutput.Labels)
 
-			// Filter comments by severity threshold on the first run too
-			if c.SeverityThreshold != "" && accumulatedAgentOutput.Review != nil {
+			// Filter comments by severity threshold and ignore/include/generated lists on the first run too
+			if accumulatedAgentOutput.Review != nil {
+				effectiveIgnoreFiles = validatePatterns(effectiveIgnoreFiles)
+				effectiveIncludeFiles = validatePatterns(effectiveIncludeFiles)
+
 				var filtered []*models.DraftReviewComment
 				for _, comment := range accumulatedAgentOutput.Review.Comments {
-					if getSeverityLevel(comment.Severity) >= getSeverityLevel(c.SeverityThreshold) {
+					if comment == nil {
+						continue
+					}
+
+					if comment.Path != nil {
+						actualPath := getActualPath(*comment.Path, diffFiles)
+						if matchesAnyPattern(actualPath, effectiveIgnoreFiles) {
+							continue
+						}
+						if len(effectiveIncludeFiles) > 0 && !matchesAnyPattern(actualPath, effectiveIncludeFiles) {
+							continue
+						}
+						if IsGeneratedFile(repoDir, actualPath) {
+							continue
+						}
+					}
+
+					// Only check severity if threshold is set
+					if c.SeverityThreshold != "" {
+						if getSeverityLevel(comment.Severity) >= getSeverityLevel(c.SeverityThreshold) {
+							filtered = append(filtered, comment)
+						} else if comment.Path != nil {
+							log.Info("Filtering out comment below severity threshold", "file", *comment.Path, "severity", comment.Severity, "threshold", c.SeverityThreshold)
+						}
+					} else {
 						filtered = append(filtered, comment)
-					} else if comment.Path != nil {
-						log.Info("Filtering out comment below severity threshold", "file", *comment.Path, "severity", comment.Severity, "threshold", c.SeverityThreshold)
 					}
 				}
 				accumulatedAgentOutput.Review.Comments = filtered
 			}
 		} else {
 			for _, newComment := range agentOutput.Review.Comments {
-				if newComment == nil || newComment.Path == nil || newComment.Line == nil || newComment.Body == nil {
-					continue
-				}
-				cleanPath := strings.TrimPrefix(*newComment.Path, "b/")
-
-				if IsGeneratedFile(repoDir, cleanPath) {
-					log.Info("Filtering out comment on generated file", "file", *newComment.Path)
+				if newComment == nil || newComment.Line == nil || newComment.Body == nil {
 					continue
 				}
 
-				if shouldIgnoreFile(cleanPath, c.IgnoreFiles) {
-					log.Info("Filtering out comment on ignored file", "file", *newComment.Path)
-					continue
+				if newComment.Path != nil {
+					actualPath := getActualPath(*newComment.Path, diffFiles)
+
+					if matchesAnyPattern(actualPath, effectiveIgnoreFiles) {
+						log.Info("Filtering out comment on ignored file", "file", *newComment.Path)
+						continue
+					}
+
+					if len(effectiveIncludeFiles) > 0 && !matchesAnyPattern(actualPath, effectiveIncludeFiles) {
+						log.Info("Filtering out comment on file not in include list", "file", *newComment.Path)
+						continue
+					}
+
+					if IsGeneratedFile(repoDir, actualPath) {
+						log.Info("Filtering out comment on generated file", "file", *newComment.Path)
+						continue
+					}
 				}
 
 				if getSeverityLevel(newComment.Severity) < getSeverityLevel(c.SeverityThreshold) {
-					log.Info("Filtering out comment below severity threshold", "file", *newComment.Path, "severity", newComment.Severity, "threshold", c.SeverityThreshold)
+					if newComment.Path != nil {
+						log.Info("Filtering out comment below severity threshold", "file", *newComment.Path, "severity", newComment.Severity, "threshold", c.SeverityThreshold)
+					}
 					continue
 				}
 
 				if !isDuplicateCommentExact(newComment, existingComments, accumulatedAgentOutput.Review.Comments) {
 					accumulatedAgentOutput.Review.Comments = append(accumulatedAgentOutput.Review.Comments, newComment)
-				} else {
+				} else if newComment.Path != nil {
 					log.Info("Filtering out duplicate comment", "file", *newComment.Path, "line", *newComment.Line)
 				}
 			}
@@ -668,7 +749,7 @@ func isDuplicateCommentExact(newComment *models.DraftReviewComment, existingComm
 		if existingComment.Path == nil || existingComment.Line == nil || existingComment.Body == nil {
 			continue
 		}
-		if *newComment.Path == *existingComment.Path &&
+		if pathMatches(*newComment.Path, *existingComment.Path) &&
 			*newComment.Line == *existingComment.Line &&
 			*newComment.Body == *existingComment.Body {
 			return true
@@ -681,7 +762,7 @@ func isDuplicateCommentExact(newComment *models.DraftReviewComment, existingComm
 		if existingComment.Path == nil || existingComment.Line == nil || existingComment.Body == nil {
 			continue
 		}
-		if *newComment.Path == *existingComment.Path &&
+		if pathMatches(*newComment.Path, *existingComment.Path) &&
 			*newComment.Line == *existingComment.Line &&
 			*newComment.Body == *existingComment.Body {
 			return true
@@ -730,8 +811,11 @@ func isCommentValid(comment *models.DraftReviewComment, diffFiles []*gitdiff.Fil
 	if comment.Side != nil {
 		side = *comment.Side
 	}
+
+	actualPath := getActualPath(*comment.Path, diffFiles)
+
 	for _, file := range diffFiles {
-		if file.NewName == *comment.Path {
+		if file.NewName == actualPath {
 			for _, fragment := range file.TextFragments {
 				if side == "RIGHT" {
 					if fragment.NewPosition <= int64(*comment.Line) && int64(*comment.Line) <= fragment.NewPosition+fragment.NewLines {
@@ -758,20 +842,9 @@ var sizeToComments = map[string]int{
 }
 
 // getDiffSize categorizes the diff based on the total number of lines changed.
-func getDiffSize(repoDir string, files []*gitdiff.File, ignoreFiles []string) string {
+func getDiffSize(files []*gitdiff.File) string {
 	var totalLinesChanged int64
 	for _, file := range files {
-		// Git diffs usually use a/ and b/ prefixes
-		path := strings.TrimPrefix(file.NewName, "b/")
-
-		if IsGeneratedFile(repoDir, path) {
-			continue
-		}
-
-		if shouldIgnoreFile(path, ignoreFiles) {
-			continue
-		}
-
 		for _, fragment := range file.TextFragments {
 			totalLinesChanged += fragment.LinesAdded
 			totalLinesChanged += fragment.LinesDeleted
@@ -829,8 +902,46 @@ func dedupeAndCombineText(provider llm.Provider, text string) (string, *llm.Stat
 	return string(output), usage, nil
 }
 
-func shouldIgnoreFile(path string, ignorePatterns []string) bool {
-	for _, pattern := range ignorePatterns {
+func getActualPath(path string, diffFiles []*gitdiff.File) string {
+	for _, f := range diffFiles {
+		if f.NewName == path {
+			return path
+		}
+	}
+	// Try matching by stripping prefixes from input
+	strippedPath := stripGitPrefix(path)
+	for _, f := range diffFiles {
+		if f.NewName == strippedPath {
+			return f.NewName
+		}
+	}
+	// Try matching by stripping prefixes from both
+	for _, f := range diffFiles {
+		if stripGitPrefix(f.NewName) == strippedPath {
+			return f.NewName
+		}
+	}
+	return path
+}
+
+func pathMatches(p1, p2 string) bool {
+	if p1 == p2 {
+		return true
+	}
+	s1 := stripGitPrefix(p1)
+	s2 := stripGitPrefix(p2)
+	return s1 == s2 || s1 == p2 || p1 == s2
+}
+
+func stripGitPrefix(path string) string {
+	if strings.HasPrefix(path, "a/") || strings.HasPrefix(path, "b/") {
+		return path[2:]
+	}
+	return path
+}
+
+func matchesAnyPattern(path string, patterns []string) bool {
+	for _, pattern := range patterns {
 		// Special case for recursive directory matching with ** at the end
 		if strings.HasSuffix(pattern, "/**") {
 			prefix := strings.TrimSuffix(pattern, "**")
@@ -855,21 +966,47 @@ func shouldIgnoreFile(path string, ignorePatterns []string) bool {
 	return false
 }
 
-func filterDiffFiles(repoDir string, diffFiles []*gitdiff.File, ignoreFiles []string) []*gitdiff.File {
+func validatePatterns(patterns []string) []string {
+	var valid []string
+	for _, p := range patterns {
+		// filepath.Match only returns error on malformed patterns
+		// We test it with a dummy string
+		_, err := filepath.Match(p, "test")
+		if err != nil {
+			klog.Warningf("Ignoring malformed glob pattern '%s': %v", p, err)
+			continue
+		}
+		valid = append(valid, p)
+	}
+	return valid
+}
+
+func filterDiffFiles(repoDir string, diffFiles []*gitdiff.File, ignoreFiles []string, includeFiles []string) []*gitdiff.File {
+	ignoreFiles = validatePatterns(ignoreFiles)
+	includeFiles = validatePatterns(includeFiles)
+
 	var filteredDiffFiles []*gitdiff.File
 	for _, file := range diffFiles {
-		// gitdiff usually uses a/ and b/ prefixes
-		path := strings.TrimPrefix(file.NewName, "b/")
+		// Use the name directly as gitdiff already stripped prefixes.
+		path := file.NewName
+
+		if matchesAnyPattern(path, ignoreFiles) {
+			klog.Infof("Filtering out ignored file: %s", path)
+			continue
+		}
+
+		if len(includeFiles) > 0 {
+			if !matchesAnyPattern(path, includeFiles) {
+				klog.Infof("Filtering out file not in include list: %s", path)
+				continue
+			}
+		}
 
 		if IsGeneratedFile(repoDir, path) {
 			klog.Infof("Filtering out generated file: %s", path)
 			continue
 		}
 
-		if shouldIgnoreFile(path, ignoreFiles) {
-			klog.Infof("Filtering out ignored file: %s", path)
-			continue
-		}
 		filteredDiffFiles = append(filteredDiffFiles, file)
 	}
 	return filteredDiffFiles
@@ -888,4 +1025,144 @@ func getSeverityLevel(severity string) int {
 	default:
 		return 2 // Default to medium if not specified or unknown
 	}
+}
+
+func parseOverrides(body string) (*int, []string, []string) {
+	var maxFiles *int
+	var ignoreFiles []string
+	var includeFiles []string
+
+	lines := strings.Split(body, "\n")
+	inCodeBlock := false
+	for _, line := range lines {
+		trimmedLine := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmedLine, "```") {
+			inCodeBlock = !inCodeBlock
+			continue
+		}
+		if inCodeBlock {
+			continue
+		}
+
+		processedLine := strings.Trim(trimmedLine, "`")
+		lowerLine := strings.ToLower(processedLine)
+
+		if val, ok := processCmd("/max-review-files", lowerLine, processedLine); ok {
+			if num, err := strconv.Atoi(val); err == nil {
+				maxFiles = &num
+			}
+		} else if val, ok := processCmd("/ignore-files", lowerLine, processedLine); ok {
+			ignoreFiles = append(ignoreFiles, splitFiles(val)...)
+		} else if val, ok := processCmd("/include-files", lowerLine, processedLine); ok {
+			includeFiles = append(includeFiles, splitFiles(val)...)
+		}
+	}
+	return maxFiles, ignoreFiles, includeFiles
+}
+
+func processCmd(cmd, lowerLine, fullLine string) (string, bool) {
+	if !strings.HasPrefix(lowerLine, cmd) {
+		return "", false
+	}
+	valStr := fullLine[len(cmd):]
+	if len(valStr) == 0 {
+		return "", true
+	}
+
+	i := 0
+	// 1. If it starts with : or =, these are definitely separators. Skip them.
+	if i < len(valStr) && (valStr[i] == ':' || valStr[i] == '=') {
+		for i < len(valStr) && (valStr[i] == ':' || valStr[i] == '=') {
+			i++
+		}
+		// Skip any whitespace after the separators
+		for i < len(valStr) && (valStr[i] == ' ' || valStr[i] == '\t') {
+			i++
+		}
+		return strings.TrimSpace(valStr[i:]), true
+	}
+
+	// 2. It starts with whitespace (or it was empty). Skip all leading whitespace.
+	for i < len(valStr) && (valStr[i] == ' ' || valStr[i] == '\t') {
+		i++
+	}
+
+	// 3. For numerical overrides, we can be more aggressive and skip a following : or = separator.
+	// For file lists, we are conservative to avoid stripping characters that might be part of a filename.
+	if cmd == "/max-review-files" {
+		for i < len(valStr) && (valStr[i] == ':' || valStr[i] == '=' || valStr[i] == ' ' || valStr[i] == '\t') {
+			i++
+		}
+	}
+
+	// If we haven't advanced 'i', it means the character immediately after 'cmd'
+	// was not a separator or whitespace. This is likely an unintended suffix (e.g., /ignore-files-extra).
+	if i == 0 && len(valStr) > 0 {
+		return "", false
+	}
+
+	return strings.TrimSpace(valStr[i:]), true
+}
+
+func splitFiles(val string) []string {
+	var files []string
+	val = strings.TrimSpace(val)
+	if val == "" {
+		return nil
+	}
+
+	hasExplicitSeparator := strings.Contains(val, ",") || strings.Contains(val, ";")
+
+	// Robust splitting that handles quotes, spaces, commas, and semicolons
+	var current strings.Builder
+	inQuote := false
+	var quoteChar rune
+	for _, r := range val {
+		if (r == '"' || r == '\'' || r == '`') && (!inQuote || r == quoteChar) {
+			if inQuote {
+				inQuote = false
+			} else {
+				inQuote = true
+				quoteChar = r
+			}
+			continue
+		}
+		// Treat as delimiter:
+		// 1. Newlines/carriage returns are always delimiters.
+		// 2. Comma and semicolon are always delimiters.
+		// 3. Space and tab are delimiters ONLY if no explicit separator (comma/semicolon) is present.
+		isDelimiter := r == '\n' || r == '\r' || r == ',' || r == ';'
+		if !isDelimiter && !hasExplicitSeparator {
+			isDelimiter = r == ' ' || r == '\t'
+		}
+
+		if !inQuote && isDelimiter {
+			f := strings.TrimSpace(current.String())
+			if f != "" {
+				files = append(files, f)
+			}
+			current.Reset()
+			continue
+		}
+		current.WriteRune(r)
+	}
+	f := strings.TrimSpace(current.String())
+	if f != "" {
+		files = append(files, f)
+	}
+	return files
+}
+
+func parseCommaSeparatedEnv(key string) []string {
+	var result []string
+	envStr := os.Getenv(key)
+	if envStr != "" {
+		for _, s := range strings.Split(envStr, ",") {
+			s = strings.TrimSpace(s)
+			if s != "" {
+				result = append(result, s)
+			}
+		}
+	}
+	return result
 }

@@ -234,6 +234,10 @@ spec:
                     type: array
                   image:
                     type: string
+                  includeFiles:
+                    items:
+                      type: string
+                    type: array
                   labels:
                     items:
                       items:

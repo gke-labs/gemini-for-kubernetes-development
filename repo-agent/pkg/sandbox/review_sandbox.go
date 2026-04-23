@@ -26,6 +26,7 @@ type ReviewSandboxOptions struct {
 
 	MaxReviewFiles    int
 	IgnoreFiles       []string
+	IncludeFiles      []string
 	SeverityThreshold string
 	LLMExtensions     []reviewv1alpha1.Extension
 	WorkspaceDiskSize string
@@ -52,12 +53,11 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 	for k, v := range opt.Labels {
 		labels[k] = v
 	}
-	// Default type to review if not set
-	if _, ok := labels["sandbox-type"]; !ok {
-		labels["sandbox-type"] = "review"
-	}
 	if _, ok := labels["sandbox.gemini.google.com/type"]; !ok {
 		labels["sandbox.gemini.google.com/type"] = "review"
+	}
+	if _, ok := labels["sandbox-type"]; !ok {
+		labels["sandbox-type"] = labels["sandbox.gemini.google.com/type"]
 	}
 
 	annotations := make(map[string]interface{})
@@ -97,6 +97,7 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 		map[string]interface{}{"name": "PRID", "value": fmt.Sprintf("%d", opt.PRNumber)},
 		map[string]interface{}{"name": "MAX_REVIEW_FILES", "value": strconv.Itoa(opt.MaxReviewFiles)},
 		map[string]interface{}{"name": "IGNORE_FILES", "value": strings.Join(opt.IgnoreFiles, ",")},
+		map[string]interface{}{"name": "INCLUDE_FILES", "value": strings.Join(opt.IncludeFiles, ",")},
 		map[string]interface{}{"name": "SEVERITY_THRESHOLD", "value": opt.SeverityThreshold},
 		map[string]interface{}{"name": "AGENT_NAME", "value": opt.LLMProvider},
 		map[string]interface{}{"name": "GITHUB_USER_LOGIN", "value": opt.UserLogin},
@@ -218,7 +219,9 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 				"podTemplate": map[string]interface{}{
 					"metadata": map[string]interface{}{
 						"labels": map[string]interface{}{
-							"sandbox": sandboxName,
+							"sandbox":                        sandboxName,
+							"sandbox.gemini.google.com/type": labels["sandbox.gemini.google.com/type"],
+							"sandbox-type":                   labels["sandbox-type"],
 						},
 					},
 					"spec": map[string]interface{}{

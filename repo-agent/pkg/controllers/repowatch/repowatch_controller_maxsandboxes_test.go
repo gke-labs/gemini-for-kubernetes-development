@@ -78,6 +78,9 @@ func TestReconcileReviewSandboxes_MaxSandboxes(t *testing.T) {
 			"metadata": map[string]interface{}{
 				"name":      "test-repowatch-pr-1",
 				"namespace": "default",
+				"labels": map[string]interface{}{
+					"review.gemini.google.com/repowatch": "test-repowatch",
+				},
 				"ownerReferences": []interface{}{
 					map[string]interface{}{
 						"apiVersion": "review.gemini.google.com/v1alpha1",
@@ -101,6 +104,9 @@ func TestReconcileReviewSandboxes_MaxSandboxes(t *testing.T) {
 			"metadata": map[string]interface{}{
 				"name":      "test-repowatch-pr-2",
 				"namespace": "default",
+				"labels": map[string]interface{}{
+					"review.gemini.google.com/repowatch": "test-repowatch",
+				},
 				"ownerReferences": []interface{}{
 					map[string]interface{}{
 						"apiVersion": "review.gemini.google.com/v1alpha1",
@@ -213,7 +219,8 @@ func TestReconcileIssueHandlerSandboxes_MaxSandboxes(t *testing.T) {
 				"name":      "test-repowatch-issue-1",
 				"namespace": "default",
 				"labels": map[string]interface{}{
-					"sandbox.gemini.google.com/type": "issue",
+					"sandbox.gemini.google.com/type":     "issue",
+					"review.gemini.google.com/repowatch": "test-repowatch",
 				},
 				"ownerReferences": []interface{}{
 					map[string]interface{}{
@@ -239,7 +246,8 @@ func TestReconcileIssueHandlerSandboxes_MaxSandboxes(t *testing.T) {
 				"name":      "test-repowatch-issue-2",
 				"namespace": "default",
 				"labels": map[string]interface{}{
-					"sandbox.gemini.google.com/type": "issue",
+					"sandbox.gemini.google.com/type":     "issue",
+					"review.gemini.google.com/repowatch": "test-repowatch",
 				},
 				"ownerReferences": []interface{}{
 					map[string]interface{}{
@@ -362,7 +370,8 @@ func TestReconcileDevSandboxes_MaxSandboxes(t *testing.T) {
 				"name":      "feature-1-dev",
 				"namespace": "default",
 				"labels": map[string]interface{}{
-					"sandbox.gemini.google.com/type": "dev",
+					"sandbox.gemini.google.com/type":     "dev",
+					"review.gemini.google.com/repowatch": "test-repowatch",
 				},
 				"annotations": map[string]interface{}{
 					"sandbox.gemini.google.com/branch": "feature-1",

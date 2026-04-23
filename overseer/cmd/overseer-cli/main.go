@@ -326,6 +326,7 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 			Labels: map[string]string{
 				"review.gemini.google.com/overseer": overseer.Name,
 				"sandbox.gemini.google.com/type":    "chore",
+				"sandbox-type":                      "chore",
 				"chore.gemini.google.com/name":      slugify(chore.Name),
 			},
 			CloneURL:            cloneURL,
@@ -823,6 +824,7 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 			Labels: map[string]string{
 				"review.gemini.google.com/overseer": overseer.Name,
 				"sandbox.gemini.google.com/type":    "issue",
+				"sandbox-type":                      "issue",
 			},
 			CloneURL:            cloneURL,
 			HTMLURL:             issue.GetHTMLURL(),
@@ -895,6 +897,7 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 			Labels: map[string]string{
 				"review.gemini.google.com/overseer": overseer.Name,
 				"sandbox.gemini.google.com/type":    "review",
+				"sandbox-type":                      "review",
 			},
 			UserLogin:             userLogin,
 			UserName:              userName,

@@ -112,9 +112,16 @@ func (s *Server) listIssuesFromK8s(ctx context.Context, namespace, repo string) 
 
 	var issues []models.Issue
 	for _, item := range list.Items {
-		// Filter out dev sandboxes
+		// Filter out dev sandboxes (checking both new and legacy labels)
 		labels := item.GetLabels()
-		if labels != nil && labels["sandbox.gemini.google.com/type"] == "dev" {
+		sType := ""
+		if labels != nil {
+			sType = labels["sandbox.gemini.google.com/type"]
+			if sType == "" {
+				sType = labels["sandbox-type"]
+			}
+		}
+		if sType == "dev" {
 			continue
 		}
 

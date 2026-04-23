@@ -129,7 +129,11 @@ func main() {
 
 		if u.GetKind() == "Sandbox" {
 			labels := u.GetLabels()
-			if labels["sandbox-type"] != "review" {
+			sType := labels["sandbox.gemini.google.com/type"]
+			if sType == "" {
+				sType = labels["sandbox-type"]
+			}
+			if sType != "review" {
 				continue
 			}
 		}

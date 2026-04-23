@@ -418,7 +418,8 @@ func TestReconcileIssueHandlerSandboxes(t *testing.T) {
 				// If name is `test-repowatch-issue-2`, split by `-issue-` works.
 				"namespace": "default",
 				"labels": map[string]interface{}{
-					"sandbox.gemini.google.com/type": "issue",
+					"sandbox.gemini.google.com/type":     "issue",
+					"review.gemini.google.com/repowatch": "test-repowatch",
 				},
 				"ownerReferences": []interface{}{
 					map[string]interface{}{
@@ -505,7 +506,8 @@ func TestReconcileIssueHandlerSandboxes(t *testing.T) {
 					"name":      "test-repowatch-issue-1", // Must match controller naming
 					"namespace": "default",
 					"labels": map[string]interface{}{
-						"sandbox.gemini.google.com/type": "issue",
+						"sandbox.gemini.google.com/type":     "issue",
+						"review.gemini.google.com/repowatch": "test-repowatch",
 					},
 					"ownerReferences": []interface{}{
 						map[string]interface{}{
