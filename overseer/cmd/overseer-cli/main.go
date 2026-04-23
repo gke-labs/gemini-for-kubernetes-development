@@ -204,6 +204,10 @@ func isGitHubTransient(err error) bool {
 	if errors.As(err, &rateLimitErr) {
 		return true
 	}
+	var abuseErr *githubv39.AbuseRateLimitError
+	if errors.As(err, &abuseErr) {
+		return true
+	}
 
 	var githubErr *githubv39.ErrorResponse
 	if errors.As(err, &githubErr) {
