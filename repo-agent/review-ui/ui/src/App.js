@@ -26,6 +26,7 @@ function App() {
   const [githubClientId, setGithubClientId] = useState('');
   const [githubClientSecret, setGithubClientSecret] = useState('');
   const [isGeminiKeySet, setIsGeminiKeySet] = useState(true); // Default to true to avoid flash of warning
+  const [isClaudeKeySet, setIsClaudeKeySet] = useState(true);
   const [configError, setConfigError] = useState('');
 
   const [repos, setRepos] = useState([]);
@@ -152,7 +153,8 @@ function App() {
         .then(res => res.json())
         .then(data => {
           setIsGeminiKeySet(data.gemini_api_key_set);
-          if (!data.gemini_api_key_set && !hasRedirectedMissingKey.current && isAuthenticated) {
+          setIsClaudeKeySet(data.claude_api_key_set);
+          if (!data.gemini_api_key_set && !data.claude_api_key_set && !hasRedirectedMissingKey.current && isAuthenticated) {
             hasRedirectedMissingKey.current = true;
             setView('settings');
           }
@@ -1310,8 +1312,8 @@ function App() {
           </button>
         ))}
         <button className="tab-btn add-repo-btn" onClick={() => {
-          if (!isGeminiKeySet && !isGuest) {
-            alert("Please set your Gemini API Key in Settings before adding a repository.");
+          if (!isGeminiKeySet && !isClaudeKeySet && !isGuest) {
+            alert("Please set your Gemini or Claude API Key in Settings before adding a repository.");
             setView('settings');
           } else {
             setView('add_repo');
@@ -1416,9 +1418,9 @@ function App() {
         </div>
       </header>
       
-      {(isAuthenticated || isGuest) && !isGeminiKeySet && (
+      {(isAuthenticated || isGuest) && !isGeminiKeySet && !isClaudeKeySet && (
         <div className="warning-banner">
-          <strong>⚠️ Gemini API Key Missing:</strong> Please configure your Gemini API Key in <a href="#" onClick={(e) => { e.preventDefault(); setView('settings'); }}>Settings</a> to enable code reviews and issue handling.
+          <strong>⚠️ API Keys Missing:</strong> Please configure your Gemini or Claude API Key in <a href="#" onClick={(e) => { e.preventDefault(); setView('settings'); }}>Settings</a> to enable code reviews and issue handling.
         </div>
       )}
 

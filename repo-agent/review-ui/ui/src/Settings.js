@@ -3,7 +3,8 @@ import React, { useState, useEffect } from 'react';
 function Settings({ onBack }) {
     const [githubPat, setGithubPat] = useState('');
     const [geminiKey, setGeminiKey] = useState('');
-    const [status, setStatus] = useState({ github_pat_set: false, gemini_api_key_set: false });
+    const [claudeKey, setClaudeKey] = useState('');
+    const [status, setStatus] = useState({ github_pat_set: false, gemini_api_key_set: false, claude_api_key_set: false });
     const [isLoading, setIsLoading] = useState(true);
     const [message, setMessage] = useState({ text: '', type: '' }); // type: 'success' or 'error'
     const [versionInfo, setVersionInfo] = useState({ version: '...', commit: '...' });
@@ -43,6 +44,7 @@ function Settings({ onBack }) {
         const payload = {};
         if (githubPat) payload.github_pat = githubPat;
         if (geminiKey) payload.gemini_api_key = geminiKey;
+        if (claudeKey) payload.claude_api_key = claudeKey;
 
         if (Object.keys(payload).length === 0) {
              setMessage({ text: 'Nothing to update.', type: 'info' });
@@ -59,6 +61,7 @@ function Settings({ onBack }) {
                 setMessage({ text: 'Settings updated successfully!', type: 'success' });
                 setGithubPat('');
                 setGeminiKey('');
+                setClaudeKey('');
                 // Refresh status
                 fetch('/api/settings').then(r => r.json()).then(setStatus);
             } else {
@@ -177,6 +180,25 @@ function Settings({ onBack }) {
                     <p style={{ fontSize: '0.9rem', marginTop: '5px' }}>
                         Required for AI-powered reviews and triage. 
                         Check your <a href="https://ai.dev/rate-limit" target="_blank" rel="noopener noreferrer">token usage</a>.
+                    </p>
+                </div>
+
+                <div className="form-group">
+                    <label htmlFor="claudeKey">Claude API Key:</label>
+                    <div className="input-status-wrapper">
+                        <input
+                            type="password"
+                            id="claudeKey"
+                            value={claudeKey}
+                            onChange={(e) => setClaudeKey(e.target.value)}
+                            placeholder={status.claude_api_key_set ? "(Currently set - leave blank to keep)" : "Enter new API Key"}
+                        />
+                         <span className={`status-badge ${status.claude_api_key_set ? 'set' : 'missing'}`}>
+                            {status.claude_api_key_set ? '✅ Configured' : '⚠️ Not Set'}
+                        </span>
+                    </div>
+                    <p style={{ fontSize: '0.9rem', marginTop: '5px' }}>
+                        Required for Claude-powered analysis.
                     </p>
                 </div>
 
