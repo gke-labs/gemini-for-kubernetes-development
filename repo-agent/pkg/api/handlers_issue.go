@@ -315,7 +315,7 @@ func (s *Server) submitIssueComment(c *gin.Context) {
 		return
 	}
 
-	body := s.applyTraceabilityMetadata(c, commentText, metadata.TaskTypeIssueComment, sandboxName, taskNameReq, taskUIDReq)
+	body := s.applyTraceabilityMetadataWithSandbox(c, commentText, metadata.TaskTypeIssueComment, sandboxName, taskNameReq, taskUIDReq, sandbox)
 	comment := &github.IssueComment{Body: &body}
 	_, _, err = client.Issues.CreateComment(ctx, owner, repoName, issueNumber, comment)
 	if err != nil {
@@ -603,7 +603,7 @@ func (s *Server) getIssueCommits(c *gin.Context) {
 		matches := prURLRegex.FindAllString(agentDraft, -1)
 		for _, match := range matches {
 			if prRef, err := pkg_github.ParsePullRequestURL(match); err == nil {
-				if p, _, err := client.PullRequests.Get(c.Request.Context(), prRef.Repo.Owner, prRef.Repo.Name, prRef.PullRequestNumber); err == nil {
+				if p, _, getErr := client.PullRequests.Get(c.Request.Context(), prRef.Repo.Owner, prRef.Repo.Name, prRef.PullRequestNumber); getErr == nil {
 					linkedPR = p
 					break
 				}
@@ -620,11 +620,12 @@ func (s *Server) getIssueCommits(c *gin.Context) {
 					matches := prURLRegex.FindAllString(tAgentDraft, -1)
 					for _, match := range matches {
 						if prRef, err := pkg_github.ParsePullRequestURL(match); err == nil {
-							if p, _, err := client.PullRequests.Get(c.Request.Context(), prRef.Repo.Owner, prRef.Repo.Name, prRef.PullRequestNumber); err == nil {
+							if p, _, getErr := client.PullRequests.Get(c.Request.Context(), prRef.Repo.Owner, prRef.Repo.Name, prRef.PullRequestNumber); getErr == nil {
 								linkedPR = p
 								break
+							} else {
+								log.Error(getErr, "Failed to get PR details from GitHub", "match", match)
 							}
-							log.Error(err, "Failed to get PR details from GitHub", "match", match)
 						} else {
 							log.Error(err, "Failed to parse PR URL from agentDraft", "match", match)
 						}

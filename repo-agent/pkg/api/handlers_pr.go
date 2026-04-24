@@ -319,8 +319,12 @@ func (s *Server) submitReview(c *gin.Context) {
 	agentOutput := &models.ReviewAgentOutput{}
 	reviewRequest := &github.PullRequestReviewRequest{}
 	err = yaml.Unmarshal([]byte(reviewText), &agentOutput)
-	if err != nil {
-		log.Info("Failed to unmarshal review payload", "err", err)
+	if err != nil || agentOutput.Review == nil {
+		if err != nil {
+			log.Info("Failed to unmarshal review payload", "err", err)
+		} else {
+			log.Info("Review field missing in YAML payload")
+		}
 		reviewRequest.Body = github.String(reviewText)
 	} else {
 		reviewRequest = agentOutput.Review.ToGitHubReviewRequest()
@@ -351,7 +355,7 @@ func (s *Server) submitReview(c *gin.Context) {
 	}
 
 	if body != "" || len(reviewRequest.Comments) == 0 {
-		newBody := s.applyTraceabilityMetadata(c, body, metadata.TaskTypePRReview, sandboxName, taskNameReq, taskUIDReq)
+		newBody := s.applyTraceabilityMetadataWithSandbox(c, body, metadata.TaskTypePRReview, sandboxName, taskNameReq, taskUIDReq, sandbox)
 		reviewRequest.Body = &newBody
 	} else {
 		// Only inline comments. Add metadata to the first comment to maintain traceability
@@ -363,7 +367,7 @@ func (s *Server) submitReview(c *gin.Context) {
 			commentBody = *firstComment.Body
 		}
 
-		newCommentBody := s.applyTraceabilityMetadata(c, commentBody, metadata.TaskTypePRReview, sandboxName, taskNameReq, taskUIDReq)
+		newCommentBody := s.applyTraceabilityMetadataWithSandbox(c, commentBody, metadata.TaskTypePRReview, sandboxName, taskNameReq, taskUIDReq, sandbox)
 		if firstComment != nil {
 			firstComment.Body = &newCommentBody
 		}

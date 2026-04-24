@@ -182,6 +182,9 @@ func truncateLogString(s string, limit int) string {
 	if len(s) <= limit {
 		return s
 	}
+	if limit <= len(suffix) {
+		return truncateToRuneBoundary(s, limit)
+	}
 	return truncateToRuneBoundary(s, limit-len(suffix)) + suffix
 }
 

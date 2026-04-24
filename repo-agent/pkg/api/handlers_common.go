@@ -153,28 +153,70 @@ func truncateString(s string, limit int) string {
 
 	for {
 		needsClosing := ""
-		// To correctly handle nested blocks, we scan the string from the beginning.
-		backtickOpen := false
-		tildeOpen := false
-
+		var stack []string
 		i := 0
 		for i < len(res) {
-			if !tildeOpen && strings.HasPrefix(res[i:], "```") {
-				backtickOpen = !backtickOpen
-				i += 3
-			} else if !backtickOpen && strings.HasPrefix(res[i:], "~~~") {
-				tildeOpen = !tildeOpen
-				i += 3
+			top := ""
+			if len(stack) > 0 {
+				top = stack[len(stack)-1]
+			}
+
+			if top == "```" {
+				if strings.HasPrefix(res[i:], "```") {
+					stack = stack[:len(stack)-1]
+					i += 3
+				} else {
+					i++
+				}
+			} else if top == "~~~" {
+				if strings.HasPrefix(res[i:], "~~~") {
+					stack = stack[:len(stack)-1]
+					i += 3
+				} else {
+					i++
+				}
+			} else if top != "" && top[0] == '`' {
+				// Inline code. Must match exact number of backticks.
+				count := 0
+				for i+count < len(res) && res[i+count] == '`' {
+					count++
+				}
+				if count == len(top) {
+					stack = stack[:len(stack)-1]
+					i += count
+				} else {
+					// According to CommonMark, backticks inside code spans are just text
+					// unless they match the opening delimiter length.
+					i++
+				}
 			} else {
-				i++
+				// Outside any block.
+				if strings.HasPrefix(res[i:], "```") {
+					stack = append(stack, "```")
+					i += 3
+				} else if strings.HasPrefix(res[i:], "~~~") {
+					stack = append(stack, "~~~")
+					i += 3
+				} else if res[i] == '`' {
+					count := 0
+					for i+count < len(res) && res[i+count] == '`' {
+						count++
+					}
+					stack = append(stack, strings.Repeat("`", count))
+					i += count
+				} else {
+					i++
+				}
 			}
 		}
 
-		if backtickOpen {
-			needsClosing += "\n```"
-		}
-		if tildeOpen {
-			needsClosing += "\n~~~"
+		for j := len(stack) - 1; j >= 0; j-- {
+			tag := stack[j]
+			if tag == "```" || tag == "~~~" {
+				needsClosing += "\n" + tag
+			} else {
+				needsClosing += tag
+			}
 		}
 
 		if needsClosing == "" || len(res)+len(needsClosing) <= limit {
@@ -182,12 +224,8 @@ func truncateString(s string, limit int) string {
 			break
 		}
 
-		// If adding closing blocks exceeds the limit, truncate further and re-evaluate.
-		// We jump to the available space minus the closing block.
 		newLimit := limit - len(needsClosing)
 		if newLimit <= 0 {
-			// If even the closing tags don't fit, or if we would be left with only
-			// closing tags, we should trigger the fallback logic.
 			res = ""
 			break
 		}
@@ -198,7 +236,6 @@ func truncateString(s string, limit int) string {
 		if len(truncatedFallback) <= limit {
 			return truncatedFallback
 		}
-		// Final safety: if even fallback doesn't fit, return truncated fallback.
 		return truncateToRuneBoundary(truncatedFallback, limit)
 	}
 	return res
@@ -212,10 +249,6 @@ func truncateToRuneBoundary(s string, limit int) string {
 		return s
 	}
 
-	// This loop is O(1) in practice because utf8.RuneStart will match within
-	// a maximum of 4 bytes for any valid UTF-8 string.
-	// We start from the byte at the limit and walk backwards to find the
-	// beginning of the last (possibly multi-byte) rune.
 	for i := limit; i >= 0; i-- {
 		if utf8.RuneStart(s[i]) {
 			return s[:i]
@@ -226,7 +259,6 @@ func truncateToRuneBoundary(s string, limit int) string {
 
 func (s *Server) getTaskMetadata(ctx context.Context, namespace, sandboxName, taskName, taskUID string) (string, string) {
 	if sandboxName == "" || sandboxName == "n/a" {
-		// Even without a sandbox name, preserve explicitly provided metadata.
 		if taskName == "" {
 			taskName = "n/a"
 		}
@@ -236,13 +268,10 @@ func (s *Server) getTaskMetadata(ctx context.Context, namespace, sandboxName, ta
 		return taskName, taskUID
 	}
 
-	// If BOTH are missing or explicitly n/a, we'll fall back to latest.
-	// If only one is missing or n/a, we try to preserve or resolve the other.
 	if (taskName == "" || taskName == "n/a") && (taskUID == "" || taskUID == "n/a") {
 		return s.getLatestTaskMetadata(ctx, namespace, sandboxName)
 	}
 
-	// If we have a taskName but no UID, try to find the UID in the sandbox's tasks.
 	if taskName != "" && taskName != "n/a" && (taskUID == "" || taskUID == "n/a") {
 		taskList, err := s.K8sManager.ListSandboxTasks(ctx, namespace, sandboxName)
 		if err == nil {
@@ -259,7 +288,6 @@ func (s *Server) getTaskMetadata(ctx context.Context, namespace, sandboxName, ta
 		}
 	}
 
-	// If we have a taskUID but no name (or name is "n/a"), try to resolve the name.
 	if taskUID != "" && taskUID != "n/a" && (taskName == "" || taskName == "n/a") {
 		taskList, err := s.K8sManager.ListSandboxTasks(ctx, namespace, sandboxName)
 		if err == nil {
@@ -273,7 +301,6 @@ func (s *Server) getTaskMetadata(ctx context.Context, namespace, sandboxName, ta
 		} else {
 			klog.FromContext(ctx).Error(err, "Failed to list tasks for sandbox to resolve name", "sandbox", sandboxName)
 		}
-		// If not found, just return what we have
 		return "n/a", taskUID
 	}
 
@@ -283,19 +310,20 @@ func (s *Server) getTaskMetadata(ctx context.Context, namespace, sandboxName, ta
 // applyTraceabilityMetadata appends a structured metadata footer to a body string
 // if traceability is enabled and the footer is not already present.
 func (s *Server) applyTraceabilityMetadata(c *gin.Context, body string, taskType string, sandboxName string, taskNameReq string, taskUIDReq string) string {
+	return s.applyTraceabilityMetadataWithSandbox(c, body, taskType, sandboxName, taskNameReq, taskUIDReq, nil)
+}
+
+func (s *Server) applyTraceabilityMetadataWithSandbox(c *gin.Context, body string, taskType string, sandboxName string, taskNameReq string, taskUIDReq string, sb *unstructured.Unstructured) string {
 	const githubLimit = 65536
 	const safetyMargin = 536
 	const limit = githubLimit - safetyMargin
 
 	body = strings.TrimRight(body, " \t\n\r")
 
-	// Identify and remove existing footer to avoid duplication and ensure it's not truncated
-	// if it was already near the limit.
 	if footerStart := strings.LastIndex(body, "<!-- repo-agent-metadata"); footerStart != -1 {
 		footerEnd := strings.Index(body[footerStart:], "-->")
 		contentBefore := body[:footerStart]
 
-		// Also remove the preceding rule if present to avoid stacking them
 		contentBefore = strings.TrimRight(contentBefore, " \t\n\r")
 		if strings.HasSuffix(contentBefore, "---") {
 			contentBefore = strings.TrimSuffix(contentBefore, "---")
@@ -303,10 +331,8 @@ func (s *Server) applyTraceabilityMetadata(c *gin.Context, body string, taskType
 		}
 
 		if footerEnd != -1 {
-			// Remove the footer and any trailing whitespace
 			body = strings.TrimRight(contentBefore+body[footerStart+footerEnd+3:], " \t\n\r")
 		} else {
-			// Malformed footer? Just cut from footerStart
 			body = strings.TrimRight(contentBefore, " \t\n\r")
 		}
 	}
@@ -323,7 +349,7 @@ func (s *Server) applyTraceabilityMetadata(c *gin.Context, body string, taskType
 	}
 
 	taskName, taskUID := s.getTaskMetadata(ctx, namespace, sandboxName, taskNameReq, taskUIDReq)
-	repowatchName := s.getRepoWatchName(ctx, namespace, sandboxName)
+	repowatchName := s.getRepoWatchNameWithSandbox(ctx, namespace, sandboxName, sb)
 	footer := tasks.GenerateMetadataFooter(metadata.Metadata{
 		SandboxTask:    taskName,
 		SandboxTaskUID: taskUID,
@@ -337,13 +363,20 @@ func (s *Server) applyTraceabilityMetadata(c *gin.Context, body string, taskType
 }
 
 func (s *Server) getRepoWatchName(ctx context.Context, namespace, sandboxName string) string {
+	return s.getRepoWatchNameWithSandbox(ctx, namespace, sandboxName, nil)
+}
+
+func (s *Server) getRepoWatchNameWithSandbox(ctx context.Context, namespace, sandboxName string, sb *unstructured.Unstructured) string {
 	if sandboxName == "" || sandboxName == "n/a" {
 		return "n/a"
 	}
-	sb, err := s.K8sManager.GetSandbox(ctx, namespace, sandboxName)
-	if err != nil {
-		klog.V(4).Infof("failed to get sandbox %s/%s to retrieve repowatch label: %v", namespace, sandboxName, err)
-		return "n/a"
+	if sb == nil {
+		var err error
+		sb, err = s.K8sManager.GetSandbox(ctx, namespace, sandboxName)
+		if err != nil {
+			klog.V(4).Infof("failed to get sandbox %s/%s to retrieve repowatch label: %v", namespace, sandboxName, err)
+			return "n/a"
+		}
 	}
 	labels := sb.GetLabels()
 	if labels == nil {
