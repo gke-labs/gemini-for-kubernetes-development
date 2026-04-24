@@ -1,18 +1,4 @@
 #!/bin/bash
-# Copyright 2026 The Kubernetes Authors.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 set -e
 
 # Default prompt from files
@@ -35,11 +21,8 @@ if [ -d "/workspaces/prompt" ]; then
     if [ "$ISSUE_MODE" != "disabled" ]; then
         cat /workspaces/prompt/06-examples-issues.txt >> "$PROMPT_FILE"
     fi
-    if [ "$PR_MODE" != "disabled" ]; then
+    if [ "$REVIEW_MODE" != "disabled" ] || [ "$PR_MODE" != "disabled" ]; then
         cat /workspaces/prompt/06a-examples-prs.txt >> "$PROMPT_FILE"
-    fi
-    if [ "$REVIEW_MODE" != "disabled" ]; then
-        cat /workspaces/prompt/06b-examples-prs-review.txt >> "$PROMPT_FILE"
     fi
     if [ "$CHORES_MODE" != "disabled" ]; then
         cat /workspaces/prompt/07-examples-chores.txt >> "$PROMPT_FILE"
@@ -56,25 +39,10 @@ if [ -z "$REPO_URL" ]; then
   exit 1
 fi
 
-function refreshLLMToken {
-    if [ -n "$TOKENSCRIPT_DIR" ] && [ -d "$TOKENSCRIPT_DIR" ]; then
-        for script in "$TOKENSCRIPT_DIR"/*; do
-            if [ -f "$script" ]; then
-                echo "Running tokenscript $script"
-                SCRIPT_TOKEN=$("$script")
-                if [ -n "$SCRIPT_TOKEN" ]; then
-                    export GEMINI_API_KEY="$SCRIPT_TOKEN"
-                    break
-                fi
-            fi
-        done
-    fi
-}
-
 function setupGit {
     echo "Running setupGit..."
     
-    # Hierarchy: MANUAL_PAT -> OAUTH_PAT -> GITHUB_USER_TOKEN
+    # Hierarchy: MANUAL_PAT > OAUTH_PAT > GITHUB_USER_TOKEN
     GITHUB_USER_TOKEN="${MANUAL_PAT:-${OAUTH_PAT:-$GITHUB_USER_TOKEN}}"
 
     # Also ensure GITHUB_TOKEN is set for tools that specifically look for it
@@ -144,9 +112,6 @@ fi
 while true; do
   echo "$(date): Running Overseer cycle..."
   
-  # Refresh LLM token
-  refreshLLMToken
-
   # Update the repo
   git pull
 
@@ -162,7 +127,7 @@ while true; do
   # We rely on environment variables for auth (GEMINI_API_KEY, GITHUB_TOKEN, etc.)
   
   # Note: If LLM_PROVIDER is set, we might need to adapt.
-  # But for now we assume gemini handles what it handles.
+  # But for now we assume gemini-cli handles what it handles.
   
   # Capture stderr to a file so we can inspect it for quota errors
   GEMINI_ERR=$(mktemp)

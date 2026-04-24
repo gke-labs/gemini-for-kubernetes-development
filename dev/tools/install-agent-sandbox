@@ -13,37 +13,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
 import requests
 import subprocess
 import time
 import argparse
-import sys
 
 def get_latest_agent_sandbox_version():
     """Fetches the latest Agent Sandbox version from the GitHub API."""
-    # Use environment variable if provided to avoid rate limits
-    if os.getenv("AGENT_SANDBOX_VERSION"):
-        return os.getenv("AGENT_SANDBOX_VERSION").lstrip("v")
-
     url = "https://api.github.com/repos/kubernetes-sigs/agent-sandbox/releases/latest"
-    # Use GITHUB_TOKEN if available to avoid rate limits
-    headers = {}
-    token = os.getenv("GITHUB_TOKEN") or os.getenv("GITHUB_PAT")
-    if token:
-        headers["Authorization"] = f"token {token}"
-    
-    try:
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
-        tag_name = response.json()["tag_name"]
-        return tag_name.lstrip("v")
-    except Exception as e:
-        print(f"Warning: Failed to fetch latest version from GitHub: {e}")
-        # Fallback to a known good version if we hit rate limits and don't have a version specified
-        fallback_version = "0.1.1"
-        print(f"Falling back to version {fallback_version}")
-        return fallback_version
+    response = requests.get(url)
+    response.raise_for_status()
+    tag_name = response.json()["tag_name"]
+    return tag_name.lstrip("v")
 
 def run_command(command):
     """Runs a shell command and prints its output."""
@@ -54,18 +35,16 @@ def main():
     """Installs or uninstalls the latest version of Agent Sandbox."""
     parser = argparse.ArgumentParser(description="Installs or uninstalls Agent Sandbox.")
     parser.add_argument("--uninstall", action="store_true", help="Uninstall Agent Sandbox.")
-    parser.add_argument("--version", help="Specific version to install.")
     args = parser.parse_args()
 
     try:
-        version = args.version or get_latest_agent_sandbox_version()
+        version = get_latest_agent_sandbox_version()
 
         if args.uninstall:
             print(f"Uninstalling agent-sandbox version: {version}")
             uninstall_command = [
                 "kubectl", "delete", "-f",
-                f"https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v{version}/manifest.yaml",
-                "--ignore-not-found"
+                f"https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v{version}/manifest.yaml"
             ]
             run_command(uninstall_command)
             print("Agent Sandbox uninstalled successfully.")
@@ -73,27 +52,27 @@ def main():
 
         print(f"Installing agent-sandbox version: {version}")
  
+        # kubectl apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v0.1.0-rc.0/manifest.yaml
         install_command = [
             "kubectl", "apply", "-f",
             f"https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v{version}/manifest.yaml"
         ]
         run_command(install_command)
 
-        print("Waiting for 10 seconds for CRDs to be registered...")
-        time.sleep(10)
+        print("Waiting for 5 seconds...")
+        time.sleep(5)
 
-        # Verify installation
         kubectl_get_pods_command = ["kubectl", "get", "pods", "-n", "agent-sandbox-system"]
         run_command(kubectl_get_pods_command)
 
         print("Agent Sandbox installed successfully.")
 
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching Agent Sandbox version: {e}")
     except subprocess.CalledProcessError as e:
         print(f"Error executing command: {e}")
-        sys.exit(1)
     except Exception as e:
         print(f"An unexpected error occurred: {e}")
-        sys.exit(1)
 
 if __name__ == "__main__":
     main()
