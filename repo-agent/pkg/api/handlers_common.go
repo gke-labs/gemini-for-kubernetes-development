@@ -181,12 +181,12 @@ func truncateString(s string, limit int) string {
 				for i+count < len(res) && res[i+count] == '`' {
 					count++
 				}
-				if count == len(top) {
-					stack = stack[:len(stack)-1]
+				if count > 0 {
+					if count == len(top) {
+						stack = stack[:len(stack)-1]
+					}
 					i += count
 				} else {
-					// According to CommonMark, backticks inside code spans are just text
-					// unless they match the opening delimiter length.
 					i++
 				}
 			} else {

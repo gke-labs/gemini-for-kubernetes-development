@@ -121,7 +121,7 @@ func TestTruncateString(t *testing.T) {
 			name:  "Nested code blocks (rare but possible)",
 			s:     "``\n```go\ncode\n```\n``",
 			limit: 10,
-			want:  "``\n```go\nc", // Triple backtick inside double backtick is text, so it's not closed.
+			want:  "``\n```go``", // Opener is ``, followed by ``` (text), closed by ``.
 		},
 		{
 			name:  "Nested code blocks - correct closure order",
@@ -145,7 +145,7 @@ func TestTruncateString(t *testing.T) {
 			name:  "Triple backticks inside inline code - should not toggle block",
 			s:     "` ``` ` long long string",
 			limit: 15,
-			want:  "` ``` ` long l`",
+			want:  "` ``` ` long lo", // Correctly closed, no need for extra closing backtick.
 		},
 		{
 			name:  "Multiple inline backticks",
@@ -158,6 +158,12 @@ func TestTruncateString(t *testing.T) {
 			s:     "```\n~~~\ncode",
 			limit: 10,
 			want:  "```\n~~\n```",
+		},
+		{
+			name:  "Inline backticks mismatched length - should not close",
+			s:     "`` ` ``` `` long long string",
+			limit: 15,
+			want:  "`` ` ``` `` lon", // Opener is ``, followed by ` and ``` (should be skipped), closed by final ``.
 		},
 		{
 			name:  "Limit too small for closing tags but not for fallback",

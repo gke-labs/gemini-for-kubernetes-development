@@ -619,12 +619,12 @@ func (s *Server) getIssueCommits(c *gin.Context) {
 					matches := prURLRegex.FindAllString(tAgentDraft, -1)
 					for _, match := range matches {
 						if prRef, err := pkg_github.ParsePullRequestURL(match); err == nil {
-							if p, _, getErr := client.PullRequests.Get(c.Request.Context(), prRef.Repo.Owner, prRef.Repo.Name, prRef.PullRequestNumber); getErr == nil {
+							p, _, getErr := client.PullRequests.Get(c.Request.Context(), prRef.Repo.Owner, prRef.Repo.Name, prRef.PullRequestNumber)
+							if getErr == nil {
 								linkedPR = p
 								break
-							} else {
-								log.Error(getErr, "Failed to get PR details from GitHub", "match", match)
 							}
+							log.Error(getErr, "Failed to get PR details from GitHub", "match", match)
 						} else {
 							log.Error(err, "Failed to parse PR URL from agentDraft", "match", match)
 						}
