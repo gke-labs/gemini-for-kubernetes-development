@@ -83,7 +83,7 @@ func (c *ClaudeCLI) Run(agentPrompt string) ([]byte, *Stats, error) {
 	klog.Info("running claude-cli")
 
 	// Execute claude --print --output-format json "prompt"
-	stdout, stderr, err := c.Executor.Run("claude", "--print", "--output-format", "json", agentPrompt)
+	stdout, stderr, err := c.Executor.RunWithStdin("claude", agentPrompt, "--print", "--output-format", "json")
 
 	if err != nil {
 		klog.Infof("claude command failed: %v. Stderr: %s", err, string(stderr))

@@ -67,4 +67,19 @@ func TestRealCommandExecutor_Run(t *testing.T) {
 			t.Errorf("Expected stderr %q, but got %q", "hello", string(stderr))
 		}
 	})
+
+	t.Run("stdin", func(t *testing.T) {
+		// This test will fail if `cat` is not in the path
+		executor := &RealCommandExecutor{}
+		stdout, stderr, err := executor.RunWithStdin("cat", "hello stdin")
+		if err != nil {
+			t.Fatalf("RealCommandExecutor.RunWithStdin() failed: %v", err)
+		}
+		if string(stdout) != "hello stdin" {
+			t.Errorf("Expected stdout %q, but got %q", "hello stdin", string(stdout))
+		}
+		if len(stderr) > 0 {
+			t.Errorf("Expected empty stderr, but got %q", string(stderr))
+		}
+	})
 }

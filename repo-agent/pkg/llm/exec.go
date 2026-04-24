@@ -16,10 +16,12 @@ package llm
 
 import (
 	"os/exec"
+	"strings"
 )
 
 type CommandExecutor interface {
 	Run(command string, args ...string) ([]byte, []byte, error)
+	RunWithStdin(command string, stdin string, args ...string) ([]byte, []byte, error)
 }
 
 // RealCommandExecutor is a real implementation of CommandExecutor that runs commands.
@@ -27,11 +29,18 @@ type CommandExecutor interface {
 type RealCommandExecutor struct{}
 
 func (e *RealCommandExecutor) Run(command string, args ...string) ([]byte, []byte, error) {
+	return e.RunWithStdin(command, "", args...)
+}
+
+func (e *RealCommandExecutor) RunWithStdin(command string, stdin string, args ...string) ([]byte, []byte, error) {
 	const errBufferSize = 25 * 1024 * 1024 // 25MB
 	const outBufferSize = 1024 * 1024      // 1MB
 	stderrBuffer := NewCircularBuffer(errBufferSize)
 	stdoutBuffer := NewCircularBuffer(outBufferSize)
 	cmd := exec.Command(command, args...)
+	if stdin != "" {
+		cmd.Stdin = strings.NewReader(stdin)
+	}
 	// Dont return combined output. Return only stdout and log stderr separately.
 	cmd.Stderr = stderrBuffer
 	cmd.Stdout = stdoutBuffer

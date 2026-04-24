@@ -251,7 +251,7 @@ func ParseGeminiOutput(data []byte) (string, *Stats, error) {
 func (g *Gemini) Run(agentPrompt string) ([]byte, *Stats, error) {
 	klog.Info("running gemini")
 
-	stdout, stderr, err := g.Executor.Run("gemini", "-y", "--output-format", "json", "-p", agentPrompt)
+	stdout, stderr, err := g.Executor.RunWithStdin("gemini", agentPrompt, "-y", "--output-format", "json", "-p", "")
 	if err != nil {
 		klog.Infof("gemini command failed: %v. Stderr: %s", err, string(stderr))
 		if strings.Contains(string(stderr), "[API Error: You have exhausted your daily quota on this model.]") {

@@ -154,7 +154,9 @@ while true; do
   
   # Capture stderr to a file so we can inspect it for quota errors
   GEMINI_ERR=$(mktemp)
-  if ! gemini --yolo "$PROMPT" 2> "$GEMINI_ERR"; then
+  GEMINI_PROMPT_FILE=$(mktemp)
+  echo "$PROMPT" > "$GEMINI_PROMPT_FILE"
+  if ! gemini --yolo -p "" < "$GEMINI_PROMPT_FILE" 2> "$GEMINI_ERR"; then
     cat "$GEMINI_ERR" >&2
     if grep -iq "TerminalQuotaError\|Quota exceeded" "$GEMINI_ERR"; then
       echo "$(date): Quota exhausted. Sleeping for 1 hour..."
@@ -167,5 +169,5 @@ while true; do
     echo "$(date): Cycle complete. Sleeping..."
     sleep ${POLL_INTERVAL:-300}
   fi
-  rm -f "$GEMINI_ERR"
+  rm -f "$GEMINI_ERR" "$GEMINI_PROMPT_FILE"
 done
