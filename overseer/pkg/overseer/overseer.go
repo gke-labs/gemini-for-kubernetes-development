@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -53,12 +54,20 @@ func ReconcileOverseer(ctx context.Context, c client.Client, o *overseerv1alpha1
 		Kind:    "Sandbox",
 	})
 
+	hasTokenScript := false
+	secret := &corev1.Secret{}
+	if err := c.Get(ctx, types.NamespacedName{Name: "tokenscript", Namespace: namespace}, secret); err == nil {
+		hasTokenScript = true
+	} else if !errors.IsNotFound(err) {
+		return err
+	}
+
 	err := c.Get(ctx, types.NamespacedName{Name: overseerName, Namespace: namespace}, sandbox)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			// Create
 			log.Info("Creating Overseer sandbox", "name", overseerName, "namespace", namespace)
-			newSandbox := newOverseerSandboxFromOverseer(o, overseerName, namespace, repoSandboxImage, configDirImage)
+			newSandbox := newOverseerSandboxFromOverseer(o, overseerName, namespace, repoSandboxImage, configDirImage, hasTokenScript)
 			if err := controllerutil.SetControllerReference(o, newSandbox, c.Scheme()); err != nil {
 				return err
 			}
@@ -71,7 +80,7 @@ func ReconcileOverseer(ctx context.Context, c client.Client, o *overseerv1alpha1
 	return nil
 }
 
-func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespace, repoSandboxImage, configDirImage string) *unstructured.Unstructured {
+func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespace, repoSandboxImage, configDirImage string, hasTokenScript bool) *unstructured.Unstructured {
 	image := os.Getenv("OVERSEER_IMAGE")
 
 	apiKeySecretName := o.Spec.GeminiAPIKeySecretName
@@ -141,6 +150,10 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 		map[string]interface{}{
 			"name":  "CONFIG_DIR_IMAGE",
 			"value": configDirImage,
+		},
+		map[string]interface{}{
+			"name":  "POLL_INTERVAL",
+			"value": o.Spec.PollInterval,
 		},
 	}
 
@@ -290,6 +303,47 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 		mainContainer["volumeMounts"] = []interface{}{
 			map[string]interface{}{"name": "configdir-vol", "mountPath": "/configdir"},
 		}
+	}
+
+	if hasTokenScript {
+		// Define the volume
+		volume := map[string]interface{}{
+			"name": "tokenscript-vol",
+			"secret": map[string]interface{}{
+				"secretName":  "tokenscript",
+				"defaultMode": int32(0755),
+			},
+		}
+
+		var volumes []interface{}
+		if v, ok := podSpec["volumes"]; ok {
+			volumes = v.([]interface{})
+		}
+		volumes = append(volumes, volume)
+		podSpec["volumes"] = volumes
+
+		// Define the volumeMount
+		volumeMount := map[string]interface{}{
+			"name":      "tokenscript-vol",
+			"mountPath": "/etc/tokenscript",
+		}
+
+		containers := podSpec["containers"].([]interface{})
+		mainContainer := containers[0].(map[string]interface{})
+		var volumeMounts []interface{}
+		if vm, ok := mainContainer["volumeMounts"]; ok {
+			volumeMounts = vm.([]interface{})
+		}
+		volumeMounts = append(volumeMounts, volumeMount)
+		mainContainer["volumeMounts"] = volumeMounts
+
+		// Add an environment variable so overseer-cli knows where it is
+		envList := mainContainer["env"].([]interface{})
+		envList = append(envList, map[string]interface{}{
+			"name":  "TOKENSCRIPT_DIR",
+			"value": "/etc/tokenscript",
+		})
+		mainContainer["env"] = envList
 	}
 
 	u := &unstructured.Unstructured{

@@ -6,4 +6,3 @@
 - Track events monitored in a simple local state file.
 - Track actions taken in logs and in a simple local state file.
 - **IMPORTANT**: Your operations are strictly scoped to the current namespace ($NAMESPACE), current Overseer ($OVERSEER_NAME), and current repository ($REPO_URL). DO NOT interact with other namespaces, other Overseers, or other repositories.
-- **IMPORTANT**: If no issues or PRs meet the criteria for action (e.g., they are not labelled `overseer` or assigned to `codebot-robot`), you MUST NOT take any action. Do NOT "test the environment", do NOT create tasks for PRs that do not meet the criteria, and do NOT hallucinate work. If there is nothing to do, simply report that there is nothing to do and stop.
