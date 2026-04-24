@@ -60,6 +60,15 @@ function refreshLLMToken {
 function setupGit {
     echo "Running setupGit..."
     
+    # Extract host from REPO_URL
+    REPO_HOST=$(echo "$REPO_URL" | sed -E 's/^\w+:\/\/([^/]+)\/.*$/\1/')
+    if [[ "$REPO_URL" == git@* ]]; then
+      REPO_HOST=$(echo "$REPO_URL" | sed -E 's/^git@([^:]+):.*$/\1/')
+    fi
+    if [ -z "$REPO_HOST" ]; then
+      REPO_HOST="github.com"
+    fi
+
     # Hierarchy: MANUAL_PAT > OAUTH_PAT > GITHUB_USER_TOKEN
     GITHUB_USER_TOKEN="${MANUAL_PAT:-${OAUTH_PAT:-$GITHUB_USER_TOKEN}}"
 
@@ -74,7 +83,7 @@ function setupGit {
 
         echo "writing gh config"
         cat <<EOF > /root/.config/gh/hosts.yml
-github.com:
+${REPO_HOST}:
     users:
         ${GITHUB_USER_ID}:
             oauth_token: ${GITHUB_USER_TOKEN}
@@ -96,13 +105,6 @@ EOF
 
     echo "running gh auth setup-git"
     gh auth setup-git
-
-    echo "Configuring global git ignore"
-    git config --global core.excludesfile /root/.gitignore_global
-    cat <<EOF > /root/.gitignore_global
-manager
-bin/
-EOF
 }
 
 # Setup git and gh

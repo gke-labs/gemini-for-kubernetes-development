@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks"
 	"github.com/spf13/cobra"
@@ -121,6 +122,12 @@ func (c *ChoreCommand) Run(ctx context.Context) error {
 	}
 
 	promptPath := c.taskPath("agent-prompt.txt")
+	repo, err := github.ParseRepo(c.CloneURL)
+	if err != nil {
+		// Fallback for tests or missing clone URL
+		repo = &github.Repo{Host: "github.com"}
+	}
+
 	task := tasks.ChoreModel{
 		AgentPrompt: c.AgentPrompt,
 		ChoreName:   c.ChoreName,
@@ -130,6 +137,7 @@ func (c *ChoreCommand) Run(ctx context.Context) error {
 		RepoOwner:   c.RepoOwner,
 		PromptFile:  promptPath,
 		SkipPR:      c.SkipPR,
+		Repo:        repo,
 	}
 
 	apikey, err := GetGeminiAPIKey(c.sandboxID)

@@ -3,6 +3,8 @@ package tasks
 import (
 	"bytes"
 	"testing"
+
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 )
 
 func TestChoreScriptTemplate(t *testing.T) {
@@ -19,6 +21,11 @@ func TestChoreScriptTemplate(t *testing.T) {
 		ChoreFile:  ".agents/test.md",
 		PromptFile: "prompt.txt",
 		SkipPR:     true,
+		Repo: &github.Repo{
+			Host:  "github.com",
+			Owner: "test-owner",
+			Name:  "test-repo",
+		},
 	}
 
 	var w bytes.Buffer

@@ -44,10 +44,10 @@ func ParsePullRequestURL(s string) (*PullRequestRef, error) {
 	tokens := strings.Split(u, "/")
 
 	// e.g. https://github.com/GoogleCloudPlatform/k8s-config-connector/pull/6010
-	if len(tokens) == 5 && tokens[0] == "github.com" && tokens[3] == "pull" {
+	if len(tokens) == 5 && tokens[3] == "pull" {
 		pr := &PullRequestRef{
 			Repo: Repo{
-				Host:  "github.com",
+				Host:  tokens[0],
 				Owner: tokens[1],
 				Name:  tokens[2],
 			},

@@ -108,7 +108,7 @@ function setupGitRepos {
         cd "/workspaces/${REPO_NAME}"
         git merge --abort || true
         git reset --hard
-        git clean -fd
+        git clean -fdx
         
         # Retry loop for fetch to handle transient network issues
         for i in {1..3}; do
@@ -328,7 +328,7 @@ function runGemini {
         # Abort any previous merge and reset to the original pristine state.
         git merge --abort || true
         git reset --hard "${ORIG_HEAD}"
-        git clean -fd
+        git clean -fdx
         
         # Re-fetch to ensure remote branch is fresh for this iteration with retry loop
         FETCH_SUCCESS=false

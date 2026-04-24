@@ -3,6 +3,8 @@ package tasks
 import (
 	"bytes"
 	"fmt"
+
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 )
 
 var _ Task = &ChoreModel{}
@@ -16,6 +18,7 @@ type ChoreModel struct {
 	RepoOwner   string
 	PromptFile  string
 	SkipPR      bool
+	Repo        *github.Repo
 }
 
 func (m *ChoreModel) Name() string {

@@ -77,16 +77,16 @@ type Client struct {
 // ParseIssueURL extracts owner, repo, and issue number from a GitHub issue URL or SSH path.
 func ParseIssueURL(s string) (owner string, repo string, number int, err error) {
 	// Handle SSH URLs like git@github.com:owner/repo/issues/123
-	if strings.HasPrefix(s, "git@github.com:") {
-		trimmed := strings.TrimPrefix(s, "git@github.com:")
-		trimmed = strings.TrimSuffix(trimmed, ".git")
-		parts := strings.Split(trimmed, "/")
-		if len(parts) >= 4 && (parts[2] == "issues" || parts[2] == "pull") {
-			owner := parts[0]
-			repo := parts[1]
-			number, err := strconv.Atoi(parts[3])
+	if strings.HasPrefix(s, "git@") && strings.Contains(s, ":") {
+		parts := strings.SplitN(s, ":", 2)
+		trimmed := strings.TrimSuffix(parts[1], ".git")
+		pathParts := strings.Split(trimmed, "/")
+		if len(pathParts) >= 4 && (pathParts[2] == "issues" || pathParts[2] == "pull") {
+			owner := pathParts[0]
+			repo := pathParts[1]
+			number, err := strconv.Atoi(pathParts[3])
 			if err != nil {
-				return "", "", 0, fmt.Errorf("invalid issue/pr number %q: %w", parts[3], err)
+				return "", "", 0, fmt.Errorf("invalid issue/pr number %q: %w", pathParts[3], err)
 			}
 			return owner, repo, number, nil
 		}
@@ -98,8 +98,8 @@ func ParseIssueURL(s string) (owner string, repo string, number int, err error) 
 		return "", "", 0, err
 	}
 
-	if h := u.Hostname(); h != "" && h != "github.com" {
-		return "", "", 0, fmt.Errorf("only github.com is supported, got %q", h)
+	if h := u.Hostname(); h == "" {
+		return "", "", 0, fmt.Errorf("invalid URL: missing hostname in %q", s)
 	}
 
 	// Path should be /owner/repo/issues/number or /owner/repo/pull/number
@@ -119,12 +119,12 @@ func ParseIssueURL(s string) (owner string, repo string, number int, err error) 
 // ParseHTMLUrl extracts owner and repo from a GitHub HTML URL or SSH path.
 func ParseHTMLUrl(s string) (owner string, repo string, err error) {
 	// Handle SSH URLs like git@github.com:owner/repo.git
-	if strings.HasPrefix(s, "git@github.com:") {
-		trimmed := strings.TrimPrefix(s, "git@github.com:")
-		trimmed = strings.TrimSuffix(trimmed, ".git")
-		parts := strings.Split(trimmed, "/")
-		if len(parts) >= 2 {
-			return parts[0], parts[1], nil
+	if strings.HasPrefix(s, "git@") && strings.Contains(s, ":") {
+		parts := strings.SplitN(s, ":", 2)
+		trimmed := strings.TrimSuffix(parts[1], ".git")
+		pathParts := strings.Split(trimmed, "/")
+		if len(pathParts) >= 2 {
+			return pathParts[0], pathParts[1], nil
 		}
 		return "", "", fmt.Errorf("ssh url format %q not recognized", s)
 	}
@@ -134,8 +134,8 @@ func ParseHTMLUrl(s string) (owner string, repo string, err error) {
 		return "", "", err
 	}
 
-	if h := u.Hostname(); h != "" && h != "github.com" {
-		return "", "", fmt.Errorf("only github.com is supported, got %q", h)
+	if h := u.Hostname(); h == "" {
+		return "", "", fmt.Errorf("invalid URL: missing hostname in %q", s)
 	}
 
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")

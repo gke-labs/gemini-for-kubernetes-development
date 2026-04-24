@@ -37,7 +37,9 @@ func TestParseHTMLUrl(t *testing.T) {
 		{"ssh://git@github.com:22/owner/repo.git", "owner", "repo", false},
 		{"https://github.com:443/owner/repo", "owner", "repo", false},
 		{"https://github.com/owner", "", "", true},
-		{"https://google.com/owner/repo", "", "", true},
+		{"https://google.com/owner/repo", "owner", "repo", false},
+		{"https://github.mycompany.com/owner/repo", "owner", "repo", false},
+		{"git@github.mycompany.com:owner/repo.git", "owner", "repo", false},
 	}
 
 	for _, tt := range tests {
@@ -73,7 +75,9 @@ func TestParseIssueURL(t *testing.T) {
 		{"https://github.com/owner/repo/pull/invalid", "", "", 0, true},
 		{"https://github.com/owner/repo/blob/branch/file", "", "", 0, true},
 		{"https://github.com/owner/repo", "", "", 0, true},
-		{"https://google.com/owner/repo/issues/1", "", "", 0, true},
+		{"https://google.com/owner/repo/issues/1", "owner", "repo", 1, false},
+		{"https://github.mycompany.com/owner/repo/issues/123", "owner", "repo", 123, false},
+		{"git@github.mycompany.com:owner/repo/issues/123", "owner", "repo", 123, false},
 	}
 
 	for _, tt := range tests {
