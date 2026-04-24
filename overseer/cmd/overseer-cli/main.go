@@ -194,6 +194,23 @@ func isRetryable(err error) bool {
 	return errors.As(err, &re)
 }
 
+func isKubeTransient(err error) bool {
+	if err == nil {
+		return false
+	}
+	if apierrors.IsInternalError(err) || apierrors.IsServiceUnavailable(err) || apierrors.IsServerTimeout(err) || apierrors.IsTimeout(err) || apierrors.IsTooManyRequests(err) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	return false
+}
+
 func isGitHubTransient(err error) bool {
 	if err == nil {
 		return false
@@ -411,6 +428,9 @@ func runChore(ctx context.Context, name string, file string) error {
 	// 1. Check if a task for this chore already exists BEFORE creating sandbox
 	taskList, err := manager.ListSandboxTasks(ctx, namespace, sandboxName)
 	if err != nil {
+		if isKubeTransient(err) {
+			return &RetryableError{Message: fmt.Sprintf("transient error listing tasks for chore %s: %v", chore.Name, err)}
+		}
 		return fmt.Errorf("failed to list sandbox tasks for chore %s: %w", chore.Name, err)
 	}
 
@@ -618,6 +638,9 @@ func ensureSandbox(ctx context.Context, dynClient dynamic.Interface, namespace s
 	// To avoid stripping OwnerReferences from other controllers, we fetch existing ones and merge.
 	existing, err := dynClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sb.GetName(), metav1.GetOptions{})
 	if err != nil {
+		if isKubeTransient(err) {
+			return nil, &RetryableError{Message: fmt.Sprintf("transient error getting existing sandbox %s: %v", sb.GetName(), err)}
+		}
 		if !apierrors.IsNotFound(err) {
 			return nil, fmt.Errorf("failed to get existing sandbox %s: %w", sb.GetName(), err)
 		}
@@ -698,6 +721,9 @@ func ensureService(ctx context.Context, clientset kubernetes.Interface, namespac
 	var mergedRefs []metav1.OwnerReference
 	existing, err := clientset.CoreV1().Services(namespace).Get(ctx, svc.Name, metav1.GetOptions{})
 	if err != nil {
+		if isKubeTransient(err) {
+			return &RetryableError{Message: fmt.Sprintf("transient error getting existing service %s: %v", svc.Name, err)}
+		}
 		if !apierrors.IsNotFound(err) {
 			return fmt.Errorf("failed to get existing service %s: %w", svc.Name, err)
 		}
@@ -744,7 +770,24 @@ func ensureService(ctx context.Context, clientset kubernetes.Interface, namespac
 	}
 
 	// Use Server-Side Apply to enforce the desired state (Spec, Metadata, and OwnerReferences).
-	// For Services, we must only patch managed fields to avoid immutability errors like clusterIP.
+	// For Services, we must accurately omit unmanaged fields to avoid immutability errors like clusterIP.
+	spec, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&svc.Spec)
+	if err != nil {
+		return fmt.Errorf("failed to convert service spec to unstructured: %w", err)
+	}
+
+	// Omit empty or immutable fields from spec to avoid validation errors in SSA
+	if svc.Spec.Type == "" {
+		delete(spec, "type")
+	}
+	if svc.Spec.ClusterIP == "" {
+		delete(spec, "clusterIP")
+	}
+	// Omit other potentially problematic fields that we don't manage
+	delete(spec, "clusterIPs")
+	delete(spec, "ipFamilies")
+	delete(spec, "ipFamilyPolicy")
+
 	patch := map[string]interface{}{
 		"apiVersion": "v1",
 		"kind":       "Service",
@@ -754,11 +797,7 @@ func ensureService(ctx context.Context, clientset kubernetes.Interface, namespac
 			"annotations":     svc.Annotations,
 			"ownerReferences": mergedRefs,
 		},
-		"spec": map[string]interface{}{
-			"selector": svc.Spec.Selector,
-			"ports":    svc.Spec.Ports,
-			"type":     svc.Spec.Type,
-		},
+		"spec": spec,
 	}
 
 	data, err := json.Marshal(patch)
@@ -891,8 +930,13 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 				}
 			}
 		}
-	} else if !apierrors.IsNotFound(err) {
-		return fmt.Errorf("failed to check if sandbox exists for issue #%d: %w", number, err)
+	} else {
+		if isKubeTransient(err) {
+			return &RetryableError{Message: fmt.Sprintf("transient error checking sandbox for issue %d: %v", number, err)}
+		}
+		if !apierrors.IsNotFound(err) {
+			return fmt.Errorf("failed to check if sandbox exists for issue #%d: %w", number, err)
+		}
 	}
 
 	// Fetch events to check for reopened status
@@ -900,9 +944,9 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 		klog.V(4).Infof("Issue #%d: No new events since last check at %v. Skipping event pagination.", number, eventsLastCheckedAt)
 		eventsFetchSuccess = true
 	} else {
-		listEventsOpt := &githubv39.ListOptions{PerPage: 100}
+		listEventsOpt := githubv39.ListOptions{PerPage: 100}
 		eventsFetchSuccess = true
-		page1Events, resp, err := ghClient.Issues.ListIssueEvents(ctx, owner, repo, number, listEventsOpt)
+		page1Events, resp, err := ghClient.Issues.ListIssueEvents(ctx, owner, repo, number, &listEventsOpt)
 		if err != nil {
 			if isGitHubTransient(err) {
 				return &RetryableError{Message: fmt.Sprintf("transient error listing events for issue %d: %v", number, err)}
@@ -922,7 +966,7 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 				} else {
 					listEventsOpt.Page = p
 					var err error
-					events, _, err = ghClient.Issues.ListIssueEvents(ctx, owner, repo, number, listEventsOpt)
+					events, _, err = ghClient.Issues.ListIssueEvents(ctx, owner, repo, number, &listEventsOpt)
 					if err != nil {
 						klog.Warningf("Issue #%d: Failed to list events on page %d: %v", number, p, err)
 						eventsFetchSuccess = false
@@ -949,6 +993,9 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 	// 1. Check if a task of the same type already exists for this issue BEFORE creating sandbox
 	taskList, err := manager.ListSandboxTasks(ctx, namespace, sandboxName)
 	if err != nil {
+		if isKubeTransient(err) {
+			return &RetryableError{Message: fmt.Sprintf("transient error listing tasks for issue %d: %v", number, err)}
+		}
 		return fmt.Errorf("failed to list sandbox tasks for issue #%d: %w", number, err)
 	}
 
@@ -1190,8 +1237,13 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 				}
 			}
 		}
-	} else if !apierrors.IsNotFound(err) {
-		return fmt.Errorf("failed to check if sandbox exists: %w", err)
+	} else {
+		if isKubeTransient(err) {
+			return &RetryableError{Message: fmt.Sprintf("transient error checking sandbox for PR %d: %v", number, err)}
+		}
+		if !apierrors.IsNotFound(err) {
+			return fmt.Errorf("failed to check if sandbox exists: %w", err)
+		}
 	}
 
 	head := pr.GetHead()
@@ -1206,11 +1258,11 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 		klog.V(4).Infof("PR #%d: No new events since last check at %v. Skipping event pagination.", number, eventsLastCheckedAt)
 		eventsFetchSuccess = true
 	} else {
-		listEventsOpt := &githubv39.ListOptions{PerPage: 100}
+		listEventsOpt := githubv39.ListOptions{PerPage: 100}
 		eventsFetchSuccess = true
 
 		// Get the first page to find out the last page number (events are chronological)
-		page1Events, resp, err := ghClient.Issues.ListIssueEvents(ctx, owner, repo, number, listEventsOpt)
+		page1Events, resp, err := ghClient.Issues.ListIssueEvents(ctx, owner, repo, number, &listEventsOpt)
 		if err != nil {
 			if isGitHubTransient(err) {
 				return &RetryableError{Message: fmt.Sprintf("transient error listing events for PR %d: %v", number, err)}
@@ -1231,7 +1283,7 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 				} else {
 					listEventsOpt.Page = p
 					var err error
-					events, _, err = ghClient.Issues.ListIssueEvents(ctx, owner, repo, number, listEventsOpt)
+					events, _, err = ghClient.Issues.ListIssueEvents(ctx, owner, repo, number, &listEventsOpt)
 					if err != nil {
 						klog.Warningf("PR #%d: Failed to list events on page %d: %v", number, p, err)
 						eventsFetchSuccess = false
@@ -1265,6 +1317,9 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 	// to prevent concurrency conflicts.
 	taskList, err := manager.ListSandboxTasks(ctx, namespace, sandboxName)
 	if err != nil {
+		if isKubeTransient(err) {
+			return &RetryableError{Message: fmt.Sprintf("transient error listing tasks for PR %d: %v", number, err)}
+		}
 		return fmt.Errorf("failed to list sandbox tasks for PR #%d: %w", number, err)
 	}
 
@@ -1354,10 +1409,10 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 		if conf.BotLogin == "" && conf.UserLogin == "" {
 			klog.Warningf("PR #%d: Neither GITHUB_BOT_LOGIN nor GITHUB_USER_ID is set. Skipping GitHub review deduplication.", number)
 		} else {
-			listOpt := &githubv39.ListOptions{PerPage: 100}
+			listOpt := githubv39.ListOptions{PerPage: 100}
 
 			// Find the last page first to iterate backwards (newest reviews first)
-			page1Reviews, resp, err := ghClient.PullRequests.ListReviews(ctx, owner, repo, number, listOpt)
+			page1Reviews, resp, err := ghClient.PullRequests.ListReviews(ctx, owner, repo, number, &listOpt)
 			if err != nil {
 				if isGitHubTransient(err) {
 					return &RetryableError{Message: fmt.Sprintf("transient error listing reviews for PR %d: %v", number, err)}
@@ -1378,7 +1433,7 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 				} else {
 					listOpt.Page = p
 					var err error
-					reviews, _, err = ghClient.PullRequests.ListReviews(ctx, owner, repo, number, listOpt)
+					reviews, _, err = ghClient.PullRequests.ListReviews(ctx, owner, repo, number, &listOpt)
 					if err != nil {
 						if isGitHubTransient(err) {
 							return &RetryableError{Message: fmt.Sprintf("transient error listing reviews for PR %d on page %d: %v", number, p, err)}
@@ -1723,7 +1778,18 @@ func updateSandboxCheckpoints(ctx context.Context, manager *k8s.Manager, namespa
 	if lastReopenedAt != nil {
 		annotations["lastReopenedAt"] = lastReopenedAt.Format(time.RFC3339)
 	}
-	return manager.UpdateSandboxAnnotations(ctx, namespace, sandboxName, annotations)
+	err := manager.UpdateSandboxAnnotations(ctx, namespace, sandboxName, annotations)
+	if err != nil {
+		if isKubeTransient(err) {
+			return &RetryableError{Message: fmt.Sprintf("transient error updating checkpoints for sandbox %s: %v", sandboxName, err)}
+		}
+		if strings.Contains(err.Error(), "not found") {
+			klog.V(4).Infof("Sandbox %s not found, skipping checkpoint update.", sandboxName)
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 func parseRepoURL(url string) (string, string, error) {

@@ -99,25 +99,34 @@ func (b *ImageBuilder) GitClone(ctx context.Context, source string, dest string)
 	ref = strings.TrimPrefix(ref, "refs/heads/")
 
 	if ref != "" && isSHA(ref) {
-		// Clone then checkout
-		args := []string{"git", "clone", source, dest}
-		cmdString := strings.Join(args, " ")
-		log.Info("cloning git repo for SHA checkout", "source", source, "command", cmdString)
-		cmd := exec.CommandContext(ctx, args[0], args[1:]...)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("cloning git repo %q with %q: %w", source, cmdString, err)
+		// Efficient clone of a single SHA to reduce startup time
+		if err := os.MkdirAll(dest, 0755); err != nil {
+			return fmt.Errorf("failed to create destination directory %q: %w", dest, err)
 		}
 
-		checkoutArgs := []string{"git", "-C", dest, "checkout", ref}
-		checkoutCmdString := strings.Join(checkoutArgs, " ")
-		log.Info("checking out specific SHA", "sha", ref, "command", checkoutCmdString)
-		checkoutCmd := exec.CommandContext(ctx, checkoutArgs[0], checkoutArgs[1:]...)
-		checkoutCmd.Stdout = os.Stdout
-		checkoutCmd.Stderr = os.Stderr
-		if err := checkoutCmd.Run(); err != nil {
-			return fmt.Errorf("checking out SHA %q with %q: %w", ref, checkoutCmdString, err)
+		run := func(args ...string) error {
+			cmd := exec.CommandContext(ctx, "git", args...)
+			cmd.Dir = dest
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				return fmt.Errorf("git %s failed: %w", strings.Join(args, " "), err)
+			}
+			return nil
+		}
+
+		if err := run("init"); err != nil {
+			return err
+		}
+		if err := run("remote", "add", "origin", source); err != nil {
+			return err
+		}
+		// fetch only the specific SHA with depth 1
+		if err := run("fetch", "--depth", "1", "origin", ref); err != nil {
+			return err
+		}
+		if err := run("checkout", "FETCH_HEAD"); err != nil {
+			return err
 		}
 		return nil
 	}
