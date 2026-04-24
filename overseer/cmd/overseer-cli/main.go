@@ -617,11 +617,19 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 func ensureSandbox(ctx context.Context, dynClient dynamic.Interface, namespace string, sb *unstructured.Unstructured) (*unstructured.Unstructured, error) {
 	// To avoid stripping OwnerReferences from other controllers, we fetch existing ones and merge.
 	existing, err := dynClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sb.GetName(), metav1.GetOptions{})
-	if err == nil {
+	if err != nil {
+		if !apierrors.IsNotFound(err) {
+			return nil, fmt.Errorf("failed to get existing sandbox %s: %w", sb.GetName(), err)
+		}
+	} else {
 		if existing.GetDeletionTimestamp() != nil {
 			return nil, &RetryableError{Message: fmt.Sprintf("sandbox %s is terminating, waiting for cleanup", sb.GetName())}
 		}
-		mergedRefs := existing.GetOwnerReferences()
+		// Deep copy existing owner references to avoid data races if 'existing' is from a cache.
+		existingRefs := existing.GetOwnerReferences()
+		mergedRefs := make([]metav1.OwnerReference, len(existingRefs))
+		copy(mergedRefs, existingRefs)
+
 		for _, newRef := range sb.GetOwnerReferences() {
 			found := false
 			for i, ref := range mergedRefs {
@@ -647,6 +655,9 @@ func ensureSandbox(ctx context.Context, dynClient dynamic.Interface, namespace s
 			}
 		}
 		sb.SetOwnerReferences(mergedRefs)
+		// Preserve existing labels and annotations if they are not set in the new spec
+		// Actually SSA handles this, but for labels/annotations we might want to merge.
+		// For now, we trust the SSA patch below which includes sb.GetLabels() and sb.GetAnnotations().
 	}
 
 	// Use Server-Side Apply to ensure the Sandbox exists and has correct OwnerReferences.
@@ -686,7 +697,11 @@ func ensureService(ctx context.Context, clientset kubernetes.Interface, namespac
 	// To avoid stripping OwnerReferences from other controllers, we fetch existing ones and merge.
 	var mergedRefs []metav1.OwnerReference
 	existing, err := clientset.CoreV1().Services(namespace).Get(ctx, svc.Name, metav1.GetOptions{})
-	if err == nil {
+	if err != nil {
+		if !apierrors.IsNotFound(err) {
+			return fmt.Errorf("failed to get existing service %s: %w", svc.Name, err)
+		}
+	} else {
 		if existing.DeletionTimestamp != nil {
 			return &RetryableError{Message: fmt.Sprintf("service %s is terminating, waiting for cleanup", svc.Name)}
 		}
@@ -876,6 +891,8 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 				}
 			}
 		}
+	} else if !apierrors.IsNotFound(err) {
+		return fmt.Errorf("failed to check if sandbox exists for issue #%d: %w", number, err)
 	}
 
 	// Fetch events to check for reopened status
