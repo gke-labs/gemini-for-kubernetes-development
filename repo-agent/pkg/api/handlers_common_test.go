@@ -145,19 +145,19 @@ func TestTruncateString(t *testing.T) {
 			name:  "Triple backticks inside inline code - should not toggle block",
 			s:     "` ``` ` long long string",
 			limit: 15,
-			want:  "` ``` ` long l`", 
+			want:  "` ``` ` long l`",
 		},
 		{
 			name:  "Multiple inline backticks",
 			s:     "`` ` `` long long string",
 			limit: 15,
-			want:  "`` ` `` long lo", 
+			want:  "`` ` `` long lo",
 		},
 		{
 			name:  "Nested blocks with small limit - trigger fallback",
 			s:     "```\n~~~\ncode",
 			limit: 10,
-			want:  "```\n~~\n```", 
+			want:  "```\n~~\n```",
 		},
 		{
 			name:  "Limit too small for closing tags but not for fallback",
