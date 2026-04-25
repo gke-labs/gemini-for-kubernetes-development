@@ -180,6 +180,8 @@ func (s *Server) saveDraft(c *gin.Context) {
 	repo := c.Param("repo")
 	prID := c.Param("id")
 	var payload struct {
+		// Draft is a pointer to a string. If it is null (nil in Go),
+		// the draft will be cleared (saved as an empty string).
 		Draft *string `json:"draft"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
@@ -206,6 +208,8 @@ func (s *Server) saveTaskDraft(c *gin.Context) {
 	namespace := s.Auth.GetNamespaceFromContext(c)
 	taskName := c.Param("taskID")
 	var payload struct {
+		// Draft is a pointer to a string. If it is null (nil in Go),
+		// the draft will be cleared (saved as an empty string).
 		Draft *string `json:"draft"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {

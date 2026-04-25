@@ -75,6 +75,6 @@ func TestChoreScriptTemplate(t *testing.T) {
 		}
 	}
 	if len(missing) > 0 {
-		t.Errorf("Script missing %d expected strings: %v\nFull script:\n%s", len(missing), missing, script)
+		t.Fatalf("Script missing %d expected strings: %v\nFull script:\n%s", len(missing), missing, script)
 	}
 }

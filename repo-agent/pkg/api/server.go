@@ -177,6 +177,9 @@ func ResponseLoggerMiddleware() gin.HandlerFunc {
 	}
 }
 
+// truncateLogString truncates a string to the given limit and appends a suffix.
+// Note: If the input is a JSON string, the truncated output will be invalid JSON.
+// This is a trade-off to avoid log flooding while still providing some context.
 func truncateLogString(s string, limit int) string {
 	const suffix = "... (truncated)"
 	if len(s) <= limit {

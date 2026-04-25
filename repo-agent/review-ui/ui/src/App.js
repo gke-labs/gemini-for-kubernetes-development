@@ -605,8 +605,8 @@ function App() {
     }
     const reviewYAML = yaml.dump(review);
     const payload = { review: reviewYAML };
-    if (taskName) payload.task_name = taskName;
-    if (taskUID) payload.task_uid = taskUID;
+    if (taskName != null) payload.task_name = taskName;
+    if (taskUID != null) payload.task_uid = taskUID;
 
     fetch(`/api/repo/${activeRepo.name}/prs/${id}/submitreview`, {
       method: 'POST',

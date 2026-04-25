@@ -24,9 +24,16 @@ def get_latest_agent_sandbox_version():
     """Fetches the latest Agent Sandbox version from the GitHub API."""
     url = "https://api.github.com/repos/kubernetes-sigs/agent-sandbox/releases/latest"
     headers = {}
-    github_token = os.getenv("GITHUB_TOKEN") or os.getenv("GITHUB_PAT")
+
+    # Prefer GITHUB_TOKEN if set, then GITHUB_PAT.
+    # If both are empty or unset, github_token will be None.
+    github_token = os.getenv("GITHUB_TOKEN")
+    if github_token is None:
+        github_token = os.getenv("GITHUB_PAT")
+
     if github_token:
         headers["Authorization"] = f"Bearer {github_token}"
+
 
     response = requests.get(url, headers=headers)
     response.raise_for_status()

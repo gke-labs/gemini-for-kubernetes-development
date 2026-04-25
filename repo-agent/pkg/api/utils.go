@@ -29,7 +29,7 @@ import (
 )
 
 func SortSandboxTasks(tasks []sandboxtaskv1alpha1.SandboxTask) {
-	sort.Slice(tasks, func(i, j int) bool {
+	sort.SliceStable(tasks, func(i, j int) bool {
 		if tasks[i].CreationTimestamp.Equal(&tasks[j].CreationTimestamp) {
 			return tasks[i].Name > tasks[j].Name
 		}

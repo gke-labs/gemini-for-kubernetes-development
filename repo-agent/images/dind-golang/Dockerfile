@@ -59,6 +59,8 @@ RUN apt-get update && \
     build-essential \
     google-cloud-cli \
  && apt-get clean \
+ # Remove apt-get lists to keep image size small. 
+ # Downstream layers should run apt-get update before installing new packages.
  && rm -rf /var/lib/apt/lists/*
 
 # ------- Install go -------

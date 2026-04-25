@@ -119,7 +119,7 @@ func TestFixIssuePromptTemplate(t *testing.T) {
 		}
 	}
 	if len(missing) > 0 {
-		t.Errorf("Prompt missing %d expected metadata strings: %v\nFull prompt:\n%s", len(missing), missing, w.String())
+		t.Fatalf("Prompt missing %d expected metadata strings: %v\nFull prompt:\n%s", len(missing), missing, w.String())
 	}
 
 	// Verify that the new instruction is present
@@ -305,7 +305,7 @@ func TestAddressFeedbackPromptTemplate(t *testing.T) {
 		}
 	}
 	if len(missing) > 0 {
-		t.Errorf("Prompt missing %d expected metadata strings: %v\nFull prompt:\n%s", len(missing), missing, w.String())
+		t.Fatalf("Prompt missing %d expected metadata strings: %v\nFull prompt:\n%s", len(missing), missing, w.String())
 	}
 }
 
@@ -357,6 +357,6 @@ func TestTriageIssuePromptTemplate(t *testing.T) {
 		}
 	}
 	if len(missing) > 0 {
-		t.Errorf("Prompt missing %d expected metadata strings: %v\nFull prompt:\n%s", len(missing), missing, w.String())
+		t.Fatalf("Prompt missing %d expected metadata strings: %v\nFull prompt:\n%s", len(missing), missing, w.String())
 	}
 }

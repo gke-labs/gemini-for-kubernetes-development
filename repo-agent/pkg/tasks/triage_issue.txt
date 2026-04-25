@@ -21,7 +21,6 @@ Please output your response starting with the Prow command.
 /kind <Category> <concise explanation>
 
 {{- if .TraceabilityMetadataEnabled }}
-* Append the following structured metadata footer as an HTML comment to your response:
 
 ---
 <!-- repo-agent-metadata

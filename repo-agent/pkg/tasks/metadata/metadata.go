@@ -17,10 +17,11 @@ limitations under the License.
 package metadata
 
 import (
-	"fmt"
+	"bytes"
 	"os"
 	"strconv"
 	"strings"
+	"text/template"
 	"time"
 
 	"k8s.io/klog/v2"
@@ -52,6 +53,19 @@ const (
 	TaskTypeIssueComment    = "issue-comment"
 	TaskTypePRReview        = "pr-review"
 )
+
+var footerTemplate = template.Must(template.New("metadata-footer").Parse(`
+
+---
+
+<!-- repo-agent-metadata
+sandbox-task: {{ .SandboxTask }}
+sandbox-task-uid: {{ .SandboxTaskUID }}
+sandbox: {{ .Sandbox }}
+repowatch: {{ .RepoWatch }}
+task-type: {{ .TaskType }}
+timestamp: {{ .Timestamp }}
+-->`))
 
 // Metadata contains traceability information for bot actions.
 type Metadata struct {
@@ -91,13 +105,20 @@ func getEnvWithFallback(key, fallback string) string {
 
 // GenerateMetadataFooter creates a structured HTML comment footer from metadata.
 func GenerateMetadataFooter(m Metadata) string {
-	return fmt.Sprintf("\n\n---\n\n<!-- repo-agent-metadata\n%s: %s\n%s: %s\n%s: %s\n%s: %s\n%s: %s\n%s: %s\n-->",
-		MetadataKeySandboxTask, sanitize(m.SandboxTask),
-		MetadataKeySandboxTaskUID, sanitize(m.SandboxTaskUID),
-		MetadataKeySandbox, sanitize(m.Sandbox),
-		MetadataKeyRepoWatch, sanitize(m.RepoWatch),
-		MetadataKeyTaskType, sanitize(m.TaskType),
-		MetadataKeyTimestamp, sanitize(m.Timestamp))
+	var buf bytes.Buffer
+	sanitized := Metadata{
+		SandboxTask:    sanitize(m.SandboxTask),
+		SandboxTaskUID: sanitize(m.SandboxTaskUID),
+		Sandbox:        sanitize(m.Sandbox),
+		RepoWatch:      sanitize(m.RepoWatch),
+		TaskType:       sanitize(m.TaskType),
+		Timestamp:      sanitize(m.Timestamp),
+	}
+	if err := footerTemplate.Execute(&buf, sanitized); err != nil {
+		klog.Errorf("failed to execute metadata footer template: %v", err)
+		return ""
+	}
+	return buf.String()
 }
 
 func sanitize(s string) string {

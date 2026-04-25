@@ -239,6 +239,42 @@ func TestTruncateLogString(t *testing.T) {
 	}
 }
 
+func TestSortSandboxTasks(t *testing.T) {
+	now := time.Now()
+	tasks := []sandboxtaskv1alpha1.SandboxTask{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "task-b",
+				CreationTimestamp: metav1.Time{Time: now},
+			},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "task-a",
+				CreationTimestamp: metav1.Time{Time: now},
+			},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "task-c",
+				CreationTimestamp: metav1.Time{Time: now.Add(-1 * time.Hour)},
+			},
+		},
+	}
+
+	SortSandboxTasks(tasks)
+
+	if tasks[0].Name != "task-b" {
+		t.Errorf("Expected first task to be task-b (newer/desc name), got %s", tasks[0].Name)
+	}
+	if tasks[1].Name != "task-a" {
+		t.Errorf("Expected second task to be task-a, got %s", tasks[1].Name)
+	}
+	if tasks[2].Name != "task-c" {
+		t.Errorf("Expected third task to be task-c (older), got %s", tasks[2].Name)
+	}
+}
+
 func TestGetRepoWatchName(t *testing.T) {
 	scheme := runtime.NewScheme()
 	gvrSandbox := schema.GroupVersionResource{Group: "agents.x-k8s.io", Version: "v1alpha1", Resource: "sandboxes"}

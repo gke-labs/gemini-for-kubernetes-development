@@ -118,6 +118,6 @@ func TestInvestigateFailuresPromptTemplate(t *testing.T) {
 		}
 	}
 	if len(missing) > 0 {
-		t.Errorf("Prompt missing %d expected metadata strings: %v\nFull prompt:\n%s", len(missing), missing, w.String())
+		t.Fatalf("Prompt missing %d expected metadata strings: %v\nFull prompt:\n%s", len(missing), missing, w.String())
 	}
 }
