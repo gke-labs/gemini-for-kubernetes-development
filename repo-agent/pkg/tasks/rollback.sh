@@ -22,9 +22,9 @@ function setupGit {
     if [ -n "${GITHUB_BOT_LOGIN}" ]; then
         GH_USER="${GITHUB_BOT_LOGIN}"
     fi
-
+    echo "writing gh config"
     cat <<EOF > /root/.config/gh/hosts.yml
-github.com:
+{{ .Repo.Host }}:
     users:
         ${GH_USER}:
             oauth_token: ${GITHUB_USER_TOKEN}

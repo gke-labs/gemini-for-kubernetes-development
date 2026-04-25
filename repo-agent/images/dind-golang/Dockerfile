@@ -18,14 +18,14 @@ RUN find /etc/apt/ -type f -name "*.list" -o -name "*.sources" | xargs sed -i 's
 RUN echo 'Acquire::Retries "10"; Acquire::http::Timeout "60"; Acquire::https::Timeout "60";' > /etc/apt/apt.conf.d/80-retries
 
 # 1. Install prerequisites for adding apt repositories with robust retries
-RUN (apt-get update || (sleep 10 && apt-get update) || (sleep 20 && apt-get update)) && \
+RUN (apt-get update || (echo "Warning: apt-get update failed, retrying in 10s..." && sleep 10 && apt-get update) || (echo "Warning: apt-get update failed again, retrying in 20s..." && sleep 20 && apt-get update)) && \
     (apt-get -y install --no-install-recommends \
     apt-transport-https \
     ca-certificates \
     curl \
     gnupg \
     wget \
-    jq || (sleep 10 && apt-get -y install --no-install-recommends apt-transport-https ca-certificates curl gnupg wget jq))
+    jq || (echo "Warning: apt-get install failed, retrying in 10s..." && sleep 10 && apt-get -y install --no-install-recommends apt-transport-https ca-certificates curl gnupg wget jq))
 
 # 2. Add apt repositories (Docker, NodeSource, Google Cloud, Helm)
 RUN mkdir -p /etc/apt/keyrings && \
@@ -44,7 +44,7 @@ RUN mkdir -p /etc/apt/keyrings && \
     echo "deb [signed-by=/etc/apt/keyrings/helm.gpg] https://packages.buildkite.com/helm-linux/helm-debian/any/ any main" > /etc/apt/sources.list.d/helm-stable-debian.list
 
 # 3. Install all apt packages
-RUN (apt-get update || (sleep 10 && apt-get update) || (sleep 20 && apt-get update)) && \
+RUN (apt-get update || (echo "Warning: apt-get update failed, retrying in 10s..." && sleep 10 && apt-get update) || (echo "Warning: apt-get update failed again, retrying in 20s..." && sleep 20 && apt-get update)) && \
     (apt-get install -y --no-install-recommends \
     docker-ce=${DOCKER_VERSION} \
     docker-ce-cli=${DOCKER_VERSION} \
@@ -65,7 +65,7 @@ RUN (apt-get update || (sleep 10 && apt-get update) || (sleep 20 && apt-get upda
     sudo \
     helm \
     build-essential \
-    google-cloud-cli || (sleep 10 && apt-get install -y --no-install-recommends \
+    google-cloud-cli || (echo "Warning: apt-get install failed, retrying in 10s..." && sleep 10 && apt-get install -y --no-install-recommends \
     docker-ce=${DOCKER_VERSION} \
     docker-ce-cli=${DOCKER_VERSION} \
     containerd.io \

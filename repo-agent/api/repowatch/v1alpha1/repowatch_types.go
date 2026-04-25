@@ -354,6 +354,7 @@ type RepoWatchSpec struct {
 	// How often to retry mergeability check when GitHub is still computing (in seconds).
 	// If not set, it defaults to 60 seconds.
 	// +kubebuilder:validation:Minimum=10
+	// +kubebuilder:validation:Optional
 	// +kubebuilder:default=60
 	MergeableRetryIntervalSeconds int `json:"mergeableRetryIntervalSeconds,omitempty"`
 }

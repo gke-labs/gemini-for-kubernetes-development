@@ -11,12 +11,11 @@ func TestChoreScriptTemplate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	data := ChoreModel{
+	data := MockModel{
 		RepoName:   "test-repo",
 		RepoOwner:  "test-owner",
 		CloneURL:   "https://github.com/test-owner/test-repo.git",
-		ChoreName:  "Test Chore",
-		ChoreFile:  ".agents/test.md",
+		Repo:       MockRepo{},
 		PromptFile: "prompt.txt",
 		SkipPR:     true,
 	}

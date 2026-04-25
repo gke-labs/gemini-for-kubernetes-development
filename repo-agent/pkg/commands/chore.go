@@ -1,3 +1,17 @@
+// Copyright 2026 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package commands
 
 import (
@@ -6,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks"
 	"github.com/spf13/cobra"
@@ -27,6 +42,7 @@ type ChoreCommand struct {
 	SkipPR       bool
 
 	// loaded objects
+	repo      *github.Repository
 	sandbox   *sandbox.IssueSandbox
 	sandboxID string
 }
@@ -88,8 +104,7 @@ func (c *ChoreCommand) taskPath(name string, args ...interface{}) string {
 func (c *ChoreCommand) loadSandbox(ctx context.Context) error {
 	// For chore, we might not have an issue or full repo info easily available
 	// But IssueSandbox is what tasks.RunTask expects.
-	// We can probably pass nil for repo and issue if the task doesn't use them.
-	sb, err := sandbox.NewIssueSandbox(ctx, c.InPod, nil, nil, "")
+	sb, err := sandbox.NewIssueSandbox(ctx, c.InPod, c.repo, nil, "")
 	if err != nil {
 		return err
 	}
@@ -98,10 +113,30 @@ func (c *ChoreCommand) loadSandbox(ctx context.Context) error {
 	return nil
 }
 
+func (c *ChoreCommand) loadGithubObjects(ctx context.Context) error {
+	if c.CloneURL == "" {
+		return nil
+	}
+	githubAPI, err := github.NewClient(ctx)
+	if err != nil {
+		return err
+	}
+	repo, err := githubAPI.GetRepositoryFromHTMLUrl(ctx, c.CloneURL)
+	if err != nil {
+		return err
+	}
+	c.repo = repo
+	return nil
+}
+
 // Run executes the chore.
 func (c *ChoreCommand) Run(ctx context.Context) error {
 	log := klog.FromContext(ctx)
 	log.Info("Starting chore task", "taskdir", c.TaskDir)
+
+	if err := c.loadGithubObjects(ctx); err != nil {
+		klog.Warningf("failed to load github objects for chore: %v", err)
+	}
 
 	// get sandbox
 	err := c.loadSandbox(ctx)
@@ -111,6 +146,7 @@ func (c *ChoreCommand) Run(ctx context.Context) error {
 
 	promptPath := c.taskPath("agent-prompt.txt")
 	task := tasks.ChoreModel{
+		Repo:        c.repo,
 		AgentPrompt: c.AgentPrompt,
 		ChoreName:   c.ChoreName,
 		ChoreFile:   c.ChoreFile,

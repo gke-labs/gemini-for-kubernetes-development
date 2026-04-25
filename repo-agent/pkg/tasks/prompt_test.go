@@ -1,3 +1,17 @@
+// Copyright 2026 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package tasks
 
 import (
@@ -7,45 +21,46 @@ import (
 	"text/template"
 )
 
-type MockIssue struct{}
+func TestResolveConflictsScriptTemplate(t *testing.T) {
+	// Read the template file
+	content, err := os.ReadFile("resolve_conflicts.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
 
-func (i MockIssue) HTMLURL() string { return "http://url" }
-func (i MockIssue) Number() int     { return 123 }
-func (i MockIssue) Title() string   { return "Title" }
-func (i MockIssue) Body() string    { return "Body" }
+	tmpl, err := template.New("test").Parse(string(content))
+	if err != nil {
+		t.Fatalf("Failed to parse template: %v", err)
+	}
 
-type MockComment struct{}
+	data := MockModel{
+		PullRequest: MockPullRequest{},
+		Repo:        MockRepo{},
+		RepoName:    "repo",
+		RepoOwner:   "owner",
+		Models:      []string{"gemini-test-1", "gemini-test-2"},
+		User:        MockUser{UserID: "test", Email: "test@test.com", Name: "Test User"},
+		BaseRef:     "main",
+		HeadRef:     "feature",
+		PromptFile:  "/tmp/prompt.txt",
+	}
+	var w bytes.Buffer
+	if err := tmpl.Execute(&w, data); err != nil {
+		t.Fatalf("Failed to execute template: %v", err)
+	}
 
-func (c MockComment) UserLogin() string { return "User" }
-func (c MockComment) Body() string      { return "Comment" }
+	script := w.String()
+	// Verify that the host is correctly populated
+	expectedHost := "github.com:"
+	if !bytes.Contains(w.Bytes(), []byte(expectedHost)) {
+		t.Errorf("Script does not contain expected host. Got:\n%s", script)
+	}
 
-type MockRepo struct{}
-
-func (r MockRepo) CloneURL() string { return "http://clone" }
-func (r MockRepo) Name() string     { return "repo" }
-func (r MockRepo) Owner() string    { return "owner" }
-
-type MockUser struct {
-	UserID string
-	Email  string
-	Name   string
-}
-
-type MockExtension struct {
-	Source string
-	Ref    string
-}
-
-type MockModel struct {
-	Issue         MockIssue
-	Repo          MockRepo
-	IssueComments []MockComment
-	Models        []string
-	User          MockUser
-	PromptFile    string
-	Extensions    []MockExtension
-	Branch        string
-	PRLabel       string
+	// Verify that models are populated
+	expectedModels := `MODELS=( "gemini-test-1" "gemini-test-2"  )`
+	if !bytes.Contains(w.Bytes(), []byte(expectedModels)) {
+		t.Errorf("Script does not contain expected models definition. Got:\n%s", script)
+	}
 }
 
 func TestFixIssuePromptTemplate(t *testing.T) {

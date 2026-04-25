@@ -233,7 +233,7 @@ func (c *GithubResolveConflictsCommand) Run(ctx context.Context) error {
 		}
 	}
 	if len(models) == 0 {
-		return fmt.Errorf("no models provided for conflict resolution")
+		return fmt.Errorf("no models provided for conflict resolution on PR %d", c.PRNumber)
 	}
 
 	promptPath := c.taskPath("agent-prompt.txt")

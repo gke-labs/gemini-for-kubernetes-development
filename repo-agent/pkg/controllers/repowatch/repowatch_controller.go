@@ -1823,7 +1823,7 @@ func (r *Reconciler) ensureRobotSecret(ctx context.Context, namespace, secretNam
 	return r.Create(ctx, newSecret)
 }
 
-func (r *Reconciler) unpauseSandboxIfPendingTasks(ctx context.Context, sandbox *unstructured.Unstructured, tasks []sandboxtaskv1alpha1.SandboxTask, activeSandboxes *int, maxActive int, isExplicit bool) (bool, error) {
+func (r *Reconciler) unpauseSandboxIfPendingTasks(ctx context.Context, sandbox *unstructured.Unstructured, tasks []sandboxtaskv1alpha1.SandboxTask, activeSandboxes *int, maxActive int, isExplicit bool, force bool) (bool, error) {
 	log := log.FromContext(ctx)
 
 	// Check if paused (replicas == 0)
@@ -1836,13 +1836,15 @@ func (r *Reconciler) unpauseSandboxIfPendingTasks(ctx context.Context, sandbox *
 		return false, nil
 	}
 
-	hasPending := false
-	for _, task := range tasks {
-		state := task.Status.TaskState
-		// Pending (default if empty) or Running
-		if state == "" || state == "Pending" || state == "Running" {
-			hasPending = true
-			break
+	hasPending := force
+	if !hasPending {
+		for _, task := range tasks {
+			state := task.Status.TaskState
+			// Pending (default if empty) or Running
+			if state == "" || state == "Pending" || state == "Running" {
+				hasPending = true
+				break
+			}
 		}
 	}
 
@@ -1929,7 +1931,7 @@ func (r *Reconciler) manageSandboxLifecycle(ctx context.Context, sandbox *unstru
 	}
 
 	if replicas == 0 {
-		return r.unpauseSandboxIfPendingTasks(ctx, sandbox, tasks, activeSandboxes, maxActive, isExplicit)
+		return r.unpauseSandboxIfPendingTasks(ctx, sandbox, tasks, activeSandboxes, maxActive, isExplicit, false)
 	}
 
 	if shutdownDuration > 0 {
@@ -2546,7 +2548,7 @@ func (r *Reconciler) reconcileReviewConflicts(ctx context.Context, repoWatch *re
 		}
 
 		// Ensure sandbox is scaled up if we have capacity
-		unpaused, err := r.unpauseSandboxIfPendingTasks(ctx, sandbox, tasks, activeSandboxes, repoWatch.Spec.Review.MaxActiveSandboxes, prIsExplicit)
+		unpaused, err := r.unpauseSandboxIfPendingTasks(ctx, sandbox, tasks, activeSandboxes, repoWatch.Spec.Review.MaxActiveSandboxes, prIsExplicit, true)
 		if err != nil {
 			log.Error(err, "unable to unpause sandbox after creating resolve-conflicts task", "sandbox", sandbox.GetName())
 		}

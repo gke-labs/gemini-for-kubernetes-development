@@ -30,6 +30,9 @@ type IssueSandbox struct {
 
 // NewLocalSandbox creates a sandbox that executes commands locally.
 func NewLocalSandbox(ctx context.Context, repo *github.Repository, name string) *IssueSandbox {
+	if repo == nil {
+		klog.Warning("NewLocalSandbox called with nil repo")
+	}
 	return &IssueSandbox{
 		repo: repo,
 		executor: &LocalExecutor{
