@@ -131,15 +131,36 @@ func (b *ImageBuilder) GitClone(ctx context.Context, source string, dest string)
 			}
 		}
 
-		// If efficient fetch failed, fall back to standard clone
-		log.Info("efficient SHA fetch failed, falling back to standard clone", "source", source, "ref", ref)
+		// If efficient fetch failed, fall back to standard clone and then checkout the SHA
+		log.Info("efficient SHA fetch failed, falling back to standard clone and checkout", "source", source, "ref", ref)
 		if err := os.RemoveAll(dest); err != nil {
 			log.Error(err, "failed to clean up destination after failed efficient fetch", "dest", dest)
 		}
+
+		// Standard clone without -b (since -b doesn't work with SHAs)
+		if err := b.runGitClone(ctx, source, dest, ""); err != nil {
+			return err
+		}
+
+		// Now checkout the SHA
+		cmd := exec.CommandContext(ctx, "git", "checkout", ref)
+		cmd.Dir = dest
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			log.Error(err, "failed to checkout SHA after clone", "ref", ref, "stdout", stdout.String(), "stderr", stderr.String())
+			return fmt.Errorf("git checkout %s failed: %w", ref, err)
+		}
+		return nil
 	}
 
+	return b.runGitClone(ctx, source, dest, ref)
+}
+
+func (b *ImageBuilder) runGitClone(ctx context.Context, source, dest, ref string) error {
+	log := klog.FromContext(ctx)
 	args := []string{
-		"git",
 		"clone",
 	}
 
@@ -149,11 +170,11 @@ func (b *ImageBuilder) GitClone(ctx context.Context, source string, dest string)
 
 	args = append(args, source, dest)
 
-	cmdString := strings.Join(args, " ")
+	cmdString := "git " + strings.Join(args, " ")
 	log.Info("cloning git repo", "source", source, "command", cmdString)
 
 	var stdout, stderr bytes.Buffer
-	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
@@ -165,7 +186,7 @@ func (b *ImageBuilder) GitClone(ctx context.Context, source string, dest string)
 }
 
 func isSHA(s string) bool {
-	if len(s) != 40 && len(s) != 64 {
+	if len(s) < 7 || len(s) > 64 {
 		return false
 	}
 	for _, r := range s {
