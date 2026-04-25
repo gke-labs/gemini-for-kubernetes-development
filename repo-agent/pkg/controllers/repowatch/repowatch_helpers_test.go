@@ -1,18 +1,16 @@
-/*
-Copyright 2025.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+// Copyright 2026 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package repowatch
 
@@ -97,7 +95,8 @@ func TestCreateOrUpdateReviewSandboxes(t *testing.T) {
 	// Start with one existing sandbox (oldSandbox)
 	sandboxList := &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*oldSandbox}}
 
-	watched, pending, finalActive := r.reconcileReviewSandboxesInternal(context.Background(), &github.User{Login: github.String("test-user")}, repoWatch, []*github.PullRequest{}, []*github.PullRequest{pr1, pr2, pr3, pr4}, sandboxList, map[string]*corev1.Pod{})
+	watched, pending, finalActive, _, err := r.reconcileReviewSandboxesInternal(context.Background(), &github.User{Login: github.String("test-user")}, repoWatch, &github.Client{}, "owner", "repo", []*github.PullRequest{}, []*github.PullRequest{pr1, pr2, pr3, pr4}, sandboxList, map[string]*corev1.Pod{}, map[string][]sandboxtaskv1alpha1.SandboxTask{}, "")
+	g.Expect(err).NotTo(gomega.HaveOccurred())
 
 	// Asserts
 	g.Expect(finalActive).To(gomega.Equal(0), "Active count should be 0 because existing sandbox is scaled down and no new one created")
@@ -419,7 +418,7 @@ func TestSortPRs(t *testing.T) {
 
 			g.Expect(len(sorted)).To(gomega.Equal(len(tc.expectedOrder)))
 			for i, pr := range sorted {
-				g.Expect(*pr.Number).To(gomega.Equal(tc.expectedOrder[i]))
+				g.Expect(pr.GetNumber()).To(gomega.Equal(tc.expectedOrder[i]))
 			}
 		})
 	}
@@ -435,6 +434,6 @@ func TestIsPRExplicit(t *testing.T) {
 
 	explicitPRs := []*github.PullRequest{pr1}
 
-	g.Expect(isPRExplicit(*pr1.Number, explicitPRs)).To(gomega.BeTrue())
-	g.Expect(isPRExplicit(*pr2.Number, explicitPRs)).To(gomega.BeFalse())
+	g.Expect(isPRExplicit(pr1.GetNumber(), explicitPRs)).To(gomega.BeTrue())
+	g.Expect(isPRExplicit(pr2.GetNumber(), explicitPRs)).To(gomega.BeFalse())
 }

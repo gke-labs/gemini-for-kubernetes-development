@@ -1,18 +1,16 @@
-/*
-Copyright 2025.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+// Copyright 2026 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package repowatch
 
@@ -24,6 +22,7 @@ import (
 	"testing"
 
 	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
+	sandboxtaskv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/google/go-github/v39/github"
 	"github.com/onsi/gomega"
@@ -47,6 +46,7 @@ func TestReconcileReviewSandboxes_MaxSandboxes(t *testing.T) {
 	s := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(s)
 	_ = reviewv1alpha1.AddToScheme(s)
+	_ = sandboxtaskv1alpha1.AddToScheme(s)
 	_ = sandboxv1alpha1.AddToScheme(s)
 
 	repoURL := "https://github.com/test/repo"
@@ -142,8 +142,9 @@ func TestReconcileReviewSandboxes_MaxSandboxes(t *testing.T) {
 		},
 	}
 
-	// Call reconcile
-	watchedPRs, pendingPRs, activeSandboxes := r.reconcileReviewSandboxesInternal(context.Background(), &github.User{Login: github.String("test-user")}, repoWatch, []*github.PullRequest{}, []*github.PullRequest{pr1, pr2, pr3}, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*activeSandbox, *inactiveSandbox}}, map[string]*corev1.Pod{})
+	// Reconcile
+	watchedPRs, pendingPRs, activeSandboxes, _, err := r.reconcileReviewSandboxesInternal(context.Background(), &github.User{Login: github.String("test-user")}, repoWatch, &github.Client{}, "owner", "repo", []*github.PullRequest{}, []*github.PullRequest{pr1, pr2, pr3}, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*activeSandbox, *inactiveSandbox}}, map[string]*corev1.Pod{}, map[string][]sandboxtaskv1alpha1.SandboxTask{}, "")
+	g.Expect(err).NotTo(gomega.HaveOccurred())
 	repoWatch.Status.ReviewSandboxes = watchedPRs
 	repoWatch.Status.PendingPRs = pendingPRs
 	repoWatch.Status.ActiveSandboxCount = activeSandboxes
@@ -395,7 +396,7 @@ func TestReconcileDevSandboxes_MaxSandboxes(t *testing.T) {
 		{Name: github.String("feature-2")},
 	}
 
-	watched, pending, err := r.reconcileDevSandboxesInternal(context.Background(), &github.User{Login: github.String("test-user")}, repoWatch, branches, "test-owner", "test-repo", nil)
+	watched, pending, err := r.reconcileDevSandboxesInternal(context.Background(), &github.User{Login: github.String("test-user")}, repoWatch, branches, "test-owner", "test-repo", map[string]*corev1.Pod{}, map[string][]sandboxtaskv1alpha1.SandboxTask{})
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 
 	// feature-1 should be found
