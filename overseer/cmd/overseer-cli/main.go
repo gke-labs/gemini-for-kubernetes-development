@@ -204,10 +204,7 @@ func isKubeTransient(err error) bool {
 	if errors.As(err, &netErr) && netErr.Timeout() {
 		return true
 	}
-	if apierrors.IsInternalError(err) || apierrors.IsServiceUnavailable(err) || apierrors.IsServerTimeout(err) || apierrors.IsTimeout(err) || apierrors.IsTooManyRequests(err) {
-		return true
-	}
-	return false
+	return apierrors.IsInternalError(err) || apierrors.IsServiceUnavailable(err) || apierrors.IsServerTimeout(err) || apierrors.IsTimeout(err) || apierrors.IsTooManyRequests(err)
 }
 
 func isGitHubTransient(err error) bool {
@@ -686,6 +683,7 @@ func ensureSandbox(ctx context.Context, dynClient dynamic.Interface, namespace s
 	// We manage Metadata (OwnerReferences, Labels, Annotations) and Spec.
 	metadata := map[string]interface{}{
 		"name":            sb.GetName(),
+		"namespace":       namespace,
 		"ownerReferences": sb.GetOwnerReferences(),
 	}
 	if labels := sb.GetLabels(); labels != nil {
@@ -807,6 +805,7 @@ func ensureService(ctx context.Context, clientset kubernetes.Interface, namespac
 
 	metadata := map[string]interface{}{
 		"name":            svc.Name,
+		"namespace":       namespace,
 		"ownerReferences": mergedRefs,
 	}
 	if svc.Labels != nil {
