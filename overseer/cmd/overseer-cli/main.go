@@ -284,10 +284,7 @@ func isBot(login, botLogin, userLogin string) bool {
 		// Try trimming standard [bot] suffix from both
 		t1 := strings.ToLower(strings.TrimSuffix(login, "[bot]"))
 		t2 := strings.ToLower(strings.TrimSuffix(target, "[bot]"))
-		if t1 == t2 {
-			return true
-		}
-		return false
+		return t1 == t2
 	}
 
 	return check(botLogin) || check(userLogin)
