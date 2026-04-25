@@ -35,8 +35,8 @@ func (r MockRepo) Host() string     { return "github.com" }
 
 type MockPullRequest struct{}
 
-func (p MockPullRequest) Number() int         { return 456 }
-func (p MockPullRequest) Title() string       { return "PR Title" }
+func (p MockPullRequest) Number() int           { return 456 }
+func (p MockPullRequest) Title() string         { return "PR Title" }
 func (p MockPullRequest) TruncatedBody() string { return "PR Body" }
 
 type MockUser struct {
