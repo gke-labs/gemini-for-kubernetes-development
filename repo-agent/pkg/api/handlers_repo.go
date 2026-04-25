@@ -609,7 +609,7 @@ func (s *Server) getRepos(c *gin.Context) {
 		return
 	}
 
-	repos := []models.Repo{}
+	repos := make([]models.Repo, 0, len(list.Items))
 	for _, repoWatch := range list.Items {
 		repoName := repoWatch.GetName()
 		repoURL, found, _ := unstructured.NestedString(repoWatch.Object, "spec", "repoURL")

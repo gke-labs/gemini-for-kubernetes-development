@@ -75,7 +75,7 @@ func (s *Server) getIssueTasks(c *gin.Context) {
 	copy(items, taskList.Items)
 	SortSandboxTasks(items)
 
-	tasksList := []models.Task{}
+	tasksList := make([]models.Task, 0, len(items))
 	for _, taskItem := range items {
 		tasksList = append(tasksList, s.mapSandboxTaskToModel(taskItem))
 	}
@@ -98,7 +98,7 @@ func (s *Server) listIssuesFromK8s(ctx context.Context, namespace, repo string) 
 		return nil, fmt.Errorf("failed to list Sandbox CRs: %w", err)
 	}
 
-	issues := []models.Issue{}
+	issues := make([]models.Issue, 0, len(list.Items))
 	for _, item := range list.Items {
 		// Filter out dev sandboxes
 		labels := item.GetLabels()
@@ -717,7 +717,7 @@ func (s *Server) getIssueCommits(c *gin.Context) {
 		return
 	}
 
-	result := []gin.H{}
+	result := make([]gin.H, 0, len(commits))
 	for _, commit := range commits {
 		sha := commit.GetSHA()
 		message := ""

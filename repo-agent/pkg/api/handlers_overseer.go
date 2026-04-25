@@ -70,7 +70,7 @@ func (s *Server) getOverseerSandboxes(c *gin.Context) {
 		return
 	}
 
-	items := make([]map[string]interface{}, 0)
+	items := make([]map[string]interface{}, 0, len(sandboxes.Items))
 	for _, sb := range sandboxes.Items {
 		labels := sb.GetLabels()
 		sType := labels["sandbox.gemini.google.com/type"]
@@ -208,7 +208,7 @@ func (s *Server) getChoreTasks(c *gin.Context) {
 	copy(items, tasks.Items)
 	SortSandboxTasks(items)
 
-	modelsTasks := []models.Task{}
+	modelsTasks := make([]models.Task, 0, len(items))
 	for _, taskItem := range items {
 		modelsTasks = append(modelsTasks, s.mapSandboxTaskToModel(taskItem))
 	}
@@ -264,7 +264,7 @@ func (s *Server) pauseChore(c *gin.Context) {
 
 	excludeList, found, err := unstructured.NestedStringSlice(overseer.Object, "spec", "chores", "exclude")
 	if err != nil || !found {
-		excludeList = []string{}
+		excludeList = make([]string, 0)
 	}
 
 	exists := false

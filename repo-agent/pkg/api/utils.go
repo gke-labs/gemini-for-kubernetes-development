@@ -105,10 +105,11 @@ func getSuggestedLabels(ctx context.Context, client *github.Client, owner, repo 
 	}
 
 	// Count the label ocurrences
-	issueLabels := [][]string{}
+	issueLabels := make([][]string, 0, len(result.Issues))
 	unlabelledCount := 0
-	for i, issue := range result.Issues {
+	for _, issue := range result.Issues {
 		issueLabels = append(issueLabels, []string{})
+		i := len(issueLabels) - 1
 		if len(issue.Labels) == 0 {
 			unlabelledCount++
 		}
@@ -204,7 +205,7 @@ func findMostCommonCoOccurringLabels(itemLabels [][]string) ([][]string, int) {
 		count  int
 	}
 
-	var allCounts []labelCount
+	allCounts := make([]labelCount, 0, len(counts))
 	for key, count := range counts {
 		allCounts = append(allCounts, labelCount{
 			labels: strings.Split(key, "||"),
@@ -220,7 +221,11 @@ func findMostCommonCoOccurringLabels(itemLabels [][]string) ([][]string, int) {
 		return strings.Join(allCounts[i].labels, "||") < strings.Join(allCounts[j].labels, "||")
 	})
 
-	var result [][]string
+	resultSize := len(allCounts)
+	if resultSize > TopN {
+		resultSize = TopN
+	}
+	result := make([][]string, 0, resultSize)
 	maxCount := 0
 	if len(allCounts) > 0 {
 		maxCount = allCounts[0].count

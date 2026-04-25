@@ -56,7 +56,9 @@ func (s *Server) getDevSandboxes(c *gin.Context) {
 
 func (s *Server) listDevSandboxesFromK8s(ctx context.Context, namespace, repo string) ([]models.DevSandbox, error) {
 	log := klog.FromContext(ctx)
-	sandboxes := []models.DevSandbox{}
+	// We don't know the exact count yet, but we'll have at least the ideas (if any)
+	// plus the active sandboxes.
+	sandboxes := make([]models.DevSandbox, 0)
 
 	// 1. Fetch RepoWatch to get Ideas
 	if rw, err := s.K8sManager.GetRepoWatch(ctx, namespace, repo); err == nil {
@@ -359,7 +361,7 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 	// Check if branch is in excludeBranches and remove it if so
 	excludeBranches, found, err := unstructured.NestedStringSlice(rw.Object, "spec", "dev", "excludeBranches")
 	if found && err == nil {
-		newExclude := []string{}
+		newExclude := make([]string, 0, len(excludeBranches))
 		changed := false
 		for _, b := range excludeBranches {
 			if b == req.Branch {
@@ -545,7 +547,7 @@ func (s *Server) getDevTasks(c *gin.Context) {
 	copy(items, taskList.Items)
 	SortSandboxTasks(items)
 
-	tasks := []models.Task{}
+	tasks := make([]models.Task, 0, len(items))
 	for _, taskItem := range items {
 		tasks = append(tasks, s.mapSandboxTaskToModel(taskItem))
 	}

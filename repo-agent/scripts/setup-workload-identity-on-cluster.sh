@@ -15,8 +15,8 @@
 
 set -x
 export PROJECT_ID=$(gcloud config get-value project)
-export REGION=us-central1
-export CLUSTER_NAME=gemini-dev
+export REGION="${REGION:-us-central1}"
+export CLUSTER_NAME="${CLUSTER_NAME:-gemini-dev}"
 
 # 1. Enable Workload Identity on the cluster
 gcloud container clusters update ${CLUSTER_NAME} \

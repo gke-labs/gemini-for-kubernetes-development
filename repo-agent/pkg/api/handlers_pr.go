@@ -74,7 +74,7 @@ func (s *Server) getPRTasks(c *gin.Context) {
 	copy(items, taskList.Items)
 	SortSandboxTasks(items)
 
-	tasksList := []models.Task{}
+	tasksList := make([]models.Task, 0, len(items))
 	for _, taskItem := range items {
 		tasksList = append(tasksList, s.mapSandboxTaskToModel(taskItem))
 	}
@@ -97,7 +97,7 @@ func (s *Server) listPRsFromK8s(ctx context.Context, namespace, repo string) ([]
 		return nil, fmt.Errorf("failed to list Sandbox CRs: %w", err)
 	}
 
-	prs := []models.PR{}
+	prs := make([]models.PR, 0, len(list.Items))
 	for _, item := range list.Items {
 		if item.GetDeletionTimestamp() != nil {
 			continue
@@ -370,7 +370,7 @@ func (s *Server) submitReview(c *gin.Context) {
 	// Traceability is maintained if at least one comment is present or if a body exists.
 	body := ""
 	if reviewRequest.Body != nil {
-		body = strings.TrimSpace(*reviewRequest.Body)
+		body = *reviewRequest.Body
 	}
 
 	if body != "" || len(reviewRequest.Comments) == 0 {
@@ -685,7 +685,7 @@ func (s *Server) getPRCommits(c *gin.Context) {
 		return
 	}
 
-	result := []gin.H{}
+	result := make([]gin.H, 0, len(commits))
 	for _, commit := range commits {
 		sha := commit.GetSHA()
 		message := ""
