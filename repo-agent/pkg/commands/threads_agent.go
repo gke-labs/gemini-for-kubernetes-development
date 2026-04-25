@@ -34,15 +34,18 @@ type ThreadsAgentOptions struct {
 	Cwd string
 }
 
-func (o *ThreadsAgentOptions) InitDefaults() {
+func (o *ThreadsAgentOptions) InitDefaults() error {
 	o.Action = "list"
+	return nil
 }
 
 // NewThreadsAgentCommand creates a new cobra command for managing LLM threads/chats in the dev sandbox.
 func NewThreadsAgentCommand() *cobra.Command {
 	var opt ThreadsAgentOptions
 
-	opt.InitDefaults()
+	if err := opt.InitDefaults(); err != nil {
+		panic(err)
+	}
 
 	cmd := &cobra.Command{
 		Use:   "agent [sandbox-name]",

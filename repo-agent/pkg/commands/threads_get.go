@@ -19,15 +19,18 @@ type GetThreadsOptions struct {
 	IncludeMessages bool
 }
 
-func (o *GetThreadsOptions) InitDefaults() {
+func (o *GetThreadsOptions) InitDefaults() error {
 	o.IncludeMessages = true
+	return nil
 }
 
 // NewThreadsGetCommand creates a new cobra command for getting LLM threads/chats in the dev sandbox.
 func NewThreadsGetCommand() *cobra.Command {
 	var opt GetThreadsOptions
 
-	opt.InitDefaults()
+	if err := opt.InitDefaults(); err != nil {
+		panic(err)
+	}
 
 	cmd := &cobra.Command{
 		Use:   "get [sandbox-name] [thread-id]",

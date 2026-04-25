@@ -182,7 +182,6 @@ func BuildReviewCommand() *cobra.Command {
 			}
 			return reviewCommand.Run(cmd.Context())
 		},
-
 	}
 
 	cmd.Flags().StringVar(&reviewCommand.RepoURL, "repo-url", os.Getenv("GIT_HTML_URL"), "Git HTML URL")

@@ -27,14 +27,17 @@ type CreateOptions struct {
 }
 
 // InitDefaults initializes default values for CreateOptions.
-func (o *CreateOptions) InitDefaults() {
+func (o *CreateOptions) InitDefaults() error {
 	// No defaults to set currently
+	return nil
 }
 
 // BuildCreateCommand builds the cobra command for creating a dev sandbox.
 func BuildCreateCommand() *cobra.Command {
 	var opt CreateOptions
-	opt.InitDefaults()
+	if err := opt.InitDefaults(); err != nil {
+		panic(err) // Should not happen for this command
+	}
 
 	cmd := &cobra.Command{
 		Use:   "create [NAME]",
