@@ -52,6 +52,9 @@ const (
 	TaskTypeFeedback        = "feedback"
 	TaskTypeIssueComment    = "issue-comment"
 	TaskTypePRReview        = "pr-review"
+	TaskTypeTriageIssue     = "triage-issue"
+	TaskTypeIterate         = "iterate"
+	TaskTypeRollback        = "rollback"
 )
 
 var footerTemplate = template.Must(template.New("metadata-footer").Parse(`
