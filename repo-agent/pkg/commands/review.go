@@ -62,7 +62,13 @@ type ReviewCommand struct {
 	OutputNamespace string
 }
 
-func (c *ReviewCommand) InitDefaults() {
+func (c *ReviewCommand) InitDefaults() error {
+	prompt, err := resolveAgentPrompt(c.AgentPrompt)
+	if err != nil {
+		return err
+	}
+	c.AgentPrompt = prompt
+
 	if c.OutputGVR == nil {
 		if gvrResource := os.Getenv("AGENT_OUTPUT_GVR_RESOURCE"); gvrResource != "" {
 			group := os.Getenv("AGENT_OUTPUT_GVR_GROUP")
@@ -110,15 +116,6 @@ func (c *ReviewCommand) InitDefaults() {
 	if c.AgentName == "" {
 		c.AgentName = os.Getenv("AGENT_NAME")
 	}
-	if c.AgentPrompt == "" {
-		c.AgentPrompt = os.Getenv("AGENT_PROMPT")
-	}
-	if c.AgentPrompt == "" {
-		c.AgentPrompt = os.Getenv("prompt")
-	}
-	if c.AgentPrompt == "" {
-		c.AgentPrompt = os.Getenv("PROMPT")
-	}
 	if c.DiffURL == "" {
 		c.DiffURL = os.Getenv("GIT_DIFF_URL")
 	}
@@ -147,6 +144,7 @@ func (c *ReviewCommand) InitDefaults() {
 			}
 		}
 	}
+
 	if len(c.IgnoreFiles) == 0 {
 		ignoreFilesStr := os.Getenv("IGNORE_FILES")
 		if ignoreFilesStr != "" {
@@ -167,6 +165,7 @@ func (c *ReviewCommand) InitDefaults() {
 			}
 		}
 	}
+	return nil
 }
 
 func BuildReviewCommand() *cobra.Command {
@@ -176,11 +175,14 @@ func BuildReviewCommand() *cobra.Command {
 		Short: "Run the review agent",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 0 {
-				return fmt.Errorf("review command does not take any arguments")
+				return fmt.Errorf("command does not take positional arguments")
 			}
-			reviewCommand.InitDefaults()
+			if err := reviewCommand.InitDefaults(); err != nil {
+				return err
+			}
 			return reviewCommand.Run(cmd.Context())
 		},
+
 	}
 
 	cmd.Flags().StringVar(&reviewCommand.RepoURL, "repo-url", os.Getenv("GIT_HTML_URL"), "Git HTML URL")

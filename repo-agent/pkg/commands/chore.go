@@ -40,7 +40,12 @@ func BuildChoreCommand() *cobra.Command {
 		Short: "Run a chore using an LLM in a sandbox",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			choreCommand.InitDefaults()
+			if len(args) != 0 {
+				return fmt.Errorf("command does not take positional arguments")
+			}
+			if err := choreCommand.InitDefaults(); err != nil {
+				return err
+			}
 			return choreCommand.Run(cmd.Context())
 		},
 	}
@@ -56,7 +61,13 @@ func BuildChoreCommand() *cobra.Command {
 	return cmd
 }
 
-func (c *ChoreCommand) InitDefaults() {
+func (c *ChoreCommand) InitDefaults() error {
+	prompt, err := resolveAgentPrompt(c.AgentPrompt)
+	if err != nil {
+		return err
+	}
+	c.AgentPrompt = prompt
+
 	if c.WorkspaceDir == "" {
 		c.WorkspaceDir = "/workspaces"
 	}
@@ -66,6 +77,7 @@ func (c *ChoreCommand) InitDefaults() {
 	if c.TaskDir == "" {
 		c.TaskDir = c.WorkspaceDir
 	}
+	return nil
 }
 
 func (c *ChoreCommand) taskPath(name string, args ...interface{}) string {

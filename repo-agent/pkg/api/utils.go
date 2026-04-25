@@ -3,11 +3,11 @@ package api
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"sort"
 	"strings"
 
 	"github.com/google/go-github/v39/github"
+	pkg_github "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 	"k8s.io/klog/v2"
 )
 
@@ -41,15 +41,7 @@ func convInt64SliceToInterfaceSlice(in []int64) []interface{} {
 }
 
 func parseRepoURL(repoURL string) (string, string, error) {
-	u, err := url.Parse(repoURL)
-	if err != nil {
-		return "", "", err
-	}
-	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
-	if len(parts) != 2 {
-		return "", "", fmt.Errorf("invalid repo url: %s", repoURL)
-	}
-	return parts[0], strings.TrimSuffix(parts[1], ".git"), nil
+	return pkg_github.ParseHTMLUrl(repoURL)
 }
 
 // TODO this is k8s specific. we need to generalize it later.

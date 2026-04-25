@@ -86,7 +86,11 @@ func parseURL(s string) (host, owner, repo string, number int, urlType string, e
 			repo = pathParts[1]
 			if len(pathParts) >= 4 && (pathParts[2] == "issues" || pathParts[2] == "pull") {
 				urlType = pathParts[2]
-				number, _ = strconv.Atoi(pathParts[3])
+				var err error
+				number, err = strconv.Atoi(pathParts[3])
+				if err != nil {
+					return host, owner, repo, 0, urlType, fmt.Errorf("invalid issue/pr number %q: %w", pathParts[3], err)
+				}
 			}
 			return host, owner, repo, number, urlType, nil
 		}
