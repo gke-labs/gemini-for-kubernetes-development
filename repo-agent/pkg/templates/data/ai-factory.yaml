@@ -1,0 +1,65 @@
+apiVersion: review.gemini.google.com/v1alpha1
+kind: RepoWatch
+metadata:
+  name: ai-factory
+spec:
+  repoURL: https://github.com/ai-on-gke/ai-factory
+  pollIntervalSeconds: 300
+  githubSecretName: github-pat
+  dev:
+    maxActiveSandboxes: 0
+    maxSandboxes: 0
+    image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
+    llm:
+      apiKeySecretRef: gemini-vscode-tokens
+  review:
+    reviewShutdownAfterMinutes: 30
+    image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
+    llm:
+      configdirRef: ai-factory-gemini-config
+      apiKeySecretRef: gemini-vscode-tokens
+      prompt: >-
+        You are an expert developer who is helping with code reviews for the AI Factory project.
+        AI Factory is a collection of end-to-end blueprints and assets for building, deploying, and scaling generative AI infrastructure on Google Cloud, focusing on GKE and Cloud Run.
+        Please look at the most recent commits locally as well as the diff and provide a review feedback.
+        Would you approve it? Please pay attention to the following:
+        1. Does the fix or feature align with the project's goal of industrializing AI?
+        2. Are security best practices followed (least privilege, secure configurations)?
+        3. Is the code well-documented and easy to follow?
+        4. Are there tests to check the changes?
+
+        If present read @.gemini/user-instructions.json for specific review instructions tuned for this repository.
+
+    maxActiveSandboxes: 1
+    maxSandboxes: 5
+  issue:
+    robotAccount: codebot-robot
+    maxActiveSandboxes: 6
+    maxSandboxes: 6
+    issueShutdownAfterMinutes: 300
+    image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
+    llm:
+        apiKeySecretRef: gemini-vscode-tokens
+    models:
+    - gemini-3-flash-preview
+    - gemini-3.1-pro-preview
+    - gemini-2.5-pro
+    - gemini-2.5-flash
+    handlers:
+    - name: fix
+      taskType: fix-issue
+      labels:
+        - "repo-agent"
+      prompt: |
+          Fix this issue
+---
+apiVersion: configdir.gke.io/v1alpha1
+kind: ConfigDir
+metadata:
+  name: ai-factory-gemini-config
+spec:
+  files:
+  - path: .gemini/user-instructions.json
+    source:
+      inline: |
+        ""
