@@ -25,7 +25,7 @@ import (
 
 	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
+	sbx "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks"
 	"github.com/spf13/cobra"
 	"k8s.io/klog/v2"
@@ -50,11 +50,11 @@ type GithubResolveConflictsCommand struct {
 	CustomPrompt    string
 
 	// loaded objects
-	pr        *github.PullRequest
-	repo      *github.Repository
-	user      *github.User
-	sandbox   *sandbox.IssueSandbox
-	sandboxID string
+	pr           *github.PullRequest
+	repo         *github.Repository
+	user         *github.User
+	issueSandbox *sbx.IssueSandbox
+	sandboxID    string
 }
 
 // BuildGithubResolveConflictsCommand creates a new cobra command for automated merge conflict resolution.
@@ -193,17 +193,17 @@ func (c *GithubResolveConflictsCommand) loadSandbox(ctx context.Context) error {
 		if c.repo != nil {
 			name = fmt.Sprintf("local-%s-pr-%d", c.repo.Name(), c.PRNumber)
 		}
-		c.sandbox = sandbox.NewLocalSandbox(ctx, c.repo, name)
-		c.sandboxID = c.sandbox.GetSandboxID()
+		c.issueSandbox = sbx.NewLocalSandbox(ctx, c.repo, name)
+		c.sandboxID = c.issueSandbox.GetSandboxID()
 		return nil
 	}
 
 	// For non-pod execution, we still need NewIssueSandbox to find/launch a real sandbox
-	sb, err := sandbox.NewIssueSandbox(ctx, false, c.repo, nil, fmt.Sprintf("pr-%d", c.PRNumber))
+	sb, err := sbx.NewIssueSandbox(ctx, false, c.repo, nil, fmt.Sprintf("pr-%d", c.PRNumber))
 	if err != nil {
 		return err
 	}
-	c.sandbox = sb
+	c.issueSandbox = sb
 	c.sandboxID = sb.GetSandboxID()
 	return nil
 }
@@ -270,7 +270,7 @@ func (c *GithubResolveConflictsCommand) Run(ctx context.Context) error {
 	}
 
 	// Re-use RunTask.
-	err = tasks.RunTask(ctx, &task, c.sandbox, c.TaskDir, env)
+	err = tasks.RunTask(ctx, &task, c.issueSandbox, c.TaskDir, env)
 	if err != nil {
 		return fmt.Errorf("running resolve-conflicts task: %w", err)
 	}
