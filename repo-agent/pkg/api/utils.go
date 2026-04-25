@@ -135,7 +135,7 @@ func getSuggestedLabels(ctx context.Context, client *github.Client, owner, repo 
 
 	// If the most common co-occurring labels appear in less than all unlabelled PRs, return no suggestions
 	if count < unlabelledCount {
-		return [][]string{}, nil
+		return make([][]string, 0), nil
 	}
 
 	return labels, nil

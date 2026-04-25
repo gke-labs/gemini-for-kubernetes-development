@@ -19,7 +19,7 @@
 
 set -x
 # 1. Set up variables based on your current environment
-export PROJECT_ID=$(gcloud config get-value project)
+export PROJECT_ID="${PROJECT_ID:-$(gcloud config get-value project)}"
 export K8S_SA="${K8S_SA:-issue-sandbox}"
 export GCP_SA_NAME="${GCP_SA_NAME:-kcc-overseer-sa}"
 export GCP_SA_EMAIL="${GCP_SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"

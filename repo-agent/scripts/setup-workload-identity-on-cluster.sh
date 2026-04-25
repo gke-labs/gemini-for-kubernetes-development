@@ -14,7 +14,7 @@
 # limitations under the License.
 
 set -x
-export PROJECT_ID=$(gcloud config get-value project)
+export PROJECT_ID="${PROJECT_ID:-$(gcloud config get-value project)}"
 export REGION="${REGION:-us-central1}"
 export CLUSTER_NAME="${CLUSTER_NAME:-gemini-dev}"
 

@@ -224,7 +224,7 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 			return
 		}
 		if !found {
-			ideas = []interface{}{}
+			ideas = make([]interface{}, 0)
 		}
 
 		// Check if ID already exists
