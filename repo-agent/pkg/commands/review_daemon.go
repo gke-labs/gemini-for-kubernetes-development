@@ -18,7 +18,8 @@ type ReviewDaemonCommand struct {
 }
 
 func (c *ReviewDaemonCommand) InitDefaults() error {
-	if err := c.ReviewCommand.InitDefaults(); err != nil {
+	err := c.ReviewCommand.InitDefaults()
+	if err != nil {
 		return err
 	}
 	return c.CodeServerCommand.InitDefaults()

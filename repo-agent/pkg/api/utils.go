@@ -6,9 +6,10 @@ import (
 	"sort"
 	"strings"
 
-	pkg_github "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 	"github.com/google/go-github/v39/github"
 	"k8s.io/klog/v2"
+
+	pkg_github "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 )
 
 func fixYAMLIntegers(in interface{}) interface{} {

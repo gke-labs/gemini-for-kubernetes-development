@@ -25,7 +25,7 @@ import (
 
 	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
-	sbx "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks"
 	"github.com/spf13/cobra"
 	"k8s.io/klog/v2"
@@ -53,7 +53,7 @@ type GithubResolveConflictsCommand struct {
 	pr           *github.PullRequest
 	repo         *github.Repository
 	user         *github.User
-	issueSandbox *sbx.IssueSandbox
+	issueSandbox *sandbox.IssueSandbox
 	sandboxID    string
 }
 
@@ -193,13 +193,13 @@ func (c *GithubResolveConflictsCommand) loadSandbox(ctx context.Context) error {
 		if c.repo != nil {
 			name = fmt.Sprintf("local-%s-pr-%d", c.repo.Name(), c.PRNumber)
 		}
-		c.issueSandbox = sbx.NewLocalSandbox(ctx, c.repo, name)
+		c.issueSandbox = sandbox.NewLocalSandbox(ctx, c.repo, name)
 		c.sandboxID = c.issueSandbox.GetSandboxID()
 		return nil
 	}
 
 	// For non-pod execution, we still need NewIssueSandbox to find/launch a real sandbox
-	sb, err := sbx.NewIssueSandbox(ctx, false, c.repo, nil, fmt.Sprintf("pr-%d", c.PRNumber))
+	sb, err := sandbox.NewIssueSandbox(ctx, false, c.repo, nil, fmt.Sprintf("pr-%d", c.PRNumber))
 	if err != nil {
 		return err
 	}
