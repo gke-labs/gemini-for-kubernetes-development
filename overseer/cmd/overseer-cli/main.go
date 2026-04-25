@@ -171,11 +171,12 @@ func buildReconcileCommand() *cobra.Command {
 }
 
 type ChoreDefinition struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Schedule    string `json:"schedule"`
-	SkipPR      bool   `json:"skipPR,omitempty"`
-	Prompt      string `json:"-"`
+	Name         string `json:"name"`
+	Description  string `json:"description"`
+	Schedule     string `json:"schedule"`
+	SkipPR       bool   `json:"skipPR,omitempty"`
+	StaleTimeout string `json:"staleTimeout,omitempty"`
+	Prompt       string `json:"-"`
 }
 
 type RetryableError struct {
@@ -451,7 +452,17 @@ func runChore(ctx context.Context, name string, file string) error {
 				// Fall through to create new task
 			}
 			if state == "Running" || state == "Pending" {
-				if time.Since(getTaskTime(task)) < 2*time.Hour {
+				staleTimeout := 2 * time.Hour
+				if chore.StaleTimeout != "" {
+					d, err := time.ParseDuration(chore.StaleTimeout)
+					if err != nil {
+						klog.Warningf("Chore %s: Invalid staleTimeout %q: %v. Using default 2h.", chore.Name, chore.StaleTimeout, err)
+					} else {
+						staleTimeout = d
+					}
+				}
+
+				if time.Since(getTaskTime(task)) < staleTimeout {
 					klog.V(2).Infof("Chore %s: Task already exists in state %s (created %v ago). Skipping.", chore.Name, state, time.Since(getTaskTime(task)))
 					return nil
 				}
@@ -2280,11 +2291,11 @@ func getTokenFromScript() (string, error) {
 
 		path := filepath.Join(dir, f.Name())
 		cmd := exec.Command(path)
-		var out bytes.Buffer
+		var out, errOut bytes.Buffer
 		cmd.Stdout = &out
-		cmd.Stderr = os.Stderr
+		cmd.Stderr = &errOut
 		if err := cmd.Run(); err != nil {
-			return "", fmt.Errorf("failed to run tokenscript %s: %w", path, err)
+			return "", fmt.Errorf("failed to run tokenscript %s: %w (stderr: %s)", path, err, errOut.String())
 		}
 
 		return strings.TrimSpace(out.String()), nil

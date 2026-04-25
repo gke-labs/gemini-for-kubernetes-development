@@ -75,12 +75,15 @@ func (b *ImageBuilder) InstallDotfilesRepo(ctx context.Context) error {
 	}
 
 	cmd := exec.CommandContext(ctx, foundEntrypoint)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
+		log.Error(err, "error running dotfiles entrypoint", "command", strings.Join(cmd.Args, " "), "stdout", stdout.String(), "stderr", stderr.String())
 		return fmt.Errorf("error running dotfiles entrypoint %q from repo %q: %w", strings.Join(cmd.Args, " "), b.DotFilesRepo, err)
 	}
+	log.V(2).Info("successfully ran dotfiles entrypoint", "command", strings.Join(cmd.Args, " "), "stdout", stdout.String())
 
 	return nil
 }
