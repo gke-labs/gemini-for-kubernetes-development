@@ -348,8 +348,6 @@ func (s *Server) applyTraceabilityMetadataWithSandbox(c *gin.Context, body strin
 
 		if footerEnd != -1 {
 			body = strings.TrimRight(contentBefore+body[footerStart+footerEnd+3:], " \t\n\r")
-		} else {
-			body = strings.TrimRight(contentBefore, " \t\n\r")
 		}
 	}
 

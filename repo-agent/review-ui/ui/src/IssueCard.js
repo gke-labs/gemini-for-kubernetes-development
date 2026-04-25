@@ -271,7 +271,7 @@ function IssueCard({
                 />
                 <div style={{display: 'flex', justifyContent: 'flex-end'}}>
                     <button className="btn btn-submit" onClick={() => {
-                        const latestTask = tasks.length > 0 ? tasks[tasks.length - 1] : null;
+                        const latestTask = tasks.length > 0 ? tasks[0] : null;
                         handleIssueSubmit(issue.id, latestTask?.name, latestTask?.uid);
                     }}>Submit General Comment</button>
                 </div>
