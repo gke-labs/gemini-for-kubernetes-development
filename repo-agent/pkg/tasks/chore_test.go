@@ -3,8 +3,6 @@ package tasks
 import (
 	"bytes"
 	"testing"
-
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 )
 
 func TestChoreScriptTemplate(t *testing.T) {
@@ -21,11 +19,6 @@ func TestChoreScriptTemplate(t *testing.T) {
 		ChoreFile:  ".agents/test.md",
 		PromptFile: "prompt.txt",
 		SkipPR:     true,
-		Repo: &github.Repo{
-			Host:  "github.com",
-			Owner: "test-owner",
-			Name:  "test-repo",
-		},
 	}
 
 	var w bytes.Buffer
@@ -45,9 +38,9 @@ func TestChoreScriptTemplate(t *testing.T) {
 		t.Errorf("Script does not contain expected CLONE_URL. Got:\n%s", script)
 	}
 
-	expectedCloneCmd := `gh repo clone "${CLONE_URL}" "/workspaces/${REPO_NAME}"`
+	expectedCloneCmd := `git clone "${CLONE_URL}" "/workspaces/${REPO_NAME}"`
 	if !bytes.Contains(w.Bytes(), []byte(expectedCloneCmd)) {
-		t.Errorf("Script does not contain expected gh repo clone command. Got:\n%s", script)
+		t.Errorf("Script does not contain expected git clone command. Got:\n%s", script)
 	}
 
 	expectedRunGemini := `function runGemini {`

@@ -1,17 +1,3 @@
-// Copyright 2026 The Kubernetes Authors.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 package tasks
 
 import (
@@ -38,7 +24,6 @@ type MockRepo struct{}
 func (r MockRepo) CloneURL() string { return "http://clone" }
 func (r MockRepo) Name() string     { return "repo" }
 func (r MockRepo) Owner() string    { return "owner" }
-func (r MockRepo) Host() string     { return "github.com" }
 
 type MockUser struct {
 	UserID string
@@ -54,8 +39,6 @@ type MockExtension struct {
 type MockModel struct {
 	Issue         MockIssue
 	Repo          MockRepo
-	RepoOwner     string
-	RepoName      string
 	IssueComments []MockComment
 	Models        []string
 	User          MockUser
@@ -80,8 +63,6 @@ func TestFixIssuePromptTemplate(t *testing.T) {
 	data := MockModel{
 		Issue:         MockIssue{},
 		Repo:          MockRepo{},
-		RepoOwner:     "owner",
-		RepoName:      "repo",
 		IssueComments: []MockComment{{}},
 		Models:        []string{"gemini-test"},
 		User:          MockUser{UserID: "test", Email: "test@test.com", Name: "Test User"},
@@ -93,9 +74,16 @@ func TestFixIssuePromptTemplate(t *testing.T) {
 	}
 
 	// Verify that the new instruction is present
-	expected := "Your response MUST include:"
+	expected := `Final Steps:
+* After you have created the PR, you MUST summarize the design decisions you made.`
 	if !bytes.Contains(w.Bytes(), []byte(expected)) {
 		t.Errorf("Prompt does not contain expected instruction. Got:\n%s", w.String())
+	}
+
+	// Verify that it uses the provided branch name
+	expectedPush := `git push --force --set-upstream origin test-branch`
+	if !bytes.Contains(w.Bytes(), []byte(expectedPush)) {
+		t.Errorf("Prompt does not contain expected push command with branch. Got:\n%s", w.String())
 	}
 }
 
@@ -114,8 +102,6 @@ func TestFixIssuePromptTemplate_NoBranch(t *testing.T) {
 	data := MockModel{
 		Issue:         MockIssue{},
 		Repo:          MockRepo{},
-		RepoOwner:     "owner",
-		RepoName:      "repo",
 		IssueComments: []MockComment{{}},
 		Models:        []string{"gemini-test"},
 		User:          MockUser{UserID: "test", Email: "test@test.com", Name: "Test User"},
@@ -126,10 +112,10 @@ func TestFixIssuePromptTemplate_NoBranch(t *testing.T) {
 		t.Fatalf("Failed to execute template: %v", err)
 	}
 
-	// Verify that it contains the issue information
-	expected := "<issue_number>123</issue_number>"
+	// Verify that it uses the default branch name pattern
+	expected := `git push --force --set-upstream origin issue-123`
 	if !bytes.Contains(w.Bytes(), []byte(expected)) {
-		t.Errorf("Prompt does not contain expected issue number. Got:\n%s", w.String())
+		t.Errorf("Prompt does not contain expected default push command. Got:\n%s", w.String())
 	}
 }
 
@@ -148,8 +134,6 @@ func TestFixIssueScriptTemplate(t *testing.T) {
 	data := MockModel{
 		Issue:         MockIssue{},
 		Repo:          MockRepo{},
-		RepoOwner:     "owner",
-		RepoName:      "repo",
 		IssueComments: []MockComment{{}},
 		Models:        []string{"gemini-test-1", "gemini-test-2"},
 		User:          MockUser{UserID: "test", Email: "test@test.com", Name: "Test User"},
@@ -194,8 +178,6 @@ func TestFixIssueScriptTemplate_NoBranch(t *testing.T) {
 	data := MockModel{
 		Issue:         MockIssue{},
 		Repo:          MockRepo{},
-		RepoOwner:     "owner",
-		RepoName:      "repo",
 		IssueComments: []MockComment{{}},
 		Models:        []string{"gemini-test-1", "gemini-test-2"},
 		User:          MockUser{UserID: "test", Email: "test@test.com", Name: "Test User"},
@@ -208,7 +190,7 @@ func TestFixIssueScriptTemplate_NoBranch(t *testing.T) {
 
 	script := w.String()
 	// Verify that it uses the default branch name with bash variable
-	expectedBranch := `branch_name="issue-${ISSUE_NUMBER}"`
+	expectedBranch := `local branch_name="issue-${ISSUE_NUMBER}"`
 	if !bytes.Contains(w.Bytes(), []byte(expectedBranch)) {
 		t.Errorf("Script does not contain expected default branch name. Got:\n%s", script)
 	}

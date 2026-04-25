@@ -1,17 +1,3 @@
-// Copyright 2026 The Kubernetes Authors.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 package commands
 
 import (
@@ -20,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks"
 	"github.com/spf13/cobra"
@@ -55,14 +40,12 @@ func BuildChoreCommand() *cobra.Command {
 		Short: "Run a chore using an LLM in a sandbox",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := choreCommand.InitDefaults(); err != nil {
-				return err
-			}
+			choreCommand.InitDefaults()
 			return choreCommand.Run(cmd.Context())
 		},
 	}
 
-	cmd.Flags().StringVar(&choreCommand.AgentPrompt, "prompt", "", "Chore prompt (falls back to AGENT_PROMPT_FILE or AGENT_PROMPT env vars)")
+	cmd.Flags().StringVar(&choreCommand.AgentPrompt, "prompt", os.Getenv("AGENT_PROMPT"), "Chore prompt")
 	cmd.Flags().StringVar(&choreCommand.ChoreName, "name", os.Getenv("CHORE_NAME"), "Chore name")
 	cmd.Flags().StringVar(&choreCommand.ChoreFile, "file", os.Getenv("CHORE_FILE"), "Chore definition file path")
 	cmd.Flags().StringVar(&choreCommand.RepoName, "repo", os.Getenv("REPO"), "Repository name")
@@ -73,13 +56,7 @@ func BuildChoreCommand() *cobra.Command {
 	return cmd
 }
 
-func (c *ChoreCommand) InitDefaults() error {
-	prompt, err := resolveAgentPrompt(c.AgentPrompt)
-	if err != nil {
-		return err
-	}
-	c.AgentPrompt = prompt
-
+func (c *ChoreCommand) InitDefaults() {
 	if c.WorkspaceDir == "" {
 		c.WorkspaceDir = "/workspaces"
 	}
@@ -89,7 +66,6 @@ func (c *ChoreCommand) InitDefaults() error {
 	if c.TaskDir == "" {
 		c.TaskDir = c.WorkspaceDir
 	}
-	return nil
 }
 
 func (c *ChoreCommand) taskPath(name string, args ...interface{}) string {
@@ -122,12 +98,6 @@ func (c *ChoreCommand) Run(ctx context.Context) error {
 	}
 
 	promptPath := c.taskPath("agent-prompt.txt")
-	repo, err := github.ParseRepo(c.CloneURL)
-	if err != nil {
-		// Fallback for tests or missing clone URL
-		repo = &github.Repo{Host: "github.com"}
-	}
-
 	task := tasks.ChoreModel{
 		AgentPrompt: c.AgentPrompt,
 		ChoreName:   c.ChoreName,
@@ -137,7 +107,6 @@ func (c *ChoreCommand) Run(ctx context.Context) error {
 		RepoOwner:   c.RepoOwner,
 		PromptFile:  promptPath,
 		SkipPR:      c.SkipPR,
-		Repo:        repo,
 	}
 
 	apikey, err := GetGeminiAPIKey(c.sandboxID)

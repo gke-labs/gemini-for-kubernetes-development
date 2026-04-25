@@ -1,17 +1,3 @@
-// Copyright 2026 The Kubernetes Authors.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 package commands
 
 import (
@@ -67,9 +53,7 @@ func BuildDevInitCommand() *cobra.Command {
 			if len(args) != 0 {
 				return fmt.Errorf("command does not take positional arguments")
 			}
-			if err := initCommand.InitDefaults(); err != nil {
-				return err
-			}
+			initCommand.InitDefaults()
 			return initCommand.Run(cmd.Context())
 		},
 	}
@@ -77,7 +61,7 @@ func BuildDevInitCommand() *cobra.Command {
 	cmd.Flags().StringVar(&initCommand.RepoURL, "repo-url", os.Getenv("REPO_URL"), "GitHub repo URL")
 	cmd.Flags().StringVar(&initCommand.BranchName, "branch-name", os.Getenv("BRANCH_NAME"), "Branch name")
 	cmd.Flags().StringVar(&initCommand.SourceBranch, "source-branch", os.Getenv("SOURCE_BRANCH"), "Source branch name to fork from")
-	cmd.Flags().StringVar(&initCommand.AgentPrompt, "agent-prompt", "", "Agent prompt (falls back to AGENT_PROMPT_FILE or AGENT_PROMPT env vars)")
+	cmd.Flags().StringVar(&initCommand.AgentPrompt, "agent-prompt", os.Getenv("AGENT_PROMPT"), "Agent prompt")
 	cmd.Flags().StringVar(&initCommand.GithubUserLogin, "github-user-login", os.Getenv("GITHUB_USER_LOGIN"), "Github user login")
 	cmd.Flags().StringVar(&initCommand.GithubUserEmail, "github-user-email", os.Getenv("GITHUB_USER_EMAIL"), "Github user email")
 	cmd.Flags().StringVar(&initCommand.GithubUserName, "github-user-name", os.Getenv("GITHUB_USER_NAME"), "Github user name")
@@ -87,13 +71,7 @@ func BuildDevInitCommand() *cobra.Command {
 	return cmd
 }
 
-func (c *DevInitCommand) InitDefaults() error {
-	prompt, err := resolveAgentPrompt(c.AgentPrompt)
-	if err != nil {
-		return err
-	}
-	c.AgentPrompt = prompt
-
+func (c *DevInitCommand) InitDefaults() {
 	if c.WorkspaceDir == "" {
 		c.WorkspaceDir = "/workspaces"
 	}
@@ -107,7 +85,6 @@ func (c *DevInitCommand) InitDefaults() error {
 	if c.Model == "" {
 		c.Model = "gemini-3.1-pro-preview"
 	}
-	return nil
 }
 
 func (c *DevInitCommand) taskPath(name string, args ...interface{}) string {
@@ -124,25 +101,19 @@ func (c *DevInitCommand) loadGithubObjects(ctx context.Context) error {
 	}
 	c.GithubUserToken = token
 
-	// Construct basic repo object
-	owner, repoName, err := github.ParseHTMLUrl(c.RepoURL)
-	if err != nil {
-		// Fallback for non-standard URLs
-		cleanURL := strings.Split(c.RepoURL, "#")[0]
-		cleanURL = strings.TrimSuffix(cleanURL, "/")
-		repoName = filepath.Base(cleanURL)
-		if ext := filepath.Ext(repoName); ext == ".git" {
-			repoName = repoName[:len(repoName)-len(ext)]
-		}
-		owner = c.GithubUserLogin
+	// Let's parse the name from URL for directory naming
+	// e.g. https://github.com/owner/repo
+	cleanURL := strings.Split(c.RepoURL, "#")[0]
+	cleanURL = strings.TrimSuffix(cleanURL, "/")
+	base := filepath.Base(cleanURL)
+	if ext := filepath.Ext(base); ext == ".git" {
+		base = base[:len(base)-len(ext)]
 	}
 
+	// Construct basic repo object
 	innerRepo := &githubv39.Repository{
-		CloneURL: githubv39.String(strings.TrimSuffix(c.RepoURL, ".git") + ".git"),
-		Name:     githubv39.String(repoName),
-		Owner: &githubv39.User{
-			Login: githubv39.String(owner),
-		},
+		CloneURL: githubv39.String(strings.TrimSuffix(cleanURL, ".git") + ".git"),
+		Name:     githubv39.String(base),
 	}
 	c.repo = github.NewRepository(innerRepo)
 
@@ -186,8 +157,6 @@ func (c *DevInitCommand) Run(ctx context.Context) error {
 	promptPath := c.taskPath("agent-prompt.txt")
 	task := tasks.DevSetupModel{
 		Repo:         c.repo,
-		RepoOwner:    c.repo.Owner(),
-		RepoName:     c.repo.Name(),
 		User:         c.user,
 		BranchName:   c.BranchName,
 		SourceBranch: c.SourceBranch,
@@ -199,7 +168,7 @@ func (c *DevInitCommand) Run(ctx context.Context) error {
 	if c.ExtensionsJSON != "" {
 		var extensions []reviewv1alpha1.Extension
 		if err := json.Unmarshal([]byte(c.ExtensionsJSON), &extensions); err != nil {
-			log.Error(err, "failed to unmarshal extensions JSON (skipping)", "json", c.ExtensionsJSON)
+			log.Error(err, "failed to unmarshal extensions JSON")
 		} else {
 			task.Extensions = extensions
 		}

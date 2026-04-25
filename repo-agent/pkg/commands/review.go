@@ -1,17 +1,3 @@
-// Copyright 2026 The Kubernetes Authors.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 package commands
 
 import (
@@ -31,7 +17,6 @@ import (
 	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/agentoutput"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
-	pkg_github "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/imagebuilder"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/llm"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
@@ -77,7 +62,7 @@ type ReviewCommand struct {
 	OutputNamespace string
 }
 
-func (c *ReviewCommand) InitDefaults() error {
+func (c *ReviewCommand) InitDefaults() {
 	if c.OutputGVR == nil {
 		if gvrResource := os.Getenv("AGENT_OUTPUT_GVR_RESOURCE"); gvrResource != "" {
 			group := os.Getenv("AGENT_OUTPUT_GVR_GROUP")
@@ -125,11 +110,15 @@ func (c *ReviewCommand) InitDefaults() error {
 	if c.AgentName == "" {
 		c.AgentName = os.Getenv("AGENT_NAME")
 	}
-	prompt, err := resolveAgentPrompt(c.AgentPrompt)
-	if err != nil {
-		return err
+	if c.AgentPrompt == "" {
+		c.AgentPrompt = os.Getenv("AGENT_PROMPT")
 	}
-	c.AgentPrompt = prompt
+	if c.AgentPrompt == "" {
+		c.AgentPrompt = os.Getenv("prompt")
+	}
+	if c.AgentPrompt == "" {
+		c.AgentPrompt = os.Getenv("PROMPT")
+	}
 	if c.DiffURL == "" {
 		c.DiffURL = os.Getenv("GIT_DIFF_URL")
 	}
@@ -178,7 +167,6 @@ func (c *ReviewCommand) InitDefaults() error {
 			}
 		}
 	}
-	return nil
 }
 
 func BuildReviewCommand() *cobra.Command {
@@ -190,9 +178,7 @@ func BuildReviewCommand() *cobra.Command {
 			if len(args) != 0 {
 				return fmt.Errorf("review command does not take any arguments")
 			}
-			if err := reviewCommand.InitDefaults(); err != nil {
-				return err
-			}
+			reviewCommand.InitDefaults()
 			return reviewCommand.Run(cmd.Context())
 		},
 	}
@@ -201,7 +187,7 @@ func BuildReviewCommand() *cobra.Command {
 	cmd.Flags().StringVar(&reviewCommand.UserDotfilesRepo, "user-dotfiles-repo", os.Getenv("USER_DOTFILESREPO"), "User dotfiles repo")
 	cmd.Flags().StringVar(&reviewCommand.CloneURL, "clone-url", os.Getenv("GIT_CLONE_URL"), "Git clone URL")
 	cmd.Flags().StringVar(&reviewCommand.AgentName, "agent-name", os.Getenv("AGENT_NAME"), "Agent name")
-	cmd.Flags().StringVar(&reviewCommand.AgentPrompt, "agent-prompt", "", "Agent prompt (falls back to AGENT_PROMPT_FILE or AGENT_PROMPT env vars)")
+	cmd.Flags().StringVar(&reviewCommand.AgentPrompt, "agent-prompt", os.Getenv("AGENT_PROMPT"), "Agent prompt")
 	cmd.Flags().StringVar(&reviewCommand.DiffURL, "diff-url", os.Getenv("GIT_DIFF_URL"), "Git diff URL")
 	cmd.Flags().IntVar(&reviewCommand.MaxReviewFiles, "max-review-files", 0, "Max review files")
 	cmd.Flags().IntVar(&reviewCommand.ExpectedComments, "expected-comments", 0, "Expected number of comments")
@@ -242,11 +228,11 @@ func (c *ReviewCommand) Run(ctx context.Context) error {
 		return fmt.Errorf("GIT_HTML_URL (or --repo-url) not set")
 	}
 
-	_, repo, err := pkg_github.ParseHTMLUrl(c.RepoURL)
-	if err != nil {
-		return fmt.Errorf("invalid repository URL %q: %w", c.RepoURL, err)
+	parts := strings.Split(strings.TrimPrefix(c.RepoURL, "https://github.com/"), "/")
+	if len(parts) < 2 {
+		return fmt.Errorf("invalid GIT_HTML_URL format: %s", c.RepoURL)
 	}
-	repoDir := filepath.Join(c.WorkspaceDir, repo)
+	repoDir := filepath.Join(c.WorkspaceDir, parts[1])
 
 	ib := imagebuilder.ImageBuilder{
 		DotFilesRepo: c.UserDotfilesRepo,
@@ -347,10 +333,16 @@ func (c *ReviewCommand) Run(ctx context.Context) error {
 	}
 	client := clients.NewGitHubClient(ctx, githubToken)
 
+	// Reuse parts from earlier, but need to be sure about format for PR
 	// c.RepoURL: https://github.com/owner/repo/pull/123
-	owner, repo, prNumber, err := pkg_github.ParseIssueURL(c.RepoURL)
+	if len(parts) < 4 {
+		return fmt.Errorf("invalid GIT_HTML_URL for review: %s", c.RepoURL)
+	}
+	owner := parts[0]
+	repo := parts[1]
+	prNumber, err := strconv.Atoi(parts[3])
 	if err != nil {
-		return fmt.Errorf("invalid pull request URL %q: %w", c.RepoURL, err)
+		return fmt.Errorf("failed to parse PR number from GIT_HTML_URL: %w", err)
 	}
 
 	pr, _, err := client.PullRequests.Get(ctx, owner, repo, prNumber)
