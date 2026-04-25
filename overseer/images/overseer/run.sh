@@ -69,7 +69,7 @@ function setupGit {
       REPO_HOST="github.com"
     fi
 
-    # Hierarchy: MANUAL_PAT > OAUTH_PAT > GITHUB_USER_TOKEN
+    # Hierarchy: MANUAL_PAT -> OAUTH_PAT -> GITHUB_USER_TOKEN
     GITHUB_USER_TOKEN="${MANUAL_PAT:-${OAUTH_PAT:-$GITHUB_USER_TOKEN}}"
 
     # Also ensure GITHUB_TOKEN is set for tools that specifically look for it

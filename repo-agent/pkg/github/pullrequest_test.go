@@ -68,6 +68,7 @@ func TestParsePullRequestURL(t *testing.T) {
 		err    bool
 	}{
 		{"https://github.com/owner/repo/pull/123", "github.com", "owner", "repo", 123, false},
+		{"https://github.com/owner/repo/pull/123/changes", "github.com", "owner", "repo", 123, false},
 		{"https://github.mycompany.com/owner/repo/pull/456", "github.mycompany.com", "owner", "repo", 456, false},
 		{"https://github.com/owner/repo/pull/invalid", "", "", "", 0, true},
 		{"https://github.com/owner/repo/issues/123", "", "", "", 0, true},
