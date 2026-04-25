@@ -1,16 +1,18 @@
-// Copyright 2026 The Kubernetes Authors.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+/*
+Copyright 2025.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package repowatch
 
@@ -177,7 +179,7 @@ func TestReconciler_TaskOwnerReference(t *testing.T) {
 	taskName := fmt.Sprintf("%s-issue-10-test-handler", repoWatch.Name)
 	// The previous test code had: taskName := fmt.Sprintf("%s-issue-10-test-handler", repoWatch.Name)
 	// Which implies sandboxName was just repoWatch.Name-issue-10 ?
-	// In repowatch_controller.go: sandboxName := fmt.Sprintf("%s-issue-%d", repoWatch.Name, issue.GetNumber())
+	// In repowatch_controller.go: sandboxName := fmt.Sprintf("%s-issue-%d", repoWatch.Name, *issue.Number)
 	// taskName := fmt.Sprintf("%s-%s", sandboxName, handler.Name)
 
 	// I will just replace the IssueSandbox parts for now and assume the task name logic in test matches what the test expects (or maybe the test was failing on task name too but we didn't get there).
