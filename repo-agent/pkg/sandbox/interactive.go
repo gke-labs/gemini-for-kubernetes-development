@@ -28,6 +28,17 @@ type IssueSandbox struct {
 	executor Executor
 }
 
+// NewLocalSandbox creates a sandbox that executes commands locally.
+func NewLocalSandbox(ctx context.Context, repo *github.Repository, name string) *IssueSandbox {
+	return &IssueSandbox{
+		repo: repo,
+		executor: &LocalExecutor{
+			Ctx:  ctx,
+			Name: name,
+		},
+	}
+}
+
 func NewIssueSandbox(ctx context.Context, local bool, repo *github.Repository, issue *github.Issue, branch string) (*IssueSandbox, error) {
 	log := klog.FromContext(ctx)
 
