@@ -85,16 +85,16 @@ func TestIsBot(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:     "custom bot suffix match",
+			name:     "no match for custom bot suffix",
 			login:    "my-bot[bot]-test",
 			botLogin: "my-bot",
-			expected: true,
+			expected: false,
 		},
 		{
-			name:     "another custom bot suffix match",
+			name:     "no match for another custom bot suffix",
 			login:    "my-bot[bot]-app-123",
 			botLogin: "my-bot",
-			expected: true,
+			expected: false,
 		},
 	}
 
