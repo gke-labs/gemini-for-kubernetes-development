@@ -1,6 +1,7 @@
 package imagebuilder
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -105,30 +106,36 @@ func (b *ImageBuilder) GitClone(ctx context.Context, source string, dest string)
 		}
 
 		run := func(args ...string) error {
+			var stdout, stderr bytes.Buffer
 			cmd := exec.CommandContext(ctx, "git", args...)
 			cmd.Dir = dest
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
+			cmd.Stdout = &stdout
+			cmd.Stderr = &stderr
 			if err := cmd.Run(); err != nil {
+				log.Error(err, "git command failed", "args", args, "stdout", stdout.String(), "stderr", stderr.String())
 				return fmt.Errorf("git %s failed: %w", strings.Join(args, " "), err)
 			}
+			log.V(2).Info("git command succeeded", "args", args)
 			return nil
 		}
 
-		if err := run("init"); err != nil {
-			return err
+		if err := run("init"); err == nil {
+			if err := run("remote", "add", "origin", source); err == nil {
+				// fetch only the specific SHA with depth 1.
+				// Note: this might fail if the server doesn't allow fetching specific SHAs.
+				if err := run("fetch", "--depth", "1", "origin", ref); err == nil {
+					if err := run("checkout", "FETCH_HEAD"); err == nil {
+						return nil
+					}
+				}
+			}
 		}
-		if err := run("remote", "add", "origin", source); err != nil {
-			return err
+
+		// If efficient fetch failed, fall back to standard clone
+		log.Info("efficient SHA fetch failed, falling back to standard clone", "source", source, "ref", ref)
+		if err := os.RemoveAll(dest); err != nil {
+			log.Error(err, "failed to clean up destination after failed efficient fetch", "dest", dest)
 		}
-		// fetch only the specific SHA with depth 1
-		if err := run("fetch", "--depth", "1", "origin", ref); err != nil {
-			return err
-		}
-		if err := run("checkout", "FETCH_HEAD"); err != nil {
-			return err
-		}
-		return nil
 	}
 
 	args := []string{
@@ -145,14 +152,15 @@ func (b *ImageBuilder) GitClone(ctx context.Context, source string, dest string)
 	cmdString := strings.Join(args, " ")
 	log.Info("cloning git repo", "source", source, "command", cmdString)
 
+	var stdout, stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("cloning git repo %q with %q: %w", source, cmdString, err)
+		log.Error(err, "git clone failed", "command", cmdString, "stdout", stdout.String(), "stderr", stderr.String())
+		return fmt.Errorf("git clone failed: %w", err)
 	}
-
 	return nil
 }
 

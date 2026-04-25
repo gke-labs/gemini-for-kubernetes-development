@@ -193,19 +193,18 @@ func isRetryable(err error) bool {
 	var re *RetryableError
 	return errors.As(err, &re)
 }
-
 func isKubeTransient(err error) bool {
 	if err == nil {
 		return false
 	}
-	if apierrors.IsInternalError(err) || apierrors.IsServiceUnavailable(err) || apierrors.IsServerTimeout(err) || apierrors.IsTimeout(err) || apierrors.IsTooManyRequests(err) {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return true
 	}
 	var netErr net.Error
 	if errors.As(err, &netErr) && netErr.Timeout() {
 		return true
 	}
-	if errors.Is(err, context.DeadlineExceeded) {
+	if apierrors.IsInternalError(err) || apierrors.IsServiceUnavailable(err) || apierrors.IsServerTimeout(err) || apierrors.IsTimeout(err) || apierrors.IsTooManyRequests(err) {
 		return true
 	}
 	return false
@@ -788,16 +787,35 @@ func ensureService(ctx context.Context, clientset kubernetes.Interface, namespac
 	delete(spec, "ipFamilies")
 	delete(spec, "ipFamilyPolicy")
 
+	// Scrub nodePort: 0 from ports array as it causes immutability errors in SSA
+	if ports, ok := spec["ports"].([]interface{}); ok {
+		for _, p := range ports {
+			if portMap, ok := p.(map[string]interface{}); ok {
+				if np, ok := portMap["nodePort"].(int64); ok && np == 0 {
+					delete(portMap, "nodePort")
+				} else if np, ok := portMap["nodePort"].(float64); ok && np == 0 {
+					delete(portMap, "nodePort")
+				}
+			}
+		}
+	}
+
+	metadata := map[string]interface{}{
+		"name":            svc.Name,
+		"ownerReferences": mergedRefs,
+	}
+	if svc.Labels != nil {
+		metadata["labels"] = svc.Labels
+	}
+	if svc.Annotations != nil {
+		metadata["annotations"] = svc.Annotations
+	}
+
 	patch := map[string]interface{}{
 		"apiVersion": "v1",
 		"kind":       "Service",
-		"metadata": map[string]interface{}{
-			"name":            svc.Name,
-			"labels":          svc.Labels,
-			"annotations":     svc.Annotations,
-			"ownerReferences": mergedRefs,
-		},
-		"spec": spec,
+		"metadata":   metadata,
+		"spec":       spec,
 	}
 
 	data, err := json.Marshal(patch)
@@ -903,7 +921,7 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 
 	sandboxName := fmt.Sprintf("%s-issue-%d", overseer.Name, number)
 
-	var lastReopenedAt *time.Time
+	var lastTriggerEventAt *time.Time
 	var eventsLastCheckedAt *time.Time
 	var sandboxUnstructured *unstructured.Unstructured
 	var eventsFetchSuccess bool
@@ -913,12 +931,12 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 		sandboxUnstructured = sUnstructured
 		annotations := sandboxUnstructured.GetAnnotations()
 		if annotations != nil {
-			if annotations["lastReopenedAt"] != "" {
-				t, err := time.Parse(time.RFC3339, annotations["lastReopenedAt"])
+			if annotations["lastTriggerEventAt"] != "" {
+				t, err := time.Parse(time.RFC3339, annotations["lastTriggerEventAt"])
 				if err != nil {
-					klog.Warningf("Issue #%d: Failed to parse lastReopenedAt annotation %q: %v", number, annotations["lastReopenedAt"], err)
+					klog.Warningf("Issue #%d: Failed to parse lastTriggerEventAt annotation %q: %v", number, annotations["lastTriggerEventAt"], err)
 				} else {
-					lastReopenedAt = &t
+					lastTriggerEventAt = &t
 				}
 			}
 			if annotations["eventsLastCheckedAt"] != "" {
@@ -981,8 +999,8 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 					}
 					if e.GetEvent() == "reopened" || e.GetEvent() == "review_requested" {
 						t := e.GetCreatedAt()
-						if lastReopenedAt == nil || t.After(*lastReopenedAt) {
-							lastReopenedAt = &t
+						if lastTriggerEventAt == nil || t.After(*lastTriggerEventAt) {
+							lastTriggerEventAt = &t
 						}
 					}
 				}
@@ -1010,13 +1028,13 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 		}
 		if task.Spec.Type == taskType {
 			if state == "Completed" {
-				if lastReopenedAt != nil && task.CreationTimestamp.Before(&metav1.Time{Time: *lastReopenedAt}) {
+				if lastTriggerEventAt != nil && task.CreationTimestamp.Before(&metav1.Time{Time: *lastTriggerEventAt}) {
 					klog.Infof("Issue #%d: Found historical task %s, but issue was reopened since then. Proceeding with new task.", number, taskType)
 					continue
 				}
 				klog.V(2).Infof("Issue #%d: Task %s already exists in state %s. Skipping.", number, taskType, state)
 				if eventsFetchSuccess {
-					if err := updateSandboxCheckpoints(ctx, manager, namespace, sandboxName, lastReopenedAt, issue.GetUpdatedAt()); err != nil {
+					if err := updateSandboxCheckpoints(ctx, manager, namespace, sandboxName, lastTriggerEventAt, issue.GetUpdatedAt()); err != nil {
 						return fmt.Errorf("failed to update checkpoints for issue #%d: %w", number, err)
 					}
 				}
@@ -1112,7 +1130,7 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 
 	// Cache timestamps in sandbox annotations now that task is created
 	if eventsFetchSuccess {
-		if err := updateSandboxCheckpoints(ctx, manager, namespace, sandboxName, lastReopenedAt, issue.GetUpdatedAt()); err != nil {
+		if err := updateSandboxCheckpoints(ctx, manager, namespace, sandboxName, lastTriggerEventAt, issue.GetUpdatedAt()); err != nil {
 			return fmt.Errorf("failed to update checkpoints after task creation for issue #%d: %w", number, err)
 		}
 	}
@@ -1206,7 +1224,7 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 
 	sandboxName := fmt.Sprintf("%s-pr-%d", overseer.Name, number)
 
-	var lastReopenedAt *time.Time
+	var lastTriggerEventAt *time.Time
 	var eventsLastCheckedAt *time.Time
 	var sandboxUnstructured *unstructured.Unstructured
 	var sandboxIsActive bool
@@ -1220,12 +1238,12 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 		}
 		annotations := sandboxUnstructured.GetAnnotations()
 		if annotations != nil {
-			if annotations["lastReopenedAt"] != "" {
-				t, err := time.Parse(time.RFC3339, annotations["lastReopenedAt"])
+			if annotations["lastTriggerEventAt"] != "" {
+				t, err := time.Parse(time.RFC3339, annotations["lastTriggerEventAt"])
 				if err != nil {
-					klog.Warningf("PR #%d: Failed to parse lastReopenedAt annotation %q: %v", number, annotations["lastReopenedAt"], err)
+					klog.Warningf("PR #%d: Failed to parse lastTriggerEventAt annotation %q: %v", number, annotations["lastTriggerEventAt"], err)
 				} else {
-					lastReopenedAt = &t
+					lastTriggerEventAt = &t
 				}
 			}
 			if annotations["eventsLastCheckedAt"] != "" {
@@ -1248,10 +1266,20 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 
 	head := pr.GetHead()
 	if head == nil || head.GetSHA() == "" || head.GetRepo() == nil {
-		klog.Warningf("PR #%d has no head SHA or repository info (possibly deleted fork). Skipping.", number)
+		klog.Infof("PR #%d has no head SHA or repository info (possibly deleted fork). Skipping.", number)
 		return nil
 	}
 	headSHA := head.GetSHA()
+
+	foundReviewOnGitHub := false
+	// Check if we already gave up on this SHA due to repeated 422s
+	if sandboxUnstructured != nil {
+		if sandboxUnstructured.GetAnnotations()["reviewStatus-"+headSHA] == "permanently-failed" {
+			klog.Infof("PR #%d: Review for SHA %s previously marked as permanently failed. Skipping.", number, headSHA)
+			foundReviewOnGitHub = true
+		}
+	}
+
 	// Fetch events to check for reopened status
 	var eventsFetchSuccess bool
 	if eventsLastCheckedAt != nil && !pr.GetUpdatedAt().After(*eventsLastCheckedAt) {
@@ -1304,8 +1332,8 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 
 					if e.GetEvent() == "reopened" || e.GetEvent() == "review_requested" {
 						t := e.GetCreatedAt()
-						if lastReopenedAt == nil || t.After(*lastReopenedAt) {
-							lastReopenedAt = &t
+						if lastTriggerEventAt == nil || t.After(*lastTriggerEventAt) {
+							lastTriggerEventAt = &t
 						}
 					}
 				}
@@ -1348,7 +1376,7 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 				return &RetryableError{Message: fmt.Sprintf("deleted stale task %s for PR %d, waiting for pod termination", taskType, number)}
 			}
 			if state == "Failed" {
-				if lastReopenedAt != nil && task.CreationTimestamp.Before(&metav1.Time{Time: *lastReopenedAt}) {
+				if lastTriggerEventAt != nil && task.CreationTimestamp.Before(&metav1.Time{Time: *lastTriggerEventAt}) {
 					klog.Infof("PR #%d: Found historical failed task %s for SHA %s, but PR was reopened since then. Proceeding with new task.", number, taskType, headSHA)
 					continue
 				}
@@ -1403,8 +1431,7 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 		}
 	}
 
-	foundReviewOnGitHub := false
-	if taskType == "review" {
+	if taskType == "review" && !foundReviewOnGitHub {
 		// 2. Then check GitHub for already submitted reviews for this SHA
 		if conf.BotLogin == "" && conf.UserLogin == "" {
 			klog.Warningf("PR #%d: Neither GITHUB_BOT_LOGIN nor GITHUB_USER_ID is set. Skipping GitHub review deduplication.", number)
@@ -1457,7 +1484,7 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 								state := r.GetState()
 								submittedAt := r.GetSubmittedAt()
 
-								if !submittedAt.IsZero() && lastReopenedAt != nil && submittedAt.Before(*lastReopenedAt) {
+								if !submittedAt.IsZero() && lastTriggerEventAt != nil && submittedAt.Before(*lastTriggerEventAt) {
 									klog.Infof("PR #%d: Found historical automated review for SHA %s, but PR was reopened since then. Proceeding with new review.", number, headSHA)
 									continue
 								}
@@ -1480,7 +1507,7 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 
 	if foundReviewOnGitHub {
 		if eventsFetchSuccess {
-			if err := updateSandboxCheckpoints(ctx, manager, namespace, sandboxName, lastReopenedAt, pr.GetUpdatedAt()); err != nil {
+			if err := updateSandboxCheckpoints(ctx, manager, namespace, sandboxName, lastTriggerEventAt, pr.GetUpdatedAt()); err != nil {
 				return fmt.Errorf("failed to update checkpoints for PR #%d: %w", number, err)
 			}
 		}
@@ -1494,18 +1521,22 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 		state := task.Status.TaskState
 		taskSHA := task.Spec.Params["HEAD_SHA"]
 		if task.Spec.Type == taskType && strings.EqualFold(taskSHA, headSHA) && state == "Completed" {
-			if lastReopenedAt != nil && task.CreationTimestamp.Before(&metav1.Time{Time: *lastReopenedAt}) {
+			if lastTriggerEventAt != nil && task.CreationTimestamp.Before(&metav1.Time{Time: *lastTriggerEventAt}) {
 				klog.Infof("PR #%d: Found historical completed task %s for SHA %s, but PR was reopened since then. Proceeding with new task.", number, taskType, headSHA)
 				continue
 			}
 
 			if taskType == "review" {
 				// Review task is Completed but NOT on GitHub.
-				// If it was created recently, we wait for submitAgentDraft to do its job.
-				if time.Since(task.CreationTimestamp.Time) < 30*time.Minute {
-					klog.V(2).Infof("PR #%d: Review task for SHA %s is Completed but not yet on GitHub. Waiting for submission (created %v ago).", number, headSHA, time.Since(task.CreationTimestamp.Time))
+				// If it was created/completed recently, we wait for submitAgentDraft to do its job.
+				measureTime := task.CreationTimestamp.Time
+				if task.Status.CompletionTime != nil {
+					measureTime = task.Status.CompletionTime.Time
+				}
+				if time.Since(measureTime) < 1*time.Hour {
+					klog.V(2).Infof("PR #%d: Review task for SHA %s is Completed but not yet on GitHub. Waiting for submission (completed %v ago).", number, headSHA, time.Since(measureTime))
 					if eventsFetchSuccess {
-						if err := updateSandboxCheckpoints(ctx, manager, namespace, sandboxName, lastReopenedAt, pr.GetUpdatedAt()); err != nil {
+						if err := updateSandboxCheckpoints(ctx, manager, namespace, sandboxName, lastTriggerEventAt, pr.GetUpdatedAt()); err != nil {
 							return fmt.Errorf("failed to update checkpoints for PR #%d: %w", number, err)
 						}
 					}
@@ -1513,7 +1544,7 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 				}
 
 				// If it's old, it might be stuck (e.g. failed submission). allow retry.
-				klog.Warningf("PR #%d: Review task for SHA %s is Completed but not on GitHub after %v. Deleting to allow retry.", number, headSHA, time.Since(task.CreationTimestamp.Time))
+				klog.Warningf("PR #%d: Review task for SHA %s is Completed but not on GitHub after %v since completion. Deleting to allow retry.", number, headSHA, time.Since(measureTime))
 				if err := manager.DeleteSandboxTask(ctx, namespace, task.Name); err != nil {
 					klog.Warningf("PR #%d: Failed to delete stuck completed task: %v", number, err)
 				}
@@ -1522,7 +1553,7 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 
 			klog.V(2).Infof("PR #%d: Task %s for SHA %s already exists in state %s. Skipping.", number, taskType, headSHA, state)
 			if eventsFetchSuccess {
-				if err := updateSandboxCheckpoints(ctx, manager, namespace, sandboxName, lastReopenedAt, pr.GetUpdatedAt()); err != nil {
+				if err := updateSandboxCheckpoints(ctx, manager, namespace, sandboxName, lastTriggerEventAt, pr.GetUpdatedAt()); err != nil {
 					return fmt.Errorf("failed to update checkpoints for PR #%d: %w", number, err)
 				}
 			}
@@ -1569,7 +1600,7 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 
 	// Cache timestamps in sandbox annotations now that task is created
 	if eventsFetchSuccess {
-		if err := updateSandboxCheckpoints(ctx, manager, namespace, sandboxName, lastReopenedAt, pr.GetUpdatedAt()); err != nil {
+		if err := updateSandboxCheckpoints(ctx, manager, namespace, sandboxName, lastTriggerEventAt, pr.GetUpdatedAt()); err != nil {
 			return fmt.Errorf("failed to update checkpoints after task creation for PR #%d: %w", number, err)
 		}
 	}
@@ -1701,7 +1732,7 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 	signature := "<!-- overseer-review -->"
 	body := ""
 	if reviewRequest.Body != nil {
-		body = strings.TrimRight(*reviewRequest.Body, " \t\n\r")
+		body = strings.TrimRight(*reviewRequest.Body, "\n\r")
 	}
 	if !strings.Contains(body, signature) {
 		if body != "" {
@@ -1723,7 +1754,7 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 		if errors.As(err, &githubErr) && githubErr.Response != nil && githubErr.Response.StatusCode == 422 {
 			retryCount := 0
 			if sandboxUnstructured != nil {
-				if val, ok := sandboxUnstructured.GetAnnotations()["failedSubmissions:"+currentSHA]; ok {
+				if val, ok := sandboxUnstructured.GetAnnotations()["failedSubmissions-"+currentSHA]; ok {
 					_, _ = fmt.Sscanf(val, "%d", &retryCount)
 				}
 			}
@@ -1737,12 +1768,13 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 			}
 
 			if retryCount >= maxRetries {
-				klog.Errorf("GitHub rejected review for PR %d with 422 repeatedly. SHA: %s. Giving up to avoid infinite loop.", prNumber, currentSHA)
-				return fmt.Errorf("GitHub rejected review (422) after %d retries: %w", retryCount, err)
+				klog.Errorf("GitHub rejected review for PR %d with 422 repeatedly. SHA: %s. Marking as permanently failed to avoid infinite loop.", prNumber, currentSHA)
+				_ = manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "reviewStatus-"+currentSHA, "permanently-failed")
+				return nil // Stop the loop for this SHA
 			}
 
 			klog.Warningf("GitHub rejected review for PR %d with 422 (likely invalid line references). Deleting task %s to allow re-trigger (retry %d/%d).", prNumber, latestReviewTask.Name, retryCount+1, maxRetries)
-			if err := manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "failedSubmissions:"+currentSHA, fmt.Sprintf("%d", retryCount+1)); err != nil {
+			if err := manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "failedSubmissions-"+currentSHA, fmt.Sprintf("%d", retryCount+1)); err != nil {
 				return fmt.Errorf("failed to update failedSubmissions annotation: %w", err)
 			}
 			if err := manager.DeleteSandboxTask(ctx, namespace, latestReviewTask.Name); err != nil {
@@ -1768,15 +1800,15 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 	return nil
 }
 
-func updateSandboxCheckpoints(ctx context.Context, manager *k8s.Manager, namespace, sandboxName string, lastReopenedAt *time.Time, updatedAt time.Time) error {
+func updateSandboxCheckpoints(ctx context.Context, manager *k8s.Manager, namespace, sandboxName string, lastTriggerEventAt *time.Time, updatedAt time.Time) error {
 	if sandboxName == "" {
 		return nil
 	}
 	annotations := map[string]string{
 		"eventsLastCheckedAt": updatedAt.Format(time.RFC3339),
 	}
-	if lastReopenedAt != nil {
-		annotations["lastReopenedAt"] = lastReopenedAt.Format(time.RFC3339)
+	if lastTriggerEventAt != nil {
+		annotations["lastTriggerEventAt"] = lastTriggerEventAt.Format(time.RFC3339)
 	}
 	err := manager.UpdateSandboxAnnotations(ctx, namespace, sandboxName, annotations)
 	if err != nil {

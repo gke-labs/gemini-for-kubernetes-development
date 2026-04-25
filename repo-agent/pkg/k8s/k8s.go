@@ -222,7 +222,7 @@ func (m *Manager) UpdateSandboxUserDraft(ctx context.Context, namespace, sandbox
 	annotations["userDraft"] = userDraft
 	sandbox.SetAnnotations(annotations)
 
-	_, err = m.Client.Resource(SandboxGVR).Namespace(namespace).Update(context.TODO(), sandbox, v1.UpdateOptions{})
+	_, err = m.Client.Resource(SandboxGVR).Namespace(namespace).Update(ctx, sandbox, v1.UpdateOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to update sandbox annotation: %w", err)
 	}
@@ -551,7 +551,7 @@ func (m *Manager) UpdateSandboxTaskUserDraft(ctx context.Context, namespace, tas
 	annotations["userDraft"] = userDraft
 	task.SetAnnotations(annotations)
 
-	_, err = m.Client.Resource(gvr).Namespace(namespace).Update(context.TODO(), task, v1.UpdateOptions{})
+	_, err = m.Client.Resource(gvr).Namespace(namespace).Update(ctx, task, v1.UpdateOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to update sandboxtask annotation: %w", err)
 	}
