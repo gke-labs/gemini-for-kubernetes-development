@@ -53,9 +53,7 @@ func BuildDevInitCommand() *cobra.Command {
 			if len(args) != 0 {
 				return fmt.Errorf("command does not take positional arguments")
 			}
-			if err := initCommand.InitDefaults(); err != nil {
-				return err
-			}
+			initCommand.InitDefaults()
 			return initCommand.Run(cmd.Context())
 		},
 	}
@@ -73,13 +71,7 @@ func BuildDevInitCommand() *cobra.Command {
 	return cmd
 }
 
-func (c *DevInitCommand) InitDefaults() error {
-	prompt, err := resolveAgentPrompt(c.AgentPrompt)
-	if err != nil {
-		return err
-	}
-	c.AgentPrompt = prompt
-
+func (c *DevInitCommand) InitDefaults() {
 	if c.WorkspaceDir == "" {
 		c.WorkspaceDir = "/workspaces"
 	}
@@ -93,7 +85,6 @@ func (c *DevInitCommand) InitDefaults() error {
 	if c.Model == "" {
 		c.Model = "gemini-3.1-pro-preview"
 	}
-	return nil
 }
 
 func (c *DevInitCommand) taskPath(name string, args ...interface{}) string {
@@ -112,16 +103,14 @@ func (c *DevInitCommand) loadGithubObjects(ctx context.Context) error {
 
 	// Let's parse the name from URL for directory naming
 	// e.g. https://github.com/owner/repo
-	cleanURL := strings.Split(c.RepoURL, "#")[0]
-	cleanURL = strings.TrimSuffix(cleanURL, "/")
-	base := filepath.Base(cleanURL)
-	if ext := filepath.Ext(base); ext == ".git" {
+	base := filepath.Base(c.RepoURL)
+	if ext := filepath.Ext(base); ext != "" {
 		base = base[:len(base)-len(ext)]
 	}
 
 	// Construct basic repo object
 	innerRepo := &githubv39.Repository{
-		CloneURL: githubv39.String(strings.TrimSuffix(cleanURL, ".git") + ".git"),
+		CloneURL: githubv39.String(c.RepoURL + ".git"),
 		Name:     githubv39.String(base),
 	}
 	c.repo = github.NewRepository(innerRepo)

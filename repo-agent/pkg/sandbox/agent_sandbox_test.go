@@ -189,7 +189,6 @@ func TestNewAgentSandbox(t *testing.T) {
 				"GOCACHE":    GoCachePath,
 				"GOMODCACHE": GoModCachePath,
 				"TMPDIR":     TmpDirPath,
-				"GOTMPDIR":   TmpDirPath,
 			}
 
 			for name, value := range expectedEnv {

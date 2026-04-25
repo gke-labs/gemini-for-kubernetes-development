@@ -51,9 +51,7 @@ func BuildGithubTriageIssueCommand() *cobra.Command {
 			if triageCommand.URL == "" {
 				return fmt.Errorf("--issue-url is required")
 			}
-			if err := triageCommand.InitDefaults(); err != nil {
-				return err
-			}
+			triageCommand.InitDefaults()
 			return triageCommand.Run(cmd.Context())
 		},
 	}
@@ -66,7 +64,7 @@ func BuildGithubTriageIssueCommand() *cobra.Command {
 	return cmd
 }
 
-func (c *GithubTriageIssueCommand) InitDefaults() error {
+func (c *GithubTriageIssueCommand) InitDefaults() {
 	if c.AgentName == "" {
 		c.AgentName = "gemini-cli"
 	}
@@ -84,7 +82,6 @@ func (c *GithubTriageIssueCommand) InitDefaults() error {
 	if c.Model == "" {
 		c.Model = "gemini-3.1-pro-preview"
 	}
-	return nil
 }
 
 func (c *GithubTriageIssueCommand) taskPath(name string, args ...interface{}) string {

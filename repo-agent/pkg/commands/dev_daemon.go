@@ -36,14 +36,11 @@ type SandboxDaemonCommand struct {
 	IssueID string
 }
 
-func (c *SandboxDaemonCommand) InitDefaults() error {
-	if err := c.CodeServerCommand.InitDefaults(); err != nil {
-		return err
-	}
+func (c *SandboxDaemonCommand) InitDefaults() {
+	c.CodeServerCommand.InitDefaults()
 	if c.IssueID == "" {
 		c.IssueID = os.Getenv("ISSUEID")
 	}
-	return nil
 }
 
 func BuildSandboxDaemonCommand() *cobra.Command {
@@ -55,9 +52,7 @@ func BuildSandboxDaemonCommand() *cobra.Command {
 			if len(args) != 0 {
 				return fmt.Errorf("daemon command does not take any arguments")
 			}
-			if err := daemonCmd.InitDefaults(); err != nil {
-				return err
-			}
+			daemonCmd.InitDefaults()
 			return daemonCmd.Run(cmd.Context())
 		},
 	}
@@ -76,7 +71,6 @@ func (c *SandboxDaemonCommand) Run(ctx context.Context) error {
 		os.Getenv("GOCACHE"),
 		os.Getenv("GOMODCACHE"),
 		os.Getenv("TMPDIR"),
-		os.Getenv("GOTMPDIR"),
 	}
 	for _, dir := range dirs {
 		if dir == "" {
@@ -86,9 +80,6 @@ func (c *SandboxDaemonCommand) Run(ctx context.Context) error {
 			log.Error(err, "failed to create directory", "path", dir)
 		}
 	}
-
-	// Start periodic cleanup in background
-	go startPeriodicCleanup(ctx)
 
 	var gvr schema.GroupVersionResource
 	if c.IssueID != "" {

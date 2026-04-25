@@ -172,16 +172,6 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 				},
 			},
 		},
-	}
-
-	if opt.LLMAPIKey != "" {
-		env = append(env, map[string]interface{}{
-			"name":  "GEMINI_API_KEY",
-			"value": opt.LLMAPIKey,
-		})
-	}
-
-	env = append(env,
 		map[string]interface{}{"name": "GIT_PUSH_ENABLED", "value": strconv.FormatBool(opt.PushEnabled)},
 		map[string]interface{}{"name": "GIT_CLONE_URL", "value": opt.CloneURL},
 		map[string]interface{}{"name": "ENVBUILDER_GIT_URL", "value": opt.CloneURL},
@@ -193,8 +183,7 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 		map[string]interface{}{"name": "GOCACHE", "value": GoCachePath},
 		map[string]interface{}{"name": "GOMODCACHE", "value": GoModCachePath},
 		map[string]interface{}{"name": "TMPDIR", "value": TmpDirPath},
-		map[string]interface{}{"name": "GOTMPDIR", "value": TmpDirPath},
-	)
+	}
 
 	if opt.OverseerName != "" {
 		env = append(env, map[string]interface{}{"name": "OVERSEER_NAME", "value": opt.OverseerName})
@@ -352,10 +341,8 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 									vm := []interface{}{
 										map[string]interface{}{"name": "configdir-vol", "mountPath": "/configdir"},
 										map[string]interface{}{"name": "workspaces-pvc", "mountPath": "/workspaces"},
+										map[string]interface{}{"name": "tokens-secret", "mountPath": "/tokens", "readOnly": true},
 										map[string]interface{}{"name": "agent-bin", "mountPath": "/opt/repo-agent"},
-									}
-									if opt.LLMAPIKey == "" {
-										vm = append(vm, map[string]interface{}{"name": "tokens-secret", "mountPath": "/tokens", "readOnly": true})
 									}
 									if opt.DevcontainerConfigRef != "" {
 										vm = append(vm, map[string]interface{}{"name": "devcontainer-config", "mountPath": "/devcontainer.json", "subPath": "devcontainer.json"})
@@ -381,14 +368,12 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 									"name":     "agent-bin",
 									"emptyDir": map[string]interface{}{},
 								},
-							}
-							if opt.LLMAPIKey == "" {
-								v = append(v, map[string]interface{}{
+								map[string]interface{}{
 									"name": "tokens-secret",
 									"secret": map[string]interface{}{
 										"secretName": opt.LLMAPIKeySecretName,
 									},
-								})
+								},
 							}
 							if opt.DevcontainerConfigRef != "" {
 								v = append(v, map[string]interface{}{

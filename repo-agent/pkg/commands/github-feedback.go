@@ -59,9 +59,7 @@ func BuildGithubFeedbackCommand() *cobra.Command {
 			if len(args) != 0 {
 				return fmt.Errorf("command does not take positional arguments")
 			}
-			if err := c.InitDefaults(); err != nil {
-				return err
-			}
+			c.InitDefaults()
 			if c.PullRequestID == 0 {
 				return fmt.Errorf("--pull-request is required")
 			}
@@ -86,7 +84,7 @@ func BuildGithubFeedbackCommand() *cobra.Command {
 	return cmd
 }
 
-func (c *GithubFeedbackCommand) InitDefaults() error {
+func (c *GithubFeedbackCommand) InitDefaults() {
 	if c.AgentName == "" {
 		c.AgentName = "gemini-cli"
 	}
@@ -113,7 +111,6 @@ func (c *GithubFeedbackCommand) InitDefaults() error {
 			}
 		}
 	}
-	return nil
 }
 
 func (c *GithubFeedbackCommand) taskPath(name string, args ...interface{}) string {

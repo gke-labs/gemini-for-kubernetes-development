@@ -41,7 +41,7 @@ function setupGit {
 
     echo "writing gh config"
     cat <<EOF > /root/.config/gh/hosts.yml
-{{ .Repo.Host }}:
+github.com:
     users:
         ${GH_USER}:
             oauth_token: ${GITHUB_USER_TOKEN}

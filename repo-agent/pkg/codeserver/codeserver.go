@@ -1,25 +1,11 @@
-// Copyright 2026 The Kubernetes Authors.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 package codeserver
 
 import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 	"k8s.io/klog/v2"
 )
 
@@ -43,10 +29,11 @@ func runDummyCommand() (*exec.Cmd, error) {
 
 func Start() (*exec.Cmd, error) {
 	repoURL := os.Getenv("GIT_HTML_URL")
-	_, repo, err := github.ParseHTMLUrl(repoURL)
-	if err != nil {
-		return nil, fmt.Errorf("invalid GIT_HTML_URL %q: %w", repoURL, err)
+	parts := strings.Split(strings.TrimPrefix(repoURL, "https://github.com/"), "/")
+	if len(parts) < 2 {
+		return nil, fmt.Errorf("invalid GIT_HTML_URL: %s", repoURL)
 	}
+	repo := parts[1]
 
 	codeServerPath := "/usr/bin/code-server"
 	// check if code-server exists
@@ -63,7 +50,7 @@ func Start() (*exec.Cmd, error) {
 	args := []string{"--auth=none", fmt.Sprintf("--bind-addr=0.0.0.0:%d", CodeServerPort), WorkspacePath + "/" + repo}
 	cmd := execCommand(codeServerPath, args...)
 	cmd.Stdout = os.Stdout
-	err = cmd.Start()
+	err := cmd.Start()
 	if err != nil {
 		return nil, err
 	}

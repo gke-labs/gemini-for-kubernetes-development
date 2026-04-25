@@ -51,7 +51,6 @@ func run(ctx context.Context) error {
 	rootCommand.AddCommand(commands.BuildGithubFeedbackCommand())
 	rootCommand.AddCommand(commands.BuildGithubInvestigateCommand())
 	rootCommand.AddCommand(commands.BuildGithubAutopollCommand())
-	rootCommand.AddCommand(commands.BuildGithubResolveConflictsCommand())
 	rootCommand.AddCommand(commands.BuildIterateCommand())
 	rootCommand.AddCommand(commands.BuildChoreCommand())
 

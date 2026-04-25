@@ -1,5 +1,5 @@
 # Build the gh CLI
-FROM golang:1.26.1 AS build-gh
+FROM golang:1.25.7 AS build-gh
 RUN GOBIN=/bin go install github.com/cli/cli/v2/cmd/gh@v2.82.1
 
 # -----------------------
@@ -9,43 +9,18 @@ FROM ubuntu:24.04
 ARG DOCKER_VERSION="5:27.5.1-1~ubuntu.24.04~noble"
 
 ENV DEBIAN_FRONTEND="noninteractive"
+RUN apt-get update && apt-get -y install ca-certificates curl gnupg
 
-# Switch to a more reliable mirror
-RUN find /etc/apt/ -type f -name "*.list" -o -name "*.sources" | xargs sed -i 's/archive.ubuntu.com/mirrors.edge.kernel.org/g' || true
-RUN find /etc/apt/ -type f -name "*.list" -o -name "*.sources" | xargs sed -i 's/security.ubuntu.com/mirrors.edge.kernel.org/g' || true
-
-# Add apt retries and timeouts
-RUN echo 'Acquire::Retries "10"; Acquire::http::Timeout "60"; Acquire::https::Timeout "60";' > /etc/apt/apt.conf.d/80-retries
-
-# 1. Install prerequisites for adding apt repositories with robust retries
-RUN (apt-get update || (echo "Warning: apt-get update failed, retrying in 10s..." && sleep 10 && apt-get update) || (echo "Warning: apt-get update failed again, retrying in 20s..." && sleep 20 && apt-get update)) && \
-    (apt-get -y install --no-install-recommends \
-    apt-transport-https \
-    ca-certificates \
-    curl \
-    gnupg \
-    wget \
-    jq || (echo "Warning: apt-get install failed, retrying in 10s..." && sleep 10 && apt-get -y install --no-install-recommends apt-transport-https ca-certificates curl gnupg wget jq))
-
-# 2. Add apt repositories (Docker, NodeSource, Google Cloud, Helm)
-RUN mkdir -p /etc/apt/keyrings && \
-    # Docker
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc && \
+RUN curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc && \
     chmod a+r /etc/apt/keyrings/docker.asc && \
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo \"$VERSION_CODENAME\") stable" > /etc/apt/sources.list.d/docker.list && \
-    # NodeSource
-    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg && \
-    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" > /etc/apt/sources.list.d/nodesource.list && \
-    # Google Cloud
-    curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /etc/apt/keyrings/cloud.google.com.gpg && \
-    echo "deb [signed-by=/etc/apt/keyrings/cloud.google.com.gpg] https://packages.cloud.google.com/apt cloud-sdk main" > /etc/apt/sources.list.d/google-cloud-sdk.list && \
-    # Helm
-    curl -fsSL https://packages.buildkite.com/helm-linux/helm-debian/gpgkey | gpg --dearmor -o /etc/apt/keyrings/helm.gpg && \
-    echo "deb [signed-by=/etc/apt/keyrings/helm.gpg] https://packages.buildkite.com/helm-linux/helm-debian/any/ any main" > /etc/apt/sources.list.d/helm-stable-debian.list
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
+    $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list
 
-# 3. Install all apt packages
-RUN (apt-get update || (echo "Warning: apt-get update failed, retrying in 10s..." && sleep 10 && apt-get update) || (echo "Warning: apt-get update failed again, retrying in 20s..." && sleep 20 && apt-get update)) && \
-    (apt-get install -y --no-install-recommends \
+RUN curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg && \
+    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" > /etc/apt/sources.list.d/nodesource.list
+
+RUN apt-get update && \
+    apt-get install -qqy \
     docker-ce=${DOCKER_VERSION} \
     docker-ce-cli=${DOCKER_VERSION} \
     containerd.io \
@@ -53,61 +28,30 @@ RUN (apt-get update || (echo "Warning: apt-get update failed, retrying in 10s...
     docker-compose-plugin \
     iproute2 \
     iptables \
-    nodejs \
-    python3 \
-    python3-pip \
-    python3-yaml \
-    python3-requests \
-    python-is-python3 \
-    python3-venv \
-    git \
-    tmux \
-    sudo \
-    helm \
-    build-essential \
-    google-cloud-cli || (echo "Warning: apt-get install failed, retrying in 10s..." && sleep 10 && apt-get install -y --no-install-recommends \
-    docker-ce=${DOCKER_VERSION} \
-    docker-ce-cli=${DOCKER_VERSION} \
-    containerd.io \
-    docker-buildx-plugin \
-    docker-compose-plugin \
-    iproute2 \
-    iptables \
-    nodejs \
-    python3 \
-    python3-pip \
-    python3-yaml \
-    python3-requests \
-    python-is-python3 \
-    python3-venv \
-    git \
-    tmux \
-    sudo \
-    helm \
-    build-essential \
-    google-cloud-cli)) && \
-    rm -rf /var/lib/apt/lists/*
+    nodejs
 
 # ------- Install go -------
-ENV GO_VERSION=1.26.1
+#RUN apt-get update && apt-get install -y golang-go
+## wget -c https://go.dev/dl/go1.25.0.linux-amd64.tar.gz
+ENV GO_VERSION=1.25.7
 ENV ARCH=amd64
 
 # Download, extract, and set up environment variables
+RUN apt-get update && apt-get install -y wget
 RUN wget -c https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz -O go.tar.gz && \
     tar -C /usr/local -xzf go.tar.gz && \
-    rm go.tar.gz && \
-    ln -sf /usr/local/go/bin/go /usr/local/bin/go
+    rm go.tar.gz
 
 ENV PATH=$PATH:/usr/local/go/bin
 ENV GOTOOLCHAIN=auto
 
-# -------- Install global Node.js packages --------
-RUN npm install -g pnpm yarn @google/gemini-cli @anthropic-ai/claude-code && npm cache clean --force
+# -------- Install python --------
+# We want a functional python, because gemini-cli likes to use python
+RUN apt-get update && apt-get install -y python3 python3-pip python3-yaml python3-requests python-is-python3 python3-venv
+RUN apt-get update && apt-get install -y git tmux sudo curl
 
-# -------- Install global Python tools --------
-RUN pip install --no-cache-dir pytest --break-system-packages
+RUN npm install -g @google/gemini-cli
 
-# -------- Download binary releases --------
 # Install Kind
 RUN curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.26.0/kind-linux-amd64 && \
     chmod +x ./kind && \
@@ -118,34 +62,20 @@ RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/s
     chmod +x kubectl && \
     mv kubectl /usr/local/bin/kubectl
 
-# Install Kustomize
-ENV KUSTOMIZE_VERSION=v5.3.0
-RUN curl -sSfL "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F${KUSTOMIZE_VERSION}/kustomize_${KUSTOMIZE_VERSION}_$(go env GOOS)_$(go env GOARCH).tar.gz" | tar xz \
- && mv kustomize /usr/local/bin/
+# Install Helm
+RUN curl -fsSL https://packages.buildkite.com/helm-linux/helm-debian/gpgkey | gpg --dearmor | tee /usr/share/keyrings/helm.gpg > /dev/null && \
+    echo "deb [signed-by=/usr/share/keyrings/helm.gpg] https://packages.buildkite.com/helm-linux/helm-debian/any/ any main" | tee /etc/apt/sources.list.d/helm-stable-debian.list > /dev/null && \
+    apt-get update && \
+    apt-get install -y helm
 
 # Install code-server
-RUN curl -fsSL https://code-server.dev/install.sh | sh && \
-    for i in $(seq 1 5); do \
-        code-server --install-extension golang.go --install-extension vscodevim.vim && break || \
-        if [ $i -lt 5 ]; then echo "Extension installation failed, retrying in 10s... ($i/5)" && sleep 10; else echo "Warning: Extension installation failed after 5 attempts, continuing anyway..." && break; fi; \
-    done
-
-# -------- Install Go tools --------
-# Install yq
-RUN go install github.com/mikefarah/yq/v4@latest && \
-    ln -s $(go env GOPATH)/bin/yq /usr/local/bin/yq
-
-# Install setup-envtest and download assets
-RUN go install sigs.k8s.io/controller-runtime/tools/setup-envtest@release-0.22 && \
-    $(go env GOPATH)/bin/setup-envtest use && \
-    go clean -cache -modcache
-
-# (Optional) Export KUBEBUILDER_ASSETS so it's available for 'go test' automatically.
-# The path below is the default location setup-envtest extracts the binaries to.
-ENV KUBEBUILDER_ASSETS=/root/.local/share/kubebuilder-envtest/k8s/1.35.0-linux-amd64
+RUN curl -fsSL https://code-server.dev/install.sh | sh
+RUN code-server --install-extension golang.go --install-extension vscodevim.vim
 
 COPY --from=build-gh /bin/gh /bin/gh
 COPY repo-agent/scripts/start-dockerd.sh /usr/local/bin/start-dockerd.sh
 RUN chmod +x /usr/local/bin/start-dockerd.sh
+
+RUN ln -sf /usr/local/go/bin/go /usr/local/bin/go
 
 WORKDIR /workspaces

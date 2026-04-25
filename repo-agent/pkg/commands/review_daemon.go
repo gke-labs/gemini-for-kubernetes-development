@@ -17,12 +17,9 @@ type ReviewDaemonCommand struct {
 	CodeServerCommand CodeServerCommand
 }
 
-func (c *ReviewDaemonCommand) InitDefaults() error {
-	err := c.ReviewCommand.InitDefaults()
-	if err != nil {
-		return err
-	}
-	return c.CodeServerCommand.InitDefaults()
+func (c *ReviewDaemonCommand) InitDefaults() {
+	c.ReviewCommand.InitDefaults()
+	c.CodeServerCommand.InitDefaults()
 }
 
 func BuildReviewDaemonCommand() *cobra.Command {
@@ -34,9 +31,7 @@ func BuildReviewDaemonCommand() *cobra.Command {
 			if len(args) != 0 {
 				return fmt.Errorf("daemon command does not take any arguments")
 			}
-			if err := daemonCmd.InitDefaults(); err != nil {
-				return err
-			}
+			daemonCmd.InitDefaults()
 			return daemonCmd.Run(cmd.Context())
 		},
 	}
@@ -57,7 +52,6 @@ func (c *ReviewDaemonCommand) Run(ctx context.Context) error {
 		os.Getenv("GOCACHE"),
 		os.Getenv("GOMODCACHE"),
 		os.Getenv("TMPDIR"),
-		os.Getenv("GOTMPDIR"),
 	}
 	for _, dir := range dirs {
 		if dir == "" {
@@ -67,9 +61,6 @@ func (c *ReviewDaemonCommand) Run(ctx context.Context) error {
 			log.Error(err, "failed to create directory", "path", dir)
 		}
 	}
-
-	// Start periodic cleanup in background
-	go startPeriodicCleanup(ctx)
 
 	ao, err := agentoutput.New(ReviewGVR, "", "")
 	if err != nil {

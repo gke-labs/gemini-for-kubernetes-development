@@ -35,9 +35,9 @@ function setupGit {
     if [ -n "${GITHUB_BOT_LOGIN}" ]; then
         GH_USER="${GITHUB_BOT_LOGIN}"
     fi
-    echo "writing gh config"
+
     cat <<EOF > /root/.config/gh/hosts.yml
-{{ .Repo.Host }}:
+github.com:
     users:
         ${GH_USER}:
             oauth_token: ${GITHUB_USER_TOKEN}
@@ -204,17 +204,13 @@ function runChore {
     # Identify the base branch (usually main or master)
     BASE_BRANCH=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name)
 
-    if [ "{{ .SkipPR }}" = "true" ]; then
-        echo "SkipPR is true, skipping PR check."
-    else
-        # Check for existing open PRs for this chore
-        EXISTING_PR=$(gh pr list --state open --search "\"chore: ${CHORE_NAME}\" in:title" --json url --jq '.[0].url')
-        if [ -n "$EXISTING_PR" ]; then
-            echo "An open PR already exists for chore ${CHORE_NAME}: ${EXISTING_PR}"
-            echo "An open PR already exists for chore ${CHORE_NAME}: ${EXISTING_PR}" > "$(dirname "${PROMPT_FILE}")/agent-output.txt"
-            popd > /dev/null
-            return
-        fi
+    # Check for existing open PRs for this chore
+    EXISTING_PR=$(gh pr list --state open --search "\"chore: ${CHORE_NAME}\" in:title" --json url --jq '.[0].url')
+    if [ -n "$EXISTING_PR" ]; then
+        echo "An open PR already exists for chore ${CHORE_NAME}: ${EXISTING_PR}"
+        echo "An open PR already exists for chore ${CHORE_NAME}: ${EXISTING_PR}" > "$(dirname "${PROMPT_FILE}")/agent-output.txt"
+        popd > /dev/null
+        return
     fi
     
     # Create a unique branch for this chore run

@@ -34,7 +34,6 @@ func TestInvestigateFailuresPromptTemplate(t *testing.T) {
 	type MockFailedRun struct {
 		ID   int64
 		Name string
-		URL  string
 	}
 	data := struct {
 		PullRequest   MockPR
@@ -47,13 +46,13 @@ func TestInvestigateFailuresPromptTemplate(t *testing.T) {
 			Body:  "PR Body",
 		},
 		FailedRuns: []MockFailedRun{
-			{ID: 123, Name: "Run 1", URL: "https://github.com/owner/repo/actions/runs/123"},
+			{ID: 123, Name: "Run 1"},
 		},
 		IssueComments: []MockComment{
 			{
 				UserLogin: "overseer",
 				CreatedAt: time.Now(),
-				Body:      "### Investigating Run 1 failure\nStatus: Failed",
+				Body:      "--- INVESTIGATION REPORT ---\nStatus: Failed",
 			},
 		},
 	}
@@ -72,7 +71,7 @@ func TestInvestigateFailuresPromptTemplate(t *testing.T) {
 	}
 
 	// Verify that existing comments are present
-	if !bytes.Contains(w.Bytes(), []byte("### Investigating")) {
+	if !bytes.Contains(w.Bytes(), []byte("--- INVESTIGATION REPORT ---")) {
 		t.Errorf("Prompt does not contain existing investigation report")
 	}
 

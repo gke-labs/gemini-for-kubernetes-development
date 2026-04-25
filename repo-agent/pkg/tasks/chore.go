@@ -3,14 +3,11 @@ package tasks
 import (
 	"bytes"
 	"fmt"
-
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 )
 
 var _ Task = &ChoreModel{}
 
 type ChoreModel struct {
-	Repo        *github.Repository
 	AgentPrompt string
 	ChoreName   string
 	ChoreFile   string

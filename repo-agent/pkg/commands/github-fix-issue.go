@@ -54,9 +54,7 @@ func BuildGithubFixIssueCommand() *cobra.Command {
 			if fixCommand.URL == "" {
 				return fmt.Errorf("--issue-url is required")
 			}
-			if err := fixCommand.InitDefaults(); err != nil {
-				return err
-			}
+			fixCommand.InitDefaults()
 			return fixCommand.Run(cmd.Context())
 		},
 	}
@@ -72,7 +70,7 @@ func BuildGithubFixIssueCommand() *cobra.Command {
 	return cmd
 }
 
-func (c *GithubFixIssueCommand) InitDefaults() error {
+func (c *GithubFixIssueCommand) InitDefaults() {
 	if c.AgentName == "" {
 		c.AgentName = "gemini-cli"
 	}
@@ -90,7 +88,6 @@ func (c *GithubFixIssueCommand) InitDefaults() error {
 	if c.Model == "" {
 		c.Model = "gemini-3.1-pro-preview"
 	}
-	return nil
 }
 
 func (c *GithubFixIssueCommand) taskPath(name string, args ...interface{}) string {
@@ -168,7 +165,6 @@ func (c *GithubFixIssueCommand) Run(ctx context.Context) error {
 		PromptFile:    promptPath,
 		Models:        strings.Split(c.Model, ","),
 		Branch:        os.Getenv("ISSUE_BRANCH"),
-		PRLabel:       os.Getenv("PR_LABEL"),
 	}
 
 	if c.ExtensionsJSON != "" {
