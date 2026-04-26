@@ -1287,10 +1287,14 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 	headSHA := head.GetSHA()
 
 	foundReviewOnGitHub := false
-	// Check if we already gave up on this SHA due to repeated 422s
+	// Check if we already have a cached status for this SHA
 	if sandboxUnstructured != nil {
-		if sandboxUnstructured.GetAnnotations()["review-status-"+headSHA] == "permanently-failed" {
+		status := sandboxUnstructured.GetAnnotations()["review-status-"+headSHA]
+		if status == "permanently-failed" {
 			klog.Infof("PR #%d: Review for SHA %s previously marked as permanently failed. Skipping.", number, headSHA)
+			foundReviewOnGitHub = true
+		} else if status == "submitted" {
+			klog.V(2).Infof("PR #%d: Review for SHA %s already cached as submitted. Skipping.", number, headSHA)
 			foundReviewOnGitHub = true
 		}
 	}
@@ -1505,12 +1509,17 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 								}
 
 								if state == "DISMISSED" {
-									klog.Infof("PR #%d: Automated review for SHA %s was DISMISSED. Re-reviewing.", number, headSHA)
-									break ReviewLoop // Newest bot review for this SHA was dismissed, so we need a new one
+									klog.Infof("PR #%d: Automated review for SHA %s was DISMISSED. Treating as already handled to respect maintainer action.", number, headSHA)
+									foundReviewOnGitHub = true
+									break ReviewLoop
 								}
 
 								klog.V(2).Infof("PR #%d: Automated review for SHA %s already exists on GitHub by %s (state: %s). Skipping.", number, headSHA, login, state)
 								foundReviewOnGitHub = true
+								// Cache it if we have a sandbox
+								if sandboxUnstructured != nil {
+									_ = manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "review-status-"+headSHA, "submitted")
+								}
 								break ReviewLoop
 							}
 						}
@@ -1718,6 +1727,20 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 		return fmt.Errorf("failed to parse repo URL %s: %w", repoURL, err)
 	}
 
+	// Fetch PR to verify head SHA
+	pr, _, err := client.PullRequests.Get(ctx, owner, repoName, prNumber)
+	if err != nil {
+		if isGitHubTransient(err) {
+			return &RetryableError{Message: fmt.Sprintf("transient error getting PR %d: %v", prNumber, err)}
+		}
+		return fmt.Errorf("failed to get PR %d: %w", prNumber, err)
+	}
+	headSHA := pr.GetHead().GetSHA()
+	if currentSHA != "" && !strings.EqualFold(currentSHA, headSHA) {
+		klog.Warningf("PR #%d: Task SHA %s does not match current head SHA %s. Skipping submission of obsolete review.", prNumber, currentSHA, headSHA)
+		return nil
+	}
+
 	// Try Unmarshalling the yaml review payload into PullRequestReviewRequest
 	agentOutput := &models.ReviewAgentOutput{}
 	reviewRequest := &githubv39.PullRequestReviewRequest{}
@@ -1799,10 +1822,13 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 
 	klog.Infof("Successfully created review: %s", review.GetHTMLURL())
 
-	// Update sandbox reviewState
+	// Update sandbox review status and legacy state
 	reviewState := "submitted"
 	if currentSHA != "" {
 		reviewState = "submitted:" + currentSHA
+		if err := manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "review-status-"+currentSHA, "submitted"); err != nil {
+			klog.Warningf("Failed to update review-status annotation for SHA %s: %v", currentSHA, err)
+		}
 	}
 	if err := manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "reviewState", reviewState); err != nil {
 		klog.Warningf("Failed to update reviewState annotation: %v", err)
