@@ -1519,6 +1519,11 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 									continue
 								}
 
+								if state == "PENDING" {
+									klog.V(2).Infof("PR #%d: Found PENDING review for SHA %s by %s. Ignoring draft so local task logic can handle it.", number, headSHA, login)
+									continue
+								}
+
 								if state == "DISMISSED" {
 									klog.Infof("PR #%d: Automated review for SHA %s was DISMISSED. Treating as already handled to respect maintainer action.", number, headSHA)
 									foundReviewOnGitHub = true
