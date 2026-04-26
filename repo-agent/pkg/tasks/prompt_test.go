@@ -172,7 +172,7 @@ func TestFixIssueScriptTemplate(t *testing.T) {
 	}
 
 	// Verify that it uses the provided branch name
-	expectedBranch := `branch_name="test-branch"`
+	expectedBranch := `export BRANCH_NAME="test-branch"`
 	if !bytes.Contains(w.Bytes(), []byte(expectedBranch)) {
 		t.Errorf("Script does not contain expected branch name. Got:\n%s", script)
 	}
@@ -205,7 +205,7 @@ func TestFixIssueScriptTemplate_NoBranch(t *testing.T) {
 
 	script := w.String()
 	// Verify that it uses the default branch name with bash variable
-	expectedBranch := `local branch_name="issue-${ISSUE_NUMBER}"`
+	expectedBranch := `export BRANCH_NAME="fix-issue-${ISSUE_NUMBER}"`
 	if !bytes.Contains(w.Bytes(), []byte(expectedBranch)) {
 		t.Errorf("Script does not contain expected default branch name. Got:\n%s", script)
 	}

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks"
 	"github.com/spf13/cobra"
@@ -24,9 +25,11 @@ type ChoreCommand struct {
 	RepoName     string
 	CloneURL     string
 	RepoOwner    string
+	RepoURL      string
 	SkipPR       bool
 
 	// loaded objects
+	repo      *github.Repository
 	sandbox   *sandbox.IssueSandbox
 	sandboxID string
 }
@@ -53,6 +56,7 @@ func BuildChoreCommand() *cobra.Command {
 	cmd.Flags().StringVar(&choreCommand.RepoName, "repo", os.Getenv("REPO"), "Repository name")
 	cmd.Flags().StringVar(&choreCommand.CloneURL, "clone-url", os.Getenv("CLONE_URL"), "Repository clone URL")
 	cmd.Flags().StringVar(&choreCommand.RepoOwner, "repo-owner", os.Getenv("REPO_OWNER"), "Repository owner")
+	cmd.Flags().StringVar(&choreCommand.RepoURL, "repo-url", os.Getenv("GIT_HTML_URL"), "GitHub repository URL")
 	cmd.Flags().BoolVar(&choreCommand.SkipPR, "skip-pr", os.Getenv("SKIP_PR") == "true", "Skip PR creation")
 	cmd.Flags().BoolVar(&choreCommand.InPod, "in-pod", false, "Whether running inside the pod")
 	return cmd
@@ -76,11 +80,32 @@ func (c *ChoreCommand) taskPath(name string, args ...interface{}) string {
 	return filepath.Join(c.TaskDir, file)
 }
 
+func (c *ChoreCommand) loadGithubObjects(ctx context.Context) error {
+	githubAPI, err := github.NewClient(ctx)
+	if err != nil {
+		return err
+	}
+
+	if c.RepoURL != "" {
+		c.repo, err = githubAPI.GetRepositoryFromHTMLUrl(ctx, c.RepoURL)
+		if err != nil {
+			return err
+		}
+	} else if c.CloneURL != "" {
+		c.repo, err = githubAPI.GetRepositoryFromHTMLUrl(ctx, c.CloneURL)
+		if err != nil {
+			// Best effort if CloneURL is not a standard HTML URL
+			klog.Warningf("Failed to get repository from CloneURL %q: %v", c.CloneURL, err)
+		}
+	}
+	return nil
+}
+
 func (c *ChoreCommand) loadSandbox(ctx context.Context) error {
 	// For chore, we might not have an issue or full repo info easily available
 	// But IssueSandbox is what tasks.RunTask expects.
 	// We can probably pass nil for repo and issue if the task doesn't use them.
-	sb, err := sandbox.NewIssueSandbox(ctx, c.InPod, nil, nil, "")
+	sb, err := sandbox.NewIssueSandbox(ctx, c.InPod, c.repo, nil, "")
 	if err != nil {
 		return err
 	}
@@ -94,14 +119,20 @@ func (c *ChoreCommand) Run(ctx context.Context) error {
 	log := klog.FromContext(ctx)
 	log.Info("Starting chore task", "taskdir", c.TaskDir)
 
+	err := c.loadGithubObjects(ctx)
+	if err != nil {
+		log.Info("Failed to load GitHub objects (continuing)", "error", err)
+	}
+
 	// get sandbox
-	err := c.loadSandbox(ctx)
+	err = c.loadSandbox(ctx)
 	if err != nil {
 		return err
 	}
 
 	promptPath := c.taskPath("agent-prompt.txt")
 	task := tasks.ChoreModel{
+		Repo:        c.repo,
 		AgentPrompt: c.AgentPrompt,
 		ChoreName:   c.ChoreName,
 		ChoreFile:   c.ChoreFile,
