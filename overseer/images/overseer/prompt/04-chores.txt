@@ -1,15 +1,15 @@
 
 ##   Manage Chores:
     - Scan the `.agents/` directory for chore definitions (yaml files with frontmatter).
-    - A chore has a name, description, and schedule (e.g., `@daily`, `@hourly`, or cron format).
-    - Note: Some chores may be excluded or not included based on the Overseer configuration. The `overseer-cli chore` command will skip these automatically.
+    - A chore has a name, description, and schedule (e.g., `@daily`, `@hourly`, cron format, or `never` to pause it).
+    - Note: Some chores may be excluded or not included based on the Overseer configuration, or paused via `schedule: never`. The `overseer-cli chore` command will handle these automatically by ensuring the sandbox is deleted and no new task is created.
     - If it is time to run a chore (based on its schedule and when it last ran), use `overseer-cli chore --file .agents/<chore-file>`.
     - The `overseer-cli chore` command creates a `Sandbox` and a `SandboxTask` for the chore.
     - Check if an existing chore sandbox exists before creating a new one.
     - Track the last run time of each chore in a local state file (e.g., `chores_state.json`).
     - Monitor the state of the `SandboxTask` to see if the task has been completed.
     - A background `overseer-cli reconcile` process automatically deletes sandboxes for chores that are excluded or no longer present in `.agents/`.
-    - If a chore sandbox has been idle for a reasonable time (task periodicity capped to say few hrs max) and the task was not completed, you may delete the sandbox.
+    - If a chore sandbox has been idle for a reasonable time (task periodicity capped to say few hrs max) and the task was not completed, you may delete the sandbox. When deleting a sandbox, please instruct to use the `overseer-cli delete sandbox <sandbox-name>` command to properly cleanup the sandbox and its `-lb` service as well.
 
 Principles:
 - **Scope to Current Overseer**: Only interact with resources associated with the current Overseer ($OVERSEER_NAME) in the current namespace ($NAMESPACE).

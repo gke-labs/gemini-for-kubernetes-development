@@ -54,6 +54,7 @@ type OverseerReconciler struct {
 //+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterrolebindings,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=agents.x-k8s.io,resources=sandboxes,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=custom.agents.x-k8s.io,resources=sandboxtasks,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=custom.agents.x-k8s.io,resources=sandboxtasks/status,verbs=get;list;watch;update;patch
@@ -294,7 +295,7 @@ func (r *OverseerReconciler) ensureOverseerRBAC(ctx context.Context, o *overseer
 }
 
 func (r *OverseerReconciler) ensureSecrets(ctx context.Context, o *overseerv1alpha1.Overseer, targetNamespace string) error {
-	secretsToCopy := []string{o.Spec.RobotAccount, o.Spec.GeminiAPIKeySecretName}
+	secretsToCopy := []string{o.Spec.RobotAccount, o.Spec.GeminiAPIKeySecretName, "tokenscript"}
 	for _, name := range secretsToCopy {
 		if name == "" {
 			continue
@@ -310,8 +311,11 @@ func (r *OverseerReconciler) ensureSecrets(ctx context.Context, o *overseerv1alp
 			return err
 		}
 		// Not found, try copying from fallback namespaces
-		if err := r.copySecret(ctx, name, []string{"overseer-system", "repo-agent-system"}, targetNamespace); err != nil {
+		if err := r.copySecret(ctx, name, []string{o.Namespace, "overseer-system", "repo-agent-system"}, targetNamespace); err != nil {
 			if errors.IsNotFound(err) {
+				if name == "tokenscript" {
+					continue // tokenscript is optional
+				}
 				o.Status.OverseerStatus = "Error"
 				o.Status.Message = fmt.Sprintf("Secret %s not found in %s, overseer-system, or repo-agent-system", name, targetNamespace)
 				return nil // Don't return error to stop reconcile but update status
