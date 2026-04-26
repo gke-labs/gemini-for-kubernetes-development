@@ -17,14 +17,30 @@ import requests
 import subprocess
 import time
 import argparse
+import os
+import sys
+
+# Hardcoded fallback version to use if GitHub API is unavailable (e.g. rate limited)
+FALLBACK_VERSION = "0.1.0-rc.3"
 
 def get_latest_agent_sandbox_version():
     """Fetches the latest Agent Sandbox version from the GitHub API."""
+    # Allow override via environment variable
+    env_version = os.Getenv("AGENT_SANDBOX_VERSION")
+    if env_version:
+        print(f"Using Agent Sandbox version from environment: {env_version}")
+        return env_version.lstrip("v")
+
     url = "https://api.github.com/repos/kubernetes-sigs/agent-sandbox/releases/latest"
-    response = requests.get(url)
-    response.raise_for_status()
-    tag_name = response.json()["tag_name"]
-    return tag_name.lstrip("v")
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        tag_name = response.json()["tag_name"]
+        return tag_name.lstrip("v")
+    except Exception as e:
+        print(f"Warning: Failed to fetch latest Agent Sandbox version from GitHub: {e}")
+        print(f"Falling back to hardcoded version: {FALLBACK_VERSION}")
+        return FALLBACK_VERSION.lstrip("v")
 
 def run_command(command):
     """Runs a shell command and prints its output."""
@@ -43,7 +59,7 @@ def main():
         if args.uninstall:
             print(f"Uninstalling agent-sandbox version: {version}")
             uninstall_command = [
-                "kubectl", "delete", "-f",
+                "kubectl", "delete", "--ignore-not-found", "-f",
                 f"https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v{version}/manifest.yaml"
             ]
             run_command(uninstall_command)
@@ -67,12 +83,12 @@ def main():
 
         print("Agent Sandbox installed successfully.")
 
-    except requests.exceptions.RequestException as e:
-        print(f"Error fetching Agent Sandbox version: {e}")
     except subprocess.CalledProcessError as e:
         print(f"Error executing command: {e}")
+        sys.exit(1)
     except Exception as e:
         print(f"An unexpected error occurred: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

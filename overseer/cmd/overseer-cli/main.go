@@ -1293,9 +1293,20 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 		if status == "permanently-failed" {
 			klog.Infof("PR #%d: Review for SHA %s previously marked as permanently failed. Skipping.", number, headSHA)
 			foundReviewOnGitHub = true
-		} else if status == "submitted" {
-			klog.V(2).Infof("PR #%d: Review for SHA %s already cached as submitted. Skipping.", number, headSHA)
-			foundReviewOnGitHub = true
+		} else if strings.HasPrefix(status, "submitted:") {
+			cachedTimeStr := strings.TrimPrefix(status, "submitted:")
+			cachedTime, err := time.Parse(time.RFC3339, cachedTimeStr)
+			if err != nil {
+				klog.Warningf("PR #%d: Failed to parse cached review timestamp %q: %v", number, cachedTimeStr, err)
+			} else {
+				// If we have a trigger event (reopen/request), ensure cached review is after it
+				if lastTriggerEventAt == nil || cachedTime.After(*lastTriggerEventAt) {
+					klog.V(2).Infof("PR #%d: Review for SHA %s already cached as submitted at %v. Skipping.", number, headSHA, cachedTime)
+					foundReviewOnGitHub = true
+				} else {
+					klog.Infof("PR #%d: Review for SHA %s cached as submitted at %v, but PR was reopened at %v. Re-verifying with GitHub.", number, headSHA, cachedTime, lastTriggerEventAt)
+				}
+			}
 		}
 	}
 
@@ -1518,7 +1529,11 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 								foundReviewOnGitHub = true
 								// Cache it if we have a sandbox
 								if sandboxUnstructured != nil {
-									_ = manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "review-status-"+headSHA, "submitted")
+									val := "submitted"
+									if !submittedAt.IsZero() {
+										val = "submitted:" + submittedAt.Format(time.RFC3339)
+									}
+									_ = manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "review-status-"+headSHA, val)
 								}
 								break ReviewLoop
 							}
@@ -1826,7 +1841,11 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 	reviewState := "submitted"
 	if currentSHA != "" {
 		reviewState = "submitted:" + currentSHA
-		if err := manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "review-status-"+currentSHA, "submitted"); err != nil {
+		val := "submitted"
+		if !review.GetSubmittedAt().IsZero() {
+			val = "submitted:" + review.GetSubmittedAt().Format(time.RFC3339)
+		}
+		if err := manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "review-status-"+currentSHA, val); err != nil {
 			klog.Warningf("Failed to update review-status annotation for SHA %s: %v", currentSHA, err)
 		}
 	}
