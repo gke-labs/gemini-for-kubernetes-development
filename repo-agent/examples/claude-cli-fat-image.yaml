@@ -1,0 +1,17 @@
+apiVersion: review.gemini.google.com/v1alpha1
+kind: RepoWatch
+metadata:
+  name: claude-cli-fat-image
+  namespace: repo-agent-system
+spec:
+  repoURL: https://github.com/your-org/your-repo
+  githubSecretName: github-pat
+  review:
+    # Use the pre-baked image containing Node.js and Claude CLI
+    image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
+    # Specify the claude-cli provider
+    llm:
+      provider: claude-cli
+      apiKeySecretRef: anthropic-api-key
+    maxActiveSandboxes: 5
+    # Note: No devcontainerConfigRef is needed here as the image is self-contained.

@@ -74,8 +74,8 @@ func TestClaudeCLI_Run(t *testing.T) {
 		if mockExecutor.Command != "claude" {
 			t.Errorf("Expected command 'claude', got %q", mockExecutor.Command)
 		}
-		if len(mockExecutor.Args) != 3 {
-			t.Fatalf("Expected 3 args, got %d", len(mockExecutor.Args))
+		if len(mockExecutor.Args) != 4 {
+			t.Fatalf("Expected 4 args, got %d", len(mockExecutor.Args))
 		}
 		if mockExecutor.Args[0] != "--print" {
 			t.Errorf("Expected arg[0] '--print', got %q", mockExecutor.Args[0])
@@ -86,8 +86,8 @@ func TestClaudeCLI_Run(t *testing.T) {
 		if mockExecutor.Args[2] != "json" {
 			t.Errorf("Expected arg[2] 'json', got %q", mockExecutor.Args[2])
 		}
-		if mockExecutor.Stdin != "fix this bug" {
-			t.Errorf("Expected Stdin 'fix this bug', got %q", mockExecutor.Stdin)
+		if mockExecutor.Args[3] != "fix this bug" {
+			t.Errorf("Expected arg[3] 'fix this bug', got %q", mockExecutor.Args[3])
 		}
 	})
 }
