@@ -25,6 +25,8 @@ const (
 	GeminiProvider = "gemini-cli"
 	// ClaudeProvider represents the Claude LLM provider.
 	ClaudeProvider = "claude"
+	// ClaudeCLIProvider represents the Claude Code CLI provider.
+	ClaudeCLIProvider = "claude-cli"
 	// Dummy provider for testing
 	DummyProvider = "dummy"
 
@@ -38,7 +40,7 @@ type LLMConfig struct {
 	// Provider is the name of the LLM provider to use. This field is used to
 	// determine which LLM client to instantiate and how to interact with the
 	// LLM API.
-	// +kubebuilder:validation:Enum=gemini-cli;claude;dummy
+	// +kubebuilder:validation:Enum=gemini-cli;claude;claude-cli;dummy
 	// +kubebuilder:default=gemini-cli
 	Provider string `json:"provider,omitempty"`
 

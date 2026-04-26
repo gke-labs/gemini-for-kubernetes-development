@@ -30,6 +30,8 @@ check-prereqs:
 	@command -v kind >/dev/null 2>&1 || { echo >&2 "kind not found. Please install it. https://kind.sigs.k8s.io/docs/user/quick-start/#installation"; exit 1; }
 	@command -v kubectl >/dev/null 2>&1 || { echo >&2 "kubectl not found. Please install it. https://kubernetes.io/docs/tasks/tools/install-kubectl/"; exit 1; }
 	@command -v helm >/dev/null 2>&1 || { echo >&2 "helm not found. Please install it. https://helm.sh/docs/intro/install/"; exit 1; }
+	@command -v node >/dev/null 2>&1 || { echo >&2 "node not found. Please install it. https://nodejs.org/"; exit 1; }
+	@command -v npm >/dev/null 2>&1 || { echo >&2 "npm not found. Please install it. https://docs.npmjs.com/downloading-and-installing-node-js-and-npm"; exit 1; }
 	@echo "All prerequisites are installed."
 
 .PHONY: generate
