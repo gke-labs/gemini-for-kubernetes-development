@@ -111,6 +111,18 @@ func (s *Server) listIssuesFromK8s(ctx context.Context, namespace, repo string) 
 	}
 
 	var issues []models.Issue
+
+	// Fetch RepoWatch to get defaults (host)
+	rw, err := s.K8sManager.GetRepoWatch(ctx, namespace, repo)
+	host := "github.com"
+	if err == nil {
+		if repoURL, found, _ := unstructured.NestedString(rw.Object, "spec", "repoURL"); found {
+			if u, err := url.Parse(repoURL); err == nil && u.Hostname() != "" {
+				host = u.Hostname()
+			}
+		}
+	}
+
 	for _, item := range list.Items {
 		// Filter out dev sandboxes
 		labels := item.GetLabels()
@@ -157,7 +169,7 @@ func (s *Server) listIssuesFromK8s(ctx context.Context, namespace, repo string) 
 		repoParts := strings.Split(strings.TrimSuffix(cloneURL, ".git"), "/")
 		repoName := repoParts[len(repoParts)-1]
 
-		branchURL := fmt.Sprintf("https://github.com/%s/%s/tree/%s", login, repoName, branch)
+		branchURL := fmt.Sprintf("https://%s/%s/%s/tree/%s", host, login, repoName, branch)
 
 		// get draft from annotation[agentDraft]
 		draft := ""
@@ -592,9 +604,14 @@ func (s *Server) getIssueCommits(c *gin.Context) {
 		return
 	}
 
+	host := "github.com"
+	if u, err := url.Parse(repoURL); err == nil && u.Hostname() != "" {
+		host = u.Hostname()
+	}
+
 	// Try to find a linked PR
 	var linkedPR *github.PullRequest
-	prURLRegex := regexp.MustCompile(`https://github\.com/[\w-]+/[\w-]+/pull/\d+`)
+	prURLRegex := regexp.MustCompile(fmt.Sprintf(`https://%s/[\w-]+/[\w-]+/pull/\d+`, regexp.QuoteMeta(host)))
 
 	// 1. Check sandbox annotations for agentDraft
 	if agentDraft, _, _ := unstructured.NestedString(sandbox.Object, "metadata", "annotations", "agentDraft"); agentDraft != "" {

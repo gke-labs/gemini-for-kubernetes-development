@@ -62,6 +62,9 @@ function setupGit {
     
     # Extract host from REPO_URL
     REPO_HOST=$(echo "$REPO_URL" | sed -E 's/^\w+:\/\/([^/]+)\/.*$/\1/')
+    # Strip user info if present (e.g. git@github.com -> github.com)
+    REPO_HOST=$(echo "$REPO_HOST" | sed -E 's/^.*@//')
+
     if [[ "$REPO_URL" == git@* ]]; then
       REPO_HOST=$(echo "$REPO_URL" | sed -E 's/^git@([^:]+):.*$/\1/')
     fi
