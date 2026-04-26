@@ -22,15 +22,21 @@ func TestManagerList(t *testing.T) {
 		t.Errorf("Expected at least one template, got 0")
 	}
 
-	found := false
+	foundGateway := false
+	foundAiFactory := false
 	for _, tmpl := range templates {
 		if tmpl.ID == "gateway-api-reference-implementation" {
-			found = true
-			break
+			foundGateway = true
+		}
+		if tmpl.ID == "ai-factory" {
+			foundAiFactory = true
 		}
 	}
 
-	if !found {
+	if !foundGateway {
 		t.Errorf("Template 'gateway-api-reference-implementation' not found in %v", templates)
+	}
+	if !foundAiFactory {
+		t.Errorf("Template 'ai-factory' not found in %v", templates)
 	}
 }
