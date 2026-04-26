@@ -53,7 +53,9 @@ func BuildDevInitCommand() *cobra.Command {
 			if len(args) != 0 {
 				return fmt.Errorf("command does not take positional arguments")
 			}
-			initCommand.InitDefaults()
+			if err := initCommand.InitDefaults(); err != nil {
+				return err
+			}
 			return initCommand.Run(cmd.Context())
 		},
 	}
@@ -71,7 +73,7 @@ func BuildDevInitCommand() *cobra.Command {
 	return cmd
 }
 
-func (c *DevInitCommand) InitDefaults() {
+func (c *DevInitCommand) InitDefaults() error {
 	if c.WorkspaceDir == "" {
 		c.WorkspaceDir = "/workspaces"
 	}
@@ -85,6 +87,7 @@ func (c *DevInitCommand) InitDefaults() {
 	if c.Model == "" {
 		c.Model = "gemini-3.1-pro-preview"
 	}
+	return nil
 }
 
 func (c *DevInitCommand) taskPath(name string, args ...interface{}) string {

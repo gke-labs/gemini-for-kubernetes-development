@@ -52,7 +52,9 @@ func BuildIterateCommand() *cobra.Command {
 			if len(args) != 0 {
 				return fmt.Errorf("command does not take positional arguments")
 			}
-			iterCommand.InitDefaults()
+			if err := iterCommand.InitDefaults(); err != nil {
+				return err
+			}
 			return iterCommand.Run(cmd.Context())
 		},
 	}
@@ -70,7 +72,7 @@ func BuildIterateCommand() *cobra.Command {
 	return cmd
 }
 
-func (c *IterateCommand) InitDefaults() {
+func (c *IterateCommand) InitDefaults() error {
 	if c.PRID == "" {
 		c.PRID = os.Getenv("PRID")
 	}
@@ -90,6 +92,7 @@ func (c *IterateCommand) InitDefaults() {
 	if c.Model == "" {
 		c.Model = "gemini-3.1-pro-preview"
 	}
+	return nil
 }
 
 func (c *IterateCommand) taskPath(name string, args ...interface{}) string {

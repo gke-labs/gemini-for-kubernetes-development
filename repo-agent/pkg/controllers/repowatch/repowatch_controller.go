@@ -1856,13 +1856,22 @@ func (r *Reconciler) unpauseSandboxIfPendingTasks(ctx context.Context, sandbox *
 		}
 
 		log.Info("Unpausing sandbox due to pending tasks", "sandbox", sandbox.GetName())
-		patch := client.MergeFrom(sandbox.DeepCopy())
-		if err := unstructured.SetNestedField(sandbox.Object, int64(1), "spec", "replicas"); err != nil {
+		// Re-fetch sandbox to ensure we have the latest version for patching
+		latestSandbox := &unstructured.Unstructured{}
+		latestSandbox.SetGroupVersionKind(sandbox.GroupVersionKind())
+		if err := r.Get(ctx, types.NamespacedName{Name: sandbox.GetName(), Namespace: sandbox.GetNamespace()}, latestSandbox); err != nil {
+			log.Error(err, "failed to re-fetch sandbox for patching", "sandbox", sandbox.GetName())
 			return false, err
 		}
-		if err := r.Patch(ctx, sandbox, patch); err != nil {
+
+		patch := client.MergeFrom(latestSandbox.DeepCopy())
+		if err := unstructured.SetNestedField(latestSandbox.Object, int64(1), "spec", "replicas"); err != nil {
 			return false, err
 		}
+		if err := r.Patch(ctx, latestSandbox, patch); err != nil {
+			return false, err
+		}
+		*sandbox = *latestSandbox
 		(*activeSandboxes)++
 		return true, nil
 	}
@@ -1913,11 +1922,23 @@ func (r *Reconciler) pauseSandboxIfIdle(ctx context.Context, sandbox *unstructur
 
 	if time.Since(latestTime) > shutdownDuration {
 		log.Info("Pausing sandbox (idle)", "sandbox", sandbox.GetName(), "lastActivity", latestTime)
-		patch := client.MergeFrom(sandbox.DeepCopy())
-		if err := unstructured.SetNestedField(sandbox.Object, int64(0), "spec", "replicas"); err != nil {
+		// Re-fetch sandbox to ensure we have the latest version for patching
+		latestSandbox := &unstructured.Unstructured{}
+		latestSandbox.SetGroupVersionKind(sandbox.GroupVersionKind())
+		if err := r.Get(ctx, types.NamespacedName{Name: sandbox.GetName(), Namespace: sandbox.GetNamespace()}, latestSandbox); err != nil {
+			log.Error(err, "failed to re-fetch sandbox for patching", "sandbox", sandbox.GetName())
 			return false, err
 		}
-		return true, r.Patch(ctx, sandbox, patch)
+
+		patch := client.MergeFrom(latestSandbox.DeepCopy())
+		if err := unstructured.SetNestedField(latestSandbox.Object, int64(0), "spec", "replicas"); err != nil {
+			return false, err
+		}
+		if err := r.Patch(ctx, latestSandbox, patch); err != nil {
+			return false, err
+		}
+		*sandbox = *latestSandbox
+		return true, nil
 	}
 
 	return false, nil
@@ -2067,13 +2088,22 @@ func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *revi
 				return nil
 			}
 
-			patch := client.MergeFrom(sandbox.DeepCopy())
-			if err := unstructured.SetNestedField(sandbox.Object, int64(1), "spec", "replicas"); err != nil {
+			// Re-fetch sandbox to ensure we have the latest version for patching
+			latestSandbox := &unstructured.Unstructured{}
+			latestSandbox.SetGroupVersionKind(sandbox.GroupVersionKind())
+			if err := r.Get(ctx, types.NamespacedName{Name: sandbox.GetName(), Namespace: sandbox.GetNamespace()}, latestSandbox); err != nil {
+				log.Error(err, "failed to re-fetch sandbox for patching", "sandbox", sandbox.GetName())
+				return nil
+			}
+
+			patch := client.MergeFrom(latestSandbox.DeepCopy())
+			if err := unstructured.SetNestedField(latestSandbox.Object, int64(1), "spec", "replicas"); err != nil {
 				log.Error(err, "unable to set replicas to 1")
 			} else {
-				if err := r.Patch(ctx, sandbox, patch); err != nil {
+				if err := r.Patch(ctx, latestSandbox, patch); err != nil {
 					log.Error(err, "unable to patch sandbox for scale up")
 				} else {
+					*sandbox = *latestSandbox
 					(*activeSandboxes)++
 				}
 			}
@@ -2212,13 +2242,22 @@ func (r *Reconciler) reconcilePRFailures(ctx context.Context, repoWatch *reviewv
 				return nil
 			}
 
-			patch := client.MergeFrom(sandbox.DeepCopy())
-			if err := unstructured.SetNestedField(sandbox.Object, int64(1), "spec", "replicas"); err != nil {
+			// Re-fetch sandbox to ensure we have the latest version for patching
+			latestSandbox := &unstructured.Unstructured{}
+			latestSandbox.SetGroupVersionKind(sandbox.GroupVersionKind())
+			if err := r.Get(ctx, types.NamespacedName{Name: sandbox.GetName(), Namespace: sandbox.GetNamespace()}, latestSandbox); err != nil {
+				log.Error(err, "failed to re-fetch sandbox for patching", "sandbox", sandbox.GetName())
+				return nil
+			}
+
+			patch := client.MergeFrom(latestSandbox.DeepCopy())
+			if err := unstructured.SetNestedField(latestSandbox.Object, int64(1), "spec", "replicas"); err != nil {
 				log.Error(err, "unable to set replicas to 1")
 			} else {
-				if err := r.Patch(ctx, sandbox, patch); err != nil {
+				if err := r.Patch(ctx, latestSandbox, patch); err != nil {
 					log.Error(err, "unable to patch sandbox for scale up")
 				} else {
+					*sandbox = *latestSandbox
 					(*activeSandboxes)++
 				}
 			}
@@ -2399,6 +2438,7 @@ func (r *Reconciler) reconcileSandboxPodStatus(ctx context.Context, sandbox *uns
 			log.Error(err, "failed to patch sandbox annotation for pod status", "sandbox", latestSandbox.GetName())
 			return sandboxStatus, err
 		}
+		*sandbox = *latestSandbox
 	}
 
 	return sandboxStatus, nil
@@ -2590,5 +2630,6 @@ func (r *Reconciler) updateConflictCheckAnnotation(ctx context.Context, sandbox 
 		log.Error(err, "failed to patch sandbox annotation for conflict check", "sandbox", latestSandbox.GetName())
 		return err
 	}
+	*sandbox = *latestSandbox
 	return nil
 }

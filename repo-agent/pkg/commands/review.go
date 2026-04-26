@@ -62,7 +62,7 @@ type ReviewCommand struct {
 	OutputNamespace string
 }
 
-func (c *ReviewCommand) InitDefaults() {
+func (c *ReviewCommand) InitDefaults() error {
 	if c.OutputGVR == nil {
 		if gvrResource := os.Getenv("AGENT_OUTPUT_GVR_RESOURCE"); gvrResource != "" {
 			group := os.Getenv("AGENT_OUTPUT_GVR_GROUP")
@@ -167,6 +167,7 @@ func (c *ReviewCommand) InitDefaults() {
 			}
 		}
 	}
+	return nil
 }
 
 func BuildReviewCommand() *cobra.Command {
@@ -178,7 +179,9 @@ func BuildReviewCommand() *cobra.Command {
 			if len(args) != 0 {
 				return fmt.Errorf("review command does not take any arguments")
 			}
-			reviewCommand.InitDefaults()
+			if err := reviewCommand.InitDefaults(); err != nil {
+				return err
+			}
 			return reviewCommand.Run(cmd.Context())
 		},
 	}

@@ -16,7 +16,6 @@ package github
 
 import (
 	"fmt"
-	"unicode/utf8"
 
 	githubv39 "github.com/google/go-github/v39/github"
 )
@@ -77,15 +76,18 @@ func (p *PullRequest) State() string {
 
 func (p *PullRequest) TruncatedBody() string {
 	body := p.pr.GetBody()
-	byteOffset := 0
-	runeCount := 0
-	for runeCount < 2000 && byteOffset < len(body) {
-		_, size := utf8.DecodeRuneInString(body[byteOffset:])
-		byteOffset += size
-		runeCount++
+	if len(body) <= 2000 {
+		return body
 	}
-	if byteOffset < len(body) {
-		return body[:byteOffset] + "... (truncated)"
+	
+	// Truncate to 2000 runes (not bytes) for LLM safety, while ensuring we don't slice mid-rune.
+	// We use range loop which safely iterates over runes.
+	count := 0
+	for i := range body {
+		if count >= 2000 {
+			return body[:i] + "... (truncated)"
+		}
+		count++
 	}
 	return body
 }
