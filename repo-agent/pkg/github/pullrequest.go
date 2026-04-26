@@ -79,7 +79,7 @@ func (p *PullRequest) TruncatedBody() string {
 	if len(body) <= 2000 {
 		return body
 	}
-	
+
 	// Truncate to 2000 runes (not bytes) for LLM safety, while ensuring we don't slice mid-rune.
 	// We use range loop which safely iterates over runes.
 	count := 0
