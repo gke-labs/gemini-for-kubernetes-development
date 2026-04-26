@@ -436,9 +436,10 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 	serviceName := sandboxName + "-lb"
 	service := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      serviceName,
-			Namespace: opt.Namespace,
-			Labels:    labels,
+			Name:        serviceName,
+			Namespace:   opt.Namespace,
+			Labels:      labels,
+			Annotations: opt.Annotations,
 		},
 		Spec: corev1.ServiceSpec{
 			Selector: map[string]string{

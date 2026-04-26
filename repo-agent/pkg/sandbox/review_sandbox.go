@@ -313,8 +313,10 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 			"apiVersion": "v1",
 			"kind":       "Service",
 			"metadata": map[string]interface{}{
-				"name":      serviceName,
-				"namespace": opt.Namespace,
+				"name":        serviceName,
+				"namespace":   opt.Namespace,
+				"labels":      labels,
+				"annotations": annotations,
 			},
 			"spec": map[string]interface{}{
 				"selector": map[string]interface{}{
