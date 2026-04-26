@@ -960,5 +960,5 @@ body.dark-mode .warning-banner {
 }
 
 .btn-link:hover {
-  filter: brightness(1.2);
+  opacity: 0.8;
 }

@@ -123,8 +123,14 @@ func GenerateMetadataFooter(m Metadata) string {
 }
 
 func sanitize(s string) string {
-	s = strings.ReplaceAll(s, "--", "**")
-	return strings.ReplaceAll(s, "\n", " ")
+	// Neutralize HTML comment markers to prevent injection without aggressively
+	// replacing all double hyphens.
+	s = strings.ReplaceAll(s, "-->", "-- >")
+	s = strings.ReplaceAll(s, "--!>", "--! >")
+	s = strings.ReplaceAll(s, "<!--", "< !--")
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", "")
+	return s
 }
 
 // GetMetadataEnv returns a map of all metadata environment variables.

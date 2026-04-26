@@ -240,13 +240,16 @@ func truncateString(s string, limit int) string {
 
 		newLimit := limit - len(needsClosing)
 		if newLimit <= 0 {
-			res = ""
+			// If we can't fit the closing tags, just use the original truncation
+			// and let the next check handle the fallback if it's still messy.
+			res = truncateToRuneBoundary(s, limit)
 			break
 		}
 		res = truncateToRuneBoundary(res, newLimit)
 	}
 
-	if res == "" || res == "\n```" || res == "\n~~~" || res == "\n```\n~~~" || res == "\n~~~\n```" {
+	// Final safety check: if we still have an effectively empty or messy result, use the fallback.
+	if res == "" || res == "\n```" || res == "\n~~~" || res == "```\n" || res == "~~~\n" || res == "```" || res == "~~~" {
 		if len(truncatedFallback) <= limit {
 			return truncatedFallback
 		}

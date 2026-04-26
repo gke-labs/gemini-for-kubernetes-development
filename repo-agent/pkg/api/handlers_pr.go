@@ -356,7 +356,16 @@ func (s *Server) submitReview(c *gin.Context) {
 	if reviewRequest.Body != nil {
 		bodyForEmptyCheck = strings.TrimSpace(*reviewRequest.Body)
 	}
-	isEmpty := bodyForEmptyCheck == "" && len(reviewRequest.Comments) == 0
+
+	hasValidComment := false
+	for _, comment := range reviewRequest.Comments {
+		if comment != nil && comment.Body != nil && strings.TrimSpace(*comment.Body) != "" {
+			hasValidComment = true
+			break
+		}
+	}
+
+	isEmpty := bodyForEmptyCheck == "" && !hasValidComment
 	if isEmpty {
 		log.Info("Review is empty, skipping submission")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Review is empty"})
@@ -385,6 +394,12 @@ func (s *Server) submitReview(c *gin.Context) {
 		}
 
 		newCommentBody := s.applyTraceabilityMetadataWithSandbox(c, commentBody, metadata.TaskTypePRReview, sandboxName, taskNameReq, taskUIDReq, sandbox)
+		// For inline comments, remove the horizontal rule and extra newlines to save space.
+		// We keep the invisible HTML comment for traceability but drop the visible rule.
+		if idx := strings.Index(newCommentBody, "<!-- repo-agent-metadata"); idx != -1 {
+			newCommentBody = strings.TrimRight(newCommentBody[:idx], " \t\n\r") + "\n" + newCommentBody[idx:]
+		}
+
 		if firstComment != nil {
 			firstComment.Body = &newCommentBody
 		}

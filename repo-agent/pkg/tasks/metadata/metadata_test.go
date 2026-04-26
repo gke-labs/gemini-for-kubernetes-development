@@ -42,7 +42,7 @@ func TestGenerateMetadataFooter(t *testing.T) {
 				SandboxTask: "task <!-- with --> comment and --!> sneaky closure",
 			},
 			contains: []string{
-				"sandbox-task: task <!** with **> comment and **!> sneaky closure",
+				"sandbox-task: task < !-- with -- > comment and --! > sneaky closure",
 			},
 		},
 	}
