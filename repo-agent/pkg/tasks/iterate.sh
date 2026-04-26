@@ -1,34 +1,21 @@
 #!/bin/bash
-# Copyright 2026 The Kubernetes Authors.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 set -e
 set -o pipefail
-#set -x
+set -x
 
 # It expects the following environment variables to be set:
 # - GEMINI_API_KEY
 # - GITHUB_USER_TOKEN
 
-export REPO_NAME={{ printf "%q" .Repo.Name }}
-export REPO_OWNER={{ printf "%q" .Repo.Owner }}
-export CLONE_URL={{ printf "%q" .Repo.CloneURL }}
-export PROMPT_FILE={{ printf "%q" .PromptFile }}
-export GITHUB_USER_ID={{ printf "%q" .User.UserID }}
-export GITHUB_USER_EMAIL={{ printf "%q" .User.Email }}
-export GITHUB_USER_NAME={{ printf "%q" .User.Name }}
-export BRANCH_NAME={{ printf "%q" .BranchName }}
+export REPO_OWNER="{{ .Repo.Owner }}"
+export REPO_NAME="{{ .Repo.Name }}"
+export CLONE_URL="{{ .Repo.CloneURL }}"
+export BRANCH_NAME="{{ .BranchName }}"
+export PRID="{{ .PRID }}"
+export PROMPT_FILE="{{ .PromptFile }}"
+export GITHUB_USER_ID="{{ .User.UserID }}"
+export GITHUB_USER_EMAIL="{{ .User.Email }}"
+export GITHUB_USER_NAME="{{ .User.Name }}"
 
 export GITHUB_USER_TOKEN="${GITHUB_USER_TOKEN:-${GITHUB_TOKEN}}"
 if [ -z "$GITHUB_USER_TOKEN" ]; then
@@ -44,76 +31,90 @@ fi
 
 function setupGit {
     echo "Running setupGit..."
+    echo "creating /root/.config/gh directory"
     mkdir -p /root/.config/gh
 
-    local GH_USER; GH_USER="${GITHUB_USER_ID}"
+    local GH_USER="${GITHUB_USER_ID}"
     if [ -n "${GITHUB_BOT_LOGIN}" ]; then
         GH_USER="${GITHUB_BOT_LOGIN}"
     fi
 
-    local SAFE_GH_USER; SAFE_GH_USER=$(printf "%q" "${GH_USER}")
-    local SAFE_TOKEN; SAFE_TOKEN=$(printf "%q" "${GITHUB_USER_TOKEN}")
+    echo "writing gh config"
     cat <<EOF > /root/.config/gh/hosts.yml
-{{ .Repo.Host }}:
+github.com:
     users:
-        ${SAFE_GH_USER}:
-            oauth_token: ${SAFE_TOKEN}
+        ${GH_USER}:
+            oauth_token: ${GITHUB_USER_TOKEN}
     git_protocol: https
-    oauth_token: ${SAFE_TOKEN}
-    user: ${SAFE_GH_USER}
+    oauth_token: ${GITHUB_USER_TOKEN}
+    user: ${GH_USER}
 EOF
 
-    if [ -n "${GITHUB_BOT_EMAIL}" ]; then
+    echo "running git config user.email"
+    if [ -n "$GITHUB_BOT_EMAIL" ]; then
         git config --global user.email "${GITHUB_BOT_EMAIL}"
     else
         git config --global user.email "${GITHUB_USER_EMAIL}"
     fi
 
-    if [ -n "${GITHUB_BOT_NAME}" ]; then
+    echo "running git config user.name"
+    if [ -n "$GITHUB_BOT_NAME" ]; then
         git config --global user.name "${GITHUB_BOT_NAME}"
     else
         git config --global user.name "${GITHUB_USER_NAME}"
     fi
 
+    echo "running gh auth setup-git"
     gh auth setup-git
+
+    echo "Configuring global git ignore"
+    git config --global core.excludesfile /root/.gitignore_global
+    cat <<EOF > /root/.gitignore_global
+manager
+bin/
+EOF
 }
 
 function setupGitRepos {
     echo "Running setupGitRepos..."
-    if [ ! -d "/workspaces/${REPO_NAME}/.git" ]; then
-        echo "cloning repository"
-        rm -rf "/workspaces/${REPO_NAME}"
-        gh repo clone "${REPO_OWNER}/${REPO_NAME}" "/workspaces/${REPO_NAME}"
-    else
-        echo "repository already exists"
-        cd "/workspaces/${REPO_NAME}"
-        git reset --hard
-        git clean -fdx
-        git fetch origin
-    fi
-
-    cd "/workspaces/${REPO_NAME}"
-    gh repo set-default "${REPO_OWNER}/${REPO_NAME}" || true
-}
-
-function checkoutBranch {
-    echo "Running checkoutBranch..."
-    cd "/workspaces/${REPO_NAME}"
     
-    # Check if branch exists on remote
-    if git ls-remote --heads origin "${BRANCH_NAME}" | grep -q "${BRANCH_NAME}"; then
-        echo "Branch ${BRANCH_NAME} exists on remote, checking it out..."
-        git fetch origin "${BRANCH_NAME}"
-        git checkout "${BRANCH_NAME}"
-    else
-        echo "Branch ${BRANCH_NAME} does not exist on remote, checking it out locally..."
-        git checkout "${BRANCH_NAME}" || git checkout -b "${BRANCH_NAME}"
+    # only clone if doesn't exist
+    if [ ! -d "/workspaces/${REPO_NAME}" ]; then
+        echo "cloning repository"
+        (cd /workspaces/ && git clone ${CLONE_URL})
     fi
+
+    echo "running gh repo fork --remote"
+    (cd "/workspaces/${REPO_NAME}" && gh repo fork --remote)
+    (cd "/workspaces/${REPO_NAME}" && gh repo fork --remote)
+
+    echo "running gh repo set-default"
+    (cd "/workspaces/${REPO_NAME}" && gh repo set-default "${CLONE_URL}")
+
+    echo "running git config local user.email"
+    (cd "/workspaces/${REPO_NAME}" && git config user.email "${GITHUB_USER_EMAIL}")
+
+    echo "running git config local user.name"
+    (cd "/workspaces/${REPO_NAME}" && git config user.name "${GITHUB_USER_NAME}")
+
+    if [ -n "$PRID" ] && [ "$PRID" != "null" ]; then
+        echo "Checking out PR $PRID"
+        (cd "/workspaces/${REPO_NAME}" && gh pr checkout "$PRID")
+    elif [ -n "$BRANCH_NAME" ]; then
+        echo "Checking out branch $BRANCH_NAME"
+        (cd "/workspaces/${REPO_NAME}" && git checkout "$BRANCH_NAME")
+    fi
+
+    echo "waiting for checkout to be ready (branch check)"
+    (cd "/workspaces/${REPO_NAME}" && git branch --show-current)
 }
 
 function configureGemini {
     echo "Running configureGemini..."
+    echo "creating /root/.gemini directory"
     mkdir -p /root/.gemini
+
+    echo "writing gemini config"
     cat <<EOF > /root/.gemini/settings.json
 {
   "general": {
@@ -124,47 +125,71 @@ function configureGemini {
 EOF
 }
 
-function runGemini {
-    echo "Running runGemini..."
-    cd "/workspaces/${REPO_NAME}"
-
-    if [ -n "${GITHUB_BOT_NAME}" ]; then
-        export GIT_AUTHOR_NAME="${GITHUB_BOT_NAME}"
-        export GIT_AUTHOR_EMAIL="${GITHUB_BOT_EMAIL:-bot@example.com}"
-        export GIT_COMMITTER_NAME="${GITHUB_BOT_NAME}"
-        export GIT_COMMITTER_EMAIL="${GITHUB_BOT_EMAIL:-bot@example.com}"
-    fi
-
-    MODELS=( {{ range .Models }}{{ printf "%q" . }} {{ end }} )
-    SUCCESS=false
-    for MODEL in "${MODELS[@]}"; do
-        echo "Trying model: ${MODEL}"
-        if gemini --yolo --model "${MODEL}" --output-format stream-json < "${PROMPT_FILE}" | /opt/repo-agent/gemini-stream-processor --output "$(dirname "${PROMPT_FILE}")/gemini-output.json"; then
-             echo "Gemini execution successful with model: ${MODEL}"
-             SUCCESS=true
-             break
-        else
-             echo "Gemini execution failed with model: ${MODEL}. Retrying..."
-        fi
-    done
-    
-    if [ "${SUCCESS}" = false ]; then
-        echo "All models failed."
-        exit 1
-    fi
-}
-
 function installExtensions {
     echo "Installing extensions..."
     {{- range .Extensions }}
-    gemini extensions install {{ printf "%q" .Source }} {{ if .Ref }}--ref {{ printf "%q" .Ref }}{{ end }} --consent || true
+    gemini extensions install "{{ .Source }}" {{ if .Ref }}--ref "{{ .Ref }}"{{ end }} --consent
     {{- end }}
+}
+
+function runGemini {
+    # Only run gemini if a prompt was actually provided in env or prompt file is non-empty
+    if [ -s "${PROMPT_FILE}" ]; then
+        echo "Running runGemini..."
+        echo "running gemini in yolo mode"
+
+        if [ -n "$GITHUB_BOT_NAME" ]; then
+            echo "Using bot identity for commits"
+            export GIT_AUTHOR_NAME="$GITHUB_BOT_NAME"
+            export GIT_AUTHOR_EMAIL="$GITHUB_BOT_EMAIL"
+            export GIT_COMMITTER_NAME="$GITHUB_BOT_NAME"
+            export GIT_COMMITTER_EMAIL="$GITHUB_BOT_EMAIL"
+        fi
+
+        MODELS=( {{ range .Models }}"{{ . }}" {{ end }} )
+        SUCCESS=false
+        for MODEL in "${MODELS[@]}"; do
+            echo "Trying model: $MODEL"
+            if (cd "/workspaces/${REPO_NAME}" && export GEMINI_API_KEY="${GEMINI_API_KEY}" && gemini --yolo --model "$MODEL" --output-format stream-json < ${PROMPT_FILE} | /opt/repo-agent/gemini-stream-processor --output "$(dirname "${PROMPT_FILE}")/gemini-output.json"); then
+                echo "Gemini execution successful with model: $MODEL"
+                SUCCESS=true
+                break
+            else
+                echo "Gemini execution failed with model: $MODEL. Retrying with next model..."
+            fi
+        done
+        
+        if [ "$SUCCESS" = false ]; then
+            echo "All models failed."
+            exit 1
+        fi
+    else
+        echo "No prompt provided, skipping gemini execution."
+    fi
+}
+
+function commitAndPush {
+    echo "Running commitAndPush..."
+    pushd "/workspaces/${REPO_NAME}" > /dev/null
+    
+    # check if there are changes
+    if [ -z "$(git status --porcelain)" ]; then 
+        echo "No changes to commit."
+    else
+        echo "Changes detected, committing..."
+        git add .
+        git commit -m "Agent iteration: Apply changes"
+        git push origin HEAD
+    fi
+    popd > /dev/null
 }
 
 # Main execution
 setupGit
 setupGitRepos
-checkoutBranch
+# HACK: Avoid git lock issues
+sleep 5
 configureGemini
 installExtensions
 runGemini
+commitAndPush

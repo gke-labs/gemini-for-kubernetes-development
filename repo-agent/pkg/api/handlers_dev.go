@@ -108,15 +108,11 @@ func (s *Server) listDevSandboxesFromK8s(ctx context.Context, namespace, repo st
 		}
 
 		repoParts := strings.Split(strings.TrimSuffix(cloneURL, ".git"), "/")
-		if len(repoParts) >= 3 {
+		if len(repoParts) >= 2 {
 			repoName := repoParts[len(repoParts)-1]
 			owner := repoParts[len(repoParts)-2]
-			hostPart := repoParts[len(repoParts)-3]
-			// Strip protocol from hostPart if present
-			host := strings.TrimPrefix(strings.TrimPrefix(hostPart, "http://"), "https://")
-
-			// Construct branch URL: https://HOST/OWNER/REPO/tree/BRANCH
-			branchURL := fmt.Sprintf("https://%s/%s/%s/tree/%s", host, owner, repoName, branch)
+			// Construct branch URL: https://github.com/OWNER/REPO/tree/BRANCH
+			branchURL := fmt.Sprintf("https://github.com/%s/%s/tree/%s", owner, repoName, branch)
 
 			agentState := ""
 			agentStateMessage := ""
@@ -295,19 +291,13 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 	repoParts := strings.Split(strings.TrimSuffix(repoURL, ".git"), "/")
 	repoName := repoParts[len(repoParts)-1]
 
-	host := "github.com"
-	u, parseErr := url.Parse(repoURL)
-	if parseErr == nil && u.Hostname() != "" {
-		host = u.Hostname()
-	}
-
-	forkCloneURL := fmt.Sprintf("https://%s/%s/%s.git", host, namespace, repoName)
+	forkCloneURL := fmt.Sprintf("https://github.com/%s/%s.git", namespace, repoName)
 	if req.BaseBranch != "" {
 		forkCloneURL = fmt.Sprintf("%s#refs/heads/%s", forkCloneURL, req.BaseBranch)
 	}
 
-	forkHTMLURL := fmt.Sprintf("https://%s/%s/%s", host, namespace, repoName)
-	originURL := fmt.Sprintf("%s/%s/%s.git", host, namespace, repoName)
+	forkHTMLURL := fmt.Sprintf("https://github.com/%s/%s", namespace, repoName)
+	originURL := fmt.Sprintf("github.com/%s/%s.git", namespace, repoName)
 
 	githubSecretName, _, _ := unstructured.NestedString(rw.Object, "spec", "githubSecretName")
 	apiKeySecretRef, _, _ := unstructured.NestedString(rw.Object, "spec", "dev", "llm", "apiKeySecretRef")
@@ -315,7 +305,6 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 	llmProvider, _, _ := unstructured.NestedString(rw.Object, "spec", "dev", "llm", "provider")
 	image, _, _ := unstructured.NestedString(rw.Object, "spec", "dev", "image")
 	devContainerConfigRef, _, _ := unstructured.NestedString(rw.Object, "spec", "dev", "devcontainerConfigRef")
-	dindSupport, _, _ := unstructured.NestedString(rw.Object, "spec", "dev", "dindSupport")
 
 	// Fetch user info from secret
 	var userName, userEmail string
@@ -412,7 +401,6 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 
 		DevcontainerConfigRef: devContainerConfigRef,
 		Image:                 image,
-		DindSupport:           dindSupport,
 
 		HTTPEnabled: true,
 		Replicas:    1,

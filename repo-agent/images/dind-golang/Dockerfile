@@ -9,13 +9,7 @@ FROM ubuntu:24.04
 ARG DOCKER_VERSION="5:27.5.1-1~ubuntu.24.04~noble"
 
 ENV DEBIAN_FRONTEND="noninteractive"
-
-RUN echo 'Acquire::Retries "10"; Acquire::http::Timeout "60"; Acquire::https::Timeout "60";' > /etc/apt/apt.conf.d/80-retries
-RUN find /etc/apt/ -type f -name "*.list" -o -name "*.sources" | xargs sed -i 's/archive.ubuntu.com/mirrors.edge.kernel.org/g' || true
-RUN find /etc/apt/ -type f -name "*.list" -o -name "*.sources" | xargs sed -i 's/security.ubuntu.com/mirrors.edge.kernel.org/g' || true
-
-RUN (apt-get update || (echo "Warning: apt-get update failed, retrying in 10s..." && sleep 10 && apt-get update) || (echo "Warning: apt-get update failed again, retrying in 20s..." && sleep 20 && apt-get update)) && \
-    (apt-get -y install ca-certificates curl gnupg || (echo "Warning: apt-get install failed, retrying in 10s..." && sleep 10 && apt-get -y install ca-certificates curl gnupg) || (echo "Warning: apt-get install failed again, retrying in 20s..." && sleep 20 && apt-get -y install ca-certificates curl gnupg))
+RUN apt-get update && apt-get -y install ca-certificates curl gnupg
 
 RUN curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc && \
     chmod a+r /etc/apt/keyrings/docker.asc && \
@@ -25,8 +19,8 @@ RUN curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings
 RUN curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg && \
     echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" > /etc/apt/sources.list.d/nodesource.list
 
-RUN (apt-get update || (echo "Warning: apt-get update failed, retrying in 10s..." && sleep 10 && apt-get update) || (echo "Warning: apt-get update failed again, retrying in 20s..." && sleep 20 && apt-get update)) && \
-    (apt-get install -qqy \
+RUN apt-get update && \
+    apt-get install -qqy \
     docker-ce=${DOCKER_VERSION} \
     docker-ce-cli=${DOCKER_VERSION} \
     containerd.io \
@@ -34,23 +28,7 @@ RUN (apt-get update || (echo "Warning: apt-get update failed, retrying in 10s...
     docker-compose-plugin \
     iproute2 \
     iptables \
-    nodejs || (echo "Warning: apt-get install failed, retrying in 10s..." && sleep 10 && apt-get install -qqy \
-    docker-ce=${DOCKER_VERSION} \
-    docker-ce-cli=${DOCKER_VERSION} \
-    containerd.io \
-    docker-buildx-plugin \
-    docker-compose-plugin \
-    iproute2 \
-    iptables \
-    nodejs) || (echo "Warning: apt-get install failed again, retrying in 20s..." && sleep 20 && apt-get install -qqy \
-    docker-ce=${DOCKER_VERSION} \
-    docker-ce-cli=${DOCKER_VERSION} \
-    containerd.io \
-    docker-buildx-plugin \
-    docker-compose-plugin \
-    iproute2 \
-    iptables \
-    nodejs))
+    nodejs
 
 # ------- Install go -------
 #RUN apt-get update && apt-get install -y golang-go
@@ -59,8 +37,7 @@ ENV GO_VERSION=1.25.7
 ENV ARCH=amd64
 
 # Download, extract, and set up environment variables
-RUN (apt-get update || (echo "Warning: apt-get update failed, retrying in 10s..." && sleep 10 && apt-get update) || (echo "Warning: apt-get update failed again, retrying in 20s..." && sleep 20 && apt-get update)) && \
-    (apt-get install -y wget || (echo "Warning: apt-get install failed, retrying in 10s..." && sleep 10 && apt-get install -y wget) || (echo "Warning: apt-get install failed again, retrying in 20s..." && sleep 20 && apt-get install -y wget))
+RUN apt-get update && apt-get install -y wget
 RUN wget -c https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz -O go.tar.gz && \
     tar -C /usr/local -xzf go.tar.gz && \
     rm go.tar.gz
@@ -70,10 +47,8 @@ ENV GOTOOLCHAIN=auto
 
 # -------- Install python --------
 # We want a functional python, because gemini-cli likes to use python
-RUN (apt-get update || (echo "Warning: apt-get update failed, retrying in 10s..." && sleep 10 && apt-get update) || (echo "Warning: apt-get update failed again, retrying in 20s..." && sleep 20 && apt-get update)) && \
-    (apt-get install -y python3 python3-pip python3-yaml python3-requests python-is-python3 python3-venv || (echo "Warning: apt-get install failed, retrying in 10s..." && sleep 10 && apt-get install -y python3 python3-pip python3-yaml python3-requests python-is-python3 python3-venv) || (echo "Warning: apt-get install failed again, retrying in 20s..." && sleep 20 && apt-get install -y python3 python3-pip python3-yaml python3-requests python-is-python3 python3-venv))
-RUN (apt-get update || (echo "Warning: apt-get update failed, retrying in 10s..." && sleep 10 && apt-get update) || (echo "Warning: apt-get update failed again, retrying in 20s..." && sleep 20 && apt-get update)) && \
-    (apt-get install -y git tmux sudo curl || (echo "Warning: apt-get install failed, retrying in 10s..." && sleep 10 && apt-get install -y git tmux sudo curl) || (echo "Warning: apt-get install failed again, retrying in 20s..." && sleep 20 && apt-get install -y git tmux sudo curl))
+RUN apt-get update && apt-get install -y python3 python3-pip python3-yaml python3-requests python-is-python3 python3-venv
+RUN apt-get update && apt-get install -y git tmux sudo curl
 
 RUN npm install -g @google/gemini-cli
 
@@ -90,8 +65,8 @@ RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/s
 # Install Helm
 RUN curl -fsSL https://packages.buildkite.com/helm-linux/helm-debian/gpgkey | gpg --dearmor | tee /usr/share/keyrings/helm.gpg > /dev/null && \
     echo "deb [signed-by=/usr/share/keyrings/helm.gpg] https://packages.buildkite.com/helm-linux/helm-debian/any/ any main" | tee /etc/apt/sources.list.d/helm-stable-debian.list > /dev/null && \
-    (apt-get update || (echo "Warning: apt-get update failed, retrying in 10s..." && sleep 10 && apt-get update) || (echo "Warning: apt-get update failed again, retrying in 20s..." && sleep 20 && apt-get update)) && \
-    (apt-get install -y helm || (echo "Warning: apt-get install failed, retrying in 10s..." && sleep 10 && apt-get install -y helm) || (echo "Warning: apt-get install failed again, retrying in 20s..." && sleep 20 && apt-get install -y helm))
+    apt-get update && \
+    apt-get install -y helm
 
 # Install code-server
 RUN curl -fsSL https://code-server.dev/install.sh | sh

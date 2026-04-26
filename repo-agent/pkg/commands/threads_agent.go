@@ -34,25 +34,21 @@ type ThreadsAgentOptions struct {
 	Cwd string
 }
 
-func (o *ThreadsAgentOptions) InitDefaults() error {
-	if o.Action == "" {
-		o.Action = "list"
-	}
-	return nil
+func (o *ThreadsAgentOptions) InitDefaults() {
+	o.Action = "list"
 }
 
 // NewThreadsAgentCommand creates a new cobra command for managing LLM threads/chats in the dev sandbox.
 func NewThreadsAgentCommand() *cobra.Command {
 	var opt ThreadsAgentOptions
 
+	opt.InitDefaults()
+
 	cmd := &cobra.Command{
 		Use:   "agent [sandbox-name]",
 		Short: "Manage LLM threads/chats in the dev sandbox",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := opt.InitDefaults(); err != nil {
-				return err
-			}
 			if len(args) != 0 {
 				return fmt.Errorf("threads agent command does not take any arguments")
 			}
@@ -62,7 +58,7 @@ func NewThreadsAgentCommand() *cobra.Command {
 	cmd.Hidden = true
 
 	cmd.Flags().StringVar(&opt.ThreadID, "thread-id", opt.ThreadID, "If specified, filter only for the given thread ID")
-	cmd.Flags().StringVar(&opt.Action, "action", "list", "Action to perform: list or append")
+	cmd.Flags().StringVar(&opt.Action, "action", opt.Action, "Action to perform: list or append")
 	cmd.Flags().BoolVar(&opt.IncludeMessages, "include-messages", opt.IncludeMessages, "If specified, include messages in the output")
 	cmd.Flags().StringVar(&opt.Cwd, "cwd", opt.Cwd, "Current working directory for the agent")
 

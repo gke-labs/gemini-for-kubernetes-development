@@ -3,13 +3,12 @@ package api
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 
 	"github.com/google/go-github/v39/github"
 	"k8s.io/klog/v2"
-
-	pkg_github "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 )
 
 func fixYAMLIntegers(in interface{}) interface{} {
@@ -42,7 +41,15 @@ func convInt64SliceToInterfaceSlice(in []int64) []interface{} {
 }
 
 func parseRepoURL(repoURL string) (string, string, error) {
-	return pkg_github.ParseHTMLUrl(repoURL)
+	u, err := url.Parse(repoURL)
+	if err != nil {
+		return "", "", err
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) != 2 {
+		return "", "", fmt.Errorf("invalid repo url: %s", repoURL)
+	}
+	return parts[0], strings.TrimSuffix(parts[1], ".git"), nil
 }
 
 // TODO this is k8s specific. we need to generalize it later.

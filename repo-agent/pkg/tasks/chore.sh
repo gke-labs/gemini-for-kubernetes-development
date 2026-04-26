@@ -1,32 +1,13 @@
 #!/bin/bash
-# Copyright 2026 The Kubernetes Authors.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 set -e
-set -o pipefail
-#set -x
+set -x
 
-# It expects the following environment variables to be set:
-# - GEMINI_API_KEY
-# - GITHUB_USER_TOKEN
-
-export REPO_NAME={{ printf "%q" .RepoName }}
-export REPO_OWNER={{ printf "%q" .RepoOwner }}
-export CLONE_URL={{ printf "%q" .CloneURL }}
-export CHORE_NAME={{ printf "%q" .ChoreName }}
-export CHORE_FILE={{ printf "%q" .ChoreFile }}
-export PROMPT_FILE={{ printf "%q" .PromptFile }}
+export REPO_NAME="{{ .RepoName }}"
+export REPO_OWNER="{{ .RepoOwner }}"
+export CLONE_URL="{{ .CloneURL }}"
+export CHORE_NAME="{{ .ChoreName }}"
+export CHORE_FILE="{{ .ChoreFile }}"
+export PROMPT_FILE="{{ .PromptFile }}"
 
 # Use environment variables if they are set, otherwise use defaults
 # These should be set in the AgentSandbox pod
@@ -35,7 +16,7 @@ export GITHUB_USER_EMAIL="${GITHUB_USER_EMAIL}"
 export GITHUB_USER_NAME="${GITHUB_USER_NAME}"
 export GITHUB_USER_TOKEN="${GITHUB_USER_TOKEN:-${GITHUB_TOKEN}}"
 
-if [ -z "${GITHUB_USER_TOKEN}" ]; then
+if [ -z "$GITHUB_USER_TOKEN" ]; then
     # Try other common names
     GITHUB_USER_TOKEN="${MANUAL_PAT:-${OAUTH_PAT}}"
 fi
@@ -50,24 +31,22 @@ function setupGit {
     echo "Running setupGit..."
     mkdir -p /root/.config/gh
 
-    local GH_USER; GH_USER="${GITHUB_USER_ID}"
+    local GH_USER="${GITHUB_USER_ID}"
     if [ -n "${GITHUB_BOT_LOGIN}" ]; then
         GH_USER="${GITHUB_BOT_LOGIN}"
     fi
 
-    local SAFE_GH_USER; SAFE_GH_USER=$(printf "%q" "${GH_USER}")
-    local SAFE_TOKEN; SAFE_TOKEN=$(printf "%q" "${GITHUB_USER_TOKEN}")
     cat <<EOF > /root/.config/gh/hosts.yml
-{{ if .Repo }}{{ .Repo.Host }}{{ else }}github.com{{ end }}:
+github.com:
     users:
-        ${SAFE_GH_USER}:
-            oauth_token: ${SAFE_TOKEN}
+        ${GH_USER}:
+            oauth_token: ${GITHUB_USER_TOKEN}
     git_protocol: https
-    oauth_token: ${SAFE_TOKEN}
-    user: ${SAFE_GH_USER}
+    oauth_token: ${GITHUB_USER_TOKEN}
+    user: ${GH_USER}
 EOF
 
-    if [ -n "${GITHUB_BOT_EMAIL}" ]; then
+    if [ -n "$GITHUB_BOT_EMAIL" ]; then
         git config --global user.email "${GITHUB_BOT_EMAIL}"
         git config --global user.name "${GITHUB_BOT_NAME}"
     else
@@ -80,52 +59,56 @@ EOF
 
 function setupGitRepos {
     echo "Running setupGitRepos..."
-    if [ ! -d "/workspaces/${REPO_NAME}/.git" ]; then
-        echo "cloning repository"
-        rm -rf "/workspaces/${REPO_NAME}"
-        gh repo clone "${REPO_OWNER}/${REPO_NAME}" "/workspaces/${REPO_NAME}"
-    else
-        echo "repository already exists"
-        cd "/workspaces/${REPO_NAME}"
-        git reset --hard
-        git clean -fdx
-        git fetch origin
+    if [ -d "/workspaces/${REPO_NAME}" ]; then
+        echo "Repository already exists at /workspaces/${REPO_NAME}"
+        return
     fi
+    
+    echo "cloning repository"
+    # Clone into the specific REPO_NAME directory to ensure consistency
+    git clone "${CLONE_URL}" "/workspaces/${REPO_NAME}"
 
-    cd "/workspaces/${REPO_NAME}"
-    gh repo set-default "${REPO_OWNER}/${REPO_NAME}" || true
+    echo "running gh repo fork"
+    (cd "/workspaces/${REPO_NAME}" && gh repo fork --remote || true)
+
+    echo "running gh repo set-default"
+    (cd "/workspaces/${REPO_NAME}" && gh repo set-default "${CLONE_URL}" || true)
+
+    echo "running git config local user.email"
+    if [ -n "$GITHUB_BOT_EMAIL" ]; then
+        (cd "/workspaces/${REPO_NAME}" && git config user.email "${GITHUB_BOT_EMAIL}" || true)
+        (cd "/workspaces/${REPO_NAME}" && git config user.name "${GITHUB_BOT_NAME}" || true)
+    else
+        (cd "/workspaces/${REPO_NAME}" && git config user.email "${GITHUB_USER_EMAIL}" || true)
+        (cd "/workspaces/${REPO_NAME}" && git config user.name "${GITHUB_USER_NAME}" || true)
+    fi
 }
 
 function injectConfigDirData {
-    cd "/workspaces/${REPO_NAME}"
+    pushd "/workspaces/${REPO_NAME}" > /dev/null
     if [ -d "/configdir" ] && [ "$(ls -A /configdir)" ]; then
       echo "Injecting configdir files into repository..."
       shopt -s dotglob
       cp -R /configdir/* .
       shopt -u dotglob
     fi
+    popd > /dev/null
 }
 
 function runGemini {
     echo "Running gemini for chore: ${CHORE_NAME}"
-    cd "/workspaces/${REPO_NAME}"
-    
-    if [ -n "${GITHUB_BOT_NAME}" ]; then
-        export GIT_AUTHOR_NAME="${GITHUB_BOT_NAME}"
-        export GIT_AUTHOR_EMAIL="${GITHUB_BOT_EMAIL:-bot@example.com}"
-        export GIT_COMMITTER_NAME="${GITHUB_BOT_NAME}"
-        export GIT_COMMITTER_EMAIL="${GITHUB_BOT_EMAIL:-bot@example.com}"
-    fi
+    set +x
+    export GEMINI_API_KEY="${GEMINI_API_KEY}"
 
     if gemini --yolo < "${PROMPT_FILE}"; then
         echo "Gemini execution successful"
     else
         echo "Gemini execution encountered errors, but we will check for changes anyway."
     fi
+    set -x
 }
 
 function restoreConfigDirFiles {
-    cd "/workspaces/${REPO_NAME}"
     BASE_BRANCH=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name)
     if [ -d "/configdir" ] && [ "$(ls -A /configdir)" ]; then
       echo "Restoring files changed by configdir injection..."
@@ -147,15 +130,17 @@ function restoreConfigDirFiles {
 }
 
 function commitChanges {
-    cd "/workspaces/${REPO_NAME}"
     BASE_BRANCH=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name)
     # Check for changes (uncommitted or committed on this branch)
+    # If gemini --yolo committed, we can check changes against BASE_BRANCH
     if [ -n "$(git status --porcelain)" ] || [ "$(git rev-parse HEAD)" != "$(git rev-parse ${BASE_BRANCH})" ]; then
         echo "Changes detected."
         
         # If there are uncommitted changes, commit them
         if [ -n "$(git status --porcelain)" ]; then
             echo "Committing uncommitted changes..."
+            
+            # Generate commit message using gemini
             git diff > /tmp/chore_diff.txt
             
             COMMIT_MSG=$(gemini "Generate a concise, meaningful commit message for the following changes.
@@ -182,6 +167,7 @@ Only output the commit message itself.")
         
         # Determine Repo Owner for the link
         REPO_URL=$(git remote get-url origin)
+        # Assuming github.com:owner/repo or https://github.com/owner/repo
         REPO_PATH=$(echo $REPO_URL | sed -E 's/.*github.com[:\/]//;s/\.git$//')
         FORK_OWNER=$(echo "$REPO_PATH" | cut -d'/' -f1)
         
@@ -193,10 +179,14 @@ Only output the commit message itself.")
 ### Changes
 ${COMMIT_MSG}"
 
+        # Try to create PR
+        # Split creation and labeling to be more robust. 
+        # Adding a retry loop or explicit error checking could also help.
         PR_URL=$(gh pr create --title "chore: ${CHORE_NAME}" --body "${PR_BODY}" --head "${FORK_OWNER}:${BRANCH_NAME}" --base "${BASE_BRANCH}" || true)
         
         if [ -n "$PR_URL" ] && [[ "$PR_URL" == http* ]]; then
             echo "$PR_URL" > "$(dirname "${PROMPT_FILE}")/agent-output.txt"
+            # Add label after creation
             gh pr edit "$PR_URL" --add-label "overseer" || echo "Warning: failed to add label overseer to $PR_URL"
         else
             echo "Failed to create PR or no changes compared to base branch."
@@ -209,23 +199,30 @@ ${COMMIT_MSG}"
 }
 
 function runChore {
-    cd "/workspaces/${REPO_NAME}"
+    pushd "/workspaces/${REPO_NAME}" > /dev/null
+    
+    # Identify the base branch (usually main or master)
     BASE_BRANCH=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name)
 
+    # Check for existing open PRs for this chore
     EXISTING_PR=$(gh pr list --state open --search "\"chore: ${CHORE_NAME}\" in:title" --json url --jq '.[0].url')
     if [ -n "$EXISTING_PR" ]; then
         echo "An open PR already exists for chore ${CHORE_NAME}: ${EXISTING_PR}"
         echo "An open PR already exists for chore ${CHORE_NAME}: ${EXISTING_PR}" > "$(dirname "${PROMPT_FILE}")/agent-output.txt"
+        popd > /dev/null
         return
     fi
     
+    # Create a unique branch for this chore run
     SLUGIFIED_NAME=$(echo "${CHORE_NAME}" | tr '[:upper:]' '[:lower:]' | tr -c '[:alnum:]' '-' | sed 's/^-//;s/-$//')
-    export BRANCH_NAME="chore/${SLUGIFIED_NAME}-$(date +%Y%m%d-%H%M%S)"
+    BRANCH_NAME="chore/${SLUGIFIED_NAME}-$(date +%Y%m%d-%H%M%S)"
     
+    # start from base branch
     git checkout "${BASE_BRANCH}"
     git checkout -b "${BRANCH_NAME}"
 
     runGemini
+    
     restoreConfigDirFiles
 
     if [ "{{ .SkipPR }}" = "true" ]; then
@@ -234,6 +231,8 @@ function runChore {
     else
         commitChanges
     fi
+    
+    popd > /dev/null
 }
 
 setupGit

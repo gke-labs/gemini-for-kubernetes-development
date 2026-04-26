@@ -104,20 +104,14 @@ func TestGemini_Setup(t *testing.T) {
 type MockCommandExecutor struct {
 	Command string
 	Args    []string
-	Stdin   string
 	Output  []byte
 	Stderr  []byte
 	Err     error
 }
 
 func (e *MockCommandExecutor) Run(command string, args ...string) ([]byte, []byte, error) {
-	return e.RunWithStdin(command, "", args...)
-}
-
-func (e *MockCommandExecutor) RunWithStdin(command string, stdin string, args ...string) ([]byte, []byte, error) {
 	e.Command = command
 	e.Args = args
-	e.Stdin = stdin
 	return e.Output, e.Stderr, e.Err
 }
 
@@ -132,15 +126,10 @@ type RecordingCommandExecutor struct {
 type RecordedCall struct {
 	Command string
 	Args    []string
-	Stdin   string
 }
 
 func (e *RecordingCommandExecutor) Run(command string, args ...string) ([]byte, []byte, error) {
-	return e.RunWithStdin(command, "", args...)
-}
-
-func (e *RecordingCommandExecutor) RunWithStdin(command string, stdin string, args ...string) ([]byte, []byte, error) {
-	e.Calls = append(e.Calls, RecordedCall{Command: command, Args: args, Stdin: stdin})
+	e.Calls = append(e.Calls, RecordedCall{Command: command, Args: args})
 	return []byte("ok"), e.Stderr, e.Err
 }
 
@@ -353,11 +342,7 @@ type FailOnNthCallExecutor struct {
 }
 
 func (e *FailOnNthCallExecutor) Run(command string, args ...string) ([]byte, []byte, error) {
-	return e.RunWithStdin(command, "", args...)
-}
-
-func (e *FailOnNthCallExecutor) RunWithStdin(command string, stdin string, args ...string) ([]byte, []byte, error) {
-	e.Calls = append(e.Calls, RecordedCall{Command: command, Args: args, Stdin: stdin})
+	e.Calls = append(e.Calls, RecordedCall{Command: command, Args: args})
 	if len(e.Calls) == e.FailOnCall {
 		return nil, []byte("error on call"), errors.New("command failed")
 	}
@@ -450,12 +435,8 @@ func TestGemini_Run(t *testing.T) {
 		if mockExecutor.Args[3] != "-p" {
 			t.Errorf("Expected fourth argument to be '-p', but got '%s'", mockExecutor.Args[3])
 		}
-		if mockExecutor.Args[4] != "" {
-			t.Errorf("Expected fifth argument to be empty string, but got '%s'", mockExecutor.Args[4])
-		}
-		// Check if the prompt was passed via stdin
-		if mockExecutor.Stdin != "test prompt" {
-			t.Errorf("Expected stdin to be 'test prompt', but got '%q'", mockExecutor.Stdin)
+		if mockExecutor.Args[4] != "test prompt" {
+			t.Errorf("Expected fifth argument to be 'test prompt', but got '%s'", mockExecutor.Args[4])
 		}
 	})
 

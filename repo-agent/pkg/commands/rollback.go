@@ -34,7 +34,7 @@ type RollbackOptions struct {
 	sandboxID string
 }
 
-func (o *RollbackOptions) InitDefaults() error {
+func (o *RollbackOptions) InitDefaults() {
 	if o.RepoURL == "" {
 		o.RepoURL = os.Getenv("GIT_HTML_URL")
 	}
@@ -92,8 +92,6 @@ func (o *RollbackOptions) InitDefaults() error {
 	if o.GithubUserName == "" {
 		o.GithubUserName = os.Getenv("GITHUB_USER_NAME")
 	}
-
-	return nil
 }
 
 func BuildRollbackCommand() *cobra.Command {
@@ -102,9 +100,7 @@ func BuildRollbackCommand() *cobra.Command {
 		Use:   "rollback",
 		Short: "Rollback to a previous commit",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := opts.InitDefaults(); err != nil {
-				return err
-			}
+			opts.InitDefaults()
 			if opts.PullRequestID == 0 {
 				return fmt.Errorf("--pull-request is required")
 			}

@@ -17,11 +17,9 @@ type ReviewDaemonCommand struct {
 	CodeServerCommand CodeServerCommand
 }
 
-func (c *ReviewDaemonCommand) InitDefaults() error {
-	if err := c.ReviewCommand.InitDefaults(); err != nil {
-		return err
-	}
-	return c.CodeServerCommand.InitDefaults()
+func (c *ReviewDaemonCommand) InitDefaults() {
+	c.ReviewCommand.InitDefaults()
+	c.CodeServerCommand.InitDefaults()
 }
 
 func BuildReviewDaemonCommand() *cobra.Command {
@@ -33,9 +31,7 @@ func BuildReviewDaemonCommand() *cobra.Command {
 			if len(args) != 0 {
 				return fmt.Errorf("daemon command does not take any arguments")
 			}
-			if err := daemonCmd.InitDefaults(); err != nil {
-				return err
-			}
+			daemonCmd.InitDefaults()
 			return daemonCmd.Run(cmd.Context())
 		},
 	}
