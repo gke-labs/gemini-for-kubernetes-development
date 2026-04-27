@@ -305,6 +305,8 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 	llmProvider, _, _ := unstructured.NestedString(rw.Object, "spec", "dev", "llm", "provider")
 	image, _, _ := unstructured.NestedString(rw.Object, "spec", "dev", "image")
 	devContainerConfigRef, _, _ := unstructured.NestedString(rw.Object, "spec", "dev", "devcontainerConfigRef")
+	dindSupport, _, _ := unstructured.NestedString(rw.Object, "spec", "dev", "dindSupport")
+	workspaceDiskSize, _, _ := unstructured.NestedString(rw.Object, "spec", "dev", "workspaceDiskSize")
 
 	// Fetch user info from secret
 	var userName, userEmail string
@@ -406,6 +408,9 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 		Replicas:    1,
 
 		ServiceAccountName: "issue-sandbox",
+
+		DindSupport:       dindSupport,
+		WorkspaceDiskSize: workspaceDiskSize,
 
 		IdeaID:         req.IdeaID,
 		Approach:       req.Approach,

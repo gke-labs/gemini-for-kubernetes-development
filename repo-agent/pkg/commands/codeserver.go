@@ -61,6 +61,7 @@ func (c *CodeServerCommand) Wait() error {
 	return nil
 }
 
-func (c *CodeServerCommand) InitDefaults() {
+func (c *CodeServerCommand) InitDefaults() error {
 	// No defaults to initialize for now
+	return nil
 }

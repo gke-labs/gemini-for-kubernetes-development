@@ -72,6 +72,13 @@ func (c *ChoreCommand) InitDefaults() error {
 	if c.TaskDir == "" {
 		c.TaskDir = c.WorkspaceDir
 	}
+
+	var err error
+	c.AgentPrompt, err = resolveAgentPrompt(c.AgentPrompt)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 

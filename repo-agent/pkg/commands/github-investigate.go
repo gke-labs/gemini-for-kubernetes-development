@@ -55,7 +55,9 @@ func BuildGithubInvestigateCommand() *cobra.Command {
 			if len(args) != 0 {
 				return fmt.Errorf("command does not take positional arguments")
 			}
-			c.InitDefaults()
+			if err := c.InitDefaults(); err != nil {
+				return err
+			}
 			if c.PullRequestID == 0 {
 				return fmt.Errorf("--pull-request is required")
 			}
@@ -80,7 +82,7 @@ func BuildGithubInvestigateCommand() *cobra.Command {
 	return cmd
 }
 
-func (c *GithubInvestigateCommand) InitDefaults() {
+func (c *GithubInvestigateCommand) InitDefaults() error {
 	if c.AgentName == "" {
 		c.AgentName = "gemini-cli"
 	}
@@ -107,6 +109,7 @@ func (c *GithubInvestigateCommand) InitDefaults() {
 			}
 		}
 	}
+	return nil
 }
 
 func (c *GithubInvestigateCommand) taskPath(name string, args ...interface{}) string {

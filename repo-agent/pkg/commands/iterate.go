@@ -92,6 +92,13 @@ func (c *IterateCommand) InitDefaults() error {
 	if c.Model == "" {
 		c.Model = "gemini-3.1-pro-preview"
 	}
+
+	var err error
+	c.AgentPrompt, err = resolveAgentPrompt(c.AgentPrompt)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 

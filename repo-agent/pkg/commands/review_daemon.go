@@ -21,7 +21,9 @@ func (c *ReviewDaemonCommand) InitDefaults() error {
 	if err := c.ReviewCommand.InitDefaults(); err != nil {
 		return err
 	}
-	c.CodeServerCommand.InitDefaults()
+	if err := c.CodeServerCommand.InitDefaults(); err != nil {
+		return err
+	}
 	return nil
 }
 

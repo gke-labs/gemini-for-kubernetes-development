@@ -36,11 +36,14 @@ type SandboxDaemonCommand struct {
 	IssueID string
 }
 
-func (c *SandboxDaemonCommand) InitDefaults() {
-	c.CodeServerCommand.InitDefaults()
+func (c *SandboxDaemonCommand) InitDefaults() error {
+	if err := c.CodeServerCommand.InitDefaults(); err != nil {
+		return err
+	}
 	if c.IssueID == "" {
 		c.IssueID = os.Getenv("ISSUEID")
 	}
+	return nil
 }
 
 func BuildSandboxDaemonCommand() *cobra.Command {
@@ -52,7 +55,9 @@ func BuildSandboxDaemonCommand() *cobra.Command {
 			if len(args) != 0 {
 				return fmt.Errorf("daemon command does not take any arguments")
 			}
-			daemonCmd.InitDefaults()
+			if err := daemonCmd.InitDefaults(); err != nil {
+				return err
+			}
 			return daemonCmd.Run(cmd.Context())
 		},
 	}

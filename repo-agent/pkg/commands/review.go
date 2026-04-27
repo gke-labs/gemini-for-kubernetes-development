@@ -110,8 +110,10 @@ func (c *ReviewCommand) InitDefaults() error {
 	if c.AgentName == "" {
 		c.AgentName = os.Getenv("AGENT_NAME")
 	}
-	if c.AgentPrompt == "" {
-		c.AgentPrompt = os.Getenv("AGENT_PROMPT")
+	var err error
+	c.AgentPrompt, err = resolveAgentPrompt(c.AgentPrompt)
+	if err != nil {
+		return err
 	}
 	if c.AgentPrompt == "" {
 		c.AgentPrompt = os.Getenv("prompt")
