@@ -649,6 +649,16 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 				}
 			}
 		}
+
+		// Also check GitHub if we already reviewed this SHA
+		botLogin := os.Getenv("GITHUB_BOT_LOGIN")
+		reviewed, err := hasBeenReviewedByBot(ctx, ghClient.Client, owner, repo, number, botLogin, headSHA)
+		if err != nil {
+			fmt.Printf("Warning: failed to check GitHub reviews: %v\n", err)
+		} else if reviewed {
+			fmt.Printf("Review for SHA %s already exists on GitHub. Skipping.\n", headSHA)
+			return nil
+		}
 	}
 
 	// Create Sandbox if it doesn't exist
@@ -778,6 +788,24 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 	owner, repoName, err := parseRepoURL(repoURL)
 	if err != nil {
 		return fmt.Errorf("failed to parse repo URL %s: %w", repoURL, err)
+	}
+
+	// Check GitHub if we already reviewed this SHA
+	botLogin := os.Getenv("GITHUB_BOT_LOGIN")
+	reviewed, err := hasBeenReviewedByBot(ctx, client, owner, repoName, prNumber, botLogin, currentSHA)
+	if err != nil {
+		fmt.Printf("Warning: failed to check GitHub reviews during submission: %v\n", err)
+	} else if reviewed {
+		fmt.Printf("Review for SHA %s already exists on GitHub. Skipping submission.\n", currentSHA)
+
+		// Update sandbox reviewState if sandbox still exists
+		reviewState := "submitted"
+		if currentSHA != "" {
+			reviewState = "submitted:" + currentSHA
+		}
+		_ = manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "reviewState", reviewState)
+
+		return nil
 	}
 
 	// Try Unmarshalling the yaml review payload into PullRequestReviewRequest
@@ -1266,4 +1294,21 @@ func getTokenFromScript() (string, error) {
 	}
 
 	return "", nil
+}
+
+func hasBeenReviewedByBot(ctx context.Context, client *githubv39.Client, owner, repo string, prNumber int, botLogin, headSHA string) (bool, error) {
+	if botLogin == "" {
+		return false, nil
+	}
+	// List all reviews for the PR
+	reviews, _, err := client.PullRequests.ListReviews(ctx, owner, repo, prNumber, &githubv39.ListOptions{PerPage: 100})
+	if err != nil {
+		return false, err
+	}
+	for _, r := range reviews {
+		if r.GetUser() != nil && r.GetUser().GetLogin() == botLogin && r.GetCommitID() == headSHA {
+			return true, nil
+		}
+	}
+	return false, nil
 }
