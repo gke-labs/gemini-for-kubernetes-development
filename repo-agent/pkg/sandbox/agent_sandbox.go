@@ -199,6 +199,9 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 	if opt.OverseerName != "" {
 		env = append(env, map[string]interface{}{"name": "OVERSEER_NAME", "value": opt.OverseerName})
 	}
+	if os.Getenv("TRACEABILITY_METADATA_ENABLED") != "" {
+		env = append(env, map[string]interface{}{"name": "TRACEABILITY_METADATA_ENABLED", "value": os.Getenv("TRACEABILITY_METADATA_ENABLED")})
+	}
 	if opt.RepoSandboxImage != "" {
 		env = append(env, map[string]interface{}{"name": "REPO_SANDBOX_IMAGE", "value": opt.RepoSandboxImage})
 	}

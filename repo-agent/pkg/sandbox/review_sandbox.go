@@ -109,6 +109,10 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 		map[string]interface{}{"name": "GITHUB_BOT_EMAIL", "value": opt.BotEmail},
 	}
 
+	if os.Getenv("TRACEABILITY_METADATA_ENABLED") != "" {
+		env = append(env, map[string]interface{}{"name": "TRACEABILITY_METADATA_ENABLED", "value": os.Getenv("TRACEABILITY_METADATA_ENABLED")})
+	}
+
 	if len(opt.LLMExtensions) > 0 {
 		exts, _ := json.Marshal(opt.LLMExtensions)
 		env = append(env, map[string]interface{}{

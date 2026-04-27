@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/agentoutput"
@@ -20,6 +21,30 @@ type Task interface {
 	Prompt() ([]byte, error)
 	PostScript() ([]byte, error)
 	DraftState() string
+}
+
+type TraceabilityMetadata struct {
+	SandboxTaskName      string
+	SandboxTaskNamespace string
+	SandboxTaskUID       string
+	SandboxName          string
+	RepoWatchName        string
+	TaskType             string
+	Timestamp            string
+	TraceabilityEnabled  bool
+}
+
+func PopulateTraceabilityMetadata() TraceabilityMetadata {
+	return TraceabilityMetadata{
+		SandboxTaskName:      os.Getenv("SANDBOX_TASK_NAME"),
+		SandboxTaskNamespace: os.Getenv("SANDBOX_TASK_NAMESPACE"),
+		SandboxTaskUID:       os.Getenv("SANDBOX_TASK_UID"),
+		SandboxName:          os.Getenv("NAME"),
+		RepoWatchName:        os.Getenv("REPO"),
+		TaskType:             os.Getenv("TASK_TYPE"),
+		Timestamp:            time.Now().UTC().Format(time.RFC3339),
+		TraceabilityEnabled:  os.Getenv("TRACEABILITY_METADATA_ENABLED") == "true",
+	}
 }
 
 func taskPath(taskDir string, name string) string {

@@ -46,6 +46,16 @@ type MockModel struct {
 	Extensions    []MockExtension
 	Branch        string
 	PRLabel       string
+
+	// Traceability metadata
+	SandboxTaskName      string
+	SandboxTaskNamespace string
+	SandboxTaskUID       string
+	SandboxName          string
+	RepoWatchName        string
+	TaskType             string
+	Timestamp            string
+	TraceabilityEnabled  bool
 }
 
 func TestFixIssuePromptTemplate(t *testing.T) {
@@ -84,6 +94,32 @@ func TestFixIssuePromptTemplate(t *testing.T) {
 	expectedPush := `git push --force --set-upstream origin test-branch`
 	if !bytes.Contains(w.Bytes(), []byte(expectedPush)) {
 		t.Errorf("Prompt does not contain expected push command with branch. Got:\n%s", w.String())
+	}
+
+	// Test with TraceabilityEnabled
+	data.TraceabilityEnabled = true
+	data.SandboxTaskName = "task"
+	data.SandboxTaskNamespace = "ns"
+	data.SandboxTaskUID = "uid"
+	data.SandboxName = "sb"
+	data.RepoWatchName = "rw"
+	data.TaskType = "fix-issue"
+	data.Timestamp = "2026-01-01T00:00:00Z"
+
+	w.Reset()
+	if err := tmpl.Execute(&w, data); err != nil {
+		t.Fatalf("Failed to execute template with traceability: %v", err)
+	}
+	expectedMetadata := `<!-- repo-agent-metadata
+sandbox-task: ns/task
+sandbox-task-uid: uid
+sandbox: sb
+repowatch: rw
+task-type: fix-issue
+timestamp: 2026-01-01T00:00:00Z
+-->`
+	if !bytes.Contains(w.Bytes(), []byte(expectedMetadata)) {
+		t.Errorf("Prompt does not contain expected metadata. Got:\n%s", w.String())
 	}
 }
 
