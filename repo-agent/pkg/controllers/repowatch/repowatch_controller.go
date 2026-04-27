@@ -980,17 +980,21 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 	}
 
 	// Cleanup old sandboxes
-	for _, sandbox := range ownedSandboxes {
-		labels := sandbox.GetLabels()
-		if labels != nil && labels["sandbox.gemini.google.com/type"] == "dev" {
-			continue
-		}
-		if !validSandboxNames[sandbox.GetName()] {
-			log.Info("deleting orphan issue sandbox", "sandbox", sandbox.GetName())
-			if err := r.Delete(ctx, &sandbox); err != nil {
-				log.Error(err, "unable to delete sandbox", "sandbox", sandbox.GetName())
+	if len(allIssues) > 0 {
+		for _, sandbox := range ownedSandboxes {
+			labels := sandbox.GetLabels()
+			if labels != nil && labels["sandbox.gemini.google.com/type"] == "dev" {
+				continue
+			}
+			if !validSandboxNames[sandbox.GetName()] {
+				log.Info("deleting orphan issue sandbox", "sandbox", sandbox.GetName())
+				if err := r.Delete(ctx, &sandbox); err != nil {
+					log.Error(err, "unable to delete sandbox", "sandbox", sandbox.GetName())
+				}
 			}
 		}
+	} else if len(ownedSandboxes) > 0 {
+		log.Info("no open issues found, but skipping cleanup to avoid accidental deletion during API flakes")
 	}
 
 	repoWatch.Status.IssueSandboxes = watchedIssues
@@ -2269,7 +2273,7 @@ func (r *Reconciler) reconcilePRFailures(ctx context.Context, repoWatch *reviewv
 	return nil
 }
 
-var prURLRegex = regexp.MustCompile(`https://github\.com/[\w-]+/[\w-]+/pull/\d+`)
+var prURLRegex = regexp.MustCompile(`(?:https?://|git@|ssh://|)[^/\s:]+[/:][\w-]+/[\w-]+/pull/\d+`)
 
 func (r *Reconciler) getLinkedPRFromSandbox(ctx context.Context, ghClient *github.Client, sandbox *unstructured.Unstructured, tasks []sandboxtaskv1alpha1.SandboxTask) (*github.PullRequest, error) {
 	for _, task := range tasks {

@@ -31,6 +31,10 @@ import (
 // It returns the updated count of total sandboxes.
 func (r *Reconciler) cleanupClosedPRSandboxes(ctx context.Context, totalSandboxes int, ownedSandboxes []unstructured.Unstructured, allOpenPRs []*github.PullRequest) int {
 	log := log.FromContext(ctx)
+	if len(allOpenPRs) == 0 && len(ownedSandboxes) > 0 {
+		log.Info("no open PRs found, skipping cleanup to avoid accidental deletion during API flakes")
+		return totalSandboxes
+	}
 	for _, sandbox := range ownedSandboxes {
 		parts := strings.Split(sandbox.GetName(), "-pr-")
 		if len(parts) < 2 {
