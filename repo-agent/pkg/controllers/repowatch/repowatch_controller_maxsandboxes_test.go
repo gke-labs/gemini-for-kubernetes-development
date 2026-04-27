@@ -396,7 +396,7 @@ func TestReconcileDevSandboxes_MaxSandboxes(t *testing.T) {
 		{Name: github.String("feature-2")},
 	}
 
-	watched, pending, err := r.reconcileDevSandboxesInternal(context.Background(), &github.User{Login: github.String("test-user")}, repoWatch, branches, "test-owner", "test-repo", map[string]*corev1.Pod{}, map[string][]sandboxtaskv1alpha1.SandboxTask{})
+	watched, pending, _, err := r.reconcileDevSandboxesInternal(context.Background(), &github.User{Login: github.String("test-user")}, repoWatch, branches, "test-owner", "test-repo", map[string]*corev1.Pod{}, map[string][]sandboxtaskv1alpha1.SandboxTask{})
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 
 	// feature-1 should be found
