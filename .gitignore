@@ -4,6 +4,6 @@ bin/
 
 # Vscode files
 .vscode
-/overseer-cli
+/overseer/overseer-cli
 /overseer/main
 /main
