@@ -318,8 +318,7 @@ func (s *Server) submitIssueComment(c *gin.Context) {
 
 	body := payload.Comment
 	if s.TraceabilityEnabled {
-		body += fmt.Sprintf("\n\n---\n<!-- repo-agent-metadata\nnamespace: %s\nsandbox: %s\nrepowatch: %s\ntask-type: submit-comment\ntimestamp: %s\n-->",
-			namespace, sandboxName, repo, time.Now().UTC().Format(time.RFC3339))
+		body += s.getTraceabilityFooter(ctx, namespace, sandboxName, repo, "submit-comment")
 	}
 
 	comment := &github.IssueComment{Body: &body}

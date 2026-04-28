@@ -332,8 +332,7 @@ func (s *Server) submitReview(c *gin.Context) {
 	reviewRequest.Event = nil
 
 	if s.TraceabilityEnabled {
-		footer := fmt.Sprintf("\n\n---\n<!-- repo-agent-metadata\nnamespace: %s\nsandbox: %s\nrepowatch: %s\ntask-type: submit-review\ntimestamp: %s\n-->",
-			namespace, sandboxName, repo, time.Now().UTC().Format(time.RFC3339))
+		footer := s.getTraceabilityFooter(ctx, namespace, sandboxName, repo, "submit-review")
 		if reviewRequest.Body == nil {
 			reviewRequest.Body = github.String(footer)
 		} else {

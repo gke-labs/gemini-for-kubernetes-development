@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
@@ -64,8 +63,7 @@ func (s *Server) submitFeedback(c *gin.Context) {
 	}
 
 	if s.TraceabilityEnabled {
-		body += fmt.Sprintf("\n\n---\n<!-- repo-agent-metadata\nnamespace: %s\ntask-type: feedback\ntimestamp: %s\n-->",
-			namespace, time.Now().UTC().Format(time.RFC3339))
+		body += s.getTraceabilityFooter(c.Request.Context(), namespace, "", "", "feedback")
 	}
 
 	req := &github.IssueRequest{
