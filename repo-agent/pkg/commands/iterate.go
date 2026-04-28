@@ -163,6 +163,20 @@ func (c *IterateCommand) Run(ctx context.Context) error {
 		return err
 	}
 
+	var models []string
+	modelSeen := make(map[string]bool)
+	for _, m := range strings.Split(c.Model, ",") {
+		if trimmed := strings.TrimSpace(m); trimmed != "" {
+			if !modelSeen[trimmed] {
+				models = append(models, trimmed)
+				modelSeen[trimmed] = true
+			}
+		}
+	}
+	if len(models) == 0 {
+		return fmt.Errorf("no models provided for iterate task on branch %s", c.BranchName)
+	}
+
 	promptPath := c.taskPath("agent-prompt.txt")
 	task := tasks.IterateModel{
 		Repo:        c.repo,
@@ -171,7 +185,7 @@ func (c *IterateCommand) Run(ctx context.Context) error {
 		BranchName:  c.BranchName,
 		PRID:        c.PRID,
 		PromptFile:  promptPath,
-		Models:      strings.Split(c.Model, ","),
+		Models:      models,
 	}
 
 	if c.ExtensionsJSON != "" {

@@ -45,6 +45,10 @@ func NewLocalSandbox(ctx context.Context, repo *github.Repository, name string) 
 func NewIssueSandbox(ctx context.Context, local bool, repo *github.Repository, issue *github.Issue, branch string) (*IssueSandbox, error) {
 	log := klog.FromContext(ctx)
 
+	if repo == nil {
+		return nil, fmt.Errorf("NewIssueSandbox called with nil repo")
+	}
+
 	kube, err := clients.NewKubernetesClient()
 	if err != nil {
 		return nil, err
@@ -164,8 +168,9 @@ func LaunchSandbox(ctx context.Context, kube *clients.KubernetesClient, repo *gi
 		issueURL = issue.String()
 	}
 
-	cloneRepos := []string{
-		fmt.Sprintf("/workspaces/%s=%s", repo.Name(), repo.CloneURL()),
+	var cloneRepos []string
+	if repo != nil {
+		cloneRepos = append(cloneRepos, fmt.Sprintf("/workspaces/%s=%s", repo.Name(), repo.CloneURL()))
 	}
 
 	log.Info("Creating sandbox", "name", sandboxName, "repos", cloneRepos, "issue", issueURL)

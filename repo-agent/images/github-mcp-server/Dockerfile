@@ -3,7 +3,9 @@ FROM ghcr.io/github/github-mcp-server as build
 FROM debian:bookworm-slim
 
 # Install socat and necessary tools.
-RUN apt-get update && \
+RUN echo 'Acquire::http::Timeout "60";' > /etc/apt/apt.conf.d/99timeout && \
+    echo 'Acquire::https::Timeout "60";' >> /etc/apt/apt.conf.d/99timeout && \
+    for i in {1..5}; do apt-get update && break || (echo "apt-get update failed, retrying in 10s..." && sleep 10); done && \
     apt-get install -y --no-install-recommends \
     socat \
     # Needed to find dynamic library dependencies.

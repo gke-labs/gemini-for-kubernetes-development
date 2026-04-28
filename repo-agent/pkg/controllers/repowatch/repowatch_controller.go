@@ -447,8 +447,22 @@ func (r *Reconciler) setAuthCondition(ctx context.Context, repoWatch *reviewv1al
 	if !changed {
 		return
 	}
-	if err := r.Status().Update(ctx, repoWatch); err != nil {
-		log.Error(err, "unable to update RepoWatch auth condition")
+
+	// Use Patch instead of Update to minimize ResourceVersion conflicts
+	latest := &reviewv1alpha1.RepoWatch{}
+	if err := r.Get(ctx, types.NamespacedName{Name: repoWatch.Name, Namespace: repoWatch.Namespace}, latest); err != nil {
+		log.Error(err, "unable to fetch latest RepoWatch for auth condition patch")
+		return
+	}
+
+	patch := client.MergeFrom(latest.DeepCopy())
+	apimeta.SetStatusCondition(&latest.Status.Conditions, condition)
+	if err := r.Status().Patch(ctx, latest, patch); err != nil {
+		log.Error(err, "unable to patch RepoWatch auth condition")
+	} else {
+		// Update the local object with the new resource version and conditions
+		repoWatch.Status.Conditions = latest.Status.Conditions
+		repoWatch.ResourceVersion = latest.ResourceVersion
 	}
 }
 
@@ -1617,6 +1631,10 @@ func (r *Reconciler) reconcileDevSandboxesInternal(ctx context.Context, user *gi
 		desiredBranches[b.GetName()] = true
 	}
 
+	if len(branches) == 0 && len(ownedSandboxes) > 0 {
+		log.Info("no dev branches found, skipping cleanup to avoid accidental deletion during API flakes")
+	}
+
 	for _, sandbox := range ownedSandboxes {
 		// Get branch from annotations
 		annotations := sandbox.GetAnnotations()
@@ -1630,7 +1648,7 @@ func (r *Reconciler) reconcileDevSandboxesInternal(ctx context.Context, user *gi
 			continue
 		}
 
-		if !desiredBranches[branch] {
+		if len(branches) > 0 && !desiredBranches[branch] {
 			log.Info("deleting dev sandbox for untracked branch", "branch", branch)
 			if err := r.Delete(ctx, &sandbox); err != nil {
 				log.Error(err, "unable to delete sandbox", "sandbox", sandbox.GetName())
