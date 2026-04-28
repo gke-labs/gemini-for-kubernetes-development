@@ -60,10 +60,10 @@ RUN npm install -g @google/gemini-cli @anthropic-ai/claude-code
 RUN curl -fsSL https://code-server.dev/install.sh | sh
 RUN code-server --install-extension golang.go --install-extension vscodevim.vim
 
-COPY --from=build-repo-sandbox /repo-sandbox /repo-agent/repo-sandbox
+COPY --from=build-repo-sandbox /repo-sandbox /usr/local/bin/repo-sandbox
 COPY --from=build-gh /bin/gh /bin/gh
 
 RUN ln -sf /usr/local/go/bin/go /usr/local/bin/go
 
 WORKDIR /workspaces
-ENTRYPOINT ["/repo-agent/repo-sandbox", "agent"]
+ENTRYPOINT ["/usr/local/bin/repo-sandbox", "agent"]
