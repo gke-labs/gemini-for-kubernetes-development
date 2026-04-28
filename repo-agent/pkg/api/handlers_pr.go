@@ -332,7 +332,11 @@ func (s *Server) submitReview(c *gin.Context) {
 	reviewRequest.Event = nil
 
 	if s.TraceabilityEnabled {
-		footer := s.getTraceabilityFooter(ctx, namespace, sandboxName, repo, "submit-review")
+		body := ""
+		if reviewRequest.Body != nil {
+			body = *reviewRequest.Body
+		}
+		footer := s.getTraceabilityFooter(ctx, body, namespace, sandboxName, repo, "submit-review")
 		if reviewRequest.Body == nil {
 			reviewRequest.Body = github.String(footer)
 		} else {

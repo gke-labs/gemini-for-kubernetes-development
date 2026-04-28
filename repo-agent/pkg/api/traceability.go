@@ -3,13 +3,15 @@ package api
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"k8s.io/klog/v2"
 )
 
-func (s *Server) getTraceabilityFooter(ctx context.Context, namespace, sandboxName, repowatchName, taskType string) string {
-	if !s.TraceabilityEnabled {
+func (s *Server) getTraceabilityFooter(ctx context.Context, currentBody, namespace, sandboxName, repowatchName, taskType string) string {
+	if !s.TraceabilityEnabled || strings.Contains(currentBody, "<!-- repo-agent-metadata") {
 		return ""
 	}
 
@@ -21,7 +23,10 @@ func (s *Server) getTraceabilityFooter(ctx context.Context, namespace, sandboxNa
 	if sandboxName != "" {
 		taskList, err := s.K8sManager.ListSandboxTasks(ctx, namespace, sandboxName)
 		if err == nil && len(taskList.Items) > 0 {
-			// SandboxTasks are usually returned in order, but let's just pick the last one
+			// Sort tasks by creation timestamp to find the latest one
+			sort.Slice(taskList.Items, func(i, j int) bool {
+				return taskList.Items[i].CreationTimestamp.Before(&taskList.Items[j].CreationTimestamp)
+			})
 			latestTask := taskList.Items[len(taskList.Items)-1]
 			footer += fmt.Sprintf("\nsandbox-task: %s/%s\nsandbox-task-uid: %s",
 				latestTask.GetNamespace(), latestTask.GetName(), string(latestTask.GetUID()))
