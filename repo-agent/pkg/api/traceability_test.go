@@ -96,10 +96,10 @@ func TestGetTraceabilityFooter(t *testing.T) {
 			},
 		}
 
-		// Use metav1.Time for proper comparison in fake client if possible, 
+		// Use metav1.Time for proper comparison in fake client if possible,
 		// but unstructured uses strings for timestamps.
 		// Actually, we need to make sure the fake client handles timestamps correctly or just rely on the sort logic.
-		
+
 		_, _ = dynamicClient.Resource(gvrSandboxTask).Namespace(namespace).Create(ctx, task1, metav1.CreateOptions{})
 		_, _ = dynamicClient.Resource(gvrSandboxTask).Namespace(namespace).Create(ctx, task2, metav1.CreateOptions{})
 
