@@ -22,6 +22,7 @@ export ROBOT1_GH_PAT="your-github-personal-access-token"
 export ROBOT1_GH_USERID="your-github-username"
 export ROBOT1_GH_NAME="Your Name"
 export ROBOT1_GH_EMAIL="your-email@example.com"
+export GITHUB_BOT_LOGIN="your-github-username" # Optional, used to skip duplicate reviews
 ```
 
 ### 2. Deploy

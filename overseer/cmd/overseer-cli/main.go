@@ -803,7 +803,9 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 		if currentSHA != "" {
 			reviewState = "submitted:" + currentSHA
 		}
-		_ = manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "reviewState", reviewState)
+		if err := manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "reviewState", reviewState); err != nil {
+			fmt.Printf("Warning: failed to update sandbox annotation: %v\n", err)
+		}
 
 		return nil
 	}
@@ -1298,17 +1300,28 @@ func getTokenFromScript() (string, error) {
 
 func hasBeenReviewedByBot(ctx context.Context, client *githubv39.Client, owner, repo string, prNumber int, botLogin, headSHA string) (bool, error) {
 	if botLogin == "" {
+		fmt.Println("Warning: GITHUB_BOT_LOGIN is not set, skipping duplicate review check.")
 		return false, nil
 	}
-	// List all reviews for the PR
-	reviews, _, err := client.PullRequests.ListReviews(ctx, owner, repo, prNumber, &githubv39.ListOptions{PerPage: 100})
-	if err != nil {
-		return false, err
+	if headSHA == "" {
+		return false, nil
 	}
-	for _, r := range reviews {
-		if r.GetUser() != nil && r.GetUser().GetLogin() == botLogin && r.GetCommitID() == headSHA {
-			return true, nil
+	// List all reviews for the PR with pagination
+	opt := &githubv39.ListOptions{PerPage: 100}
+	for {
+		reviews, resp, err := client.PullRequests.ListReviews(ctx, owner, repo, prNumber, opt)
+		if err != nil {
+			return false, err
 		}
+		for _, r := range reviews {
+			if r.GetUser() != nil && r.GetUser().GetLogin() == botLogin && r.GetCommitID() == headSHA {
+				return true, nil
+			}
+		}
+		if resp.NextPage == 0 {
+			break
+		}
+		opt.Page = resp.NextPage
 	}
 	return false, nil
 }
