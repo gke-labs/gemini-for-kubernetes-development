@@ -56,8 +56,11 @@ RUN echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.
 
 RUN npm install -g @google/gemini-cli @anthropic-ai/claude-code
 
-# Install code-server
-RUN curl -fsSL https://code-server.dev/install.sh | sh
+# Install code-server with retries
+RUN for i in 1 2 3 4 5; do \
+        curl -fsSL https://code-server.dev/install.sh | sh && break || \
+        (echo "Retry $i/5 failed, waiting..."; sleep 15); \
+    done
 RUN code-server --install-extension golang.go --install-extension vscodevim.vim
 
 COPY --from=build-repo-sandbox /repo-sandbox /repo-agent/repo-sandbox

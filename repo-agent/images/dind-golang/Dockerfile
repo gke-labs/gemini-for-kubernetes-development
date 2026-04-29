@@ -91,8 +91,11 @@ ENV KUSTOMIZE_VERSION=v5.3.0
 RUN curl -sSfL "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F${KUSTOMIZE_VERSION}/kustomize_${KUSTOMIZE_VERSION}_$(go env GOOS)_$(go env GOARCH).tar.gz" | tar xz \
  && mv kustomize /usr/local/bin/
 
-# Install code-server
-RUN curl -fsSL https://code-server.dev/install.sh | sh && \
+# Install code-server with retries
+RUN for i in 1 2 3 4 5; do \
+        curl -fsSL https://code-server.dev/install.sh | sh && break || \
+        (echo "Retry $i/5 failed, waiting..."; sleep 15); \
+    done && \
     code-server --install-extension golang.go --install-extension vscodevim.vim
 
 # -------- Install Go tools --------
