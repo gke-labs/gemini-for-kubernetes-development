@@ -1,6 +1,11 @@
 # Ignore python cache files
 **/__pycache__/
 bin/
+overseer-cli
+overseer-controller
+repowatch-controller
+review-api
+code-server-install.sh
 
 # Vscode files
 .vscode
