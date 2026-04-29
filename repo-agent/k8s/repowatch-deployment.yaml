@@ -73,6 +73,8 @@ spec:
           value: ko://repo-agent/images/repo-sandbox
         - name: CONFIGDIR_CLI_IMAGE
           value: ko://repo-agent/configdir/cmd/configdir-cli
+        - name: GITHUB_BOT_LOGIN
+          value: "" # Optional: Set to a default bot login for reviews
         - name: GITHUB_CLIENT_ID
           valueFrom:
             secretKeyRef:

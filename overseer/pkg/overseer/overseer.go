@@ -247,6 +247,11 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 				},
 			},
 		})
+	} else if botLogin := os.Getenv("GITHUB_BOT_LOGIN"); botLogin != "" {
+		env = append(env, map[string]interface{}{
+			"name":  "GITHUB_BOT_LOGIN",
+			"value": botLogin,
+		})
 	}
 
 	ephemeralStorage := o.Spec.EphemeralStorage

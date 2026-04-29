@@ -1018,7 +1018,7 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 	userEmail := user.GetEmail()
 
 	// Default bot info to empty (or current user if not using robot account)
-	botLogin := ""
+	botLogin := os.Getenv("GITHUB_BOT_LOGIN")
 	botName := ""
 	botEmail := ""
 
@@ -1219,7 +1219,7 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, user *github.
 	userEmail := user.GetEmail()
 
 	githubSecretName := repoWatch.Spec.GithubSecretName
-	botLogin := ""
+	botLogin := os.Getenv("GITHUB_BOT_LOGIN")
 	botName := ""
 	botEmail := ""
 	if repoWatch.Spec.Review.RobotAccount != "" {

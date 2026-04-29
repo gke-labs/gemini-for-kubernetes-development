@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -394,6 +395,8 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 		UserLogin:   namespace,
 		UserName:    userName,
 		UserEmail:   userEmail,
+
+		BotLogin: os.Getenv("GITHUB_BOT_LOGIN"),
 
 		LLMProvider:         llmProvider,
 		LLMConfigdirRef:     configdirRef,
