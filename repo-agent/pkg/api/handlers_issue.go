@@ -154,10 +154,15 @@ func (s *Server) listIssuesFromK8s(ctx context.Context, namespace, repo string) 
 			cloneURL = "https://github.com/noorg/norepo.git"
 		}
 
+		host := "github.com"
+		if u, err := url.Parse(cloneURL); err == nil && u.Hostname() != "" {
+			host = u.Hostname()
+		}
+
 		repoParts := strings.Split(strings.TrimSuffix(cloneURL, ".git"), "/")
 		repoName := repoParts[len(repoParts)-1]
 
-		branchURL := fmt.Sprintf("https://github.com/%s/%s/tree/%s", login, repoName, branch)
+		branchURL := fmt.Sprintf("https://%s/%s/%s/tree/%s", host, login, repoName, branch)
 
 		// get draft from annotation[agentDraft]
 		draft := ""
