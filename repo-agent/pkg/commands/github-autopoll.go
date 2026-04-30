@@ -146,23 +146,52 @@ func (p *AutoPoller) pollOnce(ctx context.Context) error {
 		log.V(2).Info("Found issues assigned to bot", "repo", repoStr, "count", len(issues))
 
 		for _, issue := range issues {
-			// Skip pull requests (GitHub API returns PRs as issues)
-			if issue.PullRequestLinks != nil {
-				continue
-			}
-
-			issueKey := fmt.Sprintf("%s/%s#%d", repo.Owner, repo.Name, issue.GetNumber())
+			issueNumber := issue.GetNumber()
+			isPR := issue.PullRequestLinks != nil
+			issueKey := fmt.Sprintf("%s/%s#%d", repo.Owner, repo.Name, issueNumber)
 
 			// Skip if already processed in this run
 			if info := p.processedIssues[issueKey]; info != nil {
-				log.V(2).Info("Skipping issue, already processed", "issue", issueKey, "reason", info.Reason)
+				log.V(2).Info("Skipping, already processed", "issue", issueKey, "reason", info.Reason)
 				continue
 			}
 
 			// Check if issue author is in allowlist
 			author := issue.GetUser().GetLogin()
 			if !p.allowlistMap[author] {
-				log.Info("Skipping issue, author not in allowlist", "issue", issueKey, "author", author)
+				log.Info("Skipping, author not in allowlist", "issue", issueKey, "author", author)
+				continue
+			}
+
+			if isPR {
+				log.Info("Processing pull request feedback", "pr", issueKey)
+
+				// Mark as processed
+				p.processedIssues[issueKey] = &Info{Reason: "processed"}
+
+				// Remove assignment
+				_, _, err := p.githubAPI.Issues.RemoveAssignees(ctx, repo.Owner, repo.Name, issueNumber, []string{p.opt.AssignedTo})
+				if err != nil {
+					log.Error(err, "failed to remove assignment", "pr", issueKey)
+				}
+
+				prURL := issue.GetHTMLURL()
+				go func(prURL string, prNumber int) {
+					feedback := GithubFeedbackCommand{
+						URL:             prURL,
+						PullRequestID:   prNumber,
+						InPod:           false,
+						GithubUserLogin: "codebot-robot",
+						GithubUserEmail: "codebot-robot@google.com",
+						GithubUserName:  "codebot-robot",
+						GithubUserToken: os.Getenv("CODEBOT_ROBOT_GITHUB_TOKEN"),
+					}
+					feedback.InitDefaults()
+
+					if err := feedback.Run(ctx); err != nil {
+						log.Error(err, "failed to process PR feedback", "pr", issueKey)
+					}
+				}(prURL, issueNumber)
 				continue
 			}
 
@@ -175,7 +204,7 @@ func (p *AutoPoller) pollOnce(ctx context.Context) error {
 				continue
 			}
 			if !shouldProcess {
-				log.Info("Skipping issue", "issue", issueKey, "reason", reason)
+				log.V(2).Info("Skipping issue", "issue", issueKey, "reason", reason)
 				p.processedIssues[issueKey] = &Info{Reason: reason}
 				continue
 			}
@@ -186,7 +215,7 @@ func (p *AutoPoller) pollOnce(ctx context.Context) error {
 			p.processedIssues[issueKey] = &Info{Reason: "processed"}
 
 			// Create the issue URL and invoke github-fix-issue logic
-			issueURL := fmt.Sprintf("https://github.com/%s/%s/issues/%d", repo.Owner, repo.Name, issue.GetNumber())
+			issueURL := fmt.Sprintf("https://github.com/%s/%s/issues/%d", repo.Owner, repo.Name, issueNumber)
 
 			go func(issueURL string) {
 				// TODO (barney-s): set additional fields
@@ -198,7 +227,7 @@ func (p *AutoPoller) pollOnce(ctx context.Context) error {
 					GithubUserName:  "codebot-robot",
 					GithubUserToken: os.Getenv("CODEBOT_ROBOT_GITHUB_TOKEN"),
 				}
-				// fixIssue.InitDefaults()
+				fixIssue.InitDefaults()
 
 				if err := fixIssue.Run(ctx); err != nil {
 					log.Error(err, "failed to process issue", "issue", issueKey)

@@ -201,6 +201,16 @@ func (c *GithubFeedbackCommand) loadSandbox(ctx context.Context) error {
 		return nil
 	}
 
+	if c.Sandbox == "" {
+		sb, err := sandbox.NewIssueSandbox(ctx, c.InPod, c.repo, c.issue, "")
+		if err != nil {
+			return err
+		}
+		c.sandbox = sb
+		c.sandboxID = sb.GetSandboxID()
+		return nil
+	}
+
 	// Reusing existing sandbox
 	podID, err := sandbox.FindSandboxPod(ctx, c.Sandbox)
 	if err != nil {
