@@ -44,30 +44,21 @@ RUN GOBIN=/bin go install github.com/cli/cli/v2/cmd/gh@v2.82.1
 FROM golang:1.25.7
 ENV GOTOOLCHAIN=auto
 
-RUN echo 'Acquire::http::Timeout "60";' > /etc/apt/apt.conf.d/99timeout && \
-    echo 'Acquire::https::Timeout "60";' >> /etc/apt/apt.conf.d/99timeout
-
 # We want a functional python, because gemini-cli likes to use python
-RUN for i in {1..5}; do apt-get update && break || (echo "apt-get update failed, retrying in 10s..." && sleep 10); done && \
-    apt-get install -y --no-install-recommends \
-    python3 \
-    python3-pip \
-    python3-yaml \
-    python-is-python3 \
-    python3-venv \
-    git \
-    tmux \
-    nodejs \
-    npm \
-    sudo \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y python3 python3-pip python3-yaml python-is-python3 python3-venv
 
-RUN npm install -g @google/gemini-cli
+RUN apt-get update && apt-get install -y git tmux nodejs npm sudo curl apt-transport-https ca-certificates gnupg jq
+
+# Install Google Cloud CLI
+RUN echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | tee -a /etc/apt/sources.list.d/google-cloud-sdk.list && \
+    curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg && \
+    apt-get update && apt-get install -y google-cloud-cli
+
+RUN npm install -g @google/gemini-cli @anthropic-ai/claude-code
 
 # Install code-server
 RUN curl -fsSL https://code-server.dev/install.sh | sh
-RUN for i in {1..5}; do code-server --install-extension golang.go --install-extension vscodevim.vim && break || sleep 5; done
+RUN code-server --install-extension golang.go --install-extension vscodevim.vim
 
 COPY --from=build-repo-sandbox /repo-sandbox /repo-agent/repo-sandbox
 COPY --from=build-gh /bin/gh /bin/gh

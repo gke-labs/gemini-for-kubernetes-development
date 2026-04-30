@@ -21,8 +21,11 @@ if [ -d "/workspaces/prompt" ]; then
     if [ "$ISSUE_MODE" != "disabled" ]; then
         cat /workspaces/prompt/06-examples-issues.txt >> "$PROMPT_FILE"
     fi
-    if [ "$REVIEW_MODE" != "disabled" ] || [ "$PR_MODE" != "disabled" ]; then
+    if [ "$PR_MODE" != "disabled" ]; then
         cat /workspaces/prompt/06a-examples-prs.txt >> "$PROMPT_FILE"
+    fi
+    if [ "$REVIEW_MODE" != "disabled" ]; then
+        cat /workspaces/prompt/06b-examples-prs-review.txt >> "$PROMPT_FILE"
     fi
     if [ "$CHORES_MODE" != "disabled" ]; then
         cat /workspaces/prompt/07-examples-chores.txt >> "$PROMPT_FILE"
@@ -38,6 +41,21 @@ if [ -z "$REPO_URL" ]; then
   echo "REPO_URL environment variable is not set"
   exit 1
 fi
+
+function refreshLLMToken {
+    if [ -n "$TOKENSCRIPT_DIR" ] && [ -d "$TOKENSCRIPT_DIR" ]; then
+        for script in "$TOKENSCRIPT_DIR"/*; do
+            if [ -f "$script" ]; then
+                echo "Running tokenscript $script"
+                SCRIPT_TOKEN=$("$script")
+                if [ -n "$SCRIPT_TOKEN" ]; then
+                    export GEMINI_API_KEY="$SCRIPT_TOKEN"
+                    break
+                fi
+            fi
+        done
+    fi
+}
 
 function setupGit {
     echo "Running setupGit..."
@@ -112,6 +130,9 @@ fi
 while true; do
   echo "$(date): Running Overseer cycle..."
   
+  # Refresh LLM token
+  refreshLLMToken
+
   # Update the repo
   git pull
 

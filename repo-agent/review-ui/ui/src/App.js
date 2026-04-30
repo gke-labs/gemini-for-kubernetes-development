@@ -26,7 +26,7 @@ function App() {
   const [githubClientId, setGithubClientId] = useState('');
   const [githubClientSecret, setGithubClientSecret] = useState('');
   const [isGeminiKeySet, setIsGeminiKeySet] = useState(true); // Default to true to avoid flash of warning
-  const [, setConfigError] = useState('');
+  const [configError, setConfigError] = useState('');
 
   const [repos, setRepos] = useState([]);
   const [activeRepo, setActiveRepo] = useState(null);
