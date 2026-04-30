@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"math/rand"
+	"net/url"
 	"os"
 	"regexp"
 	"sort"
