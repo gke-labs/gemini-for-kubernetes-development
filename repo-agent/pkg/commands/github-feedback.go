@@ -119,17 +119,18 @@ func (c *GithubFeedbackCommand) taskPath(name string, args ...interface{}) strin
 }
 
 func (c *GithubFeedbackCommand) loadGithubObjects(ctx context.Context) error {
-	token, err := github.GetGithubToken(ctx)
+	if c.GithubUserToken == "" {
+		token, err := github.GetGithubToken(ctx)
+		if err != nil {
+			return err
+		}
+		c.GithubUserToken = token
+	}
+
+	githubAPI, err := github.NewClientWithToken(context.Background(), c.GithubUserToken)
 	if err != nil {
 		return err
 	}
-	c.GithubUserToken = token
-
-	githubAPI, err := github.NewClient(context.Background())
-	if err != nil {
-		return err
-	}
-
 	c.repo, err = githubAPI.GetRepositoryFromIssueURL(ctx, c.URL)
 	if err != nil {
 		return err
@@ -202,6 +203,8 @@ func (c *GithubFeedbackCommand) loadSandbox(ctx context.Context) error {
 	}
 
 	if c.Sandbox == "" {
+		log := klog.FromContext(ctx)
+		log.Info("Automatically creating sandbox for PR feedback")
 		sb, err := sandbox.NewIssueSandbox(ctx, c.InPod, c.repo, c.issue, "")
 		if err != nil {
 			return err
@@ -210,7 +213,6 @@ func (c *GithubFeedbackCommand) loadSandbox(ctx context.Context) error {
 		c.sandboxID = sb.GetSandboxID()
 		return nil
 	}
-
 	// Reusing existing sandbox
 	podID, err := sandbox.FindSandboxPod(ctx, c.Sandbox)
 	if err != nil {

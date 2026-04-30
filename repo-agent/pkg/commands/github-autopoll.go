@@ -181,15 +181,21 @@ func (p *AutoPoller) pollOnce(ctx context.Context) error {
 						URL:             prURL,
 						PullRequestID:   prNumber,
 						InPod:           false,
-						GithubUserLogin: "codebot-robot",
-						GithubUserEmail: "codebot-robot@google.com",
-						GithubUserName:  "codebot-robot",
-						GithubUserToken: os.Getenv("CODEBOT_ROBOT_GITHUB_TOKEN"),
+						GithubUserLogin: p.opt.AssignedTo,
+						GithubUserEmail: fmt.Sprintf("%s@google.com", p.opt.AssignedTo),
+						GithubUserName:  p.opt.AssignedTo,
 					}
 					feedback.InitDefaults()
 
 					if err := feedback.Run(ctx); err != nil {
 						log.Error(err, "failed to process PR feedback", "pr", issueKey)
+						errorMsg := fmt.Sprintf("I failed to process the feedback: %v\n\nPlease re-assign me if you'd like me to try again.", err)
+						_, _, commentErr := p.githubAPI.Issues.CreateComment(ctx, repo.Owner, repo.Name, prNumber, &gogithub.IssueComment{
+							Body: &errorMsg,
+						})
+						if commentErr != nil {
+							log.Error(commentErr, "failed to post error comment", "pr", issueKey)
+						}
 					}
 				}(prURL, issueNumber)
 				continue
