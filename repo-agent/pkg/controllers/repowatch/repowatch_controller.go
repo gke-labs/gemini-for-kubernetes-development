@@ -1107,7 +1107,19 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 	// Base name matches the issue identifier
 	name := fmt.Sprintf("%s-issue-%d", repoWatch.Name, issue.GetNumber())
 
-	cloneURL := strings.Replace(issue.GetRepositoryURL(), "api.github.com/repos", "github.com", 1) + ".git"
+	host := "github.com"
+	if u, err := url.Parse(issue.GetRepositoryURL()); err == nil && u.Hostname() != "" {
+		host = u.Hostname()
+		// If it's api.github.com, we want the web host
+		if host == "api.github.com" {
+			host = "github.com"
+		}
+	}
+
+	cloneURL := strings.Replace(issue.GetRepositoryURL(), "api.github.com/repos", host, 1) + ".git"
+	if !strings.HasPrefix(cloneURL, "https://") && !strings.HasPrefix(cloneURL, "http://") {
+		cloneURL = "https://" + cloneURL
+	}
 	repoParts := strings.Split(cloneURL, "/")
 	repoName := repoParts[len(repoParts)-1]
 
@@ -1738,8 +1750,13 @@ func (r *Reconciler) reconcileDevSandboxesInternal(ctx context.Context, user *gi
 
 func (r *Reconciler) createDevSandbox(ctx context.Context, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, forkOwner, forkRepo, branchName, sandboxName string) error {
 	log := log.FromContext(ctx)
+	host := "github.com"
+	if u, err := url.Parse(repoWatch.Spec.RepoURL); err == nil && u.Hostname() != "" {
+		host = u.Hostname()
+	}
+
 	cloneURL := strings.TrimSuffix(repoWatch.Spec.RepoURL, ".git") + ".git"
-	originURL := fmt.Sprintf("github.com/%s/%s.git", forkOwner, forkRepo)
+	originURL := fmt.Sprintf("%s/%s/%s.git", host, forkOwner, forkRepo)
 
 	userLogin := user.GetLogin()
 	userName := user.GetName()
