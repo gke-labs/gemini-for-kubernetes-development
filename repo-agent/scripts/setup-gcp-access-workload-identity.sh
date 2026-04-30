@@ -39,18 +39,29 @@ else
     echo "GCP Service Account ${GCP_SA_EMAIL} already exists."
 fi
 
-# 3. Grant the GCP Service Account broad permissions on the project
-# (The e2e tests create/delete many types of resources)
-if ! gcloud projects get-iam-policy "$PROJECT_ID" \
-    --flatten="bindings[].members" \
-    --format="table(bindings.role)" \
-    --filter="bindings.members:serviceAccount:${GCP_SA_EMAIL}" | grep -q "roles/editor"; then
-    gcloud projects add-iam-policy-binding $PROJECT_ID \
-        --member="serviceAccount:${GCP_SA_EMAIL}" \
-        --role="roles/editor"
-else
-    echo "GCP Service Account ${GCP_SA_EMAIL} already has roles/editor on project ${PROJECT_ID}."
-fi
+# 3. Grant the GCP Service Account necessary permissions on the project
+# We use a narrower set of roles than roles/editor for better security.
+ROLES=(
+    "roles/container.admin"
+    "roles/storage.admin"
+    "roles/compute.networkAdmin"
+    "roles/logging.logWriter"
+    "roles/monitoring.metricWriter"
+)
+
+for ROLE in "${ROLES[@]}"; do
+    if ! gcloud projects get-iam-policy "$PROJECT_ID" \
+        --flatten="bindings[].members" \
+        --format="table(bindings.role)" \
+        --filter="bindings.members:serviceAccount:${GCP_SA_EMAIL}" | grep -q "$ROLE"; then
+        echo "Granting $ROLE to ${GCP_SA_EMAIL}..."
+        gcloud projects add-iam-policy-binding $PROJECT_ID \
+            --member="serviceAccount:${GCP_SA_EMAIL}" \
+            --role="$ROLE"
+    else
+        echo "GCP Service Account ${GCP_SA_EMAIL} already has $ROLE on project ${PROJECT_ID}."
+    fi
+done
 
 # 4. Bind the Kubernetes Service Account to the GCP Service Account
 K8S_MEMBER="serviceAccount:${PROJECT_ID}.svc.id.goog[${K8S_NAMESPACE}/${K8S_SA}]"

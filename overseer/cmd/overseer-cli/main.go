@@ -46,6 +46,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/yaml"
 
+	corev1 "k8s.io/api/core/v1"
 	overseerv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/overseer/pkg/api/v1alpha1"
 	sandboxtaskv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
@@ -526,6 +527,9 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 	}
 
 	if number == 0 && prNumber != 0 {
+		if prNumber <= 0 {
+			return fmt.Errorf("PR number must be greater than zero")
+		}
 		klog.Infof("Resolving issue from PR %d...", prNumber)
 		if isDryRun {
 			klog.Infof("[dryrun] Would resolve issue from PR %d", prNumber)
@@ -1017,6 +1021,10 @@ func ensureGitHubUser(ctx context.Context, ghClient *github.Client, isDryRun boo
 }
 
 func parseRepoURL(repoURL string) (string, string, error) {
+	if repoURL == "" {
+		return "", "", fmt.Errorf("empty repository URL")
+	}
+
 	// Handle SSH URLs like git@github.com:owner/repo or github.com:owner/repo
 	// Standard SSH detection: contains : but no ://, OR strictly matching git@ prefix
 	isSSH := (strings.Contains(repoURL, ":") && !strings.Contains(repoURL, "://")) || strings.HasPrefix(repoURL, "git@")
@@ -1027,10 +1035,11 @@ func parseRepoURL(repoURL string) (string, string, error) {
 		s = strings.TrimRight(s, "/")
 		s = strings.TrimSuffix(s, ".git")
 
+		// For SSH URLs, owner/repo follows the colon
 		parts := strings.SplitN(s, ":", 2)
 		if len(parts) == 2 {
 			repoPath := parts[1]
-			pathParts := strings.Split(repoPath, "/")
+			pathParts := strings.Split(strings.Trim(repoPath, "/"), "/")
 			if len(pathParts) >= 2 {
 				owner := strings.Join(pathParts[:len(pathParts)-1], "/")
 				repo := pathParts[len(pathParts)-1]
@@ -1051,22 +1060,33 @@ func parseRepoURL(repoURL string) (string, string, error) {
 		uStr = "https://" + uStr
 	}
 
-	u, err := url.Parse(uStr)
-	if err != nil {
-		return "", "", err
+	// For non-local, non-SSH URLs, use standard URL parser
+	if !isLocal {
+		u, err := url.Parse(uStr)
+		if err != nil {
+			return "", "", err
+		}
+
+		// Support git://, https://, http:// etc.
+		path := strings.Trim(u.Path, "/")
+		path = strings.TrimSuffix(path, ".git")
+		parts := strings.Split(path, "/")
+		if len(parts) >= 2 {
+			owner := strings.Join(parts[:len(parts)-1], "/")
+			return owner, parts[len(parts)-1], nil
+		}
 	}
 
-	// For local paths, owner/repo might not be well-defined as per GitHub
-	// but we try to extract the last two components.
-	path := strings.Trim(u.Path, "/")
+	// Fallback for local paths or if URL parsing didn't give enough parts
+	path := strings.Trim(repoURL, "/")
 	path = strings.TrimSuffix(path, ".git")
 	parts := strings.Split(path, "/")
-	if len(parts) < 2 {
-		return "", "", fmt.Errorf("invalid repo URL path: %s", repoURL)
+	if len(parts) >= 2 {
+		owner := strings.Join(parts[:len(parts)-1], "/")
+		return owner, parts[len(parts)-1], nil
 	}
 
-	owner := strings.Join(parts[:len(parts)-1], "/")
-	return owner, parts[len(parts)-1], nil
+	return "", "", fmt.Errorf("invalid repository URL format: %s (need at least owner and repo name)", repoURL)
 }
 
 func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, overseer *overseerv1alpha1.Overseer, issue *githubv39.Issue) error {
@@ -1102,6 +1122,27 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 		}
 	}
 
+	if scriptToken != "" {
+		apiKeySecretName = name + "-api-key"
+		klog.Infof("Creating API key secret %s...", apiKeySecretName)
+		secret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      apiKeySecretName,
+				Namespace: namespace,
+				Labels: map[string]string{
+					"sandbox.gemini.google.com/sandbox-name": k8s.TruncateLabel(name),
+				},
+			},
+			Data: map[string][]byte{
+				"gemini": []byte(scriptToken),
+			},
+		}
+		_, err = kubeClient.Clientset.CoreV1().Secrets(namespace).Create(ctx, secret, metav1.CreateOptions{})
+		if err != nil && !kerrors.IsAlreadyExists(err) {
+			return fmt.Errorf("failed to create API key secret: %w", err)
+		}
+	}
+
 	opt := sandbox.AgentSandboxOptions{
 		DevSandboxOptions: sandbox.DevSandboxOptions{
 			Name:      name,
@@ -1130,7 +1171,6 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 			LLMAPIKeySecretName: apiKeySecretName,
 			Prompt:              overseer.Spec.IssuePrompt,
 			GithubSecretName:    githubSecretName,
-			LLMAPIKey:           scriptToken,
 			Image:               overseer.Spec.Image,
 			RepoSandboxImage:    os.Getenv("REPO_SANDBOX_IMAGE"),
 			ConfigDirImage:      os.Getenv("CONFIG_DIR_IMAGE"),
@@ -1195,6 +1235,27 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 		}
 	}
 
+	if scriptToken != "" {
+		apiKeySecretName = name + "-api-key"
+		klog.Infof("Creating API key secret %s...", apiKeySecretName)
+		secret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      apiKeySecretName,
+				Namespace: namespace,
+				Labels: map[string]string{
+					"sandbox.gemini.google.com/sandbox-name": k8s.TruncateLabel(name),
+				},
+			},
+			Data: map[string][]byte{
+				"gemini": []byte(scriptToken),
+			},
+		}
+		_, err = kubeClient.Clientset.CoreV1().Secrets(namespace).Create(ctx, secret, metav1.CreateOptions{})
+		if err != nil && !kerrors.IsAlreadyExists(err) {
+			return fmt.Errorf("failed to create API key secret: %w", err)
+		}
+	}
+
 	opt := sandbox.ReviewSandboxOptions{
 		DevSandboxOptions: sandbox.DevSandboxOptions{
 			Name:      name,
@@ -1218,7 +1279,6 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 			LLMAPIKeySecretName:   apiKeySecretName,
 			Prompt:                overseer.Spec.Review.Prompt,
 			GithubSecretName:      githubSecretName,
-			LLMAPIKey:             scriptToken,
 			DevcontainerConfigRef: "",
 			Image:                 overseer.Spec.Image,
 			RepoSandboxImage:      os.Getenv("REPO_SANDBOX_IMAGE"),
@@ -1228,6 +1288,7 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 			ServiceAccountName:    "overseer-sandbox",
 			GHHost:                ghHost,
 		},
+
 		PRNumber:          pr.GetNumber(),
 		PRTitle:           pr.GetTitle(),
 		PRHTMLURL:         pr.GetHTMLURL(),
@@ -1872,6 +1933,17 @@ func deleteSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, na
 		}
 	} else {
 		klog.Warningf("Skipping name-based deletion of associated service %s: name too long (>63 characters). Please manually check for orphaned services.", serviceName)
+	}
+
+	// Also delete associated API key secret if it exists
+	secretName := sandboxName + "-api-key"
+	err = kubeClient.Clientset.CoreV1().Secrets(namespace).Delete(ctx, secretName, metav1.DeleteOptions{
+		PropagationPolicy: &propagationPolicy,
+	})
+	if err == nil {
+		klog.Infof("Deleted associated API key secret %s.", secretName)
+	} else if !kerrors.IsNotFound(err) {
+		errs = append(errs, fmt.Errorf("failed to delete associated secret %s: %w", secretName, err))
 	}
 
 	if len(errs) > 0 {
