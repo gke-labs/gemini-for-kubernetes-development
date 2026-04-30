@@ -192,7 +192,7 @@ kubectl apply -f https://github.com/gke-labs/gemini-for-kubernetes-development/r
 # Gemini API key
 kubectl create secret generic gemini-api-key \
   -n repo-agent-system \
-  --from-literal=key="$GEMINI_API_KEY" \
+  --from-literal=gemini="$GEMINI_API_KEY" \
   --dry-run=client -o yaml | kubectl apply -f -
 
 # GitHub token — single-user mode
@@ -232,73 +232,33 @@ install.
 
 The release manifest contains sandbox pod specs whose image fields use `ko://`
 build-time references — these are resolved by the `ko` build tool during
-development but are **not valid image names at runtime**.  On a `kind` cluster
-the project's local build pipeline resolves them automatically; on GKE they
-cause `ImagePullBackOff`.
+development but are **not typically supported** by GKE (or other standard K8s distributions).
 
-The fix is a Kyverno `ClusterPolicy` with four mutation rules:
+Kyverno intercepts sandbox pod creation and rewrites these to the production
+`ghcr.io` images.
 
-| Rule | Rewrites | To |
-|---|---|---|
-| `replace-repo-sandbox-initcontainer` | `ko://repo-agent/images/repo-sandbox` (init) | `ghcr.io/.../repo-sandbox:latest` |
-| `replace-sandbox-main-container` | `ko://repo-agent/images/repo-sandbox` (main) | `ghcr.io/.../generic-golang:latest` |
-| `replace-configdir-initcontainer` | `ko://repo-agent/images/configdir-cli` | `ghcr.io/.../configdir-cli:latest` |
-| `replace-overseer-container` | `ko://overseer/images/overseer` | `ghcr.io/.../overseer:latest` |
+### Fix 2 — Development container branch reset
 
-A fifth rule (`mount-devcontainer-json`) is described below.
+When an agent-based sandbox starts, it attempts to checkout the PR branch. On
+some GKE storage backends (especially when using PVCs), the git state may become
+"dirty" or diverged from the upstream branch if the pod restarts.
 
-### Fix 2 — `devcontainer.json` mount for PR review pods
-
-PR review sandbox pods use `envbuilder` as their container entrypoint.
-`envbuilder` looks for a `devcontainer.json` at the path specified by
-`ENVBUILDER_DEVCONTAINER_DIR` (set to `/` in the manifest), but the
-`repowatch-controller` does not mount the `devcontainer-json` ConfigMap into
-these pods.
-
-Without the ConfigMap mounted, envbuilder exits immediately with:
-```
-error: open devcontainer.json: open /devcontainer.json: no such file or directory
-```
-
-The fifth Kyverno rule (`mount-devcontainer-json`) injects the volume and
-mount into any pod in `repo-agent-system` whose main container is named
-`sandbox`.
-
-The `devcontainer-json` ConfigMap is also patched to use the pre-built
-`generic-golang:latest` image as the `devcontainer.json` base, rather than
-`mcr.microsoft.com/devcontainers/base:ubuntu`, which would trigger a full
-feature-install build on every pod restart.
-
-### Fix 3 — `gh pr checkout` fast-forward failure
-
-When the Overseer agent creates an `investigate-failures` task, the pre-script
-runs `gh pr checkout <N>`.  If external commits have been pushed to the PR
-branch after the sandbox last checked it out, the local branch diverges from
-upstream and `gh pr checkout` fails with:
-
-```
-fatal: Not possible to fast-forward, aborting.
-```
-
-The `devcontainer.json` `postCreateCommand` installs a wrapper at
-`/usr/local/bin/gh` (which takes precedence over the system `gh` at
-`/usr/bin/gh`) that intercepts `gh pr checkout` and replaces the fast-forward
-pull with `git reset --hard upstream/<branch>`, ensuring the sandbox always
-reflects the current upstream state.
+The `devcontainer-json` patch adds a wrapper around the `gh` CLI that performs a
+force-reset to the upstream state whenever `gh pr checkout` is called, ensuring
+the agent always works from a clean, up-to-date branch.
 
 ---
 
 ## Creating a RepoWatch
 
-After the system components are ready, create a `RepoWatch` CR to start
-watching a repository:
+Once the stack is installed, you need to tell it which repository to monitor.
 
 ```yaml
 apiVersion: review.gemini.google.com/v1alpha1
 kind: RepoWatch
 metadata:
   name: my-repo
-  namespace: my-repo          # create this namespace first
+  namespace: my-repo-ns
 spec:
   repoURL: https://github.com/my-org/my-repo
   githubSecretName: github-token
@@ -307,47 +267,28 @@ spec:
     llm:
       provider: gemini-cli
       apiKeySecretRef: gemini-api-key
-    maxActiveSandboxes: 2
-    workspaceDiskSize: 10Gi
+    maxActiveSandboxes: 5
   issue:
     llm:
       provider: gemini-cli
       apiKeySecretRef: gemini-api-key
     maxActiveSandboxes: 2
-    workspaceDiskSize: 10Gi
 ```
 
-Copy the required secrets into the RepoWatch namespace:
-
-```bash
-NS=my-repo
-kubectl create namespace $NS
-
-for SECRET in github-token gemini-api-key; do
-  kubectl get secret $SECRET -n repo-agent-system -o json \
-    | jq 'del(.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,.metadata.annotations) | .metadata.namespace = "'$NS'"' \
-    | kubectl apply -f -
-done
-
-kubectl apply -f repowatch.yaml
-```
+Apply this with `kubectl apply -f`.  The controller will create a dedicated
+namespace for the repository and begin polling.
 
 ---
 
 ## Accessing the UI
 
-```bash
-# Get the external IP of the pr-review-ui service
-kubectl get svc -n repo-agent-system pr-review-ui \
-  -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
-```
-
-Open `https://<EXTERNAL_IP>` in a browser.
-
-**Authentication:**
-- **Single-user mode** (no OAuth App configured): The UI may show the repository
-  dashboard directly.  If it shows "Please select or add a repository", navigate
-  to `https://<EXTERNAL_IP>/api/auth/login` and complete the GitHub OAuth flow.
+1. Get the external IP of the UI service:
+   ```bash
+   kubectl get svc -n repo-agent-system pr-review-ui
+   ```
+2. Open `https://<EXTERNAL_IP>` in your browser.
+3. If you configured multi-user mode, you will need to navigate to
+   `https://<EXTERNAL_IP>/api/auth/login` and complete the GitHub OAuth flow.
 - **Multi-user mode**: Click **Login with GitHub** on the home page.
 
 > **Note:** The `pr-review-api` stores sessions in memory.  If the pod restarts
@@ -401,6 +342,21 @@ kubectl describe clusterpolicy gfk-gke-compat | grep -A5 "Ready\|Error"
 ```
 
 Delete and re-create any affected pods to force Kyverno to re-evaluate.
+
+---
+
+## Upgrading
+
+### From v0.1.0-rc.3 to v0.1.0
+
+> [!IMPORTANT]
+> **Breaking Change: Gemini API Secret Key**
+> The expected key within the `gemini-api-key` secret has changed from `key` to `gemini`. Existing secrets must be updated or re-created, otherwise the Gemini agent will fail to authenticate.
+>
+> To update an existing secret:
+> ```bash
+> kubectl patch secret gemini-api-key -n repo-agent-system --type=json -p='[{"op": "add", "path": "/data/gemini", "value": "'$(kubectl get secret gemini-api-key -n repo-agent-system -o jsonpath="{.data.key}")'"}]'
+> ```
 
 ---
 

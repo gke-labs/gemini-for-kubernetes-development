@@ -106,7 +106,7 @@ func RunCreate(ctx context.Context, opt CreateOptions) error {
 	secretName := opt.LLMSecret
 	if secretName == "" {
 		if opt.LLMProvider == "gemini-cli" {
-			secretName = "gemini-vscode-tokens"
+			secretName = "gemini-api-key"
 		} else if opt.LLMProvider == "claude" {
 			secretName = "anthropic-api-key"
 		} else {

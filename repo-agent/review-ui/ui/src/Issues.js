@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import IssueCard from './IssueCard';
 
 function Issues({
@@ -76,16 +76,19 @@ function Issues({
             });
         }
     }
-  }, [activeRepo]);
+  }, [activeRepo, excludedDetails]);
 
   // 1. Active Issues
-  const activeList = [];
-  if (issues.length > 0) {
-      issues.forEach(issue => activeList.push({ ...issue, id: String(issue.id), type: 'active', sortId: parseInt(issue.id) }));
-  }
+  const activeList = useMemo(() => {
+      const list = [];
+      if (issues.length > 0) {
+          issues.forEach(issue => list.push({ ...issue, id: String(issue.id), type: 'active', sortId: parseInt(issue.id) }));
+      }
 
-  // Sort active issues by ID descending (newest first)
-  activeList.sort((a, b) => b.sortId - a.sortId);
+      // Sort active issues by ID descending (newest first)
+      list.sort((a, b) => b.sortId - a.sortId);
+      return list;
+  }, [issues]);
 
   // 2. Pending Issues
   const pending = activeRepo.pendingIssues || [];

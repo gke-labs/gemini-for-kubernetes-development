@@ -27,7 +27,6 @@ const Overseer = ({ onBack, getSandboxStatusClass, namespace: userNamespace }) =
     const [tasks, setTasks] = useState([]);
     
     const [logs, setLogs] = useState('');
-    const [loading, setLoading] = useState(false);
     const [showOverseerLogs, setShowOverseerLogs] = useState(false);
     const [showTerminal, setShowTerminal] = useState(false);
 
@@ -103,7 +102,7 @@ const Overseer = ({ onBack, getSandboxStatusClass, namespace: userNamespace }) =
         fetchSandboxes();
         const interval = setInterval(() => { fetchChores(); fetchSandboxes(); }, 10000);
         return () => clearInterval(interval);
-    }, [fetchChores]);
+    }, [fetchChores, fetchSandboxes]);
 
     const fetchOverseerLogs = useCallback(() => {
         if (!activeOverseer || !showOverseerLogs) return;

@@ -29,7 +29,7 @@ RUN go build -o overseer-cli ./cmd/overseer-cli/main.go
 FROM node:20-slim
 
 # Install tools
-RUN apt-get update && \
+RUN for i in 1 2 3; do apt-get update && break || sleep 5; done && \
     apt-get install -y --no-install-recommends \
     bash \
     git \

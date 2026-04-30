@@ -167,12 +167,12 @@ spec:
     maxSandboxes: 3
     devcontainerConfigRef: devcontainer-json
     llm:
-      apiKeySecretRef: gemini-vscode-tokens
+      apiKeySecretRef: gemini-api-key
   review:
     reviewShutdownAfterMinutes: 30
     devcontainerConfigRef: devcontainer-json
     llm:
-      apiKeySecretRef: gemini-vscode-tokens
+      apiKeySecretRef: gemini-api-key
       prompt: >-
         You are an expert kubernetes developer who is helping with code reviews.
         Please look at the most recent commit and provide a review feedback.
@@ -189,7 +189,7 @@ spec:
     issueShutdownAfterMinutes: 30
     handlers:
     - llm:
-        apiKeySecretRef: gemini-vscode-tokens
+        apiKeySecretRef: gemini-api-key
         prompt: >-
           You are a helpful assistant that triages GitHub issues for a
           Kubernetes-related open source project.

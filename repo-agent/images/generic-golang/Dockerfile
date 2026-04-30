@@ -1,4 +1,3 @@
-# --------------------------------
 # Build the repo-sandbox binary
 FROM golang:1.25.7 AS build-repo-sandbox
 WORKDIR /app
@@ -21,6 +20,7 @@ COPY services/container-registry/go.sum services/container-registry/go.sum
 
 # Copy the source code
 COPY agentsandboxes/ agentsandboxes/
+COPY repo-agent/*.go repo-agent/
 COPY repo-agent/pkg/ repo-agent/pkg/
 COPY repo-agent/api/ repo-agent/api/
 COPY repo-agent/cmd/repo-sandbox/ repo-agent/cmd/repo-sandbox/
@@ -44,26 +44,34 @@ RUN GOBIN=/bin go install github.com/cli/cli/v2/cmd/gh@v2.82.1
 FROM golang:1.25.7
 ENV GOTOOLCHAIN=auto
 
-# We want a functional python, because gemini-cli likes to use python
-RUN apt-get update && apt-get install -y python3 python3-pip python3-yaml python-is-python3 python3-venv
-
-RUN apt-get update && apt-get install -y git tmux nodejs npm sudo curl apt-transport-https ca-certificates gnupg jq
-
-# Install Google Cloud CLI
-RUN echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | tee -a /etc/apt/sources.list.d/google-cloud-sdk.list && \
+# Install dependencies and clean up in the same layer to reduce size
+RUN for i in 1 2 3; do apt-get update && break || sleep 5; done && \
+    apt-get install -y --no-install-recommends \
+    python3 python3-pip python3-yaml python-is-python3 python3-venv \
+    git tmux nodejs npm sudo curl apt-transport-https ca-certificates gnupg jq && \
+    # Install Google Cloud CLI
+    echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | tee -a /etc/apt/sources.list.d/google-cloud-sdk.list && \
     curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg && \
-    apt-get update && apt-get install -y google-cloud-cli
+    apt-get update && apt-get install -y --no-install-recommends google-cloud-cli && \
+    # Clean up
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 RUN npm install -g @google/gemini-cli @anthropic-ai/claude-code
 
 # Install code-server
 RUN curl -fsSL https://code-server.dev/install.sh | sh
-RUN code-server --install-extension golang.go --install-extension vscodevim.vim
+RUN for i in 1 2 3 4 5; do \
+        code-server --install-extension golang.go --install-extension vscodevim.vim && break || \
+        if [ $i -eq 5 ]; then exit 1; fi; \
+        sleep 5; \
+    done
 
+COPY --from=build-repo-sandbox /repo-sandbox /usr/local/bin/repo-sandbox
 COPY --from=build-repo-sandbox /repo-sandbox /repo-agent/repo-sandbox
 COPY --from=build-gh /bin/gh /bin/gh
 
 RUN ln -sf /usr/local/go/bin/go /usr/local/bin/go
 
 WORKDIR /workspaces
-ENTRYPOINT ["/repo-agent/repo-sandbox", "agent"]
+ENTRYPOINT ["repo-sandbox", "agent"]

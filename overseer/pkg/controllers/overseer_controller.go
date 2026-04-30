@@ -35,6 +35,7 @@ import (
 
 	overseerv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/overseer/pkg/api/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/overseer/pkg/overseer"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 )
 
 // OverseerReconciler reconciles an Overseer object
@@ -72,10 +73,7 @@ func (r *OverseerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	}
 
 	// 1. Ensure Namespace exists
-	nsName := fmt.Sprintf("overseer-%s", overseerObj.Name)
-	if len(nsName) > 63 {
-		nsName = nsName[:63]
-	}
+	nsName := k8s.TruncateName(fmt.Sprintf("overseer-%s", overseerObj.Name))
 	ns := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: nsName,

@@ -48,7 +48,7 @@ Secrets are a critical part of the multi-tenancy model, handling both global def
 ### Global Defaults (System Namespace)
 The `repo-agent-system` namespace holds the default configuration and secrets:
 *   `github-pat`: Contains a default GitHub Personal Access Token (PAT), name, and email.
-*   `gemini-vscode-tokens`: Contains the default Gemini API key.
+*   `gemini-api-key`: Contains the default Gemini API key.
 *   `anthropic-api-key`: Contains the default Anthropic API key.
 *   `devcontainer-json`: A default ConfigMap for devcontainer configurations.
 
@@ -57,11 +57,11 @@ When a user logs in (or the namespace is bootstrapped), the system:
 1.  Checks if the user's namespace exists. If not, it creates it.
 2.  **Copies** the default secrets and ConfigMaps from `repo-agent-system` to the user's namespace.
     *   This ensures every user starts with a working configuration without needing manual setup.
-    *   Copied secrets retain the same names (`github-pat`, `gemini-vscode-tokens`, etc.).
+    *   Copied secrets retain the same names (`github-pat`, `gemini-api-key`, etc.).
 
 ### Per-User Secrets & Overrides
 Users can provide their own credentials via the `/settings` page.
-*   **Mechanism**: The `updateSettings` API updates the `github-pat` or `gemini-vscode-tokens` secrets *in the user's namespace*.
+*   **Mechanism**: The `updateSettings` API updates the `github-pat` or `gemini-api-key` secrets *in the user's namespace*.
 *   **OAuth Token**: When a user logs in via OAuth, their access token is automatically stored in their namespace's `github-pat` secret (key: `pat`). This effectively overrides the default PAT with the user's own credentials.
 *   **Isolation**: Since controllers look for secrets in the `RepoWatch`'s namespace, they will use the user-specific secrets if present (or the copied defaults).
 

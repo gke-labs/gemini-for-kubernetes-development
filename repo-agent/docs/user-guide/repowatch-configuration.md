@@ -35,7 +35,7 @@ review:
   # Configuration for the LLM (Large Language Model)
   llm:
     provider: gemini-cli
-    apiKeySecretRef: gemini-vscode-tokens
+    apiKeySecretRef: gemini-api-key
     prompt: |
       You are an expert code reviewer...
       
@@ -80,7 +80,7 @@ issue:
   # Configuration for the LLM (Large Language Model)
   llm:
     provider: gemini-cli
-    apiKeySecretRef: gemini-vscode-tokens
+    apiKeySecretRef: gemini-api-key
     prompt: |
       You are a helpful assistant that fixes GitHub issues...
 

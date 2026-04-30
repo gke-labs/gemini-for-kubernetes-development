@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
@@ -75,4 +76,15 @@ func ensureSSHConfigLine(ctx context.Context, path, line string) error {
 	log.Info("Adding include line to SSH config", "line", line)
 
 	return os.WriteFile(path, []byte(newConfig), 0644)
+}
+
+// GetPullRequestIDFromEnv retrieves the pull request ID from the PULL_REQUEST_ID environment variable.
+func GetPullRequestIDFromEnv() int {
+	prid := os.Getenv("PULL_REQUEST_ID")
+	if prid != "" {
+		if val, err := strconv.Atoi(prid); err == nil {
+			return val
+		}
+	}
+	return 0
 }

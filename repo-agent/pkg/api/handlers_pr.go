@@ -14,6 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 	"github.com/google/go-github/v39/github"
 	yaml "go.yaml.in/yaml/v3"
@@ -43,7 +44,7 @@ func (s *Server) getPRTasks(c *gin.Context) {
 	repo := c.Param("repo")
 	prID := c.Param("id")
 
-	sandboxName := fmt.Sprintf("%s-pr-%s", repo, prID)
+	sandboxName := k8s.TruncateName(fmt.Sprintf("%s-pr-%s", repo, prID))
 
 	taskList, err := s.K8sManager.ListSandboxTasks(c.Request.Context(), namespace, sandboxName)
 	if err != nil {
@@ -199,7 +200,7 @@ func (s *Server) saveDraft(c *gin.Context) {
 		return
 	}
 
-	sandboxName := fmt.Sprintf("%s-pr-%s", repo, prID)
+	sandboxName := k8s.TruncateName(fmt.Sprintf("%s-pr-%s", repo, prID))
 	err := s.K8sManager.UpdateSandboxUserDraft(c.Request.Context(), namespace, sandboxName, payload.Draft)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save draft", "details": err.Error()})
@@ -245,7 +246,7 @@ func (s *Server) submitReview(c *gin.Context) {
 	ctx := c.Request.Context()
 	log.Info("Submitting review for PR", "prID", prID, "repo", repo, "review", payload.Review)
 
-	sandboxName := fmt.Sprintf("%s-pr-%s", repo, prID)
+	sandboxName := k8s.TruncateName(fmt.Sprintf("%s-pr-%s", repo, prID))
 	gvr := schema.GroupVersionResource{
 		Group:    "agents.x-k8s.io",
 		Version:  "v1alpha1",
@@ -421,7 +422,7 @@ func (s *Server) createPRTask(c *gin.Context) {
 		return
 	}
 
-	sandboxName := fmt.Sprintf("%s-pr-%s", repo, prID)
+	sandboxName := k8s.TruncateName(fmt.Sprintf("%s-pr-%s", repo, prID))
 
 	// Fetch RepoWatch to get latest config
 	rw, err := s.K8sManager.GetRepoWatch(c.Request.Context(), namespace, repo)
@@ -544,7 +545,7 @@ func (s *Server) getTaskLogs(c *gin.Context) {
 	prID := c.Param("id")
 	taskID := c.Param("taskID")
 
-	sandboxName := fmt.Sprintf("%s-pr-%s", repo, prID)
+	sandboxName := k8s.TruncateName(fmt.Sprintf("%s-pr-%s", repo, prID))
 	serviceName := fmt.Sprintf("%s-lb", sandboxName)
 
 	targetURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:13339", serviceName, namespace)

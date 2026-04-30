@@ -734,7 +734,7 @@ spec:
     maxSandboxes: 0
     image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
     llm:
-      apiKeySecretRef: gemini-vscode-tokens
+      apiKeySecretRef: gemini-api-key
   review:
     assignedToSelf: true
     reviewShutdownAfterMinutes: 30
@@ -743,7 +743,7 @@ spec:
     maxSandboxes: 5
     llm:
       configdirRef: k8s-gemini-config
-      apiKeySecretRef: gemini-vscode-tokens
+      apiKeySecretRef: gemini-api-key
       prompt: >-
         /review:pr "{{.Number}}"
   issue:
@@ -753,7 +753,7 @@ spec:
     issueShutdownAfterMinutes: 300
     image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
     llm:
-      apiKeySecretRef: gemini-vscode-tokens
+      apiKeySecretRef: gemini-api-key
     models:
     - gemini-3-flash-preview
     - gemini-3.1-pro-preview

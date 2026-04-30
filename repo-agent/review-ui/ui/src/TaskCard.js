@@ -19,7 +19,7 @@ function TaskCard({
         if (content !== localDraft) {
             setLocalDraft(content);
         }
-    }, [task.userDraft, task.agentDraft]);
+    }, [task.userDraft, task.agentDraft, localDraft]);
 
     useEffect(() => {
         let isMounted = true;

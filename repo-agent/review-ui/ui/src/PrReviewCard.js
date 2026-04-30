@@ -91,7 +91,7 @@ function TaskReviewCard({
                  // ignore parse error on init
              }
          }
-    }, [task.userDraft, task.agentDraft]);
+    }, [task.userDraft, task.agentDraft, localYaml]);
 
     const handleLocalYamlChange = (val) => {
         setLocalYaml(val);
@@ -789,7 +789,7 @@ function PrReviewCard({
       .catch(err => console.error("Failed to submit task draft", err));
   };
   
-  const fetchTasks = () => {
+  const fetchTasks = React.useCallback(() => {
     if (pr.type === 'pending' || pr.type === 'excluded') return;
     if (!repoName) return;
 
@@ -801,7 +801,7 @@ function PrReviewCard({
             }
         })
         .catch(err => console.error("Failed to fetch tasks:", err));
-  };
+  }, [repoName, pr.id, pr.type]);
 
 
 
@@ -809,7 +809,7 @@ function PrReviewCard({
     fetchTasks();
     const interval = setInterval(fetchTasks, 10000);
     return () => clearInterval(interval);
-  }, [pr.id, pr.type, pr.sandbox, lastUpdated, repoName]);
+  }, [fetchTasks, lastUpdated]);
 
   const handleCreateTask = () => {
       if (!repoName) return;

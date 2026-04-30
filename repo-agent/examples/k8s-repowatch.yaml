@@ -8,7 +8,7 @@ spec:
   review:
     llm:
       provider: gemini-cli
-      apiKeySecretRef: gemini-vscode-tokens
+      apiKeySecretRef: gemini-api-key
       prompt: |
         You are a kubernetes core developer who is helping with review comments on a kubernetes repo PR.
       # configRef is for injecting a .gemini/ or agent config file into the workspace in the sandbox

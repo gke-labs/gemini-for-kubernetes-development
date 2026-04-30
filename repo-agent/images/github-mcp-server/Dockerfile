@@ -3,7 +3,7 @@ FROM ghcr.io/github/github-mcp-server as build
 FROM debian:bookworm-slim
 
 # Install socat and necessary tools.
-RUN apt-get update && \
+RUN for i in 1 2 3; do apt-get update && break || sleep 5; done && \
     apt-get install -y --no-install-recommends \
     socat \
     # Needed to find dynamic library dependencies.

@@ -9,7 +9,7 @@ spec:
   maxActiveIssues: 3
   chores:
     mode: disabled
-  geminiAPIKeySecretName: gemini-vscode-tokens
+  geminiAPIKeySecretName: gemini-api-key
   ephemeralStorage: 10Gi
   image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
   repo:

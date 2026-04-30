@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -92,7 +93,9 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 		labels[k] = v
 	}
 	// Ensure sandbox label matches for service selector
-	labels["sandbox"] = sandboxName
+	labels["sandbox"] = k8s.TruncateLabel(sandboxName)
+	labels["sandbox.gemini.google.com/name"] = k8s.TruncateLabel(sandboxName)
+	labels["sandbox.gemini.google.com/sandbox-name"] = k8s.TruncateLabel(sandboxName)
 	// Default type to issue if not set
 	if _, ok := labels["sandbox-type"]; !ok {
 		labels["sandbox-type"] = "issue"
@@ -180,6 +183,24 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 
 	if opt.GHHost != "" {
 		env = append(env, map[string]interface{}{"name": "GH_HOST", "value": opt.GHHost})
+	}
+
+	if opt.LLMAPIKey != "" {
+		env = append(env, map[string]interface{}{
+			"name":  "GEMINI_API_KEY",
+			"value": opt.LLMAPIKey,
+		})
+	} else if opt.LLMAPIKeySecretName != "" {
+		env = append(env, map[string]interface{}{
+			"name": "GEMINI_API_KEY",
+			"valueFrom": map[string]interface{}{
+				"secretKeyRef": map[string]interface{}{
+					"name":     opt.LLMAPIKeySecretName,
+					"key":      "gemini",
+					"optional": true,
+				},
+			},
+		})
 	}
 
 	env = append(env, buildLLMEnvVars(opt.DevSandboxOptions)...)
@@ -313,7 +334,7 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 							containers = append(containers, map[string]interface{}{
 								"name":    "inject-agent",
 								"image":   opt.RepoSandboxImage,
-								"command": []interface{}{"/repo-agent/repo-sandbox", "inject", "--path", "/opt/repo-agent"},
+								"command": []interface{}{"repo-sandbox", "inject", "--path", "/opt/repo-agent"},
 								"volumeMounts": []interface{}{
 									map[string]interface{}{"name": "agent-bin", "mountPath": "/opt/repo-agent"},
 								},
@@ -436,7 +457,7 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 	}
 
 	// Service
-	serviceName := sandboxName + "-lb"
+	serviceName := k8s.TruncateName(sandboxName + "-lb")
 	service := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      serviceName,
@@ -445,7 +466,7 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 		},
 		Spec: corev1.ServiceSpec{
 			Selector: map[string]string{
-				"sandbox": sandboxName,
+				"sandbox": k8s.TruncateLabel(sandboxName),
 			},
 			Ports: []corev1.ServicePort{
 				{

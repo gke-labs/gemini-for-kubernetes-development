@@ -11,7 +11,7 @@ spec:
     mode: disabled
   review:
     severityThreshold: HIGH
-  geminiAPIKeySecretName: gemini-vscode-tokens
+  geminiAPIKeySecretName: gemini-api-key
   ephemeralStorage: 10Gi
   image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
   repo:

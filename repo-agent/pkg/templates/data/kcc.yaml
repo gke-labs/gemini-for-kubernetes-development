@@ -271,7 +271,7 @@ spec:
     workspaceDiskSize: 20Gi
     image: ghcr.io/gke-labs/gemini-for-kubernetes-development/dind-golang:latest
     llm:
-      apiKeySecretRef: gemini-vscode-tokens
+      apiKeySecretRef: gemini-api-key
   review:
     reviewShutdownAfterMinutes: 30
     workspaceDiskSize: 20Gi
@@ -280,7 +280,7 @@ spec:
     maxSandboxes: 5
     llm:
       configdirRef: kcc-review-gemini-config
-      apiKeySecretRef: gemini-vscode-tokens
+      apiKeySecretRef: gemini-api-key
       prompt: >-
         /google-internal:review-pr "{{.Number}}"
   issue:
@@ -291,7 +291,7 @@ spec:
     issueShutdownAfterMinutes: 300
     image: ghcr.io/gke-labs/gemini-for-kubernetes-development/dind-golang:latest
     llm:
-        apiKeySecretRef: gemini-vscode-tokens
+        apiKeySecretRef: gemini-api-key
     models:
     - gemini-3-flash-preview
     - gemini-3.1-pro-preview

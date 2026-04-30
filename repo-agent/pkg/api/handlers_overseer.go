@@ -43,7 +43,7 @@ func (s *Server) getOverseer(c *gin.Context) {
 
 func (s *Server) getOverseerSandboxes(c *gin.Context) {
 	name := c.Param("name")
-	namespace := fmt.Sprintf("overseer-%s", name)
+	namespace := k8s.TruncateName(fmt.Sprintf("overseer-%s", name))
 
 	// Get all sandboxes in the namespace
 	sandboxes, err := s.K8sManager.ListSandboxes(c.Request.Context(), namespace, "")
@@ -71,8 +71,8 @@ func (s *Server) getOverseerSandboxes(c *gin.Context) {
 func (s *Server) getOverseerChores(c *gin.Context) {
 	name := c.Param("name")
 	// Chores are sandboxes in the overseer namespace with specific labels
-	namespace := fmt.Sprintf("overseer-%s", name)
-	labelSelector := fmt.Sprintf("review.gemini.google.com/overseer=%s,sandbox.gemini.google.com/type=chore", name)
+	namespace := k8s.TruncateName(fmt.Sprintf("overseer-%s", name))
+	labelSelector := fmt.Sprintf("review.gemini.google.com/overseer=%s,sandbox.gemini.google.com/type=chore", k8s.TruncateLabel(name))
 	sandboxes, err := s.K8sManager.ListSandboxes(c.Request.Context(), namespace, labelSelector)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list chore sandboxes"})
@@ -88,11 +88,11 @@ func (s *Server) getOverseerChores(c *gin.Context) {
 
 func (s *Server) getOverseerLogs(c *gin.Context) {
 	name := c.Param("name")
-	namespace := fmt.Sprintf("overseer-%s", name)
+	namespace := k8s.TruncateName(fmt.Sprintf("overseer-%s", name))
 
 	// Find pod by label
 	pods, err := s.K8sManager.Clientset.CoreV1().Pods(namespace).List(c.Request.Context(), v1.ListOptions{
-		LabelSelector: fmt.Sprintf("sandbox=overseer-%s", name),
+		LabelSelector: fmt.Sprintf("sandbox.gemini.google.com/sandbox-name=%s", k8s.TruncateLabel(k8s.TruncateName(fmt.Sprintf("overseer-%s", name)))),
 	})
 	if err != nil || len(pods.Items) == 0 {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Overseer pod not found"})
@@ -120,10 +120,10 @@ func (s *Server) getOverseerLogs(c *gin.Context) {
 
 func (s *Server) getChoreLogs(c *gin.Context) {
 	overseerName := c.Param("name")
-	choreSandboxName := c.Param("name")
+	choreSandboxName := c.Param("choreName")
 	taskID := c.Query("taskID")
 
-	namespace := fmt.Sprintf("overseer-%s", overseerName)
+	namespace := k8s.TruncateName(fmt.Sprintf("overseer-%s", overseerName))
 
 	// If taskID is provided, proxy to agentserver.
 	// Otherwise, return pod logs.
@@ -150,7 +150,7 @@ func (s *Server) getChoreLogs(c *gin.Context) {
 
 	// Find pod by label
 	pods, err := s.K8sManager.Clientset.CoreV1().Pods(namespace).List(c.Request.Context(), v1.ListOptions{
-		LabelSelector: fmt.Sprintf("sandbox=%s", choreSandboxName),
+		LabelSelector: fmt.Sprintf("sandbox.gemini.google.com/sandbox-name=%s", k8s.TruncateLabel(choreSandboxName)),
 	})
 	if err != nil || len(pods.Items) == 0 {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Chore pod not found"})
@@ -176,7 +176,7 @@ func (s *Server) getChoreLogs(c *gin.Context) {
 func (s *Server) getChoreTasks(c *gin.Context) {
 	overseerName := c.Param("name")
 	choreSandboxName := c.Param("choreName")
-	namespace := fmt.Sprintf("overseer-%s", overseerName)
+	namespace := k8s.TruncateName(fmt.Sprintf("overseer-%s", overseerName))
 
 	tasks, err := s.K8sManager.ListSandboxTasks(c.Request.Context(), namespace, choreSandboxName)
 	if err != nil {
@@ -192,7 +192,7 @@ func (s *Server) getChoreTaskLogs(c *gin.Context) {
 	choreSandboxName := c.Param("name")
 	taskID := c.Param("taskID")
 
-	namespace := fmt.Sprintf("overseer-%s", overseerName)
+	namespace := k8s.TruncateName(fmt.Sprintf("overseer-%s", overseerName))
 
 	serviceName := fmt.Sprintf("%s-lb", choreSandboxName)
 	targetURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:13339", serviceName, namespace)
@@ -215,7 +215,7 @@ func (s *Server) getChoreTaskLogs(c *gin.Context) {
 func (s *Server) pauseChore(c *gin.Context) {
 	overseerName := c.Param("name")
 	choreName := c.Param("choreName")
-	namespace := fmt.Sprintf("overseer-%s", overseerName)
+	namespace := k8s.TruncateName(fmt.Sprintf("overseer-%s", overseerName))
 
 	overseer, err := s.K8sManager.GetOverseer(c.Request.Context(), overseerName)
 	if err != nil {

@@ -11,14 +11,14 @@ spec:
     maxSandboxes: 0
     image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
     llm:
-      apiKeySecretRef: gemini-vscode-tokens
+      apiKeySecretRef: gemini-api-key
   review:
     reviewShutdownAfterMinutes: 30
     image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
     maxActiveSandboxes: 3
     maxSandboxes: 5
     llm:
-      apiKeySecretRef: gemini-vscode-tokens
+      apiKeySecretRef: gemini-api-key
       prompt: >-
         You are an expert kubernetes developer who is helping with code reviews.
         Please look at the most recent commit and provide a review feedback.
@@ -34,7 +34,7 @@ spec:
     issueShutdownAfterMinutes: 0
     image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
     llm:
-      apiKeySecretRef: gemini-vscode-tokens
+      apiKeySecretRef: gemini-api-key
     models:
     - gemini-3-flash-preview
     - gemini-3.1-pro-preview

@@ -1,4 +1,19 @@
 #!/bin/bash
+
+# Copyright 2026.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 set -euo pipefail
 
 echo "Checking params"
@@ -61,6 +76,7 @@ kubectl apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/downl
 
 echo "Install repo agent"
 kubectl apply -f https://github.com/gke-labs/gemini-for-kubernetes-development/releases/download/${REPO_AGENT_VERSION}/manifest.yaml
+kubectl create secret -n repo-agent-system generic gemini-api-key --from-literal=gemini="${GEMINI_API_KEY:-}" --dry-run=client -o yaml | kubectl apply -f -
 kubectl create secret -n repo-agent-system generic gemini-vscode-tokens --from-literal=gemini="${GEMINI_API_KEY:-}" --dry-run=client -o yaml | kubectl apply -f -
 if [ ! -z "${ANTHROPIC_API_KEY:-}" ]; then
   echo "Creating Anthropic API key secret"

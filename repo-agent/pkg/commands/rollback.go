@@ -62,12 +62,7 @@ func (o *RollbackOptions) InitDefaults() {
 		}
 	}
 	if o.PullRequestID == 0 {
-		prid := os.Getenv("PULL_REQUEST_ID")
-		if prid != "" {
-			if _, err := fmt.Sscanf(prid, "%d", &o.PullRequestID); err != nil {
-				o.PullRequestID = 0
-			}
-		}
+		o.PullRequestID = GetPullRequestIDFromEnv()
 	}
 	if o.Remote == "" {
 		o.Remote = "origin"

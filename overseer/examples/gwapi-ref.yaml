@@ -9,7 +9,7 @@ spec:
   maxActiveIssues: 3
   chores:
     mode: enabled
-  geminiAPIKeySecretName: gemini-vscode-tokens
+  geminiAPIKeySecretName: gemini-api-key
   image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
   #configdirRef: gateway-api-ref-impl-gemini-config
   review:

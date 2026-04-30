@@ -8,7 +8,7 @@ spec:
   review:
     llm:
       provider: gemini-cli
-      apiKeySecretRef: gemini-vscode-tokens
+      apiKeySecretRef: gemini-api-key
       prompt: |
         /google-internal:review-pr "{{.Number}}"
       configdirRef: kcc-review-gemini-config

@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import yaml from 'js-yaml';
 import TaskCard from './TaskCard';
 import SandboxTerminal from './Terminal';
 
@@ -28,7 +27,7 @@ function IssueCard({
   const [commits, setCommits] = useState([]);
   const [selectedModel, setSelectedModel] = useState('');
 
-  const fetchTasks = () => {
+  const fetchTasks = React.useCallback(() => {
     if (!repoName || !issue.id) return;
     fetch(`/api/repo/${repoName}/issues/${issue.id}/tasks`)
         .then(res => res.json())
@@ -38,7 +37,7 @@ function IssueCard({
             }
         })
         .catch(err => console.error("Failed to fetch tasks:", err));
-  };
+  }, [repoName, issue.id]);
 
   const fetchCommits = () => {
     if (!repoName || !issue.id) return;
@@ -120,7 +119,7 @@ function IssueCard({
         const interval = setInterval(fetchTasks, 10000);
         return () => clearInterval(interval);
     }
-  }, [isCollapsed, isMainView, repoName, issue.id]);
+  }, [isCollapsed, isMainView, fetchTasks]);
 
   if (issue.type === 'pending' || issue.type === 'excluded') {
       return (

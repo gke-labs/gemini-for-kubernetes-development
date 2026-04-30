@@ -1,10 +1,26 @@
+/*
+Copyright 2026.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 // Command gfk-install is an interactive installer for Gemini for Kubernetes
 // Development on Google Kubernetes Engine (GKE).
 //
 // Usage:
 //
-//	go run . [flags]
-//	./gfk-install [flags]
+//      go run . [flags]
+//      ./gfk-install [flags]
 //
 // All flags are optional; the installer will prompt for any values not supplied.
 package main
@@ -66,6 +82,7 @@ func main() {
 	flag.StringVar(&cfg.RepoURL, "repo", "", "GitHub repository URL to watch (e.g. https://github.com/org/repo)")
 	flag.StringVar(&cfg.WatchNamespace, "watch-namespace", "", "Namespace for RepoWatch CR (default: derived from repo name)")
 	flag.StringVar(&cfg.GeminiAPIKey, "gemini-api-key", "", "Google Gemini API key")
+	flag.StringVar(&cfg.GeminiAPIKey, "gemini-vscode-tokens", "", "Google Gemini API key (alias for gemini-api-key)")
 	flag.StringVar(&cfg.GitHubPAT, "github-pat", "", "GitHub Personal Access Token for the bot account")
 	flag.StringVar(&cfg.GitHubOAuthClientID, "oauth-client-id", "", "GitHub OAuth App client ID (omit for single-user mode)")
 	flag.StringVar(&cfg.GitHubOAuthSecret, "oauth-client-secret", "", "GitHub OAuth App client secret")
@@ -249,9 +266,14 @@ func applyManifest(_ *Config) error {
 func createSecrets(cfg *Config) error {
 	ns := systemNamespace
 
-	fmt.Println("  Creating gemini-api-key secret …")
+	fmt.Println("  Creating gemini-api-key and gemini-vscode-tokens secrets …")
 	if err := applySecret(ns, "gemini-api-key", map[string]string{
-		"key": cfg.GeminiAPIKey,
+		"gemini": cfg.GeminiAPIKey,
+	}); err != nil {
+		return err
+	}
+	if err := applySecret(ns, "gemini-vscode-tokens", map[string]string{
+		"gemini": cfg.GeminiAPIKey,
 	}); err != nil {
 		return err
 	}
@@ -470,12 +492,16 @@ func createRepoWatch(cfg *Config) error {
 		}
 	}
 
-	// Copy the github-token and gemini-api-key secrets into the watch namespace
+	// Copy the github-token, gemini-api-key and gemini-vscode-tokens secrets into the watch namespace
 	// so the RepoWatch controller can access them.
-	for _, secret := range []string{"github-token", "gemini-api-key"} {
+	for _, secret := range []string{"github-token", "gemini-api-key", "gemini-vscode-tokens"} {
 		fmt.Printf("  Copying secret %s → %s …\n", secret, cfg.WatchNamespace)
 		secretJSON, err := output("kubectl", "get", "secret", "-n", systemNamespace, secret, "-o", "json")
 		if err != nil {
+			if secret == "gemini-vscode-tokens" {
+				fmt.Printf("  Note: skipping optional secret %s (not found)\n", secret)
+				continue
+			}
 			return fmt.Errorf("get secret %s: %w", secret, err)
 		}
 		// Clear metadata that would prevent re-creation in another namespace.
@@ -591,7 +617,7 @@ Prerequisites:
   • An existing GKE cluster (Standard or Autopilot)
   • kubectl, helm, gcloud, gh configured and in PATH
   • A GitHub Personal Access Token (repo + workflow scopes)
-  • A Google Gemini API key
+  • a Google Gemini API key
   • (Optional) A GitHub OAuth App for multi-user UI access
 `)
 }

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
@@ -52,6 +53,10 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 	for k, v := range opt.Labels {
 		labels[k] = v
 	}
+	// Ensure sandbox label matches for service selector
+	labels["sandbox"] = k8s.TruncateLabel(sandboxName)
+	labels["sandbox.gemini.google.com/name"] = k8s.TruncateLabel(sandboxName)
+	labels["sandbox.gemini.google.com/sandbox-name"] = k8s.TruncateLabel(sandboxName)
 	// Default type to review if not set
 	if _, ok := labels["sandbox-type"]; !ok {
 		labels["sandbox-type"] = "review"
@@ -164,6 +169,24 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 		env = append(env, map[string]interface{}{"name": "GH_HOST", "value": opt.GHHost})
 	}
 
+	if opt.LLMAPIKey != "" {
+		env = append(env, map[string]interface{}{
+			"name":  "GEMINI_API_KEY",
+			"value": opt.LLMAPIKey,
+		})
+	} else if opt.LLMAPIKeySecretName != "" {
+		env = append(env, map[string]interface{}{
+			"name": "GEMINI_API_KEY",
+			"valueFrom": map[string]interface{}{
+				"secretKeyRef": map[string]interface{}{
+					"name":     opt.LLMAPIKeySecretName,
+					"key":      "gemini",
+					"optional": true,
+				},
+			},
+		})
+	}
+
 	env = append(env, buildLLMEnvVars(opt.DevSandboxOptions)...)
 
 	env = append(env,
@@ -233,7 +256,8 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 				"podTemplate": map[string]interface{}{
 					"metadata": map[string]interface{}{
 						"labels": map[string]interface{}{
-							"sandbox": sandboxName,
+							"sandbox":                                k8s.TruncateLabel(sandboxName),
+							"sandbox.gemini.google.com/sandbox-name": k8s.TruncateLabel(sandboxName),
 						},
 					},
 					"spec": map[string]interface{}{
@@ -262,7 +286,7 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 							containers = append(containers, map[string]interface{}{
 								"name":    "inject-agent",
 								"image":   opt.RepoSandboxImage,
-								"command": []interface{}{"/repo-agent/repo-sandbox", "inject", "--path", "/opt/repo-agent"},
+								"command": []interface{}{"repo-sandbox", "inject", "--path", "/opt/repo-agent"},
 								"volumeMounts": []interface{}{
 									map[string]interface{}{
 										"name":      "agent-bin",
@@ -313,7 +337,7 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 		},
 	}
 
-	serviceName := fmt.Sprintf("%s-lb", sandboxName)
+	serviceName := k8s.TruncateName(fmt.Sprintf("%s-lb", sandboxName))
 	service := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "v1",
@@ -324,7 +348,7 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 			},
 			"spec": map[string]interface{}{
 				"selector": map[string]interface{}{
-					"sandbox": sandboxName,
+					"sandbox": k8s.TruncateLabel(sandboxName),
 				},
 				"ports": []interface{}{
 					map[string]interface{}{

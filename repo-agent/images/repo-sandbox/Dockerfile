@@ -20,6 +20,7 @@ COPY services/container-registry/go.sum services/container-registry/go.sum
 
 # Copy the source code
 COPY agentsandboxes/ agentsandboxes/
+COPY repo-agent/*.go repo-agent/
 COPY repo-agent/pkg/ repo-agent/pkg/
 COPY repo-agent/api/ repo-agent/api/
 COPY repo-agent/cmd/repo-sandbox/ repo-agent/cmd/repo-sandbox/
@@ -31,6 +32,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -v -o /gemini-stream-proc
 
 # Envbuilder root
 FROM ghcr.io/coder/envbuilder
+COPY --from=builder /repo-sandbox /usr/local/bin/repo-sandbox
 COPY --from=builder /repo-sandbox /repo-agent/repo-sandbox
 COPY --from=builder /gemini-stream-processor /usr/local/bin/gemini-stream-processor
 ENV KANIKO_DIR=/.envbuilder

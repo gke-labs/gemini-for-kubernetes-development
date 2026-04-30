@@ -1,5 +1,19 @@
 #!/bin/bash
 
+# Copyright 2026.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 # This script sets up Workload Identity for a Kubernetes Service Account to impersonate a GCP Service Account.
 # example:
 # K8S_SA=overseer-sandbox K8S_NAMESPACE=overseer-system ./repo-agent/scripts/setup-gcp-access-workload-identity.sh
@@ -30,12 +44,12 @@ fi
 if ! gcloud projects get-iam-policy "$PROJECT_ID" \
     --flatten="bindings[].members" \
     --format="table(bindings.role)" \
-    --filter="bindings.members:serviceAccount:${GCP_SA_EMAIL}" | grep -q "roles/owner"; then
+    --filter="bindings.members:serviceAccount:${GCP_SA_EMAIL}" | grep -q "roles/editor"; then
     gcloud projects add-iam-policy-binding $PROJECT_ID \
         --member="serviceAccount:${GCP_SA_EMAIL}" \
-        --role="roles/owner"
+        --role="roles/editor"
 else
-    echo "GCP Service Account ${GCP_SA_EMAIL} already has roles/owner on project ${PROJECT_ID}."
+    echo "GCP Service Account ${GCP_SA_EMAIL} already has roles/editor on project ${PROJECT_ID}."
 fi
 
 # 4. Bind the Kubernetes Service Account to the GCP Service Account

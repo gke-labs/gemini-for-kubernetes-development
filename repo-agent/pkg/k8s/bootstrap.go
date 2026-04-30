@@ -15,7 +15,7 @@ import (
 const (
 	SystemNamespace  = "repo-agent-system"
 	GithubSecretName = "github-pat"
-	GeminiSecretName = "gemini-vscode-tokens"
+	GeminiSecretName = "gemini-api-key"
 	ClaudeSecretName = "anthropic-api-key"
 	DevContainerCM   = "devcontainer-json"
 )

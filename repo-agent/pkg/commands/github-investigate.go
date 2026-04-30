@@ -100,12 +100,7 @@ func (c *GithubInvestigateCommand) InitDefaults() {
 	}
 
 	if c.PullRequestID == 0 {
-		prid := os.Getenv("PULL_REQUEST_ID")
-		if prid != "" {
-			if _, err := fmt.Sscanf(prid, "%d", &c.PullRequestID); err != nil {
-				c.PullRequestID = 0
-			}
-		}
+		c.PullRequestID = GetPullRequestIDFromEnv()
 	}
 }
 

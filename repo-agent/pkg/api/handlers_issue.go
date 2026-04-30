@@ -16,6 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	pkg_github "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 	"github.com/google/go-github/v39/github"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -44,7 +45,7 @@ func (s *Server) getIssueTasks(c *gin.Context) {
 	repo := c.Param("repo")
 	issueID := c.Param("issue_id")
 
-	sandboxName := fmt.Sprintf("%s-issue-%s", repo, issueID)
+	sandboxName := k8s.TruncateName(fmt.Sprintf("%s-issue-%s", repo, issueID))
 
 	taskList, err := s.K8sManager.ListSandboxTasks(c.Request.Context(), namespace, sandboxName)
 	if err != nil {
@@ -223,7 +224,7 @@ func (s *Server) saveIssueDraft(c *gin.Context) {
 		return
 	}
 
-	sandboxName := fmt.Sprintf("%s-issue-%s", repo, issueID)
+	sandboxName := k8s.TruncateName(fmt.Sprintf("%s-issue-%s", repo, issueID))
 	err := s.K8sManager.UpdateSandboxUserDraft(c.Request.Context(), namespace, sandboxName, payload.Draft)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save draft", "details": err.Error()})
@@ -249,7 +250,7 @@ func (s *Server) submitIssueComment(c *gin.Context) {
 	ctx := c.Request.Context()
 	log.Info("Submitting comment for Issue", "issueID", issueID, "repo", repo, "comment", payload.Comment)
 
-	sandboxName := fmt.Sprintf("%s-issue-%s", repo, issueID)
+	sandboxName := k8s.TruncateName(fmt.Sprintf("%s-issue-%s", repo, issueID))
 	gvr := schema.GroupVersionResource{
 		Group:    "agents.x-k8s.io",
 		Version:  "v1alpha1",
@@ -448,7 +449,7 @@ func (s *Server) getIssueTaskLogs(c *gin.Context) {
 	issueID := c.Param("issue_id")
 	taskID := c.Param("taskID")
 
-	sandboxName := fmt.Sprintf("%s-issue-%s", repo, issueID)
+	sandboxName := k8s.TruncateName(fmt.Sprintf("%s-issue-%s", repo, issueID))
 	serviceName := fmt.Sprintf("%s-lb", sandboxName)
 
 	targetURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:13339", serviceName, namespace)
@@ -492,7 +493,7 @@ func (s *Server) createIssueTask(c *gin.Context) {
 		return
 	}
 
-	sandboxName := fmt.Sprintf("%s-issue-%s", repo, issueID)
+	sandboxName := k8s.TruncateName(fmt.Sprintf("%s-issue-%s", repo, issueID))
 
 	// Fetch RepoWatch to get latest config
 	rw, err := s.K8sManager.GetRepoWatch(c.Request.Context(), namespace, repo)
@@ -571,7 +572,7 @@ func (s *Server) getIssueCommits(c *gin.Context) {
 		authUserLogin = authUser.GetLogin()
 	}
 
-	sandboxName := fmt.Sprintf("%s-issue-%s", repo, issueID)
+	sandboxName := k8s.TruncateName(fmt.Sprintf("%s-issue-%s", repo, issueID))
 	gvr := schema.GroupVersionResource{
 		Group:    "agents.x-k8s.io",
 		Version:  "v1alpha1",
@@ -742,7 +743,7 @@ func (s *Server) rollbackIssue(c *gin.Context) {
 		return
 	}
 
-	sandboxName := fmt.Sprintf("%s-issue-%s", repo, issueID)
+	sandboxName := k8s.TruncateName(fmt.Sprintf("%s-issue-%s", repo, issueID))
 	params := map[string]string{
 		"COMMIT_SHA":      payload.CommitSHA,
 		"PULL_REQUEST_ID": payload.PullRequestID,

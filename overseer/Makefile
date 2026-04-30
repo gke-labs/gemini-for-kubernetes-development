@@ -55,6 +55,7 @@ create-secrets: bin/github-portal-ca.crt
 		exit 1; \
 	fi
 	kubectl create namespace overseer-system || true
+	@kubectl create secret -n overseer-system generic gemini-api-key --from-literal=gemini=${GEMINI_API_KEY} --dry-run=client -o yaml | kubectl apply -f -
 	@kubectl create secret -n overseer-system generic gemini-vscode-tokens --from-literal=gemini=${GEMINI_API_KEY} --dry-run=client -o yaml | kubectl apply -f -
 	@kubectl create secret -n overseer-system generic ${ROBOT1_GH_USERID} \
 		--from-literal=pat="${ROBOT1_GH_PAT}" \

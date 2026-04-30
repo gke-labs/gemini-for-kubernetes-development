@@ -9,6 +9,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/agentsandboxes/pkg/threads"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -284,11 +285,18 @@ func FindSandboxPodInNamespace(ctx context.Context, sandboxName, namespace strin
 		namespace = kube.CurrentNamespace
 	}
 
-	// And the pods have label sandbox=<name>
-	labelSelector := fmt.Sprintf("sandbox=%s", sandboxName)
+	// And the pods have label sandbox.gemini.google.com/sandbox-name=<name>
+	labelSelector := fmt.Sprintf("sandbox.gemini.google.com/sandbox-name=%s", k8s.TruncateLabel(sandboxName))
 	pods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: labelSelector,
 	})
+	if err != nil || len(pods.Items) == 0 {
+		// Fallback to legacy label sandbox=<name>
+		labelSelector = fmt.Sprintf("sandbox=%s", sandboxName)
+		pods, err = clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+			LabelSelector: labelSelector,
+		})
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to list pods with selector %q: %w", labelSelector, err)
 	}

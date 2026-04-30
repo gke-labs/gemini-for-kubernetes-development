@@ -505,7 +505,7 @@ func (m *Manager) ListSandboxTasks(ctx context.Context, namespace, sandboxName s
 
 	labelSelector := ""
 	if sandboxName != "" {
-		labelSelector = fmt.Sprintf("sandbox.gemini.google.com/sandbox-name=%s", sandboxName)
+		labelSelector = fmt.Sprintf("sandbox.gemini.google.com/sandbox-name=%s", TruncateLabel(sandboxName))
 	}
 
 	unstructuredList, err := m.Client.Resource(gvr).Namespace(namespace).List(ctx, v1.ListOptions{
@@ -574,7 +574,18 @@ func (m *Manager) CreateSandboxTask(ctx context.Context, namespace, sandboxName,
 	}
 
 	// Generate a name
-	name := fmt.Sprintf("%s-%d-%s", sandboxName, time.Now().Unix(), taskType)
+	name := TruncateName(fmt.Sprintf("%s-%d-%s", sandboxName, time.Now().Unix(), taskType))
+
+	labels := map[string]string{
+		"sandbox.gemini.google.com/sandbox-name": TruncateLabel(sandboxName),
+		"sandbox.gemini.google.com/name":         TruncateLabel(sandboxName),
+	}
+
+	// Copy repowatch label if present for better observability and E2E test consistency
+	sandboxLabels := sandbox.GetLabels()
+	if val, ok := sandboxLabels["review.gemini.google.com/repowatch"]; ok {
+		labels["review.gemini.google.com/repowatch"] = val
+	}
 
 	task := &sandboxtaskv1alpha1.SandboxTask{
 		TypeMeta: v1.TypeMeta{
@@ -584,9 +595,7 @@ func (m *Manager) CreateSandboxTask(ctx context.Context, namespace, sandboxName,
 		ObjectMeta: v1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
-			Labels: map[string]string{
-				"sandbox.gemini.google.com/sandbox-name": sandboxName,
-			},
+			Labels:    labels,
 			OwnerReferences: []v1.OwnerReference{
 				*v1.NewControllerRef(sandbox, schema.GroupVersionKind{
 					Group:   ownerGVR.Group,

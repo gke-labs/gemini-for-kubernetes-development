@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import PrReviewCard from './PrReviewCard';
 
 function Review({
@@ -56,36 +56,38 @@ function Review({
             activeRepo.pendingPRs.forEach(p => fetchDetails(typeof p === 'object' ? p.number : p));
          }
     }
-  }, [activeRepo]);
-
+  }, [activeRepo, excludedDetails]);
   // Categorize PRs (Active, Pending, Excluded)
   // 1. Active PRs
-  const activeList = [];
-  if (prs.length > 0) {
-      prs.forEach(pr => activeList.push({ ...pr, id: String(pr.id), type: 'active', sortId: parseInt(pr.id) }));
-  }
+  const activeList = useMemo(() => {
+    const list = [];
+    if (prs.length > 0) {
+        prs.forEach(pr => list.push({ ...pr, id: String(pr.id), type: 'active', sortId: parseInt(pr.id) }));
+    }
 
-  const getPriority = (pr) => {
-      const isReviewDraftCreated = pr.reviewState === 'submitted' || !!pr.review;
-      if (isReviewDraftCreated) return 5;
+    const getPriority = (pr) => {
+        const isReviewDraftCreated = pr.reviewState === 'submitted' || !!pr.review;
+        if (isReviewDraftCreated) return 5;
 
-      if (!pr.agentState) return 6;
+        if (!pr.agentState) return 6;
 
-      const state = pr.agentState.toLowerCase();
-      if (state === 'review ready') return 1;
-      if (state.includes('error')) return 2;
-      if (state === 'quota exceeded') return 3;
-      if (state === 'too many files') return 4;
+        const state = pr.agentState.toLowerCase();
+        if (state === 'review ready') return 1;
+        if (state.includes('error')) return 2;
+        if (state === 'quota exceeded') return 3;
+        if (state === 'too many files') return 4;
 
-      return 6;
-  };
+        return 6;
+    };
 
-  activeList.sort((a, b) => {
-      const pA = getPriority(a);
-      const pB = getPriority(b);
-      if (pA !== pB) return pA - pB;
-      return b.sortId - a.sortId;
-  });
+    list.sort((a, b) => {
+        const pA = getPriority(a);
+        const pB = getPriority(b);
+        if (pA !== pB) return pA - pB;
+        return b.sortId - a.sortId;
+    });
+    return list;
+  }, [prs]);
 
   // 2. Pending PRs
   const pending = activeRepo.pendingPRs || [];

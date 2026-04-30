@@ -31,20 +31,15 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	overseerv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/overseer/pkg/api/v1alpha1"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 )
 
 // ReconcileOverseer ensures the Overseer sandbox is running for the given Overseer.
 func ReconcileOverseer(ctx context.Context, c client.Client, o *overseerv1alpha1.Overseer, repoSandboxImage, configDirImage string) error {
 	log := log.FromContext(ctx)
 
-	overseerName := fmt.Sprintf("overseer-%s", o.Name)
-	if len(overseerName) > 63 {
-		overseerName = overseerName[:63]
-	}
-	namespace := fmt.Sprintf("overseer-%s", o.Name)
-	if len(namespace) > 63 {
-		namespace = namespace[:63]
-	}
+	overseerName := k8s.TruncateName(fmt.Sprintf("overseer-%s", o.Name))
+	namespace := k8s.TruncateName(fmt.Sprintf("overseer-%s", o.Name))
 
 	// Define the sandbox object
 	sandbox := &unstructured.Unstructured{}
@@ -366,8 +361,10 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 				"name":      name,
 				"namespace": namespace,
 				"labels": map[string]interface{}{
-					"sandbox-type":                        "agent",
-					"overseer.gemini.google.com/overseer": o.Name,
+					"sandbox-type":                           "agent",
+					"overseer.gemini.google.com/overseer":    k8s.TruncateLabel(o.Name),
+					"sandbox.gemini.google.com/name":         k8s.TruncateLabel(name),
+					"sandbox.gemini.google.com/sandbox-name": k8s.TruncateLabel(name),
 				},
 			},
 			"spec": map[string]interface{}{
@@ -375,8 +372,9 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 				"podTemplate": map[string]interface{}{
 					"metadata": map[string]interface{}{
 						"labels": map[string]interface{}{
-							"sandbox":      name,
-							"sandbox-type": "agent",
+							"sandbox":                                name,
+							"sandbox.gemini.google.com/sandbox-name": k8s.TruncateLabel(name),
+							"sandbox-type":                           "agent",
 						},
 					},
 					"spec": podSpec,

@@ -11,13 +11,13 @@ spec:
     maxSandboxes: 0
     image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
     llm:
-      apiKeySecretRef: gemini-vscode-tokens
+      apiKeySecretRef: gemini-api-key
   review:
     reviewShutdownAfterMinutes: 30
     image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
     llm:
       configdirRef: agent-sandbox-gemini-config
-      apiKeySecretRef: gemini-vscode-tokens
+      apiKeySecretRef: gemini-api-key
       prompt: >-
         You are an expert kubernetes developer who is helping with code reviews.
         This repo you are working on Gemini for Kubernetes development is a kubernetes sigs project to help run review and issue agents on a repo.
@@ -37,7 +37,7 @@ spec:
     issueShutdownAfterMinutes: 300
     image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
     llm:
-        apiKeySecretRef: gemini-vscode-tokens
+        apiKeySecretRef: gemini-api-key
     models:
     - gemini-3-flash-preview
     - gemini-3.1-pro-preview

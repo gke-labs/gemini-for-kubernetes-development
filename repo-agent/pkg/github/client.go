@@ -5,6 +5,7 @@ package github
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -52,6 +53,18 @@ func NewClient(ctx context.Context) (*Client, error) {
 	return &Client{
 		Client: clients.NewGitHubClient(ctx, token),
 	}, nil
+}
+
+// IsNotFound returns true if the error is a 404 Not Found from GitHub.
+func IsNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	var gerr *githubv39.ErrorResponse
+	if errors.As(err, &gerr) {
+		return gerr.Response != nil && gerr.Response.StatusCode == 404
+	}
+	return false
 }
 
 // Client is a wrapper around the github.Client.
