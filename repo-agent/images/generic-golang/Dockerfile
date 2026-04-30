@@ -59,9 +59,9 @@ RUN npm install -g @google/gemini-cli @anthropic-ai/claude-code
 # Install code-server with retries
 RUN for i in 1 2 3 4 5; do \
         curl -fsSL https://code-server.dev/install.sh | sh && break || \
-        (echo "Retry $i/5 failed, waiting..."; sleep 15); \
-    done
-RUN code-server --install-extension golang.go --install-extension vscodevim.vim
+        (echo "Retry $i/5 failed, waiting..."; [ $i -eq 5 ] && exit 1 || sleep 15); \
+    done && \
+    code-server --install-extension golang.go --install-extension vscodevim.vim
 
 COPY --from=build-repo-sandbox /repo-sandbox /repo-agent/repo-sandbox
 COPY --from=build-gh /bin/gh /bin/gh

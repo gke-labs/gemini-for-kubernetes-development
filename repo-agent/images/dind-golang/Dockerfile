@@ -94,7 +94,7 @@ RUN curl -sSfL "https://github.com/kubernetes-sigs/kustomize/releases/download/k
 # Install code-server with retries
 RUN for i in 1 2 3 4 5; do \
         curl -fsSL https://code-server.dev/install.sh | sh && break || \
-        (echo "Retry $i/5 failed, waiting..."; sleep 15); \
+        (echo "Retry $i/5 failed, waiting..."; [ $i -eq 5 ] && exit 1 || sleep 15); \
     done && \
     code-server --install-extension golang.go --install-extension vscodevim.vim
 

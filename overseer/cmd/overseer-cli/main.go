@@ -654,7 +654,7 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 		botLogin := os.Getenv("GITHUB_BOT_LOGIN")
 		reviewed, err := hasBeenReviewedByBot(ctx, ghClient.Client, owner, repo, number, botLogin, headSHA)
 		if err != nil {
-			fmt.Printf("Warning: failed to check GitHub reviews: %v\n", err)
+			return fmt.Errorf("failed to check GitHub reviews: %w", err)
 		} else if reviewed {
 			fmt.Printf("Review for SHA %s already exists on GitHub. Skipping.\n", headSHA)
 			return nil
@@ -794,15 +794,12 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 	botLogin := os.Getenv("GITHUB_BOT_LOGIN")
 	reviewed, err := hasBeenReviewedByBot(ctx, client, owner, repoName, prNumber, botLogin, currentSHA)
 	if err != nil {
-		fmt.Printf("Warning: failed to check GitHub reviews during submission: %v\n", err)
+		return fmt.Errorf("failed to check GitHub reviews during submission: %w", err)
 	} else if reviewed {
 		fmt.Printf("Review for SHA %s already exists on GitHub. Skipping submission.\n", currentSHA)
 
 		// Update sandbox reviewState if sandbox still exists
-		reviewState := "submitted"
-		if currentSHA != "" {
-			reviewState = "submitted:" + currentSHA
-		}
+		reviewState := "submitted:" + currentSHA
 		if err := manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "reviewState", reviewState); err != nil {
 			fmt.Printf("Warning: failed to update sandbox annotation: %v\n", err)
 		}
@@ -1298,9 +1295,14 @@ func getTokenFromScript() (string, error) {
 	return "", nil
 }
 
+var warnedAboutBotLogin bool
+
 func hasBeenReviewedByBot(ctx context.Context, client *githubv39.Client, owner, repo string, prNumber int, botLogin, headSHA string) (bool, error) {
 	if botLogin == "" {
-		fmt.Println("Warning: GITHUB_BOT_LOGIN is not set, skipping duplicate review check.")
+		if !warnedAboutBotLogin {
+			fmt.Println("Warning: GITHUB_BOT_LOGIN is not set, skipping duplicate review check.")
+			warnedAboutBotLogin = true
+		}
 		return false, nil
 	}
 	if headSHA == "" {
@@ -1314,7 +1316,18 @@ func hasBeenReviewedByBot(ctx context.Context, client *githubv39.Client, owner, 
 			return false, err
 		}
 		for _, r := range reviews {
-			if r.GetUser() != nil && r.GetUser().GetLogin() == botLogin && r.GetCommitID() == headSHA {
+			if r.GetUser() == nil {
+				continue
+			}
+			login := r.GetUser().GetLogin()
+			// GitHub usernames are case-insensitive. Bot accounts often have a [bot] suffix.
+			isBot := strings.EqualFold(login, botLogin) || strings.EqualFold(login, botLogin+"[bot]")
+			// Commit SHAs are case-insensitive hex strings.
+			isSameSHA := strings.EqualFold(r.GetCommitID(), headSHA)
+			// Skip dismissed reviews as they might indicate a request for re-review.
+			isNotDismissed := r.GetState() != "DISMISSED"
+
+			if isBot && isSameSHA && isNotDismissed {
 				return true, nil
 			}
 		}

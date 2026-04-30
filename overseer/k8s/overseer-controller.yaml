@@ -98,7 +98,11 @@ spec:
         - name: OVERSEER_IMAGE
           value: ko://overseer/images/overseer
         - name: GITHUB_BOT_LOGIN
-          value: "" # Optional: Set to a default bot login for reviews
+          valueFrom:
+            secretKeyRef:
+              name: github-bot-login
+              key: userid
+              optional: true
         resources:
           limits:
             cpu: 500m

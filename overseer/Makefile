@@ -54,6 +54,11 @@ create-secrets:
 		--from-literal=userid="${ROBOT1_GH_USERID}" \
 		--from-literal=email="${ROBOT1_GH_EMAIL}" \
 		--dry-run=client -o yaml | kubectl apply -f -
+	@if [ -n "${GITHUB_BOT_LOGIN}" ]; then \
+		kubectl create secret -n overseer-system generic github-bot-login \
+			--from-literal=userid="${GITHUB_BOT_LOGIN}" \
+			--dry-run=client -o yaml | kubectl apply -f -; \
+	fi
 
 .PHONY: install-dep-packages
 install-dep-packages:
