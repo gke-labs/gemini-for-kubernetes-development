@@ -269,7 +269,7 @@ spec:
     maxActiveSandboxes: 0
     maxSandboxes: 0
     workspaceDiskSize: 20Gi
-    image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
+    image: ghcr.io/gke-labs/gemini-for-kubernetes-development/dind-golang:latest
     llm:
       apiKeySecretRef: gemini-vscode-tokens
   review:
@@ -289,7 +289,7 @@ spec:
     maxSandboxes: 6
     workspaceDiskSize: 20Gi
     issueShutdownAfterMinutes: 300
-    image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
+    image: ghcr.io/gke-labs/gemini-for-kubernetes-development/dind-golang:latest
     llm:
         apiKeySecretRef: gemini-vscode-tokens
     models:

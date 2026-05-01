@@ -65,12 +65,25 @@ function setupGitRepos {
     
     # Check if repo already exists (reuse sandbox case)
     if [ ! -d "/workspaces/${REPO_NAME}" ]; then
-        echo "cloning repository"
-        (cd /workspaces/ && git clone ${CLONE_URL})
+        echo "cloning repository from ${CLONE_URL}"
+        (cd /workspaces/ && git clone "${CLONE_URL}" "${REPO_NAME}")
+
+        # Ensure we have the fork and remotes set up correctly
+        echo "Configuring fork..."
+        (cd "/workspaces/${REPO_NAME}" && gh repo fork --remote)
+
+        echo "Setting default repository for gh CLI..."
+        (cd "/workspaces/${REPO_NAME}" && gh repo set-default "${CLONE_URL}")
+
+        echo "Syncing fork with upstream..."
+        # Specify the fork explicitly to avoid 'gh repo set-default' issues
+        (cd "/workspaces/${REPO_NAME}" && gh repo sync "${GITHUB_USER_ID}/${REPO_NAME}" --force)
+        
+        # Ensure we have all branches from upstream
+        (cd "/workspaces/${REPO_NAME}" && git fetch upstream && git fetch origin)
     else
-        echo "repository already exists"
-        # Optional: fetch latest changes
-        (cd "/workspaces/${REPO_NAME}" && git fetch origin)
+        echo "repository already exists, fetching latest changes..."
+        (cd "/workspaces/${REPO_NAME}" && git fetch origin && git fetch upstream)
     fi
 }
 
@@ -82,18 +95,22 @@ function checkoutBranch {
     if git show-ref --verify --quiet "refs/heads/${BRANCH_NAME}"; then
         echo "Branch ${BRANCH_NAME} exists locally, checking out..."
         git checkout "${BRANCH_NAME}"
-    # Check if branch exists remotely
+    # Check if branch exists remotely on origin
     elif git show-ref --verify --quiet "refs/remotes/origin/${BRANCH_NAME}"; then
-        echo "Branch ${BRANCH_NAME} exists remotely, checking out..."
+        echo "Branch ${BRANCH_NAME} exists remotely on origin, checking out..."
         git checkout "${BRANCH_NAME}"
     else
         echo "Branch ${BRANCH_NAME} does not exist."
+
         if [ -n "${SOURCE_BRANCH}" ] && [ "${SOURCE_BRANCH}" != "${BRANCH_NAME}" ]; then
              echo "Creating ${BRANCH_NAME} from ${SOURCE_BRANCH}..."
-             # Try remote source first
+             
+             # Try origin source
              if git show-ref --verify --quiet "refs/remotes/origin/${SOURCE_BRANCH}"; then
+                 echo "Found ${SOURCE_BRANCH} on origin."
                  git checkout -b "${BRANCH_NAME}" "origin/${SOURCE_BRANCH}"
              elif git show-ref --verify --quiet "refs/heads/${SOURCE_BRANCH}"; then
+                 echo "Found ${SOURCE_BRANCH} locally."
                  git checkout -b "${BRANCH_NAME}" "${SOURCE_BRANCH}"
              else
                  echo "Source branch ${SOURCE_BRANCH} not found, creating from default..."

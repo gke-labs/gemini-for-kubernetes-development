@@ -342,7 +342,7 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 	h := fnv.New32a()
 	h.Write([]byte(fullSuffix))
 	hashedSuffix := fmt.Sprintf("%08x", h.Sum32())
-	sandboxName := fmt.Sprintf("%s-dev", hashedSuffix)
+	sandboxName := fmt.Sprintf("dev-%s", hashedSuffix)
 
 	// Check if branch is in excludeBranches and remove it if so
 	excludeBranches, found, err := unstructured.NestedStringSlice(rw.Object, "spec", "dev", "excludeBranches")
@@ -404,8 +404,7 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 		LLMAPIKeySecretName: apiKeySecretRef,
 		Prompt:              req.Prompt,
 
-		GithubSecretName: githubSecretName,
-
+		GithubSecretName:      githubSecretName,
 		DevcontainerConfigRef: devContainerConfigRef,
 		Image:                 image,
 
@@ -416,10 +415,9 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 
 		DindSupport:       dindSupport,
 		WorkspaceDiskSize: workspaceDiskSize,
-
-		IdeaID:         req.IdeaID,
-		Approach:       req.Approach,
-		ParentApproach: req.ParentApproach,
+		IdeaID:            req.IdeaID,
+		Approach:          req.Approach,
+		ParentApproach:    req.ParentApproach,
 	}
 
 	sb, svc := sandbox.NewDevSandbox(opts)

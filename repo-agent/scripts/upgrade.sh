@@ -32,8 +32,8 @@ cd "${REPO_AGENT_ROOT}"
 cleanup() {
   echo "--- Cleanup ---"
   # Rarely cleanups are required.
-  ./scripts/ops/scaledown_and_clean.py --types=sandboxes --apply
-  ./scripts/ops/scaledown_and_clean.py --types=sandboxtasks --apply
+  #./scripts/ops/scaledown_and_clean.py --types=sandboxes --apply
+  #./scripts/ops/scaledown_and_clean.py --types=sandboxtasks --apply
 }
 
 upgrade() {

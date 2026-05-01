@@ -5,4 +5,4 @@ metadata:
   namespace: repo-agent-system
 data:
   GITHUB_ALLOWED_USERS: ""
-  GITHUB_ADMIN_USERS: "barney-s"
+  GITHUB_ADMIN_USERS: "barney-s,xiaoweim,ldanielmadariaga"

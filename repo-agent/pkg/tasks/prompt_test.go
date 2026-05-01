@@ -45,6 +45,7 @@ type MockModel struct {
 	PromptFile    string
 	Extensions    []MockExtension
 	Branch        string
+	PRLabel       string
 }
 
 func TestFixIssuePromptTemplate(t *testing.T) {

@@ -168,6 +168,7 @@ func (c *GithubFixIssueCommand) Run(ctx context.Context) error {
 		PromptFile:    promptPath,
 		Models:        strings.Split(c.Model, ","),
 		Branch:        os.Getenv("ISSUE_BRANCH"),
+		PRLabel:       os.Getenv("PR_LABEL"),
 	}
 
 	if c.ExtensionsJSON != "" {

@@ -1707,7 +1707,6 @@ func (r *Reconciler) reconcileDevSandboxesInternal(ctx context.Context, user *gi
 		// hashing ensures we don't exceed this limit
 		fullSuffix := fmt.Sprintf("dev-%s-%s", forkRepo, safeBranchName)
 		hashedSuffix := NameHash(fullSuffix)
-
 		oldSandboxName := fmt.Sprintf("%s-dev", hashedSuffix)
 		newSandboxName := fmt.Sprintf("dev-%s", hashedSuffix)
 
