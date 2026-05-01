@@ -12,11 +12,11 @@ import (
 func (s *Server) getSettings(c *gin.Context) {
 	namespace := s.Auth.GetNamespaceFromContext(c)
 	settings := gin.H{
-		"manual_pat_set":          false,
-		"oauth_pat_set":           false,
-		"gemini_api_key_set":      false,
-		"anthropic_api_key_set":   false,
-		"github_pat_set":          false, // Legacy field for UI compatibility
+		"manual_pat_set":        false,
+		"oauth_pat_set":         false,
+		"gemini_api_key_set":    false,
+		"anthropic_api_key_set": false,
+		"github_pat_set":        false, // Legacy field for UI compatibility
 	}
 
 	if sec, err := s.K8sManager.Clientset.CoreV1().Secrets(namespace).Get(c.Request.Context(), k8s.GithubSecretName, v1.GetOptions{}); err == nil {
