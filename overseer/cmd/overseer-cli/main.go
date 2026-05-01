@@ -504,6 +504,13 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 		return fmt.Errorf("OVERSEER_NAME and NAMESPACE environment variables must be set")
 	}
 
+	if number <= 0 && prNumber <= 0 {
+		return fmt.Errorf("either issue number or PR number (to resolve issue from) must be greater than zero")
+	}
+	if prNumber < 0 {
+		return fmt.Errorf("PR number must be greater than or equal to zero")
+	}
+
 	issueMode := getMode("ISSUE_MODE")
 	isDryRun := dryRun || issueMode == "dryrun"
 	if issueMode == "disabled" {
@@ -548,9 +555,6 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 	}
 
 	if number == 0 && prNumber != 0 {
-		if prNumber <= 0 {
-			return fmt.Errorf("PR number must be greater than zero")
-		}
 		klog.Infof("Resolving issue from PR %d...", prNumber)
 		if isDryRun {
 			klog.Infof("[dryrun] Would resolve issue from PR %d", prNumber)
@@ -661,6 +665,10 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 		return fmt.Errorf("OVERSEER_NAME and NAMESPACE environment variables must be set")
 	}
 
+	if number <= 0 {
+		return fmt.Errorf("PR number must be greater than zero")
+	}
+
 	modeName := "PR_MODE"
 	if submit || taskType == "review" {
 		modeName = "REVIEW_MODE"
@@ -711,10 +719,6 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 	owner, repo, err := parseRepoURL(overseer.Spec.RepoURL)
 	if err != nil {
 		return fmt.Errorf("failed to parse RepoURL: %w", err)
-	}
-
-	if number <= 0 {
-		return fmt.Errorf("PR number must be greater than zero")
 	}
 
 	if isDryRun {
