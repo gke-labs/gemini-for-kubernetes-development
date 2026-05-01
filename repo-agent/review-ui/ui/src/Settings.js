@@ -3,7 +3,8 @@ import React, { useState, useEffect } from 'react';
 function Settings({ onBack }) {
     const [githubPat, setGithubPat] = useState('');
     const [geminiKey, setGeminiKey] = useState('');
-    const [status, setStatus] = useState({ github_pat_set: false, gemini_api_key_set: false });
+    const [anthropicKey, setAnthropicKey] = useState('');
+    const [status, setStatus] = useState({ github_pat_set: false, gemini_api_key_set: false, anthropic_api_key_set: false });
     const [isLoading, setIsLoading] = useState(true);
     const [message, setMessage] = useState({ text: '', type: '' }); // type: 'success' or 'error'
     const [versionInfo, setVersionInfo] = useState({ version: '...', commit: '...' });
@@ -43,6 +44,13 @@ function Settings({ onBack }) {
         const payload = {};
         if (githubPat) payload.github_pat = githubPat;
         if (geminiKey) payload.gemini_api_key = geminiKey;
+        if (anthropicKey) {
+            if (!anthropicKey.startsWith('sk-ant-')) {
+                setMessage({ text: 'Invalid Anthropic API Key format. It should start with "sk-ant-".', type: 'error' });
+                return;
+            }
+            payload.anthropic_api_key = anthropicKey;
+        }
 
         if (Object.keys(payload).length === 0) {
              setMessage({ text: 'Nothing to update.', type: 'info' });
@@ -59,6 +67,7 @@ function Settings({ onBack }) {
                 setMessage({ text: 'Settings updated successfully!', type: 'success' });
                 setGithubPat('');
                 setGeminiKey('');
+                setAnthropicKey('');
                 // Refresh status
                 fetch('/api/settings').then(r => r.json()).then(setStatus);
             } else {
@@ -177,6 +186,25 @@ function Settings({ onBack }) {
                     <p style={{ fontSize: '0.9rem', marginTop: '5px' }}>
                         Required for AI-powered reviews and triage. 
                         Check your <a href="https://ai.dev/rate-limit" target="_blank" rel="noopener noreferrer">token usage</a>.
+                    </p>
+                </div>
+
+                <div className="form-group">
+                    <label htmlFor="anthropicKey">Anthropic API Key:</label>
+                    <div className="input-status-wrapper">
+                        <input
+                            type="password"
+                            id="anthropicKey"
+                            value={anthropicKey}
+                            onChange={(e) => setAnthropicKey(e.target.value)}
+                            placeholder={status.anthropic_api_key_set ? "(Currently set - leave blank to keep)" : "Enter new API Key"}
+                        />
+                         <span className={`status-badge ${status.anthropic_api_key_set ? 'set' : 'missing'}`}>
+                            {status.anthropic_api_key_set ? '✅ Configured' : '⚠️ Not Set'}
+                        </span>
+                    </div>
+                    <p style={{ fontSize: '0.9rem', marginTop: '5px' }}>
+                        Required for Claude-powered features. 
                     </p>
                 </div>
 
