@@ -418,6 +418,27 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 		}
 	}
 
+	if scriptToken != "" {
+		apiKeySecretName = sandboxName + "-api-key"
+		klog.Infof("Creating API key secret %s...", apiKeySecretName)
+		secret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      apiKeySecretName,
+				Namespace: namespace,
+				Labels: map[string]string{
+					"sandbox.gemini.google.com/sandbox-name": k8s.TruncateLabel(sandboxName),
+				},
+			},
+			Data: map[string][]byte{
+				"gemini": []byte(scriptToken),
+			},
+		}
+		_, err = kubeClient.Clientset.CoreV1().Secrets(namespace).Create(ctx, secret, metav1.CreateOptions{})
+		if err != nil && !kerrors.IsAlreadyExists(err) {
+			return fmt.Errorf("failed to create API key secret: %w", err)
+		}
+	}
+
 	opt := sandbox.AgentSandboxOptions{
 		DevSandboxOptions: sandbox.DevSandboxOptions{
 			Name:      sandboxName,
@@ -443,7 +464,7 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 			BotEmail:            githubBotEmail,
 			LLMAPIKeySecretName: apiKeySecretName,
 			GithubSecretName:    githubSecretName,
-			LLMAPIKey:           scriptToken,
+			LLMAPIKey:           "", // scriptToken is now passed via secret
 			OverseerName:        overseerName,
 			RepoSandboxImage:    os.Getenv("REPO_SANDBOX_IMAGE"),
 			ConfigDirImage:      os.Getenv("CONFIG_DIR_IMAGE"),
