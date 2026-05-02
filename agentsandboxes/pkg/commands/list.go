@@ -29,18 +29,21 @@ type ListOptions struct {
 }
 
 // InitDefaults initializes default values for ListOptions.
-func (o *ListOptions) InitDefaults() {
+func (o *ListOptions) InitDefaults() error {
+	return nil
 }
 
 // BuildListCommand builds the cobra command for listing agent sandboxes.
 func BuildListCommand() *cobra.Command {
 	var opt ListOptions
-	opt.InitDefaults()
 
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List agent sandboxes",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := opt.InitDefaults(); err != nil {
+				return err
+			}
 			return RunList(cmd.Context(), opt)
 		},
 	}

@@ -253,7 +253,7 @@ func (c *GithubResolveConflictsCommand) Run(ctx context.Context) error {
 	if c.ExtensionsJSON != "" {
 		var extensions []reviewv1alpha1.Extension
 		if err := json.Unmarshal([]byte(c.ExtensionsJSON), &extensions); err != nil {
-			klog.Warningf("failed to unmarshal extensions JSON (skipping): %v", err)
+			klog.Warningf("failed to unmarshal extensions JSON (skipping): %v; JSON: %q", err, c.ExtensionsJSON)
 		} else {
 			task.Extensions = extensions
 		}

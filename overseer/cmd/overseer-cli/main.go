@@ -820,10 +820,19 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 }
 
 func parseRepoURL(url string) (string, string, error) {
-	u := strings.TrimPrefix(url, "https://")
+	u := url
+	u = strings.TrimPrefix(u, "https://")
+	u = strings.TrimPrefix(u, "http://")
+	u = strings.TrimPrefix(u, "ssh://")
+	u = strings.TrimPrefix(u, "git@")
 	u = strings.TrimSuffix(u, ".git")
+	u = strings.TrimSuffix(u, "/")
+
+	// Replace : with / to handle git@github.com:owner/repo
+	u = strings.ReplaceAll(u, ":", "/")
+
 	parts := strings.Split(u, "/")
-	if len(parts) < 3 {
+	if len(parts) < 2 {
 		return "", "", fmt.Errorf("invalid repo URL: %s", url)
 	}
 	return parts[len(parts)-2], parts[len(parts)-1], nil

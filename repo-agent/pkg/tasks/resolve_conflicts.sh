@@ -138,8 +138,8 @@ function checkoutPRBranch {
 function verifyResolution {
     echo "Verifying conflict resolution..."
     # Use git diff HEAD --check to identify conflict markers in both staged and unstaged changes.
-    # We disable common whitespace checks that might be introduced by the LLM but aren't merge conflicts.
-    if ! git -c core.whitespace=blank-at-eol,-blank-at-eof,-space-before-tab,-trailing-space diff HEAD --check; then
+    # We disable all whitespace checks that might be introduced by the LLM but aren't merge conflicts.
+    if ! git -c core.whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab,-trailing-space diff HEAD --check; then
         echo "Conflict markers found by git diff --check"
         return 1
     fi
@@ -344,8 +344,8 @@ function runGemini {
             echo "Error: git fetch origin ${BASE_REF} failed after 3 attempts. Skipping model ${MODEL}."
             continue
         fi
-        # We merge from FETCH_HEAD to ensure we are using exactly what we just fetched.
-        if git merge FETCH_HEAD --no-ff --no-commit; then
+        # We merge from origin/${BASE_REF} as suggested in review to avoid FETCH_HEAD overwrites.
+        if git merge "origin/${BASE_REF}" --no-ff --no-commit; then
              echo "Merge successful without conflicts (unexpected in loop). Verifying..."
              set +e
              verifyResolution
@@ -378,7 +378,8 @@ function runGemini {
 
         echo "Conflicts detected. Calling Gemini with model ${MODEL}..."
         # We use --yolo because this runs in a sandboxed pod and we need automated resolution.
-        if gemini --yolo --model "${MODEL}" --output-format stream-json < "${PROMPT_FILE}" | /opt/repo-agent/gemini-stream-processor --output "${TASK_DIR}/gemini-output-${MODEL}.json"; then
+        # Wrapped with timeout to prevent infinite hangs.
+        if timeout 10m gemini --yolo --model "${MODEL}" --output-format stream-json < "${PROMPT_FILE}" | /opt/repo-agent/gemini-stream-processor --output "${TASK_DIR}/gemini-output-${MODEL}.json"; then
              echo "Gemini execution successful with model: ${MODEL}"
              
              set +e
@@ -455,10 +456,10 @@ if [ "${FETCH_SUCCESS}" = false ]; then
     echo "Failed to fetch base branch after 3 attempts. Perhaps it was deleted?"
     exit 1
 fi
-echo "Attempting initial merge of FETCH_HEAD..."
+echo "Attempting initial merge of origin/${BASE_REF}..."
 BEFORE_MERGE_SHA=$(git rev-parse HEAD)
 # Use --no-ff and --no-commit to verify behavioral correctness even for clean merges.
-if git merge FETCH_HEAD --no-ff --no-commit; then
+if git merge "origin/${BASE_REF}" --no-ff --no-commit; then
     set +e
     verifyResolution
     V_RES=$?
@@ -475,9 +476,8 @@ if git merge FETCH_HEAD --no-ff --no-commit; then
         pushChanges
         exit 0
     fi
-    echo "Merge succeeded but conflict markers found or tests failed. Proceeding to LLM loop."
-    git merge --abort || true
-    git reset --hard "${BEFORE_MERGE_SHA}"
+    echo "Merge succeeded but conflict markers found or tests failed. Exiting as LLM step is bypassed."
+    exit 1
 else
     echo "Initial merge failed with conflicts. Proceeding to LLM loop."
     git merge --abort || true

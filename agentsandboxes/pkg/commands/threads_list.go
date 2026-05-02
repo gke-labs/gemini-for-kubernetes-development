@@ -32,19 +32,22 @@ type ThreadsListOptions struct {
 }
 
 // InitDefaults initializes default values for ThreadsListOptions.
-func (o *ThreadsListOptions) InitDefaults() {
+func (o *ThreadsListOptions) InitDefaults() error {
+	return nil
 }
 
 // BuildThreadsListCommand builds the cobra command for listing threads.
 func BuildThreadsListCommand() *cobra.Command {
 	var opt ThreadsListOptions
-	opt.InitDefaults()
 
 	cmd := &cobra.Command{
 		Use:   "list <sandbox-name>",
 		Short: "List LLM threads in a sandbox",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := opt.InitDefaults(); err != nil {
+				return err
+			}
 			opt.SandboxName = args[0]
 			return RunThreadsList(cmd.Context(), opt)
 		},

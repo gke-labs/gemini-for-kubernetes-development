@@ -31,25 +31,30 @@ type CreateOptions struct {
 }
 
 // InitDefaults initializes default values for CreateOptions.
-func (o *CreateOptions) InitDefaults() {
-	o.Image = "gcr.io/justinsb-knotai-dev/generic-golang:latest"
+func (o *CreateOptions) InitDefaults() error {
+	if o.Image == "" {
+		o.Image = "gcr.io/justinsb-knotai-dev/generic-golang:latest"
+	}
+	return nil
 }
 
 // BuildCreateCommand builds the cobra command for creating an agent sandbox.
 func BuildCreateCommand() *cobra.Command {
 	var opt CreateOptions
-	opt.InitDefaults()
 
 	cmd := &cobra.Command{
 		Use:   "create [name]",
 		Short: "Create an agent sandbox",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := opt.InitDefaults(); err != nil {
+				return err
+			}
 			opt.Name = args[0]
 			return RunCreate(cmd.Context(), opt)
 		},
 	}
-	cmd.Flags().StringVar(&opt.Image, "image", opt.Image, "Container image for the sandbox")
+	cmd.Flags().StringVar(&opt.Image, "image", "", "Container image for the sandbox")
 
 	return cmd
 }

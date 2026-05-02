@@ -34,19 +34,22 @@ type ThreadsGetOptions struct {
 }
 
 // InitDefaults initializes default values for ThreadsGetOptions.
-func (o *ThreadsGetOptions) InitDefaults() {
+func (o *ThreadsGetOptions) InitDefaults() error {
+	return nil
 }
 
 // BuildThreadsGetCommand builds the cobra command for getting a thread.
 func BuildThreadsGetCommand() *cobra.Command {
 	var opt ThreadsGetOptions
-	opt.InitDefaults()
 
 	cmd := &cobra.Command{
 		Use:   "get <sandbox-name> <thread-id>",
 		Short: "Get a specific LLM thread in a sandbox",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := opt.InitDefaults(); err != nil {
+				return err
+			}
 			opt.SandboxName = args[0]
 			opt.ThreadID = args[1]
 			return RunThreadsGet(cmd.Context(), opt)

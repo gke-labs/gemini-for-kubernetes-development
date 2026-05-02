@@ -1,4 +1,18 @@
 #!/bin/bash
+# Copyright 2026 The Kubernetes Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 set -e
 
 # Default prompt from files
@@ -73,8 +87,10 @@ function setupGit {
         mkdir -p /root/.config/gh
 
         echo "writing gh config"
+        # Extract host from REPO_URL for multi-host support (e.g. GitHub Enterprise)
+        local REPO_HOST; REPO_HOST=$(echo "$REPO_URL" | sed -E 's|^https?://||; s|^ssh://||; s|^git@||; s|.*@||; s|[/:].*||')
         cat <<EOF > /root/.config/gh/hosts.yml
-github.com:
+${REPO_HOST}:
     users:
         ${GITHUB_USER_ID}:
             oauth_token: ${GITHUB_USER_TOKEN}
@@ -110,7 +126,7 @@ setupGit
 
 # Clone the repo if it doesn't exist
 # We are in /workspaces because of WORKDIR in Dockerfile
-REPO_NAME=$(basename "$REPO_URL" .git)
+REPO_NAME=$(echo "$REPO_URL" | sed -E 's|\.git/?$||; s|:|/|g; s|.*/||')
 
 if [ ! -d "$REPO_NAME" ]; then
   echo "Cloning $REPO_URL into /workspaces/$REPO_NAME..."
@@ -142,17 +158,15 @@ while true; do
     overseer-cli reconcile
   fi
 
-  # Run gemini
-  # We assume gemini is in PATH
-  # We use --prompt to pass the instruction
-  # We rely on environment variables for auth (GEMINI_API_KEY, GITHUB_TOKEN, etc.)
+  # Run gemini. We assume gemini is in PATH.
+  # We rely on environment variables for auth (GEMINI_API_KEY, GITHUB_TOKEN, etc).
   
   # Note: If LLM_PROVIDER is set, we might need to adapt.
-  # But for now we assume gemini-cli handles what it handles.
+  # But for now we assume the gemini command handles what it handles.
   
   # Capture stderr to a file so we can inspect it for quota errors
   GEMINI_ERR=$(mktemp)
-  if ! gemini --yolo "$PROMPT" 2> "$GEMINI_ERR"; then
+  if ! gemini --yolo -- "$PROMPT" 2> "$GEMINI_ERR"; then
     cat "$GEMINI_ERR" >&2
     if grep -iq "TerminalQuotaError\|Quota exceeded" "$GEMINI_ERR"; then
       echo "$(date): Quota exhausted. Sleeping for 1 hour..."

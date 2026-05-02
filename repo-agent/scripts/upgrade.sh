@@ -65,7 +65,7 @@ scaleup() {
 }
 
 # Run the upgrade process
-cleanup ## required for https://github.com/gke-labs/gemini-for-kubernetes-development/pull/803 which removed devc- prefix from service,Sandbox,pods
+cleanup # required for https://github.com/gke-labs/gemini-for-kubernetes-development/pull/803 which removed devc- prefix from service,Sandbox,pods
 upgrade
 scaledown
 mutations

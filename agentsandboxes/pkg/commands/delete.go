@@ -30,19 +30,22 @@ type DeleteOptions struct {
 }
 
 // InitDefaults initializes default values for DeleteOptions.
-func (o *DeleteOptions) InitDefaults() {
+func (o *DeleteOptions) InitDefaults() error {
+	return nil
 }
 
 // BuildDeleteCommand builds the cobra command for deleting an agent sandbox.
 func BuildDeleteCommand() *cobra.Command {
 	var opt DeleteOptions
-	opt.InitDefaults()
 
 	cmd := &cobra.Command{
 		Use:   "delete [name]",
 		Short: "Delete an agent sandbox",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := opt.InitDefaults(); err != nil {
+				return err
+			}
 			opt.Name = args[0]
 			return RunDelete(cmd.Context(), opt)
 		},

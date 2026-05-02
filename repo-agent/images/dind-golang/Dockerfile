@@ -73,7 +73,7 @@ ENV PATH=$PATH:/usr/local/go/bin
 ENV GOTOOLCHAIN=auto
 
 # -------- Install global Node.js packages --------
-RUN npm install -g @google/gemini-cli @anthropic-ai/claude-code
+RUN npm install -g @google/gemini-cli @anthropic-ai/claude-code pnpm yarn && npm cache clean --force
 
 # -------- Download binary releases --------
 # Install Kind

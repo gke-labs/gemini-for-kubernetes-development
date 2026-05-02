@@ -54,7 +54,7 @@ RUN echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.
     curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg && \
     apt-get update && apt-get install -y google-cloud-cli
 
-RUN npm install -g @google/gemini-cli @anthropic-ai/claude-code
+RUN npm install -g @google/gemini-cli @anthropic-ai/claude-code pnpm yarn && npm cache clean --force
 
 # Install code-server
 RUN curl -fsSL https://code-server.dev/install.sh | sh
