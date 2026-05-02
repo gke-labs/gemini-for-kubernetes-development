@@ -16,19 +16,6 @@ Please output your response as a single line starting with the Prow command.
 
 /kind <Category> <concise explanation>
 
-{{- if .TraceabilityEnabled }}
-
----
-<!-- repo-agent-metadata
-sandbox-task: {{ .SandboxTaskNamespace }}/{{ .SandboxTaskName }}
-sandbox-task-uid: {{ .SandboxTaskUID }}
-sandbox: {{ .SandboxName }}
-repowatch: {{ .RepoWatchName }}
-task-type: {{ .TaskType }}
-timestamp: {{ .Timestamp }}
--->
-{{- end }}
-
 Issue Title: "{{.Issue.Title}}"
 Issue Body: "{{.Issue.Body}}"
 HTML URL: "{{.Issue.HTMLURL}}"

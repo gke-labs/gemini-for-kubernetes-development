@@ -318,7 +318,10 @@ func (s *Server) submitIssueComment(c *gin.Context) {
 
 	body := payload.Comment
 	if s.TraceabilityEnabled {
-		body += s.getTraceabilityFooter(ctx, body, namespace, sandboxName, repo, "submit-comment")
+		footer := s.getTraceabilityFooter(ctx, body, namespace, sandboxName, repo, "submit-comment")
+		if footer != "" {
+			body += footer
+		}
 	}
 
 	comment := &github.IssueComment{Body: &body}

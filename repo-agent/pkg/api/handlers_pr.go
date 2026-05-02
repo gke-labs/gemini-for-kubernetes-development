@@ -337,10 +337,12 @@ func (s *Server) submitReview(c *gin.Context) {
 			body = *reviewRequest.Body
 		}
 		footer := s.getTraceabilityFooter(ctx, body, namespace, sandboxName, repo, "submit-review")
-		if reviewRequest.Body == nil {
-			reviewRequest.Body = github.String(footer)
-		} else {
-			reviewRequest.Body = github.String(*reviewRequest.Body + footer)
+		if footer != "" {
+			if reviewRequest.Body == nil {
+				reviewRequest.Body = github.String(footer)
+			} else {
+				reviewRequest.Body = github.String(*reviewRequest.Body + footer)
+			}
 		}
 	}
 

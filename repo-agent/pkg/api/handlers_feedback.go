@@ -63,7 +63,10 @@ func (s *Server) submitFeedback(c *gin.Context) {
 	}
 
 	if s.TraceabilityEnabled {
-		body += s.getTraceabilityFooter(c.Request.Context(), body, namespace, "", "", "feedback")
+		footer := s.getTraceabilityFooter(c.Request.Context(), body, namespace, "", "", "feedback")
+		if footer != "" {
+			body += footer
+		}
 	}
 
 	req := &github.IssueRequest{
