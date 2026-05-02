@@ -179,7 +179,10 @@ func TestReconciler_Reconcile(t *testing.T) {
 			if projected, ok := vol["projected"].(map[string]interface{}); ok {
 				if sources, ok := projected["sources"].([]interface{}); ok {
 					for _, s := range sources {
-						source := s.(map[string]interface{})
+						source, ok := s.(map[string]interface{})
+						if !ok {
+							continue
+						}
 						if secret, ok := source["secret"].(map[string]interface{}); ok {
 							if secret["name"] == "llm-secret" {
 								foundSecret = true
@@ -188,6 +191,9 @@ func TestReconciler_Reconcile(t *testing.T) {
 						}
 					}
 				}
+			}
+			if foundSecret {
+				break
 			}
 		}
 	}

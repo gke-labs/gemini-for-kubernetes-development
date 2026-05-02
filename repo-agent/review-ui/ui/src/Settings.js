@@ -42,14 +42,15 @@ function Settings({ onBack }) {
         setMessage({ text: 'Saving...', type: 'info' });
 
         const payload = {};
-        if (githubPat) payload.github_pat = githubPat;
-        if (geminiKey) payload.gemini_api_key = geminiKey;
-        if (anthropicKey) {
-            if (!anthropicKey.startsWith('sk-ant-')) {
+        if (githubPat.trim()) payload.github_pat = githubPat.trim();
+        if (geminiKey.trim()) payload.gemini_api_key = geminiKey.trim();
+        if (anthropicKey.trim()) {
+            const trimmedAnthropicKey = anthropicKey.trim();
+            if (!trimmedAnthropicKey.startsWith('sk-ant-')) {
                 setMessage({ text: 'Invalid Anthropic API Key format. It should start with "sk-ant-".', type: 'error' });
                 return;
             }
-            payload.anthropic_api_key = anthropicKey;
+            payload.anthropic_api_key = trimmedAnthropicKey;
         }
 
         if (Object.keys(payload).length === 0) {
@@ -127,6 +128,44 @@ function Settings({ onBack }) {
         .catch(err => setMessage({ text: 'Error clearing PAT.', type: 'error' }));
     };
 
+    const handleClearGeminiKey = () => {
+        if (!window.confirm("Are you sure you want to clear your Gemini API Key?")) return;
+        
+        fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ gemini_api_key: "" })
+        })
+        .then(res => {
+            if (res.ok) {
+                setMessage({ text: 'Gemini API Key cleared.', type: 'success' });
+                fetch('/api/settings').then(r => r.json()).then(setStatus);
+            } else {
+                throw new Error('Failed to clear Gemini API Key');
+            }
+        })
+        .catch(err => setMessage({ text: 'Error clearing Gemini API Key.', type: 'error' }));
+    };
+
+    const handleClearAnthropicKey = () => {
+        if (!window.confirm("Are you sure you want to clear your Anthropic API Key?")) return;
+        
+        fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ anthropic_api_key: "" })
+        })
+        .then(res => {
+            if (res.ok) {
+                setMessage({ text: 'Anthropic API Key cleared.', type: 'success' });
+                fetch('/api/settings').then(r => r.json()).then(setStatus);
+            } else {
+                throw new Error('Failed to clear Anthropic API Key');
+            }
+        })
+        .catch(err => setMessage({ text: 'Error clearing Anthropic API Key.', type: 'error' }));
+    };
+
     if (isLoading) return <div className="settings-container"><p>Loading settings...</p></div>;
 
     return (
@@ -182,6 +221,9 @@ function Settings({ onBack }) {
                          <span className={`status-badge ${status.gemini_api_key_set ? 'set' : 'missing'}`}>
                             {status.gemini_api_key_set ? '✅ Configured' : '⚠️ Not Set'}
                         </span>
+                        {status.gemini_api_key_set && (
+                            <button type="button" className="btn btn-delete btn-sm" onClick={handleClearGeminiKey} style={{marginLeft: '10px'}}>Clear</button>
+                        )}
                     </div>
                     <p style={{ fontSize: '0.9rem', marginTop: '5px' }}>
                         Required for AI-powered reviews and triage. 
@@ -202,6 +244,9 @@ function Settings({ onBack }) {
                          <span className={`status-badge ${status.anthropic_api_key_set ? 'set' : 'missing'}`}>
                             {status.anthropic_api_key_set ? '✅ Configured' : '⚠️ Not Set'}
                         </span>
+                        {status.anthropic_api_key_set && (
+                            <button type="button" className="btn btn-delete btn-sm" onClick={handleClearAnthropicKey} style={{marginLeft: '10px'}}>Clear</button>
+                        )}
                     </div>
                     <p style={{ fontSize: '0.9rem', marginTop: '5px' }}>
                         Required for Claude-powered features. 

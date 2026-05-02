@@ -172,34 +172,9 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 				},
 			},
 		},
-		map[string]interface{}{
-			"name": "GEMINI_API_KEY",
-			"valueFrom": map[string]interface{}{
-				"secretKeyRef": map[string]interface{}{
-					"name":     "gemini-vscode-tokens",
-					"key":      "gemini",
-					"optional": true,
-				},
-			},
-		},
-		map[string]interface{}{
-			"name": "ANTHROPIC_API_KEY",
-			"valueFrom": map[string]interface{}{
-				"secretKeyRef": map[string]interface{}{
-					"name":     "anthropic-api-key",
-					"key":      "claude",
-					"optional": true,
-				},
-			},
-		},
 	}
 
-	if opt.LLMAPIKey != "" {
-		env = append(env, map[string]interface{}{
-			"name":  "GEMINI_API_KEY",
-			"value": opt.LLMAPIKey,
-		})
-	}
+	env = append(env, buildLLMEnvVars(opt.DevSandboxOptions)...)
 
 	env = append(env,
 		map[string]interface{}{"name": "GIT_PUSH_ENABLED", "value": strconv.FormatBool(opt.PushEnabled)},
@@ -403,36 +378,10 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 								},
 							}
 							if opt.LLMAPIKey == "" {
-								sources := []interface{}{}
-								if opt.LLMAPIKeySecretName != "" {
-									sources = append(sources, map[string]interface{}{
-										"secret": map[string]interface{}{
-											"name": opt.LLMAPIKeySecretName,
-										},
-									})
-								}
-								// Ensure default gemini and claude secrets are also mounted if they are different from LLMAPIKeySecretName
-								if opt.LLMAPIKeySecretName != "gemini-vscode-tokens" {
-									sources = append(sources, map[string]interface{}{
-										"secret": map[string]interface{}{
-											"name":     "gemini-vscode-tokens",
-											"optional": true,
-										},
-									})
-								}
-								if opt.LLMAPIKeySecretName != "anthropic-api-key" {
-									sources = append(sources, map[string]interface{}{
-										"secret": map[string]interface{}{
-											"name":     "anthropic-api-key",
-											"optional": true,
-										},
-									})
-								}
-
 								v = append(v, map[string]interface{}{
 									"name": "tokens-secret",
 									"projected": map[string]interface{}{
-										"sources": sources,
+										"sources": buildLLMVolumeSources(opt.DevSandboxOptions),
 									},
 								})
 							}

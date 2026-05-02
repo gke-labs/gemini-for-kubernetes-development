@@ -37,6 +37,9 @@ func TestProjectedTokens(t *testing.T) {
 				},
 			}
 			sandbox, _ := NewAgentSandbox(opt)
+			if sandbox == nil {
+				t.Fatalf("NewAgentSandbox returned nil")
+			}
 
 			spec := sandbox.Object["spec"].(map[string]interface{})
 			podTemplate := spec["podTemplate"].(map[string]interface{})
@@ -87,7 +90,10 @@ func TestEnvAPIKeys(t *testing.T) {
 			Namespace: "default",
 		},
 	}
-	sandbox, _ := NewAgentSandbox(opt)
+	sandbox, svc := NewAgentSandbox(opt)
+	if sandbox == nil || svc == nil {
+		t.Fatal("NewAgentSandbox returned nil")
+	}
 
 	spec := sandbox.Object["spec"].(map[string]interface{})
 	podTemplate := spec["podTemplate"].(map[string]interface{})
@@ -107,8 +113,16 @@ func TestEnvAPIKeys(t *testing.T) {
 			envVar := e.(map[string]interface{})
 			if envVar["name"] == name {
 				found = true
-				valueFrom := envVar["valueFrom"].(map[string]interface{})
-				secretKeyRef := valueFrom["secretKeyRef"].(map[string]interface{})
+				valueFrom, ok := envVar["valueFrom"].(map[string]interface{})
+				if !ok {
+					t.Errorf("env var %s missing valueFrom", name)
+					continue
+				}
+				secretKeyRef, ok := valueFrom["secretKeyRef"].(map[string]interface{})
+				if !ok {
+					t.Errorf("env var %s missing secretKeyRef", name)
+					continue
+				}
 				if secretKeyRef["name"] != secretName {
 					t.Errorf("expected env %s to use secret %s, got %s", name, secretName, secretKeyRef["name"])
 				}
