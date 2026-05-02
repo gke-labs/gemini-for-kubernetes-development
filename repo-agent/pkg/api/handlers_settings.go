@@ -54,7 +54,7 @@ func (s *Server) getSettings(c *gin.Context) {
 func (s *Server) updateSettings(c *gin.Context) {
 	namespace := s.Auth.GetNamespaceFromContext(c)
 	var payload struct {
-		GithubPAT       *string `json:"github_pat"`       // Use pointer to distinguish between empty string and missing field
+		GithubPAT       *string `json:"github_pat"`        // Use pointer to distinguish between empty string and missing field
 		GeminiAPIKey    *string `json:"gemini_api_key"`    // Use pointer to distinguish between empty string and missing field
 		AnthropicAPIKey *string `json:"anthropic_api_key"` // Use pointer to distinguish between empty string and missing field
 	}
