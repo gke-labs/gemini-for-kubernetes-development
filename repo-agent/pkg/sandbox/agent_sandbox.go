@@ -314,7 +314,8 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 							        "volumeMounts": []interface{}{
 							                map[string]interface{}{"name": "agent-bin", "mountPath": "/opt/repo-agent"},
 							        },
-							})							return containers
+							})
+							return containers
 						}(),
 						"containers": []interface{}{
 							map[string]interface{}{

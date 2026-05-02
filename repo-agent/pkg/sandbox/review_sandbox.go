@@ -263,7 +263,8 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 							                       "mountPath": "/opt/repo-agent",
 							                },
 							        },
-							})							return containers
+							})
+							return containers
 						}(),
 						"containers": []interface{}{
 							map[string]interface{}{
