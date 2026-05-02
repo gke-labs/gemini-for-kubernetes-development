@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-
 // Package agentoutput provides utilities for agents to report their state and
 // output back to the Kubernetes resources (Sandboxes/Tasks). These updates vary
 // from status strings to streaming content drafts which are reflected in the UI.

@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-
 // Package repowatch implements the controller for RepoWatch resources.
 // It manages the lifecycle of ReviewSandboxes and IssueSandboxes based on
 // GitHub Pull Requests and Issues, handling synchronization, limits, and
