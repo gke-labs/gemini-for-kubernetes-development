@@ -163,10 +163,11 @@ func TestGetMode(t *testing.T) {
 		{name: "no shorthand", envVar: "MODE8_NO", val: "n", want: "disabled"},
 		{name: "quoted enabled", envVar: "MODE9", val: "\"enabled\"", want: "enabled"},
 		{name: "single quoted dryrun", envVar: "MODE10", val: "'dryrun'", want: "dryrun"},
-		{name: "on with spaces", envVar: "MODE11", val: "  on  ", want: "enabled"},
-		{name: "empty", envVar: "MODE12", val: "", want: "enabled"},
-		{name: "invalid defaults to enabled", envVar: "MODE13", val: "invalid", want: "enabled"},
-		{name: "long utf8", envVar: "MODE14", val: "👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋", want: "enabled"},
+		{name: "quoted with internal spaces", envVar: "MODE11", val: "\" disabled \"", want: "disabled"},
+		{name: "on with spaces", envVar: "MODE12", val: "  on  ", want: "enabled"},
+		{name: "empty", envVar: "MODE13", val: "", want: "enabled"},
+		{name: "invalid defaults to enabled", envVar: "MODE14", val: "invalid", want: "enabled"},
+		{name: "long utf8", envVar: "MODE15", val: "👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋👋", want: "enabled"},
 	}
 
 	for _, tt := range tests {

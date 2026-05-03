@@ -64,7 +64,7 @@ RUN curl -fsSL https://code-server.dev/install.sh | sh
 RUN for i in 1 2 3 4 5; do \
         code-server --install-extension golang.go --install-extension vscodevim.vim && break || \
         if [ $i -eq 5 ]; then exit 1; fi; \
-        sleep 5; \
+        sleep $((2 ** i)); \
     done
 
 COPY --from=build-repo-sandbox /repo-sandbox /usr/local/bin/repo-sandbox

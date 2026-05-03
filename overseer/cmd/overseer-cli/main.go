@@ -1983,6 +1983,7 @@ func deleteSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, na
 func getMode(name string) string {
 	val := os.Getenv(name)
 	m := strings.ToLower(strings.Trim(val, " \t\n\r\"'"))
+	m = strings.TrimSpace(m)
 	switch m {
 	case "enabled", "enable", "true", "1", "yes", "on", "t", "y":
 		return "enabled"

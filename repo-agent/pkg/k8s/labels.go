@@ -24,7 +24,7 @@ import (
 )
 
 var (
-	reSanitize = regexp.MustCompile(`[^a-z0-9._-]`)
+	reSanitize = regexp.MustCompile(`[^a-z0-9._-]+`)
 	reDashes   = regexp.MustCompile(`-+`)
 	reEnds     = regexp.MustCompile(`^[^a-z0-9]+|[^a-z0-9]+$`)
 	reSlugify  = regexp.MustCompile(`[^a-z0-9]+`)
