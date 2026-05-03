@@ -1740,7 +1740,10 @@ func runReconcile(ctx context.Context) error {
 	}
 
 	klog.V(2).Infof("Reconciliation complete.")
-	return errors.Join(reconcileErrs...)
+	if len(reconcileErrs) > 0 {
+		return fmt.Errorf("reconciliation encountered %d errors: %w", len(reconcileErrs), errors.Join(reconcileErrs...))
+	}
+	return nil
 }
 
 func isChoreAllowed(spec *overseerv1alpha1.ChoresSpec, name string) bool {
@@ -1832,7 +1835,10 @@ func runDeleteSandboxes(ctx context.Context, sandboxNames []string) error {
 		}
 	}
 
-	return errors.Join(errs...)
+	if len(errs) > 0 {
+		return fmt.Errorf("delete command encountered %d errors: %w", len(errs), errors.Join(errs...))
+	}
+	return nil
 }
 
 // deleteSandbox deletes a sandbox resource and its associated services.

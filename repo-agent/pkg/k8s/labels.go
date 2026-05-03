@@ -24,8 +24,7 @@ import (
 )
 
 var (
-	reSanitize = regexp.MustCompile(`[^a-z0-9._-]+`)
-	reDashes   = regexp.MustCompile(`-+`)
+	reSanitize = regexp.MustCompile(`[^a-z0-9._]+`)
 	reEnds     = regexp.MustCompile(`^[^a-z0-9]+|[^a-z0-9]+$`)
 	reSlugify  = regexp.MustCompile(`[^a-z0-9]+`)
 )
@@ -42,10 +41,9 @@ func TruncateLabel(s string) string {
 
 	// 1. Lowercase and Sanitize middle characters
 	// Kubernetes label values must consist of alphanumeric characters, '-', '_' or '.'
+	// We use a single regex pass to replace all invalid sequences with a single dash.
 	s = strings.ToLower(s)
 	s = reSanitize.ReplaceAllString(s, "-")
-	// Collapse multiple dashes for cleaner labels
-	s = reDashes.ReplaceAllString(s, "-")
 
 	// 2. Truncate if too long
 	truncated := false
