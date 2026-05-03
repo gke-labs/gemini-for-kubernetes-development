@@ -42,11 +42,11 @@ You must strictly follow the `kubernetes/kubernetes` project conventions.
 
 ### **Copyright Header**
 * Never modify the header of an existing file.
-* For any **new file**, you must add the following Apache License 2.0 header, replacing `[YEAR]` with the current year (2025).
+* For any **new file**, you must add the following Apache License 2.0 header, replacing `[YEAR]` with the current year (2026).
 
     ```
     /*
-    Copyright 2025 The Kubernetes Authors.
+    Copyright 2026 The Kubernetes Authors.
 
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
