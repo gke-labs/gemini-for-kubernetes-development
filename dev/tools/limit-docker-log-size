@@ -1,0 +1,197 @@
+#!/usr/bin/env python3
+
+import json
+import os
+import subprocess
+import sys
+
+# --- Configuration Variables ---
+DOCKER_CONFIG_PATH = "/etc/docker/daemon.json"
+MAX_SIZE = "100m"
+MAX_FILES = 3
+
+# --- Desired Configuration Structure ---
+DESIRED_CONFIG = {
+    "log-driver": "json-file",
+    "log-opts": {
+        "max-size": MAX_SIZE,
+        "max-file": str(MAX_FILES)
+    }
+}
+
+def check_sudo_privileges():
+    """Checks for root privileges."""
+    if os.geteuid() != 0:
+        print("ERROR: This script must be run as root (using sudo).")
+        sys.exit(1)
+    print("--- Docker Log Limit Configuration Script (Python) ---")
+
+def get_current_config():
+    """Reads and parses the current Docker daemon configuration."""
+    if not os.path.exists(DOCKER_CONFIG_PATH):
+        print(f"Configuration file {DOCKER_CONFIG_PATH} does not exist.")
+        return None
+    
+    try:
+        with open(DOCKER_CONFIG_PATH, 'r') as f:
+            # Load the JSON, handling empty files or malformed JSON gracefully
+            content = f.read().strip()
+            if not content:
+                 return {}
+            return json.loads(content)
+    except json.JSONDecodeError:
+        print(f"WARNING: Could not decode JSON from {DOCKER_CONFIG_PATH}. Proceeding with merge.")
+        return {}
+    except Exception as e:
+        print(f"ERROR: Failed to read {DOCKER_CONFIG_PATH}: {e}")
+        sys.exit(1)
+
+
+def already_updated(current_config, desired_config):
+    """Compares the current config with the desired config."""
+    current_driver = current_config.get("log-driver")
+    current_opts = current_config.get("log-opts", {})
+    driver_matches = current_driver == desired_config["log-driver"]
+    opts_match = True
+    if current_opts.get("max-size") != desired_config["log-opts"].get("max-size"):
+        opts_match = False
+    if str(current_opts.get("max-file")) != desired_config["log-opts"].get("max-file"):
+        opts_match = False
+
+    if driver_matches and opts_match:
+        print(f"✅ Desired log limits (max-size: {MAX_SIZE}, max-file: {MAX_FILES}) are **ALREADY set**.")
+        print("No changes or restart necessary. Exiting.")
+        return True
+    return False
+    
+
+def check_update_readiness(current_config, desired_config):
+    """Compares the current config with the desired config."""
+    current_driver = current_config.get("log-driver")
+    current_opts = current_config.get("log-opts", {})
+
+    driver_matches = current_driver == desired_config["log-driver"]
+
+    if current_driver is None:
+        print("No existing log-driver configured. Proceeding to apply desired configuration.")
+        return
+    if driver_matches and current_opts == {}:
+        print("No existing log-opts configured. Proceeding to apply desired configuration.")
+        return
+
+    opts_match = True
+    if current_opts.get("max-size") != desired_config["log-opts"].get("max-size"):
+        opts_match = False
+    if str(current_opts.get("max-file")) != desired_config["log-opts"].get("max-file"):
+        opts_match = False
+
+    if driver_matches and opts_match:
+        print(f"✅ Desired log limits (max-size: {MAX_SIZE}, max-file: {MAX_FILES}) are **ALREADY set**.")
+        print("No changes or restart necessary. Exiting.")
+        sys.exit(0)
+    
+
+    # Conflict detected (file exists but configuration does not match)
+    print("\n🛑 **WARNING: CONFLICT DETECTED** 🛑")
+    print(f"The existing configuration in {DOCKER_CONFIG_PATH} does NOT match the required log limits.")
+    print("To prevent unexpected changes, the script is exiting.")
+
+    print("\n--- **Existing Configuration** ---")
+    print(f"log-driver: {current_driver}")
+    print(f"log-opts: {current_opts}")
+        
+    print("\n--- **Desired Configuration** (Required for repo-agent stability) ---")
+    print(json.dumps(desired_config, indent=4))
+        
+    print("\n**ACTION REQUIRED:**")
+    print("\n 🛑 Please review the existing configuration and manually apply the desired changes.")
+    print("\n 🛑 If the changes are not made, you may experience issues with disk space due to unbounded Docker log growth.")
+    sys.exit(1)
+
+def merge_config(current_config, desired_config):
+    """Merges the desired configuration into the current configuration."""
+    if current_config is None:
+        current_config = {}
+    
+    merged_config = current_config.copy()
+    merged_config.update(desired_config)
+    return merged_config
+
+def apply_configuration(merged_config):
+    """Merges the new configuration and writes it to the file."""
+    # Create a backup
+    backup_path = DOCKER_CONFIG_PATH + ".bak"
+    if os.path.exists(DOCKER_CONFIG_PATH):
+        print(f"Creating a backup of the current configuration at {backup_path}...")
+        os.rename(DOCKER_CONFIG_PATH, backup_path)
+    
+    # Write the new configuration
+    print(f"Writing new log limits to {DOCKER_CONFIG_PATH}...")
+    try:
+        with open(DOCKER_CONFIG_PATH, 'w') as f:
+            json.dump(merged_config, f, indent=4)
+    except Exception as e:
+        print(f"ERROR: Failed to write configuration file: {e}")
+        # Attempt to restore backup
+        if os.path.exists(backup_path):
+             os.rename(backup_path, DOCKER_CONFIG_PATH)
+             print("Restored configuration from backup.")
+        sys.exit(1)
+        
+    print("Configuration updated successfully.")
+
+def restart_docker():
+    """Restarts the Docker daemon service."""
+    print("Restarting the Docker daemon to apply changes...")
+    
+    try:
+        # Use subprocess to run the systemctl command
+        result = subprocess.run(
+            ['systemctl', 'restart', 'docker'], 
+            check=True, 
+            capture_output=True, 
+            text=True
+        )
+        print("Docker service restarted successfully.")
+        
+        # Check service status (optional, but helpful for user confirmation)
+        status_result = subprocess.run(
+            ['systemctl', 'status', 'docker', '--no-pager'], 
+            capture_output=True, 
+            text=True
+        )
+        status_line = next((line for line in status_result.stdout.splitlines() if "Active:" in line), "")
+        print(f"Docker service status:\n{status_line.strip()}")
+        
+    except subprocess.CalledProcessError as e:
+        print(f"ERROR: Failed to restart Docker service.")
+        print(f"Stdout:\n{e.stdout}")
+        print(f"Stderr:\n{e.stderr}")
+        sys.exit(1)
+    except FileNotFoundError:
+        print("WARNING: 'systemctl' command not found. Please manually restart your Docker daemon.")
+
+
+# --- Main Execution Flow ---
+if __name__ == "__main__":
+    
+    if "--check" in sys.argv:
+        if already_updated(get_current_config(), DESIRED_CONFIG):
+            sys.exit(0)
+        else:
+            sys.exit(1)
+
+    check_sudo_privileges()
+    # 1. Check current config and handle conflicts/matches
+    current_config = get_current_config()
+    check_update_readiness(current_config, DESIRED_CONFIG) # Exits if match or conflict is found
+    
+
+    # 2. Apply configuration (runs only if file didn't exist)
+    updated_config = merge_config(current_config, DESIRED_CONFIG)
+    apply_configuration(updated_config)
+    
+    # 3. Restart Docker
+    restart_docker()
+    
+    print("--- Script finished. New log limits are now active. ---")
