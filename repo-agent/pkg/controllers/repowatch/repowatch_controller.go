@@ -2573,19 +2573,21 @@ func (r *Reconciler) reconcileReviewConflicts(ctx context.Context, repoWatch *re
 	}
 
 	if alreadyAttemptedThisSHA {
-		// If we've already attempted this SHA combination and it finished,
-		// we should still update the annotation if it was successful (Completed)
-		// so that we stop checking mergeability for this SHA.
-		hasCompletedTask := false
+		// If we've already attempted this SHA combination and it finished (Completed or Failed),
+		// we should update the annotation so that we stop checking mergeability for this SHA.
+		hasFinishedTask := false
 		for _, task := range tasks {
-			if task.Spec.Type == "resolve-conflicts" && task.Spec.Params["HEAD_SHA"] == headSHA && task.Spec.Params["BASE_SHA"] == baseSHA && task.Status.TaskState == "Completed" {
-				hasCompletedTask = true
-				break
+			if task.Spec.Type == "resolve-conflicts" && task.Spec.Params["HEAD_SHA"] == headSHA && task.Spec.Params["BASE_SHA"] == baseSHA {
+				state := task.Status.TaskState
+				if state == "Completed" || state == "Failed" {
+					hasFinishedTask = true
+					break
+				}
 			}
 		}
 
-		if hasCompletedTask {
-			// Record success in annotation to stop polling.
+		if hasFinishedTask {
+			// Record check in annotation to stop polling.
 			if err := r.updateConflictCheckAnnotation(ctx, sandbox, checkSHA); err != nil {
 				return false, err
 			}
