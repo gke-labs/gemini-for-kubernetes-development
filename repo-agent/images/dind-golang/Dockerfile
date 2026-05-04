@@ -24,8 +24,12 @@ ARG DOCKER_VERSION="5:27.5.1-1~ubuntu.24.04~noble"
 
 ENV DEBIAN_FRONTEND="noninteractive"
 
+RUN echo 'Acquire::http::Timeout "60";' > /etc/apt/apt.conf.d/99timeout && \
+    echo 'Acquire::https::Timeout "60";' >> /etc/apt/apt.conf.d/99timeout
+
 # 1. Install prerequisites for adding apt repositories
-RUN apt-get update && apt-get -y install --no-install-recommends \
+RUN for i in {1..5}; do apt-get update && break || (echo "apt-get update failed, retrying in 10s... ($i/5)" && sleep 10); done && \
+    apt-get -y install --no-install-recommends \
     apt-transport-https \
     ca-certificates \
     curl \
@@ -50,7 +54,7 @@ RUN mkdir -p /etc/apt/keyrings && \
     echo "deb [signed-by=/etc/apt/keyrings/helm.gpg] https://packages.buildkite.com/helm-linux/helm-debian/any/ any main" > /etc/apt/sources.list.d/helm-stable-debian.list
 
 # 3. Install all apt packages
-RUN apt-get update && \
+RUN for i in {1..5}; do apt-get update && break || (echo "apt-get update failed, retrying in 10s... ($i/5)" && sleep 10); done && \
     apt-get install -y \
     docker-ce=${DOCKER_VERSION} \
     docker-ce-cli=${DOCKER_VERSION} \

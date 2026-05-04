@@ -1,4 +1,4 @@
-FROM golang:1.25.7 AS builder
+FROM golang:1.26.1 AS builder
 
 WORKDIR /app
 # Copy the Go Modules manifests
@@ -28,8 +28,13 @@ RUN go build -o overseer-cli ./cmd/overseer-cli/main.go
 
 FROM node:20-slim
 
+ENV DEBIAN_FRONTEND="noninteractive"
+
+RUN echo 'Acquire::http::Timeout "60";' > /etc/apt/apt.conf.d/99timeout && \
+    echo 'Acquire::https::Timeout "60";' >> /etc/apt/apt.conf.d/99timeout
+
 # Install tools
-RUN apt-get update && \
+RUN for i in {1..5}; do apt-get update && break || (echo "apt-get update failed, retrying in 10s... ($i/5)" && sleep 10); done && \
     apt-get install -y --no-install-recommends \
     bash \
     git \
