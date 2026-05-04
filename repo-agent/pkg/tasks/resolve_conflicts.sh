@@ -146,7 +146,7 @@ function verifyResolution {
     # Supplemental check for conflict markers using git grep as a secondary verification,
     # which is more robust than xargs grep because it handles exit codes properly
     # and only searches tracked files in the working tree.
-    if git grep -E "^<{7}([[:space:]]|$)|^>{7}([[:space:]]|$)" > /dev/null 2>&1; then
+    if git grep -E "^<{7}|^>{7}|^={7}$" > /dev/null 2>&1; then
         echo "Conflict markers still present!"
         return 1
     fi

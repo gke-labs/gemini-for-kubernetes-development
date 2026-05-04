@@ -64,23 +64,26 @@ RUN echo 'Acquire::http::Timeout "60";' > /etc/apt/apt.conf.d/99timeout && \
     echo 'Acquire::https::Timeout "60";' >> /etc/apt/apt.conf.d/99timeout
 
 # We want a functional python, because gemini-cli likes to use python
-RUN for i in {1..5}; do apt-get update && break || (echo "apt-get update failed, retrying in 10s... ($i/5)" && sleep 10); done && \
+RUN for i in 1 2 3 4 5; do apt-get update && break || (echo "apt-get update failed, retrying in 10s... ($i/5)" && sleep 10); done && \
     apt-get install -y python3 python3-pip python3-yaml python-is-python3 python3-venv
 
-RUN for i in {1..5}; do apt-get update && break || (echo "apt-get update failed, retrying in 10s... ($i/5)" && sleep 10); done && \
+RUN for i in 1 2 3 4 5; do apt-get update && break || (echo "apt-get update failed, retrying in 10s... ($i/5)" && sleep 10); done && \
     apt-get install -y git tmux nodejs npm sudo curl apt-transport-https ca-certificates gnupg jq
 
 # Install Google Cloud CLI
 RUN echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | tee -a /etc/apt/sources.list.d/google-cloud-sdk.list && \
     curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg && \
-    for i in {1..5}; do apt-get update && break || (echo "apt-get update failed, retrying in 10s... ($i/5)" && sleep 10); done && \
+    for i in 1 2 3 4 5; do apt-get update && break || (echo "apt-get update failed, retrying in 10s... ($i/5)" && sleep 10); done && \
     apt-get install -y google-cloud-cli
 
 RUN npm install -g @google/gemini-cli @anthropic-ai/claude-code pnpm yarn && npm cache clean --force
 
 # Install code-server
-RUN curl -fsSL https://code-server.dev/install.sh | sh
-RUN code-server --install-extension golang.go --install-extension vscodevim.vim
+RUN curl -fsSL https://code-server.dev/install.sh | sh && \
+    for i in 1 2 3 4 5; do \
+        code-server --install-extension golang.go --install-extension vscodevim.vim && break || \
+        (echo "code-server extension installation failed, retrying in 10s... ($i/5)" && sleep 10); \
+    done || echo "Warning: code-server extension installation failed after 5 attempts. Continuing anyway..."
 
 COPY --from=build-repo-sandbox /repo-sandbox /repo-agent/repo-sandbox
 COPY --from=build-gh /bin/gh /bin/gh

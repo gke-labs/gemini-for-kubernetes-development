@@ -28,7 +28,7 @@ RUN echo 'Acquire::http::Timeout "60";' > /etc/apt/apt.conf.d/99timeout && \
     echo 'Acquire::https::Timeout "60";' >> /etc/apt/apt.conf.d/99timeout
 
 # 1. Install prerequisites for adding apt repositories
-RUN for i in {1..5}; do apt-get update && break || (echo "apt-get update failed, retrying in 10s... ($i/5)" && sleep 10); done && \
+RUN for i in 1 2 3 4 5; do apt-get update && break || (echo "apt-get update failed, retrying in 10s... ($i/5)" && sleep 10); done && \
     apt-get -y install --no-install-recommends \
     apt-transport-https \
     ca-certificates \
@@ -54,7 +54,7 @@ RUN mkdir -p /etc/apt/keyrings && \
     echo "deb [signed-by=/etc/apt/keyrings/helm.gpg] https://packages.buildkite.com/helm-linux/helm-debian/any/ any main" > /etc/apt/sources.list.d/helm-stable-debian.list
 
 # 3. Install all apt packages
-RUN for i in {1..5}; do apt-get update && break || (echo "apt-get update failed, retrying in 10s... ($i/5)" && sleep 10); done && \
+RUN for i in 1 2 3 4 5; do apt-get update && break || (echo "apt-get update failed, retrying in 10s... ($i/5)" && sleep 10); done && \
     apt-get install -y \
     docker-ce=${DOCKER_VERSION} \
     docker-ce-cli=${DOCKER_VERSION} \
@@ -111,7 +111,10 @@ RUN curl -sSfL "https://github.com/kubernetes-sigs/kustomize/releases/download/k
 
 # Install code-server
 RUN curl -fsSL https://code-server.dev/install.sh | sh && \
-    code-server --install-extension golang.go --install-extension vscodevim.vim
+    for i in 1 2 3 4 5; do \
+        code-server --install-extension golang.go --install-extension vscodevim.vim && break || \
+        (echo "code-server extension installation failed, retrying in 10s... ($i/5)" && sleep 10); \
+    done || echo "Warning: code-server extension installation failed after 5 attempts. Continuing anyway..."
 
 # -------- Install Go tools --------
 # Install yq
