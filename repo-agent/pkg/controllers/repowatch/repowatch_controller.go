@@ -472,12 +472,13 @@ func (r *Reconciler) reconcileReviews(ctx context.Context, repoWatch *reviewv1al
 
 	// Fetch default branch SHA once for conflict checks
 	var defaultBranchSHA string
+	var defaultBranchName string
 	if repoWatch.Spec.Review.ResolveConflicts {
 		repoObj, _, err := ghClient.Repositories.Get(ctx, owner, repo)
 		if err != nil {
 			log.Error(err, "unable to fetch repository for default branch")
 		} else {
-			defaultBranchName := repoObj.GetDefaultBranch()
+			defaultBranchName = repoObj.GetDefaultBranch()
 			branch, _, err := ghClient.Repositories.GetBranch(ctx, owner, repo, defaultBranchName, false)
 			if err != nil {
 				log.Error(err, "unable to fetch default branch SHA", "branch", defaultBranchName)
@@ -525,7 +526,7 @@ func (r *Reconciler) reconcileReviews(ctx context.Context, repoWatch *reviewv1al
 		return 0, false, err
 	}
 
-	watchedPRs, pendingPRs, activeSandboxes, pending, err := r.reconcileReviewSandboxesInternal(ctx, user, repoWatch, ghClient, owner, repo, explicitPRs, prs, sandboxList, podsBySandbox, tasksBySandbox, defaultBranchSHA)
+	watchedPRs, pendingPRs, activeSandboxes, pending, err := r.reconcileReviewSandboxesInternal(ctx, user, repoWatch, ghClient, owner, repo, explicitPRs, prs, sandboxList, podsBySandbox, tasksBySandbox, defaultBranchSHA, defaultBranchName)
 	if err != nil {
 		log.Error(err, "errors occurred during review sandbox reconciliation")
 	}
@@ -701,7 +702,7 @@ func (r *Reconciler) excludePRs(prs []*github.PullRequest, repoWatch *reviewv1al
 	return filteredPRs
 }
 
-func (r *Reconciler) reconcileReviewSandboxesInternal(ctx context.Context, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, ghClient *github.Client, owner, repo string, explicitPRs []*github.PullRequest, prs []*github.PullRequest, sandboxes *unstructured.UnstructuredList, podsBySandbox map[string]*corev1.Pod, tasksBySandbox map[string][]sandboxtaskv1alpha1.SandboxTask, defaultBranchSHA string) ([]reviewv1alpha1.WatchedPR, []int, int, bool, error) {
+func (r *Reconciler) reconcileReviewSandboxesInternal(ctx context.Context, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, ghClient *github.Client, owner, repo string, explicitPRs []*github.PullRequest, prs []*github.PullRequest, sandboxes *unstructured.UnstructuredList, podsBySandbox map[string]*corev1.Pod, tasksBySandbox map[string][]sandboxtaskv1alpha1.SandboxTask, defaultBranchSHA string, defaultBranchName string) ([]reviewv1alpha1.WatchedPR, []int, int, bool, error) {
 	log := log.FromContext(ctx)
 	var reconcileErr error
 	var reconcilePending bool
@@ -788,7 +789,7 @@ func (r *Reconciler) reconcileReviewSandboxesInternal(ctx context.Context, user 
 			}
 
 			// Check for merge conflicts
-			pending, err := r.reconcileReviewConflicts(ctx, repoWatch, existingSandbox, sandboxTasks, pr, ghClient, owner, repo, &activeSandboxes, prIsExplicit, defaultBranchSHA)
+			pending, err := r.reconcileReviewConflicts(ctx, repoWatch, existingSandbox, sandboxTasks, pr, ghClient, owner, repo, &activeSandboxes, prIsExplicit, defaultBranchSHA, defaultBranchName)
 			if err != nil {
 				log.Error(err, "unable to reconcile review conflicts", "pr", pr.GetNumber())
 				reconcileErr = errors.Join(reconcileErr, err)
@@ -2511,7 +2512,7 @@ func (r *Reconciler) reconcileSandboxPodStatus(ctx context.Context, sandbox *uns
 	return sandboxStatus, nil
 }
 
-func (r *Reconciler) reconcileReviewConflicts(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, sandbox *unstructured.Unstructured, tasks []sandboxtaskv1alpha1.SandboxTask, pr *github.PullRequest, ghClient *github.Client, owner, repo string, activeSandboxes *int, prIsExplicit bool, defaultBranchSHA string) (bool, error) {
+func (r *Reconciler) reconcileReviewConflicts(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, sandbox *unstructured.Unstructured, tasks []sandboxtaskv1alpha1.SandboxTask, pr *github.PullRequest, ghClient *github.Client, owner, repo string, activeSandboxes *int, prIsExplicit bool, defaultBranchSHA string, defaultBranchName string) (bool, error) {
 	log := log.FromContext(ctx)
 	if !repoWatch.Spec.Review.ResolveConflicts {
 		return false, nil
@@ -2529,7 +2530,7 @@ func (r *Reconciler) reconcileReviewConflicts(ctx context.Context, repoWatch *re
 	// we use that to detect if the PR has become out of date.
 	baseSHA := pr.GetBase().GetSHA()
 	// Use defaultBranchSHA if it matches the base branch of the PR
-	if defaultBranchSHA != "" && (baseRef == "main" || baseRef == "master") { // Simple heuristic, could be improved by checking default branch name
+	if defaultBranchSHA != "" && baseRef == defaultBranchName {
 		baseSHA = defaultBranchSHA
 	}
 
