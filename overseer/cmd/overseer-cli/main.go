@@ -1,17 +1,3 @@
-// Copyright 2026 The Kubernetes Authors.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 package main
 
 import (
@@ -22,7 +8,6 @@ import (
 	"math/rand"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -74,7 +59,6 @@ func main() {
 	rootCmd.AddCommand(buildPRCommand())
 	rootCmd.AddCommand(buildChoreCommand())
 	rootCmd.AddCommand(buildReconcileCommand())
-	rootCmd.AddCommand(buildDeleteCommand())
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -170,12 +154,6 @@ func runChore(ctx context.Context, name string, file string) error {
 		return fmt.Errorf("OVERSEER_NAME and NAMESPACE environment variables must be set")
 	}
 
-	choresMode := os.Getenv("CHORES_MODE")
-	if choresMode == "disabled" {
-		fmt.Printf("Chore handling is disabled (CHORES_MODE=disabled). Skipping.\n")
-		return nil
-	}
-
 	chore, err := parseChore(file)
 	if err != nil {
 		return err
@@ -220,28 +198,18 @@ func runChore(ctx context.Context, name string, file string) error {
 
 	sandboxName := fmt.Sprintf("chore-%s-%s", overseer.Name, slugify(chore.Name))
 
-	isAllowed := isChoreAllowed(overseer.Spec.Chores, chore.Name)
-	isPaused := strings.EqualFold(chore.Schedule, "never")
-
-	if !isAllowed || isPaused {
-		var reasons []string
-		if !isAllowed {
-			reasons = append(reasons, "excluded by configuration")
-		}
-		if isPaused {
-			reasons = append(reasons, "paused (schedule: never)")
-		}
-		reason := strings.Join(reasons, " and ")
-
+	if !isChoreAllowed(overseer.Spec.Chores, chore.Name) {
+		choresMode := os.Getenv("CHORES_MODE")
 		if choresMode == "dryrun" {
-			fmt.Printf("[dryrun] Ensuring sandbox %s is deleted for chore %s (%s)\n", sandboxName, chore.Name, reason)
-			_ = deleteSandbox(ctx, kubeClient, namespace, sandboxName)
+			fmt.Printf("[dryrun] Ensuring sandbox %s is deleted for excluded/not-included chore %s\n", sandboxName, chore.Name)
+			_ = deleteChoreSandbox(ctx, kubeClient, namespace, sandboxName)
 			return nil
 		}
-		fmt.Printf("Chore %s %s. Ensuring sandbox is deleted.\n", chore.Name, reason)
-		return deleteSandbox(ctx, kubeClient, namespace, sandboxName)
+		fmt.Printf("Chore %s is excluded or not included. Ensuring sandbox is deleted.\n", chore.Name)
+		return deleteChoreSandbox(ctx, kubeClient, namespace, sandboxName)
 	}
 
+	choresMode := os.Getenv("CHORES_MODE")
 	if choresMode == "dryrun" {
 		fmt.Printf("[dryrun] Would create sandbox and task chore for chore %s in Overseer %s\n", chore.Name, overseerName)
 		return nil
@@ -351,11 +319,6 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 
 	githubSecretName := overseer.Spec.RobotAccount
 
-	scriptToken, err := getTokenFromScript()
-	if err != nil {
-		fmt.Printf("Warning: failed to get token from script: %v\n", err)
-	}
-
 	opt := sandbox.AgentSandboxOptions{
 		DevSandboxOptions: sandbox.DevSandboxOptions{
 			Name:      sandboxName,
@@ -378,7 +341,6 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 			BotEmail:            botEmail,
 			LLMAPIKeySecretName: apiKeySecretName,
 			GithubSecretName:    githubSecretName,
-			LLMAPIKey:           scriptToken,
 			OverseerName:        overseerName,
 			RepoSandboxImage:    os.Getenv("REPO_SANDBOX_IMAGE"),
 			ConfigDirImage:      os.Getenv("CONFIG_DIR_IMAGE"),
@@ -412,10 +374,6 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 	}
 
 	issueMode := os.Getenv("ISSUE_MODE")
-	if issueMode == "disabled" {
-		fmt.Printf("Issue handling is disabled (ISSUE_MODE=disabled). Skipping.\n")
-		return nil
-	}
 	if issueMode == "dryrun" {
 		if number != 0 {
 			fmt.Printf("[dryrun] Would create/ensure sandbox and task %s for issue %d in Overseer %s\n", taskType, number, overseerName)
@@ -531,7 +489,6 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 		"ISSUE_URL":       issue.GetHTMLURL(),
 		"PULL_REQUEST_ID": fmt.Sprintf("%d", prNumber),
 		"AGENT_PROMPT":    agentPrompt,
-		"PR_LABEL":        "overseer",
 	}
 	params["model"] = strings.Join(IssueModelsOrder, ",")
 
@@ -551,18 +508,10 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 	}
 
 	mode := ""
-	modeName := ""
 	if submit || taskType == "review" {
-		modeName = "REVIEW_MODE"
-		mode = os.Getenv(modeName)
+		mode = os.Getenv("REVIEW_MODE")
 	} else {
-		modeName = "PR_MODE"
-		mode = os.Getenv(modeName)
-	}
-
-	if mode == "disabled" {
-		fmt.Printf("PR/Review handling is disabled (%s=disabled). Skipping.\n", modeName)
-		return nil
+		mode = os.Getenv("PR_MODE")
 	}
 
 	if mode == "dryrun" {
@@ -804,7 +753,6 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 		} else {
 			fmt.Printf("Warning: review field missing in YAML, using draft as plain body\n")
 		}
-
 		reviewRequest.Body = githubv39.String(draft)
 	} else {
 		reviewRequest = agentOutput.Review.ToGitHubReviewRequest()
@@ -834,19 +782,10 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 }
 
 func parseRepoURL(url string) (string, string, error) {
-	u := url
-	u = strings.TrimPrefix(u, "https://")
-	u = strings.TrimPrefix(u, "http://")
-	u = strings.TrimPrefix(u, "ssh://")
-	u = strings.TrimPrefix(u, "git@")
+	u := strings.TrimPrefix(url, "https://")
 	u = strings.TrimSuffix(u, ".git")
-	u = strings.TrimSuffix(u, "/")
-
-	// Replace : with / to handle git@github.com:owner/repo
-	u = strings.ReplaceAll(u, ":", "/")
-
 	parts := strings.Split(u, "/")
-	if len(parts) < 2 {
+	if len(parts) < 3 {
 		return "", "", fmt.Errorf("invalid repo URL: %s", url)
 	}
 	return parts[len(parts)-2], parts[len(parts)-1], nil
@@ -877,12 +816,6 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 	}
 
 	githubSecretName := overseer.Spec.RobotAccount
-
-	scriptToken, err := getTokenFromScript()
-	if err != nil {
-		fmt.Printf("Warning: failed to get token from script: %v\n", err)
-	}
-
 	opt := sandbox.AgentSandboxOptions{
 		DevSandboxOptions: sandbox.DevSandboxOptions{
 			Name:      name,
@@ -907,7 +840,6 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 			LLMAPIKeySecretName: apiKeySecretName,
 			Prompt:              overseer.Spec.IssuePrompt,
 			GithubSecretName:    githubSecretName,
-			LLMAPIKey:           scriptToken,
 			Image:               overseer.Spec.Image,
 			RepoSandboxImage:    os.Getenv("REPO_SANDBOX_IMAGE"),
 			ConfigDirImage:      os.Getenv("CONFIG_DIR_IMAGE"),
@@ -923,7 +855,7 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 
 	sb, svc := sandbox.NewAgentSandbox(opt)
 
-	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sb, metav1.CreateOptions{})
+	_, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sb, metav1.CreateOptions{})
 	if err != nil {
 		return err
 	}
@@ -956,12 +888,6 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 		maxReviewFiles = 150
 	}
 	githubSecretName := overseer.Spec.RobotAccount
-
-	scriptToken, err := getTokenFromScript()
-	if err != nil {
-		fmt.Printf("Warning: failed to get token from script: %v\n", err)
-	}
-
 	opt := sandbox.ReviewSandboxOptions{
 		DevSandboxOptions: sandbox.DevSandboxOptions{
 			Name:      name,
@@ -981,7 +907,6 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 			LLMAPIKeySecretName:   apiKeySecretName,
 			Prompt:                overseer.Spec.Review.Prompt,
 			GithubSecretName:      githubSecretName,
-			LLMAPIKey:             scriptToken,
 			DevcontainerConfigRef: "",
 			Image:                 overseer.Spec.Image,
 			RepoSandboxImage:      os.Getenv("REPO_SANDBOX_IMAGE"),
@@ -1005,7 +930,7 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 
 	sb, svc := sandbox.NewReviewSandbox(opt)
 
-	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sb, metav1.CreateOptions{})
+	_, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sb, metav1.CreateOptions{})
 	if err != nil {
 		return err
 	}
@@ -1111,7 +1036,6 @@ func runReconcile(ctx context.Context) error {
 
 	// 1. Get current chores in .agents/
 	currentChores := make(map[string]bool)
-	pausedChores := make(map[string]bool)
 	choresMode := os.Getenv("CHORES_MODE")
 	if choresMode != "disabled" && choresMode != "dryrun" {
 		files, err := os.ReadDir(".agents")
@@ -1123,12 +1047,8 @@ func runReconcile(ctx context.Context) error {
 				if strings.HasSuffix(f.Name(), ".yaml") || strings.HasSuffix(f.Name(), ".yml") || strings.HasSuffix(f.Name(), ".md") {
 					chore, err := parseChore(".agents/" + f.Name())
 					if err == nil && chore.Name != "" {
-						isAllowed := isChoreAllowed(overseer.Spec.Chores, chore.Name)
-						isPaused := strings.EqualFold(chore.Schedule, "never")
-						if isAllowed && !isPaused {
+						if isChoreAllowed(overseer.Spec.Chores, chore.Name) {
 							currentChores[slugify(chore.Name)] = true
-						} else if isAllowed && isPaused {
-							pausedChores[slugify(chore.Name)] = true
 						}
 					}
 				}
@@ -1152,14 +1072,11 @@ func runReconcile(ctx context.Context) error {
 		if found {
 			if !currentChores[choreSlug] {
 				reason := "no longer present or is excluded"
-				if pausedChores[choreSlug] {
-					reason = "paused (schedule: never)"
-				}
 				if choresMode == "disabled" || choresMode == "dryrun" {
 					reason = fmt.Sprintf("chores are %s", choresMode)
 				}
 				fmt.Printf("Chore %s %s. Deleting sandbox %s.\n", choreSlug, reason, item.GetName())
-				if err := deleteSandbox(ctx, kubeClient, namespace, item.GetName()); err != nil {
+				if err := deleteChoreSandbox(ctx, kubeClient, namespace, item.GetName()); err != nil {
 					fmt.Printf("Warning: failed to delete sandbox %s: %v\n", item.GetName(), err)
 				}
 			}
@@ -1192,54 +1109,7 @@ func isChoreAllowed(spec *overseerv1alpha1.ChoresSpec, name string) bool {
 	return true
 }
 
-func buildDeleteCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "delete",
-		Short: "Delete resources",
-	}
-
-	sandboxCmd := &cobra.Command{
-		Use:   "sandbox [name]",
-		Short: "Delete a sandbox and its associated resources (like the -lb service)",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
-			return runDeleteSandbox(context.Background(), args[0])
-		},
-	}
-	cmd.AddCommand(sandboxCmd)
-
-	return cmd
-}
-
-func runDeleteSandbox(ctx context.Context, sandboxName string) error {
-	if namespace == "" {
-		return fmt.Errorf("NAMESPACE environment variable must be set")
-	}
-
-	cfg, err := config.GetConfig()
-	if err != nil {
-		return fmt.Errorf("unable to get kubeconfig: %w", err)
-	}
-
-	dynClient, err := dynamic.NewForConfig(cfg)
-	if err != nil {
-		return fmt.Errorf("unable to create dynamic client: %w", err)
-	}
-
-	clientset, err := kubernetes.NewForConfig(cfg)
-	if err != nil {
-		return fmt.Errorf("unable to create clientset: %w", err)
-	}
-
-	kubeClient := &clients.KubernetesClient{
-		DynamicClient: dynClient,
-		Clientset:     clientset,
-	}
-
-	return deleteSandbox(ctx, kubeClient, namespace, sandboxName)
-}
-
-func deleteSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, sandboxName string) error {
+func deleteChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, sandboxName string) error {
 	fmt.Printf("Deleting sandbox %s...\n", sandboxName)
 	err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Delete(ctx, sandboxName, metav1.DeleteOptions{})
 	if err != nil && !errors.IsNotFound(err) {
@@ -1249,44 +1119,11 @@ func deleteSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, na
 		}
 	}
 	// Also delete service
-	serviceName := sandboxName + "-lb"
-	fmt.Printf("Deleting service %s...\n", serviceName)
-	err = kubeClient.Clientset.CoreV1().Services(namespace).Delete(ctx, serviceName, metav1.DeleteOptions{})
+	err = kubeClient.Clientset.CoreV1().Services(namespace).Delete(ctx, sandboxName, metav1.DeleteOptions{})
 	if err != nil && !errors.IsNotFound(err) {
 		if !strings.Contains(err.Error(), "not found") {
 			return err
 		}
 	}
 	return nil
-}
-
-func getTokenFromScript() (string, error) {
-	dir := os.Getenv("TOKENSCRIPT_DIR")
-	if dir == "" {
-		return "", nil
-	}
-
-	files, err := os.ReadDir(dir)
-	if err != nil {
-		return "", fmt.Errorf("failed to read tokenscript dir: %w", err)
-	}
-
-	for _, f := range files {
-		if f.IsDir() || strings.HasPrefix(f.Name(), "..") {
-			continue
-		}
-
-		path := filepath.Join(dir, f.Name())
-		cmd := exec.Command(path)
-		var out bytes.Buffer
-		cmd.Stdout = &out
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			return "", fmt.Errorf("failed to run tokenscript %s: %w", path, err)
-		}
-
-		return strings.TrimSpace(out.String()), nil
-	}
-
-	return "", nil
 }

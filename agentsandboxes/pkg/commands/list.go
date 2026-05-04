@@ -1,16 +1,18 @@
-// Copyright 2026 The Kubernetes Authors.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+/*
+Copyright 2026 The Gemini Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package commands
 
@@ -27,21 +29,18 @@ type ListOptions struct {
 }
 
 // InitDefaults initializes default values for ListOptions.
-func (o *ListOptions) InitDefaults() error {
-	return nil
+func (o *ListOptions) InitDefaults() {
 }
 
 // BuildListCommand builds the cobra command for listing agent sandboxes.
 func BuildListCommand() *cobra.Command {
 	var opt ListOptions
+	opt.InitDefaults()
 
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List agent sandboxes",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := opt.InitDefaults(); err != nil {
-				return err
-			}
 			return RunList(cmd.Context(), opt)
 		},
 	}

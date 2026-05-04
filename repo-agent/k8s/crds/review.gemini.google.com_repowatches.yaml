@@ -92,7 +92,6 @@ spec:
                         enum:
                         - gemini-cli
                         - claude
-                        - claude-cli
                         - dummy
                         type: string
                     required:
@@ -189,7 +188,6 @@ spec:
                         enum:
                         - gemini-cli
                         - claude
-                        - claude-cli
                         - dummy
                         type: string
                     required:
@@ -276,7 +274,6 @@ spec:
                         enum:
                         - gemini-cli
                         - claude
-                        - claude-cli
                         - dummy
                         type: string
                     required:

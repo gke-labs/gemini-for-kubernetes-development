@@ -1,18 +1,4 @@
 #!/bin/bash
-# Copyright 2026 The Kubernetes Authors.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 set -e
 
 # Default prompt from files
@@ -35,11 +21,8 @@ if [ -d "/workspaces/prompt" ]; then
     if [ "$ISSUE_MODE" != "disabled" ]; then
         cat /workspaces/prompt/06-examples-issues.txt >> "$PROMPT_FILE"
     fi
-    if [ "$PR_MODE" != "disabled" ]; then
+    if [ "$REVIEW_MODE" != "disabled" ] || [ "$PR_MODE" != "disabled" ]; then
         cat /workspaces/prompt/06a-examples-prs.txt >> "$PROMPT_FILE"
-    fi
-    if [ "$REVIEW_MODE" != "disabled" ]; then
-        cat /workspaces/prompt/06b-examples-prs-review.txt >> "$PROMPT_FILE"
     fi
     if [ "$CHORES_MODE" != "disabled" ]; then
         cat /workspaces/prompt/07-examples-chores.txt >> "$PROMPT_FILE"
@@ -55,21 +38,6 @@ if [ -z "$REPO_URL" ]; then
   echo "REPO_URL environment variable is not set"
   exit 1
 fi
-
-function refreshLLMToken {
-    if [ -n "$TOKENSCRIPT_DIR" ] && [ -d "$TOKENSCRIPT_DIR" ]; then
-        for script in "$TOKENSCRIPT_DIR"/*; do
-            if [ -f "$script" ]; then
-                echo "Running tokenscript $script"
-                SCRIPT_TOKEN=$("$script")
-                if [ -n "$SCRIPT_TOKEN" ]; then
-                    export GEMINI_API_KEY="$SCRIPT_TOKEN"
-                    break
-                fi
-            fi
-        done
-    fi
-}
 
 function setupGit {
     echo "Running setupGit..."
@@ -87,10 +55,8 @@ function setupGit {
         mkdir -p /root/.config/gh
 
         echo "writing gh config"
-        # Extract host from REPO_URL for multi-host support (e.g. GitHub Enterprise)
-        local REPO_HOST; REPO_HOST=$(echo "$REPO_URL" | sed -E 's|^https?://||; s|^ssh://||; s|^git@||; s|.*@||; s|[/:].*||')
         cat <<EOF > /root/.config/gh/hosts.yml
-${REPO_HOST}:
+github.com:
     users:
         ${GITHUB_USER_ID}:
             oauth_token: ${GITHUB_USER_TOKEN}
@@ -126,7 +92,7 @@ setupGit
 
 # Clone the repo if it doesn't exist
 # We are in /workspaces because of WORKDIR in Dockerfile
-REPO_NAME=$(echo "$REPO_URL" | sed -E 's|\.git/?$||; s|:|/|g; s|.*/||')
+REPO_NAME=$(basename "$REPO_URL" .git)
 
 if [ ! -d "$REPO_NAME" ]; then
   echo "Cloning $REPO_URL into /workspaces/$REPO_NAME..."
@@ -146,9 +112,6 @@ fi
 while true; do
   echo "$(date): Running Overseer cycle..."
   
-  # Refresh LLM token
-  refreshLLMToken
-
   # Update the repo
   git pull
 
@@ -158,15 +121,17 @@ while true; do
     overseer-cli reconcile
   fi
 
-  # Run gemini. We assume gemini is in PATH.
-  # We rely on environment variables for auth (GEMINI_API_KEY, GITHUB_TOKEN, etc).
+  # Run gemini
+  # We assume gemini is in PATH
+  # We use --prompt to pass the instruction
+  # We rely on environment variables for auth (GEMINI_API_KEY, GITHUB_TOKEN, etc.)
   
   # Note: If LLM_PROVIDER is set, we might need to adapt.
-  # But for now we assume the gemini command handles what it handles.
+  # But for now we assume gemini-cli handles what it handles.
   
   # Capture stderr to a file so we can inspect it for quota errors
   GEMINI_ERR=$(mktemp)
-  if ! gemini --yolo -- "$PROMPT" 2> "$GEMINI_ERR"; then
+  if ! gemini --yolo "$PROMPT" 2> "$GEMINI_ERR"; then
     cat "$GEMINI_ERR" >&2
     if grep -iq "TerminalQuotaError\|Quota exceeded" "$GEMINI_ERR"; then
       echo "$(date): Quota exhausted. Sleeping for 1 hour..."

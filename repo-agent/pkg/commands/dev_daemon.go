@@ -102,7 +102,6 @@ func (c *SandboxDaemonCommand) Run(ctx context.Context) error {
 	}
 
 	// Start periodic cleanup in background
-	go startPeriodicCleanup(ctx)
 
 	var gvr schema.GroupVersionResource
 	if c.IssueID != "" {

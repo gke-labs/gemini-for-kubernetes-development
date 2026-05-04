@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Copyright 2026 The Kubernetes Authors.
+# Copyright 2026 The Gemini For Kubernetes Development Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
