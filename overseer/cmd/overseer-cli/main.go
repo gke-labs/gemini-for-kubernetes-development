@@ -94,19 +94,21 @@ func buildPRCommand() *cobra.Command {
 	var number int
 	var taskType string
 	var submit bool
+	var force bool
 	var prompt string
 
 	cmd := &cobra.Command{
 		Use:   "pr",
 		Short: "Create/ensure sandbox and task for a PR",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runPR(context.Background(), number, taskType, submit, prompt)
+			return runPR(context.Background(), number, taskType, submit, force, prompt)
 		},
 	}
 
 	cmd.Flags().IntVar(&number, "number", 0, "PR number")
 	cmd.Flags().StringVar(&taskType, "task", "review", "Task type (e.g., review, address-feedback, investigate-failures)")
 	cmd.Flags().BoolVar(&submit, "submit", false, "Submit agent draft from task as review")
+	cmd.Flags().BoolVar(&force, "force", false, "Force re-review even if already reviewed on GitHub or task exists")
 	cmd.Flags().StringVar(&prompt, "prompt", "", "Custom prompt for the task")
 	_ = cmd.MarkFlagRequired("number")
 
@@ -530,7 +532,7 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 	return nil
 }
 
-func runPR(ctx context.Context, number int, taskType string, submit bool, customPrompt string) error {
+func runPR(ctx context.Context, number int, taskType string, submit bool, force bool, customPrompt string) error {
 	// Similar to runIssue but for PRs
 	if overseerName == "" || namespace == "" {
 		return fmt.Errorf("OVERSEER_NAME and NAMESPACE environment variables must be set")
@@ -579,7 +581,7 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 
 	if submit {
 		fmt.Printf("Submitting agent draft for PR %d...\n", number)
-		return submitAgentDraft(ctx, manager, kubeClient, namespace, overseerName, number)
+		return submitAgentDraft(ctx, manager, kubeClient, namespace, overseerName, number, force)
 	}
 
 	rwUnstructured, err := getOverseer(ctx, kubeClient.DynamicClient, overseerName)
@@ -636,7 +638,7 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 	}
 
 	// Check if a task for this SHA already exists (only for review tasks)
-	if taskType == "review" {
+	if taskType == "review" && !force {
 		taskList, err := manager.ListSandboxTasks(ctx, namespace, sandboxName)
 		if err == nil {
 			for i := range taskList.Items {
@@ -692,7 +694,7 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 	return nil
 }
 
-func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *clients.KubernetesClient, namespace, overseerName string, prNumber int) error {
+func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *clients.KubernetesClient, namespace, overseerName string, prNumber int, force bool) error {
 	rwUnstructured, err := getOverseer(ctx, kubeClient.DynamicClient, overseerName)
 	if err != nil {
 		return fmt.Errorf("failed to get Overseer %s: %w", overseerName, err)
@@ -722,7 +724,7 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 	currentSHA := latestReviewTask.Spec.Params["HEAD_SHA"]
 
 	sandboxUnstructured, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
-	if err == nil {
+	if err == nil && !force {
 		annotations := sandboxUnstructured.GetAnnotations()
 		if annotations != nil {
 			if state, ok := annotations["reviewState"]; ok {
@@ -791,20 +793,22 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 	}
 
 	// Check GitHub if we already reviewed this SHA
-	botLogin := os.Getenv("GITHUB_BOT_LOGIN")
-	reviewed, err := hasBeenReviewedByBot(ctx, client, owner, repoName, prNumber, botLogin, currentSHA)
-	if err != nil {
-		return fmt.Errorf("failed to check GitHub reviews during submission: %w", err)
-	} else if reviewed {
-		fmt.Printf("Review for SHA %s already exists on GitHub. Skipping submission.\n", currentSHA)
+	if !force {
+		botLogin := os.Getenv("GITHUB_BOT_LOGIN")
+		reviewed, err := hasBeenReviewedByBot(ctx, client, owner, repoName, prNumber, botLogin, currentSHA)
+		if err != nil {
+			return fmt.Errorf("failed to check GitHub reviews during submission: %w", err)
+		} else if reviewed {
+			fmt.Printf("Review for SHA %s already exists on GitHub. Skipping submission.\n", currentSHA)
 
-		// Update sandbox reviewState if sandbox still exists
-		reviewState := "submitted:" + currentSHA
-		if err := manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "reviewState", reviewState); err != nil {
-			fmt.Printf("Warning: failed to update sandbox annotation: %v\n", err)
+			// Update sandbox reviewState if sandbox still exists
+			reviewState := "submitted:" + currentSHA
+			if err := manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "reviewState", reviewState); err != nil {
+				fmt.Printf("Warning: failed to update sandbox annotation: %v\n", err)
+			}
+
+			return nil
 		}
-
-		return nil
 	}
 
 	// Try Unmarshalling the yaml review payload into PullRequestReviewRequest
