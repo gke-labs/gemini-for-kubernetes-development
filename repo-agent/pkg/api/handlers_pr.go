@@ -1,3 +1,17 @@
+// Copyright 2026 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// you may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package api
 
 import (
@@ -7,16 +21,17 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	sandboxtaskv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks/metadata"
 	"github.com/google/go-github/v39/github"
-	yaml "go.yaml.in/yaml/v3"
+	yaml "gopkg.in/yaml.v3"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -51,47 +66,18 @@ func (s *Server) getPRTasks(c *gin.Context) {
 		return
 	}
 
-	var tasks []models.Task
-	for _, taskItem := range taskList.Items {
-		taskType := taskItem.Spec.Type
-		taskState := taskItem.Status.TaskState
-		result := taskItem.Status.Result
+	// Sort tasks by creation timestamp (newest first).
+	// Tie-break with name for stable sorting.
+	items := make([]sandboxtaskv1alpha1.SandboxTask, len(taskList.Items))
+	copy(items, taskList.Items)
+	SortSandboxTasks(items)
 
-		tAgentDraft := ""
-		tUserDraft := ""
-		tAgentState := ""
-		tAgentStateMessage := ""
-		tAgentDraftType := ""
-
-		tAnnotations := taskItem.GetAnnotations()
-		if tAnnotations != nil {
-			tAgentDraft = tAnnotations["agentDraft"]
-			tAgentDraftType = tAnnotations["agentDraftType"]
-			tUserDraft = tAnnotations["userDraft"]
-			tAgentState = tAnnotations["agentState"]
-			tAgentStateMessage = tAnnotations["agentStateMessage"]
-		}
-
-		tasks = append(tasks, models.Task{
-			Name:              taskItem.GetName(),
-			Type:              taskType,
-			TaskState:         taskState,
-			Result:            result,
-			CreationTimestamp: taskItem.GetCreationTimestamp().Format(time.RFC3339),
-			AgentDraft:        tAgentDraft,
-			AgentDraftType:    tAgentDraftType,
-			UserDraft:         tUserDraft,
-			AgentState:        tAgentState,
-			AgentStateMessage: tAgentStateMessage,
-			Stats:             convertStats(taskItem.Status.Stats),
-		})
+	tasksList := make([]models.Task, 0, len(items))
+	for _, taskItem := range items {
+		tasksList = append(tasksList, s.mapSandboxTaskToModel(taskItem))
 	}
-	// Sort tasks by creation timestamp (newest first)
-	sort.Slice(tasks, func(i, j int) bool {
-		return tasks[i].CreationTimestamp > tasks[j].CreationTimestamp
-	})
 
-	c.JSON(http.StatusOK, tasks)
+	c.JSON(http.StatusOK, tasksList)
 }
 
 func (s *Server) listPRsFromK8s(ctx context.Context, namespace, repo string) ([]models.PR, error) {
@@ -101,7 +87,7 @@ func (s *Server) listPRsFromK8s(ctx context.Context, namespace, repo string) ([]
 		Version:  "v1alpha1",
 		Resource: "sandboxes",
 	}
-	list, err := s.K8sManager.Client.Resource(gvr).Namespace(namespace).List(context.Background(),
+	list, err := s.K8sManager.Client.Resource(gvr).Namespace(namespace).List(ctx,
 		v1.ListOptions{
 			LabelSelector: fmt.Sprintf("review.gemini.google.com/repowatch=%s", repo),
 		})
@@ -109,7 +95,7 @@ func (s *Server) listPRsFromK8s(ctx context.Context, namespace, repo string) ([]
 		return nil, fmt.Errorf("failed to list Sandbox CRs: %w", err)
 	}
 
-	var prs []models.PR
+	prs := make([]models.PR, 0, len(list.Items))
 	for _, item := range list.Items {
 		if item.GetDeletionTimestamp() != nil {
 			continue
@@ -118,7 +104,7 @@ func (s *Server) listPRsFromK8s(ctx context.Context, namespace, repo string) ([]
 		// Get replicas and if it scaled down skip
 		replicas, found, err := unstructured.NestedInt64(item.Object, "spec", "replicas")
 		if err != nil || !found {
-			log.Info("Replicas (.spec.replicas) not found in Sandbox", "name", item.GetName())
+			log.Error(err, "Replicas (.spec.replicas) not found in Sandbox", "name", item.GetName())
 			continue
 		}
 
@@ -192,15 +178,22 @@ func (s *Server) saveDraft(c *gin.Context) {
 	repo := c.Param("repo")
 	prID := c.Param("id")
 	var payload struct {
-		Draft string
+		// Draft is a pointer to a string. If it is null (nil in Go),
+		// the draft will be cleared (saved as an empty string).
+		Draft *string `json:"draft"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
+	draft := ""
+	if payload.Draft != nil {
+		draft = *payload.Draft
+	}
+
 	sandboxName := fmt.Sprintf("%s-pr-%s", repo, prID)
-	err := s.K8sManager.UpdateSandboxUserDraft(c.Request.Context(), namespace, sandboxName, payload.Draft)
+	err := s.K8sManager.UpdateSandboxUserDraft(c.Request.Context(), namespace, sandboxName, draft)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save draft", "details": err.Error()})
 		return
@@ -213,14 +206,21 @@ func (s *Server) saveTaskDraft(c *gin.Context) {
 	namespace := s.Auth.GetNamespaceFromContext(c)
 	taskName := c.Param("taskID")
 	var payload struct {
-		Draft string
+		// Draft is a pointer to a string. If it is null (nil in Go),
+		// the draft will be cleared (saved as an empty string).
+		Draft *string `json:"draft"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	err := s.K8sManager.UpdateSandboxTaskUserDraft(c.Request.Context(), namespace, taskName, payload.Draft)
+	draft := ""
+	if payload.Draft != nil {
+		draft = *payload.Draft
+	}
+
+	err := s.K8sManager.UpdateSandboxTaskUserDraft(c.Request.Context(), namespace, taskName, draft)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save task draft", "details": err.Error()})
 		return
@@ -235,15 +235,30 @@ func (s *Server) submitReview(c *gin.Context) {
 	repo := c.Param("repo")
 	prID := c.Param("id")
 	var payload struct {
-		Review string
+		Review   *string `json:"review"`
+		TaskName *string `json:"task_name"`
+		TaskUID  *string `json:"task_uid"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
+	reviewText := ""
+	if payload.Review != nil {
+		reviewText = *payload.Review
+	}
+	taskNameReq := ""
+	if payload.TaskName != nil {
+		taskNameReq = *payload.TaskName
+	}
+	taskUIDReq := ""
+	if payload.TaskUID != nil {
+		taskUIDReq = *payload.TaskUID
+	}
+
 	ctx := c.Request.Context()
-	log.Info("Submitting review for PR", "prID", prID, "repo", repo, "review", payload.Review)
+	log.Info("Submitting review for PR", "prID", prID, "repo", repo, "review", truncateToRuneBoundary(reviewText, 1000), "taskName", taskNameReq, "taskUID", taskUIDReq)
 
 	sandboxName := fmt.Sprintf("%s-pr-%s", repo, prID)
 	gvr := schema.GroupVersionResource{
@@ -260,7 +275,7 @@ func (s *Server) submitReview(c *gin.Context) {
 		return
 	}
 
-	draft := payload.Review
+	draft := reviewText
 	agentDraft := ""
 	if annotations := sandbox.GetAnnotations(); annotations != nil {
 		if val, ok := annotations["agentDraft"]; ok {
@@ -320,12 +335,74 @@ func (s *Server) submitReview(c *gin.Context) {
 	// Try Unmarshalling the yaml review payload into PullRequestReviewRequest
 	agentOutput := &models.ReviewAgentOutput{}
 	reviewRequest := &github.PullRequestReviewRequest{}
-	err = yaml.Unmarshal([]byte(payload.Review), &agentOutput)
-	if err != nil {
-		log.Info("Failed to unmarshal review payload", "err", err)
-		reviewRequest.Body = github.String(payload.Review)
+	err = yaml.Unmarshal([]byte(reviewText), &agentOutput)
+	if err != nil || agentOutput.Review == nil {
+		if err != nil {
+			log.Info("Failed to unmarshal review payload", "err", err)
+		} else {
+			log.Info("Review field missing in YAML payload")
+		}
+		reviewRequest.Body = github.String(reviewText)
 	} else {
 		reviewRequest = agentOutput.Review.ToGitHubReviewRequest()
+	}
+
+	if reviewRequest == nil {
+		reviewRequest = &github.PullRequestReviewRequest{}
+	}
+
+	// Check if the review is effectively empty before adding metadata
+	bodyForEmptyCheck := ""
+	if reviewRequest.Body != nil {
+		bodyForEmptyCheck = strings.TrimSpace(*reviewRequest.Body)
+	}
+
+	hasValidComment := false
+	for _, comment := range reviewRequest.Comments {
+		if comment != nil && comment.Body != nil && strings.TrimSpace(*comment.Body) != "" {
+			hasValidComment = true
+			break
+		}
+	}
+
+	isEmpty := bodyForEmptyCheck == "" && !hasValidComment
+	if isEmpty {
+		log.Info("Review is empty, skipping submission")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Review is empty"})
+		return
+	}
+
+	// If the body is empty but we have inline comments, we skip adding the
+	// metadata footer to the top-level body to avoid cluttering the PR timeline.
+	// Traceability is maintained if at least one comment is present or if a body exists.
+	body := ""
+	if reviewRequest.Body != nil {
+		body = *reviewRequest.Body
+	}
+
+	if body != "" || len(reviewRequest.Comments) == 0 {
+		newBody := s.applyTraceabilityMetadataWithSandbox(c, body, metadata.TaskTypePRReview, sandboxName, taskNameReq, taskUIDReq, sandbox)
+		reviewRequest.Body = &newBody
+	} else {
+		// Only inline comments. Add metadata to the first comment to maintain traceability
+		// without a top-level body.
+		reviewRequest.Body = nil
+		firstComment := reviewRequest.Comments[0]
+		commentBody := ""
+		if firstComment != nil && firstComment.Body != nil {
+			commentBody = *firstComment.Body
+		}
+
+		newCommentBody := s.applyTraceabilityMetadataWithSandbox(c, commentBody, metadata.TaskTypePRReview, sandboxName, taskNameReq, taskUIDReq, sandbox)
+		// For inline comments, remove the horizontal rule and extra newlines to save space.
+		// We keep the invisible HTML comment for traceability but drop the visible rule.
+		if idx := strings.Index(newCommentBody, "<!-- repo-agent-metadata"); idx != -1 {
+			newCommentBody = strings.TrimRight(newCommentBody[:idx], " \t\n\r") + "\n" + newCommentBody[idx:]
+		}
+
+		if firstComment != nil {
+			firstComment.Body = &newCommentBody
+		}
 	}
 
 	// Not setting event sets it as a draft
@@ -621,7 +698,7 @@ func (s *Server) getPRCommits(c *gin.Context) {
 		return
 	}
 
-	var result []gin.H
+	result := make([]gin.H, 0, len(commits))
 	for _, commit := range commits {
 		sha := commit.GetSHA()
 		message := ""

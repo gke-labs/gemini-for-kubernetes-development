@@ -1,18 +1,16 @@
-/*
-Copyright 2025.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+// Copyright 2026 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// you may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package main
 
@@ -38,6 +36,7 @@ import (
 	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
 	sandboxtaskv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/controllers/repowatch"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks"
 	//+kubebuilder:scaffold:imports
 )
 
@@ -84,14 +83,22 @@ func main() {
 		os.Exit(1)
 	}
 
+	traceabilityEnabled := tasks.GetTraceabilityMetadataEnabled()
+	if traceabilityEnabled {
+		setupLog.Info("Traceability metadata is enabled for RepoWatch actions")
+	} else {
+		setupLog.Info("Traceability metadata is disabled for RepoWatch actions")
+	}
+
 	if err = (&repowatch.Reconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 		NewGithubClient: func(ctx context.Context, k8sClient client.Client, repoWatch *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
 			return repowatch.NewGithubClient(ctx, k8sClient, repoWatch)
 		},
-		RepoSandboxImage: os.Getenv("REPO_SANDBOX_IMAGE"),
-		ConfigDirImage:   os.Getenv("CONFIGDIR_CLI_IMAGE"),
+		RepoSandboxImage:            os.Getenv("REPO_SANDBOX_IMAGE"),
+		ConfigDirImage:              os.Getenv("CONFIGDIR_CLI_IMAGE"),
+		TraceabilityMetadataEnabled: traceabilityEnabled,
 	}).SetupWithManager(mgr, concurrentReconciles); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "RepoWatch")
 		os.Exit(1)

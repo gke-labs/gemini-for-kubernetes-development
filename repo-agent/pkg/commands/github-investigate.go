@@ -1,3 +1,17 @@
+// Copyright 2026 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// you may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package commands
 
 import (
@@ -9,12 +23,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spf13/cobra"
+	"k8s.io/klog/v2"
+
 	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks"
-	"github.com/spf13/cobra"
-	"k8s.io/klog/v2"
 )
 
 // GithubInvestigateCommand holds options for the RunCode function.
@@ -260,14 +275,16 @@ func (c *GithubInvestigateCommand) Run(ctx context.Context) error {
 
 	promptPath := c.taskPath("agent-prompt.txt")
 	task := tasks.InvestigateFailuresModel{
-		Repo:              c.repo,
-		PullRequest:       c.pullRequest,
-		PromptFile:        promptPath,
-		User:              c.user,
-		Models:            strings.Split(c.Model, ","),
-		FailedRuns:        c.failedRuns,
-		IssueComments:     filteredComments,
-		RepositoryCommits: commits,
+		Repo:                        c.repo,
+		PullRequest:                 c.pullRequest,
+		PromptFile:                  promptPath,
+		User:                        c.user,
+		Models:                      strings.Split(c.Model, ","),
+		FailedRuns:                  c.failedRuns,
+		IssueComments:               filteredComments,
+		RepositoryCommits:           commits,
+		Metadata:                    tasks.GetMetadata(),
+		TraceabilityMetadataEnabled: tasks.GetTraceabilityMetadataEnabled(),
 	}
 
 	if c.ExtensionsJSON != "" {
@@ -284,10 +301,9 @@ func (c *GithubInvestigateCommand) Run(ctx context.Context) error {
 		return err
 	}
 
-	env := map[string]string{
-		"GEMINI_API_KEY":    apikey,
-		"GITHUB_USER_TOKEN": c.GithubUserToken,
-	}
+	env := tasks.GetMetadataEnv()
+	env["GEMINI_API_KEY"] = apikey
+	env["GITHUB_USER_TOKEN"] = c.GithubUserToken
 
 	err = tasks.RunTask(ctx, &task, c.sandbox, c.TaskDir, env)
 	if err != nil {

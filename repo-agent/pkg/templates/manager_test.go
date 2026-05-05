@@ -1,4 +1,4 @@
-// Copyright 2026 The Gemini Authors.
+// Copyright 2026 The Kubernetes Authors.
 
 package templates
 

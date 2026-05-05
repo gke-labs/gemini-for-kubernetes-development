@@ -1,3 +1,17 @@
+// Copyright 2026 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// you may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package commands
 
 import (
@@ -8,12 +22,13 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/spf13/cobra"
+	"k8s.io/klog/v2"
+
 	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks"
-	"github.com/spf13/cobra"
-	"k8s.io/klog/v2"
 )
 
 // GithubFixIssueCommand holds options for the RunCode function.
@@ -158,14 +173,16 @@ func (c *GithubFixIssueCommand) Run(ctx context.Context) error {
 
 	promptPath := c.taskPath("agent-prompt.txt")
 	task := tasks.FixIssueModel{
-		Issue:         c.issue,
-		Repo:          c.repo,
-		User:          c.user,
-		IssueComments: c.issue.IssueComments,
-		PromptFile:    promptPath,
-		Models:        strings.Split(c.Model, ","),
-		Branch:        os.Getenv("ISSUE_BRANCH"),
-		PRLabel:       os.Getenv("PR_LABEL"),
+		Issue:                       c.issue,
+		Repo:                        c.repo,
+		User:                        c.user,
+		IssueComments:               c.issue.IssueComments,
+		PromptFile:                  promptPath,
+		Models:                      strings.Split(c.Model, ","),
+		Branch:                      os.Getenv("ISSUE_BRANCH"),
+		PRLabel:                     os.Getenv("PR_LABEL"),
+		Metadata:                    tasks.GetMetadata(),
+		TraceabilityMetadataEnabled: tasks.GetTraceabilityMetadataEnabled(),
 	}
 
 	if c.ExtensionsJSON != "" {
@@ -182,10 +199,10 @@ func (c *GithubFixIssueCommand) Run(ctx context.Context) error {
 		return err
 	}
 
-	env := map[string]string{
-		"GEMINI_API_KEY":    apikey,
-		"GITHUB_USER_TOKEN": c.GithubUserToken,
-	}
+	env := tasks.GetMetadataEnv()
+	env["GEMINI_API_KEY"] = apikey
+	env["GITHUB_USER_TOKEN"] = c.GithubUserToken
+
 	err = tasks.RunTask(ctx, &task, c.sandbox, c.TaskDir, env)
 	if err != nil {
 		return fmt.Errorf("running fix-issue task: %w", err)

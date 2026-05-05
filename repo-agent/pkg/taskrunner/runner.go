@@ -1,3 +1,17 @@
+// Copyright 2026 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// you may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package taskrunner
 
 import (
@@ -8,8 +22,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
+
+	"k8s.io/klog/v2"
 
 	sandboxtaskv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/agentoutput"
@@ -18,7 +35,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/llm"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
-	"k8s.io/klog/v2"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks/metadata"
 )
 
 type TaskRunner struct {
@@ -146,102 +163,71 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		return
 	}
 
+	// Prepare environment for subcommands
+	commonEnv := os.Environ()
+	for k, v := range params {
+		upperK := strings.ToUpper(k)
+		switch upperK {
+		case metadata.EnvSandboxTaskName, metadata.EnvSandboxTaskUID, metadata.EnvSandboxName, metadata.EnvRepoWatchName, metadata.EnvSandboxTaskType, metadata.EnvMetadataTraceabilityEnable:
+			klog.Warningf("User parameter %q is overridden by system traceability metadata for security and integrity.", k)
+			continue
+		}
+		commonEnv = append(commonEnv, fmt.Sprintf("%s=%s", upperK, v))
+	}
+	commonEnv = append(commonEnv, fmt.Sprintf("%s=%s/%s", metadata.EnvSandboxTaskName, task.GetNamespace(), task.GetName()))
+	commonEnv = append(commonEnv, fmt.Sprintf("%s=%s", metadata.EnvSandboxTaskUID, task.GetUID()))
+	commonEnv = append(commonEnv, fmt.Sprintf("%s=%s", metadata.EnvSandboxName, tr.sandboxName))
+	commonEnv = append(commonEnv, fmt.Sprintf("%s=%s", metadata.EnvRepoWatchName, task.GetLabels()["review.gemini.google.com/repowatch"]))
+	commonEnv = append(commonEnv, fmt.Sprintf("%s=%s", metadata.EnvSandboxTaskType, task.Spec.Type))
+	commonEnv = append(commonEnv, fmt.Sprintf("%s=%s", metadata.EnvMetadataTraceabilityEnable, strconv.FormatBool(metadata.GetTraceabilityMetadataEnabled())))
+
 	switch taskType {
 	case "review":
 		cmd = exec.Command(sandbox.RepoSandboxBinary, "review")
 		// Map params to env vars
-		cmd.Env = os.Environ()
+		cmd.Env = commonEnv
 		cmd.Env = append(cmd.Env, "AGENT_OUTPUT_GVR_RESOURCE=sandboxtasks")
 		cmd.Env = append(cmd.Env, "AGENT_OUTPUT_GVR_GROUP=custom.agents.x-k8s.io")
 		cmd.Env = append(cmd.Env, "AGENT_OUTPUT_GVR_VERSION=v1alpha1")
-		// Inject params into env
-		for k, v := range params {
-			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
-		}
 
 	case "fix-issue":
 		cmd = exec.Command(sandbox.RepoSandboxBinary, "github-fix-issue", "--in-pod=true")
-		// Map params to env vars
-		cmd.Env = os.Environ()
-		// Inject params into env
-		for k, v := range params {
-			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
-		}
+		cmd.Env = commonEnv
 
 	case "address-feedback":
 		cmd = exec.Command(sandbox.RepoSandboxBinary, "github-feedback", "--in-pod=true")
-		// Map params to env vars
-		cmd.Env = os.Environ()
-		// Inject params into env
-		for k, v := range params {
-			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
-		}
+		cmd.Env = commonEnv
 
 	case "investigate-failures":
 		cmd = exec.Command(sandbox.RepoSandboxBinary, "github-investigate", "--in-pod=true")
-		// Map params to env vars
-		cmd.Env = os.Environ()
-		// Inject params into env
-		for k, v := range params {
-			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
-		}
+		cmd.Env = commonEnv
 
 	case "triage-issue":
 		cmd = exec.Command(sandbox.RepoSandboxBinary, "github-triage-issue", "--in-pod=true")
-		// Map params to env vars
-		cmd.Env = os.Environ()
-		// Inject params into env
-		for k, v := range params {
-			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
-		}
+		cmd.Env = commonEnv
 
 	case "dev-setup":
 		cmd = exec.Command(sandbox.RepoSandboxBinary, "dev-init", "--in-pod=true")
-		// Map params to env vars
-		cmd.Env = os.Environ()
-		// Inject params into env
-		for k, v := range params {
-			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
-		}
+		cmd.Env = commonEnv
 
 	case "iterate":
 		cmd = exec.Command(sandbox.RepoSandboxBinary, "iterate", "--in-pod=true")
-		// Map params to env vars
-		cmd.Env = os.Environ()
-		// Inject params into env
-		for k, v := range params {
-			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
-		}
+		cmd.Env = commonEnv
 
 	case "chore":
 		cmd = exec.Command(sandbox.RepoSandboxBinary, "chore", "--in-pod=true")
-		// Map params to env vars
-		cmd.Env = os.Environ()
-		// Inject params into env
-		for k, v := range params {
-			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
-		}
+		cmd.Env = commonEnv
 
 	case "rollback":
 		cmd = exec.Command(sandbox.RepoSandboxBinary, "rollback", "--in-pod=true")
-		// Map params to env vars
-		cmd.Env = os.Environ()
-		// Inject params into env
-		for k, v := range params {
-			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
-		}
+		cmd.Env = commonEnv
 
 	case "issue":
 		cmd = exec.Command(sandbox.RepoSandboxBinary, "dev")
-		// Map params to env vars
-		cmd.Env = os.Environ()
+		cmd.Env = commonEnv
 		cmd.Env = append(cmd.Env, "AGENT_OUTPUT_GVR_RESOURCE=sandboxtasks")
 		cmd.Env = append(cmd.Env, "AGENT_OUTPUT_GVR_GROUP=custom.agents.x-k8s.io")
 		cmd.Env = append(cmd.Env, "AGENT_OUTPUT_GVR_VERSION=v1alpha1")
-		// Inject params into env
-		for k, v := range params {
-			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
-		}
 
 	// TODO (barney-s): Pending decision: Should we support script tasks ?
 	case "script":

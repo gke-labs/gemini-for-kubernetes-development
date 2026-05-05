@@ -1,3 +1,17 @@
+// Copyright 2026 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// you may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package api
 
 import (
@@ -6,17 +20,20 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/klog/v2"
+
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/auth"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/templates"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/klog/v2"
 )
 
 type Server struct {
 	K8sManager *k8s.Manager
 	Auth       *auth.Authenticator
 	Templates  *templates.Manager
+	// TraceabilityMetadataEnabled when true will append a metadata footer to GitHub issues, PRs, and comments.
+	TraceabilityMetadataEnabled bool
 }
 
 func NewServer(manager *k8s.Manager, authenticator *auth.Authenticator) *Server {
@@ -155,8 +172,7 @@ func RequestLoggerMiddleware() gin.HandlerFunc {
 
 		klog.Infof("Request Method: %s\n", c.Request.Method)
 		klog.Infof("Request URL: %s\n", c.Request.URL.String())
-		//log.Printf("Request Headers: %v\n", c.Request.Header)
-		klog.Infof("Request Body: %s\n", string(bodyBytes))
+		klog.Infof("Request Body: %s\n", truncateLogString(string(bodyBytes), 1000))
 
 		c.Next() // Process the request further
 	}
@@ -171,8 +187,22 @@ func ResponseLoggerMiddleware() gin.HandlerFunc {
 
 		klog.Infof("Response Status: %d\n", c.Writer.Status())
 		klog.Infof("Response Headers: %v\n", c.Writer.Header())
-		klog.Infof("Response Body: %s\n", blw.body.String())
+		klog.Infof("Response Body: %s\n", truncateLogString(blw.body.String(), 1000))
 	}
+}
+
+// truncateLogString truncates a string to the given limit and appends a suffix.
+// Note: If the input is a JSON string, the truncated output will be invalid JSON.
+// This is a trade-off to avoid log flooding while still providing some context.
+func truncateLogString(s string, limit int) string {
+	const suffix = "... (truncated)"
+	if len(s) <= limit {
+		return s
+	}
+	if limit <= len(suffix) {
+		return truncateToRuneBoundary(s, limit)
+	}
+	return truncateToRuneBoundary(s, limit-len(suffix)) + suffix
 }
 
 func (s *Server) getInstructions(c *gin.Context) {
@@ -240,14 +270,27 @@ func (s *Server) updateInstructions(c *gin.Context) {
 	}
 
 	var req struct {
-		Current string `json:"current"`
-		Draft   string `json:"draft"`
-		Action  string `json:"action"` // "save_draft", "publish", "discard_draft"
+		Current *string `json:"current"`
+		Draft   *string `json:"draft"`
+		Action  *string `json:"action"` // "save_draft", "publish", "discard_draft"
 	}
 
 	if err := c.BindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
 		return
+	}
+
+	current := ""
+	if req.Current != nil {
+		current = *req.Current
+	}
+	draft := ""
+	if req.Draft != nil {
+		draft = *req.Draft
+	}
+	action := ""
+	if req.Action != nil {
+		action = *req.Action
 	}
 
 	rw, err := s.K8sManager.GetRepoWatch(c.Request.Context(), namespace, repoName)
@@ -262,9 +305,9 @@ func (s *Server) updateInstructions(c *gin.Context) {
 		return
 	}
 
-	switch req.Action {
+	switch action {
 	case "save_draft":
-		if err := s.K8sManager.UpdateConfigDirFile(c.Request.Context(), namespace, configDirRef, ".gemini/user-instructions.draft.json", req.Draft); err != nil {
+		if err := s.K8sManager.UpdateConfigDirFile(c.Request.Context(), namespace, configDirRef, ".gemini/user-instructions.draft.json", draft); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save draft", "details": err.Error()})
 			return
 		}
@@ -274,8 +317,12 @@ func (s *Server) updateInstructions(c *gin.Context) {
 			return
 		}
 	case "publish":
+		if req.Current == nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "current instructions are required for publish action"})
+			return
+		}
 		// Update current
-		if err := s.K8sManager.UpdateConfigDirFile(c.Request.Context(), namespace, configDirRef, ".gemini/user-instructions.json", req.Current); err != nil {
+		if err := s.K8sManager.UpdateConfigDirFile(c.Request.Context(), namespace, configDirRef, ".gemini/user-instructions.json", current); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update current instructions", "details": err.Error()})
 			return
 		}

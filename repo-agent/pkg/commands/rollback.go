@@ -1,3 +1,17 @@
+// Copyright 2026 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// you may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package commands
 
 import (
@@ -6,11 +20,12 @@ import (
 	"os"
 	"strings"
 
+	"github.com/spf13/cobra"
+	"k8s.io/klog/v2"
+
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks"
-	"github.com/spf13/cobra"
-	"k8s.io/klog/v2"
 )
 
 type RollbackOptions struct {
@@ -179,17 +194,18 @@ func RunRollback(ctx context.Context, opts RollbackOptions) error {
 	}
 
 	task := tasks.RollbackModel{
-		PullRequestID: opts.PullRequestID,
-		Repo:          opts.repo,
-		User:          opts.user,
-		CommitSHA:     opts.CommitSHA,
-		Branch:        opts.Branch,
-		Remote:        opts.Remote,
+		PullRequestID:               opts.PullRequestID,
+		Repo:                        opts.repo,
+		User:                        opts.user,
+		CommitSHA:                   opts.CommitSHA,
+		Branch:                      opts.Branch,
+		Remote:                      opts.Remote,
+		Metadata:                    tasks.GetMetadata(),
+		TraceabilityMetadataEnabled: tasks.GetTraceabilityMetadataEnabled(),
 	}
 
-	env := map[string]string{
-		"GITHUB_USER_TOKEN": opts.GithubUserToken,
-	}
+	env := tasks.GetMetadataEnv()
+	env["GITHUB_USER_TOKEN"] = opts.GithubUserToken
 
 	// Try to get Gemini API key, though rollback might not need it,
 	// but it's good practice for tasks.

@@ -1,3 +1,17 @@
+// Copyright 2026 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// you may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package api
 
 import (
@@ -8,15 +22,16 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	sandboxtaskv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	pkg_github "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks/metadata"
 	"github.com/google/go-github/v39/github"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -52,47 +67,18 @@ func (s *Server) getIssueTasks(c *gin.Context) {
 		return
 	}
 
-	var tasks []models.Task
-	for _, taskItem := range taskList.Items {
-		taskType := taskItem.Spec.Type
-		taskState := taskItem.Status.TaskState
-		result := taskItem.Status.Result
+	// Sort tasks by creation timestamp (newest first).
+	// Tie-break with name for stable sorting.
+	items := make([]sandboxtaskv1alpha1.SandboxTask, len(taskList.Items))
+	copy(items, taskList.Items)
+	SortSandboxTasks(items)
 
-		tAgentDraft := ""
-		tUserDraft := ""
-		tAgentState := ""
-		tAgentStateMessage := ""
-		tAgentDraftType := ""
-
-		tAnnotations := taskItem.GetAnnotations()
-		if tAnnotations != nil {
-			tAgentDraft = tAnnotations["agentDraft"]
-			tAgentDraftType = tAnnotations["agentDraftType"]
-			tUserDraft = tAnnotations["userDraft"]
-			tAgentState = tAnnotations["agentState"]
-			tAgentStateMessage = tAnnotations["agentStateMessage"]
-		}
-
-		tasks = append(tasks, models.Task{
-			Name:              taskItem.GetName(),
-			Type:              taskType,
-			TaskState:         taskState,
-			Result:            result,
-			CreationTimestamp: taskItem.GetCreationTimestamp().Format(time.RFC3339),
-			AgentDraft:        tAgentDraft,
-			AgentDraftType:    tAgentDraftType,
-			UserDraft:         tUserDraft,
-			AgentState:        tAgentState,
-			AgentStateMessage: tAgentStateMessage,
-			Stats:             convertStats(taskItem.Status.Stats),
-		})
+	tasksList := make([]models.Task, 0, len(items))
+	for _, taskItem := range items {
+		tasksList = append(tasksList, s.mapSandboxTaskToModel(taskItem))
 	}
-	// Sort tasks by creation timestamp (newest first)
-	sort.Slice(tasks, func(i, j int) bool {
-		return tasks[i].CreationTimestamp > tasks[j].CreationTimestamp
-	})
 
-	c.JSON(http.StatusOK, tasks)
+	c.JSON(http.StatusOK, tasksList)
 }
 
 func (s *Server) listIssuesFromK8s(ctx context.Context, namespace, repo string) ([]models.Issue, error) {
@@ -102,7 +88,7 @@ func (s *Server) listIssuesFromK8s(ctx context.Context, namespace, repo string) 
 		Version:  "v1alpha1",
 		Resource: "sandboxes",
 	}
-	list, err := s.K8sManager.Client.Resource(gvr).Namespace(namespace).List(context.Background(),
+	list, err := s.K8sManager.Client.Resource(gvr).Namespace(namespace).List(ctx,
 		v1.ListOptions{
 			LabelSelector: fmt.Sprintf("review.gemini.google.com/repowatch=%s", repo),
 		})
@@ -110,7 +96,7 @@ func (s *Server) listIssuesFromK8s(ctx context.Context, namespace, repo string) 
 		return nil, fmt.Errorf("failed to list Sandbox CRs: %w", err)
 	}
 
-	var issues []models.Issue
+	issues := make([]models.Issue, 0, len(list.Items))
 	for _, item := range list.Items {
 		// Filter out dev sandboxes
 		labels := item.GetLabels()
@@ -120,7 +106,7 @@ func (s *Server) listIssuesFromK8s(ctx context.Context, namespace, repo string) 
 
 		replicas, found, err := unstructured.NestedInt64(item.Object, "spec", "replicas")
 		if err != nil || !found {
-			log.Info("Replicas (.spec.replicas) not found in Sandbox", "name", item.GetName())
+			log.Error(err, "Replicas (.spec.replicas) not found in Sandbox", "name", item.GetName())
 			continue
 		}
 
@@ -216,15 +202,20 @@ func (s *Server) saveIssueDraft(c *gin.Context) {
 	repo := c.Param("repo")
 	issueID := c.Param("issue_id")
 	var payload struct {
-		Draft string
+		Draft *string `json:"draft"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
+	draft := ""
+	if payload.Draft != nil {
+		draft = *payload.Draft
+	}
+
 	sandboxName := fmt.Sprintf("%s-issue-%s", repo, issueID)
-	err := s.K8sManager.UpdateSandboxUserDraft(c.Request.Context(), namespace, sandboxName, payload.Draft)
+	err := s.K8sManager.UpdateSandboxUserDraft(c.Request.Context(), namespace, sandboxName, draft)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save draft", "details": err.Error()})
 		return
@@ -239,15 +230,30 @@ func (s *Server) submitIssueComment(c *gin.Context) {
 	repo := c.Param("repo")
 	issueID := c.Param("issue_id")
 	var payload struct {
-		Comment string
+		Comment  *string `json:"comment"`
+		TaskName *string `json:"task_name"`
+		TaskUID  *string `json:"task_uid"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
+	commentText := ""
+	if payload.Comment != nil {
+		commentText = *payload.Comment
+	}
+	taskNameReq := ""
+	if payload.TaskName != nil {
+		taskNameReq = *payload.TaskName
+	}
+	taskUIDReq := ""
+	if payload.TaskUID != nil {
+		taskUIDReq = *payload.TaskUID
+	}
+
 	ctx := c.Request.Context()
-	log.Info("Submitting comment for Issue", "issueID", issueID, "repo", repo, "comment", payload.Comment)
+	log.Info("Submitting comment for Issue", "issueID", issueID, "repo", repo, "comment", truncateToRuneBoundary(commentText, 1000), "taskName", taskNameReq, "taskUID", taskUIDReq)
 
 	sandboxName := fmt.Sprintf("%s-issue-%s", repo, issueID)
 	gvr := schema.GroupVersionResource{
@@ -264,7 +270,7 @@ func (s *Server) submitIssueComment(c *gin.Context) {
 		return
 	}
 
-	draft := payload.Comment
+	draft := commentText
 	agentDraft := ""
 	if annotations := sandbox.GetAnnotations(); annotations != nil {
 		if val, ok := annotations["agentDraft"]; ok {
@@ -316,7 +322,14 @@ func (s *Server) submitIssueComment(c *gin.Context) {
 		return
 	}
 
-	comment := &github.IssueComment{Body: &payload.Comment}
+	if commentText == "" {
+		log.Info("Comment text is empty, skipping submission")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Comment is empty"})
+		return
+	}
+
+	body := s.applyTraceabilityMetadataWithSandbox(c, commentText, metadata.TaskTypeIssueComment, sandboxName, taskNameReq, taskUIDReq, sandbox)
+	comment := &github.IssueComment{Body: &body}
 	_, _, err = client.Issues.CreateComment(ctx, owner, repoName, issueNumber, comment)
 	if err != nil {
 		log.Info("Failed to create comment on Issue", "issueNumber", issueNumber, "err", err)
@@ -603,7 +616,7 @@ func (s *Server) getIssueCommits(c *gin.Context) {
 		matches := prURLRegex.FindAllString(agentDraft, -1)
 		for _, match := range matches {
 			if prRef, err := pkg_github.ParsePullRequestURL(match); err == nil {
-				if p, _, err := client.PullRequests.Get(c.Request.Context(), prRef.Repo.Owner, prRef.Repo.Name, prRef.PullRequestNumber); err == nil {
+				if p, _, getErr := client.PullRequests.Get(c.Request.Context(), prRef.Repo.Owner, prRef.Repo.Name, prRef.PullRequestNumber); getErr == nil {
 					linkedPR = p
 					break
 				}
@@ -613,16 +626,21 @@ func (s *Server) getIssueCommits(c *gin.Context) {
 
 	// 2. Check SandboxTasks if not found in sandbox annotation
 	if linkedPR == nil {
-		if taskList, err := s.K8sManager.ListSandboxTasks(c.Request.Context(), namespace, sandboxName); err == nil {
+		taskList, err := s.K8sManager.ListSandboxTasks(c.Request.Context(), namespace, sandboxName)
+		if err == nil {
 			for _, taskItem := range taskList.Items {
 				if tAgentDraft := taskItem.GetAnnotations()["agentDraft"]; tAgentDraft != "" {
 					matches := prURLRegex.FindAllString(tAgentDraft, -1)
 					for _, match := range matches {
 						if prRef, err := pkg_github.ParsePullRequestURL(match); err == nil {
-							if p, _, err := client.PullRequests.Get(c.Request.Context(), prRef.Repo.Owner, prRef.Repo.Name, prRef.PullRequestNumber); err == nil {
+							p, _, getErr := client.PullRequests.Get(c.Request.Context(), prRef.Repo.Owner, prRef.Repo.Name, prRef.PullRequestNumber)
+							if getErr == nil {
 								linkedPR = p
 								break
 							}
+							log.Error(getErr, "Failed to get PR details from GitHub", "match", match)
+						} else {
+							log.Error(err, "Failed to parse PR URL from agentDraft", "match", match)
 						}
 					}
 				}
@@ -630,6 +648,8 @@ func (s *Server) getIssueCommits(c *gin.Context) {
 					break
 				}
 			}
+		} else {
+			log.Error(err, "Failed to list tasks for sandbox to find linked PR", "sandbox", sandboxName)
 		}
 	}
 
@@ -695,7 +715,7 @@ func (s *Server) getIssueCommits(c *gin.Context) {
 		return
 	}
 
-	var result []gin.H
+	result := make([]gin.H, 0, len(commits))
 	for _, commit := range commits {
 		sha := commit.GetSHA()
 		message := ""

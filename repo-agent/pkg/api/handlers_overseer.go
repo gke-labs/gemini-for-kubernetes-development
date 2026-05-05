@@ -1,3 +1,17 @@
+// Copyright 2026 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// you may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package api
 
 import (
@@ -8,7 +22,9 @@ import (
 	"net/url"
 
 	"github.com/gin-gonic/gin"
+	sandboxtaskv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -52,7 +68,7 @@ func (s *Server) getOverseerSandboxes(c *gin.Context) {
 		return
 	}
 
-	items := make([]map[string]interface{}, 0)
+	items := make([]map[string]interface{}, 0, len(sandboxes.Items))
 	for _, sb := range sandboxes.Items {
 		labels := sb.GetLabels()
 		sType := labels["sandbox.gemini.google.com/type"]
@@ -183,7 +199,19 @@ func (s *Server) getChoreTasks(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list chore tasks", "details": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, tasks.Items)
+
+	// Sort tasks by creation timestamp (newest first).
+	// Tie-break with name for stable sorting.
+	items := make([]sandboxtaskv1alpha1.SandboxTask, len(tasks.Items))
+	copy(items, tasks.Items)
+	SortSandboxTasks(items)
+
+	modelsTasks := make([]models.Task, 0, len(items))
+	for _, taskItem := range items {
+		modelsTasks = append(modelsTasks, s.mapSandboxTaskToModel(taskItem))
+	}
+
+	c.JSON(http.StatusOK, modelsTasks)
 }
 
 func (s *Server) getChoreTaskLogs(c *gin.Context) {
@@ -234,7 +262,7 @@ func (s *Server) pauseChore(c *gin.Context) {
 
 	excludeList, found, err := unstructured.NestedStringSlice(overseer.Object, "spec", "chores", "exclude")
 	if err != nil || !found {
-		excludeList = []string{}
+		excludeList = make([]string, 0)
 	}
 
 	exists := false

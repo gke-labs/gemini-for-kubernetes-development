@@ -1,3 +1,17 @@
+// Copyright 2026 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// you may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package api
 
 import (
@@ -6,11 +20,13 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	"github.com/google/go-github/v39/github"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
+
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks/metadata"
 )
 
 func (s *Server) submitFeedback(c *gin.Context) {
@@ -21,21 +37,34 @@ func (s *Server) submitFeedback(c *gin.Context) {
 	}
 
 	var payload struct {
-		Title string `json:"title"`
-		Text  string `json:"text"`
-		Image string `json:"image"` // base64
+		Title *string `json:"title"`
+		Text  *string `json:"text"`
+		Image *string `json:"image"` // base64
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	if payload.Title == "" {
+	titleText := ""
+	if payload.Title != nil {
+		titleText = *payload.Title
+	}
+	bodyText := ""
+	if payload.Text != nil {
+		bodyText = *payload.Text
+	}
+	imageText := ""
+	if payload.Image != nil {
+		imageText = *payload.Image
+	}
+
+	if titleText == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Title is required"})
 		return
 	}
 
-	if payload.Text == "" {
+	if bodyText == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Text is required"})
 		return
 	}
@@ -54,13 +83,15 @@ func (s *Server) submitFeedback(c *gin.Context) {
 	// Create Issue
 	owner := "gke-labs"
 	repo := "gemini-for-kubernetes-development"
-	title := fmt.Sprintf("[repo-agent] %s", payload.Title)
-	body := fmt.Sprintf("User: %s\n\n%s", namespace, payload.Text)
+	title := fmt.Sprintf("[repo-agent] %s", titleText)
+	body := fmt.Sprintf("User: %s\n\n%s", namespace, bodyText)
 	labels := []string{"feedback"}
 
-	if payload.Image != "" {
+	if imageText != "" {
 		body += "\n\n[Screenshot attached in request but ignored due to missing image host configuration]"
 	}
+
+	body = s.applyTraceabilityMetadata(c, body, metadata.TaskTypeFeedback, "n/a", "n/a", "n/a")
 
 	req := &github.IssueRequest{
 		Title:  &title,

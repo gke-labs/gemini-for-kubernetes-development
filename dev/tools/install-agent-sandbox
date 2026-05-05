@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2025 The Kubernetes Authors.
+# Copyright 2026 The Kubernetes Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,11 +17,25 @@ import requests
 import subprocess
 import time
 import argparse
+import os
+import sys
 
 def get_latest_agent_sandbox_version():
     """Fetches the latest Agent Sandbox version from the GitHub API."""
     url = "https://api.github.com/repos/kubernetes-sigs/agent-sandbox/releases/latest"
-    response = requests.get(url)
+    headers = {}
+
+    # Prefer GITHUB_TOKEN if set, then GITHUB_PAT.
+    # If both are empty or unset, github_token will be None or an empty string.
+    github_token = os.environ.get("GITHUB_TOKEN")
+    if not github_token:
+        github_token = os.environ.get("GITHUB_PAT")
+
+    if github_token:
+        headers["Authorization"] = f"Bearer {github_token}"
+
+
+    response = requests.get(url, headers=headers)
     response.raise_for_status()
     tag_name = response.json()["tag_name"]
     return tag_name.lstrip("v")
@@ -51,7 +65,7 @@ def main():
             return
 
         print(f"Installing agent-sandbox version: {version}")
- 
+
         # kubectl apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v0.1.0-rc.0/manifest.yaml
         install_command = [
             "kubectl", "apply", "-f",
@@ -69,10 +83,13 @@ def main():
 
     except requests.exceptions.RequestException as e:
         print(f"Error fetching Agent Sandbox version: {e}")
+        sys.exit(1)
     except subprocess.CalledProcessError as e:
         print(f"Error executing command: {e}")
+        sys.exit(e.returncode or 1)
     except Exception as e:
         print(f"An unexpected error occurred: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

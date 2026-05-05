@@ -1,18 +1,16 @@
-/*
-Copyright 2025.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+// Copyright 2026 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// you may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package repowatch
 
@@ -259,6 +257,8 @@ type Reconciler struct {
 
 	userCacheMu sync.Mutex
 	userCache   map[string]cachedUser
+
+	TraceabilityMetadataEnabled bool
 }
 
 //+kubebuilder:rbac:groups=review.gemini.google.com,resources=repowatches,verbs=get;list;watch;create;update;patch;delete
@@ -1080,30 +1080,31 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 			Annotations: map[string]string{
 				"agentState": "provisioning",
 			},
-			CloneURL:              cloneURL,
-			HTMLURL:               *issue.HTMLURL,
-			Branch:                branchName,
-			Origin:                originURL,
-			PushEnabled:           false,
-			UserLogin:             userLogin,
-			UserName:              userName,
-			UserEmail:             userEmail,
-			BotLogin:              botLogin,
-			BotName:               botName,
-			BotEmail:              botEmail,
-			LLMProvider:           repoWatch.Spec.Issue.LLM.Provider,
-			LLMConfigdirRef:       repoWatch.Spec.Issue.LLM.ConfigdirRef,
-			LLMAPIKeySecretName:   apiKeySecretName,
-			Prompt:                repoWatch.Spec.Issue.LLM.Prompt,
-			GithubSecretName:      githubSecretName,
-			DevcontainerConfigRef: repoWatch.Spec.Issue.DevcontainerConfigRef,
-			Image:                 repoWatch.Spec.Issue.Image,
-			RepoSandboxImage:      r.RepoSandboxImage,
-			ConfigDirImage:        r.ConfigDirImage,
-			HTTPEnabled:           true,
-			Replicas:              1,
-			ServiceAccountName:    "issue-sandbox",
-			WorkspaceDiskSize:     repoWatch.Spec.Issue.WorkspaceDiskSize,
+			CloneURL:                    cloneURL,
+			HTMLURL:                     *issue.HTMLURL,
+			Branch:                      branchName,
+			Origin:                      originURL,
+			PushEnabled:                 false,
+			UserLogin:                   userLogin,
+			UserName:                    userName,
+			UserEmail:                   userEmail,
+			BotLogin:                    botLogin,
+			BotName:                     botName,
+			BotEmail:                    botEmail,
+			LLMProvider:                 repoWatch.Spec.Issue.LLM.Provider,
+			LLMConfigdirRef:             repoWatch.Spec.Issue.LLM.ConfigdirRef,
+			LLMAPIKeySecretName:         apiKeySecretName,
+			Prompt:                      repoWatch.Spec.Issue.LLM.Prompt,
+			GithubSecretName:            githubSecretName,
+			DevcontainerConfigRef:       repoWatch.Spec.Issue.DevcontainerConfigRef,
+			Image:                       repoWatch.Spec.Issue.Image,
+			RepoSandboxImage:            r.RepoSandboxImage,
+			ConfigDirImage:              r.ConfigDirImage,
+			HTTPEnabled:                 true,
+			Replicas:                    1,
+			ServiceAccountName:          "issue-sandbox",
+			WorkspaceDiskSize:           repoWatch.Spec.Issue.WorkspaceDiskSize,
+			TraceabilityMetadataEnabled: r.TraceabilityMetadataEnabled,
 		},
 		DindSupport:   repoWatch.Spec.Issue.DindSupport,
 		LLMExtensions: repoWatch.Spec.Issue.LLM.Extensions,
@@ -1111,11 +1112,12 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 		IssueTitle:    *issue.Title,
 		IssueRepo:     repoWatch.GetName(),
 		//Handler:    "", // Handled per task?
-		Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{
-			corev1.ResourceCPU:    resource.MustParse("2000m"),
-			corev1.ResourceMemory: resource.MustParse("2Gi"),
-			"ephemeral-storage":   ephemeralStorage,
-		},
+		Resources: corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("2000m"),
+				corev1.ResourceMemory: resource.MustParse("2Gi"),
+				"ephemeral-storage":   ephemeralStorage,
+			},
 			Limits: corev1.ResourceList{
 				corev1.ResourceCPU:    resource.MustParse("4000m"),
 				corev1.ResourceMemory: resource.MustParse("6Gi"),
@@ -1263,16 +1265,17 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, user *github.
 			BotName:     botName,
 			BotEmail:    botEmail,
 			LLMProvider: repoWatch.Spec.Review.LLM.Provider, LLMConfigdirRef: repoWatch.Spec.Review.LLM.ConfigdirRef,
-			LLMAPIKeySecretName:   repoWatch.Spec.Review.LLM.APIKeySecretRef,
-			Prompt:                repoWatch.Spec.Review.LLM.Prompt,
-			GithubSecretName:      githubSecretName,
-			DevcontainerConfigRef: repoWatch.Spec.Review.DevcontainerConfigRef,
-			Image:                 repoWatch.Spec.Review.Image,
-			RepoSandboxImage:      r.RepoSandboxImage,
-			ConfigDirImage:        r.ConfigDirImage,
-			HTTPEnabled:           true,
-			Replicas:              1,
-			ServiceAccountName:    "review-sandbox",
+			LLMAPIKeySecretName:         repoWatch.Spec.Review.LLM.APIKeySecretRef,
+			Prompt:                      repoWatch.Spec.Review.LLM.Prompt,
+			GithubSecretName:            githubSecretName,
+			DevcontainerConfigRef:       repoWatch.Spec.Review.DevcontainerConfigRef,
+			Image:                       repoWatch.Spec.Review.Image,
+			RepoSandboxImage:            r.RepoSandboxImage,
+			ConfigDirImage:              r.ConfigDirImage,
+			HTTPEnabled:                 true,
+			Replicas:                    1,
+			ServiceAccountName:          "review-sandbox",
+			TraceabilityMetadataEnabled: r.TraceabilityMetadataEnabled,
 		},
 		PRNumber:          *pr.Number,
 		PRTitle:           *pr.Title,
@@ -1646,11 +1649,12 @@ func (r *Reconciler) createDevSandbox(ctx context.Context, user *github.User, re
 		RepoSandboxImage:      r.RepoSandboxImage,
 		ConfigDirImage:        r.ConfigDirImage,
 
-		HTTPEnabled:        true,
-		Replicas:           1,
-		ServiceAccountName: "issue-sandbox",
-		DindSupport:        repoWatch.Spec.Dev.DindSupport,
-		WorkspaceDiskSize:  repoWatch.Spec.Dev.WorkspaceDiskSize,
+		HTTPEnabled:                 true,
+		Replicas:                    1,
+		ServiceAccountName:          "issue-sandbox",
+		DindSupport:                 repoWatch.Spec.Dev.DindSupport,
+		WorkspaceDiskSize:           repoWatch.Spec.Dev.WorkspaceDiskSize,
+		TraceabilityMetadataEnabled: r.TraceabilityMetadataEnabled,
 	}
 
 	sb, svc := sandbox.NewDevSandbox(opts)

@@ -11,11 +11,24 @@ Analyze the issue title and body to determine the most relevant category from th
 5. support: Questions or requests for help regarding the use of the software.
 6. other: Any issue that does not fit into the above categories.
 
-Response format:
-Please output your response as a single line starting with the Prow command.
-
-/kind <Category> <concise explanation>
-
 Issue Title: "{{.Issue.Title}}"
 Issue Body: "{{.Issue.Body}}"
 HTML URL: "{{.Issue.HTMLURL}}"
+
+Response format:
+Please output your response starting with the Prow command.
+
+/kind <Category> <concise explanation>
+
+{{- if .TraceabilityMetadataEnabled }}
+
+---
+<!-- repo-agent-metadata
+sandbox-task: {{ .Metadata.SandboxTask }}
+sandbox-task-uid: {{ .Metadata.SandboxTaskUID }}
+sandbox: {{ .Metadata.Sandbox }}
+repowatch: {{ .Metadata.RepoWatch }}
+task-type: {{ .Metadata.TaskType }}
+timestamp: {{ .Metadata.Timestamp }}
+-->
+{{- end }}

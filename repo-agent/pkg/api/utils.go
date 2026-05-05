@@ -1,3 +1,17 @@
+// Copyright 2026 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// you may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package api
 
 import (
@@ -7,9 +21,19 @@ import (
 	"sort"
 	"strings"
 
+	sandboxtaskv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
 	"github.com/google/go-github/v39/github"
 	"k8s.io/klog/v2"
 )
+
+func SortSandboxTasks(tasks []sandboxtaskv1alpha1.SandboxTask) {
+	sort.SliceStable(tasks, func(i, j int) bool {
+		if tasks[i].CreationTimestamp.Equal(&tasks[j].CreationTimestamp) {
+			return tasks[i].Name > tasks[j].Name
+		}
+		return tasks[i].CreationTimestamp.After(tasks[j].CreationTimestamp.Time)
+	})
+}
 
 func fixYAMLIntegers(in interface{}) interface{} {
 	switch v := in.(type) {
@@ -79,10 +103,11 @@ func getSuggestedLabels(ctx context.Context, client *github.Client, owner, repo 
 	}
 
 	// Count the label ocurrences
-	issueLabels := [][]string{}
+	issueLabels := make([][]string, 0, len(result.Issues))
 	unlabelledCount := 0
-	for i, issue := range result.Issues {
+	for _, issue := range result.Issues {
 		issueLabels = append(issueLabels, []string{})
+		i := len(issueLabels) - 1
 		if len(issue.Labels) == 0 {
 			unlabelledCount++
 		}
@@ -108,7 +133,7 @@ func getSuggestedLabels(ctx context.Context, client *github.Client, owner, repo 
 
 	// If the most common co-occurring labels appear in less than all unlabelled PRs, return no suggestions
 	if count < unlabelledCount {
-		return [][]string{}, nil
+		return make([][]string, 0), nil
 	}
 
 	return labels, nil
@@ -178,7 +203,7 @@ func findMostCommonCoOccurringLabels(itemLabels [][]string) ([][]string, int) {
 		count  int
 	}
 
-	var allCounts []labelCount
+	allCounts := make([]labelCount, 0, len(counts))
 	for key, count := range counts {
 		allCounts = append(allCounts, labelCount{
 			labels: strings.Split(key, "||"),
@@ -194,7 +219,11 @@ func findMostCommonCoOccurringLabels(itemLabels [][]string) ([][]string, int) {
 		return strings.Join(allCounts[i].labels, "||") < strings.Join(allCounts[j].labels, "||")
 	})
 
-	var result [][]string
+	resultSize := len(allCounts)
+	if resultSize > TopN {
+		resultSize = TopN
+	}
+	result := make([][]string, 0, resultSize)
 	maxCount := 0
 	if len(allCounts) > 0 {
 		maxCount = allCounts[0].count

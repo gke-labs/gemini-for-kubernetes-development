@@ -1,3 +1,17 @@
+// Copyright 2026 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// you may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package api
 
 import (
@@ -8,11 +22,11 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	sandboxtaskv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
 	pkgk8s "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
@@ -40,7 +54,9 @@ func (s *Server) getDevSandboxes(c *gin.Context) {
 
 func (s *Server) listDevSandboxesFromK8s(ctx context.Context, namespace, repo string) ([]models.DevSandbox, error) {
 	log := klog.FromContext(ctx)
-	var sandboxes []models.DevSandbox
+	// We don't know the exact count yet, but we'll have at least the ideas (if any)
+	// plus the active sandboxes.
+	sandboxes := make([]models.DevSandbox, 0)
 
 	// 1. Fetch RepoWatch to get Ideas
 	if rw, err := s.K8sManager.GetRepoWatch(ctx, namespace, repo); err == nil {
@@ -76,7 +92,7 @@ func (s *Server) listDevSandboxesFromK8s(ctx context.Context, namespace, repo st
 		Version:  "v1alpha1",
 		Resource: "sandboxes",
 	}
-	list, err := s.K8sManager.Client.Resource(gvr).Namespace(namespace).List(context.Background(),
+	list, err := s.K8sManager.Client.Resource(gvr).Namespace(namespace).List(ctx,
 		v1.ListOptions{
 			LabelSelector: fmt.Sprintf("review.gemini.google.com/repowatch=%s,sandbox.gemini.google.com/type=dev", repo),
 		})
@@ -206,7 +222,7 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 			return
 		}
 		if !found {
-			ideas = []interface{}{}
+			ideas = make([]interface{}, 0)
 		}
 
 		// Check if ID already exists
@@ -343,7 +359,7 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 	// Check if branch is in excludeBranches and remove it if so
 	excludeBranches, found, err := unstructured.NestedStringSlice(rw.Object, "spec", "dev", "excludeBranches")
 	if found && err == nil {
-		newExclude := []string{}
+		newExclude := make([]string, 0, len(excludeBranches))
 		changed := false
 		for _, b := range excludeBranches {
 			if b == req.Branch {
@@ -414,6 +430,8 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 		IdeaID:            req.IdeaID,
 		Approach:          req.Approach,
 		ParentApproach:    req.ParentApproach,
+
+		TraceabilityMetadataEnabled: s.TraceabilityMetadataEnabled,
 	}
 
 	sb, svc := sandbox.NewDevSandbox(opts)
@@ -521,42 +539,16 @@ func (s *Server) getDevTasks(c *gin.Context) {
 		return
 	}
 
-	var tasks []models.Task
-	for _, taskItem := range taskList.Items {
-		taskType := taskItem.Spec.Type
-		taskState := taskItem.Status.TaskState
-		result := taskItem.Status.Result
+	// Sort tasks by creation timestamp (newest first).
+	// Tie-break with name for stable sorting.
+	items := make([]sandboxtaskv1alpha1.SandboxTask, len(taskList.Items))
+	copy(items, taskList.Items)
+	SortSandboxTasks(items)
 
-		tAgentDraft := ""
-		tUserDraft := ""
-		tAgentState := ""
-		tAgentStateMessage := ""
-
-		tAnnotations := taskItem.GetAnnotations()
-		if tAnnotations != nil {
-			tAgentDraft = tAnnotations["agentDraft"]
-			tUserDraft = tAnnotations["userDraft"]
-			tAgentState = tAnnotations["agentState"]
-			tAgentStateMessage = tAnnotations["agentStateMessage"]
-		}
-
-		tasks = append(tasks, models.Task{
-			Name:              taskItem.GetName(),
-			Type:              taskType,
-			TaskState:         taskState,
-			Result:            result,
-			CreationTimestamp: taskItem.GetCreationTimestamp().Format(time.RFC3339),
-			AgentDraft:        tAgentDraft,
-			UserDraft:         tUserDraft,
-			AgentState:        tAgentState,
-			AgentStateMessage: tAgentStateMessage,
-			Stats:             convertStats(taskItem.Status.Stats),
-		})
+	tasks := make([]models.Task, 0, len(items))
+	for _, taskItem := range items {
+		tasks = append(tasks, s.mapSandboxTaskToModel(taskItem))
 	}
-	// Sort tasks by creation timestamp (newest first)
-	sort.Slice(tasks, func(i, j int) bool {
-		return tasks[i].CreationTimestamp > tasks[j].CreationTimestamp
-	})
 
 	c.JSON(http.StatusOK, tasks)
 }

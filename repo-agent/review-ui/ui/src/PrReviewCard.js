@@ -1,3 +1,17 @@
+// Copyright 2026 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// you may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 import React, { useState, useEffect, useRef } from 'react';
 import yaml from 'js-yaml';
 import { parseDiff, Diff, getChangeKey } from 'react-diff-view';
@@ -181,12 +195,12 @@ function TaskReviewCard({
     const submitTaskDraft = () => {
          // We need to tell the parent to submit THIS content
          if (handleSubmitTask) {
-             handleSubmitTask(prId, localYaml);
+             handleSubmitTask(prId, localYaml, task.name, task.uid);
          } else {
              // Fallback: update global draft then submit?
              // Or call the existing handleSubmit but we need it to support payload override.
              // Let's assume handleSubmit can take content.
-             handleSubmit(prId, localYaml);
+             handleSubmit(prId, localYaml, task.name, task.uid);
          }
     };
 
@@ -770,12 +784,16 @@ function PrReviewCard({
       }).catch(err => console.error("Failed to save task draft", err));
   };
 
-  const handleSubmitTask = (prId, draft) => {
+  const handleSubmitTask = (prId, draft, taskName, taskUID) => {
       if (!repoName) return;
       fetch(`/api/repo/${repoName}/prs/${pr.id}/submitreview`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ review: draft })
+          body: JSON.stringify({ 
+              review: draft,
+              task_name: taskName,
+              task_uid: taskUID
+          })
       })
       .then(res => {
           if (res.ok) {

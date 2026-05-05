@@ -1,3 +1,17 @@
+// Copyright 2026 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// you may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package tasks
 
 import (
@@ -7,12 +21,14 @@ import (
 	"os"
 	"path/filepath"
 
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/klog/v2"
+
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/agentoutput"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/llm"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/klog/v2"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks/metadata"
 )
 
 type Task interface {
@@ -20,6 +36,22 @@ type Task interface {
 	Prompt() ([]byte, error)
 	PostScript() ([]byte, error)
 	DraftState() string
+}
+
+func GetMetadata() metadata.Metadata {
+	return metadata.GetMetadata()
+}
+
+func GetMetadataEnv() map[string]string {
+	return metadata.GetMetadataEnv()
+}
+
+func GetTraceabilityMetadataEnabled() bool {
+	return metadata.GetTraceabilityMetadataEnabled()
+}
+
+func GenerateMetadataFooter(m metadata.Metadata) string {
+	return metadata.GenerateMetadataFooter(m)
 }
 
 func taskPath(taskDir string, name string) string {

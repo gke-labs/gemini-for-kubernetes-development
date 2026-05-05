@@ -1,15 +1,25 @@
+// Copyright 2026 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// you may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import yaml from 'js-yaml';
 import './App.css';
-import PrReviewCard from './PrReviewCard';
 import Review from './Review';
 import Issues from './Issues';
-import IssueCard from './IssueCard';
 import DevCard from './DevCard';
-import ExplorationGroup from './ExplorationGroup';
 import DevSidebar from './DevSidebar';
 import AddRepo from './AddRepo';
-import DeleteRepo from './DeleteRepo';
 import Settings from './Settings';
 import UpdateRepo from './UpdateRepo';
 import Overseer from './Overseer';
@@ -22,11 +32,9 @@ function App() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [view, setView] = useState('dashboard'); // 'dashboard', 'settings', 'add_repo', 'overseer'
   const [githubAuthEnabled, setGithubAuthEnabled] = useState(false);
-  const [showGithubConfig, setShowGithubConfig] = useState(false);
-  const [githubClientId, setGithubClientId] = useState('');
-  const [githubClientSecret, setGithubClientSecret] = useState('');
+  const [githubClientId] = useState('');
+  const [githubClientSecret] = useState('');
   const [isGeminiKeySet, setIsGeminiKeySet] = useState(true); // Default to true to avoid flash of warning
-  const [configError, setConfigError] = useState('');
 
   const [repos, setRepos] = useState([]);
   const [activeRepo, setActiveRepo] = useState(null);
@@ -180,25 +188,23 @@ function App() {
     }
   }, [activeRepo, isAuthenticated, isGuest]);
 
-  const handleGithubConfigSubmit = (e) => {
-    e.preventDefault();
-    setConfigError('');
-    fetch('/api/auth/github-config', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ client_id: githubClientId, client_secret: githubClientSecret })
-    })
-    .then(async (res) => {
-      if (res.ok) {
-        setGithubAuthEnabled(true);
-        setShowGithubConfig(false);
-      } else {
-        const data = await res.json();
-        throw new Error(data.error || 'Failed to update config');
+  const handleRepoClick = useCallback((repoName, currentRepos = repos) => {
+    setView('dashboard');
+    const repo = currentRepos.find(r => r.name === repoName);
+    setActiveRepo(repo);
+    setPrs([]);
+    setIssues([]);
+    setDevSandboxes([]);
+    if (repo) {
+      if (repo.review) {
+        setActiveSubTab({ repo: repoName, name: 'review' });
+      } else if (repo.issue) {
+        setActiveSubTab({ repo: repoName, name: 'issues' });
+      } else if (repo.dev) {
+        setActiveSubTab({ repo: repoName, name: 'dev' });
       }
-    })
-    .catch(err => setConfigError(err.message));
-  };
+    }
+  }, [repos]);
 
   const fetchRepos = useCallback(() => {
     if (!isAuthenticated && !isGuest) return;
@@ -221,7 +227,7 @@ function App() {
         }
       })
       .catch(err => console.error("Failed to fetch repos:", err));
-  }, [isAuthenticated, isGuest, view]);
+  }, [isAuthenticated, isGuest, view, handleRepoClick]);
 
   useEffect(() => {
     if (isAuthenticated || isGuest) {
@@ -417,24 +423,6 @@ function App() {
       .catch(err => console.error("Failed to logout", err));
   };
 
-  const handleRepoClick = (repoName, currentRepos = repos) => {
-    setView('dashboard');
-    const repo = currentRepos.find(r => r.name === repoName);
-    setActiveRepo(repo);
-    setPrs([]);
-    setIssues([]);
-    setDevSandboxes([]);
-    if (repo) {
-      if (repo.review) {
-        setActiveSubTab({ repo: repoName, name: 'review' });
-      } else if (repo.issue) {
-        setActiveSubTab({ repo: repoName, name: 'issues' });
-      } else if (repo.dev) {
-        setActiveSubTab({ repo: repoName, name: 'dev' });
-      }
-    }
-  };
-
   const handleRepoDeleted = (deletedRepoName) => {
     fetchRepos();
     if (activeRepo && activeRepo.name === deletedRepoName) {
@@ -576,7 +564,7 @@ function App() {
         setDrafts(prev => ({ ...prev, [id]: parsedDraft }));
         setReviewViewModes(prev => ({ ...prev, [id]: 'structured' }));
       } catch (e) {
-        alert('Invalid YAML. Please fix it before switching view.');
+        alert(`Invalid YAML: ${e.message}. Please fix it before switching view.`);
         console.error("YAML parse error on view switch:", e);
       }
     } else {
@@ -600,33 +588,44 @@ function App() {
         body: JSON.stringify({ draft })
       }).catch(err => console.error("Failed to save draft:", err));
     } catch (e) {
-      alert('Invalid YAML, not saving.');
+      alert(`Invalid YAML: ${e.message}, not saving.`);
       console.error("YAML parse error on blur:", e);
     }
   };
 
-  const handleSubmit = (id) => {
+  const handleSubmit = (id, content = null, taskName = null, taskUID = null) => {
     let review;
-    if (reviewViewModes[id] === 'yaml') {
+    if (content) {
+        try {
+            review = yaml.load(content);
+        } catch (e) {
+            alert(`Invalid YAML in content: ${e.message}. Please fix it before submitting.`);
+            return;
+        }
+    } else if (reviewViewModes[id] === 'yaml') {
       try {
         review = yaml.load(yamlDrafts[id]);
       } catch (e) {
-        alert('Invalid YAML. Please fix it before submitting.');
+        alert(`Invalid YAML: ${e.message}. Please fix it before submitting.`);
         return;
       }
     } else {
       review = drafts[id];
     }
 
-    if (!review || (!review.review.body?.trim() && (!review.review.comments || review.review.comments.length === 0))) {
+    if (!review || (!review.review?.body?.trim() && (!review.review?.comments || review.review?.comments?.length === 0))) {
       alert("Please leave a review comment before Submitting.");
       return;
     }
     const reviewYAML = yaml.dump(review);
+    const payload = { review: reviewYAML };
+    if (taskName != null) payload.task_name = taskName;
+    if (taskUID != null) payload.task_uid = taskUID;
+
     fetch(`/api/repo/${activeRepo.name}/prs/${id}/submitreview`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ review: reviewYAML })
+      body: JSON.stringify(payload)
     })
     .then(res => {
       if (res.ok) {
@@ -649,14 +648,14 @@ function App() {
       try {
         review = yaml.load(yamlDrafts[id]);
       } catch (e) {
-        alert('Invalid YAML. Please fix it before exporting.');
+        alert(`Invalid YAML: ${e.message}. Please fix it before exporting.`);
         return;
       }
     } else {
       review = drafts[id];
     }
 
-    if (!review || (!review.review.body?.trim() && (!review.review.comments || review.review.comments.length === 0))) {
+    if (!review || (!review.review?.body?.trim() && (!review.review?.comments || review.review?.comments?.length === 0))) {
       alert("Please leave a review comment before Exporting.");
       return;
     }
@@ -719,16 +718,21 @@ function App() {
     }).catch(err => console.error("Failed to save issue draft:", err));
   };
 
-  const handleIssueSubmit = (issueId) => {
-    const comment = drafts[issueId];
+  const handleIssueSubmit = (issueId, taskName = null, taskUID = null) => {
+    const comment = drafts[issueId] || "";
     if (!comment.trim()) {
       alert("Please leave a comment before Submitting.");
       return;
     }
+
+    const payload = { comment };
+    if (taskName) payload.task_name = taskName;
+    if (taskUID) payload.task_uid = taskUID;
+
     fetch(`/api/repo/${activeRepo.name}/issues/${issueId}/submitcomment`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ comment })
+      body: JSON.stringify(payload)
     })
     .then(res => {
       if (res.ok) {
@@ -1175,11 +1179,6 @@ function App() {
             }
         }
 
-        const handleAddDevInstance = (branch) => {
-             setNewDevBranch(branch);
-             setDevModalOpen(true);
-        };
-
         return (
             <div className="dev-layout">
                 <div style={{ width: sidebarWidth, display: 'flex', flexDirection: 'column' }}>
@@ -1418,7 +1417,7 @@ function App() {
       
       {(isAuthenticated || isGuest) && !isGeminiKeySet && (
         <div className="warning-banner">
-          <strong>⚠️ Gemini API Key Missing:</strong> Please configure your Gemini API Key in <a href="#" onClick={(e) => { e.preventDefault(); setView('settings'); }}>Settings</a> to enable code reviews and issue handling.
+          <strong>⚠️ Gemini API Key Missing:</strong> Please configure your Gemini API Key in <button className="btn-link" onClick={(e) => { e.preventDefault(); setView('settings'); }}>Settings</button> to enable code reviews and issue handling.
         </div>
       )}
 

@@ -1,3 +1,17 @@
+// Copyright 2026 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// you may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package api
 
 import (
@@ -10,7 +24,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
-	yaml "go.yaml.in/yaml/v3"
+	yaml "gopkg.in/yaml.v3"
 	"k8s.io/apimachinery/pkg/api/errors"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -136,10 +150,10 @@ func (s *Server) createRepoWatch(c *gin.Context) {
 					obj.SetResourceVersion(existing.GetResourceVersion())
 					_, updateErr := s.K8sManager.Client.Resource(gvr).Namespace(namespace).Update(c.Request.Context(), obj, v1.UpdateOptions{})
 					if updateErr != nil {
-						log.Info("Failed to update existing resource", "kind", gvk.Kind, "err", updateErr)
+						log.Error(updateErr, "Failed to update existing resource", "kind", gvk.Kind, "name", obj.GetName())
 					}
 				} else {
-					log.Info("Failed to get existing resource for update", "kind", gvk.Kind, "err", getErr)
+					log.Error(getErr, "Failed to get existing resource for update", "kind", gvk.Kind, "name", obj.GetName())
 				}
 				continue
 			}
@@ -609,7 +623,7 @@ func (s *Server) getRepos(c *gin.Context) {
 		return
 	}
 
-	repos := []models.Repo{}
+	repos := make([]models.Repo, 0, len(list.Items))
 	for _, repoWatch := range list.Items {
 		repoName := repoWatch.GetName()
 		repoURL, found, _ := unstructured.NestedString(repoWatch.Object, "spec", "repoURL")

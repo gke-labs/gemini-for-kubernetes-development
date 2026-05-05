@@ -10,7 +10,6 @@ require (
 	github.com/gin-contrib/sessions v1.0.4
 	github.com/gin-gonic/gin v1.11.0
 	github.com/gke-labs/gemini-for-kubernetes-development/agentsandboxes v0.0.0-20260219181406-93b8108eadd1
-	github.com/gke-labs/gemini-for-kubernetes-development/overseer v0.0.0-20260306231042-c4fe9d89a8c0
 	github.com/google/cel-go v0.26.1
 	github.com/google/go-cmp v0.7.0
 	github.com/google/go-github/v39 v39.2.0
@@ -19,7 +18,6 @@ require (
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/onsi/gomega v1.38.2
 	github.com/spf13/cobra v1.10.2
-	go.yaml.in/yaml/v3 v3.0.4
 	golang.org/x/crypto v0.45.0
 	golang.org/x/oauth2 v0.33.0
 	google.golang.org/api v0.257.0
@@ -134,6 +132,7 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.27.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.3 // indirect
+	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/arch v0.20.0 // indirect
 	golang.org/x/exp v0.0.0-20240909161429-701f63a606c0 // indirect
 	golang.org/x/mod v0.29.0 // indirect

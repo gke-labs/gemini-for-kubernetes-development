@@ -1,3 +1,17 @@
+// Copyright 2026 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// you may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package commands
 
 import (
@@ -8,12 +22,13 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/spf13/cobra"
+	"k8s.io/klog/v2"
+
 	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks"
-	"github.com/spf13/cobra"
-	"k8s.io/klog/v2"
 )
 
 // GithubTriageIssueCommand holds options for the RunCode function.
@@ -144,10 +159,12 @@ func (c *GithubTriageIssueCommand) Run(ctx context.Context) error {
 
 	promptPath := c.taskPath("agent-prompt.txt")
 	task := tasks.TriageIssueModel{
-		Issue:      c.issue,
-		PromptFile: promptPath,
-		Models:     strings.Split(c.Model, ","),
-		AgentName:  c.AgentName,
+		Issue:                       c.issue,
+		PromptFile:                  promptPath,
+		Models:                      strings.Split(c.Model, ","),
+		AgentName:                   c.AgentName,
+		Metadata:                    tasks.GetMetadata(),
+		TraceabilityMetadataEnabled: tasks.GetTraceabilityMetadataEnabled(),
 	}
 
 	if c.ExtensionsJSON != "" {
@@ -169,11 +186,11 @@ func (c *GithubTriageIssueCommand) Run(ctx context.Context) error {
 		}
 	}
 
-	env := map[string]string{
-		"GEMINI_API_KEY": apikey,
-		// Dont need it for the script. leaving a comment here just in case we change the script
-		//"GITHUB_USER_TOKEN": c.GithubUserToken,
-	}
+	env := tasks.GetMetadataEnv()
+	env["GEMINI_API_KEY"] = apikey
+	// Dont need it for the script. leaving a comment here just in case we change the script
+	//"GITHUB_USER_TOKEN": c.GithubUserToken,
+
 	err = tasks.RunTask(ctx, &task, c.sandbox, c.TaskDir, env)
 	if err != nil {
 		return fmt.Errorf("running triage-issue task: %w", err)

@@ -1,3 +1,17 @@
+// Copyright 2026 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// you may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 import React, { useState, useEffect } from 'react';
 import yaml from 'js-yaml';
 import TaskCard from './TaskCard';
@@ -257,6 +271,25 @@ function IssueCard({
             ) : (
                 <p>No tasks found. Tasks should appear shortly if the sandbox is active.</p>
             )}
+
+            <div style={{padding: '15px', borderTop: '1px solid var(--border-color)', marginTop: '10px', backgroundColor: 'var(--bg-review-section)', borderRadius: '5px'}}>
+                <h4 style={{marginTop: 0, fontSize: '14px'}}>General Issue Comment</h4>
+                <textarea 
+                    className="review-textarea"
+                    value={drafts[issue.id] || ''} 
+                    onChange={(e) => handleIssueDraftChange(issue.id, e.target.value)}
+                    onBlur={() => handleIssueSaveDraft(issue.id)}
+                    placeholder="Leave a general comment on this issue (not tied to a specific task)..."
+                    rows={4}
+                    style={{width: '100%', marginBottom: '10px'}}
+                />
+                <div style={{display: 'flex', justifyContent: 'flex-end'}}>
+                    <button className="btn btn-submit" onClick={() => {
+                        const latestTask = tasks.length > 0 ? tasks[0] : null;
+                        handleIssueSubmit(issue.id, latestTask?.name, latestTask?.uid);
+                    }}>Submit General Comment</button>
+                </div>
+            </div>
             
             <div style={{padding: '10px', borderTop: '1px solid var(--border-color)', marginTop: '10px'}}>
                 <div style={{display: 'flex', gap: '10px', flexDirection: 'column'}}>

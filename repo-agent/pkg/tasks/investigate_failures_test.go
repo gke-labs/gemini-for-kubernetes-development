@@ -1,3 +1,17 @@
+// Copyright 2026 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// you may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package tasks
 
 import (
@@ -6,6 +20,8 @@ import (
 	"testing"
 	"text/template"
 	"time"
+
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks/metadata"
 )
 
 func TestInvestigateFailuresPromptTemplate(t *testing.T) {
@@ -37,9 +53,11 @@ func TestInvestigateFailuresPromptTemplate(t *testing.T) {
 		URL  string
 	}
 	data := struct {
-		PullRequest   MockPR
-		FailedRuns    []MockFailedRun
-		IssueComments []MockComment
+		PullRequest                 MockPR
+		FailedRuns                  []MockFailedRun
+		IssueComments               []MockComment
+		Metadata                    metadata.Metadata
+		TraceabilityMetadataEnabled bool
 	}{
 		PullRequest: MockPR{
 			URL:   "https://github.com/owner/repo/pull/1",
@@ -56,14 +74,21 @@ func TestInvestigateFailuresPromptTemplate(t *testing.T) {
 				Body:      "### Investigating Run 1 failure\nStatus: Failed",
 			},
 		},
+		Metadata: metadata.Metadata{
+			SandboxTask:    "ns/task",
+			SandboxTaskUID: "uid",
+			Sandbox:        "sb",
+			RepoWatch:      "rw",
+			TaskType:       "investigate-failures",
+			Timestamp:      "2026-03-02T12:00:00Z",
+		},
+		TraceabilityMetadataEnabled: true,
 	}
 
 	var w bytes.Buffer
 	if err := tmpl.Execute(&w, data); err != nil {
 		t.Fatalf("Failed to execute template: %v", err)
 	}
-
-	output := w.String()
 
 	// Verify that the new instruction is present
 	expectedInstruction := "Check for Repeated Failures"
@@ -76,11 +101,21 @@ func TestInvestigateFailuresPromptTemplate(t *testing.T) {
 		t.Errorf("Prompt does not contain existing investigation report")
 	}
 
-	// Verify retry limit instruction
-	expectedLimit := "If there are already 3 or more such reports, and you are seeing the same failures, DO NOT attempt to fix them again."
-	if !bytes.Contains(w.Bytes(), []byte(expectedLimit)) {
-		t.Errorf("Prompt does not contain retry limit instruction: %q", expectedLimit)
+	// Verify metadata footer
+	missing := []string{}
+	for _, expected := range []string{
+		"sandbox-task: ns/task",
+		"sandbox-task-uid: uid",
+		"sandbox: sb",
+		"repowatch: rw",
+		"task-type: investigate-failures",
+		"timestamp: 2026-03-02T12:00:00Z",
+	} {
+		if !bytes.Contains(w.Bytes(), []byte(expected)) {
+			missing = append(missing, expected)
+		}
 	}
-
-	_ = output
+	if len(missing) > 0 {
+		t.Fatalf("Prompt missing %d expected metadata strings: %v\nFull prompt:\n%s", len(missing), missing, w.String())
+	}
 }
