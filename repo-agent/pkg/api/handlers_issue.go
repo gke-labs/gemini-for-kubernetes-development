@@ -450,7 +450,7 @@ func (s *Server) getIssueTaskLogs(c *gin.Context) {
 	taskID := c.Param("taskID")
 
 	sandboxName := k8s.TruncateName(fmt.Sprintf("%s-issue-%s", repo, issueID))
-	serviceName := fmt.Sprintf("%s-lb", sandboxName)
+	serviceName := k8s.TruncateName(sandboxName + "-lb")
 
 	targetURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:13339", serviceName, namespace)
 

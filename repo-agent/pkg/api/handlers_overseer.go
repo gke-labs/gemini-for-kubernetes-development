@@ -129,7 +129,7 @@ func (s *Server) getChoreLogs(c *gin.Context) {
 	// Otherwise, return pod logs.
 
 	if taskID != "" {
-		serviceName := fmt.Sprintf("%s-lb", choreSandboxName)
+		serviceName := k8s.TruncateName(choreSandboxName + "-lb")
 		targetURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:13339", serviceName, namespace)
 
 		proxyURL, err := url.Parse(targetURL)
@@ -194,7 +194,7 @@ func (s *Server) getChoreTaskLogs(c *gin.Context) {
 
 	namespace := k8s.TruncateName(fmt.Sprintf("overseer-%s", overseerName))
 
-	serviceName := fmt.Sprintf("%s-lb", choreSandboxName)
+	serviceName := k8s.TruncateName(choreSandboxName + "-lb")
 	targetURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:13339", serviceName, namespace)
 
 	proxyURL, err := url.Parse(targetURL)

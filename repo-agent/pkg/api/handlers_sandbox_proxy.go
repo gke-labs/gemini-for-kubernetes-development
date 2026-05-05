@@ -7,6 +7,7 @@ import (
 	"net/url"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	"k8s.io/klog/v2"
 )
 
@@ -28,7 +29,7 @@ func (s *Server) proxySandbox(c *gin.Context) {
 	}
 
 	// We need to resolve the correct service name.
-	targetHost := fmt.Sprintf("%s-lb.%s.svc.cluster.local:13338", name, namespace)
+	targetHost := fmt.Sprintf("%s.%s.svc.cluster.local:13338", k8s.TruncateName(name+"-lb"), namespace)
 
 	targetURL := &url.URL{
 		Scheme: "http",

@@ -1950,20 +1950,16 @@ func deleteSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, na
 	}
 
 	// Fallback to name-based deletion for services that might lack labels (legacy)
-	serviceName := sandboxName + "-lb"
-	if len(serviceName) <= 63 {
-		if !deletedServices[serviceName] {
-			deletedServices[serviceName] = true
-			klog.Infof("Deleting service %s...", serviceName)
-			err = kubeClient.Clientset.CoreV1().Services(namespace).Delete(ctx, serviceName, metav1.DeleteOptions{
-				PropagationPolicy: &propagationPolicy,
-			})
-			if err != nil && !kerrors.IsNotFound(err) {
-				errs = append(errs, fmt.Errorf("failed to delete legacy service %s: %w", serviceName, err))
-			}
+	serviceName := k8s.TruncateName(sandboxName + "-lb")
+	if !deletedServices[serviceName] {
+		deletedServices[serviceName] = true
+		klog.Infof("Deleting service %s...", serviceName)
+		err = kubeClient.Clientset.CoreV1().Services(namespace).Delete(ctx, serviceName, metav1.DeleteOptions{
+			PropagationPolicy: &propagationPolicy,
+		})
+		if err != nil && !kerrors.IsNotFound(err) {
+			errs = append(errs, fmt.Errorf("failed to delete legacy service %s: %w", serviceName, err))
 		}
-	} else {
-		klog.Warningf("Skipping name-based deletion of associated service %s: name too long (>63 characters). Please manually check for orphaned services.", serviceName)
 	}
 
 	// Also delete associated API key secret if it exists

@@ -610,7 +610,7 @@ func (s *Server) getDevTaskLogs(c *gin.Context) {
 	sandboxName := c.Param("name")
 	taskID := c.Param("taskID")
 
-	serviceName := fmt.Sprintf("%s-lb", sandboxName)
+	serviceName := k8s.TruncateName(sandboxName + "-lb")
 
 	targetURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:13339", serviceName, namespace)
 
