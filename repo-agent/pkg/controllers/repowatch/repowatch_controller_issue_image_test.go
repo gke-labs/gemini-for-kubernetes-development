@@ -167,7 +167,9 @@ func TestReconciler_Reconcile_Issue_With_Image(t *testing.T) {
 	g.Expect(found).To(gomega.BeTrue())
 	g.Expect(containers).To(gomega.HaveLen(1))
 
-	container := containers[0].(map[string]interface{})
-	image := container["image"].(string)
+	container, ok := containers[0].(map[string]interface{})
+	g.Expect(ok).To(gomega.BeTrue())
+	image, ok := container["image"].(string)
+	g.Expect(ok).To(gomega.BeTrue())
 	g.Expect(image).To(gomega.Equal("custom-image:latest"))
 }

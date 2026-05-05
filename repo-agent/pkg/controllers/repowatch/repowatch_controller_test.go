@@ -174,7 +174,10 @@ func TestReconciler_Reconcile(t *testing.T) {
 
 	foundSecret := false
 	for _, v := range volumes {
-		vol := v.(map[string]interface{})
+		vol, ok := v.(map[string]interface{})
+		if !ok {
+			continue
+		}
 		if vol["name"] == "tokens-secret" {
 			if projected, ok := vol["projected"].(map[string]interface{}); ok {
 				if sources, ok := projected["sources"].([]interface{}); ok {
@@ -205,7 +208,8 @@ func TestReconciler_Reconcile(t *testing.T) {
 	g.Expect(found).To(gomega.BeTrue())
 	g.Expect(containers).To(gomega.HaveLen(1))
 
-	container := containers[0].(map[string]interface{})
+	container, ok := containers[0].(map[string]interface{})
+	g.Expect(ok).To(gomega.BeTrue())
 	env, found, err := unstructured.NestedSlice(container, "env")
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(found).To(gomega.BeTrue())
@@ -220,7 +224,10 @@ func TestReconciler_Reconcile(t *testing.T) {
 	for name, value := range expectedEnv {
 		found := false
 		for _, e := range env {
-			envVar := e.(map[string]interface{})
+			envVar, ok := e.(map[string]interface{})
+			if !ok {
+				continue
+			}
 			if envVar["name"] == name {
 				found = true
 				g.Expect(envVar["value"]).To(gomega.Equal(value))
@@ -1433,12 +1440,17 @@ func TestReconcile_MultipleRepoWatchesSameRepo(t *testing.T) {
 	containersA, foundA, errA := unstructured.NestedSlice(sandboxA.Object, "spec", "podTemplate", "spec", "containers")
 	g.Expect(errA).NotTo(gomega.HaveOccurred())
 	g.Expect(foundA).To(gomega.BeTrue())
-	containerA := containersA[0].(map[string]interface{})
-	envA := containerA["env"].([]interface{})
+	containerA, ok := containersA[0].(map[string]interface{})
+	g.Expect(ok).To(gomega.BeTrue())
+	envA, ok := containerA["env"].([]interface{})
+	g.Expect(ok).To(gomega.BeTrue())
 
 	foundAgentNameA := false
 	for _, e := range envA {
-		envVar := e.(map[string]interface{})
+		envVar, ok := e.(map[string]interface{})
+		if !ok {
+			continue
+		}
 		if envVar["name"] == "AGENT_NAME" {
 			g.Expect(envVar["value"]).To(gomega.Equal("gemini-cli"))
 			foundAgentNameA = true
@@ -1456,12 +1468,17 @@ func TestReconcile_MultipleRepoWatchesSameRepo(t *testing.T) {
 	containersB, foundB, errB := unstructured.NestedSlice(sandboxB.Object, "spec", "podTemplate", "spec", "containers")
 	g.Expect(errB).NotTo(gomega.HaveOccurred())
 	g.Expect(foundB).To(gomega.BeTrue())
-	containerB := containersB[0].(map[string]interface{})
-	envB := containerB["env"].([]interface{})
+	containerB, ok := containersB[0].(map[string]interface{})
+	g.Expect(ok).To(gomega.BeTrue())
+	envB, ok := containerB["env"].([]interface{})
+	g.Expect(ok).To(gomega.BeTrue())
 
 	foundAgentNameB := false
 	for _, e := range envB {
-		envVar := e.(map[string]interface{})
+		envVar, ok := e.(map[string]interface{})
+		if !ok {
+			continue
+		}
 		if envVar["name"] == "AGENT_NAME" {
 			g.Expect(envVar["value"]).To(gomega.Equal("claude"))
 			foundAgentNameB = true

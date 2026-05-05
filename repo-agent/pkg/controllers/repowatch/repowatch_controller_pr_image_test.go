@@ -154,7 +154,8 @@ func TestReconciler_Reconcile_PR_With_Image(t *testing.T) {
 	g.Expect(found).To(gomega.BeTrue())
 	g.Expect(containers).To(gomega.HaveLen(1))
 
-	container := containers[0].(map[string]interface{})
+	container, ok := containers[0].(map[string]interface{})
+	g.Expect(ok).To(gomega.BeTrue())
 	image, found, err := unstructured.NestedString(container, "image")
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(found).To(gomega.BeTrue())

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	"github.com/spf13/cobra"
 	"sigs.k8s.io/yaml"
 )
@@ -106,9 +107,9 @@ func RunCreate(ctx context.Context, opt CreateOptions) error {
 	secretName := opt.LLMSecret
 	if secretName == "" {
 		if opt.LLMProvider == "gemini-cli" {
-			secretName = "gemini-vscode-tokens"
+			secretName = k8s.GeminiSecretName
 		} else if opt.LLMProvider == "claude" {
-			secretName = "anthropic-api-key"
+			secretName = k8s.ClaudeSecretName
 		} else {
 			return fmt.Errorf("llm-secret must be provided for llm-provider %q", opt.LLMProvider)
 		}

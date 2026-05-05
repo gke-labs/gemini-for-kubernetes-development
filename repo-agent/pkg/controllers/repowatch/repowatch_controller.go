@@ -56,6 +56,7 @@ import (
 	pkg_github "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/prompts"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 )
 
 // Character set for the random string
@@ -1060,7 +1061,7 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 	apiKeySecretName := repoWatch.Spec.Issue.LLM.APIKeySecretRef
 	if apiKeySecretName == "" {
 		// Fallback to a default if not specified, to avoid Pod validation error
-		apiKeySecretName = "gemini-vscode-tokens"
+		apiKeySecretName = k8s.GeminiSecretName
 	}
 
 	ephemeralStorage := resource.MustParse("6Gi")

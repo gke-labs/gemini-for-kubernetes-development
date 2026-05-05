@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	"k8s.io/klog/v2"
 )
 
@@ -33,7 +34,7 @@ const (
 	anthropicAPIVersion    = "2023-06-01"
 
 	// AnthropicAPIKeySecretName is the name of the secret containing the Anthropic API key.
-	AnthropicAPIKeySecretName = "anthropic-api-key"
+	AnthropicAPIKeySecretName = k8s.ClaudeSecretName
 
 	// AnthropicAPIKeySecretKey is the key in the secret containing the Anthropic API key.
 	AnthropicAPIKeySecretKey = "claude"
