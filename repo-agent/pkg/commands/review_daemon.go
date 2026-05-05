@@ -85,6 +85,7 @@ func (c *ReviewDaemonCommand) Run(ctx context.Context) error {
 	}
 
 	// Start periodic cleanup in background
+	go startPeriodicCleanup(ctx)
 
 	ao, err := agentoutput.New(ReviewGVR, "", "")
 	if err != nil {
