@@ -1031,6 +1031,7 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 	botEmail := ""
 
 	if githubSecretName != "" {
+		botLogin = "" // Avoid fallback if custom secret is provided
 		secret := &corev1.Secret{}
 		if err := r.Get(ctx, types.NamespacedName{Name: githubSecretName, Namespace: repoWatch.Namespace}, secret); err != nil {
 			log.Error(err, "failed to get github secret", "secret", githubSecretName)
@@ -1039,6 +1040,8 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 
 		if len(secret.Data["userid"]) > 0 {
 			botLogin = string(secret.Data["userid"])
+		} else {
+			log.V(1).Info("Warning: userid key missing in github secret", "secret", githubSecretName)
 		}
 		if len(secret.Data["name"]) > 0 {
 			botName = string(secret.Data["name"])
@@ -1233,6 +1236,7 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, user *github.
 	botEmail := ""
 
 	if githubSecretName != "" {
+		botLogin = "" // Avoid fallback if custom secret is provided
 		secret := &corev1.Secret{}
 		if err := r.Get(ctx, types.NamespacedName{Name: githubSecretName, Namespace: repoWatch.Namespace}, secret); err != nil {
 			log.Error(err, "failed to get github secret", "secret", githubSecretName)
@@ -1241,6 +1245,8 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, user *github.
 
 		if len(secret.Data["userid"]) > 0 {
 			botLogin = string(secret.Data["userid"])
+		} else {
+			log.V(1).Info("Warning: userid key missing in github secret", "secret", githubSecretName)
 		}
 		if len(secret.Data["name"]) > 0 {
 			botName = string(secret.Data["name"])

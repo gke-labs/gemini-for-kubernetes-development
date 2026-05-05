@@ -328,7 +328,7 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 	}
 	userEmail := os.Getenv("GITHUB_USER_EMAIL")
 
-	botLogin := os.Getenv("GITHUB_BOT_LOGIN")
+	botLogin := resolveBotLogin(ctx, k8s.NewManager(kubeClient), namespace, overseer)
 	botName := os.Getenv("GITHUB_BOT_NAME")
 	botEmail := os.Getenv("GITHUB_BOT_EMAIL")
 
@@ -637,23 +637,31 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, force 
 		}
 	}
 
-	// Check if a task for this SHA already exists (only for review tasks)
-	if taskType == "review" && !force {
-		taskList, err := manager.ListSandboxTasks(ctx, namespace, sandboxName)
-		if err == nil {
-			for i := range taskList.Items {
-				task := &taskList.Items[i]
-				if task.Spec.Type == "review" && task.Spec.Params["HEAD_SHA"] == headSHA {
+	// Check if a task for this SHA already exists
+	taskList, err := manager.ListSandboxTasks(ctx, namespace, sandboxName)
+	if err == nil {
+		for i := range taskList.Items {
+			task := &taskList.Items[i]
+			if task.Spec.Type == taskType && task.Spec.Params["HEAD_SHA"] == headSHA {
+				if !force {
 					if task.Status.TaskState == "Completed" || task.Status.TaskState == "Running" || task.Status.TaskState == "Pending" {
-						fmt.Printf("Review task for SHA %s already exists in state %s. Skipping.\n", headSHA, task.Status.TaskState)
+						fmt.Printf("%s task for SHA %s already exists in state %s. Skipping.\n", taskType, headSHA, task.Status.TaskState)
 						return nil
+					}
+				} else {
+					// Delete existing task if force is true
+					fmt.Printf("Deleting existing %s task %s for SHA %s...\n", taskType, task.Name, headSHA)
+					if err := manager.DeleteSandboxTask(ctx, namespace, task.Name); err != nil {
+						fmt.Printf("Warning: failed to delete existing task %s: %v\n", task.Name, err)
 					}
 				}
 			}
 		}
+	}
 
-		// Also check GitHub if we already reviewed this SHA
-		botLogin := os.Getenv("GITHUB_BOT_LOGIN")
+	// Also check GitHub if we already reviewed this SHA (only for review tasks)
+	if taskType == "review" && !force {
+		botLogin := resolveBotLogin(ctx, manager, namespace, &overseer)
 		reviewed, err := hasBeenReviewedByBot(ctx, ghClient.Client, owner, repo, number, botLogin, headSHA)
 		if err != nil {
 			return fmt.Errorf("failed to check GitHub reviews: %w", err)
@@ -794,7 +802,7 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 
 	// Check GitHub if we already reviewed this SHA
 	if !force {
-		botLogin := os.Getenv("GITHUB_BOT_LOGIN")
+		botLogin := resolveBotLogin(ctx, manager, namespace, &overseer)
 		reviewed, err := hasBeenReviewedByBot(ctx, client, owner, repoName, prNumber, botLogin, currentSHA)
 		if err != nil {
 			return fmt.Errorf("failed to check GitHub reviews during submission: %w", err)
@@ -873,7 +881,7 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 	}
 	userEmail := os.Getenv("GITHUB_USER_EMAIL")
 
-	botLogin := os.Getenv("GITHUB_BOT_LOGIN")
+	botLogin := resolveBotLogin(ctx, k8s.NewManager(kubeClient), namespace, overseer)
 	botName := os.Getenv("GITHUB_BOT_NAME")
 	botEmail := os.Getenv("GITHUB_BOT_EMAIL")
 
@@ -950,7 +958,7 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 	}
 	userEmail := os.Getenv("GITHUB_USER_EMAIL")
 
-	botLogin := os.Getenv("GITHUB_BOT_LOGIN")
+	botLogin := resolveBotLogin(ctx, k8s.NewManager(kubeClient), namespace, overseer)
 	botName := os.Getenv("GITHUB_BOT_NAME")
 	botEmail := os.Getenv("GITHUB_BOT_EMAIL")
 
@@ -1297,6 +1305,22 @@ func getTokenFromScript() (string, error) {
 	}
 
 	return "", nil
+}
+
+func resolveBotLogin(ctx context.Context, manager *k8s.Manager, namespace string, overseer *overseerv1alpha1.Overseer) string {
+	if overseer.Spec.RobotAccount != "" {
+		secret, err := manager.Clientset.CoreV1().Secrets(namespace).Get(ctx, overseer.Spec.RobotAccount, metav1.GetOptions{})
+		if err == nil {
+			if len(secret.Data["userid"]) > 0 {
+				return string(secret.Data["userid"])
+			}
+			klog.V(1).Infof("Warning: userid key missing in robot account secret %s", overseer.Spec.RobotAccount)
+		} else {
+			klog.V(1).Infof("Warning: failed to get robot account secret %s: %v", overseer.Spec.RobotAccount, err)
+		}
+		return "" // Avoid fallback if RobotAccount is specified but invalid
+	}
+	return os.Getenv("GITHUB_BOT_LOGIN")
 }
 
 var warnedAboutBotLogin bool
