@@ -1302,16 +1302,26 @@ func getTokenFromScript() (string, error) {
 var warnedAboutBotLogin bool
 
 func hasBeenReviewedByBot(ctx context.Context, client *githubv39.Client, owner, repo string, prNumber int, botLogin, headSHA string) (bool, error) {
-	if botLogin == "" {
+	if headSHA == "" {
+		return false, nil
+	}
+
+	actualBotLogin := botLogin
+	if actualBotLogin == "" {
+		user, _, err := client.Users.Get(ctx, "")
+		if err == nil {
+			actualBotLogin = user.GetLogin()
+		}
+	}
+
+	if actualBotLogin == "" {
 		if !warnedAboutBotLogin {
-			klog.V(1).Info("Warning: GITHUB_BOT_LOGIN is not set, skipping duplicate review check.")
+			klog.V(1).Info("Warning: GITHUB_BOT_LOGIN is not set and could not be determined from token, skipping duplicate review check.")
 			warnedAboutBotLogin = true
 		}
 		return false, nil
 	}
-	if headSHA == "" {
-		return false, nil
-	}
+
 	// List all reviews for the PR with pagination
 	opt := &githubv39.ListOptions{PerPage: 100}
 	for {
@@ -1325,7 +1335,7 @@ func hasBeenReviewedByBot(ctx context.Context, client *githubv39.Client, owner, 
 			}
 			login := r.GetUser().GetLogin()
 			// GitHub usernames are case-insensitive. Bot accounts often have a [bot] suffix.
-			isBot := strings.EqualFold(login, botLogin) || strings.EqualFold(login, botLogin+"[bot]")
+			isBot := strings.EqualFold(login, actualBotLogin) || strings.EqualFold(login, actualBotLogin+"[bot]")
 			// Commit SHAs are case-insensitive hex strings.
 			isSameSHA := strings.EqualFold(r.GetCommitID(), headSHA)
 			// Skip dismissed reviews as they might indicate a request for re-review.
