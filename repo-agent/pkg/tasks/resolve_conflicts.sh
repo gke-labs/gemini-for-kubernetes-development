@@ -28,7 +28,7 @@ export PROMPT_FILE={{ printf "%q" .PromptFile }}
 export GITHUB_USER_ID={{ printf "%q" .User.UserID }}
 export GITHUB_USER_EMAIL={{ printf "%q" .User.Email }}
 export GITHUB_USER_NAME={{ printf "%q" .User.Name }}
-export PR_NUMBER={{ printf "%q" .PullRequest.Number }}
+export PR_NUMBER={{ .PullRequest.Number }}
 export BASE_REF={{ printf "%q" .BaseRef }}
 
 if [ -z "${REPO_NAME}" ]; then
