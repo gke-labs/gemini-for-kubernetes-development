@@ -1,6 +1,23 @@
+/*
+Copyright 2026.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package imagebuilder
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -74,12 +91,15 @@ func (b *ImageBuilder) InstallDotfilesRepo(ctx context.Context) error {
 	}
 
 	cmd := exec.CommandContext(ctx, foundEntrypoint)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
+		log.Error(err, "error running dotfiles entrypoint", "command", strings.Join(cmd.Args, " "), "stdout", stdout.String(), "stderr", stderr.String())
 		return fmt.Errorf("error running dotfiles entrypoint %q from repo %q: %w", strings.Join(cmd.Args, " "), b.DotFilesRepo, err)
 	}
+	log.V(2).Info("successfully ran dotfiles entrypoint", "command", strings.Join(cmd.Args, " "), "stdout", stdout.String())
 
 	return nil
 }
@@ -88,34 +108,110 @@ func (b *ImageBuilder) InstallDotfilesRepo(ctx context.Context) error {
 func (b *ImageBuilder) GitClone(ctx context.Context, source string, dest string) error {
 	log := klog.FromContext(ctx)
 
-	var branch string
-	if strings.Contains(source, "#refs/heads/") {
-		parts := strings.SplitN(source, "#refs/heads/", 2)
+	var ref string
+	if strings.Contains(source, "#") {
+		parts := strings.SplitN(source, "#", 2)
 		source = parts[0]
-		branch = parts[1]
+		ref = parts[1]
 	}
 
+	// Strip refs/heads/ prefix if present
+	ref = strings.TrimPrefix(ref, "refs/heads/")
+
+	if ref != "" && isSHA(ref) {
+		// Efficient clone of a single SHA to reduce startup time
+		if err := os.MkdirAll(dest, 0755); err != nil {
+			return fmt.Errorf("failed to create destination directory %q: %w", dest, err)
+		}
+
+		run := func(args ...string) error {
+			var stdout, stderr bytes.Buffer
+			cmd := exec.CommandContext(ctx, "git", args...)
+			cmd.Dir = dest
+			cmd.Stdout = &stdout
+			cmd.Stderr = &stderr
+			if err := cmd.Run(); err != nil {
+				log.Error(err, "git command failed", "args", args, "stdout", stdout.String(), "stderr", stderr.String())
+				return fmt.Errorf("git %s failed: %w", strings.Join(args, " "), err)
+			}
+			log.V(2).Info("git command succeeded", "args", args)
+			return nil
+		}
+
+		if err := run("init"); err == nil {
+			if err := run("remote", "add", "origin", source); err == nil {
+				// fetch only the specific SHA with depth 1.
+				// Note: this might fail if the server doesn't allow fetching specific SHAs.
+				if err := run("fetch", "--depth", "1", "origin", ref); err == nil {
+					if err := run("checkout", "FETCH_HEAD"); err == nil {
+						return nil
+					}
+				}
+			}
+		}
+
+		// If efficient fetch failed, fall back to standard clone and then checkout the SHA
+		log.Info("efficient SHA fetch failed, falling back to standard clone and checkout", "source", source, "ref", ref)
+		if err := os.RemoveAll(dest); err != nil {
+			log.Error(err, "failed to clean up destination after failed efficient fetch", "dest", dest)
+		}
+
+		// Standard clone without -b (since -b doesn't work with SHAs)
+		if err := b.runGitClone(ctx, source, dest, ""); err != nil {
+			return err
+		}
+
+		// Now checkout the SHA
+		cmd := exec.CommandContext(ctx, "git", "checkout", ref)
+		cmd.Dir = dest
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			log.Error(err, "failed to checkout SHA after clone", "ref", ref, "stdout", stdout.String(), "stderr", stderr.String())
+			return fmt.Errorf("git checkout %s failed: %w", ref, err)
+		}
+		return nil
+	}
+
+	return b.runGitClone(ctx, source, dest, ref)
+}
+
+func (b *ImageBuilder) runGitClone(ctx context.Context, source, dest, ref string) error {
+	log := klog.FromContext(ctx)
 	args := []string{
-		"git",
 		"clone",
 	}
 
-	if branch != "" {
-		args = append(args, "-b", branch)
+	if ref != "" {
+		args = append(args, "-b", ref)
 	}
 
 	args = append(args, source, dest)
 
-	cmdString := strings.Join(args, " ")
+	cmdString := "git " + strings.Join(args, " ")
 	log.Info("cloning git repo", "source", source, "command", cmdString)
 
-	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	var stdout, stderr bytes.Buffer
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("cloning git repo %q with %q: %w", source, cmdString, err)
+		log.Error(err, "git clone failed", "command", cmdString, "stdout", stdout.String(), "stderr", stderr.String())
+		return fmt.Errorf("git clone failed: %w", err)
 	}
-
 	return nil
+}
+
+func isSHA(s string) bool {
+	if len(s) < 7 || len(s) > 64 {
+		return false
+	}
+	for _, r := range s {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+			return false
+		}
+	}
+	return true
 }

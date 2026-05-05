@@ -1,3 +1,19 @@
+/*
+Copyright 2026.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package k8s
 
 import (
@@ -222,27 +238,6 @@ func (m *Manager) UpdateSandboxUserDraft(ctx context.Context, namespace, sandbox
 	annotations["userDraft"] = userDraft
 	sandbox.SetAnnotations(annotations)
 
-	_, err = m.Client.Resource(SandboxGVR).Namespace(namespace).Update(context.TODO(), sandbox, v1.UpdateOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to update sandbox annotation: %w", err)
-	}
-
-	return nil
-}
-
-func (m *Manager) UpdateSandboxAnnotation(ctx context.Context, namespace, sandboxName, key, value string) error {
-	sandbox, err := m.Client.Resource(SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to get sandbox %s: %w", sandboxName, err)
-	}
-
-	if sandbox.GetAnnotations() == nil {
-		sandbox.SetAnnotations(make(map[string]string))
-	}
-	annotations := sandbox.GetAnnotations()
-	annotations[key] = value
-	sandbox.SetAnnotations(annotations)
-
 	_, err = m.Client.Resource(SandboxGVR).Namespace(namespace).Update(ctx, sandbox, v1.UpdateOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to update sandbox annotation: %w", err)
@@ -251,6 +246,33 @@ func (m *Manager) UpdateSandboxAnnotation(ctx context.Context, namespace, sandbo
 	return nil
 }
 
+func (m *Manager) UpdateSandboxAnnotation(ctx context.Context, namespace, sandboxName, key, value string) error {
+	return m.UpdateSandboxAnnotations(ctx, namespace, sandboxName, map[string]string{key: value})
+}
+
+func (m *Manager) UpdateSandboxAnnotations(ctx context.Context, namespace, sandboxName string, updates map[string]string) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		sandbox, err := m.Client.Resource(SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to get sandbox %s: %w", sandboxName, err)
+		}
+
+		annotations := sandbox.GetAnnotations()
+		if annotations == nil {
+			annotations = make(map[string]string)
+		}
+		for k, v := range updates {
+			annotations[k] = v
+		}
+		sandbox.SetAnnotations(annotations)
+
+		_, err = m.Client.Resource(SandboxGVR).Namespace(namespace).Update(ctx, sandbox, v1.UpdateOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to update sandbox annotations: %w", err)
+		}
+		return nil
+	})
+}
 func (m *Manager) GetGitHubToken(ctx context.Context, repoWatch *unstructured.Unstructured) (string, error) {
 	secretName, found, err := unstructured.NestedString(repoWatch.Object, "spec", "githubSecretName")
 	if err != nil || !found {
@@ -545,7 +567,7 @@ func (m *Manager) UpdateSandboxTaskUserDraft(ctx context.Context, namespace, tas
 	annotations["userDraft"] = userDraft
 	task.SetAnnotations(annotations)
 
-	_, err = m.Client.Resource(gvr).Namespace(namespace).Update(context.TODO(), task, v1.UpdateOptions{})
+	_, err = m.Client.Resource(gvr).Namespace(namespace).Update(ctx, task, v1.UpdateOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to update sandboxtask annotation: %w", err)
 	}
@@ -611,6 +633,18 @@ func (m *Manager) CreateSandboxTask(ctx context.Context, namespace, sandboxName,
 
 	_, err = m.Client.Resource(gvr).Namespace(namespace).Create(ctx, &unstructured.Unstructured{Object: unstructuredMap}, v1.CreateOptions{})
 	return err
+}
+
+func (m *Manager) DeleteSandboxTask(ctx context.Context, namespace, taskName string) error {
+	gvr := schema.GroupVersionResource{
+		Group:    "custom.agents.x-k8s.io",
+		Version:  "v1alpha1",
+		Resource: "sandboxtasks",
+	}
+	propagationPolicy := v1.DeletePropagationForeground
+	return m.Client.Resource(gvr).Namespace(namespace).Delete(ctx, taskName, v1.DeleteOptions{
+		PropagationPolicy: &propagationPolicy,
+	})
 }
 
 func (m *Manager) UpdateSandboxTaskStatus(ctx context.Context, namespace, taskName, state, result string, stats *sandboxtaskv1alpha1.Stats) error {
