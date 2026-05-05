@@ -1304,7 +1304,7 @@ var warnedAboutBotLogin bool
 func hasBeenReviewedByBot(ctx context.Context, client *githubv39.Client, owner, repo string, prNumber int, botLogin, headSHA string) (bool, error) {
 	if botLogin == "" {
 		if !warnedAboutBotLogin {
-			fmt.Println("Warning: GITHUB_BOT_LOGIN is not set, skipping duplicate review check.")
+			klog.V(1).Info("Warning: GITHUB_BOT_LOGIN is not set, skipping duplicate review check.")
 			warnedAboutBotLogin = true
 		}
 		return false, nil
