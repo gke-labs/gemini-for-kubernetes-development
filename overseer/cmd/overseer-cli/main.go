@@ -1846,6 +1846,10 @@ func runDeleteSandboxes(ctx context.Context, sandboxNames []string) error {
 // matching the 'sandbox=<name>' label, and finally falls back to a name-based
 // deletion for the '<name>-lb' service to ensure legacy resources are cleaned up.
 func deleteSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, sandboxName string) error {
+	if strings.TrimSpace(sandboxName) == "" {
+		return fmt.Errorf("sandbox name cannot be empty")
+	}
+
 	var errs []error
 	propagationPolicy := metav1.DeletePropagationBackground
 	err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Delete(ctx, sandboxName, metav1.DeleteOptions{
@@ -1953,11 +1957,12 @@ func deleteSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, na
 	serviceName := k8s.TruncateName(sandboxName + "-lb")
 	if !deletedServices[serviceName] {
 		deletedServices[serviceName] = true
-		klog.Infof("Deleting service %s...", serviceName)
 		err = kubeClient.Clientset.CoreV1().Services(namespace).Delete(ctx, serviceName, metav1.DeleteOptions{
 			PropagationPolicy: &propagationPolicy,
 		})
-		if err != nil && !kerrors.IsNotFound(err) {
+		if err == nil {
+			klog.Infof("Deleted legacy service %s.", serviceName)
+		} else if !kerrors.IsNotFound(err) {
 			errs = append(errs, fmt.Errorf("failed to delete legacy service %s: %w", serviceName, err))
 		}
 	}
@@ -1996,7 +2001,12 @@ func getMode(name string) string {
 	case "":
 		return "enabled"
 	default:
-		klog.Warningf("unrecognized mode for environment variable %s. Defaulting to \"enabled\" for safety. Valid modes are: enabled, disabled, dryrun.", name)
+		// Truncate the unrecognized value to avoid log bloating
+		displayVal := m
+		if len(displayVal) > 50 {
+			displayVal = displayVal[:47] + "..."
+		}
+		klog.Warningf("unrecognized mode %q for environment variable %s. Defaulting to \"enabled\" for safety. Valid modes are: enabled, disabled, dryrun.", displayVal, name)
 		return "enabled"
 	}
 }
