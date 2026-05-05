@@ -256,6 +256,7 @@ type Reconciler struct {
 	NewGithubClient  githubClientFactory
 	RepoSandboxImage string
 	ConfigDirImage   string
+	ForceGvisor      bool
 
 	userCacheMu sync.Mutex
 	userCache   map[string]cachedUser
@@ -283,6 +284,25 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		}
 		log.Error(err, "unable to fetch RepoWatch")
 		return ctrl.Result{}, err
+	}
+
+	if r.ForceGvisor {
+		inconsistent := false
+		if repoWatch.Spec.Issue != nil && repoWatch.Spec.Issue.DindSupport != reviewv1alpha1.DindSupportGvisor {
+			inconsistent = true
+		}
+		if repoWatch.Spec.Dev.DindSupport != reviewv1alpha1.DindSupportGvisor {
+			inconsistent = true
+		}
+		if repoWatch.Spec.Review.DindSupport != reviewv1alpha1.DindSupportGvisor {
+			inconsistent = true
+		}
+
+		if inconsistent {
+			r.setCondition(ctx, repoWatch, "GvisorConfigurationConsistency", metav1.ConditionFalse, "Inconsistent", "force-gvisor is enabled, but dindSupport is not set to gvisor. Sandboxes are forced to use gvisor anyway.")
+		} else {
+			r.setCondition(ctx, repoWatch, "GvisorConfigurationConsistency", metav1.ConditionTrue, "Consistent", "Configuration is consistent with force-gvisor.")
+		}
 	}
 
 	ghClient, githubConfig, err := r.NewGithubClient(ctx, r.Client, repoWatch)
@@ -416,6 +436,27 @@ func (r *Reconciler) setAuthCondition(ctx context.Context, repoWatch *reviewv1al
 	}
 	if err := r.Status().Update(ctx, repoWatch); err != nil {
 		log.Error(err, "unable to update RepoWatch auth condition")
+	}
+}
+
+// setCondition sets a generic condition on the RepoWatch status.
+func (r *Reconciler) setCondition(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, condType string, status metav1.ConditionStatus, reason, message string) {
+	log := log.FromContext(ctx)
+
+	condition := metav1.Condition{
+		Type:               condType,
+		Status:             status,
+		Reason:             reason,
+		Message:            message,
+		ObservedGeneration: repoWatch.Generation,
+	}
+
+	changed := apimeta.SetStatusCondition(&repoWatch.Status.Conditions, condition)
+	if !changed {
+		return
+	}
+	if err := r.Status().Update(ctx, repoWatch); err != nil {
+		log.Error(err, "unable to update RepoWatch condition", "type", condType)
 	}
 }
 
@@ -1063,8 +1104,13 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 		apiKeySecretName = "gemini-vscode-tokens"
 	}
 
+	dindSupport := repoWatch.Spec.Issue.DindSupport
+	if r.ForceGvisor {
+		dindSupport = reviewv1alpha1.DindSupportGvisor
+	}
+
 	ephemeralStorage := resource.MustParse("6Gi")
-	if repoWatch.Spec.Issue.DindSupport == reviewv1alpha1.DindSupportPrivileged {
+	if dindSupport == reviewv1alpha1.DindSupportPrivileged {
 		ephemeralStorage = resource.MustParse("40Gi")
 	}
 
@@ -1105,7 +1151,7 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 			ServiceAccountName:    "issue-sandbox",
 			WorkspaceDiskSize:     repoWatch.Spec.Issue.WorkspaceDiskSize,
 		},
-		DindSupport:   repoWatch.Spec.Issue.DindSupport,
+		DindSupport:   dindSupport,
 		LLMExtensions: repoWatch.Spec.Issue.LLM.Extensions,
 		IssueID:       fmt.Sprintf("%d", *issue.Number),
 		IssueTitle:    *issue.Title,
@@ -1273,6 +1319,12 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, user *github.
 			HTTPEnabled:           true,
 			Replicas:              1,
 			ServiceAccountName:    "review-sandbox",
+			DindSupport: func() string {
+				if r.ForceGvisor {
+					return reviewv1alpha1.DindSupportGvisor
+				}
+				return repoWatch.Spec.Review.DindSupport
+			}(),
 		},
 		PRNumber:          *pr.Number,
 		PRTitle:           *pr.Title,
@@ -1649,7 +1701,12 @@ func (r *Reconciler) createDevSandbox(ctx context.Context, user *github.User, re
 		HTTPEnabled:        true,
 		Replicas:           1,
 		ServiceAccountName: "issue-sandbox",
-		DindSupport:        repoWatch.Spec.Dev.DindSupport,
+		DindSupport:        func() string {
+			if r.ForceGvisor {
+				return reviewv1alpha1.DindSupportGvisor
+			}
+			return repoWatch.Spec.Dev.DindSupport
+		}(),
 		WorkspaceDiskSize:  repoWatch.Spec.Dev.WorkspaceDiskSize,
 	}
 

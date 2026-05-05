@@ -65,6 +65,8 @@ func main() {
 			"Enabling this will ensure there is only one active controller manager.")
 	var concurrentReconciles int
 	flag.IntVar(&concurrentReconciles, "concurrent-reconciles", 1, "The number of concurrent reconciles.")
+	var forceGvisor bool
+	flag.BoolVar(&forceGvisor, "force-gvisor", false, "Force all AgentSandboxes to use gvisor, ignoring RepoWatch config.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -92,6 +94,7 @@ func main() {
 		},
 		RepoSandboxImage: os.Getenv("REPO_SANDBOX_IMAGE"),
 		ConfigDirImage:   os.Getenv("CONFIGDIR_CLI_IMAGE"),
+		ForceGvisor:      forceGvisor,
 	}).SetupWithManager(mgr, concurrentReconciles); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "RepoWatch")
 		os.Exit(1)

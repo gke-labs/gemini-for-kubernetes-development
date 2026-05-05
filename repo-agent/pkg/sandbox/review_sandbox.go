@@ -238,6 +238,12 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 					},
 					"spec": map[string]interface{}{
 						"serviceAccountName": opt.ServiceAccountName,
+						"runtimeClassName": func() interface{} {
+							if opt.DindSupport == DindSupportGvisor {
+								return "gvisor"
+							}
+							return nil
+						}(),
 						"initContainers": func() []interface{} {
 							containers := []interface{}{}
 							if opt.LLMConfigdirRef != "" {
