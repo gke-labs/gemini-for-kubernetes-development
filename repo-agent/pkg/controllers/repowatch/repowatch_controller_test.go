@@ -176,9 +176,23 @@ func TestReconciler_Reconcile(t *testing.T) {
 	for _, v := range volumes {
 		vol := v.(map[string]interface{})
 		if vol["name"] == "tokens-secret" {
-			secret := vol["secret"].(map[string]interface{})
-			if secret["secretName"] == "llm-secret" {
-				foundSecret = true
+			if projected, ok := vol["projected"].(map[string]interface{}); ok {
+				if sources, ok := projected["sources"].([]interface{}); ok {
+					for _, s := range sources {
+						source, ok := s.(map[string]interface{})
+						if !ok {
+							continue
+						}
+						if secret, ok := source["secret"].(map[string]interface{}); ok {
+							if secret["name"] == "llm-secret" {
+								foundSecret = true
+								break
+							}
+						}
+					}
+				}
+			}
+			if foundSecret {
 				break
 			}
 		}

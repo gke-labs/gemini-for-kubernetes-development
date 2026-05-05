@@ -159,12 +159,7 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 		},
 	)
 
-	if opt.LLMAPIKey != "" {
-		env = append(env, map[string]interface{}{
-			"name":  "GEMINI_API_KEY",
-			"value": opt.LLMAPIKey,
-		})
-	}
+	env = append(env, buildLLMEnvVars(opt.DevSandboxOptions)...)
 
 	env = append(env,
 		map[string]interface{}{"name": "ENVBUILDER_CACHE_REPO", "value": "registry.repo-agent-system.svc.cluster.local:5000/envbuilder-cache"},
@@ -204,8 +199,8 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 	if opt.LLMAPIKey == "" {
 		volumes = append(volumes, map[string]interface{}{
 			"name": "tokens-secret",
-			"secret": map[string]interface{}{
-				"secretName": opt.LLMAPIKeySecretName,
+			"projected": map[string]interface{}{
+				"sources": buildLLMVolumeSources(opt.DevSandboxOptions),
 			},
 		})
 	}
