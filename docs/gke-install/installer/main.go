@@ -19,8 +19,8 @@ limitations under the License.
 //
 // Usage:
 //
-//      go run . [flags]
-//      ./gfk-install [flags]
+//	go run . [flags]
+//	./gfk-install [flags]
 //
 // All flags are optional; the installer will prompt for any values not supplied.
 package main
