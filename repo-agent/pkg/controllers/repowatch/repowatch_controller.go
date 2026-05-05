@@ -256,7 +256,7 @@ type Reconciler struct {
 	NewGithubClient  githubClientFactory
 	RepoSandboxImage string
 	ConfigDirImage   string
-	ForceGvisor      bool
+	ForceSandboxMode string
 
 	userCacheMu sync.Mutex
 	userCache   map[string]cachedUser
@@ -286,22 +286,22 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{}, err
 	}
 
-	if r.ForceGvisor {
+	if r.ForceSandboxMode != "" {
 		inconsistent := false
-		if repoWatch.Spec.Issue != nil && repoWatch.Spec.Issue.DindSupport != reviewv1alpha1.DindSupportGvisor {
+		if repoWatch.Spec.Issue != nil && repoWatch.Spec.Issue.DindSupport != r.ForceSandboxMode {
 			inconsistent = true
 		}
-		if repoWatch.Spec.Dev.DindSupport != reviewv1alpha1.DindSupportGvisor {
+		if repoWatch.Spec.Dev.DindSupport != r.ForceSandboxMode {
 			inconsistent = true
 		}
-		if repoWatch.Spec.Review.DindSupport != reviewv1alpha1.DindSupportGvisor {
+		if repoWatch.Spec.Review.DindSupport != r.ForceSandboxMode {
 			inconsistent = true
 		}
 
 		if inconsistent {
-			r.setCondition(ctx, repoWatch, "GvisorConfigurationConsistency", metav1.ConditionFalse, "Inconsistent", "force-gvisor is enabled, but dindSupport is not set to gvisor. Sandboxes are forced to use gvisor anyway.")
+			r.setCondition(ctx, repoWatch, "SandboxModeConsistency", metav1.ConditionFalse, "Inconsistent", fmt.Sprintf("force-sandbox-mode is enabled (%s), but dindSupport is not set to match. Sandboxes are forced to use %s anyway.", r.ForceSandboxMode, r.ForceSandboxMode))
 		} else {
-			r.setCondition(ctx, repoWatch, "GvisorConfigurationConsistency", metav1.ConditionTrue, "Consistent", "Configuration is consistent with force-gvisor.")
+			r.setCondition(ctx, repoWatch, "SandboxModeConsistency", metav1.ConditionTrue, "Consistent", fmt.Sprintf("Configuration is consistent with force-sandbox-mode (%s).", r.ForceSandboxMode))
 		}
 	}
 
@@ -1105,8 +1105,8 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 	}
 
 	dindSupport := repoWatch.Spec.Issue.DindSupport
-	if r.ForceGvisor {
-		dindSupport = reviewv1alpha1.DindSupportGvisor
+	if r.ForceSandboxMode != "" {
+		dindSupport = r.ForceSandboxMode
 	}
 
 	ephemeralStorage := resource.MustParse("6Gi")
@@ -1320,8 +1320,8 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, user *github.
 			Replicas:              1,
 			ServiceAccountName:    "review-sandbox",
 			DindSupport: func() string {
-				if r.ForceGvisor {
-					return reviewv1alpha1.DindSupportGvisor
+				if r.ForceSandboxMode != "" {
+					return r.ForceSandboxMode
 				}
 				return repoWatch.Spec.Review.DindSupport
 			}(),
@@ -1701,13 +1701,13 @@ func (r *Reconciler) createDevSandbox(ctx context.Context, user *github.User, re
 		HTTPEnabled:        true,
 		Replicas:           1,
 		ServiceAccountName: "issue-sandbox",
-		DindSupport:        func() string {
-			if r.ForceGvisor {
-				return reviewv1alpha1.DindSupportGvisor
+		DindSupport: func() string {
+			if r.ForceSandboxMode != "" {
+				return r.ForceSandboxMode
 			}
 			return repoWatch.Spec.Dev.DindSupport
 		}(),
-		WorkspaceDiskSize:  repoWatch.Spec.Dev.WorkspaceDiskSize,
+		WorkspaceDiskSize: repoWatch.Spec.Dev.WorkspaceDiskSize,
 	}
 
 	sb, svc := sandbox.NewDevSandbox(opts)

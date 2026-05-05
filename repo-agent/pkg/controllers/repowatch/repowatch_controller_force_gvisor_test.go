@@ -1,5 +1,5 @@
 /*
-Copyright 2025.
+Copyright 2026.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -61,9 +61,9 @@ func TestReconciler_Reconcile_ForceGvisor_AllSandboxes(t *testing.T) {
 	g := gomega.NewWithT(t)
 
 	s := runtime.NewScheme()
-	_ = clientgoscheme.AddToScheme(s)
-	_ = reviewv1alpha1.AddToScheme(s)
-	_ = sandboxv1alpha1.AddToScheme(s)
+	g.Expect(clientgoscheme.AddToScheme(s)).To(gomega.Succeed())
+	g.Expect(reviewv1alpha1.AddToScheme(s)).To(gomega.Succeed())
+	g.Expect(sandboxv1alpha1.AddToScheme(s)).To(gomega.Succeed())
 
 	fakeClient := clientfake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&reviewv1alpha1.RepoWatch{}).Build()
 
@@ -139,9 +139,9 @@ func TestReconciler_Reconcile_ForceGvisor_AllSandboxes(t *testing.T) {
 	ghClient := clients.NewGitHubClientFromHTTP(mockHTTPClient)
 
 	r := &Reconciler{
-		Client: fakeClient,
-		Scheme: s,
-		ForceGvisor: true,
+		Client:           fakeClient,
+		Scheme:           s,
+		ForceSandboxMode: reviewv1alpha1.DindSupportGvisor,
 		NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
 			return ghClient, map[string]string{"pat": "test-pat"}, nil
 		},
@@ -230,7 +230,7 @@ func TestReconciler_Reconcile_ForceGvisor_AllSandboxes(t *testing.T) {
 		Kind:    "Sandbox",
 	})
 	g.Expect(fakeClient.List(context.Background(), sandboxList)).To(gomega.Succeed())
-	
+
 	for _, item := range sandboxList.Items {
 		t.Logf("Found sandbox name: %s, type label: %s", item.GetName(), item.GetLabels()["sandbox.gemini.google.com/type"])
 	}
@@ -244,13 +244,13 @@ func TestReconciler_Reconcile_ForceGvisor_AllSandboxes(t *testing.T) {
 		g.Expect(runtimeClassName).To(gomega.Equal("gvisor"), "Sandbox %s type %s did not have gvisor runtime class", item.GetName(), item.GetLabels()["sandbox.gemini.google.com/type"])
 	}
 
-	// Verify GvisorConfigurationConsistency condition is set to False due to inconsistent config (None)
+	// Verify SandboxModeConsistency condition is set to False due to inconsistent config (None)
 	fetchedRepoWatch := &reviewv1alpha1.RepoWatch{}
 	g.Expect(fakeClient.Get(context.Background(), req.NamespacedName, fetchedRepoWatch)).To(gomega.Succeed())
-	
+
 	var consistencyCond *metav1.Condition
 	for i := range fetchedRepoWatch.Status.Conditions {
-		if fetchedRepoWatch.Status.Conditions[i].Type == "GvisorConfigurationConsistency" {
+		if fetchedRepoWatch.Status.Conditions[i].Type == "SandboxModeConsistency" {
 			consistencyCond = &fetchedRepoWatch.Status.Conditions[i]
 			break
 		}
