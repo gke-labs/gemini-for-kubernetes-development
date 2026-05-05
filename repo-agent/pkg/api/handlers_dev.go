@@ -121,12 +121,17 @@ func (s *Server) listDevSandboxesFromK8s(ctx context.Context, namespace, repo st
 			cloneURL = "https://github.com/noorg/norepo.git"
 		}
 
+		host := "github.com"
+		if u, err := url.Parse(cloneURL); err == nil && u.Hostname() != "" {
+			host = u.Hostname()
+		}
+
 		repoParts := strings.Split(strings.TrimSuffix(cloneURL, ".git"), "/")
 		if len(repoParts) >= 2 {
 			repoName := repoParts[len(repoParts)-1]
 			owner := repoParts[len(repoParts)-2]
-			// Construct branch URL: https://github.com/OWNER/REPO/tree/BRANCH
-			branchURL := fmt.Sprintf("https://github.com/%s/%s/tree/%s", owner, repoName, branch)
+			// Construct branch URL: https://HOST/OWNER/REPO/tree/BRANCH
+			branchURL := fmt.Sprintf("https://%s/%s/%s/tree/%s", host, owner, repoName, branch)
 
 			agentState := ""
 			agentStateMessage := ""
