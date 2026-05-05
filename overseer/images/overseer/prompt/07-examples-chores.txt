@@ -3,3 +3,8 @@ Running a chore:
 ```bash
 overseer-cli chore --file .agents/gateway-conformance.yaml
 ```
+
+Deleting a sandbox:
+```bash
+overseer-cli delete sandbox <sandbox-name>
+```

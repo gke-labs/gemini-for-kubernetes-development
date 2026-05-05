@@ -145,6 +145,11 @@ type OverseerSpec struct {
 	// GeminiAPIKeySecretName is the name of the secret containing the Gemini API key.
 	// +kubebuilder:validation:Optional
 	GeminiAPIKeySecretName string `json:"geminiAPIKeySecretName,omitempty"`
+
+	// PollInterval is the interval at which the overseer polls for updates.
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default="30m"
+	PollInterval string `json:"pollInterval,omitempty"`
 }
 
 // OverseerStatus defines the observed state of Overseer
