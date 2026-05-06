@@ -178,12 +178,7 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 		env = append(env, map[string]interface{}{"name": "GH_HOST", "value": opt.GHHost})
 	}
 
-	if opt.LLMAPIKey != "" {
-		env = append(env, map[string]interface{}{
-			"name":  "GEMINI_API_KEY",
-			"value": opt.LLMAPIKey,
-		})
-	}
+	env = append(env, buildLLMEnvVars(opt.DevSandboxOptions)...)
 
 	env = append(env,
 		map[string]interface{}{"name": "GIT_PUSH_ENABLED", "value": strconv.FormatBool(opt.PushEnabled)},
@@ -389,8 +384,8 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 							if opt.LLMAPIKey == "" {
 								v = append(v, map[string]interface{}{
 									"name": "tokens-secret",
-									"secret": map[string]interface{}{
-										"secretName": opt.LLMAPIKeySecretName,
+									"projected": map[string]interface{}{
+										"sources": buildLLMVolumeSources(opt.DevSandboxOptions),
 									},
 								})
 							}

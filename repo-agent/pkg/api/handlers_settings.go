@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
@@ -12,10 +13,11 @@ import (
 func (s *Server) getSettings(c *gin.Context) {
 	namespace := s.Auth.GetNamespaceFromContext(c)
 	settings := gin.H{
-		"manual_pat_set":     false,
-		"oauth_pat_set":      false,
-		"gemini_api_key_set": false,
-		"github_pat_set":     false, // Legacy field for UI compatibility
+		"manual_pat_set":        false,
+		"oauth_pat_set":         false,
+		"gemini_api_key_set":    false,
+		"anthropic_api_key_set": false,
+		"github_pat_set":        false, // Legacy field for UI compatibility
 	}
 
 	if sec, err := s.K8sManager.Clientset.CoreV1().Secrets(namespace).Get(c.Request.Context(), k8s.GithubSecretName, v1.GetOptions{}); err == nil {
@@ -41,14 +43,20 @@ func (s *Server) getSettings(c *gin.Context) {
 			settings["gemini_api_key_set"] = true
 		}
 	}
+	if sec, err := s.K8sManager.Clientset.CoreV1().Secrets(namespace).Get(c.Request.Context(), k8s.ClaudeSecretName, v1.GetOptions{}); err == nil {
+		if val, ok := sec.Data["claude"]; ok && len(val) > 0 {
+			settings["anthropic_api_key_set"] = true
+		}
+	}
 	c.JSON(http.StatusOK, settings)
 }
 
 func (s *Server) updateSettings(c *gin.Context) {
 	namespace := s.Auth.GetNamespaceFromContext(c)
 	var payload struct {
-		GithubPAT    *string `json:"github_pat"` // Use pointer to distinguish between empty string and missing field
-		GeminiAPIKey string  `json:"gemini_api_key"`
+		GithubPAT       *string `json:"github_pat"`        // Use pointer to distinguish between empty string and missing field
+		GeminiAPIKey    *string `json:"gemini_api_key"`    // Use pointer to distinguish between empty string and missing field
+		AnthropicAPIKey *string `json:"anthropic_api_key"` // Use pointer to distinguish between empty string and missing field
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -56,7 +64,7 @@ func (s *Server) updateSettings(c *gin.Context) {
 	}
 
 	if payload.GithubPAT != nil {
-		patValue := *payload.GithubPAT
+		patValue := strings.TrimSpace(*payload.GithubPAT)
 		if patValue == "" {
 			// Clear manual PAT
 			data := map[string][]byte{
@@ -64,7 +72,7 @@ func (s *Server) updateSettings(c *gin.Context) {
 			}
 			err := s.K8sManager.UpdateSecret(c.Request.Context(), namespace, k8s.GithubSecretName, data, nil)
 			if err != nil {
-				klog.Infof("Failed to clear GitHub PAT: %v", err)
+				klog.Errorf("Failed to clear GitHub PAT: %v", err)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to clear GitHub PAT"})
 				return
 			}
@@ -77,18 +85,41 @@ func (s *Server) updateSettings(c *gin.Context) {
 			}
 			err := s.K8sManager.UpdateSecret(c.Request.Context(), namespace, k8s.GithubSecretName, data, nil)
 			if err != nil {
-				klog.Infof("Failed to update GitHub PAT: %v", err)
+				klog.Errorf("Failed to update GitHub PAT: %v", err)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update GitHub PAT"})
 				return
 			}
 		}
 	}
 
-	if payload.GeminiAPIKey != "" {
-		err := s.K8sManager.UpdateSecret(c.Request.Context(), namespace, k8s.GeminiSecretName, map[string][]byte{"gemini": []byte(payload.GeminiAPIKey)}, nil)
+	if payload.GeminiAPIKey != nil {
+		geminiValue := strings.TrimSpace(*payload.GeminiAPIKey)
+		var data map[string][]byte
+		if geminiValue == "" {
+			data = map[string][]byte{"gemini": nil}
+		} else {
+			data = map[string][]byte{"gemini": []byte(geminiValue)}
+		}
+		err := s.K8sManager.UpdateSecret(c.Request.Context(), namespace, k8s.GeminiSecretName, data, nil)
 		if err != nil {
-			klog.Infof("Failed to update Gemini API Key: %v", err)
+			klog.Errorf("Failed to update Gemini API Key: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update Gemini API Key"})
+			return
+		}
+	}
+
+	if payload.AnthropicAPIKey != nil {
+		anthropicValue := strings.TrimSpace(*payload.AnthropicAPIKey)
+		var data map[string][]byte
+		if anthropicValue == "" {
+			data = map[string][]byte{"claude": nil}
+		} else {
+			data = map[string][]byte{"claude": []byte(anthropicValue)}
+		}
+		err := s.K8sManager.UpdateSecret(c.Request.Context(), namespace, k8s.ClaudeSecretName, data, nil)
+		if err != nil {
+			klog.Errorf("Failed to update Anthropic API Key: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update Anthropic API Key"})
 			return
 		}
 	}

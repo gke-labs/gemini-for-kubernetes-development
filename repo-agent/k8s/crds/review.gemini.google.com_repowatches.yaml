@@ -222,6 +222,13 @@ spec:
                     type: array
                   devcontainerConfigRef:
                     type: string
+                  dindSupport:
+                    default: none
+                    enum:
+                    - none
+                    - gvisor
+                    - privileged
+                    type: string
                   excludeLabels:
                     items:
                       type: string

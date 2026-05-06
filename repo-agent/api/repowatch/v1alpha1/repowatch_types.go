@@ -152,6 +152,12 @@ type PRReviewSpec struct {
 	// RobotAccount to use for this handler.
 	// +kubebuilder:validation:Optional
 	RobotAccount string `json:"robotAccount,omitempty"`
+
+	// DindSupport enables docker-in-docker support for the sandbox.
+	// +kubebuilder:validation:Enum=none;gvisor;privileged
+	// +kubebuilder:default=none
+	// +kubebuilder:validation:Optional
+	DindSupport string `json:"dindSupport,omitempty"`
 }
 
 // IdeaSpec defines the configuration for an idea/exploration.
