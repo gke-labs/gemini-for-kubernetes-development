@@ -46,6 +46,10 @@ create-secrets:
 		echo "Error: ROBOT1_GH_PAT is not set." >&2; \
 		exit 1; \
 	fi
+	@if [ -z "${ROBOT1_GH_USERID}" ]; then \
+		echo "Error: ROBOT1_GH_USERID is not set." >&2; \
+		exit 1; \
+	fi
 	kubectl create namespace overseer-system || true
 	@kubectl create secret -n overseer-system generic gemini-vscode-tokens --from-literal=gemini=${GEMINI_API_KEY} --dry-run=client -o yaml | kubectl apply -f -
 	@kubectl create secret -n overseer-system generic ${ROBOT1_GH_USERID} \
@@ -59,6 +63,7 @@ create-secrets:
 install-dep-packages:
 	../dev/tools/install-agent-sandbox
 	kubectl apply -f ../repo-agent/k8s/crds/ || true
+	curl -k -L https://github.com/cert-manager/cert-manager/releases/download/v1.13.3/cert-manager.yaml | kubectl apply -f - || true
 
 .PHONY: uninstall-dep-packages
 uninstall-dep-packages:
