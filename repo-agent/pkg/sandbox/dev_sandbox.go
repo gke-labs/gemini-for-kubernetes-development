@@ -42,6 +42,7 @@ type DevSandboxOptions struct {
 	// Infra
 	ServiceAccountName    string
 	GithubSecretName      string
+	GHHost                string
 	DevcontainerConfigRef string
 	Image                 string
 	OverseerName          string

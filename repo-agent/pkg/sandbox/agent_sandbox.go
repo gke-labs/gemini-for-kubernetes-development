@@ -174,6 +174,10 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 		},
 	}
 
+	if opt.GHHost != "" {
+		env = append(env, map[string]interface{}{"name": "GH_HOST", "value": opt.GHHost})
+	}
+
 	if opt.LLMAPIKey != "" {
 		env = append(env, map[string]interface{}{
 			"name":  "GEMINI_API_KEY",
