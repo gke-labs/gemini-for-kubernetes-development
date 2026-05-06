@@ -1,18 +1,16 @@
-/*
-Copyright 2025.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+// Copyright 2026 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package v1alpha1
 
@@ -25,8 +23,6 @@ const (
 	GeminiProvider = "gemini-cli"
 	// ClaudeProvider represents the Claude LLM provider.
 	ClaudeProvider = "claude"
-	// ClaudeCLIProvider represents the Claude Code CLI provider.
-	ClaudeCLIProvider = "claude-cli"
 	// Dummy provider for testing
 	DummyProvider = "dummy"
 
@@ -40,7 +36,7 @@ type LLMConfig struct {
 	// Provider is the name of the LLM provider to use. This field is used to
 	// determine which LLM client to instantiate and how to interact with the
 	// LLM API.
-	// +kubebuilder:validation:Enum=gemini-cli;claude;claude-cli;dummy
+	// +kubebuilder:validation:Enum=gemini-cli;claude;dummy
 	// +kubebuilder:default=gemini-cli
 	Provider string `json:"provider,omitempty"`
 
@@ -152,6 +148,18 @@ type PRReviewSpec struct {
 	// RobotAccount to use for this handler.
 	// +kubebuilder:validation:Optional
 	RobotAccount string `json:"robotAccount,omitempty"`
+
+	// Models specifies a list of models to use for the review handler.
+	// If omitted, it defaults to the controller's globally configured default model.
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:MinItems=1
+	Models []string `json:"models,omitempty"`
+
+	// ResolveConflicts enables automated merge conflict resolution for PRs.
+	// Warning: Enabling this may increase GitHub API usage and consume significant LLM tokens.
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=false
+	ResolveConflicts bool `json:"resolveConflicts,omitempty"`
 }
 
 // IdeaSpec defines the configuration for an idea/exploration.
@@ -214,6 +222,12 @@ type DevSpec struct {
 	// +kubebuilder:validation:Optional
 	// +kubebuilder:default="10Gi"
 	WorkspaceDiskSize string `json:"workspaceDiskSize,omitempty"`
+
+	// Models specifies a list of models to use for the development handler.
+	// If omitted, it defaults to the controller's globally configured default model.
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:MinItems=1
+	Models []string `json:"models,omitempty"`
 }
 
 type IssueHandlerSpec struct {
@@ -297,7 +311,9 @@ type IssueSpec struct {
 	WorkspaceDiskSize string `json:"workspaceDiskSize,omitempty"`
 
 	// Models specifies a list of models to use for the issue handler.
+	// If omitted, it defaults to the controller's globally configured default model.
 	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:MinItems=1
 	Models []string `json:"models,omitempty"`
 
 	// Handlers configuration for Bugs
@@ -332,6 +348,13 @@ type RepoWatchSpec struct {
 	// +kubebuilder:validation:Minimum=30
 	// +kubebuilder:default=300
 	PollIntervalSeconds int `json:"pollIntervalSeconds,omitempty"`
+
+	// How often to retry mergeability check when GitHub is still computing (in seconds).
+	// If not set, it defaults to 60 seconds.
+	// +kubebuilder:validation:Minimum=10
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=60
+	MergeableRetryIntervalSeconds int `json:"mergeableRetryIntervalSeconds,omitempty"`
 }
 
 // RepoWatchStatus defines the observed state of RepoWatch

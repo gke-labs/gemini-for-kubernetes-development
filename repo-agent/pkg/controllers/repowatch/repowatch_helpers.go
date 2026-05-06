@@ -1,18 +1,16 @@
-/*
-Copyright 2025.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+// Copyright 2026 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package repowatch
 
@@ -33,6 +31,10 @@ import (
 // It returns the updated count of total sandboxes.
 func (r *Reconciler) cleanupClosedPRSandboxes(ctx context.Context, totalSandboxes int, ownedSandboxes []unstructured.Unstructured, allOpenPRs []*github.PullRequest) int {
 	log := log.FromContext(ctx)
+	if len(allOpenPRs) == 0 && len(ownedSandboxes) > 0 {
+		log.Info("no open PRs found, skipping cleanup to avoid accidental deletion during API flakes")
+		return totalSandboxes
+	}
 	for _, sandbox := range ownedSandboxes {
 		parts := strings.Split(sandbox.GetName(), "-pr-")
 		if len(parts) < 2 {
@@ -46,7 +48,7 @@ func (r *Reconciler) cleanupClosedPRSandboxes(ctx context.Context, totalSandboxe
 
 		found := false
 		for _, pr := range allOpenPRs {
-			if *pr.Number == prNumber {
+			if pr.GetNumber() == prNumber {
 				found = true
 				break
 			}
@@ -144,7 +146,7 @@ func getOwnedIssueSandboxes(sandboxes []unstructured.Unstructured, ownerUID type
 func (r *Reconciler) sortPRs(ctx context.Context, prs []*github.PullRequest, _ *reviewv1alpha1.RepoWatch, user *github.User) []*github.PullRequest {
 	// Prioritize PRs assigned to the current user
 	log := log.FromContext(ctx)
-	if user == nil || user.Login == nil {
+	if user == nil || user.GetLogin() == "" {
 		log.Error(errors.New("user or user login is nil"), "unable to get current user login for sorting PRs")
 		return prs
 	}
@@ -153,7 +155,7 @@ func (r *Reconciler) sortPRs(ctx context.Context, prs []*github.PullRequest, _ *
 	for _, pr := range prs {
 		isAssigned := false
 		for _, assignee := range pr.Assignees {
-			if assignee.Login != nil && *assignee.Login == *user.Login {
+			if assignee.GetLogin() != "" && assignee.GetLogin() == user.GetLogin() {
 				isAssigned = true
 				break
 			}
@@ -172,7 +174,7 @@ func (r *Reconciler) sortPRs(ctx context.Context, prs []*github.PullRequest, _ *
 // spec's `pullRequests` field.
 func isPRExplicit(prNumber int, explicitPRs []*github.PullRequest) bool {
 	for _, explicitPR := range explicitPRs {
-		if *explicitPR.Number == prNumber {
+		if explicitPR.GetNumber() == prNumber {
 			return true
 		}
 	}

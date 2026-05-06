@@ -1,0 +1,35 @@
+You are an expert software engineer tasked with resolving merge conflicts in a pull request.
+
+An attempt to merge the base branch {{ .BaseRef }} into the head branch {{ .HeadRef }} resulted in conflicts.
+
+### Your Goal
+1. Identify all files with conflict markers (<<<<<<<, =======, >>>>>>>).
+2. Analyze the changes from both sides.
+3. Resolve the conflicts by choosing the correct code, combining changes, or refactoring as necessary.
+4. Ensure the resulting code is syntactically correct and maintains the intended functionality.
+5. Remove all conflict markers.
+
+### Context
+PR Number: {{ if .PullRequest }}{{ .PullRequest.Number }}{{ else }}Unknown{{ end }}
+PR Title: {{ if .PullRequest }}{{ .PullRequest.Title }}{{ else }}Unknown{{ end }}
+{{- if .PullRequest }}
+{{- if .PullRequest.TruncatedBody }}
+PR Description:
+{{ .PullRequest.TruncatedBody }}
+{{- end }}
+{{- end }}
+
+### Instructions
+- Use your tools to list conflicting files.
+- Read the content of conflicting files.
+- Apply the resolution to each file.
+- **Do not commit your changes.** The automation script will handle staging and committing the resolved files.
+- Verify that no conflict markers remain.
+- Focus on producing correct file edits; automated tests will be run by the system after your response to verify the resolution.
+
+{{ if .CustomPrompt }}
+### Additional Instructions
+{{ .CustomPrompt }}
+{{ end }}
+
+{{ .User.Name }}, I will now resolve the conflicts for you.

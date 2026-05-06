@@ -1,3 +1,17 @@
+// Copyright 2026 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package commands
 
 import (
@@ -34,7 +48,7 @@ type RollbackOptions struct {
 	sandboxID string
 }
 
-func (o *RollbackOptions) InitDefaults() {
+func (o *RollbackOptions) InitDefaults() error {
 	if o.RepoURL == "" {
 		o.RepoURL = os.Getenv("GIT_HTML_URL")
 	}
@@ -92,6 +106,7 @@ func (o *RollbackOptions) InitDefaults() {
 	if o.GithubUserName == "" {
 		o.GithubUserName = os.Getenv("GITHUB_USER_NAME")
 	}
+	return nil
 }
 
 func BuildRollbackCommand() *cobra.Command {
@@ -100,7 +115,9 @@ func BuildRollbackCommand() *cobra.Command {
 		Use:   "rollback",
 		Short: "Rollback to a previous commit",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			opts.InitDefaults()
+			if err := opts.InitDefaults(); err != nil {
+				return err
+			}
 			if opts.PullRequestID == 0 {
 				return fmt.Errorf("--pull-request is required")
 			}

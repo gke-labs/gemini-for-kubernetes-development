@@ -1,3 +1,17 @@
+# Copyright 2026 The Kubernetes Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 # Build the gh CLI
 FROM golang:1.26.1 AS build-gh
 RUN GOBIN=/bin go install github.com/cli/cli/v2/cmd/gh@v2.82.1
@@ -10,8 +24,12 @@ ARG DOCKER_VERSION="5:27.5.1-1~ubuntu.24.04~noble"
 
 ENV DEBIAN_FRONTEND="noninteractive"
 
+RUN echo 'Acquire::http::Timeout "60";' > /etc/apt/apt.conf.d/99timeout && \
+    echo 'Acquire::https::Timeout "60";' >> /etc/apt/apt.conf.d/99timeout
+
 # 1. Install prerequisites for adding apt repositories
-RUN apt-get update && apt-get -y install --no-install-recommends \
+RUN for i in 1 2 3 4 5; do apt-get update && break || (echo "apt-get update failed, retrying in 10s... ($i/5)" && sleep 10); done && \
+    apt-get -y install --no-install-recommends \
     apt-transport-https \
     ca-certificates \
     curl \
@@ -36,7 +54,7 @@ RUN mkdir -p /etc/apt/keyrings && \
     echo "deb [signed-by=/etc/apt/keyrings/helm.gpg] https://packages.buildkite.com/helm-linux/helm-debian/any/ any main" > /etc/apt/sources.list.d/helm-stable-debian.list
 
 # 3. Install all apt packages
-RUN apt-get update && \
+RUN for i in 1 2 3 4 5; do apt-get update && break || (echo "apt-get update failed, retrying in 10s... ($i/5)" && sleep 10); done && \
     apt-get install -y \
     docker-ce=${DOCKER_VERSION} \
     docker-ce-cli=${DOCKER_VERSION} \
@@ -73,7 +91,7 @@ ENV PATH=$PATH:/usr/local/go/bin
 ENV GOTOOLCHAIN=auto
 
 # -------- Install global Node.js packages --------
-RUN npm install -g @google/gemini-cli @anthropic-ai/claude-code
+RUN npm install -g @google/gemini-cli @anthropic-ai/claude-code pnpm yarn && npm cache clean --force
 
 # -------- Download binary releases --------
 # Install Kind
@@ -93,7 +111,10 @@ RUN curl -sSfL "https://github.com/kubernetes-sigs/kustomize/releases/download/k
 
 # Install code-server
 RUN curl -fsSL https://code-server.dev/install.sh | sh && \
-    code-server --install-extension golang.go --install-extension vscodevim.vim
+    for i in 1 2 3 4 5; do \
+        code-server --install-extension golang.go --install-extension vscodevim.vim && break || \
+        (echo "code-server extension installation failed, retrying in 10s... ($i/5)" && sleep 10); \
+    done || echo "Warning: code-server extension installation failed after 5 attempts. Continuing anyway..."
 
 # -------- Install Go tools --------
 # Install yq

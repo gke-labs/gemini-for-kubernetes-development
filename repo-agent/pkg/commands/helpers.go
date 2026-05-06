@@ -1,3 +1,17 @@
+// Copyright 2026 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package commands
 
 import (
@@ -75,4 +89,26 @@ func ensureSSHConfigLine(ctx context.Context, path, line string) error {
 	log.Info("Adding include line to SSH config", "line", line)
 
 	return os.WriteFile(path, []byte(newConfig), 0644)
+}
+
+// resolveAgentPrompt resolves the agent prompt from the provided string, or from
+// AGENT_PROMPT / AGENT_PROMPT_FILE environment variables.
+func resolveAgentPrompt(currentPrompt string) (string, error) {
+	if currentPrompt != "" {
+		return currentPrompt, nil
+	}
+	if promptFile := os.Getenv("AGENT_PROMPT_FILE"); promptFile != "" {
+		data, err := os.ReadFile(promptFile)
+		if err != nil {
+			return "", fmt.Errorf("failed to read AGENT_PROMPT_FILE at %s: %w", promptFile, err)
+		}
+		return string(data), nil
+	}
+	if prompt := os.Getenv("AGENT_PROMPT"); prompt != "" {
+		return prompt, nil
+	}
+	if prompt := os.Getenv("PROMPT"); prompt != "" {
+		return prompt, nil
+	}
+	return "", nil
 }

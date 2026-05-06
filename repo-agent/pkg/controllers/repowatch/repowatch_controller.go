@@ -1,18 +1,16 @@
-/*
-Copyright 2025.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+// Copyright 2026 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package repowatch
 
@@ -144,15 +142,7 @@ func NameHash(objectName string) string {
 }
 
 func parseRepoURL(repoURL string) (string, string, error) {
-	u, err := url.Parse(repoURL)
-	if err != nil {
-		return "", "", err
-	}
-	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
-	if len(parts) != 2 {
-		return "", "", fmt.Errorf("invalid repo url: %s", repoURL)
-	}
-	return parts[0], strings.TrimSuffix(parts[1], ".git"), nil
+	return pkg_github.ParseHTMLUrl(repoURL)
 }
 
 func NewGithubClient(ctx context.Context, k8sClient client.Client, repoWatch *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
@@ -261,18 +251,17 @@ type Reconciler struct {
 	userCache   map[string]cachedUser
 }
 
-//+kubebuilder:rbac:groups=review.gemini.google.com,resources=repowatches,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=review.gemini.google.com,resources=repowatches/status,verbs=get;update;patch
-//+kubebuilder:rbac:groups=review.gemini.google.com,resources=repowatches/finalizers,verbs=update
-//+kubebuilder:rbac:groups=agents.x-k8s.io,resources=sandboxes,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=custom.agents.x-k8s.io,resources=sandboxtasks,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=agents.x-k8s.io,resources=sandboxes,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
-//+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
-//+kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create;update;patch
-//+kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
-
+// +kubebuilder:rbac:groups=review.gemini.google.com,resources=repowatches,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=review.gemini.google.com,resources=repowatches/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=review.gemini.google.com,resources=repowatches/finalizers,verbs=update
+// +kubebuilder:rbac:groups=agents.x-k8s.io,resources=sandboxes,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=custom.agents.x-k8s.io,resources=sandboxtasks,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=agents.x-k8s.io,resources=sandboxes,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
 
@@ -370,32 +359,77 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		}
 	}
 
+	// List SandboxTasks in the namespace once
+	taskList := &sandboxtaskv1alpha1.SandboxTaskList{}
+	if err := r.List(ctx, taskList, client.InNamespace(repoWatch.Namespace)); err != nil {
+		log.Error(err, "unable to list SandboxTasks")
+	}
+	tasksBySandbox := make(map[string][]sandboxtaskv1alpha1.SandboxTask)
+	for _, task := range taskList.Items {
+		sandboxName := task.Labels["sandbox.gemini.google.com/sandbox-name"]
+		if sandboxName != "" {
+			tasksBySandbox[sandboxName] = append(tasksBySandbox[sandboxName], task)
+		}
+	}
+
 	var reconcileErr error
+	var requeueAfter time.Duration
+	var totalActiveSandboxes int
+
 	// Reconcile Reviews for Pull Requests
 	log.Info("reconciling reviews")
-	if err := r.reconcileReviews(ctx, repoWatch, ghClient, owner, repo, user, podsBySandbox); err != nil {
+	activeReviews, pending, err := r.reconcileReviews(ctx, repoWatch, ghClient, owner, repo, user, podsBySandbox, tasksBySandbox)
+	if err != nil {
 		log.Error(err, "unable to reconcile reviews")
 		reconcileErr = errors.Join(reconcileErr, err)
-		// Continue to next reconciliation
+	}
+	totalActiveSandboxes += activeReviews
+	if pending {
+		log.Info("GitHub is still computing mergeability, requeuing reviews")
+		interval := repoWatch.Spec.MergeableRetryIntervalSeconds
+		if interval == 0 {
+			interval = 60
+		}
+		requeueAfter = time.Duration(interval) * time.Second
 	}
 
 	log.Info("reconciling issues")
 	// Reconcile Issues
-	if err := r.reconcileIssues(ctx, repoWatch, ghClient, owner, repo, user, podsBySandbox); err != nil {
+	activeIssues, err := r.reconcileIssues(ctx, repoWatch, ghClient, owner, repo, user, podsBySandbox, tasksBySandbox)
+	if err != nil {
 		log.Error(err, "unable to reconcile issues")
 		reconcileErr = errors.Join(reconcileErr, err)
 		// Continue to next reconciliation
 	}
+	totalActiveSandboxes += activeIssues
 
 	log.Info("reconciling dev sandboxes")
 	// Reconcile Dev Sandboxes
-	if err := r.reconcileDevSandboxes(ctx, user, repoWatch, ghClient, repo, podsBySandbox); err != nil {
+	activeDev, err := r.reconcileDevSandboxes(ctx, user, repoWatch, ghClient, repo, podsBySandbox, tasksBySandbox)
+	if err != nil {
 		log.Error(err, "unable to reconcile dev sandboxes")
 		reconcileErr = errors.Join(reconcileErr, err)
 		// Continue to next reconciliation
 	}
+	totalActiveSandboxes += activeDev
 
-	return ctrl.Result{RequeueAfter: time.Second * time.Duration(repoWatch.Spec.PollIntervalSeconds)}, reconcileErr
+	// Update status once with combined active sandbox count
+	repoWatch.Status.ActiveSandboxCount = totalActiveSandboxes
+	if err := r.Status().Update(ctx, repoWatch); err != nil {
+		log.Error(err, "unable to update RepoWatch status")
+		reconcileErr = errors.Join(reconcileErr, err)
+	}
+
+	pollInterval := time.Second * time.Duration(repoWatch.Spec.PollIntervalSeconds)
+	if reconcileErr != nil {
+		return ctrl.Result{RequeueAfter: pollInterval}, reconcileErr
+	}
+
+	if requeueAfter > 0 && requeueAfter < pollInterval {
+		return ctrl.Result{RequeueAfter: requeueAfter}, nil
+	}
+
+	return ctrl.Result{RequeueAfter: pollInterval}, nil
 }
 
 // setAuthCondition sets the GitHubAuthentication condition on the RepoWatch status.
@@ -414,19 +448,51 @@ func (r *Reconciler) setAuthCondition(ctx context.Context, repoWatch *reviewv1al
 	if !changed {
 		return
 	}
-	if err := r.Status().Update(ctx, repoWatch); err != nil {
-		log.Error(err, "unable to update RepoWatch auth condition")
+
+	// Use Patch instead of Update to minimize ResourceVersion conflicts
+	latest := &reviewv1alpha1.RepoWatch{}
+	if err := r.Get(ctx, types.NamespacedName{Name: repoWatch.Name, Namespace: repoWatch.Namespace}, latest); err != nil {
+		log.Error(err, "unable to fetch latest RepoWatch for auth condition patch")
+		return
+	}
+
+	patch := client.MergeFrom(latest.DeepCopy())
+	apimeta.SetStatusCondition(&latest.Status.Conditions, condition)
+	if err := r.Status().Patch(ctx, latest, patch); err != nil {
+		log.Error(err, "unable to patch RepoWatch auth condition")
+	} else {
+		// Update the local object with the new resource version and conditions
+		repoWatch.Status.Conditions = latest.Status.Conditions
+		repoWatch.ResourceVersion = latest.ResourceVersion
 	}
 }
 
-func (r *Reconciler) reconcileReviews(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, ghClient *github.Client, owner string, repo string, user *github.User, podsBySandbox map[string]*corev1.Pod) error {
+func (r *Reconciler) reconcileReviews(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, ghClient *github.Client, owner string, repo string, user *github.User, podsBySandbox map[string]*corev1.Pod, tasksBySandbox map[string][]sandboxtaskv1alpha1.SandboxTask) (int, bool, error) {
 	log := log.FromContext(ctx)
+
+	// Fetch default branch SHA once for conflict checks
+	var defaultBranchSHA string
+	var defaultBranchName string
+	if repoWatch.Spec.Review.ResolveConflicts {
+		repoObj, _, err := ghClient.Repositories.Get(ctx, owner, repo)
+		if err != nil {
+			log.Error(err, "unable to fetch repository for default branch")
+		} else {
+			defaultBranchName = repoObj.GetDefaultBranch()
+			branch, _, err := ghClient.Repositories.GetBranch(ctx, owner, repo, defaultBranchName, false)
+			if err != nil {
+				log.Error(err, "unable to fetch default branch SHA", "branch", defaultBranchName)
+			} else {
+				defaultBranchSHA = branch.GetCommit().GetSHA()
+			}
+		}
+	}
 
 	explicitPRs := r.getExplicitPRs(ctx, ghClient, repoWatch, owner, repo)
 
 	prs, err := r.listOpenPRs(ctx, ghClient, owner, repo)
 	if err != nil {
-		return err
+		return 0, false, err
 	}
 
 	prs = r.filterPRsByLabels(prs, repoWatch)
@@ -438,7 +504,7 @@ func (r *Reconciler) reconcileReviews(ctx context.Context, repoWatch *reviewv1al
 	// Log repoIssues and sandboxList for debug purposes
 	prsStr := []string{}
 	for _, pr := range prs {
-		prsStr = append(prsStr, fmt.Sprintf("%d", *pr.Number))
+		prsStr = append(prsStr, fmt.Sprintf("%d", pr.GetNumber()))
 	}
 	log.V(4).Info("PRs:", "prs", prsStr)
 
@@ -457,16 +523,18 @@ func (r *Reconciler) reconcileReviews(ctx context.Context, repoWatch *reviewv1al
 
 	if err := r.List(ctx, sandboxList, client.InNamespace(repoWatch.Namespace), labelSelector); err != nil {
 		log.Error(err, "unable to list Sandboxes")
-		return err
+		return 0, false, err
 	}
 
-	watchedPRs, pendingPRs, activeSandboxes := r.reconcileReviewSandboxesInternal(ctx, user, repoWatch, explicitPRs, prs, sandboxList, podsBySandbox)
+	watchedPRs, pendingPRs, activeSandboxes, pending, err := r.reconcileReviewSandboxesInternal(ctx, user, repoWatch, ghClient, owner, repo, explicitPRs, prs, sandboxList, podsBySandbox, tasksBySandbox, defaultBranchSHA, defaultBranchName)
+	if err != nil {
+		log.Error(err, "errors occurred during review sandbox reconciliation")
+	}
 
-	repoWatch.Status.ActiveSandboxCount = activeSandboxes
 	repoWatch.Status.ReviewSandboxes = watchedPRs
 	repoWatch.Status.PendingPRs = pendingPRs
 
-	return r.Status().Update(ctx, repoWatch)
+	return activeSandboxes, pending, err
 }
 
 func (r *Reconciler) getExplicitPRs(ctx context.Context, ghClient *github.Client, repoWatch *reviewv1alpha1.RepoWatch, owner, repo string) []*github.PullRequest {
@@ -575,8 +643,8 @@ func (r *Reconciler) filterPRsByAssignees(prs []*github.PullRequest, repoWatch *
 		assigneesMap[assignee] = true
 	}
 
-	if repoWatch.Spec.Review.AssignedToSelf && user != nil && user.Login != nil {
-		assigneesMap[*user.Login] = true
+	if repoWatch.Spec.Review.AssignedToSelf && user != nil && user.GetLogin() != "" {
+		assigneesMap[user.GetLogin()] = true
 	}
 
 	if len(assigneesMap) == 0 {
@@ -586,7 +654,7 @@ func (r *Reconciler) filterPRsByAssignees(prs []*github.PullRequest, repoWatch *
 	for _, pr := range prs {
 		matches := false
 		for _, assignee := range pr.Assignees {
-			if assignee.Login != nil && assigneesMap[*assignee.Login] {
+			if assignee.GetLogin() != "" && assigneesMap[assignee.GetLogin()] {
 				matches = true
 				break
 			}
@@ -604,7 +672,7 @@ func (r *Reconciler) deduplicatePRs(prs []*github.PullRequest, explicitPRs []*gi
 	for _, pr := range prs {
 		found := false
 		for _, explicitPR := range explicitPRs {
-			if *pr.Number == *explicitPR.Number {
+			if pr.GetNumber() == explicitPR.GetNumber() {
 				found = true
 				break
 			}
@@ -627,15 +695,17 @@ func (r *Reconciler) excludePRs(prs []*github.PullRequest, repoWatch *reviewv1al
 
 	var filteredPRs []*github.PullRequest
 	for _, pr := range prs {
-		if !excludedPRsMap[*pr.Number] {
+		if !excludedPRsMap[pr.GetNumber()] {
 			filteredPRs = append(filteredPRs, pr)
 		}
 	}
 	return filteredPRs
 }
 
-func (r *Reconciler) reconcileReviewSandboxesInternal(ctx context.Context, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, explicitPRs []*github.PullRequest, prs []*github.PullRequest, sandboxes *unstructured.UnstructuredList, podsBySandbox map[string]*corev1.Pod) ([]reviewv1alpha1.WatchedPR, []int, int) {
+func (r *Reconciler) reconcileReviewSandboxesInternal(ctx context.Context, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, ghClient *github.Client, owner, repo string, explicitPRs []*github.PullRequest, prs []*github.PullRequest, sandboxes *unstructured.UnstructuredList, podsBySandbox map[string]*corev1.Pod, tasksBySandbox map[string][]sandboxtaskv1alpha1.SandboxTask, defaultBranchSHA string, defaultBranchName string) ([]reviewv1alpha1.WatchedPR, []int, int, bool, error) {
 	log := log.FromContext(ctx)
+	var reconcileErr error
+	var reconcilePending bool
 
 	ownedSandboxes := getOwnedSandboxes(sandboxes.Items, repoWatch.UID)
 
@@ -654,7 +724,7 @@ func (r *Reconciler) reconcileReviewSandboxesInternal(ctx context.Context, user 
 
 		found := false
 		for _, pr := range allOpenPRs {
-			if *pr.Number == prNumber {
+			if pr.GetNumber() == prNumber {
 				found = true
 				break
 			}
@@ -667,7 +737,7 @@ func (r *Reconciler) reconcileReviewSandboxesInternal(ctx context.Context, user 
 	activeSandboxes, totalSandboxes := countSandboxes(validOwnedSandboxes, explicitPRs)
 
 	// Cleanup closed PRs from the owned list
-	r.cleanupClosedPRSandboxes(ctx, totalSandboxes, ownedSandboxes, allOpenPRs)
+	totalSandboxes = r.cleanupClosedPRSandboxes(ctx, totalSandboxes, ownedSandboxes, allOpenPRs)
 
 	watchedPRs := []reviewv1alpha1.WatchedPR{}
 	pendingPRs := []int{}
@@ -676,7 +746,7 @@ func (r *Reconciler) reconcileReviewSandboxesInternal(ctx context.Context, user 
 	allPRs := append(explicitPRs, prs...)
 
 	for _, pr := range allPRs {
-		sandboxName := fmt.Sprintf("%s-pr-%d", repoWatch.Name, *pr.Number)
+		sandboxName := fmt.Sprintf("%s-pr-%d", repoWatch.Name, pr.GetNumber())
 		sandboxExists := false
 		var existingSandbox *unstructured.Unstructured
 
@@ -689,11 +759,15 @@ func (r *Reconciler) reconcileReviewSandboxesInternal(ctx context.Context, user 
 		}
 
 		if sandboxExists {
+			sandboxTasks := tasksBySandbox[existingSandbox.GetName()]
+
 			// Manage lifecycle (pause/unpause)
 			shutdownDuration := time.Minute * time.Duration(repoWatch.Spec.Review.ReviewShutdownAfterMinutes)
-			wasScaled, err := r.manageSandboxLifecycle(ctx, existingSandbox, shutdownDuration)
+			prIsExplicit := isPRExplicit(pr.GetNumber(), explicitPRs)
+			wasScaled, err := r.manageSandboxLifecycle(ctx, existingSandbox, sandboxTasks, shutdownDuration, &activeSandboxes, repoWatch.Spec.Review.MaxActiveSandboxes, prIsExplicit)
 			if err != nil {
 				log.Error(err, "unable to manage sandbox lifecycle", "sandbox", existingSandbox.GetName())
+				reconcileErr = errors.Join(reconcileErr, err)
 			}
 
 			// Check if sandbox is scaled down (re-check in case we just updated it or it was already down)
@@ -710,47 +784,59 @@ func (r *Reconciler) reconcileReviewSandboxesInternal(ctx context.Context, user 
 
 			sandboxStatus, err := r.reconcileSandboxPodStatus(ctx, existingSandbox, podsBySandbox, scaledDown)
 			if err != nil {
-				log.Error(err, "unable to reconcile sandbox pod status", "pr", *pr.Number)
+				log.Error(err, "unable to reconcile sandbox pod status", "pr", pr.GetNumber())
+				reconcileErr = errors.Join(reconcileErr, err)
+			}
+
+			// Check for merge conflicts
+			pending, err := r.reconcileReviewConflicts(ctx, repoWatch, existingSandbox, sandboxTasks, pr, ghClient, owner, repo, &activeSandboxes, prIsExplicit, defaultBranchSHA, defaultBranchName)
+			if err != nil {
+				log.Error(err, "unable to reconcile review conflicts", "pr", pr.GetNumber())
+				reconcileErr = errors.Join(reconcileErr, err)
+			}
+			if pending {
+				reconcilePending = true
 			}
 
 			watchedPRs = append(watchedPRs, reviewv1alpha1.WatchedPR{
-				Number:      *pr.Number,
+				Number:      pr.GetNumber(),
 				SandboxName: sandboxName,
 				Status:      sandboxStatus,
 				ScaledDown:  scaledDown,
 			})
 		} else {
 			// Sandbox does not exist, try to create it if within limits
-			prIsExplicit := isPRExplicit(*pr.Number, explicitPRs)
+			prIsExplicit := isPRExplicit(pr.GetNumber(), explicitPRs)
 			// Explicit PRs (defined in RepoWatch CRD) bypass MaxActiveSandboxes and MaxSandboxes limits.
 			// Auto-discovered PRs must respect these limits to prevent resource exhaustion.
 			if prIsExplicit || (activeSandboxes < repoWatch.Spec.Review.MaxActiveSandboxes) &&
 				(repoWatch.Spec.Review.MaxSandboxes == 0 || totalSandboxes < repoWatch.Spec.Review.MaxSandboxes) {
-				log.Info("creating sandbox for PR", "pr", *pr.Number)
+				log.Info("creating sandbox for PR", "pr", pr.GetNumber())
 				if err := r.createReviewSandboxForPR(ctx, user, repoWatch, pr); err != nil {
-					log.Error(err, "unable to create sandbox for PR", "pr", *pr.Number)
+					log.Error(err, "unable to create sandbox for PR", "pr", pr.GetNumber())
+					reconcileErr = errors.Join(reconcileErr, err)
 				} else {
 					activeSandboxes++
 					totalSandboxes++
 					watchedPRs = append(watchedPRs, reviewv1alpha1.WatchedPR{
-						Number:      *pr.Number,
+						Number:      pr.GetNumber(),
 						SandboxName: sandboxName,
 						Status:      "Creating",
 						ScaledDown:  false,
 					})
 				}
 			} else {
-				pendingPRs = append(pendingPRs, *pr.Number)
+				pendingPRs = append(pendingPRs, pr.GetNumber())
 			}
 		}
 	}
-	return watchedPRs, pendingPRs, activeSandboxes
+	return watchedPRs, pendingPRs, activeSandboxes, reconcilePending, reconcileErr
 }
 
-func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, ghClient *github.Client, owner string, repo string, user *github.User, podsBySandbox map[string]*corev1.Pod) error {
+func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, ghClient *github.Client, owner string, repo string, user *github.User, podsBySandbox map[string]*corev1.Pod, tasksBySandbox map[string][]sandboxtaskv1alpha1.SandboxTask) (int, error) {
 	log := log.FromContext(ctx)
 	if repoWatch.Spec.Issue == nil {
-		return nil
+		return 0, nil
 	}
 
 	// 1. List all open issues
@@ -763,7 +849,7 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 		issues, resp, err := ghClient.Issues.ListByRepo(ctx, owner, repo, opts)
 		if err != nil {
 			log.Error(err, "unable to list issues")
-			return err
+			return 0, err
 		}
 		// Filter out PRs
 		for _, issue := range issues {
@@ -786,7 +872,7 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 	}
 	sandboxList.SetGroupVersionKind(sandboxGVK)
 	if err := r.List(ctx, sandboxList, client.InNamespace(repoWatch.Namespace), client.MatchingLabels{"sandbox.gemini.google.com/type": "issue"}); err != nil {
-		return err
+		return 0, err
 	}
 
 	ownedSandboxes := getOwnedSandboxes(sandboxList.Items, repoWatch.UID)
@@ -822,7 +908,7 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 			continue
 		}
 
-		sandboxName := fmt.Sprintf("%s-issue-%d", repoWatch.Name, *issue.Number)
+		sandboxName := fmt.Sprintf("%s-issue-%d", repoWatch.Name, issue.GetNumber())
 		validSandboxNames[sandboxName] = true
 
 		// Check if sandbox exists
@@ -835,21 +921,24 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 		}
 
 		if existingSandbox != nil {
-			log.Info("sandbox found for", "issue", *issue.Number)
+			log.Info("sandbox found for", "issue", issue.GetNumber())
+			sandboxTasks := tasksBySandbox[existingSandbox.GetName()]
+
+			issueIsExplicit := isIssueExplicit(issue.GetNumber(), repoWatch.Spec.Issue.Issues)
 
 			// Check for feedback
-			if err := r.reconcileIssueFeedback(ctx, repoWatch, existingSandbox, issue, ghClient); err != nil {
-				log.Error(err, "unable to reconcile issue feedback", "issue", *issue.Number)
+			if err := r.reconcileIssueFeedback(ctx, repoWatch, existingSandbox, sandboxTasks, issue, ghClient, &activeSandboxes, issueIsExplicit); err != nil {
+				log.Error(err, "unable to reconcile issue feedback", "issue", issue.GetNumber())
 			}
 
 			// Check for PR failures
-			if err := r.reconcilePRFailures(ctx, repoWatch, existingSandbox, issue, ghClient); err != nil {
-				log.Error(err, "unable to reconcile PR failures", "issue", *issue.Number)
+			if err := r.reconcilePRFailures(ctx, repoWatch, existingSandbox, sandboxTasks, issue, ghClient, &activeSandboxes, issueIsExplicit); err != nil {
+				log.Error(err, "unable to reconcile PR failures", "issue", issue.GetNumber())
 			}
 
 			// Manage lifecycle (pause/unpause)
 			shutdownDuration := time.Minute * time.Duration(repoWatch.Spec.Issue.IssueShutdownAfterMinutes)
-			wasScaled, err := r.manageSandboxLifecycle(ctx, existingSandbox, shutdownDuration)
+			wasScaled, err := r.manageSandboxLifecycle(ctx, existingSandbox, sandboxTasks, shutdownDuration, &activeSandboxes, repoWatch.Spec.Issue.MaxActiveSandboxes, issueIsExplicit)
 			if err != nil {
 				log.Error(err, "unable to manage sandbox lifecycle", "sandbox", existingSandbox.GetName())
 			}
@@ -867,7 +956,7 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 
 			sandboxStatus, err := r.reconcileSandboxPodStatus(ctx, existingSandbox, podsBySandbox, scaledDown)
 			if err != nil {
-				log.Error(err, "unable to reconcile sandbox pod status", "issue", *issue.Number)
+				log.Error(err, "unable to reconcile sandbox pod status", "issue", issue.GetNumber())
 			}
 
 			// Ensure tasks exist for applicable handlers
@@ -876,7 +965,7 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 					log.Error(err, "unable to ensure task", "sandbox", sandboxName, "handler", handler.Name)
 				}
 				watchedIssues[handler.Name] = append(watchedIssues[handler.Name], reviewv1alpha1.WatchedIssue{
-					Number:      *issue.Number,
+					Number:      issue.GetNumber(),
 					SandboxName: sandboxName,
 					Status:      sandboxStatus,
 					ScaledDown:  scaledDown,
@@ -884,15 +973,15 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 			}
 
 		} else {
-			log.Info("sandbox not found for", "issue", *issue.Number, "activeSandboxes", activeSandboxes, "totalSandboxes", totalSandboxes)
+			log.Info("sandbox not found for", "issue", issue.GetNumber(), "activeSandboxes", activeSandboxes, "totalSandboxes", totalSandboxes)
 			// Create Sandbox if within limits
-			issueIsExplicit := isIssueExplicit(*issue.Number, repoWatch.Spec.Issue.Issues)
+			issueIsExplicit := isIssueExplicit(issue.GetNumber(), repoWatch.Spec.Issue.Issues)
 			if issueIsExplicit || (activeSandboxes < repoWatch.Spec.Issue.MaxActiveSandboxes &&
 				(repoWatch.Spec.Issue.MaxSandboxes == 0 || totalSandboxes < repoWatch.Spec.Issue.MaxSandboxes)) {
-				log.Info("creating sandbox for issue", "issue", *issue.Number)
+				log.Info("creating sandbox for issue", "issue", issue.GetNumber())
 				createdSandbox, err := r.createIssueSandbox(ctx, user, repoWatch, issue)
 				if err != nil {
-					log.Error(err, "unable to create sandbox for issue", "issue", *issue.Number)
+					log.Error(err, "unable to create sandbox for issue", "issue", issue.GetNumber())
 				} else {
 					activeSandboxes++
 					totalSandboxes++
@@ -902,7 +991,7 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 							log.Error(err, "unable to create task", "sandbox", sandboxName, "handler", handler.Name)
 						}
 						watchedIssues[handler.Name] = append(watchedIssues[handler.Name], reviewv1alpha1.WatchedIssue{
-							Number:      *issue.Number,
+							Number:      issue.GetNumber(),
 							SandboxName: sandboxName,
 							Status:      "Creating",
 							ScaledDown:  false,
@@ -911,53 +1000,67 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 				}
 			} else {
 				for _, handler := range applicableHandlers {
-					pendingIssues[handler.Name] = append(pendingIssues[handler.Name], *issue.Number)
+					pendingIssues[handler.Name] = append(pendingIssues[handler.Name], issue.GetNumber())
 				}
 			}
 		}
 	}
 
 	// Cleanup old sandboxes
-	for _, sandbox := range ownedSandboxes {
-		labels := sandbox.GetLabels()
-		if labels != nil && labels["sandbox.gemini.google.com/type"] == "dev" {
-			continue
-		}
-		if !validSandboxNames[sandbox.GetName()] {
-			log.Info("deleting orphan issue sandbox", "sandbox", sandbox.GetName())
-			if err := r.Delete(ctx, &sandbox); err != nil {
-				log.Error(err, "unable to delete sandbox", "sandbox", sandbox.GetName())
+	if len(allIssues) > 0 {
+		for _, sandbox := range ownedSandboxes {
+			labels := sandbox.GetLabels()
+			if labels != nil && labels["sandbox.gemini.google.com/type"] == "dev" {
+				continue
+			}
+			if !validSandboxNames[sandbox.GetName()] {
+				log.Info("deleting orphan issue sandbox", "sandbox", sandbox.GetName())
+				if err := r.Delete(ctx, &sandbox); err != nil {
+					log.Error(err, "unable to delete sandbox", "sandbox", sandbox.GetName())
+				}
 			}
 		}
+	} else if len(ownedSandboxes) > 0 {
+		log.Info("no open issues found, but skipping cleanup to avoid accidental deletion during API flakes")
 	}
 
 	repoWatch.Status.IssueSandboxes = watchedIssues
 	repoWatch.Status.PendingIssues = pendingIssues
 
-	return r.Status().Update(ctx, repoWatch)
+	// Re-calculate active count after cleanup
+	activeIssueSandboxes := make(map[string]bool)
+	for _, ws := range watchedIssues {
+		for _, wi := range ws {
+			if !wi.ScaledDown {
+				activeIssueSandboxes[wi.SandboxName] = true
+			}
+		}
+	}
+
+	return len(activeIssueSandboxes), nil
 }
 
 func (r *Reconciler) isIssueMatch(issue *github.Issue, handler reviewv1alpha1.IssueHandlerSpec, repoWatch *reviewv1alpha1.RepoWatch, user *github.User) bool {
 	if repoWatch.Spec.Issue != nil {
 		// Include explicit includes - bypass other filters
 		for _, included := range repoWatch.Spec.Issue.Issues {
-			if *issue.Number == included {
+			if issue.GetNumber() == included {
 				return true
 			}
 		}
 
 		// Exclude explicit excludes from IssueSpec
 		for _, excluded := range repoWatch.Spec.Issue.ExcludeIssues {
-			if *issue.Number == excluded {
+			if issue.GetNumber() == excluded {
 				return false
 			}
 		}
 
 		// Check AssignedToSelf
-		if repoWatch.Spec.Issue.AssignedToSelf && user != nil && user.Login != nil {
+		if repoWatch.Spec.Issue.AssignedToSelf && user != nil && user.GetLogin() != "" {
 			isAssigned := false
 			for _, assignee := range issue.Assignees {
-				if assignee.Login != nil && *assignee.Login == *user.Login {
+				if assignee.GetLogin() != "" && assignee.GetLogin() == user.GetLogin() {
 					isAssigned = true
 					break
 				}
@@ -1004,9 +1107,21 @@ func (r *Reconciler) isIssueMatch(issue *github.Issue, handler reviewv1alpha1.Is
 func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, issue *github.Issue) (*unstructured.Unstructured, error) {
 	log := log.FromContext(ctx)
 	// Base name matches the issue identifier
-	name := fmt.Sprintf("%s-issue-%d", repoWatch.Name, *issue.Number)
+	name := fmt.Sprintf("%s-issue-%d", repoWatch.Name, issue.GetNumber())
 
-	cloneURL := strings.Replace(*issue.RepositoryURL, "api.github.com/repos", "github.com", 1) + ".git"
+	host := "github.com"
+	if u, err := url.Parse(issue.GetRepositoryURL()); err == nil && u.Hostname() != "" {
+		host = u.Hostname()
+		// If it's api.github.com, we want the web host
+		if host == "api.github.com" {
+			host = "github.com"
+		}
+	}
+
+	cloneURL := strings.Replace(issue.GetRepositoryURL(), "api.github.com/repos", host, 1) + ".git"
+	if !strings.HasPrefix(cloneURL, "https://") && !strings.HasPrefix(cloneURL, "http://") {
+		cloneURL = "https://" + cloneURL
+	}
 	repoParts := strings.Split(cloneURL, "/")
 	repoName := repoParts[len(repoParts)-1]
 
@@ -1052,9 +1167,9 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 		originUser = botLogin
 	}
 	originURL := fmt.Sprintf("github.com/%s/%s", originUser, repoName)
-	branchName := fmt.Sprintf("issue-%d-%s", *issue.Number, randString(4))
+	branchName := fmt.Sprintf("issue-%d-%s", issue.GetNumber(), randString(4))
 
-	log.Info("Generated sandbox for Issue", "issue", *issue)
+	log.Info("Generated sandbox for Issue", "issue", issue.GetHTMLURL())
 
 	// Determine apiKeySecretName from IssueSpec
 	apiKeySecretName := repoWatch.Spec.Issue.LLM.APIKeySecretRef
@@ -1081,7 +1196,7 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 				"agentState": "provisioning",
 			},
 			CloneURL:              cloneURL,
-			HTMLURL:               *issue.HTMLURL,
+			HTMLURL:               issue.GetHTMLURL(),
 			Branch:                branchName,
 			Origin:                originURL,
 			PushEnabled:           false,
@@ -1107,8 +1222,8 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 		},
 		DindSupport:   repoWatch.Spec.Issue.DindSupport,
 		LLMExtensions: repoWatch.Spec.Issue.LLM.Extensions,
-		IssueID:       fmt.Sprintf("%d", *issue.Number),
-		IssueTitle:    *issue.Title,
+		IssueID:       fmt.Sprintf("%d", issue.GetNumber()),
+		IssueTitle:    issue.GetTitle(),
 		IssueRepo:     repoWatch.GetName(),
 		//Handler:    "", // Handled per task?
 		Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{
@@ -1147,6 +1262,7 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 }
 
 func (r *Reconciler) ensureIssueTask(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, sandbox client.Object, sandboxName string, issue *github.Issue, handler reviewv1alpha1.IssueHandlerSpec) error {
+	log := log.FromContext(ctx)
 	taskName := fmt.Sprintf("%s-%s", sandboxName, handler.Name) // e.g. repo-issue-123-triage
 
 	// Check if task exists
@@ -1166,7 +1282,7 @@ func (r *Reconciler) ensureIssueTask(ctx context.Context, repoWatch *reviewv1alp
 	}
 
 	params := map[string]string{
-		"ISSUEID":      fmt.Sprintf("%d", *issue.Number),
+		"ISSUEID":      fmt.Sprintf("%d", issue.GetNumber()),
 		"AGENT_PROMPT": prompt,
 		"HANDLER_NAME": handler.Name,
 		"PR_LABEL":     "repo-agent",
@@ -1182,7 +1298,11 @@ func (r *Reconciler) ensureIssueTask(ctx context.Context, repoWatch *reviewv1alp
 		params["AGENT_LLM_CONFIGDIR"] = repoWatch.Spec.Issue.LLM.ConfigdirRef
 	}
 	if len(repoWatch.Spec.Issue.LLM.Extensions) > 0 {
-		exts, _ := json.Marshal(repoWatch.Spec.Issue.LLM.Extensions)
+		exts, err := json.Marshal(repoWatch.Spec.Issue.LLM.Extensions)
+		if err != nil {
+			log.Error(err, "unable to marshal extensions")
+			return err
+		}
 		params["AGENT_LLM_EXTENSIONS"] = string(exts)
 	}
 	if len(repoWatch.Spec.Issue.Models) > 0 {
@@ -1207,7 +1327,7 @@ func (r *Reconciler) generateIssueHandlerPrompt(handler reviewv1alpha1.IssueHand
 // sandbox.
 func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, pr *github.PullRequest) error {
 	log := log.FromContext(ctx)
-	sandboxName := fmt.Sprintf("%s-pr-%d", repoWatch.Name, *pr.Number)
+	sandboxName := fmt.Sprintf("%s-pr-%d", repoWatch.Name, pr.GetNumber())
 
 	prompt := repoWatch.Spec.Review.LLM.Prompt
 
@@ -1274,11 +1394,11 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, user *github.
 			Replicas:              1,
 			ServiceAccountName:    "review-sandbox",
 		},
-		PRNumber:          *pr.Number,
-		PRTitle:           *pr.Title,
-		PRHTMLURL:         *pr.HTMLURL,
-		PRDiffURL:         *pr.DiffURL,
-		PRCloneURL:        fmt.Sprintf("%s#refs/heads/%s", *pr.Head.Repo.CloneURL, *pr.Head.Ref),
+		PRNumber:          pr.GetNumber(),
+		PRTitle:           pr.GetTitle(),
+		PRHTMLURL:         pr.GetHTMLURL(),
+		PRDiffURL:         pr.GetDiffURL(),
+		PRCloneURL:        fmt.Sprintf("%s#refs/heads/%s", pr.GetHead().GetRepo().GetCloneURL(), pr.GetHead().GetRef()),
 		RepoName:          repoWatch.GetName(),
 		MaxReviewFiles:    repoWatch.Spec.Review.MaxReviewFiles,
 		IgnoreFiles:       repoWatch.Spec.Review.IgnoreFiles,
@@ -1361,11 +1481,11 @@ func randString(n int) string {
 	return string(b)
 }
 
-func (r *Reconciler) reconcileDevSandboxes(ctx context.Context, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, ghClient *github.Client, upstreamRepo string, podsBySandbox map[string]*corev1.Pod) error {
+func (r *Reconciler) reconcileDevSandboxes(ctx context.Context, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, ghClient *github.Client, upstreamRepo string, podsBySandbox map[string]*corev1.Pod, tasksBySandbox map[string][]sandboxtaskv1alpha1.SandboxTask) (int, error) {
 	log := log.FromContext(ctx)
 
 	if repoWatch.Spec.Dev.MaxSandboxes == 0 {
-		return nil
+		return 0, nil
 	}
 
 	// 1. Get User's Fork
@@ -1378,23 +1498,30 @@ func (r *Reconciler) reconcileDevSandboxes(ctx context.Context, user *github.Use
 	if err != nil {
 		log.Error(err, "unable to get user fork", "owner", forkOwner, "repo", forkRepo)
 		// If fork doesn't exist, we can't do anything.
-		return nil
+		return 0, nil
 	}
 
 	branches, err := r.getDevCandidateBranches(ctx, ghClient, repoWatch, forkOwner, forkRepo, repo.GetDefaultBranch())
 	if err != nil {
-		return err
+		return 0, err
 	}
 
-	watchedDevSandboxes, pendingDevBranches, err := r.reconcileDevSandboxesInternal(ctx, user, repoWatch, branches, forkOwner, forkRepo, podsBySandbox)
+	watchedDevSandboxes, pendingDevBranches, _, err := r.reconcileDevSandboxesInternal(ctx, user, repoWatch, branches, forkOwner, forkRepo, podsBySandbox, tasksBySandbox)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	repoWatch.Status.DevSandboxes = watchedDevSandboxes
 	repoWatch.Status.PendingDevBranches = pendingDevBranches
 
-	return r.Status().Update(ctx, repoWatch)
+	activeDevSandboxes := 0
+	for _, ds := range watchedDevSandboxes {
+		if !ds.ScaledDown {
+			activeDevSandboxes++
+		}
+	}
+
+	return activeDevSandboxes, nil
 }
 
 func (r *Reconciler) getDevCandidateBranches(ctx context.Context, ghClient *github.Client, repoWatch *reviewv1alpha1.RepoWatch, forkOwner, forkRepo string, defaultBranch string) ([]*github.Branch, error) {
@@ -1492,7 +1619,7 @@ func (r *Reconciler) getDevCandidateBranches(ctx context.Context, ghClient *gith
 	return sortedBranches, nil
 }
 
-func (r *Reconciler) reconcileDevSandboxesInternal(ctx context.Context, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, branches []*github.Branch, forkOwner, forkRepo string, podsBySandbox map[string]*corev1.Pod) ([]reviewv1alpha1.DevSandbox, []string, error) {
+func (r *Reconciler) reconcileDevSandboxesInternal(ctx context.Context, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, branches []*github.Branch, forkOwner, forkRepo string, podsBySandbox map[string]*corev1.Pod, tasksBySandbox map[string][]sandboxtaskv1alpha1.SandboxTask) ([]reviewv1alpha1.DevSandbox, []string, int, error) {
 	log := log.FromContext(ctx)
 	// 6. List Existing DevSandboxes
 	sandboxList := &unstructured.UnstructuredList{}
@@ -1503,7 +1630,7 @@ func (r *Reconciler) reconcileDevSandboxesInternal(ctx context.Context, user *gi
 	}
 	sandboxList.SetGroupVersionKind(sandboxGVK)
 	if err := r.List(ctx, sandboxList, client.InNamespace(repoWatch.Namespace), client.MatchingLabels{"sandbox.gemini.google.com/type": "dev"}); err != nil {
-		return nil, nil, fmt.Errorf("listing dev sandboxes: %w", err)
+		return nil, nil, 0, fmt.Errorf("listing dev sandboxes: %w", err)
 	}
 
 	ownedSandboxes := getOwnedSandboxes(sandboxList.Items, repoWatch.UID)
@@ -1518,15 +1645,24 @@ func (r *Reconciler) reconcileDevSandboxesInternal(ctx context.Context, user *gi
 		desiredBranches[b.GetName()] = true
 	}
 
+	if len(branches) == 0 && len(ownedSandboxes) > 0 {
+		log.Info("no dev branches found, skipping cleanup to avoid accidental deletion during API flakes")
+	}
+
 	for _, sandbox := range ownedSandboxes {
 		// Get branch from annotations
-		branch := sandbox.GetAnnotations()["sandbox.gemini.google.com/branch"]
+		annotations := sandbox.GetAnnotations()
+		if annotations == nil {
+			log.Error(nil, "sandbox has no annotations", "sandbox", sandbox.GetName())
+			continue
+		}
+		branch := annotations["sandbox.gemini.google.com/branch"]
 		if branch == "" {
 			log.Error(nil, "unable to get branch from sandbox annotations", "sandbox", sandbox.GetName())
 			continue
 		}
 
-		if !desiredBranches[branch] {
+		if len(branches) > 0 && !desiredBranches[branch] {
 			log.Info("deleting dev sandbox for untracked branch", "branch", branch)
 			if err := r.Delete(ctx, &sandbox); err != nil {
 				log.Error(err, "unable to delete sandbox", "sandbox", sandbox.GetName())
@@ -1572,17 +1708,23 @@ func (r *Reconciler) reconcileDevSandboxesInternal(ctx context.Context, user *gi
 		// hashing ensures we don't exceed this limit
 		fullSuffix := fmt.Sprintf("dev-%s-%s", forkRepo, safeBranchName)
 		hashedSuffix := NameHash(fullSuffix)
-		sandboxName := fmt.Sprintf("dev-%s", hashedSuffix)
+		oldSandboxName := fmt.Sprintf("%s-dev", hashedSuffix)
+		newSandboxName := fmt.Sprintf("dev-%s", hashedSuffix)
 
 		// Check if sandbox exists
 		sandboxExists := false
+		sandboxName := newSandboxName
 		for _, ws := range watchedDevSandboxes {
-			if ws.SandboxName == sandboxName {
+			if ws.SandboxName == oldSandboxName {
+				sandboxExists = true
+				sandboxName = oldSandboxName
+				break
+			}
+			if ws.SandboxName == newSandboxName {
 				sandboxExists = true
 				break
 			}
 		}
-
 		if sandboxExists {
 			continue
 		}
@@ -1604,12 +1746,18 @@ func (r *Reconciler) reconcileDevSandboxesInternal(ctx context.Context, user *gi
 			pendingDevBranches = append(pendingDevBranches, branchName)
 		}
 	}
-	return watchedDevSandboxes, pendingDevBranches, nil
+	return watchedDevSandboxes, pendingDevBranches, activeSandboxes, nil
 }
 
 func (r *Reconciler) createDevSandbox(ctx context.Context, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, forkOwner, forkRepo, branchName, sandboxName string) error {
+	log := log.FromContext(ctx)
+	host := "github.com"
+	if u, err := url.Parse(repoWatch.Spec.RepoURL); err == nil && u.Hostname() != "" {
+		host = u.Hostname()
+	}
+
 	cloneURL := strings.TrimSuffix(repoWatch.Spec.RepoURL, ".git") + ".git"
-	originURL := fmt.Sprintf("github.com/%s/%s.git", forkOwner, forkRepo)
+	originURL := fmt.Sprintf("%s/%s/%s.git", host, forkOwner, forkRepo)
 
 	userLogin := user.GetLogin()
 	userName := user.GetName()
@@ -1682,8 +1830,15 @@ func (r *Reconciler) createDevSandbox(ctx context.Context, user *github.User, re
 	if repoWatch.Spec.Dev.LLM.Prompt != "" {
 		params["AGENT_PROMPT"] = repoWatch.Spec.Dev.LLM.Prompt
 	}
+	if len(repoWatch.Spec.Dev.Models) > 0 {
+		params["model"] = strings.Join(repoWatch.Spec.Dev.Models, ",")
+	}
 	if len(repoWatch.Spec.Dev.LLM.Extensions) > 0 {
-		exts, _ := json.Marshal(repoWatch.Spec.Dev.LLM.Extensions)
+		exts, err := json.Marshal(repoWatch.Spec.Dev.LLM.Extensions)
+		if err != nil {
+			log.Error(err, "unable to marshal extensions")
+			return err
+		}
 		params["AGENT_LLM_EXTENSIONS"] = string(exts)
 	}
 
@@ -1736,7 +1891,7 @@ func (r *Reconciler) ensureRobotSecret(ctx context.Context, namespace, secretNam
 	return r.Create(ctx, newSecret)
 }
 
-func (r *Reconciler) unpauseSandboxIfPendingTasks(ctx context.Context, sandbox *unstructured.Unstructured) (bool, error) {
+func (r *Reconciler) unpauseSandboxIfPendingTasks(ctx context.Context, sandbox *unstructured.Unstructured, tasks []sandboxtaskv1alpha1.SandboxTask, activeSandboxes *int, maxActive int, isExplicit bool, force bool) (bool, error) {
 	log := log.FromContext(ctx)
 
 	// Check if paused (replicas == 0)
@@ -1749,41 +1904,59 @@ func (r *Reconciler) unpauseSandboxIfPendingTasks(ctx context.Context, sandbox *
 		return false, nil
 	}
 
-	// List tasks
-	tasks := &sandboxtaskv1alpha1.SandboxTaskList{}
-	if err := r.List(ctx, tasks, client.InNamespace(sandbox.GetNamespace()), client.MatchingLabels{"sandbox.gemini.google.com/sandbox-name": sandbox.GetName()}); err != nil {
-		return false, err
-	}
-
-	hasPending := false
-	for _, task := range tasks.Items {
-		state := task.Status.TaskState
-		// Pending (default if empty) or Running
-		if state == "" || state == "Pending" || state == "Running" {
-			hasPending = true
-			break
+	hasPending := force
+	if !hasPending {
+		for _, task := range tasks {
+			state := task.Status.TaskState
+			// Pending (default if empty) or Running
+			if state == "" || state == "Pending" || state == "Running" {
+				hasPending = true
+				break
+			}
 		}
 	}
 
 	if hasPending {
+		// Check limits
+		if !isExplicit && *activeSandboxes >= maxActive {
+			log.V(2).Info("Skipping sandbox scale-up: MaxActiveSandboxes reached", "sandbox", sandbox.GetName())
+			return false, nil
+		}
+
 		log.Info("Unpausing sandbox due to pending tasks", "sandbox", sandbox.GetName())
-		if err := unstructured.SetNestedField(sandbox.Object, int64(1), "spec", "replicas"); err != nil {
+		// Re-fetch sandbox to ensure we have the latest version for patching
+		latestSandbox := &unstructured.Unstructured{}
+		latestSandbox.SetGroupVersionKind(sandbox.GroupVersionKind())
+		if err := r.Get(ctx, types.NamespacedName{Name: sandbox.GetName(), Namespace: sandbox.GetNamespace()}, latestSandbox); err != nil {
+			log.Error(err, "failed to re-fetch sandbox for patching", "sandbox", sandbox.GetName())
 			return false, err
 		}
-		return true, r.Update(ctx, sandbox)
+
+		patch := client.MergeFrom(latestSandbox.DeepCopy())
+		if err := unstructured.SetNestedField(latestSandbox.Object, int64(1), "spec", "replicas"); err != nil {
+			return false, err
+		}
+		if err := r.Patch(ctx, latestSandbox, patch); err != nil {
+			return false, err
+		}
+		*sandbox = *latestSandbox
+		(*activeSandboxes)++
+		return true, nil
 	}
 	return false, nil
 }
 
-func (r *Reconciler) pauseSandboxIfIdle(ctx context.Context, sandbox *unstructured.Unstructured, shutdownDuration time.Duration) (bool, error) {
+func (r *Reconciler) pauseSandboxIfIdle(ctx context.Context, sandbox *unstructured.Unstructured, tasks []sandboxtaskv1alpha1.SandboxTask, shutdownDuration time.Duration) (bool, error) {
 	log := log.FromContext(ctx)
 
 	// Check for manual override annotation
 	annotations := sandbox.GetAnnotations()
-	if val, ok := annotations["sandbox.gemini.google.com/prevent-auto-shutdown"]; ok && val == "true" {
-		// Log only at debug level to avoid spam, or Info if occasional
-		log.V(4).Info("Skipping auto-pause due to manual override", "sandbox", sandbox.GetName())
-		return false, nil
+	if annotations != nil {
+		if val, ok := annotations["sandbox.gemini.google.com/prevent-auto-shutdown"]; ok && val == "true" {
+			// Log only at debug level to avoid spam, or Info if occasional
+			log.V(4).Info("Skipping auto-pause due to manual override", "sandbox", sandbox.GetName())
+			return false, nil
+		}
 	}
 
 	// Check if running (replicas > 0)
@@ -1792,16 +1965,10 @@ func (r *Reconciler) pauseSandboxIfIdle(ctx context.Context, sandbox *unstructur
 		return false, nil // Already paused
 	}
 
-	// List tasks
-	tasks := &sandboxtaskv1alpha1.SandboxTaskList{}
-	if err := r.List(ctx, tasks, client.InNamespace(sandbox.GetNamespace()), client.MatchingLabels{"sandbox.gemini.google.com/sandbox-name": sandbox.GetName()}); err != nil {
-		return false, err
-	}
-
 	// Check if all tasks are completed and find latest completion time
 	latestTime := sandbox.GetCreationTimestamp().Time
 
-	for _, task := range tasks.Items {
+	for _, task := range tasks {
 		state := task.Status.TaskState
 		if state != "Completed" && state != "Failed" {
 			// Found an active task, do not pause
@@ -1809,11 +1976,13 @@ func (r *Reconciler) pauseSandboxIfIdle(ctx context.Context, sandbox *unstructur
 		}
 
 		// Check completion time
-		annotations := task.GetAnnotations()
-		if tsStr, ok := annotations["sandbox.gemini.google.com/completion-time"]; ok {
-			if ts, err := time.Parse(time.RFC3339, tsStr); err == nil {
-				if ts.After(latestTime) {
-					latestTime = ts
+		ann := task.GetAnnotations()
+		if ann != nil {
+			if tsStr, ok := ann["sandbox.gemini.google.com/completion-time"]; ok {
+				if ts, err := time.Parse(time.RFC3339, tsStr); err == nil {
+					if ts.After(latestTime) {
+						latestTime = ts
+					}
 				}
 			}
 		}
@@ -1821,16 +1990,29 @@ func (r *Reconciler) pauseSandboxIfIdle(ctx context.Context, sandbox *unstructur
 
 	if time.Since(latestTime) > shutdownDuration {
 		log.Info("Pausing sandbox (idle)", "sandbox", sandbox.GetName(), "lastActivity", latestTime)
-		if err := unstructured.SetNestedField(sandbox.Object, int64(0), "spec", "replicas"); err != nil {
+		// Re-fetch sandbox to ensure we have the latest version for patching
+		latestSandbox := &unstructured.Unstructured{}
+		latestSandbox.SetGroupVersionKind(sandbox.GroupVersionKind())
+		if err := r.Get(ctx, types.NamespacedName{Name: sandbox.GetName(), Namespace: sandbox.GetNamespace()}, latestSandbox); err != nil {
+			log.Error(err, "failed to re-fetch sandbox for patching", "sandbox", sandbox.GetName())
 			return false, err
 		}
-		return true, r.Update(ctx, sandbox)
+
+		patch := client.MergeFrom(latestSandbox.DeepCopy())
+		if err := unstructured.SetNestedField(latestSandbox.Object, int64(0), "spec", "replicas"); err != nil {
+			return false, err
+		}
+		if err := r.Patch(ctx, latestSandbox, patch); err != nil {
+			return false, err
+		}
+		*sandbox = *latestSandbox
+		return true, nil
 	}
 
 	return false, nil
 }
 
-func (r *Reconciler) manageSandboxLifecycle(ctx context.Context, sandbox *unstructured.Unstructured, shutdownDuration time.Duration) (bool, error) {
+func (r *Reconciler) manageSandboxLifecycle(ctx context.Context, sandbox *unstructured.Unstructured, tasks []sandboxtaskv1alpha1.SandboxTask, shutdownDuration time.Duration, activeSandboxes *int, maxActive int, isExplicit bool) (bool, error) {
 	replicas, found, err := unstructured.NestedInt64(sandbox.Object, "spec", "replicas")
 	if err != nil || !found {
 		// If field missing, assume it's running (default behavior usually)
@@ -1838,32 +2020,26 @@ func (r *Reconciler) manageSandboxLifecycle(ctx context.Context, sandbox *unstru
 	}
 
 	if replicas == 0 {
-		return r.unpauseSandboxIfPendingTasks(ctx, sandbox)
+		return r.unpauseSandboxIfPendingTasks(ctx, sandbox, tasks, activeSandboxes, maxActive, isExplicit, false)
 	}
 
 	if shutdownDuration > 0 {
-		return r.pauseSandboxIfIdle(ctx, sandbox, shutdownDuration)
+		return r.pauseSandboxIfIdle(ctx, sandbox, tasks, shutdownDuration)
 	}
 	return false, nil
 }
 
-func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, sandbox *unstructured.Unstructured, issue *github.Issue, ghClient *github.Client) error {
+func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, sandbox *unstructured.Unstructured, tasks []sandboxtaskv1alpha1.SandboxTask, issue *github.Issue, ghClient *github.Client, activeSandboxes *int, issueIsExplicit bool) error {
 	log := log.FromContext(ctx)
 
-	// Check if we have an active address-feedback task
-	tasks := &sandboxtaskv1alpha1.SandboxTaskList{}
-	if err := r.List(ctx, tasks, client.InNamespace(sandbox.GetNamespace()), client.MatchingLabels{"sandbox.gemini.google.com/sandbox-name": sandbox.GetName()}); err != nil {
-		return err
-	}
-
-	if len(tasks.Items) == 0 {
+	if len(tasks) == 0 {
 		return nil
 	}
 
 	activeTaskExists := false
 	var lastAddressFeedbackTaskTime time.Time
 
-	for _, task := range tasks.Items {
+	for _, task := range tasks {
 		// If ANY task is active, skip creating a new one
 		state := task.Status.TaskState
 		if state == "" || state == "Pending" || state == "Running" {
@@ -1887,7 +2063,7 @@ func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *revi
 		return err
 	}
 
-	pr, err := r.getLinkedPRFromSandbox(ctx, ghClient, sandbox)
+	pr, err := r.getLinkedPRFromSandbox(ctx, ghClient, sandbox, tasks)
 	if err != nil {
 		return err
 	}
@@ -1905,9 +2081,9 @@ func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *revi
 	opts := &github.ListOptions{PerPage: 100}
 	commitsFound := false
 	for {
-		commits, resp, err := ghClient.PullRequests.ListCommits(ctx, owner, repo, *pr.Number, opts)
+		commits, resp, err := ghClient.PullRequests.ListCommits(ctx, owner, repo, pr.GetNumber(), opts)
 		if err != nil {
-			log.Error(err, "unable to list commits for PR", "pr", pr.Number)
+			log.Error(err, "unable to list commits for PR", "pr", pr.GetNumber())
 			break
 		}
 		for _, commit := range commits {
@@ -1932,21 +2108,21 @@ func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *revi
 	// Check for new feedback
 	hasNew, latestFeedbackTime, err := r.hasNewFeedback(ctx, ghClient, owner, repo, pr, issue, latestCommitTime, latestCommitAuthorLogin)
 	if err != nil {
-		log.Error(err, "checking for new feedback", "pr", pr.Number)
+		log.Error(err, "checking for new feedback", "pr", pr.GetNumber())
 		return nil
 	}
 
 	if hasNew {
 		// Check if we have already created a task after the latest feedback
 		if !lastAddressFeedbackTaskTime.IsZero() && lastAddressFeedbackTaskTime.After(latestFeedbackTime) {
-			log.Info("Skipping address-feedback: last attempt was after latest feedback", "pr", *pr.Number, "lastAttempt", lastAddressFeedbackTaskTime, "latestFeedback", latestFeedbackTime)
+			log.Info("Skipping address-feedback: last attempt was after latest feedback", "pr", pr.GetNumber(), "lastAttempt", lastAddressFeedbackTaskTime, "latestFeedback", latestFeedbackTime)
 			return nil
 		}
 
-		log.Info("Found new feedback, creating address-feedback task", "pr", pr.Number)
+		log.Info("Found new feedback, creating address-feedback task", "pr", pr.GetNumber())
 		params := map[string]string{
-			"PULL_REQUEST_ID": fmt.Sprintf("%d", *pr.Number),
-			"ISSUE_URL":       *issue.HTMLURL,
+			"PULL_REQUEST_ID": fmt.Sprintf("%d", pr.GetNumber()),
+			"ISSUE_URL":       issue.GetHTMLURL(),
 			"AGENT_PROMPT":    repoWatch.Spec.Issue.LLM.Prompt,
 		}
 		// Add LLM params
@@ -1960,7 +2136,11 @@ func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *revi
 			params["AGENT_LLM_CONFIGDIR"] = repoWatch.Spec.Issue.LLM.ConfigdirRef
 		}
 		if len(repoWatch.Spec.Issue.LLM.Extensions) > 0 {
-			exts, _ := json.Marshal(repoWatch.Spec.Issue.LLM.Extensions)
+			exts, err := json.Marshal(repoWatch.Spec.Issue.LLM.Extensions)
+			if err != nil {
+				log.Error(err, "unable to marshal extensions")
+				return err
+			}
 			params["AGENT_LLM_EXTENSIONS"] = string(exts)
 		}
 		if len(repoWatch.Spec.Issue.Models) > 0 {
@@ -1970,11 +2150,29 @@ func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *revi
 		// Ensure sandbox is scaled up
 		replicas, found, err := unstructured.NestedInt64(sandbox.Object, "spec", "replicas")
 		if err != nil || !found || replicas == 0 {
-			if err := unstructured.SetNestedField(sandbox.Object, int64(1), "spec", "replicas"); err != nil {
+			// Check active sandboxes limit
+			if !issueIsExplicit && *activeSandboxes >= repoWatch.Spec.Issue.MaxActiveSandboxes {
+				log.V(2).Info("Skipping sandbox scale-up: MaxActiveSandboxes reached", "issue", issue.GetNumber(), "active", *activeSandboxes, "max", repoWatch.Spec.Issue.MaxActiveSandboxes)
+				return nil
+			}
+
+			// Re-fetch sandbox to ensure we have the latest version for patching
+			latestSandbox := &unstructured.Unstructured{}
+			latestSandbox.SetGroupVersionKind(sandbox.GroupVersionKind())
+			if err := r.Get(ctx, types.NamespacedName{Name: sandbox.GetName(), Namespace: sandbox.GetNamespace()}, latestSandbox); err != nil {
+				log.Error(err, "failed to re-fetch sandbox for patching", "sandbox", sandbox.GetName())
+				return nil
+			}
+
+			patch := client.MergeFrom(latestSandbox.DeepCopy())
+			if err := unstructured.SetNestedField(latestSandbox.Object, int64(1), "spec", "replicas"); err != nil {
 				log.Error(err, "unable to set replicas to 1")
 			} else {
-				if err := r.Update(ctx, sandbox); err != nil {
-					log.Error(err, "unable to scale up sandbox")
+				if err := r.Patch(ctx, latestSandbox, patch); err != nil {
+					log.Error(err, "unable to patch sandbox for scale up")
+				} else {
+					*sandbox = *latestSandbox
+					(*activeSandboxes)++
 				}
 			}
 		}
@@ -1985,23 +2183,17 @@ func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *revi
 	return nil
 }
 
-func (r *Reconciler) reconcilePRFailures(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, sandbox *unstructured.Unstructured, issue *github.Issue, ghClient *github.Client) error {
+func (r *Reconciler) reconcilePRFailures(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, sandbox *unstructured.Unstructured, tasks []sandboxtaskv1alpha1.SandboxTask, issue *github.Issue, ghClient *github.Client, activeSandboxes *int, issueIsExplicit bool) error {
 	log := log.FromContext(ctx)
 
-	// Check if we have an active task
-	tasks := &sandboxtaskv1alpha1.SandboxTaskList{}
-	if err := r.List(ctx, tasks, client.InNamespace(sandbox.GetNamespace()), client.MatchingLabels{"sandbox.gemini.google.com/sandbox-name": sandbox.GetName()}); err != nil {
-		return err
-	}
-
-	if len(tasks.Items) == 0 {
+	if len(tasks) == 0 {
 		return nil
 	}
 
 	activeTaskExists := false
 	var lastInvestigateFailuresTaskTime time.Time
 
-	for _, task := range tasks.Items {
+	for _, task := range tasks {
 		// If ANY task is active, skip creating a new one
 		state := task.Status.TaskState
 		if state == "" || state == "Pending" || state == "Running" {
@@ -2025,7 +2217,7 @@ func (r *Reconciler) reconcilePRFailures(ctx context.Context, repoWatch *reviewv
 		return err
 	}
 
-	pr, err := r.getLinkedPRFromSandbox(ctx, ghClient, sandbox)
+	pr, err := r.getLinkedPRFromSandbox(ctx, ghClient, sandbox, tasks)
 	if err != nil {
 		return err
 	}
@@ -2077,14 +2269,14 @@ func (r *Reconciler) reconcilePRFailures(ctx context.Context, repoWatch *reviewv
 		latestCommitTime := commit.GetCommit().GetCommitter().GetDate()
 
 		if !lastInvestigateFailuresTaskTime.IsZero() && lastInvestigateFailuresTaskTime.After(latestCommitTime) {
-			log.Info("Skipping investigate-failures: last attempt was after latest commit", "pr", *pr.Number, "lastAttempt", lastInvestigateFailuresTaskTime, "latestCommit", latestCommitTime)
+			log.Info("Skipping investigate-failures: last attempt was after latest commit", "pr", pr.GetNumber(), "lastAttempt", lastInvestigateFailuresTaskTime, "latestCommit", latestCommitTime)
 			return nil
 		}
 
-		log.Info("Found failures on latest commit, creating investigate-failures task", "pr", pr.Number, "sha", sha)
+		log.Info("Found failures on latest commit, creating investigate-failures task", "pr", pr.GetNumber(), "sha", sha)
 		params := map[string]string{
-			"PULL_REQUEST_ID": fmt.Sprintf("%d", *pr.Number),
-			"ISSUE_URL":       *issue.HTMLURL,
+			"PULL_REQUEST_ID": fmt.Sprintf("%d", pr.GetNumber()),
+			"ISSUE_URL":       issue.GetHTMLURL(),
 			"AGENT_PROMPT":    repoWatch.Spec.Issue.LLM.Prompt,
 		}
 		// Add LLM params
@@ -2098,7 +2290,11 @@ func (r *Reconciler) reconcilePRFailures(ctx context.Context, repoWatch *reviewv
 			params["AGENT_LLM_CONFIGDIR"] = repoWatch.Spec.Issue.LLM.ConfigdirRef
 		}
 		if len(repoWatch.Spec.Issue.LLM.Extensions) > 0 {
-			exts, _ := json.Marshal(repoWatch.Spec.Issue.LLM.Extensions)
+			exts, err := json.Marshal(repoWatch.Spec.Issue.LLM.Extensions)
+			if err != nil {
+				log.Error(err, "unable to marshal extensions")
+				return err
+			}
 			params["AGENT_LLM_EXTENSIONS"] = string(exts)
 		}
 		if len(repoWatch.Spec.Issue.Models) > 0 {
@@ -2108,11 +2304,29 @@ func (r *Reconciler) reconcilePRFailures(ctx context.Context, repoWatch *reviewv
 		// Ensure sandbox is scaled up
 		replicas, found, err := unstructured.NestedInt64(sandbox.Object, "spec", "replicas")
 		if err != nil || !found || replicas == 0 {
-			if err := unstructured.SetNestedField(sandbox.Object, int64(1), "spec", "replicas"); err != nil {
+			// Check active sandboxes limit
+			if !issueIsExplicit && *activeSandboxes >= repoWatch.Spec.Issue.MaxActiveSandboxes {
+				log.V(2).Info("Skipping sandbox scale-up: MaxActiveSandboxes reached", "issue", issue.GetNumber(), "active", *activeSandboxes, "max", repoWatch.Spec.Issue.MaxActiveSandboxes)
+				return nil
+			}
+
+			// Re-fetch sandbox to ensure we have the latest version for patching
+			latestSandbox := &unstructured.Unstructured{}
+			latestSandbox.SetGroupVersionKind(sandbox.GroupVersionKind())
+			if err := r.Get(ctx, types.NamespacedName{Name: sandbox.GetName(), Namespace: sandbox.GetNamespace()}, latestSandbox); err != nil {
+				log.Error(err, "failed to re-fetch sandbox for patching", "sandbox", sandbox.GetName())
+				return nil
+			}
+
+			patch := client.MergeFrom(latestSandbox.DeepCopy())
+			if err := unstructured.SetNestedField(latestSandbox.Object, int64(1), "spec", "replicas"); err != nil {
 				log.Error(err, "unable to set replicas to 1")
 			} else {
-				if err := r.Update(ctx, sandbox); err != nil {
-					log.Error(err, "unable to scale up sandbox")
+				if err := r.Patch(ctx, latestSandbox, patch); err != nil {
+					log.Error(err, "unable to patch sandbox for scale up")
+				} else {
+					*sandbox = *latestSandbox
+					(*activeSandboxes)++
 				}
 			}
 		}
@@ -2123,17 +2337,14 @@ func (r *Reconciler) reconcilePRFailures(ctx context.Context, repoWatch *reviewv
 	return nil
 }
 
-var prURLRegex = regexp.MustCompile(`https://github\.com/[\w-]+/[\w-]+/pull/\d+`)
+var prURLRegex = regexp.MustCompile(`(?:https?://|git@|ssh://|)[^/\s:]+[/:][\w-]+/[\w-]+/pull/\d+`)
 
-func (r *Reconciler) getLinkedPRFromSandbox(ctx context.Context, ghClient *github.Client, sandbox *unstructured.Unstructured) (*github.PullRequest, error) {
-	// List tasks
-	tasks := &sandboxtaskv1alpha1.SandboxTaskList{}
-	if err := r.List(ctx, tasks, client.InNamespace(sandbox.GetNamespace()), client.MatchingLabels{"sandbox.gemini.google.com/sandbox-name": sandbox.GetName()}); err != nil {
-		return nil, err
-	}
-
-	for _, task := range tasks.Items {
+func (r *Reconciler) getLinkedPRFromSandbox(ctx context.Context, ghClient *github.Client, sandbox *unstructured.Unstructured, tasks []sandboxtaskv1alpha1.SandboxTask) (*github.PullRequest, error) {
+	for _, task := range tasks {
 		annotations := task.GetAnnotations()
+		if annotations == nil {
+			continue
+		}
 		agentDraft, ok := annotations["agentDraft"]
 		if !ok || agentDraft == "" {
 			continue
@@ -2161,7 +2372,7 @@ func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client
 	found := false
 
 	// Check PR comments
-	comments, _, err := ghClient.Issues.ListComments(ctx, owner, repo, *pr.Number, &github.IssueListCommentsOptions{
+	comments, _, err := ghClient.Issues.ListComments(ctx, owner, repo, pr.GetNumber(), &github.IssueListCommentsOptions{
 		Since: &since,
 	})
 	if err != nil {
@@ -2169,7 +2380,7 @@ func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client
 	}
 	for _, c := range comments {
 		if c.CreatedAt != nil && c.CreatedAt.After(since) {
-			if c.User.GetLogin() == latestCommitAuthorLogin {
+			if c.GetUser().GetLogin() == latestCommitAuthorLogin {
 				continue
 			}
 			found = true
@@ -2180,13 +2391,13 @@ func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client
 	}
 
 	// Check PR reviews
-	reviews, _, err := ghClient.PullRequests.ListReviews(ctx, owner, repo, *pr.Number, nil)
+	reviews, _, err := ghClient.PullRequests.ListReviews(ctx, owner, repo, pr.GetNumber(), nil)
 	if err != nil {
 		return false, time.Time{}, err
 	}
 	for _, rev := range reviews {
 		if rev.SubmittedAt != nil && rev.SubmittedAt.After(since) {
-			if rev.User.GetLogin() == latestCommitAuthorLogin {
+			if rev.GetUser().GetLogin() == latestCommitAuthorLogin {
 				continue
 			}
 			found = true
@@ -2197,7 +2408,7 @@ func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client
 	}
 
 	// Check Issue comments
-	issueComments, _, err := ghClient.Issues.ListComments(ctx, owner, repo, *issue.Number, &github.IssueListCommentsOptions{
+	issueComments, _, err := ghClient.Issues.ListComments(ctx, owner, repo, issue.GetNumber(), &github.IssueListCommentsOptions{
 		Since: &since,
 	})
 	if err != nil {
@@ -2207,7 +2418,7 @@ func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client
 		if c.CreatedAt != nil && c.CreatedAt.After(since) {
 			// We use the latest commit author (likely the bot/agent) to filter out
 			// comments made by the agent itself on the issue.
-			if c.User.GetLogin() == latestCommitAuthorLogin {
+			if c.GetUser().GetLogin() == latestCommitAuthorLogin {
 				continue
 			}
 			found = true
@@ -2273,12 +2484,222 @@ func (r *Reconciler) reconcileSandboxPodStatus(ctx context.Context, sandbox *uns
 	}
 
 	if updateAnnotation {
-		sandbox.SetAnnotations(annotations)
-		if err := r.Update(ctx, sandbox); err != nil {
-			log.Error(err, "failed to update sandbox annotation for pod status", "sandbox", sandbox.GetName())
+		// Re-fetch sandbox to ensure we have the latest version
+		latestSandbox := &unstructured.Unstructured{}
+		latestSandbox.SetGroupVersionKind(sandbox.GroupVersionKind())
+		if err := r.Get(ctx, types.NamespacedName{Name: sandbox.GetName(), Namespace: sandbox.GetNamespace()}, latestSandbox); err != nil {
+			log.Error(err, "failed to re-fetch sandbox for update", "sandbox", sandbox.GetName())
 			return sandboxStatus, err
 		}
+
+		patch := client.MergeFrom(latestSandbox.DeepCopy())
+		latestAnnotations := latestSandbox.GetAnnotations()
+		if latestAnnotations == nil {
+			latestAnnotations = make(map[string]string)
+		}
+		for k, v := range annotations {
+			latestAnnotations[k] = v
+		}
+
+		latestSandbox.SetAnnotations(latestAnnotations)
+		if err := r.Patch(ctx, latestSandbox, patch); err != nil {
+			log.Error(err, "failed to patch sandbox annotation for pod status", "sandbox", latestSandbox.GetName())
+			return sandboxStatus, err
+		}
+		*sandbox = *latestSandbox
 	}
 
 	return sandboxStatus, nil
+}
+
+func (r *Reconciler) reconcileReviewConflicts(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, sandbox *unstructured.Unstructured, tasks []sandboxtaskv1alpha1.SandboxTask, pr *github.PullRequest, ghClient *github.Client, owner, repo string, activeSandboxes *int, prIsExplicit bool, defaultBranchSHA string, defaultBranchName string) (bool, error) {
+	log := log.FromContext(ctx)
+	if !repoWatch.Spec.Review.ResolveConflicts {
+		return false, nil
+	}
+
+	headSHA := pr.GetHead().GetSHA()
+	baseRef := pr.GetBase().GetRef()
+	headRef := pr.GetHead().GetRef()
+	if headSHA == "" || baseRef == "" || headRef == "" {
+		return false, nil
+	}
+
+	// We use the base SHA from the PR object to avoid excessive GitHub API calls.
+	// However, if we've already fetched the latest base branch SHA once in this reconcile loop,
+	// we use that to detect if the PR has become out of date.
+	baseSHA := pr.GetBase().GetSHA()
+	// Use defaultBranchSHA if it matches the base branch of the PR
+	if defaultBranchSHA != "" && baseRef == defaultBranchName {
+		baseSHA = defaultBranchSHA
+	}
+
+	if baseSHA == "" {
+		return false, nil
+	}
+
+	checkSHA := fmt.Sprintf("%s:%s", headSHA, baseSHA)
+
+	// Check Sandbox annotations to see if we've already checked this SHA combination and it was mergeable
+	if sandbox.GetAnnotations() != nil && sandbox.GetAnnotations()["sandbox.gemini.google.com/last-conflict-check-key"] == checkSHA {
+		return false, nil
+	}
+
+	activeTaskExists := false
+	alreadyAttemptedThisSHA := false
+	for _, task := range tasks {
+		if task.Spec.Type != "resolve-conflicts" {
+			continue
+		}
+
+		state := task.Status.TaskState
+		// If any resolve-conflicts task is currently active for this sandbox, don't start a new one.
+		if state == "" || state == "Pending" || state == "Running" {
+			activeTaskExists = true
+		}
+
+		// If we've already attempted this specific combination of head and base SHAs, skip.
+		if task.Spec.Params["HEAD_SHA"] == headSHA && task.Spec.Params["BASE_SHA"] == baseSHA {
+			if state == "" || state == "Pending" || state == "Running" {
+				alreadyAttemptedThisSHA = true
+			} else if state == "Completed" || state == "Failed" {
+				alreadyAttemptedThisSHA = true
+			}
+		}
+	}
+
+	if activeTaskExists {
+		return false, nil
+	}
+
+	if alreadyAttemptedThisSHA {
+		// If we've already attempted this SHA combination and it finished (Completed or Failed),
+		// we should update the annotation so that we stop checking mergeability for this SHA.
+		hasFinishedTask := false
+		for _, task := range tasks {
+			if task.Spec.Type == "resolve-conflicts" && task.Spec.Params["HEAD_SHA"] == headSHA && task.Spec.Params["BASE_SHA"] == baseSHA {
+				state := task.Status.TaskState
+				if state == "Completed" || state == "Failed" {
+					hasFinishedTask = true
+					break
+				}
+			}
+		}
+
+		if hasFinishedTask {
+			// Record check in annotation to stop polling.
+			if err := r.updateConflictCheckAnnotation(ctx, sandbox, checkSHA); err != nil {
+				return false, err
+			}
+		}
+		return false, nil
+	}
+
+	// Check mergeability
+	// The PullRequests.List API does not return the mergeable field, so we might need to fetch the full PR.
+	// But we only do this if we haven't already recorded checking this SHA.
+	if pr.Mergeable == nil {
+		// Need to fetch full PR object to get mergeability
+		fullPR, resp, err := ghClient.PullRequests.Get(ctx, owner, repo, pr.GetNumber())
+		if err != nil {
+			if resp != nil && resp.StatusCode == 404 {
+				log.Info("PR not found (deleted or closed), skipping conflict resolution", "pr", pr.GetNumber())
+				return false, nil
+			}
+			return false, err
+		}
+		pr = fullPR
+	}
+
+	if pr.Mergeable == nil {
+		// GitHub is still computing mergeability.
+		log.V(1).Info("GitHub is still computing mergeability, requeuing", "pr", pr.GetNumber())
+		return true, nil
+	}
+
+	// Mergeable is false if there are conflicts
+	if !pr.GetMergeable() {
+		// alreadyAttemptedThisSHA check moved up, so we know we need to create a task here.
+		log.V(1).Info("Found merge conflicts in PR, creating resolve-conflicts task", "pr", pr.GetNumber(), "headSHA", headSHA, "baseSHA", baseSHA)
+
+		params := map[string]string{
+			"HEAD_SHA":     headSHA,
+			"BASE_SHA":     baseSHA,
+			"PR_NUMBER":    fmt.Sprintf("%d", pr.GetNumber()),
+			"BASE_REF":     baseRef,
+			"HEAD_REF":     headRef,
+			"AGENT_PROMPT": repoWatch.Spec.Review.LLM.Prompt,
+		}
+		if len(repoWatch.Spec.Review.Models) > 0 {
+			params["model"] = strings.Join(repoWatch.Spec.Review.Models, ",")
+		}
+
+		// Add LLM params from ReviewSpec
+		if repoWatch.Spec.Review.LLM.Provider != "" {
+			params["AGENT_LLM_PROVIDER"] = repoWatch.Spec.Review.LLM.Provider
+		}
+		if repoWatch.Spec.Review.LLM.APIKeySecretRef != "" {
+			params["AGENT_LLM_API_KEY_SECRET"] = repoWatch.Spec.Review.LLM.APIKeySecretRef
+		}
+		if repoWatch.Spec.Review.LLM.ConfigdirRef != "" {
+			params["AGENT_LLM_CONFIGDIR"] = repoWatch.Spec.Review.LLM.ConfigdirRef
+		}
+		if len(repoWatch.Spec.Review.LLM.Extensions) > 0 {
+			exts, err := json.Marshal(repoWatch.Spec.Review.LLM.Extensions)
+			if err != nil {
+				log.Error(err, "unable to marshal extensions")
+				return false, err
+			}
+			params["AGENT_LLM_EXTENSIONS"] = string(exts)
+		}
+
+		if err := r.createSandboxTask(ctx, repoWatch, sandbox, sandbox.GetName(), "", "resolve-conflicts", params); err != nil {
+			return false, err
+		}
+
+		// Ensure sandbox is scaled up if we have capacity
+		unpaused, err := r.unpauseSandboxIfPendingTasks(ctx, sandbox, tasks, activeSandboxes, repoWatch.Spec.Review.MaxActiveSandboxes, prIsExplicit, true)
+		if err != nil {
+			log.Error(err, "unable to unpause sandbox after creating resolve-conflicts task", "sandbox", sandbox.GetName())
+		}
+		if !unpaused && !prIsExplicit && *activeSandboxes >= repoWatch.Spec.Review.MaxActiveSandboxes {
+			log.V(2).Info("Sandbox scale-up deferred: MaxActiveSandboxes reached", "sandbox", sandbox.GetName(), "active", *activeSandboxes, "max", repoWatch.Spec.Review.MaxActiveSandboxes)
+		}
+	}
+
+	// Update annotation to record that we've checked this SHA combination.
+	// Only update if mergeable. If it's NOT mergeable, we rely on the task existence to avoid re-creating the task,
+	// but we don't set the annotation so that if the task fails, we can retry.
+	if pr.GetMergeable() {
+		if err := r.updateConflictCheckAnnotation(ctx, sandbox, checkSHA); err != nil {
+			return false, err
+		}
+	}
+
+	return false, nil
+}
+
+func (r *Reconciler) updateConflictCheckAnnotation(ctx context.Context, sandbox *unstructured.Unstructured, checkSHA string) error {
+	log := log.FromContext(ctx)
+	// Re-fetch sandbox to ensure we have the latest version for patching
+	latestSandbox := &unstructured.Unstructured{}
+	latestSandbox.SetGroupVersionKind(sandbox.GroupVersionKind())
+	if err := r.Get(ctx, types.NamespacedName{Name: sandbox.GetName(), Namespace: sandbox.GetNamespace()}, latestSandbox); err != nil {
+		log.Error(err, "failed to re-fetch sandbox for patching", "sandbox", sandbox.GetName())
+		return err
+	}
+
+	patch := client.MergeFrom(latestSandbox.DeepCopy())
+	annotations := latestSandbox.GetAnnotations()
+	if annotations == nil {
+		annotations = make(map[string]string)
+	}
+	annotations["sandbox.gemini.google.com/last-conflict-check-key"] = checkSHA
+	latestSandbox.SetAnnotations(annotations)
+	if err := r.Patch(ctx, latestSandbox, patch); err != nil {
+		log.Error(err, "failed to patch sandbox annotation for conflict check", "sandbox", latestSandbox.GetName())
+		return err
+	}
+	*sandbox = *latestSandbox
+	return nil
 }

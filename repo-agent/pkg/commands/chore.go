@@ -1,3 +1,17 @@
+// Copyright 2026 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package commands
 
 import (
@@ -6,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks"
 	"github.com/spf13/cobra"
@@ -24,9 +39,11 @@ type ChoreCommand struct {
 	RepoName     string
 	CloneURL     string
 	RepoOwner    string
+	RepoURL      string
 	SkipPR       bool
 
 	// loaded objects
+	repo      *github.Repository
 	sandbox   *sandbox.IssueSandbox
 	sandboxID string
 }
@@ -40,7 +57,9 @@ func BuildChoreCommand() *cobra.Command {
 		Short: "Run a chore using an LLM in a sandbox",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			choreCommand.InitDefaults()
+			if err := choreCommand.InitDefaults(); err != nil {
+				return err
+			}
 			return choreCommand.Run(cmd.Context())
 		},
 	}
@@ -51,12 +70,13 @@ func BuildChoreCommand() *cobra.Command {
 	cmd.Flags().StringVar(&choreCommand.RepoName, "repo", os.Getenv("REPO"), "Repository name")
 	cmd.Flags().StringVar(&choreCommand.CloneURL, "clone-url", os.Getenv("CLONE_URL"), "Repository clone URL")
 	cmd.Flags().StringVar(&choreCommand.RepoOwner, "repo-owner", os.Getenv("REPO_OWNER"), "Repository owner")
+	cmd.Flags().StringVar(&choreCommand.RepoURL, "repo-url", os.Getenv("GIT_HTML_URL"), "GitHub repository URL")
 	cmd.Flags().BoolVar(&choreCommand.SkipPR, "skip-pr", os.Getenv("SKIP_PR") == "true", "Skip PR creation")
 	cmd.Flags().BoolVar(&choreCommand.InPod, "in-pod", false, "Whether running inside the pod")
 	return cmd
 }
 
-func (c *ChoreCommand) InitDefaults() {
+func (c *ChoreCommand) InitDefaults() error {
 	if c.WorkspaceDir == "" {
 		c.WorkspaceDir = "/workspaces"
 	}
@@ -66,6 +86,14 @@ func (c *ChoreCommand) InitDefaults() {
 	if c.TaskDir == "" {
 		c.TaskDir = c.WorkspaceDir
 	}
+
+	var err error
+	c.AgentPrompt, err = resolveAgentPrompt(c.AgentPrompt)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (c *ChoreCommand) taskPath(name string, args ...interface{}) string {
@@ -73,11 +101,32 @@ func (c *ChoreCommand) taskPath(name string, args ...interface{}) string {
 	return filepath.Join(c.TaskDir, file)
 }
 
+func (c *ChoreCommand) loadGithubObjects(ctx context.Context) error {
+	githubAPI, err := github.NewClient(ctx)
+	if err != nil {
+		return err
+	}
+
+	if c.RepoURL != "" {
+		c.repo, err = githubAPI.GetRepositoryFromHTMLUrl(ctx, c.RepoURL)
+		if err != nil {
+			return err
+		}
+	} else if c.CloneURL != "" {
+		c.repo, err = githubAPI.GetRepositoryFromHTMLUrl(ctx, c.CloneURL)
+		if err != nil {
+			// Best effort if CloneURL is not a standard HTML URL
+			klog.Warningf("Failed to get repository from CloneURL %q: %v", c.CloneURL, err)
+		}
+	}
+	return nil
+}
+
 func (c *ChoreCommand) loadSandbox(ctx context.Context) error {
 	// For chore, we might not have an issue or full repo info easily available
 	// But IssueSandbox is what tasks.RunTask expects.
 	// We can probably pass nil for repo and issue if the task doesn't use them.
-	sb, err := sandbox.NewIssueSandbox(ctx, c.InPod, nil, nil, "")
+	sb, err := sandbox.NewIssueSandbox(ctx, c.InPod, c.repo, nil, "")
 	if err != nil {
 		return err
 	}
@@ -91,14 +140,20 @@ func (c *ChoreCommand) Run(ctx context.Context) error {
 	log := klog.FromContext(ctx)
 	log.Info("Starting chore task", "taskdir", c.TaskDir)
 
+	err := c.loadGithubObjects(ctx)
+	if err != nil {
+		log.Info("Failed to load GitHub objects (continuing)", "error", err)
+	}
+
 	// get sandbox
-	err := c.loadSandbox(ctx)
+	err = c.loadSandbox(ctx)
 	if err != nil {
 		return err
 	}
 
 	promptPath := c.taskPath("agent-prompt.txt")
 	task := tasks.ChoreModel{
+		Repo:        c.repo,
 		AgentPrompt: c.AgentPrompt,
 		ChoreName:   c.ChoreName,
 		ChoreFile:   c.ChoreFile,

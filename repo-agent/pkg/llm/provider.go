@@ -1,4 +1,4 @@
-// Copyright 2025 Google LLC
+// Copyright 2026 The Kubernetes Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -106,13 +106,6 @@ func NewLLMProvider(cfg ProviderConfig) (Provider, error) {
 		return g, nil
 	case "claude":
 		c := &Claude{
-			ProviderConfig: cfg,
-		}
-		c.AddPostProcessor(StripYAMLMarkers)
-		return c, nil
-	case "claude-cli":
-		c := &ClaudeCLI{
-			Executor:       &RealCommandExecutor{},
 			ProviderConfig: cfg,
 		}
 		c.AddPostProcessor(StripYAMLMarkers)

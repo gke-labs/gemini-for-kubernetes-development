@@ -1,3 +1,17 @@
+// Copyright 2026 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package commands
 
 import (
@@ -53,7 +67,9 @@ func BuildDevInitCommand() *cobra.Command {
 			if len(args) != 0 {
 				return fmt.Errorf("command does not take positional arguments")
 			}
-			initCommand.InitDefaults()
+			if err := initCommand.InitDefaults(); err != nil {
+				return err
+			}
 			return initCommand.Run(cmd.Context())
 		},
 	}
@@ -71,7 +87,7 @@ func BuildDevInitCommand() *cobra.Command {
 	return cmd
 }
 
-func (c *DevInitCommand) InitDefaults() {
+func (c *DevInitCommand) InitDefaults() error {
 	if c.WorkspaceDir == "" {
 		c.WorkspaceDir = "/workspaces"
 	}
@@ -85,6 +101,14 @@ func (c *DevInitCommand) InitDefaults() {
 	if c.Model == "" {
 		c.Model = "gemini-3.1-pro-preview"
 	}
+
+	var err error
+	c.AgentPrompt, err = resolveAgentPrompt(c.AgentPrompt)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (c *DevInitCommand) taskPath(name string, args ...interface{}) string {
@@ -103,16 +127,14 @@ func (c *DevInitCommand) loadGithubObjects(ctx context.Context) error {
 
 	// Let's parse the name from URL for directory naming
 	// e.g. https://github.com/owner/repo
-	cleanURL := strings.Split(c.RepoURL, "#")[0]
-	cleanURL = strings.TrimSuffix(cleanURL, "/")
-	base := filepath.Base(cleanURL)
-	if ext := filepath.Ext(base); ext == ".git" {
+	base := filepath.Base(c.RepoURL)
+	if ext := filepath.Ext(base); ext != "" {
 		base = base[:len(base)-len(ext)]
 	}
 
 	// Construct basic repo object
 	innerRepo := &githubv39.Repository{
-		CloneURL: githubv39.String(strings.TrimSuffix(cleanURL, ".git") + ".git"),
+		CloneURL: githubv39.String(c.RepoURL + ".git"),
 		Name:     githubv39.String(base),
 	}
 	c.repo = github.NewRepository(innerRepo)

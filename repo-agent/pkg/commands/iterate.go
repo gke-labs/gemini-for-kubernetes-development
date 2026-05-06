@@ -1,3 +1,17 @@
+// Copyright 2026 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package commands
 
 import (
@@ -52,7 +66,9 @@ func BuildIterateCommand() *cobra.Command {
 			if len(args) != 0 {
 				return fmt.Errorf("command does not take positional arguments")
 			}
-			iterCommand.InitDefaults()
+			if err := iterCommand.InitDefaults(); err != nil {
+				return err
+			}
 			return iterCommand.Run(cmd.Context())
 		},
 	}
@@ -70,7 +86,7 @@ func BuildIterateCommand() *cobra.Command {
 	return cmd
 }
 
-func (c *IterateCommand) InitDefaults() {
+func (c *IterateCommand) InitDefaults() error {
 	if c.PRID == "" {
 		c.PRID = os.Getenv("PRID")
 	}
@@ -90,6 +106,14 @@ func (c *IterateCommand) InitDefaults() {
 	if c.Model == "" {
 		c.Model = "gemini-3.1-pro-preview"
 	}
+
+	var err error
+	c.AgentPrompt, err = resolveAgentPrompt(c.AgentPrompt)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (c *IterateCommand) taskPath(name string, args ...interface{}) string {
@@ -153,6 +177,20 @@ func (c *IterateCommand) Run(ctx context.Context) error {
 		return err
 	}
 
+	var models []string
+	modelSeen := make(map[string]bool)
+	for _, m := range strings.Split(c.Model, ",") {
+		if trimmed := strings.TrimSpace(m); trimmed != "" {
+			if !modelSeen[trimmed] {
+				models = append(models, trimmed)
+				modelSeen[trimmed] = true
+			}
+		}
+	}
+	if len(models) == 0 {
+		return fmt.Errorf("no models provided for iterate task on branch %s", c.BranchName)
+	}
+
 	promptPath := c.taskPath("agent-prompt.txt")
 	task := tasks.IterateModel{
 		Repo:        c.repo,
@@ -161,7 +199,7 @@ func (c *IterateCommand) Run(ctx context.Context) error {
 		BranchName:  c.BranchName,
 		PRID:        c.PRID,
 		PromptFile:  promptPath,
-		Models:      strings.Split(c.Model, ","),
+		Models:      models,
 	}
 
 	if c.ExtensionsJSON != "" {

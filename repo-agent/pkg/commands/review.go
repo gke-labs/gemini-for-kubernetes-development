@@ -1,3 +1,17 @@
+// Copyright 2026 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package commands
 
 import (
@@ -62,7 +76,7 @@ type ReviewCommand struct {
 	OutputNamespace string
 }
 
-func (c *ReviewCommand) InitDefaults() {
+func (c *ReviewCommand) InitDefaults() error {
 	if c.OutputGVR == nil {
 		if gvrResource := os.Getenv("AGENT_OUTPUT_GVR_RESOURCE"); gvrResource != "" {
 			group := os.Getenv("AGENT_OUTPUT_GVR_GROUP")
@@ -110,8 +124,10 @@ func (c *ReviewCommand) InitDefaults() {
 	if c.AgentName == "" {
 		c.AgentName = os.Getenv("AGENT_NAME")
 	}
-	if c.AgentPrompt == "" {
-		c.AgentPrompt = os.Getenv("AGENT_PROMPT")
+	var err error
+	c.AgentPrompt, err = resolveAgentPrompt(c.AgentPrompt)
+	if err != nil {
+		return err
 	}
 	if c.AgentPrompt == "" {
 		c.AgentPrompt = os.Getenv("prompt")
@@ -167,6 +183,7 @@ func (c *ReviewCommand) InitDefaults() {
 			}
 		}
 	}
+	return nil
 }
 
 func BuildReviewCommand() *cobra.Command {
@@ -178,7 +195,9 @@ func BuildReviewCommand() *cobra.Command {
 			if len(args) != 0 {
 				return fmt.Errorf("review command does not take any arguments")
 			}
-			reviewCommand.InitDefaults()
+			if err := reviewCommand.InitDefaults(); err != nil {
+				return err
+			}
 			return reviewCommand.Run(cmd.Context())
 		},
 	}

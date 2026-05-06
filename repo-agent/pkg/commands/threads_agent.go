@@ -1,3 +1,17 @@
+// Copyright 2026 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package commands
 
 import (
@@ -34,15 +48,16 @@ type ThreadsAgentOptions struct {
 	Cwd string
 }
 
-func (o *ThreadsAgentOptions) InitDefaults() {
-	o.Action = "list"
+func (o *ThreadsAgentOptions) InitDefaults() error {
+	if o.Action == "" {
+		o.Action = "list"
+	}
+	return nil
 }
 
 // NewThreadsAgentCommand creates a new cobra command for managing LLM threads/chats in the dev sandbox.
 func NewThreadsAgentCommand() *cobra.Command {
 	var opt ThreadsAgentOptions
-
-	opt.InitDefaults()
 
 	cmd := &cobra.Command{
 		Use:   "agent [sandbox-name]",
@@ -52,13 +67,16 @@ func NewThreadsAgentCommand() *cobra.Command {
 			if len(args) != 0 {
 				return fmt.Errorf("threads agent command does not take any arguments")
 			}
+			if err := opt.InitDefaults(); err != nil {
+				return err
+			}
 			return RunThreadsAgent(cmd.Context(), opt)
 		},
 	}
 	cmd.Hidden = true
 
 	cmd.Flags().StringVar(&opt.ThreadID, "thread-id", opt.ThreadID, "If specified, filter only for the given thread ID")
-	cmd.Flags().StringVar(&opt.Action, "action", opt.Action, "Action to perform: list or append")
+	cmd.Flags().StringVar(&opt.Action, "action", "list", "Action to perform: list or append")
 	cmd.Flags().BoolVar(&opt.IncludeMessages, "include-messages", opt.IncludeMessages, "If specified, include messages in the output")
 	cmd.Flags().StringVar(&opt.Cwd, "cwd", opt.Cwd, "Current working directory for the agent")
 

@@ -1,3 +1,17 @@
+// Copyright 2026 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package api
 
 import (
@@ -107,12 +121,17 @@ func (s *Server) listDevSandboxesFromK8s(ctx context.Context, namespace, repo st
 			cloneURL = "https://github.com/noorg/norepo.git"
 		}
 
+		host := "github.com"
+		if u, err := url.Parse(cloneURL); err == nil && u.Hostname() != "" {
+			host = u.Hostname()
+		}
+
 		repoParts := strings.Split(strings.TrimSuffix(cloneURL, ".git"), "/")
 		if len(repoParts) >= 2 {
 			repoName := repoParts[len(repoParts)-1]
 			owner := repoParts[len(repoParts)-2]
-			// Construct branch URL: https://github.com/OWNER/REPO/tree/BRANCH
-			branchURL := fmt.Sprintf("https://github.com/%s/%s/tree/%s", owner, repoName, branch)
+			// Construct branch URL: https://HOST/OWNER/REPO/tree/BRANCH
+			branchURL := fmt.Sprintf("https://%s/%s/%s/tree/%s", host, owner, repoName, branch)
 
 			agentState := ""
 			agentStateMessage := ""
@@ -287,18 +306,22 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "RepoURL not found in RepoWatch"})
 		return
 	}
-	repoURL = strings.TrimSuffix(repoURL, ".git") + ".git"
 
 	repoParts := strings.Split(strings.TrimSuffix(repoURL, ".git"), "/")
 	repoName := repoParts[len(repoParts)-1]
 
-	cloneURL := repoURL
-	if req.BaseBranch != "" {
-		cloneURL = fmt.Sprintf("%s#refs/heads/%s", repoURL, req.BaseBranch)
+	host := "github.com"
+	if u, err := url.Parse(repoURL); err == nil && u.Hostname() != "" {
+		host = u.Hostname()
 	}
 
-	htmlURL := strings.TrimSuffix(repoURL, ".git")
-	originURL := fmt.Sprintf("github.com/%s/%s.git", namespace, repoName)
+	forkCloneURL := fmt.Sprintf("https://%s/%s/%s.git", host, namespace, repoName)
+	if req.BaseBranch != "" {
+		forkCloneURL = fmt.Sprintf("%s#refs/heads/%s", forkCloneURL, req.BaseBranch)
+	}
+
+	forkHTMLURL := fmt.Sprintf("https://%s/%s/%s", host, namespace, repoName)
+	originURL := fmt.Sprintf("%s/%s/%s.git", host, namespace, repoName)
 
 	githubSecretName, _, _ := unstructured.NestedString(rw.Object, "spec", "githubSecretName")
 	apiKeySecretRef, _, _ := unstructured.NestedString(rw.Object, "spec", "dev", "llm", "apiKeySecretRef")
@@ -385,8 +408,8 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 			"sandbox-type":                       "dev",
 		},
 		Annotations: annotations,
-		CloneURL:    cloneURL,
-		HTMLURL:     htmlURL,
+		CloneURL:    forkCloneURL,
+		HTMLURL:     forkHTMLURL,
 
 		Branch:      branchName,
 		Origin:      originURL,
@@ -443,7 +466,7 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 
 	// Create initial dev-setup task
 	taskParams := map[string]string{
-		"REPO_URL":          repoURL,
+		"REPO_URL":          forkHTMLURL,
 		"BRANCH_NAME":       branchName,
 		"GITHUB_USER_LOGIN": namespace,
 		"GITHUB_USER_EMAIL": userEmail,

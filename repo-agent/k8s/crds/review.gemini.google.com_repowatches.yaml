@@ -92,7 +92,6 @@ spec:
                         enum:
                         - gemini-cli
                         - claude
-                        - claude-cli
                         - dummy
                         type: string
                     required:
@@ -102,6 +101,11 @@ spec:
                     type: integer
                   maxSandboxes:
                     type: integer
+                  models:
+                    items:
+                      type: string
+                    minItems: 1
+                    type: array
                   workspaceDiskSize:
                     default: 10Gi
                     type: string
@@ -184,7 +188,6 @@ spec:
                         enum:
                         - gemini-cli
                         - claude
-                        - claude-cli
                         - dummy
                         type: string
                     required:
@@ -197,6 +200,7 @@ spec:
                   models:
                     items:
                       type: string
+                    minItems: 1
                     type: array
                   robotAccount:
                     type: string
@@ -206,6 +210,10 @@ spec:
                 required:
                 - maxActiveSandboxes
                 type: object
+              mergeableRetryIntervalSeconds:
+                default: 60
+                minimum: 10
+                type: integer
               pollIntervalSeconds:
                 default: 300
                 minimum: 30
@@ -266,7 +274,6 @@ spec:
                         enum:
                         - gemini-cli
                         - claude
-                        - claude-cli
                         - dummy
                         type: string
                     required:
@@ -279,10 +286,18 @@ spec:
                     type: integer
                   maxSandboxes:
                     type: integer
+                  models:
+                    items:
+                      type: string
+                    minItems: 1
+                    type: array
                   pullRequests:
                     items:
                       type: integer
                     type: array
+                  resolveConflicts:
+                    default: false
+                    type: boolean
                   reviewShutdownAfterMinutes:
                     type: integer
                   robotAccount:

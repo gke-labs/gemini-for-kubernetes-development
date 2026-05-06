@@ -1,3 +1,17 @@
+// Copyright 2026 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package sandbox
 
 import (
@@ -28,8 +42,33 @@ type IssueSandbox struct {
 	executor Executor
 }
 
+// NewLocalSandbox creates a sandbox that executes commands locally.
+func NewLocalSandbox(ctx context.Context, repo *github.Repository, name string) *IssueSandbox {
+	log := klog.FromContext(ctx)
+	repoURL := "nil"
+	if repo != nil {
+		repoURL = repo.CloneURL()
+	} else {
+		klog.Warning("NewLocalSandbox called with nil repo")
+	}
+
+	log.Info("Creating local sandbox", "name", name, "repo", repoURL)
+
+	return &IssueSandbox{
+		repo: repo,
+		executor: &LocalExecutor{
+			Ctx:  ctx,
+			Name: name,
+		},
+	}
+}
+
 func NewIssueSandbox(ctx context.Context, local bool, repo *github.Repository, issue *github.Issue, branch string) (*IssueSandbox, error) {
 	log := klog.FromContext(ctx)
+
+	if repo == nil {
+		return nil, fmt.Errorf("NewIssueSandbox called with nil repo")
+	}
 
 	kube, err := clients.NewKubernetesClient()
 	if err != nil {
@@ -150,8 +189,9 @@ func LaunchSandbox(ctx context.Context, kube *clients.KubernetesClient, repo *gi
 		issueURL = issue.String()
 	}
 
-	cloneRepos := []string{
-		fmt.Sprintf("/workspaces/%s=%s", repo.Name(), repo.CloneURL()),
+	var cloneRepos []string
+	if repo != nil {
+		cloneRepos = append(cloneRepos, fmt.Sprintf("/workspaces/%s=%s", repo.Name(), repo.CloneURL()))
 	}
 
 	log.Info("Creating sandbox", "name", sandboxName, "repos", cloneRepos, "issue", issueURL)

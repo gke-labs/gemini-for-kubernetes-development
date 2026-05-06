@@ -1,3 +1,17 @@
+// Copyright 2026 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package taskrunner
 
 import (
@@ -149,117 +163,68 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 	switch taskType {
 	case "review":
 		cmd = exec.Command(sandbox.RepoSandboxBinary, "review")
-		// Map params to env vars
-		cmd.Env = os.Environ()
-		cmd.Env = append(cmd.Env, "AGENT_OUTPUT_GVR_RESOURCE=sandboxtasks")
-		cmd.Env = append(cmd.Env, "AGENT_OUTPUT_GVR_GROUP=custom.agents.x-k8s.io")
-		cmd.Env = append(cmd.Env, "AGENT_OUTPUT_GVR_VERSION=v1alpha1")
-		// Inject params into env
-		for k, v := range params {
-			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
-		}
-
 	case "fix-issue":
 		cmd = exec.Command(sandbox.RepoSandboxBinary, "github-fix-issue", "--in-pod=true")
-		// Map params to env vars
-		cmd.Env = os.Environ()
-		// Inject params into env
-		for k, v := range params {
-			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
-		}
-
 	case "address-feedback":
 		cmd = exec.Command(sandbox.RepoSandboxBinary, "github-feedback", "--in-pod=true")
-		// Map params to env vars
-		cmd.Env = os.Environ()
-		// Inject params into env
-		for k, v := range params {
-			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
-		}
-
 	case "investigate-failures":
 		cmd = exec.Command(sandbox.RepoSandboxBinary, "github-investigate", "--in-pod=true")
-		// Map params to env vars
-		cmd.Env = os.Environ()
-		// Inject params into env
-		for k, v := range params {
-			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
-		}
-
+	case "resolve-conflicts":
+		cmd = exec.Command(sandbox.RepoSandboxBinary, "github-resolve-conflicts", "--in-pod=true")
 	case "triage-issue":
 		cmd = exec.Command(sandbox.RepoSandboxBinary, "github-triage-issue", "--in-pod=true")
-		// Map params to env vars
-		cmd.Env = os.Environ()
-		// Inject params into env
-		for k, v := range params {
-			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
-		}
-
 	case "dev-setup":
 		cmd = exec.Command(sandbox.RepoSandboxBinary, "dev-init", "--in-pod=true")
-		// Map params to env vars
-		cmd.Env = os.Environ()
-		// Inject params into env
-		for k, v := range params {
-			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
-		}
-
 	case "iterate":
 		cmd = exec.Command(sandbox.RepoSandboxBinary, "iterate", "--in-pod=true")
-		// Map params to env vars
-		cmd.Env = os.Environ()
-		// Inject params into env
-		for k, v := range params {
-			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
-		}
-
 	case "chore":
 		cmd = exec.Command(sandbox.RepoSandboxBinary, "chore", "--in-pod=true")
-		// Map params to env vars
-		cmd.Env = os.Environ()
-		// Inject params into env
-		for k, v := range params {
-			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
-		}
-
 	case "rollback":
 		cmd = exec.Command(sandbox.RepoSandboxBinary, "rollback", "--in-pod=true")
-		// Map params to env vars
-		cmd.Env = os.Environ()
-		// Inject params into env
-		for k, v := range params {
-			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
-		}
-
 	case "issue":
 		cmd = exec.Command(sandbox.RepoSandboxBinary, "dev")
-		// Map params to env vars
-		cmd.Env = os.Environ()
-		cmd.Env = append(cmd.Env, "AGENT_OUTPUT_GVR_RESOURCE=sandboxtasks")
-		cmd.Env = append(cmd.Env, "AGENT_OUTPUT_GVR_GROUP=custom.agents.x-k8s.io")
-		cmd.Env = append(cmd.Env, "AGENT_OUTPUT_GVR_VERSION=v1alpha1")
-		// Inject params into env
-		for k, v := range params {
-			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
-		}
-
-	// TODO (barney-s): Pending decision: Should we support script tasks ?
 	case "script":
 		if command, ok := params["command"]; ok {
 			cmd = exec.Command("/bin/sh", "-c", command)
-			cmd.Env = os.Environ()
 		} else {
 			tr.updateTaskStatus(ctx, task, "Failed", "missing 'command' param", nil)
 			return
 		}
-
 	default:
 		klog.Warningf("Unknown task type: %s", taskType)
 		tr.updateTaskStatus(ctx, task, "Failed", "unknown task type", nil)
 		return
 	}
 
+	// Set common environment variables
+	cmd.Env = os.Environ()
+
+	if taskType == "review" || taskType == "issue" || taskType == "resolve-conflicts" {
+		cmd.Env = append(cmd.Env, "AGENT_OUTPUT_GVR_RESOURCE=sandboxtasks")
+		cmd.Env = append(cmd.Env, "AGENT_OUTPUT_GVR_GROUP=custom.agents.x-k8s.io")
+		cmd.Env = append(cmd.Env, "AGENT_OUTPUT_GVR_VERSION=v1alpha1")
+	}
+
+	// Inject params into env
+	for k, v := range params {
+		if k == "AGENT_PROMPT" && len(v) > 1024 {
+			promptPath := filepath.Join(taskDir, "agent-prompt.txt")
+			if err := os.WriteFile(promptPath, []byte(v), 0600); err == nil {
+				cmd.Env = append(cmd.Env, "AGENT_PROMPT_FILE="+promptPath)
+				continue
+			}
+			klog.Errorf("Failed to write AGENT_PROMPT to %s: %v", promptPath, err)
+			// If it's too long and writing to file failed, we cannot proceed as it will likely hit OS env limits.
+			if len(v) > 32768 {
+				tr.updateTaskStatus(ctx, task, "Failed", fmt.Sprintf("Failed to write AGENT_PROMPT to file and it is too long for env: %v", err), nil)
+				return
+			}
+		}
+		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
+	}
+
 	cmd.Env = append(cmd.Env, fmt.Sprintf("NAME=%s", taskName))
+	cmd.Env = append(cmd.Env, fmt.Sprintf("NAMESPACE=%s", tr.namespace))
 	cmd.Env = append(cmd.Env, fmt.Sprintf("TASKDIR=%s", taskDir))
 	cmd.Stdout = io.MultiWriter(f, os.Stdout)
 	cmd.Stderr = io.MultiWriter(f, os.Stderr)
