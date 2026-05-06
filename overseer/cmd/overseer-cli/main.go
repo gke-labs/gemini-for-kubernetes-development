@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -446,6 +447,13 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 	if err != nil {
 		return fmt.Errorf("failed to create github client: %w", err)
 	}
+	if apiURL := os.Getenv("GITHUB_API_URL"); apiURL != "" {
+		u, err := url.Parse(apiURL)
+		if err != nil {
+			return fmt.Errorf("invalid GITHUB_API_URL: %w", err)
+		}
+		ghClient.BaseURL = u
+	}
 
 	owner, repo, err := parseRepoURL(overseer.Spec.RepoURL)
 	if err != nil {
@@ -595,6 +603,13 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 	ghClient, err := github.NewClient(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create github client: %w", err)
+	}
+	if apiURL := os.Getenv("GITHUB_API_URL"); apiURL != "" {
+		u, err := url.Parse(apiURL)
+		if err != nil {
+			return fmt.Errorf("invalid GITHUB_API_URL: %w", err)
+		}
+		ghClient.BaseURL = u
 	}
 
 	owner, repo, err := parseRepoURL(overseer.Spec.RepoURL)
@@ -769,6 +784,13 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 
 	// Create GitHub client
 	client := clients.NewGitHubClient(ctx, token)
+	if apiURL := os.Getenv("GITHUB_API_URL"); apiURL != "" {
+		u, err := url.Parse(apiURL)
+		if err != nil {
+			return fmt.Errorf("invalid GITHUB_API_URL: %w", err)
+		}
+		client.BaseURL = u
+	}
 
 	// Parse repo URL
 	repoURL, found, err := unstructured.NestedString(rwUnstructured.Object, "spec", "repoURL")

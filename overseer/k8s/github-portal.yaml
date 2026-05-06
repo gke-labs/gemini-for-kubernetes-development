@@ -1,0 +1,92 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: github-portal
+  namespace: overseer-system
+  labels:
+    app: github-portal
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: github-portal
+  template:
+    metadata:
+      labels:
+        app: github-portal
+    spec:
+      containers:
+      - name: github-portal
+        image: github-portal:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+        env:
+        - name: TARGET_URL
+          value: "https://api.github.com/"
+        - name: UPSTREAM_AUTH_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: github-portal-secret
+              key: token
+              optional: true
+        - name: UPSTREAM_AUTH_HEADER
+          value: "Authorization"
+        - name: CA_CERT_PATH
+          value: "/etc/github-portal/ca/tls.crt"
+        - name: CA_KEY_PATH
+          value: "/etc/github-portal/ca/tls.key"
+        - name: CACHE_TTL
+          value: "1m"
+        volumeMounts:
+        - name: ca-cert
+          mountPath: /etc/github-portal/ca
+          readOnly: true
+      volumes:
+      - name: ca-cert
+        secret:
+          secretName: github-portal-ca
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: github-portal
+  namespace: overseer-system
+spec:
+  selector:
+    app: github-portal
+  ports:
+  - port: 80
+    targetPort: 8080
+    protocol: TCP
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: github-portal-selfsigned-issuer
+  namespace: overseer-system
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: github-portal-ca
+  namespace: overseer-system
+spec:
+  isCA: true
+  commonName: github-portal-ca
+  secretName: github-portal-ca
+  issuerRef:
+    name: github-portal-selfsigned-issuer
+    kind: Issuer
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: github-portal-issuer
+  namespace: overseer-system
+spec:
+  ca:
+    secretName: github-portal-ca
