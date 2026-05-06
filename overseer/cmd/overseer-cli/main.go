@@ -383,6 +383,16 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 	sb, svc := sandbox.NewAgentSandbox(opt)
 	sb.SetName(sandboxName)
 
+	githubAPIURL := os.Getenv("GITHUB_API_URL")
+	if githubAPIURL != "" {
+		u, err := url.Parse(githubAPIURL)
+		if err == nil && u.Host != "" {
+			if err := injectEnvVar(sb, "GH_HOST", u.Host); err != nil {
+				return fmt.Errorf("failed to inject GH_HOST: %w", err)
+			}
+		}
+	}
+
 	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sb, metav1.CreateOptions{})
 	if err != nil {
 		return err
@@ -900,6 +910,16 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 
 	sb, svc := sandbox.NewAgentSandbox(opt)
 
+	githubAPIURL := os.Getenv("GITHUB_API_URL")
+	if githubAPIURL != "" {
+		u, err := url.Parse(githubAPIURL)
+		if err == nil && u.Host != "" {
+			if err := injectEnvVar(sb, "GH_HOST", u.Host); err != nil {
+				return fmt.Errorf("failed to inject GH_HOST: %w", err)
+			}
+		}
+	}
+
 	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sb, metav1.CreateOptions{})
 	if err != nil {
 		return err
@@ -981,6 +1001,16 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 	}
 
 	sb, svc := sandbox.NewReviewSandbox(opt)
+
+	githubAPIURL := os.Getenv("GITHUB_API_URL")
+	if githubAPIURL != "" {
+		u, err := url.Parse(githubAPIURL)
+		if err == nil && u.Host != "" {
+			if err := injectEnvVar(sb, "GH_HOST", u.Host); err != nil {
+				return fmt.Errorf("failed to inject GH_HOST: %w", err)
+			}
+		}
+	}
 
 	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sb, metav1.CreateOptions{})
 	if err != nil {
@@ -1266,4 +1296,45 @@ func getTokenFromScript() (string, error) {
 	}
 
 	return "", nil
+}
+
+func injectEnvVar(sb *unstructured.Unstructured, name, value string) error {
+	// Get the spec.template.spec.containers
+	containers, found, err := unstructured.NestedSlice(sb.Object, "spec", "template", "spec", "containers")
+	if err != nil || !found || len(containers) == 0 {
+		return fmt.Errorf("failed to get containers from sandbox: %w", err)
+	}
+	// Assuming the first container is the main one
+	container := containers[0].(map[string]interface{})
+	env, found, err := unstructured.NestedSlice(container, "env")
+	if err != nil || !found {
+		return fmt.Errorf("failed to get env from container: %w", err)
+	}
+	// Add or update env var
+	updated := false
+	for i, e := range env {
+		envVar := e.(map[string]interface{})
+		if envVar["name"] == name {
+			envVar["value"] = value
+			env[i] = envVar
+			updated = true
+			break
+		}
+	}
+	if !updated {
+		env = append(env, map[string]interface{}{
+			"name":  name,
+			"value": value,
+		})
+	}
+	
+	// Put it back
+	if err := unstructured.SetNestedSlice(container, env, "env"); err != nil {
+		return fmt.Errorf("failed to set env in container: %w", err)
+	}
+	containers[0] = container
+	if err := unstructured.SetNestedSlice(sb.Object, containers, "spec", "template", "spec", "containers"); err != nil {
+		return fmt.Errorf("failed to set containers in sandbox: %w", err)
+	}
+	return nil
 }
