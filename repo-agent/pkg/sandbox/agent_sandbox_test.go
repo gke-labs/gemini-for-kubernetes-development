@@ -186,10 +186,11 @@ func TestNewAgentSandbox(t *testing.T) {
 
 			// Check Go cache and tmp env vars
 			expectedEnv := map[string]string{
-				"GOCACHE":    GoCachePath,
-				"GOMODCACHE": GoModCachePath,
-				"TMPDIR":     TmpDirPath,
-				"GOTMPDIR":   TmpDirPath,
+				"GOCACHE":                    GoCachePath,
+				"GOMODCACHE":                 GoModCachePath,
+				"TMPDIR":                     TmpDirPath,
+				"GOTMPDIR":                   TmpDirPath,
+				"GEMINI_CLI_TRUST_WORKSPACE": "true",
 			}
 
 			for name, value := range expectedEnv {
