@@ -9,12 +9,14 @@ We need these basic tokens for both the installation modes:
 
 1. `GEMINI_API_KEY` is used with `gemini-cli` to generate reviews or bug fixes
 2. `GITHUB_PAT` is used to make API calls to poll for Pull Requests, Issues etc. It is also used to create Draft reviews and code branches.
+3. `GITHUB_BOT_LOGIN` (optional) is the GitHub username of the bot. Used to skip duplicate reviews. If left unset, duplicate review prevention will be disabled.
 
-Export your Gemini API key and GitHub Personal Access Token as environment variables:
+Export your Gemini API key, GitHub Personal Access Token, and (optional) Bot Login as environment variables:
 
 ```bash
 export GEMINI_API_KEY="..."
 export GITHUB_PAT="..."
+export GITHUB_BOT_LOGIN="..."
 ```
 
 When installing for multi-user case, we need these additional tokens. This allows enbaling login using github for the users.

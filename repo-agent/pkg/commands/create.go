@@ -134,6 +134,8 @@ func RunCreate(ctx context.Context, opt CreateOptions) error {
 		UserName:  userName,
 		UserEmail: userEmail,
 
+		BotLogin: os.Getenv("GITHUB_BOT_LOGIN"),
+
 		LLMProvider: opt.LLMProvider,
 		// TODO: LLMConfigdirRef:     repoWatch.Spec.Dev.LLM.ConfigdirRef,
 		LLMAPIKeySecretName: secretName,

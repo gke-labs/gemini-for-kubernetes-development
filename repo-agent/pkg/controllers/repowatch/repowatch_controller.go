@@ -1058,11 +1058,6 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 	}
 	userEmail := user.GetEmail()
 
-	// Default bot info to empty (or current user if not using robot account)
-	botLogin := ""
-	botName := ""
-	botEmail := ""
-
 	githubSecretName := repoWatch.Spec.GithubSecretName
 	if repoWatch.Spec.Issue.RobotAccount != "" {
 		githubSecretName = repoWatch.Spec.Issue.RobotAccount
@@ -1070,15 +1065,24 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 			log.Error(err, "failed to ensure robot secret", "secret", githubSecretName)
 			return nil, err
 		}
+	}
 
+	botLogin := os.Getenv("GITHUB_BOT_LOGIN")
+	botName := ""
+	botEmail := ""
+
+	if githubSecretName != "" {
+		botLogin = "" // Avoid fallback if custom secret is provided
 		secret := &corev1.Secret{}
 		if err := r.Get(ctx, types.NamespacedName{Name: githubSecretName, Namespace: repoWatch.Namespace}, secret); err != nil {
-			log.Error(err, "failed to get robot secret", "secret", githubSecretName)
+			log.Error(err, "failed to get github secret", "secret", githubSecretName)
 			return nil, err
 		}
 
 		if len(secret.Data["userid"]) > 0 {
 			botLogin = string(secret.Data["userid"])
+		} else {
+			log.V(1).Info("Warning: userid key missing in github secret", "secret", githubSecretName)
 		}
 		if len(secret.Data["name"]) > 0 {
 			botName = string(secret.Data["name"])
@@ -1265,24 +1269,30 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, user *github.
 	userEmail := user.GetEmail()
 
 	githubSecretName := repoWatch.Spec.GithubSecretName
-	botLogin := ""
-	botName := ""
-	botEmail := ""
 	if repoWatch.Spec.Review.RobotAccount != "" {
 		githubSecretName = repoWatch.Spec.Review.RobotAccount
 		if err := r.ensureRobotSecret(ctx, repoWatch.Namespace, githubSecretName); err != nil {
 			log.Error(err, "failed to ensure robot secret", "secret", githubSecretName)
 			return err
 		}
+	}
 
+	botLogin := os.Getenv("GITHUB_BOT_LOGIN")
+	botName := ""
+	botEmail := ""
+
+	if githubSecretName != "" {
+		botLogin = "" // Avoid fallback if custom secret is provided
 		secret := &corev1.Secret{}
 		if err := r.Get(ctx, types.NamespacedName{Name: githubSecretName, Namespace: repoWatch.Namespace}, secret); err != nil {
-			log.Error(err, "failed to get robot secret", "secret", githubSecretName)
+			log.Error(err, "failed to get github secret", "secret", githubSecretName)
 			return err
 		}
 
 		if len(secret.Data["userid"]) > 0 {
 			botLogin = string(secret.Data["userid"])
+		} else {
+			log.V(1).Info("Warning: userid key missing in github secret", "secret", githubSecretName)
 		}
 		if len(secret.Data["name"]) > 0 {
 			botName = string(secret.Data["name"])

@@ -28,6 +28,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/google/go-github/v39/github"
 	"github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -111,7 +112,18 @@ func TestReconciler_ReconcileExplicitIssues(t *testing.T) {
 		},
 	}
 
-	fakeClient := clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch).WithStatusSubresource(&reviewv1alpha1.RepoWatch{}).Build()
+	fakeSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-secret",
+			Namespace: "default",
+		},
+		Data: map[string][]byte{
+			"pat":    []byte("test-pat"),
+			"userid": []byte("agent-user"),
+		},
+	}
+
+	fakeClient := clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, fakeSecret).WithStatusSubresource(&reviewv1alpha1.RepoWatch{}).Build()
 
 	r := &Reconciler{
 		Client: fakeClient,

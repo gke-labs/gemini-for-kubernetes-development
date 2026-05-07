@@ -255,6 +255,13 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 				},
 			},
 		})
+		// Fallback to the controller's GITHUB_BOT_LOGIN environment variable if no specific RobotAccount is provided.
+		// This ensures that the duplicate review prevention still works with a global bot account.
+	} else if botLogin := os.Getenv("GITHUB_BOT_LOGIN"); botLogin != "" {
+		env = append(env, map[string]interface{}{
+			"name":  "GITHUB_BOT_LOGIN",
+			"value": botLogin,
+		})
 	}
 
 	ephemeralStorage := o.Spec.EphemeralStorage

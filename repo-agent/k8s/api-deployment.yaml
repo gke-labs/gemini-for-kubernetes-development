@@ -54,3 +54,9 @@ spec:
           value: ko://repo-agent/images/repo-sandbox
         - name: CONFIGDIR_CLI_IMAGE
           value: ko://repo-agent/configdir/cmd/configdir-cli
+        - name: GITHUB_BOT_LOGIN
+          valueFrom:
+            secretKeyRef:
+              name: github-pat
+              key: userid
+              optional: true

@@ -95,19 +95,21 @@ func buildPRCommand() *cobra.Command {
 	var number int
 	var taskType string
 	var submit bool
+	var force bool
 	var prompt string
 
 	cmd := &cobra.Command{
 		Use:   "pr",
 		Short: "Create/ensure sandbox and task for a PR",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runPR(context.Background(), number, taskType, submit, prompt)
+			return runPR(context.Background(), number, taskType, submit, force, prompt)
 		},
 	}
 
 	cmd.Flags().IntVar(&number, "number", 0, "PR number")
 	cmd.Flags().StringVar(&taskType, "task", "review", "Task type (e.g., review, address-feedback, investigate-failures)")
 	cmd.Flags().BoolVar(&submit, "submit", false, "Submit agent draft from task as review")
+	cmd.Flags().BoolVar(&force, "force", false, "Force re-review even if already reviewed on GitHub or task exists")
 	cmd.Flags().StringVar(&prompt, "prompt", "", "Custom prompt for the task")
 	_ = cmd.MarkFlagRequired("number")
 
@@ -327,7 +329,7 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 	}
 	userEmail := os.Getenv("GITHUB_USER_EMAIL")
 
-	botLogin := os.Getenv("GITHUB_BOT_LOGIN")
+	botLogin := resolveBotLogin(ctx, k8s.NewManager(kubeClient), namespace, overseer)
 	botName := os.Getenv("GITHUB_BOT_NAME")
 	botEmail := os.Getenv("GITHUB_BOT_EMAIL")
 
@@ -538,7 +540,7 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 	return nil
 }
 
-func runPR(ctx context.Context, number int, taskType string, submit bool, customPrompt string) error {
+func runPR(ctx context.Context, number int, taskType string, submit bool, force bool, customPrompt string) error {
 	// Similar to runIssue but for PRs
 	if overseerName == "" || namespace == "" {
 		return fmt.Errorf("OVERSEER_NAME and NAMESPACE environment variables must be set")
@@ -587,7 +589,7 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 
 	if submit {
 		fmt.Printf("Submitting agent draft for PR %d...\n", number)
-		return submitAgentDraft(ctx, manager, kubeClient, namespace, overseerName, number)
+		return submitAgentDraft(ctx, manager, kubeClient, namespace, overseerName, number, force)
 	}
 
 	rwUnstructured, err := getOverseer(ctx, kubeClient.DynamicClient, overseerName)
@@ -650,19 +652,37 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 		}
 	}
 
-	// Check if a task for this SHA already exists (only for review tasks)
-	if taskType == "review" {
-		taskList, err := manager.ListSandboxTasks(ctx, namespace, sandboxName)
-		if err == nil {
-			for i := range taskList.Items {
-				task := &taskList.Items[i]
-				if task.Spec.Type == "review" && task.Spec.Params["HEAD_SHA"] == headSHA {
+	// Check if a task for this SHA already exists
+	taskList, err := manager.ListSandboxTasks(ctx, namespace, sandboxName)
+	if err == nil {
+		for i := range taskList.Items {
+			task := &taskList.Items[i]
+			if task.Spec.Type == taskType && task.Spec.Params["HEAD_SHA"] == headSHA {
+				if !force {
 					if task.Status.TaskState == "Completed" || task.Status.TaskState == "Running" || task.Status.TaskState == "Pending" {
-						fmt.Printf("Review task for SHA %s already exists in state %s. Skipping.\n", headSHA, task.Status.TaskState)
+						fmt.Printf("%s task for SHA %s already exists in state %s. Skipping.\n", taskType, headSHA, task.Status.TaskState)
 						return nil
+					}
+				} else {
+					// Delete existing task if force is true
+					fmt.Printf("Deleting existing %s task %s for SHA %s...\n", taskType, task.Name, headSHA)
+					if err := manager.DeleteSandboxTask(ctx, namespace, task.Name); err != nil {
+						fmt.Printf("Warning: failed to delete existing task %s: %v\n", task.Name, err)
 					}
 				}
 			}
+		}
+	}
+
+	// Also check GitHub if we already reviewed this SHA (only for review tasks)
+	if taskType == "review" && !force {
+		botLogin := resolveBotLogin(ctx, manager, namespace, &overseer)
+		reviewed, err := hasBeenReviewedByBot(ctx, ghClient.Client, owner, repo, number, botLogin, headSHA)
+		if err != nil {
+			return fmt.Errorf("failed to check GitHub reviews: %w", err)
+		} else if reviewed {
+			fmt.Printf("Review for SHA %s already exists on GitHub. Skipping.\n", headSHA)
+			return nil
 		}
 	}
 
@@ -697,7 +717,7 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 	return nil
 }
 
-func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *clients.KubernetesClient, namespace, overseerName string, prNumber int) error {
+func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *clients.KubernetesClient, namespace, overseerName string, prNumber int, force bool) error {
 	rwUnstructured, err := getOverseer(ctx, kubeClient.DynamicClient, overseerName)
 	if err != nil {
 		return fmt.Errorf("failed to get Overseer %s: %w", overseerName, err)
@@ -727,7 +747,7 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 	currentSHA := latestReviewTask.Spec.Params["HEAD_SHA"]
 
 	sandboxUnstructured, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
-	if err == nil {
+	if err == nil && !force {
 		annotations := sandboxUnstructured.GetAnnotations()
 		if annotations != nil {
 			if state, ok := annotations["reviewState"]; ok {
@@ -802,6 +822,25 @@ func submitAgentDraft(ctx context.Context, manager *k8s.Manager, kubeClient *cli
 		return fmt.Errorf("failed to parse repo URL %s: %w", repoURL, err)
 	}
 
+	// Check GitHub if we already reviewed this SHA
+	if !force {
+		botLogin := resolveBotLogin(ctx, manager, namespace, &overseer)
+		reviewed, err := hasBeenReviewedByBot(ctx, client, owner, repoName, prNumber, botLogin, currentSHA)
+		if err != nil {
+			return fmt.Errorf("failed to check GitHub reviews during submission: %w", err)
+		} else if reviewed {
+			fmt.Printf("Review for SHA %s already exists on GitHub. Skipping submission.\n", currentSHA)
+
+			// Update sandbox reviewState if sandbox still exists
+			reviewState := "submitted:" + currentSHA
+			if err := manager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, "reviewState", reviewState); err != nil {
+				fmt.Printf("Warning: failed to update sandbox annotation: %v\n", err)
+			}
+
+			return nil
+		}
+	}
+
 	// Try Unmarshalling the yaml review payload into PullRequestReviewRequest
 	agentOutput := &models.ReviewAgentOutput{}
 	reviewRequest := &githubv39.PullRequestReviewRequest{}
@@ -864,7 +903,7 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 	}
 	userEmail := os.Getenv("GITHUB_USER_EMAIL")
 
-	botLogin := os.Getenv("GITHUB_BOT_LOGIN")
+	botLogin := resolveBotLogin(ctx, k8s.NewManager(kubeClient), namespace, overseer)
 	botName := os.Getenv("GITHUB_BOT_NAME")
 	botEmail := os.Getenv("GITHUB_BOT_EMAIL")
 
@@ -941,7 +980,7 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 	}
 	userEmail := os.Getenv("GITHUB_USER_EMAIL")
 
-	botLogin := os.Getenv("GITHUB_BOT_LOGIN")
+	botLogin := resolveBotLogin(ctx, k8s.NewManager(kubeClient), namespace, overseer)
 	botName := os.Getenv("GITHUB_BOT_NAME")
 	botEmail := os.Getenv("GITHUB_BOT_EMAIL")
 
@@ -1288,4 +1327,74 @@ func getTokenFromScript() (string, error) {
 	}
 
 	return "", nil
+}
+
+func resolveBotLogin(ctx context.Context, manager *k8s.Manager, namespace string, overseer *overseerv1alpha1.Overseer) string {
+	if overseer.Spec.RobotAccount != "" {
+		secret, err := manager.Clientset.CoreV1().Secrets(namespace).Get(ctx, overseer.Spec.RobotAccount, metav1.GetOptions{})
+		if err == nil {
+			if len(secret.Data["userid"]) > 0 {
+				return string(secret.Data["userid"])
+			}
+			klog.V(1).Infof("Warning: userid key missing in robot account secret %s", overseer.Spec.RobotAccount)
+		} else {
+			klog.V(1).Infof("Warning: failed to get robot account secret %s: %v", overseer.Spec.RobotAccount, err)
+		}
+		return "" // Avoid fallback if RobotAccount is specified but invalid
+	}
+	return os.Getenv("GITHUB_BOT_LOGIN")
+}
+
+var warnedAboutBotLogin bool
+
+func hasBeenReviewedByBot(ctx context.Context, client *githubv39.Client, owner, repo string, prNumber int, botLogin, headSHA string) (bool, error) {
+	if headSHA == "" {
+		return false, nil
+	}
+
+	actualBotLogin := botLogin
+	if actualBotLogin == "" {
+		user, _, err := client.Users.Get(ctx, "")
+		if err == nil {
+			actualBotLogin = user.GetLogin()
+		}
+	}
+
+	if actualBotLogin == "" {
+		if !warnedAboutBotLogin {
+			klog.V(1).Info("Warning: GITHUB_BOT_LOGIN is not set and could not be determined from token, skipping duplicate review check.")
+			warnedAboutBotLogin = true
+		}
+		return false, nil
+	}
+
+	// List all reviews for the PR with pagination
+	opt := &githubv39.ListOptions{PerPage: 100}
+	for {
+		reviews, resp, err := client.PullRequests.ListReviews(ctx, owner, repo, prNumber, opt)
+		if err != nil {
+			return false, err
+		}
+		for _, r := range reviews {
+			if r.GetUser() == nil {
+				continue
+			}
+			login := r.GetUser().GetLogin()
+			// GitHub usernames are case-insensitive. Bot accounts often have a [bot] suffix.
+			isBot := strings.EqualFold(login, actualBotLogin) || strings.EqualFold(login, actualBotLogin+"[bot]")
+			// Commit SHAs are case-insensitive hex strings.
+			isSameSHA := strings.EqualFold(r.GetCommitID(), headSHA)
+			// Skip dismissed reviews as they might indicate a request for re-review.
+			isNotDismissed := r.GetState() != "DISMISSED"
+
+			if isBot && isSameSHA && isNotDismissed {
+				return true, nil
+			}
+		}
+		if resp.NextPage == 0 {
+			break
+		}
+		opt.Page = resp.NextPage
+	}
+	return false, nil
 }
