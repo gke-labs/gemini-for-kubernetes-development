@@ -172,6 +172,10 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 				},
 			},
 		},
+		map[string]interface{}{
+			"name":  "GEMINI_CLI_TRUST_WORKSPACE",
+			"value": "true",
+		},
 	}
 
 	env = append(env, buildLLMEnvVars(opt.DevSandboxOptions)...)

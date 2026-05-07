@@ -107,6 +107,7 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 		map[string]interface{}{"name": "GITHUB_BOT_LOGIN", "value": opt.BotLogin},
 		map[string]interface{}{"name": "GITHUB_BOT_NAME", "value": opt.BotName},
 		map[string]interface{}{"name": "GITHUB_BOT_EMAIL", "value": opt.BotEmail},
+		map[string]interface{}{"name": "GEMINI_CLI_TRUST_WORKSPACE", "value": "true"},
 	}
 
 	if len(opt.LLMExtensions) > 0 {
