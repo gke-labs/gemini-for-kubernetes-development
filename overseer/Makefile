@@ -36,8 +36,12 @@ test-unit:
 lint-go:
 	../dev/tools/lint-go --working-dir ./
 
+bin/github-portal-ca.crt:
+	@mkdir -p bin
+	openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout bin/github-portal-ca.key -out bin/github-portal-ca.crt -subj "/CN=github-portal-ca"
+
 .PHONY: create-secrets
-create-secrets:
+create-secrets: bin/github-portal-ca.crt
 	@if [ -z "${GEMINI_API_KEY}" ]; then \
 		echo "Error: GEMINI_API_KEY is not set." >&2; \
 		exit 1; \
@@ -58,12 +62,12 @@ create-secrets:
 		--from-literal=userid="${ROBOT1_GH_USERID}" \
 		--from-literal=email="${ROBOT1_GH_EMAIL}" \
 		--dry-run=client -o yaml | kubectl apply -f -
+	@kubectl create secret generic github-portal-ca -n overseer-system --from-file=tls.crt=bin/github-portal-ca.crt --from-file=tls.key=bin/github-portal-ca.key --dry-run=client -o yaml | kubectl apply -f -
 
 .PHONY: install-dep-packages
 install-dep-packages:
 	../dev/tools/install-agent-sandbox
 	kubectl apply -f ../repo-agent/k8s/crds/ || true
-	curl -k -L https://github.com/cert-manager/cert-manager/releases/download/v1.13.3/cert-manager.yaml | kubectl apply -f - || true
 
 .PHONY: uninstall-dep-packages
 uninstall-dep-packages:

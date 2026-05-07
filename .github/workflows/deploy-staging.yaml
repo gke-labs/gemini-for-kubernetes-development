@@ -44,14 +44,6 @@ jobs:
           CLUSTER_NAME: ${{ secrets.GKE_STAGING_CLUSTER }}
           GW_CLASS: 'gke-l7-regional-external-managed'
 
-      - name: Install cert-manager
-        run: |
-          curl -k -L https://github.com/cert-manager/cert-manager/releases/download/v1.13.3/cert-manager.yaml | kubectl apply -f - || true
-          kubectl wait --for=condition=available --timeout=300s deployment/cert-manager -n cert-manager
-          kubectl wait --for=condition=available --timeout=300s deployment/cert-manager-cainjector -n cert-manager
-          kubectl wait --for=condition=available --timeout=300s deployment/cert-manager-webhook -n cert-manager
-          sleep 30
-
       - name: Deploy Overseer to Staging
         run: |
           chmod +x ./overseer/scripts/upgrade.sh
