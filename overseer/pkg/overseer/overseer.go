@@ -136,6 +136,10 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 			"value": "http://github-portal.overseer-system.svc.cluster.local",
 		},
 		map[string]interface{}{
+			"name":  "GH_HOST",
+			"value": "github-portal.overseer-system.svc.cluster.local",
+		},
+		map[string]interface{}{
 			"name":  "GEMINI_CLI_TRUST_WORKSPACE",
 			"value": "true",
 		},
