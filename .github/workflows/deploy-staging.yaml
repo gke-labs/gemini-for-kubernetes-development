@@ -47,7 +47,9 @@ jobs:
       - name: Install cert-manager
         run: |
           curl -k -L https://github.com/cert-manager/cert-manager/releases/download/v1.13.3/cert-manager.yaml | kubectl apply -f - || true
-          sleep 10
+          kubectl wait --for=condition=available --timeout=300s deployment/cert-manager -n cert-manager
+          kubectl wait --for=condition=available --timeout=300s deployment/cert-manager-cainjector -n cert-manager
+          kubectl wait --for=condition=available --timeout=300s deployment/cert-manager-webhook -n cert-manager
 
       - name: Deploy Overseer to Staging
         run: |
