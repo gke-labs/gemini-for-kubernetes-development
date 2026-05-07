@@ -1319,4 +1319,3 @@ func getTokenFromScript() (string, error) {
 
 	return "", nil
 }
-
