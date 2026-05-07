@@ -343,6 +343,15 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 		fmt.Printf("Warning: failed to get token from script: %v\n", err)
 	}
 
+	githubAPIURL := os.Getenv("GITHUB_API_URL")
+	var ghHost string
+	if githubAPIURL != "" {
+		u, err := url.Parse(githubAPIURL)
+		if err == nil && u.Host != "" {
+			ghHost = u.Host
+		}
+	}
+
 	opt := sandbox.AgentSandboxOptions{
 		DevSandboxOptions: sandbox.DevSandboxOptions{
 			Name:      sandboxName,
@@ -373,6 +382,7 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 			Replicas:            1,
 			WorkspaceDiskSize:   overseer.Spec.WorkspaceDiskSize,
 			ServiceAccountName:  "overseer-sandbox",
+			GHHost:              ghHost,
 		},
 		IssueRepo: repo,
 	}
@@ -882,6 +892,15 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 		fmt.Printf("Warning: failed to get token from script: %v\n", err)
 	}
 
+	githubAPIURL := os.Getenv("GITHUB_API_URL")
+	var ghHost string
+	if githubAPIURL != "" {
+		u, err := url.Parse(githubAPIURL)
+		if err == nil && u.Host != "" {
+			ghHost = u.Host
+		}
+	}
+
 	opt := sandbox.AgentSandboxOptions{
 		DevSandboxOptions: sandbox.DevSandboxOptions{
 			Name:      name,
@@ -914,6 +933,7 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 			Replicas:            1,
 			ServiceAccountName:  "overseer-sandbox",
 			WorkspaceDiskSize:   overseer.Spec.WorkspaceDiskSize,
+			GHHost:              ghHost,
 		},
 		IssueID:    fmt.Sprintf("%d", issue.GetNumber()),
 		IssueTitle: issue.GetTitle(),
@@ -961,6 +981,15 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 		fmt.Printf("Warning: failed to get token from script: %v\n", err)
 	}
 
+	githubAPIURL := os.Getenv("GITHUB_API_URL")
+	var ghHost string
+	if githubAPIURL != "" {
+		u, err := url.Parse(githubAPIURL)
+		if err == nil && u.Host != "" {
+			ghHost = u.Host
+		}
+	}
+
 	opt := sandbox.ReviewSandboxOptions{
 		DevSandboxOptions: sandbox.DevSandboxOptions{
 			Name:      name,
@@ -988,6 +1017,7 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 			HTTPEnabled:           true,
 			Replicas:              1,
 			ServiceAccountName:    "overseer-sandbox",
+			GHHost:                ghHost,
 		},
 		PRNumber:          pr.GetNumber(),
 		PRTitle:           pr.GetTitle(),
