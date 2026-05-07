@@ -464,6 +464,32 @@ func (s *Server) updateRepoWatch(c *gin.Context) {
 				return
 			}
 		}
+
+		// Remove from Issues if present
+		issuesSlice, found, _ := unstructured.NestedSlice(existing.Object, "spec", "issue", "issues")
+		if found {
+			var newIssues []int64
+			changed := false
+			for _, v := range issuesSlice {
+				val := int64(0)
+				if i, ok := v.(int64); ok {
+					val = i
+				} else if i, ok := v.(int); ok {
+					val = int64(i)
+				}
+
+				if val != int64(payload.ExcludeIssue) {
+					newIssues = append(newIssues, val)
+				} else {
+					changed = true
+				}
+			}
+			if changed {
+				if err := unstructured.SetNestedSlice(existing.Object, convInt64SliceToInterfaceSlice(newIssues), "spec", "issue", "issues"); err != nil {
+					log.Info("Failed to update issues", "err", err)
+				}
+			}
+		}
 	}
 
 	// Exclude PR if provided
