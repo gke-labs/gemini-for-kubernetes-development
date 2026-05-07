@@ -16,7 +16,7 @@ import Overseer from './Overseer';
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [isGuest, setIsGuest] = useState(false);
+
   const [isLoadingAuth, setIsLoadingAuth] = useState(true);
   const [user, setUser] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -147,7 +147,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (isAuthenticated || isGuest) {
+    if (isAuthenticated) {
       fetch('/api/settings')
         .then(res => res.json())
         .then(data => {
@@ -159,10 +159,10 @@ function App() {
         })
         .catch(err => console.error("Failed to fetch settings:", err));
     }
-  }, [isAuthenticated, isGuest]);
+  }, [isAuthenticated]);
 
   useEffect(() => {
-    if (activeRepo && (isAuthenticated || isGuest)) {
+    if (activeRepo && isAuthenticated) {
         fetch(`/api/repos/${activeRepo.name}/instructions`)
             .then(res => {
                 if (res.ok) return res.json();
@@ -178,7 +178,7 @@ function App() {
     } else {
         setHasInstructionDraft(false);
     }
-  }, [activeRepo, isAuthenticated, isGuest]);
+  }, [activeRepo, isAuthenticated]);
 
   const handleGithubConfigSubmit = (e) => {
     e.preventDefault();
@@ -201,7 +201,7 @@ function App() {
   };
 
   const fetchRepos = useCallback(() => {
-    if (!isAuthenticated && !isGuest) return;
+    if (!isAuthenticated) return;
     fetch('/api/repos')
       .then(res => res.json())
       .then(data => {
@@ -221,16 +221,16 @@ function App() {
         }
       })
       .catch(err => console.error("Failed to fetch repos:", err));
-  }, [isAuthenticated, isGuest, view]);
+  }, [isAuthenticated, view]);
 
   useEffect(() => {
-    if (isAuthenticated || isGuest) {
+    if (isAuthenticated) {
         fetchRepos();
     }
-  }, [isAuthenticated, isGuest, fetchRepos]);
+  }, [isAuthenticated, fetchRepos]);
 
   const refreshData = useCallback((merge = false) => {
-    if (!isAuthenticated && !isGuest) return;
+    if (!isAuthenticated) return;
     if (!activeRepo) return;
     if (activeSubTab.repo !== activeRepo.name) return;
 
@@ -329,10 +329,10 @@ function App() {
           })
           .catch(err => console.error(`Failed to fetch issues for ${activeRepo.name} tab ${activeSubTab.name}:`, err));
     }
-  }, [activeRepo, activeSubTab, isAuthenticated, isGuest]);
+  }, [activeRepo, activeSubTab, isAuthenticated]);
 
   useEffect(() => {
-    if ((!isAuthenticated && !isGuest) || view !== 'dashboard') return;
+    if (!isAuthenticated || view !== 'dashboard') return;
 
     let intervalId;
     let ticks = 0;
@@ -390,23 +390,16 @@ function App() {
       stop();
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [refreshData, isAuthenticated, isGuest, view]);
+  }, [refreshData, isAuthenticated, view]);
 
   const handleLogin = (scope) => {
     window.location.href = `/api/auth/login?scope=${scope}`;
   };
 
-  const handleGuestLogin = () => {
-    setIsGuest(true);
-  };
+
 
   const handleLogout = () => {
-    if (isGuest) {
-        setIsGuest(false);
-        setRepos([]);
-        setActiveRepo(null);
-        return;
-    }
+
     fetch('/api/auth/logout', { method: 'POST' })
       .then(() => {
         setIsAuthenticated(false);
@@ -1310,7 +1303,7 @@ function App() {
           </button>
         ))}
         <button className="tab-btn add-repo-btn" onClick={() => {
-          if (!isGeminiKeySet && !isGuest) {
+          if (!isGeminiKeySet) {
             alert("Please set your Gemini API Key in Settings before adding a repository.");
             setView('settings');
           } else {
@@ -1369,7 +1362,7 @@ function App() {
 
   if (isLoadingAuth) return <div className="App"><header className="App-header"><h1>Loading...</h1></header></div>;
 
-  if (!isAuthenticated && !isGuest) {
+  if (!isAuthenticated) {
     return (
       <div className="App">
         <header className="App-header">
@@ -1387,7 +1380,10 @@ function App() {
                 <button className="btn btn-submit" onClick={() => handleLogin('readonly')} style={{backgroundColor: '#6f42c1'}}>Login with GitHub (Read-Only)</button>
                 </>
             ) : (
-                <button className="btn btn-submit" onClick={handleGuestLogin}>Continue</button>
+                <div className="auth-error">
+                    <p>GitHub Authentication is not configured.</p>
+                    <p>Please set <code>GITHUB_CLIENT_ID</code> and <code>GITHUB_CLIENT_SECRET</code> in the cluster secrets.</p>
+                </div>
             )}
           </div>
         </main>
@@ -1401,7 +1397,7 @@ function App() {
         <h1><a href="/" onClick={(e) => { e.preventDefault(); setView('dashboard'); }}>Repo Agent</a></h1>
         <div className="header-right">
           {user && <span className="user-greeting">Hi, {user}</span>}
-          {isGuest && <span className="user-greeting">Guest</span>}
+
           {isAdmin && (
             <button className="btn" onClick={() => setView('overseer')} style={{marginRight: '10px', backgroundColor: '#6f42c1', color: 'white'}}>
                 Overseer
@@ -1416,7 +1412,7 @@ function App() {
         </div>
       </header>
       
-      {(isAuthenticated || isGuest) && !isGeminiKeySet && (
+      {isAuthenticated && !isGeminiKeySet && (
         <div className="warning-banner">
           <strong>⚠️ Gemini API Key Missing:</strong> Please configure your Gemini API Key in <a href="#" onClick={(e) => { e.preventDefault(); setView('settings'); }}>Settings</a> to enable code reviews and issue handling.
         </div>

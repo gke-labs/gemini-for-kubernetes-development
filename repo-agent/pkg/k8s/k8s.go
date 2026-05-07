@@ -274,10 +274,8 @@ func (m *Manager) GetGitHubToken(ctx context.Context, repoWatch *unstructured.Un
 		tokenBase64 = val
 	} else if val, ok := secretData[OAuthPATKey]; ok && val != "" {
 		tokenBase64 = val
-	} else if val, ok := secretData["pat"]; ok && val != "" {
-		tokenBase64 = val
 	} else {
-		return "", fmt.Errorf("no GitHub token found in secret %s (checked %s, %s, and pat)", secretName, ManualPATKey, OAuthPATKey)
+		return "", fmt.Errorf("no GitHub token found in secret %s (checked %s and %s)", secretName, ManualPATKey, OAuthPATKey)
 	}
 
 	tokenBytes, err := base64.StdEncoding.DecodeString(tokenBase64)
