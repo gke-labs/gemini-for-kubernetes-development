@@ -68,10 +68,13 @@ create-secrets: bin/github-portal-ca.crt
 install-dep-packages:
 	../dev/tools/install-agent-sandbox
 	kubectl apply -f ../repo-agent/k8s/crds/ || true
+	kubectl create namespace overseer-system || true
+	kubectl apply -f deps/github-portal.yaml
 
 .PHONY: uninstall-dep-packages
 uninstall-dep-packages:
 	../dev/tools/install-agent-sandbox --uninstall || true
+	kubectl delete -f deps/github-portal.yaml || true
 
 .PHONY: create-kind
 create-kind:
