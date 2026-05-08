@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # Build the container-registry binary
-FROM golang:1.25.7 AS builder
+FROM golang:1.26.2 AS builder
 WORKDIR /app
 
 # Copy the Go Modules manifests

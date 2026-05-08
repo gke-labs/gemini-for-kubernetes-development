@@ -13,18 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import requests
 import subprocess
 import time
 import argparse
-
-def get_latest_kro_version():
-    """Fetches the latest Kro version from the GitHub API."""
-    url = "https://api.github.com/repos/kubernetes-sigs/kro/releases/latest"
-    response = requests.get(url)
-    response.raise_for_status()
-    tag_name = response.json()["tag_name"]
-    return tag_name.lstrip("v")
 
 def run_command(command):
     """Runs a shell command and prints its output."""
@@ -75,8 +66,6 @@ def main():
 
         print("Kro installed successfully.")
 
-    except requests.exceptions.RequestException as e:
-        print(f"Error fetching Kro version: {e}")
     except subprocess.CalledProcessError as e:
         print(f"Error executing command: {e}")
     except Exception as e:
