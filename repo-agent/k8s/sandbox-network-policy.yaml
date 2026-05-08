@@ -11,7 +11,22 @@ spec:
   policyTypes:
   - Egress
   egress:
-  # Allow Public Internet (Blocks all other private IPs AND internal DNS)
+  # Allow DNS
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  # Allow Local Registry and other infrastructure in repo-agent-system
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: repo-agent-system
+  # Allow Public Internet (Blocks all other private IPs)
   - to:
     - ipBlock:
         cidr: 0.0.0.0/0

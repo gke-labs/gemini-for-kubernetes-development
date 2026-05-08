@@ -42,6 +42,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -274,6 +275,7 @@ type Reconciler struct {
 //+kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create;update;patch
 //+kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
 
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
@@ -2369,6 +2371,41 @@ func (r *Reconciler) ensureNetworkPolicy(ctx context.Context, namespace string) 
 			},
 			Egress: []networkingv1.NetworkPolicyEgressRule{
 				{
+					// Allow DNS
+					To: []networkingv1.NetworkPolicyPeer{
+						{
+							NamespaceSelector: &metav1.LabelSelector{
+								MatchLabels: map[string]string{
+									"kubernetes.io/metadata.name": "kube-system",
+								},
+							},
+						},
+					},
+					Ports: []networkingv1.NetworkPolicyPort{
+						{
+							Protocol: func() *corev1.Protocol { p := corev1.ProtocolUDP; return &p }(),
+							Port:     &intstr.IntOrString{Type: intstr.Int, IntVal: 53},
+						},
+						{
+							Protocol: func() *corev1.Protocol { p := corev1.ProtocolTCP; return &p }(),
+							Port:     &intstr.IntOrString{Type: intstr.Int, IntVal: 53},
+						},
+					},
+				},
+				{
+					// Allow Local Registry and other infrastructure in repo-agent-system
+					To: []networkingv1.NetworkPolicyPeer{
+						{
+							NamespaceSelector: &metav1.LabelSelector{
+								MatchLabels: map[string]string{
+									"kubernetes.io/metadata.name": "repo-agent-system",
+								},
+							},
+						},
+					},
+				},
+				{
+					// Allow Public Internet (Blocks all other private IPs)
 					To: []networkingv1.NetworkPolicyPeer{
 						{
 							IPBlock: &networkingv1.IPBlock{

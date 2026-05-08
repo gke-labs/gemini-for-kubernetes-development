@@ -27,6 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -61,6 +62,7 @@ type OverseerReconciler struct {
 //+kubebuilder:rbac:groups=custom.agents.x-k8s.io,resources=sandboxtasks/status,verbs=get;list;watch;update;patch
 //+kubebuilder:rbac:groups=configdir.gke.io,resources=configdirs;configfiles,verbs=get;list;watch
 //+kubebuilder:rbac:groups=review.gemini.google.com,resources=repowatches,verbs=get;list;watch
+//+kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -170,6 +172,41 @@ func (r *OverseerReconciler) ensureNetworkPolicy(ctx context.Context, namespace 
 			},
 			Egress: []networkingv1.NetworkPolicyEgressRule{
 				{
+					// Allow DNS
+					To: []networkingv1.NetworkPolicyPeer{
+						{
+							NamespaceSelector: &metav1.LabelSelector{
+								MatchLabels: map[string]string{
+									"kubernetes.io/metadata.name": "kube-system",
+								},
+							},
+						},
+					},
+					Ports: []networkingv1.NetworkPolicyPort{
+						{
+							Protocol: func() *corev1.Protocol { p := corev1.ProtocolUDP; return &p }(),
+							Port:     &intstr.IntOrString{Type: intstr.Int, IntVal: 53},
+						},
+						{
+							Protocol: func() *corev1.Protocol { p := corev1.ProtocolTCP; return &p }(),
+							Port:     &intstr.IntOrString{Type: intstr.Int, IntVal: 53},
+						},
+					},
+				},
+				{
+					// Allow Local Registry and other infrastructure in repo-agent-system
+					To: []networkingv1.NetworkPolicyPeer{
+						{
+							NamespaceSelector: &metav1.LabelSelector{
+								MatchLabels: map[string]string{
+									"kubernetes.io/metadata.name": "repo-agent-system",
+								},
+							},
+						},
+					},
+				},
+				{
+					// Allow Public Internet (Blocks all other private IPs)
 					To: []networkingv1.NetworkPolicyPeer{
 						{
 							IPBlock: &networkingv1.IPBlock{
