@@ -347,13 +347,12 @@ func (a *Authenticator) Middleware() gin.HandlerFunc {
 		log := klog.FromContext(c.Request.Context())
 		session := sessions.Default(c)
 		userVal := session.Get(UserKey)
-
-		// If no user is logged in, default to "default" namespace (guest mode)
-		// The user requested: "no auth" logic that puts the user in the default namespace
-		user := "default"
-		if userVal != nil {
-			user = userVal.(string)
+		if userVal == nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Authentication required"})
+			c.Abort()
+			return
 		}
+		user := userVal.(string)
 
 		// Determine target namespace
 		namespace := user
