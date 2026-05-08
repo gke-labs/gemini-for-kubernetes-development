@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
       - name: github-portal
-        image: ghcr.io/gke-labs/gemini-for-kubernetes-development/github-portal:latest
+        image: github-portal:latest
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8080
