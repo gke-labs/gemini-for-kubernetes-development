@@ -139,8 +139,9 @@ func main() {
 	steps := []step{
 		{"Check prerequisites", checkPrereqs},
 		{"Connect kubectl to GKE cluster", func(c *Config) error { return connectGKE(c) }},
+		{"Uninstall KRO (if present)", uninstallKRO},
 		{"Install Kyverno", maybeInstallKyverno},
-		{"Install Helm dependencies (Envoy Gateway, KRO, Agent Sandbox)", installHelmDeps},
+		{"Install Helm dependencies (Envoy Gateway, Agent Sandbox)", installHelmDeps},
 		{"Apply release manifest (" + releaseVersion + ")", applyManifest},
 		{"Create Kubernetes secrets", createSecrets},
 		{"Apply GKE compatibility fixes (image rewriting + gh wrapper)", applyGKEFixes},
@@ -203,6 +204,27 @@ func maybeInstallKyverno(cfg *Config) error {
 		"--wait", "--timeout", "5m")
 }
 
+func uninstallKRO(_ *Config) error {
+	fmt.Println("  Checking for KRO installation …")
+	// Check if already installed
+	out, _ := output("helm", "list", "-n", "kro")
+	if strings.Contains(out, "kro") {
+		fmt.Println("  Uninstalling KRO helm release …")
+		if err := run("helm", "uninstall", "kro", "--namespace", "kro"); err != nil {
+			fmt.Printf("  Warning: helm uninstall failed: %v\n", err)
+		}
+	}
+
+	out, _ = output("kubectl", "get", "namespace", "kro", "--ignore-not-found")
+	if strings.Contains(out, "kro") {
+		fmt.Println("  Deleting kro namespace …")
+		if err := run("kubectl", "delete", "namespace", "kro"); err != nil {
+			fmt.Printf("  Warning: kubectl delete namespace failed: %v\n", err)
+		}
+	}
+	return nil
+}
+
 func installHelmDeps(cfg *Config) error {
 	type helmChart struct {
 		name, repo, chart, namespace, version string
@@ -213,10 +235,6 @@ func installHelmDeps(cfg *Config) error {
 			name: "envoy-gateway", repo: "envoyproxy",
 			chart:     "oci://docker.io/envoyproxy/gateway-helm",
 			namespace: "envoy-gateway-system", version: "v1.5.2",
-		},
-		{
-			name: "kro", chart: "oci://registry.k8s.io/kro/charts/kro",
-			namespace: "kro", version: "0.5.1",
 		},
 		{
 			name: "agent-sandbox", repo: "agent-sandbox",

@@ -31,9 +31,6 @@ def main():
     result = subprocess.run([f"{repo_root}/dev/tools/create-kind-cluster", "e2e-test", "--recreate", "--kubeconfig", f"{repo_root}/bin/KUBECONFIG"])
     if result.returncode != 0:
         return result.returncode
-    result = subprocess.run([f"{repo_root}/dev/tools/install-kro"])
-    if result.returncode != 0:
-        return result.returncode
     result = subprocess.run([f"{repo_root}/dev/tools/install-envoy"])
     if result.returncode != 0:
         return result.returncode

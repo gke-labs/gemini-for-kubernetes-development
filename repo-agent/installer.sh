@@ -22,7 +22,6 @@ else
 fi
 
 : ${ENVOY_GW_VERSION:=v1.5.2}
-: ${KRO_VERSION:=0.5.1}
 : ${AGENT_SANDBOX_VERSION:=v0.1.0}
 : ${REPO_AGENT_VERSION:=v0.1.0-rc.3}
 
@@ -45,16 +44,14 @@ command -v kubectl >/dev/null 2>&1 || { echo >&2 "kubectl not found. Please inst
 command -v helm >/dev/null 2>&1 || { echo >&2 "helm not found. Please install it. https://helm.sh/docs/intro/install/"; exit 1; }
 echo "All prerequisites are installed."
 
+echo "Uninstalling KRO (if present)"
+helm uninstall kro --namespace kro 2>/dev/null || true
+kubectl delete namespace kro 2>/dev/null || true
+
 echo "Installing Envoy GW"
 helm install eg oci://docker.io/envoyproxy/gateway-helm --version ${ENVOY_GW_VERSION} -n envoy-gateway-system --create-namespace
 sleep 5
 kubectl wait --timeout=5m -n envoy-gateway-system deployment/envoy-gateway --for=condition=Available
-
-echo "Installing KRO"
-helm install kro oci://registry.k8s.io/kro/charts/kro --namespace kro --create-namespace --version=${KRO_VERSION}
-helm -n kro list
-sleep 5
-kubectl get pods -n kro
 
 echo "Installing Sandbox"
 kubectl apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/manifest.yaml

@@ -54,7 +54,6 @@ lint-go:
 
 .PHONY: install-dep-packages
 install-dep-packages:
-	../dev/tools/install-kro
 	echo "INSTALL_ENVOY is set to $(INSTALL_ENVOY)"
 	@if [ "$(INSTALL_ENVOY)" = "yes" ]; then \
 	  	echo "Installing Envoy..."; \
@@ -64,7 +63,9 @@ install-dep-packages:
 
 .PHONY: uninstall-dep-packages
 uninstall-dep-packages:
-	../dev/tools/install-kro --uninstall || true
+	@echo "Uninstalling KRO (if present)..."
+	@helm uninstall kro --namespace kro 2>/dev/null || true
+	@kubectl delete namespace kro 2>/dev/null || true
 	echo "INSTALL_ENVOY is set to $(INSTALL_ENVOY)"
 	@if [ "$(INSTALL_ENVOY)" = "yes" ]; then \
 	  	echo "UnInstalling Envoy..."; \
@@ -91,8 +92,6 @@ build-and-push-repo-agent:
 
 .PHONY: install-repo-agent
 install-repo-agent:
-	# Using crd yaml directly due to KRO bug with status fields not being created
-	# cp cmd/repo-sandbox/sandbox-task-rgd.yaml k8s/
 	../dev/tools/deploy-to-kube --image-prefix=$(REGISTRY) --working-dir . \
 	--replace .spec.installationName=${CLUSTER_NAME} \
 	--replace .spec.gatewayClassName=${GW_CLASS} \
@@ -175,7 +174,6 @@ apply-examples: apply-common-for-examples
 	kubectl apply -f examples/agent-sandbox-repowatch.yaml -n $(NAMESPACE)
 	kubectl apply -f examples/kcc-configdir.yaml -n $(NAMESPACE)
 	kubectl apply -f examples/kcc-repowatch.yaml -n $(NAMESPACE)
-	kubectl apply -f examples/kro-repowatch.yaml -n $(NAMESPACE)
 	kubectl apply -f examples/k8s-configdir.yaml -n $(NAMESPACE)
 	kubectl apply -f examples/k8s-repowatch.yaml -n $(NAMESPACE)
 	sleep 5
