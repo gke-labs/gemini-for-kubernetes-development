@@ -20,7 +20,7 @@ import os
 
 from shared import utils
 
-CHAINSAW_VERSION = "v0.2.12"
+CHAINSAW_VERSION = "v0.2.15"
 
 def install_chainsaw(repo_root):
     """Installs chainsaw if not present or if the version is incorrect."""
