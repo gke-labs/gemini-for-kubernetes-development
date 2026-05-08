@@ -232,9 +232,14 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 				"replicas": int64(1),
 				"podTemplate": map[string]interface{}{
 					"metadata": map[string]interface{}{
-						"labels": map[string]interface{}{
-							"sandbox": sandboxName,
-						},
+						"labels": func() map[string]interface{} {
+							l := make(map[string]interface{})
+							for k, v := range labels {
+								l[k] = v
+							}
+							l["sandbox"] = sandboxName
+							return l
+						}(),
 					},
 					"spec": map[string]interface{}{
 						"serviceAccountName": opt.ServiceAccountName,

@@ -22,6 +22,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -97,7 +98,12 @@ func (r *OverseerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{}, err
 	}
 
-	// 3. Ensure secrets are present in the target namespace
+	// 3. Ensure NetworkPolicy for the sandboxes
+	if err := r.ensureNetworkPolicy(ctx, nsName); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// 4. Ensure secrets are present in the target namespace
 	if err := r.ensureSecrets(ctx, &overseerObj, nsName); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -129,17 +135,72 @@ func (r *OverseerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		}
 	}
 
-	// 4. Reconcile Sandbox
+	// 5. Reconcile Sandbox
 	if err := overseer.ReconcileOverseer(ctx, r.Client, &overseerObj, r.RepoSandboxImage, r.ConfigDirImage); err != nil {
 		return ctrl.Result{}, err
 	}
 
-	// 5. Update status
+	// 6. Update status
 	if err := r.Status().Update(ctx, &overseerObj); err != nil {
 		return ctrl.Result{}, err
 	}
 
 	return ctrl.Result{}, nil
+}
+
+func (r *OverseerReconciler) ensureNetworkPolicy(ctx context.Context, namespace string) error {
+	log := log.FromContext(ctx)
+
+	np := &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "sandbox-egress",
+			Namespace: namespace,
+		},
+		Spec: networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{
+				MatchExpressions: []metav1.LabelSelectorRequirement{
+					{
+						Key:      "sandbox.gemini.google.com/type",
+						Operator: metav1.LabelSelectorOpExists,
+					},
+				},
+			},
+			PolicyTypes: []networkingv1.PolicyType{
+				networkingv1.PolicyTypeEgress,
+			},
+			Egress: []networkingv1.NetworkPolicyEgressRule{
+				{
+					To: []networkingv1.NetworkPolicyPeer{
+						{
+							IPBlock: &networkingv1.IPBlock{
+								CIDR: "0.0.0.0/0",
+								Except: []string{
+									"10.0.0.0/8",
+									"172.16.0.0/12",
+									"192.168.0.0/16",
+									"169.254.0.0/16",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	existingNP := &networkingv1.NetworkPolicy{}
+	err := r.Get(ctx, types.NamespacedName{Name: "sandbox-egress", Namespace: namespace}, existingNP)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			log.Info("Creating NetworkPolicy for sandboxes", "namespace", namespace)
+			return r.Create(ctx, np)
+		}
+		return err
+	}
+
+	// Update if needed (optional, but good for keeping it in sync)
+	np.ResourceVersion = existingNP.ResourceVersion
+	return r.Update(ctx, np)
 }
 
 func (r *OverseerReconciler) ensureOverseerRBAC(ctx context.Context, o *overseerv1alpha1.Overseer, namespace string) error {

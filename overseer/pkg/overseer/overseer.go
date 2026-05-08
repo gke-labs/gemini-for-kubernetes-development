@@ -367,6 +367,7 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 				"namespace": namespace,
 				"labels": map[string]interface{}{
 					"sandbox-type":                        "agent",
+					"sandbox.gemini.google.com/type":      "agent",
 					"overseer.gemini.google.com/overseer": o.Name,
 				},
 			},
@@ -375,8 +376,9 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 				"podTemplate": map[string]interface{}{
 					"metadata": map[string]interface{}{
 						"labels": map[string]interface{}{
-							"sandbox":      name,
-							"sandbox-type": "agent",
+							"sandbox":                        name,
+							"sandbox-type":                   "agent",
+							"sandbox.gemini.google.com/type": "agent",
 						},
 					},
 					"spec": podSpec,
