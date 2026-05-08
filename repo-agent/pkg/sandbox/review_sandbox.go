@@ -160,10 +160,6 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 		},
 	)
 
-	if opt.GHHost != "" {
-		env = append(env, map[string]interface{}{"name": "GH_HOST", "value": opt.GHHost})
-	}
-
 	env = append(env, buildLLMEnvVars(opt.DevSandboxOptions)...)
 
 	env = append(env,
@@ -186,6 +182,7 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 	volumeMounts := []interface{}{
 		map[string]interface{}{"name": "workspaces-pvc", "mountPath": "/workspaces"},
 		map[string]interface{}{"name": "agent-bin", "mountPath": "/opt/repo-agent"},
+		map[string]interface{}{"name": "ca-cert", "mountPath": "/etc/github-portal/ca", "readOnly": true},
 	}
 	if opt.LLMAPIKey == "" {
 		volumeMounts = append(volumeMounts, map[string]interface{}{"name": "tokens-secret", "mountPath": "/tokens", "readOnly": true})
@@ -200,6 +197,13 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 
 	volumes := []interface{}{
 		map[string]interface{}{"name": "agent-bin", "emptyDir": map[string]interface{}{}},
+		map[string]interface{}{
+			"name": "ca-cert",
+			"secret": map[string]interface{}{
+				"secretName": "github-portal-ca",
+				"optional":   true,
+			},
+		},
 	}
 	if opt.LLMAPIKey == "" {
 		volumes = append(volumes, map[string]interface{}{

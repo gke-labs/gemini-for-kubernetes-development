@@ -177,11 +177,6 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 			"value": "true",
 		},
 	}
-
-	if opt.GHHost != "" {
-		env = append(env, map[string]interface{}{"name": "GH_HOST", "value": opt.GHHost})
-	}
-
 	env = append(env, buildLLMEnvVars(opt.DevSandboxOptions)...)
 
 	env = append(env,
@@ -366,6 +361,7 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 									if opt.DindSupport != "" && opt.DindSupport != DindSupportNone {
 										vm = append(vm, map[string]interface{}{"name": "docker", "mountPath": "/var/lib/docker"})
 									}
+									vm = append(vm, map[string]interface{}{"name": "ca-cert", "mountPath": "/etc/github-portal/ca", "readOnly": true})
 									return vm
 								}(),
 								"ports": []interface{}{
@@ -407,6 +403,13 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 									"emptyDir": map[string]interface{}{},
 								})
 							}
+							v = append(v, map[string]interface{}{
+								"name": "ca-cert",
+								"secret": map[string]interface{}{
+									"secretName": "github-portal-ca",
+									"optional":   true,
+								},
+							})
 							return v
 						}(),
 					},

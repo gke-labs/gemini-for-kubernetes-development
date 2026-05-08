@@ -136,10 +136,6 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 			"value": "http://github-portal.overseer-system.svc.cluster.local",
 		},
 		map[string]interface{}{
-			"name":  "GH_HOST",
-			"value": "github-portal.overseer-system.svc.cluster.local",
-		},
-		map[string]interface{}{
 			"name":  "GEMINI_CLI_TRUST_WORKSPACE",
 			"value": "true",
 		},
@@ -356,6 +352,39 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 			"value": "/etc/tokenscript",
 		})
 		mainContainer["env"] = envList
+	}
+
+	// Inject CA cert volume
+	{
+		volume := map[string]interface{}{
+			"name": "ca-cert",
+			"secret": map[string]interface{}{
+				"secretName": "github-portal-ca",
+				"optional":   true,
+			},
+		}
+
+		var volumes []interface{}
+		if v, ok := podSpec["volumes"]; ok {
+			volumes = v.([]interface{})
+		}
+		volumes = append(volumes, volume)
+		podSpec["volumes"] = volumes
+
+		volumeMount := map[string]interface{}{
+			"name":      "ca-cert",
+			"mountPath": "/etc/github-portal/ca",
+			"readOnly":  true,
+		}
+
+		containers := podSpec["containers"].([]interface{})
+		mainContainer := containers[0].(map[string]interface{})
+		var volumeMounts []interface{}
+		if vm, ok := mainContainer["volumeMounts"]; ok {
+			volumeMounts = vm.([]interface{})
+		}
+		volumeMounts = append(volumeMounts, volumeMount)
+		mainContainer["volumeMounts"] = volumeMounts
 	}
 
 	u := &unstructured.Unstructured{
