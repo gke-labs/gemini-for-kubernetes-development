@@ -71,7 +71,7 @@ EOF
         echo "creating gh wrapper script"
         cat <<'EOF' > /usr/local/bin/gh
 #!/bin/bash
-HTTPS_PROXY=http://github-portal.overseer-system.svc.cluster.local SSL_CERT_FILE=/etc/github-portal/ca/tls.crt /usr/bin/gh "$@"
+HTTPS_PROXY=http://github-portal.overseer-system.svc.cluster.local:80 SSL_CERT_FILE=/etc/github-portal/ca/tls.crt /usr/bin/gh "$@"
 EOF
         chmod +x /usr/local/bin/gh
     fi
