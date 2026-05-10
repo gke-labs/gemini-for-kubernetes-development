@@ -212,36 +212,3 @@ func TestNewAgentSandbox(t *testing.T) {
 		})
 	}
 }
-
-func TestNewAgentSandbox_GHHost(t *testing.T) {
-	opt := AgentSandboxOptions{
-		DevSandboxOptions: DevSandboxOptions{
-			Name:      "test",
-			Namespace: "default",
-			GHHost:    "proxy.example.com",
-		},
-	}
-	sandbox, _ := NewAgentSandbox(opt)
-
-	spec := sandbox.Object["spec"].(map[string]interface{})
-	podTemplate := spec["podTemplate"].(map[string]interface{})
-	podSpec := podTemplate["spec"].(map[string]interface{})
-	containers := podSpec["containers"].([]interface{})
-	container := containers[0].(map[string]interface{})
-	env := container["env"].([]interface{})
-
-	found := false
-	for _, e := range env {
-		envVar := e.(map[string]interface{})
-		if envVar["name"] == "GH_HOST" {
-			found = true
-			if envVar["value"] != "proxy.example.com" {
-				t.Errorf("expected GH_HOST value proxy.example.com, got %v", envVar["value"])
-			}
-			break
-		}
-	}
-	if !found {
-		t.Errorf("GH_HOST env var not found")
-	}
-}

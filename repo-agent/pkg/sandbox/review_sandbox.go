@@ -160,10 +160,6 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 		},
 	)
 
-	if opt.GHHost != "" {
-		env = append(env, map[string]interface{}{"name": "GH_HOST", "value": opt.GHHost})
-	}
-
 	env = append(env, buildLLMEnvVars(opt.DevSandboxOptions)...)
 
 	env = append(env,
@@ -171,11 +167,12 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 		map[string]interface{}{"name": "ENVBUILDER_DEVCONTAINER_DIR", "value": "/"},
 		map[string]interface{}{"name": "ENVBUILDER_GIT_CLONE_SINGLE_BRANCH", "value": "true"},
 		map[string]interface{}{"name": "ENVBUILDER_INIT_SCRIPT", "value": RepoSandboxBinary + " review-daemon"},
-		map[string]interface{}{"name": "ENVBUILDER_IGNORE_PATHS", "value": "/var/run,/product_uuid,/product_name,/tokens,/repo-agent/"},
+		map[string]interface{}{"name": "ENVBUILDER_IGNORE_PATHS", "value": "/var/run,/product_uuid,/product_name,/tokens,/repo-agent/,/etc/github-portal/ca"},
 		map[string]interface{}{"name": "GOCACHE", "value": GoCachePath},
 		map[string]interface{}{"name": "GOMODCACHE", "value": GoModCachePath},
 		map[string]interface{}{"name": "TMPDIR", "value": TmpDirPath},
 		map[string]interface{}{"name": "GOTMPDIR", "value": TmpDirPath},
+		map[string]interface{}{"name": "SSL_CERT_FILE", "value": "/opt/repo-agent/ca/tls.crt"},
 	)
 
 	workspaceDiskSize := opt.WorkspaceDiskSize
@@ -186,6 +183,7 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 	volumeMounts := []interface{}{
 		map[string]interface{}{"name": "workspaces-pvc", "mountPath": "/workspaces"},
 		map[string]interface{}{"name": "agent-bin", "mountPath": "/opt/repo-agent"},
+		map[string]interface{}{"name": "ca-cert", "mountPath": "/etc/github-portal/ca", "readOnly": true},
 	}
 	if opt.LLMAPIKey == "" {
 		volumeMounts = append(volumeMounts, map[string]interface{}{"name": "tokens-secret", "mountPath": "/tokens", "readOnly": true})
@@ -200,6 +198,13 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 
 	volumes := []interface{}{
 		map[string]interface{}{"name": "agent-bin", "emptyDir": map[string]interface{}{}},
+		map[string]interface{}{
+			"name": "ca-cert",
+			"secret": map[string]interface{}{
+				"secretName": "github-portal-ca",
+				"optional":   true,
+			},
+		},
 	}
 	if opt.LLMAPIKey == "" {
 		volumes = append(volumes, map[string]interface{}{
@@ -267,6 +272,11 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 									map[string]interface{}{
 										"name":      "agent-bin",
 										"mountPath": "/opt/repo-agent",
+									},
+									map[string]interface{}{
+										"name":      "ca-cert",
+										"mountPath": "/etc/github-portal/ca",
+										"readOnly":  true,
 									},
 								},
 							})

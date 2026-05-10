@@ -46,6 +46,9 @@ func BootstrapNamespace(ctx context.Context, clientset kubernetes.Interface, tar
 	if err := CopySecret(ctx, clientset, SystemNamespace, GithubSecretName, targetNS, GithubSecretName); err != nil {
 		log.Info("Warning: failed to copy default github secret", "err", err)
 	}
+	if err := CopySecret(ctx, clientset, "overseer-system", "github-portal-ca", targetNS, "github-portal-ca"); err != nil {
+		log.Info("Warning: failed to copy github-portal-ca secret", "err", err)
+	}
 	if err := CopySecret(ctx, clientset, SystemNamespace, GeminiSecretName, targetNS, GeminiSecretName); err != nil {
 		log.Info("Warning: failed to copy default gemini secret", "err", err)
 	}

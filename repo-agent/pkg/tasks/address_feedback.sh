@@ -3,6 +3,15 @@ set -e
 set -o pipefail
 #set -x
 
+if [ ! -f /usr/local/bin/gh ]; then
+    echo "creating gh wrapper script"
+    cat <<'EOF' > /usr/local/bin/gh
+#!/bin/bash
+HTTPS_PROXY=http://github-portal.overseer-system.svc.cluster.local:80 SSL_CERT_FILE="${SSL_CERT_FILE:-/etc/github-portal/ca/tls.crt}" GIT_SSL_CAINFO="${SSL_CERT_FILE:-/etc/github-portal/ca/tls.crt}" /usr/bin/gh "$@"
+EOF
+    chmod +x /usr/local/bin/gh
+fi
+
 # It expects the following environment variables to be set:
 # - GEMINI_API_KEY
 # - GITHUB_USER_TOKEN

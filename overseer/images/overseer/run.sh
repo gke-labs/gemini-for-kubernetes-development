@@ -60,6 +60,13 @@ function refreshLLMToken {
 function setupGit {
     echo "Running setupGit..."
     
+    echo "creating gh wrapper script"
+    cat <<'EOF' > /usr/local/bin/gh
+#!/bin/bash
+HTTPS_PROXY=http://github-portal.overseer-system.svc.cluster.local SSL_CERT_FILE=/etc/github-portal/ca/tls.crt /usr/bin/gh "$@"
+EOF
+    chmod +x /usr/local/bin/gh
+
     # Hierarchy: MANUAL_PAT > OAUTH_PAT > GITHUB_USER_TOKEN
     GITHUB_USER_TOKEN="${MANUAL_PAT:-${OAUTH_PAT:-$GITHUB_USER_TOKEN}}"
 
