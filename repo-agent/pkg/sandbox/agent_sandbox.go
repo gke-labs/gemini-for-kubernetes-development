@@ -186,12 +186,13 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 		map[string]interface{}{"name": "ENVBUILDER_CACHE_REPO", "value": "registry.repo-agent-system.svc.cluster.local:5000/envbuilder-cache"},
 		map[string]interface{}{"name": "ENVBUILDER_DEVCONTAINER_DIR", "value": "/"},
 		map[string]interface{}{"name": "ENVBUILDER_INIT_SCRIPT", "value": RepoSandboxBinary + " dev-daemon"},
-		map[string]interface{}{"name": "ENVBUILDER_IGNORE_PATHS", "value": "/var/run,/product_uuid,/product_name,/tokens,/repo-agent/"},
+		map[string]interface{}{"name": "ENVBUILDER_IGNORE_PATHS", "value": "/var/run,/product_uuid,/product_name,/tokens,/repo-agent/,/etc/github-portal/ca"},
 		map[string]interface{}{"name": "DIND_SUPPORT", "value": opt.DindSupport},
 		map[string]interface{}{"name": "GOCACHE", "value": GoCachePath},
 		map[string]interface{}{"name": "GOMODCACHE", "value": GoModCachePath},
 		map[string]interface{}{"name": "TMPDIR", "value": TmpDirPath},
 		map[string]interface{}{"name": "GOTMPDIR", "value": TmpDirPath},
+		map[string]interface{}{"name": "SSL_CERT_FILE", "value": "/opt/repo-agent/ca/tls.crt"},
 	)
 
 	if opt.OverseerName != "" {
@@ -311,6 +312,7 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 								"command": []interface{}{"/repo-agent/repo-sandbox", "inject", "--path", "/opt/repo-agent"},
 								"volumeMounts": []interface{}{
 									map[string]interface{}{"name": "agent-bin", "mountPath": "/opt/repo-agent"},
+									map[string]interface{}{"name": "ca-cert", "mountPath": "/etc/github-portal/ca", "readOnly": true},
 								},
 							})
 							return containers

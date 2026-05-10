@@ -60,6 +60,20 @@ func inject(destDir string) error {
 		fmt.Printf("Successfully injected %s to %s\n", gspSrc, gspDest)
 	}
 
+	// Inject CA cert if found
+	caSrc := "/etc/github-portal/ca/tls.crt"
+	if _, err := os.Stat(caSrc); err == nil {
+		caDestDir := filepath.Join(destDir, "ca")
+		if err := os.MkdirAll(caDestDir, 0755); err != nil {
+			return fmt.Errorf("failed to create CA destination directory: %w", err)
+		}
+		caDest := filepath.Join(caDestDir, "tls.crt")
+		if err := copyFile(caSrc, caDest); err != nil {
+			return err
+		}
+		fmt.Printf("Successfully injected %s to %s\n", caSrc, caDest)
+	}
+
 	return nil
 }
 
