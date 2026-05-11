@@ -21,6 +21,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/llm"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/prompts"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tokens"
 	"github.com/google/go-github/v39/github"
 	"github.com/spf13/cobra"
@@ -351,10 +352,21 @@ func (c *ReviewCommand) Run(ctx context.Context) error {
 		return fmt.Errorf("failed to get pull request: %w", err)
 	}
 
+	tm := tasks.PopulateTraceabilityMetadata()
 	model := prompts.ReviewPromptModel{
 		PullRequest: *pr,
 		Prompt:      rawAgentPrompt,
 		IgnoreFiles: c.IgnoreFiles,
+
+		// Traceability metadata
+		SandboxTaskName:      tm.SandboxTaskName,
+		SandboxTaskNamespace: tm.SandboxTaskNamespace,
+		SandboxTaskUID:       tm.SandboxTaskUID,
+		SandboxName:          tm.SandboxName,
+		RepoWatchName:        tm.RepoWatchName,
+		TaskType:             tm.TaskType,
+		Timestamp:            tm.Timestamp,
+		TraceabilityEnabled:  tm.TraceabilityEnabled,
 	}
 	expandedPrompt, err := prompts.ExpandReviewPrompt(model)
 	if err != nil {

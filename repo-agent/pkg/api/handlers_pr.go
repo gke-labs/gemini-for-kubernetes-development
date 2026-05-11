@@ -331,6 +331,21 @@ func (s *Server) submitReview(c *gin.Context) {
 	// Not setting event sets it as a draft
 	reviewRequest.Event = nil
 
+	if s.TraceabilityEnabled {
+		body := ""
+		if reviewRequest.Body != nil {
+			body = *reviewRequest.Body
+		}
+		footer := s.getTraceabilityFooter(ctx, body, namespace, sandboxName, repo, "submit-review")
+		if footer != "" {
+			if reviewRequest.Body == nil {
+				reviewRequest.Body = github.String(footer)
+			} else {
+				reviewRequest.Body = github.String(*reviewRequest.Body + footer)
+			}
+		}
+	}
+
 	log.Info("reviewRequest being created", "request", reviewRequest)
 	review, resp, err := client.PullRequests.CreateReview(ctx, owner, repoName, prNumber, reviewRequest)
 	if err != nil {

@@ -272,6 +272,9 @@ func (c *GithubFeedbackCommand) Run(ctx context.Context) error {
 		PromptFile:            promptPath,
 		User:                  c.user,
 		Models:                strings.Split(c.Model, ","),
+
+		// Traceability metadata
+		TraceabilityMetadata: tasks.PopulateTraceabilityMetadata(),
 	}
 
 	if c.ExtensionsJSON != "" {

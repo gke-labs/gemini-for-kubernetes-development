@@ -186,7 +186,19 @@ Only output the commit message itself.")
 
 ---
 ### Changes
-${COMMIT_MSG}"
+${COMMIT_MSG}
+{{- if .TraceabilityEnabled }}
+
+---
+<!-- repo-agent-metadata
+sandbox-task: {{ .SandboxTaskNamespace }}/{{ .SandboxTaskName }}
+sandbox-task-uid: {{ .SandboxTaskUID }}
+sandbox: {{ .SandboxName }}
+repowatch: {{ .RepoWatchName }}
+task-type: {{ .TaskType }}
+timestamp: {{ .Timestamp }}
+-->
+{{- end }}"
 
         # Try to create PR
         # Split creation and labeling to be more robust. 

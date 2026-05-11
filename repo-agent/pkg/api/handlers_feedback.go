@@ -62,6 +62,13 @@ func (s *Server) submitFeedback(c *gin.Context) {
 		body += "\n\n[Screenshot attached in request but ignored due to missing image host configuration]"
 	}
 
+	if s.TraceabilityEnabled {
+		footer := s.getTraceabilityFooter(c.Request.Context(), body, namespace, "", "", "feedback")
+		if footer != "" {
+			body += footer
+		}
+	}
+
 	req := &github.IssueRequest{
 		Title:  &title,
 		Body:   &body,

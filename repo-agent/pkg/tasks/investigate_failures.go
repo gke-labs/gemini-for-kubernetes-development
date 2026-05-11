@@ -34,6 +34,9 @@ type InvestigateFailuresModel struct {
 	FailedRuns        []FailedRun
 	Extensions        []reviewv1alpha1.Extension
 	IssueComments     []github.IssueComment
+
+	// Traceability metadata
+	TraceabilityMetadata
 }
 
 func (m *InvestigateFailuresModel) Name() string {

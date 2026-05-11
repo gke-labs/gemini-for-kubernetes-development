@@ -107,6 +107,9 @@ func (c *ChoreCommand) Run(ctx context.Context) error {
 		RepoOwner:   c.RepoOwner,
 		PromptFile:  promptPath,
 		SkipPR:      c.SkipPR,
+
+		// Traceability metadata
+		TraceabilityMetadata: tasks.PopulateTraceabilityMetadata(),
 	}
 
 	apikey, err := GetGeminiAPIKey(c.sandboxID)

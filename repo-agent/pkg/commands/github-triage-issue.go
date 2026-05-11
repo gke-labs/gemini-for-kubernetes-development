@@ -148,6 +148,9 @@ func (c *GithubTriageIssueCommand) Run(ctx context.Context) error {
 		PromptFile: promptPath,
 		Models:     strings.Split(c.Model, ","),
 		AgentName:  c.AgentName,
+
+		// Traceability metadata
+		TraceabilityMetadata: tasks.PopulateTraceabilityMetadata(),
 	}
 
 	if c.ExtensionsJSON != "" {

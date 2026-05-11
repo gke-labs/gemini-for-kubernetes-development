@@ -268,6 +268,9 @@ func (c *GithubInvestigateCommand) Run(ctx context.Context) error {
 		FailedRuns:        c.failedRuns,
 		IssueComments:     filteredComments,
 		RepositoryCommits: commits,
+
+		// Traceability metadata
+		TraceabilityMetadata: tasks.PopulateTraceabilityMetadata(),
 	}
 
 	if c.ExtensionsJSON != "" {

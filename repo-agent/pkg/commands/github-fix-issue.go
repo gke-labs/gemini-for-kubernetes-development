@@ -166,6 +166,9 @@ func (c *GithubFixIssueCommand) Run(ctx context.Context) error {
 		Models:        strings.Split(c.Model, ","),
 		Branch:        os.Getenv("ISSUE_BRANCH"),
 		PRLabel:       os.Getenv("PR_LABEL"),
+
+		// Traceability metadata
+		TraceabilityMetadata: tasks.PopulateTraceabilityMetadata(),
 	}
 
 	if c.ExtensionsJSON != "" {

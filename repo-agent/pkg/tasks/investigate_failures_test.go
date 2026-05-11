@@ -40,6 +40,16 @@ func TestInvestigateFailuresPromptTemplate(t *testing.T) {
 		PullRequest   MockPR
 		FailedRuns    []MockFailedRun
 		IssueComments []MockComment
+
+		// Traceability metadata
+		SandboxTaskName      string
+		SandboxTaskNamespace string
+		SandboxTaskUID       string
+		SandboxName          string
+		RepoWatchName        string
+		TaskType             string
+		Timestamp            string
+		TraceabilityEnabled  bool
 	}{
 		PullRequest: MockPR{
 			URL:   "https://github.com/owner/repo/pull/1",
