@@ -125,6 +125,8 @@ spec:
                     - gvisor
                     - privileged
                     type: string
+                  draftPR:
+                    type: boolean
                   excludeIssues:
                     items:
                       type: integer

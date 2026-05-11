@@ -291,6 +291,10 @@ type IssueSpec struct {
 	// +kubebuilder:validation:Optional
 	RobotAccount string `json:"robotAccount,omitempty"`
 
+	// DraftPR if true, the issue handler task should create a draft PR.
+	// +kubebuilder:validation:Optional
+	DraftPR *bool `json:"draftPR,omitempty"`
+
 	// DindSupport enables docker-in-docker support for the sandbox.
 	// +kubebuilder:validation:Enum=none;gvisor;privileged
 	// +kubebuilder:default=none
