@@ -45,7 +45,7 @@ func BuildQuotaCommand() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			o.InitDefaults()
-			return o.Run(cmd.Context())
+			return RunQuota(cmd.Context(), *o)
 		},
 	}
 
@@ -54,8 +54,8 @@ func BuildQuotaCommand() *cobra.Command {
 	return cmd
 }
 
-// Run executes the quota check.
-func (o *QuotaOptions) Run(ctx context.Context) error {
+// RunQuota executes the quota check.
+func RunQuota(ctx context.Context, o QuotaOptions) error {
 	if o.ProjectID == "" {
 		return fmt.Errorf("--project is required or GOOGLE_CLOUD_PROJECT environment variable must be set")
 	}
