@@ -23,16 +23,13 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
-	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -65,7 +62,6 @@ type OverseerReconciler struct {
 //+kubebuilder:rbac:groups=custom.agents.x-k8s.io,resources=sandboxtasks/status,verbs=get;list;watch;update;patch
 //+kubebuilder:rbac:groups=configdir.gke.io,resources=configdirs;configfiles,verbs=get;list;watch
 //+kubebuilder:rbac:groups=review.gemini.google.com,resources=repowatches,verbs=get;list;watch
-//+kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
 
 const overseerFinalizer = "overseer.gemini.google.com/finalizer"
 
@@ -115,11 +111,6 @@ func (r *OverseerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 	// 2. Ensure ServiceAccount and RBAC for the overseer pod
 	if err := r.ensureOverseerRBAC(ctx, &overseerObj, nsName); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	// 3. Ensure NetworkPolicy for the sandboxes
-	if err := r.ensureNetworkPolicy(ctx, nsName); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -184,105 +175,6 @@ func (r *OverseerReconciler) reconcileDelete(ctx context.Context, o *overseerv1a
 
 	controllerutil.RemoveFinalizer(o, overseerFinalizer)
 	return ctrl.Result{}, r.Update(ctx, o)
-}
-
-func (r *OverseerReconciler) ensureNetworkPolicy(ctx context.Context, namespace string) error {
-	log := log.FromContext(ctx)
-
-	systemNamespace := os.Getenv("REPO_AGENT_SYSTEM_NAMESPACE")
-	if systemNamespace == "" {
-		systemNamespace = "repo-agent-system"
-	}
-
-	np := &networkingv1.NetworkPolicy{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "sandbox-egress",
-			Namespace: namespace,
-		},
-		Spec: networkingv1.NetworkPolicySpec{
-			PodSelector: metav1.LabelSelector{
-				MatchExpressions: []metav1.LabelSelectorRequirement{
-					{
-						Key:      "sandbox.gemini.google.com/type",
-						Operator: metav1.LabelSelectorOpExists,
-					},
-				},
-			},
-			PolicyTypes: []networkingv1.PolicyType{
-				networkingv1.PolicyTypeEgress,
-			},
-			Egress: []networkingv1.NetworkPolicyEgressRule{
-				{
-					// Allow DNS
-					To: []networkingv1.NetworkPolicyPeer{
-						{
-							NamespaceSelector: &metav1.LabelSelector{
-								MatchLabels: map[string]string{
-									"kubernetes.io/metadata.name": "kube-system",
-								},
-							},
-						},
-					},
-					Ports: []networkingv1.NetworkPolicyPort{
-						{
-							Protocol: func() *corev1.Protocol { p := corev1.ProtocolUDP; return &p }(),
-							Port:     &intstr.IntOrString{Type: intstr.Int, IntVal: 53},
-						},
-						{
-							Protocol: func() *corev1.Protocol { p := corev1.ProtocolTCP; return &p }(),
-							Port:     &intstr.IntOrString{Type: intstr.Int, IntVal: 53},
-						},
-					},
-				},
-				{
-					// Allow Local Registry and other infrastructure in repo-agent-system
-					To: []networkingv1.NetworkPolicyPeer{
-						{
-							NamespaceSelector: &metav1.LabelSelector{
-								MatchLabels: map[string]string{
-									"kubernetes.io/metadata.name": systemNamespace,
-								},
-							},
-						},
-					},
-				},
-				{
-					// Allow Public Internet (Blocks all other private IPs)
-					To: []networkingv1.NetworkPolicyPeer{
-						{
-							IPBlock: &networkingv1.IPBlock{
-								CIDR: "0.0.0.0/0",
-								Except: []string{
-									"10.0.0.0/8",
-									"172.16.0.0/12",
-									"192.168.0.0/16",
-									"169.254.0.0/16",
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-
-	existingNP := &networkingv1.NetworkPolicy{}
-	err := r.Get(ctx, types.NamespacedName{Name: "sandbox-egress", Namespace: namespace}, existingNP)
-	if err != nil {
-		if errors.IsNotFound(err) {
-			log.Info("Creating NetworkPolicy for sandboxes", "namespace", namespace)
-			return r.Create(ctx, np)
-		}
-		return err
-	}
-
-	// Update if needed
-	if !apiequality.Semantic.DeepEqual(existingNP.Spec, np.Spec) {
-		log.Info("Updating NetworkPolicy", "namespace", namespace)
-		np.ResourceVersion = existingNP.ResourceVersion
-		return r.Update(ctx, np)
-	}
-	return nil
 }
 
 func (r *OverseerReconciler) ensureOverseerRBAC(ctx context.Context, o *overseerv1alpha1.Overseer, namespace string) error {
