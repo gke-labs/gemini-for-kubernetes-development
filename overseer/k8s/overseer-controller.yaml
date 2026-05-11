@@ -107,3 +107,41 @@ spec:
           requests:
             cpu: 100m
             memory: 128Mi
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-egress
+  namespace: overseer-system
+spec:
+  podSelector:
+    matchExpressions:
+    - key: sandbox.gemini.google.com/type
+      operator: Exists
+  policyTypes:
+  - Egress
+  egress:
+  # Allow DNS to kube-system
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  # Allow Local Registry and other infrastructure in the system namespace
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: repo-agent-system
+  # Allow Public Internet (Blocks all other private IPs)
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+        except:
+        - 10.0.0.0/8
+        - 172.16.0.0/12
+        - 192.168.0.0/16
+        - 169.254.0.0/16
