@@ -1,6 +1,6 @@
 #!/bin/bash
 set -e
-set -x
+#set -x
 
 if [ ! -f /usr/local/bin/gh ]; then
     echo "creating gh wrapper script"
@@ -20,21 +20,11 @@ export PROMPT_FILE="{{ .PromptFile }}"
 
 # Use environment variables if they are set, otherwise use defaults
 # These should be set in the AgentSandbox pod
-export GITHUB_USER_ID="${GITHUB_USER_ID:-${GITHUB_USER_LOGIN}}"
-export GITHUB_USER_EMAIL="${GITHUB_USER_EMAIL}"
-export GITHUB_USER_NAME="${GITHUB_USER_NAME}"
-export GITHUB_USER_TOKEN="${GITHUB_USER_TOKEN:-${GITHUB_TOKEN}}"
+export GITHUB_USER_ID="{{ .User.UserID }}"
+export GITHUB_USER_EMAIL="{{ .User.Email }}"
+export GITHUB_USER_NAME="{{ .User.Name }}"
 
-if [ -z "$GITHUB_USER_TOKEN" ]; then
-    # Try other common names
-    GITHUB_USER_TOKEN="${MANUAL_PAT:-${OAUTH_PAT}}"
-fi
-
-if [ -n "${GITHUB_BOT_LOGIN}" ]; then
-    if [ -n "${GITHUB_BOT_TOKEN}" ] || [ -n "${GITHUB_BOT_OAUTH_PAT}" ] || [ -n "${GITHUB_BOT_MANUAL_PAT}" ]; then
-        GITHUB_USER_TOKEN="${GITHUB_BOT_TOKEN:-${GITHUB_BOT_MANUAL_PAT:-${GITHUB_BOT_OAUTH_PAT}}}"
-    fi
-fi
+source "$(dirname "$0")/github_token_helper.sh"
 
 function setupGit {
     echo "Running setupGit..."
@@ -114,7 +104,7 @@ function runGemini {
     else
         echo "Gemini execution encountered errors, but we will check for changes anyway."
     fi
-    set -x
+#set -x
 }
 
 function restoreConfigDirFiles {

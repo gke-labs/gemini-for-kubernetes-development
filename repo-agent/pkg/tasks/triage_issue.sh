@@ -17,6 +17,8 @@ fi
 
 export PROMPT_FILE="{{ .PromptFile }}"
 
+source "$(dirname "$0")/github_token_helper.sh"
+
 function configureGemini {
     echo "Running configureGemini..."
     echo "creating /root/.gemini directory"

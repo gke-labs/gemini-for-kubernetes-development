@@ -24,17 +24,7 @@ export GITHUB_USER_EMAIL="{{ .User.Email }}"
 export GITHUB_USER_NAME="{{ .User.Name }}"
 export PR_NUMBER={{ .PullRequest.Number }}
 
-export GITHUB_USER_TOKEN="${GITHUB_USER_TOKEN:-${GITHUB_TOKEN}}"
-if [ -z "$GITHUB_USER_TOKEN" ]; then
-    # Try other common names
-    GITHUB_USER_TOKEN="${MANUAL_PAT:-${OAUTH_PAT}}"
-fi
-
-if [ -n "${GITHUB_BOT_LOGIN}" ]; then
-    if [ -n "${GITHUB_BOT_TOKEN}" ] || [ -n "${GITHUB_BOT_OAUTH_PAT}" ] || [ -n "${GITHUB_BOT_MANUAL_PAT}" ]; then
-        GITHUB_USER_TOKEN="${GITHUB_BOT_TOKEN:-${GITHUB_BOT_MANUAL_PAT:-${GITHUB_BOT_OAUTH_PAT}}}"
-    fi
-fi
+source "$(dirname "$0")/github_token_helper.sh"
 
 function setupGit {
     echo "Running setupGit..."

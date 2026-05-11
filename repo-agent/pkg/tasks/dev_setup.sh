@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 set -o pipefail
-set -x
+#set -x
 
 if [ ! -f /usr/local/bin/gh ]; then
     echo "creating gh wrapper script"
@@ -24,6 +24,8 @@ export PROMPT_FILE="{{ .PromptFile }}"
 export GITHUB_USER_ID="{{ .User.UserID }}"
 export GITHUB_USER_EMAIL="{{ .User.Email }}"
 export GITHUB_USER_NAME="{{ .User.Name }}"
+
+source "$(dirname "$0")/github_token_helper.sh"
 
 function setupGit {
     echo "Running setupGit..."

@@ -59,6 +59,18 @@ func RunTask(ctx context.Context, t Task, sb *sandbox.IssueSandbox, taskDir stri
 	}
 	log.Info("Copied pre-script into sandbox", "sandbox", sb.GetSandboxID(), "path", preScriptPath)
 
+	// Copy github_token_helper.sh into sandbox
+	helperScript, err := scriptsFS.ReadFile("github_token_helper.sh")
+	if err != nil {
+		log.Error(err, "Failed to read github_token_helper.sh from embed FS")
+	} else {
+		helperPath := taskPath(taskDir, "github_token_helper.sh")
+		if err := sb.WriteXFile(helperPath, helperScript); err != nil {
+			return fmt.Errorf("copying github_token_helper.sh into sandbox: %w", err)
+		}
+		log.Info("Copied github_token_helper.sh into sandbox", "sandbox", sb.GetSandboxID(), "path", helperPath)
+	}
+
 	postScriptPath := ""
 	if postScript != nil {
 		log.Info("copying post-script into sandbox", "sandbox", sb.GetSandboxID())
