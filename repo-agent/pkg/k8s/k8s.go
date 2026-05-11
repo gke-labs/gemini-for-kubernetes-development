@@ -25,6 +25,7 @@ import (
 const (
 	OAuthPATKey  = "oauth_pat"
 	ManualPATKey = "manual_pat"
+	LegacyPATKey = "pat"
 )
 
 var (
@@ -274,8 +275,10 @@ func (m *Manager) GetGitHubToken(ctx context.Context, repoWatch *unstructured.Un
 		tokenBase64 = val
 	} else if val, ok := secretData[OAuthPATKey]; ok && val != "" {
 		tokenBase64 = val
+	} else if val, ok := secretData[LegacyPATKey]; ok && val != "" {
+		tokenBase64 = val
 	} else {
-		return "", fmt.Errorf("no GitHub token found in secret %s (checked %s and %s)", secretName, ManualPATKey, OAuthPATKey)
+		return "", fmt.Errorf("no GitHub token found in secret %s (checked %s, %s and %s)", secretName, ManualPATKey, OAuthPATKey, LegacyPATKey)
 	}
 
 	tokenBytes, err := base64.StdEncoding.DecodeString(tokenBase64)
