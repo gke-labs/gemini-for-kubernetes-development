@@ -36,8 +36,6 @@ import (
 	"golang.org/x/oauth2"
 	githuboauth "golang.org/x/oauth2/github"
 	corev1 "k8s.io/api/core/v1"
-	networkingv1 "k8s.io/api/networking/v1"
-	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -46,7 +44,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -276,7 +273,6 @@ type Reconciler struct {
 //+kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create;update;patch
 //+kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
 
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
@@ -378,12 +374,6 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 	if githubConfig["email"] != "" {
 		user.Email = github.String(githubConfig["email"])
-	}
-
-	// Ensure NetworkPolicy for the sandboxes
-	if err := r.ensureNetworkPolicy(ctx, repoWatch); err != nil {
-		log.Error(err, "unable to ensure network policy")
-		return ctrl.Result{}, err
 	}
 
 	// List Pods to check for status/eviction
@@ -2348,109 +2338,4 @@ func (r *Reconciler) reconcileSandboxPodStatus(ctx context.Context, sandbox *uns
 	}
 
 	return sandboxStatus, nil
-}
-
-func (r *Reconciler) ensureNetworkPolicy(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch) error {
-	log := log.FromContext(ctx)
-	namespace := repoWatch.Namespace
-
-	systemNamespace := os.Getenv("REPO_AGENT_SYSTEM_NAMESPACE")
-	if systemNamespace == "" {
-		systemNamespace = "repo-agent-system"
-	}
-
-	np := &networkingv1.NetworkPolicy{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "sandbox-egress",
-			Namespace: namespace,
-		},
-	}
-
-	if err := controllerutil.SetControllerReference(repoWatch, np, r.Scheme); err != nil {
-		return err
-	}
-
-	np.Spec = networkingv1.NetworkPolicySpec{
-		PodSelector: metav1.LabelSelector{
-			MatchExpressions: []metav1.LabelSelectorRequirement{
-				{
-					Key:      "sandbox.gemini.google.com/type",
-					Operator: metav1.LabelSelectorOpExists,
-				},
-			},
-		},
-		PolicyTypes: []networkingv1.PolicyType{
-			networkingv1.PolicyTypeEgress,
-		},
-		Egress: []networkingv1.NetworkPolicyEgressRule{
-			{
-				// Allow DNS
-				To: []networkingv1.NetworkPolicyPeer{
-					{
-						NamespaceSelector: &metav1.LabelSelector{
-							MatchLabels: map[string]string{
-								"kubernetes.io/metadata.name": "kube-system",
-							},
-						},
-					},
-				},
-				Ports: []networkingv1.NetworkPolicyPort{
-					{
-						Protocol: func() *corev1.Protocol { p := corev1.ProtocolUDP; return &p }(),
-						Port:     &intstr.IntOrString{Type: intstr.Int, IntVal: 53},
-					},
-					{
-						Protocol: func() *corev1.Protocol { p := corev1.ProtocolTCP; return &p }(),
-						Port:     &intstr.IntOrString{Type: intstr.Int, IntVal: 53},
-					},
-				},
-			},
-			{
-				// Allow Local Registry and other infrastructure in repo-agent-system
-				To: []networkingv1.NetworkPolicyPeer{
-					{
-						NamespaceSelector: &metav1.LabelSelector{
-							MatchLabels: map[string]string{
-								"kubernetes.io/metadata.name": systemNamespace,
-							},
-						},
-					},
-				},
-			},
-			{
-				// Allow Public Internet (Blocks all other private IPs)
-				To: []networkingv1.NetworkPolicyPeer{
-					{
-						IPBlock: &networkingv1.IPBlock{
-							CIDR: "0.0.0.0/0",
-							Except: []string{
-								"10.0.0.0/8",
-								"172.16.0.0/12",
-								"192.168.0.0/16",
-								"169.254.0.0/16",
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-
-	existingNP := &networkingv1.NetworkPolicy{}
-	err := r.Get(ctx, types.NamespacedName{Name: "sandbox-egress", Namespace: namespace}, existingNP)
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			log.Info("Creating NetworkPolicy for sandboxes", "namespace", namespace)
-			return r.Create(ctx, np)
-		}
-		return err
-	}
-
-	// Update if needed
-	if !apiequality.Semantic.DeepEqual(existingNP.Spec, np.Spec) {
-		log.Info("Updating NetworkPolicy", "namespace", namespace)
-		np.ResourceVersion = existingNP.ResourceVersion
-		return r.Update(ctx, np)
-	}
-	return nil
 }
