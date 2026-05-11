@@ -128,7 +128,7 @@ The installer performs these steps in order:
 1. Checks that `kubectl`, `helm`, `gcloud`, and `gh` are in `PATH`
 2. Runs `gcloud container clusters get-credentials` to configure `kubectl`
 3. Installs **Kyverno** (required for image-reference rewriting; skipped if already present)
-4. Installs Helm charts: Envoy Gateway, KRO, Agent Sandbox
+4. Installs Helm charts: Envoy Gateway, Agent Sandbox
 5. Applies the release manifest (`manifest.yaml`)
 6. Creates the `gemini-api-key` and `github-token` secrets
 7. Applies the [GKE compatibility fixes](#gke-specific-compatibility-fixes)
@@ -166,12 +166,6 @@ helm upgrade --install envoy-gateway \
   oci://docker.io/envoyproxy/gateway-helm \
   --version v1.5.2 \
   --namespace envoy-gateway-system --create-namespace --wait
-
-# KRO (Kubernetes Resource Orchestration)
-helm upgrade --install kro \
-  oci://registry.k8s.io/kro/charts/kro \
-  --version 0.5.1 \
-  --namespace kro --create-namespace --wait
 
 # Agent Sandbox framework
 helm upgrade --install agent-sandbox \
@@ -412,4 +406,3 @@ Delete and re-create any affected pods to force Kyverno to re-evaluate.
 | [RepoWatch CRD spec](https://github.com/gke-labs/gemini-for-kubernetes-development) | Full spec reference |
 | [Kyverno docs](https://kyverno.io/docs/) | Policy engine reference |
 | [Envoy Gateway](https://gateway.envoyproxy.io/) | Ingress controller |
-| [KRO](https://kro.run/) | Kubernetes Resource Orchestration |
