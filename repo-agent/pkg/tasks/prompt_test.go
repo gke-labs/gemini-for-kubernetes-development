@@ -46,6 +46,7 @@ type MockModel struct {
 	Extensions    []MockExtension
 	Branch        string
 	PRLabel       string
+	DraftPR       bool
 }
 
 func TestFixIssuePromptTemplate(t *testing.T) {
@@ -67,6 +68,7 @@ func TestFixIssuePromptTemplate(t *testing.T) {
 		Models:        []string{"gemini-test"},
 		User:          MockUser{UserID: "test", Email: "test@test.com", Name: "Test User"},
 		Branch:        "test-branch",
+		DraftPR:       true,
 	}
 	var w bytes.Buffer
 	if err := tmpl.Execute(&w, data); err != nil {
@@ -84,6 +86,12 @@ func TestFixIssuePromptTemplate(t *testing.T) {
 	expectedPush := `git push --force --set-upstream origin test-branch`
 	if !bytes.Contains(w.Bytes(), []byte(expectedPush)) {
 		t.Errorf("Prompt does not contain expected push command with branch. Got:\n%s", w.String())
+	}
+
+	// Verify Draft PR instruction
+	expectedDraft := `* You MUST create the PR as a **draft** PR. Use ` + "`" + `gh pr create --draft` + "`" + ` when creating the PR.`
+	if !bytes.Contains(w.Bytes(), []byte(expectedDraft)) {
+		t.Errorf("Prompt does not contain expected draft PR instruction. Got:\n%s", w.String())
 	}
 }
 
@@ -106,6 +114,7 @@ func TestFixIssuePromptTemplate_NoBranch(t *testing.T) {
 		Models:        []string{"gemini-test"},
 		User:          MockUser{UserID: "test", Email: "test@test.com", Name: "Test User"},
 		// Branch left empty
+		DraftPR: false,
 	}
 	var w bytes.Buffer
 	if err := tmpl.Execute(&w, data); err != nil {
@@ -116,6 +125,12 @@ func TestFixIssuePromptTemplate_NoBranch(t *testing.T) {
 	expected := `git push --force --set-upstream origin issue-123`
 	if !bytes.Contains(w.Bytes(), []byte(expected)) {
 		t.Errorf("Prompt does not contain expected default push command. Got:\n%s", w.String())
+	}
+
+	// Verify Draft PR instruction is NOT present
+	unexpectedDraft := `You MUST create the PR as a **draft** PR`
+	if bytes.Contains(w.Bytes(), []byte(unexpectedDraft)) {
+		t.Errorf("Prompt contains unexpected draft PR instruction. Got:\n%s", w.String())
 	}
 }
 
