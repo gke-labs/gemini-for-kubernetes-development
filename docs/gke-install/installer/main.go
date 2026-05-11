@@ -139,8 +139,9 @@ func main() {
 	steps := []step{
 		{"Check prerequisites", checkPrereqs},
 		{"Connect kubectl to GKE cluster", func(c *Config) error { return connectGKE(c) }},
+		{"Uninstall KRO (if present)", uninstallKro},
 		{"Install Kyverno", maybeInstallKyverno},
-		{"Install Helm dependencies (Envoy Gateway, KRO, Agent Sandbox)", installHelmDeps},
+		{"Install Helm dependencies (Envoy Gateway, Agent Sandbox)", installHelmDeps},
 		{"Apply release manifest (" + releaseVersion + ")", applyManifest},
 		{"Create Kubernetes secrets", createSecrets},
 		{"Apply GKE compatibility fixes (image rewriting + gh wrapper)", applyGKEFixes},
@@ -179,6 +180,15 @@ func connectGKE(cfg *Config) error {
 		cfg.Cluster, "--location", cfg.Region, "--project", cfg.Project)
 }
 
+func uninstallKro(cfg *Config) error {
+	fmt.Println("  Uninstalling KRO (if present) …")
+	// Try to uninstall via helm first
+	_ = run("helm", "uninstall", "kro", "--namespace", "kro")
+	// Then delete the namespace
+	_ = run("kubectl", "delete", "namespace", "kro", "--ignore-not-found")
+	return nil
+}
+
 func maybeInstallKyverno(cfg *Config) error {
 	if !cfg.InstallKyverno {
 		fmt.Println("  Skipping (--install-kyverno=false)")
@@ -213,10 +223,6 @@ func installHelmDeps(cfg *Config) error {
 			name: "envoy-gateway", repo: "envoyproxy",
 			chart:     "oci://docker.io/envoyproxy/gateway-helm",
 			namespace: "envoy-gateway-system", version: "v1.5.2",
-		},
-		{
-			name: "kro", chart: "oci://registry.k8s.io/kro/charts/kro",
-			namespace: "kro", version: "0.5.1",
 		},
 		{
 			name: "agent-sandbox", repo: "agent-sandbox",
