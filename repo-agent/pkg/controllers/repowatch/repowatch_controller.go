@@ -37,6 +37,7 @@ import (
 	githuboauth "golang.org/x/oauth2/github"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -380,7 +381,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 
 	// Ensure NetworkPolicy for the sandboxes
-	if err := r.ensureNetworkPolicy(ctx, repoWatch.Namespace); err != nil {
+	if err := r.ensureNetworkPolicy(ctx, repoWatch); err != nil {
 		log.Error(err, "unable to ensure network policy")
 		return ctrl.Result{}, err
 	}
@@ -2349,73 +2350,84 @@ func (r *Reconciler) reconcileSandboxPodStatus(ctx context.Context, sandbox *uns
 	return sandboxStatus, nil
 }
 
-func (r *Reconciler) ensureNetworkPolicy(ctx context.Context, namespace string) error {
+func (r *Reconciler) ensureNetworkPolicy(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch) error {
 	log := log.FromContext(ctx)
+	namespace := repoWatch.Namespace
+
+	systemNamespace := os.Getenv("REPO_AGENT_SYSTEM_NAMESPACE")
+	if systemNamespace == "" {
+		systemNamespace = "repo-agent-system"
+	}
 
 	np := &networkingv1.NetworkPolicy{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "sandbox-egress",
 			Namespace: namespace,
 		},
-		Spec: networkingv1.NetworkPolicySpec{
-			PodSelector: metav1.LabelSelector{
-				MatchExpressions: []metav1.LabelSelectorRequirement{
+	}
+
+	if err := controllerutil.SetControllerReference(repoWatch, np, r.Scheme); err != nil {
+		return err
+	}
+
+	np.Spec = networkingv1.NetworkPolicySpec{
+		PodSelector: metav1.LabelSelector{
+			MatchExpressions: []metav1.LabelSelectorRequirement{
+				{
+					Key:      "sandbox.gemini.google.com/type",
+					Operator: metav1.LabelSelectorOpExists,
+				},
+			},
+		},
+		PolicyTypes: []networkingv1.PolicyType{
+			networkingv1.PolicyTypeEgress,
+		},
+		Egress: []networkingv1.NetworkPolicyEgressRule{
+			{
+				// Allow DNS
+				To: []networkingv1.NetworkPolicyPeer{
 					{
-						Key:      "sandbox.gemini.google.com/type",
-						Operator: metav1.LabelSelectorOpExists,
-					},
-				},
-			},
-			PolicyTypes: []networkingv1.PolicyType{
-				networkingv1.PolicyTypeEgress,
-			},
-			Egress: []networkingv1.NetworkPolicyEgressRule{
-				{
-					// Allow DNS
-					To: []networkingv1.NetworkPolicyPeer{
-						{
-							NamespaceSelector: &metav1.LabelSelector{
-								MatchLabels: map[string]string{
-									"kubernetes.io/metadata.name": "kube-system",
-								},
-							},
-						},
-					},
-					Ports: []networkingv1.NetworkPolicyPort{
-						{
-							Protocol: func() *corev1.Protocol { p := corev1.ProtocolUDP; return &p }(),
-							Port:     &intstr.IntOrString{Type: intstr.Int, IntVal: 53},
-						},
-						{
-							Protocol: func() *corev1.Protocol { p := corev1.ProtocolTCP; return &p }(),
-							Port:     &intstr.IntOrString{Type: intstr.Int, IntVal: 53},
-						},
-					},
-				},
-				{
-					// Allow Local Registry and other infrastructure in repo-agent-system
-					To: []networkingv1.NetworkPolicyPeer{
-						{
-							NamespaceSelector: &metav1.LabelSelector{
-								MatchLabels: map[string]string{
-									"kubernetes.io/metadata.name": "repo-agent-system",
-								},
+						NamespaceSelector: &metav1.LabelSelector{
+							MatchLabels: map[string]string{
+								"kubernetes.io/metadata.name": "kube-system",
 							},
 						},
 					},
 				},
-				{
-					// Allow Public Internet (Blocks all other private IPs)
-					To: []networkingv1.NetworkPolicyPeer{
-						{
-							IPBlock: &networkingv1.IPBlock{
-								CIDR: "0.0.0.0/0",
-								Except: []string{
-									"10.0.0.0/8",
-									"172.16.0.0/12",
-									"192.168.0.0/16",
-									"169.254.0.0/16",
-								},
+				Ports: []networkingv1.NetworkPolicyPort{
+					{
+						Protocol: func() *corev1.Protocol { p := corev1.ProtocolUDP; return &p }(),
+						Port:     &intstr.IntOrString{Type: intstr.Int, IntVal: 53},
+					},
+					{
+						Protocol: func() *corev1.Protocol { p := corev1.ProtocolTCP; return &p }(),
+						Port:     &intstr.IntOrString{Type: intstr.Int, IntVal: 53},
+					},
+				},
+			},
+			{
+				// Allow Local Registry and other infrastructure in repo-agent-system
+				To: []networkingv1.NetworkPolicyPeer{
+					{
+						NamespaceSelector: &metav1.LabelSelector{
+							MatchLabels: map[string]string{
+								"kubernetes.io/metadata.name": systemNamespace,
+							},
+						},
+					},
+				},
+			},
+			{
+				// Allow Public Internet (Blocks all other private IPs)
+				To: []networkingv1.NetworkPolicyPeer{
+					{
+						IPBlock: &networkingv1.IPBlock{
+							CIDR: "0.0.0.0/0",
+							Except: []string{
+								"10.0.0.0/8",
+								"172.16.0.0/12",
+								"192.168.0.0/16",
+								"169.254.0.0/16",
 							},
 						},
 					},
@@ -2435,6 +2447,10 @@ func (r *Reconciler) ensureNetworkPolicy(ctx context.Context, namespace string) 
 	}
 
 	// Update if needed
-	np.ResourceVersion = existingNP.ResourceVersion
-	return r.Update(ctx, np)
+	if !apiequality.Semantic.DeepEqual(existingNP.Spec, np.Spec) {
+		log.Info("Updating NetworkPolicy", "namespace", namespace)
+		np.ResourceVersion = existingNP.ResourceVersion
+		return r.Update(ctx, np)
+	}
+	return nil
 }

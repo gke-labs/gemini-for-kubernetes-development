@@ -167,7 +167,12 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 	env = append(env, buildLLMEnvVars(opt.DevSandboxOptions)...)
 
 	env = append(env,
-		map[string]interface{}{"name": "ENVBUILDER_CACHE_REPO", "value": "registry.repo-agent-system.svc.cluster.local:5000/envbuilder-cache"},
+		map[string]interface{}{"name": "ENVBUILDER_CACHE_REPO", "value": fmt.Sprintf("registry.%s.svc.cluster.local:5000/envbuilder-cache", func() string {
+			if ns := os.Getenv("REPO_AGENT_SYSTEM_NAMESPACE"); ns != "" {
+				return ns
+			}
+			return "repo-agent-system"
+		}())},
 		map[string]interface{}{"name": "ENVBUILDER_DEVCONTAINER_DIR", "value": "/"},
 		map[string]interface{}{"name": "ENVBUILDER_GIT_CLONE_SINGLE_BRANCH", "value": "true"},
 		map[string]interface{}{"name": "ENVBUILDER_INIT_SCRIPT", "value": RepoSandboxBinary + " review-daemon"},
@@ -218,6 +223,12 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 		})
 	}
 
+	podLabels := make(map[string]interface{})
+	for k, v := range labels {
+		podLabels[k] = v
+	}
+	podLabels["sandbox"] = sandboxName
+
 	sandbox := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "agents.x-k8s.io/v1alpha1",
@@ -232,14 +243,7 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 				"replicas": int64(1),
 				"podTemplate": map[string]interface{}{
 					"metadata": map[string]interface{}{
-						"labels": func() map[string]interface{} {
-							l := make(map[string]interface{})
-							for k, v := range labels {
-								l[k] = v
-							}
-							l["sandbox"] = sandboxName
-							return l
-						}(),
+						"labels": podLabels,
 					},
 					"spec": map[string]interface{}{
 						"serviceAccountName": opt.ServiceAccountName,

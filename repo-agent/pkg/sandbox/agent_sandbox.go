@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"strconv"
 
@@ -188,7 +189,12 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 		map[string]interface{}{"name": "GIT_PUSH_ENABLED", "value": strconv.FormatBool(opt.PushEnabled)},
 		map[string]interface{}{"name": "GIT_CLONE_URL", "value": opt.CloneURL},
 		map[string]interface{}{"name": "ENVBUILDER_GIT_URL", "value": opt.CloneURL},
-		map[string]interface{}{"name": "ENVBUILDER_CACHE_REPO", "value": "registry.repo-agent-system.svc.cluster.local:5000/envbuilder-cache"},
+		map[string]interface{}{"name": "ENVBUILDER_CACHE_REPO", "value": fmt.Sprintf("registry.%s.svc.cluster.local:5000/envbuilder-cache", func() string {
+			if ns := os.Getenv("REPO_AGENT_SYSTEM_NAMESPACE"); ns != "" {
+				return ns
+			}
+			return "repo-agent-system"
+		}())},
 		map[string]interface{}{"name": "ENVBUILDER_DEVCONTAINER_DIR", "value": "/"},
 		map[string]interface{}{"name": "ENVBUILDER_INIT_SCRIPT", "value": RepoSandboxBinary + " dev-daemon"},
 		map[string]interface{}{"name": "ENVBUILDER_IGNORE_PATHS", "value": "/var/run,/product_uuid,/product_name,/tokens,/repo-agent/"},

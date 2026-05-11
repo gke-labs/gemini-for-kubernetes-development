@@ -19,11 +19,13 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -33,6 +35,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	overseerv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/overseer/pkg/api/v1alpha1"
@@ -64,6 +67,8 @@ type OverseerReconciler struct {
 //+kubebuilder:rbac:groups=review.gemini.google.com,resources=repowatches,verbs=get;list;watch
 //+kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
 
+const overseerFinalizer = "overseer.gemini.google.com/finalizer"
+
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
 func (r *OverseerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -72,6 +77,19 @@ func (r *OverseerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	var overseerObj overseerv1alpha1.Overseer
 	if err := r.Get(ctx, req.NamespacedName, &overseerObj); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	// Handle deletion
+	if !overseerObj.DeletionTimestamp.IsZero() {
+		return r.reconcileDelete(ctx, &overseerObj)
+	}
+
+	// Add finalizer if not present
+	if !controllerutil.ContainsFinalizer(&overseerObj, overseerFinalizer) {
+		controllerutil.AddFinalizer(&overseerObj, overseerFinalizer)
+		if err := r.Update(ctx, &overseerObj); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 
 	// 1. Ensure Namespace exists
@@ -150,8 +168,31 @@ func (r *OverseerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	return ctrl.Result{}, nil
 }
 
+func (r *OverseerReconciler) reconcileDelete(ctx context.Context, o *overseerv1alpha1.Overseer) (ctrl.Result, error) {
+	nsName := fmt.Sprintf("overseer-%s", o.Name)
+	if len(nsName) > 63 {
+		nsName = nsName[:63]
+	}
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: nsName,
+		},
+	}
+	if err := r.Delete(ctx, ns); err != nil && !errors.IsNotFound(err) {
+		return ctrl.Result{}, err
+	}
+
+	controllerutil.RemoveFinalizer(o, overseerFinalizer)
+	return ctrl.Result{}, r.Update(ctx, o)
+}
+
 func (r *OverseerReconciler) ensureNetworkPolicy(ctx context.Context, namespace string) error {
 	log := log.FromContext(ctx)
+
+	systemNamespace := os.Getenv("REPO_AGENT_SYSTEM_NAMESPACE")
+	if systemNamespace == "" {
+		systemNamespace = "repo-agent-system"
+	}
 
 	np := &networkingv1.NetworkPolicy{
 		ObjectMeta: metav1.ObjectMeta{
@@ -199,7 +240,7 @@ func (r *OverseerReconciler) ensureNetworkPolicy(ctx context.Context, namespace 
 						{
 							NamespaceSelector: &metav1.LabelSelector{
 								MatchLabels: map[string]string{
-									"kubernetes.io/metadata.name": "repo-agent-system",
+									"kubernetes.io/metadata.name": systemNamespace,
 								},
 							},
 						},
@@ -235,9 +276,13 @@ func (r *OverseerReconciler) ensureNetworkPolicy(ctx context.Context, namespace 
 		return err
 	}
 
-	// Update if needed (optional, but good for keeping it in sync)
-	np.ResourceVersion = existingNP.ResourceVersion
-	return r.Update(ctx, np)
+	// Update if needed
+	if !apiequality.Semantic.DeepEqual(existingNP.Spec, np.Spec) {
+		log.Info("Updating NetworkPolicy", "namespace", namespace)
+		np.ResourceVersion = existingNP.ResourceVersion
+		return r.Update(ctx, np)
+	}
+	return nil
 }
 
 func (r *OverseerReconciler) ensureOverseerRBAC(ctx context.Context, o *overseerv1alpha1.Overseer, namespace string) error {
@@ -393,6 +438,11 @@ func (r *OverseerReconciler) ensureOverseerRBAC(ctx context.Context, o *overseer
 }
 
 func (r *OverseerReconciler) ensureSecrets(ctx context.Context, o *overseerv1alpha1.Overseer, targetNamespace string) error {
+	systemNamespace := os.Getenv("REPO_AGENT_SYSTEM_NAMESPACE")
+	if systemNamespace == "" {
+		systemNamespace = "repo-agent-system"
+	}
+
 	secretsToCopy := []string{o.Spec.RobotAccount, o.Spec.GeminiAPIKeySecretName, "tokenscript"}
 	for _, name := range secretsToCopy {
 		if name == "" {
@@ -409,13 +459,13 @@ func (r *OverseerReconciler) ensureSecrets(ctx context.Context, o *overseerv1alp
 			return err
 		}
 		// Not found, try copying from fallback namespaces
-		if err := r.copySecret(ctx, name, []string{o.Namespace, "overseer-system", "repo-agent-system"}, targetNamespace); err != nil {
+		if err := r.copySecret(ctx, name, []string{o.Namespace, "overseer-system", systemNamespace}, targetNamespace); err != nil {
 			if errors.IsNotFound(err) {
 				if name == "tokenscript" {
 					continue // tokenscript is optional
 				}
 				o.Status.OverseerStatus = "Error"
-				o.Status.Message = fmt.Sprintf("Secret %s not found in %s, overseer-system, or repo-agent-system", name, targetNamespace)
+				o.Status.Message = fmt.Sprintf("Secret %s not found in %s, overseer-system, or %s", name, targetNamespace, systemNamespace)
 				return nil // Don't return error to stop reconcile but update status
 			}
 			return err
