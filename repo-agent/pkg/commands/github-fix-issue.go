@@ -30,6 +30,7 @@ type GithubFixIssueCommand struct {
 	TaskDir         string
 	Model           string
 	ExtensionsJSON  string
+	DraftPR         bool
 
 	// loaded objects
 	issue     *github.Issue
@@ -67,6 +68,7 @@ func BuildGithubFixIssueCommand() *cobra.Command {
 	cmd.Flags().StringVar(&fixCommand.Model, "model", os.Getenv("MODEL"), "Model to use")
 	cmd.Flags().StringVar(&fixCommand.ExtensionsJSON, "extensions", os.Getenv("AGENT_LLM_EXTENSIONS"), "Extensions JSON")
 	cmd.Flags().BoolVar(&fixCommand.InPod, "in-pod", false, "Whether running inside the pod")
+	cmd.Flags().BoolVar(&fixCommand.DraftPR, "draft-pr", os.Getenv("DRAFT_PR") == "true", "Create a draft PR")
 	return cmd
 }
 
@@ -140,7 +142,7 @@ func (c *GithubFixIssueCommand) loadSandbox(ctx context.Context) error {
 	return nil
 }
 
-// RunGithubFixIssue launches VS Code connected to the specified dev sandbox.
+// Run launches the fix-issue task.
 func (c *GithubFixIssueCommand) Run(ctx context.Context) error {
 	log := klog.FromContext(ctx)
 	log.Info("Starting github-fix-issue task", "taskdir", c.TaskDir)
@@ -166,6 +168,7 @@ func (c *GithubFixIssueCommand) Run(ctx context.Context) error {
 		Models:        strings.Split(c.Model, ","),
 		Branch:        os.Getenv("ISSUE_BRANCH"),
 		PRLabel:       os.Getenv("PR_LABEL"),
+		DraftPR:       c.DraftPR,
 	}
 
 	if c.ExtensionsJSON != "" {

@@ -124,6 +124,11 @@ func (in *IssueSpec) DeepCopyInto(out *IssueSpec) {
 		copy(*out, *in)
 	}
 	in.LLM.DeepCopyInto(&out.LLM)
+	if in.DraftPR != nil {
+		in, out := &in.DraftPR, &out.DraftPR
+		*out = new(bool)
+		**out = **in
+	}
 	if in.Models != nil {
 		in, out := &in.Models, &out.Models
 		*out = make([]string, len(*in))
