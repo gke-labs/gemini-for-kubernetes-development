@@ -12,18 +12,18 @@ func TestProjectedTokens(t *testing.T) {
 	}{
 		{
 			name:                "DefaultSecrets",
-			llmAPIKeySecretName: "gemini-vscode-tokens",
-			expectedSources:     []string{"gemini-vscode-tokens", "anthropic-api-key"},
+			llmAPIKeySecretName: "gemini-api-key",
+			expectedSources:     []string{"gemini-api-key", "anthropic-api-key"},
 		},
 		{
 			name:                "CustomSecret",
 			llmAPIKeySecretName: "custom-secret",
-			expectedSources:     []string{"custom-secret", "gemini-vscode-tokens", "anthropic-api-key"},
+			expectedSources:     []string{"custom-secret", "gemini-api-key", "anthropic-api-key"},
 		},
 		{
 			name:                "ClaudeSecret",
 			llmAPIKeySecretName: "anthropic-api-key",
-			expectedSources:     []string{"anthropic-api-key", "gemini-vscode-tokens"},
+			expectedSources:     []string{"anthropic-api-key", "gemini-api-key"},
 		},
 	}
 
@@ -103,7 +103,7 @@ func TestEnvAPIKeys(t *testing.T) {
 	env := container["env"].([]interface{})
 
 	expectedEnv := map[string]string{
-		"GEMINI_API_KEY":    "gemini-vscode-tokens",
+		"GEMINI_API_KEY":    "gemini-api-key",
 		"ANTHROPIC_API_KEY": "anthropic-api-key",
 	}
 
