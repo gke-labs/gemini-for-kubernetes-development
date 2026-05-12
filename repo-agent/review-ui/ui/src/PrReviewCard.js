@@ -747,6 +747,8 @@ function PrReviewCard({
   const [showNewTaskForm, setShowNewTaskForm] = useState(false);
   const [newTaskPrompt, setNewTaskPrompt] = useState('');
   const [expectedComments, setExpectedComments] = useState(0);
+  const [maxReviewFiles, setMaxReviewFiles] = useState(0);
+  const [ignoreFiles, setIgnoreFiles] = useState('');
   const [selectedModel, setSelectedModel] = useState('gemini-3.1-pro-preview');
   const lastDragTargetRef = useRef(null);
 
@@ -819,7 +821,9 @@ function PrReviewCard({
           body: JSON.stringify({ 
               prompt: newTaskPrompt, 
               expectedComments: expectedComments,
-              model: selectedModel
+              model: selectedModel,
+              maxReviewFiles: maxReviewFiles,
+              ignoreFiles: ignoreFiles ? ignoreFiles.split(',').map(s => s.trim()).filter(Boolean) : []
           })
       })
       .then(res => {
@@ -827,6 +831,8 @@ function PrReviewCard({
               setShowNewTaskForm(false);
               setNewTaskPrompt('');
               setExpectedComments(0);
+              setMaxReviewFiles(0);
+              setIgnoreFiles('');
               fetchTasks();
           } else {
               res.text().then(t => alert("Failed to create task: " + t));
@@ -1033,7 +1039,7 @@ function PrReviewCard({
                                     min="0" 
                                     max="50" 
                                     value={expectedComments} 
-                                    onChange={(e) => setExpectedComments(parseInt(e.target.value))}
+                                    onChange={(e) => setExpectedComments(parseInt(e.target.value) || 0)}
                                     style={{width: '100%'}}
                                 />
                                 <div style={{display: 'flex', justifyContent: 'space-between', fontSize: 'small', color: 'var(--text-secondary)'}}>
@@ -1050,6 +1056,26 @@ function PrReviewCard({
                                 >
                                     {reviewModels.map(m => <option key={m} value={m}>{m}</option>)}
                                 </select>
+                            </div>
+                            <div style={{marginBottom: '10px'}}>
+                                <label style={{fontSize: 'small', color: 'var(--text-secondary)', display: 'block', marginBottom: '5px'}}>Max Review Files (0 for default):</label>
+                                <input 
+                                    type="number" 
+                                    value={maxReviewFiles} 
+                                    onChange={(e) => setMaxReviewFiles(parseInt(e.target.value) || 0)}
+                                    style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-primary)', color: 'var(--text-primary)'}}
+                                    placeholder="e.g. 150"
+                                />
+                            </div>
+                            <div style={{marginBottom: '10px'}}>
+                                <label style={{fontSize: 'small', color: 'var(--text-secondary)', display: 'block', marginBottom: '5px'}}>Ignore Files (comma separated):</label>
+                                <input 
+                                    type="text" 
+                                    value={ignoreFiles} 
+                                    onChange={(e) => setIgnoreFiles(e.target.value)}
+                                    style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-primary)', color: 'var(--text-primary)'}}
+                                    placeholder="e.g. vendor/**, *.lock"
+                                />
                             </div>
                             <textarea 
                                 className="review-textarea"

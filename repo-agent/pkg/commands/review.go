@@ -123,7 +123,7 @@ func (c *ReviewCommand) InitDefaults() {
 		c.DiffURL = os.Getenv("GIT_DIFF_URL")
 	}
 	if c.MaxReviewFiles == 0 {
-		maxReviewFilesStr := os.Getenv("MAX_REVIEW_FILES")
+		maxReviewFilesStr := strings.TrimSpace(os.Getenv("MAX_REVIEW_FILES"))
 		if maxReviewFilesStr != "" {
 			val, err := strconv.Atoi(maxReviewFilesStr)
 			if err != nil {
@@ -137,7 +137,7 @@ func (c *ReviewCommand) InitDefaults() {
 		}
 	}
 	if c.ExpectedComments == 0 {
-		expectedCommentsStr := os.Getenv("EXPECTED_COMMENTS")
+		expectedCommentsStr := strings.TrimSpace(os.Getenv("EXPECTED_COMMENTS"))
 		if expectedCommentsStr != "" {
 			val, err := strconv.Atoi(expectedCommentsStr)
 			if err != nil {
@@ -150,7 +150,12 @@ func (c *ReviewCommand) InitDefaults() {
 	if len(c.IgnoreFiles) == 0 {
 		ignoreFilesStr := os.Getenv("IGNORE_FILES")
 		if ignoreFilesStr != "" {
-			c.IgnoreFiles = strings.Split(ignoreFilesStr, ",")
+			parts := strings.Split(ignoreFilesStr, ",")
+			for _, p := range parts {
+				if t := strings.TrimSpace(p); t != "" {
+					c.IgnoreFiles = append(c.IgnoreFiles, t)
+				}
+			}
 		}
 	}
 	if c.SeverityThreshold == "" {

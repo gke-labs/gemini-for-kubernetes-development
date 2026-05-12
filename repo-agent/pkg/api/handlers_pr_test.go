@@ -207,4 +207,126 @@ func TestCreatePRTask(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("Create task with explicit maxReviewFiles and ignoreFiles", func(t *testing.T) {
+		// Create the Sandbox for a different PR
+		sandbox := &unstructured.Unstructured{
+			Object: map[string]interface{}{
+				"apiVersion": "agents.x-k8s.io/v1alpha1",
+				"kind":       "Sandbox",
+				"metadata": map[string]interface{}{
+					"name":      "test-repo-pr-125",
+					"namespace": "default",
+				},
+			},
+		}
+		_, err := dynamicClient.Resource(gvrSandbox).Namespace("default").Create(context.Background(), sandbox, v1.CreateOptions{})
+		if err != nil {
+			t.Fatalf("Failed to create review sandbox: %v", err)
+		}
+
+		payload := map[string]interface{}{
+			"prompt":         "Test Filter Prompt",
+			"maxReviewFiles": 50,
+			"ignoreFiles":    []string{"internal/**", "experimental/**"},
+		}
+		jsonValue, _ := json.Marshal(payload)
+		req, _ := http.NewRequest("POST", "/repo/test-repo/prs/125/tasks", bytes.NewBuffer(jsonValue))
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d. Body: %s", w.Code, w.Body.String())
+		}
+
+		gvr := schema.GroupVersionResource{
+			Group:    "custom.agents.x-k8s.io",
+			Version:  "v1alpha1",
+			Resource: "sandboxtasks",
+		}
+		list, err := dynamicClient.Resource(gvr).Namespace("default").List(context.Background(), v1.ListOptions{})
+		if err != nil {
+			t.Fatalf("Failed to list tasks: %v", err)
+		}
+
+		var foundTask *unstructured.Unstructured
+		for _, item := range list.Items {
+			params, _, _ := unstructured.NestedMap(item.Object, "spec", "params")
+			if params["AGENT_PROMPT"] == "Test Filter Prompt" {
+				foundTask = &item
+				break
+			}
+		}
+		if foundTask == nil {
+			t.Fatalf("Task with prompt 'Test Filter Prompt' not found")
+		}
+		params, _, _ := unstructured.NestedMap(foundTask.Object, "spec", "params")
+		if params["MAX_REVIEW_FILES"] != "50" {
+			t.Errorf("Expected MAX_REVIEW_FILES '50', got %v", params["MAX_REVIEW_FILES"])
+		}
+		if params["IGNORE_FILES"] != "internal/**,experimental/**" {
+			t.Errorf("Expected IGNORE_FILES 'internal/**,experimental/**', got %v", params["IGNORE_FILES"])
+		}
+	})
+
+	t.Run("Create task with fallback to RepoWatch", func(t *testing.T) {
+		// Create the Sandbox for a different PR
+		sandbox := &unstructured.Unstructured{
+			Object: map[string]interface{}{
+				"apiVersion": "agents.x-k8s.io/v1alpha1",
+				"kind":       "Sandbox",
+				"metadata": map[string]interface{}{
+					"name":      "test-repo-pr-126",
+					"namespace": "default",
+				},
+			},
+		}
+		_, err := dynamicClient.Resource(gvrSandbox).Namespace("default").Create(context.Background(), sandbox, v1.CreateOptions{})
+		if err != nil {
+			t.Fatalf("Failed to create review sandbox: %v", err)
+		}
+
+		payload := map[string]interface{}{
+			"prompt":         "Test Fallback Prompt",
+			"maxReviewFiles": 0, // Should fallback to RepoWatch
+			// ignoreFiles omitted, should fallback to RepoWatch
+		}
+		jsonValue, _ := json.Marshal(payload)
+		req, _ := http.NewRequest("POST", "/repo/test-repo/prs/126/tasks", bytes.NewBuffer(jsonValue))
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d. Body: %s", w.Code, w.Body.String())
+		}
+
+		gvr := schema.GroupVersionResource{
+			Group:    "custom.agents.x-k8s.io",
+			Version:  "v1alpha1",
+			Resource: "sandboxtasks",
+		}
+		list, err := dynamicClient.Resource(gvr).Namespace("default").List(context.Background(), v1.ListOptions{})
+		if err != nil {
+			t.Fatalf("Failed to list tasks: %v", err)
+		}
+
+		var foundTask *unstructured.Unstructured
+		for _, item := range list.Items {
+			params, _, _ := unstructured.NestedMap(item.Object, "spec", "params")
+			if params["AGENT_PROMPT"] == "Test Fallback Prompt" {
+				foundTask = &item
+				break
+			}
+		}
+		if foundTask == nil {
+			t.Fatalf("Task with prompt 'Test Fallback Prompt' not found")
+		}
+		params, _, _ := unstructured.NestedMap(foundTask.Object, "spec", "params")
+		if params["MAX_REVIEW_FILES"] != "10" {
+			t.Errorf("Expected MAX_REVIEW_FILES '10' from RepoWatch, got %v", params["MAX_REVIEW_FILES"])
+		}
+		if params["IGNORE_FILES"] != "*.lock,*.pdf" {
+			t.Errorf("Expected IGNORE_FILES '*.lock,*.pdf' from RepoWatch, got %v", params["IGNORE_FILES"])
+		}
+	})
 }
