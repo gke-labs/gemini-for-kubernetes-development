@@ -25,6 +25,7 @@ type GithubFeedbackCommand struct {
 	Sandbox         string
 	AgentName       string
 	GithubUserLogin string
+	GithubBotLogin  string
 	GithubUserEmail string
 	GithubUserName  string
 	GithubUserToken string
@@ -33,8 +34,11 @@ type GithubFeedbackCommand struct {
 	TaskDir         string
 	Model           string
 	ExtensionsJSON  string
+	// Maintainers is a comma-separated list of GitHub usernames who are allowed to provide feedback.
+	Maintainers string
 
 	// loaded objects
+	maintainers   []string
 	issue         *github.Issue
 	repo          *github.Repository
 	pullRequest   *github.PullRequest
@@ -75,10 +79,12 @@ func BuildGithubFeedbackCommand() *cobra.Command {
 	cmd.Flags().StringVar(&c.URL, "issue-url", os.Getenv("ISSUE_URL"), "GitHub issue URL")
 	cmd.Flags().StringVar(&c.AgentName, "agent-name", os.Getenv("AGENT_NAME"), "Agent name")
 	cmd.Flags().StringVar(&c.GithubUserLogin, "github-user-login", os.Getenv("GITHUB_USER_LOGIN"), "Github user login")
+	cmd.Flags().StringVar(&c.GithubBotLogin, "github-bot-login", os.Getenv("GITHUB_BOT_LOGIN"), "Github bot login")
 	cmd.Flags().StringVar(&c.GithubUserEmail, "github-user-email", os.Getenv("GITHUB_USER_EMAIL"), "Github user email")
 	cmd.Flags().StringVar(&c.GithubUserName, "github-user-name", os.Getenv("GITHUB_USER_NAME"), "Github user name")
 	cmd.Flags().StringVar(&c.Model, "model", os.Getenv("MODEL"), "Model to use")
 	cmd.Flags().StringVar(&c.ExtensionsJSON, "extensions", os.Getenv("AGENT_LLM_EXTENSIONS"), "Extensions JSON")
+	cmd.Flags().StringVar(&c.Maintainers, "maintainers", os.Getenv("MAINTAINERS"), "Comma-separated list of maintainers")
 	cmd.Flags().BoolVar(&c.InPod, "in-pod", false, "Whether running inside the pod")
 
 	return cmd
@@ -101,6 +107,10 @@ func (c *GithubFeedbackCommand) InitDefaults() {
 
 	if c.Model == "" {
 		c.Model = "gemini-3.1-pro-preview"
+	}
+
+	if c.GithubBotLogin == "" {
+		c.GithubBotLogin = os.Getenv("GITHUB_BOT_LOGIN")
 	}
 
 	if c.PullRequestID == 0 {
@@ -219,10 +229,51 @@ func (c *GithubFeedbackCommand) loadSandbox(ctx context.Context) error {
 	return nil
 }
 
+func (c *GithubFeedbackCommand) isAuthorized(author string, association string) bool {
+	if author == "" {
+		return false
+	}
+	// Always authorize the agent's own account (user login or bot login) so it retains its conversational memory
+	if c.GithubUserLogin != "" && strings.EqualFold(author, c.GithubUserLogin) {
+		return true
+	}
+	if c.GithubBotLogin != "" && strings.EqualFold(author, c.GithubBotLogin) {
+		return true
+	}
+	// Always authorize the issue author
+	if c.issue != nil && strings.EqualFold(author, c.issue.Author()) {
+		return true
+	}
+	// Always authorize the PR author
+	if c.pullRequest != nil && strings.EqualFold(author, c.pullRequest.Author()) {
+		return true
+	}
+	// Authorize by association
+	if association == "OWNER" || association == "MEMBER" || association == "COLLABORATOR" {
+		return true
+	}
+	// Authorize maintainers
+	for _, m := range c.maintainers {
+		if strings.EqualFold(m, author) {
+			return true
+		}
+	}
+	return false
+}
+
 // RunGithubFeedback launches gemini-cli to respond to the specified GitHub pull request feedback.
 func (c *GithubFeedbackCommand) Run(ctx context.Context) error {
 	log := klog.FromContext(ctx)
 	log.Info("Starting github-feedback task", "taskdir", c.TaskDir)
+
+	if c.Maintainers != "" {
+		for _, m := range strings.Split(c.Maintainers, ",") {
+			trimmed := strings.TrimSpace(m)
+			if trimmed != "" {
+				c.maintainers = append(c.maintainers, trimmed)
+			}
+		}
+	}
 
 	err := c.loadGithubObjects(ctx)
 	if err != nil {
@@ -234,7 +285,7 @@ func (c *GithubFeedbackCommand) Run(ctx context.Context) error {
 		return err
 	}
 
-	// Filter comments and reviews based on last commit time
+	// Filter comments and reviews based on last commit time and author authorization
 	var lastCommitTime time.Time
 	for _, commit := range c.repoCommits {
 		if t := commit.CommittedAt(); t.After(lastCommitTime) {
@@ -244,6 +295,10 @@ func (c *GithubFeedbackCommand) Run(ctx context.Context) error {
 
 	var newIssueComments, oldIssueComments []github.IssueComment
 	for _, comment := range c.issueComments {
+		if !c.isAuthorized(comment.UserLogin(), comment.AuthorAssociation()) {
+			log.V(2).Info("Ignoring comment from side actor", "author", comment.UserLogin(), "association", comment.AuthorAssociation(), "pr", c.PullRequestID)
+			continue
+		}
 		if comment.CreatedAt().Before(lastCommitTime) {
 			oldIssueComments = append(oldIssueComments, comment)
 		} else {
@@ -253,6 +308,10 @@ func (c *GithubFeedbackCommand) Run(ctx context.Context) error {
 
 	var newPrReviews, oldPrReviews []github.PullRequestReview
 	for _, review := range c.prReviews {
+		if !c.isAuthorized(review.UserLogin(), review.AuthorAssociation()) {
+			log.V(2).Info("Ignoring review from side actor", "author", review.UserLogin(), "association", review.AuthorAssociation(), "pr", c.PullRequestID)
+			continue
+		}
 		if review.SubmittedAt().Before(lastCommitTime) {
 			oldPrReviews = append(oldPrReviews, review)
 		} else {

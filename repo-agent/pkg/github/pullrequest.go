@@ -76,3 +76,7 @@ func (p *PullRequest) Body() string {
 func (p *PullRequest) HeadRef() string {
 	return p.pr.GetHead().GetRef()
 }
+
+func (p *PullRequest) Author() string {
+	return p.pr.GetUser().GetLogin()
+}

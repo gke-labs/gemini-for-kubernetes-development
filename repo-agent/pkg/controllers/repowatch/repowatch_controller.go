@@ -2003,7 +2003,7 @@ func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *revi
 	}
 
 	// Check for new feedback
-	hasNew, latestFeedbackTime, err := r.hasNewFeedback(ctx, ghClient, owner, repo, pr, issue, latestCommitTime, latestCommitAuthorLogin)
+	hasNew, latestFeedbackTime, err := r.hasNewFeedback(ctx, repoWatch, ghClient, owner, repo, pr, issue, latestCommitTime, latestCommitAuthorLogin)
 	if err != nil {
 		log.Error(err, "checking for new feedback", "pr", pr.Number)
 		return nil
@@ -2021,6 +2021,22 @@ func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *revi
 			"PULL_REQUEST_ID": fmt.Sprintf("%d", *pr.Number),
 			"ISSUE_URL":       *issue.HTMLURL,
 			"AGENT_PROMPT":    repoWatch.Spec.Issue.LLM.Prompt,
+		}
+		if len(repoWatch.Spec.Maintainers) > 0 {
+			var maintainers []string
+			for _, m := range repoWatch.Spec.Maintainers {
+				trimmed := strings.TrimSpace(m)
+				if trimmed != "" {
+					if strings.Contains(trimmed, ",") {
+						log.Error(fmt.Errorf("maintainer username %q contains a comma and will be skipped; ensure maintainers are provided as a YAML list, not a comma-separated string", trimmed), "invalid maintainer configuration", "repowatch", repoWatch.Name)
+						continue
+					}
+					maintainers = append(maintainers, trimmed)
+				}
+			}
+			if len(maintainers) > 0 {
+				params["MAINTAINERS"] = strings.Join(maintainers, ",")
+			}
 		}
 		// Add LLM params
 		if repoWatch.Spec.Issue.LLM.Provider != "" {
@@ -2229,9 +2245,47 @@ func (r *Reconciler) getLinkedPRFromSandbox(ctx context.Context, ghClient *githu
 	return nil, nil
 }
 
-func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client, owner, repo string, pr *github.PullRequest, issue *github.Issue, since time.Time, latestCommitAuthorLogin string) (bool, time.Time, error) {
+func (r *Reconciler) isAuthorized(author string, association string, repoWatch *reviewv1alpha1.RepoWatch, issue *github.Issue, pr *github.PullRequest) bool {
+	if author == "" {
+		return false
+	}
+	// Always authorize the issue author
+	if issue != nil && issue.User != nil && strings.EqualFold(issue.User.GetLogin(), author) {
+		return true
+	}
+	// Always authorize the PR author
+	if pr != nil && pr.User != nil && strings.EqualFold(pr.User.GetLogin(), author) {
+		return true
+	}
+	// Authorize by association
+	if association == "OWNER" || association == "MEMBER" || association == "COLLABORATOR" {
+		return true
+	}
+	// Authorize maintainers
+	for _, m := range repoWatch.Spec.Maintainers {
+		if strings.EqualFold(strings.TrimSpace(m), author) {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *Reconciler) hasNewFeedback(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, ghClient *github.Client, owner, repo string, pr *github.PullRequest, issue *github.Issue, since time.Time, latestCommitAuthorLogin string) (bool, time.Time, error) {
 	var latestFeedbackTime time.Time
 	found := false
+
+	checkFeedback := func(author string, association string, createdAt time.Time) {
+		if author == latestCommitAuthorLogin {
+			return
+		}
+		if !r.isAuthorized(author, association, repoWatch, issue, pr) {
+			return
+		}
+		found = true
+		if createdAt.After(latestFeedbackTime) {
+			latestFeedbackTime = createdAt
+		}
+	}
 
 	// Check PR comments
 	comments, _, err := ghClient.Issues.ListComments(ctx, owner, repo, *pr.Number, &github.IssueListCommentsOptions{
@@ -2242,13 +2296,7 @@ func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client
 	}
 	for _, c := range comments {
 		if c.CreatedAt != nil && c.CreatedAt.After(since) {
-			if c.User.GetLogin() == latestCommitAuthorLogin {
-				continue
-			}
-			found = true
-			if c.CreatedAt.After(latestFeedbackTime) {
-				latestFeedbackTime = *c.CreatedAt
-			}
+			checkFeedback(c.User.GetLogin(), c.GetAuthorAssociation(), *c.CreatedAt)
 		}
 	}
 
@@ -2259,13 +2307,7 @@ func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client
 	}
 	for _, rev := range reviews {
 		if rev.SubmittedAt != nil && rev.SubmittedAt.After(since) {
-			if rev.User.GetLogin() == latestCommitAuthorLogin {
-				continue
-			}
-			found = true
-			if rev.SubmittedAt.After(latestFeedbackTime) {
-				latestFeedbackTime = *rev.SubmittedAt
-			}
+			checkFeedback(rev.User.GetLogin(), rev.GetAuthorAssociation(), *rev.SubmittedAt)
 		}
 	}
 
@@ -2278,15 +2320,7 @@ func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client
 	}
 	for _, c := range issueComments {
 		if c.CreatedAt != nil && c.CreatedAt.After(since) {
-			// We use the latest commit author (likely the bot/agent) to filter out
-			// comments made by the agent itself on the issue.
-			if c.User.GetLogin() == latestCommitAuthorLogin {
-				continue
-			}
-			found = true
-			if c.CreatedAt.After(latestFeedbackTime) {
-				latestFeedbackTime = *c.CreatedAt
-			}
+			checkFeedback(c.User.GetLogin(), c.GetAuthorAssociation(), *c.CreatedAt)
 		}
 	}
 
