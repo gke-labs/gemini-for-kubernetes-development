@@ -22,8 +22,15 @@ import (
 
 // buildLLMEnvVars returns the standard environment variables for LLM API keys.
 func buildLLMEnvVars(opt DevSandboxOptions) []interface{} {
-	env := []interface{}{
-		map[string]interface{}{
+	var env []interface{}
+
+	if opt.LLMAPIKey != "" {
+		env = append(env, map[string]interface{}{
+			"name":  "GEMINI_API_KEY",
+			"value": opt.LLMAPIKey,
+		})
+	} else {
+		env = append(env, map[string]interface{}{
 			"name": "GEMINI_API_KEY",
 			"valueFrom": map[string]interface{}{
 				"secretKeyRef": map[string]interface{}{
@@ -32,25 +39,19 @@ func buildLLMEnvVars(opt DevSandboxOptions) []interface{} {
 					"optional": true,
 				},
 			},
-		},
-		map[string]interface{}{
-			"name": "ANTHROPIC_API_KEY",
-			"valueFrom": map[string]interface{}{
-				"secretKeyRef": map[string]interface{}{
-					"name":     k8s.ClaudeSecretName,
-					"key":      "claude",
-					"optional": true,
-				},
-			},
-		},
-	}
-
-	if opt.LLMAPIKey != "" {
-		env = append(env, map[string]interface{}{
-			"name":  "GEMINI_API_KEY",
-			"value": opt.LLMAPIKey,
 		})
 	}
+
+	env = append(env, map[string]interface{}{
+		"name": "ANTHROPIC_API_KEY",
+		"valueFrom": map[string]interface{}{
+			"secretKeyRef": map[string]interface{}{
+				"name":     k8s.ClaudeSecretName,
+				"key":      "claude",
+				"optional": true,
+			},
+		},
+	})
 
 	return env
 }
