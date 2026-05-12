@@ -310,7 +310,7 @@ func (s *Server) submitReview(c *gin.Context) {
 	}
 
 	// Get PR number
-	prNumber, err := strconv.Atoi(prID)
+	prNumber, err := strconv.Atoi(strings.TrimSpace(prID))
 	if err != nil {
 		log.Info("Failed to parse prID", "prID", prID, "err", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid pr id"})
@@ -412,9 +412,11 @@ func (s *Server) createPRTask(c *gin.Context) {
 	prID := c.Param("id")
 
 	var payload struct {
-		Prompt           string `json:"prompt"`
-		ExpectedComments int    `json:"expectedComments"`
-		Model            string `json:"model"`
+		Prompt           string   `json:"prompt"`
+		ExpectedComments int      `json:"expectedComments"`
+		Model            string   `json:"model"`
+		MaxReviewFiles   int      `json:"maxReviewFiles"`
+		IgnoreFiles      []string `json:"ignoreFiles"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -442,16 +444,42 @@ func (s *Server) createPRTask(c *gin.Context) {
 		"AGENT_PROMPT": prompt,
 	}
 
-	// Inject MaxReviewFiles from RepoWatch
-	maxReviewFiles, found, err := unstructured.NestedInt64(rw.Object, "spec", "review", "maxReviewFiles")
-	if err == nil && found {
-		params["MAX_REVIEW_FILES"] = strconv.FormatInt(maxReviewFiles, 10)
+	// Inject MaxReviewFiles
+	if payload.MaxReviewFiles > 0 {
+		params["MAX_REVIEW_FILES"] = strconv.Itoa(payload.MaxReviewFiles)
+	} else {
+		// Inject MaxReviewFiles from RepoWatch
+		maxReviewFiles, found, err := unstructured.NestedInt64(rw.Object, "spec", "review", "maxReviewFiles")
+		if err == nil && found {
+			params["MAX_REVIEW_FILES"] = strconv.FormatInt(maxReviewFiles, 10)
+		}
 	}
 
-	// Inject IgnoreFiles from RepoWatch
-	ignoreFiles, found, err := unstructured.NestedStringSlice(rw.Object, "spec", "review", "ignoreFiles")
-	if err == nil && found && len(ignoreFiles) > 0 {
-		params["IGNORE_FILES"] = strings.Join(ignoreFiles, ",")
+	// Inject IgnoreFiles
+	if len(payload.IgnoreFiles) > 0 {
+		var trimmed []string
+		for _, f := range payload.IgnoreFiles {
+			if t := strings.TrimSpace(f); t != "" {
+				trimmed = append(trimmed, t)
+			}
+		}
+		if len(trimmed) > 0 {
+			params["IGNORE_FILES"] = strings.Join(trimmed, ",")
+		}
+	} else {
+		// Inject IgnoreFiles from RepoWatch
+		ignoreFiles, found, err := unstructured.NestedStringSlice(rw.Object, "spec", "review", "ignoreFiles")
+		if err == nil && found && len(ignoreFiles) > 0 {
+			var trimmed []string
+			for _, f := range ignoreFiles {
+				if t := strings.TrimSpace(f); t != "" {
+					trimmed = append(trimmed, t)
+				}
+			}
+			if len(trimmed) > 0 {
+				params["IGNORE_FILES"] = strings.Join(trimmed, ",")
+			}
+		}
 	}
 
 	if payload.ExpectedComments > 0 {
@@ -490,7 +518,7 @@ func (s *Server) getPRDetails(c *gin.Context) {
 	repo := c.Param("repo")
 	prIDStr := c.Param("id")
 
-	prID, err := strconv.Atoi(prIDStr)
+	prID, err := strconv.Atoi(strings.TrimSpace(prIDStr))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid PR ID"})
 		return
@@ -581,7 +609,7 @@ func (s *Server) getPRCommits(c *gin.Context) {
 	repo := c.Param("repo")
 	prIDStr := c.Param("id")
 
-	prID, err := strconv.Atoi(prIDStr)
+	prID, err := strconv.Atoi(strings.TrimSpace(prIDStr))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid PR ID"})
 		return
