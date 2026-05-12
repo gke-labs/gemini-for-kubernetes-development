@@ -4,5 +4,5 @@ metadata:
   name: allowed-users
   namespace: repo-agent-system
 data:
-  GITHUB_ALLOWED_USERS: "aaron-prindle,abhishekpardhi,acpana,aditya-shantanu,anhdle-sso,barney-s,bowei,cheftako,chw120,fedebongio,fkc1e100,gemmahou,hanshu-g,himanigulati01,janetkuo,jd1375122-ux,jefftree,jpbetz,justinsb,lalitc375,ldanielmadariaga,maqiuyujoyce,seans3,shruti6991,suwandim,tomergee,vicentefb,xiaoweim,yongruilin,yuwenma"
+  GITHUB_ALLOWED_USERS: "aaron-prindle,abhishekpardhi,acpana,aditya-shantanu,anhdle-sso,barney-s,bowei,cheftako,chw120,fedebongio,fkc1e100,gemmahou,hanshu-g,hdp617,himanigulati01,janetkuo,jd1375122-ux,jefftree,jpbetz,justinsb,lalitc375,ldanielmadariaga,maqiuyujoyce,seans3,shruti6991,suwandim,tomergee,vicentefb,xiaoweim,yongruilin,yuwenma"
   GITHUB_ADMIN_USERS: "barney-s,xiaoweim,ldanielmadariaga"
