@@ -68,7 +68,7 @@ echo "Publishing summary to GitHub Wiki..."
 # Clone the wiki repo if it doesn't exist
 if [ ! -d "$WIKI_DIR" ]; then
   echo "Cloning wiki repo..."
-  WIKI_URL="${REPO_URL%.git}.wiki.git"
+  WIKI_URL="https://x-access-token:${GITHUB_USER_TOKEN}@github.com/${REPO_URL#https://github.com/}.wiki.git"
   git clone "$WIKI_URL" "$WIKI_DIR"
 fi
 
