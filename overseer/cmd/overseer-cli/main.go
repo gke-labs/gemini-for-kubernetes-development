@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -96,12 +97,14 @@ func buildPRCommand() *cobra.Command {
 	var taskType string
 	var submit bool
 	var prompt string
+	var maxReviewFiles int
+	var ignoreFiles string
 
 	cmd := &cobra.Command{
 		Use:   "pr",
 		Short: "Create/ensure sandbox and task for a PR",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runPR(context.Background(), number, taskType, submit, prompt)
+			return runPR(context.Background(), number, taskType, submit, prompt, maxReviewFiles, ignoreFiles)
 		},
 	}
 
@@ -109,6 +112,8 @@ func buildPRCommand() *cobra.Command {
 	cmd.Flags().StringVar(&taskType, "task", "review", "Task type (e.g., review, address-feedback, investigate-failures)")
 	cmd.Flags().BoolVar(&submit, "submit", false, "Submit agent draft from task as review")
 	cmd.Flags().StringVar(&prompt, "prompt", "", "Custom prompt for the task")
+	cmd.Flags().IntVar(&maxReviewFiles, "max-review-files", 0, "Maximum number of files to review")
+	cmd.Flags().StringVar(&ignoreFiles, "ignore-files", "", "Comma-separated list of glob patterns to ignore")
 	_ = cmd.MarkFlagRequired("number")
 
 	return cmd
@@ -548,7 +553,7 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 	return nil
 }
 
-func runPR(ctx context.Context, number int, taskType string, submit bool, customPrompt string) error {
+func runPR(ctx context.Context, number int, taskType string, submit bool, customPrompt string, maxReviewFiles int, ignoreFiles string) error {
 	// Similar to runIssue but for PRs
 	if overseerName == "" || namespace == "" {
 		return fmt.Errorf("OVERSEER_NAME and NAMESPACE environment variables must be set")
@@ -679,7 +684,7 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 	// Create Sandbox if it doesn't exist
 	if !sandboxExists {
 		fmt.Printf("Creating sandbox %s...\n", sandboxName)
-		if err := createPRSandbox(ctx, kubeClient, &overseer, pr); err != nil {
+		if err := createPRSandbox(ctx, kubeClient, &overseer, pr, maxReviewFiles, ignoreFiles); err != nil {
 			return fmt.Errorf("failed to create PR sandbox: %w", err)
 		}
 	}
@@ -696,6 +701,19 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 		"ISSUE_URL":       pr.GetHTMLURL(),
 		"AGENT_PROMPT":    agentPrompt,
 		"HEAD_SHA":        headSHA,
+	}
+	if maxReviewFiles > 0 {
+		params["MAX_REVIEW_FILES"] = strconv.Itoa(maxReviewFiles)
+	}
+	if ignoreFiles != "" {
+		parts := strings.Split(ignoreFiles, ",")
+		var trimmed []string
+		for _, p := range parts {
+			if t := strings.TrimSpace(p); t != "" {
+				trimmed = append(trimmed, t)
+			}
+		}
+		params["IGNORE_FILES"] = strings.Join(trimmed, ",")
 	}
 
 	err = manager.CreateSandboxTask(ctx, namespace, sandboxName, "Sandbox", taskType, params)
@@ -951,7 +969,7 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 	return err
 }
 
-func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, overseer *overseerv1alpha1.Overseer, pr *githubv39.PullRequest) error {
+func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, overseer *overseerv1alpha1.Overseer, pr *githubv39.PullRequest, maxReviewFiles int, ignoreFiles string) error {
 	name := fmt.Sprintf("%s-pr-%d", overseer.Name, pr.GetNumber())
 
 	userLogin := os.Getenv("GITHUB_USER_ID")
@@ -970,7 +988,9 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 		apiKeySecretName = "gemini-api-key"
 	}
 
-	maxReviewFiles := overseer.Spec.Review.MaxReviewFiles
+	if maxReviewFiles == 0 {
+		maxReviewFiles = overseer.Spec.Review.MaxReviewFiles
+	}
 	if maxReviewFiles == 0 {
 		maxReviewFiles = 150
 	}
@@ -979,6 +999,22 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 	scriptToken, err := getTokenFromScript()
 	if err != nil {
 		fmt.Printf("Warning: failed to get token from script: %v\n", err)
+	}
+
+	var finalIgnoreFiles []string
+	if ignoreFiles != "" {
+		parts := strings.Split(ignoreFiles, ",")
+		for _, p := range parts {
+			if t := strings.TrimSpace(p); t != "" {
+				finalIgnoreFiles = append(finalIgnoreFiles, t)
+			}
+		}
+	} else {
+		for _, p := range overseer.Spec.Review.IgnoreFiles {
+			if t := strings.TrimSpace(p); t != "" {
+				finalIgnoreFiles = append(finalIgnoreFiles, t)
+			}
+		}
 	}
 
 	githubAPIURL := os.Getenv("GITHUB_API_URL")
@@ -1026,7 +1062,7 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 		PRCloneURL:        fmt.Sprintf("%s#refs/heads/%s", pr.GetHead().GetRepo().GetCloneURL(), pr.GetHead().GetRef()),
 		RepoName:          overseer.Name,
 		MaxReviewFiles:    maxReviewFiles,
-		IgnoreFiles:       overseer.Spec.Review.IgnoreFiles,
+		IgnoreFiles:       finalIgnoreFiles,
 		SeverityThreshold: overseer.Spec.Review.SeverityThreshold,
 		LLMExtensions:     overseer.Spec.Extensions,
 		WorkspaceDiskSize: overseer.Spec.WorkspaceDiskSize,
