@@ -60,12 +60,32 @@ gemini --yolo "$PROMPT" > "$SUMMARY_FILE"
 # Print summary to stdout
 cat "$SUMMARY_FILE"
 
-# Integration (Google Chat)
-if [ -f "/etc/overseer-notifications/webhook-url" ]; then
-  WEBHOOK_URL=$(cat /etc/overseer-notifications/webhook-url)
-  echo "Sending summary to Google Chat..."
-  TEXT=$(cat "$SUMMARY_FILE" | jq -aRs .)
-  curl -X POST -H 'Content-Type: application/json' -d "{\"text\": $TEXT}" "$WEBHOOK_URL"
-else
-  echo "No Google Chat webhook found at /etc/overseer-notifications/webhook-url. Skipping notification."
+# Integration (GitHub Wiki)
+WIKI_DIR="/workspaces/k8s-config-connector.wiki"
+
+echo "Publishing summary to GitHub Wiki..."
+
+# Clone the wiki repo if it doesn't exist
+if [ ! -d "$WIKI_DIR" ]; then
+  echo "Cloning wiki repo..."
+  WIKI_URL="${REPO_URL%.git}.wiki.git"
+  git clone "$WIKI_URL" "$WIKI_DIR"
 fi
+
+# Use a subshell to avoid changing working directory of the main script
+(
+  cd "$WIKI_DIR"
+  git pull
+  
+  if [ "$MODE" == "--daily" ]; then
+    WIKI_FILE="Daily-Summary-$TARGET.md"
+  elif [ "$MODE" == "--weekly" ]; then
+    WIKI_FILE="Weekly-Summary-$TARGET.md"
+  fi
+
+  cp "$SUMMARY_FILE" "$WIKI_FILE"
+
+  git add "$WIKI_FILE"
+  git commit -m "Add $MODE summary for $TARGET" || echo "No changes to commit"
+  git push
+)
