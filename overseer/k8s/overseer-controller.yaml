@@ -53,6 +53,9 @@ rules:
 - apiGroups: ["agents.x-k8s.io"]
   resources: ["sandboxes"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["networking.k8s.io"]
+  resources: ["networkpolicies"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -97,6 +100,12 @@ spec:
           value: ko://repo-agent/images/configdir-cli
         - name: OVERSEER_IMAGE
           value: ko://overseer/images/overseer
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: REPO_AGENT_SYSTEM_NAMESPACE
+          value: repo-agent-system
         resources:
           limits:
             cpu: 500m
