@@ -59,6 +59,9 @@ type DevSandboxOptions struct {
 
 	DindSupport string
 
+	// DisableGitHubProxy specifies whether to disable the GitHub proxy wrapper.
+	DisableGitHubProxy bool
+
 	// WorkspaceDiskSize specifies the disk size for the workspace PVC.
 	WorkspaceDiskSize string
 
