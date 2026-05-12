@@ -195,6 +195,10 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 		map[string]interface{}{"name": "SSL_CERT_FILE", "value": "/opt/repo-agent/ca/tls.crt"},
 	)
 
+	if opt.DisableGitHubProxy {
+		env = append(env, map[string]interface{}{"name": "DISABLE_GITHUB_PROXY", "value": "true"})
+	}
+
 	if opt.OverseerName != "" {
 		env = append(env, map[string]interface{}{"name": "OVERSEER_NAME", "value": opt.OverseerName})
 	}

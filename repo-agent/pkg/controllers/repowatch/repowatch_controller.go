@@ -1150,6 +1150,7 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 			Replicas:              1,
 			ServiceAccountName:    "issue-sandbox",
 			WorkspaceDiskSize:     repoWatch.Spec.Issue.WorkspaceDiskSize,
+			DisableGitHubProxy:    true,
 		},
 		DindSupport:   dindSupport,
 		LLMExtensions: repoWatch.Spec.Issue.LLM.Extensions,
@@ -1339,6 +1340,7 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, user *github.
 				}
 				return repoWatch.Spec.Review.DindSupport
 			}(),
+			DisableGitHubProxy: true,
 		},
 		PRNumber:          *pr.Number,
 		PRTitle:           *pr.Title,

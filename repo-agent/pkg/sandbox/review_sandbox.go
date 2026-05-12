@@ -175,6 +175,10 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 		map[string]interface{}{"name": "SSL_CERT_FILE", "value": "/opt/repo-agent/ca/tls.crt"},
 	)
 
+	if opt.DisableGitHubProxy {
+		env = append(env, map[string]interface{}{"name": "DISABLE_GITHUB_PROXY", "value": "true"})
+	}
+
 	workspaceDiskSize := opt.WorkspaceDiskSize
 	if workspaceDiskSize == "" {
 		workspaceDiskSize = "10Gi"
