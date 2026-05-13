@@ -33,8 +33,9 @@ if [ -z "$ALL_LOGS" ]; then
 fi
 
 # Get resource status
-RESOURCE_STATUS=$'Pods in overseer-kcc:\n'"$(kubectl get pods -n overseer-kcc --no-headers || true)"$'\n\n'"Sandboxes:\n"
-RESOURCE_STATUS="$RESOURCE_STATUS""$(kubectl get sandboxes.agents.x-k8s.io -A --no-headers || true)"$'\n\n'"SandboxTasks:\n"
+CURRENT_NS="${NAMESPACE:-overseer-kcc}"
+RESOURCE_STATUS="Pods in $CURRENT_NS:"$'\n'"$(kubectl get pods -n "$CURRENT_NS" --no-headers || true)"$'\n\n'"Sandboxes:"$'\n'
+RESOURCE_STATUS="$RESOURCE_STATUS""$(kubectl get sandboxes.agents.x-k8s.io -A --no-headers || true)"$'\n\n'"SandboxTasks:"$'\n'
 RESOURCE_STATUS="$RESOURCE_STATUS""$(kubectl get sandboxtasks.custom.agents.x-k8s.io -A --no-headers || true)"
 
 PROMPT="You are the Overseer Summarizer. Your job is to generate a clear, concise summary report based on the provided logs and resource status.
@@ -60,32 +61,4 @@ gemini --yolo "$PROMPT" > "$SUMMARY_FILE"
 # Print summary to stdout
 cat "$SUMMARY_FILE"
 
-# Integration (GitHub Wiki)
-WIKI_DIR="/workspaces/k8s-config-connector.wiki"
 
-echo "Publishing summary to GitHub Wiki..."
-
-# Clone the wiki repo if it doesn't exist
-if [ ! -d "$WIKI_DIR" ]; then
-  echo "Cloning wiki repo..."
-  WIKI_URL="https://x-access-token:${GITHUB_USER_TOKEN}@github.com/${REPO_URL#https://github.com/}.wiki.git"
-  git clone "$WIKI_URL" "$WIKI_DIR"
-fi
-
-# Use a subshell to avoid changing working directory of the main script
-(
-  cd "$WIKI_DIR"
-  git pull
-  
-  if [ "$MODE" == "--daily" ]; then
-    WIKI_FILE="Daily-Summary-$TARGET.md"
-  elif [ "$MODE" == "--weekly" ]; then
-    WIKI_FILE="Weekly-Summary-$TARGET.md"
-  fi
-
-  cp "$SUMMARY_FILE" "$WIKI_FILE"
-
-  git add "$WIKI_FILE"
-  git commit -m "Add $MODE summary for $TARGET" || echo "No changes to commit"
-  git push
-)

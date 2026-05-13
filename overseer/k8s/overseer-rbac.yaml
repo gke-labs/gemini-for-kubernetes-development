@@ -44,9 +44,6 @@ subjects:
 - kind: ServiceAccount
   name: overseer
   namespace: overseer-system
-- kind: ServiceAccount
-  name: overseer
-  namespace: overseer-kcc
 roleRef:
   kind: ClusterRole
   name: overseer
