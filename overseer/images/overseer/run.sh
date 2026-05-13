@@ -137,43 +137,72 @@ if [ -d "/configdir" ] && [ "$(ls -A /configdir)" ]; then
 fi
 
 # Loop
+# Create logs directory
+mkdir -p /workspaces/logs
+
+LAST_DAY=$(date +%F)
+LAST_WEEK=$(date +%V)
+
 while true; do
-  echo "$(date): Running Overseer cycle..."
+  CURRENT_DAY=$(date +%F)
+  CURRENT_WEEK=$(date +%V)
+  TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+  LOG_FILE="/workspaces/logs/run-$TIMESTAMP.log"
   
-  # Refresh LLM token
-  refreshLLMToken
-
-  # Update the repo
-  git pull
-
-  # Reconcile chores if enabled
-  if [ "$CHORES_MODE" != "disabled" ]; then
-    echo "$(date): running overseer-cli reconcile ..."
-    overseer-cli reconcile
+  # Daily Summary and Cleanup
+  if [ "$CURRENT_DAY" != "$LAST_DAY" ]; then
+    echo "$(date): Day changed from $LAST_DAY to $CURRENT_DAY. Running daily summary..."
+    /workspaces/summarize.sh --daily "$LAST_DAY" || true
+    
+    echo "$(date): Cleaning up old logs..."
+    find /workspaces/logs -type f -name "run-*.log" -mtime +15 -delete || true
+    
+    LAST_DAY="$CURRENT_DAY"
   fi
 
-  # Run gemini
-  # We assume gemini is in PATH
-  # We use --prompt to pass the instruction
-  # We rely on environment variables for auth (GEMINI_API_KEY, GITHUB_TOKEN, etc.)
+  # Weekly Summary
+  if [ "$CURRENT_WEEK" != "$LAST_WEEK" ]; then
+    echo "$(date): Week changed from $LAST_WEEK to $CURRENT_WEEK. Running weekly summary..."
+    /workspaces/summarize.sh --weekly "$LAST_WEEK" || true
+    LAST_WEEK="$CURRENT_WEEK"
+  fi
+
+  SLEEP_TIME=${POLL_INTERVAL:-300}
   
-  # Note: If LLM_PROVIDER is set, we might need to adapt.
-  # But for now we assume gemini-cli handles what it handles.
-  
-  # Capture stderr to a file so we can inspect it for quota errors
-  GEMINI_ERR=$(mktemp)
-  if ! gemini --yolo "$PROMPT" 2> "$GEMINI_ERR"; then
-    cat "$GEMINI_ERR" >&2
-    if grep -iq "TerminalQuotaError\|Quota exceeded" "$GEMINI_ERR"; then
-      echo "$(date): Quota exhausted. Sleeping for 1 hour..."
-      sleep 3600
-    else
-      echo "$(date): Gemini failed with non-quota error. Sleeping for normal interval..."
-      sleep ${POLL_INTERVAL:-300}
+  {
+    echo "$(date): Running Overseer cycle..."
+    
+    # Refresh LLM token
+    refreshLLMToken
+
+    # Update the repo
+    git pull
+
+    # Reconcile chores if enabled
+    if [ "$CHORES_MODE" != "disabled" ]; then
+      echo "$(date): running overseer-cli reconcile ..."
+      overseer-cli reconcile
     fi
-  else
-    echo "$(date): Cycle complete. Sleeping..."
-    sleep ${POLL_INTERVAL:-300}
-  fi
-  rm -f "$GEMINI_ERR"
+
+    # Run gemini
+    GEMINI_ERR=$(mktemp)
+    if ! gemini --yolo "$PROMPT" 2> "$GEMINI_ERR"; then
+      cat "$GEMINI_ERR" >&2
+      if grep -iq "TerminalQuotaError\|Quota exceeded" "$GEMINI_ERR"; then
+        echo "$(date): Quota exhausted. Setting sleep to 1 hour..."
+        SLEEP_TIME=3600
+      else
+        echo "$(date): Gemini failed with non-quota error."
+      fi
+    else
+      echo "$(date): Cycle complete."
+    fi
+    rm -f "$GEMINI_ERR"
+  } > "$LOG_FILE" 2>&1
+  
+  # Print log to stdout
+  cat "$LOG_FILE"
+  
+  echo "$(date): Sleeping for $SLEEP_TIME seconds..."
+  sleep "$SLEEP_TIME"
 done

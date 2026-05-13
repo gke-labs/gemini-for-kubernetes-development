@@ -30,7 +30,7 @@ rules:
   resources: ["services"]
   verbs: ["get", "list", "create", "update", "patch", "delete"]
 - apiGroups: [""]
-  resources: ["secrets"]
+  resources: ["secrets", "pods", "events"]
   verbs: ["get", "list"]
 - apiGroups: ["configdir.gke.io"]
   resources: ["configdirs", "configfiles"]
