@@ -2186,9 +2186,18 @@ func runRepoInit(ctx context.Context, nameFlag string, githubSecret string) erro
 	_, err = clientset.CoreV1().Secrets(namespace).Get(ctx, githubSecret, metav1.GetOptions{})
 	if err != nil {
 		if errors.IsNotFound(err) {
-			return fmt.Errorf("github secret %s not found in namespace %s. Please create it first or specify another one using --github-secret", githubSecret, namespace)
+			return fmt.Errorf("github secret %s not found in namespace %s.\nPlease set it first using:\n  overseer-cli secret set github-pat <token> --namespace %s", githubSecret, namespace, namespace)
 		}
 		return fmt.Errorf("failed to check github secret: %w", err)
+	}
+
+	geminiSecret := "gemini-vscode-tokens"
+	_, err = clientset.CoreV1().Secrets(namespace).Get(ctx, geminiSecret, metav1.GetOptions{})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return fmt.Errorf("gemini secret %s not found in namespace %s.\nPlease set it first using:\n  overseer-cli secret set gemini <token> --namespace %s", geminiSecret, namespace, namespace)
+		}
+		return fmt.Errorf("failed to check gemini secret: %w", err)
 	}
 
 	gvr := schema.GroupVersionResource{
