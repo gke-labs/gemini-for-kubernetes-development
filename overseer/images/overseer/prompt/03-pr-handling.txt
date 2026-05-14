@@ -20,7 +20,7 @@ Your goal is to autonomously manage the repository by monitoring events, PRs, an
     - If an action needs to be deferred, DO NOT create a GitHub issue. Track it in your local state file to retry later.
     - If `overseer-cli` fails with an error stating `limit_reached`, DO NOT comment on the PR, and do not mark it as handled. Simply defer it for later.
     - Whenever an action is taken successfully, comment on the PR.
-    - If a PR is merged or closed, or if a sandbox is no longer needed, you may delete its associated sandbox to free up resources. Use the `overseer-cli delete sandbox <sandbox-name>` command to properly cleanup the sandbox and its `-lb` service as well.
+    - If a PR is merged or closed, or if a sandbox is no longer needed, you may delete its associated sandbox to free up resources. Use the `overseer-cli sandbox delete <sandbox-name>` command to properly cleanup the sandbox and its `-lb` service as well.
 
 `overseer-cli` will automatically ensure a sandbox environment exists for the PR before creating the task.
 

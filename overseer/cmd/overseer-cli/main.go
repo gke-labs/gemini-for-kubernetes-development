@@ -40,6 +40,9 @@ import (
 var (
 	overseerName     string
 	namespace        string
+	repoURL          string
+	image            string
+	workspaceDiskSize string
 	IssueModelsOrder = []string{
 		"gemini-3-flash-preview",
 		"gemini-3.1-pro-preview",
@@ -60,23 +63,41 @@ func main() {
 	}
 
 	rootCmd.PersistentFlags().StringVar(&namespace, "namespace", namespace, "Kubernetes namespace (defaults to $NAMESPACE env var, or deduced from git origin remote)")
+	rootCmd.PersistentFlags().StringVar(&repoURL, "repo", os.Getenv("REPO"), "Repository URL (defaults to $REPO env var or deduced from git upstream remote)")
 
 	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
 		if namespace == "" {
 			namespace = deduceNamespaceFromGit()
+		}
+		if repoURL == "" {
+			repoURL = deduceRepoURLFromGit()
 		}
 		return nil
 	}
 
 	rootCmd.AddCommand(buildIssueCommand())
 	rootCmd.AddCommand(buildPRCommand())
-	rootCmd.AddCommand(buildChoreCommand())
-	rootCmd.AddCommand(buildReconcileCommand())
-	rootCmd.AddCommand(buildDeleteCommand())
-	rootCmd.AddCommand(buildListCommand())
-	rootCmd.AddCommand(buildConnectCommand())
-	rootCmd.AddCommand(buildChatCommand())
 	rootCmd.AddCommand(buildTaskCommand())
+
+	choreCmd := &cobra.Command{
+		Use:   "chore",
+		Short: "Manage chores",
+	}
+	choreCmd.AddCommand(buildChoreEnsureCommand())
+	choreCmd.AddCommand(buildReconcileCommand())
+
+	rootCmd.AddCommand(choreCmd)
+
+	sandboxCmd := &cobra.Command{
+		Use:   "sandbox",
+		Short: "Manage sandboxes",
+	}
+	sandboxCmd.AddCommand(buildListCommand())
+	sandboxCmd.AddCommand(buildChatCommand())
+	sandboxCmd.AddCommand(buildConnectCommand())
+	sandboxCmd.AddCommand(buildDeleteCommand())
+
+	rootCmd.AddCommand(sandboxCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -102,6 +123,8 @@ func buildIssueCommand() *cobra.Command {
 	cmd.Flags().IntVar(&prNumber, "pr", 0, "PR number to extract issue from")
 	cmd.Flags().StringVar(&taskType, "task", "fix-issue", "Task type (e.g., fix-issue, triage-issue)")
 	cmd.Flags().StringVar(&prompt, "prompt", "", "Custom prompt for the task")
+	cmd.Flags().StringVar(&image, "image", "golang:1.21", "Sandbox image")
+	cmd.Flags().StringVar(&workspaceDiskSize, "workspace-disk-size", "6G", "Workspace disk size")
 
 	return cmd
 }
@@ -124,17 +147,20 @@ func buildPRCommand() *cobra.Command {
 	cmd.Flags().StringVar(&taskType, "task", "review", "Task type (e.g., review, address-feedback, investigate-failures)")
 	cmd.Flags().BoolVar(&submit, "submit", false, "Submit agent draft from task as review")
 	cmd.Flags().StringVar(&prompt, "prompt", "", "Custom prompt for the task")
+	cmd.Flags().StringVar(&image, "image", "golang:1.21", "Sandbox image")
+	cmd.Flags().StringVar(&workspaceDiskSize, "workspace-disk-size", "6G", "Workspace disk size")
+
 	_ = cmd.MarkFlagRequired("number")
 
 	return cmd
 }
 
-func buildChoreCommand() *cobra.Command {
+func buildChoreEnsureCommand() *cobra.Command {
 	var name string
 	var file string
 
 	cmd := &cobra.Command{
-		Use:   "chore",
+		Use:   "ensure",
 		Short: "Create/ensure sandbox and task for a chore",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runChore(context.Background(), name, file)
@@ -419,8 +445,11 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 }
 
 func runIssue(ctx context.Context, number int, prNumber int, taskType string, customPrompt string) error {
-	if overseerName == "" || namespace == "" {
-		return fmt.Errorf("OVERSEER_NAME environment variable and namespace must be set")
+	if namespace == "" {
+		return fmt.Errorf("namespace must be set")
+	}
+	if overseerName == "" && repoURL == "" {
+		return fmt.Errorf("repository URL must be set (via --repo flag, REPO env var, or git remote upstream)")
 	}
 
 	issueMode := os.Getenv("ISSUE_MODE")
@@ -458,14 +487,32 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 	}
 	manager := k8s.NewManager(kubeClient)
 
-	rwUnstructured, err := getOverseer(ctx, kubeClient.DynamicClient, overseerName)
-	if err != nil {
-		return fmt.Errorf("failed to get Overseer %s: %w", overseerName, err)
-	}
-
 	var overseer overseerv1alpha1.Overseer
-	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(rwUnstructured.Object, &overseer); err != nil {
-		return fmt.Errorf("failed to convert Overseer: %w", err)
+	if overseerName != "" {
+		rwUnstructured, err := getOverseer(ctx, kubeClient.DynamicClient, overseerName)
+		if err != nil {
+			return fmt.Errorf("failed to get Overseer %s: %w", overseerName, err)
+		}
+		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(rwUnstructured.Object, &overseer); err != nil {
+			return fmt.Errorf("failed to convert Overseer: %w", err)
+		}
+	} else {
+		// Construct dummy Overseer
+		overseer.Spec.RepoURL = repoURL
+		overseer.Spec.Image = image
+		overseer.Spec.WorkspaceDiskSize = workspaceDiskSize
+		overseer.Spec.GeminiAPIKeySecretName = "gemini-api-key"
+
+		// Extract repo name from URL
+		parts := strings.Split(strings.TrimSuffix(repoURL, "/"), "/")
+		repoName := ""
+		if len(parts) > 0 {
+			repoName = parts[len(parts)-1]
+		}
+		if len(repoName) > 30 {
+			repoName = repoName[:30]
+		}
+		overseer.Name = repoName
 	}
 
 	ghClient, err := github.NewClient(ctx)
@@ -565,8 +612,11 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 
 func runPR(ctx context.Context, number int, taskType string, submit bool, customPrompt string) error {
 	// Similar to runIssue but for PRs
-	if overseerName == "" || namespace == "" {
-		return fmt.Errorf("OVERSEER_NAME environment variable and namespace must be set")
+	if namespace == "" {
+		return fmt.Errorf("namespace must be set")
+	}
+	if overseerName == "" && repoURL == "" {
+		return fmt.Errorf("repository URL must be set (via --repo flag, REPO env var, or git remote upstream)")
 	}
 
 	mode := ""
@@ -615,14 +665,32 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 		return submitAgentDraft(ctx, manager, kubeClient, namespace, overseerName, number)
 	}
 
-	rwUnstructured, err := getOverseer(ctx, kubeClient.DynamicClient, overseerName)
-	if err != nil {
-		return fmt.Errorf("failed to get Overseer %s: %w", overseerName, err)
-	}
-
 	var overseer overseerv1alpha1.Overseer
-	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(rwUnstructured.Object, &overseer); err != nil {
-		return fmt.Errorf("failed to convert Overseer: %w", err)
+	if overseerName != "" {
+		rwUnstructured, err := getOverseer(ctx, kubeClient.DynamicClient, overseerName)
+		if err != nil {
+			return fmt.Errorf("failed to get Overseer %s: %w", overseerName, err)
+		}
+		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(rwUnstructured.Object, &overseer); err != nil {
+			return fmt.Errorf("failed to convert Overseer: %w", err)
+		}
+	} else {
+		// Construct dummy Overseer
+		overseer.Spec.RepoURL = repoURL
+		overseer.Spec.Image = image
+		overseer.Spec.WorkspaceDiskSize = workspaceDiskSize
+		overseer.Spec.GeminiAPIKeySecretName = "gemini-api-key"
+
+		// Extract repo name from URL
+		parts := strings.Split(strings.TrimSuffix(repoURL, "/"), "/")
+		repoName := ""
+		if len(parts) > 0 {
+			repoName = parts[len(parts)-1]
+		}
+		if len(repoName) > 30 {
+			repoName = repoName[:30]
+		}
+		overseer.Name = repoName
 	}
 
 	ghClient, err := github.NewClient(ctx)
@@ -1829,4 +1897,18 @@ func deduceNamespaceFromGit() string {
 	}
 
 	return ""
+}
+
+func deduceRepoURLFromGit() string {
+	cmd := exec.Command("git", "remote", "get-url", "upstream")
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
+		return ""
+	}
+	urlStr := strings.TrimSpace(out.String())
+	if urlStr == "" {
+		return ""
+	}
+	return strings.TrimSuffix(urlStr, ".git")
 }

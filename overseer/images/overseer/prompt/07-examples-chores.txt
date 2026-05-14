@@ -1,10 +1,10 @@
 
 Running a chore:
 ```bash
-overseer-cli chore --file .agents/gateway-conformance.yaml
+overseer-cli chore ensure --file .agents/gateway-conformance.yaml
 ```
 
 Deleting a sandbox:
 ```bash
-overseer-cli delete sandbox <sandbox-name>
+overseer-cli sandbox delete <sandbox-name>
 ```
