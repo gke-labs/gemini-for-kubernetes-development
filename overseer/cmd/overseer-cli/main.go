@@ -29,21 +29,21 @@ import (
 	overseerv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/overseer/pkg/api/v1alpha1"
 	sandboxtaskv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/commands"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/commands"
 	githubv39 "github.com/google/go-github/v39/github"
 )
 
 var (
-	overseerName     string
-	namespace        string
-	repoURL          string
-	image            string
+	overseerName      string
+	namespace         string
+	repoURL           string
+	image             string
 	workspaceDiskSize string
-	IssueModelsOrder = []string{
+	IssueModelsOrder  = []string{
 		"gemini-3-flash-preview",
 		"gemini-3.1-pro-preview",
 		"gemini-2.5-pro",
@@ -79,6 +79,11 @@ func main() {
 	rootCmd.AddCommand(buildPRCommand())
 	rootCmd.AddCommand(buildTaskCommand())
 
+	adminCmd := &cobra.Command{
+		Use:   "admin",
+		Short: "Admin commands",
+	}
+
 	choreCmd := &cobra.Command{
 		Use:   "chore",
 		Short: "Manage chores",
@@ -86,7 +91,8 @@ func main() {
 	choreCmd.AddCommand(buildChoreEnsureCommand())
 	choreCmd.AddCommand(buildReconcileCommand())
 
-	rootCmd.AddCommand(choreCmd)
+	adminCmd.AddCommand(choreCmd)
+	rootCmd.AddCommand(adminCmd)
 
 	sandboxCmd := &cobra.Command{
 		Use:   "sandbox",
@@ -1444,7 +1450,7 @@ func runListPRs(ctx context.Context) error {
 	}
 
 	opts := &githubv39.PullRequestListOptions{
-		State: "open",
+		State:       "open",
 		ListOptions: githubv39.ListOptions{PerPage: 100},
 	}
 
