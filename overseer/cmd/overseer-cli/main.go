@@ -2200,12 +2200,61 @@ func runRepoGet(ctx context.Context, name string) error {
 		return fmt.Errorf("failed to get RepoWatch: %w", err)
 	}
 
-	y, err := yaml.Marshal(item.Object)
-	if err != nil {
-		return fmt.Errorf("failed to marshal to YAML: %w", err)
+	fmt.Printf("RepoWatch: %s\n", item.GetName())
+	
+	repoURL, _, _ := unstructured.NestedString(item.Object, "spec", "repoURL")
+	fmt.Printf("URL:       %s\n", repoURL)
+	fmt.Printf("Namespace: %s\n\n", item.GetNamespace())
+
+	fmt.Println("Review Config:")
+	maxActive, _, _ := unstructured.NestedInt64(item.Object, "spec", "review", "maxActiveSandboxes")
+	maxTotal, _, _ := unstructured.NestedInt64(item.Object, "spec", "review", "maxSandboxes")
+	fmt.Printf("  Max Active Sandboxes: %d\n", maxActive)
+	fmt.Printf("  Max Sandboxes:        %d\n\n", maxTotal)
+
+	fmt.Println("Issue Config:")
+	maxActiveIssue, _, _ := unstructured.NestedInt64(item.Object, "spec", "issue", "maxActiveSandboxes")
+	maxTotalIssue, _, _ := unstructured.NestedInt64(item.Object, "spec", "issue", "maxSandboxes")
+	fmt.Printf("  Max Active Sandboxes: %d\n", maxActiveIssue)
+	fmt.Printf("  Max Sandboxes:        %d\n\n", maxTotalIssue)
+
+	fmt.Println("Status:")
+	pendingPRs, _, _ := unstructured.NestedSlice(item.Object, "status", "pendingPRs")
+	if len(pendingPRs) > 0 {
+		fmt.Printf("  Pending PRs: ")
+		var prs []string
+		for _, pr := range pendingPRs {
+			prs = append(prs, fmt.Sprintf("%v", pr))
+		}
+		fmt.Println(strings.Join(prs, ", "))
+	} else {
+		fmt.Println("  Pending PRs: None")
 	}
 
-	fmt.Println(string(y))
+	issueSandboxes, _, _ := unstructured.NestedMap(item.Object, "status", "issueSandboxes")
+	if len(issueSandboxes) > 0 {
+		fmt.Println("  Issue Sandboxes:")
+		for handler, list := range issueSandboxes {
+			fmt.Printf("    Handler: %s\n", handler)
+			listSlice, ok := list.([]interface{})
+			if !ok {
+				continue
+			}
+			for _, s := range listSlice {
+				sMap, ok := s.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				num, _, _ := unstructured.NestedInt64(sMap, "number")
+				sName, _, _ := unstructured.NestedString(sMap, "sandboxName")
+				status, _, _ := unstructured.NestedString(sMap, "status")
+				fmt.Printf("      - #%d (%s) [%s]\n", num, sName, status)
+			}
+		}
+	} else {
+		fmt.Println("  Issue Sandboxes: None")
+	}
+
 	return nil
 }
 
