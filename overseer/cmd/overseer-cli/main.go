@@ -59,6 +59,15 @@ func main() {
 		Short: "CLI for Overseer to manage sandboxes and tasks",
 	}
 
+	rootCmd.PersistentFlags().StringVar(&namespace, "namespace", namespace, "Kubernetes namespace")
+
+	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
+		if namespace == "" {
+			namespace = deduceNamespaceFromGit()
+		}
+		return nil
+	}
+
 	rootCmd.AddCommand(buildIssueCommand())
 	rootCmd.AddCommand(buildPRCommand())
 	rootCmd.AddCommand(buildChoreCommand())
@@ -160,7 +169,7 @@ type ChoreDefinition struct {
 
 func runChore(ctx context.Context, name string, file string) error {
 	if overseerName == "" || namespace == "" {
-		return fmt.Errorf("OVERSEER_NAME and NAMESPACE environment variables must be set")
+		return fmt.Errorf("OVERSEER_NAME environment variable and namespace must be set")
 	}
 
 	choresMode := os.Getenv("CHORES_MODE")
@@ -411,7 +420,7 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 
 func runIssue(ctx context.Context, number int, prNumber int, taskType string, customPrompt string) error {
 	if overseerName == "" || namespace == "" {
-		return fmt.Errorf("OVERSEER_NAME and NAMESPACE environment variables must be set")
+		return fmt.Errorf("OVERSEER_NAME environment variable and namespace must be set")
 	}
 
 	issueMode := os.Getenv("ISSUE_MODE")
@@ -557,7 +566,7 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 func runPR(ctx context.Context, number int, taskType string, submit bool, customPrompt string) error {
 	// Similar to runIssue but for PRs
 	if overseerName == "" || namespace == "" {
-		return fmt.Errorf("OVERSEER_NAME and NAMESPACE environment variables must be set")
+		return fmt.Errorf("OVERSEER_NAME environment variable and namespace must be set")
 	}
 
 	mode := ""
@@ -1111,7 +1120,7 @@ func getOverseer(ctx context.Context, dynClient dynamic.Interface, name string) 
 
 func runReconcile(ctx context.Context) error {
 	if overseerName == "" || namespace == "" {
-		return fmt.Errorf("OVERSEER_NAME and NAMESPACE environment variables must be set")
+		return fmt.Errorf("OVERSEER_NAME environment variable and namespace must be set")
 	}
 
 	cfg, err := config.GetConfig()
@@ -1289,7 +1298,7 @@ func buildListCommand() *cobra.Command {
 
 func runListSandboxes(ctx context.Context, sandboxType string) error {
 	if namespace == "" {
-		return fmt.Errorf("NAMESPACE environment variable must be set")
+		return fmt.Errorf("namespace must be set")
 	}
 
 	cfg, err := config.GetConfig()
@@ -1405,7 +1414,7 @@ func buildConnectCommand() *cobra.Command {
 
 func runConnect(ctx context.Context, target string) error {
 	if namespace == "" {
-		return fmt.Errorf("NAMESPACE environment variable must be set")
+		return fmt.Errorf("namespace must be set")
 	}
 
 	cfg, err := config.GetConfig()
@@ -1486,7 +1495,7 @@ func buildChatCommand() *cobra.Command {
 
 func runChat(ctx context.Context, target string) error {
 	if namespace == "" {
-		return fmt.Errorf("NAMESPACE environment variable must be set")
+		return fmt.Errorf("namespace must be set")
 	}
 
 	cfg, err := config.GetConfig()
@@ -1585,7 +1594,7 @@ func buildTaskCommand() *cobra.Command {
 
 func runCreateTask(ctx context.Context, target string, command string) error {
 	if namespace == "" {
-		return fmt.Errorf("NAMESPACE environment variable must be set")
+		return fmt.Errorf("namespace must be set")
 	}
 
 	cfg, err := config.GetConfig()
@@ -1706,7 +1715,7 @@ func runCreateTask(ctx context.Context, target string, command string) error {
 
 func runDeleteSandbox(ctx context.Context, sandboxName string) error {
 	if namespace == "" {
-		return fmt.Errorf("NAMESPACE environment variable must be set")
+		return fmt.Errorf("namespace must be set")
 	}
 
 	cfg, err := config.GetConfig()
@@ -1782,4 +1791,42 @@ func getTokenFromScript() (string, error) {
 	}
 
 	return "", nil
+}
+
+func deduceNamespaceFromGit() string {
+	cmd := exec.Command("git", "remote", "get-url", "origin")
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
+		return ""
+	}
+	urlStr := strings.TrimSpace(out.String())
+	if urlStr == "" {
+		return ""
+	}
+
+	// Handle HTTPS/HTTP
+	if strings.HasPrefix(urlStr, "http://") || strings.HasPrefix(urlStr, "https://") {
+		u, err := url.Parse(urlStr)
+		if err != nil {
+			return ""
+		}
+		parts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
+		if len(parts) > 0 {
+			return parts[0]
+		}
+	}
+
+	// Handle SSH (git@github.com:user/repo.git)
+	if strings.Contains(urlStr, "@") && strings.Contains(urlStr, ":") {
+		parts := strings.Split(urlStr, ":")
+		if len(parts) > 1 {
+			subParts := strings.Split(parts[1], "/")
+			if len(subParts) > 0 {
+				return subParts[0]
+			}
+		}
+	}
+
+	return ""
 }
