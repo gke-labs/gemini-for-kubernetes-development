@@ -504,22 +504,57 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 			return fmt.Errorf("failed to convert Overseer: %w", err)
 		}
 	} else {
-		// Construct dummy Overseer
-		overseer.Spec.RepoURL = repoURL
-		overseer.Spec.Image = image
-		overseer.Spec.WorkspaceDiskSize = workspaceDiskSize
-		overseer.Spec.GeminiAPIKeySecretName = "gemini-api-key"
+		// Look for a repowatch using the --repo URL
+		name, err := findRepoWatchNameByURL(ctx, repoURL)
+		if err != nil {
+			return err
+		}
+		if name == "" {
+			return fmt.Errorf("no matching RepoWatch found for URL %s. Please run 'overseer-cli repo init' first.", repoURL)
+		}
 
-		// Extract repo name from URL
-		parts := strings.Split(strings.TrimSuffix(repoURL, "/"), "/")
-		repoName := ""
-		if len(parts) > 0 {
-			repoName = parts[len(parts)-1]
+		// Fetch RepoWatch
+		gvr := schema.GroupVersionResource{
+			Group:    "review.gemini.google.com",
+			Version:  "v1alpha1",
+			Resource: "repowatches",
 		}
-		if len(repoName) > 30 {
-			repoName = repoName[:30]
+		rwUnstructured, err := kubeClient.DynamicClient.Resource(gvr).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to get RepoWatch %s: %w", name, err)
 		}
-		overseer.Name = repoName
+
+		// Populate dummy Overseer from RepoWatch
+		overseer.Name = name
+		overseer.Spec.RepoURL = repoURL
+
+		img, _, _ := unstructured.NestedString(rwUnstructured.Object, "spec", "issue", "image")
+		overseer.Spec.Image = img
+
+		secret, _, _ := unstructured.NestedString(rwUnstructured.Object, "spec", "issue", "llm", "apiKeySecretRef")
+		if secret == "" {
+			secret = "gemini-api-key"
+		}
+		overseer.Spec.GeminiAPIKeySecretName = secret
+
+		configdir, _, _ := unstructured.NestedString(rwUnstructured.Object, "spec", "issue", "llm", "configdirRef")
+		overseer.Spec.ConfigdirRef = configdir
+
+		prompt, _, _ := unstructured.NestedString(rwUnstructured.Object, "spec", "issue", "llm", "prompt")
+		overseer.Spec.IssuePrompt = prompt
+
+		robot, _, _ := unstructured.NestedString(rwUnstructured.Object, "spec", "issue", "robotAccount")
+		overseer.Spec.RobotAccount = robot
+
+		maxActive, _, _ := unstructured.NestedInt64(rwUnstructured.Object, "spec", "issue", "maxActiveSandboxes")
+		maxActiveInt32 := int32(maxActive)
+		overseer.Spec.MaxActiveIssues = &maxActiveInt32
+
+		diskSize, _, _ := unstructured.NestedString(rwUnstructured.Object, "spec", "issue", "workspaceDiskSize")
+		if diskSize == "" {
+			diskSize = "10Gi"
+		}
+		overseer.Spec.WorkspaceDiskSize = diskSize
 	}
 
 	ghClient, err := github.NewClient(ctx)
@@ -682,22 +717,72 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 			return fmt.Errorf("failed to convert Overseer: %w", err)
 		}
 	} else {
-		// Construct dummy Overseer
-		overseer.Spec.RepoURL = repoURL
-		overseer.Spec.Image = image
-		overseer.Spec.WorkspaceDiskSize = workspaceDiskSize
-		overseer.Spec.GeminiAPIKeySecretName = "gemini-api-key"
+		// Look for a repowatch using the --repo URL
+		name, err := findRepoWatchNameByURL(ctx, repoURL)
+		if err != nil {
+			return err
+		}
+		if name == "" {
+			return fmt.Errorf("no matching RepoWatch found for URL %s. Please run 'overseer-cli repo init' first.", repoURL)
+		}
 
-		// Extract repo name from URL
-		parts := strings.Split(strings.TrimSuffix(repoURL, "/"), "/")
-		repoName := ""
-		if len(parts) > 0 {
-			repoName = parts[len(parts)-1]
+		// Fetch RepoWatch
+		gvr := schema.GroupVersionResource{
+			Group:    "review.gemini.google.com",
+			Version:  "v1alpha1",
+			Resource: "repowatches",
 		}
-		if len(repoName) > 30 {
-			repoName = repoName[:30]
+		rwUnstructured, err := kubeClient.DynamicClient.Resource(gvr).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to get RepoWatch %s: %w", name, err)
 		}
-		overseer.Name = repoName
+
+		// Populate dummy Overseer from RepoWatch
+		overseer.Name = name
+		overseer.Spec.RepoURL = repoURL
+
+		img, _, _ := unstructured.NestedString(rwUnstructured.Object, "spec", "review", "image")
+		overseer.Spec.Image = img
+
+		secret, _, _ := unstructured.NestedString(rwUnstructured.Object, "spec", "review", "llm", "apiKeySecretRef")
+		if secret == "" {
+			secret = "gemini-api-key"
+		}
+		overseer.Spec.GeminiAPIKeySecretName = secret
+
+		configdir, _, _ := unstructured.NestedString(rwUnstructured.Object, "spec", "review", "llm", "configdirRef")
+		overseer.Spec.ConfigdirRef = configdir
+
+		prompt, _, _ := unstructured.NestedString(rwUnstructured.Object, "spec", "review", "llm", "prompt")
+		overseer.Spec.Review.Prompt = prompt
+
+		robot, _, _ := unstructured.NestedString(rwUnstructured.Object, "spec", "review", "robotAccount")
+		overseer.Spec.RobotAccount = robot
+
+		maxFiles, _, _ := unstructured.NestedInt64(rwUnstructured.Object, "spec", "review", "maxReviewFiles")
+		overseer.Spec.Review.MaxReviewFiles = int(maxFiles)
+
+		ignoreFiles, _, _ := unstructured.NestedSlice(rwUnstructured.Object, "spec", "review", "ignoreFiles")
+		if len(ignoreFiles) > 0 {
+			var ignores []string
+			for _, ig := range ignoreFiles {
+				ignores = append(ignores, fmt.Sprintf("%v", ig))
+			}
+			overseer.Spec.Review.IgnoreFiles = ignores
+		}
+
+		severity, _, _ := unstructured.NestedString(rwUnstructured.Object, "spec", "review", "severityThreshold")
+		overseer.Spec.Review.SeverityThreshold = severity
+
+		maxActive, _, _ := unstructured.NestedInt64(rwUnstructured.Object, "spec", "review", "maxActiveSandboxes")
+		maxActiveInt32 := int32(maxActive)
+		overseer.Spec.MaxActiveReviews = &maxActiveInt32
+
+		diskSize, _, _ := unstructured.NestedString(rwUnstructured.Object, "spec", "review", "workspaceDiskSize")
+		if diskSize == "" {
+			diskSize = "10Gi"
+		}
+		overseer.Spec.WorkspaceDiskSize = diskSize
 	}
 
 	ghClient, err := github.NewClient(ctx)
