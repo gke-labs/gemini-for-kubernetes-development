@@ -2194,7 +2194,6 @@ func runRepoInit(ctx context.Context, nameFlag string, githubSecret string) erro
 					},
 				},
 				"issue": map[string]interface{}{
-					"robotAccount":              "codebot-robot",
 					"maxActiveSandboxes":         int64(0),
 					"maxSandboxes":               int64(0),
 					"issueShutdownAfterMinutes": int64(0),
@@ -2214,7 +2213,7 @@ func runRepoInit(ctx context.Context, nameFlag string, githubSecret string) erro
 							"name":     "fix",
 							"taskType": "fix-issue",
 							"labels": []interface{}{
-								repoName,
+								"repo-agent",
 							},
 							"prompt": "Fix this issue\n",
 						},
