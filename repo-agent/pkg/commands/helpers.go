@@ -12,8 +12,8 @@ import (
 	"k8s.io/klog/v2"
 )
 
-// updateSSHConfig updates the user's SSH config to include the sandbox host.
-func updateSSHConfig(ctx context.Context, path, host string, podID types.NamespacedName) error {
+// UpdateSSHConfig updates the user's SSH config to include the sandbox host.
+func UpdateSSHConfig(ctx context.Context, path, host string, podID types.NamespacedName) error {
 	sshDir := filepath.Dir(path)
 	confDir := filepath.Join(sshDir, "config.d", "dev-sandboxes")
 	if err := os.MkdirAll(confDir, 0755); err != nil {

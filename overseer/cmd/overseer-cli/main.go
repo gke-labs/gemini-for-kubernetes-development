@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,6 +33,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/commands"
 	githubv39 "github.com/google/go-github/v39/github"
 )
 
@@ -62,6 +64,10 @@ func main() {
 	rootCmd.AddCommand(buildChoreCommand())
 	rootCmd.AddCommand(buildReconcileCommand())
 	rootCmd.AddCommand(buildDeleteCommand())
+	rootCmd.AddCommand(buildListCommand())
+	rootCmd.AddCommand(buildConnectCommand())
+	rootCmd.AddCommand(buildChatCommand())
+	rootCmd.AddCommand(buildTaskCommand())
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -1238,6 +1244,464 @@ func buildDeleteCommand() *cobra.Command {
 	cmd.AddCommand(sandboxCmd)
 
 	return cmd
+}
+
+func buildListCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "List resources",
+	}
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "sandboxes",
+		Short: "List all sandboxes",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			return runListSandboxes(context.Background(), "")
+		},
+	})
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "reviews",
+		Short: "List existing reviews",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			return runListSandboxes(context.Background(), "review")
+		},
+	})
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "issue-sandboxes",
+		Short: "List existing issue sandboxes",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			return runListSandboxes(context.Background(), "issue")
+		},
+	})
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "prs",
+		Short: "List PRs handled by the system",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			return runListPRs(context.Background())
+		},
+	})
+
+	return cmd
+}
+
+func runListSandboxes(ctx context.Context, sandboxType string) error {
+	if namespace == "" {
+		return fmt.Errorf("NAMESPACE environment variable must be set")
+	}
+
+	cfg, err := config.GetConfig()
+	if err != nil {
+		return fmt.Errorf("unable to get kubeconfig: %w", err)
+	}
+
+	dynClient, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("unable to create dynamic client: %w", err)
+	}
+
+	listOptions := metav1.ListOptions{}
+	var selectors []string
+	if overseerName != "" {
+		selectors = append(selectors, fmt.Sprintf("review.gemini.google.com/overseer=%s", overseerName))
+	}
+	if sandboxType != "" {
+		selectors = append(selectors, fmt.Sprintf("sandbox.gemini.google.com/type=%s", sandboxType))
+	}
+	if len(selectors) > 0 {
+		listOptions.LabelSelector = strings.Join(selectors, ",")
+	}
+
+	sandboxList, err := dynClient.Resource(k8s.SandboxGVR).Namespace(namespace).List(ctx, listOptions)
+	if err != nil {
+		return fmt.Errorf("failed to list sandboxes: %w", err)
+	}
+
+	fmt.Printf("%-40s %-15s %-20s\n", "NAME", "TYPE", "CREATED")
+	for _, item := range sandboxList.Items {
+		name := item.GetName()
+		labels := item.GetLabels()
+		sType := labels["sandbox.gemini.google.com/type"]
+		created := item.GetCreationTimestamp().Format(time.RFC3339)
+		fmt.Printf("%-40s %-15s %-20s\n", name, sType, created)
+	}
+
+	return nil
+}
+
+func runListPRs(ctx context.Context) error {
+	if overseerName == "" {
+		return fmt.Errorf("OVERSEER_NAME environment variable must be set")
+	}
+
+	cfg, err := config.GetConfig()
+	if err != nil {
+		return fmt.Errorf("unable to get kubeconfig: %w", err)
+	}
+
+	dynClient, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("unable to create dynamic client: %w", err)
+	}
+
+	rwUnstructured, err := getOverseer(ctx, dynClient, overseerName)
+	if err != nil {
+		return fmt.Errorf("failed to get Overseer %s: %w", overseerName, err)
+	}
+
+	var overseer overseerv1alpha1.Overseer
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(rwUnstructured.Object, &overseer); err != nil {
+		return fmt.Errorf("failed to convert Overseer: %w", err)
+	}
+
+	ghClient, err := github.NewClient(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to create github client: %w", err)
+	}
+
+	owner, repo, err := parseRepoURL(overseer.Spec.RepoURL)
+	if err != nil {
+		return fmt.Errorf("failed to parse RepoURL: %w", err)
+	}
+
+	opts := &githubv39.PullRequestListOptions{
+		State: "open",
+		ListOptions: githubv39.ListOptions{PerPage: 100},
+	}
+
+	prs, _, err := ghClient.PullRequests.List(ctx, owner, repo, opts)
+	if err != nil {
+		return fmt.Errorf("failed to list pull requests: %w", err)
+	}
+
+	fmt.Printf("%-10s %-50s %-20s\n", "NUMBER", "TITLE", "URL")
+	for _, pr := range prs {
+		fmt.Printf("%-10d %-50s %-20s\n", pr.GetNumber(), truncateString(pr.GetTitle(), 50), pr.GetHTMLURL())
+	}
+
+	return nil
+}
+
+func truncateString(s string, l int) string {
+	if len(s) > l {
+		return s[:l-3] + "..."
+	}
+	return s
+}
+
+func buildConnectCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "connect <target>",
+		Short: "Connect to a sandbox via SSH + tmux",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runConnect(cmd.Context(), args[0])
+		},
+	}
+	return cmd
+}
+
+func runConnect(ctx context.Context, target string) error {
+	if namespace == "" {
+		return fmt.Errorf("NAMESPACE environment variable must be set")
+	}
+
+	cfg, err := config.GetConfig()
+	if err != nil {
+		return fmt.Errorf("unable to get kubeconfig: %w", err)
+	}
+
+	dynClient, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("unable to create dynamic client: %w", err)
+	}
+
+	// Resolve target to sandbox name
+	sandboxName := target
+	if _, err := strconv.Atoi(target); err == nil {
+		// It's a number, try to find sandbox by label
+		listOptions := metav1.ListOptions{}
+		sandboxList, err := dynClient.Resource(k8s.SandboxGVR).Namespace(namespace).List(ctx, listOptions)
+		if err != nil {
+			return fmt.Errorf("failed to list sandboxes: %w", err)
+		}
+
+		found := false
+		for _, item := range sandboxList.Items {
+			name := item.GetName()
+			if strings.Contains(name, "-pr-"+target) || strings.Contains(name, "-issue-"+target) {
+				sandboxName = name
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("could not resolve target %q to a sandbox", target)
+		}
+	}
+
+	// Find the pod for the sandbox using the helper from repo-agent/pkg/sandbox
+	podID, err := sandbox.FindSandboxPodInNamespace(ctx, sandboxName, namespace)
+	if err != nil {
+		return fmt.Errorf("failed to find pod for sandbox %q: %w", sandboxName, err)
+	}
+	if podID == nil {
+		return fmt.Errorf("no pod found for sandbox %q in namespace %q", sandboxName, namespace)
+	}
+
+	// Update ~/.ssh/config
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("failed to get user home dir: %w", err)
+	}
+
+	sshConfigPath := filepath.Join(homeDir, ".ssh", "config")
+
+	// Call exported helper from repo-agent/pkg/commands
+	if err := commands.UpdateSSHConfig(ctx, sshConfigPath, sandboxName, *podID); err != nil {
+		return fmt.Errorf("failed to update ssh config: %w", err)
+	}
+
+	// Launch tmux via exported helper
+	if err := commands.LaunchTmux(ctx, sandboxName); err != nil {
+		return fmt.Errorf("running tmux: %w", err)
+	}
+
+	return nil
+}
+
+func buildChatCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "chat <target>",
+		Short: "Continue Gemini session inside a sandbox",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runChat(cmd.Context(), args[0])
+		},
+	}
+	return cmd
+}
+
+func runChat(ctx context.Context, target string) error {
+	if namespace == "" {
+		return fmt.Errorf("NAMESPACE environment variable must be set")
+	}
+
+	cfg, err := config.GetConfig()
+	if err != nil {
+		return fmt.Errorf("unable to get kubeconfig: %w", err)
+	}
+
+	dynClient, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("unable to create dynamic client: %w", err)
+	}
+
+	// Resolve target to sandbox name
+	sandboxName := target
+	if _, err := strconv.Atoi(target); err == nil {
+		// Resolve number to name
+		listOptions := metav1.ListOptions{}
+		sandboxList, err := dynClient.Resource(k8s.SandboxGVR).Namespace(namespace).List(ctx, listOptions)
+		if err != nil {
+			return fmt.Errorf("failed to list sandboxes: %w", err)
+		}
+
+		found := false
+		for _, item := range sandboxList.Items {
+			name := item.GetName()
+			if strings.Contains(name, "-pr-"+target) || strings.Contains(name, "-issue-"+target) {
+				sandboxName = name
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("could not resolve target %q to a sandbox", target)
+		}
+	}
+
+	// Find the pod for the sandbox
+	podID, err := sandbox.FindSandboxPodInNamespace(ctx, sandboxName, namespace)
+	if err != nil {
+		return fmt.Errorf("failed to find pod for sandbox %q: %w", sandboxName, err)
+	}
+	if podID == nil {
+		return fmt.Errorf("no pod found for sandbox %q in namespace %q", sandboxName, namespace)
+	}
+
+	// Update ~/.ssh/config
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("failed to get user home dir: %w", err)
+	}
+
+	sshConfigPath := filepath.Join(homeDir, ".ssh", "config")
+
+	if err := commands.UpdateSSHConfig(ctx, sshConfigPath, sandboxName, *podID); err != nil {
+		return fmt.Errorf("failed to update ssh config: %w", err)
+	}
+
+	// Launch interactive command via SSH
+	args := []string{
+		"ssh", "-t", sandboxName, "gemini",
+	}
+
+	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("starting ssh chat: %w", err)
+	}
+
+	if err := cmd.Wait(); err != nil {
+		return fmt.Errorf("waiting for ssh chat: %w", err)
+	}
+
+	return nil
+}
+
+func buildTaskCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "task",
+		Short: "Manage tasks in sandboxes",
+	}
+
+	createCmd := &cobra.Command{
+		Use:   "create <target> <command>",
+		Short: "Create a script task in a sandbox",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runCreateTask(cmd.Context(), args[0], args[1])
+		},
+	}
+	cmd.AddCommand(createCmd)
+
+	return cmd
+}
+
+func runCreateTask(ctx context.Context, target string, command string) error {
+	if namespace == "" {
+		return fmt.Errorf("NAMESPACE environment variable must be set")
+	}
+
+	cfg, err := config.GetConfig()
+	if err != nil {
+		return fmt.Errorf("unable to get kubeconfig: %w", err)
+	}
+
+	dynClient, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("unable to create dynamic client: %w", err)
+	}
+
+	clientset, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("unable to create clientset: %w", err)
+	}
+
+	manager := k8s.NewManager(&clients.KubernetesClient{DynamicClient: dynClient, Clientset: clientset})
+
+	// Resolve target to sandbox name
+	sandboxName := target
+	if _, err := strconv.Atoi(target); err == nil {
+		// Resolve number to name
+		listOptions := metav1.ListOptions{}
+		sandboxList, err := dynClient.Resource(k8s.SandboxGVR).Namespace(namespace).List(ctx, listOptions)
+		if err != nil {
+			return fmt.Errorf("failed to list sandboxes: %w", err)
+		}
+
+		found := false
+		for _, item := range sandboxList.Items {
+			name := item.GetName()
+			if strings.Contains(name, "-pr-"+target) || strings.Contains(name, "-issue-"+target) {
+				sandboxName = name
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("could not resolve target %q to a sandbox", target)
+		}
+	}
+
+	// Create Task
+	taskType := "script"
+	fmt.Printf("Creating task %s for sandbox %s...\n", taskType, sandboxName)
+	params := map[string]string{
+		"command": command,
+	}
+
+	err = manager.CreateSandboxTask(ctx, namespace, sandboxName, "Sandbox", taskType, params)
+	if err != nil {
+		return fmt.Errorf("failed to create sandbox task: %w", err)
+	}
+
+	fmt.Println("Task created successfully.")
+
+	// Wait for the task to be created and listed
+	time.Sleep(1 * time.Second)
+
+	// Find the task name
+	taskList, err := manager.ListSandboxTasks(ctx, namespace, sandboxName)
+	if err != nil {
+		return fmt.Errorf("failed to list tasks: %w", err)
+	}
+
+	var latestTask *sandboxtaskv1alpha1.SandboxTask
+	for i := range taskList.Items {
+		task := &taskList.Items[i]
+		if task.Spec.Type == "script" {
+			if latestTask == nil || task.CreationTimestamp.After(latestTask.CreationTimestamp.Time) {
+				latestTask = task
+			}
+		}
+	}
+
+	if latestTask == nil {
+		return fmt.Errorf("failed to find the created task")
+	}
+
+	taskName := latestTask.GetName()
+	fmt.Printf("Streaming logs for task %s...\n", taskName)
+
+	// Find the pod for the sandbox
+	podID, err := sandbox.FindSandboxPodInNamespace(ctx, sandboxName, namespace)
+	if err != nil {
+		return fmt.Errorf("failed to find pod for sandbox %q: %w", sandboxName, err)
+	}
+	if podID == nil {
+		return fmt.Errorf("no pod found for sandbox %q in namespace %q", sandboxName, namespace)
+	}
+
+	// Stream logs using kubectl exec
+	logPath := fmt.Sprintf("/workspaces/.agent/logs/%s.log", taskName)
+
+	// Run kubectl exec -i <pod> -n <namespace> -- tail -f <logPath>
+	args := []string{
+		"kubectl", "exec", "-i", podID.Name, "-n", podID.Namespace, "--", "tail", "-f", logPath,
+	}
+
+	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("starting log streaming: %w", err)
+	}
+
+	if err := cmd.Wait(); err != nil {
+		// Ignore error if context was canceled or process killed by user
+		if ctx.Err() == nil {
+			return fmt.Errorf("waiting for log streaming: %w", err)
+		}
+	}
+
+	return nil
 }
 
 func runDeleteSandbox(ctx context.Context, sandboxName string) error {
