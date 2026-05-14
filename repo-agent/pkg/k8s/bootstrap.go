@@ -66,6 +66,40 @@ func BootstrapNamespace(ctx context.Context, clientset kubernetes.Interface, tar
 	return nil
 }
 
+// BootstrapNamespaceSimple bootstraps the target namespace with ONLY portal-ca, devcontainer cm, and service accounts.
+func BootstrapNamespaceSimple(ctx context.Context, clientset kubernetes.Interface, targetNS string) error {
+	log := klog.FromContext(ctx)
+	_, err := clientset.CoreV1().Namespaces().Get(ctx, targetNS, v1.GetOptions{})
+	if errors.IsNotFound(err) {
+		log.Info("Creating namespace", "name", targetNS)
+		ns := &corev1.Namespace{
+			ObjectMeta: v1.ObjectMeta{
+				Name:   targetNS,
+				Labels: map[string]string{"app.kubernetes.io/managed-by": "repo-agent", "review.gemini.google.com/tenant": targetNS},
+			},
+		}
+		if _, err := clientset.CoreV1().Namespaces().Create(ctx, ns, v1.CreateOptions{}); err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	}
+
+	// Copy ONLY portal-ca, devcontainer cm, and service accounts
+	if err := CopySecret(ctx, clientset, "overseer-system", "github-portal-ca", targetNS, "github-portal-ca"); err != nil {
+		log.Info("Warning: failed to copy github-portal-ca secret", "err", err)
+	}
+	if err := CopyConfigMap(ctx, clientset, SystemNamespace, DevContainerCM, targetNS, DevContainerCM); err != nil {
+		log.Info("Debug: failed to copy configmap", "name", DevContainerCM, "err", err)
+	}
+
+	if err := SetupServiceAccounts(ctx, clientset, targetNS); err != nil {
+		log.Info("Warning: failed to setup service accounts", "err", err)
+	}
+
+	return nil
+}
+
 // CopySecret copies a secret from source namespace to destination namespace.
 func CopySecret(ctx context.Context, clientset kubernetes.Interface, srcNS, srcName, dstNS, dstName string) error {
 	log := klog.FromContext(ctx)

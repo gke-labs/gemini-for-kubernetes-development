@@ -93,6 +93,16 @@ func main() {
 	choreCmd.AddCommand(buildReconcileCommand())
 
 	adminCmd.AddCommand(choreCmd)
+
+	onboardCmd := &cobra.Command{
+		Use:   "onboard [github-id]",
+		Short: "Onboard a new user",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			return runAdminOnboard(context.Background(), args[0])
+		},
+	}
+	adminCmd.AddCommand(onboardCmd)
 	rootCmd.AddCommand(adminCmd)
 
 	sandboxCmd := &cobra.Command{
@@ -2476,14 +2486,19 @@ func buildSecretCommand() *cobra.Command {
 		Short: "Manage secrets in the namespace",
 	}
 
+	var githubEmail string
+	var githubName string
+
 	setCmd := &cobra.Command{
 		Use:   "set [github-pat|gemini] [token]",
 		Short: "Set a secret value",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(_ *cobra.Command, args []string) error {
-			return runSecretSet(context.Background(), args[0], args[1])
+			return runSecretSet(context.Background(), args[0], args[1], githubEmail, githubName)
 		},
 	}
+	setCmd.Flags().StringVar(&githubEmail, "github-email", "", "GitHub email (defaults to git config user.email) - only for github-pat")
+	setCmd.Flags().StringVar(&githubName, "github-name", "", "GitHub name (defaults to git config user.name) - only for github-pat")
 	cmd.AddCommand(setCmd)
 
 	clearCmd := &cobra.Command{
@@ -2499,7 +2514,7 @@ func buildSecretCommand() *cobra.Command {
 	return cmd
 }
 
-func runSecretSet(ctx context.Context, secretType string, token string) error {
+func runSecretSet(ctx context.Context, secretType string, token string, email string, name string) error {
 	if namespace == "" {
 		return fmt.Errorf("namespace must be set")
 	}
@@ -2520,9 +2535,22 @@ func runSecretSet(ctx context.Context, secretType string, token string) error {
 	switch secretType {
 	case "github-pat":
 		secretName = "github-pat"
+		// Deduce email and name if not provided
+		if email == "" {
+			email = getGitConfig("user.email")
+		}
+		if name == "" {
+			name = getGitConfig("user.name")
+		}
 		data = map[string][]byte{
 			"manual_pat": []byte(token),
 			"pat":        []byte(token),
+		}
+		if name != "" {
+			data["name"] = []byte(name)
+		}
+		if email != "" {
+			data["email"] = []byte(email)
 		}
 	case "gemini":
 		secretName = "gemini-vscode-tokens"
@@ -2604,4 +2632,41 @@ func runSecretClear(ctx context.Context, secretType string) error {
 	default:
 		return fmt.Errorf("unknown secret type: %s. Supported types: github-pat, gemini, all", secretType)
 	}
+}
+
+func runAdminOnboard(ctx context.Context, githubID string) error {
+	if githubID == "" {
+		return fmt.Errorf("github-id is required")
+	}
+
+	cfg, err := config.GetConfig()
+	if err != nil {
+		return fmt.Errorf("unable to get kubeconfig: %w", err)
+	}
+
+	clientset, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("unable to create clientset: %w", err)
+	}
+
+	namespace := githubID
+
+	fmt.Printf("Bootstrapping namespace %s...\n", namespace)
+	err = k8s.BootstrapNamespaceSimple(ctx, clientset, namespace)
+	if err != nil {
+		return fmt.Errorf("failed to bootstrap namespace %s: %w", namespace, err)
+	}
+
+	fmt.Println("Onboarding completed successfully.")
+	return nil
+}
+
+func getGitConfig(key string) string {
+	cmd := exec.Command("git", "config", key)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(out.String())
 }
