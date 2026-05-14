@@ -95,11 +95,11 @@ func main() {
 	adminCmd.AddCommand(choreCmd)
 
 	onboardCmd := &cobra.Command{
-		Use:          "onboard [github-id]",
-		Short:        "Onboard a new user",
-		SilenceUsage: true,
-		Args:         cobra.ExactArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
+		Use:   "onboard [github-id]",
+		Short: "Onboard a new user",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
 			return runAdminOnboard(context.Background(), args[0])
 		},
 	}
@@ -132,10 +132,10 @@ func buildIssueCommand() *cobra.Command {
 	var prompt string
 
 	cmd := &cobra.Command{
-		Use:          "issue",
-		Short:        "Create/ensure sandbox and task for an issue",
-		SilenceUsage: true,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		Use:   "issue",
+		Short: "Create/ensure sandbox and task for an issue",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cmd.SilenceUsage = true
 			return runIssue(context.Background(), number, prNumber, taskType, prompt)
 		},
 	}
@@ -157,10 +157,10 @@ func buildPRCommand() *cobra.Command {
 	var prompt string
 
 	cmd := &cobra.Command{
-		Use:          "pr",
-		Short:        "Create/ensure sandbox and task for a PR",
-		SilenceUsage: true,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		Use:   "pr",
+		Short: "Create/ensure sandbox and task for a PR",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cmd.SilenceUsage = true
 			return runPR(context.Background(), number, taskType, submit, prompt)
 		},
 	}
@@ -182,10 +182,10 @@ func buildChoreEnsureCommand() *cobra.Command {
 	var file string
 
 	cmd := &cobra.Command{
-		Use:          "ensure",
-		Short:        "Create/ensure sandbox and task for a chore",
-		SilenceUsage: true,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		Use:   "ensure",
+		Short: "Create/ensure sandbox and task for a chore",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cmd.SilenceUsage = true
 			return runChore(context.Background(), name, file)
 		},
 	}
@@ -199,10 +199,10 @@ func buildChoreEnsureCommand() *cobra.Command {
 
 func buildReconcileCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:          "reconcile",
-		Short:        "Reconcile chores: delete sandboxes for chores that are excluded or no longer present",
-		SilenceUsage: true,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		Use:   "reconcile",
+		Short: "Reconcile chores: delete sandboxes for chores that are excluded or no longer present",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cmd.SilenceUsage = true
 			return runReconcile(context.Background())
 		},
 	}
@@ -528,19 +528,24 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 		}
 
 		name := ""
-		// Try to check if repoURL is actually the name of a RepoWatch resource
-		_, err := kubeClient.DynamicClient.Resource(gvr).Namespace(namespace).Get(ctx, repoURL, metav1.GetOptions{})
-		if err == nil {
-			name = repoURL
-		} else if errors.IsNotFound(err) {
+		// If repoURL contains '/', it is definitely a URL, so skip direct Get
+		if !strings.Contains(repoURL, "/") {
+			// Try to check if repoURL is actually the name of a RepoWatch resource
+			_, err := kubeClient.DynamicClient.Resource(gvr).Namespace(namespace).Get(ctx, repoURL, metav1.GetOptions{})
+			if err == nil {
+				name = repoURL
+			} else if !errors.IsNotFound(err) {
+				return fmt.Errorf("failed to check if RepoWatch %s exists: %w", repoURL, err)
+			}
+		}
+
+		if name == "" {
 			// Fallback to finding by URL
 			var err2 error
 			name, err2 = findRepoWatchNameByURL(ctx, repoURL)
 			if err2 != nil {
 				return err2
 			}
-		} else {
-			return fmt.Errorf("failed to check if RepoWatch %s exists: %w", repoURL, err)
 		}
 
 		if name == "" {
@@ -754,19 +759,24 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 		}
 
 		name := ""
-		// Try to check if repoURL is actually the name of a RepoWatch resource
-		_, err := kubeClient.DynamicClient.Resource(gvr).Namespace(namespace).Get(ctx, repoURL, metav1.GetOptions{})
-		if err == nil {
-			name = repoURL
-		} else if errors.IsNotFound(err) {
+		// If repoURL contains '/', it is definitely a URL, so skip direct Get
+		if !strings.Contains(repoURL, "/") {
+			// Try to check if repoURL is actually the name of a RepoWatch resource
+			_, err := kubeClient.DynamicClient.Resource(gvr).Namespace(namespace).Get(ctx, repoURL, metav1.GetOptions{})
+			if err == nil {
+				name = repoURL
+			} else if !errors.IsNotFound(err) {
+				return fmt.Errorf("failed to check if RepoWatch %s exists: %w", repoURL, err)
+			}
+		}
+
+		if name == "" {
 			// Fallback to finding by URL
 			var err2 error
 			name, err2 = findRepoWatchNameByURL(ctx, repoURL)
 			if err2 != nil {
 				return err2
 			}
-		} else {
-			return fmt.Errorf("failed to check if RepoWatch %s exists: %w", repoURL, err)
 		}
 
 		if name == "" {
@@ -1446,11 +1456,11 @@ func buildDeleteCommand() *cobra.Command {
 	}
 
 	sandboxCmd := &cobra.Command{
-		Use:          "sandbox [name]",
-		Short:        "Delete a sandbox and its associated resources (like the -lb service)",
-		SilenceUsage: true,
-		Args:         cobra.ExactArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
+		Use:   "sandbox [name]",
+		Short: "Delete a sandbox and its associated resources (like the -lb service)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
 			return runDeleteSandbox(context.Background(), args[0])
 		},
 	}
@@ -1466,37 +1476,37 @@ func buildListCommand() *cobra.Command {
 	}
 
 	cmd.AddCommand(&cobra.Command{
-		Use:          "sandboxes",
-		Short:        "List all sandboxes",
-		SilenceUsage: true,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		Use:   "sandboxes",
+		Short: "List all sandboxes",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cmd.SilenceUsage = true
 			return runListSandboxes(context.Background(), "")
 		},
 	})
 
 	cmd.AddCommand(&cobra.Command{
-		Use:          "reviews",
-		Short:        "List existing reviews",
-		SilenceUsage: true,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		Use:   "reviews",
+		Short: "List existing reviews",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cmd.SilenceUsage = true
 			return runListSandboxes(context.Background(), "review")
 		},
 	})
 
 	cmd.AddCommand(&cobra.Command{
-		Use:          "issue-sandboxes",
-		Short:        "List existing issue sandboxes",
-		SilenceUsage: true,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		Use:   "issue-sandboxes",
+		Short: "List existing issue sandboxes",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cmd.SilenceUsage = true
 			return runListSandboxes(context.Background(), "issue")
 		},
 	})
 
 	cmd.AddCommand(&cobra.Command{
-		Use:          "prs",
-		Short:        "List PRs handled by the system",
-		SilenceUsage: true,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		Use:   "prs",
+		Short: "List PRs handled by the system",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cmd.SilenceUsage = true
 			return runListPRs(context.Background())
 		},
 	})
@@ -1610,11 +1620,11 @@ func truncateString(s string, l int) string {
 
 func buildConnectCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:          "connect <target>",
-		Short:        "Connect to a sandbox via SSH + tmux",
-		SilenceUsage: true,
-		Args:         cobra.ExactArgs(1),
+		Use:   "connect <target>",
+		Short: "Connect to a sandbox via SSH + tmux",
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
 			return runConnect(cmd.Context(), args[0])
 		},
 	}
@@ -1692,11 +1702,11 @@ func runConnect(ctx context.Context, target string) error {
 
 func buildChatCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:          "chat <target>",
-		Short:        "Continue Gemini session inside a sandbox",
-		SilenceUsage: true,
-		Args:         cobra.ExactArgs(1),
+		Use:   "chat <target>",
+		Short: "Continue Gemini session inside a sandbox",
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
 			return runChat(cmd.Context(), args[0])
 		},
 	}
@@ -1790,11 +1800,11 @@ func buildTaskCommand() *cobra.Command {
 	}
 
 	createCmd := &cobra.Command{
-		Use:          "create <target> <command>",
-		Short:        "Create a script task in a sandbox",
-		SilenceUsage: true,
-		Args:         cobra.ExactArgs(2),
+		Use:   "create <target> <command>",
+		Short: "Create a script task in a sandbox",
+		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
 			return runCreateTask(cmd.Context(), args[0], args[1])
 		},
 	}
@@ -2067,10 +2077,10 @@ func buildRepoCommand() *cobra.Command {
 
 	var githubSecret string
 	initCmd := &cobra.Command{
-		Use:          "init",
-		Short:        "Create a RepoWatch resource for the current repository",
-		SilenceUsage: true,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		Use:   "init",
+		Short: "Create a RepoWatch resource for the current repository",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cmd.SilenceUsage = true
 			return runRepoInit(context.Background(), nameFlag, githubSecret)
 		},
 	}
@@ -2078,20 +2088,20 @@ func buildRepoCommand() *cobra.Command {
 	cmd.AddCommand(initCmd)
 
 	cmd.AddCommand(&cobra.Command{
-		Use:          "list",
-		Short:        "List all RepoWatch resources",
-		SilenceUsage: true,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		Use:   "list",
+		Short: "List all RepoWatch resources",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cmd.SilenceUsage = true
 			return runRepoList(context.Background())
 		},
 	})
 
 	cmd.AddCommand(&cobra.Command{
-		Use:          "get [name]",
-		Short:        "Get a RepoWatch resource as YAML",
-		SilenceUsage: true,
-		Args:         cobra.MaximumNArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
+		Use:   "get [name]",
+		Short: "Get a RepoWatch resource as YAML",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
 			name := nameFlag
 			if name == "" && len(args) > 0 {
 				name = args[0]
@@ -2111,11 +2121,11 @@ func buildRepoCommand() *cobra.Command {
 	})
 
 	deleteCmd := &cobra.Command{
-		Use:          "delete [name]",
-		Short:        "Delete a RepoWatch resource",
-		SilenceUsage: true,
-		Args:         cobra.MaximumNArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
+		Use:   "delete [name]",
+		Short: "Delete a RepoWatch resource",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
 			name := nameFlag
 			if name == "" && len(args) > 0 {
 				name = args[0]
@@ -2136,11 +2146,11 @@ func buildRepoCommand() *cobra.Command {
 	cmd.AddCommand(deleteCmd)
 
 	editCmd := &cobra.Command{
-		Use:          "edit [name]",
-		Short:        "Edit a RepoWatch resource",
-		SilenceUsage: true,
-		Args:         cobra.MaximumNArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
+		Use:   "edit [name]",
+		Short: "Edit a RepoWatch resource",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
 			name := nameFlag
 			if name == "" && len(args) > 0 {
 				name = args[0]
@@ -2517,11 +2527,11 @@ func buildSecretCommand() *cobra.Command {
 	var githubName string
 
 	setCmd := &cobra.Command{
-		Use:          "set [github-pat|gemini] [token]",
-		Short:        "Set a secret value",
-		SilenceUsage: true,
-		Args:         cobra.ExactArgs(2),
-		RunE: func(_ *cobra.Command, args []string) error {
+		Use:   "set [github-pat|gemini] [token]",
+		Short: "Set a secret value",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
 			return runSecretSet(context.Background(), args[0], args[1], githubEmail, githubName)
 		},
 	}
@@ -2530,11 +2540,11 @@ func buildSecretCommand() *cobra.Command {
 	cmd.AddCommand(setCmd)
 
 	clearCmd := &cobra.Command{
-		Use:          "clear [github-pat|gemini|all]",
-		Short:        "Clear/delete a secret",
-		SilenceUsage: true,
-		Args:         cobra.ExactArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
+		Use:   "clear [github-pat|gemini|all]",
+		Short: "Clear/delete a secret",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
 			return runSecretClear(context.Background(), args[0])
 		},
 	}
