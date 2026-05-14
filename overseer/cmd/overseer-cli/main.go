@@ -104,6 +104,7 @@ func main() {
 	sandboxCmd.AddCommand(buildDeleteCommand())
 
 	rootCmd.AddCommand(sandboxCmd)
+	rootCmd.AddCommand(buildRepoCommand())
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -1917,4 +1918,271 @@ func deduceRepoURLFromGit() string {
 		return ""
 	}
 	return strings.TrimSuffix(urlStr, ".git")
+}
+
+func buildRepoCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "repo",
+		Short: "Manage RepoWatch resources",
+	}
+
+	var nameFlag string
+	cmd.PersistentFlags().StringVar(&nameFlag, "name", "", "Name for the RepoWatch resource")
+
+	var githubSecret string
+	initCmd := &cobra.Command{
+		Use:   "init",
+		Short: "Create a RepoWatch resource for the current repository",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			return runRepoInit(context.Background(), nameFlag, githubSecret)
+		},
+	}
+	initCmd.Flags().StringVar(&githubSecret, "github-secret", "github-pat", "Name of the GitHub secret")
+	cmd.AddCommand(initCmd)
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "list",
+		Short: "List all RepoWatch resources",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			return runRepoList(context.Background())
+		},
+	})
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "get [name]",
+		Short: "Get a RepoWatch resource as YAML",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			name := nameFlag
+			if name == "" {
+				if len(args) < 1 {
+					return fmt.Errorf("must provide name or use --name")
+				}
+				name = args[0]
+			}
+			return runRepoGet(context.Background(), name)
+		},
+	})
+
+	deleteCmd := &cobra.Command{
+		Use:   "delete [name]",
+		Short: "Delete a RepoWatch resource",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			name := nameFlag
+			if name == "" {
+				if len(args) < 1 {
+					return fmt.Errorf("must provide name or use --name")
+				}
+				name = args[0]
+			}
+			return runRepoDelete(context.Background(), name)
+		},
+	}
+	cmd.AddCommand(deleteCmd)
+
+	editCmd := &cobra.Command{
+		Use:   "edit [name]",
+		Short: "Edit a RepoWatch resource",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			name := nameFlag
+			if name == "" {
+				if len(args) < 1 {
+					return fmt.Errorf("must provide name or use --name")
+				}
+				name = args[0]
+			}
+			return runRepoEdit(context.Background(), name)
+		},
+	}
+	cmd.AddCommand(editCmd)
+
+	return cmd
+}
+
+func runRepoInit(ctx context.Context, nameFlag string, githubSecret string) error {
+	if namespace == "" {
+		return fmt.Errorf("namespace must be set")
+	}
+	if repoURL == "" {
+		return fmt.Errorf("repository URL must be set (deduced from git or set via --repo)")
+	}
+
+	repoName := nameFlag
+	if repoName == "" {
+		parts := strings.Split(strings.TrimSuffix(repoURL, "/"), "/")
+		if len(parts) > 0 {
+			repoName = parts[len(parts)-1]
+		}
+		if repoName == "" {
+			return fmt.Errorf("failed to extract repo name from URL: %s", repoURL)
+		}
+		if len(repoName) > 30 {
+			repoName = repoName[:30]
+		}
+	}
+
+	cfg, err := config.GetConfig()
+	if err != nil {
+		return fmt.Errorf("unable to get kubeconfig: %w", err)
+	}
+
+	dynClient, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("unable to create dynamic client: %w", err)
+	}
+
+	gvr := schema.GroupVersionResource{
+		Group:    "review.gemini.google.com",
+		Version:  "v1alpha1",
+		Resource: "repowatches",
+	}
+
+	repoWatch := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "review.gemini.google.com/v1alpha1",
+			"kind":       "RepoWatch",
+			"metadata": map[string]interface{}{
+				"name":      repoName,
+				"namespace": namespace,
+			},
+			"spec": map[string]interface{}{
+				"repoURL":          repoURL,
+				"githubSecretName": githubSecret,
+				"review": map[string]interface{}{
+					"maxActiveSandboxes": int64(0),
+					"maxSandboxes":       int64(0),
+				},
+				"issue": map[string]interface{}{
+					"maxActiveSandboxes": int64(0),
+					"maxSandboxes":       int64(0),
+				},
+			},
+		},
+	}
+
+	fmt.Printf("Creating RepoWatch %s in namespace %s...\n", repoName, namespace)
+	_, err = dynClient.Resource(gvr).Namespace(namespace).Create(ctx, repoWatch, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to create RepoWatch: %w", err)
+	}
+
+	fmt.Println("Done.")
+	return nil
+}
+
+func runRepoList(ctx context.Context) error {
+	if namespace == "" {
+		return fmt.Errorf("namespace must be set")
+	}
+
+	cfg, err := config.GetConfig()
+	if err != nil {
+		return fmt.Errorf("unable to get kubeconfig: %w", err)
+	}
+
+	dynClient, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("unable to create dynamic client: %w", err)
+	}
+
+	gvr := schema.GroupVersionResource{
+		Group:    "review.gemini.google.com",
+		Version:  "v1alpha1",
+		Resource: "repowatches",
+	}
+
+	list, err := dynClient.Resource(gvr).Namespace(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to list RepoWatches: %w", err)
+	}
+
+	fmt.Printf("%-30s %-50s\n", "NAME", "REPO URL")
+	for _, item := range list.Items {
+		name := item.GetName()
+		repoURL, _, _ := unstructured.NestedString(item.Object, "spec", "repoURL")
+		fmt.Printf("%-30s %-50s\n", name, repoURL)
+	}
+
+	return nil
+}
+
+func runRepoDelete(ctx context.Context, name string) error {
+	if namespace == "" {
+		return fmt.Errorf("namespace must be set")
+	}
+
+	cfg, err := config.GetConfig()
+	if err != nil {
+		return fmt.Errorf("unable to get kubeconfig: %w", err)
+	}
+
+	dynClient, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("unable to create dynamic client: %w", err)
+	}
+
+	gvr := schema.GroupVersionResource{
+		Group:    "review.gemini.google.com",
+		Version:  "v1alpha1",
+		Resource: "repowatches",
+	}
+
+	fmt.Printf("Deleting RepoWatch %s in namespace %s...\n", name, namespace)
+	err = dynClient.Resource(gvr).Namespace(namespace).Delete(ctx, name, metav1.DeleteOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to delete RepoWatch: %w", err)
+	}
+
+	fmt.Println("Done.")
+	return nil
+}
+
+func runRepoEdit(ctx context.Context, name string) error {
+	if namespace == "" {
+		return fmt.Errorf("namespace must be set")
+	}
+
+	cmd := exec.Command("kubectl", "edit", "repowatch", name, "-n", namespace)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	return cmd.Run()
+}
+
+func runRepoGet(ctx context.Context, name string) error {
+	if namespace == "" {
+		return fmt.Errorf("namespace must be set")
+	}
+
+	cfg, err := config.GetConfig()
+	if err != nil {
+		return fmt.Errorf("unable to get kubeconfig: %w", err)
+	}
+
+	dynClient, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("unable to create dynamic client: %w", err)
+	}
+
+	gvr := schema.GroupVersionResource{
+		Group:    "review.gemini.google.com",
+		Version:  "v1alpha1",
+		Resource: "repowatches",
+	}
+
+	item, err := dynClient.Resource(gvr).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to get RepoWatch: %w", err)
+	}
+
+	y, err := yaml.Marshal(item.Object)
+	if err != nil {
+		return fmt.Errorf("failed to marshal to YAML: %w", err)
+	}
+
+	fmt.Println(string(y))
+	return nil
 }
