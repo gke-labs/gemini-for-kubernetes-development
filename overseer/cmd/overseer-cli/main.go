@@ -95,9 +95,10 @@ func main() {
 	adminCmd.AddCommand(choreCmd)
 
 	onboardCmd := &cobra.Command{
-		Use:   "onboard [github-id]",
-		Short: "Onboard a new user",
-		Args:  cobra.ExactArgs(1),
+		Use:          "onboard [github-id]",
+		Short:        "Onboard a new user",
+		SilenceUsage: true,
+		Args:         cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			return runAdminOnboard(context.Background(), args[0])
 		},
@@ -131,8 +132,9 @@ func buildIssueCommand() *cobra.Command {
 	var prompt string
 
 	cmd := &cobra.Command{
-		Use:   "issue",
-		Short: "Create/ensure sandbox and task for an issue",
+		Use:          "issue",
+		Short:        "Create/ensure sandbox and task for an issue",
+		SilenceUsage: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runIssue(context.Background(), number, prNumber, taskType, prompt)
 		},
@@ -155,8 +157,9 @@ func buildPRCommand() *cobra.Command {
 	var prompt string
 
 	cmd := &cobra.Command{
-		Use:   "pr",
-		Short: "Create/ensure sandbox and task for a PR",
+		Use:          "pr",
+		Short:        "Create/ensure sandbox and task for a PR",
+		SilenceUsage: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runPR(context.Background(), number, taskType, submit, prompt)
 		},
@@ -179,8 +182,9 @@ func buildChoreEnsureCommand() *cobra.Command {
 	var file string
 
 	cmd := &cobra.Command{
-		Use:   "ensure",
-		Short: "Create/ensure sandbox and task for a chore",
+		Use:          "ensure",
+		Short:        "Create/ensure sandbox and task for a chore",
+		SilenceUsage: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runChore(context.Background(), name, file)
 		},
@@ -195,8 +199,9 @@ func buildChoreEnsureCommand() *cobra.Command {
 
 func buildReconcileCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "reconcile",
-		Short: "Reconcile chores: delete sandboxes for chores that are excluded or no longer present",
+		Use:          "reconcile",
+		Short:        "Reconcile chores: delete sandboxes for chores that are excluded or no longer present",
+		SilenceUsage: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runReconcile(context.Background())
 		},
@@ -1441,9 +1446,10 @@ func buildDeleteCommand() *cobra.Command {
 	}
 
 	sandboxCmd := &cobra.Command{
-		Use:   "sandbox [name]",
-		Short: "Delete a sandbox and its associated resources (like the -lb service)",
-		Args:  cobra.ExactArgs(1),
+		Use:          "sandbox [name]",
+		Short:        "Delete a sandbox and its associated resources (like the -lb service)",
+		SilenceUsage: true,
+		Args:         cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			return runDeleteSandbox(context.Background(), args[0])
 		},
@@ -1460,32 +1466,36 @@ func buildListCommand() *cobra.Command {
 	}
 
 	cmd.AddCommand(&cobra.Command{
-		Use:   "sandboxes",
-		Short: "List all sandboxes",
+		Use:          "sandboxes",
+		Short:        "List all sandboxes",
+		SilenceUsage: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runListSandboxes(context.Background(), "")
 		},
 	})
 
 	cmd.AddCommand(&cobra.Command{
-		Use:   "reviews",
-		Short: "List existing reviews",
+		Use:          "reviews",
+		Short:        "List existing reviews",
+		SilenceUsage: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runListSandboxes(context.Background(), "review")
 		},
 	})
 
 	cmd.AddCommand(&cobra.Command{
-		Use:   "issue-sandboxes",
-		Short: "List existing issue sandboxes",
+		Use:          "issue-sandboxes",
+		Short:        "List existing issue sandboxes",
+		SilenceUsage: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runListSandboxes(context.Background(), "issue")
 		},
 	})
 
 	cmd.AddCommand(&cobra.Command{
-		Use:   "prs",
-		Short: "List PRs handled by the system",
+		Use:          "prs",
+		Short:        "List PRs handled by the system",
+		SilenceUsage: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runListPRs(context.Background())
 		},
@@ -1600,9 +1610,10 @@ func truncateString(s string, l int) string {
 
 func buildConnectCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "connect <target>",
-		Short: "Connect to a sandbox via SSH + tmux",
-		Args:  cobra.ExactArgs(1),
+		Use:          "connect <target>",
+		Short:        "Connect to a sandbox via SSH + tmux",
+		SilenceUsage: true,
+		Args:         cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runConnect(cmd.Context(), args[0])
 		},
@@ -1681,9 +1692,10 @@ func runConnect(ctx context.Context, target string) error {
 
 func buildChatCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "chat <target>",
-		Short: "Continue Gemini session inside a sandbox",
-		Args:  cobra.ExactArgs(1),
+		Use:          "chat <target>",
+		Short:        "Continue Gemini session inside a sandbox",
+		SilenceUsage: true,
+		Args:         cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runChat(cmd.Context(), args[0])
 		},
@@ -1778,9 +1790,10 @@ func buildTaskCommand() *cobra.Command {
 	}
 
 	createCmd := &cobra.Command{
-		Use:   "create <target> <command>",
-		Short: "Create a script task in a sandbox",
-		Args:  cobra.ExactArgs(2),
+		Use:          "create <target> <command>",
+		Short:        "Create a script task in a sandbox",
+		SilenceUsage: true,
+		Args:         cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runCreateTask(cmd.Context(), args[0], args[1])
 		},
@@ -2054,8 +2067,9 @@ func buildRepoCommand() *cobra.Command {
 
 	var githubSecret string
 	initCmd := &cobra.Command{
-		Use:   "init",
-		Short: "Create a RepoWatch resource for the current repository",
+		Use:          "init",
+		Short:        "Create a RepoWatch resource for the current repository",
+		SilenceUsage: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runRepoInit(context.Background(), nameFlag, githubSecret)
 		},
@@ -2064,17 +2078,19 @@ func buildRepoCommand() *cobra.Command {
 	cmd.AddCommand(initCmd)
 
 	cmd.AddCommand(&cobra.Command{
-		Use:   "list",
-		Short: "List all RepoWatch resources",
+		Use:          "list",
+		Short:        "List all RepoWatch resources",
+		SilenceUsage: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runRepoList(context.Background())
 		},
 	})
 
 	cmd.AddCommand(&cobra.Command{
-		Use:   "get [name]",
-		Short: "Get a RepoWatch resource as YAML",
-		Args:  cobra.MaximumNArgs(1),
+		Use:          "get [name]",
+		Short:        "Get a RepoWatch resource as YAML",
+		SilenceUsage: true,
+		Args:         cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			name := nameFlag
 			if name == "" && len(args) > 0 {
@@ -2095,9 +2111,10 @@ func buildRepoCommand() *cobra.Command {
 	})
 
 	deleteCmd := &cobra.Command{
-		Use:   "delete [name]",
-		Short: "Delete a RepoWatch resource",
-		Args:  cobra.MaximumNArgs(1),
+		Use:          "delete [name]",
+		Short:        "Delete a RepoWatch resource",
+		SilenceUsage: true,
+		Args:         cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			name := nameFlag
 			if name == "" && len(args) > 0 {
@@ -2119,9 +2136,10 @@ func buildRepoCommand() *cobra.Command {
 	cmd.AddCommand(deleteCmd)
 
 	editCmd := &cobra.Command{
-		Use:   "edit [name]",
-		Short: "Edit a RepoWatch resource",
-		Args:  cobra.MaximumNArgs(1),
+		Use:          "edit [name]",
+		Short:        "Edit a RepoWatch resource",
+		SilenceUsage: true,
+		Args:         cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			name := nameFlag
 			if name == "" && len(args) > 0 {
@@ -2499,9 +2517,10 @@ func buildSecretCommand() *cobra.Command {
 	var githubName string
 
 	setCmd := &cobra.Command{
-		Use:   "set [github-pat|gemini] [token]",
-		Short: "Set a secret value",
-		Args:  cobra.ExactArgs(2),
+		Use:          "set [github-pat|gemini] [token]",
+		Short:        "Set a secret value",
+		SilenceUsage: true,
+		Args:         cobra.ExactArgs(2),
 		RunE: func(_ *cobra.Command, args []string) error {
 			return runSecretSet(context.Background(), args[0], args[1], githubEmail, githubName)
 		},
@@ -2511,9 +2530,10 @@ func buildSecretCommand() *cobra.Command {
 	cmd.AddCommand(setCmd)
 
 	clearCmd := &cobra.Command{
-		Use:   "clear [github-pat|gemini|all]",
-		Short: "Clear/delete a secret",
-		Args:  cobra.ExactArgs(1),
+		Use:          "clear [github-pat|gemini|all]",
+		Short:        "Clear/delete a secret",
+		SilenceUsage: true,
+		Args:         cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			return runSecretClear(context.Background(), args[0])
 		},
