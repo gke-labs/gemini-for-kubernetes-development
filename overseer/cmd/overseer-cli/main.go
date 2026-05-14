@@ -2140,6 +2140,19 @@ func runRepoInit(ctx context.Context, nameFlag string, githubSecret string) erro
 		return fmt.Errorf("unable to create dynamic client: %w", err)
 	}
 
+	clientset, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("unable to create clientset: %w", err)
+	}
+
+	_, err = clientset.CoreV1().Secrets(namespace).Get(ctx, githubSecret, metav1.GetOptions{})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return fmt.Errorf("github secret %s not found in namespace %s. Please create it first or specify another one using --github-secret", githubSecret, namespace)
+		}
+		return fmt.Errorf("failed to check github secret: %w", err)
+	}
+
 	gvr := schema.GroupVersionResource{
 		Group:    "review.gemini.google.com",
 		Version:  "v1alpha1",
