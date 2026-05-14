@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -105,6 +106,7 @@ func main() {
 
 	rootCmd.AddCommand(sandboxCmd)
 	rootCmd.AddCommand(buildRepoCommand())
+	rootCmd.AddCommand(buildSecretCommand())
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -2168,15 +2170,55 @@ func runRepoInit(ctx context.Context, nameFlag string, githubSecret string) erro
 				"namespace": namespace,
 			},
 			"spec": map[string]interface{}{
-				"repoURL":          repoURL,
-				"githubSecretName": githubSecret,
-				"review": map[string]interface{}{
+				"repoURL":             repoURL,
+				"pollIntervalSeconds": int64(300),
+				"githubSecretName":    githubSecret,
+				"dev": map[string]interface{}{
 					"maxActiveSandboxes": int64(0),
 					"maxSandboxes":       int64(0),
+					"image":              "ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest",
+					"llm": map[string]interface{}{
+						"apiKeySecretRef": "gemini-vscode-tokens",
+						"provider":        "gemini-cli",
+					},
+				},
+				"review": map[string]interface{}{
+					"reviewShutdownAfterMinutes": int64(30),
+					"image":                      "ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest",
+					"maxActiveSandboxes":         int64(0),
+					"maxSandboxes":               int64(0),
+					"llm": map[string]interface{}{
+						"apiKeySecretRef": "gemini-vscode-tokens",
+						"provider":        "gemini-cli",
+						"prompt":          "You are an expert kubernetes developer who is helping with code reviews.\nPlease look at the most recent commit and provide a review feedback.\nWould you approve it ?\nPlease pay attention to the following:\n1. Does the fix resolve the original problem.\n2. Look for linked issues to understand the original problem.\n3. Are there tests to check the fix.",
+					},
 				},
 				"issue": map[string]interface{}{
-					"maxActiveSandboxes": int64(0),
-					"maxSandboxes":       int64(0),
+					"robotAccount":              "codebot-robot",
+					"maxActiveSandboxes":         int64(0),
+					"maxSandboxes":               int64(0),
+					"issueShutdownAfterMinutes": int64(0),
+					"image":                      "ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest",
+					"llm": map[string]interface{}{
+						"apiKeySecretRef": "gemini-vscode-tokens",
+						"provider":        "gemini-cli",
+					},
+					"models": []interface{}{
+						"gemini-3-flash-preview",
+						"gemini-3.1-pro-preview",
+						"gemini-2.5-pro",
+						"gemini-2.5-flash",
+					},
+					"handlers": []interface{}{
+						map[string]interface{}{
+							"name":     "fix",
+							"taskType": "fix-issue",
+							"labels": []interface{}{
+								repoName,
+							},
+							"prompt": "Fix this issue\n",
+						},
+					},
 				},
 			},
 		},
@@ -2401,4 +2443,140 @@ func deduceDefaultName(repoURL string) string {
 		repoName = repoName[:30]
 	}
 	return repoName
+}
+
+func buildSecretCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "secret",
+		Short: "Manage secrets in the namespace",
+	}
+
+	setCmd := &cobra.Command{
+		Use:   "set [github-pat|gemini] [token]",
+		Short: "Set a secret value",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(_ *cobra.Command, args []string) error {
+			return runSecretSet(context.Background(), args[0], args[1])
+		},
+	}
+	cmd.AddCommand(setCmd)
+
+	clearCmd := &cobra.Command{
+		Use:   "clear [github-pat|gemini|all]",
+		Short: "Clear/delete a secret",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			return runSecretClear(context.Background(), args[0])
+		},
+	}
+	cmd.AddCommand(clearCmd)
+
+	return cmd
+}
+
+func runSecretSet(ctx context.Context, secretType string, token string) error {
+	if namespace == "" {
+		return fmt.Errorf("namespace must be set")
+	}
+
+	cfg, err := config.GetConfig()
+	if err != nil {
+		return fmt.Errorf("unable to get kubeconfig: %w", err)
+	}
+
+	clientset, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("unable to create clientset: %w", err)
+	}
+
+	var secretName string
+	var data map[string][]byte
+
+	switch secretType {
+	case "github-pat":
+		secretName = "github-pat"
+		data = map[string][]byte{
+			"manual_pat": []byte(token),
+			"pat":        []byte(token),
+		}
+	case "gemini":
+		secretName = "gemini-vscode-tokens"
+		data = map[string][]byte{
+			"gemini": []byte(token),
+		}
+	default:
+		return fmt.Errorf("unknown secret type: %s. Supported types: github-pat, gemini", secretType)
+	}
+
+	// Check if exists
+	_, err = clientset.CoreV1().Secrets(namespace).Get(ctx, secretName, metav1.GetOptions{})
+	if err == nil {
+		return fmt.Errorf("secret %s already exists in namespace %s. Use clear command first if you want to recreate it", secretName, namespace)
+	}
+	if !errors.IsNotFound(err) {
+		return fmt.Errorf("failed to check secret existence: %w", err)
+	}
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: namespace,
+		},
+		Data: data,
+	}
+
+	fmt.Printf("Creating secret %s in namespace %s...\n", secretName, namespace)
+	_, err = clientset.CoreV1().Secrets(namespace).Create(ctx, secret, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to create secret: %w", err)
+	}
+
+	fmt.Println("Done.")
+	return nil
+}
+
+func runSecretClear(ctx context.Context, secretType string) error {
+	if namespace == "" {
+		return fmt.Errorf("namespace must be set")
+	}
+
+	cfg, err := config.GetConfig()
+	if err != nil {
+		return fmt.Errorf("unable to get kubeconfig: %w", err)
+	}
+
+	clientset, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("unable to create clientset: %w", err)
+	}
+
+	deleteSecret := func(name string) error {
+		fmt.Printf("Deleting secret %s in namespace %s...\n", name, namespace)
+		err := clientset.CoreV1().Secrets(namespace).Delete(ctx, name, metav1.DeleteOptions{})
+		if err != nil {
+			if errors.IsNotFound(err) {
+				fmt.Printf("Secret %s not found in namespace %s. Skipping.\n", name, namespace)
+				return nil
+			}
+			return fmt.Errorf("failed to delete secret %s: %w", name, err)
+		}
+		fmt.Println("Deleted.")
+		return nil
+	}
+
+	switch secretType {
+	case "github-pat":
+		return deleteSecret("github-pat")
+	case "gemini":
+		return deleteSecret("gemini-vscode-tokens")
+	case "all":
+		err1 := deleteSecret("github-pat")
+		err2 := deleteSecret("gemini-vscode-tokens")
+		if err1 != nil || err2 != nil {
+			return fmt.Errorf("failed to clear all secrets: errors: %v, %v", err1, err2)
+		}
+		return nil
+	default:
+		return fmt.Errorf("unknown secret type: %s. Supported types: github-pat, gemini, all", secretType)
+	}
 }
