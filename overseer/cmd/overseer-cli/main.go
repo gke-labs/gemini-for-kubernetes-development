@@ -416,6 +416,8 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 		}
 	}
 
+	repoSandboxImage, configDirImage := resolveDefaultImages(ctx, kubeClient.Clientset)
+
 	opt := sandbox.AgentSandboxOptions{
 		DevSandboxOptions: sandbox.DevSandboxOptions{
 			Name:      sandboxName,
@@ -440,8 +442,8 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 			GithubSecretName:    githubSecretName,
 			LLMAPIKey:           scriptToken,
 			OverseerName:        overseerName,
-			RepoSandboxImage:    os.Getenv("REPO_SANDBOX_IMAGE"),
-			ConfigDirImage:      os.Getenv("CONFIG_DIR_IMAGE"),
+			RepoSandboxImage:    repoSandboxImage,
+			ConfigDirImage:      configDirImage,
 			HTTPEnabled:         true,
 			Replicas:            1,
 			WorkspaceDiskSize:   overseer.Spec.WorkspaceDiskSize,
@@ -1128,6 +1130,8 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 		}
 	}
 
+	repoSandboxImage, configDirImage := resolveDefaultImages(ctx, kubeClient.Clientset)
+
 	opt := sandbox.AgentSandboxOptions{
 		DevSandboxOptions: sandbox.DevSandboxOptions{
 			Name:      name,
@@ -1154,8 +1158,8 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 			GithubSecretName:    githubSecretName,
 			LLMAPIKey:           scriptToken,
 			Image:               overseer.Spec.Image,
-			RepoSandboxImage:    os.Getenv("REPO_SANDBOX_IMAGE"),
-			ConfigDirImage:      os.Getenv("CONFIG_DIR_IMAGE"),
+			RepoSandboxImage:    repoSandboxImage,
+			ConfigDirImage:      configDirImage,
 			HTTPEnabled:         true,
 			Replicas:            1,
 			ServiceAccountName:  "issue-sandbox",
@@ -1217,6 +1221,8 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 		}
 	}
 
+	repoSandboxImage, configDirImage := resolveDefaultImages(ctx, kubeClient.Clientset)
+
 	opt := sandbox.ReviewSandboxOptions{
 		DevSandboxOptions: sandbox.DevSandboxOptions{
 			Name:      name,
@@ -1239,8 +1245,8 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 			LLMAPIKey:             scriptToken,
 			DevcontainerConfigRef: "",
 			Image:                 overseer.Spec.Image,
-			RepoSandboxImage:      os.Getenv("REPO_SANDBOX_IMAGE"),
-			ConfigDirImage:        os.Getenv("CONFIG_DIR_IMAGE"),
+			RepoSandboxImage:      repoSandboxImage,
+			ConfigDirImage:        configDirImage,
 			HTTPEnabled:           true,
 			Replicas:              1,
 			ServiceAccountName:    "review-sandbox",
@@ -2707,4 +2713,63 @@ func getGitConfig(key string) string {
 		return ""
 	}
 	return strings.TrimSpace(out.String())
+}
+
+func resolveDefaultImages(ctx context.Context, clientset kubernetes.Interface) (repoSandboxImage string, configDirImage string) {
+	repoSandboxImage = os.Getenv("REPO_SANDBOX_IMAGE")
+	configDirImage = os.Getenv("CONFIGDIR_CLI_IMAGE")
+	if configDirImage == "" {
+		configDirImage = os.Getenv("CONFIG_DIR_IMAGE") // check legacy env too
+	}
+
+	if repoSandboxImage != "" && configDirImage != "" {
+		return repoSandboxImage, configDirImage
+	}
+
+	// Try to resolve from running repowatch-controller in repo-agent-system
+	ss, err := clientset.AppsV1().StatefulSets("repo-agent-system").Get(ctx, "repowatch-controller", metav1.GetOptions{})
+	if err == nil && len(ss.Spec.Template.Spec.Containers) > 0 {
+		container := ss.Spec.Template.Spec.Containers[0]
+
+		// Extract from env
+		for _, envVar := range container.Env {
+			if envVar.Name == "REPO_SANDBOX_IMAGE" && repoSandboxImage == "" {
+				repoSandboxImage = envVar.Value
+			}
+			if envVar.Name == "CONFIGDIR_CLI_IMAGE" && configDirImage == "" {
+				configDirImage = envVar.Value
+			}
+		}
+
+		// If still not found, try to deduce from controller image tag
+		if repoSandboxImage == "" || configDirImage == "" {
+			controllerImage := container.Image
+			// e.g. ghcr.io/gke-labs/gemini-for-kubernetes-development/repowatch-controller:16bd72d608c922c132257fb5023bf2d6b940ad64
+			parts := strings.Split(controllerImage, ":")
+			if len(parts) == 2 {
+				tag := parts[1]
+				// Try to split by '/' to get registry
+				imageParts := strings.Split(parts[0], "/")
+				if len(imageParts) > 1 {
+					registry := strings.Join(imageParts[:len(imageParts)-1], "/")
+					if repoSandboxImage == "" {
+						repoSandboxImage = fmt.Sprintf("%s/repo-sandbox:%s", registry, tag)
+					}
+					if configDirImage == "" {
+						configDirImage = fmt.Sprintf("%s/configdir-cli:%s", registry, tag)
+					}
+				}
+			}
+		}
+	}
+
+	// Final fallbacks if everything fails
+	if repoSandboxImage == "" {
+		repoSandboxImage = "ghcr.io/gke-labs/gemini-for-kubernetes-development/repo-sandbox:latest"
+	}
+	if configDirImage == "" {
+		configDirImage = "ghcr.io/gke-labs/gemini-for-kubernetes-development/configdir-cli:latest"
+	}
+
+	return repoSandboxImage, configDirImage
 }
