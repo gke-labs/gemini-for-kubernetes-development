@@ -59,7 +59,7 @@ func main() {
 		Short: "CLI for Overseer to manage sandboxes and tasks",
 	}
 
-	rootCmd.PersistentFlags().StringVar(&namespace, "namespace", namespace, "Kubernetes namespace")
+	rootCmd.PersistentFlags().StringVar(&namespace, "namespace", namespace, "Kubernetes namespace (defaults to $NAMESPACE env var, or deduced from git origin remote)")
 
 	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
 		if namespace == "" {
