@@ -384,12 +384,7 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 		return fmt.Errorf("failed to parse RepoURL: %w", err)
 	}
 
-	userLogin := os.Getenv("GITHUB_USER_ID")
-	userName := os.Getenv("GITHUB_USER_NAME")
-	if userName == "" {
-		userName = userLogin
-	}
-	userEmail := os.Getenv("GITHUB_USER_EMAIL")
+	userLogin, userName, userEmail := resolveGithubUserFromSecret(ctx, kubeClient.Clientset, namespace)
 
 	botLogin := os.Getenv("GITHUB_BOT_LOGIN")
 	botName := os.Getenv("GITHUB_BOT_NAME")
@@ -1096,12 +1091,7 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 	cloneURL := strings.Replace(issue.GetRepositoryURL(), "api.github.com/repos", "github.com", 1) + ".git"
 
 	// We need to fetch user info. In Overseer, we might just use env vars.
-	userLogin := os.Getenv("GITHUB_USER_ID")
-	userName := os.Getenv("GITHUB_USER_NAME")
-	if userName == "" {
-		userName = userLogin
-	}
-	userEmail := os.Getenv("GITHUB_USER_EMAIL")
+	userLogin, userName, userEmail := resolveGithubUserFromSecret(ctx, kubeClient.Clientset, namespace)
 
 	botLogin := os.Getenv("GITHUB_BOT_LOGIN")
 	botName := os.Getenv("GITHUB_BOT_NAME")
@@ -1185,12 +1175,7 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, overseer *overseerv1alpha1.Overseer, pr *githubv39.PullRequest) error {
 	name := fmt.Sprintf("%s-pr-%d", overseer.Name, pr.GetNumber())
 
-	userLogin := os.Getenv("GITHUB_USER_ID")
-	userName := os.Getenv("GITHUB_USER_NAME")
-	if userName == "" {
-		userName = userLogin
-	}
-	userEmail := os.Getenv("GITHUB_USER_EMAIL")
+	userLogin, userName, userEmail := resolveGithubUserFromSecret(ctx, kubeClient.Clientset, namespace)
 
 	botLogin := os.Getenv("GITHUB_BOT_LOGIN")
 	botName := os.Getenv("GITHUB_BOT_NAME")
@@ -2772,4 +2757,35 @@ func resolveDefaultImages(ctx context.Context, clientset kubernetes.Interface) (
 	}
 
 	return repoSandboxImage, configDirImage
+}
+
+func resolveGithubUserFromSecret(ctx context.Context, clientset kubernetes.Interface, namespace string) (userLogin, userName, userEmail string) {
+	userLogin = os.Getenv("GITHUB_USER_ID")
+	userName = os.Getenv("GITHUB_USER_NAME")
+	userEmail = os.Getenv("GITHUB_USER_EMAIL")
+
+	if userLogin != "" {
+		if userName == "" {
+			userName = userLogin
+		}
+		return userLogin, userName, userEmail
+	}
+
+	// Fallback to secret-based resolution
+	userLogin = namespace // namespace IS the github ID
+	userName = userLogin
+	userEmail = ""
+
+	secretName := "github-pat"
+	secret, err := clientset.CoreV1().Secrets(namespace).Get(ctx, secretName, metav1.GetOptions{})
+	if err == nil && secret.Data != nil {
+		if nameBytes, ok := secret.Data["name"]; ok && len(nameBytes) > 0 {
+			userName = string(nameBytes)
+		}
+		if emailBytes, ok := secret.Data["email"]; ok && len(emailBytes) > 0 {
+			userEmail = string(emailBytes)
+		}
+	}
+
+	return userLogin, userName, userEmail
 }
