@@ -506,21 +506,33 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 			return fmt.Errorf("failed to convert Overseer: %w", err)
 		}
 	} else {
-		// Look for a repowatch using the --repo URL
-		name, err := findRepoWatchNameByURL(ctx, repoURL)
-		if err != nil {
-			return err
-		}
-		if name == "" {
-			return fmt.Errorf("no matching RepoWatch found for URL %s. Please run 'overseer-cli repo init' first.", repoURL)
-		}
-
-		// Fetch RepoWatch
 		gvr := schema.GroupVersionResource{
 			Group:    "review.gemini.google.com",
 			Version:  "v1alpha1",
 			Resource: "repowatches",
 		}
+
+		name := ""
+		// Try to check if repoURL is actually the name of a RepoWatch resource
+		_, err := kubeClient.DynamicClient.Resource(gvr).Namespace(namespace).Get(ctx, repoURL, metav1.GetOptions{})
+		if err == nil {
+			name = repoURL
+		} else if errors.IsNotFound(err) {
+			// Fallback to finding by URL
+			var err2 error
+			name, err2 = findRepoWatchNameByURL(ctx, repoURL)
+			if err2 != nil {
+				return err2
+			}
+		} else {
+			return fmt.Errorf("failed to check if RepoWatch %s exists: %w", repoURL, err)
+		}
+
+		if name == "" {
+			return fmt.Errorf("no matching RepoWatch found for URL/Name %s. Please run 'overseer-cli repo init' first.", repoURL)
+		}
+
+		// Fetch RepoWatch
 		rwUnstructured, err := kubeClient.DynamicClient.Resource(gvr).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
 			return fmt.Errorf("failed to get RepoWatch %s: %w", name, err)
@@ -528,7 +540,8 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 
 		// Populate dummy Overseer from RepoWatch
 		overseer.Name = name
-		overseer.Spec.RepoURL = repoURL
+		actualRepoURL, _, _ := unstructured.NestedString(rwUnstructured.Object, "spec", "repoURL")
+		overseer.Spec.RepoURL = actualRepoURL
 
 		img, _, _ := unstructured.NestedString(rwUnstructured.Object, "spec", "issue", "image")
 		overseer.Spec.Image = img
@@ -719,21 +732,33 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 			return fmt.Errorf("failed to convert Overseer: %w", err)
 		}
 	} else {
-		// Look for a repowatch using the --repo URL
-		name, err := findRepoWatchNameByURL(ctx, repoURL)
-		if err != nil {
-			return err
-		}
-		if name == "" {
-			return fmt.Errorf("no matching RepoWatch found for URL %s. Please run 'overseer-cli repo init' first.", repoURL)
-		}
-
-		// Fetch RepoWatch
 		gvr := schema.GroupVersionResource{
 			Group:    "review.gemini.google.com",
 			Version:  "v1alpha1",
 			Resource: "repowatches",
 		}
+
+		name := ""
+		// Try to check if repoURL is actually the name of a RepoWatch resource
+		_, err := kubeClient.DynamicClient.Resource(gvr).Namespace(namespace).Get(ctx, repoURL, metav1.GetOptions{})
+		if err == nil {
+			name = repoURL
+		} else if errors.IsNotFound(err) {
+			// Fallback to finding by URL
+			var err2 error
+			name, err2 = findRepoWatchNameByURL(ctx, repoURL)
+			if err2 != nil {
+				return err2
+			}
+		} else {
+			return fmt.Errorf("failed to check if RepoWatch %s exists: %w", repoURL, err)
+		}
+
+		if name == "" {
+			return fmt.Errorf("no matching RepoWatch found for URL/Name %s. Please run 'overseer-cli repo init' first.", repoURL)
+		}
+
+		// Fetch RepoWatch
 		rwUnstructured, err := kubeClient.DynamicClient.Resource(gvr).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
 			return fmt.Errorf("failed to get RepoWatch %s: %w", name, err)
@@ -741,7 +766,8 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 
 		// Populate dummy Overseer from RepoWatch
 		overseer.Name = name
-		overseer.Spec.RepoURL = repoURL
+		actualRepoURL, _, _ := unstructured.NestedString(rwUnstructured.Object, "spec", "repoURL")
+		overseer.Spec.RepoURL = actualRepoURL
 
 		img, _, _ := unstructured.NestedString(rwUnstructured.Object, "spec", "review", "image")
 		overseer.Spec.Image = img
