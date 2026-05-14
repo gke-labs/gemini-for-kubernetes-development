@@ -1954,11 +1954,18 @@ func buildRepoCommand() *cobra.Command {
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			name := nameFlag
-			if name == "" {
-				if len(args) < 1 {
-					return fmt.Errorf("must provide name or use --name")
-				}
+			if name == "" && len(args) > 0 {
 				name = args[0]
+			}
+			if name == "" {
+				var err error
+				name, err = findRepoWatchNameByURL(context.Background(), repoURL)
+				if err != nil {
+					return err
+				}
+			}
+			if name == "" {
+				name = deduceDefaultName(repoURL)
 			}
 			return runRepoGet(context.Background(), name)
 		},
@@ -1970,11 +1977,18 @@ func buildRepoCommand() *cobra.Command {
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			name := nameFlag
-			if name == "" {
-				if len(args) < 1 {
-					return fmt.Errorf("must provide name or use --name")
-				}
+			if name == "" && len(args) > 0 {
 				name = args[0]
+			}
+			if name == "" {
+				var err error
+				name, err = findRepoWatchNameByURL(context.Background(), repoURL)
+				if err != nil {
+					return err
+				}
+			}
+			if name == "" {
+				name = deduceDefaultName(repoURL)
 			}
 			return runRepoDelete(context.Background(), name)
 		},
@@ -1987,11 +2001,18 @@ func buildRepoCommand() *cobra.Command {
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			name := nameFlag
-			if name == "" {
-				if len(args) < 1 {
-					return fmt.Errorf("must provide name or use --name")
-				}
+			if name == "" && len(args) > 0 {
 				name = args[0]
+			}
+			if name == "" {
+				var err error
+				name, err = findRepoWatchNameByURL(context.Background(), repoURL)
+				if err != nil {
+					return err
+				}
+			}
+			if name == "" {
+				name = deduceDefaultName(repoURL)
 			}
 			return runRepoEdit(context.Background(), name)
 		},
@@ -2009,18 +2030,19 @@ func runRepoInit(ctx context.Context, nameFlag string, githubSecret string) erro
 		return fmt.Errorf("repository URL must be set (deduced from git or set via --repo)")
 	}
 
+	// Check if RepoWatch already exists for this URL
+	existingName, err := findRepoWatchNameByURL(ctx, repoURL)
+	if err != nil {
+		return err
+	}
+	if existingName != "" {
+		fmt.Printf("RepoWatch already exists for URL %s with name %s. Skipping creation.\n", repoURL, existingName)
+		return nil
+	}
+
 	repoName := nameFlag
 	if repoName == "" {
-		parts := strings.Split(strings.TrimSuffix(repoURL, "/"), "/")
-		if len(parts) > 0 {
-			repoName = parts[len(parts)-1]
-		}
-		if repoName == "" {
-			return fmt.Errorf("failed to extract repo name from URL: %s", repoURL)
-		}
-		if len(repoName) > 30 {
-			repoName = repoName[:30]
-		}
+		repoName = deduceDefaultName(repoURL)
 	}
 
 	cfg, err := config.GetConfig()
@@ -2185,4 +2207,51 @@ func runRepoGet(ctx context.Context, name string) error {
 
 	fmt.Println(string(y))
 	return nil
+}
+
+func findRepoWatchNameByURL(ctx context.Context, repoURL string) (string, error) {
+	if namespace == "" {
+		return "", fmt.Errorf("namespace must be set")
+	}
+
+	cfg, err := config.GetConfig()
+	if err != nil {
+		return "", fmt.Errorf("unable to get kubeconfig: %w", err)
+	}
+
+	dynClient, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return "", fmt.Errorf("unable to create dynamic client: %w", err)
+	}
+
+	gvr := schema.GroupVersionResource{
+		Group:    "review.gemini.google.com",
+		Version:  "v1alpha1",
+		Resource: "repowatches",
+	}
+
+	list, err := dynClient.Resource(gvr).Namespace(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return "", fmt.Errorf("failed to list RepoWatches: %w", err)
+	}
+
+	for _, item := range list.Items {
+		url, _, _ := unstructured.NestedString(item.Object, "spec", "repoURL")
+		if url == repoURL {
+			return item.GetName(), nil
+		}
+	}
+	return "", nil
+}
+
+func deduceDefaultName(repoURL string) string {
+	parts := strings.Split(strings.TrimSuffix(repoURL, "/"), "/")
+	repoName := ""
+	if len(parts) > 0 {
+		repoName = parts[len(parts)-1]
+	}
+	if len(repoName) > 30 {
+		repoName = repoName[:30]
+	}
+	return repoName
 }
