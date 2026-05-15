@@ -66,6 +66,40 @@ func BootstrapNamespace(ctx context.Context, clientset kubernetes.Interface, tar
 	return nil
 }
 
+// BootstrapNamespaceSimple bootstraps the target namespace with ONLY portal-ca, devcontainer cm, and service accounts.
+func BootstrapNamespaceSimple(ctx context.Context, clientset kubernetes.Interface, targetNS string) error {
+	log := klog.FromContext(ctx)
+	_, err := clientset.CoreV1().Namespaces().Get(ctx, targetNS, v1.GetOptions{})
+	if errors.IsNotFound(err) {
+		log.Info("Creating namespace", "name", targetNS)
+		ns := &corev1.Namespace{
+			ObjectMeta: v1.ObjectMeta{
+				Name:   targetNS,
+				Labels: map[string]string{"app.kubernetes.io/managed-by": "repo-agent", "review.gemini.google.com/tenant": targetNS},
+			},
+		}
+		if _, err := clientset.CoreV1().Namespaces().Create(ctx, ns, v1.CreateOptions{}); err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	}
+
+	// Copy ONLY portal-ca, devcontainer cm, and service accounts
+	if err := CopySecret(ctx, clientset, "overseer-system", "github-portal-ca", targetNS, "github-portal-ca"); err != nil {
+		log.Info("Warning: failed to copy github-portal-ca secret", "err", err)
+	}
+	if err := CopyConfigMap(ctx, clientset, SystemNamespace, DevContainerCM, targetNS, DevContainerCM); err != nil {
+		log.Info("Debug: failed to copy configmap", "name", DevContainerCM, "err", err)
+	}
+
+	if err := SetupServiceAccounts(ctx, clientset, targetNS); err != nil {
+		log.Info("Warning: failed to setup service accounts", "err", err)
+	}
+
+	return nil
+}
+
 // CopySecret copies a secret from source namespace to destination namespace.
 func CopySecret(ctx context.Context, clientset kubernetes.Interface, srcNS, srcName, dstNS, dstName string) error {
 	log := klog.FromContext(ctx)
@@ -186,4 +220,63 @@ func ignoreAlreadyExists(err error) error {
 		return nil
 	}
 	return err
+}
+
+// BindUserIAMToNamespace creates a RoleBinding in the namespace for the user's GCP IAM email,
+// mapping it to the 'overseer-cli-user' ClusterRole.
+func BindUserIAMToNamespace(ctx context.Context, clientset kubernetes.Interface, namespace, email string) error {
+	log := klog.FromContext(ctx)
+	log.Info("Binding GCP IAM user to namespace", "email", email, "namespace", namespace)
+
+	rb, err := clientset.RbacV1().RoleBindings(namespace).Get(ctx, "overseer-cli-user-binding", v1.GetOptions{})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			// Create new
+			newRb := &rbacv1.RoleBinding{
+				ObjectMeta: v1.ObjectMeta{
+					Name:      "overseer-cli-user-binding",
+					Namespace: namespace,
+				},
+				Subjects: []rbacv1.Subject{
+					{
+						Kind:     "User",
+						Name:     email,
+						APIGroup: "rbac.authorization.k8s.io",
+					},
+				},
+				RoleRef: rbacv1.RoleRef{
+					Kind:     "ClusterRole",
+					Name:     "overseer-cli-user",
+					APIGroup: "rbac.authorization.k8s.io",
+				},
+			}
+			_, err = clientset.RbacV1().RoleBindings(namespace).Create(ctx, newRb, v1.CreateOptions{})
+			return err
+		}
+		return err
+	}
+
+	// If already exists, check if email needs update
+	needsUpdate := true
+	for _, s := range rb.Subjects {
+		if s.Kind == "User" && s.Name == email {
+			needsUpdate = false
+			break
+		}
+	}
+
+	if needsUpdate {
+		log.Info("Updating existing RoleBinding subject email", "email", email, "namespace", namespace)
+		rb.Subjects = []rbacv1.Subject{
+			{
+				Kind:     "User",
+				Name:     email,
+				APIGroup: "rbac.authorization.k8s.io",
+			},
+		}
+		_, err = clientset.RbacV1().RoleBindings(namespace).Update(ctx, rb, v1.UpdateOptions{})
+		return err
+	}
+
+	return nil
 }

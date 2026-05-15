@@ -1,0 +1,17 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: overseer-cli-user
+rules:
+- apiGroups: ["agents.x-k8s.io"]
+  resources: ["sandboxes"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["custom.agents.x-k8s.io"]
+  resources: ["sandboxtasks"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["review.gemini.google.com"]
+  resources: ["repowatches"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["pods", "pods/exec", "services", "secrets", "configmaps"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]

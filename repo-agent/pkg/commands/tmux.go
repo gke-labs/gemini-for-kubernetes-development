@@ -57,19 +57,19 @@ func RunTmux(ctx context.Context, opt RunTmuxOptions) error {
 	sshConfigPath := filepath.Join(homeDir, ".ssh", "config")
 	sshHost := opt.SandboxName
 
-	if err := updateSSHConfig(ctx, sshConfigPath, sshHost, *podID); err != nil {
+	if err := UpdateSSHConfig(ctx, sshConfigPath, sshHost, *podID); err != nil {
 		return fmt.Errorf("failed to update ssh config: %w", err)
 	}
 
-	if err := launchTmux(ctx, sshHost); err != nil {
+	if err := LaunchTmux(ctx, sshHost); err != nil {
 		return fmt.Errorf("running tmux: %w", err)
 	}
 
 	return nil
 }
 
-// launchTmux launches tmux connected to the given SSH host.
-func launchTmux(ctx context.Context, sshHost string) error {
+// LaunchTmux launches tmux connected to the given SSH host.
+func LaunchTmux(ctx context.Context, sshHost string) error {
 	// ssh -t <sshHost> "tmux attach || tmux new-session"
 
 	args := []string{
