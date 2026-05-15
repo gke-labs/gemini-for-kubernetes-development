@@ -228,28 +228,55 @@ func BindUserIAMToNamespace(ctx context.Context, clientset kubernetes.Interface,
 	log := klog.FromContext(ctx)
 	log.Info("Binding GCP IAM user to namespace", "email", email, "namespace", namespace)
 
-	rb := &rbacv1.RoleBinding{
-		ObjectMeta: v1.ObjectMeta{
-			Name:      "overseer-cli-user-binding",
-			Namespace: namespace,
-		},
-		Subjects: []rbacv1.Subject{
+	rb, err := clientset.RbacV1().RoleBindings(namespace).Get(ctx, "overseer-cli-user-binding", v1.GetOptions{})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			// Create new
+			newRb := &rbacv1.RoleBinding{
+				ObjectMeta: v1.ObjectMeta{
+					Name:      "overseer-cli-user-binding",
+					Namespace: namespace,
+				},
+				Subjects: []rbacv1.Subject{
+					{
+						Kind:     "User",
+						Name:     email,
+						APIGroup: "rbac.authorization.k8s.io",
+					},
+				},
+				RoleRef: rbacv1.RoleRef{
+					Kind:     "ClusterRole",
+					Name:     "overseer-cli-user",
+					APIGroup: "rbac.authorization.k8s.io",
+				},
+			}
+			_, err = clientset.RbacV1().RoleBindings(namespace).Create(ctx, newRb, v1.CreateOptions{})
+			return err
+		}
+		return err
+	}
+
+	// If already exists, check if email needs update
+	needsUpdate := true
+	for _, s := range rb.Subjects {
+		if s.Kind == "User" && s.Name == email {
+			needsUpdate = false
+			break
+		}
+	}
+
+	if needsUpdate {
+		log.Info("Updating existing RoleBinding subject email", "email", email, "namespace", namespace)
+		rb.Subjects = []rbacv1.Subject{
 			{
 				Kind:     "User",
 				Name:     email,
 				APIGroup: "rbac.authorization.k8s.io",
 			},
-		},
-		RoleRef: rbacv1.RoleRef{
-			Kind:     "ClusterRole",
-			Name:     "overseer-cli-user",
-			APIGroup: "rbac.authorization.k8s.io",
-		},
-	}
-
-	_, err := clientset.RbacV1().RoleBindings(namespace).Create(ctx, rb, v1.CreateOptions{})
-	if err != nil && !errors.IsAlreadyExists(err) {
+		}
+		_, err = clientset.RbacV1().RoleBindings(namespace).Update(ctx, rb, v1.UpdateOptions{})
 		return err
 	}
+
 	return nil
 }
