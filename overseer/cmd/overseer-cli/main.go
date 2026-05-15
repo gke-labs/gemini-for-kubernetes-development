@@ -452,7 +452,7 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 				}
 				return "issue-sandbox"
 			}(),
-			GHHost:              ghHost,
+			GHHost: ghHost,
 		},
 		IssueRepo: repo,
 	}
@@ -554,7 +554,7 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 		}
 
 		if name == "" {
-			return fmt.Errorf("no matching RepoWatch found for URL/Name %s. Please run 'overseer-cli repo init' first.", repoURL)
+			return fmt.Errorf("no matching RepoWatch found for URL/Name %s; run 'overseer-cli repo init' first", repoURL)
 		}
 
 		// Fetch RepoWatch
@@ -785,7 +785,7 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 		}
 
 		if name == "" {
-			return fmt.Errorf("no matching RepoWatch found for URL/Name %s. Please run 'overseer-cli repo init' first.", repoURL)
+			return fmt.Errorf("no matching RepoWatch found for URL/Name %s; run 'overseer-cli repo init' first", repoURL)
 		}
 
 		// Fetch RepoWatch
@@ -1167,8 +1167,8 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 				}
 				return "issue-sandbox"
 			}(),
-			WorkspaceDiskSize:   overseer.Spec.WorkspaceDiskSize,
-			GHHost:              ghHost,
+			WorkspaceDiskSize: overseer.Spec.WorkspaceDiskSize,
+			GHHost:            ghHost,
 		},
 		IssueID:    fmt.Sprintf("%d", issue.GetNumber()),
 		IssueTitle: issue.GetTitle(),
@@ -1254,7 +1254,7 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 				}
 				return "review-sandbox"
 			}(),
-			GHHost:                ghHost,
+			GHHost: ghHost,
 		},
 		PRNumber:          pr.GetNumber(),
 		PRTitle:           pr.GetTitle(),
@@ -1978,7 +1978,6 @@ func runTaskLogs(ctx context.Context, taskName string, follow bool) error {
 		return fmt.Errorf("unable to create dynamic client: %w", err)
 	}
 
-
 	// Get SandboxTask to find sandboxName
 	gvr := schema.GroupVersionResource{
 		Group:    "custom.agents.x-k8s.io",
@@ -2443,10 +2442,10 @@ func runRepoInit(ctx context.Context, nameFlag string, githubSecret string) erro
 					},
 				},
 				"issue": map[string]interface{}{
-					"maxActiveSandboxes":         int64(0),
-					"maxSandboxes":               int64(0),
+					"maxActiveSandboxes":        int64(0),
+					"maxSandboxes":              int64(0),
 					"issueShutdownAfterMinutes": int64(0),
-					"image":                      "ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest",
+					"image":                     "ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest",
 					"llm": map[string]interface{}{
 						"apiKeySecretRef": "gemini-vscode-tokens",
 						"provider":        "gemini-cli",
@@ -2589,7 +2588,7 @@ func runRepoGet(ctx context.Context, name string) error {
 	}
 
 	fmt.Printf("RepoWatch: %s\n", item.GetName())
-	
+
 	repoURL, _, _ := unstructured.NestedString(item.Object, "spec", "repoURL")
 	fmt.Printf("URL:       %s\n", repoURL)
 	fmt.Printf("Namespace: %s\n\n", item.GetNamespace())
@@ -3003,4 +3002,3 @@ func resolveSandboxName(ctx context.Context, dynClient dynamic.Interface, target
 	}
 	return "", fmt.Errorf("could not resolve target %q to a sandbox", target)
 }
-

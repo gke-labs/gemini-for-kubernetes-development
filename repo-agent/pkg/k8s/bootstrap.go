@@ -253,4 +253,3 @@ func BindUserIAMToNamespace(ctx context.Context, clientset kubernetes.Interface,
 	}
 	return nil
 }
-
