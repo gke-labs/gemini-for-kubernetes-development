@@ -44,6 +44,7 @@ var (
 	repoURL           string
 	image             string
 	workspaceDiskSize string
+	iamEmail          string
 	IssueModelsOrder  = []string{
 		"gemini-3-flash-preview",
 		"gemini-3.1-pro-preview",
@@ -100,9 +101,10 @@ func main() {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
-			return runAdminOnboard(context.Background(), args[0])
+			return runAdminOnboard(context.Background(), args[0], iamEmail)
 		},
 	}
+	onboardCmd.Flags().StringVar(&iamEmail, "email", "", "GCP IAM identity (user email) to bind to the namespace")
 	adminCmd.AddCommand(onboardCmd)
 	rootCmd.AddCommand(adminCmd)
 
@@ -2847,7 +2849,7 @@ func runSecretClear(ctx context.Context, secretType string) error {
 	}
 }
 
-func runAdminOnboard(ctx context.Context, githubID string) error {
+func runAdminOnboard(ctx context.Context, githubID string, email string) error {
 	if githubID == "" {
 		return fmt.Errorf("github-id is required")
 	}
@@ -2868,6 +2870,14 @@ func runAdminOnboard(ctx context.Context, githubID string) error {
 	err = k8s.BootstrapNamespaceSimple(ctx, clientset, namespace)
 	if err != nil {
 		return fmt.Errorf("failed to bootstrap namespace %s: %w", namespace, err)
+	}
+
+	if email != "" {
+		fmt.Printf("Binding GCP IAM identity %s to namespace %s...\n", email, namespace)
+		err = k8s.BindUserIAMToNamespace(ctx, clientset, namespace, email)
+		if err != nil {
+			return fmt.Errorf("failed to bind IAM identity: %w", err)
+		}
 	}
 
 	fmt.Println("Onboarding completed successfully.")

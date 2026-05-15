@@ -159,6 +159,39 @@ overseer-cli
         └── reconcile                                   # Syncs chores and cleans up stale sandboxes
 ```
 
+### Developer Machine Setup (GKE Autopilot)
+
+For enterprise environments running GKE Autopilot with Google Cloud IAM, the admin can onboard developers and bind their GCP IAM email directly to their scoped developer namespace.
+
+#### 1. Admin Onboarding
+The cluster administrator runs the `admin onboard` command specifying the developer's GitHub ID and their corresponding Google Cloud IAM identity (email):
+```bash
+overseer-cli admin onboard <github-id> --email alex.developer@yourcompany.com
+```
+This automatically:
+* Bootstraps their isolated namespace (naming it `<github-id>`).
+* Configures sandbox ServiceAccounts.
+* Generates a local Kubernetes `RoleBinding` mapping the developer's GCP identity directly to the scoped `overseer-cli-user` ClusterRole in their namespace.
+
+#### 2. Local Developer Configuration
+Once onboarded, the developer can configure their local shell to access the GKE Autopilot cluster:
+1. **Authenticate locally with Google Cloud:**
+   ```bash
+   gcloud auth login
+   ```
+2. **Generate local scoped `kubeconfig`:**
+   ```bash
+   gcloud container clusters get-credentials <cluster-name> \
+       --region <region> \
+       --project <project-id>
+   ```
+3. **Set their context default namespace to their own namespace:**
+   ```bash
+   kubectl config set-context --current --namespace=<github-id>
+   ```
+
+The developer's local `overseer-cli` will now automatically run scoped against their own private workspace! Any attempt to interact with other namespaces or cluster-wide resources will be blocked by Kubernetes RBAC.
+
 ### Command and Parameter Map
 
 The table below details the commands, arguments, flags, and target resolution rules:

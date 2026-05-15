@@ -221,3 +221,36 @@ func ignoreAlreadyExists(err error) error {
 	}
 	return err
 }
+
+// BindUserIAMToNamespace creates a RoleBinding in the namespace for the user's GCP IAM email,
+// mapping it to the 'overseer-cli-user' ClusterRole.
+func BindUserIAMToNamespace(ctx context.Context, clientset kubernetes.Interface, namespace, email string) error {
+	log := klog.FromContext(ctx)
+	log.Info("Binding GCP IAM user to namespace", "email", email, "namespace", namespace)
+
+	rb := &rbacv1.RoleBinding{
+		ObjectMeta: v1.ObjectMeta{
+			Name:      "overseer-cli-user-binding",
+			Namespace: namespace,
+		},
+		Subjects: []rbacv1.Subject{
+			{
+				Kind:     "User",
+				Name:     email,
+				APIGroup: "rbac.authorization.k8s.io",
+			},
+		},
+		RoleRef: rbacv1.RoleRef{
+			Kind:     "ClusterRole",
+			Name:     "overseer-cli-user",
+			APIGroup: "rbac.authorization.k8s.io",
+		},
+	}
+
+	_, err := clientset.RbacV1().RoleBindings(namespace).Create(ctx, rb, v1.CreateOptions{})
+	if err != nil && !errors.IsAlreadyExists(err) {
+		return err
+	}
+	return nil
+}
+
