@@ -114,6 +114,8 @@ func main() {
 	sandboxCmd.AddCommand(buildChatCommand())
 	sandboxCmd.AddCommand(buildConnectCommand())
 	sandboxCmd.AddCommand(buildDeleteCommand())
+	sandboxCmd.AddCommand(buildSuspendCommand())
+	sandboxCmd.AddCommand(buildResumeCommand())
 
 	rootCmd.AddCommand(sandboxCmd)
 	rootCmd.AddCommand(buildRepoCommand())
@@ -1456,12 +1458,7 @@ func isChoreAllowed(spec *overseerv1alpha1.ChoresSpec, name string) bool {
 
 func buildDeleteCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "delete",
-		Short: "Delete resources",
-	}
-
-	sandboxCmd := &cobra.Command{
-		Use:   "sandbox [name]",
+		Use:   "delete <target>",
 		Short: "Delete a sandbox and its associated resources (like the -lb service)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -1469,52 +1466,54 @@ func buildDeleteCommand() *cobra.Command {
 			return runDeleteSandbox(context.Background(), args[0])
 		},
 	}
-	cmd.AddCommand(sandboxCmd)
 
 	return cmd
 }
 
+func buildSuspendCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "suspend <target>",
+		Short: "Suspend a sandbox (scale it down to 0 replicas)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
+			return runSuspendSandbox(context.Background(), args[0])
+		},
+	}
+	return cmd
+}
+
+func buildResumeCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "resume <target>",
+		Short: "Resume a suspended sandbox (scale it up to 1 replica)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
+			return runResumeSandbox(context.Background(), args[0])
+		},
+	}
+	return cmd
+}
+
 func buildListCommand() *cobra.Command {
+	var filterType string
+	var listPRs bool
+
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List resources",
+		Short: "List sandboxes or handled pull requests",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cmd.SilenceUsage = true
+			if listPRs {
+				return runListPRs(context.Background())
+			}
+			return runListSandboxes(context.Background(), filterType)
+		},
 	}
 
-	cmd.AddCommand(&cobra.Command{
-		Use:   "sandboxes",
-		Short: "List all sandboxes",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			cmd.SilenceUsage = true
-			return runListSandboxes(context.Background(), "")
-		},
-	})
-
-	cmd.AddCommand(&cobra.Command{
-		Use:   "reviews",
-		Short: "List existing reviews",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			cmd.SilenceUsage = true
-			return runListSandboxes(context.Background(), "review")
-		},
-	})
-
-	cmd.AddCommand(&cobra.Command{
-		Use:   "issue-sandboxes",
-		Short: "List existing issue sandboxes",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			cmd.SilenceUsage = true
-			return runListSandboxes(context.Background(), "issue")
-		},
-	})
-
-	cmd.AddCommand(&cobra.Command{
-		Use:   "prs",
-		Short: "List PRs handled by the system",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			cmd.SilenceUsage = true
-			return runListPRs(context.Background())
-		},
-	})
+	cmd.Flags().StringVar(&filterType, "type", "", "Filter by sandbox type (review, issue, chore)")
+	cmd.Flags().BoolVar(&listPRs, "prs", false, "List PRs handled by the system")
 
 	return cmd
 }
@@ -1651,28 +1650,9 @@ func runConnect(ctx context.Context, target string) error {
 		return fmt.Errorf("unable to create dynamic client: %w", err)
 	}
 
-	// Resolve target to sandbox name
-	sandboxName := target
-	if _, err := strconv.Atoi(target); err == nil {
-		// It's a number, try to find sandbox by label
-		listOptions := metav1.ListOptions{}
-		sandboxList, err := dynClient.Resource(k8s.SandboxGVR).Namespace(namespace).List(ctx, listOptions)
-		if err != nil {
-			return fmt.Errorf("failed to list sandboxes: %w", err)
-		}
-
-		found := false
-		for _, item := range sandboxList.Items {
-			name := item.GetName()
-			if strings.Contains(name, "-pr-"+target) || strings.Contains(name, "-issue-"+target) {
-				sandboxName = name
-				found = true
-				break
-			}
-		}
-		if !found {
-			return fmt.Errorf("could not resolve target %q to a sandbox", target)
-		}
+	sandboxName, err := resolveSandboxName(ctx, dynClient, target)
+	if err != nil {
+		return err
 	}
 
 	// Find the pod for the sandbox using the helper from repo-agent/pkg/sandbox
@@ -1733,28 +1713,9 @@ func runChat(ctx context.Context, target string) error {
 		return fmt.Errorf("unable to create dynamic client: %w", err)
 	}
 
-	// Resolve target to sandbox name
-	sandboxName := target
-	if _, err := strconv.Atoi(target); err == nil {
-		// Resolve number to name
-		listOptions := metav1.ListOptions{}
-		sandboxList, err := dynClient.Resource(k8s.SandboxGVR).Namespace(namespace).List(ctx, listOptions)
-		if err != nil {
-			return fmt.Errorf("failed to list sandboxes: %w", err)
-		}
-
-		found := false
-		for _, item := range sandboxList.Items {
-			name := item.GetName()
-			if strings.Contains(name, "-pr-"+target) || strings.Contains(name, "-issue-"+target) {
-				sandboxName = name
-				found = true
-				break
-			}
-		}
-		if !found {
-			return fmt.Errorf("could not resolve target %q to a sandbox", target)
-		}
+	sandboxName, err := resolveSandboxName(ctx, dynClient, target)
+	if err != nil {
+		return err
 	}
 
 	// Find the pod for the sandbox
@@ -1814,7 +1775,39 @@ func buildTaskCommand() *cobra.Command {
 		},
 	}
 	cmd.AddCommand(createCmd)
+	cmd.AddCommand(buildTaskListCommand())
+	cmd.AddCommand(buildTaskLogsCommand())
 
+	return cmd
+}
+
+func buildTaskListCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "list <target>",
+		Short: "List all tasks in a sandbox",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
+			return runListTasks(context.Background(), args[0])
+		},
+	}
+	return cmd
+}
+
+func buildTaskLogsCommand() *cobra.Command {
+	var follow bool
+
+	cmd := &cobra.Command{
+		Use:   "logs <task-name>",
+		Short: "Get or follow logs for a task",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
+			return runTaskLogs(context.Background(), args[0], follow)
+		},
+	}
+
+	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "Specify if the logs should be streamed")
 	return cmd
 }
 
@@ -1840,28 +1833,9 @@ func runCreateTask(ctx context.Context, target string, command string) error {
 
 	manager := k8s.NewManager(&clients.KubernetesClient{DynamicClient: dynClient, Clientset: clientset})
 
-	// Resolve target to sandbox name
-	sandboxName := target
-	if _, err := strconv.Atoi(target); err == nil {
-		// Resolve number to name
-		listOptions := metav1.ListOptions{}
-		sandboxList, err := dynClient.Resource(k8s.SandboxGVR).Namespace(namespace).List(ctx, listOptions)
-		if err != nil {
-			return fmt.Errorf("failed to list sandboxes: %w", err)
-		}
-
-		found := false
-		for _, item := range sandboxList.Items {
-			name := item.GetName()
-			if strings.Contains(name, "-pr-"+target) || strings.Contains(name, "-issue-"+target) {
-				sandboxName = name
-				found = true
-				break
-			}
-		}
-		if !found {
-			return fmt.Errorf("could not resolve target %q to a sandbox", target)
-		}
+	sandboxName, err := resolveSandboxName(ctx, dynClient, target)
+	if err != nil {
+		return err
 	}
 
 	// Create Task
@@ -1939,7 +1913,123 @@ func runCreateTask(ctx context.Context, target string, command string) error {
 	return nil
 }
 
-func runDeleteSandbox(ctx context.Context, sandboxName string) error {
+func runListTasks(ctx context.Context, target string) error {
+	if namespace == "" {
+		return fmt.Errorf("namespace must be set")
+	}
+
+	cfg, err := config.GetConfig()
+	if err != nil {
+		return fmt.Errorf("unable to get kubeconfig: %w", err)
+	}
+
+	dynClient, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("unable to create dynamic client: %w", err)
+	}
+
+	clientset, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("unable to create clientset: %w", err)
+	}
+
+	manager := k8s.NewManager(&clients.KubernetesClient{DynamicClient: dynClient, Clientset: clientset})
+
+	sandboxName, err := resolveSandboxName(ctx, dynClient, target)
+	if err != nil {
+		return err
+	}
+
+	taskList, err := manager.ListSandboxTasks(ctx, namespace, sandboxName)
+	if err != nil {
+		return fmt.Errorf("failed to list tasks for sandbox %s: %w", sandboxName, err)
+	}
+
+	fmt.Printf("%-50s %-15s %-12s %-20s\n", "NAME", "TYPE", "STATE", "CREATED")
+	for i := range taskList.Items {
+		task := &taskList.Items[i]
+		name := task.GetName()
+		tType := task.Spec.Type
+		state := task.Status.TaskState
+		if state == "" {
+			state = "Pending"
+		}
+		created := task.CreationTimestamp.Format(time.RFC3339)
+		fmt.Printf("%-50s %-15s %-12s %-20s\n", name, tType, state, created)
+	}
+
+	return nil
+}
+
+func runTaskLogs(ctx context.Context, taskName string, follow bool) error {
+	if namespace == "" {
+		return fmt.Errorf("namespace must be set")
+	}
+
+	cfg, err := config.GetConfig()
+	if err != nil {
+		return fmt.Errorf("unable to get kubeconfig: %w", err)
+	}
+
+	dynClient, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("unable to create dynamic client: %w", err)
+	}
+
+
+	// Get SandboxTask to find sandboxName
+	gvr := schema.GroupVersionResource{
+		Group:    "custom.agents.x-k8s.io",
+		Version:  "v1alpha1",
+		Resource: "sandboxtasks",
+	}
+	taskUnstructured, err := dynClient.Resource(gvr).Namespace(namespace).Get(ctx, taskName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to get task %s: %w", taskName, err)
+	}
+
+	sandboxName, found, err := unstructured.NestedString(taskUnstructured.Object, "spec", "sandboxName")
+	if err != nil || !found || sandboxName == "" {
+		return fmt.Errorf("sandboxName not found in task spec for %s: %w", taskName, err)
+	}
+
+	// Find pod
+	podID, err := sandbox.FindSandboxPodInNamespace(ctx, sandboxName, namespace)
+	if err != nil {
+		return fmt.Errorf("failed to find pod for sandbox %s: %w", sandboxName, err)
+	}
+	if podID == nil {
+		return fmt.Errorf("no active pod found for sandbox %s in namespace %s", sandboxName, namespace)
+	}
+
+	logPath := fmt.Sprintf("/workspaces/.agent/logs/%s.log", taskName)
+
+	var args []string
+	if follow {
+		fmt.Printf("Streaming logs for task %s (Ctrl+C to stop)...\n", taskName)
+		args = []string{"kubectl", "exec", "-i", podID.Name, "-n", podID.Namespace, "--", "tail", "-f", logPath}
+	} else {
+		args = []string{"kubectl", "exec", "-i", podID.Name, "-n", podID.Namespace, "--", "cat", logPath}
+	}
+
+	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start command: %w", err)
+	}
+
+	if err := cmd.Wait(); err != nil {
+		if ctx.Err() == nil {
+			return fmt.Errorf("log execution failed: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func runDeleteSandbox(ctx context.Context, target string) error {
 	if namespace == "" {
 		return fmt.Errorf("namespace must be set")
 	}
@@ -1964,6 +2054,11 @@ func runDeleteSandbox(ctx context.Context, sandboxName string) error {
 		Clientset:     clientset,
 	}
 
+	sandboxName, err := resolveSandboxName(ctx, dynClient, target)
+	if err != nil {
+		return err
+	}
+
 	return deleteSandbox(ctx, kubeClient, namespace, sandboxName)
 }
 
@@ -1985,6 +2080,80 @@ func deleteSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, na
 			return err
 		}
 	}
+	return nil
+}
+
+func runSuspendSandbox(ctx context.Context, target string) error {
+	if namespace == "" {
+		return fmt.Errorf("namespace must be set")
+	}
+
+	cfg, err := config.GetConfig()
+	if err != nil {
+		return fmt.Errorf("unable to get kubeconfig: %w", err)
+	}
+
+	dynClient, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("unable to create dynamic client: %w", err)
+	}
+
+	clientset, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("unable to create clientset: %w", err)
+	}
+
+	manager := k8s.NewManager(&clients.KubernetesClient{DynamicClient: dynClient, Clientset: clientset})
+
+	sandboxName, err := resolveSandboxName(ctx, dynClient, target)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Suspending sandbox %s...\n", sandboxName)
+	err = manager.ScaledownDevSandboxHelper(ctx, namespace, sandboxName)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("Sandbox suspended successfully.")
+	return nil
+}
+
+func runResumeSandbox(ctx context.Context, target string) error {
+	if namespace == "" {
+		return fmt.Errorf("namespace must be set")
+	}
+
+	cfg, err := config.GetConfig()
+	if err != nil {
+		return fmt.Errorf("unable to get kubeconfig: %w", err)
+	}
+
+	dynClient, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("unable to create dynamic client: %w", err)
+	}
+
+	clientset, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("unable to create clientset: %w", err)
+	}
+
+	manager := k8s.NewManager(&clients.KubernetesClient{DynamicClient: dynClient, Clientset: clientset})
+
+	sandboxName, err := resolveSandboxName(ctx, dynClient, target)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Resuming sandbox %s...\n", sandboxName)
+	err = manager.ScaleupDevSandboxHelper(ctx, namespace, sandboxName)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("Sandbox resumed successfully.")
 	return nil
 }
 
@@ -2804,3 +2973,24 @@ func resolveGithubUserFromSecret(ctx context.Context, clientset kubernetes.Inter
 
 	return userLogin, userName, userEmail
 }
+
+func resolveSandboxName(ctx context.Context, dynClient dynamic.Interface, target string) (string, error) {
+	if _, err := strconv.Atoi(target); err != nil {
+		return target, nil
+	}
+
+	listOptions := metav1.ListOptions{}
+	sandboxList, err := dynClient.Resource(k8s.SandboxGVR).Namespace(namespace).List(ctx, listOptions)
+	if err != nil {
+		return "", fmt.Errorf("failed to list sandboxes: %w", err)
+	}
+
+	for _, item := range sandboxList.Items {
+		name := item.GetName()
+		if strings.Contains(name, "-pr-"+target) || strings.Contains(name, "-issue-"+target) {
+			return name, nil
+		}
+	}
+	return "", fmt.Errorf("could not resolve target %q to a sandbox", target)
+}
+
