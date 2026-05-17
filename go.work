@@ -4,6 +4,7 @@ use (
 	.
 	./agentsandboxes
 	./dev/tools
+	./factory
 	./overseer
 	./repo-agent
 	./services/container-registry

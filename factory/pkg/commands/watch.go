@@ -1,0 +1,144 @@
+package commands
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
+	githubv39 "github.com/google/go-github/v39/github"
+	"github.com/spf13/cobra"
+	"k8s.io/klog/v2"
+)
+
+func NewWatchCommand(ctx context.Context) *cobra.Command {
+	var repo string
+	var pollInterval time.Duration
+	var assignee string
+	var labels []string
+	var dryRun bool
+
+	cmd := &cobra.Command{
+		Use:   "watch",
+		Short: "Watch a GitHub repo for test failures and assigned issues to automatically fix and review",
+		Example: `  # Watch for unassigned issues with specific labels
+  factory watch --repo owner/repo --assignee "" --labels "bug,help wanted"
+
+  # Watch for assigned issues with labels
+  factory watch --repo owner/repo --assignee "factory-bot" --labels "p0,urgent"`,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			if repo == "" {
+				return fmt.Errorf("--repo is required (e.g. owner/repo)")
+			}
+			parts := strings.Split(repo, "/")
+			if len(parts) != 2 {
+				return fmt.Errorf("invalid repo format, expected owner/repo, got %s", repo)
+			}
+			return runWatch(ctx, parts[0], parts[1], pollInterval, assignee, labels, dryRun)
+		},
+	}
+
+	cmd.Flags().StringVar(&repo, "repo", "", "GitHub repository (e.g. owner/repo)")
+	cmd.Flags().DurationVar(&pollInterval, "poll-interval", 2*time.Minute, "Polling interval")
+	cmd.Flags().StringVar(&assignee, "assignee", "factory-bot", "GitHub username to watch for assigned issues (use empty string for unassigned issues)")
+	cmd.Flags().StringSliceVar(&labels, "labels", nil, "Comma-separated list of labels to filter issues by")
+	cmd.Flags().BoolVar(&dryRun, "dryrun", false, "Print actions without creating sandboxes or executing tasks")
+
+	return cmd
+}
+
+func runWatch(ctx context.Context, owner, repo string, interval time.Duration, assignee string, labels []string, dryRun bool) error {
+	fmt.Printf("Starting watch for repository %s/%s (poll interval: %s, assignee: '%s', labels: %v, dryRun: %v)...\n", owner, repo, interval, assignee, labels, dryRun)
+
+	ghClient, err := github.NewClient(ctx)
+	if err != nil {
+		return fmt.Errorf("creating github client: %w", err)
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	processedIssues := make(map[int]time.Time)
+	processedPRs := make(map[int]time.Time)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			assigneeFilter := assignee
+			if assigneeFilter == "" {
+				assigneeFilter = "none"
+			}
+			opts := &githubv39.IssueListByRepoOptions{
+				Assignee:    assigneeFilter,
+				State:       "open",
+				Labels:      labels,
+				ListOptions: githubv39.ListOptions{PerPage: 50},
+			}
+			issues, _, err := ghClient.Issues.ListByRepo(ctx, owner, repo, opts)
+			if err != nil {
+				klog.Errorf("Failed to list issues: %v", err)
+			} else {
+				for _, issue := range issues {
+					if issue.PullRequestLinks != nil {
+						continue
+					}
+					num := issue.GetNumber()
+					if lastProcessed, ok := processedIssues[num]; !ok || time.Since(lastProcessed) > 24*time.Hour {
+						fmt.Printf("Found assigned issue #%d (%s). Triggering fix...\n", num, issue.GetTitle())
+						processedIssues[num] = time.Now()
+						issueURL := fmt.Sprintf("https://github.com/%s/%s/issues/%d", owner, repo, num)
+						if dryRun {
+							fmt.Printf("[DRYRUN] Would trigger fix for issue #%d: %s\n", num, issueURL)
+						} else {
+							if err := runFix(ctx, issueURL, "Fix this issue"); err != nil {
+								klog.Errorf("Fix for issue #%d failed: %v", num, err)
+							}
+						}
+					}
+				}
+			}
+
+			prOpts := &githubv39.PullRequestListOptions{
+				State:       "open",
+				ListOptions: githubv39.ListOptions{PerPage: 50},
+			}
+			prs, _, err := ghClient.PullRequests.List(ctx, owner, repo, prOpts)
+			if err != nil {
+				klog.Errorf("Failed to list PRs: %v", err)
+			} else {
+				for _, pr := range prs {
+					num := pr.GetNumber()
+					headSHA := pr.GetHead().GetSHA()
+					checks, _, err := ghClient.Checks.ListCheckRunsForRef(ctx, owner, repo, headSHA, nil)
+					if err != nil {
+						continue
+					}
+					hasFailure := false
+					for _, run := range checks.CheckRuns {
+						if run.GetConclusion() == "failure" {
+							hasFailure = true
+							break
+						}
+					}
+					if hasFailure {
+						if lastProcessed, ok := processedPRs[num]; !ok || time.Since(lastProcessed) > 6*time.Hour {
+							fmt.Printf("Found failing PR #%d (%s). Triggering investigate & review...\n", num, pr.GetTitle())
+							processedPRs[num] = time.Now()
+							prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", owner, repo, num)
+							if dryRun {
+								fmt.Printf("[DRYRUN] Would trigger investigate for PR #%d: %s\n", num, prURL)
+							} else {
+								if err := runInvestigate(ctx, prURL, "Investigate check failures for this PR"); err != nil {
+									klog.Errorf("Investigate for PR #%d failed: %v", num, err)
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
