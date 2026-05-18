@@ -1,0 +1,21 @@
+apiVersion: review.gemini.google.com/v1alpha1
+kind: RepoWatch
+metadata:
+  name: {{ .RepoName }}
+  namespace: {{ .WatchNamespace }}
+spec:
+  repoURL: {{ .RepoURL }}
+  githubSecretName: github-token
+  pollIntervalSeconds: 60
+  review:
+    llm:
+      provider: gemini-cli
+      apiKeySecretRef: gemini-api-key
+    maxActiveSandboxes: 2
+    workspaceDiskSize: 10Gi
+  issue:
+    llm:
+      provider: gemini-cli
+      apiKeySecretRef: gemini-api-key
+    maxActiveSandboxes: 2
+    workspaceDiskSize: 10Gi
