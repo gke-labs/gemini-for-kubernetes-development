@@ -53,13 +53,19 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 		api.GET("/repos", s.getRepos)
 		api.POST("/repos", s.createRepoWatch)
 		api.GET("/repos/:repo", s.getRepo)
+		api.GET("/repo/:repo", s.getRepo) // Alias
 		api.GET("/getRepoWatch", s.getDefaultRepoWatch)
 		api.GET("/templates", s.getTemplates)
 		api.GET("/repos/:repo/yaml", s.getRepoWatchYAML)
+		api.GET("/repo/:repo/yaml", s.getRepoWatchYAML) // Alias
 		api.PUT("/repos/:repo", s.updateRepoWatch)
+		api.PUT("/repo/:repo", s.updateRepoWatch) // Alias
 		api.DELETE("/repos/:repo", s.deleteRepoWatch)
+		api.DELETE("/repo/:repo", s.deleteRepoWatch) // Alias
 		api.GET("/repos/:repo/instructions", s.getInstructions)
+		api.GET("/repo/:repo/instructions", s.getInstructions) // Alias
 		api.POST("/repos/:repo/instructions", s.updateInstructions)
+		api.POST("/repo/:repo/instructions", s.updateInstructions) // Alias
 
 		api.GET("/settings", s.getSettings)
 		api.POST("/settings", s.updateSettings)

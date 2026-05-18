@@ -376,12 +376,9 @@ func (s *Server) updateRepoWatch(c *gin.Context) {
 		var pullRequests []int64
 		if found {
 			for _, v := range pullRequestsSlice {
-				if i, ok := v.(int64); ok {
+				if i, ok := toInt64(v); ok {
 					pullRequests = append(pullRequests, i)
-				} else if i, ok := v.(int); ok {
-					pullRequests = append(pullRequests, int64(i))
-				}
-			}
+				}			}
 		}
 
 		// Check for duplicates
@@ -666,9 +663,14 @@ func (s *Server) getRepos(c *gin.Context) {
 		if pendingPRsSlice, found, err := unstructured.NestedSlice(repoWatch.Object, "status", "pendingPRs"); err == nil && found {
 			var prNumbers []int64
 			for _, v := range pendingPRsSlice {
-				if i, ok := v.(int64); ok {
+				switch i := v.(type) {
+				case int64:
 					prNumbers = append(prNumbers, i)
-				} else if i, ok := v.(int); ok {
+				case int:
+					prNumbers = append(prNumbers, int64(i))
+				case int32:
+					prNumbers = append(prNumbers, int64(i))
+				case float64:
 					prNumbers = append(prNumbers, int64(i))
 				}
 			}
@@ -760,10 +762,8 @@ func (s *Server) getRepos(c *gin.Context) {
 			for _, v := range pendingIssuesMap {
 				if issuesSlice, ok := v.([]interface{}); ok {
 					for _, issue := range issuesSlice {
-						if i, ok := issue.(int64); ok {
+						if i, ok := toInt64(issue); ok {
 							issueNumbers = append(issueNumbers, i)
-						} else if i, ok := issue.(int); ok {
-							issueNumbers = append(issueNumbers, int64(i))
 						}
 					}
 				}
@@ -866,9 +866,14 @@ func (s *Server) getRepo(c *gin.Context) {
 	if pendingPRsSlice, found, err := unstructured.NestedSlice(repoWatch.Object, "status", "pendingPRs"); err == nil && found {
 		var prNumbers []int64
 		for _, v := range pendingPRsSlice {
-			if i, ok := v.(int64); ok {
+			switch i := v.(type) {
+			case int64:
 				prNumbers = append(prNumbers, i)
-			} else if i, ok := v.(int); ok {
+			case int:
+				prNumbers = append(prNumbers, int64(i))
+			case int32:
+				prNumbers = append(prNumbers, int64(i))
+			case float64:
 				prNumbers = append(prNumbers, int64(i))
 			}
 		}
@@ -960,10 +965,8 @@ func (s *Server) getRepo(c *gin.Context) {
 		for _, v := range pendingIssuesMap {
 			if issuesSlice, ok := v.([]interface{}); ok {
 				for _, issue := range issuesSlice {
-					if i, ok := issue.(int64); ok {
+					if i, ok := toInt64(issue); ok {
 						issueNumbers = append(issueNumbers, i)
-					} else if i, ok := issue.(int); ok {
-						issueNumbers = append(issueNumbers, int64(i))
 					}
 				}
 			}

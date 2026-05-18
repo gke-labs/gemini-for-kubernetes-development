@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/agentsandboxes/pkg/threads"
@@ -156,9 +157,14 @@ func LaunchSandbox(ctx context.Context, kube *clients.KubernetesClient, repo *gi
 
 	log.Info("Creating sandbox", "name", sandboxName, "repos", cloneRepos, "issue", issueURL)
 
+	image := os.Getenv("REPO_SANDBOX_IMAGE")
+	if image == "" {
+		image = "gcr.io/gke-labs/repo-sandbox:latest"
+	}
+
 	container := v1.Container{}
 	container.Name = "agent"
-	container.Image = "gcr.io/justinsb-knotai-dev/generic-golang:latest"
+	container.Image = image
 
 	container.Env = append(container.Env, v1.EnvVar{
 		Name:  "CLONE_REPOS",

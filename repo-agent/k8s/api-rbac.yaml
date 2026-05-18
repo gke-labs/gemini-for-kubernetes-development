@@ -34,7 +34,7 @@ rules:
 # Can list pods to find sandboxes and exec into them for terminal
 - apiGroups: [""]
   resources: ["pods", "pods/exec", "pods/log"]
-  verbs: ["get", "list", "create"]
+  verbs: ["get", "list", "watch", "create"]
 # Can proxy to nodes for exec
 - apiGroups: [""]
   resources: ["nodes", "nodes/proxy"]
@@ -108,4 +108,6 @@ roleRef:
   kind: ClusterRole
   name: configdir-controller
   apiGroup: rbac.authorization.k8s.io
+
+.k8s.io
 
