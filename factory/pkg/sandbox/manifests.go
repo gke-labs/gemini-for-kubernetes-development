@@ -12,12 +12,13 @@ import (
 
 // DevSandboxOptions holds common options for creating Sandboxes.
 type DevSandboxOptions struct {
-	Name        string
-	Namespace   string
-	Labels      map[string]string
-	Annotations map[string]string
-	Image       string
-	Replicas    int64
+	Name              string
+	Namespace         string
+	Labels            map[string]string
+	Annotations       map[string]string
+	Image             string
+	Replicas          int64
+	WorkspaceDiskSize string
 }
 
 // AgentSandboxOptions holds options for creating an AgentSandbox.
@@ -86,6 +87,11 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 	ephemeralRequest := resources.Requests["ephemeral-storage"]
 	ephemeralLimit := resources.Limits["ephemeral-storage"]
 
+	diskSize := opt.WorkspaceDiskSize
+	if diskSize == "" {
+		diskSize = "10Gi"
+	}
+
 	env := []interface{}{}
 
 	sandbox := &unstructured.Unstructured{
@@ -143,7 +149,7 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 							"accessModes": []interface{}{"ReadWriteOnce"},
 							"resources": map[string]interface{}{
 								"requests": map[string]interface{}{
-									"storage": "10Gi",
+									"storage": diskSize,
 								},
 							},
 						},
@@ -206,6 +212,11 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 	annotations["diffURL"] = opt.PRDiffURL
 	annotations["cloneURL"] = opt.PRCloneURL
 
+	diskSize := opt.WorkspaceDiskSize
+	if diskSize == "" {
+		diskSize = "10Gi"
+	}
+
 	env := []interface{}{}
 
 	sandbox := &unstructured.Unstructured{
@@ -259,7 +270,7 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 							"accessModes": []interface{}{"ReadWriteOnce"},
 							"resources": map[string]interface{}{
 								"requests": map[string]interface{}{
-									"storage": "10Gi",
+									"storage": diskSize,
 								},
 							},
 						},

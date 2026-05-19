@@ -51,7 +51,7 @@ func NewStatusCommand(ctx context.Context) *cobra.Command {
 				} else {
 					fmt.Fprintf(w, "GitHub Token\t[OK]\tConfigured in secret '%s'\n", rootFlags.SecretName)
 				}
-				if string(secret.Data[KeyGeminiApiKey]) == "" {
+				if string(secret.Data[KeyGeminiAPIKey]) == "" {
 					fmt.Fprintf(w, "Gemini Key\t[FAIL]\tGEMINI_API_KEY missing in secret '%s'\n", rootFlags.SecretName)
 				} else {
 					fmt.Fprintf(w, "Gemini Key\t[OK]\tConfigured in secret '%s'\n", rootFlags.SecretName)

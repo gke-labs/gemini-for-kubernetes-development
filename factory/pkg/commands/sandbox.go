@@ -288,7 +288,7 @@ func NewSandboxExecCommand(ctx context.Context) *cobra.Command {
 		Short: "Execute a command in the sandbox with stdin/stdout connected",
 		Long: `Execute a command in the sandbox with stdin/stdout connected.
 Note: factory flags (-e, -w) must precede positional arguments ([sandbox-name] [command...]).`,
-		Args:  cobra.MinimumNArgs(2),
+		Args: cobra.MinimumNArgs(2),
 		RunE: func(_ *cobra.Command, args []string) error {
 			sandboxName := args[0]
 			if err := validateSandboxName(sandboxName); err != nil {
