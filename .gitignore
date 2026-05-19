@@ -5,3 +5,4 @@ bin/
 # Vscode files
 .vscode
 .jetskicli
+cli/cli

@@ -1,4 +1,3 @@
-
 // Copyright 2026 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,12 +29,11 @@ const (
 	`
 )
 
-type VersionOptions struct {
+type Options struct {
 }
 
-
 func BuildVersionCmd() *cobra.Command {
-	var opts VersionOptions
+	var opts Options
 
 	cmd := &cobra.Command{
 		Use:     "version",
@@ -50,11 +48,11 @@ func BuildVersionCmd() *cobra.Command {
 	return cmd
 }
 
-func (opts *VersionOptions) validateFlags() error {
+func (opts *Options) validateFlags() error {
 	return nil
 }
 
-func RunVersion(ctx context.Context, opts *VersionOptions) error {
+func RunVersion(ctx context.Context, opts *Options) error {
 	log.Printf("Running codebot version %s.", version.GetVersion())
 
 	if err := opts.validateFlags(); err != nil {

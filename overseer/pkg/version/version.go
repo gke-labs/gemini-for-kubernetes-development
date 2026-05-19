@@ -26,7 +26,6 @@ const (
 )
 
 func GetVersion() string {
-	version := "0.1"
 	vcsrevision := unknown
 	vcstimestamp := unknown
 	vcsdirty := ""
@@ -46,6 +45,6 @@ func GetVersion() string {
 		}
 	}
 
-	version = fmt.Sprintf("devel (%s)", vcsrevision)
+	version := fmt.Sprintf("devel (%s)", vcsrevision)
 	return fmt.Sprintf("%s/%s (%s/%s) %s%s/%s", name, version, runtime.GOOS, runtime.GOARCH, vcsrevision, vcsdirty, vcstimestamp)
 }

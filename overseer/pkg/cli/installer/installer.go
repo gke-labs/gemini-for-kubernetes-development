@@ -1,4 +1,3 @@
-
 // Copyright 2026 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,8 +21,8 @@ import (
 	"log"
 	"os"
 
-	"github.com/spf13/cobra"
 	"github.com/gke-labs/gemini-for-kubernetes-development/overseer/pkg/installer"
+	"github.com/spf13/cobra"
 )
 
 const (
@@ -33,22 +32,22 @@ const (
 	`
 
 	// flag names.
-	flag_project     = "project"
-	flag_cluster     = "cluster"
-	flag_region      = "region"
-	flag_repo        = "repo"
-	flag_watchNs     = "watch-namespace"
-	flag_geminiKey   = "gemini-api-key"
-	flag_ghPat       = "github-pat"
-	flag_oauthId     = "oauth-client-id"
-	flag_oauthSecret = "oauth-client-secret"
-	flag_botName     = "bot-name"
-	flag_botEmail    = "bot-email"
-	flag_admins      = "admin-users"
-	flag_kyverno     = "install-kyverno"
+	flagProject     = "project"
+	flagCluster     = "cluster"
+	flagRegion      = "region"
+	flagRepo        = "repo"
+	flagWatchNs     = "watch-namespace"
+	flagGeminiKey   = "gemini-api-key"
+	flagGhPat       = "github-pat"
+	flagOauthID     = "oauth-client-id"
+	flagOauthSecret = "oauth-client-secret"
+	flagBotName     = "bot-name"
+	flagBotEmail    = "bot-email"
+	flagAdmins      = "admin-users"
+	flagKyverno     = "install-kyverno"
 )
 
-type InstallerOptions struct {
+type Options struct {
 	// GCP / GKE
 	Project string
 	Cluster string
@@ -76,9 +75,8 @@ type InstallerOptions struct {
 	InstallKyverno bool
 }
 
-
 func BuildInstallerCmd() *cobra.Command {
-	var opts InstallerOptions
+	var opts Options
 
 	cmd := &cobra.Command{
 		Use:     "installer",
@@ -90,24 +88,24 @@ func BuildInstallerCmd() *cobra.Command {
 		Args: cobra.ExactArgs(0),
 	}
 
-	cmd.Flags().StringVar(&opts.Project, flag_project, "", "GCP project ID. (or set PROJECT env)")
-	cmd.Flags().StringVar(&opts.Cluster, flag_cluster, "", "GKE cluster name. (or set CLUSTER env)")
-	cmd.Flags().StringVar(&opts.Region, flag_region, "", "GKE cluster region/zone. (or set REGION env)")
-	cmd.Flags().StringVar(&opts.RepoURL, flag_repo, "", "GitHub repository URL to watch (e.g. https://github.com/org/repo)")
-	cmd.Flags().StringVar(&opts.WatchNamespace, flag_watchNs, "", "Namespace for RepoWatch CR (default: derived from repo name)")
-	cmd.Flags().StringVar(&opts.GeminiAPIKey, flag_geminiKey, "", "Google Gemini API key. (or set GEMINI_API_KEY)")
-	cmd.Flags().StringVar(&opts.GitHubPAT, flag_ghPat, "", "GitHub Personal Access Token for the bot account")
-	cmd.Flags().StringVar(&opts.GitHubOAuthClientID, flag_oauthId, "", "GitHub OAuth App client ID (omit for single-user mode)")
-	cmd.Flags().StringVar(&opts.GitHubOAuthSecret, flag_oauthSecret, "", "GitHub OAuth App client secret")
-	cmd.Flags().StringVar(&opts.BotGitName, flag_botName, "", "Git author name for bot commits")
-	cmd.Flags().StringVar(&opts.BotGitEmail, flag_botEmail, "", "Git author email for bot commits")
-	cmd.Flags().StringVar(&opts.AdminUsers, flag_admins, "", "Comma-separated GitHub logins allowed to administer the UI")
-	cmd.Flags().BoolVar(&opts.InstallKyverno, flag_kyverno, true, "Install Kyverno (required on GKE for image-reference rewriting)")
+	cmd.Flags().StringVar(&opts.Project, flagProject, "", "GCP project ID. (or set PROJECT env)")
+	cmd.Flags().StringVar(&opts.Cluster, flagCluster, "", "GKE cluster name. (or set CLUSTER env)")
+	cmd.Flags().StringVar(&opts.Region, flagRegion, "", "GKE cluster region/zone. (or set REGION env)")
+	cmd.Flags().StringVar(&opts.RepoURL, flagRepo, "", "GitHub repository URL to watch (e.g. https://github.com/org/repo)")
+	cmd.Flags().StringVar(&opts.WatchNamespace, flagWatchNs, "", "Namespace for RepoWatch CR (default: derived from repo name)")
+	cmd.Flags().StringVar(&opts.GeminiAPIKey, flagGeminiKey, "", "Google Gemini API key. (or set GEMINI_API_KEY)")
+	cmd.Flags().StringVar(&opts.GitHubPAT, flagGhPat, "", "GitHub Personal Access Token for the bot account")
+	cmd.Flags().StringVar(&opts.GitHubOAuthClientID, flagOauthID, "", "GitHub OAuth App client ID (omit for single-user mode)")
+	cmd.Flags().StringVar(&opts.GitHubOAuthSecret, flagOauthSecret, "", "GitHub OAuth App client secret")
+	cmd.Flags().StringVar(&opts.BotGitName, flagBotName, "", "Git author name for bot commits")
+	cmd.Flags().StringVar(&opts.BotGitEmail, flagBotEmail, "", "Git author email for bot commits")
+	cmd.Flags().StringVar(&opts.AdminUsers, flagAdmins, "", "Comma-separated GitHub logins allowed to administer the UI")
+	cmd.Flags().BoolVar(&opts.InstallKyverno, flagKyverno, true, "Install Kyverno (required on GKE for image-reference rewriting)")
 
 	return cmd
 }
 
-func (opts *InstallerOptions) validateFlags() []error {
+func (opts *Options) validateFlags() []error {
 	var errs []error
 	if opts.Project == "" {
 		opts.Project = os.Getenv("PROJECT")
@@ -172,7 +170,7 @@ func printErrors(errs []error) error {
 	return result
 }
 
-func RunInstaller(ctx context.Context, opts *InstallerOptions) error {
+func RunInstaller(ctx context.Context, opts *Options) error {
 	log.Printf("Running installer.")
 
 	if errs := opts.validateFlags(); errs != nil {
