@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/agentoutput"
@@ -69,12 +71,28 @@ func RunTask(ctx context.Context, t Task, sb *sandbox.IssueSandbox, taskDir stri
 		log.Info("Copied post-script into sandbox", "sandbox", sb.GetSandboxID(), "path", postScriptPath)
 	}
 
+	// Create task directory if it doesn't exist
+	if err := os.MkdirAll(taskDir, 0755); err != nil {
+		return fmt.Errorf("failed to create task directory: %w", err)
+	}
+
+	// Create log file for task execution
+	logFile := filepath.Join(taskDir, "execution.log")
+	f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to create log file: %w", err)
+	}
+	defer f.Close()
+
+	fmt.Fprintf(f, "\n--- Task started at %s ---\n", time.Now().Format(time.RFC3339))
+	defer fmt.Fprintf(f, "--- Task completed at %s ---\n", time.Now().Format(time.RFC3339))
+
 	// Run the pre-script
 	log.Info("running pre-script in sandbox", "sandbox", sb.GetSandboxID())
 	opts := sandbox.ExecOptions{
 		Command: []string{preScriptPath},
-		Stdout:  os.Stdout,
-		Stderr:  os.Stderr,
+		Stdout:  io.MultiWriter(f, os.Stdout),
+		Stderr:  io.MultiWriter(f, os.Stderr),
 		Env:     env,
 	}
 	if err := sb.Exec(opts); err != nil {
@@ -90,8 +108,8 @@ func RunTask(ctx context.Context, t Task, sb *sandbox.IssueSandbox, taskDir stri
 		log.Info("running post-script in sandbox", "sandbox", sb.GetSandboxID())
 		opts := sandbox.ExecOptions{
 			Command: []string{postScriptPath},
-			Stdout:  os.Stdout,
-			Stderr:  os.Stderr,
+			Stdout:  io.MultiWriter(f, os.Stdout),
+			Stderr:  io.MultiWriter(f, os.Stderr),
 			Env:     env,
 		}
 		if err := sb.Exec(opts); err != nil {
@@ -99,6 +117,7 @@ func RunTask(ctx context.Context, t Task, sb *sandbox.IssueSandbox, taskDir stri
 		}
 		log.Info("Completed post-script in sandbox", "sandbox", sb.GetSandboxID())
 	}
+
 
 	// Read agent output and update annotation
 	agentOutputPath := taskPath(taskDir, "agent-output.txt")
