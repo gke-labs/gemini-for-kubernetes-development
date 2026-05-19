@@ -13,6 +13,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	"github.com/spf13/cobra"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func validateSandboxName(name string) error {
@@ -34,6 +35,7 @@ func NewSandboxCommand(ctx context.Context) *cobra.Command {
 	cmd.AddCommand(NewSandboxExecCommand(ctx))
 	cmd.AddCommand(NewSandboxInspectCommand(ctx))
 	cmd.AddCommand(NewSandboxLogsCommand(ctx))
+	cmd.AddCommand(NewSandboxConnectCommand(ctx))
 
 	return cmd
 }
@@ -144,11 +146,16 @@ func NewSandboxListCommand(ctx context.Context) *cobra.Command {
 				return nil
 			}
 
+			podList, _ := kubeClient.Clientset.CoreV1().Pods(rootFlags.Namespace).List(ctx, metav1.ListOptions{})
+
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 4, ' ', 0)
-			fmt.Fprintln(w, "NAME\tTYPE\tAGE")
+			fmt.Fprintln(w, "NAME\tTYPE\tSTATUS\tAGE")
 
 			for _, item := range list.Items {
 				name := item.GetName()
+				if name == "" {
+					continue
+				}
 				sbType := "unknown"
 				if labels := item.GetLabels(); labels != nil {
 					if t, ok := labels["sandbox.gemini.google.com/type"]; ok {
@@ -157,11 +164,51 @@ func NewSandboxListCommand(ctx context.Context) *cobra.Command {
 						sbType = t
 					}
 				}
+				if sbType == "review" {
+					sbType = "pr"
+				}
+
+				podStatusStr := ""
+				if podList != nil {
+					for _, pod := range podList.Items {
+						if pod.Labels["sandbox"] == name && pod.DeletionTimestamp == nil {
+							podStatusStr = string(pod.Status.Phase)
+							if len(pod.Status.ContainerStatuses) > 0 {
+								state := pod.Status.ContainerStatuses[0].State
+								if state.Waiting != nil && state.Waiting.Reason != "" {
+									podStatusStr = state.Waiting.Reason
+								} else if state.Terminated != nil && state.Terminated.Reason != "" {
+									podStatusStr = state.Terminated.Reason
+								}
+							}
+							if podStatusStr == "Pending" {
+								for _, cond := range pod.Status.Conditions {
+									if cond.Type == "PodScheduled" && cond.Status == "False" && cond.Reason == "Unschedulable" {
+										podStatusStr = "Unschedulable"
+										break
+									}
+								}
+							}
+							break
+						}
+					}
+				}
+
+				if podStatusStr == "" {
+					if ann := item.GetAnnotations(); ann != nil {
+						if s, ok := ann["sandbox.gemini.google.com/pod-status"]; ok && s != "" {
+							podStatusStr = s
+						}
+					}
+				}
+				if podStatusStr == "" {
+					podStatusStr = "No Pod"
+				}
 
 				creationTime := item.GetCreationTimestamp().Time
 				age := time.Since(creationTime).Round(time.Second)
 
-				fmt.Fprintf(w, "%s\t%s\t%s\n", name, sbType, age)
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", name, sbType, podStatusStr, age)
 			}
 			w.Flush()
 
@@ -241,7 +288,7 @@ func NewSandboxExecCommand(ctx context.Context) *cobra.Command {
 		Short: "Execute a command in the sandbox with stdin/stdout connected",
 		Long: `Execute a command in the sandbox with stdin/stdout connected.
 Note: factory flags (-e, -w) must precede positional arguments ([sandbox-name] [command...]).`,
-		Args:  cobra.MinimumNArgs(2),
+		Args: cobra.MinimumNArgs(2),
 		RunE: func(_ *cobra.Command, args []string) error {
 			sandboxName := args[0]
 			if err := validateSandboxName(sandboxName); err != nil {
@@ -268,5 +315,35 @@ Note: factory flags (-e, -w) must precede positional arguments ([sandbox-name] [
 	}
 	cmd.Flags().StringArrayVarP(&flags.Envs, "env", "e", nil, "Environment variables to set (e.g. -e KEY=VALUE)")
 	cmd.Flags().StringVarP(&flags.Cwd, "cwd", "w", "/workspaces", "Working directory inside the container")
+	return cmd
+}
+
+func NewSandboxConnectCommand(ctx context.Context) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "connect [sandbox-name]",
+		Short: "Connect to a sandbox via interactive tmux session",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			sandboxName := args[0]
+			if err := validateSandboxName(sandboxName); err != nil {
+				return err
+			}
+
+			podName, err := envd.GetSandboxPodName(ctx, rootFlags.Namespace, sandboxName)
+			if err != nil {
+				return fmt.Errorf("getting sandbox pod: %w", err)
+			}
+
+			fmt.Printf("Connecting to tmux session in sandbox '%s'...\n", sandboxName)
+			cmd := exec.CommandContext(ctx, "kubectl", "exec", "-it", "-n", rootFlags.Namespace, podName, "-c", "sandbox", "--", "sh", "-c", "tmux attach || tmux new-session")
+			cmd.Stdin = os.Stdin
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				return fmt.Errorf("tmux session exited: %w", err)
+			}
+			return nil
+		},
+	}
 	return cmd
 }

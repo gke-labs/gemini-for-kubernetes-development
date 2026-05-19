@@ -194,7 +194,7 @@ func RunUserOnboard(ctx context.Context, githubLogin, githubToken, githubEmail, 
 
 	data := map[string][]byte{
 		KeyGithubToken:  []byte(githubToken),
-		KeyGeminiApiKey: []byte(geminiKey),
+		KeyGeminiAPIKey: []byte(geminiKey),
 		KeyGithubLogin:  []byte(githubLogin),
 		KeyGithubEmail:  []byte(githubEmail),
 	}

@@ -33,8 +33,9 @@ func EnsureIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 				"sandbox.gemini.google.com/type":    "issue",
 				"factory.gemini.google.com/managed": "true",
 			},
-			Image:    image,
-			Replicas: 1,
+			Image:             image,
+			Replicas:          1,
+			WorkspaceDiskSize: diskSize,
 		},
 	}
 
@@ -79,8 +80,9 @@ func EnsureReviewSandbox(ctx context.Context, kubeClient *clients.KubernetesClie
 				"sandbox.gemini.google.com/type":    "review",
 				"factory.gemini.google.com/managed": "true",
 			},
-			Image:    image,
-			Replicas: 1,
+			Image:             image,
+			Replicas:          1,
+			WorkspaceDiskSize: diskSize,
 		},
 		PRNumber:   prNum,
 		PRTitle:    prTitle,

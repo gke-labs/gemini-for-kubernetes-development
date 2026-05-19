@@ -12,7 +12,7 @@ import (
 
 const (
 	KeyGithubToken    = "GITHUB_TOKEN"
-	KeyGeminiApiKey   = "GEMINI_API_KEY"
+	KeyGeminiAPIKey   = "GEMINI_API_KEY"
 	KeyGithubLogin    = "GITHUB_LOGIN"
 	KeyGithubEmail    = "GITHUB_EMAIL"
 	SecretFactoryUser = "factory-user"

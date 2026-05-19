@@ -17,6 +17,7 @@ jobs:
             repo-agent/go.sum
             overseer/go.sum
             dev/tools/go.sum
+            factory/go.sum
       - name: Run Unit Tests
         run: |
           ./dev/tools/test-unit --working-dir repo-agent/
@@ -33,10 +34,12 @@ jobs:
             repo-agent/go.sum
             overseer/go.sum
             dev/tools/go.sum
+            factory/go.sum
       - name: Run Lint
         run: |
           ./dev/tools/lint-go --working-dir repo-agent/
           ./dev/tools/lint-go --working-dir overseer/
+          ./dev/tools/lint-go --working-dir factory/
   docker-build-overseer:
     runs-on: ubuntu-latest
     permissions:
@@ -52,6 +55,22 @@ jobs:
         with:
           context: .
           file: overseer/images/overseer/Dockerfile
+          push: false
+  docker-build-factory:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: factory/images/factory-golang/Dockerfile
           push: false
   docker-build:
     runs-on: ubuntu-latest
@@ -95,10 +114,12 @@ jobs:
             repo-agent/go.sum
             overseer/go.sum
             dev/tools/go.sum
+            factory/go.sum
       - name: Build Binaries
         run: |
           ./dev/tools/build-go-binaries --working-dir repo-agent/
           ./dev/tools/build-go-binaries --working-dir overseer/
+          ./dev/tools/build-go-binaries --working-dir factory/
   generate:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -111,6 +132,7 @@ jobs:
             repo-agent/go.sum
             overseer/go.sum
             dev/tools/go.sum
+            factory/go.sum
       - name: Run api generators
         run: ./dev/tools/fix-go-generate --working-dir repo-agent/api/
       - name: Run controller generators
@@ -137,6 +159,7 @@ jobs:
             repo-agent/go.sum
             overseer/go.sum
             dev/tools/go.sum
+            factory/go.sum
 
       - name: dev/tasks/free-disk-space-on-github-actions-runner
         run: dev/tasks/free-disk-space-on-github-actions-runner

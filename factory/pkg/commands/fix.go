@@ -135,7 +135,7 @@ func runFix(ctx context.Context, issueURL, prompt string) error {
 
 	envMap := map[string]string{
 		"GITHUB_TOKEN":               string(secret.Data[KeyGithubToken]),
-		"GEMINI_API_KEY":             string(secret.Data[KeyGeminiApiKey]),
+		"GEMINI_API_KEY":             string(secret.Data[KeyGeminiAPIKey]),
 		"GEMINI_CLI_TRUST_WORKSPACE": "true",
 		"REPO_OWNER":                 owner,
 		"REPO_NAME":                  repo,
