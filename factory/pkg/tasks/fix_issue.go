@@ -98,3 +98,52 @@ func RenderInvestigatePrompt(params InvestigateParams) ([]byte, error) {
 
 	return pBuf.Bytes(), nil
 }
+
+type RepositoryCommit struct {
+	SHA     string
+	Message string
+}
+
+type PullRequestComment struct {
+	Path     string
+	DiffHunk string
+	Body     string
+}
+
+type PRReview struct {
+	ID                  int64
+	UserLogin           string
+	Body                string
+	PullRequestComments []PullRequestComment
+}
+
+type AddressFeedbackParams struct {
+	PullRequest           PullRequest
+	RepositoryCommits     []RepositoryCommit
+	OldIssueComments      []PRComment
+	IssueComments         []PRComment
+	OldPullRequestReviews []PRReview
+	PullRequestReviews    []PRReview
+	Models                []string
+}
+
+func GetAddressFeedbackScript() ([]byte, error) {
+	return scriptsFS.ReadFile("address_feedback.sh")
+}
+
+func RenderAddressFeedbackPrompt(params AddressFeedbackParams) ([]byte, error) {
+	if len(params.Models) == 0 {
+		params.Models = []string{"gemini-3-flash-preview", "gemini-3.1-pro-preview", "gemini-2.5-pro"}
+	}
+
+	promptTmpl, err := getPromptTemplate("address_feedback.txt")
+	if err != nil {
+		return nil, fmt.Errorf("getting prompt template: %w", err)
+	}
+	var pBuf bytes.Buffer
+	if err := promptTmpl.Execute(&pBuf, params); err != nil {
+		return nil, fmt.Errorf("executing prompt template: %w", err)
+	}
+
+	return pBuf.Bytes(), nil
+}

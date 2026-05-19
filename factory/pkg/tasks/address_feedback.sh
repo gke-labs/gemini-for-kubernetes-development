@@ -12,7 +12,6 @@ set -o pipefail
 # - GITHUB_USER_EMAIL
 # - GITHUB_USER_NAME
 # - PR_NUMBER
-# - FAILED_RUNS
 # - MODELS
 # - EXTENSIONS
 
@@ -100,17 +99,6 @@ function checkoutPRBranch {
     (cd "/workspaces/${REPO_NAME}" && git reset --hard HEAD && git clean -fd && gh pr checkout ${PR_NUMBER} && git pull origin HEAD)
 }
 
-function fetchLogs {
-    echo "Fetching logs for failed runs..."
-    cd "/workspaces/${REPO_NAME}"
-    if [ -n "$FAILED_RUNS" ]; then
-        for runID in $FAILED_RUNS; do
-            echo "Downloading logs for run $runID"
-            gh run view "$runID" --log-failed > "run-${runID}-failed.log" || echo "Failed to download logs for run $runID"
-        done
-    fi
-}
-
 function configureGemini {
     echo "Running configureGemini..."
     echo "creating /root/.gemini directory"
@@ -173,7 +161,6 @@ setupGitRepos
 # HACK: Avoid git lock issues
 sleep 5
 checkoutPRBranch
-fetchLogs
 configureGemini
 installExtensions
 runGemini

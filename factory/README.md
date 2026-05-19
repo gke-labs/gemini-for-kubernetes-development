@@ -34,6 +34,31 @@ It spins up isolated development environments (`agents.x-k8s.io`), establishes d
 - **Full Environment Injection**: The CLI dynamically resolves your GitHub credentials and Gemini API keys from Kubernetes Secrets and injects them directly into the `envd` execution environment via Connect-RPC `StartRequest`.
 - **Live Streaming & Logging**: Standard output and error are streamed live to your terminal while simultaneously being recorded into `execution.log` inside the sandbox.
 
+### Command Tree
+```
+factory
+ ├── up (Install CRDs & operator components, interactively onboard user)
+ ├── issue
+ │    └── fix (Fix a bug for a given GitHub issue URL in a sandbox)
+ ├── pr
+ │    ├── review (Review a GitHub pull request in a sandbox)
+ │    ├── investigate (Investigate CI check failures for a PR in a sandbox)
+ │    ├── address-comments (Address review feedback and comments for a PR)
+ │    └── watch (Continuously monitor a PR for CI failures or new feedback)
+ ├── watch (Continuously monitor a GitHub repo for failures and assigned issues)
+ ├── status (Diagnostic pre-flight checks to verify cluster and factory health)
+ ├── user
+ │    └── onboard (Onboard a new user by creating a namespace and secret)
+ └── sandbox
+      ├── list (List sandboxes in the current namespace)
+      ├── delete (Delete a sandbox and its load-balancer service)
+      ├── cp (Copy files into sandbox)
+      ├── exec (Run interactive commands with env/cwd injection)
+      ├── connect (Connect to a sandbox via interactive tmux session)
+      ├── inspect (Inspect sandbox status, PVC usage, pod info)
+      └── logs (Stream task execution logs or envd daemon logs)
+```
+
 ---
 
 ## Installation & Setup
@@ -104,8 +129,20 @@ Spin up a review sandbox to analyze failed CI check logs, review previous invest
 ./bin/factory pr investigate --pr-url https://github.com/owner/repo/pull/1
 ```
 
+### Addressing Review Comments (`factory pr address-comments`)
+Spin up a review sandbox to parse new review feedback and PR comments, execute code fixes, and push updated commits:
+```bash
+./bin/factory pr address-comments --pr-url https://github.com/owner/repo/pull/1
+```
+
+### Watching Pull Requests (`factory pr watch`)
+Continuously monitor a specific PR in the foreground, automatically triggering `investigate` on CI failures or `address-comments` on new review feedback:
+```bash
+./bin/factory pr watch --pr-url https://github.com/owner/repo/pull/1 --poll-interval 1m
+```
+
 ### Watching Repositories (`factory watch`)
-Run as a background daemon to continuously watch a GitHub repository for test failures or assigned issues, automatically dispatching `fix` or `investigate` tasks:
+Continuously monitor a GitHub repository in the foreground for test failures or assigned issues, automatically dispatching `fix` or `investigate` tasks:
 ```bash
 # Watch for assigned issues with specific labels
 ./bin/factory watch --repo owner/repo --assignee "factory-bot" --labels "p0,urgent"
