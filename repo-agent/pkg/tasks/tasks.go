@@ -82,10 +82,16 @@ func RunTask(ctx context.Context, t Task, sb *sandbox.IssueSandbox, taskDir stri
 	if err != nil {
 		return fmt.Errorf("failed to create log file: %w", err)
 	}
-	defer f.Close()
+	defer func() {
+		if err := f.Close(); err != nil {
+			log.Error(err, "Failed to close log file")
+		}
+	}()
 
-	fmt.Fprintf(f, "\n--- Task started at %s ---\n", time.Now().Format(time.RFC3339))
-	defer fmt.Fprintf(f, "--- Task completed at %s ---\n", time.Now().Format(time.RFC3339))
+	_, _ = fmt.Fprintf(f, "\n--- Task started at %s ---\n", time.Now().Format(time.RFC3339))
+	defer func() {
+		_, _ = fmt.Fprintf(f, "--- Task completed at %s ---\n", time.Now().Format(time.RFC3339))
+	}()
 
 	// Run the pre-script
 	log.Info("running pre-script in sandbox", "sandbox", sb.GetSandboxID())
