@@ -23,7 +23,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	"github.com/gke-labs/gemini-for-kubernetes-development/cli/pkg/installer"
+	"github.com/gke-labs/gemini-for-kubernetes-development/overseer/pkg/installer"
 )
 
 const (

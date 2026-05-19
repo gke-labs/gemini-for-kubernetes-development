@@ -19,7 +19,7 @@ import (
 	"context"
 	"log"
 
-	"github.com/gke-labs/gemini-for-kubernetes-development/cli/pkg/version"
+	"github.com/gke-labs/gemini-for-kubernetes-development/overseer/pkg/version"
 	"github.com/spf13/cobra"
 )
 

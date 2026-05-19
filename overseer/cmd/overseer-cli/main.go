@@ -27,6 +27,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/yaml"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/overseer/pkg/cli/installer"
+	"github.com/gke-labs/gemini-for-kubernetes-development/overseer/pkg/cli/version"
 	overseerv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/overseer/pkg/api/v1alpha1"
 	sandboxtaskv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
@@ -106,6 +108,8 @@ func main() {
 	}
 	onboardCmd.Flags().StringVar(&iamEmail, "email", "", "GCP IAM identity (user email) to bind to the namespace")
 	adminCmd.AddCommand(onboardCmd)
+	adminCmd.AddCommand(installer.BuildInstallerCmd())
+	adminCmd.AddCommand(version.BuildVersionCmd())
 	rootCmd.AddCommand(adminCmd)
 
 	sandboxCmd := &cobra.Command{
