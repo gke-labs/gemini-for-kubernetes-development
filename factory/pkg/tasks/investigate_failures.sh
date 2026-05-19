@@ -109,6 +109,18 @@ function fetchLogs {
             gh run view "$runID" --log-failed > "run-${runID}-failed.log" || echo "Failed to download logs for run $runID"
         done
     fi
+    if [ -n "$FAILED_PROW_RUNS" ]; then
+        for prowRun in $FAILED_PROW_RUNS; do
+            runID="${prowRun%%|*}"
+            targetURL="${prowRun#*|}"
+            echo "Downloading Prow logs for run $runID from $targetURL"
+            rawURL="$(echo "$targetURL" | sed 's|https://prow.k8s.io/view/gcs/|https://storage.googleapis.com/|')/build-log.txt"
+            curl -sSL "$rawURL" > "run-${runID}-failed.log" || echo "Failed to download prow logs for run $runID"
+            if [ ! -s "run-${runID}-failed.log" ] || grep -q "<Error>" "run-${runID}-failed.log"; then
+                echo "Log not found at $rawURL. Please view the failure URL directly: $targetURL" > "run-${runID}-failed.log"
+            fi
+        done
+    fi
 }
 
 function configureGemini {
