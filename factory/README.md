@@ -38,8 +38,7 @@ It spins up isolated development environments (`agents.x-k8s.io`), establishes d
 ```
 factory
  ├── up (Install CRDs & operator components, interactively onboard user)
- ├── issue
- │    └── fix (Fix a bug for a given GitHub issue URL in a sandbox)
+ ├── fix (Fix a bug for a given GitHub issue URL in a sandbox)
  ├── pr
  │    ├── review (Review a GitHub pull request in a sandbox)
  │    ├── investigate (Investigate CI check failures for a PR in a sandbox)
@@ -134,19 +133,31 @@ Gemini Key       [OK]     Configured in secret 'factory-user'
 
 ## Usage & AI Workflows
 
-### Fixing Issues (`factory issue fix`)
+### Fixing Issues (`factory fix`)
 Automatically spin up a sandbox, clone the repository, checkout a dedicated issue branch, run Gemini to fix the bug, and open a Pull Request:
 ```bash
-factory issue fix --issue-url https://github.com/owner/repo/issues/1
+factory fix --url https://github.com/owner/repo/issues/1
 ```
 
-**Advanced Customization**: Override the default prompt, base image, or PVC disk size:
+**Advanced Customization**: Override the default instruction, provide an instruction file, or execute repository-level tasks without an issue:
 ```bash
-factory issue fix \
-  --issue-url https://github.com/owner/repo/issues/1 \
-  --prompt "Use Go 1.26 and ensure 100% test coverage" \
+factory fix \
+  --url https://github.com/owner/repo/issues/1 \
+  --instruction "Use Go 1.26 and ensure 100% test coverage" \
   --image kind.local/factory-golang:latest \
   --workspace-disk-size 20Gi
+
+# Execute a custom task on a repository without an issue number (requires --name)
+factory fix \
+  --url https://github.com/owner/repo \
+  --name refactor-auth \
+  --instruction "Refactor the auth package"
+
+# Read instruction from a file
+factory fix \
+  --url https://github.com/owner/repo \
+  --name refactor-auth \
+  --instruction-file ./prompt.txt
 ```
 
 ### Reviewing Pull Requests (`factory pr review`)

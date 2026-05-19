@@ -97,7 +97,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						if dryRun {
 							fmt.Printf("[DRYRUN] Would trigger fix for issue #%d: %s\n", num, issueURL)
 						} else {
-							if err := runFix(ctx, issueURL, "Fix this issue"); err != nil {
+							if err := runFix(ctx, issueURL, "Fix this issue", ""); err != nil {
 								klog.Errorf("Fix for issue #%d failed: %v", num, err)
 							}
 						}

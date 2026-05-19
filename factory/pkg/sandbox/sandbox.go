@@ -10,8 +10,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func EnsureIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace string, issueNum int, issueURL, cloneURL, issueTitle, image, diskSize string) (string, error) {
-	name := fmt.Sprintf("factory-issue-%d", issueNum)
+func EnsureFixSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, taskID, cloneURL, taskTitle, image, diskSize string) (string, error) {
+	name := fmt.Sprintf("fix-%s-%s", repoName, taskID)
 
 	_, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err == nil {
@@ -30,7 +30,7 @@ func EnsureIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 			Name:      name,
 			Namespace: namespace,
 			Labels: map[string]string{
-				"sandbox.gemini.google.com/type":    "issue",
+				"sandbox.gemini.google.com/type":    "fix",
 				"factory.gemini.google.com/managed": "true",
 			},
 			Image:             image,

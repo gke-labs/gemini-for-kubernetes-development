@@ -78,15 +78,21 @@ EOF
 function setupGitRepos {
     echo "Running setupGitRepos..."
     
-    echo "cloning repository"
-    (cd /workspaces/ && git clone ${CLONE_URL})
+    # Check if repo already exists (reuse sandbox case)
+    if [ ! -d "/workspaces/${REPO_NAME}" ]; then
+        echo "cloning repository"
+        (cd /workspaces/ && git clone ${CLONE_URL})
+    else
+        echo "repository already exists"
+        # Optional: fetch latest changes
+        (cd "/workspaces/${REPO_NAME}" && git fetch origin)
+    fi
 
-    (cd "/workspaces/${REPO_NAME}" && gh repo fork --remote)
     echo "running gh repo fork"
-    (cd "/workspaces/${REPO_NAME}" && gh repo fork --remote)
+    (cd "/workspaces/${REPO_NAME}" && gh repo fork --remote || true)
 
     echo "running gh repo set-default"
-    (cd "/workspaces/${REPO_NAME}" && gh repo set-default "${CLONE_URL}")
+    (cd "/workspaces/${REPO_NAME}" && gh repo set-default "${CLONE_URL}" || true)
 
     echo "running git config local user.email"
     (cd "/workspaces/${REPO_NAME}" && git config user.email "${GITHUB_USER_EMAIL}")
@@ -100,6 +106,10 @@ function setupGitRepos {
 
 function checkForExistingPR {
     echo "Checking for existing PRs..."
+    if [ "${ISSUE_NUMBER:-0}" -eq 0 ]; then
+        echo "No issue number specified; skipping check for existing PR."
+        return
+    fi
     pushd "/workspaces/${REPO_NAME}" > /dev/null
 
     # Try to find a PR by the current user first
@@ -134,7 +144,7 @@ function checkoutNewBranch {
     echo "Running checkoutNewBranch..."
     echo "creating new branch"
     local branch_name="${BRANCH_NAME:-issue-${ISSUE_NUMBER}}"
-    (cd "/workspaces/${REPO_NAME}" && git checkout -B "$branch_name")
+    (cd "/workspaces/${REPO_NAME}" && git reset --hard HEAD && git clean -fd && git checkout -B "$branch_name")
 }
 
 function configureGemini {
@@ -221,13 +231,15 @@ function recordPRLink {
     # If not found, try listing PRs for this branch
     if [ -z "$pr_url" ] || [ "$pr_url" == "null" ]; then
         echo "Checking pr list by branch..."
-        pr_url=$(gh pr list --head "issue_${ISSUE_NUMBER}" --json url --jq '.[0].url // empty')
+        pr_url=$(gh pr list --head "${BRANCH_NAME:-issue_${ISSUE_NUMBER}}" --json url --jq '.[0].url // empty')
     fi
 
     # If still not found, try searching PRs by issue number and author
     if [ -z "$pr_url" ] || [ "$pr_url" == "null" ]; then
-        echo "Searching for PR..."
-        pr_url=$(gh search prs "${ISSUE_NUMBER}" --state open --repo "${REPO_OWNER}/${REPO_NAME}" --author "${GITHUB_USER_ID}" --json url --jq '.[0].url // empty' --limit 1)
+        if [ "${ISSUE_NUMBER:-0}" -gt 0 ]; then
+            echo "Searching for PR..."
+            pr_url=$(gh search prs "${ISSUE_NUMBER}" --state open --repo "${REPO_OWNER}/${REPO_NAME}" --author "${GITHUB_USER_ID}" --json url --jq '.[0].url // empty' --limit 1)
+        fi
     fi
 
     if [ -n "$pr_url" ] && [ "$pr_url" != "null" ]; then

@@ -25,6 +25,7 @@ type FixIssueParams struct {
 	Repo          Repo
 	Issue         Issue
 	IssueComments []IssueComment
+	Instruction   string
 	Branch        string
 	Models        []string
 	DraftPR       bool

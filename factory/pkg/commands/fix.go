@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/tasks"
 	"github.com/spf13/cobra"
@@ -17,8 +19,10 @@ import (
 )
 
 type FixFlags struct {
-	IssueURL string
-	Prompt   string
+	URL             string
+	Instruction     string
+	InstructionFile string
+	Name            string
 }
 
 func NewFixCommand(ctx context.Context) *cobra.Command {
@@ -26,57 +30,102 @@ func NewFixCommand(ctx context.Context) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "fix",
-		Short: "Fix a bug for a given GitHub issue URL in a sandbox",
-		Example: `  # Fix an issue with a custom prompt
-  factory fix --issue-url https://github.com/owner/repo/issues/1 --prompt "Use Go 1.26 and add unit tests"
+		Short: "Create a pull request for a given GitHub issue or instructions in a sandbox",
+		Example: `  # Fix an issue with a custom instruction
+  factory fix --url https://github.com/owner/repo/issues/1 --instruction "Use Go 1.26 and add unit tests"
+
+  # Execute a task on a repository without an issue (requires --name)
+  factory fix --url https://github.com/owner/repo --name refactor-auth --instruction "Refactor the auth package"
+
+  # Execute a task reading instruction from a file
+  factory fix --url https://github.com/owner/repo --name refactor-auth --instruction-file ./prompt.txt
 
   # Override workspace disk size and base image
-  factory fix --issue-url https://github.com/owner/repo/issues/1 --workspace-disk-size 20Gi --image kind.local/my-golang:latest`,
+  factory fix --url https://github.com/owner/repo/issues/1 --workspace-disk-size 20Gi --image kind.local/my-golang:latest`,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			if flags.IssueURL == "" {
-				return fmt.Errorf("--issue-url is required")
+			if flags.URL == "" {
+				return fmt.Errorf("--url is required")
 			}
+			if flags.Instruction != "" && flags.InstructionFile != "" {
+				return fmt.Errorf("cannot specify both --instruction and --instruction-file")
+			}
+			prompt := flags.Instruction
+			if flags.InstructionFile != "" {
+				content, err := os.ReadFile(flags.InstructionFile)
+				if err != nil {
+					return fmt.Errorf("reading instruction file: %w", err)
+				}
+				prompt = strings.TrimSpace(string(content))
+			}
+			if prompt == "" {
+				prompt = "Fix this issue in the repository and push a PR"
+			}
+
 			ctx, cancel := context.WithTimeout(ctx, rootFlags.Timeout)
 			defer cancel()
-			return runFix(ctx, flags.IssueURL, flags.Prompt)
+			return runFix(ctx, flags.URL, prompt, flags.Name)
 		},
 	}
 
-	cmd.Flags().StringVar(&flags.IssueURL, "issue-url", "", "GitHub issue URL (e.g. https://github.com/owner/repo/issues/123)")
-	cmd.Flags().StringVar(&flags.Prompt, "prompt", "Fix this issue in the repository and push a PR", "Custom prompt for the fix task")
+	cmd.Flags().StringVar(&flags.URL, "url", "", "GitHub issue or repository URL (e.g. https://github.com/owner/repo/issues/123 or https://github.com/owner/repo)")
+	cmd.Flags().StringVar(&flags.Instruction, "instruction", "", "Custom instruction for the fix task")
+	cmd.Flags().StringVar(&flags.InstructionFile, "instruction-file", "", "Path to a file containing custom instruction for the fix task")
+	cmd.Flags().StringVar(&flags.Name, "name", "", "Short name for the sandbox (required when URL is a repository URL without an issue number)")
 
 	return cmd
 }
 
-func runFix(ctx context.Context, issueURL, prompt string) error {
-	fmt.Printf("Resolving issue URL: %s...\n", issueURL)
-
-	u, err := url.Parse(issueURL)
-	if err != nil {
-		return fmt.Errorf("invalid issue URL: %w", err)
+func runFix(ctx context.Context, targetURL, prompt, name string) error {
+	if targetURL == "" {
+		return fmt.Errorf("--url is required to determine the repository")
 	}
-	parts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
-	if len(parts) < 4 || parts[2] != "issues" {
-		return fmt.Errorf("expected URL format https://github.com/owner/repo/issues/123, got %s", issueURL)
+	fmt.Printf("Resolving target URL: %s...\n", targetURL)
+
+	u, err := url.Parse(targetURL)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+	path := strings.TrimSuffix(strings.TrimPrefix(u.Path, "/"), ".git")
+	parts := strings.Split(path, "/")
+	if len(parts) < 2 {
+		return fmt.Errorf("expected URL format https://github.com/owner/repo or https://github.com/owner/repo/issues/123, got %s", targetURL)
 	}
 	owner, repo := parts[0], parts[1]
-	issueNum, err := strconv.Atoi(parts[3])
-	if err != nil {
-		return fmt.Errorf("invalid issue number in URL: %s", parts[3])
-	}
 
+	var issueNum int
+	var issueTitle string
+	isIssue := false
 	cloneURL := fmt.Sprintf("https://github.com/%s/%s.git", owner, repo)
-	issueTitle := fmt.Sprintf("Issue #%d", issueNum)
+
+	if len(parts) >= 4 && parts[2] == "issues" {
+		isIssue = true
+		issueNum, err = strconv.Atoi(parts[3])
+		if err != nil {
+			return fmt.Errorf("invalid issue number in URL: %s", parts[3])
+		}
+		issueTitle = fmt.Sprintf("Issue #%d", issueNum)
+	} else {
+		if name == "" {
+			return fmt.Errorf("--name is required when URL is a repository URL without an issue number")
+		}
+		issueTitle = fmt.Sprintf("Task: %s", name)
+	}
 
 	kubeClient, err := clients.NewKubernetesClient()
 	if err != nil {
 		return fmt.Errorf("creating k8s client: %w", err)
 	}
 
-	fmt.Printf("Ensuring sandbox for issue #%d...\n", issueNum)
-	sandboxName, err := factorysandbox.EnsureIssueSandbox(ctx, kubeClient, rootFlags.Namespace, issueNum, issueURL, cloneURL, issueTitle, rootFlags.Image, rootFlags.DiskSize)
+	var sandboxName string
+	if isIssue {
+		fmt.Printf("Ensuring sandbox for issue #%d...\n", issueNum)
+		sandboxName, err = factorysandbox.EnsureFixSandbox(ctx, kubeClient, rootFlags.Namespace, repo, strconv.Itoa(issueNum), cloneURL, issueTitle, rootFlags.Image, rootFlags.DiskSize)
+	} else {
+		fmt.Printf("Ensuring sandbox for task %s on repo %s/%s...\n", name, owner, repo)
+		sandboxName, err = factorysandbox.EnsureFixSandbox(ctx, kubeClient, rootFlags.Namespace, repo, name, cloneURL, issueTitle, rootFlags.Image, rootFlags.DiskSize)
+	}
 	if err != nil {
-		return fmt.Errorf("ensuring issue sandbox: %w", err)
+		return fmt.Errorf("ensuring sandbox: %w", err)
 	}
 
 	secret, err := kubeClient.Clientset.CoreV1().Secrets(rootFlags.Namespace).Get(ctx, rootFlags.SecretName, metav1.GetOptions{})
@@ -86,7 +135,38 @@ func runFix(ctx context.Context, issueURL, prompt string) error {
 	githubLogin := string(secret.Data[KeyGithubLogin])
 	githubEmail := string(secret.Data[KeyGithubEmail])
 
-	branchName := fmt.Sprintf("issue-%d-%d", issueNum, time.Now().Unix())
+	var branchName string
+	var issueBody string
+	var issueComments []tasks.IssueComment
+	if isIssue {
+		branchName = fmt.Sprintf("issue-%d-%d", issueNum, time.Now().Unix())
+		fmt.Printf("Fetching details for issue #%d...\n", issueNum)
+		ghClient, err := github.NewClient(ctx)
+		if err != nil {
+			return fmt.Errorf("creating github client: %w", err)
+		}
+		issue, _, err := ghClient.Issues.Get(ctx, owner, repo, issueNum)
+		if err != nil {
+			return fmt.Errorf("fetching github issue #%d: %w", issueNum, err)
+		}
+		issueBody = issue.GetBody()
+		if issue.GetTitle() != "" {
+			issueTitle = issue.GetTitle()
+		}
+
+		comments, _, err := ghClient.Issues.ListComments(ctx, owner, repo, issueNum, nil)
+		if err == nil {
+			for _, c := range comments {
+				issueComments = append(issueComments, tasks.IssueComment{
+					UserLogin: c.GetUser().GetLogin(),
+					Body:      c.GetBody(),
+				})
+			}
+		}
+	} else {
+		branchName = fmt.Sprintf("fix-%s-%d", name, time.Now().Unix())
+		issueBody = prompt
+	}
 
 	params := tasks.FixIssueParams{
 		Repo: tasks.Repo{
@@ -94,14 +174,16 @@ func runFix(ctx context.Context, issueURL, prompt string) error {
 		},
 		Issue: tasks.Issue{
 			Number:  issueNum,
-			HTMLURL: issueURL,
+			HTMLURL: targetURL,
 			Title:   issueTitle,
-			Body:    prompt,
+			Body:    issueBody,
 		},
-		Branch:  branchName,
-		Models:  []string{"gemini-3-flash-preview", "gemini-3.1-pro-preview", "gemini-2.5-pro"},
-		DraftPR: false,
-		PRLabel: "factory",
+		IssueComments: issueComments,
+		Instruction:   prompt,
+		Branch:        branchName,
+		Models:        []string{"gemini-3-flash-preview", "gemini-3.1-pro-preview", "gemini-2.5-pro"},
+		DraftPR:       false,
+		PRLabel:       "factory",
 	}
 
 	scriptBytes, err := tasks.GetFixIssueScript()
