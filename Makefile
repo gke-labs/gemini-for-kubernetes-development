@@ -13,14 +13,14 @@
 # limitations under the License.
 
 .PHONY: build
-build: bin/codebot-cli
+build: bin/overseer-cli
 
 bin:
 	mkdir -p bin
 
-.PHONY: bin/codebot-cli
-bin/codebot-cli: bin
-	GO111MODULE=on go build -o bin/codebot-cli cli/main.go
+.PHONY: bin/overseer-cli
+bin/overseer-cli: bin
+	GO111MODULE=on go build -o bin/overseer-cli overseer/cmd/overseer-cli/main.go
 
 .PHONY: clean
 clean:

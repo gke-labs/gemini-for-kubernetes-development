@@ -72,13 +72,13 @@ func InstallSecrets(ns, geminiAPIKey, gitHubPAT, gitHubOAuthClientID, gitHubOAut
 		return err
 	}
 
-	keyMap := map[string]string{ "key": geminiAPIKey, }
+	keyMap := map[string]string{"key": geminiAPIKey}
 	if err := applySecret(ns, "gemini-api-key", keyMap); err != nil {
 		return err
 	}
 
 	fmt.Println("  Creating github-token secret …")
-	tokenData := map[string]string{ "token": gitHubPAT, }
+	tokenData := map[string]string{"token": gitHubPAT}
 	if gitHubOAuthClientID != "" {
 		tokenData["github-client-id"] = gitHubOAuthClientID
 		tokenData["github-client-secret"] = gitHubOAuthSecret
@@ -93,19 +93,18 @@ func InstallSecrets(ns, geminiAPIKey, gitHubPAT, gitHubOAuthClientID, gitHubOAut
 	return nil
 }
 
-func InstallKRO(kro_version string) error {
+func InstallKRO(kroVersion string) error {
 	fmt.Printf("  Installing kro …\n")
-	cmd := []string {
+	cmd := []string{
 		"helm", "upgrade", "kro", "oci://registry.k8s.io/kro/charts/kro", "--install",
 		"--namespace", "kro-system", "--create-namespace",
-		"--version", kro_version, "--wait", "--timeout", "5m",
+		"--version", kroVersion, "--wait", "--timeout", "5m",
 	}
 	if err := run(cmd...); err != nil {
 		return fmt.Errorf("helm install kro: %w", err)
 	}
 	return nil
 }
-
 
 func InstallCRDs() error {
 	// Should look at deploying from source rather than release.
@@ -146,9 +145,8 @@ func InstallRepoWatch(watchNamespace, geminiAPIKey, gitHubPAT, gitHubOAuthClient
 	return nil
 }
 
-
 func applyNamespace(ns string) error {
-	dry := []string{ "kubectl", "create", "namespace", ns, "--dry-run=client", "-o", "yaml", }
+	dry := []string{"kubectl", "create", "namespace", ns, "--dry-run=client", "-o", "yaml"}
 	output, err := exec.Command(dry[0], dry[1:]...).Output()
 	if err != nil {
 		return fmt.Errorf("generate namespace %s: %w", ns, err)
@@ -160,9 +158,9 @@ func applyNamespace(ns string) error {
 }
 
 func applySecret(ns, name string, data map[string]string) error {
-	dry := []string{ "kubectl", "create", "secret", "generic", name, "-n", ns, "--dry-run=client", "-o", "yaml", }
+	dry := []string{"kubectl", "create", "secret", "generic", name, "-n", ns, "--dry-run=client", "-o", "yaml"}
 	for key, val := range data {
-		dry = append(dry, "--from-literal=" + key + "=" + val)
+		dry = append(dry, "--from-literal="+key+"="+val)
 	}
 	output, err := exec.Command(dry[0], dry[1:]...).Output()
 	if err != nil {
@@ -184,7 +182,7 @@ func applyDryRun(output string) error {
 
 func kubectlInstall(name, url string) error {
 	fmt.Printf("  Installing %s …\n", name)
-	cmd := []string {"kubectl", "apply", "-f", url,} 
+	cmd := []string{"kubectl", "apply", "-f", url}
 	if err := run(cmd...); err != nil {
 		return fmt.Errorf("kubectl install %s: %w", name, err)
 	}
@@ -193,14 +191,14 @@ func kubectlInstall(name, url string) error {
 
 func helmInstall(name, chart, namespace, version string) error {
 	fmt.Printf("  Installing %s …\n", name)
-	cmd := []string {
+	cmd := []string{
 		"helm", "upgrade", "--install", name, chart,
 		"--namespace", namespace, "--create-namespace",
 		"--version", version, "--wait", "--timeout", "5m",
 	}
 	if err := run(cmd...); err != nil {
-		log.Printf("%s %s %s %s %s %s %s %s %s %s %s %s %s", 
-			cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5], cmd[6], 
+		log.Printf("%s %s %s %s %s %s %s %s %s %s %s %s %s",
+			cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5], cmd[6],
 			cmd[7], cmd[8], cmd[9], cmd[10], cmd[11], cmd[12])
 		return fmt.Errorf("helm install %s: %w", name, err)
 	}
