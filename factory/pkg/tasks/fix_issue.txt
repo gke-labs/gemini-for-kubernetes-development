@@ -26,9 +26,10 @@ Final Steps:
 
 ---
 
+{{ if gt .Issue.Number 0 }}
 Please create a Pull Request to fix this github issue:
 
-<issue_url>{{ .Issue.HTMLURL }}/issue_url>
+<issue_url>{{ .Issue.HTMLURL }}</issue_url>
 <issue_number>{{ .Issue.Number }}</issue_number>
 <issue_title>{{ .Issue.Title }}</issue_title>
 <issue_description>
@@ -41,4 +42,18 @@ Please create a Pull Request to fix this github issue:
 {{ $comment.Body }}
 </body>
 </issue_comment>
+{{ end }}
+
+{{ if .Instruction }}
+Additional Instructions:
+<instructions>
+{{ .Instruction }}
+</instructions>
+{{ end }}
+{{ else }}
+Please create a Pull Request according to the following instructions:
+
+<instructions>
+{{ .Instruction }}
+</instructions>
 {{ end }}

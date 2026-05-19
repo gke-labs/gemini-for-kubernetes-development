@@ -76,9 +76,9 @@ coding tasks without local side effects or host dependencies.`,
 	statusCmd.GroupID = "management"
 	cmd.AddCommand(statusCmd)
 
-	issueCmd := NewIssueCommand(ctx)
-	issueCmd.GroupID = "workflows"
-	cmd.AddCommand(issueCmd)
+	fixCmd := NewFixCommand(ctx)
+	fixCmd.GroupID = "workflows"
+	cmd.AddCommand(fixCmd)
 
 	prCmd := NewPRCommand(ctx)
 	prCmd.GroupID = "workflows"
