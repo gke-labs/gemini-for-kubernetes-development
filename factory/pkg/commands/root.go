@@ -10,13 +10,23 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var (
-	namespace  string
-	image      string
-	diskSize   string
-	secretName string
-	timeout    time.Duration
+const (
+	KeyGithubToken    = "GITHUB_TOKEN"
+	KeyGeminiApiKey   = "GEMINI_API_KEY"
+	KeyGithubLogin    = "GITHUB_LOGIN"
+	KeyGithubEmail    = "GITHUB_EMAIL"
+	SecretFactoryUser = "factory-user"
 )
+
+type RootFlags struct {
+	Namespace  string
+	Image      string
+	DiskSize   string
+	SecretName string
+	Timeout    time.Duration
+}
+
+var rootFlags RootFlags
 
 func NewRootCommand(ctx context.Context) *cobra.Command {
 	cmd := &cobra.Command{
@@ -28,23 +38,23 @@ coding tasks without local side effects or host dependencies.`,
 		SilenceUsage: true,
 	}
 
-	cmd.PersistentFlags().StringVarP(&namespace, "namespace", "n", os.Getenv("NAMESPACE"), "Kubernetes namespace (defaults to $NAMESPACE, gh user, or default)")
-	cmd.PersistentFlags().StringVar(&image, "image", "ghcr.io/gke-labs/gemini-for-kubernetes-development/factory-golang:latest", "Sandbox base image")
-	cmd.PersistentFlags().StringVar(&diskSize, "workspace-disk-size", "10Gi", "Workspace PVC disk size")
-	cmd.PersistentFlags().StringVar(&secretName, "secret-name", "factory-user", "Kubernetes secret containing credentials")
-	cmd.PersistentFlags().DurationVar(&timeout, "timeout", 30*time.Minute, "Overall execution timeout")
+	cmd.PersistentFlags().StringVarP(&rootFlags.Namespace, "namespace", "n", os.Getenv("NAMESPACE"), "Kubernetes namespace (defaults to $NAMESPACE, gh user, or default)")
+	cmd.PersistentFlags().StringVar(&rootFlags.Image, "image", "ghcr.io/gke-labs/gemini-for-kubernetes-development/factory-golang:latest", "Sandbox base image")
+	cmd.PersistentFlags().StringVar(&rootFlags.DiskSize, "workspace-disk-size", "10Gi", "Workspace PVC disk size")
+	cmd.PersistentFlags().StringVar(&rootFlags.SecretName, "secret-name", SecretFactoryUser, "Kubernetes secret containing credentials")
+	cmd.PersistentFlags().DurationVar(&rootFlags.Timeout, "timeout", 30*time.Minute, "Overall execution timeout")
 
 	cmd.PersistentPreRun = func(_ *cobra.Command, _ []string) {
-		if namespace == "" {
+		if rootFlags.Namespace == "" {
 			out, err := exec.CommandContext(ctx, "gh", "api", "user", "--jq", ".login").Output()
 			if err == nil {
 				login := strings.TrimSpace(string(out))
 				if login != "" && login != "null" {
-					namespace = login
+					rootFlags.Namespace = login
 				}
 			}
-			if namespace == "" {
-				namespace = "default"
+			if rootFlags.Namespace == "" {
+				rootFlags.Namespace = "default"
 			}
 		}
 	}

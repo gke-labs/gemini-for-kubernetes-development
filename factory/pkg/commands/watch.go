@@ -12,12 +12,16 @@ import (
 	"k8s.io/klog/v2"
 )
 
+type WatchFlags struct {
+	Repo         string
+	PollInterval time.Duration
+	Assignee     string
+	Labels       []string
+	DryRun       bool
+}
+
 func NewWatchCommand(ctx context.Context) *cobra.Command {
-	var repo string
-	var pollInterval time.Duration
-	var assignee string
-	var labels []string
-	var dryRun bool
+	var flags WatchFlags
 
 	cmd := &cobra.Command{
 		Use:   "watch",
@@ -28,22 +32,22 @@ func NewWatchCommand(ctx context.Context) *cobra.Command {
   # Watch for assigned issues with labels
   factory watch --repo owner/repo --assignee "factory-bot" --labels "p0,urgent"`,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			if repo == "" {
+			if flags.Repo == "" {
 				return fmt.Errorf("--repo is required (e.g. owner/repo)")
 			}
-			parts := strings.Split(repo, "/")
+			parts := strings.Split(flags.Repo, "/")
 			if len(parts) != 2 {
-				return fmt.Errorf("invalid repo format, expected owner/repo, got %s", repo)
+				return fmt.Errorf("invalid repo format, expected owner/repo, got %s", flags.Repo)
 			}
-			return runWatch(ctx, parts[0], parts[1], pollInterval, assignee, labels, dryRun)
+			return runWatch(ctx, parts[0], parts[1], flags.PollInterval, flags.Assignee, flags.Labels, flags.DryRun)
 		},
 	}
 
-	cmd.Flags().StringVar(&repo, "repo", "", "GitHub repository (e.g. owner/repo)")
-	cmd.Flags().DurationVar(&pollInterval, "poll-interval", 2*time.Minute, "Polling interval")
-	cmd.Flags().StringVar(&assignee, "assignee", "factory-bot", "GitHub username to watch for assigned issues (use empty string for unassigned issues)")
-	cmd.Flags().StringSliceVar(&labels, "labels", nil, "Comma-separated list of labels to filter issues by")
-	cmd.Flags().BoolVar(&dryRun, "dryrun", false, "Print actions without creating sandboxes or executing tasks")
+	cmd.Flags().StringVar(&flags.Repo, "repo", "", "GitHub repository (e.g. owner/repo)")
+	cmd.Flags().DurationVar(&flags.PollInterval, "poll-interval", 2*time.Minute, "Polling interval")
+	cmd.Flags().StringVar(&flags.Assignee, "assignee", "factory-bot", "GitHub username to watch for assigned issues (use empty string for unassigned issues)")
+	cmd.Flags().StringSliceVar(&flags.Labels, "labels", nil, "Comma-separated list of labels to filter issues by")
+	cmd.Flags().BoolVar(&flags.DryRun, "dryrun", false, "Print actions without creating sandboxes or executing tasks")
 
 	return cmd
 }

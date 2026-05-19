@@ -27,9 +27,13 @@ func NewPRCommand(ctx context.Context) *cobra.Command {
 	return cmd
 }
 
+type InvestigateFlags struct {
+	PRURL  string
+	Prompt string
+}
+
 func NewInvestigateCommand(ctx context.Context) *cobra.Command {
-	var prURL string
-	var prompt string
+	var flags InvestigateFlags
 
 	cmd := &cobra.Command{
 		Use:   "investigate",
@@ -37,17 +41,17 @@ func NewInvestigateCommand(ctx context.Context) *cobra.Command {
 		Example: `  # Investigate PR check failures
   factory pr investigate --pr-url https://github.com/owner/repo/pull/1`,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			if prURL == "" {
+			if flags.PRURL == "" {
 				return fmt.Errorf("--pr-url is required")
 			}
-			ctx, cancel := context.WithTimeout(ctx, timeout)
+			ctx, cancel := context.WithTimeout(ctx, rootFlags.Timeout)
 			defer cancel()
-			return runInvestigate(ctx, prURL, prompt)
+			return runInvestigate(ctx, flags.PRURL, flags.Prompt)
 		},
 	}
 
-	cmd.Flags().StringVar(&prURL, "pr-url", "", "GitHub PR URL (e.g. https://github.com/owner/repo/pull/123)")
-	cmd.Flags().StringVar(&prompt, "prompt", "Investigate check failures for this PR", "Custom prompt for the investigate task")
+	cmd.Flags().StringVar(&flags.PRURL, "pr-url", "", "GitHub PR URL (e.g. https://github.com/owner/repo/pull/123)")
+	cmd.Flags().StringVar(&flags.Prompt, "prompt", "Investigate check failures for this PR", "Custom prompt for the investigate task")
 
 	return cmd
 }
@@ -124,17 +128,17 @@ func runInvestigate(ctx context.Context, prURL, prompt string) error {
 
 	cloneURL := fmt.Sprintf("%s#refs/heads/%s", pr.GetHead().GetRepo().GetCloneURL(), pr.GetHead().GetRef())
 	fmt.Printf("Ensuring review sandbox for PR #%d...\n", prNum)
-	sandboxName, err := factorysandbox.EnsureReviewSandbox(ctx, kubeClient, namespace, prNum, pr.GetTitle(), pr.GetHTMLURL(), pr.GetDiffURL(), cloneURL, image, diskSize)
+	sandboxName, err := factorysandbox.EnsureReviewSandbox(ctx, kubeClient, rootFlags.Namespace, prNum, pr.GetTitle(), pr.GetHTMLURL(), pr.GetDiffURL(), cloneURL, rootFlags.Image, rootFlags.DiskSize)
 	if err != nil {
 		return fmt.Errorf("ensuring review sandbox: %w", err)
 	}
 
-	secret, err := kubeClient.Clientset.CoreV1().Secrets(namespace).Get(ctx, secretName, metav1.GetOptions{})
+	secret, err := kubeClient.Clientset.CoreV1().Secrets(rootFlags.Namespace).Get(ctx, rootFlags.SecretName, metav1.GetOptions{})
 	if err != nil {
-		return fmt.Errorf("fetching %s secret in namespace %s: %w (make sure to run 'factory user onboard' first)", secretName, namespace, err)
+		return fmt.Errorf("fetching %s secret in namespace %s: %w (make sure to run 'factory user onboard' first)", rootFlags.SecretName, rootFlags.Namespace, err)
 	}
-	githubLogin := string(secret.Data["GITHUB_LOGIN"])
-	githubEmail := string(secret.Data["GITHUB_EMAIL"])
+	githubLogin := string(secret.Data[KeyGithubLogin])
+	githubEmail := string(secret.Data[KeyGithubEmail])
 
 	params := tasks.InvestigateParams{
 		PullRequest: tasks.PullRequest{
@@ -159,7 +163,7 @@ func runInvestigate(ctx context.Context, prURL, prompt string) error {
 	}
 
 	fmt.Printf("Connecting to sandbox %s via envd...\n", sandboxName)
-	client, err := envd.Connect(ctx, namespace, sandboxName)
+	client, err := envd.Connect(ctx, rootFlags.Namespace, sandboxName)
 	if err != nil {
 		return fmt.Errorf("connecting to sandbox: %w", err)
 	}
@@ -178,8 +182,8 @@ func runInvestigate(ctx context.Context, prURL, prompt string) error {
 	}
 
 	envMap := map[string]string{
-		"GITHUB_TOKEN":               string(secret.Data["GITHUB_TOKEN"]),
-		"GEMINI_API_KEY":             string(secret.Data["GEMINI_API_KEY"]),
+		"GITHUB_TOKEN":               string(secret.Data[KeyGithubToken]),
+		"GEMINI_API_KEY":             string(secret.Data[KeyGeminiApiKey]),
 		"GEMINI_CLI_TRUST_WORKSPACE": "true",
 		"REPO_NAME":                  repo,
 		"CLONE_URL":                  cloneURL,

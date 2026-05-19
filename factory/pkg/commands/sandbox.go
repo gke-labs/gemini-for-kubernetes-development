@@ -15,6 +15,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
+func validateSandboxName(name string) error {
+	if strings.HasPrefix(name, "-") {
+		return fmt.Errorf("invalid sandbox name '%s': cannot begin with '-' (make sure flags precede positional arguments)", name)
+	}
+	return nil
+}
+
 func NewSandboxCommand(ctx context.Context) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "sandbox",
@@ -38,13 +45,17 @@ func NewSandboxInspectCommand(ctx context.Context) *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			sandboxName := args[0]
+			if err := validateSandboxName(sandboxName); err != nil {
+				return err
+			}
+
 			kubeClient, err := clients.NewKubernetesClient()
 			if err != nil {
 				return fmt.Errorf("creating k8s client: %w", err)
 			}
 			manager := k8s.NewManager(kubeClient)
 
-			sb, err := manager.GetSandbox(ctx, namespace, sandboxName)
+			sb, err := manager.GetSandbox(ctx, rootFlags.Namespace, sandboxName)
 			if err != nil {
 				return fmt.Errorf("getting sandbox '%s': %w", sandboxName, err)
 			}
@@ -57,7 +68,7 @@ func NewSandboxInspectCommand(ctx context.Context) *cobra.Command {
 				fmt.Printf("Type: %s\n", labels["sandbox.gemini.google.com/type"])
 			}
 
-			podName, err := envd.GetSandboxPodName(ctx, namespace, sandboxName)
+			podName, err := envd.GetSandboxPodName(ctx, rootFlags.Namespace, sandboxName)
 			if err == nil {
 				fmt.Printf("Active Pod: %s\n", podName)
 			} else {
@@ -70,27 +81,35 @@ func NewSandboxInspectCommand(ctx context.Context) *cobra.Command {
 	return cmd
 }
 
+type SandboxLogsFlags struct {
+	Daemon bool
+}
+
 func NewSandboxLogsCommand(ctx context.Context) *cobra.Command {
-	var daemon bool
+	var flags SandboxLogsFlags
 	cmd := &cobra.Command{
 		Use:   "logs [sandbox-name]",
 		Short: "Stream task execution logs or envd daemon logs",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			sandboxName := args[0]
-			podName, err := envd.GetSandboxPodName(ctx, namespace, sandboxName)
+			if err := validateSandboxName(sandboxName); err != nil {
+				return err
+			}
+
+			podName, err := envd.GetSandboxPodName(ctx, rootFlags.Namespace, sandboxName)
 			if err != nil {
 				return fmt.Errorf("getting sandbox pod: %w", err)
 			}
 
-			if daemon {
-				cmd := exec.CommandContext(ctx, "kubectl", "logs", "-f", "-n", namespace, podName, "-c", "sandbox")
+			if flags.Daemon {
+				cmd := exec.CommandContext(ctx, "kubectl", "logs", "-f", "-n", rootFlags.Namespace, podName, "-c", "sandbox")
 				cmd.Stdout = os.Stdout
 				cmd.Stderr = os.Stderr
 				return cmd.Run()
 			}
 
-			client, err := envd.Connect(ctx, namespace, sandboxName)
+			client, err := envd.Connect(ctx, rootFlags.Namespace, sandboxName)
 			if err != nil {
 				return fmt.Errorf("connecting to sandbox: %w", err)
 			}
@@ -100,7 +119,7 @@ func NewSandboxLogsCommand(ctx context.Context) *cobra.Command {
 			return client.RunTask(ctx, "tail -f $(ls -td /workspaces/tasks/fix-* 2>/dev/null | head -1)/execution.log", nil)
 		},
 	}
-	cmd.Flags().BoolVar(&daemon, "daemon", false, "Stream envd daemon logs instead of task execution logs")
+	cmd.Flags().BoolVar(&flags.Daemon, "daemon", false, "Stream envd daemon logs instead of task execution logs")
 	return cmd
 }
 
@@ -115,13 +134,13 @@ func NewSandboxListCommand(ctx context.Context) *cobra.Command {
 			}
 			manager := k8s.NewManager(kubeClient)
 
-			list, err := manager.ListSandboxes(ctx, namespace)
+			list, err := manager.ListSandboxes(ctx, rootFlags.Namespace)
 			if err != nil {
 				return fmt.Errorf("listing sandboxes: %w", err)
 			}
 
 			if len(list.Items) == 0 {
-				fmt.Printf("No sandboxes found in namespace '%s'.\n", namespace)
+				fmt.Printf("No sandboxes found in namespace '%s'.\n", rootFlags.Namespace)
 				return nil
 			}
 
@@ -159,14 +178,18 @@ func NewSandboxDeleteCommand(ctx context.Context) *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			sandboxName := args[0]
+			if err := validateSandboxName(sandboxName); err != nil {
+				return err
+			}
+
 			kubeClient, err := clients.NewKubernetesClient()
 			if err != nil {
 				return fmt.Errorf("creating k8s client: %w", err)
 			}
 			manager := k8s.NewManager(kubeClient)
 
-			fmt.Printf("Deleting sandbox '%s' and its service in namespace '%s'...\n", sandboxName, namespace)
-			if err := manager.DeleteSandbox(ctx, namespace, sandboxName); err != nil {
+			fmt.Printf("Deleting sandbox '%s' and its service in namespace '%s'...\n", sandboxName, rootFlags.Namespace)
+			if err := manager.DeleteSandbox(ctx, rootFlags.Namespace, sandboxName); err != nil {
 				return fmt.Errorf("deleting sandbox: %w", err)
 			}
 
@@ -184,13 +207,16 @@ func NewSandboxCpCommand(ctx context.Context) *cobra.Command {
 		Args:  cobra.ExactArgs(3),
 		RunE: func(_ *cobra.Command, args []string) error {
 			sandboxName, srcFile, destPath := args[0], args[1], args[2]
+			if err := validateSandboxName(sandboxName); err != nil {
+				return err
+			}
 
-			podName, err := envd.GetSandboxPodName(ctx, namespace, sandboxName)
+			podName, err := envd.GetSandboxPodName(ctx, rootFlags.Namespace, sandboxName)
 			if err != nil {
 				return fmt.Errorf("getting sandbox pod: %w", err)
 			}
 
-			cmd := exec.CommandContext(ctx, "kubectl", "cp", srcFile, fmt.Sprintf("%s/%s:%s", namespace, podName, destPath), "-c", "sandbox")
+			cmd := exec.CommandContext(ctx, "kubectl", "cp", srcFile, fmt.Sprintf("%s/%s:%s", rootFlags.Namespace, podName, destPath), "-c", "sandbox")
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 			if err := cmd.Run(); err != nil {
@@ -203,35 +229,44 @@ func NewSandboxCpCommand(ctx context.Context) *cobra.Command {
 	return cmd
 }
 
+type SandboxExecFlags struct {
+	Envs []string
+	Cwd  string
+}
+
 func NewSandboxExecCommand(ctx context.Context) *cobra.Command {
-	var envs []string
-	var cwd string
+	var flags SandboxExecFlags
 	cmd := &cobra.Command{
 		Use:   "exec [sandbox-name] [command...]",
 		Short: "Execute a command in the sandbox with stdin/stdout connected",
+		Long: `Execute a command in the sandbox with stdin/stdout connected.
+Note: factory flags (-e, -w) must precede positional arguments ([sandbox-name] [command...]).`,
 		Args:  cobra.MinimumNArgs(2),
 		RunE: func(_ *cobra.Command, args []string) error {
 			sandboxName := args[0]
+			if err := validateSandboxName(sandboxName); err != nil {
+				return err
+			}
 			execArgs := strings.Join(args[1:], " ")
 
-			client, err := envd.Connect(ctx, namespace, sandboxName)
+			client, err := envd.Connect(ctx, rootFlags.Namespace, sandboxName)
 			if err != nil {
 				return fmt.Errorf("connecting to sandbox: %w", err)
 			}
 			defer client.Close()
 
 			envMap := make(map[string]string)
-			for _, e := range envs {
+			for _, e := range flags.Envs {
 				parts := strings.SplitN(e, "=", 2)
 				if len(parts) == 2 {
 					envMap[parts[0]] = parts[1]
 				}
 			}
 
-			return client.Exec(ctx, execArgs, cwd, envMap, os.Stdin, os.Stdout, os.Stderr)
+			return client.Exec(ctx, execArgs, flags.Cwd, envMap, os.Stdin, os.Stdout, os.Stderr)
 		},
 	}
-	cmd.Flags().StringArrayVarP(&envs, "env", "e", nil, "Environment variables to set (e.g. -e KEY=VALUE)")
-	cmd.Flags().StringVarP(&cwd, "cwd", "w", "/workspaces", "Working directory inside the container")
+	cmd.Flags().StringArrayVarP(&flags.Envs, "env", "e", nil, "Environment variables to set (e.g. -e KEY=VALUE)")
+	cmd.Flags().StringVarP(&flags.Cwd, "cwd", "w", "/workspaces", "Working directory inside the container")
 	return cmd
 }

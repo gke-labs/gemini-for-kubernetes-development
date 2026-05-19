@@ -27,24 +27,28 @@ func NewUserCommand(ctx context.Context) *cobra.Command {
 	return cmd
 }
 
+type UserOnboardFlags struct {
+	GithubLogin string
+	GithubToken string
+	GithubEmail string
+	GeminiKey   string
+}
+
 func NewUserOnboardCommand(ctx context.Context) *cobra.Command {
-	var githubLogin string
-	var githubToken string
-	var githubEmail string
-	var geminiKey string
+	var flags UserOnboardFlags
 
 	cmd := &cobra.Command{
 		Use:   "onboard",
 		Short: "Onboard a new user by creating a namespace and factory-user secret",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return RunUserOnboard(ctx, githubLogin, githubToken, githubEmail, geminiKey, false)
+			return RunUserOnboard(ctx, flags.GithubLogin, flags.GithubToken, flags.GithubEmail, flags.GeminiKey, false)
 		},
 	}
 
-	cmd.Flags().StringVar(&githubLogin, "github-login", "", "GitHub username (if not provided, deduced from gh api user)")
-	cmd.Flags().StringVar(&githubToken, "github-token", "", "GitHub Personal Access Token (if not provided, extracted from env or gh auth status)")
-	cmd.Flags().StringVar(&githubEmail, "github-email", "", "GitHub email for commits (if not provided, deduced from gh api user or git config)")
-	cmd.Flags().StringVar(&geminiKey, "gemini-key", "", "Gemini API Key (if not provided, extracted from GEMINI_API_KEY env)")
+	cmd.Flags().StringVar(&flags.GithubLogin, "github-login", "", "GitHub username (if not provided, deduced from gh api user)")
+	cmd.Flags().StringVar(&flags.GithubToken, "github-token", "", "GitHub Personal Access Token (if not provided, extracted from env or gh auth status)")
+	cmd.Flags().StringVar(&flags.GithubEmail, "github-email", "", "GitHub email for commits (if not provided, deduced from gh api user or git config)")
+	cmd.Flags().StringVar(&flags.GeminiKey, "gemini-key", "", "Gemini API Key (if not provided, extracted from GEMINI_API_KEY env)")
 
 	return cmd
 }
@@ -189,15 +193,15 @@ func RunUserOnboard(ctx context.Context, githubLogin, githubToken, githubEmail, 
 	}
 
 	data := map[string][]byte{
-		"GITHUB_TOKEN":   []byte(githubToken),
-		"GEMINI_API_KEY": []byte(geminiKey),
-		"GITHUB_LOGIN":   []byte(githubLogin),
-		"GITHUB_EMAIL":   []byte(githubEmail),
+		KeyGithubToken:  []byte(githubToken),
+		KeyGeminiApiKey: []byte(geminiKey),
+		KeyGithubLogin:  []byte(githubLogin),
+		KeyGithubEmail:  []byte(githubEmail),
 	}
 
-	fmt.Printf("Creating secret '%s' in namespace '%s'...\n", secretName, githubLogin)
-	if err := manager.UpdateSecret(ctx, githubLogin, secretName, data, nil); err != nil {
-		return fmt.Errorf("updating secret '%s': %w", secretName, err)
+	fmt.Printf("Creating secret '%s' in namespace '%s'...\n", rootFlags.SecretName, githubLogin)
+	if err := manager.UpdateSecret(ctx, githubLogin, rootFlags.SecretName, data, nil); err != nil {
+		return fmt.Errorf("updating secret '%s': %w", rootFlags.SecretName, err)
 	}
 
 	fmt.Printf("Successfully onboarded user '%s'.\n", githubLogin)

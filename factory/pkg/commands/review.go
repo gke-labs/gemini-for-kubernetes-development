@@ -14,9 +14,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
+type ReviewFlags struct {
+	PRURL  string
+	Prompt string
+}
+
 func NewReviewCommand(ctx context.Context) *cobra.Command {
-	var prURL string
-	var prompt string
+	var flags ReviewFlags
 
 	cmd := &cobra.Command{
 		Use:   "review",
@@ -27,17 +31,17 @@ func NewReviewCommand(ctx context.Context) *cobra.Command {
   # Review using a specific credential secret
   factory pr review --pr-url https://github.com/owner/repo/pull/1 --secret-name my-bot-secret`,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			if prURL == "" {
+			if flags.PRURL == "" {
 				return fmt.Errorf("--pr-url is required")
 			}
-			ctx, cancel := context.WithTimeout(ctx, timeout)
+			ctx, cancel := context.WithTimeout(ctx, rootFlags.Timeout)
 			defer cancel()
-			return runReview(ctx, prURL, prompt)
+			return runReview(ctx, flags.PRURL, flags.Prompt)
 		},
 	}
 
-	cmd.Flags().StringVar(&prURL, "pr-url", "", "GitHub PR URL (e.g. https://github.com/owner/repo/pull/123)")
-	cmd.Flags().StringVar(&prompt, "prompt", "Review this PR and provide helpful feedback", "Custom prompt for the review task")
+	cmd.Flags().StringVar(&flags.PRURL, "pr-url", "", "GitHub PR URL (e.g. https://github.com/owner/repo/pull/123)")
+	cmd.Flags().StringVar(&flags.Prompt, "prompt", "Review this PR and provide helpful feedback", "Custom prompt for the review task")
 
 	return cmd
 }
@@ -75,13 +79,13 @@ func runReview(ctx context.Context, prURL, prompt string) error {
 
 	cloneURL := fmt.Sprintf("%s#refs/heads/%s", pr.GetHead().GetRepo().GetCloneURL(), pr.GetHead().GetRef())
 	fmt.Printf("Ensuring review sandbox for PR #%d...\n", prNum)
-	sandboxName, err := factorysandbox.EnsureReviewSandbox(ctx, kubeClient, namespace, prNum, pr.GetTitle(), pr.GetHTMLURL(), pr.GetDiffURL(), cloneURL, image, diskSize)
+	sandboxName, err := factorysandbox.EnsureReviewSandbox(ctx, kubeClient, rootFlags.Namespace, prNum, pr.GetTitle(), pr.GetHTMLURL(), pr.GetDiffURL(), cloneURL, rootFlags.Image, rootFlags.DiskSize)
 	if err != nil {
 		return fmt.Errorf("ensuring review sandbox: %w", err)
 	}
 
 	fmt.Printf("Connecting to sandbox %s via envd...\n", sandboxName)
-	client, err := envd.Connect(ctx, namespace, sandboxName)
+	client, err := envd.Connect(ctx, rootFlags.Namespace, sandboxName)
 	if err != nil {
 		return fmt.Errorf("connecting to sandbox: %w", err)
 	}

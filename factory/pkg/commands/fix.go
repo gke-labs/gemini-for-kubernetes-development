@@ -16,9 +16,13 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+type FixFlags struct {
+	IssueURL string
+	Prompt   string
+}
+
 func NewFixCommand(ctx context.Context) *cobra.Command {
-	var issueURL string
-	var prompt string
+	var flags FixFlags
 
 	cmd := &cobra.Command{
 		Use:   "fix",
@@ -29,17 +33,17 @@ func NewFixCommand(ctx context.Context) *cobra.Command {
   # Override workspace disk size and base image
   factory fix --issue-url https://github.com/owner/repo/issues/1 --workspace-disk-size 20Gi --image kind.local/my-golang:latest`,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			if issueURL == "" {
+			if flags.IssueURL == "" {
 				return fmt.Errorf("--issue-url is required")
 			}
-			ctx, cancel := context.WithTimeout(ctx, timeout)
+			ctx, cancel := context.WithTimeout(ctx, rootFlags.Timeout)
 			defer cancel()
-			return runFix(ctx, issueURL, prompt)
+			return runFix(ctx, flags.IssueURL, flags.Prompt)
 		},
 	}
 
-	cmd.Flags().StringVar(&issueURL, "issue-url", "", "GitHub issue URL (e.g. https://github.com/owner/repo/issues/123)")
-	cmd.Flags().StringVar(&prompt, "prompt", "Fix this issue in the repository and push a PR", "Custom prompt for the fix task")
+	cmd.Flags().StringVar(&flags.IssueURL, "issue-url", "", "GitHub issue URL (e.g. https://github.com/owner/repo/issues/123)")
+	cmd.Flags().StringVar(&flags.Prompt, "prompt", "Fix this issue in the repository and push a PR", "Custom prompt for the fix task")
 
 	return cmd
 }
@@ -70,17 +74,17 @@ func runFix(ctx context.Context, issueURL, prompt string) error {
 	}
 
 	fmt.Printf("Ensuring sandbox for issue #%d...\n", issueNum)
-	sandboxName, err := factorysandbox.EnsureIssueSandbox(ctx, kubeClient, namespace, issueNum, issueURL, cloneURL, issueTitle, image, diskSize)
+	sandboxName, err := factorysandbox.EnsureIssueSandbox(ctx, kubeClient, rootFlags.Namespace, issueNum, issueURL, cloneURL, issueTitle, rootFlags.Image, rootFlags.DiskSize)
 	if err != nil {
 		return fmt.Errorf("ensuring issue sandbox: %w", err)
 	}
 
-	secret, err := kubeClient.Clientset.CoreV1().Secrets(namespace).Get(ctx, secretName, metav1.GetOptions{})
+	secret, err := kubeClient.Clientset.CoreV1().Secrets(rootFlags.Namespace).Get(ctx, rootFlags.SecretName, metav1.GetOptions{})
 	if err != nil {
-		return fmt.Errorf("fetching %s secret in namespace %s: %w (make sure to run 'factory user onboard' first)", secretName, namespace, err)
+		return fmt.Errorf("fetching %s secret in namespace %s: %w (make sure to run 'factory user onboard' first)", rootFlags.SecretName, rootFlags.Namespace, err)
 	}
-	githubLogin := string(secret.Data["GITHUB_LOGIN"])
-	githubEmail := string(secret.Data["GITHUB_EMAIL"])
+	githubLogin := string(secret.Data[KeyGithubLogin])
+	githubEmail := string(secret.Data[KeyGithubEmail])
 
 	branchName := fmt.Sprintf("issue-%d-%d", issueNum, time.Now().Unix())
 
@@ -111,7 +115,7 @@ func runFix(ctx context.Context, issueURL, prompt string) error {
 	}
 
 	fmt.Printf("Connecting to sandbox %s via envd...\n", sandboxName)
-	client, err := envd.Connect(ctx, namespace, sandboxName)
+	client, err := envd.Connect(ctx, rootFlags.Namespace, sandboxName)
 	if err != nil {
 		return fmt.Errorf("connecting to sandbox: %w", err)
 	}
@@ -130,8 +134,8 @@ func runFix(ctx context.Context, issueURL, prompt string) error {
 	}
 
 	envMap := map[string]string{
-		"GITHUB_TOKEN":               string(secret.Data["GITHUB_TOKEN"]),
-		"GEMINI_API_KEY":             string(secret.Data["GEMINI_API_KEY"]),
+		"GITHUB_TOKEN":               string(secret.Data[KeyGithubToken]),
+		"GEMINI_API_KEY":             string(secret.Data[KeyGeminiApiKey]),
 		"GEMINI_CLI_TRUST_WORKSPACE": "true",
 		"REPO_OWNER":                 owner,
 		"REPO_NAME":                  repo,
