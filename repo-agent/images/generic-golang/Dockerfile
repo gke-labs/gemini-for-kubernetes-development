@@ -18,6 +18,8 @@ COPY dev/tools/go.mod dev/tools/go.mod
 COPY dev/tools/go.sum dev/tools/go.sum
 COPY services/container-registry/go.mod services/container-registry/go.mod
 COPY services/container-registry/go.sum services/container-registry/go.sum
+COPY factory/go.mod factory/go.mod
+COPY factory/go.sum factory/go.sum
 
 # Copy the source code
 COPY agentsandboxes/ agentsandboxes/

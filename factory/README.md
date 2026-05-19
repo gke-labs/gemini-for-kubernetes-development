@@ -1,0 +1,159 @@
+# AI Factory CLI (`factory`)
+
+AI Factory CLI (`factory`) is a powerful, robust, and fully decoupled command-line tool for automating software engineering tasks in Kubernetes sandboxes.
+
+It spins up isolated development environments (`agents.x-k8s.io`), establishes direct port-forwarding to the embedded `envd` Connect-RPC daemon, and executes LLM-powered coding workflows (fixing bugs, reviewing pull requests, and watching repositories) without local side-effects or host dependencies.
+
+## Architecture & Design
+
+```
++-------------------+         +------------------------------------------------+
+|   Local Machine   |         |               Kubernetes Cluster               |
+|                   |         |                                                |
+|  +-------------+  | kubectl |  +------------------------------------------+  |
+|  | factory CLI | <========> |  | Pod: factory-issue-917                   |  |
+|  +-------------+  | port-   |  |                                          |  |
+|         |         | forward |  |  +------------------------------------+  |  |
+|         |         | (49983) |  |  | Container: sandbox                 |  |  |
+|         |         |         |  |  |                                    |  |  |
+|         +------------------------>| Daemon: envd (Connect-RPC)         |  |  |
+|                   |         |  |  |                                    |  |  |
+|                   |         |  |  |  +------------------------------+  |  |  |
+|                   |         |  |  |  | /workspaces/tasks/fix-*/     |  |  |  |
+|                   |         |  |  |  |   ├── agent-prompt.txt       |  |  |  |
+|                   |         |  |  |  |   ├── pre-script.sh          |  |  |  |
+|                   |         |  |  |  |   └── execution.log          |  |  |  |
+|                   |         |  |  |  +------------------------------+  |  |  |
+|                   |         |  |  +------------------------------------+  |  |
+|                   |         |  +------------------------------------------+  |
++-------------------+         +------------------------------------------------+
+```
+
+### Key Principles
+- **Zero Host Side-Effects**: No temporary file creation on your local machine. All scripts, prompts, and task logs are written directly to timestamped subdirectories inside the sandbox PVC (`/workspaces/tasks/fix-<timestamp>/`).
+- **Full Environment Injection**: The CLI dynamically resolves your GitHub credentials and Gemini API keys from Kubernetes Secrets and injects them directly into the `envd` execution environment via Connect-RPC `StartRequest`.
+- **Live Streaming & Logging**: Standard output and error are streamed live to your terminal while simultaneously being recorded into `execution.log` inside the sandbox.
+
+---
+
+## Installation & Setup
+
+### Prerequisites
+- `kubectl` configured to communicate with your Kubernetes or Kind cluster.
+- `gh` (GitHub CLI) installed and authenticated (`gh auth login`).
+- `GEMINI_API_KEY` environment variable exported in your local terminal.
+
+### 1. Build the CLI
+```bash
+cd factory/
+make build
+```
+The compiled binary will be placed in `bin/factory`.
+
+### 2. Cluster Bootstrap (`factory up`)
+Spin up the operator components, install required CRDs (`agents.x-k8s.io/v1alpha1`), and interactively onboard your GitHub/Gemini identity:
+```bash
+./bin/factory up
+```
+*During onboarding, the CLI will deduce your GitHub username, email, and token, display them for confirmation, and provision a dedicated namespace and `factory-user` Kubernetes Secret.*
+
+### 3. Diagnostic Check (`factory status`)
+Verify system health before running workflows:
+```bash
+./bin/factory status
+```
+Example Output:
+```
+CHECK            STATUS   MESSAGE
+Kubernetes API   [OK]     Connected to cluster
+Namespace        [OK]     barney-s
+Agent CRDs       [OK]     agents.x-k8s.io/v1alpha1 installed
+GitHub Login     [OK]     barney-s
+GitHub Token     [OK]     Configured in secret 'factory-user'
+Gemini Key       [OK]     Configured in secret 'factory-user'
+```
+
+---
+
+## Usage & AI Workflows
+
+### Fixing Issues (`factory issue fix`)
+Automatically spin up a sandbox, clone the repository, checkout a dedicated issue branch, run Gemini to fix the bug, and open a Pull Request:
+```bash
+./bin/factory issue fix --issue-url https://github.com/owner/repo/issues/1
+```
+
+**Advanced Customization**: Override the default prompt, base image, or PVC disk size:
+```bash
+./bin/factory issue fix \
+  --issue-url https://github.com/owner/repo/issues/1 \
+  --prompt "Use Go 1.26 and ensure 100% test coverage" \
+  --image kind.local/factory-golang:latest \
+  --workspace-disk-size 20Gi
+```
+
+### Reviewing Pull Requests (`factory pr review`)
+Spin up a review sandbox to analyze diffs and provide constructive feedback:
+```bash
+./bin/factory pr review --pr-url https://github.com/owner/repo/pull/1
+```
+
+### Investigating Check Failures (`factory pr investigate`)
+Spin up a review sandbox to analyze failed CI check logs, review previous investigation comments, and attempt to fix the failure or report root causes:
+```bash
+./bin/factory pr investigate --pr-url https://github.com/owner/repo/pull/1
+```
+
+### Watching Repositories (`factory watch`)
+Run as a background daemon to continuously watch a GitHub repository for test failures or assigned issues, automatically dispatching `fix` or `investigate` tasks:
+```bash
+# Watch for assigned issues with specific labels
+./bin/factory watch --repo owner/repo --assignee "factory-bot" --labels "p0,urgent"
+
+# Watch for unassigned issues with specific labels
+./bin/factory watch --repo owner/repo --assignee "" --labels "bug,help wanted"
+
+# Simulate actions without creating sandboxes or executing tasks
+./bin/factory watch --repo owner/repo --assignee "factory-bot" --dryrun
+```
+
+---
+
+## Sandbox Management & Debugging
+
+### Executing Commands (`factory sandbox exec`)
+Run interactive commands in an active sandbox with environment variable injection and custom working directories:
+```bash
+./bin/factory sandbox exec factory-issue-917 -e FOO=bar -w /workspaces/my-repo -- make test
+```
+
+### Inspecting Sandboxes (`factory sandbox inspect`)
+View metadata, PVC status, and active pod resolution:
+```bash
+./bin/factory sandbox inspect factory-issue-917
+```
+
+### Streaming Logs (`factory sandbox logs`)
+Stream either the active task execution transcript or the underlying `envd` daemon logs:
+```bash
+# Stream task execution log (execution.log)
+./bin/factory sandbox logs factory-issue-917
+
+# Stream envd daemon logs
+./bin/factory sandbox logs factory-issue-917 --daemon
+```
+
+### Copying Files (`factory sandbox cp`)
+Copy files directly into a specific path in the sandbox container:
+```bash
+./bin/factory sandbox cp factory-issue-917 ./local-script.sh /workspaces/script.sh
+```
+
+### Listing & Deleting Sandboxes
+```bash
+# List all active sandboxes in your namespace
+./bin/factory sandbox list
+
+# Delete a sandbox and its load-balancer service
+./bin/factory sandbox delete factory-issue-917
+```
