@@ -118,6 +118,11 @@ function setupGitRepos {
 
     echo "waiting for checkout to be ready (branch check)"
     (cd "/workspaces/${REPO_NAME}" && git branch --show-current)
+
+    echo "recording initial HEAD"
+    pushd "/workspaces/${REPO_NAME}" > /dev/null
+    OLD_HEAD=$(git rev-parse HEAD)
+    popd > /dev/null
 }
 
 function configureGemini {
@@ -183,14 +188,26 @@ function commitAndPush {
     echo "Running commitAndPush..."
     pushd "/workspaces/${REPO_NAME}" > /dev/null
     
+    NEW_HEAD=$(git rev-parse HEAD)
+
     # check if there are changes
     if [ -z "$(git status --porcelain)" ]; then 
-        echo "No changes to commit."
+        if [ "$OLD_HEAD" != "$NEW_HEAD" ]; then
+            echo "HEAD has changed (likely rebased by agent). Pushing changes..."
+            git push --force origin HEAD
+        else
+            echo "No changes to commit."
+        fi
     else
         echo "Changes detected, committing..."
         git add .
         git commit -m "Agent iteration: Apply changes"
-        git push origin HEAD
+        if [ "$OLD_HEAD" != "$NEW_HEAD" ]; then
+            echo "HEAD has changed and working directory has changes. Pushing changes..."
+            git push --force origin HEAD
+        else
+            git push origin HEAD
+        fi
     fi
     popd > /dev/null
 }
