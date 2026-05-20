@@ -15,6 +15,7 @@ spec:
   ephemeralStorage: 10Gi
   image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
   configdirRef: kcc-agents
+  workspaceDiskSize: 20Gi
   repo:
     issueMode: enabled
     prMode: enabled
