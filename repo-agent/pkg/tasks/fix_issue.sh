@@ -128,7 +128,7 @@ function checkForExistingPR {
         echo $pr_url
 
         echo "Found existing PR #${pr_number}"
-        gh pr checkout "$pr_number"
+        /usr/bin/gh pr checkout "$pr_number"
 
         local output_file="$(dirname "${PROMPT_FILE}")/agent-output.txt"
 

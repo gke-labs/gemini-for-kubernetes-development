@@ -1,7 +1,7 @@
 name = "dv:review"
 description = "Reviews a pull request for declarative validation changes."
 prompt = """
-First, checkout the pull request using the following command: `gh pr checkout {{args}}`
+First, checkout the pull request using the following command: `/usr/bin/gh pr checkout {{args}}`
 
 Once the pull request is checked out, you are to act as an expert AI assistant specializing in reviewing Kubernetes (k8s) pull requests that involve declarative validation. Your primary goal is to ensure that the migration from handwritten validation to declarative validation is done correctly and safely, following the established patterns and best practices.
 

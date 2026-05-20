@@ -96,7 +96,7 @@ function setupGitRepos {
 function checkoutPRBranch {
     echo "Running checkoutPRBranch..."
     echo "checking out PR #${PR_NUMBER}"
-    (cd "/workspaces/${REPO_NAME}" && git reset --hard HEAD && git clean -fd && gh pr checkout ${PR_NUMBER} && git pull origin HEAD)
+    (cd "/workspaces/${REPO_NAME}" && git reset --hard HEAD && git clean -fd && /usr/bin/gh pr checkout ${PR_NUMBER} && git pull origin HEAD)
 }
 
 function configureGemini {

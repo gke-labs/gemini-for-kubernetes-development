@@ -110,7 +110,7 @@ function setupGitRepos {
 
     if [ -n "$PRID" ] && [ "$PRID" != "null" ]; then
         echo "Checking out PR $PRID"
-        (cd "/workspaces/${REPO_NAME}" && gh pr checkout "$PRID")
+        (cd "/workspaces/${REPO_NAME}" && /usr/bin/gh pr checkout "$PRID")
     elif [ -n "$BRANCH_NAME" ]; then
         echo "Checking out branch $BRANCH_NAME"
         (cd "/workspaces/${REPO_NAME}" && git checkout "$BRANCH_NAME")

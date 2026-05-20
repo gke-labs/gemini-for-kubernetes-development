@@ -106,7 +106,7 @@ function setupGitRepos {
 function checkoutPRBranch {
     echo "Running checkoutPRBranch..."
     echo "checking out PR #${PR_NUMBER}"
-    (cd "/workspaces/${REPO_NAME}" && gh pr checkout ${PR_NUMBER})
+    (cd "/workspaces/${REPO_NAME}" && /usr/bin/gh pr checkout ${PR_NUMBER})
 }
 
 function fetchLogs {
