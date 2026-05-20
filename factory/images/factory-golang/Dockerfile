@@ -8,7 +8,8 @@ RUN GOBIN=/bin go install github.com/cli/cli/v2/cmd/gh@v2.82.1
 
 # Build envd
 FROM golang:1.26.2 AS build-envd
-RUN git clone https://github.com/e2b-dev/infra.git /infra && \
+ENV GOTOOLCHAIN=auto
+RUN git clone --depth 1 --branch 2026.20 https://github.com/e2b-dev/infra.git /infra && \
     cd /infra/packages/envd && \
     sed -i 's/oomWrapperScript := fmt.Sprintf.*/oomWrapperScript := fmt.Sprintf(`exec "${@}" # %d`, niceDelta)/' internal/services/process/handler/handler.go && \
     # Future: To inherit full container environment in envd instead of stripping it, uncomment the following line:
