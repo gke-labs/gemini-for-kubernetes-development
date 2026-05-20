@@ -63,86 +63,121 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	processedIssues := make(map[int]time.Time)
-	processedPRs := make(map[int]time.Time)
+	type prWatchState struct {
+		lastSHA          string
+		lastInvestigated time.Time
+	}
 
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-			assigneeFilter := assignee
-			if assigneeFilter == "" {
-				assigneeFilter = "none"
-			}
-			opts := &githubv39.IssueListByRepoOptions{
-				Assignee:    assigneeFilter,
-				State:       "open",
-				Labels:      labels,
-				ListOptions: githubv39.ListOptions{PerPage: 50},
-			}
-			issues, _, err := ghClient.Issues.ListByRepo(ctx, owner, repo, opts)
-			if err != nil {
-				klog.Errorf("Failed to list issues: %v", err)
-			} else {
-				for _, issue := range issues {
-					if issue.PullRequestLinks != nil {
-						continue
-					}
-					num := issue.GetNumber()
-					if lastProcessed, ok := processedIssues[num]; !ok || time.Since(lastProcessed) > 24*time.Hour {
-						fmt.Printf("Found assigned issue #%d (%s). Triggering fix...\n", num, issue.GetTitle())
-						processedIssues[num] = time.Now()
-						issueURL := fmt.Sprintf("https://github.com/%s/%s/issues/%d", owner, repo, num)
-						if dryRun {
-							fmt.Printf("[DRYRUN] Would trigger fix for issue #%d: %s\n", num, issueURL)
-						} else {
-							if err := runFix(ctx, issueURL, "Fix this issue", ""); err != nil {
-								klog.Errorf("Fix for issue #%d failed: %v", num, err)
-							}
+	processedIssues := make(map[int]time.Time)
+	processedPRs := make(map[int]prWatchState)
+
+	checkRepo := func() {
+		acted := false
+
+		assigneeFilter := assignee
+		if assigneeFilter == "" {
+			assigneeFilter = "none"
+		}
+		opts := &githubv39.IssueListByRepoOptions{
+			Assignee:    assigneeFilter,
+			State:       "open",
+			Labels:      labels,
+			ListOptions: githubv39.ListOptions{PerPage: 50},
+		}
+		issues, _, err := ghClient.Issues.ListByRepo(ctx, owner, repo, opts)
+		if err != nil {
+			klog.Errorf("Failed to list issues: %v", err)
+		} else {
+			for _, issue := range issues {
+				if issue.PullRequestLinks != nil {
+					continue
+				}
+				num := issue.GetNumber()
+				if lastProcessed, ok := processedIssues[num]; !ok || time.Since(lastProcessed) > 24*time.Hour {
+					fmt.Printf("\nFound assigned issue #%d (%s). Triggering fix...\n", num, issue.GetTitle())
+					processedIssues[num] = time.Now()
+					acted = true
+					issueURL := fmt.Sprintf("https://github.com/%s/%s/issues/%d", owner, repo, num)
+					if dryRun {
+						fmt.Printf("[DRYRUN] Would trigger fix for issue #%d: %s\n", num, issueURL)
+					} else {
+						if err := runFix(ctx, issueURL, "Fix this issue", ""); err != nil {
+							klog.Errorf("Fix for issue #%d failed: %v", num, err)
 						}
 					}
 				}
 			}
+		}
 
-			prOpts := &githubv39.PullRequestListOptions{
-				State:       "open",
-				ListOptions: githubv39.ListOptions{PerPage: 50},
-			}
-			prs, _, err := ghClient.PullRequests.List(ctx, owner, repo, prOpts)
-			if err != nil {
-				klog.Errorf("Failed to list PRs: %v", err)
-			} else {
-				for _, pr := range prs {
-					num := pr.GetNumber()
-					headSHA := pr.GetHead().GetSHA()
-					checks, _, err := ghClient.Checks.ListCheckRunsForRef(ctx, owner, repo, headSHA, nil)
-					if err != nil {
-						continue
-					}
-					hasFailure := false
+		prOpts := &githubv39.PullRequestListOptions{
+			State:       "open",
+			ListOptions: githubv39.ListOptions{PerPage: 50},
+		}
+		prs, _, err := ghClient.PullRequests.List(ctx, owner, repo, prOpts)
+		if err != nil {
+			klog.Errorf("Failed to list PRs: %v", err)
+		} else {
+			for _, pr := range prs {
+				num := pr.GetNumber()
+				headSHA := pr.GetHead().GetSHA()
+
+				hasFailure := false
+				checks, _, err := ghClient.Checks.ListCheckRunsForRef(ctx, owner, repo, headSHA, nil)
+				if err == nil {
 					for _, run := range checks.CheckRuns {
 						if run.GetConclusion() == "failure" {
 							hasFailure = true
 							break
 						}
 					}
-					if hasFailure {
-						if lastProcessed, ok := processedPRs[num]; !ok || time.Since(lastProcessed) > 6*time.Hour {
-							fmt.Printf("Found failing PR #%d (%s). Triggering investigate & review...\n", num, pr.GetTitle())
-							processedPRs[num] = time.Now()
-							prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", owner, repo, num)
-							if dryRun {
-								fmt.Printf("[DRYRUN] Would trigger investigate for PR #%d: %s\n", num, prURL)
-							} else {
-								if err := runInvestigate(ctx, prURL, "Investigate check failures for this PR"); err != nil {
-									klog.Errorf("Investigate for PR #%d failed: %v", num, err)
-								}
+				}
+
+				statuses, _, err := ghClient.Repositories.ListStatuses(ctx, owner, repo, headSHA, nil)
+				if err == nil {
+					for _, status := range statuses {
+						if status.GetState() == "failure" || status.GetState() == "error" {
+							hasFailure = true
+							break
+						}
+					}
+				}
+
+				if hasFailure {
+					state, ok := processedPRs[num]
+					if !ok || headSHA != state.lastSHA || time.Since(state.lastInvestigated) > 6*time.Hour {
+						fmt.Printf("\nFound failing PR #%d (%s) (SHA: %s). Triggering investigate & review...\n", num, pr.GetTitle(), headSHA[:7])
+						processedPRs[num] = prWatchState{
+							lastSHA:          headSHA,
+							lastInvestigated: time.Now(),
+						}
+						acted = true
+						prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", owner, repo, num)
+						if dryRun {
+							fmt.Printf("[DRYRUN] Would trigger investigate for PR #%d: %s\n", num, prURL)
+						} else {
+							if err := runInvestigate(ctx, prURL, "Investigate check failures for this PR"); err != nil {
+								klog.Errorf("Investigate for PR #%d failed: %v", num, err)
 							}
 						}
 					}
 				}
 			}
+		}
+
+		if !acted {
+			fmt.Print(".")
+		}
+	}
+
+	// Run first check immediately
+	checkRepo()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			checkRepo()
 		}
 	}
 }
