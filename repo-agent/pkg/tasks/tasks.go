@@ -124,7 +124,6 @@ func RunTask(ctx context.Context, t Task, sb *sandbox.IssueSandbox, taskDir stri
 		log.Info("Completed post-script in sandbox", "sandbox", sb.GetSandboxID())
 	}
 
-
 	// Read agent output and update annotation
 	agentOutputPath := taskPath(taskDir, "agent-output.txt")
 	output, err := sb.ReadFile(agentOutputPath)
