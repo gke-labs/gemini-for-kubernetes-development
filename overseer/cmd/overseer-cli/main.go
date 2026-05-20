@@ -41,13 +41,11 @@ import (
 )
 
 var (
-	overseerName      string
-	namespace         string
-	repoURL           string
-	image             string
-	workspaceDiskSize string
-	iamEmail          string
-	IssueModelsOrder  = []string{
+	overseerName     string
+	namespace        string
+	repoURL          string
+	iamEmail         string
+	IssueModelsOrder = []string{
 		"gemini-3-flash-preview",
 		"gemini-3.1-pro-preview",
 		"gemini-2.5-pro",
@@ -132,52 +130,84 @@ func main() {
 	}
 }
 
+type IssueCommandOptions struct {
+	PRNumber          int
+	IssueNumber       int
+	TaskType          string
+	Submit            bool
+	CustomPrompt      string
+	Debug             bool
+	Image             string
+	WorkspaceDiskSize string
+}
+
+func (o *IssueCommandOptions) InitDefaults() {
+	o.TaskType = "fix-issue"
+	o.Image = "golang:1.21"
+	o.WorkspaceDiskSize = "6G"
+}
+
 func buildIssueCommand() *cobra.Command {
-	var number int
-	var prNumber int
-	var taskType string
-	var prompt string
+	options := &IssueCommandOptions{}
+
+	options.InitDefaults()
 
 	cmd := &cobra.Command{
 		Use:   "issue",
 		Short: "Create/ensure sandbox and task for an issue",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cmd.SilenceUsage = true
-			return runIssue(context.Background(), number, prNumber, taskType, prompt)
+			return runIssue(context.Background(), options)
 		},
 	}
 
-	cmd.Flags().IntVar(&number, "number", 0, "Issue number")
-	cmd.Flags().IntVar(&prNumber, "pr", 0, "PR number to extract issue from")
-	cmd.Flags().StringVar(&taskType, "task", "fix-issue", "Task type (e.g., fix-issue, triage-issue)")
-	cmd.Flags().StringVar(&prompt, "prompt", "", "Custom prompt for the task")
-	cmd.Flags().StringVar(&image, "image", "golang:1.21", "Sandbox image")
-	cmd.Flags().StringVar(&workspaceDiskSize, "workspace-disk-size", "6G", "Workspace disk size")
+	cmd.Flags().IntVar(&options.IssueNumber, "number", options.IssueNumber, "Issue number")
+	cmd.Flags().IntVar(&options.PRNumber, "pr", options.PRNumber, "PR number to extract issue from")
+	cmd.Flags().StringVar(&options.TaskType, "task", options.TaskType, "Task type (e.g., fix-issue, triage-issue)")
+	cmd.Flags().StringVar(&options.CustomPrompt, "prompt", options.CustomPrompt, "Custom prompt for the task")
+	cmd.Flags().StringVar(&options.Image, "image", options.Image, "Sandbox image")
+	cmd.Flags().StringVar(&options.WorkspaceDiskSize, "workspace-disk-size", options.WorkspaceDiskSize, "Workspace disk size")
 
 	return cmd
 }
 
+type PROptions struct {
+	PRNumber          int
+	TaskType          string
+	Submit            bool
+	CustomPrompt      string
+	Debug             bool
+	Image             string
+	WorkspaceDiskSize string
+}
+
+func (o *PROptions) InitDefaults() {
+	o.TaskType = "review"
+	o.Image = "golang:1.21"
+	o.WorkspaceDiskSize = "6G"
+
+}
+
 func buildPRCommand() *cobra.Command {
-	var number int
-	var taskType string
-	var submit bool
-	var prompt string
+	options := &PROptions{}
+
+	options.InitDefaults()
 
 	cmd := &cobra.Command{
 		Use:   "pr",
 		Short: "Create/ensure sandbox and task for a PR",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cmd.SilenceUsage = true
-			return runPR(context.Background(), number, taskType, submit, prompt)
+			return runPR(context.Background(), options)
 		},
 	}
 
-	cmd.Flags().IntVar(&number, "number", 0, "PR number")
-	cmd.Flags().StringVar(&taskType, "task", "review", "Task type (e.g., review, address-feedback, investigate-failures)")
-	cmd.Flags().BoolVar(&submit, "submit", false, "Submit agent draft from task as review")
-	cmd.Flags().StringVar(&prompt, "prompt", "", "Custom prompt for the task")
-	cmd.Flags().StringVar(&image, "image", "golang:1.21", "Sandbox image")
-	cmd.Flags().StringVar(&workspaceDiskSize, "workspace-disk-size", "6G", "Workspace disk size")
+	cmd.Flags().IntVar(&options.PRNumber, "number", 0, "PR number")
+	cmd.Flags().StringVar(&options.TaskType, "task", options.TaskType, "Task type (e.g., review, address-feedback, investigate-failures)")
+	cmd.Flags().BoolVar(&options.Submit, "submit", options.Submit, "Submit agent draft from task as review")
+	cmd.Flags().StringVar(&options.CustomPrompt, "prompt", options.CustomPrompt, "Custom prompt for the task")
+	cmd.Flags().StringVar(&options.Image, "image", options.Image, "Sandbox image")
+	cmd.Flags().StringVar(&options.WorkspaceDiskSize, "workspace-disk-size", options.WorkspaceDiskSize, "Workspace disk size")
 
 	_ = cmd.MarkFlagRequired("number")
 
@@ -477,7 +507,7 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 	return err
 }
 
-func runIssue(ctx context.Context, number int, prNumber int, taskType string, customPrompt string) error {
+func runIssue(ctx context.Context, options *IssueCommandOptions) error {
 	if namespace == "" {
 		return fmt.Errorf("namespace must be set")
 	}
@@ -491,10 +521,10 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 		return nil
 	}
 	if issueMode == "dryrun" {
-		if number != 0 {
-			fmt.Printf("[dryrun] Would create/ensure sandbox and task %s for issue %d in Overseer %s\n", taskType, number, overseerName)
-		} else if prNumber != 0 {
-			fmt.Printf("[dryrun] Would create/ensure sandbox and task %s for issue from PR %d in Overseer %s\n", taskType, prNumber, overseerName)
+		if options.IssueNumber != 0 {
+			fmt.Printf("[dryrun] Would create/ensure sandbox and task %s for issue %d in Overseer %s\n", options.TaskType, options.IssueNumber, overseerName)
+		} else if options.PRNumber != 0 {
+			fmt.Printf("[dryrun] Would create/ensure sandbox and task %s for issue from PR %d in Overseer %s\n", options.TaskType, options.PRNumber, overseerName)
 		}
 		return nil
 	}
@@ -618,25 +648,26 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 		return fmt.Errorf("failed to parse RepoURL: %w", err)
 	}
 
-	if number == 0 && prNumber != 0 {
-		fmt.Printf("Resolving issue from PR %d...\n", prNumber)
-		number, err = resolveIssueFromPR(ctx, owner, repo, prNumber)
+	if options.IssueNumber == 0 && options.PRNumber != 0 {
+		fmt.Printf("Resolving issue from PR %d...\n", options.PRNumber)
+		issueNumber, err := resolveIssueFromPR(ctx, owner, repo, options.PRNumber)
 		if err != nil {
 			return fmt.Errorf("failed to resolve issue from PR: %w", err)
 		}
-		fmt.Printf("Resolved to issue %d\n", number)
+		options.IssueNumber = issueNumber
+		fmt.Printf("Resolved to issue %d\n", issueNumber)
 	}
 
-	if number == 0 {
+	if options.IssueNumber == 0 {
 		return fmt.Errorf("either --number or --pr must be provided")
 	}
 
-	issue, _, err := ghClient.Issues.Get(ctx, owner, repo, number)
+	issue, _, err := ghClient.Issues.Get(ctx, owner, repo, options.IssueNumber)
 	if err != nil {
-		return fmt.Errorf("failed to get issue %d: %w", number, err)
+		return fmt.Errorf("failed to get issue %d: %w", options.IssueNumber, err)
 	}
 
-	sandboxName := fmt.Sprintf("%s-issue-%d", overseer.Name, number)
+	sandboxName := fmt.Sprintf("%s-issue-%d", overseer.Name, options.IssueNumber)
 
 	var sandboxExists bool
 	var sandboxIsActive bool
@@ -673,21 +704,21 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 	}
 
 	// Create Task
-	fmt.Printf("Creating task %s for sandbox %s...\n", taskType, sandboxName)
-	agentPrompt := customPrompt
+	fmt.Printf("Creating task %s for sandbox %s...\n", options.TaskType, sandboxName)
+	agentPrompt := options.CustomPrompt
 	if agentPrompt == "" {
 		agentPrompt = overseer.Spec.IssuePrompt
 	}
 
 	params := map[string]string{
 		"ISSUE_URL":       issue.GetHTMLURL(),
-		"PULL_REQUEST_ID": fmt.Sprintf("%d", prNumber),
+		"PULL_REQUEST_ID": fmt.Sprintf("%d", options.PRNumber),
 		"AGENT_PROMPT":    agentPrompt,
 		"PR_LABEL":        "overseer",
 	}
 	params["model"] = strings.Join(IssueModelsOrder, ",")
 
-	err = manager.CreateSandboxTask(ctx, namespace, sandboxName, "Sandbox", taskType, params)
+	err = manager.CreateSandboxTask(ctx, namespace, sandboxName, "Sandbox", options.TaskType, params)
 	if err != nil {
 		return fmt.Errorf("failed to create sandbox task: %w", err)
 	}
@@ -696,7 +727,7 @@ func runIssue(ctx context.Context, number int, prNumber int, taskType string, cu
 	return nil
 }
 
-func runPR(ctx context.Context, number int, taskType string, submit bool, customPrompt string) error {
+func runPR(ctx context.Context, options *PROptions) error {
 	// Similar to runIssue but for PRs
 	if namespace == "" {
 		return fmt.Errorf("namespace must be set")
@@ -707,7 +738,7 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 
 	mode := ""
 	modeName := ""
-	if submit || taskType == "review" {
+	if options.Submit || options.TaskType == "review" {
 		modeName = "REVIEW_MODE"
 		mode = os.Getenv(modeName)
 	} else {
@@ -721,7 +752,7 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 	}
 
 	if mode == "dryrun" {
-		fmt.Printf("[dryrun] Would create/ensure sandbox and task %s for PR %d in Overseer %s\n", taskType, number, overseerName)
+		fmt.Printf("[dryrun] Would create/ensure sandbox and task %s for PR %d in Overseer %s\n", options.TaskType, options.PRNumber, overseerName)
 		return nil
 	}
 
@@ -746,9 +777,9 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 	}
 	manager := k8s.NewManager(kubeClient)
 
-	if submit {
-		fmt.Printf("Submitting agent draft for PR %d...\n", number)
-		return submitAgentDraft(ctx, manager, kubeClient, namespace, overseerName, number)
+	if options.Submit {
+		fmt.Printf("Submitting agent draft for PR %d...\n", options.PRNumber)
+		return submitAgentDraft(ctx, manager, kubeClient, namespace, overseerName, options.PRNumber)
 	}
 
 	var overseer overseerv1alpha1.Overseer
@@ -864,12 +895,12 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 		return fmt.Errorf("failed to parse RepoURL: %w", err)
 	}
 
-	pr, _, err := ghClient.PullRequests.Get(ctx, owner, repo, number)
+	pr, _, err := ghClient.PullRequests.Get(ctx, owner, repo, options.PRNumber)
 	if err != nil {
-		return fmt.Errorf("failed to get PR %d: %w", number, err)
+		return fmt.Errorf("failed to get PR %d: %w", options.PRNumber, err)
 	}
 
-	sandboxName := fmt.Sprintf("%s-pr-%d", overseer.Name, number)
+	sandboxName := fmt.Sprintf("%s-pr-%d", overseer.Name, options.PRNumber)
 	headSHA := pr.GetHead().GetSHA()
 
 	var sandboxExists bool
@@ -898,7 +929,7 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 	}
 
 	// Check if a task for this SHA already exists (only for review tasks)
-	if taskType == "review" {
+	if options.TaskType == "review" {
 		taskList, err := manager.ListSandboxTasks(ctx, namespace, sandboxName)
 		if err == nil {
 			for i := range taskList.Items {
@@ -922,20 +953,20 @@ func runPR(ctx context.Context, number int, taskType string, submit bool, custom
 	}
 
 	// Create Task
-	fmt.Printf("Creating task %s for sandbox %s...\n", taskType, sandboxName)
-	agentPrompt := customPrompt
+	fmt.Printf("Creating task %s for sandbox %s...\n", options.TaskType, sandboxName)
+	agentPrompt := options.CustomPrompt
 	if agentPrompt == "" {
 		agentPrompt = overseer.Spec.Review.Prompt
 	}
 
 	params := map[string]string{
-		"PULL_REQUEST_ID": fmt.Sprintf("%d", number),
+		"PULL_REQUEST_ID": fmt.Sprintf("%d", options.PRNumber),
 		"ISSUE_URL":       pr.GetHTMLURL(),
 		"AGENT_PROMPT":    agentPrompt,
 		"HEAD_SHA":        headSHA,
 	}
 
-	err = manager.CreateSandboxTask(ctx, namespace, sandboxName, "Sandbox", taskType, params)
+	err = manager.CreateSandboxTask(ctx, namespace, sandboxName, "Sandbox", options.TaskType, params)
 	if err != nil {
 		return fmt.Errorf("failed to create sandbox task: %w", err)
 	}
