@@ -176,12 +176,12 @@ while true; do
     refreshLLMToken
 
     # Update the repo
-    git pull
+    git pull || true
 
     # Reconcile chores if enabled
     if [ "$CHORES_MODE" != "disabled" ]; then
-      echo "$(date): running overseer-cli reconcile ..."
-      overseer-cli reconcile
+      echo "$(date): running overseer-cli admin chore reconcile ..."
+      overseer-cli admin chore reconcile || true
     fi
 
     # Run gemini
@@ -198,7 +198,11 @@ while true; do
       echo "$(date): Cycle complete."
     fi
     rm -f "$GEMINI_ERR"
-  } > "$LOG_FILE" 2>&1
+  } > "$LOG_FILE" 2>&1 || {
+    EXIT_CODE=$?
+    cat "$LOG_FILE"
+    exit $EXIT_CODE
+  }
   
   # Print log to stdout
   cat "$LOG_FILE"
