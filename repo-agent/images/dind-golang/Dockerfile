@@ -1,5 +1,5 @@
 # Build the gh CLI
-FROM golang:1.26.1 AS build-gh
+FROM golang:1.26.3 AS build-gh
 RUN GOBIN=/bin go install github.com/cli/cli/v2/cmd/gh@v2.82.1
 
 # -----------------------
@@ -60,7 +60,7 @@ RUN apt-get update && \
     google-cloud-cli
 
 # ------- Install go -------
-ENV GO_VERSION=1.26.1
+ENV GO_VERSION=1.26.3
 ENV ARCH=amd64
 
 # Download, extract, and set up environment variables

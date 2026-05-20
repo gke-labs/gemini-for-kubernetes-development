@@ -1,6 +1,6 @@
 module github.com/gke-labs/gemini-for-kubernetes-development/overseer
 
-go 1.26.2
+go 1.26.3
 
 require (
 	github.com/gke-labs/gemini-for-kubernetes-development/repo-agent v0.0.0-20260219222318-567bd9a5c9f5

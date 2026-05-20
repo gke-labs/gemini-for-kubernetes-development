@@ -1,6 +1,6 @@
 module github.com/gke-labs/gemini-for-kubernetes-development/dev/tools
 
-go 1.26.2
+go 1.26.3
 
 tool (
 	github.com/golangci/golangci-lint/cmd/golangci-lint
