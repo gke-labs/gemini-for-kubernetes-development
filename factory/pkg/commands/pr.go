@@ -105,6 +105,21 @@ func runInvestigate(ctx context.Context, prURL, prompt string) error {
 		}
 	}
 
+	var failedProwRuns []string
+	statuses, _, err := ghClient.Repositories.ListStatuses(ctx, owner, repo, headSHA, nil)
+	if err == nil {
+		for _, status := range statuses {
+			if status.GetState() == "failure" || status.GetState() == "error" {
+				failedRuns = append(failedRuns, tasks.FailedRun{
+					ID:   status.GetID(),
+					Name: status.GetContext(),
+					URL:  status.GetTargetURL(),
+				})
+				failedProwRuns = append(failedProwRuns, fmt.Sprintf("%d|%s", status.GetID(), status.GetTargetURL()))
+			}
+		}
+	}
+
 	if len(failedRuns) == 0 {
 		fmt.Printf("No failing checks found for PR #%d.\n", prNum)
 		return nil
@@ -129,7 +144,7 @@ func runInvestigate(ctx context.Context, prURL, prompt string) error {
 		return fmt.Errorf("creating k8s client: %w", err)
 	}
 
-	cloneURL := fmt.Sprintf("%s#refs/heads/%s", pr.GetHead().GetRepo().GetCloneURL(), pr.GetHead().GetRef())
+	cloneURL := pr.GetBase().GetRepo().GetCloneURL()
 	fmt.Printf("Ensuring review sandbox for PR #%d...\n", prNum)
 	sandboxName, err := factorysandbox.EnsureReviewSandbox(ctx, kubeClient, rootFlags.Namespace, prNum, pr.GetTitle(), pr.GetHTMLURL(), pr.GetDiffURL(), cloneURL, rootFlags.Image, rootFlags.DiskSize)
 	if err != nil {
@@ -196,6 +211,7 @@ func runInvestigate(ctx context.Context, prURL, prompt string) error {
 		"GITHUB_USER_NAME":           githubLogin,
 		"PR_NUMBER":                  strconv.Itoa(prNum),
 		"FAILED_RUNS":                strings.Join(failedRunIDs, " "),
+		"FAILED_PROW_RUNS":           strings.Join(failedProwRuns, " "),
 		"MODELS":                     "gemini-3-flash-preview gemini-3.1-pro-preview gemini-2.5-pro",
 	}
 
@@ -342,7 +358,7 @@ func runAddressComments(ctx context.Context, prURL, prompt string) error {
 		return fmt.Errorf("creating k8s client: %w", err)
 	}
 
-	cloneURL := fmt.Sprintf("%s#refs/heads/%s", pr.GetHead().GetRepo().GetCloneURL(), pr.GetHead().GetRef())
+	cloneURL := pr.GetBase().GetRepo().GetCloneURL()
 	fmt.Printf("Ensuring review sandbox for PR #%d...\n", prNum)
 	sandboxName, err := factorysandbox.EnsureReviewSandbox(ctx, kubeClient, rootFlags.Namespace, prNum, pr.GetTitle(), pr.GetHTMLURL(), pr.GetDiffURL(), cloneURL, rootFlags.Image, rootFlags.DiskSize)
 	if err != nil {
@@ -478,81 +494,112 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	var lastCheckedTime time.Time
+	var lastInvestigatedSHA string
+	var lastInvestigatedTime time.Time
+	var lastCommentAddressedTime time.Time
+
+	checkPR := func() {
+		pr, _, err := ghClient.PullRequests.Get(ctx, owner, repo, prNum)
+		if err != nil {
+			klog.Errorf("Failed to fetch PR #%d: %v", prNum, err)
+			return
+		}
+
+		acted := false
+
+		// Check 1: Check CI check runs and commit statuses
+		headSHA := pr.GetHead().GetSHA()
+		hasFailure := false
+
+		checks, _, err := ghClient.Checks.ListCheckRunsForRef(ctx, owner, repo, headSHA, nil)
+		if err == nil {
+			for _, run := range checks.CheckRuns {
+				if run.GetConclusion() == "failure" {
+					hasFailure = true
+					break
+				}
+			}
+		}
+
+		statuses, _, err := ghClient.Repositories.ListStatuses(ctx, owner, repo, headSHA, nil)
+		if err == nil {
+			for _, status := range statuses {
+				if status.GetState() == "failure" || status.GetState() == "error" {
+					hasFailure = true
+					break
+				}
+			}
+		}
+
+		if hasFailure {
+			if headSHA != lastInvestigatedSHA || time.Since(lastInvestigatedTime) > 30*time.Minute {
+				fmt.Printf("\nFound failing checks for PR #%d (SHA: %s). Triggering investigate...\n", prNum, headSHA[:7])
+				lastInvestigatedSHA = headSHA
+				lastInvestigatedTime = time.Now()
+				acted = true
+				if dryRun {
+					fmt.Printf("[DRYRUN] Would trigger investigate for PR #%d\n", prNum)
+				} else {
+					if err := runInvestigate(ctx, prURL, "Investigate check failures for this PR"); err != nil {
+						klog.Errorf("Investigate failed: %v", err)
+					}
+				}
+			}
+		}
+
+		// Check 2: Check new comments/reviews after latest commit
+		prCommits, _, err := ghClient.PullRequests.ListCommits(ctx, owner, repo, prNum, nil)
+		if err == nil {
+			var lastCommitTime time.Time
+			for _, c := range prCommits {
+				if c.GetCommit().GetAuthor().GetDate().After(lastCommitTime) {
+					lastCommitTime = c.GetCommit().GetAuthor().GetDate()
+				}
+			}
+
+			comments, _, err := ghClient.Issues.ListComments(ctx, owner, repo, prNum, nil)
+			if err == nil {
+				hasNewComments := false
+				for _, c := range comments {
+					// Ignore comments from bot
+					if strings.Contains(c.GetUser().GetLogin(), "bot") {
+						continue
+					}
+					if c.GetCreatedAt().After(lastCommitTime) && c.GetCreatedAt().After(lastCommentAddressedTime) {
+						hasNewComments = true
+						break
+					}
+				}
+
+				if hasNewComments {
+					fmt.Printf("\nFound new review comments for PR #%d. Triggering address-comments...\n", prNum)
+					lastCommentAddressedTime = time.Now()
+					acted = true
+					if dryRun {
+						fmt.Printf("[DRYRUN] Would trigger address-comments for PR #%d\n", prNum)
+					} else {
+						if err := runAddressComments(ctx, prURL, "Address review feedback for this PR"); err != nil {
+							klog.Errorf("Address-comments failed: %v", err)
+						}
+					}
+				}
+			}
+		}
+
+		if !acted {
+			fmt.Print(".")
+		}
+	}
+
+	// Run first check immediately
+	checkPR()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			pr, _, err := ghClient.PullRequests.Get(ctx, owner, repo, prNum)
-			if err != nil {
-				klog.Errorf("Failed to fetch PR #%d: %v", prNum, err)
-				continue
-			}
-
-			// Check 1: Check CI check runs
-			headSHA := pr.GetHead().GetSHA()
-			checks, _, err := ghClient.Checks.ListCheckRunsForRef(ctx, owner, repo, headSHA, nil)
-			if err == nil {
-				hasFailure := false
-				for _, run := range checks.CheckRuns {
-					if run.GetConclusion() == "failure" {
-						hasFailure = true
-						break
-					}
-				}
-				if hasFailure {
-					if time.Since(lastCheckedTime) > 30*time.Minute {
-						fmt.Printf("Found failing checks for PR #%d. Triggering investigate...\n", prNum)
-						lastCheckedTime = time.Now()
-						if dryRun {
-							fmt.Printf("[DRYRUN] Would trigger investigate for PR #%d\n", prNum)
-						} else {
-							if err := runInvestigate(ctx, prURL, "Investigate check failures for this PR"); err != nil {
-								klog.Errorf("Investigate failed: %v", err)
-							}
-						}
-					}
-				}
-			}
-
-			// Check 2: Check new comments/reviews after latest commit
-			prCommits, _, err := ghClient.PullRequests.ListCommits(ctx, owner, repo, prNum, nil)
-			if err == nil {
-				var lastCommitTime time.Time
-				for _, c := range prCommits {
-					if c.GetCommit().GetAuthor().GetDate().After(lastCommitTime) {
-						lastCommitTime = c.GetCommit().GetAuthor().GetDate()
-					}
-				}
-
-				comments, _, err := ghClient.Issues.ListComments(ctx, owner, repo, prNum, nil)
-				if err == nil {
-					hasNewComments := false
-					for _, c := range comments {
-						// Ignore comments from bot
-						if strings.Contains(c.GetUser().GetLogin(), "bot") {
-							continue
-						}
-						if c.GetCreatedAt().After(lastCommitTime) && c.GetCreatedAt().After(lastCheckedTime) {
-							hasNewComments = true
-							break
-						}
-					}
-
-					if hasNewComments {
-						fmt.Printf("Found new review comments for PR #%d. Triggering address-comments...\n", prNum)
-						lastCheckedTime = time.Now()
-						if dryRun {
-							fmt.Printf("[DRYRUN] Would trigger address-comments for PR #%d\n", prNum)
-						} else {
-							if err := runAddressComments(ctx, prURL, "Address review feedback for this PR"); err != nil {
-								klog.Errorf("Address-comments failed: %v", err)
-							}
-						}
-					}
-				}
-			}
+			checkPR()
 		}
 	}
 }

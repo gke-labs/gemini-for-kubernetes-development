@@ -77,7 +77,7 @@ func runReview(ctx context.Context, prURL, prompt string) error {
 		return fmt.Errorf("creating k8s client: %w", err)
 	}
 
-	cloneURL := fmt.Sprintf("%s#refs/heads/%s", pr.GetHead().GetRepo().GetCloneURL(), pr.GetHead().GetRef())
+	cloneURL := pr.GetBase().GetRepo().GetCloneURL()
 	fmt.Printf("Ensuring review sandbox for PR #%d...\n", prNum)
 	sandboxName, err := factorysandbox.EnsureReviewSandbox(ctx, kubeClient, rootFlags.Namespace, prNum, pr.GetTitle(), pr.GetHTMLURL(), pr.GetDiffURL(), cloneURL, rootFlags.Image, rootFlags.DiskSize)
 	if err != nil {
