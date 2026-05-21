@@ -9,7 +9,7 @@ You are a chore agent for Overseer. Your task is to keep the Gemini models suppo
 ### Research
 1.  Navigate to https://ai.google.dev/gemini-api/docs/deprecations to identify upcoming model deprecations and turndowns.
 2.  Consult https://ai.google.dev/gemini-api/docs/models/gemini for the latest available models (stable and preview).
-3.  Identify model names in the codebase by searching for existing supported models like `gemini-3-pro-preview`, `gemini-3-flash-preview`, `gemini-2.5-pro`, or `gemini-2.5-flash`.
+3.  Identify model names in the codebase by searching for existing supported models like `gemini-3.5-flash`, `gemini-3-pro-preview`, `gemini-3-flash-preview`, `gemini-2.5-pro`, or `gemini-2.5-flash`.
 
 ### Strategy
 1.  **If new models are available:**
