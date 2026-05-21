@@ -48,6 +48,7 @@ var (
 	workspaceDiskSize string
 	iamEmail          string
 	IssueModelsOrder  = []string{
+		"gemini-3.5-flash",
 		"gemini-3-flash-preview",
 		"gemini-3.1-pro-preview",
 		"gemini-2.5-pro",
@@ -2455,6 +2456,7 @@ func runRepoInit(ctx context.Context, nameFlag string, githubSecret string) erro
 						"provider":        "gemini-cli",
 					},
 					"models": []interface{}{
+						"gemini-3.5-flash",
 						"gemini-3-flash-preview",
 						"gemini-3.1-pro-preview",
 						"gemini-2.5-pro",
