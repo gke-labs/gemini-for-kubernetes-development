@@ -60,6 +60,7 @@ type FailedRun struct {
 }
 
 type PRComment struct {
+	ID        int64
 	UserLogin string
 	CreatedAt string
 	Body      string

@@ -133,6 +133,7 @@ func runInvestigate(ctx context.Context, prURL, prompt string) error {
 	var prComments []tasks.PRComment
 	for _, c := range comments {
 		prComments = append(prComments, tasks.PRComment{
+			ID:        c.GetID(),
 			UserLogin: c.GetUser().GetLogin(),
 			CreatedAt: c.GetCreatedAt().Format(time.RFC3339),
 			Body:      c.GetBody(),
@@ -306,6 +307,7 @@ func runAddressComments(ctx context.Context, prURL, prompt string) error {
 	var newComments []tasks.PRComment
 	for _, c := range comments {
 		cmt := tasks.PRComment{
+			ID:        c.GetID(),
 			UserLogin: c.GetUser().GetLogin(),
 			CreatedAt: c.GetCreatedAt().Format(time.RFC3339),
 			Body:      c.GetBody(),
