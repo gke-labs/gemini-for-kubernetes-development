@@ -11,7 +11,7 @@ FROM golang:1.26.2 AS build-envd
 ENV GOTOOLCHAIN=auto
 RUN git clone --depth 1 --branch 2026.20 https://github.com/e2b-dev/infra.git /infra && \
     cd /infra/packages/envd && \
-    sed -i 's/oomWrapperScript := fmt.Sprintf.*/oomWrapperScript := fmt.Sprintf(`exec "${@}" # %d`, niceDelta)/' internal/services/process/handler/handler.go && \
+    sed -i 's/oomWrapperScript := fmt.Sprintf.*/oomWrapperScript := fmt.Sprintf("exec \\\"\${@}\\\" # %d", niceDelta)/' internal/services/process/handler/handler.go && \
     # Future: To inherit full container environment in envd instead of stripping it, uncomment the following line:
     # sed -i 's/var formattedVars \[\]string/formattedVars := os.Environ()/' internal/services/process/handler/handler.go && \
     CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -v -o /envd .
