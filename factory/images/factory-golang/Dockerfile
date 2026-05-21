@@ -16,6 +16,16 @@ RUN git clone --depth 1 --branch 2026.20 https://github.com/e2b-dev/infra.git /i
     # sed -i 's/var formattedVars \[\]string/formattedVars := os.Environ()/' internal/services/process/handler/handler.go && \
     CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -v -o /envd .
 
+# --------------------------------
+
+# Build factory binary
+FROM golang:1.26.2 AS build-factory
+WORKDIR /app/factory
+COPY factory/go.mod factory/go.sum ./
+RUN go mod download
+COPY factory/ ./
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -v -o /factory .
+
 
 
 # Main image
@@ -40,8 +50,9 @@ RUN code-server --install-extension golang.go --install-extension vscodevim.vim
 
 COPY --from=build-gh /bin/gh /bin/gh
 COPY --from=build-envd /envd /usr/local/bin/envd
+COPY --from=build-factory /factory /usr/local/bin/factory
 
 RUN ln -sf /usr/local/go/bin/go /usr/local/bin/go
 
 WORKDIR /workspaces
-ENTRYPOINT ["/usr/local/bin/envd"]
+ENTRYPOINT ["/usr/local/bin/factory", "daemon"]

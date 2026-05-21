@@ -96,5 +96,9 @@ coding tasks without local side effects or host dependencies.`,
 	sandboxCmd.GroupID = "management"
 	cmd.AddCommand(sandboxCmd)
 
+	daemonCmd := NewDaemonCommand(ctx)
+	daemonCmd.GroupID = "management"
+	cmd.AddCommand(daemonCmd)
+
 	return cmd
 }
