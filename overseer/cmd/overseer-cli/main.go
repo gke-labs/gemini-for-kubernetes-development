@@ -451,7 +451,7 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 			Replicas:            1,
 			WorkspaceDiskSize:   overseer.Spec.WorkspaceDiskSize,
 			ServiceAccountName: func() string {
-				if os.Getenv("OVERSEER") != "" {
+				if os.Getenv("OVERSEER") != "" || os.Getenv("OVERSEER_NAME") != "" {
 					return "overseer-sandbox"
 				}
 				return "issue-sandbox"
@@ -1166,7 +1166,7 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 			HTTPEnabled:         true,
 			Replicas:            1,
 			ServiceAccountName: func() string {
-				if os.Getenv("OVERSEER") != "" {
+				if os.Getenv("OVERSEER") != "" || os.Getenv("OVERSEER_NAME") != "" {
 					return "overseer-sandbox"
 				}
 				return "issue-sandbox"
@@ -1253,7 +1253,7 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 			HTTPEnabled:           true,
 			Replicas:              1,
 			ServiceAccountName: func() string {
-				if os.Getenv("OVERSEER") != "" {
+				if os.Getenv("OVERSEER") != "" || os.Getenv("OVERSEER_NAME") != "" {
 					return "overseer-sandbox"
 				}
 				return "review-sandbox"
