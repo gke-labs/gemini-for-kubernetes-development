@@ -5,7 +5,7 @@ metadata:
 spec:
   repoURL: https://github.com/GoogleCloudPlatform/k8s-config-connector
   robotAccount: codebot-robot
-  maxActiveReviews: 3
+  maxActiveReviews: 8
   maxActiveIssues: 3
   chores:
     mode: enabled
@@ -15,7 +15,7 @@ spec:
   ephemeralStorage: 10Gi
   image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
   configdirRef: kcc-agents
-  workspaceDiskSize: 20Gi
+  workspaceDiskSize: 40Gi
   repo:
     issueMode: enabled
     prMode: enabled
