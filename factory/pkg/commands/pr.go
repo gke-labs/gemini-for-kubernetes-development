@@ -168,7 +168,7 @@ func runInvestigate(ctx context.Context, prURL, prompt string) error {
 		},
 		FailedRuns:    failedRuns,
 		IssueComments: prComments,
-		Models:        []string{"gemini-3-flash-preview", "gemini-3.1-pro-preview", "gemini-2.5-pro"},
+		Models:        []string{"gemini-3.5-flash", "gemini-3-flash-preview", "gemini-3.1-pro-preview", "gemini-2.5-pro"},
 	}
 
 	scriptBytes, err := tasks.GetInvestigateScript()
@@ -213,7 +213,7 @@ func runInvestigate(ctx context.Context, prURL, prompt string) error {
 		"PR_NUMBER":                  strconv.Itoa(prNum),
 		"FAILED_RUNS":                strings.Join(failedRunIDs, " "),
 		"FAILED_PROW_RUNS":           strings.Join(failedProwRuns, " "),
-		"MODELS":                     "gemini-3-flash-preview gemini-3.1-pro-preview gemini-2.5-pro",
+		"MODELS":                     "gemini-3.5-flash gemini-3-flash-preview gemini-3.1-pro-preview gemini-2.5-pro",
 	}
 
 	fmt.Println("Running investigate task via envd...")
@@ -386,7 +386,7 @@ func runAddressComments(ctx context.Context, prURL, prompt string) error {
 		IssueComments:         newComments,
 		OldPullRequestReviews: oldReviews,
 		PullRequestReviews:    newReviews,
-		Models:                []string{"gemini-3-flash-preview", "gemini-3.1-pro-preview", "gemini-2.5-pro"},
+		Models:                []string{"gemini-3.5-flash", "gemini-3-flash-preview", "gemini-3.1-pro-preview", "gemini-2.5-pro"},
 	}
 
 	scriptBytes, err := tasks.GetAddressFeedbackScript()
@@ -429,7 +429,7 @@ func runAddressComments(ctx context.Context, prURL, prompt string) error {
 		"GITHUB_USER_EMAIL":          githubEmail,
 		"GITHUB_USER_NAME":           githubLogin,
 		"PR_NUMBER":                  strconv.Itoa(prNum),
-		"MODELS":                     "gemini-3-flash-preview gemini-3.1-pro-preview gemini-2.5-pro",
+		"MODELS":                     "gemini-3.5-flash gemini-3-flash-preview gemini-3.1-pro-preview gemini-2.5-pro",
 	}
 
 	fmt.Println("Running address-comments task via envd...")

@@ -751,6 +751,7 @@ function PrReviewCard({
   const lastDragTargetRef = useRef(null);
 
   const reviewModels = (availableModels && availableModels.length > 0) ? availableModels : [
+    'gemini-3.5-flash',
     'gemini-3.1-pro-preview',
     'gemini-3-flash-preview',
     'gemini-2.0-pro-exp-02-05',

@@ -181,7 +181,7 @@ func runFix(ctx context.Context, targetURL, prompt, name string) error {
 		IssueComments: issueComments,
 		Instruction:   prompt,
 		Branch:        branchName,
-		Models:        []string{"gemini-3-flash-preview", "gemini-3.1-pro-preview", "gemini-2.5-pro"},
+		Models:        []string{"gemini-3.5-flash", "gemini-3-flash-preview", "gemini-3.1-pro-preview", "gemini-2.5-pro"},
 		DraftPR:       false,
 		PRLabel:       "factory",
 	}
@@ -228,7 +228,7 @@ func runFix(ctx context.Context, targetURL, prompt, name string) error {
 		"GITHUB_USER_EMAIL":          githubEmail,
 		"GITHUB_USER_NAME":           githubLogin,
 		"BRANCH_NAME":                branchName,
-		"MODELS":                     "gemini-3-flash-preview gemini-3.1-pro-preview gemini-2.5-pro",
+		"MODELS":                     "gemini-3.5-flash gemini-3-flash-preview gemini-3.1-pro-preview gemini-2.5-pro",
 	}
 
 	fmt.Println("Running fix-issue task via envd...")
