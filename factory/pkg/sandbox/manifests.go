@@ -10,6 +10,12 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
+const (
+	GoCachePath    = "/workspaces/.cache/go-build"
+	GoModCachePath = "/workspaces/.cache/mod"
+	TmpDirPath     = "/workspaces/.tmp"
+)
+
 // DevSandboxOptions holds common options for creating Sandboxes.
 type DevSandboxOptions struct {
 	Name              string
@@ -92,7 +98,12 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 		diskSize = "10Gi"
 	}
 
-	env := []interface{}{}
+	env := []interface{}{
+		map[string]interface{}{"name": "GOCACHE", "value": GoCachePath},
+		map[string]interface{}{"name": "GOMODCACHE", "value": GoModCachePath},
+		map[string]interface{}{"name": "TMPDIR", "value": TmpDirPath},
+		map[string]interface{}{"name": "GOTMPDIR", "value": TmpDirPath},
+	}
 
 	sandbox := &unstructured.Unstructured{
 		Object: map[string]interface{}{
@@ -115,7 +126,7 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 							map[string]interface{}{
 								"name":    "sandbox",
 								"image":   opt.Image,
-								"command": []interface{}{"envd"},
+								"command": []interface{}{"factory", "daemon"},
 								"resources": map[string]interface{}{
 									"requests": map[string]interface{}{
 										"cpu":               resources.Requests.Cpu().String(),
@@ -217,7 +228,12 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 		diskSize = "10Gi"
 	}
 
-	env := []interface{}{}
+	env := []interface{}{
+		map[string]interface{}{"name": "GOCACHE", "value": GoCachePath},
+		map[string]interface{}{"name": "GOMODCACHE", "value": GoModCachePath},
+		map[string]interface{}{"name": "TMPDIR", "value": TmpDirPath},
+		map[string]interface{}{"name": "GOTMPDIR", "value": TmpDirPath},
+	}
 
 	sandbox := &unstructured.Unstructured{
 		Object: map[string]interface{}{
@@ -242,7 +258,7 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 							map[string]interface{}{
 								"name":    "sandbox",
 								"image":   opt.Image,
-								"command": []interface{}{"envd"},
+								"command": []interface{}{"factory", "daemon"},
 								"resources": map[string]interface{}{
 									"limits": map[string]interface{}{
 										"ephemeral-storage": "6Gi",
