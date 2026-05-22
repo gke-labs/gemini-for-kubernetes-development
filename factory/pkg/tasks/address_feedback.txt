@@ -6,7 +6,7 @@ Use good PR hygene:
 * Only solve the specific issue.  Do not make unrelated changes or cleanups.
 * **Avoid committing or pushing large binary files.** Build artifacts (like the `manager` binary in many controller projects) should be cleaned up before committing or added to `.gitignore`.
 * **Cleaning up:** If you run build commands (like `make`, `go build`, `go test`), ensure you clean up any generated binaries or artifacts before committing. Use `make clean` if available, or manually remove them.
-* Reference the issue you are solving in the PR description, like "Issue #1234" or "Fixes #1234".  Put this in the commit body, not the first line.
+* Reference the issue you are solving in the PR description, like "Issue #1234" or "Fixes #1234".  In the commit body, add a line like "Issue: 1234" or "Fix: 1234" instead, but not the first line.
 
 ## Instructions
 
