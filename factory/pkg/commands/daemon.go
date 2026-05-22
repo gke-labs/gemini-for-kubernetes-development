@@ -13,8 +13,9 @@ import (
 
 func NewDaemonCommand(ctx context.Context) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "daemon",
-		Short: "Run the factory sandbox daemon to initialize workspace storage and start envd",
+		Use:    "daemon",
+		Short:  "Run the factory sandbox daemon to initialize workspace storage and start envd",
+		Hidden: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 0 {
 				return fmt.Errorf("daemon command does not take any arguments")
