@@ -54,6 +54,7 @@ factory
       ├── cp (Copy files into sandbox)
       ├── exec (Run interactive commands with env/cwd injection)
       ├── connect (Connect to a sandbox via interactive tmux session)
+      ├── chat (Connect to a sandbox and resume a Gemini CLI chat session)
       ├── inspect (Inspect sandbox status, PVC usage, pod info)
       └── logs (Stream task execution logs or envd daemon logs)
 ```
@@ -139,7 +140,7 @@ Automatically spin up a sandbox, clone the repository, checkout a dedicated issu
 factory fix --url https://github.com/owner/repo/issues/1
 ```
 
-**Advanced Customization**: Override the default instruction, provide an instruction file, or execute repository-level tasks without an issue:
+**Advanced Customization**: Override the default instruction, provide an instruction file, execute repository-level tasks without an issue, or push a branch without creating a PR:
 ```bash
 factory fix \
   --url https://github.com/owner/repo/issues/1 \
@@ -158,6 +159,13 @@ factory fix \
   --url https://github.com/owner/repo \
   --name refactor-auth \
   --instruction-file ./prompt.txt
+
+# Commit changes and push branch remotely, but do not create a pull request
+factory fix \
+  --url https://github.com/owner/repo/issues/1 \
+  --name refactor-auth \
+  --instruction "Refactor the auth package"
+  --no-pr
 ```
 
 ### Reviewing Pull Requests (`factory pr review`)
@@ -200,6 +208,19 @@ factory watch --repo owner/repo --assignee "factory-bot" --dryrun
 ---
 
 ## Sandbox Management & Debugging
+
+### Resuming Chat Sessions (`factory sandbox chat`)
+Connect to an active sandbox container and resume a Gemini CLI chat session with automatic repository detection, session backup/restore, and `GEMINI_API_KEY` environment injection:
+```bash
+# Resume the latest chat session in the sandbox
+factory sandbox chat factory-issue-917
+
+# List all available saved sessions for the project
+factory sandbox chat factory-issue-917 -l
+
+# Resume a specific session by index or ID
+factory sandbox chat factory-issue-917 -r 2
+```
 
 ### Executing Commands (`factory sandbox exec`)
 Run interactive commands in an active sandbox with environment variable injection and custom working directories:
