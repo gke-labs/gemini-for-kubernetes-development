@@ -106,6 +106,10 @@ function setupGitRepos {
 
 function checkForExistingPR {
     echo "Checking for existing PRs..."
+    if [ "$NO_PR" = "true" ]; then
+        echo "NO_PR is true; skipping check for existing PR."
+        return
+    fi
     if [ "${ISSUE_NUMBER:-0}" -eq 0 ]; then
         echo "No issue number specified; skipping check for existing PR."
         return
@@ -222,6 +226,11 @@ function recordPRLink {
     echo "Recording PR link..."
     pushd "/workspaces/${REPO_NAME}" > /dev/null
     local output_file="$(dirname "${PROMPT_FILE}")/agent-output.txt"
+    if [ "$NO_PR" = "true" ]; then
+        echo "Branch successfully pushed to origin/${BRANCH_NAME}" > "$output_file"
+        popd > /dev/null
+        return
+    fi
     local pr_url=""
 
     # Try current branch PR status

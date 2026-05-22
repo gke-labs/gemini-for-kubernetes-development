@@ -36,6 +36,7 @@ func NewSandboxCommand(ctx context.Context) *cobra.Command {
 	cmd.AddCommand(NewSandboxInspectCommand(ctx))
 	cmd.AddCommand(NewSandboxLogsCommand(ctx))
 	cmd.AddCommand(NewSandboxConnectCommand(ctx))
+	cmd.AddCommand(NewSandboxChatCommand(ctx))
 
 	return cmd
 }
@@ -345,5 +346,96 @@ func NewSandboxConnectCommand(ctx context.Context) *cobra.Command {
 			return nil
 		},
 	}
+	return cmd
+}
+
+type SandboxChatFlags struct {
+	ListSessions bool
+	Resume       string
+}
+
+func NewSandboxChatCommand(ctx context.Context) *cobra.Command {
+	var flags SandboxChatFlags
+	cmd := &cobra.Command{
+		Use:   "chat [sandbox-name]",
+		Short: "Connect to a sandbox and resume a Gemini CLI chat session",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			sandboxName := args[0]
+			if err := validateSandboxName(sandboxName); err != nil {
+				return err
+			}
+
+			kubeClient, err := clients.NewKubernetesClient()
+			if err != nil {
+				return fmt.Errorf("creating k8s client: %w", err)
+			}
+
+			secret, err := kubeClient.Clientset.CoreV1().Secrets(rootFlags.Namespace).Get(ctx, rootFlags.SecretName, metav1.GetOptions{})
+			if err != nil {
+				return fmt.Errorf("fetching %s secret in namespace %s: %w (make sure to run 'factory user onboard' first)", rootFlags.SecretName, rootFlags.Namespace, err)
+			}
+			geminiKey := string(secret.Data[KeyGeminiAPIKey])
+			if geminiKey == "" {
+				return fmt.Errorf("GEMINI_API_KEY not found in secret %s", rootFlags.SecretName)
+			}
+
+			podName, err := envd.GetSandboxPodName(ctx, rootFlags.Namespace, sandboxName)
+			if err != nil {
+				return fmt.Errorf("getting sandbox pod: %w", err)
+			}
+
+			manager := k8s.NewManager(kubeClient)
+			sb, err := manager.GetSandbox(ctx, rootFlags.Namespace, sandboxName)
+			if err != nil {
+				return fmt.Errorf("getting sandbox '%s': %w", sandboxName, err)
+			}
+
+			var repoDir string
+			if ann := sb.GetAnnotations(); ann != nil {
+				if r, ok := ann["repo"]; ok && r != "" {
+					repoDir = fmt.Sprintf("/workspaces/%s", r)
+				}
+			}
+
+			// Extract repo directory from Sandbox annotations if available, falling back to auto-detecting via find
+			detectRepoScript := `REPO_DIR=$(find /workspaces -maxdepth 2 -name .git 2>/dev/null | head -1 | sed 's|/.git||'); if [ -n "$REPO_DIR" ]; then cd "$REPO_DIR"; else cd /workspaces; fi;`
+			if repoDir != "" {
+				detectRepoScript = fmt.Sprintf(`if [ -d "%s" ]; then cd "%s"; else REPO_DIR=$(find /workspaces -maxdepth 2 -name .git 2>/dev/null | head -1 | sed 's|/.git||'); if [ -n "$REPO_DIR" ]; then cd "$REPO_DIR"; else cd /workspaces; fi; fi;`, repoDir, repoDir)
+			}
+
+			// Backup session files before running Gemini CLI, and restore them afterward if Gemini deletes them on exit due to inactivity
+			backupScript := `CHAT_DIR="/root/.gemini/tmp/$(basename "$PWD")/chats"; if [ -d "$CHAT_DIR" ]; then mkdir -p "$CHAT_DIR/backup"; cp "$CHAT_DIR"/*.jsonl "$CHAT_DIR/backup/" 2>/dev/null || true; fi;`
+			restoreScript := `if [ -d "$CHAT_DIR/backup" ]; then cp -n "$CHAT_DIR/backup"/*.jsonl "$CHAT_DIR/" 2>/dev/null || true; fi;`
+
+			if flags.ListSessions {
+				fmt.Printf("Listing Gemini sessions in sandbox '%s'...\n", sandboxName)
+				execCmd := fmt.Sprintf("%s GEMINI_API_KEY='%s' gemini --list-sessions", detectRepoScript, geminiKey)
+				cmd := exec.CommandContext(ctx, "kubectl", "exec", "-it", "-n", rootFlags.Namespace, podName, "-c", "sandbox", "--", "sh", "-c", execCmd)
+				cmd.Stdin = os.Stdin
+				cmd.Stdout = os.Stdout
+				cmd.Stderr = os.Stderr
+				if err := cmd.Run(); err != nil {
+					return fmt.Errorf("listing sessions failed: %w", err)
+				}
+				return nil
+			}
+
+			fmt.Printf("Connecting to Gemini chat session (resume: %s) in sandbox '%s'...\n", flags.Resume, sandboxName)
+			execCmd := fmt.Sprintf("%s %s GEMINI_API_KEY='%s' gemini --resume %s; %s", detectRepoScript, backupScript, geminiKey, flags.Resume, restoreScript)
+			cmd := exec.CommandContext(ctx, "kubectl", "exec", "-it", "-n", rootFlags.Namespace, podName, "-c", "sandbox", "--", "sh", "-c", execCmd)
+			cmd.Stdin = os.Stdin
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				return fmt.Errorf("gemini session exited: %w", err)
+			}
+			return nil
+		},
+	}
+
+	cmd.Flags().BoolVarP(&flags.ListSessions, "list-sessions", "l", false, "List available Gemini sessions in the sandbox and exit")
+	cmd.Flags().StringVarP(&flags.Resume, "resume", "r", "latest", "Resume a previous session by index or 'latest'")
+
 	return cmd
 }

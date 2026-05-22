@@ -23,6 +23,7 @@ type FixFlags struct {
 	Instruction     string
 	InstructionFile string
 	Name            string
+	NoPR            bool
 }
 
 func NewFixCommand(ctx context.Context) *cobra.Command {
@@ -63,7 +64,7 @@ func NewFixCommand(ctx context.Context) *cobra.Command {
 
 			ctx, cancel := context.WithTimeout(ctx, rootFlags.Timeout)
 			defer cancel()
-			return runFix(ctx, flags.URL, prompt, flags.Name)
+			return runFix(ctx, flags.URL, prompt, flags.Name, flags.NoPR)
 		},
 	}
 
@@ -71,11 +72,12 @@ func NewFixCommand(ctx context.Context) *cobra.Command {
 	cmd.Flags().StringVar(&flags.Instruction, "instruction", "", "Custom instruction for the fix task")
 	cmd.Flags().StringVar(&flags.InstructionFile, "instruction-file", "", "Path to a file containing custom instruction for the fix task")
 	cmd.Flags().StringVar(&flags.Name, "name", "", "Short name for the sandbox (required when URL is a repository URL without an issue number)")
+	cmd.Flags().BoolVar(&flags.NoPR, "no-pr", false, "Commit changes and push branch remotely, but do not create a pull request")
 
 	return cmd
 }
 
-func runFix(ctx context.Context, targetURL, prompt, name string) error {
+func runFix(ctx context.Context, targetURL, prompt, name string, noPR bool) error {
 	if targetURL == "" {
 		return fmt.Errorf("--url is required to determine the repository")
 	}
@@ -184,6 +186,7 @@ func runFix(ctx context.Context, targetURL, prompt, name string) error {
 		Models:        []string{"gemini-3.5-flash", "gemini-3-flash-preview", "gemini-3.1-pro-preview", "gemini-2.5-pro"},
 		DraftPR:       false,
 		PRLabel:       "factory",
+		NoPR:          noPR,
 	}
 
 	scriptBytes, err := tasks.GetFixIssueScript()
@@ -229,6 +232,7 @@ func runFix(ctx context.Context, targetURL, prompt, name string) error {
 		"GITHUB_USER_NAME":           githubLogin,
 		"BRANCH_NAME":                branchName,
 		"MODELS":                     "gemini-3.5-flash gemini-3-flash-preview gemini-3.1-pro-preview gemini-2.5-pro",
+		"NO_PR":                      strconv.FormatBool(noPR),
 	}
 
 	fmt.Println("Running fix-issue task via envd...")

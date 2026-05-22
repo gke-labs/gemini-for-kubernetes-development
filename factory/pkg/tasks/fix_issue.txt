@@ -16,13 +16,13 @@ Tips:
 * Where the issue references another issue or a PR, use the github MCP server to read that issue/PR too - there are often important details in those links.
 * Also use the github MCP tools to read related issues and PRs, and follow patterns established there.
 * If you get stuck, push a PR but start the PR title with "[WIP]".  Other people on github may have suggestions on how to proceed.  Some tasks are blocked on problems in other libraries, and we probably want to fix those in separate PRs anyway.
-* Do not forget to open your pull request using `gh` cli tool when you are done.  Just pushing the branch is not enough.
+{{ if .NoPR }}* Do NOT create a Pull Request. You MUST commit your changes and push your branch to "origin", but do not open a PR using gh.{{ else }}* Do not forget to open your pull request using `gh` cli tool when you are done.  Just pushing the branch is not enough.
 {{ if .DraftPR }}* You MUST create the PR as a **draft** PR. Use `gh pr create --draft` when creating the PR.{{ end }}
-{{ if .PRLabel }}* You MUST label the PR `{{ .PRLabel }}` `gh pr edit <PR_NUMBER> --add-label "{{ .PRLabel }}"` or  `gh pr create --label "{{ .PRLabel }}"`{{ end }}
+{{ if .PRLabel }}* You MUST label the PR `{{ .PRLabel }}` `gh pr edit <PR_NUMBER> --add-label "{{ .PRLabel }}"` or  `gh pr create --label "{{ .PRLabel }}"`{{ end }}{{ end }}
 * The year is 2026.  Copyright headers on new files should use 2026.
 
 Final Steps:
-* After you have created the PR, you MUST summarize the design decisions you made. Explain the rationale behind your changes and any alternatives you considered. This summary is for the human reviewer reading the agent logs.
+* After you have finished, you MUST summarize the design decisions you made. Explain the rationale behind your changes and any alternatives you considered. This summary is for the human reviewer reading the agent logs.
 
 ---
 
