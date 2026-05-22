@@ -404,6 +404,10 @@ func NewSandboxChatCommand(ctx context.Context) *cobra.Command {
 				detectRepoScript = fmt.Sprintf(`if [ -d "%s" ]; then cd "%s"; else REPO_DIR=$(find /workspaces -maxdepth 2 -name .git 2>/dev/null | head -1 | sed 's|/.git||'); if [ -n "$REPO_DIR" ]; then cd "$REPO_DIR"; else cd /workspaces; fi; fi;`, repoDir, repoDir)
 			}
 
+			// Backup session files before running Gemini CLI, and restore them afterward if Gemini deletes them on exit due to inactivity
+			backupScript := `CHAT_DIR="/root/.gemini/tmp/$(basename "$PWD")/chats"; if [ -d "$CHAT_DIR" ]; then mkdir -p "$CHAT_DIR/backup"; cp "$CHAT_DIR"/*.jsonl "$CHAT_DIR/backup/" 2>/dev/null || true; fi;`
+			restoreScript := `if [ -d "$CHAT_DIR/backup" ]; then cp -n "$CHAT_DIR/backup"/*.jsonl "$CHAT_DIR/" 2>/dev/null || true; fi;`
+
 			if flags.ListSessions {
 				fmt.Printf("Listing Gemini sessions in sandbox '%s'...\n", sandboxName)
 				execCmd := fmt.Sprintf("%s GEMINI_API_KEY='%s' gemini --list-sessions", detectRepoScript, geminiKey)
@@ -418,7 +422,7 @@ func NewSandboxChatCommand(ctx context.Context) *cobra.Command {
 			}
 
 			fmt.Printf("Connecting to Gemini chat session (resume: %s) in sandbox '%s'...\n", flags.Resume, sandboxName)
-			execCmd := fmt.Sprintf("%s GEMINI_API_KEY='%s' gemini --resume %s", detectRepoScript, geminiKey, flags.Resume)
+			execCmd := fmt.Sprintf("%s %s GEMINI_API_KEY='%s' gemini --resume %s; %s", detectRepoScript, backupScript, geminiKey, flags.Resume, restoreScript)
 			cmd := exec.CommandContext(ctx, "kubectl", "exec", "-it", "-n", rootFlags.Namespace, podName, "-c", "sandbox", "--", "sh", "-c", execCmd)
 			cmd.Stdin = os.Stdin
 			cmd.Stdout = os.Stdout
