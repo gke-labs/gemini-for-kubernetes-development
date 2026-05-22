@@ -439,4 +439,3 @@ func NewSandboxChatCommand(ctx context.Context) *cobra.Command {
 
 	return cmd
 }
-
