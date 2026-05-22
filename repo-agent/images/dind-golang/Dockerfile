@@ -57,7 +57,8 @@ RUN apt-get update && \
     sudo \
     helm \
     build-essential \
-    google-cloud-cli
+    google-cloud-cli \
+    ripgrep
 
 # ------- Install go -------
 ENV GO_VERSION=1.26.1
