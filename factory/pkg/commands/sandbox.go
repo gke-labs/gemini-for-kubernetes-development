@@ -385,9 +385,12 @@ func NewSandboxChatCommand(ctx context.Context) *cobra.Command {
 				return fmt.Errorf("getting sandbox pod: %w", err)
 			}
 
+			// Auto-detect git repository directory to ensure Gemini CLI locates project sessions correctly
+			detectRepoScript := `REPO_DIR=$(find /workspaces -maxdepth 2 -name .git 2>/dev/null | head -1 | sed 's|/.git||'); if [ -n "$REPO_DIR" ]; then cd "$REPO_DIR"; else cd /workspaces; fi;`
+
 			if flags.ListSessions {
 				fmt.Printf("Listing Gemini sessions in sandbox '%s'...\n", sandboxName)
-				execCmd := fmt.Sprintf("GEMINI_API_KEY='%s' gemini --list-sessions", geminiKey)
+				execCmd := fmt.Sprintf("%s GEMINI_API_KEY='%s' gemini --list-sessions", detectRepoScript, geminiKey)
 				cmd := exec.CommandContext(ctx, "kubectl", "exec", "-it", "-n", rootFlags.Namespace, podName, "-c", "sandbox", "--", "sh", "-c", execCmd)
 				cmd.Stdin = os.Stdin
 				cmd.Stdout = os.Stdout
@@ -399,7 +402,7 @@ func NewSandboxChatCommand(ctx context.Context) *cobra.Command {
 			}
 
 			fmt.Printf("Connecting to Gemini chat session (resume: %s) in sandbox '%s'...\n", flags.Resume, sandboxName)
-			execCmd := fmt.Sprintf("GEMINI_API_KEY='%s' gemini --resume %s", geminiKey, flags.Resume)
+			execCmd := fmt.Sprintf("%s GEMINI_API_KEY='%s' gemini --resume %s", detectRepoScript, geminiKey, flags.Resume)
 			cmd := exec.CommandContext(ctx, "kubectl", "exec", "-it", "-n", rootFlags.Namespace, podName, "-c", "sandbox", "--", "sh", "-c", execCmd)
 			cmd.Stdin = os.Stdin
 			cmd.Stdout = os.Stdout
