@@ -385,8 +385,24 @@ func NewSandboxChatCommand(ctx context.Context) *cobra.Command {
 				return fmt.Errorf("getting sandbox pod: %w", err)
 			}
 
-			// Auto-detect git repository directory to ensure Gemini CLI locates project sessions correctly
+			manager := k8s.NewManager(kubeClient)
+			sb, err := manager.GetSandbox(ctx, rootFlags.Namespace, sandboxName)
+			if err != nil {
+				return fmt.Errorf("getting sandbox '%s': %w", sandboxName, err)
+			}
+
+			var repoDir string
+			if ann := sb.GetAnnotations(); ann != nil {
+				if r, ok := ann["repo"]; ok && r != "" {
+					repoDir = fmt.Sprintf("/workspaces/%s", r)
+				}
+			}
+
+			// Extract repo directory from Sandbox annotations if available, falling back to auto-detecting via find
 			detectRepoScript := `REPO_DIR=$(find /workspaces -maxdepth 2 -name .git 2>/dev/null | head -1 | sed 's|/.git||'); if [ -n "$REPO_DIR" ]; then cd "$REPO_DIR"; else cd /workspaces; fi;`
+			if repoDir != "" {
+				detectRepoScript = fmt.Sprintf(`if [ -d "%s" ]; then cd "%s"; else REPO_DIR=$(find /workspaces -maxdepth 2 -name .git 2>/dev/null | head -1 | sed 's|/.git||'); if [ -n "$REPO_DIR" ]; then cd "$REPO_DIR"; else cd /workspaces; fi; fi;`, repoDir, repoDir)
+			}
 
 			if flags.ListSessions {
 				fmt.Printf("Listing Gemini sessions in sandbox '%s'...\n", sandboxName)
