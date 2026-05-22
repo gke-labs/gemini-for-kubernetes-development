@@ -16,6 +16,7 @@
 import subprocess
 import sys
 import argparse
+import os
 
 from shared import utils
 
@@ -30,16 +31,49 @@ def main():
                         default=None)
     args = parser.parse_args()
 
-    working_dir = args.working_dir or utils.get_repo_root()
+    repo_root = utils.get_repo_root()
+    working_dir = args.working_dir or repo_root
     print(f"using working dir: {working_dir}")
 
-    # get the list of packages using go list ./...
-    go_list_cmd = ["go", "list", "./..."]
-    go_list_output = utils.check_output_go_command(go_list_cmd, cwd=working_dir, text=True)
-    packages = go_list_output.strip().split("\n")
+    packages = []
+    if working_dir == repo_root:
+        # Find all workspace modules and list their packages
+        try:
+            output = utils.check_output_go_command(["go", "list", "-m", "-f", "{{.Dir}}", "all"], cwd=repo_root, text=True)
+            mod_dirs = [line.strip() for line in output.strip().split("\n") if line.strip().startswith(repo_root)]
+        except Exception as e:
+            print(f"Warning: failed to list workspace modules: {e}")
+            mod_dirs = []
+
+        for mod_dir in mod_dirs:
+            if mod_dir == repo_root:
+                continue
+            
+            # Check if there are any .go files in this module
+            has_go = False
+            for root, dirs, files in os.walk(mod_dir):
+                if any(f.endswith(".go") for f in files):
+                    has_go = True
+                    break
+            if not has_go:
+                continue
+            
+            print(f"Finding packages in module: {mod_dir}")
+            go_list_cmd = ["go", "list", "./..."]
+            go_list_output = utils.check_output_go_command(go_list_cmd, cwd=mod_dir, text=True)
+            packages.extend([pkg.strip() for pkg in go_list_output.strip().split("\n") if pkg.strip()])
+    else:
+        # get the list of packages using go list ./...
+        go_list_cmd = ["go", "list", "./..."]
+        go_list_output = utils.check_output_go_command(go_list_cmd, cwd=working_dir, text=True)
+        packages = [pkg.strip() for pkg in go_list_output.strip().split("\n") if pkg.strip()]
 
     # Filter out the e2e packages
     filtered_packages = [pkg for pkg in packages if not "test/e2e" in pkg]
+
+    if not filtered_packages:
+        print("No packages to test.")
+        return 0
 
     result = utils.run_go_command(utils.go_tool_args(
         "gotestsum", f"--junitfile={working_dir}/bin/unit-junit.xml",
