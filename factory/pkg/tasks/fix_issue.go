@@ -30,6 +30,7 @@ type FixIssueParams struct {
 	Models        []string
 	DraftPR       bool
 	PRLabel       string
+	NoPR          bool
 }
 
 func GetFixIssueScript() ([]byte, error) {
