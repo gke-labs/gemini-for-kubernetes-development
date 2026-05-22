@@ -146,7 +146,9 @@ func (s *Server) handleTags(name string, w http.ResponseWriter, r *http.Request)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		log.Printf("failed to encode response: %v", err)
+	}
 }
 
 func (s *Server) handleBlobUpload(name string, w http.ResponseWriter, r *http.Request) {
@@ -350,7 +352,9 @@ func (s *Server) handleManifest(name string, w http.ResponseWriter, r *http.Requ
 		var manifest struct {
 			MediaType string `json:"mediaType"`
 		}
-		json.Unmarshal(data, &manifest)
+		if err := json.Unmarshal(data, &manifest); err != nil {
+			log.Printf("failed to unmarshal manifest to detect media type: %v", err)
+		}
 		if manifest.MediaType != "" {
 			w.Header().Set("Content-Type", manifest.MediaType)
 		} else {
@@ -361,7 +365,9 @@ func (s *Server) handleManifest(name string, w http.ResponseWriter, r *http.Requ
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
 
 		if r.Method == http.MethodGet {
-			w.Write(data)
+			if _, err := w.Write(data); err != nil {
+				log.Printf("failed to write manifest response: %v", err)
+			}
 		} else {
 			w.WriteHeader(http.StatusOK)
 		}
