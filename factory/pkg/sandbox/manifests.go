@@ -211,6 +211,7 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 	}
 	labels["sandbox"] = sandboxName
 	labels["sandbox-type"] = "review"
+	labels["factory.gemini.google.com/pr"] = fmt.Sprintf("%d", opt.PRNumber)
 
 	annotations := make(map[string]interface{})
 	for k, v := range opt.Annotations {

@@ -58,10 +58,45 @@ func EnsureFixSandbox(ctx context.Context, kubeClient *clients.KubernetesClient,
 	return name, nil
 }
 
+func AliasSandboxToPR(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, sandboxName string, prNum int) error {
+	unstructObj, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("getting sandbox %s: %w", sandboxName, err)
+	}
+
+	labels := unstructObj.GetLabels()
+	if labels == nil {
+		labels = make(map[string]string)
+	}
+	labels["factory.gemini.google.com/pr"] = fmt.Sprintf("%d", prNum)
+	unstructObj.SetLabels(labels)
+
+	annotations := unstructObj.GetAnnotations()
+	if annotations == nil {
+		annotations = make(map[string]string)
+	}
+	annotations["pr"] = fmt.Sprintf("%d", prNum)
+	unstructObj.SetAnnotations(annotations)
+
+	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Update(ctx, unstructObj, metav1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf("updating sandbox %s with PR alias: %w", sandboxName, err)
+	}
+	return nil
+}
+
 func EnsureReviewSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace string, prNum int, prTitle, prHTMLURL, prDiffURL, prCloneURL, image, diskSize string) (string, error) {
+	listOpts := metav1.ListOptions{
+		LabelSelector: fmt.Sprintf("factory.gemini.google.com/pr=%d", prNum),
+	}
+	sbs, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).List(ctx, listOpts)
+	if err == nil && len(sbs.Items) > 0 {
+		return sbs.Items[0].GetName(), nil
+	}
+
 	name := fmt.Sprintf("factory-pr-%d", prNum)
 
-	_, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err == nil {
 		return name, nil
 	}
