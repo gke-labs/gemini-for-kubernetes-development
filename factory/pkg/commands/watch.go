@@ -72,8 +72,6 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 	processedPRs := make(map[int]prWatchState)
 
 	checkRepo := func() {
-		acted := false
-
 		assigneeFilter := assignee
 		if assigneeFilter == "" {
 			assigneeFilter = "none"
@@ -96,7 +94,6 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				if lastProcessed, ok := processedIssues[num]; !ok || time.Since(lastProcessed) > 24*time.Hour {
 					fmt.Printf("\nFound assigned issue #%d (%s). Triggering fix...\n", num, issue.GetTitle())
 					processedIssues[num] = time.Now()
-					acted = true
 					issueURL := fmt.Sprintf("https://github.com/%s/%s/issues/%d", owner, repo, num)
 					if dryRun {
 						fmt.Printf("[DRYRUN] Would trigger fix for issue #%d: %s\n", num, issueURL)
@@ -150,7 +147,6 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 							lastSHA:          headSHA,
 							lastInvestigated: time.Now(),
 						}
-						acted = true
 						prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", owner, repo, num)
 						if dryRun {
 							fmt.Printf("[DRYRUN] Would trigger investigate for PR #%d: %s\n", num, prURL)
@@ -163,16 +159,13 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				}
 			}
 		}
-
-		if !acted {
-			fmt.Print(".")
-		}
 	}
 
 	// Run first check immediately
 	checkRepo()
 
 	for {
+		fmt.Printf("Sleeping for %s...\n", interval)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()

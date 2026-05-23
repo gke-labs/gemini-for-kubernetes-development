@@ -500,14 +500,21 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 	var lastInvestigatedTime time.Time
 	var lastCommentAddressedTime time.Time
 
-	checkPR := func() {
+	checkPR := func() bool {
 		pr, _, err := ghClient.PullRequests.Get(ctx, owner, repo, prNum)
 		if err != nil {
 			klog.Errorf("Failed to fetch PR #%d: %v", prNum, err)
-			return
+			return false
 		}
 
-		acted := false
+		if pr.GetMerged() {
+			fmt.Printf("\nPR #%d is merged. Stopping watch.\n", prNum)
+			return true
+		}
+		if pr.GetState() == "closed" {
+			fmt.Printf("\nPR #%d is closed. Stopping watch.\n", prNum)
+			return true
+		}
 
 		// Check 1: Check CI check runs and commit statuses
 		headSHA := pr.GetHead().GetSHA()
@@ -538,7 +545,6 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 				fmt.Printf("\nFound failing checks for PR #%d (SHA: %s). Triggering investigate...\n", prNum, headSHA[:7])
 				lastInvestigatedSHA = headSHA
 				lastInvestigatedTime = time.Now()
-				acted = true
 				if dryRun {
 					fmt.Printf("[DRYRUN] Would trigger investigate for PR #%d\n", prNum)
 				} else {
@@ -576,7 +582,6 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 				if hasNewComments {
 					fmt.Printf("\nFound new review comments for PR #%d. Triggering address-comments...\n", prNum)
 					lastCommentAddressedTime = time.Now()
-					acted = true
 					if dryRun {
 						fmt.Printf("[DRYRUN] Would trigger address-comments for PR #%d\n", prNum)
 					} else {
@@ -588,20 +593,23 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 			}
 		}
 
-		if !acted {
-			fmt.Print(".")
-		}
+		return false
 	}
 
 	// Run first check immediately
-	checkPR()
+	if checkPR() {
+		return nil
+	}
 
 	for {
+		fmt.Printf("Sleeping for %s...\n", interval)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			checkPR()
+			if checkPR() {
+				return nil
+			}
 		}
 	}
 }
