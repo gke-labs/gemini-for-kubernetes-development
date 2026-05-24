@@ -31,8 +31,9 @@ func NewPRCommand(ctx context.Context) *cobra.Command {
 }
 
 type InvestigateFlags struct {
-	PRURL  string
-	Prompt string
+	PRURL           string
+	Prompt          string
+	ContinueSession bool
 }
 
 func NewInvestigateCommand(ctx context.Context) *cobra.Command {
@@ -49,17 +50,18 @@ func NewInvestigateCommand(ctx context.Context) *cobra.Command {
 			}
 			ctx, cancel := context.WithTimeout(ctx, rootFlags.Timeout)
 			defer cancel()
-			return runInvestigate(ctx, flags.PRURL, flags.Prompt)
+			return runInvestigate(ctx, flags.PRURL, flags.Prompt, flags.ContinueSession)
 		},
 	}
 
 	cmd.Flags().StringVar(&flags.PRURL, "pr-url", "", "GitHub PR URL (e.g. https://github.com/owner/repo/pull/123)")
 	cmd.Flags().StringVar(&flags.Prompt, "prompt", "Investigate check failures for this PR", "Custom prompt for the investigate task")
+	cmd.Flags().BoolVar(&flags.ContinueSession, "continue-session", false, "Continue the Gemini session from previous runs in the sandbox")
 
 	return cmd
 }
 
-func runInvestigate(ctx context.Context, prURL, prompt string) error {
+func runInvestigate(ctx context.Context, prURL, prompt string, continueSession bool) error {
 	fmt.Printf("Resolving PR URL: %s...\n", prURL)
 
 	u, err := url.Parse(prURL)
@@ -214,6 +216,7 @@ func runInvestigate(ctx context.Context, prURL, prompt string) error {
 		"FAILED_RUNS":                strings.Join(failedRunIDs, " "),
 		"FAILED_PROW_RUNS":           strings.Join(failedProwRuns, " "),
 		"MODELS":                     "gemini-3.5-flash gemini-3-flash-preview gemini-3.1-pro-preview gemini-2.5-pro",
+		"GEMINI_CONTINUE_SESSION":    strconv.FormatBool(continueSession),
 	}
 
 	fmt.Println("Running investigate task via envd...")
@@ -227,8 +230,9 @@ func runInvestigate(ctx context.Context, prURL, prompt string) error {
 }
 
 type AddressCommentsFlags struct {
-	PRURL  string
-	Prompt string
+	PRURL           string
+	Prompt          string
+	ContinueSession bool
 }
 
 func NewAddressCommentsCommand(ctx context.Context) *cobra.Command {
@@ -245,17 +249,18 @@ func NewAddressCommentsCommand(ctx context.Context) *cobra.Command {
 			}
 			ctx, cancel := context.WithTimeout(ctx, rootFlags.Timeout)
 			defer cancel()
-			return runAddressComments(ctx, flags.PRURL, flags.Prompt)
+			return runAddressComments(ctx, flags.PRURL, flags.Prompt, flags.ContinueSession)
 		},
 	}
 
 	cmd.Flags().StringVar(&flags.PRURL, "pr-url", "", "GitHub PR URL (e.g. https://github.com/owner/repo/pull/123)")
 	cmd.Flags().StringVar(&flags.Prompt, "prompt", "Address review feedback for this PR", "Custom prompt for the address-comments task")
+	cmd.Flags().BoolVar(&flags.ContinueSession, "continue-session", false, "Continue the Gemini session from previous runs in the sandbox")
 
 	return cmd
 }
 
-func runAddressComments(ctx context.Context, prURL, prompt string) error {
+func runAddressComments(ctx context.Context, prURL, prompt string, continueSession bool) error {
 	fmt.Printf("Resolving PR URL: %s...\n", prURL)
 
 	u, err := url.Parse(prURL)
@@ -430,6 +435,7 @@ func runAddressComments(ctx context.Context, prURL, prompt string) error {
 		"GITHUB_USER_NAME":           githubLogin,
 		"PR_NUMBER":                  strconv.Itoa(prNum),
 		"MODELS":                     "gemini-3.5-flash gemini-3-flash-preview gemini-3.1-pro-preview gemini-2.5-pro",
+		"GEMINI_CONTINUE_SESSION":    strconv.FormatBool(continueSession),
 	}
 
 	fmt.Println("Running address-comments task via envd...")
@@ -443,9 +449,10 @@ func runAddressComments(ctx context.Context, prURL, prompt string) error {
 }
 
 type PRWatchFlags struct {
-	PRURL        string
-	PollInterval time.Duration
-	DryRun       bool
+	PRURL           string
+	PollInterval    time.Duration
+	DryRun          bool
+	ContinueSession bool
 }
 
 func NewPRWatchCommand(ctx context.Context) *cobra.Command {
@@ -460,19 +467,20 @@ func NewPRWatchCommand(ctx context.Context) *cobra.Command {
 			if flags.PRURL == "" {
 				return fmt.Errorf("--pr-url is required")
 			}
-			return runPRWatch(ctx, flags.PRURL, flags.PollInterval, flags.DryRun)
+			return runPRWatch(ctx, flags.PRURL, flags.PollInterval, flags.DryRun, flags.ContinueSession)
 		},
 	}
 
 	cmd.Flags().StringVar(&flags.PRURL, "pr-url", "", "GitHub PR URL (e.g. https://github.com/owner/repo/pull/123)")
 	cmd.Flags().DurationVar(&flags.PollInterval, "poll-interval", 2*time.Minute, "Polling interval")
 	cmd.Flags().BoolVar(&flags.DryRun, "dryrun", false, "Print actions without creating sandboxes or executing tasks")
+	cmd.Flags().BoolVar(&flags.ContinueSession, "continue-session", false, "Continue the Gemini session from previous runs in the sandbox")
 
 	return cmd
 }
 
-func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRun bool) error {
-	fmt.Printf("Starting PR watch for %s (poll interval: %s, dryRun: %v)...\n", prURL, interval, dryRun)
+func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRun, continueSession bool) error {
+	fmt.Printf("Starting PR watch for %s (poll interval: %s, dryRun: %v, continueSession: %v)...\n", prURL, interval, dryRun, continueSession)
 
 	u, err := url.Parse(prURL)
 	if err != nil {
@@ -500,14 +508,21 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 	var lastInvestigatedTime time.Time
 	var lastCommentAddressedTime time.Time
 
-	checkPR := func() {
+	checkPR := func() bool {
 		pr, _, err := ghClient.PullRequests.Get(ctx, owner, repo, prNum)
 		if err != nil {
 			klog.Errorf("Failed to fetch PR #%d: %v", prNum, err)
-			return
+			return false
 		}
 
-		acted := false
+		if pr.GetMerged() {
+			fmt.Printf("\nPR #%d is merged. Stopping watch.\n", prNum)
+			return true
+		}
+		if pr.GetState() == "closed" {
+			fmt.Printf("\nPR #%d is closed. Stopping watch.\n", prNum)
+			return true
+		}
 
 		// Check 1: Check CI check runs and commit statuses
 		headSHA := pr.GetHead().GetSHA()
@@ -538,11 +553,10 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 				fmt.Printf("\nFound failing checks for PR #%d (SHA: %s). Triggering investigate...\n", prNum, headSHA[:7])
 				lastInvestigatedSHA = headSHA
 				lastInvestigatedTime = time.Now()
-				acted = true
 				if dryRun {
 					fmt.Printf("[DRYRUN] Would trigger investigate for PR #%d\n", prNum)
 				} else {
-					if err := runInvestigate(ctx, prURL, "Investigate check failures for this PR"); err != nil {
+					if err := runInvestigate(ctx, prURL, "Investigate check failures for this PR", continueSession); err != nil {
 						klog.Errorf("Investigate failed: %v", err)
 					}
 				}
@@ -576,11 +590,10 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 				if hasNewComments {
 					fmt.Printf("\nFound new review comments for PR #%d. Triggering address-comments...\n", prNum)
 					lastCommentAddressedTime = time.Now()
-					acted = true
 					if dryRun {
 						fmt.Printf("[DRYRUN] Would trigger address-comments for PR #%d\n", prNum)
 					} else {
-						if err := runAddressComments(ctx, prURL, "Address review feedback for this PR"); err != nil {
+						if err := runAddressComments(ctx, prURL, "Address review feedback for this PR", continueSession); err != nil {
 							klog.Errorf("Address-comments failed: %v", err)
 						}
 					}
@@ -588,20 +601,23 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 			}
 		}
 
-		if !acted {
-			fmt.Print(".")
-		}
+		return false
 	}
 
 	// Run first check immediately
-	checkPR()
+	if checkPR() {
+		return nil
+	}
 
 	for {
+		fmt.Printf("Sleeping for %s...\n", interval)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			checkPR()
+			if checkPR() {
+				return nil
+			}
 		}
 	}
 }

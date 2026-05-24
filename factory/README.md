@@ -33,6 +33,7 @@ It spins up isolated development environments (`agents.x-k8s.io`), establishes d
 - **Zero Host Side-Effects**: No temporary file creation on your local machine. All scripts, prompts, and task logs are written directly to timestamped subdirectories inside the sandbox PVC (`/workspaces/tasks/fix-<timestamp>/`).
 - **Full Environment Injection**: The CLI dynamically resolves your GitHub credentials and Gemini API keys from Kubernetes Secrets and injects them directly into the `envd` execution environment via Connect-RPC `StartRequest`.
 - **Live Streaming & Logging**: Standard output and error are streamed live to your terminal while simultaneously being recorded into `execution.log` inside the sandbox.
+- **Label-Based Discovery & Session Continuity**: Sandboxes are dynamically aliased to Pull Requests via Kubernetes labels (`factory.gemini.google.com/pr`), allowing `pr watch`, `investigate`, and `address-comments` to reuse existing sandboxes (`fix-...`) and maintain full Gemini chat session history across PR workflows.
 
 ### Command Tree
 ```
@@ -140,7 +141,7 @@ Automatically spin up a sandbox, clone the repository, checkout a dedicated issu
 factory fix --url https://github.com/owner/repo/issues/1
 ```
 
-**Advanced Customization**: Override the default instruction, provide an instruction file, execute repository-level tasks without an issue, or push a branch without creating a PR:
+**Advanced Customization**: Override the default instruction, provide an instruction file, execute repository-level tasks without an issue, push a branch without creating a PR, or automatically transition to watching the created PR:
 ```bash
 factory fix \
   --url https://github.com/owner/repo/issues/1 \
@@ -164,8 +165,14 @@ factory fix \
 factory fix \
   --url https://github.com/owner/repo/issues/1 \
   --name refactor-auth \
-  --instruction "Refactor the auth package"
+  --instruction "Refactor the auth package" \
   --no-pr
+
+# Automatically alias the sandbox to the created PR and start watching it for CI failures or review feedback
+factory fix \
+  --url https://github.com/owner/repo/issues/1 \
+  --watch \
+  --poll-interval 1m
 ```
 
 ### Reviewing Pull Requests (`factory pr review`)
@@ -175,25 +182,25 @@ factory pr review --pr-url https://github.com/owner/repo/pull/1
 ```
 
 ### Investigating Check Failures (`factory pr investigate`)
-Spin up a review sandbox to analyze failed CI check logs, review previous investigation comments, and attempt to fix the failure or report root causes:
+Spin up a review sandbox to analyze failed CI check logs, review previous investigation comments, and attempt to fix the failure or report root causes. Use `--continue-session` to preserve LLM conversation history across multiple PR operations in the same sandbox:
 ```bash
-factory pr investigate --pr-url https://github.com/owner/repo/pull/1
+factory pr investigate --pr-url https://github.com/owner/repo/pull/1 --continue-session
 ```
 
 ### Addressing Review Comments (`factory pr address-comments`)
-Spin up a review sandbox to parse new review feedback and PR comments, execute code fixes, and push updated commits:
+Spin up a review sandbox to parse new review feedback and PR comments, execute code fixes, and push updated commits. Use `--continue-session` to maintain full Gemini chat context from previous fixes or investigations:
 ```bash
-factory pr address-comments --pr-url https://github.com/owner/repo/pull/1
+factory pr address-comments --pr-url https://github.com/owner/repo/pull/1 --continue-session
 ```
 
 ### Watching Pull Requests (`factory pr watch`)
-Continuously monitor a specific PR in the foreground, automatically triggering `investigate` on CI failures or `address-comments` on new review feedback:
+Continuously monitor a specific PR in the foreground, automatically triggering `investigate` on CI failures or `address-comments` on new review feedback. Use `--continue-session` to ensure all dispatched tasks inherit the ongoing chat session. The watch loop logs explicit sleep intervals and cleanly terminates when the PR is merged or closed:
 ```bash
-factory pr watch --pr-url https://github.com/owner/repo/pull/1 --poll-interval 1m
+factory pr watch --pr-url https://github.com/owner/repo/pull/1 --poll-interval 1m --continue-session
 ```
 
 ### Watching Repositories (`factory watch`)
-Continuously monitor a GitHub repository in the foreground for test failures or assigned issues, automatically dispatching `fix` or `investigate` tasks:
+Continuously monitor a GitHub repository in the foreground for test failures or assigned issues, automatically dispatching `fix` or `investigate` tasks. The watch loop logs explicit sleep intervals between repository polls:
 ```bash
 # Watch for assigned issues with specific labels
 factory watch --repo owner/repo --assignee "factory-bot" --labels "p0,urgent"

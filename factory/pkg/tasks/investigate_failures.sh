@@ -164,7 +164,11 @@ function runGemini {
     SUCCESS=false
     for MODEL in $MODELS_LIST; do
         echo "Trying model: $MODEL"
-        if (cd "/workspaces/${REPO_NAME}" && export GEMINI_API_KEY="${GEMINI_API_KEY}" && gemini --yolo --model "$MODEL" --output-format json < ${PROMPT_FILE} > "$(dirname "${PROMPT_FILE}")/gemini-output.json"); then
+        GEMINI_ARGS=("--yolo" "--model" "$MODEL" "--output-format" "json")
+        if [ "$GEMINI_CONTINUE_SESSION" = "true" ]; then
+            GEMINI_ARGS+=("--resume" "latest")
+        fi
+        if (cd "/workspaces/${REPO_NAME}" && export GEMINI_API_KEY="${GEMINI_API_KEY}" && gemini "${GEMINI_ARGS[@]}" < ${PROMPT_FILE} > "$(dirname "${PROMPT_FILE}")/gemini-output.json"); then
              echo "Gemini execution successful with model: $MODEL"
              SUCCESS=true
              break

@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/url"
@@ -16,6 +17,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/tasks"
 	"github.com/spf13/cobra"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/klog/v2"
 )
 
 type FixFlags struct {
@@ -24,6 +26,8 @@ type FixFlags struct {
 	InstructionFile string
 	Name            string
 	NoPR            bool
+	Watch           bool
+	PollInterval    time.Duration
 }
 
 func NewFixCommand(ctx context.Context) *cobra.Command {
@@ -64,7 +68,7 @@ func NewFixCommand(ctx context.Context) *cobra.Command {
 
 			ctx, cancel := context.WithTimeout(ctx, rootFlags.Timeout)
 			defer cancel()
-			return runFix(ctx, flags.URL, prompt, flags.Name, flags.NoPR)
+			return runFix(ctx, flags.URL, prompt, flags.Name, flags.NoPR, flags.Watch, flags.PollInterval)
 		},
 	}
 
@@ -73,11 +77,13 @@ func NewFixCommand(ctx context.Context) *cobra.Command {
 	cmd.Flags().StringVar(&flags.InstructionFile, "instruction-file", "", "Path to a file containing custom instruction for the fix task")
 	cmd.Flags().StringVar(&flags.Name, "name", "", "Short name for the sandbox (required when URL is a repository URL without an issue number)")
 	cmd.Flags().BoolVar(&flags.NoPR, "no-pr", false, "Commit changes and push branch remotely, but do not create a pull request")
+	cmd.Flags().BoolVar(&flags.Watch, "watch", false, "Watch the created pull request for check failures and new review comments")
+	cmd.Flags().DurationVar(&flags.PollInterval, "poll-interval", 2*time.Minute, "Polling interval for watching the PR")
 
 	return cmd
 }
 
-func runFix(ctx context.Context, targetURL, prompt, name string, noPR bool) error {
+func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch bool, pollInterval time.Duration) error {
 	if targetURL == "" {
 		return fmt.Errorf("--url is required to determine the repository")
 	}
@@ -242,5 +248,41 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR bool) erro
 	}
 
 	fmt.Println("\nTask execution completed.")
+
+	var buf bytes.Buffer
+	if err := client.Exec(ctx, fmt.Sprintf("cat %s/agent-output.txt", taskDir), "/workspaces", nil, nil, &buf, os.Stderr); err != nil {
+		klog.Warningf("Could not read agent-output.txt: %v", err)
+	}
+
+	var prURL string
+	var prNum int
+	for _, line := range strings.Split(buf.String(), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.Contains(line, "/pull/") {
+			prURL = line
+			parts := strings.Split(line, "/")
+			if len(parts) > 0 {
+				if n, err := strconv.Atoi(parts[len(parts)-1]); err == nil {
+					prNum = n
+					break
+				}
+			}
+		}
+	}
+
+	if prNum > 0 {
+		fmt.Printf("Aliasing sandbox %s to PR #%d...\n", sandboxName, prNum)
+		if err := factorysandbox.AliasSandboxToPR(ctx, kubeClient, rootFlags.Namespace, sandboxName, prNum); err != nil {
+			klog.Warningf("Failed to alias sandbox to PR #%d: %v", prNum, err)
+		}
+
+		if watch {
+			fmt.Printf("\nStarting PR watch for %s...\n", prURL)
+			return runPRWatch(ctx, prURL, pollInterval, false, true)
+		}
+	} else if watch {
+		fmt.Println("\nWarning: --watch was specified but could not determine PR URL from task output.")
+	}
+
 	return nil
 }
