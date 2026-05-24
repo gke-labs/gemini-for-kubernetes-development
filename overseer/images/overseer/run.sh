@@ -1,41 +1,43 @@
 #!/bin/bash
 set -e
 
-# Default prompt from files
-if [ -d "/workspaces/prompt" ]; then
-    PROMPT_FILE=$(mktemp)
-    cat /workspaces/prompt/01-header.txt >> "$PROMPT_FILE"
-    if [ "$ISSUE_MODE" != "disabled" ]; then
-        cat /workspaces/prompt/02-issue-handling.txt >> "$PROMPT_FILE"
+function constructPrompt {
+    if [ -d "/workspaces/prompt" ]; then
+        echo "$(date): Constructing prompt from /workspaces/prompt templates into /workspaces/current_prompt.txt..."
+        PROMPT_FILE="/workspaces/current_prompt.txt"
+        rm -f "$PROMPT_FILE"
+        cat /workspaces/prompt/01-header.txt >> "$PROMPT_FILE"
+        if [ "$ISSUE_MODE" != "disabled" ]; then
+            cat /workspaces/prompt/02-issue-handling.txt >> "$PROMPT_FILE"
+        fi
+        if [ "$PR_MODE" != "disabled" ]; then
+            cat /workspaces/prompt/03-pr-handling.txt >> "$PROMPT_FILE"
+        fi
+        if [ "$REVIEW_MODE" != "disabled" ]; then
+            cat /workspaces/prompt/03a-pr-review-handling.txt >> "$PROMPT_FILE"
+        fi
+        if [ "$CHORES_MODE" != "disabled" ]; then
+            cat /workspaces/prompt/04-chores.txt >> "$PROMPT_FILE"
+        fi
+        cat /workspaces/prompt/05-examples-header.txt >> "$PROMPT_FILE"
+        if [ "$ISSUE_MODE" != "disabled" ]; then
+            cat /workspaces/prompt/06-examples-issues.txt >> "$PROMPT_FILE"
+        fi
+        if [ "$PR_MODE" != "disabled" ]; then
+            cat /workspaces/prompt/06a-examples-prs.txt >> "$PROMPT_FILE"
+        fi
+        if [ "$REVIEW_MODE" != "disabled" ]; then
+            cat /workspaces/prompt/06b-examples-prs-review.txt >> "$PROMPT_FILE"
+        fi
+        if [ "$CHORES_MODE" != "disabled" ]; then
+            cat /workspaces/prompt/07-examples-chores.txt >> "$PROMPT_FILE"
+        fi
+        cat /workspaces/prompt/08-footer.txt >> "$PROMPT_FILE"
+        PROMPT=$(cat "$PROMPT_FILE")
+    else
+        PROMPT="${AGENT_PROMPT:-You are the Overseer. Monitor the repository and orchestrate agents.}"
     fi
-    if [ "$PR_MODE" != "disabled" ]; then
-        cat /workspaces/prompt/03-pr-handling.txt >> "$PROMPT_FILE"
-    fi
-    if [ "$REVIEW_MODE" != "disabled" ]; then
-        cat /workspaces/prompt/03a-pr-review-handling.txt >> "$PROMPT_FILE"
-    fi
-    if [ "$CHORES_MODE" != "disabled" ]; then
-        cat /workspaces/prompt/04-chores.txt >> "$PROMPT_FILE"
-    fi
-    cat /workspaces/prompt/05-examples-header.txt >> "$PROMPT_FILE"
-    if [ "$ISSUE_MODE" != "disabled" ]; then
-        cat /workspaces/prompt/06-examples-issues.txt >> "$PROMPT_FILE"
-    fi
-    if [ "$PR_MODE" != "disabled" ]; then
-        cat /workspaces/prompt/06a-examples-prs.txt >> "$PROMPT_FILE"
-    fi
-    if [ "$REVIEW_MODE" != "disabled" ]; then
-        cat /workspaces/prompt/06b-examples-prs-review.txt >> "$PROMPT_FILE"
-    fi
-    if [ "$CHORES_MODE" != "disabled" ]; then
-        cat /workspaces/prompt/07-examples-chores.txt >> "$PROMPT_FILE"
-    fi
-    cat /workspaces/prompt/08-footer.txt >> "$PROMPT_FILE"
-    PROMPT=$(cat "$PROMPT_FILE")
-    rm -f "$PROMPT_FILE"
-else
-    PROMPT="${AGENT_PROMPT:-You are the Overseer. Monitor the repository and orchestrate agents.}"
-fi
+}
 
 if [ -z "$REPO_URL" ]; then
   echo "REPO_URL environment variable is not set"
@@ -183,6 +185,9 @@ while true; do
       echo "$(date): running overseer-cli admin chore reconcile ..."
       overseer-cli admin chore reconcile || true
     fi
+
+    # Construct / refresh prompt for this cycle
+    constructPrompt
 
     # Run gemini
     GEMINI_ERR=$(mktemp)
