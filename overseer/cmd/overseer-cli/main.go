@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"math/rand"
 	"net/url"
@@ -57,14 +58,24 @@ var (
 )
 
 func main() {
-	klog.InitFlags(nil)
-
 	overseerName = os.Getenv("OVERSEER_NAME")
 	namespace = os.Getenv("NAMESPACE")
 
 	rootCmd := &cobra.Command{
 		Use:   "overseer-cli",
 		Short: "CLI for Overseer to manage sandboxes and tasks",
+	}
+
+	// Add some klog flags to all commands
+	{
+		goflags := flag.NewFlagSet("goflags", flag.ExitOnError)
+		klog.InitFlags(goflags)
+		goflags.VisitAll(func(f *flag.Flag) {
+			switch f.Name {
+			case "v":
+				rootCmd.PersistentFlags().AddGoFlag(f)
+			}
+		})
 	}
 
 	rootCmd.PersistentFlags().StringVar(&namespace, "namespace", namespace, "Kubernetes namespace (defaults to $NAMESPACE env var, or deduced from git origin remote)")
