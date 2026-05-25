@@ -88,8 +88,18 @@ EOF
 function setupGitRepos {
     echo "Running setupGitRepos..."
     
-    echo "cloning repository"
-    (cd /workspaces/ && git clone ${CLONE_URL})
+    # Check if repo already exists (reuse sandbox case)
+    if [ ! -d "/workspaces/${REPO_NAME}" ]; then
+        echo "cloning repository"
+        (cd /workspaces/ && git clone ${CLONE_URL})
+    else
+        echo "repository already exists, cleaning up previous git state..."
+        (cd "/workspaces/${REPO_NAME}" && git rebase --abort 2>/dev/null || true)
+        (cd "/workspaces/${REPO_NAME}" && git merge --abort 2>/dev/null || true)
+        (cd "/workspaces/${REPO_NAME}" && git cherry-pick --abort 2>/dev/null || true)
+        (cd "/workspaces/${REPO_NAME}" && git reset --hard HEAD && git clean -fd)
+        (cd "/workspaces/${REPO_NAME}" && git fetch origin)
+    fi
 
     (cd "/workspaces/${REPO_NAME}" && gh repo fork --remote)
     echo "running gh repo fork"
@@ -128,6 +138,11 @@ function checkForExistingPR {
         echo $pr_url
 
         echo "Found existing PR #${pr_number}"
+        git rebase --abort 2>/dev/null || true
+        git merge --abort 2>/dev/null || true
+        git cherry-pick --abort 2>/dev/null || true
+        git reset --hard HEAD
+        git clean -fd
         /usr/bin/gh pr checkout "$pr_number"
 
         local output_file="$(dirname "${PROMPT_FILE}")/agent-output.txt"
@@ -147,7 +162,10 @@ function checkoutNewBranch {
     {{- if .Branch }}
     branch_name="{{ .Branch }}"
     {{- end }}
-    (cd "/workspaces/${REPO_NAME}" && git checkout -B "$branch_name")
+    (cd "/workspaces/${REPO_NAME}" && git rebase --abort 2>/dev/null || true)
+    (cd "/workspaces/${REPO_NAME}" && git merge --abort 2>/dev/null || true)
+    (cd "/workspaces/${REPO_NAME}" && git cherry-pick --abort 2>/dev/null || true)
+    (cd "/workspaces/${REPO_NAME}" && git reset --hard HEAD && git clean -fd && git checkout -B "$branch_name")
 }
 
 function configureGemini {

@@ -93,7 +93,11 @@ function setupGitRepos {
         # Ensure we have all branches from upstream
         (cd "/workspaces/${REPO_NAME}" && git fetch upstream && git fetch origin)
     else
-        echo "repository already exists, fetching latest changes..."
+        echo "repository already exists, cleaning up previous git state and fetching latest changes..."
+        (cd "/workspaces/${REPO_NAME}" && git rebase --abort 2>/dev/null || true)
+        (cd "/workspaces/${REPO_NAME}" && git merge --abort 2>/dev/null || true)
+        (cd "/workspaces/${REPO_NAME}" && git cherry-pick --abort 2>/dev/null || true)
+        (cd "/workspaces/${REPO_NAME}" && git reset --hard HEAD && git clean -fd)
         (cd "/workspaces/${REPO_NAME}" && git fetch origin && git fetch upstream)
     fi
 }
@@ -101,6 +105,11 @@ function setupGitRepos {
 function checkoutBranch {
     echo "Running checkoutBranch..."
     cd "/workspaces/${REPO_NAME}"
+    git rebase --abort 2>/dev/null || true
+    git merge --abort 2>/dev/null || true
+    git cherry-pick --abort 2>/dev/null || true
+    git reset --hard HEAD
+    git clean -fd
     
     # Check if branch exists locally
     if git show-ref --verify --quiet "refs/heads/${BRANCH_NAME}"; then

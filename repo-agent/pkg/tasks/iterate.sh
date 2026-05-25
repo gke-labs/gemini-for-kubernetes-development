@@ -93,6 +93,12 @@ function setupGitRepos {
     if [ ! -d "/workspaces/${REPO_NAME}" ]; then
         echo "cloning repository"
         (cd /workspaces/ && git clone ${CLONE_URL})
+    else
+        echo "repository already exists, cleaning up previous git state..."
+        (cd "/workspaces/${REPO_NAME}" && git rebase --abort 2>/dev/null || true)
+        (cd "/workspaces/${REPO_NAME}" && git merge --abort 2>/dev/null || true)
+        (cd "/workspaces/${REPO_NAME}" && git cherry-pick --abort 2>/dev/null || true)
+        (cd "/workspaces/${REPO_NAME}" && git reset --hard HEAD && git clean -fd)
     fi
 
     echo "running gh repo fork --remote"
@@ -110,10 +116,16 @@ function setupGitRepos {
 
     if [ -n "$PRID" ] && [ "$PRID" != "null" ]; then
         echo "Checking out PR $PRID"
-        (cd "/workspaces/${REPO_NAME}" && /usr/bin/gh pr checkout "$PRID")
+        (cd "/workspaces/${REPO_NAME}" && git rebase --abort 2>/dev/null || true)
+        (cd "/workspaces/${REPO_NAME}" && git merge --abort 2>/dev/null || true)
+        (cd "/workspaces/${REPO_NAME}" && git cherry-pick --abort 2>/dev/null || true)
+        (cd "/workspaces/${REPO_NAME}" && git reset --hard HEAD && git clean -fd && /usr/bin/gh pr checkout "$PRID")
     elif [ -n "$BRANCH_NAME" ]; then
         echo "Checking out branch $BRANCH_NAME"
-        (cd "/workspaces/${REPO_NAME}" && git checkout "$BRANCH_NAME")
+        (cd "/workspaces/${REPO_NAME}" && git rebase --abort 2>/dev/null || true)
+        (cd "/workspaces/${REPO_NAME}" && git merge --abort 2>/dev/null || true)
+        (cd "/workspaces/${REPO_NAME}" && git cherry-pick --abort 2>/dev/null || true)
+        (cd "/workspaces/${REPO_NAME}" && git reset --hard HEAD && git clean -fd && git checkout "$BRANCH_NAME")
     fi
 
     echo "waiting for checkout to be ready (branch check)"

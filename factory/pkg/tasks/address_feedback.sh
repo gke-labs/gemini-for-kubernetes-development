@@ -81,7 +81,11 @@ function setupGitRepos {
         echo "cloning repository"
         (cd /workspaces/ && git clone ${CLONE_URL})
     else
-        echo "repository already exists"
+        echo "repository already exists, cleaning up previous git state..."
+        (cd "/workspaces/${REPO_NAME}" && git rebase --abort 2>/dev/null || true)
+        (cd "/workspaces/${REPO_NAME}" && git merge --abort 2>/dev/null || true)
+        (cd "/workspaces/${REPO_NAME}" && git cherry-pick --abort 2>/dev/null || true)
+        (cd "/workspaces/${REPO_NAME}" && git reset --hard HEAD && git clean -fd)
         # Optional: fetch latest changes
         (cd "/workspaces/${REPO_NAME}" && git fetch origin)
     fi
@@ -96,6 +100,9 @@ function setupGitRepos {
 function checkoutPRBranch {
     echo "Running checkoutPRBranch..."
     echo "checking out PR #${PR_NUMBER}"
+    (cd "/workspaces/${REPO_NAME}" && git rebase --abort 2>/dev/null || true)
+    (cd "/workspaces/${REPO_NAME}" && git merge --abort 2>/dev/null || true)
+    (cd "/workspaces/${REPO_NAME}" && git cherry-pick --abort 2>/dev/null || true)
     (cd "/workspaces/${REPO_NAME}" && git reset --hard HEAD && git clean -fd && /usr/bin/gh pr checkout ${PR_NUMBER} && git pull origin HEAD)
 }
 
