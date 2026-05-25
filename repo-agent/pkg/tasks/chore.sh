@@ -71,7 +71,12 @@ EOF
 function setupGitRepos {
     echo "Running setupGitRepos..."
     if [ -d "/workspaces/${REPO_NAME}" ]; then
-        echo "Repository already exists at /workspaces/${REPO_NAME}"
+        echo "Repository already exists at /workspaces/${REPO_NAME}, cleaning up previous git state..."
+        (cd "/workspaces/${REPO_NAME}" && git rebase --abort 2>/dev/null || true)
+        (cd "/workspaces/${REPO_NAME}" && git merge --abort 2>/dev/null || true)
+        (cd "/workspaces/${REPO_NAME}" && git cherry-pick --abort 2>/dev/null || true)
+        (cd "/workspaces/${REPO_NAME}" && git reset --hard HEAD && git clean -fd)
+        (cd "/workspaces/${REPO_NAME}" && git fetch origin)
         return
     fi
     
@@ -233,6 +238,11 @@ function runChore {
     BRANCH_NAME="chore/${SLUGIFIED_NAME}-$(date +%Y%m%d-%H%M%S)"
     
     # start from base branch
+    git rebase --abort 2>/dev/null || true
+    git merge --abort 2>/dev/null || true
+    git cherry-pick --abort 2>/dev/null || true
+    git reset --hard HEAD
+    git clean -fd
     git checkout "${BASE_BRANCH}"
     git checkout -b "${BRANCH_NAME}"
 

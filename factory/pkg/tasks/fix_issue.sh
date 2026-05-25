@@ -83,7 +83,11 @@ function setupGitRepos {
         echo "cloning repository"
         (cd /workspaces/ && git clone ${CLONE_URL})
     else
-        echo "repository already exists"
+        echo "repository already exists, cleaning up previous git state..."
+        (cd "/workspaces/${REPO_NAME}" && git rebase --abort 2>/dev/null || true)
+        (cd "/workspaces/${REPO_NAME}" && git merge --abort 2>/dev/null || true)
+        (cd "/workspaces/${REPO_NAME}" && git cherry-pick --abort 2>/dev/null || true)
+        (cd "/workspaces/${REPO_NAME}" && git reset --hard HEAD && git clean -fd)
         # Optional: fetch latest changes
         (cd "/workspaces/${REPO_NAME}" && git fetch origin)
     fi
@@ -132,6 +136,11 @@ function checkForExistingPR {
         echo $pr_url
 
         echo "Found existing PR #${pr_number}"
+        git rebase --abort 2>/dev/null || true
+        git merge --abort 2>/dev/null || true
+        git cherry-pick --abort 2>/dev/null || true
+        git reset --hard HEAD
+        git clean -fd
         /usr/bin/gh pr checkout "$pr_number"
 
         local output_file="$(dirname "${PROMPT_FILE}")/agent-output.txt"
@@ -148,6 +157,9 @@ function checkoutNewBranch {
     echo "Running checkoutNewBranch..."
     echo "creating new branch"
     local branch_name="${BRANCH_NAME:-issue-${ISSUE_NUMBER}}"
+    (cd "/workspaces/${REPO_NAME}" && git rebase --abort 2>/dev/null || true)
+    (cd "/workspaces/${REPO_NAME}" && git merge --abort 2>/dev/null || true)
+    (cd "/workspaces/${REPO_NAME}" && git cherry-pick --abort 2>/dev/null || true)
     (cd "/workspaces/${REPO_NAME}" && git reset --hard HEAD && git clean -fd && git checkout -B "$branch_name")
 }
 
