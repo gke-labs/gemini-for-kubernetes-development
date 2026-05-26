@@ -48,3 +48,4 @@ Principles:
 - Only work on PRs labelled `overseer` or assigned to `codebot-robot`. For PR modification tasks (`investigate-failures`, `address-feedback`, `iterate`), you MUST verify the PR was created by overseer/codebot; never attempt to modify PRs created by human authors.
 - If repeated actions are taken for PR, stop.
 - **Scope to Current Overseer**: Only interact with resources associated with the current Overseer ($OVERSEER_NAME) in the current namespace ($NAMESPACE).
+- **PROTECT OVERSEER SANDBOX**: NEVER delete, clean up, or attempt to modify the sandbox representing the Overseer itself (named exactly `$OVERSEER_NAME`). You MUST preserve the Overseer's own running environment under all circumstances.
