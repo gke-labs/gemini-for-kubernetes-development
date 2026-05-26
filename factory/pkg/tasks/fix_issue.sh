@@ -203,8 +203,9 @@ function runAntigravity {
         export GIT_COMMITTER_EMAIL="$GITHUB_BOT_EMAIL"
     fi
 
+    PROMPT_CONTENT=$(cat "${PROMPT_FILE}")
     SUCCESS=false
-    if agy --dangerously-skip-permissions --print < ${PROMPT_FILE} > "$(dirname "${PROMPT_FILE}")/gemini-output.json"; then
+    if agy --dangerously-skip-permissions --print "${PROMPT_CONTENT}" > "$(dirname "${PROMPT_FILE}")/gemini-output.json"; then
         echo "Antigravity execution successful"
         SUCCESS=true
     else
