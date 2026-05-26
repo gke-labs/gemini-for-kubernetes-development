@@ -225,20 +225,22 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch boo
 	}
 
 	envMap := map[string]string{
-		"GITHUB_TOKEN":               string(secret.Data[KeyGithubToken]),
-		"GEMINI_API_KEY":             string(secret.Data[KeyGeminiAPIKey]),
-		"GEMINI_CLI_TRUST_WORKSPACE": "true",
-		"REPO_OWNER":                 owner,
-		"REPO_NAME":                  repo,
-		"CLONE_URL":                  cloneURL,
-		"ISSUE_NUMBER":               strconv.Itoa(issueNum),
-		"PROMPT_FILE":                promptPath,
-		"GITHUB_USER_ID":             githubLogin,
-		"GITHUB_USER_EMAIL":          githubEmail,
-		"GITHUB_USER_NAME":           githubLogin,
-		"BRANCH_NAME":                branchName,
-		"MODELS":                     "gemini-3.5-flash gemini-3-flash-preview gemini-3.1-pro-preview gemini-2.5-pro",
-		"NO_PR":                      strconv.FormatBool(noPR),
+		"GITHUB_TOKEN":                    string(secret.Data[KeyGithubToken]),
+		"GEMINI_API_KEY":                  string(secret.Data[KeyGeminiAPIKey]),
+		"ANTIGRAVITY_API_KEY":             string(secret.Data[KeyGeminiAPIKey]),
+		"GEMINI_CLI_TRUST_WORKSPACE":      "true",
+		"ANTIGRAVITY_CLI_TRUST_WORKSPACE": "true",
+		"REPO_OWNER":                      owner,
+		"REPO_NAME":                       repo,
+		"CLONE_URL":                       cloneURL,
+		"ISSUE_NUMBER":                    strconv.Itoa(issueNum),
+		"PROMPT_FILE":                     promptPath,
+		"GITHUB_USER_ID":                  githubLogin,
+		"GITHUB_USER_EMAIL":               githubEmail,
+		"GITHUB_USER_NAME":                githubLogin,
+		"BRANCH_NAME":                     branchName,
+		"MODELS":                          "gemini-3.5-flash gemini-3-flash-preview gemini-3.1-pro-preview gemini-2.5-pro",
+		"NO_PR":                           strconv.FormatBool(noPR),
 	}
 
 	fmt.Println("Running fix-issue task via envd...")

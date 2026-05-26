@@ -358,7 +358,7 @@ func NewSandboxChatCommand(ctx context.Context) *cobra.Command {
 	var flags SandboxChatFlags
 	cmd := &cobra.Command{
 		Use:   "chat [sandbox-name]",
-		Short: "Connect to a sandbox and resume a Gemini CLI chat session",
+		Short: "Connect to a sandbox and resume an Antigravity CLI chat session",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			sandboxName := args[0]
@@ -404,13 +404,13 @@ func NewSandboxChatCommand(ctx context.Context) *cobra.Command {
 				detectRepoScript = fmt.Sprintf(`if [ -d "%s" ]; then cd "%s"; else REPO_DIR=$(find /workspaces -maxdepth 2 -name .git 2>/dev/null | head -1 | sed 's|/.git||'); if [ -n "$REPO_DIR" ]; then cd "$REPO_DIR"; else cd /workspaces; fi; fi;`, repoDir, repoDir)
 			}
 
-			// Backup session files before running Gemini CLI, and restore them afterward if Gemini deletes them on exit due to inactivity
-			backupScript := `CHAT_DIR="/root/.gemini/tmp/$(basename "$PWD")/chats"; if [ -d "$CHAT_DIR" ]; then mkdir -p "$CHAT_DIR/backup"; cp "$CHAT_DIR"/*.jsonl "$CHAT_DIR/backup/" 2>/dev/null || true; fi;`
+			// Backup session files before running Antigravity CLI, and restore them afterward if Antigravity deletes them on exit due to inactivity
+			backupScript := `CHAT_DIR="/root/.gemini/antigravity-cli/tmp/$(basename "$PWD")/chats"; if [ ! -d "$CHAT_DIR" ]; then CHAT_DIR="/root/.gemini/tmp/$(basename "$PWD")/chats"; fi; if [ -d "$CHAT_DIR" ]; then mkdir -p "$CHAT_DIR/backup"; cp "$CHAT_DIR"/*.jsonl "$CHAT_DIR/backup/" 2>/dev/null || true; fi;`
 			restoreScript := `if [ -d "$CHAT_DIR/backup" ]; then cp -n "$CHAT_DIR/backup"/*.jsonl "$CHAT_DIR/" 2>/dev/null || true; fi;`
 
 			if flags.ListSessions {
-				fmt.Printf("Listing Gemini sessions in sandbox '%s'...\n", sandboxName)
-				execCmd := fmt.Sprintf("%s GEMINI_API_KEY='%s' gemini --list-sessions", detectRepoScript, geminiKey)
+				fmt.Printf("Listing Antigravity sessions in sandbox '%s'...\n", sandboxName)
+				execCmd := fmt.Sprintf("%s GEMINI_API_KEY='%s' ANTIGRAVITY_API_KEY='%s' agy --list-sessions", detectRepoScript, geminiKey, geminiKey)
 				cmd := exec.CommandContext(ctx, "kubectl", "exec", "-it", "-n", rootFlags.Namespace, podName, "-c", "sandbox", "--", "sh", "-c", execCmd)
 				cmd.Stdin = os.Stdin
 				cmd.Stdout = os.Stdout
@@ -421,20 +421,20 @@ func NewSandboxChatCommand(ctx context.Context) *cobra.Command {
 				return nil
 			}
 
-			fmt.Printf("Connecting to Gemini chat session (resume: %s) in sandbox '%s'...\n", flags.Resume, sandboxName)
-			execCmd := fmt.Sprintf("%s %s GEMINI_API_KEY='%s' gemini --resume %s; %s", detectRepoScript, backupScript, geminiKey, flags.Resume, restoreScript)
+			fmt.Printf("Connecting to Antigravity chat session (resume: %s) in sandbox '%s'...\n", flags.Resume, sandboxName)
+			execCmd := fmt.Sprintf("%s %s GEMINI_API_KEY='%s' ANTIGRAVITY_API_KEY='%s' agy --resume %s; %s", detectRepoScript, backupScript, geminiKey, geminiKey, flags.Resume, restoreScript)
 			cmd := exec.CommandContext(ctx, "kubectl", "exec", "-it", "-n", rootFlags.Namespace, podName, "-c", "sandbox", "--", "sh", "-c", execCmd)
 			cmd.Stdin = os.Stdin
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 			if err := cmd.Run(); err != nil {
-				return fmt.Errorf("gemini session exited: %w", err)
+				return fmt.Errorf("antigravity session exited: %w", err)
 			}
 			return nil
 		},
 	}
 
-	cmd.Flags().BoolVarP(&flags.ListSessions, "list-sessions", "l", false, "List available Gemini sessions in the sandbox and exit")
+	cmd.Flags().BoolVarP(&flags.ListSessions, "list-sessions", "l", false, "List available Antigravity sessions in the sandbox and exit")
 	cmd.Flags().StringVarP(&flags.Resume, "resume", "r", "latest", "Resume a previous session by index or 'latest'")
 
 	return cmd
