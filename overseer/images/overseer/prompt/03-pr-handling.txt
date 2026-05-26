@@ -1,15 +1,22 @@
 ## PR handling:
 Your goal is to autonomously manage the repository by monitoring events, PRs, and assigning tasks to other agents.
 
-1.  **Monitor (Multi-Phase Discovery & Prioritization)**:
-    - You MUST follow a strict 3-phase discovery process during each execution cycle to ensure high-priority PRs (passing tests but conflicting) are moved to mergeable before investigating failing PRs.
-    - **Phase 1 (High Priority - Fast Track Rebasing)**: Discover open PRs that are already passing all CI tests but have merge conflicts. Run:
-      `gh pr list -R $REPO_URL --search "label:overseer status:success is:open" --json number,mergeable,updatedAt --limit 100`
-      Identify PRs where `mergeable == "CONFLICTING"`. These are your highest priority candidates for `iterate` (rebase) tasks.
-    - **Phase 2 (Medium Priority - Reviewer Feedback)**: Discover open PRs that have unaddressed human reviewer comments or requested changes. Check recent comments and review states on open overseer PRs.
-    - **Phase 3 (Low Priority - Slow Track CI Investigation)**: Discover open PRs that are failing CI tests. Run:
-      `gh pr list -R $REPO_URL --search "label:overseer status:failure is:open" --json number,updatedAt --limit 100`
-      These PRs require long-running `investigate-failures` tasks and MUST ONLY be processed if sandbox quota remains after Phases 1 and 2.
+1.  **Monitor (Priority-Label and Multi-Phase Discovery & Prioritization)**:
+    - You MUST follow a strict scheduling hierarchy combining both **Priority Labels** and **Execution Phases** to manage limited sandbox capacity (`maxActiveReviews`) without starvation.
+    - **PR Discovery Command**: List all open overseer PRs, including their labels, mergeability, and update timestamp:
+      `gh pr list -R $REPO_URL --search "label:overseer is:open" --json number,mergeable,labels,updatedAt --limit 100`
+    - **Priority-Label Ranking**: Parse the labels of each discovered PR to find any label matching `priority/<priority>`. Categorize and prioritize the candidate PRs using the following strict hierarchy:
+      1. `priority/critical` (Rank 1 - Absolute Highest Priority)
+      2. `priority/urgent` (Rank 2)
+      3. `priority/important` (Rank 3)
+      4. `priority/high` (Rank 4)
+      5. `priority/medium` (Rank 5 - Default rank to use if a PR has NO priority label)
+      6. `priority/low` (Rank 6 - Lowest Priority)
+    - **Phase-Based Scheduling**: Within each priority rank group, candidates must be processed in order of their phases:
+      - **Phase 1 (Fast Track Rebasing)**: PRs that are passing all CI tests (`status:success` on GitHub) but have merge conflicts (`mergeable == "CONFLICTING"`). These are candidates for `iterate` (rebase) tasks.
+      - **Phase 2 (Reviewer Feedback)**: PRs that have unaddressed human reviewer comments or requested changes.
+      - **Phase 3 (Slow Track CI Investigation)**: PRs that are failing CI tests. These require long-running `investigate-failures` tasks.
+    - **Execution Order**: Work your way down the priority list (from `priority/critical` to `priority/low`). For each priority group, process Phase 1 and Phase 2 candidates first before scheduling any Phase 3 (CI investigation) tasks. This ensures that higher priority items and already passing PRs are unblocked first.
     - While task creation is only for OPEN PRs, you MUST also monitor existing sandboxes in the namespace (using `kubectl get sandboxes,sandboxtasks -n $NAMESPACE`) to identify cleanup opportunities.
     - **IMPORTANT**: DO NOT search for PRs in other repositories. Only work with the current repository ($REPO_URL).
     - Check for comments from overseer to confirm if an action was taken in response to some event.
