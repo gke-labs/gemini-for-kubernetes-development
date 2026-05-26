@@ -143,25 +143,20 @@ function runAntigravity {
         export GIT_COMMITTER_EMAIL="$GITHUB_BOT_EMAIL"
     fi
 
-    MODELS_LIST="${MODELS:-gemini-3.5-flash gemini-3-flash-preview gemini-3.1-pro-preview gemini-2.5-pro}"
     SUCCESS=false
-    for MODEL in $MODELS_LIST; do
-        echo "Trying model: $MODEL"
-        AGY_ARGS=("--dangerously-skip-permissions" "--model" "$MODEL" "--output-format" "json")
-        if [ "$GEMINI_CONTINUE_SESSION" = "true" ] || [ "$ANTIGRAVITY_CONTINUE_SESSION" = "true" ]; then
-            AGY_ARGS+=("--resume" "latest")
-        fi
-        if (cd "/workspaces/${REPO_NAME}" && export GEMINI_API_KEY="${GEMINI_API_KEY}" && export ANTIGRAVITY_API_KEY="${GEMINI_API_KEY}" && agy "${AGY_ARGS[@]}" < ${PROMPT_FILE} > "$(dirname "${PROMPT_FILE}")/gemini-output.json"); then
-             echo "Antigravity execution successful with model: $MODEL"
-             SUCCESS=true
-             break
-        else
-             echo "Antigravity execution failed with model: $MODEL. Retrying with next model..."
-        fi
-    done
+    AGY_ARGS=("--dangerously-skip-permissions" "--print")
+    if [ "$GEMINI_CONTINUE_SESSION" = "true" ] || [ "$ANTIGRAVITY_CONTINUE_SESSION" = "true" ]; then
+        AGY_ARGS+=("--continue")
+    fi
+    if (cd "/workspaces/${REPO_NAME}" && export GEMINI_API_KEY="${GEMINI_API_KEY}" && export ANTIGRAVITY_API_KEY="${GEMINI_API_KEY}" && agy "${AGY_ARGS[@]}" < ${PROMPT_FILE} > "$(dirname "${PROMPT_FILE}")/gemini-output.json"); then
+         echo "Antigravity execution successful"
+         SUCCESS=true
+    else
+         echo "Antigravity execution failed"
+    fi
     
     if [ "$SUCCESS" = false ]; then
-        echo "All models failed."
+        echo "Execution failed."
         exit 1
     fi
 }

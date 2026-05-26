@@ -203,21 +203,16 @@ function runAntigravity {
         export GIT_COMMITTER_EMAIL="$GITHUB_BOT_EMAIL"
     fi
 
-    MODELS_LIST="${MODELS:-gemini-2.5-flash}"
     SUCCESS=false
-    for MODEL in $MODELS_LIST; do
-        echo "Trying model: $MODEL"
-        if agy --dangerously-skip-permissions --model "$MODEL" --output-format json < ${PROMPT_FILE} > "$(dirname "${PROMPT_FILE}")/gemini-output.json"; then
-            echo "Antigravity execution successful with model: $MODEL"
-            SUCCESS=true
-            break
-        else
-            echo "Antigravity execution failed with model: $MODEL. Retrying with next model..."
-        fi
-    done
+    if agy --dangerously-skip-permissions --print < ${PROMPT_FILE} > "$(dirname "${PROMPT_FILE}")/gemini-output.json"; then
+        echo "Antigravity execution successful"
+        SUCCESS=true
+    else
+        echo "Antigravity execution failed"
+    fi
 
     if [ "$SUCCESS" = false ]; then
-        echo "All models failed."
+        echo "Execution failed."
         exit 1
     fi
     set -x
