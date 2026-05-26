@@ -144,11 +144,13 @@ function runAntigravity {
     fi
 
     SUCCESS=false
-    AGY_ARGS=("--dangerously-skip-permissions" "--print")
+    AGY_ARGS=("--dangerously-skip-permissions")
     if [ "$GEMINI_CONTINUE_SESSION" = "true" ] || [ "$ANTIGRAVITY_CONTINUE_SESSION" = "true" ]; then
         AGY_ARGS+=("--continue")
     fi
-    if (cd "/workspaces/${REPO_NAME}" && export GEMINI_API_KEY="${GEMINI_API_KEY}" && export ANTIGRAVITY_API_KEY="${GEMINI_API_KEY}" && agy "${AGY_ARGS[@]}" < ${PROMPT_FILE} > "$(dirname "${PROMPT_FILE}")/gemini-output.json"); then
+    PROMPT_CONTENT=$(cat "${PROMPT_FILE}")
+    AGY_ARGS+=("--print" "${PROMPT_CONTENT}")
+    if (cd "/workspaces/${REPO_NAME}" && export GEMINI_API_KEY="${GEMINI_API_KEY}" && export ANTIGRAVITY_API_KEY="${GEMINI_API_KEY}" && agy "${AGY_ARGS[@]}" > "$(dirname "${PROMPT_FILE}")/gemini-output.json"); then
          echo "Antigravity execution successful"
          SUCCESS=true
     else
