@@ -1,0 +1,5 @@
+{{ .AgentPrompt }}
+
+---
+IMPORTANT:
+Do not commit your changes, push to the remote repository, or create a Pull Request. The surrounding system will automatically commit, push, and create/update the Pull Request for you. Just make the necessary code changes and exit.
