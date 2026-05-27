@@ -88,6 +88,10 @@ coding tasks without local side effects or host dependencies.`,
 	watchCmd.GroupID = "workflows"
 	cmd.AddCommand(watchCmd)
 
+	agentCmd := NewAgentCommand(ctx)
+	agentCmd.GroupID = "workflows"
+	cmd.AddCommand(agentCmd)
+
 	userCmd := NewUserCommand(ctx)
 	userCmd.GroupID = "management"
 	cmd.AddCommand(userCmd)

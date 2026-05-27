@@ -45,6 +45,8 @@ factory
  │    ├── investigate (Investigate CI check failures for a PR in a sandbox)
  │    ├── address-comments (Address review feedback and comments for a PR)
  │    └── watch (Continuously monitor a PR for CI failures or new feedback)
+ ├── agent
+ │    └── create (Run a custom agent definition in a sandbox)
  ├── watch (Continuously monitor a GitHub repo for failures and assigned issues)
  ├── status (Diagnostic pre-flight checks to verify cluster and factory health)
  ├── user
@@ -197,6 +199,28 @@ factory pr address-comments --pr-url https://github.com/owner/repo/pull/1 --cont
 Continuously monitor a specific PR in the foreground, automatically triggering `investigate` on CI failures or `address-comments` on new review feedback. Use `--continue-session` to ensure all dispatched tasks inherit the ongoing chat session. The watch loop logs explicit sleep intervals and cleanly terminates when the PR is merged or closed:
 ```bash
 factory pr watch --pr-url https://github.com/owner/repo/pull/1 --poll-interval 1m --continue-session
+```
+
+### Running Custom Agents (`factory agent create`)
+Automatically spin up a sandbox, clone the repository (or PR branch), retrieve a custom agent definition file, execute its prompt instructions inside the sandbox, and automatically commit/push/create/update a Pull Request depending on your configuration and whether it was triggered on a PR or a repository:
+```bash
+# Run an agent defined in the remote .agents/my-agent.yaml on a repository
+factory agent create --url https://github.com/owner/repo --agent my-agent.yaml
+```
+
+**Advanced Customization**:
+```bash
+# Run an agent defined locally in a sandbox for a PR
+factory agent create \
+  --url https://github.com/owner/repo/pull/123 \
+  --agent ./my-agent.yaml \
+  --local
+
+# Simulate agent execution (dry-run) without invoking the LLM inside the sandbox
+factory agent create \
+  --url https://github.com/owner/repo \
+  --agent my-agent.yaml \
+  --dry-run
 ```
 
 ### Watching Repositories (`factory watch`)

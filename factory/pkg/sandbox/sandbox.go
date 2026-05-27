@@ -58,6 +58,54 @@ func EnsureFixSandbox(ctx context.Context, kubeClient *clients.KubernetesClient,
 	return name, nil
 }
 
+func EnsureAgentSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, taskID, cloneURL, taskTitle, image, diskSize string) (string, error) {
+	name := fmt.Sprintf("agent-%s-%s", repoName, taskID)
+
+	_, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err == nil {
+		return name, nil
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		return "", fmt.Errorf("checking sandbox existence: %w", err)
+	}
+
+	if diskSize == "" {
+		diskSize = "10Gi"
+	}
+
+	opt := AgentSandboxOptions{
+		DevSandboxOptions: DevSandboxOptions{
+			Name:      name,
+			Namespace: namespace,
+			Labels: map[string]string{
+				"sandbox.gemini.google.com/type":    "agent",
+				"factory.gemini.google.com/managed": "true",
+			},
+			Annotations: map[string]string{
+				"repo":     repoName,
+				"cloneURL": cloneURL,
+			},
+			Image:             image,
+			Replicas:          1,
+			WorkspaceDiskSize: diskSize,
+		},
+	}
+
+	sb, svc := NewAgentSandbox(opt)
+
+	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sb, metav1.CreateOptions{})
+	if err != nil {
+		return "", fmt.Errorf("creating sandbox CR: %w", err)
+	}
+
+	_, err = kubeClient.Clientset.CoreV1().Services(namespace).Create(ctx, svc, metav1.CreateOptions{})
+	if err != nil {
+		return "", fmt.Errorf("creating sandbox service: %w", err)
+	}
+
+	return name, nil
+}
+
 func AliasSandboxToPR(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, sandboxName string, prNum int) error {
 	unstructObj, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
 	if err != nil {
