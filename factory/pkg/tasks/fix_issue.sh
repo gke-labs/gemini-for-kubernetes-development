@@ -163,13 +163,13 @@ function checkoutNewBranch {
     (cd "/workspaces/${REPO_NAME}" && git reset --hard HEAD && git clean -fd && git checkout -B "$branch_name")
 }
 
-function configureGemini {
-    echo "Running configureGemini..."
-    echo "creating /root/.gemini directory"
-    mkdir -p /root/.gemini
+function configureAntigravity {
+    echo "Running configureAntigravity..."
+    echo "creating /root/.gemini/antigravity-cli directory"
+    mkdir -p /root/.gemini/antigravity-cli
 
-    echo "writing gemini config"
-    cat <<EOF > /root/.gemini/settings.json
+    echo "writing antigravity config"
+    cat <<EOF > /root/.gemini/antigravity-cli/settings.json
 {
   "general": {
     "enableAutoUpdate": false,
@@ -183,16 +183,17 @@ function installExtensions {
     echo "Installing extensions..."
     if [ -n "$EXTENSIONS" ]; then
         for ext in $EXTENSIONS; do
-            gemini extensions install "$ext" --consent
+            agy plugin install "$ext" --consent
         done
     fi
 }
 
-function runGemini {
-    echo "running gemini in yolo mode"
+function runAntigravity {
+    echo "running agy in dangerously-skip-permissions mode"
     pushd "/workspaces/${REPO_NAME}" > /dev/null
     set +x
     export GEMINI_API_KEY="${GEMINI_API_KEY}"
+    export ANTIGRAVITY_API_KEY="${GEMINI_API_KEY}"
 
     if [ -n "$GITHUB_BOT_NAME" ]; then
         echo "Using bot identity for commits"
@@ -202,21 +203,17 @@ function runGemini {
         export GIT_COMMITTER_EMAIL="$GITHUB_BOT_EMAIL"
     fi
 
-    MODELS_LIST="${MODELS:-gemini-2.5-flash}"
+    PROMPT_CONTENT=$(cat "${PROMPT_FILE}")
     SUCCESS=false
-    for MODEL in $MODELS_LIST; do
-        echo "Trying model: $MODEL"
-        if gemini --yolo --model "$MODEL" --output-format json < ${PROMPT_FILE} > "$(dirname "${PROMPT_FILE}")/gemini-output.json"; then
-            echo "Gemini execution successful with model: $MODEL"
-            SUCCESS=true
-            break
-        else
-            echo "Gemini execution failed with model: $MODEL. Retrying with next model..."
-        fi
-    done
+    if agy --dangerously-skip-permissions --print "${PROMPT_CONTENT}" > "$(dirname "${PROMPT_FILE}")/gemini-output.json"; then
+        echo "Antigravity execution successful"
+        SUCCESS=true
+    else
+        echo "Antigravity execution failed"
+    fi
 
     if [ "$SUCCESS" = false ]; then
-        echo "All models failed."
+        echo "Execution failed."
         exit 1
     fi
     set -x
@@ -283,8 +280,8 @@ setupGitRepos
 sleep 5
 checkForExistingPR
 checkoutNewBranch
-configureGemini
+configureAntigravity
 installExtensions
 injectConfigDirData
-runGemini
+runAntigravity
 recordPRLink

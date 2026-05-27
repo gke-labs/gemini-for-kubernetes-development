@@ -31,9 +31,9 @@ It spins up isolated development environments (`agents.x-k8s.io`), establishes d
 
 ### Key Principles
 - **Zero Host Side-Effects**: No temporary file creation on your local machine. All scripts, prompts, and task logs are written directly to timestamped subdirectories inside the sandbox PVC (`/workspaces/tasks/fix-<timestamp>/`).
-- **Full Environment Injection**: The CLI dynamically resolves your GitHub credentials and Gemini API keys from Kubernetes Secrets and injects them directly into the `envd` execution environment via Connect-RPC `StartRequest`.
+- **Full Environment Injection**: The CLI dynamically resolves your GitHub credentials and Antigravity API keys from Kubernetes Secrets and injects them directly into the `envd` execution environment via Connect-RPC `StartRequest`.
 - **Live Streaming & Logging**: Standard output and error are streamed live to your terminal while simultaneously being recorded into `execution.log` inside the sandbox.
-- **Label-Based Discovery & Session Continuity**: Sandboxes are dynamically aliased to Pull Requests via Kubernetes labels (`factory.gemini.google.com/pr`), allowing `pr watch`, `investigate`, and `address-comments` to reuse existing sandboxes (`fix-...`) and maintain full Gemini chat session history across PR workflows.
+- **Label-Based Discovery & Session Continuity**: Sandboxes are dynamically aliased to Pull Requests via Kubernetes labels (`factory.gemini.google.com/pr`), allowing `pr watch`, `investigate`, and `address-comments` to reuse existing sandboxes (`fix-...`) and maintain full Antigravity chat session history across PR workflows.
 
 ### Command Tree
 ```
@@ -57,7 +57,7 @@ factory
       ├── cp (Copy files into sandbox)
       ├── exec (Run interactive commands with env/cwd injection)
       ├── connect (Connect to a sandbox via interactive tmux session)
-      ├── chat (Connect to a sandbox and resume a Gemini CLI chat session)
+      ├── chat (Connect to a sandbox and resume an Antigravity CLI chat session)
       ├── inspect (Inspect sandbox status, PVC usage, pod info)
       └── logs (Stream task execution logs or envd daemon logs)
 ```
@@ -69,7 +69,7 @@ factory
 ### Prerequisites
 - `kubectl` configured to communicate with your Kubernetes or Kind cluster.
 - `gh` (GitHub CLI) installed and authenticated (`gh auth login`).
-- `GEMINI_API_KEY` environment variable exported in your local terminal.
+- `GEMINI_API_KEY` (or `ANTIGRAVITY_API_KEY`) environment variable exported in your local terminal.
 
 ### 1. Build or Run the CLI
 **Option A: Build Locally**
@@ -138,7 +138,7 @@ Gemini Key       [OK]     Configured in secret 'factory-user'
 ## Usage & AI Workflows
 
 ### Fixing Issues (`factory fix`)
-Automatically spin up a sandbox, clone the repository, checkout a dedicated issue branch, run Gemini to fix the bug, and open a Pull Request:
+Automatically spin up a sandbox, clone the repository, checkout a dedicated issue branch, run Antigravity to fix the bug, and open a Pull Request:
 ```bash
 factory fix --url https://github.com/owner/repo/issues/1
 ```
@@ -190,7 +190,7 @@ factory pr investigate --pr-url https://github.com/owner/repo/pull/1 --continue-
 ```
 
 ### Addressing Review Comments (`factory pr address-comments`)
-Spin up a review sandbox to parse new review feedback and PR comments, execute code fixes, and push updated commits. Use `--continue-session` to maintain full Gemini chat context from previous fixes or investigations:
+Spin up a review sandbox to parse new review feedback and PR comments, execute code fixes, and push updated commits. Use `--continue-session` to maintain full Antigravity chat context from previous fixes or investigations:
 ```bash
 factory pr address-comments --pr-url https://github.com/owner/repo/pull/1 --continue-session
 ```
@@ -241,7 +241,7 @@ factory watch --repo owner/repo --assignee "factory-bot" --dryrun
 ## Sandbox Management & Debugging
 
 ### Resuming Chat Sessions (`factory sandbox chat`)
-Connect to an active sandbox container and resume a Gemini CLI chat session with automatic repository detection, session backup/restore, and `GEMINI_API_KEY` environment injection:
+Connect to an active sandbox container and resume an Antigravity CLI chat session with automatic repository detection, session backup/restore, and API key environment injection:
 ```bash
 # Resume the latest chat session in the sandbox
 factory sandbox chat factory-issue-917

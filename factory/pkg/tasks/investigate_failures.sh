@@ -130,13 +130,13 @@ function fetchLogs {
     fi
 }
 
-function configureGemini {
-    echo "Running configureGemini..."
-    echo "creating /root/.gemini directory"
-    mkdir -p /root/.gemini
+function configureAntigravity {
+    echo "Running configureAntigravity..."
+    echo "creating /root/.gemini/antigravity-cli directory"
+    mkdir -p /root/.gemini/antigravity-cli
 
-    echo "writing gemini config"
-    cat <<EOF > /root/.gemini/settings.json
+    echo "writing antigravity config"
+    cat <<EOF > /root/.gemini/antigravity-cli/settings.json
 {
   "general": {
     "enableAutoUpdate": false,
@@ -150,14 +150,14 @@ function installExtensions {
     echo "Installing extensions..."
     if [ -n "$EXTENSIONS" ]; then
         for ext in $EXTENSIONS; do
-            gemini extensions install "$ext" --consent
+            agy plugin install "$ext" --consent
         done
     fi
 }
 
-function runGemini {
-    echo "Running runGemini..."
-    echo "running gemini in yolo mode"
+function runAntigravity {
+    echo "Running runAntigravity..."
+    echo "running agy in dangerously-skip-permissions mode"
 
     if [ -n "$GITHUB_BOT_NAME" ]; then
         echo "Using bot identity for commits"
@@ -167,25 +167,22 @@ function runGemini {
         export GIT_COMMITTER_EMAIL="$GITHUB_BOT_EMAIL"
     fi
 
-    MODELS_LIST="${MODELS:-gemini-3.5-flash gemini-3-flash-preview gemini-3.1-pro-preview gemini-2.5-pro}"
     SUCCESS=false
-    for MODEL in $MODELS_LIST; do
-        echo "Trying model: $MODEL"
-        GEMINI_ARGS=("--yolo" "--model" "$MODEL" "--output-format" "json")
-        if [ "$GEMINI_CONTINUE_SESSION" = "true" ]; then
-            GEMINI_ARGS+=("--resume" "latest")
-        fi
-        if (cd "/workspaces/${REPO_NAME}" && export GEMINI_API_KEY="${GEMINI_API_KEY}" && gemini "${GEMINI_ARGS[@]}" < ${PROMPT_FILE} > "$(dirname "${PROMPT_FILE}")/gemini-output.json"); then
-             echo "Gemini execution successful with model: $MODEL"
-             SUCCESS=true
-             break
-        else
-             echo "Gemini execution failed with model: $MODEL. Retrying with next model..."
-        fi
-    done
+    AGY_ARGS=("--dangerously-skip-permissions")
+    if [ "$GEMINI_CONTINUE_SESSION" = "true" ] || [ "$ANTIGRAVITY_CONTINUE_SESSION" = "true" ]; then
+        AGY_ARGS+=("--continue")
+    fi
+    PROMPT_CONTENT=$(cat "${PROMPT_FILE}")
+    AGY_ARGS+=("--print" "${PROMPT_CONTENT}")
+    if (cd "/workspaces/${REPO_NAME}" && export GEMINI_API_KEY="${GEMINI_API_KEY}" && export ANTIGRAVITY_API_KEY="${GEMINI_API_KEY}" && agy "${AGY_ARGS[@]}" > "$(dirname "${PROMPT_FILE}")/gemini-output.json"); then
+         echo "Antigravity execution successful"
+         SUCCESS=true
+    else
+         echo "Antigravity execution failed"
+    fi
     
     if [ "$SUCCESS" = false ]; then
-        echo "All models failed."
+        echo "Execution failed."
         exit 1
     fi
 }
@@ -197,6 +194,6 @@ setupGitRepos
 sleep 5
 checkoutPRBranch
 fetchLogs
-configureGemini
+configureAntigravity
 installExtensions
-runGemini
+runAntigravity

@@ -203,20 +203,23 @@ func runInvestigate(ctx context.Context, prURL, prompt string, continueSession b
 	}
 
 	envMap := map[string]string{
-		"GITHUB_TOKEN":               string(secret.Data[KeyGithubToken]),
-		"GEMINI_API_KEY":             string(secret.Data[KeyGeminiAPIKey]),
-		"GEMINI_CLI_TRUST_WORKSPACE": "true",
-		"REPO_NAME":                  repo,
-		"CLONE_URL":                  cloneURL,
-		"PROMPT_FILE":                promptPath,
-		"GITHUB_USER_ID":             githubLogin,
-		"GITHUB_USER_EMAIL":          githubEmail,
-		"GITHUB_USER_NAME":           githubLogin,
-		"PR_NUMBER":                  strconv.Itoa(prNum),
-		"FAILED_RUNS":                strings.Join(failedRunIDs, " "),
-		"FAILED_PROW_RUNS":           strings.Join(failedProwRuns, " "),
-		"MODELS":                     "gemini-3.5-flash gemini-3-flash-preview gemini-3.1-pro-preview gemini-2.5-pro",
-		"GEMINI_CONTINUE_SESSION":    strconv.FormatBool(continueSession),
+		"GITHUB_TOKEN":                    string(secret.Data[KeyGithubToken]),
+		"GEMINI_API_KEY":                  string(secret.Data[KeyGeminiAPIKey]),
+		"ANTIGRAVITY_API_KEY":             string(secret.Data[KeyGeminiAPIKey]),
+		"GEMINI_CLI_TRUST_WORKSPACE":      "true",
+		"ANTIGRAVITY_CLI_TRUST_WORKSPACE": "true",
+		"REPO_NAME":                       repo,
+		"CLONE_URL":                       cloneURL,
+		"PROMPT_FILE":                     promptPath,
+		"GITHUB_USER_ID":                  githubLogin,
+		"GITHUB_USER_EMAIL":               githubEmail,
+		"GITHUB_USER_NAME":                githubLogin,
+		"PR_NUMBER":                       strconv.Itoa(prNum),
+		"FAILED_RUNS":                     strings.Join(failedRunIDs, " "),
+		"FAILED_PROW_RUNS":                strings.Join(failedProwRuns, " "),
+		"MODELS":                          "gemini-3.5-flash gemini-3-flash-preview gemini-3.1-pro-preview gemini-2.5-pro",
+		"GEMINI_CONTINUE_SESSION":         strconv.FormatBool(continueSession),
+		"ANTIGRAVITY_CONTINUE_SESSION":    strconv.FormatBool(continueSession),
 	}
 
 	fmt.Println("Running investigate task via envd...")
@@ -424,18 +427,21 @@ func runAddressComments(ctx context.Context, prURL, prompt string, continueSessi
 	}
 
 	envMap := map[string]string{
-		"GITHUB_TOKEN":               string(secret.Data[KeyGithubToken]),
-		"GEMINI_API_KEY":             string(secret.Data[KeyGeminiAPIKey]),
-		"GEMINI_CLI_TRUST_WORKSPACE": "true",
-		"REPO_NAME":                  repo,
-		"CLONE_URL":                  cloneURL,
-		"PROMPT_FILE":                promptPath,
-		"GITHUB_USER_ID":             githubLogin,
-		"GITHUB_USER_EMAIL":          githubEmail,
-		"GITHUB_USER_NAME":           githubLogin,
-		"PR_NUMBER":                  strconv.Itoa(prNum),
-		"MODELS":                     "gemini-3.5-flash gemini-3-flash-preview gemini-3.1-pro-preview gemini-2.5-pro",
-		"GEMINI_CONTINUE_SESSION":    strconv.FormatBool(continueSession),
+		"GITHUB_TOKEN":                    string(secret.Data[KeyGithubToken]),
+		"GEMINI_API_KEY":                  string(secret.Data[KeyGeminiAPIKey]),
+		"ANTIGRAVITY_API_KEY":             string(secret.Data[KeyGeminiAPIKey]),
+		"GEMINI_CLI_TRUST_WORKSPACE":      "true",
+		"ANTIGRAVITY_CLI_TRUST_WORKSPACE": "true",
+		"REPO_NAME":                       repo,
+		"CLONE_URL":                       cloneURL,
+		"PROMPT_FILE":                     promptPath,
+		"GITHUB_USER_ID":                  githubLogin,
+		"GITHUB_USER_EMAIL":               githubEmail,
+		"GITHUB_USER_NAME":                githubLogin,
+		"PR_NUMBER":                       strconv.Itoa(prNum),
+		"MODELS":                          "gemini-3.5-flash gemini-3-flash-preview gemini-3.1-pro-preview gemini-2.5-pro",
+		"GEMINI_CONTINUE_SESSION":         strconv.FormatBool(continueSession),
+		"ANTIGRAVITY_CONTINUE_SESSION":    strconv.FormatBool(continueSession),
 	}
 
 	fmt.Println("Running address-comments task via envd...")

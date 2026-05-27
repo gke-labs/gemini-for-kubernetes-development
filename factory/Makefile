@@ -9,7 +9,7 @@ KIND_CLUSTER_ARG=
 endif
 
 .PHONY: all
-all: lint-go build push-images
+all: lint-go build create-kind push-images
 
 .PHONY: build
 build:
@@ -20,9 +20,13 @@ build:
 lint-go:
 	../dev/tools/lint-go --working-dir ./
 
+.PHONY: create-kind
+create-kind:
+	../dev/tools/create-kind-cluster --recreate ${KIND_CLUSTER}
+
 .PHONY: push-images
 push-images:
-	../dev/tools/push-images --image-prefix=$(REGISTRY) $(KIND_CLUSTER_ARG) --working-dir . --images-dir images
+	../dev/tools/push-images --image-prefix=$(REGISTRY) $(KIND_CLUSTER_ARG) --working-dir .. --images-dir images
 
 .PHONY: clean
 clean:
