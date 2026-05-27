@@ -3,8 +3,12 @@ Your goal is to autonomously manage the repository by monitoring events, creatin
 
 1.  **Monitor (Priority-Label Discovery & Prioritization)**:
     - You MUST follow a strict scheduling hierarchy based on **Priority Labels** to manage limited sandbox capacity without starvation.
-    - **Issue Discovery Command**: List all open overseer issues, including their labels, update timestamp, and creation timestamp:
-      `gh issue list -R $REPO_URL --search "label:overseer is:open" --json number,labels,updatedAt,createdAt --limit 100`
+    - **Issue Discovery Commands**: To ensure extremely old issues with high priority (e.g., `priority/critical`, `priority/urgent`, or `priority/important`) are never missed due to search list limits (like the top 100 limit), you MUST query for high-priority issues explicitly and combine them with the general query:
+      1. High-Priority Issues Query:
+         `gh issue list -R $REPO_URL --search "label:overseer is:open (label:priority/critical OR label:priority/urgent OR label:priority/important)" --json number,labels,updatedAt,createdAt --limit 100`
+      2. General Issues Query:
+         `gh issue list -R $REPO_URL --search "label:overseer is:open" --json number,labels,updatedAt,createdAt --limit 100`
+      Merge and deduplicate both lists before sorting and prioritizing.
     - **Priority-Label Ranking**: Parse the labels of each discovered issue to find any label matching `priority/<priority>`. Categorize and prioritize the candidate issues using the following strict hierarchy:
       1. `priority/critical` (Rank 1 - Absolute Highest Priority)
       2. `priority/urgent` (Rank 2)
