@@ -1,22 +1,29 @@
 package commands
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/tasks"
+	githubv39 "github.com/google/go-github/v39/github"
 	"github.com/spf13/cobra"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type ReviewFlags struct {
-	PRURL  string
-	Prompt string
+	PRURL        string
+	Publish      string
+	Instructions []string
 }
 
 func NewReviewCommand(ctx context.Context) *cobra.Command {
@@ -24,29 +31,55 @@ func NewReviewCommand(ctx context.Context) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "review",
-		Short: "Review a GitHub pull request in a sandbox",
-		Example: `  # Review a PR with custom guidelines
-  factory pr review --pr-url https://github.com/owner/repo/pull/1 --prompt "Focus on performance and security vulnerabilities"
+		Short: "Review a GitHub pull request in a sandbox pod",
+		Example: `  # Review a PR with specific instructions
+  factory pr review --pr-url https://github.com/owner/repo/pull/1 --instruction docs/guidelines.md --instruction /path/to/local/rules.txt
 
-  # Review using a specific credential secret
-  factory pr review --pr-url https://github.com/owner/repo/pull/1 --secret-name my-bot-secret`,
+  # Review and publish automatically
+  factory pr review --pr-url https://github.com/owner/repo/pull/1 --publish yes`,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			if flags.PRURL == "" {
 				return fmt.Errorf("--pr-url is required")
 			}
+			flags.Publish = strings.ToLower(strings.TrimSpace(flags.Publish))
+			if flags.Publish != "yes" && flags.Publish != "no" && flags.Publish != "ask" {
+				return fmt.Errorf("invalid value for --publish: %s. Must be one of [no, yes, ask]", flags.Publish)
+			}
 			ctx, cancel := context.WithTimeout(ctx, rootFlags.Timeout)
 			defer cancel()
-			return runReview(ctx, flags.PRURL, flags.Prompt)
+			return runReview(ctx, flags.PRURL, flags.Publish, flags.Instructions)
 		},
 	}
 
 	cmd.Flags().StringVar(&flags.PRURL, "pr-url", "", "GitHub PR URL (e.g. https://github.com/owner/repo/pull/123)")
-	cmd.Flags().StringVar(&flags.Prompt, "prompt", "Review this PR and provide helpful feedback", "Custom prompt for the review task")
+	cmd.Flags().StringVar(&flags.Publish, "publish", "no", "Publish policy: yes (publish to github), no (print on screen only), ask (print on screen and ask y/n)")
+	cmd.Flags().StringSliceVar(&flags.Instructions, "instruction", []string{}, "Repeatable set of files either in the repo or locally containing instructions")
 
 	return cmd
 }
 
-func runReview(ctx context.Context, prURL, prompt string) error {
+func readInstructionFile(ctx context.Context, ghClient *githubv39.Client, owner, repo, ref, path string) (string, error) {
+	// 1. Try reading from local filesystem first
+	data, err := os.ReadFile(path)
+	if err == nil {
+		return string(data), nil
+	}
+
+	// 2. If not found locally, try fetching from GitHub repo
+	if ghClient != nil {
+		fileContent, _, _, err := ghClient.Repositories.GetContents(ctx, owner, repo, path, &githubv39.RepositoryContentGetOptions{Ref: ref})
+		if err == nil && fileContent != nil {
+			content, err := fileContent.GetContent()
+			if err == nil {
+				return content, nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("instruction file not found locally or in repo: %s", path)
+}
+
+func runReview(ctx context.Context, prURL string, publishPolicy string, instructionPaths []string) error {
 	fmt.Printf("Resolving PR URL: %s...\n", prURL)
 
 	u, err := url.Parse(prURL)
@@ -72,6 +105,19 @@ func runReview(ctx context.Context, prURL, prompt string) error {
 		return fmt.Errorf("fetching github PR #%d: %w", prNum, err)
 	}
 
+	ref := pr.GetHead().GetSHA()
+
+	// Read and accumulate all instructions
+	var instructions []string
+	for _, instPath := range instructionPaths {
+		fmt.Printf("Reading instruction from: %s...\n", instPath)
+		content, err := readInstructionFile(ctx, ghClient, owner, repo, ref, instPath)
+		if err != nil {
+			return fmt.Errorf("reading instruction path %s: %w", instPath, err)
+		}
+		instructions = append(instructions, content)
+	}
+
 	kubeClient, err := clients.NewKubernetesClient()
 	if err != nil {
 		return fmt.Errorf("creating k8s client: %w", err)
@@ -84,6 +130,34 @@ func runReview(ctx context.Context, prURL, prompt string) error {
 		return fmt.Errorf("ensuring review sandbox: %w", err)
 	}
 
+	secret, err := kubeClient.Clientset.CoreV1().Secrets(rootFlags.Namespace).Get(ctx, rootFlags.SecretName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("fetching %s secret in namespace %s: %w (make sure to run 'factory user onboard' first)", rootFlags.SecretName, rootFlags.Namespace, err)
+	}
+	githubLogin := string(secret.Data[KeyGithubLogin])
+	githubEmail := string(secret.Data[KeyGithubEmail])
+
+	params := tasks.ReviewParams{
+		PullRequest: tasks.PullRequest{
+			Number: prNum,
+			URL:    prURL,
+			Title:  pr.GetTitle(),
+			Body:   pr.GetBody(),
+		},
+		Instructions: instructions,
+		Models:       []string{"gemini-3.5-flash", "gemini-3-flash-preview", "gemini-3.1-pro-preview", "gemini-2.5-pro"},
+	}
+
+	scriptBytes, err := tasks.GetReviewScript()
+	if err != nil {
+		return fmt.Errorf("getting review script: %w", err)
+	}
+
+	promptBytes, err := tasks.RenderReviewPrompt(params)
+	if err != nil {
+		return fmt.Errorf("rendering review prompt: %w", err)
+	}
+
 	fmt.Printf("Connecting to sandbox %s via envd...\n", sandboxName)
 	client, err := envd.Connect(ctx, rootFlags.Namespace, sandboxName)
 	if err != nil {
@@ -91,11 +165,90 @@ func runReview(ctx context.Context, prURL, prompt string) error {
 	}
 	defer client.Close()
 
-	fmt.Println("Running hello world task via envd...")
-	if err := client.RunTask(ctx, "echo 'hello world'", nil); err != nil {
+	taskDir := fmt.Sprintf("/workspaces/tasks/review-%s", time.Now().Format("20060102-150405"))
+	promptPath := fmt.Sprintf("%s/agent-prompt.txt", taskDir)
+	scriptPath := fmt.Sprintf("%s/pre-script.sh", taskDir)
+
+	fmt.Println("Writing prompt and script into sandbox...")
+	if err := client.WriteFile(ctx, promptPath, promptBytes); err != nil {
+		return fmt.Errorf("writing prompt: %w", err)
+	}
+	if err := client.WriteFile(ctx, scriptPath, scriptBytes); err != nil {
+		return fmt.Errorf("writing script: %w", err)
+	}
+
+	envMap := map[string]string{
+		"GITHUB_TOKEN":               string(secret.Data[KeyGithubToken]),
+		"GEMINI_API_KEY":             string(secret.Data[KeyGeminiAPIKey]),
+		"GEMINI_CLI_TRUST_WORKSPACE": "true",
+		"REPO_NAME":                  repo,
+		"CLONE_URL":                  cloneURL,
+		"PROMPT_FILE":                promptPath,
+		"GITHUB_USER_ID":             githubLogin,
+		"GITHUB_USER_EMAIL":          githubEmail,
+		"GITHUB_USER_NAME":           githubLogin,
+		"PR_NUMBER":                  strconv.Itoa(prNum),
+		"MODELS":                     "gemini-3.5-flash gemini-3-flash-preview gemini-3.1-pro-preview gemini-2.5-pro",
+	}
+
+	fmt.Println("Running review task via envd...")
+	cmdStr := fmt.Sprintf("bash -c 'set -o pipefail; bash %s 2>&1 | tee %s/execution.log'", scriptPath, taskDir)
+	if err := client.RunTask(ctx, cmdStr, envMap); err != nil {
 		return fmt.Errorf("running task: %w", err)
 	}
 
-	fmt.Println("\nReview execution completed.")
+	fmt.Println("\nReview execution completed. Reading output...")
+
+	var stdoutBuf bytes.Buffer
+	var stderrBuf bytes.Buffer
+	catCmd := fmt.Sprintf("cat %s/review-output.txt", taskDir)
+	if err := client.Exec(ctx, catCmd, "/workspaces", nil, nil, &stdoutBuf, &stderrBuf); err != nil {
+		return fmt.Errorf("reading review output from sandbox: %w (stderr: %s)", err, stderrBuf.String())
+	}
+
+	reviewOutput := strings.TrimSpace(stdoutBuf.String())
+	if reviewOutput == "" {
+		return fmt.Errorf("review output was empty")
+	}
+
+	shouldPublish := false
+	switch publishPolicy {
+	case "yes":
+		shouldPublish = true
+	case "no":
+		fmt.Println("\n================= CODE REVIEW =================")
+		fmt.Println(reviewOutput)
+		fmt.Println("===============================================")
+	case "ask":
+		fmt.Println("\n================= CODE REVIEW =================")
+		fmt.Println(reviewOutput)
+		fmt.Println("===============================================")
+
+		fmt.Print("Do you want to post this review to the PR? (y/N): ")
+		var response string
+		if _, err := fmt.Scanln(&response); err != nil {
+			response = "n"
+		}
+		response = strings.ToLower(strings.TrimSpace(response))
+		if response == "y" || response == "yes" {
+			shouldPublish = true
+		}
+	}
+
+	if shouldPublish {
+		fmt.Println("Posting review to GitHub PR...")
+		reviewRequest := &githubv39.PullRequestReviewRequest{
+			Body:  githubv39.String(reviewOutput),
+			Event: githubv39.String("COMMENT"),
+		}
+		_, _, err = ghClient.PullRequests.CreateReview(ctx, owner, repo, prNum, reviewRequest)
+		if err != nil {
+			return fmt.Errorf("failed to create review on GitHub: %w", err)
+		}
+		fmt.Println("Review successfully posted to the PR!")
+	} else {
+		fmt.Println("Review was not posted.")
+	}
+
 	return nil
 }
