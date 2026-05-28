@@ -36,14 +36,17 @@ func NewReviewCommand(ctx context.Context) *cobra.Command {
   factory pr review --pr-url https://github.com/owner/repo/pull/1 --instruction docs/guidelines.md --instruction /path/to/local/rules.txt
 
   # Review and publish automatically
-  factory pr review --pr-url https://github.com/owner/repo/pull/1 --publish yes`,
+  factory pr review --pr-url https://github.com/owner/repo/pull/1 --publish yes
+
+  # Review and post as a draft (pending) review comment
+  factory pr review --pr-url https://github.com/owner/repo/pull/1 --publish draft`,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			if flags.PRURL == "" {
 				return fmt.Errorf("--pr-url is required")
 			}
 			flags.Publish = strings.ToLower(strings.TrimSpace(flags.Publish))
-			if flags.Publish != "yes" && flags.Publish != "no" && flags.Publish != "ask" {
-				return fmt.Errorf("invalid value for --publish: %s. Must be one of [no, yes, ask]", flags.Publish)
+			if flags.Publish != "yes" && flags.Publish != "no" && flags.Publish != "ask" && flags.Publish != "draft" {
+				return fmt.Errorf("invalid value for --publish: %s. Must be one of [no, yes, ask, draft]", flags.Publish)
 			}
 			ctx, cancel := context.WithTimeout(ctx, rootFlags.Timeout)
 			defer cancel()
@@ -52,7 +55,7 @@ func NewReviewCommand(ctx context.Context) *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&flags.PRURL, "pr-url", "", "GitHub PR URL (e.g. https://github.com/owner/repo/pull/123)")
-	cmd.Flags().StringVar(&flags.Publish, "publish", "no", "Publish policy: yes (publish to github), no (print on screen only), ask (print on screen and ask y/n)")
+	cmd.Flags().StringVar(&flags.Publish, "publish", "no", "Publish policy: yes (publish to github), no (print on screen only), ask (print on screen and ask y/n), draft (post as a draft pending comment on github)")
 	cmd.Flags().StringSliceVar(&flags.Instructions, "instruction", []string{}, "Repeatable set of files either in the repo or locally containing instructions")
 
 	return cmd
@@ -212,9 +215,13 @@ func runReview(ctx context.Context, prURL string, publishPolicy string, instruct
 	}
 
 	shouldPublish := false
+	isDraft := false
 	switch publishPolicy {
 	case "yes":
 		shouldPublish = true
+	case "draft":
+		shouldPublish = true
+		isDraft = true
 	case "no":
 		fmt.Println("\n================= CODE REVIEW =================")
 		fmt.Println(reviewOutput)
@@ -224,7 +231,7 @@ func runReview(ctx context.Context, prURL string, publishPolicy string, instruct
 		fmt.Println(reviewOutput)
 		fmt.Println("===============================================")
 
-		fmt.Print("Do you want to post this review to the PR? (y/N): ")
+		fmt.Print("Do you want to post this review to the PR? (y/N/d for draft): ")
 		var response string
 		if _, err := fmt.Scanln(&response); err != nil {
 			response = "n"
@@ -232,20 +239,34 @@ func runReview(ctx context.Context, prURL string, publishPolicy string, instruct
 		response = strings.ToLower(strings.TrimSpace(response))
 		if response == "y" || response == "yes" {
 			shouldPublish = true
+		} else if response == "d" || response == "draft" {
+			shouldPublish = true
+			isDraft = true
 		}
 	}
 
 	if shouldPublish {
-		fmt.Println("Posting review to GitHub PR...")
+		var reviewEvent *string
+		if !isDraft {
+			reviewEvent = githubv39.String("COMMENT")
+			fmt.Println("Posting review to GitHub PR...")
+		} else {
+			fmt.Println("Posting review as a draft (pending) review to GitHub PR...")
+		}
+
 		reviewRequest := &githubv39.PullRequestReviewRequest{
 			Body:  githubv39.String(reviewOutput),
-			Event: githubv39.String("COMMENT"),
+			Event: reviewEvent,
 		}
 		_, _, err = ghClient.PullRequests.CreateReview(ctx, owner, repo, prNum, reviewRequest)
 		if err != nil {
 			return fmt.Errorf("failed to create review on GitHub: %w", err)
 		}
-		fmt.Println("Review successfully posted to the PR!")
+		if !isDraft {
+			fmt.Println("Review successfully posted to the PR!")
+		} else {
+			fmt.Println("Draft review successfully created on the PR!")
+		}
 	} else {
 		fmt.Println("Review was not posted.")
 	}
