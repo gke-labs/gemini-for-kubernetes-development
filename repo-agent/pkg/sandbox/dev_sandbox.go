@@ -69,6 +69,14 @@ type DevSandboxOptions struct {
 	IdeaID         string
 	Approach       string
 	ParentApproach string
+
+	// Secrets is a list of secrets to mount in all development sandboxes.
+	Secrets []SecretMount
+}
+
+type SecretMount struct {
+	Name      string
+	MountPath string
 }
 
 // NewDevSandbox creates a new DevSandbox.
