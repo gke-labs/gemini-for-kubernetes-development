@@ -200,6 +200,13 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 		})
 	}
 
+	for _, secret := range opt.Secrets {
+		volumeMounts = append(volumeMounts, map[string]interface{}{
+			"name":      secret.Name + "-vol",
+			"mountPath": secret.MountPath,
+		})
+	}
+
 	volumes := []interface{}{
 		map[string]interface{}{"name": "agent-bin", "emptyDir": map[string]interface{}{}},
 		map[string]interface{}{
@@ -223,6 +230,15 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 			"name": "devcontainer-config",
 			"configMap": map[string]interface{}{
 				"name": opt.DevcontainerConfigRef,
+			},
+		})
+	}
+
+	for _, secret := range opt.Secrets {
+		volumes = append(volumes, map[string]interface{}{
+			"name": secret.Name + "-vol",
+			"secret": map[string]interface{}{
+				"secretName": secret.Name,
 			},
 		})
 	}
