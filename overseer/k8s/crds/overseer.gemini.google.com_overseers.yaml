@@ -122,6 +122,18 @@ spec:
                 type: object
               robotAccount:
                 type: string
+              secrets:
+                items:
+                  properties:
+                    mountPath:
+                      type: string
+                    name:
+                      type: string
+                  required:
+                  - mountPath
+                  - name
+                  type: object
+                type: array
               workspaceDiskSize:
                 default: 10Gi
                 type: string

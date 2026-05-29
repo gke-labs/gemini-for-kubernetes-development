@@ -1174,6 +1174,16 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 			}(),
 			WorkspaceDiskSize: overseer.Spec.WorkspaceDiskSize,
 			GHHost:            ghHost,
+			Secrets: func() []sandbox.SecretMount {
+				var mounts []sandbox.SecretMount
+				for _, s := range overseer.Spec.Secrets {
+					mounts = append(mounts, sandbox.SecretMount{
+						Name:      s.Name,
+						MountPath: s.MountPath,
+					})
+				}
+				return mounts
+			}(),
 		},
 		IssueID:    fmt.Sprintf("%d", issue.GetNumber()),
 		IssueTitle: issue.GetTitle(),
@@ -1260,6 +1270,16 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 				return "review-sandbox"
 			}(),
 			GHHost: ghHost,
+			Secrets: func() []sandbox.SecretMount {
+				var mounts []sandbox.SecretMount
+				for _, s := range overseer.Spec.Secrets {
+					mounts = append(mounts, sandbox.SecretMount{
+						Name:      s.Name,
+						MountPath: s.MountPath,
+					})
+				}
+				return mounts
+			}(),
 		},
 		PRNumber:          pr.GetNumber(),
 		PRTitle:           pr.GetTitle(),

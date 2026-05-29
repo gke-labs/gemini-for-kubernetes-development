@@ -67,5 +67,15 @@ COPY --from=build-gh /bin/gh /bin/gh
 
 RUN ln -sf /usr/local/go/bin/go /usr/local/bin/go
 
+RUN apt-get install -y vim less 
+
+# Install setup-envtest and download assets
+RUN go install sigs.k8s.io/controller-runtime/tools/setup-envtest@release-0.22 && \
+    $(go env GOPATH)/bin/setup-envtest use --print  env
+
+# (Optional) Export KUBEBUILDER_ASSETS so it's available for 'go test' automatically.
+# The path below is the default location setup-envtest extracts the binaries to.
+ENV KUBEBUILDER_ASSETS=/root/.local/share/kubebuilder-envtest/k8s/1.36.0-linux-amd64
+
 WORKDIR /workspaces
 ENTRYPOINT ["/repo-agent/repo-sandbox", "agent"]

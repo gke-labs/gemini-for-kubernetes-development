@@ -368,6 +368,12 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 										vm = append(vm, map[string]interface{}{"name": "docker", "mountPath": "/var/lib/docker"})
 									}
 									vm = append(vm, map[string]interface{}{"name": "ca-cert", "mountPath": "/etc/github-portal/ca", "readOnly": true})
+									for _, secret := range opt.Secrets {
+										vm = append(vm, map[string]interface{}{
+											"name":      secret.Name + "-vol",
+											"mountPath": secret.MountPath,
+										})
+									}
 									return vm
 								}(),
 								"ports": []interface{}{
@@ -416,6 +422,14 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 									"optional":   true,
 								},
 							})
+							for _, secret := range opt.Secrets {
+								v = append(v, map[string]interface{}{
+									"name": secret.Name + "-vol",
+									"secret": map[string]interface{}{
+										"secretName": secret.Name,
+									},
+								})
+							}
 							return v
 						}(),
 					},

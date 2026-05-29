@@ -150,6 +150,15 @@ type OverseerSpec struct {
 	// +kubebuilder:validation:Optional
 	// +kubebuilder:default="30m"
 	PollInterval string `json:"pollInterval,omitempty"`
+
+	// Secrets is a list of secrets to mount in all development and issue sandboxes.
+	// +kubebuilder:validation:Optional
+	Secrets []SecretMount `json:"secrets,omitempty"`
+}
+
+type SecretMount struct {
+	Name      string `json:"name"`
+	MountPath string `json:"mountPath"`
 }
 
 // OverseerStatus defines the observed state of Overseer
