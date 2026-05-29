@@ -154,11 +154,20 @@ type OverseerSpec struct {
 	// Secrets is a list of secrets to mount in all development and issue sandboxes.
 	// +kubebuilder:validation:Optional
 	Secrets []SecretMount `json:"secrets,omitempty"`
+
+	// Env is a list of environment variables to inject in all sandboxes.
+	// +kubebuilder:validation:Optional
+	Env []EnvVar `json:"env,omitempty"`
 }
 
 type SecretMount struct {
 	Name      string `json:"name"`
 	MountPath string `json:"mountPath"`
+}
+
+type EnvVar struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
 }
 
 // OverseerStatus defines the observed state of Overseer

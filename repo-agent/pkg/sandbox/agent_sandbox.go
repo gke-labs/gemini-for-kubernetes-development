@@ -177,6 +177,12 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 			"value": "true",
 		},
 	}
+	for _, e := range opt.Env {
+		env = append(env, map[string]interface{}{
+			"name":  e.Name,
+			"value": e.Value,
+		})
+	}
 	env = append(env, buildLLMEnvVars(opt.DevSandboxOptions)...)
 
 	env = append(env,
