@@ -72,11 +72,19 @@ type DevSandboxOptions struct {
 
 	// Secrets is a list of secrets to mount in all development sandboxes.
 	Secrets []SecretMount
+
+	// Env is a list of environment variables to inject in all development sandboxes.
+	Env []EnvVar
 }
 
 type SecretMount struct {
 	Name      string
 	MountPath string
+}
+
+type EnvVar struct {
+	Name  string
+	Value string
 }
 
 // NewDevSandbox creates a new DevSandbox.

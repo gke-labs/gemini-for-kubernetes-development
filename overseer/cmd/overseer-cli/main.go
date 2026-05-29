@@ -458,6 +458,26 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 				return "issue-sandbox"
 			}(),
 			GHHost: ghHost,
+			Secrets: func() []sandbox.SecretMount {
+				var mounts []sandbox.SecretMount
+				for _, s := range overseer.Spec.Secrets {
+					mounts = append(mounts, sandbox.SecretMount{
+						Name:      s.Name,
+						MountPath: s.MountPath,
+					})
+				}
+				return mounts
+			}(),
+			Env: func() []sandbox.EnvVar {
+				var envs []sandbox.EnvVar
+				for _, e := range overseer.Spec.Env {
+					envs = append(envs, sandbox.EnvVar{
+						Name:  e.Name,
+						Value: e.Value,
+					})
+				}
+				return envs
+			}(),
 		},
 		IssueRepo: repo,
 	}
@@ -1184,6 +1204,16 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 				}
 				return mounts
 			}(),
+			Env: func() []sandbox.EnvVar {
+				var envs []sandbox.EnvVar
+				for _, e := range overseer.Spec.Env {
+					envs = append(envs, sandbox.EnvVar{
+						Name:  e.Name,
+						Value: e.Value,
+					})
+				}
+				return envs
+			}(),
 		},
 		IssueID:    fmt.Sprintf("%d", issue.GetNumber()),
 		IssueTitle: issue.GetTitle(),
@@ -1279,6 +1309,16 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 					})
 				}
 				return mounts
+			}(),
+			Env: func() []sandbox.EnvVar {
+				var envs []sandbox.EnvVar
+				for _, e := range overseer.Spec.Env {
+					envs = append(envs, sandbox.EnvVar{
+						Name:  e.Name,
+						Value: e.Value,
+					})
+				}
+				return envs
 			}(),
 		},
 		PRNumber:          pr.GetNumber(),
