@@ -13,6 +13,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/tasks"
 	"github.com/spf13/cobra"
@@ -288,6 +289,14 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch boo
 		}
 	} else if watch {
 		fmt.Println("\nWarning: --watch was specified but could not determine PR URL from task output.")
+	}
+
+	if rootFlags.Cleanup {
+		fmt.Printf("Cleaning up sandbox '%s'...\n", sandboxName)
+		manager := k8s.NewManager(kubeClient)
+		if err := manager.DeleteSandbox(ctx, rootFlags.Namespace, sandboxName); err != nil {
+			klog.Errorf("Failed to cleanup sandbox '%s': %v", sandboxName, err)
+		}
 	}
 
 	return nil

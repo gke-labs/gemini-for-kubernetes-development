@@ -29,6 +29,7 @@ type RootFlags struct {
 	SecretName string
 	Timeout    time.Duration
 	Tmux       bool
+	Cleanup    bool
 }
 
 var rootFlags RootFlags
@@ -49,6 +50,7 @@ coding tasks without local side effects or host dependencies.`,
 	cmd.PersistentFlags().StringVar(&rootFlags.SecretName, "secret-name", SecretFactoryUser, "Kubernetes secret containing credentials")
 	cmd.PersistentFlags().DurationVar(&rootFlags.Timeout, "timeout", 30*time.Minute, "Overall execution timeout")
 	cmd.PersistentFlags().BoolVar(&rootFlags.Tmux, "tmux", false, "Run blocking remote tasks inside a named tmux session inside the sandbox")
+	cmd.PersistentFlags().BoolVar(&rootFlags.Cleanup, "cleanup", false, "Delete the sandbox after the task is run or watch completes")
 
 	cmd.PersistentPreRun = func(_ *cobra.Command, _ []string) {
 		if rootFlags.Namespace == "" {
@@ -101,6 +103,10 @@ coding tasks without local side effects or host dependencies.`,
 	userCmd := NewUserCommand(ctx)
 	userCmd.GroupID = "management"
 	cmd.AddCommand(userCmd)
+
+	cleanupCmd := NewCleanupCommand(ctx)
+	cleanupCmd.GroupID = "management"
+	cmd.AddCommand(cleanupCmd)
 
 	sandboxCmd := NewSandboxCommand(ctx)
 	sandboxCmd.GroupID = "management"

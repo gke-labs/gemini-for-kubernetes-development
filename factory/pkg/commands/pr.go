@@ -11,6 +11,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/tasks"
 	"github.com/spf13/cobra"
@@ -511,12 +512,28 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 		return fmt.Errorf("creating github client: %w", err)
 	}
 
+	kubeClient, err := clients.NewKubernetesClient()
+	if err != nil {
+		return fmt.Errorf("creating k8s client: %w", err)
+	}
+
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	var timeoutChan <-chan time.Time
 	if watchTimeout > 0 {
 		timeoutChan = time.After(watchTimeout)
+	}
+
+	cleanup := func() {
+		if rootFlags.Cleanup {
+			sandboxName := fmt.Sprintf("factory-pr-%d", prNum)
+			fmt.Printf("Cleaning up sandbox '%s'...\n", sandboxName)
+			manager := k8s.NewManager(kubeClient)
+			if err := manager.DeleteSandbox(ctx, rootFlags.Namespace, sandboxName); err != nil {
+				klog.Errorf("Failed to cleanup sandbox '%s': %v", sandboxName, err)
+			}
+		}
 	}
 
 	var lastInvestigatedSHA string
@@ -621,6 +638,7 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 
 	// Run first check immediately
 	if checkPR() {
+		cleanup()
 		return nil
 	}
 
@@ -631,9 +649,11 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 			return ctx.Err()
 		case <-timeoutChan:
 			fmt.Printf("\nWatch timeout of %s expired. Stopping watch.\n", watchTimeout)
+			cleanup()
 			return nil
 		case <-ticker.C:
 			if checkPR() {
+				cleanup()
 				return nil
 			}
 		}
