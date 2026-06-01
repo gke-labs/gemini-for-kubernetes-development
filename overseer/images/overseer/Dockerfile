@@ -43,6 +43,7 @@ RUN apt-get update && \
     jq \
     gh \
     procps \
+    tmux \
     ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
