@@ -461,6 +461,7 @@ type PRWatchFlags struct {
 	PollInterval    time.Duration
 	DryRun          bool
 	ContinueSession bool
+	WatchTimeout    time.Duration
 }
 
 func NewPRWatchCommand(ctx context.Context) *cobra.Command {
@@ -475,7 +476,7 @@ func NewPRWatchCommand(ctx context.Context) *cobra.Command {
 			if flags.PRURL == "" {
 				return fmt.Errorf("--pr-url is required")
 			}
-			return runPRWatch(ctx, flags.PRURL, flags.PollInterval, flags.DryRun, flags.ContinueSession)
+			return runPRWatch(ctx, flags.PRURL, flags.PollInterval, flags.DryRun, flags.ContinueSession, flags.WatchTimeout)
 		},
 	}
 
@@ -483,12 +484,13 @@ func NewPRWatchCommand(ctx context.Context) *cobra.Command {
 	cmd.Flags().DurationVar(&flags.PollInterval, "poll-interval", 2*time.Minute, "Polling interval")
 	cmd.Flags().BoolVar(&flags.DryRun, "dryrun", false, "Print actions without creating sandboxes or executing tasks")
 	cmd.Flags().BoolVar(&flags.ContinueSession, "continue-session", false, "Continue the Gemini session from previous runs in the sandbox")
+	cmd.Flags().DurationVar(&flags.WatchTimeout, "watch-timeout", 0, "Timeout for watching (default forever)")
 
 	return cmd
 }
 
-func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRun, continueSession bool) error {
-	fmt.Printf("Starting PR watch for %s (poll interval: %s, dryRun: %v, continueSession: %v)...\n", prURL, interval, dryRun, continueSession)
+func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRun, continueSession bool, watchTimeout time.Duration) error {
+	fmt.Printf("Starting PR watch for %s (poll interval: %s, dryRun: %v, continueSession: %v, watchTimeout: %s)...\n", prURL, interval, dryRun, continueSession, watchTimeout)
 
 	u, err := url.Parse(prURL)
 	if err != nil {
@@ -511,6 +513,11 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+
+	var timeoutChan <-chan time.Time
+	if watchTimeout > 0 {
+		timeoutChan = time.After(watchTimeout)
+	}
 
 	var lastInvestigatedSHA string
 	var lastInvestigatedTime time.Time
@@ -622,6 +629,9 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-timeoutChan:
+			fmt.Printf("\nWatch timeout of %s expired. Stopping watch.\n", watchTimeout)
+			return nil
 		case <-ticker.C:
 			if checkPR() {
 				return nil

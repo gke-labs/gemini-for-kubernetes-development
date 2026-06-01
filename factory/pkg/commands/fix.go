@@ -28,6 +28,7 @@ type FixFlags struct {
 	NoPR            bool
 	Watch           bool
 	PollInterval    time.Duration
+	WatchTimeout    time.Duration
 }
 
 func NewFixCommand(ctx context.Context) *cobra.Command {
@@ -68,7 +69,7 @@ func NewFixCommand(ctx context.Context) *cobra.Command {
 
 			ctx, cancel := context.WithTimeout(ctx, rootFlags.Timeout)
 			defer cancel()
-			return runFix(ctx, flags.URL, prompt, flags.Name, flags.NoPR, flags.Watch, flags.PollInterval)
+			return runFix(ctx, flags.URL, prompt, flags.Name, flags.NoPR, flags.Watch, flags.PollInterval, flags.WatchTimeout)
 		},
 	}
 
@@ -79,11 +80,12 @@ func NewFixCommand(ctx context.Context) *cobra.Command {
 	cmd.Flags().BoolVar(&flags.NoPR, "no-pr", false, "Commit changes and push branch remotely, but do not create a pull request")
 	cmd.Flags().BoolVar(&flags.Watch, "watch", false, "Watch the created pull request for check failures and new review comments")
 	cmd.Flags().DurationVar(&flags.PollInterval, "poll-interval", 2*time.Minute, "Polling interval for watching the PR")
+	cmd.Flags().DurationVar(&flags.WatchTimeout, "watch-timeout", 0, "Timeout for watching the PR (default forever)")
 
 	return cmd
 }
 
-func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch bool, pollInterval time.Duration) error {
+func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch bool, pollInterval time.Duration, watchTimeout time.Duration) error {
 	if targetURL == "" {
 		return fmt.Errorf("--url is required to determine the repository")
 	}
@@ -282,7 +284,7 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch boo
 
 		if watch {
 			fmt.Printf("\nStarting PR watch for %s...\n", prURL)
-			return runPRWatch(ctx, prURL, pollInterval, false, true)
+			return runPRWatch(ctx, prURL, pollInterval, false, true, watchTimeout)
 		}
 	} else if watch {
 		fmt.Println("\nWarning: --watch was specified but could not determine PR URL from task output.")
