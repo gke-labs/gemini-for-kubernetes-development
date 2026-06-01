@@ -204,7 +204,7 @@ func runInvestigate(ctx context.Context, prURL, prompt string, continueSession b
 
 	envMap := map[string]string{
 		"GITHUB_TOKEN":               string(secret.Data[KeyGithubToken]),
-		"GEMINI_API_KEY":             string(secret.Data[KeyGeminiAPIKey]),
+		"GEMINI_API_KEY":             getGeminiAPIKey(secret),
 		"GEMINI_CLI_TRUST_WORKSPACE": "true",
 		"REPO_NAME":                  repo,
 		"CLONE_URL":                  cloneURL,
@@ -425,7 +425,7 @@ func runAddressComments(ctx context.Context, prURL, prompt string, continueSessi
 
 	envMap := map[string]string{
 		"GITHUB_TOKEN":               string(secret.Data[KeyGithubToken]),
-		"GEMINI_API_KEY":             string(secret.Data[KeyGeminiAPIKey]),
+		"GEMINI_API_KEY":             getGeminiAPIKey(secret),
 		"GEMINI_CLI_TRUST_WORKSPACE": "true",
 		"REPO_NAME":                  repo,
 		"CLONE_URL":                  cloneURL,

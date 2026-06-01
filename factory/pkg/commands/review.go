@@ -182,7 +182,7 @@ func runReview(ctx context.Context, prURL string, publishPolicy string, instruct
 
 	envMap := map[string]string{
 		"GITHUB_TOKEN":               string(secret.Data[KeyGithubToken]),
-		"GEMINI_API_KEY":             string(secret.Data[KeyGeminiAPIKey]),
+		"GEMINI_API_KEY":             getGeminiAPIKey(secret),
 		"GEMINI_CLI_TRUST_WORKSPACE": "true",
 		"REPO_NAME":                  repo,
 		"CLONE_URL":                  cloneURL,
