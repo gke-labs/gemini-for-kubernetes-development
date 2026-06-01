@@ -221,6 +221,10 @@ func runInvestigate(ctx context.Context, prURL, prompt string, continueSession b
 
 	fmt.Println("Running investigate task via envd...")
 	cmdStr := fmt.Sprintf("bash -c 'set -o pipefail; bash %s 2>&1 | tee %s/execution.log'", scriptPath, taskDir)
+	if rootFlags.Tmux {
+		fmt.Printf("Running task inside tmux session '%s'...\n", sandboxName)
+		cmdStr = wrapWithTmux(cmdStr, sandboxName)
+	}
 	if err := client.RunTask(ctx, cmdStr, envMap); err != nil {
 		return fmt.Errorf("running task: %w", err)
 	}
@@ -440,6 +444,10 @@ func runAddressComments(ctx context.Context, prURL, prompt string, continueSessi
 
 	fmt.Println("Running address-comments task via envd...")
 	cmdStr := fmt.Sprintf("bash -c 'set -o pipefail; bash %s 2>&1 | tee %s/execution.log'", scriptPath, taskDir)
+	if rootFlags.Tmux {
+		fmt.Printf("Running task inside tmux session '%s'...\n", sandboxName)
+		cmdStr = wrapWithTmux(cmdStr, sandboxName)
+	}
 	if err := client.RunTask(ctx, cmdStr, envMap); err != nil {
 		return fmt.Errorf("running task: %w", err)
 	}

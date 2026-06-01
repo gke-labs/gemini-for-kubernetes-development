@@ -238,6 +238,10 @@ func runAgent(ctx context.Context, flags AgentFlags) error {
 
 	fmt.Println("Running agent task via envd...")
 	cmdStr := fmt.Sprintf("bash -c 'set -o pipefail; bash %s 2>&1 | tee %s/execution.log'", scriptPath, taskDir)
+	if rootFlags.Tmux {
+		fmt.Printf("Running task inside tmux session '%s'...\n", sandboxName)
+		cmdStr = wrapWithTmux(cmdStr, sandboxName)
+	}
 	if err := client.RunTask(ctx, cmdStr, envMap); err != nil {
 		return fmt.Errorf("running task: %w", err)
 	}

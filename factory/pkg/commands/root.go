@@ -28,6 +28,7 @@ type RootFlags struct {
 	DiskSize   string
 	SecretName string
 	Timeout    time.Duration
+	Tmux       bool
 }
 
 var rootFlags RootFlags
@@ -47,6 +48,7 @@ coding tasks without local side effects or host dependencies.`,
 	cmd.PersistentFlags().StringVar(&rootFlags.DiskSize, "workspace-disk-size", "10Gi", "Workspace PVC disk size")
 	cmd.PersistentFlags().StringVar(&rootFlags.SecretName, "secret-name", SecretFactoryUser, "Kubernetes secret containing credentials")
 	cmd.PersistentFlags().DurationVar(&rootFlags.Timeout, "timeout", 30*time.Minute, "Overall execution timeout")
+	cmd.PersistentFlags().BoolVar(&rootFlags.Tmux, "tmux", false, "Run blocking remote tasks inside a named tmux session inside the sandbox")
 
 	cmd.PersistentPreRun = func(_ *cobra.Command, _ []string) {
 		if rootFlags.Namespace == "" {
@@ -150,4 +152,12 @@ func getTokenFromScript() (string, error) {
 	}
 
 	return "", nil
+}
+
+func wrapWithTmux(cmdStr string, sessionName string) string {
+	if !rootFlags.Tmux {
+		return cmdStr
+	}
+	escapedCmd := strings.ReplaceAll(cmdStr, "'", "'\"'\"'")
+	return fmt.Sprintf("tmux kill-session -t %s 2>/dev/null; tmux new-session -s %s '%s'", sessionName, sessionName, escapedCmd)
 }
