@@ -174,22 +174,27 @@ func RunUserOnboard(ctx context.Context, githubLogin, githubToken, githubEmail, 
 	}
 	manager := k8s.NewManager(kubeClient)
 
+	targetNamespace := rootFlags.Namespace
+	if targetNamespace == "" {
+		targetNamespace = githubLogin
+	}
+
 	nsClient := manager.Clientset.CoreV1().Namespaces()
-	_, err = nsClient.Get(ctx, githubLogin, metav1.GetOptions{})
+	_, err = nsClient.Get(ctx, targetNamespace, metav1.GetOptions{})
 	if errors.IsNotFound(err) {
-		fmt.Printf("Creating namespace '%s'...\n", githubLogin)
+		fmt.Printf("Creating namespace '%s'...\n", targetNamespace)
 		_, err = nsClient.Create(ctx, &corev1.Namespace{
 			ObjectMeta: metav1.ObjectMeta{
-				Name: githubLogin,
+				Name: targetNamespace,
 			},
 		}, metav1.CreateOptions{})
 		if err != nil {
-			return fmt.Errorf("creating namespace %s: %w", githubLogin, err)
+			return fmt.Errorf("creating namespace %s: %w", targetNamespace, err)
 		}
 	} else if err != nil {
-		return fmt.Errorf("checking namespace %s: %w", githubLogin, err)
+		return fmt.Errorf("checking namespace %s: %w", targetNamespace, err)
 	} else {
-		fmt.Printf("Namespace '%s' already exists.\n", githubLogin)
+		fmt.Printf("Namespace '%s' already exists.\n", targetNamespace)
 	}
 
 	data := map[string][]byte{
@@ -199,11 +204,11 @@ func RunUserOnboard(ctx context.Context, githubLogin, githubToken, githubEmail, 
 		KeyGithubEmail:  []byte(githubEmail),
 	}
 
-	fmt.Printf("Creating secret '%s' in namespace '%s'...\n", rootFlags.SecretName, githubLogin)
-	if err := manager.UpdateSecret(ctx, githubLogin, rootFlags.SecretName, data, nil); err != nil {
+	fmt.Printf("Creating secret '%s' in namespace '%s'...\n", rootFlags.SecretName, targetNamespace)
+	if err := manager.UpdateSecret(ctx, targetNamespace, rootFlags.SecretName, data, nil); err != nil {
 		return fmt.Errorf("updating secret '%s': %w", rootFlags.SecretName, err)
 	}
 
-	fmt.Printf("Successfully onboarded user '%s'.\n", githubLogin)
+	fmt.Printf("Successfully onboarded user '%s' in namespace '%s'.\n", githubLogin, targetNamespace)
 	return nil
 }
