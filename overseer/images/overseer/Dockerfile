@@ -24,9 +24,13 @@ COPY agentsandboxes/ agentsandboxes/
 COPY repo-agent/pkg/ repo-agent/pkg/
 COPY repo-agent/api/ repo-agent/api/
 COPY overseer/ overseer/
+COPY factory/ factory/
 
 WORKDIR /app/overseer
 RUN go build -o overseer-cli ./cmd/overseer-cli/main.go
+
+WORKDIR /app/factory
+RUN go build -o factory ./main.go
 
 FROM node:20-slim
 
@@ -53,6 +57,7 @@ RUN npm install -g @google/gemini-cli
 WORKDIR /workspaces
 
 COPY --from=builder /app/overseer/overseer-cli /usr/local/bin/overseer-cli
+COPY --from=builder /app/factory/factory /usr/local/bin/factory
 COPY overseer/images/overseer/run.sh /workspaces/run.sh
 COPY overseer/images/overseer/summarize.sh /workspaces/summarize.sh
 COPY overseer/images/overseer/prompt/ /workspaces/prompt/
