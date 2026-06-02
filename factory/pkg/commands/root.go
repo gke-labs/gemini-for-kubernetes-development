@@ -28,7 +28,7 @@ type RootFlags struct {
 	DiskSize   string
 	SecretName string
 	Timeout    time.Duration
-	Tmux       bool
+	Background bool
 	Cleanup    bool
 }
 
@@ -49,7 +49,7 @@ coding tasks without local side effects or host dependencies.`,
 	cmd.PersistentFlags().StringVar(&rootFlags.DiskSize, "workspace-disk-size", "10Gi", "Workspace PVC disk size")
 	cmd.PersistentFlags().StringVar(&rootFlags.SecretName, "secret-name", SecretFactoryUser, "Kubernetes secret containing credentials")
 	cmd.PersistentFlags().DurationVar(&rootFlags.Timeout, "timeout", 30*time.Minute, "Overall execution timeout")
-	cmd.PersistentFlags().BoolVar(&rootFlags.Tmux, "tmux", false, "Run blocking remote tasks inside a named tmux session inside the sandbox")
+	cmd.PersistentFlags().BoolVar(&rootFlags.Background, "background", false, "Run the CLI command as a background daemon process and redirect output to a log file")
 	cmd.PersistentFlags().BoolVar(&rootFlags.Cleanup, "cleanup", false, "Delete the sandbox after the task is run or watch completes")
 
 	cmd.PersistentPreRun = func(_ *cobra.Command, _ []string) {
@@ -160,10 +160,54 @@ func getTokenFromScript() (string, error) {
 	return "", nil
 }
 
-func wrapWithTmux(cmdStr string, sessionName string) string {
-	if !rootFlags.Tmux {
-		return cmdStr
+func checkAndRunInBackground(sessionName string) (bool, error) {
+	if !rootFlags.Background {
+		return false, nil
 	}
-	escapedCmd := strings.ReplaceAll(cmdStr, "'", "'\"'\"'")
-	return fmt.Sprintf("tmux kill-session -t %s 2>/dev/null; tmux new-session -s %s '%s'", sessionName, sessionName, escapedCmd)
+	if os.Getenv("FACTORY_BACKGROUND") == "true" {
+		return false, nil // Already running in background
+	}
+
+	executable, err := os.Executable()
+	if err != nil {
+		return false, fmt.Errorf("failed to get executable path: %w", err)
+	}
+
+	// Build args, stripping out the --background flag
+	var args []string
+	for _, arg := range os.Args[1:] {
+		if arg == "--background" {
+			continue
+		}
+		args = append(args, arg)
+	}
+
+	// Determine log file path
+	logDir := os.Getenv("FACTORY_LOGS")
+	if logDir == "" {
+		logDir = "."
+	}
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		return false, fmt.Errorf("failed to create logs directory: %w", err)
+	}
+
+	logFile := filepath.Join(logDir, fmt.Sprintf("%s.log", sessionName))
+	f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return false, fmt.Errorf("failed to open log file: %w", err)
+	}
+	defer f.Close()
+
+	// Spawn the process detached
+	cmd := exec.Command(executable, args...)
+	cmd.Env = append(os.Environ(), "FACTORY_BACKGROUND=true")
+	cmd.Stdout = f
+	cmd.Stderr = f
+
+	if err := cmd.Start(); err != nil {
+		return false, fmt.Errorf("failed to start background process: %w", err)
+	}
+
+	fmt.Printf("Started command in background. Logs are redirected to %s\n", logFile)
+	return true, nil // Parent exits
 }

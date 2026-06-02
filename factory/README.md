@@ -32,7 +32,7 @@ It spins up isolated development environments (`agents.x-k8s.io`), establishes d
 ### Key Principles
 - **Zero Host Side-Effects**: No temporary file creation on your local machine. All scripts, prompts, and task logs are written directly to timestamped subdirectories inside the sandbox PVC (`/workspaces/tasks/fix-<timestamp>/`).
 - **Full Environment Injection & Dynamic Tokens**: The CLI dynamically resolves your GitHub credentials and Gemini API keys from Kubernetes Secrets (or dynamically via a token script if `TOKENSCRIPT_DIR` is set) and injects them directly into the `envd` execution environment.
-- **Tmux Session Persistence**: Support for running blocking tasks inside named tmux sessions (`--tmux`), allowing tasks to survive network disconnections and enabling users to attach to the session later.
+- **Background Daemon Execution**: Support for running blocking remote tasks in the background (`--background`). The CLI detaches, spawns as a background process, and redirects all stdout and stderr cleanly to a command-specific log file (storing logs under a custom `FACTORY_LOGS` path if set, or in the current directory by default).
 - **Live Streaming & Logging**: Standard output and error are streamed live to your terminal while simultaneously being recorded into `execution.log` inside the sandbox.
 - **Label-Based Discovery & Session Continuity**: Sandboxes are dynamically aliased to Pull Requests via Kubernetes labels (`factory.gemini.google.com/pr`), allowing `pr watch`, `investigate`, and `address-comments` to reuse existing sandboxes (`fix-...`) and maintain full Gemini chat session history across PR workflows.
 
@@ -286,7 +286,7 @@ factory sandbox cp factory-issue-917 ./local-script.sh /workspaces/script.sh
 
 ### Listing & Deleting Sandboxes
 ```bash
-# List all active sandboxes in your namespace
+# List all active sandboxes in your namespace with active tasks and PR/issue URLs
 factory sandbox list
 
 # Delete a sandbox and its load-balancer service

@@ -45,6 +45,13 @@ func (c *Client) WriteFile(ctx context.Context, destPath string, data []byte) er
 }
 
 func GetSandboxPodName(ctx context.Context, namespace, sandboxName string) (string, error) {
+	// Verify that the sandbox resource actually exists in Kubernetes first
+	// to avoid waiting indefinitely if the name is mistyped.
+	checkCmd := exec.CommandContext(ctx, "kubectl", "get", "sandbox", sandboxName, "-n", namespace)
+	if err := checkCmd.Run(); err != nil {
+		return "", fmt.Errorf("sandbox '%s' does not exist in namespace '%s'", sandboxName, namespace)
+	}
+
 	for i := 0; i < 120; i++ {
 		if ctx.Err() != nil {
 			return "", ctx.Err()

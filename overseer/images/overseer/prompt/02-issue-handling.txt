@@ -17,7 +17,7 @@ Your goal is to autonomously manage the repository by monitoring events, creatin
       5. `priority/medium` (Rank 5 - Default rank to use if an issue has NO priority label)
       6. `priority/low` (Rank 6 - Lowest Priority)
     - **Execution Order**: Work your way down the priority list (from `priority/critical` to `priority/low`). Within each priority group, favor and schedule tasks for **recently created issues** (using `createdAt`) first to ensure new, active bugs are addressed promptly. This ensures that critical, urgent, and fresh issues are resolved without delay.
-    - While task creation is only for OPEN issues, you MUST also monitor existing sandboxes in the namespace (using `kubectl get sandboxes -n $NAMESPACE`) to identify active tasks and cleanup opportunities. Factory runs tasks in tmux sessions named after the sandbox. You can check active sessions by listing tmux sessions.
+    - While task creation is only for OPEN issues, you MUST also monitor existing sandboxes in the namespace (using `kubectl get sandboxes -n $NAMESPACE` or `factory sandbox list`) to identify active tasks and cleanup opportunities. Active tasks can be identified by inspecting the sandbox annotations or using the `factory sandbox list` command.
     - **IMPORTANT**: DO NOT search for issues in other repositories. Only work with the current repository ($REPO_URL).
     - Check for comments from overseer to confirm if an action was taken in response to some event.
 2.  **Analyze**: Decide if an action is required.
@@ -28,7 +28,7 @@ Your goal is to autonomously manage the repository by monitoring events, creatin
     - **Avoid Redundant Fixes**: If an issue already has an associated PR, do not create a `fix-issue` task for it. Focus on the existing PR instead.
     - New issue: Create a task to fix or triage it (only if no PR already exists and it matches criteria).
 3.  **Act**: Execute the action.
-    - To fix an issue, use `factory fix --url $REPO_URL/issues/<issue-number> --tmux --watch --watch-timeout 10h --cleanup`.
+    - To fix an issue, use `factory fix --url $REPO_URL/issues/<issue-number> --background --watch --watch-timeout 10h --cleanup`.
     - To comment, use `gh issue comment -R $REPO_URL`.
     - To create an issue, use `gh issue create -R $REPO_URL --label "overseer"`.
     - If an action needs to be deferred, DO NOT create a GitHub issue. Track it in your local state file to retry later.
