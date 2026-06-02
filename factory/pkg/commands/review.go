@@ -49,6 +49,26 @@ func NewReviewCommand(ctx context.Context) *cobra.Command {
 			if flags.Publish != "yes" && flags.Publish != "no" && flags.Publish != "ask" && flags.Publish != "draft" {
 				return fmt.Errorf("invalid value for --publish: %s. Must be one of [no, yes, ask, draft]", flags.Publish)
 			}
+
+			sessionName := "factory-review"
+			u, err := url.Parse(flags.PRURL)
+			if err == nil {
+				parts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
+				if len(parts) >= 4 && parts[2] == "pull" {
+					sessionName = fmt.Sprintf("factory-review-%s", parts[3])
+				}
+			}
+
+			if rootFlags.Tmux {
+				ran, err := checkAndRunInTmux(sessionName)
+				if err != nil {
+					return err
+				}
+				if ran {
+					return nil // Parent process exits
+				}
+			}
+
 			ctx, cancel := context.WithTimeout(ctx, rootFlags.Timeout)
 			defer cancel()
 			return runReview(ctx, flags.PRURL, flags.Publish, flags.Instructions)

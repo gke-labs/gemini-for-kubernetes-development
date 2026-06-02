@@ -161,9 +161,39 @@ func getTokenFromScript() (string, error) {
 }
 
 func wrapWithTmux(cmdStr string, sessionName string) string {
+	// Disabled wrapping remote tasks in tmux as we now wrap the CLI itself.
+	return cmdStr
+}
+
+func checkAndRunInTmux(sessionName string) (bool, error) {
 	if !rootFlags.Tmux {
-		return cmdStr
+		return false, nil
 	}
-	escapedCmd := strings.ReplaceAll(cmdStr, "'", "'\"'\"'")
-	return fmt.Sprintf("tmux kill-session -t %s 2>/dev/null; tmux new-session -s %s '%s'", sessionName, sessionName, escapedCmd)
+	if os.Getenv("FACTORY_TMUX") == "true" {
+		return false, nil // Already running in tmux
+	}
+
+	executable, err := os.Executable()
+	if err != nil {
+		return false, fmt.Errorf("failed to get executable path: %w", err)
+	}
+
+	args := os.Args[1:]
+	
+	// Use -A to attach to existing session or create new one
+	tmuxArgs := []string{"new-session", "-A", "-s", sessionName, executable}
+	tmuxArgs = append(tmuxArgs, args...)
+
+	cmd := exec.Command("tmux", tmuxArgs...)
+	cmd.Env = append(os.Environ(), "FACTORY_TMUX=true")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+
+	fmt.Printf("Restarting command inside local tmux session '%s'...\n", sessionName)
+	if err := cmd.Run(); err != nil {
+		return true, fmt.Errorf("failed to run tmux: %w", err)
+	}
+
+	return true, nil
 }
