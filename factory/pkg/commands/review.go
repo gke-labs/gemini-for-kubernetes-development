@@ -118,27 +118,21 @@ func stripUntilIndicator(input string, indicator string) string {
 }
 
 func stripYAMLMarkers(input string) string {
-	startMarker := "```yaml"
-	endMarker := "```"
+	trimmed := strings.TrimSpace(input)
 
-	startIndex := strings.Index(input, startMarker)
-	if startIndex == -1 {
-		return input // Start marker not found
+	// Strip the prefix if it exists
+	if strings.HasPrefix(trimmed, "```yaml") {
+		trimmed = strings.TrimPrefix(trimmed, "```yaml")
+		trimmed = strings.TrimSpace(trimmed)
 	}
 
-	// Adjust startIndex to point after the start marker
-	startIndex += len(startMarker)
-
-	endIndex := strings.Index(input[startIndex:], endMarker)
-	if endIndex == -1 {
-		return input // End marker not found after start marker
+	// Strip the suffix if it exists (regardless of whether prefix existed)
+	if strings.HasSuffix(trimmed, "```") {
+		trimmed = strings.TrimSuffix(trimmed, "```")
+		trimmed = strings.TrimSpace(trimmed)
 	}
 
-	// Adjust endIndex to be relative to the original input string
-	endIndex += startIndex
-
-	// Extract the content between the markers, trimming any leading/trailing whitespace
-	return strings.TrimSpace(input[startIndex:endIndex])
+	return trimmed
 }
 
 func runReview(ctx context.Context, prURL string, publishPolicy string, instructionPaths []string) error {
