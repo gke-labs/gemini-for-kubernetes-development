@@ -68,6 +68,27 @@ func NewFixCommand(ctx context.Context) *cobra.Command {
 				prompt = "Fix this issue in the repository and push a PR"
 			}
 
+			sessionName := "factory-fix"
+			u, err := url.Parse(flags.URL)
+			if err == nil {
+				parts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
+				if len(parts) >= 4 && parts[2] == "issues" {
+					sessionName = fmt.Sprintf("factory-fix-%s", parts[3])
+				} else if flags.Name != "" {
+					sessionName = fmt.Sprintf("factory-fix-%s", flags.Name)
+				}
+			}
+
+			if rootFlags.Background {
+				ran, err := checkAndRunInBackground(sessionName)
+				if err != nil {
+					return err
+				}
+				if ran {
+					return nil // Parent exits
+				}
+			}
+
 			ctx, cancel := context.WithTimeout(ctx, rootFlags.Timeout)
 			defer cancel()
 			return runFix(ctx, flags.URL, prompt, flags.Name, flags.NoPR, flags.Watch, flags.PollInterval, flags.WatchTimeout)
@@ -246,10 +267,6 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch boo
 
 	fmt.Println("Running fix-issue task via envd...")
 	cmdStr := fmt.Sprintf("bash -c 'set -o pipefail; bash %s 2>&1 | tee %s/execution.log'", scriptPath, taskDir)
-	if rootFlags.Tmux {
-		fmt.Printf("Running task inside tmux session '%s'...\n", sandboxName)
-		cmdStr = wrapWithTmux(cmdStr, sandboxName)
-	}
 	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "fix-issue", "Running")
 	if err := client.RunTask(ctx, cmdStr, envMap); err != nil {
 		_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "fix-issue", "Failed")

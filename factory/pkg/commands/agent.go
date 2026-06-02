@@ -65,6 +65,27 @@ func NewAgentCreateCommand(ctx context.Context) *cobra.Command {
 				return fmt.Errorf("--agent is required")
 			}
 
+			sessionName := "factory-agent"
+			u, err := url.Parse(flags.URL)
+			if err == nil {
+				parts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
+				if len(parts) >= 4 && parts[2] == "pull" {
+					sessionName = fmt.Sprintf("factory-agent-pr-%s", parts[3])
+				} else {
+					sessionName = fmt.Sprintf("factory-agent-%s", slugify(flags.Agent))
+				}
+			}
+
+			if rootFlags.Background {
+				ran, err := checkAndRunInBackground(sessionName)
+				if err != nil {
+					return err
+				}
+				if ran {
+					return nil // Parent exits
+				}
+			}
+
 			ctx, cancel := context.WithTimeout(ctx, rootFlags.Timeout)
 			defer cancel()
 			return runAgent(ctx, flags)
@@ -238,10 +259,6 @@ func runAgent(ctx context.Context, flags AgentFlags) error {
 
 	fmt.Println("Running agent task via envd...")
 	cmdStr := fmt.Sprintf("bash -c 'set -o pipefail; bash %s 2>&1 | tee %s/execution.log'", scriptPath, taskDir)
-	if rootFlags.Tmux {
-		fmt.Printf("Running task inside tmux session '%s'...\n", sandboxName)
-		cmdStr = wrapWithTmux(cmdStr, sandboxName)
-	}
 	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "agent", "Running")
 	if err := client.RunTask(ctx, cmdStr, envMap); err != nil {
 		_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "agent", "Failed")

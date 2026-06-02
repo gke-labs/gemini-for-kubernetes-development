@@ -28,7 +28,7 @@ type RootFlags struct {
 	DiskSize   string
 	SecretName string
 	Timeout    time.Duration
-	Tmux       bool
+	Background bool
 	Cleanup    bool
 }
 
@@ -49,7 +49,7 @@ coding tasks without local side effects or host dependencies.`,
 	cmd.PersistentFlags().StringVar(&rootFlags.DiskSize, "workspace-disk-size", "10Gi", "Workspace PVC disk size")
 	cmd.PersistentFlags().StringVar(&rootFlags.SecretName, "secret-name", SecretFactoryUser, "Kubernetes secret containing credentials")
 	cmd.PersistentFlags().DurationVar(&rootFlags.Timeout, "timeout", 30*time.Minute, "Overall execution timeout")
-	cmd.PersistentFlags().BoolVar(&rootFlags.Tmux, "tmux", false, "Run blocking remote tasks inside a named tmux session inside the sandbox")
+	cmd.PersistentFlags().BoolVar(&rootFlags.Background, "background", false, "Run the CLI command as a background daemon process and redirect output to a log file")
 	cmd.PersistentFlags().BoolVar(&rootFlags.Cleanup, "cleanup", false, "Delete the sandbox after the task is run or watch completes")
 
 	cmd.PersistentPreRun = func(_ *cobra.Command, _ []string) {
@@ -160,25 +160,12 @@ func getTokenFromScript() (string, error) {
 	return "", nil
 }
 
-func wrapWithTmux(cmdStr string, sessionName string) string {
-	// Disabled wrapping remote tasks in tmux as we now wrap the CLI itself.
-	return cmdStr
-}
-
-func checkAndRunInTmux(sessionName string) (bool, error) {
-	if !rootFlags.Tmux {
+func checkAndRunInBackground(sessionName string) (bool, error) {
+	if !rootFlags.Background {
 		return false, nil
 	}
-	if os.Getenv("FACTORY_TMUX") == "true" {
-		return false, nil // Already running in tmux
-	}
-
-	// Check if the tmux session already exists
-	hasSessionCmd := exec.Command("tmux", "has-session", "-t", sessionName)
-	if err := hasSessionCmd.Run(); err == nil {
-		fmt.Printf("Tmux session '%s' is already running in the background.\n", sessionName)
-		fmt.Printf("To attach, run: tmux attach -t '%s'\n", sessionName)
-		return true, nil // Parent process exits, doing nothing
+	if os.Getenv("FACTORY_BACKGROUND") == "true" {
+		return false, nil // Already running in background
 	}
 
 	executable, err := os.Executable()
@@ -186,30 +173,41 @@ func checkAndRunInTmux(sessionName string) (bool, error) {
 		return false, fmt.Errorf("failed to get executable path: %w", err)
 	}
 
-	args := os.Args[1:]
-	
-	var quotedArgs []string
-	for _, arg := range args {
-		quotedArgs = append(quotedArgs, fmt.Sprintf("'%s'", strings.ReplaceAll(arg, "'", "'\\''")))
-	}
-	// Enable remain-on-exit so dead sessions can be easily cleaned up.
-	shellCmd := fmt.Sprintf("tmux set-window-option remain-on-exit on; exec '%s' %s", executable, strings.Join(quotedArgs, " "))
-	
-	// Start detached (-d)
-	tmuxArgs := []string{"new-session", "-d", "-s", sessionName, "sh", "-c", shellCmd}
-
-	cmd := exec.Command("tmux", tmuxArgs...)
-	cmd.Env = append(os.Environ(), "FACTORY_TMUX=true")
-	
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-
-	fmt.Printf("Starting command inside background tmux session '%s'...\n", sessionName)
-	fmt.Printf("To view logs, run: tmux attach -t '%s'\n", sessionName)
-	
-	if err := cmd.Run(); err != nil {
-		return true, fmt.Errorf("failed to start tmux session: %s: %w", stderr.String(), err)
+	// Build args, stripping out the --background flag
+	var args []string
+	for _, arg := range os.Args[1:] {
+		if arg == "--background" {
+			continue
+		}
+		args = append(args, arg)
 	}
 
-	return true, nil
+	// Determine log file path
+	logDir := os.Getenv("FACTORY_LOGS")
+	if logDir == "" {
+		logDir = "."
+	}
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		return false, fmt.Errorf("failed to create logs directory: %w", err)
+	}
+
+	logFile := filepath.Join(logDir, fmt.Sprintf("%s.log", sessionName))
+	f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return false, fmt.Errorf("failed to open log file: %w", err)
+	}
+	defer f.Close()
+
+	// Spawn the process detached
+	cmd := exec.Command(executable, args...)
+	cmd.Env = append(os.Environ(), "FACTORY_BACKGROUND=true")
+	cmd.Stdout = f
+	cmd.Stderr = f
+
+	if err := cmd.Start(); err != nil {
+		return false, fmt.Errorf("failed to start background process: %w", err)
+	}
+
+	fmt.Printf("Started command in background. Logs are redirected to %s\n", logFile)
+	return true, nil // Parent exits
 }

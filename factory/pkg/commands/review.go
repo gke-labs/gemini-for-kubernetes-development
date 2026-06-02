@@ -59,8 +59,8 @@ func NewReviewCommand(ctx context.Context) *cobra.Command {
 				}
 			}
 
-			if rootFlags.Tmux {
-				ran, err := checkAndRunInTmux(sessionName)
+			if rootFlags.Background {
+				ran, err := checkAndRunInBackground(sessionName)
 				if err != nil {
 					return err
 				}
@@ -244,10 +244,6 @@ func runReview(ctx context.Context, prURL string, publishPolicy string, instruct
 
 	fmt.Println("Running review task via envd...")
 	cmdStr := fmt.Sprintf("bash -c 'set -o pipefail; bash %s 2>&1 | tee %s/execution.log'", scriptPath, taskDir)
-	if rootFlags.Tmux {
-		fmt.Printf("Running task inside tmux session '%s'...\n", sandboxName)
-		cmdStr = wrapWithTmux(cmdStr, sandboxName)
-	}
 	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "review", "Running")
 	if err := client.RunTask(ctx, cmdStr, envMap); err != nil {
 		_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "review", "Failed")
