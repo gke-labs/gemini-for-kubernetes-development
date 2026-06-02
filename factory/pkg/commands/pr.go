@@ -528,18 +528,18 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 	cleanup := func() {
 		if rootFlags.Cleanup {
 			manager := k8s.NewManager(kubeClient)
-			
+
 			// Find the sandbox by label first
 			listOpts := metav1.ListOptions{
 				LabelSelector: fmt.Sprintf("factory.gemini.google.com/pr=%d", prNum),
 			}
 			sbs, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(rootFlags.Namespace).List(ctx, listOpts)
-			
+
 			targetSandboxName := fmt.Sprintf("factory-pr-%d", prNum)
 			if err == nil && len(sbs.Items) > 0 {
 				targetSandboxName = sbs.Items[0].GetName()
 			}
-			
+
 			fmt.Printf("Cleaning up sandbox '%s'...\n", targetSandboxName)
 			if err := manager.DeleteSandbox(ctx, rootFlags.Namespace, targetSandboxName); err != nil {
 				klog.Errorf("Failed to cleanup sandbox '%s': %v", targetSandboxName, err)
