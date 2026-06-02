@@ -31,7 +31,8 @@ It spins up isolated development environments (`agents.x-k8s.io`), establishes d
 
 ### Key Principles
 - **Zero Host Side-Effects**: No temporary file creation on your local machine. All scripts, prompts, and task logs are written directly to timestamped subdirectories inside the sandbox PVC (`/workspaces/tasks/fix-<timestamp>/`).
-- **Full Environment Injection**: The CLI dynamically resolves your GitHub credentials and Gemini API keys from Kubernetes Secrets and injects them directly into the `envd` execution environment via Connect-RPC `StartRequest`.
+- **Full Environment Injection & Dynamic Tokens**: The CLI dynamically resolves your GitHub credentials and Gemini API keys from Kubernetes Secrets (or dynamically via a token script if `TOKENSCRIPT_DIR` is set) and injects them directly into the `envd` execution environment.
+- **Tmux Session Persistence**: Support for running blocking tasks inside named tmux sessions (`--tmux`), allowing tasks to survive network disconnections and enabling users to attach to the session later.
 - **Live Streaming & Logging**: Standard output and error are streamed live to your terminal while simultaneously being recorded into `execution.log` inside the sandbox.
 - **Label-Based Discovery & Session Continuity**: Sandboxes are dynamically aliased to Pull Requests via Kubernetes labels (`factory.gemini.google.com/pr`), allowing `pr watch`, `investigate`, and `address-comments` to reuse existing sandboxes (`fix-...`) and maintain full Gemini chat session history across PR workflows.
 
@@ -51,6 +52,7 @@ factory
  ├── status (Diagnostic pre-flight checks to verify cluster and factory health)
  ├── user
  │    └── onboard (Onboard a new user by creating a namespace and secret)
+ ├── cleanup (Delete sandboxes older than a specified duration)
  └── sandbox
       ├── list (List sandboxes in the current namespace)
       ├── delete (Delete a sandbox and its load-balancer service)
@@ -108,9 +110,9 @@ GEMINI_API_KEY=yourkey factory up --current-context
 **User Onboarding**:
 User onboarding is automatically performed during `factory up` if `gh` CLI is installed and authenticated (`gh auth login`). The CLI deduces your GitHub username, email, and token, displays them for confirmation, and provisions a dedicated namespace and `factory-user` Kubernetes Secret.
 
-If automatic onboarding is skipped or fails, you can configure your identity and keys manually at any time:
+If automatic onboarding is skipped or fails, you can configure your identity and keys manually at any time. You can also onboard to a custom namespace by using the global `-n` or `--namespace` flag:
 ```bash
-factory user onboard \
+factory -n my-custom-namespace user onboard \
   --github-login yourlogin \
   --github-token yourpat \
   --github-email youremail \
@@ -170,11 +172,12 @@ factory fix \
   --instruction "Refactor the auth package" \
   --no-pr
 
-# Automatically alias the sandbox to the created PR and start watching it for CI failures or review feedback
+# Automatically alias the sandbox to the created PR, start watching it, and cleanup on completion
 factory fix \
   --url https://github.com/owner/repo/issues/1 \
   --watch \
-  --poll-interval 1m
+  --watch-timeout 1h \
+  --cleanup
 ```
 
 ### Reviewing Pull Requests (`factory pr review`)
@@ -196,9 +199,9 @@ factory pr address-comments --pr-url https://github.com/owner/repo/pull/1 --cont
 ```
 
 ### Watching Pull Requests (`factory pr watch`)
-Continuously monitor a specific PR in the foreground, automatically triggering `investigate` on CI failures or `address-comments` on new review feedback. Use `--continue-session` to ensure all dispatched tasks inherit the ongoing chat session. The watch loop logs explicit sleep intervals and cleanly terminates when the PR is merged or closed:
+Continuously monitor a specific PR in the foreground, automatically triggering `investigate` on CI failures or `address-comments` on new review feedback. Use `--continue-session` to ensure all dispatched tasks inherit the ongoing chat session. The watch loop logs explicit sleep intervals and cleanly terminates when the PR is merged, closed, or timeout expires:
 ```bash
-factory pr watch --pr-url https://github.com/owner/repo/pull/1 --poll-interval 1m --continue-session
+factory pr watch --pr-url https://github.com/owner/repo/pull/1 --watch-timeout 1h --cleanup
 ```
 
 ### Running Custom Agents (`factory agent create`)
@@ -288,4 +291,14 @@ factory sandbox list
 
 # Delete a sandbox and its load-balancer service
 factory sandbox delete factory-issue-917
+```
+
+### Cleaning up Sandboxes (`factory cleanup`)
+Delete sandboxes older than a specified duration (default 24h).
+```bash
+# Delete sandboxes older than 1 day
+factory cleanup
+
+# Delete sandboxes older than 6 hours
+factory cleanup --older-than 6h
 ```

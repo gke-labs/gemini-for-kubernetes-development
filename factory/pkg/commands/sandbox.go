@@ -375,9 +375,9 @@ func NewSandboxChatCommand(ctx context.Context) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("fetching %s secret in namespace %s: %w (make sure to run 'factory user onboard' first)", rootFlags.SecretName, rootFlags.Namespace, err)
 			}
-			geminiKey := string(secret.Data[KeyGeminiAPIKey])
+			geminiKey := getGeminiAPIKey(secret)
 			if geminiKey == "" {
-				return fmt.Errorf("GEMINI_API_KEY not found in secret %s", rootFlags.SecretName)
+				return fmt.Errorf("GEMINI_API_KEY not found in secret %s and TOKENSCRIPT_DIR was not set or returned empty", rootFlags.SecretName)
 			}
 
 			podName, err := envd.GetSandboxPodName(ctx, rootFlags.Namespace, sandboxName)

@@ -18,6 +18,7 @@ type WatchFlags struct {
 	Assignee     string
 	Labels       []string
 	DryRun       bool
+	WatchTimeout time.Duration
 }
 
 func NewWatchCommand(ctx context.Context) *cobra.Command {
@@ -39,7 +40,7 @@ func NewWatchCommand(ctx context.Context) *cobra.Command {
 			if len(parts) != 2 {
 				return fmt.Errorf("invalid repo format, expected owner/repo, got %s", flags.Repo)
 			}
-			return runWatch(ctx, parts[0], parts[1], flags.PollInterval, flags.Assignee, flags.Labels, flags.DryRun)
+			return runWatch(ctx, parts[0], parts[1], flags.PollInterval, flags.Assignee, flags.Labels, flags.DryRun, flags.WatchTimeout)
 		},
 	}
 
@@ -48,12 +49,13 @@ func NewWatchCommand(ctx context.Context) *cobra.Command {
 	cmd.Flags().StringVar(&flags.Assignee, "assignee", "factory-bot", "GitHub username to watch for assigned issues (use empty string for unassigned issues)")
 	cmd.Flags().StringSliceVar(&flags.Labels, "labels", nil, "Comma-separated list of labels to filter issues by")
 	cmd.Flags().BoolVar(&flags.DryRun, "dryrun", false, "Print actions without creating sandboxes or executing tasks")
+	cmd.Flags().DurationVar(&flags.WatchTimeout, "watch-timeout", 0, "Timeout for watching (default forever)")
 
 	return cmd
 }
 
-func runWatch(ctx context.Context, owner, repo string, interval time.Duration, assignee string, labels []string, dryRun bool) error {
-	fmt.Printf("Starting watch for repository %s/%s (poll interval: %s, assignee: '%s', labels: %v, dryRun: %v)...\n", owner, repo, interval, assignee, labels, dryRun)
+func runWatch(ctx context.Context, owner, repo string, interval time.Duration, assignee string, labels []string, dryRun bool, watchTimeout time.Duration) error {
+	fmt.Printf("Starting watch for repository %s/%s (poll interval: %s, assignee: '%s', labels: %v, dryRun: %v, watchTimeout: %s)...\n", owner, repo, interval, assignee, labels, dryRun, watchTimeout)
 
 	ghClient, err := github.NewClient(ctx)
 	if err != nil {
@@ -62,6 +64,11 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+
+	var timeoutChan <-chan time.Time
+	if watchTimeout > 0 {
+		timeoutChan = time.After(watchTimeout)
+	}
 
 	type prWatchState struct {
 		lastSHA          string
@@ -98,7 +105,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					if dryRun {
 						fmt.Printf("[DRYRUN] Would trigger fix for issue #%d: %s\n", num, issueURL)
 					} else {
-						if err := runFix(ctx, issueURL, "Fix this issue", "", false, false, 0); err != nil {
+						if err := runFix(ctx, issueURL, "Fix this issue", "", false, false, 0, watchTimeout); err != nil {
 							klog.Errorf("Fix for issue #%d failed: %v", num, err)
 						}
 					}
@@ -169,6 +176,9 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-timeoutChan:
+			fmt.Printf("\nWatch timeout of %s expired. Stopping watch.\n", watchTimeout)
+			return nil
 		case <-ticker.C:
 			checkRepo()
 		}

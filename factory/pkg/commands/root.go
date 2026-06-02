@@ -1,13 +1,17 @@
 package commands
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
+	corev1 "k8s.io/api/core/v1"
 )
 
 const (
@@ -24,6 +28,8 @@ type RootFlags struct {
 	DiskSize   string
 	SecretName string
 	Timeout    time.Duration
+	Tmux       bool
+	Cleanup    bool
 }
 
 var rootFlags RootFlags
@@ -43,6 +49,8 @@ coding tasks without local side effects or host dependencies.`,
 	cmd.PersistentFlags().StringVar(&rootFlags.DiskSize, "workspace-disk-size", "10Gi", "Workspace PVC disk size")
 	cmd.PersistentFlags().StringVar(&rootFlags.SecretName, "secret-name", SecretFactoryUser, "Kubernetes secret containing credentials")
 	cmd.PersistentFlags().DurationVar(&rootFlags.Timeout, "timeout", 30*time.Minute, "Overall execution timeout")
+	cmd.PersistentFlags().BoolVar(&rootFlags.Tmux, "tmux", false, "Run blocking remote tasks inside a named tmux session inside the sandbox")
+	cmd.PersistentFlags().BoolVar(&rootFlags.Cleanup, "cleanup", false, "Delete the sandbox after the task is run or watch completes")
 
 	cmd.PersistentPreRun = func(_ *cobra.Command, _ []string) {
 		if rootFlags.Namespace == "" {
@@ -96,6 +104,10 @@ coding tasks without local side effects or host dependencies.`,
 	userCmd.GroupID = "management"
 	cmd.AddCommand(userCmd)
 
+	cleanupCmd := NewCleanupCommand(ctx)
+	cleanupCmd.GroupID = "management"
+	cmd.AddCommand(cleanupCmd)
+
 	sandboxCmd := NewSandboxCommand(ctx)
 	sandboxCmd.GroupID = "management"
 	cmd.AddCommand(sandboxCmd)
@@ -105,4 +117,53 @@ coding tasks without local side effects or host dependencies.`,
 	cmd.AddCommand(daemonCmd)
 
 	return cmd
+}
+
+func getGeminiAPIKey(secret *corev1.Secret) string {
+	if token, err := getTokenFromScript(); err == nil && token != "" {
+		return token
+	}
+	if secret != nil {
+		return string(secret.Data[KeyGeminiAPIKey])
+	}
+	return ""
+}
+
+func getTokenFromScript() (string, error) {
+	dir := os.Getenv("TOKENSCRIPT_DIR")
+	if dir == "" {
+		return "", nil
+	}
+
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return "", fmt.Errorf("failed to read tokenscript dir: %w", err)
+	}
+
+	for _, f := range files {
+		if f.IsDir() || strings.HasPrefix(f.Name(), "..") {
+			continue
+		}
+
+		path := filepath.Join(dir, f.Name())
+		cmd := exec.Command(path)
+		var out bytes.Buffer
+		cmd.Stdout = &out
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return "", fmt.Errorf("failed to run tokenscript %s: %w", path, err)
+		}
+
+		return strings.TrimSpace(out.String()), nil
+	}
+
+	return "", nil
+}
+
+func wrapWithTmux(cmdStr string, sessionName string) string {
+	if !rootFlags.Tmux {
+		return cmdStr
+	}
+	escapedCmd := strings.ReplaceAll(cmdStr, "'", "'\"'\"'")
+	return fmt.Sprintf("tmux kill-session -t %s 2>/dev/null; tmux new-session -s %s '%s'", sessionName, sessionName, escapedCmd)
 }

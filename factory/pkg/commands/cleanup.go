@@ -2,11 +2,15 @@ package commands
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"time"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
+	"github.com/spf13/cobra"
 	"k8s.io/klog/v2"
 )
 
@@ -169,4 +173,52 @@ func cleanOldFiles(ctx context.Context, dir string, maxAge time.Duration) {
 			}
 		}
 	}
+}
+
+type CleanupFlags struct {
+	OlderThan time.Duration
+}
+
+func NewCleanupCommand(ctx context.Context) *cobra.Command {
+	var flags CleanupFlags
+
+	cmd := &cobra.Command{
+		Use:   "cleanup",
+		Short: "Delete sandboxes older than a specified duration",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			kubeClient, err := clients.NewKubernetesClient()
+			if err != nil {
+				return fmt.Errorf("creating k8s client: %w", err)
+			}
+			manager := k8s.NewManager(kubeClient)
+
+			list, err := manager.ListSandboxes(ctx, rootFlags.Namespace)
+			if err != nil {
+				return fmt.Errorf("listing sandboxes: %w", err)
+			}
+
+			now := time.Now()
+			deletedCount := 0
+
+			for _, item := range list.Items {
+				creationTime := item.GetCreationTimestamp().Time
+				if now.Sub(creationTime) > flags.OlderThan {
+					name := item.GetName()
+					fmt.Printf("Deleting sandbox '%s' (age: %s)...\n", name, now.Sub(creationTime).Round(time.Second))
+					if err := manager.DeleteSandbox(ctx, rootFlags.Namespace, name); err != nil {
+						klog.Errorf("Failed to delete sandbox '%s': %v", name, err)
+					} else {
+						deletedCount++
+					}
+				}
+			}
+
+			fmt.Printf("Successfully deleted %d sandboxes.\n", deletedCount)
+			return nil
+		},
+	}
+
+	cmd.Flags().DurationVar(&flags.OlderThan, "older-than", 24*time.Hour, "Delete sandboxes older than this duration")
+
+	return cmd
 }

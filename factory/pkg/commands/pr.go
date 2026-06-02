@@ -11,6 +11,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/tasks"
 	"github.com/spf13/cobra"
@@ -204,7 +205,7 @@ func runInvestigate(ctx context.Context, prURL, prompt string, continueSession b
 
 	envMap := map[string]string{
 		"GITHUB_TOKEN":               string(secret.Data[KeyGithubToken]),
-		"GEMINI_API_KEY":             string(secret.Data[KeyGeminiAPIKey]),
+		"GEMINI_API_KEY":             getGeminiAPIKey(secret),
 		"GEMINI_CLI_TRUST_WORKSPACE": "true",
 		"REPO_NAME":                  repo,
 		"CLONE_URL":                  cloneURL,
@@ -221,6 +222,10 @@ func runInvestigate(ctx context.Context, prURL, prompt string, continueSession b
 
 	fmt.Println("Running investigate task via envd...")
 	cmdStr := fmt.Sprintf("bash -c 'set -o pipefail; bash %s 2>&1 | tee %s/execution.log'", scriptPath, taskDir)
+	if rootFlags.Tmux {
+		fmt.Printf("Running task inside tmux session '%s'...\n", sandboxName)
+		cmdStr = wrapWithTmux(cmdStr, sandboxName)
+	}
 	if err := client.RunTask(ctx, cmdStr, envMap); err != nil {
 		return fmt.Errorf("running task: %w", err)
 	}
@@ -425,7 +430,7 @@ func runAddressComments(ctx context.Context, prURL, prompt string, continueSessi
 
 	envMap := map[string]string{
 		"GITHUB_TOKEN":               string(secret.Data[KeyGithubToken]),
-		"GEMINI_API_KEY":             string(secret.Data[KeyGeminiAPIKey]),
+		"GEMINI_API_KEY":             getGeminiAPIKey(secret),
 		"GEMINI_CLI_TRUST_WORKSPACE": "true",
 		"REPO_NAME":                  repo,
 		"CLONE_URL":                  cloneURL,
@@ -440,6 +445,10 @@ func runAddressComments(ctx context.Context, prURL, prompt string, continueSessi
 
 	fmt.Println("Running address-comments task via envd...")
 	cmdStr := fmt.Sprintf("bash -c 'set -o pipefail; bash %s 2>&1 | tee %s/execution.log'", scriptPath, taskDir)
+	if rootFlags.Tmux {
+		fmt.Printf("Running task inside tmux session '%s'...\n", sandboxName)
+		cmdStr = wrapWithTmux(cmdStr, sandboxName)
+	}
 	if err := client.RunTask(ctx, cmdStr, envMap); err != nil {
 		return fmt.Errorf("running task: %w", err)
 	}
@@ -453,6 +462,7 @@ type PRWatchFlags struct {
 	PollInterval    time.Duration
 	DryRun          bool
 	ContinueSession bool
+	WatchTimeout    time.Duration
 }
 
 func NewPRWatchCommand(ctx context.Context) *cobra.Command {
@@ -467,7 +477,7 @@ func NewPRWatchCommand(ctx context.Context) *cobra.Command {
 			if flags.PRURL == "" {
 				return fmt.Errorf("--pr-url is required")
 			}
-			return runPRWatch(ctx, flags.PRURL, flags.PollInterval, flags.DryRun, flags.ContinueSession)
+			return runPRWatch(ctx, flags.PRURL, flags.PollInterval, flags.DryRun, flags.ContinueSession, flags.WatchTimeout)
 		},
 	}
 
@@ -475,12 +485,13 @@ func NewPRWatchCommand(ctx context.Context) *cobra.Command {
 	cmd.Flags().DurationVar(&flags.PollInterval, "poll-interval", 2*time.Minute, "Polling interval")
 	cmd.Flags().BoolVar(&flags.DryRun, "dryrun", false, "Print actions without creating sandboxes or executing tasks")
 	cmd.Flags().BoolVar(&flags.ContinueSession, "continue-session", false, "Continue the Gemini session from previous runs in the sandbox")
+	cmd.Flags().DurationVar(&flags.WatchTimeout, "watch-timeout", 0, "Timeout for watching (default forever)")
 
 	return cmd
 }
 
-func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRun, continueSession bool) error {
-	fmt.Printf("Starting PR watch for %s (poll interval: %s, dryRun: %v, continueSession: %v)...\n", prURL, interval, dryRun, continueSession)
+func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRun, continueSession bool, watchTimeout time.Duration) error {
+	fmt.Printf("Starting PR watch for %s (poll interval: %s, dryRun: %v, continueSession: %v, watchTimeout: %s)...\n", prURL, interval, dryRun, continueSession, watchTimeout)
 
 	u, err := url.Parse(prURL)
 	if err != nil {
@@ -501,8 +512,40 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 		return fmt.Errorf("creating github client: %w", err)
 	}
 
+	kubeClient, err := clients.NewKubernetesClient()
+	if err != nil {
+		return fmt.Errorf("creating k8s client: %w", err)
+	}
+
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+
+	var timeoutChan <-chan time.Time
+	if watchTimeout > 0 {
+		timeoutChan = time.After(watchTimeout)
+	}
+
+	cleanup := func() {
+		if rootFlags.Cleanup {
+			manager := k8s.NewManager(kubeClient)
+
+			// Find the sandbox by label first
+			listOpts := metav1.ListOptions{
+				LabelSelector: fmt.Sprintf("factory.gemini.google.com/pr=%d", prNum),
+			}
+			sbs, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(rootFlags.Namespace).List(ctx, listOpts)
+
+			targetSandboxName := fmt.Sprintf("factory-pr-%d", prNum)
+			if err == nil && len(sbs.Items) > 0 {
+				targetSandboxName = sbs.Items[0].GetName()
+			}
+
+			fmt.Printf("Cleaning up sandbox '%s'...\n", targetSandboxName)
+			if err := manager.DeleteSandbox(ctx, rootFlags.Namespace, targetSandboxName); err != nil {
+				klog.Errorf("Failed to cleanup sandbox '%s': %v", targetSandboxName, err)
+			}
+		}
+	}
 
 	var lastInvestigatedSHA string
 	var lastInvestigatedTime time.Time
@@ -606,6 +649,7 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 
 	// Run first check immediately
 	if checkPR() {
+		cleanup()
 		return nil
 	}
 
@@ -614,8 +658,13 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-timeoutChan:
+			fmt.Printf("\nWatch timeout of %s expired. Stopping watch.\n", watchTimeout)
+			cleanup()
+			return nil
 		case <-ticker.C:
 			if checkPR() {
+				cleanup()
 				return nil
 			}
 		}
