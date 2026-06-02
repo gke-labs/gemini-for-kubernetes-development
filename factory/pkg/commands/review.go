@@ -17,6 +17,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/tasks"
 	githubv39 "github.com/google/go-github/v39/github"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -82,6 +83,44 @@ func readInstructionFile(ctx context.Context, ghClient *githubv39.Client, owner,
 	return "", fmt.Errorf("instruction file not found locally or in repo: %s", path)
 }
 
+func stripUntilIndicator(input string, indicator string) string {
+	if indicator == "" {
+		return input
+	}
+	if strings.HasPrefix(input, indicator) {
+		return input
+	}
+	search := "\n" + indicator
+	if idx := strings.Index(input, search); idx != -1 {
+		return input[idx+1:]
+	}
+	return input
+}
+
+func stripYAMLMarkers(input string) string {
+	startMarker := "```yaml"
+	endMarker := "```"
+
+	startIndex := strings.Index(input, startMarker)
+	if startIndex == -1 {
+		return input // Start marker not found
+	}
+
+	// Adjust startIndex to point after the start marker
+	startIndex += len(startMarker)
+
+	endIndex := strings.Index(input[startIndex:], endMarker)
+	if endIndex == -1 {
+		return input // End marker not found after start marker
+	}
+
+	// Adjust endIndex to be relative to the original input string
+	endIndex += startIndex
+
+	// Extract the content between the markers, trimming any leading/trailing whitespace
+	return strings.TrimSpace(input[startIndex:endIndex])
+}
+
 func runReview(ctx context.Context, prURL string, publishPolicy string, instructionPaths []string) error {
 	fmt.Printf("Resolving PR URL: %s...\n", prURL)
 
@@ -140,25 +179,20 @@ func runReview(ctx context.Context, prURL string, publishPolicy string, instruct
 	githubLogin := string(secret.Data[KeyGithubLogin])
 	githubEmail := string(secret.Data[KeyGithubEmail])
 
-	params := tasks.ReviewParams{
-		PullRequest: tasks.PullRequest{
-			Number: prNum,
-			URL:    prURL,
-			Title:  pr.GetTitle(),
-			Body:   pr.GetBody(),
-		},
+	structuredParams := tasks.StructuredReviewParams{
+		PullRequest:  *pr,
 		Instructions: instructions,
-		Models:       []string{"gemini-3.5-flash", "gemini-3-flash-preview", "gemini-3.1-pro-preview", "gemini-2.5-pro"},
+		DiffURL:      pr.GetDiffURL(),
+		HTMLURL:      pr.GetHTMLURL(),
+	}
+	promptBytes, err := tasks.RenderStructuredReviewPrompt(structuredParams)
+	if err != nil {
+		return fmt.Errorf("rendering structured review prompt: %w", err)
 	}
 
 	scriptBytes, err := tasks.GetReviewScript()
 	if err != nil {
 		return fmt.Errorf("getting review script: %w", err)
-	}
-
-	promptBytes, err := tasks.RenderReviewPrompt(params)
-	if err != nil {
-		return fmt.Errorf("rendering review prompt: %w", err)
 	}
 
 	fmt.Printf("Connecting to sandbox %s via envd...\n", sandboxName)
@@ -218,6 +252,15 @@ func runReview(ctx context.Context, prURL string, publishPolicy string, instruct
 		return fmt.Errorf("review output was empty")
 	}
 
+	reviewOutput = stripYAMLMarkers(reviewOutput)
+	reviewOutput = stripUntilIndicator(reviewOutput, "review:")
+
+	var agentOutput tasks.ReviewAgentOutput
+	if err := yaml.Unmarshal([]byte(reviewOutput), &agentOutput); err != nil {
+		return fmt.Errorf("parsing structured review output: %w", err)
+	}
+	structuredOutput := &agentOutput
+
 	shouldPublish := false
 	isDraft := false
 	switch publishPolicy {
@@ -258,9 +301,30 @@ func runReview(ctx context.Context, prURL string, publishPolicy string, instruct
 			fmt.Println("Posting review as a draft (pending) review to GitHub PR...")
 		}
 
-		reviewRequest := &githubv39.PullRequestReviewRequest{
-			Body:  githubv39.String(reviewOutput),
-			Event: reviewEvent,
+		var reviewRequest *githubv39.PullRequestReviewRequest
+		if structuredOutput != nil && structuredOutput.Review != nil {
+			var comments []*githubv39.DraftReviewComment
+			for _, c := range structuredOutput.Review.Comments {
+				comments = append(comments, &githubv39.DraftReviewComment{
+					Path:      c.Path,
+					Position:  c.Position,
+					Body:      c.Body,
+					Line:      c.Line,
+					Side:      c.Side,
+					StartLine: c.StartLine,
+					StartSide: c.StartSide,
+				})
+			}
+			reviewRequest = &githubv39.PullRequestReviewRequest{
+				Body:     structuredOutput.Review.Body,
+				Event:    reviewEvent,
+				Comments: comments,
+			}
+		} else {
+			reviewRequest = &githubv39.PullRequestReviewRequest{
+				Body:  githubv39.String(reviewOutput),
+				Event: reviewEvent,
+			}
 		}
 		_, _, err = ghClient.PullRequests.CreateReview(ctx, owner, repo, prNum, reviewRequest)
 		if err != nil {
