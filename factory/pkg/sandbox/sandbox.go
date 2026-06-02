@@ -193,3 +193,31 @@ func EnsureReviewSandbox(ctx context.Context, kubeClient *clients.KubernetesClie
 
 	return name, nil
 }
+
+func UpdateSandboxTaskAnnotation(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, sandboxName, taskType, taskState string) error {
+	unstructObj, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("getting sandbox %s: %w", sandboxName, err)
+	}
+
+	annotations := unstructObj.GetAnnotations()
+	if annotations == nil {
+		annotations = make(map[string]string)
+	}
+
+	if taskType != "" {
+		annotations["sandbox.gemini.google.com/last-task-type"] = taskType
+		annotations["sandbox.gemini.google.com/last-task-state"] = taskState
+	} else {
+		delete(annotations, "sandbox.gemini.google.com/last-task-type")
+		delete(annotations, "sandbox.gemini.google.com/last-task-state")
+	}
+
+	unstructObj.SetAnnotations(annotations)
+	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Update(ctx, unstructObj, metav1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf("updating sandbox %s task annotations: %w", sandboxName, err)
+	}
+	return nil
+}
+

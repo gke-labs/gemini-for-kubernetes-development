@@ -192,8 +192,8 @@ func checkAndRunInTmux(sessionName string) (bool, error) {
 	for _, arg := range args {
 		quotedArgs = append(quotedArgs, fmt.Sprintf("'%s'", strings.ReplaceAll(arg, "'", "'\\''")))
 	}
-	// Always wait after command exits so logs are preserved
-	shellCmd := fmt.Sprintf("'%s' %s; echo; echo 'Command finished. Press Enter to exit...'; read _", executable, strings.Join(quotedArgs, " "))
+	// Enable remain-on-exit so dead sessions can be easily cleaned up.
+	shellCmd := fmt.Sprintf("tmux set-window-option remain-on-exit on; exec '%s' %s", executable, strings.Join(quotedArgs, " "))
 	
 	// Start detached (-d)
 	tmuxArgs := []string{"new-session", "-d", "-s", sessionName, "sh", "-c", shellCmd}

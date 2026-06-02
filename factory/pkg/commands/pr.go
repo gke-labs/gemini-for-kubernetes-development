@@ -226,9 +226,12 @@ func runInvestigate(ctx context.Context, prURL, prompt string, continueSession b
 		fmt.Printf("Running task inside tmux session '%s'...\n", sandboxName)
 		cmdStr = wrapWithTmux(cmdStr, sandboxName)
 	}
+	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "investigate", "Running")
 	if err := client.RunTask(ctx, cmdStr, envMap); err != nil {
+		_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "investigate", "Failed")
 		return fmt.Errorf("running task: %w", err)
 	}
+	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "investigate", "Completed")
 
 	fmt.Println("\nInvestigate execution completed.")
 	return nil
@@ -449,9 +452,12 @@ func runAddressComments(ctx context.Context, prURL, prompt string, continueSessi
 		fmt.Printf("Running task inside tmux session '%s'...\n", sandboxName)
 		cmdStr = wrapWithTmux(cmdStr, sandboxName)
 	}
+	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "address-comments", "Running")
 	if err := client.RunTask(ctx, cmdStr, envMap); err != nil {
+		_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "address-comments", "Failed")
 		return fmt.Errorf("running task: %w", err)
 	}
+	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "address-comments", "Completed")
 
 	fmt.Println("\nAddress-comments execution completed.")
 	return nil

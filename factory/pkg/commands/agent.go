@@ -242,9 +242,12 @@ func runAgent(ctx context.Context, flags AgentFlags) error {
 		fmt.Printf("Running task inside tmux session '%s'...\n", sandboxName)
 		cmdStr = wrapWithTmux(cmdStr, sandboxName)
 	}
+	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "agent", "Running")
 	if err := client.RunTask(ctx, cmdStr, envMap); err != nil {
+		_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "agent", "Failed")
 		return fmt.Errorf("running task: %w", err)
 	}
+	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "agent", "Completed")
 
 	fmt.Println("\nAgent execution completed.")
 

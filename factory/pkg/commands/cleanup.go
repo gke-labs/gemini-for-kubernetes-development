@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
@@ -175,6 +176,44 @@ func cleanOldFiles(ctx context.Context, dir string, maxAge time.Duration) {
 	}
 }
 
+func cleanupDeadTmuxPanes(ctx context.Context) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		// tmux not installed, ignore
+		return
+	}
+
+	cmd := exec.CommandContext(ctx, "tmux", "list-panes", "-a", "-F", "#{pane_dead} #{session_name} #{window_index} #{pane_index}")
+	out, err := cmd.Output()
+	if err != nil {
+		// It is common for tmux to fail if the server is not running.
+		return
+	}
+
+	lines := strings.Split(string(out), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.Fields(line)
+		if len(parts) < 4 {
+			continue
+		}
+		if parts[0] == "1" {
+			sessionName := parts[1]
+			windowIndex := parts[2]
+			paneIndex := parts[3]
+
+			target := fmt.Sprintf("%s:%s.%s", sessionName, windowIndex, paneIndex)
+			fmt.Printf("Killing dead tmux pane '%s'...\n", target)
+			killCmd := exec.CommandContext(ctx, "tmux", "kill-pane", "-t", target)
+			if err := killCmd.Run(); err != nil {
+				klog.Errorf("Failed to kill dead tmux pane '%s': %v", target, err)
+			}
+		}
+	}
+}
+
 type CleanupFlags struct {
 	OlderThan time.Duration
 }
@@ -186,6 +225,8 @@ func NewCleanupCommand(ctx context.Context) *cobra.Command {
 		Use:   "cleanup",
 		Short: "Delete sandboxes older than a specified duration",
 		RunE: func(_ *cobra.Command, _ []string) error {
+			cleanupDeadTmuxPanes(ctx)
+
 			kubeClient, err := clients.NewKubernetesClient()
 			if err != nil {
 				return fmt.Errorf("creating k8s client: %w", err)

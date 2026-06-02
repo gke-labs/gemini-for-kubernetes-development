@@ -250,9 +250,12 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch boo
 		fmt.Printf("Running task inside tmux session '%s'...\n", sandboxName)
 		cmdStr = wrapWithTmux(cmdStr, sandboxName)
 	}
+	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "fix-issue", "Running")
 	if err := client.RunTask(ctx, cmdStr, envMap); err != nil {
+		_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "fix-issue", "Failed")
 		return fmt.Errorf("running task: %w", err)
 	}
+	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "fix-issue", "Completed")
 
 	fmt.Println("\nTask execution completed.")
 

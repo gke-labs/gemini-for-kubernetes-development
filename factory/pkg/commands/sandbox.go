@@ -150,7 +150,7 @@ func NewSandboxListCommand(ctx context.Context) *cobra.Command {
 			podList, _ := kubeClient.Clientset.CoreV1().Pods(rootFlags.Namespace).List(ctx, metav1.ListOptions{})
 
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 4, ' ', 0)
-			fmt.Fprintln(w, "NAME\tTYPE\tSTATUS\tAGE")
+			fmt.Fprintln(w, "NAME\tTYPE\tSTATUS\tLAST TASK\tPR/ISSUE URL\tAGE")
 
 			for _, item := range list.Items {
 				name := item.GetName()
@@ -206,10 +206,26 @@ func NewSandboxListCommand(ctx context.Context) *cobra.Command {
 					podStatusStr = "No Pod"
 				}
 
+				lastTaskStr := "-"
+				htmlURL := "-"
+				if ann := item.GetAnnotations(); ann != nil {
+					tType := ann["sandbox.gemini.google.com/last-task-type"]
+					tState := ann["sandbox.gemini.google.com/last-task-state"]
+					if tType != "" && tState != "" {
+						lastTaskStr = fmt.Sprintf("%s (%s)", tType, tState)
+					}
+
+					if u, ok := ann["sandbox.gemini.google.com/html-url"]; ok && u != "" {
+						htmlURL = u
+					} else if u, ok := ann["htmlURL"]; ok && u != "" {
+						htmlURL = u
+					}
+				}
+
 				creationTime := item.GetCreationTimestamp().Time
 				age := time.Since(creationTime).Round(time.Second)
 
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", name, sbType, podStatusStr, age)
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", name, sbType, podStatusStr, lastTaskStr, htmlURL, age)
 			}
 			w.Flush()
 
