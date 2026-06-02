@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -77,7 +78,7 @@ func NewReviewCommand(ctx context.Context) *cobra.Command {
 
 	cmd.Flags().StringVar(&flags.PRURL, "pr-url", "", "GitHub PR URL (e.g. https://github.com/owner/repo/pull/123)")
 	cmd.Flags().StringVar(&flags.Publish, "publish", "no", "Publish policy: yes (publish to github), no (print on screen only), ask (print on screen and ask y/n), draft (post as a draft pending comment on github)")
-	cmd.Flags().StringSliceVar(&flags.Instructions, "instruction", []string{}, "Repeatable set of files either in the repo or locally containing instructions")
+	cmd.Flags().StringSliceVar(&flags.Instructions, "instruction", []string{}, "Repeatable set of instruction files (local/repo) or raw instruction strings")
 
 	return cmd
 }
@@ -101,6 +102,39 @@ func readInstructionFile(ctx context.Context, ghClient *githubv39.Client, owner,
 	}
 
 	return "", fmt.Errorf("instruction file not found locally or in repo: %s", path)
+}
+
+func resolveInstruction(ctx context.Context, ghClient *githubv39.Client, owner, repo, ref, val string) (string, bool, error) {
+	content, err := readInstructionFile(ctx, ghClient, owner, repo, ref, val)
+	if err == nil {
+		return content, true, nil
+	}
+
+	if isLikelyFilePath(val) {
+		return "", true, err
+	}
+
+	return val, false, nil
+}
+
+func isLikelyFilePath(val string) bool {
+	val = strings.TrimSpace(val)
+	if val == "" {
+		return false
+	}
+	if strings.Contains(val, "\n") {
+		return false
+	}
+	if strings.HasPrefix(val, "/") || strings.HasPrefix(val, "./") || strings.HasPrefix(val, "../") || strings.HasPrefix(val, "~/") {
+		return true
+	}
+	if strings.Contains(val, "/") || strings.Contains(val, "\\") {
+		return true
+	}
+	if strings.Contains(val, " ") {
+		return false
+	}
+	return filepath.Ext(val) != ""
 }
 
 func stripUntilIndicator(input string, indicator string) string {
@@ -165,11 +199,15 @@ func runReview(ctx context.Context, prURL string, publishPolicy string, instruct
 
 	// Read and accumulate all instructions
 	var instructions []string
-	for _, instPath := range instructionPaths {
-		fmt.Printf("Reading instruction from: %s...\n", instPath)
-		content, err := readInstructionFile(ctx, ghClient, owner, repo, ref, instPath)
+	for _, instVal := range instructionPaths {
+		content, isFile, err := resolveInstruction(ctx, ghClient, owner, repo, ref, instVal)
 		if err != nil {
-			return fmt.Errorf("reading instruction path %s: %w", instPath, err)
+			return err
+		}
+		if isFile {
+			fmt.Printf("Loaded instruction file: %s\n", instVal)
+		} else {
+			fmt.Printf("Loaded instruction: %q\n", instVal)
 		}
 		instructions = append(instructions, content)
 	}

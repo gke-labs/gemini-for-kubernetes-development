@@ -181,9 +181,24 @@ factory fix \
 ```
 
 ### Reviewing Pull Requests (`factory pr review`)
-Spin up a review sandbox to analyze diffs and provide constructive feedback:
+Spin up a review sandbox to analyze diffs and provide constructive feedback. You can pass multiple instructions as either paths to files containing guidelines (located locally or in the repo) or as inline raw instruction strings:
 ```bash
+# Review a PR with standard options
 factory pr review --pr-url https://github.com/owner/repo/pull/1
+
+# Review a PR with file-based instructions
+factory pr review --pr-url https://github.com/owner/repo/pull/1 --instruction docs/guidelines.md
+
+# Review a PR with inline/raw instruction strings
+factory pr review --pr-url https://github.com/owner/repo/pull/1 \
+  --instruction "focus on the memory allocations" \
+  --instruction "ignore changes in test files"
+
+# Review a PR in the background and post as a draft review comment on GitHub
+factory pr review --pr-url https://github.com/owner/repo/pull/1 \
+  --instruction docs/guidelines.md \
+  --publish draft \
+  --background
 ```
 
 ### Investigating Check Failures (`factory pr investigate`)
