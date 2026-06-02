@@ -173,6 +173,14 @@ func checkAndRunInTmux(sessionName string) (bool, error) {
 		return false, nil // Already running in tmux
 	}
 
+	// Check if the tmux session already exists
+	hasSessionCmd := exec.Command("tmux", "has-session", "-t", sessionName)
+	if err := hasSessionCmd.Run(); err == nil {
+		fmt.Printf("Tmux session '%s' is already running in the background.\n", sessionName)
+		fmt.Printf("To attach, run: tmux attach -t '%s'\n", sessionName)
+		return true, nil // Parent process exits, doing nothing
+	}
+
 	executable, err := os.Executable()
 	if err != nil {
 		return false, fmt.Errorf("failed to get executable path: %w", err)
@@ -180,19 +188,27 @@ func checkAndRunInTmux(sessionName string) (bool, error) {
 
 	args := os.Args[1:]
 	
-	// Use -A to attach to existing session or create new one
-	tmuxArgs := []string{"new-session", "-A", "-s", sessionName, executable}
-	tmuxArgs = append(tmuxArgs, args...)
+	var quotedArgs []string
+	for _, arg := range args {
+		quotedArgs = append(quotedArgs, fmt.Sprintf("'%s'", strings.ReplaceAll(arg, "'", "'\\''")))
+	}
+	// Always wait after command exits so logs are preserved
+	shellCmd := fmt.Sprintf("'%s' %s; echo; echo 'Command finished. Press Enter to exit...'; read _", executable, strings.Join(quotedArgs, " "))
+	
+	// Start detached (-d)
+	tmuxArgs := []string{"new-session", "-d", "-s", sessionName, "sh", "-c", shellCmd}
 
 	cmd := exec.Command("tmux", tmuxArgs...)
 	cmd.Env = append(os.Environ(), "FACTORY_TMUX=true")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Stdin = os.Stdin
+	
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 
-	fmt.Printf("Restarting command inside local tmux session '%s'...\n", sessionName)
+	fmt.Printf("Starting command inside background tmux session '%s'...\n", sessionName)
+	fmt.Printf("To view logs, run: tmux attach -t '%s'\n", sessionName)
+	
 	if err := cmd.Run(); err != nil {
-		return true, fmt.Errorf("failed to run tmux: %w", err)
+		return true, fmt.Errorf("failed to start tmux session: %s: %w", stderr.String(), err)
 	}
 
 	return true, nil
