@@ -220,4 +220,3 @@ func UpdateSandboxTaskAnnotation(ctx context.Context, kubeClient *clients.Kubern
 	}
 	return nil
 }
-
