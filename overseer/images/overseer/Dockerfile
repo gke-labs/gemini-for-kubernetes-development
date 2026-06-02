@@ -57,6 +57,8 @@ RUN npm install -g @google/gemini-cli
 
 WORKDIR /workspaces
 
+ENV FACTORY_LOGS=/workspaces/logs/
+
 COPY --from=builder /app/overseer/overseer-cli /usr/local/bin/overseer-cli
 COPY --from=builder /app/factory/factory /usr/local/bin/factory
 COPY overseer/images/overseer/run.sh /workspaces/run.sh
