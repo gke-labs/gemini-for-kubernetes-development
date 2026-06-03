@@ -14,6 +14,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/tasks"
+	githubv39 "github.com/google/go-github/v39/github"
 	"github.com/spf13/cobra"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
@@ -110,14 +111,14 @@ func runInvestigate(ctx context.Context, prURL, prompt string, continueSession b
 
 	// Fetch failed check runs to populate FailedRuns
 	headSHA := pr.GetHead().GetSHA()
-	checks, _, err := ghClient.Checks.ListCheckRunsForRef(ctx, owner, repo, headSHA, nil)
+	checkRuns, err := listAllCheckRuns(ctx, ghClient, owner, repo, headSHA)
 	if err != nil {
 		return fmt.Errorf("listing check runs: %w", err)
 	}
 
 	var failedRuns []tasks.FailedRun
 	var failedRunIDs []string
-	for _, run := range checks.CheckRuns {
+	for _, run := range checkRuns {
 		if run.GetConclusion() == "failure" {
 			failedRuns = append(failedRuns, tasks.FailedRun{
 				ID:   run.GetID(),
@@ -609,9 +610,9 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 		headSHA := pr.GetHead().GetSHA()
 		hasFailure := false
 
-		checks, _, err := ghClient.Checks.ListCheckRunsForRef(ctx, owner, repo, headSHA, nil)
+		checkRuns, err := listAllCheckRuns(ctx, ghClient, owner, repo, headSHA)
 		if err == nil {
-			for _, run := range checks.CheckRuns {
+			for _, run := range checkRuns {
 				if run.GetConclusion() == "failure" {
 					hasFailure = true
 					break
@@ -708,3 +709,25 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 		}
 	}
 }
+
+func listAllCheckRuns(ctx context.Context, client *githubv39.Client, owner, repo, ref string) ([]*githubv39.CheckRun, error) {
+	var allRuns []*githubv39.CheckRun
+	opts := &githubv39.ListCheckRunsOptions{
+		ListOptions: githubv39.ListOptions{
+			PerPage: 200,
+		},
+	}
+	for {
+		runs, resp, err := client.Checks.ListCheckRunsForRef(ctx, owner, repo, ref, opts)
+		if err != nil {
+			return nil, err
+		}
+		allRuns = append(allRuns, runs.CheckRuns...)
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	return allRuns, nil
+}
+
