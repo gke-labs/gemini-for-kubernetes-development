@@ -1,15 +1,15 @@
 
-Creating a task to investigate PR failures:
+Investigating PR failures:
 ```bash
 factory pr investigate --pr-url $REPO_URL/pull/<pr-number> --background
 ```
 
-Creating a task to resolve merge conflicts:
+Resolving merge conflicts in a PR:
 ```bash
 factory pr iterate --pr-url $REPO_URL/pull/<pr-number> --prompt "Please resolve merge conflicts in this PR by rebasing onto the latest master/main branch and resolving any conflicts that arise." --background
 ```
 
-Creating a task to rebase a PR to resolve upstream CI test failures:
+Rebasing a PR to resolve upstream CI test failures:
 ```bash
 factory pr iterate --pr-url $REPO_URL/pull/<pr-number> --prompt "Please rebase this PR onto the latest master/main branch to resolve upstream CI test failures." --background
 ```
