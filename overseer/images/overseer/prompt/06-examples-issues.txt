@@ -1,4 +1,4 @@
-Creating a task to fix an issue:
+Fixing an issue:
 ```bash
 factory fix --url $REPO_URL/issues/<issue-number> --background --watch --watch-timeout 10h --cleanup
 ```

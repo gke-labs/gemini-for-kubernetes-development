@@ -26,9 +26,6 @@ COPY repo-agent/api/ repo-agent/api/
 COPY overseer/ overseer/
 COPY factory/ factory/
 
-WORKDIR /app/overseer
-RUN go build -o overseer-cli ./cmd/overseer-cli/main.go
-
 WORKDIR /app/factory
 RUN go build -o factory ./main.go
 
@@ -57,9 +54,8 @@ RUN npm install -g @google/gemini-cli
 
 WORKDIR /workspaces
 
-ENV FACTORY_LOGS=/workspaces/logs/
+ENV FACTORY_LOGS=/workspaces/logs/factory/
 
-COPY --from=builder /app/overseer/overseer-cli /usr/local/bin/overseer-cli
 COPY --from=builder /app/factory/factory /usr/local/bin/factory
 COPY overseer/images/overseer/run.sh /workspaces/run.sh
 COPY overseer/images/overseer/summarize.sh /workspaces/summarize.sh

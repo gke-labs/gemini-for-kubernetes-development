@@ -14,6 +14,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/tasks"
+	githubv39 "github.com/google/go-github/v39/github"
 	"github.com/spf13/cobra"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
@@ -27,6 +28,7 @@ func NewPRCommand(ctx context.Context) *cobra.Command {
 	cmd.AddCommand(NewReviewCommand(ctx))
 	cmd.AddCommand(NewInvestigateCommand(ctx))
 	cmd.AddCommand(NewAddressCommentsCommand(ctx))
+	cmd.AddCommand(NewIterateCommand(ctx))
 	cmd.AddCommand(NewPRWatchCommand(ctx))
 	return cmd
 }
@@ -110,14 +112,14 @@ func runInvestigate(ctx context.Context, prURL, prompt string, continueSession b
 
 	// Fetch failed check runs to populate FailedRuns
 	headSHA := pr.GetHead().GetSHA()
-	checks, _, err := ghClient.Checks.ListCheckRunsForRef(ctx, owner, repo, headSHA, nil)
+	checkRuns, err := listAllCheckRuns(ctx, ghClient, owner, repo, headSHA)
 	if err != nil {
 		return fmt.Errorf("listing check runs: %w", err)
 	}
 
 	var failedRuns []tasks.FailedRun
 	var failedRunIDs []string
-	for _, run := range checks.CheckRuns {
+	for _, run := range checkRuns {
 		if run.GetConclusion() == "failure" {
 			failedRuns = append(failedRuns, tasks.FailedRun{
 				ID:   run.GetID(),
@@ -609,9 +611,9 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 		headSHA := pr.GetHead().GetSHA()
 		hasFailure := false
 
-		checks, _, err := ghClient.Checks.ListCheckRunsForRef(ctx, owner, repo, headSHA, nil)
+		checkRuns, err := listAllCheckRuns(ctx, ghClient, owner, repo, headSHA)
 		if err == nil {
-			for _, run := range checks.CheckRuns {
+			for _, run := range checkRuns {
 				if run.GetConclusion() == "failure" {
 					hasFailure = true
 					break
@@ -707,4 +709,190 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 			}
 		}
 	}
+}
+
+func listAllCheckRuns(ctx context.Context, client *githubv39.Client, owner, repo, ref string) ([]*githubv39.CheckRun, error) {
+	var allRuns []*githubv39.CheckRun
+	opts := &githubv39.ListCheckRunsOptions{
+		ListOptions: githubv39.ListOptions{
+			PerPage: 200,
+		},
+	}
+	for {
+		runs, resp, err := client.Checks.ListCheckRunsForRef(ctx, owner, repo, ref, opts)
+		if err != nil {
+			return nil, err
+		}
+		allRuns = append(allRuns, runs.CheckRuns...)
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	return allRuns, nil
+}
+
+type IterateFlags struct {
+	PRURL           string
+	Prompt          string
+	ContinueSession bool
+}
+
+func NewIterateCommand(ctx context.Context) *cobra.Command {
+	var flags IterateFlags
+
+	cmd := &cobra.Command{
+		Use:   "iterate",
+		Short: "Iterate on code / resolve merge conflicts for a GitHub pull request in a sandbox",
+		Example: `  # Iterate on PR / rebase PR
+  factory pr iterate --pr-url https://github.com/owner/repo/pull/1 --prompt "Please rebase onto latest master"`,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			if flags.PRURL == "" {
+				return fmt.Errorf("--pr-url is required")
+			}
+
+			sessionName := "factory-iterate"
+			u, err := url.Parse(flags.PRURL)
+			if err == nil {
+				parts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
+				if len(parts) >= 4 && parts[2] == "pull" {
+					sessionName = fmt.Sprintf("factory-iterate-%s", parts[3])
+				}
+			}
+
+			if rootFlags.Background {
+				ran, err := checkAndRunInBackground(sessionName)
+				if err != nil {
+					return err
+				}
+				if ran {
+					return nil // Parent exits
+				}
+			}
+
+			ctx, cancel := context.WithTimeout(ctx, rootFlags.Timeout)
+			defer cancel()
+			return runIterate(ctx, flags.PRURL, flags.Prompt, flags.ContinueSession)
+		},
+	}
+
+	cmd.Flags().StringVar(&flags.PRURL, "pr-url", "", "GitHub PR URL (e.g. https://github.com/owner/repo/pull/123)")
+	cmd.Flags().StringVar(&flags.Prompt, "prompt", "Resolve merge conflicts and iterate on code", "Custom prompt for the iterate task")
+	cmd.Flags().BoolVar(&flags.ContinueSession, "continue-session", false, "Continue the Gemini session from previous runs in the sandbox")
+
+	return cmd
+}
+
+func runIterate(ctx context.Context, prURL, prompt string, continueSession bool) error {
+	fmt.Printf("Resolving PR URL: %s...\n", prURL)
+
+	u, err := url.Parse(prURL)
+	if err != nil {
+		return fmt.Errorf("invalid PR URL: %w", err)
+	}
+	parts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
+	if len(parts) < 4 || parts[2] != "pull" {
+		return fmt.Errorf("expected URL format https://github.com/owner/repo/pull/123, got %s", prURL)
+	}
+	owner, repo := parts[0], parts[1]
+	prNum, err := strconv.Atoi(parts[3])
+	if err != nil {
+		return fmt.Errorf("invalid PR number in URL: %s", parts[3])
+	}
+
+	ghClient, err := github.NewClient(ctx)
+	if err != nil {
+		return fmt.Errorf("creating github client: %w", err)
+	}
+	pr, _, err := ghClient.PullRequests.Get(ctx, owner, repo, prNum)
+	if err != nil {
+		return fmt.Errorf("fetching github PR #%d: %w", prNum, err)
+	}
+
+	kubeClient, err := clients.NewKubernetesClient()
+	if err != nil {
+		return fmt.Errorf("creating k8s client: %w", err)
+	}
+
+	cloneURL := pr.GetBase().GetRepo().GetCloneURL()
+	fmt.Printf("Ensuring review sandbox for PR #%d...\n", prNum)
+	sandboxName, err := factorysandbox.EnsureReviewSandbox(ctx, kubeClient, rootFlags.Namespace, prNum, pr.GetTitle(), pr.GetHTMLURL(), pr.GetDiffURL(), cloneURL, rootFlags.Image, rootFlags.DiskSize)
+	if err != nil {
+		return fmt.Errorf("ensuring review sandbox: %w", err)
+	}
+
+	secret, err := kubeClient.Clientset.CoreV1().Secrets(rootFlags.Namespace).Get(ctx, rootFlags.SecretName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("fetching %s secret in namespace %s: %w (make sure to run 'factory user onboard' first)", rootFlags.SecretName, rootFlags.Namespace, err)
+	}
+	githubLogin := string(secret.Data[KeyGithubLogin])
+	githubEmail := string(secret.Data[KeyGithubEmail])
+
+	params := tasks.IterateParams{
+		Repo: tasks.Repo{
+			CloneURL: cloneURL,
+		},
+		Instruction: prompt,
+		Branch:      pr.GetHead().GetRef(),
+		PRNumber:    prNum,
+		Models:      []string{"gemini-3.5-flash", "gemini-3-flash-preview", "gemini-3.1-pro-preview", "gemini-2.5-pro"},
+	}
+
+	scriptBytes, err := tasks.GetIterateScript()
+	if err != nil {
+		return fmt.Errorf("getting iterate script: %w", err)
+	}
+
+	promptBytes, err := tasks.RenderIteratePrompt(params)
+	if err != nil {
+		return fmt.Errorf("rendering iterate prompt: %w", err)
+	}
+
+	fmt.Printf("Connecting to sandbox %s via envd...\n", sandboxName)
+	client, err := envd.Connect(ctx, rootFlags.Namespace, sandboxName)
+	if err != nil {
+		return fmt.Errorf("connecting to sandbox: %w", err)
+	}
+	defer client.Close()
+
+	taskDir := fmt.Sprintf("/workspaces/tasks/iterate-%s", time.Now().Format("20060102-150405"))
+	promptPath := fmt.Sprintf("%s/agent-prompt.txt", taskDir)
+	scriptPath := fmt.Sprintf("%s/pre-script.sh", taskDir)
+
+	fmt.Println("Writing prompt and script into sandbox...")
+	if err := client.WriteFile(ctx, promptPath, promptBytes); err != nil {
+		return fmt.Errorf("writing prompt: %w", err)
+	}
+	if err := client.WriteFile(ctx, scriptPath, scriptBytes); err != nil {
+		return fmt.Errorf("writing script: %w", err)
+	}
+
+	envMap := map[string]string{
+		"GITHUB_TOKEN":               string(secret.Data[KeyGithubToken]),
+		"GEMINI_API_KEY":             getGeminiAPIKey(secret),
+		"GEMINI_CLI_TRUST_WORKSPACE": "true",
+		"REPO_OWNER":                 owner,
+		"REPO_NAME":                  repo,
+		"CLONE_URL":                  cloneURL,
+		"PROMPT_FILE":                promptPath,
+		"GITHUB_USER_ID":             githubLogin,
+		"GITHUB_USER_EMAIL":          githubEmail,
+		"GITHUB_USER_NAME":           githubLogin,
+		"PR_NUMBER":                  strconv.Itoa(prNum),
+		"BRANCH_NAME":                pr.GetHead().GetRef(),
+		"MODELS":                     "gemini-3.5-flash gemini-3-flash-preview gemini-3.1-pro-preview gemini-2.5-pro",
+		"GEMINI_CONTINUE_SESSION":    strconv.FormatBool(continueSession),
+	}
+
+	fmt.Println("Running iterate task via envd...")
+	cmdStr := fmt.Sprintf("bash -c 'set -o pipefail; bash %s 2>&1 | tee %s/execution.log'", scriptPath, taskDir)
+	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "iterate", "Running")
+	if err := client.RunTask(ctx, cmdStr, envMap); err != nil {
+		_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "iterate", "Failed")
+		return fmt.Errorf("running task: %w", err)
+	}
+	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "iterate", "Completed")
+
+	fmt.Println("\nIterate execution completed.")
+	return nil
 }
