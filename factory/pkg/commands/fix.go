@@ -89,8 +89,20 @@ func NewFixCommand(ctx context.Context) *cobra.Command {
 				}
 			}
 
-			ctx, cancel := context.WithTimeout(ctx, rootFlags.Timeout)
-			defer cancel()
+			timeout := rootFlags.Timeout
+			if flags.Watch {
+				if flags.WatchTimeout == 0 {
+					timeout = 0
+				} else {
+					timeout = flags.WatchTimeout + 1*time.Hour
+				}
+			}
+
+			if timeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, timeout)
+				defer cancel()
+			}
 			return runFix(ctx, flags.URL, prompt, flags.Name, flags.NoPR, flags.Watch, flags.PollInterval, flags.WatchTimeout)
 		},
 	}
