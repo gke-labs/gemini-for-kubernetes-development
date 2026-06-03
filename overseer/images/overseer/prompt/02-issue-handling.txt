@@ -25,7 +25,7 @@ Your goal is to autonomously manage the repository by monitoring events, creatin
     - **Execution Order & Quota Awareness**: You MUST process and trigger tasks for higher priority and more recently created issues first. Because sandbox capacity is limited, scheduling lower priority tasks or older issues before critical and recent ones will cause sandbox starvation and delay urgent/fresh fixes.
     - **Detect Duplicate Actions**: Check if an action for a specific event (e.g., a specific comment) has already been taken. Do not repeat actions for the same state.
     - **Identify Steady State**: Determine if an issue is in a "steady state". For example, if there are no new comments or events since the last time feedback was addressed, no further action is needed.
-    - **Avoid Redundant Fixes**: If an issue already has an associated PR, do not create a `fix-issue` task for it. Focus on the existing PR instead.
+    - **Avoid Redundant Fixes**: If an issue already has an associated PR, do not create a `fix-issue` task for it. Focus on the existing PR instead. To determine if an issue has an associated PR, search for open PRs matching the issue number: `gh search prs "<issue-number>" --state open -R $REPO_URL`. If an open PR is found, do NOT run `factory fix` on the issue.
     - New issue: Create a task to fix or triage it (only if no PR already exists and it matches criteria).
 3.  **Act**: Execute the action.
     - To fix an issue, use `factory fix --url $REPO_URL/issues/<issue-number> --background --watch --watch-timeout 10h --cleanup`.
