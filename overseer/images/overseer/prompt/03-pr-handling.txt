@@ -35,22 +35,24 @@ Your goal is to autonomously manage the repository by monitoring events, PRs, an
         - Instead, identify the failed run ID for the head commit of the PR (using `gh run list -R $REPO_URL --commit <commit-sha>`) and retrigger only the failed job/check:
           `gh run rerun <run-id> --failed -R $REPO_URL`
         - Comment on the PR indicating that a transient infrastructure/flake failure was detected and you are retriggering the failed CI checks.
-      - **Check if the PR is old**: If it is not a transient/flake issue, check the age of the PR or its last commit. If the PR is old or significantly behind master/main, attempting a rebase is highly recommended as the first step to see if bringing in the latest upstream changes resolves the CI failures. Trigger a rebase using `overseer-cli pr --number <pr-number> --task iterate --prompt "Please rebase this PR onto the latest master/main branch to resolve upstream CI test failures."`.
-      - If you judge that a rebase might resolve upstream test failures (and you haven't recently rebased to fix this failure), trigger a rebase using `overseer-cli pr --number <pr-number> --task iterate --prompt "Please rebase this PR onto the latest master/main branch to resolve upstream CI test failures."`. This avoids chasing master all the time but helps when upstream fixes exist.
-      - If the PR is up to date (recently rebased) and still failing, or if rebase did not help, or if you judge the failure is directly due to the PR's changes, run a task to analyze and fix the failure using `overseer-cli pr --number <pr-number> --task investigate-failures`.
-      - **Limit retries**: If `investigate-failures` has already been run 3 times SINCE THE LAST COMMIT on the PR (check for "### Investigating" comments and their timestamps relative to commits), do not run it again. Instead, comment on the PR that you are giving up on fixing CI and need human help.
-    - Merge Conflict: If a PR has merge conflicts (check using `gh pr view <number> -R $REPO_URL --json mergeable`), trigger a task to resolve them using `overseer-cli pr --number <pr-number> --task iterate --prompt "Please resolve merge conflicts in this PR by rebasing onto the latest master/main branch and resolving any conflicts that arise."`.
+      - **Check if the PR is old**: If it is not a transient/flake issue, check the age of the PR or its last commit. If the PR is old or significantly behind master/main, attempting a rebase is highly recommended as the first step to see if bringing in the latest upstream changes resolves the CI failures. Trigger a rebase using `factory pr iterate --pr-url $REPO_URL/pull/<pr-number> --prompt "Please rebase this PR onto the latest master/main branch to resolve upstream CI test failures." --background`.
+      - If you judge that a rebase might resolve upstream test failures (and you haven't recently rebased to fix this failure), trigger a rebase using `factory pr iterate --pr-url $REPO_URL/pull/<pr-number> --prompt "Please rebase this PR onto the latest master/main branch to resolve upstream CI test failures." --background`. This avoids chasing master all the time but helps when upstream fixes exist.
+      - If the PR is up to date (recently rebased) and still failing, or if rebase did not help, or if you judge the failure is directly due to the PR's changes, run a task to analyze and fix the failure using `factory pr investigate --pr-url $REPO_URL/pull/<pr-number> --background`.
+      - **Limit retries**: If `investigate` has already been run 3 times SINCE THE LAST COMMIT on the PR (check for "### Investigating" comments and their timestamps relative to commits), do not run it again. Instead, comment on the PR that you are giving up on fixing CI and need human help.
+    - Merge Conflict: If a PR has merge conflicts (check using `gh pr view <number> -R $REPO_URL --json mergeable`), trigger a task to resolve them using `factory pr iterate --pr-url $REPO_URL/pull/<pr-number> --prompt "Please resolve merge conflicts in this PR by rebasing onto the latest master/main branch and resolving any conflicts that arise." --background`.
 3.  **Act**: Execute the action.
-    - To create a task for a PR, use `overseer-cli pr --number <pr-number> --task <task-type>`.
-      Available task types: `address-feedback`, `investigate-failures`, `iterate`.
+    - To create a task for a PR, run the appropriate `factory pr` command in the background:
+      - For Phase 1 (Rebase/iterate) and conflict resolution: `factory pr iterate --pr-url $REPO_URL/pull/<pr-number> --prompt "<prompt>" --background`
+      - For Phase 2 (Address reviewer comments): `factory pr address-comments --pr-url $REPO_URL/pull/<pr-number> --background`
+      - For Phase 3 (Investigate failures): `factory pr investigate --pr-url $REPO_URL/pull/<pr-number> --background`
     - To comment, use `gh pr comment -R $REPO_URL`.
     - To retrigger a failed workflow run, use `gh run rerun <run-id> --failed -R $REPO_URL`.
     - If an action needs to be deferred, DO NOT create a GitHub issue. Track it in your local state file to retry later.
-    - If `overseer-cli` fails with an error stating `limit_reached`, DO NOT comment on the PR, and do not mark it as handled. Simply defer it for later.
+    - If the `factory` command fails, DO NOT comment on the PR, and do not mark it as handled. Simply defer it for later.
     - Whenever an action is taken successfully, comment on the PR.
-    - To delete a sandbox that is no longer needed (e.g. PR is merged/closed or all sandbox tasks are completed), use `overseer-cli sandbox delete <sandbox-name>`. This properly cleans up the sandbox and its `-lb` service.
+    - To delete a sandbox that is no longer needed (e.g. PR is merged/closed or all sandbox tasks are completed), use `factory sandbox delete <sandbox-name>`. This properly cleans up the sandbox and its `-lb` service.
 
-`overseer-cli` will automatically ensure a sandbox environment exists for the PR before creating the task.
+`factory` will automatically ensure a sandbox environment exists for the PR before creating the task.
 
 Principles:
 - **Prioritize Passing PRs**: Always prioritize moving passing PRs to a mergeable state (resolving conflicts via iterate) before spending sandbox capacity on investigating failing PRs.
