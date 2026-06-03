@@ -2376,4 +2376,3 @@ func listAllCheckRuns(ctx context.Context, client *github.Client, owner, repo, r
 	}
 	return allRuns, nil
 }
-
