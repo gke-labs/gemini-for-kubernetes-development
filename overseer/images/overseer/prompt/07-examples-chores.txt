@@ -1,10 +1,5 @@
 
 Running a chore:
 ```bash
-overseer-cli admin chore ensure --file .agents/gateway-conformance.yaml
-```
-
-Deleting a sandbox:
-```bash
-overseer-cli sandbox delete <sandbox-name>
+factory agent create --url $REPO_URL --agent gateway-conformance.yaml --background --cleanup
 ```
