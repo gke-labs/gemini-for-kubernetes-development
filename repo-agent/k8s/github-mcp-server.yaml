@@ -23,7 +23,7 @@ spec:
           #value: "repos,issues,pull_requests,actions,code_security,experiments"
           value: "issues,pull_requests,actions,experiments"
         - name: GITHUB_DYNAMIC_TOOLSETS
-          value: "1"
+          value: "0"
         - name: GITHUB_READ_ONLY
           value: "1"
         - name: GITHUB_PERSONAL_ACCESS_TOKEN
