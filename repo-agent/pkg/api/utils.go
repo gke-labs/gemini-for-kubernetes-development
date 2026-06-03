@@ -40,6 +40,21 @@ func convInt64SliceToInterfaceSlice(in []int64) []interface{} {
 	return out
 }
 
+func toInt64(v interface{}) (int64, bool) {
+	switch i := v.(type) {
+	case int64:
+		return i, true
+	case int:
+		return int64(i), true
+	case int32:
+		return int64(i), true
+	case float64:
+		return int64(i), true
+	default:
+		return 0, false
+	}
+}
+
 func parseRepoURL(repoURL string) (string, string, error) {
 	u, err := url.Parse(repoURL)
 	if err != nil {

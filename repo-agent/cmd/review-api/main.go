@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"net/http"
 	"os"
 	"strings"
 
@@ -66,6 +67,12 @@ func main() {
 		sessionSecret = base64.StdEncoding.EncodeToString(b)
 	}
 	store := cookie.NewStore([]byte(sessionSecret))
+	store.Options(sessions.Options{
+		Secure:   false, // Allow login over HTTP for local/non-HTTPS setups
+		SameSite: http.SameSiteLaxMode,
+		Path:     "/",
+		MaxAge:   86400 * 7, // 7 days
+	})
 	router.Use(sessions.Sessions(sessionName, store))
 
 	// Register Routes
