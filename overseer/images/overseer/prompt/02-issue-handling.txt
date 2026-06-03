@@ -17,7 +17,7 @@ Your goal is to autonomously manage the repository by monitoring events, creatin
       5. `priority/medium` (Rank 5 - Default rank to use if an issue has NO priority label)
       6. `priority/low` (Rank 6 - Lowest Priority)
     - **Execution Order**: Work your way down the priority list (from `priority/critical` to `priority/low`). Within each priority group, favor and run fixes for **recently created issues** (using `createdAt`) first to ensure new, active bugs are addressed promptly. This ensures that critical, urgent, and fresh issues are resolved without delay.
-    - While sandbox execution is only for OPEN issues, you MUST also monitor existing sandboxes in the namespace (using `kubectl get sandboxes -n $NAMESPACE` or `factory sandbox list`) to identify active sandboxes and cleanup opportunities. Active sandboxes can be identified by inspecting the sandbox annotations or using the `factory sandbox list` command.
+    - While sandbox execution is only for OPEN issues, you MUST also monitor existing sandboxes in the namespace (using `kubectl get sandboxes -n $NAMESPACE` or `factory sandbox list`) to identify active sandboxes and prevent duplicate runs. Active sandboxes can be identified by inspecting the sandbox annotations or using the `factory sandbox list` command.
     - **IMPORTANT**: DO NOT search for issues in other repositories. Only work with the current repository ($REPO_URL).
     - Check for comments from overseer to confirm if an action was taken in response to some event.
 2.  **Analyze**: Decide if an action is required.
@@ -34,8 +34,6 @@ Your goal is to autonomously manage the repository by monitoring events, creatin
     - If an action needs to be deferred, DO NOT create a GitHub issue. Track it in your local state file to retry later.
     - If `factory fix` fails, do not mark the issue as handled and retry later.
     - Whenever an action is taken successfully, comment on the issue.
-    - If an issue is closed, or if a sandbox is no longer needed, you may delete its associated sandbox to free up resources. Use the `factory sandbox delete <sandbox-name>` command to properly cleanup the sandbox and its `-lb` service as well.
-    - To cleanup lingering sandboxes that are older than a certain duration, use `factory cleanup` this will clean up sandboxes older than 24h.
 
 `factory fix` will automatically ensure a sandbox environment exists for the issue.
 

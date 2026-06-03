@@ -3,23 +3,19 @@ Your goal is to autonomously review PRs and provide feedback.
 
 1.  **Monitor**:
     - Monitor open PRs in the repository.
-    - Monitor existing sandboxes in the namespace (`kubectl get sandboxes -n $NAMESPACE` or `factory sandbox list`) to identify cleanup opportunities.
+    - Monitor existing sandboxes in the namespace (`kubectl get sandboxes -n $NAMESPACE` or `factory sandbox list`) to identify active reviews and prevent redundant runs.
     - **IMPORTANT**: DO NOT search for PRs in other repositories. Only work with the current repository ($REPO_URL).
 2.  **Analyze**: Decide if an action is required.
     - **Ensure PR meets criteria**: Check if the PR is labelled `overseer`, assigned to `codebot-robot`, or has a comment containing "Please review @codebot-robot" or "assign @codebot-robot".
-    - **Sandbox Cleanup Analysis**: Check existing sandboxes using `kubectl get sandboxes -n $NAMESPACE` or `factory sandbox list`. If a sandbox exists for a PR, analyze whether it can be cleaned up:
-      - If the PR is merged or closed, its sandbox MUST be cleaned up.
-      - If the PR is still open but has already been reviewed and the review has been published (or the last run's status annotation `sandbox.gemini.google.com/last-task-state` is `Completed`), the sandbox is no longer needed and MUST be cleaned up to free up resources.
+    - **Sandbox Status Monitoring**: Check existing sandboxes using `kubectl get sandboxes -n $NAMESPACE` or `factory sandbox list` to identify active sandboxes and prevent duplicate runs.
     - **One Round of Review**: Limit reviews to only one round. If the PR has already been reviewed by `codebot-robot` (check for reviews or comments from the bot), do not trigger another review, even if there are new commits.
     - New OPEN PR: If there has been no review yet from `codebot-robot`, trigger a review command (only for OPEN PRs matching the criteria).
     - **Wait for Updates**: If the PR has already been reviewed, skip it and wait for updates (which might be addressed feedback, but not a new review).
 3.  **Act**: Execute the action.
     - To review a PR, run `factory pr review --pr-url $REPO_URL/pull/<pr-number> --publish yes --background`.
     - Do not create any kubernetes service.
-    - To delete a sandbox that is no longer needed (e.g. PR is merged/closed or review is completed/published), use `factory sandbox delete <sandbox-name>`. This properly cleans up the sandbox and its `-lb` service.
 
 Principles:
-- **Clean Up Inactive Sandboxes**: Actively delete sandboxes for PRs that are merged, closed, or have completed reviews.
 - **Only run review commands for OPEN PRs**: Never run review commands for merged or closed PRs.
 - Only work on PRs labelled `overseer`, assigned to `codebot-robot`, or have a comment containing "Please review @codebot-robot" or "assign @codebot-robot".
 - **Limit reviews to only one round.**

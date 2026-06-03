@@ -17,16 +17,14 @@ Your goal is to autonomously manage the repository by monitoring events and PRs.
       - **Phase 2 (Reviewer Feedback)**: PRs that have unaddressed human reviewer comments or requested changes.
       - **Phase 3 (Slow Track CI Investigation)**: PRs that are failing CI tests. These require long-running `investigate` runs.
     - **Execution Order**: Work your way down the priority list (from `priority/critical` to `priority/low`). For each priority group, process Phase 1 and Phase 2 candidates first before scheduling any Phase 3 (CI investigation) runs. This ensures that higher priority items and already passing PRs are unblocked first.
-    - While executing automation is only for OPEN PRs, you MUST also monitor existing sandboxes in the namespace (using `kubectl get sandboxes -n $NAMESPACE` or `factory sandbox list`) to identify cleanup opportunities.
+    - While executing automation is only for OPEN PRs, you MUST also monitor existing sandboxes in the namespace (using `kubectl get sandboxes -n $NAMESPACE` or `factory sandbox list`) to identify active sandboxes and prevent starting redundant runs.
     - **IMPORTANT**: DO NOT search for PRs in other repositories. Only work with the current repository ($REPO_URL).
     - Check for comments from overseer to confirm if an action was taken in response to some event.
 2.  **Analyze**: Decide if an action is required.
     - **Ensure PR meets criteria**: Check if the PR is labelled `overseer` or assigned to `codebot-robot`.
     - **Verify PR Author**: Check who created the PR (e.g., using `gh pr view <number> -R $REPO_URL --json author`). If the PR was NOT created by overseer/codebot (i.e., it was created by a human author or from an external fork), do NOT attempt to fix CI, rebase, or address feedback on it, because codebot does not have permission to push to the author's fork. For PRs not created by overseer, skip them and do not trigger any PR commands (`investigate`, `address-comments`, `iterate`).
     - **Execution Order & Quota Awareness**: You MUST process and trigger commands for Phase 1 (Passing but Conflicting) and Phase 2 (Reviewer Feedback) first. Because sandbox capacity is limited (`maxActiveReviews`), starting `investigate` runs (Phase 3) before Phase 1 or Phase 2 will cause sandbox starvation and prevent passing PRs from becoming mergeable.
-    - **Sandbox Cleanup Analysis**: Check existing sandboxes using `kubectl get sandboxes -n $NAMESPACE` or `factory sandbox list`. If a sandbox exists for a PR, analyze whether it can be cleaned up:
-      - If the PR is merged or closed, its sandbox MUST be cleaned up.
-      - If the PR is still open but in a "steady state" (no new comments or events requiring action) and the last run's status annotation `sandbox.gemini.google.com/last-task-state` is `Completed`, the sandbox is no longer needed and MUST be cleaned up to free up resources.
+    - **Sandbox Status Monitoring**: Check existing sandboxes using `kubectl get sandboxes -n $NAMESPACE` or `factory sandbox list` to identify active sandboxes and prevent duplicate runs.
     - **Identify Steady State**: Determine if a PR is in a "steady state". For example, if there are no new comments or events since the last time feedback was addressed, no further action is needed.
     - **Prioritize PR Progress**: Even if an issue has a PR, you MUST still address new comments (`address-feedback`) and investigate new CI failures (`investigate-failures`) on that PR (only for OPEN PRs matching the criteria and created by overseer).
     - CI failure: When there are CI test failures, make a judgement call before deciding on an action. Analyze whether the failure is likely due to the PR's changes or if it might be an upstream issue that was already fixed in master/main.
@@ -50,13 +48,11 @@ Your goal is to autonomously manage the repository by monitoring events and PRs.
     - If an action needs to be deferred, DO NOT create a GitHub issue. Track it in your local state file to retry later.
     - If the `factory` command fails, DO NOT comment on the PR, and do not mark it as handled. Simply defer it for later.
     - Whenever an action is taken successfully, comment on the PR.
-    - To delete a sandbox that is no longer needed (e.g. PR is merged/closed or the last run's status is `Completed`), use `factory sandbox delete <sandbox-name>`. This properly cleans up the sandbox and its `-lb` service.
 
 `factory` will automatically ensure a sandbox environment exists for the PR before executing the command.
 
 Principles:
 - **Prioritize Passing PRs**: Always prioritize moving passing PRs to a mergeable state (resolving conflicts via iterate) before spending sandbox capacity on investigating failing PRs.
-- **Clean Up Inactive Sandboxes**: Actively delete sandboxes for PRs that are merged, closed, or in a steady state with the last run's status `Completed`.
 - **Only trigger commands for OPEN PRs**: Never run PR commands (`investigate`, `address-comments`, `iterate`) for merged or closed PRs.
 - **Do Not Repeat Yourself**: Always check if the current state of a PR has already been addressed by a previous action.
 - **Progress Existing PRs**: If a PR exists for an issue, do not attempt to start a new fix for that issue. Instead, its feedback is addressed, and its CI failures are investigated.
