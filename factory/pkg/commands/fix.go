@@ -49,7 +49,12 @@ func NewFixCommand(ctx context.Context) *cobra.Command {
 
   # Override workspace disk size and base image
   factory fix --url https://github.com/owner/repo/issues/1 --workspace-disk-size 20Gi --image kind.local/my-golang:latest`,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			_, err := ResolveRootFlags(cmd)
+			if err != nil {
+				return err
+			}
+
 			if flags.URL == "" {
 				return fmt.Errorf("--url is required")
 			}
@@ -103,7 +108,7 @@ func NewFixCommand(ctx context.Context) *cobra.Command {
 				ctx, cancel = context.WithTimeout(ctx, timeout)
 				defer cancel()
 			}
-			return runFix(ctx, flags.URL, prompt, flags.Name, flags.NoPR, flags.Watch, flags.PollInterval, flags.WatchTimeout)
+			return runFix(ctx, flags.URL, prompt, flags.Name, flags.NoPR, flags.Watch, flags.PollInterval, flags.WatchTimeout, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets)
 		},
 	}
 
@@ -119,7 +124,7 @@ func NewFixCommand(ctx context.Context) *cobra.Command {
 	return cmd
 }
 
-func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch bool, pollInterval time.Duration, watchTimeout time.Duration) error {
+func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch bool, pollInterval time.Duration, watchTimeout time.Duration, ephemeralStorage string, secrets []factorysandbox.SecretMount) error {
 	if targetURL == "" {
 		return fmt.Errorf("--url is required to determine the repository")
 	}
@@ -163,10 +168,10 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch boo
 	var sandboxName string
 	if isIssue {
 		fmt.Printf("Ensuring sandbox for issue #%d...\n", issueNum)
-		sandboxName, err = factorysandbox.EnsureFixSandbox(ctx, kubeClient, rootFlags.Namespace, repo, strconv.Itoa(issueNum), cloneURL, issueTitle, rootFlags.Image, rootFlags.DiskSize)
+		sandboxName, err = factorysandbox.EnsureFixSandbox(ctx, kubeClient, rootFlags.Namespace, repo, strconv.Itoa(issueNum), cloneURL, issueTitle, rootFlags.Image, rootFlags.DiskSize, ephemeralStorage, secrets)
 	} else {
 		fmt.Printf("Ensuring sandbox for task %s on repo %s/%s...\n", name, owner, repo)
-		sandboxName, err = factorysandbox.EnsureFixSandbox(ctx, kubeClient, rootFlags.Namespace, repo, name, cloneURL, issueTitle, rootFlags.Image, rootFlags.DiskSize)
+		sandboxName, err = factorysandbox.EnsureFixSandbox(ctx, kubeClient, rootFlags.Namespace, repo, name, cloneURL, issueTitle, rootFlags.Image, rootFlags.DiskSize, ephemeralStorage, secrets)
 	}
 	if err != nil {
 		return fmt.Errorf("ensuring sandbox: %w", err)
@@ -317,7 +322,7 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch boo
 
 		if watch {
 			fmt.Printf("\nStarting PR watch for %s...\n", prURL)
-			return runPRWatch(ctx, prURL, pollInterval, false, true, watchTimeout)
+			return runPRWatch(ctx, prURL, pollInterval, false, true, watchTimeout, ephemeralStorage, secrets)
 		}
 	} else if watch {
 		fmt.Println("\nWarning: --watch was specified but could not determine PR URL from task output.")

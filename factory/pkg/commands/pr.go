@@ -47,7 +47,12 @@ func NewInvestigateCommand(ctx context.Context) *cobra.Command {
 		Short: "Investigate CI check failures for a GitHub pull request in a sandbox",
 		Example: `  # Investigate PR check failures
   factory pr investigate --pr-url https://github.com/owner/repo/pull/1`,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			_, err := ResolveRootFlags(cmd)
+			if err != nil {
+				return err
+			}
+
 			if flags.PRURL == "" {
 				return fmt.Errorf("--pr-url is required")
 			}
@@ -73,7 +78,7 @@ func NewInvestigateCommand(ctx context.Context) *cobra.Command {
 
 			ctx, cancel := context.WithTimeout(ctx, rootFlags.Timeout)
 			defer cancel()
-			return runInvestigate(ctx, flags.PRURL, flags.Prompt, flags.ContinueSession)
+			return runInvestigate(ctx, flags.PRURL, flags.Prompt, flags.ContinueSession, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets)
 		},
 	}
 
@@ -84,7 +89,7 @@ func NewInvestigateCommand(ctx context.Context) *cobra.Command {
 	return cmd
 }
 
-func runInvestigate(ctx context.Context, prURL, prompt string, continueSession bool) error {
+func runInvestigate(ctx context.Context, prURL, prompt string, continueSession bool, ephemeralStorage string, secrets []factorysandbox.SecretMount) error {
 	fmt.Printf("Resolving PR URL: %s...\n", prURL)
 
 	u, err := url.Parse(prURL)
@@ -172,7 +177,7 @@ func runInvestigate(ctx context.Context, prURL, prompt string, continueSession b
 
 	cloneURL := pr.GetBase().GetRepo().GetCloneURL()
 	fmt.Printf("Ensuring review sandbox for PR #%d...\n", prNum)
-	sandboxName, err := factorysandbox.EnsureReviewSandbox(ctx, kubeClient, rootFlags.Namespace, prNum, pr.GetTitle(), pr.GetHTMLURL(), pr.GetDiffURL(), cloneURL, rootFlags.Image, rootFlags.DiskSize)
+	sandboxName, err := factorysandbox.EnsureReviewSandbox(ctx, kubeClient, rootFlags.Namespace, prNum, pr.GetTitle(), pr.GetHTMLURL(), pr.GetDiffURL(), cloneURL, rootFlags.Image, rootFlags.DiskSize, ephemeralStorage, secrets)
 	if err != nil {
 		return fmt.Errorf("ensuring review sandbox: %w", err)
 	}
@@ -269,7 +274,12 @@ func NewAddressCommentsCommand(ctx context.Context) *cobra.Command {
 		Short: "Address review feedback and comments for a GitHub pull request in a sandbox",
 		Example: `  # Address PR review feedback
   factory pr address-comments --pr-url https://github.com/owner/repo/pull/1`,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			_, err := ResolveRootFlags(cmd)
+			if err != nil {
+				return err
+			}
+
 			if flags.PRURL == "" {
 				return fmt.Errorf("--pr-url is required")
 			}
@@ -295,7 +305,7 @@ func NewAddressCommentsCommand(ctx context.Context) *cobra.Command {
 
 			ctx, cancel := context.WithTimeout(ctx, rootFlags.Timeout)
 			defer cancel()
-			return runAddressComments(ctx, flags.PRURL, flags.Prompt, flags.ContinueSession)
+			return runAddressComments(ctx, flags.PRURL, flags.Prompt, flags.ContinueSession, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets)
 		},
 	}
 
@@ -306,7 +316,7 @@ func NewAddressCommentsCommand(ctx context.Context) *cobra.Command {
 	return cmd
 }
 
-func runAddressComments(ctx context.Context, prURL, prompt string, continueSession bool) error {
+func runAddressComments(ctx context.Context, prURL, prompt string, continueSession bool, ephemeralStorage string, secrets []factorysandbox.SecretMount) error {
 	fmt.Printf("Resolving PR URL: %s...\n", prURL)
 
 	u, err := url.Parse(prURL)
@@ -413,7 +423,7 @@ func runAddressComments(ctx context.Context, prURL, prompt string, continueSessi
 
 	cloneURL := pr.GetBase().GetRepo().GetCloneURL()
 	fmt.Printf("Ensuring review sandbox for PR #%d...\n", prNum)
-	sandboxName, err := factorysandbox.EnsureReviewSandbox(ctx, kubeClient, rootFlags.Namespace, prNum, pr.GetTitle(), pr.GetHTMLURL(), pr.GetDiffURL(), cloneURL, rootFlags.Image, rootFlags.DiskSize)
+	sandboxName, err := factorysandbox.EnsureReviewSandbox(ctx, kubeClient, rootFlags.Namespace, prNum, pr.GetTitle(), pr.GetHTMLURL(), pr.GetDiffURL(), cloneURL, rootFlags.Image, rootFlags.DiskSize, ephemeralStorage, secrets)
 	if err != nil {
 		return fmt.Errorf("ensuring review sandbox: %w", err)
 	}
@@ -513,11 +523,16 @@ func NewPRWatchCommand(ctx context.Context) *cobra.Command {
 		Short: "Watch a GitHub pull request for check failures and new review comments to automatically react",
 		Example: `  # Watch a PR and automatically investigate failures or address feedback
   factory pr watch --pr-url https://github.com/owner/repo/pull/1`,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			_, err := ResolveRootFlags(cmd)
+			if err != nil {
+				return err
+			}
+
 			if flags.PRURL == "" {
 				return fmt.Errorf("--pr-url is required")
 			}
-			return runPRWatch(ctx, flags.PRURL, flags.PollInterval, flags.DryRun, flags.ContinueSession, flags.WatchTimeout)
+			return runPRWatch(ctx, flags.PRURL, flags.PollInterval, flags.DryRun, flags.ContinueSession, flags.WatchTimeout, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets)
 		},
 	}
 
@@ -530,7 +545,7 @@ func NewPRWatchCommand(ctx context.Context) *cobra.Command {
 	return cmd
 }
 
-func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRun, continueSession bool, watchTimeout time.Duration) error {
+func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRun, continueSession bool, watchTimeout time.Duration, ephemeralStorage string, secrets []factorysandbox.SecretMount) error {
 	fmt.Printf("Starting PR watch for %s (poll interval: %s, dryRun: %v, continueSession: %v, watchTimeout: %s)...\n", prURL, interval, dryRun, continueSession, watchTimeout)
 
 	u, err := url.Parse(prURL)
@@ -639,7 +654,7 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 				if dryRun {
 					fmt.Printf("[DRYRUN] Would trigger investigate for PR #%d\n", prNum)
 				} else {
-					if err := runInvestigate(ctx, prURL, "Investigate check failures for this PR", continueSession); err != nil {
+					if err := runInvestigate(ctx, prURL, "Investigate check failures for this PR", continueSession, ephemeralStorage, secrets); err != nil {
 						klog.Errorf("Investigate failed: %v", err)
 					}
 				}
@@ -676,7 +691,7 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 					if dryRun {
 						fmt.Printf("[DRYRUN] Would trigger address-comments for PR #%d\n", prNum)
 					} else {
-						if err := runAddressComments(ctx, prURL, "Address review feedback for this PR", continueSession); err != nil {
+						if err := runAddressComments(ctx, prURL, "Address review feedback for this PR", continueSession, ephemeralStorage, secrets); err != nil {
 							klog.Errorf("Address-comments failed: %v", err)
 						}
 					}
@@ -746,7 +761,12 @@ func NewIterateCommand(ctx context.Context) *cobra.Command {
 		Short: "Iterate on code / resolve merge conflicts for a GitHub pull request in a sandbox",
 		Example: `  # Iterate on PR / rebase PR
   factory pr iterate --pr-url https://github.com/owner/repo/pull/1 --prompt "Please rebase onto latest master"`,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			_, err := ResolveRootFlags(cmd)
+			if err != nil {
+				return err
+			}
+
 			if flags.PRURL == "" {
 				return fmt.Errorf("--pr-url is required")
 			}
@@ -772,7 +792,7 @@ func NewIterateCommand(ctx context.Context) *cobra.Command {
 
 			ctx, cancel := context.WithTimeout(ctx, rootFlags.Timeout)
 			defer cancel()
-			return runIterate(ctx, flags.PRURL, flags.Prompt, flags.ContinueSession)
+			return runIterate(ctx, flags.PRURL, flags.Prompt, flags.ContinueSession, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets)
 		},
 	}
 
@@ -783,7 +803,7 @@ func NewIterateCommand(ctx context.Context) *cobra.Command {
 	return cmd
 }
 
-func runIterate(ctx context.Context, prURL, prompt string, continueSession bool) error {
+func runIterate(ctx context.Context, prURL, prompt string, continueSession bool, ephemeralStorage string, secrets []factorysandbox.SecretMount) error {
 	fmt.Printf("Resolving PR URL: %s...\n", prURL)
 
 	u, err := url.Parse(prURL)
@@ -816,7 +836,7 @@ func runIterate(ctx context.Context, prURL, prompt string, continueSession bool)
 
 	cloneURL := pr.GetBase().GetRepo().GetCloneURL()
 	fmt.Printf("Ensuring review sandbox for PR #%d...\n", prNum)
-	sandboxName, err := factorysandbox.EnsureReviewSandbox(ctx, kubeClient, rootFlags.Namespace, prNum, pr.GetTitle(), pr.GetHTMLURL(), pr.GetDiffURL(), cloneURL, rootFlags.Image, rootFlags.DiskSize)
+	sandboxName, err := factorysandbox.EnsureReviewSandbox(ctx, kubeClient, rootFlags.Namespace, prNum, pr.GetTitle(), pr.GetHTMLURL(), pr.GetDiffURL(), cloneURL, rootFlags.Image, rootFlags.DiskSize, ephemeralStorage, secrets)
 	if err != nil {
 		return fmt.Errorf("ensuring review sandbox: %w", err)
 	}
