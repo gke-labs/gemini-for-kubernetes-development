@@ -179,7 +179,7 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 				"annotations": annotationsInterface,
 			},
 			"spec": map[string]interface{}{
-				"replicas":    opt.Replicas,
+				"replicas": opt.Replicas,
 				"podTemplate": map[string]interface{}{
 					"metadata": map[string]interface{}{
 						"labels": labelsInterface,

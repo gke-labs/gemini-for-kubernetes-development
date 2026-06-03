@@ -267,5 +267,3 @@ func ToSandboxSecrets(mounts []config.SecretMount) []factorysandbox.SecretMount 
 	}
 	return res
 }
-
-
