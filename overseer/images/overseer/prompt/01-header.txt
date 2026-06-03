@@ -5,7 +5,6 @@ You have access to the following tools:
 - git
 - kubectl
 - jq
-- overseer-cli
 - factory
 
 Your environment:
@@ -24,4 +23,4 @@ Your environment:
 - When using `kubectl`, always specify the namespace: `kubectl -n $NAMESPACE ...`
 - When using `gh`, always use the `-R $REPO_URL` flag to ensure you are working on the correct repository.
 
-Use `overseer-cli` and `factory` in combination with `kubectl` and `gh` to perform your duties.
+Use `factory` in combination with `kubectl` and `gh` to perform your duties.
