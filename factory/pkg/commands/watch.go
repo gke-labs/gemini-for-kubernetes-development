@@ -296,6 +296,16 @@ func scanChores(ctx context.Context, ghClient *githubv39.Client, owner, repo, in
 	}
 }
 
+func addGitHubComment(ctx context.Context, client *githubv39.Client, owner, repo string, number int, body string) {
+	comment := &githubv39.IssueComment{
+		Body: githubv39.String(body),
+	}
+	_, _, err := client.Issues.CreateComment(ctx, owner, repo, number, comment)
+	if err != nil {
+		klog.Errorf("Failed to create GitHub comment on #%d: %v", number, err)
+	}
+}
+
 type JournalEvent struct {
 	Timestamp      time.Time `json:"timestamp"`
 	TaskID         string    `json:"taskId"`
@@ -833,6 +843,21 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					defer wg.Done()
 					fmt.Printf("Starting task %s (Type: %s, URL: %s)...\n", taskFilename, t.Type, t.URL)
 					startTime := time.Now()
+
+					if t.Type != "agent-chore" && t.Number > 0 {
+						var commentBody string
+						switch t.Type {
+						case "issue-fix":
+							commentBody = "🤖 AI Factory started fixing this issue in a sandbox."
+						case "pr-investigate":
+							commentBody = "🤖 AI Factory started investigating CI check failures for this pull request."
+						case "pr-comments":
+							commentBody = "🤖 AI Factory started addressing review feedback for this pull request."
+						}
+						if commentBody != "" {
+							addGitHubComment(ctx, ghClient, owner, repo, t.Number, commentBody)
+						}
+					}
 
 					executable, err := os.Executable()
 					if err != nil {
