@@ -1,15 +1,12 @@
 
-Investigating PR failures:
+Rerunning failed CI checks due to transient infrastructure/flake failure:
 ```bash
-factory pr investigate --pr-url $REPO_URL/pull/<pr-number> --background
-```
+# 1. Find the failed workflow run ID for the PR head commit
+gh run list -R $REPO_URL --commit <commit-sha>
 
-Resolving merge conflicts in a PR:
-```bash
-factory pr iterate --pr-url $REPO_URL/pull/<pr-number> --prompt "Please resolve merge conflicts in this PR by rebasing onto the latest master/main branch and resolving any conflicts that arise." --background
-```
+# 2. Retrigger only the failed checks for that run
+gh run rerun <run-id> --failed -R $REPO_URL
 
-Rebasing a PR to resolve upstream CI test failures:
-```bash
-factory pr iterate --pr-url $REPO_URL/pull/<pr-number> --prompt "Please rebase this PR onto the latest master/main branch to resolve upstream CI test failures." --background
+# 3. Comment on the PR
+gh pr comment <pr-number> -R $REPO_URL --body "🤖 Retriggering failed CI checks due to transient infrastructure/flake failure."
 ```
