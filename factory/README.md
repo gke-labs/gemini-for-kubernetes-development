@@ -324,3 +324,35 @@ factory cleanup
 # Delete sandboxes older than 6 hours
 factory cleanup --older-than 6h
 ```
+
+---
+
+## Design Footnote: Directory-Based Queue Design for `factory watch`
+
+To support decoupled operation and integration with external schedulers (e.g. Overseer prompt or custom scripts), `factory watch` supports a directory-based queueing model. 
+
+```
+                  ┌──────────────────────┐
+                  │  External Systems /  │
+                  │   Overseer Prompt    │
+                  └──────────┬───────────┘
+                             │ (writes task file)
+                             ▼
+┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+│factory watch │     │   incoming/  │     │factory watch │
+│  --mode=scan ├────>│ task-123.yaml├────>│  --mode=run  │
+└──────────────┘     └──────────────┘     └──────┬───────┘
+                                                 │ (runs sandbox)
+                                                 ▼
+                                          ┌──────────────┐
+                                          │  processing/ │
+                                          └──────┬───────┘
+                                                 │ (completed)
+                                                 ▼
+                                          ┌──────────────┐
+                                          │  processed/  │
+                                          └──────────────┘
+```
+
+By splitting the command execution into `--mode=scan` (discovers issues/PRs/chores, unassigns from the bot, and writes deterministic YAML files to `incoming/`) and `--mode=run` (reads from queue directories, respects concurrency and execution limits, and runs tasks), multiple daemons can safely interact asynchronously via POSIX-atomic file moves without file lock conflicts.
+
