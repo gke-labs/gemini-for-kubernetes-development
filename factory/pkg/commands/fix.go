@@ -77,10 +77,15 @@ func NewFixCommand(ctx context.Context) *cobra.Command {
 			u, err := url.Parse(flags.URL)
 			if err == nil {
 				parts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
-				if len(parts) >= 4 && parts[2] == "issues" {
-					sessionName = fmt.Sprintf("factory-fix-%s", parts[3])
-				} else if flags.Name != "" {
-					sessionName = fmt.Sprintf("factory-fix-%s", flags.Name)
+				if len(parts) >= 2 {
+					repo := parts[1]
+					taskID := "task"
+					if len(parts) >= 4 && parts[2] == "issues" {
+						taskID = parts[3]
+					} else if flags.Name != "" {
+						taskID = flags.Name
+					}
+					sessionName = fmt.Sprintf("fix-%s-%s-fix", repo, taskID)
 				}
 			}
 

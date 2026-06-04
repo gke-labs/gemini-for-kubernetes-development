@@ -74,11 +74,16 @@ func NewAgentCreateCommand(ctx context.Context) *cobra.Command {
 			sessionName := "factory-agent"
 			u, err := url.Parse(flags.URL)
 			if err == nil {
-				parts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
-				if len(parts) >= 4 && parts[2] == "pull" {
-					sessionName = fmt.Sprintf("factory-agent-pr-%s", parts[3])
-				} else {
-					sessionName = fmt.Sprintf("factory-agent-%s", slugify(flags.Agent))
+				path := strings.TrimSuffix(strings.TrimPrefix(u.Path, "/"), ".git")
+				parts := strings.Split(path, "/")
+				if len(parts) >= 2 {
+					repo := parts[1]
+					agentName := slugify(flags.Agent)
+					taskID := agentName
+					if len(parts) >= 4 && parts[2] == "pull" {
+						taskID = fmt.Sprintf("pr-%s-%s", parts[3], agentName)
+					}
+					sessionName = fmt.Sprintf("agent-%s-%s-agent", repo, taskID)
 				}
 			}
 

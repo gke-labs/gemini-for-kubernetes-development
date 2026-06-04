@@ -201,7 +201,8 @@ func checkAndRunInBackground(sessionName string) (bool, error) {
 		return false, fmt.Errorf("failed to create logs directory: %w", err)
 	}
 
-	logFile := filepath.Join(logDir, fmt.Sprintf("%s.log", sessionName))
+	timestamp := time.Now().Format("20060102-150405")
+	logFile := filepath.Join(logDir, fmt.Sprintf("%s-%s.log", sessionName, timestamp))
 	f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		return false, fmt.Errorf("failed to open log file: %w", err)
