@@ -21,6 +21,11 @@ type SecretMount struct {
 	MountPath string
 }
 
+type EnvVar struct {
+	Name  string
+	Value string
+}
+
 // DevSandboxOptions holds common options for creating Sandboxes.
 type DevSandboxOptions struct {
 	Name              string
@@ -32,6 +37,7 @@ type DevSandboxOptions struct {
 	WorkspaceDiskSize string
 	EphemeralStorage  string
 	Secrets           []SecretMount
+	Env               []EnvVar
 }
 
 // AgentSandboxOptions holds options for creating an AgentSandbox.
@@ -115,6 +121,12 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 		map[string]interface{}{"name": "GOMODCACHE", "value": GoModCachePath},
 		map[string]interface{}{"name": "TMPDIR", "value": TmpDirPath},
 		map[string]interface{}{"name": "GOTMPDIR", "value": TmpDirPath},
+	}
+	for _, e := range opt.Env {
+		env = append(env, map[string]interface{}{
+			"name":  e.Name,
+			"value": e.Value,
+		})
 	}
 
 	volumeMounts := []interface{}{
@@ -274,6 +286,12 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 		map[string]interface{}{"name": "GOMODCACHE", "value": GoModCachePath},
 		map[string]interface{}{"name": "TMPDIR", "value": TmpDirPath},
 		map[string]interface{}{"name": "GOTMPDIR", "value": TmpDirPath},
+	}
+	for _, e := range opt.Env {
+		env = append(env, map[string]interface{}{
+			"name":  e.Name,
+			"value": e.Value,
+		})
 	}
 
 	volumeMounts := []interface{}{
