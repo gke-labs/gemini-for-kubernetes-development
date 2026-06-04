@@ -124,14 +124,19 @@ func runInvestigate(ctx context.Context, prURL, prompt string, continueSession b
 
 	var failedRuns []tasks.FailedRun
 	var failedRunIDs []string
+	seenRunIDs := make(map[int64]bool)
 	for _, run := range checkRuns {
 		if run.GetConclusion() == "failure" {
+			runID := getWorkflowRunID(run)
 			failedRuns = append(failedRuns, tasks.FailedRun{
-				ID:   run.GetID(),
+				ID:   runID,
 				Name: run.GetName(),
 				URL:  run.GetHTMLURL(),
 			})
-			failedRunIDs = append(failedRunIDs, fmt.Sprintf("%d", run.GetID()))
+			if !seenRunIDs[runID] {
+				seenRunIDs[runID] = true
+				failedRunIDs = append(failedRunIDs, fmt.Sprintf("%d", runID))
+			}
 		}
 	}
 
@@ -915,4 +920,28 @@ func runIterate(ctx context.Context, prURL, prompt string, continueSession bool,
 
 	fmt.Println("\nIterate execution completed.")
 	return nil
+}
+
+func getWorkflowRunID(checkRun *githubv39.CheckRun) int64 {
+	for _, urlPtr := range []*string{checkRun.HTMLURL, checkRun.DetailsURL} {
+		if urlPtr == nil {
+			continue
+		}
+		u := *urlPtr
+		const segment = "/actions/runs/"
+		if idx := strings.Index(u, segment); idx != -1 {
+			remaining := u[idx+len(segment):]
+			if endIdx := strings.Index(remaining, "/"); endIdx != -1 {
+				idStr := remaining[:endIdx]
+				if id, err := strconv.ParseInt(idStr, 10, 64); err == nil {
+					return id
+				}
+			} else {
+				if id, err := strconv.ParseInt(remaining, 10, 64); err == nil {
+					return id
+				}
+			}
+		}
+	}
+	return checkRun.GetID()
 }
