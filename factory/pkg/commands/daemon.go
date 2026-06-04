@@ -56,7 +56,7 @@ func runDaemon(ctx context.Context) error {
 
 	log.Info("Starting envd daemon...")
 
-	cmd := exec.CommandContext(ctx, "envd")
+	cmd := exec.CommandContext(ctx, "envd", "--isnotfc")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
