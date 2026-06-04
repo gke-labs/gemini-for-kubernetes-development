@@ -242,16 +242,23 @@ factory agent create \
 ```
 
 ### Watching Repositories (`factory watch`)
-Continuously monitor a GitHub repository in the foreground for test failures or assigned issues, automatically dispatching `fix` or `investigate` tasks. The watch loop logs explicit sleep intervals between repository polls:
-```bash
-# Watch for assigned issues with specific labels
-factory watch --repo owner/repo --assignee "factory-bot" --labels "p0,urgent"
+Continuously monitor a GitHub repository in the foreground for test failures, assigned issues, or open pull requests, automatically dispatching `fix`, `investigate`, or `address-comments` tasks.
 
-# Watch for unassigned issues with specific labels
+**Key Features**:
+- **Assignee & Label Filtering**: By default, it monitors issues and PRs assigned to the onboarded user (resolved from the `factory-user` secret) OR labelled `overseer`. You can override the assignee with `--assignee` (e.g. `--assignee ""` to watch for unassigned issues/PRs).
+- **PR Check Failure & Comment Watching**: For watched PRs, it automatically dispatches `investigate` on CI test failures and `address-comments` on new review comments since the last commit.
+- **Smart Issue Link Detection**: To prevent redundant work, it will automatically skip triggering a fix task for an issue if it finds an open PR referencing that issue (checked via branch names, PR titles, PR bodies, or the GitHub Timeline API).
+- **Dry-run Execution**: Fully respects the `--dryrun` flag, printing actions without creating sandboxes or starting tasks.
+
+```bash
+# Watch for issues/PRs assigned to the onboarded user (from secret) or labelled "overseer"
+factory watch --repo owner/repo
+
+# Watch for unassigned issues/PRs with specific labels
 factory watch --repo owner/repo --assignee "" --labels "bug,help wanted"
 
-# Simulate actions without creating sandboxes or executing tasks
-factory watch --repo owner/repo --assignee "factory-bot" --dryrun
+# Simulate watch loop actions without executing any tasks or creating sandboxes
+factory watch --repo owner/repo --dryrun
 ```
 
 ---
