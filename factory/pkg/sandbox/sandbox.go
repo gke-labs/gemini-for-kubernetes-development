@@ -10,7 +10,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func EnsureFixSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, taskID, cloneURL, taskTitle, image, diskSize, ephemeralStorage string, secrets []SecretMount) (string, error) {
+func EnsureFixSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, taskID, cloneURL, taskTitle, image, diskSize, ephemeralStorage string, secrets []SecretMount, envs []EnvVar) (string, error) {
 	name := fmt.Sprintf("fix-%s-%s", repoName, taskID)
 
 	_, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
@@ -42,6 +42,7 @@ func EnsureFixSandbox(ctx context.Context, kubeClient *clients.KubernetesClient,
 			WorkspaceDiskSize: diskSize,
 			EphemeralStorage:  ephemeralStorage,
 			Secrets:           secrets,
+			Env:               envs,
 		},
 	}
 
@@ -60,7 +61,7 @@ func EnsureFixSandbox(ctx context.Context, kubeClient *clients.KubernetesClient,
 	return name, nil
 }
 
-func EnsureAgentSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, taskID, cloneURL, taskTitle, image, diskSize, ephemeralStorage string, secrets []SecretMount) (string, error) {
+func EnsureAgentSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, taskID, cloneURL, taskTitle, image, diskSize, ephemeralStorage string, secrets []SecretMount, envs []EnvVar) (string, error) {
 	name := fmt.Sprintf("agent-%s-%s", repoName, taskID)
 
 	_, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
@@ -92,6 +93,7 @@ func EnsureAgentSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 			WorkspaceDiskSize: diskSize,
 			EphemeralStorage:  ephemeralStorage,
 			Secrets:           secrets,
+			Env:               envs,
 		},
 	}
 
@@ -137,7 +139,7 @@ func AliasSandboxToPR(ctx context.Context, kubeClient *clients.KubernetesClient,
 	return nil
 }
 
-func EnsureReviewSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace string, prNum int, prTitle, prHTMLURL, prDiffURL, prCloneURL, image, diskSize, ephemeralStorage string, secrets []SecretMount) (string, error) {
+func EnsureReviewSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace string, prNum int, prTitle, prHTMLURL, prDiffURL, prCloneURL, image, diskSize, ephemeralStorage string, secrets []SecretMount, envs []EnvVar) (string, error) {
 	listOpts := metav1.ListOptions{
 		LabelSelector: fmt.Sprintf("factory.gemini.google.com/pr=%d", prNum),
 	}
@@ -176,6 +178,7 @@ func EnsureReviewSandbox(ctx context.Context, kubeClient *clients.KubernetesClie
 			WorkspaceDiskSize: diskSize,
 			EphemeralStorage:  ephemeralStorage,
 			Secrets:           secrets,
+			Env:               envs,
 		},
 		PRNumber:   prNum,
 		PRTitle:    prTitle,

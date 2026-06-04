@@ -35,6 +35,8 @@ type RootFlags struct {
 	EphemeralStorage string
 	Secrets          []string
 	ResolvedSecrets  []factorysandbox.SecretMount
+	Envs             []string
+	ResolvedEnvs     []factorysandbox.EnvVar
 }
 
 var rootFlags RootFlags
@@ -58,6 +60,7 @@ coding tasks without local side effects or host dependencies.`,
 	cmd.PersistentFlags().BoolVar(&rootFlags.Cleanup, "cleanup", false, "Delete the sandbox after the task is run or watch completes")
 	cmd.PersistentFlags().StringVar(&rootFlags.EphemeralStorage, "ephemeral-storage", "", "Sandbox ephemeral storage request/limit size")
 	cmd.PersistentFlags().StringSliceVar(&rootFlags.Secrets, "secret", nil, "Inject a secret with format secretName:mountPath (can be specified multiple times)")
+	cmd.PersistentFlags().StringArrayVar(&rootFlags.Envs, "env", nil, "Inject an environment variable with format KEY=VALUE (can be specified multiple times)")
 
 	cmd.PersistentPreRun = func(_ *cobra.Command, _ []string) {
 		if rootFlags.Namespace == "" {
@@ -254,6 +257,23 @@ func ResolveRootFlags(cmd *cobra.Command) (*config.FactoryConfig, error) {
 		rootFlags.ResolvedSecrets = ToSandboxSecrets(cfg.Secrets)
 	}
 
+	if cmd.Flags().Changed("env") {
+		var resolved []factorysandbox.EnvVar
+		for _, e := range rootFlags.Envs {
+			parts := strings.SplitN(e, "=", 2)
+			if len(parts) != 2 || parts[0] == "" {
+				return nil, fmt.Errorf("invalid env format: %s. Expected KEY=VALUE", e)
+			}
+			resolved = append(resolved, factorysandbox.EnvVar{
+				Name:  parts[0],
+				Value: parts[1],
+			})
+		}
+		rootFlags.ResolvedEnvs = resolved
+	} else {
+		rootFlags.ResolvedEnvs = ToSandboxEnvs(cfg.Env)
+	}
+
 	return cfg, nil
 }
 
@@ -263,6 +283,17 @@ func ToSandboxSecrets(mounts []config.SecretMount) []factorysandbox.SecretMount 
 		res[i] = factorysandbox.SecretMount{
 			Name:      m.Name,
 			MountPath: m.MountPath,
+		}
+	}
+	return res
+}
+
+func ToSandboxEnvs(envs []config.EnvVar) []factorysandbox.EnvVar {
+	res := make([]factorysandbox.EnvVar, len(envs))
+	for i, e := range envs {
+		res[i] = factorysandbox.EnvVar{
+			Name:  e.Name,
+			Value: e.Value,
 		}
 	}
 	return res

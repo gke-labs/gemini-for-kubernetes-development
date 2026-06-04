@@ -13,6 +13,11 @@ type SecretMount struct {
 	MountPath string `yaml:"mountPath"`
 }
 
+type EnvVar struct {
+	Name  string `yaml:"name"`
+	Value string `yaml:"value"`
+}
+
 type ChoresConfig struct {
 	Mode string `yaml:"mode"`
 }
@@ -25,6 +30,7 @@ type FactoryConfig struct {
 	Image             string        `yaml:"image"`
 	WorkspaceDiskSize string        `yaml:"workspaceDiskSize"`
 	Secrets           []SecretMount `yaml:"secrets"`
+	Env               []EnvVar      `yaml:"env"`
 }
 
 func LoadConfig() (*FactoryConfig, error) {

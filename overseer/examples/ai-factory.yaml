@@ -10,7 +10,7 @@ spec:
   chores:
     mode: enabled
   geminiAPIKeySecretName: gemini-vscode-tokens
-  image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
+  image: ghcr.io/gke-labs/gemini-for-kubernetes-development/factory-golang:latest
   review:
     prompt: >-
         You are an expert developer who is helping with code reviews for the AI Factory project.

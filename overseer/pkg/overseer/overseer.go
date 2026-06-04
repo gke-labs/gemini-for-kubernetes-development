@@ -231,6 +231,15 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 			})
 		}
 	}
+	if len(o.Spec.Env) > 0 {
+		envJSON, err := json.Marshal(o.Spec.Env)
+		if err == nil {
+			env = append(env, map[string]interface{}{
+				"name":  "FACTORY_ENV",
+				"value": string(envJSON),
+			})
+		}
+	}
 
 	botSecretName := o.Spec.RobotAccount
 	if botSecretName != "" {
