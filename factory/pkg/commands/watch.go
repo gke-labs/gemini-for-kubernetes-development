@@ -106,130 +106,108 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 	processedPRs := make(map[int]prWatchState)
 
 	checkRepo := func() {
-		// 1. Fetch Pull Requests first to check for referenced issues, and to filter watched PRs
+		// 1. Fetch first 100 open Pull Requests to check for referenced issues
 		prOpts := &githubv39.PullRequestListOptions{
 			State:       "open",
 			ListOptions: githubv39.ListOptions{PerPage: 100},
 		}
 		prs, _, err := ghClient.PullRequests.List(ctx, owner, repo, prOpts)
-		if err != nil {
-			klog.Errorf("Failed to list PRs: %v", err)
-			return
+		referencedIssues := make(map[int]bool)
+		if err == nil {
+			for _, pr := range prs {
+				for num := range getReferencedIssues(pr) {
+					referencedIssues[num] = true
+				}
+			}
+		} else {
+			klog.Errorf("Failed to list open PRs for referenced issue detection: %v", err)
 		}
 
-		// Extract all referenced issues from open PRs
-		referencedIssues := make(map[int]bool)
-		for _, pr := range prs {
-			for num := range getReferencedIssues(pr) {
-				referencedIssues[num] = true
+		// 2. Fetch Issues/PRs matching assignee or labelled "overseer" (using Issues API to fetch both)
+		var allItems []*githubv39.Issue
+		if targetAssignee != "" {
+			opts1 := &githubv39.IssueListByRepoOptions{
+				Assignee:    targetAssignee,
+				State:       "open",
+				ListOptions: githubv39.ListOptions{PerPage: 100},
+			}
+			issues1, _, err := ghClient.Issues.ListByRepo(ctx, owner, repo, opts1)
+			if err != nil {
+				klog.Errorf("Failed to list issues for assignee %s: %v", targetAssignee, err)
+			} else {
+				allItems = append(allItems, issues1...)
 			}
 		}
 
-		// 2. Fetch and process Issues
-		issueOpts := &githubv39.IssueListByRepoOptions{
+		opts2 := &githubv39.IssueListByRepoOptions{
+			Labels:      []string{"overseer"},
 			State:       "open",
 			ListOptions: githubv39.ListOptions{PerPage: 100},
 		}
-		issues, _, err := ghClient.Issues.ListByRepo(ctx, owner, repo, issueOpts)
+		issues2, _, err := ghClient.Issues.ListByRepo(ctx, owner, repo, opts2)
 		if err != nil {
-			klog.Errorf("Failed to list issues: %v", err)
+			klog.Errorf("Failed to list issues for label overseer: %v", err)
 		} else {
-			for _, issue := range issues {
-				if issue.PullRequestLinks != nil {
+			allItems = append(allItems, issues2...)
+		}
+
+		// Deduplicate and group into issues and PRs
+		uniqueIssues := make(map[int]*githubv39.Issue)
+		for _, item := range allItems {
+			uniqueIssues[item.GetNumber()] = item
+		}
+
+		var issues []*githubv39.Issue
+		var prIssues []*githubv39.Issue
+		for _, item := range uniqueIssues {
+			if item.PullRequestLinks != nil {
+				prIssues = append(prIssues, item)
+			} else {
+				issues = append(issues, item)
+			}
+		}
+
+		// 3. Process Issues
+		for _, issue := range issues {
+			num := issue.GetNumber()
+			if referencedIssues[num] {
+				klog.Infof("Skipping issue #%d because there is already a PR referencing it.", num)
+				continue
+			}
+			if lastProcessed, ok := processedIssues[num]; !ok || time.Since(lastProcessed) > 24*time.Hour {
+				linked, err := hasLinkedPR(ctx, ghClient, owner, repo, num)
+				if err != nil {
+					klog.Errorf("Failed to check linked PR for issue #%d: %v", num, err)
+				} else if linked {
+					klog.Infof("Skipping issue #%d because it has a linked PR according to the Timeline API.", num)
 					continue
 				}
 
-				// Filter issue: must be assigned to targetAssignee OR labelled "overseer"
-				isAssigned := false
-				if targetAssignee != "" {
-					if issue.GetAssignee().GetLogin() == targetAssignee {
-						isAssigned = true
-					}
-					for _, assignee := range issue.Assignees {
-						if assignee.GetLogin() == targetAssignee {
-							isAssigned = true
-							break
-						}
-					}
+				issueURL := fmt.Sprintf("https://github.com/%s/%s/issues/%d", owner, repo, num)
+				if dryRun {
+					fmt.Printf("[DRYRUN] Would trigger fix for issue #%d (%s): %s\n", num, issue.GetTitle(), issueURL)
 				} else {
-					if len(issue.Assignees) == 0 && issue.GetAssignee().GetLogin() == "" {
-						isAssigned = true
-					}
-				}
-
-				hasOverseerLabel := false
-				for _, lbl := range issue.Labels {
-					if strings.ToLower(lbl.GetName()) == "overseer" {
-						hasOverseerLabel = true
-						break
-					}
-				}
-
-				if !isAssigned && !hasOverseerLabel {
-					continue
-				}
-				num := issue.GetNumber()
-				if referencedIssues[num] {
-					klog.Infof("Skipping issue #%d because there is already a PR referencing it.", num)
-					continue
-				}
-				if lastProcessed, ok := processedIssues[num]; !ok || time.Since(lastProcessed) > 24*time.Hour {
-					linked, err := hasLinkedPR(ctx, ghClient, owner, repo, num)
-					if err != nil {
-						klog.Errorf("Failed to check linked PR for issue #%d: %v", num, err)
-					} else if linked {
-						klog.Infof("Skipping issue #%d because it has a linked PR according to the Timeline API.", num)
-						continue
-					}
-
-					issueURL := fmt.Sprintf("https://github.com/%s/%s/issues/%d", owner, repo, num)
-					if dryRun {
-						fmt.Printf("[DRYRUN] Would trigger fix for issue #%d (%s): %s\n", num, issue.GetTitle(), issueURL)
-					} else {
-						fmt.Printf("\nFound assigned issue #%d (%s). Triggering fix...\n", num, issue.GetTitle())
-						processedIssues[num] = time.Now()
-						if err := runFix(ctx, issueURL, "Fix this issue", "", false, false, 0, watchTimeout, ephemeralStorage, secrets); err != nil {
-							klog.Errorf("Fix for issue #%d failed: %v", num, err)
-						}
+					fmt.Printf("\nFound assigned issue #%d (%s). Triggering fix...\n", num, issue.GetTitle())
+					processedIssues[num] = time.Now()
+					if err := runFix(ctx, issueURL, "Fix this issue", "", false, false, 0, watchTimeout, ephemeralStorage, secrets); err != nil {
+						klog.Errorf("Fix for issue #%d failed: %v", num, err)
 					}
 				}
 			}
 		}
 
-		// 3. Process Pull Requests
-		for _, pr := range prs {
-			num := pr.GetNumber()
-			headSHA := pr.GetHead().GetSHA()
+		// 4. Process Pull Requests
+		for _, prIssue := range prIssues {
+			num := prIssue.GetNumber()
 
-			// Filter PR: must be assigned to targetAssignee OR labelled "overseer"
-			isAssigned := false
-			if targetAssignee != "" {
-				if pr.GetAssignee().GetLogin() == targetAssignee {
-					isAssigned = true
-				}
-				for _, assignee := range pr.Assignees {
-					if assignee.GetLogin() == targetAssignee {
-						isAssigned = true
-						break
-					}
-				}
-			} else {
-				if len(pr.Assignees) == 0 && pr.GetAssignee().GetLogin() == "" {
-					isAssigned = true
-				}
-			}
-
-			hasOverseerLabel := false
-			for _, lbl := range pr.Labels {
-				if strings.ToLower(lbl.GetName()) == "overseer" {
-					hasOverseerLabel = true
-					break
-				}
-			}
-
-			if !isAssigned && !hasOverseerLabel {
+			// Fetch full Pull Request to get HEAD SHA and other details
+			pr, _, err := ghClient.PullRequests.Get(ctx, owner, repo, num)
+			if err != nil {
+				klog.Errorf("Failed to fetch full PR #%d: %v", num, err)
 				continue
 			}
+
+			headSHA := pr.GetHead().GetSHA()
 
 			// Check 3.1: Check CI check runs and commit statuses for failures
 			hasFailure := false
