@@ -941,11 +941,11 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					case "issue-fix":
 						args = []string{"fix", "--url", t.URL, "--instruction", "Fix this issue"}
 					case "pr-investigate":
-						args = []string{"pr", "investigate", "--url", t.URL}
+						args = []string{"pr", "investigate", "--pr-url", t.URL}
 					case "pr-comments":
-						args = []string{"pr", "address-comments", "--url", t.URL}
+						args = []string{"pr", "address-comments", "--pr-url", t.URL}
 					case "pr-iterate":
-						args = []string{"pr", "iterate", "--url", t.URL, "--prompt", "Resolve merge conflicts and iterate on code"}
+						args = []string{"pr", "iterate", "--pr-url", t.URL, "--prompt", "Please resolve merge conflicts in this PR by rebasing onto the latest master/main branch and resolving any conflicts that arise."}
 					case "agent-chore":
 						args = []string{"agent", "create", "--url", t.URL, "--agent", t.AgentFile}
 					default:
