@@ -451,10 +451,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 		actionsTaken := 0
 		unassignedPRs := make(map[int]bool)
 
-		runningCount, err := countRunningSandboxTasks(ctx, kubeClient, rootFlags.Namespace)
-		if err != nil {
-			klog.Errorf("Failed to count running sandbox tasks: %v", err)
-		}
+
 
 		// 1. Scanner Mode
 		if mode == "all" || mode == "scan" {
@@ -948,7 +945,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					break
 				}
 
-				runningCount, err = countRunningSandboxTasks(ctx, kubeClient, rootFlags.Namespace)
+				runningCount, err := countRunningSandboxTasks(ctx, kubeClient, rootFlags.Namespace)
 				if err != nil {
 					klog.Errorf("Failed to count running sandbox tasks: %v", err)
 				}
