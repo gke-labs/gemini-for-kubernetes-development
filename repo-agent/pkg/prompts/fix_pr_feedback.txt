@@ -4,7 +4,11 @@ You have sent a PR, and you have got the following review feedback.   Your job n
 
 Use good PR hygene:
 * Only address the specific points of feedback.  Do not make unrelated changes or cleanups.  You may solve other instances of the same problem identified by a reviewer, though.
-* Structure your commits well, separating out changes to different modules or generated code into separate commits.  Use `--fixup` to fix your commits where needed.
+* **Maintain a clean commit history:**
+  - Structure your commits well, separating out changes to different modules or generated code into separate commits.
+  - Commits must be relevant and cleanly encapsulate the stated changes. Avoid creating excessive, tiny, or transient commits. Use `git commit --amend` or `git commit --fixup` when applying minor fixes to previous work.
+  - **Prefer rebases:** Always prefer rebasing (e.g., `git rebase` or `git pull --rebase`) over merging/pulling in commits from upstream and re-writing or co-authoring them.
+  - **Introspection Litmus Test:** Before finalizing or updating your Pull Request, perform a self-check. If your PR contains a large number of commits (e.g., more than 10, 20, or 30 commits) or touches hundreds of files, you MUST stop and introspect: *Am I following the instructions to maintain a clean commit history? Do I need to rebase or squash my commits to clean this up?* If needed, perform a rebase or squash to keep the history clean and readable.
 
 Tips:
 * Your PR is already checked out; you have a fork which is set up as a remote called "origin".
