@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -824,25 +825,61 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 
 				go func(taskFilename string, t *QueueTask) {
 					fmt.Printf("Starting task %s (Type: %s, URL: %s)...\n", taskFilename, t.Type, t.URL)
-					var taskErr error
 					startTime := time.Now()
 
+					executable, err := os.Executable()
+					if err != nil {
+						klog.Errorf("Failed to get executable path: %v", err)
+						return
+					}
+
+					var args []string
 					switch t.Type {
 					case "issue-fix":
-						taskErr = runFix(ctx, t.URL, "Fix this issue", "", false, false, 0, watchTimeout, ephemeralStorage, secrets)
+						args = []string{"fix", "--url", t.URL, "--instruction", "Fix this issue"}
 					case "pr-investigate":
-						taskErr = runInvestigate(ctx, t.URL, "Investigate check failures for this PR", false, ephemeralStorage, secrets)
+						args = []string{"pr", "investigate", "--url", t.URL}
 					case "pr-comments":
-						taskErr = runAddressComments(ctx, t.URL, "Address review feedback for this PR", false, ephemeralStorage, secrets)
+						args = []string{"pr", "address-comments", "--url", t.URL}
 					case "agent-chore":
-						taskErr = RunAgent(ctx, AgentFlags{
-							URL:   t.URL,
-							Agent: t.AgentFile,
-							Local: false,
-						}, ephemeralStorage, secrets)
+						args = []string{"agent", "create", "--url", t.URL, "--agent", t.AgentFile}
 					default:
-						taskErr = fmt.Errorf("unknown task type: %s", t.Type)
+						klog.Errorf("Unknown task type: %s", t.Type)
+						return
 					}
+
+					if rootFlags.Namespace != "" {
+						args = append(args, "--namespace", rootFlags.Namespace)
+					}
+					if rootFlags.SecretName != "" {
+						args = append(args, "--secret", rootFlags.SecretName)
+					}
+					if rootFlags.Image != "" {
+						args = append(args, "--image", rootFlags.Image)
+					}
+					if rootFlags.DiskSize != "" {
+						args = append(args, "--workspace-disk-size", rootFlags.DiskSize)
+					}
+					if rootFlags.EphemeralStorage != "" {
+						args = append(args, "--ephemeral-storage", rootFlags.EphemeralStorage)
+					}
+
+					cmd := exec.Command(executable, args...)
+
+					logFilename := strings.TrimSuffix(taskFilename, ".yaml") + ".log"
+					processingLogPath := filepath.Join(processingDir, logFilename)
+					processedLogPath := filepath.Join(processedDir, logFilename)
+
+					logFile, err := os.OpenFile(processingLogPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+					if err != nil {
+						klog.Errorf("Failed to create log file: %v", err)
+					} else {
+						cmd.Stdout = logFile
+						cmd.Stderr = logFile
+						defer logFile.Close()
+					}
+
+					taskErr := cmd.Run()
 
 					processingPathLocal := filepath.Join(processingDir, taskFilename)
 					processedPathLocal := filepath.Join(processedDir, taskFilename)
@@ -862,6 +899,11 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					_ = writeTaskAtomically(processingDir, taskFilename, t)
 					if err := os.Rename(processingPathLocal, processedPathLocal); err != nil {
 						klog.Errorf("Failed to move task %s to processed directory: %v", taskFilename, err)
+					}
+					if _, err := os.Stat(processingLogPath); err == nil {
+						if err := os.Rename(processingLogPath, processedLogPath); err != nil {
+							klog.Errorf("Failed to move log file to processed directory: %v", err)
+						}
 					}
 				}(filename, task)
 			}
