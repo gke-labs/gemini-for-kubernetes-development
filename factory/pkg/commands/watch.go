@@ -175,7 +175,7 @@ func countRunningSandboxTasks(ctx context.Context, kubeClient *clients.Kubernete
 }
 
 type QueueTask struct {
-	Type      string    `yaml:"type"`      // "issue-fix", "pr-investigate", "pr-comments", "pr-iterate", "agent-chore"
+	Type      string    `yaml:"type"`      // "issue-fix", "pr-investigate", "pr-comments", "pr-iterate", "pr-review", "agent-chore"
 	URL       string    `yaml:"url"`
 	Number    int       `yaml:"number"`
 	Priority  string    `yaml:"priority"`  // "critical", "urgent", "important", "high", "medium", "low"
@@ -1001,6 +1001,8 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 							commentBody = "🤖 AI Factory started addressing review feedback for this pull request."
 						case "pr-iterate":
 							commentBody = "🤖 AI Factory started resolving merge conflicts / rebasing this pull request in a sandbox."
+						case "pr-review":
+							commentBody = "🤖 AI Factory started reviewing this pull request in a sandbox."
 						}
 						if commentBody != "" {
 							addGitHubComment(ctx, ghClient, owner, repo, t.Number, commentBody)
@@ -1023,6 +1025,8 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						args = []string{"pr", "address-comments", "--pr-url", t.URL}
 					case "pr-iterate":
 						args = []string{"pr", "iterate", "--pr-url", t.URL, "--prompt", "Please resolve merge conflicts in this PR by rebasing onto the latest master/main branch and resolving any conflicts that arise."}
+					case "pr-review":
+						args = []string{"pr", "review", "--pr-url", t.URL, "--publish", "yes"}
 					case "agent-chore":
 						args = []string{"agent", "create", "--url", t.URL, "--agent", t.AgentFile}
 					default:
