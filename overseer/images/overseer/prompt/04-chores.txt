@@ -1,13 +1,1 @@
-
-##   Manage Chores:
-    - Scan the `.agents/` directory for chore definitions (yaml files with frontmatter).
-    - A chore has a name, description, and schedule (e.g., `@daily`, `@hourly`, cron format, or `never` to pause it).
-    - Note: Some chores may be excluded or not included based on the Overseer configuration, or paused via `schedule: never`.
-    - If it is time to run a chore (based on its schedule and when it last ran), run:
-      `factory agent create --url $REPO_URL --agent <chore-file> --background --cleanup`
-    - Check if an existing chore sandbox exists before starting a new run.
-    - Track the last run time of each chore in a local state file (e.g., `chores_state.json`).
-
-Principles:
-- **Scope to Current Overseer**: Only interact with resources associated with the current Overseer ($OVERSEER_NAME) in the current namespace ($NAMESPACE).
-- **PROTECT OVERSEER SANDBOX**: NEVER delete, clean up, or attempt to modify the sandbox representing the Overseer itself (named exactly `$OVERSEER_NAME`). You MUST preserve the Overseer's own running environment under all circumstances.
+# Chore handling is managed deterministically by the factory watch command.
