@@ -10,6 +10,7 @@ import (
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	githubv39 "github.com/google/go-github/v39/github"
 	"github.com/spf13/cobra"
@@ -24,6 +25,8 @@ type WatchFlags struct {
 	Labels       []string
 	DryRun       bool
 	WatchTimeout time.Duration
+	MaxActions   int
+	MaxPending   int
 }
 
 func NewWatchCommand(ctx context.Context) *cobra.Command {
@@ -50,7 +53,7 @@ func NewWatchCommand(ctx context.Context) *cobra.Command {
 			if len(parts) != 2 {
 				return fmt.Errorf("invalid repo format, expected owner/repo, got %s", flags.Repo)
 			}
-			return runWatch(ctx, parts[0], parts[1], flags.PollInterval, flags.Assignee, cmd.Flags().Changed("assignee"), flags.Labels, flags.DryRun, flags.WatchTimeout, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets)
+			return runWatch(ctx, parts[0], parts[1], flags.PollInterval, flags.Assignee, cmd.Flags().Changed("assignee"), flags.Labels, flags.DryRun, flags.WatchTimeout, flags.MaxActions, flags.MaxPending, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets)
 		},
 	}
 
@@ -60,11 +63,70 @@ func NewWatchCommand(ctx context.Context) *cobra.Command {
 	cmd.Flags().StringSliceVar(&flags.Labels, "labels", nil, "Comma-separated list of labels to filter issues by")
 	cmd.Flags().BoolVar(&flags.DryRun, "dryrun", false, "Print actions without creating sandboxes or executing tasks")
 	cmd.Flags().DurationVar(&flags.WatchTimeout, "watch-timeout", 0, "Timeout for watching (default forever)")
+	cmd.Flags().IntVar(&flags.MaxActions, "max-actions", 10, "Maximum number of actions to take in a single watch loop")
+	cmd.Flags().IntVar(&flags.MaxPending, "max-pending", 40, "Maximum number of pending/running sandboxes allowed before skipping actions")
 
 	return cmd
 }
 
-func runWatch(ctx context.Context, owner, repo string, interval time.Duration, assignee string, assigneeChanged bool, labels []string, dryRun bool, watchTimeout time.Duration, ephemeralStorage string, secrets []factorysandbox.SecretMount) error {
+func isAssigned(issue *githubv39.Issue, assignee string) bool {
+	if assignee == "" {
+		return false
+	}
+	for _, u := range issue.Assignees {
+		if strings.EqualFold(u.GetLogin(), assignee) {
+			return true
+		}
+	}
+	return false
+}
+
+func isSandboxTaskRunning(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, name string) (bool, error) {
+	unstructObj, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return false, nil
+		}
+		return false, err
+	}
+
+	annotations := unstructObj.GetAnnotations()
+	if annotations == nil {
+		return true, nil
+	}
+
+	state := annotations["sandbox.gemini.google.com/last-task-state"]
+	if state == "" || strings.EqualFold(state, "Running") {
+		return true, nil
+	}
+
+	return false, nil
+}
+
+func countRunningSandboxTasks(ctx context.Context, kubeClient *clients.KubernetesClient, namespace string) (int, error) {
+	list, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return 0, err
+	}
+
+	count := 0
+	for _, item := range list.Items {
+		annotations := item.GetAnnotations()
+		if annotations == nil {
+			count++
+			continue
+		}
+
+		state := annotations["sandbox.gemini.google.com/last-task-state"]
+		if state == "" || strings.EqualFold(state, "Running") {
+			count++
+		}
+	}
+
+	return count, nil
+}
+
+func runWatch(ctx context.Context, owner, repo string, interval time.Duration, assignee string, assigneeChanged bool, labels []string, dryRun bool, watchTimeout time.Duration, maxActions int, maxPending int, ephemeralStorage string, secrets []factorysandbox.SecretMount) error {
 	ghClient, err := github.NewClient(ctx)
 	if err != nil {
 		return fmt.Errorf("creating github client: %w", err)
@@ -106,6 +168,20 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 	processedPRs := make(map[int]prWatchState)
 
 	checkRepo := func() {
+		actionsTaken := 0
+		unassignedPRs := make(map[int]bool)
+
+		runningCount, err := countRunningSandboxTasks(ctx, kubeClient, rootFlags.Namespace)
+		if err != nil {
+			klog.Errorf("Failed to count running sandbox tasks: %v", err)
+		} else {
+			fmt.Printf("Current running sandbox tasks: %d / %d\n", runningCount, maxPending)
+			if runningCount >= maxPending {
+				fmt.Printf("Reached maximum pending sandboxes limit (%d). Skipping this cycle.\n", maxPending)
+				return
+			}
+		}
+
 		// 1. Fetch first 100 open Pull Requests to check for referenced issues
 		prOpts := &githubv39.PullRequestListOptions{
 			State:       "open",
@@ -169,6 +245,15 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 
 		// 3. Process Issues
 		for _, issue := range issues {
+			if actionsTaken >= maxActions {
+				fmt.Printf("Reached maximum actions limit (%d) for this cycle. Skipping remaining issues.\n", maxActions)
+				break
+			}
+			if runningCount >= maxPending {
+				fmt.Printf("Reached maximum pending sandboxes limit (%d). Skipping remaining issues.\n", maxPending)
+				break
+			}
+
 			num := issue.GetNumber()
 			if referencedIssues[num] {
 				klog.Infof("Skipping issue #%d because there is already a PR referencing it.", num)
@@ -183,12 +268,36 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					continue
 				}
 
+				sandboxName := fmt.Sprintf("fix-%s-%d", repo, num)
+				running, err := isSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName)
+				if err != nil {
+					klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
+				} else if running {
+					klog.Infof("Skipping issue #%d because there is an in-flight sandbox %s.", num, sandboxName)
+					continue
+				}
+
+				if isAssigned(issue, targetAssignee) {
+					if dryRun {
+						fmt.Printf("[DRYRUN] Would unassign %s from issue #%d\n", targetAssignee, num)
+					} else {
+						fmt.Printf("Unassigning %s from issue #%d...\n", targetAssignee, num)
+						if _, _, err := ghClient.Issues.RemoveAssignees(ctx, owner, repo, num, []string{targetAssignee}); err != nil {
+							klog.Errorf("Failed to unassign %s from issue #%d: %v", targetAssignee, num, err)
+						}
+					}
+				}
+
 				issueURL := fmt.Sprintf("https://github.com/%s/%s/issues/%d", owner, repo, num)
 				if dryRun {
 					fmt.Printf("[DRYRUN] Would trigger fix for issue #%d (%s): %s\n", num, issue.GetTitle(), issueURL)
+					actionsTaken++
+					runningCount++
 				} else {
 					fmt.Printf("\nFound assigned issue #%d (%s). Triggering fix...\n", num, issue.GetTitle())
 					processedIssues[num] = time.Now()
+					actionsTaken++
+					runningCount++
 					if err := runFix(ctx, issueURL, "Fix this issue", "", false, false, 0, watchTimeout, ephemeralStorage, secrets); err != nil {
 						klog.Errorf("Fix for issue #%d failed: %v", num, err)
 					}
@@ -198,6 +307,15 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 
 		// 4. Process Pull Requests
 		for _, prIssue := range prIssues {
+			if actionsTaken >= maxActions {
+				fmt.Printf("Reached maximum actions limit (%d) for this cycle. Skipping remaining PRs.\n", maxActions)
+				break
+			}
+			if runningCount >= maxPending {
+				fmt.Printf("Reached maximum pending sandboxes limit (%d). Skipping remaining PRs.\n", maxPending)
+				break
+			}
+
 			num := prIssue.GetNumber()
 
 			// Fetch full Pull Request to get HEAD SHA and other details
@@ -235,19 +353,50 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 
 			if hasFailure {
 				if state.lastSHA != headSHA || time.Since(state.lastInvestigatedTime) > 6*time.Hour {
-					prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", owner, repo, num)
-					if dryRun {
-						fmt.Printf("[DRYRUN] Would trigger investigate for PR #%d (%s) (SHA: %s): %s\n", num, pr.GetTitle(), headSHA[:7], prURL)
+					sandboxName := fmt.Sprintf("factory-pr-%d", num)
+					running, err := isSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName)
+					if err != nil {
+						klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
+					} else if running {
+						klog.Infof("Skipping PR #%d investigate because there is an in-flight sandbox %s.", num, sandboxName)
 					} else {
-						fmt.Printf("\nFound failing PR #%d (%s) (SHA: %s). Triggering investigate...\n", num, pr.GetTitle(), headSHA[:7])
-						state.lastSHA = headSHA
-						state.lastInvestigatedTime = time.Now()
-						processedPRs[num] = state
-						if err := runInvestigate(ctx, prURL, "Investigate check failures for this PR", false, ephemeralStorage, secrets); err != nil {
-							klog.Errorf("Investigate for PR #%d failed: %v", num, err)
+						if isAssigned(prIssue, targetAssignee) && !unassignedPRs[num] {
+							if dryRun {
+								fmt.Printf("[DRYRUN] Would unassign %s from PR #%d\n", targetAssignee, num)
+							} else {
+								fmt.Printf("Unassigning %s from PR #%d...\n", targetAssignee, num)
+								if _, _, err := ghClient.Issues.RemoveAssignees(ctx, owner, repo, num, []string{targetAssignee}); err != nil {
+									klog.Errorf("Failed to unassign %s from PR #%d: %v", targetAssignee, num, err)
+								}
+								unassignedPRs[num] = true
+							}
+						}
+
+						prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", owner, repo, num)
+						if dryRun {
+							fmt.Printf("[DRYRUN] Would trigger investigate for PR #%d (%s) (SHA: %s): %s\n", num, pr.GetTitle(), headSHA[:7], prURL)
+							actionsTaken++
+							runningCount++
+						} else {
+							fmt.Printf("\nFound failing PR #%d (%s) (SHA: %s). Triggering investigate...\n", num, pr.GetTitle(), headSHA[:7])
+							state.lastSHA = headSHA
+							state.lastInvestigatedTime = time.Now()
+							processedPRs[num] = state
+							actionsTaken++
+							runningCount++
+							if err := runInvestigate(ctx, prURL, "Investigate check failures for this PR", false, ephemeralStorage, secrets); err != nil {
+								klog.Errorf("Investigate for PR #%d failed: %v", num, err)
+							}
 						}
 					}
 				}
+			}
+
+			if actionsTaken >= maxActions {
+				continue
+			}
+			if runningCount >= maxPending {
+				continue
 			}
 
 			// Check 3.2: Check new review comments/feedback after latest commit
@@ -275,15 +424,39 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					}
 
 					if hasNewComments {
-						prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", owner, repo, num)
-						if dryRun {
-							fmt.Printf("[DRYRUN] Would trigger address-comments for PR #%d (%s): %s\n", num, pr.GetTitle(), prURL)
+						sandboxName := fmt.Sprintf("factory-pr-%d", num)
+						running, err := isSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName)
+						if err != nil {
+							klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
+						} else if running {
+							klog.Infof("Skipping PR #%d address-comments because there is an in-flight sandbox %s.", num, sandboxName)
 						} else {
-							fmt.Printf("\nFound new review comments for PR #%d (%s). Triggering address-comments...\n", num, pr.GetTitle())
-							state.lastCommentAddressedTime = time.Now()
-							processedPRs[num] = state
-							if err := runAddressComments(ctx, prURL, "Address review feedback for this PR", false, ephemeralStorage, secrets); err != nil {
-								klog.Errorf("Address-comments for PR #%d failed: %v", num, err)
+							if isAssigned(prIssue, targetAssignee) && !unassignedPRs[num] {
+								if dryRun {
+									fmt.Printf("[DRYRUN] Would unassign %s from PR #%d\n", targetAssignee, num)
+								} else {
+									fmt.Printf("Unassigning %s from PR #%d...\n", targetAssignee, num)
+									if _, _, err := ghClient.Issues.RemoveAssignees(ctx, owner, repo, num, []string{targetAssignee}); err != nil {
+										klog.Errorf("Failed to unassign %s from PR #%d: %v", targetAssignee, num, err)
+									}
+									unassignedPRs[num] = true
+								}
+							}
+
+							prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", owner, repo, num)
+							if dryRun {
+								fmt.Printf("[DRYRUN] Would trigger address-comments for PR #%d (%s): %s\n", num, pr.GetTitle(), prURL)
+								actionsTaken++
+								runningCount++
+							} else {
+								fmt.Printf("\nFound new review comments for PR #%d (%s). Triggering address-comments...\n", num, pr.GetTitle())
+								state.lastCommentAddressedTime = time.Now()
+								processedPRs[num] = state
+								actionsTaken++
+								runningCount++
+								if err := runAddressComments(ctx, prURL, "Address review feedback for this PR", false, ephemeralStorage, secrets); err != nil {
+									klog.Errorf("Address-comments for PR #%d failed: %v", num, err)
+								}
 							}
 						}
 					}
