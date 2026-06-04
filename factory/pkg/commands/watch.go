@@ -278,6 +278,7 @@ func scanChores(ctx context.Context, ghClient *githubv39.Client, owner, repo, in
 					} else {
 						choresState[agentDef.Name] = ChoreRunState{LastRun: time.Now()}
 						stateChanged = true
+						writeTaskJournalEvent(queueDir, filename, task, "Created", 0)
 					}
 				}
 			}
@@ -288,6 +289,50 @@ func scanChores(ctx context.Context, ghClient *githubv39.Client, owner, repo, in
 		if data, err := json.MarshalIndent(choresState, "", "  "); err == nil {
 			_ = os.WriteFile(choresStatePath, data, 0644)
 		}
+	}
+}
+
+type JournalEvent struct {
+	Timestamp      time.Time `json:"timestamp"`
+	TaskID         string    `json:"taskId"`
+	Event          string    `json:"event"`
+	Type           string    `json:"type"`
+	URL            string    `json:"url"`
+	Priority       string    `json:"priority"`
+	Error          string    `json:"error,omitempty"`
+	DurationSecond float64   `json:"durationSeconds,omitempty"`
+}
+
+func writeTaskJournalEvent(queueDir string, taskFilename string, task *QueueTask, event string, duration time.Duration) {
+	journalPath := filepath.Join(queueDir, "journal.jsonl")
+	f, err := os.OpenFile(journalPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		klog.Errorf("Failed to open journal file: %v", err)
+		return
+	}
+	defer f.Close()
+
+	je := JournalEvent{
+		Timestamp: time.Now(),
+		TaskID:    strings.TrimSuffix(taskFilename, ".yaml"),
+		Event:     event,
+		Type:      task.Type,
+		URL:       task.URL,
+		Priority:  task.Priority,
+		Error:     task.Error,
+	}
+	if duration > 0 {
+		je.DurationSecond = duration.Seconds()
+	}
+
+	data, err := json.Marshal(je)
+	if err != nil {
+		klog.Errorf("Failed to marshal journal event: %v", err)
+		return
+	}
+
+	if _, err := f.Write(append(data, '\n')); err != nil {
+		klog.Errorf("Failed to write journal event: %v", err)
 	}
 }
 
@@ -476,6 +521,8 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						processedIssues[num] = time.Now()
 						if err := writeTaskAtomically(incomingDir, filename, task); err != nil {
 							klog.Errorf("Failed to queue task for issue #%d: %v", num, err)
+						} else {
+							writeTaskJournalEvent(queueDir, filename, task, "Created", 0)
 						}
 					}
 				}
@@ -559,6 +606,8 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 									processedPRs[num] = state
 									if err := writeTaskAtomically(incomingDir, filename, task); err != nil {
 										klog.Errorf("Failed to queue investigate task for PR #%d: %v", num, err)
+									} else {
+										writeTaskJournalEvent(queueDir, filename, task, "Created", 0)
 									}
 								}
 							}
@@ -630,6 +679,8 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 										processedPRs[num] = state
 										if err := writeTaskAtomically(incomingDir, filename, task); err != nil {
 											klog.Errorf("Failed to queue address-comments task for PR #%d: %v", num, err)
+										} else {
+											writeTaskJournalEvent(queueDir, filename, task, "Created", 0)
 										}
 									}
 								}
@@ -766,6 +817,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 
 				task.Status = "Running"
 				_ = writeTaskAtomically(processingDir, filename, task)
+				writeTaskJournalEvent(queueDir, filename, task, "Started", 0)
 
 				actionsTaken++
 				filesInProcessing++
@@ -773,6 +825,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				go func(taskFilename string, t *QueueTask) {
 					fmt.Printf("Starting task %s (Type: %s, URL: %s)...\n", taskFilename, t.Type, t.URL)
 					var taskErr error
+					startTime := time.Now()
 
 					switch t.Type {
 					case "issue-fix":
@@ -793,14 +846,17 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 
 					processingPathLocal := filepath.Join(processingDir, taskFilename)
 					processedPathLocal := filepath.Join(processedDir, taskFilename)
+					duration := time.Since(startTime)
 
 					if taskErr != nil {
 						klog.Errorf("Task %s failed: %v", taskFilename, taskErr)
 						t.Status = "Failed"
 						t.Error = taskErr.Error()
+						writeTaskJournalEvent(queueDir, taskFilename, t, "Failed", duration)
 					} else {
 						fmt.Printf("Task %s completed successfully.\n", taskFilename)
 						t.Status = "Completed"
+						writeTaskJournalEvent(queueDir, taskFilename, t, "Completed", duration)
 					}
 
 					_ = writeTaskAtomically(processingDir, taskFilename, t)
