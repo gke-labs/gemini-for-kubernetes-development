@@ -57,12 +57,12 @@ func NewInvestigateCommand(ctx context.Context) *cobra.Command {
 				return fmt.Errorf("--pr-url is required")
 			}
 
-			sessionName := "factory-investigate"
+			sessionName := "factory-pr-unknown-investigate"
 			u, err := url.Parse(flags.PRURL)
 			if err == nil {
 				parts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
 				if len(parts) >= 4 && parts[2] == "pull" {
-					sessionName = fmt.Sprintf("factory-investigate-%s", parts[3])
+					sessionName = fmt.Sprintf("factory-pr-%s-investigate", parts[3])
 				}
 			}
 
@@ -289,12 +289,12 @@ func NewAddressCommentsCommand(ctx context.Context) *cobra.Command {
 				return fmt.Errorf("--pr-url is required")
 			}
 
-			sessionName := "factory-address-comments"
+			sessionName := "factory-pr-unknown-address-comments"
 			u, err := url.Parse(flags.PRURL)
 			if err == nil {
 				parts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
 				if len(parts) >= 4 && parts[2] == "pull" {
-					sessionName = fmt.Sprintf("factory-address-%s", parts[3])
+					sessionName = fmt.Sprintf("factory-pr-%s-address-comments", parts[3])
 				}
 			}
 
@@ -776,12 +776,12 @@ func NewIterateCommand(ctx context.Context) *cobra.Command {
 				return fmt.Errorf("--pr-url is required")
 			}
 
-			sessionName := "factory-iterate"
+			sessionName := "factory-pr-unknown-iterate"
 			u, err := url.Parse(flags.PRURL)
 			if err == nil {
 				parts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
 				if len(parts) >= 4 && parts[2] == "pull" {
-					sessionName = fmt.Sprintf("factory-iterate-%s", parts[3])
+					sessionName = fmt.Sprintf("factory-pr-%s-iterate", parts[3])
 				}
 			}
 

@@ -57,12 +57,12 @@ func NewReviewCommand(ctx context.Context) *cobra.Command {
 				return fmt.Errorf("invalid value for --publish: %s. Must be one of [no, yes, ask, draft]", flags.Publish)
 			}
 
-			sessionName := "factory-review"
+			sessionName := "factory-pr-unknown-review"
 			u, err := url.Parse(flags.PRURL)
 			if err == nil {
 				parts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
 				if len(parts) >= 4 && parts[2] == "pull" {
-					sessionName = fmt.Sprintf("factory-review-%s", parts[3])
+					sessionName = fmt.Sprintf("factory-pr-%s-review", parts[3])
 				}
 			}
 
