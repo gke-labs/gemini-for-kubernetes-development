@@ -16,6 +16,11 @@ const (
 	TmpDirPath     = "/workspaces/.tmp"
 )
 
+type SecretMount struct {
+	Name      string
+	MountPath string
+}
+
 // DevSandboxOptions holds common options for creating Sandboxes.
 type DevSandboxOptions struct {
 	Name              string
@@ -25,6 +30,8 @@ type DevSandboxOptions struct {
 	Image             string
 	Replicas          int64
 	WorkspaceDiskSize string
+	EphemeralStorage  string
+	Secrets           []SecretMount
 }
 
 // AgentSandboxOptions holds options for creating an AgentSandbox.
@@ -72,11 +79,16 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 	if resources.Limits.Cpu().IsZero() {
 		resources.Limits[corev1.ResourceCPU] = resource.MustParse("4000m")
 	}
+
+	ephemeralStorage := opt.EphemeralStorage
+	if ephemeralStorage == "" {
+		ephemeralStorage = "6Gi"
+	}
 	if _, ok := resources.Requests["ephemeral-storage"]; !ok {
-		resources.Requests["ephemeral-storage"] = resource.MustParse("6Gi")
+		resources.Requests["ephemeral-storage"] = resource.MustParse(ephemeralStorage)
 	}
 	if _, ok := resources.Limits["ephemeral-storage"]; !ok {
-		resources.Limits["ephemeral-storage"] = resource.MustParse("6Gi")
+		resources.Limits["ephemeral-storage"] = resource.MustParse(ephemeralStorage)
 	}
 
 	labelsInterface := make(map[string]interface{}, len(opt.Labels)+1)
@@ -105,6 +117,57 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 		map[string]interface{}{"name": "GOTMPDIR", "value": TmpDirPath},
 	}
 
+	volumeMounts := []interface{}{
+		map[string]interface{}{"name": "workspaces-pvc", "mountPath": "/workspaces"},
+	}
+	for _, secret := range opt.Secrets {
+		volumeMounts = append(volumeMounts, map[string]interface{}{
+			"name":      "secret-vol-" + secret.Name,
+			"mountPath": secret.MountPath,
+		})
+	}
+
+	var volumesList []interface{}
+	for _, secret := range opt.Secrets {
+		volumesList = append(volumesList, map[string]interface{}{
+			"name": "secret-vol-" + secret.Name,
+			"secret": map[string]interface{}{
+				"secretName": secret.Name,
+			},
+		})
+	}
+
+	podSpecMap := map[string]interface{}{
+		"containers": []interface{}{
+			map[string]interface{}{
+				"name":    "sandbox",
+				"image":   opt.Image,
+				"command": []interface{}{"factory", "daemon"},
+				"resources": map[string]interface{}{
+					"requests": map[string]interface{}{
+						"cpu":               resources.Requests.Cpu().String(),
+						"memory":            resources.Requests.Memory().String(),
+						"ephemeral-storage": ephemeralRequest.String(),
+					},
+					"limits": map[string]interface{}{
+						"cpu":               resources.Limits.Cpu().String(),
+						"memory":            resources.Limits.Memory().String(),
+						"ephemeral-storage": ephemeralLimit.String(),
+					},
+				},
+				"env":          env,
+				"volumeMounts": volumeMounts,
+				"ports": []interface{}{
+					map[string]interface{}{"containerPort": int64(13337)},
+					map[string]interface{}{"containerPort": int64(49983)},
+				},
+			},
+		},
+	}
+	if len(volumesList) > 0 {
+		podSpecMap["volumes"] = volumesList
+	}
+
 	sandbox := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "agents.x-k8s.io/v1alpha1",
@@ -121,35 +184,7 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 					"metadata": map[string]interface{}{
 						"labels": labelsInterface,
 					},
-					"spec": map[string]interface{}{
-						"containers": []interface{}{
-							map[string]interface{}{
-								"name":    "sandbox",
-								"image":   opt.Image,
-								"command": []interface{}{"factory", "daemon"},
-								"resources": map[string]interface{}{
-									"requests": map[string]interface{}{
-										"cpu":               resources.Requests.Cpu().String(),
-										"memory":            resources.Requests.Memory().String(),
-										"ephemeral-storage": ephemeralRequest.String(),
-									},
-									"limits": map[string]interface{}{
-										"cpu":               resources.Limits.Cpu().String(),
-										"memory":            resources.Limits.Memory().String(),
-										"ephemeral-storage": ephemeralLimit.String(),
-									},
-								},
-								"env": env,
-								"volumeMounts": []interface{}{
-									map[string]interface{}{"name": "workspaces-pvc", "mountPath": "/workspaces"},
-								},
-								"ports": []interface{}{
-									map[string]interface{}{"containerPort": int64(13337)},
-									map[string]interface{}{"containerPort": int64(49983)},
-								},
-							},
-						},
-					},
+					"spec": podSpecMap,
 				},
 				"volumeClaimTemplates": []interface{}{
 					map[string]interface{}{
@@ -229,11 +264,63 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 		diskSize = "10Gi"
 	}
 
+	ephemeralStorage := opt.EphemeralStorage
+	if ephemeralStorage == "" {
+		ephemeralStorage = "6Gi"
+	}
+
 	env := []interface{}{
 		map[string]interface{}{"name": "GOCACHE", "value": GoCachePath},
 		map[string]interface{}{"name": "GOMODCACHE", "value": GoModCachePath},
 		map[string]interface{}{"name": "TMPDIR", "value": TmpDirPath},
 		map[string]interface{}{"name": "GOTMPDIR", "value": TmpDirPath},
+	}
+
+	volumeMounts := []interface{}{
+		map[string]interface{}{"name": "workspaces-pvc", "mountPath": "/workspaces"},
+	}
+	for _, secret := range opt.Secrets {
+		volumeMounts = append(volumeMounts, map[string]interface{}{
+			"name":      "secret-vol-" + secret.Name,
+			"mountPath": secret.MountPath,
+		})
+	}
+
+	var volumesList []interface{}
+	for _, secret := range opt.Secrets {
+		volumesList = append(volumesList, map[string]interface{}{
+			"name": "secret-vol-" + secret.Name,
+			"secret": map[string]interface{}{
+				"secretName": secret.Name,
+			},
+		})
+	}
+
+	podSpecMap := map[string]interface{}{
+		"containers": []interface{}{
+			map[string]interface{}{
+				"name":    "sandbox",
+				"image":   opt.Image,
+				"command": []interface{}{"factory", "daemon"},
+				"resources": map[string]interface{}{
+					"limits": map[string]interface{}{
+						"ephemeral-storage": ephemeralStorage,
+					},
+					"requests": map[string]interface{}{
+						"ephemeral-storage": ephemeralStorage,
+					},
+				},
+				"env":          env,
+				"volumeMounts": volumeMounts,
+				"ports": []interface{}{
+					map[string]interface{}{"containerPort": int64(13337)},
+					map[string]interface{}{"containerPort": int64(49983)},
+				},
+			},
+		},
+	}
+	if len(volumesList) > 0 {
+		podSpecMap["volumes"] = volumesList
 	}
 
 	sandbox := &unstructured.Unstructured{
@@ -254,31 +341,7 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 							"sandbox": sandboxName,
 						},
 					},
-					"spec": map[string]interface{}{
-						"containers": []interface{}{
-							map[string]interface{}{
-								"name":    "sandbox",
-								"image":   opt.Image,
-								"command": []interface{}{"factory", "daemon"},
-								"resources": map[string]interface{}{
-									"limits": map[string]interface{}{
-										"ephemeral-storage": "6Gi",
-									},
-									"requests": map[string]interface{}{
-										"ephemeral-storage": "6Gi",
-									},
-								},
-								"env": env,
-								"volumeMounts": []interface{}{
-									map[string]interface{}{"name": "workspaces-pvc", "mountPath": "/workspaces"},
-								},
-								"ports": []interface{}{
-									map[string]interface{}{"containerPort": int64(13337)},
-									map[string]interface{}{"containerPort": int64(49983)},
-								},
-							},
-						},
-					},
+					"spec": podSpecMap,
 				},
 				"volumeClaimTemplates": []interface{}{
 					map[string]interface{}{

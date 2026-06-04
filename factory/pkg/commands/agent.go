@@ -58,7 +58,12 @@ func NewAgentCreateCommand(ctx context.Context) *cobra.Command {
 
   # Run an agent defined locally in a sandbox for a PR
   factory agent create --url https://github.com/owner/repo/pull/123 --agent ./my-agent.yaml --local`,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			_, err := ResolveRootFlags(cmd)
+			if err != nil {
+				return err
+			}
+
 			if flags.URL == "" {
 				return fmt.Errorf("--url is required")
 			}
@@ -89,7 +94,7 @@ func NewAgentCreateCommand(ctx context.Context) *cobra.Command {
 
 			ctx, cancel := context.WithTimeout(ctx, rootFlags.Timeout)
 			defer cancel()
-			return runAgent(ctx, flags)
+			return runAgent(ctx, flags, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets)
 		},
 	}
 
@@ -101,7 +106,7 @@ func NewAgentCreateCommand(ctx context.Context) *cobra.Command {
 	return cmd
 }
 
-func runAgent(ctx context.Context, flags AgentFlags) error {
+func runAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, secrets []factorysandbox.SecretMount) error {
 	fmt.Printf("Resolving target URL: %s...\n", flags.URL)
 
 	u, err := url.Parse(flags.URL)
@@ -185,7 +190,7 @@ func runAgent(ctx context.Context, flags AgentFlags) error {
 	taskTitle := fmt.Sprintf("Agent: %s", agentDef.Name)
 
 	fmt.Printf("Ensuring sandbox for task %s...\n", taskID)
-	sandboxName, err := factorysandbox.EnsureAgentSandbox(ctx, kubeClient, rootFlags.Namespace, repo, taskID, cloneURL, taskTitle, rootFlags.Image, rootFlags.DiskSize)
+	sandboxName, err := factorysandbox.EnsureAgentSandbox(ctx, kubeClient, rootFlags.Namespace, repo, taskID, cloneURL, taskTitle, rootFlags.Image, rootFlags.DiskSize, ephemeralStorage, secrets)
 	if err != nil {
 		return fmt.Errorf("ensuring agent sandbox: %w", err)
 	}

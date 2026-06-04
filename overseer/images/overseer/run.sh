@@ -1,6 +1,42 @@
 #!/bin/bash
 set -e
 
+function writeFactoryConfig {
+    echo "$(date): Generating /workspaces/.factory.cfg..."
+    
+    CFG_FILE="/workspaces/.factory.cfg"
+    rm -f "$CFG_FILE"
+    touch "$CFG_FILE"
+    
+    if [ -n "$MAX_ACTIVE_REVIEWS" ]; then
+        echo "maxActiveReviews: $MAX_ACTIVE_REVIEWS" >> "$CFG_FILE"
+    fi
+    if [ -n "$MAX_ACTIVE_ISSUES" ]; then
+        echo "maxActiveIssues: $MAX_ACTIVE_ISSUES" >> "$CFG_FILE"
+    fi
+    if [ -n "$CHORES_MODE" ]; then
+        echo "chores:" >> "$CFG_FILE"
+        echo "  mode: $CHORES_MODE" >> "$CFG_FILE"
+    fi
+    if [ -n "$EPHEMERAL_STORAGE" ]; then
+        echo "ephemeralStorage: $EPHEMERAL_STORAGE" >> "$CFG_FILE"
+    fi
+    if [ -n "$FACTORY_IMAGE" ]; then
+        echo "image: $FACTORY_IMAGE" >> "$CFG_FILE"
+    fi
+    if [ -n "$WORKSPACE_DISK_SIZE" ]; then
+        echo "workspaceDiskSize: $WORKSPACE_DISK_SIZE" >> "$CFG_FILE"
+    fi
+    
+    if [ -n "$FACTORY_SECRETS" ]; then
+        echo "secrets:" >> "$CFG_FILE"
+        echo "$FACTORY_SECRETS" | jq -r '.[] | "  - name: \(.name)\n    mountPath: \(.mountPath)"' >> "$CFG_FILE"
+    fi
+    
+    export FACTORY_CONFIG="$CFG_FILE"
+    echo "$(date): FACTORY_CONFIG set to $FACTORY_CONFIG"
+}
+
 function constructPrompt {
     if [ -d "/workspaces/prompt" ]; then
         echo "$(date): Constructing prompt from /workspaces/prompt templates into /workspaces/current_prompt.txt..."
@@ -119,6 +155,7 @@ EOF
 
 # Setup git and gh
 setupGit
+writeFactoryConfig
 
 # Clone the repo if it doesn't exist
 # We are in /workspaces because of WORKDIR in Dockerfile

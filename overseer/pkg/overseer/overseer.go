@@ -18,6 +18,7 @@ package overseer
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 
@@ -163,6 +164,10 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 			"name":  "POLL_INTERVAL",
 			"value": o.Spec.PollInterval,
 		},
+		map[string]interface{}{
+			"name":  "EPHEMERAL_STORAGE",
+			"value": o.Spec.EphemeralStorage,
+		},
 	}
 
 	if o.Spec.Chores != nil && o.Spec.Chores.Mode != "" {
@@ -189,6 +194,40 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 			env = append(env, map[string]interface{}{
 				"name":  "ISSUE_MODE",
 				"value": o.Spec.Repo.IssueMode,
+			})
+		}
+	}
+
+	if o.Spec.MaxActiveReviews != nil {
+		env = append(env, map[string]interface{}{
+			"name":  "MAX_ACTIVE_REVIEWS",
+			"value": fmt.Sprintf("%d", *o.Spec.MaxActiveReviews),
+		})
+	}
+	if o.Spec.MaxActiveIssues != nil {
+		env = append(env, map[string]interface{}{
+			"name":  "MAX_ACTIVE_ISSUES",
+			"value": fmt.Sprintf("%d", *o.Spec.MaxActiveIssues),
+		})
+	}
+	if o.Spec.WorkspaceDiskSize != "" {
+		env = append(env, map[string]interface{}{
+			"name":  "WORKSPACE_DISK_SIZE",
+			"value": o.Spec.WorkspaceDiskSize,
+		})
+	}
+	if o.Spec.Image != "" {
+		env = append(env, map[string]interface{}{
+			"name":  "FACTORY_IMAGE",
+			"value": o.Spec.Image,
+		})
+	}
+	if len(o.Spec.Secrets) > 0 {
+		secretsJSON, err := json.Marshal(o.Spec.Secrets)
+		if err == nil {
+			env = append(env, map[string]interface{}{
+				"name":  "FACTORY_SECRETS",
+				"value": string(secretsJSON),
 			})
 		}
 	}

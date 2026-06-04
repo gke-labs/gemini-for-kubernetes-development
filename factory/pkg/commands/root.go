@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
+	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
 )
@@ -23,13 +25,16 @@ const (
 )
 
 type RootFlags struct {
-	Namespace  string
-	Image      string
-	DiskSize   string
-	SecretName string
-	Timeout    time.Duration
-	Background bool
-	Cleanup    bool
+	Namespace        string
+	Image            string
+	DiskSize         string
+	SecretName       string
+	Timeout          time.Duration
+	Background       bool
+	Cleanup          bool
+	EphemeralStorage string
+	Secrets          []string
+	ResolvedSecrets  []factorysandbox.SecretMount
 }
 
 var rootFlags RootFlags
@@ -51,6 +56,8 @@ coding tasks without local side effects or host dependencies.`,
 	cmd.PersistentFlags().DurationVar(&rootFlags.Timeout, "timeout", 30*time.Minute, "Overall execution timeout")
 	cmd.PersistentFlags().BoolVar(&rootFlags.Background, "background", false, "Run the CLI command as a background daemon process and redirect output to a log file")
 	cmd.PersistentFlags().BoolVar(&rootFlags.Cleanup, "cleanup", false, "Delete the sandbox after the task is run or watch completes")
+	cmd.PersistentFlags().StringVar(&rootFlags.EphemeralStorage, "ephemeral-storage", "", "Sandbox ephemeral storage request/limit size")
+	cmd.PersistentFlags().StringSliceVar(&rootFlags.Secrets, "secret", nil, "Inject a secret with format secretName:mountPath (can be specified multiple times)")
 
 	cmd.PersistentPreRun = func(_ *cobra.Command, _ []string) {
 		if rootFlags.Namespace == "" {
@@ -210,4 +217,53 @@ func checkAndRunInBackground(sessionName string) (bool, error) {
 
 	fmt.Printf("Started command in background. Logs are redirected to %s\n", logFile)
 	return true, nil // Parent exits
+}
+
+func ResolveRootFlags(cmd *cobra.Command) (*config.FactoryConfig, error) {
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		return nil, err
+	}
+	if !cmd.Flags().Changed("image") && cfg.Image != "" {
+		rootFlags.Image = cfg.Image
+	}
+	if !cmd.Flags().Changed("workspace-disk-size") && cfg.WorkspaceDiskSize != "" {
+		rootFlags.DiskSize = cfg.WorkspaceDiskSize
+	}
+	if !cmd.Flags().Changed("ephemeral-storage") && cfg.EphemeralStorage != "" {
+		rootFlags.EphemeralStorage = cfg.EphemeralStorage
+	}
+	if rootFlags.EphemeralStorage == "" {
+		rootFlags.EphemeralStorage = "6Gi"
+	}
+
+	if cmd.Flags().Changed("secret") {
+		var resolved []factorysandbox.SecretMount
+		for _, s := range rootFlags.Secrets {
+			parts := strings.SplitN(s, ":", 2)
+			if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+				return nil, fmt.Errorf("invalid secret format: %s. Expected secretName:mountPath", s)
+			}
+			resolved = append(resolved, factorysandbox.SecretMount{
+				Name:      parts[0],
+				MountPath: parts[1],
+			})
+		}
+		rootFlags.ResolvedSecrets = resolved
+	} else {
+		rootFlags.ResolvedSecrets = ToSandboxSecrets(cfg.Secrets)
+	}
+
+	return cfg, nil
+}
+
+func ToSandboxSecrets(mounts []config.SecretMount) []factorysandbox.SecretMount {
+	res := make([]factorysandbox.SecretMount, len(mounts))
+	for i, m := range mounts {
+		res[i] = factorysandbox.SecretMount{
+			Name:      m.Name,
+			MountPath: m.MountPath,
+		}
+	}
+	return res
 }

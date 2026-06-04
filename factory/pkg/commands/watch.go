@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
+	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	githubv39 "github.com/google/go-github/v39/github"
 	"github.com/spf13/cobra"
 	"k8s.io/klog/v2"
@@ -32,7 +33,12 @@ func NewWatchCommand(ctx context.Context) *cobra.Command {
 
   # Watch for assigned issues with labels
   factory watch --repo owner/repo --assignee "factory-bot" --labels "p0,urgent"`,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			_, err := ResolveRootFlags(cmd)
+			if err != nil {
+				return err
+			}
+
 			if flags.Repo == "" {
 				return fmt.Errorf("--repo is required (e.g. owner/repo)")
 			}
@@ -40,7 +46,7 @@ func NewWatchCommand(ctx context.Context) *cobra.Command {
 			if len(parts) != 2 {
 				return fmt.Errorf("invalid repo format, expected owner/repo, got %s", flags.Repo)
 			}
-			return runWatch(ctx, parts[0], parts[1], flags.PollInterval, flags.Assignee, flags.Labels, flags.DryRun, flags.WatchTimeout)
+			return runWatch(ctx, parts[0], parts[1], flags.PollInterval, flags.Assignee, flags.Labels, flags.DryRun, flags.WatchTimeout, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets)
 		},
 	}
 
@@ -54,7 +60,7 @@ func NewWatchCommand(ctx context.Context) *cobra.Command {
 	return cmd
 }
 
-func runWatch(ctx context.Context, owner, repo string, interval time.Duration, assignee string, labels []string, dryRun bool, watchTimeout time.Duration) error {
+func runWatch(ctx context.Context, owner, repo string, interval time.Duration, assignee string, labels []string, dryRun bool, watchTimeout time.Duration, ephemeralStorage string, secrets []factorysandbox.SecretMount) error {
 	fmt.Printf("Starting watch for repository %s/%s (poll interval: %s, assignee: '%s', labels: %v, dryRun: %v, watchTimeout: %s)...\n", owner, repo, interval, assignee, labels, dryRun, watchTimeout)
 
 	ghClient, err := github.NewClient(ctx)
@@ -105,7 +111,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					if dryRun {
 						fmt.Printf("[DRYRUN] Would trigger fix for issue #%d: %s\n", num, issueURL)
 					} else {
-						if err := runFix(ctx, issueURL, "Fix this issue", "", false, false, 0, watchTimeout); err != nil {
+						if err := runFix(ctx, issueURL, "Fix this issue", "", false, false, 0, watchTimeout, ephemeralStorage, secrets); err != nil {
 							klog.Errorf("Fix for issue #%d failed: %v", num, err)
 						}
 					}
@@ -158,7 +164,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						if dryRun {
 							fmt.Printf("[DRYRUN] Would trigger investigate for PR #%d: %s\n", num, prURL)
 						} else {
-							if err := runInvestigate(ctx, prURL, "Investigate check failures for this PR", false); err != nil {
+							if err := runInvestigate(ctx, prURL, "Investigate check failures for this PR", false, ephemeralStorage, secrets); err != nil {
 								klog.Errorf("Investigate for PR #%d failed: %v", num, err)
 							}
 						}

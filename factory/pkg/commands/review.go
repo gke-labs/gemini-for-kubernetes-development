@@ -42,11 +42,17 @@ func NewReviewCommand(ctx context.Context) *cobra.Command {
 
   # Review and post as a draft (pending) review comment
   factory pr review --pr-url https://github.com/owner/repo/pull/1 --publish draft`,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			_, err := ResolveRootFlags(cmd)
+			if err != nil {
+				return err
+			}
+
 			if flags.PRURL == "" {
 				return fmt.Errorf("--pr-url is required")
 			}
 			flags.Publish = strings.ToLower(strings.TrimSpace(flags.Publish))
+
 			if flags.Publish != "yes" && flags.Publish != "no" && flags.Publish != "ask" && flags.Publish != "draft" {
 				return fmt.Errorf("invalid value for --publish: %s. Must be one of [no, yes, ask, draft]", flags.Publish)
 			}
@@ -72,7 +78,7 @@ func NewReviewCommand(ctx context.Context) *cobra.Command {
 
 			ctx, cancel := context.WithTimeout(ctx, rootFlags.Timeout)
 			defer cancel()
-			return runReview(ctx, flags.PRURL, flags.Publish, flags.Instructions)
+			return runReview(ctx, flags.PRURL, flags.Publish, flags.Instructions, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets)
 		},
 	}
 
@@ -169,7 +175,7 @@ func stripYAMLMarkers(input string) string {
 	return trimmed
 }
 
-func runReview(ctx context.Context, prURL string, publishPolicy string, instructionPaths []string) error {
+func runReview(ctx context.Context, prURL string, publishPolicy string, instructionPaths []string, ephemeralStorage string, secrets []factorysandbox.SecretMount) error {
 	fmt.Printf("Resolving PR URL: %s...\n", prURL)
 
 	u, err := url.Parse(prURL)
@@ -219,7 +225,7 @@ func runReview(ctx context.Context, prURL string, publishPolicy string, instruct
 
 	cloneURL := pr.GetBase().GetRepo().GetCloneURL()
 	fmt.Printf("Ensuring review sandbox for PR #%d...\n", prNum)
-	sandboxName, err := factorysandbox.EnsureReviewSandbox(ctx, kubeClient, rootFlags.Namespace, prNum, pr.GetTitle(), pr.GetHTMLURL(), pr.GetDiffURL(), cloneURL, rootFlags.Image, rootFlags.DiskSize)
+	sandboxName, err := factorysandbox.EnsureReviewSandbox(ctx, kubeClient, rootFlags.Namespace, prNum, pr.GetTitle(), pr.GetHTMLURL(), pr.GetDiffURL(), cloneURL, rootFlags.Image, rootFlags.DiskSize, ephemeralStorage, secrets)
 	if err != nil {
 		return fmt.Errorf("ensuring review sandbox: %w", err)
 	}
