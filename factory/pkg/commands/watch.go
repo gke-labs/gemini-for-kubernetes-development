@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
@@ -34,6 +35,7 @@ type WatchFlags struct {
 	MaxPending   int
 	Mode         string
 	QueueDir     string
+	Once         bool
 }
 
 func NewWatchCommand(ctx context.Context) *cobra.Command {
@@ -60,7 +62,7 @@ func NewWatchCommand(ctx context.Context) *cobra.Command {
 			if len(parts) != 2 {
 				return fmt.Errorf("invalid repo format, expected owner/repo, got %s", flags.Repo)
 			}
-			return runWatch(ctx, parts[0], parts[1], flags.PollInterval, flags.Assignee, cmd.Flags().Changed("assignee"), flags.Labels, flags.DryRun, flags.WatchTimeout, flags.MaxActions, flags.MaxPending, flags.Mode, flags.QueueDir, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets)
+			return runWatch(ctx, parts[0], parts[1], flags.PollInterval, flags.Assignee, cmd.Flags().Changed("assignee"), flags.Labels, flags.DryRun, flags.WatchTimeout, flags.MaxActions, flags.MaxPending, flags.Mode, flags.QueueDir, flags.Once, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets)
 		},
 	}
 
@@ -74,6 +76,7 @@ func NewWatchCommand(ctx context.Context) *cobra.Command {
 	cmd.Flags().IntVar(&flags.MaxPending, "max-pending", 40, "Maximum number of pending/running sandboxes allowed before skipping actions")
 	cmd.Flags().StringVar(&flags.Mode, "mode", "all", "Watch mode: all (scan & run), scan (only scan & queue), run (only process queue)")
 	cmd.Flags().StringVar(&flags.QueueDir, "queue-dir", "/workspaces/queues", "Directory path for the task queues")
+	cmd.Flags().BoolVar(&flags.Once, "once", false, "Run watch once and exit (waits for active tasks to complete)")
 
 	return cmd
 }
@@ -337,7 +340,7 @@ func writeTaskJournalEvent(queueDir string, taskFilename string, task *QueueTask
 	}
 }
 
-func runWatch(ctx context.Context, owner, repo string, interval time.Duration, assignee string, assigneeChanged bool, labels []string, dryRun bool, watchTimeout time.Duration, maxActions int, maxPending int, mode string, queueDir string, ephemeralStorage string, secrets []factorysandbox.SecretMount) error {
+func runWatch(ctx context.Context, owner, repo string, interval time.Duration, assignee string, assigneeChanged bool, labels []string, dryRun bool, watchTimeout time.Duration, maxActions int, maxPending int, mode string, queueDir string, once bool, ephemeralStorage string, secrets []factorysandbox.SecretMount) error {
 	ghClient, err := github.NewClient(ctx)
 	if err != nil {
 		return fmt.Errorf("creating github client: %w", err)
@@ -393,6 +396,8 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 
 	processedIssues := make(map[int]time.Time)
 	processedPRs := make(map[int]prWatchState)
+
+	var wg sync.WaitGroup
 
 	checkRepo := func() {
 		actionsTaken := 0
@@ -823,7 +828,9 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				actionsTaken++
 				filesInProcessing++
 
+				wg.Add(1)
 				go func(taskFilename string, t *QueueTask) {
+					defer wg.Done()
 					fmt.Printf("Starting task %s (Type: %s, URL: %s)...\n", taskFilename, t.Type, t.URL)
 					startTime := time.Now()
 
@@ -911,6 +918,13 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 	}
 
 	checkRepo()
+
+	if once {
+		fmt.Println("Running in once mode. Waiting for active tasks to complete...")
+		wg.Wait()
+		fmt.Println("All tasks completed. Exiting.")
+		return nil
+	}
 
 	for {
 		fmt.Printf("Sleeping for %s...\n", interval)
