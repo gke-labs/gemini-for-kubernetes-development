@@ -48,30 +48,18 @@ function constructPrompt {
         PROMPT_FILE="/workspaces/current_prompt.txt"
         rm -f "$PROMPT_FILE"
         cat /workspaces/prompt/01-header.txt >> "$PROMPT_FILE"
-        if [ "$ISSUE_MODE" != "disabled" ]; then
-            cat /workspaces/prompt/02-issue-handling.txt >> "$PROMPT_FILE"
-        fi
         if [ "$PR_MODE" != "disabled" ]; then
             cat /workspaces/prompt/03-pr-handling.txt >> "$PROMPT_FILE"
         fi
         if [ "$REVIEW_MODE" != "disabled" ]; then
             cat /workspaces/prompt/03a-pr-review-handling.txt >> "$PROMPT_FILE"
         fi
-        if [ "$CHORES_MODE" != "disabled" ]; then
-            cat /workspaces/prompt/04-chores.txt >> "$PROMPT_FILE"
-        fi
         cat /workspaces/prompt/05-examples-header.txt >> "$PROMPT_FILE"
-        if [ "$ISSUE_MODE" != "disabled" ]; then
-            cat /workspaces/prompt/06-examples-issues.txt >> "$PROMPT_FILE"
-        fi
         if [ "$PR_MODE" != "disabled" ]; then
             cat /workspaces/prompt/06a-examples-prs.txt >> "$PROMPT_FILE"
         fi
         if [ "$REVIEW_MODE" != "disabled" ]; then
             cat /workspaces/prompt/06b-examples-prs-review.txt >> "$PROMPT_FILE"
-        fi
-        if [ "$CHORES_MODE" != "disabled" ]; then
-            cat /workspaces/prompt/07-examples-chores.txt >> "$PROMPT_FILE"
         fi
         cat /workspaces/prompt/08-footer.txt >> "$PROMPT_FILE"
         PROMPT=$(cat "$PROMPT_FILE")

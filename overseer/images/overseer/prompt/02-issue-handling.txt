@@ -1,1 +1,0 @@
-# Issue handling is managed deterministically by the factory watch command.
