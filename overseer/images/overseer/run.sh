@@ -206,14 +206,29 @@ function runWatchCycle {
         --queue-dir ./overseer/queues \
         --repo "$REPO_PATH"
         
-    # 5. Run Runner (Processes queued tasks asynchronously and waits for completion)
+    # 5. Run Gemini LLM (Non-deterministic Scanner/Orchestrator)
+    constructPrompt
+    GEMINI_ERR=$(mktemp)
+    if ! gemini --yolo "$PROMPT" 2> "$GEMINI_ERR"; then
+      cat "$GEMINI_ERR" >&2
+      if grep -iq "TerminalQuotaError\|Quota exceeded" "$GEMINI_ERR"; then
+        echo "$(date): Gemini quota exhausted. Continuing to run queued tasks..."
+      else
+        echo "$(date): Gemini failed with non-quota error. Continuing to run queued tasks..."
+      fi
+    else
+      echo "$(date): Gemini orchestration cycle complete."
+    fi
+    rm -f "$GEMINI_ERR"
+
+    # 6. Run Runner (Processes queued tasks from both scanner types asynchronously and waits for completion)
     factory watch \
         --mode run \
         --once \
         --queue-dir ./overseer/queues \
         --repo "$REPO_PATH"
         
-    # 6. Push queue and state changes back to fork/origin
+    # 7. Push queue and state changes back to fork/origin
     if [ -d "./overseer/queues" ]; then
         git add ./overseer/queues
         if [ -f "./overseer/queues/journal.jsonl" ]; then
