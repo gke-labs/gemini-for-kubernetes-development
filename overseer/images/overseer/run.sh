@@ -54,7 +54,6 @@ function constructPrompt {
         if [ "$REVIEW_MODE" != "disabled" ]; then
             cat /workspaces/prompt/03a-pr-review-handling.txt >> "$PROMPT_FILE"
         fi
-        cat /workspaces/prompt/05-examples-header.txt >> "$PROMPT_FILE"
         if [ "$PR_MODE" != "disabled" ]; then
             cat /workspaces/prompt/06a-examples-prs.txt >> "$PROMPT_FILE"
         fi
