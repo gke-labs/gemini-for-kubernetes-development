@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
@@ -36,6 +37,9 @@ type WatchFlags struct {
 	Mode         string
 	QueueDir     string
 	Once         bool
+	IssueMode    string
+	PRMode       string
+	ChoresMode   string
 }
 
 func NewWatchCommand(ctx context.Context) *cobra.Command {
@@ -62,7 +66,36 @@ func NewWatchCommand(ctx context.Context) *cobra.Command {
 			if len(parts) != 2 {
 				return fmt.Errorf("invalid repo format, expected owner/repo, got %s", flags.Repo)
 			}
-			return runWatch(ctx, parts[0], parts[1], flags.PollInterval, flags.Assignee, cmd.Flags().Changed("assignee"), flags.Labels, flags.DryRun, flags.WatchTimeout, flags.MaxActions, flags.MaxPending, flags.Mode, flags.QueueDir, flags.Once, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets)
+
+			issueMode := os.Getenv("ISSUE_MODE")
+			if flags.IssueMode != "" {
+				issueMode = flags.IssueMode
+			}
+			if issueMode == "" {
+				issueMode = "enabled"
+			}
+
+			prMode := os.Getenv("PR_MODE")
+			if flags.PRMode != "" {
+				prMode = flags.PRMode
+			}
+			if prMode == "" {
+				prMode = "enabled"
+			}
+
+			choresMode := os.Getenv("CHORES_MODE")
+			if flags.ChoresMode != "" {
+				choresMode = flags.ChoresMode
+			}
+			cfg, _ := config.LoadConfig()
+			if cfg != nil && cfg.Chores.Mode == "disabled" {
+				choresMode = "disabled"
+			}
+			if choresMode == "" {
+				choresMode = "enabled"
+			}
+
+			return runWatch(ctx, parts[0], parts[1], flags.PollInterval, flags.Assignee, cmd.Flags().Changed("assignee"), flags.Labels, flags.DryRun, flags.WatchTimeout, flags.MaxActions, flags.MaxPending, flags.Mode, flags.QueueDir, flags.Once, issueMode, prMode, choresMode, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets)
 		},
 	}
 
@@ -77,6 +110,9 @@ func NewWatchCommand(ctx context.Context) *cobra.Command {
 	cmd.Flags().StringVar(&flags.Mode, "mode", "all", "Watch mode: all (scan & run), scan (only scan & queue), run (only process queue)")
 	cmd.Flags().StringVar(&flags.QueueDir, "queue-dir", "/workspaces/queues", "Directory path for the task queues")
 	cmd.Flags().BoolVar(&flags.Once, "once", false, "Run watch once and exit (waits for active tasks to complete)")
+	cmd.Flags().StringVar(&flags.IssueMode, "issue-mode", "", "Issue mode: enabled or disabled (defaults to ISSUE_MODE env or enabled)")
+	cmd.Flags().StringVar(&flags.PRMode, "pr-mode", "", "PR mode: enabled or disabled (defaults to PR_MODE env or enabled)")
+	cmd.Flags().StringVar(&flags.ChoresMode, "chores-mode", "", "Chores mode: enabled or disabled (defaults to CHORES_MODE env or enabled)")
 
 	return cmd
 }
@@ -352,7 +388,7 @@ func writeTaskJournalEvent(queueDir string, taskFilename string, task *QueueTask
 	}
 }
 
-func runWatch(ctx context.Context, owner, repo string, interval time.Duration, assignee string, assigneeChanged bool, labels []string, dryRun bool, watchTimeout time.Duration, maxActions int, maxPending int, mode string, queueDir string, once bool, ephemeralStorage string, secrets []factorysandbox.SecretMount) error {
+func runWatch(ctx context.Context, owner, repo string, interval time.Duration, assignee string, assigneeChanged bool, labels []string, dryRun bool, watchTimeout time.Duration, maxActions int, maxPending int, mode string, queueDir string, once bool, issueMode string, prMode string, choresMode string, ephemeralStorage string, secrets []factorysandbox.SecretMount) error {
 	ghClient, err := github.NewClient(ctx)
 	if err != nil {
 		return fmt.Errorf("creating github client: %w", err)
@@ -481,7 +517,8 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 			}
 
 			// Process Issues (Scanner)
-			for _, issue := range issues {
+			if issueMode != "disabled" {
+				for _, issue := range issues {
 				num := issue.GetNumber()
 				if referencedIssues[num] {
 					klog.Infof("Skipping issue #%d because there is already a PR referencing it.", num)
@@ -545,10 +582,12 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						}
 					}
 				}
+				}
 			}
 
 			// Process Pull Requests (Scanner)
-			for _, prIssue := range prIssues {
+			if prMode != "disabled" {
+				for _, prIssue := range prIssues {
 				num := prIssue.GetNumber()
 				pr, _, err := ghClient.PullRequests.Get(ctx, owner, repo, num)
 				if err != nil {
@@ -752,6 +791,9 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						}
 
 						if hasNewComments {
+							if os.Getenv("DRY_RUN") == "true" {
+								continue
+							}
 							filename := fmt.Sprintf("task-pr-%d-comments.yaml", num)
 							if !taskExists(incomingDir, processingDir, filename) {
 								sandboxName := fmt.Sprintf("factory-pr-%d", num)
@@ -802,10 +844,12 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						}
 					}
 				}
-
+			}
 
 			// Scan chores
-			scanChores(ctx, ghClient, owner, repo, incomingDir, processingDir, queueDir, dryRun)
+			if choresMode != "disabled" {
+				scanChores(ctx, ghClient, owner, repo, incomingDir, processingDir, queueDir, dryRun)
+			}
 		}
 
 		// 2. Runner Mode
