@@ -139,10 +139,11 @@ func countRunningSandboxTasks(ctx context.Context, kubeClient *clients.Kubernete
 }
 
 type QueueTask struct {
-	Type      string    `yaml:"type"`      // "issue-fix", "pr-investigate", "pr-comments", "agent-chore"
+	Type      string    `yaml:"type"`      // "issue-fix", "pr-investigate", "pr-comments", "pr-iterate", "agent-chore"
 	URL       string    `yaml:"url"`
 	Number    int       `yaml:"number"`
 	Priority  string    `yaml:"priority"`  // "critical", "urgent", "important", "high", "medium", "low"
+	Phase     int       `yaml:"phase"`     // 1: Rebase/iterate, 2: Comments, 3: Investigate/Fix, 4: Chores
 	CreatedAt time.Time `yaml:"createdAt"`
 	Assignee  string    `yaml:"assignee,omitempty"`
 	Status    string    `yaml:"status"`    // "Pending", "Running", "Completed", "Failed"
@@ -268,6 +269,7 @@ func scanChores(ctx context.Context, ghClient *githubv39.Client, owner, repo, in
 					Type:      "agent-chore",
 					URL:       fmt.Sprintf("https://github.com/%s/%s", owner, repo),
 					Priority:  "medium",
+					Phase:     4,
 					CreatedAt: time.Now(),
 					Status:    "Pending",
 					AgentFile: ".agents/" + file.GetName(),
@@ -525,6 +527,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						URL:       issueURL,
 						Number:    num,
 						Priority:  getIssuePriority(issue),
+						Phase:     3,
 						CreatedAt: issue.GetCreatedAt(),
 						Assignee:  targetAssignee,
 						Status:    "Pending",
@@ -553,7 +556,67 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					continue
 				}
 
+				// Verify PR Author: Only process PRs created by the bot
+				author := pr.GetUser().GetLogin()
+				if !strings.EqualFold(author, githubLogin) {
+					klog.Infof("Skipping PR #%d because it was created by %s (not %s). We do not have permission to push to external forks.", num, author, githubLogin)
+					continue
+				}
+
 				headSHA := pr.GetHead().GetSHA()
+
+				// Check Phase 1: Rebase/Conflicts
+				isConflicting := pr.Mergeable != nil && !*pr.Mergeable
+
+				if isConflicting {
+					filename := fmt.Sprintf("task-pr-%d-iterate.yaml", num)
+					if !taskExists(incomingDir, processingDir, filename) {
+						sandboxName := fmt.Sprintf("factory-pr-%d", num)
+						running, err := isSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName)
+						if err != nil {
+							klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
+						} else if running {
+							klog.Infof("Skipping PR #%d rebase because there is an in-flight sandbox %s.", num, sandboxName)
+						} else {
+							if isAssigned(prIssue, targetAssignee) && !unassignedPRs[num] {
+								if dryRun {
+									fmt.Printf("[DRYRUN] Would unassign %s from PR #%d\n", targetAssignee, num)
+								} else {
+									fmt.Printf("Unassigning %s from PR #%d...\n", targetAssignee, num)
+									if _, _, err := ghClient.Issues.RemoveAssignees(ctx, owner, repo, num, []string{targetAssignee}); err != nil {
+										klog.Errorf("Failed to unassign %s from PR #%d: %v", targetAssignee, num, err)
+									}
+									unassignedPRs[num] = true
+								}
+							}
+
+							prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", owner, repo, num)
+							task := &QueueTask{
+								Type:      "pr-iterate",
+								URL:       prURL,
+								Number:    num,
+								Priority:  getPRPriority(prIssue),
+								Phase:     1,
+								CreatedAt: pr.GetCreatedAt(),
+								Assignee:  targetAssignee,
+								Status:    "Pending",
+							}
+
+							if dryRun {
+								fmt.Printf("[DRYRUN] Would queue rebase task for PR #%d: %s\n", num, prURL)
+							} else {
+								fmt.Printf("Queueing rebase task for PR #%d...\n", num)
+								if err := writeTaskAtomically(incomingDir, filename, task); err != nil {
+									klog.Errorf("Failed to queue rebase task for PR #%d: %v", num, err)
+								} else {
+									writeTaskJournalEvent(queueDir, filename, task, "Created", 0)
+								}
+							}
+						}
+					}
+					// If conflicting, we prioritize rebase and skip other PR checks for this PR in this loop
+					continue
+				}
 
 				// Check CI Check Failures
 				hasFailure := false
@@ -608,6 +671,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 									URL:       prURL,
 									Number:    num,
 									Priority:  getPRPriority(prIssue),
+									Phase:     3,
 									CreatedAt: pr.GetCreatedAt(),
 									Assignee:  targetAssignee,
 									Status:    "Pending",
@@ -682,6 +746,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 										URL:       prURL,
 										Number:    num,
 										Priority:  getPRPriority(prIssue),
+										Phase:     2,
 										CreatedAt: pr.GetCreatedAt(),
 										Assignee:  targetAssignee,
 										Status:    "Pending",
@@ -765,7 +830,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				return 5
 			}
 
-			// Sort tasks by priority level (critical first) and createdAt (newest first)
+			// Sort tasks by priority level (critical first), phase rank (rebase > comments > investigate), and createdAt (newest first)
 			for i := 0; i < len(tasksToRun); i++ {
 				for j := i + 1; j < len(tasksToRun); j++ {
 					tI := tasksToRun[i].task
@@ -777,8 +842,12 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					if rankI > rankJ {
 						swap = true
 					} else if rankI == rankJ {
-						if tI.CreatedAt.Before(tJ.CreatedAt) {
+						if tI.Phase > tJ.Phase {
 							swap = true
+						} else if tI.Phase == tJ.Phase {
+							if tI.CreatedAt.Before(tJ.CreatedAt) {
+								swap = true
+							}
 						}
 					}
 
@@ -853,6 +922,8 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 							commentBody = "🤖 AI Factory started investigating CI check failures for this pull request."
 						case "pr-comments":
 							commentBody = "🤖 AI Factory started addressing review feedback for this pull request."
+						case "pr-iterate":
+							commentBody = "🤖 AI Factory started resolving merge conflicts / rebasing this pull request in a sandbox."
 						}
 						if commentBody != "" {
 							addGitHubComment(ctx, ghClient, owner, repo, t.Number, commentBody)
@@ -873,6 +944,8 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						args = []string{"pr", "investigate", "--url", t.URL}
 					case "pr-comments":
 						args = []string{"pr", "address-comments", "--url", t.URL}
+					case "pr-iterate":
+						args = []string{"pr", "iterate", "--url", t.URL, "--prompt", "Resolve merge conflicts and iterate on code"}
 					case "agent-chore":
 						args = []string{"agent", "create", "--url", t.URL, "--agent", t.AgentFile}
 					default:
