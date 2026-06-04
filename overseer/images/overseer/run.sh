@@ -180,6 +180,59 @@ if [ -d "/configdir" ] && [ "$(ls -A /configdir)" ]; then
   shopt -u dotglob
 fi
 
+function runWatchCycle {
+    echo "$(date): Running deterministic watch cycle..."
+    
+    # 1. Parse repo owner/name from REPO_URL
+    REPO_PATH=$(echo "$REPO_URL" | sed -E 's|https://github.com/([^/]+/[^/.]+)(\.git)?|\1|')
+    
+    # 2. Update main branch
+    git checkout main || git checkout -b main
+    git fetch origin
+    git reset --hard origin/main
+    
+    # 3. Switch to overseer branch and rebase onto main
+    git checkout overseer || git checkout -b overseer
+    git rebase main || {
+        echo "$(date): Rebase failed. Resetting overseer branch to main..."
+        git rebase --abort || true
+        git reset --hard main
+    }
+    
+    # 4. Run Scanner (Discovers issues, PR failures, chores and writes to incoming/)
+    factory watch \
+        --mode scan \
+        --once \
+        --queue-dir ./overseer/queues \
+        --repo "$REPO_PATH"
+        
+    # 5. Run Runner (Processes queued tasks asynchronously and waits for completion)
+    factory watch \
+        --mode run \
+        --once \
+        --queue-dir ./overseer/queues \
+        --repo "$REPO_PATH"
+        
+    # 6. Push queue and state changes back to fork/origin
+    if [ -d "./overseer/queues" ]; then
+        git add ./overseer/queues
+        if [ -f "./overseer/queues/journal.jsonl" ]; then
+            git add ./overseer/queues/journal.jsonl
+        fi
+        if [ -f "./overseer/queues/chores_state.json" ]; then
+            git add ./overseer/queues/chores_state.json
+        fi
+        
+        if ! git diff --cached --quiet; then
+            echo "$(date): Committing and pushing queue updates to overseer branch..."
+            git commit -m "chore(watch): sync queue state at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            git push origin overseer --force
+        else
+            echo "$(date): No queue changes to push."
+        fi
+    fi
+}
+
 # Loop
 # Create logs directory
 mkdir -p /workspaces/logs
@@ -219,26 +272,10 @@ while true; do
     # Refresh LLM token
     refreshLLMToken
 
-    # Update the repo
-    git pull || true
-
-    # Construct / refresh prompt for this cycle
-    constructPrompt
-
-    # Run gemini
-    GEMINI_ERR=$(mktemp)
-    if ! gemini --yolo "$PROMPT" 2> "$GEMINI_ERR"; then
-      cat "$GEMINI_ERR" >&2
-      if grep -iq "TerminalQuotaError\|Quota exceeded" "$GEMINI_ERR"; then
-        echo "$(date): Quota exhausted. Setting sleep to 1 hour..."
-        SLEEP_TIME=3600
-      else
-        echo "$(date): Gemini failed with non-quota error."
-      fi
-    else
-      echo "$(date): Cycle complete."
-    fi
-    rm -f "$GEMINI_ERR"
+    # Run the deterministic watch cycle
+    runWatchCycle
+    
+    echo "$(date): Cycle complete."
   } > "$LOG_FILE" 2>&1 || {
     EXIT_CODE=$?
     cat "$LOG_FILE"
