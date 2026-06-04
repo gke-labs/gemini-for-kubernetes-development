@@ -451,8 +451,6 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 		actionsTaken := 0
 		unassignedPRs := make(map[int]bool)
 
-
-
 		// 1. Scanner Mode
 		if mode == "all" || mode == "scan" {
 			prOpts := &githubv39.PullRequestListOptions{
