@@ -1,5 +1,0 @@
-
-Running a chore:
-```bash
-factory agent create --url $REPO_URL --agent gateway-conformance.yaml --background --cleanup
-```

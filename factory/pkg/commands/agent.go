@@ -78,7 +78,7 @@ func NewAgentCreateCommand(ctx context.Context) *cobra.Command {
 				parts := strings.Split(path, "/")
 				if len(parts) >= 2 {
 					repo := parts[1]
-					agentName := slugify(flags.Agent)
+					agentName := Slugify(flags.Agent)
 					taskID := agentName
 					if len(parts) >= 4 && parts[2] == "pull" {
 						taskID = fmt.Sprintf("pr-%s-%s", parts[3], agentName)
@@ -99,7 +99,7 @@ func NewAgentCreateCommand(ctx context.Context) *cobra.Command {
 
 			ctx, cancel := context.WithTimeout(ctx, rootFlags.Timeout)
 			defer cancel()
-			return runAgent(ctx, flags, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets)
+			return RunAgent(ctx, flags, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets)
 		},
 	}
 
@@ -111,7 +111,7 @@ func NewAgentCreateCommand(ctx context.Context) *cobra.Command {
 	return cmd
 }
 
-func runAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, secrets []factorysandbox.SecretMount) error {
+func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, secrets []factorysandbox.SecretMount) error {
 	fmt.Printf("Resolving target URL: %s...\n", flags.URL)
 
 	u, err := url.Parse(flags.URL)
@@ -178,7 +178,7 @@ func runAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 		content = []byte(contentStr)
 	}
 
-	agentDef, err := parseAgent(content)
+	agentDef, err := ParseAgent(content)
 	if err != nil {
 		return fmt.Errorf("parsing agent definition: %w", err)
 	}
@@ -188,7 +188,7 @@ func runAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 		return fmt.Errorf("creating k8s client: %w", err)
 	}
 
-	taskID := slugify(agentDef.Name)
+	taskID := Slugify(agentDef.Name)
 	if isPR {
 		taskID = fmt.Sprintf("pr-%d-%s", prNum, taskID)
 	}
@@ -214,7 +214,7 @@ func runAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 	}
 	defer client.Close()
 
-	taskDir := fmt.Sprintf("/workspaces/tasks/agent-%s-%s", slugify(agentDef.Name), time.Now().Format("20060102-150405"))
+	taskDir := fmt.Sprintf("/workspaces/tasks/agent-%s-%s", Slugify(agentDef.Name), time.Now().Format("20060102-150405"))
 	promptPath := fmt.Sprintf("%s/agent-prompt.txt", taskDir)
 	scriptPath := fmt.Sprintf("%s/pre-script.sh", taskDir)
 
@@ -321,7 +321,7 @@ func runAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 	return nil
 }
 
-func parseAgent(content []byte) (*AgentDefinition, error) {
+func ParseAgent(content []byte) (*AgentDefinition, error) {
 	parts := strings.SplitN(string(content), "---", 3)
 	if len(parts) < 3 {
 		return nil, fmt.Errorf("invalid agent definition format: missing frontmatter")
@@ -336,7 +336,7 @@ func parseAgent(content []byte) (*AgentDefinition, error) {
 	return &def, nil
 }
 
-func slugify(s string) string {
+func Slugify(s string) string {
 	s = strings.ToLower(s)
 	s = strings.ReplaceAll(s, " ", "-")
 	var res strings.Builder

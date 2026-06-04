@@ -1,5 +1,11 @@
-
-Reviewing a PR:
+Queueing a PR Review task:
 ```bash
-factory pr review --pr-url $REPO_URL/pull/<pr-number> --publish yes --background
+cat <<EOF > overseer/queues/incoming/task-pr-<pr-number>-review.yaml
+type: pr-review
+url: https://github.com/<owner>/<repo>/pull/<pr-number>
+number: <pr-number>
+priority: medium
+createdAt: "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+status: Pending
+EOF
 ```
