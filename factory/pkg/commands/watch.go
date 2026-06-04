@@ -565,6 +565,20 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 
 				headSHA := pr.GetHead().GetSHA()
 
+				// Fetch PR commits to find the last commit timestamp
+				prCommits, _, err := ghClient.PullRequests.ListCommits(ctx, owner, repo, num, nil)
+				var lastCommitTime time.Time
+				if err == nil {
+					for _, c := range prCommits {
+						if c.GetCommit().GetAuthor().GetDate().After(lastCommitTime) {
+							lastCommitTime = c.GetCommit().GetAuthor().GetDate()
+						}
+					}
+				}
+
+				// Fetch PR comments
+				comments, _, listCommentsErr := ghClient.Issues.ListComments(ctx, owner, repo, num, nil)
+
 				// Check Phase 1: Rebase/Conflicts
 				isConflicting := pr.Mergeable != nil && !*pr.Mergeable
 
@@ -643,7 +657,36 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				state := processedPRs[num]
 
 				if hasFailure {
-					if state.lastSHA != headSHA || time.Since(state.lastInvestigatedTime) > 6*time.Hour {
+					// Count investigations since last commit
+					investigationCount := 0
+					if listCommentsErr == nil {
+						for _, c := range comments {
+							if strings.EqualFold(c.GetUser().GetLogin(), githubLogin) &&
+								strings.Contains(c.GetBody(), "started investigating CI check failures") &&
+								c.GetCreatedAt().After(lastCommitTime) {
+								investigationCount++
+							}
+						}
+					}
+
+					if investigationCount >= 3 {
+						// Post giving up comment if we haven't already posted it since the last commit
+						hasPostedGivingUp := false
+						if listCommentsErr == nil {
+							for _, c := range comments {
+								if strings.EqualFold(c.GetUser().GetLogin(), githubLogin) &&
+									strings.Contains(c.GetBody(), "giving up. Human assistance is required") &&
+									c.GetCreatedAt().After(lastCommitTime) {
+									hasPostedGivingUp = true
+									break
+								}
+							}
+						}
+						if !hasPostedGivingUp && !dryRun {
+							addGitHubComment(ctx, ghClient, owner, repo, num, "🤖 AI Factory has attempted to fix CI failures for this PR 3 times since the last commit and is giving up. Human assistance is required.")
+						}
+						klog.Infof("Skipping PR #%d investigate because it has reached the maximum retry limit (3).", num)
+					} else if state.lastSHA != headSHA || time.Since(state.lastInvestigatedTime) > 6*time.Hour {
 						filename := fmt.Sprintf("task-pr-%d-investigate.yaml", num)
 						if !taskExists(incomingDir, processingDir, filename) {
 							sandboxName := fmt.Sprintf("factory-pr-%d", num)
@@ -696,17 +739,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				}
 
 				// Check review comments
-				prCommits, _, err := ghClient.PullRequests.ListCommits(ctx, owner, repo, num, nil)
-				if err == nil {
-					var lastCommitTime time.Time
-					for _, c := range prCommits {
-						if c.GetCommit().GetAuthor().GetDate().After(lastCommitTime) {
-							lastCommitTime = c.GetCommit().GetAuthor().GetDate()
-						}
-					}
-
-					comments, _, err := ghClient.Issues.ListComments(ctx, owner, repo, num, nil)
-					if err == nil {
+				if listCommentsErr == nil {
 						hasNewComments := false
 						for _, c := range comments {
 							if strings.Contains(strings.ToLower(c.GetUser().GetLogin()), "bot") {
@@ -769,7 +802,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						}
 					}
 				}
-			}
+
 
 			// Scan chores
 			scanChores(ctx, ghClient, owner, repo, incomingDir, processingDir, queueDir, dryRun)
