@@ -13,7 +13,7 @@ spec:
     #  - KCC Release Scheduler
   geminiAPIKeySecretName: gemini-vscode-tokens
   ephemeralStorage: 10Gi
-  image: ghcr.io/gke-labs/gemini-for-kubernetes-development/generic-golang:latest
+  image: ghcr.io/gke-labs/gemini-for-kubernetes-development/factory-golang:latest
   configdirRef: kcc-agents
   workspaceDiskSize: 40Gi
   secrets:
