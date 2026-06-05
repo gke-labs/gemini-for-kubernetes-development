@@ -414,6 +414,13 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 	processingDir := filepath.Join(queueDir, "processing")
 	processedDir := filepath.Join(queueDir, "processed")
 
+	logDir := os.Getenv("FACTORY_LOGS")
+	if logDir == "" {
+		logDir = filepath.Join(queueDir, "logs")
+	}
+	processingLogDir := filepath.Join(logDir, "processing")
+	processedLogDir := filepath.Join(logDir, "processed")
+
 	if !dryRun {
 		if err := os.MkdirAll(incomingDir, 0755); err != nil {
 			return fmt.Errorf("failed to create incoming queue dir: %w", err)
@@ -423,6 +430,12 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 		}
 		if err := os.MkdirAll(processedDir, 0755); err != nil {
 			return fmt.Errorf("failed to create processed queue dir: %w", err)
+		}
+		if err := os.MkdirAll(processingLogDir, 0755); err != nil {
+			return fmt.Errorf("failed to create processing log dir: %w", err)
+		}
+		if err := os.MkdirAll(processedLogDir, 0755); err != nil {
+			return fmt.Errorf("failed to create processed log dir: %w", err)
 		}
 	}
 
@@ -1053,8 +1066,8 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					cmd := exec.Command(executable, args...)
 
 					logFilename := strings.TrimSuffix(taskFilename, ".yaml") + ".log"
-					processingLogPath := filepath.Join(processingDir, logFilename)
-					processedLogPath := filepath.Join(processedDir, logFilename)
+					processingLogPath := filepath.Join(processingLogDir, logFilename)
+					processedLogPath := filepath.Join(processedLogDir, logFilename)
 
 					logFile, err := os.OpenFile(processingLogPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 					if err != nil {
