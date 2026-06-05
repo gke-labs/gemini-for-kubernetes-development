@@ -523,6 +523,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						linked, err := hasLinkedPR(ctx, ghClient, owner, repo, num)
 						if err != nil {
 							klog.Errorf("Failed to check linked PR for issue #%d: %v", num, err)
+							continue
 						} else if linked {
 							klog.Infof("Skipping issue #%d because it has a linked PR according to the Timeline API.", num)
 							continue
@@ -537,6 +538,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						running, err := isSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName)
 						if err != nil {
 							klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
+							continue
 						} else if running {
 							klog.Infof("Skipping issue #%d because there is an in-flight sandbox %s.", num, sandboxName)
 							continue
@@ -623,6 +625,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 							running, err := isSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName)
 							if err != nil {
 								klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
+								continue
 							} else if running {
 								klog.Infof("Skipping PR #%d rebase because there is an in-flight sandbox %s.", num, sandboxName)
 							} else {
@@ -727,6 +730,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 								running, err := isSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName)
 								if err != nil {
 									klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
+									continue
 								} else if running {
 									klog.Infof("Skipping PR #%d investigate because there is an in-flight sandbox %s.", num, sandboxName)
 								} else {
@@ -795,6 +799,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 								running, err := isSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName)
 								if err != nil {
 									klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
+									continue
 								} else if running {
 									klog.Infof("Skipping PR #%d address-comments because there is an in-flight sandbox %s.", num, sandboxName)
 								} else {
