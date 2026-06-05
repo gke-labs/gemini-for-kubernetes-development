@@ -213,10 +213,11 @@ function runWatchCycle {
         git reset --hard main
     }
     
-    # 4. Run Scanner (Discovers issues, PR failures, chores and writes to incoming/)
+    # 4. Run Watch Daemon for POLL_INTERVAL duration (default 300s/5m)
+    TIMEOUT_DURATION=${POLL_INTERVAL:-300}
     factory watch \
-        --mode scan \
-        --once \
+        --mode all \
+        --watch-timeout "${TIMEOUT_DURATION}s" \
         --queue-dir ./overseer/queues \
         --repo "$REPO_PATH"
         
@@ -225,14 +226,7 @@ function runWatchCycle {
         runGeminiOrchestrator
     fi
 
-    # 6. Run Runner (Processes queued tasks from both scanner types asynchronously and waits for completion)
-    factory watch \
-        --mode run \
-        --once \
-        --queue-dir ./overseer/queues \
-        --repo "$REPO_PATH"
-        
-    # 7. Push queue and state changes back to fork/origin
+    # 6. Push queue and state changes back to fork/origin
     if [ -d "./overseer/queues" ]; then
         git add ./overseer/queues
         if [ -f "./overseer/queues/journal.jsonl" ]; then
@@ -264,7 +258,7 @@ while true; do
   CURRENT_WEEK=$(date +%V)
   TIMESTAMP=$(date +%Y%m%d-%H%M%S)
   LOG_FILE="/workspaces/logs/run-$TIMESTAMP.log"
-  
+
   # Daily Summary and Cleanup
   if [ "$CURRENT_DAY" != "$LAST_DAY" ]; then
     echo "$(date): Day changed from $LAST_DAY to $CURRENT_DAY. Running daily summary..."
@@ -283,17 +277,12 @@ while true; do
     LAST_WEEK="$CURRENT_WEEK"
   fi
 
-  SLEEP_TIME=${POLL_INTERVAL:-300}
-  
+  # Refresh LLM token
+  refreshLLMToken
+
   {
     echo "$(date): Running Overseer cycle..."
-    
-    # Refresh LLM token
-    refreshLLMToken
-
-    # Run the deterministic watch cycle
     runWatchCycle
-    
     echo "$(date): Cycle complete."
   } > "$LOG_FILE" 2>&1 || {
     EXIT_CODE=$?
@@ -304,6 +293,6 @@ while true; do
   # Print log to stdout
   cat "$LOG_FILE"
   
-  echo "$(date): Sleeping for $SLEEP_TIME seconds..."
-  sleep "$SLEEP_TIME"
+  echo "$(date): Sleeping for 10 seconds before next cycle..."
+  sleep 10
 done
