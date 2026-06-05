@@ -21,6 +21,7 @@ import (
 	"connectrpc.com/connect"
 	process "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd/spec/process"
 	processconnect "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd/spec/process/processconnect"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/geminitokens"
 	"k8s.io/klog/v2"
 )
 
@@ -415,6 +416,14 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 				if len(newData) > 0 {
 					_, _ = os.Stdout.Write(newData)
 					offset += int64(len(newData))
+
+					if geminitokens.ContainsQuotaError(newData) {
+						if key := envs["GEMINI_API_KEY"]; key != "" {
+							if err := geminitokens.AddQuotaExceededKey(key, 4*time.Hour); err != nil {
+								klog.Errorf("Failed to mark key as quota exceeded: %v", err)
+							}
+						}
+					}
 				}
 			} else {
 				klog.Warningf("Log streaming connection flaked: %v. Reconnecting...", err)
