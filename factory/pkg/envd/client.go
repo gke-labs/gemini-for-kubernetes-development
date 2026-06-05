@@ -28,6 +28,12 @@ type Client struct {
 	baseURL       string
 	processClient processconnect.ProcessClient
 	closePF       func()
+
+	// For reconnection
+	namespace   string
+	sandboxName string
+	localPort   int
+	pfCmd       *exec.Cmd
 }
 
 func (c *Client) WriteFile(ctx context.Context, destPath string, data []byte) error {
@@ -141,6 +147,8 @@ func Connect(ctx context.Context, namespace, sandboxName string) (*Client, error
 			baseURL:       baseURL,
 			processClient: processClient,
 			closePF:       func() {},
+			namespace:     namespace,
+			sandboxName:   sandboxName,
 		}, nil
 	}
 
@@ -185,6 +193,10 @@ func Connect(ctx context.Context, namespace, sandboxName string) (*Client, error
 		baseURL:       baseURL,
 		processClient: processClient,
 		closePF:       closeFunc,
+		namespace:     namespace,
+		sandboxName:   sandboxName,
+		localPort:     localPort,
+		pfCmd:         pfCmd,
 	}, nil
 }
 
@@ -192,6 +204,57 @@ func (c *Client) Close() {
 	if c.closePF != nil {
 		c.closePF()
 	}
+	if c.pfCmd != nil && c.pfCmd.Process != nil {
+		_ = c.pfCmd.Process.Kill()
+	}
+}
+
+func (c *Client) ReconnectPortForward(ctx context.Context) error {
+	if c.pfCmd == nil {
+		return nil
+	}
+
+	// First, check if the connection is already healthy
+	resp, err := http.Get(c.baseURL + "/health")
+	if err == nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		resp.Body.Close()
+		return nil // Already healthy
+	}
+
+	klog.Infof("Re-establishing port-forward to service for sandbox %s...", c.sandboxName)
+
+	if c.pfCmd.Process != nil {
+		_ = c.pfCmd.Process.Kill()
+		_ = c.pfCmd.Wait()
+	}
+
+	serviceName := c.sandboxName + "-lb"
+	c.pfCmd = exec.CommandContext(context.Background(), "kubectl", "port-forward", fmt.Sprintf("svc/%s", serviceName), fmt.Sprintf("%d:49983", c.localPort), "-n", c.namespace)
+	if err := c.pfCmd.Start(); err != nil {
+		return fmt.Errorf("restarting port-forward: %w", err)
+	}
+
+	ready := false
+	for i := 0; i < 40; i++ {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		time.Sleep(500 * time.Millisecond)
+		resp, err := http.Get(c.baseURL + "/health")
+		if err == nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			resp.Body.Close()
+			ready = true
+			break
+		}
+	}
+	if !ready {
+		return fmt.Errorf("timed out waiting for restarted port-forward to become ready")
+	}
+
+	klog.Infof("Port-forward successfully re-established on port %d", c.localPort)
+	return nil
 }
 
 func (c *Client) Exec(ctx context.Context, cmdStr, cwd string, envs map[string]string, stdin io.Reader, stdout, stderr io.Writer) error {
@@ -355,6 +418,9 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 				}
 			} else {
 				klog.Warningf("Log streaming connection flaked: %v. Reconnecting...", err)
+				if reconnectErr := c.ReconnectPortForward(loopCtx); reconnectErr != nil {
+					klog.Errorf("Failed to reconnect port-forward: %v", reconnectErr)
+				}
 			}
 
 			// Check if exit code file exists
@@ -383,6 +449,11 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 						return fmt.Errorf("task failed with exit code %d", code)
 					}
 					return nil
+				}
+			} else {
+				klog.Warningf("Status check connection flaked: %v. Reconnecting...", err)
+				if reconnectErr := c.ReconnectPortForward(loopCtx); reconnectErr != nil {
+					klog.Errorf("Failed to reconnect port-forward: %v", reconnectErr)
 				}
 			}
 		}
