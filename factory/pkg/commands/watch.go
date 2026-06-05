@@ -936,12 +936,12 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					}
 				}
 			}
-			opts2_pr := &githubv39.IssueListByRepoOptions{
+			opts2PR := &githubv39.IssueListByRepoOptions{
 				Labels:      []string{"overseer"},
 				State:       "open",
 				ListOptions: githubv39.ListOptions{PerPage: 100},
 			}
-			iss2, _, err := ghClient.Issues.ListByRepo(ctx, owner, repo, opts2_pr)
+			iss2, _, err := ghClient.Issues.ListByRepo(ctx, owner, repo, opts2PR)
 			if err == nil {
 				for _, item := range iss2 {
 					if item.PullRequestLinks != nil {
