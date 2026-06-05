@@ -214,10 +214,13 @@ function runWatchCycle {
     }
     
     # 4. Run Watch Daemon for POLL_INTERVAL duration (default 300s/5m)
-    TIMEOUT_DURATION=${POLL_INTERVAL:-300}
+    TIMEOUT_DURATION=${POLL_INTERVAL:-300s}
+    if [[ "$TIMEOUT_DURATION" =~ ^[0-9]+$ ]]; then
+        TIMEOUT_DURATION="${TIMEOUT_DURATION}s"
+    fi
     factory watch \
         --mode all \
-        --watch-timeout "${TIMEOUT_DURATION}s" \
+        --watch-timeout "${TIMEOUT_DURATION}" \
         --queue-dir ./overseer/queues \
         --repo "$REPO_PATH"
         
