@@ -46,6 +46,9 @@ spec:
                 type: object
               configdirRef:
                 type: string
+              enableGeminiOrchestrator:
+                default: false
+                type: boolean
               env:
                 items:
                   properties:

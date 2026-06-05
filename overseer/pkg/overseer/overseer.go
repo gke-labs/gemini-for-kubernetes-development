@@ -168,6 +168,10 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 			"name":  "EPHEMERAL_STORAGE",
 			"value": o.Spec.EphemeralStorage,
 		},
+		map[string]interface{}{
+			"name":  "ALLOW_GEMINI_ORCHESTRATION",
+			"value": fmt.Sprintf("%t", o.Spec.EnableGeminiOrchestrator),
+		},
 	}
 
 	if o.Spec.Chores != nil && o.Spec.Chores.Mode != "" {

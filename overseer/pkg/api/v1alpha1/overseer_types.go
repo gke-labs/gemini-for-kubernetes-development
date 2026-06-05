@@ -151,6 +151,11 @@ type OverseerSpec struct {
 	// +kubebuilder:default="30m"
 	PollInterval string `json:"pollInterval,omitempty"`
 
+	// EnableGeminiOrchestrator enables the non-deterministic Gemini orchestration cycle.
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=false
+	EnableGeminiOrchestrator bool `json:"enableGeminiOrchestrator,omitempty"`
+
 	// Secrets is a list of secrets to mount in all development and issue sandboxes.
 	// +kubebuilder:validation:Optional
 	Secrets []SecretMount `json:"secrets,omitempty"`
