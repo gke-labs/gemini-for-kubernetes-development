@@ -167,6 +167,23 @@ if [ -d "/configdir" ] && [ "$(ls -A /configdir)" ]; then
   shopt -u dotglob
 fi
 
+function runGeminiOrchestrator {
+    # Run Gemini LLM (Non-deterministic Scanner/Orchestrator)
+    constructPrompt
+    GEMINI_ERR=$(mktemp)
+    if ! gemini --yolo "$PROMPT" 2> "$GEMINI_ERR"; then
+      cat "$GEMINI_ERR" >&2
+      if grep -iq "TerminalQuotaError\|Quota exceeded" "$GEMINI_ERR"; then
+        echo "$(date): Gemini quota exhausted. Continuing to run queued tasks..."
+      else
+        echo "$(date): Gemini failed with non-quota error. Continuing to run queued tasks..."
+      fi
+    else
+      echo "$(date): Gemini orchestration cycle complete."
+    fi
+    rm -f "$GEMINI_ERR"
+}
+
 function runWatchCycle {
     echo "$(date): Running deterministic watch cycle..."
     
@@ -194,19 +211,9 @@ function runWatchCycle {
         --repo "$REPO_PATH"
         
     # 5. Run Gemini LLM (Non-deterministic Scanner/Orchestrator)
-    constructPrompt
-    GEMINI_ERR=$(mktemp)
-    if ! gemini --yolo "$PROMPT" 2> "$GEMINI_ERR"; then
-      cat "$GEMINI_ERR" >&2
-      if grep -iq "TerminalQuotaError\|Quota exceeded" "$GEMINI_ERR"; then
-        echo "$(date): Gemini quota exhausted. Continuing to run queued tasks..."
-      else
-        echo "$(date): Gemini failed with non-quota error. Continuing to run queued tasks..."
-      fi
-    else
-      echo "$(date): Gemini orchestration cycle complete."
+    if [ "${ALLOW_GEMINI_ORCHESTRATION}" = "true" ]; then
+        runGeminiOrchestrator
     fi
-    rm -f "$GEMINI_ERR"
 
     # 6. Run Runner (Processes queued tasks from both scanner types asynchronously and waits for completion)
     factory watch \
