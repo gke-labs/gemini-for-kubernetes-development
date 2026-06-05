@@ -97,8 +97,11 @@ HTTPS_PROXY=http://github-portal.overseer-system.svc.cluster.local:80 SSL_CERT_F
 EOF
     chmod +x /usr/local/bin/gh
 
-    # Hierarchy: MANUAL_PAT > OAUTH_PAT > GITHUB_USER_TOKEN
-    GITHUB_USER_TOKEN="${MANUAL_PAT:-${OAUTH_PAT:-$GITHUB_USER_TOKEN}}"
+    # Map GITHUB_BOT_* env variables if set
+    GITHUB_USER_ID="${GITHUB_BOT_LOGIN:-$GITHUB_USER_ID}"
+    GITHUB_USER_NAME="${GITHUB_BOT_NAME:-$GITHUB_BOT_NAME}"
+    GITHUB_USER_EMAIL="${GITHUB_BOT_EMAIL:-$GITHUB_BOT_EMAIL}"
+    GITHUB_USER_TOKEN="${GITHUB_BOT_MANUAL_PAT:-${GITHUB_BOT_OAUTH_PAT:-${GITHUB_BOT_TOKEN:-${MANUAL_PAT:-${OAUTH_PAT:-$GITHUB_USER_TOKEN}}}}}"
 
     # Also ensure GITHUB_TOKEN is set for tools that specifically look for it
     if [ -n "$GITHUB_USER_TOKEN" ]; then
@@ -160,6 +163,9 @@ fi
 
 cd "$REPO_NAME"
 
+echo "Ensuring fork is configured..."
+gh repo fork --remote || true
+
 if [ -d "/configdir" ] && [ "$(ls -A /configdir)" ]; then
   echo "Injecting configdir files into repository..."
   shopt -s dotglob
@@ -191,9 +197,13 @@ function runWatchCycle {
     REPO_PATH=$(echo "$REPO_URL" | sed -E 's|https://github.com/([^/]+/[^/.]+)(\.git)?|\1|')
     
     # 2. Update main branch
+    REMOTE_MAIN="origin"
+    if git remote | grep -q "^upstream$"; then
+        REMOTE_MAIN="upstream"
+    fi
     git checkout main || git checkout -b main
-    git fetch origin
-    git reset --hard origin/main
+    git fetch $REMOTE_MAIN
+    git reset --hard $REMOTE_MAIN/main
     
     # 3. Switch to overseer branch and rebase onto main
     git checkout overseer || git checkout -b overseer
