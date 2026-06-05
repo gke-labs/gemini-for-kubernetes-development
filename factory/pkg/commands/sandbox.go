@@ -119,7 +119,7 @@ func NewSandboxLogsCommand(ctx context.Context) *cobra.Command {
 			defer client.Close()
 
 			fmt.Println("Streaming latest execution log...")
-			return client.RunTask(ctx, "tail -f $(ls -td /workspaces/tasks/fix-* 2>/dev/null | head -1)/execution.log", nil)
+			return client.RunTask(ctx, "tail -f $(ls -td /workspaces/tasks/* 2>/dev/null | head -1)/execution.log", nil)
 		},
 	}
 	cmd.Flags().BoolVar(&flags.Daemon, "daemon", false, "Stream envd daemon logs instead of task execution logs")
