@@ -287,11 +287,14 @@ func runReview(ctx context.Context, prURL string, publishPolicy string, instruct
 	}
 
 	fmt.Println("Running review task via envd...")
-	cmdStr := fmt.Sprintf("bash -c 'set -o pipefail; bash %s 2>&1 | tee %s/execution.log'", scriptPath, taskDir)
+	cmdStr := fmt.Sprintf("bash -c 'set -o pipefail; bash %s'", scriptPath)
 	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "review", "Running")
-	if err := client.RunTask(ctx, cmdStr, envMap); err != nil {
+	if err := client.RunTaskResilient(ctx, cmdStr, envMap, taskDir, rootFlags.Detached); err != nil {
 		_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "review", "Failed")
 		return fmt.Errorf("running task: %w", err)
+	}
+	if rootFlags.Detached {
+		return nil
 	}
 	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "review", "Completed")
 

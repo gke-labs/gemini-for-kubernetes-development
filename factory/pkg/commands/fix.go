@@ -288,11 +288,14 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch boo
 	}
 
 	fmt.Println("Running fix-issue task via envd...")
-	cmdStr := fmt.Sprintf("bash -c 'set -o pipefail; bash %s 2>&1 | tee %s/execution.log'", scriptPath, taskDir)
+	cmdStr := fmt.Sprintf("bash -c 'set -o pipefail; bash %s'", scriptPath)
 	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "fix-issue", "Running")
-	if err := client.RunTask(ctx, cmdStr, envMap); err != nil {
+	if err := client.RunTaskResilient(ctx, cmdStr, envMap, taskDir, rootFlags.Detached); err != nil {
 		_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "fix-issue", "Failed")
 		return fmt.Errorf("running task: %w", err)
+	}
+	if rootFlags.Detached {
+		return nil
 	}
 	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "fix-issue", "Completed")
 

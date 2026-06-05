@@ -13,9 +13,15 @@ import (
 	"os/exec"
 	"time"
 
+	"os/signal"
+	"strconv"
+	"strings"
+	"syscall"
+
 	"connectrpc.com/connect"
 	process "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd/spec/process"
 	processconnect "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd/spec/process/processconnect"
+	"k8s.io/klog/v2"
 )
 
 type Client struct {
@@ -271,4 +277,114 @@ func (c *Client) Exec(ctx context.Context, cmdStr, cwd string, envs map[string]s
 
 func (c *Client) RunTask(ctx context.Context, cmdStr string, envs map[string]string) error {
 	return c.Exec(ctx, cmdStr, "/workspaces", envs, nil, os.Stdout, os.Stderr)
+}
+
+func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[string]string, taskDir string, detached bool) error {
+	pidFile := fmt.Sprintf("%s/pid", taskDir)
+	logFile := fmt.Sprintf("%s/execution.log", taskDir)
+	exitCodeFile := fmt.Sprintf("%s/exit_code", taskDir)
+
+	// Ensure the task directory exists inside the pod before writing to it
+	if err := c.Exec(ctx, fmt.Sprintf("mkdir -p %s", taskDir), "/workspaces", nil, nil, nil, nil); err != nil {
+		return fmt.Errorf("failed to create task directory in pod: %w", err)
+	}
+
+	// 1. Launch the command in the background using nohup
+	detachedCmd := fmt.Sprintf("nohup sh -c \"echo \\$\\$ > %s; %s > %s 2>&1; echo \\$? > %s\" >/dev/null 2>&1 &", pidFile, cmdStr, logFile, exitCodeFile)
+
+	klog.Infof("Launching task in background of sandbox pod (Task directory: %s)...", taskDir)
+	if err := c.Exec(ctx, detachedCmd, "/workspaces", envs, nil, nil, nil); err != nil {
+		return fmt.Errorf("failed to launch background task: %w", err)
+	}
+
+	if detached {
+		fmt.Printf("Task launched in detached mode. Task directory: %s\n", taskDir)
+		return nil
+	}
+
+	// 2. Tailing & status loop
+	var offset int64
+
+	// Set up signal channel for Ctrl+C
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigChan)
+
+	// Context for active cancellation
+	loopCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	// Separate goroutine to monitor Ctrl+C
+	go func() {
+		select {
+		case <-sigChan:
+			fmt.Printf("\nInterrupt received. Aborting task in sandbox pod...\n")
+			cancel()
+		case <-loopCtx.Done():
+		}
+	}()
+
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-loopCtx.Done():
+			// The context was canceled (either Ctrl+C, timeout, or external cancellation).
+			// We must kill the process in the pod before exiting!
+			// We use context.Background() since loopCtx is canceled.
+			killCtx, killCancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer killCancel()
+
+			fmt.Printf("Terminating process in pod...\n")
+			killCmd := fmt.Sprintf("if [ -f %s ]; then kill $(cat %s) 2>/dev/null || true; fi", pidFile, pidFile)
+			_ = c.Exec(killCtx, killCmd, "/workspaces", nil, nil, nil, nil)
+			return loopCtx.Err()
+
+		case <-ticker.C:
+			// Read new logs
+			// We run 'tail -c +<offset>' to read log delta.
+			var logBuf bytes.Buffer
+			tailCmd := fmt.Sprintf("if [ -f %s ]; then tail -c +%d %s; fi", logFile, offset+1, logFile)
+
+			if err := c.Exec(loopCtx, tailCmd, "/workspaces", nil, nil, &logBuf, nil); err == nil {
+				newData := logBuf.Bytes()
+				if len(newData) > 0 {
+					_, _ = os.Stdout.Write(newData)
+					offset += int64(len(newData))
+				}
+			} else {
+				klog.Warningf("Log streaming connection flaked: %v. Reconnecting...", err)
+			}
+
+			// Check if exit code file exists
+			var exitBuf bytes.Buffer
+			checkCmd := fmt.Sprintf("if [ -f %s ]; then cat %s; fi", exitCodeFile, exitCodeFile)
+			if err := c.Exec(loopCtx, checkCmd, "/workspaces", nil, nil, &exitBuf, nil); err == nil {
+				exitStr := strings.TrimSpace(exitBuf.String())
+				if exitStr != "" {
+					// Process completed!
+					// Do one final tail to flush any remaining log lines.
+					var finalBuf bytes.Buffer
+					finalTailCmd := fmt.Sprintf("if [ -f %s ]; then tail -c +%d %s; fi", logFile, offset+1, logFile)
+					if err := c.Exec(loopCtx, finalTailCmd, "/workspaces", nil, nil, &finalBuf, nil); err == nil {
+						newData := finalBuf.Bytes()
+						if len(newData) > 0 {
+							_, _ = os.Stdout.Write(newData)
+						}
+					}
+
+					// Parse exit code
+					code, err := strconv.Atoi(exitStr)
+					if err != nil {
+						return fmt.Errorf("invalid exit code '%s': %w", exitStr, err)
+					}
+					if code != 0 {
+						return fmt.Errorf("task failed with exit code %d", code)
+					}
+					return nil
+				}
+			}
+		}
+	}
 }
