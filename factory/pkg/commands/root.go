@@ -37,6 +37,7 @@ type RootFlags struct {
 	ResolvedSecrets  []factorysandbox.SecretMount
 	Envs             []string
 	ResolvedEnvs     []factorysandbox.EnvVar
+	Detached         bool
 }
 
 var rootFlags RootFlags
@@ -61,6 +62,7 @@ coding tasks without local side effects or host dependencies.`,
 	cmd.PersistentFlags().StringVar(&rootFlags.EphemeralStorage, "ephemeral-storage", "", "Sandbox ephemeral storage request/limit size")
 	cmd.PersistentFlags().StringSliceVar(&rootFlags.Secrets, "secret", nil, "Inject a secret with format secretName:mountPath (can be specified multiple times)")
 	cmd.PersistentFlags().StringArrayVar(&rootFlags.Envs, "env", nil, "Inject an environment variable with format KEY=VALUE (can be specified multiple times)")
+	cmd.PersistentFlags().BoolVar(&rootFlags.Detached, "detached", false, "Run the task in the background of the sandbox pod and return immediately")
 
 	cmd.PersistentPreRun = func(_ *cobra.Command, _ []string) {
 		if rootFlags.Namespace == "" {
