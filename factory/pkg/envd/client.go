@@ -337,7 +337,7 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 			defer killCancel()
 
 			fmt.Printf("Terminating process in pod...\n")
-			killCmd := fmt.Sprintf("if [ -f %s ]; then kill $(cat %s) 2>/dev/null || true; fi", pidFile, pidFile)
+			killCmd := fmt.Sprintf("if [ -f %s ]; then pids=\"$(cat %s) $(pgrep -P $(cat %s) 2>/dev/null)\"; kill $pids 2>/dev/null || true; fi", pidFile, pidFile, pidFile)
 			_ = c.Exec(killCtx, killCmd, "/workspaces", nil, nil, nil, nil)
 			return loopCtx.Err()
 
