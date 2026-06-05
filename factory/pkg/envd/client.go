@@ -110,6 +110,34 @@ func Connect(ctx context.Context, namespace, sandboxName string) (*Client, error
 		return nil, err
 	}
 
+	// If running inside Kubernetes cluster, connect directly to the service DNS
+	if os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
+		baseURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:49983", serviceName, namespace)
+		fmt.Printf("Running inside Kubernetes cluster. Connecting directly to service: %s\n", baseURL)
+
+		ready := false
+		for i := 0; i < 40; i++ {
+			time.Sleep(500 * time.Millisecond)
+			resp, err := http.Get(baseURL + "/health")
+			if err == nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				resp.Body.Close()
+				ready = true
+				break
+			}
+		}
+		if !ready {
+			return nil, fmt.Errorf("timed out connecting directly to envd service %s", serviceName)
+		}
+
+		processClient := processconnect.NewProcessClient(http.DefaultClient, baseURL)
+
+		return &Client{
+			baseURL:       baseURL,
+			processClient: processClient,
+			closePF:       func() {},
+		}, nil
+	}
+
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, fmt.Errorf("finding free port: %w", err)
