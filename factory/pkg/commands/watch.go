@@ -1038,7 +1038,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						args = append(args, "--namespace", rootFlags.Namespace)
 					}
 					if rootFlags.SecretName != "" {
-						args = append(args, "--secret", rootFlags.SecretName)
+						args = append(args, "--secret-name", rootFlags.SecretName)
 					}
 					if rootFlags.Image != "" {
 						args = append(args, "--image", rootFlags.Image)
