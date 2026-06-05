@@ -485,6 +485,272 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 		actionsTaken := 0
 		unassignedPRs := make(map[int]bool)
 
+		processPRsFunc := func(prIssues []*githubv39.Issue) {
+			if prMode == "disabled" {
+				return
+			}
+			for _, prIssue := range prIssues {
+				num := prIssue.GetNumber()
+				pr, _, err := ghClient.PullRequests.Get(ctx, owner, repo, num)
+				if err != nil {
+					klog.Errorf("Failed to fetch full PR #%d: %v", num, err)
+					continue
+				}
+
+				// Verify PR Author: Only process PRs created by the bot
+				author := pr.GetUser().GetLogin()
+				if !strings.EqualFold(author, githubLogin) {
+					klog.Infof("Skipping PR #%d because it was created by %s (not %s). We do not have permission to push to external forks.", num, author, githubLogin)
+					continue
+				}
+
+				headSHA := pr.GetHead().GetSHA()
+
+				// Fetch PR commits to find the last commit timestamp
+				prCommits, _, err := ghClient.PullRequests.ListCommits(ctx, owner, repo, num, nil)
+				var lastCommitTime time.Time
+				if err == nil {
+					for _, c := range prCommits {
+						if c.GetCommit().GetAuthor().GetDate().After(lastCommitTime) {
+							lastCommitTime = c.GetCommit().GetAuthor().GetDate()
+						}
+					}
+				}
+
+				// Fetch PR comments
+				comments, _, listCommentsErr := ghClient.Issues.ListComments(ctx, owner, repo, num, nil)
+
+				// Check Phase 1: Rebase/Conflicts
+				isConflicting := pr.Mergeable != nil && !*pr.Mergeable
+
+				if isConflicting {
+					filename := fmt.Sprintf("task-pr-%d-iterate.yaml", num)
+					if !taskExists(incomingDir, processingDir, filename) {
+						sandboxName := fmt.Sprintf("factory-pr-%d", num)
+						running, err := isSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName)
+						if err != nil {
+							klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
+							continue
+						} else if running {
+							klog.Infof("Skipping PR #%d rebase because there is an in-flight sandbox %s.", num, sandboxName)
+						} else {
+							if isAssigned(prIssue, targetAssignee) && !unassignedPRs[num] {
+								if dryRun {
+									fmt.Printf("[DRYRUN] Would unassign %s from PR #%d\n", targetAssignee, num)
+								} else {
+									fmt.Printf("Unassigning %s from PR #%d...\n", targetAssignee, num)
+									if _, _, err := ghClient.Issues.RemoveAssignees(ctx, owner, repo, num, []string{targetAssignee}); err != nil {
+										klog.Errorf("Failed to unassign %s from PR #%d: %v", targetAssignee, num, err)
+									}
+									unassignedPRs[num] = true
+								}
+							}
+
+							prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", owner, repo, num)
+							task := &QueueTask{
+								Type:      "pr-iterate",
+								URL:       prURL,
+								Number:    num,
+								Priority:  getPRPriority(prIssue),
+								Phase:     1,
+								CreatedAt: pr.GetCreatedAt(),
+								Assignee:  targetAssignee,
+								Status:    "Pending",
+							}
+
+							if dryRun {
+								fmt.Printf("[DRYRUN] Would queue rebase task for PR #%d: %s\n", num, prURL)
+							} else {
+								fmt.Printf("Queueing rebase task for PR #%d...\n", num)
+								if err := writeTaskAtomically(incomingDir, filename, task); err != nil {
+									klog.Errorf("Failed to queue rebase task for PR #%d: %v", num, err)
+								} else {
+									writeTaskJournalEvent(queueDir, filename, task, "Created", 0)
+								}
+							}
+						}
+					}
+					// If conflicting, we prioritize rebase and skip other PR checks for this PR in this loop
+					continue
+				}
+
+				// Check CI Check Failures
+				hasFailure := false
+				checkRuns, err := listAllCheckRuns(ctx, ghClient, owner, repo, headSHA)
+				if err == nil {
+					for _, run := range checkRuns {
+						if run.GetConclusion() == "failure" {
+							hasFailure = true
+							break
+						}
+					}
+				}
+
+				statuses, _, err := ghClient.Repositories.ListStatuses(ctx, owner, repo, headSHA, nil)
+				if err == nil {
+					for _, status := range statuses {
+						if status.GetState() == "failure" || status.GetState() == "error" {
+							hasFailure = true
+							break
+						}
+					}
+				}
+
+				state := processedPRs[num]
+
+				if hasFailure {
+					// Count investigations since last commit
+					investigationCount := 0
+					if listCommentsErr == nil {
+						for _, c := range comments {
+							if strings.EqualFold(c.GetUser().GetLogin(), githubLogin) &&
+								strings.Contains(c.GetBody(), "started investigating CI check failures") &&
+								c.GetCreatedAt().After(lastCommitTime) {
+								investigationCount++
+							}
+						}
+					}
+
+					if investigationCount >= 3 {
+						// Post giving up comment if we haven't already posted it since the last commit
+						hasPostedGivingUp := false
+						if listCommentsErr == nil {
+							for _, c := range comments {
+								if strings.EqualFold(c.GetUser().GetLogin(), githubLogin) &&
+									strings.Contains(c.GetBody(), "giving up. Human assistance is required") &&
+									c.GetCreatedAt().After(lastCommitTime) {
+									hasPostedGivingUp = true
+									break
+								}
+							}
+						}
+						if !hasPostedGivingUp && !dryRun {
+							addGitHubComment(ctx, ghClient, owner, repo, num, "🤖 AI Factory has attempted to fix CI failures for this PR 3 times since the last commit and is giving up. Human assistance is required.")
+						}
+						klog.Infof("Skipping PR #%d investigate because it has reached the maximum retry limit (3).", num)
+					} else if state.lastSHA != headSHA || time.Since(state.lastInvestigatedTime) > 6*time.Hour {
+						filename := fmt.Sprintf("task-pr-%d-investigate.yaml", num)
+						if !taskExists(incomingDir, processingDir, filename) {
+							sandboxName := fmt.Sprintf("factory-pr-%d", num)
+							running, err := isSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName)
+							if err != nil {
+								klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
+								continue
+							} else if running {
+								klog.Infof("Skipping PR #%d investigate because there is an in-flight sandbox %s.", num, sandboxName)
+							} else {
+								if isAssigned(prIssue, targetAssignee) && !unassignedPRs[num] {
+									if dryRun {
+										fmt.Printf("[DRYRUN] Would unassign %s from PR #%d\n", targetAssignee, num)
+									} else {
+										fmt.Printf("Unassigning %s from PR #%d...\n", targetAssignee, num)
+										if _, _, err := ghClient.Issues.RemoveAssignees(ctx, owner, repo, num, []string{targetAssignee}); err != nil {
+											klog.Errorf("Failed to unassign %s from PR #%d: %v", targetAssignee, num, err)
+										}
+										unassignedPRs[num] = true
+									}
+								}
+
+								prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", owner, repo, num)
+								task := &QueueTask{
+									Type:      "pr-investigate",
+									URL:       prURL,
+									Number:    num,
+									Priority:  getPRPriority(prIssue),
+									Phase:     3,
+									CreatedAt: pr.GetCreatedAt(),
+									Assignee:  targetAssignee,
+									Status:    "Pending",
+								}
+
+								if dryRun {
+									fmt.Printf("[DRYRUN] Would queue investigate task for PR #%d: %s\n", num, prURL)
+								} else {
+									fmt.Printf("Queueing investigate task for PR #%d...\n", num)
+									state.lastSHA = headSHA
+									state.lastInvestigatedTime = time.Now()
+									processedPRs[num] = state
+									if err := writeTaskAtomically(incomingDir, filename, task); err != nil {
+										klog.Errorf("Failed to queue investigate task for PR #%d: %v", num, err)
+									} else {
+										writeTaskJournalEvent(queueDir, filename, task, "Created", 0)
+									}
+								}
+							}
+						}
+					}
+				}
+
+				// Check review comments
+				if listCommentsErr == nil {
+					hasNewComments := false
+					for _, c := range comments {
+						if strings.Contains(strings.ToLower(c.GetUser().GetLogin()), "bot") {
+							continue
+						}
+						if c.GetCreatedAt().After(lastCommitTime) && c.GetCreatedAt().After(state.lastCommentAddressedTime) {
+							hasNewComments = true
+							break
+						}
+					}
+
+					if hasNewComments {
+						if os.Getenv("DRY_RUN") == "true" {
+							continue
+						}
+						filename := fmt.Sprintf("task-pr-%d-comments.yaml", num)
+						if !taskExists(incomingDir, processingDir, filename) {
+							sandboxName := fmt.Sprintf("factory-pr-%d", num)
+							running, err := isSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName)
+							if err != nil {
+								klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
+								continue
+							} else if running {
+								klog.Infof("Skipping PR #%d address-comments because there is an in-flight sandbox %s.", num, sandboxName)
+							} else {
+								if isAssigned(prIssue, targetAssignee) && !unassignedPRs[num] {
+									if dryRun {
+										fmt.Printf("[DRYRUN] Would unassign %s from PR #%d\n", targetAssignee, num)
+									} else {
+										fmt.Printf("Unassigning %s from PR #%d...\n", targetAssignee, num)
+										if _, _, err := ghClient.Issues.RemoveAssignees(ctx, owner, repo, num, []string{targetAssignee}); err != nil {
+											klog.Errorf("Failed to unassign %s from PR #%d: %v", targetAssignee, num, err)
+										}
+										unassignedPRs[num] = true
+									}
+								}
+
+								prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", owner, repo, num)
+								task := &QueueTask{
+									Type:      "pr-comments",
+									URL:       prURL,
+									Number:    num,
+									Priority:  getPRPriority(prIssue),
+									Phase:     2,
+									CreatedAt: pr.GetCreatedAt(),
+									Assignee:  targetAssignee,
+									Status:    "Pending",
+								}
+
+								if dryRun {
+									fmt.Printf("[DRYRUN] Would queue address-comments task for PR #%d: %s\n", num, prURL)
+								} else {
+									fmt.Printf("Queueing address-comments task for PR #%d...\n", num)
+									state.lastCommentAddressedTime = time.Now()
+									processedPRs[num] = state
+									if err := writeTaskAtomically(incomingDir, filename, task); err != nil {
+										klog.Errorf("Failed to queue address-comments task for PR #%d: %v", num, err)
+									} else {
+										writeTaskJournalEvent(queueDir, filename, task, "Created", 0)
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+
 		// Determine what to run
 		runIssueScan := false
 		if mode == "all" || mode == "scan" || mode == "scan-issue" {
@@ -693,268 +959,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				prIssues = append(prIssues, item)
 			}
 
-			if prMode != "disabled" {
-				for _, prIssue := range prIssues {
-					num := prIssue.GetNumber()
-					pr, _, err := ghClient.PullRequests.Get(ctx, owner, repo, num)
-					if err != nil {
-						klog.Errorf("Failed to fetch full PR #%d: %v", num, err)
-						continue
-					}
-
-					// Verify PR Author: Only process PRs created by the bot
-					author := pr.GetUser().GetLogin()
-					if !strings.EqualFold(author, githubLogin) {
-						klog.Infof("Skipping PR #%d because it was created by %s (not %s). We do not have permission to push to external forks.", num, author, githubLogin)
-						continue
-					}
-
-					headSHA := pr.GetHead().GetSHA()
-
-					// Fetch PR commits to find the last commit timestamp
-					prCommits, _, err := ghClient.PullRequests.ListCommits(ctx, owner, repo, num, nil)
-					var lastCommitTime time.Time
-					if err == nil {
-						for _, c := range prCommits {
-							if c.GetCommit().GetAuthor().GetDate().After(lastCommitTime) {
-								lastCommitTime = c.GetCommit().GetAuthor().GetDate()
-							}
-						}
-					}
-
-					// Fetch PR comments
-					comments, _, listCommentsErr := ghClient.Issues.ListComments(ctx, owner, repo, num, nil)
-
-					// Check Phase 1: Rebase/Conflicts
-					isConflicting := pr.Mergeable != nil && !*pr.Mergeable
-
-					if isConflicting {
-						filename := fmt.Sprintf("task-pr-%d-iterate.yaml", num)
-						if !taskExists(incomingDir, processingDir, filename) {
-							sandboxName := fmt.Sprintf("factory-pr-%d", num)
-							running, err := isSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName)
-							if err != nil {
-								klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
-								continue
-							} else if running {
-								klog.Infof("Skipping PR #%d rebase because there is an in-flight sandbox %s.", num, sandboxName)
-							} else {
-								if isAssigned(prIssue, targetAssignee) && !unassignedPRs[num] {
-									if dryRun {
-										fmt.Printf("[DRYRUN] Would unassign %s from PR #%d\n", targetAssignee, num)
-									} else {
-										fmt.Printf("Unassigning %s from PR #%d...\n", targetAssignee, num)
-										if _, _, err := ghClient.Issues.RemoveAssignees(ctx, owner, repo, num, []string{targetAssignee}); err != nil {
-											klog.Errorf("Failed to unassign %s from PR #%d: %v", targetAssignee, num, err)
-										}
-										unassignedPRs[num] = true
-									}
-								}
-
-								prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", owner, repo, num)
-								task := &QueueTask{
-									Type:      "pr-iterate",
-									URL:       prURL,
-									Number:    num,
-									Priority:  getPRPriority(prIssue),
-									Phase:     1,
-									CreatedAt: pr.GetCreatedAt(),
-									Assignee:  targetAssignee,
-									Status:    "Pending",
-								}
-
-								if dryRun {
-									fmt.Printf("[DRYRUN] Would queue rebase task for PR #%d: %s\n", num, prURL)
-								} else {
-									fmt.Printf("Queueing rebase task for PR #%d...\n", num)
-									if err := writeTaskAtomically(incomingDir, filename, task); err != nil {
-										klog.Errorf("Failed to queue rebase task for PR #%d: %v", num, err)
-									} else {
-										writeTaskJournalEvent(queueDir, filename, task, "Created", 0)
-									}
-								}
-							}
-						}
-						// If conflicting, we prioritize rebase and skip other PR checks for this PR in this loop
-						continue
-					}
-
-					// Check CI Check Failures
-					hasFailure := false
-					checkRuns, err := listAllCheckRuns(ctx, ghClient, owner, repo, headSHA)
-					if err == nil {
-						for _, run := range checkRuns {
-							if run.GetConclusion() == "failure" {
-								hasFailure = true
-								break
-							}
-						}
-					}
-
-					statuses, _, err := ghClient.Repositories.ListStatuses(ctx, owner, repo, headSHA, nil)
-					if err == nil {
-						for _, status := range statuses {
-							if status.GetState() == "failure" || status.GetState() == "error" {
-								hasFailure = true
-								break
-							}
-						}
-					}
-
-					state := processedPRs[num]
-
-					if hasFailure {
-						// Count investigations since last commit
-						investigationCount := 0
-						if listCommentsErr == nil {
-							for _, c := range comments {
-								if strings.EqualFold(c.GetUser().GetLogin(), githubLogin) &&
-									strings.Contains(c.GetBody(), "started investigating CI check failures") &&
-									c.GetCreatedAt().After(lastCommitTime) {
-									investigationCount++
-								}
-							}
-						}
-
-						if investigationCount >= 3 {
-							// Post giving up comment if we haven't already posted it since the last commit
-							hasPostedGivingUp := false
-							if listCommentsErr == nil {
-								for _, c := range comments {
-									if strings.EqualFold(c.GetUser().GetLogin(), githubLogin) &&
-										strings.Contains(c.GetBody(), "giving up. Human assistance is required") &&
-										c.GetCreatedAt().After(lastCommitTime) {
-										hasPostedGivingUp = true
-										break
-									}
-								}
-							}
-							if !hasPostedGivingUp && !dryRun {
-								addGitHubComment(ctx, ghClient, owner, repo, num, "🤖 AI Factory has attempted to fix CI failures for this PR 3 times since the last commit and is giving up. Human assistance is required.")
-							}
-							klog.Infof("Skipping PR #%d investigate because it has reached the maximum retry limit (3).", num)
-						} else if state.lastSHA != headSHA || time.Since(state.lastInvestigatedTime) > 6*time.Hour {
-							filename := fmt.Sprintf("task-pr-%d-investigate.yaml", num)
-							if !taskExists(incomingDir, processingDir, filename) {
-								sandboxName := fmt.Sprintf("factory-pr-%d", num)
-								running, err := isSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName)
-								if err != nil {
-									klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
-									continue
-								} else if running {
-									klog.Infof("Skipping PR #%d investigate because there is an in-flight sandbox %s.", num, sandboxName)
-								} else {
-									if isAssigned(prIssue, targetAssignee) && !unassignedPRs[num] {
-										if dryRun {
-											fmt.Printf("[DRYRUN] Would unassign %s from PR #%d\n", targetAssignee, num)
-										} else {
-											fmt.Printf("Unassigning %s from PR #%d...\n", targetAssignee, num)
-											if _, _, err := ghClient.Issues.RemoveAssignees(ctx, owner, repo, num, []string{targetAssignee}); err != nil {
-												klog.Errorf("Failed to unassign %s from PR #%d: %v", targetAssignee, num, err)
-											}
-											unassignedPRs[num] = true
-										}
-									}
-
-									prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", owner, repo, num)
-									task := &QueueTask{
-										Type:      "pr-investigate",
-										URL:       prURL,
-										Number:    num,
-										Priority:  getPRPriority(prIssue),
-										Phase:     3,
-										CreatedAt: pr.GetCreatedAt(),
-										Assignee:  targetAssignee,
-										Status:    "Pending",
-									}
-
-									if dryRun {
-										fmt.Printf("[DRYRUN] Would queue investigate task for PR #%d: %s\n", num, prURL)
-									} else {
-										fmt.Printf("Queueing investigate task for PR #%d...\n", num)
-										state.lastSHA = headSHA
-										state.lastInvestigatedTime = time.Now()
-										processedPRs[num] = state
-										if err := writeTaskAtomically(incomingDir, filename, task); err != nil {
-											klog.Errorf("Failed to queue investigate task for PR #%d: %v", num, err)
-										} else {
-											writeTaskJournalEvent(queueDir, filename, task, "Created", 0)
-										}
-									}
-								}
-							}
-						}
-					}
-
-					// Check review comments
-					if listCommentsErr == nil {
-						hasNewComments := false
-						for _, c := range comments {
-							if strings.Contains(strings.ToLower(c.GetUser().GetLogin()), "bot") {
-								continue
-							}
-							if c.GetCreatedAt().After(lastCommitTime) && c.GetCreatedAt().After(state.lastCommentAddressedTime) {
-								hasNewComments = true
-								break
-							}
-						}
-
-						if hasNewComments {
-							if os.Getenv("DRY_RUN") == "true" {
-								continue
-							}
-							filename := fmt.Sprintf("task-pr-%d-comments.yaml", num)
-							if !taskExists(incomingDir, processingDir, filename) {
-								sandboxName := fmt.Sprintf("factory-pr-%d", num)
-								running, err := isSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName)
-								if err != nil {
-									klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
-									continue
-								} else if running {
-									klog.Infof("Skipping PR #%d address-comments because there is an in-flight sandbox %s.", num, sandboxName)
-								} else {
-									if isAssigned(prIssue, targetAssignee) && !unassignedPRs[num] {
-										if dryRun {
-											fmt.Printf("[DRYRUN] Would unassign %s from PR #%d\n", targetAssignee, num)
-										} else {
-											fmt.Printf("Unassigning %s from PR #%d...\n", targetAssignee, num)
-											if _, _, err := ghClient.Issues.RemoveAssignees(ctx, owner, repo, num, []string{targetAssignee}); err != nil {
-												klog.Errorf("Failed to unassign %s from PR #%d: %v", targetAssignee, num, err)
-											}
-											unassignedPRs[num] = true
-										}
-									}
-
-									prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", owner, repo, num)
-									task := &QueueTask{
-										Type:      "pr-comments",
-										URL:       prURL,
-										Number:    num,
-										Priority:  getPRPriority(prIssue),
-										Phase:     2,
-										CreatedAt: pr.GetCreatedAt(),
-										Assignee:  targetAssignee,
-										Status:    "Pending",
-									}
-
-									if dryRun {
-										fmt.Printf("[DRYRUN] Would queue address-comments task for PR #%d: %s\n", num, prURL)
-									} else {
-										fmt.Printf("Queueing address-comments task for PR #%d...\n", num)
-										state.lastCommentAddressedTime = time.Now()
-										processedPRs[num] = state
-										if err := writeTaskAtomically(incomingDir, filename, task); err != nil {
-											klog.Errorf("Failed to queue address-comments task for PR #%d: %v", num, err)
-										} else {
-											writeTaskJournalEvent(queueDir, filename, task, "Created", 0)
-										}
-									}
-								}
-							}
-						}
-					}
-				}
-			}
+			processPRsFunc(prIssues)
 
 			// Scan chores
 			if (mode == "all" || mode == "scan" || mode == "scan-pr") && choresMode != "disabled" {
@@ -994,9 +999,12 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 			}
 
 			var issues []*githubv39.Issue
+			var fastPRIssues []*githubv39.Issue
 			for _, item := range uniqueIssues {
 				if item.PullRequestLinks == nil {
 					issues = append(issues, item)
+				} else {
+					fastPRIssues = append(fastPRIssues, item)
 				}
 			}
 
@@ -1069,6 +1077,13 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					}
 				}
 			}
+
+			// Process PRs assigned to the bot in the fast cycle
+			if len(fastPRIssues) > 0 {
+				klog.Infof("Processing %d assigned PRs in fast cycle...", len(fastPRIssues))
+				processPRsFunc(fastPRIssues)
+			}
+
 			state.mu.Lock()
 			state.lastIssueScan = now
 			state.mu.Unlock()
