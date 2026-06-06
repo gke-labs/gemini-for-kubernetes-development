@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/geminitokens"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
@@ -132,44 +132,7 @@ coding tasks without local side effects or host dependencies.`,
 }
 
 func getGeminiAPIKey(secret *corev1.Secret) string {
-	if token, err := getTokenFromScript(); err == nil && token != "" {
-		return token
-	}
-	if secret != nil {
-		return string(secret.Data[KeyGeminiAPIKey])
-	}
-	return ""
-}
-
-func getTokenFromScript() (string, error) {
-	dir := os.Getenv("TOKENSCRIPT_DIR")
-	if dir == "" {
-		return "", nil
-	}
-
-	files, err := os.ReadDir(dir)
-	if err != nil {
-		return "", fmt.Errorf("failed to read tokenscript dir: %w", err)
-	}
-
-	for _, f := range files {
-		if f.IsDir() || strings.HasPrefix(f.Name(), "..") {
-			continue
-		}
-
-		path := filepath.Join(dir, f.Name())
-		cmd := exec.Command(path)
-		var out bytes.Buffer
-		cmd.Stdout = &out
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			return "", fmt.Errorf("failed to run tokenscript %s: %w", path, err)
-		}
-
-		return strings.TrimSpace(out.String()), nil
-	}
-
-	return "", nil
+	return geminitokens.GetGeminiAPIKey(secret)
 }
 
 func checkAndRunInBackground(sessionName string) (bool, error) {

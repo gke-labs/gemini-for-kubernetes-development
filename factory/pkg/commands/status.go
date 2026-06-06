@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/geminitokens"
 	"github.com/spf13/cobra"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -55,8 +57,15 @@ func NewStatusCommand(ctx context.Context) *cobra.Command {
 				if geminiKey == "" {
 					fmt.Fprintf(w, "Gemini Key\t[FAIL]\tGEMINI_API_KEY missing in secret '%s' and TOKENSCRIPT_DIR was not set or returned empty\n", rootFlags.SecretName)
 				} else {
-					if token, _ := getTokenFromScript(); token != "" {
+					if token := geminitokens.GetGeminiAPIKey(nil); token != "" {
 						fmt.Fprintf(w, "Gemini Key\t[OK]\tConfigured via dynamic tokenscript\n")
+						status, err := geminitokens.GetTokensStatus()
+						if err == nil && status != nil {
+							fmt.Fprintf(w, "Tokens Status\t[OK]\tTotal: %d (Active: %d, Quota Exceeded: %d)\n", status.Total, status.Active, status.QuotaExceeded)
+							if len(status.QuotaExceededList) > 0 {
+								fmt.Fprintf(w, "Quota Exceeded\t[WARN]\t%s (resets at midnight)\n", strings.Join(status.QuotaExceededList, ", "))
+							}
+						}
 					} else {
 						fmt.Fprintf(w, "Gemini Key\t[OK]\tConfigured in secret '%s'\n", rootFlags.SecretName)
 					}
