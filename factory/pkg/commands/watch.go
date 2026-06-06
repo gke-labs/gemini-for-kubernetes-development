@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
@@ -147,6 +149,31 @@ func isSandboxTaskRunning(ctx context.Context, kubeClient *clients.KubernetesCli
 
 	state := annotations["sandbox.gemini.google.com/last-task-state"]
 	if state == "" || strings.EqualFold(state, "Running") {
+		// Verify if the task has actually finished by connecting to the sandbox via envd
+		client, err := envd.Connect(ctx, namespace, name)
+		if err == nil {
+			defer client.Close()
+			var buf bytes.Buffer
+			// Check exit_code of the latest task
+			checkCmd := "cat $(ls -td /workspaces/tasks/* 2>/dev/null | head -1)/exit_code 2>/dev/null"
+			if err := client.Exec(ctx, checkCmd, "/workspaces", nil, nil, &buf, nil); err == nil {
+				exitStr := strings.TrimSpace(buf.String())
+				if exitStr != "" {
+					// Task has finished!
+					taskState := "Completed"
+					if exitStr != "0" {
+						taskState = "Failed"
+					}
+					taskType := annotations["sandbox.gemini.google.com/last-task-type"]
+					if taskType == "" {
+						taskType = "task"
+					}
+					klog.Infof("Detected completed task %s inside sandbox %s with exit code %s. Updating sandbox annotation to %s.", taskType, name, exitStr, taskState)
+					_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, namespace, name, taskType, taskState)
+					return false, nil
+				}
+			}
+		}
 		return true, nil
 	}
 
@@ -1286,6 +1313,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					if rootFlags.EphemeralStorage != "" {
 						args = append(args, "--ephemeral-storage", rootFlags.EphemeralStorage)
 					}
+					args = append(args, "--abort-on-cancel=false")
 
 					cmd := exec.Command(executable, args...)
 

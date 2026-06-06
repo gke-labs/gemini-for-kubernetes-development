@@ -271,7 +271,7 @@ func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 	fmt.Println("Running agent task via envd...")
 	cmdStr := fmt.Sprintf("bash -c 'set -o pipefail; bash %s'", scriptPath)
 	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "agent", "Running")
-	if err := client.RunTaskResilient(ctx, cmdStr, envMap, taskDir, rootFlags.Detached); err != nil {
+	if err := client.RunTaskResilient(ctx, cmdStr, envMap, taskDir, rootFlags.Detached, rootFlags.AbortOnCancel); err != nil {
 		_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "agent", "Failed")
 		return fmt.Errorf("running task: %w", err)
 	}
