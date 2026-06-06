@@ -18,6 +18,7 @@ package repowatch
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -1579,4 +1580,193 @@ func TestReconciler_Reconcile_AssigneeFilteredPRs(t *testing.T) {
 	// Only PR 3 should be watched
 	g.Expect(fetchedRepoWatch.Status.ReviewSandboxes).To(gomega.HaveLen(1))
 	g.Expect(fetchedRepoWatch.Status.ReviewSandboxes[0].Number).To(gomega.Equal(3))
+}
+
+func TestIsGPURequired(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	tests := []struct {
+		name    string
+		content string
+		want    bool
+	}{
+		{
+			name:    "no gpu field",
+			content: `{"image": "ubuntu"}`,
+			want:    false,
+		},
+		{
+			name:    "gpu false",
+			content: `{"hostRequirements": {"gpu": false}}`,
+			want:    false,
+		},
+		{
+			name:    "gpu true boolean",
+			content: `{"hostRequirements": {"gpu": true}}`,
+			want:    true,
+		},
+		{
+			name:    "gpu true string",
+			content: `{"hostRequirements": {"gpu": "true"}}`,
+			want:    true,
+		},
+		{
+			name:    "gpu false string",
+			content: `{"hostRequirements": {"gpu": "false"}}`,
+			want:    false,
+		},
+		{
+			name: "gpu true with line comments",
+			content: `{
+				// host requirements config
+				"hostRequirements": {
+					"gpu": true // set to true
+				}
+			}`,
+			want: true,
+		},
+		{
+			name: "gpu true with block comments",
+			content: `{
+				/* block comment 
+				   gpu setup */
+				"hostRequirements": {
+					"gpu": true
+				}
+			}`,
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isGPURequired([]byte(tt.content))
+			g.Expect(got).To(gomega.Equal(tt.want))
+		})
+	}
+}
+
+func TestReconciler_GPU_FromDevcontainer(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	s := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(s)
+	_ = reviewv1alpha1.AddToScheme(s)
+
+	responseBody := `[
+        {"number": 1, "head": {"repo": {"clone_url": "https://github.com/test/repo", "html_url": "https://github.com/test/repo", "owner": {"login": "test"}}, "ref": "feature-gpu"}, "html_url": "https://github.com/test/repo/pull/1", "diff_url": "d", "title": "t", "assignees": []}
+    ]`
+
+	devcontainerJSON := `{
+		"hostRequirements": {
+			"gpu": true
+		}
+	}`
+
+	mockHTTPClient := &http.Client{
+		Transport: &mockRoundTripper{
+			responses: map[string]func() *http.Response{
+				"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=created&state=open": func() *http.Response {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(strings.NewReader(responseBody)),
+					}
+				},
+				"https://api.github.com/repos/test/repo/contents/.devcontainer/devcontainer.json?ref=feature-gpu": func() *http.Response {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(strings.NewReader(fmt.Sprintf(`{"type": "file", "encoding": "base64", "content": "%s"}`, base64.StdEncoding.EncodeToString([]byte(devcontainerJSON))))),
+					}
+				},
+				"https://api.github.com/user": func() *http.Response {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(strings.NewReader(`{"login": "test-user"}`)),
+					}
+				},
+			},
+		},
+	}
+	ghClient := clients.NewGitHubClientFromHTTP(mockHTTPClient)
+
+	objName := "test-repowatch-gpu"
+	objNamespace := "default"
+	req := reconcile.Request{
+		NamespacedName: types.NamespacedName{
+			Name:      objName,
+			Namespace: objNamespace,
+		},
+	}
+
+	repoWatch := &reviewv1alpha1.RepoWatch{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      objName,
+			Namespace: objNamespace,
+		},
+		Spec: reviewv1alpha1.RepoWatchSpec{
+			RepoURL:          "https://github.com/test/repo",
+			GithubSecretName: "github-secret",
+			Review: reviewv1alpha1.PRReviewSpec{
+				MaxActiveSandboxes: 10,
+				LLM: reviewv1alpha1.LLMConfig{
+					APIKeySecretRef: "dummy-secret",
+				},
+			},
+		},
+	}
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "github-secret",
+			Namespace: objNamespace,
+		},
+		Data: map[string][]byte{
+			"pat": []byte("test-pat"),
+		},
+	}
+
+	fakeClient := clientfake.NewClientBuilder().
+		WithScheme(s).
+		WithObjects(repoWatch, secret).
+		WithStatusSubresource(repoWatch).
+		Build()
+
+	r := &Reconciler{
+		Client: fakeClient,
+		Scheme: s,
+		NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
+			return ghClient, map[string]string{"pat": "test-pat"}, nil
+		},
+	}
+
+	_, err := r.Reconcile(context.Background(), req)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	// List created sandboxes and inspect
+	sandboxList := &unstructured.UnstructuredList{}
+	sandboxList.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "agents.x-k8s.io",
+		Version: "v1alpha1",
+		Kind:    "Sandbox",
+	})
+	g.Expect(fakeClient.List(context.Background(), sandboxList)).To(gomega.Succeed())
+	g.Expect(sandboxList.Items).To(gomega.HaveLen(1))
+
+	// Verify GPU requirements are set (nodeSelector and limits)
+	sandboxObj := sandboxList.Items[0]
+	spec := sandboxObj.Object["spec"].(map[string]interface{})
+	podTemplate := spec["podTemplate"].(map[string]interface{})
+	podSpec := podTemplate["spec"].(map[string]interface{})
+
+	// Check nodeSelector
+	nodeSelector, ok := podSpec["nodeSelector"].(map[string]interface{})
+	g.Expect(ok).To(gomega.BeTrue())
+	g.Expect(nodeSelector["cloud.google.com/gke-gpu-sharing-strategy"]).To(gomega.Equal("time-sharing"))
+
+	// Check limits
+	containers := podSpec["containers"].([]interface{})
+	container := containers[0].(map[string]interface{})
+	resources := container["resources"].(map[string]interface{})
+	limits := resources["limits"].(map[string]interface{})
+	g.Expect(limits["nvidia.com/gpu"]).To(gomega.Equal("1"))
 }

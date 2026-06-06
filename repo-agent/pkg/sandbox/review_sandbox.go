@@ -269,6 +269,14 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 					},
 					"spec": map[string]interface{}{
 						"serviceAccountName": opt.ServiceAccountName,
+						"nodeSelector": func() interface{} {
+							if opt.GPU {
+								return map[string]interface{}{
+									"cloud.google.com/gke-gpu-sharing-strategy": "time-sharing",
+								}
+							}
+							return nil
+						}(),
 						"runtimeClassName": func() interface{} {
 							if opt.DindSupport == DindSupportGvisor {
 								return "gvisor"
@@ -314,9 +322,15 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 								"image":   image,
 								"command": command,
 								"resources": map[string]interface{}{
-									"limits": map[string]interface{}{
-										"ephemeral-storage": "6Gi",
-									},
+									"limits": func() map[string]interface{} {
+										limits := map[string]interface{}{
+											"ephemeral-storage": "6Gi",
+										}
+										if opt.GPU {
+											limits["nvidia.com/gpu"] = "1"
+										}
+										return limits
+									}(),
 									"requests": map[string]interface{}{
 										"ephemeral-storage": "6Gi",
 									},

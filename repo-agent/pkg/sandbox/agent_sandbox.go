@@ -284,6 +284,14 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 					},
 					"spec": map[string]interface{}{
 						"serviceAccountName": opt.ServiceAccountName,
+						"nodeSelector": func() interface{} {
+							if opt.GPU {
+								return map[string]interface{}{
+									"cloud.google.com/gke-gpu-sharing-strategy": "time-sharing",
+								}
+							}
+							return nil
+						}(),
 						"runtimeClassName": func() interface{} {
 							if opt.DindSupport == DindSupportGvisor {
 								return "gvisor"
@@ -351,11 +359,17 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 										"memory":            resources.Requests.Memory().String(),
 										"ephemeral-storage": ephemeralRequest.String(),
 									},
-									"limits": map[string]interface{}{
-										"cpu":               resources.Limits.Cpu().String(),
-										"memory":            resources.Limits.Memory().String(),
-										"ephemeral-storage": ephemeralLimit.String(),
-									},
+									"limits": func() map[string]interface{} {
+										limits := map[string]interface{}{
+											"cpu":               resources.Limits.Cpu().String(),
+											"memory":            resources.Limits.Memory().String(),
+											"ephemeral-storage": ephemeralLimit.String(),
+										}
+										if opt.GPU {
+											limits["nvidia.com/gpu"] = "1"
+										}
+										return limits
+									}(),
 								},
 								"env": env,
 								"volumeMounts": func() []interface{} {
