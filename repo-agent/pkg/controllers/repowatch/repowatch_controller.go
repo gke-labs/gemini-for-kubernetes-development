@@ -826,11 +826,27 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 		Kind:    "Sandbox",
 	}
 	sandboxList.SetGroupVersionKind(sandboxGVK)
-	if err := r.List(ctx, sandboxList, client.InNamespace(repoWatch.Namespace), client.MatchingLabels{"sandbox.gemini.google.com/type": "issue"}); err != nil {
+	labelSelector := client.MatchingLabels{
+		"review.gemini.google.com/repowatch": repoWatch.Name,
+	}
+	if err := r.List(ctx, sandboxList, client.InNamespace(repoWatch.Namespace), labelSelector); err != nil {
 		return err
 	}
 
 	ownedSandboxes := getOwnedSandboxes(sandboxList.Items, repoWatch.UID)
+	// Filter to only include issue sandboxes (checking both new and legacy labels)
+	var issueSandboxes []unstructured.Unstructured
+	for _, sb := range ownedSandboxes {
+		labels := sb.GetLabels()
+		sType := labels["sandbox.gemini.google.com/type"]
+		if sType == "" {
+			sType = labels["sandbox-type"]
+		}
+		if sType == "issue" {
+			issueSandboxes = append(issueSandboxes, sb)
+		}
+	}
+	ownedSandboxes = issueSandboxes
 
 	// 3. Process Issues
 	activeSandboxes := 0
@@ -961,7 +977,14 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 	// Cleanup old sandboxes
 	for _, sandbox := range ownedSandboxes {
 		labels := sandbox.GetLabels()
-		if labels != nil && labels["sandbox.gemini.google.com/type"] == "dev" {
+		sType := ""
+		if labels != nil {
+			sType = labels["sandbox.gemini.google.com/type"]
+			if sType == "" {
+				sType = labels["sandbox-type"]
+			}
+		}
+		if sType == "dev" {
 			continue
 		}
 		if !validSandboxNames[sandbox.GetName()] {
@@ -1316,6 +1339,7 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, user *github.
 			Labels: map[string]string{
 				"review.gemini.google.com/repowatch": repoWatch.Name,
 				"sandbox.gemini.google.com/type":     "review",
+				"sandbox-type":                       "review",
 			},
 			UserLogin:   userLogin,
 			UserName:    userName,
@@ -1350,6 +1374,7 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, user *github.
 		RepoName:          repoWatch.GetName(),
 		MaxReviewFiles:    repoWatch.Spec.Review.MaxReviewFiles,
 		IgnoreFiles:       repoWatch.Spec.Review.IgnoreFiles,
+		IncludeFiles:      repoWatch.Spec.Review.IncludeFiles,
 		SeverityThreshold: repoWatch.Spec.Review.SeverityThreshold,
 		LLMExtensions:     repoWatch.Spec.Review.LLM.Extensions,
 		WorkspaceDiskSize: repoWatch.Spec.Review.WorkspaceDiskSize,
@@ -1570,11 +1595,27 @@ func (r *Reconciler) reconcileDevSandboxesInternal(ctx context.Context, user *gi
 		Kind:    "Sandbox",
 	}
 	sandboxList.SetGroupVersionKind(sandboxGVK)
-	if err := r.List(ctx, sandboxList, client.InNamespace(repoWatch.Namespace), client.MatchingLabels{"sandbox.gemini.google.com/type": "dev"}); err != nil {
+	labelSelector := client.MatchingLabels{
+		"review.gemini.google.com/repowatch": repoWatch.Name,
+	}
+	if err := r.List(ctx, sandboxList, client.InNamespace(repoWatch.Namespace), labelSelector); err != nil {
 		return nil, nil, fmt.Errorf("listing dev sandboxes: %w", err)
 	}
 
 	ownedSandboxes := getOwnedSandboxes(sandboxList.Items, repoWatch.UID)
+	// Filter to only include dev sandboxes (checking both new and legacy labels)
+	var devSandboxes []unstructured.Unstructured
+	for _, sb := range ownedSandboxes {
+		labels := sb.GetLabels()
+		sType := labels["sandbox.gemini.google.com/type"]
+		if sType == "" {
+			sType = labels["sandbox-type"]
+		}
+		if sType == "dev" {
+			devSandboxes = append(devSandboxes, sb)
+		}
+	}
+	ownedSandboxes = devSandboxes
 
 	activeSandboxes := 0
 	watchedDevSandboxes := []reviewv1alpha1.DevSandbox{}

@@ -106,6 +106,11 @@ type PRReviewSpec struct {
 	// +kubebuilder:validation:Optional
 	IgnoreFiles []string `json:"ignoreFiles,omitempty"`
 
+	// IncludeFiles specifies a list of glob patterns for files that should be included during review.
+	// If specified, only files matching these patterns will be reviewed.
+	// +kubebuilder:validation:Optional
+	IncludeFiles []string `json:"includeFiles,omitempty"`
+
 	// SeverityThreshold sets the minimum severity level for review comments to be posted.
 	// Comments below this threshold will be filtered out. Valid values: "LOW", "MEDIUM", "HIGH".
 	// +kubebuilder:validation:Optional

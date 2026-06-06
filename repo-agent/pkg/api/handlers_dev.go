@@ -78,13 +78,25 @@ func (s *Server) listDevSandboxesFromK8s(ctx context.Context, namespace, repo st
 	}
 	list, err := s.K8sManager.Client.Resource(gvr).Namespace(namespace).List(context.Background(),
 		v1.ListOptions{
-			LabelSelector: fmt.Sprintf("review.gemini.google.com/repowatch=%s,sandbox.gemini.google.com/type=dev", repo),
+			LabelSelector: fmt.Sprintf("review.gemini.google.com/repowatch=%s", repo),
 		})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list DevSandbox CRs: %w", err)
 	}
 
+	var devSandboxes []unstructured.Unstructured
 	for _, item := range list.Items {
+		labels := item.GetLabels()
+		sType := labels["sandbox.gemini.google.com/type"]
+		if sType == "" {
+			sType = labels["sandbox-type"]
+		}
+		if sType == "dev" {
+			devSandboxes = append(devSandboxes, item)
+		}
+	}
+
+	for _, item := range devSandboxes {
 		replicas, found, err := unstructured.NestedInt64(item.Object, "spec", "replicas")
 		if err != nil || !found {
 			log.Info("Replicas (.spec.replicas) not found in DevSandbox", "name", item.GetName())
@@ -382,7 +394,6 @@ func (s *Server) createDevSandbox(c *gin.Context) {
 		Labels: map[string]string{
 			"review.gemini.google.com/repowatch": repo,
 			"sandbox.gemini.google.com/type":     "dev",
-			"sandbox-type":                       "dev",
 		},
 		Annotations: annotations,
 		CloneURL:    cloneURL,

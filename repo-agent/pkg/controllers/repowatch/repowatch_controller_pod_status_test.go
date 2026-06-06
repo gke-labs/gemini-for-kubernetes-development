@@ -95,7 +95,8 @@ func TestReconciler_ReconcileIssues_PodEvicted(t *testing.T) {
 				"name":      sandboxName,
 				"namespace": "default",
 				"labels": map[string]interface{}{
-					"sandbox.gemini.google.com/type": "issue",
+					"sandbox.gemini.google.com/type":     "issue",
+					"review.gemini.google.com/repowatch": repoWatch.Name,
 				},
 				"ownerReferences": []interface{}{
 					map[string]interface{}{
@@ -118,8 +119,8 @@ func TestReconciler_ReconcileIssues_PodEvicted(t *testing.T) {
 			Name:      sandboxName + "-pod",
 			Namespace: "default",
 			Labels: map[string]string{
-				"sandbox":      sandboxName,
-				"sandbox-type": "issue",
+				"sandbox":                        sandboxName,
+				"sandbox.gemini.google.com/type": "issue",
 			},
 		},
 		Status: corev1.PodStatus{
@@ -215,7 +216,8 @@ func TestReconciler_ReconcileIssues_PodFailedOOM(t *testing.T) {
 				"name":      sandboxName,
 				"namespace": "default",
 				"labels": map[string]interface{}{
-					"sandbox.gemini.google.com/type": "issue",
+					"sandbox.gemini.google.com/type":     "issue",
+					"review.gemini.google.com/repowatch": repoWatch.Name,
 				},
 				"ownerReferences": []interface{}{
 					map[string]interface{}{
@@ -238,8 +240,8 @@ func TestReconciler_ReconcileIssues_PodFailedOOM(t *testing.T) {
 			Name:      sandboxName + "-pod",
 			Namespace: "default",
 			Labels: map[string]string{
-				"sandbox":      sandboxName,
-				"sandbox-type": "issue",
+				"sandbox":                        sandboxName,
+				"sandbox.gemini.google.com/type": "issue",
 			},
 		},
 		Status: corev1.PodStatus{
@@ -335,7 +337,8 @@ func TestReconciler_ReconcileIssues_PodPendingScheduled(t *testing.T) {
 				"name":      sandboxName,
 				"namespace": "default",
 				"labels": map[string]interface{}{
-					"sandbox.gemini.google.com/type": "issue",
+					"sandbox.gemini.google.com/type":     "issue",
+					"review.gemini.google.com/repowatch": repoWatch.Name,
 				},
 				"ownerReferences": []interface{}{
 					map[string]interface{}{
@@ -358,8 +361,8 @@ func TestReconciler_ReconcileIssues_PodPendingScheduled(t *testing.T) {
 			Name:      sandboxName + "-pod",
 			Namespace: "default",
 			Labels: map[string]string{
-				"sandbox":      sandboxName,
-				"sandbox-type": "issue",
+				"sandbox":                        sandboxName,
+				"sandbox.gemini.google.com/type": "issue",
 			},
 		},
 		Status: corev1.PodStatus{

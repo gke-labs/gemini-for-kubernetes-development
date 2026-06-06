@@ -266,7 +266,7 @@ const Overseer = ({ onBack, getSandboxStatusClass, namespace: userNamespace }) =
                                         })()}
 
                                         {sandboxes.map(sb => {
-                                            const type = sb.metadata.labels?.['sandbox-type'] || 'dev';
+                                            const type = sb.metadata.labels?.['sandbox.gemini.google.com/type'] || sb.metadata.labels?.['sandbox-type'] || 'dev';
                                             const icon = type === 'review' ? '🔄' : type === 'issue' ? '🐞' : '🛠️';
                                             const name = sb.metadata.labels?.['chore.gemini.google.com/name'] || sb.metadata.name;
                                             return (
