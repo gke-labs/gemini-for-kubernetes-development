@@ -38,6 +38,7 @@ type RootFlags struct {
 	Envs             []string
 	ResolvedEnvs     []factorysandbox.EnvVar
 	Detached         bool
+	AbortOnCancel    bool
 }
 
 var rootFlags RootFlags
@@ -63,6 +64,7 @@ coding tasks without local side effects or host dependencies.`,
 	cmd.PersistentFlags().StringSliceVar(&rootFlags.Secrets, "secret", nil, "Inject a secret with format secretName:mountPath (can be specified multiple times)")
 	cmd.PersistentFlags().StringArrayVar(&rootFlags.Envs, "env", nil, "Inject an environment variable with format KEY=VALUE (can be specified multiple times)")
 	cmd.PersistentFlags().BoolVar(&rootFlags.Detached, "detached", false, "Run the task in the background of the sandbox pod and return immediately")
+	cmd.PersistentFlags().BoolVar(&rootFlags.AbortOnCancel, "abort-on-cancel", true, "Abort the background task in the sandbox pod if the local CLI command is canceled or killed")
 
 	cmd.PersistentPreRun = func(_ *cobra.Command, _ []string) {
 		if rootFlags.Namespace == "" {

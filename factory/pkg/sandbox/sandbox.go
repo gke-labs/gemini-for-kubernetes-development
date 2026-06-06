@@ -4,13 +4,14 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func EnsureFixSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, taskID, cloneURL, taskTitle, image, diskSize, ephemeralStorage string, secrets []SecretMount, envs []EnvVar) (string, error) {
+func EnsureFixSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, taskID, cloneURL, htmlURL, taskTitle, image, diskSize, ephemeralStorage string, secrets []SecretMount, envs []EnvVar) (string, error) {
 	name := fmt.Sprintf("fix-%s-%s", repoName, taskID)
 
 	_, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
@@ -36,6 +37,7 @@ func EnsureFixSandbox(ctx context.Context, kubeClient *clients.KubernetesClient,
 			Annotations: map[string]string{
 				"repo":     repoName,
 				"cloneURL": cloneURL,
+				"htmlURL":  htmlURL,
 			},
 			Image:             image,
 			Replicas:          1,
@@ -61,7 +63,7 @@ func EnsureFixSandbox(ctx context.Context, kubeClient *clients.KubernetesClient,
 	return name, nil
 }
 
-func EnsureAgentSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, taskID, cloneURL, taskTitle, image, diskSize, ephemeralStorage string, secrets []SecretMount, envs []EnvVar) (string, error) {
+func EnsureAgentSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, taskID, cloneURL, htmlURL, taskTitle, image, diskSize, ephemeralStorage string, secrets []SecretMount, envs []EnvVar) (string, error) {
 	name := fmt.Sprintf("agent-%s-%s", repoName, taskID)
 
 	_, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
@@ -87,6 +89,7 @@ func EnsureAgentSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 			Annotations: map[string]string{
 				"repo":     repoName,
 				"cloneURL": cloneURL,
+				"htmlURL":  htmlURL,
 			},
 			Image:             image,
 			Replicas:          1,
@@ -112,7 +115,7 @@ func EnsureAgentSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 	return name, nil
 }
 
-func AliasSandboxToPR(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, sandboxName string, prNum int) error {
+func AliasSandboxToPR(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, sandboxName string, prNum int, prURL string) error {
 	unstructObj, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("getting sandbox %s: %w", sandboxName, err)
@@ -130,6 +133,9 @@ func AliasSandboxToPR(ctx context.Context, kubeClient *clients.KubernetesClient,
 		annotations = make(map[string]string)
 	}
 	annotations["pr"] = fmt.Sprintf("%d", prNum)
+	if prURL != "" {
+		annotations["htmlURL"] = prURL
+	}
 	unstructObj.SetAnnotations(annotations)
 
 	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Update(ctx, unstructObj, metav1.UpdateOptions{})
@@ -204,6 +210,12 @@ func EnsureReviewSandbox(ctx context.Context, kubeClient *clients.KubernetesClie
 }
 
 func UpdateSandboxTaskAnnotation(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, sandboxName, taskType, taskState string) error {
+	if ctx.Err() != nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+	}
+
 	unstructObj, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("getting sandbox %s: %w", sandboxName, err)

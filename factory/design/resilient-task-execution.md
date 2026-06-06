@@ -89,3 +89,23 @@ In interactive (default) mode, the client performs the following loop:
 | **Log Polling Overhead** | Downloading the entire log file recursively wastes CPU/bandwidth. | Used `tail -c +<offset>` to retrieve only the delta bytes since the last read. |
 | **Log Truncation** | The process might exit, but the client breaks the loop before reading final log lines. | Perform one final `tail -c +<offset>` check after detecting the `exit_code` file. |
 | **Orphaned Processes** | Forgotten tasks run forever. | Deleting the sandbox pod via standard controller methods cleans up all resources. |
+
+---
+
+## Execution Modes & Cancellation Semantics
+
+Below is a comparison of how `--background`, `--detached`, and `--abort-on-cancel` control task execution and monitoring:
+
+| Flag / Mode | Run Location | Monitoring Mechanism | Sandbox Status Updates | Resiliency to Overseer Restart |
+| :--- | :--- | :--- | :--- | :--- |
+| **`--background`** | **Host (Overseer container)** | Local CLI daemon runs in background on the host; port-forwards and streams logs. | Yes, the host CLI process updates annotations to `Completed`/`Failed` on task completion. | **Aborted.** Overseer restart kills the host process, which sends a kill signal to the sandbox. |
+| **`--detached`** | **Sandbox Pod** | runs via `nohup ... &` in the sandbox pod. Local CLI exits immediately. | **No.** CLI exits immediately and stops tracking, leaving task status as `Running` in annotations indefinitely. | **Resilient.** Task inside sandbox runs completely independently. |
+| **`--abort-on-cancel`** (default `true`) | **N/A** (Cleanup policy) | Controls whether local CLI should send a `kill` signal to the sandbox pod if context is canceled or CLI process is killed. | N/A | If `false`, killing the CLI process leaves the task running inside the sandbox pod. |
+
+### Orchestrator (Watch Daemon) Resiliency Pattern
+
+To prevent restarts of the `overseer-kcc` container/pod from disrupting active subagent tasks while keeping execution state updated in Kubernetes:
+1. `factory watch` runs child commands synchronously on the host container to stream logs and monitor completion.
+2. It passes `--abort-on-cancel=false` to these child commands. If `factory watch` exits or restarts, the child processes terminate without killing the background tasks in the sandbox pods.
+3. On restart, `factory watch` dynamically reconciles any sandboxes in a `Running` task state by executing a lightweight check inside the pod for the task's `exit_code` file, updating the metadata annotations to `Completed`/`Failed` retroactively.
+

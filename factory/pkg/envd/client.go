@@ -343,7 +343,7 @@ func (c *Client) RunTask(ctx context.Context, cmdStr string, envs map[string]str
 	return c.Exec(ctx, cmdStr, "/workspaces", envs, nil, os.Stdout, os.Stderr)
 }
 
-func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[string]string, taskDir string, detached bool) error {
+func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[string]string, taskDir string, detached bool, abortOnCancel bool) error {
 	pidFile := fmt.Sprintf("%s/pid", taskDir)
 	logFile := fmt.Sprintf("%s/execution.log", taskDir)
 	exitCodeFile := fmt.Sprintf("%s/exit_code", taskDir)
@@ -395,14 +395,15 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 		select {
 		case <-loopCtx.Done():
 			// The context was canceled (either Ctrl+C, timeout, or external cancellation).
-			// We must kill the process in the pod before exiting!
-			// We use context.Background() since loopCtx is canceled.
-			killCtx, killCancel := context.WithTimeout(context.Background(), 15*time.Second)
-			defer killCancel()
+			// We must kill the process in the pod before exiting if abortOnCancel is true!
+			if abortOnCancel {
+				killCtx, killCancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer killCancel()
 
-			fmt.Printf("Terminating process in pod...\n")
-			killCmd := fmt.Sprintf("if [ -f %s ]; then pids=\"$(cat %s) $(pgrep -P $(cat %s) 2>/dev/null)\"; kill $pids 2>/dev/null || true; fi", pidFile, pidFile, pidFile)
-			_ = c.Exec(killCtx, killCmd, "/workspaces", nil, nil, nil, nil)
+				fmt.Printf("Terminating process in pod...\n")
+				killCmd := fmt.Sprintf("if [ -f %s ]; then pids=\"$(cat %s) $(pgrep -P $(cat %s) 2>/dev/null)\"; kill $pids 2>/dev/null || true; fi", pidFile, pidFile, pidFile)
+				_ = c.Exec(killCtx, killCmd, "/workspaces", nil, nil, nil, nil)
+			}
 			return loopCtx.Err()
 
 		case <-ticker.C:

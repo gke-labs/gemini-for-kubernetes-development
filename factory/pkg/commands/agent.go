@@ -195,7 +195,7 @@ func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 	taskTitle := fmt.Sprintf("Agent: %s", agentDef.Name)
 
 	fmt.Printf("Ensuring sandbox for task %s...\n", taskID)
-	sandboxName, err := factorysandbox.EnsureAgentSandbox(ctx, kubeClient, rootFlags.Namespace, repo, taskID, cloneURL, taskTitle, rootFlags.Image, rootFlags.DiskSize, ephemeralStorage, secrets, rootFlags.ResolvedEnvs)
+	sandboxName, err := factorysandbox.EnsureAgentSandbox(ctx, kubeClient, rootFlags.Namespace, repo, taskID, cloneURL, flags.URL, taskTitle, rootFlags.Image, rootFlags.DiskSize, ephemeralStorage, secrets, rootFlags.ResolvedEnvs)
 	if err != nil {
 		return fmt.Errorf("ensuring agent sandbox: %w", err)
 	}
@@ -271,7 +271,7 @@ func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 	fmt.Println("Running agent task via envd...")
 	cmdStr := fmt.Sprintf("bash -c 'set -o pipefail; bash %s'", scriptPath)
 	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "agent", "Running")
-	if err := client.RunTaskResilient(ctx, cmdStr, envMap, taskDir, rootFlags.Detached); err != nil {
+	if err := client.RunTaskResilient(ctx, cmdStr, envMap, taskDir, rootFlags.Detached, rootFlags.AbortOnCancel); err != nil {
 		_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "agent", "Failed")
 		return fmt.Errorf("running task: %w", err)
 	}
@@ -307,7 +307,7 @@ func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 
 	if createdPRNum > 0 {
 		fmt.Printf("Aliasing sandbox %s to PR #%d...\n", sandboxName, createdPRNum)
-		if err := factorysandbox.AliasSandboxToPR(ctx, kubeClient, rootFlags.Namespace, sandboxName, createdPRNum); err != nil {
+		if err := factorysandbox.AliasSandboxToPR(ctx, kubeClient, rootFlags.Namespace, sandboxName, createdPRNum, prURL); err != nil {
 			klog.Warningf("Failed to alias sandbox to PR #%d: %v", createdPRNum, err)
 		}
 		fmt.Printf("PR created/updated: %s\n", prURL)

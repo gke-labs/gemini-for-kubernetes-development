@@ -173,10 +173,10 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch boo
 	var sandboxName string
 	if isIssue {
 		fmt.Printf("Ensuring sandbox for issue #%d...\n", issueNum)
-		sandboxName, err = factorysandbox.EnsureFixSandbox(ctx, kubeClient, rootFlags.Namespace, repo, strconv.Itoa(issueNum), cloneURL, issueTitle, rootFlags.Image, rootFlags.DiskSize, ephemeralStorage, secrets, rootFlags.ResolvedEnvs)
+		sandboxName, err = factorysandbox.EnsureFixSandbox(ctx, kubeClient, rootFlags.Namespace, repo, strconv.Itoa(issueNum), cloneURL, targetURL, issueTitle, rootFlags.Image, rootFlags.DiskSize, ephemeralStorage, secrets, rootFlags.ResolvedEnvs)
 	} else {
 		fmt.Printf("Ensuring sandbox for task %s on repo %s/%s...\n", name, owner, repo)
-		sandboxName, err = factorysandbox.EnsureFixSandbox(ctx, kubeClient, rootFlags.Namespace, repo, name, cloneURL, issueTitle, rootFlags.Image, rootFlags.DiskSize, ephemeralStorage, secrets, rootFlags.ResolvedEnvs)
+		sandboxName, err = factorysandbox.EnsureFixSandbox(ctx, kubeClient, rootFlags.Namespace, repo, name, cloneURL, targetURL, issueTitle, rootFlags.Image, rootFlags.DiskSize, ephemeralStorage, secrets, rootFlags.ResolvedEnvs)
 	}
 	if err != nil {
 		return fmt.Errorf("ensuring sandbox: %w", err)
@@ -290,7 +290,7 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch boo
 	fmt.Println("Running fix-issue task via envd...")
 	cmdStr := fmt.Sprintf("bash -c 'set -o pipefail; bash %s'", scriptPath)
 	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "fix-issue", "Running")
-	if err := client.RunTaskResilient(ctx, cmdStr, envMap, taskDir, rootFlags.Detached); err != nil {
+	if err := client.RunTaskResilient(ctx, cmdStr, envMap, taskDir, rootFlags.Detached, rootFlags.AbortOnCancel); err != nil {
 		_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "fix-issue", "Failed")
 		return fmt.Errorf("running task: %w", err)
 	}
@@ -324,7 +324,7 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch boo
 
 	if prNum > 0 {
 		fmt.Printf("Aliasing sandbox %s to PR #%d...\n", sandboxName, prNum)
-		if err := factorysandbox.AliasSandboxToPR(ctx, kubeClient, rootFlags.Namespace, sandboxName, prNum); err != nil {
+		if err := factorysandbox.AliasSandboxToPR(ctx, kubeClient, rootFlags.Namespace, sandboxName, prNum, prURL); err != nil {
 			klog.Warningf("Failed to alias sandbox to PR #%d: %v", prNum, err)
 		}
 
