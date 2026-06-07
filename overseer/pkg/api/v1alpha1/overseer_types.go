@@ -17,7 +17,6 @@ limitations under the License.
 package v1alpha1
 
 import (
-	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -120,11 +119,7 @@ type OverseerSpec struct {
 	// +kubebuilder:default="10Gi"
 	EphemeralStorage string `json:"ephemeralStorage,omitempty"`
 
-	// Extensions is a list of extensions to install in the sandbox
-	// before running the agent. Each entry specifies a source
-	// (GitHub URL or extension name) and optional ref.
-	// +kubebuilder:validation:Optional
-	Extensions []reviewv1alpha1.Extension `json:"extensions,omitempty"`
+	
 
 	// Review configuration for PRs
 	// +kubebuilder:validation:Optional

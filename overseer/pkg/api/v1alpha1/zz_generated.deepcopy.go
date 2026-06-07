@@ -5,7 +5,6 @@
 package v1alpha1
 
 import (
-	repowatchv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -120,11 +119,6 @@ func (in *OverseerSpec) DeepCopyInto(out *OverseerSpec) {
 		in, out := &in.Repo, &out.Repo
 		*out = new(RepoSpec)
 		**out = **in
-	}
-	if in.Extensions != nil {
-		in, out := &in.Extensions, &out.Extensions
-		*out = make([]repowatchv1alpha1.Extension, len(*in))
-		copy(*out, *in)
 	}
 	in.Review.DeepCopyInto(&out.Review)
 	if in.MaxActiveReviews != nil {

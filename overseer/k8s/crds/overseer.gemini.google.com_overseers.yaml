@@ -64,17 +64,6 @@ spec:
               ephemeralStorage:
                 default: 10Gi
                 type: string
-              extensions:
-                items:
-                  properties:
-                    ref:
-                      type: string
-                    source:
-                      type: string
-                  required:
-                  - source
-                  type: object
-                type: array
               geminiAPIKeySecretName:
                 type: string
               image:
