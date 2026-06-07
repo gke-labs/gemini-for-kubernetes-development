@@ -123,11 +123,51 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 			},
 		},
 		map[string]interface{}{
+			"name": "GITHUB_TOKEN",
+			"valueFrom": map[string]interface{}{
+				"secretKeyRef": map[string]interface{}{
+					"name":     githubSecretName,
+					"key":      "GITHUB_TOKEN",
+					"optional": true,
+				},
+			},
+		},
+		map[string]interface{}{
+			"name": "GITHUB_LOGIN",
+			"valueFrom": map[string]interface{}{
+				"secretKeyRef": map[string]interface{}{
+					"name":     githubSecretName,
+					"key":      "GITHUB_LOGIN",
+					"optional": true,
+				},
+			},
+		},
+		map[string]interface{}{
+			"name": "GITHUB_EMAIL",
+			"valueFrom": map[string]interface{}{
+				"secretKeyRef": map[string]interface{}{
+					"name":     githubSecretName,
+					"key":      "GITHUB_EMAIL",
+					"optional": true,
+				},
+			},
+		},
+		map[string]interface{}{
 			"name": "GEMINI_API_KEY",
 			"valueFrom": map[string]interface{}{
 				"secretKeyRef": map[string]interface{}{
 					"name":     apiKeySecretName,
 					"key":      "gemini",
+					"optional": true,
+				},
+			},
+		},
+		map[string]interface{}{
+			"name": "GEMINI_API_KEY_ALT",
+			"valueFrom": map[string]interface{}{
+				"secretKeyRef": map[string]interface{}{
+					"name":     apiKeySecretName,
+					"key":      "GEMINI_API_KEY",
 					"optional": true,
 				},
 			},
@@ -303,6 +343,36 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 				"secretKeyRef": map[string]interface{}{
 					"name":     botSecretName,
 					"key":      "manual_pat",
+					"optional": true,
+				},
+			},
+		})
+		env = append(env, map[string]interface{}{
+			"name": "GITHUB_LOGIN",
+			"valueFrom": map[string]interface{}{
+				"secretKeyRef": map[string]interface{}{
+					"name":     botSecretName,
+					"key":      "GITHUB_LOGIN",
+					"optional": true,
+				},
+			},
+		})
+		env = append(env, map[string]interface{}{
+			"name": "GITHUB_EMAIL",
+			"valueFrom": map[string]interface{}{
+				"secretKeyRef": map[string]interface{}{
+					"name":     botSecretName,
+					"key":      "GITHUB_EMAIL",
+					"optional": true,
+				},
+			},
+		})
+		env = append(env, map[string]interface{}{
+			"name": "GITHUB_TOKEN",
+			"valueFrom": map[string]interface{}{
+				"secretKeyRef": map[string]interface{}{
+					"name":     botSecretName,
+					"key":      "GITHUB_TOKEN",
 					"optional": true,
 				},
 			},

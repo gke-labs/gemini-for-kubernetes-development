@@ -61,6 +61,10 @@ function constructPrompt {
             cat /workspaces/prompt/06b-examples-prs-review.txt >> "$PROMPT_FILE"
         fi
         cat /workspaces/prompt/08-footer.txt >> "$PROMPT_FILE"
+        
+        BOT_NAME="${GITHUB_USER_ID:-codebot-robot}"
+        sed -i "s/{{BOT_NAME}}/$BOT_NAME/g" "$PROMPT_FILE"
+        
         PROMPT=$(cat "$PROMPT_FILE")
     else
         PROMPT="${AGENT_PROMPT:-You are the Overseer. Monitor the repository and orchestrate agents.}"
@@ -98,10 +102,10 @@ EOF
     chmod +x /usr/local/bin/gh
 
     # Map GITHUB_BOT_* env variables if set
-    GITHUB_USER_ID="${GITHUB_BOT_LOGIN:-$GITHUB_USER_ID}"
+    GITHUB_USER_ID="${GITHUB_BOT_LOGIN:-${GITHUB_LOGIN:-$GITHUB_USER_ID}}"
     GITHUB_USER_NAME="${GITHUB_BOT_NAME:-$GITHUB_BOT_NAME}"
-    GITHUB_USER_EMAIL="${GITHUB_BOT_EMAIL:-$GITHUB_BOT_EMAIL}"
-    GITHUB_USER_TOKEN="${GITHUB_BOT_MANUAL_PAT:-${GITHUB_BOT_OAUTH_PAT:-${GITHUB_BOT_TOKEN:-${MANUAL_PAT:-${OAUTH_PAT:-$GITHUB_USER_TOKEN}}}}}"
+    GITHUB_USER_EMAIL="${GITHUB_BOT_EMAIL:-${GITHUB_EMAIL:-$GITHUB_USER_EMAIL}}"
+    GITHUB_USER_TOKEN="${GITHUB_BOT_MANUAL_PAT:-${GITHUB_BOT_OAUTH_PAT:-${GITHUB_BOT_TOKEN:-${GITHUB_TOKEN:-${MANUAL_PAT:-${OAUTH_PAT:-$GITHUB_USER_TOKEN}}}}}}"
 
     # Also ensure GITHUB_TOKEN is set for tools that specifically look for it
     if [ -n "$GITHUB_USER_TOKEN" ]; then
@@ -147,6 +151,9 @@ manager
 bin/
 EOF
 }
+
+# Fallback for Gemini API Key if mounted using alternative key name (GEMINI_API_KEY)
+export GEMINI_API_KEY="${GEMINI_API_KEY:-$GEMINI_API_KEY_ALT}"
 
 # Setup git and gh
 setupGit
