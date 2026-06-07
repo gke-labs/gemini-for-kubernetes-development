@@ -93,36 +93,6 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 
 	env := []interface{}{
 		map[string]interface{}{
-			"name": "MANUAL_PAT",
-			"valueFrom": map[string]interface{}{
-				"secretKeyRef": map[string]interface{}{
-					"name":     githubSecretName,
-					"key":      "manual_pat",
-					"optional": true,
-				},
-			},
-		},
-		map[string]interface{}{
-			"name": "OAUTH_PAT",
-			"valueFrom": map[string]interface{}{
-				"secretKeyRef": map[string]interface{}{
-					"name":     githubSecretName,
-					"key":      "oauth_pat",
-					"optional": true,
-				},
-			},
-		},
-		map[string]interface{}{
-			"name": "GITHUB_USER_TOKEN",
-			"valueFrom": map[string]interface{}{
-				"secretKeyRef": map[string]interface{}{
-					"name":     githubSecretName,
-					"key":      "pat",
-					"optional": true,
-				},
-			},
-		},
-		map[string]interface{}{
 			"name": "GITHUB_TOKEN",
 			"valueFrom": map[string]interface{}{
 				"secretKeyRef": map[string]interface{}{
@@ -154,16 +124,6 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 		},
 		map[string]interface{}{
 			"name": "GEMINI_API_KEY",
-			"valueFrom": map[string]interface{}{
-				"secretKeyRef": map[string]interface{}{
-					"name":     apiKeySecretName,
-					"key":      "gemini",
-					"optional": true,
-				},
-			},
-		},
-		map[string]interface{}{
-			"name": "GEMINI_API_KEY_ALT",
 			"valueFrom": map[string]interface{}{
 				"secretKeyRef": map[string]interface{}{
 					"name":     apiKeySecretName,
@@ -287,66 +247,6 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 
 	botSecretName := o.Spec.RobotAccount
 	if botSecretName != "" {
-		env = append(env, map[string]interface{}{
-			"name": "GITHUB_BOT_LOGIN",
-			"valueFrom": map[string]interface{}{
-				"secretKeyRef": map[string]interface{}{
-					"name":     botSecretName,
-					"key":      "userid",
-					"optional": true,
-				},
-			},
-		})
-		env = append(env, map[string]interface{}{
-			"name": "GITHUB_BOT_NAME",
-			"valueFrom": map[string]interface{}{
-				"secretKeyRef": map[string]interface{}{
-					"name":     botSecretName,
-					"key":      "name",
-					"optional": true,
-				},
-			},
-		})
-		env = append(env, map[string]interface{}{
-			"name": "GITHUB_BOT_EMAIL",
-			"valueFrom": map[string]interface{}{
-				"secretKeyRef": map[string]interface{}{
-					"name":     botSecretName,
-					"key":      "email",
-					"optional": true,
-				},
-			},
-		})
-		env = append(env, map[string]interface{}{
-			"name": "GITHUB_BOT_TOKEN",
-			"valueFrom": map[string]interface{}{
-				"secretKeyRef": map[string]interface{}{
-					"name":     botSecretName,
-					"key":      "pat",
-					"optional": true,
-				},
-			},
-		})
-		env = append(env, map[string]interface{}{
-			"name": "GITHUB_BOT_OAUTH_PAT",
-			"valueFrom": map[string]interface{}{
-				"secretKeyRef": map[string]interface{}{
-					"name":     botSecretName,
-					"key":      "oauth_pat",
-					"optional": true,
-				},
-			},
-		})
-		env = append(env, map[string]interface{}{
-			"name": "GITHUB_BOT_MANUAL_PAT",
-			"valueFrom": map[string]interface{}{
-				"secretKeyRef": map[string]interface{}{
-					"name":     botSecretName,
-					"key":      "manual_pat",
-					"optional": true,
-				},
-			},
-		})
 		env = append(env, map[string]interface{}{
 			"name": "GITHUB_LOGIN",
 			"valueFrom": map[string]interface{}{

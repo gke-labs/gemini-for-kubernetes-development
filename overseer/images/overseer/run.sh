@@ -101,11 +101,11 @@ HTTPS_PROXY=http://github-portal.overseer-system.svc.cluster.local:80 SSL_CERT_F
 EOF
     chmod +x /usr/local/bin/gh
 
-    # Map GITHUB_BOT_* env variables if set
-    GITHUB_USER_ID="${GITHUB_BOT_LOGIN:-${GITHUB_LOGIN:-$GITHUB_USER_ID}}"
-    GITHUB_USER_NAME="${GITHUB_BOT_NAME:-$GITHUB_BOT_NAME}"
-    GITHUB_USER_EMAIL="${GITHUB_BOT_EMAIL:-${GITHUB_EMAIL:-$GITHUB_USER_EMAIL}}"
-    GITHUB_USER_TOKEN="${GITHUB_BOT_MANUAL_PAT:-${GITHUB_BOT_OAUTH_PAT:-${GITHUB_BOT_TOKEN:-${GITHUB_TOKEN:-${MANUAL_PAT:-${OAUTH_PAT:-$GITHUB_USER_TOKEN}}}}}}"
+    # Map GitHub credentials from environment
+    GITHUB_USER_ID="${GITHUB_LOGIN:-$GITHUB_USER_ID}"
+    GITHUB_USER_NAME="${GITHUB_LOGIN:-$GITHUB_USER_NAME}"
+    GITHUB_USER_EMAIL="${GITHUB_EMAIL:-$GITHUB_USER_EMAIL}"
+    GITHUB_USER_TOKEN="${GITHUB_TOKEN:-$GITHUB_USER_TOKEN}"
 
     # Also ensure GITHUB_TOKEN is set for tools that specifically look for it
     if [ -n "$GITHUB_USER_TOKEN" ]; then
@@ -151,9 +151,6 @@ manager
 bin/
 EOF
 }
-
-# Fallback for Gemini API Key if mounted using alternative key name (GEMINI_API_KEY)
-export GEMINI_API_KEY="${GEMINI_API_KEY:-$GEMINI_API_KEY_ALT}"
 
 # Setup git and gh
 setupGit
