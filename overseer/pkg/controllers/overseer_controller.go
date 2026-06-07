@@ -297,22 +297,20 @@ func (r *OverseerReconciler) ensureOverseerRBAC(ctx context.Context, o *overseer
 }
 
 func (r *OverseerReconciler) ensureSecrets(ctx context.Context, o *overseerv1alpha1.Overseer, targetNamespace string) error {
-	secretsToCopy := []string{o.Spec.RobotAccount, o.Spec.GeminiAPIKeySecretName, "tokenscript", "github-portal-ca"}
-	for _, name := range secretsToCopy {
-		if name == "" {
-			continue
-		}
+	log := log.FromContext(ctx)
+
+	// 1. Reconcile system secrets (tokenscript, github-portal-ca) by copying them
+	systemSecrets := []string{"tokenscript", "github-portal-ca"}
+	for _, name := range systemSecrets {
 		// check if secret exists in targetNamespace
 		s := &corev1.Secret{}
 		err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: targetNamespace}, s)
 		if err == nil {
-			// Found it.
 			continue
 		}
 		if !errors.IsNotFound(err) {
 			return err
 		}
-		// Not found, try copying from fallback namespaces
 		if err := r.copySecret(ctx, name, []string{o.Namespace, "overseer-system", "repo-agent-system"}, targetNamespace); err != nil {
 			if errors.IsNotFound(err) {
 				if name == "tokenscript" {
@@ -320,10 +318,107 @@ func (r *OverseerReconciler) ensureSecrets(ctx context.Context, o *overseerv1alp
 				}
 				o.Status.OverseerStatus = "Error"
 				o.Status.Message = fmt.Sprintf("Secret %s not found in %s, overseer-system, or repo-agent-system", name, targetNamespace)
-				return nil // Don't return error to stop reconcile but update status
+				return nil
 			}
 			return err
 		}
+	}
+
+	// 2. Resolve credentials secret and Gemini API key secret from source namespaces
+	var githubLogin, githubEmail, githubToken []byte
+	if o.Spec.RobotAccount != "" {
+		srcRobotSecret, err := r.findSecret(ctx, o.Spec.RobotAccount, []string{o.Namespace, "overseer-system", "repo-agent-system"})
+		if err != nil {
+			if errors.IsNotFound(err) {
+				o.Status.OverseerStatus = "Error"
+				o.Status.Message = fmt.Sprintf("Robot account secret %s not found in %s, overseer-system, or repo-agent-system", o.Spec.RobotAccount, targetNamespace)
+				return nil
+			}
+			return err
+		}
+		
+		githubLogin = getSecretValue(srcRobotSecret, "GITHUB_LOGIN", "userid")
+		githubEmail = getSecretValue(srcRobotSecret, "GITHUB_EMAIL", "email")
+		githubToken = getSecretValue(srcRobotSecret, "GITHUB_TOKEN", "pat")
+	}
+
+	var geminiAPIKey []byte
+	geminiSecretName := o.Spec.GeminiAPIKeySecretName
+	if geminiSecretName == "" {
+		geminiSecretName = "gemini-api-key"
+	}
+	srcGeminiSecret, err := r.findSecret(ctx, geminiSecretName, []string{o.Namespace, "overseer-system", "repo-agent-system"})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			o.Status.OverseerStatus = "Error"
+			o.Status.Message = fmt.Sprintf("Gemini API key secret %s not found in %s, overseer-system, or repo-agent-system", geminiSecretName, targetNamespace)
+			return nil
+		}
+		return err
+	}
+	geminiAPIKey = getSecretValue(srcGeminiSecret, "GEMINI_API_KEY", "gemini")
+
+	// 3. Create or Update "factory-user" secret in target namespace
+	factorySecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "factory-user",
+			Namespace: targetNamespace,
+		},
+		Data: map[string][]byte{},
+	}
+	if len(githubLogin) > 0 {
+		factorySecret.Data["GITHUB_LOGIN"] = githubLogin
+	}
+	if len(githubEmail) > 0 {
+		factorySecret.Data["GITHUB_EMAIL"] = githubEmail
+	}
+	if len(githubToken) > 0 {
+		factorySecret.Data["GITHUB_TOKEN"] = githubToken
+	}
+	if len(geminiAPIKey) > 0 {
+		factorySecret.Data["GEMINI_API_KEY"] = geminiAPIKey
+	}
+
+	existingSecret := &corev1.Secret{}
+	err = r.Get(ctx, types.NamespacedName{Name: "factory-user", Namespace: targetNamespace}, existingSecret)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			log.Info("Creating factory-user secret", "namespace", targetNamespace)
+			return r.Create(ctx, factorySecret)
+		}
+		return err
+	}
+
+	// Update if changed
+	factorySecret.ResourceVersion = existingSecret.ResourceVersion
+	return r.Update(ctx, factorySecret)
+}
+
+func (r *OverseerReconciler) findSecret(ctx context.Context, name string, namespaces []string) (*corev1.Secret, error) {
+	var lastErr error
+	for _, ns := range namespaces {
+		secret := &corev1.Secret{}
+		err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: ns}, secret)
+		if err == nil {
+			return secret, nil
+		}
+		if !errors.IsNotFound(err) {
+			return nil, err
+		}
+		lastErr = err
+	}
+	return nil, lastErr
+}
+
+func getSecretValue(s *corev1.Secret, key string, fallbackKey string) []byte {
+	if s == nil || s.Data == nil {
+		return nil
+	}
+	if val, ok := s.Data[key]; ok && len(val) > 0 {
+		return val
+	}
+	if val, ok := s.Data[fallbackKey]; ok && len(val) > 0 {
+		return val
 	}
 	return nil
 }

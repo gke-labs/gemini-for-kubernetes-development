@@ -84,19 +84,14 @@ func ReconcileOverseer(ctx context.Context, c client.Client, o *overseerv1alpha1
 func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespace, repoSandboxImage, configDirImage string, hasTokenScript bool) *unstructured.Unstructured {
 	image := os.Getenv("OVERSEER_IMAGE")
 
-	apiKeySecretName := o.Spec.GeminiAPIKeySecretName
-	if apiKeySecretName == "" {
-		apiKeySecretName = "gemini-api-key"
-	}
-
-	githubSecretName := o.Spec.RobotAccount
+	secretName := "factory-user"
 
 	env := []interface{}{
 		map[string]interface{}{
 			"name": "GITHUB_TOKEN",
 			"valueFrom": map[string]interface{}{
 				"secretKeyRef": map[string]interface{}{
-					"name":     githubSecretName,
+					"name":     secretName,
 					"key":      "GITHUB_TOKEN",
 					"optional": true,
 				},
@@ -106,7 +101,7 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 			"name": "GITHUB_LOGIN",
 			"valueFrom": map[string]interface{}{
 				"secretKeyRef": map[string]interface{}{
-					"name":     githubSecretName,
+					"name":     secretName,
 					"key":      "GITHUB_LOGIN",
 					"optional": true,
 				},
@@ -116,7 +111,7 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 			"name": "GITHUB_EMAIL",
 			"valueFrom": map[string]interface{}{
 				"secretKeyRef": map[string]interface{}{
-					"name":     githubSecretName,
+					"name":     secretName,
 					"key":      "GITHUB_EMAIL",
 					"optional": true,
 				},
@@ -126,7 +121,7 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 			"name": "GEMINI_API_KEY",
 			"valueFrom": map[string]interface{}{
 				"secretKeyRef": map[string]interface{}{
-					"name":     apiKeySecretName,
+					"name":     secretName,
 					"key":      "GEMINI_API_KEY",
 					"optional": true,
 				},
@@ -245,39 +240,7 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 		}
 	}
 
-	botSecretName := o.Spec.RobotAccount
-	if botSecretName != "" {
-		env = append(env, map[string]interface{}{
-			"name": "GITHUB_LOGIN",
-			"valueFrom": map[string]interface{}{
-				"secretKeyRef": map[string]interface{}{
-					"name":     botSecretName,
-					"key":      "GITHUB_LOGIN",
-					"optional": true,
-				},
-			},
-		})
-		env = append(env, map[string]interface{}{
-			"name": "GITHUB_EMAIL",
-			"valueFrom": map[string]interface{}{
-				"secretKeyRef": map[string]interface{}{
-					"name":     botSecretName,
-					"key":      "GITHUB_EMAIL",
-					"optional": true,
-				},
-			},
-		})
-		env = append(env, map[string]interface{}{
-			"name": "GITHUB_TOKEN",
-			"valueFrom": map[string]interface{}{
-				"secretKeyRef": map[string]interface{}{
-					"name":     botSecretName,
-					"key":      "GITHUB_TOKEN",
-					"optional": true,
-				},
-			},
-		})
-	}
+
 
 	ephemeralStorage := o.Spec.EphemeralStorage
 	if ephemeralStorage == "" {

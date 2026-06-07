@@ -395,16 +395,12 @@ func createChoreSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 
 	userLogin, userName, userEmail := resolveGithubUserFromSecret(ctx, kubeClient.Clientset, namespace)
 
-	botLogin := os.Getenv("GITHUB_BOT_LOGIN")
-	botName := os.Getenv("GITHUB_BOT_NAME")
-	botEmail := os.Getenv("GITHUB_BOT_EMAIL")
+	botLogin := os.Getenv("GITHUB_LOGIN")
+	botEmail := os.Getenv("GITHUB_EMAIL")
+	botName := botLogin
 
-	apiKeySecretName := overseer.Spec.GeminiAPIKeySecretName
-	if apiKeySecretName == "" {
-		apiKeySecretName = "gemini-api-key"
-	}
-
-	githubSecretName := overseer.Spec.RobotAccount
+	apiKeySecretName := "factory-user"
+	githubSecretName := "factory-user"
 
 	scriptToken, err := getTokenFromScript()
 	if err != nil {
@@ -1127,18 +1123,14 @@ func createIssueSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 	// We need to fetch user info. In Overseer, we might just use env vars.
 	userLogin, userName, userEmail := resolveGithubUserFromSecret(ctx, kubeClient.Clientset, namespace)
 
-	botLogin := os.Getenv("GITHUB_BOT_LOGIN")
-	botName := os.Getenv("GITHUB_BOT_NAME")
-	botEmail := os.Getenv("GITHUB_BOT_EMAIL")
+	botLogin := os.Getenv("GITHUB_LOGIN")
+	botEmail := os.Getenv("GITHUB_EMAIL")
+	botName := botLogin
 
 	branchName := fmt.Sprintf("issue-%d-%s", issue.GetNumber(), randString(4))
 
-	apiKeySecretName := overseer.Spec.GeminiAPIKeySecretName
-	if apiKeySecretName == "" {
-		apiKeySecretName = "gemini-api-key"
-	}
-
-	githubSecretName := overseer.Spec.RobotAccount
+	apiKeySecretName := "factory-user"
+	githubSecretName := "factory-user"
 
 	scriptToken, err := getTokenFromScript()
 	if err != nil {
@@ -1236,20 +1228,17 @@ func createPRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 
 	userLogin, userName, userEmail := resolveGithubUserFromSecret(ctx, kubeClient.Clientset, namespace)
 
-	botLogin := os.Getenv("GITHUB_BOT_LOGIN")
-	botName := os.Getenv("GITHUB_BOT_NAME")
-	botEmail := os.Getenv("GITHUB_BOT_EMAIL")
+	botLogin := os.Getenv("GITHUB_LOGIN")
+	botEmail := os.Getenv("GITHUB_EMAIL")
+	botName := botLogin
 
-	apiKeySecretName := overseer.Spec.GeminiAPIKeySecretName
-	if apiKeySecretName == "" {
-		apiKeySecretName = "gemini-api-key"
-	}
+	apiKeySecretName := "factory-user"
 
 	maxReviewFiles := overseer.Spec.Review.MaxReviewFiles
 	if maxReviewFiles == 0 {
 		maxReviewFiles = 150
 	}
-	githubSecretName := overseer.Spec.RobotAccount
+	githubSecretName := "factory-user"
 
 	scriptToken, err := getTokenFromScript()
 	if err != nil {
