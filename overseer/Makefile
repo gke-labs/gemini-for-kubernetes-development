@@ -131,11 +131,6 @@ push-images-overseer:
 
 .PHONY: push-images
 push-images: push-images-overseer
-	../dev/tools/push-images --image-prefix=$(REGISTRY) $(KIND_CLUSTER_ARG) \
-	--working-dir .. \
-	--images-dir ../repo-agent/images \
-	--only repo-sandbox \
-	--only configdir-cli
 
 .PHONY: clean
 clean:
