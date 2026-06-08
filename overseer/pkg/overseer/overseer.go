@@ -238,6 +238,11 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 		ephemeralStorage = "10Gi"
 	}
 
+	diskSize := o.Spec.WorkspaceDiskSize
+	if diskSize == "" {
+		diskSize = "10Gi"
+	}
+
 	podSpec := map[string]interface{}{
 		"serviceAccountName": "overseer",
 		"containers": []interface{}{
@@ -258,10 +263,12 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 						"ephemeral-storage": ephemeralStorage,
 					},
 				},
+				"volumeMounts": []interface{}{
+					map[string]interface{}{"name": "workspaces-pvc", "mountPath": "/workspaces"},
+				},
 			},
 		},
 	}
-
 	if hasTokenScript {
 		// Define the volume
 		volume := map[string]interface{}{
@@ -358,6 +365,21 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 						},
 					},
 					"spec": podSpec,
+				},
+				"volumeClaimTemplates": []interface{}{
+					map[string]interface{}{
+						"metadata": map[string]interface{}{
+							"name": "workspaces-pvc",
+						},
+						"spec": map[string]interface{}{
+							"accessModes": []interface{}{"ReadWriteOnce"},
+							"resources": map[string]interface{}{
+								"requests": map[string]interface{}{
+									"storage": diskSize,
+								},
+							},
+						},
+					},
 				},
 			},
 		},

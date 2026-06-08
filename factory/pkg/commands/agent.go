@@ -35,6 +35,7 @@ type AgentDefinition struct {
 	Description string `yaml:"description"`
 	Schedule    string `yaml:"schedule"`
 	SkipPR      bool   `yaml:"skipPR,omitempty"`
+	Mode        string `yaml:"mode,omitempty"`
 	Prompt      string `yaml:"-"`
 }
 
@@ -262,6 +263,7 @@ func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 		"GITHUB_USER_NAME":           githubLogin,
 		"AGENT_NAME":                 agentDef.Name,
 		"AGENT_FILE":                 agentPath,
+		"AGENT_MODE":                 agentDef.Mode,
 		"SKIP_PR":                    strconv.FormatBool(agentDef.SkipPR),
 		"PR_NUMBER":                  strconv.Itoa(prNum),
 		"MODELS":                     "gemini-3.5-flash gemini-3-flash-preview gemini-3.1-pro-preview gemini-2.5-pro",
