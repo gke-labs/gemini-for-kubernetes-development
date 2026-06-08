@@ -113,11 +113,11 @@ EOF
     fi
 
     if [ -n "${GITHUB_USER_TOKEN}" ] && [ -n "${GITHUB_USER_ID}" ]; then
-        echo "creating /root/.config/gh directory"
-        mkdir -p /root/.config/gh
+        echo "creating ${HOME}/.config/gh directory"
+        mkdir -p "${HOME}/.config/gh"
 
         echo "writing gh config"
-        cat <<EOF > /root/.config/gh/hosts.yml
+        cat <<EOF > "${HOME}/.config/gh/hosts.yml"
 github.com:
     users:
         ${GITHUB_USER_ID}:
@@ -145,8 +145,8 @@ EOF
     git config --global http.sslCAInfo /etc/github-portal/ca/tls.crt
 
     echo "Configuring global git ignore"
-    git config --global core.excludesfile /root/.gitignore_global
-    cat <<EOF > /root/.gitignore_global
+    git config --global core.excludesfile "${HOME}/.gitignore_global"
+    cat <<EOF > "${HOME}/.gitignore_global"
 manager
 bin/
 EOF

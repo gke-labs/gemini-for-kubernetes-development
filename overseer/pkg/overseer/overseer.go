@@ -147,6 +147,10 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 			"name":  "NAMESPACE",
 			"value": namespace,
 		},
+		map[string]interface{}{
+			"name":  "HOME",
+			"value": "/workspaces/.home",
+		},
 
 		map[string]interface{}{
 			"name":  "POLL_INTERVAL",
