@@ -311,13 +311,13 @@ func (r *OverseerReconciler) ensureSecrets(ctx context.Context, o *overseerv1alp
 		if !errors.IsNotFound(err) {
 			return err
 		}
-		if err := r.copySecret(ctx, name, []string{o.Namespace, "overseer-system", "repo-agent-system"}, targetNamespace); err != nil {
+		if err := r.copySecret(ctx, name, []string{o.Namespace, "overseer-system"}, targetNamespace); err != nil {
 			if errors.IsNotFound(err) {
 				if name == "tokenscript" {
 					continue // tokenscript is optional
 				}
 				o.Status.OverseerStatus = "Error"
-				o.Status.Message = fmt.Sprintf("Secret %s not found in %s, overseer-system, or repo-agent-system", name, targetNamespace)
+				o.Status.Message = fmt.Sprintf("Secret %s not found in %s or overseer-system", name, targetNamespace)
 				return nil
 			}
 			return err
@@ -327,11 +327,11 @@ func (r *OverseerReconciler) ensureSecrets(ctx context.Context, o *overseerv1alp
 	// 2. Resolve credentials secret and Gemini API key secret from source namespaces
 	var githubLogin, githubEmail, githubToken []byte
 	if o.Spec.RobotAccount != "" {
-		srcRobotSecret, err := r.findSecret(ctx, o.Spec.RobotAccount, []string{o.Namespace, "overseer-system", "repo-agent-system"})
+		srcRobotSecret, err := r.findSecret(ctx, o.Spec.RobotAccount, []string{o.Namespace, "overseer-system"})
 		if err != nil {
 			if errors.IsNotFound(err) {
 				o.Status.OverseerStatus = "Error"
-				o.Status.Message = fmt.Sprintf("Robot account secret %s not found in %s, overseer-system, or repo-agent-system", o.Spec.RobotAccount, targetNamespace)
+				o.Status.Message = fmt.Sprintf("Robot account secret %s not found in %s or overseer-system", o.Spec.RobotAccount, targetNamespace)
 				return nil
 			}
 			return err
@@ -347,11 +347,11 @@ func (r *OverseerReconciler) ensureSecrets(ctx context.Context, o *overseerv1alp
 	if geminiSecretName == "" {
 		geminiSecretName = "gemini-api-key"
 	}
-	srcGeminiSecret, err := r.findSecret(ctx, geminiSecretName, []string{o.Namespace, "overseer-system", "repo-agent-system"})
+	srcGeminiSecret, err := r.findSecret(ctx, geminiSecretName, []string{o.Namespace, "overseer-system"})
 	if err != nil {
 		if errors.IsNotFound(err) {
 			o.Status.OverseerStatus = "Error"
-			o.Status.Message = fmt.Sprintf("Gemini API key secret %s not found in %s, overseer-system, or repo-agent-system", geminiSecretName, targetNamespace)
+			o.Status.Message = fmt.Sprintf("Gemini API key secret %s not found in %s or overseer-system", geminiSecretName, targetNamespace)
 			return nil
 		}
 		return err

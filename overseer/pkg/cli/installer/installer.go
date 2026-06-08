@@ -182,7 +182,7 @@ func RunInstaller(ctx context.Context, opts *Options) error {
 	if err := installer.InstallCRDs(); err != nil {
 		return err
 	}
-	if err := installer.InstallSecrets("repo-agent-system", opts.GeminiAPIKey, opts.GitHubPAT, opts.GitHubOAuthClientID, opts.GitHubOAuthSecret); err != nil {
+	if err := installer.InstallSecrets("overseer-system", opts.GeminiAPIKey, opts.GitHubPAT, opts.GitHubOAuthClientID, opts.GitHubOAuthSecret); err != nil {
 		return err
 	}
 
