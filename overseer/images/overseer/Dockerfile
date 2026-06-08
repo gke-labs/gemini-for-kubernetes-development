@@ -57,9 +57,9 @@ WORKDIR /workspaces
 ENV FACTORY_LOGS=/workspaces/logs/factory/
 
 COPY --from=builder /app/factory/factory /usr/local/bin/factory
-COPY overseer/images/overseer/run.sh /workspaces/run.sh
-COPY overseer/images/overseer/summarize.sh /workspaces/summarize.sh
-COPY overseer/images/overseer/prompt/ /workspaces/prompt/
-RUN chmod +x /workspaces/run.sh /workspaces/summarize.sh
+COPY overseer/images/overseer/run.sh /app/run.sh
+COPY overseer/images/overseer/summarize.sh /app/summarize.sh
+COPY overseer/images/overseer/prompt/ /app/prompt/
+RUN chmod +x /app/run.sh /app/summarize.sh
 
-ENTRYPOINT ["/workspaces/run.sh"]
+ENTRYPOINT ["/app/run.sh"]
