@@ -60,7 +60,6 @@ type OverseerReconciler struct {
 //+kubebuilder:rbac:groups=agents.x-k8s.io,resources=sandboxes,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=configdir.gke.io,resources=configdirs;configfiles,verbs=get;list;watch
 
-
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
 func (r *OverseerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -334,7 +333,7 @@ func (r *OverseerReconciler) ensureSecrets(ctx context.Context, o *overseerv1alp
 			}
 			return err
 		}
-		
+
 		githubLogin = getSecretValue(srcRobotSecret, "GITHUB_LOGIN", "userid")
 		githubEmail = getSecretValue(srcRobotSecret, "GITHUB_EMAIL", "email")
 		githubToken = getSecretValue(srcRobotSecret, "GITHUB_TOKEN", "pat")

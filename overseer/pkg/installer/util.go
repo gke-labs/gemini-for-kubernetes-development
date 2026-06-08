@@ -111,7 +111,6 @@ func InstallCRDs() error {
 	return kubectlInstall("gemini-for-kubernetes-development", url)
 }
 
-
 func applyNamespace(ns string) error {
 	dry := []string{"kubectl", "create", "namespace", ns, "--dry-run=client", "-o", "yaml"}
 	output, err := exec.Command(dry[0], dry[1:]...).Output()
@@ -171,7 +170,6 @@ func helmInstall(name, chart, namespace, version string) error {
 	}
 	return nil
 }
-
 
 func run(args ...string) error {
 	cmd := exec.Command(args[0], args[1:]...)

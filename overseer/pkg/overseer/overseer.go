@@ -240,8 +240,6 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 		}
 	}
 
-
-
 	ephemeralStorage := o.Spec.EphemeralStorage
 	if ephemeralStorage == "" {
 		ephemeralStorage = "10Gi"

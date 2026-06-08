@@ -140,7 +140,6 @@ func (opts *Options) validateFlags() []error {
 		}
 	}
 
-
 	if len(errs) > 0 {
 		return errs
 	}

@@ -119,8 +119,6 @@ type OverseerSpec struct {
 	// +kubebuilder:default="10Gi"
 	EphemeralStorage string `json:"ephemeralStorage,omitempty"`
 
-	
-
 	// Review configuration for PRs
 	// +kubebuilder:validation:Optional
 	Review ReviewSpec `json:"review"`
