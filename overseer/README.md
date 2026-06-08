@@ -44,7 +44,7 @@ Here is an example that watches a repo, enables background chores, and disables 
 apiVersion: overseer.gemini.google.com/v1alpha1
 kind: Overseer
 metadata:
-  name: my-repo-agent
+  name: your-repo
 spec:
   repoURL: https://github.com/your-org/your-repo
   robotAccount: your-github-username # Must match ROBOT1_GH_USERID
@@ -77,9 +77,9 @@ kubectl logs -n overseer-system -l app=overseer-controller -f
 ```
 
 **Overseer Agent Logs:**
-When you apply an `Overseer` CR, the controller creates a dedicated namespace (e.g., `overseer-my-repo-agent`) and deploys the agent sandbox there. To watch the agent's autonomous loop and see what it is doing:
+When you apply an `Overseer` CR, the controller creates a dedicated namespace (e.g., `overseer-your-repo`) and deploys the agent sandbox there. To watch the agent's autonomous loop and see what it is doing:
 ```bash
-kubectl logs -n overseer-my-repo-agent -l sandbox=overseer-my-repo-agent -f
+kubectl logs -n overseer-your-repo-agent -l sandbox=overseer-your-repo-agent -f
 ```
 
 

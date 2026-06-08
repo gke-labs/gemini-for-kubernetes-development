@@ -35,7 +35,7 @@ import (
 )
 
 // ReconcileOverseer ensures the Overseer sandbox is running for the given Overseer.
-func ReconcileOverseer(ctx context.Context, c client.Client, o *overseerv1alpha1.Overseer, repoSandboxImage string) error {
+func ReconcileOverseer(ctx context.Context, c client.Client, o *overseerv1alpha1.Overseer) error {
 	log := log.FromContext(ctx)
 
 	overseerName := fmt.Sprintf("overseer-%s", o.Name)
@@ -68,7 +68,7 @@ func ReconcileOverseer(ctx context.Context, c client.Client, o *overseerv1alpha1
 		if errors.IsNotFound(err) {
 			// Create
 			log.Info("Creating Overseer sandbox", "name", overseerName, "namespace", namespace)
-			newSandbox := newOverseerSandboxFromOverseer(o, overseerName, namespace, repoSandboxImage, hasTokenScript)
+			newSandbox := newOverseerSandboxFromOverseer(o, overseerName, namespace, hasTokenScript)
 			if err := controllerutil.SetControllerReference(o, newSandbox, c.Scheme()); err != nil {
 				return err
 			}
@@ -81,7 +81,7 @@ func ReconcileOverseer(ctx context.Context, c client.Client, o *overseerv1alpha1
 	return nil
 }
 
-func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespace, repoSandboxImage string, hasTokenScript bool) *unstructured.Unstructured {
+func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespace string, hasTokenScript bool) *unstructured.Unstructured {
 	image := os.Getenv("OVERSEER_IMAGE")
 
 	secretName := "factory-user"
@@ -146,10 +146,6 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 		map[string]interface{}{
 			"name":  "NAMESPACE",
 			"value": namespace,
-		},
-		map[string]interface{}{
-			"name":  "REPO_SANDBOX_IMAGE",
-			"value": repoSandboxImage,
 		},
 
 		map[string]interface{}{

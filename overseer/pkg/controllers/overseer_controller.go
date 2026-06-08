@@ -38,8 +38,7 @@ import (
 // OverseerReconciler reconciles an Overseer object
 type OverseerReconciler struct {
 	client.Client
-	Scheme           *runtime.Scheme
-	RepoSandboxImage string
+	Scheme *runtime.Scheme
 }
 
 //+kubebuilder:rbac:groups=overseer.gemini.google.com,resources=overseers,verbs=get;list;watch;create;update;patch;delete
@@ -105,7 +104,7 @@ func (r *OverseerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	}
 
 	// 4. Reconcile Sandbox
-	if err := overseer.ReconcileOverseer(ctx, r.Client, &overseerObj, r.RepoSandboxImage); err != nil {
+	if err := overseer.ReconcileOverseer(ctx, r.Client, &overseerObj); err != nil {
 		return ctrl.Result{}, err
 	}
 
