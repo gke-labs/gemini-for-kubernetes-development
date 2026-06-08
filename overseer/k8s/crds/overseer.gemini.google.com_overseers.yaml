@@ -44,8 +44,6 @@ spec:
                     - dryrun
                     type: string
                 type: object
-              configdirRef:
-                type: string
               enableGeminiOrchestrator:
                 default: false
                 type: boolean

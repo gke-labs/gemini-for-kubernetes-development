@@ -25,9 +25,7 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -42,7 +40,6 @@ type OverseerReconciler struct {
 	client.Client
 	Scheme           *runtime.Scheme
 	RepoSandboxImage string
-	ConfigDirImage   string
 }
 
 //+kubebuilder:rbac:groups=overseer.gemini.google.com,resources=overseers,verbs=get;list;watch;create;update;patch;delete
@@ -58,7 +55,6 @@ type OverseerReconciler struct {
 //+kubebuilder:rbac:groups="",resources=pods/portforward,verbs=create
 //+kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=agents.x-k8s.io,resources=sandboxes,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=configdir.gke.io,resources=configdirs;configfiles,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -108,28 +104,8 @@ func (r *OverseerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
 	}
 
-	// Wait for ConfigDir to exist if referenced
-	if overseerObj.Spec.ConfigdirRef != "" {
-		configDir := &unstructured.Unstructured{}
-		configDir.SetGroupVersionKind(schema.GroupVersionKind{
-			Group:   "configdir.gke.io",
-			Version: "v1alpha1",
-			Kind:    "ConfigDir",
-		})
-
-		// Let's look in the target namespace (nsName).
-		err := r.Get(ctx, types.NamespacedName{Name: overseerObj.Spec.ConfigdirRef, Namespace: nsName}, configDir)
-		if err != nil {
-			if errors.IsNotFound(err) {
-				log.Info("ConfigDir not found, waiting for it to be created", "name", overseerObj.Spec.ConfigdirRef, "namespace", nsName)
-				return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
-			}
-			return ctrl.Result{}, err
-		}
-	}
-
 	// 4. Reconcile Sandbox
-	if err := overseer.ReconcileOverseer(ctx, r.Client, &overseerObj, r.RepoSandboxImage, r.ConfigDirImage); err != nil {
+	if err := overseer.ReconcileOverseer(ctx, r.Client, &overseerObj, r.RepoSandboxImage); err != nil {
 		return ctrl.Result{}, err
 	}
 

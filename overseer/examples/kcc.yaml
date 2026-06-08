@@ -14,7 +14,6 @@ spec:
   geminiAPIKeySecretName: gemini-vscode-tokens
   ephemeralStorage: 10Gi
   image: ghcr.io/gke-labs/gemini-for-kubernetes-development/factory-golang:latest
-  configdirRef: kcc-agents
   workspaceDiskSize: 40Gi
   secrets:
     - name: projectaccess
@@ -23,24 +22,3 @@ spec:
     issueMode: enabled
     prMode: enabled
     reviewMode: disabled
-
----
-apiVersion: configdir.gke.io/v1alpha1
-kind: ConfigDir
-metadata:
-  name: kcc-agents
-  namespace: overseer-kcc
-spec:
-  files:
-  - path: .gemini/settings.json
-    source:
-      inline: |
-        {
-          "mcpServers": {
-          }
-        }
-#  - path: .agents/tf2d-create-identity-ref-issues.yaml
-#    source:
-#      inline: |
-#        ---
-#        name: Issue for Identity and Reference

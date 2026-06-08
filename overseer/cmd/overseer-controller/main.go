@@ -52,7 +52,6 @@ func main() {
 	var enableLeaderElection bool
 	var probeAddr string
 	var repoSandboxImage string
-	var configDirImage string
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -60,7 +59,6 @@ func main() {
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
 	flag.StringVar(&repoSandboxImage, "repo-sandbox-image", "", "The image to use for the repo sandbox.")
-	flag.StringVar(&configDirImage, "config-dir-image", "", "The image to use for the config dir.")
 
 	opts := zap.Options{
 		Development: true,
@@ -72,9 +70,6 @@ func main() {
 
 	if repoSandboxImage == "" {
 		repoSandboxImage = os.Getenv("REPO_SANDBOX_IMAGE")
-	}
-	if configDirImage == "" {
-		configDirImage = os.Getenv("CONFIG_DIR_IMAGE")
 	}
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
@@ -92,7 +87,6 @@ func main() {
 		Client:           mgr.GetClient(),
 		Scheme:           mgr.GetScheme(),
 		RepoSandboxImage: repoSandboxImage,
-		ConfigDirImage:   configDirImage,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Overseer")
 		os.Exit(1)

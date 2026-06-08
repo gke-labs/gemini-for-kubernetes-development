@@ -68,40 +68,7 @@ Apply it to your cluster:
 kubectl apply -f my-overseer.yaml
 ```
 
-### 4. Using ConfigDir
-
-You can optionally inject custom agent instructions or context files (such as `.agents/file.md`) directly into the repository sandbox by defining a `ConfigDir` resource and referencing it in the `Overseer` spec. This is particularly useful for adding chore definitions without committing them directly to the repository.
-
-Here is an example of defining a `ConfigDir` and referencing it:
-
-```yaml
-apiVersion: configdir.gke.io/v1alpha1
-kind: ConfigDir
-metadata:
-  name: my-agent-config
-spec:
-  files:
-  - path: .agents/file.md
-    source:
-      inline: |
-        # Custom Agent Instructions
-        These are project-specific guidelines for the agent...
----
-apiVersion: overseer.gemini.google.com/v1alpha1
-kind: Overseer
-metadata:
-  name: my-repo-agent
-spec:
-  repoURL: https://github.com/your-org/your-repo
-  robotAccount: your-github-username
-  geminiAPIKeySecretName: gemini-vscode-tokens
-  # Inject the ConfigDir defined above
-  configdirRef: my-agent-config
-  chores:
-    mode: enabled
-```
-
-### 5. View Logs
+### 4. View Logs
 
 **Overseer Controller Logs:**
 The controller manages the lifecycle of the Overseer sandboxes.

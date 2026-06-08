@@ -170,12 +170,6 @@ cd "$REPO_NAME"
 echo "Ensuring fork is configured..."
 gh repo fork --remote || true
 
-if [ -d "/configdir" ] && [ "$(ls -A /configdir)" ]; then
-  echo "Injecting configdir files into repository..."
-  shopt -s dotglob
-  cp -R /configdir/* .
-  shopt -u dotglob
-fi
 
 function runGeminiOrchestrator {
     # Run Gemini LLM (Non-deterministic Scanner/Orchestrator)

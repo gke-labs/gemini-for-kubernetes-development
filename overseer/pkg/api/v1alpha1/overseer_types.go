@@ -96,11 +96,6 @@ type OverseerSpec struct {
 	// +kubebuilder:validation:Optional
 	Repo *RepoSpec `json:"repo,omitempty"`
 
-	// ConfigdirRef is a reference to a ConfigDir resource that contains
-	// additional configuration for the LLM agent, such as tool schemas and
-	// model configurations.
-	ConfigdirRef string `json:"configdirRef,omitempty"`
-
 	// Image to use for the development sandbox. If set, this overrides the devcontainer image.
 	// +kubebuilder:validation:Optional
 	Image string `json:"image,omitempty"`
