@@ -129,6 +129,7 @@ push-images-overseer:
 
 .PHONY: push-images
 push-images: push-images-overseer
+	make -C ../factory push-images REGISTRY=$(REGISTRY) KIND_CLUSTER=$(KIND_CLUSTER)
 
 .PHONY: clean
 clean:
