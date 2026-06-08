@@ -30,19 +30,6 @@ rules:
   resources: ["services"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 - apiGroups:
-  - "custom.agents.x-k8s.io"
-  resources:
-  - sandboxtasks
-  - sandboxtasks/status
-  verbs:
-  - get
-  - list
-  - watch
-  - update
-  - patch
-  - create
-  - delete
-- apiGroups:
   - "configdir.gke.io"
   resources:
   - configdirs

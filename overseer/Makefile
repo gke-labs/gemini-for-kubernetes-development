@@ -66,7 +66,8 @@ create-secrets: bin/github-portal-ca.crt
 .PHONY: install-dep-packages
 install-dep-packages:
 	../dev/tools/install-agent-sandbox
-	kubectl apply -f ../repo-agent/k8s/crds/ || true
+	kubectl apply -f ../repo-agent/k8s/crds/configdir.gke.io_configdirs.yaml || true
+	kubectl apply -f ../repo-agent/k8s/crds/configdir.gke.io_configfiles.yaml || true
 	kubectl create namespace overseer-system || true
 
 .PHONY: uninstall-dep-packages
