@@ -35,8 +35,6 @@ const (
 	flagProject     = "project"
 	flagCluster     = "cluster"
 	flagRegion      = "region"
-	flagRepo        = "repo"
-	flagWatchNs     = "watch-namespace"
 	flagGeminiKey   = "gemini-api-key"
 	flagGhPat       = "github-pat"
 	flagOauthID     = "oauth-client-id"
@@ -52,11 +50,6 @@ type Options struct {
 	Project string
 	Cluster string
 	Region  string
-
-	// Repository to watch
-	RepoURL string
-	// Namespace the RepoWatch CR lives in (defaults to a slug of the repo name)
-	WatchNamespace string
 
 	// Credentials
 	GeminiAPIKey        string
@@ -91,8 +84,6 @@ func BuildInstallerCmd() *cobra.Command {
 	cmd.Flags().StringVar(&opts.Project, flagProject, "", "GCP project ID. (or set PROJECT env)")
 	cmd.Flags().StringVar(&opts.Cluster, flagCluster, "", "GKE cluster name. (or set CLUSTER env)")
 	cmd.Flags().StringVar(&opts.Region, flagRegion, "", "GKE cluster region/zone. (or set REGION env)")
-	cmd.Flags().StringVar(&opts.RepoURL, flagRepo, "", "GitHub repository URL to watch (e.g. https://github.com/org/repo)")
-	cmd.Flags().StringVar(&opts.WatchNamespace, flagWatchNs, "", "Namespace for RepoWatch CR (default: derived from repo name)")
 	cmd.Flags().StringVar(&opts.GeminiAPIKey, flagGeminiKey, "", "Google Gemini API key. (or set GEMINI_API_KEY)")
 	cmd.Flags().StringVar(&opts.GitHubPAT, flagGhPat, "", "GitHub Personal Access Token for the bot account")
 	cmd.Flags().StringVar(&opts.GitHubOAuthClientID, flagOauthID, "", "GitHub OAuth App client ID (omit for single-user mode)")
@@ -148,12 +139,7 @@ func (opts *Options) validateFlags() []error {
 			errs = append(errs, fmt.Errorf("Unset or invalid github oauth secret %q", opts.GitHubOAuthSecret))
 		}
 	}
-	if opts.WatchNamespace != "" && opts.RepoURL == "" {
-		errs = append(errs, fmt.Errorf("Cannot set watch space %q, without a repo URL", opts.WatchNamespace))
-	}
-	if opts.WatchNamespace == "" && opts.RepoURL != "" {
-		errs = append(errs, fmt.Errorf("Cannot set repo URL %q, without a watch spave", opts.RepoURL))
-	}
+
 
 	if len(errs) > 0 {
 		return errs
@@ -197,9 +183,6 @@ func RunInstaller(ctx context.Context, opts *Options) error {
 		return err
 	}
 	if err := installer.InstallSecrets("repo-agent-system", opts.GeminiAPIKey, opts.GitHubPAT, opts.GitHubOAuthClientID, opts.GitHubOAuthSecret); err != nil {
-		return err
-	}
-	if err := installer.InstallRepoWatch(opts.WatchNamespace, opts.GeminiAPIKey, opts.GitHubPAT, opts.GitHubOAuthClientID, opts.GitHubOAuthSecret, opts.RepoURL); err != nil {
 		return err
 	}
 

@@ -15,13 +15,11 @@
 package installer
 
 import (
-	"bytes"
 	"fmt"
 	"log"
 	"os"
 	"os/exec"
 	"strings"
-	"text/template"
 )
 
 func CheckTools() []error {
@@ -113,37 +111,6 @@ func InstallCRDs() error {
 	return kubectlInstall("gemini-for-kubernetes-development", url)
 }
 
-func InstallRepoWatch(watchNamespace, geminiAPIKey, gitHubPAT, gitHubOAuthClientID, gitHubOAuthSecret, repoURL string) error {
-	// Create the namespace if it doesn't exist.
-	if err := applyNamespace(watchNamespace); err != nil {
-		return err
-	}
-
-	if err := InstallSecrets(watchNamespace, geminiAPIKey, gitHubPAT, gitHubOAuthClientID, gitHubOAuthSecret); err != nil {
-		return err
-	}
-
-	tmpl, err := template.ParseFiles("templates/repowatch.tmpl")
-	if err != nil {
-		return err
-	}
-	data := struct {
-		RepoName       string
-		WatchNamespace string
-		RepoURL        string
-	}{
-		RepoName:       repoSlug(repoURL),
-		WatchNamespace: watchNamespace,
-		RepoURL:        repoURL,
-	}
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, data); err != nil {
-		return err
-	}
-	fmt.Printf("  Creating RepoWatch %s/%s …\n", watchNamespace, data.RepoName)
-	//return applyYAML(buf.String())
-	return nil
-}
 
 func applyNamespace(ns string) error {
 	dry := []string{"kubectl", "create", "namespace", ns, "--dry-run=client", "-o", "yaml"}
@@ -205,24 +172,6 @@ func helmInstall(name, chart, namespace, version string) error {
 	return nil
 }
 
-func repoSlug(repoURL string) string {
-	parts := strings.Split(strings.TrimSuffix(repoURL, ".git"), "/")
-	if len(parts) == 0 {
-		return "repo-watch"
-	}
-	slug := parts[len(parts)-1]
-	slug = strings.ToLower(slug)
-	// Replace non-alphanumeric with hyphens
-	var b strings.Builder
-	for _, c := range slug {
-		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' {
-			b.WriteRune(c)
-		} else {
-			b.WriteRune('-')
-		}
-	}
-	return strings.Trim(b.String(), "-")
-}
 
 func run(args ...string) error {
 	cmd := exec.Command(args[0], args[1:]...)
