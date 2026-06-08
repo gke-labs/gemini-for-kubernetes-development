@@ -24,10 +24,11 @@ import (
 )
 
 type AgentFlags struct {
-	URL    string
-	Agent  string
-	Local  bool
-	DryRun bool
+	URL       string
+	Agent     string
+	Local     bool
+	DryRun    bool
+	SessionID string
 }
 
 type AgentDefinition struct {
@@ -108,6 +109,7 @@ func NewAgentCreateCommand(ctx context.Context) *cobra.Command {
 	cmd.Flags().StringVar(&flags.Agent, "agent", "", "Agent file name (relative to .agents/ if remote) or local file path")
 	cmd.Flags().BoolVar(&flags.Local, "local", false, "Load the agent definition from a local path")
 	cmd.Flags().BoolVar(&flags.DryRun, "dry-run", false, "Simulate agent execution without running the Gemini CLI inside the sandbox")
+	cmd.Flags().StringVar(&flags.SessionID, "session-id", "", "Unique session ID for workflow isolation")
 
 	return cmd
 }
@@ -190,7 +192,9 @@ func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 	}
 
 	taskID := Slugify(agentDef.Name)
-	if isPR {
+	if flags.SessionID != "" {
+		taskID = fmt.Sprintf("%s-%s", taskID, flags.SessionID)
+	} else if isPR {
 		taskID = fmt.Sprintf("pr-%d-%s", prNum, taskID)
 	}
 	taskTitle := fmt.Sprintf("Agent: %s", agentDef.Name)
@@ -264,6 +268,7 @@ func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 		"AGENT_NAME":                 agentDef.Name,
 		"AGENT_FILE":                 agentPath,
 		"AGENT_MODE":                 agentDef.Mode,
+		"SESSION_ID":                 flags.SessionID,
 		"SKIP_PR":                    strconv.FormatBool(agentDef.SkipPR),
 		"PR_NUMBER":                  strconv.Itoa(prNum),
 		"MODELS":                     "gemini-3.5-flash gemini-3-flash-preview gemini-3.1-pro-preview gemini-2.5-pro",

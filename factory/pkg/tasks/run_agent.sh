@@ -257,16 +257,29 @@ function runAgent {
         export GIT_COMMITTER_EMAIL="$GITHUB_BOT_EMAIL"
     fi
  
-    # Check for thread resumption in workflow mode
+    # Check for thread resumption in workflow mode using mapping file
     RESUME_FLAG=""
     if [ "$AGENT_MODE" = "workflow" ]; then
-        LAST_SESSION=$(find "${HOME}/.gemini/tmp" -name "session-*.json" -not -name "logs.json" -printf '%T@ %p\n' 2>/dev/null | sort -k1,1nr | head -1 | awk '{print $2}')
-        if [ -n "$LAST_SESSION" ]; then
-            SESSION_ID=$(basename "$LAST_SESSION" .json | sed 's/session-//')
-            echo "Found previous session: ${SESSION_ID}. Resuming thread..."
-            RESUME_FLAG="--resume ${SESSION_ID}"
-        else
-            echo "No previous session found. Starting new thread..."
+        MAPPING_FILE="${HOME}/.gemini/workflow-sessions.json"
+        mkdir -p "${HOME}/.gemini"
+        if [ -n "$SESSION_ID" ] && [ -f "$MAPPING_FILE" ]; then
+            INTERNAL_ID=$(jq -r --arg sid "$SESSION_ID" '.[$sid] // ""' "$MAPPING_FILE")
+            if [ -n "$INTERNAL_ID" ] && [ "$INTERNAL_ID" != "null" ]; then
+                echo "Found mapped Gemini session ID: $INTERNAL_ID for workflow session: $SESSION_ID"
+                RESUME_FLAG="--resume ${INTERNAL_ID}"
+            fi
+        fi
+        
+        # Fallback to the latest session if no mapping matches (robust fallback)
+        if [ -z "$RESUME_FLAG" ]; then
+            LAST_SESSION=$(find "${HOME}/.gemini/tmp" -name "session-*.json" -not -name "logs.json" -printf '%T@ %p\n' 2>/dev/null | sort -k1,1nr | head -1 | awk '{print $2}')
+            if [ -n "$LAST_SESSION" ]; then
+                FALLBACK_ID=$(basename "$LAST_SESSION" .json | sed 's/session-//')
+                echo "No session mapping found. Resuming newest session as fallback: ${FALLBACK_ID}"
+                RESUME_FLAG="--resume ${FALLBACK_ID}"
+            else
+                echo "Starting new thread..."
+            fi
         fi
     fi
  
@@ -293,6 +306,21 @@ function runAgent {
         exit 1
     fi
     set -x
+ 
+    # Map the session ID to the newly started Gemini session if we didn't resume
+    if [ "$AGENT_MODE" = "workflow" ] && [ -n "$SESSION_ID" ] && [ -z "$RESUME_FLAG" ]; then
+        NEWEST_SESSION=$(find "${HOME}/.gemini/tmp" -name "session-*.json" -not -name "logs.json" -printf '%T@ %p\n' 2>/dev/null | sort -k1,1nr | head -1 | awk '{print $2}')
+        if [ -n "$NEWEST_SESSION" ]; then
+            INTERNAL_ID=$(basename "$NEWEST_SESSION" .json | sed 's/session-//')
+            echo "Mapping workflow session $SESSION_ID to internal Gemini session: $INTERNAL_ID"
+            MAPPING_FILE="${HOME}/.gemini/workflow-sessions.json"
+            if [ -f "$MAPPING_FILE" ]; then
+                jq --arg sid "$SESSION_ID" --arg iid "$INTERNAL_ID" '.[$sid] = $iid' "$MAPPING_FILE" > "${MAPPING_FILE}.tmp" && mv "${MAPPING_FILE}.tmp" "$MAPPING_FILE"
+            else
+                echo "{\"$SESSION_ID\": \"$INTERNAL_ID\"}" > "$MAPPING_FILE"
+            fi
+        fi
+    fi
  
     if [ "$SKIP_PR" = "true" ]; then
         echo "SkipPR is true, skipping commit and push."
