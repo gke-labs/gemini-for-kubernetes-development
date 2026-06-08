@@ -294,6 +294,41 @@ func findWorkflowPath(body string) string {
 	return ""
 }
 
+func isWorkflowDefinition(ctx context.Context, ghClient *githubv39.Client, owner, repo, path string) bool {
+	// 1. Directory convention: any path containing "/workflows/" is treated as a workflow
+	if strings.Contains(path, "/workflows/") {
+		return true
+	}
+
+	// Clean up leading dot slashes from path to match GitHub API format
+	cleanPath := strings.TrimPrefix(path, "./")
+	cleanPath = strings.TrimPrefix(cleanPath, "/")
+
+	// 2. Fetch remote content from GitHub and search for keywords/metadata
+	fileContent, _, _, err := ghClient.Repositories.GetContents(ctx, owner, repo, cleanPath, &githubv39.RepositoryContentGetOptions{})
+	if err != nil {
+		klog.V(4).Infof("Failed to get content for %s: %v", cleanPath, err)
+		return false
+	}
+	content, err := fileContent.GetContent()
+	if err != nil {
+		return false
+	}
+
+	limit := 2000
+	if len(content) < limit {
+		limit = len(content)
+	}
+	header := content[:limit]
+
+	// Look for mode: workflow metadata in header or front-matter
+	if strings.Contains(header, "mode: workflow") || strings.Contains(header, "mode: \"workflow\"") || strings.Contains(header, "AGENT_MODE=workflow") {
+		return true
+	}
+
+	return false
+}
+
 func queueIssueTasks(ctx context.Context, ghClient *githubv39.Client, kubeClient *clients.KubernetesClient, owner, repo string, issues []*githubv39.Issue, processedIssues map[int]time.Time, refIssues map[int]bool, targetAssignee string, incomingDir, processingDir, processedDir, queueDir string, dryRun bool) {
 	for _, issue := range issues {
 		num := issue.GetNumber()
@@ -306,9 +341,15 @@ func queueIssueTasks(ctx context.Context, ghClient *githubv39.Client, kubeClient
 		workflowPath := findWorkflowPath(issue.GetBody())
 		workflowName := ""
 		if workflowPath != "" {
-			filenameOnly := filepath.Base(workflowPath)
-			ext := filepath.Ext(filenameOnly)
-			workflowName = strings.TrimSuffix(filenameOnly, ext)
+			if isWorkflowDefinition(ctx, ghClient, owner, repo, workflowPath) {
+				filenameOnly := filepath.Base(workflowPath)
+				ext := filepath.Ext(filenameOnly)
+				workflowName = strings.TrimSuffix(filenameOnly, ext)
+			} else {
+				// It was just a standard skill/agent prompt mentioned, not a workflow.
+				// Fallback to standard issue-fix
+				workflowPath = ""
+			}
 		}
 
 		filename := fmt.Sprintf("task-issue-%d.yaml", num)
