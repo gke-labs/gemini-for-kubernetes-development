@@ -101,3 +101,18 @@ When parallel sessions commit their logs to the `overseer` branch, they push to 
 To keep developers informed of the workflow's current state:
 1.  **Authoritative State**: Stored in Git in session-specific Markdown journals (e.g. `.gemini/workflows/checklist-for-kind/session-issue-123.md`).
 2.  **Visual Progress State**: The agent uses the `gh` CLI to dynamically edit the description/body of the triggering GitHub issue (e.g., `#123`). The agent keeps a markdown checklist updated, showing completed sub-tasks, pending steps, and active PR links.
+
+### 6. Unified Developer CLI UX
+
+To keep the developer interface simple and prevent confusion between `fix`, `agent`, and `workflow` commands, we unify the entry point under the existing `factory fix` command:
+
+*   **Usage**: The developer simply runs:
+    ```bash
+    factory fix --url https://github.com/owner/repo/issues/123
+    ```
+*   **Automatic Interception**: Under the hood, `factory fix` fetches the target GitHub issue.
+    *   It parses the issue description for workflow definitions (using the same content analysis & directory convention logic).
+    *   If a workflow reference is identified, `factory fix` automatically forwards the task execution to `RunAgent` in **workflow mode** (passing `SessionID: issue-123`).
+    *   If no workflow is identified, it executes standard single-shot **code-fix mode**.
+*   This hides the underlying orchestration complexity from the developer while providing the correct runtime environment automatically.
+
