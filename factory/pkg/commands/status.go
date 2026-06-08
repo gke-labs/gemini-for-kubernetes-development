@@ -7,10 +7,10 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/geminitokens"
 	"github.com/spf13/cobra"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
