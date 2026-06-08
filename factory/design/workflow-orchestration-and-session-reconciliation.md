@@ -53,11 +53,14 @@ sequenceDiagram
 
 ### 1. Distinguishing Workflows from Regular Tasks
 
-To prevent every issue that references a skill or prompt from launching a persistent workflow, we inspect the metadata:
-1.  When `factory watch` scans an issue, it extracts any referenced file path matching `.agents/...` or `.gemini/...`.
-2.  It retrieves the file from Git and parses its YAML header.
-3.  If the file contains `mode: workflow`, it runs the task in **Workflow Mode**.
-4.  If the file is a plain Markdown prompt or has no `mode: workflow` metadata, it falls back to a standard single-shot execution.
+To prevent every issue that references a skill or prompt from launching a persistent workflow, `factory watch` performs a two-tier verification:
+
+1.  **Directory Convention Check**: Any path containing `/workflows/` (e.g. `.agents/workflows/checklist-for-kind.yaml`) is automatically classified as a workflow.
+2.  **Content Analysis Check**: If the path does not reside in a `/workflows/` folder (e.g. it is located under `.gemini/skills/checklist-for-kind/prompt.md`):
+    *   `factory watch` dynamically fetches the first 2,000 characters of the referenced file from GitHub using the Repository GetContents API.
+    *   It scans the file header/front-matter for workflow keywords: `mode: workflow`, `mode: "workflow"`, or `AGENT_MODE=workflow`.
+    *   If found, it is classified as a workflow.
+3.  **Fallback**: If neither condition is met, the path is assumed to be a standard task prompt, and the issue is queued as a standard single-shot `issue-fix` task.
 
 ### 2. Session Isolation & Sandbox Naming
 
