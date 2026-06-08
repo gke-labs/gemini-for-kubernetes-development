@@ -4,7 +4,7 @@ metadata:
   name: gemini-for-kubernetes-development
 spec:
   repoURL: https://github.com/gke-labs/gemini-for-kubernetes-development
-  robotAccount: codebot-robot
+  robotAccount: factorybot-robot
   maxActiveReviews: 3
   maxActiveIssues: 3
   chores:
