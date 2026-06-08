@@ -26,6 +26,10 @@ spec:
             type: object
           spec:
             properties:
+              blockedActions:
+                items:
+                  type: string
+                type: array
               chores:
                 properties:
                   exclude:

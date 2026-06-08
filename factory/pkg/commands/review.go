@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/blocked"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
@@ -386,6 +387,20 @@ func runReview(ctx context.Context, prURL string, publishPolicy string, instruct
 				Event: reviewEvent,
 			}
 		}
+
+		body := ""
+		if reviewRequest.Body != nil {
+			body = *reviewRequest.Body
+		}
+		if blocked.IsBlocked(reviewOutput) || blocked.IsBlocked(body) {
+			return fmt.Errorf("failed to create review: action is blocked by policy")
+		}
+		for _, comment := range reviewRequest.Comments {
+			if comment != nil && comment.Body != nil && blocked.IsBlocked(*comment.Body) {
+				return fmt.Errorf("failed to create review: action comment is blocked by policy")
+			}
+		}
+
 		_, _, err = ghClient.PullRequests.CreateReview(ctx, owner, repo, prNum, reviewRequest)
 		if err != nil {
 			return fmt.Errorf("failed to create review on GitHub: %w", err)
