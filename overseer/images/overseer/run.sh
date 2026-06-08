@@ -43,24 +43,24 @@ function writeFactoryConfig {
 }
 
 function constructPrompt {
-    if [ -d "/app/prompt" ]; then
-        echo "$(date): Constructing prompt from /app/prompt templates into /workspaces/current_prompt.txt..."
+    if [ -d "/workspaces/prompt" ]; then
+        echo "$(date): Constructing prompt from /workspaces/prompt templates into /workspaces/current_prompt.txt..."
         PROMPT_FILE="/workspaces/current_prompt.txt"
         rm -f "$PROMPT_FILE"
-        cat /app/prompt/01-header.txt >> "$PROMPT_FILE"
+        cat /workspaces/prompt/01-header.txt >> "$PROMPT_FILE"
         if [ "$PR_MODE" != "disabled" ]; then
-            cat /app/prompt/03-pr-handling.txt >> "$PROMPT_FILE"
+            cat /workspaces/prompt/03-pr-handling.txt >> "$PROMPT_FILE"
         fi
         if [ "$REVIEW_MODE" != "disabled" ]; then
-            cat /app/prompt/03a-pr-review-handling.txt >> "$PROMPT_FILE"
+            cat /workspaces/prompt/03a-pr-review-handling.txt >> "$PROMPT_FILE"
         fi
         if [ "$PR_MODE" != "disabled" ]; then
-            cat /app/prompt/06a-examples-prs.txt >> "$PROMPT_FILE"
+            cat /workspaces/prompt/06a-examples-prs.txt >> "$PROMPT_FILE"
         fi
         if [ "$REVIEW_MODE" != "disabled" ]; then
-            cat /app/prompt/06b-examples-prs-review.txt >> "$PROMPT_FILE"
+            cat /workspaces/prompt/06b-examples-prs-review.txt >> "$PROMPT_FILE"
         fi
-        cat /app/prompt/08-footer.txt >> "$PROMPT_FILE"
+        cat /workspaces/prompt/08-footer.txt >> "$PROMPT_FILE"
         
         BOT_NAME="${GITHUB_USER_ID:-codebot-robot}"
         sed -i "s/{{BOT_NAME}}/$BOT_NAME/g" "$PROMPT_FILE"
@@ -263,7 +263,7 @@ while true; do
   # Daily Summary and Cleanup
   if [ "$CURRENT_DAY" != "$LAST_DAY" ]; then
     echo "$(date): Day changed from $LAST_DAY to $CURRENT_DAY. Running daily summary..."
-    /app/summarize.sh --daily "$LAST_DAY" || true
+    /workspaces/summarize.sh --daily "$LAST_DAY" || true
     
     echo "$(date): Cleaning up old logs..."
     find /workspaces/logs -type f -name "run-*.log" -mtime +15 -delete || true
@@ -274,7 +274,7 @@ while true; do
   # Weekly Summary
   if [ "$CURRENT_WEEK" != "$LAST_WEEK" ]; then
     echo "$(date): Week changed from $LAST_WEEK to $CURRENT_WEEK. Running weekly summary..."
-    /app/summarize.sh --weekly "$LAST_WEEK" || true
+    /workspaces/summarize.sh --weekly "$LAST_WEEK" || true
     LAST_WEEK="$CURRENT_WEEK"
   fi
 

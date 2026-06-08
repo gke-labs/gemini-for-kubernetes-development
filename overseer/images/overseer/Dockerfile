@@ -60,6 +60,7 @@ COPY --from=builder /app/factory/factory /usr/local/bin/factory
 COPY overseer/images/overseer/run.sh /app/run.sh
 COPY overseer/images/overseer/summarize.sh /app/summarize.sh
 COPY overseer/images/overseer/prompt/ /app/prompt/
-RUN chmod +x /app/run.sh /app/summarize.sh
+COPY overseer/images/overseer/bootstrap.sh /app/bootstrap.sh
+RUN chmod +x /app/run.sh /app/summarize.sh /app/bootstrap.sh
 
-ENTRYPOINT ["/app/run.sh"]
+ENTRYPOINT ["/app/bootstrap.sh"]

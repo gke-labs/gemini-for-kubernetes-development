@@ -253,7 +253,7 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 			map[string]interface{}{
 				"name":    "overseer",
 				"image":   image,
-				"command": []string{"/app/run.sh"},
+				"command": []string{"/app/bootstrap.sh"},
 				"env":     env,
 				"resources": map[string]interface{}{
 					"requests": map[string]interface{}{
