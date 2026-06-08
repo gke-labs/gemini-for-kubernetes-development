@@ -284,6 +284,16 @@ func getPRPriority(prIssue *githubv39.Issue) string {
 	return getIssuePriority(prIssue)
 }
 
+var workflowFileRegex = regexp.MustCompile(`\b(\.?\.?/?(?:.agents|.gemini)/[a-zA-Z0-9_\-\./]+)\b`)
+
+func findWorkflowPath(body string) string {
+	matches := workflowFileRegex.FindStringSubmatch(body)
+	if len(matches) > 1 {
+		return matches[1]
+	}
+	return ""
+}
+
 func queueIssueTasks(ctx context.Context, ghClient *githubv39.Client, kubeClient *clients.KubernetesClient, owner, repo string, issues []*githubv39.Issue, processedIssues map[int]time.Time, refIssues map[int]bool, targetAssignee string, incomingDir, processingDir, processedDir, queueDir string, dryRun bool) {
 	for _, issue := range issues {
 		num := issue.GetNumber()
@@ -292,13 +302,13 @@ func queueIssueTasks(ctx context.Context, ghClient *githubv39.Client, kubeClient
 			continue
 		}
 
-		// Check if it's a workflow trigger
+		// Check if the issue specifies a workflow path in its description
+		workflowPath := findWorkflowPath(issue.GetBody())
 		workflowName := ""
-		for _, l := range issue.Labels {
-			if strings.HasPrefix(l.GetName(), "workflow/") {
-				workflowName = strings.TrimPrefix(l.GetName(), "workflow/")
-				break
-			}
+		if workflowPath != "" {
+			filenameOnly := filepath.Base(workflowPath)
+			ext := filepath.Ext(filenameOnly)
+			workflowName = strings.TrimSuffix(filenameOnly, ext)
 		}
 
 		filename := fmt.Sprintf("task-issue-%d.yaml", num)
@@ -334,7 +344,7 @@ func queueIssueTasks(ctx context.Context, ghClient *githubv39.Client, kubeClient
 
 			sandboxName := fmt.Sprintf("fix-%s-%d", repo, num)
 			if workflowName != "" {
-				sandboxName = fmt.Sprintf("agent-%s-%s-issue-%d", repo, Slugify(workflowName), num)
+				sandboxName = fmt.Sprintf("wf-issue-%d", num)
 			}
 
 			running, err := isSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName)
@@ -369,7 +379,7 @@ func queueIssueTasks(ctx context.Context, ghClient *githubv39.Client, kubeClient
 					CreatedAt: issue.GetCreatedAt(),
 					Assignee:  targetAssignee,
 					Status:    "Pending",
-					AgentFile: ".agents/" + workflowName + ".yaml",
+					AgentFile: workflowPath,
 					SessionID: fmt.Sprintf("issue-%d", num),
 				}
 			} else {
