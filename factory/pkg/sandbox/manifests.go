@@ -1,7 +1,9 @@
 package sandbox
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -38,6 +40,7 @@ type DevSandboxOptions struct {
 	EphemeralStorage  string
 	Secrets           []SecretMount
 	Env               []EnvVar
+	BlockedActions    []string
 }
 
 // AgentSandboxOptions holds options for creating an AgentSandbox.
@@ -126,6 +129,21 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 		env = append(env, map[string]interface{}{
 			"name":  e.Name,
 			"value": e.Value,
+		})
+	}
+
+	if len(opt.BlockedActions) > 0 {
+		blockedJSON, err := json.Marshal(opt.BlockedActions)
+		if err == nil {
+			env = append(env, map[string]interface{}{
+				"name":  "BLOCKED_ACTIONS",
+				"value": string(blockedJSON),
+			})
+		}
+	} else if os.Getenv("BLOCKED_ACTIONS") != "" {
+		env = append(env, map[string]interface{}{
+			"name":  "BLOCKED_ACTIONS",
+			"value": os.Getenv("BLOCKED_ACTIONS"),
 		})
 	}
 
@@ -291,6 +309,21 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 		env = append(env, map[string]interface{}{
 			"name":  e.Name,
 			"value": e.Value,
+		})
+	}
+
+	if len(opt.BlockedActions) > 0 {
+		blockedJSON, err := json.Marshal(opt.BlockedActions)
+		if err == nil {
+			env = append(env, map[string]interface{}{
+				"name":  "BLOCKED_ACTIONS",
+				"value": string(blockedJSON),
+			})
+		}
+	} else if os.Getenv("BLOCKED_ACTIONS") != "" {
+		env = append(env, map[string]interface{}{
+			"name":  "BLOCKED_ACTIONS",
+			"value": os.Getenv("BLOCKED_ACTIONS"),
 		})
 	}
 

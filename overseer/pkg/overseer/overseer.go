@@ -232,6 +232,15 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 			})
 		}
 	}
+	if len(o.Spec.BlockedActions) > 0 {
+		blockedJSON, err := json.Marshal(o.Spec.BlockedActions)
+		if err == nil {
+			env = append(env, map[string]interface{}{
+				"name":  "BLOCKED_ACTIONS",
+				"value": string(blockedJSON),
+			})
+		}
+	}
 
 	ephemeralStorage := o.Spec.EphemeralStorage
 	if ephemeralStorage == "" {
