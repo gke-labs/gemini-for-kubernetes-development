@@ -4,7 +4,7 @@ metadata:
   name: ai-factory
 spec:
   repoURL: https://github.com/ai-on-gke/ai-factory
-  robotAccount: codebot-robot
+  robotAccount: factorybot-robot
   maxActiveReviews: 3
   maxActiveIssues: 3
   chores:

@@ -4,7 +4,7 @@ metadata:
   name: agent-sandbox
 spec:
   repoURL: https://github.com/kubernetes-sigs/agent-sandbox
-  robotAccount: codebot-robot
+  robotAccount: factorybot-robot
   maxActiveReviews: 3
   maxActiveIssues: 3
   chores:

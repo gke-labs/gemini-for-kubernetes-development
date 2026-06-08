@@ -4,7 +4,7 @@ metadata:
   name: kcc
 spec:
   repoURL: https://github.com/GoogleCloudPlatform/k8s-config-connector
-  robotAccount: codebot-robot
+  robotAccount: factorybot-robot
   maxActiveReviews: 20
   maxActiveIssues: 11
   chores:

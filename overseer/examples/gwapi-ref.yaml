@@ -4,7 +4,7 @@ metadata:
   name: gwapi-ref
 spec:
   repoURL: https://github.com/gke-labs/gateway-api-reference-implementation
-  robotAccount: codebot-robot
+  robotAccount: factorybot-robot
   maxActiveReviews: 3
   maxActiveIssues: 3
   chores:

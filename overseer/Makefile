@@ -9,7 +9,7 @@ KIND_CLUSTER_ARG=
 endif
 
 .PHONY: all
-all: check-prereqs generate lint-go test-unit create-kind install-dep-packages create-secrets push-images install
+all: check-prereqs generate lint-go test-unit create-kind create-secrets push-images install-dep-packages install
 
 .PHONY: check-prereqs
 check-prereqs:
