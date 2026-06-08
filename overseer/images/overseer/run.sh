@@ -43,6 +43,12 @@ function writeFactoryConfig {
 }
 
 function constructPrompt {
+    if [ -f "/workspaces/override_prompt.txt" ]; then
+        echo "$(date): Using override prompt from /workspaces/override_prompt.txt..."
+        PROMPT=$(cat "/workspaces/override_prompt.txt")
+        return
+    fi
+
     if [ -d "/workspaces/prompt" ]; then
         echo "$(date): Constructing prompt from /workspaces/prompt templates into /workspaces/current_prompt.txt..."
         PROMPT_FILE="/workspaces/current_prompt.txt"
