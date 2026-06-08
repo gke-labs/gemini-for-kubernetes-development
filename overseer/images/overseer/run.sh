@@ -287,18 +287,16 @@ while true; do
   # Refresh LLM token
   refreshLLMToken
 
+  set -o pipefail
   {
     echo "$(date): Running Overseer cycle..."
     runWatchCycle
     echo "$(date): Cycle complete."
-  } > "$LOG_FILE" 2>&1 || {
-    EXIT_CODE=$?
-    cat "$LOG_FILE"
+  } 2>&1 | tee -a "$LOG_FILE"
+  EXIT_CODE=$?
+  if [ $EXIT_CODE -ne 0 ]; then
     exit $EXIT_CODE
-  }
-  
-  # Print log to stdout
-  cat "$LOG_FILE"
+  fi
   
   echo "$(date): Sleeping for 10 seconds before next cycle..."
   sleep 10

@@ -330,6 +330,7 @@ func isWorkflowDefinition(ctx context.Context, ghClient *githubv39.Client, owner
 }
 
 func queueIssueTasks(ctx context.Context, ghClient *githubv39.Client, kubeClient *clients.KubernetesClient, owner, repo string, issues []*githubv39.Issue, processedIssues map[int]time.Time, refIssues map[int]bool, targetAssignee string, incomingDir, processingDir, processedDir, queueDir string, dryRun bool) {
+	klog.Infof("queueIssueTasks called with %d issues", len(issues))
 	for _, issue := range issues {
 		num := issue.GetNumber()
 		if refIssues[num] {
@@ -1127,6 +1128,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				if err != nil {
 					klog.Errorf("Failed to list issues for assignee %s: %v", targetAssignee, err)
 				} else {
+					klog.Infof("Fetched %d issues assigned to %s from GitHub API", len(issues1), targetAssignee)
 					allItems = append(allItems, issues1...)
 				}
 			}
