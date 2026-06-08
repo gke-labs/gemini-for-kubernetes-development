@@ -47,6 +47,31 @@ sequenceDiagram
     Watcher->>Git: Scans Issue #123 -> Detected closed -> Stop rescheduling!
 ```
 
+### Detailed Reconciliation Lifecycle Walkthrough
+
+1.  **Trigger**: A developer opens parent issue `#123` containing a path reference to a workflow (e.g. `.agents/workflows/checklist-for-kind.yaml`) in its description.
+2.  **First Run**:
+    *   `factory watch` detects that issue `#123` is open and matches the workflow path, and queues a new task.
+    *   The runner starts/ensures Sandbox `wf-issue-123`.
+    *   The LLM runs step 1 of the workflow (e.g. it creates a child PR to add a resource).
+    *   The LLM writes the current progress and tracking information into `.gemini/workflows/checklist-for-kind/session-issue-123.md`.
+    *   `run_agent.sh` commits and pushes the updated journal to the `overseer` branch, maps the Gemini session ID inside the persistent registry, and exits. The Sandbox pod goes idle.
+3.  **Rescheduling while Waiting**:
+    *   10 minutes later (in the next watch cycle), `factory watch` runs again. Parent issue `#123` is still **open**.
+    *   It checks the rate limit: has it been 10 minutes since the last run finished? Yes.
+    *   It queues the task again.
+    *   The runner reuses Sandbox `wf-issue-123`.
+    *   `run_agent.sh` resolves `issue-123` in the mapping registry, gets the session UUID, and resumes the thread (`gemini --yolo --resume <session-id>`).
+    *   The LLM checks the status of the child PR using `gh pr view <pr-num>`.
+    *   If the PR is **not merged yet**, the LLM logs: *"Step 1 is still pending. I will wait."*, saves the state, pushes to the `overseer` branch, and exits. The Sandbox goes idle.
+4.  **Resuming after Merge**:
+    *   In a later cycle, the LLM runs `gh pr view <pr-num>` and sees that it is **merged**.
+    *   The LLM logs: *"Step 1 is complete! Now executing Step 2 (creating the next issue/task)."*
+    *   It performs the next step, updates the journal file, pushes to `overseer`, and exits.
+5.  **Completion**:
+    *   Once the entire checklist is done, the LLM closes the parent issue `#123` (`gh issue close 123`).
+    *   In the next watch cycle, `factory watch` detects that issue `#123` is closed and stops queueing the task for this session.
+
 ---
 
 ## Technical Details
