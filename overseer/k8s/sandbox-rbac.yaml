@@ -29,32 +29,6 @@ rules:
 - apiGroups: [""]
   resources: ["services"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-- apiGroups:
-  - "custom.agents.x-k8s.io"
-  resources:
-  - sandboxtasks
-  - sandboxtasks/status
-  verbs:
-  - get
-  - list
-  - watch
-  - update
-  - patch
-  - create
-  - delete
-- apiGroups:
-  - "configdir.gke.io"
-  resources:
-  - configdirs
-  - configfiles
-  verbs:
-  - get
-  - list
-  - watch
-  #- update
-  #- create
-  #- delete
-  #- patch
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

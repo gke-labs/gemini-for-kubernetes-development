@@ -1,10 +1,10 @@
 apiVersion: overseer.gemini.google.com/v1alpha1
 kind: Overseer
 metadata:
-  name: repo-agent
+  name: gfkd
 spec:
   repoURL: https://github.com/gke-labs/gemini-for-kubernetes-development
-  robotAccount: codebot-robot
+  robotAccount: factorybot-robot
   maxActiveReviews: 3
   maxActiveIssues: 3
   chores:

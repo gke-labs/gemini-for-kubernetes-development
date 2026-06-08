@@ -44,8 +44,6 @@ spec:
                     - dryrun
                     type: string
                 type: object
-              configdirRef:
-                type: string
               enableGeminiOrchestrator:
                 default: false
                 type: boolean
@@ -64,17 +62,6 @@ spec:
               ephemeralStorage:
                 default: 10Gi
                 type: string
-              extensions:
-                items:
-                  properties:
-                    ref:
-                      type: string
-                    source:
-                      type: string
-                  required:
-                  - source
-                  type: object
-                type: array
               geminiAPIKeySecretName:
                 type: string
               image:

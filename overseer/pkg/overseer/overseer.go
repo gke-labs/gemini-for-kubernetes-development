@@ -35,7 +35,7 @@ import (
 )
 
 // ReconcileOverseer ensures the Overseer sandbox is running for the given Overseer.
-func ReconcileOverseer(ctx context.Context, c client.Client, o *overseerv1alpha1.Overseer, repoSandboxImage, configDirImage string) error {
+func ReconcileOverseer(ctx context.Context, c client.Client, o *overseerv1alpha1.Overseer) error {
 	log := log.FromContext(ctx)
 
 	overseerName := fmt.Sprintf("overseer-%s", o.Name)
@@ -68,7 +68,7 @@ func ReconcileOverseer(ctx context.Context, c client.Client, o *overseerv1alpha1
 		if errors.IsNotFound(err) {
 			// Create
 			log.Info("Creating Overseer sandbox", "name", overseerName, "namespace", namespace)
-			newSandbox := newOverseerSandboxFromOverseer(o, overseerName, namespace, repoSandboxImage, configDirImage, hasTokenScript)
+			newSandbox := newOverseerSandboxFromOverseer(o, overseerName, namespace, hasTokenScript)
 			if err := controllerutil.SetControllerReference(o, newSandbox, c.Scheme()); err != nil {
 				return err
 			}
@@ -81,43 +81,38 @@ func ReconcileOverseer(ctx context.Context, c client.Client, o *overseerv1alpha1
 	return nil
 }
 
-func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespace, repoSandboxImage, configDirImage string, hasTokenScript bool) *unstructured.Unstructured {
+func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespace string, hasTokenScript bool) *unstructured.Unstructured {
 	image := os.Getenv("OVERSEER_IMAGE")
 
-	apiKeySecretName := o.Spec.GeminiAPIKeySecretName
-	if apiKeySecretName == "" {
-		apiKeySecretName = "gemini-api-key"
-	}
-
-	githubSecretName := o.Spec.RobotAccount
+	secretName := "factory-user"
 
 	env := []interface{}{
 		map[string]interface{}{
-			"name": "MANUAL_PAT",
+			"name": "GITHUB_TOKEN",
 			"valueFrom": map[string]interface{}{
 				"secretKeyRef": map[string]interface{}{
-					"name":     githubSecretName,
-					"key":      "manual_pat",
+					"name":     secretName,
+					"key":      "GITHUB_TOKEN",
 					"optional": true,
 				},
 			},
 		},
 		map[string]interface{}{
-			"name": "OAUTH_PAT",
+			"name": "GITHUB_LOGIN",
 			"valueFrom": map[string]interface{}{
 				"secretKeyRef": map[string]interface{}{
-					"name":     githubSecretName,
-					"key":      "oauth_pat",
+					"name":     secretName,
+					"key":      "GITHUB_LOGIN",
 					"optional": true,
 				},
 			},
 		},
 		map[string]interface{}{
-			"name": "GITHUB_USER_TOKEN",
+			"name": "GITHUB_EMAIL",
 			"valueFrom": map[string]interface{}{
 				"secretKeyRef": map[string]interface{}{
-					"name":     githubSecretName,
-					"key":      "pat",
+					"name":     secretName,
+					"key":      "GITHUB_EMAIL",
 					"optional": true,
 				},
 			},
@@ -126,8 +121,8 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 			"name": "GEMINI_API_KEY",
 			"valueFrom": map[string]interface{}{
 				"secretKeyRef": map[string]interface{}{
-					"name":     apiKeySecretName,
-					"key":      "gemini",
+					"name":     secretName,
+					"key":      "GEMINI_API_KEY",
 					"optional": true,
 				},
 			},
@@ -152,14 +147,7 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 			"name":  "NAMESPACE",
 			"value": namespace,
 		},
-		map[string]interface{}{
-			"name":  "REPO_SANDBOX_IMAGE",
-			"value": repoSandboxImage,
-		},
-		map[string]interface{}{
-			"name":  "CONFIG_DIR_IMAGE",
-			"value": configDirImage,
-		},
+
 		map[string]interface{}{
 			"name":  "POLL_INTERVAL",
 			"value": o.Spec.PollInterval,
@@ -245,70 +233,6 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 		}
 	}
 
-	botSecretName := o.Spec.RobotAccount
-	if botSecretName != "" {
-		env = append(env, map[string]interface{}{
-			"name": "GITHUB_BOT_LOGIN",
-			"valueFrom": map[string]interface{}{
-				"secretKeyRef": map[string]interface{}{
-					"name":     botSecretName,
-					"key":      "userid",
-					"optional": true,
-				},
-			},
-		})
-		env = append(env, map[string]interface{}{
-			"name": "GITHUB_BOT_NAME",
-			"valueFrom": map[string]interface{}{
-				"secretKeyRef": map[string]interface{}{
-					"name":     botSecretName,
-					"key":      "name",
-					"optional": true,
-				},
-			},
-		})
-		env = append(env, map[string]interface{}{
-			"name": "GITHUB_BOT_EMAIL",
-			"valueFrom": map[string]interface{}{
-				"secretKeyRef": map[string]interface{}{
-					"name":     botSecretName,
-					"key":      "email",
-					"optional": true,
-				},
-			},
-		})
-		env = append(env, map[string]interface{}{
-			"name": "GITHUB_BOT_TOKEN",
-			"valueFrom": map[string]interface{}{
-				"secretKeyRef": map[string]interface{}{
-					"name":     botSecretName,
-					"key":      "pat",
-					"optional": true,
-				},
-			},
-		})
-		env = append(env, map[string]interface{}{
-			"name": "GITHUB_BOT_OAUTH_PAT",
-			"valueFrom": map[string]interface{}{
-				"secretKeyRef": map[string]interface{}{
-					"name":     botSecretName,
-					"key":      "oauth_pat",
-					"optional": true,
-				},
-			},
-		})
-		env = append(env, map[string]interface{}{
-			"name": "GITHUB_BOT_MANUAL_PAT",
-			"valueFrom": map[string]interface{}{
-				"secretKeyRef": map[string]interface{}{
-					"name":     botSecretName,
-					"key":      "manual_pat",
-					"optional": true,
-				},
-			},
-		})
-	}
-
 	ephemeralStorage := o.Spec.EphemeralStorage
 	if ephemeralStorage == "" {
 		ephemeralStorage = "10Gi"
@@ -336,33 +260,6 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 				},
 			},
 		},
-	}
-
-	if o.Spec.ConfigdirRef != "" {
-		podSpec["initContainers"] = []interface{}{
-			map[string]interface{}{
-				"name":  "gemini-configs",
-				"image": configDirImage,
-				"args":  []interface{}{"--directory", "/configdir", "--namespace", namespace, "--name", o.Spec.ConfigdirRef, "--ignore-not-found-error"},
-				"volumeMounts": []interface{}{
-					map[string]interface{}{"name": "configdir-vol", "mountPath": "/configdir"},
-				},
-			},
-		}
-
-		podSpec["volumes"] = []interface{}{
-			map[string]interface{}{
-				"name":     "configdir-vol",
-				"emptyDir": map[string]interface{}{},
-			},
-		}
-
-		// Also mount configdir-vol to the main container
-		containers := podSpec["containers"].([]interface{})
-		mainContainer := containers[0].(map[string]interface{})
-		mainContainer["volumeMounts"] = []interface{}{
-			map[string]interface{}{"name": "configdir-vol", "mountPath": "/configdir"},
-		}
 	}
 
 	if hasTokenScript {

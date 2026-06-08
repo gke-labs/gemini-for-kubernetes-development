@@ -4,14 +4,13 @@ metadata:
   name: gwapi-ref
 spec:
   repoURL: https://github.com/gke-labs/gateway-api-reference-implementation
-  robotAccount: codebot-robot
+  robotAccount: factorybot-robot
   maxActiveReviews: 3
   maxActiveIssues: 3
   chores:
     mode: enabled
   geminiAPIKeySecretName: gemini-vscode-tokens
   image: ghcr.io/gke-labs/gemini-for-kubernetes-development/factory-golang:latest
-  #configdirRef: gateway-api-ref-impl-gemini-config
   review:
     prompt: >-
         You are an expert kubernetes developer who is helping with code reviews.
@@ -20,18 +19,5 @@ spec:
         Would you approve it ? Please pay attention to the following: 1. Does
         the fix resolve the original problem. 2. Look for linked issues to
         understand the original problem. 3. Are there tests to check the fix.
-
-        Read @.gemini/user-instructions.json for specific review instructions tuned for this repository.
   issuePrompt: |
           Fix this issue
-#---
-#apiVersion: configdir.gke.io/v1alpha1
-#kind: ConfigDir
-#metadata:
-#  name: gateway-api-ref-impl-gemini-config
-#spec:
-#  files:
-#  - path: .gemini/user-instructions.json
-#    source:
-#      inline: |
-#        ""

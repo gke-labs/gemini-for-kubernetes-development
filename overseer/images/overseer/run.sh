@@ -61,6 +61,10 @@ function constructPrompt {
             cat /workspaces/prompt/06b-examples-prs-review.txt >> "$PROMPT_FILE"
         fi
         cat /workspaces/prompt/08-footer.txt >> "$PROMPT_FILE"
+        
+        BOT_NAME="${GITHUB_USER_ID:-codebot-robot}"
+        sed -i "s/{{BOT_NAME}}/$BOT_NAME/g" "$PROMPT_FILE"
+        
         PROMPT=$(cat "$PROMPT_FILE")
     else
         PROMPT="${AGENT_PROMPT:-You are the Overseer. Monitor the repository and orchestrate agents.}"
@@ -97,11 +101,11 @@ HTTPS_PROXY=http://github-portal.overseer-system.svc.cluster.local:80 SSL_CERT_F
 EOF
     chmod +x /usr/local/bin/gh
 
-    # Map GITHUB_BOT_* env variables if set
-    GITHUB_USER_ID="${GITHUB_BOT_LOGIN:-$GITHUB_USER_ID}"
-    GITHUB_USER_NAME="${GITHUB_BOT_NAME:-$GITHUB_BOT_NAME}"
-    GITHUB_USER_EMAIL="${GITHUB_BOT_EMAIL:-$GITHUB_BOT_EMAIL}"
-    GITHUB_USER_TOKEN="${GITHUB_BOT_MANUAL_PAT:-${GITHUB_BOT_OAUTH_PAT:-${GITHUB_BOT_TOKEN:-${MANUAL_PAT:-${OAUTH_PAT:-$GITHUB_USER_TOKEN}}}}}"
+    # Map GitHub credentials from environment
+    GITHUB_USER_ID="${GITHUB_LOGIN:-$GITHUB_USER_ID}"
+    GITHUB_USER_NAME="${GITHUB_LOGIN:-$GITHUB_USER_NAME}"
+    GITHUB_USER_EMAIL="${GITHUB_EMAIL:-$GITHUB_USER_EMAIL}"
+    GITHUB_USER_TOKEN="${GITHUB_TOKEN:-$GITHUB_USER_TOKEN}"
 
     # Also ensure GITHUB_TOKEN is set for tools that specifically look for it
     if [ -n "$GITHUB_USER_TOKEN" ]; then
@@ -166,12 +170,6 @@ cd "$REPO_NAME"
 echo "Ensuring fork is configured..."
 gh repo fork --remote || true
 
-if [ -d "/configdir" ] && [ "$(ls -A /configdir)" ]; then
-  echo "Injecting configdir files into repository..."
-  shopt -s dotglob
-  cp -R /configdir/* .
-  shopt -u dotglob
-fi
 
 function runGeminiOrchestrator {
     # Run Gemini LLM (Non-deterministic Scanner/Orchestrator)

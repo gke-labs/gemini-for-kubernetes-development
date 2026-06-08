@@ -9,7 +9,7 @@ KIND_CLUSTER_ARG=
 endif
 
 .PHONY: all
-all: check-prereqs generate lint-go test-unit create-kind install-dep-packages create-secrets push-images install
+all: check-prereqs generate lint-go test-unit create-kind create-secrets push-images install-dep-packages install
 
 .PHONY: check-prereqs
 check-prereqs:
@@ -55,19 +55,17 @@ create-secrets: bin/github-portal-ca.crt
 		exit 1; \
 	fi
 	kubectl create namespace overseer-system || true
-	@kubectl create secret -n overseer-system generic gemini-vscode-tokens --from-literal=gemini=${GEMINI_API_KEY} --dry-run=client -o yaml | kubectl apply -f -
+	@kubectl create secret -n overseer-system generic gemini-vscode-tokens --from-literal=GEMINI_API_KEY=${GEMINI_API_KEY} --dry-run=client -o yaml | kubectl apply -f -
 	@kubectl create secret -n overseer-system generic ${ROBOT1_GH_USERID} \
-		--from-literal=pat="${ROBOT1_GH_PAT}" \
-		--from-literal=name="${ROBOT1_GH_NAME}" \
-		--from-literal=userid="${ROBOT1_GH_USERID}" \
-		--from-literal=email="${ROBOT1_GH_EMAIL}" \
+		--from-literal=GITHUB_TOKEN="${ROBOT1_GH_PAT}" \
+		--from-literal=GITHUB_LOGIN="${ROBOT1_GH_USERID}" \
+		--from-literal=GITHUB_EMAIL="${ROBOT1_GH_EMAIL}" \
 		--dry-run=client -o yaml | kubectl apply -f -
 	@kubectl create secret generic github-portal-ca -n overseer-system --from-file=tls.crt=bin/github-portal-ca.crt --from-file=tls.key=bin/github-portal-ca.key --dry-run=client -o yaml | kubectl apply -f -
 
 .PHONY: install-dep-packages
 install-dep-packages:
 	../dev/tools/install-agent-sandbox
-	kubectl apply -f ../repo-agent/k8s/crds/ || true
 	kubectl create namespace overseer-system || true
 
 .PHONY: uninstall-dep-packages
@@ -131,11 +129,7 @@ push-images-overseer:
 
 .PHONY: push-images
 push-images: push-images-overseer
-	../dev/tools/push-images --image-prefix=$(REGISTRY) $(KIND_CLUSTER_ARG) \
-	--working-dir .. \
-	--images-dir ../repo-agent/images \
-	--only repo-sandbox \
-	--only configdir-cli
+	make -C ../factory push-images REGISTRY=$(REGISTRY) KIND_CLUSTER=$(KIND_CLUSTER)
 
 .PHONY: clean
 clean:

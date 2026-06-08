@@ -17,7 +17,6 @@ limitations under the License.
 package v1alpha1
 
 import (
-	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -97,11 +96,6 @@ type OverseerSpec struct {
 	// +kubebuilder:validation:Optional
 	Repo *RepoSpec `json:"repo,omitempty"`
 
-	// ConfigdirRef is a reference to a ConfigDir resource that contains
-	// additional configuration for the LLM agent, such as tool schemas and
-	// model configurations.
-	ConfigdirRef string `json:"configdirRef,omitempty"`
-
 	// Image to use for the development sandbox. If set, this overrides the devcontainer image.
 	// +kubebuilder:validation:Optional
 	Image string `json:"image,omitempty"`
@@ -119,12 +113,6 @@ type OverseerSpec struct {
 	// +kubebuilder:validation:Optional
 	// +kubebuilder:default="10Gi"
 	EphemeralStorage string `json:"ephemeralStorage,omitempty"`
-
-	// Extensions is a list of extensions to install in the sandbox
-	// before running the agent. Each entry specifies a source
-	// (GitHub URL or extension name) and optional ref.
-	// +kubebuilder:validation:Optional
-	Extensions []reviewv1alpha1.Extension `json:"extensions,omitempty"`
 
 	// Review configuration for PRs
 	// +kubebuilder:validation:Optional
