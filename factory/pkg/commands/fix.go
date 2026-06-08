@@ -208,6 +208,20 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch boo
 			issueTitle = issue.GetTitle()
 		}
 
+		// Intercept and run as workflow if a workflow path is referenced in the issue body
+		workflowPath := findWorkflowPath(issueBody)
+		if workflowPath != "" {
+			if isWorkflowDefinition(ctx, ghClient, owner, repo, workflowPath) {
+				fmt.Printf("Detected workflow definition '%s' referenced in issue #%d. Forwarding to workflow execution...\n", workflowPath, issueNum)
+				agentFlags := AgentFlags{
+					URL:       targetURL,
+					Agent:     workflowPath,
+					SessionID: fmt.Sprintf("issue-%d", issueNum),
+				}
+				return RunAgent(ctx, agentFlags, ephemeralStorage, secrets)
+			}
+		}
+
 		comments, _, err := ghClient.Issues.ListComments(ctx, owner, repo, issueNum, nil)
 		if err == nil {
 			for _, c := range comments {
