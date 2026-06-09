@@ -251,7 +251,7 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch boo
 		Branch:        branchName,
 		Models:        []string{"gemini-3.5-flash", "gemini-3-flash-preview", "gemini-3.1-pro-preview", "gemini-2.5-pro"},
 		DraftPR:       false,
-		PRLabel:       "factory",
+		PRLabel:       "overseer",
 		NoPR:          noPR,
 	}
 

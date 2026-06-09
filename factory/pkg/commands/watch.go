@@ -400,11 +400,15 @@ func queueIssueTasks(ctx context.Context, ghClient *githubv39.Client, kubeClient
 
 			if isAssigned(issue, targetAssignee) {
 				if dryRun {
-					fmt.Printf("[DRYRUN] Would unassign %s from issue #%d\n", targetAssignee, num)
+					fmt.Printf("[DRYRUN] Would unassign %s from issue #%d and add label 'overseer'\n", targetAssignee, num)
 				} else {
 					fmt.Printf("Unassigning %s from issue #%d...\n", targetAssignee, num)
 					if _, _, err := ghClient.Issues.RemoveAssignees(ctx, owner, repo, num, []string{targetAssignee}); err != nil {
 						klog.Errorf("Failed to unassign %s from issue #%d: %v", targetAssignee, num, err)
+					}
+					klog.Infof("Adding 'overseer' label to issue #%d", num)
+					if _, _, err := ghClient.Issues.AddLabelsToIssue(ctx, owner, repo, num, []string{"overseer"}); err != nil {
+						klog.Errorf("Failed to add label 'overseer' to issue #%d: %v", num, err)
 					}
 				}
 			}

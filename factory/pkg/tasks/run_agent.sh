@@ -187,11 +187,11 @@ function commitChanges {
     ${COMMIT_MSG}"
     
                 # Try to create PR
-                PR_URL=$(gh pr create --title "chore: ${AGENT_NAME}" --body "${PR_BODY}" --head "${FORK_OWNER}:${BRANCH_NAME}" --base "${BASE_BRANCH}" || true)
+                PR_URL=$(gh pr create --title "chore: ${AGENT_NAME}" --body "${PR_BODY}" --head "${FORK_OWNER}:${BRANCH_NAME}" --base "${BASE_BRANCH}" --label "overseer" || true)
                 
                 if [ -n "$PR_URL" ] && [[ "$PR_URL" == http* ]]; then
                     echo "$PR_URL" > "$(dirname "${PROMPT_FILE}")/agent-output.txt"
-                    gh pr edit "$PR_URL" --add-label "factory" || echo "Warning: failed to add label factory to $PR_URL"
+                    gh pr edit "$PR_URL" --add-label "overseer" || echo "Warning: failed to add label overseer to $PR_URL"
                 else
                     echo "Failed to create PR" > "$(dirname "${PROMPT_FILE}")/agent-output.txt"
                 fi
