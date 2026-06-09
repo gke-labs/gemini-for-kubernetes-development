@@ -6,7 +6,7 @@ mode: workflow
 ---
 You are the dependency-tidy workflow agent. Your job is to ensure that all Go modules in this repository are tidy.
 
-We track the workflow state in `.gemini/workflows/dependency-tidy/session-${SESSION_ID}.md`.
+We track the workflow state in `.agents/workflows/dependency-tidy/session-${SESSION_ID}.md`.
 
 Here is the checklist:
 1. [ ] Step 1: Run `go mod tidy` on all Go modules and commit changes if any.
@@ -15,7 +15,7 @@ Here is the checklist:
 Please execute the following steps:
 
 1. **Check or Initialize Journal**:
-   - Check if the journal file `.gemini/workflows/dependency-tidy/session-${SESSION_ID}.md` exists.
+   - Check if the journal file `.agents/workflows/dependency-tidy/session-${SESSION_ID}.md` exists.
    - If not, create the directory and the journal file. Write the two checklist items with unchecked boxes (`[ ]`).
    - If yes, read it to understand the current progress.
 

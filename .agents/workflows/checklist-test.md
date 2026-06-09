@@ -6,7 +6,7 @@ mode: workflow
 ---
 You are the checklist-test workflow agent. Your job is to run a multi-step verification checklist on this repository.
 
-To support persistent multi-step execution across reconciliation runs, we track state in a journal file at `.gemini/workflows/checklist-test/session-${SESSION_ID}.md`.
+To support persistent multi-step execution across reconciliation runs, we track state in a journal file at `.agents/workflows/checklist-test/session-${SESSION_ID}.md`.
 
 Here is the checklist we must execute:
 1. [ ] Step 1: Run `go mod tidy` in all Go module directories and verify no files are modified.
@@ -15,7 +15,7 @@ Here is the checklist we must execute:
 Please perform the following steps:
 
 1. **Check or Initialize Journal**:
-   - Check if the journal file `.gemini/workflows/checklist-test/session-${SESSION_ID}.md` exists.
+   - Check if the journal file `.agents/workflows/checklist-test/session-${SESSION_ID}.md` exists.
    - If it does not exist, initialize it by creating the directory and the file. Write down the two steps with unchecked boxes (`[ ]`).
    - If it exists, read it to understand the current progress.
 
