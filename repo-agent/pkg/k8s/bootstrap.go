@@ -8,6 +8,7 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/klog/v2"
@@ -295,6 +296,117 @@ func EnsureNetworkPolicy(ctx context.Context, clientset kubernetes.Interface, na
 	log := klog.FromContext(ctx)
 	policyName := "sandbox-egress-policy"
 
+	var apiServerIP string
+	var apiServerPort int32 = 443
+	if svc, err := clientset.CoreV1().Services("default").Get(ctx, "kubernetes", v1.GetOptions{}); err == nil {
+		apiServerIP = svc.Spec.ClusterIP
+		if len(svc.Spec.Ports) > 0 {
+			apiServerPort = svc.Spec.Ports[0].Port
+		}
+	}
+
+	var registryIP string
+	var registryPort int32 = 5000
+	if svc, err := clientset.CoreV1().Services("repo-agent-system").Get(ctx, "registry", v1.GetOptions{}); err == nil {
+		registryIP = svc.Spec.ClusterIP
+		if len(svc.Spec.Ports) > 0 {
+			registryPort = svc.Spec.Ports[0].Port
+		}
+	}
+
+	egressRules := []networkingv1.NetworkPolicyEgressRule{
+		// Allow DNS
+		{
+			Ports: []networkingv1.NetworkPolicyPort{
+				{
+					Protocol: protoPtr(corev1.ProtocolUDP),
+					Port:     intstrPtr(intstr.FromInt(53)),
+				},
+				{
+					Protocol: protoPtr(corev1.ProtocolTCP),
+					Port:     intstrPtr(intstr.FromInt(53)),
+				},
+			},
+		},
+		// Allow repo-agent-system namespace
+		{
+			To: []networkingv1.NetworkPolicyPeer{
+				{
+					NamespaceSelector: &v1.LabelSelector{
+						MatchLabels: map[string]string{
+							"kubernetes.io/metadata.name": "repo-agent-system",
+						},
+					},
+				},
+			},
+		},
+		// Allow overseer-system namespace
+		{
+			To: []networkingv1.NetworkPolicyPeer{
+				{
+					NamespaceSelector: &v1.LabelSelector{
+						MatchLabels: map[string]string{
+							"kubernetes.io/metadata.name": "overseer-system",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	if apiServerIP != "" {
+		egressRules = append(egressRules, networkingv1.NetworkPolicyEgressRule{
+			To: []networkingv1.NetworkPolicyPeer{
+				{
+					IPBlock: &networkingv1.IPBlock{
+						CIDR: apiServerIP + "/32",
+					},
+				},
+			},
+			Ports: []networkingv1.NetworkPolicyPort{
+				{
+					Protocol: protoPtr(corev1.ProtocolTCP),
+					Port:     intstrPtr(intstr.FromInt(int(apiServerPort))),
+				},
+			},
+		})
+	}
+
+	if registryIP != "" {
+		egressRules = append(egressRules, networkingv1.NetworkPolicyEgressRule{
+			To: []networkingv1.NetworkPolicyPeer{
+				{
+					IPBlock: &networkingv1.IPBlock{
+						CIDR: registryIP + "/32",
+					},
+				},
+			},
+			Ports: []networkingv1.NetworkPolicyPort{
+				{
+					Protocol: protoPtr(corev1.ProtocolTCP),
+					Port:     intstrPtr(intstr.FromInt(int(registryPort))),
+				},
+			},
+		})
+	}
+
+	egressRules = append(egressRules, networkingv1.NetworkPolicyEgressRule{
+		// Allow Public Internet (Blocks all other private IPs)
+		To: []networkingv1.NetworkPolicyPeer{
+			{
+				IPBlock: &networkingv1.IPBlock{
+					CIDR: "0.0.0.0/0",
+					Except: []string{
+						"10.0.0.0/8",
+						"172.16.0.0/12",
+						"192.168.0.0/16",
+						"169.254.0.0/16",
+					},
+				},
+			},
+		},
+	})
+
 	policy := &networkingv1.NetworkPolicy{
 		ObjectMeta: v1.ObjectMeta{
 			Name:      policyName,
@@ -312,23 +424,7 @@ func EnsureNetworkPolicy(ctx context.Context, clientset kubernetes.Interface, na
 			PolicyTypes: []networkingv1.PolicyType{
 				networkingv1.PolicyTypeEgress,
 			},
-			Egress: []networkingv1.NetworkPolicyEgressRule{
-				{
-					To: []networkingv1.NetworkPolicyPeer{
-						{
-							IPBlock: &networkingv1.IPBlock{
-								CIDR: "0.0.0.0/0",
-								Except: []string{
-									"10.0.0.0/8",
-									"172.16.0.0/12",
-									"192.168.0.0/16",
-									"169.254.0.0/16",
-								},
-							},
-						},
-					},
-				},
-			},
+			Egress: egressRules,
 		},
 	}
 
@@ -344,4 +440,12 @@ func EnsureNetworkPolicy(ctx context.Context, clientset kubernetes.Interface, na
 	log.Info("Updating sandbox egress NetworkPolicy", "namespace", namespace)
 	_, err = clientset.NetworkingV1().NetworkPolicies(namespace).Update(ctx, policy, v1.UpdateOptions{})
 	return err
+}
+
+func protoPtr(p corev1.Protocol) *corev1.Protocol {
+	return &p
+}
+
+func intstrPtr(i intstr.IntOrString) *intstr.IntOrString {
+	return &i
 }

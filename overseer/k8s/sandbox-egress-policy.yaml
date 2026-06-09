@@ -11,7 +11,32 @@ spec:
   policyTypes:
   - Egress
   egress:
-    # Allow Public Internet (Blocks all other private IPs AND internal DNS)
+    # Allow DNS
+    - ports:
+      - protocol: UDP
+        port: 53
+      - protocol: TCP
+        port: 53
+    # Allow repo-agent-system namespace
+    - to:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: repo-agent-system
+    # Allow overseer-system namespace
+    - to:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: overseer-system
+    # Allow default namespace (Kubernetes API Server Service)
+    - to:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: default
+    # Allow standard Kubernetes Service CIDR in Kind (e.g., CoreDNS, Registry, API Server)
+    - to:
+      - ipBlock:
+          cidr: 10.96.0.0/12
+    # Allow Public Internet (Blocks all other private IPs)
     - to:
       - ipBlock:
           cidr: 0.0.0.0/0

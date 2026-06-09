@@ -48,6 +48,20 @@ func TestBootstrapNamespace(t *testing.T) {
 			},
 			Data: map[string]string{"devcontainer.json": "{}"},
 		},
+		&corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "registry",
+				Namespace: "repo-agent-system",
+			},
+			Spec: corev1.ServiceSpec{
+				ClusterIP: "10.96.0.5",
+				Ports: []corev1.ServicePort{
+					{
+						Port: 5000,
+					},
+				},
+			},
+		},
 	)
 
 	targetNS := "user-alice"
@@ -84,6 +98,21 @@ func TestBootstrapNamespace(t *testing.T) {
 		if req.Key != "sandbox" || req.Operator != metav1.LabelSelectorOpExists {
 			t.Errorf("Unexpected MatchExpression: %v", req)
 		}
+	}
+
+	// Verify that registry egress rule is present
+	foundRegistryRule := false
+	for _, rule := range policy.Spec.Egress {
+		for _, peer := range rule.To {
+			if peer.IPBlock != nil && peer.IPBlock.CIDR == "10.96.0.5/32" {
+				if len(rule.Ports) == 1 && rule.Ports[0].Port.IntVal == 5000 {
+					foundRegistryRule = true
+				}
+			}
+		}
+	}
+	if !foundRegistryRule {
+		t.Errorf("Expected to find an egress rule allowing access to registry (10.96.0.5/32 on port 5000), but none was found. Policy: %+v", policy.Spec)
 	}
 }
 

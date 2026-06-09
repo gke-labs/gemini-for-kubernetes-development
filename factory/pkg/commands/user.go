@@ -15,6 +15,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
 func NewUserCommand(ctx context.Context) *cobra.Command {
@@ -199,6 +200,118 @@ func RunUserOnboard(ctx context.Context, githubLogin, githubToken, githubEmail, 
 	}
 
 	policyName := "sandbox-egress-policy"
+
+	var apiServerIP string
+	var apiServerPort int32 = 443
+	if svc, err := manager.Clientset.CoreV1().Services("default").Get(ctx, "kubernetes", metav1.GetOptions{}); err == nil {
+		apiServerIP = svc.Spec.ClusterIP
+		if len(svc.Spec.Ports) > 0 {
+			apiServerPort = svc.Spec.Ports[0].Port
+		}
+	}
+
+	var registryIP string
+	var registryPort int32 = 5000
+	if svc, err := manager.Clientset.CoreV1().Services("repo-agent-system").Get(ctx, "registry", metav1.GetOptions{}); err == nil {
+		registryIP = svc.Spec.ClusterIP
+		if len(svc.Spec.Ports) > 0 {
+			registryPort = svc.Spec.Ports[0].Port
+		}
+	}
+
+	egressRules := []networkingv1.NetworkPolicyEgressRule{
+		// Allow DNS
+		{
+			Ports: []networkingv1.NetworkPolicyPort{
+				{
+					Protocol: protoPtr(corev1.ProtocolUDP),
+					Port:     intstrPtr(intstr.FromInt(53)),
+				},
+				{
+					Protocol: protoPtr(corev1.ProtocolTCP),
+					Port:     intstrPtr(intstr.FromInt(53)),
+				},
+			},
+		},
+		// Allow repo-agent-system namespace
+		{
+			To: []networkingv1.NetworkPolicyPeer{
+				{
+					NamespaceSelector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{
+							"kubernetes.io/metadata.name": "repo-agent-system",
+						},
+					},
+				},
+			},
+		},
+		// Allow overseer-system namespace
+		{
+			To: []networkingv1.NetworkPolicyPeer{
+				{
+					NamespaceSelector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{
+							"kubernetes.io/metadata.name": "overseer-system",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	if apiServerIP != "" {
+		egressRules = append(egressRules, networkingv1.NetworkPolicyEgressRule{
+			To: []networkingv1.NetworkPolicyPeer{
+				{
+					IPBlock: &networkingv1.IPBlock{
+						CIDR: apiServerIP + "/32",
+					},
+				},
+			},
+			Ports: []networkingv1.NetworkPolicyPort{
+				{
+					Protocol: protoPtr(corev1.ProtocolTCP),
+					Port:     intstrPtr(intstr.FromInt(int(apiServerPort))),
+				},
+			},
+		})
+	}
+
+	if registryIP != "" {
+		egressRules = append(egressRules, networkingv1.NetworkPolicyEgressRule{
+			To: []networkingv1.NetworkPolicyPeer{
+				{
+					IPBlock: &networkingv1.IPBlock{
+						CIDR: registryIP + "/32",
+					},
+				},
+			},
+			Ports: []networkingv1.NetworkPolicyPort{
+				{
+					Protocol: protoPtr(corev1.ProtocolTCP),
+					Port:     intstrPtr(intstr.FromInt(int(registryPort))),
+				},
+			},
+		})
+	}
+
+	egressRules = append(egressRules, networkingv1.NetworkPolicyEgressRule{
+		// Allow Public Internet (Blocks all other private IPs)
+		To: []networkingv1.NetworkPolicyPeer{
+			{
+				IPBlock: &networkingv1.IPBlock{
+					CIDR: "0.0.0.0/0",
+					Except: []string{
+						"10.0.0.0/8",
+						"172.16.0.0/12",
+						"192.168.0.0/16",
+						"169.254.0.0/16",
+					},
+				},
+			},
+		},
+	})
+
 	policy := &networkingv1.NetworkPolicy{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      policyName,
@@ -216,23 +329,7 @@ func RunUserOnboard(ctx context.Context, githubLogin, githubToken, githubEmail, 
 			PolicyTypes: []networkingv1.PolicyType{
 				networkingv1.PolicyTypeEgress,
 			},
-			Egress: []networkingv1.NetworkPolicyEgressRule{
-				{
-					To: []networkingv1.NetworkPolicyPeer{
-						{
-							IPBlock: &networkingv1.IPBlock{
-								CIDR: "0.0.0.0/0",
-								Except: []string{
-									"10.0.0.0/8",
-									"172.16.0.0/12",
-									"192.168.0.0/16",
-									"169.254.0.0/16",
-								},
-							},
-						},
-					},
-				},
-			},
+			Egress: egressRules,
 		},
 	}
 
@@ -267,4 +364,12 @@ func RunUserOnboard(ctx context.Context, githubLogin, githubToken, githubEmail, 
 
 	fmt.Printf("Successfully onboarded user '%s' in namespace '%s'.\n", githubLogin, targetNamespace)
 	return nil
+}
+
+func protoPtr(p corev1.Protocol) *corev1.Protocol {
+	return &p
+}
+
+func intstrPtr(i intstr.IntOrString) *intstr.IntOrString {
+	return &i
 }
