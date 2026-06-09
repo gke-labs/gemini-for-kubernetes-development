@@ -12,6 +12,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -195,6 +196,61 @@ func RunUserOnboard(ctx context.Context, githubLogin, githubToken, githubEmail, 
 		return fmt.Errorf("checking namespace %s: %w", targetNamespace, err)
 	} else {
 		fmt.Printf("Namespace '%s' already exists.\n", targetNamespace)
+	}
+
+	policyName := "sandbox-egress-policy"
+	policy := &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      policyName,
+			Namespace: targetNamespace,
+		},
+		Spec: networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{
+				MatchExpressions: []metav1.LabelSelectorRequirement{
+					{
+						Key:      "sandbox",
+						Operator: metav1.LabelSelectorOpExists,
+					},
+				},
+			},
+			PolicyTypes: []networkingv1.PolicyType{
+				networkingv1.PolicyTypeEgress,
+			},
+			Egress: []networkingv1.NetworkPolicyEgressRule{
+				{
+					To: []networkingv1.NetworkPolicyPeer{
+						{
+							IPBlock: &networkingv1.IPBlock{
+								CIDR: "0.0.0.0/0",
+								Except: []string{
+									"10.0.0.0/8",
+									"172.16.0.0/12",
+									"192.168.0.0/16",
+									"169.254.0.0/16",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	_, err = manager.Clientset.NetworkingV1().NetworkPolicies(targetNamespace).Get(ctx, policyName, metav1.GetOptions{})
+	if errors.IsNotFound(err) {
+		fmt.Printf("Creating sandbox egress NetworkPolicy in namespace '%s'...\n", targetNamespace)
+		_, err = manager.Clientset.NetworkingV1().NetworkPolicies(targetNamespace).Create(ctx, policy, metav1.CreateOptions{})
+		if err != nil {
+			return fmt.Errorf("creating network policy in namespace %s: %w", targetNamespace, err)
+		}
+	} else if err != nil {
+		return fmt.Errorf("checking network policy in namespace %s: %w", targetNamespace, err)
+	} else {
+		fmt.Printf("Sandbox egress NetworkPolicy already exists in namespace '%s'. Updating it...\n", targetNamespace)
+		_, err = manager.Clientset.NetworkingV1().NetworkPolicies(targetNamespace).Update(ctx, policy, metav1.UpdateOptions{})
+		if err != nil {
+			return fmt.Errorf("updating network policy in namespace %s: %w", targetNamespace, err)
+		}
 	}
 
 	data := map[string][]byte{
