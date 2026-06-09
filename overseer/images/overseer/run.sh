@@ -30,16 +30,17 @@ function writeFactoryConfig {
     
     # PR Labels configuration (defaulting to 'overseer' inside the overseer container)
     PR_LABEL_VAL=${PR_LABEL:-overseer}
-    echo "prLabels:" >> "$CFG_FILE"
     IFS=',' read -ra ADDR <<< "$PR_LABEL_VAL"
-    for i in "${ADDR[@]}"; do
-        echo "  - $i" >> "$CFG_FILE"
-    done
     
     # Trigger Label configuration (defaulting to the first label in PR_LABEL_VAL)
-    FIRST_PR_LABEL=${PR_LABEL_VAL%%,*}
+    FIRST_PR_LABEL=${ADDR[0]}
     TRIGGER_LABEL_VAL=${TRIGGER_LABEL:-$FIRST_PR_LABEL}
     echo "triggerLabel: $TRIGGER_LABEL_VAL" >> "$CFG_FILE"
+    
+    echo "additionalLabels:" >> "$CFG_FILE"
+    for ((i=1; i<${#ADDR[@]}; i++)); do
+        echo "  - ${ADDR[i]}" >> "$CFG_FILE"
+    done
     
     if [ -n "$FACTORY_SECRETS" ]; then
         echo "secrets:" >> "$CFG_FILE"
