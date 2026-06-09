@@ -22,6 +22,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -53,6 +54,7 @@ type OverseerReconciler struct {
 //+kubebuilder:rbac:groups="",resources=pods;events,verbs=get;list
 //+kubebuilder:rbac:groups="",resources=pods/portforward,verbs=create
 //+kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=agents.x-k8s.io,resources=sandboxes,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
@@ -84,6 +86,11 @@ func (r *OverseerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		} else {
 			return ctrl.Result{}, err
 		}
+	}
+
+	// Ensure sandbox egress NetworkPolicy exists in target namespace
+	if err := r.ensureNetworkPolicy(ctx, nsName); err != nil {
+		return ctrl.Result{}, err
 	}
 
 	// 2. Ensure ServiceAccount and RBAC for the overseer pod
@@ -443,6 +450,62 @@ func (r *OverseerReconciler) copySecret(ctx context.Context, name string, fromNa
 	// Update if data changed
 	targetSecret.ResourceVersion = existingSecret.ResourceVersion
 	return r.Update(ctx, targetSecret)
+}
+
+func (r *OverseerReconciler) ensureNetworkPolicy(ctx context.Context, namespace string) error {
+	log := log.FromContext(ctx)
+	policyName := "sandbox-egress-policy"
+
+	policy := &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      policyName,
+			Namespace: namespace,
+		},
+		Spec: networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{
+				MatchExpressions: []metav1.LabelSelectorRequirement{
+					{
+						Key:      "sandbox",
+						Operator: metav1.LabelSelectorOpExists,
+					},
+				},
+			},
+			PolicyTypes: []networkingv1.PolicyType{
+				networkingv1.PolicyTypeEgress,
+			},
+			Egress: []networkingv1.NetworkPolicyEgressRule{
+				{
+					To: []networkingv1.NetworkPolicyPeer{
+						{
+							IPBlock: &networkingv1.IPBlock{
+								CIDR: "0.0.0.0/0",
+								Except: []string{
+									"10.0.0.0/8",
+									"172.16.0.0/12",
+									"192.168.0.0/16",
+									"169.254.0.0/16",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	existing := &networkingv1.NetworkPolicy{}
+	err := r.Get(ctx, types.NamespacedName{Name: policyName, Namespace: namespace}, existing)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			log.Info("Creating sandbox egress NetworkPolicy", "namespace", namespace)
+			return r.Create(ctx, policy)
+		}
+		return err
+	}
+
+	log.Info("Updating sandbox egress NetworkPolicy", "namespace", namespace)
+	policy.ResourceVersion = existing.ResourceVersion
+	return r.Update(ctx, policy)
 }
 
 // SetupWithManager sets up the controller with the Manager.
