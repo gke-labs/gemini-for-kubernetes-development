@@ -10,6 +10,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/geminitokens"
 	"github.com/spf13/cobra"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -30,7 +31,16 @@ func NewStatusCommand(ctx context.Context) *cobra.Command {
 			}
 			fmt.Fprintln(w, "Kubernetes API\t[OK]\tConnected to cluster")
 
-			fmt.Fprintf(w, "Namespace\t[OK]\t%s\n", rootFlags.Namespace)
+			_, err = kubeClient.Clientset.CoreV1().Namespaces().Get(ctx, rootFlags.Namespace, metav1.GetOptions{})
+			if err != nil {
+				if apierrors.IsNotFound(err) {
+					fmt.Fprintf(w, "Namespace\t[FAIL]\tNamespace '%s' does not exist in cluster\n", rootFlags.Namespace)
+				} else {
+					fmt.Fprintf(w, "Namespace\t[FAIL]\tChecking namespace '%s': %v\n", rootFlags.Namespace, err)
+				}
+			} else {
+				fmt.Fprintf(w, "Namespace\t[OK]\t%s\n", rootFlags.Namespace)
+			}
 
 			_, err = kubeClient.Clientset.Discovery().ServerResourcesForGroupVersion("agents.x-k8s.io/v1alpha1")
 			if err != nil {

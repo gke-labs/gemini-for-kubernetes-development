@@ -65,6 +65,17 @@ func EnsureFixSandbox(ctx context.Context, kubeClient *clients.KubernetesClient,
 
 func EnsureAgentSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, taskID, cloneURL, htmlURL, taskTitle, image, diskSize, ephemeralStorage string, secrets []SecretMount, envs []EnvVar) (string, error) {
 	name := fmt.Sprintf("agent-%s-%s", repoName, taskID)
+	labels := map[string]string{
+		"sandbox.gemini.google.com/type":    "agent",
+		"factory.gemini.google.com/managed": "true",
+	}
+
+	if idx := strings.Index(taskID, "-issue-"); idx != -1 {
+		workflowName := taskID[:idx]
+		issueNum := taskID[idx+len("-issue-"):]
+		name = fmt.Sprintf("wf-issue-%s", issueNum)
+		labels["factory.gemini.google.com/workflow"] = workflowName
+	}
 
 	_, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err == nil {
@@ -82,10 +93,7 @@ func EnsureAgentSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 		DevSandboxOptions: DevSandboxOptions{
 			Name:      name,
 			Namespace: namespace,
-			Labels: map[string]string{
-				"sandbox.gemini.google.com/type":    "agent",
-				"factory.gemini.google.com/managed": "true",
-			},
+			Labels:    labels,
 			Annotations: map[string]string{
 				"repo":     repoName,
 				"cloneURL": cloneURL,

@@ -13,6 +13,6 @@ spec:
   ephemeralStorage: 10Gi
   image: ghcr.io/gke-labs/gemini-for-kubernetes-development/factory-golang:latest
   repo:
-    issueMode: disabled
-    prMode: disabled
+    issueMode: enabled
+    prMode: enabled
     reviewMode: enabled

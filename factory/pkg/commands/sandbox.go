@@ -421,7 +421,7 @@ func NewSandboxChatCommand(ctx context.Context) *cobra.Command {
 			}
 
 			// Backup session files before running Gemini CLI, and restore them afterward if Gemini deletes them on exit due to inactivity
-			backupScript := `CHAT_DIR="/root/.gemini/tmp/$(basename "$PWD")/chats"; if [ -d "$CHAT_DIR" ]; then mkdir -p "$CHAT_DIR/backup"; cp "$CHAT_DIR"/*.jsonl "$CHAT_DIR/backup/" 2>/dev/null || true; fi;`
+			backupScript := `CHAT_DIR="${HOME:-/root}/.gemini/tmp/$(basename "$PWD")/chats"; if [ -d "$CHAT_DIR" ]; then mkdir -p "$CHAT_DIR/backup"; cp "$CHAT_DIR"/*.jsonl "$CHAT_DIR/backup/" 2>/dev/null || true; fi;`
 			restoreScript := `if [ -d "$CHAT_DIR/backup" ]; then cp -n "$CHAT_DIR/backup"/*.jsonl "$CHAT_DIR/" 2>/dev/null || true; fi;`
 
 			if flags.ListSessions {

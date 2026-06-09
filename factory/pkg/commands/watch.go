@@ -214,6 +214,7 @@ type QueueTask struct {
 	Status    string    `yaml:"status"` // "Pending", "Running", "Completed", "Failed"
 	Error     string    `yaml:"error,omitempty"`
 	AgentFile string    `yaml:"agentFile,omitempty"` // For chore tasks
+	SessionID string    `yaml:"sessionId,omitempty"` // For workflow sessions
 }
 
 type ChoreRunState struct {
@@ -281,6 +282,182 @@ func getIssuePriority(issue *githubv39.Issue) string {
 
 func getPRPriority(prIssue *githubv39.Issue) string {
 	return getIssuePriority(prIssue)
+}
+
+var workflowFileRegex = regexp.MustCompile(`\b(\.?\.?/?(?:.agents|.gemini)/[a-zA-Z0-9_\-\./]+)\b`)
+
+func findWorkflowPath(body string) string {
+	matches := workflowFileRegex.FindStringSubmatch(body)
+	if len(matches) > 1 {
+		return matches[1]
+	}
+	return ""
+}
+
+func isWorkflowDefinition(ctx context.Context, ghClient *githubv39.Client, owner, repo, path string) bool {
+	// 1. Directory convention: any path containing "/workflows/" is treated as a workflow
+	if strings.Contains(path, "/workflows/") {
+		return true
+	}
+
+	// Clean up leading dot slashes from path to match GitHub API format
+	cleanPath := strings.TrimPrefix(path, "./")
+	cleanPath = strings.TrimPrefix(cleanPath, "/")
+
+	// 2. Fetch remote content from GitHub and search for keywords/metadata
+	fileContent, _, _, err := ghClient.Repositories.GetContents(ctx, owner, repo, cleanPath, &githubv39.RepositoryContentGetOptions{})
+	if err != nil {
+		klog.V(4).Infof("Failed to get content for %s: %v", cleanPath, err)
+		return false
+	}
+	content, err := fileContent.GetContent()
+	if err != nil {
+		return false
+	}
+
+	limit := 2000
+	if len(content) < limit {
+		limit = len(content)
+	}
+	header := content[:limit]
+
+	// Look for mode: workflow metadata in header or front-matter
+	if strings.Contains(header, "mode: workflow") || strings.Contains(header, "mode: \"workflow\"") || strings.Contains(header, "AGENT_MODE=workflow") {
+		return true
+	}
+
+	return false
+}
+
+func queueIssueTasks(ctx context.Context, ghClient *githubv39.Client, kubeClient *clients.KubernetesClient, owner, repo string, issues []*githubv39.Issue, processedIssues map[int]time.Time, refIssues map[int]bool, targetAssignee string, incomingDir, processingDir, processedDir, queueDir string, dryRun bool) {
+	klog.Infof("queueIssueTasks called with %d issues", len(issues))
+	for _, issue := range issues {
+		num := issue.GetNumber()
+		if refIssues[num] {
+			klog.Infof("Skipping issue #%d because there is already a PR referencing it.", num)
+			continue
+		}
+
+		// Check if the issue specifies a workflow path in its description
+		workflowPath := findWorkflowPath(issue.GetBody())
+		workflowName := ""
+		if workflowPath != "" {
+			if isWorkflowDefinition(ctx, ghClient, owner, repo, workflowPath) {
+				filenameOnly := filepath.Base(workflowPath)
+				ext := filepath.Ext(filenameOnly)
+				workflowName = strings.TrimSuffix(filenameOnly, ext)
+			} else {
+				// It was just a standard skill/agent prompt mentioned, not a workflow.
+				// Fallback to standard issue-fix
+				workflowPath = ""
+			}
+		}
+
+		filename := fmt.Sprintf("task-issue-%d.yaml", num)
+		if workflowName != "" {
+			filename = fmt.Sprintf("task-workflow-%s-issue-%d.yaml", Slugify(workflowName), num)
+		}
+
+		if taskExists(incomingDir, processingDir, filename) {
+			continue
+		}
+
+		// Check if the workflow session already completed recently
+		processedPath := filepath.Join(processedDir, filename)
+		if info, err := os.Stat(processedPath); err == nil {
+			// Rate limit: only run once every 10 minutes
+			if time.Since(info.ModTime()) < 10*time.Minute {
+				continue
+			}
+		}
+
+		if lastProcessed, ok := processedIssues[num]; !ok || time.Since(lastProcessed) > 24*time.Hour || workflowName != "" {
+			// Skip KRM check for workflow triggers since they don't necessarily have linked code PRs
+			if workflowName == "" {
+				linked, err := hasLinkedPR(ctx, ghClient, owner, repo, num)
+				if err != nil {
+					klog.Errorf("Failed to check linked PR for issue #%d: %v", num, err)
+					continue
+				} else if linked {
+					klog.Infof("Skipping issue #%d because it has a linked PR according to the Timeline API.", num)
+					continue
+				}
+			}
+
+			sandboxName := fmt.Sprintf("fix-%s-%d", repo, num)
+			if workflowName != "" {
+				sandboxName = fmt.Sprintf("wf-issue-%d", num)
+			}
+
+			running, err := isSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName)
+			if err != nil {
+				klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
+				continue
+			} else if running {
+				klog.Infof("Skipping issue #%d because there is an in-flight sandbox %s.", num, sandboxName)
+				continue
+			}
+
+			if isAssigned(issue, targetAssignee) {
+				if dryRun {
+					fmt.Printf("[DRYRUN] Would unassign %s from issue #%d\n", targetAssignee, num)
+				} else {
+					fmt.Printf("Unassigning %s from issue #%d...\n", targetAssignee, num)
+					if _, _, err := ghClient.Issues.RemoveAssignees(ctx, owner, repo, num, []string{targetAssignee}); err != nil {
+						klog.Errorf("Failed to unassign %s from issue #%d: %v", targetAssignee, num, err)
+					}
+				}
+			}
+
+			issueURL := fmt.Sprintf("https://github.com/%s/%s/issues/%d", owner, repo, num)
+			var task *QueueTask
+			if workflowName != "" {
+				task = &QueueTask{
+					Type:      "agent-chore",
+					URL:       issueURL,
+					Number:    num,
+					Priority:  getIssuePriority(issue),
+					Phase:     4,
+					CreatedAt: issue.GetCreatedAt(),
+					Assignee:  targetAssignee,
+					Status:    "Pending",
+					AgentFile: workflowPath,
+					SessionID: fmt.Sprintf("issue-%d", num),
+				}
+			} else {
+				task = &QueueTask{
+					Type:      "issue-fix",
+					URL:       issueURL,
+					Number:    num,
+					Priority:  getIssuePriority(issue),
+					Phase:     3,
+					CreatedAt: issue.GetCreatedAt(),
+					Assignee:  targetAssignee,
+					Status:    "Pending",
+				}
+			}
+
+			if dryRun {
+				if workflowName != "" {
+					fmt.Printf("[DRYRUN] Would queue workflow task %s for issue #%d: %s\n", workflowName, num, issueURL)
+				} else {
+					fmt.Printf("[DRYRUN] Would queue fix task for issue #%d: %s\n", num, issueURL)
+				}
+			} else {
+				if workflowName != "" {
+					fmt.Printf("Queueing workflow task %s for issue #%d...\n", workflowName, num)
+				} else {
+					fmt.Printf("Queueing fix task for issue #%d...\n", num)
+				}
+				processedIssues[num] = time.Now()
+				if err := writeTaskAtomically(incomingDir, filename, task); err != nil {
+					klog.Errorf("Failed to queue task for issue #%d: %v", num, err)
+				} else {
+					writeTaskJournalEvent(queueDir, filename, task, "Created", 0)
+				}
+			}
+		}
+	}
 }
 
 func scanChores(ctx context.Context, ghClient *githubv39.Client, owner, repo, incomingDir, processingDir, queueDir string, dryRun bool) {
@@ -875,74 +1052,9 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 			}
 
 			// Process slow issues
+			// Process slow issues
 			if issueMode != "disabled" {
-				for _, issue := range slowIssues {
-					num := issue.GetNumber()
-					if refIssues[num] {
-						klog.Infof("Skipping issue #%d because there is already a PR referencing it.", num)
-						continue
-					}
-					if lastProcessed, ok := processedIssues[num]; !ok || time.Since(lastProcessed) > 24*time.Hour {
-						linked, err := hasLinkedPR(ctx, ghClient, owner, repo, num)
-						if err != nil {
-							klog.Errorf("Failed to check linked PR for issue #%d: %v", num, err)
-							continue
-						} else if linked {
-							klog.Infof("Skipping issue #%d because it has a linked PR according to the Timeline API.", num)
-							continue
-						}
-
-						filename := fmt.Sprintf("task-issue-%d.yaml", num)
-						if taskExists(incomingDir, processingDir, filename) {
-							continue
-						}
-
-						sandboxName := fmt.Sprintf("fix-%s-%d", repo, num)
-						running, err := isSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName)
-						if err != nil {
-							klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
-							continue
-						} else if running {
-							klog.Infof("Skipping issue #%d because there is an in-flight sandbox %s.", num, sandboxName)
-							continue
-						}
-
-						if isAssigned(issue, targetAssignee) {
-							if dryRun {
-								fmt.Printf("[DRYRUN] Would unassign %s from issue #%d\n", targetAssignee, num)
-							} else {
-								fmt.Printf("Unassigning %s from issue #%d...\n", targetAssignee, num)
-								if _, _, err := ghClient.Issues.RemoveAssignees(ctx, owner, repo, num, []string{targetAssignee}); err != nil {
-									klog.Errorf("Failed to unassign %s from issue #%d: %v", targetAssignee, num, err)
-								}
-							}
-						}
-
-						issueURL := fmt.Sprintf("https://github.com/%s/%s/issues/%d", owner, repo, num)
-						task := &QueueTask{
-							Type:      "issue-fix",
-							URL:       issueURL,
-							Number:    num,
-							Priority:  getIssuePriority(issue),
-							Phase:     3,
-							CreatedAt: issue.GetCreatedAt(),
-							Assignee:  targetAssignee,
-							Status:    "Pending",
-						}
-
-						if dryRun {
-							fmt.Printf("[DRYRUN] Would queue fix task for issue #%d: %s\n", num, issueURL)
-						} else {
-							fmt.Printf("Queueing fix task for issue #%d...\n", num)
-							processedIssues[num] = time.Now()
-							if err := writeTaskAtomically(incomingDir, filename, task); err != nil {
-								klog.Errorf("Failed to queue task for issue #%d: %v", num, err)
-							} else {
-								writeTaskJournalEvent(queueDir, filename, task, "Created", 0)
-							}
-						}
-					}
-				}
+				queueIssueTasks(ctx, ghClient, kubeClient, owner, repo, slowIssues, processedIssues, refIssues, targetAssignee, incomingDir, processingDir, processedDir, queueDir, dryRun)
 			}
 
 			// Process Pull Requests (Scanner)
@@ -1016,6 +1128,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				if err != nil {
 					klog.Errorf("Failed to list issues for assignee %s: %v", targetAssignee, err)
 				} else {
+					klog.Infof("Fetched %d issues assigned to %s from GitHub API", len(issues1), targetAssignee)
 					allItems = append(allItems, issues1...)
 				}
 			}
@@ -1036,73 +1149,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 			}
 
 			if issueMode != "disabled" {
-				for _, issue := range issues {
-					num := issue.GetNumber()
-					if refIssues[num] {
-						klog.Infof("Skipping issue #%d because there is already a PR referencing it.", num)
-						continue
-					}
-					if lastProcessed, ok := processedIssues[num]; !ok || time.Since(lastProcessed) > 24*time.Hour {
-						linked, err := hasLinkedPR(ctx, ghClient, owner, repo, num)
-						if err != nil {
-							klog.Errorf("Failed to check linked PR for issue #%d: %v", num, err)
-							continue
-						} else if linked {
-							klog.Infof("Skipping issue #%d because it has a linked PR according to the Timeline API.", num)
-							continue
-						}
-
-						filename := fmt.Sprintf("task-issue-%d.yaml", num)
-						if taskExists(incomingDir, processingDir, filename) {
-							continue
-						}
-
-						sandboxName := fmt.Sprintf("fix-%s-%d", repo, num)
-						running, err := isSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName)
-						if err != nil {
-							klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
-							continue
-						} else if running {
-							klog.Infof("Skipping issue #%d because there is an in-flight sandbox %s.", num, sandboxName)
-							continue
-						}
-
-						if isAssigned(issue, targetAssignee) {
-							if dryRun {
-								fmt.Printf("[DRYRUN] Would unassign %s from issue #%d\n", targetAssignee, num)
-							} else {
-								fmt.Printf("Unassigning %s from issue #%d...\n", targetAssignee, num)
-								if _, _, err := ghClient.Issues.RemoveAssignees(ctx, owner, repo, num, []string{targetAssignee}); err != nil {
-									klog.Errorf("Failed to unassign %s from issue #%d: %v", targetAssignee, num, err)
-								}
-							}
-						}
-
-						issueURL := fmt.Sprintf("https://github.com/%s/%s/issues/%d", owner, repo, num)
-						task := &QueueTask{
-							Type:      "issue-fix",
-							URL:       issueURL,
-							Number:    num,
-							Priority:  getIssuePriority(issue),
-							Phase:     3,
-							CreatedAt: issue.GetCreatedAt(),
-							Assignee:  targetAssignee,
-							Status:    "Pending",
-						}
-
-						if dryRun {
-							fmt.Printf("[DRYRUN] Would queue fix task for issue #%d: %s\n", num, issueURL)
-						} else {
-							fmt.Printf("Queueing fix task for issue #%d...\n", num)
-							processedIssues[num] = time.Now()
-							if err := writeTaskAtomically(incomingDir, filename, task); err != nil {
-								klog.Errorf("Failed to queue task for issue #%d: %v", num, err)
-							} else {
-								writeTaskJournalEvent(queueDir, filename, task, "Created", 0)
-							}
-						}
-					}
-				}
+				queueIssueTasks(ctx, ghClient, kubeClient, owner, repo, issues, processedIssues, refIssues, targetAssignee, incomingDir, processingDir, processedDir, queueDir, dryRun)
 			}
 
 			// Process PRs assigned to the bot in the fast cycle
@@ -1293,6 +1340,9 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						args = []string{"pr", "review", "--pr-url", t.URL, "--publish", "yes"}
 					case "agent-chore":
 						args = []string{"agent", "create", "--url", t.URL, "--agent", t.AgentFile}
+						if t.SessionID != "" {
+							args = append(args, "--session-id", t.SessionID)
+						}
 					default:
 						klog.Errorf("Unknown task type: %s", t.Type)
 						return

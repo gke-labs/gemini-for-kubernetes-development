@@ -147,6 +147,10 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 			"name":  "NAMESPACE",
 			"value": namespace,
 		},
+		map[string]interface{}{
+			"name":  "HOME",
+			"value": "/workspaces/.home",
+		},
 
 		map[string]interface{}{
 			"name":  "POLL_INTERVAL",
@@ -238,13 +242,18 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 		ephemeralStorage = "10Gi"
 	}
 
+	diskSize := o.Spec.WorkspaceDiskSize
+	if diskSize == "" {
+		diskSize = "10Gi"
+	}
+
 	podSpec := map[string]interface{}{
 		"serviceAccountName": "overseer",
 		"containers": []interface{}{
 			map[string]interface{}{
 				"name":    "overseer",
 				"image":   image,
-				"command": []string{"/workspaces/run.sh"},
+				"command": []string{"/app/bootstrap.sh"},
 				"env":     env,
 				"resources": map[string]interface{}{
 					"requests": map[string]interface{}{
@@ -258,10 +267,12 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 						"ephemeral-storage": ephemeralStorage,
 					},
 				},
+				"volumeMounts": []interface{}{
+					map[string]interface{}{"name": "workspaces-pvc", "mountPath": "/workspaces"},
+				},
 			},
 		},
 	}
-
 	if hasTokenScript {
 		// Define the volume
 		volume := map[string]interface{}{
@@ -358,6 +369,21 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 						},
 					},
 					"spec": podSpec,
+				},
+				"volumeClaimTemplates": []interface{}{
+					map[string]interface{}{
+						"metadata": map[string]interface{}{
+							"name": "workspaces-pvc",
+						},
+						"spec": map[string]interface{}{
+							"accessModes": []interface{}{"ReadWriteOnce"},
+							"resources": map[string]interface{}{
+								"requests": map[string]interface{}{
+									"storage": diskSize,
+								},
+							},
+						},
+					},
 				},
 			},
 		},
