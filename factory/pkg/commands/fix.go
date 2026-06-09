@@ -285,6 +285,7 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch boo
 	}
 
 	envMap := map[string]string{
+		"HOME":                       "/workspaces/.home",
 		"GITHUB_TOKEN":               string(secret.Data[KeyGithubToken]),
 		"GEMINI_API_KEY":             getGeminiAPIKey(secret),
 		"GEMINI_CLI_TRUST_WORKSPACE": "true",
