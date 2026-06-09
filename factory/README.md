@@ -45,6 +45,7 @@ factory
  │    ├── review (Review a GitHub pull request in a sandbox)
  │    ├── investigate (Investigate CI check failures for a PR in a sandbox)
  │    ├── address-comments (Address review feedback and comments for a PR)
+ │    ├── iterate (Iterate on code / resolve merge conflicts for a PR)
  │    └── watch (Continuously monitor a PR for CI failures or new feedback)
  ├── agent
  │    └── create (Run a custom agent definition in a sandbox)
@@ -205,6 +206,9 @@ factory pr review --pr-url https://github.com/owner/repo/pull/1 \
 Spin up a review sandbox to analyze failed CI check logs, review previous investigation comments, and attempt to fix the failure or report root causes. Use `--continue-session` to preserve LLM conversation history across multiple PR operations in the same sandbox:
 ```bash
 factory pr investigate --pr-url https://github.com/owner/repo/pull/1 --continue-session
+
+# Adopt the PR (owned by someone else) and close the original after adopting
+factory pr investigate --pr-url https://github.com/owner/repo/pull/1 --adopt close
 ```
 
 ### Addressing Review Comments (`factory pr address-comments`)
@@ -213,10 +217,22 @@ Spin up a review sandbox to parse new review feedback and PR comments, execute c
 factory pr address-comments --pr-url https://github.com/owner/repo/pull/1 --continue-session
 ```
 
+### Iterating on Code (`factory pr iterate`)
+Spin up a sandbox to resolve merge conflicts, rebase, or run manual code iterations:
+```bash
+factory pr iterate --pr-url https://github.com/owner/repo/pull/1 --prompt "Please rebase onto latest master"
+
+# Adopt the PR before iterating
+factory pr iterate --pr-url https://github.com/owner/repo/pull/1 --adopt open --prompt "Refactor the auth handler"
+```
+
 ### Watching Pull Requests (`factory pr watch`)
 Continuously monitor a specific PR in the foreground, automatically triggering `investigate` on CI failures or `address-comments` on new review feedback. Use `--continue-session` to ensure all dispatched tasks inherit the ongoing chat session. The watch loop logs explicit sleep intervals and cleanly terminates when the PR is merged, closed, or timeout expires:
 ```bash
 factory pr watch --pr-url https://github.com/owner/repo/pull/1 --watch-timeout 1h --cleanup
+
+# Adopt the PR and watch the adopted PR
+factory pr watch --pr-url https://github.com/owner/repo/pull/1 --adopt close --cleanup
 ```
 
 ### Running Custom Agents (`factory agent create`)
