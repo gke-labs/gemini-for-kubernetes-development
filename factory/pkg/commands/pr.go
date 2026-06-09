@@ -1,9 +1,12 @@
 package commands
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/url"
+	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -37,6 +40,7 @@ type InvestigateFlags struct {
 	PRURL           string
 	Prompt          string
 	ContinueSession bool
+	Adopt           string
 }
 
 func NewInvestigateCommand(ctx context.Context) *cobra.Command {
@@ -57,8 +61,13 @@ func NewInvestigateCommand(ctx context.Context) *cobra.Command {
 				return fmt.Errorf("--pr-url is required")
 			}
 
+			resolvedPRURL, err := ensureAdoptedPR(ctx, flags.PRURL, flags.Adopt)
+			if err != nil {
+				return err
+			}
+
 			sessionName := "factory-pr-unknown-investigate"
-			u, err := url.Parse(flags.PRURL)
+			u, err := url.Parse(resolvedPRURL)
 			if err == nil {
 				parts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
 				if len(parts) >= 4 && parts[2] == "pull" {
@@ -78,13 +87,14 @@ func NewInvestigateCommand(ctx context.Context) *cobra.Command {
 
 			ctx, cancel := context.WithTimeout(ctx, rootFlags.Timeout)
 			defer cancel()
-			return runInvestigate(ctx, flags.PRURL, flags.Prompt, flags.ContinueSession, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets)
+			return runInvestigate(ctx, resolvedPRURL, flags.Prompt, flags.ContinueSession, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets)
 		},
 	}
 
 	cmd.Flags().StringVar(&flags.PRURL, "pr-url", "", "GitHub PR URL (e.g. https://github.com/owner/repo/pull/123)")
 	cmd.Flags().StringVar(&flags.Prompt, "prompt", "Investigate check failures for this PR", "Custom prompt for the investigate task")
 	cmd.Flags().BoolVar(&flags.ContinueSession, "continue-session", false, "Continue the Gemini session from previous runs in the sandbox")
+	cmd.Flags().StringVar(&flags.Adopt, "adopt", "", "Adopt the PR: 'open' to keep the original PR open, 'close' to close it after adopting")
 
 	return cmd
 }
@@ -524,6 +534,7 @@ type PRWatchFlags struct {
 	DryRun          bool
 	ContinueSession bool
 	WatchTimeout    time.Duration
+	Adopt           string
 }
 
 func NewPRWatchCommand(ctx context.Context) *cobra.Command {
@@ -543,7 +554,13 @@ func NewPRWatchCommand(ctx context.Context) *cobra.Command {
 			if flags.PRURL == "" {
 				return fmt.Errorf("--pr-url is required")
 			}
-			return runPRWatch(ctx, flags.PRURL, flags.PollInterval, flags.DryRun, flags.ContinueSession, flags.WatchTimeout, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets)
+
+			resolvedPRURL, err := ensureAdoptedPR(ctx, flags.PRURL, flags.Adopt)
+			if err != nil {
+				return err
+			}
+
+			return runPRWatch(ctx, resolvedPRURL, flags.PollInterval, flags.DryRun, flags.ContinueSession, flags.WatchTimeout, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets)
 		},
 	}
 
@@ -552,6 +569,7 @@ func NewPRWatchCommand(ctx context.Context) *cobra.Command {
 	cmd.Flags().BoolVar(&flags.DryRun, "dryrun", false, "Print actions without creating sandboxes or executing tasks")
 	cmd.Flags().BoolVar(&flags.ContinueSession, "continue-session", false, "Continue the Gemini session from previous runs in the sandbox")
 	cmd.Flags().DurationVar(&flags.WatchTimeout, "watch-timeout", 0, "Timeout for watching (default forever)")
+	cmd.Flags().StringVar(&flags.Adopt, "adopt", "", "Adopt the PR: 'open' to keep the original PR open, 'close' to close it after adopting")
 
 	return cmd
 }
@@ -762,6 +780,7 @@ type IterateFlags struct {
 	PRURL           string
 	Prompt          string
 	ContinueSession bool
+	Adopt           string
 }
 
 func NewIterateCommand(ctx context.Context) *cobra.Command {
@@ -782,8 +801,13 @@ func NewIterateCommand(ctx context.Context) *cobra.Command {
 				return fmt.Errorf("--pr-url is required")
 			}
 
+			resolvedPRURL, err := ensureAdoptedPR(ctx, flags.PRURL, flags.Adopt)
+			if err != nil {
+				return err
+			}
+
 			sessionName := "factory-pr-unknown-iterate"
-			u, err := url.Parse(flags.PRURL)
+			u, err := url.Parse(resolvedPRURL)
 			if err == nil {
 				parts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
 				if len(parts) >= 4 && parts[2] == "pull" {
@@ -803,13 +827,14 @@ func NewIterateCommand(ctx context.Context) *cobra.Command {
 
 			ctx, cancel := context.WithTimeout(ctx, rootFlags.Timeout)
 			defer cancel()
-			return runIterate(ctx, flags.PRURL, flags.Prompt, flags.ContinueSession, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets)
+			return runIterate(ctx, resolvedPRURL, flags.Prompt, flags.ContinueSession, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets)
 		},
 	}
 
 	cmd.Flags().StringVar(&flags.PRURL, "pr-url", "", "GitHub PR URL (e.g. https://github.com/owner/repo/pull/123)")
 	cmd.Flags().StringVar(&flags.Prompt, "prompt", "Resolve merge conflicts and iterate on code", "Custom prompt for the iterate task")
 	cmd.Flags().BoolVar(&flags.ContinueSession, "continue-session", false, "Continue the Gemini session from previous runs in the sandbox")
+	cmd.Flags().StringVar(&flags.Adopt, "adopt", "", "Adopt the PR: 'open' to keep the original PR open, 'close' to close it after adopting")
 
 	return cmd
 }
@@ -953,4 +978,190 @@ func getWorkflowRunID(checkRun *githubv39.CheckRun) int64 {
 		}
 	}
 	return checkRun.GetID()
+}
+
+func ensureAdoptedPR(ctx context.Context, prURL string, adoptFlag string) (string, error) {
+	if adoptFlag != "" && adoptFlag != "open" && adoptFlag != "close" {
+		return "", fmt.Errorf("invalid value for --adopt: %s. Must be one of [open, close]", adoptFlag)
+	}
+
+	u, err := url.Parse(prURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid PR URL: %w", err)
+	}
+	parts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
+	if len(parts) < 4 || parts[2] != "pull" {
+		return "", fmt.Errorf("expected URL format https://github.com/owner/repo/pull/123, got %s", prURL)
+	}
+	owner, repo := parts[0], parts[1]
+	prNum, err := strconv.Atoi(parts[3])
+	if err != nil {
+		return "", fmt.Errorf("invalid PR number in URL: %s", parts[3])
+	}
+
+	ghClient, err := github.NewClient(ctx)
+	if err != nil {
+		return "", fmt.Errorf("creating github client: %w", err)
+	}
+
+	pr, _, err := ghClient.PullRequests.Get(ctx, owner, repo, prNum)
+	if err != nil {
+		return "", fmt.Errorf("fetching github PR #%d: %w", prNum, err)
+	}
+
+	kubeClient, err := clients.NewKubernetesClient()
+	if err != nil {
+		return "", fmt.Errorf("creating k8s client: %w", err)
+	}
+
+	secret, err := kubeClient.Clientset.CoreV1().Secrets(rootFlags.Namespace).Get(ctx, rootFlags.SecretName, metav1.GetOptions{})
+	if err != nil {
+		return "", fmt.Errorf("fetching %s secret in namespace %s: %w (make sure to run 'factory user onboard' first)", rootFlags.SecretName, rootFlags.Namespace, err)
+	}
+	githubLogin := string(secret.Data[KeyGithubLogin])
+
+	prAuthor := pr.GetUser().GetLogin()
+
+	if adoptFlag == "" {
+		// Verify that the PR is owned by the factory user
+		if prAuthor != githubLogin {
+			return "", fmt.Errorf("PR was not created by the factory user (%s). It is owned by %s. Use --adopt [open|close] to adopt it", githubLogin, prAuthor)
+		}
+		return prURL, nil
+	}
+
+	// adoptFlag is either "open" or "close"
+	if prAuthor == githubLogin {
+		return "", fmt.Errorf("PR is already owned by the factory user (%s). Do not use --adopt", githubLogin)
+	}
+
+	fmt.Printf("Adopting PR #%d under user %s...\n", prNum, githubLogin)
+
+	fmt.Printf("Ensuring fork of %s/%s for user %s...\n", owner, repo, githubLogin)
+	_, resp, err := ghClient.Repositories.CreateFork(ctx, owner, repo, nil)
+	if err != nil && resp != nil && resp.StatusCode != 202 {
+		return "", fmt.Errorf("creating fork: %w", err)
+	}
+
+	// Wait for fork to be ready
+	fmt.Println("Waiting for fork to be ready...")
+	forkReady := false
+	for i := 0; i < 15; i++ {
+		_, resp, err := ghClient.Repositories.Get(ctx, githubLogin, repo)
+		if err == nil {
+			forkReady = true
+			break
+		}
+		if resp != nil && resp.StatusCode == 404 {
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		return "", fmt.Errorf("checking fork: %w", err)
+	}
+	if !forkReady {
+		return "", fmt.Errorf("timeout waiting for fork of %s/%s to be created under %s", owner, repo, githubLogin)
+	}
+
+	tmpDir, err := os.MkdirTemp("", "factory-pr-adopt-*")
+	if err != nil {
+		return "", fmt.Errorf("creating temp directory: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	fmt.Println("Initializing temporary git repository...")
+	if err := runCmd(ctx, tmpDir, "git", "init"); err != nil {
+		return "", err
+	}
+	if err := runCmd(ctx, tmpDir, "git", "config", "credential.helper", "!gh auth git-credential"); err != nil {
+		return "", err
+	}
+	if err := runCmd(ctx, tmpDir, "git", "remote", "add", "origin", pr.GetBase().GetRepo().GetCloneURL()); err != nil {
+		return "", err
+	}
+
+	fmt.Printf("Fetching PR history from %s...\n", pr.GetBase().GetRepo().GetCloneURL())
+	if err := runCmd(ctx, tmpDir, "git", "fetch", "origin", fmt.Sprintf("pull/%d/head:adopt-pr-%d", prNum, prNum)); err != nil {
+		return "", err
+	}
+
+	forkURL := fmt.Sprintf("https://github.com/%s/%s.git", githubLogin, repo)
+	if err := runCmd(ctx, tmpDir, "git", "remote", "add", "fork", forkURL); err != nil {
+		return "", err
+	}
+
+	fmt.Printf("Pushing branch adopt-pr-%d to fork...\n", prNum)
+	var pushErr error
+	for i := 0; i < 5; i++ {
+		pushErr = runCmd(ctx, tmpDir, "git", "push", "-f", "fork", fmt.Sprintf("adopt-pr-%d", prNum))
+		if pushErr == nil {
+			break
+		}
+		fmt.Printf("Push failed (may be due to async fork creation), retrying in 2s: %v\n", pushErr)
+		time.Sleep(2 * time.Second)
+	}
+	if pushErr != nil {
+		return "", fmt.Errorf("failed to push to fork: %w", pushErr)
+	}
+
+	fmt.Println("Creating new adopted Pull Request on GitHub...")
+	newPRBody := fmt.Sprintf("This PR was adopted from %s\n\n---\n\n%s", prURL, pr.GetBody())
+	newPR := &githubv39.NewPullRequest{
+		Title:               githubv39.String(pr.GetTitle()),
+		Head:                githubv39.String(fmt.Sprintf("%s:adopt-pr-%d", githubLogin, prNum)),
+		Base:                githubv39.String(pr.GetBase().GetRef()),
+		Body:                githubv39.String(newPRBody),
+		MaintainerCanModify: githubv39.Bool(true),
+	}
+
+	createdPR, _, err := ghClient.PullRequests.Create(ctx, owner, repo, newPR)
+	if err != nil {
+		return "", fmt.Errorf("creating adopted PR: %w", err)
+	}
+
+	fmt.Println("Leaving comment on the original PR...")
+	var commentBody string
+	closeOriginal := (adoptFlag == "close")
+	if closeOriginal {
+		commentBody = fmt.Sprintf("This PR has been adopted/forked here: %s and closed.", createdPR.GetHTMLURL())
+	} else {
+		commentBody = fmt.Sprintf("This PR has been adopted/forked here: %s", createdPR.GetHTMLURL())
+	}
+	comment := &githubv39.IssueComment{
+		Body: githubv39.String(commentBody),
+	}
+	_, _, err = ghClient.Issues.CreateComment(ctx, owner, repo, prNum, comment)
+	if err != nil {
+		// Log comment error but don't fail, as the PR was already successfully created
+		fmt.Printf("Warning: failed to comment on original PR: %v\n", err)
+	}
+
+	if closeOriginal {
+		fmt.Println("Closing the original PR...")
+		updatePR := &githubv39.PullRequest{
+			State: githubv39.String("closed"),
+		}
+		_, _, err = ghClient.PullRequests.Edit(ctx, owner, repo, prNum, updatePR)
+		if err != nil {
+			fmt.Printf("Warning: failed to close original PR: %v\n", err)
+		}
+	}
+
+	fmt.Printf("\nSuccessfully adopted PR #%d!\n", prNum)
+	fmt.Println("To check out this PR locally, run:")
+	fmt.Printf("  gh pr checkout %d\n", createdPR.GetNumber())
+	fmt.Println(createdPR.GetHTMLURL())
+	fmt.Println()
+
+	return createdPR.GetHTMLURL(), nil
+}
+
+func runCmd(ctx context.Context, dir string, name string, args ...string) error {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = dir
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to run %s %v: %w (stderr: %s)", name, args, err, stderr.String())
+	}
+	return nil
 }
