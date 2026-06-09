@@ -34,7 +34,7 @@ function writeFactoryConfig {
     
     # Trigger Label configuration (defaulting to the first label in PR_LABEL_VAL)
     FIRST_PR_LABEL=${ADDR[0]}
-    TRIGGER_LABEL_VAL=${TRIGGER_LABEL:-$FIRST_PR_LABEL}
+    export TRIGGER_LABEL_VAL=${TRIGGER_LABEL:-$FIRST_PR_LABEL}
     echo "triggerLabel: $TRIGGER_LABEL_VAL" >> "$CFG_FILE"
     
     echo "additionalLabels:" >> "$CFG_FILE"
@@ -214,24 +214,28 @@ function runWatchCycle {
     # 1. Parse repo owner/name from REPO_URL
     REPO_PATH=$(echo "$REPO_URL" | sed -E 's|https://github.com/([^/]+/[^/.]+)(\.git)?|\1|')
     
-    # 2. Update main branch
+    # 2. Get default branch (e.g. main or master)
+    DEFAULT_BRANCH=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name 2>/dev/null || echo "main")
+    
+    # 3. Update default branch
     REMOTE_MAIN="origin"
     if git remote | grep -q "^upstream$"; then
         REMOTE_MAIN="upstream"
     fi
-    git checkout main || git checkout -b main
+    git checkout $DEFAULT_BRANCH -- || git checkout -b $DEFAULT_BRANCH
     git fetch $REMOTE_MAIN
-    git reset --hard $REMOTE_MAIN/main
+    git reset --hard $REMOTE_MAIN/$DEFAULT_BRANCH
     
-    # 3. Switch to overseer branch and rebase onto main
-    git checkout overseer || git checkout -b overseer
-    git rebase main || {
-        echo "$(date): Rebase failed. Resetting overseer branch to main..."
+    # 4. Switch to state tracking branch (named after TRIGGER_LABEL_VAL) and rebase onto default branch
+    STATE_BRANCH=${TRIGGER_LABEL_VAL:-overseer}
+    git checkout $STATE_BRANCH -- || git checkout -b $STATE_BRANCH
+    git rebase $DEFAULT_BRANCH || {
+        echo "$(date): Rebase failed. Resetting state branch $STATE_BRANCH to $DEFAULT_BRANCH..."
         git rebase --abort || true
-        git reset --hard main
+        git reset --hard $DEFAULT_BRANCH
     }
     
-    # 4. Run Watch Daemon for POLL_INTERVAL duration (default 300s/5m)
+    # 5. Run Watch Daemon for POLL_INTERVAL duration (default 300s/5m)
     TIMEOUT_DURATION=${POLL_INTERVAL:-300s}
     if [[ "$TIMEOUT_DURATION" =~ ^[0-9]+$ ]]; then
         TIMEOUT_DURATION="${TIMEOUT_DURATION}s"
@@ -242,12 +246,12 @@ function runWatchCycle {
         --queue-dir ./overseer/queues \
         --repo "$REPO_PATH"
         
-    # 5. Run Gemini LLM (Non-deterministic Scanner/Orchestrator)
+    # 6. Run Gemini LLM (Non-deterministic Scanner/Orchestrator)
     if [ "${ALLOW_GEMINI_ORCHESTRATION}" = "true" ]; then
         runGeminiOrchestrator
     fi
 
-    # 6. Push queue and state changes back to fork/origin
+    # 7. Push queue and state changes back to fork/origin
     if [ -d "./overseer/queues" ]; then
         git add ./overseer/queues
         if [ -f "./overseer/queues/journal.jsonl" ]; then
@@ -258,9 +262,9 @@ function runWatchCycle {
         fi
         
         if ! git diff --cached --quiet; then
-            echo "$(date): Committing and pushing queue updates to overseer branch..."
+            echo "$(date): Committing and pushing queue updates to branch $STATE_BRANCH..."
             git commit -m "chore(watch): sync queue state at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            git push origin overseer --force
+            git push origin $STATE_BRANCH --force
         else
             echo "$(date): No queue changes to push."
         fi
