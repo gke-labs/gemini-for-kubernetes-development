@@ -1492,7 +1492,9 @@ func hasLinkedPR(ctx context.Context, client *githubv39.Client, owner, repo stri
 	for _, event := range timeline {
 		if event.GetEvent() == "cross-referenced" && event.Source != nil {
 			if event.Source.Issue != nil && event.Source.Issue.PullRequestLinks != nil {
-				return true, nil
+				if event.Source.Issue.GetState() == "open" {
+					return true, nil
+				}
 			}
 		}
 	}
