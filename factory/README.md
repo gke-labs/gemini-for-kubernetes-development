@@ -277,6 +277,35 @@ factory watch --repo owner/repo --assignee "" --labels "bug,help wanted"
 factory watch --repo owner/repo --dryrun
 ```
 
+### Persistent Multi-Step Workflows
+
+A **Workflow** is a long-running, multi-step process with dependencies that spans hours or days (e.g., migrating APIs kind-by-kind, or running multi-stage verification checklists). Workflows run inside isolated, persistent Sandboxes named `wf-issue-<id>` and sync their progress to a Git branch.
+
+#### 1. Automatic Triggering via GitHub Issues
+Workflows are automatically triggered by the background `factory watch` loop when:
+1.  An issue is created and assigned to the bot.
+2.  The issue description mentions a path referencing a workflow definition file in the repository (located under `.agents/workflows/` or `.gemini/skills/` with the metadata `mode: workflow`).
+
+#### 2. Manual CLI Triggering & Local Testing
+If you are developing a new workflow and want to test it locally from your filesystem without committing it to the repository, you can trigger it manually using the `agent create` command:
+```bash
+factory agent create \
+  --url https://github.com/owner/repo \
+  --agent ./my-local-workflow.md \
+  --local \
+  --session-id my-test-session
+```
+*   **`--local`**: Forces the CLI to load the workflow definition file from your local disk.
+*   **`--session-id`**: Assigns a session ID to keep the chat history and filesystem state persistent on the cluster.
+
+#### 3. Execution Logs & Session Resumption
+*   **Real-time Monitoring**: You can stream execution logs of the active workflow using the sandbox logs command:
+    ```bash
+    factory sandbox logs wf-issue-my-test-session
+    ```
+*   **State Persistence**: All state tracking and Gemini CLI chat history persist on the sandbox's `/workspaces` PVC, allowing the workflow to resume exactly where it left off across periodic watch cycles.
+*   **Git Syncing**: The workflow commits and pushes its progress journal (e.g. `session-my-test-session.md`) to the `overseer` branch of the robot's fork for durability.
+
 ---
 
 ## Sandbox Management & Debugging
