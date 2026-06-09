@@ -796,7 +796,8 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				checkRuns, err := listAllCheckRuns(ctx, ghClient, owner, repo, headSHA)
 				if err == nil {
 					for _, run := range checkRuns {
-						if run.GetConclusion() == "failure" {
+						c := run.GetConclusion()
+						if c == "failure" || c == "timed_out" || c == "cancelled" {
 							hasFailure = true
 							break
 						}

@@ -142,7 +142,8 @@ func runInvestigate(ctx context.Context, prURL, prompt string, continueSession b
 	var failedRunIDs []string
 	seenRunIDs := make(map[int64]bool)
 	for _, run := range checkRuns {
-		if run.GetConclusion() == "failure" {
+		c := run.GetConclusion()
+		if c == "failure" || c == "timed_out" || c == "cancelled" {
 			runID := getWorkflowRunID(run)
 			failedRuns = append(failedRuns, tasks.FailedRun{
 				ID:   runID,
@@ -681,7 +682,8 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 		checkRuns, err := listAllCheckRuns(ctx, ghClient, owner, repo, headSHA)
 		if err == nil {
 			for _, run := range checkRuns {
-				if run.GetConclusion() == "failure" {
+				c := run.GetConclusion()
+				if c == "failure" || c == "timed_out" || c == "cancelled" {
 					hasFailure = true
 					break
 				}
