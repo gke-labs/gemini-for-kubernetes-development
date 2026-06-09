@@ -136,6 +136,11 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch boo
 		klog.Warningf("Failed to load factory config: %v", err)
 	}
 
+	ghClient, err := github.NewClient(ctx)
+	if err != nil {
+		return fmt.Errorf("creating github client: %w", err)
+	}
+
 	if targetURL == "" {
 		return fmt.Errorf("--url is required to determine the repository")
 	}
@@ -201,10 +206,6 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch boo
 	if isIssue {
 		branchName = fmt.Sprintf("issue-%d-%d", issueNum, time.Now().Unix())
 		fmt.Printf("Fetching details for issue #%d...\n", issueNum)
-		ghClient, err := github.NewClient(ctx)
-		if err != nil {
-			return fmt.Errorf("creating github client: %w", err)
-		}
 		issue, _, err := ghClient.Issues.Get(ctx, owner, repo, issueNum)
 		if err != nil {
 			return fmt.Errorf("fetching github issue #%d: %w", issueNum, err)
@@ -358,6 +359,14 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch boo
 		fmt.Printf("Aliasing sandbox %s to PR #%d...\n", sandboxName, prNum)
 		if err := factorysandbox.AliasSandboxToPR(ctx, kubeClient, rootFlags.Namespace, sandboxName, prNum, prURL); err != nil {
 			klog.Warningf("Failed to alias sandbox to PR #%d: %v", prNum, err)
+		}
+
+		if prLabel != "" {
+			labelsToAdd := strings.Split(prLabel, ",")
+			fmt.Printf("Adding labels %v to PR #%d...\n", labelsToAdd, prNum)
+			if _, _, err := ghClient.Issues.AddLabelsToIssue(ctx, owner, repo, prNum, labelsToAdd); err != nil {
+				klog.Warningf("Failed to add labels %v to PR #%d: %v", labelsToAdd, prNum, err)
+			}
 		}
 
 		if watch {
