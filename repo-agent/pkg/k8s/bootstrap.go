@@ -4,6 +4,7 @@ import (
 	"context"
 
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -63,6 +64,10 @@ func BootstrapNamespace(ctx context.Context, clientset kubernetes.Interface, tar
 		log.Info("Warning: failed to setup service accounts", "err", err)
 	}
 
+	if err := EnsureNetworkPolicy(ctx, clientset, targetNS); err != nil {
+		log.Info("Warning: failed to setup sandbox network policy", "err", err)
+	}
+
 	return nil
 }
 
@@ -95,6 +100,10 @@ func BootstrapNamespaceSimple(ctx context.Context, clientset kubernetes.Interfac
 
 	if err := SetupServiceAccounts(ctx, clientset, targetNS); err != nil {
 		log.Info("Warning: failed to setup service accounts", "err", err)
+	}
+
+	if err := EnsureNetworkPolicy(ctx, clientset, targetNS); err != nil {
+		log.Info("Warning: failed to setup sandbox network policy", "err", err)
 	}
 
 	return nil
@@ -279,4 +288,60 @@ func BindUserIAMToNamespace(ctx context.Context, clientset kubernetes.Interface,
 	}
 
 	return nil
+}
+
+// EnsureNetworkPolicy ensures that the sandbox egress NetworkPolicy exists in the namespace.
+func EnsureNetworkPolicy(ctx context.Context, clientset kubernetes.Interface, namespace string) error {
+	log := klog.FromContext(ctx)
+	policyName := "sandbox-egress-policy"
+
+	policy := &networkingv1.NetworkPolicy{
+		ObjectMeta: v1.ObjectMeta{
+			Name:      policyName,
+			Namespace: namespace,
+		},
+		Spec: networkingv1.NetworkPolicySpec{
+			PodSelector: v1.LabelSelector{
+				MatchExpressions: []v1.LabelSelectorRequirement{
+					{
+						Key:      "sandbox",
+						Operator: v1.LabelSelectorOpExists,
+					},
+				},
+			},
+			PolicyTypes: []networkingv1.PolicyType{
+				networkingv1.PolicyTypeEgress,
+			},
+			Egress: []networkingv1.NetworkPolicyEgressRule{
+				{
+					To: []networkingv1.NetworkPolicyPeer{
+						{
+							IPBlock: &networkingv1.IPBlock{
+								CIDR: "0.0.0.0/0",
+								Except: []string{
+									"10.0.0.0/8",
+									"172.16.0.0/12",
+									"192.168.0.0/16",
+									"169.254.0.0/16",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	_, err := clientset.NetworkingV1().NetworkPolicies(namespace).Get(ctx, policyName, v1.GetOptions{})
+	if errors.IsNotFound(err) {
+		log.Info("Creating sandbox egress NetworkPolicy", "namespace", namespace)
+		_, err = clientset.NetworkingV1().NetworkPolicies(namespace).Create(ctx, policy, v1.CreateOptions{})
+		return err
+	} else if err != nil {
+		return err
+	}
+
+	log.Info("Updating sandbox egress NetworkPolicy", "namespace", namespace)
+	_, err = clientset.NetworkingV1().NetworkPolicies(namespace).Update(ctx, policy, v1.UpdateOptions{})
+	return err
 }
