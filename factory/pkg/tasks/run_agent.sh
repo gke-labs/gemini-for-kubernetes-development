@@ -228,7 +228,7 @@ function runAgent {
             (cd "/workspaces/${REPO_NAME}" && git merge --abort 2>/dev/null || true)
             (cd "/workspaces/${REPO_NAME}" && git cherry-pick --abort 2>/dev/null || true)
             (cd "/workspaces/${REPO_NAME}" && git reset --hard HEAD && git clean -fd)
-            (cd "/workspaces/${REPO_NAME}" && git checkout "${BRANCH_NAME}" || git checkout -b "${BRANCH_NAME}")
+            (cd "/workspaces/${REPO_NAME}" && git checkout "${BRANCH_NAME}" -- || git checkout -b "${BRANCH_NAME}")
             if (cd "/workspaces/${REPO_NAME}" && git ls-remote --heads origin "${BRANCH_NAME}" | grep -q "refs/heads/${BRANCH_NAME}"); then
                 (cd "/workspaces/${REPO_NAME}" && git pull origin "${BRANCH_NAME}")
             else
