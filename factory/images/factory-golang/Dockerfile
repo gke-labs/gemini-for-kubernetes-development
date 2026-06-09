@@ -1,13 +1,13 @@
 # --------------------------------
 
 # Build the gh CLI
-FROM golang:1.26.2 AS build-gh
+FROM golang:1.26.3 AS build-gh
 RUN GOBIN=/bin go install github.com/cli/cli/v2/cmd/gh@v2.82.1
 
 # --------------------------------
 
 # Build envd
-FROM golang:1.26.2 AS build-envd
+FROM golang:1.26.3 AS build-envd
 ENV GOTOOLCHAIN=auto
 RUN git clone --depth 1 --branch 2026.20 https://github.com/e2b-dev/infra.git /infra && \
     cd /infra/packages/envd && \
@@ -19,7 +19,7 @@ RUN git clone --depth 1 --branch 2026.20 https://github.com/e2b-dev/infra.git /i
 # --------------------------------
 
 # Build factory binary
-FROM golang:1.26.2 AS build-factory
+FROM golang:1.26.3 AS build-factory
 WORKDIR /app/factory
 COPY factory/go.mod factory/go.sum ./
 RUN go mod download
@@ -29,7 +29,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -v -o /factory .
 
 
 # Main image
-FROM golang:1.26.2
+FROM golang:1.26.3
 ENV GOTOOLCHAIN=auto
 
 # We want a functional python, because gemini-cli likes to use python

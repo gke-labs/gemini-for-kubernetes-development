@@ -1,6 +1,6 @@
 module github.com/gke-labs/gemini-for-kubernetes-development/factory
 
-go 1.26.2
+go 1.26.3
 
 require (
 	connectrpc.com/connect v1.18.1
