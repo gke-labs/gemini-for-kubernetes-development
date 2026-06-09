@@ -1313,22 +1313,31 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					fmt.Printf("Starting task %s (Type: %s, URL: %s)...\n", taskFilename, t.Type, t.URL)
 					startTime := time.Now()
 
-					if t.Type != "agent-chore" && t.Number > 0 {
-						var commentBody string
-						switch t.Type {
-						case "issue-fix":
-							commentBody = "🤖 AI Factory started fixing this issue in a sandbox."
-						case "pr-investigate":
-							commentBody = "🤖 AI Factory started investigating CI check failures for this pull request."
-						case "pr-comments":
-							commentBody = "🤖 AI Factory started addressing review feedback for this pull request."
-						case "pr-iterate":
-							commentBody = "🤖 AI Factory started resolving merge conflicts / rebasing this pull request in a sandbox."
-						case "pr-review":
-							commentBody = "🤖 AI Factory started reviewing this pull request in a sandbox."
+					if t.Number > 0 {
+						if (t.Type == "issue-fix" || t.Type == "agent-chore") && t.Assignee != "" {
+							klog.Infof("Assigning issue #%d to %s as claimed", t.Number, t.Assignee)
+							if _, _, err := ghClient.Issues.AddAssignees(ctx, owner, repo, t.Number, []string{t.Assignee}); err != nil {
+								klog.Errorf("Failed to assign issue #%d to %s: %v", t.Number, t.Assignee, err)
+							}
 						}
-						if commentBody != "" {
-							addGitHubComment(ctx, ghClient, owner, repo, t.Number, commentBody)
+
+						if t.Type != "agent-chore" {
+							var commentBody string
+							switch t.Type {
+							case "issue-fix":
+								commentBody = "🤖 AI Factory started fixing this issue in a sandbox."
+							case "pr-investigate":
+								commentBody = "🤖 AI Factory started investigating CI check failures for this pull request."
+							case "pr-comments":
+								commentBody = "🤖 AI Factory started addressing review feedback for this pull request."
+							case "pr-iterate":
+								commentBody = "🤖 AI Factory started resolving merge conflicts / rebasing this pull request in a sandbox."
+							case "pr-review":
+								commentBody = "🤖 AI Factory started reviewing this pull request in a sandbox."
+							}
+							if commentBody != "" {
+								addGitHubComment(ctx, ghClient, owner, repo, t.Number, commentBody)
+							}
 						}
 					}
 
