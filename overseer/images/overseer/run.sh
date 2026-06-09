@@ -28,6 +28,10 @@ function writeFactoryConfig {
         echo "workspaceDiskSize: $WORKSPACE_DISK_SIZE" >> "$CFG_FILE"
     fi
     
+    # PR Label configuration (defaulting to 'overseer' inside the overseer container)
+    PR_LABEL_VAL=${PR_LABEL:-overseer}
+    echo "prLabel: $PR_LABEL_VAL" >> "$CFG_FILE"
+    
     if [ -n "$FACTORY_SECRETS" ]; then
         echo "secrets:" >> "$CFG_FILE"
         echo "$FACTORY_SECRETS" | jq -r '.[] | "  - name: \(.name)\n    mountPath: \(.mountPath)"' >> "$CFG_FILE"

@@ -29,6 +29,7 @@ type FactoryConfig struct {
 	EphemeralStorage  string        `yaml:"ephemeralStorage"`
 	Image             string        `yaml:"image"`
 	WorkspaceDiskSize string        `yaml:"workspaceDiskSize"`
+	PRLabel           string        `yaml:"prLabel"`
 	Secrets           []SecretMount `yaml:"secrets"`
 	Env               []EnvVar      `yaml:"env"`
 }

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
@@ -130,6 +131,11 @@ func NewFixCommand(ctx context.Context) *cobra.Command {
 }
 
 func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch bool, pollInterval time.Duration, watchTimeout time.Duration, ephemeralStorage string, secrets []factorysandbox.SecretMount) error {
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		klog.Warningf("Failed to load factory config: %v", err)
+	}
+
 	if targetURL == "" {
 		return fmt.Errorf("--url is required to determine the repository")
 	}
@@ -236,6 +242,11 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch boo
 		issueBody = prompt
 	}
 
+	prLabel := "factory"
+	if cfg != nil && cfg.PRLabel != "" {
+		prLabel = cfg.PRLabel
+	}
+
 	params := tasks.FixIssueParams{
 		Repo: tasks.Repo{
 			CloneURL: cloneURL,
@@ -251,7 +262,7 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch boo
 		Branch:        branchName,
 		Models:        []string{"gemini-3.5-flash", "gemini-3-flash-preview", "gemini-3.1-pro-preview", "gemini-2.5-pro"},
 		DraftPR:       false,
-		PRLabel:       "overseer",
+		PRLabel:       prLabel,
 		NoPR:          noPR,
 	}
 
@@ -286,6 +297,7 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch boo
 
 	envMap := map[string]string{
 		"HOME":                       "/workspaces/.home",
+		"FACTORY_CONFIG":             "/workspaces/.factory.cfg",
 		"GITHUB_TOKEN":               string(secret.Data[KeyGithubToken]),
 		"GEMINI_API_KEY":             getGeminiAPIKey(secret),
 		"GEMINI_CLI_TRUST_WORKSPACE": "true",
