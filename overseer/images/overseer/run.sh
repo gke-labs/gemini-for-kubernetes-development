@@ -36,6 +36,11 @@ function writeFactoryConfig {
         echo "  - $i" >> "$CFG_FILE"
     done
     
+    # Trigger Label configuration (defaulting to the first label in PR_LABEL_VAL)
+    FIRST_PR_LABEL=${PR_LABEL_VAL%%,*}
+    TRIGGER_LABEL_VAL=${TRIGGER_LABEL:-$FIRST_PR_LABEL}
+    echo "triggerLabel: $TRIGGER_LABEL_VAL" >> "$CFG_FILE"
+    
     if [ -n "$FACTORY_SECRETS" ]; then
         echo "secrets:" >> "$CFG_FILE"
         echo "$FACTORY_SECRETS" | jq -r '.[] | "  - name: \(.name)\n    mountPath: \(.mountPath)"' >> "$CFG_FILE"

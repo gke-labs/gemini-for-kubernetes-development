@@ -79,6 +79,7 @@ type InvestigateParams struct {
 	FailedRuns    []FailedRun
 	IssueComments []PRComment
 	Models        []string
+	TriggerLabel  string
 }
 
 func GetInvestigateScript() ([]byte, error) {
@@ -128,6 +129,7 @@ type AddressFeedbackParams struct {
 	OldPullRequestReviews []PRReview
 	PullRequestReviews    []PRReview
 	Models                []string
+	TriggerLabel          string
 }
 
 func GetAddressFeedbackScript() ([]byte, error) {

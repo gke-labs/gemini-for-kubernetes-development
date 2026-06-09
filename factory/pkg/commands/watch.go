@@ -329,7 +329,7 @@ func isWorkflowDefinition(ctx context.Context, ghClient *githubv39.Client, owner
 	return false
 }
 
-func queueIssueTasks(ctx context.Context, ghClient *githubv39.Client, kubeClient *clients.KubernetesClient, owner, repo string, issues []*githubv39.Issue, processedIssues map[int]time.Time, refIssues map[int]bool, targetAssignee string, incomingDir, processingDir, processedDir, queueDir string, dryRun bool) {
+func queueIssueTasks(ctx context.Context, ghClient *githubv39.Client, kubeClient *clients.KubernetesClient, owner, repo string, issues []*githubv39.Issue, processedIssues map[int]time.Time, refIssues map[int]bool, targetAssignee string, incomingDir, processingDir, processedDir, queueDir string, dryRun bool, triggerLabel string) {
 	klog.Infof("queueIssueTasks called with %d issues", len(issues))
 	for _, issue := range issues {
 		num := issue.GetNumber()
@@ -400,15 +400,15 @@ func queueIssueTasks(ctx context.Context, ghClient *githubv39.Client, kubeClient
 
 			if isAssigned(issue, targetAssignee) {
 				if dryRun {
-					fmt.Printf("[DRYRUN] Would unassign %s from issue #%d and add label 'overseer'\n", targetAssignee, num)
+					fmt.Printf("[DRYRUN] Would unassign %s from issue #%d and add label '%s'\n", targetAssignee, num, triggerLabel)
 				} else {
 					fmt.Printf("Unassigning %s from issue #%d...\n", targetAssignee, num)
 					if _, _, err := ghClient.Issues.RemoveAssignees(ctx, owner, repo, num, []string{targetAssignee}); err != nil {
 						klog.Errorf("Failed to unassign %s from issue #%d: %v", targetAssignee, num, err)
 					}
-					klog.Infof("Adding 'overseer' label to issue #%d", num)
-					if _, _, err := ghClient.Issues.AddLabelsToIssue(ctx, owner, repo, num, []string{"overseer"}); err != nil {
-						klog.Errorf("Failed to add label 'overseer' to issue #%d: %v", num, err)
+					klog.Infof("Adding '%s' label to issue #%d", triggerLabel, num)
+					if _, _, err := ghClient.Issues.AddLabelsToIssue(ctx, owner, repo, num, []string{triggerLabel}); err != nil {
+						klog.Errorf("Failed to add label '%s' to issue #%d: %v", triggerLabel, num, err)
 					}
 				}
 			}
@@ -599,6 +599,15 @@ func writeTaskJournalEvent(queueDir string, taskFilename string, task *QueueTask
 }
 
 func runWatch(ctx context.Context, owner, repo string, interval time.Duration, assignee string, assigneeChanged bool, labels []string, dryRun bool, watchTimeout time.Duration, maxActions int, maxPending int, mode string, queueDir string, once bool, issueMode string, prMode string, choresMode string, ephemeralStorage string, secrets []factorysandbox.SecretMount, scanLimit int) error {
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		klog.Warningf("Failed to load factory config: %v", err)
+	}
+	triggerLabel := "factory"
+	if cfg != nil && cfg.TriggerLabel != "" {
+		triggerLabel = cfg.TriggerLabel
+	}
+
 	ghClient, err := github.NewClient(ctx)
 	if err != nil {
 		return fmt.Errorf("creating github client: %w", err)
@@ -1037,16 +1046,16 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				klog.Errorf("Failed to list open PRs: %v", err)
 			}
 
-			// Scan issues labeled "overseer"
+			// Scan issues labeled with triggerLabel
 			var slowIssues []*githubv39.Issue
 			opts2 := &githubv39.IssueListByRepoOptions{
-				Labels:      []string{"overseer"},
+				Labels:      []string{triggerLabel},
 				State:       "open",
 				ListOptions: githubv39.ListOptions{PerPage: 100},
 			}
 			issues2, _, err := ghClient.Issues.ListByRepo(ctx, owner, repo, opts2)
 			if err != nil {
-				klog.Errorf("Failed to list issues for label overseer: %v", err)
+				klog.Errorf("Failed to list issues for label %s: %v", triggerLabel, err)
 			} else {
 				for _, item := range issues2 {
 					if item.PullRequestLinks == nil {
@@ -1056,9 +1065,8 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 			}
 
 			// Process slow issues
-			// Process slow issues
 			if issueMode != "disabled" {
-				queueIssueTasks(ctx, ghClient, kubeClient, owner, repo, slowIssues, processedIssues, refIssues, targetAssignee, incomingDir, processingDir, processedDir, queueDir, dryRun)
+				queueIssueTasks(ctx, ghClient, kubeClient, owner, repo, slowIssues, processedIssues, refIssues, targetAssignee, incomingDir, processingDir, processedDir, queueDir, dryRun, triggerLabel)
 			}
 
 			// Process Pull Requests (Scanner)
@@ -1080,7 +1088,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				}
 			}
 			opts2PR := &githubv39.IssueListByRepoOptions{
-				Labels:      []string{"overseer"},
+				Labels:      []string{triggerLabel},
 				State:       "open",
 				ListOptions: githubv39.ListOptions{PerPage: 100},
 			}
@@ -1153,7 +1161,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 			}
 
 			if issueMode != "disabled" {
-				queueIssueTasks(ctx, ghClient, kubeClient, owner, repo, issues, processedIssues, refIssues, targetAssignee, incomingDir, processingDir, processedDir, queueDir, dryRun)
+				queueIssueTasks(ctx, ghClient, kubeClient, owner, repo, issues, processedIssues, refIssues, targetAssignee, incomingDir, processingDir, processedDir, queueDir, dryRun, triggerLabel)
 			}
 
 			// Process PRs assigned to the bot in the fast cycle
