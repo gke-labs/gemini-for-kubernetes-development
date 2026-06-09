@@ -242,10 +242,11 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch boo
 		issueBody = prompt
 	}
 
-	prLabel := "factory"
-	if cfg != nil && cfg.PRLabel != "" {
-		prLabel = cfg.PRLabel
+	prLabels := []string{"factory"}
+	if cfg != nil && len(cfg.PRLabels) > 0 {
+		prLabels = cfg.PRLabels
 	}
+	prLabel := strings.Join(prLabels, ",")
 
 	params := tasks.FixIssueParams{
 		Repo: tasks.Repo{

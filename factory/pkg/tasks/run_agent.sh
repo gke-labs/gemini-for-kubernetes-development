@@ -186,12 +186,21 @@ function commitChanges {
     ### Changes
     ${COMMIT_MSG}"
     
+                # Resolve labels from factory config if present
+                PR_LABELS="overseer"
+                if [ -n "$FACTORY_CONFIG" ] && [ -f "$FACTORY_CONFIG" ]; then
+                    RESOLVED_LABELS=$(python3 -c "import yaml; cfg = yaml.safe_load(open('$FACTORY_CONFIG')) or {}; print(','.join(cfg.get('prLabels', ['overseer'])))" 2>/dev/null || true)
+                    if [ -n "$RESOLVED_LABELS" ]; then
+                        PR_LABELS="$RESOLVED_LABELS"
+                    fi
+                fi
+
                 # Try to create PR
-                PR_URL=$(gh pr create --title "chore: ${AGENT_NAME}" --body "${PR_BODY}" --head "${FORK_OWNER}:${BRANCH_NAME}" --base "${BASE_BRANCH}" --label "overseer" || true)
+                PR_URL=$(gh pr create --title "chore: ${AGENT_NAME}" --body "${PR_BODY}" --head "${FORK_OWNER}:${BRANCH_NAME}" --base "${BASE_BRANCH}" --label "${PR_LABELS}" || true)
                 
                 if [ -n "$PR_URL" ] && [[ "$PR_URL" == http* ]]; then
                     echo "$PR_URL" > "$(dirname "${PROMPT_FILE}")/agent-output.txt"
-                    gh pr edit "$PR_URL" --add-label "overseer" || echo "Warning: failed to add label overseer to $PR_URL"
+                    gh pr edit "$PR_URL" --add-label "${PR_LABELS}" || echo "Warning: failed to add labels ${PR_LABELS} to $PR_URL"
                 else
                     echo "Failed to create PR" > "$(dirname "${PROMPT_FILE}")/agent-output.txt"
                 fi
