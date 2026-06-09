@@ -284,7 +284,7 @@ func getPRPriority(prIssue *githubv39.Issue) string {
 	return getIssuePriority(prIssue)
 }
 
-var workflowFileRegex = regexp.MustCompile(`\b(\.?\.?/?(?:.agents|.gemini)/[a-zA-Z0-9_\-\./]+)\b`)
+var workflowFileRegex = regexp.MustCompile(`(?:\s|^)(\.?\.?/?(?:\.?agents?|\.gemini)/[a-zA-Z0-9_\-\./]+)\b`)
 
 func findWorkflowPath(body string) string {
 	matches := workflowFileRegex.FindStringSubmatch(body)
