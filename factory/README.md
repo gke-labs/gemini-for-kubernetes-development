@@ -277,6 +277,50 @@ factory watch --repo owner/repo --assignee "" --labels "bug,help wanted"
 factory watch --repo owner/repo --dryrun
 ```
 
+### Persistent Multi-Step Workflows
+
+A **Workflow** is a long-running, multi-step process with dependencies that spans hours or days (e.g., migrating APIs kind-by-kind, or running multi-stage verification checklists). Workflows run inside isolated, persistent Sandboxes named `wf-issue-<id>` and sync their progress to a Git branch.
+
+#### 1. Automatic Triggering via GitHub Issues
+Workflows are automatically triggered by the background `factory watch` loop when:
+1.  An issue is created and assigned to the bot.
+2.  The issue description mentions a path referencing a workflow definition file in the repository (located under `.agents/workflows/` or `.gemini/skills/` with the metadata `mode: workflow`).
+
+#### 2. Manual CLI Triggering & Local Testing
+You can manually trigger and test workflows directly from the CLI without relying on GitHub issue assignment.
+
+*   **Via `factory fix`**: If your issue body references a workflow definition, running:
+    ```bash
+    factory fix --url https://github.com/owner/repo/issues/123
+    ```
+    will automatically detect the workflow and assign a matching `SessionID` (e.g. `issue-123`) under the hood. No manual session configuration is needed!
+*   **Via `factory agent create` (Local Filesystem)**: If you are developing a new workflow and want to test it locally from your filesystem without committing it to the repository:
+    ```bash
+    factory agent create \
+      --url https://github.com/owner/repo \
+      --agent ./my-local-workflow.md \
+      --local \
+      --session-id my-test-session
+    ```
+    *   **`--local`**: Forces the CLI to load the workflow definition file from your local disk.
+    *   **`--session-id`**: Sets a custom session ID to keep the chat history and filesystem state persistent on the cluster.
+
+#### 3. Execution Logs & Session Resumption
+*   **Real-time Monitoring**: You can stream execution logs of the active workflow using the sandbox logs command:
+    ```bash
+    factory sandbox logs wf-issue-my-test-session
+    ```
+*   **State Persistence**: All state tracking and Gemini CLI chat history persist on the sandbox's `/workspaces` PVC, allowing the workflow to resume exactly where it left off across periodic watch cycles.
+*   **Git Syncing**: The workflow commits and pushes its progress journal (e.g. `session-my-test-session.md`) to the `overseer` branch of the robot's fork for durability.
+
+#### 4. Workflow Progression & Automation
+Workflows execute in **cycles** (or "ticks"). Each cycle processes the next checklist step (e.g. runs tests, creates a child PR, or checks PR merge status) and exits, returning the sandbox to an idle state.
+
+To progress a workflow through its steps, it must be executed periodically:
+*   **Manual Progression**: Re-run the trigger command (either `factory fix` or `factory agent create`) with the same session context once the current step's blocker is resolved (e.g., once the child PR is merged).
+*   **Automated Progression (Local)**: Run `factory watch --repo owner/repo` in a spare terminal. The watch daemon will automatically poll GitHub and execute/reconcile the workflow sandbox every 2 minutes.
+*   **Automated Progression (Cluster-wide)**: Once committed to the repository, assign the issue to the bot, and the cluster-wide **Overseer** controller will automatically orchestrate and run the workflow cycles.
+
 ---
 
 ## Sandbox Management & Debugging

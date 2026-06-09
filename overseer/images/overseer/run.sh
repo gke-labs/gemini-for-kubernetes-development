@@ -28,6 +28,20 @@ function writeFactoryConfig {
         echo "workspaceDiskSize: $WORKSPACE_DISK_SIZE" >> "$CFG_FILE"
     fi
     
+    # PR Labels configuration (defaulting to 'overseer' inside the overseer container)
+    PR_LABEL_VAL=${PR_LABEL:-overseer}
+    IFS=',' read -ra ADDR <<< "$PR_LABEL_VAL"
+    
+    # Trigger Label configuration (defaulting to the first label in PR_LABEL_VAL)
+    FIRST_PR_LABEL=${ADDR[0]}
+    TRIGGER_LABEL_VAL=${TRIGGER_LABEL:-$FIRST_PR_LABEL}
+    echo "triggerLabel: $TRIGGER_LABEL_VAL" >> "$CFG_FILE"
+    
+    echo "additionalLabels:" >> "$CFG_FILE"
+    for ((i=1; i<${#ADDR[@]}; i++)); do
+        echo "  - ${ADDR[i]}" >> "$CFG_FILE"
+    done
+    
     if [ -n "$FACTORY_SECRETS" ]; then
         echo "secrets:" >> "$CFG_FILE"
         echo "$FACTORY_SECRETS" | jq -r '.[] | "  - name: \(.name)\n    mountPath: \(.mountPath)"' >> "$CFG_FILE"

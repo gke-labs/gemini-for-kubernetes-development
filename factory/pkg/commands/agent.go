@@ -255,6 +255,8 @@ func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 	}
 
 	envMap := map[string]string{
+		"HOME":                       "/workspaces/.home",
+		"FACTORY_CONFIG":             "/workspaces/.factory.cfg",
 		"GITHUB_TOKEN":               string(secret.Data[KeyGithubToken]),
 		"GEMINI_API_KEY":             getGeminiAPIKey(secret),
 		"GEMINI_CLI_TRUST_WORKSPACE": "true",

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
@@ -100,6 +101,11 @@ func NewInvestigateCommand(ctx context.Context) *cobra.Command {
 }
 
 func runInvestigate(ctx context.Context, prURL, prompt string, continueSession bool, ephemeralStorage string, secrets []factorysandbox.SecretMount) error {
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		klog.Warningf("Failed to load factory config: %v", err)
+	}
+
 	fmt.Printf("Resolving PR URL: %s...\n", prURL)
 
 	u, err := url.Parse(prURL)
@@ -136,7 +142,8 @@ func runInvestigate(ctx context.Context, prURL, prompt string, continueSession b
 	var failedRunIDs []string
 	seenRunIDs := make(map[int64]bool)
 	for _, run := range checkRuns {
-		if run.GetConclusion() == "failure" {
+		c := run.GetConclusion()
+		if c == "failure" || c == "timed_out" || c == "cancelled" {
 			runID := getWorkflowRunID(run)
 			failedRuns = append(failedRuns, tasks.FailedRun{
 				ID:   runID,
@@ -204,6 +211,11 @@ func runInvestigate(ctx context.Context, prURL, prompt string, continueSession b
 	githubLogin := string(secret.Data[KeyGithubLogin])
 	githubEmail := string(secret.Data[KeyGithubEmail])
 
+	triggerLabel := "factory"
+	if cfg != nil && cfg.TriggerLabel != "" {
+		triggerLabel = cfg.TriggerLabel
+	}
+
 	params := tasks.InvestigateParams{
 		PullRequest: tasks.PullRequest{
 			Number: prNum,
@@ -214,6 +226,7 @@ func runInvestigate(ctx context.Context, prURL, prompt string, continueSession b
 		FailedRuns:    failedRuns,
 		IssueComments: prComments,
 		Models:        []string{"gemini-3.5-flash", "gemini-3-flash-preview", "gemini-3.1-pro-preview", "gemini-2.5-pro"},
+		TriggerLabel:  triggerLabel,
 	}
 
 	scriptBytes, err := tasks.GetInvestigateScript()
@@ -335,6 +348,11 @@ func NewAddressCommentsCommand(ctx context.Context) *cobra.Command {
 }
 
 func runAddressComments(ctx context.Context, prURL, prompt string, continueSession bool, ephemeralStorage string, secrets []factorysandbox.SecretMount) error {
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		klog.Warningf("Failed to load factory config: %v", err)
+	}
+
 	fmt.Printf("Resolving PR URL: %s...\n", prURL)
 
 	u, err := url.Parse(prURL)
@@ -453,6 +471,11 @@ func runAddressComments(ctx context.Context, prURL, prompt string, continueSessi
 	githubLogin := string(secret.Data[KeyGithubLogin])
 	githubEmail := string(secret.Data[KeyGithubEmail])
 
+	triggerLabel := "factory"
+	if cfg != nil && cfg.TriggerLabel != "" {
+		triggerLabel = cfg.TriggerLabel
+	}
+
 	params := tasks.AddressFeedbackParams{
 		PullRequest: tasks.PullRequest{
 			Number: prNum,
@@ -466,6 +489,7 @@ func runAddressComments(ctx context.Context, prURL, prompt string, continueSessi
 		OldPullRequestReviews: oldReviews,
 		PullRequestReviews:    newReviews,
 		Models:                []string{"gemini-3.5-flash", "gemini-3-flash-preview", "gemini-3.1-pro-preview", "gemini-2.5-pro"},
+		TriggerLabel:          triggerLabel,
 	}
 
 	scriptBytes, err := tasks.GetAddressFeedbackScript()
@@ -658,7 +682,8 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 		checkRuns, err := listAllCheckRuns(ctx, ghClient, owner, repo, headSHA)
 		if err == nil {
 			for _, run := range checkRuns {
-				if run.GetConclusion() == "failure" {
+				c := run.GetConclusion()
+				if c == "failure" || c == "timed_out" || c == "cancelled" {
 					hasFailure = true
 					break
 				}

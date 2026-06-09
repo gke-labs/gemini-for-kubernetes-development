@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
@@ -130,6 +131,16 @@ func NewFixCommand(ctx context.Context) *cobra.Command {
 }
 
 func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch bool, pollInterval time.Duration, watchTimeout time.Duration, ephemeralStorage string, secrets []factorysandbox.SecretMount) error {
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		klog.Warningf("Failed to load factory config: %v", err)
+	}
+
+	ghClient, err := github.NewClient(ctx)
+	if err != nil {
+		return fmt.Errorf("creating github client: %w", err)
+	}
+
 	if targetURL == "" {
 		return fmt.Errorf("--url is required to determine the repository")
 	}
@@ -195,10 +206,6 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch boo
 	if isIssue {
 		branchName = fmt.Sprintf("issue-%d-%d", issueNum, time.Now().Unix())
 		fmt.Printf("Fetching details for issue #%d...\n", issueNum)
-		ghClient, err := github.NewClient(ctx)
-		if err != nil {
-			return fmt.Errorf("creating github client: %w", err)
-		}
 		issue, _, err := ghClient.Issues.Get(ctx, owner, repo, issueNum)
 		if err != nil {
 			return fmt.Errorf("fetching github issue #%d: %w", issueNum, err)
@@ -236,6 +243,16 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch boo
 		issueBody = prompt
 	}
 
+	triggerLabel := "factory"
+	if cfg != nil && cfg.TriggerLabel != "" {
+		triggerLabel = cfg.TriggerLabel
+	}
+	allLabels := []string{triggerLabel}
+	if cfg != nil {
+		allLabels = append(allLabels, cfg.AdditionalLabels...)
+	}
+	prLabel := strings.Join(allLabels, ",")
+
 	params := tasks.FixIssueParams{
 		Repo: tasks.Repo{
 			CloneURL: cloneURL,
@@ -251,7 +268,7 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch boo
 		Branch:        branchName,
 		Models:        []string{"gemini-3.5-flash", "gemini-3-flash-preview", "gemini-3.1-pro-preview", "gemini-2.5-pro"},
 		DraftPR:       false,
-		PRLabel:       "factory",
+		PRLabel:       prLabel,
 		NoPR:          noPR,
 	}
 
@@ -285,6 +302,8 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch boo
 	}
 
 	envMap := map[string]string{
+		"HOME":                       "/workspaces/.home",
+		"FACTORY_CONFIG":             "/workspaces/.factory.cfg",
 		"GITHUB_TOKEN":               string(secret.Data[KeyGithubToken]),
 		"GEMINI_API_KEY":             getGeminiAPIKey(secret),
 		"GEMINI_CLI_TRUST_WORKSPACE": "true",
@@ -340,6 +359,14 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch boo
 		fmt.Printf("Aliasing sandbox %s to PR #%d...\n", sandboxName, prNum)
 		if err := factorysandbox.AliasSandboxToPR(ctx, kubeClient, rootFlags.Namespace, sandboxName, prNum, prURL); err != nil {
 			klog.Warningf("Failed to alias sandbox to PR #%d: %v", prNum, err)
+		}
+
+		if prLabel != "" {
+			labelsToAdd := strings.Split(prLabel, ",")
+			fmt.Printf("Adding labels %v to PR #%d...\n", labelsToAdd, prNum)
+			if _, _, err := ghClient.Issues.AddLabelsToIssue(ctx, owner, repo, prNum, labelsToAdd); err != nil {
+				klog.Warningf("Failed to add labels %v to PR #%d: %v", labelsToAdd, prNum, err)
+			}
 		}
 
 		if watch {

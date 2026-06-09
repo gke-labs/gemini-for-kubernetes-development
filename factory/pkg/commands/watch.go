@@ -284,7 +284,7 @@ func getPRPriority(prIssue *githubv39.Issue) string {
 	return getIssuePriority(prIssue)
 }
 
-var workflowFileRegex = regexp.MustCompile(`\b(\.?\.?/?(?:.agents|.gemini)/[a-zA-Z0-9_\-\./]+)\b`)
+var workflowFileRegex = regexp.MustCompile(`(?:\s|^)(\.?\.?/?(?:\.?agents?|\.gemini)/[a-zA-Z0-9_\-\./]+)\b`)
 
 func findWorkflowPath(body string) string {
 	matches := workflowFileRegex.FindStringSubmatch(body)
@@ -329,7 +329,7 @@ func isWorkflowDefinition(ctx context.Context, ghClient *githubv39.Client, owner
 	return false
 }
 
-func queueIssueTasks(ctx context.Context, ghClient *githubv39.Client, kubeClient *clients.KubernetesClient, owner, repo string, issues []*githubv39.Issue, processedIssues map[int]time.Time, refIssues map[int]bool, targetAssignee string, incomingDir, processingDir, processedDir, queueDir string, dryRun bool) {
+func queueIssueTasks(ctx context.Context, ghClient *githubv39.Client, kubeClient *clients.KubernetesClient, owner, repo string, issues []*githubv39.Issue, processedIssues map[int]time.Time, refIssues map[int]bool, targetAssignee string, incomingDir, processingDir, processedDir, queueDir string, dryRun bool, triggerLabel string) {
 	klog.Infof("queueIssueTasks called with %d issues", len(issues))
 	for _, issue := range issues {
 		num := issue.GetNumber()
@@ -400,11 +400,15 @@ func queueIssueTasks(ctx context.Context, ghClient *githubv39.Client, kubeClient
 
 			if isAssigned(issue, targetAssignee) {
 				if dryRun {
-					fmt.Printf("[DRYRUN] Would unassign %s from issue #%d\n", targetAssignee, num)
+					fmt.Printf("[DRYRUN] Would unassign %s from issue #%d and add label '%s'\n", targetAssignee, num, triggerLabel)
 				} else {
 					fmt.Printf("Unassigning %s from issue #%d...\n", targetAssignee, num)
 					if _, _, err := ghClient.Issues.RemoveAssignees(ctx, owner, repo, num, []string{targetAssignee}); err != nil {
 						klog.Errorf("Failed to unassign %s from issue #%d: %v", targetAssignee, num, err)
+					}
+					klog.Infof("Adding '%s' label to issue #%d", triggerLabel, num)
+					if _, _, err := ghClient.Issues.AddLabelsToIssue(ctx, owner, repo, num, []string{triggerLabel}); err != nil {
+						klog.Errorf("Failed to add label '%s' to issue #%d: %v", triggerLabel, num, err)
 					}
 				}
 			}
@@ -595,6 +599,15 @@ func writeTaskJournalEvent(queueDir string, taskFilename string, task *QueueTask
 }
 
 func runWatch(ctx context.Context, owner, repo string, interval time.Duration, assignee string, assigneeChanged bool, labels []string, dryRun bool, watchTimeout time.Duration, maxActions int, maxPending int, mode string, queueDir string, once bool, issueMode string, prMode string, choresMode string, ephemeralStorage string, secrets []factorysandbox.SecretMount, scanLimit int) error {
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		klog.Warningf("Failed to load factory config: %v", err)
+	}
+	triggerLabel := "factory"
+	if cfg != nil && cfg.TriggerLabel != "" {
+		triggerLabel = cfg.TriggerLabel
+	}
+
 	ghClient, err := github.NewClient(ctx)
 	if err != nil {
 		return fmt.Errorf("creating github client: %w", err)
@@ -783,7 +796,8 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				checkRuns, err := listAllCheckRuns(ctx, ghClient, owner, repo, headSHA)
 				if err == nil {
 					for _, run := range checkRuns {
-						if run.GetConclusion() == "failure" {
+						c := run.GetConclusion()
+						if c == "failure" || c == "timed_out" || c == "cancelled" {
 							hasFailure = true
 							break
 						}
@@ -1033,16 +1047,16 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				klog.Errorf("Failed to list open PRs: %v", err)
 			}
 
-			// Scan issues labeled "overseer"
+			// Scan issues labeled with triggerLabel
 			var slowIssues []*githubv39.Issue
 			opts2 := &githubv39.IssueListByRepoOptions{
-				Labels:      []string{"overseer"},
+				Labels:      []string{triggerLabel},
 				State:       "open",
 				ListOptions: githubv39.ListOptions{PerPage: 100},
 			}
 			issues2, _, err := ghClient.Issues.ListByRepo(ctx, owner, repo, opts2)
 			if err != nil {
-				klog.Errorf("Failed to list issues for label overseer: %v", err)
+				klog.Errorf("Failed to list issues for label %s: %v", triggerLabel, err)
 			} else {
 				for _, item := range issues2 {
 					if item.PullRequestLinks == nil {
@@ -1052,9 +1066,8 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 			}
 
 			// Process slow issues
-			// Process slow issues
 			if issueMode != "disabled" {
-				queueIssueTasks(ctx, ghClient, kubeClient, owner, repo, slowIssues, processedIssues, refIssues, targetAssignee, incomingDir, processingDir, processedDir, queueDir, dryRun)
+				queueIssueTasks(ctx, ghClient, kubeClient, owner, repo, slowIssues, processedIssues, refIssues, targetAssignee, incomingDir, processingDir, processedDir, queueDir, dryRun, triggerLabel)
 			}
 
 			// Process Pull Requests (Scanner)
@@ -1076,7 +1089,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				}
 			}
 			opts2PR := &githubv39.IssueListByRepoOptions{
-				Labels:      []string{"overseer"},
+				Labels:      []string{triggerLabel},
 				State:       "open",
 				ListOptions: githubv39.ListOptions{PerPage: 100},
 			}
@@ -1149,7 +1162,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 			}
 
 			if issueMode != "disabled" {
-				queueIssueTasks(ctx, ghClient, kubeClient, owner, repo, issues, processedIssues, refIssues, targetAssignee, incomingDir, processingDir, processedDir, queueDir, dryRun)
+				queueIssueTasks(ctx, ghClient, kubeClient, owner, repo, issues, processedIssues, refIssues, targetAssignee, incomingDir, processingDir, processedDir, queueDir, dryRun, triggerLabel)
 			}
 
 			// Process PRs assigned to the bot in the fast cycle
@@ -1301,22 +1314,31 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					fmt.Printf("Starting task %s (Type: %s, URL: %s)...\n", taskFilename, t.Type, t.URL)
 					startTime := time.Now()
 
-					if t.Type != "agent-chore" && t.Number > 0 {
-						var commentBody string
-						switch t.Type {
-						case "issue-fix":
-							commentBody = "🤖 AI Factory started fixing this issue in a sandbox."
-						case "pr-investigate":
-							commentBody = "🤖 AI Factory started investigating CI check failures for this pull request."
-						case "pr-comments":
-							commentBody = "🤖 AI Factory started addressing review feedback for this pull request."
-						case "pr-iterate":
-							commentBody = "🤖 AI Factory started resolving merge conflicts / rebasing this pull request in a sandbox."
-						case "pr-review":
-							commentBody = "🤖 AI Factory started reviewing this pull request in a sandbox."
+					if t.Number > 0 {
+						if (t.Type == "issue-fix" || t.Type == "agent-chore") && t.Assignee != "" {
+							klog.Infof("Assigning issue #%d to %s as claimed", t.Number, t.Assignee)
+							if _, _, err := ghClient.Issues.AddAssignees(ctx, owner, repo, t.Number, []string{t.Assignee}); err != nil {
+								klog.Errorf("Failed to assign issue #%d to %s: %v", t.Number, t.Assignee, err)
+							}
 						}
-						if commentBody != "" {
-							addGitHubComment(ctx, ghClient, owner, repo, t.Number, commentBody)
+
+						if t.Type != "agent-chore" {
+							var commentBody string
+							switch t.Type {
+							case "issue-fix":
+								commentBody = "🤖 AI Factory started fixing this issue in a sandbox."
+							case "pr-investigate":
+								commentBody = "🤖 AI Factory started investigating CI check failures for this pull request."
+							case "pr-comments":
+								commentBody = "🤖 AI Factory started addressing review feedback for this pull request."
+							case "pr-iterate":
+								commentBody = "🤖 AI Factory started resolving merge conflicts / rebasing this pull request in a sandbox."
+							case "pr-review":
+								commentBody = "🤖 AI Factory started reviewing this pull request in a sandbox."
+							}
+							if commentBody != "" {
+								addGitHubComment(ctx, ghClient, owner, repo, t.Number, commentBody)
+							}
 						}
 					}
 
@@ -1480,7 +1502,9 @@ func hasLinkedPR(ctx context.Context, client *githubv39.Client, owner, repo stri
 	for _, event := range timeline {
 		if event.GetEvent() == "cross-referenced" && event.Source != nil {
 			if event.Source.Issue != nil && event.Source.Issue.PullRequestLinks != nil {
-				return true, nil
+				if event.Source.Issue.GetState() == "open" {
+					return true, nil
+				}
 			}
 		}
 	}

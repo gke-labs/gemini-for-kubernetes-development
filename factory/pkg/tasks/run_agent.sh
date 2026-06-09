@@ -186,12 +186,21 @@ function commitChanges {
     ### Changes
     ${COMMIT_MSG}"
     
+                # Resolve labels from factory config if present
+                PR_LABELS="factory"
+                if [ -n "$FACTORY_CONFIG" ] && [ -f "$FACTORY_CONFIG" ]; then
+                    RESOLVED_LABELS=$(python3 -c "import yaml; cfg = yaml.safe_load(open('$FACTORY_CONFIG')) or {}; trigger = cfg.get('triggerLabel', 'factory'); additional = cfg.get('additionalLabels') or []; print(','.join([trigger] + additional))" 2>/dev/null || true)
+                    if [ -n "$RESOLVED_LABELS" ]; then
+                        PR_LABELS="$RESOLVED_LABELS"
+                    fi
+                fi
+
                 # Try to create PR
-                PR_URL=$(gh pr create --title "chore: ${AGENT_NAME}" --body "${PR_BODY}" --head "${FORK_OWNER}:${BRANCH_NAME}" --base "${BASE_BRANCH}" || true)
+                PR_URL=$(gh pr create --title "chore: ${AGENT_NAME}" --body "${PR_BODY}" --head "${FORK_OWNER}:${BRANCH_NAME}" --base "${BASE_BRANCH}" --label "${PR_LABELS}" || true)
                 
                 if [ -n "$PR_URL" ] && [[ "$PR_URL" == http* ]]; then
                     echo "$PR_URL" > "$(dirname "${PROMPT_FILE}")/agent-output.txt"
-                    gh pr edit "$PR_URL" --add-label "factory" || echo "Warning: failed to add label factory to $PR_URL"
+                    gh pr edit "$PR_URL" --add-label "${PR_LABELS}" || echo "Warning: failed to add labels ${PR_LABELS} to $PR_URL"
                 else
                     echo "Failed to create PR" > "$(dirname "${PROMPT_FILE}")/agent-output.txt"
                 fi
@@ -222,14 +231,18 @@ function runAgent {
             echo "SkipPR is true. Running on default branch ${BASE_BRANCH}"
             BRANCH_NAME="${BASE_BRANCH}"
         elif [ "$AGENT_MODE" = "workflow" ]; then
-            echo "Agent mode is workflow. Checking out overseer branch..."
-            BRANCH_NAME="overseer"
+            echo "Agent mode is workflow. Checking out factory branch..."
+            BRANCH_NAME="factory"
             (cd "/workspaces/${REPO_NAME}" && git rebase --abort 2>/dev/null || true)
             (cd "/workspaces/${REPO_NAME}" && git merge --abort 2>/dev/null || true)
             (cd "/workspaces/${REPO_NAME}" && git cherry-pick --abort 2>/dev/null || true)
             (cd "/workspaces/${REPO_NAME}" && git reset --hard HEAD && git clean -fd)
-            (cd "/workspaces/${REPO_NAME}" && git checkout "${BRANCH_NAME}" || git checkout -b "${BRANCH_NAME}")
-            (cd "/workspaces/${REPO_NAME}" && git pull origin "${BRANCH_NAME}" || true)
+            (cd "/workspaces/${REPO_NAME}" && git checkout "${BRANCH_NAME}" -- || git checkout -b "${BRANCH_NAME}")
+            if (cd "/workspaces/${REPO_NAME}" && git ls-remote --heads origin "${BRANCH_NAME}" | grep -q "refs/heads/${BRANCH_NAME}"); then
+                (cd "/workspaces/${REPO_NAME}" && git pull origin "${BRANCH_NAME}")
+            else
+                echo "Remote branch ${BRANCH_NAME} does not exist on origin yet. Skipping pull."
+            fi
         else
             SLUGIFIED_NAME=$(echo "${AGENT_NAME}" | tr '[:upper:]' '[:lower:]' | tr -c '[:alnum:]' '-' | sed 's/^-//;s/-$//')
             BRANCH_NAME="agent/${SLUGIFIED_NAME}-$(date +%Y%m%d-%H%M%S)"
@@ -271,7 +284,7 @@ function runAgent {
         fi
         
         # Fallback to the latest session if no mapping matches (robust fallback)
-        if [ -z "$RESUME_FLAG" ]; then
+        if [ -z "$RESUME_FLAG" ] && [ -d "${HOME}/.gemini/tmp" ]; then
             LAST_SESSION=$(find "${HOME}/.gemini/tmp" -name "session-*.json" -not -name "logs.json" -printf '%T@ %p\n' 2>/dev/null | sort -k1,1nr | head -1 | awk '{print $2}')
             if [ -n "$LAST_SESSION" ]; then
                 FALLBACK_ID=$(basename "$LAST_SESSION" .json | sed 's/session-//')
@@ -280,6 +293,8 @@ function runAgent {
             else
                 echo "Starting new thread..."
             fi
+        else
+            echo "Starting new thread..."
         fi
     fi
  
