@@ -187,9 +187,9 @@ function commitChanges {
     ${COMMIT_MSG}"
     
                 # Resolve labels from factory config if present
-                PR_LABELS="overseer"
+                PR_LABELS="factory"
                 if [ -n "$FACTORY_CONFIG" ] && [ -f "$FACTORY_CONFIG" ]; then
-                    RESOLVED_LABELS=$(python3 -c "import yaml; cfg = yaml.safe_load(open('$FACTORY_CONFIG')) or {}; trigger = cfg.get('triggerLabel', 'overseer'); additional = cfg.get('additionalLabels') or []; print(','.join([trigger] + additional))" 2>/dev/null || true)
+                    RESOLVED_LABELS=$(python3 -c "import yaml; cfg = yaml.safe_load(open('$FACTORY_CONFIG')) or {}; trigger = cfg.get('triggerLabel', 'factory'); additional = cfg.get('additionalLabels') or []; print(','.join([trigger] + additional))" 2>/dev/null || true)
                     if [ -n "$RESOLVED_LABELS" ]; then
                         PR_LABELS="$RESOLVED_LABELS"
                     fi
@@ -231,8 +231,8 @@ function runAgent {
             echo "SkipPR is true. Running on default branch ${BASE_BRANCH}"
             BRANCH_NAME="${BASE_BRANCH}"
         elif [ "$AGENT_MODE" = "workflow" ]; then
-            echo "Agent mode is workflow. Checking out overseer branch..."
-            BRANCH_NAME="overseer"
+            echo "Agent mode is workflow. Checking out factory branch..."
+            BRANCH_NAME="factory"
             (cd "/workspaces/${REPO_NAME}" && git rebase --abort 2>/dev/null || true)
             (cd "/workspaces/${REPO_NAME}" && git merge --abort 2>/dev/null || true)
             (cd "/workspaces/${REPO_NAME}" && git cherry-pick --abort 2>/dev/null || true)
