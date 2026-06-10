@@ -237,11 +237,17 @@ function runAgent {
             (cd "/workspaces/${REPO_NAME}" && git merge --abort 2>/dev/null || true)
             (cd "/workspaces/${REPO_NAME}" && git cherry-pick --abort 2>/dev/null || true)
             (cd "/workspaces/${REPO_NAME}" && git reset --hard HEAD && git clean -fd)
-            (cd "/workspaces/${REPO_NAME}" && git checkout "${BRANCH_NAME}" -- || git checkout -b "${BRANCH_NAME}")
-            if (cd "/workspaces/${REPO_NAME}" && git ls-remote --heads origin "${BRANCH_NAME}" | grep -q "refs/heads/${BRANCH_NAME}"); then
+            (cd "/workspaces/${REPO_NAME}" && git fetch origin)
+            if (cd "/workspaces/${REPO_NAME}" && git show-ref --verify --quiet "refs/heads/${BRANCH_NAME}"); then
+                echo "Local branch ${BRANCH_NAME} already exists. Checking out and pulling latest..."
+                (cd "/workspaces/${REPO_NAME}" && git checkout "${BRANCH_NAME}")
                 (cd "/workspaces/${REPO_NAME}" && git pull origin "${BRANCH_NAME}")
+            elif (cd "/workspaces/${REPO_NAME}" && git ls-remote --heads origin "${BRANCH_NAME}" | grep -q "refs/heads/${BRANCH_NAME}"); then
+                echo "Remote branch ${BRANCH_NAME} exists. Checking out with tracking..."
+                (cd "/workspaces/${REPO_NAME}" && git checkout -b "${BRANCH_NAME}" --track "origin/${BRANCH_NAME}")
             else
-                echo "Remote branch ${BRANCH_NAME} does not exist on origin yet. Skipping pull."
+                echo "Remote branch ${BRANCH_NAME} does not exist on origin yet. Creating new branch..."
+                (cd "/workspaces/${REPO_NAME}" && git checkout -b "${BRANCH_NAME}")
             fi
         else
             SLUGIFIED_NAME=$(echo "${AGENT_NAME}" | tr '[:upper:]' '[:lower:]' | tr -c '[:alnum:]' '-' | sed 's/^-//;s/-$//')

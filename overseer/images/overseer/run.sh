@@ -222,6 +222,8 @@ function runWatchCycle {
     if git remote | grep -q "^upstream$"; then
         REMOTE_MAIN="upstream"
     fi
+    git reset --hard HEAD || true
+    git clean -fd || true
     git checkout $DEFAULT_BRANCH -- || git checkout -b $DEFAULT_BRANCH
     git fetch $REMOTE_MAIN
     git reset --hard $REMOTE_MAIN/$DEFAULT_BRANCH
