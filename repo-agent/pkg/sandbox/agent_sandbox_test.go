@@ -191,6 +191,7 @@ func TestNewAgentSandbox(t *testing.T) {
 				"TMPDIR":                     TmpDirPath,
 				"GOTMPDIR":                   TmpDirPath,
 				"GEMINI_CLI_TRUST_WORKSPACE": "true",
+				"GOTOOLCHAIN":                "local",
 			}
 
 			for name, value := range expectedEnv {

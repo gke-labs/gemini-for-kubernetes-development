@@ -1,6 +1,6 @@
 module github.com/gke-labs/gemini-for-kubernetes-development/repo-agent
 
-go 1.26.2
+go 1.26.3
 
 require (
 	cloud.google.com/go/monitoring v1.24.2

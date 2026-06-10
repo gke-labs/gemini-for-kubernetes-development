@@ -211,10 +211,11 @@ func TestReconciler_Reconcile(t *testing.T) {
 	g.Expect(found).To(gomega.BeTrue())
 
 	expectedEnv := map[string]string{
-		"GOCACHE":    sandbox.GoCachePath,
-		"GOMODCACHE": sandbox.GoModCachePath,
-		"TMPDIR":     sandbox.TmpDirPath,
-		"GOTMPDIR":   sandbox.TmpDirPath,
+		"GOCACHE":     sandbox.GoCachePath,
+		"GOMODCACHE":  sandbox.GoModCachePath,
+		"TMPDIR":      sandbox.TmpDirPath,
+		"GOTMPDIR":    sandbox.TmpDirPath,
+		"GOTOOLCHAIN": "local",
 	}
 
 	for name, value := range expectedEnv {
