@@ -36,7 +36,16 @@ Only proceed to the next step once the PR for the current step is merged success
    ```bash
    gh issue edit ${SESSION_ID#issue-} --body "<updated_body>"
    ```
-   The updated body should reflect the current progress table, step status, and any active PR/Issue links.
+   If editing the issue description fails (due to write permissions on public repositories), **fall back to updating a comment**:
+   * Search the comments on the issue for an existing comment posted by yourself (`factorybot-robot`) that contains the text `Migration Progress`.
+   * If such a comment exists, edit it with the updated progress using:
+     ```bash
+     gh issue comment edit <comment-id> --body "<updated_comment_body>"
+     ```
+   * If no such comment exists, create a new comment:
+     ```bash
+     gh issue comment create ${SESSION_ID#issue-} --body "<updated_comment_body>"
+     ```
 4. Once all steps of the migration for the resource kind are successfully completed and verified merged, update the parent issue description to show completion, and close the parent issue:
    ```bash
    gh issue close ${SESSION_ID#issue-}
