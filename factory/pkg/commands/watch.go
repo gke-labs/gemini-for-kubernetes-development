@@ -284,9 +284,16 @@ func getPRPriority(prIssue *githubv39.Issue) string {
 	return getIssuePriority(prIssue)
 }
 
+var workflowURLRegex = regexp.MustCompile(`(?:\s|^)(https?://[^\s\)]+(?:\.(?:md|txt|yaml)|/(?:workflows|agents)/)[^\s\)]*)`)
+
 var workflowFileRegex = regexp.MustCompile(`(?:\s|^)(\.?\.?/?(?:\.?agents?|\.gemini)/[a-zA-Z0-9_\-\./]+)\b`)
 
 func findWorkflowPath(body string) string {
+	urlMatch := workflowURLRegex.FindStringSubmatch(body)
+	if len(urlMatch) > 1 {
+		return strings.TrimSpace(urlMatch[1])
+	}
+
 	matches := workflowFileRegex.FindStringSubmatch(body)
 	if len(matches) > 1 {
 		return matches[1]
@@ -295,6 +302,30 @@ func findWorkflowPath(body string) string {
 }
 
 func isWorkflowDefinition(ctx context.Context, ghClient *githubv39.Client, owner, repo, path string) bool {
+	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
+		// 1. Path/URL convention check
+		if strings.Contains(path, "/workflows/") || strings.Contains(path, "/agents/") {
+			return true
+		}
+
+		// 2. Download and verify headers
+		content, err := fetchWorkflowContent(ctx, ghClient, path)
+		if err != nil {
+			klog.V(4).Infof("Failed to fetch content from workflow URL %s: %v", path, err)
+			return false
+		}
+
+		limit := 2000
+		if len(content) < limit {
+			limit = len(content)
+		}
+		header := string(content[:limit])
+		if strings.Contains(header, "mode: workflow") || strings.Contains(header, "mode: \"workflow\"") || strings.Contains(header, "AGENT_MODE=workflow") {
+			return true
+		}
+		return false
+	}
+
 	// 1. Directory convention: any path containing "/workflows/" is treated as a workflow
 	if strings.Contains(path, "/workflows/") {
 		return true

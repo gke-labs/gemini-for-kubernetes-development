@@ -1,13 +1,13 @@
 ---
-name: checklist-for-kind
 description: A meta-skill for KCC kinds that describes the steps we need to take to get them to be "production ready" direct controllers at v1beta1 at least.
-schedule: "@weekly"
+name: checklist-for-kind
+schedule: never
 mode: workflow
 ---
 
 # Checklist for KCC Resource Kind Migration
 
-This is a meta-skill describing the steps to migrate a KCC resource kind to a production-ready direct controller at `v1beta1` (or higher).
+This is a meta-skill describinsg the steps to migrate a KCC resource kind to a production-ready direct controller at `v1beta1` (or higher).
 
 Instead of doing the coding yourself under this skill, you will coordinate and orchestrate:
 1. Planning the migration steps.
@@ -32,13 +32,24 @@ The journal should contain:
 
 Only proceed to the next step once the PR for the current step is merged successfully.
 
-### Visual Dashboard
-
-To compile and update the visual HTML dashboard of all tracked resource migration pipelines, run the Python generator script:
-```bash
-python3 .agents/workflows/checklist-for-kind/scripts/generate_dashboard.py
-```
-This generates the dashboard at `.agents/workflows/checklist-for-kind/journal/migration_dashboard.html` and copies it to the App Data directory so it is viewable as an HTML artifact.
+3. In addition to the local journal file, **update the parent issue description** (using the issue ID/number extracted from `${SESSION_ID#issue-}`) using the `gh` CLI:
+   ```bash
+   gh issue edit ${SESSION_ID#issue-} --body "<updated_body>"
+   ```
+   If editing the issue description fails (due to write permissions on public repositories), **fall back to updating a comment**:
+   * Search the comments on the issue for an existing comment posted by yourself (`factorybot-robot`) that contains the text `Migration Progress`.
+   * If such a comment exists, edit it with the updated progress using:
+     ```bash
+     gh issue comment edit <comment-id> --body "<updated_comment_body>"
+     ```
+   * If no such comment exists, create a new comment:
+     ```bash
+     gh issue comment create ${SESSION_ID#issue-} --body "<updated_comment_body>"
+     ```
+4. Once all steps of the migration for the resource kind are successfully completed and verified merged, update the parent issue description to show completion, and close the parent issue:
+   ```bash
+   gh issue close ${SESSION_ID#issue-}
+   ```
 
 ## Steps
 
