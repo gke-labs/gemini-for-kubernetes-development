@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"strconv"
@@ -148,7 +149,13 @@ func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 	// Get agent definition
 	var content []byte
 	agentPath := flags.Agent
-	if flags.Local {
+	if strings.HasPrefix(agentPath, "http://") || strings.HasPrefix(agentPath, "https://") {
+		fmt.Printf("Fetching agent definition from URL: %s...\n", agentPath)
+		content, err = fetchWorkflowContent(ctx, ghClient, agentPath)
+		if err != nil {
+			return fmt.Errorf("fetching agent from URL %s: %w", agentPath, err)
+		}
+	} else if flags.Local {
 		fmt.Printf("Loading local agent definition: %s...\n", agentPath)
 		content, err = os.ReadFile(agentPath)
 		if err != nil {
@@ -358,4 +365,59 @@ func Slugify(s string) string {
 		}
 	}
 	return res.String()
+}
+
+func parseGitHubURL(urlStr string) (owner, repo, branch, path string, ok bool) {
+	u, err := url.Parse(urlStr)
+	if err != nil {
+		return "", "", "", "", false
+	}
+	if u.Host != "github.com" {
+		return "", "", "", "", false
+	}
+	parts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
+	if len(parts) < 4 || (parts[2] != "blob" && parts[2] != "raw") {
+		return "", "", "", "", false
+	}
+	owner = parts[0]
+	repo = parts[1]
+	branch = parts[3]
+	path = strings.Join(parts[4:], "/")
+	return owner, repo, branch, path, true
+}
+
+func fetchWorkflowContent(ctx context.Context, ghClient *githubv39.Client, urlStr string) ([]byte, error) {
+	if owner, repo, branch, path, ok := parseGitHubURL(urlStr); ok {
+		klog.Infof("Fetching agent from GitHub repository %s/%s at branch/ref %s, path %s", owner, repo, branch, path)
+		fileContent, _, _, err := ghClient.Repositories.GetContents(ctx, owner, repo, path, &githubv39.RepositoryContentGetOptions{Ref: branch})
+		if err != nil {
+			return nil, fmt.Errorf("fetching content from GitHub repo: %w", err)
+		}
+		contentStr, err := fileContent.GetContent()
+		if err != nil {
+			return nil, fmt.Errorf("decoding GitHub content: %w", err)
+		}
+		return []byte(contentStr), nil
+	}
+
+	klog.Infof("Fetching agent from HTTP URL %s", urlStr)
+	req, err := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("HTTP GET request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("HTTP GET returned status %d", resp.StatusCode)
+	}
+
+	var buf bytes.Buffer
+	if _, err := buf.ReadFrom(resp.Body); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }

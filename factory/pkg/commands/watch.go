@@ -284,9 +284,16 @@ func getPRPriority(prIssue *githubv39.Issue) string {
 	return getIssuePriority(prIssue)
 }
 
+var workflowURLRegex = regexp.MustCompile(`(?:\s|^)(https?://[^\s\)]+(?:\.(?:md|txt|yaml)|/(?:workflows|agents)/)[^\s\)]*)`)
+
 var workflowFileRegex = regexp.MustCompile(`(?:\s|^)(\.?\.?/?(?:\.?agents?|\.gemini)/[a-zA-Z0-9_\-\./]+)\b`)
 
 func findWorkflowPath(body string) string {
+	urlMatch := workflowURLRegex.FindStringSubmatch(body)
+	if len(urlMatch) > 1 {
+		return strings.TrimSpace(urlMatch[1])
+	}
+
 	matches := workflowFileRegex.FindStringSubmatch(body)
 	if len(matches) > 1 {
 		return matches[1]
@@ -295,6 +302,10 @@ func findWorkflowPath(body string) string {
 }
 
 func isWorkflowDefinition(ctx context.Context, ghClient *githubv39.Client, owner, repo, path string) bool {
+	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
+		return true
+	}
+
 	// 1. Directory convention: any path containing "/workflows/" is treated as a workflow
 	if strings.Contains(path, "/workflows/") {
 		return true
