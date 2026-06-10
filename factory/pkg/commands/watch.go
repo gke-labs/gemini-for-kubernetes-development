@@ -303,7 +303,27 @@ func findWorkflowPath(body string) string {
 
 func isWorkflowDefinition(ctx context.Context, ghClient *githubv39.Client, owner, repo, path string) bool {
 	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
-		return true
+		// 1. Path/URL convention check
+		if strings.Contains(path, "/workflows/") || strings.Contains(path, "/agents/") {
+			return true
+		}
+
+		// 2. Download and verify headers
+		content, err := fetchWorkflowContent(ctx, ghClient, path)
+		if err != nil {
+			klog.V(4).Infof("Failed to fetch content from workflow URL %s: %v", path, err)
+			return false
+		}
+
+		limit := 2000
+		if len(content) < limit {
+			limit = len(content)
+		}
+		header := string(content[:limit])
+		if strings.Contains(header, "mode: workflow") || strings.Contains(header, "mode: \"workflow\"") || strings.Contains(header, "AGENT_MODE=workflow") {
+			return true
+		}
+		return false
 	}
 
 	// 1. Directory convention: any path containing "/workflows/" is treated as a workflow
