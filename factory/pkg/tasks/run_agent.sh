@@ -303,11 +303,11 @@ function runAgent {
     for MODEL in $MODELS_LIST; do
         echo "Trying model: $MODEL"
         if [ "${DRY_RUN:-false}" = "true" ]; then
-            echo "[dry-run] Would run: gemini --yolo --model \"$MODEL\" ${RESUME_FLAG} --output-format json < \"${PROMPT_FILE}\""
+            echo "[dry-run] Would run: gemini --yolo --model \"$MODEL\" ${RESUME_FLAG} --include-directories \"$(dirname "${PROMPT_FILE}")\" --output-format json < \"${PROMPT_FILE}\""
             SUCCESS=true
             break
         fi
-        if gemini --yolo --model "$MODEL" ${RESUME_FLAG} --output-format json < "${PROMPT_FILE}" > "$(dirname "${PROMPT_FILE}")/gemini-output.json"; then
+        if gemini --yolo --model "$MODEL" ${RESUME_FLAG} --include-directories "$(dirname "${PROMPT_FILE}")" --output-format json < "${PROMPT_FILE}" > "$(dirname "${PROMPT_FILE}")/gemini-output.json"; then
             echo "Gemini execution successful with model: $MODEL"
             SUCCESS=true
             break

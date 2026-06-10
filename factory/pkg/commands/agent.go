@@ -131,13 +131,24 @@ func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 
 	var prNum int
 	isPR := false
+	isIssue := false
+	targetNum := 0
 	cloneURL := fmt.Sprintf("https://github.com/%s/%s.git", owner, repo)
 
-	if len(parts) >= 4 && parts[2] == "pull" {
-		isPR = true
-		prNum, err = strconv.Atoi(parts[3])
-		if err != nil {
-			return fmt.Errorf("invalid PR number in URL: %s", parts[3])
+	if len(parts) >= 4 {
+		if parts[2] == "pull" {
+			isPR = true
+			targetNum, err = strconv.Atoi(parts[3])
+			if err != nil {
+				return fmt.Errorf("invalid PR number in URL: %s", parts[3])
+			}
+			prNum = targetNum
+		} else if parts[2] == "issues" {
+			isIssue = true
+			targetNum, err = strconv.Atoi(parts[3])
+			if err != nil {
+				return fmt.Errorf("invalid issue number in URL: %s", parts[3])
+			}
 		}
 	}
 
@@ -202,7 +213,9 @@ func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 	if flags.SessionID != "" {
 		taskID = fmt.Sprintf("%s-%s", taskID, flags.SessionID)
 	} else if isPR {
-		taskID = fmt.Sprintf("pr-%d-%s", prNum, taskID)
+		taskID = fmt.Sprintf("pr-%d-%s", targetNum, taskID)
+	} else if isIssue {
+		taskID = fmt.Sprintf("issue-%d-%s", targetNum, taskID)
 	}
 	taskTitle := fmt.Sprintf("Agent: %s", agentDef.Name)
 
@@ -226,12 +239,40 @@ func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 	}
 	defer client.Close()
 
+	var prompt string
+	if isPR || isIssue {
+		fmt.Printf("Fetching details for #%d from GitHub...\n", targetNum)
+		issue, _, err := ghClient.Issues.Get(ctx, owner, repo, targetNum)
+		if err != nil {
+			return fmt.Errorf("fetching issue/PR details: %w", err)
+		}
+
+		fmt.Printf("Fetching comments for #%d from GitHub...\n", targetNum)
+		comments, _, err := ghClient.Issues.ListComments(ctx, owner, repo, targetNum, &githubv39.IssueListCommentsOptions{})
+		if err != nil {
+			return fmt.Errorf("fetching comments: %w", err)
+		}
+		var commentMsgs []string
+		for _, c := range comments {
+			commentMsgs = append(commentMsgs, fmt.Sprintf("Comment from %s:\n%s", c.GetUser().GetLogin(), c.GetBody()))
+		}
+
+		prompt = fmt.Sprintf("%s\n\nOriginal GitHub Context:\nTitle: %s\n\nDescription:\n%s\n\nComments:\n%s",
+			agentDef.Prompt,
+			issue.GetTitle(),
+			issue.GetBody(),
+			strings.Join(commentMsgs, "\n\n"),
+		)
+	} else {
+		prompt = agentDef.Prompt
+	}
+
 	taskDir := fmt.Sprintf("/workspaces/tasks/agent-%s-%s", Slugify(agentDef.Name), time.Now().Format("20060102-150405"))
 	promptPath := fmt.Sprintf("%s/agent-prompt.txt", taskDir)
 	scriptPath := fmt.Sprintf("%s/pre-script.sh", taskDir)
 
 	params := tasks.AgentParams{
-		AgentPrompt: agentDef.Prompt,
+		AgentPrompt: prompt,
 		AgentName:   agentDef.Name,
 		AgentFile:   agentPath,
 		RepoName:    repo,
