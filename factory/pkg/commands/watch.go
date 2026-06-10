@@ -371,7 +371,8 @@ func queueIssueTasks(ctx context.Context, ghClient *githubv39.Client, kubeClient
 			}
 		}
 
-		if lastProcessed, ok := processedIssues[num]; !ok || time.Since(lastProcessed) > 24*time.Hour || workflowName != "" {
+		lastProcessed, ok := processedIssues[num]
+		if !ok || issue.GetUpdatedAt().After(lastProcessed) || workflowName != "" {
 			// Skip KRM check for workflow triggers since they don't necessarily have linked code PRs
 			if workflowName == "" {
 				linked, err := hasLinkedPR(ctx, ghClient, owner, repo, num)
@@ -672,6 +673,19 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 	}
 
 	processedIssues := make(map[int]time.Time)
+	if files, err := os.ReadDir(processedDir); err == nil {
+		for _, f := range files {
+			if !f.IsDir() && strings.HasPrefix(f.Name(), "task-issue-") && strings.HasSuffix(f.Name(), ".yaml") {
+				trimmed := strings.TrimPrefix(f.Name(), "task-issue-")
+				trimmed = strings.TrimSuffix(trimmed, ".yaml")
+				if num, err := strconv.Atoi(trimmed); err == nil {
+					if info, err := f.Info(); err == nil {
+						processedIssues[num] = info.ModTime()
+					}
+				}
+			}
+		}
+	}
 	processedPRs := make(map[int]prWatchState)
 
 	type watchState struct {
@@ -1143,6 +1157,66 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				} else {
 					klog.Infof("Fetched %d issues assigned to %s from GitHub API", len(issues1), targetAssignee)
 					allItems = append(allItems, issues1...)
+				}
+			}
+
+			if githubLogin != "" {
+				optsCreator := &githubv39.IssueListByRepoOptions{
+					Creator:     githubLogin,
+					State:       "open",
+					Sort:        "updated",
+					Direction:   "desc",
+					ListOptions: githubv39.ListOptions{PerPage: limit},
+				}
+				issuesCreator, _, err := ghClient.Issues.ListByRepo(ctx, owner, repo, optsCreator)
+				if err != nil {
+					klog.Errorf("Failed to list issues created by %s: %v", githubLogin, err)
+				} else {
+					klog.Infof("Fetched %d issues created by %s from GitHub API", len(issuesCreator), githubLogin)
+					for _, issue := range issuesCreator {
+						if issue.PullRequestLinks != nil {
+							continue
+						}
+
+						hasTriggerLabel := false
+						for _, l := range issue.Labels {
+							if strings.EqualFold(l.GetName(), triggerLabel) {
+								hasTriggerLabel = true
+								break
+							}
+						}
+
+						hasAssignee := false
+						for _, u := range issue.Assignees {
+							if strings.EqualFold(u.GetLogin(), targetAssignee) {
+								hasAssignee = true
+								break
+							}
+						}
+
+						if !hasTriggerLabel || !hasAssignee {
+							if dryRun {
+								fmt.Printf("[DRYRUN] Would label issue #%d created by %s with '%s' and assign to %s\n", issue.GetNumber(), githubLogin, triggerLabel, targetAssignee)
+							} else {
+								fmt.Printf("Labelling issue #%d created by %s with '%s' and assigning to %s...\n", issue.GetNumber(), githubLogin, triggerLabel, targetAssignee)
+								if !hasTriggerLabel {
+									if _, _, err := ghClient.Issues.AddLabelsToIssue(ctx, owner, repo, issue.GetNumber(), []string{triggerLabel}); err != nil {
+										klog.Errorf("Failed to add label '%s' to issue #%d: %v", triggerLabel, issue.GetNumber(), err)
+									} else {
+										issue.Labels = append(issue.Labels, &githubv39.Label{Name: githubv39.String(triggerLabel)})
+									}
+								}
+								if !hasAssignee && targetAssignee != "" {
+									if _, _, err := ghClient.Issues.AddAssignees(ctx, owner, repo, issue.GetNumber(), []string{targetAssignee}); err != nil {
+										klog.Errorf("Failed to assign %s to issue #%d: %v", targetAssignee, issue.GetNumber(), err)
+									} else {
+										issue.Assignees = append(issue.Assignees, &githubv39.User{Login: githubv39.String(targetAssignee)})
+									}
+								}
+							}
+						}
+						allItems = append(allItems, issue)
+					}
 				}
 			}
 
