@@ -117,6 +117,60 @@ function setupGit {
     echo "creating gh wrapper script"
     cat <<'EOF' > /usr/local/bin/gh
 #!/bin/bash
+function check_blocked_actions {
+    if [ -z "$BLOCKED_ACTIONS" ]; then
+        return 0
+    fi
+
+    # Parse blocked actions
+    local terms=()
+    if [[ "$BLOCKED_ACTIONS" == [* ]]; then
+        if command -v jq >/dev/null 2>&1; then
+            while IFS= read -r line; do
+                terms+=("$line")
+            done < <(echo "$BLOCKED_ACTIONS" | jq -r '.[]')
+        else
+            while IFS= read -r line; do
+                terms+=("$line")
+            done < <(echo "$BLOCKED_ACTIONS" | tr -d '[]"' | tr ',' '\n' | sed 's/^ *//;s/ *$//')
+        fi
+    else
+        while IFS= read -r line; do
+            terms+=("$line")
+        done < <(echo "$BLOCKED_ACTIONS" | tr ',' '\n' | sed 's/^ *//;s/ *$//')
+    fi
+
+    # Expand semantic terms
+    local expanded_terms=()
+    for term in "${terms[@]}"; do
+        if [ -z "$term" ]; then
+            continue
+        fi
+        expanded_terms+=("$term")
+        # Lowercase for mapping
+        local lterm=$(echo "$term" | tr '[:upper:]' '[:lower:]')
+        if [[ "$lterm" == "unhold" || "$lterm" == "unhold-pr" ]]; then
+            expanded_terms+=("/hold cancel" "hold cancel" "do-not-merge/hold")
+        elif [[ "$lterm" == "approve" || "$lterm" == "lgtm" ]]; then
+            expanded_terms+=("/approve" "/lgtm" "approved" "lgtm")
+        elif [[ "$lterm" == "hold" ]]; then
+            expanded_terms+=("/hold" "do-not-merge/hold")
+        fi
+    done
+
+    # Check all command line arguments
+    for arg in "$@"; do
+        local larg=$(echo "$arg" | tr '[:upper:]' '[:lower:]')
+        for term in "${expanded_terms[@]}"; do
+            local lterm=$(echo "$term" | tr '[:upper:]' '[:lower:]')
+            if [[ "$larg" == *"$lterm"* ]]; then
+                echo "Error: Action containing '$term' is blocked by policy (BLOCKED_ACTIONS=$BLOCKED_ACTIONS)" >&2
+                exit 1
+            fi
+        done
+    done
+}
+check_blocked_actions "$@"
 HTTPS_PROXY=http://github-portal.overseer-system.svc.cluster.local:80 SSL_CERT_FILE=/etc/github-portal/ca/tls.crt /usr/bin/gh "$@"
 EOF
     chmod +x /usr/local/bin/gh

@@ -151,6 +151,10 @@ type OverseerSpec struct {
 	// Env is a list of environment variables to inject in all sandboxes.
 	// +kubebuilder:validation:Optional
 	Env []EnvVar `json:"env,omitempty"`
+
+	// BlockedActions is a list of actions/commands that are blocked.
+	// +kubebuilder:validation:Optional
+	BlockedActions []string `json:"blockedActions,omitempty"`
 }
 
 type SecretMount struct {
