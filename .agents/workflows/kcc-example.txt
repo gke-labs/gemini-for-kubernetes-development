@@ -7,7 +7,7 @@ mode: workflow
 
 # Checklist for KCC Resource Kind Migration
 
-This is a meta-skill describinsg the steps to migrate a KCC resource kind to a production-ready direct controller at `v1beta1` (or higher).
+This is a meta-skill describing the steps to migrate a KCC resource kind to a production-ready direct controller at `v1beta1` (or higher).
 
 Instead of doing the coding yourself under this skill, you will coordinate and orchestrate:
 1. Planning the migration steps.
