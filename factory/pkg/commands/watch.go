@@ -43,6 +43,7 @@ type WatchFlags struct {
 	PRMode       string
 	ChoresMode   string
 	ScanLimit    int
+	TaskTimeout  time.Duration
 }
 
 func NewWatchCommand(ctx context.Context) *cobra.Command {
@@ -98,7 +99,7 @@ func NewWatchCommand(ctx context.Context) *cobra.Command {
 				choresMode = "enabled"
 			}
 
-			return runWatch(ctx, parts[0], parts[1], flags.PollInterval, flags.Assignee, cmd.Flags().Changed("assignee"), flags.Labels, flags.DryRun, flags.WatchTimeout, flags.MaxActions, flags.MaxPending, flags.Mode, flags.QueueDir, flags.Once, issueMode, prMode, choresMode, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, flags.ScanLimit)
+			return runWatch(ctx, parts[0], parts[1], flags.PollInterval, flags.Assignee, cmd.Flags().Changed("assignee"), flags.Labels, flags.DryRun, flags.WatchTimeout, flags.MaxActions, flags.MaxPending, flags.Mode, flags.QueueDir, flags.Once, issueMode, prMode, choresMode, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, flags.ScanLimit, flags.TaskTimeout)
 		},
 	}
 
@@ -117,6 +118,7 @@ func NewWatchCommand(ctx context.Context) *cobra.Command {
 	cmd.Flags().StringVar(&flags.PRMode, "pr-mode", "", "PR mode: enabled or disabled (defaults to PR_MODE env or enabled)")
 	cmd.Flags().StringVar(&flags.ChoresMode, "chores-mode", "", "Chores mode: enabled or disabled (defaults to CHORES_MODE env or enabled)")
 	cmd.Flags().IntVar(&flags.ScanLimit, "scan-limit", 100, "Maximum number of issues/PRs to fetch from GitHub API in a scan cycle")
+	cmd.Flags().DurationVar(&flags.TaskTimeout, "task-timeout", 3*time.Hour, "Timeout for each task execution (default 3h)")
 
 	return cmd
 }
@@ -630,7 +632,7 @@ func writeTaskJournalEvent(queueDir string, taskFilename string, task *QueueTask
 	}
 }
 
-func runWatch(ctx context.Context, owner, repo string, interval time.Duration, assignee string, assigneeChanged bool, labels []string, dryRun bool, watchTimeout time.Duration, maxActions int, maxPending int, mode string, queueDir string, once bool, issueMode string, prMode string, choresMode string, ephemeralStorage string, secrets []factorysandbox.SecretMount, scanLimit int) error {
+func runWatch(ctx context.Context, owner, repo string, interval time.Duration, assignee string, assigneeChanged bool, labels []string, dryRun bool, watchTimeout time.Duration, maxActions int, maxPending int, mode string, queueDir string, once bool, issueMode string, prMode string, choresMode string, ephemeralStorage string, secrets []factorysandbox.SecretMount, scanLimit int, taskTimeout time.Duration) error {
 	cfg, err := config.LoadConfig()
 	if err != nil {
 		klog.Warningf("Failed to load factory config: %v", err)
@@ -1419,6 +1421,9 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					fmt.Printf("Starting task %s (Type: %s, URL: %s)...\n", taskFilename, t.Type, t.URL)
 					startTime := time.Now()
 
+					taskCtx, taskCancel := context.WithTimeout(ctx, taskTimeout)
+					defer taskCancel()
+
 					if t.Number > 0 {
 						if (t.Type == "issue-fix" || t.Type == "agent-chore") && t.Assignee != "" {
 							klog.Infof("Assigning issue #%d to %s as claimed", t.Number, t.Assignee)
@@ -1492,7 +1497,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					}
 					args = append(args, "--abort-on-cancel=false")
 
-					cmd := exec.Command(executable, args...)
+					cmd := exec.CommandContext(taskCtx, executable, args...)
 
 					logFilename := strings.TrimSuffix(taskFilename, ".yaml") + ".log"
 					processingLogPath := filepath.Join(processingLogDir, logFilename)
@@ -1518,6 +1523,35 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						t.Status = "Failed"
 						t.Error = taskErr.Error()
 						writeTaskJournalEvent(queueDir, taskFilename, t, "Failed", duration)
+
+						// Force clean up sandbox if the task timed out
+						if taskCtx.Err() == context.DeadlineExceeded {
+							var sandboxName string
+							switch t.Type {
+							case "issue-fix":
+								if t.SessionID != "" {
+									sandboxName = fmt.Sprintf("wf-issue-%d", t.Number)
+								} else {
+									sandboxName = fmt.Sprintf("fix-%s-%d", repo, t.Number)
+								}
+							case "agent-chore":
+								if t.SessionID != "" {
+									sandboxName = fmt.Sprintf("wf-issue-%d", t.Number)
+								} else {
+									sandboxName = fmt.Sprintf("agent-%s-%d", repo, t.Number)
+								}
+							case "pr-investigate", "pr-comments", "pr-iterate", "pr-review":
+								sandboxName = fmt.Sprintf("factory-pr-%d", t.Number)
+							}
+
+							if sandboxName != "" {
+								klog.Warningf("Task %s timed out after %s! Force cleaning up sandbox '%s'...", taskFilename, taskTimeout, sandboxName)
+								manager := k8s.NewManager(kubeClient)
+								if err := manager.DeleteSandbox(ctx, rootFlags.Namespace, sandboxName); err != nil {
+									klog.Errorf("Failed to delete sandbox '%s' on timeout: %v", sandboxName, err)
+								}
+							}
+						}
 					} else {
 						fmt.Printf("Task %s completed successfully.\n", taskFilename)
 						t.Status = "Completed"
@@ -1562,8 +1596,17 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 			state.mu.Unlock()
 
 			fmt.Println("Waiting for active tasks to complete...")
-			wg.Wait()
-			fmt.Println("All tasks completed. Exiting.")
+			doneChan := make(chan struct{})
+			go func() {
+				wg.Wait()
+				close(doneChan)
+			}()
+			select {
+			case <-doneChan:
+				fmt.Println("All tasks completed. Exiting.")
+			case <-time.After(2 * time.Minute):
+				fmt.Println("Timeout waiting for active tasks to complete. Exiting.")
+			}
 			return nil
 		case <-time.After(10 * time.Second):
 			checkRepo()
