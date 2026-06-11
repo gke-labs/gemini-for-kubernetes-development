@@ -950,7 +950,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				if listCommentsErr == nil {
 					hasNewComments := false
 					for _, c := range comments {
-						if strings.Contains(strings.ToLower(c.GetUser().GetLogin()), "bot") {
+						if strings.EqualFold(c.GetUser().GetLogin(), githubLogin) {
 							continue
 						}
 						if c.GetCreatedAt().After(lastCommitTime) && c.GetCreatedAt().After(state.lastCommentAddressedTime) {
@@ -964,7 +964,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						reviews, _, err := ghClient.PullRequests.ListReviews(ctx, owner, repo, num, nil)
 						if err == nil {
 							for _, r := range reviews {
-								if r.GetUser() != nil && strings.Contains(strings.ToLower(r.GetUser().GetLogin()), "bot") {
+								if r.GetUser() != nil && strings.EqualFold(r.GetUser().GetLogin(), githubLogin) {
 									continue
 								}
 								if r.GetSubmittedAt().After(lastCommitTime) && r.GetSubmittedAt().After(state.lastCommentAddressedTime) {
@@ -975,7 +975,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 								revComments, _, err := ghClient.PullRequests.ListReviewComments(ctx, owner, repo, num, r.GetID(), nil)
 								if err == nil {
 									for _, rc := range revComments {
-										if rc.GetUser() != nil && strings.Contains(strings.ToLower(rc.GetUser().GetLogin()), "bot") {
+										if rc.GetUser() != nil && strings.EqualFold(rc.GetUser().GetLogin(), githubLogin) {
 											continue
 										}
 										if rc.GetCreatedAt().After(lastCommitTime) && rc.GetCreatedAt().After(state.lastCommentAddressedTime) {
