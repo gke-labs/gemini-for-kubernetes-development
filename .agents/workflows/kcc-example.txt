@@ -32,20 +32,22 @@ The journal should contain:
 
 Only proceed to the next step once the PR for the current step is merged successfully.
 
-3. In addition to the local journal file, **update the parent issue description** (using the issue ID/number extracted from `${SESSION_ID#issue-}`) using the `gh` CLI:
-   ```bash
-   gh issue edit ${SESSION_ID#issue-} --body "<updated_body>"
-   ```
-   If editing the issue description fails (due to write permissions on public repositories), **fall back to updating a comment**:
-   * Search the comments on the issue for an existing comment posted by yourself (`factorybot-robot`) that contains the text `Migration Progress`.
-   * If such a comment exists, edit it with the updated progress using:
+3. In addition to the local journal file, **update the parent issue description** (using the issue ID/number extracted from `${SESSION_ID#issue-}`) or fall back to updating a comment:
+   * **Formatting the GitHub Description/Comment**: To keep the parent GitHub issue clean and avoid excessively chatty updates, the body posted to GitHub (description or comment) must **only** include the current step, the progress tracking table, and **at most the 3 most recent status update notes**. Do not include the entire historical list of check logs or updates under the table in the GitHub description/comment; all older history must remain in the local journal file on the branch only.
+   * Edit/create the description or comment using the `gh` CLI:
      ```bash
-     gh issue comment edit <comment-id> --body "<updated_comment_body>"
+     gh issue edit ${SESSION_ID#issue-} --body "<updated_body>"
      ```
-   * If no such comment exists, create a new comment:
-     ```bash
-     gh issue comment create ${SESSION_ID#issue-} --body "<updated_comment_body>"
-     ```
+     If editing the issue description fails (due to write permissions on public repositories), **fall back to updating a comment**:
+     * Search the comments on the issue for an existing comment posted by yourself (`factorybot-robot`) that contains the text `Migration Progress`.
+     * If such a comment exists, edit it with the updated progress using:
+       ```bash
+       gh issue comment edit <comment-id> --body "<updated_comment_body>"
+       ```
+     * If no such comment exists, create a new comment:
+       ```bash
+       gh issue comment create ${SESSION_ID#issue-} --body "<updated_comment_body>"
+       ```
 4. Once all steps of the migration for the resource kind are successfully completed and verified merged, update the parent issue description to show completion, and close the parent issue:
    ```bash
    gh issue close ${SESSION_ID#issue-}
