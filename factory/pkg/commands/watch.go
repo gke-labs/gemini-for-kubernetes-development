@@ -775,8 +775,8 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				var lastCommitTime time.Time
 				if err == nil {
 					for _, c := range prCommits {
-						if c.GetCommit().GetAuthor().GetDate().After(lastCommitTime) {
-							lastCommitTime = c.GetCommit().GetAuthor().GetDate()
+						if c.GetCommit().GetCommitter().GetDate().After(lastCommitTime) {
+							lastCommitTime = c.GetCommit().GetCommitter().GetDate()
 						}
 					}
 				}
@@ -950,7 +950,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				if listCommentsErr == nil {
 					hasNewComments := false
 					for _, c := range comments {
-						if strings.Contains(strings.ToLower(c.GetUser().GetLogin()), "bot") {
+						if strings.EqualFold(c.GetUser().GetLogin(), githubLogin) {
 							continue
 						}
 						if c.GetCreatedAt().After(lastCommitTime) && c.GetCreatedAt().After(state.lastCommentAddressedTime) {
@@ -959,7 +959,39 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						}
 					}
 
-					if hasNewComments {
+					// Also check inline PR review comments directly
+					if !hasNewComments {
+						reviews, _, err := ghClient.PullRequests.ListReviews(ctx, owner, repo, num, nil)
+						if err == nil {
+							for _, r := range reviews {
+								if r.GetUser() != nil && strings.EqualFold(r.GetUser().GetLogin(), githubLogin) {
+									continue
+								}
+								if r.GetSubmittedAt().After(lastCommitTime) && r.GetSubmittedAt().After(state.lastCommentAddressedTime) {
+									hasNewComments = true
+									break
+								}
+
+								revComments, _, err := ghClient.PullRequests.ListReviewComments(ctx, owner, repo, num, r.GetID(), nil)
+								if err == nil {
+									for _, rc := range revComments {
+										if rc.GetUser() != nil && strings.EqualFold(rc.GetUser().GetLogin(), githubLogin) {
+											continue
+										}
+										if rc.GetCreatedAt().After(lastCommitTime) && rc.GetCreatedAt().After(state.lastCommentAddressedTime) {
+											hasNewComments = true
+											break
+										}
+									}
+								}
+								if hasNewComments {
+									break
+								}
+							}
+						}
+					}
+
+					if hasNewComments || (isAssigned(prIssue, targetAssignee) && !unassignedPRs[num]) {
 						if os.Getenv("DRY_RUN") == "true" {
 							continue
 						}

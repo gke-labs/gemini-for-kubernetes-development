@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -388,8 +389,10 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 		}
 	}()
 
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
+	startTime := time.Now()
+	pollInterval := 2 * time.Second
+	timer := time.NewTimer(pollInterval)
+	defer timer.Stop()
 
 	for {
 		select {
@@ -406,7 +409,7 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 			}
 			return loopCtx.Err()
 
-		case <-ticker.C:
+		case <-timer.C:
 			// Read new logs
 			// We run 'tail -c +<offset>' to read log delta.
 			var logBuf bytes.Buffer
@@ -466,6 +469,18 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 					klog.Errorf("Failed to reconnect port-forward: %v", reconnectErr)
 				}
 			}
+
+			// Calculate next interval based on exponential backoff from 2s to 10s over 2 minutes
+			elapsedSeconds := time.Since(startTime).Seconds()
+			if elapsedSeconds >= 120 {
+				pollInterval = 10 * time.Second
+			} else {
+				pollInterval = time.Duration(2.0 * math.Exp(0.0134*elapsedSeconds) * float64(time.Second))
+				if pollInterval > 10*time.Second {
+					pollInterval = 10 * time.Second
+				}
+			}
+			timer.Reset(pollInterval)
 		}
 	}
 }
