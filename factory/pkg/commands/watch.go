@@ -959,6 +959,38 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						}
 					}
 
+					// Also check inline PR review comments directly
+					if !hasNewComments {
+						reviews, _, err := ghClient.PullRequests.ListReviews(ctx, owner, repo, num, nil)
+						if err == nil {
+							for _, r := range reviews {
+								if r.GetUser() != nil && strings.Contains(strings.ToLower(r.GetUser().GetLogin()), "bot") {
+									continue
+								}
+								if r.GetSubmittedAt().After(lastCommitTime) && r.GetSubmittedAt().After(state.lastCommentAddressedTime) {
+									hasNewComments = true
+									break
+								}
+
+								revComments, _, err := ghClient.PullRequests.ListReviewComments(ctx, owner, repo, num, r.GetID(), nil)
+								if err == nil {
+									for _, rc := range revComments {
+										if rc.GetUser() != nil && strings.Contains(strings.ToLower(rc.GetUser().GetLogin()), "bot") {
+											continue
+										}
+										if rc.GetCreatedAt().After(lastCommitTime) && rc.GetCreatedAt().After(state.lastCommentAddressedTime) {
+											hasNewComments = true
+											break
+										}
+									}
+								}
+								if hasNewComments {
+									break
+								}
+							}
+						}
+					}
+
 					if hasNewComments || (isAssigned(prIssue, targetAssignee) && !unassignedPRs[num]) {
 						if os.Getenv("DRY_RUN") == "true" {
 							continue
