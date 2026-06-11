@@ -128,6 +128,17 @@ EOF
 
 function commitChanges {
     if [ "$AGENT_MODE" = "workflow" ]; then
+        if [ -n "$SESSION_ID" ] && [[ "$SESSION_ID" == issue-* ]]; then
+            ISSUE_NUM="${SESSION_ID#issue-}"
+            ISSUE_STATE=$(gh issue view "${ISSUE_NUM}" --json state --jq .state 2>/dev/null || echo "OPEN")
+            if [ "${ISSUE_STATE}" = "CLOSED" ]; then
+                echo "Parent issue #${ISSUE_NUM} is closed. Deleting remote branch ${BRANCH_NAME}..."
+                git push origin --delete "${BRANCH_NAME}" || true
+                echo "Cleaned up remote branch for completed workflow." > "$(dirname "${PROMPT_FILE}")/agent-output.txt"
+                return
+            fi
+        fi
+
         if [ -n "$(git status --porcelain)" ]; then
             echo "Committing workflow changes..."
             git add .
