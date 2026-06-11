@@ -775,8 +775,8 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				var lastCommitTime time.Time
 				if err == nil {
 					for _, c := range prCommits {
-						if c.GetCommit().GetAuthor().GetDate().After(lastCommitTime) {
-							lastCommitTime = c.GetCommit().GetAuthor().GetDate()
+						if c.GetCommit().GetCommitter().GetDate().After(lastCommitTime) {
+							lastCommitTime = c.GetCommit().GetCommitter().GetDate()
 						}
 					}
 				}
