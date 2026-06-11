@@ -959,7 +959,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						}
 					}
 
-					if hasNewComments {
+					if hasNewComments || (isAssigned(prIssue, targetAssignee) && !unassignedPRs[num]) {
 						if os.Getenv("DRY_RUN") == "true" {
 							continue
 						}
