@@ -69,6 +69,9 @@ EOF
     echo "running gh auth setup-git"
     gh auth setup-git
 
+    echo "Configuring git pull rebase"
+    git config --global pull.rebase true
+
     echo "Configuring global git ignore"
     git config --global core.excludesfile "${HOME}/.gitignore_global"
     cat <<EOF > "${HOME}/.gitignore_global"
@@ -125,6 +128,17 @@ EOF
 
 function commitChanges {
     if [ "$AGENT_MODE" = "workflow" ]; then
+        if [ -n "$SESSION_ID" ] && [[ "$SESSION_ID" == issue-* ]]; then
+            ISSUE_NUM="${SESSION_ID#issue-}"
+            ISSUE_STATE=$(gh issue view "${ISSUE_NUM}" --json state --jq .state 2>/dev/null || echo "OPEN")
+            if [ "${ISSUE_STATE}" = "CLOSED" ]; then
+                echo "Parent issue #${ISSUE_NUM} is closed. Deleting remote branch ${BRANCH_NAME}..."
+                git push origin --delete "${BRANCH_NAME}" || true
+                echo "Cleaned up remote branch for completed workflow." > "$(dirname "${PROMPT_FILE}")/agent-output.txt"
+                return
+            fi
+        fi
+
         if [ -n "$(git status --porcelain)" ]; then
             echo "Committing workflow changes..."
             git add .
@@ -231,8 +245,12 @@ function runAgent {
             echo "SkipPR is true. Running on default branch ${BASE_BRANCH}"
             BRANCH_NAME="${BASE_BRANCH}"
         elif [ "$AGENT_MODE" = "workflow" ]; then
-            echo "Agent mode is workflow. Checking out factory branch..."
-            BRANCH_NAME="factory"
+            if [ -n "$SESSION_ID" ] && [[ "$SESSION_ID" == issue-* ]]; then
+                BRANCH_NAME="factory-${SESSION_ID#issue-}"
+            else
+                BRANCH_NAME="factory"
+            fi
+            echo "Agent mode is workflow. Checking out branch ${BRANCH_NAME}..."
             (cd "/workspaces/${REPO_NAME}" && git rebase --abort 2>/dev/null || true)
             (cd "/workspaces/${REPO_NAME}" && git merge --abort 2>/dev/null || true)
             (cd "/workspaces/${REPO_NAME}" && git cherry-pick --abort 2>/dev/null || true)

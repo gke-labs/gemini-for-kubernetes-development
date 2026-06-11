@@ -36,15 +36,23 @@ Below are the existing comments on the PR since the last commit. Look for "### I
    - Check if the code changes in the PR are related to the failure.
    - Distinguish between code errors, test failures, linting issues, and infrastructure flakes.
 
-3. **Fix Issues (if applicable)**:
-   - If the failure is caused by the code in the PR, attempt to fix it.
-   - Make code changes, run tests (if you can verify locally), and commit the changes.
-   - **Maintain a clean commit history:**
-     - Structure your commits well, separating out changes to different modules or generated code into separate commits.
-     - Commits must be relevant and cleanly encapsulate the stated changes. Avoid creating excessive, tiny, or transient commits. Use `git commit --amend` or `git commit --fixup` when applying minor fixes to previous work.
-     - **Prefer rebases:** Always prefer rebasing (e.g., `git rebase` or `git pull --rebase`) over merging/pulling in commits from upstream and re-writing or co-authoring them.
-     - **Introspection Litmus Test:** Before finalizing or updating your Pull Request, perform a self-check. If your PR contains a large number of commits (e.g., more than 10, 20, or 30 commits) or touches hundreds of files, you MUST stop and introspect: *Am I following the instructions to maintain a clean commit history? Do I need to rebase or squash my commits to clean this up?* If needed, perform a rebase or squash to keep the history clean and readable.
-   - If the failure is a flake or infrastructure issue, DO NOT change the code.
+3. **Fix or Rerun Issues (if applicable)**:
+   - If the failure is caused by the code in the PR, attempt to fix it:
+     - Make code changes, run tests (if you can verify locally), and commit the changes.
+     - **Maintain a clean commit history:**
+       - Structure your commits well, separating out changes to different modules or generated code into separate commits.
+       - Commits must be relevant and cleanly encapsulate the stated changes. Avoid creating excessive, tiny, or transient commits. Use `git commit --amend` or `git commit --fixup` when applying minor fixes to previous work.
+       - **Prefer rebases:** Always prefer rebasing (e.g., `git rebase` or `git pull --rebase`) over merging/pulling in commits from upstream and re-writing or co-authoring them.
+       - **Introspection Litmus Test:** Before finalizing or updating your Pull Request, perform a self-check. If your PR contains a large number of commits (e.g., more than 10, 20, or 30 commits) or touches hundreds of files, you MUST stop and introspect: *Am I following the instructions to maintain a clean commit history? Do I need to rebase or squash my commits to clean this up?* If needed, perform a rebase or squash to keep the history clean and readable.
+   - If the failure is a flake or infrastructure issue (NOT caused by code changes in the PR):
+     - DO NOT change the code.
+     - Try to rerun the failed workflow run using the GitHub CLI:
+       ```bash
+       gh run rerun <run-id> --failed
+       ```
+       (If the `--failed` flag is not supported by the CLI version, fallback to `gh run rerun <run-id>` to rerun the entire workflow run).
+     - If it is a Prow / repository status check (without a run-id), trigger a rerun by commenting on the PR (e.g. `/retest` or `/test <job-name>`).
+     - In your report comment, state that you triggered a rerun and explain why you believe it is a flake.
 
 4. **Report**:
    - Provide a summary of your investigation.
@@ -59,7 +67,7 @@ Below are the existing comments on the PR since the last commit. Look for "### I
    Name: `[Name]`
    Cause: `[Code Error / Test Failure / Flake / Infrastructure]`
    Details: [Explanation of the failure]
-   Action Taken: [Fix applied / None]
+   Action Taken: [Fix applied / Rerun triggered / None]
    ```
 
 5. **Respond on GitHub**:

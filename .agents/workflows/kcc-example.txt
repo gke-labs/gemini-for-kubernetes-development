@@ -7,11 +7,11 @@ mode: workflow
 
 # Checklist for KCC Resource Kind Migration
 
-This is a meta-skill describinsg the steps to migrate a KCC resource kind to a production-ready direct controller at `v1beta1` (or higher).
+This is a meta-skill describing the steps to migrate a KCC resource kind to a production-ready direct controller at `v1beta1` (or higher).
 
 Instead of doing the coding yourself under this skill, you will coordinate and orchestrate:
 1. Planning the migration steps.
-2. Opening GitHub issues for each step and assigning them to `factorybot-robot`.
+2. Opening GitHub issues for each step, labeling them with `overseer`, and assigning them to `factorybot-robot`.
 3. Monitoring progress of the Pull Requests.
    * **Requesting PR changes**: If you need `factorybot-robot` to make changes to an open PR (such as rebasing it on master after dependent changes are merged, or addressing review feedback), you can comment directly on the PR outlining the required changes and reassign it back to `factorybot-robot` by adding `/assign factorybot-robot` in your comment.
 4. Opening subsequent issues once the prior steps are successfully completed.
@@ -51,6 +51,17 @@ Only proceed to the next step once the PR for the current step is merged success
    gh issue close ${SESSION_ID#issue-}
    ```
 
+### Verifying PR CI Checks Status
+When checking if all CI check-runs have passed for a pull request, do NOT rely on a single unpaginated `gh api .../check-runs` call (since GitHub defaults to 30 items per page and might hide failing runs). Instead, use the `--paginate` option to ensure all runs are checked:
+```bash
+gh api repos/GoogleCloudPlatform/k8s-config-connector/commits/<head-sha>/check-runs --paginate --jq '.check_runs[] | select(.conclusion != "success" and .conclusion != "neutral" and .conclusion != "skipped") | {name: .name, conclusion: .conclusion}'
+```
+Or check via GitHub CLI:
+```bash
+gh pr checks <pr-number> --repo GoogleCloudPlatform/k8s-config-connector
+```
+Only declare the PR as fully passed/verified if no failures are returned across all pages of checks.
+
 ## Steps
 
 
@@ -66,6 +77,7 @@ The resource must have a direct KRM type (`_types.go`) scaffolded and updated vi
 **GitHub Issue Details for Greenfield Resource:**
 *   **Title:** `Implement direct KRM types and generate.sh for {kind}`
 *   **Assignee:** `factorybot-robot`
+*   **Labels:** `overseer`
 *   **Body:**
     ```
     Please follow the skill .gemini/skills/kcc-direct-greenfield-types-implementer/SKILL.md for {kind}.
@@ -80,6 +92,7 @@ The resource must have a direct KRM type (`_types.go`) scaffolded and updated vi
 **GitHub Issue Details for Existing Terraform/DCL Resource:**
 *   **Title:** `Implement direct KRM types and generate.sh for {kind}`
 *   **Assignee:** `factorybot-robot`
+*   **Labels:** `overseer`
 *   **Body:**
     ```
     Please follow the skill .gemini/skills/crd-mapper-fuzzer-existing-type/SKILL.md for {kind}.
@@ -101,6 +114,7 @@ The resource kind must have an identity and reference type that follow our canon
 **GitHub Issue Details:**
 *   **Title:** `Move {kind} to identity and refs pattern`
 *   **Assignee:** `factorybot-robot`
+*   **Labels:** `overseer`
 *   **Body:**
     ```
     Please follow the skill .gemini/skills/kcc-identity-reference/SKILL.md for {kind}
@@ -117,6 +131,7 @@ For existing resources transitioning to a direct controller, a round-trip KRM fu
 **GitHub Issue Details:**
 *   **Title:** `Implement round-trip KRM fuzzer for {kind}`
 *   **Assignee:** `factorybot-robot`
+*   **Labels:** `overseer`
 *   **Body:**
     ```
     Please follow the skill .gemini/skills/create-fuzzer/skill.md to implement a round-trip KRM fuzzer for {kind}.
@@ -135,6 +150,7 @@ The direct controller must be implemented to manage reconciliation logic (Adapte
 **GitHub Issue Details:**
 *   **Title:** `Implement direct controller and E2E fixtures for {kind}`
 *   **Assignee:** `factorybot-robot`
+*   **Labels:** `overseer`
 *   **Body:**
     ```
     Please follow the skills:
