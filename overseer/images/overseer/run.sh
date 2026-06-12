@@ -41,6 +41,14 @@ function writeFactoryConfig {
     for ((i=1; i<${#ADDR[@]}; i++)); do
         echo "  - ${ADDR[i]}" >> "$CFG_FILE"
     done
+
+    # Allowlisted Bots configuration (defaulting to 'reviewbot-robot' inside the overseer container)
+    ALLOWLISTED_BOTS_VAL=${ALLOWLISTED_BOTS:-reviewbot-robot}
+    IFS=',' read -ra BOTS_ARR <<< "$ALLOWLISTED_BOTS_VAL"
+    echo "allowlistedBots:" >> "$CFG_FILE"
+    for bot in "${BOTS_ARR[@]}"; do
+        echo "  - $bot" >> "$CFG_FILE"
+    done
     
     if [ -n "$FACTORY_SECRETS" ]; then
         echo "secrets:" >> "$CFG_FILE"

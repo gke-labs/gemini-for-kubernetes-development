@@ -1022,11 +1022,24 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					}
 				}
 
-				// Check review comments
+				// Check review comments and approvals
+				var reviews []*githubv39.PullRequestReview
+				if listReviews, _, err := ghClient.PullRequests.ListReviews(ctx, owner, repo, num, nil); err == nil {
+					reviews = listReviews
+				}
+
+				isApproved := isPRApprovedOrLGTM(pr, prIssue, reviews)
+
 				if listCommentsErr == nil {
 					hasNewComments := false
+					
+					var bots []string
+					if cfg != nil {
+						bots = cfg.AllowlistedBots
+					}
+					
 					for _, c := range comments {
-						if strings.EqualFold(c.GetUser().GetLogin(), githubLogin) {
+						if shouldIgnoreUser(c.GetUser(), githubLogin, bots) {
 							continue
 						}
 						if c.GetCreatedAt().After(lastCommitTime) && c.GetCreatedAt().After(state.lastCommentAddressedTime) {
@@ -1037,34 +1050,58 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 
 					// Also check inline PR review comments directly
 					if !hasNewComments {
-						reviews, _, err := ghClient.PullRequests.ListReviews(ctx, owner, repo, num, nil)
-						if err == nil {
-							for _, r := range reviews {
-								if r.GetUser() != nil && strings.EqualFold(r.GetUser().GetLogin(), githubLogin) {
-									continue
-								}
-								if r.GetSubmittedAt().After(lastCommitTime) && r.GetSubmittedAt().After(state.lastCommentAddressedTime) {
-									hasNewComments = true
-									break
-								}
+						for _, r := range reviews {
+							if shouldIgnoreUser(r.GetUser(), githubLogin, bots) {
+								continue
+							}
+							if r.GetSubmittedAt().After(lastCommitTime) && r.GetSubmittedAt().After(state.lastCommentAddressedTime) {
+								hasNewComments = true
+								break
+							}
 
-								revComments, _, err := ghClient.PullRequests.ListReviewComments(ctx, owner, repo, num, r.GetID(), nil)
-								if err == nil {
-									for _, rc := range revComments {
-										if rc.GetUser() != nil && strings.EqualFold(rc.GetUser().GetLogin(), githubLogin) {
-											continue
-										}
-										if rc.GetCreatedAt().After(lastCommitTime) && rc.GetCreatedAt().After(state.lastCommentAddressedTime) {
-											hasNewComments = true
-											break
-										}
+							revComments, _, err := ghClient.PullRequests.ListReviewComments(ctx, owner, repo, num, r.GetID(), nil)
+							if err == nil {
+								for _, rc := range revComments {
+									if shouldIgnoreUser(rc.GetUser(), githubLogin, bots) {
+										continue
+									}
+									if rc.GetCreatedAt().After(lastCommitTime) && rc.GetCreatedAt().After(state.lastCommentAddressedTime) {
+										hasNewComments = true
+										break
 									}
 								}
-								if hasNewComments {
+							}
+							if hasNewComments {
+								break
+							}
+						}
+					}
+
+					if isApproved {
+						if hasNewComments {
+							klog.Infof("PR #%d is approved / LGTM'd. Ignoring new comments/feedback.", num)
+							
+							// Post ignore comment if we haven't already posted it since the last commit
+							hasPostedIgnore := false
+							ignorePrefix := "🤖 AI Factory is ignoring new comments/feedback because this PR is already approved"
+							for _, c := range comments {
+								if strings.EqualFold(c.GetUser().GetLogin(), githubLogin) &&
+									strings.HasPrefix(c.GetBody(), ignorePrefix) &&
+									c.GetCreatedAt().After(lastCommitTime) {
+									hasPostedIgnore = true
 									break
 								}
 							}
+							
+							if !hasPostedIgnore && !dryRun {
+								addGitHubComment(ctx, ghClient, owner, repo, num, ignorePrefix+" / LGTM'd.")
+							}
+							
+							state.lastCommentAddressedTime = time.Now()
+							processedPRs[num] = state
 						}
+						// Skip queueing comment task since it's approved
+						continue
 					}
 
 					if hasNewComments || (isAssigned(prIssue, targetAssignee) && !unassignedPRs[num]) {
@@ -1766,4 +1803,56 @@ func hasLinkedPR(ctx context.Context, client *githubv39.Client, owner, repo stri
 		}
 	}
 	return false, nil
+}
+
+func isPRApprovedOrLGTM(pr *githubv39.PullRequest, prIssue *githubv39.Issue, reviews []*githubv39.PullRequestReview) bool {
+	// 1. Check labels
+	for _, label := range prIssue.Labels {
+		if strings.EqualFold(label.GetName(), "lgtm") || strings.EqualFold(label.GetName(), "approved") {
+			return true
+		}
+	}
+
+	// 2. Check reviews
+	hasApproved := false
+	hasChangesRequested := false
+	latestReviews := make(map[string]string)
+	for _, r := range reviews {
+		if r.GetUser() != nil && r.GetState() != "" {
+			latestReviews[r.GetUser().GetLogin()] = r.GetState()
+		}
+	}
+	for _, state := range latestReviews {
+		if state == "APPROVED" {
+			hasApproved = true
+		} else if state == "CHANGES_REQUESTED" {
+			hasChangesRequested = true
+		}
+	}
+
+	return hasApproved && !hasChangesRequested
+}
+
+func shouldIgnoreUser(user *githubv39.User, githubLogin string, allowlistedBots []string) bool {
+	if user == nil {
+		return false
+	}
+	login := user.GetLogin()
+	if strings.EqualFold(login, githubLogin) {
+		return true // always ignore our own bot
+	}
+
+	// Check if this user is a bot
+	isBotUser := strings.EqualFold(user.GetType(), "Bot") || strings.HasSuffix(strings.ToLower(login), "[bot]")
+	if isBotUser {
+		// Check if it's in the allowlist
+		for _, b := range allowlistedBots {
+			if strings.EqualFold(login, b) {
+				return false // DO NOT ignore (it is allowlisted)
+			}
+		}
+		return true // ignore since it is not allowlisted
+	}
+
+	return false
 }
