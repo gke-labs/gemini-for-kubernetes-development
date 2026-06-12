@@ -765,6 +765,36 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 		}
 	}
 
+	// Recovery: Move any stuck tasks from processingDir back to incomingDir on startup
+	if files, err := os.ReadDir(processingDir); err == nil {
+		for _, f := range files {
+			if !f.IsDir() && strings.HasPrefix(f.Name(), "task-") && strings.HasSuffix(f.Name(), ".yaml") {
+				processingPath := filepath.Join(processingDir, f.Name())
+				
+				// Read the task to reset its status to Pending
+				if data, err := os.ReadFile(processingPath); err == nil {
+					var t QueueTask
+					if err := yaml.Unmarshal(data, &t); err == nil {
+						t.Status = "Pending"
+						if err := writeTaskAtomically(incomingDir, f.Name(), &t); err == nil {
+							_ = os.Remove(processingPath)
+							klog.Infof("Recovered stuck task %s from processing to incoming", f.Name())
+							continue
+						}
+					}
+				}
+				
+				// Fallback to simple rename if parsing fails
+				incomingPath := filepath.Join(incomingDir, f.Name())
+				if err := os.Rename(processingPath, incomingPath); err == nil {
+					klog.Infof("Recovered stuck task %s (fallback rename) to incoming", f.Name())
+				} else {
+					klog.Errorf("Failed to recover stuck task %s: %v", f.Name(), err)
+				}
+			}
+		}
+	}
+
 	type watchState struct {
 		mu               sync.Mutex
 		openPRs          []*githubv39.PullRequest
