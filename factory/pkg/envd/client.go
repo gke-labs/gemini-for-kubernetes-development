@@ -349,21 +349,48 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 	logFile := fmt.Sprintf("%s/execution.log", taskDir)
 	exitCodeFile := fmt.Sprintf("%s/exit_code", taskDir)
 
-	// Ensure the task directory exists inside the pod before writing to it
-	if err := c.Exec(ctx, fmt.Sprintf("mkdir -p %s", taskDir), "/workspaces", nil, nil, nil, nil); err != nil {
-		return fmt.Errorf("failed to create task directory in pod: %w", err)
+	// Check if task is already running or completed in the sandbox pod
+	var checkBuf bytes.Buffer
+	checkStatusCmd := fmt.Sprintf("if [ -f %s ]; then cat %s; fi", exitCodeFile, exitCodeFile)
+	isCompleted := false
+	if err := c.Exec(ctx, checkStatusCmd, "/workspaces", nil, nil, &checkBuf, nil); err == nil {
+		if strings.TrimSpace(checkBuf.String()) != "" {
+			isCompleted = true
+		}
 	}
 
-	// 1. Launch the command in the background using nohup
-	detachedCmd := fmt.Sprintf("nohup sh -c \"echo \\$\\$ > %s; %s > %s 2>&1; echo \\$? > %s\" >/dev/null 2>&1 &", pidFile, cmdStr, logFile, exitCodeFile)
+	isAlreadyRunning := false
+	if !isCompleted {
+		var pidBuf bytes.Buffer
+		checkPidCmd := fmt.Sprintf("if [ -f %s ]; then pid=$(cat %s); if kill -0 $pid 2>/dev/null; then echo \"alive\"; fi; fi", pidFile, pidFile)
+		if err := c.Exec(ctx, checkPidCmd, "/workspaces", nil, nil, &pidBuf, nil); err == nil {
+			if strings.TrimSpace(pidBuf.String()) == "alive" {
+				isAlreadyRunning = true
+			}
+		}
+	}
 
-	klog.Infof("Launching task in background of sandbox pod (Task directory: %s)...", taskDir)
-	if err := c.Exec(ctx, detachedCmd, "/workspaces", envs, nil, nil, nil); err != nil {
-		return fmt.Errorf("failed to launch background task: %w", err)
+	if isCompleted {
+		klog.Infof("Task in directory %s has already completed. Reattaching to read status...", taskDir)
+	} else if isAlreadyRunning {
+		klog.Infof("Task in directory %s is already running. Reattaching...", taskDir)
+	} else {
+		// Ensure the task directory exists inside the pod before writing to it
+		if err := c.Exec(ctx, fmt.Sprintf("mkdir -p %s", taskDir), "/workspaces", nil, nil, nil, nil); err != nil {
+			return fmt.Errorf("failed to create task directory in pod: %w", err)
+		}
+
+		// 1. Launch the command in the background using nohup
+		detachedCmd := fmt.Sprintf("nohup sh -c \"echo \\$\\$ > %s; %s > %s 2>&1; echo \\$? > %s\" >/dev/null 2>&1 &", pidFile, cmdStr, logFile, exitCodeFile)
+
+		klog.Infof("Launching task in background of sandbox pod (Task directory: %s)...", taskDir)
+		if err := c.Exec(ctx, detachedCmd, "/workspaces", envs, nil, nil, nil); err != nil {
+			return fmt.Errorf("failed to launch background task: %w", err)
+		}
 	}
 
 	if detached {
-		fmt.Printf("Task launched in detached mode. Task directory: %s\n", taskDir)
+		fmt.Printf("Task launched/running in detached mode. Task directory: %s\n", taskDir)
 		return nil
 	}
 

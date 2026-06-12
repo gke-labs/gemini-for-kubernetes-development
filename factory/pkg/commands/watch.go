@@ -1713,7 +1713,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 			select {
 			case <-doneChan:
 				fmt.Println("All tasks completed. Exiting.")
-			case <-time.After(taskTimeout):
+			case <-time.After(5 * time.Minute):
 				fmt.Println("Timeout waiting for active tasks to complete. Exiting.")
 			}
 			return nil
