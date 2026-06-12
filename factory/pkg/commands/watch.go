@@ -1641,6 +1641,9 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					if rootFlags.EphemeralStorage != "" {
 						args = append(args, "--ephemeral-storage", rootFlags.EphemeralStorage)
 					}
+					if taskTimeout > 0 {
+						args = append(args, "--timeout", taskTimeout.String())
+					}
 					args = append(args, "--abort-on-cancel=false")
 
 					cmd := exec.CommandContext(taskCtx, executable, args...)
