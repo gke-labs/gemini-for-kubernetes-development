@@ -726,17 +726,17 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				// Format could be task-pr-%d-comments.yaml or task-pr-%d-investigate.yaml
 				name := strings.TrimPrefix(f.Name(), "task-pr-")
 				name = strings.TrimSuffix(name, ".yaml")
-				
+
 				isComments := strings.HasSuffix(name, "-comments")
 				isInvestigate := strings.HasSuffix(name, "-investigate")
-				
+
 				var numStr string
 				if isComments {
 					numStr = strings.TrimSuffix(name, "-comments")
 				} else if isInvestigate {
 					numStr = strings.TrimSuffix(name, "-investigate")
 				}
-				
+
 				if numStr != "" {
 					if num, err := strconv.Atoi(numStr); err == nil {
 						if info, err := f.Info(); err == nil {
@@ -746,7 +746,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 							} else if isInvestigate {
 								state.lastInvestigatedTime = info.ModTime()
 							}
-							
+
 							// Read the file to get CommitSHA if it's there
 							if data, err := os.ReadFile(filePath); err == nil {
 								var t QueueTask
@@ -756,7 +756,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 									}
 								}
 							}
-							
+
 							processedPRs[num] = state
 						}
 					}
@@ -770,7 +770,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 		for _, f := range files {
 			if !f.IsDir() && strings.HasPrefix(f.Name(), "task-") && strings.HasSuffix(f.Name(), ".yaml") {
 				processingPath := filepath.Join(processingDir, f.Name())
-				
+
 				// Read the task to reset its status to Pending
 				if data, err := os.ReadFile(processingPath); err == nil {
 					var t QueueTask
@@ -783,7 +783,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						}
 					}
 				}
-				
+
 				// Fallback to simple rename if parsing fails
 				incomingPath := filepath.Join(incomingDir, f.Name())
 				if err := os.Rename(processingPath, incomingPath); err == nil {
@@ -1032,12 +1032,12 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 
 				if listCommentsErr == nil {
 					hasNewComments := false
-					
+
 					var bots []string
 					if cfg != nil {
 						bots = cfg.AllowlistedBots
 					}
-					
+
 					for _, c := range comments {
 						if shouldIgnoreUser(c.GetUser(), githubLogin, bots) {
 							continue
@@ -1080,7 +1080,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					if isApproved {
 						if hasNewComments {
 							klog.Infof("PR #%d is approved / LGTM'd. Ignoring new comments/feedback.", num)
-							
+
 							// Post ignore comment if we haven't already posted it since the last commit
 							hasPostedIgnore := false
 							ignorePrefix := "🤖 AI Factory is ignoring new comments/feedback because this PR is already approved"
@@ -1092,11 +1092,11 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 									break
 								}
 							}
-							
+
 							if !hasPostedIgnore && !dryRun {
 								addGitHubComment(ctx, ghClient, owner, repo, num, ignorePrefix+" / LGTM'd.")
 							}
-							
+
 							state.lastCommentAddressedTime = time.Now()
 							processedPRs[num] = state
 						}
