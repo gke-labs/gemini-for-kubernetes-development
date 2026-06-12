@@ -1315,6 +1315,11 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 			if err := cleanupClosedPRSandboxes(ctx, ghClient, kubeClient, owner, repo, rootFlags.Namespace, dryRun); err != nil {
 				klog.Errorf("Failed to clean up closed PR sandboxes: %v", err)
 			}
+
+			// Clean up sandboxes of closed issues
+			if err := cleanupClosedIssueSandboxes(ctx, ghClient, kubeClient, owner, repo, rootFlags.Namespace, dryRun); err != nil {
+				klog.Errorf("Failed to clean up closed issue sandboxes: %v", err)
+			}
 		}
 
 		// 2. Fast Issue Scan Cycle
@@ -1899,6 +1904,61 @@ func cleanupClosedPRSandboxes(ctx context.Context, ghClient *githubv39.Client, k
 			}
 			if err := manager.DeleteSandbox(ctx, namespace, name); err != nil {
 				klog.Errorf("Failed to delete sandbox '%s' for closed PR #%d: %v", name, num, err)
+			}
+		}
+	}
+	return nil
+}
+
+func cleanupClosedIssueSandboxes(ctx context.Context, ghClient *githubv39.Client, kubeClient *clients.KubernetesClient, owner, repo, namespace string, dryRun bool) error {
+	list, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("listing sandboxes for issue cleanup: %w", err)
+	}
+
+	manager := k8s.NewManager(kubeClient)
+	for _, item := range list.Items {
+		name := item.GetName()
+		var num int
+		var isIssueSandbox bool
+
+		if strings.HasPrefix(name, "wf-issue-") {
+			numStr := strings.TrimPrefix(name, "wf-issue-")
+			if n, err := strconv.Atoi(numStr); err == nil {
+				num = n
+				isIssueSandbox = true
+			}
+		} else if strings.HasPrefix(name, "fix-") {
+			idx := strings.LastIndex(name, "-")
+			if idx != -1 {
+				numStr := name[idx+1:]
+				if n, err := strconv.Atoi(numStr); err == nil {
+					num = n
+					isIssueSandbox = true
+				}
+			}
+		}
+
+		if !isIssueSandbox {
+			continue
+		}
+
+		// Fetch the issue state from GitHub
+		issue, _, err := ghClient.Issues.Get(ctx, owner, repo, num)
+		if err != nil {
+			klog.Warningf("Failed to fetch issue #%d for sandbox cleanup check: %v", num, err)
+			continue
+		}
+
+		// Check if the issue is closed
+		if issue.GetState() == "closed" {
+			klog.Infof("Issue #%d is closed. Deleting corresponding sandbox '%s'...", num, name)
+			if dryRun {
+				fmt.Printf("[DRYRUN] Would delete sandbox '%s' for closed issue #%d\n", name, num)
+				continue
+			}
+			if err := manager.DeleteSandbox(ctx, namespace, name); err != nil {
+				klog.Errorf("Failed to delete sandbox '%s' for closed issue #%d: %v", name, num, err)
 			}
 		}
 	}
