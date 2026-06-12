@@ -31,6 +31,7 @@ type FactoryConfig struct {
 	WorkspaceDiskSize string        `yaml:"workspaceDiskSize"`
 	AdditionalLabels  []string      `yaml:"additionalLabels"`
 	TriggerLabel      string        `yaml:"triggerLabel"`
+	AllowlistedBots   []string      `yaml:"allowlistedBots"`
 	Secrets           []SecretMount `yaml:"secrets"`
 	Env               []EnvVar      `yaml:"env"`
 }

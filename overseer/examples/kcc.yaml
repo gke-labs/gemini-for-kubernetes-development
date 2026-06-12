@@ -8,7 +8,7 @@ spec:
   maxActiveReviews: 20
   maxActiveIssues: 11
   chores:
-    mode: enabled
+    mode: disabled
     #include:
     #  - KCC Release Scheduler
   geminiAPIKeySecretName: gemini-vscode-tokens

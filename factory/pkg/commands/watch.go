@@ -217,6 +217,7 @@ type QueueTask struct {
 	Error     string    `yaml:"error,omitempty"`
 	AgentFile string    `yaml:"agentFile,omitempty"` // For chore tasks
 	SessionID string    `yaml:"sessionId,omitempty"` // For workflow sessions
+	CommitSHA string    `yaml:"commitSHA,omitempty"`
 }
 
 type ChoreRunState struct {
@@ -706,9 +707,14 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 	}
 
 	processedIssues := make(map[int]time.Time)
+	processedPRs := make(map[int]prWatchState)
 	if files, err := os.ReadDir(processedDir); err == nil {
 		for _, f := range files {
-			if !f.IsDir() && strings.HasPrefix(f.Name(), "task-issue-") && strings.HasSuffix(f.Name(), ".yaml") {
+			if f.IsDir() || !strings.HasSuffix(f.Name(), ".yaml") {
+				continue
+			}
+			filePath := filepath.Join(processedDir, f.Name())
+			if strings.HasPrefix(f.Name(), "task-issue-") {
 				trimmed := strings.TrimPrefix(f.Name(), "task-issue-")
 				trimmed = strings.TrimSuffix(trimmed, ".yaml")
 				if num, err := strconv.Atoi(trimmed); err == nil {
@@ -716,10 +722,78 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						processedIssues[num] = info.ModTime()
 					}
 				}
+			} else if strings.HasPrefix(f.Name(), "task-pr-") {
+				// Format could be task-pr-%d-comments.yaml or task-pr-%d-investigate.yaml
+				name := strings.TrimPrefix(f.Name(), "task-pr-")
+				name = strings.TrimSuffix(name, ".yaml")
+
+				isComments := strings.HasSuffix(name, "-comments")
+				isInvestigate := strings.HasSuffix(name, "-investigate")
+
+				var numStr string
+				if isComments {
+					numStr = strings.TrimSuffix(name, "-comments")
+				} else if isInvestigate {
+					numStr = strings.TrimSuffix(name, "-investigate")
+				}
+
+				if numStr != "" {
+					if num, err := strconv.Atoi(numStr); err == nil {
+						if info, err := f.Info(); err == nil {
+							state := processedPRs[num]
+							if isComments {
+								state.lastCommentAddressedTime = info.ModTime()
+							} else if isInvestigate {
+								state.lastInvestigatedTime = info.ModTime()
+							}
+
+							// Read the file to get CommitSHA if it's there
+							if data, err := os.ReadFile(filePath); err == nil {
+								var t QueueTask
+								if err := yaml.Unmarshal(data, &t); err == nil {
+									if t.CommitSHA != "" {
+										state.lastSHA = t.CommitSHA
+									}
+								}
+							}
+
+							processedPRs[num] = state
+						}
+					}
+				}
 			}
 		}
 	}
-	processedPRs := make(map[int]prWatchState)
+
+	// Recovery: Move any stuck tasks from processingDir back to incomingDir on startup
+	if files, err := os.ReadDir(processingDir); err == nil {
+		for _, f := range files {
+			if !f.IsDir() && strings.HasPrefix(f.Name(), "task-") && strings.HasSuffix(f.Name(), ".yaml") {
+				processingPath := filepath.Join(processingDir, f.Name())
+
+				// Read the task to reset its status to Pending
+				if data, err := os.ReadFile(processingPath); err == nil {
+					var t QueueTask
+					if err := yaml.Unmarshal(data, &t); err == nil {
+						t.Status = "Pending"
+						if err := writeTaskAtomically(incomingDir, f.Name(), &t); err == nil {
+							_ = os.Remove(processingPath)
+							klog.Infof("Recovered stuck task %s from processing to incoming", f.Name())
+							continue
+						}
+					}
+				}
+
+				// Fallback to simple rename if parsing fails
+				incomingPath := filepath.Join(incomingDir, f.Name())
+				if err := os.Rename(processingPath, incomingPath); err == nil {
+					klog.Infof("Recovered stuck task %s (fallback rename) to incoming", f.Name())
+				} else {
+					klog.Errorf("Failed to recover stuck task %s: %v", f.Name(), err)
+				}
+			}
+		}
+	}
 
 	type watchState struct {
 		mu               sync.Mutex
@@ -820,6 +894,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 								CreatedAt: pr.GetCreatedAt(),
 								Assignee:  targetAssignee,
 								Status:    "Pending",
+								CommitSHA: headSHA,
 							}
 
 							if dryRun {
@@ -926,6 +1001,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 									CreatedAt: pr.GetCreatedAt(),
 									Assignee:  targetAssignee,
 									Status:    "Pending",
+									CommitSHA: headSHA,
 								}
 
 								if dryRun {
@@ -946,11 +1022,24 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					}
 				}
 
-				// Check review comments
+				// Check review comments and approvals
+				var reviews []*githubv39.PullRequestReview
+				if listReviews, _, err := ghClient.PullRequests.ListReviews(ctx, owner, repo, num, nil); err == nil {
+					reviews = listReviews
+				}
+
+				isApproved := isPRApprovedOrLGTM(pr, prIssue, reviews)
+
 				if listCommentsErr == nil {
 					hasNewComments := false
+
+					var bots []string
+					if cfg != nil {
+						bots = cfg.AllowlistedBots
+					}
+
 					for _, c := range comments {
-						if strings.EqualFold(c.GetUser().GetLogin(), githubLogin) {
+						if shouldIgnoreUser(c.GetUser(), githubLogin, bots) {
 							continue
 						}
 						if c.GetCreatedAt().After(lastCommitTime) && c.GetCreatedAt().After(state.lastCommentAddressedTime) {
@@ -961,34 +1050,58 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 
 					// Also check inline PR review comments directly
 					if !hasNewComments {
-						reviews, _, err := ghClient.PullRequests.ListReviews(ctx, owner, repo, num, nil)
-						if err == nil {
-							for _, r := range reviews {
-								if r.GetUser() != nil && strings.EqualFold(r.GetUser().GetLogin(), githubLogin) {
-									continue
-								}
-								if r.GetSubmittedAt().After(lastCommitTime) && r.GetSubmittedAt().After(state.lastCommentAddressedTime) {
-									hasNewComments = true
-									break
-								}
+						for _, r := range reviews {
+							if shouldIgnoreUser(r.GetUser(), githubLogin, bots) {
+								continue
+							}
+							if r.GetSubmittedAt().After(lastCommitTime) && r.GetSubmittedAt().After(state.lastCommentAddressedTime) {
+								hasNewComments = true
+								break
+							}
 
-								revComments, _, err := ghClient.PullRequests.ListReviewComments(ctx, owner, repo, num, r.GetID(), nil)
-								if err == nil {
-									for _, rc := range revComments {
-										if rc.GetUser() != nil && strings.EqualFold(rc.GetUser().GetLogin(), githubLogin) {
-											continue
-										}
-										if rc.GetCreatedAt().After(lastCommitTime) && rc.GetCreatedAt().After(state.lastCommentAddressedTime) {
-											hasNewComments = true
-											break
-										}
+							revComments, _, err := ghClient.PullRequests.ListReviewComments(ctx, owner, repo, num, r.GetID(), nil)
+							if err == nil {
+								for _, rc := range revComments {
+									if shouldIgnoreUser(rc.GetUser(), githubLogin, bots) {
+										continue
+									}
+									if rc.GetCreatedAt().After(lastCommitTime) && rc.GetCreatedAt().After(state.lastCommentAddressedTime) {
+										hasNewComments = true
+										break
 									}
 								}
-								if hasNewComments {
+							}
+							if hasNewComments {
+								break
+							}
+						}
+					}
+
+					if isApproved {
+						if hasNewComments {
+							klog.Infof("PR #%d is approved / LGTM'd. Ignoring new comments/feedback.", num)
+
+							// Post ignore comment if we haven't already posted it since the last commit
+							hasPostedIgnore := false
+							ignorePrefix := "🤖 AI Factory is ignoring new comments/feedback because this PR is already approved"
+							for _, c := range comments {
+								if strings.EqualFold(c.GetUser().GetLogin(), githubLogin) &&
+									strings.HasPrefix(c.GetBody(), ignorePrefix) &&
+									c.GetCreatedAt().After(lastCommitTime) {
+									hasPostedIgnore = true
 									break
 								}
 							}
+
+							if !hasPostedIgnore && !dryRun {
+								addGitHubComment(ctx, ghClient, owner, repo, num, ignorePrefix+" / LGTM'd.")
+							}
+
+							state.lastCommentAddressedTime = time.Now()
+							processedPRs[num] = state
 						}
+						// Skip queueing comment task since it's approved
+						continue
 					}
 
 					if hasNewComments || (isAssigned(prIssue, targetAssignee) && !unassignedPRs[num]) {
@@ -1027,6 +1140,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 									CreatedAt: pr.GetCreatedAt(),
 									Assignee:  targetAssignee,
 									Status:    "Pending",
+									CommitSHA: headSHA,
 								}
 
 								if dryRun {
@@ -1195,6 +1309,16 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 			// Scan chores
 			if (mode == "all" || mode == "scan" || mode == "scan-pr") && choresMode != "disabled" {
 				scanChores(ctx, ghClient, owner, repo, incomingDir, processingDir, queueDir, dryRun)
+			}
+
+			// Clean up sandboxes of merged or closed PRs
+			if err := cleanupClosedPRSandboxes(ctx, ghClient, kubeClient, owner, repo, rootFlags.Namespace, dryRun); err != nil {
+				klog.Errorf("Failed to clean up closed PR sandboxes: %v", err)
+			}
+
+			// Clean up sandboxes of closed issues
+			if err := cleanupClosedIssueSandboxes(ctx, ghClient, kubeClient, owner, repo, rootFlags.Namespace, dryRun); err != nil {
+				klog.Errorf("Failed to clean up closed issue sandboxes: %v", err)
 			}
 		}
 
@@ -1527,6 +1651,9 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					if rootFlags.EphemeralStorage != "" {
 						args = append(args, "--ephemeral-storage", rootFlags.EphemeralStorage)
 					}
+					if taskTimeout > 0 {
+						args = append(args, "--timeout", taskTimeout.String())
+					}
 					args = append(args, "--abort-on-cancel=false")
 
 					cmd := exec.CommandContext(taskCtx, executable, args...)
@@ -1636,7 +1763,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 			select {
 			case <-doneChan:
 				fmt.Println("All tasks completed. Exiting.")
-			case <-time.After(2 * time.Minute):
+			case <-time.After(5 * time.Minute):
 				fmt.Println("Timeout waiting for active tasks to complete. Exiting.")
 			}
 			return nil
@@ -1689,4 +1816,151 @@ func hasLinkedPR(ctx context.Context, client *githubv39.Client, owner, repo stri
 		}
 	}
 	return false, nil
+}
+
+func isPRApprovedOrLGTM(pr *githubv39.PullRequest, prIssue *githubv39.Issue, reviews []*githubv39.PullRequestReview) bool {
+	// 1. Check labels
+	for _, label := range prIssue.Labels {
+		if strings.EqualFold(label.GetName(), "lgtm") || strings.EqualFold(label.GetName(), "approved") {
+			return true
+		}
+	}
+
+	// 2. Check reviews
+	hasApproved := false
+	hasChangesRequested := false
+	latestReviews := make(map[string]string)
+	for _, r := range reviews {
+		if r.GetUser() != nil && r.GetState() != "" {
+			latestReviews[r.GetUser().GetLogin()] = r.GetState()
+		}
+	}
+	for _, state := range latestReviews {
+		if state == "APPROVED" {
+			hasApproved = true
+		} else if state == "CHANGES_REQUESTED" {
+			hasChangesRequested = true
+		}
+	}
+
+	return hasApproved && !hasChangesRequested
+}
+
+func shouldIgnoreUser(user *githubv39.User, githubLogin string, allowlistedBots []string) bool {
+	if user == nil {
+		return false
+	}
+	login := user.GetLogin()
+	if strings.EqualFold(login, githubLogin) {
+		return true // always ignore our own bot
+	}
+
+	// Check if this user is a bot
+	isBotUser := strings.EqualFold(user.GetType(), "Bot") || strings.HasSuffix(strings.ToLower(login), "[bot]")
+	if isBotUser {
+		// Check if it's in the allowlist
+		for _, b := range allowlistedBots {
+			if strings.EqualFold(login, b) {
+				return false // DO NOT ignore (it is allowlisted)
+			}
+		}
+		return true // ignore since it is not allowlisted
+	}
+
+	return false
+}
+
+func cleanupClosedPRSandboxes(ctx context.Context, ghClient *githubv39.Client, kubeClient *clients.KubernetesClient, owner, repo, namespace string, dryRun bool) error {
+	list, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("listing sandboxes for cleanup: %w", err)
+	}
+
+	manager := k8s.NewManager(kubeClient)
+	for _, item := range list.Items {
+		name := item.GetName()
+		if !strings.HasPrefix(name, "factory-pr-") {
+			continue
+		}
+		numStr := strings.TrimPrefix(name, "factory-pr-")
+		num, err := strconv.Atoi(numStr)
+		if err != nil {
+			continue
+		}
+
+		// Fetch the PR state from GitHub
+		pr, _, err := ghClient.PullRequests.Get(ctx, owner, repo, num)
+		if err != nil {
+			klog.Warningf("Failed to fetch PR #%d for sandbox cleanup check: %v", num, err)
+			continue
+		}
+
+		// Check if it is closed or merged
+		if pr.GetState() == "closed" {
+			klog.Infof("Pull Request #%d is closed/merged. Deleting corresponding sandbox '%s'...", num, name)
+			if dryRun {
+				fmt.Printf("[DRYRUN] Would delete sandbox '%s' for closed PR #%d\n", name, num)
+				continue
+			}
+			if err := manager.DeleteSandbox(ctx, namespace, name); err != nil {
+				klog.Errorf("Failed to delete sandbox '%s' for closed PR #%d: %v", name, num, err)
+			}
+		}
+	}
+	return nil
+}
+
+func cleanupClosedIssueSandboxes(ctx context.Context, ghClient *githubv39.Client, kubeClient *clients.KubernetesClient, owner, repo, namespace string, dryRun bool) error {
+	list, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("listing sandboxes for issue cleanup: %w", err)
+	}
+
+	manager := k8s.NewManager(kubeClient)
+	for _, item := range list.Items {
+		name := item.GetName()
+		var num int
+		var isIssueSandbox bool
+
+		if strings.HasPrefix(name, "wf-issue-") {
+			numStr := strings.TrimPrefix(name, "wf-issue-")
+			if n, err := strconv.Atoi(numStr); err == nil {
+				num = n
+				isIssueSandbox = true
+			}
+		} else if strings.HasPrefix(name, "fix-") {
+			idx := strings.LastIndex(name, "-")
+			if idx != -1 {
+				numStr := name[idx+1:]
+				if n, err := strconv.Atoi(numStr); err == nil {
+					num = n
+					isIssueSandbox = true
+				}
+			}
+		}
+
+		if !isIssueSandbox {
+			continue
+		}
+
+		// Fetch the issue state from GitHub
+		issue, _, err := ghClient.Issues.Get(ctx, owner, repo, num)
+		if err != nil {
+			klog.Warningf("Failed to fetch issue #%d for sandbox cleanup check: %v", num, err)
+			continue
+		}
+
+		// Check if the issue is closed
+		if issue.GetState() == "closed" {
+			klog.Infof("Issue #%d is closed. Deleting corresponding sandbox '%s'...", num, name)
+			if dryRun {
+				fmt.Printf("[DRYRUN] Would delete sandbox '%s' for closed issue #%d\n", name, num)
+				continue
+			}
+			if err := manager.DeleteSandbox(ctx, namespace, name); err != nil {
+				klog.Errorf("Failed to delete sandbox '%s' for closed issue #%d: %v", name, num, err)
+			}
+		}
+	}
+	return nil
 }
