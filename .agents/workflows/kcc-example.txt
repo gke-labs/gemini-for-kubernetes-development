@@ -13,8 +13,12 @@ Instead of doing the coding yourself under this skill, you will coordinate and o
 1. Planning the migration steps.
 2. Opening GitHub issues for each step, labeling them with `overseer`, and assigning them to `factorybot-robot`.
 3. Monitoring progress of the Pull Requests.
-   * **Requesting PR changes**: If you need `factorybot-robot` to make changes to an open PR (such as rebasing it on master after dependent changes are merged, or addressing review feedback), you can comment directly on the PR outlining the required changes and reassign it back to `factorybot-robot` by adding `/assign factorybot-robot` in your comment.
 4. Opening subsequent issues once the prior steps are successfully completed.
+
+> [!IMPORTANT]
+> **Safety Guardrails (Strict Enforcement)**:
+> - **Do NOT comment on child Pull Requests**: You must **never** comment directly on the child Pull Requests. The watch daemon will automatically monitor and handle PR review feedback and CI check failures. If you need to request action or re-trigger a run, do so only by assigning the PR to the bot (using `/assign factorybot-robot` or assigning via `gh` CLI).
+> - **Do NOT approve, LGTM, or label PRs**: You must **never** approve, LGTM, or add approval/merging labels (such as `lgtm`, `approved`, or `automerge`) to any Pull Requests. These actions require human OWNER review and approval.
 
 
 ## Journaling and Progress Tracking
