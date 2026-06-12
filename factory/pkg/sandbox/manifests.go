@@ -80,7 +80,7 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 		resources.Limits[corev1.ResourceMemory] = resource.MustParse("6Gi")
 	}
 	if resources.Requests.Cpu().IsZero() {
-		resources.Requests[corev1.ResourceCPU] = resource.MustParse("2000m")
+		resources.Requests[corev1.ResourceCPU] = resource.MustParse("500m")
 	}
 	if resources.Limits.Cpu().IsZero() {
 		resources.Limits[corev1.ResourceCPU] = resource.MustParse("4000m")
