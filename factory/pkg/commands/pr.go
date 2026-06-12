@@ -1246,22 +1246,21 @@ func runAdopt(ctx context.Context, prURL, adoptAction, strategy string, ephemera
 	fmt.Println("\nAdopt execution completed.")
 
 	var buf bytes.Buffer
+	var createdPRURL string
 	if err := client.Exec(ctx, fmt.Sprintf("cat %s/agent-output.txt", taskDir), "/workspaces", nil, nil, &buf, os.Stderr); err != nil {
 		klog.Warningf("Could not read agent-output.txt: %v", err)
 	} else {
-		fmt.Printf("\nAdopted PR URL:\n%s\n", buf.String())
-	}
-
-	var createdPRURL string
-	for _, line := range strings.Split(buf.String(), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.Contains(line, "/pull/") {
-			createdPRURL = line
-			break
+		for _, line := range strings.Split(buf.String(), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.Contains(line, "/pull/") {
+				createdPRURL = line
+				break
+			}
 		}
 	}
 
 	if createdPRURL != "" {
+		fmt.Printf("\nSuccessfully adopted PR! New PR URL: %s\n", createdPRURL)
 		parts := strings.Split(createdPRURL, "/")
 		if len(parts) > 0 {
 			if createdPRNum, err := strconv.Atoi(parts[len(parts)-1]); err == nil {
@@ -1271,6 +1270,8 @@ func runAdopt(ctx context.Context, prURL, adoptAction, strategy string, ephemera
 				}
 			}
 		}
+	} else {
+		fmt.Printf("\nAdopted PR output:\n%s\n", buf.String())
 	}
 
 	return nil
