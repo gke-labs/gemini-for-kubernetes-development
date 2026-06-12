@@ -75,47 +75,30 @@ fi
 echo "Ensuring fork of ${REPO_OWNER}/${REPO_NAME} for user ${GH_USER}..."
 gh repo fork "${REPO_OWNER}/${REPO_NAME}" --clone=false || true
 
+# Clone the repository if it doesn't exist under /workspaces
+if [ ! -d "/workspaces/${REPO_NAME}" ]; then
+    echo "Cloning repository ${CLONE_URL}..."
+    (cd /workspaces/ && git clone "${CLONE_URL}")
+fi
+
+cd "/workspaces/${REPO_NAME}"
+FORK_URL="https://github.com/${GH_USER}/${REPO_NAME}.git"
+git remote add fork "${FORK_URL}" || true
+git fetch origin
+
 if [ "$STRATEGY" = "reuse" ]; then
     echo "Executing 'reuse' strategy (git-based history preservation)..."
-    
-    # We clone to a temp dir to do the git checkout/fetch/push without polluting workspaces
-    TMP_GIT_DIR=$(mktemp -d -t factory-pr-adopt-XXXXXX)
-    cd "${TMP_GIT_DIR}"
-    
-    git init
-    git config credential.helper "!gh auth git-credential"
-    git remote add origin "${CLONE_URL}"
     
     echo "Fetching PR head commit..."
     git fetch origin "pull/${PR_NUMBER}/head:adopt-pr-${PR_NUMBER}"
     
-    FORK_URL="https://github.com/${GH_USER}/${REPO_NAME}.git"
-    git remote add fork "${FORK_URL}"
-    
     echo "Pushing branch adopt-pr-${PR_NUMBER} to fork..."
     git push -f fork "adopt-pr-${PR_NUMBER}"
     
-    cd /workspaces
-    rm -rf "${TMP_GIT_DIR}"
-    
-    # Switch to the workspaces repository directory (if any) and register git branch
-    if [ -d "/workspaces/${REPO_NAME}" ]; then
-        cd "/workspaces/${REPO_NAME}"
-        git remote add fork "${FORK_URL}" || true
-        git fetch fork "adopt-pr-${PR_NUMBER}" || true
-    fi
+    git checkout "adopt-pr-${PR_NUMBER}"
 
 elif [ "$STRATEGY" = "reimplement" ]; then
     echo "Executing 'reimplement' strategy (LLM-based re-implementation)..."
-    
-    # Clone the repository if it doesn't exist under /workspaces
-    if [ ! -d "/workspaces/${REPO_NAME}" ]; then
-        (cd /workspaces/ && git clone "${CLONE_URL}")
-    fi
-    
-    cd "/workspaces/${REPO_NAME}"
-    git remote add fork "https://github.com/${GH_USER}/${REPO_NAME}.git" || true
-    git fetch origin
     
     BASE_BRANCH=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name)
     
