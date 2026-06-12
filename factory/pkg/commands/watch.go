@@ -217,6 +217,7 @@ type QueueTask struct {
 	Error     string    `yaml:"error,omitempty"`
 	AgentFile string    `yaml:"agentFile,omitempty"` // For chore tasks
 	SessionID string    `yaml:"sessionId,omitempty"` // For workflow sessions
+	CommitSHA string    `yaml:"commitSHA,omitempty"`
 }
 
 type ChoreRunState struct {
@@ -706,9 +707,14 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 	}
 
 	processedIssues := make(map[int]time.Time)
+	processedPRs := make(map[int]prWatchState)
 	if files, err := os.ReadDir(processedDir); err == nil {
 		for _, f := range files {
-			if !f.IsDir() && strings.HasPrefix(f.Name(), "task-issue-") && strings.HasSuffix(f.Name(), ".yaml") {
+			if f.IsDir() || !strings.HasSuffix(f.Name(), ".yaml") {
+				continue
+			}
+			filePath := filepath.Join(processedDir, f.Name())
+			if strings.HasPrefix(f.Name(), "task-issue-") {
 				trimmed := strings.TrimPrefix(f.Name(), "task-issue-")
 				trimmed = strings.TrimSuffix(trimmed, ".yaml")
 				if num, err := strconv.Atoi(trimmed); err == nil {
@@ -716,10 +722,48 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						processedIssues[num] = info.ModTime()
 					}
 				}
+			} else if strings.HasPrefix(f.Name(), "task-pr-") {
+				// Format could be task-pr-%d-comments.yaml or task-pr-%d-investigate.yaml
+				name := strings.TrimPrefix(f.Name(), "task-pr-")
+				name = strings.TrimSuffix(name, ".yaml")
+				
+				isComments := strings.HasSuffix(name, "-comments")
+				isInvestigate := strings.HasSuffix(name, "-investigate")
+				
+				var numStr string
+				if isComments {
+					numStr = strings.TrimSuffix(name, "-comments")
+				} else if isInvestigate {
+					numStr = strings.TrimSuffix(name, "-investigate")
+				}
+				
+				if numStr != "" {
+					if num, err := strconv.Atoi(numStr); err == nil {
+						if info, err := f.Info(); err == nil {
+							state := processedPRs[num]
+							if isComments {
+								state.lastCommentAddressedTime = info.ModTime()
+							} else if isInvestigate {
+								state.lastInvestigatedTime = info.ModTime()
+							}
+							
+							// Read the file to get CommitSHA if it's there
+							if data, err := os.ReadFile(filePath); err == nil {
+								var t QueueTask
+								if err := yaml.Unmarshal(data, &t); err == nil {
+									if t.CommitSHA != "" {
+										state.lastSHA = t.CommitSHA
+									}
+								}
+							}
+							
+							processedPRs[num] = state
+						}
+					}
+				}
 			}
 		}
 	}
-	processedPRs := make(map[int]prWatchState)
 
 	type watchState struct {
 		mu               sync.Mutex
@@ -820,6 +864,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 								CreatedAt: pr.GetCreatedAt(),
 								Assignee:  targetAssignee,
 								Status:    "Pending",
+								CommitSHA: headSHA,
 							}
 
 							if dryRun {
@@ -926,6 +971,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 									CreatedAt: pr.GetCreatedAt(),
 									Assignee:  targetAssignee,
 									Status:    "Pending",
+									CommitSHA: headSHA,
 								}
 
 								if dryRun {
@@ -1027,6 +1073,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 									CreatedAt: pr.GetCreatedAt(),
 									Assignee:  targetAssignee,
 									Status:    "Pending",
+									CommitSHA: headSHA,
 								}
 
 								if dryRun {
