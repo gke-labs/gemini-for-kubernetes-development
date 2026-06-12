@@ -91,6 +91,8 @@ The resource must have a direct KRM type (`_types.go`) scaffolded and updated vi
     For reference on setting up `generate.sh`, renaming files/fields to match acronyms, handling pointers, and ensuring proper directory structure, please also refer to the skill .gemini/skills/generate-sh-checker/SKILL.md.
 
     If you find any shortcomings in the skill (that likely apply to other resources), you may update SKILL.md. Also keep a journal of any less general observations etc. To avoid git merge conflicts, use a file under .gemini/skills/crd-mapper-fuzzer-existing-type/journal/, named after the kind or a similarly unique name. You may grep journal entries to identify learnings from other resources; if you find an important pattern by doing that you may also update the SKILL.md itself.
+
+    The created PR must include these labels: `direct-migration` and `overseer`
     ```
 
 ### Step 2: Identity and Reference Types Pattern
@@ -109,6 +111,8 @@ The resource kind must have an identity and reference type that follow our canon
     Please follow the skill .gemini/skills/kcc-identity-reference/SKILL.md for {kind}
 
     If you find any shortcomings in the skill (that likely apply to other resources), you may update SKILL.md. Also keep a journal of any less general observations etc. To avoid git merge conflicts, use a file under .gemini/skills/kcc-identity-reference/journal/, named after the kind or a similarly unique name. You may grep journal entries to identify learnings from other resources; if you find an important pattern by doing that you may also update the SKILL.md itself.
+
+    The created PR must include these labels: `direct-migration` and `overseer`
     ```
 
 ### Step 3: Create a Round-Trip KRM Fuzzer
@@ -128,6 +132,8 @@ For existing resources transitioning to a direct controller, a round-trip KRM fu
     The expected path for the fuzzer is `pkg/controller/direct/{service}/{kind}_fuzzer.go`. Ensure the direct controller package is imported/registered in `pkg/controller/direct/register/register.go` so the fuzzer executes under the central fuzz test suite.
 
     If you find any shortcomings in the skill (that likely apply to other resources), you may update skill.md. Also keep a journal of any less general observations etc. To avoid git merge conflicts, use a file under .gemini/skills/create-fuzzer/journal/, named after the kind or a similarly unique name. You may grep journal entries to identify learnings from other resources; if you find an important pattern by doing that you may also update the skill.md itself.
+
+    The created PR must include these labels: `direct-migration` and `overseer`
     ```
 
 ### Step 4: Implement Direct Controller & E2E Fixtures
@@ -148,4 +154,6 @@ The direct controller must be implemented to manage reconciliation logic (Adapte
     to implement the direct controller and record/verify E2E fixtures for {kind}.
 
     If you find any shortcomings in these skills (that likely apply to other resources), you may update them. Also keep a journal of any less general observations etc. To avoid git merge conflicts, use a file under their respective journal/ folders, named after the kind or a similarly unique name.
+
+    The created PR must include these labels: `direct-migration` and `overseer`
     ```
