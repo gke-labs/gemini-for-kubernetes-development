@@ -1310,6 +1310,11 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 			if (mode == "all" || mode == "scan" || mode == "scan-pr") && choresMode != "disabled" {
 				scanChores(ctx, ghClient, owner, repo, incomingDir, processingDir, queueDir, dryRun)
 			}
+
+			// Clean up sandboxes of merged or closed PRs
+			if err := cleanupClosedPRSandboxes(ctx, ghClient, kubeClient, owner, repo, rootFlags.Namespace, dryRun); err != nil {
+				klog.Errorf("Failed to clean up closed PR sandboxes: %v", err)
+			}
 		}
 
 		// 2. Fast Issue Scan Cycle
@@ -1858,4 +1863,44 @@ func shouldIgnoreUser(user *githubv39.User, githubLogin string, allowlistedBots 
 	}
 
 	return false
+}
+
+func cleanupClosedPRSandboxes(ctx context.Context, ghClient *githubv39.Client, kubeClient *clients.KubernetesClient, owner, repo, namespace string, dryRun bool) error {
+	list, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("listing sandboxes for cleanup: %w", err)
+	}
+
+	manager := k8s.NewManager(kubeClient)
+	for _, item := range list.Items {
+		name := item.GetName()
+		if !strings.HasPrefix(name, "factory-pr-") {
+			continue
+		}
+		numStr := strings.TrimPrefix(name, "factory-pr-")
+		num, err := strconv.Atoi(numStr)
+		if err != nil {
+			continue
+		}
+
+		// Fetch the PR state from GitHub
+		pr, _, err := ghClient.PullRequests.Get(ctx, owner, repo, num)
+		if err != nil {
+			klog.Warningf("Failed to fetch PR #%d for sandbox cleanup check: %v", num, err)
+			continue
+		}
+
+		// Check if it is closed or merged
+		if pr.GetState() == "closed" {
+			klog.Infof("Pull Request #%d is closed/merged. Deleting corresponding sandbox '%s'...", num, name)
+			if dryRun {
+				fmt.Printf("[DRYRUN] Would delete sandbox '%s' for closed PR #%d\n", name, num)
+				continue
+			}
+			if err := manager.DeleteSandbox(ctx, namespace, name); err != nil {
+				klog.Errorf("Failed to delete sandbox '%s' for closed PR #%d: %v", name, num, err)
+			}
+		}
+	}
+	return nil
 }
