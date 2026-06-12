@@ -46,7 +46,8 @@ factory
  │    ├── investigate (Investigate CI check failures for a PR in a sandbox)
  │    ├── address-comments (Address review feedback and comments for a PR)
  │    ├── iterate (Iterate on code / resolve merge conflicts for a PR)
- │    └── watch (Continuously monitor a PR for CI failures or new feedback)
+ │    ├── watch (Continuously monitor a PR for CI failures or new feedback)
+ │    └── adopt (Adopt a third-party PR under the bot user identity in a sandbox)
  ├── agent
  │    └── create (Run a custom agent definition in a sandbox)
  ├── watch (Continuously monitor a GitHub repo for failures and assigned issues)
@@ -206,9 +207,6 @@ factory pr review --pr-url https://github.com/owner/repo/pull/1 \
 Spin up a review sandbox to analyze failed CI check logs, review previous investigation comments, and attempt to fix the failure or report root causes. Use `--continue-session` to preserve LLM conversation history across multiple PR operations in the same sandbox:
 ```bash
 factory pr investigate --pr-url https://github.com/owner/repo/pull/1 --continue-session
-
-# Adopt the PR (owned by someone else) and close the original after adopting
-factory pr investigate --pr-url https://github.com/owner/repo/pull/1 --adopt close
 ```
 
 ### Addressing Review Comments (`factory pr address-comments`)
@@ -221,19 +219,29 @@ factory pr address-comments --pr-url https://github.com/owner/repo/pull/1 --cont
 Spin up a sandbox to resolve merge conflicts, rebase, or run manual code iterations:
 ```bash
 factory pr iterate --pr-url https://github.com/owner/repo/pull/1 --prompt "Please rebase onto latest master"
-
-# Adopt the PR before iterating
-factory pr iterate --pr-url https://github.com/owner/repo/pull/1 --adopt open --prompt "Refactor the auth handler"
 ```
 
 ### Watching Pull Requests (`factory pr watch`)
 Continuously monitor a specific PR in the foreground, automatically triggering `investigate` on CI failures or `address-comments` on new review feedback. Use `--continue-session` to ensure all dispatched tasks inherit the ongoing chat session. The watch loop logs explicit sleep intervals and cleanly terminates when the PR is merged, closed, or timeout expires:
 ```bash
 factory pr watch --pr-url https://github.com/owner/repo/pull/1 --watch-timeout 1h --cleanup
-
-# Adopt the PR and watch the adopted PR
-factory pr watch --pr-url https://github.com/owner/repo/pull/1 --adopt close --cleanup
 ```
+
+### Adopting Pull Requests (`factory pr adopt`)
+When collaborating on a shared repository, you often need the bot to work on a PR created by another developer. Since your bot's token cannot push directly to their personal fork, you must "adopt" the PR first. The adopt command runs in a sandbox and forks the base repository under the bot user identity, copies the commits or re-implements them, and opens a new adopted PR on GitHub.
+
+```bash
+# Adopt a PR using the git 'reuse' strategy (git fetch/push to preserve author history) and close the original
+factory pr adopt close --pr-url https://github.com/owner/repo/pull/1 --strategy reuse
+
+# Adopt a PR and leave the original open (linking to the new adopted PR via comment)
+factory pr adopt open --pr-url https://github.com/owner/repo/pull/1 --strategy reuse
+
+# Adopt a PR using the 'reimplement' strategy (LLM-based re-implementation on top of latest master/main) and close original
+factory pr adopt close --pr-url https://github.com/owner/repo/pull/1 --strategy reimplement
+```
+
+**Note**: The legacy `--adopt` flag on other commands (`investigate`, `iterate`, and `watch`) has been removed. Those commands will now fail immediately with a descriptive error if the PR does not belong to the factory bot, requiring you to adopt it first.
 
 ### Running Custom Agents (`factory agent create`)
 Automatically spin up a sandbox, clone the repository (or PR branch), retrieve a custom agent definition file, execute its prompt instructions inside the sandbox, and automatically commit/push/create/update a Pull Request depending on your configuration and whether it was triggered on a PR or a repository:

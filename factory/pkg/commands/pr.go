@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -1274,16 +1273,5 @@ func runAdopt(ctx context.Context, prURL, adoptAction, strategy string, ephemera
 		fmt.Printf("\nAdopted PR output:\n%s\n", buf.String())
 	}
 
-	return nil
-}
-
-func runCmd(ctx context.Context, dir string, name string, args ...string) error {
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Dir = dir
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to run %s %v: %w (stderr: %s)", name, args, err, stderr.String())
-	}
 	return nil
 }

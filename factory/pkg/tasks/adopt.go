@@ -6,17 +6,17 @@ import (
 )
 
 type AdoptParams struct {
-	RepoOwner     string
-	RepoName      string
-	CloneURL      string
-	PRNumber      int
-	PRURL         string
-	AdoptFlag     string // "open" or "close"
-	Strategy      string // "reuse" or "reimplement"
-	Title         string
-	Body          string
-	Diff          string
-	Models        []string
+	RepoOwner string
+	RepoName  string
+	CloneURL  string
+	PRNumber  int
+	PRURL     string
+	AdoptFlag string // "open" or "close"
+	Strategy  string // "reuse" or "reimplement"
+	Title     string
+	Body      string
+	Diff      string
+	Models    []string
 }
 
 func GetAdoptScript() ([]byte, error) {
