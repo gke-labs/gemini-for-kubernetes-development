@@ -67,7 +67,7 @@ EOF
 setupGit
 
 # Fork the repository if it doesn't already exist under the bot user account
-local GH_USER="${GITHUB_USER_ID}"
+GH_USER="${GITHUB_USER_ID}"
 if [ -n "${GITHUB_BOT_LOGIN}" ]; then
     GH_USER="${GITHUB_BOT_LOGIN}"
 fi
