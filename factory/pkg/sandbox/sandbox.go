@@ -123,6 +123,58 @@ func EnsureAgentSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 	return name, nil
 }
 
+func EnsureAdoptSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName string, prNum int, cloneURL, htmlURL, image, diskSize, ephemeralStorage string, secrets []SecretMount, envs []EnvVar) (string, error) {
+	name := fmt.Sprintf("adopt-%s-%d", repoName, prNum)
+
+	_, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err == nil {
+		return name, nil
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		return "", fmt.Errorf("checking sandbox existence: %w", err)
+	}
+
+	if diskSize == "" {
+		diskSize = "10Gi"
+	}
+
+	opt := AgentSandboxOptions{
+		DevSandboxOptions: DevSandboxOptions{
+			Name:      name,
+			Namespace: namespace,
+			Labels: map[string]string{
+				"sandbox.gemini.google.com/type":    "adopt",
+				"factory.gemini.google.com/managed": "true",
+			},
+			Annotations: map[string]string{
+				"repo":     repoName,
+				"cloneURL": cloneURL,
+				"htmlURL":  htmlURL,
+			},
+			Image:             image,
+			Replicas:          1,
+			WorkspaceDiskSize: diskSize,
+			EphemeralStorage:  ephemeralStorage,
+			Secrets:           secrets,
+			Env:               envs,
+		},
+	}
+
+	sb, svc := NewAgentSandbox(opt)
+
+	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sb, metav1.CreateOptions{})
+	if err != nil {
+		return "", fmt.Errorf("creating sandbox CR: %w", err)
+	}
+
+	_, err = kubeClient.Clientset.CoreV1().Services(namespace).Create(ctx, svc, metav1.CreateOptions{})
+	if err != nil {
+		return "", fmt.Errorf("creating sandbox service: %w", err)
+	}
+
+	return name, nil
+}
+
 func AliasSandboxToPR(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, sandboxName string, prNum int, prURL string) error {
 	unstructObj, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
 	if err != nil {
