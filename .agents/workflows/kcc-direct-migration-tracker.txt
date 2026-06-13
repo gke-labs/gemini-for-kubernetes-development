@@ -33,7 +33,7 @@ This workflow runs in the context of a singleton coordinator issue.
 3. For each active migration, check if it is already recorded as `"In Progress"` in `dev/migration-tracker/data.json`. If it is recorded as `"Not Started"`, update it to `"In Progress"` and record the issue.
 4. Check if any previously active migration issues have been **closed**:
    - For any resource that was in progress but its corresponding `overseer` issue is now closed/merged:
-     - Check if the direct controller is indeed registered in `pkg/controller/resourceconfig/static_config.go` or types are present.
+     - Check if the direct controller is indeed registered in `pkg/controller/resourceconfig/static_config.go`
      - Update the resource's state to `"Completed"` in `dev/migration-tracker/data.json` and reset/populate the relevant step completion flags.
 
 ## Step 3: Scan GitHub for Community and External Work
