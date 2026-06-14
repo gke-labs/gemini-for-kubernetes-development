@@ -151,6 +151,16 @@ type OverseerSpec struct {
 	// Env is a list of environment variables to inject in all sandboxes.
 	// +kubebuilder:validation:Optional
 	Env []EnvVar `json:"env,omitempty"`
+
+	// Roles defines the user account pools per role.
+	// +kubebuilder:validation:Optional
+	Roles map[string]RoleSpec `json:"roles,omitempty"`
+}
+
+type RoleSpec struct {
+	// Users is the list of user accounts belonging to this role pool.
+	// +kubebuilder:validation:Optional
+	Users []string `json:"users,omitempty"`
 }
 
 type SecretMount struct {

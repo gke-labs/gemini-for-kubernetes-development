@@ -124,6 +124,15 @@ spec:
                 type: object
               robotAccount:
                 type: string
+              roles:
+                additionalProperties:
+                  properties:
+                    users:
+                      items:
+                        type: string
+                      type: array
+                  type: object
+                type: object
               secrets:
                 items:
                   properties:

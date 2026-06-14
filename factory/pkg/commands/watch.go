@@ -1608,6 +1608,18 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						}
 					}
 
+					selectedUser, sUserErr := selectUserForTask(ctx, ghClient, cfg, t.Type, t.Number, owner, repo)
+					if sUserErr != nil {
+						klog.Errorf("Failed to select user for task %s: %v", taskFilename, sUserErr)
+						t.Status = "Failed"
+						t.Error = sUserErr.Error()
+						_ = writeTaskAtomically(processingDir, taskFilename, t)
+						writeTaskJournalEvent(queueDir, taskFilename, t, "Failed", 0)
+						processedPath := filepath.Join(processedDir, taskFilename)
+						_ = os.Rename(processingPath, processedPath)
+						return
+					}
+
 					executable, err := os.Executable()
 					if err != nil {
 						klog.Errorf("Failed to get executable path: %v", err)
@@ -1639,8 +1651,8 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					if rootFlags.Namespace != "" {
 						args = append(args, "--namespace", rootFlags.Namespace)
 					}
-					if rootFlags.SecretName != "" {
-						args = append(args, "--secret-name", rootFlags.SecretName)
+					if selectedUser != "" {
+						args = append(args, "--user", selectedUser)
 					}
 					if rootFlags.Image != "" {
 						args = append(args, "--image", rootFlags.Image)
@@ -1963,4 +1975,82 @@ func cleanupClosedIssueSandboxes(ctx context.Context, ghClient *githubv39.Client
 		}
 	}
 	return nil
+}
+
+func selectUserForTask(ctx context.Context, ghClient *githubv39.Client, cfg *config.FactoryConfig, taskType string, prNum int, owner, repo string) (string, error) {
+	if cfg == nil || len(cfg.Roles) == 0 {
+		return "", nil // default fallback to factory-user
+	}
+
+	// 1. Determine role for task type
+	role := ""
+	for roleName, rCfg := range cfg.Roles {
+		for _, t := range rCfg.Tasks {
+			if strings.EqualFold(t, taskType) {
+				role = roleName
+				break
+			}
+		}
+		if role != "" {
+			break
+		}
+	}
+
+	if role == "" {
+		switch taskType {
+		case "issue-fix", "pr-investigate", "pr-comments", "pr-iterate":
+			role = "coder"
+		case "pr-review":
+			role = "reviewer"
+		default:
+			return "", nil // default fallback
+		}
+	}
+
+	roleCfg, exists := cfg.Roles[role]
+	if !exists || len(roleCfg.Users) == 0 {
+		return "", nil // default fallback
+	}
+
+	// 2. Select bot based on new vs existing PR
+	isNewPR := taskType == "issue-fix"
+	if isNewPR {
+		idx := time.Now().UnixNano() % int64(len(roleCfg.Users))
+		return roleCfg.Users[idx], nil
+	}
+
+	if prNum > 0 {
+		pr, _, err := ghClient.PullRequests.Get(ctx, owner, repo, prNum)
+		if err != nil {
+			return "", fmt.Errorf("fetching PR details: %w", err)
+		}
+		author := pr.GetUser().GetLogin()
+		if author == "" {
+			return "", fmt.Errorf("empty author login for PR %d", prNum)
+		}
+
+		if taskType == "pr-review" {
+			reviewerRoleCfg, ok := cfg.Roles["reviewer"]
+			if ok && len(reviewerRoleCfg.Users) > 0 {
+				idx := time.Now().UnixNano() % int64(len(reviewerRoleCfg.Users))
+				return reviewerRoleCfg.Users[idx], nil
+			}
+			idx := time.Now().UnixNano() % int64(len(roleCfg.Users))
+			return roleCfg.Users[idx], nil
+		}
+
+		inPool := false
+		for _, u := range roleCfg.Users {
+			if strings.EqualFold(u, author) {
+				inPool = true
+				break
+			}
+		}
+		if !inPool {
+			return "", fmt.Errorf("PR author '%s' is not in the configured bot pool for role '%s'", author, role)
+		}
+		return author, nil
+	}
+
+	return "", nil
 }

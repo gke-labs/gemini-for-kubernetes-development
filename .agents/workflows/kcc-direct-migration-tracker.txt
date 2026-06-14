@@ -8,7 +8,10 @@ mode: workflow
 
 # Role
 You are a senior release orchestrator and meta-agent for the Kubernetes Config Connector (KCC) project.
-Your goal is to coordinate the overall migration of legacy Terraform and DCL controllers to the modern "Direct" controller pattern. Note that this workflow is strictly focused on migration use cases of legacy resources (already tracked in `dev/migration-tracker/data.json`) and excludes greenfield resources. You do this by parsing the local migration tracking data, auditing GitHub for active work/PRs, updating tracking records, and delegating individual migrations to sub-agents via overseer issues.
+Your goal is to coordinate the overall migration of legacy Terraform and DCL controllers to the modern "Direct" controller pattern.
+Note that this workflow is strictly focused on migration use cases of legacy resources (already tracked in `dev/migration-tracker/data.json`) 
+and excludes greenfield resources. 
+You do this by parsing the local migration tracking data, auditing GitHub for active work/PRs, updating tracking records, and delegating individual migrations to sub-agents via overseer issues.
 
 # Periodic Execution & Idempotency Rules
 This orchestrator agent runs periodically (invoked by an external harness that continues the same session). To ensure idempotency and prevent duplicate issues:
@@ -51,8 +54,9 @@ To avoid duplicate work, audit GitHub for external contributions:
        - Create a new `overseer` tracking issue to link and monitor the work (similar to issue #9737):
          ```bash
          gh issue create --title "Migrating ${KIND} to Direct controller overseer" \
-           --body "Active in-flight work detected: ${EXTERNAL_PR_OR_ISSUE_URL}\n\nUsing the skill workflow, please complete creation of direct controller for ${KIND}\n\nhttps://raw.githubusercontent.com/gke-labs/gemini-for-kubernetes-development/refs/heads/main/.agents/workflows/kcc-example.txt" \
+           --body "Using the skill workflow, please complete creation of direct controller for ${KIND}\n\nhttps://raw.githubusercontent.com/gke-labs/gemini-for-kubernetes-development/refs/heads/main/.agents/workflows/kcc-example.txt" \
            --label "overseer" \
+           --label "workflow/migrate" \
            --assignee "factorybot-robot"
          ```
        - Update the resource's state to `"In Progress"` in `dev/migration-tracker/data.json` and record the newly created issue number in the `"trackingIssue"` field of that resource's JSON block.
@@ -70,6 +74,7 @@ To avoid duplicate work, audit GitHub for external contributions:
      gh issue create --title "Migrating ${KIND} to Direct controller overseer" \
        --body "Using the skill workflow, please complete creation of direct controller for ${KIND}\n\nhttps://raw.githubusercontent.com/gke-labs/gemini-for-kubernetes-development/refs/heads/main/.agents/workflows/kcc-example.txt" \
        --label "overseer" \
+       --label "workflow/migrate" \
        --assignee "factorybot-robot"
      ```
    - Update the resource's `"state"` to `"In Progress"` in `dev/migration-tracker/data.json` and save the new issue number in the `"trackingIssue"` field of that resource's JSON block.

@@ -21,6 +21,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/tasks"
 	githubv39 "github.com/google/go-github/v39/github"
 	"github.com/spf13/cobra"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
 )
@@ -1031,13 +1032,25 @@ func verifyPROwnership(ctx context.Context, prURL string) error {
 		return fmt.Errorf("creating k8s client: %w", err)
 	}
 
+	prAuthor := pr.GetUser().GetLogin()
+	if rootFlags.User == "" && prAuthor != "" {
+		secretName := fmt.Sprintf("factory-user-%s", prAuthor)
+		_, err = kubeClient.Clientset.CoreV1().Secrets(rootFlags.Namespace).Get(ctx, secretName, metav1.GetOptions{})
+		if err == nil {
+			klog.Infof("Auto-resolved PR author secret: %s", secretName)
+			rootFlags.SecretName = secretName
+			rootFlags.User = prAuthor
+		} else if !apierrors.IsNotFound(err) {
+			return fmt.Errorf("checking user secret: %w", err)
+		}
+	}
+
 	secret, err := kubeClient.Clientset.CoreV1().Secrets(rootFlags.Namespace).Get(ctx, rootFlags.SecretName, metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("fetching %s secret in namespace %s: %w (make sure to run 'factory user onboard' first)", rootFlags.SecretName, rootFlags.Namespace, err)
 	}
 	githubLogin := string(secret.Data[KeyGithubLogin])
 
-	prAuthor := pr.GetUser().GetLogin()
 	if !strings.EqualFold(prAuthor, githubLogin) {
 		return fmt.Errorf("PR is not owned by the factory user (%s). It is owned by %s. Please run 'factory pr adopt <open|close> --pr-url %s' to adopt it first", githubLogin, prAuthor, prURL)
 	}
