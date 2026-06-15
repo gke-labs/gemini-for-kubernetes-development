@@ -45,7 +45,10 @@ Here are the available fields in `.factory.cfg`:
   * **Role Spec**:
     * **`tasks`** (array of strings): The list of task types mapped to this role (e.g., `issue-fix`, `pr-investigate`, `pr-comments`, `pr-iterate`, `pr-review`, `agent-chore`).
     * **`users`** (array of strings): The list of bot user accounts belonging to this pool. The `factory` CLI will select one randomly.
-  * *Note*: Standard role names are `coder` (maps to coding tasks) and `reviewer` (maps to PR review tasks).
+  * *Note*: Standard role names are:
+    * `coder` (default for coding tasks: `issue-fix`, `pr-investigate`, `pr-comments`, `pr-iterate`)
+    * `reviewer` (default for PR review tasks: `pr-review`)
+    * `agent` (default for custom agent tasks: `agent-chore`. Falls back to the `coder` role if the `agent` role is not explicitly configured).
 
 ---
 

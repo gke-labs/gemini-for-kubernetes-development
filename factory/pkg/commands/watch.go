@@ -1998,6 +1998,12 @@ func selectUserForTask(ctx context.Context, ghClient *githubv39.Client, cfg *con
 
 	if role == "" {
 		switch taskType {
+		case "agent-chore":
+			if rCfg, ok := cfg.Roles["agent"]; ok && len(rCfg.Users) > 0 {
+				role = "agent"
+			} else {
+				role = "coder"
+			}
 		case "issue-fix", "pr-investigate", "pr-comments", "pr-iterate":
 			role = "coder"
 		case "pr-review":
@@ -2009,12 +2015,18 @@ func selectUserForTask(ctx context.Context, ghClient *githubv39.Client, cfg *con
 
 	roleCfg, exists := cfg.Roles[role]
 	if !exists || len(roleCfg.Users) == 0 {
-		return "", nil // default fallback
+		if role == "agent" {
+			role = "coder"
+			roleCfg, exists = cfg.Roles[role]
+		}
+		if !exists || len(roleCfg.Users) == 0 {
+			return "", nil // default fallback
+		}
 	}
 
 	// 2. Select bot based on new vs existing PR
-	isNewPR := taskType == "issue-fix"
-	if isNewPR {
+	isNewWorkflow := prNum == 0 || taskType == "issue-fix"
+	if isNewWorkflow {
 		idx := time.Now().UnixNano() % int64(len(roleCfg.Users))
 		return roleCfg.Users[idx], nil
 	}
