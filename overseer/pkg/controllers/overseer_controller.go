@@ -269,7 +269,6 @@ func (r *OverseerReconciler) ensureOverseerRBAC(ctx context.Context, o *overseer
 }
 
 func (r *OverseerReconciler) ensureSecrets(ctx context.Context, o *overseerv1alpha1.Overseer, targetNamespace string) error {
-	log := log.FromContext(ctx)
 
 	// 1. Reconcile system secrets (tokenscript, github-portal-ca) by copying them
 	systemSecrets := []string{"tokenscript", "github-portal-ca"}
@@ -331,9 +330,53 @@ func (r *OverseerReconciler) ensureSecrets(ctx context.Context, o *overseerv1alp
 	geminiAPIKey = getSecretValue(srcGeminiSecret, "GEMINI_API_KEY", "gemini")
 
 	// 3. Create or Update "factory-user" secret in target namespace
+	if err := r.reconcileFactorySecret(ctx, "factory-user", targetNamespace, githubLogin, githubEmail, githubToken, geminiAPIKey); err != nil {
+		return err
+	}
+
+	// 4. Create or Update user pool secrets
+	for _, roleSpec := range o.Spec.Roles {
+		for _, user := range roleSpec.Users {
+			if user == "" {
+				continue
+			}
+
+			userSecret, err := r.findSecret(ctx, user, []string{o.Namespace, "overseer-system"})
+			if err != nil {
+				if errors.IsNotFound(err) {
+					userSecret, err = r.findSecret(ctx, fmt.Sprintf("user-%s", user), []string{o.Namespace, "overseer-system"})
+				}
+			}
+
+			if err != nil {
+				if errors.IsNotFound(err) {
+					o.Status.OverseerStatus = "Error"
+					o.Status.Message = fmt.Sprintf("Secret for user %s not found in %s or overseer-system", user, o.Namespace)
+					return nil
+				}
+				return err
+			}
+
+			uLogin := getSecretValue(userSecret, "GITHUB_LOGIN", "userid")
+			uEmail := getSecretValue(userSecret, "GITHUB_EMAIL", "email")
+			uToken := getSecretValue(userSecret, "GITHUB_TOKEN", "pat")
+
+			targetSecretName := fmt.Sprintf("factory-user-%s", user)
+			if err := r.reconcileFactorySecret(ctx, targetSecretName, targetNamespace, uLogin, uEmail, uToken, geminiAPIKey); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func (r *OverseerReconciler) reconcileFactorySecret(ctx context.Context, name, targetNamespace string, githubLogin, githubEmail, githubToken, geminiAPIKey []byte) error {
+	log := log.FromContext(ctx)
+
 	factorySecret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "factory-user",
+			Name:      name,
 			Namespace: targetNamespace,
 		},
 		Data: map[string][]byte{},
@@ -352,10 +395,10 @@ func (r *OverseerReconciler) ensureSecrets(ctx context.Context, o *overseerv1alp
 	}
 
 	existingSecret := &corev1.Secret{}
-	err = r.Get(ctx, types.NamespacedName{Name: "factory-user", Namespace: targetNamespace}, existingSecret)
+	err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: targetNamespace}, existingSecret)
 	if err != nil {
 		if errors.IsNotFound(err) {
-			log.Info("Creating factory-user secret", "namespace", targetNamespace)
+			log.Info("Creating factory secret", "name", name, "namespace", targetNamespace)
 			return r.Create(ctx, factorySecret)
 		}
 		return err

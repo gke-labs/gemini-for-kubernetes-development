@@ -59,6 +59,11 @@ function writeFactoryConfig {
         echo "env:" >> "$CFG_FILE"
         echo "$FACTORY_ENV" | jq -r '.[] | "  - name: \(.name)\n    value: \(.value)"' >> "$CFG_FILE"
     fi
+
+    if [ -n "$FACTORY_ROLES" ]; then
+        echo "roles:" >> "$CFG_FILE"
+        echo "$FACTORY_ROLES" | jq -r 'to_entries[] | "  \(.key):\n    users:\n" + (.value.users | map("      - " + .) | join("\n"))' >> "$CFG_FILE"
+    fi
     
     export FACTORY_CONFIG="$CFG_FILE"
     echo "$(date): FACTORY_CONFIG set to $FACTORY_CONFIG"

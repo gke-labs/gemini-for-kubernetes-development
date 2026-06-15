@@ -139,6 +139,14 @@ Gemini Key       [OK]     Configured in secret 'factory-user'
 
 ---
 
+## Configuration (`.factory.cfg`)
+
+The `factory` CLI and watch daemon support a local YAML configuration file named `.factory.cfg` to manage limits, default resources, and multiple bot identity pools (roles).
+
+For a complete reference of the config fields, paths, and an example YAML file, see the [AI Factory Configuration Guide](docs/configuration.md).
+
+---
+
 ## Usage & AI Workflows
 
 ### Fixing Issues (`factory fix`)

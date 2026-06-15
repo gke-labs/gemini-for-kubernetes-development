@@ -77,6 +77,34 @@ func ReconcileOverseer(ctx context.Context, c client.Client, o *overseerv1alpha1
 		return err
 	}
 
+	// If exists, compare spec and update if changed
+	desiredSandbox := newOverseerSandboxFromOverseer(o, overseerName, namespace, hasTokenScript)
+	existingSpec := sandbox.Object["spec"]
+	desiredSpec := desiredSandbox.Object["spec"]
+
+	existingJSON, _ := json.Marshal(existingSpec)
+	desiredJSON, _ := json.Marshal(desiredSpec)
+
+	if string(existingJSON) != string(desiredJSON) {
+		log.Info("Updating Overseer sandbox spec", "name", overseerName, "namespace", namespace)
+		sandbox.Object["spec"] = desiredSpec
+		if err := c.Update(ctx, sandbox); err != nil {
+			return fmt.Errorf("updating sandbox spec: %w", err)
+		}
+
+		// Delete the sandbox pod to force a restart/recreation with the new spec
+		pod := &corev1.Pod{}
+		err = c.Get(ctx, types.NamespacedName{Name: overseerName, Namespace: namespace}, pod)
+		if err == nil {
+			log.Info("Deleting Overseer sandbox pod to force restart", "name", overseerName, "namespace", namespace)
+			if err := c.Delete(ctx, pod); err != nil {
+				log.Error(err, "Failed to delete sandbox pod to force restart", "name", overseerName, "namespace", namespace)
+			}
+		} else if !errors.IsNotFound(err) {
+			log.Error(err, "Failed to find sandbox pod for deletion", "name", overseerName, "namespace", namespace)
+		}
+	}
+
 	o.Status.OverseerStatus = "Active"
 	return nil
 }
@@ -85,6 +113,9 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 	image := os.Getenv("OVERSEER_IMAGE")
 
 	secretName := "factory-user"
+	if roleSpec, ok := o.Spec.Roles["watcher"]; ok && len(roleSpec.Users) > 0 && roleSpec.Users[0] != "" {
+		secretName = fmt.Sprintf("factory-user-%s", roleSpec.Users[0])
+	}
 
 	env := []interface{}{
 		map[string]interface{}{
@@ -165,6 +196,12 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 			"value": fmt.Sprintf("%t", o.Spec.EnableGeminiOrchestrator),
 		},
 	}
+
+	rolesJSON, _ := json.Marshal(o.Spec.Roles)
+	env = append(env, map[string]interface{}{
+		"name":  "FACTORY_ROLES",
+		"value": string(rolesJSON),
+	})
 
 	if o.Spec.Chores != nil && o.Spec.Chores.Mode != "" {
 		env = append(env, map[string]interface{}{
