@@ -293,6 +293,10 @@ mkdir -p /workspaces/logs
 LAST_DAY=$(date +%F)
 LAST_WEEK=$(date +%V)
 
+# Start factory webhook handler (local webhook listener & token broker) in background
+echo "$(date): Starting local factory webhook handler..."
+factory gh-webhook-handler --port 8080 --queue-dir ./overseer/queues --trigger-label "${TRIGGER_LABEL_VAL:-factory}" &
+
 while true; do
   CURRENT_DAY=$(date +%F)
   CURRENT_WEEK=$(date +%V)
