@@ -7,6 +7,8 @@
 #export FEYNMAN_GITHUB_TOKEN=..
 #export WALLE_GITHUB_TOKEN=..
 
+alias factory=../factory/bin/factory
+
 factory user onboard \
   --user argus-watcher-bot \
   --namespace overseer-system \

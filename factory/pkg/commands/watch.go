@@ -2024,9 +2024,30 @@ func selectUserForTask(ctx context.Context, ghClient *githubv39.Client, cfg *con
 		}
 	}
 
-	// 2. Select bot based on new vs existing PR
-	isNewWorkflow := prNum == 0 || taskType == "issue-fix"
-	if isNewWorkflow {
+	// 2. Select bot based on new vs existing PR/Issue
+	isIssueTask := taskType == "issue-fix" || taskType == "agent-chore"
+	if isIssueTask {
+		if prNum > 0 {
+			issue, _, err := ghClient.Issues.Get(ctx, owner, repo, prNum)
+			if err == nil {
+				assignee := issue.GetAssignee().GetLogin()
+				if assignee != "" {
+					inPool := false
+					for _, u := range roleCfg.Users {
+						if strings.EqualFold(u, assignee) {
+							inPool = true
+							break
+						}
+					}
+					if inPool {
+						return assignee, nil
+					}
+				}
+			} else {
+				klog.Warningf("Failed to fetch issue details for task %s #%d: %v", taskType, prNum, err)
+			}
+		}
+
 		idx := time.Now().UnixNano() % int64(len(roleCfg.Users))
 		return roleCfg.Users[idx], nil
 	}
