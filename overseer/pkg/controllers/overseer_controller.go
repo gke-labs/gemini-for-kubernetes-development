@@ -347,6 +347,11 @@ func (r *OverseerReconciler) ensureSecrets(ctx context.Context, o *overseerv1alp
 					userSecret, err = r.findSecret(ctx, fmt.Sprintf("user-%s", user), []string{o.Namespace, "overseer-system"})
 				}
 			}
+			if err != nil {
+				if errors.IsNotFound(err) {
+					userSecret, err = r.findSecret(ctx, fmt.Sprintf("factory-user-%s", user), []string{o.Namespace, "overseer-system"})
+				}
+			}
 
 			if err != nil {
 				if errors.IsNotFound(err) {
