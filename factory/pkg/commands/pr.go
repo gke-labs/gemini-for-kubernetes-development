@@ -1034,7 +1034,7 @@ func verifyPROwnership(ctx context.Context, prURL string) error {
 
 	prAuthor := pr.GetUser().GetLogin()
 	if rootFlags.User == "" && prAuthor != "" {
-		secretName := fmt.Sprintf("factory-user-%s", prAuthor)
+		secretName := fmt.Sprintf("user-%s", prAuthor)
 		_, err = kubeClient.Clientset.CoreV1().Secrets(rootFlags.Namespace).Get(ctx, secretName, metav1.GetOptions{})
 		if err == nil {
 			klog.Infof("Auto-resolved PR author secret: %s", secretName)

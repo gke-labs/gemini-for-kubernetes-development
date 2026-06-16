@@ -57,7 +57,7 @@ coding tasks without local side effects or host dependencies.`,
 	cmd.PersistentFlags().StringVarP(&rootFlags.Namespace, "namespace", "n", os.Getenv("NAMESPACE"), "Kubernetes namespace (defaults to $NAMESPACE, gh user, or default)")
 	cmd.PersistentFlags().StringVar(&rootFlags.Image, "image", "ghcr.io/gke-labs/gemini-for-kubernetes-development/factory-golang:latest", "Sandbox base image")
 	cmd.PersistentFlags().StringVar(&rootFlags.DiskSize, "workspace-disk-size", "10Gi", "Workspace PVC disk size")
-	cmd.PersistentFlags().StringVarP(&rootFlags.User, "user", "u", "", "Run tasks under a specific bot user identity (looks up secret factory-user-<user>)")
+	cmd.PersistentFlags().StringVarP(&rootFlags.User, "user", "u", "", "Run tasks under a specific bot user identity (looks up secret user-<user>)")
 	cmd.PersistentFlags().DurationVar(&rootFlags.Timeout, "timeout", 30*time.Minute, "Overall execution timeout")
 	cmd.PersistentFlags().BoolVar(&rootFlags.Background, "background", false, "Run the CLI command as a background daemon process and redirect output to a log file")
 	cmd.PersistentFlags().BoolVar(&rootFlags.Cleanup, "cleanup", false, "Delete the sandbox after the task is run or watch completes")
@@ -82,7 +82,7 @@ coding tasks without local side effects or host dependencies.`,
 		}
 
 		if rootFlags.User != "" {
-			rootFlags.SecretName = fmt.Sprintf("factory-user-%s", rootFlags.User)
+			rootFlags.SecretName = fmt.Sprintf("user-%s", rootFlags.User)
 		} else {
 			rootFlags.SecretName = SecretFactoryUser
 		}

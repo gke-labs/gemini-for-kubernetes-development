@@ -114,7 +114,7 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 
 	secretName := "factory-user"
 	if roleSpec, ok := o.Spec.Roles["watcher"]; ok && len(roleSpec.Users) > 0 && roleSpec.Users[0] != "" {
-		secretName = fmt.Sprintf("factory-user-%s", roleSpec.Users[0])
+		secretName = fmt.Sprintf("user-%s", roleSpec.Users[0])
 	}
 
 	env := []interface{}{
