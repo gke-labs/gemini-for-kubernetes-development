@@ -22,3 +22,21 @@ spec:
     issueMode: enabled
     prMode: enabled
     reviewMode: disabled
+  roles:
+    watcher:
+      users:
+        - argus-watcher-bot
+        #- spock-watcher-bot
+    coder:
+      users:
+        - lovelace-coder-bot
+        - hopper-coder-bot
+        - ada-coder-bot
+    reviewer:
+      users:
+        - reviewbot-robot
+    agent:
+      users:
+        - daedalus-agent-bot
+        - feynman-agent-bot
+        - walle-agent-bot
