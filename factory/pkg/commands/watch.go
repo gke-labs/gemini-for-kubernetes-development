@@ -1905,19 +1905,36 @@ func getReferencedIssues(pr *githubv39.PullRequest) map[int]bool {
 }
 
 func hasLinkedPR(ctx context.Context, client *githubv39.Client, owner, repo string, issueNum int) (bool, error) {
+	// 1. Try timeline check (quick and standard)
 	timeline, _, err := client.Issues.ListIssueTimeline(ctx, owner, repo, issueNum, nil)
-	if err != nil {
-		return false, err
-	}
-	for _, event := range timeline {
-		if event.GetEvent() == "cross-referenced" && event.Source != nil {
-			if event.Source.Issue != nil && event.Source.Issue.PullRequestLinks != nil {
-				if event.Source.Issue.GetState() == "open" {
-					return true, nil
+	if err == nil {
+		for _, event := range timeline {
+			if event.GetEvent() == "cross-referenced" && event.Source != nil {
+				if event.Source.Issue != nil && event.Source.Issue.PullRequestLinks != nil {
+					if event.Source.Issue.GetState() == "open" {
+						return true, nil
+					}
 				}
 			}
 		}
+	} else {
+		klog.Warningf("Failed to list issue timeline for #%d: %v. Falling back to search API.", issueNum, err)
 	}
+
+	// 2. Fallback to Search API: search for open PRs referencing the issue number
+	query := fmt.Sprintf("repo:%s/%s type:pr state:open \"%d\"", owner, repo, issueNum)
+	opts := &githubv39.SearchOptions{
+		ListOptions: githubv39.ListOptions{PerPage: 10},
+	}
+	result, _, err := client.Search.Issues(ctx, query, opts)
+	if err != nil {
+		return false, fmt.Errorf("failed to search PRs for issue #%d: %w", issueNum, err)
+	}
+
+	if result.GetTotal() > 0 {
+		return true, nil
+	}
+
 	return false, nil
 }
 
