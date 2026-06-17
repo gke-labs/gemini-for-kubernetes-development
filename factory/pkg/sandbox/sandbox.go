@@ -9,13 +9,26 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/klog/v2"
 )
 
-func EnsureFixSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, taskID, cloneURL, htmlURL, taskTitle, image, diskSize, ephemeralStorage string, secrets []SecretMount, envs []EnvVar) (string, error) {
+func EnsureFixSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, taskID, cloneURL, htmlURL, taskTitle, image, diskSize, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
 	name := fmt.Sprintf("fix-%s-%s", repoName, taskID)
 
-	_, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	sb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err == nil {
+		labels := sb.GetLabels()
+		if labels == nil {
+			labels = make(map[string]string)
+		}
+		if labels["factory.gemini.google.com/user"] != user && user != "" {
+			labels["factory.gemini.google.com/user"] = user
+			sb.SetLabels(labels)
+			_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Update(ctx, sb, metav1.UpdateOptions{})
+			if err != nil {
+				klog.Warningf("Failed to update sandbox labels with user '%s': %v", user, err)
+			}
+		}
 		return name, nil
 	}
 	if !strings.Contains(err.Error(), "not found") {
@@ -33,6 +46,7 @@ func EnsureFixSandbox(ctx context.Context, kubeClient *clients.KubernetesClient,
 			Labels: map[string]string{
 				"sandbox.gemini.google.com/type":    "fix",
 				"factory.gemini.google.com/managed": "true",
+				"factory.gemini.google.com/user":    user,
 			},
 			Annotations: map[string]string{
 				"repo":     repoName,
@@ -48,9 +62,9 @@ func EnsureFixSandbox(ctx context.Context, kubeClient *clients.KubernetesClient,
 		},
 	}
 
-	sb, svc := NewAgentSandbox(opt)
+	sbObj, svc := NewAgentSandbox(opt)
 
-	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sb, metav1.CreateOptions{})
+	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sbObj, metav1.CreateOptions{})
 	if err != nil {
 		return "", fmt.Errorf("creating sandbox CR: %w", err)
 	}
@@ -63,11 +77,12 @@ func EnsureFixSandbox(ctx context.Context, kubeClient *clients.KubernetesClient,
 	return name, nil
 }
 
-func EnsureAgentSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, taskID, cloneURL, htmlURL, taskTitle, image, diskSize, ephemeralStorage string, secrets []SecretMount, envs []EnvVar) (string, error) {
+func EnsureAgentSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, taskID, cloneURL, htmlURL, taskTitle, image, diskSize, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
 	name := fmt.Sprintf("agent-%s-%s", repoName, taskID)
 	labels := map[string]string{
 		"sandbox.gemini.google.com/type":    "agent",
 		"factory.gemini.google.com/managed": "true",
+		"factory.gemini.google.com/user":    user,
 	}
 
 	if idx := strings.Index(taskID, "-issue-"); idx != -1 {
@@ -77,8 +92,20 @@ func EnsureAgentSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 		labels["factory.gemini.google.com/workflow"] = workflowName
 	}
 
-	_, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	sb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err == nil {
+		labels := sb.GetLabels()
+		if labels == nil {
+			labels = make(map[string]string)
+		}
+		if labels["factory.gemini.google.com/user"] != user && user != "" {
+			labels["factory.gemini.google.com/user"] = user
+			sb.SetLabels(labels)
+			_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Update(ctx, sb, metav1.UpdateOptions{})
+			if err != nil {
+				klog.Warningf("Failed to update sandbox labels with user '%s': %v", user, err)
+			}
+		}
 		return name, nil
 	}
 	if !strings.Contains(err.Error(), "not found") {
@@ -108,9 +135,9 @@ func EnsureAgentSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 		},
 	}
 
-	sb, svc := NewAgentSandbox(opt)
+	sbObj, svc := NewAgentSandbox(opt)
 
-	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sb, metav1.CreateOptions{})
+	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sbObj, metav1.CreateOptions{})
 	if err != nil {
 		return "", fmt.Errorf("creating sandbox CR: %w", err)
 	}
@@ -123,11 +150,23 @@ func EnsureAgentSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 	return name, nil
 }
 
-func EnsureAdoptSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName string, prNum int, cloneURL, htmlURL, image, diskSize, ephemeralStorage string, secrets []SecretMount, envs []EnvVar) (string, error) {
+func EnsureAdoptSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName string, prNum int, cloneURL, htmlURL, image, diskSize, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
 	name := fmt.Sprintf("adopt-%s-%d", repoName, prNum)
 
-	_, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	sb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err == nil {
+		labels := sb.GetLabels()
+		if labels == nil {
+			labels = make(map[string]string)
+		}
+		if labels["factory.gemini.google.com/user"] != user && user != "" {
+			labels["factory.gemini.google.com/user"] = user
+			sb.SetLabels(labels)
+			_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Update(ctx, sb, metav1.UpdateOptions{})
+			if err != nil {
+				klog.Warningf("Failed to update sandbox labels with user '%s': %v", user, err)
+			}
+		}
 		return name, nil
 	}
 	if !strings.Contains(err.Error(), "not found") {
@@ -145,6 +184,7 @@ func EnsureAdoptSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 			Labels: map[string]string{
 				"sandbox.gemini.google.com/type":    "adopt",
 				"factory.gemini.google.com/managed": "true",
+				"factory.gemini.google.com/user":    user,
 			},
 			Annotations: map[string]string{
 				"repo":     repoName,
@@ -160,9 +200,9 @@ func EnsureAdoptSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 		},
 	}
 
-	sb, svc := NewAgentSandbox(opt)
+	sbObj, svc := NewAgentSandbox(opt)
 
-	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sb, metav1.CreateOptions{})
+	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sbObj, metav1.CreateOptions{})
 	if err != nil {
 		return "", fmt.Errorf("creating sandbox CR: %w", err)
 	}

@@ -220,7 +220,7 @@ func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 	taskTitle := fmt.Sprintf("Agent: %s", agentDef.Name)
 
 	fmt.Printf("Ensuring sandbox for task %s...\n", taskID)
-	sandboxName, err := factorysandbox.EnsureAgentSandbox(ctx, kubeClient, rootFlags.Namespace, repo, taskID, cloneURL, flags.URL, taskTitle, rootFlags.Image, rootFlags.DiskSize, ephemeralStorage, secrets, rootFlags.ResolvedEnvs)
+	sandboxName, err := factorysandbox.EnsureAgentSandbox(ctx, kubeClient, rootFlags.Namespace, repo, taskID, cloneURL, flags.URL, taskTitle, rootFlags.Image, rootFlags.DiskSize, ephemeralStorage, secrets, rootFlags.ResolvedEnvs, rootFlags.User)
 	if err != nil {
 		return fmt.Errorf("ensuring agent sandbox: %w", err)
 	}

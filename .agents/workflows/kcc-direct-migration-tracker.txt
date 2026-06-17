@@ -26,12 +26,10 @@ This workflow runs in the context of a singleton coordinator issue.
 2. Store this issue number as `${COORDINATOR_ISSUE_NUMBER}`.
 
 ## Step 2: Audit In-Flight Migration Work
-1. Search for open issues representing active migrations in flight (either labeled `overseer` or assigned to `factorybot-robot`):
+1. Search for open issues representing active migrations in flight (labeled `overseer`):
    ```bash
    gh issue list --state open --label "overseer" --json number,title,labels,assignees,createdAt
-   gh issue list --state open --assignee "factorybot-robot" --json number,title,labels,assignees,createdAt
    ```
-   Combine and de-duplicate the results by issue number.
 2. Parse the titles to extract the resource **Kind** for each active migration (e.g., from titles like "Migrating ComputeSSLPolicy to Direct controller overseer", the Kind is `ComputeSSLPolicy`). Exclude any greenfield resources (new resources that are not legacy migrations and do not exist in `dev/migration-tracker/data.json`).
 3. For each active migration, check if it is already recorded as `"In Progress"` in `dev/migration-tracker/data.json`. If it is recorded as `"Not Started"`, update it to `"In Progress"` and record the issue.
 4. Check if any previously active migration issues have been **closed**:
@@ -47,7 +45,7 @@ To avoid duplicate work, audit GitHub for external contributions:
      gh issue list --state open --search "${KIND}" --json number,title,url,assignees,author
      gh pr list --state open --search "${KIND}" --json number,title,url,author,state
      ```
-   - Filter out issues or PRs created by yourself (`factorybot-robot`) or already tracked.
+   - Filter out issues or PRs created by the bot pool accounts (e.g. `*bot*` or `*robot*`) or already tracked.
    - If an active external PR or issue is found:
      - Record its URL in the `"notes"` or `"external_tracking"` field of that resource's JSON block in `dev/migration-tracker/data.json` (e.g. `notes: "Community PR: github.com/GoogleCloudPlatform/k8s-config-connector/pull/1234"`).
      - **In-flight tracking check**: If this resource does not have an active open `overseer` tracking issue:
@@ -56,8 +54,7 @@ To avoid duplicate work, audit GitHub for external contributions:
          gh issue create --title "Migrating ${KIND} to Direct controller overseer" \
            --body "Using the skill workflow, please complete creation of direct controller for ${KIND}\n\nhttps://raw.githubusercontent.com/gke-labs/gemini-for-kubernetes-development/refs/heads/main/.agents/workflows/kcc-example.txt" \
            --label "overseer" \
-           --label "workflow/migrate" \
-           --assignee "factorybot-robot"
+           --label "workflow/migrate"
          ```
        - Update the resource's state to `"In Progress"` in `dev/migration-tracker/data.json` and record the newly created issue number in the `"trackingIssue"` field of that resource's JSON block.
 
@@ -74,8 +71,7 @@ To avoid duplicate work, audit GitHub for external contributions:
      gh issue create --title "Migrating ${KIND} to Direct controller overseer" \
        --body "Using the skill workflow, please complete creation of direct controller for ${KIND}\n\nhttps://raw.githubusercontent.com/gke-labs/gemini-for-kubernetes-development/refs/heads/main/.agents/workflows/kcc-example.txt" \
        --label "overseer" \
-       --label "workflow/migrate" \
-       --assignee "factorybot-robot"
+       --label "workflow/migrate"
      ```
    - Update the resource's `"state"` to `"In Progress"` in `dev/migration-tracker/data.json` and save the new issue number in the `"trackingIssue"` field of that resource's JSON block.
 

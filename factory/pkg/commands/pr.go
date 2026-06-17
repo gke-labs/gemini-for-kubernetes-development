@@ -1150,7 +1150,7 @@ func runAdopt(ctx context.Context, prURL, adoptAction, strategy string, ephemera
 	cloneURL := fmt.Sprintf("https://github.com/%s/%s.git", owner, repo)
 
 	fmt.Printf("Ensuring adopt sandbox '%s'...\n", sandboxName)
-	sandboxName, err = factorysandbox.EnsureAdoptSandbox(ctx, kubeClient, rootFlags.Namespace, repo, prNum, cloneURL, prURL, rootFlags.Image, rootFlags.DiskSize, ephemeralStorage, secrets, rootFlags.ResolvedEnvs)
+	sandboxName, err = factorysandbox.EnsureAdoptSandbox(ctx, kubeClient, rootFlags.Namespace, repo, prNum, cloneURL, prURL, rootFlags.Image, rootFlags.DiskSize, ephemeralStorage, secrets, rootFlags.ResolvedEnvs, rootFlags.User)
 	if err != nil {
 		return fmt.Errorf("ensuring adopt sandbox: %w", err)
 	}
