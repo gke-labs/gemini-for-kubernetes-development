@@ -1697,6 +1697,11 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 							if _, _, err := ghClient.Issues.AddAssignees(ctx, owner, repo, t.Number, []string{t.Assignee}); err != nil {
 								klog.Errorf("Failed to assign issue #%d to %s: %v", t.Number, t.Assignee, err)
 							}
+							if t.Assignee != targetAssignee {
+								if _, _, err := ghClient.Issues.RemoveAssignees(ctx, owner, repo, t.Number, []string{targetAssignee}); err != nil {
+									klog.Errorf("Failed to remove watcher bot %s from issue #%d: %v", targetAssignee, t.Number, err)
+								}
+							}
 						}
 
 						if t.Type != "agent-chore" {
