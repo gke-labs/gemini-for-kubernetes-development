@@ -137,22 +137,43 @@ For existing resources transitioning to a direct controller, a round-trip KRM fu
     The created PR must include these labels: `direct-migration` and `overseer`
     ```
 
-### Step 4: Implement Direct Controller & E2E Fixtures
+### Step 4: Ensure MockGCP matches real gcp behavior
+We need to ensure that we have a mockgcp that aligns with realgcp.
+
+1. Open a GitHub issue assigned to `factorybot-robot` to implement or improve the MockGCP for the resource.
+
+**GitHub Issue Details:**
+*   **Title:** `Match real gcp behavior in MockGCP for {kind}`
+*   **Assignee:** `factorybot-robot`
+*   **Labels:** `overseer`
+*   **Body:**
+    ```
+    Please first check if a mock for the GCP {service},{resource} corresponding to the {kind} already exists in the codebase. Check under mockgcp/ folder.
+    If it doesnt exist, please follow the skill .gemini/skills/add-new-mockgcp-resource/SKILL.md to implement the mock for {service}, {resource} first.
+
+    Next please follow the skill .gemini/skills/match-mockgcp-with-realgcp/SKILL.md to match with realgcp for {service}, {resource}
+
+    If you find any shortcomings in these skills (that likely apply to other resources), you may update them. Also keep a journal of any less general observations etc. To avoid git merge conflicts, use a file under .gemini/skills/add-new-mockgcp-resource/journal/, named after the kind or a similarly unique name.
+
+    The created PR must include these labels: `direct-migration` and `overseer`
+    ```
+
+### Step 5: Implement Direct Controller & E2E Fixtures
 
 The direct controller must be implemented to manage reconciliation logic (Adapter: Find, Create, Update, Delete) and E2E fixtures must be created and recorded against mockgcp/real GCP to verify functionality.
 
 1. Open a GitHub issue (unassigned or assigned to the current bot) to implement the direct controller and E2E fixtures.
 
 **GitHub Issue Details:**
-*   **Title:** `Implement direct controller and E2E fixtures for {kind}`
+*   **Title:** `Implement direct controller and test fixtures for {kind}`
 *   **Assignee:** (leave unassigned or assign to the current bot)
 *   **Labels:** `overseer`
 *   **Body:**
     ```
     Please follow the skills:
     - .gemini/skills/kcc-direct-controller-implementer/SKILL.md
-    - .gemini/skills/kcc-direct-controller-logic-implementer/SKILL.md
-    to implement the direct controller and record/verify E2E fixtures for {kind}.
+    - .gemini/skills/kcc-direct-controller-logic-brownfield/SKILL.md
+    to implement the direct controller and record/verify test fixtures for {kind}.
 
     If you find any shortcomings in these skills (that likely apply to other resources), you may update them. Also keep a journal of any less general observations etc. To avoid git merge conflicts, use a file under their respective journal/ folders, named after the kind or a similarly unique name.
 
