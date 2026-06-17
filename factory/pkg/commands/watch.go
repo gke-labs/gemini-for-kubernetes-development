@@ -2225,7 +2225,33 @@ func selectUserForTask(ctx context.Context, ghClient *githubv39.Client, kubeClie
 			} else {
 				role = "coder"
 			}
-		case "issue-fix", "pr-investigate", "pr-comments", "pr-iterate":
+		case "pr-investigate", "pr-comments", "pr-iterate":
+			if prNum > 0 {
+				pr, _, err := ghClient.PullRequests.Get(ctx, owner, repo, prNum)
+				if err == nil {
+					author := pr.GetUser().GetLogin()
+					if author != "" {
+						inAgentPool := false
+						if agentCfg, ok := cfg.Roles["agent"]; ok {
+							for _, u := range agentCfg.Users {
+								if strings.EqualFold(u, author) {
+									inAgentPool = true
+									break
+								}
+							}
+						}
+						if inAgentPool {
+							role = "agent"
+						} else {
+							role = "coder"
+						}
+					}
+				}
+			}
+			if role == "" {
+				role = "coder"
+			}
+		case "issue-fix":
 			role = "coder"
 		case "pr-review":
 			role = "reviewer"
