@@ -206,6 +206,36 @@ func isSandboxTaskRunning(ctx context.Context, kubeClient *clients.KubernetesCli
 	return false, nil
 }
 
+func isSandboxTaskCompleted(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, name, taskType string) (bool, error) {
+	unstructObj, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return false, nil
+		}
+		return false, err
+	}
+
+	annotations := unstructObj.GetAnnotations()
+	if annotations == nil {
+		return false, nil
+	}
+
+	state := annotations["sandbox.gemini.google.com/last-task-state"]
+	tType := annotations["sandbox.gemini.google.com/last-task-type"]
+
+	sbTaskType := taskType
+	if taskType == "issue-fix" {
+		sbTaskType = "fix-issue"
+	} else if taskType == "agent-chore" {
+		sbTaskType = "agent"
+	}
+
+	if strings.EqualFold(state, "Completed") && strings.EqualFold(tType, sbTaskType) {
+		return true, nil
+	}
+	return false, nil
+}
+
 func countRunningSandboxTasks(ctx context.Context, kubeClient *clients.KubernetesClient, namespace string) (int, error) {
 	list, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
@@ -1688,6 +1718,27 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				}
 				if running {
 					klog.Infof("Skipping task %s because sandbox %s is currently busy running another task.", filename, sandboxName)
+					continue
+				}
+
+				completed, err := isSandboxTaskCompleted(ctx, kubeClient, rootFlags.Namespace, sandboxName, task.Type)
+				if err != nil {
+					klog.Errorf("Failed to check if sandbox %s completed task: %v", sandboxName, err)
+					continue
+				}
+				if completed {
+					klog.Infof("Task %s is already completed in sandbox %s. Marking as completed.", filename, sandboxName)
+					if dryRun {
+						continue
+					}
+					incomingPath := filepath.Join(incomingDir, filename)
+					processedPath := filepath.Join(processedDir, filename)
+					task.Status = "Completed"
+					_ = writeTaskAtomically(incomingDir, filename, task)
+					writeTaskJournalEvent(queueDir, filename, task, "Completed", 0)
+					if err := os.Rename(incomingPath, processedPath); err != nil {
+						klog.Errorf("Failed to move completed task %s to processed: %v", filename, err)
+					}
 					continue
 				}
 
