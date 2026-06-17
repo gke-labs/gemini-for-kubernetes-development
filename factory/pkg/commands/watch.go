@@ -1115,6 +1115,9 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						if shouldIgnoreUser(c.GetUser(), githubLogin, bots) {
 							continue
 						}
+						if strings.EqualFold(c.GetUser().GetLogin(), pr.GetUser().GetLogin()) {
+							continue
+						}
 						if c.GetCreatedAt().After(lastCommitTime) && c.GetCreatedAt().After(state.lastCommentAddressedTime) {
 							hasNewComments = true
 							break
@@ -1127,6 +1130,9 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 							if shouldIgnoreUser(r.GetUser(), githubLogin, bots) {
 								continue
 							}
+							if strings.EqualFold(r.GetUser().GetLogin(), pr.GetUser().GetLogin()) {
+								continue
+							}
 							if r.GetSubmittedAt().After(lastCommitTime) && r.GetSubmittedAt().After(state.lastCommentAddressedTime) {
 								hasNewComments = true
 								break
@@ -1136,6 +1142,9 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 							if err == nil {
 								for _, rc := range revComments {
 									if shouldIgnoreUser(rc.GetUser(), githubLogin, bots) {
+										continue
+									}
+									if strings.EqualFold(rc.GetUser().GetLogin(), pr.GetUser().GetLogin()) {
 										continue
 									}
 									if rc.GetCreatedAt().After(lastCommitTime) && rc.GetCreatedAt().After(state.lastCommentAddressedTime) {
