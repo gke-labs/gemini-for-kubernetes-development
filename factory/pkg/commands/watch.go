@@ -374,7 +374,7 @@ func isWorkflowDefinition(ctx context.Context, ghClient *githubv39.Client, owner
 	return false
 }
 
-func queueIssueTasks(ctx context.Context, ghClient *githubv39.Client, kubeClient *clients.KubernetesClient, owner, repo string, issues []*githubv39.Issue, processedIssues map[int]time.Time, refIssues map[int]bool, targetAssignee string, allBotUsers []string, incomingDir, processingDir, processedDir, queueDir string, dryRun bool, triggerLabel string) {
+func queueIssueTasks(ctx context.Context, ghClient *githubv39.Client, kubeClient *clients.KubernetesClient, cfg *config.FactoryConfig, owner, repo string, issues []*githubv39.Issue, processedIssues map[int]time.Time, refIssues map[int]bool, targetAssignee string, allBotUsers []string, incomingDir, processingDir, processedDir, queueDir string, dryRun bool, triggerLabel string) {
 	klog.Infof("queueIssueTasks called with %d issues", len(issues))
 	for _, issue := range issues {
 		num := issue.GetNumber()
@@ -460,7 +460,16 @@ func queueIssueTasks(ctx context.Context, ghClient *githubv39.Client, kubeClient
 				}
 			}
 
-			taskAssignee := assignedBot
+			taskType := "issue-fix"
+			if workflowName != "" {
+				taskType = "agent-chore"
+			}
+
+			taskAssignee, err := selectUserForTask(ctx, ghClient, kubeClient, cfg, taskType, num, owner, repo)
+			if err != nil {
+				klog.Errorf("Failed to select user for issue #%d: %v", num, err)
+				taskAssignee = targetAssignee
+			}
 			if taskAssignee == "" {
 				taskAssignee = targetAssignee
 			}
@@ -1355,7 +1364,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 
 			// Process slow issues
 			if issueMode != "disabled" {
-				queueIssueTasks(ctx, ghClient, kubeClient, owner, repo, slowIssues, processedIssues, refIssues, targetAssignee, allBotUsers, incomingDir, processingDir, processedDir, queueDir, dryRun, triggerLabel)
+				queueIssueTasks(ctx, ghClient, kubeClient, cfg, owner, repo, slowIssues, processedIssues, refIssues, targetAssignee, allBotUsers, incomingDir, processingDir, processedDir, queueDir, dryRun, triggerLabel)
 			}
 
 			// Process Pull Requests (Scanner)
@@ -1525,7 +1534,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 			}
 
 			if issueMode != "disabled" {
-				queueIssueTasks(ctx, ghClient, kubeClient, owner, repo, issues, processedIssues, refIssues, targetAssignee, allBotUsers, incomingDir, processingDir, processedDir, queueDir, dryRun, triggerLabel)
+				queueIssueTasks(ctx, ghClient, kubeClient, cfg, owner, repo, issues, processedIssues, refIssues, targetAssignee, allBotUsers, incomingDir, processingDir, processedDir, queueDir, dryRun, triggerLabel)
 			}
 
 			// Process PRs assigned to the bot in the fast cycle
