@@ -2230,17 +2230,19 @@ func selectUserForTask(ctx context.Context, ghClient *githubv39.Client, kubeClie
 			// B. Fallback to GitHub issue assignee check
 			issue, _, err := ghClient.Issues.Get(ctx, owner, repo, prNum)
 			if err == nil {
-				assignee := issue.GetAssignee().GetLogin()
-				if assignee != "" {
-					inPool := false
-					for _, u := range roleCfg.Users {
-						if strings.EqualFold(u, assignee) {
-							inPool = true
-							break
+				for _, a := range issue.Assignees {
+					assignee := a.GetLogin()
+					if assignee != "" {
+						inPool := false
+						for _, u := range roleCfg.Users {
+							if strings.EqualFold(u, assignee) {
+								inPool = true
+								break
+							}
 						}
-					}
-					if inPool {
-						return assignee, nil
+						if inPool {
+							return assignee, nil
+						}
 					}
 				}
 			} else {
