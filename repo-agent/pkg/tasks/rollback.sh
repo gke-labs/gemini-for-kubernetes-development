@@ -57,7 +57,7 @@ EOF
 
 function setupGitRepos {
     echo "Running setupGitRepos..."
-    if [ -d "/workspaces/${REPO_NAME}" ]; then
+    if [ -d "/workspaces/${REPO_NAME}/.git" ]; then
         echo "Repository already exists at /workspaces/${REPO_NAME}, cleaning up previous git state..."
         (cd "/workspaces/${REPO_NAME}" && git rebase --abort 2>/dev/null || true)
         (cd "/workspaces/${REPO_NAME}" && git merge --abort 2>/dev/null || true)
@@ -66,7 +66,8 @@ function setupGitRepos {
         (cd "/workspaces/${REPO_NAME}" && git fetch origin)
     else
         echo "cloning repository"
-        git clone "${CLONE_URL}" "/workspaces/${REPO_NAME}"
+        rm -rf "/workspaces/${REPO_NAME}"
+    git clone "${CLONE_URL}" "/workspaces/${REPO_NAME}"
     fi
 
     pushd "/workspaces/${REPO_NAME}" > /dev/null

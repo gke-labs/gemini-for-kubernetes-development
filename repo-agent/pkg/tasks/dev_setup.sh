@@ -74,9 +74,10 @@ function injectConfigDirData {
 function setupGitRepos {
     echo "Running setupGitRepos..."
     
-    # Check if repo already exists (reuse sandbox case)
-    if [ ! -d "/workspaces/${REPO_NAME}" ]; then
-        echo "cloning repository from ${CLONE_URL}"
+    # Check if repo already exists and is a valid git repository
+    if [ ! -d "/workspaces/${REPO_NAME}/.git" ]; then
+        echo "repository does not exist or is invalid, cleaning up destination and cloning..."
+        rm -rf "/workspaces/${REPO_NAME}"
         (cd /workspaces/ && git clone "${CLONE_URL}" "${REPO_NAME}")
 
         # Ensure we have the fork and remotes set up correctly
