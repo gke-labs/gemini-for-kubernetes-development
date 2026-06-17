@@ -2090,8 +2090,13 @@ func shouldIgnoreUser(user *githubv39.User, githubLogin string, allowlistedBots 
 		return true // always ignore our own bot
 	}
 
-	// Check if this user is a bot
-	isBotUser := strings.EqualFold(user.GetType(), "Bot") || strings.HasSuffix(strings.ToLower(login), "[bot]")
+	loginLower := strings.ToLower(login)
+	isBotUser := strings.EqualFold(user.GetType(), "Bot") ||
+		strings.HasSuffix(loginLower, "[bot]") ||
+		strings.HasSuffix(loginLower, "-bot") ||
+		strings.HasSuffix(loginLower, "-robot") ||
+		strings.Contains(loginLower, "prow")
+
 	if isBotUser {
 		// Check if it's in the allowlist
 		for _, b := range allowlistedBots {
