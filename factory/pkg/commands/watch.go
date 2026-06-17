@@ -1721,25 +1721,27 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					continue
 				}
 
-				completed, err := isSandboxTaskCompleted(ctx, kubeClient, rootFlags.Namespace, sandboxName, task.Type)
-				if err != nil {
-					klog.Errorf("Failed to check if sandbox %s completed task: %v", sandboxName, err)
-					continue
-				}
-				if completed {
-					klog.Infof("Task %s is already completed in sandbox %s. Marking as completed.", filename, sandboxName)
-					if dryRun {
+				if task.Type != "agent-chore" {
+					completed, err := isSandboxTaskCompleted(ctx, kubeClient, rootFlags.Namespace, sandboxName, task.Type)
+					if err != nil {
+						klog.Errorf("Failed to check if sandbox %s completed task: %v", sandboxName, err)
 						continue
 					}
-					incomingPath := filepath.Join(incomingDir, filename)
-					processedPath := filepath.Join(processedDir, filename)
-					task.Status = "Completed"
-					_ = writeTaskAtomically(incomingDir, filename, task)
-					writeTaskJournalEvent(queueDir, filename, task, "Completed", 0)
-					if err := os.Rename(incomingPath, processedPath); err != nil {
-						klog.Errorf("Failed to move completed task %s to processed: %v", filename, err)
+					if completed {
+						klog.Infof("Task %s is already completed in sandbox %s. Marking as completed.", filename, sandboxName)
+						if dryRun {
+							continue
+						}
+						incomingPath := filepath.Join(incomingDir, filename)
+						processedPath := filepath.Join(processedDir, filename)
+						task.Status = "Completed"
+						_ = writeTaskAtomically(incomingDir, filename, task)
+						writeTaskJournalEvent(queueDir, filename, task, "Completed", 0)
+						if err := os.Rename(incomingPath, processedPath); err != nil {
+							klog.Errorf("Failed to move completed task %s to processed: %v", filename, err)
+						}
+						continue
 					}
-					continue
 				}
 
 				incomingPath := filepath.Join(incomingDir, filename)
