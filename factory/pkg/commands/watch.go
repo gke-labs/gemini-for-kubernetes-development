@@ -123,16 +123,40 @@ func NewWatchCommand(ctx context.Context) *cobra.Command {
 	return cmd
 }
 
-func isAssigned(issue *githubv39.Issue, assignee string) bool {
-	if assignee == "" {
-		return false
-	}
+func assignedBotUser(issue *githubv39.Issue, botUsers []string) string {
 	for _, u := range issue.Assignees {
-		if strings.EqualFold(u.GetLogin(), assignee) {
-			return true
+		for _, bot := range botUsers {
+			if strings.EqualFold(u.GetLogin(), bot) {
+				return u.GetLogin()
+			}
 		}
 	}
-	return false
+	return ""
+}
+
+func resolveSandboxName(ctx context.Context, kubeClient *clients.KubernetesClient, taskType string, num int, repo string) string {
+	if taskType == "issue-fix" || taskType == "agent-chore" {
+		wfName := fmt.Sprintf("wf-issue-%d", num)
+		if kubeClient != nil {
+			if _, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(rootFlags.Namespace).Get(ctx, wfName, metav1.GetOptions{}); err == nil {
+				return wfName
+			}
+		}
+		return fmt.Sprintf("fix-%s-%d", repo, num)
+	}
+
+	// For PR tasks, check if there's an existing sandbox with the PR label
+	if kubeClient != nil {
+		listOpts := metav1.ListOptions{
+			LabelSelector: fmt.Sprintf("factory.gemini.google.com/pr=%d", num),
+		}
+		sbs, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(rootFlags.Namespace).List(ctx, listOpts)
+		if err == nil && len(sbs.Items) > 0 {
+			return sbs.Items[0].GetName()
+		}
+	}
+
+	return fmt.Sprintf("factory-pr-%d", num)
 }
 
 func isSandboxTaskRunning(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, name string) (bool, error) {
@@ -363,7 +387,7 @@ func isWorkflowDefinition(ctx context.Context, ghClient *githubv39.Client, owner
 	return false
 }
 
-func queueIssueTasks(ctx context.Context, ghClient *githubv39.Client, kubeClient *clients.KubernetesClient, owner, repo string, issues []*githubv39.Issue, processedIssues map[int]time.Time, refIssues map[int]bool, targetAssignee string, incomingDir, processingDir, processedDir, queueDir string, dryRun bool, triggerLabel string) {
+func queueIssueTasks(ctx context.Context, ghClient *githubv39.Client, kubeClient *clients.KubernetesClient, cfg *config.FactoryConfig, owner, repo string, issues []*githubv39.Issue, processedIssues map[int]time.Time, refIssues map[int]bool, targetAssignee string, allBotUsers []string, incomingDir, processingDir, processedDir, queueDir string, dryRun bool, triggerLabel string) {
 	klog.Infof("queueIssueTasks called with %d issues", len(issues))
 	for _, issue := range issues {
 		num := issue.GetNumber()
@@ -433,19 +457,36 @@ func queueIssueTasks(ctx context.Context, ghClient *githubv39.Client, kubeClient
 				continue
 			}
 
-			if isAssigned(issue, targetAssignee) {
+			hasTriggerLabel := false
+			for _, label := range issue.Labels {
+				if strings.EqualFold(label.GetName(), triggerLabel) {
+					hasTriggerLabel = true
+					break
+				}
+			}
+			if !hasTriggerLabel {
 				if dryRun {
-					fmt.Printf("[DRYRUN] Would unassign %s from issue #%d and add label '%s'\n", targetAssignee, num, triggerLabel)
+					fmt.Printf("[DRYRUN] Would add label '%s' to issue #%d\n", triggerLabel, num)
 				} else {
-					fmt.Printf("Unassigning %s from issue #%d...\n", targetAssignee, num)
-					if _, _, err := ghClient.Issues.RemoveAssignees(ctx, owner, repo, num, []string{targetAssignee}); err != nil {
-						klog.Errorf("Failed to unassign %s from issue #%d: %v", targetAssignee, num, err)
-					}
 					klog.Infof("Adding '%s' label to issue #%d", triggerLabel, num)
 					if _, _, err := ghClient.Issues.AddLabelsToIssue(ctx, owner, repo, num, []string{triggerLabel}); err != nil {
 						klog.Errorf("Failed to add label '%s' to issue #%d: %v", triggerLabel, num, err)
 					}
 				}
+			}
+
+			taskType := "issue-fix"
+			if workflowName != "" {
+				taskType = "agent-chore"
+			}
+
+			taskAssignee, err := selectUserForTask(ctx, ghClient, kubeClient, cfg, taskType, num, owner, repo)
+			if err != nil {
+				klog.Errorf("Failed to select user for issue #%d: %v", num, err)
+				taskAssignee = targetAssignee
+			}
+			if taskAssignee == "" {
+				taskAssignee = targetAssignee
 			}
 
 			issueURL := fmt.Sprintf("https://github.com/%s/%s/issues/%d", owner, repo, num)
@@ -458,7 +499,7 @@ func queueIssueTasks(ctx context.Context, ghClient *githubv39.Client, kubeClient
 					Priority:  getIssuePriority(issue),
 					Phase:     4,
 					CreatedAt: issue.GetCreatedAt(),
-					Assignee:  targetAssignee,
+					Assignee:  taskAssignee,
 					Status:    "Pending",
 					AgentFile: workflowPath,
 					SessionID: fmt.Sprintf("issue-%d", num),
@@ -471,7 +512,7 @@ func queueIssueTasks(ctx context.Context, ghClient *githubv39.Client, kubeClient
 					Priority:  getIssuePriority(issue),
 					Phase:     3,
 					CreatedAt: issue.GetCreatedAt(),
-					Assignee:  targetAssignee,
+					Assignee:  taskAssignee,
 					Status:    "Pending",
 				}
 			}
@@ -664,6 +705,29 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 		targetAssignee = githubLogin
 	}
 
+	var allBotUsers []string
+	if cfg != nil {
+		for _, rCfg := range cfg.Roles {
+			for _, u := range rCfg.Users {
+				if u != "" {
+					allBotUsers = append(allBotUsers, u)
+				}
+			}
+		}
+	}
+	if targetAssignee != "" {
+		found := false
+		for _, u := range allBotUsers {
+			if strings.EqualFold(u, targetAssignee) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			allBotUsers = append(allBotUsers, targetAssignee)
+		}
+	}
+
 	incomingDir := filepath.Join(queueDir, "incoming")
 	processingDir := filepath.Join(queueDir, "processing")
 	processedDir := filepath.Join(queueDir, "processed")
@@ -835,10 +899,17 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					continue
 				}
 
-				// Verify PR Author: Only process PRs created by the bot
+				// Verify PR Author: Only process PRs created by any bot in the pool
 				author := pr.GetUser().GetLogin()
-				if !strings.EqualFold(author, githubLogin) {
-					klog.Infof("Skipping PR #%d because it was created by %s (not %s). We do not have permission to push to external forks.", num, author, githubLogin)
+				isBotPR := false
+				for _, bot := range allBotUsers {
+					if strings.EqualFold(author, bot) {
+						isBotPR = true
+						break
+					}
+				}
+				if !isBotPR {
+					klog.Infof("Skipping PR #%d because it was created by %s (not in our bot pool). We do not have permission to push to external forks.", num, author)
 					continue
 				}
 
@@ -864,7 +935,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				if isConflicting {
 					filename := fmt.Sprintf("task-pr-%d-iterate.yaml", num)
 					if !taskExists(incomingDir, processingDir, filename) {
-						sandboxName := fmt.Sprintf("factory-pr-%d", num)
+						sandboxName := resolveSandboxName(ctx, kubeClient, "pr-iterate", num, repo)
 						running, err := isSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName)
 						if err != nil {
 							klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
@@ -872,16 +943,22 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						} else if running {
 							klog.Infof("Skipping PR #%d rebase because there is an in-flight sandbox %s.", num, sandboxName)
 						} else {
-							if isAssigned(prIssue, targetAssignee) && !unassignedPRs[num] {
+							assignedBot := assignedBotUser(prIssue, allBotUsers)
+							if assignedBot != "" && !unassignedPRs[num] {
 								if dryRun {
-									fmt.Printf("[DRYRUN] Would unassign %s from PR #%d\n", targetAssignee, num)
+									fmt.Printf("[DRYRUN] Would unassign %s from PR #%d\n", assignedBot, num)
 								} else {
-									fmt.Printf("Unassigning %s from PR #%d...\n", targetAssignee, num)
-									if _, _, err := ghClient.Issues.RemoveAssignees(ctx, owner, repo, num, []string{targetAssignee}); err != nil {
-										klog.Errorf("Failed to unassign %s from PR #%d: %v", targetAssignee, num, err)
+									fmt.Printf("Unassigning %s from PR #%d...\n", assignedBot, num)
+									if _, _, err := ghClient.Issues.RemoveAssignees(ctx, owner, repo, num, []string{assignedBot}); err != nil {
+										klog.Errorf("Failed to unassign %s from PR #%d: %v", assignedBot, num, err)
 									}
 									unassignedPRs[num] = true
 								}
+							}
+
+							taskAssignee := assignedBot
+							if taskAssignee == "" {
+								taskAssignee = targetAssignee
 							}
 
 							prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", owner, repo, num)
@@ -892,7 +969,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 								Priority:  getPRPriority(prIssue),
 								Phase:     1,
 								CreatedAt: pr.GetCreatedAt(),
-								Assignee:  targetAssignee,
+								Assignee:  taskAssignee,
 								Status:    "Pending",
 								CommitSHA: headSHA,
 							}
@@ -943,7 +1020,14 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					investigationCount := 0
 					if listCommentsErr == nil {
 						for _, c := range comments {
-							if strings.EqualFold(c.GetUser().GetLogin(), githubLogin) &&
+							isPoolBot := false
+							for _, bot := range allBotUsers {
+								if strings.EqualFold(c.GetUser().GetLogin(), bot) {
+									isPoolBot = true
+									break
+								}
+							}
+							if isPoolBot &&
 								strings.Contains(c.GetBody(), "started investigating CI check failures") &&
 								c.GetCreatedAt().After(lastCommitTime) {
 								investigationCount++
@@ -956,7 +1040,14 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						hasPostedGivingUp := false
 						if listCommentsErr == nil {
 							for _, c := range comments {
-								if strings.EqualFold(c.GetUser().GetLogin(), githubLogin) &&
+								isPoolBot := false
+								for _, bot := range allBotUsers {
+									if strings.EqualFold(c.GetUser().GetLogin(), bot) {
+										isPoolBot = true
+										break
+									}
+								}
+								if isPoolBot &&
 									strings.Contains(c.GetBody(), "giving up. Human assistance is required") &&
 									c.GetCreatedAt().After(lastCommitTime) {
 									hasPostedGivingUp = true
@@ -971,7 +1062,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					} else if state.lastSHA != headSHA || time.Since(state.lastInvestigatedTime) > 6*time.Hour {
 						filename := fmt.Sprintf("task-pr-%d-investigate.yaml", num)
 						if !taskExists(incomingDir, processingDir, filename) {
-							sandboxName := fmt.Sprintf("factory-pr-%d", num)
+							sandboxName := resolveSandboxName(ctx, kubeClient, "pr-investigate", num, repo)
 							running, err := isSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName)
 							if err != nil {
 								klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
@@ -979,16 +1070,22 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 							} else if running {
 								klog.Infof("Skipping PR #%d investigate because there is an in-flight sandbox %s.", num, sandboxName)
 							} else {
-								if isAssigned(prIssue, targetAssignee) && !unassignedPRs[num] {
+								assignedBot := assignedBotUser(prIssue, allBotUsers)
+								if assignedBot != "" && !unassignedPRs[num] {
 									if dryRun {
-										fmt.Printf("[DRYRUN] Would unassign %s from PR #%d\n", targetAssignee, num)
+										fmt.Printf("[DRYRUN] Would unassign %s from PR #%d\n", assignedBot, num)
 									} else {
-										fmt.Printf("Unassigning %s from PR #%d...\n", targetAssignee, num)
-										if _, _, err := ghClient.Issues.RemoveAssignees(ctx, owner, repo, num, []string{targetAssignee}); err != nil {
-											klog.Errorf("Failed to unassign %s from PR #%d: %v", targetAssignee, num, err)
+										fmt.Printf("Unassigning %s from PR #%d...\n", assignedBot, num)
+										if _, _, err := ghClient.Issues.RemoveAssignees(ctx, owner, repo, num, []string{assignedBot}); err != nil {
+											klog.Errorf("Failed to unassign %s from PR #%d: %v", assignedBot, num, err)
 										}
 										unassignedPRs[num] = true
 									}
+								}
+
+								taskAssignee := assignedBot
+								if taskAssignee == "" {
+									taskAssignee = targetAssignee
 								}
 
 								prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", owner, repo, num)
@@ -999,7 +1096,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 									Priority:  getPRPriority(prIssue),
 									Phase:     3,
 									CreatedAt: pr.GetCreatedAt(),
-									Assignee:  targetAssignee,
+									Assignee:  taskAssignee,
 									Status:    "Pending",
 									CommitSHA: headSHA,
 								}
@@ -1042,6 +1139,9 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						if shouldIgnoreUser(c.GetUser(), githubLogin, bots) {
 							continue
 						}
+						if strings.EqualFold(c.GetUser().GetLogin(), pr.GetUser().GetLogin()) {
+							continue
+						}
 						if c.GetCreatedAt().After(lastCommitTime) && c.GetCreatedAt().After(state.lastCommentAddressedTime) {
 							hasNewComments = true
 							break
@@ -1054,6 +1154,9 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 							if shouldIgnoreUser(r.GetUser(), githubLogin, bots) {
 								continue
 							}
+							if strings.EqualFold(r.GetUser().GetLogin(), pr.GetUser().GetLogin()) {
+								continue
+							}
 							if r.GetSubmittedAt().After(lastCommitTime) && r.GetSubmittedAt().After(state.lastCommentAddressedTime) {
 								hasNewComments = true
 								break
@@ -1063,6 +1166,9 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 							if err == nil {
 								for _, rc := range revComments {
 									if shouldIgnoreUser(rc.GetUser(), githubLogin, bots) {
+										continue
+									}
+									if strings.EqualFold(rc.GetUser().GetLogin(), pr.GetUser().GetLogin()) {
 										continue
 									}
 									if rc.GetCreatedAt().After(lastCommitTime) && rc.GetCreatedAt().After(state.lastCommentAddressedTime) {
@@ -1085,7 +1191,14 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 							hasPostedIgnore := false
 							ignorePrefix := "🤖 AI Factory is ignoring new comments/feedback because this PR is already approved"
 							for _, c := range comments {
-								if strings.EqualFold(c.GetUser().GetLogin(), githubLogin) &&
+								isPoolBot := false
+								for _, bot := range allBotUsers {
+									if strings.EqualFold(c.GetUser().GetLogin(), bot) {
+										isPoolBot = true
+										break
+									}
+								}
+								if isPoolBot &&
 									strings.HasPrefix(c.GetBody(), ignorePrefix) &&
 									c.GetCreatedAt().After(lastCommitTime) {
 									hasPostedIgnore = true
@@ -1104,13 +1217,14 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						continue
 					}
 
-					if hasNewComments || (isAssigned(prIssue, targetAssignee) && !unassignedPRs[num]) {
+					assignedBot := assignedBotUser(prIssue, allBotUsers)
+					if hasNewComments || (assignedBot != "" && !unassignedPRs[num]) {
 						if os.Getenv("DRY_RUN") == "true" {
 							continue
 						}
 						filename := fmt.Sprintf("task-pr-%d-comments.yaml", num)
 						if !taskExists(incomingDir, processingDir, filename) {
-							sandboxName := fmt.Sprintf("factory-pr-%d", num)
+							sandboxName := resolveSandboxName(ctx, kubeClient, "pr-comments", num, repo)
 							running, err := isSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName)
 							if err != nil {
 								klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
@@ -1118,16 +1232,21 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 							} else if running {
 								klog.Infof("Skipping PR #%d address-comments because there is an in-flight sandbox %s.", num, sandboxName)
 							} else {
-								if isAssigned(prIssue, targetAssignee) && !unassignedPRs[num] {
+								if assignedBot != "" && !unassignedPRs[num] {
 									if dryRun {
-										fmt.Printf("[DRYRUN] Would unassign %s from PR #%d\n", targetAssignee, num)
+										fmt.Printf("[DRYRUN] Would unassign %s from PR #%d\n", assignedBot, num)
 									} else {
-										fmt.Printf("Unassigning %s from PR #%d...\n", targetAssignee, num)
-										if _, _, err := ghClient.Issues.RemoveAssignees(ctx, owner, repo, num, []string{targetAssignee}); err != nil {
-											klog.Errorf("Failed to unassign %s from PR #%d: %v", targetAssignee, num, err)
+										fmt.Printf("Unassigning %s from PR #%d...\n", assignedBot, num)
+										if _, _, err := ghClient.Issues.RemoveAssignees(ctx, owner, repo, num, []string{assignedBot}); err != nil {
+											klog.Errorf("Failed to unassign %s from PR #%d: %v", assignedBot, num, err)
 										}
 										unassignedPRs[num] = true
 									}
+								}
+
+								taskAssignee := assignedBot
+								if taskAssignee == "" {
+									taskAssignee = targetAssignee
 								}
 
 								prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", owner, repo, num)
@@ -1138,7 +1257,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 									Priority:  getPRPriority(prIssue),
 									Phase:     2,
 									CreatedAt: pr.GetCreatedAt(),
-									Assignee:  targetAssignee,
+									Assignee:  taskAssignee,
 									Status:    "Pending",
 									CommitSHA: headSHA,
 								}
@@ -1260,15 +1379,15 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 
 			// Process slow issues
 			if issueMode != "disabled" {
-				queueIssueTasks(ctx, ghClient, kubeClient, owner, repo, slowIssues, processedIssues, refIssues, targetAssignee, incomingDir, processingDir, processedDir, queueDir, dryRun, triggerLabel)
+				queueIssueTasks(ctx, ghClient, kubeClient, cfg, owner, repo, slowIssues, processedIssues, refIssues, targetAssignee, allBotUsers, incomingDir, processingDir, processedDir, queueDir, dryRun, triggerLabel)
 			}
 
 			// Process Pull Requests (Scanner)
 			var prIssues []*githubv39.Issue
 			var allPRIssues []*githubv39.Issue
-			if targetAssignee != "" {
+			for _, botUser := range allBotUsers {
 				opts1 := &githubv39.IssueListByRepoOptions{
-					Assignee:    targetAssignee,
+					Assignee:    botUser,
 					State:       "open",
 					ListOptions: githubv39.ListOptions{PerPage: 100},
 				}
@@ -1332,9 +1451,9 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				limit = 30
 			}
 
-			if targetAssignee != "" {
+			for _, botUser := range allBotUsers {
 				opts1 := &githubv39.IssueListByRepoOptions{
-					Assignee:    targetAssignee,
+					Assignee:    botUser,
 					State:       "open",
 					Sort:        "updated",
 					Direction:   "desc",
@@ -1342,9 +1461,9 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				}
 				issues1, _, err := ghClient.Issues.ListByRepo(ctx, owner, repo, opts1)
 				if err != nil {
-					klog.Errorf("Failed to list issues for assignee %s: %v", targetAssignee, err)
+					klog.Errorf("Failed to list issues for assignee %s: %v", botUser, err)
 				} else {
-					klog.Infof("Fetched %d issues assigned to %s from GitHub API", len(issues1), targetAssignee)
+					klog.Infof("Fetched %d issues assigned to %s from GitHub API", len(issues1), botUser)
 					allItems = append(allItems, issues1...)
 				}
 			}
@@ -1377,8 +1496,13 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 
 						hasAssignee := false
 						for _, u := range issue.Assignees {
-							if strings.EqualFold(u.GetLogin(), targetAssignee) {
-								hasAssignee = true
+							for _, bot := range allBotUsers {
+								if strings.EqualFold(u.GetLogin(), bot) {
+									hasAssignee = true
+									break
+								}
+							}
+							if hasAssignee {
 								break
 							}
 						}
@@ -1425,7 +1549,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 			}
 
 			if issueMode != "disabled" {
-				queueIssueTasks(ctx, ghClient, kubeClient, owner, repo, issues, processedIssues, refIssues, targetAssignee, incomingDir, processingDir, processedDir, queueDir, dryRun, triggerLabel)
+				queueIssueTasks(ctx, ghClient, kubeClient, cfg, owner, repo, issues, processedIssues, refIssues, targetAssignee, allBotUsers, incomingDir, processingDir, processedDir, queueDir, dryRun, triggerLabel)
 			}
 
 			// Process PRs assigned to the bot in the fast cycle
@@ -1529,6 +1653,8 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				}
 			}
 
+			activeSandboxesInCycle := make(map[string]bool)
+
 			for _, item := range tasksToRun {
 				if actionsTaken >= maxActions {
 					fmt.Printf("Reached maximum actions limit (%d) for this cycle. Stopping execution.\n", maxActions)
@@ -1549,11 +1675,28 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				filename := item.filename
 				task := item.task
 
+				sandboxName := resolveSandboxName(ctx, kubeClient, task.Type, task.Number, repo)
+				if activeSandboxesInCycle[sandboxName] {
+					klog.Infof("Skipping task %s because sandbox %s is already scheduled to run a task in this cycle.", filename, sandboxName)
+					continue
+				}
+
+				running, err := isSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName)
+				if err != nil {
+					klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
+					continue
+				}
+				if running {
+					klog.Infof("Skipping task %s because sandbox %s is currently busy running another task.", filename, sandboxName)
+					continue
+				}
+
 				incomingPath := filepath.Join(incomingDir, filename)
 				processingPath := filepath.Join(processingDir, filename)
 
 				if dryRun {
 					fmt.Printf("[DRYRUN] Would process task %s (Type: %s, URL: %s)\n", filename, task.Type, task.URL)
+					activeSandboxesInCycle[sandboxName] = true
 					actionsTaken++
 					filesInProcessing++
 					continue
@@ -1564,6 +1707,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					continue
 				}
 
+				activeSandboxesInCycle[sandboxName] = true
 				task.Status = "Running"
 				_ = writeTaskAtomically(processingDir, filename, task)
 				writeTaskJournalEvent(queueDir, filename, task, "Started", 0)
@@ -1585,6 +1729,11 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 							klog.Infof("Assigning issue #%d to %s as claimed", t.Number, t.Assignee)
 							if _, _, err := ghClient.Issues.AddAssignees(ctx, owner, repo, t.Number, []string{t.Assignee}); err != nil {
 								klog.Errorf("Failed to assign issue #%d to %s: %v", t.Number, t.Assignee, err)
+							}
+							if t.Assignee != targetAssignee {
+								if _, _, err := ghClient.Issues.RemoveAssignees(ctx, owner, repo, t.Number, []string{targetAssignee}); err != nil {
+									klog.Errorf("Failed to remove watcher bot %s from issue #%d: %v", targetAssignee, t.Number, err)
+								}
 							}
 						}
 
@@ -1608,7 +1757,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						}
 					}
 
-					selectedUser, sUserErr := selectUserForTask(ctx, ghClient, cfg, t.Type, t.Number, owner, repo)
+					selectedUser, sUserErr := selectUserForTask(ctx, ghClient, kubeClient, cfg, t.Type, t.Number, owner, repo)
 					if sUserErr != nil {
 						klog.Errorf("Failed to select user for task %s: %v", taskFilename, sUserErr)
 						t.Status = "Failed"
@@ -1712,7 +1861,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 									sandboxName = fmt.Sprintf("agent-%s-%d", repo, t.Number)
 								}
 							case "pr-investigate", "pr-comments", "pr-iterate", "pr-review":
-								sandboxName = fmt.Sprintf("factory-pr-%d", t.Number)
+								sandboxName = resolveSandboxName(ctx, kubeClient, t.Type, t.Number, repo)
 							}
 
 							if sandboxName != "" {
@@ -1814,19 +1963,36 @@ func getReferencedIssues(pr *githubv39.PullRequest) map[int]bool {
 }
 
 func hasLinkedPR(ctx context.Context, client *githubv39.Client, owner, repo string, issueNum int) (bool, error) {
+	// 1. Try timeline check (quick and standard)
 	timeline, _, err := client.Issues.ListIssueTimeline(ctx, owner, repo, issueNum, nil)
-	if err != nil {
-		return false, err
-	}
-	for _, event := range timeline {
-		if event.GetEvent() == "cross-referenced" && event.Source != nil {
-			if event.Source.Issue != nil && event.Source.Issue.PullRequestLinks != nil {
-				if event.Source.Issue.GetState() == "open" {
-					return true, nil
+	if err == nil {
+		for _, event := range timeline {
+			if event.GetEvent() == "cross-referenced" && event.Source != nil {
+				if event.Source.Issue != nil && event.Source.Issue.PullRequestLinks != nil {
+					if event.Source.Issue.GetState() == "open" {
+						return true, nil
+					}
 				}
 			}
 		}
+	} else {
+		klog.Warningf("Failed to list issue timeline for #%d: %v. Falling back to search API.", issueNum, err)
 	}
+
+	// 2. Fallback to Search API: search for open PRs referencing the issue number
+	query := fmt.Sprintf("repo:%s/%s type:pr state:open \"%d\"", owner, repo, issueNum)
+	opts := &githubv39.SearchOptions{
+		ListOptions: githubv39.ListOptions{PerPage: 10},
+	}
+	result, _, err := client.Search.Issues(ctx, query, opts)
+	if err != nil {
+		return false, fmt.Errorf("failed to search PRs for issue #%d: %w", issueNum, err)
+	}
+
+	if result.GetTotal() > 0 {
+		return true, nil
+	}
+
 	return false, nil
 }
 
@@ -1977,7 +2143,7 @@ func cleanupClosedIssueSandboxes(ctx context.Context, ghClient *githubv39.Client
 	return nil
 }
 
-func selectUserForTask(ctx context.Context, ghClient *githubv39.Client, cfg *config.FactoryConfig, taskType string, prNum int, owner, repo string) (string, error) {
+func selectUserForTask(ctx context.Context, ghClient *githubv39.Client, kubeClient *clients.KubernetesClient, cfg *config.FactoryConfig, taskType string, prNum int, owner, repo string) (string, error) {
 	if cfg == nil || len(cfg.Roles) == 0 {
 		return "", nil // default fallback to factory-user
 	}
@@ -2024,9 +2190,60 @@ func selectUserForTask(ctx context.Context, ghClient *githubv39.Client, cfg *con
 		}
 	}
 
-	// 2. Select bot based on new vs existing PR
-	isNewWorkflow := prNum == 0 || taskType == "issue-fix"
-	if isNewWorkflow {
+	// 2. Select bot based on new vs existing PR/Issue
+	isIssueTask := taskType == "issue-fix" || taskType == "agent-chore"
+	if isIssueTask {
+		if prNum > 0 {
+			// A. First check if a Sandbox already exists for this task on the cluster
+			// and has been pinned to a specific user.
+			var sandboxName string
+			if taskType == "issue-fix" {
+				sandboxName = fmt.Sprintf("fix-%s-%d", repo, prNum)
+			} else if taskType == "agent-chore" {
+				sandboxName = fmt.Sprintf("wf-issue-%d", prNum)
+			}
+
+			if sandboxName != "" && kubeClient != nil {
+				sb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(rootFlags.Namespace).Get(ctx, sandboxName, metav1.GetOptions{})
+				if err == nil {
+					labels := sb.GetLabels()
+					if user, ok := labels["factory.gemini.google.com/user"]; ok && user != "" {
+						inPool := false
+						for _, u := range roleCfg.Users {
+							if strings.EqualFold(u, user) {
+								inPool = true
+								break
+							}
+						}
+						if inPool {
+							klog.Infof("Pinned user '%s' for issue #%d from existing sandbox '%s'", user, prNum, sandboxName)
+							return user, nil
+						}
+					}
+				}
+			}
+
+			// B. Fallback to GitHub issue assignee check
+			issue, _, err := ghClient.Issues.Get(ctx, owner, repo, prNum)
+			if err == nil {
+				assignee := issue.GetAssignee().GetLogin()
+				if assignee != "" {
+					inPool := false
+					for _, u := range roleCfg.Users {
+						if strings.EqualFold(u, assignee) {
+							inPool = true
+							break
+						}
+					}
+					if inPool {
+						return assignee, nil
+					}
+				}
+			} else {
+				klog.Warningf("Failed to fetch issue details for task %s #%d: %v", taskType, prNum, err)
+			}
+		}
+
 		idx := time.Now().UnixNano() % int64(len(roleCfg.Users))
 		return roleCfg.Users[idx], nil
 	}

@@ -11,13 +11,14 @@ This is a meta-skill describing the steps to migrate a KCC resource kind to a pr
 
 Instead of doing the coding yourself under this skill, you will coordinate and orchestrate:
 1. Planning the migration steps.
-2. Opening GitHub issues for each step, labeling them with `overseer`, and assigning them to `factorybot-robot`.
+2. Opening GitHub issues for each step, labeling them with `overseer`, and leaving them unassigned (or assigning them to the current bot user).
 3. Monitoring progress of the Pull Requests.
 4. Opening subsequent issues once the prior steps are successfully completed.
 
 > [!IMPORTANT]
 > **Safety Guardrails (Strict Enforcement)**:
-> - **Do NOT comment on child Pull Requests**: You must **never** comment directly on the child Pull Requests. The watch daemon will automatically monitor and handle PR review feedback and CI check failures. If you need to request action or re-trigger a run, do so only by assigning the PR to the bot (using `/assign factorybot-robot` or assigning via `gh` CLI).
+> - **Do NOT write code or create PRs directly**: You must **never** checkout code, write code, run builds/tests, commit changes, or run `gh pr create` to send/push PRs. Your role under this skill is strictly limited to planning, progress tracking, and orchestration. All code implementation, CI fixing, and triage work must be delegated to coder and reviewer bots by creating child issues or assigning PRs back to their author bots.
+> - **Do NOT comment on child Pull Requests**: You must **never** comment directly on the child Pull Requests. The watch daemon will automatically monitor and handle PR review feedback and CI check failures. If you need to request action or re-trigger a run, do so only by assigning the PR to the PR author bot (using `gh pr edit <pr> --add-assignee <author>` or assigning via `gh` CLI).
 > - **Do NOT approve, LGTM, or label PRs**: You must **never** approve, LGTM, or add approval/merging labels (such as `lgtm`, `approved`, or `automerge`) to any Pull Requests. These actions require human OWNER review and approval.
 
 
@@ -43,7 +44,7 @@ Only proceed to the next step once the PR for the current step is merged success
      gh issue edit ${SESSION_ID#issue-} --body "<updated_body>"
      ```
      If editing the issue description fails (due to write permissions on public repositories), **fall back to updating a comment**:
-     * Search the comments on the issue for an existing comment posted by yourself (`factorybot-robot`) that contains the text `Migration Progress`.
+     * Search the comments on the issue for an existing comment posted by yourself (check for author match with your GITHUB_USER_ID) that contains the text `Migration Progress`.
      * If such a comment exists, edit it with the updated progress using:
        ```bash
        gh issue comment edit <comment-id> --body "<updated_comment_body>"
@@ -80,7 +81,7 @@ The resource must have a direct KRM type (`_types.go`) scaffolded and updated vi
    
 **GitHub Issue Details for Existing Terraform/DCL Resource:**
 *   **Title:** `Implement direct KRM types and generate.sh for {kind}`
-*   **Assignee:** `factorybot-robot`
+*   **Assignee:** (leave unassigned or assign to the current bot)
 *   **Labels:** `overseer`
 *   **Body:**
     ```
@@ -100,11 +101,11 @@ The resource must have a direct KRM type (`_types.go`) scaffolded and updated vi
 The resource kind must have an identity and reference type that follow our canonical patterns.
 
 1. Check if the resource has `_identity.go` and `_reference.go` implementing `identity.IdentityV2` and `refs.Ref` using `gcpurls.Template`.
-2. If not, open a GitHub issue assigned to `factorybot-robot` to implement/move the kind to the identity and reference pattern.
+2. If not, open a GitHub issue (unassigned or assigned to the current bot) to implement/move the kind to the identity and reference pattern.
 
 **GitHub Issue Details:**
 *   **Title:** `Move {kind} to identity and refs pattern`
-*   **Assignee:** `factorybot-robot`
+*   **Assignee:** (leave unassigned or assign to the current bot)
 *   **Labels:** `overseer`
 *   **Body:**
     ```
@@ -119,11 +120,11 @@ The resource kind must have an identity and reference type that follow our canon
 
 For existing resources transitioning to a direct controller, a round-trip KRM fuzzer must be created to verify that all field mapping conversions between KRM and GCP proto representations are lossless and fully correct.
 
-1. Open a GitHub issue assigned to `factorybot-robot` to implement the round-trip KRM fuzzer at the expected path `pkg/controller/direct/{service}/{kind}_fuzzer.go`.
+1. Open a GitHub issue (unassigned or assigned to the current bot) to implement the round-trip KRM fuzzer at the expected path `pkg/controller/direct/{service}/{kind}_fuzzer.go`.
 
 **GitHub Issue Details:**
 *   **Title:** `Implement round-trip KRM fuzzer for {kind}`
-*   **Assignee:** `factorybot-robot`
+*   **Assignee:** (leave unassigned or assign to the current bot)
 *   **Labels:** `overseer`
 *   **Body:**
     ```
@@ -140,11 +141,11 @@ For existing resources transitioning to a direct controller, a round-trip KRM fu
 
 The direct controller must be implemented to manage reconciliation logic (Adapter: Find, Create, Update, Delete) and E2E fixtures must be created and recorded against mockgcp/real GCP to verify functionality.
 
-1. Open a GitHub issue assigned to `factorybot-robot` to implement the direct controller and E2E fixtures.
+1. Open a GitHub issue (unassigned or assigned to the current bot) to implement the direct controller and E2E fixtures.
 
 **GitHub Issue Details:**
 *   **Title:** `Implement direct controller and E2E fixtures for {kind}`
-*   **Assignee:** `factorybot-robot`
+*   **Assignee:** (leave unassigned or assign to the current bot)
 *   **Labels:** `overseer`
 *   **Body:**
     ```

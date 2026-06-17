@@ -89,9 +89,10 @@ EOF
 function setupGitRepos {
     echo "Running setupGitRepos..."
     
-    # only clone if doesn't exist
-    if [ ! -d "/workspaces/${REPO_NAME}" ]; then
-        echo "cloning repository"
+    # only clone if doesn't exist and is a valid git repository
+    if [ ! -d "/workspaces/${REPO_NAME}/.git" ]; then
+        echo "repository does not exist or is invalid, cleaning up destination and cloning..."
+        rm -rf "/workspaces/${REPO_NAME}"
         (cd /workspaces/ && git clone ${CLONE_URL})
     else
         echo "repository already exists, cleaning up previous git state..."

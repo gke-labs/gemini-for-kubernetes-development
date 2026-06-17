@@ -341,10 +341,15 @@ func (r *OverseerReconciler) ensureSecrets(ctx context.Context, o *overseerv1alp
 				continue
 			}
 
-			userSecret, err := r.findSecret(ctx, user, []string{o.Namespace, "overseer-system"})
+			userSecret, err := r.findSecret(ctx, fmt.Sprintf("user-%s", user), []string{o.Namespace, "overseer-system"})
 			if err != nil {
 				if errors.IsNotFound(err) {
-					userSecret, err = r.findSecret(ctx, fmt.Sprintf("user-%s", user), []string{o.Namespace, "overseer-system"})
+					userSecret, err = r.findSecret(ctx, user, []string{o.Namespace, "overseer-system"})
+				}
+			}
+			if err != nil {
+				if errors.IsNotFound(err) {
+					userSecret, err = r.findSecret(ctx, fmt.Sprintf("factory-user-%s", user), []string{o.Namespace, "overseer-system"})
 				}
 			}
 
@@ -361,7 +366,7 @@ func (r *OverseerReconciler) ensureSecrets(ctx context.Context, o *overseerv1alp
 			uEmail := getSecretValue(userSecret, "GITHUB_EMAIL", "email")
 			uToken := getSecretValue(userSecret, "GITHUB_TOKEN", "pat")
 
-			targetSecretName := fmt.Sprintf("factory-user-%s", user)
+			targetSecretName := fmt.Sprintf("user-%s", user)
 			if err := r.reconcileFactorySecret(ctx, targetSecretName, targetNamespace, uLogin, uEmail, uToken, geminiAPIKey); err != nil {
 				return err
 			}

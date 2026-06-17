@@ -1034,7 +1034,7 @@ func verifyPROwnership(ctx context.Context, prURL string) error {
 
 	prAuthor := pr.GetUser().GetLogin()
 	if rootFlags.User == "" && prAuthor != "" {
-		secretName := fmt.Sprintf("factory-user-%s", prAuthor)
+		secretName := fmt.Sprintf("user-%s", prAuthor)
 		_, err = kubeClient.Clientset.CoreV1().Secrets(rootFlags.Namespace).Get(ctx, secretName, metav1.GetOptions{})
 		if err == nil {
 			klog.Infof("Auto-resolved PR author secret: %s", secretName)
@@ -1150,7 +1150,7 @@ func runAdopt(ctx context.Context, prURL, adoptAction, strategy string, ephemera
 	cloneURL := fmt.Sprintf("https://github.com/%s/%s.git", owner, repo)
 
 	fmt.Printf("Ensuring adopt sandbox '%s'...\n", sandboxName)
-	sandboxName, err = factorysandbox.EnsureAdoptSandbox(ctx, kubeClient, rootFlags.Namespace, repo, prNum, cloneURL, prURL, rootFlags.Image, rootFlags.DiskSize, ephemeralStorage, secrets, rootFlags.ResolvedEnvs)
+	sandboxName, err = factorysandbox.EnsureAdoptSandbox(ctx, kubeClient, rootFlags.Namespace, repo, prNum, cloneURL, prURL, rootFlags.Image, rootFlags.DiskSize, ephemeralStorage, secrets, rootFlags.ResolvedEnvs, rootFlags.User)
 	if err != nil {
 		return fmt.Errorf("ensuring adopt sandbox: %w", err)
 	}
