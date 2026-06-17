@@ -1757,7 +1757,11 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						}
 					}
 
-					selectedUser, sUserErr := selectUserForTask(ctx, ghClient, kubeClient, cfg, t.Type, t.Number, owner, repo)
+					selectedUser := t.Assignee
+					var sUserErr error
+					if selectedUser == "" {
+						selectedUser, sUserErr = selectUserForTask(ctx, ghClient, kubeClient, cfg, t.Type, t.Number, owner, repo)
+					}
 					if sUserErr != nil {
 						klog.Errorf("Failed to select user for task %s: %v", taskFilename, sUserErr)
 						t.Status = "Failed"
