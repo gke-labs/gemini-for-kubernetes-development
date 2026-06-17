@@ -444,15 +444,17 @@ func queueIssueTasks(ctx context.Context, ghClient *githubv39.Client, kubeClient
 				continue
 			}
 
-			assignedBot := assignedBotUser(issue, allBotUsers)
-			if assignedBot != "" {
+			hasTriggerLabel := false
+			for _, label := range issue.Labels {
+				if strings.EqualFold(label.GetName(), triggerLabel) {
+					hasTriggerLabel = true
+					break
+				}
+			}
+			if !hasTriggerLabel {
 				if dryRun {
-					fmt.Printf("[DRYRUN] Would unassign %s from issue #%d and add label '%s'\n", assignedBot, num, triggerLabel)
+					fmt.Printf("[DRYRUN] Would add label '%s' to issue #%d\n", triggerLabel, num)
 				} else {
-					fmt.Printf("Unassigning %s from issue #%d...\n", assignedBot, num)
-					if _, _, err := ghClient.Issues.RemoveAssignees(ctx, owner, repo, num, []string{assignedBot}); err != nil {
-						klog.Errorf("Failed to unassign %s from issue #%d: %v", assignedBot, num, err)
-					}
 					klog.Infof("Adding '%s' label to issue #%d", triggerLabel, num)
 					if _, _, err := ghClient.Issues.AddLabelsToIssue(ctx, owner, repo, num, []string{triggerLabel}); err != nil {
 						klog.Errorf("Failed to add label '%s' to issue #%d: %v", triggerLabel, num, err)
