@@ -123,18 +123,6 @@ func NewWatchCommand(ctx context.Context) *cobra.Command {
 	return cmd
 }
 
-func isAssigned(issue *githubv39.Issue, assignee string) bool {
-	if assignee == "" {
-		return false
-	}
-	for _, u := range issue.Assignees {
-		if strings.EqualFold(u.GetLogin(), assignee) {
-			return true
-		}
-	}
-	return false
-}
-
 func assignedBotUser(issue *githubv39.Issue, botUsers []string) string {
 	for _, u := range issue.Assignees {
 		for _, bot := range botUsers {
@@ -170,7 +158,6 @@ func resolveSandboxName(ctx context.Context, kubeClient *clients.KubernetesClien
 
 	return fmt.Sprintf("factory-pr-%d", num)
 }
-
 
 func isSandboxTaskRunning(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, name string) (bool, error) {
 	unstructObj, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
