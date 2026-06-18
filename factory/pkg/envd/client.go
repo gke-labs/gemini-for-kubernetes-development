@@ -463,38 +463,82 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 				}
 			}
 
+			// Check if process is still alive
+			var pidBuf bytes.Buffer
+			checkPidCmd := fmt.Sprintf("if [ -f %s ]; then pid=$(cat %s); if kill -0 $pid 2>/dev/null; then echo \"alive\"; fi; fi", pidFile, pidFile)
+			processAlive := false
+			if err := c.Exec(loopCtx, checkPidCmd, "/workspaces", nil, nil, &pidBuf, nil); err == nil {
+				if strings.TrimSpace(pidBuf.String()) == "alive" {
+					processAlive = true
+				}
+			}
+
 			// Check if exit code file exists
 			var exitBuf bytes.Buffer
 			checkCmd := fmt.Sprintf("if [ -f %s ]; then cat %s; fi", exitCodeFile, exitCodeFile)
+			exitCodeExists := false
+			var exitStr string
 			if err := c.Exec(loopCtx, checkCmd, "/workspaces", nil, nil, &exitBuf, nil); err == nil {
-				exitStr := strings.TrimSpace(exitBuf.String())
+				exitStr = strings.TrimSpace(exitBuf.String())
 				if exitStr != "" {
-					// Process completed!
-					// Do one final tail to flush any remaining log lines.
-					var finalBuf bytes.Buffer
-					finalTailCmd := fmt.Sprintf("if [ -f %s ]; then tail -c +%d %s; fi", logFile, offset+1, logFile)
-					if err := c.Exec(loopCtx, finalTailCmd, "/workspaces", nil, nil, &finalBuf, nil); err == nil {
-						newData := finalBuf.Bytes()
-						if len(newData) > 0 {
-							_, _ = os.Stdout.Write(newData)
-						}
-					}
-
-					// Parse exit code
-					code, err := strconv.Atoi(exitStr)
-					if err != nil {
-						return fmt.Errorf("invalid exit code '%s': %w", exitStr, err)
-					}
-					if code != 0 {
-						return fmt.Errorf("task failed with exit code %d", code)
-					}
-					return nil
+					exitCodeExists = true
 				}
 			} else {
 				klog.Warningf("Status check connection flaked: %v. Reconnecting...", err)
 				if reconnectErr := c.ReconnectPortForward(loopCtx); reconnectErr != nil {
 					klog.Errorf("Failed to reconnect port-forward: %v", reconnectErr)
 				}
+			}
+
+			if exitCodeExists {
+				// Process completed!
+				// Do one final tail to flush any remaining log lines.
+				var finalBuf bytes.Buffer
+				finalTailCmd := fmt.Sprintf("if [ -f %s ]; then tail -c +%d %s; fi", logFile, offset+1, logFile)
+				if err := c.Exec(loopCtx, finalTailCmd, "/workspaces", nil, nil, &finalBuf, nil); err == nil {
+					newData := finalBuf.Bytes()
+					if len(newData) > 0 {
+						_, _ = os.Stdout.Write(newData)
+					}
+				}
+
+				// Parse exit code
+				code, err := strconv.Atoi(exitStr)
+				if err != nil {
+					return fmt.Errorf("invalid exit code '%s': %w", exitStr, err)
+				}
+				if code != 0 {
+					return fmt.Errorf("task failed with exit code %d", code)
+				}
+				return nil
+			} else if !processAlive {
+				// Process is dead, and no exit code file exists!
+				// Wait 5 seconds to be sure it's not a write race
+				time.Sleep(5 * time.Second)
+				exitBuf.Reset()
+				if err := c.Exec(loopCtx, checkCmd, "/workspaces", nil, nil, &exitBuf, nil); err == nil {
+					exitStr = strings.TrimSpace(exitBuf.String())
+					if exitStr != "" {
+						// Process completed!
+						var finalBuf bytes.Buffer
+						finalTailCmd := fmt.Sprintf("if [ -f %s ]; then tail -c +%d %s; fi", logFile, offset+1, logFile)
+						if err := c.Exec(loopCtx, finalTailCmd, "/workspaces", nil, nil, &finalBuf, nil); err == nil {
+							newData := finalBuf.Bytes()
+							if len(newData) > 0 {
+								_, _ = os.Stdout.Write(newData)
+							}
+						}
+						code, err := strconv.Atoi(exitStr)
+						if err != nil {
+							return fmt.Errorf("invalid exit code '%s': %w", exitStr, err)
+						}
+						if code != 0 {
+							return fmt.Errorf("task failed with exit code %d", code)
+						}
+						return nil
+					}
+				}
+				return fmt.Errorf("task process terminated abruptly (PID file missing or process not found)")
 			}
 
 			// Calculate next interval based on exponential backoff from 2s to 10s over 2 minutes
