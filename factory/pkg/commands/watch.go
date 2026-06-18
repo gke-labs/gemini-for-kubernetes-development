@@ -272,6 +272,7 @@ type QueueTask struct {
 	AgentFile string    `yaml:"agentFile,omitempty"` // For chore tasks
 	SessionID string    `yaml:"sessionId,omitempty"` // For workflow sessions
 	CommitSHA string    `yaml:"commitSHA,omitempty"`
+	Recovered bool      `yaml:"recovered,omitempty"`
 }
 
 type ChoreRunState struct {
@@ -873,6 +874,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					var t QueueTask
 					if err := yaml.Unmarshal(data, &t); err == nil {
 						t.Status = "Pending"
+						t.Recovered = true
 						if err := writeTaskAtomically(incomingDir, f.Name(), &t); err == nil {
 							_ = os.Remove(processingPath)
 							klog.Infof("Recovered stuck task %s from processing to incoming", f.Name())
@@ -1755,14 +1757,14 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					continue
 				}
 
-				if task.Type != "agent-chore" {
+				if task.Type != "agent-chore" && task.Recovered {
 					completed, err := isSandboxTaskCompleted(ctx, kubeClient, rootFlags.Namespace, sandboxName, task.Type)
 					if err != nil {
 						klog.Errorf("Failed to check if sandbox %s completed task: %v", sandboxName, err)
 						continue
 					}
 					if completed {
-						klog.Infof("Task %s is already completed in sandbox %s. Marking as completed.", filename, sandboxName)
+						klog.Infof("Recovered task %s is already completed in sandbox %s. Marking as completed.", filename, sandboxName)
 						if dryRun {
 							continue
 						}
