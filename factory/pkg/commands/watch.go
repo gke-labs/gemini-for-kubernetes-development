@@ -1045,6 +1045,9 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 
 				state := processedPRs[num]
 
+				assignedBot := assignedBotUser(prIssue, allBotUsers)
+				isExplicitlyAssigned := assignedBot != "" && !unassignedPRs[num]
+
 				if hasFailure {
 					// Count investigations since last commit
 					investigationCount := 0
@@ -1065,7 +1068,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						}
 					}
 
-					if investigationCount >= 3 {
+					if investigationCount >= 3 && !isExplicitlyAssigned {
 						// Post giving up comment if we haven't already posted it since the last commit
 						hasPostedGivingUp := false
 						if listCommentsErr == nil {
@@ -1102,7 +1105,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 							}
 						}
 
-						if state.lastSHA != headSHA || prevFailed || time.Since(state.lastInvestigatedTime) > 6*time.Hour {
+						if state.lastSHA != headSHA || prevFailed || isExplicitlyAssigned || time.Since(state.lastInvestigatedTime) > 6*time.Hour {
 							filename := fmt.Sprintf("task-pr-%d-investigate.yaml", num)
 							if !taskExists(incomingDir, processingDir, filename) {
 								sandboxName := resolveSandboxName(ctx, kubeClient, "pr-investigate", num, repo)
@@ -1261,8 +1264,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						continue
 					}
 
-					assignedBot := assignedBotUser(prIssue, allBotUsers)
-					if hasNewComments || (assignedBot != "" && !unassignedPRs[num]) {
+					if hasNewComments || (assignedBot != "" && !unassignedPRs[num] && !hasFailure) {
 						if os.Getenv("DRY_RUN") == "true" {
 							continue
 						}
