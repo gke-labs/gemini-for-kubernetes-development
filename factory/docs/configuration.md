@@ -22,6 +22,7 @@ Here are the available fields in `.factory.cfg`:
 * **`image`** (string): Default base image to use for spawned sandboxes (e.g., `ghcr.io/gke-labs/gemini-for-kubernetes-development/factory-golang:latest`).
 * **`workspaceDiskSize`** (string, default: `10Gi`): Default size of the persistent volume claim (PVC) for the sandbox workspace (e.g., `20Gi`).
 * **`ephemeralStorage`** (string, default: `6Gi`): Default ephemeral storage request and limit for the sandbox pod (e.g., `10Gi`).
+* **`minNumber`** (integer, default: 0): Minimum issue or PR number to process. Any issue or PR with a number less than `minNumber` will be ignored.
 
 ### Repository Watching & Triggering
 * **`triggerLabel`** (string, default: `factory`): The GitHub label that triggers automatic issue fixing when detected by `factory watch`.
@@ -63,6 +64,7 @@ ephemeralStorage: 10Gi
 # Watch Limits
 maxActiveReviews: 5
 maxActiveIssues: 3
+minNumber: 10400
 
 # Watching Options
 triggerLabel: overseer

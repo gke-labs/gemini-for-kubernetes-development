@@ -4,6 +4,7 @@ metadata:
   name: kcc
 spec:
   repoURL: https://github.com/GoogleCloudPlatform/k8s-config-connector
+  minNumber: 9000
   robotAccount: argus-watcher-bot
   maxActiveReviews: 20
   maxActiveIssues: 11

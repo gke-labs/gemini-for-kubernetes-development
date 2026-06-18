@@ -200,7 +200,7 @@ func runInvestigate(ctx context.Context, prURL, prompt string, continueSession b
 
 	cloneURL := pr.GetBase().GetRepo().GetCloneURL()
 	fmt.Printf("Ensuring review sandbox for PR #%d...\n", prNum)
-	sandboxName, err := factorysandbox.EnsureReviewSandbox(ctx, kubeClient, rootFlags.Namespace, prNum, pr.GetTitle(), pr.GetHTMLURL(), pr.GetDiffURL(), cloneURL, rootFlags.Image, rootFlags.DiskSize, ephemeralStorage, secrets, rootFlags.ResolvedEnvs)
+	sandboxName, err := factorysandbox.EnsureReviewSandbox(ctx, kubeClient, rootFlags.Namespace, prNum, pr.GetTitle(), pr.GetHTMLURL(), pr.GetDiffURL(), cloneURL, rootFlags.Image, rootFlags.DiskSize, ephemeralStorage, secrets, rootFlags.ResolvedEnvs, rootFlags.User)
 	if err != nil {
 		return fmt.Errorf("ensuring review sandbox: %w", err)
 	}
@@ -460,7 +460,7 @@ func runAddressComments(ctx context.Context, prURL, prompt string, continueSessi
 
 	cloneURL := pr.GetBase().GetRepo().GetCloneURL()
 	fmt.Printf("Ensuring review sandbox for PR #%d...\n", prNum)
-	sandboxName, err := factorysandbox.EnsureReviewSandbox(ctx, kubeClient, rootFlags.Namespace, prNum, pr.GetTitle(), pr.GetHTMLURL(), pr.GetDiffURL(), cloneURL, rootFlags.Image, rootFlags.DiskSize, ephemeralStorage, secrets, rootFlags.ResolvedEnvs)
+	sandboxName, err := factorysandbox.EnsureReviewSandbox(ctx, kubeClient, rootFlags.Namespace, prNum, pr.GetTitle(), pr.GetHTMLURL(), pr.GetDiffURL(), cloneURL, rootFlags.Image, rootFlags.DiskSize, ephemeralStorage, secrets, rootFlags.ResolvedEnvs, rootFlags.User)
 	if err != nil {
 		return fmt.Errorf("ensuring review sandbox: %w", err)
 	}
@@ -797,7 +797,25 @@ func listAllCheckRuns(ctx context.Context, client *githubv39.Client, owner, repo
 		}
 		opts.Page = resp.NextPage
 	}
-	return allRuns, nil
+
+	// Deduplicate check runs by name, keeping only the latest run (highest ID)
+	latestRuns := make(map[string]*githubv39.CheckRun)
+	for _, run := range allRuns {
+		name := run.GetName()
+		if existing, ok := latestRuns[name]; ok {
+			if run.GetID() > existing.GetID() {
+				latestRuns[name] = run
+			}
+		} else {
+			latestRuns[name] = run
+		}
+	}
+
+	deduped := make([]*githubv39.CheckRun, 0, len(latestRuns))
+	for _, run := range latestRuns {
+		deduped = append(deduped, run)
+	}
+	return deduped, nil
 }
 
 type IterateFlags struct {
@@ -894,7 +912,7 @@ func runIterate(ctx context.Context, prURL, prompt string, continueSession bool,
 
 	cloneURL := pr.GetBase().GetRepo().GetCloneURL()
 	fmt.Printf("Ensuring review sandbox for PR #%d...\n", prNum)
-	sandboxName, err := factorysandbox.EnsureReviewSandbox(ctx, kubeClient, rootFlags.Namespace, prNum, pr.GetTitle(), pr.GetHTMLURL(), pr.GetDiffURL(), cloneURL, rootFlags.Image, rootFlags.DiskSize, ephemeralStorage, secrets, rootFlags.ResolvedEnvs)
+	sandboxName, err := factorysandbox.EnsureReviewSandbox(ctx, kubeClient, rootFlags.Namespace, prNum, pr.GetTitle(), pr.GetHTMLURL(), pr.GetDiffURL(), cloneURL, rootFlags.Image, rootFlags.DiskSize, ephemeralStorage, secrets, rootFlags.ResolvedEnvs, rootFlags.User)
 	if err != nil {
 		return fmt.Errorf("ensuring review sandbox: %w", err)
 	}
@@ -1033,13 +1051,20 @@ func verifyPROwnership(ctx context.Context, prURL string) error {
 	}
 
 	prAuthor := pr.GetUser().GetLogin()
-	if rootFlags.User == "" && prAuthor != "" {
-		secretName := fmt.Sprintf("user-%s", prAuthor)
+	user := rootFlags.User
+	if user == "" {
+		user = prAuthor
+	}
+
+	if user != "" && rootFlags.SecretName == "factory-user" {
+		secretName := fmt.Sprintf("user-%s", user)
 		_, err = kubeClient.Clientset.CoreV1().Secrets(rootFlags.Namespace).Get(ctx, secretName, metav1.GetOptions{})
 		if err == nil {
-			klog.Infof("Auto-resolved PR author secret: %s", secretName)
+			klog.Infof("Auto-resolved user secret for %s: %s", user, secretName)
 			rootFlags.SecretName = secretName
-			rootFlags.User = prAuthor
+			if rootFlags.User == "" {
+				rootFlags.User = user
+			}
 		} else if !apierrors.IsNotFound(err) {
 			return fmt.Errorf("checking user secret: %w", err)
 		}

@@ -243,6 +243,12 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 			"value": fmt.Sprintf("%d", *o.Spec.MaxActiveIssues),
 		})
 	}
+	if o.Spec.MinNumber != nil {
+		env = append(env, map[string]interface{}{
+			"name":  "MIN_NUMBER",
+			"value": fmt.Sprintf("%d", *o.Spec.MinNumber),
+		})
+	}
 	if o.Spec.WorkspaceDiskSize != "" {
 		env = append(env, map[string]interface{}{
 			"name":  "WORKSPACE_DISK_SIZE",
