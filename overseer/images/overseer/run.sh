@@ -27,6 +27,9 @@ function writeFactoryConfig {
     if [ -n "$WORKSPACE_DISK_SIZE" ]; then
         echo "workspaceDiskSize: $WORKSPACE_DISK_SIZE" >> "$CFG_FILE"
     fi
+    if [ -n "$MIN_NUMBER" ]; then
+        echo "minNumber: $MIN_NUMBER" >> "$CFG_FILE"
+    fi
     
     # PR Labels configuration (defaulting to 'overseer' inside the overseer container)
     PR_LABEL_VAL=${PR_LABEL:-overseer}

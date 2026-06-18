@@ -126,6 +126,10 @@ type OverseerSpec struct {
 	// +kubebuilder:validation:Optional
 	MaxActiveIssues *int32 `json:"maxActiveIssues,omitempty"`
 
+	// MinNumber specifies the minimum PR/issue number to process.
+	// +kubebuilder:validation:Optional
+	MinNumber *int32 `json:"minNumber,omitempty"`
+
 	// RobotAccount to use for the overseer.
 	// +kubebuilder:validation:Optional
 	RobotAccount string `json:"robotAccount,omitempty"`

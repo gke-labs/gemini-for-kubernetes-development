@@ -131,6 +131,11 @@ func (in *OverseerSpec) DeepCopyInto(out *OverseerSpec) {
 		*out = new(int32)
 		**out = **in
 	}
+	if in.MinNumber != nil {
+		in, out := &in.MinNumber, &out.MinNumber
+		*out = new(int32)
+		**out = **in
+	}
 	if in.Secrets != nil {
 		in, out := &in.Secrets, &out.Secrets
 		*out = make([]SecretMount, len(*in))
