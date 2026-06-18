@@ -34,7 +34,7 @@ graph TD
 
 ## 3. Work Item Discovery & Deduplication Rules
 
-The watcher uses the GitHub API to discover open issues and pull requests, applying specific filters based on labels, creators, and assignees.
+The watcher uses the GitHub API to discover open issues and pull requests, applying specific filters based on labels, creators, and assignees. It automatically paginates all API queries to fetch all pages of issues, PRs, reviews, and comments, bypassing default API limits.
 
 ### A. Issue Discovery (Bugs & Chores)
 The watcher fetches open issues matching any of the following criteria:
@@ -43,6 +43,7 @@ The watcher fetches open issues matching any of the following criteria:
 3. **Created by Watcher**: Open issues created by the watcher bot account itself.
 
 *Deduplication Filters*:
+* **MinNumber Filter**: Ignored if the issue or PR ID is less than the configured `minNumber` threshold.
 * **PR Filter**: The watcher ignores issues that are actually Pull Requests (where `PullRequestLinks != nil`).
 * **Linked PR Check**: The watcher searches all open PRs in the repository. If an open PR references the issue number in its title, description, branch name, or via the GitHub Timeline API, the issue is skipped to prevent duplicate work.
 
@@ -87,7 +88,7 @@ When processing a PR, the scan evaluates conditions and queues tasks in three ph
 
 ### Phase 1: Rebase / Merge Conflicts (`pr-iterate`)
 * **Trigger**: The PR is in a conflicting merge state (`Mergeable == false`).
-* **Unassignment**: If a bot from the pool is assigned, it is unassigned to indicate work has started.
+* **Assignment**: The bot user stays assigned to the PR on GitHub while the rebase task is executing.
 
 ### Phase 2: Review Feedback / Comments (`pr-comments`)
 * **Trigger**: A new comment or review is posted after the PR's last commit time and after `lastCommentAddressedTime`. Or, a pool bot is manually assigned to the PR as an override trigger.
@@ -95,13 +96,14 @@ When processing a PR, the scan evaluates conditions and queues tasks in three ph
   * Own watcher bot (`githubLogin`) and PR author comments are ignored.
   * System bots (matching `prow`, `-bot`, `-robot`, or `[bot]`) are ignored by default.
   * Allowlisted review bots (e.g. `reviewbot-robot` in `allowlistedBots`) are NOT ignored.
-* **Unassignment**: Unassigns the pool bot from the PR if it was assigned.
+* **Assignment**: The bot user stays assigned to the PR on GitHub while addressing comments.
 
 ### Phase 3: CI Check Failures (`pr-investigate`)
 * **Trigger**: Check runs or status checks for the head commit have failed.
+* **Check Run Deduplication**: Check runs are deduplicated by name, keeping only the latest run (highest ID), ensuring older cancelled/failed runs do not block the PR if a newer run succeeded.
 * **Retry Count**: If `investigationCount >= 3` since the last commit, it posts a "giving up" message and halts retries.
 * **Retry on Recovery**: If the previous investigation task is in `processed/` but has status `"Failed"`, the watcher ignores the SHA check and allows retrying the task.
-* **Unassignment**: Unassigns any pool bot from the PR.
+* **Assignment**: The bot user remains assigned to the PR while the task is executing. If it reaches the retry limit and gives up, it explicitly unassigns itself to request human review.
 
 ---
 
