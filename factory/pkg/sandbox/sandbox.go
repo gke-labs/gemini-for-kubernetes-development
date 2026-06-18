@@ -245,19 +245,44 @@ func AliasSandboxToPR(ctx context.Context, kubeClient *clients.KubernetesClient,
 	return nil
 }
 
-func EnsureReviewSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace string, prNum int, prTitle, prHTMLURL, prDiffURL, prCloneURL, image, diskSize, ephemeralStorage string, secrets []SecretMount, envs []EnvVar) (string, error) {
+func EnsureReviewSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace string, prNum int, prTitle, prHTMLURL, prDiffURL, prCloneURL, image, diskSize, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
 	listOpts := metav1.ListOptions{
 		LabelSelector: fmt.Sprintf("factory.gemini.google.com/pr=%d", prNum),
 	}
 	sbs, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).List(ctx, listOpts)
 	if err == nil && len(sbs.Items) > 0 {
-		return sbs.Items[0].GetName(), nil
+		sb := sbs.Items[0]
+		labels := sb.GetLabels()
+		if labels == nil {
+			labels = make(map[string]string)
+		}
+		if labels["factory.gemini.google.com/user"] != user && user != "" {
+			labels["factory.gemini.google.com/user"] = user
+			sb.SetLabels(labels)
+			_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Update(ctx, &sb, metav1.UpdateOptions{})
+			if err != nil {
+				klog.Warningf("Failed to update sandbox labels with user '%s': %v", user, err)
+			}
+		}
+		return sb.GetName(), nil
 	}
 
 	name := fmt.Sprintf("factory-pr-%d", prNum)
 
-	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	sbGet, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err == nil {
+		labels := sbGet.GetLabels()
+		if labels == nil {
+			labels = make(map[string]string)
+		}
+		if labels["factory.gemini.google.com/user"] != user && user != "" {
+			labels["factory.gemini.google.com/user"] = user
+			sbGet.SetLabels(labels)
+			_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Update(ctx, sbGet, metav1.UpdateOptions{})
+			if err != nil {
+				klog.Warningf("Failed to update sandbox labels with user '%s': %v", user, err)
+			}
+		}
 		return name, nil
 	}
 	if !strings.Contains(err.Error(), "not found") {
@@ -278,6 +303,7 @@ func EnsureReviewSandbox(ctx context.Context, kubeClient *clients.KubernetesClie
 			Labels: map[string]string{
 				"sandbox.gemini.google.com/type":    "review",
 				"factory.gemini.google.com/managed": "true",
+				"factory.gemini.google.com/user":    user,
 			},
 			Image:             image,
 			Replicas:          1,
