@@ -1279,7 +1279,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						continue
 					}
 
-					if hasNewComments || (assignedBot != "" && !unassignedPRs[num] && !hasFailure) {
+					if hasNewComments {
 						if os.Getenv("DRY_RUN") == "true" {
 							continue
 						}
