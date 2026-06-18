@@ -956,8 +956,24 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					}
 				}
 
-				// Fetch PR comments
-				comments, _, listCommentsErr := ghClient.Issues.ListComments(ctx, owner, repo, num, nil)
+				// Fetch all PR comments (handling pagination)
+				var comments []*githubv39.IssueComment
+				var listCommentsErr error
+				opt := &githubv39.IssueListCommentsOptions{
+					ListOptions: githubv39.ListOptions{PerPage: 100},
+				}
+				for {
+					pageComments, resp, err := ghClient.Issues.ListComments(ctx, owner, repo, num, opt)
+					if err != nil {
+						listCommentsErr = err
+						break
+					}
+					comments = append(comments, pageComments...)
+					if resp.NextPage == 0 {
+						break
+					}
+					opt.Page = resp.NextPage
+				}
 
 				// Check Phase 1: Rebase/Conflicts
 				isConflicting := pr.Mergeable != nil && !*pr.Mergeable
