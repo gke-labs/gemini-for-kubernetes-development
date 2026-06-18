@@ -1033,13 +1033,20 @@ func verifyPROwnership(ctx context.Context, prURL string) error {
 	}
 
 	prAuthor := pr.GetUser().GetLogin()
-	if rootFlags.User == "" && prAuthor != "" {
-		secretName := fmt.Sprintf("user-%s", prAuthor)
+	user := rootFlags.User
+	if user == "" {
+		user = prAuthor
+	}
+
+	if user != "" && rootFlags.SecretName == "factory-user" {
+		secretName := fmt.Sprintf("user-%s", user)
 		_, err = kubeClient.Clientset.CoreV1().Secrets(rootFlags.Namespace).Get(ctx, secretName, metav1.GetOptions{})
 		if err == nil {
-			klog.Infof("Auto-resolved PR author secret: %s", secretName)
+			klog.Infof("Auto-resolved user secret for %s: %s", user, secretName)
 			rootFlags.SecretName = secretName
-			rootFlags.User = prAuthor
+			if rootFlags.User == "" {
+				rootFlags.User = user
+			}
 		} else if !apierrors.IsNotFound(err) {
 			return fmt.Errorf("checking user secret: %w", err)
 		}
