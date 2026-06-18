@@ -1048,6 +1048,22 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				assignedBot := assignedBotUser(prIssue, allBotUsers)
 				isExplicitlyAssigned := assignedBot != "" && !unassignedPRs[num]
 
+				if state.lastSHA != "" && state.lastSHA != headSHA {
+					if assignedBot != "" && !unassignedPRs[num] {
+						if dryRun {
+							fmt.Printf("[DRYRUN] Would unassign stale bot %s from PR #%d due to new commit %s\n", assignedBot, num, headSHA)
+						} else {
+							fmt.Printf("Unassigning stale bot %s from PR #%d due to new commit %s...\n", assignedBot, num, headSHA)
+							if _, _, err := ghClient.Issues.RemoveAssignees(ctx, owner, repo, num, []string{assignedBot}); err != nil {
+								klog.Errorf("Failed to unassign stale bot %s from PR #%d: %v", assignedBot, num, err)
+							}
+							unassignedPRs[num] = true
+							isExplicitlyAssigned = false
+							assignedBot = ""
+						}
+					}
+				}
+
 				if hasFailure {
 					filename := fmt.Sprintf("task-pr-%d-investigate.yaml", num)
 					if !taskExists(incomingDir, processingDir, filename) {
