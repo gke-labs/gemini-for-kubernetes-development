@@ -1411,22 +1411,28 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				klog.Errorf("Failed to list open PRs: %v", err)
 			}
 
-			// Scan issues labeled with triggerLabel
+			// Scan issues labeled with triggerLabel (handling pagination)
 			var slowIssues []*githubv39.Issue
 			opts2 := &githubv39.IssueListByRepoOptions{
 				Labels:      []string{triggerLabel},
 				State:       "open",
 				ListOptions: githubv39.ListOptions{PerPage: 100},
 			}
-			issues2, _, err := ghClient.Issues.ListByRepo(ctx, owner, repo, opts2)
-			if err != nil {
-				klog.Errorf("Failed to list issues for label %s: %v", triggerLabel, err)
-			} else {
-				for _, item := range issues2 {
+			for {
+				pageIssues, resp, err := ghClient.Issues.ListByRepo(ctx, owner, repo, opts2)
+				if err != nil {
+					klog.Errorf("Failed to list issues for label %s: %v", triggerLabel, err)
+					break
+				}
+				for _, item := range pageIssues {
 					if item.PullRequestLinks == nil {
 						slowIssues = append(slowIssues, item)
 					}
 				}
+				if resp.NextPage == 0 {
+					break
+				}
+				opts2.Page = resp.NextPage
 			}
 
 			// Process slow issues
