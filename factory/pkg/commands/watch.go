@@ -421,6 +421,9 @@ func queueIssueTasks(ctx context.Context, ghClient *githubv39.Client, kubeClient
 	klog.Infof("queueIssueTasks called with %d issues", len(issues))
 	for _, issue := range issues {
 		num := issue.GetNumber()
+		if cfg != nil && cfg.MinNumber > 0 && num < cfg.MinNumber {
+			continue
+		}
 		if refIssues[num] {
 			klog.Infof("Skipping issue #%d because there is already a PR referencing it.", num)
 			continue
@@ -923,6 +926,9 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 			}
 			for _, prIssue := range prIssues {
 				num := prIssue.GetNumber()
+				if cfg != nil && cfg.MinNumber > 0 && num < cfg.MinNumber {
+					continue
+				}
 				pr, _, err := ghClient.PullRequests.Get(ctx, owner, repo, num)
 				if err != nil {
 					klog.Errorf("Failed to fetch full PR #%d: %v", num, err)

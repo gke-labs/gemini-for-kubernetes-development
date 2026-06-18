@@ -39,6 +39,7 @@ type FactoryConfig struct {
 	AllowlistedBots   []string              `yaml:"allowlistedBots"`
 	Secrets           []SecretMount         `yaml:"secrets"`
 	Env               []EnvVar              `yaml:"env"`
+	MinNumber         int                   `yaml:"minNumber"`
 	Roles             map[string]RoleConfig `yaml:"roles"`
 }
 
