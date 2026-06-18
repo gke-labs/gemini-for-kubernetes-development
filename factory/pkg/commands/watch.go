@@ -974,17 +974,6 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 							klog.Infof("Skipping PR #%d rebase because there is an in-flight sandbox %s.", num, sandboxName)
 						} else {
 							assignedBot := assignedBotUser(prIssue, allBotUsers)
-							if assignedBot != "" && !unassignedPRs[num] {
-								if dryRun {
-									fmt.Printf("[DRYRUN] Would unassign %s from PR #%d\n", assignedBot, num)
-								} else {
-									fmt.Printf("Unassigning %s from PR #%d...\n", assignedBot, num)
-									if _, _, err := ghClient.Issues.RemoveAssignees(ctx, owner, repo, num, []string{assignedBot}); err != nil {
-										klog.Errorf("Failed to unassign %s from PR #%d: %v", assignedBot, num, err)
-									}
-									unassignedPRs[num] = true
-								}
-							}
 
 							taskAssignee := assignedBot
 							if taskAssignee == "" {
@@ -1106,8 +1095,17 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 									}
 								}
 							}
-							if !hasPostedGivingUp && !dryRun {
-								addGitHubComment(ctx, ghClient, owner, repo, num, "🤖 AI Factory has attempted to fix CI failures for this PR 3 times since the last commit and is giving up. Human assistance is required.")
+							if !dryRun {
+								if !hasPostedGivingUp {
+									addGitHubComment(ctx, ghClient, owner, repo, num, "🤖 AI Factory has attempted to fix CI failures for this PR 3 times since the last commit and is giving up. Human assistance is required.")
+								}
+								if assignedBot != "" && !unassignedPRs[num] {
+									fmt.Printf("Unassigning bot %s from PR #%d because it has given up...\n", assignedBot, num)
+									if _, _, err := ghClient.Issues.RemoveAssignees(ctx, owner, repo, num, []string{assignedBot}); err != nil {
+										klog.Errorf("Failed to unassign bot %s from PR #%d: %v", assignedBot, num, err)
+									}
+									unassignedPRs[num] = true
+								}
 							}
 							klog.Infof("Skipping PR #%d investigate because it has reached the maximum retry limit (3).", num)
 						} else {
@@ -1132,17 +1130,6 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 									klog.Infof("Skipping PR #%d investigate because there is an in-flight sandbox %s.", num, sandboxName)
 								} else {
 									assignedBot := assignedBotUser(prIssue, allBotUsers)
-									if assignedBot != "" && !unassignedPRs[num] {
-										if dryRun {
-											fmt.Printf("[DRYRUN] Would unassign %s from PR #%d\n", assignedBot, num)
-										} else {
-											fmt.Printf("Unassigning %s from PR #%d...\n", assignedBot, num)
-											if _, _, err := ghClient.Issues.RemoveAssignees(ctx, owner, repo, num, []string{assignedBot}); err != nil {
-												klog.Errorf("Failed to unassign %s from PR #%d: %v", assignedBot, num, err)
-											}
-											unassignedPRs[num] = true
-										}
-									}
 
 									taskAssignee := assignedBot
 									if taskAssignee == "" {
@@ -1293,18 +1280,6 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 							} else if running {
 								klog.Infof("Skipping PR #%d address-comments because there is an in-flight sandbox %s.", num, sandboxName)
 							} else {
-								if assignedBot != "" && !unassignedPRs[num] {
-									if dryRun {
-										fmt.Printf("[DRYRUN] Would unassign %s from PR #%d\n", assignedBot, num)
-									} else {
-										fmt.Printf("Unassigning %s from PR #%d...\n", assignedBot, num)
-										if _, _, err := ghClient.Issues.RemoveAssignees(ctx, owner, repo, num, []string{assignedBot}); err != nil {
-											klog.Errorf("Failed to unassign %s from PR #%d: %v", assignedBot, num, err)
-										}
-										unassignedPRs[num] = true
-									}
-								}
-
 								taskAssignee := assignedBot
 								if taskAssignee == "" {
 									taskAssignee = targetAssignee
