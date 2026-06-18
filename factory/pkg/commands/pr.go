@@ -797,7 +797,25 @@ func listAllCheckRuns(ctx context.Context, client *githubv39.Client, owner, repo
 		}
 		opts.Page = resp.NextPage
 	}
-	return allRuns, nil
+
+	// Deduplicate check runs by name, keeping only the latest run (highest ID)
+	latestRuns := make(map[string]*githubv39.CheckRun)
+	for _, run := range allRuns {
+		name := run.GetName()
+		if existing, ok := latestRuns[name]; ok {
+			if run.GetID() > existing.GetID() {
+				latestRuns[name] = run
+			}
+		} else {
+			latestRuns[name] = run
+		}
+	}
+
+	deduped := make([]*githubv39.CheckRun, 0, len(latestRuns))
+	for _, run := range latestRuns {
+		deduped = append(deduped, run)
+	}
+	return deduped, nil
 }
 
 type IterateFlags struct {
