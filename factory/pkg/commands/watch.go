@@ -1063,16 +1063,31 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 
 				if state.lastSHA != "" && state.lastSHA != headSHA {
 					if assignedBot != "" && !unassignedPRs[num] {
-						if dryRun {
-							fmt.Printf("[DRYRUN] Would unassign stale bot %s from PR #%d due to new commit %s\n", assignedBot, num, headSHA)
+						// Check role levels and author to prevent assignment cycling (ping-pong) between different role levels
+						author := pr.GetUser().GetLogin()
+						isAuthor := strings.EqualFold(assignedBot, author)
+						assignedBotRole := getBotUserRole(assignedBot, cfg)
+						watcherRole := "watcher"
+						hasHigherRole := getRoleLevel(assignedBotRole) > getRoleLevel(watcherRole)
+
+						if isAuthor || hasHigherRole {
+							// Do not unassign the active agent or coder/author bot to prevent assignment cycling loops
+							klog.Infof("Skipping unassigning bot %s from PR #%d (isAuthor: %v, role: %s) to prevent assignment cycling", assignedBot, num, isAuthor, assignedBotRole)
+							// Acknowledge the new commit so we don't repeat this skip log continuously on every poll
+							state.lastSHA = headSHA
+							processedPRs[num] = state
 						} else {
-							fmt.Printf("Unassigning stale bot %s from PR #%d due to new commit %s...\n", assignedBot, num, headSHA)
-							if _, _, err := ghClient.Issues.RemoveAssignees(ctx, owner, repo, num, []string{assignedBot}); err != nil {
-								klog.Errorf("Failed to unassign stale bot %s from PR #%d: %v", assignedBot, num, err)
+							if dryRun {
+								fmt.Printf("[DRYRUN] Would unassign stale bot %s from PR #%d due to new commit %s\n", assignedBot, num, headSHA)
+							} else {
+								fmt.Printf("Unassigning stale bot %s from PR #%d due to new commit %s...\n", assignedBot, num, headSHA)
+								if _, _, err := ghClient.Issues.RemoveAssignees(ctx, owner, repo, num, []string{assignedBot}); err != nil {
+									klog.Errorf("Failed to unassign stale bot %s from PR #%d: %v", assignedBot, num, err)
+								}
+								unassignedPRs[num] = true
+								isExplicitlyAssigned = false
+								assignedBot = ""
 							}
-							unassignedPRs[num] = true
-							isExplicitlyAssigned = false
-							assignedBot = ""
 						}
 					}
 				}
@@ -2144,6 +2159,35 @@ func shouldIgnoreUser(user *githubv39.User, githubLogin string, allowlistedBots 
 	}
 
 	return false
+}
+
+func getBotUserRole(user string, cfg *config.FactoryConfig) string {
+	if cfg == nil || user == "" {
+		return ""
+	}
+	for roleName, rCfg := range cfg.Roles {
+		for _, u := range rCfg.Users {
+			if strings.EqualFold(u, user) {
+				return roleName
+			}
+		}
+	}
+	return ""
+}
+
+func getRoleLevel(role string) int {
+	switch strings.ToLower(role) {
+	case "watcher":
+		return 1
+	case "reviewer":
+		return 2
+	case "coder":
+		return 3
+	case "agent":
+		return 4
+	default:
+		return 0
+	}
 }
 
 func cleanupClosedPRSandboxes(ctx context.Context, ghClient *githubv39.Client, kubeClient *clients.KubernetesClient, owner, repo, namespace string, dryRun bool) error {
