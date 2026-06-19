@@ -1856,7 +1856,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 
 					selectedUser := t.Assignee
 					var sUserErr error
-					if selectedUser == "" {
+					if selectedUser == "" || (isPRTask(t.Type) && strings.EqualFold(selectedUser, targetAssignee)) {
 						selectedUser, sUserErr = selectUserForTask(ctx, ghClient, kubeClient, cfg, t.Type, t.Number, owner, repo)
 					}
 					if sUserErr != nil {
@@ -2269,14 +2269,14 @@ func selectUserForTask(ctx context.Context, ghClient *githubv39.Client, kubeClie
 	}
 
 	if role == "" {
-		switch taskType {
-		case "agent-chore":
+		switch {
+		case taskType == "agent-chore":
 			if rCfg, ok := cfg.Roles["agent"]; ok && len(rCfg.Users) > 0 {
 				role = "agent"
 			} else {
 				role = "coder"
 			}
-		case "pr-investigate", "pr-comments", "pr-iterate":
+		case isPRTask(taskType):
 			if prNum > 0 {
 				pr, _, err := ghClient.PullRequests.Get(ctx, owner, repo, prNum)
 				if err == nil {
@@ -2302,9 +2302,9 @@ func selectUserForTask(ctx context.Context, ghClient *githubv39.Client, kubeClie
 			if role == "" {
 				role = "coder"
 			}
-		case "issue-fix":
+		case taskType == "issue-fix":
 			role = "coder"
-		case "pr-review":
+		case taskType == "pr-review":
 			role = "reviewer"
 		default:
 			return "", nil // default fallback
@@ -2416,4 +2416,8 @@ func selectUserForTask(ctx context.Context, ghClient *githubv39.Client, kubeClie
 	}
 
 	return "", nil
+}
+
+func isPRTask(taskType string) bool {
+	return taskType == "pr-investigate" || taskType == "pr-comments" || taskType == "pr-iterate"
 }
