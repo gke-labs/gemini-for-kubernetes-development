@@ -285,6 +285,12 @@ func (c *ReviewCommand) Run(ctx context.Context) error {
 		// Filter files based on ignore patterns and generated files
 		diffFiles = filterDiffFiles(repoDir, diffFiles, c.IgnoreFiles)
 
+		if len(diffFiles) == 0 {
+			log.Info("No files to review after filtering out ignored and generated files. Skipping review.")
+			updateState("skipped", "No files to review after filtering")
+			return nil
+		}
+
 		if len(diffFiles) > c.MaxReviewFiles {
 			errStr := fmt.Sprintf("Too many files to review: %d (max %d)", len(diffFiles), c.MaxReviewFiles)
 			updateState("Error: Too many files", errStr)
