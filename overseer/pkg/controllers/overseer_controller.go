@@ -65,6 +65,10 @@ func (r *OverseerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
+	// Reset status on every reconcile to clear previous errors
+	overseerObj.Status.OverseerStatus = ""
+	overseerObj.Status.Message = ""
+
 	// 1. Ensure Namespace exists
 	nsName := fmt.Sprintf("overseer-%s", overseerObj.Name)
 	if len(nsName) > 63 {
