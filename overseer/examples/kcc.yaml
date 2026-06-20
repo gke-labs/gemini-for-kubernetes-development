@@ -19,6 +19,17 @@ spec:
   secrets:
     - name: projectaccess
       mountPath: "/etc/pakey"
+  env:
+    - name: GOOGLE_APPLICATION_CREDENTIALS
+      value: "/etc/pakey/keys.json"
+    - name: CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE
+      value: "/etc/pakey/keys.json"
+    - name: GOOGLE_CLOUD_PROJECT
+      value: "cnrm-barni-4"
+    - name: CLOUDSDK_CORE_PROJECT
+      value: "cnrm-barni-4"
+    - name: GCP_PROJECT_ID
+      value: "cnrm-barni-4"
   repo:
     issueMode: enabled
     prMode: enabled
