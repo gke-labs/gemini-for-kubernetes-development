@@ -426,6 +426,44 @@ func isWorkflowDefinition(ctx context.Context, ghClient *githubv39.Client, owner
 	return false
 }
 
+func getWorkflowCooldown(ctx context.Context, ghClient *githubv39.Client, owner, repo, path string) time.Duration {
+	defaultCooldown := 10 * time.Minute
+	if path == "" {
+		return defaultCooldown
+	}
+
+	var content []byte
+	var err error
+	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
+		content, err = fetchWorkflowContent(ctx, ghClient, path)
+	} else {
+		cleanPath := strings.TrimPrefix(path, "./")
+		cleanPath = strings.TrimPrefix(cleanPath, "/")
+		var fileContent *githubv39.RepositoryContent
+		fileContent, _, _, err = ghClient.Repositories.GetContents(ctx, owner, repo, cleanPath, &githubv39.RepositoryContentGetOptions{})
+		if err == nil {
+			var contentStr string
+			contentStr, err = fileContent.GetContent()
+			content = []byte(contentStr)
+		}
+	}
+	if err != nil {
+		return defaultCooldown
+	}
+
+	agentDef, err := ParseAgent(content)
+	if err != nil || agentDef.Cooldown == "" {
+		return defaultCooldown
+	}
+
+	d, err := time.ParseDuration(agentDef.Cooldown)
+	if err != nil {
+		klog.Warningf("Failed to parse workflow cooldown duration %q: %v", agentDef.Cooldown, err)
+		return defaultCooldown
+	}
+	return d
+}
+
 func queueIssueTasks(ctx context.Context, ghClient *githubv39.Client, kubeClient *clients.KubernetesClient, cfg *config.FactoryConfig, owner, repo string, issues []*githubv39.Issue, processedIssues map[int]time.Time, refIssues map[int]bool, targetAssignee string, allBotUsers []string, incomingDir, processingDir, processedDir, queueDir string, dryRun bool, triggerLabel string) {
 	klog.Infof("queueIssueTasks called with %d issues", len(issues))
 	for _, issue := range issues {
@@ -465,8 +503,8 @@ func queueIssueTasks(ctx context.Context, ghClient *githubv39.Client, kubeClient
 		// Check if the workflow session already completed recently
 		processedPath := filepath.Join(processedDir, filename)
 		if info, err := os.Stat(processedPath); err == nil {
-			// Rate limit: only run once every 10 minutes
-			if time.Since(info.ModTime()) < 10*time.Minute {
+			cooldown := getWorkflowCooldown(ctx, ghClient, owner, repo, workflowPath)
+			if time.Since(info.ModTime()) < cooldown {
 				continue
 			}
 		}

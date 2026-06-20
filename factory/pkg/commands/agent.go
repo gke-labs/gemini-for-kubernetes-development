@@ -38,8 +38,10 @@ type AgentDefinition struct {
 	Schedule    string `yaml:"schedule"`
 	SkipPR      bool   `yaml:"skipPR,omitempty"`
 	Mode        string `yaml:"mode,omitempty"`
+	Cooldown    string `yaml:"cooldown,omitempty"`
 	Prompt      string `yaml:"-"`
 }
+
 
 func NewAgentCommand(ctx context.Context) *cobra.Command {
 	cmd := &cobra.Command{
