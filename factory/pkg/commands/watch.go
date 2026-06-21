@@ -134,7 +134,7 @@ func assignedBotUser(issue *githubv39.Issue, botUsers []string) string {
 	return ""
 }
 
-func resolveSandboxName(ctx context.Context, kubeClient *clients.KubernetesClient, taskType string, num int, repo string) string {
+func resolveSandboxName(ctx context.Context, kubeClient *clients.KubernetesClient, ghClient *githubv39.Client, taskType string, num int, owner, repo string) string {
 	if taskType == "issue-fix" || taskType == "agent-chore" {
 		wfName := fmt.Sprintf("wf-issue-%d", num)
 		if kubeClient != nil {
@@ -153,6 +153,27 @@ func resolveSandboxName(ctx context.Context, kubeClient *clients.KubernetesClien
 		sbs, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(rootFlags.Namespace).List(ctx, listOpts)
 		if err == nil && len(sbs.Items) > 0 {
 			return sbs.Items[0].GetName()
+		}
+	}
+
+	// If no sandbox is labeled with this PR, try to find a matching issue sandbox by checking referenced issues
+	if kubeClient != nil && ghClient != nil && owner != "" {
+		pr, _, err := ghClient.PullRequests.Get(ctx, owner, repo, num)
+		if err == nil {
+			// Find referenced issue numbers
+			referencedIssues := getReferencedIssues(pr)
+			for issueNum := range referencedIssues {
+				// Check if there is an active/existing sandbox for this issue
+				issueSandboxName := fmt.Sprintf("fix-%s-%d", repo, issueNum)
+				if _, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(rootFlags.Namespace).Get(ctx, issueSandboxName, metav1.GetOptions{}); err == nil {
+					// We found a matching issue sandbox! Alias it to the PR now for future lookups.
+					klog.Infof("Self-healing: Found matching issue sandbox '%s' for PR #%d. Aliasing sandbox to PR...", issueSandboxName, num)
+					if aliasErr := factorysandbox.AliasSandboxToPR(ctx, kubeClient, rootFlags.Namespace, issueSandboxName, num, pr.GetHTMLURL()); aliasErr != nil {
+						klog.Warningf("Failed to dynamically alias sandbox '%s' to PR #%d: %v", issueSandboxName, num, aliasErr)
+					}
+					return issueSandboxName
+				}
+			}
 		}
 	}
 
@@ -1035,7 +1056,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				if isConflicting {
 					filename := fmt.Sprintf("task-pr-%d-iterate.yaml", num)
 					if !taskExists(incomingDir, processingDir, filename) {
-						sandboxName := resolveSandboxName(ctx, kubeClient, "pr-iterate", num, repo)
+						sandboxName := resolveSandboxName(ctx, kubeClient, ghClient, "pr-iterate", num, owner, repo)
 						running, err := isSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName)
 						if err != nil {
 							klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
@@ -1191,7 +1212,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 							}
 
 							if state.lastSHA != headSHA || prevFailed || isExplicitlyAssigned || time.Since(state.lastInvestigatedTime) > 6*time.Hour {
-								sandboxName := resolveSandboxName(ctx, kubeClient, "pr-investigate", num, repo)
+								sandboxName := resolveSandboxName(ctx, kubeClient, ghClient, "pr-investigate", num, owner, repo)
 								running, err := isSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName)
 								if err != nil {
 									klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
@@ -1342,7 +1363,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						}
 						filename := fmt.Sprintf("task-pr-%d-comments.yaml", num)
 						if !taskExists(incomingDir, processingDir, filename) {
-							sandboxName := resolveSandboxName(ctx, kubeClient, "pr-comments", num, repo)
+							sandboxName := resolveSandboxName(ctx, kubeClient, ghClient, "pr-comments", num, owner, repo)
 							running, err := isSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName)
 							if err != nil {
 								klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
@@ -1787,7 +1808,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				filename := item.filename
 				task := item.task
 
-				sandboxName := resolveSandboxName(ctx, kubeClient, task.Type, task.Number, repo)
+				sandboxName := resolveSandboxName(ctx, kubeClient, ghClient, task.Type, task.Number, owner, repo)
 				if activeSandboxesInCycle[sandboxName] {
 					klog.Infof("Skipping task %s because sandbox %s is already scheduled to run a task in this cycle.", filename, sandboxName)
 					continue
@@ -2000,7 +2021,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 									sandboxName = fmt.Sprintf("agent-%s-%d", repo, t.Number)
 								}
 							case "pr-investigate", "pr-comments", "pr-iterate", "pr-review":
-								sandboxName = resolveSandboxName(ctx, kubeClient, t.Type, t.Number, repo)
+								sandboxName = resolveSandboxName(ctx, kubeClient, ghClient, t.Type, t.Number, owner, repo)
 							}
 
 							if sandboxName != "" {
