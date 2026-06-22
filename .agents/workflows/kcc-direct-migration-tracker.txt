@@ -3,6 +3,7 @@ description: Tracks the overall status of KCC resource migration from TF/DCL to 
 name: kcc-direct-migration-tracker
 schedule: never
 mode: workflow
+cooldown: 6h
 ---
 
 # Role
