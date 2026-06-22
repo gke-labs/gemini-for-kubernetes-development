@@ -42,7 +42,6 @@ type AgentDefinition struct {
 	Prompt      string `yaml:"-"`
 }
 
-
 func NewAgentCommand(ctx context.Context) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "agent",
