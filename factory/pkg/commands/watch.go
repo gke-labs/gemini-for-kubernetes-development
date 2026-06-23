@@ -289,19 +289,20 @@ func countRunningSandboxTasks(ctx context.Context, kubeClient *clients.Kubernete
 }
 
 type QueueTask struct {
-	Type      string    `yaml:"type"` // "issue-fix", "pr-investigate", "pr-comments", "pr-iterate", "pr-review", "agent-chore"
-	URL       string    `yaml:"url"`
-	Number    int       `yaml:"number"`
-	Priority  string    `yaml:"priority"` // "critical", "urgent", "important", "high", "medium", "low"
-	Phase     int       `yaml:"phase"`    // 1: Rebase/iterate, 2: Comments, 3: Investigate/Fix, 4: Chores
-	CreatedAt time.Time `yaml:"createdAt"`
-	Assignee  string    `yaml:"assignee,omitempty"`
-	Status    string    `yaml:"status"` // "Pending", "Running", "Completed", "Failed"
-	Error     string    `yaml:"error,omitempty"`
-	AgentFile string    `yaml:"agentFile,omitempty"` // For chore tasks
-	SessionID string    `yaml:"sessionId,omitempty"` // For workflow sessions
-	CommitSHA string    `yaml:"commitSHA,omitempty"`
-	Recovered bool      `yaml:"recovered,omitempty"`
+	Type        string    `yaml:"type"` // "issue-fix", "pr-investigate", "pr-comments", "pr-iterate", "pr-review", "agent-chore"
+	URL         string    `yaml:"url"`
+	Number      int       `yaml:"number"`
+	Priority    string    `yaml:"priority"` // "critical", "urgent", "important", "high", "medium", "low"
+	Phase       int       `yaml:"phase"`    // 1: Rebase/iterate, 2: Comments, 3: Investigate/Fix, 4: Chores
+	CreatedAt   time.Time `yaml:"createdAt"`
+	Assignee    string    `yaml:"assignee,omitempty"`
+	Status      string    `yaml:"status"` // "Pending", "Running", "Completed", "Failed"
+	Error       string    `yaml:"error,omitempty"`
+	AgentFile   string    `yaml:"agentFile,omitempty"` // For chore tasks
+	SessionID   string    `yaml:"sessionId,omitempty"` // For workflow sessions
+	CommitSHA   string    `yaml:"commitSHA,omitempty"`
+	Recovered   bool      `yaml:"recovered,omitempty"`
+	CompletedAt time.Time `yaml:"completedAt,omitempty"`
 }
 
 type ChoreRunState struct {
@@ -883,8 +884,19 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				trimmed := strings.TrimPrefix(f.Name(), "task-issue-")
 				trimmed = strings.TrimSuffix(trimmed, ".yaml")
 				if num, err := strconv.Atoi(trimmed); err == nil {
+					var t QueueTask
+					hasTask := false
+					if data, err := os.ReadFile(filePath); err == nil {
+						if err := yaml.Unmarshal(data, &t); err == nil {
+							hasTask = true
+						}
+					}
 					if info, err := f.Info(); err == nil {
-						processedIssues[num] = info.ModTime()
+						tTime := info.ModTime()
+						if hasTask && !t.CompletedAt.IsZero() {
+							tTime = t.CompletedAt
+						}
+						processedIssues[num] = tTime
 					}
 				}
 			} else if strings.HasPrefix(f.Name(), "task-pr-") {
@@ -904,26 +916,31 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 
 				if numStr != "" {
 					if num, err := strconv.Atoi(numStr); err == nil {
-						if info, err := f.Info(); err == nil {
-							state := processedPRs[num]
-							if isComments {
-								state.lastCommentAddressedTime = info.ModTime()
-							} else if isInvestigate {
-								state.lastInvestigatedTime = info.ModTime()
-							}
-
-							// Read the file to get CommitSHA if it's there
-							if data, err := os.ReadFile(filePath); err == nil {
-								var t QueueTask
-								if err := yaml.Unmarshal(data, &t); err == nil {
-									if t.CommitSHA != "" {
-										state.lastSHA = t.CommitSHA
-									}
+						state := processedPRs[num]
+						var t QueueTask
+						hasTask := false
+						if data, err := os.ReadFile(filePath); err == nil {
+							if err := yaml.Unmarshal(data, &t); err == nil {
+								hasTask = true
+								if t.CommitSHA != "" {
+									state.lastSHA = t.CommitSHA
 								}
 							}
-
-							processedPRs[num] = state
 						}
+
+						if info, err := f.Info(); err == nil {
+							tTime := info.ModTime()
+							if hasTask && !t.CompletedAt.IsZero() {
+								tTime = t.CompletedAt
+							}
+							if isComments {
+								state.lastCommentAddressedTime = tTime
+							} else if isInvestigate {
+								state.lastInvestigatedTime = tTime
+							}
+						}
+
+						processedPRs[num] = state
 					}
 				}
 			}
@@ -1160,6 +1177,11 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 							}
 						}
 					}
+				}
+
+				if state.lastSHA != headSHA {
+					state.lastSHA = headSHA
+					processedPRs[num] = state
 				}
 
 				if hasFailure {
@@ -1864,6 +1886,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						incomingPath := filepath.Join(incomingDir, filename)
 						processedPath := filepath.Join(processedDir, filename)
 						task.Status = "Completed"
+						task.CompletedAt = time.Now()
 						_ = writeTaskAtomically(incomingDir, filename, task)
 						writeTaskJournalEvent(queueDir, filename, task, "Completed", 0)
 						if err := os.Rename(incomingPath, processedPath); err != nil {
@@ -2028,6 +2051,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						klog.Errorf("Task %s failed: %v", taskFilename, taskErr)
 						t.Status = "Failed"
 						t.Error = taskErr.Error()
+						t.CompletedAt = time.Now()
 						writeTaskJournalEvent(queueDir, taskFilename, t, "Failed", duration)
 
 						// Force clean up sandbox if the task timed out
@@ -2061,6 +2085,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					} else {
 						fmt.Printf("Task %s completed successfully.\n", taskFilename)
 						t.Status = "Completed"
+						t.CompletedAt = time.Now()
 						writeTaskJournalEvent(queueDir, taskFilename, t, "Completed", duration)
 					}
 
