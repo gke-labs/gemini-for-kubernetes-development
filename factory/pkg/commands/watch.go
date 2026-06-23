@@ -1179,6 +1179,11 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					}
 				}
 
+				if state.lastSHA != headSHA {
+					state.lastSHA = headSHA
+					processedPRs[num] = state
+				}
+
 				if hasFailure {
 					filename := fmt.Sprintf("task-pr-%d-investigate.yaml", num)
 					if !taskExists(incomingDir, processingDir, filename) {
