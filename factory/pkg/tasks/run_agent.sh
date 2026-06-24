@@ -256,17 +256,33 @@ function runAgent {
             (cd "/workspaces/${REPO_NAME}" && git merge --abort 2>/dev/null || true)
             (cd "/workspaces/${REPO_NAME}" && git cherry-pick --abort 2>/dev/null || true)
             (cd "/workspaces/${REPO_NAME}" && git reset --hard HEAD && git clean -fd)
-            (cd "/workspaces/${REPO_NAME}" && git fetch origin)
+            (cd "/workspaces/${REPO_NAME}" && git fetch origin && (git fetch upstream 2>/dev/null || true))
             if (cd "/workspaces/${REPO_NAME}" && git show-ref --verify --quiet "refs/heads/${BRANCH_NAME}"); then
-                echo "Local branch ${BRANCH_NAME} already exists. Checking out and pulling latest..."
+                echo "Local branch ${BRANCH_NAME} already exists. Checking out..."
                 (cd "/workspaces/${REPO_NAME}" && git checkout "${BRANCH_NAME}")
-                (cd "/workspaces/${REPO_NAME}" && git pull origin "${BRANCH_NAME}")
+                if (cd "/workspaces/${REPO_NAME}" && git ls-remote --heads origin "${BRANCH_NAME}" | grep -q "refs/heads/${BRANCH_NAME}"); then
+                    echo "Pulling latest changes from remote branch..."
+                    (cd "/workspaces/${REPO_NAME}" && git pull origin "${BRANCH_NAME}")
+                else
+                    echo "Remote branch ${BRANCH_NAME} does not exist on origin. Skipping pull."
+                fi
             elif (cd "/workspaces/${REPO_NAME}" && git ls-remote --heads origin "${BRANCH_NAME}" | grep -q "refs/heads/${BRANCH_NAME}"); then
                 echo "Remote branch ${BRANCH_NAME} exists. Checking out with tracking..."
                 (cd "/workspaces/${REPO_NAME}" && git checkout -b "${BRANCH_NAME}" --track "origin/${BRANCH_NAME}")
             else
                 echo "Remote branch ${BRANCH_NAME} does not exist on origin yet. Creating new branch..."
                 (cd "/workspaces/${REPO_NAME}" && git checkout -b "${BRANCH_NAME}")
+            fi
+
+            # Periodic rebase to upstream default branch for workflow branch
+            UPSTREAM_REMOTE="origin"
+            if (cd "/workspaces/${REPO_NAME}" && git remote | grep -q "^upstream$"); then
+                UPSTREAM_REMOTE="upstream"
+            fi
+            echo "Rebasing workflow branch ${BRANCH_NAME} onto ${UPSTREAM_REMOTE}/${BASE_BRANCH}..."
+            if ! (cd "/workspaces/${REPO_NAME}" && git rebase "${UPSTREAM_REMOTE}/${BASE_BRANCH}"); then
+                echo "Warning: Rebase of workflow branch onto ${UPSTREAM_REMOTE}/${BASE_BRANCH} failed. Aborting."
+                (cd "/workspaces/${REPO_NAME}" && git rebase --abort)
             fi
         else
             SLUGIFIED_NAME=$(echo "${AGENT_NAME}" | tr '[:upper:]' '[:lower:]' | tr -c '[:alnum:]' '-' | sed 's/^-//;s/-$//')
