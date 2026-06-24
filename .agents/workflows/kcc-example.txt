@@ -155,6 +155,17 @@ We need to ensure that we have a mockgcp that aligns with realgcp.
 
     CRITICAL: You MUST run `hack/record-gcp` against real GCP to record the initial baseline `_http.log`. Generating golden logs (`_http.log`) directly from MockGCP (e.g., by running with `E2E_GCP_TARGET=mock` and `WRITE_GOLDEN_OUTPUT=1`) is strictly forbidden, as it freezes mock-only behavior and bypasses actual GCP contract validation.
 
+    API ENABLEMENT TROUBLESHOOTING:
+    If `hack/record-gcp` fails with a 403 error indicating that the GCP API is disabled (e.g., "API has not been used in project ... before or it is disabled"), do NOT assume this is a permissions blocker. The runner service account has permissions to enable APIs, but the test framework needs to trigger it.
+    To resolve this, you must edit the test fixture's `dependencies.yaml` file (located under `pkg/test/resourcefixture/testdata/basic/{service}/...`) and add a `Service` resource declaration for the disabled service to the dependencies list:
+    ```yaml
+    apiVersion: serviceusage.cnrm.cloud.google.com/v1beta1
+    kind: Service
+    metadata:
+      name: <api-service-domain> (e.g., dataflow.googleapis.com)
+    ```
+    Once the Service dependency is added, run `hack/record-gcp` again; the test framework will automatically enable the API before running the recording.
+
     GCP RECORDING PR REPORTING REQUIREMENT:
     In the created PR description, you MUST explicitly document whether `record-gcp` was successfully run against real GCP. If it was run, state the GCP project used. If it was not run (e.g., due to disabled APIs, missing permissions, or rate limits), you must document the specific command run, the full error message encountered, and the fallback approach you used to generate/align the HTTP logs.
 
@@ -179,7 +190,7 @@ The direct controller must be implemented to manage reconciliation logic (Adapte
     - .gemini/skills/kcc-direct-controller-implementer/SKILL.md
     - .gemini/skills/kcc-direct-controller-logic-brownfield/SKILL.md
     to implement the direct controller and record/verify test fixtures for {kind}.
-    
+
     If you find any shortcomings in these skills (that likely apply to other resources), you may update them. Also keep a journal of any less general observations etc. To avoid git merge conflicts, use a file under their respective journal/ folders, named after the kind or a similarly unique name.
 
     The created PR must include these labels: `direct-migration` and `overseer`
