@@ -20,7 +20,7 @@ Instead of doing the coding yourself under this skill, you will coordinate and o
 > - **Do NOT write code or create PRs directly**: You must **never** checkout code, write code, run builds/tests, commit changes, or run `gh pr create` to send/push PRs. Your role under this skill is strictly limited to planning, progress tracking, and orchestration. All code implementation, CI fixing, and triage work must be delegated to coder and reviewer bots by creating child issues or assigning PRs back to their author bots.
 > - **Do NOT comment on child Pull Requests**: You must **never** comment directly on the child Pull Requests. The watch daemon will automatically monitor and handle PR review feedback and CI check failures. If you need to request action or re-trigger a run, do so only by assigning the PR to the PR author bot (using `gh pr edit <pr> --add-assignee <author>` or assigning via `gh` CLI). However, if the PR has the `overseer/giving-up` label, you MUST NOT assign the PR back to the bot, as this indicates the retry limit was reached and human OWNER intervention is required.
 > - **Do NOT approve, LGTM, or label PRs**: You must **never** approve, LGTM, or add approval/merging labels (such as `lgtm`, `approved`, or `automerge`) to any Pull Requests. These actions require human OWNER review and approval.
-
+> - **Do NOT work on closed Pull Requests**: If a PR is closed but not merged, dont assign bots to the PR.
 
 ## Journaling and Progress Tracking
 
@@ -154,6 +154,20 @@ We need to ensure that we have a mockgcp that aligns with realgcp.
     Next please follow the skill .gemini/skills/match-mockgcp-with-realgcp/SKILL.md to match with realgcp for {service}, {resource}
 
     CRITICAL: You MUST run `hack/record-gcp` against real GCP to record the initial baseline `_http.log`. Generating golden logs (`_http.log`) directly from MockGCP (e.g., by running with `E2E_GCP_TARGET=mock` and `WRITE_GOLDEN_OUTPUT=1`) is strictly forbidden, as it freezes mock-only behavior and bypasses actual GCP contract validation.
+
+    API ENABLEMENT TROUBLESHOOTING:
+    If `hack/record-gcp` fails with a 403 error indicating that the GCP API is disabled (e.g., "API has not been used in project ... before or it is disabled"), do NOT assume this is a permissions blocker. The runner service account has permissions to enable APIs, but the test framework needs to trigger it.
+    To resolve this, you must edit the test fixture's `dependencies.yaml` file (located under `pkg/test/resourcefixture/testdata/basic/{service}/...`) and add a `Service` resource declaration for the disabled service to the dependencies list:
+    ```yaml
+    apiVersion: serviceusage.cnrm.cloud.google.com/v1beta1
+    kind: Service
+    metadata:
+      name: <api-service-domain> (e.g., dataflow.googleapis.com)
+    ```
+    Once the Service dependency is added, run `hack/record-gcp` again; the test framework will automatically enable the API before running the recording.
+
+    GCP RECORDING PR REPORTING REQUIREMENT:
+    In the created PR description, you MUST explicitly document whether `record-gcp` was successfully run against real GCP. If it was run, state the GCP project used. If it was not run (e.g., due to disabled APIs, missing permissions, or rate limits), you must document the specific command run, the full error message encountered, and the fallback approach you used to generate/align the HTTP logs.
 
     If you find any shortcomings in these skills (that likely apply to other resources), you may update them. Also keep a journal of any less general observations etc. To avoid git merge conflicts, use a file under .gemini/skills/add-new-mockgcp-resource/journal/, named after the kind or a similarly unique name.
 
