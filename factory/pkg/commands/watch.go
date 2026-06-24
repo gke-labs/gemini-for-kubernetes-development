@@ -1231,7 +1231,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 							continue
 						}
 
-						if investigationCount >= 3 && !isExplicitlyAssigned {
+						if investigationCount >= 3 {
 							if !dryRun {
 								addGitHubComment(ctx, ghClient, owner, repo, num, "🤖 AI Factory has attempted to fix CI failures for this PR 3 times since the last commit and is giving up. Human assistance is required.")
 								if assignedBot != "" && !unassignedPRs[num] {
