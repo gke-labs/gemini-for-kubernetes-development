@@ -180,7 +180,7 @@ Only output the commit message itself.")
         fi
 
         # Push the branch
-        git push origin "${BRANCH_NAME}"
+        git push --force origin "${BRANCH_NAME}"
         
         # Determine Repo Owner for the link
         REPO_URL=$(git remote get-url origin)
