@@ -144,7 +144,7 @@ function commitChanges {
             echo "Committing workflow changes..."
             git add .
             git commit -m "chore(workflow): update workflow state/journal [skip ci]"
-            git push origin "${BRANCH_NAME}"
+            git push --force origin "${BRANCH_NAME}"
             echo "Directly pushed workflow changes to branch." > "$(dirname "${PROMPT_FILE}")/agent-output.txt"
         else
             echo "No workflow changes to commit."
@@ -182,7 +182,7 @@ function commitChanges {
             fi
     
             # Push the branch
-            git push origin "${BRANCH_NAME}"
+            git push --force origin "${BRANCH_NAME}"
             
             if [ "${PR_NUMBER:-0}" -gt 0 ]; then
                 echo "PR already exists (#${PR_NUMBER}), pushed changes to branch."
