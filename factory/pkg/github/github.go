@@ -126,4 +126,3 @@ func ListAllReviewComments(ctx context.Context, client *githubv39.Client, owner,
 	}
 	return allComments, nil
 }
-
