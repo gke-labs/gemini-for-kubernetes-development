@@ -249,7 +249,7 @@ func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 		}
 
 		fmt.Printf("Fetching comments for #%d from GitHub...\n", targetNum)
-		comments, _, err := ghClient.Issues.ListComments(ctx, owner, repo, targetNum, &githubv39.IssueListCommentsOptions{})
+		comments, err := github.ListAllIssueComments(ctx, ghClient, owner, repo, targetNum)
 		if err != nil {
 			return fmt.Errorf("fetching comments: %w", err)
 		}

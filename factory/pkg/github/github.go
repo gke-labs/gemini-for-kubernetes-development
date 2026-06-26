@@ -52,3 +52,77 @@ func NewClient(ctx context.Context) (*githubv39.Client, error) {
 	tc := oauth2.NewClient(ctx, ts)
 	return githubv39.NewClient(tc), nil
 }
+
+// ListAllIssueComments retrieves all comments for an issue or pull request handling pagination.
+func ListAllIssueComments(ctx context.Context, client *githubv39.Client, owner, repo string, num int) ([]*githubv39.IssueComment, error) {
+	var allComments []*githubv39.IssueComment
+	opt := &githubv39.IssueListCommentsOptions{
+		ListOptions: githubv39.ListOptions{PerPage: 100},
+	}
+	for {
+		comments, resp, err := client.Issues.ListComments(ctx, owner, repo, num, opt)
+		if err != nil {
+			return nil, err
+		}
+		allComments = append(allComments, comments...)
+		if resp.NextPage == 0 {
+			break
+		}
+		opt.Page = resp.NextPage
+	}
+	return allComments, nil
+}
+
+// ListAllCommits retrieves all commits for a pull request handling pagination.
+func ListAllCommits(ctx context.Context, client *githubv39.Client, owner, repo string, num int) ([]*githubv39.RepositoryCommit, error) {
+	var allCommits []*githubv39.RepositoryCommit
+	opt := &githubv39.ListOptions{PerPage: 100}
+	for {
+		commits, resp, err := client.PullRequests.ListCommits(ctx, owner, repo, num, opt)
+		if err != nil {
+			return nil, err
+		}
+		allCommits = append(allCommits, commits...)
+		if resp.NextPage == 0 {
+			break
+		}
+		opt.Page = resp.NextPage
+	}
+	return allCommits, nil
+}
+
+// ListAllReviews retrieves all reviews for a pull request handling pagination.
+func ListAllReviews(ctx context.Context, client *githubv39.Client, owner, repo string, num int) ([]*githubv39.PullRequestReview, error) {
+	var allReviews []*githubv39.PullRequestReview
+	opt := &githubv39.ListOptions{PerPage: 100}
+	for {
+		reviews, resp, err := client.PullRequests.ListReviews(ctx, owner, repo, num, opt)
+		if err != nil {
+			return nil, err
+		}
+		allReviews = append(allReviews, reviews...)
+		if resp.NextPage == 0 {
+			break
+		}
+		opt.Page = resp.NextPage
+	}
+	return allReviews, nil
+}
+
+// ListAllReviewComments retrieves all review comments for a pull request review handling pagination.
+func ListAllReviewComments(ctx context.Context, client *githubv39.Client, owner, repo string, prNum int, reviewID int64) ([]*githubv39.PullRequestComment, error) {
+	var allComments []*githubv39.PullRequestComment
+	opt := &githubv39.ListOptions{PerPage: 100}
+	for {
+		comments, resp, err := client.PullRequests.ListReviewComments(ctx, owner, repo, prNum, reviewID, opt)
+		if err != nil {
+			return nil, err
+		}
+		allComments = append(allComments, comments...)
+		if resp.NextPage == 0 {
+			break
+		}
+		opt.Page = resp.NextPage
+	}
+	return allComments, nil
+}

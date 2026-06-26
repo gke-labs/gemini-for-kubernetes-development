@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+set -euo pipefail
+
+TARGET_TYPE=""
+TARGET_ID=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --org|--organization)
+      TARGET_TYPE="organizations"
+      TARGET_ID="$2"
+      shift 2
+      ;;
+    --project)
+      TARGET_TYPE="projects"
+      TARGET_ID="$2"
+      shift 2
+      ;;
+    -h|--help)
+      echo "Usage: $0 [--org <org-id> | --project <project-id>]"
+      echo "Cleans up stale deleted service account identifiers (deleted:serviceAccount:...) from GCP IAM policies."
+      exit 0
+      ;;
+    *)
+      echo "Unknown argument: $1"
+      echo "Usage: $0 [--org <org-id> | --project <project-id>]"
+      exit 1
+      ;;
+  esac
+done
+
+if [[ -z "${TARGET_TYPE}" || -z "${TARGET_ID}" ]]; then
+  echo "Error: You must specify either --org <org-id> or --project <project-id>"
+  exit 1
+fi
+
+TMP_POLICY=$(mktemp)
+CLEANED_POLICY=$(mktemp)
+trap 'rm -f "${TMP_POLICY}" "${CLEANED_POLICY}"' EXIT
+
+echo "Fetching IAM policy for ${TARGET_TYPE} ${TARGET_ID}..."
+gcloud "${TARGET_TYPE}" get-iam-policy "${TARGET_ID}" --format=json > "${TMP_POLICY}"
+
+py_status=0
+python3 -c '
+import sys, json
+
+policy = json.load(open("'"${TMP_POLICY}"'"))
+cleaned_bindings = []
+before_count = 0
+after_count = 0
+deleted_count = 0
+
+for b in policy.get("bindings", []):
+    members = b.get("members", [])
+    before_count += len(members)
+    valid_members = []
+    for m in members:
+        if m.startswith("deleted:"):
+            deleted_count += 1
+        else:
+            valid_members.append(m)
+    after_count += len(valid_members)
+    if valid_members:
+        b["members"] = valid_members
+        cleaned_bindings.append(b)
+
+policy["bindings"] = cleaned_bindings
+with open("'"${CLEANED_POLICY}"'", "w") as f:
+    json.dump(policy, f, indent=2)
+
+print(f"Total binding occurrences before cleanup: {before_count}")
+print(f"Purged stale deleted members: {deleted_count}")
+print(f"Total binding occurrences after cleanup: {after_count}")
+if deleted_count == 0:
+    sys.exit(2)
+' || py_status=$?
+
+if [[ ${py_status} -eq 2 ]]; then
+  echo "No stale deleted members found in IAM policy. Nothing to update."
+  exit 0
+elif [[ ${py_status} -ne 0 ]]; then
+  echo "Error processing IAM policy JSON."
+  exit 1
+fi
+
+echo "Applying cleaned IAM policy to ${TARGET_TYPE} ${TARGET_ID}..."
+gcloud "${TARGET_TYPE}" set-iam-policy "${TARGET_ID}" "${CLEANED_POLICY}"
+echo "IAM policy cleanup complete!"

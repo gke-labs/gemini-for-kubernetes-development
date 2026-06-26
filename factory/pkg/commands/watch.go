@@ -1084,7 +1084,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				headSHA := pr.GetHead().GetSHA()
 
 				// Fetch PR commits to find the last commit timestamp
-				prCommits, _, err := ghClient.PullRequests.ListCommits(ctx, owner, repo, num, nil)
+				prCommits, err := github.ListAllCommits(ctx, ghClient, owner, repo, num)
 				var lastCommitTime time.Time
 				if err == nil {
 					for _, c := range prCommits {
@@ -1095,23 +1095,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				}
 
 				// Fetch all PR comments (handling pagination)
-				var comments []*githubv39.IssueComment
-				var listCommentsErr error
-				opt := &githubv39.IssueListCommentsOptions{
-					ListOptions: githubv39.ListOptions{PerPage: 100},
-				}
-				for {
-					pageComments, resp, err := ghClient.Issues.ListComments(ctx, owner, repo, num, opt)
-					if err != nil {
-						listCommentsErr = err
-						break
-					}
-					comments = append(comments, pageComments...)
-					if resp.NextPage == 0 {
-						break
-					}
-					opt.Page = resp.NextPage
-				}
+				comments, listCommentsErr := github.ListAllIssueComments(ctx, ghClient, owner, repo, num)
 
 				// Check Phase 1: Rebase/Conflicts
 				isConflicting := pr.Mergeable != nil && !*pr.Mergeable

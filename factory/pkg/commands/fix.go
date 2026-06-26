@@ -229,7 +229,7 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch boo
 			}
 		}
 
-		comments, _, err := ghClient.Issues.ListComments(ctx, owner, repo, issueNum, nil)
+		comments, err := github.ListAllIssueComments(ctx, ghClient, owner, repo, issueNum)
 		if err == nil {
 			for _, c := range comments {
 				issueComments = append(issueComments, tasks.IssueComment{
