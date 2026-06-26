@@ -273,6 +273,14 @@ func countRunningSandboxTasks(ctx context.Context, kubeClient *clients.Kubernete
 
 	count := 0
 	for _, item := range list.Items {
+		if strings.HasPrefix(item.GetName(), "overseer-") {
+			continue
+		}
+		labels := item.GetLabels()
+		if labels != nil && labels["overseer.gemini.google.com/overseer"] != "" {
+			continue
+		}
+
 		annotations := item.GetAnnotations()
 		if annotations == nil {
 			count++
@@ -354,6 +362,28 @@ func taskExists(incomingDir, processingDir, filename string) bool {
 	}
 	if _, err := os.Stat(filepath.Join(processingDir, filename)); err == nil {
 		return true
+	}
+	return false
+}
+
+func isDoNotProcess(queueDir string) bool {
+	if os.Getenv("DO_NOT_PROCESS") == "true" || os.Getenv("FACTORY_DO_NOT_PROCESS") == "true" || os.Getenv("DRAIN") == "true" || os.Getenv("FACTORY_DRAIN") == "true" {
+		return true
+	}
+	checkPaths := []string{
+		filepath.Join(queueDir, ".do_not_process"),
+		filepath.Join(queueDir, "do_not_process"),
+		filepath.Join(queueDir, ".drain"),
+		filepath.Join(queueDir, "drain"),
+		"/workspaces/.do_not_process",
+		"/workspaces/do_not_process",
+		"/workspaces/.drain",
+		"/workspaces/drain",
+	}
+	for _, p := range checkPaths {
+		if _, err := os.Stat(p); err == nil {
+			return true
+		}
 	}
 	return false
 }
@@ -1001,6 +1031,22 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 			return
 		}
 		state.mu.Unlock()
+
+		if isDoNotProcess(queueDir) {
+			runningCount, err := countRunningSandboxTasks(ctx, kubeClient, rootFlags.Namespace)
+			if err != nil {
+				klog.Errorf("Failed to count running sandbox tasks during drain: %v", err)
+			}
+			processingFiles, _ := os.ReadDir(processingDir)
+			filesInProcessing := 0
+			for _, f := range processingFiles {
+				if !f.IsDir() && strings.HasPrefix(f.Name(), "task-") && strings.HasSuffix(f.Name(), ".yaml") {
+					filesInProcessing++
+				}
+			}
+			klog.Infof("[DO NOT PROCESS] Drain mode active. Active child sandboxes: %d, Tasks in processing: %d. Pausing new scanning and task execution.", runningCount, filesInProcessing)
+			return
+		}
 
 		now := time.Now()
 		actionsTaken := 0

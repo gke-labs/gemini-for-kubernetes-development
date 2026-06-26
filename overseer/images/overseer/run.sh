@@ -266,7 +266,11 @@ function runWatchCycle {
         
     # 6. Run Gemini LLM (Non-deterministic Scanner/Orchestrator)
     if [ "${ALLOW_GEMINI_ORCHESTRATION}" = "true" ]; then
-        runGeminiOrchestrator
+        if [ ! -f "/workspaces/.do_not_process" ] && [ ! -f "/workspaces/do_not_process" ] && [ ! -f "/workspaces/.drain" ] && [ ! -f "/workspaces/drain" ] && [ "$DO_NOT_PROCESS" != "true" ] && [ "$FACTORY_DO_NOT_PROCESS" != "true" ]; then
+            runGeminiOrchestrator
+        else
+            echo "$(date): [DO NOT PROCESS] Drain mode active. Skipping Gemini Orchestration."
+        fi
     fi
 
     # 7. Push queue and state changes back to fork/origin
