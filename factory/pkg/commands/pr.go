@@ -179,7 +179,7 @@ func runInvestigate(ctx context.Context, prURL, prompt string, continueSession b
 	}
 
 	// Fetch PR comments
-	comments, _, err := ghClient.Issues.ListComments(ctx, owner, repo, prNum, nil)
+	comments, err := github.ListAllIssueComments(ctx, ghClient, owner, repo, prNum)
 	if err != nil {
 		return fmt.Errorf("listing PR comments: %w", err)
 	}
@@ -380,7 +380,7 @@ func runAddressComments(ctx context.Context, prURL, prompt string, continueSessi
 	}
 
 	// Fetch PR commits
-	prCommits, _, err := ghClient.PullRequests.ListCommits(ctx, owner, repo, prNum, nil)
+	prCommits, err := github.ListAllCommits(ctx, ghClient, owner, repo, prNum)
 	if err != nil {
 		return fmt.Errorf("listing PR commits: %w", err)
 	}
@@ -397,7 +397,7 @@ func runAddressComments(ctx context.Context, prURL, prompt string, continueSessi
 	}
 
 	// Fetch PR comments
-	comments, _, err := ghClient.Issues.ListComments(ctx, owner, repo, prNum, nil)
+	comments, err := github.ListAllIssueComments(ctx, ghClient, owner, repo, prNum)
 	if err != nil {
 		return fmt.Errorf("listing PR comments: %w", err)
 	}
@@ -418,7 +418,7 @@ func runAddressComments(ctx context.Context, prURL, prompt string, continueSessi
 	}
 
 	// Fetch PR reviews
-	reviews, _, err := ghClient.PullRequests.ListReviews(ctx, owner, repo, prNum, nil)
+	reviews, err := github.ListAllReviews(ctx, ghClient, owner, repo, prNum)
 	if err != nil {
 		return fmt.Errorf("listing PR reviews: %w", err)
 	}
@@ -431,7 +431,7 @@ func runAddressComments(ctx context.Context, prURL, prompt string, continueSessi
 			Body:      r.GetBody(),
 		}
 		// Fetch review comments for this review
-		revComments, _, err := ghClient.PullRequests.ListReviewComments(ctx, owner, repo, prNum, r.GetID(), nil)
+		revComments, err := github.ListAllReviewComments(ctx, ghClient, owner, repo, prNum, r.GetID())
 		if err == nil {
 			for _, rc := range revComments {
 				rev.PullRequestComments = append(rev.PullRequestComments, tasks.PullRequestComment{
@@ -715,7 +715,7 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 		}
 
 		// Check 2: Check new comments/reviews after latest commit
-		prCommits, _, err := ghClient.PullRequests.ListCommits(ctx, owner, repo, prNum, nil)
+		prCommits, err := github.ListAllCommits(ctx, ghClient, owner, repo, prNum)
 		if err == nil {
 			var lastCommitTime time.Time
 			for _, c := range prCommits {
@@ -724,7 +724,7 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 				}
 			}
 
-			comments, _, err := ghClient.Issues.ListComments(ctx, owner, repo, prNum, nil)
+			comments, err := github.ListAllIssueComments(ctx, ghClient, owner, repo, prNum)
 			if err == nil {
 				hasNewComments := false
 				for _, c := range comments {
