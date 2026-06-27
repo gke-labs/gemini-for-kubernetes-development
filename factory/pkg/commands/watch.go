@@ -1258,7 +1258,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 
 						if hasPostedGivingUp {
 							klog.Infof("Skipping PR #%d investigate because the bot has already given up on the current commit.", num)
-							continue
+							goto checkComments
 						}
 
 						if investigationCount >= 3 {
@@ -1276,7 +1276,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 								}
 							}
 							klog.Infof("Skipping PR #%d investigate because it has reached the maximum retry limit (3).", num)
-							continue
+							goto checkComments
 						}
 
 						prevFailed := false
@@ -1295,7 +1295,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 							running, err := isSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName)
 							if err != nil {
 								klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
-								continue
+								goto checkComments
 							} else if running {
 								klog.Infof("Skipping PR #%d investigate because there is an in-flight sandbox %s.", num, sandboxName)
 							} else {
@@ -1337,6 +1337,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					}
 				}
 
+			checkComments:
 				// Check review comments and approvals
 				var reviews []*githubv39.PullRequestReview
 				if listReviews, _, err := ghClient.PullRequests.ListReviews(ctx, owner, repo, num, nil); err == nil {
