@@ -21,6 +21,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	githubv39 "github.com/google/go-github/v39/github"
+	"github.com/robfig/cron/v3"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -317,7 +318,13 @@ type ChoreRunState struct {
 	LastRun time.Time `json:"lastRun"`
 }
 
+var cronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
+
 func shouldRunChore(schedule string, lastRun time.Time) bool {
+	return shouldRunChoreAt(schedule, lastRun, time.Now())
+}
+
+func shouldRunChoreAt(schedule string, lastRun time.Time, now time.Time) bool {
 	schedule = strings.TrimSpace(schedule)
 	if strings.ToLower(schedule) == "never" || strings.ToLower(schedule) == "paused" {
 		return false
@@ -325,145 +332,15 @@ func shouldRunChore(schedule string, lastRun time.Time) bool {
 	if lastRun.IsZero() {
 		return true
 	}
-	now := time.Now()
 
-	cronExpr := schedule
-	switch strings.ToLower(schedule) {
-	case "@hourly":
-		cronExpr = "0 * * * *"
-	case "@daily":
-		cronExpr = "0 0 * * *"
-	case "@weekly":
-		cronExpr = "0 0 * * 0"
-	case "@monthly":
-		cronExpr = "0 0 1 * *"
-	}
-
-	fields := strings.Fields(cronExpr)
-	if len(fields) != 5 {
-		klog.Warningf("Invalid cron expression %q, falling back to 24h interval", schedule)
+	sched, err := cronParser.Parse(schedule)
+	if err != nil {
+		klog.Warningf("Failed to parse cron expression %q: %v, falling back to 24h", schedule, err)
 		return now.Sub(lastRun) >= 24*time.Hour
 	}
 
-	start := lastRun.Truncate(time.Minute)
-	end := now.Truncate(time.Minute)
-	if start.After(end) {
-		return false
-	}
-
-	if end.Sub(start) > 24*time.Hour {
-		start = end.Add(-24 * time.Hour)
-	}
-
-	for t := start.Add(time.Minute); !t.After(end); t = t.Add(time.Minute) {
-		if matchesCron(fields, t) {
-			return true
-		}
-	}
-	return false
-}
-
-func matchesCron(fields []string, t time.Time) bool {
-	if len(fields) != 5 {
-		return false
-	}
-
-	minMatch := matchField(fields[0], t.Minute(), 0, 59)
-	hourMatch := matchField(fields[1], t.Hour(), 0, 23)
-	domMatch := matchField(fields[2], t.Day(), 1, 31)
-	monthMatch := matchField(fields[3], int(t.Month()), 1, 12)
-	dowMatch := matchField(fields[4], int(t.Weekday()), 0, 6)
-
-	if !minMatch || !hourMatch || !monthMatch {
-		return false
-	}
-
-	domRestricted := fields[2] != "*"
-	dowRestricted := fields[4] != "*"
-
-	if domRestricted && dowRestricted {
-		return domMatch || dowMatch
-	}
-	return domMatch && dowMatch
-}
-
-func matchField(field string, value int, minVal, maxVal int) bool {
-	if field == "*" {
-		return true
-	}
-
-	if strings.Contains(field, ",") {
-		parts := strings.Split(field, ",")
-		for _, part := range parts {
-			if matchField(part, value, minVal, maxVal) {
-				return true
-			}
-		}
-		return false
-	}
-
-	if strings.Contains(field, "/") {
-		parts := strings.Split(field, "/")
-		if len(parts) != 2 {
-			return false
-		}
-		rangePart := parts[0]
-		stepStr := parts[1]
-
-		step, err := strconv.Atoi(stepStr)
-		if err != nil || step <= 0 {
-			return false
-		}
-
-		start := minVal
-		end := maxVal
-
-		if rangePart != "*" {
-			if strings.Contains(rangePart, "-") {
-				rParts := strings.Split(rangePart, "-")
-				if len(rParts) != 2 {
-					return false
-				}
-				s, err1 := strconv.Atoi(rParts[0])
-				e, err2 := strconv.Atoi(rParts[1])
-				if err1 != nil || err2 != nil {
-					return false
-				}
-				start = s
-				end = e
-			} else {
-				s, err := strconv.Atoi(rangePart)
-				if err != nil {
-					return false
-				}
-				start = s
-			}
-		}
-
-		if value < start || value > end {
-			return false
-		}
-		return (value-start)%step == 0
-	}
-
-	if strings.Contains(field, "-") {
-		parts := strings.Split(field, "-")
-		if len(parts) != 2 {
-			return false
-		}
-		start, err1 := strconv.Atoi(parts[0])
-		end, err2 := strconv.Atoi(parts[1])
-		if err1 != nil || err2 != nil {
-			return false
-		}
-		return value >= start && value <= end
-	}
-
-	val, err := strconv.Atoi(field)
-	if err != nil {
-		return false
-	}
-	return value == val
+	nextRun := sched.Next(lastRun)
+	return !nextRun.After(now)
 }
 
 func writeTaskAtomically(dir string, filename string, task *QueueTask) error {

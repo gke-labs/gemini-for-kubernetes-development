@@ -5,91 +5,79 @@ import (
 	"time"
 )
 
-func TestMatchField(t *testing.T) {
+func TestShouldRunChoreAt(t *testing.T) {
+	// Base mock "now" time: Wednesday, July 1st, 2026 at 9:55 AM UTC
+	now := time.Date(2026, 7, 1, 9, 55, 0, 0, time.UTC)
+
 	tests := []struct {
-		field    string
-		value    int
-		minVal   int
-		maxVal   int
+		name     string
+		schedule string
+		lastRun  time.Time
 		expected bool
 	}{
-		{"*", 5, 0, 59, true},
-		{"5", 5, 0, 59, true},
-		{"5", 6, 0, 59, false},
-		{"1-5", 3, 0, 59, true},
-		{"1-5", 6, 0, 59, false},
-		{"*/30", 30, 0, 59, true},
-		{"*/30", 0, 0, 59, true},
-		{"*/30", 45, 0, 59, false},
-		{"1,2,3", 2, 0, 59, true},
-		{"1,2,3", 4, 0, 59, false},
-		{"1-10/2", 5, 0, 59, true}, // 1, 3, 5, 7, 9
-		{"1-10/2", 6, 0, 59, false},
+		{
+			name:     "Never run before (zero lastRun)",
+			schedule: "*/30 * * * *",
+			lastRun:  time.Time{},
+			expected: true,
+		},
+		{
+			name:     "Interval triggers - run at 9:15 AM (40m ago, next was 9:30 AM), now is 9:55 AM",
+			schedule: "*/30 * * * *",
+			lastRun:  time.Date(2026, 7, 1, 9, 15, 0, 0, time.UTC),
+			expected: true,
+		},
+		{
+			name:     "Interval skips - run at 9:40 AM (15m ago, next is 10:00 AM), now is 9:55 AM",
+			schedule: "*/30 * * * *",
+			lastRun:  time.Date(2026, 7, 1, 9, 40, 0, 0, time.UTC),
+			expected: false,
+		},
+		{
+			name:     "Macro descriptor @hourly - run at 8:45 AM (70m ago, next was 9:00 AM), now is 9:55 AM",
+			schedule: "@hourly",
+			lastRun:  time.Date(2026, 7, 1, 8, 45, 0, 0, time.UTC),
+			expected: true,
+		},
+		{
+			name:     "Macro descriptor @hourly - run at 9:15 AM (40m ago, next is 10:00 AM), now is 9:55 AM",
+			schedule: "@hourly",
+			lastRun:  time.Date(2026, 7, 1, 9, 15, 0, 0, time.UTC),
+			expected: false,
+		},
+		{
+			name:     "Complex schedule (9 AM on Monday) - run on Saturday 9 AM (2 days ago), should trigger",
+			schedule: "0 9 * * 1",
+			lastRun:  time.Date(2026, 7, 4, 9, 0, 0, 0, time.UTC),
+			expected: true,
+		},
+		{
+			name:     "Complex schedule (9 AM on Monday) - run on Monday 9:15 AM (40m ago, next is next Monday), now is Monday 9:55 AM",
+			schedule: "0 9 * * 1",
+			lastRun:  time.Date(2026, 7, 6, 9, 15, 0, 0, time.UTC),
+			expected: false,
+		},
+		{
+			name:     "Never schedule",
+			schedule: "never",
+			lastRun:  time.Date(2026, 7, 1, 8, 0, 0, 0, time.UTC),
+			expected: false,
+		},
 	}
 
 	for _, tc := range tests {
-		got := matchField(tc.field, tc.value, tc.minVal, tc.maxVal)
-		if got != tc.expected {
-			t.Errorf("matchField(%q, %d, %d, %d) = %v; want %v", tc.field, tc.value, tc.minVal, tc.maxVal, got, tc.expected)
-		}
-	}
-}
+		t.Run(tc.name, func(t *testing.T) {
+			currentNow := now
+			// For the Monday test cases, override mock now to Monday, July 6th, 2026, 9:55 AM UTC
+			if tc.name == "Complex schedule (9 AM on Monday) - run on Saturday 9 AM (2 days ago), should trigger" ||
+				tc.name == "Complex schedule (9 AM on Monday) - run on Monday 9:15 AM (40m ago, next is next Monday), now is Monday 9:55 AM" {
+				currentNow = time.Date(2026, 7, 6, 9, 55, 0, 0, time.UTC)
+			}
 
-func TestMatchesCron(t *testing.T) {
-	// Schedule: "*/30 * * * *" (every 30 minutes)
-	fields := []string{"*/30", "*", "*", "*", "*"}
-
-	t1 := time.Date(2026, 7, 1, 12, 30, 0, 0, time.UTC)
-	if !matchesCron(fields, t1) {
-		t.Errorf("expected matchesCron for 12:30 with schedule */30 * * * *")
-	}
-
-	t2 := time.Date(2026, 7, 1, 12, 15, 0, 0, time.UTC)
-	if matchesCron(fields, t2) {
-		t.Errorf("expected no matchesCron for 12:15 with schedule */30 * * * *")
-	}
-
-	// DOM and DOW intersection logic:
-	// "0 0 1 * 0" -> Day 1 of month OR Sunday (0)
-	fieldsDOMOrDOW := []string{"0", "0", "1", "*", "0"}
-
-	// Match: Day 1 (not Sunday)
-	t3 := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC) // July 1st, 2026 is Wednesday
-	if !matchesCron(fieldsDOMOrDOW, t3) {
-		t.Errorf("expected matchesCron for July 1st (Wednesday) on schedule 0 0 1 * 0")
-	}
-
-	// Match: Sunday (not Day 1)
-	t4 := time.Date(2026, 7, 5, 0, 0, 0, 0, time.UTC) // July 5th, 2026 is Sunday
-	if !matchesCron(fieldsDOMOrDOW, t4) {
-		t.Errorf("expected matchesCron for July 5th (Sunday) on schedule 0 0 1 * 0")
-	}
-
-	// No match: Day 2 (Thursday)
-	t5 := time.Date(2026, 7, 2, 0, 0, 0, 0, time.UTC)
-	if matchesCron(fieldsDOMOrDOW, t5) {
-		t.Errorf("expected no matchesCron for July 2nd (Thursday) on schedule 0 0 1 * 0")
-	}
-}
-
-func TestShouldRunChore(t *testing.T) {
-	// A schedule of every 30 minutes
-	schedule := "*/30 * * * *"
-
-	// Case 1: Never run before
-	if !shouldRunChore(schedule, time.Time{}) {
-		t.Errorf("expected shouldRunChore to be true if lastRun is zero")
-	}
-
-	// Case 2: Run 35 minutes ago, cron triggers every 30 mins -> should run
-	lastRun1 := time.Now().Add(-35 * time.Minute)
-	if !shouldRunChore(schedule, lastRun1) {
-		t.Errorf("expected shouldRunChore to be true when last run was 35m ago")
-	}
-
-	// Case 3: Run 5 minutes ago, cron triggers every 30 mins -> should not run
-	lastRun2 := time.Now().Add(-5 * time.Minute)
-	if shouldRunChore(schedule, lastRun2) {
-		t.Errorf("expected shouldRunChore to be false when last run was 5m ago")
+			got := shouldRunChoreAt(tc.schedule, tc.lastRun, currentNow)
+			if got != tc.expected {
+				t.Errorf("shouldRunChoreAt(%q, %v, %v) = %v; want %v", tc.schedule, tc.lastRun, currentNow, got, tc.expected)
+			}
+		})
 	}
 }
