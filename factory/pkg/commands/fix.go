@@ -246,22 +246,7 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch boo
 		issueBody = prompt
 	}
 
-	triggerLabel := "factory"
-	if cfg != nil && cfg.TriggerLabel != "" {
-		triggerLabel = cfg.TriggerLabel
-	}
-	allLabels := []string{triggerLabel}
-	if cfg != nil {
-		allLabels = append(allLabels, cfg.AdditionalLabels...)
-	}
-	if isIssue && issue != nil {
-		for _, label := range issue.Labels {
-			if label.GetName() != "" {
-				allLabels = append(allLabels, label.GetName())
-			}
-		}
-	}
-	prLabel := strings.Join(allLabels, ",")
+	prLabel := resolvePRLabels(cfg, issue, isIssue)
 
 	params := tasks.FixIssueParams{
 		Repo: tasks.Repo{
@@ -396,4 +381,23 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch boo
 	}
 
 	return nil
+}
+
+func resolvePRLabels(cfg *config.FactoryConfig, issue *githubv39.Issue, isIssue bool) string {
+	triggerLabel := "factory"
+	if cfg != nil && cfg.TriggerLabel != "" {
+		triggerLabel = cfg.TriggerLabel
+	}
+	allLabels := []string{triggerLabel}
+	if cfg != nil {
+		allLabels = append(allLabels, cfg.AdditionalLabels...)
+	}
+	if isIssue && issue != nil {
+		for _, label := range issue.Labels {
+			if label.GetName() != "" {
+				allLabels = append(allLabels, label.GetName())
+			}
+		}
+	}
+	return strings.Join(allLabels, ",")
 }
