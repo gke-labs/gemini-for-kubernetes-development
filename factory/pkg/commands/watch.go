@@ -21,6 +21,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	githubv39 "github.com/google/go-github/v39/github"
+	"github.com/robfig/cron/v3"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -317,23 +318,30 @@ type ChoreRunState struct {
 	LastRun time.Time `json:"lastRun"`
 }
 
+var cronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
+
 func shouldRunChore(schedule string, lastRun time.Time) bool {
+	return shouldRunChoreAt(schedule, lastRun, time.Now())
+}
+
+func shouldRunChoreAt(schedule string, lastRun time.Time, now time.Time) bool {
+	schedule = strings.TrimSpace(schedule)
+	if strings.ToLower(schedule) == "never" || strings.ToLower(schedule) == "paused" {
+		return false
+	}
+
 	if lastRun.IsZero() {
 		return true
 	}
-	now := time.Now()
-	switch strings.ToLower(strings.TrimSpace(schedule)) {
-	case "never", "paused":
-		return false
-	case "@hourly":
-		return now.Sub(lastRun) >= 1*time.Hour
-	case "@daily":
-		return now.Sub(lastRun) >= 24*time.Hour
-	case "@weekly":
-		return now.Sub(lastRun) >= 7*24*time.Hour
-	default:
+
+	sched, err := cronParser.Parse(schedule)
+	if err != nil {
+		klog.Warningf("Failed to parse cron expression %q: %v, falling back to 24h", schedule, err)
 		return now.Sub(lastRun) >= 24*time.Hour
 	}
+
+	nextRun := sched.Next(lastRun)
+	return !nextRun.After(now)
 }
 
 func writeTaskAtomically(dir string, filename string, task *QueueTask) error {
