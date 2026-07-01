@@ -329,6 +329,7 @@ func shouldRunChoreAt(schedule string, lastRun time.Time, now time.Time) bool {
 	if strings.ToLower(schedule) == "never" || strings.ToLower(schedule) == "paused" {
 		return false
 	}
+
 	if lastRun.IsZero() {
 		return true
 	}
