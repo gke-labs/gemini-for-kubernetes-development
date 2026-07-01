@@ -17,6 +17,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/tasks"
+	githubv39 "github.com/google/go-github/v39/github"
 	"github.com/spf13/cobra"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
@@ -203,12 +204,14 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch boo
 	var branchName string
 	var issueBody string
 	var issueComments []tasks.IssueComment
+	var issue *githubv39.Issue
 	if isIssue {
 		branchName = fmt.Sprintf("issue-%d-%d", issueNum, time.Now().Unix())
 		fmt.Printf("Fetching details for issue #%d...\n", issueNum)
-		issue, _, err := ghClient.Issues.Get(ctx, owner, repo, issueNum)
-		if err != nil {
-			return fmt.Errorf("fetching github issue #%d: %w", issueNum, err)
+		var getErr error
+		issue, _, getErr = ghClient.Issues.Get(ctx, owner, repo, issueNum)
+		if getErr != nil {
+			return fmt.Errorf("fetching github issue #%d: %w", issueNum, getErr)
 		}
 		issueBody = issue.GetBody()
 		if issue.GetTitle() != "" {
@@ -250,6 +253,13 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch boo
 	allLabels := []string{triggerLabel}
 	if cfg != nil {
 		allLabels = append(allLabels, cfg.AdditionalLabels...)
+	}
+	if isIssue && issue != nil {
+		for _, label := range issue.Labels {
+			if label.GetName() != "" {
+				allLabels = append(allLabels, label.GetName())
+			}
+		}
 	}
 	prLabel := strings.Join(allLabels, ",")
 
