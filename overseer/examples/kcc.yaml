@@ -7,9 +7,9 @@ spec:
   minNumber: 9000
   robotAccount: argus-watcher-bot
   maxActiveReviews: 20
-  maxActiveIssues: 50
+  maxActiveIssues: 11
   chores:
-    mode: enabled
+    mode: disabled
     #include:
     #  - KCC Release Scheduler
   geminiAPIKeySecretName: gemini-vscode-tokens
@@ -33,7 +33,7 @@ spec:
   repo:
     issueMode: enabled
     prMode: enabled
-    reviewMode: enabled
+    reviewMode: disabled
   roles:
     watcher:
       users:
