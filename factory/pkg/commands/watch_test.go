@@ -224,3 +224,109 @@ func TestGetMissingLabelsForPR(t *testing.T) {
 		})
 	}
 }
+
+func TestSortQueueTasks(t *testing.T) {
+	now := time.Now()
+
+	tests := []struct {
+		name     string
+		input    []QueueTaskItem
+		expected []string
+	}{
+		{
+			name: "Sorting by priority level",
+			input: []QueueTaskItem{
+				{
+					Filename: "task-medium.yaml",
+					Task: &QueueTask{
+						Type:     "issue-fix",
+						Priority: "medium",
+						Phase:    1,
+					},
+				},
+				{
+					Filename: "task-critical.yaml",
+					Task: &QueueTask{
+						Type:     "issue-fix",
+						Priority: "critical",
+						Phase:    1,
+					},
+				},
+				{
+					Filename: "task-high.yaml",
+					Task: &QueueTask{
+						Type:     "issue-fix",
+						Priority: "high",
+						Phase:    1,
+					},
+				},
+			},
+			expected: []string{"task-critical.yaml", "task-high.yaml", "task-medium.yaml"},
+		},
+		{
+			name: "Sorting by phase when priority matches",
+			input: []QueueTaskItem{
+				{
+					Filename: "task-phase-3.yaml",
+					Task: &QueueTask{
+						Type:     "issue-fix",
+						Priority: "medium",
+						Phase:    3,
+					},
+				},
+				{
+					Filename: "task-phase-1.yaml",
+					Task: &QueueTask{
+						Type:     "issue-fix",
+						Priority: "medium",
+						Phase:    1,
+					},
+				},
+			},
+			expected: []string{"task-phase-1.yaml", "task-phase-3.yaml"},
+		},
+		{
+			name: "Sorting by age (newest first) when priority and phase match",
+			input: []QueueTaskItem{
+				{
+					Filename: "task-old.yaml",
+					Task: &QueueTask{
+						Type:      "issue-fix",
+						Priority:  "medium",
+						Phase:     1,
+						CreatedAt: now.Add(-10 * time.Minute),
+					},
+				},
+				{
+					Filename: "task-new.yaml",
+					Task: &QueueTask{
+						Type:      "issue-fix",
+						Priority:  "medium",
+						Phase:     1,
+						CreatedAt: now,
+					},
+				},
+			},
+			expected: []string{"task-new.yaml", "task-old.yaml"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			inputCopy := make([]QueueTaskItem, len(tc.input))
+			copy(inputCopy, tc.input)
+
+			sortQueueTasks(inputCopy)
+
+			if len(inputCopy) != len(tc.expected) {
+				t.Fatalf("sortQueueTasks() returned slice of length %d; want %d", len(inputCopy), len(tc.expected))
+			}
+
+			for i, expectedFilename := range tc.expected {
+				if inputCopy[i].Filename != expectedFilename {
+					t.Errorf("At index %d: expected filename %q, got %q", i, expectedFilename, inputCopy[i].Filename)
+				}
+			}
+		})
+	}
+}
