@@ -108,8 +108,10 @@ func (s *PersistingTokenSource) Token() (*oauth2.Token, error) {
 	// Check if token changed
 	currentPAT := string(secret.Data[OAuthPATKey])
 	if currentPAT == "" {
-		// Fallback to 'pat' if 'oauth_pat' is not yet set
 		currentPAT = string(secret.Data["pat"])
+		if currentPAT == "" {
+			currentPAT = string(secret.Data["GITHUB_TOKEN"])
+		}
 	}
 
 	if currentPAT == t.AccessToken {
@@ -177,25 +179,29 @@ func NewGithubClient(ctx context.Context, k8sClient client.Client, repoWatch *re
 	if pat, ok = secret.Data[ManualPATKey]; !ok || len(string(pat)) == 0 {
 		if pat, ok = secret.Data[OAuthPATKey]; !ok || len(string(pat)) == 0 {
 			if pat, ok = secret.Data["pat"]; !ok || len(string(pat)) == 0 {
-				// If PAT is missing or empty check if we have OAuth credentials configured.
-				// If so, we might be waiting for the user to login.
-				if os.Getenv("GITHUB_CLIENT_ID") != "" && os.Getenv("GITHUB_CLIENT_SECRET") != "" {
-					return nil, nil, fmt.Errorf("waiting for user login to populate github token in secret %s", secretName)
+				if pat, ok = secret.Data["GITHUB_TOKEN"]; !ok || len(string(pat)) == 0 {
+					// If PAT is missing or empty check if we have OAuth credentials configured.
+					// If so, we might be waiting for the user to login.
+					if os.Getenv("GITHUB_CLIENT_ID") != "" && os.Getenv("GITHUB_CLIENT_SECRET") != "" {
+						return nil, nil, fmt.Errorf("waiting for user login to populate github token in secret %s", secretName)
+					}
+					return nil, nil, fmt.Errorf("GitHub token not found or empty in secret %s (checked %s, %s, pat, and GITHUB_TOKEN)", secretName, ManualPATKey, OAuthPATKey)
 				}
-				return nil, nil, fmt.Errorf("GitHub token not found or empty in secret %s (checked %s, %s, and pat)", secretName, ManualPATKey, OAuthPATKey)
 			}
 		}
 	}
 	githubConfig["pat"] = string(pat)
 
-	_, ok = secret.Data["name"]
-	if ok {
-		githubConfig["name"] = string(secret.Data["name"])
+	if val, ok := secret.Data["name"]; ok && len(val) > 0 {
+		githubConfig["name"] = string(val)
+	} else if val, ok := secret.Data["GITHUB_LOGIN"]; ok && len(val) > 0 {
+		githubConfig["name"] = string(val)
 	}
 
-	_, ok = secret.Data["email"]
-	if ok {
-		githubConfig["email"] = string(secret.Data["email"])
+	if val, ok := secret.Data["email"]; ok && len(val) > 0 {
+		githubConfig["email"] = string(val)
+	} else if val, ok := secret.Data["GITHUB_EMAIL"]; ok && len(val) > 0 {
+		githubConfig["email"] = string(val)
 	}
 
 	clientID := os.Getenv("GITHUB_CLIENT_ID")
@@ -1079,12 +1085,18 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 
 		if len(secret.Data["userid"]) > 0 {
 			botLogin = string(secret.Data["userid"])
+		} else if len(secret.Data["GITHUB_LOGIN"]) > 0 {
+			botLogin = string(secret.Data["GITHUB_LOGIN"])
 		}
 		if len(secret.Data["name"]) > 0 {
 			botName = string(secret.Data["name"])
+		} else {
+			botName = botLogin
 		}
 		if len(secret.Data["email"]) > 0 {
 			botEmail = string(secret.Data["email"])
+		} else if len(secret.Data["GITHUB_EMAIL"]) > 0 {
+			botEmail = string(secret.Data["GITHUB_EMAIL"])
 		}
 	}
 
@@ -1298,12 +1310,18 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, user *github.
 
 		if len(secret.Data["userid"]) > 0 {
 			botLogin = string(secret.Data["userid"])
+		} else if len(secret.Data["GITHUB_LOGIN"]) > 0 {
+			botLogin = string(secret.Data["GITHUB_LOGIN"])
 		}
 		if len(secret.Data["name"]) > 0 {
 			botName = string(secret.Data["name"])
+		} else {
+			botName = botLogin
 		}
 		if len(secret.Data["email"]) > 0 {
 			botEmail = string(secret.Data["email"])
+		} else if len(secret.Data["GITHUB_EMAIL"]) > 0 {
+			botEmail = string(secret.Data["GITHUB_EMAIL"])
 		}
 	}
 
