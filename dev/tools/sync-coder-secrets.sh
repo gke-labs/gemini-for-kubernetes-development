@@ -16,7 +16,14 @@
 set -eo pipefail
 
 SOURCE_NS="overseer-kcc"
-ROBOT_SECRETS=("user-lovelace-coder-bot" "user-hopper-coder-bot" "user-ada-coder-bot" "user-reviewbot-robot")
+
+# Dynamically fetch all robot and review secrets in the source namespace
+ROBOT_SECRETS=($(kubectl get secrets -n "${SOURCE_NS}" -o jsonpath='{.items[*].metadata.name}' | tr ' ' '\n' | grep -E "^user-.*-(coder-bot|robot)$" | sort -u || true))
+
+if [ ${#ROBOT_SECRETS[@]} -eq 0 ]; then
+  echo "Error: No robot secrets starting with 'user-' found in source namespace ${SOURCE_NS}."
+  exit 1
+fi
 
 echo "=== Coder Secrets Sync Utility ==="
 echo "Source Namespace: ${SOURCE_NS}"
@@ -40,13 +47,18 @@ for ns in ${TARGET_NAMESPACES}; do
   echo "Syncing secrets to namespace: ${ns}"
   echo "----------------------------------------"
 
-  # Round-robin select a coder bot from the pool to act as the 'codebot-robot' fallback for this namespace
-  CODER_BOTS=("user-lovelace-coder-bot" "user-hopper-coder-bot" "user-ada-coder-bot")
+  # Dynamically list available coder bots in the source namespace for fallback rotation
+  CODER_BOTS=($(kubectl get secrets -n "${SOURCE_NS}" -o jsonpath='{.items[*].metadata.name}' | tr ' ' '\n' | grep -E "^user-.*-coder-bot$" | sort -u || true))
   BOT_POOL_SIZE=${#CODER_BOTS[@]}
-  BOT_INDEX=$(( i % BOT_POOL_SIZE ))
-  FALLBACK_BOT=${CODER_BOTS[$BOT_INDEX]}
-  echo "Selected ${FALLBACK_BOT} (index ${BOT_INDEX}) as the codebot-robot fallback for namespace ${ns}"
-  i=$(( i + 1 ))
+  if [ ${BOT_POOL_SIZE} -eq 0 ]; then
+    echo "  [Warning] No coder bots found for round-robin fallback. Legacy codebot-robot won't be updated."
+    FALLBACK_BOT=""
+  else
+    BOT_INDEX=$(( i % BOT_POOL_SIZE ))
+    FALLBACK_BOT=${CODER_BOTS[$BOT_INDEX]}
+    echo "Selected ${FALLBACK_BOT} (index ${BOT_INDEX}) as the codebot-robot fallback for namespace ${ns}"
+    i=$(( i + 1 ))
+  fi
 
   for secret_name in "${ROBOT_SECRETS[@]}"; do
     echo "Checking source secret ${secret_name}..."
