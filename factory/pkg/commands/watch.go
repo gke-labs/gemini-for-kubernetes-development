@@ -1093,6 +1093,9 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					continue
 				}
 
+				// Sync labels from referenced parent issues to the PR
+				syncReferencedIssueLabels(ctx, ghClient, owner, repo, pr, prIssue)
+
 				headSHA := pr.GetHead().GetSHA()
 
 				// Fetch PR commits to find the last commit timestamp
@@ -2187,7 +2190,7 @@ func getReferencedIssues(pr *githubv39.PullRequest) map[int]bool {
 
 	// Check branch name
 	if pr.GetHead().GetRef() != "" {
-		re := regexp.MustCompile(`\b\d+\b`)
+		re := regexp.MustCompile(`\d+`)
 		for _, match := range re.FindAllString(pr.GetHead().GetRef(), -1) {
 			if num, err := strconv.Atoi(match); err == nil {
 				referenced[num] = true
@@ -2208,6 +2211,55 @@ func getReferencedIssues(pr *githubv39.PullRequest) map[int]bool {
 	}
 
 	return referenced
+}
+
+func syncReferencedIssueLabels(ctx context.Context, ghClient *githubv39.Client, owner, repo string, pr *githubv39.PullRequest, prIssue *githubv39.Issue) {
+	var refIssues []*githubv39.Issue
+	for refIssueNum := range getReferencedIssues(pr) {
+		refIssue, _, err := ghClient.Issues.Get(ctx, owner, repo, refIssueNum)
+		if err != nil {
+			klog.Warningf("Failed to fetch referenced parent issue #%d for PR #%d: %v", refIssueNum, pr.GetNumber(), err)
+			continue
+		}
+		refIssues = append(refIssues, refIssue)
+	}
+
+	allMissingLabels := getMissingLabelsForPR(prIssue.Labels, refIssues)
+
+	if len(allMissingLabels) > 0 {
+		klog.Infof("Adding inherited labels %v to PR #%d", allMissingLabels, pr.GetNumber())
+		if _, _, err := ghClient.Issues.AddLabelsToIssue(ctx, owner, repo, pr.GetNumber(), allMissingLabels); err != nil {
+			klog.Errorf("Failed to add labels %v to PR #%d: %v", allMissingLabels, pr.GetNumber(), err)
+		}
+	}
+}
+
+func getMissingLabelsForPR(prLabels []*githubv39.Label, refIssues []*githubv39.Issue) []string {
+	prLabelsSet := make(map[string]bool)
+	for _, label := range prLabels {
+		if label.GetName() != "" {
+			prLabelsSet[label.GetName()] = true
+		}
+	}
+
+	var allMissingLabels []string
+	missingLabelsSet := make(map[string]bool)
+
+	for _, refIssue := range refIssues {
+		if refIssue == nil {
+			continue
+		}
+
+		for _, label := range refIssue.Labels {
+			labelName := label.GetName()
+			if labelName != "" && !prLabelsSet[labelName] && !missingLabelsSet[labelName] {
+				missingLabelsSet[labelName] = true
+				allMissingLabels = append(allMissingLabels, labelName)
+			}
+		}
+	}
+
+	return allMissingLabels
 }
 
 func hasLinkedPR(ctx context.Context, client *githubv39.Client, owner, repo string, issueNum int) (bool, error) {

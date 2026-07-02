@@ -3,6 +3,8 @@ package commands
 import (
 	"testing"
 	"time"
+
+	githubv39 "github.com/google/go-github/v39/github"
 )
 
 func TestShouldRunChoreAt(t *testing.T) {
@@ -77,6 +79,147 @@ func TestShouldRunChoreAt(t *testing.T) {
 			got := shouldRunChoreAt(tc.schedule, tc.lastRun, currentNow)
 			if got != tc.expected {
 				t.Errorf("shouldRunChoreAt(%q, %v, %v) = %v; want %v", tc.schedule, tc.lastRun, currentNow, got, tc.expected)
+			}
+		})
+	}
+}
+
+func TestGetReferencedIssues(t *testing.T) {
+	tests := []struct {
+		name     string
+		headRef  string
+		title    string
+		body     string
+		expected map[int]bool
+	}{
+		{
+			name:    "Branch name contains issue number",
+			headRef: "issue_8883",
+			title:   "Some PR title",
+			body:    "Some PR body",
+			expected: map[int]bool{
+				8883: true,
+			},
+		},
+		{
+			name:    "Title and body contain issue number references",
+			headRef: "my-dev-branch",
+			title:   "Fixes #8883 and #10294",
+			body:    "Resolves issue #9271 in config-connector",
+			expected: map[int]bool{
+				8883:  true,
+				10294: true,
+				9271:  true,
+			},
+		},
+		{
+			name:     "No references",
+			headRef:  "master",
+			title:    "Clean PR without issue link",
+			body:     "Just refactoring some code",
+			expected: map[int]bool{},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			pr := &githubv39.PullRequest{
+				Head: &githubv39.PullRequestBranch{
+					Ref: &tc.headRef,
+				},
+				Title: &tc.title,
+				Body:  &tc.body,
+			}
+			got := getReferencedIssues(pr)
+			if len(got) != len(tc.expected) {
+				t.Fatalf("getReferencedIssues() returned %v; want %v", got, tc.expected)
+			}
+			for num := range tc.expected {
+				if !got[num] {
+					t.Errorf("getReferencedIssues() missed expected issue %d in %v", num, got)
+				}
+			}
+		})
+	}
+}
+
+func TestGetMissingLabelsForPR(t *testing.T) {
+	tests := []struct {
+		name      string
+		prLabels  []string
+		refIssues [][]string
+		expected  []string
+	}{
+		{
+			name:      "All issue labels are missing from PR",
+			prLabels:  []string{},
+			refIssues: [][]string{{"greenfield", "step/controller"}},
+			expected:  []string{"greenfield", "step/controller"},
+		},
+		{
+			name:      "Some labels already exist on PR",
+			prLabels:  []string{"greenfield"},
+			refIssues: [][]string{{"greenfield", "step/controller", "area/direct"}},
+			expected:  []string{"greenfield", "step/controller", "area/direct"},
+		},
+		{
+			name:     "Duplicate labels across multiple issues are deduplicated",
+			prLabels: []string{"priority/medium"},
+			refIssues: [][]string{
+				{"greenfield", "step/controller"},
+				{"step/controller", "area/direct"},
+			},
+			expected: []string{"priority/medium", "greenfield", "step/controller", "area/direct"},
+		},
+		{
+			name:      "No missing labels",
+			prLabels:  []string{"greenfield", "step/controller"},
+			refIssues: [][]string{{"greenfield"}},
+			expected:  []string{"greenfield", "step/controller"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var prLabels []*githubv39.Label
+			for _, name := range tc.prLabels {
+				prLabels = append(prLabels, &githubv39.Label{Name: stringPtr(name)})
+			}
+
+			var refIssues []*githubv39.Issue
+			for _, issueLabels := range tc.refIssues {
+				var labels []*githubv39.Label
+				for _, name := range issueLabels {
+					labels = append(labels, &githubv39.Label{Name: stringPtr(name)})
+				}
+				refIssues = append(refIssues, &githubv39.Issue{Labels: labels})
+			}
+
+			got := getMissingLabelsForPR(prLabels, refIssues)
+
+			// Build the final set of labels on the PR (original labels + added labels)
+			finalLabelsMap := make(map[string]bool)
+			var finalLabels []string
+			for _, name := range tc.prLabels {
+				if !finalLabelsMap[name] {
+					finalLabelsMap[name] = true
+					finalLabels = append(finalLabels, name)
+				}
+			}
+			for _, name := range got {
+				if !finalLabelsMap[name] {
+					finalLabelsMap[name] = true
+					finalLabels = append(finalLabels, name)
+				}
+			}
+
+			if len(finalLabels) != len(tc.expected) {
+				t.Fatalf("Final labels list length is %d (%v); want %d (%v)", len(finalLabels), finalLabels, len(tc.expected), tc.expected)
+			}
+			for i, val := range tc.expected {
+				if finalLabels[i] != val {
+					t.Errorf("Final label at index %d = %q; want %q", i, finalLabels[i], val)
+				}
 			}
 		})
 	}
