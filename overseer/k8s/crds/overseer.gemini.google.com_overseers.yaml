@@ -136,6 +136,9 @@ spec:
                       type: array
                   type: object
                 type: object
+              sandboxEvictionAge:
+                default: 7d
+                type: string
               secrets:
                 items:
                   properties:
