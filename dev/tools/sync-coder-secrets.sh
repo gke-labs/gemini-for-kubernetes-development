@@ -34,16 +34,19 @@ echo "Found active namespaces:"
 echo "${TARGET_NAMESPACES}"
 echo ""
 
+i=0
 for ns in ${TARGET_NAMESPACES}; do
   echo "----------------------------------------"
   echo "Syncing secrets to namespace: ${ns}"
   echo "----------------------------------------"
 
-  # Randomly select a coder bot from the pool to act as the 'codebot-robot' fallback for this namespace
+  # Round-robin select a coder bot from the pool to act as the 'codebot-robot' fallback for this namespace
   CODER_BOTS=("user-lovelace-coder-bot" "user-hopper-coder-bot" "user-ada-coder-bot")
-  RANDOM_INDEX=$(( RANDOM % ${#CODER_BOTS[@]} ))
-  FALLBACK_BOT=${CODER_BOTS[$RANDOM_INDEX]}
-  echo "Selected ${FALLBACK_BOT} as the codebot-robot fallback for namespace ${ns}"
+  BOT_POOL_SIZE=${#CODER_BOTS[@]}
+  BOT_INDEX=$(( i % BOT_POOL_SIZE ))
+  FALLBACK_BOT=${CODER_BOTS[$BOT_INDEX]}
+  echo "Selected ${FALLBACK_BOT} (index ${BOT_INDEX}) as the codebot-robot fallback for namespace ${ns}"
+  i=$(( i + 1 ))
 
   for secret_name in "${ROBOT_SECRETS[@]}"; do
     echo "Checking source secret ${secret_name}..."
