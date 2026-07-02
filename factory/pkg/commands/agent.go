@@ -435,6 +435,9 @@ func fetchWorkflowContent(ctx context.Context, ghClient *githubv39.Client, urlSt
 		if err != nil {
 			return nil, fmt.Errorf("fetching content from GitHub repo: %w", err)
 		}
+		if fileContent == nil {
+			return nil, fmt.Errorf("content is nil (possibly a directory or submodule)")
+		}
 		contentStr, err := fileContent.GetContent()
 		if err != nil {
 			return nil, fmt.Errorf("decoding GitHub content: %w", err)

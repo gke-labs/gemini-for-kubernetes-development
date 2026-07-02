@@ -467,6 +467,10 @@ func isWorkflowDefinition(ctx context.Context, ghClient *githubv39.Client, owner
 		klog.V(4).Infof("Failed to get content for %s: %v", cleanPath, err)
 		return false
 	}
+	if fileContent == nil {
+		klog.V(4).Infof("Content is nil for %s (possibly a directory or submodule)", cleanPath)
+		return false
+	}
 	content, err := fileContent.GetContent()
 	if err != nil {
 		return false
