@@ -1659,7 +1659,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				klog.Errorf("Failed to clean up closed issue sandboxes: %v", err)
 			}
 
-			// Clean up stale idle sandboxes older than a week
+			// Clean up stale idle sandboxes older than eviction age (defaults to 1 week)
 			if err := cleanupStaleIdleSandboxes(ctx, kubeClient, rootFlags.Namespace, sandboxEvictionAge, dryRun); err != nil {
 				klog.Errorf("Failed to clean up stale idle sandboxes: %v", err)
 			}
@@ -2648,9 +2648,7 @@ func cleanupStaleIdleSandboxes(ctx context.Context, kubeClient *clients.Kubernet
 			continue
 		}
 
-		// Check if the sandbox is older than evictionAge
 		if now.Sub(creationTime) > evictionAge {
-			// Check if a task is actively running on this sandbox
 			running, err := isSandboxTaskRunning(ctx, kubeClient, namespace, name)
 			if err != nil {
 				klog.Errorf("Failed to check if sandbox %s is running: %v", name, err)
@@ -2663,12 +2661,14 @@ func cleanupStaleIdleSandboxes(ctx context.Context, kubeClient *clients.Kubernet
 					fmt.Printf("[DRYRUN] Would evict stale/idle sandbox '%s'\n", name)
 					continue
 				}
+
 				if err := manager.DeleteSandbox(ctx, namespace, name); err != nil {
 					klog.Errorf("Failed to delete stale/idle sandbox '%s': %v", name, err)
 				}
 			}
 		}
 	}
+	
 	return nil
 }
 
