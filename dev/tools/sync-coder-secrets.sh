@@ -39,6 +39,12 @@ for ns in ${TARGET_NAMESPACES}; do
   echo "Syncing secrets to namespace: ${ns}"
   echo "----------------------------------------"
 
+  # Randomly select a coder bot from the pool to act as the 'codebot-robot' fallback for this namespace
+  CODER_BOTS=("user-lovelace-coder-bot" "user-hopper-coder-bot" "user-ada-coder-bot")
+  RANDOM_INDEX=$(( RANDOM % ${#CODER_BOTS[@]} ))
+  FALLBACK_BOT=${CODER_BOTS[$RANDOM_INDEX]}
+  echo "Selected ${FALLBACK_BOT} as the codebot-robot fallback for namespace ${ns}"
+
   for secret_name in "${ROBOT_SECRETS[@]}"; do
     echo "Checking source secret ${secret_name}..."
     
@@ -73,9 +79,9 @@ for ns in ${TARGET_NAMESPACES}; do
       --from-literal=GEMINI_API_KEY="${GEMINI}" \
       --dry-run=client -o yaml | kubectl apply -f -
 
-    # If this is lovelace-coder-bot, also overwrite the legacy 'codebot-robot' secret as a fallback
-    if [ "${secret_name}" == "user-lovelace-coder-bot" ]; then
-      echo "  Updating legacy 'codebot-robot' fallback credentials in ${ns}..."
+    # If this is the chosen fallback bot for this namespace, also update 'codebot-robot' secret
+    if [ "${secret_name}" == "${FALLBACK_BOT}" ]; then
+      echo "  Updating legacy 'codebot-robot' fallback credentials in ${ns} using ${secret_name}..."
       kubectl create secret generic "codebot-robot" -n "${ns}" \
         --from-literal=pat="${TOKEN}" \
         --from-literal=userid="${LOGIN}" \
