@@ -76,6 +76,7 @@ EOF
     cat <<EOF > "${USER_HOME}/.gitignore_global"
 manager
 bin/
+http-logs/
 EOF
 }
 
