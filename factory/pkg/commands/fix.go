@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
+	watchpkg "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
@@ -219,9 +220,9 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch boo
 		}
 
 		// Intercept and run as workflow if a workflow path is referenced in the issue body
-		workflowPath := findWorkflowPath(issueBody)
+		workflowPath := watchpkg.FindWorkflowPath(issueBody)
 		if workflowPath != "" {
-			if isWorkflowDefinition(ctx, ghClient, owner, repo, workflowPath) {
+			if watchpkg.IsWorkflowDefinition(ctx, ghClient, owner, repo, workflowPath) {
 				fmt.Printf("Detected workflow definition '%s' referenced in issue #%d. Forwarding to workflow execution...\n", workflowPath, issueNum)
 				agentFlags := AgentFlags{
 					URL:       targetURL,
