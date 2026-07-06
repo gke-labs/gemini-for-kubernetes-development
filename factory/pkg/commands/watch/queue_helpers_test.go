@@ -41,27 +41,6 @@ func TestQueueHelpers(t *testing.T) {
 		t.Errorf("task should exist in incoming directory after writing")
 	}
 
-	// 2. Test isDoNotProcess
-	// Scenario A: default no drain
-	if isDoNotProcess(tempDir) {
-		t.Errorf("expected isDoNotProcess to be false")
-	}
-
-	// Scenario B: environment variable trigger
-	t.Setenv("DRAIN", "true")
-	if !isDoNotProcess(tempDir) {
-		t.Errorf("expected isDoNotProcess to be true when DRAIN=true env var is set")
-	}
-	t.Setenv("DRAIN", "") // clear
-
-	// Scenario C: check file trigger (.drain)
-	drainFile := filepath.Join(tempDir, ".drain")
-	_ = os.WriteFile(drainFile, []byte(""), 0644)
-	if !isDoNotProcess(tempDir) {
-		t.Errorf("expected isDoNotProcess to be true when .drain file exists")
-	}
-	_ = os.Remove(drainFile)
-
 	// 3. Test writeTaskJournalEvent
 	journalDir := filepath.Join(tempDir, "journal")
 	writeTaskJournalEvent(tempDir, filename, task, "Created", 10*time.Second)
@@ -111,42 +90,5 @@ func TestQueueHelpersErrorsAndDrains(t *testing.T) {
 		t.Errorf("expected taskExists to be true when task is in processing directory")
 	}
 
-	// 3. isDoNotProcess other environment variables
-	envVars := []string{"DO_NOT_PROCESS", "FACTORY_DO_NOT_PROCESS", "FACTORY_DRAIN"}
-	for _, env := range envVars {
-		t.Setenv(env, "true")
-		if !isDoNotProcess(tempDir) {
-			t.Errorf("expected isDoNotProcess to be true when %s=true", env)
-		}
-		t.Setenv(env, "")
-	}
 
-	// 4. isDoNotProcess multiple drain file paths
-	subPaths := []string{
-		".do_not_process",
-		"do_not_process",
-		".drain",
-		"drain",
-	}
-
-	for _, sub := range subPaths {
-		p := filepath.Join(tempDir, sub)
-		err := os.MkdirAll(filepath.Dir(p), 0755)
-		if err != nil {
-			t.Fatalf("failed to create dir for %s: %v", p, err)
-		}
-		err = os.WriteFile(p, []byte(""), 0644)
-		if err != nil {
-			t.Fatalf("failed to write drain file %s: %v", p, err)
-		}
-
-		if !isDoNotProcess(tempDir) {
-			t.Errorf("expected isDoNotProcess to be true when drain file %s exists", p)
-		}
-
-		err = os.Remove(p)
-		if err != nil {
-			t.Fatalf("failed to remove drain file %s: %v", p, err)
-		}
-	}
 }

@@ -261,7 +261,7 @@ func RunWatch(ctx context.Context, opts WatchOptions) error {
 		}
 		w.state.mu.Unlock()
 
-		if isDoNotProcess(w.queueDir) {
+		if w.isDoNotProcess() {
 			runningCount, err := countRunningSandboxTasks(ctx, w.kubeClient, w.opts.Namespace)
 			if err != nil {
 				klog.Errorf("Failed to count running sandbox tasks during drain: %v", err)
@@ -339,3 +339,26 @@ func (w *watchContext) runLoop(ctx context.Context, wg *sync.WaitGroup, checkRep
 		}
 	}
 }
+
+func (w *watchContext) isDoNotProcess() bool {
+	if os.Getenv("DO_NOT_PROCESS") == "true" || os.Getenv("FACTORY_DO_NOT_PROCESS") == "true" || os.Getenv("DRAIN") == "true" || os.Getenv("FACTORY_DRAIN") == "true" {
+		return true
+	}
+	checkPaths := []string{
+		filepath.Join(w.queueDir, ".do_not_process"),
+		filepath.Join(w.queueDir, "do_not_process"),
+		filepath.Join(w.queueDir, ".drain"),
+		filepath.Join(w.queueDir, "drain"),
+		"/workspaces/.do_not_process",
+		"/workspaces/do_not_process",
+		"/workspaces/.drain",
+		"/workspaces/drain",
+	}
+	for _, p := range checkPaths {
+		if _, err := os.Stat(p); err == nil {
+			return true
+		}
+	}
+	return false
+}
+

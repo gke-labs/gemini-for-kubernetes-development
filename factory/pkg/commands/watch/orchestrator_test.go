@@ -257,3 +257,59 @@ func TestRunWatchErrors(t *testing.T) {
 		t.Errorf("expected mkdir failure error, got %v", err)
 	}
 }
+
+func TestWatcherIsDoNotProcess(t *testing.T) {
+	tempDir := t.TempDir()
+	w := &watchContext{
+		queueDir: tempDir,
+	}
+
+	// 1. Scenario A: default no drain
+	if w.isDoNotProcess() {
+		t.Errorf("expected isDoNotProcess to be false by default")
+	}
+
+	// 2. Scenario B: environment variable trigger
+	t.Setenv("DRAIN", "true")
+	if !w.isDoNotProcess() {
+		t.Errorf("expected isDoNotProcess to be true when DRAIN=true env var is set")
+	}
+	t.Setenv("DRAIN", "") // clear
+
+	// 3. Scenario C: check file trigger (.drain)
+	drainFile := filepath.Join(tempDir, ".drain")
+	_ = os.WriteFile(drainFile, []byte(""), 0644)
+	if !w.isDoNotProcess() {
+		t.Errorf("expected isDoNotProcess to be true when .drain file exists")
+	}
+	_ = os.Remove(drainFile)
+
+	// 4. Scenario D: other env vars
+	envVars := []string{"DO_NOT_PROCESS", "FACTORY_DO_NOT_PROCESS", "FACTORY_DRAIN"}
+	for _, env := range envVars {
+		t.Setenv(env, "true")
+		if !w.isDoNotProcess() {
+			t.Errorf("expected isDoNotProcess to be true when %s=true", env)
+		}
+		t.Setenv(env, "")
+	}
+
+	// 5. Scenario E: multiple drain file paths
+	subPaths := []string{
+		".do_not_process",
+		"do_not_process",
+		"drain",
+	}
+	for _, sub := range subPaths {
+		p := filepath.Join(tempDir, sub)
+		err := os.WriteFile(p, []byte(""), 0644)
+		if err != nil {
+			t.Fatalf("failed to write drain file %s: %v", p, err)
+		}
+		if !w.isDoNotProcess() {
+			t.Errorf("expected isDoNotProcess to be true when drain file %s exists", p)
+		}
+		_ = os.Remove(p)
+	}
+}
+

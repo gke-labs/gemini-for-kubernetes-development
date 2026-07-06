@@ -448,3 +448,10 @@ func fetchWorkflowContent(ctx context.Context, ghClient *githubv39.Client, urlSt
 	}
 	return buf.Bytes(), nil
 }
+
+func addGitHubComment(ctx context.Context, client *githubv39.Client, owner, repo string, number int, body string) error {
+	comment := &githubv39.IssueComment{Body: &body}
+	_, _, err := client.Issues.CreateComment(ctx, owner, repo, number, comment)
+	return err
+}
+

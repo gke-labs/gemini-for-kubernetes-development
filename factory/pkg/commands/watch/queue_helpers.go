@@ -1,7 +1,6 @@
 package watch
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	githubv39 "github.com/google/go-github/v39/github"
 	"gopkg.in/yaml.v3"
 )
 
@@ -41,34 +39,6 @@ func taskExists(incomingDir, processingDir, filename string) bool {
 		return true
 	}
 	return false
-}
-
-func isDoNotProcess(queueDir string) bool {
-	if os.Getenv("DO_NOT_PROCESS") == "true" || os.Getenv("FACTORY_DO_NOT_PROCESS") == "true" || os.Getenv("DRAIN") == "true" || os.Getenv("FACTORY_DRAIN") == "true" {
-		return true
-	}
-	checkPaths := []string{
-		filepath.Join(queueDir, ".do_not_process"),
-		filepath.Join(queueDir, "do_not_process"),
-		filepath.Join(queueDir, ".drain"),
-		filepath.Join(queueDir, "drain"),
-		"/workspaces/.do_not_process",
-		"/workspaces/do_not_process",
-		"/workspaces/.drain",
-		"/workspaces/drain",
-	}
-	for _, p := range checkPaths {
-		if _, err := os.Stat(p); err == nil {
-			return true
-		}
-	}
-	return false
-}
-
-func addGitHubComment(ctx context.Context, client *githubv39.Client, owner, repo string, number int, body string) error {
-	comment := &githubv39.IssueComment{Body: &body}
-	_, _, err := client.Issues.CreateComment(ctx, owner, repo, number, comment)
-	return err
 }
 
 func writeTaskJournalEvent(dir string, filename string, task *QueueTask, action string, status time.Duration) {
