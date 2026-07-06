@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
@@ -177,6 +178,7 @@ func cleanOldFiles(ctx context.Context, dir string, maxAge time.Duration) {
 
 type CleanupFlags struct {
 	OlderThan time.Duration
+	Overseer  bool
 }
 
 func NewCleanupCommand(ctx context.Context) *cobra.Command {
@@ -201,9 +203,18 @@ func NewCleanupCommand(ctx context.Context) *cobra.Command {
 			deletedCount := 0
 
 			for _, item := range list.Items {
+				name := item.GetName()
+				if !flags.Overseer {
+					if strings.HasPrefix(name, "overseer-") {
+						continue
+					}
+					labels := item.GetLabels()
+					if labels != nil && labels["overseer.gemini.google.com/overseer"] != "" {
+						continue
+					}
+				}
 				creationTime := item.GetCreationTimestamp().Time
 				if now.Sub(creationTime) > flags.OlderThan {
-					name := item.GetName()
 					fmt.Printf("Deleting sandbox '%s' (age: %s)...\n", name, now.Sub(creationTime).Round(time.Second))
 					if err := manager.DeleteSandbox(ctx, rootFlags.Namespace, name); err != nil {
 						klog.Errorf("Failed to delete sandbox '%s': %v", name, err)
@@ -219,6 +230,7 @@ func NewCleanupCommand(ctx context.Context) *cobra.Command {
 	}
 
 	cmd.Flags().DurationVar(&flags.OlderThan, "older-than", 24*time.Hour, "Delete sandboxes older than this duration")
+	cmd.Flags().BoolVar(&flags.Overseer, "overseer", false, "Include overseer sandboxes in cleanup")
 
 	return cmd
 }
