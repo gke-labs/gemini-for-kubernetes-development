@@ -1886,7 +1886,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				if err != nil {
 					klog.Errorf("Failed to count running sandbox tasks: %v", err)
 				}
-				activeCount := runningCount + filesInProcessing
+				activeCount := max(runningCount, filesInProcessing)
 
 				if activeCount >= maxPending {
 					fmt.Printf("Reached maximum pending sandboxes limit (%d). Skipping remaining queue items.\n", maxPending)
