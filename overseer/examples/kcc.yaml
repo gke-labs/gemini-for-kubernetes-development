@@ -7,7 +7,7 @@ spec:
   minNumber: 9000
   robotAccount: argus-watcher-bot
   maxActiveReviews: 20
-  maxActiveIssues: 50
+  maxActiveIssues: 25
   chores:
     mode: enabled
     #include:
