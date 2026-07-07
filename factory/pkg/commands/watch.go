@@ -29,20 +29,20 @@ import (
 )
 
 type WatchFlags struct {
-	Repo         string
-	PollInterval time.Duration
-	Assignee     string
-	Labels       []string
-	DryRun       bool
-	WatchTimeout time.Duration
-	MaxActions   int
-	MaxPending   int
-	Mode         string
-	QueueDir     string
-	Once         bool
-	IssueMode    string
-	PRMode       string
-	ChoresMode   string
+	Repo               string
+	PollInterval       time.Duration
+	Assignee           string
+	Labels             []string
+	DryRun             bool
+	WatchTimeout       time.Duration
+	MaxActions         int
+	MaxPending         int
+	Mode               string
+	QueueDir           string
+	Once               bool
+	IssueMode          string
+	PRMode             string
+	ChoresMode         string
 	ScanLimit          int
 	TaskTimeout        time.Duration
 	SandboxEvictionAge string
@@ -2668,7 +2668,7 @@ func cleanupStaleIdleSandboxes(ctx context.Context, kubeClient *clients.Kubernet
 			}
 		}
 	}
-	
+
 	return nil
 }
 
