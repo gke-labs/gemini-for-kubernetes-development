@@ -126,6 +126,11 @@ type OverseerSpec struct {
 	// +kubebuilder:validation:Optional
 	MaxActiveIssues *int32 `json:"maxActiveIssues,omitempty"`
 
+	// SandboxEvictionAge defines the age threshold for idle sandbox eviction (e.g. "7d", "24h").
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default="7d"
+	SandboxEvictionAge string `json:"sandboxEvictionAge,omitempty"`
+
 	// MinNumber specifies the minimum PR/issue number to process.
 	// +kubebuilder:validation:Optional
 	MinNumber *int32 `json:"minNumber,omitempty"`

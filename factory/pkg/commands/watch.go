@@ -29,22 +29,23 @@ import (
 )
 
 type WatchFlags struct {
-	Repo         string
-	PollInterval time.Duration
-	Assignee     string
-	Labels       []string
-	DryRun       bool
-	WatchTimeout time.Duration
-	MaxActions   int
-	MaxPending   int
-	Mode         string
-	QueueDir     string
-	Once         bool
-	IssueMode    string
-	PRMode       string
-	ChoresMode   string
-	ScanLimit    int
-	TaskTimeout  time.Duration
+	Repo               string
+	PollInterval       time.Duration
+	Assignee           string
+	Labels             []string
+	DryRun             bool
+	WatchTimeout       time.Duration
+	MaxActions         int
+	MaxPending         int
+	Mode               string
+	QueueDir           string
+	Once               bool
+	IssueMode          string
+	PRMode             string
+	ChoresMode         string
+	ScanLimit          int
+	TaskTimeout        time.Duration
+	SandboxEvictionAge string
 }
 
 func NewWatchCommand(ctx context.Context) *cobra.Command {
@@ -100,7 +101,7 @@ func NewWatchCommand(ctx context.Context) *cobra.Command {
 				choresMode = "enabled"
 			}
 
-			return runWatch(ctx, parts[0], parts[1], flags.PollInterval, flags.Assignee, cmd.Flags().Changed("assignee"), flags.Labels, flags.DryRun, flags.WatchTimeout, flags.MaxActions, flags.MaxPending, flags.Mode, flags.QueueDir, flags.Once, issueMode, prMode, choresMode, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, flags.ScanLimit, flags.TaskTimeout)
+			return runWatch(ctx, parts[0], parts[1], flags.PollInterval, flags.Assignee, cmd.Flags().Changed("assignee"), flags.Labels, flags.DryRun, flags.WatchTimeout, flags.MaxActions, flags.MaxPending, flags.Mode, flags.QueueDir, flags.Once, issueMode, prMode, choresMode, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, flags.ScanLimit, flags.TaskTimeout, flags.SandboxEvictionAge)
 		},
 	}
 
@@ -120,6 +121,7 @@ func NewWatchCommand(ctx context.Context) *cobra.Command {
 	cmd.Flags().StringVar(&flags.ChoresMode, "chores-mode", "", "Chores mode: enabled or disabled (defaults to CHORES_MODE env or enabled)")
 	cmd.Flags().IntVar(&flags.ScanLimit, "scan-limit", 100, "Maximum number of issues/PRs to fetch from GitHub API in a scan cycle")
 	cmd.Flags().DurationVar(&flags.TaskTimeout, "task-timeout", 3*time.Hour, "Timeout for each task execution (default 3h)")
+	cmd.Flags().StringVar(&flags.SandboxEvictionAge, "sandbox-eviction-age", "7d", "Age threshold for idle sandbox eviction (e.g. '7d', '24h')")
 
 	return cmd
 }
@@ -818,7 +820,7 @@ func writeTaskJournalEvent(queueDir string, taskFilename string, task *QueueTask
 	}
 }
 
-func runWatch(ctx context.Context, owner, repo string, interval time.Duration, assignee string, assigneeChanged bool, labels []string, dryRun bool, watchTimeout time.Duration, maxActions int, maxPending int, mode string, queueDir string, once bool, issueMode string, prMode string, choresMode string, ephemeralStorage string, secrets []factorysandbox.SecretMount, scanLimit int, taskTimeout time.Duration) error {
+func runWatch(ctx context.Context, owner, repo string, interval time.Duration, assignee string, assigneeChanged bool, labels []string, dryRun bool, watchTimeout time.Duration, maxActions int, maxPending int, mode string, queueDir string, once bool, issueMode string, prMode string, choresMode string, ephemeralStorage string, secrets []factorysandbox.SecretMount, scanLimit int, taskTimeout time.Duration, sandboxEvictionAge string) error {
 	cfg, err := config.LoadConfig()
 	if err != nil {
 		klog.Warningf("Failed to load factory config: %v", err)
@@ -1659,6 +1661,11 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 			// Clean up sandboxes of closed issues
 			if err := cleanupClosedIssueSandboxes(ctx, ghClient, kubeClient, owner, repo, rootFlags.Namespace, dryRun); err != nil {
 				klog.Errorf("Failed to clean up closed issue sandboxes: %v", err)
+			}
+
+			// Clean up stale idle sandboxes older than eviction age (defaults to 1 week)
+			if err := cleanupStaleIdleSandboxes(ctx, kubeClient, rootFlags.Namespace, sandboxEvictionAge, dryRun); err != nil {
+				klog.Errorf("Failed to clean up stale idle sandboxes: %v", err)
 			}
 		}
 
@@ -2619,4 +2626,70 @@ func selectUserForTask(ctx context.Context, ghClient *githubv39.Client, kubeClie
 
 func isPRTask(taskType string) bool {
 	return taskType == "pr-investigate" || taskType == "pr-comments" || taskType == "pr-iterate"
+}
+
+func cleanupStaleIdleSandboxes(ctx context.Context, kubeClient *clients.KubernetesClient, namespace string, ageStr string, dryRun bool) error {
+	if kubeClient == nil {
+		return nil
+	}
+
+	evictionAge, err := parseEvictionAge(ageStr)
+	if err != nil {
+		return fmt.Errorf("parsing sandbox eviction age: %w", err)
+	}
+
+	list, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("listing sandboxes for idle cleanup: %w", err)
+	}
+
+	manager := k8s.NewManager(kubeClient)
+	now := time.Now()
+	for _, item := range list.Items {
+		name := item.GetName()
+		creationTime := item.GetCreationTimestamp().Time
+		if creationTime.IsZero() {
+			continue
+		}
+
+		if now.Sub(creationTime) > evictionAge {
+			running, err := isSandboxTaskRunning(ctx, kubeClient, namespace, name)
+			if err != nil {
+				klog.Errorf("Failed to check if sandbox %s is running: %v", name, err)
+				continue
+			}
+
+			if !running {
+				klog.Infof("Sandbox '%s' has been idle and is older than configured eviction age %s (created: %v). Evicting...", name, ageStr, creationTime)
+				if dryRun {
+					fmt.Printf("[DRYRUN] Would evict stale/idle sandbox '%s'\n", name)
+					continue
+				}
+
+				if err := manager.DeleteSandbox(ctx, namespace, name); err != nil {
+					klog.Errorf("Failed to delete stale/idle sandbox '%s': %v", name, err)
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+func parseEvictionAge(ageStr string) (time.Duration, error) {
+	ageStr = strings.TrimSpace(ageStr)
+	if ageStr == "" {
+		return 7 * 24 * time.Hour, nil
+	}
+
+	if strings.HasSuffix(ageStr, "d") {
+		daysStr := strings.TrimSuffix(ageStr, "d")
+		days, err := strconv.Atoi(daysStr)
+		if err != nil {
+			return 0, fmt.Errorf("invalid days format %q: %w", ageStr, err)
+		}
+		return time.Duration(days) * 24 * time.Hour, nil
+	}
+
+	return time.ParseDuration(ageStr)
 }
