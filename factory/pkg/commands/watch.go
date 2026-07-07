@@ -314,6 +314,11 @@ type QueueTask struct {
 	CompletedAt time.Time `yaml:"completedAt,omitempty"`
 }
 
+type QueueTaskItem struct {
+	Filename string
+	Task     *QueueTask
+}
+
 type ChoreRunState struct {
 	LastRun time.Time `json:"lastRun"`
 }
@@ -1786,95 +1791,18 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 
 		// 3. Runner Mode execution
 		if runRunner {
-			incomingFiles, err := os.ReadDir(incomingDir)
+			tasksToRun, err := loadQueueTasks(incomingDir)
 			if err != nil {
-				if !os.IsNotExist(err) {
-					klog.Errorf("Failed to read incoming queue directory: %v", err)
-				}
+				klog.Errorf("Failed to load queue tasks: %v", err)
 				return
 			}
 
-			var tasksToRun []struct {
-				filename string
-				task     *QueueTask
-			}
+			sortQueueTasks(tasksToRun)
 
-			for _, f := range incomingFiles {
-				if f.IsDir() || !strings.HasPrefix(f.Name(), "task-") || !strings.HasSuffix(f.Name(), ".yaml") {
-					continue
-				}
-
-				filename := f.Name()
-				filePath := filepath.Join(incomingDir, filename)
-				data, err := os.ReadFile(filePath)
-				if err != nil {
-					klog.Errorf("Failed to read task file %s: %v", filename, err)
-					continue
-				}
-
-				var t QueueTask
-				if err := yaml.Unmarshal(data, &t); err != nil {
-					klog.Errorf("Failed to unmarshal task file %s: %v", filename, err)
-					continue
-				}
-
-				tasksToRun = append(tasksToRun, struct {
-					filename string
-					task     *QueueTask
-				}{filename, &t})
-			}
-
-			priorityRank := map[string]int{
-				"critical":  1,
-				"urgent":    2,
-				"important": 3,
-				"high":      4,
-				"medium":    5,
-				"low":       6,
-			}
-			getRank := func(p string) int {
-				if r, ok := priorityRank[strings.ToLower(p)]; ok {
-					return r
-				}
-				return 5
-			}
-
-			// Sort tasks by priority level (critical first), phase rank (rebase > comments > investigate), and createdAt (newest first)
-			for i := 0; i < len(tasksToRun); i++ {
-				for j := i + 1; j < len(tasksToRun); j++ {
-					tI := tasksToRun[i].task
-					tJ := tasksToRun[j].task
-					rankI := getRank(tI.Priority)
-					rankJ := getRank(tJ.Priority)
-
-					swap := false
-					if rankI > rankJ {
-						swap = true
-					} else if rankI == rankJ {
-						if tI.Phase > tJ.Phase {
-							swap = true
-						} else if tI.Phase == tJ.Phase {
-							if tI.CreatedAt.Before(tJ.CreatedAt) {
-								swap = true
-							}
-						}
-					}
-
-					if swap {
-						tasksToRun[i], tasksToRun[j] = tasksToRun[j], tasksToRun[i]
-					}
-				}
-			}
-
-			processingFiles, _ := os.ReadDir(processingDir)
-			filesInProcessing := 0
-			for _, f := range processingFiles {
-				if !f.IsDir() && strings.HasPrefix(f.Name(), "task-") && strings.HasSuffix(f.Name(), ".yaml") {
-					filesInProcessing++
-				}
-			}
+			filesInProcessing := countProcessingFiles(processingDir)
 
 			activeSandboxesInCycle := make(map[string]bool)
+			choresSpawnedInCycle := 0
 
 			for _, item := range tasksToRun {
 				if actionsTaken >= maxActions {
@@ -1888,13 +1816,15 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				}
 				activeCount := max(runningCount, filesInProcessing)
 
-				if activeCount >= maxPending {
+				filename := item.Filename
+				task := item.Task
+
+				isGeneralChore := task.Type == "agent-chore" && task.Number == 0
+				bypassLimit := isGeneralChore && choresSpawnedInCycle < 5
+				if activeCount >= maxPending && !bypassLimit {
 					fmt.Printf("Reached maximum pending sandboxes limit (%d). Skipping remaining queue items.\n", maxPending)
 					break
 				}
-
-				filename := item.filename
-				task := item.task
 
 				sandboxName := resolveSandboxName(ctx, kubeClient, ghClient, task.Type, task.Number, owner, repo)
 				if activeSandboxesInCycle[sandboxName] {
@@ -1938,6 +1868,10 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 
 				incomingPath := filepath.Join(incomingDir, filename)
 				processingPath := filepath.Join(processingDir, filename)
+
+				if isGeneralChore {
+					choresSpawnedInCycle++
+				}
 
 				if dryRun {
 					fmt.Printf("[DRYRUN] Would process task %s (Type: %s, URL: %s)\n", filename, task.Type, task.URL)
@@ -2619,4 +2553,101 @@ func selectUserForTask(ctx context.Context, ghClient *githubv39.Client, kubeClie
 
 func isPRTask(taskType string) bool {
 	return taskType == "pr-investigate" || taskType == "pr-comments" || taskType == "pr-iterate"
+}
+
+func loadQueueTasks(incomingDir string) ([]QueueTaskItem, error) {
+	incomingFiles, err := os.ReadDir(incomingDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("reading incoming queue directory: %w", err)
+	}
+
+	var tasks []QueueTaskItem
+	for _, f := range incomingFiles {
+		if f.IsDir() || !strings.HasPrefix(f.Name(), "task-") || !strings.HasSuffix(f.Name(), ".yaml") {
+			continue
+		}
+
+		filename := f.Name()
+		filePath := filepath.Join(incomingDir, filename)
+		data, err := os.ReadFile(filePath)
+		if err != nil {
+			klog.Errorf("Failed to read task file %s: %v", filename, err)
+			continue
+		}
+
+		var t QueueTask
+		if err := yaml.Unmarshal(data, &t); err != nil {
+			klog.Errorf("Failed to unmarshal task file %s: %v", filename, err)
+			continue
+		}
+
+		tasks = append(tasks, QueueTaskItem{
+			Filename: filename,
+			Task:     &t,
+		})
+	}
+	return tasks, nil
+}
+
+func sortQueueTasks(tasks []QueueTaskItem) {
+	priorityRank := map[string]int{
+		"critical":  1,
+		"urgent":    2,
+		"important": 3,
+		"high":      4,
+		"medium":    5,
+		"low":       6,
+	}
+	getRank := func(p string) int {
+		if r, ok := priorityRank[strings.ToLower(p)]; ok {
+			return r
+		}
+		return 5
+	}
+
+	for i := 0; i < len(tasks); i++ {
+		for j := i + 1; j < len(tasks); j++ {
+			tI := tasks[i].Task
+			tJ := tasks[j].Task
+			rankI := getRank(tI.Priority)
+			rankJ := getRank(tJ.Priority)
+
+			isChoreI := tI.Type == "agent-chore" && tI.Number == 0
+			isChoreJ := tJ.Type == "agent-chore" && tJ.Number == 0
+
+			swap := false
+			if isChoreJ && !isChoreI {
+				swap = true
+			} else if isChoreI && !isChoreJ {
+				swap = false
+			} else if rankI > rankJ {
+				swap = true
+			} else if rankI == rankJ && tI.Phase > tJ.Phase {
+				swap = true
+			} else if rankI == rankJ && tI.Phase == tJ.Phase && tI.CreatedAt.Before(tJ.CreatedAt) {
+				swap = true
+			}
+
+			if swap {
+				tasks[i], tasks[j] = tasks[j], tasks[i]
+			}
+		}
+	}
+}
+
+func countProcessingFiles(processingDir string) int {
+	processingFiles, err := os.ReadDir(processingDir)
+	if err != nil {
+		return 0
+	}
+	filesInProcessing := 0
+	for _, f := range processingFiles {
+		if !f.IsDir() && strings.HasPrefix(f.Name(), "task-") && strings.HasSuffix(f.Name(), ".yaml") {
+			filesInProcessing++
+		}
+	}
+	return filesInProcessing
 }
