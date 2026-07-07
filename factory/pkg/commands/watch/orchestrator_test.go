@@ -108,7 +108,7 @@ func TestRunWatch(t *testing.T) {
 	}
 	_ = writeTaskAtomically(processedDir, "task-pr-17-comments.yaml", processedPRTask)
 
-	opts := WatchOptions{
+	opts := Options{
 		Owner:      "owner",
 		Repo:       "repo",
 		SecretName: "test-secret",
@@ -138,7 +138,7 @@ func TestRunWatchLoop(t *testing.T) {
 
 	w := &watchContext{
 		ctx:  ctx,
-		opts: WatchOptions{Once: false, WatchTimeout: 1 * time.Second},
+		opts: Options{Once: false, WatchTimeout: 1 * time.Second},
 		state: &watchState{
 			referencedIssues: make(map[int]bool),
 		},
@@ -206,7 +206,7 @@ func TestRunWatchErrors(t *testing.T) {
 	newGitHubClient = func(ctx context.Context) (*githubv39.Client, error) {
 		return nil, fmt.Errorf("github construction error")
 	}
-	opts1 := WatchOptions{Owner: "owner", Repo: "repo", SecretName: "s", Namespace: "ns", Once: true}
+	opts1 := Options{Owner: "owner", Repo: "repo", SecretName: "s", Namespace: "ns", Once: true}
 	err := RunWatch(ctx, opts1)
 	if err == nil || !strings.Contains(err.Error(), "github construction error") {
 		t.Errorf("expected github construction error, got %v", err)
@@ -241,7 +241,7 @@ func TestRunWatchErrors(t *testing.T) {
 	fakeKubeSecretData = `{"metadata":{"name":"test-secret","namespace":"test-ns"},"data":{"GITHUB_LOGIN":"ZmFjdG9yeS1ib3Q="}}`
 	defer func() { fakeKubeSecretData = "" }()
 
-	optsMkdir := WatchOptions{
+	optsMkdir := Options{
 		Owner:      "owner",
 		Repo:       "repo",
 		SecretName: "test-secret",
@@ -312,4 +312,3 @@ func TestWatcherIsDoNotProcess(t *testing.T) {
 		_ = os.Remove(p)
 	}
 }
-

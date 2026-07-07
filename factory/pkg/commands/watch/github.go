@@ -454,4 +454,3 @@ func addGitHubComment(ctx context.Context, client *githubv39.Client, owner, repo
 	_, _, err := client.Issues.CreateComment(ctx, owner, repo, number, comment)
 	return err
 }
-

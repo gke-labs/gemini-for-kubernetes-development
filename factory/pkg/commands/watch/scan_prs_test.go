@@ -212,7 +212,7 @@ func TestProcessPRs(t *testing.T) {
 
 	w := &watchContext{
 		ctx:             ctx,
-		opts:            WatchOptions{Owner: "owner", Repo: "repo", QueueDir: tempDir, Namespace: "ns"},
+		opts:            Options{Owner: "owner", Repo: "repo", QueueDir: tempDir, Namespace: "ns"},
 		ghClient:        ghClient,
 		kubeClient:      newFakeKubeClient(),
 		allBotUsers:     []string{"factory-bot"},

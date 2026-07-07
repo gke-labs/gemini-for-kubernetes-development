@@ -53,7 +53,7 @@ func TestScan(t *testing.T) {
 
 	w := &watchContext{
 		ctx:             ctx,
-		opts:            WatchOptions{Owner: "owner", Repo: "repo", QueueDir: tempDir, Namespace: "ns", Mode: "all"},
+		opts:            Options{Owner: "owner", Repo: "repo", QueueDir: tempDir, Namespace: "ns", Mode: "all"},
 		ghClient:        ghClient,
 		kubeClient:      newFakeKubeClient(),
 		allBotUsers:     []string{"factory-bot"},
@@ -71,7 +71,7 @@ func TestScan(t *testing.T) {
 	w.scan(ctx)
 
 	// Scenario B: Scan with HTTP failures (ensure it doesn't crash)
-	errorHttpClient := &http.Client{
+	errorHTTPClient := &http.Client{
 		Transport: mockRoundTripper(func(req *http.Request) *http.Response {
 			return &http.Response{
 				StatusCode: 500,
@@ -82,8 +82,8 @@ func TestScan(t *testing.T) {
 	}
 	wError := &watchContext{
 		ctx:             ctx,
-		opts:            WatchOptions{Owner: "owner", Repo: "repo", QueueDir: tempDir, Namespace: "ns", Mode: "all"},
-		ghClient:        githubv39.NewClient(errorHttpClient),
+		opts:            Options{Owner: "owner", Repo: "repo", QueueDir: tempDir, Namespace: "ns", Mode: "all"},
+		ghClient:        githubv39.NewClient(errorHTTPClient),
 		kubeClient:      newFakeKubeClient(),
 		allBotUsers:     []string{"factory-bot"},
 		processedIssues: make(map[int]time.Time),
@@ -158,7 +158,7 @@ func TestScanCreatorIssues(t *testing.T) {
 
 	w := &watchContext{
 		ctx:             ctx,
-		opts:            WatchOptions{Owner: "owner", Repo: "repo", QueueDir: tempDir, Namespace: "ns", Mode: "all", IssueMode: "enabled"},
+		opts:            Options{Owner: "owner", Repo: "repo", QueueDir: tempDir, Namespace: "ns", Mode: "all", IssueMode: "enabled"},
 		ghClient:        ghClient,
 		kubeClient:      newFakeKubeClient(),
 		allBotUsers:     []string{"factory-bot"},

@@ -32,7 +32,7 @@ type ChoreRunState struct {
 	LastRun time.Time `json:"lastRun"`
 }
 
-type WatchOptions struct {
+type Options struct {
 	Owner            string
 	Repo             string
 	Interval         time.Duration
@@ -77,7 +77,7 @@ type watchState struct {
 
 type watchContext struct {
 	ctx             context.Context
-	opts            WatchOptions
+	opts            Options
 	ghClient        *githubv39.Client
 	kubeClient      *clients.KubernetesClient
 	cfg             *config.FactoryConfig

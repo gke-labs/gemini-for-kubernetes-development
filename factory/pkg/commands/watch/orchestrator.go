@@ -32,7 +32,7 @@ var newKubernetesClient = func() (*clients.KubernetesClient, error) {
 	return clients.NewKubernetesClient()
 }
 
-func RunWatch(ctx context.Context, opts WatchOptions) error {
+func RunWatch(ctx context.Context, opts Options) error {
 	cfg, err := config.LoadConfig()
 	if err != nil {
 		klog.Warningf("Failed to load factory config: %v", err)
@@ -361,4 +361,3 @@ func (w *watchContext) isDoNotProcess() bool {
 	}
 	return false
 }
-

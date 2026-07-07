@@ -84,7 +84,7 @@ func NewWatchCommand(ctx context.Context) *cobra.Command {
 				choresMode = "enabled"
 			}
 
-			opts := watch.WatchOptions{
+			opts := watch.Options{
 				Owner:            parts[0],
 				Repo:             parts[1],
 				Interval:         flags.PollInterval,

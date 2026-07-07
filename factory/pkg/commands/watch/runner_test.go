@@ -65,7 +65,7 @@ func TestRun(t *testing.T) {
 
 	w := &watchContext{
 		ctx:             ctx,
-		opts:            WatchOptions{Owner: "owner", Repo: "repo", QueueDir: tempDir, Namespace: "ns", MaxActions: 10, MaxPending: 10, TaskTimeout: 5 * time.Second},
+		opts:            Options{Owner: "owner", Repo: "repo", QueueDir: tempDir, Namespace: "ns", MaxActions: 10, MaxPending: 10, TaskTimeout: 5 * time.Second},
 		ghClient:        ghClient,
 		kubeClient:      newFakeKubeClient(),
 		processedIssues: make(map[int]time.Time),
@@ -121,7 +121,7 @@ func TestRunLimitsAndSkips(t *testing.T) {
 	// Scenario A: MaxActions reached
 	wLimit := &watchContext{
 		ctx:             ctx,
-		opts:            WatchOptions{Owner: "owner", Repo: "repo", QueueDir: tempDir, Namespace: "ns", MaxActions: 0, MaxPending: 10},
+		opts:            Options{Owner: "owner", Repo: "repo", QueueDir: tempDir, Namespace: "ns", MaxActions: 0, MaxPending: 10},
 		ghClient:        nil,
 		kubeClient:      newFakeKubeClient(),
 		processedIssues: make(map[int]time.Time),
@@ -163,7 +163,7 @@ func TestRunLimitsAndSkips(t *testing.T) {
 
 	wRecovered := &watchContext{
 		ctx:             ctx,
-		opts:            WatchOptions{Owner: "owner", Repo: "repo", QueueDir: tempDir, Namespace: "ns", MaxActions: 10, MaxPending: 10},
+		opts:            Options{Owner: "owner", Repo: "repo", QueueDir: tempDir, Namespace: "ns", MaxActions: 10, MaxPending: 10},
 		ghClient:        nil,
 		kubeClient:      kubeClient,
 		processedIssues: make(map[int]time.Time),
@@ -230,7 +230,7 @@ func TestRunFailure(t *testing.T) {
 
 	w := &watchContext{
 		ctx:             ctx,
-		opts:            WatchOptions{Owner: "owner", Repo: "repo", QueueDir: tempDir, Namespace: "ns", MaxActions: 10, MaxPending: 10, TaskTimeout: 5 * time.Second},
+		opts:            Options{Owner: "owner", Repo: "repo", QueueDir: tempDir, Namespace: "ns", MaxActions: 10, MaxPending: 10, TaskTimeout: 5 * time.Second},
 		ghClient:        ghClient,
 		kubeClient:      newFakeKubeClient(),
 		processedIssues: make(map[int]time.Time),
@@ -299,7 +299,7 @@ func TestRunTimeout(t *testing.T) {
 
 	w := &watchContext{
 		ctx:             ctx,
-		opts:            WatchOptions{Owner: "owner", Repo: "repo", QueueDir: tempDir, Namespace: "ns", MaxActions: 10, MaxPending: 10, TaskTimeout: 1 * time.Millisecond}, // Tiny timeout
+		opts:            Options{Owner: "owner", Repo: "repo", QueueDir: tempDir, Namespace: "ns", MaxActions: 10, MaxPending: 10, TaskTimeout: 1 * time.Millisecond}, // Tiny timeout
 		ghClient:        ghClient,
 		kubeClient:      newFakeKubeClient(),
 		processedIssues: make(map[int]time.Time),
@@ -419,7 +419,7 @@ func TestRunAllTaskTypes(t *testing.T) {
 
 			w := &watchContext{
 				ctx:             ctx,
-				opts:            WatchOptions{Owner: "owner", Repo: "repo", QueueDir: tempDir, Namespace: "ns", MaxActions: 10, MaxPending: 10, TaskTimeout: 5 * time.Second},
+				opts:            Options{Owner: "owner", Repo: "repo", QueueDir: tempDir, Namespace: "ns", MaxActions: 10, MaxPending: 10, TaskTimeout: 5 * time.Second},
 				ghClient:        ghClient,
 				kubeClient:      newFakeKubeClient(),
 				processedIssues: make(map[int]time.Time),
@@ -486,7 +486,7 @@ func TestRunLogCreationError(t *testing.T) {
 
 	w := &watchContext{
 		ctx:             ctx,
-		opts:            WatchOptions{Owner: "owner", Repo: "repo", QueueDir: tempDir, Namespace: "ns", MaxActions: 10, MaxPending: 10, TaskTimeout: 5 * time.Second},
+		opts:            Options{Owner: "owner", Repo: "repo", QueueDir: tempDir, Namespace: "ns", MaxActions: 10, MaxPending: 10, TaskTimeout: 5 * time.Second},
 		ghClient:        ghClient,
 		kubeClient:      newFakeKubeClient(),
 		processedIssues: make(map[int]time.Time),
@@ -521,4 +521,3 @@ func TestRunLogCreationError(t *testing.T) {
 		t.Errorf("expected task-issue-1.yaml to be processed despite log creation failure")
 	}
 }
-

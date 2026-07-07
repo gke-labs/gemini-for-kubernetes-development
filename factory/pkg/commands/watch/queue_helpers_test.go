@@ -90,5 +90,4 @@ func TestQueueHelpersErrorsAndDrains(t *testing.T) {
 		t.Errorf("expected taskExists to be true when task is in processing directory")
 	}
 
-
 }
