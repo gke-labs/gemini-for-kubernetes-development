@@ -535,6 +535,11 @@ func queueIssueTasks(ctx context.Context, ghClient *githubv39.Client, kubeClient
 		if cfg != nil && cfg.MinNumber > 0 && num < cfg.MinNumber {
 			continue
 		}
+		if hasStopLabel(issue.Labels, triggerLabel) {
+			klog.Infof("Skipping issue #%d because it has the stop label ('overseer/stop' or '%s/stop')", num, triggerLabel)
+			removePendingTasksForNumber(incomingDir, num)
+			continue
+		}
 		if refIssues[num] {
 			klog.Infof("Skipping issue #%d because there is already a PR referencing it.", num)
 			continue
@@ -1073,6 +1078,11 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				if cfg != nil && cfg.MinNumber > 0 && num < cfg.MinNumber {
 					continue
 				}
+				if hasStopLabel(prIssue.Labels, triggerLabel) {
+					klog.Infof("Skipping PR #%d because it has the stop label ('overseer/stop' or '%s/stop')", num, triggerLabel)
+					removePendingTasksForNumber(incomingDir, num)
+					continue
+				}
 				pr, _, err := ghClient.PullRequests.Get(ctx, owner, repo, num)
 				if err != nil {
 					klog.Errorf("Failed to fetch full PR #%d: %v", num, err)
@@ -1095,6 +1105,11 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 
 				// Sync labels from referenced parent issues to the PR
 				syncReferencedIssueLabels(ctx, ghClient, owner, repo, pr, prIssue)
+				if hasStopLabel(prIssue.Labels, triggerLabel) {
+					klog.Infof("Skipping PR #%d after label sync because it has the stop label ('overseer/stop' or '%s/stop')", num, triggerLabel)
+					removePendingTasksForNumber(incomingDir, num)
+					continue
+				}
 
 				headSHA := pr.GetHead().GetSHA()
 
@@ -1706,6 +1721,10 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						if issue.PullRequestLinks != nil {
 							continue
 						}
+						if hasStopLabel(issue.Labels, triggerLabel) {
+							klog.Infof("Skipping auto labeling/assigning issue #%d because it has the stop label ('overseer/stop' or '%s/stop')", issue.GetNumber(), triggerLabel)
+							continue
+						}
 
 						hasTriggerLabel := false
 						for _, l := range issue.Labels {
@@ -1910,6 +1929,16 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				if running {
 					klog.Infof("Skipping task %s because sandbox %s is currently busy running another task.", filename, sandboxName)
 					continue
+				}
+
+				if task.Number > 0 && !dryRun {
+					if issueOrPR, _, err := ghClient.Issues.Get(ctx, owner, repo, task.Number); err == nil && issueOrPR != nil {
+						if hasStopLabel(issueOrPR.Labels, triggerLabel) {
+							klog.Infof("Skipping task %s and removing from incoming because target #%d has the stop label ('overseer/stop' or '%s/stop')", filename, task.Number, triggerLabel)
+							_ = os.Remove(filepath.Join(incomingDir, filename))
+							continue
+						}
+					}
 				}
 
 				if task.Type != "agent-chore" && task.Recovered {
@@ -2351,6 +2380,35 @@ func shouldIgnoreUser(user *githubv39.User, githubLogin string, allowlistedBots 
 	}
 
 	return false
+}
+
+func hasStopLabel(labels []*githubv39.Label, triggerLabel string) bool {
+	stopLabels := []string{"overseer/stop"}
+	if triggerLabel != "" && !strings.EqualFold(triggerLabel, "overseer") {
+		stopLabels = append(stopLabels, triggerLabel+"/stop")
+	}
+	for _, label := range labels {
+		for _, stop := range stopLabels {
+			if strings.EqualFold(label.GetName(), stop) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func removePendingTasksForNumber(incomingDir string, number int) {
+	files, err := os.ReadDir(incomingDir)
+	if err != nil {
+		return
+	}
+	pattern1 := fmt.Sprintf("-issue-%d.yaml", number)
+	pattern2 := fmt.Sprintf("-pr-%d-", number)
+	for _, f := range files {
+		if !f.IsDir() && (strings.Contains(f.Name(), pattern1) || strings.Contains(f.Name(), pattern2)) {
+			_ = os.Remove(filepath.Join(incomingDir, f.Name()))
+		}
+	}
 }
 
 func cleanupClosedPRSandboxes(ctx context.Context, ghClient *githubv39.Client, kubeClient *clients.KubernetesClient, owner, repo, namespace string, dryRun bool) error {
