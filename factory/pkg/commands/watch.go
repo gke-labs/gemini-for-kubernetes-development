@@ -1427,37 +1427,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					}
 
 					if isApproved {
-						if hasNewComments {
-							klog.Infof("PR #%d is approved / LGTM'd. Ignoring new comments/feedback.", num)
-
-							// Post ignore comment if we haven't already posted it since the last commit
-							hasPostedIgnore := false
-							ignorePrefix := "🤖 AI Factory is ignoring new comments/feedback because this PR is already approved"
-							for _, c := range comments {
-								isPoolBot := false
-								for _, bot := range allBotUsers {
-									if strings.EqualFold(c.GetUser().GetLogin(), bot) {
-										isPoolBot = true
-										break
-									}
-								}
-								if isPoolBot &&
-									strings.HasPrefix(c.GetBody(), ignorePrefix) &&
-									c.GetCreatedAt().After(lastCommitTime) {
-									hasPostedIgnore = true
-									break
-								}
-							}
-
-							if !hasPostedIgnore && !dryRun {
-								addGitHubComment(ctx, ghClient, owner, repo, num, ignorePrefix+" / LGTM'd.")
-							}
-
-							state.lastCommentAddressedTime = time.Now()
-							processedPRs[num] = state
-						}
-						// Skip queueing comment task since it's approved
-						continue
+						klog.V(2).Infof("PR #%d is approved / LGTM'd", num)
 					}
 
 					if hasNewComments {
