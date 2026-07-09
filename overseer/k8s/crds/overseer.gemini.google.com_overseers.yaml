@@ -139,6 +139,9 @@ spec:
               sandboxEvictionAge:
                 default: 7d
                 type: string
+              sandboxIdleTimeout:
+                default: 1h
+                type: string
               secrets:
                 items:
                   properties:

@@ -249,6 +249,12 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 			"value": o.Spec.SandboxEvictionAge,
 		})
 	}
+	if o.Spec.SandboxIdleTimeout != "" {
+		env = append(env, map[string]interface{}{
+			"name":  "SANDBOX_IDLE_TIMEOUT",
+			"value": o.Spec.SandboxIdleTimeout,
+		})
+	}
 	if o.Spec.MinNumber != nil {
 		env = append(env, map[string]interface{}{
 			"name":  "MIN_NUMBER",

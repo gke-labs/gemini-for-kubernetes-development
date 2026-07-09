@@ -131,6 +131,11 @@ type OverseerSpec struct {
 	// +kubebuilder:default="7d"
 	SandboxEvictionAge string `json:"sandboxEvictionAge,omitempty"`
 
+	// SandboxIdleTimeout defines the idle timeout after which a sandbox that has not run any task is suspended (e.g. "1h", "30m").
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default="1h"
+	SandboxIdleTimeout string `json:"sandboxIdleTimeout,omitempty"`
+
 	// MinNumber specifies the minimum PR/issue number to process.
 	// +kubebuilder:validation:Optional
 	MinNumber *int32 `json:"minNumber,omitempty"`
