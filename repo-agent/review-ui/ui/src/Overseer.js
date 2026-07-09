@@ -258,6 +258,8 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                String(pr).toLowerCase().includes(q) ||
                user.toLowerCase().includes(q) ||
                desc.toLowerCase().includes(q);
+    };
+
     return (
         <div className="dev-layout" style={{ height: 'calc(100vh - 80px)' }}>
             {/* Main Panel - Full Width */}
