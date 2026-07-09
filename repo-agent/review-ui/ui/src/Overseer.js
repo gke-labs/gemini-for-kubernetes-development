@@ -410,7 +410,16 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                 {showOverseerLogs ? (
                     <div className="logs-container" style={{ textAlign: 'left' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                            <h4 style={{ margin: 0 }}>Overseer Watch Daemon Logs</h4>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+                                <button 
+                                    className="btn btn-sm" 
+                                    style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '6px' }}
+                                    onClick={() => setShowOverseerLogs(false)}
+                                >
+                                    ⬅ Back to Sandboxes Table
+                                </button>
+                                <h4 style={{ margin: 0 }}>Overseer Watch Daemon Logs</h4>
+                            </div>
                             <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Live refreshing every 5s...</span>
                         </div>
                         <div className="logs-display" style={{ backgroundColor: '#1e1e1e', color: '#d4d4d4', padding: '18px', borderRadius: '6px', height: '620px', overflowY: 'auto', fontFamily: '"Consolas", "Monaco", "Courier New", monospace', fontSize: '13px', lineHeight: '1.5', boxShadow: 'inset 0 0 10px rgba(0,0,0,0.5)' }}>
@@ -421,6 +430,16 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                     </div>
                 ) : activeSandbox ? (
                     <div>
+                        <div style={{ marginBottom: '15px' }}>
+                            <button 
+                                className="btn btn-sm" 
+                                style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '6px' }}
+                                onClick={() => setActiveSandbox(null)}
+                            >
+                                ⬅ Back to Sandboxes Table
+                            </button>
+                        </div>
+
                         {/* Sandbox Header Box */}
                         <div style={{ backgroundColor: 'var(--bg-card)', padding: '20px', borderRadius: '8px', border: '1px solid var(--border-color)', marginBottom: '25px', boxShadow: 'var(--shadow-card)' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '15px' }}>
@@ -509,13 +528,16 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                             </div>
                         </div>
 
-                        {/* Terminal View */}
+                        {/* Interactive SSH Terminal View */}
                         {showTerminal && (
-                            <div style={{ marginBottom: '25px', borderRadius: '8px', overflow: 'hidden', border: '1px solid var(--border-color)', boxShadow: 'var(--shadow-card)' }}>
+                            <div className="terminal-container" style={{ marginBottom: '25px', borderRadius: '8px', overflow: 'hidden', border: '1px solid var(--border-color)', boxShadow: 'var(--shadow-card)' }}>
                                 <div style={{ backgroundColor: '#21262d', color: '#c9d1d9', padding: '10px 15px', fontSize: '0.85rem', fontWeight: 'bold', borderBottom: '1px solid #30363d' }}>
-                                    Interactive SSH / Terminal ({activeSandbox.metadata.name})
+                                    Interactive SSH Terminal (`/workspaces`)
                                 </div>
-                                <SandboxTerminal namespace={`overseer-${activeOverseer?.metadata.name}`} sandboxName={activeSandbox.metadata.name} />
+                                <SandboxTerminal 
+                                    namespace={`overseer-${activeOverseer?.metadata?.name}`} 
+                                    sandboxName={activeSandbox.metadata.name} 
+                                />
                             </div>
                         )}
 
@@ -621,7 +643,193 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                             )}
                         </div>
                     </div>
-                ) : (
+                ) : activeOverseer ? (() => {
+                    const filtered = sandboxes.filter(filterSandbox);
+                    const activeSandboxes = filtered.filter(sb => !(sb.spec?.replicas === 0 || sb.spec?.replicas === '0'));
+                    const suspendedSandboxes = filtered.filter(sb => sb.spec?.replicas === 0 || sb.spec?.replicas === '0');
+
+                    const renderTableRow = (sb, isSuspended) => {
+                        const name = sb.metadata?.name || '';
+                        const typeBadge = getSandboxBadgeLabel(sb);
+                        const icon = getSandboxTypeIcon(sb);
+                        const assignedBot = sb.metadata?.labels?.['factory.gemini.google.com/user'] || '-';
+                        
+                        let lastTaskStr = '-';
+                        if (sb.metadata?.annotations) {
+                            const tType = sb.metadata.annotations['sandbox.gemini.google.com/last-task-type'];
+                            const tState = sb.metadata.annotations['sandbox.gemini.google.com/last-task-state'];
+                            if (tType && tState) lastTaskStr = `${tType} (${tState})`;
+                            else if (tType) lastTaskStr = tType;
+                        }
+
+                        let htmlURL = '-';
+                        if (sb.metadata?.annotations) {
+                            const u = sb.metadata.annotations['sandbox.gemini.google.com/html-url'] || sb.metadata.annotations.htmlURL;
+                            if (u) {
+                                htmlURL = (
+                                    <a href={u} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} style={{ color: 'var(--text-link)', fontWeight: '600', textDecoration: 'underline' }}>
+                                        View ↗
+                                    </a>
+                                );
+                            }
+                        }
+
+                        const diffMs = Date.now() - new Date(sb.metadata.creationTimestamp).getTime();
+                        const hours = Math.floor(diffMs / 3600000);
+                        const days = Math.floor(hours / 24);
+                        const ageStr = days > 0 ? `${days}d ${hours % 24}h` : `${hours}h`;
+
+                        return (
+                            <tr 
+                                key={name}
+                                onClick={() => handleSandboxClick(sb)}
+                                style={{ 
+                                    cursor: 'pointer', 
+                                    borderBottom: '1px solid var(--border-color)',
+                                    backgroundColor: isSuspended ? 'rgba(255, 243, 205, 0.04)' : 'transparent',
+                                    opacity: isSuspended ? 0.75 : 1
+                                }}
+                                className="table-row-hover"
+                            >
+                                <td style={{ padding: '12px 16px', fontWeight: 'bold', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <span>{isSuspended ? '⏸️' : icon}</span>
+                                    <span style={{ textDecoration: isSuspended ? 'line-through' : 'none' }}>{name}</span>
+                                </td>
+                                <td style={{ padding: '12px 16px' }}>
+                                    <span style={{ fontSize: '0.75rem', padding: '3px 8px', borderRadius: '10px', backgroundColor: isSuspended ? '#fff3cd' : 'var(--bg-secondary)', color: isSuspended ? '#856404' : 'var(--text-secondary)', fontWeight: isSuspended ? 'bold' : 'normal', whiteSpace: 'nowrap' }}>
+                                        {isSuspended ? `Suspended • ${typeBadge}` : typeBadge}
+                                    </span>
+                                </td>
+                                <td style={{ padding: '12px 16px', fontSize: '0.85rem' }}>
+                                    <span style={{ color: isSuspended ? '#856404' : 'var(--status-green)', fontWeight: '600' }}>
+                                        {isSuspended ? 'Suspended (0)' : 'Running (1)'}
+                                    </span>
+                                </td>
+                                <td style={{ padding: '12px 16px', fontSize: '0.85rem', fontFamily: 'monospace', color: 'var(--text-secondary)' }}>
+                                    {assignedBot}
+                                </td>
+                                <td style={{ padding: '12px 16px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                                    {lastTaskStr}
+                                </td>
+                                <td style={{ padding: '12px 16px', fontSize: '0.85rem' }}>
+                                    {htmlURL}
+                                </td>
+                                <td style={{ padding: '12px 16px', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                                    {ageStr}
+                                </td>
+                            </tr>
+                        );
+                    };
+
+                    return (
+                        <div style={{ backgroundColor: 'var(--bg-card)', borderRadius: '8px', border: '1px solid var(--border-color)', boxShadow: 'var(--shadow-card)', overflow: 'hidden' }}>
+                            <div style={{ padding: '20px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '15px' }}>
+                                <div>
+                                    <h3 style={{ margin: 0, fontSize: '1.3rem', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                        <span>📂 Sandboxes Table: <strong>{activeOverseer.metadata.name}</strong></span>
+                                    </h3>
+                                    <p style={{ margin: '5px 0 0 0', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                                        Click any row to drill down into the sandbox detail view, live terminal, and task logs.
+                                    </p>
+                                </div>
+                                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                                    <input 
+                                        type="text"
+                                        placeholder="🔍 Filter Sandboxes Table..."
+                                        value={searchFilter}
+                                        onChange={(e) => setSearchFilter(e.target.value)}
+                                        style={{
+                                            padding: '8px 12px',
+                                            borderRadius: '6px',
+                                            border: '1px solid var(--border-color)',
+                                            backgroundColor: 'var(--bg-secondary)',
+                                            color: 'var(--text-primary)',
+                                            fontSize: '0.85rem',
+                                            width: '240px'
+                                        }}
+                                    />
+                                    <button 
+                                        className="btn btn-sm"
+                                        style={{ backgroundColor: 'var(--bg-active)', color: 'white', fontWeight: '600' }}
+                                        onClick={() => { setShowOverseerLogs(true); setActiveSandbox(null); }}
+                                    >
+                                        🤖 Overseer Daemon Log
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div style={{ overflowX: 'auto' }}>
+                                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                                    <thead>
+                                        <tr style={{ backgroundColor: 'var(--bg-sidebar)', borderBottom: '2px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.75rem', textTransform: 'uppercase' }}>
+                                            <th style={{ padding: '12px 16px' }}>NAME</th>
+                                            <th style={{ padding: '12px 16px' }}>TYPE</th>
+                                            <th style={{ padding: '12px 16px' }}>STATUS</th>
+                                            <th style={{ padding: '12px 16px' }}>ASSIGNED BOT</th>
+                                            <th style={{ padding: '12px 16px' }}>LAST TASK</th>
+                                            <th style={{ padding: '12px 16px' }}>PR/ISSUE URL</th>
+                                            <th style={{ padding: '12px 16px' }}>AGE</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {/* Special Overseer Daemon Row right on top */}
+                                        <tr 
+                                            onClick={() => { setShowOverseerLogs(true); setActiveSandbox(null); }}
+                                            style={{ cursor: 'pointer', borderBottom: '2px solid var(--border-color)', backgroundColor: 'rgba(56, 139, 253, 0.08)' }}
+                                            className="table-row-hover"
+                                        >
+                                            <td style={{ padding: '12px 16px', fontWeight: 'bold', color: 'var(--text-active)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                <span>🤖</span>
+                                                <span>overseer-{activeOverseer.metadata.name} (Controller)</span>
+                                            </td>
+                                            <td style={{ padding: '12px 16px' }}>
+                                                <span style={{ fontSize: '0.75rem', padding: '3px 8px', borderRadius: '10px', backgroundColor: 'var(--bg-active)', color: 'white', fontWeight: 'bold' }}>
+                                                    Controller / Daemon
+                                                </span>
+                                            </td>
+                                            <td style={{ padding: '12px 16px', fontSize: '0.85rem' }}>
+                                                <span style={{ color: 'var(--status-green)', fontWeight: '600' }}>Running</span>
+                                            </td>
+                                            <td style={{ padding: '12px 16px', fontSize: '0.85rem', fontFamily: 'monospace', color: 'var(--text-secondary)' }}>
+                                                overseer-controller
+                                            </td>
+                                            <td style={{ padding: '12px 16px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                                                Daemon Loop
+                                            </td>
+                                            <td style={{ padding: '12px 16px', fontSize: '0.85rem' }}>
+                                                -
+                                            </td>
+                                            <td style={{ padding: '12px 16px', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                                                Active
+                                            </td>
+                                        </tr>
+
+                                        {activeSandboxes.map(sb => renderTableRow(sb, false))}
+
+                                        {suspendedSandboxes.length > 0 && (
+                                            <>
+                                                <tr style={{ backgroundColor: 'var(--bg-sidebar)', borderTop: '2px solid var(--border-color)' }}>
+                                                    <td colSpan={7} style={{ padding: '10px 16px', fontSize: '0.75rem', fontWeight: 'bold', color: '#856404', textTransform: 'uppercase' }}>
+                                                        ⏸️ Suspended Sandboxes ({suspendedSandboxes.length})
+                                                    </td>
+                                                </tr>
+                                                {suspendedSandboxes.map(sb => renderTableRow(sb, true))}
+                                            </>
+                                        )}
+
+                                        {activeSandboxes.length === 0 && suspendedSandboxes.length === 0 && (
+                                            <tr>
+                                                <td colSpan={7} style={{ padding: '40px', textAlign: 'center', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                                                    No sandboxes match your current filter or repo.
+                                                </td>
+                                            </tr>
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    );
+                })() : (
                     <div style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--text-muted)', backgroundColor: 'var(--bg-card)', borderRadius: '8px', border: '1px dashed var(--border-color)' }}>
                         <h3 style={{ margin: '0 0 10px 0', fontSize: '1.3rem', color: 'var(--text-secondary)' }}>Welcome to the Overseer Factory Control Center</h3>
                         <p style={{ margin: 0, fontSize: '0.95rem', maxWidth: '600px', display: 'inline-block', lineHeight: '1.6' }}>
