@@ -19,6 +19,10 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
+	"net/url"
+	"regexp"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -27,8 +31,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	overseerv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/overseer/pkg/api/v1alpha1"
@@ -70,10 +76,16 @@ func (r *OverseerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	overseerObj.Status.Message = ""
 
 	// 1. Ensure Namespace exists
-	nsName := fmt.Sprintf("overseer-%s", overseerObj.Name)
-	if len(nsName) > 63 {
-		nsName = nsName[:63]
+	repoPath, err := parseRepoPath(overseerObj.Spec.RepoURL)
+	if err != nil {
+		log.Error(err, "Failed to parse repository URL from spec", "url", overseerObj.Spec.RepoURL)
+		overseerObj.Status.OverseerStatus = "Error"
+		overseerObj.Status.Message = fmt.Sprintf("Invalid repoURL: %v", err)
+		_ = r.Status().Update(ctx, &overseerObj)
+		return ctrl.Result{}, nil
 	}
+	nsName := slugifyNamespace(repoPath)
+
 	ns := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: nsName,
@@ -97,6 +109,11 @@ func (r *OverseerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 	// 3. Ensure secrets are present in the target namespace
 	if err := r.ensureSecrets(ctx, &overseerObj, nsName); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// 3a. Ensure local listener Service exists
+	if err := r.ensureListenerService(ctx, &overseerObj, nsName); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -502,4 +519,77 @@ func (r *OverseerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&overseerv1alpha1.Overseer{}).
 		Complete(r)
+}
+
+func (r *OverseerReconciler) ensureListenerService(ctx context.Context, o *overseerv1alpha1.Overseer, namespace string) error {
+	log := log.FromContext(ctx)
+	svcName := "overseer-local-listener"
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      svcName,
+			Namespace: namespace,
+		},
+		Spec: corev1.ServiceSpec{
+			Selector: map[string]string{
+				"sandbox": fmt.Sprintf("overseer-%s", o.Name),
+			},
+			Ports: []corev1.ServicePort{
+				{
+					Name:       "http",
+					Protocol:   corev1.ProtocolTCP,
+					Port:       8080,
+					TargetPort: intstr.FromInt(8080),
+				},
+			},
+		},
+	}
+
+	existingSvc := &corev1.Service{}
+	err := r.Get(ctx, types.NamespacedName{Name: svcName, Namespace: namespace}, existingSvc)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			log.Info("Creating local listener Service", "namespace", namespace)
+			if err := controllerutil.SetControllerReference(o, svc, r.Scheme); err != nil {
+				return err
+			}
+			return r.Create(ctx, svc)
+		}
+		return err
+	}
+	return nil
+}
+
+var nonAlphaNumRegex = regexp.MustCompile(`[^a-z0-9]+`)
+
+func slugifyNamespace(repoFullName string) string {
+	s := strings.ToLower(repoFullName)
+	s = nonAlphaNumRegex.ReplaceAllString(s, "-")
+	s = strings.Trim(s, "-")
+
+	name := fmt.Sprintf("f-%s", s)
+	if len(name) <= 63 {
+		return name
+	}
+
+	h := fnv.New32a()
+	h.Write([]byte(repoFullName))
+	hashStr := fmt.Sprintf("%08x", h.Sum32())
+
+	maxSlugLen := 52
+	if len(s) > maxSlugLen {
+		s = s[:maxSlugLen]
+	}
+	s = strings.TrimSuffix(s, "-")
+
+	return fmt.Sprintf("f-%s-%s", s, hashStr)
+}
+
+func parseRepoPath(repoURL string) (string, error) {
+	u, err := url.Parse(repoURL)
+	if err != nil {
+		return "", err
+	}
+	path := strings.TrimPrefix(u.Path, "/")
+	path = strings.TrimSuffix(path, ".git")
+	return path, nil
 }

@@ -20,7 +20,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
+	"net/url"
 	"os"
+	"regexp"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -38,13 +42,15 @@ import (
 func ReconcileOverseer(ctx context.Context, c client.Client, o *overseerv1alpha1.Overseer) error {
 	log := log.FromContext(ctx)
 
+	repoPath, err := parseRepoPath(o.Spec.RepoURL)
+	if err != nil {
+		return fmt.Errorf("parsing repo path: %w", err)
+	}
+	namespace := slugifyNamespace(repoPath)
+
 	overseerName := fmt.Sprintf("overseer-%s", o.Name)
 	if len(overseerName) > 63 {
 		overseerName = overseerName[:63]
-	}
-	namespace := fmt.Sprintf("overseer-%s", o.Name)
-	if len(namespace) > 63 {
-		namespace = namespace[:63]
 	}
 
 	// Define the sandbox object
@@ -63,7 +69,7 @@ func ReconcileOverseer(ctx context.Context, c client.Client, o *overseerv1alpha1
 		return err
 	}
 
-	err := c.Get(ctx, types.NamespacedName{Name: overseerName, Namespace: namespace}, sandbox)
+	err = c.Get(ctx, types.NamespacedName{Name: overseerName, Namespace: namespace}, sandbox)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			// Create
@@ -319,6 +325,9 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 				"volumeMounts": []interface{}{
 					map[string]interface{}{"name": "workspaces-pvc", "mountPath": "/workspaces"},
 				},
+				"ports": []interface{}{
+					map[string]interface{}{"containerPort": int64(8080)},
+				},
 			},
 		},
 	}
@@ -439,4 +448,39 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 	}
 
 	return u
+}
+
+var nonAlphaNumRegex = regexp.MustCompile(`[^a-z0-9]+`)
+
+func slugifyNamespace(repoFullName string) string {
+	s := strings.ToLower(repoFullName)
+	s = nonAlphaNumRegex.ReplaceAllString(s, "-")
+	s = strings.Trim(s, "-")
+
+	name := fmt.Sprintf("f-%s", s)
+	if len(name) <= 63 {
+		return name
+	}
+
+	h := fnv.New32a()
+	h.Write([]byte(repoFullName))
+	hashStr := fmt.Sprintf("%08x", h.Sum32())
+
+	maxSlugLen := 52
+	if len(s) > maxSlugLen {
+		s = s[:maxSlugLen]
+	}
+	s = strings.TrimSuffix(s, "-")
+
+	return fmt.Sprintf("f-%s-%s", s, hashStr)
+}
+
+func parseRepoPath(repoURL string) (string, error) {
+	u, err := url.Parse(repoURL)
+	if err != nil {
+		return "", err
+	}
+	path := strings.TrimPrefix(u.Path, "/")
+	path = strings.TrimSuffix(path, ".git")
+	return path, nil
 }

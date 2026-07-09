@@ -3,9 +3,11 @@ package commands
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -136,6 +138,14 @@ coding tasks without local side effects or host dependencies.`,
 	daemonCmd := NewDaemonCommand(ctx)
 	daemonCmd.GroupID = "management"
 	cmd.AddCommand(daemonCmd)
+
+	serverCmd := NewWebhookHandlerCommand(ctx)
+	serverCmd.GroupID = "management"
+	cmd.AddCommand(serverCmd)
+
+	routerCmd := NewWebhookRouterCommand(ctx)
+	routerCmd.GroupID = "management"
+	cmd.AddCommand(routerCmd)
 
 	return cmd
 }
@@ -272,4 +282,29 @@ func ToSandboxEnvs(envs []config.EnvVar) []factorysandbox.EnvVar {
 		}
 	}
 	return res
+}
+
+var nonAlphaNumRegex = regexp.MustCompile(`[^a-z0-9]+`)
+
+func SlugifyNamespace(repoFullName string) string {
+	s := strings.ToLower(repoFullName)
+	s = nonAlphaNumRegex.ReplaceAllString(s, "-")
+	s = strings.Trim(s, "-")
+
+	name := fmt.Sprintf("f-%s", s)
+	if len(name) <= 63 {
+		return name
+	}
+
+	h := fnv.New32a()
+	h.Write([]byte(repoFullName))
+	hashStr := fmt.Sprintf("%08x", h.Sum32())
+
+	maxSlugLen := 52
+	if len(s) > maxSlugLen {
+		s = s[:maxSlugLen]
+	}
+	s = strings.TrimSuffix(s, "-")
+
+	return fmt.Sprintf("f-%s-%s", s, hashStr)
 }
