@@ -258,41 +258,8 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                String(pr).toLowerCase().includes(q) ||
                user.toLowerCase().includes(q) ||
                desc.toLowerCase().includes(q);
-    };
-
-    const renderSandboxItem = (sb, isSuspended) => {
-        const badgeLabel = getSandboxBadgeLabel(sb);
-        const icon = getSandboxTypeIcon(sb);
-        const isActive = activeSandbox?.metadata.name === sb.metadata.name && !showOverseerLogs;
-
-        return (
-            <div 
-                key={sb.metadata.name}
-                className={`sidebar-tree-row ${isActive ? 'active' : ''}`}
-                onClick={() => handleSandboxClick(sb)}
-                style={{ 
-                    padding: '8px 15px', 
-                    cursor: 'pointer', 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    justifyContent: 'space-between', 
-                    borderRadius: '4px',
-                    opacity: isSuspended ? 0.7 : 1
-                }}
-            >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden' }}>
-                    <span className="tree-icon">{isSuspended ? '⏸️' : icon}</span>
-                    <span className="tree-label" style={{ fontSize: '0.85rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', textDecoration: isSuspended ? 'line-through' : 'none' }} title={sb.metadata.name}>
-                        {sb.metadata.name}
-                    </span>
-                </div>
-                <span style={{ fontSize: '0.7rem', padding: '2px 6px', borderRadius: '10px', backgroundColor: isSuspended ? '#fff3cd' : 'var(--bg-secondary)', color: isSuspended ? '#856404' : 'var(--text-secondary)', fontWeight: isSuspended ? 'bold' : 'normal', whiteSpace: 'nowrap' }}>
-                    {isSuspended ? `Suspended • ${badgeLabel}` : badgeLabel}
-                </span>
-            </div>
-        );
-    };
-
+    return (
+        <div className="dev-layout" style={{ height: 'calc(100vh - 80px)' }}>
             {/* Main Panel - Full Width */}
             <div className="dev-main" style={{ width: '100%', flex: 1, padding: '25px', overflowY: 'auto', backgroundColor: 'var(--bg-color)' }}>
                 {error && (
