@@ -21,6 +21,7 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
     const [sandboxes, setSandboxes] = useState([]);
     const [activeSandbox, setActiveSandbox] = useState(null);
     const [tasks, setTasks] = useState([]);
+    const [searchFilter, setSearchFilter] = useState('');
     
     const [logs, setLogs] = useState('');
     const [showOverseerLogs, setShowOverseerLogs] = useState(false);
@@ -225,6 +226,16 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
         return '📦';
     };
 
+    const getSandboxBadgeLabel = (sb) => {
+        const t = sb.metadata?.labels?.['sandbox.gemini.google.com/type'] || sb.metadata?.labels?.['sandbox-type'] || '';
+        const name = sb.metadata?.name || '';
+        if (t === 'pr' || name.startsWith('factory-pr-') || name.startsWith('pr-')) return 'PR';
+        if (t === 'fix' || name.startsWith('factory-fix-') || name.startsWith('fix-')) return 'Fix (Issue->PR)';
+        if (t === 'review') return 'Review';
+        if (t === 'adopt') return 'Adopt';
+        return t || 'Factory';
+    };
+
     const getStatusBadgeColor = (status) => {
         if (!status) return 'var(--status-grey)';
         const s = status.toLowerCase();
@@ -232,6 +243,54 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
         if (s === 'running' || s === 'provisioning') return 'var(--status-yellow)';
         if (s === 'failed' || s === 'crashed' || s === 'error') return 'var(--text-danger)';
         return 'var(--status-grey)';
+    };
+
+    const filterSandbox = (sb) => {
+        if (!searchFilter || !searchFilter.trim()) return true;
+        const q = searchFilter.trim().toLowerCase();
+        const name = sb.metadata?.name || '';
+        const issue = sb.metadata?.labels?.['factory.gemini.google.com/issue'] || sb.metadata?.labels?.issue || '';
+        const pr = sb.metadata?.labels?.['factory.gemini.google.com/pr'] || sb.metadata?.annotations?.pr || '';
+        const user = sb.metadata?.labels?.['factory.gemini.google.com/user'] || '';
+        const desc = sb.metadata?.annotations?.['sandbox.gemini.google.com/description'] || '';
+        return name.toLowerCase().includes(q) ||
+               String(issue).toLowerCase().includes(q) ||
+               String(pr).toLowerCase().includes(q) ||
+               user.toLowerCase().includes(q) ||
+               desc.toLowerCase().includes(q);
+    };
+
+    const renderSandboxItem = (sb, isSuspended) => {
+        const badgeLabel = getSandboxBadgeLabel(sb);
+        const icon = getSandboxTypeIcon(sb);
+        const isActive = activeSandbox?.metadata.name === sb.metadata.name && !showOverseerLogs;
+
+        return (
+            <div 
+                key={sb.metadata.name}
+                className={`sidebar-tree-row ${isActive ? 'active' : ''}`}
+                onClick={() => handleSandboxClick(sb)}
+                style={{ 
+                    padding: '8px 15px', 
+                    cursor: 'pointer', 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    justifyContent: 'space-between', 
+                    borderRadius: '4px',
+                    opacity: isSuspended ? 0.7 : 1
+                }}
+            >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden' }}>
+                    <span className="tree-icon">{isSuspended ? '⏸️' : icon}</span>
+                    <span className="tree-label" style={{ fontSize: '0.85rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', textDecoration: isSuspended ? 'line-through' : 'none' }} title={sb.metadata.name}>
+                        {sb.metadata.name}
+                    </span>
+                </div>
+                <span style={{ fontSize: '0.7rem', padding: '2px 6px', borderRadius: '10px', backgroundColor: isSuspended ? '#fff3cd' : 'var(--bg-secondary)', color: isSuspended ? '#856404' : 'var(--text-secondary)', fontWeight: isSuspended ? 'bold' : 'normal', whiteSpace: 'nowrap' }}>
+                    {isSuspended ? `Suspended • ${badgeLabel}` : badgeLabel}
+                </span>
+            </div>
+        );
     };
 
     return (
@@ -259,52 +318,65 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                                     <span className="tree-label" style={{ fontWeight: '600' }}>{ov.metadata.name}</span>
                                 </div>
 
-                                {isExpanded && (
-                                    <div style={{ paddingLeft: '15px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                                        <div 
-                                            className={`sidebar-tree-row ${showOverseerLogs ? 'active' : ''}`}
-                                            onClick={() => { setShowOverseerLogs(true); setActiveSandbox(null); }}
-                                            style={{ padding: '8px 15px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', borderRadius: '4px' }}
-                                        >
-                                            <span className="tree-icon">🤖</span>
-                                            <span className="tree-label" style={{ fontSize: '0.9rem' }}>Overseer Daemon Log</span>
-                                        </div>
+                                {isExpanded && (() => {
+                                    const filtered = sandboxes.filter(filterSandbox);
+                                    const activeSandboxes = filtered.filter(sb => !(sb.spec?.replicas === 0 || sb.spec?.replicas === '0'));
+                                    const suspendedSandboxes = filtered.filter(sb => sb.spec?.replicas === 0 || sb.spec?.replicas === '0');
 
-                                        <div style={{ padding: '6px 15px 2px 15px', fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 'bold', marginTop: '6px' }}>
-                                            Factory Sandboxes ({sandboxes.length})
-                                        </div>
-
-                                        {sandboxes.length === 0 && (
-                                            <div style={{ padding: '6px 15px', fontSize: '0.8rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
-                                                No active sandboxes
+                                    return (
+                                        <div style={{ paddingLeft: '15px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                            <div 
+                                                className={`sidebar-tree-row ${showOverseerLogs ? 'active' : ''}`}
+                                                onClick={() => { setShowOverseerLogs(true); setActiveSandbox(null); }}
+                                                style={{ padding: '8px 15px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', borderRadius: '4px' }}
+                                            >
+                                                <span className="tree-icon">🤖</span>
+                                                <span className="tree-label" style={{ fontSize: '0.9rem' }}>Overseer Daemon Log</span>
                                             </div>
-                                        )}
 
-                                        {sandboxes.map(sb => {
-                                            const type = sb.metadata?.labels?.['sandbox.gemini.google.com/type'] || sb.metadata?.labels?.['sandbox-type'] || 'dev';
-                                            const icon = getSandboxTypeIcon(sb);
-                                            const isActive = activeSandbox?.metadata.name === sb.metadata.name && !showOverseerLogs;
-                                            return (
-                                                <div 
-                                                    key={sb.metadata.name}
-                                                    className={`sidebar-tree-row ${isActive ? 'active' : ''}`}
-                                                    onClick={() => handleSandboxClick(sb)}
-                                                    style={{ padding: '8px 15px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderRadius: '4px' }}
-                                                >
-                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden' }}>
-                                                        <span className="tree-icon">{icon}</span>
-                                                        <span className="tree-label" style={{ fontSize: '0.85rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={sb.metadata.name}>
-                                                            {sb.metadata.name}
-                                                        </span>
-                                                    </div>
-                                                    <span style={{ fontSize: '0.7rem', padding: '2px 6px', borderRadius: '10px', backgroundColor: 'var(--bg-secondary)', color: 'var(--text-secondary)', textTransform: 'capitalize' }}>
-                                                        {type}
-                                                    </span>
+                                            <div style={{ padding: '8px 15px 4px 15px' }}>
+                                                <input 
+                                                    type="text"
+                                                    placeholder="🔍 Filter (PR #, Issue #, wf-)..."
+                                                    value={searchFilter}
+                                                    onChange={(e) => setSearchFilter(e.target.value)}
+                                                    onClick={(e) => e.stopPropagation()}
+                                                    style={{
+                                                        width: '100%',
+                                                        padding: '6px 10px',
+                                                        borderRadius: '4px',
+                                                        border: '1px solid var(--border-color)',
+                                                        backgroundColor: 'var(--bg-card)',
+                                                        color: 'var(--text-primary)',
+                                                        fontSize: '0.8rem'
+                                                    }}
+                                                />
+                                            </div>
+
+                                            <div style={{ padding: '6px 15px 2px 15px', fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 'bold', marginTop: '4px' }}>
+                                                Active Sandboxes ({activeSandboxes.length})
+                                            </div>
+
+                                            {activeSandboxes.length === 0 && (
+                                                <div style={{ padding: '6px 15px', fontSize: '0.8rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                                                    {searchFilter ? 'No active sandboxes match filter' : 'No active sandboxes'}
                                                 </div>
-                                            );
-                                        })}
-                                    </div>
-                                )}
+                                            )}
+
+                                            {activeSandboxes.map(sb => renderSandboxItem(sb, false))}
+
+                                            {suspendedSandboxes.length > 0 && (
+                                                <>
+                                                    <div style={{ padding: '12px 15px 2px 15px', fontSize: '0.75rem', textTransform: 'uppercase', color: '#856404', fontWeight: 'bold', marginTop: '8px', borderTop: '1px dashed var(--border-color)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                        <span>⏸️ Suspended Sandboxes ({suspendedSandboxes.length})</span>
+                                                    </div>
+
+                                                    {suspendedSandboxes.map(sb => renderSandboxItem(sb, true))}
+                                                </>
+                                            )}
+                                        </div>
+                                    );
+                                })()}
                             </React.Fragment>
                         );
                     })}
@@ -364,8 +436,21 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                                             color: 'var(--text-primary)',
                                             textTransform: 'uppercase'
                                         }}>
-                                            {activeSandbox.metadata?.labels?.['sandbox.gemini.google.com/type'] || activeSandbox.metadata?.labels?.['sandbox-type'] || 'Factory'}
+                                            {getSandboxBadgeLabel(activeSandbox)}
                                         </span>
+                                        {(activeSandbox.spec?.replicas === 0 || activeSandbox.spec?.replicas === '0') && (
+                                            <span style={{ 
+                                                padding: '3px 10px', 
+                                                borderRadius: '12px', 
+                                                fontSize: '0.75rem', 
+                                                fontWeight: 'bold', 
+                                                backgroundColor: '#fff3cd', 
+                                                color: '#856404', 
+                                                border: '1px solid #ffeeba'
+                                            }}>
+                                                ⏸️ Suspended (Replicas: 0)
+                                            </span>
+                                        )}
                                     </div>
 
                                     <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', display: 'flex', flexWrap: 'wrap', gap: '15px' }}>
