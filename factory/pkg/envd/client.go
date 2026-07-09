@@ -66,6 +66,13 @@ func GetSandboxPodName(ctx context.Context, namespace, sandboxName string) (stri
 		return "", fmt.Errorf("sandbox '%s' does not exist in namespace '%s'", sandboxName, namespace)
 	}
 
+	// Check if the sandbox is suspended (replicas == 0). If so, wake it up by setting replicas to 1.
+	repOut, err := exec.CommandContext(ctx, "kubectl", "get", "sandbox", sandboxName, "-n", namespace, "-o", "jsonpath={.spec.replicas}").Output()
+	if err == nil && string(repOut) == "0" {
+		fmt.Printf("Sandbox %s is currently suspended (replicas=0). Setting replicas to 1 to bring up the pod back...\n", sandboxName)
+		_ = exec.CommandContext(ctx, "kubectl", "patch", "sandbox", sandboxName, "-n", namespace, "--type=merge", "-p", `{"spec":{"replicas":1}}`).Run()
+	}
+
 	for i := 0; i < 120; i++ {
 		if ctx.Err() != nil {
 			return "", ctx.Err()
