@@ -46,6 +46,7 @@ type WatchFlags struct {
 	ScanLimit          int
 	TaskTimeout        time.Duration
 	SandboxEvictionAge string
+	SandboxIdleTimeout time.Duration
 }
 
 func NewWatchCommand(ctx context.Context) *cobra.Command {
@@ -101,7 +102,7 @@ func NewWatchCommand(ctx context.Context) *cobra.Command {
 				choresMode = "enabled"
 			}
 
-			return runWatch(ctx, parts[0], parts[1], flags.PollInterval, flags.Assignee, cmd.Flags().Changed("assignee"), flags.Labels, flags.DryRun, flags.WatchTimeout, flags.MaxActions, flags.MaxPending, flags.Mode, flags.QueueDir, flags.Once, issueMode, prMode, choresMode, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, flags.ScanLimit, flags.TaskTimeout, flags.SandboxEvictionAge)
+			return runWatch(ctx, parts[0], parts[1], flags.PollInterval, flags.Assignee, cmd.Flags().Changed("assignee"), flags.Labels, flags.DryRun, flags.WatchTimeout, flags.MaxActions, flags.MaxPending, flags.Mode, flags.QueueDir, flags.Once, issueMode, prMode, choresMode, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, flags.ScanLimit, flags.TaskTimeout, flags.SandboxEvictionAge, flags.SandboxIdleTimeout)
 		},
 	}
 
@@ -122,6 +123,7 @@ func NewWatchCommand(ctx context.Context) *cobra.Command {
 	cmd.Flags().IntVar(&flags.ScanLimit, "scan-limit", 100, "Maximum number of issues/PRs to fetch from GitHub API in a scan cycle")
 	cmd.Flags().DurationVar(&flags.TaskTimeout, "task-timeout", 3*time.Hour, "Timeout for each task execution (default 3h)")
 	cmd.Flags().StringVar(&flags.SandboxEvictionAge, "sandbox-eviction-age", "7d", "Age threshold for idle sandbox eviction (e.g. '7d', '24h')")
+	cmd.Flags().DurationVar(&flags.SandboxIdleTimeout, "sandbox-idle-timeout", getEnvDuration("SANDBOX_IDLE_TIMEOUT", 0), "Idle timeout after which a sandbox that has not run any task is suspended by setting replicas to 0 (e.g. '30m', '1h')")
 
 	return cmd
 }
@@ -825,7 +827,7 @@ func writeTaskJournalEvent(queueDir string, taskFilename string, task *QueueTask
 	}
 }
 
-func runWatch(ctx context.Context, owner, repo string, interval time.Duration, assignee string, assigneeChanged bool, labels []string, dryRun bool, watchTimeout time.Duration, maxActions int, maxPending int, mode string, queueDir string, once bool, issueMode string, prMode string, choresMode string, ephemeralStorage string, secrets []factorysandbox.SecretMount, scanLimit int, taskTimeout time.Duration, sandboxEvictionAge string) error {
+func runWatch(ctx context.Context, owner, repo string, interval time.Duration, assignee string, assigneeChanged bool, labels []string, dryRun bool, watchTimeout time.Duration, maxActions int, maxPending int, mode string, queueDir string, once bool, issueMode string, prMode string, choresMode string, ephemeralStorage string, secrets []factorysandbox.SecretMount, scanLimit int, taskTimeout time.Duration, sandboxEvictionAge string, sandboxIdleTimeout time.Duration) error {
 	cfg, err := config.LoadConfig()
 	if err != nil {
 		klog.Warningf("Failed to load factory config: %v", err)
@@ -1651,6 +1653,12 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 			// Clean up stale idle sandboxes older than eviction age (defaults to 1 week)
 			if err := cleanupStaleIdleSandboxes(ctx, kubeClient, rootFlags.Namespace, sandboxEvictionAge, dryRun); err != nil {
 				klog.Errorf("Failed to clean up stale idle sandboxes: %v", err)
+			}
+
+			if sandboxIdleTimeout > 0 {
+				if _, err := factorysandbox.SuspendIdleSandboxes(ctx, kubeClient, rootFlags.Namespace, sandboxIdleTimeout, dryRun); err != nil {
+					klog.Errorf("Failed to suspend idle sandboxes: %v", err)
+				}
 			}
 		}
 

@@ -12,8 +12,10 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
+	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	"github.com/spf13/cobra"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 func validateSandboxName(name string) error {
@@ -37,6 +39,8 @@ func NewSandboxCommand(ctx context.Context) *cobra.Command {
 	cmd.AddCommand(NewSandboxLogsCommand(ctx))
 	cmd.AddCommand(NewSandboxConnectCommand(ctx))
 	cmd.AddCommand(NewSandboxChatCommand(ctx))
+	cmd.AddCommand(NewSandboxSuspendCommand(ctx))
+	cmd.AddCommand(NewSandboxResumeCommand(ctx))
 
 	return cmd
 }
@@ -457,5 +461,131 @@ func NewSandboxChatCommand(ctx context.Context) *cobra.Command {
 	cmd.Flags().BoolVarP(&flags.ListSessions, "list-sessions", "l", false, "List available Gemini sessions in the sandbox and exit")
 	cmd.Flags().StringVarP(&flags.Resume, "resume", "r", "latest", "Resume a previous session by index or 'latest'")
 
+	return cmd
+}
+
+func NewSandboxSuspendCommand(ctx context.Context) *cobra.Command {
+	var idleTimeout time.Duration
+	var all bool
+	cmd := &cobra.Command{
+		Use:   "suspend [sandbox-name...]",
+		Short: "Suspend one or more sandboxes by setting replicas to 0 (or auto-suspend idle sandboxes with --idle-timeout)",
+		RunE: func(_ *cobra.Command, args []string) error {
+			if len(args) == 0 && !all && idleTimeout <= 0 {
+				return fmt.Errorf("must specify sandbox name(s), --all, or --idle-timeout N")
+			}
+
+			kubeClient, err := clients.NewKubernetesClient()
+			if err != nil {
+				return fmt.Errorf("creating k8s client: %w", err)
+			}
+
+			if idleTimeout > 0 {
+				fmt.Printf("Checking for sandboxes in namespace '%s' idle for more than %v...\n", rootFlags.Namespace, idleTimeout)
+				count, err := factorysandbox.SuspendIdleSandboxes(ctx, kubeClient, rootFlags.Namespace, idleTimeout, false)
+				if err != nil {
+					return err
+				}
+				fmt.Printf("Suspended %d idle sandbox(es).\n", count)
+				if len(args) == 0 && !all {
+					return nil
+				}
+			}
+
+			list, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(rootFlags.Namespace).List(ctx, metav1.ListOptions{})
+			if err != nil {
+				return fmt.Errorf("listing sandboxes: %w", err)
+			}
+
+			targets := make(map[string]bool)
+			if all {
+				for _, item := range list.Items {
+					targets[item.GetName()] = true
+				}
+			} else {
+				for _, arg := range args {
+					targets[arg] = true
+				}
+			}
+
+			for _, item := range list.Items {
+				name := item.GetName()
+				if !targets[name] {
+					continue
+				}
+				replicas, found, _ := unstructured.NestedInt64(item.Object, "spec", "replicas")
+				if found && replicas == 0 {
+					fmt.Printf("Sandbox '%s' is already suspended (replicas=0).\n", name)
+					continue
+				}
+				if err := unstructured.SetNestedField(item.Object, int64(0), "spec", "replicas"); err != nil {
+					return fmt.Errorf("setting replicas=0 on %s: %w", name, err)
+				}
+				if _, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(rootFlags.Namespace).Update(ctx, &item, metav1.UpdateOptions{}); err != nil {
+					return fmt.Errorf("updating sandbox %s: %w", name, err)
+				}
+				fmt.Printf("Suspended sandbox '%s' (replicas=0).\n", name)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().DurationVar(&idleTimeout, "idle-timeout", 0, "Suspend sandboxes that haven't run any task for this duration (e.g. '30m')")
+	cmd.Flags().BoolVar(&all, "all", false, "Suspend all sandboxes in the namespace")
+	return cmd
+}
+
+func NewSandboxResumeCommand(ctx context.Context) *cobra.Command {
+	var all bool
+	cmd := &cobra.Command{
+		Use:   "resume [sandbox-name...]",
+		Short: "Resume one or more suspended sandboxes by setting replicas to 1",
+		RunE: func(_ *cobra.Command, args []string) error {
+			if len(args) == 0 && !all {
+				return fmt.Errorf("must specify sandbox name(s) or --all")
+			}
+
+			kubeClient, err := clients.NewKubernetesClient()
+			if err != nil {
+				return fmt.Errorf("creating k8s client: %w", err)
+			}
+
+			list, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(rootFlags.Namespace).List(ctx, metav1.ListOptions{})
+			if err != nil {
+				return fmt.Errorf("listing sandboxes: %w", err)
+			}
+
+			targets := make(map[string]bool)
+			if all {
+				for _, item := range list.Items {
+					targets[item.GetName()] = true
+				}
+			} else {
+				for _, arg := range args {
+					targets[arg] = true
+				}
+			}
+
+			for _, item := range list.Items {
+				name := item.GetName()
+				if !targets[name] {
+					continue
+				}
+				replicas, found, _ := unstructured.NestedInt64(item.Object, "spec", "replicas")
+				if found && replicas == 1 {
+					fmt.Printf("Sandbox '%s' is already active (replicas=1).\n", name)
+					continue
+				}
+				if err := unstructured.SetNestedField(item.Object, int64(1), "spec", "replicas"); err != nil {
+					return fmt.Errorf("setting replicas=1 on %s: %w", name, err)
+				}
+				if _, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(rootFlags.Namespace).Update(ctx, &item, metav1.UpdateOptions{}); err != nil {
+					return fmt.Errorf("updating sandbox %s: %w", name, err)
+				}
+				fmt.Printf("Resumed sandbox '%s' (replicas=1).\n", name)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&all, "all", false, "Resume all sandboxes in the namespace")
 	return cmd
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/klog/v2"
 )
 
@@ -347,6 +348,13 @@ func UpdateSandboxTaskAnnotation(ctx context.Context, kubeClient *clients.Kubern
 		return fmt.Errorf("getting sandbox %s: %w", sandboxName, err)
 	}
 
+	if taskType != "" && taskState != "Completed" && taskState != "Failed" {
+		replicas, found, _ := unstructured.NestedInt64(unstructObj.Object, "spec", "replicas")
+		if found && replicas == 0 {
+			_ = unstructured.SetNestedField(unstructObj.Object, int64(1), "spec", "replicas")
+		}
+	}
+
 	annotations := unstructObj.GetAnnotations()
 	if annotations == nil {
 		annotations = make(map[string]string)
@@ -355,6 +363,11 @@ func UpdateSandboxTaskAnnotation(ctx context.Context, kubeClient *clients.Kubern
 	if taskType != "" {
 		annotations["sandbox.gemini.google.com/last-task-type"] = taskType
 		annotations["sandbox.gemini.google.com/last-task-state"] = taskState
+		if taskState == "Completed" || taskState == "Failed" {
+			nowStr := time.Now().UTC().Format(time.RFC3339)
+			annotations["sandbox.gemini.google.com/completion-time"] = nowStr
+			annotations["sandbox.gemini.google.com/last-task-time"] = nowStr
+		}
 	} else {
 		delete(annotations, "sandbox.gemini.google.com/last-task-type")
 		delete(annotations, "sandbox.gemini.google.com/last-task-state")
@@ -366,4 +379,68 @@ func UpdateSandboxTaskAnnotation(ctx context.Context, kubeClient *clients.Kubern
 		return fmt.Errorf("updating sandbox %s task annotations: %w", sandboxName, err)
 	}
 	return nil
+}
+
+func SuspendIdleSandboxes(ctx context.Context, kubeClient *clients.KubernetesClient, namespace string, idleTimeout time.Duration, dryRun bool) (int, error) {
+	if kubeClient == nil || idleTimeout <= 0 {
+		return 0, nil
+	}
+
+	list, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return 0, fmt.Errorf("listing sandboxes for idle suspension check: %w", err)
+	}
+
+	now := time.Now()
+	suspendedCount := 0
+
+	for _, item := range list.Items {
+		name := item.GetName()
+		replicas, found, err := unstructured.NestedInt64(item.Object, "spec", "replicas")
+		if err == nil && found && replicas == 0 {
+			continue // Already suspended
+		}
+
+		// Determine last activity time (latest of creation time, completion-time, last-task-time)
+		lastActivity := item.GetCreationTimestamp().Time
+		if annotations := item.GetAnnotations(); annotations != nil {
+			if state := annotations["sandbox.gemini.google.com/last-task-state"]; state != "" && !strings.EqualFold(state, "Completed") && !strings.EqualFold(state, "Failed") {
+				// There is an active task running right now (e.g. Running), do not suspend
+				continue
+			}
+			if tsStr, ok := annotations["sandbox.gemini.google.com/completion-time"]; ok {
+				if ts, err := time.Parse(time.RFC3339, tsStr); err == nil && ts.After(lastActivity) {
+					lastActivity = ts
+				}
+			}
+			if tsStr, ok := annotations["sandbox.gemini.google.com/last-task-time"]; ok {
+				if ts, err := time.Parse(time.RFC3339, tsStr); err == nil && ts.After(lastActivity) {
+					lastActivity = ts
+				}
+			}
+		}
+
+		if now.Sub(lastActivity) > idleTimeout {
+			klog.Infof("Sandbox '%s' in namespace '%s' has not run any task for %v (last activity: %v). Suspending (replicas=0)...", name, namespace, idleTimeout, lastActivity)
+			if dryRun {
+				fmt.Printf("[DRYRUN] Would suspend idle sandbox '%s' (replicas=0)\n", name)
+				suspendedCount++
+				continue
+			}
+
+			if err := unstructured.SetNestedField(item.Object, int64(0), "spec", "replicas"); err != nil {
+				klog.Errorf("Failed to set replicas=0 on sandbox '%s': %v", name, err)
+				continue
+			}
+			_, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Update(ctx, &item, metav1.UpdateOptions{})
+			if err != nil {
+				klog.Errorf("Failed to update sandbox '%s' to replicas=0: %v", name, err)
+			} else {
+				fmt.Printf("Suspended idle sandbox '%s' (replicas=0)\n", name)
+				suspendedCount++
+			}
+		}
+	}
+
+	return suspendedCount, nil
 }
