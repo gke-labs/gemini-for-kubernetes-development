@@ -193,7 +193,7 @@ func ExecInPod(ctx context.Context, kube *clients.KubernetesClient, podID types.
 		}
 		// Prepend the env commands to the original command
 		shellCommand := strings.Join(envCommands, " && ") + " && " + strings.Join(command, " ")
-		command = []string{"sh", "-c", shellCommand}
+		command = []string{"/bin/sh", "-c", shellCommand}
 	}
 
 	log.Info("Executing command in pod", "pod", podID, "command", redactedCommand)

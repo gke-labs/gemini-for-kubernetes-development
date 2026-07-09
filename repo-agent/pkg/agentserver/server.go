@@ -3,10 +3,12 @@
 package agentserver
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
@@ -33,6 +35,9 @@ func NewAgentServer() *AgentServer {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("OK"))
 	})
+
+	// Endpoint to list tasks directly from /workspaces/tasks
+	r.HandleFunc("/tasks", serveTasksList)
 
 	// Endpoint to serve specific log files by task ID.
 	r.HandleFunc("/logs/{taskID}", serveLogFile)
@@ -71,6 +76,66 @@ func (s *AgentServer) Stop() error {
 	return s.server.Close()
 }
 
+func serveTasksList(w http.ResponseWriter, r *http.Request) {
+	tasksDir := "/workspaces/tasks"
+	entries, err := os.ReadDir(tasksDir)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("[]"))
+		return
+	}
+
+	var res []map[string]interface{}
+	for i := len(entries) - 1; i >= 0; i-- {
+		entry := entries[i]
+		if !entry.IsDir() {
+			continue
+		}
+		d := entry.Name()
+		p := filepath.Join(tasksDir, d)
+		status := "Pending"
+		var ec interface{}
+
+		if exitBytes, err := os.ReadFile(filepath.Join(p, "exit_code")); err == nil {
+			code := strings.TrimSpace(string(exitBytes))
+			ec = code
+			if code == "0" {
+				status = "Completed"
+			} else {
+				status = "Failed"
+			}
+		} else if pidBytes, err := os.ReadFile(filepath.Join(p, "pid")); err == nil {
+			pidStr := strings.TrimSpace(string(pidBytes))
+			var pid int
+			if _, err := fmt.Sscanf(pidStr, "%d", &pid); err == nil {
+				if err := os.FindProcess(pid); err == nil {
+					status = "Running"
+				} else {
+					status = "Crashed"
+				}
+			}
+		}
+
+		res = append(res, map[string]interface{}{
+			"metadata": map[string]interface{}{
+				"name": d,
+			},
+			"spec": map[string]interface{}{
+				"taskType": d,
+			},
+			"status": map[string]interface{}{
+				"state":    status,
+				"exitCode": ec,
+			},
+		})
+	}
+	if res == nil {
+		res = []map[string]interface{}{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(res)
+}
+
 // serveLogFile handles requests to read log files.
 // It validates the taskID to prevent path traversal and serves the file if it exists.
 func serveLogFile(w http.ResponseWriter, r *http.Request) {
@@ -87,13 +152,20 @@ func serveLogFile(w http.ResponseWriter, r *http.Request) {
 
 	// Check if file exists
 	if _, err := os.Stat(logFilePath); os.IsNotExist(err) {
-		http.Error(w, "Log file not found", http.StatusNotFound)
-		return
+		// Also check /workspaces/tasks/<taskID>/execution.log and agent-output.txt
+		taskLogPath := filepath.Join("/workspaces/tasks", taskID, "execution.log")
+		if _, err2 := os.Stat(taskLogPath); os.IsNotExist(err2) {
+			outputPath := filepath.Join("/workspaces/tasks", taskID, "agent-output.txt")
+			if _, err3 := os.Stat(outputPath); os.IsNotExist(err3) {
+				http.Error(w, "Log file not found", http.StatusNotFound)
+				return
+			}
+			logFilePath = outputPath
+		} else {
+			logFilePath = taskLogPath
+		}
 	}
 
 	// Serve the file
-	// http.ServeFile handles Range requests and caching headers automatically,
-	// but for live streaming (tailing), we might want a WebSocket or chunked response.
-	// For now, simple file serving is a good start. The UI can poll or use Range headers.
 	http.ServeFile(w, r, logFilePath)
 }
