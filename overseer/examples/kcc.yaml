@@ -8,6 +8,7 @@ spec:
   robotAccount: argus-watcher-bot
   maxActiveReviews: 20
   maxActiveIssues: 25
+  sandboxIdleTimeout: 1h
   chores:
     mode: enabled
     #include:
