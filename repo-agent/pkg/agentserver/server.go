@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
@@ -108,7 +109,7 @@ func serveTasksList(w http.ResponseWriter, r *http.Request) {
 			pidStr := strings.TrimSpace(string(pidBytes))
 			var pid int
 			if _, err := fmt.Sscanf(pidStr, "%d", &pid); err == nil {
-				if err := os.FindProcess(pid); err == nil {
+				if proc, err := os.FindProcess(pid); err == nil && proc.Signal(syscall.Signal(0)) == nil {
 					status = "Running"
 				} else {
 					status = "Crashed"

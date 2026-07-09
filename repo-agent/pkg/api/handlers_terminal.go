@@ -2,11 +2,13 @@ package api
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -92,6 +94,29 @@ func (s *Server) terminal(c *gin.Context) {
 
 	// Context for the exec command
 	ctx := c.Request.Context()
+
+	// Ensure repo-sandbox binary is present in target pod
+	checkOpts := sandbox.ExecOptions{
+		Command: []string{"test", "-f", sandbox.RepoSandboxBinary},
+	}
+	if err := sandbox.ExecInPod(ctx, s.K8sManager.KubeClient, *podID, checkOpts); err != nil {
+		klog.Infof("repo-sandbox binary not found in pod %s/%s (%v), injecting from /app-bin/repo-sandbox...", podID.Namespace, podID.Name, err)
+		if localBytes, readErr := os.ReadFile("/app-bin/repo-sandbox"); readErr == nil {
+			_ = ws.WriteMessage(websocket.TextMessage, []byte("\r\n*** Injecting SSH daemon helper into sandbox container... ***\r\n"))
+			mkdirOpts := sandbox.ExecOptions{
+				Command:     []string{"/bin/sh", "-c", "mkdir -p /opt/repo-agent && cat > /opt/repo-agent/repo-sandbox && chmod +x /opt/repo-agent/repo-sandbox"},
+				StdinReader: bytes.NewReader(localBytes),
+			}
+			if copyErr := sandbox.ExecInPod(ctx, s.K8sManager.KubeClient, *podID, mkdirOpts); copyErr != nil {
+				klog.Errorf("Failed to inject repo-sandbox to pod %s/%s: %v", podID.Namespace, podID.Name, copyErr)
+				_ = ws.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("\r\n*** Warning: failed to inject SSH helper: %v ***\r\n", copyErr)))
+			} else {
+				klog.Infof("Successfully injected repo-sandbox to pod %s/%s", podID.Namespace, podID.Name)
+			}
+		} else {
+			klog.Warningf("Could not read local /app-bin/repo-sandbox: %v", readErr)
+		}
+	}
 
 	// Channel to capture execution errors
 	execErrChan := make(chan error, 1)
