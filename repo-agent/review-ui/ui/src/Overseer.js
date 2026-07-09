@@ -293,112 +293,50 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
         );
     };
 
-    return (
-        <div className="dev-layout" style={{ height: 'calc(100vh - 80px)' }}>
-            {/* Sidebar */}
-            <div className="dev-sidebar" style={{ width: '320px', borderRight: '1px solid var(--border-color)', overflowY: 'auto', backgroundColor: 'var(--bg-sidebar)' }}>
-                <div className="sidebar-header-row" style={{ padding: '15px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span className="sidebar-header-title" style={{ fontWeight: 'bold', fontSize: '1rem', color: 'var(--text-primary)' }}>Factory & Overseers</span>
-                    <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{overseers.length} Repo(s)</span>
-                </div>
-                <div className="sidebar-tree-content" style={{ padding: '10px 0' }}>
-                    {overseers.map(ov => {
-                        const isExpanded = activeOverseer?.metadata.name === ov.metadata.name;
-                        return (
-                            <React.Fragment key={ov.metadata.name}>
-                                <div 
-                                    className={`sidebar-tree-row root-row ${isExpanded && showOverseerLogs ? 'active' : ''}`}
-                                    onClick={() => handleOverseerClick(ov)}
-                                    style={{ padding: '10px 15px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
-                                >
-                                    <span className="tree-expander">
-                                        {isExpanded ? <ChevronDown /> : <ChevronRight />}
-                                    </span>
-                                    <span className="tree-icon">📂</span>
-                                    <span className="tree-label" style={{ fontWeight: '600' }}>{ov.metadata.name}</span>
-                                </div>
-
-                                {isExpanded && (() => {
-                                    const filtered = sandboxes.filter(filterSandbox);
-                                    const activeSandboxes = filtered.filter(sb => !(sb.spec?.replicas === 0 || sb.spec?.replicas === '0'));
-                                    const suspendedSandboxes = filtered.filter(sb => sb.spec?.replicas === 0 || sb.spec?.replicas === '0');
-
-                                    return (
-                                        <div style={{ paddingLeft: '15px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                                            <div 
-                                                className={`sidebar-tree-row ${showOverseerLogs ? 'active' : ''}`}
-                                                onClick={() => { setShowOverseerLogs(true); setActiveSandbox(null); }}
-                                                style={{ padding: '8px 15px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', borderRadius: '4px' }}
-                                            >
-                                                <span className="tree-icon">🤖</span>
-                                                <span className="tree-label" style={{ fontSize: '0.9rem' }}>Overseer Daemon Log</span>
-                                            </div>
-
-                                            <div style={{ padding: '8px 15px 4px 15px' }}>
-                                                <input 
-                                                    type="text"
-                                                    placeholder="🔍 Filter (PR #, Issue #, wf-)..."
-                                                    value={searchFilter}
-                                                    onChange={(e) => setSearchFilter(e.target.value)}
-                                                    onClick={(e) => e.stopPropagation()}
-                                                    style={{
-                                                        width: '100%',
-                                                        padding: '6px 10px',
-                                                        borderRadius: '4px',
-                                                        border: '1px solid var(--border-color)',
-                                                        backgroundColor: 'var(--bg-card)',
-                                                        color: 'var(--text-primary)',
-                                                        fontSize: '0.8rem'
-                                                    }}
-                                                />
-                                            </div>
-
-                                            <div style={{ padding: '6px 15px 2px 15px', fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 'bold', marginTop: '4px' }}>
-                                                Active Sandboxes ({activeSandboxes.length})
-                                            </div>
-
-                                            {activeSandboxes.length === 0 && (
-                                                <div style={{ padding: '6px 15px', fontSize: '0.8rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
-                                                    {searchFilter ? 'No active sandboxes match filter' : 'No active sandboxes'}
-                                                </div>
-                                            )}
-
-                                            {activeSandboxes.map(sb => renderSandboxItem(sb, false))}
-
-                                            {suspendedSandboxes.length > 0 && (
-                                                <>
-                                                    <div style={{ padding: '12px 15px 2px 15px', fontSize: '0.75rem', textTransform: 'uppercase', color: '#856404', fontWeight: 'bold', marginTop: '8px', borderTop: '1px dashed var(--border-color)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                                        <span>⏸️ Suspended Sandboxes ({suspendedSandboxes.length})</span>
-                                                    </div>
-
-                                                    {suspendedSandboxes.map(sb => renderSandboxItem(sb, true))}
-                                                </>
-                                            )}
-                                        </div>
-                                    );
-                                })()}
-                            </React.Fragment>
-                        );
-                    })}
-                </div>
-            </div>
-
-            {/* Main Panel */}
-            <div className="dev-main" style={{ flex: 1, padding: '25px', overflowY: 'auto', backgroundColor: 'var(--bg-color)' }}>
+            {/* Main Panel - Full Width */}
+            <div className="dev-main" style={{ width: '100%', flex: 1, padding: '25px', overflowY: 'auto', backgroundColor: 'var(--bg-color)' }}>
                 {error && (
                     <div className="warning-banner" style={{ backgroundColor: '#fdecea', color: '#721c24', borderColor: '#f5c6cb', marginBottom: '20px', padding: '12px', borderRadius: '4px', border: '1px solid #f5c6cb' }}>
                         <strong>Error fetching overseers:</strong> {error}
                     </div>
                 )}
 
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '25px', borderBottom: '1px solid var(--border-color)', paddingBottom: '15px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '25px', borderBottom: '1px solid var(--border-color)', paddingBottom: '15px', flexWrap: 'wrap', gap: '15px' }}>
                     <div>
-                        <h2 style={{ margin: 0, fontSize: '1.6rem', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                            {!activeOverseer ? "Select an Overseer Repo from the sidebar" : showOverseerLogs ? `🤖 Overseer: ${activeOverseer.metadata.name}` : `🛠️ Sandbox: ${activeSandbox?.metadata?.name || 'Select a Sandbox'}`}
-                        </h2>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            <span style={{ fontSize: '1.4rem', fontWeight: 'bold', color: 'var(--text-primary)' }}>
+                                📂 Overseer Repo:
+                            </span>
+                            {overseers.length > 1 ? (
+                                <select 
+                                    value={activeOverseer?.metadata.name || ''} 
+                                    onChange={(e) => {
+                                        const selected = overseers.find(o => o.metadata.name === e.target.value);
+                                        if (selected) handleOverseerClick(selected);
+                                    }}
+                                    style={{
+                                        padding: '6px 14px',
+                                        borderRadius: '6px',
+                                        border: '1px solid var(--border-color)',
+                                        backgroundColor: 'var(--bg-card)',
+                                        color: 'var(--text-primary)',
+                                        fontSize: '1.1rem',
+                                        fontWeight: 'bold'
+                                    }}
+                                >
+                                    {overseers.map(o => (
+                                        <option key={o.metadata.name} value={o.metadata.name}>{o.metadata.name}</option>
+                                    ))}
+                                </select>
+                            ) : (
+                                <span style={{ fontSize: '1.4rem', fontWeight: 'bold', color: 'var(--text-active)' }}>
+                                    {activeOverseer?.metadata.name || 'Loading...'}
+                                </span>
+                            )}
+                        </div>
                         {activeOverseer && (
-                            <p style={{ margin: '5px 0 0 0', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                                Repo: <a href={activeOverseer.spec?.repoURL} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--text-link)' }}>{activeOverseer.spec?.repoURL}</a>
+                            <p style={{ margin: '6px 0 0 0', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                                Repo: <a href={activeOverseer.spec?.repoURL} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--text-link)', fontWeight: '500' }}>{activeOverseer.spec?.repoURL}</a>
                                 {activeOverseer.spec?.pollInterval && ` • Poll: ${activeOverseer.spec?.pollInterval}`}
                                 {activeOverseer.spec?.robotAccount && ` • Bot: ${activeOverseer.spec?.robotAccount}`}
                             </p>
