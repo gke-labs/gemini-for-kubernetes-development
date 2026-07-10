@@ -206,9 +206,32 @@ func NewSandboxListCommand(ctx context.Context) *cobra.Command {
 				}
 
 				if podStatusStr == "" {
-					replicas, found, _ := unstructured.NestedInt64(item.Object, "spec", "replicas")
-					if found && replicas == 0 {
-						podStatusStr = "Suspended"
+					isZeroReplicas := false
+					val, found, _ := unstructured.NestedFieldNoCopy(item.Object, "spec", "replicas")
+					if found && val != nil {
+						switch v := val.(type) {
+						case int64:
+							isZeroReplicas = (v == 0)
+						case int:
+							isZeroReplicas = (v == 0)
+						case float64:
+							isZeroReplicas = (v == 0)
+						}
+					}
+					if !isZeroReplicas {
+						conditions, _, _ := unstructured.NestedSlice(item.Object, "status", "conditions")
+						for _, c := range conditions {
+							if condMap, ok := c.(map[string]interface{}); ok {
+								if msg, _ := condMap["message"].(string); strings.Contains(msg, "replicas is 0") {
+									isZeroReplicas = true
+									break
+								}
+							}
+						}
+					}
+
+					if isZeroReplicas {
+						podStatusStr = "Scaled Down"
 					} else if ann := item.GetAnnotations(); ann != nil {
 						if s, ok := ann["sandbox.gemini.google.com/pod-status"]; ok && s != "" {
 							podStatusStr = s
