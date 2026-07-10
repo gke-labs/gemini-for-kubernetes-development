@@ -1247,7 +1247,23 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				if hasFailure {
 					filename := fmt.Sprintf("task-pr-%d-investigate.yaml", num)
 					if !taskExists(incomingDir, processingDir, filename) {
-						// Count investigations since last commit
+						lastResetTime := lastCommitTime
+						if listCommentsErr == nil {
+							for _, c := range comments {
+								isPoolBot := false
+								for _, bot := range allBotUsers {
+									if strings.EqualFold(c.GetUser().GetLogin(), bot) {
+										isPoolBot = true
+										break
+									}
+								}
+								// Advance reset timestamp when any human comments OR when the bot previously paused automated investigation
+								if (!isPoolBot || strings.Contains(c.GetBody(), "pausing automated investigation")) && c.GetCreatedAt().After(lastResetTime) {
+									lastResetTime = c.GetCreatedAt()
+								}
+							}
+						}
+
 						investigationCount := 0
 						if listCommentsErr == nil {
 							for _, c := range comments {
@@ -1260,49 +1276,21 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 								}
 								if isPoolBot &&
 									strings.Contains(c.GetBody(), "started investigating CI check failures") &&
-									c.GetCreatedAt().After(lastCommitTime) {
+									c.GetCreatedAt().After(lastResetTime) {
 									investigationCount++
 								}
 							}
 						}
 
-						// Post giving up comment if we haven't already posted it since the last commit
-						hasPostedGivingUp := false
-						if listCommentsErr == nil {
-							for _, c := range comments {
-								isPoolBot := false
-								for _, bot := range allBotUsers {
-									if strings.EqualFold(c.GetUser().GetLogin(), bot) {
-										isPoolBot = true
-										break
-									}
-								}
-								if isPoolBot &&
-									strings.Contains(c.GetBody(), "giving up. Human assistance is required") &&
-									c.GetCreatedAt().After(lastCommitTime) {
-									hasPostedGivingUp = true
-									break
-								}
-							}
-						}
-
-						if hasPostedGivingUp {
-							klog.Infof("Skipping PR #%d investigate because the bot has already given up on the current commit.", num)
-						} else if investigationCount >= 3 {
+						if investigationCount >= 3 {
+							stopLabel := getStopLabel(triggerLabel)
 							if !dryRun {
-								addGitHubComment(ctx, ghClient, owner, repo, num, "🤖 AI Factory has attempted to fix CI failures for this PR 3 times since the last commit and is giving up. Human assistance is required.")
-								if assignedBot != "" && !unassignedPRs[num] {
-									fmt.Printf("Unassigning bot %s from PR #%d because it has given up...\n", assignedBot, num)
-									if _, _, err := ghClient.Issues.RemoveAssignees(ctx, owner, repo, num, []string{assignedBot}); err != nil {
-										klog.Errorf("Failed to unassign bot %s from PR #%d: %v", assignedBot, num, err)
-									}
-									unassignedPRs[num] = true
-								}
-								if _, _, err := ghClient.Issues.AddLabelsToIssue(ctx, owner, repo, num, []string{"overseer/giving-up"}); err != nil {
-									klog.Errorf("Failed to add giving up label to PR #%d: %v", num, err)
+								addGitHubComment(ctx, ghClient, owner, repo, num, fmt.Sprintf("🤖 AI Factory has attempted to investigate/fix CI check failures for this pull request 3 times since the last commit or update without success. To prevent infinite loops, I am pausing automated investigation and attaching the `%s` label.\n\nTo request another attempt or resume automated processing, please remove the `%s` label from this pull request (and/or push a new commit or leave a comment).", stopLabel, stopLabel))
+								if _, _, err := ghClient.Issues.AddLabelsToIssue(ctx, owner, repo, num, []string{stopLabel}); err != nil {
+									klog.Errorf("Failed to add stop label '%s' to PR #%d: %v", stopLabel, num, err)
 								}
 							}
-							klog.Infof("Skipping PR #%d investigate because it has reached the maximum retry limit (3).", num)
+							klog.Infof("Skipping PR #%d investigate because it has reached the maximum retry limit (3 attempts since last update) and applying stop label '%s'.", num, stopLabel)
 						} else {
 							prevFailed := false
 							processedPath := filepath.Join(processedDir, filename)
@@ -2376,6 +2364,13 @@ func hasStopLabel(labels []*githubv39.Label, triggerLabel string) bool {
 		}
 	}
 	return false
+}
+
+func getStopLabel(triggerLabel string) string {
+	if triggerLabel != "" && !strings.EqualFold(triggerLabel, "overseer") {
+		return triggerLabel + "/stop"
+	}
+	return "overseer/stop"
 }
 
 func removePendingTasksForNumber(incomingDir string, number int) {
