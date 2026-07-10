@@ -674,6 +674,7 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                     </div>
                 ) : activeOverseer ? (() => {
                     const overseerName = `overseer-${activeOverseer.metadata.name}`;
+                    const filtered = sandboxes.filter(filterSandbox);
                     const runningSandboxes = filtered.filter(sb => {
                         const info = getSandboxPodInfo(sb);
                         return !info.isSuspended && !info.isEvicted && !info.isFailed;
