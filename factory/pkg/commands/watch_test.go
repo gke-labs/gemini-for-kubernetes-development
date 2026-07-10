@@ -119,6 +119,15 @@ func TestGetReferencedIssues(t *testing.T) {
 			body:     "Just refactoring some code",
 			expected: map[int]bool{},
 		},
+		{
+			name:    "Branch with timestamp and keyword issue link without #",
+			headRef: "ada-coder-bot:issue-11414-1783386792",
+			title:   "Fixes 11414",
+			body:    "Resolves 11414 without hash",
+			expected: map[int]bool{
+				11414: true,
+			},
+		},
 	}
 
 	for _, tc := range tests {

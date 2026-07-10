@@ -2202,22 +2202,22 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 func getReferencedIssues(pr *githubv39.PullRequest) map[int]bool {
 	referenced := make(map[int]bool)
 
-	// Check branch name
+	// Check branch name, ignoring epoch timestamps (num >= 10000000)
 	if pr.GetHead().GetRef() != "" {
 		re := regexp.MustCompile(`\d+`)
 		for _, match := range re.FindAllString(pr.GetHead().GetRef(), -1) {
-			if num, err := strconv.Atoi(match); err == nil {
+			if num, err := strconv.Atoi(match); err == nil && num < 10000000 {
 				referenced[num] = true
 			}
 		}
 	}
 
-	// Check title and body
-	re := regexp.MustCompile(`#(\d+)\b`)
+	// Check title and body for #1234 or "Fixes/Closes/Resolves/Issue 1234"
+	re := regexp.MustCompile(`(?:#|(?i:\b(?:fixes|closes|resolves|issue)\s+))(\d+)\b`)
 	for _, text := range []string{pr.GetTitle(), pr.GetBody()} {
 		for _, match := range re.FindAllStringSubmatch(text, -1) {
 			if len(match) > 1 {
-				if num, err := strconv.Atoi(match[1]); err == nil {
+				if num, err := strconv.Atoi(match[1]); err == nil && num < 10000000 {
 					referenced[num] = true
 				}
 			}
