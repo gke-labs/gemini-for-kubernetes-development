@@ -31,6 +31,16 @@ func (s *Server) startCommand(ctx context.Context, sshChannel ssh.Channel, comma
 	log := klog.FromContext(ctx)
 
 	userHomeDir := os.Getenv("HOME")
+	if userHomeDir == "" {
+		userHomeDir = "/workspaces"
+	}
+	if err := os.MkdirAll(userHomeDir, 0755); err != nil {
+		if _, statErr := os.Stat("/workspaces"); statErr == nil {
+			userHomeDir = "/workspaces"
+		} else {
+			userHomeDir = "/"
+		}
+	}
 
 	// Rather than trying to parse the command, we just run a shell and let it handle it.
 	cmd := exec.CommandContext(ctx, "/bin/bash", "-c", command)

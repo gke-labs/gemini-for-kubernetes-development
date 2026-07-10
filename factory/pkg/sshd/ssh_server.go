@@ -51,7 +51,7 @@ func (s *Server) Start(ctx context.Context, conn net.Conn) error {
 
 	sshDir := os.Getenv("SSHD_ROOT_DIR")
 	if sshDir == "" {
-		sshDir = "/etc/ssh"
+		sshDir = "/tmp/ssh"
 	}
 	if err := os.MkdirAll(sshDir, 0700); err != nil {
 		if sshDir == "/etc/ssh" {

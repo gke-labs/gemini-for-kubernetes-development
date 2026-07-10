@@ -125,9 +125,6 @@ func (s *Server) terminal(c *gin.Context) {
 			Stdout:      execOutW,
 			Stderr:      execErrW,
 			TTY:         false, // SSH transport doesn't need TTY
-			Env: map[string]string{
-				"SSHD_ROOT_DIR": "/tmp/ssh",
-			},
 		}
 
 		klog.Infof("Starting sshd in pod %s", podID.Name)
