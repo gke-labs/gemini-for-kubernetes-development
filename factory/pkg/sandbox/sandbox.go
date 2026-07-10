@@ -3,6 +3,7 @@ package sandbox
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -381,6 +382,62 @@ func UpdateSandboxTaskAnnotation(ctx context.Context, kubeClient *clients.Kubern
 	return nil
 }
 
+// IsCurrentSandbox checks if the given Sandbox resource corresponds to the pod currently running this process,
+// preventing self-suspension or self-eviction of the active watch/controller daemon.
+func IsCurrentSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, item *unstructured.Unstructured, namespace string) bool {
+	if item == nil {
+		return false
+	}
+	sbName := item.GetName()
+	if sbName == "" {
+		return false
+	}
+
+	// If not running inside a Kubernetes pod (or sandbox container), we are running on an external workstation.
+	// Therefore, no cluster sandbox corresponds to "this current process".
+	if os.Getenv("KUBERNETES_SERVICE_HOST") == "" && os.Getenv("SANDBOX_NAME") == "" {
+		if _, err := os.Stat("/var/run/secrets/kubernetes.io/serviceaccount/token"); os.IsNotExist(err) {
+			return false
+		}
+	}
+
+	// 1. Fast path from explicit environment variables
+	if envSB := os.Getenv("SANDBOX_NAME"); envSB != "" && envSB == sbName {
+		return true
+	}
+	podName := os.Getenv("POD_NAME")
+	if podName == "" {
+		podName = os.Getenv("HOSTNAME")
+	}
+	if podName != "" {
+		// If the pod name exactly equals the sandbox name (e.g. overseer-kcc == overseer-kcc)
+		if podName == sbName {
+			return true
+		}
+		// If the pod name starts with the sandbox name followed by a hyphen (e.g. overseer-kcc-6c66b9cb6d-7gprl)
+		if strings.HasPrefix(podName, sbName+"-") {
+			return true
+		}
+		// 2. Query k8s API for the current pod's labels and owner references
+		if kubeClient != nil && kubeClient.Clientset != nil {
+			pod, err := kubeClient.Clientset.CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{})
+			if err == nil && pod != nil {
+				// Check standard sandbox label on the pod
+				if pod.Labels["sandbox"] == sbName || pod.Labels["agents.x-k8s.io/sandbox"] == sbName {
+					return true
+				}
+				// Check owner references pointing to this Sandbox resource
+				for _, owner := range pod.OwnerReferences {
+					if owner.Name == sbName {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
 func SuspendIdleSandboxes(ctx context.Context, kubeClient *clients.KubernetesClient, namespace string, idleTimeout time.Duration, dryRun bool) (int, error) {
 	if kubeClient == nil || idleTimeout <= 0 {
 		return 0, nil
@@ -396,6 +453,9 @@ func SuspendIdleSandboxes(ctx context.Context, kubeClient *clients.KubernetesCli
 
 	for _, item := range list.Items {
 		name := item.GetName()
+		if IsCurrentSandbox(ctx, kubeClient, &item, namespace) {
+			continue
+		}
 		replicas, found, err := unstructured.NestedInt64(item.Object, "spec", "replicas")
 		if err == nil && found && replicas == 0 {
 			continue // Already suspended

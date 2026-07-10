@@ -2,6 +2,7 @@ package sandbox_test
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
@@ -103,6 +104,72 @@ func TestSuspendIdleSandboxes(t *testing.T) {
 	repRecent, _, _ := unstructured.NestedInt64(updatedRecent.Object, "spec", "replicas")
 	if repRecent != 1 {
 		t.Errorf("Expected recent-sandbox replicas=1, got %d", repRecent)
+	}
+}
+
+func TestIsCurrentSandbox_And_SuspendSkip(t *testing.T) {
+	scheme := runtime.NewScheme()
+	fakeDynamic := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, map[schema.GroupVersionResource]string{
+		k8s.SandboxGVR: "SandboxList",
+	})
+	kubeClient := &clients.KubernetesClient{
+		DynamicClient: fakeDynamic,
+	}
+
+	ctx := context.Background()
+	ns := "test-namespace"
+	sbName := "my-active-daemon"
+
+	t.Setenv("KUBERNETES_SERVICE_HOST", "10.0.0.1")
+	t.Setenv("HOSTNAME", sbName)
+
+	oldTime := time.Now().Add(-24 * time.Hour).UTC().Format(time.RFC3339)
+	controllerSandbox := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "agents.x-k8s.io/v1alpha1",
+			"kind":       "Sandbox",
+			"metadata": map[string]interface{}{
+				"name":              sbName,
+				"namespace":         ns,
+				"creationTimestamp": oldTime,
+			},
+			"spec": map[string]interface{}{
+				"replicas": int64(1),
+			},
+		},
+	}
+
+	if !sandbox.IsCurrentSandbox(ctx, kubeClient, controllerSandbox, ns) {
+		t.Errorf("Expected IsCurrentSandbox=true when HOSTNAME matches sandbox name inside cluster")
+	}
+
+	// Verify that outside the cluster (workstation without k8s env/tokens), IsCurrentSandbox returns false
+	t.Setenv("KUBERNETES_SERVICE_HOST", "")
+	t.Setenv("SANDBOX_NAME", "")
+	if sandbox.IsCurrentSandbox(ctx, kubeClient, controllerSandbox, ns) {
+		if _, err := os.Stat("/var/run/secrets/kubernetes.io/serviceaccount/token"); os.IsNotExist(err) {
+			t.Errorf("Expected IsCurrentSandbox=false when running outside cluster on workstation")
+		}
+	}
+	t.Setenv("KUBERNETES_SERVICE_HOST", "10.0.0.1")
+
+	_, err := fakeDynamic.Resource(k8s.SandboxGVR).Namespace(ns).Create(ctx, controllerSandbox, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("Failed to create controller sandbox: %v", err)
+	}
+
+	count, err := sandbox.SuspendIdleSandboxes(ctx, kubeClient, ns, 30*time.Minute, false)
+	if err != nil {
+		t.Fatalf("SuspendIdleSandboxes failed: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("Expected 0 sandboxes suspended when checking current sandbox, got %d", count)
+	}
+
+	updated, _ := fakeDynamic.Resource(k8s.SandboxGVR).Namespace(ns).Get(ctx, sbName, metav1.GetOptions{})
+	rep, _, _ := unstructured.NestedInt64(updated.Object, "spec", "replicas")
+	if rep != 1 {
+		t.Errorf("Expected current sandbox replicas=1 (skipped), got %d", rep)
 	}
 }
 

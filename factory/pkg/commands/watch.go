@@ -278,11 +278,7 @@ func countRunningSandboxTasks(ctx context.Context, kubeClient *clients.Kubernete
 
 	count := 0
 	for _, item := range list.Items {
-		if strings.HasPrefix(item.GetName(), "overseer-") {
-			continue
-		}
-		labels := item.GetLabels()
-		if labels != nil && labels["overseer.gemini.google.com/overseer"] != "" {
+		if factorysandbox.IsCurrentSandbox(ctx, kubeClient, &item, namespace) {
 			continue
 		}
 
@@ -2683,6 +2679,9 @@ func cleanupStaleIdleSandboxes(ctx context.Context, kubeClient *clients.Kubernet
 	now := time.Now()
 	for _, item := range list.Items {
 		name := item.GetName()
+		if factorysandbox.IsCurrentSandbox(ctx, kubeClient, &item, namespace) {
+			continue
+		}
 		creationTime := item.GetCreationTimestamp().Time
 		if creationTime.IsZero() {
 			continue

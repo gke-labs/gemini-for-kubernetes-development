@@ -513,6 +513,12 @@ func NewSandboxSuspendCommand(ctx context.Context) *cobra.Command {
 				if !targets[name] {
 					continue
 				}
+				if factorysandbox.IsCurrentSandbox(ctx, kubeClient, &item, rootFlags.Namespace) {
+					if !all && len(args) > 0 {
+						fmt.Printf("Skipping active watch daemon sandbox '%s' (cannot self-suspend via factory suspend).\n", name)
+					}
+					continue
+				}
 				replicas, found, _ := unstructured.NestedInt64(item.Object, "spec", "replicas")
 				if found && replicas == 0 {
 					fmt.Printf("Sandbox '%s' is already suspended (replicas=0).\n", name)
