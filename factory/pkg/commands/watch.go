@@ -1655,13 +1655,21 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					State:       "open",
 					ListOptions: githubv39.ListOptions{PerPage: 100},
 				}
-				iss1, _, err := ghClient.Issues.ListByRepo(ctx, owner, repo, opts1)
-				if err == nil {
+				for {
+					iss1, resp, err := ghClient.Issues.ListByRepo(ctx, owner, repo, opts1)
+					if err != nil {
+						klog.Errorf("Failed to list PR issues for assignee %s: %v", botUser, err)
+						break
+					}
 					for _, item := range iss1 {
 						if item.PullRequestLinks != nil {
 							allPRIssues = append(allPRIssues, item)
 						}
 					}
+					if resp.NextPage == 0 {
+						break
+					}
+					opts1.Page = resp.NextPage
 				}
 			}
 			opts2PR := &githubv39.IssueListByRepoOptions{
@@ -1669,13 +1677,21 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				State:       "open",
 				ListOptions: githubv39.ListOptions{PerPage: 100},
 			}
-			iss2, _, err := ghClient.Issues.ListByRepo(ctx, owner, repo, opts2PR)
-			if err == nil {
+			for {
+				iss2, resp, err := ghClient.Issues.ListByRepo(ctx, owner, repo, opts2PR)
+				if err != nil {
+					klog.Errorf("Failed to list PR issues for label %s: %v", triggerLabel, err)
+					break
+				}
 				for _, item := range iss2 {
 					if item.PullRequestLinks != nil {
 						allPRIssues = append(allPRIssues, item)
 					}
 				}
+				if resp.NextPage == 0 {
+					break
+				}
+				opts2PR.Page = resp.NextPage
 			}
 
 			// Deduplicate allPRIssues
