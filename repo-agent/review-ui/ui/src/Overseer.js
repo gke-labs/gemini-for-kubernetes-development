@@ -263,14 +263,62 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
         return 'var(--status-grey)';
     };
 
+    const getSandboxPodInfo = (sb) => {
+        if (!sb) return { status: 'Unknown', label: 'Unknown', badgeLabel: 'Unknown', color: 'var(--text-secondary)', bgColor: 'var(--bg-secondary)', isSuspended: false, isEvicted: false, isFailed: false };
+        const replicas = sb.spec?.replicas;
+        const conditions = sb.status?.conditions || [];
+        let isSuspended = (replicas === 0 || replicas === '0');
+        if (!isSuspended) {
+            for (const c of conditions) {
+                if (c.message && c.message.toLowerCase().includes('replicas is 0')) {
+                    isSuspended = true;
+                    break;
+                }
+            }
+        }
+        if (isSuspended) {
+            return { status: 'scaled down', label: 'Scaled Down (0)', badgeLabel: 'Scaled Down', color: '#856404', bgColor: '#fff3cd', isSuspended: true, isEvicted: false, isFailed: false };
+        }
+
+        let isEvicted = false;
+        let isFailed = false;
+        let failReason = 'Failed';
+        for (const c of conditions) {
+            const msg = (c.message || '').toLowerCase();
+            const reason = (c.reason || '').toLowerCase();
+            if (msg.includes('evicted') || reason === 'evicted') {
+                isEvicted = true;
+                failReason = 'Evicted';
+                break;
+            }
+            if (msg.includes('phase: failed') || reason === 'podfailed') {
+                isFailed = true;
+            }
+        }
+        if (isEvicted || isFailed) {
+            return {
+                status: isEvicted ? 'evicted' : 'failed',
+                label: isEvicted ? 'Evicted (1)' : 'Failed (1)',
+                badgeLabel: failReason,
+                color: '#d93025',
+                bgColor: '#fce8e6',
+                isSuspended: false,
+                isEvicted: true,
+                isFailed: true
+            };
+        }
+
+        return { status: 'running', label: 'Running (1)', badgeLabel: 'Active', color: 'var(--status-green)', bgColor: 'var(--bg-secondary)', isSuspended: false, isEvicted: false, isFailed: false };
+    };
+
     const filterSandbox = (sb) => {
         if (!searchFilter || !searchFilter.trim()) return true;
         const q = searchFilter.trim().toLowerCase();
         const name = sb.metadata?.name || '';
         const typeBadge = getSandboxBadgeLabel(sb);
         const rawType = sb.metadata?.labels?.['sandbox.gemini.google.com/type'] || sb.metadata?.labels?.['sandbox-type'] || '';
-        const isSuspended = sb.spec?.replicas === 0 || sb.spec?.replicas === '0';
-        const status = isSuspended ? 'suspended' : 'running';
+        const podInfo = getSandboxPodInfo(sb);
+        const status = podInfo.status;
         const issue = sb.metadata?.labels?.['factory.gemini.google.com/issue'] || sb.metadata?.labels?.issue || '';
         const pr = sb.metadata?.labels?.['factory.gemini.google.com/pr'] || sb.metadata?.annotations?.pr || '';
         const user = sb.metadata?.labels?.['factory.gemini.google.com/user'] || '';
@@ -395,19 +443,40 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                                         }}>
                                             {getSandboxBadgeLabel(activeSandbox)}
                                         </span>
-                                        {(activeSandbox.spec?.replicas === 0 || activeSandbox.spec?.replicas === '0') && (
-                                            <span style={{ 
-                                                padding: '3px 10px', 
-                                                borderRadius: '12px', 
-                                                fontSize: '0.75rem', 
-                                                fontWeight: 'bold', 
-                                                backgroundColor: '#fff3cd', 
-                                                color: '#856404', 
-                                                border: '1px solid #ffeeba'
-                                            }}>
-                                                ⏸️ Suspended (Replicas: 0)
-                                            </span>
-                                        )}
+                                        {(() => {
+                                            const podInfo = getSandboxPodInfo(activeSandbox);
+                                            if (podInfo.isSuspended) {
+                                                return (
+                                                    <span style={{ 
+                                                        padding: '3px 10px', 
+                                                        borderRadius: '12px', 
+                                                        fontSize: '0.75rem', 
+                                                        fontWeight: 'bold', 
+                                                        backgroundColor: podInfo.bgColor, 
+                                                        color: podInfo.color, 
+                                                        border: '1px solid #ffeeba'
+                                                    }}>
+                                                        ⏸️ Scaled Down (Replicas: 0)
+                                                    </span>
+                                                );
+                                            }
+                                            if (podInfo.isEvicted || podInfo.isFailed) {
+                                                return (
+                                                    <span style={{ 
+                                                        padding: '3px 10px', 
+                                                        borderRadius: '12px', 
+                                                        fontSize: '0.75rem', 
+                                                        fontWeight: 'bold', 
+                                                        backgroundColor: podInfo.bgColor, 
+                                                        color: podInfo.color, 
+                                                        border: '1px solid #f8d7da'
+                                                    }}>
+                                                        ⚠️ {podInfo.label}
+                                                    </span>
+                                                );
+                                            }
+                                            return null;
+                                        })()}
                                     </div>
 
                                     <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', display: 'flex', flexWrap: 'wrap', gap: '15px' }}>
@@ -585,16 +654,23 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                     </div>
                 ) : activeOverseer ? (() => {
                     const overseerName = `overseer-${activeOverseer.metadata.name}`;
-                    const filtered = sandboxes.filter(sb => {
-                        const name = sb.metadata?.name || '';
-                        const sType = sb.metadata?.labels?.['sandbox.gemini.google.com/type'] || sb.metadata?.labels?.['sandbox-type'] || '';
-                        if (name === overseerName || sType === 'overseer') return false;
-                        return filterSandbox(sb);
+                    const runningSandboxes = filtered.filter(sb => {
+                        const info = getSandboxPodInfo(sb);
+                        return !info.isSuspended && !info.isEvicted && !info.isFailed;
                     });
-                    const activeSandboxes = filtered.filter(sb => !(sb.spec?.replicas === 0 || sb.spec?.replicas === '0'));
-                    const suspendedSandboxes = filtered.filter(sb => sb.spec?.replicas === 0 || sb.spec?.replicas === '0');
+                    const evictedSandboxes = filtered.filter(sb => {
+                        const info = getSandboxPodInfo(sb);
+                        return !info.isSuspended && (info.isEvicted || info.isFailed);
+                    });
+                    const suspendedSandboxes = filtered.filter(sb => {
+                        const info = getSandboxPodInfo(sb);
+                        return info.isSuspended;
+                    });
 
-                    const renderTableRow = (sb, isSuspended) => {
+                    const renderTableRow = (sb) => {
+                        const podInfo = getSandboxPodInfo(sb);
+                        const isSuspended = podInfo.isSuspended;
+                        const isEvicted = podInfo.isEvicted || podInfo.isFailed;
                         const name = sb.metadata?.name || '';
                         const typeBadge = getSandboxBadgeLabel(sb);
                         const icon = getSandboxTypeIcon(sb);
@@ -632,23 +708,23 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                                 style={{ 
                                     cursor: 'pointer', 
                                     borderBottom: '1px solid var(--border-color)',
-                                    backgroundColor: isSuspended ? 'rgba(255, 243, 205, 0.04)' : 'transparent',
+                                    backgroundColor: isEvicted ? 'rgba(217, 48, 37, 0.04)' : (isSuspended ? 'rgba(255, 243, 205, 0.04)' : 'transparent'),
                                     opacity: isSuspended ? 0.75 : 1
                                 }}
                                 className="table-row-hover"
                             >
                                 <td style={{ padding: '12px 16px', fontWeight: 'bold', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                    <span>{isSuspended ? '⏸️' : icon}</span>
+                                    <span>{isEvicted ? '⚠️' : (isSuspended ? '⏸️' : icon)}</span>
                                     <span style={{ textDecoration: isSuspended ? 'line-through' : 'none' }}>{name}</span>
                                 </td>
                                 <td style={{ padding: '12px 16px' }}>
-                                    <span style={{ fontSize: '0.75rem', padding: '3px 8px', borderRadius: '10px', backgroundColor: isSuspended ? '#fff3cd' : 'var(--bg-secondary)', color: isSuspended ? '#856404' : 'var(--text-secondary)', fontWeight: isSuspended ? 'bold' : 'normal', whiteSpace: 'nowrap' }}>
-                                        {isSuspended ? `Suspended • ${typeBadge}` : typeBadge}
+                                    <span style={{ fontSize: '0.75rem', padding: '3px 8px', borderRadius: '10px', backgroundColor: podInfo.bgColor, color: podInfo.color, fontWeight: (isSuspended || isEvicted) ? 'bold' : 'normal', whiteSpace: 'nowrap' }}>
+                                        {isSuspended ? `Scaled Down • ${typeBadge}` : (isEvicted ? `${podInfo.badgeLabel} • ${typeBadge}` : typeBadge)}
                                     </span>
                                 </td>
                                 <td style={{ padding: '12px 16px', fontSize: '0.85rem' }}>
-                                    <span style={{ color: isSuspended ? '#856404' : 'var(--status-green)', fontWeight: '600' }}>
-                                        {isSuspended ? 'Suspended (0)' : 'Running (1)'}
+                                    <span style={{ color: podInfo.color, fontWeight: '600' }}>
+                                        {podInfo.label}
                                     </span>
                                 </td>
                                 <td style={{ padding: '12px 16px', fontSize: '0.85rem', fontFamily: 'monospace', color: 'var(--text-secondary)' }}>
@@ -751,20 +827,31 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                                             </td>
                                         </tr>
 
-                                        {activeSandboxes.map(sb => renderTableRow(sb, false))}
+                                        {runningSandboxes.map(sb => renderTableRow(sb))}
+
+                                        {evictedSandboxes.length > 0 && (
+                                            <>
+                                                <tr style={{ backgroundColor: 'var(--bg-sidebar)', borderTop: '2px solid var(--border-color)' }}>
+                                                    <td colSpan={7} style={{ padding: '10px 16px', fontSize: '0.75rem', fontWeight: 'bold', color: '#d93025', textTransform: 'uppercase' }}>
+                                                        ⚠️ Evicted / Failed Sandboxes ({evictedSandboxes.length})
+                                                    </td>
+                                                </tr>
+                                                {evictedSandboxes.map(sb => renderTableRow(sb))}
+                                            </>
+                                        )}
 
                                         {suspendedSandboxes.length > 0 && (
                                             <>
                                                 <tr style={{ backgroundColor: 'var(--bg-sidebar)', borderTop: '2px solid var(--border-color)' }}>
                                                     <td colSpan={7} style={{ padding: '10px 16px', fontSize: '0.75rem', fontWeight: 'bold', color: '#856404', textTransform: 'uppercase' }}>
-                                                        ⏸️ Suspended Sandboxes ({suspendedSandboxes.length})
+                                                        ⏸️ Scaled Down Sandboxes ({suspendedSandboxes.length})
                                                     </td>
                                                 </tr>
-                                                {suspendedSandboxes.map(sb => renderTableRow(sb, true))}
+                                                {suspendedSandboxes.map(sb => renderTableRow(sb))}
                                             </>
                                         )}
 
-                                        {activeSandboxes.length === 0 && suspendedSandboxes.length === 0 && (
+                                        {runningSandboxes.length === 0 && evictedSandboxes.length === 0 && suspendedSandboxes.length === 0 && (
                                             <tr>
                                                 <td colSpan={7} style={{ padding: '40px', textAlign: 'center', color: 'var(--text-muted)', fontStyle: 'italic' }}>
                                                     No sandboxes match your current filter or repo.
