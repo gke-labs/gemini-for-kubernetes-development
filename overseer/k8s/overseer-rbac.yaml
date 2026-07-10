@@ -24,7 +24,7 @@ rules:
   resources: ["services"]
   verbs: ["get", "list", "create", "update", "patch", "delete"]
 - apiGroups: [""]
-  resources: ["secrets", "pods", "events"]
+  resources: ["secrets", "pods", "events", "namespaces"]
   verbs: ["get", "list"]
 - apiGroups: [""]
   resources: ["pods/portforward"]

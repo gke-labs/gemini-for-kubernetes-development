@@ -64,8 +64,8 @@ func (s *Server) getOverseerSandboxes(c *gin.Context) {
 		if sType == "" {
 			sType = labels["sandbox-type"]
 		}
-		// Skip only the overseer controller sandbox if labeled type=overseer
-		if sType == "overseer" {
+		// Skip the overseer controller sandbox if labeled type=overseer or named equal to the namespace (e.g. overseer-kcc)
+		if sType == "overseer" || sb.GetName() == namespace {
 			continue
 		}
 		items = append(items, sb.Object)

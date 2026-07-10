@@ -172,10 +172,28 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
     };
 
     const handleSandboxClick = (sb) => {
+        const isController = sb.metadata?.name === `overseer-${activeOverseer?.metadata.name}`;
         setActiveSandbox(sb);
         setShowOverseerLogs(false);
         setShowTerminal(false);
-        setShowPodLogs(false);
+        setShowPodLogs(isController);
+    };
+
+    const handleOverseerDaemonClick = () => {
+        if (!activeOverseer) return;
+        const ovName = `overseer-${activeOverseer.metadata.name}`;
+        const ovSandbox = sandboxes.find(sb => sb.metadata?.name === ovName) || {
+            metadata: {
+                name: ovName,
+                creationTimestamp: activeOverseer.metadata?.creationTimestamp || new Date().toISOString(),
+                labels: {
+                    'sandbox.gemini.google.com/type': 'Controller / Daemon',
+                    'sandbox-type': 'Controller / Daemon'
+                }
+            },
+            spec: { replicas: 1 }
+        };
+        handleSandboxClick(ovSandbox);
     };
 
     const handleDeleteSandbox = (sbName) => {
@@ -249,15 +267,28 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
         if (!searchFilter || !searchFilter.trim()) return true;
         const q = searchFilter.trim().toLowerCase();
         const name = sb.metadata?.name || '';
+        const typeBadge = getSandboxBadgeLabel(sb);
+        const rawType = sb.metadata?.labels?.['sandbox.gemini.google.com/type'] || sb.metadata?.labels?.['sandbox-type'] || '';
+        const isSuspended = sb.spec?.replicas === 0 || sb.spec?.replicas === '0';
+        const status = isSuspended ? 'suspended' : 'running';
         const issue = sb.metadata?.labels?.['factory.gemini.google.com/issue'] || sb.metadata?.labels?.issue || '';
         const pr = sb.metadata?.labels?.['factory.gemini.google.com/pr'] || sb.metadata?.annotations?.pr || '';
         const user = sb.metadata?.labels?.['factory.gemini.google.com/user'] || '';
         const desc = sb.metadata?.annotations?.['sandbox.gemini.google.com/description'] || '';
+        const tType = sb.metadata?.annotations?.['sandbox.gemini.google.com/last-task-type'] || '';
+        const tState = sb.metadata?.annotations?.['sandbox.gemini.google.com/last-task-state'] || '';
+        const url = sb.metadata?.annotations?.['sandbox.gemini.google.com/html-url'] || sb.metadata?.annotations?.htmlURL || '';
         return name.toLowerCase().includes(q) ||
+               typeBadge.toLowerCase().includes(q) ||
+               rawType.toLowerCase().includes(q) ||
+               status.toLowerCase().includes(q) ||
                String(issue).toLowerCase().includes(q) ||
                String(pr).toLowerCase().includes(q) ||
                user.toLowerCase().includes(q) ||
-               desc.toLowerCase().includes(q);
+               desc.toLowerCase().includes(q) ||
+               tType.toLowerCase().includes(q) ||
+               tState.toLowerCase().includes(q) ||
+               url.toLowerCase().includes(q);
     };
 
     return (
@@ -424,13 +455,15 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                                         📑 Pod Logs
                                     </button>
 
-                                    <button 
-                                        className="btn" 
-                                        style={{ backgroundColor: 'var(--bg-danger-light)', color: 'var(--text-danger)', border: '1px solid var(--border-danger)', fontWeight: '600' }}
-                                        onClick={() => handleDeleteSandbox(activeSandbox.metadata.name)}
-                                    >
-                                        🗑️ Evict / Delete
-                                    </button>
+                                    {activeSandbox.metadata.name !== `overseer-${activeOverseer?.metadata.name}` && (
+                                        <button 
+                                            className="btn" 
+                                            style={{ backgroundColor: 'var(--bg-danger-light)', color: 'var(--text-danger)', border: '1px solid var(--border-danger)', fontWeight: '600' }}
+                                            onClick={() => handleDeleteSandbox(activeSandbox.metadata.name)}
+                                        >
+                                            🗑️ Evict / Delete
+                                        </button>
+                                    )}
                                 </div>
                             </div>
                         </div>
@@ -551,7 +584,13 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                         </div>
                     </div>
                 ) : activeOverseer ? (() => {
-                    const filtered = sandboxes.filter(filterSandbox);
+                    const overseerName = `overseer-${activeOverseer.metadata.name}`;
+                    const filtered = sandboxes.filter(sb => {
+                        const name = sb.metadata?.name || '';
+                        const sType = sb.metadata?.labels?.['sandbox.gemini.google.com/type'] || sb.metadata?.labels?.['sandbox-type'] || '';
+                        if (name === overseerName || sType === 'overseer') return false;
+                        return filterSandbox(sb);
+                    });
                     const activeSandboxes = filtered.filter(sb => !(sb.spec?.replicas === 0 || sb.spec?.replicas === '0'));
                     const suspendedSandboxes = filtered.filter(sb => sb.spec?.replicas === 0 || sb.spec?.replicas === '0');
 
@@ -642,7 +681,8 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                                 <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
                                     <input 
                                         type="text"
-                                        placeholder="🔍 Filter Sandboxes Table..."
+                                        placeholder="🔍 Filter Name, Type, Status, Bot, Task..."
+                                        title="Searches across all columns: Name, Type, Status, Assigned Bot, Last Task, and PR/Issue URL/Number"
                                         value={searchFilter}
                                         onChange={(e) => setSearchFilter(e.target.value)}
                                         style={{
@@ -652,13 +692,13 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                                             backgroundColor: 'var(--bg-secondary)',
                                             color: 'var(--text-primary)',
                                             fontSize: '0.85rem',
-                                            width: '240px'
+                                            width: '310px'
                                         }}
                                     />
                                     <button 
                                         className="btn btn-sm"
                                         style={{ backgroundColor: 'var(--bg-active)', color: 'white', fontWeight: '600' }}
-                                        onClick={() => { setShowOverseerLogs(true); setActiveSandbox(null); }}
+                                        onClick={handleOverseerDaemonClick}
                                     >
                                         🤖 Overseer Daemon Log
                                     </button>
@@ -681,7 +721,7 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                                     <tbody>
                                         {/* Special Overseer Daemon Row right on top */}
                                         <tr 
-                                            onClick={() => { setShowOverseerLogs(true); setActiveSandbox(null); }}
+                                            onClick={handleOverseerDaemonClick}
                                             style={{ cursor: 'pointer', borderBottom: '2px solid var(--border-color)', backgroundColor: 'rgba(56, 139, 253, 0.08)' }}
                                             className="table-row-hover"
                                         >

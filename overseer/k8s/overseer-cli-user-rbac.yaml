@@ -7,5 +7,5 @@ rules:
   resources: ["sandboxes"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 - apiGroups: [""]
-  resources: ["pods", "pods/exec", "services", "secrets", "configmaps"]
+  resources: ["namespaces", "pods", "pods/exec", "services", "secrets", "configmaps"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
