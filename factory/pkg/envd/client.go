@@ -366,14 +366,7 @@ func (c *Client) Exec(ctx context.Context, cmdStr, cwd string, envs map[string]s
 	return stream.Err()
 }
 
-// SanitizeWorkspace removes stale git lockfiles or corrupted temporary files left over by an evicted or crashed pod.
-func (c *Client) SanitizeWorkspace(ctx context.Context) {
-	sanitizationCmd := `find /workspaces -maxdepth 4 -name "*.lock" -path "*/.git/*" -delete 2>/dev/null || true`
-	_ = c.Exec(ctx, sanitizationCmd, "/workspaces", nil, nil, nil, nil)
-}
-
 func (c *Client) RunTask(ctx context.Context, cmdStr string, envs map[string]string) error {
-	c.SanitizeWorkspace(ctx)
 	return c.Exec(ctx, cmdStr, "/workspaces", envs, nil, os.Stdout, os.Stderr)
 }
 
@@ -408,9 +401,6 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 	} else if isAlreadyRunning {
 		klog.Infof("Task in directory %s is already running. Reattaching...", taskDir)
 	} else {
-		// Pre-task sanitization: clean up any stale git lockfiles across the workspace left by a previously evicted or crashed pod
-		c.SanitizeWorkspace(ctx)
-
 		// Ensure the task directory exists inside the pod before writing to it
 		if err := c.Exec(ctx, fmt.Sprintf("mkdir -p %s", taskDir), "/workspaces", nil, nil, nil, nil); err != nil {
 			return fmt.Errorf("failed to create task directory in pod: %w", err)
