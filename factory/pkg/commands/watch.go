@@ -25,6 +25,7 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/klog/v2"
 )
 
@@ -201,6 +202,30 @@ func isSandboxTaskRunning(ctx context.Context, kubeClient *clients.KubernetesCli
 
 	state := annotations["sandbox.gemini.google.com/last-task-state"]
 	if state == "" || strings.EqualFold(state, "Running") {
+		// First check if the sandbox pod has failed or been evicted before calling envd.Connect
+		podList, err := kubeClient.Clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: fmt.Sprintf("sandbox=%s", name)})
+		if err == nil && len(podList.Items) > 0 {
+			for _, pod := range podList.Items {
+				if pod.DeletionTimestamp == nil && (pod.Status.Phase == corev1.PodFailed || pod.Status.Phase == corev1.PodSucceeded || strings.EqualFold(pod.Status.Reason, "Evicted")) {
+					reason := pod.Status.Reason
+					if reason == "" {
+						reason = string(pod.Status.Phase)
+					}
+					taskState := "Failed"
+					if pod.Status.Phase == corev1.PodSucceeded {
+						taskState = "Completed"
+					}
+					taskType := annotations["sandbox.gemini.google.com/last-task-type"]
+					if taskType == "" {
+						taskType = "task"
+					}
+					klog.Warningf("Sandbox %s pod is in %s state (reason: %s). Updating sandbox annotation from Running to %s.", name, pod.Status.Phase, reason, taskState)
+					_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, namespace, name, taskType, taskState)
+					return false, nil
+				}
+			}
+		}
+
 		// Verify if the task has actually finished by connecting to the sandbox via envd
 		client, err := envd.Connect(ctx, namespace, name)
 		if err == nil {
@@ -233,6 +258,14 @@ func isSandboxTaskRunning(ctx context.Context, kubeClient *clients.KubernetesCli
 					return false, nil
 				}
 			}
+		} else if strings.Contains(err.Error(), "cannot connect to terminated pod") || strings.Contains(err.Error(), "is in Failed state") {
+			taskType := annotations["sandbox.gemini.google.com/last-task-type"]
+			if taskType == "" {
+				taskType = "task"
+			}
+			klog.Warningf("Sandbox %s pod cannot be connected (%v). Updating sandbox annotation to Failed.", name, err)
+			_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, namespace, name, taskType, "Failed")
+			return false, nil
 		}
 		return true, nil
 	}

@@ -87,6 +87,7 @@ func GetSandboxPodName(ctx context.Context, namespace, sandboxName string) (stri
 					} `json:"metadata"`
 					Status struct {
 						Phase      string `json:"phase"`
+						Reason     string `json:"reason"`
 						Conditions []struct {
 							Type   string `json:"type"`
 							Status string `json:"status"`
@@ -102,6 +103,13 @@ func GetSandboxPodName(ctx context.Context, namespace, sandboxName string) (stri
 					if pod.Metadata.DeletionTimestamp != nil {
 						hasTerminating = true
 					} else {
+						if pod.Status.Phase == "Failed" || pod.Status.Phase == "Succeeded" || strings.EqualFold(pod.Status.Reason, "Evicted") {
+							reason := pod.Status.Reason
+							if reason == "" {
+								reason = pod.Status.Phase
+							}
+							return "", fmt.Errorf("sandbox pod %s is in %s state (reason: %s): cannot connect to terminated pod", pod.Metadata.Name, pod.Status.Phase, reason)
+						}
 						if pod.Status.Phase == "Running" {
 							for _, cond := range pod.Status.Conditions {
 								if cond.Type == "Ready" && cond.Status == "True" {
