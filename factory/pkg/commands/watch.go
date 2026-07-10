@@ -232,6 +232,10 @@ func isSandboxTaskRunning(ctx context.Context, kubeClient *clients.KubernetesCli
 				}
 				klog.Warningf("Sandbox %s pod is in %s state (reason: %s). Updating sandbox annotation from Running to %s.", name, lastFailedPod.Status.Phase, reason, taskState)
 				_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, namespace, name, taskType, taskState)
+				if strings.EqualFold(reason, "Evicted") || (lastFailedPod.Status.Phase == corev1.PodFailed && strings.EqualFold(lastFailedPod.Status.Reason, "Evicted")) {
+					klog.Infof("Deleting evicted pod %s so controller can recreate it.", lastFailedPod.Name)
+					_ = kubeClient.Clientset.CoreV1().Pods(namespace).Delete(ctx, lastFailedPod.Name, metav1.DeleteOptions{})
+				}
 				return false, nil
 			}
 		}
@@ -1091,6 +1095,21 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 			return
 		}
 		state.mu.Unlock()
+
+		// Proactively delete any evicted sandbox pods in the namespace so the sandbox controller can recreate them or free resources.
+		func() {
+			podList, err := kubeClient.Clientset.CoreV1().Pods(rootFlags.Namespace).List(ctx, metav1.ListOptions{LabelSelector: "sandbox"})
+			if err != nil {
+				return
+			}
+			for i := range podList.Items {
+				pod := &podList.Items[i]
+				if pod.DeletionTimestamp == nil && pod.Status.Phase == corev1.PodFailed && strings.EqualFold(pod.Status.Reason, "Evicted") {
+					klog.Infof("Found evicted sandbox pod %s in namespace %s. Deleting pod so controller can recreate or clean up.", pod.Name, rootFlags.Namespace)
+					_ = kubeClient.Clientset.CoreV1().Pods(rootFlags.Namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{})
+				}
+			}
+		}()
 
 		if isDoNotProcess(queueDir) {
 			runningCount, err := countRunningSandboxTasks(ctx, kubeClient, rootFlags.Namespace)
