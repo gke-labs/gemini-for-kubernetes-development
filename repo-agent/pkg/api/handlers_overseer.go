@@ -1,17 +1,22 @@
 package api
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
 )
 
@@ -59,8 +64,8 @@ func (s *Server) getOverseerSandboxes(c *gin.Context) {
 		if sType == "" {
 			sType = labels["sandbox-type"]
 		}
-		// Skip agent and chore, since they are handled elsewhere
-		if sType == "agent" || sType == "chore" || sType == "overseer" {
+		// Skip only the overseer controller sandbox if labeled type=overseer
+		if sType == "overseer" {
 			continue
 		}
 		items = append(items, sb.Object)
@@ -306,4 +311,230 @@ func (s *Server) resumeChore(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Chore resumed"})
+}
+
+func (s *Server) getOverseerSandboxTasks(c *gin.Context) {
+	overseerName := c.Param("name")
+	sandboxName := c.Param("sandboxName")
+	namespace := fmt.Sprintf("overseer-%s", overseerName)
+
+	// 1. Try checking if there is a SandboxTask CRD in K8s (for backwards compat)
+	tasks, err := s.K8sManager.ListSandboxTasks(c.Request.Context(), namespace, sandboxName)
+	if err == nil && len(tasks.Items) > 0 {
+		c.JSON(http.StatusOK, tasks.Items)
+		return
+	}
+
+	// 2. Try AgentServer HTTP /tasks on port 13339 if available
+	serviceName := fmt.Sprintf("%s-lb", sandboxName)
+	targetURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:13339/tasks", serviceName, namespace)
+	client := http.Client{Timeout: 2 * time.Second}
+	if resp, err := client.Get(targetURL); err == nil && resp.StatusCode == http.StatusOK {
+		defer resp.Body.Close()
+		var httpTasks []interface{}
+		if json.NewDecoder(resp.Body).Decode(&httpTasks) == nil && len(httpTasks) > 0 {
+			c.JSON(http.StatusOK, httpTasks)
+			return
+		}
+	}
+
+	// 3. Find pod to exec into /workspaces/tasks
+	podID, err := sandbox.FindSandboxPodInNamespace(c.Request.Context(), sandboxName, namespace)
+	if err != nil || podID == nil {
+		// Fallback to checking the Sandbox CR annotations for last-task-type / last-task-state
+		sb, getErr := s.K8sManager.Client.Resource(k8s.SandboxGVR).Namespace(namespace).Get(c.Request.Context(), sandboxName, v1.GetOptions{})
+		if getErr == nil {
+			ann := sb.GetAnnotations()
+			if ann != nil && ann["sandbox.gemini.google.com/last-task-type"] != "" {
+				tType := ann["sandbox.gemini.google.com/last-task-type"]
+				tState := ann["sandbox.gemini.google.com/last-task-state"]
+				if tState == "" {
+					tState = "Completed"
+				}
+				synth := []map[string]interface{}{
+					{
+						"metadata": map[string]interface{}{
+							"name":      tType,
+							"namespace": namespace,
+						},
+						"spec": map[string]interface{}{
+							"taskType": tType,
+						},
+						"status": map[string]interface{}{
+							"state": tState,
+						},
+					},
+				}
+				c.JSON(http.StatusOK, synth)
+				return
+			}
+		}
+		c.JSON(http.StatusOK, []interface{}{})
+		return
+	}
+
+	// 4. Exec sh check inside the pod via Stdin
+	var stdout bytes.Buffer
+	peekScript := fmt.Sprintf(`if command -v python3 >/dev/null 2>&1; then
+  python3 -c '
+import os, json
+tasks_dir = "/workspaces/tasks"
+res = []
+if os.path.exists(tasks_dir):
+    for d in sorted(os.listdir(tasks_dir), reverse=True):
+        p = os.path.join(tasks_dir, d)
+        if not os.path.isdir(p): continue
+        status = "Pending"
+        ec = None
+        if os.path.exists(os.path.join(p, "exit_code")):
+            try:
+                with open(os.path.join(p, "exit_code")) as f: ec = f.read().strip()
+                status = "Completed" if ec == "0" else "Failed"
+            except: pass
+        elif os.path.exists(os.path.join(p, "pid")):
+            try:
+                with open(os.path.join(p, "pid")) as f: pid = int(f.read().strip())
+                try:
+                    os.kill(pid, 0)
+                    status = "Running"
+                except OSError: status = "Crashed"
+            except: pass
+        res.append({"metadata": {"name": d, "namespace": "%s"}, "spec": {"taskType": d}, "status": {"state": status, "exitCode": ec}})
+print(json.dumps(res))
+'
+else
+  echo "["
+  first=true
+  if [ -d "/workspaces/tasks" ]; then
+    for d in $(ls -r /workspaces/tasks 2>/dev/null); do
+      if [ ! -d "/workspaces/tasks/$d" ]; then continue; fi
+      if [ "$first" = true ]; then first=false; else echo ","; fi
+      status="Pending"
+      ec="null"
+      if [ -f "/workspaces/tasks/$d/exit_code" ]; then
+        code=$(cat "/workspaces/tasks/$d/exit_code" 2>/dev/null | tr -d "\r\n")
+        ec="\"$code\""
+        if [ "$code" = "0" ]; then status="Completed"; else status="Failed"; fi
+      elif [ -f "/workspaces/tasks/$d/pid" ]; then
+        pid=$(cat "/workspaces/tasks/$d/pid" 2>/dev/null | tr -d "\r\n")
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then status="Running"; else status="Crashed"; fi
+      fi
+      printf "{\"metadata\":{\"name\":\"%%s\",\"namespace\":\"%s\"},\"spec\":{\"taskType\":\"%%s\"},\"status\":{\"state\":\"%%s\",\"exitCode\":%%s}}" "$d" "$d" "$status" "$ec"
+    done
+  fi
+  echo "]"
+fi`, namespace, namespace)
+
+	execOpts := sandbox.ExecOptions{
+		Command: []string{"/bin/sh"},
+		Stdin:   []byte(peekScript),
+		Stdout:  &stdout,
+	}
+	if err := sandbox.ExecInPod(c.Request.Context(), s.K8sManager.KubeClient, *podID, execOpts); err != nil {
+		stdout.Reset()
+		execOpts.Command = []string{"/bin/bash"}
+		if err2 := sandbox.ExecInPod(c.Request.Context(), s.K8sManager.KubeClient, *podID, execOpts); err2 != nil {
+			klog.Warningf("Failed to peek tasks inside pod %s/%s: %v / %v", namespace, podID.Name, err, err2)
+			c.JSON(http.StatusOK, []interface{}{})
+			return
+		}
+	}
+
+	var peekedTasks []interface{}
+	if err := json.Unmarshal(stdout.Bytes(), &peekedTasks); err != nil {
+		klog.Warningf("Failed to decode peeked tasks JSON from pod %s/%s: %v\nOutput: %s", namespace, podID.Name, err, stdout.String())
+		c.JSON(http.StatusOK, []interface{}{})
+		return
+	}
+
+	c.JSON(http.StatusOK, peekedTasks)
+}
+
+func (s *Server) getOverseerSandboxTaskLogs(c *gin.Context) {
+	overseerName := c.Param("name")
+	sandboxName := c.Param("sandboxName")
+	taskID := c.Param("taskID")
+	namespace := fmt.Sprintf("overseer-%s", overseerName)
+
+	serviceName := fmt.Sprintf("%s-lb", sandboxName)
+	targetURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:13339", serviceName, namespace)
+
+	client := http.Client{Timeout: 1 * time.Second}
+	if resp, err := client.Get(fmt.Sprintf("%s/logs/%s", targetURL, taskID)); err == nil && resp.StatusCode == http.StatusOK {
+		defer resp.Body.Close()
+		c.Header("Content-Type", "text/plain")
+		_, _ = io.Copy(c.Writer, resp.Body)
+		return
+	}
+
+	podID, err := sandbox.FindSandboxPodInNamespace(c.Request.Context(), sandboxName, namespace)
+	if err != nil || podID == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Sandbox pod not found or not reachable via AgentServer"})
+		return
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	readCmd := fmt.Sprintf("if [ -f /workspaces/tasks/%s/execution.log ]; then cat /workspaces/tasks/%s/execution.log; elif [ -f /workspaces/tasks/%s/agent-output.txt ]; then cat /workspaces/tasks/%s/agent-output.txt; else echo 'Log file not found.'; fi", taskID, taskID, taskID, taskID)
+	execOpts := sandbox.ExecOptions{
+		Command: []string{"/bin/sh"},
+		Stdin:   []byte(readCmd),
+		Stdout:  &stdout,
+		Stderr:  &stderr,
+	}
+	if err := sandbox.ExecInPod(c.Request.Context(), s.K8sManager.KubeClient, *podID, execOpts); err != nil {
+		stdout.Reset()
+		stderr.Reset()
+		execOpts.Command = []string{"/bin/bash"}
+		if err2 := sandbox.ExecInPod(c.Request.Context(), s.K8sManager.KubeClient, *podID, execOpts); err2 != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read task log from pod", "details": fmt.Sprintf("%v / %v", err, err2)})
+			return
+		}
+	}
+
+	c.Header("Content-Type", "text/plain")
+	_, _ = c.Writer.Write(stdout.Bytes())
+}
+
+func (s *Server) getOverseerSandboxLogs(c *gin.Context) {
+	overseerName := c.Param("name")
+	sandboxName := c.Param("sandboxName")
+	namespace := fmt.Sprintf("overseer-%s", overseerName)
+
+	podID, err := sandbox.FindSandboxPodInNamespace(c.Request.Context(), sandboxName, namespace)
+	if err != nil || podID == nil {
+		pods, listErr := s.K8sManager.Clientset.CoreV1().Pods(namespace).List(c.Request.Context(), v1.ListOptions{
+			LabelSelector: fmt.Sprintf("sandbox=%s", sandboxName),
+		})
+		if listErr != nil || len(pods.Items) == 0 {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Sandbox pod not found"})
+			return
+		}
+		podName := pods.Items[0].Name
+		podID = &types.NamespacedName{Namespace: namespace, Name: podName}
+	}
+
+	req := s.K8sManager.Clientset.CoreV1().Pods(namespace).GetLogs(podID.Name, &corev1.PodLogOptions{})
+	readCloser, err := req.Stream(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to stream sandbox logs", "details": err.Error()})
+		return
+	}
+	defer readCloser.Close()
+
+	c.Header("Content-Type", "text/plain")
+	_, _ = io.Copy(c.Writer, readCloser)
+}
+
+func (s *Server) deleteOverseerSandbox(c *gin.Context) {
+	overseerName := c.Param("name")
+	sandboxName := c.Param("sandboxName")
+	namespace := fmt.Sprintf("overseer-%s", overseerName)
+
+	err := s.K8sManager.DeleteSandbox(c.Request.Context(), namespace, sandboxName)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete sandbox", "details": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "deleted"})
 }

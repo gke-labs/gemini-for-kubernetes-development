@@ -137,6 +137,10 @@ coding tasks without local side effects or host dependencies.`,
 	daemonCmd.GroupID = "management"
 	cmd.AddCommand(daemonCmd)
 
+	sshdCmd := NewSSHDCommand(ctx)
+	sshdCmd.GroupID = "management"
+	cmd.AddCommand(sshdCmd)
+
 	return cmd
 }
 

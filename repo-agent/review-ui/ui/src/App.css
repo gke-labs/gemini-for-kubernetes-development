@@ -83,6 +83,10 @@ body.dark-mode {
   font-size: 0.9rem; /* Reduced base font size */
 }
 
+.xterm, .xterm-viewport, .xterm-screen, .terminal-container {
+  text-align: left !important;
+}
+
 .App-header {
   background-color: var(--bg-header);
   padding: 20px;

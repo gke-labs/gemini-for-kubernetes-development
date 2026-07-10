@@ -90,6 +90,7 @@ const SandboxTerminal = ({ namespace, sandboxName }) => {
         <div 
             ref={terminalRef} 
             style={{ 
+                textAlign: 'left',
                 width: '100%', 
                 height: '600px', 
                 backgroundColor: '#1e1e1e', 

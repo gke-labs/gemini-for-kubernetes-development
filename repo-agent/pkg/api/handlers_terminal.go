@@ -110,15 +110,21 @@ func (s *Server) terminal(c *gin.Context) {
 		defer execOutW.Close()
 		defer execErrW.Close()
 
+		sshCmd := []string{sandbox.RepoSandboxBinary, "sshd"}
+		checkOpts := sandbox.ExecOptions{
+			Command: []string{"test", "-f", sandbox.RepoSandboxBinary},
+		}
+		if err := sandbox.ExecInPod(ctx, s.K8sManager.KubeClient, *podID, checkOpts); err != nil {
+			klog.Infof("pod %s/%s does not have %s, using /usr/local/bin/factory sshd", podID.Namespace, podID.Name, sandbox.RepoSandboxBinary)
+			sshCmd = []string{"/usr/local/bin/factory", "sshd"}
+		}
+
 		opts := sandbox.ExecOptions{
-			Command:     []string{sandbox.RepoSandboxBinary, "sshd"},
+			Command:     sshCmd,
 			StdinReader: execInR,
 			Stdout:      execOutW,
 			Stderr:      execErrW,
 			TTY:         false, // SSH transport doesn't need TTY
-			Env: map[string]string{
-				"SSHD_ROOT_DIR": "/tmp/ssh",
-			},
 		}
 
 		klog.Infof("Starting sshd in pod %s", podID.Name)

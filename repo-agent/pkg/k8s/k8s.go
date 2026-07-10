@@ -55,6 +55,19 @@ func NewManager(kube *clients.KubernetesClient) *Manager {
 	return &Manager{Client: kube.DynamicClient, Clientset: kube.Clientset, KubeClient: kube}
 }
 
+func (m *Manager) DeleteSandbox(ctx context.Context, namespace, name string) error {
+	err := m.Client.Resource(SandboxGVR).Namespace(namespace).Delete(ctx, name, v1.DeleteOptions{})
+	if err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("deleting sandbox %s: %w", name, err)
+	}
+	svcName := name + "-lb"
+	err = m.Clientset.CoreV1().Services(namespace).Delete(ctx, svcName, v1.DeleteOptions{})
+	if err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("deleting service %s: %w", svcName, err)
+	}
+	return nil
+}
+
 func (m *Manager) ListOverseers(ctx context.Context) (*unstructured.UnstructuredList, error) {
 	return m.Client.Resource(OverseerGVR).List(ctx, v1.ListOptions{})
 }
