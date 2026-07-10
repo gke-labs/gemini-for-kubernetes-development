@@ -264,9 +264,13 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
     };
 
     const getSandboxPodInfo = (sb) => {
-        if (!sb) return { status: 'Unknown', label: 'Unknown', badgeLabel: 'Unknown', color: 'var(--text-secondary)', bgColor: 'var(--bg-secondary)', isSuspended: false, isEvicted: false, isFailed: false };
+        if (!sb) return { status: 'Unknown', label: 'Unknown', badgeLabel: 'Unknown', color: 'var(--text-secondary)', bgColor: 'var(--bg-secondary)', isSuspended: false, isEvicted: false, isFailed: false, evictionCount: 0 };
         const replicas = sb.spec?.replicas;
         const conditions = sb.status?.conditions || [];
+        const evictionCountStr = sb.metadata?.annotations?.['sandbox.gemini.google.com/eviction-count'] || '0';
+        const evictionCount = parseInt(evictionCountStr, 10) || 0;
+        const evictionSuffix = evictionCount > 0 ? ` (Evictions: ${evictionCount})` : '';
+
         let isSuspended = (replicas === 0 || replicas === '0');
         if (!isSuspended) {
             for (const c of conditions) {
@@ -277,7 +281,7 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
             }
         }
         if (isSuspended) {
-            return { status: 'scaled down', label: 'Scaled Down (0)', badgeLabel: 'Scaled Down', color: '#856404', bgColor: '#fff3cd', isSuspended: true, isEvicted: false, isFailed: false };
+            return { status: 'scaled down', label: `Scaled Down (0)${evictionSuffix}`, badgeLabel: 'Scaled Down', color: '#856404', bgColor: '#fff3cd', isSuspended: true, isEvicted: false, isFailed: false, evictionCount };
         }
 
         let isEvicted = false;
@@ -298,17 +302,18 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
         if (isEvicted || isFailed) {
             return {
                 status: isEvicted ? 'evicted' : 'failed',
-                label: isEvicted ? 'Evicted (1)' : 'Failed (1)',
+                label: `${isEvicted ? 'Evicted (1)' : 'Failed (1)'}${evictionSuffix}`,
                 badgeLabel: failReason,
                 color: '#d93025',
                 bgColor: '#fce8e6',
                 isSuspended: false,
                 isEvicted: true,
-                isFailed: true
+                isFailed: true,
+                evictionCount
             };
         }
 
-        return { status: 'running', label: 'Running (1)', badgeLabel: 'Active', color: 'var(--status-green)', bgColor: 'var(--bg-secondary)', isSuspended: false, isEvicted: false, isFailed: false };
+        return { status: 'running', label: `Running (1)${evictionSuffix}`, badgeLabel: 'Active', color: 'var(--status-green)', bgColor: 'var(--bg-secondary)', isSuspended: false, isEvicted: false, isFailed: false, evictionCount };
     };
 
     const filterSandbox = (sb) => {
@@ -445,9 +450,25 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                                         </span>
                                         {(() => {
                                             const podInfo = getSandboxPodInfo(activeSandbox);
+                                            const badges = [];
+                                            if (podInfo.evictionCount > 0) {
+                                                badges.push(
+                                                    <span key="eviction-badge" style={{ 
+                                                        padding: '3px 10px', 
+                                                        borderRadius: '12px', 
+                                                        fontSize: '0.75rem', 
+                                                        fontWeight: 'bold', 
+                                                        backgroundColor: '#fff3cd', 
+                                                        color: '#856404', 
+                                                        border: '1px solid #ffeeba'
+                                                    }} title="Total number of times this sandbox's pod has been evicted and automatically cleaned up/recreated.">
+                                                        🔄 Evictions: {podInfo.evictionCount}
+                                                    </span>
+                                                );
+                                            }
                                             if (podInfo.isSuspended) {
-                                                return (
-                                                    <span style={{ 
+                                                badges.push(
+                                                    <span key="status-badge" style={{ 
                                                         padding: '3px 10px', 
                                                         borderRadius: '12px', 
                                                         fontSize: '0.75rem', 
@@ -459,10 +480,9 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                                                         ⏸️ Scaled Down (Replicas: 0)
                                                     </span>
                                                 );
-                                            }
-                                            if (podInfo.isEvicted || podInfo.isFailed) {
-                                                return (
-                                                    <span style={{ 
+                                            } else if (podInfo.isEvicted || podInfo.isFailed) {
+                                                badges.push(
+                                                    <span key="status-badge" style={{ 
                                                         padding: '3px 10px', 
                                                         borderRadius: '12px', 
                                                         fontSize: '0.75rem', 
@@ -475,7 +495,7 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                                                     </span>
                                                 );
                                             }
-                                            return null;
+                                            return badges;
                                         })()}
                                     </div>
 

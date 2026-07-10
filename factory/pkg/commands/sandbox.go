@@ -241,6 +241,11 @@ func NewSandboxListCommand(ctx context.Context) *cobra.Command {
 				if podStatusStr == "" {
 					podStatusStr = "No Pod"
 				}
+				if ann := item.GetAnnotations(); ann != nil {
+					if countStr, ok := ann["sandbox.gemini.google.com/eviction-count"]; ok && countStr != "" && countStr != "0" {
+						podStatusStr = fmt.Sprintf("%s (Evictions: %s)", podStatusStr, countStr)
+					}
+				}
 
 				lastTaskStr := "-"
 				htmlURL := "-"

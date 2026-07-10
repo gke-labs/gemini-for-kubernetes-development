@@ -234,6 +234,7 @@ func isSandboxTaskRunning(ctx context.Context, kubeClient *clients.KubernetesCli
 				_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, namespace, name, taskType, taskState)
 				if strings.EqualFold(reason, "Evicted") || (lastFailedPod.Status.Phase == corev1.PodFailed && strings.EqualFold(lastFailedPod.Status.Reason, "Evicted")) {
 					klog.Infof("Deleting evicted pod %s so controller can recreate it.", lastFailedPod.Name)
+					_ = factorysandbox.IncrementSandboxEvictionCount(ctx, kubeClient, namespace, name)
 					_ = kubeClient.Clientset.CoreV1().Pods(namespace).Delete(ctx, lastFailedPod.Name, metav1.DeleteOptions{})
 				}
 				return false, nil
@@ -1106,6 +1107,13 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				pod := &podList.Items[i]
 				if pod.DeletionTimestamp == nil && pod.Status.Phase == corev1.PodFailed && strings.EqualFold(pod.Status.Reason, "Evicted") {
 					klog.Infof("Found evicted sandbox pod %s in namespace %s. Deleting pod so controller can recreate or clean up.", pod.Name, rootFlags.Namespace)
+					sbName := pod.Labels["sandbox"]
+					if sbName == "" {
+						sbName = pod.Labels["agents.x-k8s.io/sandbox"]
+					}
+					if sbName != "" {
+						_ = factorysandbox.IncrementSandboxEvictionCount(ctx, kubeClient, rootFlags.Namespace, sbName)
+					}
 					_ = kubeClient.Clientset.CoreV1().Pods(rootFlags.Namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{})
 				}
 			}
