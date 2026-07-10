@@ -1257,7 +1257,8 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 										break
 									}
 								}
-								if !isPoolBot && c.GetCreatedAt().After(lastResetTime) {
+								// Advance reset timestamp when any human comments OR when the bot previously paused automated investigation
+								if (!isPoolBot || strings.Contains(c.GetBody(), "pausing automated investigation")) && c.GetCreatedAt().After(lastResetTime) {
 									lastResetTime = c.GetCreatedAt()
 								}
 							}
