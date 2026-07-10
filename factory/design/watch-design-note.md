@@ -101,7 +101,10 @@ When processing a PR, the scan evaluates conditions and queues tasks in three ph
 ### Phase 3: CI Check Failures (`pr-investigate`)
 * **Trigger**: Check runs or status checks for the head commit have failed.
 * **Check Run Deduplication**: Check runs are deduplicated by name, keeping only the latest run (highest ID), ensuring older cancelled/failed runs do not block the PR if a newer run succeeded.
-* **Halting Processing (`overseer/stop`)**: To halt automatic CI investigation or bot processing on any pull request or issue, attach the `overseer/stop` label (or `<triggerLabel>/stop`). Overseer immediately skips processing any PR with this label.
+* **Automated Circuit Breaker (`overseer/stop`)**: If the bot attempts to investigate/fix CI failures (`started investigating CI check failures`) 3 times since the latest git commit OR latest human comment (`max(lastCommitTime, lastHumanCommentTime)`) without success, it triggers an automated circuit breaker:
+  * It attaches the `overseer/stop` label (`or <triggerLabel>/stop`) to the pull request and posts an informative comment explaining that automated investigation is paused.
+  * To retry or resume automated investigation, a human maintainer simply removes the `overseer/stop` label (and/or pushes a new commit or leaves a comment).
+* **Halting Processing (`overseer/stop`)**: To manually halt bot processing on any pull request or issue at any time, attach the `overseer/stop` label. Overseer immediately skips processing any PR with this label.
 * **Retry on Recovery**: If the previous investigation task is in `processed/` but has status `"Failed"` or if 6 hours have passed since the last investigation (`time.Since(lastInvestigatedTime) > 6*time.Hour`), the watcher queues a retry for `pr-investigate`.
 * **Assignment**: The bot user remains assigned to the PR while tasks are executing or pending.
 

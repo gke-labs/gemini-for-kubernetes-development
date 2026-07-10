@@ -1247,56 +1247,101 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				if hasFailure {
 					filename := fmt.Sprintf("task-pr-%d-investigate.yaml", num)
 					if !taskExists(incomingDir, processingDir, filename) {
-						prevFailed := false
-						processedPath := filepath.Join(processedDir, filename)
-						if data, err := os.ReadFile(processedPath); err == nil {
-							var t QueueTask
-							if err := yaml.Unmarshal(data, &t); err == nil {
-								if t.Status == "Failed" {
-									prevFailed = true
+						lastResetTime := lastCommitTime
+						if listCommentsErr == nil {
+							for _, c := range comments {
+								isPoolBot := false
+								for _, bot := range allBotUsers {
+									if strings.EqualFold(c.GetUser().GetLogin(), bot) {
+										isPoolBot = true
+										break
+									}
+								}
+								if !isPoolBot && c.GetCreatedAt().After(lastResetTime) {
+									lastResetTime = c.GetCreatedAt()
 								}
 							}
 						}
 
-						if state.lastSHA != headSHA || prevFailed || isExplicitlyAssigned || time.Since(state.lastInvestigatedTime) > 6*time.Hour {
-							sandboxName := resolveSandboxName(ctx, kubeClient, ghClient, "pr-investigate", num, owner, repo)
-							running, err := isSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName)
-							if err != nil {
-								klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
-							} else if running {
-								klog.Infof("Skipping PR #%d investigate because there is an in-flight sandbox %s.", num, sandboxName)
-							} else {
-								assignedBot := assignedBotUser(prIssue, allBotUsers)
-
-								taskAssignee := assignedBot
-								if taskAssignee == "" {
-									taskAssignee = author
+						investigationCount := 0
+						if listCommentsErr == nil {
+							for _, c := range comments {
+								isPoolBot := false
+								for _, bot := range allBotUsers {
+									if strings.EqualFold(c.GetUser().GetLogin(), bot) {
+										isPoolBot = true
+										break
+									}
 								}
-
-								prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", owner, repo, num)
-								task := &QueueTask{
-									Type:      "pr-investigate",
-									URL:       prURL,
-									Number:    num,
-									Priority:  getPRPriority(prIssue),
-									Phase:     3,
-									CreatedAt: pr.GetCreatedAt(),
-									Assignee:  taskAssignee,
-									Status:    "Pending",
-									CommitSHA: headSHA,
+								if isPoolBot &&
+									strings.Contains(c.GetBody(), "started investigating CI check failures") &&
+									c.GetCreatedAt().After(lastResetTime) {
+									investigationCount++
 								}
+							}
+						}
 
-								if dryRun {
-									fmt.Printf("[DRYRUN] Would queue investigate task for PR #%d: %s\n", num, prURL)
+						if investigationCount >= 3 {
+							stopLabel := getStopLabel(triggerLabel)
+							if !dryRun {
+								addGitHubComment(ctx, ghClient, owner, repo, num, fmt.Sprintf("🤖 AI Factory has attempted to investigate/fix CI check failures for this pull request 3 times since the last commit or update without success. To prevent infinite loops, I am pausing automated investigation and attaching the `%s` label.\n\nTo request another attempt or resume automated processing, please remove the `%s` label from this pull request (and/or push a new commit or leave a comment).", stopLabel, stopLabel))
+								if _, _, err := ghClient.Issues.AddLabelsToIssue(ctx, owner, repo, num, []string{stopLabel}); err != nil {
+									klog.Errorf("Failed to add stop label '%s' to PR #%d: %v", stopLabel, num, err)
+								}
+							}
+							klog.Infof("Skipping PR #%d investigate because it has reached the maximum retry limit (3 attempts since last update) and applying stop label '%s'.", num, stopLabel)
+						} else {
+							prevFailed := false
+							processedPath := filepath.Join(processedDir, filename)
+							if data, err := os.ReadFile(processedPath); err == nil {
+								var t QueueTask
+								if err := yaml.Unmarshal(data, &t); err == nil {
+									if t.Status == "Failed" {
+										prevFailed = true
+									}
+								}
+							}
+
+							if state.lastSHA != headSHA || prevFailed || isExplicitlyAssigned || time.Since(state.lastInvestigatedTime) > 6*time.Hour {
+								sandboxName := resolveSandboxName(ctx, kubeClient, ghClient, "pr-investigate", num, owner, repo)
+								running, err := isSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName)
+								if err != nil {
+									klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
+								} else if running {
+									klog.Infof("Skipping PR #%d investigate because there is an in-flight sandbox %s.", num, sandboxName)
 								} else {
-									fmt.Printf("Queueing investigate task for PR #%d...\n", num)
-									state.lastSHA = headSHA
-									state.lastInvestigatedTime = time.Now()
-									processedPRs[num] = state
-									if err := writeTaskAtomically(incomingDir, filename, task); err != nil {
-										klog.Errorf("Failed to queue investigate task for PR #%d: %v", num, err)
+									assignedBot := assignedBotUser(prIssue, allBotUsers)
+
+									taskAssignee := assignedBot
+									if taskAssignee == "" {
+										taskAssignee = author
+									}
+
+									prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", owner, repo, num)
+									task := &QueueTask{
+										Type:      "pr-investigate",
+										URL:       prURL,
+										Number:    num,
+										Priority:  getPRPriority(prIssue),
+										Phase:     3,
+										CreatedAt: pr.GetCreatedAt(),
+										Assignee:  taskAssignee,
+										Status:    "Pending",
+										CommitSHA: headSHA,
+									}
+
+									if dryRun {
+										fmt.Printf("[DRYRUN] Would queue investigate task for PR #%d: %s\n", num, prURL)
 									} else {
-										writeTaskJournalEvent(queueDir, filename, task, "Created", 0)
+										fmt.Printf("Queueing investigate task for PR #%d...\n", num)
+										state.lastSHA = headSHA
+										state.lastInvestigatedTime = time.Now()
+										processedPRs[num] = state
+										if err := writeTaskAtomically(incomingDir, filename, task); err != nil {
+											klog.Errorf("Failed to queue investigate task for PR #%d: %v", num, err)
+										} else {
+											writeTaskJournalEvent(queueDir, filename, task, "Created", 0)
+										}
 									}
 								}
 							}
@@ -2318,6 +2363,13 @@ func hasStopLabel(labels []*githubv39.Label, triggerLabel string) bool {
 		}
 	}
 	return false
+}
+
+func getStopLabel(triggerLabel string) string {
+	if triggerLabel != "" && !strings.EqualFold(triggerLabel, "overseer") {
+		return triggerLabel + "/stop"
+	}
+	return "overseer/stop"
 }
 
 func removePendingTasksForNumber(incomingDir string, number int) {
