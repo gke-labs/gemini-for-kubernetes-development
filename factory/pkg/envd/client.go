@@ -87,6 +87,7 @@ func GetSandboxPodName(ctx context.Context, namespace, sandboxName string) (stri
 					} `json:"metadata"`
 					Status struct {
 						Phase      string `json:"phase"`
+						Reason     string `json:"reason"`
 						Conditions []struct {
 							Type   string `json:"type"`
 							Status string `json:"status"`
@@ -97,23 +98,41 @@ func GetSandboxPodName(ctx context.Context, namespace, sandboxName string) (stri
 			if err := json.Unmarshal(out, &podList); err == nil {
 				hasTerminating := false
 				activePodName := ""
+				hasLiveOrPending := false
+				var lastFailedReason string
+				var lastFailedPod string
+				var lastFailedPhase string
 
 				for _, pod := range podList.Items {
 					if pod.Metadata.DeletionTimestamp != nil {
 						hasTerminating = true
 					} else {
 						if pod.Status.Phase == "Running" {
+							hasLiveOrPending = true
 							for _, cond := range pod.Status.Conditions {
 								if cond.Type == "Ready" && cond.Status == "True" {
 									activePodName = pod.Metadata.Name
 								}
 							}
+						} else if pod.Status.Phase == "Pending" {
+							hasLiveOrPending = true
+						} else if pod.Status.Phase == "Failed" || pod.Status.Phase == "Succeeded" || strings.EqualFold(pod.Status.Reason, "Evicted") {
+							reason := pod.Status.Reason
+							if reason == "" {
+								reason = pod.Status.Phase
+							}
+							lastFailedReason = reason
+							lastFailedPod = pod.Metadata.Name
+							lastFailedPhase = pod.Status.Phase
 						}
 					}
 				}
 
 				if !hasTerminating && activePodName != "" {
 					return activePodName, nil
+				}
+				if !hasLiveOrPending && lastFailedPod != "" {
+					return "", fmt.Errorf("sandbox pod %s is in %s state (reason: %s): cannot connect to terminated pod", lastFailedPod, lastFailedPhase, lastFailedReason)
 				}
 			}
 		}

@@ -180,13 +180,15 @@ func NewSandboxListCommand(ctx context.Context) *cobra.Command {
 				podStatusStr := ""
 				if podList != nil {
 					for _, pod := range podList.Items {
-						if pod.Labels["sandbox"] == name && pod.DeletionTimestamp == nil {
+						if (pod.Labels["sandbox"] == name || pod.Labels["agents.x-k8s.io/sandbox"] == name) && pod.DeletionTimestamp == nil {
 							podStatusStr = string(pod.Status.Phase)
-							if len(pod.Status.ContainerStatuses) > 0 {
+							if pod.Status.Reason != "" {
+								podStatusStr = pod.Status.Reason
+							} else if len(pod.Status.ContainerStatuses) > 0 {
 								state := pod.Status.ContainerStatuses[0].State
 								if state.Waiting != nil && state.Waiting.Reason != "" {
 									podStatusStr = state.Waiting.Reason
-								} else if state.Terminated != nil && state.Terminated.Reason != "" {
+								} else if state.Terminated != nil && state.Terminated.Reason != "" && state.Terminated.Reason != "ContainerStatusUnknown" {
 									podStatusStr = state.Terminated.Reason
 								}
 							}
@@ -204,7 +206,33 @@ func NewSandboxListCommand(ctx context.Context) *cobra.Command {
 				}
 
 				if podStatusStr == "" {
-					if ann := item.GetAnnotations(); ann != nil {
+					isZeroReplicas := false
+					val, found, _ := unstructured.NestedFieldNoCopy(item.Object, "spec", "replicas")
+					if found && val != nil {
+						switch v := val.(type) {
+						case int64:
+							isZeroReplicas = (v == 0)
+						case int:
+							isZeroReplicas = (v == 0)
+						case float64:
+							isZeroReplicas = (v == 0)
+						}
+					}
+					if !isZeroReplicas {
+						conditions, _, _ := unstructured.NestedSlice(item.Object, "status", "conditions")
+						for _, c := range conditions {
+							if condMap, ok := c.(map[string]interface{}); ok {
+								if msg, _ := condMap["message"].(string); strings.Contains(msg, "replicas is 0") {
+									isZeroReplicas = true
+									break
+								}
+							}
+						}
+					}
+
+					if isZeroReplicas {
+						podStatusStr = "Scaled Down"
+					} else if ann := item.GetAnnotations(); ann != nil {
 						if s, ok := ann["sandbox.gemini.google.com/pod-status"]; ok && s != "" {
 							podStatusStr = s
 						}
@@ -212,6 +240,11 @@ func NewSandboxListCommand(ctx context.Context) *cobra.Command {
 				}
 				if podStatusStr == "" {
 					podStatusStr = "No Pod"
+				}
+				if ann := item.GetAnnotations(); ann != nil {
+					if countStr, ok := ann["sandbox.gemini.google.com/eviction-count"]; ok && countStr != "" && countStr != "0" {
+						podStatusStr = fmt.Sprintf("%s (Evictions: %s)", podStatusStr, countStr)
+					}
 				}
 
 				lastTaskStr := "-"

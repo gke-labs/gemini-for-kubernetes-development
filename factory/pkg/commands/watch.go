@@ -24,6 +24,7 @@ import (
 	"github.com/robfig/cron/v3"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
 )
@@ -201,6 +202,45 @@ func isSandboxTaskRunning(ctx context.Context, kubeClient *clients.KubernetesCli
 
 	state := annotations["sandbox.gemini.google.com/last-task-state"]
 	if state == "" || strings.EqualFold(state, "Running") {
+		// First check if the sandbox pod has failed or been evicted before calling envd.Connect
+		podList, err := kubeClient.Clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: fmt.Sprintf("sandbox=%s", name)})
+		if err == nil && len(podList.Items) > 0 {
+			hasLiveOrPending := false
+			var lastFailedPod *corev1.Pod
+			for i := range podList.Items {
+				pod := &podList.Items[i]
+				if pod.DeletionTimestamp == nil {
+					if pod.Status.Phase == corev1.PodRunning || pod.Status.Phase == corev1.PodPending {
+						hasLiveOrPending = true
+					} else if pod.Status.Phase == corev1.PodFailed || pod.Status.Phase == corev1.PodSucceeded || strings.EqualFold(pod.Status.Reason, "Evicted") {
+						lastFailedPod = pod
+					}
+				}
+			}
+			if !hasLiveOrPending && lastFailedPod != nil {
+				reason := lastFailedPod.Status.Reason
+				if reason == "" {
+					reason = string(lastFailedPod.Status.Phase)
+				}
+				taskState := "Failed"
+				if lastFailedPod.Status.Phase == corev1.PodSucceeded {
+					taskState = "Completed"
+				}
+				taskType := annotations["sandbox.gemini.google.com/last-task-type"]
+				if taskType == "" {
+					taskType = "task"
+				}
+				klog.Warningf("Sandbox %s pod is in %s state (reason: %s). Updating sandbox annotation from Running to %s.", name, lastFailedPod.Status.Phase, reason, taskState)
+				_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, namespace, name, taskType, taskState)
+				if strings.EqualFold(reason, "Evicted") || (lastFailedPod.Status.Phase == corev1.PodFailed && strings.EqualFold(lastFailedPod.Status.Reason, "Evicted")) {
+					klog.Infof("Deleting evicted pod %s so controller can recreate it.", lastFailedPod.Name)
+					_ = factorysandbox.IncrementSandboxEvictionCount(ctx, kubeClient, namespace, name)
+					_ = kubeClient.Clientset.CoreV1().Pods(namespace).Delete(ctx, lastFailedPod.Name, metav1.DeleteOptions{})
+				}
+				return false, nil
+			}
+		}
+
 		// Verify if the task has actually finished by connecting to the sandbox via envd
 		client, err := envd.Connect(ctx, namespace, name)
 		if err == nil {
@@ -233,6 +273,14 @@ func isSandboxTaskRunning(ctx context.Context, kubeClient *clients.KubernetesCli
 					return false, nil
 				}
 			}
+		} else if strings.Contains(err.Error(), "cannot connect to terminated pod") || strings.Contains(err.Error(), "is in Failed state") {
+			taskType := annotations["sandbox.gemini.google.com/last-task-type"]
+			if taskType == "" {
+				taskType = "task"
+			}
+			klog.Warningf("Sandbox %s pod cannot be connected (%v). Updating sandbox annotation to Failed.", name, err)
+			_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, namespace, name, taskType, "Failed")
+			return false, nil
 		}
 		return true, nil
 	}
@@ -1048,6 +1096,28 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 			return
 		}
 		state.mu.Unlock()
+
+		// Proactively delete any evicted sandbox pods in the namespace so the sandbox controller can recreate them or free resources.
+		func() {
+			podList, err := kubeClient.Clientset.CoreV1().Pods(rootFlags.Namespace).List(ctx, metav1.ListOptions{LabelSelector: "sandbox"})
+			if err != nil {
+				return
+			}
+			for i := range podList.Items {
+				pod := &podList.Items[i]
+				if pod.DeletionTimestamp == nil && pod.Status.Phase == corev1.PodFailed && strings.EqualFold(pod.Status.Reason, "Evicted") {
+					klog.Infof("Found evicted sandbox pod %s in namespace %s. Deleting pod so controller can recreate or clean up.", pod.Name, rootFlags.Namespace)
+					sbName := pod.Labels["sandbox"]
+					if sbName == "" {
+						sbName = pod.Labels["agents.x-k8s.io/sandbox"]
+					}
+					if sbName != "" {
+						_ = factorysandbox.IncrementSandboxEvictionCount(ctx, kubeClient, rootFlags.Namespace, sbName)
+					}
+					_ = kubeClient.Clientset.CoreV1().Pods(rootFlags.Namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{})
+				}
+			}
+		}()
 
 		if isDoNotProcess(queueDir) {
 			runningCount, err := countRunningSandboxTasks(ctx, kubeClient, rootFlags.Namespace)

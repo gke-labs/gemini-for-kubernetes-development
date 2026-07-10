@@ -77,6 +77,9 @@ EOF
 manager
 bin/
 EOF
+
+    echo "Sanitizing workspace (cleaning stale git locks)..."
+    find /workspaces -maxdepth 4 -name "*.lock" -path "*/.git/*" -delete 2>/dev/null || true
 }
 
 function setupGitRepos {

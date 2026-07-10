@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -350,6 +351,21 @@ func (s *Server) getOverseerSandboxTasks(c *gin.Context) {
 				tState := ann["sandbox.gemini.google.com/last-task-state"]
 				if tState == "" {
 					tState = "Completed"
+				}
+				if strings.EqualFold(tState, "Running") {
+					conditions, _, _ := unstructured.NestedSlice(sb.Object, "status", "conditions")
+					for _, c := range conditions {
+						if condMap, ok := c.(map[string]interface{}); ok {
+							msg, _ := condMap["message"].(string)
+							reason, _ := condMap["reason"].(string)
+							if strings.Contains(strings.ToLower(msg), "evicted") || strings.EqualFold(reason, "evicted") {
+								tState = "Failed (Evicted)"
+								break
+							} else if strings.Contains(strings.ToLower(msg), "phase: failed") || strings.EqualFold(reason, "podfailed") {
+								tState = "Failed (PodFailed)"
+							}
+						}
+					}
 				}
 				synth := []map[string]interface{}{
 					{

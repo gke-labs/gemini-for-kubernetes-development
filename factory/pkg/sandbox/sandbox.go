@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -378,6 +379,36 @@ func UpdateSandboxTaskAnnotation(ctx context.Context, kubeClient *clients.Kubern
 	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Update(ctx, unstructObj, metav1.UpdateOptions{})
 	if err != nil {
 		return fmt.Errorf("updating sandbox %s task annotations: %w", sandboxName, err)
+	}
+	return nil
+}
+
+func IncrementSandboxEvictionCount(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, sandboxName string) error {
+	if ctx.Err() != nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+	}
+
+	unstructObj, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("getting sandbox %s: %w", sandboxName, err)
+	}
+
+	annotations := unstructObj.GetAnnotations()
+	if annotations == nil {
+		annotations = make(map[string]string)
+	}
+
+	countStr := annotations["sandbox.gemini.google.com/eviction-count"]
+	count, _ := strconv.Atoi(countStr)
+	count++
+	annotations["sandbox.gemini.google.com/eviction-count"] = strconv.Itoa(count)
+
+	unstructObj.SetAnnotations(annotations)
+	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Update(ctx, unstructObj, metav1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf("updating sandbox %s eviction count: %w", sandboxName, err)
 	}
 	return nil
 }
