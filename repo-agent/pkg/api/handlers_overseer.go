@@ -531,7 +531,7 @@ func (s *Server) deleteOverseerSandbox(c *gin.Context) {
 	sandboxName := c.Param("sandboxName")
 	namespace := fmt.Sprintf("overseer-%s", overseerName)
 
-	err := s.K8sManager.Client.Resource(k8s.SandboxGVR).Namespace(namespace).Delete(c.Request.Context(), sandboxName, v1.DeleteOptions{})
+	err := s.K8sManager.DeleteSandbox(c.Request.Context(), namespace, sandboxName)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete sandbox", "details": err.Error()})
 		return
