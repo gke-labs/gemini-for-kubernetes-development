@@ -393,6 +393,14 @@ func IsCurrentSandbox(ctx context.Context, kubeClient *clients.KubernetesClient,
 		return false
 	}
 
+	// If not running inside a Kubernetes pod (or sandbox container), we are running on an external workstation.
+	// Therefore, no cluster sandbox corresponds to "this current process".
+	if os.Getenv("KUBERNETES_SERVICE_HOST") == "" && os.Getenv("SANDBOX_NAME") == "" {
+		if _, err := os.Stat("/var/run/secrets/kubernetes.io/serviceaccount/token"); os.IsNotExist(err) {
+			return false
+		}
+	}
+
 	// 1. Fast path from explicit environment variables
 	if envSB := os.Getenv("SANDBOX_NAME"); envSB != "" && envSB == sbName {
 		return true

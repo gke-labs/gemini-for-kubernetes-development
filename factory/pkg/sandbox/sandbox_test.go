@@ -2,6 +2,7 @@ package sandbox_test
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
@@ -119,6 +120,7 @@ func TestIsCurrentSandbox_And_SuspendSkip(t *testing.T) {
 	ns := "test-namespace"
 	sbName := "my-active-daemon"
 
+	t.Setenv("KUBERNETES_SERVICE_HOST", "10.0.0.1")
 	t.Setenv("HOSTNAME", sbName)
 
 	oldTime := time.Now().Add(-24 * time.Hour).UTC().Format(time.RFC3339)
@@ -138,8 +140,18 @@ func TestIsCurrentSandbox_And_SuspendSkip(t *testing.T) {
 	}
 
 	if !sandbox.IsCurrentSandbox(ctx, kubeClient, controllerSandbox, ns) {
-		t.Errorf("Expected IsCurrentSandbox=true when HOSTNAME matches sandbox name")
+		t.Errorf("Expected IsCurrentSandbox=true when HOSTNAME matches sandbox name inside cluster")
 	}
+
+	// Verify that outside the cluster (workstation without k8s env/tokens), IsCurrentSandbox returns false
+	t.Setenv("KUBERNETES_SERVICE_HOST", "")
+	t.Setenv("SANDBOX_NAME", "")
+	if sandbox.IsCurrentSandbox(ctx, kubeClient, controllerSandbox, ns) {
+		if _, err := os.Stat("/var/run/secrets/kubernetes.io/serviceaccount/token"); os.IsNotExist(err) {
+			t.Errorf("Expected IsCurrentSandbox=false when running outside cluster on workstation")
+		}
+	}
+	t.Setenv("KUBERNETES_SERVICE_HOST", "10.0.0.1")
 
 	_, err := fakeDynamic.Resource(k8s.SandboxGVR).Namespace(ns).Create(ctx, controllerSandbox, metav1.CreateOptions{})
 	if err != nil {
