@@ -106,6 +106,61 @@ func TestSuspendIdleSandboxes(t *testing.T) {
 	}
 }
 
+func TestIsCurrentSandbox_And_SuspendSkip(t *testing.T) {
+	scheme := runtime.NewScheme()
+	fakeDynamic := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, map[schema.GroupVersionResource]string{
+		k8s.SandboxGVR: "SandboxList",
+	})
+	kubeClient := &clients.KubernetesClient{
+		DynamicClient: fakeDynamic,
+	}
+
+	ctx := context.Background()
+	ns := "test-namespace"
+	sbName := "my-active-daemon"
+
+	t.Setenv("HOSTNAME", sbName)
+
+	oldTime := time.Now().Add(-24 * time.Hour).UTC().Format(time.RFC3339)
+	controllerSandbox := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "agents.x-k8s.io/v1alpha1",
+			"kind":       "Sandbox",
+			"metadata": map[string]interface{}{
+				"name":              sbName,
+				"namespace":         ns,
+				"creationTimestamp": oldTime,
+			},
+			"spec": map[string]interface{}{
+				"replicas": int64(1),
+			},
+		},
+	}
+
+	if !sandbox.IsCurrentSandbox(ctx, kubeClient, controllerSandbox, ns) {
+		t.Errorf("Expected IsCurrentSandbox=true when HOSTNAME matches sandbox name")
+	}
+
+	_, err := fakeDynamic.Resource(k8s.SandboxGVR).Namespace(ns).Create(ctx, controllerSandbox, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("Failed to create controller sandbox: %v", err)
+	}
+
+	count, err := sandbox.SuspendIdleSandboxes(ctx, kubeClient, ns, 30*time.Minute, false)
+	if err != nil {
+		t.Fatalf("SuspendIdleSandboxes failed: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("Expected 0 sandboxes suspended when checking current sandbox, got %d", count)
+	}
+
+	updated, _ := fakeDynamic.Resource(k8s.SandboxGVR).Namespace(ns).Get(ctx, sbName, metav1.GetOptions{})
+	rep, _, _ := unstructured.NestedInt64(updated.Object, "spec", "replicas")
+	if rep != 1 {
+		t.Errorf("Expected current sandbox replicas=1 (skipped), got %d", rep)
+	}
+}
+
 func TestUpdateSandboxTaskAnnotation_Resume(t *testing.T) {
 	scheme := runtime.NewScheme()
 	fakeDynamic := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, map[schema.GroupVersionResource]string{
