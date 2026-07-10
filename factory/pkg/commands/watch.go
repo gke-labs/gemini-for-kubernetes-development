@@ -1247,114 +1247,56 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				if hasFailure {
 					filename := fmt.Sprintf("task-pr-%d-investigate.yaml", num)
 					if !taskExists(incomingDir, processingDir, filename) {
-						// Count investigations since last commit
-						investigationCount := 0
-						if listCommentsErr == nil {
-							for _, c := range comments {
-								isPoolBot := false
-								for _, bot := range allBotUsers {
-									if strings.EqualFold(c.GetUser().GetLogin(), bot) {
-										isPoolBot = true
-										break
-									}
-								}
-								if isPoolBot &&
-									strings.Contains(c.GetBody(), "started investigating CI check failures") &&
-									c.GetCreatedAt().After(lastCommitTime) {
-									investigationCount++
+						prevFailed := false
+						processedPath := filepath.Join(processedDir, filename)
+						if data, err := os.ReadFile(processedPath); err == nil {
+							var t QueueTask
+							if err := yaml.Unmarshal(data, &t); err == nil {
+								if t.Status == "Failed" {
+									prevFailed = true
 								}
 							}
 						}
 
-						// Post giving up comment if we haven't already posted it since the last commit
-						hasPostedGivingUp := false
-						if listCommentsErr == nil {
-							for _, c := range comments {
-								isPoolBot := false
-								for _, bot := range allBotUsers {
-									if strings.EqualFold(c.GetUser().GetLogin(), bot) {
-										isPoolBot = true
-										break
-									}
-								}
-								if isPoolBot &&
-									strings.Contains(c.GetBody(), "giving up. Human assistance is required") &&
-									c.GetCreatedAt().After(lastCommitTime) {
-									hasPostedGivingUp = true
-									break
-								}
-							}
-						}
+						if state.lastSHA != headSHA || prevFailed || isExplicitlyAssigned || time.Since(state.lastInvestigatedTime) > 6*time.Hour {
+							sandboxName := resolveSandboxName(ctx, kubeClient, ghClient, "pr-investigate", num, owner, repo)
+							running, err := isSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName)
+							if err != nil {
+								klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
+							} else if running {
+								klog.Infof("Skipping PR #%d investigate because there is an in-flight sandbox %s.", num, sandboxName)
+							} else {
+								assignedBot := assignedBotUser(prIssue, allBotUsers)
 
-						if hasPostedGivingUp {
-							klog.Infof("Skipping PR #%d investigate because the bot has already given up on the current commit.", num)
-						} else if investigationCount >= 3 {
-							if !dryRun {
-								addGitHubComment(ctx, ghClient, owner, repo, num, "🤖 AI Factory has attempted to fix CI failures for this PR 3 times since the last commit and is giving up. Human assistance is required.")
-								if assignedBot != "" && !unassignedPRs[num] {
-									fmt.Printf("Unassigning bot %s from PR #%d because it has given up...\n", assignedBot, num)
-									if _, _, err := ghClient.Issues.RemoveAssignees(ctx, owner, repo, num, []string{assignedBot}); err != nil {
-										klog.Errorf("Failed to unassign bot %s from PR #%d: %v", assignedBot, num, err)
-									}
-									unassignedPRs[num] = true
+								taskAssignee := assignedBot
+								if taskAssignee == "" {
+									taskAssignee = author
 								}
-								if _, _, err := ghClient.Issues.AddLabelsToIssue(ctx, owner, repo, num, []string{"overseer/giving-up"}); err != nil {
-									klog.Errorf("Failed to add giving up label to PR #%d: %v", num, err)
-								}
-							}
-							klog.Infof("Skipping PR #%d investigate because it has reached the maximum retry limit (3).", num)
-						} else {
-							prevFailed := false
-							processedPath := filepath.Join(processedDir, filename)
-							if data, err := os.ReadFile(processedPath); err == nil {
-								var t QueueTask
-								if err := yaml.Unmarshal(data, &t); err == nil {
-									if t.Status == "Failed" {
-										prevFailed = true
-									}
-								}
-							}
 
-							if state.lastSHA != headSHA || prevFailed || isExplicitlyAssigned || time.Since(state.lastInvestigatedTime) > 6*time.Hour {
-								sandboxName := resolveSandboxName(ctx, kubeClient, ghClient, "pr-investigate", num, owner, repo)
-								running, err := isSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName)
-								if err != nil {
-									klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
-								} else if running {
-									klog.Infof("Skipping PR #%d investigate because there is an in-flight sandbox %s.", num, sandboxName)
+								prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", owner, repo, num)
+								task := &QueueTask{
+									Type:      "pr-investigate",
+									URL:       prURL,
+									Number:    num,
+									Priority:  getPRPriority(prIssue),
+									Phase:     3,
+									CreatedAt: pr.GetCreatedAt(),
+									Assignee:  taskAssignee,
+									Status:    "Pending",
+									CommitSHA: headSHA,
+								}
+
+								if dryRun {
+									fmt.Printf("[DRYRUN] Would queue investigate task for PR #%d: %s\n", num, prURL)
 								} else {
-									assignedBot := assignedBotUser(prIssue, allBotUsers)
-
-									taskAssignee := assignedBot
-									if taskAssignee == "" {
-										taskAssignee = author
-									}
-
-									prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", owner, repo, num)
-									task := &QueueTask{
-										Type:      "pr-investigate",
-										URL:       prURL,
-										Number:    num,
-										Priority:  getPRPriority(prIssue),
-										Phase:     3,
-										CreatedAt: pr.GetCreatedAt(),
-										Assignee:  taskAssignee,
-										Status:    "Pending",
-										CommitSHA: headSHA,
-									}
-
-									if dryRun {
-										fmt.Printf("[DRYRUN] Would queue investigate task for PR #%d: %s\n", num, prURL)
+									fmt.Printf("Queueing investigate task for PR #%d...\n", num)
+									state.lastSHA = headSHA
+									state.lastInvestigatedTime = time.Now()
+									processedPRs[num] = state
+									if err := writeTaskAtomically(incomingDir, filename, task); err != nil {
+										klog.Errorf("Failed to queue investigate task for PR #%d: %v", num, err)
 									} else {
-										fmt.Printf("Queueing investigate task for PR #%d...\n", num)
-										state.lastSHA = headSHA
-										state.lastInvestigatedTime = time.Now()
-										processedPRs[num] = state
-										if err := writeTaskAtomically(incomingDir, filename, task); err != nil {
-											klog.Errorf("Failed to queue investigate task for PR #%d: %v", num, err)
-										} else {
-											writeTaskJournalEvent(queueDir, filename, task, "Created", 0)
-										}
+										writeTaskJournalEvent(queueDir, filename, task, "Created", 0)
 									}
 								}
 							}

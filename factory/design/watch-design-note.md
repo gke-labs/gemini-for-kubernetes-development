@@ -101,14 +101,9 @@ When processing a PR, the scan evaluates conditions and queues tasks in three ph
 ### Phase 3: CI Check Failures (`pr-investigate`)
 * **Trigger**: Check runs or status checks for the head commit have failed.
 * **Check Run Deduplication**: Check runs are deduplicated by name, keeping only the latest run (highest ID), ensuring older cancelled/failed runs do not block the PR if a newer run succeeded.
-* **Retry Count**: If `investigationCount >= 3` since the last commit, it posts a "giving up" message and halts retries.
-* **Giving Up State & Reset Behavior**:
-  * Once a bot posts a "giving up" comment (`"giving up. Human assistance is required"`), the PR enters a given-up state (`hasPostedGivingUp = true`).
-  * **Reset Condition**: The given-up state and the 3-attempt investigation counter (`investigationCount`) are reset **only** when a new git commit is pushed to the pull request advancing the commit timestamp (`lastCommitTime`) past the giving up comment timestamp.
-  * **Human Feedback / Comments**: Posting new instructions or comments on the PR does *not* reset the giving up state directly. However, when a PR has failing CI checks while in the given-up state, Overseer skips further CI investigation retries (`pr-investigate`) and jumps directly to review comment evaluation (`pr-comments`). This ensures the bot can respond to human guidance and push code fixes (which advances the commit SHA and resets the giving up state).
-  * **Deleting vs. Hiding Comments**: Deleting the bot's giving up comment (and excess investigation comments) removes them from the GitHub API payload, immediately clearing the given-up state on the next scan cycle. However, hiding or minimizing comments on GitHub does not clear the state because the GitHub REST API still returns minimized comment bodies.
-* **Retry on Recovery**: If the previous investigation task is in `processed/` but has status `"Failed"`, the watcher ignores the SHA check and allows retrying the task.
-* **Assignment**: The bot user remains assigned to the PR while the task is executing. If it reaches the retry limit and gives up, it explicitly unassigns itself to request human review.
+* **Halting Processing (`overseer/stop`)**: To halt automatic CI investigation or bot processing on any pull request or issue, attach the `overseer/stop` label (or `<triggerLabel>/stop`). Overseer immediately skips processing any PR with this label.
+* **Retry on Recovery**: If the previous investigation task is in `processed/` but has status `"Failed"` or if 6 hours have passed since the last investigation (`time.Since(lastInvestigatedTime) > 6*time.Hour`), the watcher queues a retry for `pr-investigate`.
+* **Assignment**: The bot user remains assigned to the PR while tasks are executing or pending.
 
 ---
 
