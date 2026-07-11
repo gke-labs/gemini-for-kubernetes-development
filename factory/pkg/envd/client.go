@@ -480,6 +480,12 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 								klog.Errorf("Failed to mark key as quota exceeded: %v", err)
 							}
 						}
+						klog.Warningf("Quota exceeded detected in task output. Terminating task process in sandbox pod immediately...")
+						killCtx, killCancel := context.WithTimeout(context.Background(), 15*time.Second)
+						defer killCancel()
+						killCmd := fmt.Sprintf("if [ -f %s ]; then pids=\"$(cat %s) $(pgrep -P $(cat %s) 2>/dev/null)\"; kill -9 $pids 2>/dev/null || true; fi", pidFile, pidFile, pidFile)
+						_ = c.Exec(killCtx, killCmd, "/workspaces", nil, nil, nil, nil)
+						return fmt.Errorf("task failed due to quota exceeded (RESOURCE_EXHAUSTED / 429)")
 					}
 				}
 			} else {
@@ -525,6 +531,14 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 					newData := finalBuf.Bytes()
 					if len(newData) > 0 {
 						_, _ = os.Stdout.Write(newData)
+						if geminitokens.ContainsQuotaError(newData) {
+							if key := envs["GEMINI_API_KEY"]; key != "" {
+								if err := geminitokens.AddQuotaExceededKey(key, 4*time.Hour); err != nil {
+									klog.Errorf("Failed to mark key as quota exceeded: %v", err)
+								}
+							}
+							return fmt.Errorf("task failed due to quota exceeded (RESOURCE_EXHAUSTED / 429)")
+						}
 					}
 				}
 
@@ -552,6 +566,14 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 							newData := finalBuf.Bytes()
 							if len(newData) > 0 {
 								_, _ = os.Stdout.Write(newData)
+								if geminitokens.ContainsQuotaError(newData) {
+									if key := envs["GEMINI_API_KEY"]; key != "" {
+										if err := geminitokens.AddQuotaExceededKey(key, 4*time.Hour); err != nil {
+											klog.Errorf("Failed to mark key as quota exceeded: %v", err)
+										}
+									}
+									return fmt.Errorf("task failed due to quota exceeded (RESOURCE_EXHAUSTED / 429)")
+								}
 							}
 						}
 						code, err := strconv.Atoi(exitStr)
