@@ -3,6 +3,7 @@ description: A meta-skill for KCC kinds that describes the steps we need to take
 name: checklist-for-kind
 schedule: never
 mode: workflow
+cooldown: 2h
 ---
 
 # Checklist for KCC Resource Kind Migration

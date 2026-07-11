@@ -3,6 +3,7 @@ description: A meta-skill for KCC Greenfield resources that describes the steps 
 name: checklist-for-kind
 schedule: never
 mode: workflow
+cooldown: 2h
 ---
 
 # Checklist for KCC Greenfield Resource Migration
