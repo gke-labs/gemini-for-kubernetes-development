@@ -1309,8 +1309,6 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					}
 				}
 
-
-
 				if hasFailure {
 					filename := fmt.Sprintf("task-pr-%d-investigate.yaml", num)
 					if !taskExists(incomingDir, processingDir, filename) {
