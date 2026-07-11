@@ -1309,11 +1309,6 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					}
 				}
 
-				if state.lastSHA != headSHA {
-					state.lastSHA = headSHA
-					processedPRs[num] = state
-				}
-
 				if hasFailure {
 					filename := fmt.Sprintf("task-pr-%d-investigate.yaml", num)
 					if !taskExists(incomingDir, processingDir, filename) {
@@ -1373,7 +1368,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 								}
 							}
 
-							if state.lastSHA != headSHA || prevFailed || isExplicitlyAssigned || time.Since(state.lastInvestigatedTime) > 6*time.Hour {
+							if state.lastSHA != headSHA || prevFailed || isExplicitlyAssigned || time.Since(state.lastInvestigatedTime) > 2*time.Hour {
 								sandboxName := resolveSandboxName(ctx, kubeClient, ghClient, "pr-investigate", num, owner, repo)
 								running, err := isSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName)
 								if err != nil {
@@ -1418,6 +1413,9 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 							}
 						}
 					}
+				} else if state.lastSHA != headSHA {
+					state.lastSHA = headSHA
+					processedPRs[num] = state
 				}
 
 				// Check review comments and approvals
