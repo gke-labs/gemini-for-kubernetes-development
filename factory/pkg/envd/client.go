@@ -457,7 +457,7 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 				defer killCancel()
 
 				fmt.Printf("Terminating process in pod...\n")
-				killCmd := fmt.Sprintf("if [ -f %s ]; then pids=\"$(cat %s) $(pgrep -P $(cat %s) 2>/dev/null)\"; kill $pids 2>/dev/null || true; fi", pidFile, pidFile, pidFile)
+				killCmd := fmt.Sprintf("if [ -f %s ]; then pids=\"$(cat %s) $(pgrep -P $(cat %s) 2>/dev/null)\"; kill $pids 2>/dev/null || true; if [ ! -f %s ]; then echo 143 > %s; fi; fi", pidFile, pidFile, pidFile, exitCodeFile, exitCodeFile)
 				_ = c.Exec(killCtx, killCmd, "/workspaces", nil, nil, nil, nil)
 			}
 			return loopCtx.Err()
@@ -483,7 +483,7 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 						klog.Warningf("Quota exceeded detected in task output. Terminating task process in sandbox pod immediately...")
 						killCtx, killCancel := context.WithTimeout(context.Background(), 15*time.Second)
 						defer killCancel()
-						killCmd := fmt.Sprintf("if [ -f %s ]; then pids=\"$(cat %s) $(pgrep -P $(cat %s) 2>/dev/null)\"; kill -9 $pids 2>/dev/null || true; fi", pidFile, pidFile, pidFile)
+						killCmd := fmt.Sprintf("if [ -f %s ]; then pids=\"$(cat %s) $(pgrep -P $(cat %s) 2>/dev/null)\"; kill -9 $pids 2>/dev/null || true; echo 137 > %s; fi", pidFile, pidFile, pidFile, exitCodeFile)
 						_ = c.Exec(killCtx, killCmd, "/workspaces", nil, nil, nil, nil)
 						return fmt.Errorf("task failed due to quota exceeded (RESOURCE_EXHAUSTED / 429)")
 					}
@@ -537,6 +537,9 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 									klog.Errorf("Failed to mark key as quota exceeded: %v", err)
 								}
 							}
+							killCtx, killCancel := context.WithTimeout(context.Background(), 15*time.Second)
+							defer killCancel()
+							_ = c.Exec(killCtx, fmt.Sprintf("echo 137 > %s", exitCodeFile), "/workspaces", nil, nil, nil, nil)
 							return fmt.Errorf("task failed due to quota exceeded (RESOURCE_EXHAUSTED / 429)")
 						}
 					}
@@ -572,6 +575,9 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 											klog.Errorf("Failed to mark key as quota exceeded: %v", err)
 										}
 									}
+									killCtx, killCancel := context.WithTimeout(context.Background(), 15*time.Second)
+									defer killCancel()
+									_ = c.Exec(killCtx, fmt.Sprintf("echo 137 > %s", exitCodeFile), "/workspaces", nil, nil, nil, nil)
 									return fmt.Errorf("task failed due to quota exceeded (RESOURCE_EXHAUSTED / 429)")
 								}
 							}
@@ -586,6 +592,9 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 						return nil
 					}
 				}
+				killCtx, killCancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer killCancel()
+				_ = c.Exec(killCtx, fmt.Sprintf("if [ ! -f %s ]; then echo 1 > %s; fi", exitCodeFile, exitCodeFile), "/workspaces", nil, nil, nil, nil)
 				return fmt.Errorf("task process terminated abruptly (PID file missing or process not found)")
 			}
 
