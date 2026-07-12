@@ -154,7 +154,7 @@ We need to ensure that we have a mockgcp that aligns with realgcp.
 
     Next please follow the skill .gemini/skills/match-mockgcp-with-realgcp/SKILL.md to match with realgcp for {service}, {resource}
 
-    CRITICAL: You MUST run `hack/record-gcp` against real GCP to record the initial baseline `_http.log`. Generating golden logs (`_http.log`) directly from MockGCP (e.g., by running with `E2E_GCP_TARGET=mock` and `WRITE_GOLDEN_OUTPUT=1`) is strictly forbidden, as it freezes mock-only behavior and bypasses actual GCP contract validation.
+    CRITICAL: You MUST run `hack/record-gcp` against real GCP to record the initial baseline `_http.log`. Generating golden logs (`_http.log`) directly from MockGCP (e.g., by running with `E2E_GCP_TARGET=mock` and `WRITE_GOLDEN_OUTPUT=1`) is strictly forbidden, as it freezes mock-only behavior and bypasses actual GCP contract validation. And you MUST commit files modified by running `hack/record-gcp` in its own commit.
 
     API ENABLEMENT TROUBLESHOOTING:
     If `hack/record-gcp` fails with a 403 error indicating that the GCP API is disabled (e.g., "API has not been used in project ... before or it is disabled"), do NOT assume this is a permissions blocker.
