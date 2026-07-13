@@ -17,6 +17,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/tasks"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/usagereport"
 	githubv39 "github.com/google/go-github/v39/github"
 	"github.com/spf13/cobra"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -349,6 +350,14 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch boo
 			}
 		}
 	}
+
+	usagereport.HarvestTask(ctx, client, taskDir, usagereport.Meta{
+		Repo:     owner + "/" + repo,
+		TaskType: "fix",
+		Sandbox:  sandboxName,
+		Issue:    issueNum,
+		PR:       prNum,
+	})
 
 	if prNum > 0 {
 		fmt.Printf("Aliasing sandbox %s to PR #%d...\n", sandboxName, prNum)

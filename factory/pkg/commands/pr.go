@@ -19,6 +19,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/tasks"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/usagereport"
 	githubv39 "github.com/google/go-github/v39/github"
 	"github.com/spf13/cobra"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -288,6 +289,14 @@ func runInvestigate(ctx context.Context, prURL, prompt string, continueSession b
 	}
 	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "investigate", "Completed")
 
+	usagereport.HarvestTask(ctx, client, taskDir, usagereport.Meta{
+		Repo:     owner + "/" + repo,
+		TaskType: "investigate",
+		Sandbox:  sandboxName,
+		PR:       prNum,
+		Issues:   referencedIssueList(pr),
+	})
+
 	fmt.Println("\nInvestigate execution completed.")
 	return nil
 }
@@ -548,6 +557,14 @@ func runAddressComments(ctx context.Context, prURL, prompt string, continueSessi
 		return nil
 	}
 	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "address-comments", "Completed")
+
+	usagereport.HarvestTask(ctx, client, taskDir, usagereport.Meta{
+		Repo:     owner + "/" + repo,
+		TaskType: "address-comments",
+		Sandbox:  sandboxName,
+		PR:       prNum,
+		Issues:   referencedIssueList(pr),
+	})
 
 	fmt.Println("\nAddress-comments execution completed.")
 	return nil
@@ -992,6 +1009,14 @@ func runIterate(ctx context.Context, prURL, prompt string, continueSession bool,
 	}
 	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "iterate", "Completed")
 
+	usagereport.HarvestTask(ctx, client, taskDir, usagereport.Meta{
+		Repo:     owner + "/" + repo,
+		TaskType: "iterate",
+		Sandbox:  sandboxName,
+		PR:       prNum,
+		Issues:   referencedIssueList(pr),
+	})
+
 	fmt.Println("\nIterate execution completed.")
 	return nil
 }
@@ -1279,6 +1304,13 @@ func runAdopt(ctx context.Context, prURL, adoptAction, strategy string, ephemera
 		return nil
 	}
 	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "adopt", "Completed")
+
+	usagereport.HarvestTask(ctx, client, taskDir, usagereport.Meta{
+		Repo:     owner + "/" + repo,
+		TaskType: "adopt",
+		Sandbox:  sandboxName,
+		PR:       prNum,
+	})
 
 	fmt.Println("\nAdopt execution completed.")
 

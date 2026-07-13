@@ -7,6 +7,7 @@ Overseer is an autonomous agent responsible for orchestrating other agents and m
 
 - `pkg/overseer`: Go package for reconciling Overseer sandboxes.
 - `images/overseer`: Dockerfile and scripts for the Overseer agent image.
+- `pkg/tokenusage` / `cmd/token-usage`: the token-usage collector service. It durably records per-task gemini-cli token usage (pushed by the `factory` binary from inside sandboxes, see `factory/pkg/usagereport`) on a PVC and serves per-issue, per-PR, and per-workflow rollups over HTTP. Deployed by `k8s/token-usage.yaml` as a StatefulSet + Service (`token-usage.overseer-system:8080`). The factory watch loop also posts a one-time usage summary comment on a workflow issue when the issue is closed and its sandbox is cleaned up. Reporting is controlled by the `COLLECTOR_URL` env var (set on the controller, injected into overseer sandboxes; empty disables it).
 
 ## Getting Started with kind
 

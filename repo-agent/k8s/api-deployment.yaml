@@ -54,3 +54,6 @@ spec:
           value: ko://repo-agent/images/repo-sandbox
         - name: CONFIGDIR_CLI_IMAGE
           value: ko://repo-agent/configdir/cmd/configdir-cli
+        # Token-usage collector backing the Usage dashboard view.
+        - name: COLLECTOR_URL
+          value: http://token-usage.overseer-system.svc.cluster.local:8080

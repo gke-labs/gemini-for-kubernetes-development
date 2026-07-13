@@ -17,6 +17,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/tasks"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/usagereport"
 	githubv39 "github.com/google/go-github/v39/github"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -370,6 +371,26 @@ func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 		}
 		fmt.Printf("PR created/updated: %s\n", prURL)
 	}
+
+	usageMeta := usagereport.Meta{
+		Repo:         owner + "/" + repo,
+		TaskType:     "agent",
+		Sandbox:      sandboxName,
+		PR:           createdPRNum,
+		Workflow:     flags.SessionID,
+		WorkflowName: agentDef.Name,
+	}
+	if isIssue {
+		usageMeta.Issue = targetNum
+	} else if isPR && usageMeta.PR == 0 {
+		usageMeta.PR = targetNum
+	}
+	if numStr, ok := strings.CutPrefix(flags.SessionID, "issue-"); ok && usageMeta.Issue == 0 {
+		if n, err := strconv.Atoi(numStr); err == nil {
+			usageMeta.Issue = n
+		}
+	}
+	usagereport.HarvestTask(ctx, client, taskDir, usageMeta)
 
 	if rootFlags.Cleanup {
 		fmt.Printf("Cleaning up sandbox '%s'...\n", sandboxName)
