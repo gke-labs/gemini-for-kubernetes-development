@@ -31,11 +31,12 @@ spec:
       labels:
         app: token-usage
     spec:
-      securityContext:
-        fsGroup: 65532
       containers:
       - name: token-usage
-        image: ko://overseer/images/token-usage
+        # Reuses the overseer image (which bundles the factory binary) to
+        # avoid managing a separate image; only the command differs.
+        image: ko://overseer/images/overseer
+        command: ["factory", "token-daemon"]
         env:
         - name: STORAGE_ROOT
           value: /data
