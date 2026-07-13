@@ -128,7 +128,8 @@ function configureGemini {
 {
   "general": {
     "enableAutoUpdate": false,
-    "retryFetchErrors": true
+    "retryFetchErrors": true,
+    "previewFeatures": true
   }
 }
 EOF
