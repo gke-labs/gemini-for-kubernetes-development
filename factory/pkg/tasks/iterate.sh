@@ -149,7 +149,8 @@ function configureGemini {
 {
   "general": {
     "enableAutoUpdate": false,
-    "retryFetchErrors": true
+    "retryFetchErrors": true,
+    "previewFeatures": true
   }
 }
 EOF
@@ -161,6 +162,84 @@ function installExtensions {
         for ext in $EXTENSIONS; do
             gemini extensions install "$ext" --consent
         done
+    fi
+}
+
+function record_gemini_usage {
+    local output_file="$1"
+    local task_dir="$(dirname "${PROMPT_FILE}")"
+    if [ -f "$output_file" ]; then
+        python3 -c '
+import json, os, sys
+
+output_file = sys.argv[1]
+task_dir = sys.argv[2]
+
+try:
+    with open(output_file, "r") as f:
+        data = json.load(f)
+except Exception:
+    sys.exit(0)
+
+stats = data.get("stats", {})
+models = stats.get("models", {})
+if not models and ("total_tokens" in stats or "total" in stats or "totalRequests" in stats):
+    models = {data.get("model", "gemini-cli"): {
+        "api": {"totalRequests": stats.get("totalRequests", stats.get("tool_calls", 0) + 1), "totalErrors": stats.get("totalErrors", 0), "totalLatencyMs": stats.get("totalLatencyMs", stats.get("duration_ms", 0))},
+        "tokens": {"input": stats.get("input", stats.get("input_tokens", 0)), "output": stats.get("candidates", stats.get("output", stats.get("output_tokens", 0))), "total": stats.get("total", stats.get("total_tokens", 0)), "cached": stats.get("cached", 0), "thoughts": stats.get("thoughts", 0)}
+    }}
+
+if not models:
+    sys.exit(0)
+
+usage_path = os.path.join(task_dir, "llm-usage.json")
+token_path = os.path.join(task_dir, "token-usage.json")
+
+existing = {"models": {}}
+if os.path.exists(usage_path):
+    try:
+        with open(usage_path, "r") as f:
+            existing = json.load(f)
+    except Exception:
+        pass
+elif os.path.exists(token_path):
+    try:
+        with open(token_path, "r") as f:
+            existing = json.load(f)
+    except Exception:
+        pass
+
+for model_name, model_data in models.items():
+    api = model_data.get("api", {})
+    tokens = model_data.get("tokens", {})
+    
+    cur_model = existing.get("models", {}).get(model_name, {
+        "api": {"totalRequests": 0, "totalErrors": 0, "totalLatencyMs": 0},
+        "tokens": {"input": 0, "output": 0, "total": 0, "cached": 0, "thoughts": 0}
+    })
+    
+    cur_model["api"]["totalRequests"] += api.get("totalRequests", api.get("total_requests", 1))
+    cur_model["api"]["totalErrors"] += api.get("totalErrors", api.get("total_errors", 0))
+    cur_model["api"]["totalLatencyMs"] += api.get("totalLatencyMs", api.get("total_latency_ms", 0))
+    
+    cur_model["tokens"]["input"] += tokens.get("input", 0)
+    cur_model["tokens"]["output"] += tokens.get("candidates", tokens.get("output", 0))
+    cur_model["tokens"]["total"] += tokens.get("total", 0)
+    cur_model["tokens"]["cached"] += tokens.get("cached", 0)
+    cur_model["tokens"]["thoughts"] += tokens.get("thoughts", 0)
+    
+    if "models" not in existing:
+        existing["models"] = {}
+    existing["models"][model_name] = cur_model
+
+try:
+    with open(usage_path, "w") as f:
+        json.dump(existing, f, indent=2)
+    with open(token_path, "w") as f:
+        json.dump(existing, f, indent=2)
+except Exception:
+    pass
+' "$output_file" "$task_dir"
     fi
 }
 
@@ -188,6 +267,7 @@ function runGemini {
             fi
             if (cd "/workspaces/${REPO_NAME}" && export GEMINI_API_KEY="${GEMINI_API_KEY}" && gemini "${GEMINI_ARGS[@]}" < ${PROMPT_FILE} > "$(dirname "${PROMPT_FILE}")/gemini-output.json"); then
                 echo "Gemini execution successful with model: $MODEL"
+                record_gemini_usage "$(dirname "${PROMPT_FILE}")/gemini-output.json"
                 SUCCESS=true
                 break
             else

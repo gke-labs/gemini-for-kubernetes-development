@@ -171,8 +171,18 @@ func processGeminiOutput(ctx context.Context, sb *sandbox.IssueSandbox, taskDir 
 	}
 	usagePath := taskPath(taskDir, "llm-usage.json")
 	if err := os.WriteFile(usagePath, statsJSON, 0644); err != nil {
-		log.Error(err, "Failed to write llm-usage.json", "path", usagePath)
+		log.Error(err, "Failed to write llm-usage.json on host", "path", usagePath)
 	} else {
-		log.Info("Wrote LLM usage stats", "path", usagePath)
+		log.Info("Wrote LLM usage stats on host", "path", usagePath)
+	}
+	tokenUsagePath := taskPath(taskDir, "token-usage.json")
+	if err := os.WriteFile(tokenUsagePath, statsJSON, 0644); err != nil {
+		log.Error(err, "Failed to write token-usage.json on host", "path", tokenUsagePath)
+	} else {
+		log.Info("Wrote token usage stats on host", "path", tokenUsagePath)
+	}
+	if sb != nil {
+		_ = sb.WriteFile(usagePath, statsJSON)
+		_ = sb.WriteFile(tokenUsagePath, statsJSON)
 	}
 }
