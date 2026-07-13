@@ -12,7 +12,7 @@ Goals:
 * **Durability**: usage must survive sandbox and overseer pod deletion.
 * **Aggregation**: tokens per issue/PR (across all its tasks) and per workflow (across all issues/PRs linked to the workflow).
 * **Zero task risk**: reporting is best-effort and disabled by default; a task can never fail because of usage collection.
-* **No cross-module coupling**: factory/overseer do not import repo-agent; the JSON wire format is the only contract.
+* **No cross-module coupling**: factory/overseer do not import repo-agent; the JSON wire format is the only contract. Both producer (`factory/pkg/usagereport`) and collector (`factory/pkg/tokenusage`) live in the factory module and share one set of types; overseer only carries the deployment manifests.
 
 ---
 
@@ -21,13 +21,13 @@ Goals:
 ```mermaid
 graph LR
     A[Task scripts<br/>token-usage.json] -->|envd Exec cat| B[factory binary<br/>pkg/usagereport]
-    B -->|POST /v1/usage| C[token-usage collector<br/>overseer-system StatefulSet + PVC]
+    B -->|POST /v1/usage| C[factory token-daemon collector<br/>overseer-system StatefulSet + PVC]
     C -->|GET rollups| D[repo-agent API proxy<br/>/api/usage/*]
     D --> E[Review UI<br/>Usage view]
     B -->|workflow issue closed| F[GitHub summary comment]
 ```
 
-* **Collector** (`overseer/pkg/tokenusage`, `overseer/cmd/token-usage`): plain net/http service storing records in a JSONL append log on a PVC (`records.jsonl`), with a full in-memory index rebuilt by replay at startup. Deployed by `overseer/k8s/token-usage.yaml` as Service + StatefulSet `token-usage` in `overseer-system`.
+* **Collector** (`factory/pkg/tokenusage`, run as the hidden `factory token-daemon` command): plain net/http service storing records in a JSONL append log on a PVC (`records.jsonl`), with a full in-memory index rebuilt by replay at startup. Deployed by `overseer/k8s/token-usage.yaml` (image `overseer/images/token-usage`, a distroless factory binary with entrypoint `factory token-daemon`) as Service + StatefulSet `token-usage` in `overseer-system`.
 * **Producer** (`factory/pkg/usagereport`): reads usage files over envd (`cat <taskDir>/token-usage.json || cat <taskDir>/llm-usage.json`) and POSTs a `UsageRecord` to `$COLLECTOR_URL`. No-op when `COLLECTOR_URL` is unset; failures only log warnings.
 * **Wiring**: the overseer controller injects `COLLECTOR_URL` (default `http://token-usage.overseer-system.svc.cluster.local:8080`) into overseer sandboxes; `factory watch` and its re-exec'd subcommands inherit it.
 

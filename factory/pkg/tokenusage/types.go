@@ -16,12 +16,12 @@ limitations under the License.
 
 // Package tokenusage implements the token-usage collector service: a small
 // HTTP server that durably records per-task gemini-cli usage stats pushed by
-// the factory binary and serves per-issue/PR/workflow rollups.
+// factory task commands and serves per-issue/PR/workflow rollups. It runs as
+// the hidden "factory token-daemon" command; the deployment manifests live in
+// overseer/k8s.
 //
 // The Stats JSON shape is the wire contract with the producers; it matches
-// the token-usage.json files written by the task scripts. A mirrored copy of
-// these structs lives in factory/pkg/usagereport (factory must not import
-// this module).
+// the token-usage.json files written by the task scripts in factory/pkg/tasks.
 package tokenusage
 
 // Stats captures accumulated usage statistics from LLM invocations,

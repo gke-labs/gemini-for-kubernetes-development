@@ -1,18 +1,18 @@
 FROM golang:1.26.3 AS builder
 
 WORKDIR /app
-# The tokenusage package only uses the standard library, so build the
-# overseer module standalone (no go.work / sibling modules needed).
-COPY overseer/go.mod overseer/go.mod
-COPY overseer/go.sum overseer/go.sum
-COPY overseer/ overseer/
+# The factory module has no local module dependencies, so build it
+# standalone (no go.work / sibling modules needed).
+COPY factory/go.mod factory/go.mod
+COPY factory/go.sum factory/go.sum
+COPY factory/ factory/
 
-WORKDIR /app/overseer
-RUN CGO_ENABLED=0 GOOS=linux GOWORK=off go build -o token-usage ./cmd/token-usage/main.go
+WORKDIR /app/factory
+RUN CGO_ENABLED=0 GOOS=linux GOWORK=off go build -o factory ./main.go
 
 FROM gcr.io/distroless/static:nonroot
 WORKDIR /
-COPY --from=builder /app/overseer/token-usage .
+COPY --from=builder /app/factory/factory /factory
 USER 65532:65532
 
-ENTRYPOINT ["/token-usage"]
+ENTRYPOINT ["/factory", "token-daemon"]

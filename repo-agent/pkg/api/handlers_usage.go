@@ -9,7 +9,7 @@ import (
 )
 
 // usageCollectorURL returns the base URL of the token-usage collector
-// service (see overseer/pkg/tokenusage).
+// service (factory token-daemon, see factory/pkg/tokenusage).
 func usageCollectorURL() string {
 	if v, ok := os.LookupEnv("COLLECTOR_URL"); ok {
 		return strings.TrimRight(v, "/")
