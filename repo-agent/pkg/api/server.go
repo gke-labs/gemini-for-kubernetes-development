@@ -99,6 +99,7 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 		api.GET("/repo/:repo/chores/:name/tasks/:taskID/logs", s.getChoreTaskLogs)
 		api.POST("/feedback", s.submitFeedback)
 		api.GET("/proxy", s.proxy)
+		api.GET("/usage/*path", s.proxyUsage)
 
 		// Overseer routes (admin only)
 		overseer := api.Group("/overseers")

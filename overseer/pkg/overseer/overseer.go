@@ -34,6 +34,16 @@ import (
 	overseerv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/overseer/pkg/api/v1alpha1"
 )
 
+// collectorURL is the token-usage collector endpoint injected into overseer
+// sandboxes; the factory binary reports per-task gemini token usage there.
+// Overridable on the controller deployment; empty disables reporting.
+func collectorURL() string {
+	if v, ok := os.LookupEnv("COLLECTOR_URL"); ok {
+		return v
+	}
+	return "http://token-usage.overseer-system.svc.cluster.local:8080"
+}
+
 // ReconcileOverseer ensures the Overseer sandbox is running for the given Overseer.
 func ReconcileOverseer(ctx context.Context, c client.Client, o *overseerv1alpha1.Overseer) error {
 	log := log.FromContext(ctx)
@@ -194,6 +204,10 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 		map[string]interface{}{
 			"name":  "ALLOW_GEMINI_ORCHESTRATION",
 			"value": fmt.Sprintf("%t", o.Spec.EnableGeminiOrchestrator),
+		},
+		map[string]interface{}{
+			"name":  "COLLECTOR_URL",
+			"value": collectorURL(),
 		},
 	}
 

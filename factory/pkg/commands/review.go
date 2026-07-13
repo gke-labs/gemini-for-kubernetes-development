@@ -16,6 +16,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/tasks"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/usagereport"
 	githubv39 "github.com/google/go-github/v39/github"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -297,6 +298,14 @@ func runReview(ctx context.Context, prURL string, publishPolicy string, instruct
 		return nil
 	}
 	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "review", "Completed")
+
+	usagereport.HarvestTask(ctx, client, taskDir, usagereport.Meta{
+		Repo:     owner + "/" + repo,
+		TaskType: "review",
+		Sandbox:  sandboxName,
+		PR:       prNum,
+		Issues:   referencedIssueList(pr),
+	})
 
 	fmt.Println("\nReview execution completed. Reading output...")
 

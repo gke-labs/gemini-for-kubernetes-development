@@ -20,6 +20,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/usagereport"
 	githubv39 "github.com/google/go-github/v39/github"
 	"github.com/robfig/cron/v3"
 	"github.com/spf13/cobra"
@@ -1719,7 +1720,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 			}
 
 			// Clean up stale idle sandboxes older than eviction age (defaults to 1 week)
-			if err := cleanupStaleIdleSandboxes(ctx, kubeClient, rootFlags.Namespace, sandboxEvictionAge, dryRun); err != nil {
+			if err := cleanupStaleIdleSandboxes(ctx, kubeClient, owner+"/"+repo, rootFlags.Namespace, sandboxEvictionAge, dryRun); err != nil {
 				klog.Errorf("Failed to clean up stale idle sandboxes: %v", err)
 			}
 
@@ -2503,6 +2504,10 @@ func cleanupClosedPRSandboxes(ctx context.Context, ghClient *githubv39.Client, k
 				fmt.Printf("[DRYRUN] Would delete sandbox '%s' for closed PR #%d\n", name, num)
 				continue
 			}
+			meta := sandboxUsageMeta(&item, owner+"/"+repo)
+			meta.PR = num
+			meta.Issues = referencedIssueList(pr)
+			usagereport.HarvestSandbox(ctx, namespace, name, meta)
 			if err := manager.DeleteSandbox(ctx, namespace, name); err != nil {
 				klog.Errorf("Failed to delete sandbox '%s' for closed PR #%d: %v", name, num, err)
 			}
@@ -2557,6 +2562,12 @@ func cleanupClosedIssueSandboxes(ctx context.Context, ghClient *githubv39.Client
 			if dryRun {
 				fmt.Printf("[DRYRUN] Would delete sandbox '%s' for closed issue #%d\n", name, num)
 				continue
+			}
+			meta := sandboxUsageMeta(&item, owner+"/"+repo)
+			meta.Issue = num
+			usagereport.HarvestSandbox(ctx, namespace, name, meta)
+			if strings.HasPrefix(name, "wf-issue-") {
+				usagereport.PostWorkflowSummaryIfNeeded(ctx, ghClient, owner, repo, num)
 			}
 			if err := manager.DeleteSandbox(ctx, namespace, name); err != nil {
 				klog.Errorf("Failed to delete sandbox '%s' for closed issue #%d: %v", name, num, err)
@@ -2739,7 +2750,7 @@ func isPRTask(taskType string) bool {
 	return taskType == "pr-investigate" || taskType == "pr-comments" || taskType == "pr-iterate"
 }
 
-func cleanupStaleIdleSandboxes(ctx context.Context, kubeClient *clients.KubernetesClient, namespace string, ageStr string, dryRun bool) error {
+func cleanupStaleIdleSandboxes(ctx context.Context, kubeClient *clients.KubernetesClient, repoFullName string, namespace string, ageStr string, dryRun bool) error {
 	if kubeClient == nil {
 		return nil
 	}
@@ -2780,6 +2791,7 @@ func cleanupStaleIdleSandboxes(ctx context.Context, kubeClient *clients.Kubernet
 					continue
 				}
 
+				usagereport.HarvestSandbox(ctx, namespace, name, sandboxUsageMeta(&item, repoFullName))
 				if err := manager.DeleteSandbox(ctx, namespace, name); err != nil {
 					klog.Errorf("Failed to delete stale/idle sandbox '%s': %v", name, err)
 				}

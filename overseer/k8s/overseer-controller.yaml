@@ -88,6 +88,10 @@ spec:
         env:
         - name: OVERSEER_IMAGE
           value: ko://overseer/images/overseer
+        # Token-usage collector endpoint injected into overseer sandboxes.
+        # Set to "" to disable usage reporting.
+        - name: COLLECTOR_URL
+          value: http://token-usage.overseer-system.svc.cluster.local:8080
         resources:
           limits:
             cpu: 500m

@@ -1,0 +1,69 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: token-usage
+  namespace: overseer-system
+  labels:
+    app: token-usage
+spec:
+  selector:
+    app: token-usage
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: token-usage
+  namespace: overseer-system
+  labels:
+    app: token-usage
+spec:
+  serviceName: token-usage
+  replicas: 1
+  selector:
+    matchLabels:
+      app: token-usage
+  template:
+    metadata:
+      labels:
+        app: token-usage
+    spec:
+      containers:
+      - name: token-usage
+        # Reuses the overseer image (which bundles the factory binary) to
+        # avoid managing a separate image; only the command differs.
+        image: ko://overseer/images/overseer
+        command: ["factory", "token-daemon"]
+        env:
+        - name: STORAGE_ROOT
+          value: /data
+        - name: ADDR
+          value: ":8080"
+        ports:
+        - containerPort: 8080
+          name: http
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+        volumeMounts:
+        - name: data
+          mountPath: /data
+        resources:
+          limits:
+            cpu: 500m
+            memory: 256Mi
+          requests:
+            cpu: 50m
+            memory: 64Mi
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 1Gi
