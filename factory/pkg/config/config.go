@@ -28,23 +28,23 @@ type RoleConfig struct {
 }
 
 type FactoryConfig struct {
-	MaxActiveReviews  int                   `yaml:"maxActiveReviews"`
-	MaxActiveIssues   int                   `yaml:"maxActiveIssues"`
-	Chores            ChoresConfig          `yaml:"chores"`
-	EphemeralStorage  string                `yaml:"ephemeralStorage"`
-	Image             string                `yaml:"image"`
+	MaxActiveReviews     int                   `yaml:"maxActiveReviews"`
+	MaxActiveIssues      int                   `yaml:"maxActiveIssues"`
+	Chores               ChoresConfig          `yaml:"chores"`
+	EphemeralStorage     string                `yaml:"ephemeralStorage"`
+	Image                string                `yaml:"image"`
 	WorkspaceDiskSize    string                `yaml:"workspaceDiskSize"`
 	SandboxCPURequest    string                `yaml:"sandboxCPURequest"`
 	SandboxCPULimit      string                `yaml:"sandboxCPULimit"`
 	SandboxMemoryRequest string                `yaml:"sandboxMemoryRequest"`
 	SandboxMemoryLimit   string                `yaml:"sandboxMemoryLimit"`
-	AdditionalLabels  []string              `yaml:"additionalLabels"`
-	TriggerLabel      string                `yaml:"triggerLabel"`
-	AllowlistedBots   []string              `yaml:"allowlistedBots"`
-	Secrets           []SecretMount         `yaml:"secrets"`
-	Env               []EnvVar              `yaml:"env"`
-	MinNumber         int                   `yaml:"minNumber"`
-	Roles             map[string]RoleConfig `yaml:"roles"`
+	AdditionalLabels     []string              `yaml:"additionalLabels"`
+	TriggerLabel         string                `yaml:"triggerLabel"`
+	AllowlistedBots      []string              `yaml:"allowlistedBots"`
+	Secrets              []SecretMount         `yaml:"secrets"`
+	Env                  []EnvVar              `yaml:"env"`
+	MinNumber            int                   `yaml:"minNumber"`
+	Roles                map[string]RoleConfig `yaml:"roles"`
 }
 
 func LoadConfig() (*FactoryConfig, error) {
