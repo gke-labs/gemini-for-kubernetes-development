@@ -296,6 +296,7 @@ func runInvestigate(ctx context.Context, prURL, prompt string, continueSession b
 		PR:       prNum,
 		Issues:   referencedIssueList(pr),
 	})
+	usagereport.ReportPRSubject(ctx, owner+"/"+repo, pr)
 
 	fmt.Println("\nInvestigate execution completed.")
 	return nil
@@ -565,6 +566,7 @@ func runAddressComments(ctx context.Context, prURL, prompt string, continueSessi
 		PR:       prNum,
 		Issues:   referencedIssueList(pr),
 	})
+	usagereport.ReportPRSubject(ctx, owner+"/"+repo, pr)
 
 	fmt.Println("\nAddress-comments execution completed.")
 	return nil
@@ -1016,6 +1018,7 @@ func runIterate(ctx context.Context, prURL, prompt string, continueSession bool,
 		PR:       prNum,
 		Issues:   referencedIssueList(pr),
 	})
+	usagereport.ReportPRSubject(ctx, owner+"/"+repo, pr)
 
 	fmt.Println("\nIterate execution completed.")
 	return nil
@@ -1311,6 +1314,7 @@ func runAdopt(ctx context.Context, prURL, adoptAction, strategy string, ephemera
 		Sandbox:  sandboxName,
 		PR:       prNum,
 	})
+	usagereport.ReportPRSubject(ctx, owner+"/"+repo, pr)
 
 	fmt.Println("\nAdopt execution completed.")
 

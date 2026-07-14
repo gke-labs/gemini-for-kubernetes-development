@@ -306,6 +306,7 @@ func runReview(ctx context.Context, prURL string, publishPolicy string, instruct
 		PR:       prNum,
 		Issues:   referencedIssueList(pr),
 	})
+	usagereport.ReportPRSubject(ctx, owner+"/"+repo, pr)
 
 	fmt.Println("\nReview execution completed. Reading output...")
 

@@ -358,6 +358,12 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch boo
 		Issue:    issueNum,
 		PR:       prNum,
 	})
+	usagereport.ReportIssueSubject(ctx, owner+"/"+repo, issue)
+	if prNum > 0 && usagereport.Enabled() {
+		if createdPR, _, err := ghClient.PullRequests.Get(ctx, owner, repo, prNum); err == nil {
+			usagereport.ReportPRSubject(ctx, owner+"/"+repo, createdPR)
+		}
+	}
 
 	if prNum > 0 {
 		fmt.Printf("Aliasing sandbox %s to PR #%d...\n", sandboxName, prNum)

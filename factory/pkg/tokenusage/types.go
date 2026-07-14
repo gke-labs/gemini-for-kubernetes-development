@@ -24,6 +24,8 @@ limitations under the License.
 // the token-usage.json files written by the task scripts in factory/pkg/tasks.
 package tokenusage
 
+import "fmt"
+
 // Stats captures accumulated usage statistics from LLM invocations,
 // keyed by model name.
 type Stats struct {
@@ -76,16 +78,44 @@ type UsageRecord struct {
 }
 
 // Rollup is an aggregate of usage records grouped by some key
-// (issue number, PR number, or workflow session).
+// (issue number, PR number, workflow session, or day).
 type Rollup struct {
-	Key          string        `json:"key"`
-	Repo         string        `json:"repo,omitempty"`
-	WorkflowName string        `json:"workflowName,omitempty"`
-	TaskCount    int           `json:"taskCount"`
-	Issues       []int         `json:"issues,omitempty"`
-	PRs          []int         `json:"prs,omitempty"`
-	Stats        Stats         `json:"stats"`
-	Records      []UsageRecord `json:"records,omitempty"` // only in detail responses
+	Key          string `json:"key"`
+	Repo         string `json:"repo,omitempty"`
+	WorkflowName string `json:"workflowName,omitempty"`
+	TaskCount    int    `json:"taskCount"`
+	Issues       []int  `json:"issues,omitempty"`
+	PRs          []int  `json:"prs,omitempty"`
+
+	// Subject metadata (joined from the matching Subject, when reported):
+	// GitHub state and timestamps of the underlying issue/PR, used to show
+	// age and open/closed status.
+	State     string `json:"state,omitempty"` // "open" | "closed"
+	CreatedAt string `json:"createdAt,omitempty"`
+	ClosedAt  string `json:"closedAt,omitempty"`
+
+	Stats   Stats         `json:"stats"`
+	Records []UsageRecord `json:"records,omitempty"`
+}
+
+// Subject tracks GitHub metadata of an entity that usage is attributed to
+// (an issue or a PR): open/closed state and creation/close timestamps.
+// Producers upsert subjects alongside usage records; rollups join on the
+// subject key to expose age and status.
+type Subject struct {
+	Key       string `json:"key"` // "issue-<n>" or "pr-<n>"
+	Repo      string `json:"repo,omitempty"`
+	Kind      string `json:"kind"` // "issue" | "pr"
+	Number    int    `json:"number"`
+	State     string `json:"state,omitempty"`     // "open" | "closed"
+	CreatedAt string `json:"createdAt,omitempty"` // RFC3339, GitHub creation time
+	ClosedAt  string `json:"closedAt,omitempty"`  // RFC3339, set once closed
+	UpdatedAt string `json:"updatedAt,omitempty"` // RFC3339, last upsert
+}
+
+// SubjectKey builds the canonical subject key for a kind and number.
+func SubjectKey(kind string, number int) string {
+	return fmt.Sprintf("%s-%d", kind, number)
 }
 
 // MergeStats accumulates src into dst per model.
