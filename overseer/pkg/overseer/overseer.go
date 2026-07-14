@@ -202,6 +202,22 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 			"value": o.Spec.EphemeralStorage,
 		},
 		map[string]interface{}{
+			"name":  "SANDBOX_CPU_REQUEST",
+			"value": o.Spec.SandboxCPURequest,
+		},
+		map[string]interface{}{
+			"name":  "SANDBOX_CPU_LIMIT",
+			"value": o.Spec.SandboxCPULimit,
+		},
+		map[string]interface{}{
+			"name":  "SANDBOX_MEMORY_REQUEST",
+			"value": o.Spec.SandboxMemoryRequest,
+		},
+		map[string]interface{}{
+			"name":  "SANDBOX_MEMORY_LIMIT",
+			"value": o.Spec.SandboxMemoryLimit,
+		},
+		map[string]interface{}{
 			"name":  "ALLOW_GEMINI_ORCHESTRATION",
 			"value": fmt.Sprintf("%t", o.Spec.EnableGeminiOrchestrator),
 		},

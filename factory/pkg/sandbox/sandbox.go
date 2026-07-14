@@ -15,6 +15,21 @@ import (
 	"k8s.io/klog/v2"
 )
 
+func fillEnvResources(opts *DevSandboxOptions) {
+	if opts.CPURequest == "" {
+		opts.CPURequest = os.Getenv("SANDBOX_CPU_REQUEST")
+	}
+	if opts.CPULimit == "" {
+		opts.CPULimit = os.Getenv("SANDBOX_CPU_LIMIT")
+	}
+	if opts.MemoryRequest == "" {
+		opts.MemoryRequest = os.Getenv("SANDBOX_MEMORY_REQUEST")
+	}
+	if opts.MemoryLimit == "" {
+		opts.MemoryLimit = os.Getenv("SANDBOX_MEMORY_LIMIT")
+	}
+}
+
 func EnsureFixSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, taskID, cloneURL, htmlURL, taskTitle, image, diskSize, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
 	name := fmt.Sprintf("fix-%s-%s", repoName, taskID)
 
@@ -65,6 +80,7 @@ func EnsureFixSandbox(ctx context.Context, kubeClient *clients.KubernetesClient,
 		},
 	}
 
+	fillEnvResources(&opt.DevSandboxOptions)
 	sbObj, svc := NewAgentSandbox(opt)
 
 	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sbObj, metav1.CreateOptions{})
@@ -138,6 +154,7 @@ func EnsureAgentSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 		},
 	}
 
+	fillEnvResources(&opt.DevSandboxOptions)
 	sbObj, svc := NewAgentSandbox(opt)
 
 	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sbObj, metav1.CreateOptions{})
@@ -203,6 +220,7 @@ func EnsureAdoptSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 		},
 	}
 
+	fillEnvResources(&opt.DevSandboxOptions)
 	sbObj, svc := NewAgentSandbox(opt)
 
 	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sbObj, metav1.CreateOptions{})
@@ -323,6 +341,7 @@ func EnsureReviewSandbox(ctx context.Context, kubeClient *clients.KubernetesClie
 		RepoName:   repo,
 	}
 
+	fillEnvResources(&opt.DevSandboxOptions)
 	sb, svc := NewReviewSandbox(opt)
 
 	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sb, metav1.CreateOptions{})

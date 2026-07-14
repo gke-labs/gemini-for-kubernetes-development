@@ -33,7 +33,11 @@ type FactoryConfig struct {
 	Chores            ChoresConfig          `yaml:"chores"`
 	EphemeralStorage  string                `yaml:"ephemeralStorage"`
 	Image             string                `yaml:"image"`
-	WorkspaceDiskSize string                `yaml:"workspaceDiskSize"`
+	WorkspaceDiskSize    string                `yaml:"workspaceDiskSize"`
+	SandboxCPURequest    string                `yaml:"sandboxCPURequest"`
+	SandboxCPULimit      string                `yaml:"sandboxCPULimit"`
+	SandboxMemoryRequest string                `yaml:"sandboxMemoryRequest"`
+	SandboxMemoryLimit   string                `yaml:"sandboxMemoryLimit"`
 	AdditionalLabels  []string              `yaml:"additionalLabels"`
 	TriggerLabel      string                `yaml:"triggerLabel"`
 	AllowlistedBots   []string              `yaml:"allowlistedBots"`

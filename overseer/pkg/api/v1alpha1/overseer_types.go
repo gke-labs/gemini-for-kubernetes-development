@@ -114,6 +114,22 @@ type OverseerSpec struct {
 	// +kubebuilder:default="10Gi"
 	EphemeralStorage string `json:"ephemeralStorage,omitempty"`
 
+	// SandboxCPURequest specifies the CPU request for child sandboxes.
+	// +kubebuilder:validation:Optional
+	SandboxCPURequest string `json:"sandboxCPURequest,omitempty"`
+
+	// SandboxCPULimit specifies the CPU limit for child sandboxes.
+	// +kubebuilder:validation:Optional
+	SandboxCPULimit string `json:"sandboxCPULimit,omitempty"`
+
+	// SandboxMemoryRequest specifies the memory request for child sandboxes.
+	// +kubebuilder:validation:Optional
+	SandboxMemoryRequest string `json:"sandboxMemoryRequest,omitempty"`
+
+	// SandboxMemoryLimit specifies the memory limit for child sandboxes.
+	// +kubebuilder:validation:Optional
+	SandboxMemoryLimit string `json:"sandboxMemoryLimit,omitempty"`
+
 	// Review configuration for PRs
 	// +kubebuilder:validation:Optional
 	Review ReviewSpec `json:"review"`
