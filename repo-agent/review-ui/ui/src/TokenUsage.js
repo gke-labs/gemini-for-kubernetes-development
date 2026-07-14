@@ -46,61 +46,65 @@ const TokenHeaderCells = () => (
     </>
 );
 
-const RollupTable = ({ title, rollups, keyLabel, renderKey, expanded, onToggle, records }) => (
-    <div style={{ backgroundColor: 'var(--bg-card)', borderRadius: '8px', boxShadow: 'var(--shadow-card)', padding: '16px', marginBottom: '24px' }}>
-        <h3 style={{ margin: '0 0 12px 4px', color: 'var(--text-primary)' }}>{title}</h3>
-        {(!rollups || rollups.length === 0) ? (
-            <p style={{ color: 'var(--text-secondary)', margin: '4px' }}>No usage recorded yet.</p>
-        ) : (
-            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
-                <thead>
-                    <tr>
-                        <th style={thStyle}>{keyLabel}</th>
-                        <th style={{ ...thStyle, textAlign: 'right' }}>Tasks</th>
-                        <TokenHeaderCells />
-                    </tr>
-                </thead>
-                <tbody>
-                    {rollups.map(r => {
-                        const s = sumStats(r.stats);
-                        const isOpen = expanded === r.key;
-                        return (
-                            <React.Fragment key={r.key}>
-                                <tr className="table-row-hover" style={{ cursor: onToggle ? 'pointer' : 'default' }}
-                                    onClick={onToggle ? () => onToggle(isOpen ? null : r.key) : undefined}>
-                                    <td style={{ ...tdStyle, fontWeight: 'bold' }}>
-                                        {onToggle && <span style={{ marginRight: '6px' }}>{isOpen ? '▾' : '▸'}</span>}
-                                        {renderKey ? renderKey(r) : r.key}
-                                    </td>
-                                    <td style={numStyle}>{fmt(r.taskCount)}</td>
-                                    <TokenCells s={s} />
-                                </tr>
-                                {isOpen && (records || r.records || []).map(rec => (
-                                    <tr key={rec.key} style={{ backgroundColor: 'var(--bg-comment-card)' }}>
-                                        <td style={{ ...tdStyle, paddingLeft: '36px', fontSize: '13px' }}>
-                                            {rec.taskType || '-'} · {rec.sandbox || '-'}
-                                            {rec.pr ? ` · PR #${rec.pr}` : ''}{rec.issue ? ` · issue #${rec.issue}` : ''}
+const RollupTable = ({ title, subtitle, rollups, keyLabel, renderKey }) => {
+    const [expanded, setExpanded] = useState(null);
+    return (
+        <div style={{ backgroundColor: 'var(--bg-card)', borderRadius: '8px', boxShadow: 'var(--shadow-card)', padding: '16px', marginBottom: '24px' }}>
+            <h3 style={{ margin: '0 0 2px 4px', color: 'var(--text-primary)' }}>{title}</h3>
+            {subtitle && <p style={{ margin: '0 0 12px 4px', color: 'var(--text-secondary)', fontSize: '13px' }}>{subtitle}</p>}
+            {(!rollups || rollups.length === 0) ? (
+                <p style={{ color: 'var(--text-secondary)', margin: '4px' }}>No usage recorded yet.</p>
+            ) : (
+                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                    <thead>
+                        <tr>
+                            <th style={thStyle}>{keyLabel}</th>
+                            <th style={{ ...thStyle, textAlign: 'right' }}>Tasks</th>
+                            <TokenHeaderCells />
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {rollups.map(r => {
+                            const s = sumStats(r.stats);
+                            const isOpen = expanded === r.key;
+                            return (
+                                <React.Fragment key={r.key}>
+                                    <tr className="table-row-hover" style={{ cursor: 'pointer' }}
+                                        onClick={() => setExpanded(isOpen ? null : r.key)}>
+                                        <td style={{ ...tdStyle, fontWeight: 'bold' }}>
+                                            <span style={{ marginRight: '6px' }}>{isOpen ? '▾' : '▸'}</span>
+                                            {renderKey ? renderKey(r) : r.key}
                                         </td>
-                                        <td style={numStyle}>-</td>
-                                        <TokenCells s={sumStats(rec.stats)} />
+                                        <td style={numStyle}>{fmt(r.taskCount)}</td>
+                                        <TokenCells s={s} />
                                     </tr>
-                                ))}
-                            </React.Fragment>
-                        );
-                    })}
-                </tbody>
-            </table>
-        )}
-    </div>
-);
+                                    {isOpen && (r.records || []).map(rec => (
+                                        <tr key={rec.key} style={{ backgroundColor: 'var(--bg-comment-card)' }}>
+                                            <td style={{ ...tdStyle, paddingLeft: '36px', fontSize: '13px' }}>
+                                                {rec.taskType || '-'} · {rec.sandbox || '-'}
+                                                {rec.pr ? ` · PR #${rec.pr}` : ''}{rec.issue ? ` · issue #${rec.issue}` : ''}
+                                            </td>
+                                            <td style={numStyle}>-</td>
+                                            <TokenCells s={sumStats(rec.stats)} />
+                                        </tr>
+                                    ))}
+                                </React.Fragment>
+                            );
+                        })}
+                    </tbody>
+                </table>
+            )}
+        </div>
+    );
+};
+
+const prList = (prs) => (prs || []).map(n => `#${n}`).join(', ');
 
 const TokenUsage = ({ onBack }) => {
     const [workflows, setWorkflows] = useState([]);
     const [issues, setIssues] = useState([]);
     const [prs, setPRs] = useState([]);
     const [error, setError] = useState(null);
-    const [expandedWorkflow, setExpandedWorkflow] = useState(null);
-    const [workflowRecords, setWorkflowRecords] = useState([]);
 
     const fetchRollups = useCallback(() => {
         const get = (path, setter) =>
@@ -137,23 +141,6 @@ const TokenUsage = ({ onBack }) => {
         return () => clearInterval(interval);
     }, [fetchRollups]);
 
-    useEffect(() => {
-        if (!expandedWorkflow) {
-            setWorkflowRecords([]);
-            return;
-        }
-        fetch(`/api/usage/v1/usage/rollups/workflows/${encodeURIComponent(expandedWorkflow)}`)
-            .then(res => {
-                if (!res.ok) throw new Error(`HTTP error ${res.status}`);
-                return res.json();
-            })
-            .then(data => setWorkflowRecords(data.records || []))
-            .catch(err => {
-                console.error('Failed to fetch workflow detail:', err);
-                setWorkflowRecords([]);
-            });
-    }, [expandedWorkflow]);
-
     return (
         <div style={{ padding: '24px', maxWidth: '1400px', margin: '0 auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
@@ -168,16 +155,26 @@ const TokenUsage = ({ onBack }) => {
             )}
 
             <RollupTable
-                title="Per Workflow"
+                title="Workflow Issues"
+                subtitle="Workflow sandboxes (wf-issue-*), including all tasks and PRs spawned by the workflow."
                 rollups={workflows}
                 keyLabel="Workflow"
-                renderKey={r => `${r.workflowName ? `${r.workflowName} · ` : ''}${r.key}${r.prs?.length ? ` (PRs: ${r.prs.map(n => `#${n}`).join(', ')})` : ''}`}
-                expanded={expandedWorkflow}
-                onToggle={setExpandedWorkflow}
-                records={workflowRecords}
+                renderKey={r => `${r.workflowName ? `${r.workflowName} · ` : ''}${r.key}${r.prs?.length ? ` (PRs: ${prList(r.prs)})` : ''}`}
             />
-            <RollupTable title="Per Issue" rollups={issues} keyLabel="Issue" renderKey={r => `#${r.key}`} />
-            <RollupTable title="Per Pull Request" rollups={prs} keyLabel="Pull Request" renderKey={r => `#${r.key}`} />
+            <RollupTable
+                title="Issue / PR Sandboxes"
+                subtitle="Issue sandboxes and the PR work they led to; issues owned by a workflow are counted above instead."
+                rollups={issues}
+                keyLabel="Issue"
+                renderKey={r => `#${r.key}${r.prs?.length ? ` / PR ${prList(r.prs)}` : ''}`}
+            />
+            <RollupTable
+                title="PR Sandboxes"
+                subtitle="Standalone PR work (reviews, investigations, adoptions) not linked to any issue or workflow."
+                rollups={prs}
+                keyLabel="Pull Request"
+                renderKey={r => `#${r.key}`}
+            />
         </div>
     );
 };
