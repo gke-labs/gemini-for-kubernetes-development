@@ -144,7 +144,7 @@ function checkForExistingPR {
         git cherry-pick --abort 2>/dev/null || true
         git reset --hard HEAD
         git clean -fd
-        /usr/bin/gh pr checkout "$pr_number"
+        /usr/bin/gh pr checkout "$pr_number" --force
 
         local output_file="$(dirname "${PROMPT_FILE}")/agent-output.txt"
 

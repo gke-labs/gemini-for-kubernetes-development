@@ -2189,8 +2189,8 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						t.CompletedAt = time.Now()
 						writeTaskJournalEvent(queueDir, taskFilename, t, "Failed", duration)
 
-						// Force clean up sandbox if the task timed out
-						if taskCtx.Err() == context.DeadlineExceeded {
+						// Force clean up sandbox if the task failed or timed out so next retry gets a clean workspace
+						if taskErr != nil {
 							var sandboxName string
 							switch t.Type {
 							case "issue-fix":
@@ -2210,10 +2210,10 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 							}
 
 							if sandboxName != "" {
-								klog.Warningf("Task %s timed out after %s! Force cleaning up sandbox '%s'...", taskFilename, taskTimeout, sandboxName)
+								klog.Warningf("Task %s failed (%v)! Cleaning up dirty sandbox '%s' so next run gets a fresh workspace...", taskFilename, taskErr, sandboxName)
 								manager := k8s.NewManager(kubeClient)
 								if err := manager.DeleteSandbox(ctx, rootFlags.Namespace, sandboxName); err != nil {
-									klog.Errorf("Failed to delete sandbox '%s' on timeout: %v", sandboxName, err)
+									klog.Errorf("Failed to delete sandbox '%s' on task failure: %v", sandboxName, err)
 								}
 							}
 						}
