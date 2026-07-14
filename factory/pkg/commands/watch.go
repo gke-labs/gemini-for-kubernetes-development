@@ -2144,6 +2144,18 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					if rootFlags.EphemeralStorage != "" {
 						args = append(args, "--ephemeral-storage", rootFlags.EphemeralStorage)
 					}
+					if rootFlags.CPURequest != "" {
+						args = append(args, "--cpu-request", rootFlags.CPURequest)
+					}
+					if rootFlags.CPULimit != "" {
+						args = append(args, "--cpu-limit", rootFlags.CPULimit)
+					}
+					if rootFlags.MemoryRequest != "" {
+						args = append(args, "--memory-request", rootFlags.MemoryRequest)
+					}
+					if rootFlags.MemoryLimit != "" {
+						args = append(args, "--memory-limit", rootFlags.MemoryLimit)
+					}
 					if taskTimeout > 0 {
 						args = append(args, "--timeout", taskTimeout.String())
 					}

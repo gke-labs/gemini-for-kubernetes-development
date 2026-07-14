@@ -34,6 +34,10 @@ type RootFlags struct {
 	Background       bool
 	Cleanup          bool
 	EphemeralStorage string
+	CPURequest       string
+	CPULimit         string
+	MemoryRequest    string
+	MemoryLimit      string
 	Secrets          []string
 	ResolvedSecrets  []factorysandbox.SecretMount
 	Envs             []string
@@ -62,6 +66,10 @@ coding tasks without local side effects or host dependencies.`,
 	cmd.PersistentFlags().BoolVar(&rootFlags.Background, "background", false, "Run the CLI command as a background daemon process and redirect output to a log file")
 	cmd.PersistentFlags().BoolVar(&rootFlags.Cleanup, "cleanup", false, "Delete the sandbox after the task is run or watch completes")
 	cmd.PersistentFlags().StringVar(&rootFlags.EphemeralStorage, "ephemeral-storage", "", "Sandbox ephemeral storage request/limit size")
+	cmd.PersistentFlags().StringVar(&rootFlags.CPURequest, "cpu-request", "", "Sandbox CPU request (e.g. 2000m)")
+	cmd.PersistentFlags().StringVar(&rootFlags.CPULimit, "cpu-limit", "", "Sandbox CPU limit (e.g. 8000m)")
+	cmd.PersistentFlags().StringVar(&rootFlags.MemoryRequest, "memory-request", "", "Sandbox memory request (e.g. 4Gi)")
+	cmd.PersistentFlags().StringVar(&rootFlags.MemoryLimit, "memory-limit", "", "Sandbox memory limit (e.g. 16Gi)")
 	cmd.PersistentFlags().StringSliceVar(&rootFlags.Secrets, "secret", nil, "Inject a secret with format secretName:mountPath (can be specified multiple times)")
 	cmd.PersistentFlags().StringArrayVar(&rootFlags.Envs, "env", nil, "Inject an environment variable with format KEY=VALUE (can be specified multiple times)")
 	cmd.PersistentFlags().BoolVar(&rootFlags.Detached, "detached", false, "Run the task in the background of the sandbox pod and return immediately")
@@ -221,6 +229,31 @@ func ResolveRootFlags(cmd *cobra.Command) (*config.FactoryConfig, error) {
 	}
 	if rootFlags.EphemeralStorage == "" {
 		rootFlags.EphemeralStorage = "6Gi"
+	}
+	if !cmd.Flags().Changed("cpu-request") && cfg.SandboxCPURequest != "" {
+		rootFlags.CPURequest = cfg.SandboxCPURequest
+	}
+	if !cmd.Flags().Changed("cpu-limit") && cfg.SandboxCPULimit != "" {
+		rootFlags.CPULimit = cfg.SandboxCPULimit
+	}
+	if !cmd.Flags().Changed("memory-request") && cfg.SandboxMemoryRequest != "" {
+		rootFlags.MemoryRequest = cfg.SandboxMemoryRequest
+	}
+	if !cmd.Flags().Changed("memory-limit") && cfg.SandboxMemoryLimit != "" {
+		rootFlags.MemoryLimit = cfg.SandboxMemoryLimit
+	}
+
+	if rootFlags.CPURequest != "" {
+		_ = os.Setenv("SANDBOX_CPU_REQUEST", rootFlags.CPURequest)
+	}
+	if rootFlags.CPULimit != "" {
+		_ = os.Setenv("SANDBOX_CPU_LIMIT", rootFlags.CPULimit)
+	}
+	if rootFlags.MemoryRequest != "" {
+		_ = os.Setenv("SANDBOX_MEMORY_REQUEST", rootFlags.MemoryRequest)
+	}
+	if rootFlags.MemoryLimit != "" {
+		_ = os.Setenv("SANDBOX_MEMORY_LIMIT", rootFlags.MemoryLimit)
 	}
 
 	if cmd.Flags().Changed("secret") {

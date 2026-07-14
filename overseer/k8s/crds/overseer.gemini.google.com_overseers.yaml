@@ -136,11 +136,19 @@ spec:
                       type: array
                   type: object
                 type: object
+              sandboxCPULimit:
+                type: string
+              sandboxCPURequest:
+                type: string
               sandboxEvictionAge:
                 default: 7d
                 type: string
               sandboxIdleTimeout:
                 default: 1h
+                type: string
+              sandboxMemoryLimit:
+                type: string
+              sandboxMemoryRequest:
                 type: string
               secrets:
                 items:

@@ -36,6 +36,10 @@ type DevSandboxOptions struct {
 	Replicas          int64
 	WorkspaceDiskSize string
 	EphemeralStorage  string
+	CPURequest        string
+	CPULimit          string
+	MemoryRequest     string
+	MemoryLimit       string
 	Secrets           []SecretMount
 	Env               []EnvVar
 }
@@ -73,17 +77,33 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 	if resources.Limits == nil {
 		resources.Limits = make(corev1.ResourceList)
 	}
+	memReq := "2Gi"
+	if opt.MemoryRequest != "" {
+		memReq = opt.MemoryRequest
+	}
 	if resources.Requests.Memory().IsZero() {
-		resources.Requests[corev1.ResourceMemory] = resource.MustParse("2Gi")
+		resources.Requests[corev1.ResourceMemory] = resource.MustParse(memReq)
+	}
+	memLim := "6Gi"
+	if opt.MemoryLimit != "" {
+		memLim = opt.MemoryLimit
 	}
 	if resources.Limits.Memory().IsZero() {
-		resources.Limits[corev1.ResourceMemory] = resource.MustParse("6Gi")
+		resources.Limits[corev1.ResourceMemory] = resource.MustParse(memLim)
+	}
+	cpuReq := "500m"
+	if opt.CPURequest != "" {
+		cpuReq = opt.CPURequest
 	}
 	if resources.Requests.Cpu().IsZero() {
-		resources.Requests[corev1.ResourceCPU] = resource.MustParse("500m")
+		resources.Requests[corev1.ResourceCPU] = resource.MustParse(cpuReq)
+	}
+	cpuLim := "4000m"
+	if opt.CPULimit != "" {
+		cpuLim = opt.CPULimit
 	}
 	if resources.Limits.Cpu().IsZero() {
-		resources.Limits[corev1.ResourceCPU] = resource.MustParse("4000m")
+		resources.Limits[corev1.ResourceCPU] = resource.MustParse(cpuLim)
 	}
 
 	ephemeralStorage := opt.EphemeralStorage

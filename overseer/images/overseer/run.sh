@@ -27,6 +27,18 @@ function writeFactoryConfig {
     if [ -n "$WORKSPACE_DISK_SIZE" ]; then
         echo "workspaceDiskSize: $WORKSPACE_DISK_SIZE" >> "$CFG_FILE"
     fi
+    if [ -n "$SANDBOX_CPU_REQUEST" ]; then
+        echo "sandboxCPURequest: $SANDBOX_CPU_REQUEST" >> "$CFG_FILE"
+    fi
+    if [ -n "$SANDBOX_CPU_LIMIT" ]; then
+        echo "sandboxCPULimit: $SANDBOX_CPU_LIMIT" >> "$CFG_FILE"
+    fi
+    if [ -n "$SANDBOX_MEMORY_REQUEST" ]; then
+        echo "sandboxMemoryRequest: $SANDBOX_MEMORY_REQUEST" >> "$CFG_FILE"
+    fi
+    if [ -n "$SANDBOX_MEMORY_LIMIT" ]; then
+        echo "sandboxMemoryLimit: $SANDBOX_MEMORY_LIMIT" >> "$CFG_FILE"
+    fi
     if [ -n "$MIN_NUMBER" ]; then
         echo "minNumber: $MIN_NUMBER" >> "$CFG_FILE"
     fi

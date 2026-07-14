@@ -17,6 +17,10 @@ spec:
   ephemeralStorage: 10Gi
   image: ghcr.io/gke-labs/gemini-for-kubernetes-development/factory-golang:latest
   workspaceDiskSize: 40Gi
+  sandboxCPURequest: "2000m"
+  sandboxCPULimit: "8000m"
+  sandboxMemoryRequest: "4Gi"
+  sandboxMemoryLimit: "16Gi"
   secrets:
     - name: projectaccess
       mountPath: "/etc/pakey"
