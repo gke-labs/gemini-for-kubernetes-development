@@ -324,7 +324,7 @@ function runAgent {
         (cd "/workspaces/${REPO_NAME}" && git rebase --abort 2>/dev/null || true)
         (cd "/workspaces/${REPO_NAME}" && git merge --abort 2>/dev/null || true)
         (cd "/workspaces/${REPO_NAME}" && git cherry-pick --abort 2>/dev/null || true)
-        (cd "/workspaces/${REPO_NAME}" && git reset --hard HEAD && git clean -fd && /usr/bin/gh pr checkout ${PR_NUMBER} && git pull origin HEAD || true)
+        (cd "/workspaces/${REPO_NAME}" && git reset --hard HEAD && git clean -fd && /usr/bin/gh pr checkout ${PR_NUMBER} --force && git pull origin HEAD || true)
         BRANCH_NAME=$(git branch --show-current)
     else
         # Create a unique branch for this agent run if skip PR is not true

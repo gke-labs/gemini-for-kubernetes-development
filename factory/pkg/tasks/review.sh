@@ -106,7 +106,7 @@ function checkoutPRBranch {
     (cd "/workspaces/${REPO_NAME}" && git rebase --abort 2>/dev/null || true)
     (cd "/workspaces/${REPO_NAME}" && git merge --abort 2>/dev/null || true)
     (cd "/workspaces/${REPO_NAME}" && git cherry-pick --abort 2>/dev/null || true)
-    (cd "/workspaces/${REPO_NAME}" && git reset --hard HEAD && git clean -fd && /usr/bin/gh pr checkout ${PR_NUMBER} && (git reset --hard @{u} 2>/dev/null || git reset --hard FETCH_HEAD))
+    (cd "/workspaces/${REPO_NAME}" && git reset --hard HEAD && git clean -fd && /usr/bin/gh pr checkout ${PR_NUMBER} --force && (git reset --hard @{u} 2>/dev/null || git reset --hard FETCH_HEAD))
 }
 
 function configureGemini {

@@ -121,7 +121,7 @@ function setupGitRepos {
         (cd "/workspaces/${REPO_NAME}" && git rebase --abort 2>/dev/null || true)
         (cd "/workspaces/${REPO_NAME}" && git merge --abort 2>/dev/null || true)
         (cd "/workspaces/${REPO_NAME}" && git cherry-pick --abort 2>/dev/null || true)
-        (cd "/workspaces/${REPO_NAME}" && git reset --hard HEAD && git clean -fd && /usr/bin/gh pr checkout "$PRID")
+        (cd "/workspaces/${REPO_NAME}" && git reset --hard HEAD && git clean -fd && /usr/bin/gh pr checkout "$PRID" --force)
     elif [ -n "$BRANCH_NAME" ]; then
         echo "Checking out branch $BRANCH_NAME"
         (cd "/workspaces/${REPO_NAME}" && git rebase --abort 2>/dev/null || true)
