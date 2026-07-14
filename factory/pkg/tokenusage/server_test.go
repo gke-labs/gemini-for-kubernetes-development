@@ -71,7 +71,8 @@ func TestServerEndToEnd(t *testing.T) {
 		Key: "wf-issue-3:/workspaces/tasks/agent-x", Repo: "org/repo",
 		TaskType: "agent-chore", Sandbox: "wf-issue-3", Issue: 3,
 		Workflow: "issue-3", WorkflowName: "chore",
-		Stats: statsFor("gemini-2.5-pro", 10, 20, 30),
+		RecordedAt: "2026-07-14T09:00:00Z",
+		Stats:      statsFor("gemini-2.5-pro", 10, 20, 30),
 	}
 	if resp := postJSON(t, ts.URL+"/v1/usage", rec); resp.StatusCode != http.StatusOK {
 		t.Fatalf("ingest: status %d", resp.StatusCode)
@@ -96,6 +97,29 @@ func TestServerEndToEnd(t *testing.T) {
 	getJSON(t, ts.URL+"/v1/usage/rollups/workflows?repo=org/repo", &rollups)
 	if len(rollups.Rollups) != 1 || rollups.Rollups[0].Key != "issue-3" {
 		t.Fatalf("workflow rollups: got %+v", rollups.Rollups)
+	}
+
+	// Subject ingest joins onto rollups.
+	if resp := postJSON(t, ts.URL+"/v1/subjects", Subject{
+		Key: "issue-3", Repo: "org/repo", Kind: "issue", Number: 3,
+		State: "open", CreatedAt: "2026-07-10T00:00:00Z",
+	}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("subject ingest: status %d", resp.StatusCode)
+	}
+	if resp := postJSON(t, ts.URL+"/v1/subjects", Subject{}); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("subject ingest without key: expected 400, got %d", resp.StatusCode)
+	}
+	getJSON(t, ts.URL+"/v1/usage/rollups/workflows?repo=org/repo", &rollups)
+	if rollups.Rollups[0].State != "open" || rollups.Rollups[0].CreatedAt != "2026-07-10T00:00:00Z" {
+		t.Errorf("workflow rollup subject join: got %+v", rollups.Rollups[0])
+	}
+
+	var daily struct {
+		Rollups []Rollup `json:"rollups"`
+	}
+	getJSON(t, ts.URL+"/v1/usage/rollups/daily?repo=org/repo", &daily)
+	if len(daily.Rollups) != 1 || daily.Rollups[0].Key != "2026-07-14" || daily.Rollups[0].TaskCount != 1 {
+		t.Errorf("daily rollup: got %+v", daily.Rollups)
 	}
 
 	var detail Rollup

@@ -2520,6 +2520,7 @@ func cleanupClosedPRSandboxes(ctx context.Context, ghClient *githubv39.Client, k
 			meta.PR = num
 			meta.Issues = referencedIssueList(pr)
 			usagereport.HarvestSandbox(ctx, namespace, name, meta)
+			usagereport.ReportPRSubject(ctx, owner+"/"+repo, pr)
 			if err := manager.DeleteSandbox(ctx, namespace, name); err != nil {
 				klog.Errorf("Failed to delete sandbox '%s' for closed PR #%d: %v", name, num, err)
 			}
@@ -2578,6 +2579,7 @@ func cleanupClosedIssueSandboxes(ctx context.Context, ghClient *githubv39.Client
 			meta := sandboxUsageMeta(&item, owner+"/"+repo)
 			meta.Issue = num
 			usagereport.HarvestSandbox(ctx, namespace, name, meta)
+			usagereport.ReportIssueSubject(ctx, owner+"/"+repo, issue)
 			if strings.HasPrefix(name, "wf-issue-") {
 				usagereport.PostWorkflowSummaryIfNeeded(ctx, ghClient, owner, repo, num)
 			}

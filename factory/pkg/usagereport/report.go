@@ -33,6 +33,7 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/tokenusage"
 )
 
 const requestTimeout = 5 * time.Second
@@ -82,17 +83,77 @@ func ReadTaskUsage(ctx context.Context, client *envd.Client, taskDir string) (*S
 
 // Publish upserts a usage record in the collector.
 func Publish(ctx context.Context, rec UsageRecord) error {
+	return postJSON(ctx, "/v1/usage", rec)
+}
+
+// PublishSubject upserts issue/PR metadata (state, timestamps) in the
+// collector, which joins it onto rollups to expose age and status.
+func PublishSubject(ctx context.Context, sub Subject) error {
+	return postJSON(ctx, "/v1/subjects", sub)
+}
+
+// ReportIssueSubject publishes an issue's state and timestamps.
+// Best-effort: no-op when disabled or issue is nil; failures are logged.
+func ReportIssueSubject(ctx context.Context, repo string, issue *githubv39.Issue) {
+	if !Enabled() || issue == nil || issue.GetNumber() == 0 {
+		return
+	}
+	sub := Subject{
+		Key:       tokenusage.SubjectKey("issue", issue.GetNumber()),
+		Repo:      repo,
+		Kind:      "issue",
+		Number:    issue.GetNumber(),
+		State:     issue.GetState(),
+		UpdatedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	if t := issue.GetCreatedAt(); !t.IsZero() {
+		sub.CreatedAt = t.UTC().Format(time.RFC3339)
+	}
+	if t := issue.GetClosedAt(); !t.IsZero() {
+		sub.ClosedAt = t.UTC().Format(time.RFC3339)
+	}
+	if err := PublishSubject(ctx, sub); err != nil {
+		klog.Warningf("usagereport: publishing subject %s: %v", sub.Key, err)
+	}
+}
+
+// ReportPRSubject publishes a PR's state and timestamps.
+// Best-effort: no-op when disabled or pr is nil; failures are logged.
+func ReportPRSubject(ctx context.Context, repo string, pr *githubv39.PullRequest) {
+	if !Enabled() || pr == nil || pr.GetNumber() == 0 {
+		return
+	}
+	sub := Subject{
+		Key:       tokenusage.SubjectKey("pr", pr.GetNumber()),
+		Repo:      repo,
+		Kind:      "pr",
+		Number:    pr.GetNumber(),
+		State:     pr.GetState(),
+		UpdatedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	if t := pr.GetCreatedAt(); !t.IsZero() {
+		sub.CreatedAt = t.UTC().Format(time.RFC3339)
+	}
+	if t := pr.GetClosedAt(); !t.IsZero() {
+		sub.ClosedAt = t.UTC().Format(time.RFC3339)
+	}
+	if err := PublishSubject(ctx, sub); err != nil {
+		klog.Warningf("usagereport: publishing subject %s: %v", sub.Key, err)
+	}
+}
+
+func postJSON(ctx context.Context, path string, v any) error {
 	base := collectorURL()
 	if base == "" {
 		return nil
 	}
-	body, err := json.Marshal(rec)
+	body, err := json.Marshal(v)
 	if err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/v1/usage", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+path, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}

@@ -181,6 +181,107 @@ func TestRollups(t *testing.T) {
 	}
 }
 
+func TestPutPreservesFirstRecordedAt(t *testing.T) {
+	s, _ := newTestStore(t)
+	rec := UsageRecord{
+		Key: "sb:/workspaces/tasks/fix-1", Repo: "org/repo", RecordedAt: "2026-07-13T10:00:00Z",
+		Stats: statsFor("m", 1, 1, 2),
+	}
+	mustPut(t, s, rec)
+	// Sweep re-post with a later timestamp but identical stats: must be a
+	// no-op keeping the original day bucket.
+	rec.RecordedAt = "2026-07-15T10:00:00Z"
+	mustPut(t, s, rec)
+	got := s.List(ListFilter{})[0]
+	if got.RecordedAt != "2026-07-13T10:00:00Z" {
+		t.Errorf("expected first RecordedAt preserved, got %s", got.RecordedAt)
+	}
+	// Updated stats still keep the original timestamp.
+	rec.Stats = statsFor("m", 2, 2, 4)
+	rec.RecordedAt = "2026-07-16T10:00:00Z"
+	mustPut(t, s, rec)
+	got = s.List(ListFilter{})[0]
+	if got.RecordedAt != "2026-07-13T10:00:00Z" || got.Stats.Models["m"].Tokens.Total != 4 {
+		t.Errorf("expected updated stats with original RecordedAt, got %+v", got)
+	}
+}
+
+func TestRollupByDay(t *testing.T) {
+	s, _ := newTestStore(t)
+	mustPut(t, s, UsageRecord{Key: "a:1", Repo: "org/repo", RecordedAt: "2026-07-13T10:00:00Z", Stats: statsFor("m", 10, 5, 15)})
+	mustPut(t, s, UsageRecord{Key: "b:1", Repo: "org/repo", RecordedAt: "2026-07-13T23:59:00Z", Stats: statsFor("m", 1, 1, 2)})
+	mustPut(t, s, UsageRecord{Key: "c:1", Repo: "org/repo", RecordedAt: "2026-07-14T00:01:00Z", Stats: statsFor("m", 3, 3, 6)})
+
+	days := s.RollupByDay("org/repo")
+	if len(days) != 2 {
+		t.Fatalf("expected 2 days, got %+v", days)
+	}
+	// Newest day first.
+	if days[0].Key != "2026-07-14" || days[1].Key != "2026-07-13" {
+		t.Errorf("expected newest-first days, got %s, %s", days[0].Key, days[1].Key)
+	}
+	if days[1].TaskCount != 2 || days[1].Stats.Models["m"].Tokens.Total != 17 {
+		t.Errorf("2026-07-13 rollup: got %+v", days[1])
+	}
+	if len(days[0].Records) != 1 {
+		t.Errorf("expected records in daily rollup, got %+v", days[0])
+	}
+}
+
+func TestSubjects(t *testing.T) {
+	s, dir := newTestStore(t)
+	mustPut(t, s, UsageRecord{Key: "fix-55:t1", Repo: "org/repo", Issue: 55, PR: 200, Stats: statsFor("m", 1, 1, 2)})
+	mustPut(t, s, UsageRecord{Key: "wf-42:t1", Repo: "org/repo", Issue: 42, Workflow: "issue-42", Stats: statsFor("m", 1, 1, 2)})
+
+	if err := s.PutSubject(Subject{
+		Key: "issue-55", Repo: "org/repo", Kind: "issue", Number: 55,
+		State: "open", CreatedAt: "2026-07-10T00:00:00Z",
+	}); err != nil {
+		t.Fatalf("PutSubject: %v", err)
+	}
+	// Later "closed" update without createdAt must keep the creation time.
+	if err := s.PutSubject(Subject{
+		Key: "issue-55", State: "closed", ClosedAt: "2026-07-14T00:00:00Z",
+	}); err != nil {
+		t.Fatalf("PutSubject update: %v", err)
+	}
+	if err := s.PutSubject(Subject{
+		Key: "issue-42", Kind: "issue", Number: 42, State: "open", CreatedAt: "2026-07-01T00:00:00Z",
+	}); err != nil {
+		t.Fatalf("PutSubject wf: %v", err)
+	}
+	if err := s.PutSubject(Subject{Key: ""}); err == nil {
+		t.Error("expected error for empty subject key")
+	}
+
+	issues := s.RollupByIssue("org/repo")
+	if len(issues) != 1 || issues[0].Key != "55" {
+		t.Fatalf("issue rollup: got %+v", issues)
+	}
+	if issues[0].State != "closed" || issues[0].CreatedAt != "2026-07-10T00:00:00Z" || issues[0].ClosedAt != "2026-07-14T00:00:00Z" {
+		t.Errorf("issue rollup subject join: got %+v", issues[0])
+	}
+
+	wfs := s.RollupByWorkflow("org/repo")
+	if len(wfs) != 1 || wfs[0].State != "open" || wfs[0].CreatedAt != "2026-07-01T00:00:00Z" {
+		t.Errorf("workflow rollup subject join: got %+v", wfs)
+	}
+
+	// Subjects persist across restart.
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	s2, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	defer func() { _ = s2.Close() }()
+	issues = s2.RollupByIssue("org/repo")
+	if len(issues) != 1 || issues[0].State != "closed" || issues[0].CreatedAt != "2026-07-10T00:00:00Z" {
+		t.Errorf("subject replay: got %+v", issues)
+	}
+}
+
 func TestMarkSummarized(t *testing.T) {
 	s, dir := newTestStore(t)
 	already, err := s.MarkSummarized("issue-42")

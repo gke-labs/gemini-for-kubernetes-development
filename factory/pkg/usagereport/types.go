@@ -32,4 +32,5 @@ type (
 	TokenUsage  = tokenusage.TokenUsage
 	UsageRecord = tokenusage.UsageRecord
 	Rollup      = tokenusage.Rollup
+	Subject     = tokenusage.Subject
 )

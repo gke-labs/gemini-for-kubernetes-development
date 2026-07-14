@@ -46,7 +46,30 @@ const TokenHeaderCells = () => (
     </>
 );
 
-const RollupTable = ({ title, subtitle, rollups, keyLabel, renderKey }) => {
+// Age of the subject: creation to close (if closed) or to now (if open).
+const ageOf = (r) => {
+    if (!r.createdAt) return '-';
+    const end = r.closedAt ? new Date(r.closedAt) : new Date();
+    const diffMs = end - new Date(r.createdAt);
+    if (isNaN(diffMs) || diffMs < 0) return '-';
+    const hours = Math.floor(diffMs / 3600000);
+    const days = Math.floor(hours / 24);
+    return days > 0 ? `${days}d ${hours % 24}h` : `${hours}h`;
+};
+
+const StatusBadge = ({ state }) => {
+    if (!state) return <span style={{ color: 'var(--text-secondary)' }}>-</span>;
+    const isOpen = state === 'open';
+    return (
+        <span style={{
+            padding: '2px 10px', borderRadius: '12px', fontSize: '12px', fontWeight: '600',
+            backgroundColor: isOpen ? 'rgba(35, 134, 54, 0.15)' : 'rgba(130, 80, 223, 0.15)',
+            color: isOpen ? '#2da44e' : '#8250df',
+        }}>{state}</span>
+    );
+};
+
+const RollupTable = ({ title, subtitle, rollups, keyLabel, renderKey, showSubject }) => {
     const [expanded, setExpanded] = useState(null);
     return (
         <div style={{ backgroundColor: 'var(--bg-card)', borderRadius: '8px', boxShadow: 'var(--shadow-card)', padding: '16px', marginBottom: '24px' }}>
@@ -59,6 +82,8 @@ const RollupTable = ({ title, subtitle, rollups, keyLabel, renderKey }) => {
                     <thead>
                         <tr>
                             <th style={thStyle}>{keyLabel}</th>
+                            {showSubject && <th style={thStyle}>Status</th>}
+                            {showSubject && <th style={{ ...thStyle, textAlign: 'right' }}>Age</th>}
                             <th style={{ ...thStyle, textAlign: 'right' }}>Tasks</th>
                             <TokenHeaderCells />
                         </tr>
@@ -75,14 +100,17 @@ const RollupTable = ({ title, subtitle, rollups, keyLabel, renderKey }) => {
                                             <span style={{ marginRight: '6px' }}>{isOpen ? '▾' : '▸'}</span>
                                             {renderKey ? renderKey(r) : r.key}
                                         </td>
+                                        {showSubject && <td style={tdStyle}><StatusBadge state={r.state} /></td>}
+                                        {showSubject && <td style={{ ...numStyle, whiteSpace: 'nowrap' }} title={r.createdAt ? `created ${r.createdAt}${r.closedAt ? `, closed ${r.closedAt}` : ''}` : ''}>{ageOf(r)}</td>}
                                         <td style={numStyle}>{fmt(r.taskCount)}</td>
                                         <TokenCells s={s} />
                                     </tr>
                                     {isOpen && (r.records || []).map(rec => (
                                         <tr key={rec.key} style={{ backgroundColor: 'var(--bg-comment-card)' }}>
-                                            <td style={{ ...tdStyle, paddingLeft: '36px', fontSize: '13px' }}>
+                                            <td style={{ ...tdStyle, paddingLeft: '36px', fontSize: '13px' }} colSpan={showSubject ? 3 : 1}>
                                                 {rec.taskType || '-'} · {rec.sandbox || '-'}
                                                 {rec.pr ? ` · PR #${rec.pr}` : ''}{rec.issue ? ` · issue #${rec.issue}` : ''}
+                                                {rec.recordedAt ? ` · ${rec.recordedAt.slice(0, 10)}` : ''}
                                             </td>
                                             <td style={numStyle}>-</td>
                                             <TokenCells s={sumStats(rec.stats)} />
@@ -101,6 +129,7 @@ const RollupTable = ({ title, subtitle, rollups, keyLabel, renderKey }) => {
 const prList = (prs) => (prs || []).map(n => `#${n}`).join(', ');
 
 const TokenUsage = ({ onBack }) => {
+    const [daily, setDaily] = useState([]);
     const [workflows, setWorkflows] = useState([]);
     const [issues, setIssues] = useState([]);
     const [prs, setPRs] = useState([]);
@@ -126,6 +155,7 @@ const TokenUsage = ({ onBack }) => {
                 });
 
         Promise.all([
+            get('v1/usage/rollups/daily', setDaily),
             get('v1/usage/rollups/workflows', setWorkflows),
             get('v1/usage/rollups/issues', setIssues),
             get('v1/usage/rollups/prs', setPRs),
@@ -155,11 +185,18 @@ const TokenUsage = ({ onBack }) => {
             )}
 
             <RollupTable
+                title="Daily Usage"
+                subtitle="All usage grouped by the day it was first recorded (UTC)."
+                rollups={daily}
+                keyLabel="Date"
+            />
+            <RollupTable
                 title="Workflow Issues"
                 subtitle="Workflow sandboxes (wf-issue-*), including all tasks and PRs spawned by the workflow."
                 rollups={workflows}
                 keyLabel="Workflow"
                 renderKey={r => `${r.workflowName ? `${r.workflowName} · ` : ''}${r.key}${r.prs?.length ? ` (PRs: ${prList(r.prs)})` : ''}`}
+                showSubject
             />
             <RollupTable
                 title="Issue / PR Sandboxes"
@@ -167,6 +204,7 @@ const TokenUsage = ({ onBack }) => {
                 rollups={issues}
                 keyLabel="Issue"
                 renderKey={r => `#${r.key}${r.prs?.length ? ` / PR ${prList(r.prs)}` : ''}`}
+                showSubject
             />
             <RollupTable
                 title="PR Sandboxes"
@@ -174,6 +212,7 @@ const TokenUsage = ({ onBack }) => {
                 rollups={prs}
                 keyLabel="Pull Request"
                 renderKey={r => `#${r.key}`}
+                showSubject
             />
         </div>
     );

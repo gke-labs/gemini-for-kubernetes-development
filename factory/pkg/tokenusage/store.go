@@ -29,15 +29,17 @@ import (
 	"sync"
 )
 
-// Store persists usage records as a JSONL append log and keeps a full
-// in-memory index, rebuilt by replaying the log at startup. On replay the
-// last line for a key wins, so upserts are plain appends.
+// Store persists usage records and subjects as JSONL append logs and keeps
+// full in-memory indexes, rebuilt by replaying the logs at startup. On
+// replay the last line for a key wins, so upserts are plain appends.
 type Store struct {
-	mu         sync.Mutex
-	root       string
-	records    map[string]UsageRecord
-	summarized map[string]bool // workflow session -> summary comment posted
-	log        *os.File
+	mu          sync.Mutex
+	root        string
+	records     map[string]UsageRecord
+	subjects    map[string]Subject
+	summarized  map[string]bool // workflow session -> summary comment posted
+	log         *os.File
+	subjectsLog *os.File
 }
 
 func NewStore(root string) (*Store, error) {
@@ -47,9 +49,13 @@ func NewStore(root string) (*Store, error) {
 	s := &Store{
 		root:       root,
 		records:    map[string]UsageRecord{},
+		subjects:   map[string]Subject{},
 		summarized: map[string]bool{},
 	}
-	if err := s.replay(); err != nil {
+	if err := replayLog(s.recordsPath(), func(rec UsageRecord) string { return rec.Key }, s.records); err != nil {
+		return nil, err
+	}
+	if err := replayLog(s.subjectsPath(), func(sub Subject) string { return sub.Key }, s.subjects); err != nil {
 		return nil, err
 	}
 	if err := s.loadSummarized(); err != nil {
@@ -60,14 +66,24 @@ func NewStore(root string) (*Store, error) {
 		return nil, fmt.Errorf("opening records log: %w", err)
 	}
 	s.log = log
+	subjectsLog, err := os.OpenFile(s.subjectsPath(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		_ = log.Close()
+		return nil, fmt.Errorf("opening subjects log: %w", err)
+	}
+	s.subjectsLog = subjectsLog
 	return s, nil
 }
 
 func (s *Store) recordsPath() string    { return filepath.Join(s.root, "records.jsonl") }
+func (s *Store) subjectsPath() string   { return filepath.Join(s.root, "subjects.jsonl") }
 func (s *Store) summarizedPath() string { return filepath.Join(s.root, "summarized.json") }
 
-func (s *Store) replay() error {
-	f, err := os.Open(s.recordsPath())
+// replayLog rebuilds an in-memory index from a JSONL append log; the last
+// line for a key wins. Corrupt lines (e.g. torn write on crash) are skipped
+// rather than refusing to start.
+func replayLog[T any](path string, keyOf func(T) string, into map[string]T) error {
+	f, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -82,14 +98,12 @@ func (s *Store) replay() error {
 		if line == "" {
 			continue
 		}
-		var rec UsageRecord
-		if err := json.Unmarshal([]byte(line), &rec); err != nil {
-			// Skip corrupt lines (e.g. torn write on crash) rather than
-			// refusing to start.
+		var v T
+		if err := json.Unmarshal([]byte(line), &v); err != nil {
 			continue
 		}
-		if rec.Key != "" {
-			s.records[rec.Key] = rec
+		if key := keyOf(v); key != "" {
+			into[key] = v
 		}
 	}
 	return scanner.Err()
@@ -106,16 +120,23 @@ func (s *Store) loadSummarized() error {
 	return json.Unmarshal(data, &s.summarized)
 }
 
-// Put upserts a record by key. Identical re-posts are skipped without
-// touching the log.
+// Put upserts a record by key. The first RecordedAt for a key is preserved
+// across upserts so daily aggregation buckets stay stable (a sweep re-post
+// of an already-pushed task must not move its usage to a later day).
+// Identical re-posts are skipped without touching the log.
 func (s *Store) Put(rec UsageRecord) error {
 	if rec.Key == "" {
 		return fmt.Errorf("record key is required")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if existing, ok := s.records[rec.Key]; ok && reflect.DeepEqual(existing, rec) {
-		return nil
+	if existing, ok := s.records[rec.Key]; ok {
+		if existing.RecordedAt != "" {
+			rec.RecordedAt = existing.RecordedAt
+		}
+		if reflect.DeepEqual(existing, rec) {
+			return nil
+		}
 	}
 	line, err := json.Marshal(rec)
 	if err != nil {
@@ -128,6 +149,57 @@ func (s *Store) Put(rec UsageRecord) error {
 		return fmt.Errorf("syncing records log: %w", err)
 	}
 	s.records[rec.Key] = rec
+	return nil
+}
+
+// PutSubject upserts subject metadata by key, merging with the stored
+// subject: empty incoming fields never blank out known values, so a late
+// "closed" update without createdAt keeps the original creation time.
+func (s *Store) PutSubject(sub Subject) error {
+	if sub.Key == "" {
+		return fmt.Errorf("subject key is required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if existing, ok := s.subjects[sub.Key]; ok {
+		if sub.Repo == "" {
+			sub.Repo = existing.Repo
+		}
+		if sub.Kind == "" {
+			sub.Kind = existing.Kind
+		}
+		if sub.Number == 0 {
+			sub.Number = existing.Number
+		}
+		if sub.State == "" {
+			sub.State = existing.State
+		}
+		if sub.CreatedAt == "" {
+			sub.CreatedAt = existing.CreatedAt
+		}
+		if sub.ClosedAt == "" {
+			sub.ClosedAt = existing.ClosedAt
+		}
+		if sub.UpdatedAt == "" {
+			sub.UpdatedAt = existing.UpdatedAt
+		}
+		merged := sub
+		merged.UpdatedAt = existing.UpdatedAt
+		if reflect.DeepEqual(existing, merged) {
+			return nil // only UpdatedAt would change; skip the churn
+		}
+	}
+	line, err := json.Marshal(sub)
+	if err != nil {
+		return err
+	}
+	if _, err := s.subjectsLog.Write(append(line, '\n')); err != nil {
+		return fmt.Errorf("appending subject: %w", err)
+	}
+	if err := s.subjectsLog.Sync(); err != nil {
+		return fmt.Errorf("syncing subjects log: %w", err)
+	}
+	s.subjects[sub.Key] = sub
 	return nil
 }
 
@@ -205,7 +277,7 @@ func (s *Store) List(f ListFilter) []UsageRecord {
 // (they appear in the workflow rollups instead).
 func (s *Store) RollupByIssue(repo string) []Rollup {
 	wfIssues := s.workflowIssueSet(repo)
-	return s.rollup(repo, func(rec UsageRecord) []string {
+	return s.rollup(repo, "issue", func(rec UsageRecord) []string {
 		if recordInWorkflow(rec, wfIssues) {
 			return nil
 		}
@@ -230,12 +302,28 @@ func (s *Store) RollupByIssue(repo string) []Rollup {
 // rollups instead).
 func (s *Store) RollupByPR(repo string) []Rollup {
 	wfIssues := s.workflowIssueSet(repo)
-	return s.rollup(repo, func(rec UsageRecord) []string {
+	return s.rollup(repo, "pr", func(rec UsageRecord) []string {
 		if rec.PR == 0 || recordInWorkflow(rec, wfIssues) || recordTouchesAnyIssue(rec) {
 			return nil
 		}
 		return []string{strconv.Itoa(rec.PR)}
 	})
+}
+
+// RollupByDay groups all records by the day (UTC date of RecordedAt, which
+// is when the task's usage was first pushed), newest day first.
+func (s *Store) RollupByDay(repo string) []Rollup {
+	out := s.rollup(repo, "", func(rec UsageRecord) []string {
+		if len(rec.RecordedAt) < 10 {
+			return []string{"unknown"}
+		}
+		return []string{rec.RecordedAt[:10]}
+	})
+	// rollup sorts ascending; days read better newest first.
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out
 }
 
 // workflowIssueSet returns the issue numbers owned by a workflow session
@@ -336,8 +424,22 @@ func (s *Store) WorkflowRollup(repo, session string, includeRecords bool) *Rollu
 	if r.TaskCount == 0 {
 		return nil
 	}
+	// A workflow session "issue-N" is subject issue-N.
+	s.attachSubjectLocked(&r, session)
 	sortRollup(&r)
 	return &r
+}
+
+// attachSubjectLocked copies subject metadata onto a rollup; the caller must
+// hold s.mu.
+func (s *Store) attachSubjectLocked(r *Rollup, subjectKey string) {
+	sub, ok := s.subjects[subjectKey]
+	if !ok {
+		return
+	}
+	r.State = sub.State
+	r.CreatedAt = sub.CreatedAt
+	r.ClosedAt = sub.ClosedAt
 }
 
 // workflowSessionIssue parses "issue-N" session ids; returns 0 otherwise.
@@ -353,7 +455,10 @@ func workflowSessionIssue(session string) int {
 	return n
 }
 
-func (s *Store) rollup(repo string, keysFor func(UsageRecord) []string) []Rollup {
+// rollup groups records by the keys keysFor yields. When subjectKind is
+// non-empty, each group is joined with the subject "<subjectKind>-<key>" to
+// expose state and age timestamps.
+func (s *Store) rollup(repo string, subjectKind string, keysFor func(UsageRecord) []string) []Rollup {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	groups := map[string]*Rollup{}
@@ -373,6 +478,9 @@ func (s *Store) rollup(repo string, keysFor func(UsageRecord) []string) []Rollup
 	}
 	out := make([]Rollup, 0, len(groups))
 	for _, g := range groups {
+		if subjectKind != "" {
+			s.attachSubjectLocked(g, subjectKind+"-"+g.Key)
+		}
 		sortRollup(g)
 		out = append(out, *g)
 	}
@@ -443,9 +551,13 @@ func (s *Store) MarkSummarized(session string) (alreadyPosted bool, err error) {
 	return false, nil
 }
 
-// Close closes the append log.
+// Close closes the append logs.
 func (s *Store) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.log.Close()
+	err := s.log.Close()
+	if err2 := s.subjectsLog.Close(); err == nil {
+		err = err2
+	}
+	return err
 }

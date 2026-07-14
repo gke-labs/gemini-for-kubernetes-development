@@ -391,6 +391,18 @@ func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 		}
 	}
 	usagereport.HarvestTask(ctx, client, taskDir, usageMeta)
+	if usagereport.Enabled() {
+		if usageMeta.Issue != 0 {
+			if issue, _, err := ghClient.Issues.Get(ctx, owner, repo, usageMeta.Issue); err == nil {
+				usagereport.ReportIssueSubject(ctx, owner+"/"+repo, issue)
+			}
+		}
+		if usageMeta.PR != 0 {
+			if subjectPR, _, err := ghClient.PullRequests.Get(ctx, owner, repo, usageMeta.PR); err == nil {
+				usagereport.ReportPRSubject(ctx, owner+"/"+repo, subjectPR)
+			}
+		}
+	}
 
 	if rootFlags.Cleanup {
 		fmt.Printf("Cleaning up sandbox '%s'...\n", sandboxName)

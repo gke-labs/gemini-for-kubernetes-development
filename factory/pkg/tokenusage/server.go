@@ -37,9 +37,11 @@ func NewServer(storageRoot string) (*Server, error) {
 	}
 	s := &Server{store: store, mux: http.NewServeMux()}
 	s.mux.HandleFunc("POST /v1/usage", s.handleIngest)
+	s.mux.HandleFunc("POST /v1/subjects", s.handleSubjectIngest)
 	s.mux.HandleFunc("GET /v1/usage/records", s.handleRecords)
 	s.mux.HandleFunc("GET /v1/usage/rollups/issues", s.handleRollupIssues)
 	s.mux.HandleFunc("GET /v1/usage/rollups/prs", s.handleRollupPRs)
+	s.mux.HandleFunc("GET /v1/usage/rollups/daily", s.handleRollupDaily)
 	s.mux.HandleFunc("GET /v1/usage/rollups/workflows", s.handleRollupWorkflows)
 	s.mux.HandleFunc("GET /v1/usage/rollups/workflows/{session}", s.handleWorkflowDetail)
 	s.mux.HandleFunc("POST /v1/workflows/{session}/mark-summarized", s.handleMarkSummarized)
@@ -67,6 +69,28 @@ func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+func (s *Server) handleSubjectIngest(w http.ResponseWriter, r *http.Request) {
+	var sub Subject
+	if err := json.NewDecoder(r.Body).Decode(&sub); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := s.store.PutSubject(sub); err != nil {
+		if strings.Contains(err.Error(), "key is required") {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		log.Printf("subject ingest failed for key %q: %v", sub.Key, err)
+		http.Error(w, "storage error", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func (s *Server) handleRollupDaily(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, map[string]any{"rollups": s.store.RollupByDay(r.URL.Query().Get("repo"))})
 }
 
 func (s *Server) handleRecords(w http.ResponseWriter, r *http.Request) {
