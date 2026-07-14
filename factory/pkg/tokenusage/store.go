@@ -190,11 +190,25 @@ func (s *Store) List(f ListFilter) []UsageRecord {
 	return out
 }
 
-// RollupByIssue groups records by issue number: a record counts toward issue
-// N if rec.Issue == N or N appears in rec.Issues (PR tasks linked back to
-// the issue).
+// The three rollup views are mutually exclusive so each record is counted in
+// exactly one of them:
+//   - workflow rollups take every record tagged with a workflow session or
+//     referencing a workflow issue;
+//   - issue rollups take the remaining records linked to an issue (the issue
+//     sandbox and any PR work it led to — an "issue/PR sandbox");
+//   - PR rollups take what is left: standalone PR work (reviews,
+//     investigations, adoptions) not tied to any issue.
+
+// RollupByIssue groups non-workflow records by issue number: a record counts
+// toward issue N if rec.Issue == N or N appears in rec.Issues (PR tasks
+// linked back to the issue). Issues owned by a workflow session are excluded
+// (they appear in the workflow rollups instead).
 func (s *Store) RollupByIssue(repo string) []Rollup {
+	wfIssues := s.workflowIssueSet(repo)
 	return s.rollup(repo, func(rec UsageRecord) []string {
+		if recordInWorkflow(rec, wfIssues) {
+			return nil
+		}
 		seen := map[int]bool{}
 		var keys []string
 		if rec.Issue != 0 {
@@ -211,14 +225,61 @@ func (s *Store) RollupByIssue(repo string) []Rollup {
 	})
 }
 
-// RollupByPR groups records by PR number.
+// RollupByPR groups standalone PR records by PR number. Records linked to a
+// workflow or to an issue are excluded (they appear in the workflow/issue
+// rollups instead).
 func (s *Store) RollupByPR(repo string) []Rollup {
+	wfIssues := s.workflowIssueSet(repo)
 	return s.rollup(repo, func(rec UsageRecord) []string {
-		if rec.PR == 0 {
+		if rec.PR == 0 || recordInWorkflow(rec, wfIssues) || recordTouchesAnyIssue(rec) {
 			return nil
 		}
 		return []string{strconv.Itoa(rec.PR)}
 	})
+}
+
+// workflowIssueSet returns the issue numbers owned by a workflow session
+// (i.e. any record tagged workflow "issue-N").
+func (s *Store) workflowIssueSet(repo string) map[int]bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	set := map[int]bool{}
+	for _, rec := range s.records {
+		if repo != "" && rec.Repo != repo {
+			continue
+		}
+		if n := workflowSessionIssue(rec.Workflow); n != 0 {
+			set[n] = true
+		}
+	}
+	return set
+}
+
+func recordInWorkflow(rec UsageRecord, wfIssues map[int]bool) bool {
+	if rec.Workflow != "" {
+		return true
+	}
+	if wfIssues[rec.Issue] {
+		return true
+	}
+	for _, n := range rec.Issues {
+		if wfIssues[n] {
+			return true
+		}
+	}
+	return false
+}
+
+func recordTouchesAnyIssue(rec UsageRecord) bool {
+	if rec.Issue != 0 {
+		return true
+	}
+	for _, n := range rec.Issues {
+		if n != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // RollupByWorkflow groups records by workflow session. A session "issue-N"
@@ -237,7 +298,7 @@ func (s *Store) RollupByWorkflow(repo string) []Rollup {
 
 	var out []Rollup
 	for session := range sessions {
-		r := s.WorkflowRollup(repo, session, false)
+		r := s.WorkflowRollup(repo, session, true)
 		if r != nil {
 			out = append(out, *r)
 		}
@@ -307,6 +368,7 @@ func (s *Store) rollup(repo string, keysFor func(UsageRecord) []string) []Rollup
 				groups[key] = g
 			}
 			accumulate(g, rec)
+			g.Records = append(g.Records, rec)
 		}
 	}
 	out := make([]Rollup, 0, len(groups))

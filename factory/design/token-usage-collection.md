@@ -63,9 +63,13 @@ The `key` is the idempotency key: re-posting upserts (append to the log; last li
 
 ## 5. Rollups
 
-* **Per PR**: group by `pr`.
-* **Per issue**: a record counts toward issue N if `issue == N` or N is in `issues` (PR tasks roll back up to their parent issue).
-* **Per workflow**: group by `workflow` session; a session `issue-N` also absorbs untagged records that reference issue N, so PR tasks spawned by a workflow count toward it.
+The three rollups are **mutually exclusive** — every record is counted in exactly one, matching the sandbox categories shown in the dashboard:
+
+* **Per workflow** ("Workflow Issues"): group by `workflow` session; a session `issue-N` also absorbs untagged records that reference issue N, so PR tasks spawned by a workflow count toward it.
+* **Per issue** ("Issue / PR sandboxes"): remaining records count toward issue N if `issue == N` or N is in `issues` — the issue sandbox plus any PR work it led to. Rows with linked PRs are labeled `#N / PR #M`. Issues owned by a workflow session are excluded.
+* **Per PR** ("PR sandboxes"): what is left — standalone PR work (reviews, investigations, adoptions) with no issue or workflow linkage.
+
+All rollup list responses include the per-task `records` (with `taskType` and `sandbox`) for drill-down in the dashboard.
 
 Endpoints: `GET /v1/usage/rollups/{issues,prs,workflows}[?repo=]` and `GET /v1/usage/rollups/workflows/{session}` (detail with per-task records).
 

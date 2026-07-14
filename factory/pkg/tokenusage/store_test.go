@@ -109,35 +109,49 @@ func TestRollups(t *testing.T) {
 		Workflow: "issue-42", WorkflowName: "greenfield",
 		Stats: statsFor("gemini-2.5-pro", 100, 50, 150),
 	})
-	// PR task referencing issue 42 but without a workflow tag: must be
-	// absorbed into workflow issue-42.
+	// PR task referencing workflow issue 42 but without a workflow tag: must
+	// be absorbed into workflow issue-42 (and appear nowhere else).
 	mustPut(t, s, UsageRecord{
 		Key: "fix-repo-42:t2", Repo: "org/repo", PR: 101, Issues: []int{42},
 		Stats: statsFor("gemini-2.5-pro", 10, 5, 15),
 	})
-	// Unrelated PR.
+	// Standalone PR (no issue, no workflow).
 	mustPut(t, s, UsageRecord{
 		Key: "pr-7:t3", Repo: "org/repo", PR: 7,
 		Stats: statsFor("gemini-2.5-flash", 1, 1, 2),
 	})
+	// Non-workflow issue sandbox that produced a PR ("issue/PR sandbox").
+	mustPut(t, s, UsageRecord{
+		Key: "fix-repo-55:t4", Repo: "org/repo", Issue: 55, PR: 200,
+		Stats: statsFor("gemini-2.5-pro", 20, 10, 30),
+	})
+	// Review of that PR, linked back to issue 55: counts toward the issue.
+	mustPut(t, s, UsageRecord{
+		Key: "factory-pr-200:t5", Repo: "org/repo", PR: 200, Issues: []int{55},
+		Stats: statsFor("gemini-2.5-pro", 5, 2, 7),
+	})
 
+	// The three rollups are mutually exclusive.
 	issues := s.RollupByIssue("org/repo")
-	if len(issues) != 1 || issues[0].Key != "42" {
-		t.Fatalf("issue rollup: expected single issue 42, got %+v", issues)
+	if len(issues) != 1 || issues[0].Key != "55" {
+		t.Fatalf("issue rollup: expected only non-workflow issue 55, got %+v", issues)
 	}
-	if issues[0].TaskCount != 2 {
-		t.Errorf("issue 42 rollup: expected 2 tasks, got %d", issues[0].TaskCount)
+	if issues[0].TaskCount != 2 || len(issues[0].Records) != 2 {
+		t.Errorf("issue 55 rollup: expected 2 tasks with records, got %+v", issues[0])
 	}
-	if got := issues[0].Stats.Models["gemini-2.5-pro"].Tokens.Total; got != 165 {
-		t.Errorf("issue 42 rollup: expected total 165, got %d", got)
+	if got := issues[0].Stats.Models["gemini-2.5-pro"].Tokens.Total; got != 37 {
+		t.Errorf("issue 55 rollup: expected total 37, got %d", got)
+	}
+	if len(issues[0].PRs) != 1 || issues[0].PRs[0] != 200 {
+		t.Errorf("issue 55 rollup PRs: expected [200], got %v", issues[0].PRs)
 	}
 
 	prs := s.RollupByPR("org/repo")
-	if len(prs) != 2 {
-		t.Fatalf("pr rollup: expected 2 PRs, got %+v", prs)
+	if len(prs) != 1 || prs[0].Key != "7" {
+		t.Fatalf("pr rollup: expected only standalone PR 7, got %+v", prs)
 	}
-	if prs[0].Key != "7" || prs[1].Key != "101" {
-		t.Errorf("pr rollup keys should sort numerically: got %s, %s", prs[0].Key, prs[1].Key)
+	if len(prs[0].Records) != 1 {
+		t.Errorf("pr 7 rollup: expected records included, got %+v", prs[0])
 	}
 
 	wfs := s.RollupByWorkflow("org/repo")
@@ -148,8 +162,8 @@ func TestRollups(t *testing.T) {
 	if wf.Key != "issue-42" || wf.WorkflowName != "greenfield" {
 		t.Errorf("workflow rollup identity: got %+v", wf)
 	}
-	if wf.TaskCount != 2 {
-		t.Errorf("workflow absorption: expected 2 tasks, got %d", wf.TaskCount)
+	if wf.TaskCount != 2 || len(wf.Records) != 2 {
+		t.Errorf("workflow absorption: expected 2 tasks with records, got taskCount=%d records=%d", wf.TaskCount, len(wf.Records))
 	}
 	if got := wf.Stats.Models["gemini-2.5-pro"].Tokens.Total; got != 165 {
 		t.Errorf("workflow rollup: expected total 165, got %d", got)
