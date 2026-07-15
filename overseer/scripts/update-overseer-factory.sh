@@ -39,7 +39,8 @@ while true; do
     
     for sb in $SB_NAMES; do
         STATE=$(kubectl get sandbox.agents.x-k8s.io "$sb" -n "$NAMESPACE" -o jsonpath='{.metadata.annotations.sandbox\.gemini\.google\.com/last-task-state}' 2>/dev/null || true)
-        if [ -z "$STATE" ] || [ "$STATE" = "Running" ]; then
+        REPLICAS=$(kubectl get sandbox.agents.x-k8s.io "$sb" -n "$NAMESPACE" -o jsonpath='{.spec.replicas}' 2>/dev/null || echo 0)
+        if [ "$STATE" = "Running" ] && [ "${REPLICAS:-0}" -gt 0 ]; then
             ACTIVE_COUNT=$((ACTIVE_COUNT + 1))
         fi
     done
