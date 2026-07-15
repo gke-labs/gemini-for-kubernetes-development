@@ -109,7 +109,7 @@ When processing a PR, the scan evaluates conditions and queues tasks in three ph
 * **Assignment**: The bot user remains assigned to the PR while tasks are executing or pending.
 
 ### Phase 4: Automated Code Review (`pr-review`)
-* **Trigger**: CI checks are passing (`!hasFailure && !isConflicting`), PR is not yet approved (`!isApproved`), no new unaddressed comments exist (`!hasNewComments`), and the current `HEAD SHA` has not yet been reviewed by the Reviewer Bot identity (`state.lastReviewedSHA != headSHA`).
+* **Trigger**: Opted in via the `overseer/review` label (or `<triggerLabel>/review`) on the PR or its referenced parent Issue (`shouldAutoReviewPR`), CI checks are passing (`!hasFailure && !isConflicting`), PR is not yet approved (`!isApproved`), no new unaddressed comments exist (`!hasNewComments`), and the current `HEAD SHA` has not yet been reviewed by the Reviewer Bot identity (`state.lastReviewedSHA != headSHA`).
 * **Contextual Instructions**: Parses the PR description and any referenced parent Issue body for a `## Review Instructions` section (`ExtractReviewInstructions`) and passes them via `--instruction <path>`.
 * **Identity Selection**: Routes to a user in the `reviewer` pool (e.g., `reviewbot-robot`), executing inside a dedicated Sandbox Pod (`factory-pr-<num>-review`). See detailed architecture in [pr-automated-review.md](file:///usr/local/google/home/barni/workspace/src/github.com/barney-s/gemini-for-kubernetes-development/factory/design/pr-automated-review.md).
 
