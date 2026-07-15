@@ -129,7 +129,7 @@ func isLikelyFilePath(val string) bool {
 	if val == "" {
 		return false
 	}
-	if strings.Contains(val, "\n") {
+	if strings.Contains(val, "\n") || strings.Contains(val, " ") {
 		return false
 	}
 	if strings.HasPrefix(val, "/") || strings.HasPrefix(val, "./") || strings.HasPrefix(val, "../") || strings.HasPrefix(val, "~/") {
@@ -137,9 +137,6 @@ func isLikelyFilePath(val string) bool {
 	}
 	if strings.Contains(val, "/") || strings.Contains(val, "\\") {
 		return true
-	}
-	if strings.Contains(val, " ") {
-		return false
 	}
 	return filepath.Ext(val) != ""
 }
