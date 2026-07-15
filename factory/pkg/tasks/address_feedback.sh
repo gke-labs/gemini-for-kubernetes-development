@@ -66,7 +66,9 @@ EOF
     fi
 
     echo "running gh auth setup-git"
-    gh auth setup-git
+    gh auth setup-git || true
+    echo "configuring git url fallback"
+    git config --global url."https://${GH_USER}:${GITHUB_USER_TOKEN}@github.com/".insteadOf "https://github.com/"
 
     echo "Configuring global git ignore"
     git config --global core.excludesfile "${USER_HOME}/.gitignore_global"

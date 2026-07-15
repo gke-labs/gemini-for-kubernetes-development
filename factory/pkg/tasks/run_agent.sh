@@ -67,7 +67,9 @@ EOF
     fi
 
     echo "running gh auth setup-git"
-    gh auth setup-git
+    gh auth setup-git || true
+    echo "configuring git url fallback"
+    git config --global url."https://${GH_USER}:${GITHUB_USER_TOKEN}@github.com/".insteadOf "https://github.com/"
 
     echo "Configuring git pull rebase"
     git config --global pull.rebase true
