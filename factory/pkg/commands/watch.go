@@ -1567,7 +1567,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 								}
 							}
 						}
-					} else if !hasFailure && !isApproved && state.lastReviewedSHA != headSHA {
+					} else if !hasFailure && !isApproved && state.lastReviewedSHA != headSHA && shouldAutoReviewPR(ctx, ghClient, owner, repo, pr, prIssue, triggerLabel) {
 						hasBotReviewAfterLastCommit := false
 						for _, r := range reviews {
 							if shouldIgnoreUser(r.GetUser(), githubLogin, bots) && (r.GetSubmittedAt().After(lastCommitTime) || r.GetCommitID() == headSHA) {
@@ -2574,6 +2574,34 @@ func getStopLabel(triggerLabel string) string {
 		return triggerLabel + "/stop"
 	}
 	return "overseer/stop"
+}
+
+func hasReviewLabel(labels []*githubv39.Label, triggerLabel string) bool {
+	reviewLabels := []string{"overseer/review"}
+	if triggerLabel != "" && !strings.EqualFold(triggerLabel, "overseer") {
+		reviewLabels = append(reviewLabels, triggerLabel+"/review")
+	}
+	for _, label := range labels {
+		for _, rev := range reviewLabels {
+			if strings.EqualFold(label.GetName(), rev) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func shouldAutoReviewPR(ctx context.Context, ghClient *githubv39.Client, owner, repo string, pr *githubv39.PullRequest, prIssue *githubv39.Issue, triggerLabel string) bool {
+	if hasReviewLabel(prIssue.Labels, triggerLabel) {
+		return true
+	}
+	for refIssueNum := range getReferencedIssues(pr) {
+		refIssue, _, err := ghClient.Issues.Get(ctx, owner, repo, refIssueNum)
+		if err == nil && hasReviewLabel(refIssue.Labels, triggerLabel) {
+			return true
+		}
+	}
+	return false
 }
 
 func removePendingTasksForNumber(incomingDir string, number int) {
