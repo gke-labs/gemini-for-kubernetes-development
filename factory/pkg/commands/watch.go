@@ -1439,6 +1439,15 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						bots = cfg.AllowlistedBots
 					}
 
+					// Find the latest timestamp of any reply made by an allowlisted bot user
+					var latestBotReplyTime time.Time
+					for _, c := range comments {
+						if shouldIgnoreUser(c.GetUser(), githubLogin, bots) && c.GetCreatedAt().After(latestBotReplyTime) {
+							latestBotReplyTime = c.GetCreatedAt()
+						}
+					}
+
+					var unackCommentIDs []int64
 					for _, c := range comments {
 						if shouldIgnoreUser(c.GetUser(), githubLogin, bots) {
 							continue
@@ -1446,9 +1455,19 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						if strings.EqualFold(c.GetUser().GetLogin(), pr.GetUser().GetLogin()) {
 							continue
 						}
-						if c.GetCreatedAt().After(lastCommitTime) && c.GetCreatedAt().After(state.lastCommentAddressedTime) {
+						if c.GetCreatedAt().After(lastCommitTime) && c.GetCreatedAt().After(state.lastCommentAddressedTime) && c.GetCreatedAt().After(latestBotReplyTime) {
+							if hasIssueCommentReaction(ctx, ghClient, owner, repo, c.GetID(), "+1", true, bots, githubLogin) {
+								continue
+							}
+							humanRocket := hasIssueCommentReaction(ctx, ghClient, owner, repo, c.GetID(), "rocket", false, bots, githubLogin)
+							if !humanRocket && hasIssueCommentReaction(ctx, ghClient, owner, repo, c.GetID(), "eyes", true, bots, githubLogin) {
+								continue
+							}
+							if !humanRocket && hasIssueCommentReaction(ctx, ghClient, owner, repo, c.GetID(), "confused", true, bots, githubLogin) {
+								continue
+							}
 							hasNewComments = true
-							break
+							unackCommentIDs = append(unackCommentIDs, c.GetID())
 						}
 					}
 
@@ -1456,12 +1475,15 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					if !hasNewComments {
 						for _, r := range reviews {
 							if shouldIgnoreUser(r.GetUser(), githubLogin, bots) {
+								if r.GetSubmittedAt().After(latestBotReplyTime) {
+									latestBotReplyTime = r.GetSubmittedAt()
+								}
 								continue
 							}
 							if strings.EqualFold(r.GetUser().GetLogin(), pr.GetUser().GetLogin()) {
 								continue
 							}
-							if r.GetSubmittedAt().After(lastCommitTime) && r.GetSubmittedAt().After(state.lastCommentAddressedTime) {
+							if r.GetSubmittedAt().After(lastCommitTime) && r.GetSubmittedAt().After(state.lastCommentAddressedTime) && r.GetSubmittedAt().After(latestBotReplyTime) {
 								hasNewComments = true
 								break
 							}
@@ -1470,12 +1492,15 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 							if err == nil {
 								for _, rc := range revComments {
 									if shouldIgnoreUser(rc.GetUser(), githubLogin, bots) {
+										if rc.GetCreatedAt().After(latestBotReplyTime) {
+											latestBotReplyTime = rc.GetCreatedAt()
+										}
 										continue
 									}
 									if strings.EqualFold(rc.GetUser().GetLogin(), pr.GetUser().GetLogin()) {
 										continue
 									}
-									if rc.GetCreatedAt().After(lastCommitTime) && rc.GetCreatedAt().After(state.lastCommentAddressedTime) {
+									if rc.GetCreatedAt().After(lastCommitTime) && rc.GetCreatedAt().After(state.lastCommentAddressedTime) && rc.GetCreatedAt().After(latestBotReplyTime) {
 										hasNewComments = true
 										break
 									}
@@ -1527,6 +1552,9 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 									fmt.Printf("[DRYRUN] Would queue address-comments task for PR #%d: %s\n", num, prURL)
 								} else {
 									fmt.Printf("Queueing address-comments task for PR #%d...\n", num)
+									for _, cid := range unackCommentIDs {
+										addIssueCommentReaction(ctx, ghClient, owner, repo, cid, "eyes")
+									}
 									state.lastCommentAddressedTime = time.Now()
 									processedPRs[num] = state
 									if err := writeTaskAtomically(incomingDir, filename, task); err != nil {
@@ -2192,6 +2220,9 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						t.Error = taskErr.Error()
 						t.CompletedAt = time.Now()
 						writeTaskJournalEvent(queueDir, taskFilename, t, "Failed", duration)
+						if t.Type == "pr-comments" {
+							resolvePRCommentReactions(ctx, ghClient, owner, repo, t.Number, "confused", cfg.AllowlistedBots, githubLogin)
+						}
 
 						// Force clean up sandbox if the task timed out
 						if taskCtx.Err() == context.DeadlineExceeded {
@@ -2226,6 +2257,9 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						t.Status = "Completed"
 						t.CompletedAt = time.Now()
 						writeTaskJournalEvent(queueDir, taskFilename, t, "Completed", duration)
+						if t.Type == "pr-comments" {
+							resolvePRCommentReactions(ctx, ghClient, owner, repo, t.Number, "+1", cfg.AllowlistedBots, githubLogin)
+						}
 					}
 
 					_ = writeTaskAtomically(processingDir, taskFilename, t)
@@ -2762,6 +2796,55 @@ func selectUserForTask(ctx context.Context, ghClient *githubv39.Client, kubeClie
 	}
 
 	return "", nil
+}
+
+func hasIssueCommentReaction(ctx context.Context, ghClient *githubv39.Client, owner, repo string, commentID int64, content string, filterBot bool, bots []string, selfLogin string) bool {
+	if ghClient == nil {
+		return false
+	}
+	reactions, _, err := ghClient.Reactions.ListIssueCommentReactions(ctx, owner, repo, commentID, nil)
+	if err != nil {
+		return false
+	}
+	for _, r := range reactions {
+		if r.GetContent() == content {
+			isBot := shouldIgnoreUser(r.GetUser(), selfLogin, bots)
+			if filterBot && isBot {
+				return true
+			} else if !filterBot && !isBot {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func resolvePRCommentReactions(ctx context.Context, ghClient *githubv39.Client, owner, repo string, prNum int, resolutionContent string, bots []string, selfLogin string) {
+	if ghClient == nil {
+		return
+	}
+	comments, _, err := ghClient.Issues.ListComments(ctx, owner, repo, prNum, nil)
+	if err != nil {
+		return
+	}
+	for _, c := range comments {
+		if shouldIgnoreUser(c.GetUser(), selfLogin, bots) {
+			continue
+		}
+		if hasIssueCommentReaction(ctx, ghClient, owner, repo, c.GetID(), "eyes", true, bots, selfLogin) {
+			addIssueCommentReaction(ctx, ghClient, owner, repo, c.GetID(), resolutionContent)
+		}
+	}
+}
+
+func addIssueCommentReaction(ctx context.Context, ghClient *githubv39.Client, owner, repo string, commentID int64, content string) {
+	if ghClient == nil {
+		return
+	}
+	_, _, err := ghClient.Reactions.CreateIssueCommentReaction(ctx, owner, repo, commentID, content)
+	if err != nil {
+		klog.Warningf("Failed to create reaction '%s' on comment %d: %v", content, commentID, err)
+	}
 }
 
 func isPRTask(taskType string) bool {
