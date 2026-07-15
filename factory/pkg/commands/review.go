@@ -234,6 +234,10 @@ func runReview(ctx context.Context, prURL string, publishPolicy string, instruct
 	}
 	githubLogin := string(secret.Data[KeyGithubLogin])
 	githubEmail := string(secret.Data[KeyGithubEmail])
+	userToken := string(secret.Data[KeyGithubToken])
+	if userToken != "" {
+		ghClient = github.NewClientWithToken(ctx, userToken)
+	}
 
 	structuredParams := tasks.StructuredReviewParams{
 		PullRequest:  *pr,
