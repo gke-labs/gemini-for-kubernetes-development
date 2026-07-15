@@ -53,6 +53,15 @@ func NewClient(ctx context.Context) (*githubv39.Client, error) {
 	return githubv39.NewClient(tc), nil
 }
 
+// NewClientWithToken creates a new GitHub client using an explicit access token.
+func NewClientWithToken(ctx context.Context, token string) *githubv39.Client {
+	ts := oauth2.StaticTokenSource(
+		&oauth2.Token{AccessToken: token},
+	)
+	tc := oauth2.NewClient(ctx, ts)
+	return githubv39.NewClient(tc)
+}
+
 // ListAllIssueComments retrieves all comments for an issue or pull request handling pagination.
 func ListAllIssueComments(ctx context.Context, client *githubv39.Client, owner, repo string, num int) ([]*githubv39.IssueComment, error) {
 	var allComments []*githubv39.IssueComment
