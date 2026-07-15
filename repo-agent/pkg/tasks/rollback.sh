@@ -52,7 +52,9 @@ EOF
         git config --global user.name "${GITHUB_USER_NAME}"
     fi
 
-    gh auth setup-git
+    gh auth setup-git || true
+    echo "configuring git url fallback"
+    git config --global url."https://${GH_USER}:${GITHUB_USER_TOKEN}@github.com/".insteadOf "https://github.com/"
 }
 
 function setupGitRepos {
