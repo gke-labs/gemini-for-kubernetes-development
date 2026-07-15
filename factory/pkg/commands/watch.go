@@ -351,20 +351,21 @@ func countRunningSandboxTasks(ctx context.Context, kubeClient *clients.Kubernete
 }
 
 type QueueTask struct {
-	Type        string    `yaml:"type"` // "issue-fix", "pr-investigate", "pr-comments", "pr-iterate", "pr-review", "agent-chore"
-	URL         string    `yaml:"url"`
-	Number      int       `yaml:"number"`
-	Priority    string    `yaml:"priority"` // "critical", "urgent", "important", "high", "medium", "low"
-	Phase       int       `yaml:"phase"`    // 1: Rebase/iterate, 2: Comments, 3: Investigate/Fix, 4: Chores
-	CreatedAt   time.Time `yaml:"createdAt"`
-	Assignee    string    `yaml:"assignee,omitempty"`
-	Status      string    `yaml:"status"` // "Pending", "Running", "Completed", "Failed"
-	Error       string    `yaml:"error,omitempty"`
-	AgentFile   string    `yaml:"agentFile,omitempty"` // For chore tasks
-	SessionID   string    `yaml:"sessionId,omitempty"` // For workflow sessions
-	CommitSHA   string    `yaml:"commitSHA,omitempty"`
-	Recovered   bool      `yaml:"recovered,omitempty"`
-	CompletedAt time.Time `yaml:"completedAt,omitempty"`
+	Type         string    `yaml:"type"` // "issue-fix", "pr-investigate", "pr-comments", "pr-iterate", "pr-review", "agent-chore"
+	URL          string    `yaml:"url"`
+	Number       int       `yaml:"number"`
+	Priority     string    `yaml:"priority"` // "critical", "urgent", "important", "high", "medium", "low"
+	Phase        int       `yaml:"phase"`    // 1: Rebase/iterate, 2: Comments, 3: Investigate/Fix, 4: Chores
+	CreatedAt    time.Time `yaml:"createdAt"`
+	Assignee     string    `yaml:"assignee,omitempty"`
+	Status       string    `yaml:"status"` // "Pending", "Running", "Completed", "Failed"
+	Error        string    `yaml:"error,omitempty"`
+	AgentFile    string    `yaml:"agentFile,omitempty"` // For chore tasks
+	SessionID    string    `yaml:"sessionId,omitempty"` // For workflow sessions
+	CommitSHA    string    `yaml:"commitSHA,omitempty"`
+	Instructions []string  `yaml:"instructions,omitempty"`
+	Recovered    bool      `yaml:"recovered,omitempty"`
+	CompletedAt  time.Time `yaml:"completedAt,omitempty"`
 }
 
 type ChoreRunState struct {
@@ -970,6 +971,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 		lastSHA                  string
 		lastInvestigatedTime     time.Time
 		lastCommentAddressedTime time.Time
+		lastReviewedSHA          string
 	}
 
 	processedIssues := make(map[int]time.Time)
@@ -1565,6 +1567,69 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 								}
 							}
 						}
+					} else if !hasFailure && !isApproved && state.lastReviewedSHA != headSHA {
+						hasBotReviewAfterLastCommit := false
+						for _, r := range reviews {
+							if shouldIgnoreUser(r.GetUser(), githubLogin, bots) && (r.GetSubmittedAt().After(lastCommitTime) || r.GetCommitID() == headSHA) {
+								hasBotReviewAfterLastCommit = true
+								break
+							}
+						}
+
+						if !hasBotReviewAfterLastCommit {
+							if os.Getenv("DRY_RUN") == "true" {
+								continue
+							}
+							filename := fmt.Sprintf("task-pr-%d-review.yaml", num)
+							if !taskExists(incomingDir, processingDir, filename) {
+								sandboxName := resolveSandboxName(ctx, kubeClient, ghClient, "pr-review", num, owner, repo)
+								running, err := isSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName)
+								if err != nil {
+									klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
+									continue
+								} else if running {
+									klog.Infof("Skipping PR #%d review because there is an in-flight sandbox %s.", num, sandboxName)
+								} else {
+									var bodies []string
+									if pr.GetBody() != "" {
+										bodies = append(bodies, pr.GetBody())
+									}
+									for refIssueNum := range getReferencedIssues(pr) {
+										refIssue, _, err := ghClient.Issues.Get(ctx, owner, repo, refIssueNum)
+										if err == nil && refIssue.GetBody() != "" {
+											bodies = append(bodies, refIssue.GetBody())
+										}
+									}
+									instructions := ExtractReviewInstructions(bodies...)
+
+									prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", owner, repo, num)
+									task := &QueueTask{
+										Type:         "pr-review",
+										URL:          prURL,
+										Number:       num,
+										Priority:     getPRPriority(prIssue),
+										Phase:        2,
+										CreatedAt:    pr.GetCreatedAt(),
+										Status:       "Pending",
+										CommitSHA:    headSHA,
+										Instructions: instructions,
+									}
+
+									if dryRun {
+										fmt.Printf("[DRYRUN] Would queue review task for PR #%d: %s\n", num, prURL)
+									} else {
+										fmt.Printf("Queueing review task for PR #%d (Instructions: %d)...\n", num, len(instructions))
+										state.lastReviewedSHA = headSHA
+										processedPRs[num] = state
+										if err := writeTaskAtomically(incomingDir, filename, task); err != nil {
+											klog.Errorf("Failed to queue review task for PR #%d: %v", num, err)
+										} else {
+											writeTaskJournalEvent(queueDir, filename, task, "Created", 0)
+										}
+									}
+								}
+							}
+						}
 					}
 				}
 			}
@@ -2151,6 +2216,9 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						args = []string{"pr", "iterate", "--pr-url", t.URL, "--prompt", "Please resolve merge conflicts in this PR by rebasing onto the latest master/main branch and resolving any conflicts that arise."}
 					case "pr-review":
 						args = []string{"pr", "review", "--pr-url", t.URL, "--publish", "yes"}
+						for _, inst := range t.Instructions {
+							args = append(args, "--instruction", inst)
+						}
 					case "agent-chore":
 						args = []string{"agent", "create", "--url", t.URL, "--agent", t.AgentFile}
 						if t.SessionID != "" {
