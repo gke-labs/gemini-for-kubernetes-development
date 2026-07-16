@@ -2,17 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import './App.css';
 import SandboxTerminal from './Terminal';
 
-const ChevronRight = () => (
-  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style={{opacity: 0.8}}>
-    <path fillRule="evenodd" d="M6.22 3.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06L9.94 8 6.22 4.28a.75.75 0 0 1 0-1.06z"/>
-  </svg>
-);
 
-const ChevronDown = () => (
-  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style={{opacity: 0.8}}>
-    <path fillRule="evenodd" d="M3.22 6.22a.75.75 0 0 1 1.06 0L8 9.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0l-4.25-4.25a.75.75 0 0 1 0-1.06z"/>
-  </svg>
-);
 
 const Overseer = ({ onBack, namespace: userNamespace }) => {
     const [overseers, setOverseers] = useState([]);
@@ -316,6 +306,20 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
         return { status: 'running', label: `Running (1)${evictionSuffix}`, badgeLabel: 'Active', color: 'var(--status-green)', bgColor: 'var(--bg-secondary)', isSuspended: false, isEvicted: false, isFailed: false, evictionCount };
     };
 
+    const isOverseerInUpgradeMode = (overseer) => {
+        if (!overseer) return false;
+        const annotations = overseer.metadata?.annotations || {};
+        return annotations['overseer.gemini.google.com/upgrade-mode'] === 'true' ||
+               annotations['overseer.gemini.google.com/upgrade-mode'] === true ||
+               overseer.upgradeMode === true;
+    };
+
+    const getOverseerUpgradeTimestamp = (overseer) => {
+        if (!overseer) return null;
+        const annotations = overseer.metadata?.annotations || {};
+        return annotations['overseer.gemini.google.com/upgrade-timestamp'] || overseer.upgradeTimestamp || null;
+    };
+
     const filterSandbox = (sb) => {
         if (!searchFilter || !searchFilter.trim()) return true;
         const q = searchFilter.trim().toLowerCase();
@@ -354,6 +358,53 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                     </div>
                 )}
 
+                {isOverseerInUpgradeMode(activeOverseer) && (
+                    <div style={{
+                        background: 'linear-gradient(135deg, #fff3cd 0%, #ffecb5 100%)',
+                        color: '#664d03',
+                        border: '1px solid #ffecb5',
+                        borderLeft: '6px solid #ffc107',
+                        padding: '16px 20px',
+                        borderRadius: '8px',
+                        marginBottom: '22px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        boxShadow: '0 4px 12px rgba(255, 193, 7, 0.18)',
+                        flexWrap: 'wrap',
+                        gap: '15px'
+                    }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+                            <span style={{ fontSize: '1.8rem' }}>🚧</span>
+                            <div>
+                                <div style={{ fontWeight: '700', fontSize: '1.1rem', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                    <span>Overseer Upgrade Mode Active</span>
+                                    <span style={{
+                                        backgroundColor: '#ffc107',
+                                        color: '#212529',
+                                        padding: '2px 10px',
+                                        borderRadius: '12px',
+                                        fontSize: '0.72rem',
+                                        fontWeight: '800',
+                                        textTransform: 'uppercase',
+                                        letterSpacing: '0.5px'
+                                    }}>
+                                        DO NOT PROCESS
+                                    </span>
+                                </div>
+                                <div style={{ fontSize: '0.94rem', lineHeight: '1.4' }}>
+                                    <strong>{activeOverseer?.metadata?.name}</strong> is currently in upgrade mode and <strong>will not accept new tasks</strong>. Existing tasks will finish draining before the Overseer restarts.
+                                    {getOverseerUpgradeTimestamp(activeOverseer) && (
+                                        <span style={{ marginLeft: '8px', opacity: 0.85, fontWeight: '500' }}>
+                                            • Started at {new Date(getOverseerUpgradeTimestamp(activeOverseer)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                                        </span>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '25px', borderBottom: '1px solid var(--border-color)', paddingBottom: '15px', flexWrap: 'wrap', gap: '15px' }}>
                     <div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -378,12 +429,30 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                                     }}
                                 >
                                     {overseers.map(o => (
-                                        <option key={o.metadata.name} value={o.metadata.name}>{o.metadata.name}</option>
+                                        <option key={o.metadata.name} value={o.metadata.name}>
+                                            {o.metadata.name}{isOverseerInUpgradeMode(o) ? ' (UPGRADING)' : ''}
+                                        </option>
                                     ))}
                                 </select>
                             ) : (
                                 <span style={{ fontSize: '1.4rem', fontWeight: 'bold', color: 'var(--text-active)' }}>
                                     {activeOverseer?.metadata.name || 'Loading...'}
+                                </span>
+                            )}
+                            {isOverseerInUpgradeMode(activeOverseer) && (
+                                <span style={{
+                                    padding: '4px 12px',
+                                    borderRadius: '16px',
+                                    fontSize: '0.78rem',
+                                    fontWeight: 'bold',
+                                    backgroundColor: '#fff3cd',
+                                    color: '#856404',
+                                    border: '1px solid #ffeeba',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '6px'
+                                }} title="Overseer is in upgrade mode and not accepting new tasks">
+                                    🚧 UPGRADING (DO NOT PROCESS)
                                 </span>
                             )}
                         </div>
