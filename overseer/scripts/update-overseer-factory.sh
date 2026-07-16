@@ -21,7 +21,13 @@ if ! kubectl get namespace "$NAMESPACE" >/dev/null 2>&1; then
 fi
 
 echo ""
-echo "[Step 1] Marking watch loop as DO NOT PROCESS (/workspaces/.do_not_process)..."
+echo "[Step 1] Marking watch loop as DO NOT PROCESS (/workspaces/.do_not_process) and setting upgrade mode on Overseer CR..."
+NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+kubectl annotate overseer.overseer.gemini.google.com "${OVERSEER_NAME}" \
+    overseer.gemini.google.com/upgrade-mode="true" \
+    overseer.gemini.google.com/upgrade-timestamp="$NOW" --overwrite || {
+    echo "Warning: Failed to annotate overseer CR with upgrade-mode."
+}
 kubectl exec -n "$NAMESPACE" "$POD_NAME" -- touch /workspaces/.do_not_process || {
     echo "Warning: Could not touch /workspaces/.do_not_process in pod ${POD_NAME}. Pod might not be running or ready."
 }
@@ -69,11 +75,14 @@ echo "[Step 4] Deleting the overseer sandbox CR (${POD_NAME})..."
 kubectl delete sandbox.agents.x-k8s.io -n "$NAMESPACE" "$POD_NAME" --wait=false || true
 
 echo ""
-echo "[Step 5] Nudging the Overseer object (${OVERSEER_NAME}) to trigger recreation..."
+echo "[Step 5] Nudging the Overseer object (${OVERSEER_NAME}) to trigger recreation and clearing upgrade mode..."
 NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-kubectl annotate overseer.overseer.gemini.google.com "${OVERSEER_NAME}" overseer.gemini.google.com/recreate-timestamp="$NOW" --overwrite || {
+kubectl annotate overseer.overseer.gemini.google.com "${OVERSEER_NAME}" \
+    overseer.gemini.google.com/recreate-timestamp="$NOW" \
+    overseer.gemini.google.com/upgrade-mode- \
+    overseer.gemini.google.com/upgrade-timestamp- --overwrite || {
     echo "Warning: Failed to annotate overseer CR. Trying patch..."
-    kubectl patch overseer.overseer.gemini.google.com "${OVERSEER_NAME}" --type=merge -p "{\"metadata\":{\"annotations\":{\"overseer.gemini.google.com/recreate-timestamp\":\"${NOW}\"}}}" || true
+    kubectl patch overseer.overseer.gemini.google.com "${OVERSEER_NAME}" --type=merge -p "{\"metadata\":{\"annotations\":{\"overseer.gemini.google.com/recreate-timestamp\":\"${NOW}\",\"overseer.gemini.google.com/upgrade-mode\":null,\"overseer.gemini.google.com/upgrade-timestamp\":null}}}" || true
 }
 
 echo ""

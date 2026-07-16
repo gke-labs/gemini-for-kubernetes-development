@@ -21,6 +21,23 @@ import (
 	"k8s.io/klog/v2"
 )
 
+func enrichOverseerObject(ov map[string]interface{}) {
+	metadata, ok := ov["metadata"].(map[string]interface{})
+	if !ok {
+		return
+	}
+	annotations, ok := metadata["annotations"].(map[string]interface{})
+	if !ok {
+		return
+	}
+	if val, found := annotations["overseer.gemini.google.com/upgrade-mode"]; found && val == "true" {
+		ov["upgradeMode"] = true
+		if ts, ok := annotations["overseer.gemini.google.com/upgrade-timestamp"]; ok {
+			ov["upgradeTimestamp"] = ts
+		}
+	}
+}
+
 func (s *Server) getOverseers(c *gin.Context) {
 	log := klog.FromContext(c.Request.Context())
 	overseers, err := s.K8sManager.ListOverseers(c.Request.Context())
@@ -32,6 +49,7 @@ func (s *Server) getOverseers(c *gin.Context) {
 
 	items := make([]map[string]interface{}, len(overseers.Items))
 	for i, ov := range overseers.Items {
+		enrichOverseerObject(ov.Object)
 		items[i] = ov.Object
 	}
 	c.JSON(http.StatusOK, items)
@@ -44,6 +62,7 @@ func (s *Server) getOverseer(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get overseer"})
 		return
 	}
+	enrichOverseerObject(overseer.Object)
 	c.JSON(http.StatusOK, overseer.Object)
 }
 
