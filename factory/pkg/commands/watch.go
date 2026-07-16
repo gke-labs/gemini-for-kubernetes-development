@@ -1479,6 +1479,11 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 							latestBotReplyTime = c.GetCreatedAt()
 						}
 					}
+					for _, r := range reviews {
+						if shouldIgnoreUser(r.GetUser(), githubLogin, bots) && r.GetSubmittedAt().After(latestBotReplyTime) {
+							latestBotReplyTime = r.GetSubmittedAt()
+						}
+					}
 
 					var unackCommentIDs []int64
 					for _, c := range comments {
