@@ -346,8 +346,37 @@ func countRunningSandboxTasks(ctx context.Context, kubeClient *clients.Kubernete
 			count++
 		}
 	}
-
 	return count, nil
+}
+
+func reconcileRunningSandboxes(ctx context.Context, kubeClient *clients.KubernetesClient, namespace string) {
+	if kubeClient == nil {
+		return
+	}
+	list, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		klog.Warningf("Failed to list sandboxes during reconcileRunningSandboxes: %v", err)
+		return
+	}
+	for _, item := range list.Items {
+		if factorysandbox.IsCurrentSandbox(ctx, kubeClient, &item, namespace) {
+			continue
+		}
+		annotations := item.GetAnnotations()
+		state := ""
+		if annotations != nil {
+			state = annotations["sandbox.gemini.google.com/last-task-state"]
+		}
+		if state == "" || strings.EqualFold(state, "Running") {
+			sbName := item.GetName()
+			running, err := isSandboxTaskRunning(ctx, kubeClient, namespace, sbName)
+			if err != nil {
+				klog.Warningf("Failed to check status of running sandbox %s during reconcile: %v", sbName, err)
+			} else if !running {
+				klog.Infof("Sandbox '%s' task completed or stopped running; annotation updated.", sbName)
+			}
+		}
+	}
 }
 
 type QueueTask struct {
@@ -1125,6 +1154,8 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				}
 			}
 		}()
+
+		reconcileRunningSandboxes(ctx, kubeClient, rootFlags.Namespace)
 
 		if isDoNotProcess(queueDir) {
 			runningCount, err := countRunningSandboxTasks(ctx, kubeClient, rootFlags.Namespace)
