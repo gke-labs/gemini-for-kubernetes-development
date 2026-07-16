@@ -2078,6 +2078,10 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 			activeSandboxesInCycle := make(map[string]bool)
 
 			for _, item := range tasksToRun {
+				if isDoNotProcess(queueDir) {
+					klog.Infof("[DO NOT PROCESS] Drain mode detected during cycle execution. Stopping scheduling of remaining queued tasks.")
+					break
+				}
 				if actionsTaken >= maxActions {
 					fmt.Printf("Reached maximum actions limit (%d) for this cycle. Stopping execution.\n", maxActions)
 					break
