@@ -199,3 +199,23 @@ The direct controller must be implemented to manage reconciliation logic (Adapte
 
     The created PR must include these labels: `direct-migration` and `overseer`
     ```
+
+### Step 6: Validate Direct Promotion
+
+1. Open a GitHub issue to validate the direct promotion for this resource.
+
+**GitHub Issue Details:**
+*   **Title:** `Validate direct promotion for {kind}`
+*   **Assignee:** (leave unassigned or assign to the current bot)
+*   **Labels:** `overseer`
+*   **Body:**
+    ```
+    Find the tests added under pkg/test/resourcefixture/testdata/basic for the {kind}.
+    Include only those tests that are not using direct annotation `alpha.cnrm.cloud.google.com/reconciler: direct` in `create.yaml`
+
+    For each test, follow .gemini/skills/solve-migration-diff-issues/SKILL.md to test the direct migration for {kind}
+    We may need to update the mocks to conform to the new controller changes (these were run against realgcp)
+    If you find any shortcomings in these skills (that likely apply to other resources), you may update them. Also keep a journal of any less general observations etc. To avoid git merge conflicts, use a file under .gemini/skills/solve-migration-diff-issues/journal/, named after the kind or a similarly unique name.
+
+    The created PR must include these labels: `direct-migration` and `overseer`
+    ```
