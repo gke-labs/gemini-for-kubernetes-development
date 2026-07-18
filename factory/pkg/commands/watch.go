@@ -1486,7 +1486,6 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					}
 
 					var unackCommentIDs []int64
-					var unackPRCommentIDs []int64
 					for _, c := range comments {
 						if shouldIgnoreUser(c.GetUser(), githubLogin, bots) {
 							continue
@@ -1541,7 +1540,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 									}
 									if rc.GetCreatedAt().After(lastCommitTime) && rc.GetCreatedAt().After(state.lastCommentAddressedTime) && rc.GetCreatedAt().After(latestBotReplyTime) {
 										hasNewComments = true
-										unackPRCommentIDs = append(unackPRCommentIDs, rc.GetID())
+										break
 									}
 								}
 							}
@@ -1593,9 +1592,6 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 									fmt.Printf("Queueing address-comments task for PR #%d...\n", num)
 									for _, cid := range unackCommentIDs {
 										addIssueCommentReaction(ctx, ghClient, owner, repo, cid, "eyes")
-									}
-									for _, cid := range unackPRCommentIDs {
-										addPullRequestCommentReaction(ctx, ghClient, owner, repo, cid, "eyes")
 									}
 									state.lastCommentAddressedTime = time.Now()
 									processedPRs[num] = state
@@ -3000,16 +2996,6 @@ func addIssueCommentReaction(ctx context.Context, ghClient *githubv39.Client, ow
 	_, _, err := ghClient.Reactions.CreateIssueCommentReaction(ctx, owner, repo, commentID, content)
 	if err != nil {
 		klog.Warningf("Failed to create reaction '%s' on comment %d: %v", content, commentID, err)
-	}
-}
-
-func addPullRequestCommentReaction(ctx context.Context, ghClient *githubv39.Client, owner, repo string, commentID int64, content string) {
-	if ghClient == nil {
-		return
-	}
-	_, _, err := ghClient.Reactions.CreatePullRequestCommentReaction(ctx, owner, repo, commentID, content)
-	if err != nil {
-		klog.Warningf("Failed to create reaction '%s' on PR comment %d: %v", content, commentID, err)
 	}
 }
 
