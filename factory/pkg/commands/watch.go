@@ -1475,12 +1475,12 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					// Find the latest timestamp of any reply made by an allowlisted bot user
 					var latestBotReplyTime time.Time
 					for _, c := range comments {
-						if shouldIgnoreUser(c.GetUser(), githubLogin, bots) && c.GetCreatedAt().After(latestBotReplyTime) {
+						if isBotReply(c.GetUser(), githubLogin, bots) && c.GetCreatedAt().After(latestBotReplyTime) {
 							latestBotReplyTime = c.GetCreatedAt()
 						}
 					}
 					for _, r := range reviews {
-						if shouldIgnoreUser(r.GetUser(), githubLogin, bots) && r.GetSubmittedAt().After(latestBotReplyTime) {
+						if isBotReply(r.GetUser(), githubLogin, bots) && r.GetSubmittedAt().After(latestBotReplyTime) {
 							latestBotReplyTime = r.GetSubmittedAt()
 						}
 					}
@@ -1606,7 +1606,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					} else if !hasFailure && !isApproved && state.lastReviewedSHA != headSHA && shouldAutoReviewPR(ctx, ghClient, owner, repo, pr, prIssue, triggerLabel) {
 						hasBotReviewAfterLastCommit := false
 						for _, r := range reviews {
-							if shouldIgnoreUser(r.GetUser(), githubLogin, bots) && (r.GetSubmittedAt().After(lastCommitTime) || r.GetCommitID() == headSHA) {
+							if isBotReply(r.GetUser(), githubLogin, bots) && (r.GetSubmittedAt().After(lastCommitTime) || r.GetCommitID() == headSHA) {
 								hasBotReviewAfterLastCommit = true
 								break
 							}
@@ -2563,6 +2563,22 @@ func isPRApprovedOrLGTM(pr *githubv39.PullRequest, prIssue *githubv39.Issue, rev
 	}
 
 	return hasApproved && !hasChangesRequested
+}
+
+func isBotReply(user *githubv39.User, githubLogin string, allowlistedBots []string) bool {
+	if user == nil {
+		return false
+	}
+	login := user.GetLogin()
+	if strings.EqualFold(login, githubLogin) {
+		return true
+	}
+	for _, b := range allowlistedBots {
+		if strings.EqualFold(login, b) {
+			return true
+		}
+	}
+	return shouldIgnoreUser(user, githubLogin, nil)
 }
 
 func shouldIgnoreUser(user *githubv39.User, githubLogin string, allowlistedBots []string) bool {
