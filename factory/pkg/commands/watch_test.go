@@ -266,4 +266,3 @@ func TestWorkflowCooldownCompletedAt(t *testing.T) {
 		t.Fatalf("lastRunTime = %v, want %v", lastRunTime, completedAt)
 	}
 }
-
