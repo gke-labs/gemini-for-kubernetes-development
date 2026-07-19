@@ -655,8 +655,15 @@ func queueIssueTasks(ctx context.Context, ghClient *githubv39.Client, kubeClient
 		// Check if the workflow session already completed recently
 		processedPath := filepath.Join(processedDir, filename)
 		if info, err := os.Stat(processedPath); err == nil {
+			lastRunTime := info.ModTime()
+			if data, err := os.ReadFile(processedPath); err == nil {
+				var t QueueTask
+				if err := yaml.Unmarshal(data, &t); err == nil && !t.CompletedAt.IsZero() {
+					lastRunTime = t.CompletedAt
+				}
+			}
 			cooldown := getWorkflowCooldown(ctx, ghClient, owner, repo, workflowPath)
-			if time.Since(info.ModTime()) < cooldown {
+			if time.Since(lastRunTime) < cooldown {
 				continue
 			}
 		}
