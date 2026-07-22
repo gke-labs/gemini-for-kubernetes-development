@@ -1465,7 +1465,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 
 				// Check review comments and approvals
 				var reviews []*githubv39.PullRequestReview
-				if listReviews, _, err := ghClient.PullRequests.ListReviews(ctx, owner, repo, num, nil); err == nil {
+				if listReviews, err := github.ListAllReviews(ctx, ghClient, owner, repo, num); err == nil {
 					reviews = listReviews
 				}
 
@@ -1533,7 +1533,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 								break
 							}
 
-							revComments, _, err := ghClient.PullRequests.ListReviewComments(ctx, owner, repo, num, r.GetID(), nil)
+							revComments, err := github.ListAllReviewComments(ctx, ghClient, owner, repo, num, r.GetID())
 							if err == nil {
 								for _, rc := range revComments {
 									if shouldIgnoreUser(rc.GetUser(), githubLogin, bots) {
