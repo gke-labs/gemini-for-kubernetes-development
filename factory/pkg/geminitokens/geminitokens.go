@@ -152,14 +152,43 @@ func AddQuotaExceededKey(key string, duration time.Duration) error {
 	return nil
 }
 
-func ContainsQuotaError(data []byte) bool {
+// IsFatalQuotaError checks if the output indicates daily quota exhaustion (RPD) or unrecoverable billing/quota errors,
+// ignoring intermediate transient RPM/TPM retry messages ("Retrying with backoff").
+func IsFatalQuotaError(data []byte) bool {
 	str := string(data)
+
+	hasFatalKeyword := strings.Contains(str, "exceeded your current quota") ||
+		strings.Contains(str, "check your plan and billing details") ||
+		strings.Contains(str, "requests per day") ||
+		strings.Contains(str, "Generate requests per day") ||
+		strings.Contains(str, "Max retries exceeded") ||
+		strings.Contains(str, "Terminal error")
+
+	if hasFatalKeyword {
+		return true
+	}
+
+	// If the log indicates an active retry with backoff, treat as transient rate limit rather than fatal RPD quota.
+	if strings.Contains(str, "Retrying with backoff") {
+		return false
+	}
+
 	return strings.Contains(str, "RESOURCE_EXHAUSTED") ||
-		strings.Contains(str, "exceeded your current quota") ||
 		strings.Contains(str, "status: 429") ||
 		strings.Contains(str, "statusCode: 429") ||
 		strings.Contains(str, "status\": 429") ||
 		strings.Contains(str, "status: \"Too Many Requests\"")
+}
+
+// IsTransientRateLimit checks if the output indicates a transient RPM/TPM rate limit spike being retried.
+func IsTransientRateLimit(data []byte) bool {
+	str := string(data)
+	return strings.Contains(str, "Retrying with backoff") ||
+		(strings.Contains(str, "status: 429") && !IsFatalQuotaError(data))
+}
+
+func ContainsQuotaError(data []byte) bool {
+	return IsFatalQuotaError(data)
 }
 
 func GetGeminiAPIKey(secret *corev1.Secret) string {
