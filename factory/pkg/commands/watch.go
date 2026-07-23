@@ -1357,39 +1357,13 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				if hasFailure {
 					filename := fmt.Sprintf("task-pr-%d-investigate.yaml", num)
 					if !taskExists(incomingDir, processingDir, filename) {
-						lastResetTime := lastCommitTime
-						if listCommentsErr == nil {
-							for _, c := range comments {
-								isPoolBot := false
-								for _, bot := range allBotUsers {
-									if strings.EqualFold(c.GetUser().GetLogin(), bot) {
-										isPoolBot = true
-										break
-									}
-								}
-								// Advance reset timestamp when any human comments OR when the bot previously paused automated investigation
-								if (!isPoolBot || strings.Contains(c.GetBody(), "pausing automated investigation")) && c.GetCreatedAt().After(lastResetTime) {
-									lastResetTime = c.GetCreatedAt()
-								}
-							}
-						}
-
 						investigationCount := 0
 						if listCommentsErr == nil {
-							for _, c := range comments {
-								isPoolBot := false
-								for _, bot := range allBotUsers {
-									if strings.EqualFold(c.GetUser().GetLogin(), bot) {
-										isPoolBot = true
-										break
-									}
-								}
-								if isPoolBot &&
-									strings.Contains(c.GetBody(), "started investigating CI check failures") &&
-									c.GetCreatedAt().After(lastResetTime) {
-									investigationCount++
-								}
+							var bots []string
+							if cfg != nil {
+								bots = cfg.AllowlistedBots
 							}
+							investigationCount = getInvestigationCount(comments, lastCommitTime, allBotUsers, githubLogin, bots)
 						}
 
 						if investigationCount >= 3 {
@@ -2630,6 +2604,40 @@ func hasStopLabel(labels []*githubv39.Label, triggerLabel string) bool {
 		}
 	}
 	return false
+}
+
+func getInvestigationCount(comments []*githubv39.IssueComment, lastCommitTime time.Time, allBotUsers []string, githubLogin string, bots []string) int {
+	lastResetTime := lastCommitTime
+	for _, c := range comments {
+		isPoolBot := false
+		for _, bot := range allBotUsers {
+			if strings.EqualFold(c.GetUser().GetLogin(), bot) {
+				isPoolBot = true
+				break
+			}
+		}
+		isHuman := !isPoolBot && !shouldIgnoreUser(c.GetUser(), githubLogin, bots)
+		if (isHuman || strings.Contains(c.GetBody(), "pausing automated investigation")) && c.GetCreatedAt().After(lastResetTime) {
+			lastResetTime = c.GetCreatedAt()
+		}
+	}
+
+	investigationCount := 0
+	for _, c := range comments {
+		isPoolBot := false
+		for _, bot := range allBotUsers {
+			if strings.EqualFold(c.GetUser().GetLogin(), bot) {
+				isPoolBot = true
+				break
+			}
+		}
+		if isPoolBot &&
+			strings.Contains(c.GetBody(), "started investigating CI check failures") &&
+			c.GetCreatedAt().After(lastResetTime) {
+			investigationCount++
+		}
+	}
+	return investigationCount
 }
 
 func getStopLabel(triggerLabel string) string {
