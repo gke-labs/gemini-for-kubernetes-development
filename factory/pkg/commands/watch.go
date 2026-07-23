@@ -1008,6 +1008,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 		lastInvestigatedTime     time.Time
 		lastCommentAddressedTime time.Time
 		lastReviewedSHA          string
+		unassignedSHA            string
 	}
 
 	processedIssues := make(map[int]time.Time)
@@ -1182,7 +1183,6 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 
 		now := time.Now()
 		actionsTaken := 0
-		unassignedPRs := make(map[int]bool)
 
 		processPRsFunc := func(prIssues []*githubv39.Issue) {
 			if prMode == "disabled" {
@@ -1318,10 +1318,10 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				state := processedPRs[num]
 
 				assignedBot := assignedBotUser(prIssue, allBotUsers)
-				isExplicitlyAssigned := assignedBot != "" && !unassignedPRs[num]
+				isExplicitlyAssigned := assignedBot != "" && state.unassignedSHA != headSHA
 
 				if state.lastSHA != "" && state.lastSHA != headSHA {
-					if assignedBot != "" && !unassignedPRs[num] {
+					if shouldUnassignStaleBot(state.lastSHA, state.unassignedSHA, headSHA, assignedBot) {
 						if dryRun {
 							fmt.Printf("[DRYRUN] Would unassign stale bot %s from PR #%d due to new commit %s\n", assignedBot, num, headSHA)
 						} else {
@@ -1329,7 +1329,8 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 							if _, _, err := ghClient.Issues.RemoveAssignees(ctx, owner, repo, num, []string{assignedBot}); err != nil {
 								klog.Errorf("Failed to unassign stale bot %s from PR #%d: %v", assignedBot, num, err)
 							}
-							unassignedPRs[num] = true
+							state.unassignedSHA = headSHA
+							processedPRs[num] = state
 							isExplicitlyAssigned = false
 							assignedBot = ""
 						}
@@ -2604,6 +2605,19 @@ func hasStopLabel(labels []*githubv39.Label, triggerLabel string) bool {
 		}
 	}
 	return false
+}
+
+func shouldUnassignStaleBot(lastSHA, unassignedSHA, headSHA, assignedBot string) bool {
+	if lastSHA == "" || lastSHA == headSHA {
+		return false
+	}
+	if assignedBot == "" {
+		return false
+	}
+	if unassignedSHA == headSHA {
+		return false
+	}
+	return true
 }
 
 func getInvestigationCount(comments []*githubv39.IssueComment, lastCommitTime time.Time, allBotUsers []string, githubLogin string, bots []string) int {
