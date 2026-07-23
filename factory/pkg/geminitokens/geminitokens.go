@@ -182,6 +182,9 @@ func IsFatalQuotaError(data []byte) bool {
 
 // IsTransientRateLimit checks if the output indicates a transient RPM/TPM rate limit spike being retried.
 func IsTransientRateLimit(data []byte) bool {
+	if IsFatalQuotaError(data) {
+		return false
+	}
 	str := string(data)
 	return strings.Contains(str, "Retrying with backoff") ||
 		(strings.Contains(str, "status: 429") && !IsFatalQuotaError(data))
