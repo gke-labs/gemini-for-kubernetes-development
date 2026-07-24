@@ -427,3 +427,65 @@ func TestShouldUnassignStaleBot(t *testing.T) {
 		})
 	}
 }
+
+func TestParseProcessedPRTask(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// 1. Create a review task file
+	reviewTaskPath := filepath.Join(tempDir, "task-pr-123-review.yaml")
+	reviewTaskData := []byte(`
+type: pr-review
+commitSHA: "abcd123"
+`)
+	if err := os.WriteFile(reviewTaskPath, reviewTaskData, 0644); err != nil {
+		t.Fatalf("failed to write review task file: %v", err)
+	}
+
+	// 2. Create a comments task file
+	commentsTaskPath := filepath.Join(tempDir, "task-pr-123-comments.yaml")
+	commentsTaskData := []byte(`
+type: pr-comments
+completedAt: "2026-07-23T12:00:00Z"
+`)
+	if err := os.WriteFile(commentsTaskPath, commentsTaskData, 0644); err != nil {
+		t.Fatalf("failed to write comments task file: %v", err)
+	}
+
+	// 3. Create an investigate task file
+	investigateTaskPath := filepath.Join(tempDir, "task-pr-123-investigate.yaml")
+	investigateTaskData := []byte(`
+type: pr-investigate
+completedAt: "2026-07-23T13:00:00Z"
+`)
+	if err := os.WriteFile(investigateTaskPath, investigateTaskData, 0644); err != nil {
+		t.Fatalf("failed to write investigate task file: %v", err)
+	}
+
+	initialState := prWatchState{}
+
+	// Process review task
+	fInfoReview, _ := os.Stat(reviewTaskPath)
+	state := parseProcessedPRTask(reviewTaskPath, "task-pr-123-review", fInfoReview, initialState)
+	if state.lastReviewedSHA != "abcd123" {
+		t.Errorf("expected lastReviewedSHA to be 'abcd123', got '%s'", state.lastReviewedSHA)
+	}
+	if state.lastSHA != "abcd123" {
+		t.Errorf("expected lastSHA to be 'abcd123', got '%s'", state.lastSHA)
+	}
+
+	// Process comments task
+	fInfoComments, _ := os.Stat(commentsTaskPath)
+	state = parseProcessedPRTask(commentsTaskPath, "task-pr-123-comments", fInfoComments, state)
+	expectedCommentTime, _ := time.Parse(time.RFC3339, "2026-07-23T12:00:00Z")
+	if !state.lastCommentAddressedTime.Equal(expectedCommentTime) {
+		t.Errorf("expected lastCommentAddressedTime to be %v, got %v", expectedCommentTime, state.lastCommentAddressedTime)
+	}
+
+	// Process investigate task
+	fInfoInvestigate, _ := os.Stat(investigateTaskPath)
+	state = parseProcessedPRTask(investigateTaskPath, "task-pr-123-investigate", fInfoInvestigate, state)
+	expectedInvestigateTime, _ := time.Parse(time.RFC3339, "2026-07-23T13:00:00Z")
+	if !state.lastInvestigatedTime.Equal(expectedInvestigateTime) {
+		t.Errorf("expected lastInvestigatedTime to be %v, got %v", expectedInvestigateTime, state.lastInvestigatedTime)
+	}
+}

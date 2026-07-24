@@ -1003,14 +1003,6 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 		timeoutChan = time.After(watchTimeout)
 	}
 
-	type prWatchState struct {
-		lastSHA                  string
-		lastInvestigatedTime     time.Time
-		lastCommentAddressedTime time.Time
-		lastReviewedSHA          string
-		unassignedSHA            string
-	}
-
 	processedIssues := make(map[int]time.Time)
 	processedPRs := make(map[int]prWatchState)
 	if files, err := os.ReadDir(processedDir); err == nil {
@@ -1045,41 +1037,25 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 
 				isComments := strings.HasSuffix(name, "-comments")
 				isInvestigate := strings.HasSuffix(name, "-investigate")
+				isReview := strings.HasSuffix(name, "-review")
+				isIterate := strings.HasSuffix(name, "-iterate")
 
 				var numStr string
 				if isComments {
 					numStr = strings.TrimSuffix(name, "-comments")
 				} else if isInvestigate {
 					numStr = strings.TrimSuffix(name, "-investigate")
+				} else if isReview {
+					numStr = strings.TrimSuffix(name, "-review")
+				} else if isIterate {
+					numStr = strings.TrimSuffix(name, "-iterate")
 				}
 
 				if numStr != "" {
 					if num, err := strconv.Atoi(numStr); err == nil {
 						state := processedPRs[num]
-						var t QueueTask
-						hasTask := false
-						if data, err := os.ReadFile(filePath); err == nil {
-							if err := yaml.Unmarshal(data, &t); err == nil {
-								hasTask = true
-								if t.CommitSHA != "" {
-									state.lastSHA = t.CommitSHA
-								}
-							}
-						}
-
-						if info, err := f.Info(); err == nil {
-							tTime := info.ModTime()
-							if hasTask && !t.CompletedAt.IsZero() {
-								tTime = t.CompletedAt
-							}
-							if isComments {
-								state.lastCommentAddressedTime = tTime
-							} else if isInvestigate {
-								state.lastInvestigatedTime = tTime
-							}
-						}
-
-						processedPRs[num] = state
+						info, _ := f.Info()
+						processedPRs[num] = parseProcessedPRTask(filePath, name, info, state)
 					}
 				}
 			}
@@ -2618,6 +2594,52 @@ func shouldUnassignStaleBot(lastSHA, unassignedSHA, headSHA, assignedBot string)
 		return false
 	}
 	return true
+}
+
+type prWatchState struct {
+	lastSHA                  string
+	lastInvestigatedTime     time.Time
+	lastCommentAddressedTime time.Time
+	lastReviewedSHA          string
+	unassignedSHA            string
+}
+
+func parseProcessedPRTask(filePath string, name string, fInfo os.FileInfo, state prWatchState) prWatchState {
+	isComments := strings.HasSuffix(name, "-comments")
+	isInvestigate := strings.HasSuffix(name, "-investigate")
+	isReview := strings.HasSuffix(name, "-review")
+
+	var t QueueTask
+	hasTask := false
+	if data, err := os.ReadFile(filePath); err == nil {
+		if err := yaml.Unmarshal(data, &t); err == nil {
+			hasTask = true
+			if t.CommitSHA != "" {
+				state.lastSHA = t.CommitSHA
+			}
+		}
+	}
+
+	if fInfo != nil {
+		tTime := fInfo.ModTime()
+		if hasTask && !t.CompletedAt.IsZero() {
+			tTime = t.CompletedAt
+		}
+		if isComments {
+			if tTime.After(state.lastCommentAddressedTime) {
+				state.lastCommentAddressedTime = tTime
+			}
+		} else if isInvestigate {
+			if tTime.After(state.lastInvestigatedTime) {
+				state.lastInvestigatedTime = tTime
+			}
+		} else if isReview {
+			if hasTask && t.CommitSHA != "" {
+				state.lastReviewedSHA = t.CommitSHA
+			}
+		}
+	}
+	return state
 }
 
 func getInvestigationCount(comments []*githubv39.IssueComment, lastCommitTime time.Time, allBotUsers []string, githubLogin string, bots []string) int {
