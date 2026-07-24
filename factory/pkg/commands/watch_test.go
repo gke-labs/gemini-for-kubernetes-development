@@ -358,3 +358,72 @@ func TestGetInvestigationCount(t *testing.T) {
 func timePtr(t time.Time) *time.Time {
 	return &t
 }
+
+func TestShouldUnassignStaleBot(t *testing.T) {
+	tests := []struct {
+		name          string
+		lastSHA       string
+		unassignedSHA string
+		headSHA       string
+		assignedBot   string
+		expected      bool
+	}{
+		{
+			name:          "Should unassign when new commit and not yet unassigned",
+			lastSHA:       "old-sha",
+			unassignedSHA: "",
+			headSHA:       "new-sha",
+			assignedBot:   "bot1",
+			expected:      true,
+		},
+		{
+			name:          "Should not unassign when lastSHA is empty",
+			lastSHA:       "",
+			unassignedSHA: "",
+			headSHA:       "new-sha",
+			assignedBot:   "bot1",
+			expected:      false,
+		},
+		{
+			name:          "Should not unassign when lastSHA matches headSHA",
+			lastSHA:       "same-sha",
+			unassignedSHA: "",
+			headSHA:       "same-sha",
+			assignedBot:   "bot1",
+			expected:      false,
+		},
+		{
+			name:          "Should not unassign when assignedBot is empty",
+			lastSHA:       "old-sha",
+			unassignedSHA: "",
+			headSHA:       "new-sha",
+			assignedBot:   "",
+			expected:      false,
+		},
+		{
+			name:          "Should not unassign when already unassigned for this headSHA",
+			lastSHA:       "old-sha",
+			unassignedSHA: "new-sha",
+			headSHA:       "new-sha",
+			assignedBot:   "bot1",
+			expected:      false,
+		},
+		{
+			name:          "Should unassign if previously unassigned for a different SHA",
+			lastSHA:       "old-sha",
+			unassignedSHA: "old-sha2",
+			headSHA:       "new-sha",
+			assignedBot:   "bot1",
+			expected:      true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := shouldUnassignStaleBot(tc.lastSHA, tc.unassignedSHA, tc.headSHA, tc.assignedBot)
+			if got != tc.expected {
+				t.Errorf("expected %v, got %v", tc.expected, got)
+			}
+		})
+	}
+}
