@@ -6,6 +6,7 @@
 #export DAEDALUS_GITHUB_TOKEN=..
 #export FEYNMAN_GITHUB_TOKEN=..
 #export WALLE_GITHUB_TOKEN=..
+#export NEUMANN_GITHUB_TOKEN=..
 
 alias factory=../factory/bin/factory
 
@@ -72,5 +73,13 @@ factory user onboard \
   --github-login walle-agent-bot \
   --github-token $WALLE_GITHUB_TOKEN \
   --github-email walle-agent-bot@google.com \
+  --gemini-key $GEMINI_API_KEY
+
+factory user onboard \
+  --user neumann-coder-bot \
+  --namespace overseer-system \
+  --github-login neumann-coder-bot \
+  --github-token $NEUMANN_GITHUB_TOKEN \
+  --github-email neumann-coder-bot@google.com \
   --gemini-key $GEMINI_API_KEY
 

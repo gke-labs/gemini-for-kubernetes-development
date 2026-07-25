@@ -46,9 +46,9 @@ spec:
         #- spock-watcher-bot
     coder:
       users:
-        - lovelace-coder-bot
         - hopper-coder-bot
         - ada-coder-bot
+        - neumann-coder-bot
     reviewer:
       users:
         - reviewbot-robot
