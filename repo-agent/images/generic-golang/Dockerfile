@@ -53,13 +53,13 @@ RUN apt-get update && apt-get install -y git tmux nodejs npm sudo curl apt-trans
 
 # Install Google Cloud CLI
 RUN echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | tee -a /etc/apt/sources.list.d/google-cloud-sdk.list && \
-    curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg && \
+    curl -fsSL --retry 5 --retry-connrefused --retry-delay 3 https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg && \
     apt-get update && apt-get install -y google-cloud-cli
 
 RUN npm install -g @google/gemini-cli @anthropic-ai/claude-code
 
 # Install code-server
-RUN curl -fsSL https://code-server.dev/install.sh | sh
+RUN curl -fsSL --retry 5 --retry-connrefused --retry-delay 3 https://code-server.dev/install.sh | sh
 RUN code-server --install-extension golang.go --install-extension vscodevim.vim
 
 COPY --from=build-repo-sandbox /repo-sandbox /repo-agent/repo-sandbox

@@ -100,7 +100,7 @@ func serveTasksList(w http.ResponseWriter, r *http.Request) {
 		status := "Pending"
 		var ec interface{}
 
-		if exitBytes, err := os.ReadFile(filepath.Join(p, "exit_code")); err == nil {
+		if exitBytes, err := os.ReadFile(filepath.Join(p, "exit_code")); err == nil && len(strings.TrimSpace(string(exitBytes))) > 0 {
 			code := strings.TrimSpace(string(exitBytes))
 			ec = code
 			if code == "0" {
@@ -108,14 +108,15 @@ func serveTasksList(w http.ResponseWriter, r *http.Request) {
 			} else {
 				status = "Failed"
 			}
-		} else if pidBytes, err := os.ReadFile(filepath.Join(p, "pid")); err == nil {
+		} else if pidBytes, err := os.ReadFile(filepath.Join(p, "pid")); err == nil && len(strings.TrimSpace(string(pidBytes))) > 0 {
 			pidStr := strings.TrimSpace(string(pidBytes))
 			var pid int
 			if _, err := fmt.Sscanf(pidStr, "%d", &pid); err == nil {
-				if proc, err := os.FindProcess(pid); err == nil && proc.Signal(syscall.Signal(0)) == nil {
+				if isProcessAliveAndNotZombie(pid) {
 					status = "Running"
 				} else {
 					status = "Crashed"
+					ec = "137"
 				}
 			}
 		}
@@ -193,4 +194,19 @@ func serveTelemetryFile(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	http.ServeFile(w, r, telemetryPath)
+}
+
+func isProcessAliveAndNotZombie(pid int) bool {
+	proc, err := os.FindProcess(pid)
+	if err != nil || proc.Signal(syscall.Signal(0)) != nil {
+		return false
+	}
+	statBytes, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err == nil {
+		parts := strings.Fields(string(statBytes))
+		if len(parts) >= 3 && strings.HasPrefix(parts[2], "Z") {
+			return false
+		}
+	}
+	return true
 }
