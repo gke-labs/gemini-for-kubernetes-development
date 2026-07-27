@@ -208,3 +208,77 @@ func TestCreatePRTask(t *testing.T) {
 		}
 	})
 }
+
+func TestCancelTask(t *testing.T) {
+	scheme := runtime.NewScheme()
+	gvrSandboxTask := schema.GroupVersionResource{Group: "custom.agents.x-k8s.io", Version: "v1alpha1", Resource: "sandboxtasks"}
+
+	dynamicClient := fake.NewSimpleDynamicClientWithCustomListKinds(scheme, map[schema.GroupVersionResource]string{
+		gvrSandboxTask: "SandboxTaskList",
+	})
+	k8sClient := kubernetesfake.NewClientset()
+
+	manager := &k8s.Manager{
+		Client:    dynamicClient,
+		Clientset: k8sClient,
+	}
+
+	server := &Server{
+		K8sManager: manager,
+		Auth: &auth.Authenticator{
+			K8sManager: manager,
+		},
+	}
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+
+	// Mock Auth middleware by setting user
+	r.Use(func(c *gin.Context) {
+		c.Set(auth.UserKey, "default")
+		c.Next()
+	})
+
+	r.POST("/repo/:repo/tasks/:taskID/cancel", server.cancelTask)
+
+	t.Run("Cancel task successfully", func(t *testing.T) {
+		// Create a task in Pending status
+		taskName := "test-task"
+		task := &unstructured.Unstructured{
+			Object: map[string]interface{}{
+				"apiVersion": "custom.agents.x-k8s.io/v1alpha1",
+				"kind":       "SandboxTask",
+				"metadata": map[string]interface{}{
+					"name":      taskName,
+					"namespace": "default",
+				},
+				"status": map[string]interface{}{
+					"taskState": "Pending",
+				},
+			},
+		}
+		_, err := dynamicClient.Resource(gvrSandboxTask).Namespace("default").Create(context.Background(), task, v1.CreateOptions{})
+		if err != nil {
+			t.Fatalf("Failed to create sandbox task: %v", err)
+		}
+
+		req, _ := http.NewRequest("POST", "/repo/test-repo/tasks/test-task/cancel", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d. Body: %s", w.Code, w.Body.String())
+		}
+
+		// Retrieve updated task
+		updated, err := dynamicClient.Resource(gvrSandboxTask).Namespace("default").Get(context.Background(), taskName, v1.GetOptions{})
+		if err != nil {
+			t.Fatalf("Failed to get updated sandbox task: %v", err)
+		}
+
+		state, _, _ := unstructured.NestedString(updated.Object, "status", "taskState")
+		if state != "Cancelling" {
+			t.Errorf("Expected task state 'Cancelling', got %s", state)
+		}
+	})
+}

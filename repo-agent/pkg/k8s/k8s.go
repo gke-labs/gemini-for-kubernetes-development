@@ -515,7 +515,7 @@ func (m *Manager) UpdateSandboxTaskStatus(ctx context.Context, namespace, taskNa
 
 	if state == "Running" {
 		statusMap["startTime"] = timestamp
-	} else if state == "Completed" || state == "Failed" {
+	} else if state == "Completed" || state == "Failed" || state == "Canceled" {
 		statusMap["completionTime"] = timestamp
 	}
 
@@ -544,4 +544,34 @@ func (m *Manager) UpdateSandboxTaskStatus(ctx context.Context, namespace, taskNa
 
 	_, err = m.Client.Resource(gvr).Namespace(namespace).Patch(ctx, taskName, types.MergePatchType, patchBytes, v1.PatchOptions{}, "status")
 	return err
+}
+
+func (m *Manager) CancelSandboxTask(ctx context.Context, namespace, taskName string) error {
+	klog.Infof("Cancelling task %s", taskName)
+
+	gvr := schema.GroupVersionResource{
+		Group:    "custom.agents.x-k8s.io",
+		Version:  "v1alpha1",
+		Resource: "sandboxtasks",
+	}
+
+	// Fetch the latest task status
+	unstruct, err := m.Client.Resource(gvr).Namespace(namespace).Get(ctx, taskName, v1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to get task %s: %w", taskName, err)
+	}
+
+	var task sandboxtaskv1alpha1.SandboxTask
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(unstruct.Object, &task); err != nil {
+		return fmt.Errorf("failed to convert unstructured to SandboxTask: %w", err)
+	}
+
+	state := task.Status.TaskState
+	// Only cancel if it's not already complete, failed, or canceled
+	if state == "Completed" || state == "Failed" || state == "Canceled" {
+		return fmt.Errorf("cannot cancel task %s because it is already %s", taskName, state)
+	}
+
+	// Update state to Cancelling
+	return m.UpdateSandboxTaskStatus(ctx, namespace, taskName, "Cancelling", "Task cancelled by user", nil)
 }

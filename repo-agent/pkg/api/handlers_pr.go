@@ -677,3 +677,16 @@ func (s *Server) getPRCommits(c *gin.Context) {
 
 	c.JSON(http.StatusOK, result)
 }
+
+func (s *Server) cancelTask(c *gin.Context) {
+	namespace := s.Auth.GetNamespaceFromContext(c)
+	taskName := c.Param("taskID")
+
+	err := s.K8sManager.CancelSandboxTask(c.Request.Context(), namespace, taskName)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to cancel task", "details": err.Error()})
+		return
+	}
+
+	c.Status(http.StatusOK)
+}

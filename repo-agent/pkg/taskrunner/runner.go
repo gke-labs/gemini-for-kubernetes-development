@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	sandboxtaskv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
@@ -26,6 +27,10 @@ type TaskRunner struct {
 	namespace   string
 	sandboxName string
 	ao          *agentoutput.AgentOutput
+
+	mu            sync.Mutex
+	runningTask   string
+	cancelRunning context.CancelFunc
 }
 
 func NewTaskRunner(ao *agentoutput.AgentOutput) (*TaskRunner, error) {
@@ -82,6 +87,9 @@ func (tr *TaskRunner) Run(ctx context.Context) {
 }
 
 func (tr *TaskRunner) processPendingTasks(ctx context.Context) {
+	tr.mu.Lock()
+	runningTaskName := tr.runningTask
+	tr.mu.Unlock()
 
 	// List tasks with label selector using k8s manager
 	tasks, err := tr.manager.ListSandboxTasks(ctx, tr.namespace, tr.sandboxName)
@@ -90,10 +98,58 @@ func (tr *TaskRunner) processPendingTasks(ctx context.Context) {
 		return
 	}
 
+	if runningTaskName != "" {
+		// Check if the running task has been requested to cancel
+		for _, task := range tasks.Items {
+			if task.GetName() == runningTaskName {
+				taskState := task.Status.TaskState
+				if taskState == "Cancelling" || taskState == "Canceled" {
+					klog.Infof("Running task %s status is %s, cancelling process", runningTaskName, taskState)
+					tr.mu.Lock()
+					if tr.cancelRunning != nil {
+						tr.cancelRunning()
+					}
+					tr.mu.Unlock()
+				}
+				break
+			}
+		}
+		// Since a task is already running, do not start a new one
+		return
+	}
+
+	// Clean up any tasks in "Cancelling" state that are not running by directly marking them Canceled
+	for _, task := range tasks.Items {
+		taskState := task.Status.TaskState
+		if taskState == "Cancelling" {
+			klog.Infof("Pending/Other task %s status is %s, marking as Canceled", task.GetName(), taskState)
+			tr.updateTaskStatus(ctx, &task, "Canceled", "Task cancelled by user", nil)
+		}
+	}
+
+	// No task is running, find the first pending or running task to execute
 	for _, task := range tasks.Items {
 		taskState := task.Status.TaskState
 		if taskState == "" || taskState == "Pending" || taskState == "Running" {
-			tr.executeTask(ctx, &task)
+			// Start the task asynchronously in a goroutine
+			tr.mu.Lock()
+			taskCtx, cancelFunc := context.WithCancel(ctx)
+			tr.runningTask = task.GetName()
+			tr.cancelRunning = cancelFunc
+			tr.mu.Unlock()
+
+			go func(t sandboxtaskv1alpha1.SandboxTask, tCtx context.Context) {
+				defer func() {
+					tr.mu.Lock()
+					if tr.runningTask == t.GetName() {
+						tr.runningTask = ""
+						tr.cancelRunning = nil
+					}
+					tr.mu.Unlock()
+				}()
+				tr.executeTask(tCtx, &t)
+			}(task, taskCtx)
+
 			// Process one task at a time for now
 			return
 		}
@@ -120,20 +176,29 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 	taskName := task.GetName()
 	klog.Infof("Processing task: %s", taskName)
 
+	runCmd := func(name string, arg ...string) *exec.Cmd {
+		return exec.CommandContext(ctx, name, arg...)
+	}
+
+	// Use a non-cancelled context for status and state updates to ensure they succeed
+	// even if the task context is cancelled.
+	updateCtx, updateCancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+	defer updateCancel()
+
 	// Update status to Running
-	tr.updateTaskStatus(ctx, task, "Running", "", nil)
+	tr.updateTaskStatus(updateCtx, task, "Running", "", nil)
 
 	taskType := task.Spec.Type
 	params := task.Spec.Params
 
 	// Set sandbox state to Running Task
-	_ = tr.ao.SetAgentState(ctx, "Working on "+taskType, "")
+	_ = tr.ao.SetAgentState(updateCtx, "Working on "+taskType, "")
 
 	logFile := filepath.Join(agentserver.LogsDirectory, taskName+".log")
 	f, err := os.Create(logFile)
 	if err != nil {
 		klog.Errorf("Failed to create log file: %v", err)
-		tr.updateTaskStatus(ctx, task, "Failed", fmt.Sprintf("failed to create log file: %v", err), nil)
+		tr.updateTaskStatus(updateCtx, task, "Failed", fmt.Sprintf("failed to create log file: %v", err), nil)
 		return
 	}
 	defer f.Close()
@@ -142,13 +207,13 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 
 	taskDir, err := tr.createTaskDir(taskName)
 	if err != nil {
-		tr.updateTaskStatus(ctx, task, "Failed", err.Error(), nil)
+		tr.updateTaskStatus(updateCtx, task, "Failed", err.Error(), nil)
 		return
 	}
 
 	switch taskType {
 	case "review":
-		cmd = exec.Command(sandbox.RepoSandboxBinary, "review")
+		cmd = runCmd(sandbox.RepoSandboxBinary, "review")
 		// Map params to env vars
 		cmd.Env = os.Environ()
 		cmd.Env = append(cmd.Env, "AGENT_OUTPUT_GVR_RESOURCE=sandboxtasks")
@@ -160,7 +225,7 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		}
 
 	case "fix-issue":
-		cmd = exec.Command(sandbox.RepoSandboxBinary, "github-fix-issue", "--in-pod=true")
+		cmd = runCmd(sandbox.RepoSandboxBinary, "github-fix-issue", "--in-pod=true")
 		// Map params to env vars
 		cmd.Env = os.Environ()
 		// Inject params into env
@@ -169,7 +234,7 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		}
 
 	case "address-feedback":
-		cmd = exec.Command(sandbox.RepoSandboxBinary, "github-feedback", "--in-pod=true")
+		cmd = runCmd(sandbox.RepoSandboxBinary, "github-feedback", "--in-pod=true")
 		// Map params to env vars
 		cmd.Env = os.Environ()
 		// Inject params into env
@@ -178,7 +243,7 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		}
 
 	case "investigate-failures":
-		cmd = exec.Command(sandbox.RepoSandboxBinary, "github-investigate", "--in-pod=true")
+		cmd = runCmd(sandbox.RepoSandboxBinary, "github-investigate", "--in-pod=true")
 		// Map params to env vars
 		cmd.Env = os.Environ()
 		// Inject params into env
@@ -187,7 +252,7 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		}
 
 	case "triage-issue":
-		cmd = exec.Command(sandbox.RepoSandboxBinary, "github-triage-issue", "--in-pod=true")
+		cmd = runCmd(sandbox.RepoSandboxBinary, "github-triage-issue", "--in-pod=true")
 		// Map params to env vars
 		cmd.Env = os.Environ()
 		// Inject params into env
@@ -196,7 +261,7 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		}
 
 	case "dev-setup":
-		cmd = exec.Command(sandbox.RepoSandboxBinary, "dev-init", "--in-pod=true")
+		cmd = runCmd(sandbox.RepoSandboxBinary, "dev-init", "--in-pod=true")
 		// Map params to env vars
 		cmd.Env = os.Environ()
 		// Inject params into env
@@ -205,7 +270,7 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		}
 
 	case "iterate":
-		cmd = exec.Command(sandbox.RepoSandboxBinary, "iterate", "--in-pod=true")
+		cmd = runCmd(sandbox.RepoSandboxBinary, "iterate", "--in-pod=true")
 		// Map params to env vars
 		cmd.Env = os.Environ()
 		// Inject params into env
@@ -214,7 +279,7 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		}
 
 	case "chore":
-		cmd = exec.Command(sandbox.RepoSandboxBinary, "chore", "--in-pod=true")
+		cmd = runCmd(sandbox.RepoSandboxBinary, "chore", "--in-pod=true")
 		// Map params to env vars
 		cmd.Env = os.Environ()
 		// Inject params into env
@@ -223,7 +288,7 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		}
 
 	case "rollback":
-		cmd = exec.Command(sandbox.RepoSandboxBinary, "rollback", "--in-pod=true")
+		cmd = runCmd(sandbox.RepoSandboxBinary, "rollback", "--in-pod=true")
 		// Map params to env vars
 		cmd.Env = os.Environ()
 		// Inject params into env
@@ -232,7 +297,7 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		}
 
 	case "issue":
-		cmd = exec.Command(sandbox.RepoSandboxBinary, "dev")
+		cmd = runCmd(sandbox.RepoSandboxBinary, "dev")
 		// Map params to env vars
 		cmd.Env = os.Environ()
 		cmd.Env = append(cmd.Env, "AGENT_OUTPUT_GVR_RESOURCE=sandboxtasks")
@@ -246,16 +311,16 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 	// TODO (barney-s): Pending decision: Should we support script tasks ?
 	case "script":
 		if command, ok := params["command"]; ok {
-			cmd = exec.Command("/bin/sh", "-c", command)
+			cmd = runCmd("/bin/sh", "-c", command)
 			cmd.Env = os.Environ()
 		} else {
-			tr.updateTaskStatus(ctx, task, "Failed", "missing 'command' param", nil)
+			tr.updateTaskStatus(updateCtx, task, "Failed", "missing 'command' param", nil)
 			return
 		}
 
 	default:
 		klog.Warningf("Unknown task type: %s", taskType)
-		tr.updateTaskStatus(ctx, task, "Failed", "unknown task type", nil)
+		tr.updateTaskStatus(updateCtx, task, "Failed", "unknown task type", nil)
 		return
 	}
 
@@ -267,21 +332,26 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 	klog.Infof("Starting command for task %s", taskName)
 	if err := cmd.Start(); err != nil {
 		klog.Errorf("Failed to start command: %v", err)
-		tr.updateTaskStatus(ctx, task, "Failed", err.Error(), nil)
+		tr.updateTaskStatus(updateCtx, task, "Failed", err.Error(), nil)
 		return
 	}
 
 	if err := cmd.Wait(); err != nil {
 		klog.Errorf("Command failed: %v", err)
 		usage := tr.readStats(taskDir)
-		tr.updateTaskStatus(ctx, task, "Failed", err.Error(), usage)
-		_ = tr.ao.SetAgentState(ctx, "Failed "+taskType, err.Error())
+		if ctx.Err() != nil {
+			tr.updateTaskStatus(updateCtx, task, "Canceled", "Task cancelled by user", usage)
+			_ = tr.ao.SetAgentState(updateCtx, "Canceled "+taskType, "Task cancelled by user")
+		} else {
+			tr.updateTaskStatus(updateCtx, task, "Failed", err.Error(), usage)
+			_ = tr.ao.SetAgentState(updateCtx, "Failed "+taskType, err.Error())
+		}
 	} else {
 		klog.Infof("Task %s completed successfully", taskName)
 		usage := tr.readStats(taskDir)
-		tr.updateTaskStatus(ctx, task, "Completed", "", usage)
+		tr.updateTaskStatus(updateCtx, task, "Completed", "", usage)
 		// Set sandbox state to Running Task
-		_ = tr.ao.SetAgentState(ctx, taskType+" Ready", "")
+		_ = tr.ao.SetAgentState(updateCtx, taskType+" Ready", "")
 	}
 }
 
