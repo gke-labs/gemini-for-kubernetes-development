@@ -203,11 +203,29 @@ function TaskReviewCard({
          }
     };
 
+    const handleCancelTask = () => {
+        if (!window.confirm("Are you sure you want to cancel this task?")) return;
+
+        fetch(`/api/repo/${encodeURIComponent(repoName)}/tasks/${encodeURIComponent(task.name)}/cancel`, {
+            method: 'POST',
+        })
+        .then(res => {
+            if (res.ok) {
+                alert("Task cancellation requested.");
+            } else {
+                res.text().then(t => alert("Failed to cancel task: " + t));
+            }
+        })
+        .catch(err => console.error("Failed to cancel task", err));
+    };
+
     const getReviewFlairColor = (flairText) => {
         if (!flairText) return '#3e7f67ff';
         const text = flairText.toLowerCase();
         if (text === 'done' || text === 'review ready' || text === 'completed') return 'green';
         if (text.includes('reviewing') || text === 'running') return 'orange';
+        if (text === 'cancelling') return '#cd9945ff';
+        if (text === 'canceled') return '#7f8c8d';
         if (text.includes('error') || text === 'failed') return '#9e2a2aff';
         if (text === 'submitted' || text === 'review draft created') return '#3f5398ff';
         return '#cd9945ff'; // Default color
@@ -222,6 +240,10 @@ function TaskReviewCard({
              }
         } else if (task.taskState === 'Running') {
              setReviewFlairText('Running Task');
+        } else if (task.taskState === 'Cancelling') {
+             setReviewFlairText('Cancelling');
+        } else if (task.taskState === 'Canceled') {
+             setReviewFlairText('Canceled');
         } else if (task.taskState === 'Failed') {
              setReviewFlairText('Task Failed');
         } else {
@@ -596,6 +618,11 @@ function TaskReviewCard({
             {!taskCollapsed && (
                 <div style={{padding: '15px'}}>
                      <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '10px 0', gap: '10px' }}>
+                        {(task.taskState === 'Running' || task.taskState === 'Pending' || !task.taskState) && (
+                            <button className="btn btn-delete" onClick={handleCancelTask}>
+                                Cancel Task
+                            </button>
+                        )}
                         <button className="btn" onClick={() => setShowLogs(!showLogs)}>
                             {showLogs ? 'Hide Logs' : 'View Logs'}
                         </button>

@@ -79,6 +79,10 @@ function TaskCard({
              }
         } else if (task.taskState === 'Running') {
              setStatusText('Running');
+        } else if (task.taskState === 'Cancelling') {
+             setStatusText('Cancelling');
+        } else if (task.taskState === 'Canceled') {
+             setStatusText('Canceled');
         } else if (task.taskState === 'Failed') {
              setStatusText('Failed');
         } else {
@@ -90,8 +94,26 @@ function TaskCard({
         const t = text.toLowerCase();
         if (t === 'ready' || t === 'completed') return 'green';
         if (t === 'running') return 'orange';
+        if (t === 'cancelling') return '#cd9945ff';
+        if (t === 'canceled') return '#7f8c8d';
         if (t === 'failed') return '#9e2a2aff';
         return '#cd9945ff';
+    };
+
+    const handleCancelTask = () => {
+        if (!window.confirm("Are you sure you want to cancel this task?")) return;
+
+        fetch(`/api/repo/${encodeURIComponent(repoName)}/tasks/${encodeURIComponent(task.name)}/cancel`, {
+            method: 'POST',
+        })
+        .then(res => {
+            if (res.ok) {
+                alert("Task cancellation requested.");
+            } else {
+                res.text().then(t => alert("Failed to cancel task: " + t));
+            }
+        })
+        .catch(err => console.error("Failed to cancel task", err));
     };
 
     const handleSaveDraft = () => {
@@ -155,6 +177,11 @@ function TaskCard({
             {!isCollapsed && (
                 <div style={{padding: '15px'}}>
                     <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '10px 0', gap: '10px' }}>
+                        {(task.taskState === 'Running' || task.taskState === 'Pending' || !task.taskState) && (
+                            <button className="btn btn-delete" onClick={handleCancelTask}>
+                                Cancel Task
+                            </button>
+                        )}
                         <button className="btn" onClick={() => setShowLogs(!showLogs)}>
                             {showLogs ? 'Hide Logs' : 'View Logs'}
                         </button>
