@@ -637,3 +637,35 @@ func (s *Server) getDevTaskLogs(c *gin.Context) {
 
 	proxy.ServeHTTP(c.Writer, c.Request)
 }
+
+func (s *Server) getDevTaskTelemetry(c *gin.Context) {
+	log := klog.FromContext(c.Request.Context())
+	namespace := s.Auth.GetNamespaceFromContext(c)
+	sandboxName := c.Param("name")
+	taskID := c.Param("taskID")
+
+	serviceName := fmt.Sprintf("%s-lb", sandboxName)
+	targetURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:13339", serviceName, namespace)
+
+	proxyURL, err := url.Parse(targetURL)
+	if err != nil {
+		log.Error(err, "Failed to parse target URL", "url", targetURL)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid target URL"})
+		return
+	}
+
+	proxy := httputil.NewSingleHostReverseProxy(proxyURL)
+	originalDirector := proxy.Director
+	proxy.Director = func(req *http.Request) {
+		originalDirector(req)
+		req.URL.Path = fmt.Sprintf("/telemetry/%s", taskID)
+	}
+
+	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, err error) {
+		log.Error(err, "Proxy error", "target", targetURL)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("{}"))
+	}
+
+	proxy.ServeHTTP(c.Writer, c.Request)
+}

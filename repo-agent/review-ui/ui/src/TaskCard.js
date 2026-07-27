@@ -13,6 +13,7 @@ function TaskCard({
     const [statusText, setStatusText] = useState('');
     const [showLogs, setShowLogs] = useState(false);
     const [logs, setLogs] = useState('');
+    const [telemetry, setTelemetry] = useState(null);
 
     useEffect(() => {
         const content = task.userDraft || task.agentDraft || '';
@@ -28,6 +29,7 @@ function TaskCard({
         if (showLogs && repoName) {
             const fetchLogs = () => {
                 const url = `/api/repo/${encodeURIComponent(repoName)}/${parentType}/${encodeURIComponent(parentId)}/tasks/${encodeURIComponent(task.name)}/logs`;
+                const telemetryUrl = `/api/repo/${encodeURIComponent(repoName)}/${parentType}/${encodeURIComponent(parentId)}/tasks/${encodeURIComponent(task.name)}/telemetry`;
                 
                 fetch(url)
                 .then(res => {
@@ -46,8 +48,20 @@ function TaskCard({
                         timeoutId = setTimeout(fetchLogs, 5000);
                     }
                 });
+
+                fetch(telemetryUrl)
+                .then(res => res.json())
+                .then(data => {
+                    if (isMounted && data && data.total_tool_calls > 0) {
+                        setTelemetry(data);
+                    }
+                })
+                .catch(() => {});
             };
             fetchLogs();
+        } else {
+            setLogs('');
+            setTelemetry(null);
         }
         
         return () => {
@@ -146,8 +160,41 @@ function TaskCard({
                         </button>
                     </div>
                     {showLogs && (
-                        <div className="logs-display" style={{backgroundColor: '#333', color: '#fff', padding: '10px', borderRadius: '5px', marginBottom: '10px', maxHeight: '300px', overflowY: 'auto'}}>
-                            <pre style={{margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'monospace'}}>{logs || 'Loading logs...'}</pre>
+                        <div>
+                            {telemetry && telemetry.total_tool_calls > 0 && (
+                                <div style={{ marginBottom: '10px', padding: '10px', backgroundColor: '#1e1e1e', border: '1px solid #444', borderRadius: '5px' }}>
+                                    <div style={{ fontWeight: 'bold', color: '#58a6ff', marginBottom: '6px', fontSize: '13px' }}>
+                                        ⚡ Tool Execution Telemetry ({telemetry.total_tool_calls} calls, {telemetry.total_tool_duration_sec}s total)
+                                    </div>
+                                    <div style={{ overflowX: 'auto' }}>
+                                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', textAlign: 'left' }}>
+                                            <thead>
+                                                <tr style={{ borderBottom: '1px solid #333', color: '#aaa' }}>
+                                                    <th style={{ padding: '4px 6px' }}>Tool</th>
+                                                    <th style={{ padding: '4px 6px' }}>Calls</th>
+                                                    <th style={{ padding: '4px 6px' }}>Total (s)</th>
+                                                    <th style={{ padding: '4px 6px' }}>Max (s)</th>
+                                                    <th style={{ padding: '4px 6px' }}>Slowest Command</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {Object.entries(telemetry.tools || {}).map(([tname, tstat]) => (
+                                                    <tr key={tname} style={{ borderBottom: '1px solid #333' }}>
+                                                        <td style={{ padding: '4px 6px', fontFamily: 'monospace', color: '#7ee787' }}>{tname}</td>
+                                                        <td style={{ padding: '4px 6px' }}>{tstat.count}</td>
+                                                        <td style={{ padding: '4px 6px' }}>{tstat.total_sec}</td>
+                                                        <td style={{ padding: '4px 6px', color: tstat.max_sec > 60 ? '#ff7b72' : 'inherit', fontWeight: tstat.max_sec > 60 ? 'bold' : 'normal' }}>{tstat.max_sec}</td>
+                                                        <td style={{ padding: '4px 6px', fontFamily: 'monospace', fontSize: '11px', color: '#aaa', maxWidth: '250px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={tstat.slowest_cmd}>{tstat.slowest_cmd || '-'}</td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            )}
+                            <div className="logs-display" style={{backgroundColor: '#333', color: '#fff', padding: '10px', borderRadius: '5px', marginBottom: '10px', maxHeight: '300px', overflowY: 'auto'}}>
+                                <pre style={{margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'monospace'}}>{logs || 'Loading logs...'}</pre>
+                            </div>
                         </div>
                     )}
                     {isSubmittable ? (

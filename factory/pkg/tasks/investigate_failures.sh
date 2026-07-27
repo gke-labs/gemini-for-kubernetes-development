@@ -239,6 +239,54 @@ try:
         json.dump(existing, f, indent=2)
 except Exception:
     pass
+
+try:
+    import glob as gb
+    from datetime import datetime
+    def parse_iso(ts):
+        if not ts: return None
+        try: return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        except Exception: return None
+    session_files = gb.glob("/root/.gemini/tmp/*/chats/session-*.jsonl") + gb.glob("/workspaces/.home/.gemini/tmp/*/chats/session-*.jsonl")
+    if session_files:
+        latest_session = max(session_files, key=os.path.getmtime)
+        tool_metrics = {"total_tool_calls": 0, "total_tool_duration_sec": 0, "tools": {}}
+        pending = {}
+        with open(latest_session, "r", errors="ignore") as f:
+            for line in f:
+                try:
+                    data = json.loads(line)
+                    ts = parse_iso(data.get("timestamp"))
+                    if not ts: continue
+                    if "toolCalls" in data and isinstance(data["toolCalls"], list):
+                        for fc in data["toolCalls"]:
+                            cmd = fc.get("args", {}).get("command", "") or fc.get("args", {}).get("CommandLine", "") or fc.get("args", {}).get("TargetFile", "") or str(fc.get("args", {}))
+                            if len(str(cmd)) > 120: cmd = str(cmd)[:120] + "..."
+                            pending[fc.get("id")] = {"name": fc.get("name", "unknown"), "start": ts, "cmd": cmd}
+                    c = data.get("content", "")
+                    if isinstance(c, list):
+                        for part in c:
+                            if "functionResponse" in part:
+                                fr = part["functionResponse"]
+                                cid = fr.get("id")
+                                if cid in pending:
+                                    sinfo = pending.pop(cid)
+                                    dur = round((ts - sinfo["start"]).total_seconds(), 3)
+                                    tname = sinfo["name"]
+                                    tstat = tool_metrics["tools"].setdefault(tname, {"count": 0, "total_sec": 0, "max_sec": 0, "slowest_cmd": ""})
+                                    tstat["count"] += 1
+                                    tstat["total_sec"] = round(tstat["total_sec"] + dur, 3)
+                                    if dur >= tstat["max_sec"]:
+                                        tstat["max_sec"] = dur
+                                        tstat["slowest_cmd"] = sinfo.get("cmd", "")
+                                    tool_metrics["total_tool_calls"] += 1
+                                    tool_metrics["total_tool_duration_sec"] = round(tool_metrics["total_tool_duration_sec"] + dur, 3)
+                except Exception:
+                    pass
+        with open(os.path.join(task_dir, "tool-telemetry.json"), "w") as tf:
+            json.dump(tool_metrics, tf, indent=2)
+except Exception:
+    pass
 ' "$output_file" "$task_dir"
     fi
 }

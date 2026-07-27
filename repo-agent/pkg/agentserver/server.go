@@ -43,6 +43,9 @@ func NewAgentServer() *AgentServer {
 	// Endpoint to serve specific log files by task ID.
 	r.HandleFunc("/logs/{taskID}", serveLogFile)
 
+	// Endpoint to serve tool telemetry by task ID.
+	r.HandleFunc("/telemetry/{taskID}", serveTelemetryFile)
+
 	// Add CORS middleware to allow requests from the UI (potentially running on a different origin).
 	corsObj := handlers.AllowedOrigins([]string{"*"})
 
@@ -169,4 +172,25 @@ func serveLogFile(w http.ResponseWriter, r *http.Request) {
 
 	// Serve the file
 	http.ServeFile(w, r, logFilePath)
+}
+
+// serveTelemetryFile handles requests to read tool telemetry files.
+func serveTelemetryFile(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	taskID := vars["taskID"]
+
+	if taskID == "" || filepath.Clean(taskID) != taskID || taskID == ".." || taskID == "." {
+		http.Error(w, "Invalid task ID", http.StatusBadRequest)
+		return
+	}
+
+	telemetryPath := filepath.Join("/workspaces/tasks", taskID, "tool-telemetry.json")
+	if _, err := os.Stat(telemetryPath); os.IsNotExist(err) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("{}"))
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	http.ServeFile(w, r, telemetryPath)
 }
