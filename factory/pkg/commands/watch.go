@@ -251,12 +251,15 @@ func isSandboxTaskRunning(ctx context.Context, kubeClient *clients.KubernetesCli
 			checkCmd := `task_dir=$(ls -td /workspaces/tasks/* 2>/dev/null | head -1)
 			if [ -z "$task_dir" ]; then
 				echo "NOTASKS"
-			elif [ -f "$task_dir/exit_code" ]; then
+			elif [ -s "$task_dir/exit_code" ]; then
 				cat "$task_dir/exit_code"
 			else
 				pid=$(cat "$task_dir/pid" 2>/dev/null)
-				if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
-					echo "137" # Report SIGKILL/Crashed fallback exit code
+				if [ -n "$pid" ]; then
+					stat=$(ps -o stat= -p "$pid" 2>/dev/null | cut -c 1)
+					if ! kill -0 "$pid" 2>/dev/null || [ "$stat" = "Z" ]; then
+						echo "137" # Report SIGKILL/Crashed/Zombie fallback exit code
+					fi
 				fi
 			fi`
 			if err := client.Exec(ctx, checkCmd, "/workspaces", nil, nil, &buf, nil); err == nil {

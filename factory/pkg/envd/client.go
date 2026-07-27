@@ -377,7 +377,7 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 
 	// Check if task is already running or completed in the sandbox pod
 	var checkBuf bytes.Buffer
-	checkStatusCmd := fmt.Sprintf("if [ -f %s ]; then cat %s; fi", exitCodeFile, exitCodeFile)
+	checkStatusCmd := fmt.Sprintf("if [ -s %s ]; then cat %s; fi", exitCodeFile, exitCodeFile)
 	isCompleted := false
 	if err := c.Exec(ctx, checkStatusCmd, "/workspaces", nil, nil, &checkBuf, nil); err == nil {
 		if strings.TrimSpace(checkBuf.String()) != "" {
@@ -388,7 +388,7 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 	isAlreadyRunning := false
 	if !isCompleted {
 		var pidBuf bytes.Buffer
-		checkPidCmd := fmt.Sprintf("if [ -f %s ]; then pid=$(cat %s); if kill -0 $pid 2>/dev/null; then echo \"alive\"; fi; fi", pidFile, pidFile)
+		checkPidCmd := fmt.Sprintf("if [ -s %s ]; then pid=$(cat %s 2>/dev/null); if [ -n \"$pid\" ]; then stat=$(ps -o stat= -p \"$pid\" 2>/dev/null | cut -c 1); if kill -0 \"$pid\" 2>/dev/null && [ \"$stat\" != \"Z\" ]; then echo \"alive\"; fi; fi; fi", pidFile, pidFile)
 		if err := c.Exec(ctx, checkPidCmd, "/workspaces", nil, nil, &pidBuf, nil); err == nil {
 			if strings.TrimSpace(pidBuf.String()) == "alive" {
 				isAlreadyRunning = true

@@ -449,18 +449,23 @@ if os.path.exists(tasks_dir):
         if not os.path.isdir(p): continue
         status = "Pending"
         ec = None
-        if os.path.exists(os.path.join(p, "exit_code")):
+        if os.path.exists(os.path.join(p, "exit_code")) and os.path.getsize(os.path.join(p, "exit_code")) > 0:
             try:
                 with open(os.path.join(p, "exit_code")) as f: ec = f.read().strip()
                 status = "Completed" if ec == "0" else "Failed"
             except: pass
-        elif os.path.exists(os.path.join(p, "pid")):
+        elif os.path.exists(os.path.join(p, "pid")) and os.path.getsize(os.path.join(p, "pid")) > 0:
             try:
                 with open(os.path.join(p, "pid")) as f: pid = int(f.read().strip())
-                try:
-                    os.kill(pid, 0)
-                    status = "Running"
-                except OSError: status = "Crashed"
+                stat = ""
+                if os.path.exists(f"/proc/{pid}/stat"):
+                    with open(f"/proc/{pid}/stat") as sf: stat = sf.read().split()[2] if len(sf.read().split()) > 2 else ""
+                if stat.startswith("Z"): status = "Crashed"; ec = "137"
+                else:
+                    try:
+                        os.kill(pid, 0)
+                        status = "Running"
+                    except OSError: status = "Crashed"; ec = "137"
             except: pass
         res.append({"metadata": {"name": d, "namespace": "%s"}, "spec": {"taskType": d}, "status": {"state": status, "exitCode": ec}})
 print(json.dumps(res))
@@ -474,13 +479,14 @@ else
       if [ "$first" = true ]; then first=false; else echo ","; fi
       status="Pending"
       ec="null"
-      if [ -f "/workspaces/tasks/$d/exit_code" ]; then
+      if [ -s "/workspaces/tasks/$d/exit_code" ]; then
         code=$(cat "/workspaces/tasks/$d/exit_code" 2>/dev/null | tr -d "\r\n")
         ec="\"$code\""
         if [ "$code" = "0" ]; then status="Completed"; else status="Failed"; fi
-      elif [ -f "/workspaces/tasks/$d/pid" ]; then
+      elif [ -s "/workspaces/tasks/$d/pid" ]; then
         pid=$(cat "/workspaces/tasks/$d/pid" 2>/dev/null | tr -d "\r\n")
-        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then status="Running"; else status="Crashed"; fi
+        stat=$(ps -o stat= -p "$pid" 2>/dev/null | cut -c 1)
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && [ "$stat" != "Z" ]; then status="Running"; else status="Crashed"; ec="\"137\""; fi
       fi
       printf "{\"metadata\":{\"name\":\"%%s\",\"namespace\":\"%s\"},\"spec\":{\"taskType\":\"%%s\"},\"status\":{\"state\":\"%%s\",\"exitCode\":%%s}}" "$d" "$d" "$status" "$ec"
     done
