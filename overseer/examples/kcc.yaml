@@ -49,6 +49,7 @@ spec:
         - hopper-coder-bot
         - ada-coder-bot
         - neumann-coder-bot
+        - lovelace-coder-bot
     reviewer:
       users:
         - reviewbot-robot
