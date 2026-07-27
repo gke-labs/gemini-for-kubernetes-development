@@ -237,6 +237,34 @@ func (s *Server) getChoreTaskLogs(c *gin.Context) {
 	proxy.ServeHTTP(c.Writer, c.Request)
 }
 
+func (s *Server) getChoreTaskTelemetry(c *gin.Context) {
+	overseerName := c.Param("repo")
+	choreSandboxName := c.Param("name")
+	taskID := c.Param("taskID")
+	namespace := fmt.Sprintf("overseer-%s", overseerName)
+
+	serviceName := fmt.Sprintf("%s-lb", choreSandboxName)
+	targetURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:13339", serviceName, namespace)
+
+	proxyURL, err := url.Parse(targetURL)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid target URL"})
+		return
+	}
+
+	proxy := httputil.NewSingleHostReverseProxy(proxyURL)
+	proxy.Director = func(req *http.Request) {
+		req.URL.Scheme = proxyURL.Scheme
+		req.URL.Host = proxyURL.Host
+		req.URL.Path = fmt.Sprintf("/telemetry/%s", taskID)
+	}
+	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, err error) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("{}"))
+	}
+	proxy.ServeHTTP(c.Writer, c.Request)
+}
+
 func (s *Server) pauseChore(c *gin.Context) {
 	overseerName := c.Param("name")
 	choreName := c.Param("choreName")
@@ -528,6 +556,48 @@ func (s *Server) getOverseerSandboxTaskLogs(c *gin.Context) {
 	}
 
 	c.Header("Content-Type", "text/plain")
+	_, _ = c.Writer.Write(stdout.Bytes())
+}
+
+func (s *Server) getOverseerSandboxTaskTelemetry(c *gin.Context) {
+	overseerName := c.Param("name")
+	sandboxName := c.Param("sandboxName")
+	taskID := c.Param("taskID")
+	namespace := fmt.Sprintf("overseer-%s", overseerName)
+
+	serviceName := fmt.Sprintf("%s-lb", sandboxName)
+	targetURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:13339", serviceName, namespace)
+
+	client := http.Client{Timeout: 1 * time.Second}
+	if resp, err := client.Get(fmt.Sprintf("%s/telemetry/%s", targetURL, taskID)); err == nil && resp.StatusCode == http.StatusOK {
+		defer resp.Body.Close()
+		c.Header("Content-Type", "application/json")
+		_, _ = io.Copy(c.Writer, resp.Body)
+		return
+	}
+
+	podID, err := sandbox.FindSandboxPodInNamespace(c.Request.Context(), sandboxName, namespace)
+	if err != nil || podID == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Sandbox pod not found or not reachable via AgentServer"})
+		return
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	readCmd := fmt.Sprintf("if [ -f /workspaces/tasks/%s/tool-telemetry.json ]; then cat /workspaces/tasks/%s/tool-telemetry.json; else echo '{}'; fi", taskID, taskID)
+	execOpts := sandbox.ExecOptions{
+		Command: []string{"/bin/sh"},
+		Stdin:   []byte(readCmd),
+		Stdout:  &stdout,
+		Stderr:  &stderr,
+	}
+	if err := sandbox.ExecInPod(c.Request.Context(), s.K8sManager.KubeClient, *podID, execOpts); err != nil {
+		stdout.Reset()
+		execOpts.Command = []string{"/bin/bash"}
+		_ = sandbox.ExecInPod(c.Request.Context(), s.K8sManager.KubeClient, *podID, execOpts)
+	}
+
+	c.Header("Content-Type", "application/json")
 	_, _ = c.Writer.Write(stdout.Bytes())
 }
 

@@ -212,16 +212,25 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
             return;
         }
 
-        setTaskLogs(prev => ({ ...prev, [taskName]: { loading: true, show: true, content: 'Loading task execution logs...' } }));
+        setTaskLogs(prev => ({ ...prev, [taskName]: { loading: true, show: true, content: 'Loading task execution logs...', telemetry: null } }));
 
         fetch(`/api/overseers/${activeOverseer.metadata.name}/sandboxes/${activeSandbox.metadata.name}/tasks/${encodeURIComponent(taskName)}/logs`)
             .then(res => res.text())
             .then(data => {
-                setTaskLogs(prev => ({ ...prev, [taskName]: { loading: false, show: true, content: data || 'No output log found.' } }));
+                setTaskLogs(prev => ({ ...prev, [taskName]: { ...prev[taskName], loading: false, show: true, content: data || 'No output log found.' } }));
             })
             .catch(err => {
-                setTaskLogs(prev => ({ ...prev, [taskName]: { loading: false, show: true, content: `Error loading log: ${err.message}` } }));
+                setTaskLogs(prev => ({ ...prev, [taskName]: { ...prev[taskName], loading: false, show: true, content: `Error loading log: ${err.message}` } }));
             });
+
+        fetch(`/api/overseers/${activeOverseer.metadata.name}/sandboxes/${activeSandbox.metadata.name}/tasks/${encodeURIComponent(taskName)}/telemetry`)
+            .then(res => res.json())
+            .then(telemetry => {
+                if (telemetry && telemetry.total_tool_calls > 0) {
+                    setTaskLogs(prev => ({ ...prev, [taskName]: { ...prev[taskName], telemetry } }));
+                }
+            })
+            .catch(() => {});
     };
 
     const getSandboxTypeIcon = (sb) => {
@@ -726,6 +735,38 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
 
                                                 {logInfo?.show && (
                                                     <div style={{ borderTop: '1px solid var(--border-color)', padding: '15px', backgroundColor: '#161b22', color: '#c9d1d9', textAlign: 'left' }}>
+                                                        {logInfo.telemetry && logInfo.telemetry.total_tool_calls > 0 && (
+                                                            <div style={{ marginBottom: '15px', padding: '12px', backgroundColor: '#0d1117', border: '1px solid #30363d', borderRadius: '6px' }}>
+                                                                <div style={{ fontWeight: 'bold', color: '#58a6ff', marginBottom: '8px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                                    <span>⚡ Tool Execution Telemetry</span>
+                                                                    <span style={{ fontWeight: 'normal', color: '#8b949e', fontSize: '12px' }}>({logInfo.telemetry.total_tool_calls} calls, {logInfo.telemetry.total_tool_duration_sec}s total)</span>
+                                                                </div>
+                                                                <div style={{ overflowX: 'auto' }}>
+                                                                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', textAlign: 'left' }}>
+                                                                        <thead>
+                                                                            <tr style={{ borderBottom: '1px solid #21262d', color: '#8b949e' }}>
+                                                                                <th style={{ padding: '6px 8px' }}>Tool</th>
+                                                                                <th style={{ padding: '6px 8px' }}>Calls</th>
+                                                                                <th style={{ padding: '6px 8px' }}>Total (s)</th>
+                                                                                <th style={{ padding: '6px 8px' }}>Max (s)</th>
+                                                                                <th style={{ padding: '6px 8px' }}>Slowest Command / Arg</th>
+                                                                            </tr>
+                                                                        </thead>
+                                                                        <tbody>
+                                                                            {Object.entries(logInfo.telemetry.tools || {}).map(([tname, tstat]) => (
+                                                                                <tr key={tname} style={{ borderBottom: '1px solid #21262d' }}>
+                                                                                    <td style={{ padding: '6px 8px', fontFamily: 'monospace', color: '#7ee787' }}>{tname}</td>
+                                                                                    <td style={{ padding: '6px 8px' }}>{tstat.count}</td>
+                                                                                    <td style={{ padding: '6px 8px' }}>{tstat.total_sec}</td>
+                                                                                    <td style={{ padding: '6px 8px', color: tstat.max_sec > 60 ? '#ff7b72' : 'inherit', fontWeight: tstat.max_sec > 60 ? 'bold' : 'normal' }}>{tstat.max_sec}</td>
+                                                                                    <td style={{ padding: '6px 8px', fontFamily: 'monospace', fontSize: '11px', color: '#8b949e', maxWidth: '300px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={tstat.slowest_cmd}>{tstat.slowest_cmd || '-'}</td>
+                                                                                </tr>
+                                                                            ))}
+                                                                        </tbody>
+                                                                    </table>
+                                                                </div>
+                                                            </div>
+                                                        )}
                                                         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '0.8rem', color: '#8b949e', textAlign: 'left' }}>
                                                             <span>Output (`/workspaces/tasks/{taskName}/execution.log`)</span>
                                                         </div>

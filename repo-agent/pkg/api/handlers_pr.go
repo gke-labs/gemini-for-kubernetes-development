@@ -575,6 +575,40 @@ func (s *Server) getTaskLogs(c *gin.Context) {
 	proxy.ServeHTTP(c.Writer, c.Request)
 }
 
+func (s *Server) getTaskTelemetry(c *gin.Context) {
+	log := klog.FromContext(c.Request.Context())
+	namespace := s.Auth.GetNamespaceFromContext(c)
+	repo := c.Param("repo")
+	prID := c.Param("id")
+	taskID := c.Param("taskID")
+
+	sandboxName := fmt.Sprintf("%s-pr-%s", repo, prID)
+	serviceName := fmt.Sprintf("%s-lb", sandboxName)
+	targetURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:13339", serviceName, namespace)
+
+	proxyURL, err := url.Parse(targetURL)
+	if err != nil {
+		log.Error(err, "Failed to parse target URL", "url", targetURL)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid target URL"})
+		return
+	}
+
+	proxy := httputil.NewSingleHostReverseProxy(proxyURL)
+	originalDirector := proxy.Director
+	proxy.Director = func(req *http.Request) {
+		originalDirector(req)
+		req.URL.Path = fmt.Sprintf("/telemetry/%s", taskID)
+	}
+
+	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, err error) {
+		log.Error(err, "Proxy error", "target", targetURL)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("{}"))
+	}
+
+	proxy.ServeHTTP(c.Writer, c.Request)
+}
+
 func (s *Server) getPRCommits(c *gin.Context) {
 	log := klog.FromContext(c.Request.Context())
 	namespace := s.Auth.GetNamespaceFromContext(c)
