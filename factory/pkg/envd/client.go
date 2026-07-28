@@ -401,6 +401,27 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 	} else if isAlreadyRunning {
 		klog.Infof("Task in directory %s is already running. Reattaching...", taskDir)
 	} else {
+		// Verify no OTHER task in /workspaces/tasks is actively running before launching
+		var activeBuf bytes.Buffer
+		checkActiveCmd := fmt.Sprintf(`for d in /workspaces/tasks/*/; do
+  if [ -d "$d" ] && [ "$d" != "%s/" ] && [ ! -s "$d/exit_code" ] && [ -s "$d/pid" ]; then
+    pid=$(cat "$d/pid" 2>/dev/null)
+    if [ -n "$pid" ]; then
+      stat=$(ps -o stat= -p "$pid" 2>/dev/null | cut -c 1)
+      if kill -0 "$pid" 2>/dev/null && [ "$stat" != "Z" ]; then
+        echo "$d"
+        break
+      fi
+    fi
+  fi
+done`, strings.TrimSuffix(taskDir, "/"))
+		if err := c.Exec(ctx, checkActiveCmd, "/workspaces", nil, nil, &activeBuf, nil); err == nil {
+			activeTask := strings.TrimSpace(activeBuf.String())
+			if activeTask != "" {
+				return fmt.Errorf("cannot start task in %s: sandbox is currently running another task in %s", taskDir, activeTask)
+			}
+		}
+
 		// Ensure the task directory exists inside the pod before writing to it
 		if err := c.Exec(ctx, fmt.Sprintf("mkdir -p %s", taskDir), "/workspaces", nil, nil, nil, nil); err != nil {
 			return fmt.Errorf("failed to create task directory in pod: %w", err)

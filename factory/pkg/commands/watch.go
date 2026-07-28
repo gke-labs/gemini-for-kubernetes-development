@@ -259,13 +259,19 @@ func isSandboxTaskRunning(ctx context.Context, kubeClient *clients.KubernetesCli
 					stat=$(ps -o stat= -p "$pid" 2>/dev/null | cut -c 1)
 					if ! kill -0 "$pid" 2>/dev/null || [ "$stat" = "Z" ]; then
 						echo "137" # Report SIGKILL/Crashed/Zombie fallback exit code
+					else
+						echo "RUNNING"
 					fi
+				else
+					echo "NOTASKS"
 				fi
 			fi`
 			if err := client.Exec(ctx, checkCmd, "/workspaces", nil, nil, &buf, nil); err == nil {
 				exitStr := strings.TrimSpace(buf.String())
 				if exitStr == "NOTASKS" {
 					return false, nil
+				} else if exitStr == "RUNNING" {
+					return true, nil
 				} else if exitStr != "" {
 					// Task has finished!
 					taskState := "Completed"
