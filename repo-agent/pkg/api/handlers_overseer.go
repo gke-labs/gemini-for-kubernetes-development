@@ -459,7 +459,9 @@ if os.path.exists(tasks_dir):
                 with open(os.path.join(p, "pid")) as f: pid = int(f.read().strip())
                 stat = ""
                 if os.path.exists(f"/proc/{pid}/stat"):
-                    with open(f"/proc/{pid}/stat") as sf: stat = sf.read().split()[2] if len(sf.read().split()) > 2 else ""
+                    with open(f"/proc/{pid}/stat") as sf:
+                        cnt = sf.read().split()
+                        stat = cnt[2] if len(cnt) > 2 else ""
                 if stat.startswith("Z"): status = "Crashed"; ec = "137"
                 else:
                     try:
