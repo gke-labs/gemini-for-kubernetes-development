@@ -45,10 +45,15 @@ func NewServer(storageRoot string) (*Server, error) {
 	s.mux.HandleFunc("GET /v1/usage/rollups/workflows", s.handleRollupWorkflows)
 	s.mux.HandleFunc("GET /v1/usage/rollups/workflows/{session}", s.handleWorkflowDetail)
 	s.mux.HandleFunc("POST /v1/workflows/{session}/mark-summarized", s.handleMarkSummarized)
+	s.mux.HandleFunc("GET /v1/usage/tools", s.handleUsageTools)
 	s.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 	return s, nil
+}
+
+func (s *Server) handleUsageTools(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, s.store.SlowestShellCommands(r.URL.Query().Get("repo")))
 }
 
 func (s *Server) Handler() http.Handler { return s.mux }

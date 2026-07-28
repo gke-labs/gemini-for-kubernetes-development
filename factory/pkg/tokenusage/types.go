@@ -54,6 +54,58 @@ type TokenUsage struct {
 	Thoughts int64 `json:"thoughts"`
 }
 
+// ToolTelemetry captures accumulated tool execution statistics from task runs.
+type ToolTelemetry struct {
+	TotalCalls       int                 `json:"total_tool_calls"`
+	TotalDurationSec float64             `json:"total_tool_duration_sec"`
+	Tools            map[string]ToolStat `json:"tools,omitempty"`
+	ShellCalls       []ShellCall         `json:"shell_calls,omitempty"`
+}
+
+// ToolStat captures per-tool execution statistics.
+type ToolStat struct {
+	Count      int     `json:"count"`
+	TotalSec   float64 `json:"total_sec"`
+	MaxSec     float64 `json:"max_sec"`
+	SlowestCmd string  `json:"slowest_cmd"`
+}
+
+// ShellCall captures one run_shell_command invocation record.
+type ShellCall struct {
+	Cmd         string  `json:"cmd"`
+	DurationSec float64 `json:"duration_sec"`
+	Timestamp   string  `json:"timestamp"`
+
+	// Attributed context (filled during harvest)
+	Repo     string `json:"repo,omitempty"`
+	TaskType string `json:"taskType,omitempty"`
+	Sandbox  string `json:"sandbox,omitempty"`
+	TaskDir  string `json:"taskDir,omitempty"`
+}
+
+// AggregatedCommand captures aggregated statistics for a unique shell command pattern.
+type AggregatedCommand struct {
+	Cmd            string  `json:"cmd"`
+	Count          int     `json:"count"`
+	TotalSec       float64 `json:"total_sec"`
+	AvgSec         float64 `json:"avg_sec"`
+	MaxSec         float64 `json:"max_sec"`
+	LastExecutedAt string  `json:"last_executed_at"`
+}
+
+// PeriodSlowest contains the top 5 slowest shell command invocations for day, week, and month.
+type PeriodSlowest struct {
+	Day   []ShellCall `json:"day"`
+	Week  []ShellCall `json:"week"`
+	Month []ShellCall `json:"month"`
+}
+
+// SlowestCommandsResponse is returned by GET /v1/usage/tools.
+type SlowestCommandsResponse struct {
+	TopSlowestCommands []AggregatedCommand `json:"top_slowest_commands"`
+	SlowestByPeriod    PeriodSlowest       `json:"slowest_by_period"`
+}
+
 // UsageRecord is one harvested task's usage, with enough context to roll it
 // up by issue, PR, or workflow. Key is the idempotency key
 // "<sandbox>:<taskDir>"; re-posting the same key upserts the record.
@@ -73,8 +125,9 @@ type UsageRecord struct {
 	Workflow     string `json:"workflow,omitempty"`
 	WorkflowName string `json:"workflowName,omitempty"`
 
-	RecordedAt string `json:"recordedAt,omitempty"` // RFC3339
-	Stats      Stats  `json:"stats"`
+	RecordedAt    string         `json:"recordedAt,omitempty"` // RFC3339
+	Stats         Stats          `json:"stats"`
+	ToolTelemetry *ToolTelemetry `json:"toolTelemetry,omitempty"`
 }
 
 // Rollup is an aggregate of usage records grouped by some key

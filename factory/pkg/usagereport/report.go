@@ -169,6 +169,24 @@ func postJSON(ctx context.Context, path string, v any) error {
 	return nil
 }
 
+// ReadTaskToolTelemetry reads tool-telemetry.json from a task dir inside the sandbox.
+func ReadTaskToolTelemetry(ctx context.Context, client *envd.Client, taskDir string) (*ToolTelemetry, error) {
+	var stdout, stderr bytes.Buffer
+	catCmd := fmt.Sprintf("cat %s/tool-telemetry.json 2>/dev/null || true", taskDir)
+	if err := client.Exec(ctx, catCmd, "/workspaces", nil, nil, &stdout, &stderr); err != nil {
+		return nil, nil
+	}
+	data := strings.TrimSpace(stdout.String())
+	if data == "" {
+		return nil, nil
+	}
+	var telemetry ToolTelemetry
+	if err := json.Unmarshal([]byte(data), &telemetry); err != nil {
+		return nil, nil
+	}
+	return &telemetry, nil
+}
+
 // HarvestTask reads one task dir's usage and publishes it. Best-effort:
 // failures are logged, never returned.
 func HarvestTask(ctx context.Context, client *envd.Client, taskDir string, meta Meta) {
@@ -201,6 +219,25 @@ func HarvestTask(ctx context.Context, client *envd.Client, taskDir string, meta 
 		RecordedAt:   time.Now().UTC().Format(time.RFC3339),
 		Stats:        *stats,
 	}
+
+	if tt, err := ReadTaskToolTelemetry(ctx, client, taskDir); err == nil && tt != nil {
+		for i := range tt.ShellCalls {
+			if tt.ShellCalls[i].Repo == "" {
+				tt.ShellCalls[i].Repo = meta.Repo
+			}
+			if tt.ShellCalls[i].TaskType == "" {
+				tt.ShellCalls[i].TaskType = taskType
+			}
+			if tt.ShellCalls[i].Sandbox == "" {
+				tt.ShellCalls[i].Sandbox = meta.Sandbox
+			}
+			if tt.ShellCalls[i].TaskDir == "" {
+				tt.ShellCalls[i].TaskDir = taskDir
+			}
+		}
+		rec.ToolTelemetry = tt
+	}
+
 	if err := Publish(ctx, rec); err != nil {
 		klog.Warningf("usagereport: publishing usage for %s: %v", rec.Key, err)
 		return
