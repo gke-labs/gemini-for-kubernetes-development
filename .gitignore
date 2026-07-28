@@ -6,3 +6,7 @@ bin/
 .vscode
 .jetskicli
 cli/cli
+
+# AP build artifacts
+.build/
+

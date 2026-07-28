@@ -1,0 +1,11 @@
+gofmt:
+  enabled: true
+govet:
+  enabled: true
+govulncheck:
+  enabled: true
+lint:
+  replaceEmptyInterfaceWithAny:
+    enabled: false
+  testcontext:
+    mode: ignore

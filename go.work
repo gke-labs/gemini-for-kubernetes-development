@@ -4,6 +4,7 @@ use (
 	.
 	./agentsandboxes
 	./dev/tools
+	./docs/gke-install/installer
 	./factory
 	./overseer
 	./repo-agent
