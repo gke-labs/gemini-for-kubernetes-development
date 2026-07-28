@@ -1671,11 +1671,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 		// Populate PR cache once on startup if needed by issue scan
 		if !hasPRs && runIssueScan {
 			klog.Infof("Populating open PRs cache for referenced issues...")
-			prOpts := &githubv39.PullRequestListOptions{
-				State:       "open",
-				ListOptions: githubv39.ListOptions{PerPage: 100},
-			}
-			prs, _, err := ghClient.PullRequests.List(ctx, owner, repo, prOpts)
+			prs, err := listAllOpenPRs(ctx, ghClient, owner, repo)
 			if err == nil {
 				state.mu.Lock()
 				state.openPRs = prs
@@ -1695,11 +1691,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 		// 1. Slow PR Scan Cycle
 		if runPRScan {
 			klog.Infof("Running slow PR scan cycle...")
-			prOpts := &githubv39.PullRequestListOptions{
-				State:       "open",
-				ListOptions: githubv39.ListOptions{PerPage: 100},
-			}
-			prs, _, err := ghClient.PullRequests.List(ctx, owner, repo, prOpts)
+			prs, err := listAllOpenPRs(ctx, ghClient, owner, repo)
 			if err == nil {
 				state.mu.Lock()
 				state.openPRs = prs
@@ -2419,6 +2411,26 @@ func getReferencedIssues(pr *githubv39.PullRequest) map[int]bool {
 	}
 
 	return referenced
+}
+
+func listAllOpenPRs(ctx context.Context, ghClient *githubv39.Client, owner, repo string) ([]*githubv39.PullRequest, error) {
+	var allPRs []*githubv39.PullRequest
+	opts := &githubv39.PullRequestListOptions{
+		State:       "open",
+		ListOptions: githubv39.ListOptions{PerPage: 100},
+	}
+	for {
+		prs, resp, err := ghClient.PullRequests.List(ctx, owner, repo, opts)
+		if err != nil {
+			return nil, err
+		}
+		allPRs = append(allPRs, prs...)
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	return allPRs, nil
 }
 
 func syncReferencedIssueLabels(ctx context.Context, ghClient *githubv39.Client, owner, repo string, pr *githubv39.PullRequest, prIssue *githubv39.Issue) {
