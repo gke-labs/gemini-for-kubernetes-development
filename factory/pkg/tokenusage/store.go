@@ -27,6 +27,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Store persists usage records and subjects as JSONL append logs and keeps
@@ -560,4 +561,144 @@ func (s *Store) Close() error {
 		err = err2
 	}
 	return err
+}
+
+func parseTimeOrNow(tsStr string) time.Time {
+	if tsStr != "" {
+		if t, err := time.Parse(time.RFC3339, tsStr); err == nil {
+			return t
+		}
+		if t, err := time.Parse("2006-01-02T15:04:05Z07:00", tsStr); err == nil {
+			return t
+		}
+	}
+	return time.Now().UTC()
+}
+
+// SlowestShellCommands computes top 30 aggregated shell commands and top 5 slowest calls per period (day, week, month).
+func (s *Store) SlowestShellCommands(repoFilter string) SlowestCommandsResponse {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now().UTC()
+	dayLimit := now.Add(-24 * time.Hour)
+	weekLimit := now.Add(-7 * 24 * time.Hour)
+	monthLimit := now.Add(-30 * 24 * time.Hour)
+
+	type aggState struct {
+		count          int
+		totalSec       float64
+		maxSec         float64
+		lastExecutedAt string
+	}
+
+	aggMap := map[string]*aggState{}
+	var dayCalls []ShellCall
+	var weekCalls []ShellCall
+	var monthCalls []ShellCall
+
+	for _, rec := range s.records {
+		if repoFilter != "" && rec.Repo != repoFilter {
+			continue
+		}
+		if rec.ToolTelemetry == nil || len(rec.ToolTelemetry.ShellCalls) == 0 {
+			continue
+		}
+
+		for _, call := range rec.ToolTelemetry.ShellCalls {
+			c := call
+			if c.Repo == "" {
+				c.Repo = rec.Repo
+			}
+			if c.Sandbox == "" {
+				c.Sandbox = rec.Sandbox
+			}
+			if c.TaskType == "" {
+				c.TaskType = rec.TaskType
+			}
+			if c.TaskDir == "" {
+				c.TaskDir = rec.TaskDir
+			}
+			if c.Timestamp == "" {
+				c.Timestamp = rec.RecordedAt
+			}
+
+			st, exists := aggMap[c.Cmd]
+			if !exists {
+				st = &aggState{}
+				aggMap[c.Cmd] = st
+			}
+			st.count++
+			st.totalSec += c.DurationSec
+			if c.DurationSec > st.maxSec {
+				st.maxSec = c.DurationSec
+			}
+			if c.Timestamp > st.lastExecutedAt {
+				st.lastExecutedAt = c.Timestamp
+			}
+
+			t := parseTimeOrNow(c.Timestamp)
+			if t.After(dayLimit) {
+				dayCalls = append(dayCalls, c)
+			}
+			if t.After(weekLimit) {
+				weekCalls = append(weekCalls, c)
+			}
+			if t.After(monthLimit) {
+				monthCalls = append(monthCalls, c)
+			}
+		}
+	}
+
+	var topAgg []AggregatedCommand
+	for cmd, st := range aggMap {
+		avgSec := 0.0
+		if st.count > 0 {
+			avgSec = float64(int(st.totalSec/float64(st.count)*1000+0.5)) / 1000.0
+		}
+		topAgg = append(topAgg, AggregatedCommand{
+			Cmd:            cmd,
+			Count:          st.count,
+			TotalSec:       float64(int(st.totalSec*1000+0.5)) / 1000.0,
+			AvgSec:         avgSec,
+			MaxSec:         float64(int(st.maxSec*1000+0.5)) / 1000.0,
+			LastExecutedAt: st.lastExecutedAt,
+		})
+	}
+
+	sort.Slice(topAgg, func(i, j int) bool {
+		if topAgg[i].MaxSec != topAgg[j].MaxSec {
+			return topAgg[i].MaxSec > topAgg[j].MaxSec
+		}
+		return topAgg[i].Count > topAgg[j].Count
+	})
+	if len(topAgg) > 30 {
+		topAgg = topAgg[:30]
+	}
+
+	sortCalls := func(calls []ShellCall) []ShellCall {
+		sort.Slice(calls, func(i, j int) bool {
+			return calls[i].DurationSec > calls[j].DurationSec
+		})
+		if len(calls) > 5 {
+			return calls[:5]
+		}
+		if calls == nil {
+			return []ShellCall{}
+		}
+		return calls
+	}
+
+	resp := SlowestCommandsResponse{
+		TopSlowestCommands: topAgg,
+		SlowestByPeriod: PeriodSlowest{
+			Day:   sortCalls(dayCalls),
+			Week:  sortCalls(weekCalls),
+			Month: sortCalls(monthCalls),
+		},
+	}
+	if resp.TopSlowestCommands == nil {
+		resp.TopSlowestCommands = []AggregatedCommand{}
+	}
+	return resp
 }

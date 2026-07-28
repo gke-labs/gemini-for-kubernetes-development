@@ -128,11 +128,142 @@ const RollupTable = ({ title, subtitle, rollups, keyLabel, renderKey, showSubjec
 
 const prList = (prs) => (prs || []).map(n => `#${n}`).join(', ');
 
+const ToolTelemetrySection = ({ toolData }) => {
+    const [periodTab, setPeriodTab] = useState('day');
+    if (!toolData) return null;
+
+    const topCmds = toolData.top_slowest_commands || [];
+    const periodCalls = (toolData.slowest_by_period && toolData.slowest_by_period[periodTab]) || [];
+
+    const tabLabels = {
+        day: 'Past 24 Hours',
+        week: 'Past 7 Days',
+        month: 'Past 30 Days'
+    };
+
+    const formatTs = (ts) => {
+        if (!ts) return '-';
+        try {
+            const d = new Date(ts);
+            return isNaN(d.getTime()) ? ts : d.toLocaleString();
+        } catch (e) {
+            return ts;
+        }
+    };
+
+    return (
+        <div style={{ backgroundColor: 'var(--bg-card)', borderRadius: '8px', boxShadow: 'var(--shadow-card)', padding: '16px', marginBottom: '24px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                <div>
+                    <h3 style={{ margin: '0 0 2px 4px', color: 'var(--text-primary)' }}>⚡ Slowest Tool Execution Telemetry</h3>
+                    <p style={{ margin: '0 0 4px 4px', color: 'var(--text-secondary)', fontSize: '13px' }}>
+                        Tracking top shell command bottlenecks, average execution durations, and historical slowest commands over time.
+                    </p>
+                </div>
+            </div>
+
+            {/* Period Slowest Section */}
+            <div style={{ marginBottom: '20px', padding: '12px', backgroundColor: 'var(--bg-secondary)', borderRadius: '6px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                    <h4 style={{ margin: 0, fontSize: '14px', color: '#58a6ff' }}>🏆 Top 5 Slowest Executions ({tabLabels[periodTab]})</h4>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                        {['day', 'week', 'month'].map(p => (
+                            <button
+                                key={p}
+                                className="btn"
+                                onClick={() => setPeriodTab(p)}
+                                style={{
+                                    padding: '4px 10px',
+                                    fontSize: '12px',
+                                    backgroundColor: periodTab === p ? '#1f6feb' : 'transparent',
+                                    color: periodTab === p ? '#fff' : 'var(--text-secondary)',
+                                    border: '1px solid var(--border-color)'
+                                }}
+                            >
+                                {tabLabels[p]}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+
+                {periodCalls.length === 0 ? (
+                    <p style={{ color: 'var(--text-secondary)', fontSize: '13px', margin: '4px' }}>No command executions recorded in this time window.</p>
+                ) : (
+                    <div style={{ overflowX: 'auto' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '12px' }}>
+                            <thead>
+                                <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-secondary)' }}>
+                                    <th style={{ padding: '6px 10px', width: '40px' }}>Rank</th>
+                                    <th style={{ padding: '6px 10px' }}>Command</th>
+                                    <th style={{ padding: '6px 10px', textAlign: 'right' }}>Duration</th>
+                                    <th style={{ padding: '6px 10px' }}>Date / Time</th>
+                                    <th style={{ padding: '6px 10px' }}>Context</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {periodCalls.map((c, idx) => (
+                                    <tr key={idx} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                                        <td style={{ padding: '6px 10px', fontWeight: 'bold', color: '#8b949e' }}>#{idx + 1}</td>
+                                        <td style={{ padding: '6px 10px', fontFamily: 'monospace', color: '#7ee787', wordBreak: 'break-all' }}>{c.cmd}</td>
+                                        <td style={{ padding: '6px 10px', textAlign: 'right', fontWeight: 'bold', color: c.duration_sec > 60 ? '#ff7b72' : '#e6edf3' }}>
+                                            {c.duration_sec}s
+                                        </td>
+                                        <td style={{ padding: '6px 10px', whiteSpace: 'nowrap', color: 'var(--text-secondary)' }}>{formatTs(c.timestamp)}</td>
+                                        <td style={{ padding: '6px 10px', color: 'var(--text-secondary)', fontSize: '11px', whiteSpace: 'nowrap' }}>
+                                            {c.sandbox || c.taskType || '-'} {c.repo ? `(${c.repo})` : ''}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+            </div>
+
+            {/* Aggregated Commands Section */}
+            <div>
+                <h4 style={{ margin: '0 0 10px 4px', fontSize: '14px', color: 'var(--text-primary)' }}>📊 Top Slowest Aggregated Commands (Count & Avg Duration)</h4>
+                {topCmds.length === 0 ? (
+                    <p style={{ color: 'var(--text-secondary)', margin: '4px' }}>No shell commands recorded yet.</p>
+                ) : (
+                    <div style={{ overflowX: 'auto' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                            <thead>
+                                <tr>
+                                    <th style={thStyle}>Command</th>
+                                    <th style={{ ...thStyle, textAlign: 'right' }}>Calls</th>
+                                    <th style={{ ...thStyle, textAlign: 'right' }}>Total Time</th>
+                                    <th style={{ ...thStyle, textAlign: 'right' }}>Avg Time</th>
+                                    <th style={{ ...thStyle, textAlign: 'right' }}>Max Time</th>
+                                    <th style={{ ...thStyle, textAlign: 'right' }}>Last Executed</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {topCmds.map((ac, idx) => (
+                                    <tr key={idx} className="table-row-hover">
+                                        <td style={{ ...tdStyle, fontFamily: 'monospace', color: '#7ee787', fontSize: '12px', wordBreak: 'break-all' }}>{ac.cmd}</td>
+                                        <td style={numStyle}>{fmt(ac.count)}</td>
+                                        <td style={numStyle}>{ac.total_sec}s</td>
+                                        <td style={{ ...numStyle, fontWeight: 'bold' }}>{ac.avg_sec}s</td>
+                                        <td style={{ ...numStyle, color: ac.max_sec > 60 ? '#ff7b72' : 'inherit', fontWeight: ac.max_sec > 60 ? 'bold' : 'normal' }}>{ac.max_sec}s</td>
+                                        <td style={{ ...numStyle, fontSize: '12px', color: 'var(--text-secondary)' }}>{formatTs(ac.last_executed_at)}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+};
+
 const TokenUsage = ({ onBack }) => {
     const [daily, setDaily] = useState([]);
     const [workflows, setWorkflows] = useState([]);
     const [issues, setIssues] = useState([]);
     const [prs, setPRs] = useState([]);
+    const [toolData, setToolData] = useState(null);
     const [error, setError] = useState(null);
 
     const fetchRollups = useCallback(() => {
@@ -151,7 +282,11 @@ const TokenUsage = ({ onBack }) => {
                 })
                 .then(data => {
                     setError(null);
-                    setter(data.rollups || []);
+                    if (path.includes('v1/usage/tools')) {
+                        setter(data);
+                    } else {
+                        setter(data.rollups || []);
+                    }
                 });
 
         Promise.all([
@@ -159,6 +294,7 @@ const TokenUsage = ({ onBack }) => {
             get('v1/usage/rollups/workflows', setWorkflows),
             get('v1/usage/rollups/issues', setIssues),
             get('v1/usage/rollups/prs', setPRs),
+            get('v1/usage/tools', setToolData),
         ]).catch(err => {
             console.error('Failed to fetch token usage:', err);
             setError(err.message);
@@ -174,7 +310,7 @@ const TokenUsage = ({ onBack }) => {
     return (
         <div style={{ padding: '24px', maxWidth: '1400px', margin: '0 auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                <h2 style={{ margin: 0, color: 'var(--text-primary)' }}>Gemini Token Usage</h2>
+                <h2 style={{ margin: 0, color: 'var(--text-primary)' }}>Gemini Token & Tool Telemetry Usage</h2>
                 <button className="btn" onClick={onBack} style={{ padding: '8px 16px', fontWeight: '500' }}>Back to Dashboard</button>
             </div>
 
@@ -183,6 +319,8 @@ const TokenUsage = ({ onBack }) => {
                     <strong>⚠️ Failed to load token usage:</strong> {error}
                 </div>
             )}
+
+            <ToolTelemetrySection toolData={toolData} />
 
             <RollupTable
                 title="Daily Usage"

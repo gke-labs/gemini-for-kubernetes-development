@@ -26,11 +26,17 @@ import (
 
 // Aliases to the canonical collector types defined in factory/pkg/tokenusage.
 type (
-	Stats       = tokenusage.Stats
-	ModelUsage  = tokenusage.ModelUsage
-	APIUsage    = tokenusage.APIUsage
-	TokenUsage  = tokenusage.TokenUsage
-	UsageRecord = tokenusage.UsageRecord
-	Rollup      = tokenusage.Rollup
-	Subject     = tokenusage.Subject
+	Stats         = tokenusage.Stats
+	ModelUsage    = tokenusage.ModelUsage
+	APIUsage      = tokenusage.APIUsage
+	TokenUsage    = tokenusage.TokenUsage
+	UsageRecord   = tokenusage.UsageRecord
+	Rollup        = tokenusage.Rollup
+	Subject       = tokenusage.Subject
+	ToolTelemetry           = tokenusage.ToolTelemetry
+	ToolStat                = tokenusage.ToolStat
+	ShellCall               = tokenusage.ShellCall
+	AggregatedCommand       = tokenusage.AggregatedCommand
+	PeriodSlowest           = tokenusage.PeriodSlowest
+	SlowestCommandsResponse = tokenusage.SlowestCommandsResponse
 )

@@ -18,6 +18,7 @@ package tokenusage
 
 import (
 	"testing"
+	"time"
 )
 
 func statsFor(model string, input, output, total int64) Stats {
@@ -312,5 +313,62 @@ func mustPut(t *testing.T, s *Store, rec UsageRecord) {
 	t.Helper()
 	if err := s.Put(rec); err != nil {
 		t.Fatalf("Put %s: %v", rec.Key, err)
+	}
+}
+
+func TestSlowestShellCommands(t *testing.T) {
+	s, _ := newTestStore(t)
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	rec1 := UsageRecord{
+		Key:        "sb1:task1",
+		Repo:       "org/repo",
+		RecordedAt: now,
+		Stats:      statsFor("m", 1, 1, 2),
+		ToolTelemetry: &ToolTelemetry{
+			TotalCalls: 2,
+			ShellCalls: []ShellCall{
+				{Cmd: "go test ./...", DurationSec: 45.5, Timestamp: now},
+				{Cmd: "make build", DurationSec: 12.0, Timestamp: now},
+			},
+		},
+	}
+	rec2 := UsageRecord{
+		Key:        "sb2:task2",
+		Repo:       "org/repo",
+		RecordedAt: now,
+		Stats:      statsFor("m", 1, 1, 2),
+		ToolTelemetry: &ToolTelemetry{
+			TotalCalls: 1,
+			ShellCalls: []ShellCall{
+				{Cmd: "go test ./...", DurationSec: 55.5, Timestamp: now},
+			},
+		},
+	}
+
+	mustPut(t, s, rec1)
+	mustPut(t, s, rec2)
+
+	resp := s.SlowestShellCommands("org/repo")
+	if len(resp.TopSlowestCommands) != 2 {
+		t.Fatalf("expected 2 top aggregated commands, got %d", len(resp.TopSlowestCommands))
+	}
+	// "go test ./..." should be first with max 55.5s, count 2, total 101.0s, avg 50.5s
+	top := resp.TopSlowestCommands[0]
+	if top.Cmd != "go test ./..." {
+		t.Errorf("expected top command 'go test ./...', got %q", top.Cmd)
+	}
+	if top.Count != 2 {
+		t.Errorf("expected count 2, got %d", top.Count)
+	}
+	if top.MaxSec != 55.5 {
+		t.Errorf("expected maxSec 55.5, got %f", top.MaxSec)
+	}
+	if top.AvgSec != 50.5 {
+		t.Errorf("expected avgSec 50.5, got %f", top.AvgSec)
+	}
+
+	if len(resp.SlowestByPeriod.Day) != 3 {
+		t.Errorf("expected 3 day calls, got %d", len(resp.SlowestByPeriod.Day))
 	}
 }
