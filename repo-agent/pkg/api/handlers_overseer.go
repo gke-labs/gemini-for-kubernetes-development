@@ -686,17 +686,26 @@ func (s *Server) getOverseerQueue(c *gin.Context) {
 	overseerName := c.Param("name")
 	namespace := fmt.Sprintf("overseer-%s", overseerName)
 
-	pods, err := s.K8sManager.Clientset.CoreV1().Pods(namespace).List(c.Request.Context(), v1.ListOptions{
-		LabelSelector: fmt.Sprintf("sandbox=overseer-%s", overseerName),
-	})
+	pods, err := s.K8sManager.Clientset.CoreV1().Pods(namespace).List(c.Request.Context(), v1.ListOptions{})
 	if err != nil || len(pods.Items) == 0 {
-		pods, err = s.K8sManager.Clientset.CoreV1().Pods(namespace).List(c.Request.Context(), v1.ListOptions{})
-		if err != nil || len(pods.Items) == 0 {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Overseer controller pod not found"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "Overseer controller pod not found"})
+		return
+	}
+
+	// 1. Try fast embedded HTTP REST API on port 13338 first
+	podIP := pods.Items[0].Status.PodIP
+	if podIP != "" {
+		podURL := fmt.Sprintf("http://%s:13338/api/v1/queue", podIP)
+		client := http.Client{Timeout: 1500 * time.Millisecond}
+		if resp, err := client.Get(podURL); err == nil && resp.StatusCode == http.StatusOK {
+			defer resp.Body.Close()
+			c.Header("Content-Type", "application/json")
+			_, _ = io.Copy(c.Writer, resp.Body)
 			return
 		}
 	}
 
+	// 2. Fallback to ExecInPod if HTTP port 13338 is unavailable
 	podName := pods.Items[0].Name
 	podID := &types.NamespacedName{Namespace: namespace, Name: podName}
 
@@ -831,10 +840,25 @@ func (s *Server) updateOverseerQueueTaskPriority(c *gin.Context) {
 		return
 	}
 
+	cleanFilename := filepath.Base(filename)
+
+	// 1. Try fast embedded HTTP REST API on port 13338 first
+	podIP := pods.Items[0].Status.PodIP
+	if podIP != "" {
+		podURL := fmt.Sprintf("http://%s:13338/api/v1/queue/%s/priority", podIP, cleanFilename)
+		jsonBytes, _ := json.Marshal(reqBody)
+		client := http.Client{Timeout: 1500 * time.Millisecond}
+		if resp, err := client.Post(podURL, "application/json", bytes.NewReader(jsonBytes)); err == nil && resp.StatusCode == http.StatusOK {
+			defer resp.Body.Close()
+			c.Header("Content-Type", "application/json")
+			_, _ = io.Copy(c.Writer, resp.Body)
+			return
+		}
+	}
+
+	// 2. Fallback to ExecInPod if HTTP port 13338 is unavailable
 	podName := pods.Items[0].Name
 	podID := &types.NamespacedName{Namespace: namespace, Name: podName}
-
-	cleanFilename := filepath.Base(filename)
 	updateCmd := fmt.Sprintf("sed -i 's/^priority:.*/priority: %s/' /workspaces/k8s-config-connector/overseer/queues/incoming/%s", reqBody.Priority, cleanFilename)
 
 	var stdout bytes.Buffer
