@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -650,4 +652,200 @@ func (s *Server) deleteOverseerSandbox(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "deleted"})
+}
+
+type QueueTaskItem struct {
+	FileName   string `json:"fileName"`
+	QueueState string `json:"queueState"`
+	Type       string `json:"type"`
+	URL        string `json:"url"`
+	Number     int    `json:"number"`
+	Priority   string `json:"priority"`
+	Phase      int    `json:"phase"`
+	CreatedAt  string `json:"createdAt"`
+	Assignee   string `json:"assignee"`
+	Status     string `json:"status"`
+	CommitSHA  string `json:"commitSHA"`
+	Rank       int    `json:"rank,omitempty"`
+}
+
+type QueueResponse struct {
+	Summary struct {
+		TotalPending    int            `json:"totalPending"`
+		TotalProcessing int            `json:"totalProcessing"`
+		TotalCompleted  int            `json:"totalCompleted"`
+		ByPriority      map[string]int `json:"byPriority"`
+		ByType          map[string]int `json:"byType"`
+	} `json:"summary"`
+	Incoming   []QueueTaskItem `json:"incoming"`
+	Processing []QueueTaskItem `json:"processing"`
+	Processed  []QueueTaskItem `json:"processed"`
+}
+
+func (s *Server) getOverseerQueue(c *gin.Context) {
+	overseerName := c.Param("name")
+	namespace := fmt.Sprintf("overseer-%s", overseerName)
+
+	pods, err := s.K8sManager.Clientset.CoreV1().Pods(namespace).List(c.Request.Context(), v1.ListOptions{
+		LabelSelector: fmt.Sprintf("sandbox=overseer-%s", overseerName),
+	})
+	if err != nil || len(pods.Items) == 0 {
+		pods, err = s.K8sManager.Clientset.CoreV1().Pods(namespace).List(c.Request.Context(), v1.ListOptions{})
+		if err != nil || len(pods.Items) == 0 {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Overseer controller pod not found"})
+			return
+		}
+	}
+
+	podName := pods.Items[0].Name
+	podID := &types.NamespacedName{Namespace: namespace, Name: podName}
+
+	parseScript := `
+parse_queue() {
+  dir="$1"
+  state="$2"
+  first=true
+  echo "["
+  for f in /workspaces/k8s-config-connector/overseer/queues/$dir/*.yaml; do
+    [ -e "$f" ] || continue
+    if [ "$first" = true ]; then first=false; else echo ","; fi
+    fname=$(basename "$f")
+    type=$(grep "^type:" "$f" 2>/dev/null | head -n 1 | cut -d: -f2- | tr -d " \"\r\n")
+    url=$(grep "^url:" "$f" 2>/dev/null | head -n 1 | cut -d: -f2- | tr -d " \"\r\n")
+    number=$(grep "^number:" "$f" 2>/dev/null | head -n 1 | cut -d: -f2- | tr -d " \"\r\n")
+    prio=$(grep "^priority:" "$f" 2>/dev/null | head -n 1 | cut -d: -f2- | tr -d " \"\r\n")
+    phase=$(grep "^phase:" "$f" 2>/dev/null | head -n 1 | cut -d: -f2- | tr -d " \"\r\n")
+    created=$(grep "^createdAt:" "$f" 2>/dev/null | head -n 1 | cut -d: -f2- | tr -d " \"\r\n")
+    assignee=$(grep "^assignee:" "$f" 2>/dev/null | head -n 1 | cut -d: -f2- | tr -d " \"\r\n")
+    status=$(grep "^status:" "$f" 2>/dev/null | head -n 1 | cut -d: -f2- | tr -d " \"\r\n")
+    sha=$(grep "^commitSHA:" "$f" 2>/dev/null | head -n 1 | cut -d: -f2- | tr -d " \"\r\n")
+    [ -z "$prio" ] && prio="medium"
+    [ -z "$number" ] && number="0"
+    [ -z "$phase" ] && phase="0"
+    printf "{\"fileName\":\"%s\",\"queueState\":\"%s\",\"type\":\"%s\",\"url\":\"%s\",\"number\":%s,\"priority\":\"%s\",\"phase\":%s,\"createdAt\":\"%s\",\"assignee\":\"%s\",\"status\":\"%s\",\"commitSHA\":\"%s\"}" \
+      "$fname" "$state" "$type" "$url" "$number" "$prio" "$phase" "$created" "$assignee" "$status" "$sha"
+  done
+  echo "]"
+}
+echo "{\"incoming\":"
+parse_queue "incoming" "incoming"
+echo ",\"processing\":"
+parse_queue "processing" "processing"
+echo ",\"processed\":"
+parse_queue "processed" "processed"
+echo "}"
+`
+
+	var stdout bytes.Buffer
+	execOpts := sandbox.ExecOptions{
+		Command: []string{"/bin/bash", "-c", parseScript},
+		Stdout:  &stdout,
+	}
+	if err := sandbox.ExecInPod(c.Request.Context(), s.K8sManager.KubeClient, *podID, execOpts); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read overseer queue", "details": err.Error()})
+		return
+	}
+
+	var raw struct {
+		Incoming   []QueueTaskItem `json:"incoming"`
+		Processing []QueueTaskItem `json:"processing"`
+		Processed  []QueueTaskItem `json:"processed"`
+	}
+
+	if err := json.Unmarshal(stdout.Bytes(), &raw); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse queue JSON", "details": err.Error()})
+		return
+	}
+
+	prioRank := map[string]int{
+		"critical":  1,
+		"urgent":    2,
+		"important": 3,
+		"high":      4,
+		"medium":    5,
+		"low":       6,
+	}
+	getRankVal := func(p string) int {
+		if r, ok := prioRank[strings.ToLower(p)]; ok {
+			return r
+		}
+		return 5
+	}
+
+	sort.Slice(raw.Incoming, func(i, j int) bool {
+		rI := getRankVal(raw.Incoming[i].Priority)
+		rJ := getRankVal(raw.Incoming[j].Priority)
+		if rI != rJ {
+			return rI < rJ
+		}
+		if raw.Incoming[i].Phase != raw.Incoming[j].Phase {
+			return raw.Incoming[i].Phase < raw.Incoming[j].Phase
+		}
+		return raw.Incoming[i].CreatedAt < raw.Incoming[j].CreatedAt
+	})
+
+	for i := range raw.Incoming {
+		raw.Incoming[i].Rank = i + 1
+	}
+
+	byPrio := make(map[string]int)
+	byType := make(map[string]int)
+	for _, item := range raw.Incoming {
+		byPrio[item.Priority]++
+		byType[item.Type]++
+	}
+
+	var resp QueueResponse
+	resp.Summary.TotalPending = len(raw.Incoming)
+	resp.Summary.TotalProcessing = len(raw.Processing)
+	resp.Summary.TotalCompleted = len(raw.Processed)
+	resp.Summary.ByPriority = byPrio
+	resp.Summary.ByType = byType
+	resp.Incoming = raw.Incoming
+	resp.Processing = raw.Processing
+	if len(raw.Processed) > 20 {
+		resp.Processed = raw.Processed[:20]
+	} else {
+		resp.Processed = raw.Processed
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
+func (s *Server) updateOverseerQueueTaskPriority(c *gin.Context) {
+	overseerName := c.Param("name")
+	filename := c.Param("filename")
+	namespace := fmt.Sprintf("overseer-%s", overseerName)
+
+	var reqBody struct {
+		Priority string `json:"priority" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&reqBody); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body, priority is required"})
+		return
+	}
+
+	pods, err := s.K8sManager.Clientset.CoreV1().Pods(namespace).List(c.Request.Context(), v1.ListOptions{})
+	if err != nil || len(pods.Items) == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Overseer controller pod not found"})
+		return
+	}
+
+	podName := pods.Items[0].Name
+	podID := &types.NamespacedName{Namespace: namespace, Name: podName}
+
+	cleanFilename := filepath.Base(filename)
+	updateCmd := fmt.Sprintf("sed -i 's/^priority:.*/priority: %s/' /workspaces/k8s-config-connector/overseer/queues/incoming/%s", reqBody.Priority, cleanFilename)
+
+	var stdout bytes.Buffer
+	execOpts := sandbox.ExecOptions{
+		Command: []string{"/bin/bash", "-c", updateCmd},
+		Stdout:  &stdout,
+	}
+	if err := sandbox.ExecInPod(c.Request.Context(), s.K8sManager.KubeClient, *podID, execOpts); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update task priority", "details": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "updated", "priority": reqBody.Priority, "fileName": cleanFilename})
 }

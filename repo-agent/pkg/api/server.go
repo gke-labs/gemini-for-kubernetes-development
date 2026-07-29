@@ -123,6 +123,8 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 			overseer.GET("/:name/chores/:choreName/tasks", s.getChoreTasks)
 			overseer.POST("/:name/chores/:choreName/pause", s.pauseChore)
 			overseer.POST("/:name/chores/:choreName/resume", s.resumeChore)
+			overseer.GET("/:name/queue", s.getOverseerQueue)
+			overseer.POST("/:name/queue/:filename/priority", s.updateOverseerQueueTaskPriority)
 		}
 	}
 
