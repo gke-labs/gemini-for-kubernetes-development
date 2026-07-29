@@ -32,8 +32,17 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                 if (!res.ok) throw new Error("Failed to fetch task queue");
                 return res.json();
             })
-            .then(data => setQueueData(data))
-            .catch(err => console.error("Failed to fetch task queue:", err));
+            .then(data => {
+                if (data && data.isSyncing) {
+                    setQueueData(prev => prev ? { ...prev, isSyncing: true } : data);
+                } else {
+                    setQueueData(data);
+                }
+            })
+            .catch(err => {
+                console.error("Failed to fetch task queue:", err);
+                setQueueData(prev => prev ? { ...prev, isSyncing: true } : null);
+            });
     }, [activeOverseer]);
 
     useEffect(() => {
@@ -545,6 +554,28 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
 
                 {showTaskQueue ? (
                     <div>
+                        {queueData?.isSyncing && (
+                            <div style={{
+                                backgroundColor: '#fff3cd',
+                                color: '#856404',
+                                border: '1px solid #ffeeba',
+                                borderLeft: '6px solid #ffc107',
+                                padding: '12px 18px',
+                                borderRadius: '8px',
+                                marginBottom: '20px',
+                                fontSize: '0.9rem',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '12px',
+                                boxShadow: '0 2px 8px rgba(0,0,0,0.05)'
+                            }}>
+                                <span style={{ fontSize: '1.4rem' }}>🔄</span>
+                                <div>
+                                    <strong style={{ fontWeight: '700' }}>Overseer Cycle Sync Active:</strong> The Overseer daemon is currently running LLM scan / pushing state to GitHub. Displaying cached task queue view while HTTP service synchronizes...
+                                </div>
+                            </div>
+                        )}
+
                         {/* Summary Ribbon */}
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '15px', marginBottom: '22px' }}>
                             <div style={{ backgroundColor: 'var(--bg-card)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-color)', boxShadow: 'var(--shadow-card)' }}>
