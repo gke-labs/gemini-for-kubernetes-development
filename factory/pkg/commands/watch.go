@@ -3156,6 +3156,8 @@ func parseEvictionAge(ageStr string) (time.Duration, error) {
 	return time.ParseDuration(ageStr)
 }
 
+var overseerQueueMu sync.Mutex
+
 func startQueueHTTPServer(ctx context.Context, queueDir string, addr string) {
 	mux := http.NewServeMux()
 
@@ -3165,7 +3167,9 @@ func startQueueHTTPServer(ctx context.Context, queueDir string, addr string) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
+		overseerQueueMu.Lock()
 		resp := buildQueueResponse(queueDir)
+		overseerQueueMu.Unlock()
 		_ = json.NewEncoder(w).Encode(resp)
 	})
 
@@ -3179,7 +3183,10 @@ func startQueueHTTPServer(ctx context.Context, queueDir string, addr string) {
 
 		if r.Method == http.MethodDelete {
 			incomingPath := filepath.Join(queueDir, "incoming", filename)
-			if err := os.Remove(incomingPath); err != nil && !os.IsNotExist(err) {
+			overseerQueueMu.Lock()
+			err := os.Remove(incomingPath)
+			overseerQueueMu.Unlock()
+			if err != nil && !os.IsNotExist(err) {
 				http.Error(w, fmt.Sprintf("Failed to remove task: %v", err), http.StatusInternalServerError)
 				return
 			}
@@ -3198,8 +3205,10 @@ func startQueueHTTPServer(ctx context.Context, queueDir string, addr string) {
 			}
 
 			incomingPath := filepath.Join(queueDir, "incoming", filename)
+			overseerQueueMu.Lock()
 			content, err := os.ReadFile(incomingPath)
 			if err != nil {
+				overseerQueueMu.Unlock()
 				http.Error(w, fmt.Sprintf("Failed to read task file: %v", err), http.StatusNotFound)
 				return
 			}
@@ -3210,7 +3219,9 @@ func startQueueHTTPServer(ctx context.Context, queueDir string, addr string) {
 				newContent += fmt.Sprintf("\npriority: %s\n", body.Priority)
 			}
 
-			if err := os.WriteFile(incomingPath, []byte(newContent), 0644); err != nil {
+			err = os.WriteFile(incomingPath, []byte(newContent), 0644)
+			overseerQueueMu.Unlock()
+			if err != nil {
 				http.Error(w, fmt.Sprintf("Failed to write task file: %v", err), http.StatusInternalServerError)
 				return
 			}
