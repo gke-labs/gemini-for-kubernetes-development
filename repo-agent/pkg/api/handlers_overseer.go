@@ -698,7 +698,7 @@ func (s *Server) getOverseerQueue(c *gin.Context) {
 	}
 
 	podURL := fmt.Sprintf("http://%s:13338/api/v1/queue", podIP)
-	client := http.Client{Timeout: 2 * time.Second}
+	client := http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Get(podURL)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
