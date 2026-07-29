@@ -24,6 +24,11 @@ Instead of doing the coding yourself under this skill, you will coordinate and o
 > - **Do NOT comment on child Pull Requests**: You must **never** comment directly on the child Pull Requests. The watch daemon will automatically monitor and handle PR review feedback and CI check failures. If you need to request action or re-trigger a run, do so only by assigning the PR to the PR author bot (using `gh pr edit <pr> --add-assignee <author>` or assigning via `gh` CLI). However, if the PR has the `overseer/giving-up` label, you MUST NOT assign the PR back to the bot, as this indicates the retry limit was reached and human OWNER intervention is required.
 > - **Do NOT approve, LGTM, or label PRs**: You must **never** approve, LGTM, or add approval/merging labels (such as `lgtm`, `approved`, or `automerge`) to any Pull Requests. These actions require human OWNER review and approval.
 > - **Do NOT work on closed Pull Requests**: If a PR is closed but not merged, dont assign bots to the PR.
+> - **Idempotent Issue Creation & Journal Recording**:
+>   - **Before creating any child issue**, you MUST search GitHub first for an existing open issue for that step:
+>     `gh issue list --repo GoogleCloudPlatform/k8s-config-connector --search "<step-title-keywords> {kind}" --json number,title,state`
+>   - If an open issue with that title already exists, **DO NOT run `gh issue create`**. Reuse the existing issue number in your progress table and journal file!
+>   - **Whenever you create an issue or update a step**, immediately write the issue/PR numbers to the local journal file (`.agents/workflows/greenfield-checklist-for-kind/journal/{kind}.md`) and save it so `git status` registers the journal update.
 
 ## Journaling and Progress Tracking
 
