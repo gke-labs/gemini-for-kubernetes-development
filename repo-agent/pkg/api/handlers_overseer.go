@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -650,4 +651,111 @@ func (s *Server) deleteOverseerSandbox(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "deleted"})
+}
+
+type QueueTaskItem struct {
+	FileName   string `json:"fileName"`
+	QueueState string `json:"queueState"`
+	Type       string `json:"type"`
+	URL        string `json:"url"`
+	Number     int    `json:"number"`
+	Priority   string `json:"priority"`
+	Phase      int    `json:"phase"`
+	CreatedAt  string `json:"createdAt"`
+	Assignee   string `json:"assignee"`
+	Status     string `json:"status"`
+	CommitSHA  string `json:"commitSHA"`
+	Rank       int    `json:"rank,omitempty"`
+}
+
+type QueueResponse struct {
+	Summary struct {
+		TotalPending    int            `json:"totalPending"`
+		TotalProcessing int            `json:"totalProcessing"`
+		TotalCompleted  int            `json:"totalCompleted"`
+		ByPriority      map[string]int `json:"byPriority"`
+		ByType          map[string]int `json:"byType"`
+	} `json:"summary"`
+	Incoming   []QueueTaskItem `json:"incoming"`
+	Processing []QueueTaskItem `json:"processing"`
+	Processed  []QueueTaskItem `json:"processed"`
+}
+
+func (s *Server) getOverseerQueue(c *gin.Context) {
+	overseerName := c.Param("name")
+	namespace := fmt.Sprintf("overseer-%s", overseerName)
+
+	pods, err := s.K8sManager.Clientset.CoreV1().Pods(namespace).List(c.Request.Context(), v1.ListOptions{})
+	if err != nil || len(pods.Items) == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Overseer controller pod not found"})
+		return
+	}
+
+	podIP := pods.Items[0].Status.PodIP
+	if podIP == "" {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Overseer pod has no IP address allocated yet"})
+		return
+	}
+
+	podURL := fmt.Sprintf("http://%s:13338/api/v1/queue", podIP)
+	client := http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get(podURL)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"status":     "syncing",
+			"isSyncing":  true,
+			"message":    "Overseer daemon is currently in cycle sync / Gemini orchestration phase.",
+			"summary":    gin.H{"totalPending": 0, "totalProcessing": 0, "totalCompleted": 0},
+			"incoming":   []QueueTaskItem{},
+			"processing": []QueueTaskItem{},
+			"processed":  []QueueTaskItem{},
+		})
+		return
+	}
+	defer resp.Body.Close()
+
+	c.Status(resp.StatusCode)
+	c.Header("Content-Type", "application/json")
+	_, _ = io.Copy(c.Writer, resp.Body)
+}
+
+func (s *Server) updateOverseerQueueTaskPriority(c *gin.Context) {
+	overseerName := c.Param("name")
+	filename := c.Param("filename")
+	namespace := fmt.Sprintf("overseer-%s", overseerName)
+
+	var reqBody struct {
+		Priority string `json:"priority" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&reqBody); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body, priority is required"})
+		return
+	}
+
+	pods, err := s.K8sManager.Clientset.CoreV1().Pods(namespace).List(c.Request.Context(), v1.ListOptions{})
+	if err != nil || len(pods.Items) == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Overseer controller pod not found"})
+		return
+	}
+
+	podIP := pods.Items[0].Status.PodIP
+	if podIP == "" {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Overseer pod has no IP address allocated yet"})
+		return
+	}
+
+	cleanFilename := filepath.Base(filename)
+	podURL := fmt.Sprintf("http://%s:13338/api/v1/queue/%s/priority", podIP, cleanFilename)
+	jsonBytes, _ := json.Marshal(reqBody)
+	client := http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Post(podURL, "application/json", bytes.NewReader(jsonBytes))
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to update task priority via Overseer Queue REST service", "details": err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+
+	c.Status(resp.StatusCode)
+	c.Header("Content-Type", "application/json")
+	_, _ = io.Copy(c.Writer, resp.Body)
 }

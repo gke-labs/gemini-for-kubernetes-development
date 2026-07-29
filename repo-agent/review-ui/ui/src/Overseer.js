@@ -19,7 +19,53 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
     const [showPodLogs, setShowPodLogs] = useState(false);
     const [taskLogs, setTaskLogs] = useState({});
 
+    const [showTaskQueue, setShowTaskQueue] = useState(false);
+    const [queueData, setQueueData] = useState(null);
+    const [queueFilter, setQueueFilter] = useState('');
+
     const logIntervalRef = useRef(null);
+
+    const fetchQueue = useCallback(() => {
+        if (!activeOverseer) return;
+        fetch(`/api/overseers/${activeOverseer.metadata.name}/queue`)
+            .then(res => {
+                if (!res.ok) throw new Error("Failed to fetch task queue");
+                return res.json();
+            })
+            .then(data => {
+                if (data && data.isSyncing) {
+                    setQueueData(prev => prev ? { ...prev, isSyncing: true } : data);
+                } else {
+                    setQueueData(data);
+                }
+            })
+            .catch(err => {
+                console.error("Failed to fetch task queue:", err);
+                setQueueData(prev => prev ? { ...prev, isSyncing: true } : null);
+            });
+    }, [activeOverseer]);
+
+    useEffect(() => {
+        fetchQueue();
+        const interval = setInterval(fetchQueue, 5000);
+        return () => clearInterval(interval);
+    }, [fetchQueue]);
+
+    const handleMakeCritical = (fileName, currentPriority) => {
+        if (!activeOverseer) return;
+        const newPriority = currentPriority === 'critical' ? 'medium' : 'critical';
+        fetch(`/api/overseers/${activeOverseer.metadata.name}/queue/${encodeURIComponent(fileName)}/priority`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ priority: newPriority })
+        })
+        .then(res => {
+            if (!res.ok) throw new Error("Failed to update priority");
+            return res.json();
+        })
+        .then(() => fetchQueue())
+        .catch(err => alert("Failed to update task priority: " + err.message));
+    };
 
     const fetchOverseers = useCallback(() => {
         fetch('/api/overseers')
@@ -476,7 +522,220 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                     <button className="btn" onClick={onBack} style={{ padding: '8px 16px', fontWeight: '500' }}>Back to Dashboard</button>
                 </div>
 
-                {showOverseerLogs ? (
+                {/* Sub-Tab Navigation Bar */}
+                <div style={{ display: 'flex', gap: '10px', marginBottom: '20px', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px' }}>
+                    <button 
+                        className={`btn ${!showTaskQueue && !showOverseerLogs && !activeSandbox ? 'btn-primary' : 'btn-secondary'}`}
+                        onClick={() => { setShowTaskQueue(false); setShowOverseerLogs(false); setActiveSandbox(null); }}
+                        style={{ fontWeight: '600', padding: '8px 16px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                    >
+                        📦 Active Sandboxes ({sandboxes.length})
+                    </button>
+                    <button 
+                        className={`btn ${showTaskQueue ? 'btn-primary' : 'btn-secondary'}`}
+                        onClick={() => { setShowTaskQueue(true); setShowOverseerLogs(false); setActiveSandbox(null); }}
+                        style={{ fontWeight: '600', padding: '8px 16px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                    >
+                        📥 Incoming Task Queue ({queueData?.summary?.totalPending || 0})
+                        {queueData?.summary?.byPriority?.critical > 0 && (
+                            <span style={{ backgroundColor: '#d93025', color: '#fff', padding: '1px 7px', borderRadius: '10px', fontSize: '0.75rem', fontWeight: 'bold', marginLeft: '4px' }}>
+                                {queueData.summary.byPriority.critical} Critical
+                            </span>
+                        )}
+                    </button>
+                    <button 
+                        className={`btn ${showOverseerLogs ? 'btn-primary' : 'btn-secondary'}`}
+                        onClick={() => { setShowOverseerLogs(true); setShowTaskQueue(false); setActiveSandbox(null); }}
+                        style={{ fontWeight: '600', padding: '8px 16px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                    >
+                        📜 Daemon Logs
+                    </button>
+                </div>
+
+                {showTaskQueue ? (
+                    <div>
+                        {queueData?.isSyncing && (
+                            <div style={{
+                                backgroundColor: '#fff3cd',
+                                color: '#856404',
+                                border: '1px solid #ffeeba',
+                                borderLeft: '6px solid #ffc107',
+                                padding: '12px 18px',
+                                borderRadius: '8px',
+                                marginBottom: '20px',
+                                fontSize: '0.9rem',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '12px',
+                                boxShadow: '0 2px 8px rgba(0,0,0,0.05)'
+                            }}>
+                                <span style={{ fontSize: '1.4rem' }}>🔄</span>
+                                <div>
+                                    <strong style={{ fontWeight: '700' }}>Overseer Cycle Sync Active:</strong> The Overseer daemon is currently running LLM scan / pushing state to GitHub. Displaying cached task queue view while HTTP service synchronizes...
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Summary Ribbon */}
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '15px', marginBottom: '22px' }}>
+                            <div style={{ backgroundColor: 'var(--bg-card)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-color)', boxShadow: 'var(--shadow-card)' }}>
+                                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>📥 Total Pending Tasks</div>
+                                <div style={{ fontSize: '1.8rem', fontWeight: 'bold', color: 'var(--text-primary)' }}>{queueData?.summary?.totalPending || 0}</div>
+                            </div>
+                            <div style={{ backgroundColor: 'var(--bg-card)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-color)', boxShadow: 'var(--shadow-card)' }}>
+                                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>⚙️ In-Flight / Processing</div>
+                                <div style={{ fontSize: '1.8rem', fontWeight: 'bold', color: '#0275d8' }}>{queueData?.summary?.totalProcessing || 0}</div>
+                            </div>
+                            <div style={{ backgroundColor: 'var(--bg-card)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-color)', boxShadow: 'var(--shadow-card)' }}>
+                                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>⚡ Critical Priority Tasks</div>
+                                <div style={{ fontSize: '1.8rem', fontWeight: 'bold', color: queueData?.summary?.byPriority?.critical > 0 ? '#d93025' : 'var(--text-primary)' }}>
+                                    {queueData?.summary?.byPriority?.critical || 0}
+                                </div>
+                            </div>
+                            <div style={{ backgroundColor: 'var(--bg-card)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-color)', boxShadow: 'var(--shadow-card)' }}>
+                                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>✅ Recently Completed</div>
+                                <div style={{ fontSize: '1.8rem', fontWeight: 'bold', color: '#5cb85c' }}>{queueData?.summary?.totalCompleted || 0}</div>
+                            </div>
+                        </div>
+
+                        {/* Search and Controls */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', flexWrap: 'wrap', gap: '15px' }}>
+                            <input 
+                                type="text"
+                                placeholder="🔍 Search tasks by issue/PR #, type, assignee, or priority..."
+                                value={queueFilter}
+                                onChange={(e) => setQueueFilter(e.target.value)}
+                                style={{
+                                    padding: '8px 14px',
+                                    borderRadius: '6px',
+                                    border: '1px solid var(--border-color)',
+                                    backgroundColor: 'var(--bg-card)',
+                                    color: 'var(--text-primary)',
+                                    width: '380px',
+                                    fontSize: '0.9rem'
+                                }}
+                            />
+                            <button 
+                                className="btn btn-sm btn-secondary" 
+                                onClick={fetchQueue}
+                                style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+                            >
+                                🔄 Refresh Queue
+                            </button>
+                        </div>
+
+                        {/* Queue Table */}
+                        <div className="table-responsive" style={{ backgroundColor: 'var(--bg-card)', borderRadius: '8px', border: '1px solid var(--border-color)', overflow: 'hidden' }}>
+                            <table className="table" style={{ margin: 0, width: '100%', borderCollapse: 'collapse' }}>
+                                <thead>
+                                    <tr style={{ backgroundColor: 'var(--bg-secondary)', borderBottom: '1px solid var(--border-color)', fontSize: '0.85rem' }}>
+                                        <th style={{ padding: '12px 16px', textAlign: 'left', width: '75px' }}>Rank</th>
+                                        <th style={{ padding: '12px 16px', textAlign: 'left' }}>Type</th>
+                                        <th style={{ padding: '12px 16px', textAlign: 'left' }}>Target Issue / PR</th>
+                                        <th style={{ padding: '12px 16px', textAlign: 'left' }}>Priority</th>
+                                        <th style={{ padding: '12px 16px', textAlign: 'left' }}>Assignee</th>
+                                        <th style={{ padding: '12px 16px', textAlign: 'left' }}>Created At</th>
+                                        <th style={{ padding: '12px 16px', textAlign: 'right' }}>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {/* Processing tasks */}
+                                    {queueData?.processing?.map(t => (
+                                        <tr key={`processing-${t.fileName}`} style={{ backgroundColor: 'rgba(2, 117, 216, 0.08)', borderBottom: '1px solid var(--border-color)' }}>
+                                            <td style={{ padding: '12px 16px', fontWeight: 'bold' }}>
+                                                <span style={{ backgroundColor: '#0275d8', color: '#fff', padding: '2px 8px', borderRadius: '10px', fontSize: '0.75rem' }}>RUNNING</span>
+                                            </td>
+                                            <td style={{ padding: '12px 16px' }}>
+                                                <span style={{ backgroundColor: 'var(--bg-secondary)', padding: '3px 8px', borderRadius: '4px', fontSize: '0.8rem', fontWeight: '600' }}>{t.type}</span>
+                                            </td>
+                                            <td style={{ padding: '12px 16px' }}>
+                                                {t.url ? (
+                                                    <a href={t.url} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--text-link)', fontWeight: '600' }}>
+                                                        #{t.number > 0 ? t.number : t.fileName}
+                                                    </a>
+                                                ) : t.fileName}
+                                            </td>
+                                            <td style={{ padding: '12px 16px' }}>
+                                                {t.priority === 'critical' ? (
+                                                    <span style={{ backgroundColor: '#d93025', color: '#fff', padding: '2px 8px', borderRadius: '10px', fontSize: '0.75rem', fontWeight: 'bold' }}>⚡ CRITICAL</span>
+                                                ) : (
+                                                    <span style={{ backgroundColor: '#0275d8', color: '#fff', padding: '2px 8px', borderRadius: '10px', fontSize: '0.75rem', fontWeight: 'bold' }}>{(t.priority || 'medium').toUpperCase()}</span>
+                                                )}
+                                            </td>
+                                            <td style={{ padding: '12px 16px', fontSize: '0.85rem' }}>{t.assignee || '-'}</td>
+                                            <td style={{ padding: '12px 16px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>-</td>
+                                            <td style={{ padding: '12px 16px', textAlign: 'right' }}>-</td>
+                                        </tr>
+                                    ))}
+
+                                    {/* Filtered Pending Tasks */}
+                                    {(() => {
+                                        const filtered = (queueData?.incoming || []).filter(t => {
+                                            if (!queueFilter) return true;
+                                            const q = queueFilter.toLowerCase();
+                                            return (t.fileName || '').toLowerCase().includes(q) ||
+                                                   (t.type || '').toLowerCase().includes(q) ||
+                                                   (t.priority || '').toLowerCase().includes(q) ||
+                                                   (t.assignee || '').toLowerCase().includes(q) ||
+                                                   String(t.number).includes(q) ||
+                                                   (t.url || '').toLowerCase().includes(q);
+                                        });
+
+                                        if (filtered.length === 0) {
+                                            return (
+                                                <tr>
+                                                    <td colSpan="7" style={{ padding: '30px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                                                        {queueData ? 'No pending tasks match the current filter.' : 'Loading task queue...'}
+                                                    </td>
+                                                </tr>
+                                            );
+                                        }
+
+                                        return filtered.map(t => (
+                                            <tr key={t.fileName} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                                                <td style={{ padding: '12px 16px', fontWeight: 'bold', color: t.priority === 'critical' ? '#d93025' : 'var(--text-primary)' }}>
+                                                    #{t.rank}
+                                                </td>
+                                                <td style={{ padding: '12px 16px' }}>
+                                                    <span style={{ backgroundColor: 'var(--bg-secondary)', padding: '3px 8px', borderRadius: '4px', fontSize: '0.8rem', fontWeight: '600' }}>{t.type}</span>
+                                                </td>
+                                                <td style={{ padding: '12px 16px' }}>
+                                                    {t.url ? (
+                                                        <a href={t.url} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--text-link)', fontWeight: '600' }}>
+                                                            #{t.number > 0 ? t.number : t.fileName}
+                                                        </a>
+                                                    ) : t.fileName}
+                                                </td>
+                                                <td style={{ padding: '12px 16px' }}>
+                                                    {t.priority === 'critical' ? (
+                                                        <span style={{ backgroundColor: '#d93025', color: '#fff', padding: '2px 8px', borderRadius: '10px', fontSize: '0.75rem', fontWeight: 'bold' }}>⚡ CRITICAL</span>
+                                                    ) : t.priority === 'high' || t.priority === 'urgent' ? (
+                                                        <span style={{ backgroundColor: '#f57c00', color: '#fff', padding: '2px 8px', borderRadius: '10px', fontSize: '0.75rem', fontWeight: 'bold' }}>🟠 {(t.priority).toUpperCase()}</span>
+                                                    ) : (
+                                                        <span style={{ backgroundColor: '#0275d8', color: '#fff', padding: '2px 8px', borderRadius: '10px', fontSize: '0.75rem', fontWeight: 'bold' }}>{(t.priority || 'medium').toUpperCase()}</span>
+                                                    )}
+                                                </td>
+                                                <td style={{ padding: '12px 16px', fontSize: '0.85rem' }}>{t.assignee || '-'}</td>
+                                                <td style={{ padding: '12px 16px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                                                    {t.createdAt ? t.createdAt.split('T')[0] : '-'}
+                                                </td>
+                                                <td style={{ padding: '12px 16px', textAlign: 'right' }}>
+                                                    <button 
+                                                        className={`btn btn-sm ${t.priority === 'critical' ? 'btn-secondary' : 'btn-danger'}`}
+                                                        style={{ padding: '3px 10px', fontSize: '0.78rem', fontWeight: '600' }}
+                                                        onClick={() => handleMakeCritical(t.fileName, t.priority)}
+                                                    >
+                                                        {t.priority === 'critical' ? 'Demote to Medium' : '⚡ Make Critical'}
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        ));
+                                    })()}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                ) : showOverseerLogs ? (
                     <div className="logs-container" style={{ textAlign: 'left' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
@@ -783,7 +1042,6 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                         </div>
                     </div>
                 ) : activeOverseer ? (() => {
-                    const overseerName = `overseer-${activeOverseer.metadata.name}`;
                     const filtered = sandboxes.filter(filterSandbox);
                     const runningSandboxes = filtered.filter(sb => {
                         const info = getSandboxPodInfo(sb);

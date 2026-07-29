@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1003,6 +1005,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 		if err := os.MkdirAll(processedLogDir, 0755); err != nil {
 			return fmt.Errorf("failed to create processed log dir: %w", err)
 		}
+		go startQueueHTTPServer(ctx, queueDir, ":13338")
 	}
 
 	fmt.Printf("Starting watch for repository %s/%s (mode: %s, queueDir: %s, poll interval: %s, assignee: '%s', labels: %v, dryRun: %v, watchTimeout: %s)...\n", owner, repo, mode, queueDir, interval, targetAssignee, labels, dryRun, watchTimeout)
@@ -3151,4 +3154,203 @@ func parseEvictionAge(ageStr string) (time.Duration, error) {
 	}
 
 	return time.ParseDuration(ageStr)
+}
+
+var overseerQueueMu sync.Mutex
+
+func startQueueHTTPServer(ctx context.Context, queueDir string, addr string) {
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/api/v1/queue", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		overseerQueueMu.Lock()
+		resp := buildQueueResponse(queueDir)
+		overseerQueueMu.Unlock()
+		_ = json.NewEncoder(w).Encode(resp)
+	})
+
+	mux.HandleFunc("/api/v1/queue/", func(w http.ResponseWriter, r *http.Request) {
+		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/v1/queue/"), "/")
+		if len(parts) == 0 || parts[0] == "" {
+			http.Error(w, "Task filename required", http.StatusBadRequest)
+			return
+		}
+		filename := filepath.Base(parts[0])
+
+		if r.Method == http.MethodDelete {
+			incomingPath := filepath.Join(queueDir, "incoming", filename)
+			overseerQueueMu.Lock()
+			err := os.Remove(incomingPath)
+			overseerQueueMu.Unlock()
+			if err != nil && !os.IsNotExist(err) {
+				http.Error(w, fmt.Sprintf("Failed to remove task: %v", err), http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "deleted", "fileName": filename})
+			return
+		}
+
+		if r.Method == http.MethodPost && len(parts) >= 2 && parts[1] == "priority" {
+			var body struct {
+				Priority string `json:"priority"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Priority == "" {
+				http.Error(w, "Invalid JSON body, priority required", http.StatusBadRequest)
+				return
+			}
+
+			incomingPath := filepath.Join(queueDir, "incoming", filename)
+			overseerQueueMu.Lock()
+			content, err := os.ReadFile(incomingPath)
+			if err != nil {
+				overseerQueueMu.Unlock()
+				http.Error(w, fmt.Sprintf("Failed to read task file: %v", err), http.StatusNotFound)
+				return
+			}
+
+			re := regexp.MustCompile(`(?m)^priority:.*$`)
+			newContent := re.ReplaceAllString(string(content), fmt.Sprintf("priority: %s", body.Priority))
+			if !re.MatchString(string(content)) {
+				newContent += fmt.Sprintf("\npriority: %s\n", body.Priority)
+			}
+
+			err = os.WriteFile(incomingPath, []byte(newContent), 0644)
+			overseerQueueMu.Unlock()
+			if err != nil {
+				http.Error(w, fmt.Sprintf("Failed to write task file: %v", err), http.StatusInternalServerError)
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "updated", "priority": body.Priority, "fileName": filename})
+			return
+		}
+
+		http.Error(w, "Not found", http.StatusNotFound)
+	})
+
+	server := &http.Server{Addr: addr, Handler: mux}
+	klog.Infof("Starting embedded Overseer Queue HTTP server on %s", addr)
+	go func() {
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			klog.Warningf("Overseer Queue HTTP server error: %v", err)
+		}
+	}()
+
+	<-ctx.Done()
+	_ = server.Close()
+}
+
+func buildQueueResponse(queueDir string) map[string]interface{} {
+	readQueueDir := func(sub string) []map[string]interface{} {
+		d := filepath.Join(queueDir, sub)
+		entries, err := os.ReadDir(d)
+		if err != nil {
+			return nil
+		}
+		var tasks []map[string]interface{}
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(d, e.Name()))
+			if err != nil {
+				continue
+			}
+			var t QueueTask
+			if err := yaml.Unmarshal(data, &t); err != nil {
+				continue
+			}
+			prio := strings.ToLower(t.Priority)
+			if prio == "" {
+				prio = "medium"
+			}
+			tasks = append(tasks, map[string]interface{}{
+				"fileName":   e.Name(),
+				"queueState": sub,
+				"type":       t.Type,
+				"url":        t.URL,
+				"number":     t.Number,
+				"priority":   prio,
+				"phase":      t.Phase,
+				"createdAt":  t.CreatedAt.Format(time.RFC3339),
+				"assignee":   t.Assignee,
+				"status":     t.Status,
+				"commitSHA":  t.CommitSHA,
+			})
+		}
+		return tasks
+	}
+
+	incoming := readQueueDir("incoming")
+	processing := readQueueDir("processing")
+	processed := readQueueDir("processed")
+
+	priorityRank := map[string]int{
+		"critical":  1,
+		"urgent":    2,
+		"important": 3,
+		"high":      4,
+		"medium":    5,
+		"low":       6,
+	}
+	getRankVal := func(p string) int {
+		if r, ok := priorityRank[strings.ToLower(p)]; ok {
+			return r
+		}
+		return 5
+	}
+
+	sort.Slice(incoming, func(i, j int) bool {
+		pI, _ := incoming[i]["priority"].(string)
+		pJ, _ := incoming[j]["priority"].(string)
+		rI := getRankVal(pI)
+		rJ := getRankVal(pJ)
+		if rI != rJ {
+			return rI < rJ
+		}
+		phI, _ := incoming[i]["phase"].(int)
+		phJ, _ := incoming[j]["phase"].(int)
+		if phI != phJ {
+			return phI < phJ
+		}
+		cI, _ := incoming[i]["createdAt"].(string)
+		cJ, _ := incoming[j]["createdAt"].(string)
+		return cI < cJ
+	})
+
+	for i := range incoming {
+		incoming[i]["rank"] = i + 1
+	}
+
+	byPrio := make(map[string]int)
+	byType := make(map[string]int)
+	for _, item := range incoming {
+		p, _ := item["priority"].(string)
+		t, _ := item["type"].(string)
+		byPrio[p]++
+		byType[t]++
+	}
+
+	if len(processed) > 20 {
+		processed = processed[:20]
+	}
+
+	return map[string]interface{}{
+		"summary": map[string]interface{}{
+			"totalPending":    len(incoming),
+			"totalProcessing": len(processing),
+			"totalCompleted":  len(processed),
+			"byPriority":      byPrio,
+			"byType":          byType,
+		},
+		"incoming":   incoming,
+		"processing": processing,
+		"processed":  processed,
+	}
 }
