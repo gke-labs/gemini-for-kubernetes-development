@@ -1453,6 +1453,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					}
 
 					var unackCommentIDs []int64
+					var unackPRCommentIDs []int64
 					for _, c := range comments {
 						if shouldIgnoreUser(c.GetUser(), githubLogin, bots) {
 							continue
@@ -1477,42 +1478,36 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					}
 
 					// Also check inline PR review comments directly
-					if !hasNewComments {
-						for _, r := range reviews {
-							if shouldIgnoreUser(r.GetUser(), githubLogin, bots) {
-								if r.GetSubmittedAt().After(latestBotReplyTime) {
-									latestBotReplyTime = r.GetSubmittedAt()
-								}
-								continue
+					for _, r := range reviews {
+						if shouldIgnoreUser(r.GetUser(), githubLogin, bots) {
+							if r.GetSubmittedAt().After(latestBotReplyTime) {
+								latestBotReplyTime = r.GetSubmittedAt()
 							}
-							if strings.EqualFold(r.GetUser().GetLogin(), pr.GetUser().GetLogin()) {
-								continue
-							}
-							if r.GetSubmittedAt().After(lastCommitTime) && r.GetSubmittedAt().After(state.lastCommentAddressedTime) && r.GetSubmittedAt().After(latestBotReplyTime) {
-								hasNewComments = true
-								break
-							}
+							continue
+						}
+						if strings.EqualFold(r.GetUser().GetLogin(), pr.GetUser().GetLogin()) {
+							continue
+						}
+						if r.GetSubmittedAt().After(lastCommitTime) && r.GetSubmittedAt().After(state.lastCommentAddressedTime) && r.GetSubmittedAt().After(latestBotReplyTime) {
+							hasNewComments = true
+						}
 
-							revComments, err := github.ListAllReviewComments(ctx, ghClient, owner, repo, num, r.GetID())
-							if err == nil {
-								for _, rc := range revComments {
-									if shouldIgnoreUser(rc.GetUser(), githubLogin, bots) {
-										if rc.GetCreatedAt().After(latestBotReplyTime) {
-											latestBotReplyTime = rc.GetCreatedAt()
-										}
-										continue
+						revComments, err := github.ListAllReviewComments(ctx, ghClient, owner, repo, num, r.GetID())
+						if err == nil {
+							for _, rc := range revComments {
+								if shouldIgnoreUser(rc.GetUser(), githubLogin, bots) {
+									if rc.GetCreatedAt().After(latestBotReplyTime) {
+										latestBotReplyTime = rc.GetCreatedAt()
 									}
-									if strings.EqualFold(rc.GetUser().GetLogin(), pr.GetUser().GetLogin()) {
-										continue
-									}
-									if rc.GetCreatedAt().After(lastCommitTime) && rc.GetCreatedAt().After(state.lastCommentAddressedTime) && rc.GetCreatedAt().After(latestBotReplyTime) {
-										hasNewComments = true
-										break
-									}
+									continue
 								}
-							}
-							if hasNewComments {
-								break
+								if strings.EqualFold(rc.GetUser().GetLogin(), pr.GetUser().GetLogin()) {
+									continue
+								}
+								if rc.GetCreatedAt().After(lastCommitTime) && rc.GetCreatedAt().After(state.lastCommentAddressedTime) && rc.GetCreatedAt().After(latestBotReplyTime) {
+									hasNewComments = true
+									unackPRCommentIDs = append(unackPRCommentIDs, rc.GetID())
+								}
 							}
 						}
 					}
@@ -1559,6 +1554,9 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 									fmt.Printf("Queueing address-comments task for PR #%d...\n", num)
 									for _, cid := range unackCommentIDs {
 										addIssueCommentReaction(ctx, ghClient, owner, repo, cid, "eyes")
+									}
+									for _, cid := range unackPRCommentIDs {
+										addPullRequestCommentReaction(ctx, ghClient, owner, repo, cid, "eyes")
 									}
 									state.lastCommentAddressedTime = time.Now()
 									processedPRs[num] = state
@@ -3068,6 +3066,16 @@ func addIssueCommentReaction(ctx context.Context, ghClient *githubv39.Client, ow
 	_, _, err := ghClient.Reactions.CreateIssueCommentReaction(ctx, owner, repo, commentID, content)
 	if err != nil {
 		klog.Warningf("Failed to create reaction '%s' on comment %d: %v", content, commentID, err)
+	}
+}
+
+func addPullRequestCommentReaction(ctx context.Context, ghClient *githubv39.Client, owner, repo string, commentID int64, content string) {
+	if ghClient == nil {
+		return
+	}
+	_, _, err := ghClient.Reactions.CreatePullRequestCommentReaction(ctx, owner, repo, commentID, content)
+	if err != nil {
+		klog.Warningf("Failed to create reaction '%s' on PR review comment %d: %v", content, commentID, err)
 	}
 }
 
