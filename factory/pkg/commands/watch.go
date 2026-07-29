@@ -3262,26 +3262,48 @@ func buildQueueResponse(queueDir string) map[string]interface{} {
 			if err != nil {
 				continue
 			}
-			var t QueueTask
-			if err := yaml.Unmarshal(data, &t); err != nil {
-				continue
+			content := string(data)
+			extractField := func(key string) string {
+				for _, line := range strings.Split(content, "\n") {
+					line = strings.TrimSpace(line)
+					if strings.HasPrefix(line, key+":") {
+						val := strings.TrimPrefix(line, key+":")
+						val = strings.TrimSpace(val)
+						val = strings.Trim(val, "\"\r")
+						return val
+					}
+				}
+				return ""
 			}
-			prio := strings.ToLower(t.Priority)
-			if prio == "" {
-				prio = "medium"
+
+			tType := extractField("type")
+			tURL := extractField("url")
+			tNumStr := extractField("number")
+			tPrio := strings.ToLower(extractField("priority"))
+			tPhaseStr := extractField("phase")
+			tCreated := extractField("createdAt")
+			tAssignee := extractField("assignee")
+			tStatus := extractField("status")
+			tSHA := extractField("commitSHA")
+
+			if tPrio == "" {
+				tPrio = "medium"
 			}
+			tNum, _ := strconv.Atoi(tNumStr)
+			tPhase, _ := strconv.Atoi(tPhaseStr)
+
 			tasks = append(tasks, map[string]interface{}{
 				"fileName":   e.Name(),
 				"queueState": sub,
-				"type":       t.Type,
-				"url":        t.URL,
-				"number":     t.Number,
-				"priority":   prio,
-				"phase":      t.Phase,
-				"createdAt":  t.CreatedAt.Format(time.RFC3339),
-				"assignee":   t.Assignee,
-				"status":     t.Status,
-				"commitSHA":  t.CommitSHA,
+				"type":       tType,
+				"url":        tURL,
+				"number":     tNum,
+				"priority":   tPrio,
+				"phase":      tPhase,
+				"createdAt":  tCreated,
+				"assignee":   tAssignee,
+				"status":     tStatus,
+				"commitSHA":  tSHA,
 			})
 		}
 		return tasks
