@@ -346,6 +346,18 @@ func countRunningSandboxTasks(ctx context.Context, kubeClient *clients.Kubernete
 			continue
 		}
 
+		if spec, ok := item.Object["spec"].(map[string]interface{}); ok {
+			if r, ok := spec["replicas"].(int64); ok && r == 0 {
+				continue
+			}
+			if r, ok := spec["replicas"].(float64); ok && int64(r) == 0 {
+				continue
+			}
+			if r, ok := spec["replicas"].(int); ok && r == 0 {
+				continue
+			}
+		}
+
 		annotations := item.GetAnnotations()
 		if annotations == nil {
 			count++
