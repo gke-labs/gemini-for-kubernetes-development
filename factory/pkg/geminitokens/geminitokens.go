@@ -450,19 +450,30 @@ func GetTokensStatus() (*TokensStatus, error) {
 		return nil, err
 	}
 
-	if len(allTokens) == 0 {
-		return nil, nil
+	status := &TokensStatus{}
+	seenSuspended := make(map[string]bool)
+
+	// Include all permanently suspended keys recorded in storage
+	suspendedMap, _ := loadSuspendedList()
+	for k := range suspendedMap {
+		if k != "" && !seenSuspended[k] {
+			seenSuspended[k] = true
+			status.Suspended++
+			status.SuspendedList = append(status.SuspendedList, k) // Full un-obscured key string
+		}
 	}
 
-	status := &TokensStatus{}
 	for _, t := range allTokens {
 		obscured := t
 		if len(obscured) > 8 {
 			obscured = obscured[:8] + "..."
 		}
 		if IsKeySuspended(t) {
-			status.Suspended++
-			status.SuspendedList = append(status.SuspendedList, obscured)
+			if !seenSuspended[t] {
+				seenSuspended[t] = true
+				status.Suspended++
+				status.SuspendedList = append(status.SuspendedList, t) // Full un-obscured key string
+			}
 		} else if IsKeyQuotaExceeded(t) {
 			status.QuotaExceeded++
 			status.QuotaExceededList = append(status.QuotaExceededList, obscured)
@@ -472,5 +483,8 @@ func GetTokensStatus() (*TokensStatus, error) {
 		}
 	}
 	status.Total = len(allTokens)
+	if status.Total < len(seenSuspended)+status.Active+status.QuotaExceeded {
+		status.Total = len(seenSuspended) + status.Active + status.QuotaExceeded
+	}
 	return status, nil
 }

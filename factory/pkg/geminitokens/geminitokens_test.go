@@ -96,7 +96,7 @@ func TestExtractAPIKeyFromError(t *testing.T) {
 }
 
 func TestAddSuspendedKey(t *testing.T) {
-	testKey := "AIzaSyTEST_SUSPENDED_KEY_12345"
+	testKey := "AIzaSyDUMMY_FULL_SUSPENDED_KEY_99999"
 	if err := AddSuspendedKey(testKey); err != nil {
 		t.Fatalf("AddSuspendedKey failed: %v", err)
 	}
@@ -107,5 +107,21 @@ func TestAddSuspendedKey(t *testing.T) {
 
 	if !IsKeyQuotaExceeded(testKey) {
 		t.Errorf("IsKeyQuotaExceeded(%q) expected true as fallback, got false", testKey)
+	}
+
+	status, err := GetTokensStatus()
+	if err != nil {
+		t.Fatalf("GetTokensStatus failed: %v", err)
+	}
+
+	found := false
+	for _, key := range status.SuspendedList {
+		if key == testKey {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("GetTokensStatus().SuspendedList expected to contain full key %q, got %v", testKey, status.SuspendedList)
 	}
 }
