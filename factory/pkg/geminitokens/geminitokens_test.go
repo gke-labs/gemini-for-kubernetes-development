@@ -72,3 +72,56 @@ func TestIsTransientRateLimit(t *testing.T) {
 		})
 	}
 }
+
+func TestIsSuspendedKeyError(t *testing.T) {
+	suspendedPayload := `{"error":{"type":"Error","message":"{\"error\":{\"message\":\"{\\n  \\\"error\\\": {\\n    \\\"code\\\": 403,\\n    \\\"message\\\": \\\"Permission denied: Consumer 'api_key:AIzaSyDUMMY_SUSPENDED_TOKEN_FOR_TESTING_12345' has been suspended.\\\",\\n    \\\"status\\\": \\\"PERMISSION_DENIED\\\",\\n    \\\"details\\\": [\\n      {\\n        \\\"@type\\\": \\\"type.googleapis.com/google.rpc.ErrorInfo\\\",\\n        \\\"reason\\\": \\\"CONSUMER_SUSPENDED\\\",\\n        \\\"domain\\\": \\\"googleapis.com\\\",\\n        \\\"metadata\\\": {\\n          \\\"consumer\\\": \\\"projects/36948037873\\\",\\n          \\\"containerInfo\\\": \\\"api_key:AIzaSyDUMMY_SUSPENDED_TOKEN_FOR_TESTING_12345\\\",\\n          \\\"service\\\": \\\"generativelanguage.googleapis.com\\\"\\n        }\\n      }\\n    ]\\n  }\\n}\\n\",\"code\":403,\"status\":\"Forbidden\"}}","code":403}}`
+
+	if !IsSuspendedKeyError([]byte(suspendedPayload)) {
+		t.Errorf("IsSuspendedKeyError expected true for CONSUMER_SUSPENDED payload, got false")
+	}
+
+	if !IsFatalQuotaError([]byte(suspendedPayload)) {
+		t.Errorf("IsFatalQuotaError expected true for CONSUMER_SUSPENDED payload, got false")
+	}
+}
+
+func TestExtractAPIKeyFromError(t *testing.T) {
+	suspendedPayload := `Permission denied: Consumer 'api_key:AIzaSyDUMMY_SUSPENDED_TOKEN_FOR_TESTING_12345' has been suspended.`
+	extracted := ExtractAPIKeyFromError([]byte(suspendedPayload))
+	expected := "AIzaSyDUMMY_SUSPENDED_TOKEN_FOR_TESTING_12345"
+
+	if extracted != expected {
+		t.Errorf("ExtractAPIKeyFromError got %q, want %q", extracted, expected)
+	}
+}
+
+func TestAddSuspendedKey(t *testing.T) {
+	testKey := "AIzaSyDUMMY_FULL_SUSPENDED_KEY_99999"
+	if err := AddSuspendedKey(testKey); err != nil {
+		t.Fatalf("AddSuspendedKey failed: %v", err)
+	}
+
+	if !IsKeySuspended(testKey) {
+		t.Errorf("IsKeySuspended(%q) expected true, got false", testKey)
+	}
+
+	if !IsKeyQuotaExceeded(testKey) {
+		t.Errorf("IsKeyQuotaExceeded(%q) expected true as fallback, got false", testKey)
+	}
+
+	status, err := GetTokensStatus()
+	if err != nil {
+		t.Fatalf("GetTokensStatus failed: %v", err)
+	}
+
+	found := false
+	for _, key := range status.SuspendedList {
+		if key == testKey {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("GetTokensStatus().SuspendedList expected to contain full key %q, got %v", testKey, status.SuspendedList)
+	}
+}

@@ -477,17 +477,12 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 					if geminitokens.IsTransientRateLimit(newData) {
 						klog.V(2).Infof("Transient rate limit (RPM/TPM) detected in task output; allowing CLI to retry with backoff...")
 					} else if geminitokens.IsFatalQuotaError(newData) {
-						if key := envs["GEMINI_API_KEY"]; key != "" {
-							if err := geminitokens.AddQuotaExceededKey(key, 4*time.Hour); err != nil {
-								klog.Errorf("Failed to mark key as quota exceeded: %v", err)
-							}
-						}
-						klog.Warningf("Fatal quota exceeded detected in task output. Terminating task process group in sandbox pod immediately...")
+						klog.Warningf("Fatal quota/suspension error detected in task output. Terminating task process group in sandbox pod immediately...")
 						killCtx, killCancel := context.WithTimeout(context.Background(), 15*time.Second)
 						defer killCancel()
 						killCmd := fmt.Sprintf("if [ -f %s ]; then top_pid=$(cat %s); kill -9 -$(ps -o pgid= $top_pid 2>/dev/null | tr -d ' ') 2>/dev/null || pkill -9 -P $top_pid 2>/dev/null || kill -9 $top_pid 2>/dev/null || true; echo 137 > %s; fi", pidFile, pidFile, exitCodeFile)
 						_ = c.Exec(killCtx, killCmd, "/workspaces", nil, nil, nil, nil)
-						return fmt.Errorf("task failed due to quota exceeded (RESOURCE_EXHAUSTED / 429)")
+						return handleQuotaOrSuspensionError(newData, envs)
 					}
 				}
 			} else {
@@ -534,15 +529,10 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 					if len(newData) > 0 {
 						_, _ = os.Stdout.Write(newData)
 						if geminitokens.IsFatalQuotaError(newData) {
-							if key := envs["GEMINI_API_KEY"]; key != "" {
-								if err := geminitokens.AddQuotaExceededKey(key, 4*time.Hour); err != nil {
-									klog.Errorf("Failed to mark key as quota exceeded: %v", err)
-								}
-							}
 							killCtx, killCancel := context.WithTimeout(context.Background(), 15*time.Second)
 							defer killCancel()
 							_ = c.Exec(killCtx, fmt.Sprintf("echo 137 > %s", exitCodeFile), "/workspaces", nil, nil, nil, nil)
-							return fmt.Errorf("task failed due to quota exceeded (RESOURCE_EXHAUSTED / 429)")
+							return handleQuotaOrSuspensionError(newData, envs)
 						}
 					}
 				}
@@ -572,15 +562,10 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 							if len(newData) > 0 {
 								_, _ = os.Stdout.Write(newData)
 								if geminitokens.IsFatalQuotaError(newData) {
-									if key := envs["GEMINI_API_KEY"]; key != "" {
-										if err := geminitokens.AddQuotaExceededKey(key, 4*time.Hour); err != nil {
-											klog.Errorf("Failed to mark key as quota exceeded: %v", err)
-										}
-									}
 									killCtx, killCancel := context.WithTimeout(context.Background(), 15*time.Second)
 									defer killCancel()
 									_ = c.Exec(killCtx, fmt.Sprintf("echo 137 > %s", exitCodeFile), "/workspaces", nil, nil, nil, nil)
-									return fmt.Errorf("task failed due to quota exceeded (RESOURCE_EXHAUSTED / 429)")
+									return handleQuotaOrSuspensionError(newData, envs)
 								}
 							}
 						}
@@ -613,4 +598,26 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 			timer.Reset(pollInterval)
 		}
 	}
+}
+
+func handleQuotaOrSuspensionError(newData []byte, envs map[string]string) error {
+	key := geminitokens.ExtractAPIKeyFromError(newData)
+	if key == "" {
+		key = envs["GEMINI_API_KEY"]
+	}
+	if key != "" {
+		if geminitokens.IsSuspendedKeyError(newData) {
+			if err := geminitokens.AddSuspendedKey(key); err != nil {
+				klog.Errorf("Failed to mark key as suspended: %v", err)
+			}
+		} else {
+			if err := geminitokens.AddQuotaExceededKey(key, 4*time.Hour); err != nil {
+				klog.Errorf("Failed to mark key as quota exceeded: %v", err)
+			}
+		}
+	}
+	if geminitokens.IsSuspendedKeyError(newData) {
+		return fmt.Errorf("task failed due to suspended Gemini API key (CONSUMER_SUSPENDED)")
+	}
+	return fmt.Errorf("task failed due to quota exceeded (RESOURCE_EXHAUSTED / 429)")
 }

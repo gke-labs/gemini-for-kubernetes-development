@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -17,7 +18,11 @@ import (
 
 const KeyGeminiAPIKey = "GEMINI_API_KEY"
 
-var listMutex sync.Mutex
+var (
+	listMutex      sync.Mutex
+	suspendedMutex sync.Mutex
+	keyRegexp      = regexp.MustCompile(`api_key:([A-Za-z0-9_\-\.]{25,})|(AIzaSy[A-Za-z0-9_\-]{33})|(AQ\.[A-Za-z0-9_\-]{40,})`)
+)
 
 func getQuotaExceededFilePath() string {
 	// 1. If FACTORY_CONFIG or .factory.cfg is used, put it in the same directory
@@ -49,6 +54,35 @@ func getQuotaExceededFilePath() string {
 
 	// 3. Fallback to /tmp
 	return "/tmp/.factory_quota_exceeded_keys.json"
+}
+
+func getSuspendedFilePath() string {
+	configPath := ""
+	if _, err := os.Stat(".factory.cfg"); err == nil {
+		configPath = ".factory.cfg"
+	} else if envVal := os.Getenv("FACTORY_CONFIG"); envVal != "" {
+		fi, err := os.Stat(envVal)
+		if err == nil {
+			if fi.IsDir() {
+				configPath = filepath.Join(envVal, ".factory.cfg")
+			} else {
+				configPath = envVal
+			}
+		}
+	}
+	if configPath != "" {
+		absPath, err := filepath.Abs(configPath)
+		if err == nil {
+			return filepath.Join(filepath.Dir(absPath), ".factory_suspended_keys.json")
+		}
+	}
+
+	dir, err := os.UserConfigDir()
+	if err == nil {
+		return filepath.Join(dir, "factory", "suspended_keys.json")
+	}
+
+	return "/tmp/.factory_suspended_keys.json"
 }
 
 func loadQuotaExceededList() (map[string]time.Time, error) {
@@ -93,6 +127,80 @@ func saveQuotaExceededList(list map[string]time.Time) error {
 	}
 
 	return os.WriteFile(filePath, data, 0644)
+}
+
+func loadSuspendedList() (map[string]string, error) {
+	filePath := getSuspendedFilePath()
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return make(map[string]string), nil
+		}
+		return nil, err
+	}
+
+	var rawMap map[string]string
+	if err := json.Unmarshal(data, &rawMap); err != nil {
+		return nil, err
+	}
+	return rawMap, nil
+}
+
+func saveSuspendedList(list map[string]string) error {
+	filePath := getSuspendedFilePath()
+	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+		return err
+	}
+
+	data, err := json.MarshalIndent(list, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(filePath, data, 0644)
+}
+
+func IsKeySuspended(key string) bool {
+	if key == "" {
+		return false
+	}
+	suspendedMutex.Lock()
+	defer suspendedMutex.Unlock()
+
+	list, err := loadSuspendedList()
+	if err != nil {
+		return false
+	}
+	_, exists := list[key]
+	return exists
+}
+
+func AddSuspendedKey(key string) error {
+	if key == "" {
+		return nil
+	}
+	suspendedMutex.Lock()
+	defer suspendedMutex.Unlock()
+
+	list, err := loadSuspendedList()
+	if err != nil {
+		list = make(map[string]string)
+	}
+	list[key] = time.Now().Format(time.RFC3339)
+
+	keyDesc := key
+	if len(keyDesc) > 8 {
+		keyDesc = keyDesc[:8] + "..."
+	}
+	klog.Warningf("Permanently marking key starting with '%s' as SUSPENDED (CONSUMER_SUSPENDED)", keyDesc)
+
+	if err := saveSuspendedList(list); err != nil {
+		klog.Errorf("Failed to save suspended keys list: %v", err)
+	}
+
+	// Also mark it in quota exceeded list with 100-year expiration as fallback guardrail
+	_ = AddQuotaExceededKey(key, 100*365*24*time.Hour)
+	return nil
 }
 
 func IsKeyQuotaExceeded(key string) bool {
@@ -152,9 +260,36 @@ func AddQuotaExceededKey(key string, duration time.Duration) error {
 	return nil
 }
 
+// IsSuspendedKeyError checks if the output indicates that an API key has been suspended or disabled permanently.
+func IsSuspendedKeyError(data []byte) bool {
+	str := string(data)
+	return strings.Contains(str, "CONSUMER_SUSPENDED") ||
+		strings.Contains(str, "has been suspended") ||
+		strings.Contains(str, "API_KEY_INVALID") ||
+		strings.Contains(str, "API key not valid") ||
+		(strings.Contains(str, "PERMISSION_DENIED") && (strings.Contains(str, "suspended") || strings.Contains(str, "disabled")))
+}
+
+// ExtractAPIKeyFromError attempts to parse an explicit API key string from error logs/payloads.
+func ExtractAPIKeyFromError(data []byte) string {
+	matches := keyRegexp.FindSubmatch(data)
+	if len(matches) > 0 {
+		for _, m := range matches[1:] {
+			if len(m) > 0 {
+				return string(m)
+			}
+		}
+	}
+	return ""
+}
+
 // IsFatalQuotaError checks if the output indicates daily quota exhaustion (RPD) or unrecoverable billing/quota errors,
 // ignoring intermediate transient RPM/TPM retry messages ("Retrying with backoff").
 func IsFatalQuotaError(data []byte) bool {
+	if IsSuspendedKeyError(data) {
+		return true
+	}
+
 	str := string(data)
 
 	hasFatalKeyword := strings.Contains(str, "exceeded your current quota") ||
@@ -225,7 +360,7 @@ func getTokenFromScript() (string, error) {
 		return "", nil
 	}
 
-	// Try up to 30 times to get a non-quota-exceeded token from the script
+	// Try up to 30 times to get a non-quota-exceeded and non-suspended token from the script
 	for attempt := 0; attempt < 30; attempt++ {
 		cmd := exec.Command(scriptPath)
 		var out bytes.Buffer
@@ -240,7 +375,7 @@ func getTokenFromScript() (string, error) {
 			return "", nil
 		}
 
-		if !IsKeyQuotaExceeded(token) {
+		if !IsKeyQuotaExceeded(token) && !IsKeySuspended(token) {
 			return token, nil
 		}
 	}
@@ -302,9 +437,11 @@ func DiscoverTokensFromScript() ([]string, error) {
 type TokensStatus struct {
 	Total             int
 	QuotaExceeded     int
+	Suspended         int
 	Active            int
 	ActiveList        []string
 	QuotaExceededList []string
+	SuspendedList     []string
 }
 
 func GetTokensStatus() (*TokensStatus, error) {
@@ -313,17 +450,31 @@ func GetTokensStatus() (*TokensStatus, error) {
 		return nil, err
 	}
 
-	if len(allTokens) == 0 {
-		return nil, nil
+	status := &TokensStatus{}
+	seenSuspended := make(map[string]bool)
+
+	// Include all permanently suspended keys recorded in storage
+	suspendedMap, _ := loadSuspendedList()
+	for k := range suspendedMap {
+		if k != "" && !seenSuspended[k] {
+			seenSuspended[k] = true
+			status.Suspended++
+			status.SuspendedList = append(status.SuspendedList, k) // Full un-obscured key string
+		}
 	}
 
-	status := &TokensStatus{}
 	for _, t := range allTokens {
 		obscured := t
 		if len(obscured) > 8 {
 			obscured = obscured[:8] + "..."
 		}
-		if IsKeyQuotaExceeded(t) {
+		if IsKeySuspended(t) {
+			if !seenSuspended[t] {
+				seenSuspended[t] = true
+				status.Suspended++
+				status.SuspendedList = append(status.SuspendedList, t) // Full un-obscured key string
+			}
+		} else if IsKeyQuotaExceeded(t) {
 			status.QuotaExceeded++
 			status.QuotaExceededList = append(status.QuotaExceededList, obscured)
 		} else {
@@ -332,5 +483,8 @@ func GetTokensStatus() (*TokensStatus, error) {
 		}
 	}
 	status.Total = len(allTokens)
+	if status.Total < len(seenSuspended)+status.Active+status.QuotaExceeded {
+		status.Total = len(seenSuspended) + status.Active + status.QuotaExceeded
+	}
 	return status, nil
 }
