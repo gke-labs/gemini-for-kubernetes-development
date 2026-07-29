@@ -691,7 +691,20 @@ func (s *Server) getOverseerQueue(c *gin.Context) {
 		return
 	}
 
-	podIP := pods.Items[0].Status.PodIP
+	var targetPod *corev1.Pod
+	expectedName := fmt.Sprintf("overseer-%s", overseerName)
+	for i := range pods.Items {
+		p := &pods.Items[i]
+		if p.Name == expectedName || strings.HasPrefix(p.Name, "overseer-") {
+			targetPod = p
+			break
+		}
+	}
+	if targetPod == nil {
+		targetPod = &pods.Items[0]
+	}
+
+	podIP := targetPod.Status.PodIP
 	if podIP == "" {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Overseer pod has no IP address allocated yet"})
 		return
@@ -738,7 +751,20 @@ func (s *Server) updateOverseerQueueTaskPriority(c *gin.Context) {
 		return
 	}
 
-	podIP := pods.Items[0].Status.PodIP
+	var targetPod *corev1.Pod
+	expectedName := fmt.Sprintf("overseer-%s", overseerName)
+	for i := range pods.Items {
+		p := &pods.Items[i]
+		if p.Name == expectedName || strings.HasPrefix(p.Name, "overseer-") {
+			targetPod = p
+			break
+		}
+	}
+	if targetPod == nil {
+		targetPod = &pods.Items[0]
+	}
+
+	podIP := targetPod.Status.PodIP
 	if podIP == "" {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Overseer pod has no IP address allocated yet"})
 		return
