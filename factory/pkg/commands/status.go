@@ -71,9 +71,12 @@ func NewStatusCommand(ctx context.Context) *cobra.Command {
 						fmt.Fprintf(w, "Gemini Key\t[OK]\tConfigured via dynamic tokenscript\n")
 						status, err := geminitokens.GetTokensStatus()
 						if err == nil && status != nil {
-							fmt.Fprintf(w, "Tokens Status\t[OK]\tTotal: %d (Active: %d, Quota Exceeded: %d)\n", status.Total, status.Active, status.QuotaExceeded)
+							fmt.Fprintf(w, "Tokens Status\t[OK]\tTotal: %d (Active: %d, Quota Exceeded: %d, Suspended: %d)\n", status.Total, status.Active, status.QuotaExceeded, status.Suspended)
 							if len(status.QuotaExceededList) > 0 {
 								fmt.Fprintf(w, "Quota Exceeded\t[WARN]\t%s (resets at midnight)\n", strings.Join(status.QuotaExceededList, ", "))
+							}
+							if len(status.SuspendedList) > 0 {
+								fmt.Fprintf(w, "Suspended Keys\t[FAIL]\t%s (PERMANENTLY SUSPENDED - CONSUMER_SUSPENDED)\n", strings.Join(status.SuspendedList, ", "))
 							}
 						}
 					} else {
