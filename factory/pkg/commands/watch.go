@@ -2019,7 +2019,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						if tI.Phase > tJ.Phase {
 							swap = true
 						} else if tI.Phase == tJ.Phase {
-							if tI.CreatedAt.Before(tJ.CreatedAt) {
+							if tI.CreatedAt.After(tJ.CreatedAt) {
 								swap = true
 							}
 						}
