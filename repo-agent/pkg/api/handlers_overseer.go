@@ -9,7 +9,6 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -692,133 +691,24 @@ func (s *Server) getOverseerQueue(c *gin.Context) {
 		return
 	}
 
-	// 1. Try fast embedded HTTP REST API on port 13338 first
 	podIP := pods.Items[0].Status.PodIP
-	if podIP != "" {
-		podURL := fmt.Sprintf("http://%s:13338/api/v1/queue", podIP)
-		client := http.Client{Timeout: 1500 * time.Millisecond}
-		if resp, err := client.Get(podURL); err == nil && resp.StatusCode == http.StatusOK {
-			defer resp.Body.Close()
-			c.Header("Content-Type", "application/json")
-			_, _ = io.Copy(c.Writer, resp.Body)
-			return
-		}
-	}
-
-	// 2. Fallback to ExecInPod if HTTP port 13338 is unavailable
-	podName := pods.Items[0].Name
-	podID := &types.NamespacedName{Namespace: namespace, Name: podName}
-
-	parseScript := `
-parse_queue() {
-  dir="$1"
-  state="$2"
-  first=true
-  echo "["
-  for f in /workspaces/k8s-config-connector/overseer/queues/$dir/*.yaml; do
-    [ -e "$f" ] || continue
-    if [ "$first" = true ]; then first=false; else echo ","; fi
-    fname=$(basename "$f")
-    type=$(grep "^type:" "$f" 2>/dev/null | head -n 1 | cut -d: -f2- | tr -d " \"\r\n")
-    url=$(grep "^url:" "$f" 2>/dev/null | head -n 1 | cut -d: -f2- | tr -d " \"\r\n")
-    number=$(grep "^number:" "$f" 2>/dev/null | head -n 1 | cut -d: -f2- | tr -d " \"\r\n")
-    prio=$(grep "^priority:" "$f" 2>/dev/null | head -n 1 | cut -d: -f2- | tr -d " \"\r\n")
-    phase=$(grep "^phase:" "$f" 2>/dev/null | head -n 1 | cut -d: -f2- | tr -d " \"\r\n")
-    created=$(grep "^createdAt:" "$f" 2>/dev/null | head -n 1 | cut -d: -f2- | tr -d " \"\r\n")
-    assignee=$(grep "^assignee:" "$f" 2>/dev/null | head -n 1 | cut -d: -f2- | tr -d " \"\r\n")
-    status=$(grep "^status:" "$f" 2>/dev/null | head -n 1 | cut -d: -f2- | tr -d " \"\r\n")
-    sha=$(grep "^commitSHA:" "$f" 2>/dev/null | head -n 1 | cut -d: -f2- | tr -d " \"\r\n")
-    [ -z "$prio" ] && prio="medium"
-    [ -z "$number" ] && number="0"
-    [ -z "$phase" ] && phase="0"
-    printf "{\"fileName\":\"%s\",\"queueState\":\"%s\",\"type\":\"%s\",\"url\":\"%s\",\"number\":%s,\"priority\":\"%s\",\"phase\":%s,\"createdAt\":\"%s\",\"assignee\":\"%s\",\"status\":\"%s\",\"commitSHA\":\"%s\"}" \
-      "$fname" "$state" "$type" "$url" "$number" "$prio" "$phase" "$created" "$assignee" "$status" "$sha"
-  done
-  echo "]"
-}
-echo "{\"incoming\":"
-parse_queue "incoming" "incoming"
-echo ",\"processing\":"
-parse_queue "processing" "processing"
-echo ",\"processed\":"
-parse_queue "processed" "processed"
-echo "}"
-`
-
-	var stdout bytes.Buffer
-	execOpts := sandbox.ExecOptions{
-		Command: []string{"/bin/bash", "-c", parseScript},
-		Stdout:  &stdout,
-	}
-	if err := sandbox.ExecInPod(c.Request.Context(), s.K8sManager.KubeClient, *podID, execOpts); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read overseer queue", "details": err.Error()})
+	if podIP == "" {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Overseer pod has no IP address allocated yet"})
 		return
 	}
 
-	var raw struct {
-		Incoming   []QueueTaskItem `json:"incoming"`
-		Processing []QueueTaskItem `json:"processing"`
-		Processed  []QueueTaskItem `json:"processed"`
-	}
-
-	if err := json.Unmarshal(stdout.Bytes(), &raw); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse queue JSON", "details": err.Error()})
+	podURL := fmt.Sprintf("http://%s:13338/api/v1/queue", podIP)
+	client := http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get(podURL)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to connect to Overseer Queue REST service", "details": err.Error()})
 		return
 	}
+	defer resp.Body.Close()
 
-	prioRank := map[string]int{
-		"critical":  1,
-		"urgent":    2,
-		"important": 3,
-		"high":      4,
-		"medium":    5,
-		"low":       6,
-	}
-	getRankVal := func(p string) int {
-		if r, ok := prioRank[strings.ToLower(p)]; ok {
-			return r
-		}
-		return 5
-	}
-
-	sort.Slice(raw.Incoming, func(i, j int) bool {
-		rI := getRankVal(raw.Incoming[i].Priority)
-		rJ := getRankVal(raw.Incoming[j].Priority)
-		if rI != rJ {
-			return rI < rJ
-		}
-		if raw.Incoming[i].Phase != raw.Incoming[j].Phase {
-			return raw.Incoming[i].Phase < raw.Incoming[j].Phase
-		}
-		return raw.Incoming[i].CreatedAt < raw.Incoming[j].CreatedAt
-	})
-
-	for i := range raw.Incoming {
-		raw.Incoming[i].Rank = i + 1
-	}
-
-	byPrio := make(map[string]int)
-	byType := make(map[string]int)
-	for _, item := range raw.Incoming {
-		byPrio[item.Priority]++
-		byType[item.Type]++
-	}
-
-	var resp QueueResponse
-	resp.Summary.TotalPending = len(raw.Incoming)
-	resp.Summary.TotalProcessing = len(raw.Processing)
-	resp.Summary.TotalCompleted = len(raw.Processed)
-	resp.Summary.ByPriority = byPrio
-	resp.Summary.ByType = byType
-	resp.Incoming = raw.Incoming
-	resp.Processing = raw.Processing
-	if len(raw.Processed) > 20 {
-		resp.Processed = raw.Processed[:20]
-	} else {
-		resp.Processed = raw.Processed
-	}
-
-	c.JSON(http.StatusOK, resp)
+	c.Status(resp.StatusCode)
+	c.Header("Content-Type", "application/json")
+	_, _ = io.Copy(c.Writer, resp.Body)
 }
 
 func (s *Server) updateOverseerQueueTaskPriority(c *gin.Context) {
@@ -840,36 +730,24 @@ func (s *Server) updateOverseerQueueTaskPriority(c *gin.Context) {
 		return
 	}
 
-	cleanFilename := filepath.Base(filename)
-
-	// 1. Try fast embedded HTTP REST API on port 13338 first
 	podIP := pods.Items[0].Status.PodIP
-	if podIP != "" {
-		podURL := fmt.Sprintf("http://%s:13338/api/v1/queue/%s/priority", podIP, cleanFilename)
-		jsonBytes, _ := json.Marshal(reqBody)
-		client := http.Client{Timeout: 1500 * time.Millisecond}
-		if resp, err := client.Post(podURL, "application/json", bytes.NewReader(jsonBytes)); err == nil && resp.StatusCode == http.StatusOK {
-			defer resp.Body.Close()
-			c.Header("Content-Type", "application/json")
-			_, _ = io.Copy(c.Writer, resp.Body)
-			return
-		}
-	}
-
-	// 2. Fallback to ExecInPod if HTTP port 13338 is unavailable
-	podName := pods.Items[0].Name
-	podID := &types.NamespacedName{Namespace: namespace, Name: podName}
-	updateCmd := fmt.Sprintf("sed -i 's/^priority:.*/priority: %s/' /workspaces/k8s-config-connector/overseer/queues/incoming/%s", reqBody.Priority, cleanFilename)
-
-	var stdout bytes.Buffer
-	execOpts := sandbox.ExecOptions{
-		Command: []string{"/bin/bash", "-c", updateCmd},
-		Stdout:  &stdout,
-	}
-	if err := sandbox.ExecInPod(c.Request.Context(), s.K8sManager.KubeClient, *podID, execOpts); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update task priority", "details": err.Error()})
+	if podIP == "" {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Overseer pod has no IP address allocated yet"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"status": "updated", "priority": reqBody.Priority, "fileName": cleanFilename})
+	cleanFilename := filepath.Base(filename)
+	podURL := fmt.Sprintf("http://%s:13338/api/v1/queue/%s/priority", podIP, cleanFilename)
+	jsonBytes, _ := json.Marshal(reqBody)
+	client := http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Post(podURL, "application/json", bytes.NewReader(jsonBytes))
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to update task priority via Overseer Queue REST service", "details": err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+
+	c.Status(resp.StatusCode)
+	c.Header("Content-Type", "application/json")
+	_, _ = io.Copy(c.Writer, resp.Body)
 }
