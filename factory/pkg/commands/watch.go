@@ -1814,13 +1814,26 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				scanChores(ctx, ghClient, owner, repo, incomingDir, processingDir, queueDir, dryRun)
 			}
 
+			openPRMap := make(map[int]bool)
+			for _, pr := range prIssues {
+				openPRMap[pr.GetNumber()] = true
+			}
+
+			openIssueMap := make(map[int]bool)
+			for _, iss := range slowIssues {
+				openIssueMap[iss.GetNumber()] = true
+			}
+			for issNum := range processedIssues {
+				openIssueMap[issNum] = true
+			}
+
 			// Clean up sandboxes of merged or closed PRs
-			if err := cleanupClosedPRSandboxes(ctx, ghClient, kubeClient, owner, repo, rootFlags.Namespace, dryRun); err != nil {
+			if err := cleanupClosedPRSandboxes(ctx, ghClient, kubeClient, owner, repo, rootFlags.Namespace, openPRMap, dryRun); err != nil {
 				klog.Errorf("Failed to clean up closed PR sandboxes: %v", err)
 			}
 
 			// Clean up sandboxes of closed issues
-			if err := cleanupClosedIssueSandboxes(ctx, ghClient, kubeClient, owner, repo, rootFlags.Namespace, dryRun); err != nil {
+			if err := cleanupClosedIssueSandboxes(ctx, ghClient, kubeClient, owner, repo, rootFlags.Namespace, openIssueMap, dryRun); err != nil {
 				klog.Errorf("Failed to clean up closed issue sandboxes: %v", err)
 			}
 
@@ -2759,7 +2772,7 @@ func removePendingTasksForNumber(incomingDir string, number int) {
 	}
 }
 
-func cleanupClosedPRSandboxes(ctx context.Context, ghClient *githubv39.Client, kubeClient *clients.KubernetesClient, owner, repo, namespace string, dryRun bool) error {
+func cleanupClosedPRSandboxes(ctx context.Context, ghClient *githubv39.Client, kubeClient *clients.KubernetesClient, owner, repo, namespace string, openPRs map[int]bool, dryRun bool) error {
 	list, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return fmt.Errorf("listing sandboxes for cleanup: %w", err)
@@ -2777,7 +2790,12 @@ func cleanupClosedPRSandboxes(ctx context.Context, ghClient *githubv39.Client, k
 			continue
 		}
 
-		// Fetch the PR state from GitHub
+		// Fast-path: If PR is known to be open from Phase 1 scan, skip network call
+		if openPRs != nil && openPRs[num] {
+			continue
+		}
+
+		// Fetch the PR state from GitHub for unconfirmed PRs
 		pr, _, err := ghClient.PullRequests.Get(ctx, owner, repo, num)
 		if err != nil {
 			klog.Warningf("Failed to fetch PR #%d for sandbox cleanup check: %v", num, err)
@@ -2804,7 +2822,7 @@ func cleanupClosedPRSandboxes(ctx context.Context, ghClient *githubv39.Client, k
 	return nil
 }
 
-func cleanupClosedIssueSandboxes(ctx context.Context, ghClient *githubv39.Client, kubeClient *clients.KubernetesClient, owner, repo, namespace string, dryRun bool) error {
+func cleanupClosedIssueSandboxes(ctx context.Context, ghClient *githubv39.Client, kubeClient *clients.KubernetesClient, owner, repo, namespace string, openIssues map[int]bool, dryRun bool) error {
 	list, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return fmt.Errorf("listing sandboxes for issue cleanup: %w", err)
@@ -2833,11 +2851,16 @@ func cleanupClosedIssueSandboxes(ctx context.Context, ghClient *githubv39.Client
 			}
 		}
 
-		if !isIssueSandbox {
+		if !isIssueSandbox || num == 0 {
 			continue
 		}
 
-		// Fetch the issue state from GitHub
+		// Fast-path: If issue is known to be open from Phase 1 scan, skip network call
+		if openIssues != nil && openIssues[num] {
+			continue
+		}
+
+		// Fetch the issue state from GitHub for unconfirmed issues
 		issue, _, err := ghClient.Issues.Get(ctx, owner, repo, num)
 		if err != nil {
 			klog.Warningf("Failed to fetch issue #%d for sandbox cleanup check: %v", num, err)
