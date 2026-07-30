@@ -610,7 +610,7 @@ function TaskReviewCard({
                                     <div style={{ fontWeight: 'bold', color: '#58a6ff', marginBottom: '6px', fontSize: '13px' }}>
                                         ⚡ Tool Execution Telemetry ({telemetry.total_tool_calls} calls, {telemetry.total_tool_duration_sec}s total)
                                     </div>
-                                    <div style={{ overflowX: 'auto' }}>
+                                     <div style={{ overflowX: 'auto' }}>
                                         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', textAlign: 'left' }}>
                                             <thead>
                                                 <tr style={{ borderBottom: '1px solid #333', color: '#aaa' }}>
@@ -634,6 +634,33 @@ function TaskReviewCard({
                                             </tbody>
                                         </table>
                                     </div>
+                                    {telemetry.shell_calls && telemetry.shell_calls.length > 0 && (
+                                        <div style={{ marginTop: '10px', paddingTop: '8px', borderTop: '1px solid #333' }}>
+                                            <div style={{ fontWeight: 'bold', color: '#d2a8ff', marginBottom: '6px', fontSize: '12px' }}>
+                                                🐚 Top {Math.min(10, telemetry.shell_calls.length)} Slowest Shell Commands
+                                            </div>
+                                            <div style={{ overflowX: 'auto' }}>
+                                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px', textAlign: 'left' }}>
+                                                    <thead>
+                                                        <tr style={{ borderBottom: '1px solid #333', color: '#aaa' }}>
+                                                            <th style={{ padding: '3px 5px', width: '20px' }}>#</th>
+                                                            <th style={{ padding: '3px 5px', width: '65px' }}>Duration</th>
+                                                            <th style={{ padding: '3px 5px' }}>Command</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {telemetry.shell_calls.slice(0, 10).map((call, idx) => (
+                                                            <tr key={idx} style={{ borderBottom: '1px solid #2a2a2a' }}>
+                                                                <td style={{ padding: '3px 5px', color: '#888' }}>{idx + 1}</td>
+                                                                <td style={{ padding: '3px 5px', color: call.duration_sec > 60 ? '#ff7b72' : call.duration_sec > 15 ? '#ffa657' : '#7ee787', fontWeight: 'bold' }}>{call.duration_sec}s</td>
+                                                                <td style={{ padding: '3px 5px', fontFamily: 'monospace', color: '#ccc', wordBreak: 'break-all' }}>{call.cmd}</td>
+                                                            </tr>
+                                                        ))}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             )}
                             <div className="logs-display" style={{backgroundColor: '#333', color: '#fff', padding: '10px', borderRadius: '5px', marginBottom: '10px', maxHeight: '300px', overflowY: 'auto'}}>

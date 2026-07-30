@@ -1024,6 +1024,33 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                                                                         </tbody>
                                                                     </table>
                                                                 </div>
+                                                                {logInfo.telemetry.shell_calls && logInfo.telemetry.shell_calls.length > 0 && (
+                                                                    <div style={{ marginTop: '12px', paddingTop: '10px', borderTop: '1px solid #21262d' }}>
+                                                                        <div style={{ fontWeight: 'bold', color: '#d2a8ff', marginBottom: '8px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                                            <span>🐚 Top {Math.min(10, logInfo.telemetry.shell_calls.length)} Slowest Shell Commands</span>
+                                                                        </div>
+                                                                        <div style={{ overflowX: 'auto' }}>
+                                                                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px', textAlign: 'left' }}>
+                                                                                <thead>
+                                                                                    <tr style={{ borderBottom: '1px solid #21262d', color: '#8b949e' }}>
+                                                                                        <th style={{ padding: '4px 6px', width: '25px' }}>#</th>
+                                                                                        <th style={{ padding: '4px 6px', width: '70px' }}>Duration</th>
+                                                                                        <th style={{ padding: '4px 6px' }}>Command</th>
+                                                                                    </tr>
+                                                                                </thead>
+                                                                                <tbody>
+                                                                                    {logInfo.telemetry.shell_calls.slice(0, 10).map((call, idx) => (
+                                                                                        <tr key={idx} style={{ borderBottom: '1px solid #161b22' }}>
+                                                                                            <td style={{ padding: '4px 6px', color: '#8b949e' }}>{idx + 1}</td>
+                                                                                            <td style={{ padding: '4px 6px', color: call.duration_sec > 60 ? '#ff7b72' : call.duration_sec > 15 ? '#ffa657' : '#7ee787', fontWeight: 'bold' }}>{call.duration_sec}s</td>
+                                                                                            <td style={{ padding: '4px 6px', fontFamily: 'monospace', color: '#c9d1d9', wordBreak: 'break-all' }}>{call.cmd}</td>
+                                                                                        </tr>
+                                                                                    ))}
+                                                                                </tbody>
+                                                                            </table>
+                                                                        </div>
+                                                                    </div>
+                                                                )}
                                                             </div>
                                                         )}
                                                         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '0.8rem', color: '#8b949e', textAlign: 'left' }}>
