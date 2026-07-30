@@ -46,6 +46,11 @@ func getQuotaExceededFilePath() string {
 		}
 	}
 
+	dir, err := os.UserConfigDir()
+	if err == nil {
+		return filepath.Join(dir, "factory", "quota_exceeded_keys.json")
+	}
+
 	cwd, err := os.Getwd()
 	if err == nil {
 		return filepath.Join(cwd, ".factory_quota_exceeded_keys.json")
@@ -72,6 +77,11 @@ func getSuspendedFilePath() string {
 		if err == nil {
 			return filepath.Join(filepath.Dir(absPath), ".factory_suspended_keys.json")
 		}
+	}
+
+	dir, err := os.UserConfigDir()
+	if err == nil {
+		return filepath.Join(dir, "factory", "suspended_keys.json")
 	}
 
 	cwd, err := os.Getwd()
@@ -138,7 +148,26 @@ func loadSuspendedList() (map[string]string, error) {
 		}
 	}
 
-	// Just load from the primary path
+	fallbackPaths := []string{}
+	if userDir, err := os.UserConfigDir(); err == nil {
+		fallbackPaths = append(fallbackPaths, filepath.Join(userDir, "factory", "suspended_keys.json"))
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		fallbackPaths = append(fallbackPaths, filepath.Join(cwd, ".factory_suspended_keys.json"))
+	}
+	for _, fp := range fallbackPaths {
+		if fp != filePath {
+			if data, err := os.ReadFile(fp); err == nil {
+				var rawMap map[string]string
+				if err := json.Unmarshal(data, &rawMap); err == nil {
+					for k, v := range rawMap {
+						result[k] = v
+					}
+				}
+			}
+		}
+	}
+
 	return result, nil
 }
 
