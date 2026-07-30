@@ -249,8 +249,9 @@ try:
                                         tstat["slowest_cmd"] = trunc_cmd[:120] + ("..." if len(trunc_cmd) > 120 else "")
                                     tool_metrics["total_tool_calls"] += 1
                                     tool_metrics["total_tool_duration_sec"] = round(tool_metrics["total_tool_duration_sec"] + dur, 3)
-                                    if tname == "run_shell_command":
+                                    if "shell" in tname or "command" in tname or tname in ("run_shell_command", "run_command", "run_shell_commands", "exec", "bash"):
                                         all_shell_calls.append({
+                                            "tool": tname,
                                             "cmd": trunc_cmd,
                                             "duration_sec": dur,
                                             "timestamp": sinfo.get("ts_str", ts.isoformat())

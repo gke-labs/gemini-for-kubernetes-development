@@ -6,3 +6,10 @@ bin/
 .vscode
 .jetskicli
 cli/cli
+
+# Factory token status cache
+.factory_suspended_keys.json
+.factory_quota_exceeded_keys.json
+suspended_keys.json
+quota_exceeded_keys.json
+
