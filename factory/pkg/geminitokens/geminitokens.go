@@ -46,14 +46,16 @@ func getQuotaExceededFilePath() string {
 		}
 	}
 
-	// 2. Otherwise use user config dir
 	dir, err := os.UserConfigDir()
 	if err == nil {
 		return filepath.Join(dir, "factory", "quota_exceeded_keys.json")
 	}
 
-	// 3. Fallback to /tmp
-	return "/tmp/.factory_quota_exceeded_keys.json"
+	cwd, err := os.Getwd()
+	if err == nil {
+		return filepath.Join(cwd, ".factory_quota_exceeded_keys.json")
+	}
+	return ".factory_quota_exceeded_keys.json"
 }
 
 func getSuspendedFilePath() string {
@@ -82,7 +84,11 @@ func getSuspendedFilePath() string {
 		return filepath.Join(dir, "factory", "suspended_keys.json")
 	}
 
-	return "/tmp/.factory_suspended_keys.json"
+	cwd, err := os.Getwd()
+	if err == nil {
+		return filepath.Join(cwd, ".factory_suspended_keys.json")
+	}
+	return ".factory_suspended_keys.json"
 }
 
 func loadQuotaExceededList() (map[string]time.Time, error) {
@@ -131,19 +137,38 @@ func saveQuotaExceededList(list map[string]time.Time) error {
 
 func loadSuspendedList() (map[string]string, error) {
 	filePath := getSuspendedFilePath()
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return make(map[string]string), nil
+	result := make(map[string]string)
+
+	if data, err := os.ReadFile(filePath); err == nil {
+		var rawMap map[string]string
+		if err := json.Unmarshal(data, &rawMap); err == nil {
+			for k, v := range rawMap {
+				result[k] = v
+			}
 		}
-		return nil, err
 	}
 
-	var rawMap map[string]string
-	if err := json.Unmarshal(data, &rawMap); err != nil {
-		return nil, err
+	fallbackPaths := []string{}
+	if userDir, err := os.UserConfigDir(); err == nil {
+		fallbackPaths = append(fallbackPaths, filepath.Join(userDir, "factory", "suspended_keys.json"))
 	}
-	return rawMap, nil
+	if cwd, err := os.Getwd(); err == nil {
+		fallbackPaths = append(fallbackPaths, filepath.Join(cwd, ".factory_suspended_keys.json"))
+	}
+	for _, fp := range fallbackPaths {
+		if fp != filePath {
+			if data, err := os.ReadFile(fp); err == nil {
+				var rawMap map[string]string
+				if err := json.Unmarshal(data, &rawMap); err == nil {
+					for k, v := range rawMap {
+						result[k] = v
+					}
+				}
+			}
+		}
+	}
+
+	return result, nil
 }
 
 func saveSuspendedList(list map[string]string) error {
@@ -453,13 +478,10 @@ func GetTokensStatus() (*TokensStatus, error) {
 	status := &TokensStatus{}
 	seenSuspended := make(map[string]bool)
 
-	// Include all permanently suspended keys recorded in storage
 	suspendedMap, _ := loadSuspendedList()
 	for k := range suspendedMap {
-		if k != "" && !seenSuspended[k] {
+		if k != "" {
 			seenSuspended[k] = true
-			status.Suspended++
-			status.SuspendedList = append(status.SuspendedList, k) // Full un-obscured key string
 		}
 	}
 
@@ -468,23 +490,35 @@ func GetTokensStatus() (*TokensStatus, error) {
 		if len(obscured) > 8 {
 			obscured = obscured[:8] + "..."
 		}
-		if IsKeySuspended(t) {
-			if !seenSuspended[t] {
-				seenSuspended[t] = true
-				status.Suspended++
-				status.SuspendedList = append(status.SuspendedList, t) // Full un-obscured key string
-			}
+		if IsKeySuspended(t) || seenSuspended[t] {
+			seenSuspended[t] = true
+			status.SuspendedList = append(status.SuspendedList, t) // Full un-obscured key string
 		} else if IsKeyQuotaExceeded(t) {
-			status.QuotaExceeded++
 			status.QuotaExceededList = append(status.QuotaExceededList, obscured)
 		} else {
-			status.Active++
 			status.ActiveList = append(status.ActiveList, obscured)
 		}
 	}
-	status.Total = len(allTokens)
-	if status.Total < len(seenSuspended)+status.Active+status.QuotaExceeded {
-		status.Total = len(seenSuspended) + status.Active + status.QuotaExceeded
+
+	// Add any suspended keys from storage file that weren't sampled in allTokens
+	for k := range suspendedMap {
+		if k != "" {
+			found := false
+			for _, s := range status.SuspendedList {
+				if s == k {
+					found = true
+					break
+				}
+			}
+			if !found {
+				status.SuspendedList = append(status.SuspendedList, k)
+			}
+		}
 	}
+
+	status.Suspended = len(status.SuspendedList)
+	status.QuotaExceeded = len(status.QuotaExceededList)
+	status.Active = len(status.ActiveList)
+	status.Total = status.Suspended + status.QuotaExceeded + status.Active
 	return status, nil
 }
