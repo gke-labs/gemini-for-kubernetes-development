@@ -46,14 +46,11 @@ func getQuotaExceededFilePath() string {
 		}
 	}
 
-	// 2. Otherwise use user config dir
-	dir, err := os.UserConfigDir()
+	cwd, err := os.Getwd()
 	if err == nil {
-		return filepath.Join(dir, "factory", "quota_exceeded_keys.json")
+		return filepath.Join(cwd, ".factory_quota_exceeded_keys.json")
 	}
-
-	// 3. Fallback to /tmp
-	return "/tmp/.factory_quota_exceeded_keys.json"
+	return ".factory_quota_exceeded_keys.json"
 }
 
 func getSuspendedFilePath() string {
@@ -77,12 +74,11 @@ func getSuspendedFilePath() string {
 		}
 	}
 
-	dir, err := os.UserConfigDir()
+	cwd, err := os.Getwd()
 	if err == nil {
-		return filepath.Join(dir, "factory", "suspended_keys.json")
+		return filepath.Join(cwd, ".factory_suspended_keys.json")
 	}
-
-	return "/tmp/.factory_suspended_keys.json"
+	return ".factory_suspended_keys.json"
 }
 
 func loadQuotaExceededList() (map[string]time.Time, error) {
@@ -142,25 +138,7 @@ func loadSuspendedList() (map[string]string, error) {
 		}
 	}
 
-	fallbackPaths := []string{
-		"/tmp/.factory_suspended_keys.json",
-	}
-	if userDir, err := os.UserConfigDir(); err == nil {
-		fallbackPaths = append(fallbackPaths, filepath.Join(userDir, "factory", "suspended_keys.json"))
-	}
-	for _, fp := range fallbackPaths {
-		if fp != filePath {
-			if data, err := os.ReadFile(fp); err == nil {
-				var rawMap map[string]string
-				if err := json.Unmarshal(data, &rawMap); err == nil {
-					for k, v := range rawMap {
-						result[k] = v
-					}
-				}
-			}
-		}
-	}
-
+	// Just load from the primary path
 	return result, nil
 }
 
