@@ -29,7 +29,6 @@ import (
 	"gopkg.in/yaml.v3"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/klog/v2"
 )
 
@@ -1815,13 +1814,26 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				scanChores(ctx, ghClient, owner, repo, incomingDir, processingDir, queueDir, dryRun)
 			}
 
+			openPRMap := make(map[int]bool)
+			for _, pr := range prIssues {
+				openPRMap[pr.GetNumber()] = true
+			}
+
+			openIssueMap := make(map[int]bool)
+			for _, iss := range slowIssues {
+				openIssueMap[iss.GetNumber()] = true
+			}
+			for issNum := range processedIssues {
+				openIssueMap[issNum] = true
+			}
+
 			// Clean up sandboxes of merged or closed PRs
-			if err := cleanupClosedPRSandboxes(ctx, ghClient, kubeClient, owner, repo, rootFlags.Namespace, dryRun); err != nil {
+			if err := cleanupClosedPRSandboxes(ctx, ghClient, kubeClient, owner, repo, rootFlags.Namespace, openPRMap, dryRun); err != nil {
 				klog.Errorf("Failed to clean up closed PR sandboxes: %v", err)
 			}
 
 			// Clean up sandboxes of closed issues
-			if err := cleanupClosedIssueSandboxes(ctx, ghClient, kubeClient, owner, repo, rootFlags.Namespace, dryRun); err != nil {
+			if err := cleanupClosedIssueSandboxes(ctx, ghClient, kubeClient, owner, repo, rootFlags.Namespace, openIssueMap, dryRun); err != nil {
 				klog.Errorf("Failed to clean up closed issue sandboxes: %v", err)
 			}
 
@@ -2760,155 +2772,120 @@ func removePendingTasksForNumber(incomingDir string, number int) {
 	}
 }
 
-func cleanupClosedPRSandboxes(ctx context.Context, ghClient *githubv39.Client, kubeClient *clients.KubernetesClient, owner, repo, namespace string, dryRun bool) error {
+func cleanupClosedPRSandboxes(ctx context.Context, ghClient *githubv39.Client, kubeClient *clients.KubernetesClient, owner, repo, namespace string, openPRs map[int]bool, dryRun bool) error {
 	list, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return fmt.Errorf("listing sandboxes for cleanup: %w", err)
 	}
 
 	manager := k8s.NewManager(kubeClient)
-	var targets []unstructured.Unstructured
 	for _, item := range list.Items {
 		name := item.GetName()
-		if strings.HasPrefix(name, "factory-pr-") {
-			targets = append(targets, item)
+		if !strings.HasPrefix(name, "factory-pr-") {
+			continue
+		}
+		numStr := strings.TrimPrefix(name, "factory-pr-")
+		num, err := strconv.Atoi(numStr)
+		if err != nil {
+			continue
+		}
+
+		// Fast-path: If PR is known to be open from Phase 1 scan, skip network call
+		if openPRs != nil && openPRs[num] {
+			continue
+		}
+
+		// Fetch the PR state from GitHub for unconfirmed PRs
+		pr, _, err := ghClient.PullRequests.Get(ctx, owner, repo, num)
+		if err != nil {
+			klog.Warningf("Failed to fetch PR #%d for sandbox cleanup check: %v", num, err)
+			continue
+		}
+
+		// Check if it is closed or merged
+		if pr.GetState() == "closed" {
+			klog.Infof("Pull Request #%d is closed/merged. Deleting corresponding sandbox '%s'...", num, name)
+			if dryRun {
+				fmt.Printf("[DRYRUN] Would delete sandbox '%s' for closed PR #%d\n", name, num)
+				continue
+			}
+			meta := sandboxUsageMeta(&item, owner+"/"+repo)
+			meta.PR = num
+			meta.Issues = referencedIssueList(pr)
+			usagereport.HarvestSandbox(ctx, namespace, name, meta)
+			usagereport.ReportPRSubject(ctx, owner+"/"+repo, pr)
+			if err := manager.DeleteSandbox(ctx, namespace, name); err != nil {
+				klog.Errorf("Failed to delete sandbox '%s' for closed PR #%d: %v", name, num, err)
+			}
 		}
 	}
-
-	const maxWorkers = 10
-	sem := make(chan struct{}, maxWorkers)
-	var wg sync.WaitGroup
-
-	for _, item := range targets {
-		item := item
-		sem <- struct{}{}
-		wg.Add(1)
-
-		go func() {
-			defer func() {
-				<-sem
-				wg.Done()
-			}()
-
-			name := item.GetName()
-			numStr := strings.TrimPrefix(name, "factory-pr-")
-			num, err := strconv.Atoi(numStr)
-			if err != nil {
-				return
-			}
-
-			// Fetch the PR state from GitHub
-			pr, _, err := ghClient.PullRequests.Get(ctx, owner, repo, num)
-			if err != nil {
-				klog.Warningf("Failed to fetch PR #%d for sandbox cleanup check: %v", num, err)
-				return
-			}
-
-			// Check if it is closed or merged
-			if pr.GetState() == "closed" {
-				klog.Infof("Pull Request #%d is closed/merged. Deleting corresponding sandbox '%s'...", num, name)
-				if dryRun {
-					fmt.Printf("[DRYRUN] Would delete sandbox '%s' for closed PR #%d\n", name, num)
-					return
-				}
-				meta := sandboxUsageMeta(&item, owner+"/"+repo)
-				meta.PR = num
-				meta.Issues = referencedIssueList(pr)
-				usagereport.HarvestSandbox(ctx, namespace, name, meta)
-				usagereport.ReportPRSubject(ctx, owner+"/"+repo, pr)
-				if err := manager.DeleteSandbox(ctx, namespace, name); err != nil {
-					klog.Errorf("Failed to delete sandbox '%s' for closed PR #%d: %v", name, num, err)
-				}
-			}
-		}()
-	}
-	wg.Wait()
 	return nil
 }
 
-func cleanupClosedIssueSandboxes(ctx context.Context, ghClient *githubv39.Client, kubeClient *clients.KubernetesClient, owner, repo, namespace string, dryRun bool) error {
+func cleanupClosedIssueSandboxes(ctx context.Context, ghClient *githubv39.Client, kubeClient *clients.KubernetesClient, owner, repo, namespace string, openIssues map[int]bool, dryRun bool) error {
 	list, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return fmt.Errorf("listing sandboxes for issue cleanup: %w", err)
 	}
 
 	manager := k8s.NewManager(kubeClient)
-	var targets []unstructured.Unstructured
 	for _, item := range list.Items {
 		name := item.GetName()
-		if strings.HasPrefix(name, "wf-issue-") || strings.HasPrefix(name, "fix-") {
-			targets = append(targets, item)
-		}
-	}
+		var num int
+		var isIssueSandbox bool
 
-	const maxWorkers = 10
-	sem := make(chan struct{}, maxWorkers)
-	var wg sync.WaitGroup
-
-	for _, item := range targets {
-		item := item
-		sem <- struct{}{}
-		wg.Add(1)
-
-		go func() {
-			defer func() {
-				<-sem
-				wg.Done()
-			}()
-
-			name := item.GetName()
-			var num int
-			var isIssueSandbox bool
-
-			if strings.HasPrefix(name, "wf-issue-") {
-				numStr := strings.TrimPrefix(name, "wf-issue-")
+		if strings.HasPrefix(name, "wf-issue-") {
+			numStr := strings.TrimPrefix(name, "wf-issue-")
+			if n, err := strconv.Atoi(numStr); err == nil {
+				num = n
+				isIssueSandbox = true
+			}
+		} else if strings.HasPrefix(name, "fix-") {
+			idx := strings.LastIndex(name, "-")
+			if idx != -1 {
+				numStr := name[idx+1:]
 				if n, err := strconv.Atoi(numStr); err == nil {
 					num = n
 					isIssueSandbox = true
 				}
-			} else if strings.HasPrefix(name, "fix-") {
-				idx := strings.LastIndex(name, "-")
-				if idx != -1 {
-					numStr := name[idx+1:]
-					if n, err := strconv.Atoi(numStr); err == nil {
-						num = n
-						isIssueSandbox = true
-					}
-				}
 			}
+		}
 
-			if !isIssueSandbox {
-				return
-			}
+		if !isIssueSandbox || num == 0 {
+			continue
+		}
 
-			// Fetch the issue state from GitHub
-			issue, _, err := ghClient.Issues.Get(ctx, owner, repo, num)
-			if err != nil {
-				klog.Warningf("Failed to fetch issue #%d for sandbox cleanup check: %v", num, err)
-				return
-			}
+		// Fast-path: If issue is known to be open from Phase 1 scan, skip network call
+		if openIssues != nil && openIssues[num] {
+			continue
+		}
 
-			// Check if the issue is closed
-			if issue.GetState() == "closed" {
-				klog.Infof("Issue #%d is closed. Deleting corresponding sandbox '%s'...", num, name)
-				if dryRun {
-					fmt.Printf("[DRYRUN] Would delete sandbox '%s' for closed issue #%d\n", name, num)
-					return
-				}
-				meta := sandboxUsageMeta(&item, owner+"/"+repo)
-				meta.Issue = num
-				usagereport.HarvestSandbox(ctx, namespace, name, meta)
-				usagereport.ReportIssueSubject(ctx, owner+"/"+repo, issue)
-				if strings.HasPrefix(name, "wf-issue-") {
-					usagereport.PostWorkflowSummaryIfNeeded(ctx, ghClient, owner, repo, num)
-				}
-				if err := manager.DeleteSandbox(ctx, namespace, name); err != nil {
-					klog.Errorf("Failed to delete sandbox '%s' for closed issue #%d: %v", name, num, err)
-				}
+		// Fetch the issue state from GitHub for unconfirmed issues
+		issue, _, err := ghClient.Issues.Get(ctx, owner, repo, num)
+		if err != nil {
+			klog.Warningf("Failed to fetch issue #%d for sandbox cleanup check: %v", num, err)
+			continue
+		}
+
+		// Check if the issue is closed
+		if issue.GetState() == "closed" {
+			klog.Infof("Issue #%d is closed. Deleting corresponding sandbox '%s'...", num, name)
+			if dryRun {
+				fmt.Printf("[DRYRUN] Would delete sandbox '%s' for closed issue #%d\n", name, num)
+				continue
 			}
-		}()
+			meta := sandboxUsageMeta(&item, owner+"/"+repo)
+			meta.Issue = num
+			usagereport.HarvestSandbox(ctx, namespace, name, meta)
+			usagereport.ReportIssueSubject(ctx, owner+"/"+repo, issue)
+			if strings.HasPrefix(name, "wf-issue-") {
+				usagereport.PostWorkflowSummaryIfNeeded(ctx, ghClient, owner, repo, num)
+			}
+			if err := manager.DeleteSandbox(ctx, namespace, name); err != nil {
+				klog.Errorf("Failed to delete sandbox '%s' for closed issue #%d: %v", name, num, err)
+			}
+		}
 	}
-	wg.Wait()
 	return nil
 }
 
