@@ -180,7 +180,10 @@ Overseer bypasses relational databases in favor of a **Git-Backed Filesystem Que
 
 ---
 
-## 8. Related Design References
+## 8. Related References
+
+For practical step-by-step installation, onboarding, and operational guides, consult:
+- **Overseer User Guide**: [user-guide.md](./user-guide.md)
 
 For historical context and deep dive specifications into sub-system components, consult the following design notes:
 - **Overseer Core Design**: [design-overseer.md](./design-overseer.md)
