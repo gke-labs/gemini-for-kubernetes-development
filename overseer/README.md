@@ -85,5 +85,7 @@ kubectl logs -n overseer-your-repo-agent -l sandbox=overseer-your-repo-agent -f
 
 
 
-For more details on the architecture and design, see [docs/design-overseer.md](docs/design-overseer.md).
+For a complete installation, setup, and operations manual (featuring real-world configuration examples), see the [Overseer User Guide](docs/user-guide.md).
+For an end-to-end system architecture breakdown and interaction diagrams between Overseer and Factory, see [docs/architecture-overseer-factory.md](docs/architecture-overseer-factory.md).
+For additional foundational design principles, see [docs/design-overseer.md](docs/design-overseer.md).
 

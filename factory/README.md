@@ -6,6 +6,8 @@ It spins up isolated development environments (`agents.x-k8s.io`), establishes d
 
 ## Architecture & Design
 
+> **Note**: For an end-to-end architecture guide and interaction diagrams describing how Factory operates alongside the Kubernetes-native **Overseer** orchestration controller, see [../overseer/docs/architecture-overseer-factory.md](../overseer/docs/architecture-overseer-factory.md).
+
 ```
 +-------------------+         +------------------------------------------------+
 |   Local Machine   |         |               Kubernetes Cluster               |
