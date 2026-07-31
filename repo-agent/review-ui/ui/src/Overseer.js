@@ -250,6 +250,32 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
             .catch(err => console.error("Failed to delete sandbox:", err));
     };
 
+    const handleUnpauseSandbox = (sbName) => {
+        if (!activeOverseer) return;
+        fetch(`/api/overseers/${activeOverseer.metadata.name}/sandboxes/${sbName}/unpause`, { method: 'POST' })
+            .then(res => {
+                if (res.ok) {
+                    fetchSandboxes();
+                } else {
+                    alert("Failed to unpause sandbox");
+                }
+            })
+            .catch(err => console.error("Failed to unpause sandbox:", err));
+    };
+
+    const handlePauseSandbox = (sbName) => {
+        if (!activeOverseer) return;
+        fetch(`/api/overseers/${activeOverseer.metadata.name}/sandboxes/${sbName}/pause`, { method: 'POST' })
+            .then(res => {
+                if (res.ok) {
+                    fetchSandboxes();
+                } else {
+                    alert("Failed to pause sandbox");
+                }
+            })
+            .catch(err => console.error("Failed to pause sandbox:", err));
+    };
+
     const toggleTaskLogs = (taskName) => {
         if (!activeOverseer || !activeSandbox) return;
         const current = taskLogs[taskName];
@@ -854,7 +880,36 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                                     </div>
                                 </div>
 
-                                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                                <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+                                    {(() => {
+                                        const podInfo = getSandboxPodInfo(activeSandbox);
+                                        const isOverseerDaemon = activeSandbox.metadata.name === `overseer-${activeOverseer?.metadata.name}`;
+                                        if (isOverseerDaemon) return null;
+                                        if (podInfo.isSuspended) {
+                                            return (
+                                                <button 
+                                                    className="btn" 
+                                                    style={{ backgroundColor: '#d4edda', color: '#155724', border: '1px solid #c3e6cb', fontWeight: '600' }}
+                                                    onClick={() => handleUnpauseSandbox(activeSandbox.metadata.name)}
+                                                    title="Unpause sandbox and keep it running for at least the idle timeout duration"
+                                                >
+                                                    ▶️ Unpause Sandbox
+                                                </button>
+                                            );
+                                        } else if (!podInfo.isEvicted && !podInfo.isFailed) {
+                                            return (
+                                                <button 
+                                                    className="btn" 
+                                                    style={{ backgroundColor: '#fff3cd', color: '#856404', border: '1px solid #ffeeba', fontWeight: '600' }}
+                                                    onClick={() => handlePauseSandbox(activeSandbox.metadata.name)}
+                                                    title="Pause sandbox by scaling replicas down to 0"
+                                                >
+                                                    ⏸️ Pause Sandbox
+                                                </button>
+                                            );
+                                        }
+                                        return null;
+                                    })()}
                                     <button 
                                         className="btn" 
                                         style={{ 

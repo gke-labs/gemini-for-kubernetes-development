@@ -1843,6 +1843,12 @@ func (r *Reconciler) unpauseSandboxIfPendingTasks(ctx context.Context, sandbox *
 		if err := unstructured.SetNestedField(sandbox.Object, int64(1), "spec", "replicas"); err != nil {
 			return false, err
 		}
+		annotations := sandbox.GetAnnotations()
+		if annotations == nil {
+			annotations = make(map[string]string)
+		}
+		annotations["sandbox.gemini.google.com/unpaused-at"] = time.Now().Format(time.RFC3339)
+		sandbox.SetAnnotations(annotations)
 		return true, r.Update(ctx, sandbox)
 	}
 	return false, nil
@@ -1882,12 +1888,22 @@ func (r *Reconciler) pauseSandboxIfIdle(ctx context.Context, sandbox *unstructur
 		}
 
 		// Check completion time
-		annotations := task.GetAnnotations()
-		if tsStr, ok := annotations["sandbox.gemini.google.com/completion-time"]; ok {
+		taskAnnotations := task.GetAnnotations()
+		if tsStr, ok := taskAnnotations["sandbox.gemini.google.com/completion-time"]; ok {
 			if ts, err := time.Parse(time.RFC3339, tsStr); err == nil {
 				if ts.After(latestTime) {
 					latestTime = ts
 				}
+			}
+		}
+	}
+
+	// Check unpaused-at timestamp on sandbox so that unpausing a sandbox keeps it active
+	// for at least the configured shutdown duration before scaling down again.
+	if tsStr, ok := sandbox.GetAnnotations()["sandbox.gemini.google.com/unpaused-at"]; ok {
+		if ts, err := time.Parse(time.RFC3339, tsStr); err == nil {
+			if ts.After(latestTime) {
+				latestTime = ts
 			}
 		}
 	}

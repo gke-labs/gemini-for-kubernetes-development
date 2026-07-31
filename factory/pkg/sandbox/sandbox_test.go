@@ -219,4 +219,52 @@ func TestUpdateSandboxTaskAnnotation_Resume(t *testing.T) {
 	if rep != 1 {
 		t.Errorf("Expected replicas=1 when starting task, got %d", rep)
 	}
+	if val, ok := updated.GetAnnotations()["sandbox.gemini.google.com/unpaused-at"]; !ok || val == "" {
+		t.Errorf("Expected sandbox.gemini.google.com/unpaused-at annotation to be set on unpause")
+	}
+}
+
+func TestSuspendIdleSandboxes_UnpausedAt(t *testing.T) {
+	scheme := runtime.NewScheme()
+	fakeDynamic := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, map[schema.GroupVersionResource]string{
+		k8s.SandboxGVR: "SandboxList",
+	})
+	kubeClient := &clients.KubernetesClient{
+		DynamicClient: fakeDynamic,
+	}
+
+	ctx := context.Background()
+	ns := "test-ns"
+
+	// Sandbox created 2 hours ago with unpaused-at set to now
+	recentlyUnpaused := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "agents.x-k8s.io/v1alpha1",
+			"kind":       "Sandbox",
+			"metadata": map[string]interface{}{
+				"name":              "recently-unpaused",
+				"namespace":         ns,
+				"creationTimestamp": time.Now().Add(-2 * time.Hour).Format(time.RFC3339),
+				"annotations": map[string]interface{}{
+					"sandbox.gemini.google.com/unpaused-at": time.Now().Format(time.RFC3339),
+				},
+			},
+			"spec": map[string]interface{}{
+				"replicas": int64(1),
+			},
+		},
+	}
+
+	_, err := fakeDynamic.Resource(k8s.SandboxGVR).Namespace(ns).Create(ctx, recentlyUnpaused, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("Failed to create sandbox: %v", err)
+	}
+
+	count, err := sandbox.SuspendIdleSandboxes(ctx, kubeClient, ns, 30*time.Minute, false)
+	if err != nil {
+		t.Fatalf("SuspendIdleSandboxes failed: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("Expected 0 sandboxes suspended due to recent unpaused-at timestamp, got %d", count)
+	}
 }
