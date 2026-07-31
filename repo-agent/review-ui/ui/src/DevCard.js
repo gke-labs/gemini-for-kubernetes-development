@@ -155,14 +155,14 @@ function DevCard({
                   Sandbox
                 </a>
               )}
-              <button className="btn btn-sm pr-sandbox yellow" style={{padding: '4px 10px', fontSize: '14px'}} onClick={(e) => { e.stopPropagation(); handleScaleDown(sandbox.name); }} title="Scale Down">
+              <button className="btn btn-sm pr-sandbox yellow" style={{padding: '4px 10px', fontSize: '14px'}} onClick={(e) => { e.stopPropagation(); handleScaleDown(sandbox.name); }} title="Pause / Scale Down">
                 &#9646;&#9646;
               </button>
             </div>
           ) : getSandboxStatusClass(sandbox) === 'yellow' ? (
              <div style={{display: 'flex', alignItems: 'center', gap: '5px'}}>
-               <span className={`pr-sandbox ${getSandboxStatusClass(sandbox)}`}>Sandbox</span>
-               <button className="btn btn-sm pr-sandbox green" style={{padding: '4px 10px', fontSize: '14px'}} onClick={(e) => { e.stopPropagation(); handleScaleUp(sandbox.name); }} title="Scale Up">
+               <span className={`pr-sandbox ${getSandboxStatusClass(sandbox)}`}>Sandbox Paused</span>
+               <button className="btn btn-sm pr-sandbox green" style={{padding: '4px 10px', fontSize: '14px'}} onClick={(e) => { e.stopPropagation(); handleScaleUp(sandbox.name); }} title="Unpause / Scale Up">
                   &#9654;
                </button>
              </div>

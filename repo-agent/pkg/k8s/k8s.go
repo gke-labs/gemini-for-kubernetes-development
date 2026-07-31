@@ -187,39 +187,8 @@ func (m *Manager) UpdateSecret(ctx context.Context, namespace, name string, data
 }
 
 func (m *Manager) ScaledownSandbox(ctx context.Context, namespace, repo, prID string) error {
-	log := klog.FromContext(ctx)
 	sandboxName := fmt.Sprintf("%s-pr-%s", repo, prID)
-
-	log.Info("Scaling down sandbox", "name", sandboxName)
-
-	_, err := m.Client.Resource(SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
-	if err != nil {
-		if errors.IsNotFound(err) {
-			return nil
-		}
-		return fmt.Errorf("failed to get sandbox %s: %w", sandboxName, err)
-	}
-
-	sandbox := &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"apiVersion": "agents.x-k8s.io/v1alpha1",
-			"kind":       "Sandbox",
-			"metadata": map[string]interface{}{
-				"name":      sandboxName,
-				"namespace": namespace,
-			},
-			"spec": map[string]interface{}{
-				"replicas": int64(0),
-			},
-		},
-	}
-
-	_, err = m.Client.Resource(SandboxGVR).Namespace(namespace).Apply(ctx, sandboxName,
-		sandbox, v1.ApplyOptions{FieldManager: "review-ui", Force: true})
-	if err != nil {
-		return fmt.Errorf("failed to scaledown sandbox: %w", err)
-	}
-	return nil
+	return m.ScaledownSandboxByName(ctx, namespace, sandboxName)
 }
 
 func (m *Manager) UpdateSandboxUserDraft(ctx context.Context, namespace, sandboxName, userDraft string) error {
@@ -312,57 +281,16 @@ func (m *Manager) GetRepoWatch(ctx context.Context, namespace, name string) (*un
 	return repoWatch, nil
 }
 
-func (m *Manager) ScaledownIssueSandbox(ctx context.Context, namespace, repo, issueID, handler string) error {
+func (m *Manager) ScaledownSandboxByName(ctx context.Context, namespace, name string) error {
 	log := klog.FromContext(ctx)
-	var sandboxName string
-	if handler != "" {
-		sandboxName = fmt.Sprintf("%s-issue-%s-%s", repo, issueID, handler)
-	} else {
-		sandboxName = fmt.Sprintf("%s-issue-%s", repo, issueID)
-	}
-
-	log.Info("Scaling down issue sandbox", "name", sandboxName)
-
-	_, err := m.Client.Resource(SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
-	if err != nil {
-		if errors.IsNotFound(err) {
-			return nil
-		}
-		return fmt.Errorf("failed to get issue sandbox %s: %w", sandboxName, err)
-	}
-
-	sandbox := &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"apiVersion": "agents.x-k8s.io/v1alpha1",
-			"kind":       "Sandbox",
-			"metadata": map[string]interface{}{
-				"name":      sandboxName,
-				"namespace": namespace,
-			},
-			"spec": map[string]interface{}{
-				"replicas": int64(0),
-			},
-		},
-	}
-
-	_, err = m.Client.Resource(SandboxGVR).Namespace(namespace).Apply(ctx, sandboxName,
-		sandbox, v1.ApplyOptions{FieldManager: "review-ui", Force: true})
-	if err != nil {
-		return fmt.Errorf("failed to scaledown issue sandbox: %w", err)
-	}
-	return nil
-}
-
-func (m *Manager) ScaledownDevSandboxHelper(ctx context.Context, namespace, name string) error {
-	log := klog.FromContext(ctx)
-	log.Info("Scaling down dev sandbox", "name", name)
+	log.Info("Scaling down sandbox by name", "name", name)
 
 	_, err := m.Client.Resource(SandboxGVR).Namespace(namespace).Get(ctx, name, v1.GetOptions{})
 	if err != nil {
 		if errors.IsNotFound(err) {
 			return nil
 		}
-		return fmt.Errorf("failed to get dev sandbox %s: %w", name, err)
+		return fmt.Errorf("failed to get sandbox %s: %w", name, err)
 	}
 
 	sandbox := &unstructured.Unstructured{
@@ -382,34 +310,29 @@ func (m *Manager) ScaledownDevSandboxHelper(ctx context.Context, namespace, name
 	_, err = m.Client.Resource(SandboxGVR).Namespace(namespace).Apply(ctx, name,
 		sandbox, v1.ApplyOptions{FieldManager: "review-ui", Force: true})
 	if err != nil {
-		return fmt.Errorf("failed to scaledown dev sandbox: %w", err)
+		return fmt.Errorf("failed to scaledown sandbox: %w", err)
 	}
 	return nil
 }
 
-func (m *Manager) ScaleupSandbox(ctx context.Context, namespace, repo, prID, annotationValue string) error {
+func (m *Manager) ScaleupSandboxByName(ctx context.Context, namespace, name string) error {
 	log := klog.FromContext(ctx)
-	sandboxName := fmt.Sprintf("%s-pr-%s", repo, prID)
+	log.Info("Scaling up sandbox by name", "name", name)
 
-	log.Info("Scaling up sandbox", "name", sandboxName)
-
-	_, err := m.Client.Resource(SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
+	_, err := m.Client.Resource(SandboxGVR).Namespace(namespace).Get(ctx, name, v1.GetOptions{})
 	if err != nil {
 		if errors.IsNotFound(err) {
 			return nil
 		}
-		return fmt.Errorf("failed to get sandbox %s: %w", sandboxName, err)
+		return fmt.Errorf("failed to get sandbox %s: %w", name, err)
 	}
 
 	metadata := map[string]interface{}{
-		"name":      sandboxName,
+		"name":      name,
 		"namespace": namespace,
-	}
-
-	if annotationValue != "" {
-		metadata["annotations"] = map[string]interface{}{
-			"sandbox.gemini.google.com/prevent-auto-shutdown": annotationValue,
-		}
+		"annotations": map[string]interface{}{
+			"sandbox.gemini.google.com/unpaused-at": time.Now().Format(time.RFC3339),
+		},
 	}
 
 	sandbox := &unstructured.Unstructured{
@@ -423,7 +346,7 @@ func (m *Manager) ScaleupSandbox(ctx context.Context, namespace, repo, prID, ann
 		},
 	}
 
-	_, err = m.Client.Resource(SandboxGVR).Namespace(namespace).Apply(ctx, sandboxName,
+	_, err = m.Client.Resource(SandboxGVR).Namespace(namespace).Apply(ctx, name,
 		sandbox, v1.ApplyOptions{FieldManager: "review-ui", Force: true})
 	if err != nil {
 		return fmt.Errorf("failed to scale up sandbox: %w", err)
@@ -431,82 +354,37 @@ func (m *Manager) ScaleupSandbox(ctx context.Context, namespace, repo, prID, ann
 	return nil
 }
 
-func (m *Manager) ScaleupIssueSandbox(ctx context.Context, namespace, repo, issueID, handler, annotationValue string) error {
-	log := klog.FromContext(ctx)
-	sandboxName := fmt.Sprintf("%s-issue-%s", repo, issueID)
-
-	log.Info("Scaling up issue sandbox", "name", sandboxName, "handler", handler, "annotationValue", annotationValue)
-
-	_, err := m.Client.Resource(SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
-	if err != nil {
-		if errors.IsNotFound(err) {
-			return nil
-		}
-		return fmt.Errorf("failed to get issue sandbox %s: %w", sandboxName, err)
+func (m *Manager) ScaledownIssueSandbox(ctx context.Context, namespace, repo, issueID, handler string) error {
+	var sandboxName string
+	if handler != "" {
+		sandboxName = fmt.Sprintf("%s-issue-%s-%s", repo, issueID, handler)
+	} else {
+		sandboxName = fmt.Sprintf("%s-issue-%s", repo, issueID)
 	}
+	return m.ScaledownSandboxByName(ctx, namespace, sandboxName)
+}
 
-	metadata := map[string]interface{}{
-		"name":      sandboxName,
-		"namespace": namespace,
-	}
+func (m *Manager) ScaledownDevSandboxHelper(ctx context.Context, namespace, name string) error {
+	return m.ScaledownSandboxByName(ctx, namespace, name)
+}
 
-	if annotationValue != "" {
-		metadata["annotations"] = map[string]interface{}{
-			"sandbox.gemini.google.com/prevent-auto-shutdown": annotationValue,
-		}
-	}
+func (m *Manager) ScaleupSandbox(ctx context.Context, namespace, repo, prID string) error {
+	sandboxName := fmt.Sprintf("%s-pr-%s", repo, prID)
+	return m.ScaleupSandboxByName(ctx, namespace, sandboxName)
+}
 
-	sandbox := &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"apiVersion": "agents.x-k8s.io/v1alpha1",
-			"kind":       "Sandbox",
-			"metadata":   metadata,
-			"spec": map[string]interface{}{
-				"replicas": int64(1),
-			},
-		},
+func (m *Manager) ScaleupIssueSandbox(ctx context.Context, namespace, repo, issueID, handler string) error {
+	var sandboxName string
+	if handler != "" {
+		sandboxName = fmt.Sprintf("%s-issue-%s-%s", repo, issueID, handler)
+	} else {
+		sandboxName = fmt.Sprintf("%s-issue-%s", repo, issueID)
 	}
-
-	_, err = m.Client.Resource(SandboxGVR).Namespace(namespace).Apply(ctx, sandboxName,
-		sandbox, v1.ApplyOptions{FieldManager: "review-ui", Force: true})
-	if err != nil {
-		return fmt.Errorf("failed to scale up issue sandbox: %w", err)
-	}
-	return nil
+	return m.ScaleupSandboxByName(ctx, namespace, sandboxName)
 }
 
 func (m *Manager) ScaleupDevSandboxHelper(ctx context.Context, namespace, name string) error {
-	log := klog.FromContext(ctx)
-	log.Info("Scaling up dev sandbox", "name", name)
-
-	_, err := m.Client.Resource(SandboxGVR).Namespace(namespace).Get(ctx, name, v1.GetOptions{})
-	if err != nil {
-		if errors.IsNotFound(err) {
-			return nil
-		}
-		return fmt.Errorf("failed to get dev sandbox %s: %w", name, err)
-	}
-
-	sandbox := &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"apiVersion": "agents.x-k8s.io/v1alpha1",
-			"kind":       "Sandbox",
-			"metadata": map[string]interface{}{
-				"name":      name,
-				"namespace": namespace,
-			},
-			"spec": map[string]interface{}{
-				"replicas": int64(1),
-			},
-		},
-	}
-
-	_, err = m.Client.Resource(SandboxGVR).Namespace(namespace).Apply(ctx, name,
-		sandbox, v1.ApplyOptions{FieldManager: "review-ui", Force: true})
-	if err != nil {
-		return fmt.Errorf("failed to scale up dev sandbox: %w", err)
-	}
-	return nil
+	return m.ScaleupSandboxByName(ctx, namespace, name)
 }
 
 func (m *Manager) ListSandboxTasks(ctx context.Context, namespace, sandboxName string) (*sandboxtaskv1alpha1.SandboxTaskList, error) {

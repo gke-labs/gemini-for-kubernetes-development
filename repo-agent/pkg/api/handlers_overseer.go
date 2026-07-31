@@ -653,6 +653,32 @@ func (s *Server) deleteOverseerSandbox(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "deleted"})
 }
 
+func (s *Server) scaleUpOverseerSandbox(c *gin.Context) {
+	overseerName := c.Param("name")
+	sandboxName := c.Param("sandboxName")
+	namespace := fmt.Sprintf("overseer-%s", overseerName)
+
+	err := s.K8sManager.ScaleupSandboxByName(c.Request.Context(), namespace, sandboxName)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scale up sandbox", "details": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "scaled_up"})
+}
+
+func (s *Server) scaleDownOverseerSandbox(c *gin.Context) {
+	overseerName := c.Param("name")
+	sandboxName := c.Param("sandboxName")
+	namespace := fmt.Sprintf("overseer-%s", overseerName)
+
+	err := s.K8sManager.ScaledownSandboxByName(c.Request.Context(), namespace, sandboxName)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scale down sandbox", "details": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "scaled_down"})
+}
+
 type QueueTaskItem struct {
 	FileName   string `json:"fileName"`
 	QueueState string `json:"queueState"`

@@ -363,12 +363,7 @@ func (s *Server) scaleUpIssue(c *gin.Context) {
 	// Ignore error as body might be empty
 	_ = c.ShouldBindJSON(&payload)
 
-	annotationValue := ""
-	if payload.Manual {
-		annotationValue = "true"
-	}
-
-	if err := s.K8sManager.ScaleupIssueSandbox(ctx, namespace, repo, issueID, "", annotationValue); err != nil {
+	if err := s.K8sManager.ScaleupIssueSandbox(ctx, namespace, repo, issueID, ""); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scale up issue sandbox", "details": err.Error()})
 		return
 	}
@@ -565,7 +560,7 @@ func (s *Server) createIssueTask(c *gin.Context) {
 	}
 
 	// Scale up the sandbox so it can process the task
-	if err := s.K8sManager.ScaleupIssueSandbox(c.Request.Context(), namespace, repo, issueID, "", ""); err != nil {
+	if err := s.K8sManager.ScaleupIssueSandbox(c.Request.Context(), namespace, repo, issueID, ""); err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Failed to scale up sandbox after task creation", "details": err.Error()})
 		klog.Warningf("Failed to scale up issue sandbox after task creation: %v", err)
 		return
@@ -789,7 +784,7 @@ func (s *Server) rollbackIssue(c *gin.Context) {
 	}
 
 	// Scale up the sandbox so it can process the task
-	if err := s.K8sManager.ScaleupIssueSandbox(c.Request.Context(), namespace, repo, issueID, "", ""); err != nil {
+	if err := s.K8sManager.ScaleupIssueSandbox(c.Request.Context(), namespace, repo, issueID, ""); err != nil {
 		klog.Warningf("Failed to scale up issue sandbox after rollback task creation: %v", err)
 	}
 
