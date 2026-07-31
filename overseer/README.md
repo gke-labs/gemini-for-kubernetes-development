@@ -1,91 +1,18 @@
 # Overseer
 
-Overseer is an autonomous agent responsible for orchestrating other agents and managing the state of a repository in a Kubernetes-based agentic system.
+Overseer is an autonomous agent responsible for orchestrating other agents and managing the state of a repository in a Kubernetes-based agentic system. It combines deterministic task supervision with an LLM-driven autonomous phase (`gemini-cli`) to continuously observe repository events and drive workflows toward desired states.
 
-## Components
+## Documentation
 
+For instructions, architectural deep-dives, and design notes, consult the documentation under `docs/`:
 
-- `pkg/overseer`: Go package for reconciling Overseer sandboxes.
-- `images/overseer`: Dockerfile and scripts for the Overseer agent image.
-- `k8s/token-usage.yaml`: deployment of the token-usage collector (the hidden `factory token-daemon` command, implemented in `factory/pkg/tokenusage`), reusing the overseer image. It durably records per-task gemini-cli token usage (pushed by factory task commands, see `factory/pkg/usagereport`) on a PVC and serves per-issue, per-PR, and per-workflow rollups over HTTP as a StatefulSet + Service (`token-usage.overseer-system:8080`). The factory watch loop also posts a one-time usage summary comment on a workflow issue when the issue is closed and its sandbox is cleaned up. Reporting is controlled by the `COLLECTOR_URL` env var (set on the controller, injected into overseer sandboxes; empty disables it).
+- **[User Guide & Installation Manual](docs/user-guide.md)**: Comprehensive instructions for cluster prerequisites, setting up robot accounts, local development with `kind`, operational management via the Review UI dashboard, and real-world configuration walkthroughs (such as the enterprise KCC deployment).
+- **[System Architecture Guide & Interaction Diagrams](docs/architecture-overseer-factory.md)**: An end-to-end technical breakdown of the dual-loop supervisor model, worker sandbox lifecycle states, token usage telemetry, and git-backed filesystem queue management between Overseer and Factory.
+- **[Core Design Principles](docs/design-overseer.md)**: Foundational concepts governing autonomous agentic loops, intent grokking, and multi-agent orchestration.
 
-## Getting Started with kind
+## Core Components
 
-To try out Overseer locally, you can easily spin it up in a `kind` cluster.
-
-### 1. Set Environment Variables
-
-Before running the setup, you need to provide your Gemini API key and GitHub credentials for the agent's robot account. These are used to create the necessary Kubernetes secrets during setup:
-
-```bash
-export GEMINI_API_KEY="your-gemini-api-key"
-export ROBOT1_GH_PAT="your-github-personal-access-token"
-export ROBOT1_GH_USERID="your-github-username"
-export ROBOT1_GH_NAME="Your Name"
-export ROBOT1_GH_EMAIL="your-email@example.com"
-```
-
-### 2. Deploy
-
-Simply run `make` in the `overseer` directory:
-
-```bash
-make
-```
-
-This will automatically check prerequisites, create a `kind` cluster named `overseer-agent`, install required CRDs, create the secrets from your environment variables, build the images, and deploy the Overseer controller.
-
-### 3. Watch a Repository
-
-To instruct Overseer to start watching a repository, create an `Overseer` Custom Resource (CR).
-
-Here is an example that watches a repo, enables background chores, and disables automatic PR/issue handling. Create a file named `my-overseer.yaml`:
-
-```yaml
-apiVersion: overseer.gemini.google.com/v1alpha1
-kind: Overseer
-metadata:
-  name: your-repo
-spec:
-  repoURL: https://github.com/your-org/your-repo
-  robotAccount: your-github-username # Must match ROBOT1_GH_USERID
-  geminiAPIKeySecretName: gemini-vscode-tokens
-  # Enable chores. This looks for .agents/<chore files>
-  # and for each chore file we start a sandbox to run the agent in it.
-  chores:
-    mode: enabled
-  # Disable Issue/PR handling
-  # this is important if you dont want overseer to start sending PRs and reviews on a 
-  # public repo
-  repo:
-    issueMode: disabled
-    prMode: disabled
-    reviewMode: disabled
-```
-
-Apply it to your cluster:
-
-```bash
-kubectl apply -f my-overseer.yaml
-```
-
-### 4. View Logs
-
-**Overseer Controller Logs:**
-The controller manages the lifecycle of the Overseer sandboxes.
-```bash
-kubectl logs -n overseer-system -l app=overseer-controller -f
-```
-
-**Overseer Agent Logs:**
-When you apply an `Overseer` CR, the controller creates a dedicated namespace (e.g., `overseer-your-repo`) and deploys the agent sandbox there. To watch the agent's autonomous loop and see what it is doing:
-```bash
-kubectl logs -n overseer-your-repo-agent -l sandbox=overseer-your-repo-agent -f
-```
-
-
-
-For a complete installation, setup, and operations manual (featuring real-world configuration examples), see the [Overseer User Guide](docs/user-guide.md).
-For an end-to-end system architecture breakdown and interaction diagrams between Overseer and Factory, see [docs/architecture-overseer-factory.md](docs/architecture-overseer-factory.md).
-For additional foundational design principles, see [docs/design-overseer.md](docs/design-overseer.md).
-
+- `pkg/overseer`: Go package for reconciling Overseer sandboxes and managing tenant namespace isolation.
+- `images/overseer`: Dockerfile and execution scripts (`run.sh`, `bootstrap.sh`) for the Overseer watch daemon container image.
+- `k8s/token-usage.yaml`: Kubernetes manifests for the telemetry token-usage collector (reusing the overseer image to run `factory token-daemon`), which durably records per-task Gemini token consumption on a PVC and serves aggregated usage rollups over HTTP as a StatefulSet (`token-usage.overseer-system:8080`).
+- `examples/`: Ready-to-deploy custom resource configurations for real-world repositories, including [Kubernetes Config Connector (KCC)](examples/kcc.yaml), [Gateway API Reference](examples/gwapi-ref.yaml), and [AI Factory](examples/ai-factory.yaml).
