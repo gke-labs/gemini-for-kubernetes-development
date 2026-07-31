@@ -369,16 +369,21 @@ func UpdateSandboxTaskAnnotation(ctx context.Context, kubeClient *clients.Kubern
 		return fmt.Errorf("getting sandbox %s: %w", sandboxName, err)
 	}
 
+	unpaused := false
 	if taskType != "" && taskState != "Completed" && taskState != "Failed" {
 		replicas, found, _ := unstructured.NestedInt64(unstructObj.Object, "spec", "replicas")
 		if found && replicas == 0 {
 			_ = unstructured.SetNestedField(unstructObj.Object, int64(1), "spec", "replicas")
+			unpaused = true
 		}
 	}
 
 	annotations := unstructObj.GetAnnotations()
 	if annotations == nil {
 		annotations = make(map[string]string)
+	}
+	if unpaused {
+		annotations["sandbox.gemini.google.com/unpaused-at"] = time.Now().UTC().Format(time.RFC3339)
 	}
 
 	if taskType != "" {
@@ -524,6 +529,11 @@ func SuspendIdleSandboxes(ctx context.Context, kubeClient *clients.KubernetesCli
 				}
 			}
 			if tsStr, ok := annotations["sandbox.gemini.google.com/last-task-time"]; ok {
+				if ts, err := time.Parse(time.RFC3339, tsStr); err == nil && ts.After(lastActivity) {
+					lastActivity = ts
+				}
+			}
+			if tsStr, ok := annotations["sandbox.gemini.google.com/unpaused-at"]; ok {
 				if ts, err := time.Parse(time.RFC3339, tsStr); err == nil && ts.After(lastActivity) {
 					lastActivity = ts
 				}
