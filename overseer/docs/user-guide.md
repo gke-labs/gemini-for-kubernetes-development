@@ -16,7 +16,7 @@ Ensure your cluster has the required Kubernetes Custom Resource Definitions inst
 - `Sandbox` (`agents.x-k8s.io/v1alpha1`)
 - `SandboxTask` (`sandboxtask.gemini.google.com/v1alpha1`)
 
-*Tip: For local testing or development, running `make` in the `overseer/` directory automatically bootstraps a local `kind` cluster with all required CRDs and controllers pre-installed.*
+*Tip: For local testing or development, see **Section 1.5** below to automatically bootstrap a local `kind` cluster with all required CRDs and controllers pre-installed.*
 
 ### 1.2 LLM Credentials Secret
 Overseer and its worker sandboxes rely on Google Gemini models for intent evaluation and automated code generation. Create a Kubernetes Secret containing your valid API token:
@@ -37,6 +37,24 @@ kubectl create secret generic projectaccess \
   --from-file=keys.json=/path/to/sa-key.json \
   -n default
 ```
+
+### 1.5 Local Development Setup with kind
+To try out Overseer locally or develop new features, you can spin up an isolated environment inside a `kind` Kubernetes cluster.
+
+1. **Export Environment Variables**: Before starting, provide your Gemini API key and GitHub credentials for your test robot account. These are automatically packaged into Kubernetes secrets by the setup scripts:
+```bash
+export GEMINI_API_KEY="your-gemini-api-key"
+export ROBOT1_GH_PAT="your-github-personal-access-token"
+export ROBOT1_GH_USERID="your-github-username"
+export ROBOT1_GH_NAME="Your Name"
+export ROBOT1_GH_EMAIL="your-email@example.com"
+```
+
+2. **Deploy with Make**: Simply run `make` inside the `overseer/` directory:
+```bash
+make
+```
+This command checks prerequisites, initializes a `kind` cluster named `overseer-agent`, installs all required CRDs, imports your credentials as secrets, builds the Overseer images, and deploys the Overseer custom resource controller into the `overseer-system` namespace.
 
 ---
 
@@ -156,8 +174,16 @@ Verify that the supervisory watch daemon pod is running inside the new namespace
 kubectl get pods -n overseer-kcc
 ```
 
-### Step 3: Stream Live Supervisory Logs
-To monitor the continuous dual-loop (deterministic `factory watch` followed by Gemini LLM intent orchestration) in real-time:
+### Step 3: Stream Live Supervisory & Controller Logs
+
+**Overseer Controller Logs:**
+To monitor the central Kubernetes controller responsible for reconciling `Overseer` custom resources and creating tenant namespaces:
+```bash
+kubectl logs -n overseer-system -l app=overseer-controller -f
+```
+
+**Overseer Watch Daemon Agent Logs:**
+To monitor the autonomous agent's continuous dual-loop (deterministic `factory watch` followed by Gemini LLM intent orchestration) inside the tenant namespace:
 ```bash
 kubectl logs -n overseer-kcc -l sandbox=overseer-kcc-agent -f
 ```
