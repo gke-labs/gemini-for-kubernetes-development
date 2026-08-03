@@ -461,6 +461,17 @@ completedAt: "2026-07-23T13:00:00Z"
 		t.Fatalf("failed to write investigate task file: %v", err)
 	}
 
+	// 4. Create an iterate task file
+	iterateTaskPath := filepath.Join(tempDir, "task-pr-123-iterate.yaml")
+	iterateTaskData := []byte(`
+type: pr-iterate
+commitSHA: "efgh456"
+completedAt: "2026-07-23T14:00:00Z"
+`)
+	if err := os.WriteFile(iterateTaskPath, iterateTaskData, 0644); err != nil {
+		t.Fatalf("failed to write iterate task file: %v", err)
+	}
+
 	initialState := prWatchState{}
 
 	// Process review task
@@ -487,5 +498,16 @@ completedAt: "2026-07-23T13:00:00Z"
 	expectedInvestigateTime, _ := time.Parse(time.RFC3339, "2026-07-23T13:00:00Z")
 	if !state.lastInvestigatedTime.Equal(expectedInvestigateTime) {
 		t.Errorf("expected lastInvestigatedTime to be %v, got %v", expectedInvestigateTime, state.lastInvestigatedTime)
+	}
+
+	// Process iterate task
+	fInfoIterate, _ := os.Stat(iterateTaskPath)
+	state = parseProcessedPRTask(iterateTaskPath, "task-pr-123-iterate", fInfoIterate, state)
+	expectedIterateTime, _ := time.Parse(time.RFC3339, "2026-07-23T14:00:00Z")
+	if !state.lastIteratedTime.Equal(expectedIterateTime) {
+		t.Errorf("expected lastIteratedTime to be %v, got %v", expectedIterateTime, state.lastIteratedTime)
+	}
+	if state.lastIteratedSHA != "efgh456" {
+		t.Errorf("expected lastIteratedSHA to be 'efgh456', got '%s'", state.lastIteratedSHA)
 	}
 }
