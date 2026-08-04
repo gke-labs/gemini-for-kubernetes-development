@@ -1242,10 +1242,17 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				// Fetch all PR comments (handling pagination)
 				comments, listCommentsErr := github.ListAllIssueComments(ctx, ghClient, owner, repo, num)
 
+				state := processedPRs[num]
+
 				// Check Phase 1: Rebase/Conflicts
 				isConflicting := pr.Mergeable != nil && !*pr.Mergeable
 
 				if isConflicting {
+					if state.lastIteratedSHA != "" && state.lastIteratedSHA == headSHA {
+						klog.Infof("Skipping PR #%d rebase/conflict resolution because an iterate task was already processed for head SHA %s.", num, headSHA)
+						continue
+					}
+
 					filename := fmt.Sprintf("task-pr-%d-iterate.yaml", num)
 					if !taskExists(incomingDir, processingDir, filename) {
 						sandboxName := resolveSandboxName(ctx, kubeClient, ghClient, "pr-iterate", num, owner, repo)
@@ -1280,6 +1287,9 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 								fmt.Printf("[DRYRUN] Would queue rebase task for PR #%d: %s\n", num, prURL)
 							} else {
 								fmt.Printf("Queueing rebase task for PR #%d...\n", num)
+								state.lastIteratedSHA = headSHA
+								state.lastIteratedTime = time.Now()
+								processedPRs[num] = state
 								if err := writeTaskAtomically(incomingDir, filename, task); err != nil {
 									klog.Errorf("Failed to queue rebase task for PR #%d: %v", num, err)
 								} else {
@@ -1315,7 +1325,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					}
 				}
 
-				state := processedPRs[num]
+				state = processedPRs[num]
 
 				assignedBot := assignedBotUser(prIssue, allBotUsers)
 				isExplicitlyAssigned := assignedBot != "" && state.unassignedSHA != headSHA
@@ -2648,6 +2658,8 @@ type prWatchState struct {
 	lastInvestigatedTime     time.Time
 	lastCommentAddressedTime time.Time
 	lastReviewedSHA          string
+	lastIteratedSHA          string
+	lastIteratedTime         time.Time
 	unassignedSHA            string
 }
 
@@ -2655,6 +2667,7 @@ func parseProcessedPRTask(filePath string, name string, fInfo os.FileInfo, state
 	isComments := strings.HasSuffix(name, "-comments")
 	isInvestigate := strings.HasSuffix(name, "-investigate")
 	isReview := strings.HasSuffix(name, "-review")
+	isIterate := strings.HasSuffix(name, "-iterate")
 
 	var t QueueTask
 	hasTask := false
@@ -2683,6 +2696,13 @@ func parseProcessedPRTask(filePath string, name string, fInfo os.FileInfo, state
 		} else if isReview {
 			if hasTask && t.CommitSHA != "" {
 				state.lastReviewedSHA = t.CommitSHA
+			}
+		} else if isIterate {
+			if tTime.After(state.lastIteratedTime) {
+				state.lastIteratedTime = tTime
+			}
+			if hasTask && t.CommitSHA != "" {
+				state.lastIteratedSHA = t.CommitSHA
 			}
 		}
 	}
