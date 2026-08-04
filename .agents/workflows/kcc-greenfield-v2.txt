@@ -225,7 +225,9 @@ Open a GitHub issue to coordinate the implementation of the direct controller an
         - Add `update.yaml`: Update all **mutable** fields.
         - Add `dependencies.yaml` if the resource requires other KCC resources to exist first.
 
-    7.  **Record Golden Files (Real GCP)**:
+    7.  **MANDATORY: Record Golden Files Against Real GCP (`hack/record-gcp`)**:
+        - **STRICT GUARDRAIL — DO NOT USE MOCKGCP OR OFFLINE MOCKS**: You MUST record golden files directly against real GCP using `./hack/record-gcp`. Do **NOT** attempt to use `mockgcp`, do NOT search for or try to implement mockgcp services, and do NOT use `hack/compare-mock` or `E2E_GCP_TARGET=mock`.
+        - **MANDATORY EXECUTION**: You are explicitly required to run `./hack/record-gcp` on both your minimal and maximal fixtures before running any validation tests in Step 8 or preparing the PR in Step 9. Skipping this step or attempting to substitute mock tests is considered a critical failure.
         Run `hack/record-gcp "fixtures/^<testname>$"` to capture real GCP behavior and record traffic and object state:
         ```bash
         # Run from the repository root for both minimal and maximal fixtures
@@ -238,7 +240,7 @@ Open a GitHub issue to coordinate the implementation of the direct controller an
           ```
           *(For example: `gcloud services enable compute.googleapis.com` or `gcloud services enable run.googleapis.com`)*
 
-          - Using the `hack/record-gcp` wrapper ensures a sufficient timeout (e.g., 30-60 minutes) is already configured, automatically handling slow GCP resource creation. There is no need to specify additional timeout flags when using this helper.
+        - Using the `hack/record-gcp` wrapper ensures a sufficient timeout (e.g., 30-60 minutes) is already configured, automatically handling slow GCP resource creation. There is no need to specify additional timeout flags when using this helper.
 
     8.  **Validation & Last-Mile Tests**:
         Run the following tests to ensure CI compliance and verify field coverage:
