@@ -5,6 +5,7 @@
 package v1alpha1
 
 import (
+	"k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -129,6 +130,11 @@ func (in *OverseerSpec) DeepCopyInto(out *OverseerSpec) {
 	if in.MaxActiveIssues != nil {
 		in, out := &in.MaxActiveIssues, &out.MaxActiveIssues
 		*out = new(int32)
+		**out = **in
+	}
+	if in.PRInactivityTimeout != nil {
+		in, out := &in.PRInactivityTimeout, &out.PRInactivityTimeout
+		*out = new(v1.Duration)
 		**out = **in
 	}
 	if in.MinNumber != nil {
