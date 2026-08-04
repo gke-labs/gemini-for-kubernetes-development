@@ -42,6 +42,9 @@ function writeFactoryConfig {
     if [ -n "$MIN_NUMBER" ]; then
         echo "minNumber: $MIN_NUMBER" >> "$CFG_FILE"
     fi
+    if [ -n "$PR_INACTIVITY_TIMEOUT" ]; then
+        echo "prInactivityTimeout: $PR_INACTIVITY_TIMEOUT" >> "$CFG_FILE"
+    fi
     
     # PR Labels configuration (defaulting to 'overseer' inside the overseer container)
     PR_LABEL_VAL=${PR_LABEL:-overseer}

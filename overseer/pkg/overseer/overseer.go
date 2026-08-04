@@ -285,6 +285,12 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 			"value": o.Spec.SandboxIdleTimeout,
 		})
 	}
+	if o.Spec.PRInactivityTimeout != nil {
+		env = append(env, map[string]interface{}{
+			"name":  "PR_INACTIVITY_TIMEOUT",
+			"value": o.Spec.PRInactivityTimeout.Duration.String(),
+		})
+	}
 	if o.Spec.MinNumber != nil {
 		env = append(env, map[string]interface{}{
 			"name":  "MIN_NUMBER",

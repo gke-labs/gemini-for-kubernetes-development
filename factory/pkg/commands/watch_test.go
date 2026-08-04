@@ -511,3 +511,100 @@ completedAt: "2026-07-23T14:00:00Z"
 		t.Errorf("expected lastIteratedSHA to be 'efgh456', got '%s'", state.lastIteratedSHA)
 	}
 }
+
+func TestGetLastPRActivityTime(t *testing.T) {
+	baseTime := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	pr := &githubv39.PullRequest{
+		CreatedAt: &baseTime,
+	}
+
+	githubLogin := "factory-bot"
+	bots := []string{"allowlisted-bot"}
+
+	// Case 1: No comments/reviews
+	got := getLastPRActivityTime(pr, nil, nil, nil, githubLogin, bots)
+	if !got.Equal(baseTime) {
+		t.Errorf("Case 1 failed: expected %v, got %v", baseTime, got)
+	}
+
+	// Case 2: Human comment on issue
+	humanTime := baseTime.Add(1 * time.Hour)
+	comments := []*githubv39.IssueComment{
+		{
+			User:      &githubv39.User{Login: stringPtr("human-user")},
+			CreatedAt: &humanTime,
+		},
+	}
+	got = getLastPRActivityTime(pr, comments, nil, nil, githubLogin, bots)
+	if !got.Equal(humanTime) {
+		t.Errorf("Case 2 failed: expected %v, got %v", humanTime, got)
+	}
+
+	// Case 3: Bot comment (ignored)
+	botTime := baseTime.Add(2 * time.Hour)
+	comments = []*githubv39.IssueComment{
+		{
+			User:      &githubv39.User{Login: stringPtr("allowlisted-bot")},
+			CreatedAt: &botTime,
+		},
+	}
+	got = getLastPRActivityTime(pr, comments, nil, nil, githubLogin, bots)
+	if !got.Equal(baseTime) {
+		t.Errorf("Case 3 failed: expected %v, got %v", baseTime, got)
+	}
+
+	// Case 4: Bot pause comment (resets timer)
+	pauseTime := baseTime.Add(3 * time.Hour)
+	comments = []*githubv39.IssueComment{
+		{
+			User:      &githubv39.User{Login: stringPtr("factory-bot")},
+			CreatedAt: &pauseTime,
+			Body:      stringPtr("🤖 AI Factory has paused automated processing on this pull request due to a period of inactivity"),
+		},
+	}
+	got = getLastPRActivityTime(pr, comments, nil, nil, githubLogin, bots)
+	if !got.Equal(pauseTime) {
+		t.Errorf("Case 4 failed: expected %v, got %v", pauseTime, got)
+	}
+
+	// Case 5: Human review
+	reviewTime := baseTime.Add(4 * time.Hour)
+	reviews := []*githubv39.PullRequestReview{
+		{
+			ID:          int64Ptr(1),
+			User:        &githubv39.User{Login: stringPtr("human-user2")},
+			SubmittedAt: &reviewTime,
+		},
+	}
+	got = getLastPRActivityTime(pr, nil, reviews, nil, githubLogin, bots)
+	if !got.Equal(reviewTime) {
+		t.Errorf("Case 5 failed: expected %v, got %v", reviewTime, got)
+	}
+
+	// Case 6: Review comment by human under a bot review
+	botReviewTime := baseTime.Add(5 * time.Hour)
+	humanReviewCommentTime := baseTime.Add(6 * time.Hour)
+	reviews = []*githubv39.PullRequestReview{
+		{
+			ID:          int64Ptr(2),
+			User:        &githubv39.User{Login: stringPtr("factory-bot")},
+			SubmittedAt: &botReviewTime,
+		},
+	}
+	revComments := map[int64][]*githubv39.PullRequestComment{
+		2: {
+			{
+				User:      &githubv39.User{Login: stringPtr("human-user3")},
+				CreatedAt: &humanReviewCommentTime,
+			},
+		},
+	}
+	got = getLastPRActivityTime(pr, nil, reviews, revComments, githubLogin, bots)
+	if !got.Equal(humanReviewCommentTime) {
+		t.Errorf("Case 6 failed: expected %v, got %v", humanReviewCommentTime, got)
+	}
+}
+
+func int64Ptr(i int64) *int64 {
+	return &i
+}

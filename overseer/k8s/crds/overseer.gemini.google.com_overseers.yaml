@@ -80,6 +80,8 @@ spec:
               pollInterval:
                 default: 30m
                 type: string
+              prInactivityTimeout:
+                type: string
               repo:
                 properties:
                   issueMode:

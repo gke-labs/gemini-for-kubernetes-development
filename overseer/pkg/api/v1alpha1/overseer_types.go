@@ -152,6 +152,10 @@ type OverseerSpec struct {
 	// +kubebuilder:default="1h"
 	SandboxIdleTimeout string `json:"sandboxIdleTimeout,omitempty"`
 
+	// PRInactivityTimeout defines the time of inactivity with no human comments before pausing automated processing on a PR (defaults to 0, which disables staleness checks).
+	// +kubebuilder:validation:Optional
+	PRInactivityTimeout *metav1.Duration `json:"prInactivityTimeout,omitempty"`
+
 	// MinNumber specifies the minimum PR/issue number to process.
 	// +kubebuilder:validation:Optional
 	MinNumber *int32 `json:"minNumber,omitempty"`

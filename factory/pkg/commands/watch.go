@@ -33,24 +33,25 @@ import (
 )
 
 type WatchFlags struct {
-	Repo               string
-	PollInterval       time.Duration
-	Assignee           string
-	Labels             []string
-	DryRun             bool
-	WatchTimeout       time.Duration
-	MaxActions         int
-	MaxPending         int
-	Mode               string
-	QueueDir           string
-	Once               bool
-	IssueMode          string
-	PRMode             string
-	ChoresMode         string
-	ScanLimit          int
-	TaskTimeout        time.Duration
-	SandboxEvictionAge string
-	SandboxIdleTimeout time.Duration
+	Repo                string
+	PollInterval        time.Duration
+	Assignee            string
+	Labels              []string
+	DryRun              bool
+	WatchTimeout        time.Duration
+	MaxActions          int
+	MaxPending          int
+	Mode                string
+	QueueDir            string
+	Once                bool
+	IssueMode           string
+	PRMode              string
+	ChoresMode          string
+	ScanLimit           int
+	TaskTimeout         time.Duration
+	SandboxEvictionAge  string
+	SandboxIdleTimeout  time.Duration
+	PRInactivityTimeout time.Duration
 }
 
 func NewWatchCommand(ctx context.Context) *cobra.Command {
@@ -106,7 +107,7 @@ func NewWatchCommand(ctx context.Context) *cobra.Command {
 				choresMode = "enabled"
 			}
 
-			return runWatch(ctx, parts[0], parts[1], flags.PollInterval, flags.Assignee, cmd.Flags().Changed("assignee"), flags.Labels, flags.DryRun, flags.WatchTimeout, flags.MaxActions, flags.MaxPending, flags.Mode, flags.QueueDir, flags.Once, issueMode, prMode, choresMode, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, flags.ScanLimit, flags.TaskTimeout, flags.SandboxEvictionAge, flags.SandboxIdleTimeout)
+			return runWatch(ctx, parts[0], parts[1], flags.PollInterval, flags.Assignee, cmd.Flags().Changed("assignee"), flags.Labels, flags.DryRun, flags.WatchTimeout, flags.MaxActions, flags.MaxPending, flags.Mode, flags.QueueDir, flags.Once, issueMode, prMode, choresMode, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, flags.ScanLimit, flags.TaskTimeout, flags.SandboxEvictionAge, flags.SandboxIdleTimeout, flags.PRInactivityTimeout)
 		},
 	}
 
@@ -128,6 +129,7 @@ func NewWatchCommand(ctx context.Context) *cobra.Command {
 	cmd.Flags().DurationVar(&flags.TaskTimeout, "task-timeout", 3*time.Hour, "Timeout for each task execution (default 3h)")
 	cmd.Flags().StringVar(&flags.SandboxEvictionAge, "sandbox-eviction-age", "7d", "Age threshold for idle sandbox eviction (e.g. '7d', '24h')")
 	cmd.Flags().DurationVar(&flags.SandboxIdleTimeout, "sandbox-idle-timeout", getEnvDuration("SANDBOX_IDLE_TIMEOUT", 0), "Idle timeout after which a sandbox that has not run any task is suspended by setting replicas to 0 (e.g. '30m', '1h')")
+	cmd.Flags().DurationVar(&flags.PRInactivityTimeout, "pr-inactivity-timeout", getEnvDuration("PR_INACTIVITY_TIMEOUT", 0), "Time of inactivity with no human comments before pausing automated processing on a PR (e.g. '24h', '168h')")
 
 	return cmd
 }
@@ -936,7 +938,7 @@ func writeTaskJournalEvent(queueDir string, taskFilename string, task *QueueTask
 	}
 }
 
-func runWatch(ctx context.Context, owner, repo string, interval time.Duration, assignee string, assigneeChanged bool, labels []string, dryRun bool, watchTimeout time.Duration, maxActions int, maxPending int, mode string, queueDir string, once bool, issueMode string, prMode string, choresMode string, ephemeralStorage string, secrets []factorysandbox.SecretMount, scanLimit int, taskTimeout time.Duration, sandboxEvictionAge string, sandboxIdleTimeout time.Duration) error {
+func runWatch(ctx context.Context, owner, repo string, interval time.Duration, assignee string, assigneeChanged bool, labels []string, dryRun bool, watchTimeout time.Duration, maxActions int, maxPending int, mode string, queueDir string, once bool, issueMode string, prMode string, choresMode string, ephemeralStorage string, secrets []factorysandbox.SecretMount, scanLimit int, taskTimeout time.Duration, sandboxEvictionAge string, sandboxIdleTimeout time.Duration, prInactivityTimeout time.Duration) error {
 	cfg, err := config.LoadConfig()
 	if err != nil {
 		klog.Warningf("Failed to load factory config: %v", err)
@@ -1242,7 +1244,45 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				// Fetch all PR comments (handling pagination)
 				comments, listCommentsErr := github.ListAllIssueComments(ctx, ghClient, owner, repo, num)
 
+				var reviews []*githubv39.PullRequestReview
+				var listReviewsErr error
+				if listCommentsErr == nil {
+					reviews, listReviewsErr = github.ListAllReviews(ctx, ghClient, owner, repo, num)
+				}
+
+				revCommentsMap := make(map[int64][]*githubv39.PullRequestComment)
+				if listCommentsErr == nil && listReviewsErr == nil {
+					for _, r := range reviews {
+						if rc, err := github.ListAllReviewComments(ctx, ghClient, owner, repo, num, r.GetID()); err == nil {
+							revCommentsMap[r.GetID()] = rc
+						}
+					}
+				}
+
 				state := processedPRs[num]
+
+				// PR Inactivity check
+				if prInactivityTimeout > 0 && listCommentsErr == nil && listReviewsErr == nil {
+					var bots []string
+					if cfg != nil {
+						bots = cfg.AllowlistedBots
+					}
+					lastActivity := getLastPRActivityTime(pr, comments, reviews, revCommentsMap, githubLogin, bots)
+					if time.Since(lastActivity) > prInactivityTimeout {
+						stopLabel := getStopLabel(triggerLabel)
+						if dryRun {
+							fmt.Printf("[DRYRUN] Would pause automated processing on PR #%d and apply label '%s' due to inactivity since %v\n", num, stopLabel, lastActivity)
+						} else {
+							klog.Infof("Pausing automated processing on PR #%d and applying label '%s' due to inactivity since %v", num, stopLabel, lastActivity)
+							addGitHubComment(ctx, ghClient, owner, repo, num, fmt.Sprintf("🤖 AI Factory has paused automated processing on this pull request due to a period of inactivity with no human comments (inactive for %s). I have applied the `%s` label.\n\nTo resume automated processing, please remove the `%s` label from this pull request and add a new comment/review.", prInactivityTimeout, stopLabel, stopLabel))
+							if _, _, err := ghClient.Issues.AddLabelsToIssue(ctx, owner, repo, num, []string{stopLabel}); err != nil {
+								klog.Errorf("Failed to add stop label '%s' to PR #%d: %v", stopLabel, num, err)
+							}
+							removePendingTasksForNumber(incomingDir, num)
+						}
+						continue
+					}
+				}
 
 				// Check Phase 1: Rebase/Conflicts
 				isConflicting := pr.Mergeable != nil && !*pr.Mergeable
@@ -1449,11 +1489,6 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				}
 
 				// Check review comments and approvals
-				var reviews []*githubv39.PullRequestReview
-				if listReviews, err := github.ListAllReviews(ctx, ghClient, owner, repo, num); err == nil {
-					reviews = listReviews
-				}
-
 				isApproved := isPRApprovedOrLGTM(pr, prIssue, reviews)
 
 				if listCommentsErr == nil {
@@ -1517,22 +1552,20 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 							hasNewComments = true
 						}
 
-						revComments, err := github.ListAllReviewComments(ctx, ghClient, owner, repo, num, r.GetID())
-						if err == nil {
-							for _, rc := range revComments {
-								if shouldIgnoreUser(rc.GetUser(), githubLogin, bots) {
-									if rc.GetCreatedAt().After(latestBotReplyTime) {
-										latestBotReplyTime = rc.GetCreatedAt()
-									}
-									continue
+						revComments := revCommentsMap[r.GetID()]
+						for _, rc := range revComments {
+							if shouldIgnoreUser(rc.GetUser(), githubLogin, bots) {
+								if rc.GetCreatedAt().After(latestBotReplyTime) {
+									latestBotReplyTime = rc.GetCreatedAt()
 								}
-								if strings.EqualFold(rc.GetUser().GetLogin(), pr.GetUser().GetLogin()) {
-									continue
-								}
-								if rc.GetCreatedAt().After(lastCommitTime) && rc.GetCreatedAt().After(state.lastCommentAddressedTime) && rc.GetCreatedAt().After(latestBotReplyTime) {
-									hasNewComments = true
-									unackPRCommentIDs = append(unackPRCommentIDs, rc.GetID())
-								}
+								continue
+							}
+							if strings.EqualFold(rc.GetUser().GetLogin(), pr.GetUser().GetLogin()) {
+								continue
+							}
+							if rc.GetCreatedAt().After(lastCommitTime) && rc.GetCreatedAt().After(state.lastCommentAddressedTime) && rc.GetCreatedAt().After(latestBotReplyTime) {
+								hasNewComments = true
+								unackPRCommentIDs = append(unackPRCommentIDs, rc.GetID())
 							}
 						}
 					}
@@ -3430,4 +3463,45 @@ func buildQueueResponse(queueDir string) map[string]interface{} {
 		"processing": processing,
 		"processed":  processed,
 	}
+}
+
+func getLastPRActivityTime(pr *githubv39.PullRequest, comments []*githubv39.IssueComment, reviews []*githubv39.PullRequestReview, revComments map[int64][]*githubv39.PullRequestComment, githubLogin string, bots []string) time.Time {
+	lastActivity := pr.GetCreatedAt()
+
+	// 1. Check issue comments
+	for _, c := range comments {
+		isBot := isBotReply(c.GetUser(), githubLogin, bots)
+		if !isBot {
+			if c.GetCreatedAt().After(lastActivity) {
+				lastActivity = c.GetCreatedAt()
+			}
+		} else {
+			if strings.Contains(c.GetBody(), "paused automated processing on this pull request due to a period of inactivity") {
+				if c.GetCreatedAt().After(lastActivity) {
+					lastActivity = c.GetCreatedAt()
+				}
+			}
+		}
+	}
+
+	// 2. Check reviews and review comments
+	for _, r := range reviews {
+		if !isBotReply(r.GetUser(), githubLogin, bots) {
+			if r.GetSubmittedAt().After(lastActivity) {
+				lastActivity = r.GetSubmittedAt()
+			}
+		}
+
+		if rcList, ok := revComments[r.GetID()]; ok {
+			for _, rc := range rcList {
+				if !isBotReply(rc.GetUser(), githubLogin, bots) {
+					if rc.GetCreatedAt().After(lastActivity) {
+						lastActivity = rc.GetCreatedAt()
+					}
+				}
+			}
+		}
+	}
+
+	return lastActivity
 }

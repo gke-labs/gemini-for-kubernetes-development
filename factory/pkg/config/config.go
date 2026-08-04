@@ -44,6 +44,7 @@ type FactoryConfig struct {
 	Secrets              []SecretMount         `yaml:"secrets"`
 	Env                  []EnvVar              `yaml:"env"`
 	MinNumber            int                   `yaml:"minNumber"`
+	PRInactivityTimeout  string                `yaml:"prInactivityTimeout"`
 	Roles                map[string]RoleConfig `yaml:"roles"`
 }
 
