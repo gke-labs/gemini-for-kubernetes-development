@@ -226,20 +226,19 @@ Open a GitHub issue to coordinate the implementation of the direct controller an
         - Add `dependencies.yaml` if the resource requires other KCC resources to exist first.
 
     7.  **Record Golden Files (Real GCP)**:
-        Run the tests against real GCP to record the traffic and object state. Ensure you use a sufficient timeout (e.g., 30-60 minutes) as GCP resource creation can be slow:
+        Run `hack/record-gcp "fixtures/^<testname>$"` to capture real GCP behavior and record traffic and object state:
         ```bash
-        # Run from the repository root
-        RUN_E2E=1 \
-        E2E_GCP_TARGET=real \
-        E2E_KUBE_TARGET=envtest \
-        GOLDEN_REQUEST_CHECKS=1 \
-        GOLDEN_OBJECT_CHECKS=1 \
-        WRITE_GOLDEN_OUTPUT=1 \
-        go test -v ./tests/e2e \
-          -timeout 60m \
-          -run TestAllInSeries/fixtures/<resource_lower>-minimal
+        # Run from the repository root for both minimal and maximal fixtures
+        ./hack/record-gcp "fixtures/^<resource_lower>-minimal$"
+        ./hack/record-gcp "fixtures/^<resource_lower>-maximal$"
         ```
-        Repeat for the `-maximal` fixture. Commit the resulting `_http.log` and `_generated_object_*.golden.yaml` files.
+        - **Troubleshooting Service Not Enabled**: If `hack/record-gcp` fails because a GCP service is not enabled (e.g., error mentions that the API is disabled or has not been used in the project before), enable the service using `gcloud` and try again:
+          ```bash
+          gcloud services enable <service-name>.googleapis.com
+          ```
+          *(For example: `gcloud services enable compute.googleapis.com` or `gcloud services enable run.googleapis.com`)*
+
+          - Using the `hack/record-gcp` wrapper ensures a sufficient timeout (e.g., 30-60 minutes) is already configured, automatically handling slow GCP resource creation. There is no need to specify additional timeout flags when using this helper.
 
     8.  **Validation & Last-Mile Tests**:
         Run the following tests to ensure CI compliance and verify field coverage:
@@ -249,6 +248,7 @@ Open a GitHub issue to coordinate the implementation of the direct controller an
         - **API Field Coverage**: `go test ./tests/apichecks/...`. 
           - For alpha: `WRITE_GOLDEN_OUTPUT=1 go test -v ./tests/apichecks/... -run TestCRDFieldPresenceInTestsForAlpha`
           - Verify that your "Maximal" test reduces the number of missing fields in the exceptions file. If `TestCRDFieldPresenceInTestsForAlpha` fails, running with `WRITE_GOLDEN_OUTPUT=1` will regenerate the exceptions file.
+        - **Iterative Refinement Loop (Steps 7 & 8)**: Use any failures, unexpected diffs, or missing field coverage found during steps 7 and 8 as your critical debugging feedback loop. Actively refine your controller logic (Step 2), mappers (Step 3), fuzzer (Step 4), and fixtures (Steps 5 & 6), re-running steps 7 and 8 until all E2E recordings and validation suites execute and pass without error before proceeding to step 9.
 
     9.  **Final Generation & Reporting**:
         Run `make ready-pr` from the repository root. This is a critical step that:
@@ -257,8 +257,6 @@ Open a GitHub issue to coordinate the implementation of the direct controller an
 
     ## Journaling
     Append any reconciliation hurdles, GCP SDK quirks, or other controller issues to `.gemini/journals/<service_name>.md` using the format described in the `kcc-agentic-journaler` skill.
-
-    If you find any shortcomings in these instructions (that likely apply to other resources), you may update the underlying skills (`.gemini/skills/kcc-direct-controller-implementer/SKILL.md` or `.gemini/skills/kcc-direct-controller-logic-implementer/SKILL.md`). Also keep a journal of any less general observations etc. To avoid git merge conflicts, use a file under their respective `journal/` folders, named after `{kind}` or a similarly unique name.
 
     ## Review Instructions
     Use .gemini/skills/reviewgen-greenfield-controller/SKILL.md to conduct the review.
