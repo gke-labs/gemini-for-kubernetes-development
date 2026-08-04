@@ -113,30 +113,24 @@ Open a GitHub issue to coordinate the implementation of the direct controller an
 *   **Labels:** `overseer`, `greenfield`, `step/controller` `overseer/review`
 *   **Body:**
     ````
-    Please follow the instructions below (from `.gemini/skills/kcc-direct-controller-implementer/SKILL.md` and `.gemini/skills/kcc-direct-controller-logic-implementer/SKILL.md`) to implement the direct controller and record/verify E2E fixtures for {kind}.
+    Please follow the instructions below to implement the direct controller and record/verify E2E fixtures for {kind}.
 
     The direct controller must be implemented to manage reconciliation logic (Adapter: Find, Create, Update, Delete) and E2E fixtures must be created and recorded against real GCP to verify functionality.
 
-    # KCC Direct Controller Implementer
-
-    This skill guides the implementation of the controller, mappers, and fuzzer for direct KCC resources, with a focus on package isolation to prevent symbol collisions and rigorous CI validation.
-
     ## Inputs
-    - `resource_kind`: The KCC Kind.
+    - `resource_kind`: The KCC Kind (`{kind}`).
     - `package_path`: The isolated package directory (e.g., `pkg/controller/direct/vertexai/examplestore/`).
     - `proto_package`: The GCP proto package (e.g., `google.cloud.aiplatform.v1`).
+    - `service_name`: The GCP service name (short, e.g., `apigee`).
+    - `api_version`: The KCC API version.
 
     ## Workflow
 
     1.  **Package Isolation**:
         You MUST implement all controller-related logic in the provided `package_path`. This prevents symbol collisions in `mapper.generated.go`.
 
-    2.  **Brownfield Migrations**:
-        For brownfield resources (with existing terraform/DCL controllers), we do NOT immediately change the default controller to `direct` in Go type labels or static config map defaults.
-        - Keep the default controller as legacy (TF/DCL), so users can opt-in gradually.
-        - Both direct and legacy controllers are now automatically tested dynamically if a direct controller is available in `static_config.go` (under `SupportedControllers`), so there is no longer any need to manually modify `tests/e2e/unified_test.go`.
-
-    3.  **Controller Structure & Patterns**:
+    2.  **Implement Adapter Logic & Controller Patterns**:
+        Update `pkg/controller/direct/<service_name>/<resource_lower>_controller.go` to implement `Find`, `Create`, `Update`, and `Delete`. Ensure correct error handling (e.g., handling 404s in `Find`), and adhere to these structural patterns:
         - **Proto Format Desired State**: Convert the KRM Spec to its Proto representation once in `AdapterForObject` and store it as a proto struct pointer (e.g., `*pb.MyResource` or `desired`) in the adapter, rather than duplicating conversion logic in both `Create` and `Update`. The adapter should avoid holding references to raw KRM objects for desired state to keep the interfaces clean, consistent with `actual` (which is also of proto type), and avoid redundant conversions. This ensures that `desired` is stored in the same proto format as `actual`.
         - **Handling Non-API / KRM-only Spec Fields**: If the KRM Spec has fields that are not represented in the GCP resource's proto message (such as client-side behavioral options or custom installation flags, e.g., `SkipInitialVersionCreation`), do NOT mix them into the proto. Instead, parse and store them as separate, explicitly-named fields on the adapter struct (e.g., `desiredSkipInitialVersionCreation bool`).
         - **NormalizeReferences**: Always call `common.NormalizeReferences` in `AdapterForObject` to resolve any resource references:
@@ -211,60 +205,27 @@ Open a GitHub issue to coordinate the implementation of the direct controller an
           2. If the update time matches and there are no external modifications, copy those mutable-but-unreadable fields from `desired` to `maskedActual` in the comparison function to avoid false diffs.
           3. If the update time does not match (or the resource is not ready), do NOT copy them. This treats the unreadable fields as having changed (since we cannot prove they didn't), correctly forcing an update.
 
-    4.  **Mappers**:
+    3.  **Mappers**:
         Verify `mapper.generated.go` and manual mappers. Ensure all references use the standard `Ref` pattern.
 
-    5.  **Fuzzer**:
+    4.  **Fuzzer**:
         Implement `<resource_lower>_fuzzer.go` and register it with `fuzztesting.RegisterKRMFuzzer`.
         - **Fuzzer Implementation Guidelines**:
           * ALWAYS prefer and encourage using the fluent `f.SpecField(".foo")` and `f.StatusField(".bar")` methods rather than inserting directly into `SpecFields`/`StatusFields` sets (e.g. avoid `f.SpecFields.Insert...`).
           * For unhandled or unimplemented fields, prefer highly descriptive helper methods (such as `f.Unimplemented_NotYetTriaged(".baz")`, `f.Unimplemented_Identity(".id")`, or other specific variants) rather than standard inserts into `UnimplementedFields` sets. This categorizes why we are not handling specific fields.
 
-    6.  **Final Generation & Reporting**:
-        Run `make ready-pr` from the repository root. This is a critical step that:
-        - Runs `make fmt` and `make vet`.
-        YOU MUST COMMIT ALL RESULTING CHANGES.
-
-    7.  **Validation & Last-Mile Tests**:
-        Run the following tests to ensure CI compliance:
-        - **Fuzzing**: `dev/ci/presubmits/fuzz-roundtrippers`
-        - **E2E Scaffolding**: `dev/ci/presubmits/tests-e2e-fixtures-direct`
-        - **Schema Integrity**: `go test ./pkg/crd/template/...`
-        - **API Field Coverage**: `go test ./tests/apichecks/...`. 
-          - If `TestCRDFieldPresenceInTestsForAlpha` fails, you may need to regenerate the exceptions file by running it with `WRITE_GOLDEN_OUTPUT=1`.
-
-    ## Journaling
-    Append any controller/reconciliation quirks or API check hurdles to `.gemini/journals/<service>.md` using the format described in the `kcc-agentic-journaler` skill.
-
-    # KCC Direct Controller Logic Implementer
-
-    This skill guides the implementation of the `Adapter` interface and the creation of "Minimal" and "Maximal" E2E fixtures to verify the resource against real GCP.
-
-    ## Inputs
-    - `resource_kind`: The KCC Kind.
-    - `service_name`: The GCP service name (short, e.g., `apigee`).
-    - `api_version`: The KCC API version.
-
-    ## Workflow
-
-    1.  **Implement Adapter Logic**:
-        Update `pkg/controller/direct/<service>/<resource_lower>_controller.go`.
-        - Implement `Find`, `Create`, `Update`, and `Delete`.
-        - Use the generated mappers and manual mappers as needed.
-        - Ensure correct error handling (e.g., handling 404s in `Find`).
-
-    2.  **Create Minimal Fixture**:
+    5.  **Create Minimal Fixture**:
         Create directory `pkg/test/resourcefixture/testdata/basic/<service_name>/<api_version>/<resource_lower>/<resource_lower>-minimal/`.
         - Add `create.yaml`: Use the bare minimum **Required** fields.
         - Use `${uniqueId}` for resource names.
 
-    3.  **Create Maximal Fixture**:
+    6.  **Create Maximal Fixture**:
         Create directory `pkg/test/resourcefixture/testdata/basic/<service_name>/<api_version>/<resource_lower>/<resource_lower>-maximal/`.
         - Add `create.yaml`: Include **every supported field** in the Spec.
         - Add `update.yaml`: Update all **mutable** fields.
         - Add `dependencies.yaml` if the resource requires other KCC resources to exist first.
 
-    4.  **Record Golden Files (Real GCP)**:
+    7.  **Record Golden Files (Real GCP)**:
         Run the tests against real GCP to record the traffic and object state. Ensure you use a sufficient timeout (e.g., 30-60 minutes) as GCP resource creation can be slow:
         ```bash
         # Run from the repository root
@@ -280,15 +241,24 @@ Open a GitHub issue to coordinate the implementation of the direct controller an
         ```
         Repeat for the `-maximal` fixture. Commit the resulting `_http.log` and `_generated_object_*.golden.yaml` files.
 
-    5.  **Verify Field Coverage**:
-        Run the API check tests:
-        - For alpha: `WRITE_GOLDEN_OUTPUT=1 go test -v ./tests/apichecks/... -run TestCRDFieldPresenceInTestsForAlpha`
-        - Verify that your "Maximal" test reduces the number of missing fields in the exceptions file.
+    8.  **Validation & Last-Mile Tests**:
+        Run the following tests to ensure CI compliance and verify field coverage:
+        - **Fuzzing**: `dev/ci/presubmits/fuzz-roundtrippers`
+        - **E2E Scaffolding**: `dev/ci/presubmits/tests-e2e-fixtures-direct`
+        - **Schema Integrity**: `go test ./pkg/crd/template/...`
+        - **API Field Coverage**: `go test ./tests/apichecks/...`. 
+          - For alpha: `WRITE_GOLDEN_OUTPUT=1 go test -v ./tests/apichecks/... -run TestCRDFieldPresenceInTestsForAlpha`
+          - Verify that your "Maximal" test reduces the number of missing fields in the exceptions file. If `TestCRDFieldPresenceInTestsForAlpha` fails, running with `WRITE_GOLDEN_OUTPUT=1` will regenerate the exceptions file.
+
+    9.  **Final Generation & Reporting**:
+        Run `make ready-pr` from the repository root. This is a critical step that:
+        - Runs `make fmt` and `make vet`.
+        YOU MUST COMMIT ALL RESULTING CHANGES.
 
     ## Journaling
-    Append any reconciliation hurdles, GCP SDK quirks, or other controller issues to `.gemini/journals/<service>.md` using the format described in the `kcc-agentic-journaler` skill.
+    Append any reconciliation hurdles, GCP SDK quirks, or other controller issues to `.gemini/journals/<service_name>.md` using the format described in the `kcc-agentic-journaler` skill.
 
-    If you find any shortcomings in these skills (that likely apply to other resources), you may update them. Also keep a journal of any less general observations etc. To avoid git merge conflicts, use a file under their respective journal/ folders, named after the kind or a similarly unique name.
+    If you find any shortcomings in these instructions (that likely apply to other resources), you may update the underlying skills (`.gemini/skills/kcc-direct-controller-implementer/SKILL.md` or `.gemini/skills/kcc-direct-controller-logic-implementer/SKILL.md`). Also keep a journal of any less general observations etc. To avoid git merge conflicts, use a file under their respective `journal/` folders, named after `{kind}` or a similarly unique name.
 
     ## Review Instructions
     Use .gemini/skills/reviewgen-greenfield-controller/SKILL.md to conduct the review.
