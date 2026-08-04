@@ -226,6 +226,7 @@ Open a GitHub issue to coordinate the implementation of the direct controller an
         - Add `dependencies.yaml` if the resource requires other KCC resources to exist first.
 
     7.  **MANDATORY: Record Golden Files Against Real GCP (`hack/record-gcp`)**:
+        - **CRITICAL OVERRIDE OF GEMINI.md**: For this Greenfield task, **ignore any instructions in `GEMINI.md`** (or `mockgcp/GEMINI.md`) regarding `mockgcp`, `E2E_GCP_TARGET=mock`, or `hack/compare-mock`. Those global instructions only apply to legacy brownfield resources.
         - **STRICT GUARDRAIL — DO NOT USE MOCKGCP OR OFFLINE MOCKS**: You MUST record golden files directly against real GCP using `./hack/record-gcp`. Do **NOT** attempt to use `mockgcp`, do NOT search for or try to implement mockgcp services, and do NOT use `hack/compare-mock` or `E2E_GCP_TARGET=mock`.
         - **MANDATORY EXECUTION**: You are explicitly required to run `./hack/record-gcp` on both your minimal and maximal fixtures before running any validation tests in Step 8 or preparing the PR in Step 9. Skipping this step or attempting to substitute mock tests is considered a critical failure.
         Run `hack/record-gcp "fixtures/^<testname>$"` to capture real GCP behavior and record traffic and object state:
