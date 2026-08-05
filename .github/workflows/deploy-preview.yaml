@@ -1,6 +1,12 @@
 name: deploy to preview
 
 on:
+  workflow_call:
+    inputs:
+      image_tag:
+        description: 'Image tag to deploy'
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       image_tag:
