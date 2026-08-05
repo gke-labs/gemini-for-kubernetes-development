@@ -1499,23 +1499,26 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						bots = cfg.AllowlistedBots
 					}
 
-					// Find the latest timestamp of any reply made by an allowlisted bot user
+					// Find the latest timestamp of any reply made by an allowlisted bot user (excluding reviewer bots)
 					var latestBotReplyTime time.Time
 					for _, c := range comments {
-						if isBotReply(c.GetUser(), githubLogin, bots) && c.GetCreatedAt().After(latestBotReplyTime) {
+						if !isReviewerBot(c.GetUser(), cfg) && isBotReply(c.GetUser(), githubLogin, bots) && c.GetCreatedAt().After(latestBotReplyTime) {
 							latestBotReplyTime = c.GetCreatedAt()
 						}
 					}
 					for _, r := range reviews {
-						if isBotReply(r.GetUser(), githubLogin, bots) && r.GetSubmittedAt().After(latestBotReplyTime) {
+						if !isReviewerBot(r.GetUser(), cfg) && isBotReply(r.GetUser(), githubLogin, bots) && r.GetSubmittedAt().After(latestBotReplyTime) {
 							latestBotReplyTime = r.GetSubmittedAt()
 						}
 					}
 
 					var unackCommentIDs []int64
 					var unackPRCommentIDs []int64
+					hasNewHumanComments := false
+					hasNewBotReviews := false
 					for _, c := range comments {
-						if shouldIgnoreUser(c.GetUser(), githubLogin, bots) {
+						isReviewer := isReviewerBot(c.GetUser(), cfg)
+						if !isReviewer && shouldIgnoreUser(c.GetUser(), githubLogin, bots) {
 							continue
 						}
 						if strings.EqualFold(c.GetUser().GetLogin(), pr.GetUser().GetLogin()) {
@@ -1532,14 +1535,19 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 							if !humanRocket && hasIssueCommentReaction(ctx, ghClient, owner, repo, c.GetID(), "confused", true, bots, githubLogin) {
 								continue
 							}
-							hasNewComments = true
+							if isReviewer {
+								hasNewBotReviews = true
+							} else {
+								hasNewHumanComments = true
+							}
 							unackCommentIDs = append(unackCommentIDs, c.GetID())
 						}
 					}
 
 					// Also check inline PR review comments directly
 					for _, r := range reviews {
-						if shouldIgnoreUser(r.GetUser(), githubLogin, bots) {
+						isReviewer := isReviewerBot(r.GetUser(), cfg)
+						if !isReviewer && shouldIgnoreUser(r.GetUser(), githubLogin, bots) {
 							if r.GetSubmittedAt().After(latestBotReplyTime) {
 								latestBotReplyTime = r.GetSubmittedAt()
 							}
@@ -1549,12 +1557,17 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 							continue
 						}
 						if r.GetSubmittedAt().After(lastCommitTime) && r.GetSubmittedAt().After(state.lastCommentAddressedTime) && r.GetSubmittedAt().After(latestBotReplyTime) {
-							hasNewComments = true
+							if isReviewer {
+								hasNewBotReviews = true
+							} else {
+								hasNewHumanComments = true
+							}
 						}
 
 						revComments := revCommentsMap[r.GetID()]
 						for _, rc := range revComments {
-							if shouldIgnoreUser(rc.GetUser(), githubLogin, bots) {
+							isInlineReviewer := isReviewerBot(rc.GetUser(), cfg)
+							if !isInlineReviewer && shouldIgnoreUser(rc.GetUser(), githubLogin, bots) {
 								if rc.GetCreatedAt().After(latestBotReplyTime) {
 									latestBotReplyTime = rc.GetCreatedAt()
 								}
@@ -1564,9 +1577,23 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 								continue
 							}
 							if rc.GetCreatedAt().After(lastCommitTime) && rc.GetCreatedAt().After(state.lastCommentAddressedTime) && rc.GetCreatedAt().After(latestBotReplyTime) {
-								hasNewComments = true
+								if isInlineReviewer {
+									hasNewBotReviews = true
+								} else {
+									hasNewHumanComments = true
+								}
 								unackPRCommentIDs = append(unackPRCommentIDs, rc.GetID())
 							}
+						}
+					}
+
+					if hasNewHumanComments {
+						hasNewComments = true
+					} else if hasNewBotReviews {
+						if state.lastCommentAddressedSHA != "" && state.lastCommentAddressedSHA == headSHA {
+							klog.Infof("Skipping bot review feedback on PR #%d because an address-comments task already ran against SHA %s without resulting in a commit.", num, headSHA)
+						} else {
+							hasNewComments = true
 						}
 					}
 
@@ -1617,6 +1644,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 										addPullRequestCommentReaction(ctx, ghClient, owner, repo, cid, "eyes")
 									}
 									state.lastCommentAddressedTime = time.Now()
+									state.lastCommentAddressedSHA = headSHA
 									processedPRs[num] = state
 									if err := writeTaskAtomically(incomingDir, filename, task); err != nil {
 										klog.Errorf("Failed to queue address-comments task for PR #%d: %v", num, err)
@@ -2613,6 +2641,23 @@ func isPRApprovedOrLGTM(pr *githubv39.PullRequest, prIssue *githubv39.Issue, rev
 	return hasApproved && !hasChangesRequested
 }
 
+func isReviewerBot(user *githubv39.User, cfg *config.FactoryConfig) bool {
+	if user == nil {
+		return false
+	}
+	login := user.GetLogin()
+	if cfg != nil {
+		if reviewerRole, ok := cfg.Roles["reviewer"]; ok {
+			for _, u := range reviewerRole.Users {
+				if strings.EqualFold(login, u) {
+					return true
+				}
+			}
+		}
+	}
+	return strings.Contains(strings.ToLower(login), "reviewbot")
+}
+
 func isBotReply(user *githubv39.User, githubLogin string, allowlistedBots []string) bool {
 	if user == nil {
 		return false
@@ -2690,6 +2735,7 @@ type prWatchState struct {
 	lastSHA                  string
 	lastInvestigatedTime     time.Time
 	lastCommentAddressedTime time.Time
+	lastCommentAddressedSHA  string
 	lastReviewedSHA          string
 	lastIteratedSHA          string
 	lastIteratedTime         time.Time
@@ -2721,6 +2767,9 @@ func parseProcessedPRTask(filePath string, name string, fInfo os.FileInfo, state
 		if isComments {
 			if tTime.After(state.lastCommentAddressedTime) {
 				state.lastCommentAddressedTime = tTime
+			}
+			if hasTask && t.CommitSHA != "" {
+				state.lastCommentAddressedSHA = t.CommitSHA
 			}
 		} else if isInvestigate {
 			if tTime.After(state.lastInvestigatedTime) {

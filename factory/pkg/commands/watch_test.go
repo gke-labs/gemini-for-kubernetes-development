@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
 	githubv39 "github.com/google/go-github/v39/github"
 	"sigs.k8s.io/yaml"
 )
@@ -445,6 +446,7 @@ commitSHA: "abcd123"
 	commentsTaskPath := filepath.Join(tempDir, "task-pr-123-comments.yaml")
 	commentsTaskData := []byte(`
 type: pr-comments
+commitSHA: "csha789"
 completedAt: "2026-07-23T12:00:00Z"
 `)
 	if err := os.WriteFile(commentsTaskPath, commentsTaskData, 0644); err != nil {
@@ -490,6 +492,9 @@ completedAt: "2026-07-23T14:00:00Z"
 	expectedCommentTime, _ := time.Parse(time.RFC3339, "2026-07-23T12:00:00Z")
 	if !state.lastCommentAddressedTime.Equal(expectedCommentTime) {
 		t.Errorf("expected lastCommentAddressedTime to be %v, got %v", expectedCommentTime, state.lastCommentAddressedTime)
+	}
+	if state.lastCommentAddressedSHA != "csha789" {
+		t.Errorf("expected lastCommentAddressedSHA to be 'csha789', got '%s'", state.lastCommentAddressedSHA)
 	}
 
 	// Process investigate task
@@ -607,4 +612,23 @@ func TestGetLastPRActivityTime(t *testing.T) {
 
 func int64Ptr(i int64) *int64 {
 	return &i
+}
+func TestIsReviewerBot(t *testing.T) {
+	loginReviewBot := "reviewbot-robot"
+	userReviewBot := &githubv39.User{Login: &loginReviewBot}
+	loginCoderBot := "neumann-coder-bot"
+	userCoderBot := &githubv39.User{Login: &loginCoderBot}
+
+	cfg := &config.FactoryConfig{
+		Roles: map[string]config.RoleConfig{
+			"reviewer": {Users: []string{"reviewbot-robot"}},
+		},
+	}
+
+	if !isReviewerBot(userReviewBot, cfg) {
+		t.Errorf("expected reviewbot-robot to be identified as reviewer bot")
+	}
+	if isReviewerBot(userCoderBot, cfg) {
+		t.Errorf("expected neumann-coder-bot to not be identified as reviewer bot")
+	}
 }
