@@ -7,6 +7,15 @@ on:
         description: 'Image tag to deploy'
         required: true
         type: string
+    secrets:
+      GKE_SA_KEY:
+        required: true
+      GKE_PREVIEW_CLUSTER:
+        required: true
+      GKE_PREVIEW_STD_CLUSTER:
+        required: true
+      GKE_ZONE:
+        required: true
   workflow_dispatch:
     inputs:
       image_tag:

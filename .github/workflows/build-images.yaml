@@ -135,4 +135,5 @@ jobs:
     secrets:
       GKE_SA_KEY: ${{ secrets.GKE_SA_KEY }}
       GKE_PREVIEW_CLUSTER: ${{ secrets.GKE_PREVIEW_CLUSTER }}
+      GKE_PREVIEW_STD_CLUSTER: ${{ secrets.GKE_PREVIEW_STD_CLUSTER }}
       GKE_ZONE: ${{ secrets.GKE_ZONE }}
