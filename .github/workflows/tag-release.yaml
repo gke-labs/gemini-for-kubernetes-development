@@ -8,6 +8,9 @@ on:
     paths:
       - repo-agent/version.go
 
+permissions:
+  contents: read
+
 jobs:
   tag-release:
     if: ${{ github.repository == 'gke-labs/gemini-for-kubernetes-development' }}
@@ -17,7 +20,7 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - run: /usr/bin/git config --global user.email actions@github.com
       - run: /usr/bin/git config --global user.name 'GitHub Actions Release Tagger'
       - run: dev/release/tag-release --working-dir repo-agent

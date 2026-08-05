@@ -5,6 +5,9 @@ on:
     tags:
       - 'v*.*.*'
 
+permissions:
+  contents: read
+
 jobs:
   release-images:
     runs-on: ubuntu-latest
@@ -27,23 +30,23 @@ jobs:
       id-token: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # fetch all history so we can get the latest tag
           fetch-depth: 0
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push release images
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
           context: repo-agent/
           file: repo-agent/images/${{ matrix.image_name }}/Dockerfile
@@ -59,48 +62,27 @@ jobs:
       id-token: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # fetch all history so we can get the latest tag
           fetch-depth: 0
 
       - name: Generate Release Assets
+        env:
+          IMAGE_TAG: ${{ github.ref_name }}
         run: |
           chmod +x ./dev/tools/deploy-to-kube
           mkdir release-assets/
-          ./dev/tools/deploy-to-kube --image-prefix=ghcr.io/gke-labs/gemini-for-kubernetes-development/ --image-tag=${{ github.ref_name }} --working-dir repo-agent/ --output-file=release-assets/manifest.yaml
-          sed  's/{REPO_AGENT_VERSION:=.*}/{REPO_AGENT_VERSION:=${{ github.ref_name }}}/g' repo-agent/installer.sh > release-assets/installer.sh
+          ./dev/tools/deploy-to-kube --image-prefix=ghcr.io/gke-labs/gemini-for-kubernetes-development/ --image-tag="$IMAGE_TAG" --working-dir repo-agent/ --output-file=release-assets/manifest.yaml
+          sed "s/{REPO_AGENT_VERSION:=.*}/{REPO_AGENT_VERSION:=$IMAGE_TAG}/g" repo-agent/installer.sh > release-assets/installer.sh
           chmod +x release-assets/installer.sh
 
       - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ github.ref }}
-          release_name: Release ${{ github.ref }}
-          draft: false
-          prerelease: false
-
-      - name: Upload Release Manifest
-        id: upload-release-manifest
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./release-assets/manifest.yaml
-          asset_name: manifest.yaml
-          asset_content_type: application/yaml
-
-      - name: Upload Installer
-        id: upload-installer
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./release-assets/installer.sh
-          asset_name: installer.sh
-          asset_content_type: text/plain
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG_NAME" \
+            release-assets/manifest.yaml \
+            release-assets/installer.sh \
+            --title "Release $TAG_NAME"
