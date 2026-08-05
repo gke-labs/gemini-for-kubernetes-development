@@ -17,9 +17,9 @@ on:
   workflow_dispatch:
     inputs:
       image_tag:
-        description: 'Image tag to deploy'
-        required: true
-        default: 'latest'
+        description: 'Image tag to deploy (defaults to github.sha)'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -49,7 +49,7 @@ jobs:
           chmod +x ./repo-agent/scripts/upgrade.sh
           ./repo-agent/scripts/upgrade.sh
         env:
-          IMAGE_TAG: ${{ inputs.image_tag }}
+          IMAGE_TAG: ${{ inputs.image_tag || github.sha }}
           SKIP_PREQS: 'true'
           CLUSTER_NAME: ${{ secrets.GKE_STAGING_CLUSTER }}
           GW_CLASS: 'gke-l7-regional-external-managed'
@@ -59,6 +59,6 @@ jobs:
           chmod +x ./overseer/scripts/upgrade.sh
           ./overseer/scripts/upgrade.sh
         env:
-          IMAGE_TAG: ${{ inputs.image_tag }}
+          IMAGE_TAG: ${{ inputs.image_tag || github.sha }}
           SKIP_PREQS: 'true'
           CLUSTER_NAME: ${{ secrets.GKE_STAGING_CLUSTER }}
