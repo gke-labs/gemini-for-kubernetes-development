@@ -632,3 +632,141 @@ func TestIsReviewerBot(t *testing.T) {
 		t.Errorf("expected neumann-coder-bot to not be identified as reviewer bot")
 	}
 }
+
+func TestSortTasksFairly(t *testing.T) {
+	baseTime := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
+
+	t.Run("FIFO within single entity prevents LIFO starvation", func(t *testing.T) {
+		task1 := taskItem{
+			filename: "task1.yaml",
+			task: &QueueTask{
+				Type:       "pr-comments",
+				Number:     10,
+				Priority:   "medium",
+				Phase:      2,
+				CreatedAt:  baseTime,
+				EnqueuedAt: baseTime.Add(1 * time.Minute),
+			},
+		}
+		task2 := taskItem{
+			filename: "task2.yaml",
+			task: &QueueTask{
+				Type:       "pr-comments",
+				Number:     10,
+				Priority:   "medium",
+				Phase:      2,
+				CreatedAt:  baseTime.Add(1 * time.Hour),
+				EnqueuedAt: baseTime.Add(2 * time.Minute),
+			},
+		}
+		task3 := taskItem{
+			filename: "task3.yaml",
+			task: &QueueTask{
+				Type:       "pr-comments",
+				Number:     10,
+				Priority:   "medium",
+				Phase:      2,
+				CreatedAt:  baseTime.Add(2 * time.Hour),
+				EnqueuedAt: baseTime.Add(3 * time.Minute),
+			},
+		}
+
+		items := []taskItem{task3, task2, task1}
+		got := sortTasksFairly(items)
+
+		expectedOrder := []string{"task1.yaml", "task2.yaml", "task3.yaml"}
+		for i, expected := range expectedOrder {
+			if got[i].filename != expected {
+				t.Errorf("at index %d: expected %s, got %s", i, expected, got[i].filename)
+			}
+		}
+	})
+
+	t.Run("Round-Robin across entities prevents entity starvation", func(t *testing.T) {
+		pr10Task1 := taskItem{
+			filename: "pr10_1.yaml",
+			task:     &QueueTask{Number: 10, Priority: "medium", Phase: 3, EnqueuedAt: baseTime.Add(1 * time.Minute)},
+		}
+		pr10Task2 := taskItem{
+			filename: "pr10_2.yaml",
+			task:     &QueueTask{Number: 10, Priority: "medium", Phase: 3, EnqueuedAt: baseTime.Add(3 * time.Minute)},
+		}
+		pr10Task3 := taskItem{
+			filename: "pr10_3.yaml",
+			task:     &QueueTask{Number: 10, Priority: "medium", Phase: 3, EnqueuedAt: baseTime.Add(4 * time.Minute)},
+		}
+
+		pr20Task1 := taskItem{
+			filename: "pr20_1.yaml",
+			task:     &QueueTask{Number: 20, Priority: "medium", Phase: 3, EnqueuedAt: baseTime.Add(5 * time.Minute)},
+		}
+
+		pr20Task2 := taskItem{
+			filename: "pr20_2.yaml",
+			task:     &QueueTask{Number: 20, Priority: "medium", Phase: 3, EnqueuedAt: baseTime.Add(6 * time.Minute)},
+		}
+
+		items := []taskItem{pr10Task1, pr10Task2, pr10Task3, pr20Task1, pr20Task2}
+		got := sortTasksFairly(items)
+
+		expectedOrder := []string{"pr10_1.yaml", "pr20_1.yaml", "pr10_2.yaml", "pr20_2.yaml", "pr10_3.yaml"}
+		for i, expected := range expectedOrder {
+			if got[i].filename != expected {
+				t.Errorf("at index %d: expected %s, got %s", i, expected, got[i].filename)
+			}
+		}
+	})
+
+	t.Run("Priority and Phase are respected across entities", func(t *testing.T) {
+		criticalTask := taskItem{
+			filename: "critical.yaml",
+			task:     &QueueTask{Number: 10, Priority: "critical", Phase: 3, EnqueuedAt: baseTime.Add(5 * time.Minute)},
+		}
+		mediumTask := taskItem{
+			filename: "medium.yaml",
+			task:     &QueueTask{Number: 20, Priority: "medium", Phase: 3, EnqueuedAt: baseTime.Add(1 * time.Minute)},
+		}
+		phase1Task := taskItem{
+			filename: "phase1.yaml",
+			task:     &QueueTask{Number: 20, Priority: "medium", Phase: 1, EnqueuedAt: baseTime.Add(2 * time.Minute)},
+		}
+
+		items := []taskItem{mediumTask, criticalTask, phase1Task}
+		got := sortTasksFairly(items)
+
+		expectedOrder := []string{"critical.yaml", "phase1.yaml", "medium.yaml"}
+		for i, expected := range expectedOrder {
+			if got[i].filename != expected {
+				t.Errorf("at index %d: expected %s, got %s", i, expected, got[i].filename)
+			}
+		}
+	})
+
+	t.Run("Fallback to modTime or CreatedAt when EnqueuedAt is zero", func(t *testing.T) {
+		taskOldCreated := &QueueTask{
+			CreatedAt: baseTime,
+		}
+		taskNewCreated := &QueueTask{
+			CreatedAt: baseTime.Add(1 * time.Hour),
+		}
+		taskWithEnqueued := &QueueTask{
+			CreatedAt:  baseTime.Add(2 * time.Hour),
+			EnqueuedAt: baseTime.Add(10 * time.Minute),
+		}
+
+		t1 := getEnqueueTime(taskOldCreated, time.Time{})
+		if !t1.Equal(baseTime) {
+			t.Errorf("expected fallback to CreatedAt %v, got %v", baseTime, t1)
+		}
+
+		t2 := getEnqueueTime(taskNewCreated, baseTime.Add(5*time.Minute))
+		if !t2.Equal(baseTime.Add(5 * time.Minute)) {
+			t.Errorf("expected fallback to modTime %v, got %v", baseTime.Add(5*time.Minute), t2)
+		}
+
+		t3 := getEnqueueTime(taskWithEnqueued, baseTime.Add(5*time.Minute))
+		if !t3.Equal(baseTime.Add(10 * time.Minute)) {
+			t.Errorf("expected EnqueuedAt %v, got %v", baseTime.Add(10*time.Minute), t3)
+		}
+	})
+}

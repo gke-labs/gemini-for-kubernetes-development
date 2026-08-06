@@ -411,6 +411,7 @@ type QueueTask struct {
 	Priority     string    `yaml:"priority"` // "critical", "urgent", "important", "high", "medium", "low"
 	Phase        int       `yaml:"phase"`    // 1: Rebase/iterate, 2: Comments, 3: Investigate/Fix, 4: Chores
 	CreatedAt    time.Time `yaml:"createdAt"`
+	EnqueuedAt   time.Time `yaml:"enqueuedAt,omitempty"`
 	Assignee     string    `yaml:"assignee,omitempty"`
 	Status       string    `yaml:"status"` // "Pending", "Running", "Completed", "Failed"
 	Error        string    `yaml:"error,omitempty"`
@@ -420,6 +421,145 @@ type QueueTask struct {
 	Instructions []string  `yaml:"instructions,omitempty"`
 	Recovered    bool      `yaml:"recovered,omitempty"`
 	CompletedAt  time.Time `yaml:"completedAt,omitempty"`
+}
+
+// taskItem represents a queue task bundled with its filename.
+type taskItem struct {
+	filename string
+	task     *QueueTask
+}
+
+// getEnqueueTime returns the timestamp when a task was enqueued, falling back to
+// file modification time or task creation time if EnqueuedAt is unset.
+func getEnqueueTime(t *QueueTask, modTime time.Time) time.Time {
+	if !t.EnqueuedAt.IsZero() {
+		return t.EnqueuedAt
+	}
+	if !modTime.IsZero() {
+		return modTime
+	}
+	return t.CreatedAt
+}
+
+// getEntityKey returns the unique key representing the target entity (PR, issue, or chore)
+// for a given queue task.
+func getEntityKey(t *QueueTask) string {
+	if t.Number > 0 {
+		return fmt.Sprintf("%d", t.Number)
+	}
+	if t.AgentFile != "" {
+		return fmt.Sprintf("chore:%s", t.AgentFile)
+	}
+	if t.URL != "" {
+		return fmt.Sprintf("url:%s", t.URL)
+	}
+	if t.Type != "" {
+		return fmt.Sprintf("type:%s", t.Type)
+	}
+	return "default"
+}
+
+// priorityRankValue converts a priority string into an integer rank where lower numbers indicate higher priority.
+func priorityRankValue(p string) int {
+	priorityRank := map[string]int{
+		"critical":  1,
+		"urgent":    2,
+		"important": 3,
+		"high":      4,
+		"medium":    5,
+		"low":       6,
+	}
+	if r, ok := priorityRank[strings.ToLower(p)]; ok {
+		return r
+	}
+	return 5
+}
+
+// isLessTask reports whether task a should be ordered before task b based on priority rank,
+// phase rank, enqueue timestamp (FIFO), creation timestamp, and filename tiebreaking.
+func isLessTask(a, b taskItem) bool {
+	rankA := priorityRankValue(a.task.Priority)
+	rankB := priorityRankValue(b.task.Priority)
+	if rankA != rankB {
+		return rankA < rankB
+	}
+
+	phaseA := a.task.Phase
+	if phaseA == 0 {
+		phaseA = 3
+	}
+	phaseB := b.task.Phase
+	if phaseB == 0 {
+		phaseB = 3
+	}
+	if phaseA != phaseB {
+		return phaseA < phaseB
+	}
+
+	if !a.task.EnqueuedAt.Equal(b.task.EnqueuedAt) {
+		return a.task.EnqueuedAt.Before(b.task.EnqueuedAt)
+	}
+
+	if !a.task.CreatedAt.Equal(b.task.CreatedAt) {
+		return a.task.CreatedAt.Before(b.task.CreatedAt)
+	}
+
+	return a.filename < b.filename
+}
+
+// sortTasksFairly sorts queue tasks using a hybrid round-robin algorithm across entity buckets
+// while maintaining FIFO arrival order, priority ranks, and phase dependencies within each entity.
+func sortTasksFairly(items []taskItem) []taskItem {
+	if len(items) <= 1 {
+		return items
+	}
+
+	bucketsMap := make(map[string][]taskItem)
+
+	for _, item := range items {
+		key := getEntityKey(item.task)
+		bucketsMap[key] = append(bucketsMap[key], item)
+	}
+
+	for key, bucket := range bucketsMap {
+		sort.SliceStable(bucket, func(i, j int) bool {
+			return isLessTask(bucket[i], bucket[j])
+		})
+		bucketsMap[key] = bucket
+	}
+
+	var result []taskItem
+
+	for len(bucketsMap) > 0 {
+		var activeKeys []string
+		for key := range bucketsMap {
+			activeKeys = append(activeKeys, key)
+		}
+
+		sort.SliceStable(activeKeys, func(i, j int) bool {
+			headI := bucketsMap[activeKeys[i]][0]
+			headJ := bucketsMap[activeKeys[j]][0]
+			if isLessTask(headI, headJ) {
+				return true
+			}
+			if isLessTask(headJ, headI) {
+				return false
+			}
+			return activeKeys[i] < activeKeys[j]
+		})
+
+		for _, key := range activeKeys {
+			bucket := bucketsMap[key]
+			result = append(result, bucket[0])
+			if len(bucket) == 1 {
+				delete(bucketsMap, key)
+			} else {
+				bucketsMap[key] = bucket[1:]
+			}
+		}
+	}
+
+	return result
 }
 
 type ChoreRunState struct {
@@ -757,27 +897,29 @@ func queueIssueTasks(ctx context.Context, ghClient *githubv39.Client, kubeClient
 			var task *QueueTask
 			if workflowName != "" {
 				task = &QueueTask{
-					Type:      "agent-chore",
-					URL:       issueURL,
-					Number:    num,
-					Priority:  getIssuePriority(issue),
-					Phase:     4,
-					CreatedAt: issue.GetCreatedAt(),
-					Assignee:  taskAssignee,
-					Status:    "Pending",
-					AgentFile: workflowPath,
-					SessionID: fmt.Sprintf("issue-%d", num),
+					Type:       "agent-chore",
+					URL:        issueURL,
+					Number:     num,
+					Priority:   getIssuePriority(issue),
+					Phase:      4,
+					CreatedAt:  issue.GetCreatedAt(),
+					EnqueuedAt: time.Now(),
+					Assignee:   taskAssignee,
+					Status:     "Pending",
+					AgentFile:  workflowPath,
+					SessionID:  fmt.Sprintf("issue-%d", num),
 				}
 			} else {
 				task = &QueueTask{
-					Type:      "issue-fix",
-					URL:       issueURL,
-					Number:    num,
-					Priority:  getIssuePriority(issue),
-					Phase:     3,
-					CreatedAt: issue.GetCreatedAt(),
-					Assignee:  taskAssignee,
-					Status:    "Pending",
+					Type:       "issue-fix",
+					URL:        issueURL,
+					Number:     num,
+					Priority:   getIssuePriority(issue),
+					Phase:      3,
+					CreatedAt:  issue.GetCreatedAt(),
+					EnqueuedAt: time.Now(),
+					Assignee:   taskAssignee,
+					Status:     "Pending",
 				}
 			}
 
@@ -852,13 +994,14 @@ func scanChores(ctx context.Context, ghClient *githubv39.Client, owner, repo, in
 			lastRun := choresState[agentDef.Name].LastRun
 			if shouldRunChore(agentDef.Schedule, lastRun) {
 				task := &QueueTask{
-					Type:      "agent-chore",
-					URL:       fmt.Sprintf("https://github.com/%s/%s", owner, repo),
-					Priority:  "medium",
-					Phase:     4,
-					CreatedAt: time.Now(),
-					Status:    "Pending",
-					AgentFile: ".agents/" + file.GetName(),
+					Type:       "agent-chore",
+					URL:        fmt.Sprintf("https://github.com/%s/%s", owner, repo),
+					Priority:   "medium",
+					Phase:      4,
+					CreatedAt:  time.Now(),
+					EnqueuedAt: time.Now(),
+					Status:     "Pending",
+					AgentFile:  ".agents/" + file.GetName(),
 				}
 
 				if dryRun {
@@ -1312,15 +1455,16 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 
 							prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", owner, repo, num)
 							task := &QueueTask{
-								Type:      "pr-iterate",
-								URL:       prURL,
-								Number:    num,
-								Priority:  getPRPriority(prIssue),
-								Phase:     1,
-								CreatedAt: pr.GetCreatedAt(),
-								Assignee:  taskAssignee,
-								Status:    "Pending",
-								CommitSHA: headSHA,
+								Type:       "pr-iterate",
+								URL:        prURL,
+								Number:     num,
+								Priority:   getPRPriority(prIssue),
+								Phase:      1,
+								CreatedAt:  pr.GetCreatedAt(),
+								EnqueuedAt: time.Now(),
+								Assignee:   taskAssignee,
+								Status:     "Pending",
+								CommitSHA:  headSHA,
 							}
 
 							if dryRun {
@@ -1455,15 +1599,16 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 
 									prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", owner, repo, num)
 									task := &QueueTask{
-										Type:      "pr-investigate",
-										URL:       prURL,
-										Number:    num,
-										Priority:  getPRPriority(prIssue),
-										Phase:     3,
-										CreatedAt: pr.GetCreatedAt(),
-										Assignee:  taskAssignee,
-										Status:    "Pending",
-										CommitSHA: headSHA,
+										Type:       "pr-investigate",
+										URL:        prURL,
+										Number:     num,
+										Priority:   getPRPriority(prIssue),
+										Phase:      3,
+										CreatedAt:  pr.GetCreatedAt(),
+										EnqueuedAt: time.Now(),
+										Assignee:   taskAssignee,
+										Status:     "Pending",
+										CommitSHA:  headSHA,
 									}
 
 									if dryRun {
@@ -1622,15 +1767,16 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 
 								prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", owner, repo, num)
 								task := &QueueTask{
-									Type:      "pr-comments",
-									URL:       prURL,
-									Number:    num,
-									Priority:  getPRPriority(prIssue),
-									Phase:     2,
-									CreatedAt: pr.GetCreatedAt(),
-									Assignee:  taskAssignee,
-									Status:    "Pending",
-									CommitSHA: headSHA,
+									Type:       "pr-comments",
+									URL:        prURL,
+									Number:     num,
+									Priority:   getPRPriority(prIssue),
+									Phase:      2,
+									CreatedAt:  pr.GetCreatedAt(),
+									EnqueuedAt: time.Now(),
+									Assignee:   taskAssignee,
+									Status:     "Pending",
+									CommitSHA:  headSHA,
 								}
 
 								if dryRun {
@@ -1697,6 +1843,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 										Priority:     getPRPriority(prIssue),
 										Phase:        2,
 										CreatedAt:    pr.GetCreatedAt(),
+										EnqueuedAt:   time.Now(),
 										Status:       "Pending",
 										CommitSHA:    headSHA,
 										Instructions: instructions,
@@ -2056,10 +2203,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				return
 			}
 
-			var tasksToRun []struct {
-				filename string
-				task     *QueueTask
-			}
+			var taskItems []taskItem
 
 			for _, f := range incomingFiles {
 				if f.IsDir() || !strings.HasPrefix(f.Name(), "task-") || !strings.HasSuffix(f.Name(), ".yaml") {
@@ -2080,53 +2224,22 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					continue
 				}
 
-				tasksToRun = append(tasksToRun, struct {
-					filename string
-					task     *QueueTask
-				}{filename, &t})
-			}
-
-			priorityRank := map[string]int{
-				"critical":  1,
-				"urgent":    2,
-				"important": 3,
-				"high":      4,
-				"medium":    5,
-				"low":       6,
-			}
-			getRank := func(p string) int {
-				if r, ok := priorityRank[strings.ToLower(p)]; ok {
-					return r
-				}
-				return 5
-			}
-
-			// Sort tasks by priority level (critical first), phase rank (rebase > comments > investigate), and createdAt (newest first)
-			for i := 0; i < len(tasksToRun); i++ {
-				for j := i + 1; j < len(tasksToRun); j++ {
-					tI := tasksToRun[i].task
-					tJ := tasksToRun[j].task
-					rankI := getRank(tI.Priority)
-					rankJ := getRank(tJ.Priority)
-
-					swap := false
-					if rankI > rankJ {
-						swap = true
-					} else if rankI == rankJ {
-						if tI.Phase > tJ.Phase {
-							swap = true
-						} else if tI.Phase == tJ.Phase {
-							if tI.CreatedAt.Before(tJ.CreatedAt) {
-								swap = true
-							}
-						}
+				if t.EnqueuedAt.IsZero() {
+					info, err := f.Info()
+					var modTime time.Time
+					if err == nil {
+						modTime = info.ModTime()
 					}
-
-					if swap {
-						tasksToRun[i], tasksToRun[j] = tasksToRun[j], tasksToRun[i]
-					}
+					t.EnqueuedAt = getEnqueueTime(&t, modTime)
 				}
+
+				taskItems = append(taskItems, taskItem{
+					filename: filename,
+					task:     &t,
+				})
 			}
+
+			tasksToRun := sortTasksFairly(taskItems)
 
 			processingFiles, _ := os.ReadDir(processingDir)
 			filesInProcessing := 0
