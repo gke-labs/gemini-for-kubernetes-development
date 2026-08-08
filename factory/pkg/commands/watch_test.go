@@ -1,14 +1,22 @@
 package commands
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	githubv39 "github.com/google/go-github/v39/github"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	dynamicfake "k8s.io/client-go/dynamic/fake"
 	"sigs.k8s.io/yaml"
 )
 
@@ -770,3 +778,65 @@ func TestSortTasksFairly(t *testing.T) {
 		}
 	})
 }
+
+func TestIsSandboxTaskCompleted(t *testing.T) {
+	scheme := runtime.NewScheme()
+	ctx := context.Background()
+	ns := "test-ns"
+
+	tests := []struct {
+		taskType          string
+		annotatedTaskType string
+		state             string
+		expectedCompleted bool
+	}{
+		{"pr-comments", "address-comments", "Completed", true},
+		{"pr-comments", "address-comments", "Running", false},
+		{"pr-investigate", "investigate", "Completed", true},
+		{"pr-iterate", "iterate", "Completed", true},
+		{"pr-review", "review", "Completed", true},
+		{"issue-fix", "fix-issue", "Completed", true},
+		{"agent-chore", "agent", "Completed", true},
+		{"pr-comments", "wrong-type", "Completed", false},
+	}
+
+	for _, tc := range tests {
+		sbName := fmt.Sprintf("sb-%s-%s", tc.taskType, tc.state)
+		fakeDynamic := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, map[schema.GroupVersionResource]string{
+			k8s.SandboxGVR: "SandboxList",
+		})
+		kubeClient := &clients.KubernetesClient{
+			DynamicClient: fakeDynamic,
+		}
+
+		sb := &unstructured.Unstructured{
+			Object: map[string]interface{}{
+				"apiVersion": "agents.x-k8s.io/v1alpha1",
+				"kind":       "Sandbox",
+				"metadata": map[string]interface{}{
+					"name":      sbName,
+					"namespace": ns,
+					"annotations": map[string]interface{}{
+						"sandbox.gemini.google.com/last-task-state": tc.state,
+						"sandbox.gemini.google.com/last-task-type":  tc.annotatedTaskType,
+					},
+				},
+			},
+		}
+
+		_, err := fakeDynamic.Resource(k8s.SandboxGVR).Namespace(ns).Create(ctx, sb, metav1.CreateOptions{})
+		if err != nil {
+			t.Fatalf("Failed to create mock sandbox: %v", err)
+		}
+
+		completed, err := isSandboxTaskCompleted(ctx, kubeClient, ns, sbName, tc.taskType)
+		if err != nil {
+			t.Errorf("Unexpected error for %s: %v", tc.taskType, err)
+		}
+		if completed != tc.expectedCompleted {
+			t.Errorf("For taskType=%s, annotatedTaskType=%s, state=%s: expected completed=%v, got %v",
+				tc.taskType, tc.annotatedTaskType, tc.state, tc.expectedCompleted, completed)
+		}
+	}
+}
+

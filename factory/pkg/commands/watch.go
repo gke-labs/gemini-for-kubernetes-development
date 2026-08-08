@@ -324,10 +324,19 @@ func isSandboxTaskCompleted(ctx context.Context, kubeClient *clients.KubernetesC
 	tType := annotations["sandbox.gemini.google.com/last-task-type"]
 
 	sbTaskType := taskType
-	if taskType == "issue-fix" {
+	switch taskType {
+	case "issue-fix":
 		sbTaskType = "fix-issue"
-	} else if taskType == "agent-chore" {
+	case "agent-chore":
 		sbTaskType = "agent"
+	case "pr-comments":
+		sbTaskType = "address-comments"
+	case "pr-investigate":
+		sbTaskType = "investigate"
+	case "pr-iterate":
+		sbTaskType = "iterate"
+	case "pr-review":
+		sbTaskType = "review"
 	}
 
 	if strings.EqualFold(state, "Completed") && strings.EqualFold(tType, sbTaskType) {
@@ -1231,16 +1240,38 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 		}
 	}
 
-	// Recovery: Move any stuck tasks from processingDir back to incomingDir on startup
+	// Recovery: Handle any leftover tasks in processingDir on startup
 	if files, err := os.ReadDir(processingDir); err == nil {
 		for _, f := range files {
 			if !f.IsDir() && strings.HasPrefix(f.Name(), "task-") && strings.HasSuffix(f.Name(), ".yaml") {
 				processingPath := filepath.Join(processingDir, f.Name())
 
-				// Read the task to reset its status to Pending
+				// Read the task
 				if data, err := os.ReadFile(processingPath); err == nil {
 					var t QueueTask
 					if err := yaml.Unmarshal(data, &t); err == nil {
+						sandboxName := resolveSandboxName(ctx, kubeClient, ghClient, t.Type, t.Number, owner, repo)
+						if kubeClient != nil && sandboxName != "" {
+							running, err := isSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName)
+							if err == nil && running {
+								klog.Infof("Task %s is still actively running in sandbox %s. Leaving in processing.", f.Name(), sandboxName)
+								continue
+							}
+							completed, err := isSandboxTaskCompleted(ctx, kubeClient, rootFlags.Namespace, sandboxName, t.Type)
+							if err == nil && completed {
+								klog.Infof("Task %s already completed in sandbox %s. Moving from processing to processed.", f.Name(), sandboxName)
+								t.Status = "Completed"
+								if t.CompletedAt.IsZero() {
+									t.CompletedAt = time.Now()
+								}
+								if err := writeTaskAtomically(processedDir, f.Name(), &t); err == nil {
+									_ = os.Remove(processingPath)
+									writeTaskJournalEvent(queueDir, f.Name(), &t, "Completed", 0)
+									continue
+								}
+							}
+						}
+
 						t.Status = "Pending"
 						t.Recovered = true
 						if err := writeTaskAtomically(incomingDir, f.Name(), &t); err == nil {
