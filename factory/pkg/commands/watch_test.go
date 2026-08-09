@@ -857,9 +857,19 @@ func TestFindWorkflowPath(t *testing.T) {
 			expected: "https://raw.githubusercontent.com/gke-labs/gemini-for-kubernetes-development/main/.agents/workflows/kcc-greenfield.txt",
 		},
 		{
-			name:     "URL with trailing punctuation and quotes",
+			name:     "quoted double-quote URL should be ignored",
 			body:     "Follow workflow at \"https://raw.githubusercontent.com/gke-labs/gemini-for-kubernetes-development/main/.agents/workflows/kcc-greenfield.txt\", please.",
-			expected: "https://raw.githubusercontent.com/gke-labs/gemini-for-kubernetes-development/main/.agents/workflows/kcc-greenfield.txt",
+			expected: "",
+		},
+		{
+			name:     "quoted single-quote URL should be ignored",
+			body:     "Check 'https://raw.githubusercontent.com/gke-labs/gemini-for-kubernetes-development/main/.agents/workflows/kcc-greenfield.txt'",
+			expected: "",
+		},
+		{
+			name:     "backticked URL should be ignored",
+			body:     "See `https://raw.githubusercontent.com/gke-labs/gemini-for-kubernetes-development/main/.agents/workflows/kcc-greenfield.txt`",
+			expected: "",
 		},
 		{
 			name:     "local relative workflow file path",
@@ -870,6 +880,11 @@ func TestFindWorkflowPath(t *testing.T) {
 			name:     "local workflow path with escaped newline",
 			body:     "Workflow: .agents/workflows/kcc-greenfield.txt\\n",
 			expected: ".agents/workflows/kcc-greenfield.txt",
+		},
+		{
+			name:     "backticked local workflow path should be ignored",
+			body:     "Reference `.agents/workflows/kcc-greenfield.txt` in docs",
+			expected: "",
 		},
 		{
 			name:     "no workflow referenced",

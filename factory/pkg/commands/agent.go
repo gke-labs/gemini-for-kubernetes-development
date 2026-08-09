@@ -162,7 +162,7 @@ func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 	// Get agent definition
 	var content []byte
 	flags.Agent = strings.TrimSpace(flags.Agent)
-	flags.Agent = strings.TrimRight(flags.Agent, "\\n\\r\t ,.;:\"'`")
+	flags.Agent = strings.TrimRight(flags.Agent, "\\n\\r\t")
 	agentPath := flags.Agent
 	if strings.HasPrefix(agentPath, "http://") || strings.HasPrefix(agentPath, "https://") {
 		fmt.Printf("Fetching agent definition from URL: %s...\n", agentPath)
@@ -465,7 +465,7 @@ func parseGitHubURL(urlStr string) (owner, repo, branch, path string, ok bool) {
 
 func fetchWorkflowContent(ctx context.Context, ghClient *githubv39.Client, urlStr string) ([]byte, error) {
 	urlStr = strings.TrimSpace(urlStr)
-	urlStr = strings.TrimRight(urlStr, "\\n\\r\t ,.;:\"'`")
+	urlStr = strings.TrimRight(urlStr, "\\n\\r\t")
 	if owner, repo, branch, path, ok := parseGitHubURL(urlStr); ok {
 		klog.Infof("Fetching agent from GitHub repository %s/%s at branch/ref %s, path %s", owner, repo, branch, path)
 		fileContent, _, _, err := ghClient.Repositories.GetContents(ctx, owner, repo, path, &githubv39.RepositoryContentGetOptions{Ref: branch})
