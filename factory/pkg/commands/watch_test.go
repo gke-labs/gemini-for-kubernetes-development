@@ -839,3 +839,66 @@ func TestIsSandboxTaskCompleted(t *testing.T) {
 		}
 	}
 }
+
+func TestFindWorkflowPath(t *testing.T) {
+	tests := []struct {
+		name     string
+		body     string
+		expected string
+	}{
+		{
+			name:     "clean URL",
+			body:     "Workflow: https://raw.githubusercontent.com/gke-labs/gemini-for-kubernetes-development/main/.agents/workflows/kcc-greenfield.txt",
+			expected: "https://raw.githubusercontent.com/gke-labs/gemini-for-kubernetes-development/main/.agents/workflows/kcc-greenfield.txt",
+		},
+		{
+			name:     "URL with literal escaped newline \\n",
+			body:     "This issue is to track Greenfield.\n\nWorkflow: https://raw.githubusercontent.com/gke-labs/gemini-for-kubernetes-development/main/.agents/workflows/kcc-greenfield.txt\\n",
+			expected: "https://raw.githubusercontent.com/gke-labs/gemini-for-kubernetes-development/main/.agents/workflows/kcc-greenfield.txt",
+		},
+		{
+			name:     "quoted double-quote URL should be ignored",
+			body:     "Follow workflow at \"https://raw.githubusercontent.com/gke-labs/gemini-for-kubernetes-development/main/.agents/workflows/kcc-greenfield.txt\", please.",
+			expected: "",
+		},
+		{
+			name:     "quoted single-quote URL should be ignored",
+			body:     "Check 'https://raw.githubusercontent.com/gke-labs/gemini-for-kubernetes-development/main/.agents/workflows/kcc-greenfield.txt'",
+			expected: "",
+		},
+		{
+			name:     "backticked URL should be ignored",
+			body:     "See `https://raw.githubusercontent.com/gke-labs/gemini-for-kubernetes-development/main/.agents/workflows/kcc-greenfield.txt`",
+			expected: "",
+		},
+		{
+			name:     "local relative workflow file path",
+			body:     "Please use .agents/workflows/kcc-greenfield.txt for this issue",
+			expected: ".agents/workflows/kcc-greenfield.txt",
+		},
+		{
+			name:     "local workflow path with escaped newline",
+			body:     "Workflow: .agents/workflows/kcc-greenfield.txt\\n",
+			expected: ".agents/workflows/kcc-greenfield.txt",
+		},
+		{
+			name:     "backticked local workflow path should be ignored",
+			body:     "Reference `.agents/workflows/kcc-greenfield.txt` in docs",
+			expected: "",
+		},
+		{
+			name:     "no workflow referenced",
+			body:     "Regular bug report with some code snippets",
+			expected: "",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := findWorkflowPath(tc.body)
+			if got != tc.expected {
+				t.Errorf("findWorkflowPath(%q) = %q; want %q", tc.body, got, tc.expected)
+			}
+		})
+	}
+}

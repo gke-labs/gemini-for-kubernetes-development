@@ -667,19 +667,28 @@ func getPRPriority(prIssue *githubv39.Issue) string {
 	return getIssuePriority(prIssue)
 }
 
-var workflowURLRegex = regexp.MustCompile(`(?:\s|^)(https?://[^\s\)]+(?:\.(?:md|txt|yaml)|/(?:workflows|agents)/)[^\s\)]*)`)
+var workflowURLRegex = regexp.MustCompile(`(?:\s|^)(https?://[^\s\)"'` + "`" + `]+(?:\.(?:md|txt|yaml)|/(?:workflows|agents)/)[^\s\)"'` + "`" + `]*)`)
 
 var workflowFileRegex = regexp.MustCompile(`(?:\s|^)(\.?\.?/?(?:\.?agents?|\.gemini)/[a-zA-Z0-9_\-\./]+)\b`)
+
+func sanitizeWorkflowPath(path string) string {
+	path = strings.TrimSpace(path)
+	for strings.HasSuffix(path, `\n`) || strings.HasSuffix(path, `\r`) {
+		path = strings.TrimSuffix(strings.TrimSuffix(path, `\n`), `\r`)
+		path = strings.TrimSpace(path)
+	}
+	return path
+}
 
 func findWorkflowPath(body string) string {
 	urlMatch := workflowURLRegex.FindStringSubmatch(body)
 	if len(urlMatch) > 1 {
-		return strings.TrimSpace(urlMatch[1])
+		return sanitizeWorkflowPath(urlMatch[1])
 	}
 
 	matches := workflowFileRegex.FindStringSubmatch(body)
 	if len(matches) > 1 {
-		return matches[1]
+		return sanitizeWorkflowPath(matches[1])
 	}
 	return ""
 }

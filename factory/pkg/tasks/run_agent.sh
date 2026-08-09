@@ -71,9 +71,6 @@ EOF
     echo "configuring git url fallback"
     git config --global url."https://${GH_USER}:${GITHUB_USER_TOKEN}@github.com/".insteadOf "https://github.com/"
 
-    echo "Configuring git pull rebase"
-    git config --global pull.rebase true
-
     echo "Configuring global git ignore"
     git config --global core.excludesfile "${HOME}/.gitignore_global"
     cat <<EOF > "${HOME}/.gitignore_global"
@@ -99,8 +96,8 @@ function setupGitRepos {
         (cd "/workspaces/${REPO_NAME}" && git merge --abort 2>/dev/null || true)
         (cd "/workspaces/${REPO_NAME}" && git cherry-pick --abort 2>/dev/null || true)
         (cd "/workspaces/${REPO_NAME}" && git reset --hard HEAD && git clean -fd)
-        # Optional: fetch latest changes
-        (cd "/workspaces/${REPO_NAME}" && git fetch origin)
+        # Fetch latest changes from remotes
+        (cd "/workspaces/${REPO_NAME}" && git fetch origin && (git fetch upstream 2>/dev/null || true))
     fi
 
     echo "running gh repo fork"
@@ -410,14 +407,14 @@ function runAgent {
             if (cd "/workspaces/${REPO_NAME}" && git show-ref --verify --quiet "refs/heads/${BRANCH_NAME}"); then
                 echo "Local branch ${BRANCH_NAME} already exists. Checking out..."
                 (cd "/workspaces/${REPO_NAME}" && git checkout "${BRANCH_NAME}")
-                if (cd "/workspaces/${REPO_NAME}" && git ls-remote --heads origin "${BRANCH_NAME}" | grep -q "refs/heads/${BRANCH_NAME}"); then
-                    echo "Pulling latest changes from remote branch..."
-                    (cd "/workspaces/${REPO_NAME}" && git pull origin "${BRANCH_NAME}")
+                if (cd "/workspaces/${REPO_NAME}" && git show-ref --verify --quiet "refs/remotes/origin/${BRANCH_NAME}"); then
+                    echo "Resetting local branch to latest remote origin/${BRANCH_NAME}..."
+                    (cd "/workspaces/${REPO_NAME}" && git reset --hard "origin/${BRANCH_NAME}" && git clean -fd)
                 else
-                    echo "Remote branch ${BRANCH_NAME} does not exist on origin. Skipping pull."
+                    echo "Remote branch ${BRANCH_NAME} does not exist on origin. Continuing with local branch."
                 fi
-            elif (cd "/workspaces/${REPO_NAME}" && git ls-remote --heads origin "${BRANCH_NAME}" | grep -q "refs/heads/${BRANCH_NAME}"); then
-                echo "Remote branch ${BRANCH_NAME} exists. Checking out with tracking..."
+            elif (cd "/workspaces/${REPO_NAME}" && git show-ref --verify --quiet "refs/remotes/origin/${BRANCH_NAME}"); then
+                echo "Remote branch ${BRANCH_NAME} exists on origin. Checking out with tracking..."
                 (cd "/workspaces/${REPO_NAME}" && git checkout -b "${BRANCH_NAME}" --track "origin/${BRANCH_NAME}")
             else
                 echo "Remote branch ${BRANCH_NAME} does not exist on origin yet. Creating new branch..."
@@ -431,8 +428,8 @@ function runAgent {
             fi
             echo "Rebasing workflow branch ${BRANCH_NAME} onto ${UPSTREAM_REMOTE}/${BASE_BRANCH}..."
             if ! (cd "/workspaces/${REPO_NAME}" && git rebase "${UPSTREAM_REMOTE}/${BASE_BRANCH}"); then
-                echo "Warning: Rebase of workflow branch onto ${UPSTREAM_REMOTE}/${BASE_BRANCH} failed. Aborting."
-                (cd "/workspaces/${REPO_NAME}" && git rebase --abort)
+                echo "Warning: Rebase of workflow branch onto ${UPSTREAM_REMOTE}/${BASE_BRANCH} failed. Aborting and continuing with existing branch state."
+                (cd "/workspaces/${REPO_NAME}" && git rebase --abort 2>/dev/null || true)
             fi
         else
             SLUGIFIED_NAME=$(echo "${AGENT_NAME}" | tr '[:upper:]' '[:lower:]' | tr -c '[:alnum:]' '-' | sed 's/^-//;s/-$//')
