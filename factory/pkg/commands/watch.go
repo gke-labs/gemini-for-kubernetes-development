@@ -671,19 +671,24 @@ var workflowURLRegex = regexp.MustCompile(`(?:\s|^)(https?://[^\s\)"'` + "`" + `
 
 var workflowFileRegex = regexp.MustCompile(`(?:\s|^)(\.?\.?/?(?:\.?agents?|\.gemini)/[a-zA-Z0-9_\-\./]+)\b`)
 
+func sanitizeWorkflowPath(path string) string {
+	path = strings.TrimSpace(path)
+	for strings.HasSuffix(path, `\n`) || strings.HasSuffix(path, `\r`) {
+		path = strings.TrimSuffix(strings.TrimSuffix(path, `\n`), `\r`)
+		path = strings.TrimSpace(path)
+	}
+	return path
+}
+
 func findWorkflowPath(body string) string {
 	urlMatch := workflowURLRegex.FindStringSubmatch(body)
 	if len(urlMatch) > 1 {
-		url := strings.TrimSpace(urlMatch[1])
-		url = strings.TrimRight(url, "\\n\\r\t")
-		return url
+		return sanitizeWorkflowPath(urlMatch[1])
 	}
 
 	matches := workflowFileRegex.FindStringSubmatch(body)
 	if len(matches) > 1 {
-		p := strings.TrimSpace(matches[1])
-		p = strings.TrimRight(p, "\\n\\r\t")
-		return p
+		return sanitizeWorkflowPath(matches[1])
 	}
 	return ""
 }
