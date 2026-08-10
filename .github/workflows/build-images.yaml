@@ -129,11 +129,9 @@ jobs:
     needs: [build-and-publish, build-and-publish-overseer, build-and-publish-factory]
     permissions:
       contents: read
-    uses: ./.github/workflows/deploy-preview.yaml
+    uses: ./.github/workflows/deploy-autopush.yaml
     with:
       image_tag: ${{ github.sha }}
     secrets:
       GKE_SA_KEY: ${{ secrets.GKE_SA_KEY }}
-      GKE_PREVIEW_CLUSTER: ${{ secrets.GKE_PREVIEW_CLUSTER }}
-      GKE_PREVIEW_STD_CLUSTER: ${{ secrets.GKE_PREVIEW_STD_CLUSTER }}
       GKE_ZONE: ${{ secrets.GKE_ZONE }}
