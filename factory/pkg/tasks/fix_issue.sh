@@ -420,8 +420,7 @@ function recordPRLink {
         echo "${pr_url}" > "$output_file"
         popd > /dev/null
     else
-        echo "Could not find PR link automatically."
-        echo "Could not find PR link automatically." > "$output_file"
+        echo "Could not find PR link automatically." | tee "$output_file"
         popd > /dev/null
         echo "Task finished without creating a pull request." >&2
         exit 1
