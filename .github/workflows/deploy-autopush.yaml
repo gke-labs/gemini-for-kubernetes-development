@@ -10,8 +10,6 @@ on:
     secrets:
       GKE_SA_KEY:
         required: true
-      GKE_ZONE:
-        required: true
   workflow_dispatch:
     inputs:
       image_tag:
@@ -40,7 +38,7 @@ jobs:
         uses: google-github-actions/get-gke-credentials@3da1e46a907576cefaa90c484278bb5b259dd395 # v3
         with:
           cluster_name: ${{ vars.GKE_AUTOPUSH_CLUSTER }}
-          location: ${{ secrets.GKE_ZONE }}
+          location: ${{ vars.GKE_ZONE }}
 
       - name: Deploy to Autopush
         run: |
@@ -77,7 +75,7 @@ jobs:
         uses: google-github-actions/get-gke-credentials@3da1e46a907576cefaa90c484278bb5b259dd395 # v3
         with:
           cluster_name: ${{ vars.GKE_AUTOPUSH_STD_CLUSTER }}
-          location: ${{ secrets.GKE_ZONE }}
+          location: ${{ vars.GKE_ZONE }}
 
       - name: Deploy to Autopush Standard
         run: |

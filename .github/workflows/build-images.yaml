@@ -134,4 +134,3 @@ jobs:
       image_tag: ${{ github.sha }}
     secrets:
       GKE_SA_KEY: ${{ secrets.GKE_SA_KEY }}
-      GKE_ZONE: ${{ secrets.GKE_ZONE }}
