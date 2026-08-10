@@ -1,4 +1,4 @@
-name: deploy to preview
+name: deploy to autopush
 
 on:
   workflow_call:
@@ -9,10 +9,6 @@ on:
         type: string
     secrets:
       GKE_SA_KEY:
-        required: true
-      GKE_PREVIEW_CLUSTER:
-        required: true
-      GKE_PREVIEW_STD_CLUSTER:
         required: true
       GKE_ZONE:
         required: true
@@ -27,7 +23,7 @@ permissions:
   contents: read
 
 jobs:
-  deploy-preview:
+  deploy-autopush:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -43,28 +39,28 @@ jobs:
       - name: Set up GKE credentials
         uses: google-github-actions/get-gke-credentials@3da1e46a907576cefaa90c484278bb5b259dd395 # v3
         with:
-          cluster_name: ${{ secrets.GKE_PREVIEW_CLUSTER }}
+          cluster_name: ${{ vars.GKE_AUTOPUSH_CLUSTER }}
           location: ${{ secrets.GKE_ZONE }}
 
-      - name: Deploy to Preview
+      - name: Deploy to Autopush
         run: |
           chmod +x ./repo-agent/scripts/upgrade.sh
           ./repo-agent/scripts/upgrade.sh
         env:
           IMAGE_TAG: ${{ inputs.image_tag || github.sha }}
           SKIP_PREQS: 'true'
-          CLUSTER_NAME: ${{ secrets.GKE_PREVIEW_CLUSTER }}
+          CLUSTER_NAME: ${{ vars.GKE_AUTOPUSH_CLUSTER }}
           GW_CLASS: 'gke-l7-regional-external-managed'
 
-      - name: Deploy Overseer to Preview
+      - name: Deploy Overseer to Autopush
         run: |
           chmod +x ./overseer/scripts/upgrade.sh
           ./overseer/scripts/upgrade.sh
         env:
           IMAGE_TAG: ${{ inputs.image_tag || github.sha }}
           SKIP_PREQS: 'true'
-          CLUSTER_NAME: ${{ secrets.GKE_PREVIEW_CLUSTER }}
-  deploy-preview-std:
+          CLUSTER_NAME: ${{ vars.GKE_AUTOPUSH_CLUSTER }}
+  deploy-autopush-std:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -80,24 +76,24 @@ jobs:
       - name: Set up GKE credentials
         uses: google-github-actions/get-gke-credentials@3da1e46a907576cefaa90c484278bb5b259dd395 # v3
         with:
-          cluster_name: ${{ secrets.GKE_PREVIEW_STD_CLUSTER }}
+          cluster_name: ${{ vars.GKE_AUTOPUSH_STD_CLUSTER }}
           location: ${{ secrets.GKE_ZONE }}
 
-      - name: Deploy to Preview Standard
+      - name: Deploy to Autopush Standard
         run: |
           chmod +x ./repo-agent/scripts/upgrade.sh
           ./repo-agent/scripts/upgrade.sh
         env:
           IMAGE_TAG: ${{ inputs.image_tag || github.sha }}
           SKIP_PREQS: 'true'
-          CLUSTER_NAME: ${{ secrets.GKE_PREVIEW_STD_CLUSTER }}
+          CLUSTER_NAME: ${{ vars.GKE_AUTOPUSH_STD_CLUSTER }}
           GW_CLASS: 'gke-l7-regional-external-managed'
 
-      - name: Deploy Overseer to Preview Standard
+      - name: Deploy Overseer to Autopush Standard
         run: |
           chmod +x ./overseer/scripts/upgrade.sh
           ./overseer/scripts/upgrade.sh
         env:
           IMAGE_TAG: ${{ inputs.image_tag || github.sha }}
           SKIP_PREQS: 'true'
-          CLUSTER_NAME: ${{ secrets.GKE_PREVIEW_STD_CLUSTER }}
+          CLUSTER_NAME: ${{ vars.GKE_AUTOPUSH_STD_CLUSTER }}
