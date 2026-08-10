@@ -29,6 +29,11 @@ func TestIsFatalQuotaError(t *testing.T) {
 			expected: true,
 		},
 		{
+			name:     "fatal billing quota during retry attempt",
+			input:    `Attempt 3 failed with status 429. Retrying with backoff... _ApiError: {"error":{"message":"You exceeded your current quota, please check your plan and billing details.","code":429,"status":"Too Many Requests"}}`,
+			expected: true,
+		},
+		{
 			name:     "normal output",
 			input:    `Generated code successfully`,
 			expected: false,
@@ -59,6 +64,11 @@ func TestIsTransientRateLimit(t *testing.T) {
 		{
 			name:     "fatal billing quota log",
 			input:    `You exceeded your current quota, please check your plan and billing details.`,
+			expected: false,
+		},
+		{
+			name:     "fatal billing quota during retry attempt",
+			input:    `Attempt 3 failed with status 429. Retrying with backoff... _ApiError: {"error":{"message":"You exceeded your current quota, please check your plan and billing details.","code":429,"status":"Too Many Requests"}}`,
 			expected: false,
 		},
 	}

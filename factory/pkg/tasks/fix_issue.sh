@@ -418,14 +418,13 @@ function recordPRLink {
     if [ -n "$pr_url" ] && [ "$pr_url" != "null" ]; then
         echo "Successfully found PR: ${pr_url}"
         echo "${pr_url}" > "$output_file"
+        popd > /dev/null
     else
-        echo "Could not find PR link automatically."
-        # Don't overwrite if it already exists (unlikely here but safe)
-        if [ ! -s "$output_file" ]; then
-            echo "Could not find PR link automatically." > "$output_file"
-        fi
+        echo "Could not find PR link automatically." | tee "$output_file"
+        popd > /dev/null
+        echo "Task finished without creating a pull request." >&2
+        exit 1
     fi
-    popd > /dev/null
 }
 
 # Main execution

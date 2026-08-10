@@ -474,15 +474,15 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 					_, _ = os.Stdout.Write(newData)
 					offset += int64(len(newData))
 
-					if geminitokens.IsTransientRateLimit(newData) {
-						klog.V(2).Infof("Transient rate limit (RPM/TPM) detected in task output; allowing CLI to retry with backoff...")
-					} else if geminitokens.IsFatalQuotaError(newData) {
+					if geminitokens.IsFatalQuotaError(newData) {
 						klog.Warningf("Fatal quota/suspension error detected in task output. Terminating task process group in sandbox pod immediately...")
 						killCtx, killCancel := context.WithTimeout(context.Background(), 15*time.Second)
 						defer killCancel()
 						killCmd := fmt.Sprintf("if [ -f %s ]; then top_pid=$(cat %s); kill -9 -$(ps -o pgid= $top_pid 2>/dev/null | tr -d ' ') 2>/dev/null || pkill -9 -P $top_pid 2>/dev/null || kill -9 $top_pid 2>/dev/null || true; echo 137 > %s; fi", pidFile, pidFile, exitCodeFile)
 						_ = c.Exec(killCtx, killCmd, "/workspaces", nil, nil, nil, nil)
 						return handleQuotaOrSuspensionError(newData, envs)
+					} else if geminitokens.IsTransientRateLimit(newData) {
+						klog.V(2).Infof("Transient rate limit (RPM/TPM) detected in task output; allowing CLI to retry with backoff...")
 					}
 				}
 			} else {

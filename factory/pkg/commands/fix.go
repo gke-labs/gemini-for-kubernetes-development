@@ -395,6 +395,10 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch boo
 		}
 	}
 
+	if prNum == 0 && !noPR {
+		return fmt.Errorf("task finished without creating a pull request")
+	}
+
 	return nil
 }
 
