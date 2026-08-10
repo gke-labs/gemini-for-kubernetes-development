@@ -25,6 +25,14 @@ jobs:
         run: |
           ./dev/tools/test-unit --working-dir repo-agent/
           ./dev/tools/test-unit --working-dir overseer/
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 18
+      - name: Run UI Unit Tests
+        working-directory: repo-agent/review-ui/ui
+        run: |
+          npm ci || npm install
+          CI=true npm test
   lint:
     runs-on: ubuntu-latest
     timeout-minutes: 10
