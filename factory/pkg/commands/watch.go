@@ -3536,14 +3536,45 @@ func startQueueHTTPServer(ctx context.Context, queueDir string, addr string) {
 	_ = server.Close()
 }
 
-func buildQueueResponse(queueDir string) map[string]interface{} {
-	readQueueDir := func(sub string) []map[string]interface{} {
+type QueueTaskItem struct {
+	FileName   string `json:"fileName"`
+	QueueState string `json:"queueState"`
+	Type       string `json:"type"`
+	URL        string `json:"url"`
+	Number     int    `json:"number"`
+	Priority   string `json:"priority"`
+	Phase      int    `json:"phase"`
+	CreatedAt  string `json:"createdAt"`
+	EnqueuedAt string `json:"enqueuedAt,omitempty"`
+	Assignee   string `json:"assignee"`
+	Status     string `json:"status"`
+	CommitSHA  string `json:"commitSHA"`
+	Rank       int    `json:"rank,omitempty"`
+}
+
+type QueueSummary struct {
+	TotalPending    int            `json:"totalPending"`
+	TotalProcessing int            `json:"totalProcessing"`
+	TotalCompleted  int            `json:"totalCompleted"`
+	ByPriority      map[string]int `json:"byPriority"`
+	ByType          map[string]int `json:"byType"`
+}
+
+type QueueResponse struct {
+	Summary    QueueSummary    `json:"summary"`
+	Incoming   []QueueTaskItem `json:"incoming"`
+	Processing []QueueTaskItem `json:"processing"`
+	Processed  []QueueTaskItem `json:"processed"`
+}
+
+func buildQueueResponse(queueDir string) QueueResponse {
+	readQueueDir := func(sub string) []taskItem {
 		d := filepath.Join(queueDir, sub)
 		entries, err := os.ReadDir(d)
 		if err != nil {
 			return nil
 		}
-		var tasks []map[string]interface{}
+		var items []taskItem
 		for _, e := range entries {
 			if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") {
 				continue
@@ -3552,118 +3583,101 @@ func buildQueueResponse(queueDir string) map[string]interface{} {
 			if err != nil {
 				continue
 			}
-			content := string(data)
-			extractField := func(key string) string {
-				for _, line := range strings.Split(content, "\n") {
-					line = strings.TrimSpace(line)
-					if strings.HasPrefix(line, key+":") {
-						val := strings.TrimPrefix(line, key+":")
-						val = strings.TrimSpace(val)
-						val = strings.Trim(val, "\"\r")
-						return val
-					}
+			var t QueueTask
+			if err := yaml.Unmarshal(data, &t); err != nil {
+				continue
+			}
+			if t.Priority == "" {
+				t.Priority = "medium"
+			}
+			if t.EnqueuedAt.IsZero() {
+				var modTime time.Time
+				if info, err := e.Info(); err == nil {
+					modTime = info.ModTime()
 				}
-				return ""
+				t.EnqueuedAt = getEnqueueTime(&t, modTime)
 			}
-
-			tType := extractField("type")
-			tURL := extractField("url")
-			tNumStr := extractField("number")
-			tPrio := strings.ToLower(extractField("priority"))
-			tPhaseStr := extractField("phase")
-			tCreated := extractField("createdAt")
-			tAssignee := extractField("assignee")
-			tStatus := extractField("status")
-			tSHA := extractField("commitSHA")
-
-			if tPrio == "" {
-				tPrio = "medium"
-			}
-			tNum, _ := strconv.Atoi(tNumStr)
-			tPhase, _ := strconv.Atoi(tPhaseStr)
-
-			tasks = append(tasks, map[string]interface{}{
-				"fileName":   e.Name(),
-				"queueState": sub,
-				"type":       tType,
-				"url":        tURL,
-				"number":     tNum,
-				"priority":   tPrio,
-				"phase":      tPhase,
-				"createdAt":  tCreated,
-				"assignee":   tAssignee,
-				"status":     tStatus,
-				"commitSHA":  tSHA,
+			items = append(items, taskItem{
+				filename: e.Name(),
+				task:     &t,
 			})
 		}
-		return tasks
+		return items
 	}
 
-	incoming := readQueueDir("incoming")
-	processing := readQueueDir("processing")
-	processed := readQueueDir("processed")
-
-	priorityRank := map[string]int{
-		"critical":  1,
-		"urgent":    2,
-		"important": 3,
-		"high":      4,
-		"medium":    5,
-		"low":       6,
+	taskToItem := func(item taskItem, sub string) QueueTaskItem {
+		t := item.task
+		tPrio := strings.ToLower(t.Priority)
+		if tPrio == "" {
+			tPrio = "medium"
+		}
+		var createdStr, enqueuedStr string
+		if !t.CreatedAt.IsZero() {
+			createdStr = t.CreatedAt.Format(time.RFC3339)
+		}
+		if !t.EnqueuedAt.IsZero() {
+			enqueuedStr = t.EnqueuedAt.Format(time.RFC3339)
+		}
+		return QueueTaskItem{
+			FileName:   item.filename,
+			QueueState: sub,
+			Type:       t.Type,
+			URL:        t.URL,
+			Number:     t.Number,
+			Priority:   tPrio,
+			Phase:      t.Phase,
+			CreatedAt:  createdStr,
+			EnqueuedAt: enqueuedStr,
+			Assignee:   t.Assignee,
+			Status:     t.Status,
+			CommitSHA:  t.CommitSHA,
+		}
 	}
-	getRankVal := func(p string) int {
-		if r, ok := priorityRank[strings.ToLower(p)]; ok {
-			return r
-		}
-		return 5
+
+	incomingItems := readQueueDir("incoming")
+	sortedIncoming := sortTasksFairly(incomingItems)
+
+	var incoming []QueueTaskItem
+	for i, item := range sortedIncoming {
+		m := taskToItem(item, "incoming")
+		m.Rank = i + 1
+		incoming = append(incoming, m)
 	}
 
-	sort.Slice(incoming, func(i, j int) bool {
-		pI, _ := incoming[i]["priority"].(string)
-		pJ, _ := incoming[j]["priority"].(string)
-		rI := getRankVal(pI)
-		rJ := getRankVal(pJ)
-		if rI != rJ {
-			return rI < rJ
-		}
-		phI, _ := incoming[i]["phase"].(int)
-		phJ, _ := incoming[j]["phase"].(int)
-		if phI != phJ {
-			return phI < phJ
-		}
-		cI, _ := incoming[i]["createdAt"].(string)
-		cJ, _ := incoming[j]["createdAt"].(string)
-		return cI < cJ
-	})
+	processingItems := readQueueDir("processing")
+	var processing []QueueTaskItem
+	for _, item := range processingItems {
+		processing = append(processing, taskToItem(item, "processing"))
+	}
 
-	for i := range incoming {
-		incoming[i]["rank"] = i + 1
+	processedItems := readQueueDir("processed")
+	var processed []QueueTaskItem
+	for _, item := range processedItems {
+		processed = append(processed, taskToItem(item, "processed"))
 	}
 
 	byPrio := make(map[string]int)
 	byType := make(map[string]int)
 	for _, item := range incoming {
-		p, _ := item["priority"].(string)
-		t, _ := item["type"].(string)
-		byPrio[p]++
-		byType[t]++
+		byPrio[item.Priority]++
+		byType[item.Type]++
 	}
 
 	if len(processed) > 20 {
 		processed = processed[:20]
 	}
 
-	return map[string]interface{}{
-		"summary": map[string]interface{}{
-			"totalPending":    len(incoming),
-			"totalProcessing": len(processing),
-			"totalCompleted":  len(processed),
-			"byPriority":      byPrio,
-			"byType":          byType,
+	return QueueResponse{
+		Summary: QueueSummary{
+			TotalPending:    len(incoming),
+			TotalProcessing: len(processing),
+			TotalCompleted:  len(processed),
+			ByPriority:      byPrio,
+			ByType:          byType,
 		},
-		"incoming":   incoming,
-		"processing": processing,
-		"processed":  processed,
+		Incoming:   incoming,
+		Processing: processing,
+		Processed:  processed,
 	}
 }
 

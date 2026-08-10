@@ -688,6 +688,7 @@ type QueueTaskItem struct {
 	Priority   string `json:"priority"`
 	Phase      int    `json:"phase"`
 	CreatedAt  string `json:"createdAt"`
+	EnqueuedAt string `json:"enqueuedAt,omitempty"`
 	Assignee   string `json:"assignee"`
 	Status     string `json:"status"`
 	CommitSHA  string `json:"commitSHA"`

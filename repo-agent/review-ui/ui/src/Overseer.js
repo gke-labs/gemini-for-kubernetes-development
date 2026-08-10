@@ -2,7 +2,45 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import './App.css';
 import SandboxTerminal from './Terminal';
 
-
+export const formatQueueTimestamp = (ts) => {
+    if (!ts) return '-';
+    try {
+        const d = new Date(ts);
+        if (isNaN(d.getTime())) return ts;
+        const exact = d.toLocaleString();
+        const diffMs = Date.now() - d.getTime();
+        let rel = '';
+        if (diffMs >= 0) {
+            const seconds = Math.floor(diffMs / 1000);
+            if (seconds < 60) {
+                rel = `${seconds}s ago`;
+            } else {
+                const minutes = Math.floor(seconds / 60);
+                if (minutes < 60) {
+                    rel = `${minutes}m ago`;
+                } else {
+                    const hours = Math.floor(minutes / 60);
+                    if (hours < 24) {
+                        rel = `${hours}h ${minutes % 60}m ago`;
+                    } else {
+                        const days = Math.floor(hours / 24);
+                        rel = `${days}d ${hours % 24}h ago`;
+                    }
+                }
+            }
+        } else {
+            rel = 'just now';
+        }
+        return (
+            <div>
+                <div>{exact}</div>
+                {rel && <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '2px' }}>{`(${rel})`}</div>}
+            </div>
+        );
+    } catch (e) {
+        return ts;
+    }
+};
 
 const Overseer = ({ onBack, namespace: userNamespace }) => {
     const [overseers, setOverseers] = useState([]);
@@ -661,6 +699,7 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                                         <th style={{ padding: '12px 16px', textAlign: 'left' }}>Priority</th>
                                         <th style={{ padding: '12px 16px', textAlign: 'left' }}>Assignee</th>
                                         <th style={{ padding: '12px 16px', textAlign: 'left' }}>Created At</th>
+                                        <th style={{ padding: '12px 16px', textAlign: 'left' }}>Enqueued At</th>
                                         <th style={{ padding: '12px 16px', textAlign: 'right' }}>Actions</th>
                                     </tr>
                                 </thead>
@@ -690,6 +729,9 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                                             </td>
                                             <td style={{ padding: '12px 16px', fontSize: '0.85rem' }}>{t.assignee || '-'}</td>
                                             <td style={{ padding: '12px 16px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>-</td>
+                                            <td style={{ padding: '12px 16px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                                                {formatQueueTimestamp(t.enqueuedAt)}
+                                            </td>
                                             <td style={{ padding: '12px 16px', textAlign: 'right' }}>-</td>
                                         </tr>
                                     ))}
@@ -703,6 +745,7 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                                                    (t.type || '').toLowerCase().includes(q) ||
                                                    (t.priority || '').toLowerCase().includes(q) ||
                                                    (t.assignee || '').toLowerCase().includes(q) ||
+                                                   (t.enqueuedAt || '').toLowerCase().includes(q) ||
                                                    String(t.number).includes(q) ||
                                                    (t.url || '').toLowerCase().includes(q);
                                         });
@@ -710,7 +753,7 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                                         if (filtered.length === 0) {
                                             return (
                                                 <tr>
-                                                    <td colSpan="7" style={{ padding: '30px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                                                    <td colSpan="8" style={{ padding: '30px', textAlign: 'center', color: 'var(--text-secondary)' }}>
                                                         {queueData ? 'No pending tasks match the current filter.' : 'Loading task queue...'}
                                                     </td>
                                                 </tr>
@@ -744,6 +787,9 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                                                 <td style={{ padding: '12px 16px', fontSize: '0.85rem' }}>{t.assignee || '-'}</td>
                                                 <td style={{ padding: '12px 16px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
                                                     {t.createdAt ? t.createdAt.split('T')[0] : '-'}
+                                                </td>
+                                                <td style={{ padding: '12px 16px', fontSize: '0.85rem', color: 'var(--text-secondary)' }} title={t.enqueuedAt || ''}>
+                                                    {formatQueueTimestamp(t.enqueuedAt)}
                                                 </td>
                                                 <td style={{ padding: '12px 16px', textAlign: 'right' }}>
                                                     <button 
