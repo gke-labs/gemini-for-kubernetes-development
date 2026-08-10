@@ -113,6 +113,7 @@ function checkoutPRBranch {
     (cd "/workspaces/${REPO_NAME}" && git merge --abort 2>/dev/null || true)
     (cd "/workspaces/${REPO_NAME}" && git cherry-pick --abort 2>/dev/null || true)
     (cd "/workspaces/${REPO_NAME}" && git reset --hard HEAD && git clean -fd && /usr/bin/gh pr checkout ${PR_NUMBER} --force && (git reset --hard @{u} 2>/dev/null || git reset --hard FETCH_HEAD))
+    OLD_HEAD=$(cd "/workspaces/${REPO_NAME}" && git rev-parse HEAD)
 }
 
 function configureGemini {
@@ -317,6 +318,34 @@ function runGemini {
     fi
 }
 
+function commitAndPush {
+    echo "Running commitAndPush..."
+    pushd "/workspaces/${REPO_NAME}" > /dev/null
+    
+    NEW_HEAD=$(git rev-parse HEAD)
+
+    # check if there are changes
+    if [ -z "$(git status --porcelain)" ]; then 
+        if [ "$OLD_HEAD" != "$NEW_HEAD" ]; then
+            echo "HEAD has changed (committed or rebased by agent). Pushing changes..."
+            git push --force origin HEAD
+        else
+            echo "No changes to commit."
+        fi
+    else
+        echo "Changes detected in working directory, committing..."
+        git add .
+        git commit -m "Address review feedback: Apply changes"
+        if [ "$OLD_HEAD" != "$NEW_HEAD" ]; then
+            echo "HEAD has changed and working directory has changes. Pushing changes..."
+            git push --force origin HEAD
+        else
+            git push origin HEAD
+        fi
+    fi
+    popd > /dev/null
+}
+
 # Main execution
 setupGit
 setupGitRepos
@@ -326,3 +355,5 @@ checkoutPRBranch
 configureGemini
 installExtensions
 runGemini
+commitAndPush
+
