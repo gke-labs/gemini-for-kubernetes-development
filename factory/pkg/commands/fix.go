@@ -262,7 +262,7 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch boo
 		IssueComments: issueComments,
 		Instruction:   prompt,
 		Branch:        branchName,
-		Models:        []string{"gemini-3.5-flash", "gemini-3-flash-preview", "gemini-3.1-pro-preview", "gemini-2.5-pro"},
+		Models:        tasks.DefaultModels,
 		DraftPR:       false,
 		PRLabel:       prLabel,
 		NoPR:          noPR,
@@ -312,7 +312,7 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch boo
 		"GITHUB_USER_EMAIL":          githubEmail,
 		"GITHUB_USER_NAME":           githubLogin,
 		"BRANCH_NAME":                branchName,
-		"MODELS":                     "gemini-3.5-flash gemini-3-flash-preview gemini-3.1-pro-preview gemini-2.5-pro",
+		"MODELS":                     tasks.DefaultModelsString(),
 		"NO_PR":                      strconv.FormatBool(noPR),
 	}
 

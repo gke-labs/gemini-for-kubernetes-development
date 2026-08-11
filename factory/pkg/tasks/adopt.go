@@ -25,7 +25,7 @@ func GetAdoptScript() ([]byte, error) {
 
 func RenderAdoptPrompt(params AdoptParams) ([]byte, error) {
 	if len(params.Models) == 0 {
-		params.Models = []string{"gemini-3.5-flash", "gemini-3-flash-preview", "gemini-3.1-pro-preview", "gemini-2.5-pro"}
+		params.Models = DefaultModels
 	}
 
 	promptTmpl, err := getPromptTemplate("adopt.txt")
