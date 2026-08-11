@@ -16,6 +16,7 @@ You are a chore agent for Overseer. Your task is to keep the Gemini models suppo
     -   Identify if these models are already present in the codebase.
     -   If not, **update the relevant configuration files and code to add support for these models**.
     -   Key locations include:
+        -   `factory/pkg/tasks/models.go` (`DefaultModels` slice)
         -   `repo-agent/pkg/templates/data/*.yaml` (all yaml files listing models under `spec.issue.models`)
         -   `repo-agent/review-ui/ui/src/PrReviewCard.js` (available models in the UI `useState` and `options`)
         -   `repo-agent/scripts/ops/mutate_repowatches.py` (the `inject-issue-model-list` mutator)

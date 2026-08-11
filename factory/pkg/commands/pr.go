@@ -227,7 +227,7 @@ func runInvestigate(ctx context.Context, prURL, prompt string, continueSession b
 		},
 		FailedRuns:    failedRuns,
 		IssueComments: prComments,
-		Models:        []string{"gemini-3.5-flash", "gemini-3-flash-preview", "gemini-3.1-pro-preview", "gemini-2.5-pro"},
+		Models:        tasks.DefaultModels,
 		TriggerLabel:  triggerLabel,
 	}
 
@@ -273,7 +273,7 @@ func runInvestigate(ctx context.Context, prURL, prompt string, continueSession b
 		"PR_NUMBER":                  strconv.Itoa(prNum),
 		"FAILED_RUNS":                strings.Join(failedRunIDs, " "),
 		"FAILED_PROW_RUNS":           strings.Join(failedProwRuns, " "),
-		"MODELS":                     "gemini-3.5-flash gemini-3-flash-preview gemini-3.1-pro-preview gemini-2.5-pro",
+		"MODELS":                     tasks.DefaultModelsString(),
 		"GEMINI_CONTINUE_SESSION":    strconv.FormatBool(continueSession),
 	}
 
@@ -499,7 +499,7 @@ func runAddressComments(ctx context.Context, prURL, prompt string, continueSessi
 		IssueComments:         newComments,
 		OldPullRequestReviews: oldReviews,
 		PullRequestReviews:    newReviews,
-		Models:                []string{"gemini-3.5-flash", "gemini-3-flash-preview", "gemini-3.1-pro-preview", "gemini-2.5-pro"},
+		Models:                tasks.DefaultModels,
 		TriggerLabel:          triggerLabel,
 	}
 
@@ -543,7 +543,7 @@ func runAddressComments(ctx context.Context, prURL, prompt string, continueSessi
 		"GITHUB_USER_EMAIL":          githubEmail,
 		"GITHUB_USER_NAME":           githubLogin,
 		"PR_NUMBER":                  strconv.Itoa(prNum),
-		"MODELS":                     "gemini-3.5-flash gemini-3-flash-preview gemini-3.1-pro-preview gemini-2.5-pro",
+		"MODELS":                     tasks.DefaultModelsString(),
 		"GEMINI_CONTINUE_SESSION":    strconv.FormatBool(continueSession),
 	}
 
@@ -950,7 +950,7 @@ func runIterate(ctx context.Context, prURL, prompt string, continueSession bool,
 		Instruction: prompt,
 		Branch:      pr.GetHead().GetRef(),
 		PRNumber:    prNum,
-		Models:      []string{"gemini-3.5-flash", "gemini-3-flash-preview", "gemini-3.1-pro-preview", "gemini-2.5-pro"},
+		Models:      tasks.DefaultModels,
 	}
 
 	scriptBytes, err := tasks.GetIterateScript()
@@ -995,7 +995,7 @@ func runIterate(ctx context.Context, prURL, prompt string, continueSession bool,
 		"GITHUB_USER_NAME":           githubLogin,
 		"PR_NUMBER":                  strconv.Itoa(prNum),
 		"BRANCH_NAME":                pr.GetHead().GetRef(),
-		"MODELS":                     "gemini-3.5-flash gemini-3-flash-preview gemini-3.1-pro-preview gemini-2.5-pro",
+		"MODELS":                     tasks.DefaultModelsString(),
 		"GEMINI_CONTINUE_SESSION":    strconv.FormatBool(continueSession),
 	}
 
@@ -1257,7 +1257,7 @@ func runAdopt(ctx context.Context, prURL, adoptAction, strategy string, ephemera
 		Title:     pr.GetTitle(),
 		Body:      pr.GetBody(),
 		Diff:      prDiff,
-		Models:    []string{"gemini-3.5-flash", "gemini-3-flash-preview", "gemini-3.1-pro-preview", "gemini-2.5-pro"},
+		Models:    tasks.DefaultModels,
 	}
 
 	promptBytes, err = tasks.RenderAdoptPrompt(params)
@@ -1293,7 +1293,7 @@ func runAdopt(ctx context.Context, prURL, adoptAction, strategy string, ephemera
 		"PR_URL":                     prURL,
 		"ADOPT_FLAG":                 adoptAction,
 		"STRATEGY":                   strategy,
-		"MODELS":                     "gemini-3.5-flash gemini-3-flash-preview gemini-3.1-pro-preview gemini-2.5-pro",
+		"MODELS":                     tasks.DefaultModelsString(),
 	}
 
 	fmt.Println("Running adopt task via envd...")

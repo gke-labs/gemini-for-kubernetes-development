@@ -284,7 +284,7 @@ func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 		PromptFile:  promptPath,
 		SkipPR:      agentDef.SkipPR,
 		PRNumber:    prNum,
-		Models:      []string{"gemini-3.5-flash", "gemini-3-flash-preview", "gemini-3.1-pro-preview", "gemini-2.5-pro"},
+		Models:      tasks.DefaultModels,
 	}
 
 	promptBytes, err := tasks.RenderRunAgentPrompt(params)
@@ -324,7 +324,7 @@ func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 		"SESSION_ID":                 flags.SessionID,
 		"SKIP_PR":                    strconv.FormatBool(agentDef.SkipPR),
 		"PR_NUMBER":                  strconv.Itoa(prNum),
-		"MODELS":                     "gemini-3.5-flash gemini-3-flash-preview gemini-3.1-pro-preview gemini-2.5-pro",
+		"MODELS":                     tasks.DefaultModelsString(),
 		"DRY_RUN":                    strconv.FormatBool(flags.DryRun),
 	}
 
