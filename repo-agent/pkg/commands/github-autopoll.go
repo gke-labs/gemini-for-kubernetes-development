@@ -12,6 +12,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 	gogithub "github.com/google/go-github/v39/github"
 	"github.com/spf13/cobra"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
 )
 
@@ -109,11 +110,19 @@ func RunGithubAutopoll(ctx context.Context, opt GithubAutopollOptions) error {
 }
 
 type AutoPoller struct {
-	githubAPI       *github.Client
-	kube            *clients.KubernetesClient
-	opt             GithubAutopollOptions
-	allowlistMap    map[string]bool
-	processedIssues map[string]*Info
+	githubAPI        *github.Client
+	kube             *clients.KubernetesClient
+	opt              GithubAutopollOptions
+	allowlistMap     map[string]bool
+	processedIssues  map[string]*Info
+	findSandboxPodFn func(ctx context.Context, name string) (*types.NamespacedName, error)
+}
+
+func (p *AutoPoller) findSandboxPod(ctx context.Context, name string) (*types.NamespacedName, error) {
+	if p.findSandboxPodFn != nil {
+		return p.findSandboxPodFn(ctx, name)
+	}
+	return sandbox.FindSandboxPod(ctx, name)
 }
 
 type Info struct {
@@ -146,8 +155,64 @@ func (p *AutoPoller) pollOnce(ctx context.Context) error {
 		log.V(2).Info("Found issues assigned to bot", "repo", repoStr, "count", len(issues))
 
 		for _, issue := range issues {
-			// Skip pull requests (GitHub API returns PRs as issues)
 			if issue.PullRequestLinks != nil {
+				prID := issue.GetNumber()
+				prKey := fmt.Sprintf("%s/%s#%d", repo.Owner, repo.Name, prID)
+
+				// Skip if already processed in this run
+				if info := p.processedIssues[prKey]; info != nil {
+					log.V(2).Info("Skipping pull request, already processed", "pr", prKey, "reason", info.Reason)
+					continue
+				}
+
+				// Check if author is in allowlist (or if it's the bot itself)
+				author := issue.GetUser().GetLogin()
+				if author != p.opt.AssignedTo && !p.allowlistMap[author] {
+					log.Info("Skipping pull request, author not in allowlist", "pr", prKey, "author", author)
+					continue
+				}
+
+				log.Info("Checking pull request for processing", "pr", prKey, "author", author)
+
+				// Find the sandbox for the PR
+				sandboxName, err := p.findSandboxForPR(ctx, repo, prID)
+				if err != nil {
+					log.Error(err, "error finding sandbox for pull request", "pr", prKey)
+					p.processedIssues[prKey] = &Info{Reason: fmt.Sprintf("no sandbox found: %v", err)}
+					continue
+				}
+
+				log.Info("Processing pull request", "pr", prKey, "sandbox", sandboxName)
+
+				// Mark as processed
+				p.processedIssues[prKey] = &Info{Reason: "processed"}
+
+				// Create the PR URL and invoke github-feedback logic
+				prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", repo.Owner, repo.Name, prID)
+
+				go func(prURL string, prID int, prKey string, sandboxName string) {
+					log.Info("Removing bot assignment from pull request", "pr", prKey)
+					if _, _, err := p.githubAPI.Issues.RemoveAssignees(ctx, repo.Owner, repo.Name, prID, []string{p.opt.AssignedTo}); err != nil {
+						log.Error(err, "failed to remove bot assignment from pull request", "pr", prKey)
+					}
+
+					feedbackCmd := GithubFeedbackCommand{
+						URL:             prURL,
+						PullRequestID:   prID,
+						Sandbox:         sandboxName,
+						InPod:           false,
+						GithubUserLogin: "codebot-robot",
+						GithubUserEmail: "codebot-robot@google.com",
+						GithubUserName:  "codebot-robot",
+						GithubUserToken: os.Getenv("CODEBOT_ROBOT_GITHUB_TOKEN"),
+					}
+					feedbackCmd.InitDefaults()
+
+					if err := feedbackCmd.Run(ctx); err != nil {
+						log.Error(err, "failed to process pull request feedback", "pr", prKey)
+					}
+				}(prURL, prID, prKey, sandboxName)
+
 				continue
 			}
 
@@ -169,7 +234,7 @@ func (p *AutoPoller) pollOnce(ctx context.Context) error {
 			log.Info("Checking issue for processing", "issue", issueKey, "author", author)
 
 			// Check if issue should be processed
-			shouldProcess, reason, err := shouldProcessIssue(ctx, p.githubAPI, repo, issue)
+			shouldProcess, reason, err := p.shouldProcessIssue(ctx, repo, issue)
 			if err != nil {
 				log.Error(err, "error checking if issue should be processed", "issue", issueKey)
 				continue
@@ -214,17 +279,17 @@ func (p *AutoPoller) pollOnce(ctx context.Context) error {
 // shouldProcessIssue checks if an issue should be processed based on:
 // 1. Whether a PR is already linked
 // 2. Whether a sandbox already exists
-func shouldProcessIssue(ctx context.Context, githubAPI *github.Client, repo *github.Repo, issue *gogithub.Issue) (bool, string, error) {
+func (p *AutoPoller) shouldProcessIssue(ctx context.Context, repo *github.Repo, issue *gogithub.Issue) (bool, string, error) {
 	log := klog.FromContext(ctx)
 
 	// Check if a PR is linked to this issue
-	linkedPR, err := hasLinkedPR(ctx, githubAPI, repo, issue)
+	linkedPR, err := hasLinkedPR(ctx, p.githubAPI, repo, issue)
 	if err != nil {
 		return false, "", fmt.Errorf("failed to check for linked PR: %w", err)
 	}
 
 	for _, pr := range linkedPR {
-		prData, _, err := githubAPI.PullRequests.Get(ctx, pr.Repo.Owner, pr.Repo.Name, pr.PullRequestNumber)
+		prData, _, err := p.githubAPI.PullRequests.Get(ctx, pr.Repo.Owner, pr.Repo.Name, pr.PullRequestNumber)
 		if err != nil {
 			return false, "", fmt.Errorf("error fetching linked PR data: %v", err)
 		}
@@ -238,7 +303,7 @@ func shouldProcessIssue(ctx context.Context, githubAPI *github.Client, repo *git
 	sandboxName := fmt.Sprintf("github-%s-%s-%d", repo.Owner, repo.Name, issue.GetNumber())
 	sandboxName = strings.ToLower(sandboxName)
 
-	podID, err := sandbox.FindSandboxPod(ctx, sandboxName)
+	podID, err := p.findSandboxPod(ctx, sandboxName)
 	if err != nil {
 		log.Error(err, "failed to check for existing sandbox", "sandboxName", sandboxName)
 		// If we can't check, skip this issue for now
@@ -296,4 +361,45 @@ func ValueOf[T any](ptr *T) T {
 		return zero
 	}
 	return *ptr
+}
+
+func (p *AutoPoller) findSandboxForPR(ctx context.Context, repo *github.Repo, prID int) (string, error) {
+	log := klog.FromContext(ctx)
+
+	// 1. Try sandbox name with PR number first: github-<owner>-<repo>-<prID>
+	nameWithPR := fmt.Sprintf("github-%s-%s-%d", repo.Owner, repo.Name, prID)
+	nameWithPR = strings.ToLower(nameWithPR)
+	podID, err := p.findSandboxPod(ctx, nameWithPR)
+	if err == nil && podID != nil {
+		log.V(2).Info("Found sandbox named after PR", "sandbox", nameWithPR, "pr", prID)
+		return nameWithPR, nil
+	}
+
+	// 2. If not found, look for linked issues in the timeline
+	log.V(2).Info("Sandbox with PR number not found, checking timeline for linked issues", "pr", prID)
+	timeline, _, err := p.githubAPI.Issues.ListIssueTimeline(ctx, repo.Owner, repo.Name, prID, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to get pull request timeline to find sandbox: %w", err)
+	}
+
+	for _, event := range timeline {
+		// Look for cross-referenced issues
+		if event.GetEvent() == "cross-referenced" && event.Source != nil {
+			if event.Source.Issue != nil {
+				// Ensure it is indeed an issue, not a pull request
+				if event.GetSource().GetType() == "issue" && event.Source.Issue.PullRequestLinks == nil {
+					issueNum := event.Source.Issue.GetNumber()
+					nameWithIssue := fmt.Sprintf("github-%s-%s-%d", repo.Owner, repo.Name, issueNum)
+					nameWithIssue = strings.ToLower(nameWithIssue)
+					podID, err = p.findSandboxPod(ctx, nameWithIssue)
+					if err == nil && podID != nil {
+						log.Info("Found sandbox named after linked issue", "sandbox", nameWithIssue, "pr", prID, "issue", issueNum)
+						return nameWithIssue, nil
+					}
+				}
+			}
+		}
+	}
+
+	return "", fmt.Errorf("no existing sandbox found for pull request #%d", prID)
 }
