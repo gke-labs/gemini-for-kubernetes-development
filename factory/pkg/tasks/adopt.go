@@ -20,7 +20,7 @@ type AdoptParams struct {
 }
 
 func GetAdoptScript() ([]byte, error) {
-	return scriptsFS.ReadFile("adopt.sh")
+	return getScriptWithDefaults("adopt.sh")
 }
 
 func RenderAdoptPrompt(params AdoptParams) ([]byte, error) {

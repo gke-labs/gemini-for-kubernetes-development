@@ -462,7 +462,7 @@ function runAgent {
     # to avoid unbounded token accumulation in long-lived periodic workflows.
     RESUME_FLAG=""
 
-    MODELS_LIST="${MODELS:-gemini-3.5-flash gemini-3-flash-preview gemini-3.1-pro-preview gemini-2.5-pro}"
+    MODELS_LIST="${MODELS:-__DEFAULT_MODELS__}"
     SUCCESS=false
     for MODEL in $MODELS_LIST; do
         echo "Trying model: $MODEL"

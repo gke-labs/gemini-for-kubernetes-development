@@ -21,7 +21,7 @@ type AgentParams struct {
 
 // GetRunAgentScript returns the embedded run_agent.sh script.
 func GetRunAgentScript() ([]byte, error) {
-	return scriptsFS.ReadFile("run_agent.sh")
+	return getScriptWithDefaults("run_agent.sh")
 }
 
 // RenderRunAgentPrompt executes the run_agent.txt template with the given parameters.

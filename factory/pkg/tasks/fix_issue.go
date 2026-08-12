@@ -34,7 +34,7 @@ type FixIssueParams struct {
 }
 
 func GetFixIssueScript() ([]byte, error) {
-	return scriptsFS.ReadFile("fix_issue.sh")
+	return getScriptWithDefaults("fix_issue.sh")
 }
 
 func RenderFixIssuePrompt(params FixIssueParams) ([]byte, error) {
@@ -83,7 +83,7 @@ type InvestigateParams struct {
 }
 
 func GetInvestigateScript() ([]byte, error) {
-	return scriptsFS.ReadFile("investigate_failures.sh")
+	return getScriptWithDefaults("investigate_failures.sh")
 }
 
 func RenderInvestigatePrompt(params InvestigateParams) ([]byte, error) {
@@ -133,7 +133,7 @@ type AddressFeedbackParams struct {
 }
 
 func GetAddressFeedbackScript() ([]byte, error) {
-	return scriptsFS.ReadFile("address_feedback.sh")
+	return getScriptWithDefaults("address_feedback.sh")
 }
 
 func RenderAddressFeedbackPrompt(params AddressFeedbackParams) ([]byte, error) {
