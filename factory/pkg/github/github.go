@@ -3,7 +3,9 @@ package github
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"strings"
@@ -135,4 +137,89 @@ func ListAllReviewComments(ctx context.Context, client *githubv39.Client, owner,
 		opt.Page = resp.NextPage
 	}
 	return allComments, nil
+}
+
+// HTTPClient is an interface wrapping the Do method.
+type HTTPClient interface {
+	Do(req *http.Request) (*http.Response, error)
+}
+
+// DefaultHTTPClient is the default HTTP client used for requests.
+var DefaultHTTPClient HTTPClient = http.DefaultClient
+
+// IsPRInMergeQueue checks if a pull request is currently in the merge queue using GitHub GraphQL API.
+func IsPRInMergeQueue(ctx context.Context, token, owner, repo string, number int) (bool, error) {
+	if token == "" {
+		return false, fmt.Errorf("github token is empty")
+	}
+
+	query := map[string]interface{}{
+		"query": `query($owner: String!, $name: String!, $number: Int!) {
+			repository(owner: $owner, name: $name) {
+				pullRequest(number: $number) {
+					mergeQueueEntry {
+						position
+					}
+				}
+			}
+		}`,
+		"variables": map[string]interface{}{
+			"owner":  owner,
+			"name":   repo,
+			"number": number,
+		},
+	}
+
+	body, err := json.Marshal(query)
+	if err != nil {
+		return false, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.github.com/graphql", bytes.NewBuffer(body))
+	if err != nil {
+		return false, err
+	}
+
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "overseer-agent")
+
+	resp, err := DefaultHTTPClient.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return false, fmt.Errorf("graphql request failed with status: %s", resp.Status)
+	}
+
+	var result struct {
+		Data struct {
+			Repository struct {
+				PullRequest *struct {
+					MergeQueueEntry *struct {
+						Position int `json:"position"`
+					} `json:"mergeQueueEntry"`
+				} `json:"pullRequest"`
+			} `json:"repository"`
+		} `json:"data"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return false, err
+	}
+
+	if len(result.Errors) > 0 {
+		return false, fmt.Errorf("graphql error: %s", result.Errors[0].Message)
+	}
+
+	if result.Data.Repository.PullRequest == nil {
+		return false, fmt.Errorf("pull request not found: %s/%s#%d", owner, repo, number)
+	}
+
+	return result.Data.Repository.PullRequest.MergeQueueEntry != nil, nil
 }
