@@ -32,8 +32,34 @@ import (
 	"k8s.io/klog/v2"
 )
 
+type RepoFlag struct {
+	Owner string
+	Repo  string
+}
+
+func (r *RepoFlag) String() string {
+	if r == nil || (r.Owner == "" && r.Repo == "") {
+		return ""
+	}
+	return fmt.Sprintf("%s/%s", r.Owner, r.Repo)
+}
+
+func (r *RepoFlag) Set(val string) error {
+	parts := strings.Split(val, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return fmt.Errorf("invalid repo format, expected owner/repo, got %s", val)
+	}
+	r.Owner = parts[0]
+	r.Repo = parts[1]
+	return nil
+}
+
+func (r *RepoFlag) Type() string {
+	return "string"
+}
+
 type WatchFlags struct {
-	Repo                string
+	Repo                RepoFlag
 	PollInterval        time.Duration
 	Assignee            string
 	Labels              []string
@@ -71,14 +97,6 @@ func NewWatchCommand(ctx context.Context) *cobra.Command {
 				return err
 			}
 
-			if flags.Repo == "" {
-				return fmt.Errorf("--repo is required (e.g. owner/repo)")
-			}
-			parts := strings.Split(flags.Repo, "/")
-			if len(parts) != 2 {
-				return fmt.Errorf("invalid repo format, expected owner/repo, got %s", flags.Repo)
-			}
-
 			issueMode := os.Getenv("ISSUE_MODE")
 			if flags.IssueMode != "" {
 				issueMode = flags.IssueMode
@@ -107,11 +125,12 @@ func NewWatchCommand(ctx context.Context) *cobra.Command {
 				choresMode = "enabled"
 			}
 
-			return runWatch(ctx, parts[0], parts[1], flags.PollInterval, flags.Assignee, cmd.Flags().Changed("assignee"), flags.Labels, flags.DryRun, flags.WatchTimeout, flags.MaxActions, flags.MaxPending, flags.Mode, flags.QueueDir, flags.Once, issueMode, prMode, choresMode, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, flags.ScanLimit, flags.TaskTimeout, flags.SandboxEvictionAge, flags.SandboxIdleTimeout, flags.PRInactivityTimeout)
+			return runWatch(ctx, flags.Repo.Owner, flags.Repo.Repo, flags.PollInterval, flags.Assignee, cmd.Flags().Changed("assignee"), flags.Labels, flags.DryRun, flags.WatchTimeout, flags.MaxActions, flags.MaxPending, flags.Mode, flags.QueueDir, flags.Once, issueMode, prMode, choresMode, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, flags.ScanLimit, flags.TaskTimeout, flags.SandboxEvictionAge, flags.SandboxIdleTimeout, flags.PRInactivityTimeout)
 		},
 	}
 
-	cmd.Flags().StringVar(&flags.Repo, "repo", "", "GitHub repository (e.g. owner/repo)")
+	cmd.Flags().Var(&flags.Repo, "repo", "GitHub repository (e.g. owner/repo)")
+	_ = cmd.MarkFlagRequired("repo")
 	cmd.Flags().DurationVar(&flags.PollInterval, "poll-interval", 2*time.Minute, "Polling interval")
 	cmd.Flags().StringVar(&flags.Assignee, "assignee", "factory-bot", "GitHub username to watch for assigned issues (use empty string for unassigned issues)")
 	cmd.Flags().StringSliceVar(&flags.Labels, "labels", nil, "Comma-separated list of labels to filter issues by")
