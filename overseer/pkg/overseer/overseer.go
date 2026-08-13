@@ -24,6 +24,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -107,15 +108,15 @@ func ReconcileOverseer(ctx context.Context, c client.Client, o *overseerv1alpha1
 		}
 
 		// Delete the sandbox pod to force a restart/recreation with the new spec
-		pod := &corev1.Pod{}
-		err = c.Get(ctx, types.NamespacedName{Name: overseerName, Namespace: namespace}, pod)
-		if err == nil {
-			log.Info("Deleting Overseer sandbox pod to force restart", "name", overseerName, "namespace", namespace)
-			if err := c.Delete(ctx, pod); err != nil {
-				log.Error(err, "Failed to delete sandbox pod to force restart", "name", overseerName, "namespace", namespace)
-			}
-		} else if !errors.IsNotFound(err) {
-			log.Error(err, "Failed to find sandbox pod for deletion", "name", overseerName, "namespace", namespace)
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      overseerName,
+				Namespace: namespace,
+			},
+		}
+		log.Info("Deleting Overseer sandbox pod to force restart", "name", overseerName, "namespace", namespace)
+		if err := c.Delete(ctx, pod); err != nil && !errors.IsNotFound(err) {
+			log.Error(err, "Failed to delete sandbox pod to force restart", "name", overseerName, "namespace", namespace)
 		}
 	}
 
@@ -374,7 +375,7 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 			"name": "tokenscript-vol",
 			"secret": map[string]interface{}{
 				"secretName":  "tokenscript",
-				"defaultMode": int32(0755),
+				"defaultMode": int64(0755),
 			},
 		}
 
