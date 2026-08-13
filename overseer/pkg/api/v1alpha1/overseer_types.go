@@ -207,6 +207,17 @@ type EnvVar struct {
 	Value string `json:"value"`
 }
 
+// OverseerStatusType defines the status of the overseer.
+// +kubebuilder:validation:Enum=Active;Error
+type OverseerStatusType string
+
+const (
+	// OverseerStatusActive indicates the overseer is active and healthy.
+	OverseerStatusActive OverseerStatusType = "Active"
+	// OverseerStatusError indicates the overseer encountered an error.
+	OverseerStatusError OverseerStatusType = "Error"
+)
+
 // OverseerStatus defines the observed state of Overseer
 type OverseerStatus struct {
 	// ObservedGeneration is the most recent generation observed for this resource.
@@ -216,7 +227,7 @@ type OverseerStatus struct {
 
 	// OverseerStatus defines the status of the overseer.
 	// +kubebuilder:validation:Optional
-	OverseerStatus string `json:"overseerStatus,omitempty"`
+	OverseerStatus OverseerStatusType `json:"overseerStatus,omitempty"`
 
 	// Message provides more details about the status.
 	// +kubebuilder:validation:Optional

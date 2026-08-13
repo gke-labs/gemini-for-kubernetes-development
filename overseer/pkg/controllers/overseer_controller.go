@@ -100,7 +100,7 @@ func (r *OverseerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{}, err
 	}
 
-	if overseerObj.Status.OverseerStatus == "Error" {
+	if overseerObj.Status.OverseerStatus == overseerv1alpha1.OverseerStatusError {
 		overseerObj.Status.ObservedGeneration = overseerObj.Generation
 		if err := r.Status().Update(ctx, &overseerObj); err != nil {
 			return ctrl.Result{}, err
@@ -293,7 +293,7 @@ func (r *OverseerReconciler) ensureSecrets(ctx context.Context, o *overseerv1alp
 				if name == "tokenscript" {
 					continue // tokenscript is optional
 				}
-				o.Status.OverseerStatus = "Error"
+				o.Status.OverseerStatus = overseerv1alpha1.OverseerStatusError
 				o.Status.Message = fmt.Sprintf("Secret %s not found in %s or overseer-system", name, targetNamespace)
 				return nil
 			}
@@ -307,7 +307,7 @@ func (r *OverseerReconciler) ensureSecrets(ctx context.Context, o *overseerv1alp
 		srcRobotSecret, err := r.findSecret(ctx, o.Spec.RobotAccount, []string{o.Namespace, "overseer-system"})
 		if err != nil {
 			if errors.IsNotFound(err) {
-				o.Status.OverseerStatus = "Error"
+				o.Status.OverseerStatus = overseerv1alpha1.OverseerStatusError
 				o.Status.Message = fmt.Sprintf("Robot account secret %s not found in %s or overseer-system", o.Spec.RobotAccount, targetNamespace)
 				return nil
 			}
@@ -327,7 +327,7 @@ func (r *OverseerReconciler) ensureSecrets(ctx context.Context, o *overseerv1alp
 	srcGeminiSecret, err := r.findSecret(ctx, geminiSecretName, []string{o.Namespace, "overseer-system"})
 	if err != nil {
 		if errors.IsNotFound(err) {
-			o.Status.OverseerStatus = "Error"
+			o.Status.OverseerStatus = overseerv1alpha1.OverseerStatusError
 			o.Status.Message = fmt.Sprintf("Gemini API key secret %s not found in %s or overseer-system", geminiSecretName, targetNamespace)
 			return nil
 		}
@@ -361,7 +361,7 @@ func (r *OverseerReconciler) ensureSecrets(ctx context.Context, o *overseerv1alp
 
 			if err != nil {
 				if errors.IsNotFound(err) {
-					o.Status.OverseerStatus = "Error"
+					o.Status.OverseerStatus = overseerv1alpha1.OverseerStatusError
 					o.Status.Message = fmt.Sprintf("Secret for user %s not found in %s or overseer-system", user, o.Namespace)
 					return nil
 				}
