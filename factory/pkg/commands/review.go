@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
@@ -305,7 +306,7 @@ func runReview(ctx context.Context, prURL string, publishPolicy string, instruct
 		TaskType: "review",
 		Sandbox:  sandboxName,
 		PR:       prNum,
-		Issues:   referencedIssueList(pr),
+		Issues:   common.ReferencedIssueList(pr),
 	})
 	usagereport.ReportPRSubject(ctx, owner+"/"+repo, pr)
 

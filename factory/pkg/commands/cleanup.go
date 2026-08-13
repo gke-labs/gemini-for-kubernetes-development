@@ -10,26 +10,18 @@ import (
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	"github.com/spf13/cobra"
 	"k8s.io/klog/v2"
 )
 
-func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
-	if val := os.Getenv(key); val != "" {
-		if d, err := time.ParseDuration(val); err == nil {
-			return d
-		}
-	}
-	return defaultValue
-}
-
 func startPeriodicCleanup(ctx context.Context) {
 	log := klog.FromContext(ctx)
 	log.Info("Starting periodic cleanup task")
 
-	tmpInterval := getEnvDuration("CLEANUP_TMP_INTERVAL", 1*time.Hour)
-	goInterval := getEnvDuration("CLEANUP_GO_INTERVAL", 6*time.Hour)
+	tmpInterval := common.GetEnvDuration("CLEANUP_TMP_INTERVAL", 1*time.Hour)
+	goInterval := common.GetEnvDuration("CLEANUP_GO_INTERVAL", 6*time.Hour)
 
 	// Ticker for tmp directory cleanup
 	tmpTicker := time.NewTicker(tmpInterval)
@@ -62,7 +54,7 @@ func performTmpCleanup(ctx context.Context) {
 	log := klog.FromContext(ctx)
 	log.Info("Running periodic TMPDIR cleanup")
 
-	maxAge := getEnvDuration("CLEANUP_TMP_MAX_AGE", 24*time.Hour)
+	maxAge := common.GetEnvDuration("CLEANUP_TMP_MAX_AGE", 24*time.Hour)
 
 	// 1. Clean up TMPDIR
 	tmpDir := os.Getenv("TMPDIR")

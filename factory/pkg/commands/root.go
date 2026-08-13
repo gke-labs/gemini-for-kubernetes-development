@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/geminitokens"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
@@ -24,29 +25,7 @@ const (
 	SecretFactoryUser = "factory-user"
 )
 
-type RootFlags struct {
-	Namespace        string
-	Image            string
-	DiskSize         string
-	SecretName       string
-	User             string
-	Timeout          time.Duration
-	Background       bool
-	Cleanup          bool
-	EphemeralStorage string
-	CPURequest       string
-	CPULimit         string
-	MemoryRequest    string
-	MemoryLimit      string
-	Secrets          []string
-	ResolvedSecrets  []factorysandbox.SecretMount
-	Envs             []string
-	ResolvedEnvs     []factorysandbox.EnvVar
-	Detached         bool
-	AbortOnCancel    bool
-}
-
-var rootFlags RootFlags
+var rootFlags common.RootFlags
 
 func NewRootCommand(ctx context.Context) *cobra.Command {
 	cmd := &cobra.Command{

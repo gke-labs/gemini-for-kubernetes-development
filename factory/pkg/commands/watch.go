@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
@@ -82,11 +83,11 @@ type WatchFlags struct {
 }
 
 type Watcher struct {
-	RootFlags
+	common.RootFlags
 	WatchFlags
 }
 
-func NewWatcher(rootFlags RootFlags, flags WatchFlags) *Watcher {
+func NewWatcher(rootFlags common.RootFlags, flags WatchFlags) *Watcher {
 	return &Watcher{
 		RootFlags:  rootFlags,
 		WatchFlags: flags,
@@ -160,8 +161,8 @@ func NewWatchCommand(ctx context.Context) *cobra.Command {
 	cmd.Flags().IntVar(&flags.ScanLimit, "scan-limit", 100, "Maximum number of issues/PRs to fetch from GitHub API in a scan cycle")
 	cmd.Flags().DurationVar(&flags.TaskTimeout, "task-timeout", 3*time.Hour, "Timeout for each task execution (default 3h)")
 	cmd.Flags().StringVar(&flags.SandboxEvictionAge, "sandbox-eviction-age", "7d", "Age threshold for idle sandbox eviction (e.g. '7d', '24h')")
-	cmd.Flags().DurationVar(&flags.SandboxIdleTimeout, "sandbox-idle-timeout", getEnvDuration("SANDBOX_IDLE_TIMEOUT", 0), "Idle timeout after which a sandbox that has not run any task is suspended by setting replicas to 0 (e.g. '30m', '1h')")
-	cmd.Flags().DurationVar(&flags.PRInactivityTimeout, "pr-inactivity-timeout", getEnvDuration("PR_INACTIVITY_TIMEOUT", 0), "Time of inactivity with no human comments before pausing automated processing on a PR (e.g. '24h', '168h')")
+	cmd.Flags().DurationVar(&flags.SandboxIdleTimeout, "sandbox-idle-timeout", common.GetEnvDuration("SANDBOX_IDLE_TIMEOUT", 0), "Idle timeout after which a sandbox that has not run any task is suspended by setting replicas to 0 (e.g. '30m', '1h')")
+	cmd.Flags().DurationVar(&flags.PRInactivityTimeout, "pr-inactivity-timeout", common.GetEnvDuration("PR_INACTIVITY_TIMEOUT", 0), "Time of inactivity with no human comments before pausing automated processing on a PR (e.g. '24h', '168h')")
 
 	return cmd
 }
@@ -204,7 +205,7 @@ func (w *Watcher) resolveSandboxName(ctx context.Context, kubeClient *clients.Ku
 		pr, _, err := ghClient.PullRequests.Get(ctx, w.Repo.Owner, w.Repo.Repo, num)
 		if err == nil {
 			// Find referenced issue numbers
-			referencedIssues := getReferencedIssues(pr)
+			referencedIssues := common.GetReferencedIssues(pr)
 			for issueNum := range referencedIssues {
 				// Check if there is an active/existing sandbox for this issue
 				issueSandboxName := fmt.Sprintf("fix-%s-%d", w.Repo.Repo, issueNum)
@@ -699,133 +700,6 @@ func getPRPriority(prIssue *githubv39.Issue) string {
 	return getIssuePriority(prIssue)
 }
 
-var workflowURLRegex = regexp.MustCompile(`(?:\s|^)(https?://[^\s\)"'` + "`" + `]+(?:\.(?:md|txt|yaml)|/(?:workflows|agents)/)[^\s\)"'` + "`" + `]*)`)
-
-var workflowFileRegex = regexp.MustCompile(`(?:\s|^)(\.?\.?/?(?:\.?agents?|\.gemini)/[a-zA-Z0-9_\-\./]+)\b`)
-
-func sanitizeWorkflowPath(path string) string {
-	path = strings.TrimSpace(path)
-	for strings.HasSuffix(path, `\n`) || strings.HasSuffix(path, `\r`) {
-		path = strings.TrimSuffix(strings.TrimSuffix(path, `\n`), `\r`)
-		path = strings.TrimSpace(path)
-	}
-	return path
-}
-
-func findWorkflowPath(body string) string {
-	urlMatch := workflowURLRegex.FindStringSubmatch(body)
-	if len(urlMatch) > 1 {
-		return sanitizeWorkflowPath(urlMatch[1])
-	}
-
-	matches := workflowFileRegex.FindStringSubmatch(body)
-	if len(matches) > 1 {
-		return sanitizeWorkflowPath(matches[1])
-	}
-	return ""
-}
-
-func isWorkflowDefinition(ctx context.Context, ghClient *githubv39.Client, owner, repo, path string) bool {
-	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
-		// 1. Path/URL convention check
-		if strings.Contains(path, "/workflows/") || strings.Contains(path, "/agents/") {
-			return true
-		}
-
-		// 2. Download and verify headers
-		content, err := fetchWorkflowContent(ctx, ghClient, path)
-		if err != nil {
-			klog.V(4).Infof("Failed to fetch content from workflow URL %s: %v", path, err)
-			return false
-		}
-
-		limit := 2000
-		if len(content) < limit {
-			limit = len(content)
-		}
-		header := string(content[:limit])
-		if strings.Contains(header, "mode: workflow") || strings.Contains(header, "mode: \"workflow\"") || strings.Contains(header, "AGENT_MODE=workflow") {
-			return true
-		}
-		return false
-	}
-
-	// 1. Directory convention: any path containing "/workflows/" is treated as a workflow
-	if strings.Contains(path, "/workflows/") {
-		return true
-	}
-
-	// Clean up leading dot slashes from path to match GitHub API format
-	cleanPath := strings.TrimPrefix(path, "./")
-	cleanPath = strings.TrimPrefix(cleanPath, "/")
-
-	// 2. Fetch remote content from GitHub and search for keywords/metadata
-	fileContent, _, _, err := ghClient.Repositories.GetContents(ctx, owner, repo, cleanPath, &githubv39.RepositoryContentGetOptions{})
-	if err != nil {
-		klog.V(4).Infof("Failed to get content for %s: %v", cleanPath, err)
-		return false
-	}
-	if fileContent == nil {
-		klog.V(4).Infof("Content is nil for %s (possibly a directory or submodule)", cleanPath)
-		return false
-	}
-	content, err := fileContent.GetContent()
-	if err != nil {
-		return false
-	}
-
-	limit := 2000
-	if len(content) < limit {
-		limit = len(content)
-	}
-	header := content[:limit]
-
-	// Look for mode: workflow metadata in header or front-matter
-	if strings.Contains(header, "mode: workflow") || strings.Contains(header, "mode: \"workflow\"") || strings.Contains(header, "AGENT_MODE=workflow") {
-		return true
-	}
-
-	return false
-}
-
-func getWorkflowCooldown(ctx context.Context, ghClient *githubv39.Client, owner, repo, path string) time.Duration {
-	defaultCooldown := 10 * time.Minute
-	if path == "" {
-		return defaultCooldown
-	}
-
-	var content []byte
-	var err error
-	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
-		content, err = fetchWorkflowContent(ctx, ghClient, path)
-	} else {
-		cleanPath := strings.TrimPrefix(path, "./")
-		cleanPath = strings.TrimPrefix(cleanPath, "/")
-		var fileContent *githubv39.RepositoryContent
-		fileContent, _, _, err = ghClient.Repositories.GetContents(ctx, owner, repo, cleanPath, &githubv39.RepositoryContentGetOptions{})
-		if err == nil {
-			var contentStr string
-			contentStr, err = fileContent.GetContent()
-			content = []byte(contentStr)
-		}
-	}
-	if err != nil {
-		return defaultCooldown
-	}
-
-	agentDef, err := ParseAgent(content)
-	if err != nil || agentDef.Cooldown == "" {
-		return defaultCooldown
-	}
-
-	d, err := time.ParseDuration(agentDef.Cooldown)
-	if err != nil {
-		klog.Warningf("Failed to parse workflow cooldown duration %q: %v", agentDef.Cooldown, err)
-		return defaultCooldown
-	}
-	return d
-}
-
 func (w *Watcher) queueIssueTasks(ctx context.Context, ghClient *githubv39.Client, kubeClient *clients.KubernetesClient, cfg *config.FactoryConfig, issues []*githubv39.Issue, processedIssues map[int]time.Time, refIssues map[int]bool, targetAssignee string, allBotUsers []string, incomingDir, processingDir, processedDir string, triggerLabel string) {
 	klog.Infof("queueIssueTasks called with %d issues", len(issues))
 	for _, issue := range issues {
@@ -844,10 +718,10 @@ func (w *Watcher) queueIssueTasks(ctx context.Context, ghClient *githubv39.Clien
 		}
 
 		// Check if the issue specifies a workflow path in its description
-		workflowPath := findWorkflowPath(issue.GetBody())
+		workflowPath := common.FindWorkflowPath(issue.GetBody())
 		workflowName := ""
 		if workflowPath != "" {
-			if isWorkflowDefinition(ctx, ghClient, w.Repo.Owner, w.Repo.Repo, workflowPath) {
+			if common.IsWorkflowDefinition(ctx, ghClient, w.Repo.Owner, w.Repo.Repo, workflowPath) {
 				filenameOnly := filepath.Base(workflowPath)
 				ext := filepath.Ext(filenameOnly)
 				workflowName = strings.TrimSuffix(filenameOnly, ext)
@@ -860,7 +734,7 @@ func (w *Watcher) queueIssueTasks(ctx context.Context, ghClient *githubv39.Clien
 
 		filename := fmt.Sprintf("task-issue-%d.yaml", num)
 		if workflowName != "" {
-			filename = fmt.Sprintf("task-workflow-%s-issue-%d.yaml", Slugify(workflowName), num)
+			filename = fmt.Sprintf("task-workflow-%s-issue-%d.yaml", common.Slugify(workflowName), num)
 		}
 
 		if taskExists(incomingDir, processingDir, filename) {
@@ -877,7 +751,7 @@ func (w *Watcher) queueIssueTasks(ctx context.Context, ghClient *githubv39.Clien
 					lastRunTime = t.CompletedAt
 				}
 			}
-			cooldown := getWorkflowCooldown(ctx, ghClient, w.Repo.Owner, w.Repo.Repo, workflowPath)
+			cooldown := common.GetWorkflowCooldown(ctx, ghClient, w.Repo.Owner, w.Repo.Repo, workflowPath)
 			if time.Since(lastRunTime) < cooldown {
 				continue
 			}
@@ -1026,7 +900,7 @@ func scanChores(ctx context.Context, ghClient *githubv39.Client, owner, repo, in
 				continue
 			}
 
-			agentDef, err := ParseAgent([]byte(contentStr))
+			agentDef, err := common.ParseAgent([]byte(contentStr))
 			if err != nil {
 				klog.Errorf("Failed to parse chore agent %s: %v", file.GetName(), err)
 				continue
@@ -1036,7 +910,7 @@ func scanChores(ctx context.Context, ghClient *githubv39.Client, owner, repo, in
 				continue
 			}
 
-			filename := fmt.Sprintf("task-chore-%s.yaml", Slugify(agentDef.Name))
+			filename := fmt.Sprintf("task-chore-%s.yaml", common.Slugify(agentDef.Name))
 			if taskExists(incomingDir, processingDir, filename) {
 				continue
 			}
@@ -1560,7 +1434,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 
 				// Check CI Check Failures
 				hasFailure := false
-				checkRuns, err := listAllCheckRuns(ctx, ghClient, w.Repo.Owner, w.Repo.Repo, headSHA)
+				checkRuns, err := common.ListAllCheckRuns(ctx, ghClient, w.Repo.Owner, w.Repo.Repo, headSHA)
 				if err == nil {
 					for _, run := range checkRuns {
 						c := run.GetConclusion()
@@ -1899,13 +1773,13 @@ func (w *Watcher) Run(ctx context.Context) error {
 									if pr.GetBody() != "" {
 										bodies = append(bodies, pr.GetBody())
 									}
-									for refIssueNum := range getReferencedIssues(pr) {
+									for refIssueNum := range common.GetReferencedIssues(pr) {
 										refIssue, _, err := ghClient.Issues.Get(ctx, w.Repo.Owner, w.Repo.Repo, refIssueNum)
 										if err == nil && refIssue.GetBody() != "" {
 											bodies = append(bodies, refIssue.GetBody())
 										}
 									}
-									instructions := ExtractReviewInstructions(bodies...)
+									instructions := common.ExtractReviewInstructions(bodies...)
 
 									prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", w.Repo.Owner, w.Repo.Repo, num)
 									task := &QueueTask{
@@ -1980,7 +1854,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 				state.openPRs = prs
 				state.referencedIssues = make(map[int]bool)
 				for _, pr := range prs {
-					for num := range getReferencedIssues(pr) {
+					for num := range common.GetReferencedIssues(pr) {
 						state.referencedIssues[num] = true
 						refIssues[num] = true
 					}
@@ -2000,7 +1874,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 				state.openPRs = prs
 				state.referencedIssues = make(map[int]bool)
 				for _, pr := range prs {
-					for num := range getReferencedIssues(pr) {
+					for num := range common.GetReferencedIssues(pr) {
 						state.referencedIssues[num] = true
 						refIssues[num] = true
 					}
@@ -2666,34 +2540,6 @@ func (w *Watcher) Run(ctx context.Context) error {
 	}
 }
 
-func getReferencedIssues(pr *githubv39.PullRequest) map[int]bool {
-	referenced := make(map[int]bool)
-
-	// Check branch name, ignoring epoch timestamps (num >= 10000000)
-	if pr.GetHead().GetRef() != "" {
-		re := regexp.MustCompile(`\d+`)
-		for _, match := range re.FindAllString(pr.GetHead().GetRef(), -1) {
-			if num, err := strconv.Atoi(match); err == nil && num < 10000000 {
-				referenced[num] = true
-			}
-		}
-	}
-
-	// Check title and body for #1234 or "Fixes/Closes/Resolves/Issue 1234"
-	re := regexp.MustCompile(`(?:#|(?i:\b(?:fixes|closes|resolves|issue)\s+))(\d+)\b`)
-	for _, text := range []string{pr.GetTitle(), pr.GetBody()} {
-		for _, match := range re.FindAllStringSubmatch(text, -1) {
-			if len(match) > 1 {
-				if num, err := strconv.Atoi(match[1]); err == nil && num < 10000000 {
-					referenced[num] = true
-				}
-			}
-		}
-	}
-
-	return referenced
-}
-
 func listAllOpenPRs(ctx context.Context, ghClient *githubv39.Client, owner, repo string) ([]*githubv39.PullRequest, error) {
 	var allPRs []*githubv39.PullRequest
 	opts := &githubv39.PullRequestListOptions{
@@ -2716,7 +2562,7 @@ func listAllOpenPRs(ctx context.Context, ghClient *githubv39.Client, owner, repo
 
 func syncReferencedIssueLabels(ctx context.Context, ghClient *githubv39.Client, owner, repo string, pr *githubv39.PullRequest, prIssue *githubv39.Issue) {
 	var refIssues []*githubv39.Issue
-	for refIssueNum := range getReferencedIssues(pr) {
+	for refIssueNum := range common.GetReferencedIssues(pr) {
 		refIssue, _, err := ghClient.Issues.Get(ctx, owner, repo, refIssueNum)
 		if err != nil {
 			klog.Warningf("Failed to fetch referenced parent issue #%d for PR #%d: %v", refIssueNum, pr.GetNumber(), err)
@@ -3035,7 +2881,7 @@ func shouldAutoReviewPR(ctx context.Context, ghClient *githubv39.Client, owner, 
 	if hasReviewLabel(prIssue.Labels, triggerLabel) {
 		return true
 	}
-	for refIssueNum := range getReferencedIssues(pr) {
+	for refIssueNum := range common.GetReferencedIssues(pr) {
 		refIssue, _, err := ghClient.Issues.Get(ctx, owner, repo, refIssueNum)
 		if err == nil && hasReviewLabel(refIssue.Labels, triggerLabel) {
 			return true
@@ -3095,9 +2941,9 @@ func cleanupClosedPRSandboxes(ctx context.Context, ghClient *githubv39.Client, k
 				fmt.Printf("[DRYRUN] Would delete sandbox '%s' for closed PR #%d\n", name, num)
 				continue
 			}
-			meta := sandboxUsageMeta(&item, owner+"/"+repo)
+			meta := common.SandboxUsageMeta(&item, owner+"/"+repo)
 			meta.PR = num
-			meta.Issues = referencedIssueList(pr)
+			meta.Issues = common.ReferencedIssueList(pr)
 			usagereport.HarvestSandbox(ctx, namespace, name, meta)
 			usagereport.ReportPRSubject(ctx, owner+"/"+repo, pr)
 			if err := manager.DeleteSandbox(ctx, namespace, name); err != nil {
@@ -3160,7 +3006,7 @@ func cleanupClosedIssueSandboxes(ctx context.Context, ghClient *githubv39.Client
 				fmt.Printf("[DRYRUN] Would delete sandbox '%s' for closed issue #%d\n", name, num)
 				continue
 			}
-			meta := sandboxUsageMeta(&item, owner+"/"+repo)
+			meta := common.SandboxUsageMeta(&item, owner+"/"+repo)
 			meta.Issue = num
 			usagereport.HarvestSandbox(ctx, namespace, name, meta)
 			usagereport.ReportIssueSubject(ctx, owner+"/"+repo, issue)
@@ -3448,7 +3294,7 @@ func cleanupStaleIdleSandboxes(ctx context.Context, kubeClient *clients.Kubernet
 					continue
 				}
 
-				usagereport.HarvestSandbox(ctx, namespace, name, sandboxUsageMeta(&item, repoFullName))
+				usagereport.HarvestSandbox(ctx, namespace, name, common.SandboxUsageMeta(&item, repoFullName))
 				if err := manager.DeleteSandbox(ctx, namespace, name); err != nil {
 					klog.Errorf("Failed to delete stale/idle sandbox '%s': %v", name, err)
 				}

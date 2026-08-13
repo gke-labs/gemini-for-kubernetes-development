@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package commands
+package common
 
 import (
 	"sort"
@@ -27,23 +27,24 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/usagereport"
 )
 
-// referencedIssueList converts getReferencedIssues output into the sorted
+// ReferencedIssueList converts GetReferencedIssues output into the sorted
 // issue list attached to usage records.
-func referencedIssueList(pr *githubv39.PullRequest) []int {
+func ReferencedIssueList(pr *githubv39.PullRequest) []int {
 	if pr == nil {
 		return nil
 	}
 	var out []int
-	for n := range getReferencedIssues(pr) {
+	for n := range GetReferencedIssues(pr) {
 		out = append(out, n)
 	}
+
 	sort.Ints(out)
 	return out
 }
 
-// sandboxUsageMeta derives usage-record context from a sandbox's labels
+// SandboxUsageMeta derives usage-record context from a sandbox's labels
 // (used by the cleanup sweeps, where per-task context is no longer around).
-func sandboxUsageMeta(item *unstructured.Unstructured, repo string) usagereport.Meta {
+func SandboxUsageMeta(item *unstructured.Unstructured, repo string) usagereport.Meta {
 	meta := usagereport.Meta{Repo: repo}
 	labels := item.GetLabels()
 	if prStr := labels["factory.gemini.google.com/pr"]; prStr != "" {
