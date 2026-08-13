@@ -44,12 +44,6 @@ rules:
 - apiGroups: ["agents.x-k8s.io"]
   resources: ["sandboxes"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-- apiGroups: [""]
-  resources: ["pods", "events"]
-  verbs: ["get", "list"]
-- apiGroups: [""]
-  resources: ["pods/portforward"]
-  verbs: ["create"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
