@@ -11,18 +11,11 @@ import (
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/constants"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/geminitokens"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
-)
-
-const (
-	KeyGithubToken    = "GITHUB_TOKEN"
-	KeyGeminiAPIKey   = "GEMINI_API_KEY"
-	KeyGithubLogin    = "GITHUB_LOGIN"
-	KeyGithubEmail    = "GITHUB_EMAIL"
-	SecretFactoryUser = "factory-user"
 )
 
 var rootFlags common.RootFlags
@@ -71,7 +64,7 @@ coding tasks without local side effects or host dependencies.`,
 		if rootFlags.User != "" {
 			rootFlags.SecretName = fmt.Sprintf("user-%s", rootFlags.User)
 		} else {
-			rootFlags.SecretName = SecretFactoryUser
+			rootFlags.SecretName = constants.SecretFactoryUser
 		}
 	}
 

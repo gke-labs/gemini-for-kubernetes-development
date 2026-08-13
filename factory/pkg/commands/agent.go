@@ -12,6 +12,7 @@ import (
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/constants"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
@@ -221,8 +222,8 @@ func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 	if err != nil {
 		return fmt.Errorf("fetching %s secret in namespace %s: %w (make sure to run 'factory user onboard' first)", rootFlags.SecretName, rootFlags.Namespace, err)
 	}
-	githubLogin := string(secret.Data[KeyGithubLogin])
-	githubEmail := string(secret.Data[KeyGithubEmail])
+	githubLogin := string(secret.Data[constants.KeyGithubLogin])
+	githubEmail := string(secret.Data[constants.KeyGithubEmail])
 
 	fmt.Printf("Connecting to sandbox %s via envd...\n", sandboxName)
 	client, err := envd.Connect(ctx, rootFlags.Namespace, sandboxName)
@@ -297,7 +298,7 @@ func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 	envMap := map[string]string{
 		"HOME":                       "/workspaces/.home",
 		"FACTORY_CONFIG":             "/workspaces/.factory.cfg",
-		"GITHUB_TOKEN":               string(secret.Data[KeyGithubToken]),
+		"GITHUB_TOKEN":               string(secret.Data[constants.KeyGithubToken]),
 		"GEMINI_API_KEY":             getGeminiAPIKey(secret),
 		"GEMINI_CLI_TRUST_WORKSPACE": "true",
 		"REPO_OWNER":                 owner,

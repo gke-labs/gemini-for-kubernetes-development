@@ -8,6 +8,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/constants"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/geminitokens"
 	"github.com/spf13/cobra"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -53,12 +54,12 @@ func NewStatusCommand(ctx context.Context) *cobra.Command {
 			if err != nil {
 				fmt.Fprintf(w, "User Secret\t[FAIL]\tSecret '%s' missing in namespace '%s' (run 'factory user onboard')\n", rootFlags.SecretName, rootFlags.Namespace)
 			} else {
-				if string(secret.Data[KeyGithubLogin]) == "" {
+				if string(secret.Data[constants.KeyGithubLogin]) == "" {
 					fmt.Fprintf(w, "GitHub Login\t[FAIL]\tGITHUB_LOGIN missing in secret '%s'\n", rootFlags.SecretName)
 				} else {
-					fmt.Fprintf(w, "GitHub Login\t[OK]\t%s\n", string(secret.Data[KeyGithubLogin]))
+					fmt.Fprintf(w, "GitHub Login\t[OK]\t%s\n", string(secret.Data[constants.KeyGithubLogin]))
 				}
-				if string(secret.Data[KeyGithubToken]) == "" {
+				if string(secret.Data[constants.KeyGithubToken]) == "" {
 					fmt.Fprintf(w, "GitHub Token\t[FAIL]\tGITHUB_TOKEN missing in secret '%s'\n", rootFlags.SecretName)
 				} else {
 					fmt.Fprintf(w, "GitHub Token\t[OK]\tConfigured in secret '%s'\n", rootFlags.SecretName)

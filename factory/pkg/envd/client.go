@@ -20,6 +20,7 @@ import (
 	"syscall"
 
 	"connectrpc.com/connect"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/constants"
 	process "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd/spec/process"
 	processconnect "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd/spec/process/processconnect"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/geminitokens"
@@ -603,7 +604,7 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 func handleQuotaOrSuspensionError(newData []byte, envs map[string]string) error {
 	key := geminitokens.ExtractAPIKeyFromError(newData)
 	if key == "" {
-		key = envs["GEMINI_API_KEY"]
+		key = envs[constants.KeyGeminiAPIKey]
 	}
 	if key != "" {
 		if geminitokens.IsSuspendedKeyError(newData) {

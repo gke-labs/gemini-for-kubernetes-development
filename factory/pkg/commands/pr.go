@@ -15,6 +15,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/constants"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
@@ -211,8 +212,8 @@ func runInvestigate(ctx context.Context, prURL, prompt string, continueSession b
 	if err != nil {
 		return fmt.Errorf("fetching %s secret in namespace %s: %w (make sure to run 'factory user onboard' first)", rootFlags.SecretName, rootFlags.Namespace, err)
 	}
-	githubLogin := string(secret.Data[KeyGithubLogin])
-	githubEmail := string(secret.Data[KeyGithubEmail])
+	githubLogin := string(secret.Data[constants.KeyGithubLogin])
+	githubEmail := string(secret.Data[constants.KeyGithubEmail])
 
 	triggerLabel := "factory"
 	if cfg != nil && cfg.TriggerLabel != "" {
@@ -262,7 +263,7 @@ func runInvestigate(ctx context.Context, prURL, prompt string, continueSession b
 	}
 
 	envMap := map[string]string{
-		"GITHUB_TOKEN":               string(secret.Data[KeyGithubToken]),
+		"GITHUB_TOKEN":               string(secret.Data[constants.KeyGithubToken]),
 		"GEMINI_API_KEY":             getGeminiAPIKey(secret),
 		"GEMINI_CLI_TRUST_WORKSPACE": "true",
 		"REPO_NAME":                  repo,
@@ -480,8 +481,8 @@ func runAddressComments(ctx context.Context, prURL, prompt string, continueSessi
 	if err != nil {
 		return fmt.Errorf("fetching %s secret in namespace %s: %w (make sure to run 'factory user onboard' first)", rootFlags.SecretName, rootFlags.Namespace, err)
 	}
-	githubLogin := string(secret.Data[KeyGithubLogin])
-	githubEmail := string(secret.Data[KeyGithubEmail])
+	githubLogin := string(secret.Data[constants.KeyGithubLogin])
+	githubEmail := string(secret.Data[constants.KeyGithubEmail])
 
 	triggerLabel := "factory"
 	if cfg != nil && cfg.TriggerLabel != "" {
@@ -534,7 +535,7 @@ func runAddressComments(ctx context.Context, prURL, prompt string, continueSessi
 	}
 
 	envMap := map[string]string{
-		"GITHUB_TOKEN":               string(secret.Data[KeyGithubToken]),
+		"GITHUB_TOKEN":               string(secret.Data[constants.KeyGithubToken]),
 		"GEMINI_API_KEY":             getGeminiAPIKey(secret),
 		"GEMINI_CLI_TRUST_WORKSPACE": "true",
 		"REPO_NAME":                  repo,
@@ -902,8 +903,8 @@ func runIterate(ctx context.Context, prURL, prompt string, continueSession bool,
 	if err != nil {
 		return fmt.Errorf("fetching %s secret in namespace %s: %w (make sure to run 'factory user onboard' first)", rootFlags.SecretName, rootFlags.Namespace, err)
 	}
-	githubLogin := string(secret.Data[KeyGithubLogin])
-	githubEmail := string(secret.Data[KeyGithubEmail])
+	githubLogin := string(secret.Data[constants.KeyGithubLogin])
+	githubEmail := string(secret.Data[constants.KeyGithubEmail])
 
 	params := tasks.IterateParams{
 		Repo: tasks.Repo{
@@ -945,7 +946,7 @@ func runIterate(ctx context.Context, prURL, prompt string, continueSession bool,
 	}
 
 	envMap := map[string]string{
-		"GITHUB_TOKEN":               string(secret.Data[KeyGithubToken]),
+		"GITHUB_TOKEN":               string(secret.Data[constants.KeyGithubToken]),
 		"GEMINI_API_KEY":             getGeminiAPIKey(secret),
 		"GEMINI_CLI_TRUST_WORKSPACE": "true",
 		"REPO_OWNER":                 owner,
@@ -1046,7 +1047,7 @@ func verifyPROwnership(ctx context.Context, prURL string) error {
 		user = prAuthor
 	}
 
-	if user != "" && rootFlags.SecretName == "factory-user" {
+	if user != "" && rootFlags.SecretName == constants.SecretFactoryUser {
 		secretName := fmt.Sprintf("user-%s", user)
 		_, err = kubeClient.Clientset.CoreV1().Secrets(rootFlags.Namespace).Get(ctx, secretName, metav1.GetOptions{})
 		if err == nil {
@@ -1064,7 +1065,7 @@ func verifyPROwnership(ctx context.Context, prURL string) error {
 	if err != nil {
 		return fmt.Errorf("fetching %s secret in namespace %s: %w (make sure to run 'factory user onboard' first)", rootFlags.SecretName, rootFlags.Namespace, err)
 	}
-	githubLogin := string(secret.Data[KeyGithubLogin])
+	githubLogin := string(secret.Data[constants.KeyGithubLogin])
 
 	if !strings.EqualFold(prAuthor, githubLogin) {
 		return fmt.Errorf("PR is not owned by the factory user (%s). It is owned by %s. Please run 'factory pr adopt <open|close> --pr-url %s' to adopt it first", githubLogin, prAuthor, prURL)
@@ -1153,8 +1154,8 @@ func runAdopt(ctx context.Context, prURL, adoptAction, strategy string, ephemera
 	if err != nil {
 		return fmt.Errorf("fetching %s secret in namespace %s: %w (make sure to run 'factory user onboard' first)", rootFlags.SecretName, rootFlags.Namespace, err)
 	}
-	githubLogin := string(secret.Data[KeyGithubLogin])
-	githubEmail := string(secret.Data[KeyGithubEmail])
+	githubLogin := string(secret.Data[constants.KeyGithubLogin])
+	githubEmail := string(secret.Data[constants.KeyGithubEmail])
 
 	prAuthor := pr.GetUser().GetLogin()
 	if strings.EqualFold(prAuthor, githubLogin) {
@@ -1191,7 +1192,7 @@ func runAdopt(ctx context.Context, prURL, adoptAction, strategy string, ephemera
 		if err != nil {
 			return fmt.Errorf("creating request for PR diff: %w", err)
 		}
-		req.Header.Set("Authorization", "Bearer "+string(secret.Data[KeyGithubToken]))
+		req.Header.Set("Authorization", "Bearer "+string(secret.Data[constants.KeyGithubToken]))
 
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
@@ -1241,7 +1242,7 @@ func runAdopt(ctx context.Context, prURL, adoptAction, strategy string, ephemera
 	}
 
 	envMap := map[string]string{
-		"GITHUB_TOKEN":               string(secret.Data[KeyGithubToken]),
+		"GITHUB_TOKEN":               string(secret.Data[constants.KeyGithubToken]),
 		"GEMINI_API_KEY":             getGeminiAPIKey(secret),
 		"GEMINI_CLI_TRUST_WORKSPACE": "true",
 		"REPO_OWNER":                 owner,

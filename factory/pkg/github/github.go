@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/constants"
 	githubv39 "github.com/google/go-github/v39/github"
 	"golang.org/x/oauth2"
 )
@@ -21,7 +22,7 @@ import (
 func GetGithubToken(ctx context.Context) (string, error) {
 	token := os.Getenv("MANUAL_PAT")
 	if token == "" {
-		token = os.Getenv("GITHUB_TOKEN")
+		token = os.Getenv(constants.KeyGithubToken)
 	}
 	if token == "" {
 		token = os.Getenv("OAUTH_PAT")
