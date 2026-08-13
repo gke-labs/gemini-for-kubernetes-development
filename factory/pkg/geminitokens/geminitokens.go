@@ -12,11 +12,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/constants"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/klog/v2"
 )
-
-const KeyGeminiAPIKey = "GEMINI_API_KEY"
 
 var (
 	listMutex      sync.Mutex
@@ -359,7 +358,7 @@ func GetGeminiAPIKey(secret *corev1.Secret) string {
 		return token
 	}
 	if secret != nil {
-		return string(secret.Data[KeyGeminiAPIKey])
+		return string(secret.Data[constants.KeyGeminiAPIKey])
 	}
 	return ""
 }

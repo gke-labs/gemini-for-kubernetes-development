@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/constants"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
@@ -75,7 +76,7 @@ func RunUserOnboard(ctx context.Context, githubLogin, githubToken, githubEmail, 
 	}
 
 	if githubToken == "" {
-		if val := os.Getenv("GITHUB_TOKEN"); val != "" {
+		if val := os.Getenv(constants.KeyGithubToken); val != "" {
 			githubToken = val
 		} else if val := os.Getenv("GH_TOKEN"); val != "" {
 			githubToken = val
@@ -145,7 +146,7 @@ func RunUserOnboard(ctx context.Context, githubLogin, githubToken, githubEmail, 
 	}
 
 	if geminiKey == "" {
-		geminiKey = os.Getenv("GEMINI_API_KEY")
+		geminiKey = os.Getenv(constants.KeyGeminiAPIKey)
 		if geminiKey == "" {
 			return fmt.Errorf("GEMINI_API_KEY environment variable not set")
 		}
@@ -198,10 +199,10 @@ func RunUserOnboard(ctx context.Context, githubLogin, githubToken, githubEmail, 
 	}
 
 	data := map[string][]byte{
-		KeyGithubToken:  []byte(githubToken),
-		KeyGeminiAPIKey: []byte(geminiKey),
-		KeyGithubLogin:  []byte(githubLogin),
-		KeyGithubEmail:  []byte(githubEmail),
+		constants.KeyGithubToken:  []byte(githubToken),
+		constants.KeyGeminiAPIKey: []byte(geminiKey),
+		constants.KeyGithubLogin:  []byte(githubLogin),
+		constants.KeyGithubEmail:  []byte(githubEmail),
 	}
 
 	fmt.Printf("Creating secret '%s' in namespace '%s'...\n", rootFlags.SecretName, targetNamespace)
