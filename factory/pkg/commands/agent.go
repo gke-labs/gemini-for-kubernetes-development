@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"net/http"
 	"net/url"
 	"os"
 	"strconv"
@@ -12,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
@@ -20,7 +20,6 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/usagereport"
 	githubv39 "github.com/google/go-github/v39/github"
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
 )
@@ -31,16 +30,6 @@ type AgentFlags struct {
 	Local     bool
 	DryRun    bool
 	SessionID string
-}
-
-type AgentDefinition struct {
-	Name        string `yaml:"name"`
-	Description string `yaml:"description"`
-	Schedule    string `yaml:"schedule"`
-	SkipPR      bool   `yaml:"skipPR,omitempty"`
-	Mode        string `yaml:"mode,omitempty"`
-	Cooldown    string `yaml:"cooldown,omitempty"`
-	Prompt      string `yaml:"-"`
 }
 
 func NewAgentCommand(ctx context.Context) *cobra.Command {
@@ -83,7 +72,7 @@ func NewAgentCreateCommand(ctx context.Context) *cobra.Command {
 				parts := strings.Split(path, "/")
 				if len(parts) >= 2 {
 					repo := parts[1]
-					agentName := Slugify(flags.Agent)
+					agentName := common.Slugify(flags.Agent)
 					taskID := agentName
 					if len(parts) >= 4 && parts[2] == "pull" {
 						taskID = fmt.Sprintf("pr-%s-%s", parts[3], agentName)
@@ -161,11 +150,11 @@ func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 
 	// Get agent definition
 	var content []byte
-	flags.Agent = sanitizeWorkflowPath(flags.Agent)
+	flags.Agent = common.SanitizeWorkflowPath(flags.Agent)
 	agentPath := flags.Agent
 	if strings.HasPrefix(agentPath, "http://") || strings.HasPrefix(agentPath, "https://") {
 		fmt.Printf("Fetching agent definition from URL: %s...\n", agentPath)
-		content, err = fetchWorkflowContent(ctx, ghClient, agentPath)
+		content, err = common.FetchWorkflowContent(ctx, ghClient, agentPath)
 		if err != nil {
 			return fmt.Errorf("fetching agent from URL %s: %w", agentPath, err)
 		}
@@ -202,7 +191,7 @@ func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 		content = []byte(contentStr)
 	}
 
-	agentDef, err := ParseAgent(content)
+	agentDef, err := common.ParseAgent(content)
 	if err != nil {
 		return fmt.Errorf("parsing agent definition: %w", err)
 	}
@@ -212,7 +201,7 @@ func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 		return fmt.Errorf("creating k8s client: %w", err)
 	}
 
-	taskID := Slugify(agentDef.Name)
+	taskID := common.Slugify(agentDef.Name)
 	if flags.SessionID != "" {
 		taskID = fmt.Sprintf("%s-%s", taskID, flags.SessionID)
 	} else if isPR {
@@ -270,7 +259,7 @@ func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 		prompt = agentDef.Prompt
 	}
 
-	taskDir := fmt.Sprintf("/workspaces/tasks/agent-%s-%s", Slugify(agentDef.Name), time.Now().Format("20060102-150405"))
+	taskDir := fmt.Sprintf("/workspaces/tasks/agent-%s-%s", common.Slugify(agentDef.Name), time.Now().Format("20060102-150405"))
 	promptPath := fmt.Sprintf("%s/agent-prompt.txt", taskDir)
 	scriptPath := fmt.Sprintf("%s/pre-script.sh", taskDir)
 
@@ -414,90 +403,4 @@ func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 	}
 
 	return nil
-}
-
-func ParseAgent(content []byte) (*AgentDefinition, error) {
-	parts := strings.SplitN(string(content), "---", 3)
-	if len(parts) < 3 {
-		return nil, fmt.Errorf("invalid agent definition format: missing frontmatter")
-	}
-
-	var def AgentDefinition
-	if err := yaml.Unmarshal([]byte(parts[1]), &def); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal frontmatter: %w", err)
-	}
-
-	def.Prompt = strings.TrimSpace(parts[2])
-	return &def, nil
-}
-
-func Slugify(s string) string {
-	s = strings.ToLower(s)
-	s = strings.ReplaceAll(s, " ", "-")
-	var res strings.Builder
-	for _, r := range s {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
-			res.WriteRune(r)
-		}
-	}
-	return res.String()
-}
-
-func parseGitHubURL(urlStr string) (owner, repo, branch, path string, ok bool) {
-	u, err := url.Parse(urlStr)
-	if err != nil {
-		return "", "", "", "", false
-	}
-	if u.Host != "github.com" {
-		return "", "", "", "", false
-	}
-	parts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
-	if len(parts) < 4 || (parts[2] != "blob" && parts[2] != "raw") {
-		return "", "", "", "", false
-	}
-	owner = parts[0]
-	repo = parts[1]
-	branch = parts[3]
-	path = strings.Join(parts[4:], "/")
-	return owner, repo, branch, path, true
-}
-
-func fetchWorkflowContent(ctx context.Context, ghClient *githubv39.Client, urlStr string) ([]byte, error) {
-	urlStr = sanitizeWorkflowPath(urlStr)
-	if owner, repo, branch, path, ok := parseGitHubURL(urlStr); ok {
-		klog.Infof("Fetching agent from GitHub repository %s/%s at branch/ref %s, path %s", owner, repo, branch, path)
-		fileContent, _, _, err := ghClient.Repositories.GetContents(ctx, owner, repo, path, &githubv39.RepositoryContentGetOptions{Ref: branch})
-		if err != nil {
-			return nil, fmt.Errorf("fetching content from GitHub repo: %w", err)
-		}
-		if fileContent == nil {
-			return nil, fmt.Errorf("content is nil (possibly a directory or submodule)")
-		}
-		contentStr, err := fileContent.GetContent()
-		if err != nil {
-			return nil, fmt.Errorf("decoding GitHub content: %w", err)
-		}
-		return []byte(contentStr), nil
-	}
-
-	klog.Infof("Fetching agent from HTTP URL %s", urlStr)
-	req, err := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("HTTP GET request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP GET returned status %d", resp.StatusCode)
-	}
-
-	var buf bytes.Buffer
-	if _, err := buf.ReadFrom(resp.Body); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
 }

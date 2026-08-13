@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
@@ -135,7 +136,7 @@ func runInvestigate(ctx context.Context, prURL, prompt string, continueSession b
 
 	// Fetch failed check runs to populate FailedRuns
 	headSHA := pr.GetHead().GetSHA()
-	checkRuns, err := listAllCheckRuns(ctx, ghClient, owner, repo, headSHA)
+	checkRuns, err := common.ListAllCheckRuns(ctx, ghClient, owner, repo, headSHA)
 	if err != nil {
 		return fmt.Errorf("listing check runs: %w", err)
 	}
@@ -294,7 +295,7 @@ func runInvestigate(ctx context.Context, prURL, prompt string, continueSession b
 		TaskType: "investigate",
 		Sandbox:  sandboxName,
 		PR:       prNum,
-		Issues:   referencedIssueList(pr),
+		Issues:   common.ReferencedIssueList(pr),
 	})
 	usagereport.ReportPRSubject(ctx, owner+"/"+repo, pr)
 
@@ -564,7 +565,7 @@ func runAddressComments(ctx context.Context, prURL, prompt string, continueSessi
 		TaskType: "address-comments",
 		Sandbox:  sandboxName,
 		PR:       prNum,
-		Issues:   referencedIssueList(pr),
+		Issues:   common.ReferencedIssueList(pr),
 	})
 	usagereport.ReportPRSubject(ctx, owner+"/"+repo, pr)
 
@@ -697,7 +698,7 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 		headSHA := pr.GetHead().GetSHA()
 		hasFailure := false
 
-		checkRuns, err := listAllCheckRuns(ctx, ghClient, owner, repo, headSHA)
+		checkRuns, err := common.ListAllCheckRuns(ctx, ghClient, owner, repo, headSHA)
 		if err == nil {
 			for _, run := range checkRuns {
 				c := run.GetConclusion()
@@ -796,45 +797,6 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 			}
 		}
 	}
-}
-
-func listAllCheckRuns(ctx context.Context, client *githubv39.Client, owner, repo, ref string) ([]*githubv39.CheckRun, error) {
-	var allRuns []*githubv39.CheckRun
-	opts := &githubv39.ListCheckRunsOptions{
-		ListOptions: githubv39.ListOptions{
-			PerPage: 200,
-		},
-	}
-	for {
-		runs, resp, err := client.Checks.ListCheckRunsForRef(ctx, owner, repo, ref, opts)
-		if err != nil {
-			return nil, err
-		}
-		allRuns = append(allRuns, runs.CheckRuns...)
-		if resp.NextPage == 0 {
-			break
-		}
-		opts.Page = resp.NextPage
-	}
-
-	// Deduplicate check runs by name, keeping only the latest run (highest ID)
-	latestRuns := make(map[string]*githubv39.CheckRun)
-	for _, run := range allRuns {
-		name := run.GetName()
-		if existing, ok := latestRuns[name]; ok {
-			if run.GetID() > existing.GetID() {
-				latestRuns[name] = run
-			}
-		} else {
-			latestRuns[name] = run
-		}
-	}
-
-	deduped := make([]*githubv39.CheckRun, 0, len(latestRuns))
-	for _, run := range latestRuns {
-		deduped = append(deduped, run)
-	}
-	return deduped, nil
 }
 
 type IterateFlags struct {
@@ -1016,7 +978,7 @@ func runIterate(ctx context.Context, prURL, prompt string, continueSession bool,
 		TaskType: "iterate",
 		Sandbox:  sandboxName,
 		PR:       prNum,
-		Issues:   referencedIssueList(pr),
+		Issues:   common.ReferencedIssueList(pr),
 	})
 	usagereport.ReportPRSubject(ctx, owner+"/"+repo, pr)
 
