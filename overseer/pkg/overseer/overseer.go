@@ -82,7 +82,11 @@ func ReconcileOverseer(ctx context.Context, c client.Client, o *overseerv1alpha1
 			if err := controllerutil.SetControllerReference(o, newSandbox, c.Scheme()); err != nil {
 				return err
 			}
-			return c.Create(ctx, newSandbox)
+			if err := c.Create(ctx, newSandbox); err != nil {
+				return err
+			}
+			o.Status.OverseerStatus = "Active"
+			return nil
 		}
 		return err
 	}
@@ -344,7 +348,7 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 			map[string]interface{}{
 				"name":    "overseer",
 				"image":   image,
-				"command": []string{"/app/bootstrap.sh"},
+				"command": []interface{}{"/app/bootstrap.sh"},
 				"env":     env,
 				"resources": map[string]interface{}{
 					"requests": map[string]interface{}{

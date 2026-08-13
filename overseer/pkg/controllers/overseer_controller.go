@@ -101,6 +101,7 @@ func (r *OverseerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	}
 
 	if overseerObj.Status.OverseerStatus == "Error" {
+		overseerObj.Status.ObservedGeneration = overseerObj.Generation
 		if err := r.Status().Update(ctx, &overseerObj); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -113,6 +114,7 @@ func (r *OverseerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	}
 
 	// 5. Update status
+	overseerObj.Status.ObservedGeneration = overseerObj.Generation
 	if err := r.Status().Update(ctx, &overseerObj); err != nil {
 		return ctrl.Result{}, err
 	}
