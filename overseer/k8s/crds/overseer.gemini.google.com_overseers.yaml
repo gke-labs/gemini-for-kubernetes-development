@@ -179,6 +179,9 @@ spec:
                 format: int64
                 type: integer
               overseerStatus:
+                enum:
+                - Active
+                - Error
                 type: string
             type: object
         type: object

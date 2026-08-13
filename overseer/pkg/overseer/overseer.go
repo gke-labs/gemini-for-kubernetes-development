@@ -119,7 +119,7 @@ func ReconcileOverseer(ctx context.Context, c client.Client, o *overseerv1alpha1
 		}
 	}
 
-	o.Status.OverseerStatus = "Active"
+	o.Status.OverseerStatus = overseerv1alpha1.OverseerStatusActive
 	return nil
 }
 
