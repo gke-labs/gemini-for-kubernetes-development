@@ -62,6 +62,7 @@ type WatchFlags struct {
 	Repo                RepoFlag
 	PollInterval        time.Duration
 	Assignee            string
+	AssigneeChanged     bool
 	Labels              []string
 	DryRun              bool
 	WatchTimeout        time.Duration
@@ -78,6 +79,18 @@ type WatchFlags struct {
 	SandboxEvictionAge  string
 	SandboxIdleTimeout  time.Duration
 	PRInactivityTimeout time.Duration
+}
+
+type Watcher struct {
+	RootFlags
+	WatchFlags
+}
+
+func NewWatcher(rootFlags RootFlags, flags WatchFlags) *Watcher {
+	return &Watcher{
+		RootFlags:  rootFlags,
+		WatchFlags: flags,
+	}
 }
 
 func NewWatchCommand(ctx context.Context) *cobra.Command {
@@ -97,35 +110,35 @@ func NewWatchCommand(ctx context.Context) *cobra.Command {
 				return err
 			}
 
-			issueMode := os.Getenv("ISSUE_MODE")
-			if flags.IssueMode != "" {
-				issueMode = flags.IssueMode
+			flags.AssigneeChanged = cmd.Flags().Changed("assignee")
+
+			if flags.IssueMode == "" {
+				flags.IssueMode = os.Getenv("ISSUE_MODE")
 			}
-			if issueMode == "" {
-				issueMode = "enabled"
+			if flags.IssueMode == "" {
+				flags.IssueMode = "enabled"
 			}
 
-			prMode := os.Getenv("PR_MODE")
-			if flags.PRMode != "" {
-				prMode = flags.PRMode
+			if flags.PRMode == "" {
+				flags.PRMode = os.Getenv("PR_MODE")
 			}
-			if prMode == "" {
-				prMode = "enabled"
+			if flags.PRMode == "" {
+				flags.PRMode = "enabled"
 			}
 
-			choresMode := os.Getenv("CHORES_MODE")
-			if flags.ChoresMode != "" {
-				choresMode = flags.ChoresMode
+			if flags.ChoresMode == "" {
+				flags.ChoresMode = os.Getenv("CHORES_MODE")
 			}
 			cfg, _ := config.LoadConfig()
 			if cfg != nil && cfg.Chores.Mode == "disabled" {
-				choresMode = "disabled"
+				flags.ChoresMode = "disabled"
 			}
-			if choresMode == "" {
-				choresMode = "enabled"
+			if flags.ChoresMode == "" {
+				flags.ChoresMode = "enabled"
 			}
 
-			return runWatch(ctx, flags.Repo.Owner, flags.Repo.Repo, flags.PollInterval, flags.Assignee, cmd.Flags().Changed("assignee"), flags.Labels, flags.DryRun, flags.WatchTimeout, flags.MaxActions, flags.MaxPending, flags.Mode, flags.QueueDir, flags.Once, issueMode, prMode, choresMode, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, flags.ScanLimit, flags.TaskTimeout, flags.SandboxEvictionAge, flags.SandboxIdleTimeout, flags.PRInactivityTimeout)
+			watcher := NewWatcher(rootFlags, flags)
+			return watcher.Run(ctx)
 		},
 	}
 
@@ -164,15 +177,15 @@ func assignedBotUser(issue *githubv39.Issue, botUsers []string) string {
 	return ""
 }
 
-func resolveSandboxName(ctx context.Context, kubeClient *clients.KubernetesClient, ghClient *githubv39.Client, taskType string, num int, owner, repo string) string {
+func (w *Watcher) resolveSandboxName(ctx context.Context, kubeClient *clients.KubernetesClient, ghClient *githubv39.Client, taskType string, num int) string {
 	if taskType == "issue-fix" || taskType == "agent-chore" {
 		wfName := fmt.Sprintf("wf-issue-%d", num)
 		if kubeClient != nil {
-			if _, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(rootFlags.Namespace).Get(ctx, wfName, metav1.GetOptions{}); err == nil {
+			if _, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(w.Namespace).Get(ctx, wfName, metav1.GetOptions{}); err == nil {
 				return wfName
 			}
 		}
-		return fmt.Sprintf("fix-%s-%d", repo, num)
+		return fmt.Sprintf("fix-%s-%d", w.Repo.Repo, num)
 	}
 
 	// For PR tasks, check if there's an existing sandbox with the PR label
@@ -180,25 +193,25 @@ func resolveSandboxName(ctx context.Context, kubeClient *clients.KubernetesClien
 		listOpts := metav1.ListOptions{
 			LabelSelector: fmt.Sprintf("factory.gemini.google.com/pr=%d", num),
 		}
-		sbs, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(rootFlags.Namespace).List(ctx, listOpts)
+		sbs, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(w.Namespace).List(ctx, listOpts)
 		if err == nil && len(sbs.Items) > 0 {
 			return sbs.Items[0].GetName()
 		}
 	}
 
 	// If no sandbox is labeled with this PR, try to find a matching issue sandbox by checking referenced issues
-	if kubeClient != nil && ghClient != nil && owner != "" {
-		pr, _, err := ghClient.PullRequests.Get(ctx, owner, repo, num)
+	if kubeClient != nil && ghClient != nil && w.Repo.Owner != "" {
+		pr, _, err := ghClient.PullRequests.Get(ctx, w.Repo.Owner, w.Repo.Repo, num)
 		if err == nil {
 			// Find referenced issue numbers
 			referencedIssues := getReferencedIssues(pr)
 			for issueNum := range referencedIssues {
 				// Check if there is an active/existing sandbox for this issue
-				issueSandboxName := fmt.Sprintf("fix-%s-%d", repo, issueNum)
-				if _, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(rootFlags.Namespace).Get(ctx, issueSandboxName, metav1.GetOptions{}); err == nil {
+				issueSandboxName := fmt.Sprintf("fix-%s-%d", w.Repo.Repo, issueNum)
+				if _, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(w.Namespace).Get(ctx, issueSandboxName, metav1.GetOptions{}); err == nil {
 					// We found a matching issue sandbox! Alias it to the PR now for future lookups.
 					klog.Infof("Self-healing: Found matching issue sandbox '%s' for PR #%d. Aliasing sandbox to PR...", issueSandboxName, num)
-					if aliasErr := factorysandbox.AliasSandboxToPR(ctx, kubeClient, rootFlags.Namespace, issueSandboxName, num, pr.GetHTMLURL()); aliasErr != nil {
+					if aliasErr := factorysandbox.AliasSandboxToPR(ctx, kubeClient, w.Namespace, issueSandboxName, num, pr.GetHTMLURL()); aliasErr != nil {
 						klog.Warningf("Failed to dynamically alias sandbox '%s' to PR #%d: %v", issueSandboxName, num, aliasErr)
 					}
 					return issueSandboxName
@@ -813,7 +826,7 @@ func getWorkflowCooldown(ctx context.Context, ghClient *githubv39.Client, owner,
 	return d
 }
 
-func queueIssueTasks(ctx context.Context, ghClient *githubv39.Client, kubeClient *clients.KubernetesClient, cfg *config.FactoryConfig, owner, repo string, issues []*githubv39.Issue, processedIssues map[int]time.Time, refIssues map[int]bool, targetAssignee string, allBotUsers []string, incomingDir, processingDir, processedDir, queueDir string, dryRun bool, triggerLabel string) {
+func (w *Watcher) queueIssueTasks(ctx context.Context, ghClient *githubv39.Client, kubeClient *clients.KubernetesClient, cfg *config.FactoryConfig, issues []*githubv39.Issue, processedIssues map[int]time.Time, refIssues map[int]bool, targetAssignee string, allBotUsers []string, incomingDir, processingDir, processedDir string, triggerLabel string) {
 	klog.Infof("queueIssueTasks called with %d issues", len(issues))
 	for _, issue := range issues {
 		num := issue.GetNumber()
@@ -834,7 +847,7 @@ func queueIssueTasks(ctx context.Context, ghClient *githubv39.Client, kubeClient
 		workflowPath := findWorkflowPath(issue.GetBody())
 		workflowName := ""
 		if workflowPath != "" {
-			if isWorkflowDefinition(ctx, ghClient, owner, repo, workflowPath) {
+			if isWorkflowDefinition(ctx, ghClient, w.Repo.Owner, w.Repo.Repo, workflowPath) {
 				filenameOnly := filepath.Base(workflowPath)
 				ext := filepath.Ext(filenameOnly)
 				workflowName = strings.TrimSuffix(filenameOnly, ext)
@@ -864,7 +877,7 @@ func queueIssueTasks(ctx context.Context, ghClient *githubv39.Client, kubeClient
 					lastRunTime = t.CompletedAt
 				}
 			}
-			cooldown := getWorkflowCooldown(ctx, ghClient, owner, repo, workflowPath)
+			cooldown := getWorkflowCooldown(ctx, ghClient, w.Repo.Owner, w.Repo.Repo, workflowPath)
 			if time.Since(lastRunTime) < cooldown {
 				continue
 			}
@@ -874,7 +887,7 @@ func queueIssueTasks(ctx context.Context, ghClient *githubv39.Client, kubeClient
 		if !ok || issue.GetUpdatedAt().After(lastProcessed) || workflowName != "" {
 			// Skip KRM check for workflow triggers since they don't necessarily have linked code PRs
 			if workflowName == "" {
-				linked, err := hasLinkedPR(ctx, ghClient, owner, repo, num)
+				linked, err := hasLinkedPR(ctx, ghClient, w.Repo.Owner, w.Repo.Repo, num)
 				if err != nil {
 					klog.Errorf("Failed to check linked PR for issue #%d: %v", num, err)
 					continue
@@ -884,12 +897,12 @@ func queueIssueTasks(ctx context.Context, ghClient *githubv39.Client, kubeClient
 				}
 			}
 
-			sandboxName := fmt.Sprintf("fix-%s-%d", repo, num)
+			sandboxName := fmt.Sprintf("fix-%s-%d", w.Repo.Repo, num)
 			if workflowName != "" {
 				sandboxName = fmt.Sprintf("wf-issue-%d", num)
 			}
 
-			running, err := isSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName)
+			running, err := isSandboxTaskRunning(ctx, kubeClient, w.Namespace, sandboxName)
 			if err != nil {
 				klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
 				continue
@@ -906,11 +919,11 @@ func queueIssueTasks(ctx context.Context, ghClient *githubv39.Client, kubeClient
 				}
 			}
 			if !hasTriggerLabel {
-				if dryRun {
+				if w.DryRun {
 					fmt.Printf("[DRYRUN] Would add label '%s' to issue #%d\n", triggerLabel, num)
 				} else {
 					klog.Infof("Adding '%s' label to issue #%d", triggerLabel, num)
-					if _, _, err := ghClient.Issues.AddLabelsToIssue(ctx, owner, repo, num, []string{triggerLabel}); err != nil {
+					if _, _, err := ghClient.Issues.AddLabelsToIssue(ctx, w.Repo.Owner, w.Repo.Repo, num, []string{triggerLabel}); err != nil {
 						klog.Errorf("Failed to add label '%s' to issue #%d: %v", triggerLabel, num, err)
 					}
 				}
@@ -921,7 +934,7 @@ func queueIssueTasks(ctx context.Context, ghClient *githubv39.Client, kubeClient
 				taskType = "agent-chore"
 			}
 
-			taskAssignee, err := selectUserForTask(ctx, ghClient, kubeClient, cfg, taskType, num, owner, repo)
+			taskAssignee, err := w.selectUserForTask(ctx, ghClient, kubeClient, cfg, taskType, num)
 			if err != nil {
 				klog.Errorf("Failed to select user for issue #%d: %v", num, err)
 				taskAssignee = targetAssignee
@@ -930,7 +943,7 @@ func queueIssueTasks(ctx context.Context, ghClient *githubv39.Client, kubeClient
 				taskAssignee = targetAssignee
 			}
 
-			issueURL := fmt.Sprintf("https://github.com/%s/%s/issues/%d", owner, repo, num)
+			issueURL := fmt.Sprintf("https://github.com/%s/%s/issues/%d", w.Repo.Owner, w.Repo.Repo, num)
 			var task *QueueTask
 			if workflowName != "" {
 				task = &QueueTask{
@@ -960,7 +973,7 @@ func queueIssueTasks(ctx context.Context, ghClient *githubv39.Client, kubeClient
 				}
 			}
 
-			if dryRun {
+			if w.DryRun {
 				if workflowName != "" {
 					fmt.Printf("[DRYRUN] Would queue workflow task %s for issue #%d: %s\n", workflowName, num, issueURL)
 				} else {
@@ -976,7 +989,7 @@ func queueIssueTasks(ctx context.Context, ghClient *githubv39.Client, kubeClient
 				if err := writeTaskAtomically(incomingDir, filename, task); err != nil {
 					klog.Errorf("Failed to queue task for issue #%d: %v", num, err)
 				} else {
-					writeTaskJournalEvent(queueDir, filename, task, "Created", 0)
+					writeTaskJournalEvent(w.QueueDir, filename, task, "Created", 0)
 				}
 			}
 		}
@@ -1118,7 +1131,7 @@ func writeTaskJournalEvent(queueDir string, taskFilename string, task *QueueTask
 	}
 }
 
-func runWatch(ctx context.Context, owner, repo string, interval time.Duration, assignee string, assigneeChanged bool, labels []string, dryRun bool, watchTimeout time.Duration, maxActions int, maxPending int, mode string, queueDir string, once bool, issueMode string, prMode string, choresMode string, ephemeralStorage string, secrets []factorysandbox.SecretMount, scanLimit int, taskTimeout time.Duration, sandboxEvictionAge string, sandboxIdleTimeout time.Duration, prInactivityTimeout time.Duration) error {
+func (w *Watcher) Run(ctx context.Context) error {
 	cfg, err := config.LoadConfig()
 	if err != nil {
 		klog.Warningf("Failed to load factory config: %v", err)
@@ -1138,14 +1151,14 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 		return fmt.Errorf("creating k8s client: %w", err)
 	}
 
-	secret, err := kubeClient.Clientset.CoreV1().Secrets(rootFlags.Namespace).Get(ctx, rootFlags.SecretName, metav1.GetOptions{})
+	secret, err := kubeClient.Clientset.CoreV1().Secrets(w.Namespace).Get(ctx, w.SecretName, metav1.GetOptions{})
 	if err != nil {
-		return fmt.Errorf("fetching %s secret in namespace %s: %w (make sure to run 'factory user onboard' first)", rootFlags.SecretName, rootFlags.Namespace, err)
+		return fmt.Errorf("fetching %s secret in namespace %s: %w (make sure to run 'factory user onboard' first)", w.SecretName, w.Namespace, err)
 	}
 	githubLogin := string(secret.Data[KeyGithubLogin])
 
-	targetAssignee := assignee
-	if !assigneeChanged {
+	targetAssignee := w.Assignee
+	if !w.AssigneeChanged {
 		targetAssignee = githubLogin
 	}
 
@@ -1172,18 +1185,18 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 		}
 	}
 
-	incomingDir := filepath.Join(queueDir, "incoming")
-	processingDir := filepath.Join(queueDir, "processing")
-	processedDir := filepath.Join(queueDir, "processed")
+	incomingDir := filepath.Join(w.QueueDir, "incoming")
+	processingDir := filepath.Join(w.QueueDir, "processing")
+	processedDir := filepath.Join(w.QueueDir, "processed")
 
 	logDir := os.Getenv("FACTORY_LOGS")
 	if logDir == "" {
-		logDir = filepath.Join(queueDir, "logs")
+		logDir = filepath.Join(w.QueueDir, "logs")
 	}
 	processingLogDir := filepath.Join(logDir, "processing")
 	processedLogDir := filepath.Join(logDir, "processed")
 
-	if !dryRun {
+	if !w.DryRun {
 		if err := os.MkdirAll(incomingDir, 0755); err != nil {
 			return fmt.Errorf("failed to create incoming queue dir: %w", err)
 		}
@@ -1199,14 +1212,14 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 		if err := os.MkdirAll(processedLogDir, 0755); err != nil {
 			return fmt.Errorf("failed to create processed log dir: %w", err)
 		}
-		go startQueueHTTPServer(ctx, queueDir, ":13338")
+		go startQueueHTTPServer(ctx, w.QueueDir, ":13338")
 	}
 
-	fmt.Printf("Starting watch for repository %s/%s (mode: %s, queueDir: %s, poll interval: %s, assignee: '%s', labels: %v, dryRun: %v, watchTimeout: %s)...\n", owner, repo, mode, queueDir, interval, targetAssignee, labels, dryRun, watchTimeout)
+	fmt.Printf("Starting watch for repository %s/%s (mode: %s, queueDir: %s, poll interval: %s, assignee: '%s', labels: %v, dryRun: %v, watchTimeout: %s)...\n", w.Repo.Owner, w.Repo.Repo, w.Mode, w.QueueDir, w.PollInterval, targetAssignee, w.Labels, w.DryRun, w.WatchTimeout)
 
 	var timeoutChan <-chan time.Time
-	if watchTimeout > 0 {
-		timeoutChan = time.After(watchTimeout)
+	if w.WatchTimeout > 0 {
+		timeoutChan = time.After(w.WatchTimeout)
 	}
 
 	processedIssues := make(map[int]time.Time)
@@ -1278,14 +1291,14 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				if data, err := os.ReadFile(processingPath); err == nil {
 					var t QueueTask
 					if err := yaml.Unmarshal(data, &t); err == nil {
-						sandboxName := resolveSandboxName(ctx, kubeClient, ghClient, t.Type, t.Number, owner, repo)
+						sandboxName := w.resolveSandboxName(ctx, kubeClient, ghClient, t.Type, t.Number)
 						if kubeClient != nil && sandboxName != "" {
-							running, err := isSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName)
+							running, err := isSandboxTaskRunning(ctx, kubeClient, w.Namespace, sandboxName)
 							if err == nil && running {
 								klog.Infof("Task %s is still actively running in sandbox %s. Leaving in processing.", f.Name(), sandboxName)
 								continue
 							}
-							completed, err := isSandboxTaskCompleted(ctx, kubeClient, rootFlags.Namespace, sandboxName, t.Type)
+							completed, err := isSandboxTaskCompleted(ctx, kubeClient, w.Namespace, sandboxName, t.Type)
 							if err == nil && completed {
 								klog.Infof("Task %s already completed in sandbox %s. Moving from processing to processed.", f.Name(), sandboxName)
 								t.Status = "Completed"
@@ -1294,7 +1307,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 								}
 								if err := writeTaskAtomically(processedDir, f.Name(), &t); err == nil {
 									_ = os.Remove(processingPath)
-									writeTaskJournalEvent(queueDir, f.Name(), &t, "Completed", 0)
+									writeTaskJournalEvent(w.QueueDir, f.Name(), &t, "Completed", 0)
 									continue
 								}
 							}
@@ -1347,30 +1360,30 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 
 		// Proactively delete any evicted sandbox pods in the namespace so the sandbox controller can recreate them or free resources.
 		func() {
-			podList, err := kubeClient.Clientset.CoreV1().Pods(rootFlags.Namespace).List(ctx, metav1.ListOptions{LabelSelector: "sandbox"})
+			podList, err := kubeClient.Clientset.CoreV1().Pods(w.Namespace).List(ctx, metav1.ListOptions{LabelSelector: "sandbox"})
 			if err != nil {
 				return
 			}
 			for i := range podList.Items {
 				pod := &podList.Items[i]
 				if pod.DeletionTimestamp == nil && pod.Status.Phase == corev1.PodFailed && strings.EqualFold(pod.Status.Reason, "Evicted") {
-					klog.Infof("Found evicted sandbox pod %s in namespace %s. Deleting pod so controller can recreate or clean up.", pod.Name, rootFlags.Namespace)
+					klog.Infof("Found evicted sandbox pod %s in namespace %s. Deleting pod so controller can recreate or clean up.", pod.Name, w.Namespace)
 					sbName := pod.Labels["sandbox"]
 					if sbName == "" {
 						sbName = pod.Labels["agents.x-k8s.io/sandbox"]
 					}
 					if sbName != "" {
-						_ = factorysandbox.IncrementSandboxEvictionCount(ctx, kubeClient, rootFlags.Namespace, sbName)
+						_ = factorysandbox.IncrementSandboxEvictionCount(ctx, kubeClient, w.Namespace, sbName)
 					}
-					_ = kubeClient.Clientset.CoreV1().Pods(rootFlags.Namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{})
+					_ = kubeClient.Clientset.CoreV1().Pods(w.Namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{})
 				}
 			}
 		}()
 
-		reconcileRunningSandboxes(ctx, kubeClient, rootFlags.Namespace)
+		reconcileRunningSandboxes(ctx, kubeClient, w.Namespace)
 
-		if isDoNotProcess(queueDir) {
-			runningCount, err := countRunningSandboxTasks(ctx, kubeClient, rootFlags.Namespace)
+		if isDoNotProcess(w.QueueDir) {
+			runningCount, err := countRunningSandboxTasks(ctx, kubeClient, w.Namespace)
 			if err != nil {
 				klog.Errorf("Failed to count running sandbox tasks during drain: %v", err)
 			}
@@ -1389,7 +1402,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 		actionsTaken := 0
 
 		processPRsFunc := func(prIssues []*githubv39.Issue) {
-			if prMode == "disabled" {
+			if w.PRMode == "disabled" {
 				return
 			}
 			for _, prIssue := range prIssues {
@@ -1402,7 +1415,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					removePendingTasksForNumber(incomingDir, num)
 					continue
 				}
-				pr, _, err := ghClient.PullRequests.Get(ctx, owner, repo, num)
+				pr, _, err := ghClient.PullRequests.Get(ctx, w.Repo.Owner, w.Repo.Repo, num)
 				if err != nil {
 					klog.Errorf("Failed to fetch full PR #%d: %v", num, err)
 					continue
@@ -1423,7 +1436,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				}
 
 				// Sync labels from referenced parent issues to the PR
-				syncReferencedIssueLabels(ctx, ghClient, owner, repo, pr, prIssue)
+				syncReferencedIssueLabels(ctx, ghClient, w.Repo.Owner, w.Repo.Repo, pr, prIssue)
 				if hasStopLabel(prIssue.Labels, triggerLabel) {
 					klog.Infof("Skipping PR #%d after label sync because it has the stop label ('overseer/stop' or '%s/stop')", num, triggerLabel)
 					removePendingTasksForNumber(incomingDir, num)
@@ -1433,7 +1446,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				headSHA := pr.GetHead().GetSHA()
 
 				// Fetch PR commits to find the last commit timestamp
-				prCommits, err := github.ListAllCommits(ctx, ghClient, owner, repo, num)
+				prCommits, err := github.ListAllCommits(ctx, ghClient, w.Repo.Owner, w.Repo.Repo, num)
 				var lastCommitTime time.Time
 				if err == nil {
 					for _, c := range prCommits {
@@ -1444,18 +1457,18 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				}
 
 				// Fetch all PR comments (handling pagination)
-				comments, listCommentsErr := github.ListAllIssueComments(ctx, ghClient, owner, repo, num)
+				comments, listCommentsErr := github.ListAllIssueComments(ctx, ghClient, w.Repo.Owner, w.Repo.Repo, num)
 
 				var reviews []*githubv39.PullRequestReview
 				var listReviewsErr error
 				if listCommentsErr == nil {
-					reviews, listReviewsErr = github.ListAllReviews(ctx, ghClient, owner, repo, num)
+					reviews, listReviewsErr = github.ListAllReviews(ctx, ghClient, w.Repo.Owner, w.Repo.Repo, num)
 				}
 
 				revCommentsMap := make(map[int64][]*githubv39.PullRequestComment)
 				if listCommentsErr == nil && listReviewsErr == nil {
 					for _, r := range reviews {
-						if rc, err := github.ListAllReviewComments(ctx, ghClient, owner, repo, num, r.GetID()); err == nil {
+						if rc, err := github.ListAllReviewComments(ctx, ghClient, w.Repo.Owner, w.Repo.Repo, num, r.GetID()); err == nil {
 							revCommentsMap[r.GetID()] = rc
 						}
 					}
@@ -1464,20 +1477,20 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				state := processedPRs[num]
 
 				// PR Inactivity check
-				if prInactivityTimeout > 0 && listCommentsErr == nil && listReviewsErr == nil {
+				if w.PRInactivityTimeout > 0 && listCommentsErr == nil && listReviewsErr == nil {
 					var bots []string
 					if cfg != nil {
 						bots = cfg.AllowlistedBots
 					}
 					lastActivity := getLastPRActivityTime(pr, comments, reviews, revCommentsMap, githubLogin, bots)
-					if time.Since(lastActivity) > prInactivityTimeout {
+					if time.Since(lastActivity) > w.PRInactivityTimeout {
 						stopLabel := getStopLabel(triggerLabel)
-						if dryRun {
+						if w.DryRun {
 							fmt.Printf("[DRYRUN] Would pause automated processing on PR #%d and apply label '%s' due to inactivity since %v\n", num, stopLabel, lastActivity)
 						} else {
 							klog.Infof("Pausing automated processing on PR #%d and applying label '%s' due to inactivity since %v", num, stopLabel, lastActivity)
-							addGitHubComment(ctx, ghClient, owner, repo, num, fmt.Sprintf("🤖 AI Factory has paused automated processing on this pull request due to a period of inactivity with no human comments (inactive for %s). I have applied the `%s` label.\n\nTo resume automated processing, please remove the `%s` label from this pull request and add a new comment/review.", prInactivityTimeout, stopLabel, stopLabel))
-							if _, _, err := ghClient.Issues.AddLabelsToIssue(ctx, owner, repo, num, []string{stopLabel}); err != nil {
+							addGitHubComment(ctx, ghClient, w.Repo.Owner, w.Repo.Repo, num, fmt.Sprintf("🤖 AI Factory has paused automated processing on this pull request due to a period of inactivity with no human comments (inactive for %s). I have applied the `%s` label.\n\nTo resume automated processing, please remove the `%s` label from this pull request and add a new comment/review.", w.PRInactivityTimeout, stopLabel, stopLabel))
+							if _, _, err := ghClient.Issues.AddLabelsToIssue(ctx, w.Repo.Owner, w.Repo.Repo, num, []string{stopLabel}); err != nil {
 								klog.Errorf("Failed to add stop label '%s' to PR #%d: %v", stopLabel, num, err)
 							}
 							removePendingTasksForNumber(incomingDir, num)
@@ -1497,8 +1510,8 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 
 					filename := fmt.Sprintf("task-pr-%d-iterate.yaml", num)
 					if !taskExists(incomingDir, processingDir, filename) {
-						sandboxName := resolveSandboxName(ctx, kubeClient, ghClient, "pr-iterate", num, owner, repo)
-						running, err := isSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName)
+						sandboxName := w.resolveSandboxName(ctx, kubeClient, ghClient, "pr-iterate", num)
+						running, err := isSandboxTaskRunning(ctx, kubeClient, w.Namespace, sandboxName)
 						if err != nil {
 							klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
 							continue
@@ -1512,7 +1525,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 								taskAssignee = author
 							}
 
-							prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", owner, repo, num)
+							prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", w.Repo.Owner, w.Repo.Repo, num)
 							task := &QueueTask{
 								Type:       "pr-iterate",
 								URL:        prURL,
@@ -1526,7 +1539,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 								CommitSHA:  headSHA,
 							}
 
-							if dryRun {
+							if w.DryRun {
 								fmt.Printf("[DRYRUN] Would queue rebase task for PR #%d: %s\n", num, prURL)
 							} else {
 								fmt.Printf("Queueing rebase task for PR #%d...\n", num)
@@ -1536,7 +1549,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 								if err := writeTaskAtomically(incomingDir, filename, task); err != nil {
 									klog.Errorf("Failed to queue rebase task for PR #%d: %v", num, err)
 								} else {
-									writeTaskJournalEvent(queueDir, filename, task, "Created", 0)
+									writeTaskJournalEvent(w.QueueDir, filename, task, "Created", 0)
 								}
 							}
 						}
@@ -1547,7 +1560,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 
 				// Check CI Check Failures
 				hasFailure := false
-				checkRuns, err := listAllCheckRuns(ctx, ghClient, owner, repo, headSHA)
+				checkRuns, err := listAllCheckRuns(ctx, ghClient, w.Repo.Owner, w.Repo.Repo, headSHA)
 				if err == nil {
 					for _, run := range checkRuns {
 						c := run.GetConclusion()
@@ -1558,7 +1571,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					}
 				}
 
-				statuses, _, err := ghClient.Repositories.ListStatuses(ctx, owner, repo, headSHA, nil)
+				statuses, _, err := ghClient.Repositories.ListStatuses(ctx, w.Repo.Owner, w.Repo.Repo, headSHA, nil)
 				if err == nil {
 					for _, status := range statuses {
 						if status.GetState() == "failure" || status.GetState() == "error" {
@@ -1575,11 +1588,11 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 
 				if state.lastSHA != "" && state.lastSHA != headSHA {
 					if shouldUnassignStaleBot(state.lastSHA, state.unassignedSHA, headSHA, assignedBot) {
-						if dryRun {
+						if w.DryRun {
 							fmt.Printf("[DRYRUN] Would unassign stale bot %s from PR #%d due to new commit %s\n", assignedBot, num, headSHA)
 						} else {
 							fmt.Printf("Unassigning stale bot %s from PR #%d due to new commit %s...\n", assignedBot, num, headSHA)
-							if _, _, err := ghClient.Issues.RemoveAssignees(ctx, owner, repo, num, []string{assignedBot}); err != nil {
+							if _, _, err := ghClient.Issues.RemoveAssignees(ctx, w.Repo.Owner, w.Repo.Repo, num, []string{assignedBot}); err != nil {
 								klog.Errorf("Failed to unassign stale bot %s from PR #%d: %v", assignedBot, num, err)
 							}
 							state.unassignedSHA = headSHA
@@ -1597,11 +1610,11 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						}
 					}
 					if hasGivingUpLabel {
-						if dryRun {
+						if w.DryRun {
 							fmt.Printf("[DRYRUN] Would remove giving up label from PR #%d due to new commit %s\n", num, headSHA)
 						} else {
 							fmt.Printf("Removing giving up label from PR #%d due to new commit %s...\n", num, headSHA)
-							if _, err := ghClient.Issues.RemoveLabelForIssue(ctx, owner, repo, num, "overseer/giving-up"); err != nil {
+							if _, err := ghClient.Issues.RemoveLabelForIssue(ctx, w.Repo.Owner, w.Repo.Repo, num, "overseer/giving-up"); err != nil {
 								klog.Errorf("Failed to remove giving up label from PR #%d: %v", num, err)
 							}
 						}
@@ -1622,9 +1635,9 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 
 						if investigationCount >= 3 {
 							stopLabel := getStopLabel(triggerLabel)
-							if !dryRun {
-								addGitHubComment(ctx, ghClient, owner, repo, num, fmt.Sprintf("🤖 AI Factory has attempted to investigate/fix CI check failures for this pull request 3 times since the last commit or update without success. To prevent infinite loops, I am pausing automated investigation and attaching the `%s` label.\n\nTo request another attempt or resume automated processing, please remove the `%s` label from this pull request (and/or push a new commit or leave a comment).", stopLabel, stopLabel))
-								if _, _, err := ghClient.Issues.AddLabelsToIssue(ctx, owner, repo, num, []string{stopLabel}); err != nil {
+							if !w.DryRun {
+								addGitHubComment(ctx, ghClient, w.Repo.Owner, w.Repo.Repo, num, fmt.Sprintf("🤖 AI Factory has attempted to investigate/fix CI check failures for this pull request 3 times since the last commit or update without success. To prevent infinite loops, I am pausing automated investigation and attaching the `%s` label.\n\nTo request another attempt or resume automated processing, please remove the `%s` label from this pull request (and/or push a new commit or leave a comment).", stopLabel, stopLabel))
+								if _, _, err := ghClient.Issues.AddLabelsToIssue(ctx, w.Repo.Owner, w.Repo.Repo, num, []string{stopLabel}); err != nil {
 									klog.Errorf("Failed to add stop label '%s' to PR #%d: %v", stopLabel, num, err)
 								}
 							}
@@ -1642,8 +1655,8 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 							}
 
 							if state.lastSHA != headSHA || prevFailed || isExplicitlyAssigned || time.Since(state.lastInvestigatedTime) > 2*time.Hour {
-								sandboxName := resolveSandboxName(ctx, kubeClient, ghClient, "pr-investigate", num, owner, repo)
-								running, err := isSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName)
+								sandboxName := w.resolveSandboxName(ctx, kubeClient, ghClient, "pr-investigate", num)
+								running, err := isSandboxTaskRunning(ctx, kubeClient, w.Namespace, sandboxName)
 								if err != nil {
 									klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
 								} else if running {
@@ -1656,7 +1669,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 										taskAssignee = author
 									}
 
-									prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", owner, repo, num)
+									prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", w.Repo.Owner, w.Repo.Repo, num)
 									task := &QueueTask{
 										Type:       "pr-investigate",
 										URL:        prURL,
@@ -1670,7 +1683,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 										CommitSHA:  headSHA,
 									}
 
-									if dryRun {
+									if w.DryRun {
 										fmt.Printf("[DRYRUN] Would queue investigate task for PR #%d: %s\n", num, prURL)
 									} else {
 										fmt.Printf("Queueing investigate task for PR #%d...\n", num)
@@ -1680,7 +1693,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 										if err := writeTaskAtomically(incomingDir, filename, task); err != nil {
 											klog.Errorf("Failed to queue investigate task for PR #%d: %v", num, err)
 										} else {
-											writeTaskJournalEvent(queueDir, filename, task, "Created", 0)
+											writeTaskJournalEvent(w.QueueDir, filename, task, "Created", 0)
 										}
 									}
 								}
@@ -1729,14 +1742,14 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 							continue
 						}
 						if c.GetCreatedAt().After(lastCommitTime) && c.GetCreatedAt().After(state.lastCommentAddressedTime) && c.GetCreatedAt().After(latestBotReplyTime) {
-							if hasIssueCommentReaction(ctx, ghClient, owner, repo, c.GetID(), "+1", true, bots, githubLogin) {
+							if hasIssueCommentReaction(ctx, ghClient, w.Repo.Owner, w.Repo.Repo, c.GetID(), "+1", true, bots, githubLogin) {
 								continue
 							}
-							humanRocket := hasIssueCommentReaction(ctx, ghClient, owner, repo, c.GetID(), "rocket", false, bots, githubLogin)
-							if !humanRocket && hasIssueCommentReaction(ctx, ghClient, owner, repo, c.GetID(), "eyes", true, bots, githubLogin) {
+							humanRocket := hasIssueCommentReaction(ctx, ghClient, w.Repo.Owner, w.Repo.Repo, c.GetID(), "rocket", false, bots, githubLogin)
+							if !humanRocket && hasIssueCommentReaction(ctx, ghClient, w.Repo.Owner, w.Repo.Repo, c.GetID(), "eyes", true, bots, githubLogin) {
 								continue
 							}
-							if !humanRocket && hasIssueCommentReaction(ctx, ghClient, owner, repo, c.GetID(), "confused", true, bots, githubLogin) {
+							if !humanRocket && hasIssueCommentReaction(ctx, ghClient, w.Repo.Owner, w.Repo.Repo, c.GetID(), "confused", true, bots, githubLogin) {
 								continue
 							}
 							if isReviewer {
@@ -1811,8 +1824,8 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						}
 						filename := fmt.Sprintf("task-pr-%d-comments.yaml", num)
 						if !taskExists(incomingDir, processingDir, filename) {
-							sandboxName := resolveSandboxName(ctx, kubeClient, ghClient, "pr-comments", num, owner, repo)
-							running, err := isSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName)
+							sandboxName := w.resolveSandboxName(ctx, kubeClient, ghClient, "pr-comments", num)
+							running, err := isSandboxTaskRunning(ctx, kubeClient, w.Namespace, sandboxName)
 							if err != nil {
 								klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
 								continue
@@ -1824,7 +1837,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 									taskAssignee = author
 								}
 
-								prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", owner, repo, num)
+								prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", w.Repo.Owner, w.Repo.Repo, num)
 								task := &QueueTask{
 									Type:       "pr-comments",
 									URL:        prURL,
@@ -1838,15 +1851,15 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 									CommitSHA:  headSHA,
 								}
 
-								if dryRun {
+								if w.DryRun {
 									fmt.Printf("[DRYRUN] Would queue address-comments task for PR #%d: %s\n", num, prURL)
 								} else {
 									fmt.Printf("Queueing address-comments task for PR #%d...\n", num)
 									for _, cid := range unackCommentIDs {
-										addIssueCommentReaction(ctx, ghClient, owner, repo, cid, "eyes")
+										addIssueCommentReaction(ctx, ghClient, w.Repo.Owner, w.Repo.Repo, cid, "eyes")
 									}
 									for _, cid := range unackPRCommentIDs {
-										addPullRequestCommentReaction(ctx, ghClient, owner, repo, cid, "eyes")
+										addPullRequestCommentReaction(ctx, ghClient, w.Repo.Owner, w.Repo.Repo, cid, "eyes")
 									}
 									state.lastCommentAddressedTime = time.Now()
 									state.lastCommentAddressedSHA = headSHA
@@ -1854,12 +1867,12 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 									if err := writeTaskAtomically(incomingDir, filename, task); err != nil {
 										klog.Errorf("Failed to queue address-comments task for PR #%d: %v", num, err)
 									} else {
-										writeTaskJournalEvent(queueDir, filename, task, "Created", 0)
+										writeTaskJournalEvent(w.QueueDir, filename, task, "Created", 0)
 									}
 								}
 							}
 						}
-					} else if !hasFailure && !isApproved && state.lastReviewedSHA != headSHA && shouldAutoReviewPR(ctx, ghClient, owner, repo, pr, prIssue, triggerLabel) {
+					} else if !hasFailure && !isApproved && state.lastReviewedSHA != headSHA && shouldAutoReviewPR(ctx, ghClient, w.Repo.Owner, w.Repo.Repo, pr, prIssue, triggerLabel) {
 						hasBotReviewAfterLastCommit := false
 						for _, r := range reviews {
 							if isBotReply(r.GetUser(), githubLogin, bots) && (r.GetSubmittedAt().After(lastCommitTime) || r.GetCommitID() == headSHA) {
@@ -1874,8 +1887,8 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 							}
 							filename := fmt.Sprintf("task-pr-%d-review.yaml", num)
 							if !taskExists(incomingDir, processingDir, filename) {
-								sandboxName := resolveSandboxName(ctx, kubeClient, ghClient, "pr-review", num, owner, repo)
-								running, err := isSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName)
+								sandboxName := w.resolveSandboxName(ctx, kubeClient, ghClient, "pr-review", num)
+								running, err := isSandboxTaskRunning(ctx, kubeClient, w.Namespace, sandboxName)
 								if err != nil {
 									klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
 									continue
@@ -1887,14 +1900,14 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 										bodies = append(bodies, pr.GetBody())
 									}
 									for refIssueNum := range getReferencedIssues(pr) {
-										refIssue, _, err := ghClient.Issues.Get(ctx, owner, repo, refIssueNum)
+										refIssue, _, err := ghClient.Issues.Get(ctx, w.Repo.Owner, w.Repo.Repo, refIssueNum)
 										if err == nil && refIssue.GetBody() != "" {
 											bodies = append(bodies, refIssue.GetBody())
 										}
 									}
 									instructions := ExtractReviewInstructions(bodies...)
 
-									prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", owner, repo, num)
+									prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", w.Repo.Owner, w.Repo.Repo, num)
 									task := &QueueTask{
 										Type:         "pr-review",
 										URL:          prURL,
@@ -1908,7 +1921,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 										Instructions: instructions,
 									}
 
-									if dryRun {
+									if w.DryRun {
 										fmt.Printf("[DRYRUN] Would queue review task for PR #%d: %s\n", num, prURL)
 									} else {
 										fmt.Printf("Queueing review task for PR #%d (Instructions: %d)...\n", num, len(instructions))
@@ -1917,7 +1930,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 										if err := writeTaskAtomically(incomingDir, filename, task); err != nil {
 											klog.Errorf("Failed to queue review task for PR #%d: %v", num, err)
 										} else {
-											writeTaskJournalEvent(queueDir, filename, task, "Created", 0)
+											writeTaskJournalEvent(w.QueueDir, filename, task, "Created", 0)
 										}
 									}
 								}
@@ -1930,21 +1943,21 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 
 		// Determine what to run
 		runIssueScan := false
-		if mode == "all" || mode == "scan" || mode == "scan-issue" {
+		if w.Mode == "all" || w.Mode == "scan" || w.Mode == "scan-issue" {
 			if state.lastIssueScan.IsZero() || now.Sub(state.lastIssueScan) >= 30*time.Second {
 				runIssueScan = true
 			}
 		}
 
 		runPRScan := false
-		if mode == "all" || mode == "scan" || mode == "scan-pr" {
+		if w.Mode == "all" || w.Mode == "scan" || w.Mode == "scan-pr" {
 			if state.lastPRScan.IsZero() || now.Sub(state.lastPRScan) >= 5*time.Minute {
 				runPRScan = true
 			}
 		}
 
 		runRunner := false
-		if mode == "all" || mode == "run" {
+		if w.Mode == "all" || w.Mode == "run" {
 			if state.lastRunnerRun.IsZero() || now.Sub(state.lastRunnerRun) >= 30*time.Second {
 				runRunner = true
 			}
@@ -1961,7 +1974,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 		// Populate PR cache once on startup if needed by issue scan
 		if !hasPRs && runIssueScan {
 			klog.Infof("Populating open PRs cache for referenced issues...")
-			prs, err := listAllOpenPRs(ctx, ghClient, owner, repo)
+			prs, err := listAllOpenPRs(ctx, ghClient, w.Repo.Owner, w.Repo.Repo)
 			if err == nil {
 				state.mu.Lock()
 				state.openPRs = prs
@@ -1981,7 +1994,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 		// 1. Slow PR Scan Cycle
 		if runPRScan {
 			klog.Infof("Running slow PR scan cycle...")
-			prs, err := listAllOpenPRs(ctx, ghClient, owner, repo)
+			prs, err := listAllOpenPRs(ctx, ghClient, w.Repo.Owner, w.Repo.Repo)
 			if err == nil {
 				state.mu.Lock()
 				state.openPRs = prs
@@ -2006,7 +2019,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				ListOptions: githubv39.ListOptions{PerPage: 100},
 			}
 			for {
-				pageIssues, resp, err := ghClient.Issues.ListByRepo(ctx, owner, repo, opts2)
+				pageIssues, resp, err := ghClient.Issues.ListByRepo(ctx, w.Repo.Owner, w.Repo.Repo, opts2)
 				if err != nil {
 					klog.Errorf("Failed to list issues for label %s: %v", triggerLabel, err)
 					break
@@ -2023,8 +2036,8 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 			}
 
 			// Process slow issues
-			if issueMode != "disabled" {
-				queueIssueTasks(ctx, ghClient, kubeClient, cfg, owner, repo, slowIssues, processedIssues, refIssues, targetAssignee, allBotUsers, incomingDir, processingDir, processedDir, queueDir, dryRun, triggerLabel)
+			if w.IssueMode != "disabled" {
+				w.queueIssueTasks(ctx, ghClient, kubeClient, cfg, slowIssues, processedIssues, refIssues, targetAssignee, allBotUsers, incomingDir, processingDir, processedDir, triggerLabel)
 			}
 
 			// Process Pull Requests (Scanner)
@@ -2037,7 +2050,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					ListOptions: githubv39.ListOptions{PerPage: 100},
 				}
 				for {
-					iss1, resp, err := ghClient.Issues.ListByRepo(ctx, owner, repo, opts1)
+					iss1, resp, err := ghClient.Issues.ListByRepo(ctx, w.Repo.Owner, w.Repo.Repo, opts1)
 					if err != nil {
 						klog.Errorf("Failed to list PR issues for assignee %s: %v", botUser, err)
 						break
@@ -2059,7 +2072,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				ListOptions: githubv39.ListOptions{PerPage: 100},
 			}
 			for {
-				iss2, resp, err := ghClient.Issues.ListByRepo(ctx, owner, repo, opts2PR)
+				iss2, resp, err := ghClient.Issues.ListByRepo(ctx, w.Repo.Owner, w.Repo.Repo, opts2PR)
 				if err != nil {
 					klog.Errorf("Failed to list PR issues for label %s: %v", triggerLabel, err)
 					break
@@ -2087,8 +2100,8 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 			processPRsFunc(prIssues)
 
 			// Scan chores
-			if (mode == "all" || mode == "scan" || mode == "scan-pr") && choresMode != "disabled" {
-				scanChores(ctx, ghClient, owner, repo, incomingDir, processingDir, queueDir, dryRun)
+			if (w.Mode == "all" || w.Mode == "scan" || w.Mode == "scan-pr") && w.ChoresMode != "disabled" {
+				scanChores(ctx, ghClient, w.Repo.Owner, w.Repo.Repo, incomingDir, processingDir, w.QueueDir, w.DryRun)
 			}
 
 			openPRMap := make(map[int]bool)
@@ -2105,22 +2118,22 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 			}
 
 			// Clean up sandboxes of merged or closed PRs
-			if err := cleanupClosedPRSandboxes(ctx, ghClient, kubeClient, owner, repo, rootFlags.Namespace, openPRMap, dryRun); err != nil {
+			if err := cleanupClosedPRSandboxes(ctx, ghClient, kubeClient, w.Repo.Owner, w.Repo.Repo, w.Namespace, openPRMap, w.DryRun); err != nil {
 				klog.Errorf("Failed to clean up closed PR sandboxes: %v", err)
 			}
 
 			// Clean up sandboxes of closed issues
-			if err := cleanupClosedIssueSandboxes(ctx, ghClient, kubeClient, owner, repo, rootFlags.Namespace, openIssueMap, dryRun); err != nil {
+			if err := cleanupClosedIssueSandboxes(ctx, ghClient, kubeClient, w.Repo.Owner, w.Repo.Repo, w.Namespace, openIssueMap, w.DryRun); err != nil {
 				klog.Errorf("Failed to clean up closed issue sandboxes: %v", err)
 			}
 
 			// Clean up stale idle sandboxes older than eviction age (defaults to 1 week)
-			if err := cleanupStaleIdleSandboxes(ctx, kubeClient, owner+"/"+repo, rootFlags.Namespace, sandboxEvictionAge, dryRun); err != nil {
+			if err := cleanupStaleIdleSandboxes(ctx, kubeClient, w.Repo.Owner+"/"+w.Repo.Repo, w.Namespace, w.SandboxEvictionAge, w.DryRun); err != nil {
 				klog.Errorf("Failed to clean up stale idle sandboxes: %v", err)
 			}
 
-			if sandboxIdleTimeout > 0 {
-				if _, err := factorysandbox.SuspendIdleSandboxes(ctx, kubeClient, rootFlags.Namespace, sandboxIdleTimeout, dryRun); err != nil {
+			if w.SandboxIdleTimeout > 0 {
+				if _, err := factorysandbox.SuspendIdleSandboxes(ctx, kubeClient, w.Namespace, w.SandboxIdleTimeout, w.DryRun); err != nil {
 					klog.Errorf("Failed to suspend idle sandboxes: %v", err)
 				}
 			}
@@ -2130,8 +2143,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 		if runIssueScan {
 			klog.Infof("Running fast issue scan cycle...")
 			var allItems []*githubv39.Issue
-
-			limit := scanLimit
+			limit := w.ScanLimit
 			if limit <= 0 {
 				limit = 30
 			}
@@ -2144,7 +2156,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					Direction:   "desc",
 					ListOptions: githubv39.ListOptions{PerPage: limit},
 				}
-				issues1, _, err := ghClient.Issues.ListByRepo(ctx, owner, repo, opts1)
+				issues1, _, err := ghClient.Issues.ListByRepo(ctx, w.Repo.Owner, w.Repo.Repo, opts1)
 				if err != nil {
 					klog.Errorf("Failed to list issues for assignee %s: %v", botUser, err)
 				} else {
@@ -2161,7 +2173,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					Direction:   "desc",
 					ListOptions: githubv39.ListOptions{PerPage: limit},
 				}
-				issuesCreator, _, err := ghClient.Issues.ListByRepo(ctx, owner, repo, optsCreator)
+				issuesCreator, _, err := ghClient.Issues.ListByRepo(ctx, w.Repo.Owner, w.Repo.Repo, optsCreator)
 				if err != nil {
 					klog.Errorf("Failed to list issues created by %s: %v", githubLogin, err)
 				} else {
@@ -2197,19 +2209,19 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						}
 
 						if !hasTriggerLabel || !hasAssignee {
-							if dryRun {
+							if w.DryRun {
 								fmt.Printf("[DRYRUN] Would label issue #%d created by %s with '%s' and assign to %s\n", issue.GetNumber(), githubLogin, triggerLabel, targetAssignee)
 							} else {
 								fmt.Printf("Labelling issue #%d created by %s with '%s' and assigning to %s...\n", issue.GetNumber(), githubLogin, triggerLabel, targetAssignee)
 								if !hasTriggerLabel {
-									if _, _, err := ghClient.Issues.AddLabelsToIssue(ctx, owner, repo, issue.GetNumber(), []string{triggerLabel}); err != nil {
+									if _, _, err := ghClient.Issues.AddLabelsToIssue(ctx, w.Repo.Owner, w.Repo.Repo, issue.GetNumber(), []string{triggerLabel}); err != nil {
 										klog.Errorf("Failed to add label '%s' to issue #%d: %v", triggerLabel, issue.GetNumber(), err)
 									} else {
 										issue.Labels = append(issue.Labels, &githubv39.Label{Name: githubv39.String(triggerLabel)})
 									}
 								}
 								if !hasAssignee && targetAssignee != "" {
-									if _, _, err := ghClient.Issues.AddAssignees(ctx, owner, repo, issue.GetNumber(), []string{targetAssignee}); err != nil {
+									if _, _, err := ghClient.Issues.AddAssignees(ctx, w.Repo.Owner, w.Repo.Repo, issue.GetNumber(), []string{targetAssignee}); err != nil {
 										klog.Errorf("Failed to assign %s to issue #%d: %v", targetAssignee, issue.GetNumber(), err)
 									} else {
 										issue.Assignees = append(issue.Assignees, &githubv39.User{Login: githubv39.String(targetAssignee)})
@@ -2237,8 +2249,8 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				}
 			}
 
-			if issueMode != "disabled" {
-				queueIssueTasks(ctx, ghClient, kubeClient, cfg, owner, repo, issues, processedIssues, refIssues, targetAssignee, allBotUsers, incomingDir, processingDir, processedDir, queueDir, dryRun, triggerLabel)
+			if w.IssueMode != "disabled" {
+				w.queueIssueTasks(ctx, ghClient, kubeClient, cfg, issues, processedIssues, refIssues, targetAssignee, allBotUsers, incomingDir, processingDir, processedDir, triggerLabel)
 			}
 
 			// Process PRs assigned to the bot in the fast cycle
@@ -2311,36 +2323,36 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 			activeSandboxesInCycle := make(map[string]bool)
 
 			for _, item := range tasksToRun {
-				if isDoNotProcess(queueDir) {
+				if isDoNotProcess(w.QueueDir) {
 					klog.Infof("[DO NOT PROCESS] Drain mode detected during cycle execution. Stopping scheduling of remaining queued tasks.")
 					break
 				}
-				if actionsTaken >= maxActions {
-					fmt.Printf("Reached maximum actions limit (%d) for this cycle. Stopping execution.\n", maxActions)
+				if actionsTaken >= w.MaxActions {
+					fmt.Printf("Reached maximum actions limit (%d) for this cycle. Stopping execution.\n", w.MaxActions)
 					break
 				}
 
-				runningCount, err := countRunningSandboxTasks(ctx, kubeClient, rootFlags.Namespace)
+				runningCount, err := countRunningSandboxTasks(ctx, kubeClient, w.Namespace)
 				if err != nil {
 					klog.Errorf("Failed to count running sandbox tasks: %v", err)
 				}
 				activeCount := max(runningCount, filesInProcessing)
 
-				if activeCount >= maxPending {
-					fmt.Printf("Reached maximum pending sandboxes limit (%d). Skipping remaining queue items.\n", maxPending)
+				if activeCount >= w.MaxPending {
+					fmt.Printf("Reached maximum pending sandboxes limit (%d). Skipping remaining queue items.\n", w.MaxPending)
 					break
 				}
 
 				filename := item.filename
 				task := item.task
 
-				sandboxName := resolveSandboxName(ctx, kubeClient, ghClient, task.Type, task.Number, owner, repo)
+				sandboxName := w.resolveSandboxName(ctx, kubeClient, ghClient, task.Type, task.Number)
 				if activeSandboxesInCycle[sandboxName] {
 					klog.Infof("Skipping task %s because sandbox %s is already scheduled to run a task in this cycle.", filename, sandboxName)
 					continue
 				}
 
-				running, err := isSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName)
+				running, err := isSandboxTaskRunning(ctx, kubeClient, w.Namespace, sandboxName)
 				if err != nil {
 					klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
 					continue
@@ -2350,8 +2362,8 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					continue
 				}
 
-				if task.Number > 0 && !dryRun {
-					if issueOrPR, _, err := ghClient.Issues.Get(ctx, owner, repo, task.Number); err == nil && issueOrPR != nil {
+				if task.Number > 0 && !w.DryRun {
+					if issueOrPR, _, err := ghClient.Issues.Get(ctx, w.Repo.Owner, w.Repo.Repo, task.Number); err == nil && issueOrPR != nil {
 						if hasStopLabel(issueOrPR.Labels, triggerLabel) {
 							klog.Infof("Skipping task %s and removing from incoming because target #%d has the stop label ('overseer/stop' or '%s/stop')", filename, task.Number, triggerLabel)
 							_ = os.Remove(filepath.Join(incomingDir, filename))
@@ -2361,14 +2373,14 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				}
 
 				if task.Type != "agent-chore" && task.Recovered {
-					completed, err := isSandboxTaskCompleted(ctx, kubeClient, rootFlags.Namespace, sandboxName, task.Type)
+					completed, err := isSandboxTaskCompleted(ctx, kubeClient, w.Namespace, sandboxName, task.Type)
 					if err != nil {
 						klog.Errorf("Failed to check if sandbox %s completed task: %v", sandboxName, err)
 						continue
 					}
 					if completed {
 						klog.Infof("Recovered task %s is already completed in sandbox %s. Marking as completed.", filename, sandboxName)
-						if dryRun {
+						if w.DryRun {
 							continue
 						}
 						incomingPath := filepath.Join(incomingDir, filename)
@@ -2376,7 +2388,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						task.Status = "Completed"
 						task.CompletedAt = time.Now()
 						_ = writeTaskAtomically(incomingDir, filename, task)
-						writeTaskJournalEvent(queueDir, filename, task, "Completed", 0)
+						writeTaskJournalEvent(w.QueueDir, filename, task, "Completed", 0)
 						if err := os.Rename(incomingPath, processedPath); err != nil {
 							klog.Errorf("Failed to move completed task %s to processed: %v", filename, err)
 						}
@@ -2387,7 +2399,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				incomingPath := filepath.Join(incomingDir, filename)
 				processingPath := filepath.Join(processingDir, filename)
 
-				if dryRun {
+				if w.DryRun {
 					fmt.Printf("[DRYRUN] Would process task %s (Type: %s, URL: %s)\n", filename, task.Type, task.URL)
 					activeSandboxesInCycle[sandboxName] = true
 					actionsTaken++
@@ -2403,7 +2415,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 				activeSandboxesInCycle[sandboxName] = true
 				task.Status = "Running"
 				_ = writeTaskAtomically(processingDir, filename, task)
-				writeTaskJournalEvent(queueDir, filename, task, "Started", 0)
+				writeTaskJournalEvent(w.QueueDir, filename, task, "Started", 0)
 
 				actionsTaken++
 				filesInProcessing++
@@ -2414,17 +2426,17 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					fmt.Printf("Starting task %s (Type: %s, URL: %s)...\n", taskFilename, t.Type, t.URL)
 					startTime := time.Now()
 
-					taskCtx, taskCancel := context.WithTimeout(ctx, taskTimeout)
+					taskCtx, taskCancel := context.WithTimeout(ctx, w.TaskTimeout)
 					defer taskCancel()
 
 					if t.Number > 0 {
 						if (t.Type == "issue-fix" || t.Type == "agent-chore") && t.Assignee != "" {
 							klog.Infof("Assigning issue #%d to %s as claimed", t.Number, t.Assignee)
-							if _, _, err := ghClient.Issues.AddAssignees(ctx, owner, repo, t.Number, []string{t.Assignee}); err != nil {
+							if _, _, err := ghClient.Issues.AddAssignees(ctx, w.Repo.Owner, w.Repo.Repo, t.Number, []string{t.Assignee}); err != nil {
 								klog.Errorf("Failed to assign issue #%d to %s: %v", t.Number, t.Assignee, err)
 							}
 							if t.Assignee != targetAssignee {
-								if _, _, err := ghClient.Issues.RemoveAssignees(ctx, owner, repo, t.Number, []string{targetAssignee}); err != nil {
+								if _, _, err := ghClient.Issues.RemoveAssignees(ctx, w.Repo.Owner, w.Repo.Repo, t.Number, []string{targetAssignee}); err != nil {
 									klog.Errorf("Failed to remove watcher bot %s from issue #%d: %v", targetAssignee, t.Number, err)
 								}
 							}
@@ -2445,7 +2457,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 								commentBody = "🤖 AI Factory started reviewing this pull request in a sandbox."
 							}
 							if commentBody != "" {
-								addGitHubComment(ctx, ghClient, owner, repo, t.Number, commentBody)
+								addGitHubComment(ctx, ghClient, w.Repo.Owner, w.Repo.Repo, t.Number, commentBody)
 							}
 						}
 					}
@@ -2453,14 +2465,14 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 					selectedUser := t.Assignee
 					var sUserErr error
 					if selectedUser == "" || (isPRTask(t.Type) && strings.EqualFold(selectedUser, targetAssignee)) {
-						selectedUser, sUserErr = selectUserForTask(ctx, ghClient, kubeClient, cfg, t.Type, t.Number, owner, repo)
+						selectedUser, sUserErr = w.selectUserForTask(ctx, ghClient, kubeClient, cfg, t.Type, t.Number)
 					}
 					if sUserErr != nil {
 						klog.Errorf("Failed to select user for task %s: %v", taskFilename, sUserErr)
 						t.Status = "Failed"
 						t.Error = sUserErr.Error()
 						_ = writeTaskAtomically(processingDir, taskFilename, t)
-						writeTaskJournalEvent(queueDir, taskFilename, t, "Failed", 0)
+						writeTaskJournalEvent(w.QueueDir, taskFilename, t, "Failed", 0)
 						processedPath := filepath.Join(processedDir, taskFilename)
 						_ = os.Rename(processingPath, processedPath)
 						return
@@ -2497,35 +2509,35 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						return
 					}
 
-					if rootFlags.Namespace != "" {
-						args = append(args, "--namespace", rootFlags.Namespace)
+					if w.Namespace != "" {
+						args = append(args, "--namespace", w.Namespace)
 					}
 					if selectedUser != "" {
 						args = append(args, "--user", selectedUser)
 					}
-					if rootFlags.Image != "" {
-						args = append(args, "--image", rootFlags.Image)
+					if w.Image != "" {
+						args = append(args, "--image", w.Image)
 					}
-					if rootFlags.DiskSize != "" {
-						args = append(args, "--workspace-disk-size", rootFlags.DiskSize)
+					if w.DiskSize != "" {
+						args = append(args, "--workspace-disk-size", w.DiskSize)
 					}
-					if rootFlags.EphemeralStorage != "" {
-						args = append(args, "--ephemeral-storage", rootFlags.EphemeralStorage)
+					if w.EphemeralStorage != "" {
+						args = append(args, "--ephemeral-storage", w.EphemeralStorage)
 					}
-					if rootFlags.CPURequest != "" {
-						args = append(args, "--cpu-request", rootFlags.CPURequest)
+					if w.CPURequest != "" {
+						args = append(args, "--cpu-request", w.CPURequest)
 					}
-					if rootFlags.CPULimit != "" {
-						args = append(args, "--cpu-limit", rootFlags.CPULimit)
+					if w.CPULimit != "" {
+						args = append(args, "--cpu-limit", w.CPULimit)
 					}
-					if rootFlags.MemoryRequest != "" {
-						args = append(args, "--memory-request", rootFlags.MemoryRequest)
+					if w.MemoryRequest != "" {
+						args = append(args, "--memory-request", w.MemoryRequest)
 					}
-					if rootFlags.MemoryLimit != "" {
-						args = append(args, "--memory-limit", rootFlags.MemoryLimit)
+					if w.MemoryLimit != "" {
+						args = append(args, "--memory-limit", w.MemoryLimit)
 					}
-					if taskTimeout > 0 {
-						args = append(args, "--timeout", taskTimeout.String())
+					if w.TaskTimeout > 0 {
+						args = append(args, "--timeout", w.TaskTimeout.String())
 					}
 					args = append(args, "--abort-on-cancel=false")
 
@@ -2555,9 +2567,9 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						t.Status = "Failed"
 						t.Error = taskErr.Error()
 						t.CompletedAt = time.Now()
-						writeTaskJournalEvent(queueDir, taskFilename, t, "Failed", duration)
+						writeTaskJournalEvent(w.QueueDir, taskFilename, t, "Failed", duration)
 						if t.Type == "pr-comments" {
-							resolvePRCommentReactions(ctx, ghClient, owner, repo, t.Number, "confused", cfg.AllowlistedBots, githubLogin)
+							resolvePRCommentReactions(ctx, ghClient, w.Repo.Owner, w.Repo.Repo, t.Number, "confused", cfg.AllowlistedBots, githubLogin)
 						}
 
 						// Force clean up sandbox if the task timed out
@@ -2568,22 +2580,22 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 								if t.SessionID != "" {
 									sandboxName = fmt.Sprintf("wf-issue-%d", t.Number)
 								} else {
-									sandboxName = fmt.Sprintf("fix-%s-%d", repo, t.Number)
+									sandboxName = fmt.Sprintf("fix-%s-%d", w.Repo.Repo, t.Number)
 								}
 							case "agent-chore":
 								if t.SessionID != "" {
 									sandboxName = fmt.Sprintf("wf-issue-%d", t.Number)
 								} else {
-									sandboxName = fmt.Sprintf("agent-%s-%d", repo, t.Number)
+									sandboxName = fmt.Sprintf("agent-%s-%d", w.Repo.Repo, t.Number)
 								}
 							case "pr-investigate", "pr-comments", "pr-iterate", "pr-review":
-								sandboxName = resolveSandboxName(ctx, kubeClient, ghClient, t.Type, t.Number, owner, repo)
+								sandboxName = w.resolveSandboxName(ctx, kubeClient, ghClient, t.Type, t.Number)
 							}
 
 							if sandboxName != "" {
-								klog.Warningf("Task %s timed out after %s! Force cleaning up sandbox '%s'...", taskFilename, taskTimeout, sandboxName)
+								klog.Warningf("Task %s timed out after %s! Force cleaning up sandbox '%s'...", taskFilename, w.TaskTimeout, sandboxName)
 								manager := k8s.NewManager(kubeClient)
-								if err := manager.DeleteSandbox(ctx, rootFlags.Namespace, sandboxName); err != nil {
+								if err := manager.DeleteSandbox(ctx, w.Namespace, sandboxName); err != nil {
 									klog.Errorf("Failed to delete sandbox '%s' on timeout: %v", sandboxName, err)
 								}
 							}
@@ -2592,9 +2604,9 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 						fmt.Printf("Task %s completed successfully.\n", taskFilename)
 						t.Status = "Completed"
 						t.CompletedAt = time.Now()
-						writeTaskJournalEvent(queueDir, taskFilename, t, "Completed", duration)
+						writeTaskJournalEvent(w.QueueDir, taskFilename, t, "Completed", duration)
 						if t.Type == "pr-comments" {
-							resolvePRCommentReactions(ctx, ghClient, owner, repo, t.Number, "+1", cfg.AllowlistedBots, githubLogin)
+							resolvePRCommentReactions(ctx, ghClient, w.Repo.Owner, w.Repo.Repo, t.Number, "+1", cfg.AllowlistedBots, githubLogin)
 						}
 					}
 
@@ -2617,7 +2629,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 
 	checkRepo()
 
-	if once {
+	if w.Once {
 		fmt.Println("Running in once mode. Waiting for active tasks to complete...")
 		wg.Wait()
 		fmt.Println("All tasks completed. Exiting.")
@@ -2630,7 +2642,7 @@ func runWatch(ctx context.Context, owner, repo string, interval time.Duration, a
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-timeoutChan:
-			fmt.Printf("\nWatch timeout of %s expired. Shutting down gracefully...\n", watchTimeout)
+			fmt.Printf("\nWatch timeout of %s expired. Shutting down gracefully...\n", w.WatchTimeout)
 			state.mu.Lock()
 			state.shuttingDown = true
 			state.mu.Unlock()
@@ -3163,7 +3175,7 @@ func cleanupClosedIssueSandboxes(ctx context.Context, ghClient *githubv39.Client
 	return nil
 }
 
-func selectUserForTask(ctx context.Context, ghClient *githubv39.Client, kubeClient *clients.KubernetesClient, cfg *config.FactoryConfig, taskType string, prNum int, owner, repo string) (string, error) {
+func (w *Watcher) selectUserForTask(ctx context.Context, ghClient *githubv39.Client, kubeClient *clients.KubernetesClient, cfg *config.FactoryConfig, taskType string, prNum int) (string, error) {
 	if cfg == nil || len(cfg.Roles) == 0 {
 		return "", nil // default fallback to factory-user
 	}
@@ -3192,7 +3204,7 @@ func selectUserForTask(ctx context.Context, ghClient *githubv39.Client, kubeClie
 			}
 		case isPRTask(taskType):
 			if prNum > 0 {
-				pr, _, err := ghClient.PullRequests.Get(ctx, owner, repo, prNum)
+				pr, _, err := ghClient.PullRequests.Get(ctx, w.Repo.Owner, w.Repo.Repo, prNum)
 				if err == nil {
 					author := pr.GetUser().GetLogin()
 					if author != "" {
@@ -3244,13 +3256,13 @@ func selectUserForTask(ctx context.Context, ghClient *githubv39.Client, kubeClie
 			// and has been pinned to a specific user.
 			var sandboxName string
 			if taskType == "issue-fix" {
-				sandboxName = fmt.Sprintf("fix-%s-%d", repo, prNum)
+				sandboxName = fmt.Sprintf("fix-%s-%d", w.Repo.Repo, prNum)
 			} else if taskType == "agent-chore" {
 				sandboxName = fmt.Sprintf("wf-issue-%d", prNum)
 			}
 
 			if sandboxName != "" && kubeClient != nil {
-				sb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(rootFlags.Namespace).Get(ctx, sandboxName, metav1.GetOptions{})
+				sb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(w.Namespace).Get(ctx, sandboxName, metav1.GetOptions{})
 				if err == nil {
 					labels := sb.GetLabels()
 					if user, ok := labels["factory.gemini.google.com/user"]; ok && user != "" {
@@ -3270,7 +3282,7 @@ func selectUserForTask(ctx context.Context, ghClient *githubv39.Client, kubeClie
 			}
 
 			// B. Fallback to GitHub issue assignee check
-			issue, _, err := ghClient.Issues.Get(ctx, owner, repo, prNum)
+			issue, _, err := ghClient.Issues.Get(ctx, w.Repo.Owner, w.Repo.Repo, prNum)
 			if err == nil {
 				for _, a := range issue.Assignees {
 					assignee := a.GetLogin()
@@ -3297,7 +3309,7 @@ func selectUserForTask(ctx context.Context, ghClient *githubv39.Client, kubeClie
 	}
 
 	if prNum > 0 {
-		pr, _, err := ghClient.PullRequests.Get(ctx, owner, repo, prNum)
+		pr, _, err := ghClient.PullRequests.Get(ctx, w.Repo.Owner, w.Repo.Repo, prNum)
 		if err != nil {
 			return "", fmt.Errorf("fetching PR details: %w", err)
 		}
