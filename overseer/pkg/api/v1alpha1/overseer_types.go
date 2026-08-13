@@ -209,6 +209,11 @@ type EnvVar struct {
 
 // OverseerStatus defines the observed state of Overseer
 type OverseerStatus struct {
+	// ObservedGeneration is the most recent generation observed for this resource.
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default:=0
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
 	// OverseerStatus defines the status of the overseer.
 	// +kubebuilder:validation:Optional
 	OverseerStatus string `json:"overseerStatus,omitempty"`
