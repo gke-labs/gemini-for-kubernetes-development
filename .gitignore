@@ -13,3 +13,7 @@ cli/cli
 suspended_keys.json
 quota_exceeded_keys.json
 
+# Run and test log files
+*.log
+
+
