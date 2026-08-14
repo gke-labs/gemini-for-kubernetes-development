@@ -208,6 +208,11 @@ spec:
                 required:
                 - maxActiveSandboxes
                 type: object
+              maintainers:
+                items:
+                  type: string
+                type: array
+                x-kubernetes-list-type: atomic
               pollIntervalSeconds:
                 default: 300
                 minimum: 30

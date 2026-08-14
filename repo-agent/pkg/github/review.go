@@ -36,6 +36,10 @@ func (r *PullRequestReview) SubmittedAt() time.Time {
 	return r.review.GetSubmittedAt()
 }
 
+func (r *PullRequestReview) AuthorAssociation() string {
+	return r.review.GetAuthorAssociation()
+}
+
 type PullRequestComment struct {
 	comment *githubv39.PullRequestComment
 }
@@ -54,6 +58,10 @@ func (c *PullRequestComment) PullRequestReviewID() int64 {
 
 func (c *PullRequestComment) UserLogin() string {
 	return c.comment.GetUser().GetLogin()
+}
+
+func (c *PullRequestComment) AuthorAssociation() string {
+	return c.comment.GetAuthorAssociation()
 }
 
 func (c *PullRequestComment) Body() string {

@@ -29,3 +29,7 @@ func (ic *IssueComment) NodeID() string {
 func (ic *IssueComment) CreatedAt() time.Time {
 	return ic.issuecomment.GetCreatedAt()
 }
+
+func (ic *IssueComment) AuthorAssociation() string {
+	return ic.issuecomment.GetAuthorAssociation()
+}

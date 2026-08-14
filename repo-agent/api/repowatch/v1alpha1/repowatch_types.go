@@ -342,6 +342,13 @@ type RepoWatchSpec struct {
 	// +kubebuilder:validation:Minimum=30
 	// +kubebuilder:default=300
 	PollIntervalSeconds int `json:"pollIntervalSeconds,omitempty"`
+
+	// Maintainers is a list of GitHub usernames who are allowed to provide feedback
+	// on PRs and issues. If provided, feedback from users not in this list
+	// (and not the original author) will be ignored.
+	// +kubebuilder:validation:Optional
+	// +listType=atomic
+	Maintainers []string `json:"maintainers,omitempty"`
 }
 
 // RepoWatchStatus defines the observed state of RepoWatch

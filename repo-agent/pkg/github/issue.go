@@ -30,3 +30,7 @@ func (i *Issue) Title() string {
 func (i *Issue) Body() string {
 	return i.issue.GetBody()
 }
+
+func (i *Issue) Author() string {
+	return i.issue.GetUser().GetLogin()
+}
