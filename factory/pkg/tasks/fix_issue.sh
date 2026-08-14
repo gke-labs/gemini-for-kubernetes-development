@@ -353,7 +353,7 @@ function runGemini {
         export GIT_COMMITTER_EMAIL="$GITHUB_BOT_EMAIL"
     fi
 
-    MODELS_LIST="${MODELS:-gemini-2.5-flash}"
+    MODELS_LIST="${MODELS:-__DEFAULT_MODELS__}"
     SUCCESS=false
     for MODEL in $MODELS_LIST; do
         echo "Trying model: $MODEL"

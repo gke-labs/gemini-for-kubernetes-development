@@ -14,7 +14,7 @@ type IterateParams struct {
 }
 
 func GetIterateScript() ([]byte, error) {
-	return scriptsFS.ReadFile("iterate.sh")
+	return getScriptWithDefaults("iterate.sh")
 }
 
 func RenderIteratePrompt(params IterateParams) ([]byte, error) {
