@@ -216,6 +216,9 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch boo
 		if getErr != nil {
 			return fmt.Errorf("fetching github issue #%d: %w", issueNum, getErr)
 		}
+		if issue.GetState() == "closed" {
+			return fmt.Errorf("github issue #%d is closed, cannot execute fix task", issueNum)
+		}
 		issueBody = issue.GetBody()
 		if issue.GetTitle() != "" {
 			issueTitle = issue.GetTitle()

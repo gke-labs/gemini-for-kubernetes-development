@@ -2170,6 +2170,11 @@ func (w *Watcher) Run(ctx context.Context) error {
 							_ = os.Remove(filepath.Join(incomingDir, filename))
 							continue
 						}
+						if issueOrPR.GetState() == "closed" {
+							klog.Infof("Skipping task %s and removing from incoming because target #%d is closed", filename, task.Number)
+							_ = os.Remove(filepath.Join(incomingDir, filename))
+							continue
+						}
 					}
 				}
 
