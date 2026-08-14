@@ -47,11 +47,29 @@ for ns in ${TARGET_NAMESPACES}; do
   echo "Syncing secrets to namespace: ${ns}"
   echo "----------------------------------------"
 
-  # Dynamically list available coder bots in the source namespace for fallback rotation
-  CODER_BOTS=($(kubectl get secrets -n "${SOURCE_NS}" -o jsonpath='{.items[*].metadata.name}' | tr ' ' '\n' | grep -E "^user-.*-coder-bot$" | sort -u || true))
+  # Dynamically list all robot secrets matching coder-bot or agent-bot in the source namespace
+  ALL_BOTS=($(kubectl get secrets -n "${SOURCE_NS}" -o jsonpath='{.items[*].metadata.name}' | tr ' ' '\n' | grep -E "^user-.*-(coder-bot|agent-bot)$" | sort -u || true))
+  
+  # Validate each token against GitHub API and construct the valid bots pool
+  CODER_BOTS=()
+  for bot in "${ALL_BOTS[@]}"; do
+    BOT_SECRET_JSON=$(kubectl get secret "${bot}" -n "${SOURCE_NS}" -o json 2>/dev/null || true)
+    if [ -n "${BOT_SECRET_JSON}" ]; then
+      BOT_TOKEN=$(echo "${BOT_SECRET_JSON}" | jq -r '.data.GITHUB_TOKEN // empty' | base64 -d || true)
+      if [ -n "${BOT_TOKEN}" ]; then
+        STATUS_CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: token ${BOT_TOKEN}" https://api.github.com/user || true)
+        if [ "${STATUS_CODE}" == "200" ]; then
+          CODER_BOTS+=("${bot}")
+        else
+          echo "  [Info] Skipping expired/invalid bot ${bot} (status: ${STATUS_CODE})"
+        fi
+      fi
+    fi
+  done
+
   BOT_POOL_SIZE=${#CODER_BOTS[@]}
   if [ ${BOT_POOL_SIZE} -eq 0 ]; then
-    echo "  [Warning] No coder bots found for round-robin fallback. Legacy codebot-robot won't be updated."
+    echo "  [Warning] No valid coder bots found for round-robin fallback. Legacy codebot-robot won't be updated."
     FALLBACK_BOT=""
   else
     BOT_INDEX=$(( i % BOT_POOL_SIZE ))

@@ -54,14 +54,22 @@ kubectl create secret generic user-lovelace-coder-bot -n <namespace> \
   --dry-run=client -o yaml | kubectl apply -f -
 ```
 
-### Step 2: Configure RepoWatch to use the new Robot
-Patch your namespace's `RepoWatch` spec to use `user-lovelace-coder-bot` as the robot account:
+### Step 2: Configure RepoWatch to use the Robot Account
+Patch your namespace's `RepoWatch` spec to use `user-lovelace-coder-bot` for both repository polling (`githubSecretName`) and sandbox task execution (`robotAccount`):
 ```bash
+# Update repository polling credentials
+kubectl patch repowatch k8s-config-connector -n <namespace> --type=merge -p '{"spec":{"githubSecretName":"user-lovelace-coder-bot"}}'
+
+# Update issue task execution credentials
 kubectl patch repowatch k8s-config-connector -n <namespace> --type=merge -p '{"spec":{"issue":{"robotAccount":"user-lovelace-coder-bot"}}}'
+
+# Update review task execution credentials (if configured)
+kubectl patch repowatch k8s-config-connector -n <namespace> --type=merge -p '{"spec":{"review":{"robotAccount":"user-lovelace-coder-bot"}}}'
 ```
 
 ### Step 3: Restart Sandboxes
 Delete any active sandbox pods to force the deployment to reload with the new secrets:
 ```bash
-kubectl delete pod k8s-config-connector-issue-11096 -n <namespace>
+kubectl delete pod -n <namespace> -l sandbox.gemini.google.com/type
 ```
+
