@@ -1,4 +1,4 @@
-package commands
+package watch
 
 import (
 	"context"
@@ -13,6 +13,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	"github.com/google/go-cmp/cmp"
 	githubv39 "github.com/google/go-github/v39/github"
+	"github.com/spf13/cobra"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -20,6 +21,10 @@ import (
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	"sigs.k8s.io/yaml"
 )
+
+func stringPtr(s string) *string {
+	return &s
+}
 
 func TestShouldRunChoreAt(t *testing.T) {
 	// Base mock "now" time: Wednesday, July 1st, 2026 at 9:55 AM UTC
@@ -1118,8 +1123,21 @@ func TestRepoFlag(t *testing.T) {
 }
 
 func TestWatchCommand_RepoFlag(t *testing.T) {
+	newCmd := func() *cobra.Command {
+		var flags Flags
+		cmd := &cobra.Command{
+			Use: "watch",
+			RunE: func(cmd *cobra.Command, args []string) error {
+				return nil
+			},
+		}
+		cmd.Flags().Var(&flags.Repo, "repo", "GitHub repository (e.g. owner/repo)")
+		_ = cmd.MarkFlagRequired("repo")
+		return cmd
+	}
+
 	t.Run("Valid repo flag parses into RepoFlag struct", func(t *testing.T) {
-		cmd := NewWatchCommand(context.Background())
+		cmd := newCmd()
 		cmd.SetArgs([]string{"--repo", "test-org/test-repo"})
 		if err := cmd.ParseFlags([]string{"--repo", "test-org/test-repo"}); err != nil {
 			t.Fatalf("cmd.ParseFlags failed: %v", err)
@@ -1131,14 +1149,14 @@ func TestWatchCommand_RepoFlag(t *testing.T) {
 	})
 
 	t.Run("Invalid repo flag returns error during flag parsing", func(t *testing.T) {
-		cmd := NewWatchCommand(context.Background())
+		cmd := newCmd()
 		if err := cmd.ParseFlags([]string{"--repo", "invalid-repo-format"}); err == nil {
 			t.Errorf("expected error for invalid repo format, got nil")
 		}
 	})
 
 	t.Run("Missing repo flag fails required flag validation", func(t *testing.T) {
-		cmd := NewWatchCommand(context.Background())
+		cmd := newCmd()
 		cmd.SetArgs([]string{})
 		err := cmd.Execute()
 		if err == nil {
