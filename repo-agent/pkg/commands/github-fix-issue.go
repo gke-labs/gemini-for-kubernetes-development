@@ -152,6 +152,11 @@ func (c *GithubFixIssueCommand) Run(ctx context.Context) error {
 		return err
 	}
 
+	if c.issue.State() == "closed" {
+		log.Info("Skipping github-fix-issue task because the issue is closed", "issueURL", c.URL)
+		return nil
+	}
+
 	// get sandbox
 	err = c.loadSandbox(ctx)
 	if err != nil {

@@ -2,6 +2,8 @@ package github
 
 import (
 	"testing"
+
+	githubv39 "github.com/google/go-github/v39/github"
 )
 
 func TestParseHTMLUrl(t *testing.T) {
@@ -67,5 +69,17 @@ func TestParseIssueURL(t *testing.T) {
 		if number != tt.number {
 			t.Errorf("parseIssueURL(%q) number = %v, want %v", tt.url, number, tt.number)
 		}
+	}
+}
+
+func TestIssueState(t *testing.T) {
+	ghIssue := &githubv39.Issue{
+		State: githubv39.String("closed"),
+	}
+	issue := &Issue{
+		issue: ghIssue,
+	}
+	if issue.State() != "closed" {
+		t.Errorf("expected issue.State() to be %q, got %q", "closed", issue.State())
 	}
 }

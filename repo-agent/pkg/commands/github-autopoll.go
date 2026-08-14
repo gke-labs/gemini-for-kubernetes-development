@@ -212,10 +212,16 @@ func (p *AutoPoller) pollOnce(ctx context.Context) error {
 }
 
 // shouldProcessIssue checks if an issue should be processed based on:
-// 1. Whether a PR is already linked
-// 2. Whether a sandbox already exists
+// 1. Whether the issue is closed
+// 2. Whether a PR is already linked
+// 3. Whether a sandbox already exists
 func shouldProcessIssue(ctx context.Context, githubAPI *github.Client, repo *github.Repo, issue *gogithub.Issue) (bool, string, error) {
 	log := klog.FromContext(ctx)
+
+	// Check if the issue is closed
+	if issue.GetState() == "closed" {
+		return false, "issue is closed", nil
+	}
 
 	// Check if a PR is linked to this issue
 	linkedPR, err := hasLinkedPR(ctx, githubAPI, repo, issue)
