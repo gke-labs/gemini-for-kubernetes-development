@@ -1042,6 +1042,9 @@ func (w *Watcher) Run(ctx context.Context) error {
 							hasTask = true
 						}
 					}
+					if hasTask && strings.EqualFold(t.Status, "Failed") {
+						continue
+					}
 					if info, err := f.Info(); err == nil {
 						tTime := info.ModTime()
 						if hasTask && !t.CompletedAt.IsZero() {
@@ -2715,6 +2718,9 @@ func parseProcessedPRTask(filePath string, name string, fInfo os.FileInfo, state
 	if data, err := os.ReadFile(filePath); err == nil {
 		if err := yaml.Unmarshal(data, &t); err == nil {
 			hasTask = true
+			if strings.EqualFold(t.Status, "Failed") {
+				return state
+			}
 			if t.CommitSHA != "" {
 				state.lastSHA = t.CommitSHA
 			}
