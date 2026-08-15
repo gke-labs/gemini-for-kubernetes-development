@@ -229,6 +229,19 @@ func (s *Server) saveTaskDraft(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
+func (s *Server) cancelTask(c *gin.Context) {
+	namespace := s.Auth.GetNamespaceFromContext(c)
+	taskName := c.Param("taskID")
+
+	err := s.K8sManager.UpdateSandboxTaskStatus(c.Request.Context(), namespace, taskName, "Cancelled", "task cancelled", nil)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to cancel task", "details": err.Error()})
+		return
+	}
+
+	c.Status(http.StatusOK)
+}
+
 func (s *Server) submitReview(c *gin.Context) {
 	log := klog.FromContext(c.Request.Context())
 	namespace := s.Auth.GetNamespaceFromContext(c)

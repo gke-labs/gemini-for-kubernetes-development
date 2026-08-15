@@ -72,6 +72,7 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 		api.GET("/repo/:repo/prs/:id/commits", s.getPRCommits)
 		api.POST("/repo/:repo/prs/:id/tasks", s.createPRTask)
 		api.POST("/repo/:repo/tasks/:taskID/draft", s.saveTaskDraft)
+		api.POST("/repo/:repo/tasks/:taskID/cancel", s.cancelTask)
 		api.POST("/repo/:repo/prs/:id/draft", s.saveDraft)
 		api.POST("/repo/:repo/prs/:id/submitreview", s.submitReview)
 		api.DELETE("/repo/:repo/prs/:id", s.deletePR)

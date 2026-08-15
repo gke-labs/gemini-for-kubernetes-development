@@ -91,6 +91,7 @@ function TaskCard({
         if (t === 'ready' || t === 'completed') return 'green';
         if (t === 'running') return 'orange';
         if (t === 'failed') return '#9e2a2aff';
+        if (t === 'cancelled') return '#555555';
         return '#cd9945ff';
     };
 
@@ -131,6 +132,23 @@ function TaskCard({
             alert("Submission for this task type is not yet implemented.");
         }
     };
+
+    const handleCancelTask = () => {
+        if (window.confirm("Are you sure you want to cancel this task?")) {
+            fetch(`/api/repo/${repoName}/tasks/${task.name}/cancel`, {
+                method: 'POST',
+            })
+            .then(res => {
+                if (res.ok) {
+                    alert("Task cancellation requested.");
+                } else {
+                    res.text().then(t => alert("Failed to cancel task: " + t));
+                }
+            })
+            .catch(err => console.error("Failed to cancel task", err));
+        }
+    };
+
     const isSubmittable = task.agentDraftType === 'submittable';
     return (
         <div style={{border: '1px solid var(--border-color)', borderRadius: '5px', margin: '10px 0', backgroundColor: 'var(--bg-review-section)'}}>
@@ -155,6 +173,11 @@ function TaskCard({
             {!isCollapsed && (
                 <div style={{padding: '15px'}}>
                     <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '10px 0', gap: '10px' }}>
+                        {(task.taskState === 'Pending' || task.taskState === 'Running') && (
+                            <button className="btn" style={{backgroundColor: '#9e2a2aff', color: 'white'}} onClick={handleCancelTask}>
+                                Cancel Task
+                            </button>
+                        )}
                         <button className="btn" onClick={() => setShowLogs(!showLogs)}>
                             {showLogs ? 'Hide Logs' : 'View Logs'}
                         </button>

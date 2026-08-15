@@ -271,11 +271,57 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		return
 	}
 
-	if err := cmd.Wait(); err != nil {
-		klog.Errorf("Command failed: %v", err)
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	var cmdErr error
+	cancelled := false
+
+	for {
+		select {
+		case err := <-done:
+			cmdErr = err
+			goto finished
+		case <-ticker.C:
+			currentTask, err := tr.manager.GetSandboxTask(ctx, tr.namespace, taskName)
+			if err != nil {
+				klog.Warningf("Failed to poll task %s: %v", taskName, err)
+				continue
+			}
+			if currentTask.Status.TaskState == "Cancelled" {
+				klog.Infof("Task %s was cancelled, killing process", taskName)
+				if cmd.Process != nil {
+					if killErr := cmd.Process.Kill(); killErr != nil {
+						klog.Errorf("Failed to kill process for task %s: %v", taskName, killErr)
+					}
+				}
+				cancelled = true
+				<-done
+				goto finished
+			}
+		case <-ctx.Done():
+			if cmd.Process != nil {
+				_ = cmd.Process.Kill()
+			}
+			return
+		}
+	}
+
+finished:
+	if cancelled {
+		klog.Infof("Task %s completed via cancellation", taskName)
+		tr.updateTaskStatus(ctx, task, "Cancelled", "task cancelled", nil)
+		_ = tr.ao.SetAgentState(ctx, "Cancelled "+taskType, "task cancelled")
+	} else if cmdErr != nil {
+		klog.Errorf("Command failed: %v", cmdErr)
 		usage := tr.readStats(taskDir)
-		tr.updateTaskStatus(ctx, task, "Failed", err.Error(), usage)
-		_ = tr.ao.SetAgentState(ctx, "Failed "+taskType, err.Error())
+		tr.updateTaskStatus(ctx, task, "Failed", cmdErr.Error(), usage)
+		_ = tr.ao.SetAgentState(ctx, "Failed "+taskType, cmdErr.Error())
 	} else {
 		klog.Infof("Task %s completed successfully", taskName)
 		usage := tr.readStats(taskDir)
