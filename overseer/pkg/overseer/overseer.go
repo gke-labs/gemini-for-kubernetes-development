@@ -105,8 +105,18 @@ func ReconcileOverseer(ctx context.Context, c client.Client, o *overseerv1alpha1
 		if err := c.Update(ctx, sandbox); err != nil {
 			return fmt.Errorf("updating sandbox spec: %w", err)
 		}
-		// TODO: At this point the sandbox Pod may be stale (using old PodSpec). Ideally this should
-		// implement a safe update which allows the sandbox to gracefully restart (e.g. draining its task queue).
+
+		// Delete the sandbox pod to force a restart/recreation with the new spec
+		pod := &corev1.Pod{}
+		err = c.Get(ctx, types.NamespacedName{Name: overseerName, Namespace: namespace}, pod)
+		if err == nil {
+			log.Info("Deleting Overseer sandbox pod to force restart", "name", overseerName, "namespace", namespace)
+			if err := c.Delete(ctx, pod); err != nil {
+				log.Error(err, "Failed to delete sandbox pod to force restart", "name", overseerName, "namespace", namespace)
+			}
+		} else if !errors.IsNotFound(err) {
+			log.Error(err, "Failed to find sandbox pod for deletion", "name", overseerName, "namespace", namespace)
+		}
 	}
 
 	o.Status.OverseerStatus = overseerv1alpha1.OverseerStatusActive
