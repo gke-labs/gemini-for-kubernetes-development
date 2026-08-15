@@ -16,8 +16,8 @@ echo " Namespace: ${NAMESPACE}, Pod/Sandbox: ${POD_NAME}"
 echo "=========================================================="
 
 if ! kubectl get namespace "$NAMESPACE" >/dev/null 2>&1; then
-    echo "Error: Namespace '${NAMESPACE}' not found." >&2
-    exit 1
+    echo "Namespace '${NAMESPACE}' not found. Exiting early without error."
+    exit 0
 fi
 
 echo ""
