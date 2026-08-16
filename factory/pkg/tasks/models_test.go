@@ -10,8 +10,8 @@ func TestDefaultModels(t *testing.T) {
 		t.Error("DefaultModels list should not be empty")
 	}
 
-	if DefaultModels[0] != "gemini-3.6-flash" {
-		t.Errorf("Expected first default model to be gemini-3.6-flash, got: %s", DefaultModels[0])
+	if DefaultModels[0] != "gemini-3.7-flash" {
+		t.Errorf("Expected first default model to be gemini-3.7-flash, got: %s", DefaultModels[0])
 	}
 }
 
