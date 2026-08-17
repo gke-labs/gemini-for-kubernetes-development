@@ -504,7 +504,7 @@ func TestGetLastPRActivityTime(t *testing.T) {
 		t.Errorf("Case 3 failed: expected %v, got %v", baseTime, got)
 	}
 
-	// Case 4: Bot pause comment (resets timer)
+	// Case 4: Bot pause comment (ignored as it is not human activity)
 	pauseTime := baseTime.Add(3 * time.Hour)
 	comments = []*githubv39.IssueComment{
 		{
@@ -514,8 +514,8 @@ func TestGetLastPRActivityTime(t *testing.T) {
 		},
 	}
 	got = getLastPRActivityTime(pr, comments, nil, nil, githubLogin, bots)
-	if !got.Equal(pauseTime) {
-		t.Errorf("Case 4 failed: expected %v, got %v", pauseTime, got)
+	if !got.Equal(baseTime) {
+		t.Errorf("Case 4 failed: expected %v, got %v", baseTime, got)
 	}
 
 	// Case 5: Human review
@@ -559,6 +559,47 @@ func TestGetLastPRActivityTime(t *testing.T) {
 func int64Ptr(i int64) *int64 {
 	return &i
 }
+
+func TestHasInactivityComment(t *testing.T) {
+	baseTime := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	pauseBody := "🤖 AI Factory has paused automated processing on this pull request due to a period of inactivity with no human comments"
+
+	// Case 1: No comments
+	if hasInactivityComment(nil, baseTime) {
+		t.Errorf("Case 1 failed: expected false for nil comments")
+	}
+
+	// Case 2: Inactivity comment posted AFTER lastActivity
+	commentAfter := baseTime.Add(2 * time.Hour)
+	comments := []*githubv39.IssueComment{
+		{
+			CreatedAt: &commentAfter,
+			Body:      &pauseBody,
+		},
+	}
+	if !hasInactivityComment(comments, baseTime) {
+		t.Errorf("Case 2 failed: expected true when pause comment is after lastActivity")
+	}
+
+	// Case 3: Inactivity comment posted BEFORE lastActivity (e.g. human commented afterwards)
+	humanTimeAfter := baseTime.Add(4 * time.Hour)
+	if hasInactivityComment(comments, humanTimeAfter) {
+		t.Errorf("Case 3 failed: expected false when pause comment is before lastActivity")
+	}
+
+	// Case 4: Other comments with different body
+	otherBody := "LGTM"
+	otherComments := []*githubv39.IssueComment{
+		{
+			CreatedAt: &commentAfter,
+			Body:      &otherBody,
+		},
+	}
+	if hasInactivityComment(otherComments, baseTime) {
+		t.Errorf("Case 4 failed: expected false for non-pause comment")
+	}
+}
+
 func TestIsReviewerBot(t *testing.T) {
 	loginReviewBot := "reviewbot-robot"
 	userReviewBot := &githubv39.User{Login: &loginReviewBot}

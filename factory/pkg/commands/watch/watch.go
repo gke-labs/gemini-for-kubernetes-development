@@ -1221,6 +1221,11 @@ func (w *Watcher) Run(ctx context.Context) error {
 					klog.Errorf("Failed to fetch full PR #%d: %v", num, err)
 					continue
 				}
+				if hasStopLabel(pr.Labels, triggerLabel) {
+					klog.Infof("Skipping PR #%d because it has the stop label ('overseer/stop' or '%s/stop')", num, triggerLabel)
+					removePendingTasksForNumber(incomingDir, num)
+					continue
+				}
 
 				// Verify PR Author: Only process PRs created by any bot in the pool
 				author := pr.GetUser().GetLogin()
@@ -1238,7 +1243,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 
 				// Sync labels from referenced parent issues to the PR
 				syncReferencedIssueLabels(ctx, ghClient, w.Repo.Owner, w.Repo.Repo, pr, prIssue)
-				if hasStopLabel(prIssue.Labels, triggerLabel) {
+				if hasStopLabel(prIssue.Labels, triggerLabel) || hasStopLabel(pr.Labels, triggerLabel) {
 					klog.Infof("Skipping PR #%d after label sync because it has the stop label ('overseer/stop' or '%s/stop')", num, triggerLabel)
 					removePendingTasksForNumber(incomingDir, num)
 					continue
@@ -1289,8 +1294,10 @@ func (w *Watcher) Run(ctx context.Context) error {
 						if w.DryRun {
 							fmt.Printf("[DRYRUN] Would pause automated processing on PR #%d and apply label '%s' due to inactivity since %v\n", num, stopLabel, lastActivity)
 						} else {
-							klog.Infof("Pausing automated processing on PR #%d and applying label '%s' due to inactivity since %v", num, stopLabel, lastActivity)
-							addGitHubComment(ctx, ghClient, w.Repo.Owner, w.Repo.Repo, num, fmt.Sprintf("🤖 AI Factory has paused automated processing on this pull request due to a period of inactivity with no human comments (inactive for %s). I have applied the `%s` label.\n\nTo resume automated processing, please remove the `%s` label from this pull request and add a new comment/review.", w.PRInactivityTimeout, stopLabel, stopLabel))
+							if !hasInactivityComment(comments, lastActivity) {
+								klog.Infof("Pausing automated processing on PR #%d and applying label '%s' due to inactivity since %v", num, stopLabel, lastActivity)
+								addGitHubComment(ctx, ghClient, w.Repo.Owner, w.Repo.Repo, num, fmt.Sprintf("🤖 AI Factory has paused automated processing on this pull request due to a period of inactivity with no human comments (inactive for %s). I have applied the `%s` label.\n\nTo resume automated processing, please remove the `%s` label from this pull request and add a new comment/review.", w.PRInactivityTimeout, stopLabel, stopLabel))
+							}
 							if _, _, err := ghClient.Issues.AddLabelsToIssue(ctx, w.Repo.Owner, w.Repo.Repo, num, []string{stopLabel}); err != nil {
 								klog.Errorf("Failed to add stop label '%s' to PR #%d: %v", stopLabel, num, err)
 							}
@@ -3500,12 +3507,6 @@ func getLastPRActivityTime(pr *githubv39.PullRequest, comments []*githubv39.Issu
 			if c.GetCreatedAt().After(lastActivity) {
 				lastActivity = c.GetCreatedAt()
 			}
-		} else {
-			if strings.Contains(c.GetBody(), "paused automated processing on this pull request due to a period of inactivity") {
-				if c.GetCreatedAt().After(lastActivity) {
-					lastActivity = c.GetCreatedAt()
-				}
-			}
 		}
 	}
 
@@ -3529,4 +3530,15 @@ func getLastPRActivityTime(pr *githubv39.PullRequest, comments []*githubv39.Issu
 	}
 
 	return lastActivity
+}
+
+func hasInactivityComment(comments []*githubv39.IssueComment, lastActivity time.Time) bool {
+	for _, c := range comments {
+		if strings.Contains(c.GetBody(), "paused automated processing on this pull request due to a period of inactivity") {
+			if c.GetCreatedAt().After(lastActivity) {
+				return true
+			}
+		}
+	}
+	return false
 }
