@@ -460,6 +460,20 @@ completedAt: "2026-07-23T14:00:00Z"
 	if state.lastIteratedSHA != "efgh456" {
 		t.Errorf("expected lastIteratedSHA to be 'efgh456', got '%s'", state.lastIteratedSHA)
 	}
+
+	// 5. Test that a Failed task is ignored
+	failedTaskPath := filepath.Join(tempDir, "task-pr-123-comments-failed.yaml")
+	failedTaskData := []byte(`
+type: pr-comments
+status: Failed
+completedAt: "2026-07-23T20:00:00Z"
+`)
+	_ = os.WriteFile(failedTaskPath, failedTaskData, 0644)
+	fInfoFailed, _ := os.Stat(failedTaskPath)
+	state = parseProcessedPRTask(failedTaskPath, "task-pr-123-comments", fInfoFailed, state)
+	if !state.lastCommentAddressedTime.Equal(expectedCommentTime) {
+		t.Errorf("expected lastCommentAddressedTime to remain unchanged when task is Failed, got %v", state.lastCommentAddressedTime)
+	}
 }
 
 func TestGetLastPRActivityTime(t *testing.T) {
