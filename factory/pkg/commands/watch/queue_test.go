@@ -1,12 +1,14 @@
 package watch
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	githubv39 "github.com/google/go-github/v39/github"
+	"sigs.k8s.io/yaml"
 )
 
 func TestParseProcessedPRTask(t *testing.T) {
@@ -414,5 +416,34 @@ func TestLoadProcessedTasks(t *testing.T) {
 		t.Errorf("expected pr 200 in loaded prs")
 	} else if state.lastCommentAddressedSHA != "sha200" {
 		t.Errorf("expected lastCommentAddressedSHA 'sha200', got %q", state.lastCommentAddressedSHA)
+	}
+}
+
+func TestWorkflowCooldownCompletedAt(t *testing.T) {
+	tempDir := t.TempDir()
+	processedPath := filepath.Join(tempDir, "task-workflow-test-issue-1.yaml")
+
+	// Task completed 5 hours ago
+	completedAt := time.Now().Add(-5 * time.Hour)
+	taskYAML := fmt.Sprintf("completedAt: %s\n", completedAt.Format(time.RFC3339Nano))
+	if err := os.WriteFile(processedPath, []byte(taskYAML), 0644); err != nil {
+		t.Fatalf("Failed to write test task yaml: %v", err)
+	}
+
+	info, err := os.Stat(processedPath)
+	if err != nil {
+		t.Fatalf("Stat failed: %v", err)
+	}
+
+	lastRunTime := info.ModTime()
+	if data, err := os.ReadFile(processedPath); err == nil {
+		var q QueueTask
+		if err := yaml.Unmarshal(data, &q); err == nil && !q.CompletedAt.IsZero() {
+			lastRunTime = q.CompletedAt
+		}
+	}
+
+	if !lastRunTime.Equal(completedAt) {
+		t.Fatalf("lastRunTime = %v, want %v", lastRunTime, completedAt)
 	}
 }
