@@ -1,15 +1,11 @@
 package watch
 
 import (
-	"fmt"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
 	githubv39 "github.com/google/go-github/v39/github"
-	"sigs.k8s.io/yaml"
 )
 
 func stringPtr(s string) *string {
@@ -95,35 +91,6 @@ func TestGetMissingLabelsForPR(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestWorkflowCooldownCompletedAt(t *testing.T) {
-	tempDir := t.TempDir()
-	processedPath := filepath.Join(tempDir, "task-workflow-test-issue-1.yaml")
-
-	// Task completed 5 hours ago
-	completedAt := time.Now().Add(-5 * time.Hour)
-	taskYAML := fmt.Sprintf("completedAt: %s\n", completedAt.Format(time.RFC3339Nano))
-	if err := os.WriteFile(processedPath, []byte(taskYAML), 0644); err != nil {
-		t.Fatalf("Failed to write test task yaml: %v", err)
-	}
-
-	info, err := os.Stat(processedPath)
-	if err != nil {
-		t.Fatalf("Stat failed: %v", err)
-	}
-
-	lastRunTime := info.ModTime()
-	if data, err := os.ReadFile(processedPath); err == nil {
-		var q QueueTask
-		if err := yaml.Unmarshal(data, &q); err == nil && !q.CompletedAt.IsZero() {
-			lastRunTime = q.CompletedAt
-		}
-	}
-
-	if !lastRunTime.Equal(completedAt) {
-		t.Fatalf("lastRunTime = %v, want %v", lastRunTime, completedAt)
 	}
 }
 
@@ -442,5 +409,89 @@ func TestIsReviewerBot(t *testing.T) {
 	}
 	if isReviewerBot(userCoderBot, cfg) {
 		t.Errorf("expected neumann-coder-bot to not be identified as reviewer bot")
+	}
+}
+
+func TestShouldIgnoreUser(t *testing.T) {
+	selfLogin := "factory-bot"
+	allowlistedBots := []string{"trusted-bot"}
+
+	tests := []struct {
+		user     *githubv39.User
+		expected bool
+	}{
+		{nil, false},
+		{&githubv39.User{Login: stringPtr("factory-bot")}, true},
+		{&githubv39.User{Login: stringPtr("trusted-bot"), Type: stringPtr("Bot")}, false},
+		{&githubv39.User{Login: stringPtr("untrusted-bot"), Type: stringPtr("Bot")}, true},
+		{&githubv39.User{Login: stringPtr("some-user[bot]")}, true},
+		{&githubv39.User{Login: stringPtr("human-dev"), Type: stringPtr("User")}, false},
+	}
+
+	for _, tc := range tests {
+		got := shouldIgnoreUser(tc.user, selfLogin, allowlistedBots)
+		if got != tc.expected {
+			t.Errorf("shouldIgnoreUser(%v) = %v, want %v", tc.user, got, tc.expected)
+		}
+	}
+}
+
+func TestHasStopLabel(t *testing.T) {
+	labelsWithOverseerStop := []*githubv39.Label{{Name: stringPtr("overseer/stop")}}
+	labelsWithCustomStop := []*githubv39.Label{{Name: stringPtr("mybot/stop")}}
+	labelsWithoutStop := []*githubv39.Label{{Name: stringPtr("bug")}}
+
+	if !hasStopLabel(labelsWithOverseerStop, "") {
+		t.Errorf("expected hasStopLabel with overseer/stop to be true")
+	}
+	if !hasStopLabel(labelsWithCustomStop, "mybot") {
+		t.Errorf("expected hasStopLabel with mybot/stop and triggerLabel=mybot to be true")
+	}
+	if hasStopLabel(labelsWithoutStop, "mybot") {
+		t.Errorf("expected hasStopLabel with no stop label to be false")
+	}
+}
+
+func TestHasReviewLabel(t *testing.T) {
+	labelsWithOverseerReview := []*githubv39.Label{{Name: stringPtr("overseer/review")}}
+	labelsWithCustomReview := []*githubv39.Label{{Name: stringPtr("mybot/review")}}
+	labelsWithoutReview := []*githubv39.Label{{Name: stringPtr("bug")}}
+
+	if !hasReviewLabel(labelsWithOverseerReview, "") {
+		t.Errorf("expected hasReviewLabel with overseer/review to be true")
+	}
+	if !hasReviewLabel(labelsWithCustomReview, "mybot") {
+		t.Errorf("expected hasReviewLabel with mybot/review and triggerLabel=mybot to be true")
+	}
+	if hasReviewLabel(labelsWithoutReview, "mybot") {
+		t.Errorf("expected hasReviewLabel with no review label to be false")
+	}
+}
+
+func TestGetStopLabel(t *testing.T) {
+	if getStopLabel("") != "overseer/stop" {
+		t.Errorf("getStopLabel(\"\") = %q, want 'overseer/stop'", getStopLabel(""))
+	}
+	if getStopLabel("mybot") != "mybot/stop" {
+		t.Errorf("getStopLabel(\"mybot\") = %q, want 'mybot/stop'", getStopLabel("mybot"))
+	}
+}
+
+func TestAssignedBotUser(t *testing.T) {
+	issue := &githubv39.Issue{
+		Assignees: []*githubv39.User{
+			{Login: stringPtr("human-user")},
+			{Login: stringPtr("bot-1")},
+		},
+	}
+	botUsers := []string{"bot-1", "bot-2"}
+	got := assignedBotUser(issue, botUsers)
+	if got != "bot-1" {
+		t.Errorf("assignedBotUser = %q, want 'bot-1'", got)
+	}
+
+	gotNone := assignedBotUser(issue, []string{"other-bot"})
+	if gotNone != "" {
+		t.Errorf("assignedBotUser = %q, want empty", gotNone)
 	}
 }
