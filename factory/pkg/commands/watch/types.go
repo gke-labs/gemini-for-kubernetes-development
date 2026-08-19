@@ -6,7 +6,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
 	githubv39 "github.com/google/go-github/v39/github"
 )
 
@@ -62,6 +64,24 @@ type Flags struct {
 type Watcher struct {
 	common.RootFlags
 	Flags
+
+	cfg              *config.FactoryConfig
+	triggerLabel     string
+	ghClient         *githubv39.Client
+	kubeClient       *clients.KubernetesClient
+	githubLogin      string
+	targetAssignee   string
+	allBotUsers      []string
+	incomingDir      string
+	processingDir    string
+	processedDir     string
+	processingLogDir string
+	processedLogDir  string
+	processedIssues  map[int]time.Time
+	processedPRs     map[int]prWatchState
+	state            *watchState
+	timeoutChan      <-chan time.Time
+	wg               sync.WaitGroup
 }
 
 func NewWatcher(rootFlags common.RootFlags, flags Flags) *Watcher {
