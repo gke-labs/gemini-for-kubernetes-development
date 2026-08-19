@@ -187,19 +187,19 @@ func TestResolveSandboxName(t *testing.T) {
 	}
 
 	// Issue task name
-	name := w.resolveSandboxName(context.Background(), nil, nil, "issue-fix", 10)
+	name := w.resolveSandboxName(context.Background(), "issue-fix", 10)
 	if name != "fix-test-repo-10" {
 		t.Errorf("expected 'fix-test-repo-10', got %q", name)
 	}
 
 	// Chore task name fallback
-	name = w.resolveSandboxName(context.Background(), nil, nil, "agent-chore", 10)
+	name = w.resolveSandboxName(context.Background(), "agent-chore", 10)
 	if name != "fix-test-repo-10" {
 		t.Errorf("expected 'fix-test-repo-10', got %q", name)
 	}
 
 	// PR task name fallback
-	name = w.resolveSandboxName(context.Background(), nil, nil, "pr-review", 55)
+	name = w.resolveSandboxName(context.Background(), "pr-review", 55)
 	if name != "factory-pr-55" {
 		t.Errorf("expected 'factory-pr-55', got %q", name)
 	}

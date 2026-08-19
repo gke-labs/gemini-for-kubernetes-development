@@ -41,8 +41,8 @@ func shouldRunChoreAt(schedule string, lastRun time.Time, now time.Time) bool {
 	return !nextRun.After(now)
 }
 
-func scanChores(ctx context.Context, ghClient *githubv39.Client, owner, repo, incomingDir, processingDir, queueDir string, dryRun bool) {
-	_, directoryContent, _, err := ghClient.Repositories.GetContents(ctx, owner, repo, ".agents", &githubv39.RepositoryContentGetOptions{})
+func (w *Watcher) scanChores(ctx context.Context) {
+	_, directoryContent, _, err := w.ghClient.Repositories.GetContents(ctx, w.Repo.Owner, w.Repo.Repo, ".agents", &githubv39.RepositoryContentGetOptions{})
 	if err != nil {
 		if !strings.Contains(err.Error(), "404") {
 			klog.Errorf("Failed to list .agents directory: %v", err)
@@ -50,7 +50,7 @@ func scanChores(ctx context.Context, ghClient *githubv39.Client, owner, repo, in
 		return
 	}
 
-	choresStatePath := filepath.Join(queueDir, "chores_state.json")
+	choresStatePath := filepath.Join(w.QueueDir, "chores_state.json")
 	choresState := make(map[string]ChoreRunState)
 	if data, err := os.ReadFile(choresStatePath); err == nil {
 		_ = json.Unmarshal(data, &choresState)
@@ -60,7 +60,7 @@ func scanChores(ctx context.Context, ghClient *githubv39.Client, owner, repo, in
 
 	for _, file := range directoryContent {
 		if file.GetType() == "file" && (strings.HasSuffix(file.GetName(), ".yaml") || strings.HasSuffix(file.GetName(), ".md")) {
-			fileContent, _, _, err := ghClient.Repositories.GetContents(ctx, owner, repo, ".agents/"+file.GetName(), &githubv39.RepositoryContentGetOptions{})
+			fileContent, _, _, err := w.ghClient.Repositories.GetContents(ctx, w.Repo.Owner, w.Repo.Repo, ".agents/"+file.GetName(), &githubv39.RepositoryContentGetOptions{})
 			if err != nil {
 				klog.Errorf("Failed to fetch chore file %s: %v", file.GetName(), err)
 				continue
@@ -82,7 +82,7 @@ func scanChores(ctx context.Context, ghClient *githubv39.Client, owner, repo, in
 			}
 
 			filename := fmt.Sprintf("task-chore-%s.yaml", common.Slugify(agentDef.Name))
-			if taskExists(incomingDir, processingDir, filename) {
+			if taskExists(w.incomingDir, w.processingDir, filename) {
 				continue
 			}
 
@@ -90,7 +90,7 @@ func scanChores(ctx context.Context, ghClient *githubv39.Client, owner, repo, in
 			if shouldRunChore(agentDef.Schedule, lastRun) {
 				task := &QueueTask{
 					Type:       "agent-chore",
-					URL:        fmt.Sprintf("https://github.com/%s/%s", owner, repo),
+					URL:        fmt.Sprintf("https://github.com/%s/%s", w.Repo.Owner, w.Repo.Repo),
 					Priority:   "medium",
 					Phase:      4,
 					CreatedAt:  time.Now(),
@@ -99,23 +99,23 @@ func scanChores(ctx context.Context, ghClient *githubv39.Client, owner, repo, in
 					AgentFile:  ".agents/" + file.GetName(),
 				}
 
-				if dryRun {
+				if w.DryRun {
 					fmt.Printf("[DRYRUN] Would queue chore agent task %s (schedule: %s)\n", agentDef.Name, agentDef.Schedule)
 				} else {
 					fmt.Printf("Queueing chore agent task %s...\n", agentDef.Name)
-					if err := writeTaskAtomically(incomingDir, filename, task); err != nil {
+					if err := writeTaskAtomically(w.incomingDir, filename, task); err != nil {
 						klog.Errorf("Failed to queue chore task %s: %v", agentDef.Name, err)
 					} else {
 						choresState[agentDef.Name] = ChoreRunState{LastRun: time.Now()}
 						stateChanged = true
-						writeTaskJournalEvent(queueDir, filename, task, "Created", 0)
+						writeTaskJournalEvent(w.QueueDir, filename, task, "Created", 0)
 					}
 				}
 			}
 		}
 	}
 
-	if stateChanged && !dryRun {
+	if stateChanged && !w.DryRun {
 		if data, err := json.MarshalIndent(choresState, "", "  "); err == nil {
 			_ = os.WriteFile(choresStatePath, data, 0644)
 		}

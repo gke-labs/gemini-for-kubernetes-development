@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
@@ -326,14 +325,14 @@ func shouldAutoReviewPR(ctx context.Context, ghClient *githubv39.Client, owner, 
 	return false
 }
 
-func (w *Watcher) selectUserForTask(ctx context.Context, ghClient *githubv39.Client, kubeClient *clients.KubernetesClient, cfg *config.FactoryConfig, taskType string, prNum int) (string, error) {
-	if cfg == nil || len(cfg.Roles) == 0 {
+func (w *Watcher) selectUserForTask(ctx context.Context, taskType string, prNum int) (string, error) {
+	if w.cfg == nil || len(w.cfg.Roles) == 0 {
 		return "", nil // default fallback to factory-user
 	}
 
 	// 1. Determine role for task type
 	role := ""
-	for roleName, rCfg := range cfg.Roles {
+	for roleName, rCfg := range w.cfg.Roles {
 		for _, t := range rCfg.Tasks {
 			if strings.EqualFold(t, taskType) {
 				role = roleName
@@ -348,19 +347,19 @@ func (w *Watcher) selectUserForTask(ctx context.Context, ghClient *githubv39.Cli
 	if role == "" {
 		switch {
 		case taskType == "agent-chore":
-			if rCfg, ok := cfg.Roles["agent"]; ok && len(rCfg.Users) > 0 {
+			if rCfg, ok := w.cfg.Roles["agent"]; ok && len(rCfg.Users) > 0 {
 				role = "agent"
 			} else {
 				role = "coder"
 			}
 		case isPRTask(taskType):
 			if prNum > 0 {
-				pr, _, err := ghClient.PullRequests.Get(ctx, w.Repo.Owner, w.Repo.Repo, prNum)
+				pr, _, err := w.ghClient.PullRequests.Get(ctx, w.Repo.Owner, w.Repo.Repo, prNum)
 				if err == nil {
 					author := pr.GetUser().GetLogin()
 					if author != "" {
 						inAgentPool := false
-						if agentCfg, ok := cfg.Roles["agent"]; ok {
+						if agentCfg, ok := w.cfg.Roles["agent"]; ok {
 							for _, u := range agentCfg.Users {
 								if strings.EqualFold(u, author) {
 									inAgentPool = true
@@ -388,11 +387,11 @@ func (w *Watcher) selectUserForTask(ctx context.Context, ghClient *githubv39.Cli
 		}
 	}
 
-	roleCfg, exists := cfg.Roles[role]
+	roleCfg, exists := w.cfg.Roles[role]
 	if !exists || len(roleCfg.Users) == 0 {
 		if role == "agent" {
 			role = "coder"
-			roleCfg, exists = cfg.Roles[role]
+			roleCfg, exists = w.cfg.Roles[role]
 		}
 		if !exists || len(roleCfg.Users) == 0 {
 			return "", nil // default fallback
@@ -412,8 +411,8 @@ func (w *Watcher) selectUserForTask(ctx context.Context, ghClient *githubv39.Cli
 				sandboxName = fmt.Sprintf("wf-issue-%d", prNum)
 			}
 
-			if sandboxName != "" && kubeClient != nil {
-				sb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(w.Namespace).Get(ctx, sandboxName, metav1.GetOptions{})
+			if sandboxName != "" && w.kubeClient != nil {
+				sb, err := w.kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(w.Namespace).Get(ctx, sandboxName, metav1.GetOptions{})
 				if err == nil {
 					labels := sb.GetLabels()
 					if user, ok := labels["factory.gemini.google.com/user"]; ok && user != "" {
@@ -433,7 +432,7 @@ func (w *Watcher) selectUserForTask(ctx context.Context, ghClient *githubv39.Cli
 			}
 
 			// B. Fallback to GitHub issue assignee check
-			issue, _, err := ghClient.Issues.Get(ctx, w.Repo.Owner, w.Repo.Repo, prNum)
+			issue, _, err := w.ghClient.Issues.Get(ctx, w.Repo.Owner, w.Repo.Repo, prNum)
 			if err == nil {
 				for _, a := range issue.Assignees {
 					assignee := a.GetLogin()
@@ -460,7 +459,7 @@ func (w *Watcher) selectUserForTask(ctx context.Context, ghClient *githubv39.Cli
 	}
 
 	if prNum > 0 {
-		pr, _, err := ghClient.PullRequests.Get(ctx, w.Repo.Owner, w.Repo.Repo, prNum)
+		pr, _, err := w.ghClient.PullRequests.Get(ctx, w.Repo.Owner, w.Repo.Repo, prNum)
 		if err != nil {
 			return "", fmt.Errorf("fetching PR details: %w", err)
 		}
@@ -470,7 +469,7 @@ func (w *Watcher) selectUserForTask(ctx context.Context, ghClient *githubv39.Cli
 		}
 
 		if taskType == "pr-review" {
-			reviewerRoleCfg, ok := cfg.Roles["reviewer"]
+			reviewerRoleCfg, ok := w.cfg.Roles["reviewer"]
 			if ok && len(reviewerRoleCfg.Users) > 0 {
 				idx := time.Now().UnixNano() % int64(len(reviewerRoleCfg.Users))
 				return reviewerRoleCfg.Users[idx], nil
