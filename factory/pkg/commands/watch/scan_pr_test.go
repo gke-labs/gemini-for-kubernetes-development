@@ -58,7 +58,16 @@ func TestProcessPRs_Filters(t *testing.T) {
 	processedPRs := make(map[int]prWatchState)
 	allBotUsers := []string{"bot1"}
 
-	w.processPRs(context.Background(), nil, nil, cfg, prIssues, processedPRs, allBotUsers, "bot1", incomingDir, processingDir, processedDir, "factory")
+	w.cfg = cfg
+	w.processedPRs = processedPRs
+	w.allBotUsers = allBotUsers
+	w.githubLogin = "bot1"
+	w.incomingDir = incomingDir
+	w.processingDir = processingDir
+	w.processedDir = processedDir
+	w.triggerLabel = "factory"
+
+	w.processPRs(context.Background(), prIssues)
 
 	// Verify stop task was removed
 	if _, err := os.Stat(stopTaskFile); !os.IsNotExist(err) {
@@ -73,5 +82,5 @@ func TestProcessPRs_DisabledMode(t *testing.T) {
 		},
 	}
 	// Should return immediately without doing any operations
-	w.processPRs(context.Background(), nil, nil, nil, nil, nil, nil, "", "", "", "", "")
+	w.processPRs(context.Background(), nil)
 }

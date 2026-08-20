@@ -14,17 +14,16 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/usagereport"
-	githubv39 "github.com/google/go-github/v39/github"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
 )
 
-func (w *Watcher) resolveSandboxName(ctx context.Context, kubeClient *clients.KubernetesClient, ghClient *githubv39.Client, taskType string, num int) string {
+func (w *Watcher) resolveSandboxName(ctx context.Context, taskType string, num int) string {
 	if taskType == "issue-fix" || taskType == "agent-chore" {
 		wfName := fmt.Sprintf("wf-issue-%d", num)
-		if kubeClient != nil {
-			if _, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(w.Namespace).Get(ctx, wfName, metav1.GetOptions{}); err == nil {
+		if w.kubeClient != nil {
+			if _, err := w.kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(w.Namespace).Get(ctx, wfName, metav1.GetOptions{}); err == nil {
 				return wfName
 			}
 		}
@@ -32,29 +31,29 @@ func (w *Watcher) resolveSandboxName(ctx context.Context, kubeClient *clients.Ku
 	}
 
 	// For PR tasks, check if there's an existing sandbox with the PR label
-	if kubeClient != nil {
+	if w.kubeClient != nil {
 		listOpts := metav1.ListOptions{
 			LabelSelector: fmt.Sprintf("factory.gemini.google.com/pr=%d", num),
 		}
-		sbs, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(w.Namespace).List(ctx, listOpts)
+		sbs, err := w.kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(w.Namespace).List(ctx, listOpts)
 		if err == nil && len(sbs.Items) > 0 {
 			return sbs.Items[0].GetName()
 		}
 	}
 
 	// If no sandbox is labeled with this PR, try to find a matching issue sandbox by checking referenced issues
-	if kubeClient != nil && ghClient != nil && w.Repo.Owner != "" {
-		pr, _, err := ghClient.PullRequests.Get(ctx, w.Repo.Owner, w.Repo.Repo, num)
+	if w.kubeClient != nil && w.ghClient != nil && w.Repo.Owner != "" {
+		pr, _, err := w.ghClient.PullRequests.Get(ctx, w.Repo.Owner, w.Repo.Repo, num)
 		if err == nil {
 			// Find referenced issue numbers
 			referencedIssues := common.GetReferencedIssues(pr)
 			for issueNum := range referencedIssues {
 				// Check if there is an active/existing sandbox for this issue
 				issueSandboxName := fmt.Sprintf("fix-%s-%d", w.Repo.Repo, issueNum)
-				if _, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(w.Namespace).Get(ctx, issueSandboxName, metav1.GetOptions{}); err == nil {
+				if _, err := w.kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(w.Namespace).Get(ctx, issueSandboxName, metav1.GetOptions{}); err == nil {
 					// We found a matching issue sandbox! Alias it to the PR now for future lookups.
 					klog.Infof("Self-healing: Found matching issue sandbox '%s' for PR #%d. Aliasing sandbox to PR...", issueSandboxName, num)
-					if aliasErr := factorysandbox.AliasSandboxToPR(ctx, kubeClient, w.Namespace, issueSandboxName, num, pr.GetHTMLURL()); aliasErr != nil {
+					if aliasErr := factorysandbox.AliasSandboxToPR(ctx, w.kubeClient, w.Namespace, issueSandboxName, num, pr.GetHTMLURL()); aliasErr != nil {
 						klog.Warningf("Failed to dynamically alias sandbox '%s' to PR #%d: %v", issueSandboxName, num, aliasErr)
 					}
 					return issueSandboxName
@@ -258,17 +257,17 @@ func countRunningSandboxTasks(ctx context.Context, kubeClient *clients.Kubernete
 	return count, nil
 }
 
-func reconcileRunningSandboxes(ctx context.Context, kubeClient *clients.KubernetesClient, namespace string) {
-	if kubeClient == nil {
+func (w *Watcher) reconcileRunningSandboxes(ctx context.Context) {
+	if w.kubeClient == nil {
 		return
 	}
-	list, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
+	list, err := w.kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(w.Namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		klog.Warningf("Failed to list sandboxes during reconcileRunningSandboxes: %v", err)
 		return
 	}
 	for _, item := range list.Items {
-		if factorysandbox.IsCurrentSandbox(ctx, kubeClient, &item, namespace) {
+		if factorysandbox.IsCurrentSandbox(ctx, w.kubeClient, &item, w.Namespace) {
 			continue
 		}
 		annotations := item.GetAnnotations()
@@ -278,7 +277,7 @@ func reconcileRunningSandboxes(ctx context.Context, kubeClient *clients.Kubernet
 		}
 		if state == "" || strings.EqualFold(state, "Running") {
 			sbName := item.GetName()
-			running, err := isSandboxTaskRunning(ctx, kubeClient, namespace, sbName)
+			running, err := isSandboxTaskRunning(ctx, w.kubeClient, w.Namespace, sbName)
 			if err != nil {
 				klog.Warningf("Failed to check status of running sandbox %s during reconcile: %v", sbName, err)
 			} else if !running {
@@ -288,13 +287,13 @@ func reconcileRunningSandboxes(ctx context.Context, kubeClient *clients.Kubernet
 	}
 }
 
-func cleanupClosedPRSandboxes(ctx context.Context, ghClient *githubv39.Client, kubeClient *clients.KubernetesClient, owner, repo, namespace string, openPRs map[int]bool, dryRun bool) error {
-	list, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
+func (w *Watcher) cleanupClosedPRSandboxes(ctx context.Context, openPRs map[int]bool) error {
+	list, err := w.kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(w.Namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return fmt.Errorf("listing sandboxes for cleanup: %w", err)
 	}
 
-	manager := k8s.NewManager(kubeClient)
+	manager := k8s.NewManager(w.kubeClient)
 	for _, item := range list.Items {
 		name := item.GetName()
 		if !strings.HasPrefix(name, "factory-pr-") {
@@ -312,7 +311,7 @@ func cleanupClosedPRSandboxes(ctx context.Context, ghClient *githubv39.Client, k
 		}
 
 		// Fetch the PR state from GitHub for unconfirmed PRs
-		pr, _, err := ghClient.PullRequests.Get(ctx, owner, repo, num)
+		pr, _, err := w.ghClient.PullRequests.Get(ctx, w.Repo.Owner, w.Repo.Repo, num)
 		if err != nil {
 			klog.Warningf("Failed to fetch PR #%d for sandbox cleanup check: %v", num, err)
 			continue
@@ -321,16 +320,16 @@ func cleanupClosedPRSandboxes(ctx context.Context, ghClient *githubv39.Client, k
 		// Check if it is closed or merged
 		if pr.GetState() == "closed" {
 			klog.Infof("Pull Request #%d is closed/merged. Deleting corresponding sandbox '%s'...", num, name)
-			if dryRun {
+			if w.DryRun {
 				fmt.Printf("[DRYRUN] Would delete sandbox '%s' for closed PR #%d\n", name, num)
 				continue
 			}
-			meta := common.SandboxUsageMeta(&item, owner+"/"+repo)
+			meta := common.SandboxUsageMeta(&item, w.Repo.Owner+"/"+w.Repo.Repo)
 			meta.PR = num
 			meta.Issues = common.ReferencedIssueList(pr)
-			usagereport.HarvestSandbox(ctx, namespace, name, meta)
-			usagereport.ReportPRSubject(ctx, owner+"/"+repo, pr)
-			if err := manager.DeleteSandbox(ctx, namespace, name); err != nil {
+			usagereport.HarvestSandbox(ctx, w.Namespace, name, meta)
+			usagereport.ReportPRSubject(ctx, w.Repo.Owner+"/"+w.Repo.Repo, pr)
+			if err := manager.DeleteSandbox(ctx, w.Namespace, name); err != nil {
 				klog.Errorf("Failed to delete sandbox '%s' for closed PR #%d: %v", name, num, err)
 			}
 		}
@@ -338,13 +337,13 @@ func cleanupClosedPRSandboxes(ctx context.Context, ghClient *githubv39.Client, k
 	return nil
 }
 
-func cleanupClosedIssueSandboxes(ctx context.Context, ghClient *githubv39.Client, kubeClient *clients.KubernetesClient, owner, repo, namespace string, openIssues map[int]bool, dryRun bool) error {
-	list, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
+func (w *Watcher) cleanupClosedIssueSandboxes(ctx context.Context, openIssues map[int]bool) error {
+	list, err := w.kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(w.Namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return fmt.Errorf("listing sandboxes for issue cleanup: %w", err)
 	}
 
-	manager := k8s.NewManager(kubeClient)
+	manager := k8s.NewManager(w.kubeClient)
 	for _, item := range list.Items {
 		name := item.GetName()
 		var num int
@@ -377,7 +376,7 @@ func cleanupClosedIssueSandboxes(ctx context.Context, ghClient *githubv39.Client
 		}
 
 		// Fetch the issue state from GitHub for unconfirmed issues
-		issue, _, err := ghClient.Issues.Get(ctx, owner, repo, num)
+		issue, _, err := w.ghClient.Issues.Get(ctx, w.Repo.Owner, w.Repo.Repo, num)
 		if err != nil {
 			klog.Warningf("Failed to fetch issue #%d for sandbox cleanup check: %v", num, err)
 			continue
@@ -386,18 +385,18 @@ func cleanupClosedIssueSandboxes(ctx context.Context, ghClient *githubv39.Client
 		// Check if the issue is closed
 		if issue.GetState() == "closed" {
 			klog.Infof("Issue #%d is closed. Deleting corresponding sandbox '%s'...", num, name)
-			if dryRun {
+			if w.DryRun {
 				fmt.Printf("[DRYRUN] Would delete sandbox '%s' for closed issue #%d\n", name, num)
 				continue
 			}
-			meta := common.SandboxUsageMeta(&item, owner+"/"+repo)
+			meta := common.SandboxUsageMeta(&item, w.Repo.Owner+"/"+w.Repo.Repo)
 			meta.Issue = num
-			usagereport.HarvestSandbox(ctx, namespace, name, meta)
-			usagereport.ReportIssueSubject(ctx, owner+"/"+repo, issue)
+			usagereport.HarvestSandbox(ctx, w.Namespace, name, meta)
+			usagereport.ReportIssueSubject(ctx, w.Repo.Owner+"/"+w.Repo.Repo, issue)
 			if strings.HasPrefix(name, "wf-issue-") {
-				usagereport.PostWorkflowSummaryIfNeeded(ctx, ghClient, owner, repo, num)
+				usagereport.PostWorkflowSummaryIfNeeded(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, num)
 			}
-			if err := manager.DeleteSandbox(ctx, namespace, name); err != nil {
+			if err := manager.DeleteSandbox(ctx, w.Namespace, name); err != nil {
 				klog.Errorf("Failed to delete sandbox '%s' for closed issue #%d: %v", name, num, err)
 			}
 		}
@@ -405,26 +404,26 @@ func cleanupClosedIssueSandboxes(ctx context.Context, ghClient *githubv39.Client
 	return nil
 }
 
-func cleanupStaleIdleSandboxes(ctx context.Context, kubeClient *clients.KubernetesClient, repoFullName string, namespace string, ageStr string, dryRun bool) error {
-	if kubeClient == nil {
+func (w *Watcher) cleanupStaleIdleSandboxes(ctx context.Context) error {
+	if w.kubeClient == nil {
 		return nil
 	}
 
-	evictionAge, err := parseEvictionAge(ageStr)
+	evictionAge, err := parseEvictionAge(w.SandboxEvictionAge)
 	if err != nil {
 		return fmt.Errorf("parsing sandbox eviction age: %w", err)
 	}
 
-	list, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
+	list, err := w.kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(w.Namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return fmt.Errorf("listing sandboxes for idle cleanup: %w", err)
 	}
 
-	manager := k8s.NewManager(kubeClient)
+	manager := k8s.NewManager(w.kubeClient)
 	now := time.Now()
 	for _, item := range list.Items {
 		name := item.GetName()
-		if factorysandbox.IsCurrentSandbox(ctx, kubeClient, &item, namespace) {
+		if factorysandbox.IsCurrentSandbox(ctx, w.kubeClient, &item, w.Namespace) {
 			continue
 		}
 		creationTime := item.GetCreationTimestamp().Time
@@ -433,21 +432,21 @@ func cleanupStaleIdleSandboxes(ctx context.Context, kubeClient *clients.Kubernet
 		}
 
 		if now.Sub(creationTime) > evictionAge {
-			running, err := isSandboxTaskRunning(ctx, kubeClient, namespace, name)
+			running, err := isSandboxTaskRunning(ctx, w.kubeClient, w.Namespace, name)
 			if err != nil {
 				klog.Errorf("Failed to check if sandbox %s is running: %v", name, err)
 				continue
 			}
 
 			if !running {
-				klog.Infof("Sandbox '%s' has been idle and is older than configured eviction age %s (created: %v). Evicting...", name, ageStr, creationTime)
-				if dryRun {
+				klog.Infof("Sandbox '%s' has been idle and is older than configured eviction age %s (created: %v). Evicting...", name, w.SandboxEvictionAge, creationTime)
+				if w.DryRun {
 					fmt.Printf("[DRYRUN] Would evict stale/idle sandbox '%s'\n", name)
 					continue
 				}
 
-				usagereport.HarvestSandbox(ctx, namespace, name, common.SandboxUsageMeta(&item, repoFullName))
-				if err := manager.DeleteSandbox(ctx, namespace, name); err != nil {
+				usagereport.HarvestSandbox(ctx, w.Namespace, name, common.SandboxUsageMeta(&item, w.Repo.Owner+"/"+w.Repo.Repo))
+				if err := manager.DeleteSandbox(ctx, w.Namespace, name); err != nil {
 					klog.Errorf("Failed to delete stale/idle sandbox '%s': %v", name, err)
 				}
 			}

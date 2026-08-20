@@ -160,7 +160,7 @@ func (w *Watcher) init(ctx context.Context) error {
 	w.processedIssues, w.processedPRs = loadProcessedTasks(w.processedDir)
 
 	// Recovery: Handle any leftover tasks in processingDir on startup
-	w.recoverStuckTasks(ctx, w.kubeClient, w.ghClient, w.incomingDir, w.processingDir, w.processedDir)
+	w.recoverStuckTasks(ctx)
 
 	w.state = &watchState{
 		referencedIssues: make(map[int]bool),
@@ -199,7 +199,7 @@ func (w *Watcher) checkRepo(ctx context.Context) {
 		}
 	}()
 
-	reconcileRunningSandboxes(ctx, w.kubeClient, w.Namespace)
+	w.reconcileRunningSandboxes(ctx)
 
 	if isDoNotProcess(w.QueueDir) {
 		runningCount, err := countRunningSandboxTasks(ctx, w.kubeClient, w.Namespace)
@@ -290,27 +290,27 @@ func (w *Watcher) checkRepo(ctx context.Context) {
 		}
 
 		// Scan issues labeled with triggerLabel (handling pagination)
-		slowIssues, err := w.scanSlowIssues(ctx, w.ghClient, w.triggerLabel)
+		slowIssues, err := w.scanSlowIssues(ctx)
 		if err != nil {
 			klog.Errorf("Failed to list issues for label %s: %v", w.triggerLabel, err)
 		}
 
 		// Process slow issues
 		if w.IssueMode != "disabled" {
-			w.queueIssueTasks(ctx, w.ghClient, w.kubeClient, w.cfg, slowIssues, w.processedIssues, refIssues, w.targetAssignee, w.allBotUsers, w.incomingDir, w.processingDir, w.processedDir, w.triggerLabel)
+			w.queueIssueTasks(ctx, slowIssues, refIssues)
 		}
 
 		// Process Pull Requests (Scanner)
-		prIssues, err := w.scanPRIssues(ctx, w.ghClient, w.allBotUsers, w.triggerLabel)
+		prIssues, err := w.scanPRIssues(ctx)
 		if err != nil {
 			klog.Errorf("Failed to scan PR issues: %v", err)
 		}
 
-		w.processPRs(ctx, w.ghClient, w.kubeClient, w.cfg, prIssues, w.processedPRs, w.allBotUsers, w.githubLogin, w.incomingDir, w.processingDir, w.processedDir, w.triggerLabel)
+		w.processPRs(ctx, prIssues)
 
 		// Scan chores
 		if (w.Mode == "all" || w.Mode == "scan" || w.Mode == "scan-pr") && w.ChoresMode != "disabled" {
-			scanChores(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, w.incomingDir, w.processingDir, w.QueueDir, w.DryRun)
+			w.scanChores(ctx)
 		}
 
 		openPRMap := make(map[int]bool)
@@ -327,17 +327,17 @@ func (w *Watcher) checkRepo(ctx context.Context) {
 		}
 
 		// Clean up sandboxes of merged or closed PRs
-		if err := cleanupClosedPRSandboxes(ctx, w.ghClient, w.kubeClient, w.Repo.Owner, w.Repo.Repo, w.Namespace, openPRMap, w.DryRun); err != nil {
+		if err := w.cleanupClosedPRSandboxes(ctx, openPRMap); err != nil {
 			klog.Errorf("Failed to clean up closed PR sandboxes: %v", err)
 		}
 
 		// Clean up sandboxes of closed issues
-		if err := cleanupClosedIssueSandboxes(ctx, w.ghClient, w.kubeClient, w.Repo.Owner, w.Repo.Repo, w.Namespace, openIssueMap, w.DryRun); err != nil {
+		if err := w.cleanupClosedIssueSandboxes(ctx, openIssueMap); err != nil {
 			klog.Errorf("Failed to clean up closed issue sandboxes: %v", err)
 		}
 
 		// Clean up stale idle sandboxes older than eviction age (defaults to 1 week)
-		if err := cleanupStaleIdleSandboxes(ctx, w.kubeClient, w.Repo.Owner+"/"+w.Repo.Repo, w.Namespace, w.SandboxEvictionAge, w.DryRun); err != nil {
+		if err := w.cleanupStaleIdleSandboxes(ctx); err != nil {
 			klog.Errorf("Failed to clean up stale idle sandboxes: %v", err)
 		}
 
@@ -351,19 +351,19 @@ func (w *Watcher) checkRepo(ctx context.Context) {
 	// 2. Fast Issue Scan Cycle
 	if runIssueScan {
 		klog.Infof("Running fast issue scan cycle...")
-		issues, fastPRIssues, err := w.scanFastIssues(ctx, w.ghClient, w.allBotUsers, w.githubLogin, w.triggerLabel, w.targetAssignee)
+		issues, fastPRIssues, err := w.scanFastIssues(ctx)
 		if err != nil {
 			klog.Errorf("Failed to scan fast issues: %v", err)
 		}
 
 		if w.IssueMode != "disabled" {
-			w.queueIssueTasks(ctx, w.ghClient, w.kubeClient, w.cfg, issues, w.processedIssues, refIssues, w.targetAssignee, w.allBotUsers, w.incomingDir, w.processingDir, w.processedDir, w.triggerLabel)
+			w.queueIssueTasks(ctx, issues, refIssues)
 		}
 
 		// Process PRs assigned to the bot in the fast cycle
 		if len(fastPRIssues) > 0 {
 			klog.Infof("Processing %d assigned PRs in fast cycle...", len(fastPRIssues))
-			w.processPRs(ctx, w.ghClient, w.kubeClient, w.cfg, fastPRIssues, w.processedPRs, w.allBotUsers, w.githubLogin, w.incomingDir, w.processingDir, w.processedDir, w.triggerLabel)
+			w.processPRs(ctx, fastPRIssues)
 		}
 
 		w.state.mu.Lock()
@@ -373,7 +373,7 @@ func (w *Watcher) checkRepo(ctx context.Context) {
 
 	// 3. Runner Mode execution
 	if runRunner {
-		w.runTasks(ctx, w.ghClient, w.kubeClient, w.cfg, w.targetAssignee, w.githubLogin, w.incomingDir, w.processingDir, w.processedDir, w.processingLogDir, w.processedLogDir, w.triggerLabel, &w.wg)
+		w.runTasks(ctx)
 		w.state.mu.Lock()
 		w.state.lastRunnerRun = now
 		w.state.mu.Unlock()

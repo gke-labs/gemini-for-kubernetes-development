@@ -7,13 +7,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
-	githubv39 "github.com/google/go-github/v39/github"
 	"gopkg.in/yaml.v3"
 	"k8s.io/klog/v2"
 )
@@ -78,25 +74,25 @@ func (w *Watcher) buildTaskCommandArgs(t *QueueTask, selectedUser string) []stri
 	return args
 }
 
-func (w *Watcher) runSingleTask(ctx context.Context, ghClient *githubv39.Client, kubeClient *clients.KubernetesClient, cfg *config.FactoryConfig, taskFilename string, t *QueueTask, targetAssignee, githubLogin, processingDir, processedDir, processingLogDir, processedLogDir string) {
+func (w *Watcher) runSingleTask(ctx context.Context, taskFilename string, t *QueueTask) {
 	fmt.Printf("Starting task %s (Type: %s, URL: %s)...\n", taskFilename, t.Type, t.URL)
 	startTime := time.Now()
 
 	taskCtx, taskCancel := context.WithTimeout(ctx, w.TaskTimeout)
 	defer taskCancel()
 
-	processingPath := filepath.Join(processingDir, taskFilename)
-	processedPath := filepath.Join(processedDir, taskFilename)
+	processingPath := filepath.Join(w.processingDir, taskFilename)
+	processedPath := filepath.Join(w.processedDir, taskFilename)
 
-	if t.Number > 0 && ghClient != nil {
+	if t.Number > 0 && w.ghClient != nil {
 		if (t.Type == "issue-fix" || t.Type == "agent-chore") && t.Assignee != "" {
 			klog.Infof("Assigning issue #%d to %s as claimed", t.Number, t.Assignee)
-			if _, _, err := ghClient.Issues.AddAssignees(ctx, w.Repo.Owner, w.Repo.Repo, t.Number, []string{t.Assignee}); err != nil {
+			if _, _, err := w.ghClient.Issues.AddAssignees(ctx, w.Repo.Owner, w.Repo.Repo, t.Number, []string{t.Assignee}); err != nil {
 				klog.Errorf("Failed to assign issue #%d to %s: %v", t.Number, t.Assignee, err)
 			}
-			if t.Assignee != targetAssignee {
-				if _, _, err := ghClient.Issues.RemoveAssignees(ctx, w.Repo.Owner, w.Repo.Repo, t.Number, []string{targetAssignee}); err != nil {
-					klog.Errorf("Failed to remove watcher bot %s from issue #%d: %v", targetAssignee, t.Number, err)
+			if t.Assignee != w.targetAssignee {
+				if _, _, err := w.ghClient.Issues.RemoveAssignees(ctx, w.Repo.Owner, w.Repo.Repo, t.Number, []string{w.targetAssignee}); err != nil {
+					klog.Errorf("Failed to remove watcher bot %s from issue #%d: %v", w.targetAssignee, t.Number, err)
 				}
 			}
 		}
@@ -116,21 +112,21 @@ func (w *Watcher) runSingleTask(ctx context.Context, ghClient *githubv39.Client,
 				commentBody = "🤖 AI Factory started reviewing this pull request in a sandbox."
 			}
 			if commentBody != "" {
-				addGitHubComment(ctx, ghClient, w.Repo.Owner, w.Repo.Repo, t.Number, commentBody)
+				addGitHubComment(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, t.Number, commentBody)
 			}
 		}
 	}
 
 	selectedUser := t.Assignee
 	var sUserErr error
-	if selectedUser == "" || (isPRTask(t.Type) && strings.EqualFold(selectedUser, targetAssignee)) {
-		selectedUser, sUserErr = w.selectUserForTask(ctx, ghClient, kubeClient, cfg, t.Type, t.Number)
+	if selectedUser == "" || (isPRTask(t.Type) && strings.EqualFold(selectedUser, w.targetAssignee)) {
+		selectedUser, sUserErr = w.selectUserForTask(ctx, t.Type, t.Number)
 	}
 	if sUserErr != nil {
 		klog.Errorf("Failed to select user for task %s: %v", taskFilename, sUserErr)
 		t.Status = "Failed"
 		t.Error = sUserErr.Error()
-		_ = writeTaskAtomically(processingDir, taskFilename, t)
+		_ = writeTaskAtomically(w.processingDir, taskFilename, t)
 		writeTaskJournalEvent(w.QueueDir, taskFilename, t, "Failed", 0)
 		_ = os.Rename(processingPath, processedPath)
 		return
@@ -151,8 +147,8 @@ func (w *Watcher) runSingleTask(ctx context.Context, ghClient *githubv39.Client,
 	cmd := exec.CommandContext(taskCtx, executable, args...)
 
 	logFilename := strings.TrimSuffix(taskFilename, ".yaml") + ".log"
-	processingLogPath := filepath.Join(processingLogDir, logFilename)
-	processedLogPath := filepath.Join(processedLogDir, logFilename)
+	processingLogPath := filepath.Join(w.processingLogDir, logFilename)
+	processedLogPath := filepath.Join(w.processedLogDir, logFilename)
 
 	logFile, err := os.OpenFile(processingLogPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
@@ -172,8 +168,8 @@ func (w *Watcher) runSingleTask(ctx context.Context, ghClient *githubv39.Client,
 		t.Error = taskErr.Error()
 		t.CompletedAt = time.Now()
 		writeTaskJournalEvent(w.QueueDir, taskFilename, t, "Failed", duration)
-		if t.Type == "pr-comments" && cfg != nil {
-			resolvePRCommentReactions(ctx, ghClient, w.Repo.Owner, w.Repo.Repo, t.Number, "confused", cfg.AllowlistedBots, githubLogin)
+		if t.Type == "pr-comments" && w.cfg != nil {
+			resolvePRCommentReactions(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, t.Number, "confused", w.cfg.AllowlistedBots, w.githubLogin)
 		}
 
 		// Force clean up sandbox if the task timed out
@@ -193,12 +189,12 @@ func (w *Watcher) runSingleTask(ctx context.Context, ghClient *githubv39.Client,
 					sandboxName = fmt.Sprintf("agent-%s-%d", w.Repo.Repo, t.Number)
 				}
 			case "pr-investigate", "pr-comments", "pr-iterate", "pr-review":
-				sandboxName = w.resolveSandboxName(ctx, kubeClient, ghClient, t.Type, t.Number)
+				sandboxName = w.resolveSandboxName(ctx, t.Type, t.Number)
 			}
 
-			if sandboxName != "" && kubeClient != nil {
+			if sandboxName != "" && w.kubeClient != nil {
 				klog.Warningf("Task %s timed out after %s! Force cleaning up sandbox '%s'...", taskFilename, w.TaskTimeout, sandboxName)
-				manager := k8s.NewManager(kubeClient)
+				manager := k8s.NewManager(w.kubeClient)
 				if err := manager.DeleteSandbox(ctx, w.Namespace, sandboxName); err != nil {
 					klog.Errorf("Failed to delete sandbox '%s' on timeout: %v", sandboxName, err)
 				}
@@ -209,12 +205,12 @@ func (w *Watcher) runSingleTask(ctx context.Context, ghClient *githubv39.Client,
 		t.Status = "Completed"
 		t.CompletedAt = time.Now()
 		writeTaskJournalEvent(w.QueueDir, taskFilename, t, "Completed", duration)
-		if t.Type == "pr-comments" && cfg != nil {
-			resolvePRCommentReactions(ctx, ghClient, w.Repo.Owner, w.Repo.Repo, t.Number, "+1", cfg.AllowlistedBots, githubLogin)
+		if t.Type == "pr-comments" && w.cfg != nil {
+			resolvePRCommentReactions(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, t.Number, "+1", w.cfg.AllowlistedBots, w.githubLogin)
 		}
 	}
 
-	_ = writeTaskAtomically(processingDir, taskFilename, t)
+	_ = writeTaskAtomically(w.processingDir, taskFilename, t)
 	if err := os.Rename(processingPath, processedPath); err != nil {
 		klog.Errorf("Failed to move task %s to processed directory: %v", taskFilename, err)
 	}
@@ -225,8 +221,8 @@ func (w *Watcher) runSingleTask(ctx context.Context, ghClient *githubv39.Client,
 	}
 }
 
-func (w *Watcher) runTasks(ctx context.Context, ghClient *githubv39.Client, kubeClient *clients.KubernetesClient, cfg *config.FactoryConfig, targetAssignee, githubLogin, incomingDir, processingDir, processedDir, processingLogDir, processedLogDir, triggerLabel string, wg *sync.WaitGroup) {
-	incomingFiles, err := os.ReadDir(incomingDir)
+func (w *Watcher) runTasks(ctx context.Context) {
+	incomingFiles, err := os.ReadDir(w.incomingDir)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			klog.Errorf("Failed to read incoming queue directory: %v", err)
@@ -242,7 +238,7 @@ func (w *Watcher) runTasks(ctx context.Context, ghClient *githubv39.Client, kube
 		}
 
 		filename := f.Name()
-		filePath := filepath.Join(incomingDir, filename)
+		filePath := filepath.Join(w.incomingDir, filename)
 		data, err := os.ReadFile(filePath)
 		if err != nil {
 			klog.Errorf("Failed to read task file %s: %v", filename, err)
@@ -272,7 +268,7 @@ func (w *Watcher) runTasks(ctx context.Context, ghClient *githubv39.Client, kube
 
 	tasksToRun := sortTasksFairly(taskItems)
 
-	processingFiles, _ := os.ReadDir(processingDir)
+	processingFiles, _ := os.ReadDir(w.processingDir)
 	filesInProcessing := 0
 	for _, f := range processingFiles {
 		if !f.IsDir() && strings.HasPrefix(f.Name(), "task-") && strings.HasSuffix(f.Name(), ".yaml") {
@@ -293,7 +289,7 @@ func (w *Watcher) runTasks(ctx context.Context, ghClient *githubv39.Client, kube
 			break
 		}
 
-		runningCount, err := countRunningSandboxTasks(ctx, kubeClient, w.Namespace)
+		runningCount, err := countRunningSandboxTasks(ctx, w.kubeClient, w.Namespace)
 		if err != nil {
 			klog.Errorf("Failed to count running sandbox tasks: %v", err)
 		}
@@ -307,13 +303,13 @@ func (w *Watcher) runTasks(ctx context.Context, ghClient *githubv39.Client, kube
 		filename := item.filename
 		task := item.task
 
-		sandboxName := w.resolveSandboxName(ctx, kubeClient, ghClient, task.Type, task.Number)
+		sandboxName := w.resolveSandboxName(ctx, task.Type, task.Number)
 		if activeSandboxesInCycle[sandboxName] {
 			klog.Infof("Skipping task %s because sandbox %s is already scheduled to run a task in this cycle.", filename, sandboxName)
 			continue
 		}
 
-		running, err := isSandboxTaskRunning(ctx, kubeClient, w.Namespace, sandboxName)
+		running, err := isSandboxTaskRunning(ctx, w.kubeClient, w.Namespace, sandboxName)
 		if err != nil {
 			klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
 			continue
@@ -323,23 +319,23 @@ func (w *Watcher) runTasks(ctx context.Context, ghClient *githubv39.Client, kube
 			continue
 		}
 
-		if task.Number > 0 && !w.DryRun && ghClient != nil {
-			if issueOrPR, _, err := ghClient.Issues.Get(ctx, w.Repo.Owner, w.Repo.Repo, task.Number); err == nil && issueOrPR != nil {
-				if hasStopLabel(issueOrPR.Labels, triggerLabel) {
-					klog.Infof("Skipping task %s and removing from incoming because target #%d has the stop label ('overseer/stop' or '%s/stop')", filename, task.Number, triggerLabel)
-					_ = os.Remove(filepath.Join(incomingDir, filename))
+		if task.Number > 0 && !w.DryRun && w.ghClient != nil {
+			if issueOrPR, _, err := w.ghClient.Issues.Get(ctx, w.Repo.Owner, w.Repo.Repo, task.Number); err == nil && issueOrPR != nil {
+				if hasStopLabel(issueOrPR.Labels, w.triggerLabel) {
+					klog.Infof("Skipping task %s and removing from incoming because target #%d has the stop label ('overseer/stop' or '%s/stop')", filename, task.Number, w.triggerLabel)
+					_ = os.Remove(filepath.Join(w.incomingDir, filename))
 					continue
 				}
 				if issueOrPR.GetState() == "closed" {
 					klog.Infof("Skipping task %s and removing from incoming because target #%d is closed", filename, task.Number)
-					_ = os.Remove(filepath.Join(incomingDir, filename))
+					_ = os.Remove(filepath.Join(w.incomingDir, filename))
 					continue
 				}
 			}
 		}
 
 		if task.Type != "agent-chore" && task.Recovered {
-			completed, err := isSandboxTaskCompleted(ctx, kubeClient, w.Namespace, sandboxName, task.Type)
+			completed, err := isSandboxTaskCompleted(ctx, w.kubeClient, w.Namespace, sandboxName, task.Type)
 			if err != nil {
 				klog.Errorf("Failed to check if sandbox %s completed task: %v", sandboxName, err)
 				continue
@@ -349,11 +345,11 @@ func (w *Watcher) runTasks(ctx context.Context, ghClient *githubv39.Client, kube
 				if w.DryRun {
 					continue
 				}
-				incomingPath := filepath.Join(incomingDir, filename)
-				processedPath := filepath.Join(processedDir, filename)
+				incomingPath := filepath.Join(w.incomingDir, filename)
+				processedPath := filepath.Join(w.processedDir, filename)
 				task.Status = "Completed"
 				task.CompletedAt = time.Now()
-				_ = writeTaskAtomically(incomingDir, filename, task)
+				_ = writeTaskAtomically(w.incomingDir, filename, task)
 				writeTaskJournalEvent(w.QueueDir, filename, task, "Completed", 0)
 				if err := os.Rename(incomingPath, processedPath); err != nil {
 					klog.Errorf("Failed to move completed task %s to processed: %v", filename, err)
@@ -362,8 +358,8 @@ func (w *Watcher) runTasks(ctx context.Context, ghClient *githubv39.Client, kube
 			}
 		}
 
-		incomingPath := filepath.Join(incomingDir, filename)
-		processingPath := filepath.Join(processingDir, filename)
+		incomingPath := filepath.Join(w.incomingDir, filename)
+		processingPath := filepath.Join(w.processingDir, filename)
 
 		if w.DryRun {
 			fmt.Printf("[DRYRUN] Would process task %s (Type: %s, URL: %s)\n", filename, task.Type, task.URL)
@@ -380,16 +376,16 @@ func (w *Watcher) runTasks(ctx context.Context, ghClient *githubv39.Client, kube
 
 		activeSandboxesInCycle[sandboxName] = true
 		task.Status = "Running"
-		_ = writeTaskAtomically(processingDir, filename, task)
+		_ = writeTaskAtomically(w.processingDir, filename, task)
 		writeTaskJournalEvent(w.QueueDir, filename, task, "Started", 0)
 
 		actionsTaken++
 		filesInProcessing++
 
-		wg.Add(1)
+		w.wg.Add(1)
 		go func(taskFilename string, t *QueueTask) {
-			defer wg.Done()
-			w.runSingleTask(ctx, ghClient, kubeClient, cfg, taskFilename, t, targetAssignee, githubLogin, processingDir, processedDir, processingLogDir, processedLogDir)
+			defer w.wg.Done()
+			w.runSingleTask(ctx, taskFilename, t)
 		}(filename, task)
 	}
 }

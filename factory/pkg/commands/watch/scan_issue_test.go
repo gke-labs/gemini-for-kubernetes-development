@@ -66,7 +66,16 @@ func TestQueueIssueTasks_Filters(t *testing.T) {
 		refIssueNum: true, // Should be skipped
 	}
 
-	w.queueIssueTasks(context.Background(), nil, nil, cfg, issues, processedIssues, refIssues, "bot1", []string{"bot1"}, incomingDir, processingDir, processedDir, "factory")
+	w.cfg = cfg
+	w.incomingDir = incomingDir
+	w.processingDir = processingDir
+	w.processedDir = processedDir
+	w.processedIssues = processedIssues
+	w.targetAssignee = "bot1"
+	w.allBotUsers = []string{"bot1"}
+	w.triggerLabel = "factory"
+
+	w.queueIssueTasks(context.Background(), issues, refIssues)
 
 	// Verify stop task was removed
 	if _, err := os.Stat(stopTaskFile); !os.IsNotExist(err) {

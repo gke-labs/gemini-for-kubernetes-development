@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	githubv39 "github.com/google/go-github/v39/github"
 	"gopkg.in/yaml.v3"
 	"k8s.io/klog/v2"
@@ -385,34 +384,34 @@ func loadProcessedTasks(processedDir string) (map[int]time.Time, map[int]prWatch
 	return processedIssues, processedPRs
 }
 
-func (w *Watcher) recoverStuckTasks(ctx context.Context, kubeClient *clients.KubernetesClient, ghClient *githubv39.Client, incomingDir, processingDir, processedDir string) {
-	files, err := os.ReadDir(processingDir)
+func (w *Watcher) recoverStuckTasks(ctx context.Context) {
+	files, err := os.ReadDir(w.processingDir)
 	if err != nil {
 		return
 	}
 	for _, f := range files {
 		if !f.IsDir() && strings.HasPrefix(f.Name(), "task-") && strings.HasSuffix(f.Name(), ".yaml") {
-			processingPath := filepath.Join(processingDir, f.Name())
+			processingPath := filepath.Join(w.processingDir, f.Name())
 
 			// Read the task
 			if data, err := os.ReadFile(processingPath); err == nil {
 				var t QueueTask
 				if err := yaml.Unmarshal(data, &t); err == nil {
-					sandboxName := w.resolveSandboxName(ctx, kubeClient, ghClient, t.Type, t.Number)
-					if kubeClient != nil && sandboxName != "" {
-						running, err := isSandboxTaskRunning(ctx, kubeClient, w.Namespace, sandboxName)
+					sandboxName := w.resolveSandboxName(ctx, t.Type, t.Number)
+					if w.kubeClient != nil && sandboxName != "" {
+						running, err := isSandboxTaskRunning(ctx, w.kubeClient, w.Namespace, sandboxName)
 						if err == nil && running {
 							klog.Infof("Task %s is still actively running in sandbox %s. Leaving in processing.", f.Name(), sandboxName)
 							continue
 						}
-						completed, err := isSandboxTaskCompleted(ctx, kubeClient, w.Namespace, sandboxName, t.Type)
+						completed, err := isSandboxTaskCompleted(ctx, w.kubeClient, w.Namespace, sandboxName, t.Type)
 						if err == nil && completed {
 							klog.Infof("Task %s already completed in sandbox %s. Moving from processing to processed.", f.Name(), sandboxName)
 							t.Status = "Completed"
 							if t.CompletedAt.IsZero() {
 								t.CompletedAt = time.Now()
 							}
-							if err := writeTaskAtomically(processedDir, f.Name(), &t); err == nil {
+							if err := writeTaskAtomically(w.processedDir, f.Name(), &t); err == nil {
 								_ = os.Remove(processingPath)
 								writeTaskJournalEvent(w.QueueDir, f.Name(), &t, "Completed", 0)
 								continue
@@ -422,7 +421,7 @@ func (w *Watcher) recoverStuckTasks(ctx context.Context, kubeClient *clients.Kub
 
 					t.Status = "Pending"
 					t.Recovered = true
-					if err := writeTaskAtomically(incomingDir, f.Name(), &t); err == nil {
+					if err := writeTaskAtomically(w.incomingDir, f.Name(), &t); err == nil {
 						_ = os.Remove(processingPath)
 						klog.Infof("Recovered stuck task %s from processing to incoming", f.Name())
 						continue
@@ -431,7 +430,7 @@ func (w *Watcher) recoverStuckTasks(ctx context.Context, kubeClient *clients.Kub
 			}
 
 			// Fallback to simple rename if parsing fails
-			incomingPath := filepath.Join(incomingDir, f.Name())
+			incomingPath := filepath.Join(w.incomingDir, f.Name())
 			if err := os.Rename(processingPath, incomingPath); err == nil {
 				klog.Infof("Recovered stuck task %s (fallback rename) to incoming", f.Name())
 			} else {

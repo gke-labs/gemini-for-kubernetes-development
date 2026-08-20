@@ -8,24 +8,22 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
 	githubv39 "github.com/google/go-github/v39/github"
 	"gopkg.in/yaml.v3"
 	"k8s.io/klog/v2"
 )
 
-func (w *Watcher) queueIssueTasks(ctx context.Context, ghClient *githubv39.Client, kubeClient *clients.KubernetesClient, cfg *config.FactoryConfig, issues []*githubv39.Issue, processedIssues map[int]time.Time, refIssues map[int]bool, targetAssignee string, allBotUsers []string, incomingDir, processingDir, processedDir string, triggerLabel string) {
+func (w *Watcher) queueIssueTasks(ctx context.Context, issues []*githubv39.Issue, refIssues map[int]bool) {
 	klog.Infof("queueIssueTasks called with %d issues", len(issues))
 	for _, issue := range issues {
 		num := issue.GetNumber()
-		if cfg != nil && cfg.MinNumber > 0 && num < cfg.MinNumber {
+		if w.cfg != nil && w.cfg.MinNumber > 0 && num < w.cfg.MinNumber {
 			continue
 		}
-		if hasStopLabel(issue.Labels, triggerLabel) {
-			klog.Infof("Skipping issue #%d because it has the stop label ('overseer/stop' or '%s/stop')", num, triggerLabel)
-			removePendingTasksForNumber(incomingDir, num)
+		if hasStopLabel(issue.Labels, w.triggerLabel) {
+			klog.Infof("Skipping issue #%d because it has the stop label ('overseer/stop' or '%s/stop')", num, w.triggerLabel)
+			removePendingTasksForNumber(w.incomingDir, num)
 			continue
 		}
 		if refIssues[num] {
@@ -37,7 +35,7 @@ func (w *Watcher) queueIssueTasks(ctx context.Context, ghClient *githubv39.Clien
 		workflowPath := common.FindWorkflowPath(issue.GetBody())
 		workflowName := ""
 		if workflowPath != "" {
-			if common.IsWorkflowDefinition(ctx, ghClient, w.Repo.Owner, w.Repo.Repo, workflowPath) {
+			if common.IsWorkflowDefinition(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, workflowPath) {
 				filenameOnly := filepath.Base(workflowPath)
 				ext := filepath.Ext(filenameOnly)
 				workflowName = strings.TrimSuffix(filenameOnly, ext)
@@ -53,12 +51,12 @@ func (w *Watcher) queueIssueTasks(ctx context.Context, ghClient *githubv39.Clien
 			filename = fmt.Sprintf("task-workflow-%s-issue-%d.yaml", common.Slugify(workflowName), num)
 		}
 
-		if taskExists(incomingDir, processingDir, filename) {
+		if taskExists(w.incomingDir, w.processingDir, filename) {
 			continue
 		}
 
 		// Check if the workflow session already completed recently
-		processedPath := filepath.Join(processedDir, filename)
+		processedPath := filepath.Join(w.processedDir, filename)
 		if info, err := os.Stat(processedPath); err == nil {
 			lastRunTime := info.ModTime()
 			if data, err := os.ReadFile(processedPath); err == nil {
@@ -67,17 +65,17 @@ func (w *Watcher) queueIssueTasks(ctx context.Context, ghClient *githubv39.Clien
 					lastRunTime = t.CompletedAt
 				}
 			}
-			cooldown := common.GetWorkflowCooldown(ctx, ghClient, w.Repo.Owner, w.Repo.Repo, workflowPath)
+			cooldown := common.GetWorkflowCooldown(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, workflowPath)
 			if time.Since(lastRunTime) < cooldown {
 				continue
 			}
 		}
 
-		lastProcessed, ok := processedIssues[num]
+		lastProcessed, ok := w.processedIssues[num]
 		if !ok || issue.GetUpdatedAt().After(lastProcessed) || workflowName != "" {
 			// Skip KRM check for workflow triggers since they don't necessarily have linked code PRs
 			if workflowName == "" {
-				linked, err := hasLinkedPR(ctx, ghClient, w.Repo.Owner, w.Repo.Repo, num)
+				linked, err := hasLinkedPR(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, num)
 				if err != nil {
 					klog.Errorf("Failed to check linked PR for issue #%d: %v", num, err)
 					continue
@@ -92,7 +90,7 @@ func (w *Watcher) queueIssueTasks(ctx context.Context, ghClient *githubv39.Clien
 				sandboxName = fmt.Sprintf("wf-issue-%d", num)
 			}
 
-			running, err := isSandboxTaskRunning(ctx, kubeClient, w.Namespace, sandboxName)
+			running, err := isSandboxTaskRunning(ctx, w.kubeClient, w.Namespace, sandboxName)
 			if err != nil {
 				klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
 				continue
@@ -103,18 +101,18 @@ func (w *Watcher) queueIssueTasks(ctx context.Context, ghClient *githubv39.Clien
 
 			hasTriggerLabel := false
 			for _, label := range issue.Labels {
-				if strings.EqualFold(label.GetName(), triggerLabel) {
+				if strings.EqualFold(label.GetName(), w.triggerLabel) {
 					hasTriggerLabel = true
 					break
 				}
 			}
 			if !hasTriggerLabel {
 				if w.DryRun {
-					fmt.Printf("[DRYRUN] Would add label '%s' to issue #%d\n", triggerLabel, num)
+					fmt.Printf("[DRYRUN] Would add label '%s' to issue #%d\n", w.triggerLabel, num)
 				} else {
-					klog.Infof("Adding '%s' label to issue #%d", triggerLabel, num)
-					if _, _, err := ghClient.Issues.AddLabelsToIssue(ctx, w.Repo.Owner, w.Repo.Repo, num, []string{triggerLabel}); err != nil {
-						klog.Errorf("Failed to add label '%s' to issue #%d: %v", triggerLabel, num, err)
+					klog.Infof("Adding '%s' label to issue #%d", w.triggerLabel, num)
+					if _, _, err := w.ghClient.Issues.AddLabelsToIssue(ctx, w.Repo.Owner, w.Repo.Repo, num, []string{w.triggerLabel}); err != nil {
+						klog.Errorf("Failed to add label '%s' to issue #%d: %v", w.triggerLabel, num, err)
 					}
 				}
 			}
@@ -124,13 +122,13 @@ func (w *Watcher) queueIssueTasks(ctx context.Context, ghClient *githubv39.Clien
 				taskType = "agent-chore"
 			}
 
-			taskAssignee, err := w.selectUserForTask(ctx, ghClient, kubeClient, cfg, taskType, num)
+			taskAssignee, err := w.selectUserForTask(ctx, taskType, num)
 			if err != nil {
 				klog.Errorf("Failed to select user for issue #%d: %v", num, err)
-				taskAssignee = targetAssignee
+				taskAssignee = w.targetAssignee
 			}
 			if taskAssignee == "" {
-				taskAssignee = targetAssignee
+				taskAssignee = w.targetAssignee
 			}
 
 			issueURL := fmt.Sprintf("https://github.com/%s/%s/issues/%d", w.Repo.Owner, w.Repo.Repo, num)
@@ -175,8 +173,8 @@ func (w *Watcher) queueIssueTasks(ctx context.Context, ghClient *githubv39.Clien
 				} else {
 					fmt.Printf("Queueing fix task for issue #%d...\n", num)
 				}
-				processedIssues[num] = time.Now()
-				if err := writeTaskAtomically(incomingDir, filename, task); err != nil {
+				w.processedIssues[num] = time.Now()
+				if err := writeTaskAtomically(w.incomingDir, filename, task); err != nil {
 					klog.Errorf("Failed to queue task for issue #%d: %v", num, err)
 				} else {
 					writeTaskJournalEvent(w.QueueDir, filename, task, "Created", 0)
@@ -186,15 +184,15 @@ func (w *Watcher) queueIssueTasks(ctx context.Context, ghClient *githubv39.Clien
 	}
 }
 
-func (w *Watcher) scanSlowIssues(ctx context.Context, ghClient *githubv39.Client, triggerLabel string) ([]*githubv39.Issue, error) {
+func (w *Watcher) scanSlowIssues(ctx context.Context) ([]*githubv39.Issue, error) {
 	var slowIssues []*githubv39.Issue
 	opts := &githubv39.IssueListByRepoOptions{
-		Labels:      []string{triggerLabel},
+		Labels:      []string{w.triggerLabel},
 		State:       "open",
 		ListOptions: githubv39.ListOptions{PerPage: 100},
 	}
 	for {
-		pageIssues, resp, err := ghClient.Issues.ListByRepo(ctx, w.Repo.Owner, w.Repo.Repo, opts)
+		pageIssues, resp, err := w.ghClient.Issues.ListByRepo(ctx, w.Repo.Owner, w.Repo.Repo, opts)
 		if err != nil {
 			return slowIssues, err
 		}
@@ -211,14 +209,14 @@ func (w *Watcher) scanSlowIssues(ctx context.Context, ghClient *githubv39.Client
 	return slowIssues, nil
 }
 
-func (w *Watcher) scanFastIssues(ctx context.Context, ghClient *githubv39.Client, allBotUsers []string, githubLogin, triggerLabel, targetAssignee string) ([]*githubv39.Issue, []*githubv39.Issue, error) {
+func (w *Watcher) scanFastIssues(ctx context.Context) ([]*githubv39.Issue, []*githubv39.Issue, error) {
 	var allItems []*githubv39.Issue
 	limit := w.ScanLimit
 	if limit <= 0 {
 		limit = 30
 	}
 
-	for _, botUser := range allBotUsers {
+	for _, botUser := range w.allBotUsers {
 		opts1 := &githubv39.IssueListByRepoOptions{
 			Assignee:    botUser,
 			State:       "open",
@@ -226,7 +224,7 @@ func (w *Watcher) scanFastIssues(ctx context.Context, ghClient *githubv39.Client
 			Direction:   "desc",
 			ListOptions: githubv39.ListOptions{PerPage: limit},
 		}
-		issues1, _, err := ghClient.Issues.ListByRepo(ctx, w.Repo.Owner, w.Repo.Repo, opts1)
+		issues1, _, err := w.ghClient.Issues.ListByRepo(ctx, w.Repo.Owner, w.Repo.Repo, opts1)
 		if err != nil {
 			klog.Errorf("Failed to list issues for assignee %s: %v", botUser, err)
 		} else {
@@ -235,31 +233,31 @@ func (w *Watcher) scanFastIssues(ctx context.Context, ghClient *githubv39.Client
 		}
 	}
 
-	if githubLogin != "" {
+	if w.githubLogin != "" {
 		optsCreator := &githubv39.IssueListByRepoOptions{
-			Creator:     githubLogin,
+			Creator:     w.githubLogin,
 			State:       "open",
 			Sort:        "updated",
 			Direction:   "desc",
 			ListOptions: githubv39.ListOptions{PerPage: limit},
 		}
-		issuesCreator, _, err := ghClient.Issues.ListByRepo(ctx, w.Repo.Owner, w.Repo.Repo, optsCreator)
+		issuesCreator, _, err := w.ghClient.Issues.ListByRepo(ctx, w.Repo.Owner, w.Repo.Repo, optsCreator)
 		if err != nil {
-			klog.Errorf("Failed to list issues created by %s: %v", githubLogin, err)
+			klog.Errorf("Failed to list issues created by %s: %v", w.githubLogin, err)
 		} else {
-			klog.Infof("Fetched %d issues created by %s from GitHub API", len(issuesCreator), githubLogin)
+			klog.Infof("Fetched %d issues created by %s from GitHub API", len(issuesCreator), w.githubLogin)
 			for _, issue := range issuesCreator {
 				if issue.PullRequestLinks != nil {
 					continue
 				}
-				if hasStopLabel(issue.Labels, triggerLabel) {
-					klog.Infof("Skipping auto labeling/assigning issue #%d because it has the stop label ('overseer/stop' or '%s/stop')", issue.GetNumber(), triggerLabel)
+				if hasStopLabel(issue.Labels, w.triggerLabel) {
+					klog.Infof("Skipping auto labeling/assigning issue #%d because it has the stop label ('overseer/stop' or '%s/stop')", issue.GetNumber(), w.triggerLabel)
 					continue
 				}
 
 				hasTriggerLabel := false
 				for _, l := range issue.Labels {
-					if strings.EqualFold(l.GetName(), triggerLabel) {
+					if strings.EqualFold(l.GetName(), w.triggerLabel) {
 						hasTriggerLabel = true
 						break
 					}
@@ -267,7 +265,7 @@ func (w *Watcher) scanFastIssues(ctx context.Context, ghClient *githubv39.Client
 
 				hasAssignee := false
 				for _, u := range issue.Assignees {
-					for _, bot := range allBotUsers {
+					for _, bot := range w.allBotUsers {
 						if strings.EqualFold(u.GetLogin(), bot) {
 							hasAssignee = true
 							break
@@ -280,21 +278,21 @@ func (w *Watcher) scanFastIssues(ctx context.Context, ghClient *githubv39.Client
 
 				if !hasTriggerLabel || !hasAssignee {
 					if w.DryRun {
-						fmt.Printf("[DRYRUN] Would label issue #%d created by %s with '%s' and assign to %s\n", issue.GetNumber(), githubLogin, triggerLabel, targetAssignee)
+						fmt.Printf("[DRYRUN] Would label issue #%d created by %s with '%s' and assign to %s\n", issue.GetNumber(), w.githubLogin, w.triggerLabel, w.targetAssignee)
 					} else {
-						fmt.Printf("Labelling issue #%d created by %s with '%s' and assigning to %s...\n", issue.GetNumber(), githubLogin, triggerLabel, targetAssignee)
+						fmt.Printf("Labelling issue #%d created by %s with '%s' and assigning to %s...\n", issue.GetNumber(), w.githubLogin, w.triggerLabel, w.targetAssignee)
 						if !hasTriggerLabel {
-							if _, _, err := ghClient.Issues.AddLabelsToIssue(ctx, w.Repo.Owner, w.Repo.Repo, issue.GetNumber(), []string{triggerLabel}); err != nil {
-								klog.Errorf("Failed to add label '%s' to issue #%d: %v", triggerLabel, issue.GetNumber(), err)
+							if _, _, err := w.ghClient.Issues.AddLabelsToIssue(ctx, w.Repo.Owner, w.Repo.Repo, issue.GetNumber(), []string{w.triggerLabel}); err != nil {
+								klog.Errorf("Failed to add label '%s' to issue #%d: %v", w.triggerLabel, issue.GetNumber(), err)
 							} else {
-								issue.Labels = append(issue.Labels, &githubv39.Label{Name: githubv39.String(triggerLabel)})
+								issue.Labels = append(issue.Labels, &githubv39.Label{Name: githubv39.String(w.triggerLabel)})
 							}
 						}
-						if !hasAssignee && targetAssignee != "" {
-							if _, _, err := ghClient.Issues.AddAssignees(ctx, w.Repo.Owner, w.Repo.Repo, issue.GetNumber(), []string{targetAssignee}); err != nil {
-								klog.Errorf("Failed to assign %s to issue #%d: %v", targetAssignee, issue.GetNumber(), err)
+						if !hasAssignee && w.targetAssignee != "" {
+							if _, _, err := w.ghClient.Issues.AddAssignees(ctx, w.Repo.Owner, w.Repo.Repo, issue.GetNumber(), []string{w.targetAssignee}); err != nil {
+								klog.Errorf("Failed to assign %s to issue #%d: %v", w.targetAssignee, issue.GetNumber(), err)
 							} else {
-								issue.Assignees = append(issue.Assignees, &githubv39.User{Login: githubv39.String(targetAssignee)})
+								issue.Assignees = append(issue.Assignees, &githubv39.User{Login: githubv39.String(w.targetAssignee)})
 							}
 						}
 					}
