@@ -95,6 +95,19 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 			continue
 		}
 
+		// Check if PR is in merge queue
+		token, tokenErr := github.GetGithubToken(ctx)
+		if tokenErr == nil && token != "" {
+			inQueue, err := github.IsPRInMergeQueue(ctx, token, w.Repo.Owner, w.Repo.Repo, num)
+			if err != nil {
+				klog.Errorf("Failed to check if PR #%d is in merge queue: %v", num, err)
+			} else if inQueue {
+				klog.Infof("Skipping PR #%d because it is in the merge queue", num)
+				removePendingTasksForNumber(incomingDir, num)
+				continue
+			}
+		}
+
 		// Verify PR Author: Only process PRs created by any bot in the pool
 		author := pr.GetUser().GetLogin()
 		isBotPR := false
