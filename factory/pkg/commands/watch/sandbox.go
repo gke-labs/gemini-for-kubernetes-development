@@ -126,24 +126,7 @@ func isSandboxTaskRunning(ctx context.Context, kubeClient *clients.KubernetesCli
 			defer client.Close()
 			var buf bytes.Buffer
 			// Check exit_code of the latest task, and fallback to checking process viability via PID
-			checkCmd := `task_dir=$(ls -td /workspaces/tasks/* 2>/dev/null | head -1)
-			if [ -z "$task_dir" ]; then
-				echo "NOTASKS"
-			elif [ -s "$task_dir/exit_code" ]; then
-				cat "$task_dir/exit_code"
-			else
-				pid=$(cat "$task_dir/pid" 2>/dev/null)
-				if [ -n "$pid" ]; then
-					stat=$(ps -o stat= -p "$pid" 2>/dev/null | cut -c 1)
-					if ! kill -0 "$pid" 2>/dev/null || [ "$stat" = "Z" ]; then
-						echo "137" # Report SIGKILL/Crashed/Zombie fallback exit code
-					else
-						echo "RUNNING"
-					fi
-				else
-					echo "NOTASKS"
-				fi
-			fi`
+			checkCmd := envd.BuildCheckLatestTaskStatusCmd(envd.DefaultTasksDir)
 			if err := client.Exec(ctx, checkCmd, "/workspaces", nil, nil, &buf, nil); err == nil {
 				exitStr := strings.TrimSpace(buf.String())
 				if exitStr == "NOTASKS" {
