@@ -325,6 +325,71 @@ func shouldAutoReviewPR(ctx context.Context, ghClient *githubv39.Client, owner, 
 	return false
 }
 
+func getReadyForHumanLabel(triggerLabel string) string {
+	if triggerLabel != "" && !strings.EqualFold(triggerLabel, "overseer") {
+		return triggerLabel + "/ready-for-human"
+	}
+	return "overseer/ready-for-human"
+}
+
+func hasReadyForHumanLabel(labels []*githubv39.Label, triggerLabel string) bool {
+	readyLabels := []string{"overseer/ready-for-human"}
+	if triggerLabel != "" && !strings.EqualFold(triggerLabel, "overseer") {
+		readyLabels = append(readyLabels, triggerLabel+"/ready-for-human")
+	}
+	for _, label := range labels {
+		for _, ready := range readyLabels {
+			if strings.EqualFold(label.GetName(), ready) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func hasCompletedBotReviewOnHead(reviews []*githubv39.PullRequestReview, headSHA string, lastCommitTime time.Time, cfg *config.FactoryConfig) bool {
+	var latestReview *githubv39.PullRequestReview
+	for _, r := range reviews {
+		if isReviewerBot(r.GetUser(), cfg) && (r.GetSubmittedAt().After(lastCommitTime) || r.GetCommitID() == headSHA) {
+			if latestReview == nil || r.GetSubmittedAt().After(latestReview.GetSubmittedAt()) {
+				latestReview = r
+			}
+		}
+	}
+	if latestReview == nil {
+		return false
+	}
+	return latestReview.GetState() != "CHANGES_REQUESTED"
+}
+
+func (w *Watcher) reconcileReadyForHumanLabel(ctx context.Context, num int, prIssue *githubv39.Issue, isReady bool, headSHA string) {
+	if w.ghClient == nil || prIssue == nil {
+		return
+	}
+	readyLabel := getReadyForHumanLabel(w.triggerLabel)
+	hasLabel := hasReadyForHumanLabel(prIssue.Labels, w.triggerLabel)
+
+	if isReady && !hasLabel {
+		if w.DryRun {
+			fmt.Printf("[DRYRUN] Would add label '%s' to PR #%d (passed review on SHA %s)\n", readyLabel, num, headSHA)
+		} else {
+			klog.Infof("PR #%d passed automated review on SHA %s. Adding label '%s'.", num, headSHA, readyLabel)
+			if _, _, err := w.ghClient.Issues.AddLabelsToIssue(ctx, w.Repo.Owner, w.Repo.Repo, num, []string{readyLabel}); err != nil {
+				klog.Errorf("Failed to add label '%s' to PR #%d: %v", readyLabel, num, err)
+			}
+		}
+	} else if !isReady && hasLabel {
+		if w.DryRun {
+			fmt.Printf("[DRYRUN] Would remove label '%s' from PR #%d\n", readyLabel, num)
+		} else {
+			klog.Infof("PR #%d is no longer ready for human review. Removing label '%s'.", num, readyLabel)
+			if _, err := w.ghClient.Issues.RemoveLabelForIssue(ctx, w.Repo.Owner, w.Repo.Repo, num, readyLabel); err != nil {
+				klog.Errorf("Failed to remove label '%s' from PR #%d: %v", readyLabel, num, err)
+			}
+		}
+	}
+}
+
 func (w *Watcher) selectUserForTask(ctx context.Context, taskType string, prNum int) (string, error) {
 	if w.cfg == nil || len(w.cfg.Roles) == 0 {
 		return "", nil // default fallback to factory-user

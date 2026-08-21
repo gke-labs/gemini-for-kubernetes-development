@@ -86,6 +86,7 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 		}
 		if hasStopLabel(prIssue.Labels, w.triggerLabel) {
 			klog.Infof("Skipping PR #%d because it has the stop label ('overseer/stop' or '%s/stop')", num, w.triggerLabel)
+			w.reconcileReadyForHumanLabel(ctx, num, prIssue, false, "")
 			removePendingTasksForNumber(w.incomingDir, num)
 			continue
 		}
@@ -113,6 +114,7 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 		syncReferencedIssueLabels(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, pr, prIssue)
 		if hasStopLabel(prIssue.Labels, w.triggerLabel) {
 			klog.Infof("Skipping PR #%d after label sync because it has the stop label ('overseer/stop' or '%s/stop')", num, w.triggerLabel)
+			w.reconcileReadyForHumanLabel(ctx, num, prIssue, false, "")
 			removePendingTasksForNumber(w.incomingDir, num)
 			continue
 		}
@@ -159,6 +161,7 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 			lastActivity := getLastPRActivityTime(pr, comments, reviews, revCommentsMap, w.githubLogin, bots)
 			if time.Since(lastActivity) > w.PRInactivityTimeout {
 				stopLabel := getStopLabel(w.triggerLabel)
+				w.reconcileReadyForHumanLabel(ctx, num, prIssue, false, headSHA)
 				if w.DryRun {
 					fmt.Printf("[DRYRUN] Would pause automated processing on PR #%d and apply label '%s' due to inactivity since %v\n", num, stopLabel, lastActivity)
 				} else {
@@ -179,6 +182,7 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 		isConflicting := pr.Mergeable != nil && !*pr.Mergeable
 
 		if isConflicting {
+			w.reconcileReadyForHumanLabel(ctx, num, prIssue, false, headSHA)
 			if state.lastIteratedSHA != "" && state.lastIteratedSHA == headSHA {
 				klog.Infof("Skipping PR #%d rebase/conflict resolution because an iterate task was already processed for head SHA %s.", num, headSHA)
 				continue
@@ -612,6 +616,23 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 						}
 					}
 				}
+			}
+
+			// Check and reconcile ready-for-human label
+			if listReviewsErr == nil {
+				isReviewRequired := shouldAutoReviewPR(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, pr, prIssue, w.triggerLabel)
+				hasBotReviewOnHead := hasCompletedBotReviewOnHead(reviews, headSHA, lastCommitTime, w.cfg)
+				reviewSatisfied := !isReviewRequired || hasBotReviewOnHead
+
+				isReadyForHuman := !isConflicting &&
+					!hasFailure &&
+					!hasNewComments &&
+					reviewSatisfied &&
+					!hasStopLabel(prIssue.Labels, w.triggerLabel) &&
+					!pr.GetDraft() &&
+					pr.GetState() == "open"
+
+				w.reconcileReadyForHumanLabel(ctx, num, prIssue, isReadyForHuman, headSHA)
 			}
 		}
 	}
