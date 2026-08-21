@@ -372,13 +372,11 @@ func (c *Client) RunTask(ctx context.Context, cmdStr string, envs map[string]str
 }
 
 func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[string]string, taskDir string, detached bool, abortOnCancel bool) error {
-	pidFile := fmt.Sprintf("%s/pid", taskDir)
-	logFile := fmt.Sprintf("%s/execution.log", taskDir)
-	exitCodeFile := fmt.Sprintf("%s/exit_code", taskDir)
+	taskFiles := NewTaskFiles(taskDir)
 
 	// Check if task is already running or completed in the sandbox pod
 	var checkBuf bytes.Buffer
-	checkStatusCmd := fmt.Sprintf("if [ -s %s ]; then cat %s; fi", exitCodeFile, exitCodeFile)
+	checkStatusCmd := BuildCheckExitCodeCmd(taskFiles.ExitCodeFile)
 	isCompleted := false
 	if err := c.Exec(ctx, checkStatusCmd, "/workspaces", nil, nil, &checkBuf, nil); err == nil {
 		if strings.TrimSpace(checkBuf.String()) != "" {
@@ -389,7 +387,7 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 	isAlreadyRunning := false
 	if !isCompleted {
 		var pidBuf bytes.Buffer
-		checkPidCmd := fmt.Sprintf("if [ -s %s ]; then pid=$(cat %s 2>/dev/null); if [ -n \"$pid\" ]; then stat=$(ps -o stat= -p \"$pid\" 2>/dev/null | cut -c 1); if kill -0 \"$pid\" 2>/dev/null && [ \"$stat\" != \"Z\" ]; then echo \"alive\"; fi; fi; fi", pidFile, pidFile)
+		checkPidCmd := BuildCheckPidCmd(taskFiles.PIDFile)
 		if err := c.Exec(ctx, checkPidCmd, "/workspaces", nil, nil, &pidBuf, nil); err == nil {
 			if strings.TrimSpace(pidBuf.String()) == "alive" {
 				isAlreadyRunning = true
@@ -408,7 +406,7 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 		}
 
 		// 1. Launch the command in the background using nohup
-		detachedCmd := fmt.Sprintf("nohup sh -c \"echo \\$\\$ > %s; %s > %s 2>&1; echo \\$? > %s\" >/dev/null 2>&1 &", pidFile, cmdStr, logFile, exitCodeFile)
+		detachedCmd := BuildDetachedLaunchCmd(taskFiles, cmdStr)
 
 		klog.Infof("Launching task in background of sandbox pod (Task directory: %s)...", taskDir)
 		if err := c.Exec(ctx, detachedCmd, "/workspaces", envs, nil, nil, nil); err != nil {
@@ -458,7 +456,7 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 				defer killCancel()
 
 				fmt.Printf("Terminating process in pod...\n")
-				killCmd := fmt.Sprintf("if [ -f %s ]; then pids=\"$(cat %s) $(pgrep -P $(cat %s) 2>/dev/null)\"; kill $pids 2>/dev/null || true; if [ ! -f %s ]; then echo 143 > %s; fi; fi", pidFile, pidFile, pidFile, exitCodeFile, exitCodeFile)
+				killCmd := BuildAbortKillCmd(taskFiles.PIDFile, taskFiles.ExitCodeFile)
 				_ = c.Exec(killCtx, killCmd, "/workspaces", nil, nil, nil, nil)
 			}
 			return loopCtx.Err()
@@ -467,7 +465,7 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 			// Read new logs
 			// We run 'tail -c +<offset>' to read log delta.
 			var logBuf bytes.Buffer
-			tailCmd := fmt.Sprintf("if [ -f %s ]; then tail -c +%d %s; fi", logFile, offset+1, logFile)
+			tailCmd := BuildTailLogCmd(taskFiles.LogFile, offset)
 
 			if err := c.Exec(loopCtx, tailCmd, "/workspaces", nil, nil, &logBuf, nil); err == nil {
 				newData := logBuf.Bytes()
@@ -479,7 +477,7 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 						klog.Warningf("Fatal quota/suspension error detected in task output. Terminating task process group in sandbox pod immediately...")
 						killCtx, killCancel := context.WithTimeout(context.Background(), 15*time.Second)
 						defer killCancel()
-						killCmd := fmt.Sprintf("if [ -f %s ]; then top_pid=$(cat %s); kill -9 -$(ps -o pgid= $top_pid 2>/dev/null | tr -d ' ') 2>/dev/null || pkill -9 -P $top_pid 2>/dev/null || kill -9 $top_pid 2>/dev/null || true; echo 137 > %s; fi", pidFile, pidFile, exitCodeFile)
+						killCmd := BuildQuotaKillCmd(taskFiles.PIDFile, taskFiles.ExitCodeFile)
 						_ = c.Exec(killCtx, killCmd, "/workspaces", nil, nil, nil, nil)
 						return handleQuotaOrSuspensionError(newData, envs)
 					} else if geminitokens.IsTransientRateLimit(newData) {
@@ -495,7 +493,7 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 
 			// Check if process is still alive
 			var pidBuf bytes.Buffer
-			checkPidCmd := fmt.Sprintf("if [ -f %s ]; then pid=$(cat %s); if kill -0 $pid 2>/dev/null; then echo \"alive\"; fi; fi", pidFile, pidFile)
+			checkPidCmd := BuildCheckPidCmd(taskFiles.PIDFile)
 			processAlive := false
 			if err := c.Exec(loopCtx, checkPidCmd, "/workspaces", nil, nil, &pidBuf, nil); err == nil {
 				if strings.TrimSpace(pidBuf.String()) == "alive" {
@@ -505,7 +503,7 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 
 			// Check if exit code file exists
 			var exitBuf bytes.Buffer
-			checkCmd := fmt.Sprintf("if [ -f %s ]; then cat %s; fi", exitCodeFile, exitCodeFile)
+			checkCmd := BuildCheckExitCodeCmd(taskFiles.ExitCodeFile)
 			exitCodeExists := false
 			var exitStr string
 			if err := c.Exec(loopCtx, checkCmd, "/workspaces", nil, nil, &exitBuf, nil); err == nil {
@@ -524,7 +522,7 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 				// Process completed!
 				// Do one final tail to flush any remaining log lines.
 				var finalBuf bytes.Buffer
-				finalTailCmd := fmt.Sprintf("if [ -f %s ]; then tail -c +%d %s; fi", logFile, offset+1, logFile)
+				finalTailCmd := BuildTailLogCmd(taskFiles.LogFile, offset)
 				if err := c.Exec(loopCtx, finalTailCmd, "/workspaces", nil, nil, &finalBuf, nil); err == nil {
 					newData := finalBuf.Bytes()
 					if len(newData) > 0 {
@@ -532,7 +530,7 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 						if geminitokens.IsFatalQuotaError(newData) {
 							killCtx, killCancel := context.WithTimeout(context.Background(), 15*time.Second)
 							defer killCancel()
-							_ = c.Exec(killCtx, fmt.Sprintf("echo 137 > %s", exitCodeFile), "/workspaces", nil, nil, nil, nil)
+							_ = c.Exec(killCtx, BuildWriteExitCodeCmd(taskFiles.ExitCodeFile, 137), "/workspaces", nil, nil, nil, nil)
 							return handleQuotaOrSuspensionError(newData, envs)
 						}
 					}
@@ -557,7 +555,7 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 					if exitStr != "" {
 						// Process completed!
 						var finalBuf bytes.Buffer
-						finalTailCmd := fmt.Sprintf("if [ -f %s ]; then tail -c +%d %s; fi", logFile, offset+1, logFile)
+						finalTailCmd := BuildTailLogCmd(taskFiles.LogFile, offset)
 						if err := c.Exec(loopCtx, finalTailCmd, "/workspaces", nil, nil, &finalBuf, nil); err == nil {
 							newData := finalBuf.Bytes()
 							if len(newData) > 0 {
@@ -565,7 +563,7 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 								if geminitokens.IsFatalQuotaError(newData) {
 									killCtx, killCancel := context.WithTimeout(context.Background(), 15*time.Second)
 									defer killCancel()
-									_ = c.Exec(killCtx, fmt.Sprintf("echo 137 > %s", exitCodeFile), "/workspaces", nil, nil, nil, nil)
+									_ = c.Exec(killCtx, BuildWriteExitCodeCmd(taskFiles.ExitCodeFile, 137), "/workspaces", nil, nil, nil, nil)
 									return handleQuotaOrSuspensionError(newData, envs)
 								}
 							}
@@ -582,7 +580,7 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 				}
 				killCtx, killCancel := context.WithTimeout(context.Background(), 15*time.Second)
 				defer killCancel()
-				_ = c.Exec(killCtx, fmt.Sprintf("if [ ! -f %s ]; then echo 1 > %s; fi", exitCodeFile, exitCodeFile), "/workspaces", nil, nil, nil, nil)
+				_ = c.Exec(killCtx, BuildWriteExitCodeIfMissingCmd(taskFiles.ExitCodeFile, 1), "/workspaces", nil, nil, nil, nil)
 				return fmt.Errorf("task process terminated abruptly (PID file missing or process not found)")
 			}
 
