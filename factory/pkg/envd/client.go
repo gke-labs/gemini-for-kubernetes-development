@@ -387,7 +387,7 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 	isAlreadyRunning := false
 	if !isCompleted {
 		var pidBuf bytes.Buffer
-		checkPidCmd := BuildCheckPidCmd(taskFiles.PIDFile)
+		checkPidCmd := BuildCheckPidCmd(taskFiles.PIDFile, taskFiles.StartTimeFile)
 		if err := c.Exec(ctx, checkPidCmd, "/workspaces", nil, nil, &pidBuf, nil); err == nil {
 			if strings.TrimSpace(pidBuf.String()) == "alive" {
 				isAlreadyRunning = true
@@ -456,7 +456,7 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 				defer killCancel()
 
 				fmt.Printf("Terminating process in pod...\n")
-				killCmd := BuildAbortKillCmd(taskFiles.PIDFile, taskFiles.ExitCodeFile)
+				killCmd := BuildAbortKillCmd(taskFiles.PIDFile, taskFiles.StartTimeFile, taskFiles.ExitCodeFile)
 				_ = c.Exec(killCtx, killCmd, "/workspaces", nil, nil, nil, nil)
 			}
 			return loopCtx.Err()
@@ -477,7 +477,7 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 						klog.Warningf("Fatal quota/suspension error detected in task output. Terminating task process group in sandbox pod immediately...")
 						killCtx, killCancel := context.WithTimeout(context.Background(), 15*time.Second)
 						defer killCancel()
-						killCmd := BuildQuotaKillCmd(taskFiles.PIDFile, taskFiles.ExitCodeFile)
+						killCmd := BuildQuotaKillCmd(taskFiles.PIDFile, taskFiles.StartTimeFile, taskFiles.ExitCodeFile)
 						_ = c.Exec(killCtx, killCmd, "/workspaces", nil, nil, nil, nil)
 						return handleQuotaOrSuspensionError(newData, envs)
 					} else if geminitokens.IsTransientRateLimit(newData) {
@@ -493,7 +493,7 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 
 			// Check if process is still alive
 			var pidBuf bytes.Buffer
-			checkPidCmd := BuildCheckPidCmd(taskFiles.PIDFile)
+			checkPidCmd := BuildCheckPidCmd(taskFiles.PIDFile, taskFiles.StartTimeFile)
 			processAlive := false
 			if err := c.Exec(loopCtx, checkPidCmd, "/workspaces", nil, nil, &pidBuf, nil); err == nil {
 				if strings.TrimSpace(pidBuf.String()) == "alive" {
