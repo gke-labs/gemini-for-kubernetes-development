@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -112,7 +114,8 @@ func serveTasksList(w http.ResponseWriter, r *http.Request) {
 			pidStr := strings.TrimSpace(string(pidBytes))
 			var pid int
 			if _, err := fmt.Sscanf(pidStr, "%d", &pid); err == nil {
-				if isProcessAliveAndNotZombie(pid) {
+				startBytes, _ := os.ReadFile(filepath.Join(p, "start_time"))
+				if isProcessAliveAndNotZombie(pid, strings.TrimSpace(string(startBytes))) {
 					status = "Running"
 				} else {
 					status = "Crashed"
@@ -196,7 +199,7 @@ func serveTelemetryFile(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, telemetryPath)
 }
 
-func isProcessAliveAndNotZombie(pid int) bool {
+func isProcessAliveAndNotZombie(pid int, expectedStartTime string) bool {
 	proc, err := os.FindProcess(pid)
 	if err != nil || proc.Signal(syscall.Signal(0)) != nil {
 		return false
@@ -205,6 +208,17 @@ func isProcessAliveAndNotZombie(pid int) bool {
 	if err == nil {
 		parts := strings.Fields(string(statBytes))
 		if len(parts) >= 3 && strings.HasPrefix(parts[2], "Z") {
+			return false
+		}
+	}
+	if expectedStartTime != "" {
+		out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "lstart=").Output()
+		if err != nil {
+			return false
+		}
+		currentStart := strings.Join(strings.Fields(string(out)), " ")
+		expectedStart := strings.Join(strings.Fields(expectedStartTime), " ")
+		if currentStart != expectedStart {
 			return false
 		}
 	}

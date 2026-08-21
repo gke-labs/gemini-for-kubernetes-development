@@ -50,13 +50,14 @@ sequenceDiagram
 ### 1. Detached Launch Command
 Instead of executing the bash command directly, the client executes a wrapper command that detaches the process:
 ```bash
-nohup sh -c "echo \$\$ > {taskDir}/pid; {cmdStr} > {taskDir}/execution.log 2>&1; echo \$? > {taskDir}/exit_code" >/dev/null 2>&1 &
+nohup sh -c "echo \$\$ > {taskDir}/pid; ps -p \$\$ -o lstart= > {taskDir}/start_time; {cmdStr} > {taskDir}/execution.log 2>&1; echo \$? > {taskDir}/exit_code" >/dev/null 2>&1 &
 ```
 This command:
 1. Records the background PID to `{taskDir}/pid`.
-2. Runs the script `{cmdStr}`, piping all output to `execution.log`.
-3. Writes the status exit code to `exit_code` file upon completion.
-4. Exits immediately, allowing the Connect-RPC request to finish with code `0`.
+2. Records the process start time to `{taskDir}/start_time` to prevent PID reuse hazards.
+3. Runs the script `{cmdStr}`, piping all output to `execution.log`.
+4. Writes the status exit code to `exit_code` file upon completion.
+5. Exits immediately, allowing the Connect-RPC request to finish with code `0`.
 
 ### 2. Client Tailing Loop (Interactive Mode)
 In interactive (default) mode, the client performs the following loop:
@@ -86,6 +87,7 @@ In interactive (default) mode, the client performs the following loop:
 | Pitfall | Impact | Mitigation |
 | :--- | :--- | :--- |
 | **Tmux Compatibility** | Tmux can fail in containers with restricted PTY or socket permissions. | Used `nohup` (standard POSIX fork) which has zero socket/PTY dependencies. |
+| **PID Recycling / Collision** | A dead task's PID might be re-assigned to an unrelated new process. | Recorded `start_time` via `ps -o lstart=` and validated against live process start time before signaling or status reporting. |
 | **Log Polling Overhead** | Downloading the entire log file recursively wastes CPU/bandwidth. | Used `tail -c +<offset>` to retrieve only the delta bytes since the last read. |
 | **Log Truncation** | The process might exit, but the client breaks the loop before reading final log lines. | Perform one final `tail -c +<offset>` check after detecting the `exit_code` file. |
 | **Orphaned Processes** | Forgotten tasks run forever. | Deleting the sandbox pod via standard controller methods cleans up all resources. |

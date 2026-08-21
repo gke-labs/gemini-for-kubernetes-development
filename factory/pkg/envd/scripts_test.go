@@ -21,6 +21,15 @@ func runShell(t *testing.T, script string) (string, error) {
 	return strings.TrimSpace(stdout.String()), err
 }
 
+func getLiveProcessStartTime(t *testing.T, pid int) string {
+	t.Helper()
+	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "lstart=").Output()
+	if err != nil {
+		t.Fatalf("failed to get start time for pid %d: %v", pid, err)
+	}
+	return strings.Join(strings.Fields(string(out)), " ")
+}
+
 func TestBuildDetachedLaunchCmd(t *testing.T) {
 	tmpDir := t.TempDir()
 	taskDir := filepath.Join(tmpDir, "task-123")
@@ -65,6 +74,12 @@ func TestBuildDetachedLaunchCmd(t *testing.T) {
 		t.Errorf("invalid pid written: %q", string(pidBytes))
 	}
 
+	// Check start time file
+	startBytes, err := os.ReadFile(files.StartTimeFile)
+	if err != nil || len(strings.TrimSpace(string(startBytes))) == 0 {
+		t.Fatalf("failed to read start time file: %v", err)
+	}
+
 	// Check log file
 	logBytes, err := os.ReadFile(files.LogFile)
 	if err != nil {
@@ -81,26 +96,26 @@ func TestBuildCheckPidCmd(t *testing.T) {
 	files := NewTaskFiles(tmpDir)
 
 	// 1. Missing PID file -> outputs nothing
-	out, _ := runShell(t, BuildCheckPidCmd(files.PIDFile))
+	out, _ := runShell(t, BuildCheckPidCmd(files.PIDFile, files.StartTimeFile))
 	if out != "" {
 		t.Errorf("expected empty output for missing PID file, got %q", out)
 	}
 
 	// 2. Empty PID file -> outputs nothing
 	_ = os.WriteFile(files.PIDFile, []byte(""), 0644)
-	out, _ = runShell(t, BuildCheckPidCmd(files.PIDFile))
+	out, _ = runShell(t, BuildCheckPidCmd(files.PIDFile, files.StartTimeFile))
 	if out != "" {
 		t.Errorf("expected empty output for empty PID file, got %q", out)
 	}
 
 	// 3. Dead/non-existent PID -> outputs nothing
 	_ = os.WriteFile(files.PIDFile, []byte("9999999"), 0644)
-	out, _ = runShell(t, BuildCheckPidCmd(files.PIDFile))
+	out, _ = runShell(t, BuildCheckPidCmd(files.PIDFile, files.StartTimeFile))
 	if out != "" {
 		t.Errorf("expected empty output for non-existent PID, got %q", out)
 	}
 
-	// 4. Live process -> outputs "alive"
+	// 4. Live process with matching start time -> outputs "alive"
 	cmd := exec.Command("sleep", "30")
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("failed to start sleep process: %v", err)
@@ -112,16 +127,33 @@ func TestBuildCheckPidCmd(t *testing.T) {
 	}()
 
 	livePID := cmd.Process.Pid
-	_ = os.WriteFile(files.PIDFile, []byte(strconv.Itoa(livePID)), 0644)
+	liveStartTime := getLiveProcessStartTime(t, livePID)
 
-	out, err := runShell(t, BuildCheckPidCmd(files.PIDFile))
+	_ = os.WriteFile(files.PIDFile, []byte(strconv.Itoa(livePID)), 0644)
+	_ = os.WriteFile(files.StartTimeFile, []byte(liveStartTime), 0644)
+
+	out, err := runShell(t, BuildCheckPidCmd(files.PIDFile, files.StartTimeFile))
 	if err != nil || out != "alive" {
 		t.Errorf("expected 'alive', got %q (err: %v)", out, err)
+	}
+
+	// 5. Live process with empty start time file (backwards compatibility) -> outputs "alive"
+	_ = os.WriteFile(files.StartTimeFile, []byte(""), 0644)
+	out, err = runShell(t, BuildCheckPidCmd(files.PIDFile, files.StartTimeFile))
+	if err != nil || out != "alive" {
+		t.Errorf("expected 'alive' when start time is empty, got %q (err: %v)", out, err)
+	}
+
+	// 6. Live process with mismatched start time (PID recycling scenario) -> outputs nothing
+	_ = os.WriteFile(files.StartTimeFile, []byte("Thu Jan 1 00:00:00 1970"), 0644)
+	out, _ = runShell(t, BuildCheckPidCmd(files.PIDFile, files.StartTimeFile))
+	if out != "" {
+		t.Errorf("expected empty output for recycled PID with mismatched start time, got %q", out)
 	}
 }
 
 func TestBuildAbortKillCmd(t *testing.T) {
-	t.Run("kills process", func(t *testing.T) {
+	t.Run("kills process when start_time matches", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		files := NewTaskFiles(tmpDir)
 
@@ -136,9 +168,12 @@ func TestBuildAbortKillCmd(t *testing.T) {
 		}()
 
 		livePID := cmd.Process.Pid
-		_ = os.WriteFile(files.PIDFile, []byte(strconv.Itoa(livePID)), 0644)
+		liveStartTime := getLiveProcessStartTime(t, livePID)
 
-		killScript := BuildAbortKillCmd(files.PIDFile, files.ExitCodeFile)
+		_ = os.WriteFile(files.PIDFile, []byte(strconv.Itoa(livePID)), 0644)
+		_ = os.WriteFile(files.StartTimeFile, []byte(liveStartTime), 0644)
+
+		killScript := BuildAbortKillCmd(files.PIDFile, files.StartTimeFile, files.ExitCodeFile)
 		if _, err := runShell(t, killScript); err != nil {
 			t.Fatalf("failed to run abort kill script: %v", err)
 		}
@@ -160,27 +195,7 @@ func TestBuildAbortKillCmd(t *testing.T) {
 		}
 	})
 
-	t.Run("does not overwrite existing exit_code", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		files := NewTaskFiles(tmpDir)
-
-		_ = os.WriteFile(files.ExitCodeFile, []byte("0"), 0644)
-		_ = os.WriteFile(files.PIDFile, []byte("9999999"), 0644)
-
-		killScript := BuildAbortKillCmd(files.PIDFile, files.ExitCodeFile)
-		if _, err := runShell(t, killScript); err != nil {
-			t.Fatalf("failed to run abort kill script: %v", err)
-		}
-
-		ecBytes, _ := os.ReadFile(files.ExitCodeFile)
-		if strings.TrimSpace(string(ecBytes)) != "0" {
-			t.Errorf("expected existing exit_code 0 to remain unchanged, got %q", string(ecBytes))
-		}
-	})
-}
-
-func TestBuildQuotaKillCmd(t *testing.T) {
-	t.Run("kills process and sets exit code 137", func(t *testing.T) {
+	t.Run("does not kill process when start_time mismatches", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		files := NewTaskFiles(tmpDir)
 
@@ -196,8 +211,68 @@ func TestBuildQuotaKillCmd(t *testing.T) {
 
 		livePID := cmd.Process.Pid
 		_ = os.WriteFile(files.PIDFile, []byte(strconv.Itoa(livePID)), 0644)
+		_ = os.WriteFile(files.StartTimeFile, []byte("Thu Jan 1 00:00:00 1970"), 0644)
 
-		killScript := BuildQuotaKillCmd(files.PIDFile, files.ExitCodeFile)
+		killScript := BuildAbortKillCmd(files.PIDFile, files.StartTimeFile, files.ExitCodeFile)
+		if _, err := runShell(t, killScript); err != nil {
+			t.Fatalf("failed to run abort kill script: %v", err)
+		}
+
+		// Process should still be alive
+		time.Sleep(100 * time.Millisecond)
+		out, psErr := exec.Command("ps", "-p", strconv.Itoa(livePID), "-o", "stat=").Output()
+		if psErr != nil || strings.HasPrefix(strings.TrimSpace(string(out)), "Z") {
+			t.Errorf("process %d was killed even though start_time mismatched", livePID)
+		}
+
+		// Exit code 143 should still be recorded if not present
+		ecBytes, _ := os.ReadFile(files.ExitCodeFile)
+		if strings.TrimSpace(string(ecBytes)) != "143" {
+			t.Errorf("expected exit_code 143, got %q", string(ecBytes))
+		}
+	})
+
+	t.Run("does not overwrite existing exit_code", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		files := NewTaskFiles(tmpDir)
+
+		_ = os.WriteFile(files.ExitCodeFile, []byte("0"), 0644)
+		_ = os.WriteFile(files.PIDFile, []byte("9999999"), 0644)
+
+		killScript := BuildAbortKillCmd(files.PIDFile, files.StartTimeFile, files.ExitCodeFile)
+		if _, err := runShell(t, killScript); err != nil {
+			t.Fatalf("failed to run abort kill script: %v", err)
+		}
+
+		ecBytes, _ := os.ReadFile(files.ExitCodeFile)
+		if strings.TrimSpace(string(ecBytes)) != "0" {
+			t.Errorf("expected existing exit_code 0 to remain unchanged, got %q", string(ecBytes))
+		}
+	})
+}
+
+func TestBuildQuotaKillCmd(t *testing.T) {
+	t.Run("kills process and sets exit code 137 when start_time matches", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		files := NewTaskFiles(tmpDir)
+
+		cmd := exec.Command("sleep", "30")
+		if err := cmd.Start(); err != nil {
+			t.Fatalf("failed to start process: %v", err)
+		}
+		defer func() {
+			if cmd.Process != nil {
+				_ = cmd.Process.Kill()
+			}
+		}()
+
+		livePID := cmd.Process.Pid
+		liveStartTime := getLiveProcessStartTime(t, livePID)
+
+		_ = os.WriteFile(files.PIDFile, []byte(strconv.Itoa(livePID)), 0644)
+		_ = os.WriteFile(files.StartTimeFile, []byte(liveStartTime), 0644)
+
+		killScript := BuildQuotaKillCmd(files.PIDFile, files.StartTimeFile, files.ExitCodeFile)
 		if _, err := runShell(t, killScript); err != nil {
 			t.Fatalf("failed to run quota kill script: %v", err)
 		}
@@ -211,6 +286,41 @@ func TestBuildQuotaKillCmd(t *testing.T) {
 		out, psErr := exec.Command("ps", "-p", strconv.Itoa(livePID), "-o", "stat=").Output()
 		if psErr == nil && !strings.HasPrefix(strings.TrimSpace(string(out)), "Z") {
 			t.Errorf("expected process %d to be killed by SIGKILL", livePID)
+		}
+	})
+
+	t.Run("does not kill process when start_time mismatches", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		files := NewTaskFiles(tmpDir)
+
+		cmd := exec.Command("sleep", "30")
+		if err := cmd.Start(); err != nil {
+			t.Fatalf("failed to start process: %v", err)
+		}
+		defer func() {
+			if cmd.Process != nil {
+				_ = cmd.Process.Kill()
+			}
+		}()
+
+		livePID := cmd.Process.Pid
+		_ = os.WriteFile(files.PIDFile, []byte(strconv.Itoa(livePID)), 0644)
+		_ = os.WriteFile(files.StartTimeFile, []byte("Thu Jan 1 00:00:00 1970"), 0644)
+
+		killScript := BuildQuotaKillCmd(files.PIDFile, files.StartTimeFile, files.ExitCodeFile)
+		if _, err := runShell(t, killScript); err != nil {
+			t.Fatalf("failed to run quota kill script: %v", err)
+		}
+
+		time.Sleep(100 * time.Millisecond)
+		out, psErr := exec.Command("ps", "-p", strconv.Itoa(livePID), "-o", "stat=").Output()
+		if psErr != nil || strings.HasPrefix(strings.TrimSpace(string(out)), "Z") {
+			t.Errorf("process %d was killed even though start_time mismatched", livePID)
+		}
+
+		ecBytes, _ := os.ReadFile(files.ExitCodeFile)
+		if strings.TrimSpace(string(ecBytes)) != "137" {
+			t.Errorf("expected exit_code 137, got %q", string(ecBytes))
 		}
 	})
 }
@@ -335,7 +445,7 @@ func TestBuildCheckLatestTaskStatusCmd(t *testing.T) {
 		t.Errorf("expected '137' for missing exit_code with dead PID, got %q (err: %v)", out, err)
 	}
 
-	// 6. exit_code file is missing, but live PID exists -> returns "RUNNING"
+	// 6. exit_code file is missing, but live PID with matching start time exists -> returns "RUNNING"
 	cmd := exec.Command("sleep", "30")
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("failed to start live process: %v", err)
@@ -347,14 +457,24 @@ func TestBuildCheckLatestTaskStatusCmd(t *testing.T) {
 	}()
 
 	livePID := cmd.Process.Pid
+	liveStartTime := getLiveProcessStartTime(t, livePID)
+
 	_ = os.WriteFile(filepath.Join(t1, "pid"), []byte(strconv.Itoa(livePID)), 0644)
+	_ = os.WriteFile(filepath.Join(t1, "start_time"), []byte(liveStartTime), 0644)
 
 	out, err = runShell(t, BuildCheckLatestTaskStatusCmd(tasksDir))
 	if err != nil || out != "RUNNING" {
 		t.Errorf("expected 'RUNNING' for missing exit_code with live process, got %q (err: %v)", out, err)
 	}
 
-	// 7. Multiple task directories: ensure the latest created/modified task directory is evaluated
+	// 7. exit_code file is missing, but live PID with mismatched start time (PID recycled) -> returns "137"
+	_ = os.WriteFile(filepath.Join(t1, "start_time"), []byte("Thu Jan 1 00:00:00 1970"), 0644)
+	out, err = runShell(t, BuildCheckLatestTaskStatusCmd(tasksDir))
+	if err != nil || out != "137" {
+		t.Errorf("expected '137' for missing exit_code with recycled PID, got %q (err: %v)", out, err)
+	}
+
+	// 8. Multiple task directories: ensure the latest created/modified task directory is evaluated
 	time.Sleep(10 * time.Millisecond)
 	t2 := filepath.Join(tasksDir, "task-2")
 	_ = os.MkdirAll(t2, 0755)
