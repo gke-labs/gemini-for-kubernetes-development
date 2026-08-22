@@ -95,3 +95,21 @@ roles:
 - `factory pr review` runs inside a dedicated Kubernetes Pod (`factory-pr-<num>-review`) in the configured namespace.
 - It mounts the onboarded Kubernetes secret for `reviewbot-robot`, containing that account's `GITHUB_TOKEN`.
 - All inline review comments, approvals (`APPROVED`), and change requests (`CHANGES_REQUESTED`) posted to GitHub are authored by **`reviewbot-robot`**.
+
+---
+
+## 5. Ready-for-Human Signaling (`overseer/ready-for-human`)
+
+Once a PR successfully passes automated code review by the reviewer bot, the factory watcher automatically applies the `overseer/ready-for-human` label (or `<triggerLabel>/ready-for-human`).
+
+### A. Ready Conditions
+The label is applied when all of the following conditions are met:
+1. **Review Completed on HEAD (if enabled)**: If automated bot review is opted in via `overseer/review` (or inherited from parent issue), a configured reviewer bot must have completed its review on the latest `headSHA`. If automated review is not enabled, this prerequisite is automatically satisfied.
+2. **Review Passed**: The latest review from the reviewer bot is not `CHANGES_REQUESTED` and all review feedback has been resolved (`!hasNewComments`).
+3. **Passing CI Checks**: All GitHub check runs and commit statuses for `headSHA` are green (`!hasFailure`).
+4. **Mergeable**: No merge conflicts or pending rebases (`!isConflicting`).
+5. **Active & Open**: PR is open, not in draft mode, and not stopped (`!hasStopLabel`).
+
+### B. Invalidation & Removal
+The label is automatically removed if any condition ceases to hold (e.g. new commits pushed, new comments added, CI check failures, or merge conflicts), ensuring humans only review PRs that currently pass all automated criteria.
+
