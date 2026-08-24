@@ -834,6 +834,14 @@ function PrReviewCard({
     'gemini-2.5-flash'
   ];
 
+  useEffect(() => {
+    if (availableModels && availableModels.length > 0) {
+      if (!availableModels.includes(selectedModel)) {
+        setSelectedModel(availableModels[0]);
+      }
+    }
+  }, [availableModels, selectedModel]);
+
 
   const isCollapsed = collapsedReviews[pr.id];
   const repoName = propRepoName || (pr.sandbox ? pr.sandbox.split('-pr-')[0] : '');
