@@ -6,23 +6,23 @@ mode: workflow
 cooldown: 2h
 ---
 
-# Checklist for KCC Greenfield Resource Migration
+# Checklist for KCC Greenfield Resource Implementation
 
-This is a meta-skill describing the steps to migrate a KCC greenfield resource kind to a production-ready direct controller at `v1alpha1`.
+This is a meta-skill describing the steps to implement a KCC greenfield resource kind as a production-ready direct controller at `v1alpha1`.
 Greenfield resources are API resources that have not yet been implemented in KCC, they can be part of a brand new API or new resources in an existing API. 
 Compare to Brownfield resources which are already implemented in KCC.
 
 Instead of doing the coding yourself under this skill, you will coordinate and orchestrate:
-1. Planning the migration steps.
+1. Planning the Implementation steps.
 2. Opening GitHub issues for each step, labeling them with `overseer`, and leaving them unassigned (or assigning them to the current bot user).
-3. Monitoring progress of the Pull Requests.
+3. Monitoring progress of the Pull Requests, labeling PRs as `ready-for-human` when ready.
 4. Opening subsequent issues once the prior steps are successfully completed.
 
 > [!IMPORTANT]
 > **Safety Guardrails (Strict Enforcement)**:
 > - **Do NOT write code or create PRs directly**: You must **never** checkout code, write code, run builds/tests, commit changes, or run `gh pr create` to send/push PRs. Your role under this skill is strictly limited to planning, progress tracking, and orchestration. All code implementation, CI fixing, and triage work must be delegated to coder and reviewer bots by creating child issues or assigning PRs back to their author bots.
 > - **Do NOT comment on child Pull Requests**: You must **never** comment directly on the child Pull Requests. The watch daemon will automatically monitor and handle PR review feedback and CI check failures. If you need to request action or re-trigger a run, do so only by assigning the PR to the PR author bot (using `gh pr edit <pr> --add-assignee <author>` or assigning via `gh` CLI). However, if the PR has the `overseer/giving-up` label, you MUST NOT assign the PR back to the bot, as this indicates the retry limit was reached and human OWNER intervention is required.
-> - **Do NOT approve, LGTM, or label PRs**: You must **never** approve, LGTM, or add approval/merging labels (such as `lgtm`, `approved`, or `automerge`) to any Pull Requests. These actions require human OWNER review and approval.
+> - **Do NOT approve or LGTM PRs**: You must **never** approve, LGTM, or add approval/merging labels (such as `lgtm`, `approved`, or `automerge`) to any Pull Requests. These actions require human OWNER review and approval. You are only permitted to apply the `ready-for-human` label when all readiness criteria below are satisfied.
 > - **Do NOT work on closed Pull Requests**: If a PR is closed but not merged, dont assign bots to the PR.
 > - **Idempotent Issue Creation & Journal Recording**:
 >   - **Before creating any child issue**, you MUST search GitHub first for an existing open issue for that step:
@@ -40,7 +40,7 @@ The journal should contain:
    * Step Number and Name
    * GitHub Issue link/number
    * GitHub Pull Request link/number
-   * Status (e.g. `Open`, `PR Created`, `Merged`, `Completed`)
+   * Status (e.g. `Open`, `PR Created`, `Ready for Human`, `Merged`, `Completed`)
    * Date Started and Date Completed
 
 Only proceed to the next step once the PR for the current step is merged successfully.
@@ -77,6 +77,24 @@ gh pr checks <pr-number> --repo GoogleCloudPlatform/k8s-config-connector
 ```
 Only declare the PR as fully passed/verified if no failures are returned across all pages of checks.
 
+### Labeling PRs as `ready-for-human`
+
+When monitoring the pull request created for a step, you are responsible for adding the `ready-for-human` label to the PR once it is fully ready for human OWNER review.
+
+A PR is considered `ready-for-human` when all of the following conditions are met:
+1. **CI Tests Passing (Green)**: All presubmit CI check runs for the latest commit (HEAD SHA) must have passed with no failures (verified using the paginated check described above).
+2. **Review Bot Review (for steps/issues with a review section)**:
+   - The review bot is only involved in steps/issues that contain a `## Review Instructions` section (such as Step 1 and Step 2).
+   - For these steps, the PR must have been reviewed by the review bot on the latest commit (HEAD SHA), and any comments or change requests from the review bot must have been addressed by the coder bot.
+   - For steps that do not have a `## Review Instructions` section (such as Step 3 and Step 4), review bot review is not involved or required.
+3. **All Comments Addressed**: All outstanding comments and feedback on the PR (from bots or humans) have been addressed and resolved, with no pending review comment threads left unanswered.
+
+**Applying the Label:**
+Once all the above conditions are satisfied, check if the PR already has the `ready-for-human` label. If not, apply the label using the `gh` CLI:
+```bash
+gh pr edit <pr-number> --repo GoogleCloudPlatform/k8s-config-connector --add-label "ready-for-human"
+```
+
 ## Steps
 
 
@@ -87,7 +105,7 @@ Open a GitHub issue to coordinate the implementation of direct KRM types, identi
 **GitHub Issue Details for Greenfield Resource:**
 *   **Title:** `Greenfield: Implement direct KRM types, identity, and generate.sh for {kind}`
 *   **Assignee:** (leave unassigned or assign to the current bot)
-*   **Labels:** `overseer`, `greenfield`,`step/gen-types`, `overseer/review`
+*   **Labels:** `overseer`, `greenfield`, `step/gen-types`, `overseer/review`
 *   **Body:**
     ```
     Please follow the skill `.gemini/skills/kcc-direct-greenfield-types-implementer/SKILL.md` for generating types for {kind}.
@@ -110,7 +128,7 @@ Open a GitHub issue to coordinate the implementation of the direct controller an
 **GitHub Issue Details:**
 *   **Title:** `Greenfield: Implement direct controller, E2E fixtures, and fuzzer for {kind}`
 *   **Assignee:** (leave unassigned or assign to the current bot)
-*   **Labels:** `overseer`, `greenfield`, `step/controller` `overseer/review`
+*   **Labels:** `overseer`, `greenfield`, `step/controller`, `overseer/review`
 *   **Body:**
     ```
     Please follow the skill `.gemini/skills/kcc-direct-controller-logic-greenfield-implementer/SKILL.md` to implement the direct controller and record/verify E2E fixtures for {kind}.
@@ -128,7 +146,7 @@ Open a GitHub issue to coordinate the implementation of the mockGCP for a specif
 **GitHub Issue Details for Greenfield Resource:**
 *   **Title:** `Greenfield: Implement MockGCP and Alignment for {kind}`
 *   **Assignee:** (leave unassigned or assign to the current bot)
-*   **Labels:** `overseer`, `greenfield`,`step/mockgcp`
+*   **Labels:** `overseer`, `greenfield`, `step/mockgcp`
 *   **Body:**
     ```
     Please follow the skill `.gemini/skills/kcc-direct-mockgcp-implementer/SKILL.md` to implement Phase 3 (MockGCP and Alignment) for {kind} to verify behavioral correctness against the simulated GCP services.
