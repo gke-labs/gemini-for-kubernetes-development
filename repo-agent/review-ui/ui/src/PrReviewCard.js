@@ -820,10 +820,15 @@ function PrReviewCard({
   const [showNewTaskForm, setShowNewTaskForm] = useState(false);
   const [newTaskPrompt, setNewTaskPrompt] = useState('');
   const [expectedComments, setExpectedComments] = useState(0);
-  const [selectedModel, setSelectedModel] = useState('gemini-3.7-flash');
+  const [selectedModel, setSelectedModel] = useState(() => {
+    if (Array.isArray(availableModels) && availableModels.length > 0) {
+      return availableModels.includes('gemini-3.7-flash') ? 'gemini-3.7-flash' : availableModels[0];
+    }
+    return 'gemini-3.7-flash';
+  });
   const lastDragTargetRef = useRef(null);
 
-  const reviewModels = (availableModels && availableModels.length > 0) ? availableModels : [
+  const reviewModels = (Array.isArray(availableModels) && availableModels.length > 0) ? availableModels : [
     'gemini-3.7-flash',
     'gemini-3.6-flash',
     'gemini-3.5-flash',
@@ -834,13 +839,16 @@ function PrReviewCard({
     'gemini-2.5-flash'
   ];
 
+  const availableModelsKey = Array.isArray(availableModels) ? availableModels.join(',') : '';
+
   useEffect(() => {
-    if (availableModels && availableModels.length > 0) {
+    if (Array.isArray(availableModels) && availableModels.length > 0) {
       if (!availableModels.includes(selectedModel)) {
         setSelectedModel(availableModels[0]);
       }
     }
-  }, [availableModels, selectedModel]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [availableModelsKey, selectedModel]);
 
 
   const isCollapsed = collapsedReviews[pr.id];
