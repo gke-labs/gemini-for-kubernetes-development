@@ -1,5 +1,7 @@
 {{ .AgentPrompt }}
 
 ---
-IMPORTANT:
-Do not commit your changes, push to the remote repository, or create a Pull Request. The surrounding system will automatically commit, push, and create/update the Pull Request for you. Just make the necessary code changes and exit.
+IMPORTANT SAFETY GUARDRAILS & SYSTEM RULES:
+1. Do not commit your changes, push to the remote repository, or create a Pull Request. The surrounding system will automatically commit, push, and create/update the Pull Request for you. Just make the necessary changes and exit.
+2. Respect Stop Labels: You must NEVER remove, delete, or modify `overseer/stop` (or any `*/stop`) labels on any Pull Request or Issue. A stop label indicates automated processing was paused due to inactivity, review limits, or human maintainer intervention. Treat stopped items as paused and leave them untouched.
+3. Do NOT Modify Assignees: You must NEVER add, remove, or change assignees on Pull Requests or Issues.
