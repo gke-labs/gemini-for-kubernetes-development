@@ -16,7 +16,7 @@ Ensure your cluster has the required Kubernetes Custom Resource Definitions inst
 - `Sandbox` (`agents.x-k8s.io/v1alpha1`)
 - `SandboxTask` (`sandboxtask.gemini.google.com/v1alpha1`)
 
-*Tip: For local testing or development, see **Section 1.5** below to automatically bootstrap a local `kind` cluster with all required CRDs and controllers pre-installed.*
+*Tip: For local testing or development, see **Section 1.6** below to automatically bootstrap a local `kind` cluster with all required CRDs and controllers pre-installed.*
 
 ### 1.2 LLM Credentials Secret
 Overseer and its worker sandboxes rely on Google Gemini models for intent evaluation and automated code generation. Create a Kubernetes Secret containing your valid API token:
@@ -29,7 +29,56 @@ kubectl create secret generic gemini-vscode-tokens \
 ### 1.3 GitHub Robot Accounts
 Overseer uses GitHub accounts to clone repositories, sync task queues, post comments, and submit pull requests. To avoid API throttling and cleanly separate responsibilities, enterprise installations should provision multiple dedicated robot accounts (e.g., watcher bots, coding bots, reviewer bots) with valid Personal Access Tokens (PATs) or GitHub App credentials.
 
-### 1.4 Domain-Specific Test Credentials (GCP, AWS, DBs)
+### 1.4 GitHub Repository Labels
+Overseer and the underlying AI Factory watch daemon rely on structured GitHub labels to trigger workflows, signal review states, coordinate automated tasks, and act as circuit breakers. 
+
+Because GitHub requires labels to exist in the repository before bots can attach or filter by them, you must manually create the following labels in your target GitHub repository prior to deploying Overseer:
+
+| Label | Default Name | Applied By | Description & Behavior |
+|---|---|---|---|
+| **Primary Trigger** | `overseer` | Maintainers / Bot | **Triggers automated issue fixing and PR tracking.** When applied to an issue, Overseer creates an `issue-fix` task and launches a worker sandbox to write and submit a pull request. |
+| **Review Opt-In** | `overseer/review` | Maintainers / Authors | **Opt-in for automated AI code review.** When added to a PR or its referenced parent issue, the Reviewer Bot (`reviewbot-robot`) automatically performs a structured code review once CI passes. |
+| **Ready for Human** | `overseer/ready-for-human` | Overseer (Automated) | **Signaling for human maintainers.** Applied automatically when all automated gates pass: CI checks are green, no merge conflicts, bot reviews completed and passed, all comments addressed. Automatically removed if new commits, failures, or comments appear. |
+| **Stop / Pause** | `overseer/stop` | Maintainers / Overseer | **Circuit breaker and manual pause.** Halts and skips all automated processing on this issue or PR. Applied automatically if CI investigation retries exceed limits (3 attempts) or on inactivity. Maintainers can also manually apply it to freeze bot activity; remove it to resume. |
+
+> [!NOTE]
+> **Custom Trigger Labels**: If your `Overseer` custom resource specifies a custom `triggerLabel` (e.g., `factory` or a custom prefix), replace `overseer/` with `<triggerLabel>/` (e.g., `<triggerLabel>`, `<triggerLabel>/review`, `<triggerLabel>/ready-for-human`, `<triggerLabel>/stop`).
+>
+> **Additional Labels**: If your configuration defines `additionalLabels` (such as `ai-generated` or `automated-pr`), ensure those are also created in the GitHub repository so PRs created by the AI factory can be properly labeled.
+
+#### Quick Setup via GitHub CLI (`gh`)
+You can create all required labels in your target repository with the following script:
+
+```bash
+# Set your target GitHub repository (owner/repo)
+export REPO="GoogleCloudPlatform/k8s-config-connector"
+
+# 1. Primary Trigger Label
+gh label create "overseer" \
+  --description "Triggers automated processing and bug fixing by Overseer" \
+  --color "1D76DB" \
+  -R "$REPO" || true
+
+# 2. Automated PR Review Opt-In Label
+gh label create "overseer/review" \
+  --description "Opt-in for automated AI PR code review when CI passes" \
+  --color "5319E7" \
+  -R "$REPO" || true
+
+# 3. Ready for Human Review Signaling Label
+gh label create "overseer/ready-for-human" \
+  --description "Indicates PR passed all automated CI and bot reviews; ready for human review" \
+  --color "0E8A16" \
+  -R "$REPO" || true
+
+# 4. Circuit Breaker / Manual Pause Label
+gh label create "overseer/stop" \
+  --description "Pauses/halts automated bot processing on this issue or PR" \
+  --color "D93F0B" \
+  -R "$REPO" || true
+```
+
+### 1.5 Domain-Specific Test Credentials (GCP, AWS, DBs)
 If your agents are expected to run automated integration tests or compile code against real cloud providers, package those authentication keys into a Kubernetes Secret so they can be injected into worker sandboxes. For example, to allow KCC developers to verify Google Cloud resources:
 ```bash
 # Create a secret containing a GCP service account JSON key
@@ -38,7 +87,7 @@ kubectl create secret generic projectaccess \
   -n default
 ```
 
-### 1.5 Local Development Setup with kind
+### 1.6 Local Development Setup with kind
 To try out Overseer locally or develop new features, you can spin up an isolated environment inside a `kind` Kubernetes cluster.
 
 1. **Export Environment Variables**: Before starting, provide your Gemini API key and GitHub credentials for your test robot account. These are automatically packaged into Kubernetes secrets by the setup scripts:
@@ -209,6 +258,15 @@ To optimize compute resources, worker sandboxes feature automatic idle expiratio
 If you need to perform maintenance, test infrastructure upgrades, or halt LLM task generation without forcefully terminating currently executing worker jobs:
 - Create a `.do_not_process` or `.drain` empty file within the supervisor workspace, or toggle Drain mode in the UI. 
 - During drain mode, the watch daemon stops triggering Gemini LLM orchestration and stops spawning new sandboxes while allowing existing worker sandboxes to finish their assignments gracefully.
+
+### 4.4 Controlling Workflows via GitHub Labels
+Maintainers can interact with and steer Overseer workflows directly in GitHub without needing direct Kubernetes cluster access:
+- **Trigger Issue Remediation**: Apply the `overseer` label (or assign a bot user) to an open issue to trigger Overseer to spawn a worker sandbox and author a PR.
+- **Request Automated Code Review**: Apply the `overseer/review` label to an open PR (or its parent issue) to trigger automated bot review once CI tests pass.
+- **Provide Custom Review Rules**: Add a `## Review Instructions` section to the PR or issue description to supply domain-specific guidelines or references (e.g. `.gemini/skills/my-check/SKILL.md`) for the reviewer bot.
+- **Pause Processing / Circuit Breaker**: Apply `overseer/stop` to an issue or PR to immediately freeze all bot activity on it.
+- **Resume Processing**: Remove `overseer/stop` from any paused issue or PR to clear retry counters and allow the bot to resume.
+- **Filter Ready Pull Requests**: Search repository PRs with `is:pr is:open label:overseer/ready-for-human` to locate PRs that have cleared all automated checks, passed bot review, and are awaiting human maintainer sign-off.
 
 ---
 
