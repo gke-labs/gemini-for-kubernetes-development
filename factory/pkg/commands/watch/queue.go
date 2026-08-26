@@ -314,6 +314,24 @@ func removePendingTasksForNumber(incomingDir string, number int) {
 	}
 }
 
+// hasActivePRTask reports whether any task for the given PR number is currently
+// pending in the incoming queue or executing in the processing directory.
+func hasActivePRTask(incomingDir, processingDir string, number int) bool {
+	prefix := fmt.Sprintf("task-pr-%d-", number)
+	for _, dir := range []string{incomingDir, processingDir} {
+		files, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, f := range files {
+			if !f.IsDir() && strings.HasPrefix(f.Name(), prefix) && strings.HasSuffix(f.Name(), ".yaml") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func isPRTask(taskType string) bool {
 	return taskType == "pr-investigate" || taskType == "pr-comments" || taskType == "pr-iterate"
 }
