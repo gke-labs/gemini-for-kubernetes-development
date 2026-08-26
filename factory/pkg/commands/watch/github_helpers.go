@@ -243,19 +243,6 @@ func hasStopLabel(labels []*githubv39.Label, triggerLabel string) bool {
 	return false
 }
 
-func shouldUnassignStaleBot(lastSHA, unassignedSHA, headSHA, assignedBot string) bool {
-	if lastSHA == "" || lastSHA == headSHA {
-		return false
-	}
-	if assignedBot == "" {
-		return false
-	}
-	if unassignedSHA == headSHA {
-		return false
-	}
-	return true
-}
-
 func getInvestigationCount(comments []*githubv39.IssueComment, lastCommitTime time.Time, allBotUsers []string, githubLogin string, bots []string) int {
 	lastResetTime := lastCommitTime
 	for _, c := range comments {
