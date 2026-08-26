@@ -264,42 +264,7 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 		state = w.processedPRs[num]
 
 		assignedBot := assignedBotUser(prIssue, w.allBotUsers)
-		isExplicitlyAssigned := assignedBot != "" && state.unassignedSHA != headSHA
-
-		if state.lastSHA != "" && state.lastSHA != headSHA {
-			if shouldUnassignStaleBot(state.lastSHA, state.unassignedSHA, headSHA, assignedBot) {
-				if w.DryRun {
-					fmt.Printf("[DRYRUN] Would unassign stale bot %s from PR #%d due to new commit %s\n", assignedBot, num, headSHA)
-				} else {
-					fmt.Printf("Unassigning stale bot %s from PR #%d due to new commit %s...\n", assignedBot, num, headSHA)
-					if _, _, err := w.ghClient.Issues.RemoveAssignees(ctx, w.Repo.Owner, w.Repo.Repo, num, []string{assignedBot}); err != nil {
-						klog.Errorf("Failed to unassign stale bot %s from PR #%d: %v", assignedBot, num, err)
-					}
-					state.unassignedSHA = headSHA
-					w.processedPRs[num] = state
-					isExplicitlyAssigned = false
-					assignedBot = ""
-				}
-			}
-			// Remove the giving up label if present
-			hasGivingUpLabel := false
-			for _, l := range prIssue.Labels {
-				if l.GetName() == "overseer/giving-up" {
-					hasGivingUpLabel = true
-					break
-				}
-			}
-			if hasGivingUpLabel {
-				if w.DryRun {
-					fmt.Printf("[DRYRUN] Would remove giving up label from PR #%d due to new commit %s\n", num, headSHA)
-				} else {
-					fmt.Printf("Removing giving up label from PR #%d due to new commit %s...\n", num, headSHA)
-					if _, err := w.ghClient.Issues.RemoveLabelForIssue(ctx, w.Repo.Owner, w.Repo.Repo, num, "overseer/giving-up"); err != nil {
-						klog.Errorf("Failed to remove giving up label from PR #%d: %v", num, err)
-					}
-				}
-			}
-		}
+		isExplicitlyAssigned := assignedBot != ""
 
 		if hasFailure {
 			filename := fmt.Sprintf("task-pr-%d-investigate.yaml", num)
@@ -334,7 +299,7 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 						}
 					}
 
-					if state.lastSHA != headSHA || prevFailed || isExplicitlyAssigned || time.Since(state.lastInvestigatedTime) > 2*time.Hour {
+					if state.lastInvestigatedSHA != headSHA || prevFailed || isExplicitlyAssigned || time.Since(state.lastInvestigatedTime) > 2*time.Hour {
 						sandboxName := w.resolveSandboxName(ctx, "pr-investigate", num)
 						running, err := isSandboxTaskRunning(ctx, w.kubeClient, w.Namespace, sandboxName)
 						if err != nil {
@@ -367,7 +332,7 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 								fmt.Printf("[DRYRUN] Would queue investigate task for PR #%d: %s\n", num, prURL)
 							} else {
 								fmt.Printf("Queueing investigate task for PR #%d...\n", num)
-								state.lastSHA = headSHA
+								state.lastInvestigatedSHA = headSHA
 								state.lastInvestigatedTime = time.Now()
 								w.processedPRs[num] = state
 								if err := writeTaskAtomically(w.incomingDir, filename, task); err != nil {
@@ -380,9 +345,6 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 					}
 				}
 			}
-		} else if state.lastSHA != headSHA {
-			state.lastSHA = headSHA
-			w.processedPRs[num] = state
 		}
 
 		// Check review comments and approvals
@@ -636,6 +598,17 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 					pr.GetState() == "open"
 
 				w.reconcileReadyForHumanLabel(ctx, num, prIssue, isReadyForHuman, headSHA)
+
+				if isReadyForHuman && assignedBot != "" {
+					if w.DryRun {
+						fmt.Printf("[DRYRUN] Would unassign bot %s from PR #%d (ready for human review)\n", assignedBot, num)
+					} else {
+						fmt.Printf("Unassigning bot %s from PR #%d (ready for human review)...\n", assignedBot, num)
+						if _, _, err := w.ghClient.Issues.RemoveAssignees(ctx, w.Repo.Owner, w.Repo.Repo, num, []string{assignedBot}); err != nil {
+							klog.Errorf("Failed to unassign bot %s from PR #%d: %v", assignedBot, num, err)
+						}
+					}
+				}
 			}
 		}
 	}

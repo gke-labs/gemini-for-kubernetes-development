@@ -131,15 +131,22 @@ type JournalEvent struct {
 	DurationSecond float64   `json:"durationSeconds,omitempty"`
 }
 
+// prWatchState tracks the progress and state of automated tasks for a monitored pull request.
 type prWatchState struct {
-	lastSHA                  string
-	lastInvestigatedTime     time.Time
+	// lastInvestigatedTime is the timestamp when a CI failure investigation was last queued or completed.
+	lastInvestigatedTime time.Time
+	// lastInvestigatedSHA is the head commit SHA when CI failures were last investigated.
+	lastInvestigatedSHA string
+	// lastCommentAddressedTime is the timestamp when PR comments were last addressed by the bot.
 	lastCommentAddressedTime time.Time
-	lastCommentAddressedSHA  string
-	lastReviewedSHA          string
-	lastIteratedSHA          string
-	lastIteratedTime         time.Time
-	unassignedSHA            string
+	// lastCommentAddressedSHA is the head commit SHA when review comments were last addressed, preventing duplicate comment processing on the same commit.
+	lastCommentAddressedSHA string
+	// lastReviewedSHA is the commit SHA for which an automated PR review was last queued or completed.
+	lastReviewedSHA string
+	// lastIteratedSHA is the commit SHA for which a rebase/conflict-resolution task was last queued or completed.
+	lastIteratedSHA string
+	// lastIteratedTime is the timestamp when a rebase/conflict-resolution task was last queued or completed.
+	lastIteratedTime time.Time
 }
 
 type QueueTaskItem struct {

@@ -39,6 +39,7 @@ completedAt: "2026-07-23T12:00:00Z"
 	investigateTaskPath := filepath.Join(tempDir, "task-pr-123-investigate.yaml")
 	investigateTaskData := []byte(`
 type: pr-investigate
+commitSHA: "invsha123"
 completedAt: "2026-07-23T13:00:00Z"
 `)
 	if err := os.WriteFile(investigateTaskPath, investigateTaskData, 0644); err != nil {
@@ -64,9 +65,6 @@ completedAt: "2026-07-23T14:00:00Z"
 	if state.lastReviewedSHA != "abcd123" {
 		t.Errorf("expected lastReviewedSHA to be 'abcd123', got '%s'", state.lastReviewedSHA)
 	}
-	if state.lastSHA != "abcd123" {
-		t.Errorf("expected lastSHA to be 'abcd123', got '%s'", state.lastSHA)
-	}
 
 	// Process comments task
 	fInfoComments, _ := os.Stat(commentsTaskPath)
@@ -85,6 +83,9 @@ completedAt: "2026-07-23T14:00:00Z"
 	expectedInvestigateTime, _ := time.Parse(time.RFC3339, "2026-07-23T13:00:00Z")
 	if !state.lastInvestigatedTime.Equal(expectedInvestigateTime) {
 		t.Errorf("expected lastInvestigatedTime to be %v, got %v", expectedInvestigateTime, state.lastInvestigatedTime)
+	}
+	if state.lastInvestigatedSHA != "invsha123" {
+		t.Errorf("expected lastInvestigatedSHA to be 'invsha123', got '%s'", state.lastInvestigatedSHA)
 	}
 
 	// Process iterate task
@@ -405,8 +406,17 @@ func TestLoadProcessedTasks(t *testing.T) {
 	issueTask := filepath.Join(dir, "task-issue-100.yaml")
 	_ = os.WriteFile(issueTask, []byte("type: issue-fix\ncompletedAt: \"2026-08-01T10:00:00Z\"\n"), 0644)
 
-	prTask := filepath.Join(dir, "task-pr-200-comments.yaml")
-	_ = os.WriteFile(prTask, []byte("type: pr-comments\ncommitSHA: sha200\ncompletedAt: \"2026-08-01T11:00:00Z\"\n"), 0644)
+	prCommentsTask := filepath.Join(dir, "task-pr-200-comments.yaml")
+	_ = os.WriteFile(prCommentsTask, []byte("type: pr-comments\ncommitSHA: sha200\ncompletedAt: \"2026-08-01T11:00:00Z\"\n"), 0644)
+
+	prInvestigateTask := filepath.Join(dir, "task-pr-200-investigate.yaml")
+	_ = os.WriteFile(prInvestigateTask, []byte("type: pr-investigate\ncommitSHA: sha-inv\ncompletedAt: \"2026-08-01T12:00:00Z\"\n"), 0644)
+
+	prReviewTask := filepath.Join(dir, "task-pr-200-review.yaml")
+	_ = os.WriteFile(prReviewTask, []byte("type: pr-review\ncommitSHA: sha-rev\ncompletedAt: \"2026-08-01T13:00:00Z\"\n"), 0644)
+
+	prIterateTask := filepath.Join(dir, "task-pr-200-iterate.yaml")
+	_ = os.WriteFile(prIterateTask, []byte("type: pr-iterate\ncommitSHA: sha-iter\ncompletedAt: \"2026-08-01T14:00:00Z\"\n"), 0644)
 
 	issues, prs := loadProcessedTasks(dir)
 	if _, ok := issues[100]; !ok {
@@ -414,8 +424,19 @@ func TestLoadProcessedTasks(t *testing.T) {
 	}
 	if state, ok := prs[200]; !ok {
 		t.Errorf("expected pr 200 in loaded prs")
-	} else if state.lastCommentAddressedSHA != "sha200" {
-		t.Errorf("expected lastCommentAddressedSHA 'sha200', got %q", state.lastCommentAddressedSHA)
+	} else {
+		if state.lastCommentAddressedSHA != "sha200" {
+			t.Errorf("expected lastCommentAddressedSHA 'sha200', got %q", state.lastCommentAddressedSHA)
+		}
+		if state.lastInvestigatedSHA != "sha-inv" {
+			t.Errorf("expected lastInvestigatedSHA 'sha-inv', got %q", state.lastInvestigatedSHA)
+		}
+		if state.lastReviewedSHA != "sha-rev" {
+			t.Errorf("expected lastReviewedSHA 'sha-rev', got %q", state.lastReviewedSHA)
+		}
+		if state.lastIteratedSHA != "sha-iter" {
+			t.Errorf("expected lastIteratedSHA 'sha-iter', got %q", state.lastIteratedSHA)
+		}
 	}
 }
 

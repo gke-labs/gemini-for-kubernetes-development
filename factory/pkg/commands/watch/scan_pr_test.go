@@ -242,3 +242,117 @@ func TestProcessPRs_ReadyForHuman_GatedByActiveTask(t *testing.T) {
 		t.Errorf("expected 1 unassign call after task completion, got %d (%v)", len(unassignCalls), unassignCalls)
 	}
 }
+
+func TestProcessPRs_UnassignOnReadyForHuman(t *testing.T) {
+	tempDir := t.TempDir()
+	incomingDir := filepath.Join(tempDir, "incoming")
+	processingDir := filepath.Join(tempDir, "processing")
+	processedDir := filepath.Join(tempDir, "processed")
+	_ = os.MkdirAll(incomingDir, 0755)
+	_ = os.MkdirAll(processingDir, 0755)
+	_ = os.MkdirAll(processedDir, 0755)
+
+	prNum := 10
+	mergeable := true
+	headSHA := "sha-1234"
+	now := time.Now()
+
+	var unassignCalls []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10":
+			pr := &githubv39.PullRequest{
+				Number:    &prNum,
+				Mergeable: &mergeable,
+				State:     stringPtr("open"),
+				User:      &githubv39.User{Login: stringPtr("bot1")},
+				Head:      &githubv39.PullRequestBranch{SHA: stringPtr(headSHA)},
+				CreatedAt: &now,
+			}
+			_ = json.NewEncoder(w).Encode(pr)
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10/commits":
+			commits := []*githubv39.RepositoryCommit{
+				{
+					SHA: stringPtr(headSHA),
+					Commit: &githubv39.Commit{
+						Committer: &githubv39.CommitAuthor{Date: &now},
+					},
+				},
+			}
+			_ = json.NewEncoder(w).Encode(commits)
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/issues/10/comments":
+			_ = json.NewEncoder(w).Encode([]*githubv39.IssueComment{})
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10/reviews":
+			reviews := []*githubv39.PullRequestReview{
+				{
+					User:        &githubv39.User{Login: stringPtr("reviewbot")},
+					CommitID:    stringPtr(headSHA),
+					State:       stringPtr("APPROVED"),
+					SubmittedAt: &now,
+				},
+			}
+			_ = json.NewEncoder(w).Encode(reviews)
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/commits/"+headSHA+"/check-runs":
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"check_runs": []interface{}{}})
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/statuses/"+headSHA:
+			_ = json.NewEncoder(w).Encode([]interface{}{})
+		case r.Method == "POST" && r.URL.Path == "/repos/test-owner/test-repo/issues/10/labels":
+			_ = json.NewEncoder(w).Encode([]interface{}{})
+		case r.Method == "DELETE" && r.URL.Path == "/repos/test-owner/test-repo/issues/10/assignees":
+			bodyBytes, _ := io.ReadAll(r.Body)
+			unassignCalls = append(unassignCalls, strings.TrimSpace(string(bodyBytes)))
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{})
+		default:
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("{}"))
+		}
+	}))
+	defer server.Close()
+
+	ghClient := githubv39.NewClient(nil)
+	ghClient.BaseURL, _ = url.Parse(server.URL + "/")
+
+	w := &Watcher{
+		Flags: Flags{
+			Repo: RepoFlag{
+				Owner: "test-owner",
+				Repo:  "test-repo",
+			},
+			QueueDir: tempDir,
+		},
+		ghClient:      ghClient,
+		allBotUsers:   []string{"bot1"},
+		githubLogin:   "bot1",
+		incomingDir:   incomingDir,
+		processingDir: processingDir,
+		processedDir:  processedDir,
+		triggerLabel:  "factory",
+		processedPRs:  make(map[int]prWatchState),
+		cfg: &config.FactoryConfig{
+			Roles: map[string]config.RoleConfig{
+				"reviewer": {Users: []string{"reviewbot"}},
+			},
+		},
+	}
+
+	prIssue := &githubv39.Issue{
+		Number: &prNum,
+		Assignees: []*githubv39.User{
+			{Login: stringPtr("bot1")},
+		},
+		Labels: []*githubv39.Label{
+			{Name: stringPtr("factory")},
+		},
+	}
+
+	w.processPRs(context.Background(), []*githubv39.Issue{prIssue})
+
+	if len(unassignCalls) != 1 {
+		t.Fatalf("expected 1 unassign API call, got %d (%v)", len(unassignCalls), unassignCalls)
+	}
+	if !strings.Contains(unassignCalls[0], "bot1") {
+		t.Errorf("expected unassign call body to contain 'bot1', got %s", unassignCalls[0])
+	}
+}

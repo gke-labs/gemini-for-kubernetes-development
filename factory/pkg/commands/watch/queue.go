@@ -262,9 +262,6 @@ func parseProcessedPRTask(filePath string, name string, fInfo os.FileInfo, state
 			if strings.EqualFold(t.Status, "Failed") {
 				return state
 			}
-			if t.CommitSHA != "" {
-				state.lastSHA = t.CommitSHA
-			}
 		}
 	}
 
@@ -283,6 +280,9 @@ func parseProcessedPRTask(filePath string, name string, fInfo os.FileInfo, state
 		} else if isInvestigate {
 			if tTime.After(state.lastInvestigatedTime) {
 				state.lastInvestigatedTime = tTime
+			}
+			if hasTask && t.CommitSHA != "" {
+				state.lastInvestigatedSHA = t.CommitSHA
 			}
 		} else if isReview {
 			if hasTask && t.CommitSHA != "" {
