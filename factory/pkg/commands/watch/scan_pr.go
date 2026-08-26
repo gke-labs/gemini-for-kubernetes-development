@@ -624,9 +624,12 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 				hasBotReviewOnHead := hasCompletedBotReviewOnHead(reviews, headSHA, lastCommitTime, w.cfg)
 				reviewSatisfied := !isReviewRequired || hasBotReviewOnHead
 
+				hasActiveTask := hasActivePRTask(w.incomingDir, w.processingDir, num)
+
 				isReadyForHuman := !isConflicting &&
 					!hasFailure &&
 					!hasNewComments &&
+					!hasActiveTask &&
 					reviewSatisfied &&
 					!hasStopLabel(prIssue.Labels, w.triggerLabel) &&
 					!pr.GetDraft() &&

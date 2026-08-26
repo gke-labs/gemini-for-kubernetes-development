@@ -447,3 +447,53 @@ func TestWorkflowCooldownCompletedAt(t *testing.T) {
 		t.Fatalf("lastRunTime = %v, want %v", lastRunTime, completedAt)
 	}
 }
+
+func TestHasActivePRTask(t *testing.T) {
+	tempDir := t.TempDir()
+	incomingDir := filepath.Join(tempDir, "incoming")
+	processingDir := filepath.Join(tempDir, "processing")
+	_ = os.MkdirAll(incomingDir, 0755)
+	_ = os.MkdirAll(processingDir, 0755)
+
+	prNum := 12046
+
+	// 1. Initially empty
+	if hasActivePRTask(incomingDir, processingDir, prNum) {
+		t.Errorf("expected hasActivePRTask to be false for empty directories")
+	}
+
+	// 2. Task in incoming directory
+	incomingTask := filepath.Join(incomingDir, "task-pr-12046-comments.yaml")
+	_ = os.WriteFile(incomingTask, []byte("type: pr-comments\n"), 0644)
+	if !hasActivePRTask(incomingDir, processingDir, prNum) {
+		t.Errorf("expected hasActivePRTask to be true when task is in incomingDir")
+	}
+
+	// 3. Different PR number in incoming directory
+	if hasActivePRTask(incomingDir, processingDir, 9999) {
+		t.Errorf("expected hasActivePRTask to be false for different PR number")
+	}
+
+	// 4. Move task to processing directory
+	_ = os.Remove(incomingTask)
+	processingTask := filepath.Join(processingDir, "task-pr-12046-investigate.yaml")
+	_ = os.WriteFile(processingTask, []byte("type: pr-investigate\n"), 0644)
+	if !hasActivePRTask(incomingDir, processingDir, prNum) {
+		t.Errorf("expected hasActivePRTask to be true when task is in processingDir")
+	}
+
+	// 5. Remove task from processing directory
+	_ = os.Remove(processingTask)
+	if hasActivePRTask(incomingDir, processingDir, prNum) {
+		t.Errorf("expected hasActivePRTask to be false after removing tasks")
+	}
+
+	// 6. Non-matching files (e.g. issues or non-yaml files)
+	issueTask := filepath.Join(incomingDir, "task-issue-12046.yaml")
+	_ = os.WriteFile(issueTask, []byte("type: issue-fix\n"), 0644)
+	logFile := filepath.Join(processingDir, "task-pr-12046-comments.log")
+	_ = os.WriteFile(logFile, []byte("log output"), 0644)
+	if hasActivePRTask(incomingDir, processingDir, prNum) {
+		t.Errorf("expected hasActivePRTask to be false for issue tasks and log files")
+	}
+}
