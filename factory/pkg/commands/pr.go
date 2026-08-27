@@ -162,7 +162,7 @@ func runInvestigate(ctx context.Context, prURL, prompt string, continueSession b
 	}
 
 	var failedProwRuns []string
-	statuses, _, err := ghClient.Repositories.ListStatuses(ctx, owner, repo, headSHA, nil)
+	statuses, err := common.ListAllStatuses(ctx, ghClient, owner, repo, headSHA)
 	if err == nil {
 		for _, status := range statuses {
 			if status.GetState() == "failure" || status.GetState() == "error" {
@@ -710,7 +710,7 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 			}
 		}
 
-		statuses, _, err := ghClient.Repositories.ListStatuses(ctx, owner, repo, headSHA, nil)
+		statuses, err := common.ListAllStatuses(ctx, ghClient, owner, repo, headSHA)
 		if err == nil {
 			for _, status := range statuses {
 				if status.GetState() == "failure" || status.GetState() == "error" {
