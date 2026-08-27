@@ -20,8 +20,9 @@ Instead of doing the coding yourself under this skill, you will coordinate and o
 
 > [!IMPORTANT]
 > **Safety Guardrails (Strict Enforcement)**:
-> - **Do NOT write code or create PRs directly**: You must **never** checkout code, write code, run builds/tests, commit changes, or run `gh pr create` to send/push PRs. Your role under this skill is strictly limited to planning, progress tracking, and orchestration. All code implementation, CI fixing, and triage work must be delegated to coder and reviewer bots by creating child issues or assigning PRs back to their author bots.
-> - **Do NOT comment on child Pull Requests**: You must **never** comment directly on the child Pull Requests. The watch daemon will automatically monitor and handle PR review feedback and CI check failures. If you need to request action or re-trigger a run, do so only by assigning the PR to the PR author bot (using `gh pr edit <pr> --add-assignee <author>` or assigning via `gh` CLI). However, if the PR has the `overseer/giving-up` label, you MUST NOT assign the PR back to the bot, as this indicates the retry limit was reached and human OWNER intervention is required.
+> - **Do NOT write code or create PRs directly**: You must **never** checkout code, write code, run builds/tests, commit changes, or run `gh pr create` to send/push PRs. Your role under this skill is strictly limited to planning, progress tracking, and orchestration. All code implementation, CI fixing, and triage work must be delegated to coder and reviewer bots by creating child issues.
+> - **Do NOT comment on child Pull Requests**: You must **never** comment directly on the child Pull Requests. The watch daemon will automatically monitor and handle PR review feedback and CI check failures.
+> - **Do NOT assign to PRs directly**: You must **never** directly assign PRs to bots or humans. The watch daemon will automatically handle bot and task assignment.
 > - **Do NOT approve, LGTM, or label PRs**: You must **never** approve, LGTM, or add approval/merging labels (such as `lgtm`, `approved`, or `automerge`) to any Pull Requests. These actions require human OWNER review and approval.
 > - **Do NOT work on closed Pull Requests**: If a PR is closed but not merged, dont assign bots to the PR.
 > - **Idempotent Issue Creation & Journal Recording**:
@@ -89,7 +90,7 @@ Open a GitHub issue to coordinate the implementation of direct KRM types, identi
 *   **Assignee:** (leave unassigned or assign to the current bot)
 *   **Labels:** `overseer`, `greenfield`,`step/gen-types`, `overseer/review`
 *   **Body:**
-    ```
+    ````
     Please follow the skill `.gemini/skills/kcc-direct-greenfield-types-implementer/SKILL.md` for generating types for {kind}.
     Please follow the skill `.gemini/skills/kcc-identity-reference/SKILL.md` for generating identity for {kind}.
 
@@ -99,9 +100,14 @@ Open a GitHub issue to coordinate the implementation of direct KRM types, identi
 
     If you find any shortcomings in the skill (that likely apply to other resources), you may update SKILL.md. Also keep a journal of any less general observations etc. To avoid git merge conflicts, use a file under .gemini/skills/kcc-direct-greenfield-types-implementer/journal/, named after the kind or a similarly unique name. You may grep journal entries to identify learnings from other resources; if you find an important pattern by doing that you may also update the SKILL.md itself.
 
+    When creating the PR, include the release note block set to NONE:
+    ```release-note
+    NONE
+    ```
+
     ## Review Instructions
     Use .gemini/skills/reviewgen-greenfield-new-types/SKILL.md to conduct the review.
-    ```
+    ````
 
 ### Step 2: Direct Controller, E2E fixtures and Fuzzer
 
@@ -112,14 +118,19 @@ Open a GitHub issue to coordinate the implementation of the direct controller an
 *   **Assignee:** (leave unassigned or assign to the current bot)
 *   **Labels:** `overseer`, `greenfield`, `step/controller` `overseer/review`
 *   **Body:**
-    ```
+    ````
     Please follow the skill `.gemini/skills/kcc-direct-controller-logic-greenfield-implementer/SKILL.md` to implement the direct controller and record/verify E2E fixtures for {kind}.
 
     If you find any shortcomings in this skill (that likely apply to other resources), you may update it. Also keep a journal of any less general observations etc. To avoid git merge conflicts, use a file under its respective journal/ folder, named after the kind or a similarly unique name.
 
+    When creating the PR, include the release note block set to NONE:
+    ```release-note
+    NONE
+    ```
+
     ## Review Instructions
     Use .gemini/skills/reviewgen-greenfield-controller/SKILL.md to conduct the review.
-    ```
+    ````
 
 ### Step 3: mockGCP generation
 
@@ -130,9 +141,14 @@ Open a GitHub issue to coordinate the implementation of the mockGCP for a specif
 *   **Assignee:** (leave unassigned or assign to the current bot)
 *   **Labels:** `overseer`, `greenfield`,`step/mockgcp`
 *   **Body:**
-    ```
+    ````
     Please follow the skill `.gemini/skills/kcc-direct-mockgcp-implementer/SKILL.md` to implement Phase 3 (MockGCP and Alignment) for {kind} to verify behavioral correctness against the simulated GCP services.
+
+    When creating the PR, include the release note block for adding new alpha resources:
+    ```release-note
+    New Alpha Resources (Direct Reconciler): `{kind}`
     ```
+    ````
 
 ### Step 4: MockGCP Alignment with RealGCP
 
@@ -143,6 +159,12 @@ Open a GitHub issue to coordinate the alignment of MockGCP logs with RealGCP out
 *   **Assignee:** (leave unassigned or assign to the current bot)
 *   **Labels:** `overseer`, `greenfield`, `step/mockgcp-alignment`
 *   **Body:**
-    ```
+    ````
     Please follow the skill `.gemini/skills/match-mockgcp-with-realgcp/SKILL.md` to align the MockGCP logs with the RealGCP output for {kind}.
+
+    When creating the PR, include the release note block set to NONE:
+    ```release-note
+    NONE
     ```
+    ````
+
