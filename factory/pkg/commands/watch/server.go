@@ -150,26 +150,32 @@ func buildQueueResponse(queueDir string) QueueResponse {
 		if tPrio == "" {
 			tPrio = "medium"
 		}
-		var createdStr, enqueuedStr string
+		var createdStr, enqueuedStr, triggerEventStr string
 		if !t.CreatedAt.IsZero() {
 			createdStr = t.CreatedAt.Format(time.RFC3339)
 		}
 		if !t.EnqueuedAt.IsZero() {
 			enqueuedStr = t.EnqueuedAt.Format(time.RFC3339)
 		}
+		if !t.TriggerEventTime.IsZero() {
+			triggerEventStr = t.TriggerEventTime.Format(time.RFC3339)
+		}
 		return QueueTaskItem{
-			FileName:   item.filename,
-			QueueState: sub,
-			Type:       t.Type,
-			URL:        t.URL,
-			Number:     t.Number,
-			Priority:   tPrio,
-			Phase:      t.Phase,
-			CreatedAt:  createdStr,
-			EnqueuedAt: enqueuedStr,
-			Assignee:   t.Assignee,
-			Status:     t.Status,
-			CommitSHA:  t.CommitSHA,
+			FileName:         item.filename,
+			QueueState:       sub,
+			Type:             t.Type,
+			URL:              t.URL,
+			Number:           t.Number,
+			Priority:         tPrio,
+			Phase:            t.Phase,
+			CreatedAt:        createdStr,
+			EnqueuedAt:       enqueuedStr,
+			TriggerEventTime: triggerEventStr,
+			TriggerReason:    t.TriggerReason,
+			TriggerNotes:     t.TriggerNotes,
+			Assignee:         t.Assignee,
+			Status:           t.Status,
+			CommitSHA:        t.CommitSHA,
 		}
 	}
 

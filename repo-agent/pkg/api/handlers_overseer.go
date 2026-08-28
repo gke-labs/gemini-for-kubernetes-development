@@ -680,19 +680,22 @@ func (s *Server) scaleDownOverseerSandbox(c *gin.Context) {
 }
 
 type QueueTaskItem struct {
-	FileName   string `json:"fileName"`
-	QueueState string `json:"queueState"`
-	Type       string `json:"type"`
-	URL        string `json:"url"`
-	Number     int    `json:"number"`
-	Priority   string `json:"priority"`
-	Phase      int    `json:"phase"`
-	CreatedAt  string `json:"createdAt"`
-	EnqueuedAt string `json:"enqueuedAt,omitempty"`
-	Assignee   string `json:"assignee"`
-	Status     string `json:"status"`
-	CommitSHA  string `json:"commitSHA"`
-	Rank       int    `json:"rank,omitempty"`
+	FileName         string `json:"fileName"`
+	QueueState       string `json:"queueState"`
+	Type             string `json:"type"`
+	URL              string `json:"url"`
+	Number           int    `json:"number"`
+	Priority         string `json:"priority"`
+	Phase            int    `json:"phase"`
+	CreatedAt        string `json:"createdAt"`
+	EnqueuedAt       string `json:"enqueuedAt,omitempty"`
+	TriggerEventTime string `json:"triggerEventTime,omitempty"`
+	TriggerReason    string `json:"triggerReason,omitempty"`
+	TriggerNotes     string `json:"triggerNotes,omitempty"`
+	Assignee         string `json:"assignee"`
+	Status           string `json:"status"`
+	CommitSHA        string `json:"commitSHA"`
+	Rank             int    `json:"rank,omitempty"`
 }
 
 type QueueResponse struct {

@@ -225,13 +225,16 @@ func writeTaskJournalEvent(queueDir string, taskFilename string, task *QueueTask
 	defer f.Close()
 
 	je := JournalEvent{
-		Timestamp: time.Now(),
-		TaskID:    strings.TrimSuffix(taskFilename, ".yaml"),
-		Event:     event,
-		Type:      task.Type,
-		URL:       task.URL,
-		Priority:  task.Priority,
-		Error:     task.Error,
+		Timestamp:        time.Now(),
+		TaskID:           strings.TrimSuffix(taskFilename, ".yaml"),
+		Event:            event,
+		Type:             task.Type,
+		URL:              task.URL,
+		Priority:         task.Priority,
+		TriggerEventTime: task.TriggerEventTime,
+		TriggerReason:    task.TriggerReason,
+		TriggerNotes:     task.TriggerNotes,
+		Error:            task.Error,
 	}
 	if duration > 0 {
 		je.DurationSecond = duration.Seconds()

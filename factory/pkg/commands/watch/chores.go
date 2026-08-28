@@ -88,15 +88,31 @@ func (w *Watcher) scanChores(ctx context.Context) {
 
 			lastRun := choresState[agentDef.Name].LastRun
 			if shouldRunChore(agentDef.Schedule, lastRun) {
+				dueTime := time.Now()
+				if !lastRun.IsZero() {
+					if sched, err := cronParser.Parse(agentDef.Schedule); err == nil {
+						dueTime = sched.Next(lastRun)
+					}
+				}
+				reason := fmt.Sprintf("Scheduled chore: %s", agentDef.Name)
+				lastRunStr := "never"
+				if !lastRun.IsZero() {
+					lastRunStr = lastRun.Format(time.RFC3339)
+				}
+				notes := fmt.Sprintf("Chore agent '%s' (schedule: '%s') due at %s; last run: %s", agentDef.Name, agentDef.Schedule, dueTime.Format(time.RFC3339), lastRunStr)
+
 				task := &QueueTask{
-					Type:       "agent-chore",
-					URL:        fmt.Sprintf("https://github.com/%s/%s", w.Repo.Owner, w.Repo.Repo),
-					Priority:   "medium",
-					Phase:      4,
-					CreatedAt:  time.Now(),
-					EnqueuedAt: time.Now(),
-					Status:     "Pending",
-					AgentFile:  ".agents/" + file.GetName(),
+					Type:             "agent-chore",
+					URL:              fmt.Sprintf("https://github.com/%s/%s", w.Repo.Owner, w.Repo.Repo),
+					Priority:         "medium",
+					Phase:            4,
+					CreatedAt:        time.Now(),
+					EnqueuedAt:       time.Now(),
+					TriggerEventTime: dueTime,
+					TriggerReason:    reason,
+					TriggerNotes:     notes,
+					Status:           "Pending",
+					AgentFile:        ".agents/" + file.GetName(),
 				}
 
 				if w.DryRun {

@@ -698,7 +698,7 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                                         <th style={{ padding: '12px 16px', textAlign: 'left' }}>Target Issue / PR</th>
                                         <th style={{ padding: '12px 16px', textAlign: 'left' }}>Priority</th>
                                         <th style={{ padding: '12px 16px', textAlign: 'left' }}>Assignee</th>
-                                        <th style={{ padding: '12px 16px', textAlign: 'left' }}>Created At</th>
+                                        <th style={{ padding: '12px 16px', textAlign: 'left' }}>Trigger Event</th>
                                         <th style={{ padding: '12px 16px', textAlign: 'left' }}>Enqueued At</th>
                                         <th style={{ padding: '12px 16px', textAlign: 'right' }}>Actions</th>
                                     </tr>
@@ -728,9 +728,41 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                                                 )}
                                             </td>
                                             <td style={{ padding: '12px 16px', fontSize: '0.85rem' }}>{t.assignee || '-'}</td>
-                                            <td style={{ padding: '12px 16px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>-</td>
-                                            <td style={{ padding: '12px 16px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                                            <td style={{ padding: '12px 16px', fontSize: '0.85rem', color: 'var(--text-secondary)' }} title={t.triggerNotes || t.triggerReason || t.triggerEventTime || t.createdAt || ''}>
+                                                {t.triggerEventTime ? (
+                                                    <div>
+                                                        {formatQueueTimestamp(t.triggerEventTime)}
+                                                        {t.triggerReason && (
+                                                            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '2px', maxWidth: '220px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={t.triggerNotes || t.triggerReason}>
+                                                                {t.triggerReason}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                ) : (
+                                                    <div>{t.createdAt ? t.createdAt.split('T')[0] : '-'}</div>
+                                                )}
+                                            </td>
+                                            <td style={{ padding: '12px 16px', fontSize: '0.85rem', color: 'var(--text-secondary)' }} title={t.enqueuedAt || ''}>
                                                 {formatQueueTimestamp(t.enqueuedAt)}
+                                                {(() => {
+                                                    if (t.triggerEventTime && t.enqueuedAt) {
+                                                        const ev = new Date(t.triggerEventTime).getTime();
+                                                        const enq = new Date(t.enqueuedAt).getTime();
+                                                        if (!isNaN(ev) && !isNaN(enq) && enq >= ev) {
+                                                            const diffSec = Math.floor((enq - ev) / 1000);
+                                                            let lagStr = '';
+                                                            if (diffSec < 60) lagStr = `${diffSec}s lag`;
+                                                            else if (diffSec < 3600) lagStr = `${Math.floor(diffSec / 60)}m ${diffSec % 60}s lag`;
+                                                            else lagStr = `${Math.floor(diffSec / 3600)}h ${Math.floor((diffSec % 3600) / 60)}m lag`;
+                                                            return (
+                                                                <div style={{ fontSize: '0.72rem', color: '#f57c00', fontWeight: '500', marginTop: '2px' }} title={`Response lag from original event to task enqueued: ${lagStr}\nNotes: ${t.triggerNotes || t.triggerReason || ''}`}>
+                                                                    ⏱️ {lagStr}
+                                                                </div>
+                                                            );
+                                                        }
+                                                    }
+                                                    return null;
+                                                })()}
                                             </td>
                                             <td style={{ padding: '12px 16px', textAlign: 'right' }}>-</td>
                                         </tr>
@@ -746,6 +778,9 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                                                    (t.priority || '').toLowerCase().includes(q) ||
                                                    (t.assignee || '').toLowerCase().includes(q) ||
                                                    (t.enqueuedAt || '').toLowerCase().includes(q) ||
+                                                   (t.triggerReason || '').toLowerCase().includes(q) ||
+                                                   (t.triggerNotes || '').toLowerCase().includes(q) ||
+                                                   (t.triggerEventTime || '').toLowerCase().includes(q) ||
                                                    String(t.number).includes(q) ||
                                                    (t.url || '').toLowerCase().includes(q);
                                         });
@@ -785,11 +820,41 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                                                     )}
                                                 </td>
                                                 <td style={{ padding: '12px 16px', fontSize: '0.85rem' }}>{t.assignee || '-'}</td>
-                                                <td style={{ padding: '12px 16px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                                                    {t.createdAt ? t.createdAt.split('T')[0] : '-'}
+                                                <td style={{ padding: '12px 16px', fontSize: '0.85rem', color: 'var(--text-secondary)' }} title={t.triggerNotes || t.triggerReason || t.triggerEventTime || t.createdAt || ''}>
+                                                    {t.triggerEventTime ? (
+                                                        <div>
+                                                            {formatQueueTimestamp(t.triggerEventTime)}
+                                                            {t.triggerReason && (
+                                                                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '2px', maxWidth: '220px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={t.triggerNotes || t.triggerReason}>
+                                                                    {t.triggerReason}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    ) : (
+                                                        <div>{t.createdAt ? t.createdAt.split('T')[0] : '-'}</div>
+                                                    )}
                                                 </td>
                                                 <td style={{ padding: '12px 16px', fontSize: '0.85rem', color: 'var(--text-secondary)' }} title={t.enqueuedAt || ''}>
                                                     {formatQueueTimestamp(t.enqueuedAt)}
+                                                    {(() => {
+                                                        if (t.triggerEventTime && t.enqueuedAt) {
+                                                            const ev = new Date(t.triggerEventTime).getTime();
+                                                            const enq = new Date(t.enqueuedAt).getTime();
+                                                            if (!isNaN(ev) && !isNaN(enq) && enq >= ev) {
+                                                                const diffSec = Math.floor((enq - ev) / 1000);
+                                                                let lagStr = '';
+                                                                if (diffSec < 60) lagStr = `${diffSec}s lag`;
+                                                                else if (diffSec < 3600) lagStr = `${Math.floor(diffSec / 60)}m ${diffSec % 60}s lag`;
+                                                                else lagStr = `${Math.floor(diffSec / 3600)}h ${Math.floor((diffSec % 3600) / 60)}m lag`;
+                                                                return (
+                                                                    <div style={{ fontSize: '0.72rem', color: '#f57c00', fontWeight: '500', marginTop: '2px' }} title={`Response lag from original event to task enqueued: ${lagStr}\nNotes: ${t.triggerNotes || t.triggerReason || ''}`}>
+                                                                        ⏱️ {lagStr}
+                                                                    </div>
+                                                                );
+                                                            }
+                                                        }
+                                                        return null;
+                                                    })()}
                                                 </td>
                                                 <td style={{ padding: '12px 16px', textAlign: 'right' }}>
                                                     <button 
