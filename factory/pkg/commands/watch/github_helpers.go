@@ -55,15 +55,48 @@ func listAllOpenPRs(ctx context.Context, ghClient *githubv39.Client, owner, repo
 	return allPRs, nil
 }
 
-func syncReferencedIssueLabels(ctx context.Context, ghClient *githubv39.Client, owner, repo string, pr *githubv39.PullRequest, prIssue *githubv39.Issue) {
-	var refIssues []*githubv39.Issue
-	for refIssueNum := range common.GetReferencedIssues(pr) {
-		refIssue, _, err := ghClient.Issues.Get(ctx, owner, repo, refIssueNum)
+func fetchReferencedIssuesHierarchy(ctx context.Context, ghClient *githubv39.Client, owner, repo string, pr *githubv39.PullRequest) []*githubv39.Issue {
+	if ghClient == nil || pr == nil {
+		return nil
+	}
+
+	var result []*githubv39.Issue
+	visited := make(map[int]bool)
+	var queue []int
+
+	for refNum := range common.GetReferencedIssues(pr) {
+		if !visited[refNum] {
+			visited[refNum] = true
+			queue = append(queue, refNum)
+		}
+	}
+
+	maxIssues := 10
+	for len(queue) > 0 && len(result) < maxIssues {
+		issueNum := queue[0]
+		queue = queue[1:]
+
+		issue, _, err := ghClient.Issues.Get(ctx, owner, repo, issueNum)
 		if err != nil {
-			klog.Warningf("Failed to fetch referenced parent issue #%d for PR #%d: %v", refIssueNum, pr.GetNumber(), err)
+			klog.Warningf("Failed to fetch referenced issue #%d for PR #%d: %v", issueNum, pr.GetNumber(), err)
 			continue
 		}
-		refIssues = append(refIssues, refIssue)
+		result = append(result, issue)
+
+		for parentNum := range common.GetParentIssuesFromIssue(issue) {
+			if !visited[parentNum] {
+				visited[parentNum] = true
+				queue = append(queue, parentNum)
+			}
+		}
+	}
+
+	return result
+}
+
+func syncReferencedIssueLabels(ctx context.Context, ghClient *githubv39.Client, owner, repo string, pr *githubv39.PullRequest, prIssue *githubv39.Issue, refIssues []*githubv39.Issue) {
+	if ghClient == nil || pr == nil || prIssue == nil || len(refIssues) == 0 {
+		return
 	}
 
 	allMissingLabels := getMissingLabelsForPR(prIssue.Labels, refIssues)
@@ -72,8 +105,96 @@ func syncReferencedIssueLabels(ctx context.Context, ghClient *githubv39.Client, 
 		klog.Infof("Adding inherited labels %v to PR #%d", allMissingLabels, pr.GetNumber())
 		if _, _, err := ghClient.Issues.AddLabelsToIssue(ctx, owner, repo, pr.GetNumber(), allMissingLabels); err != nil {
 			klog.Errorf("Failed to add labels %v to PR #%d: %v", allMissingLabels, pr.GetNumber(), err)
+		} else {
+			for _, labelName := range allMissingLabels {
+				l := labelName
+				prIssue.Labels = append(prIssue.Labels, &githubv39.Label{Name: &l})
+			}
 		}
 	}
+}
+
+func (w *Watcher) syncReferencedIssueAssignees(ctx context.Context, pr *githubv39.PullRequest, prIssue *githubv39.Issue, refIssues []*githubv39.Issue) {
+	if w.ghClient == nil || pr == nil || prIssue == nil || len(refIssues) == 0 {
+		return
+	}
+
+	missingAssignees := getMissingHumanAssigneesForPR(prIssue.Assignees, refIssues, w.allBotUsers, w.githubLogin)
+	if len(missingAssignees) == 0 {
+		return
+	}
+
+	if w.DryRun {
+		fmt.Printf("[DRYRUN] Would add human assignees %v to PR #%d\n", missingAssignees, pr.GetNumber())
+		for _, name := range missingAssignees {
+			login := name
+			prIssue.Assignees = append(prIssue.Assignees, &githubv39.User{Login: &login})
+		}
+		return
+	}
+
+	klog.Infof("Adding inherited human assignees %v to PR #%d", missingAssignees, pr.GetNumber())
+	if _, _, err := w.ghClient.Issues.AddAssignees(ctx, w.Repo.Owner, w.Repo.Repo, pr.GetNumber(), missingAssignees); err != nil {
+		klog.Errorf("Failed to add human assignees %v to PR #%d: %v", missingAssignees, pr.GetNumber(), err)
+	} else {
+		for _, name := range missingAssignees {
+			login := name
+			prIssue.Assignees = append(prIssue.Assignees, &githubv39.User{Login: &login})
+		}
+	}
+}
+
+func isHumanUser(user *githubv39.User, botUsers []string, githubLogin string) bool {
+	if user == nil || user.GetLogin() == "" {
+		return false
+	}
+	if strings.EqualFold(user.GetType(), "Bot") {
+		return false
+	}
+	loginLower := strings.ToLower(user.GetLogin())
+	if strings.HasSuffix(loginLower, "[bot]") {
+		return false
+	}
+	if githubLogin != "" && strings.EqualFold(user.GetLogin(), githubLogin) {
+		return false
+	}
+	for _, bot := range botUsers {
+		if strings.EqualFold(user.GetLogin(), bot) {
+			return false
+		}
+	}
+	return true
+}
+
+func getMissingHumanAssigneesForPR(prAssignees []*githubv39.User, refIssues []*githubv39.Issue, botUsers []string, githubLogin string) []string {
+	prAssigneesSet := make(map[string]bool)
+	for _, user := range prAssignees {
+		if user.GetLogin() != "" {
+			prAssigneesSet[strings.ToLower(user.GetLogin())] = true
+		}
+	}
+
+	var missingAssignees []string
+	seen := make(map[string]bool)
+
+	for _, refIssue := range refIssues {
+		if refIssue == nil {
+			continue
+		}
+		for _, user := range refIssue.Assignees {
+			if !isHumanUser(user, botUsers, githubLogin) {
+				continue
+			}
+			login := user.GetLogin()
+			loginLower := strings.ToLower(login)
+			if !prAssigneesSet[loginLower] && !seen[loginLower] {
+				seen[loginLower] = true
+				missingAssignees = append(missingAssignees, login)
+			}
+		}
+	}
+
+	return missingAssignees
 }
 
 func getMissingLabelsForPR(prLabels []*githubv39.Label, refIssues []*githubv39.Issue) []string {

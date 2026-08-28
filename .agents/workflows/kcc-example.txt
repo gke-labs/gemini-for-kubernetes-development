@@ -12,7 +12,7 @@ This is a meta-skill describing the steps to migrate a KCC resource kind to a pr
 
 Instead of doing the coding yourself under this skill, you will coordinate and orchestrate:
 1. Planning the migration steps.
-2. Opening GitHub issues for each step, labeling them with `overseer`, and leaving them unassigned (or assigning them to the current bot user).
+2. Opening GitHub issues for each step, linking them to the parent workflow issue (including `Workflow Issue: #${SESSION_ID#issue-}` in the body), labeling them with `overseer`, and leaving them unassigned (or assigning them to the human assignee(s) of the parent workflow issue).
 3. Monitoring progress of the Pull Requests.
 4. Opening subsequent issues once the prior steps are successfully completed.
 
@@ -88,10 +88,12 @@ The resource must have a direct KRM type (`_types.go`) scaffolded and updated vi
    
 **GitHub Issue Details for Existing Terraform/DCL Resource:**
 *   **Title:** `Implement direct KRM types and generate.sh for {kind}`
-*   **Assignee:** (leave unassigned or assign to the current bot)
+*   **Assignee:** (leave unassigned or assign to the human assignee(s) of the parent workflow issue)
 *   **Labels:** `overseer`, `overseer/review`
 *   **Body:**
     ```
+    Workflow Issue: #${SESSION_ID#issue-}
+
     Please follow the skill .gemini/skills/crd-mapper-fuzzer-existing-type/SKILL.md for {kind}.
 
     Make sure to configure/update `generate.sh` in the resource's service directory (e.g., `apis/{service}/{version}/generate.sh`), ensuring that the direct KRM type is strictly schema-compatible with the existing CRD.
@@ -115,10 +117,12 @@ The resource kind must have an identity and reference type that follow our canon
 
 **GitHub Issue Details:**
 *   **Title:** `Move {kind} to identity and refs pattern`
-*   **Assignee:** (leave unassigned or assign to the current bot)
+*   **Assignee:** (leave unassigned or assign to the human assignee(s) of the parent workflow issue)
 *   **Labels:** `overseer`, `overseer/review`
 *   **Body:**
     ```
+    Workflow Issue: #${SESSION_ID#issue-}
+
     Please follow the skill .gemini/skills/kcc-identity-reference/SKILL.md for {kind}
 
     If you find any shortcomings in the skill (that likely apply to other resources), you may update SKILL.md. Also keep a journal of any less general observations etc. To avoid git merge conflicts, use a file under .gemini/skills/kcc-identity-reference/journal/, named after the kind or a similarly unique name. You may grep journal entries to identify learnings from other resources; if you find an important pattern by doing that you may also update the SKILL.md itself.
@@ -137,10 +141,12 @@ For existing resources transitioning to a direct controller, a round-trip KRM fu
 
 **GitHub Issue Details:**
 *   **Title:** `Implement round-trip KRM fuzzer for {kind}`
-*   **Assignee:** (leave unassigned or assign to the current bot)
+*   **Assignee:** (leave unassigned or assign to the human assignee(s) of the parent workflow issue)
 *   **Labels:** `overseer`
 *   **Body:**
     ```
+    Workflow Issue: #${SESSION_ID#issue-}
+
     Please follow the skill .gemini/skills/create-fuzzer/skill.md to implement a round-trip KRM fuzzer for {kind}.
 
     The expected path for the fuzzer is `pkg/controller/direct/{service}/{kind}_fuzzer.go`. Ensure the direct controller package is imported/registered in `pkg/controller/direct/register/register.go` so the fuzzer executes under the central fuzz test suite.
@@ -157,10 +163,12 @@ We need to ensure that we have a mockgcp that aligns with realgcp.
 
 **GitHub Issue Details:**
 *   **Title:** `Match real gcp behavior in MockGCP for {kind}`
-*   **Assignee:** `factorybot-robot`
+*   **Assignee:** (leave unassigned or assign to the human assignee(s) of the parent workflow issue)
 *   **Labels:** `overseer`
 *   **Body:**
     ```
+    Workflow Issue: #${SESSION_ID#issue-}
+
     Please first check if a mock for the GCP {service},{resource} corresponding to the {kind} already exists in the codebase. Check under mockgcp/ folder.
     If it doesnt exist, please follow the skill .gemini/skills/add-new-mockgcp-resource/SKILL.md to implement the mock for {service}, {resource} first.
 
@@ -192,10 +200,12 @@ The direct controller must be implemented to manage reconciliation logic (Adapte
 
 **GitHub Issue Details:**
 *   **Title:** `Implement direct controller and test fixtures for {kind}`
-*   **Assignee:** (leave unassigned or assign to the current bot)
+*   **Assignee:** (leave unassigned or assign to the human assignee(s) of the parent workflow issue)
 *   **Labels:** `overseer`
 *   **Body:**
     ```
+    Workflow Issue: #${SESSION_ID#issue-}
+
     Please follow the skills:
     - .gemini/skills/kcc-direct-controller-implementer/SKILL.md
     - .gemini/skills/kcc-direct-controller-logic-brownfield/SKILL.md
@@ -212,10 +222,12 @@ The direct controller must be implemented to manage reconciliation logic (Adapte
 
 **GitHub Issue Details:**
 *   **Title:** `Validate direct promotion for {kind}`
-*   **Assignee:** (leave unassigned or assign to the current bot)
+*   **Assignee:** (leave unassigned or assign to the human assignee(s) of the parent workflow issue)
 *   **Labels:** `overseer`
 *   **Body:**
     ```
+    Workflow Issue: #${SESSION_ID#issue-}
+
     Find the tests added under pkg/test/resourcefixture/testdata/basic for the {kind}.
     Include only those tests that are not using direct annotation `alpha.cnrm.cloud.google.com/reconciler: direct` in `create.yaml`
 

@@ -110,10 +110,17 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 			continue
 		}
 
+		// Fetch referenced parent issues (and parent workflow issues)
+		refIssues := fetchReferencedIssuesHierarchy(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, pr)
+
 		// Sync labels from referenced parent issues to the PR
-		syncReferencedIssueLabels(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, pr, prIssue)
+		syncReferencedIssueLabels(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, pr, prIssue, refIssues)
+
+		// Sync human assignees from referenced parent issues to the PR
+		w.syncReferencedIssueAssignees(ctx, pr, prIssue, refIssues)
+
 		if hasStopLabel(prIssue.Labels, w.triggerLabel) {
-			klog.Infof("Skipping PR #%d after label sync because it has the stop label ('overseer/stop' or '%s/stop')", num, w.triggerLabel)
+			klog.Infof("Skipping PR #%d after label/assignee sync because it has the stop label ('overseer/stop' or '%s/stop')", num, w.triggerLabel)
 			w.reconcileReadyForHumanLabel(ctx, num, prIssue, false, "")
 			removePendingTasksForNumber(w.incomingDir, num)
 			continue
@@ -657,9 +664,8 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 							if pr.GetBody() != "" {
 								bodies = append(bodies, pr.GetBody())
 							}
-							for refIssueNum := range common.GetReferencedIssues(pr) {
-								refIssue, _, err := w.ghClient.Issues.Get(ctx, w.Repo.Owner, w.Repo.Repo, refIssueNum)
-								if err == nil && refIssue.GetBody() != "" {
+							for _, refIssue := range refIssues {
+								if refIssue != nil && refIssue.GetBody() != "" {
 									bodies = append(bodies, refIssue.GetBody())
 								}
 							}
