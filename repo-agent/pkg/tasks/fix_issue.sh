@@ -84,6 +84,7 @@ EOF
     cat <<EOF > /root/.gitignore_global
 manager
 bin/
+http-logs/
 EOF
 }
 
