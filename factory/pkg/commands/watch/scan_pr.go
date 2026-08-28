@@ -206,13 +206,6 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 					}
 
 					prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", w.Repo.Owner, w.Repo.Repo, num)
-					eventTime := lastCommitTime
-					if eventTime.IsZero() {
-						eventTime = pr.GetUpdatedAt()
-					}
-					if eventTime.IsZero() {
-						eventTime = pr.GetCreatedAt()
-					}
 					shortSHA := headSHA
 					if len(shortSHA) > 7 {
 						shortSHA = shortSHA[:7]
@@ -221,24 +214,19 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 					if pr.GetBase() != nil {
 						baseRef = pr.GetBase().GetRef()
 					}
-					reason := TriggerReasonPRMergeConflict
 					notes := fmt.Sprintf("PR #%d has merge conflicts with base branch '%s'; head commit %s committer date %s, PR updated at %s", num, baseRef, shortSHA, lastCommitTime.Format(time.RFC3339), pr.GetUpdatedAt().Format(time.RFC3339))
 
-					task := &QueueTask{
+					task := w.newPRQueueTask(PRTaskOptions{
 						Type:             "pr-iterate",
-						URL:              prURL,
-						Number:           num,
-						Priority:         getPRPriority(prIssue),
+						PR:               pr,
+						PRIssue:          prIssue,
 						Phase:            1,
-						CreatedAt:        pr.GetCreatedAt(),
-						EnqueuedAt:       time.Now(),
-						TriggerEventTime: eventTime,
-						TriggerReason:    reason,
-						TriggerNotes:     notes,
 						Assignee:         taskAssignee,
-						Status:           "Pending",
 						CommitSHA:        headSHA,
-					}
+						TriggerEventTime: lastCommitTime,
+						TriggerReason:    TriggerReasonPRMergeConflict,
+						TriggerNotes:     notes,
+					})
 
 					if w.DryRun {
 						fmt.Printf("[DRYRUN] Would queue rebase task for PR #%d: %s\n", num, prURL)
@@ -380,12 +368,6 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 							if eventTime.IsZero() {
 								eventTime = lastCommitTime
 							}
-							if eventTime.IsZero() {
-								eventTime = pr.GetUpdatedAt()
-							}
-							if eventTime.IsZero() {
-								eventTime = pr.GetCreatedAt()
-							}
 							shortSHA := headSHA
 							if len(shortSHA) > 7 {
 								shortSHA = shortSHA[:7]
@@ -398,24 +380,19 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 							if failConclusion == "" {
 								failConclusion = "failed"
 							}
-							reason := TriggerReasonPRCheckFailed
 							notes := fmt.Sprintf("Earliest CI failure in '%s' (%s) at %s; total %d failed check(s) on commit %s", failName, failConclusion, eventTime.Format(time.RFC3339), failedCount, shortSHA)
 
-							task := &QueueTask{
+							task := w.newPRQueueTask(PRTaskOptions{
 								Type:             "pr-investigate",
-								URL:              prURL,
-								Number:           num,
-								Priority:         getPRPriority(prIssue),
+								PR:               pr,
+								PRIssue:          prIssue,
 								Phase:            3,
-								CreatedAt:        pr.GetCreatedAt(),
-								EnqueuedAt:       time.Now(),
-								TriggerEventTime: eventTime,
-								TriggerReason:    reason,
-								TriggerNotes:     notes,
 								Assignee:         taskAssignee,
-								Status:           "Pending",
 								CommitSHA:        headSHA,
-							}
+								TriggerEventTime: eventTime,
+								TriggerReason:    TriggerReasonPRCheckFailed,
+								TriggerNotes:     notes,
+							})
 
 							if w.DryRun {
 								fmt.Printf("[DRYRUN] Would queue investigate task for PR #%d: %s\n", num, prURL)
@@ -602,18 +579,10 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 						}
 
 						prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", w.Repo.Owner, w.Repo.Repo, num)
-						eventTime := oldestCommentTime
-						if eventTime.IsZero() {
-							eventTime = pr.GetUpdatedAt()
-						}
-						if eventTime.IsZero() {
-							eventTime = pr.GetCreatedAt()
-						}
 						shortSHA := headSHA
 						if len(shortSHA) > 7 {
 							shortSHA = shortSHA[:7]
 						}
-						reason := TriggerReasonPRCommentsAdded
 						commitInfo := ""
 						if !lastCommitTime.IsZero() {
 							commitInfo = fmt.Sprintf(" since last commit %s (committer date %s)", shortSHA, lastCommitTime.Format(time.RFC3339))
@@ -626,23 +595,19 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 						if cType == "" {
 							cType = "comment"
 						}
-						notes := fmt.Sprintf("Oldest unaddressed %s%s added at %s (ID %d)%s", cType, authorStr, eventTime.Format(time.RFC3339), oldestCommentID, commitInfo)
+						notes := fmt.Sprintf("Oldest unaddressed %s%s added at %s (ID %d)%s", cType, authorStr, oldestCommentTime.Format(time.RFC3339), oldestCommentID, commitInfo)
 
-						task := &QueueTask{
+						task := w.newPRQueueTask(PRTaskOptions{
 							Type:             "pr-comments",
-							URL:              prURL,
-							Number:           num,
-							Priority:         getPRPriority(prIssue),
+							PR:               pr,
+							PRIssue:          prIssue,
 							Phase:            2,
-							CreatedAt:        pr.GetCreatedAt(),
-							EnqueuedAt:       time.Now(),
-							TriggerEventTime: eventTime,
-							TriggerReason:    reason,
-							TriggerNotes:     notes,
 							Assignee:         taskAssignee,
-							Status:           "Pending",
 							CommitSHA:        headSHA,
-						}
+							TriggerEventTime: oldestCommentTime,
+							TriggerReason:    TriggerReasonPRCommentsAdded,
+							TriggerNotes:     notes,
+						})
 
 						if w.DryRun {
 							fmt.Printf("[DRYRUN] Would queue address-comments task for PR #%d: %s\n", num, prURL)
@@ -717,32 +682,21 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 								eventTime = latestCheckCompletedTime
 								notes = fmt.Sprintf("Automated review triggered; all CI checks passed at %s for commit %s (committer date %s)", latestCheckCompletedTime.Format(time.RFC3339), shortSHA, lastCommitTime.Format(time.RFC3339))
 							} else {
-								if eventTime.IsZero() {
-									eventTime = pr.GetUpdatedAt()
-								}
-								if eventTime.IsZero() {
-									eventTime = pr.GetCreatedAt()
-								}
 								notes = fmt.Sprintf("Automated review triggered for commit %s at %s", shortSHA, eventTime.Format(time.RFC3339))
 							}
-							reason := TriggerReasonPRReadyForReview
 
 							prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", w.Repo.Owner, w.Repo.Repo, num)
-							task := &QueueTask{
+							task := w.newPRQueueTask(PRTaskOptions{
 								Type:             "pr-review",
-								URL:              prURL,
-								Number:           num,
-								Priority:         getPRPriority(prIssue),
+								PR:               pr,
+								PRIssue:          prIssue,
 								Phase:            2,
-								CreatedAt:        pr.GetCreatedAt(),
-								EnqueuedAt:       time.Now(),
-								TriggerEventTime: eventTime,
-								TriggerReason:    reason,
-								TriggerNotes:     notes,
-								Status:           "Pending",
 								CommitSHA:        headSHA,
+								TriggerEventTime: eventTime,
+								TriggerReason:    TriggerReasonPRReadyForReview,
+								TriggerNotes:     notes,
 								Instructions:     instructions,
-							}
+							})
 
 							if w.DryRun {
 								fmt.Printf("[DRYRUN] Would queue review task for PR #%d: %s\n", num, prURL)

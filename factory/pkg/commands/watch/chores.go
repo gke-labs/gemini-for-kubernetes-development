@@ -101,19 +101,12 @@ func (w *Watcher) scanChores(ctx context.Context) {
 				}
 				notes := fmt.Sprintf("Chore agent '%s' (schedule: '%s') due at %s; last run: %s", agentDef.Name, agentDef.Schedule, dueTime.Format(time.RFC3339), lastRunStr)
 
-				task := &QueueTask{
-					Type:             "agent-chore",
-					URL:              fmt.Sprintf("https://github.com/%s/%s", w.Repo.Owner, w.Repo.Repo),
-					Priority:         "medium",
-					Phase:            4,
-					CreatedAt:        time.Now(),
-					EnqueuedAt:       time.Now(),
+				task := w.newChoreQueueTask(ChoreTaskOptions{
+					AgentFile:        ".agents/" + file.GetName(),
 					TriggerEventTime: dueTime,
 					TriggerReason:    reason,
 					TriggerNotes:     notes,
-					Status:           "Pending",
-					AgentFile:        ".agents/" + file.GetName(),
-				}
+				})
 
 				if w.DryRun {
 					fmt.Printf("[DRYRUN] Would queue chore agent task %s (schedule: %s)\n", agentDef.Name, agentDef.Schedule)

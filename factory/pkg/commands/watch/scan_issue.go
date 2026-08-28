@@ -143,47 +143,36 @@ func (w *Watcher) queueIssueTasks(ctx context.Context, issues []*githubv39.Issue
 				taskAssignee = w.targetAssignee
 			}
 
-			issueURL := fmt.Sprintf("https://github.com/%s/%s/issues/%d", w.Repo.Owner, w.Repo.Repo, num)
 			var task *QueueTask
 			if workflowName != "" {
-				task = &QueueTask{
+				task = w.newIssueQueueTask(IssueTaskOptions{
 					Type:             "agent-chore",
-					URL:              issueURL,
-					Number:           num,
-					Priority:         getIssuePriority(issue),
+					Issue:            issue,
 					Phase:            4,
-					CreatedAt:        issue.GetCreatedAt(),
-					EnqueuedAt:       time.Now(),
+					Assignee:         taskAssignee,
 					TriggerEventTime: triggerEventTime,
 					TriggerReason:    triggerReason,
 					TriggerNotes:     triggerNotes,
-					Assignee:         taskAssignee,
-					Status:           "Pending",
 					AgentFile:        workflowPath,
 					SessionID:        fmt.Sprintf("issue-%d", num),
-				}
+				})
 			} else {
-				task = &QueueTask{
+				task = w.newIssueQueueTask(IssueTaskOptions{
 					Type:             "issue-fix",
-					URL:              issueURL,
-					Number:           num,
-					Priority:         getIssuePriority(issue),
+					Issue:            issue,
 					Phase:            3,
-					CreatedAt:        issue.GetCreatedAt(),
-					EnqueuedAt:       time.Now(),
+					Assignee:         taskAssignee,
 					TriggerEventTime: triggerEventTime,
 					TriggerReason:    triggerReason,
 					TriggerNotes:     triggerNotes,
-					Assignee:         taskAssignee,
-					Status:           "Pending",
-				}
+				})
 			}
 
 			if w.DryRun {
 				if workflowName != "" {
-					fmt.Printf("[DRYRUN] Would queue workflow task %s for issue #%d: %s\n", workflowName, num, issueURL)
+					fmt.Printf("[DRYRUN] Would queue workflow task %s for issue #%d: %s\n", workflowName, num, task.URL)
 				} else {
-					fmt.Printf("[DRYRUN] Would queue fix task for issue #%d: %s\n", num, issueURL)
+					fmt.Printf("[DRYRUN] Would queue fix task for issue #%d: %s\n", num, task.URL)
 				}
 			} else {
 				if workflowName != "" {
