@@ -206,18 +206,27 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 					}
 
 					prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", w.Repo.Owner, w.Repo.Repo, num)
-					task := &QueueTask{
-						Type:       "pr-iterate",
-						URL:        prURL,
-						Number:     num,
-						Priority:   getPRPriority(prIssue),
-						Phase:      1,
-						CreatedAt:  pr.GetCreatedAt(),
-						EnqueuedAt: time.Now(),
-						Assignee:   taskAssignee,
-						Status:     "Pending",
-						CommitSHA:  headSHA,
+					shortSHA := headSHA
+					if len(shortSHA) > 7 {
+						shortSHA = shortSHA[:7]
 					}
+					baseRef := ""
+					if pr.GetBase() != nil {
+						baseRef = pr.GetBase().GetRef()
+					}
+					notes := fmt.Sprintf("PR #%d has merge conflicts with base branch '%s'; head commit %s committer date %s, PR updated at %s", num, baseRef, shortSHA, lastCommitTime.Format(time.RFC3339), pr.GetUpdatedAt().Format(time.RFC3339))
+
+					task := w.newPRQueueTask(PRTaskOptions{
+						Type:             "pr-iterate",
+						PR:               pr,
+						PRIssue:          prIssue,
+						Phase:            1,
+						Assignee:         taskAssignee,
+						CommitSHA:        headSHA,
+						TriggerEventTime: lastCommitTime,
+						TriggerReason:    TriggerReasonPRMergeConflict,
+						TriggerNotes:     notes,
+					})
 
 					if w.DryRun {
 						fmt.Printf("[DRYRUN] Would queue rebase task for PR #%d: %s\n", num, prURL)
@@ -241,6 +250,11 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 		// Check CI Check Failures and Pending Status
 		hasFailure := false
 		hasPending := false
+		var earliestFailureTime time.Time
+		var earliestFailureName string
+		var earliestFailureConclusion string
+		failedCount := 0
+
 		checkRuns, err := common.ListAllCheckRuns(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, headSHA)
 		if err == nil {
 			for _, run := range checkRuns {
@@ -250,6 +264,21 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 				c := run.GetConclusion()
 				if c == "failure" || c == "timed_out" || c == "cancelled" || c == "action_required" || c == "stale" {
 					hasFailure = true
+					failedCount++
+					t := run.GetCompletedAt().Time
+					if t.IsZero() {
+						t = run.GetStartedAt().Time
+					}
+					if !t.IsZero() {
+						if earliestFailureTime.IsZero() || t.Before(earliestFailureTime) {
+							earliestFailureTime = t
+							earliestFailureName = run.GetName()
+							earliestFailureConclusion = c
+						}
+					} else if earliestFailureName == "" {
+						earliestFailureName = run.GetName()
+						earliestFailureConclusion = c
+					}
 				}
 			}
 		}
@@ -262,6 +291,21 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 				}
 				if status.GetState() == "failure" || status.GetState() == "error" {
 					hasFailure = true
+					failedCount++
+					t := status.GetUpdatedAt()
+					if t.IsZero() {
+						t = status.GetCreatedAt()
+					}
+					if !t.IsZero() {
+						if earliestFailureTime.IsZero() || t.Before(earliestFailureTime) {
+							earliestFailureTime = t
+							earliestFailureName = status.GetContext()
+							earliestFailureConclusion = status.GetState()
+						}
+					} else if earliestFailureName == "" {
+						earliestFailureName = status.GetContext()
+						earliestFailureConclusion = status.GetState()
+					}
 				}
 			}
 		}
@@ -320,18 +364,35 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 							}
 
 							prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", w.Repo.Owner, w.Repo.Repo, num)
-							task := &QueueTask{
-								Type:       "pr-investigate",
-								URL:        prURL,
-								Number:     num,
-								Priority:   getPRPriority(prIssue),
-								Phase:      3,
-								CreatedAt:  pr.GetCreatedAt(),
-								EnqueuedAt: time.Now(),
-								Assignee:   taskAssignee,
-								Status:     "Pending",
-								CommitSHA:  headSHA,
+							eventTime := earliestFailureTime
+							if eventTime.IsZero() {
+								eventTime = lastCommitTime
 							}
+							shortSHA := headSHA
+							if len(shortSHA) > 7 {
+								shortSHA = shortSHA[:7]
+							}
+							failName := earliestFailureName
+							if failName == "" {
+								failName = "unknown check"
+							}
+							failConclusion := earliestFailureConclusion
+							if failConclusion == "" {
+								failConclusion = "failed"
+							}
+							notes := fmt.Sprintf("Earliest CI failure in '%s' (%s) at %s; total %d failed check(s) on commit %s", failName, failConclusion, eventTime.Format(time.RFC3339), failedCount, shortSHA)
+
+							task := w.newPRQueueTask(PRTaskOptions{
+								Type:             "pr-investigate",
+								PR:               pr,
+								PRIssue:          prIssue,
+								Phase:            3,
+								Assignee:         taskAssignee,
+								CommitSHA:        headSHA,
+								TriggerEventTime: eventTime,
+								TriggerReason:    TriggerReasonPRCheckFailed,
+								TriggerNotes:     notes,
+							})
 
 							if w.DryRun {
 								fmt.Printf("[DRYRUN] Would queue investigate task for PR #%d: %s\n", num, prURL)
@@ -380,6 +441,22 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 			var unackPRCommentIDs []int64
 			hasNewHumanComments := false
 			hasNewBotReviews := false
+			var oldestCommentTime time.Time
+			var oldestCommentAuthor string
+			var oldestCommentType string
+			var oldestCommentID int64
+			qualifyingCommentsCount := 0
+
+			updateOldestComment := func(t time.Time, author string, cType string, id int64) {
+				qualifyingCommentsCount++
+				if !t.IsZero() && (oldestCommentTime.IsZero() || t.Before(oldestCommentTime)) {
+					oldestCommentTime = t
+					oldestCommentAuthor = author
+					oldestCommentType = cType
+					oldestCommentID = id
+				}
+			}
+
 			for _, c := range comments {
 				isReviewer := isReviewerBot(c.GetUser(), w.cfg)
 				if !isReviewer && shouldIgnoreUser(c.GetUser(), w.githubLogin, bots) {
@@ -405,6 +482,11 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 						hasNewHumanComments = true
 					}
 					unackCommentIDs = append(unackCommentIDs, c.GetID())
+					author := ""
+					if c.GetUser() != nil {
+						author = c.GetUser().GetLogin()
+					}
+					updateOldestComment(c.GetCreatedAt(), author, "comment", c.GetID())
 				}
 			}
 
@@ -425,6 +507,13 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 						hasNewBotReviews = true
 					} else {
 						hasNewHumanComments = true
+					}
+					if strings.TrimSpace(r.GetBody()) != "" {
+						author := ""
+						if r.GetUser() != nil {
+							author = r.GetUser().GetLogin()
+						}
+						updateOldestComment(r.GetSubmittedAt(), author, "review", r.GetID())
 					}
 				}
 
@@ -447,6 +536,11 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 							hasNewHumanComments = true
 						}
 						unackPRCommentIDs = append(unackPRCommentIDs, rc.GetID())
+						author := ""
+						if rc.GetUser() != nil {
+							author = rc.GetUser().GetLogin()
+						}
+						updateOldestComment(rc.GetCreatedAt(), author, "inline review comment", rc.GetID())
 					}
 				}
 			}
@@ -485,18 +579,35 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 						}
 
 						prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", w.Repo.Owner, w.Repo.Repo, num)
-						task := &QueueTask{
-							Type:       "pr-comments",
-							URL:        prURL,
-							Number:     num,
-							Priority:   getPRPriority(prIssue),
-							Phase:      2,
-							CreatedAt:  pr.GetCreatedAt(),
-							EnqueuedAt: time.Now(),
-							Assignee:   taskAssignee,
-							Status:     "Pending",
-							CommitSHA:  headSHA,
+						shortSHA := headSHA
+						if len(shortSHA) > 7 {
+							shortSHA = shortSHA[:7]
 						}
+						commitInfo := ""
+						if !lastCommitTime.IsZero() {
+							commitInfo = fmt.Sprintf(" since last commit %s (committer date %s)", shortSHA, lastCommitTime.Format(time.RFC3339))
+						}
+						authorStr := ""
+						if oldestCommentAuthor != "" {
+							authorStr = fmt.Sprintf(" by %s", oldestCommentAuthor)
+						}
+						cType := oldestCommentType
+						if cType == "" {
+							cType = "comment"
+						}
+						notes := fmt.Sprintf("Oldest unaddressed %s%s added at %s (ID %d)%s", cType, authorStr, oldestCommentTime.Format(time.RFC3339), oldestCommentID, commitInfo)
+
+						task := w.newPRQueueTask(PRTaskOptions{
+							Type:             "pr-comments",
+							PR:               pr,
+							PRIssue:          prIssue,
+							Phase:            2,
+							Assignee:         taskAssignee,
+							CommitSHA:        headSHA,
+							TriggerEventTime: oldestCommentTime,
+							TriggerReason:    TriggerReasonPRCommentsAdded,
+							TriggerNotes:     notes,
+						})
 
 						if w.DryRun {
 							fmt.Printf("[DRYRUN] Would queue address-comments task for PR #%d: %s\n", num, prURL)
@@ -554,19 +665,38 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 							}
 							instructions := common.ExtractReviewInstructions(bodies...)
 
-							prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", w.Repo.Owner, w.Repo.Repo, num)
-							task := &QueueTask{
-								Type:         "pr-review",
-								URL:          prURL,
-								Number:       num,
-								Priority:     getPRPriority(prIssue),
-								Phase:        2,
-								CreatedAt:    pr.GetCreatedAt(),
-								EnqueuedAt:   time.Now(),
-								Status:       "Pending",
-								CommitSHA:    headSHA,
-								Instructions: instructions,
+							var latestCheckCompletedTime time.Time
+							for _, run := range checkRuns {
+								t := run.GetCompletedAt().Time
+								if t.After(latestCheckCompletedTime) {
+									latestCheckCompletedTime = t
+								}
 							}
+							eventTime := lastCommitTime
+							var notes string
+							shortSHA := headSHA
+							if len(shortSHA) > 7 {
+								shortSHA = shortSHA[:7]
+							}
+							if !latestCheckCompletedTime.IsZero() && latestCheckCompletedTime.After(lastCommitTime) {
+								eventTime = latestCheckCompletedTime
+								notes = fmt.Sprintf("Automated review triggered; all CI checks passed at %s for commit %s (committer date %s)", latestCheckCompletedTime.Format(time.RFC3339), shortSHA, lastCommitTime.Format(time.RFC3339))
+							} else {
+								notes = fmt.Sprintf("Automated review triggered for commit %s at %s", shortSHA, eventTime.Format(time.RFC3339))
+							}
+
+							prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", w.Repo.Owner, w.Repo.Repo, num)
+							task := w.newPRQueueTask(PRTaskOptions{
+								Type:             "pr-review",
+								PR:               pr,
+								PRIssue:          prIssue,
+								Phase:            2,
+								CommitSHA:        headSHA,
+								TriggerEventTime: eventTime,
+								TriggerReason:    TriggerReasonPRReadyForReview,
+								TriggerNotes:     notes,
+								Instructions:     instructions,
+							})
 
 							if w.DryRun {
 								fmt.Printf("[DRYRUN] Would queue review task for PR #%d: %s\n", num, prURL)

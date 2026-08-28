@@ -225,13 +225,18 @@ func writeTaskJournalEvent(queueDir string, taskFilename string, task *QueueTask
 	defer f.Close()
 
 	je := JournalEvent{
-		Timestamp: time.Now(),
-		TaskID:    strings.TrimSuffix(taskFilename, ".yaml"),
-		Event:     event,
-		Type:      task.Type,
-		URL:       task.URL,
-		Priority:  task.Priority,
-		Error:     task.Error,
+		Timestamp:        time.Now(),
+		TaskID:           strings.TrimSuffix(taskFilename, ".yaml"),
+		Event:            event,
+		Type:             task.Type,
+		URL:              task.URL,
+		Priority:         task.Priority,
+		TriggerEventTime: task.TriggerEventTime,
+		TriggerReason:    task.TriggerReason,
+		TriggerNotes:     task.TriggerNotes,
+		StartedAt:        task.StartedAt,
+		CompletedAt:      task.CompletedAt,
+		Error:            task.Error,
 	}
 	if duration > 0 {
 		je.DurationSecond = duration.Seconds()
@@ -426,12 +431,19 @@ func (w *Watcher) recoverStuckTasks(ctx context.Context) {
 						if err == nil && completed {
 							klog.Infof("Task %s already completed in sandbox %s. Moving from processing to processed.", f.Name(), sandboxName)
 							t.Status = "Completed"
+							if t.StartedAt.IsZero() {
+								t.StartedAt = t.EnqueuedAt
+							}
 							if t.CompletedAt.IsZero() {
 								t.CompletedAt = time.Now()
 							}
+							duration := time.Duration(0)
+							if !t.StartedAt.IsZero() && t.CompletedAt.After(t.StartedAt) {
+								duration = t.CompletedAt.Sub(t.StartedAt)
+							}
 							if err := writeTaskAtomically(w.processedDir, f.Name(), &t); err == nil {
 								_ = os.Remove(processingPath)
-								writeTaskJournalEvent(w.QueueDir, f.Name(), &t, "Completed", 0)
+								writeTaskJournalEvent(w.QueueDir, f.Name(), &t, "Completed", duration)
 								continue
 							}
 						}
@@ -455,5 +467,106 @@ func (w *Watcher) recoverStuckTasks(ctx context.Context) {
 				klog.Errorf("Failed to recover stuck task %s: %v", f.Name(), err)
 			}
 		}
+	}
+}
+
+// PRTaskOptions specifies parameters for constructing a pull request QueueTask.
+type PRTaskOptions struct {
+	Type             string
+	PR               *githubv39.PullRequest
+	PRIssue          *githubv39.Issue
+	Phase            int
+	Assignee         string
+	CommitSHA        string
+	TriggerEventTime time.Time
+	TriggerReason    TriggerReason
+	TriggerNotes     string
+	Instructions     []string
+}
+
+// newPRQueueTask constructs a QueueTask for pull request tasks with consistent defaults.
+func (w *Watcher) newPRQueueTask(opts PRTaskOptions) *QueueTask {
+	num := opts.PR.GetNumber()
+	eventTime := opts.TriggerEventTime
+	if eventTime.IsZero() {
+		eventTime = opts.PR.GetUpdatedAt()
+	}
+	if eventTime.IsZero() {
+		eventTime = opts.PR.GetCreatedAt()
+	}
+	return &QueueTask{
+		Type:             opts.Type,
+		URL:              fmt.Sprintf("https://github.com/%s/%s/pull/%d", w.Repo.Owner, w.Repo.Repo, num),
+		Number:           num,
+		Priority:         getPRPriority(opts.PRIssue),
+		Phase:            opts.Phase,
+		CreatedAt:        opts.PR.GetCreatedAt(),
+		EnqueuedAt:       time.Now(),
+		TriggerEventTime: eventTime,
+		TriggerReason:    opts.TriggerReason,
+		TriggerNotes:     opts.TriggerNotes,
+		Assignee:         opts.Assignee,
+		Status:           "Pending",
+		CommitSHA:        opts.CommitSHA,
+		Instructions:     opts.Instructions,
+	}
+}
+
+// IssueTaskOptions specifies parameters for constructing an issue QueueTask.
+type IssueTaskOptions struct {
+	Type             string
+	Issue            *githubv39.Issue
+	Phase            int
+	Assignee         string
+	TriggerEventTime time.Time
+	TriggerReason    TriggerReason
+	TriggerNotes     string
+	AgentFile        string
+	SessionID        string
+}
+
+// newIssueQueueTask constructs a QueueTask for issue tasks with consistent defaults.
+func (w *Watcher) newIssueQueueTask(opts IssueTaskOptions) *QueueTask {
+	num := opts.Issue.GetNumber()
+	return &QueueTask{
+		Type:             opts.Type,
+		URL:              fmt.Sprintf("https://github.com/%s/%s/issues/%d", w.Repo.Owner, w.Repo.Repo, num),
+		Number:           num,
+		Priority:         getIssuePriority(opts.Issue),
+		Phase:            opts.Phase,
+		CreatedAt:        opts.Issue.GetCreatedAt(),
+		EnqueuedAt:       time.Now(),
+		TriggerEventTime: opts.TriggerEventTime,
+		TriggerReason:    opts.TriggerReason,
+		TriggerNotes:     opts.TriggerNotes,
+		Assignee:         opts.Assignee,
+		Status:           "Pending",
+		AgentFile:        opts.AgentFile,
+		SessionID:        opts.SessionID,
+	}
+}
+
+// ChoreTaskOptions specifies parameters for constructing a scheduled chore QueueTask.
+type ChoreTaskOptions struct {
+	AgentFile        string
+	TriggerEventTime time.Time
+	TriggerReason    TriggerReason
+	TriggerNotes     string
+}
+
+// newChoreQueueTask constructs a QueueTask for scheduled chore tasks with consistent defaults.
+func (w *Watcher) newChoreQueueTask(opts ChoreTaskOptions) *QueueTask {
+	return &QueueTask{
+		Type:             "agent-chore",
+		URL:              fmt.Sprintf("https://github.com/%s/%s", w.Repo.Owner, w.Repo.Repo),
+		Priority:         "medium",
+		Phase:            4,
+		CreatedAt:        time.Now(),
+		EnqueuedAt:       time.Now(),
+		TriggerEventTime: opts.TriggerEventTime,
+		TriggerReason:    opts.TriggerReason,
+		TriggerNotes:     opts.TriggerNotes,
+		Status:           "Pending",
+		AgentFile:        opts.AgentFile,
 	}
 }

@@ -73,9 +73,17 @@ func (w *Watcher) queueIssueTasks(ctx context.Context, issues []*githubv39.Issue
 
 		lastProcessed, ok := w.processedIssues[num]
 		if !ok || issue.GetUpdatedAt().After(lastProcessed) || workflowName != "" {
+			var timeline []*githubv39.Timeline
+			if w.ghClient != nil {
+				tl, _, err := w.ghClient.Issues.ListIssueTimeline(ctx, w.Repo.Owner, w.Repo.Repo, num, nil)
+				if err == nil {
+					timeline = tl
+				}
+			}
+
 			// Skip KRM check for workflow triggers since they don't necessarily have linked code PRs
 			if workflowName == "" {
-				linked, err := hasLinkedPR(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, num)
+				linked, err := hasLinkedPRWithTimeline(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, num, timeline)
 				if err != nil {
 					klog.Errorf("Failed to check linked PR for issue #%d: %v", num, err)
 					continue
@@ -106,7 +114,9 @@ func (w *Watcher) queueIssueTasks(ctx context.Context, issues []*githubv39.Issue
 					break
 				}
 			}
+			wasAutoLabeled := false
 			if !hasTriggerLabel {
+				wasAutoLabeled = true
 				if w.DryRun {
 					fmt.Printf("[DRYRUN] Would add label '%s' to issue #%d\n", w.triggerLabel, num)
 				} else {
@@ -116,6 +126,8 @@ func (w *Watcher) queueIssueTasks(ctx context.Context, issues []*githubv39.Issue
 					}
 				}
 			}
+
+			triggerEventTime, triggerReason, triggerNotes := getIssueTriggerInfo(issue, timeline, w.triggerLabel, wasAutoLabeled)
 
 			taskType := "issue-fix"
 			if workflowName != "" {
@@ -131,41 +143,36 @@ func (w *Watcher) queueIssueTasks(ctx context.Context, issues []*githubv39.Issue
 				taskAssignee = w.targetAssignee
 			}
 
-			issueURL := fmt.Sprintf("https://github.com/%s/%s/issues/%d", w.Repo.Owner, w.Repo.Repo, num)
 			var task *QueueTask
 			if workflowName != "" {
-				task = &QueueTask{
-					Type:       "agent-chore",
-					URL:        issueURL,
-					Number:     num,
-					Priority:   getIssuePriority(issue),
-					Phase:      4,
-					CreatedAt:  issue.GetCreatedAt(),
-					EnqueuedAt: time.Now(),
-					Assignee:   taskAssignee,
-					Status:     "Pending",
-					AgentFile:  workflowPath,
-					SessionID:  fmt.Sprintf("issue-%d", num),
-				}
+				task = w.newIssueQueueTask(IssueTaskOptions{
+					Type:             "agent-chore",
+					Issue:            issue,
+					Phase:            4,
+					Assignee:         taskAssignee,
+					TriggerEventTime: triggerEventTime,
+					TriggerReason:    triggerReason,
+					TriggerNotes:     triggerNotes,
+					AgentFile:        workflowPath,
+					SessionID:        fmt.Sprintf("issue-%d", num),
+				})
 			} else {
-				task = &QueueTask{
-					Type:       "issue-fix",
-					URL:        issueURL,
-					Number:     num,
-					Priority:   getIssuePriority(issue),
-					Phase:      3,
-					CreatedAt:  issue.GetCreatedAt(),
-					EnqueuedAt: time.Now(),
-					Assignee:   taskAssignee,
-					Status:     "Pending",
-				}
+				task = w.newIssueQueueTask(IssueTaskOptions{
+					Type:             "issue-fix",
+					Issue:            issue,
+					Phase:            3,
+					Assignee:         taskAssignee,
+					TriggerEventTime: triggerEventTime,
+					TriggerReason:    triggerReason,
+					TriggerNotes:     triggerNotes,
+				})
 			}
 
 			if w.DryRun {
 				if workflowName != "" {
-					fmt.Printf("[DRYRUN] Would queue workflow task %s for issue #%d: %s\n", workflowName, num, issueURL)
+					fmt.Printf("[DRYRUN] Would queue workflow task %s for issue #%d: %s\n", workflowName, num, task.URL)
 				} else {
-					fmt.Printf("[DRYRUN] Would queue fix task for issue #%d: %s\n", num, issueURL)
+					fmt.Printf("[DRYRUN] Would queue fix task for issue #%d: %s\n", num, task.URL)
 				}
 			} else {
 				if workflowName != "" {

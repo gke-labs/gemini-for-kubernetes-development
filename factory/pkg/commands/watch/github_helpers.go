@@ -138,6 +138,64 @@ func hasLinkedPR(ctx context.Context, client *githubv39.Client, owner, repo stri
 	return false, nil
 }
 
+func hasLinkedPRWithTimeline(ctx context.Context, client *githubv39.Client, owner, repo string, issueNum int, timeline []*githubv39.Timeline) (bool, error) {
+	if timeline != nil {
+		for _, event := range timeline {
+			if event.GetEvent() == "cross-referenced" && event.Source != nil {
+				if event.Source.Issue != nil && event.Source.Issue.PullRequestLinks != nil {
+					if event.Source.Issue.GetState() == "open" {
+						return true, nil
+					}
+				}
+			}
+		}
+		return false, nil
+	}
+	return hasLinkedPR(ctx, client, owner, repo, issueNum)
+}
+
+func getIssueTriggerInfo(issue *githubv39.Issue, timeline []*githubv39.Timeline, triggerLabel string, wasAutoLabeled bool) (time.Time, TriggerReason, string) {
+	createTime := issue.GetCreatedAt()
+	num := issue.GetNumber()
+
+	if wasAutoLabeled {
+		user := ""
+		if issue.GetUser() != nil {
+			user = fmt.Sprintf(" by %s", issue.GetUser().GetLogin())
+		}
+		notes := fmt.Sprintf("Issue #%d created%s at %s; trigger label '%s' auto-applied by watcher", num, user, createTime.Format(time.RFC3339), triggerLabel)
+		return createTime, TriggerReasonIssueCreated, notes
+	}
+
+	var latestLabelTime time.Time
+	var labelActor string
+	for _, event := range timeline {
+		if event.GetEvent() == "labeled" && event.GetLabel() != nil {
+			if strings.EqualFold(event.GetLabel().GetName(), triggerLabel) {
+				t := event.GetCreatedAt()
+				if !t.IsZero() && t.After(latestLabelTime) {
+					latestLabelTime = t
+					if event.GetActor() != nil {
+						labelActor = event.GetActor().GetLogin()
+					}
+				}
+			}
+		}
+	}
+
+	if !latestLabelTime.IsZero() && latestLabelTime.After(createTime) {
+		actorStr := ""
+		if labelActor != "" {
+			actorStr = fmt.Sprintf(" by %s", labelActor)
+		}
+		notes := fmt.Sprintf("Issue #%d created at %s; trigger label '%s' added%s at %s", num, createTime.Format(time.RFC3339), triggerLabel, actorStr, latestLabelTime.Format(time.RFC3339))
+		return latestLabelTime, TriggerReasonIssueLabeled, notes
+	}
+
+	notes := fmt.Sprintf("Issue #%d created at %s with trigger label '%s'", num, createTime.Format(time.RFC3339), triggerLabel)
+	return createTime, TriggerReasonIssueCreated, notes
+}
+
 func isPRApprovedOrLGTM(pr *githubv39.PullRequest, prIssue *githubv39.Issue, reviews []*githubv39.PullRequestReview) bool {
 	// 1. Check labels
 	for _, label := range prIssue.Labels {

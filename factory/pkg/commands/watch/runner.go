@@ -76,7 +76,10 @@ func (w *Watcher) buildTaskCommandArgs(t *QueueTask, selectedUser string) []stri
 
 func (w *Watcher) runSingleTask(ctx context.Context, taskFilename string, t *QueueTask) {
 	fmt.Printf("Starting task %s (Type: %s, URL: %s)...\n", taskFilename, t.Type, t.URL)
-	startTime := time.Now()
+	if t.StartedAt.IsZero() {
+		t.StartedAt = time.Now()
+	}
+	startTime := t.StartedAt
 
 	taskCtx, taskCancel := context.WithTimeout(ctx, w.TaskTimeout)
 	defer taskCancel()
@@ -348,9 +351,16 @@ func (w *Watcher) runTasks(ctx context.Context) {
 				incomingPath := filepath.Join(w.incomingDir, filename)
 				processedPath := filepath.Join(w.processedDir, filename)
 				task.Status = "Completed"
+				if task.StartedAt.IsZero() {
+					task.StartedAt = task.EnqueuedAt
+				}
 				task.CompletedAt = time.Now()
+				duration := time.Duration(0)
+				if !task.StartedAt.IsZero() && task.CompletedAt.After(task.StartedAt) {
+					duration = task.CompletedAt.Sub(task.StartedAt)
+				}
 				_ = writeTaskAtomically(w.incomingDir, filename, task)
-				writeTaskJournalEvent(w.QueueDir, filename, task, "Completed", 0)
+				writeTaskJournalEvent(w.QueueDir, filename, task, "Completed", duration)
 				if err := os.Rename(incomingPath, processedPath); err != nil {
 					klog.Errorf("Failed to move completed task %s to processed: %v", filename, err)
 				}
@@ -376,6 +386,7 @@ func (w *Watcher) runTasks(ctx context.Context) {
 
 		activeSandboxesInCycle[sandboxName] = true
 		task.Status = "Running"
+		task.StartedAt = time.Now()
 		_ = writeTaskAtomically(w.processingDir, filename, task)
 		writeTaskJournalEvent(w.QueueDir, filename, task, "Started", 0)
 
