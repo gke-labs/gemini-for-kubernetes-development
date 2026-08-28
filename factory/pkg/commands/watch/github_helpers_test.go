@@ -101,6 +101,176 @@ func TestGetMissingLabelsForPR(t *testing.T) {
 	}
 }
 
+func TestGetMissingHumanAssigneesForPR(t *testing.T) {
+	tests := []struct {
+		name        string
+		prAssignees []string
+		refIssues   []struct {
+			users []*githubv39.User
+		}
+		botUsers    []string
+		githubLogin string
+		expected    []string
+	}{
+		{
+			name:        "Propagate human assignees from single parent issue",
+			prAssignees: []string{},
+			refIssues: []struct {
+				users []*githubv39.User
+			}{
+				{
+					users: []*githubv39.User{
+						{Login: stringPtr("barni")},
+						{Login: stringPtr("codebot-robot")},
+					},
+				},
+			},
+			botUsers:    []string{"codebot-robot", "reviewbot-robot"},
+			githubLogin: "codebot-robot",
+			expected:    []string{"barni"},
+		},
+		{
+			name:        "Propagate human assignees across multiple hierarchy levels and deduplicate",
+			prAssignees: []string{},
+			refIssues: []struct {
+				users []*githubv39.User
+			}{
+				{
+					users: []*githubv39.User{
+						{Login: stringPtr("barni")},
+					},
+				},
+				{
+					users: []*githubv39.User{
+						{Login: stringPtr("barni")},
+						{Login: stringPtr("alice")},
+					},
+				},
+			},
+			botUsers:    []string{"codebot-robot"},
+			githubLogin: "",
+			expected:    []string{"barni", "alice"},
+		},
+		{
+			name:        "Human already assigned to PR",
+			prAssignees: []string{"barni"},
+			refIssues: []struct {
+				users []*githubv39.User
+			}{
+				{
+					users: []*githubv39.User{
+						{Login: stringPtr("barni")},
+					},
+				},
+			},
+			botUsers:    []string{"codebot-robot"},
+			githubLogin: "",
+			expected:    []string{},
+		},
+		{
+			name:        "Filter out Type=Bot, [bot] suffix, githubLogin, and botUsers",
+			prAssignees: []string{},
+			refIssues: []struct {
+				users []*githubv39.User
+			}{
+				{
+					users: []*githubv39.User{
+						{Login: stringPtr("app[bot]")},
+						{Login: stringPtr("some-bot"), Type: stringPtr("Bot")},
+						{Login: stringPtr("factory-user")},
+						{Login: stringPtr("my-bot")},
+						{Login: stringPtr("charlie")},
+					},
+				},
+			},
+			botUsers:    []string{"my-bot"},
+			githubLogin: "factory-user",
+			expected:    []string{"charlie"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var prAssignees []*githubv39.User
+			for _, login := range tc.prAssignees {
+				prAssignees = append(prAssignees, &githubv39.User{Login: stringPtr(login)})
+			}
+
+			var refIssues []*githubv39.Issue
+			for _, r := range tc.refIssues {
+				refIssues = append(refIssues, &githubv39.Issue{Assignees: r.users})
+			}
+
+			got := getMissingHumanAssigneesForPR(prAssignees, refIssues, tc.botUsers, tc.githubLogin)
+			if len(got) != len(tc.expected) {
+				t.Fatalf("getMissingHumanAssigneesForPR() returned %v (len %d); want %v (len %d)", got, len(got), tc.expected, len(tc.expected))
+			}
+			for i, val := range tc.expected {
+				if got[i] != val {
+					t.Errorf("getMissingHumanAssigneesForPR()[%d] = %q; want %q", i, got[i], val)
+				}
+			}
+		})
+	}
+}
+
+func TestFetchReferencedIssuesHierarchy(t *testing.T) {
+	mux := http.NewServeMux()
+	// PR #102: references #101
+	// Issue #101: references #100 via "Workflow Issue: #100"
+	// Issue #100: parent workflow issue
+	mux.HandleFunc("/repos/test-owner/test-repo/issues/101", func(w http.ResponseWriter, r *http.Request) {
+		body := "Workflow Issue: #100\nPlease implement direct types."
+		num := 101
+		_ = json.NewEncoder(w).Encode(&githubv39.Issue{
+			Number: &num,
+			Body:   &body,
+			Assignees: []*githubv39.User{
+				{Login: stringPtr("codebot-robot")},
+			},
+		})
+	})
+	mux.HandleFunc("/repos/test-owner/test-repo/issues/100", func(w http.ResponseWriter, r *http.Request) {
+		body := "Migrate Foo resource kind."
+		num := 100
+		_ = json.NewEncoder(w).Encode(&githubv39.Issue{
+			Number: &num,
+			Body:   &body,
+			Assignees: []*githubv39.User{
+				{Login: stringPtr("barni")},
+			},
+		})
+	})
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	client := githubv39.NewClient(nil)
+	u, _ := url.Parse(server.URL + "/")
+	client.BaseURL = u
+
+	prTitle := "Fixes #101"
+	pr := &githubv39.PullRequest{
+		Title: &prTitle,
+	}
+
+	issues := fetchReferencedIssuesHierarchy(context.Background(), client, "test-owner", "test-repo", pr)
+	if len(issues) != 2 {
+		t.Fatalf("fetchReferencedIssuesHierarchy() returned %d issues; want 2", len(issues))
+	}
+	if issues[0].GetNumber() != 101 {
+		t.Errorf("issues[0].Number = %d; want 101", issues[0].GetNumber())
+	}
+	if issues[1].GetNumber() != 100 {
+		t.Errorf("issues[1].Number = %d; want 100", issues[1].GetNumber())
+	}
+
+	missing := getMissingHumanAssigneesForPR(nil, issues, []string{"codebot-robot"}, "")
+	if len(missing) != 1 || missing[0] != "barni" {
+		t.Fatalf("getMissingHumanAssigneesForPR() = %v; want [barni]", missing)
+	}
+}
+
 func TestGetInvestigationCount(t *testing.T) {
 	tests := []struct {
 		name          string

@@ -37,6 +37,28 @@ func GetReferencedIssues(pr *githubv39.PullRequest) map[int]bool {
 	return referenced
 }
 
+// GetParentIssuesFromIssue scans an issue's title and body for parent/workflow issue numbers.
+// It matches patterns like "Workflow: #123", "Workflow Issue: #123", "Parent: #123", "Part of #123", etc.
+func GetParentIssuesFromIssue(issue *githubv39.Issue) map[int]bool {
+	referenced := make(map[int]bool)
+	if issue == nil {
+		return referenced
+	}
+
+	re := regexp.MustCompile(`(?i)\b(?:workflow(?:\s+issue)?|parent(?:\s+issue)?|part\s+of|tracked\s+in|fixes|closes|resolves)\s*:?\s*#?\s*(\d+)\b`)
+	for _, text := range []string{issue.GetTitle(), issue.GetBody()} {
+		for _, match := range re.FindAllStringSubmatch(text, -1) {
+			if len(match) > 1 {
+				if num, err := strconv.Atoi(match[1]); err == nil && num < 10000000 && num != issue.GetNumber() {
+					referenced[num] = true
+				}
+			}
+		}
+	}
+
+	return referenced
+}
+
 // ListAllCheckRuns retrieves all check runs for a ref handling pagination and deduplicating by name.
 func ListAllCheckRuns(ctx context.Context, client *githubv39.Client, owner, repo, ref string) ([]*githubv39.CheckRun, error) {
 	var allRuns []*githubv39.CheckRun

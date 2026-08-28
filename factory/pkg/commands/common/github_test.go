@@ -79,6 +79,75 @@ func TestGetReferencedIssues(t *testing.T) {
 	}
 }
 
+func TestGetParentIssuesFromIssue(t *testing.T) {
+	tests := []struct {
+		name     string
+		issueNum int
+		title    string
+		body     string
+		expected map[int]bool
+	}{
+		{
+			name:     "Workflow Issue reference in body",
+			issueNum: 101,
+			title:    "Greenfield: Implement direct KRM types for Foo",
+			body:     "Workflow Issue: #100\n\nPlease follow the skill...",
+			expected: map[int]bool{100: true},
+		},
+		{
+			name:     "Part of and parent reference in body",
+			issueNum: 102,
+			title:    "Implement controller for Bar",
+			body:     "Part of #200\nParent: #300",
+			expected: map[int]bool{200: true, 300: true},
+		},
+		{
+			name:     "Keyword without hash and case insensitivity",
+			issueNum: 103,
+			title:    "WORKFLOW 400",
+			body:     "tracked in 500",
+			expected: map[int]bool{400: true, 500: true},
+		},
+		{
+			name:     "Does not match unrelated numbers or self reference",
+			issueNum: 104,
+			title:    "Step 1: Direct API Types for #104",
+			body:     "Phase 2 has 3 steps. Port 8080. line #123 should not match.",
+			expected: map[int]bool{},
+		},
+		{
+			name:     "Nil issue",
+			issueNum: 0,
+			title:    "",
+			body:     "",
+			expected: map[int]bool{},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var issue *githubv39.Issue
+			if tc.name != "Nil issue" {
+				num := tc.issueNum
+				issue = &githubv39.Issue{
+					Number: &num,
+					Title:  &tc.title,
+					Body:   &tc.body,
+				}
+			}
+			got := GetParentIssuesFromIssue(issue)
+			if len(got) != len(tc.expected) {
+				t.Fatalf("GetParentIssuesFromIssue() returned %v; want %v", got, tc.expected)
+			}
+			for num := range tc.expected {
+				if !got[num] {
+					t.Errorf("GetParentIssuesFromIssue() missed expected issue %d in %v", num, got)
+				}
+			}
+		})
+	}
+}
+
 func stringPtr(s string) *string {
 	return &s
 }
