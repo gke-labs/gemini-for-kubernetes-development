@@ -102,6 +102,8 @@ type QueueTask struct {
 	TriggerEventTime time.Time `yaml:"triggerEventTime,omitempty"`
 	TriggerReason    string    `yaml:"triggerReason,omitempty"`
 	TriggerNotes     string    `yaml:"triggerNotes,omitempty"`
+	StartedAt        time.Time `yaml:"startedAt,omitempty"`
+	CompletedAt      time.Time `yaml:"completedAt,omitempty"`
 	Assignee         string    `yaml:"assignee,omitempty"`
 	Status           string    `yaml:"status"` // "Pending", "Running", "Completed", "Failed"
 	Error            string    `yaml:"error,omitempty"`
@@ -110,7 +112,6 @@ type QueueTask struct {
 	CommitSHA        string    `yaml:"commitSHA,omitempty"`
 	Instructions     []string  `yaml:"instructions,omitempty"`
 	Recovered        bool      `yaml:"recovered,omitempty"`
-	CompletedAt      time.Time `yaml:"completedAt,omitempty"`
 }
 
 // taskItem represents a queue task bundled with its filename.
@@ -133,6 +134,8 @@ type JournalEvent struct {
 	TriggerEventTime time.Time `json:"triggerEventTime,omitempty"`
 	TriggerReason    string    `json:"triggerReason,omitempty"`
 	TriggerNotes     string    `json:"triggerNotes,omitempty"`
+	StartedAt        time.Time `json:"startedAt,omitempty"`
+	CompletedAt      time.Time `json:"completedAt,omitempty"`
 	Error            string    `json:"error,omitempty"`
 	DurationSecond   float64   `json:"durationSeconds,omitempty"`
 }
@@ -156,22 +159,25 @@ type prWatchState struct {
 }
 
 type QueueTaskItem struct {
-	FileName         string `json:"fileName"`
-	QueueState       string `json:"queueState"`
-	Type             string `json:"type"`
-	URL              string `json:"url"`
-	Number           int    `json:"number"`
-	Priority         string `json:"priority"`
-	Phase            int    `json:"phase"`
-	CreatedAt        string `json:"createdAt"`
-	EnqueuedAt       string `json:"enqueuedAt,omitempty"`
-	TriggerEventTime string `json:"triggerEventTime,omitempty"`
-	TriggerReason    string `json:"triggerReason,omitempty"`
-	TriggerNotes     string `json:"triggerNotes,omitempty"`
-	Assignee         string `json:"assignee"`
-	Status           string `json:"status"`
-	CommitSHA        string `json:"commitSHA"`
-	Rank             int    `json:"rank,omitempty"`
+	FileName         string  `json:"fileName"`
+	QueueState       string  `json:"queueState"`
+	Type             string  `json:"type"`
+	URL              string  `json:"url"`
+	Number           int     `json:"number"`
+	Priority         string  `json:"priority"`
+	Phase            int     `json:"phase"`
+	CreatedAt        string  `json:"createdAt"`
+	EnqueuedAt       string  `json:"enqueuedAt,omitempty"`
+	StartedAt        string  `json:"startedAt,omitempty"`
+	CompletedAt      string  `json:"completedAt,omitempty"`
+	DurationSeconds  float64 `json:"durationSeconds,omitempty"`
+	TriggerEventTime string  `json:"triggerEventTime,omitempty"`
+	TriggerReason    string  `json:"triggerReason,omitempty"`
+	TriggerNotes     string  `json:"triggerNotes,omitempty"`
+	Assignee         string  `json:"assignee"`
+	Status           string  `json:"status"`
+	CommitSHA        string  `json:"commitSHA"`
+	Rank             int     `json:"rank,omitempty"`
 }
 
 type QueueSummary struct {

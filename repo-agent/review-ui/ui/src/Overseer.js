@@ -709,6 +709,11 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                                         <tr key={`processing-${t.fileName}`} style={{ backgroundColor: 'rgba(2, 117, 216, 0.08)', borderBottom: '1px solid var(--border-color)' }}>
                                             <td style={{ padding: '12px 16px', fontWeight: 'bold' }}>
                                                 <span style={{ backgroundColor: '#0275d8', color: '#fff', padding: '2px 8px', borderRadius: '10px', fontSize: '0.75rem' }}>RUNNING</span>
+                                                {t.startedAt && (
+                                                    <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '3px', fontWeight: 'normal' }} title={`Started: ${t.startedAt}`}>
+                                                        {formatQueueTimestamp(t.startedAt)}
+                                                    </div>
+                                                )}
                                             </td>
                                             <td style={{ padding: '12px 16px' }}>
                                                 <span style={{ backgroundColor: 'var(--bg-secondary)', padding: '3px 8px', borderRadius: '4px', fontSize: '0.8rem', fontWeight: '600' }}>{t.type}</span>
@@ -764,7 +769,26 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                                                     return null;
                                                 })()}
                                             </td>
-                                            <td style={{ padding: '12px 16px', textAlign: 'right' }}>-</td>
+                                            <td style={{ padding: '12px 16px', textAlign: 'right' }}>
+                                                {t.startedAt ? (
+                                                    (() => {
+                                                        const startMs = new Date(t.startedAt).getTime();
+                                                        if (!isNaN(startMs)) {
+                                                            const elapsedSec = Math.max(0, Math.floor((Date.now() - startMs) / 1000));
+                                                            let durStr = '';
+                                                            if (elapsedSec < 60) durStr = `${elapsedSec}s`;
+                                                            else if (elapsedSec < 3600) durStr = `${Math.floor(elapsedSec / 60)}m ${elapsedSec % 60}s`;
+                                                            else durStr = `${Math.floor(elapsedSec / 3600)}h ${Math.floor((elapsedSec % 3600) / 60)}m`;
+                                                            return (
+                                                                <span style={{ backgroundColor: 'rgba(2, 117, 216, 0.12)', color: '#0275d8', padding: '2px 8px', borderRadius: '4px', fontWeight: '600', fontSize: '0.75rem' }} title={`Task started at ${t.startedAt} (running for ${durStr})`}>
+                                                                    ⏳ {durStr}
+                                                                </span>
+                                                            );
+                                                        }
+                                                        return '-';
+                                                    })()
+                                                ) : '-'}
+                                            </td>
                                         </tr>
                                     ))}
 
@@ -781,6 +805,8 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                                                    (t.triggerReason || '').toLowerCase().includes(q) ||
                                                    (t.triggerNotes || '').toLowerCase().includes(q) ||
                                                    (t.triggerEventTime || '').toLowerCase().includes(q) ||
+                                                   (t.startedAt || '').toLowerCase().includes(q) ||
+                                                   (t.completedAt || '').toLowerCase().includes(q) ||
                                                    String(t.number).includes(q) ||
                                                    (t.url || '').toLowerCase().includes(q);
                                         });

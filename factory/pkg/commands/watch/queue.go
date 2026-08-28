@@ -234,6 +234,8 @@ func writeTaskJournalEvent(queueDir string, taskFilename string, task *QueueTask
 		TriggerEventTime: task.TriggerEventTime,
 		TriggerReason:    task.TriggerReason,
 		TriggerNotes:     task.TriggerNotes,
+		StartedAt:        task.StartedAt,
+		CompletedAt:      task.CompletedAt,
 		Error:            task.Error,
 	}
 	if duration > 0 {
@@ -429,12 +431,19 @@ func (w *Watcher) recoverStuckTasks(ctx context.Context) {
 						if err == nil && completed {
 							klog.Infof("Task %s already completed in sandbox %s. Moving from processing to processed.", f.Name(), sandboxName)
 							t.Status = "Completed"
+							if t.StartedAt.IsZero() {
+								t.StartedAt = t.EnqueuedAt
+							}
 							if t.CompletedAt.IsZero() {
 								t.CompletedAt = time.Now()
 							}
+							duration := time.Duration(0)
+							if !t.StartedAt.IsZero() && t.CompletedAt.After(t.StartedAt) {
+								duration = t.CompletedAt.Sub(t.StartedAt)
+							}
 							if err := writeTaskAtomically(w.processedDir, f.Name(), &t); err == nil {
 								_ = os.Remove(processingPath)
-								writeTaskJournalEvent(w.QueueDir, f.Name(), &t, "Completed", 0)
+								writeTaskJournalEvent(w.QueueDir, f.Name(), &t, "Completed", duration)
 								continue
 							}
 						}

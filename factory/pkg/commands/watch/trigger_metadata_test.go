@@ -480,3 +480,60 @@ func TestBuildQueueResponseTriggerFields(t *testing.T) {
 		t.Errorf("expected item TriggerNotes 'Oldest comment by alice added at 2026-08-01T10:00:00Z', got '%s'", item.TriggerNotes)
 	}
 }
+
+func TestBuildQueueResponseStartedCompletedDuration(t *testing.T) {
+	tempDir := t.TempDir()
+	processingDir := filepath.Join(tempDir, "processing")
+	processedDir := filepath.Join(tempDir, "processed")
+	_ = os.MkdirAll(processingDir, 0755)
+	_ = os.MkdirAll(processedDir, 0755)
+
+	startTime := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
+	endTime := time.Date(2026, 8, 1, 10, 5, 30, 0, time.UTC)
+
+	processingTask := &QueueTask{
+		Type:      "pr-review",
+		URL:       "https://github.com/owner/repo/pull/1",
+		Number:    1,
+		Status:    "Running",
+		StartedAt: startTime,
+		Priority:  "high",
+		Phase:     2,
+	}
+	_ = writeTaskAtomically(processingDir, "task-pr-1-review.yaml", processingTask)
+
+	completedTask := &QueueTask{
+		Type:        "issue-fix",
+		URL:         "https://github.com/owner/repo/issues/2",
+		Number:      2,
+		Status:      "Completed",
+		StartedAt:   startTime,
+		CompletedAt: endTime,
+		Priority:    "medium",
+		Phase:       3,
+	}
+	_ = writeTaskAtomically(processedDir, "task-issue-2-fix.yaml", completedTask)
+
+	resp := buildQueueResponse(tempDir)
+	if len(resp.Processing) != 1 {
+		t.Fatalf("expected 1 processing task, got %d", len(resp.Processing))
+	}
+	if resp.Processing[0].StartedAt != startTime.Format(time.RFC3339) {
+		t.Errorf("expected processing startedAt %s, got %s", startTime.Format(time.RFC3339), resp.Processing[0].StartedAt)
+	}
+
+	if len(resp.Processed) != 1 {
+		t.Fatalf("expected 1 processed task, got %d", len(resp.Processed))
+	}
+	p := resp.Processed[0]
+	if p.StartedAt != startTime.Format(time.RFC3339) {
+		t.Errorf("expected processed startedAt %s, got %s", startTime.Format(time.RFC3339), p.StartedAt)
+	}
+	if p.CompletedAt != endTime.Format(time.RFC3339) {
+		t.Errorf("expected processed completedAt %s, got %s", endTime.Format(time.RFC3339), p.CompletedAt)
+	}
+	expectedDuration := float64(330) // 5 minutes 30 seconds
+	if p.DurationSeconds != expectedDuration {
+		t.Errorf("expected durationSeconds %v, got %v", expectedDuration, p.DurationSeconds)
+	}
+}
