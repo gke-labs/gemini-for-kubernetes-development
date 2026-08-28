@@ -221,7 +221,7 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 					if pr.GetBase() != nil {
 						baseRef = pr.GetBase().GetRef()
 					}
-					reason := fmt.Sprintf("PR #%d merge conflicts detected against %s", num, baseRef)
+					reason := TriggerReasonPRMergeConflict
 					notes := fmt.Sprintf("PR #%d has merge conflicts with base branch '%s'; head commit %s committer date %s, PR updated at %s", num, baseRef, shortSHA, lastCommitTime.Format(time.RFC3339), pr.GetUpdatedAt().Format(time.RFC3339))
 
 					task := &QueueTask{
@@ -398,7 +398,7 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 							if failConclusion == "" {
 								failConclusion = "failed"
 							}
-							reason := fmt.Sprintf("CI check failure: %s (%s)", failName, failConclusion)
+							reason := TriggerReasonPRCheckFailed
 							notes := fmt.Sprintf("Earliest CI failure in '%s' (%s) at %s; total %d failed check(s) on commit %s", failName, failConclusion, eventTime.Format(time.RFC3339), failedCount, shortSHA)
 
 							task := &QueueTask{
@@ -613,7 +613,7 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 						if len(shortSHA) > 7 {
 							shortSHA = shortSHA[:7]
 						}
-						reason := fmt.Sprintf("PR review comments (%d new)", qualifyingCommentsCount)
+						reason := TriggerReasonPRCommentsAdded
 						commitInfo := ""
 						if !lastCommitTime.IsZero() {
 							commitInfo = fmt.Sprintf(" since last commit %s (committer date %s)", shortSHA, lastCommitTime.Format(time.RFC3339))
@@ -725,7 +725,7 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 								}
 								notes = fmt.Sprintf("Automated review triggered for commit %s at %s", shortSHA, eventTime.Format(time.RFC3339))
 							}
-							reason := fmt.Sprintf("PR #%d ready for automated review on commit %s", num, shortSHA)
+							reason := TriggerReasonPRReadyForReview
 
 							prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", w.Repo.Owner, w.Repo.Repo, num)
 							task := &QueueTask{

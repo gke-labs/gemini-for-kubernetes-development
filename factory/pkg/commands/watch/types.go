@@ -91,27 +91,62 @@ func NewWatcher(rootFlags common.RootFlags, flags Flags) *Watcher {
 	}
 }
 
+// TriggerReason represents a machine-readable, PascalCase reason for why a queue task was triggered,
+// following Kubernetes API conventions.
+type TriggerReason string
+
+const (
+	// TriggerReasonIssueCreated indicates the task was triggered because an issue was newly created
+	// (either already labeled with the trigger label or auto-labeled by the watcher).
+	TriggerReasonIssueCreated TriggerReason = "IssueCreated"
+
+	// TriggerReasonIssueLabeled indicates the task was triggered because the trigger label was
+	// added to an existing issue after its creation.
+	TriggerReasonIssueLabeled TriggerReason = "IssueLabeled"
+
+	// TriggerReasonPRCommentsAdded indicates the task was triggered by new unaddressed comments or reviews on a PR.
+	TriggerReasonPRCommentsAdded TriggerReason = "PRCommentsAdded"
+
+	// TriggerReasonPRCheckFailed indicates the task was triggered by a failed CI check run or commit status.
+	TriggerReasonPRCheckFailed TriggerReason = "PRCheckFailed"
+
+	// TriggerReasonPRMergeConflict indicates the task was triggered by merge conflicts with the base branch.
+	TriggerReasonPRMergeConflict TriggerReason = "PRMergeConflict"
+
+	// TriggerReasonPRReadyForReview indicates the task was triggered because all CI checks passed and the PR is ready for automated review.
+	TriggerReasonPRReadyForReview TriggerReason = "PRReadyForReview"
+
+	// TriggerReasonChoreScheduled indicates the task was triggered by a scheduled cron chore.
+	TriggerReasonChoreScheduled TriggerReason = "ChoreScheduled"
+)
+
 type QueueTask struct {
-	Type             string    `yaml:"type"` // "issue-fix", "pr-investigate", "pr-comments", "pr-iterate", "pr-review", "agent-chore"
-	URL              string    `yaml:"url"`
-	Number           int       `yaml:"number"`
-	Priority         string    `yaml:"priority"` // "critical", "urgent", "important", "high", "medium", "low"
-	Phase            int       `yaml:"phase"`    // 1: Rebase/iterate, 2: Comments, 3: Investigate/Fix, 4: Chores
-	CreatedAt        time.Time `yaml:"createdAt"`
-	EnqueuedAt       time.Time `yaml:"enqueuedAt,omitempty"`
+	Type       string    `yaml:"type"` // "issue-fix", "pr-investigate", "pr-comments", "pr-iterate", "pr-review", "agent-chore"
+	URL        string    `yaml:"url"`
+	Number     int       `yaml:"number"`
+	Priority   string    `yaml:"priority"` // "critical", "urgent", "important", "high", "medium", "low"
+	Phase      int       `yaml:"phase"`    // 1: Rebase/iterate, 2: Comments, 3: Investigate/Fix, 4: Chores
+	CreatedAt  time.Time `yaml:"createdAt"`
+	EnqueuedAt time.Time `yaml:"enqueuedAt,omitempty"`
+	// TriggerEventTime is the timestamp when the original event that triggered this task occurred
+	// (e.g. oldest comment time, earliest CI check failure, or issue creation/labeling time).
 	TriggerEventTime time.Time `yaml:"triggerEventTime,omitempty"`
-	TriggerReason    string    `yaml:"triggerReason,omitempty"`
-	TriggerNotes     string    `yaml:"triggerNotes,omitempty"`
-	StartedAt        time.Time `yaml:"startedAt,omitempty"`
-	CompletedAt      time.Time `yaml:"completedAt,omitempty"`
-	Assignee         string    `yaml:"assignee,omitempty"`
-	Status           string    `yaml:"status"` // "Pending", "Running", "Completed", "Failed"
-	Error            string    `yaml:"error,omitempty"`
-	AgentFile        string    `yaml:"agentFile,omitempty"` // For chore tasks
-	SessionID        string    `yaml:"sessionId,omitempty"` // For workflow sessions
-	CommitSHA        string    `yaml:"commitSHA,omitempty"`
-	Instructions     []string  `yaml:"instructions,omitempty"`
-	Recovered        bool      `yaml:"recovered,omitempty"`
+	// TriggerReason is a machine-readable enum indicating the type of triggering event (e.g. IssueCreated, PRCommentsAdded).
+	TriggerReason TriggerReason `yaml:"triggerReason,omitempty"`
+	// TriggerNotes contains human-readable details about the triggering event (e.g. specific check that failed, comment author).
+	TriggerNotes string `yaml:"triggerNotes,omitempty"`
+	// StartedAt is the timestamp when the task began execution in processing.
+	StartedAt time.Time `yaml:"startedAt,omitempty"`
+	// CompletedAt is the timestamp when the task completed execution (either Completed or Failed).
+	CompletedAt  time.Time `yaml:"completedAt,omitempty"`
+	Assignee     string    `yaml:"assignee,omitempty"`
+	Status       string    `yaml:"status"` // "Pending", "Running", "Completed", "Failed"
+	Error        string    `yaml:"error,omitempty"`
+	AgentFile    string    `yaml:"agentFile,omitempty"` // For chore tasks
+	SessionID    string    `yaml:"sessionId,omitempty"` // For workflow sessions
+	CommitSHA    string    `yaml:"commitSHA,omitempty"`
+	Instructions []string  `yaml:"instructions,omitempty"`
+	Recovered    bool      `yaml:"recovered,omitempty"`
 }
 
 // taskItem represents a queue task bundled with its filename.
@@ -125,19 +160,19 @@ type ChoreRunState struct {
 }
 
 type JournalEvent struct {
-	Timestamp        time.Time `json:"timestamp"`
-	TaskID           string    `json:"taskId"`
-	Event            string    `json:"event"`
-	Type             string    `json:"type"`
-	URL              string    `json:"url"`
-	Priority         string    `json:"priority"`
-	TriggerEventTime time.Time `json:"triggerEventTime,omitempty"`
-	TriggerReason    string    `json:"triggerReason,omitempty"`
-	TriggerNotes     string    `json:"triggerNotes,omitempty"`
-	StartedAt        time.Time `json:"startedAt,omitempty"`
-	CompletedAt      time.Time `json:"completedAt,omitempty"`
-	Error            string    `json:"error,omitempty"`
-	DurationSecond   float64   `json:"durationSeconds,omitempty"`
+	Timestamp        time.Time     `json:"timestamp"`
+	TaskID           string        `json:"taskId"`
+	Event            string        `json:"event"`
+	Type             string        `json:"type"`
+	URL              string        `json:"url"`
+	Priority         string        `json:"priority"`
+	TriggerEventTime time.Time     `json:"triggerEventTime,omitempty"`
+	TriggerReason    TriggerReason `json:"triggerReason,omitempty"`
+	TriggerNotes     string        `json:"triggerNotes,omitempty"`
+	StartedAt        time.Time     `json:"startedAt,omitempty"`
+	CompletedAt      time.Time     `json:"completedAt,omitempty"`
+	Error            string        `json:"error,omitempty"`
+	DurationSecond   float64       `json:"durationSeconds,omitempty"`
 }
 
 // prWatchState tracks the progress and state of automated tasks for a monitored pull request.
@@ -159,25 +194,25 @@ type prWatchState struct {
 }
 
 type QueueTaskItem struct {
-	FileName         string  `json:"fileName"`
-	QueueState       string  `json:"queueState"`
-	Type             string  `json:"type"`
-	URL              string  `json:"url"`
-	Number           int     `json:"number"`
-	Priority         string  `json:"priority"`
-	Phase            int     `json:"phase"`
-	CreatedAt        string  `json:"createdAt"`
-	EnqueuedAt       string  `json:"enqueuedAt,omitempty"`
-	StartedAt        string  `json:"startedAt,omitempty"`
-	CompletedAt      string  `json:"completedAt,omitempty"`
-	DurationSeconds  float64 `json:"durationSeconds,omitempty"`
-	TriggerEventTime string  `json:"triggerEventTime,omitempty"`
-	TriggerReason    string  `json:"triggerReason,omitempty"`
-	TriggerNotes     string  `json:"triggerNotes,omitempty"`
-	Assignee         string  `json:"assignee"`
-	Status           string  `json:"status"`
-	CommitSHA        string  `json:"commitSHA"`
-	Rank             int     `json:"rank,omitempty"`
+	FileName         string        `json:"fileName"`
+	QueueState       string        `json:"queueState"`
+	Type             string        `json:"type"`
+	URL              string        `json:"url"`
+	Number           int           `json:"number"`
+	Priority         string        `json:"priority"`
+	Phase            int           `json:"phase"`
+	CreatedAt        string        `json:"createdAt"`
+	EnqueuedAt       string        `json:"enqueuedAt,omitempty"`
+	StartedAt        string        `json:"startedAt,omitempty"`
+	CompletedAt      string        `json:"completedAt,omitempty"`
+	DurationSeconds  float64       `json:"durationSeconds,omitempty"`
+	TriggerEventTime string        `json:"triggerEventTime,omitempty"`
+	TriggerReason    TriggerReason `json:"triggerReason,omitempty"`
+	TriggerNotes     string        `json:"triggerNotes,omitempty"`
+	Assignee         string        `json:"assignee"`
+	Status           string        `json:"status"`
+	CommitSHA        string        `json:"commitSHA"`
+	Rank             int           `json:"rank,omitempty"`
 }
 
 type QueueSummary struct {

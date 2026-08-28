@@ -35,8 +35,8 @@ func TestGetIssueTriggerInfo(t *testing.T) {
 		if !eventTime.Equal(t1) {
 			t.Errorf("expected eventTime %v, got %v", t1, eventTime)
 		}
-		if !strings.Contains(reason, "Issue #42 created with label 'factory'") {
-			t.Errorf("unexpected reason: %s", reason)
+		if reason != TriggerReasonIssueCreated {
+			t.Errorf("expected reason %s, got %s", TriggerReasonIssueCreated, reason)
 		}
 		if !strings.Contains(notes, "Issue #42 created at 2026-08-01T10:00:00Z with trigger label 'factory'") {
 			t.Errorf("unexpected notes: %s", notes)
@@ -64,8 +64,8 @@ func TestGetIssueTriggerInfo(t *testing.T) {
 		if !eventTime.Equal(t2) {
 			t.Errorf("expected eventTime %v, got %v", t2, eventTime)
 		}
-		if !strings.Contains(reason, "Trigger label 'factory' added to issue #42 by alice") {
-			t.Errorf("unexpected reason: %s", reason)
+		if reason != TriggerReasonIssueLabeled {
+			t.Errorf("expected reason %s, got %s", TriggerReasonIssueLabeled, reason)
 		}
 		if !strings.Contains(notes, "trigger label 'factory' added by alice at 2026-08-01T11:30:00Z") {
 			t.Errorf("unexpected notes: %s", notes)
@@ -83,8 +83,8 @@ func TestGetIssueTriggerInfo(t *testing.T) {
 		if !eventTime.Equal(t1) {
 			t.Errorf("expected eventTime %v, got %v", t1, eventTime)
 		}
-		if !strings.Contains(reason, "Issue #42 created by bob") {
-			t.Errorf("unexpected reason: %s", reason)
+		if reason != TriggerReasonIssueCreated {
+			t.Errorf("expected reason %s, got %s", TriggerReasonIssueCreated, reason)
 		}
 		if !strings.Contains(notes, "auto-applied by watcher") {
 			t.Errorf("unexpected notes: %s", notes)
@@ -207,8 +207,8 @@ func TestPRCommentsTriggerMetadata(t *testing.T) {
 	if !task.TriggerEventTime.Equal(comment1Time) {
 		t.Errorf("expected triggerEventTime %v (oldest comment), got %v", comment1Time, task.TriggerEventTime)
 	}
-	if !strings.Contains(task.TriggerReason, "PR review comments (2 new)") {
-		t.Errorf("unexpected triggerReason: %s", task.TriggerReason)
+	if task.TriggerReason != TriggerReasonPRCommentsAdded {
+		t.Errorf("expected triggerReason %s, got %s", TriggerReasonPRCommentsAdded, task.TriggerReason)
 	}
 	if !strings.Contains(task.TriggerNotes, "reviewer-alice") || !strings.Contains(task.TriggerNotes, "1000") {
 		t.Errorf("unexpected triggerNotes: %s", task.TriggerNotes)
@@ -330,8 +330,8 @@ func TestPRInvestigateTriggerMetadata(t *testing.T) {
 	if !task.TriggerEventTime.Equal(fail1Time) {
 		t.Errorf("expected triggerEventTime %v (earliest failure), got %v", fail1Time, task.TriggerEventTime)
 	}
-	if !strings.Contains(task.TriggerReason, "lint-go") || !strings.Contains(task.TriggerReason, "failure") {
-		t.Errorf("unexpected triggerReason: %s", task.TriggerReason)
+	if task.TriggerReason != TriggerReasonPRCheckFailed {
+		t.Errorf("expected triggerReason %s, got %s", TriggerReasonPRCheckFailed, task.TriggerReason)
 	}
 	if !strings.Contains(task.TriggerNotes, "lint-go") || !strings.Contains(task.TriggerNotes, "2 failed check(s)") {
 		t.Errorf("unexpected triggerNotes: %s", task.TriggerNotes)
@@ -432,8 +432,8 @@ func TestPRIterateTriggerMetadata(t *testing.T) {
 	if !task.TriggerEventTime.Equal(commitTime) {
 		t.Errorf("expected triggerEventTime %v (commit time), got %v", commitTime, task.TriggerEventTime)
 	}
-	if !strings.Contains(task.TriggerReason, "merge conflicts detected against main") {
-		t.Errorf("unexpected triggerReason: %s", task.TriggerReason)
+	if task.TriggerReason != TriggerReasonPRMergeConflict {
+		t.Errorf("expected triggerReason %s, got %s", TriggerReasonPRMergeConflict, task.TriggerReason)
 	}
 	if !strings.Contains(task.TriggerNotes, "merge conflicts with base branch 'main'") {
 		t.Errorf("unexpected triggerNotes: %s", task.TriggerNotes)
@@ -457,7 +457,7 @@ func TestBuildQueueResponseTriggerFields(t *testing.T) {
 		CreatedAt:        eventTime,
 		EnqueuedAt:       enqueuedTime,
 		TriggerEventTime: eventTime,
-		TriggerReason:    "PR review comments (1 new)",
+		TriggerReason:    TriggerReasonPRCommentsAdded,
 		TriggerNotes:     "Oldest comment by alice added at 2026-08-01T10:00:00Z",
 		Status:           "Pending",
 	}
@@ -473,8 +473,8 @@ func TestBuildQueueResponseTriggerFields(t *testing.T) {
 	if item.TriggerEventTime != eventTime.Format(time.RFC3339) {
 		t.Errorf("expected item TriggerEventTime %s, got %s", eventTime.Format(time.RFC3339), item.TriggerEventTime)
 	}
-	if item.TriggerReason != "PR review comments (1 new)" {
-		t.Errorf("expected item TriggerReason 'PR review comments (1 new)', got '%s'", item.TriggerReason)
+	if item.TriggerReason != TriggerReasonPRCommentsAdded {
+		t.Errorf("expected item TriggerReason '%s', got '%s'", TriggerReasonPRCommentsAdded, item.TriggerReason)
 	}
 	if item.TriggerNotes != "Oldest comment by alice added at 2026-08-01T10:00:00Z" {
 		t.Errorf("expected item TriggerNotes 'Oldest comment by alice added at 2026-08-01T10:00:00Z', got '%s'", item.TriggerNotes)

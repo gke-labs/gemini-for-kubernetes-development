@@ -94,7 +94,7 @@ func (w *Watcher) scanChores(ctx context.Context) {
 						dueTime = sched.Next(lastRun)
 					}
 				}
-				reason := fmt.Sprintf("Scheduled chore: %s", agentDef.Name)
+				reason := TriggerReasonChoreScheduled
 				lastRunStr := "never"
 				if !lastRun.IsZero() {
 					lastRunStr = lastRun.Format(time.RFC3339)

@@ -154,21 +154,17 @@ func hasLinkedPRWithTimeline(ctx context.Context, client *githubv39.Client, owne
 	return hasLinkedPR(ctx, client, owner, repo, issueNum)
 }
 
-func getIssueTriggerInfo(issue *githubv39.Issue, timeline []*githubv39.Timeline, triggerLabel string, wasAutoLabeled bool) (time.Time, string, string) {
+func getIssueTriggerInfo(issue *githubv39.Issue, timeline []*githubv39.Timeline, triggerLabel string, wasAutoLabeled bool) (time.Time, TriggerReason, string) {
 	createTime := issue.GetCreatedAt()
 	num := issue.GetNumber()
 
 	if wasAutoLabeled {
 		user := ""
 		if issue.GetUser() != nil {
-			user = issue.GetUser().GetLogin()
+			user = fmt.Sprintf(" by %s", issue.GetUser().GetLogin())
 		}
-		reason := fmt.Sprintf("Issue #%d created", num)
-		if user != "" {
-			reason = fmt.Sprintf("Issue #%d created by %s", num, user)
-		}
-		notes := fmt.Sprintf("Issue #%d created at %s; trigger label '%s' auto-applied by watcher", num, createTime.Format(time.RFC3339), triggerLabel)
-		return createTime, reason, notes
+		notes := fmt.Sprintf("Issue #%d created%s at %s; trigger label '%s' auto-applied by watcher", num, user, createTime.Format(time.RFC3339), triggerLabel)
+		return createTime, TriggerReasonIssueCreated, notes
 	}
 
 	var latestLabelTime time.Time
@@ -192,14 +188,12 @@ func getIssueTriggerInfo(issue *githubv39.Issue, timeline []*githubv39.Timeline,
 		if labelActor != "" {
 			actorStr = fmt.Sprintf(" by %s", labelActor)
 		}
-		reason := fmt.Sprintf("Trigger label '%s' added to issue #%d%s", triggerLabel, num, actorStr)
 		notes := fmt.Sprintf("Issue #%d created at %s; trigger label '%s' added%s at %s", num, createTime.Format(time.RFC3339), triggerLabel, actorStr, latestLabelTime.Format(time.RFC3339))
-		return latestLabelTime, reason, notes
+		return latestLabelTime, TriggerReasonIssueLabeled, notes
 	}
 
-	reason := fmt.Sprintf("Issue #%d created with label '%s'", num, triggerLabel)
 	notes := fmt.Sprintf("Issue #%d created at %s with trigger label '%s'", num, createTime.Format(time.RFC3339), triggerLabel)
-	return createTime, reason, notes
+	return createTime, TriggerReasonIssueCreated, notes
 }
 
 func isPRApprovedOrLGTM(pr *githubv39.PullRequest, prIssue *githubv39.Issue, reviews []*githubv39.PullRequestReview) bool {

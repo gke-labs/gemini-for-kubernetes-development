@@ -42,6 +42,19 @@ export const formatQueueTimestamp = (ts) => {
     }
 };
 
+export const formatTriggerReason = (reason) => {
+    switch (reason) {
+        case 'IssueCreated': return 'Issue Created';
+        case 'IssueLabeled': return 'Issue Labeled';
+        case 'PRCommentsAdded': return 'PR Comments';
+        case 'PRCheckFailed': return 'CI Failure';
+        case 'PRMergeConflict': return 'Merge Conflict';
+        case 'PRReadyForReview': return 'Ready for Review';
+        case 'ChoreScheduled': return 'Scheduled Chore';
+        default: return reason || '';
+    }
+};
+
 const Overseer = ({ onBack, namespace: userNamespace }) => {
     const [overseers, setOverseers] = useState([]);
     const [error, setError] = useState(null);
@@ -738,8 +751,10 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                                                     <div>
                                                         {formatQueueTimestamp(t.triggerEventTime)}
                                                         {t.triggerReason && (
-                                                            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '2px', maxWidth: '220px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={t.triggerNotes || t.triggerReason}>
-                                                                {t.triggerReason}
+                                                            <div style={{ fontSize: '0.75rem', marginTop: '2px', maxWidth: '220px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={t.triggerNotes || t.triggerReason}>
+                                                                <span style={{ backgroundColor: 'var(--bg-secondary)', color: 'var(--text-secondary)', padding: '1px 6px', borderRadius: '3px', fontWeight: '600', fontSize: '0.73rem' }}>
+                                                                    {formatTriggerReason(t.triggerReason)}
+                                                                </span>
                                                             </div>
                                                         )}
                                                     </div>
@@ -851,8 +866,10 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                                                         <div>
                                                             {formatQueueTimestamp(t.triggerEventTime)}
                                                             {t.triggerReason && (
-                                                                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '2px', maxWidth: '220px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={t.triggerNotes || t.triggerReason}>
-                                                                    {t.triggerReason}
+                                                                <div style={{ fontSize: '0.75rem', marginTop: '2px', maxWidth: '220px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={t.triggerNotes || t.triggerReason}>
+                                                                    <span style={{ backgroundColor: 'var(--bg-secondary)', color: 'var(--text-secondary)', padding: '1px 6px', borderRadius: '3px', fontWeight: '600', fontSize: '0.73rem' }}>
+                                                                        {formatTriggerReason(t.triggerReason)}
+                                                                    </span>
                                                                 </div>
                                                             )}
                                                         </div>
