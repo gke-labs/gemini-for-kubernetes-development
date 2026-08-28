@@ -238,25 +238,30 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 			continue
 		}
 
-		// Check CI Check Failures
+		// Check CI Check Failures and Pending Status
 		hasFailure := false
+		hasPending := false
 		checkRuns, err := common.ListAllCheckRuns(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, headSHA)
 		if err == nil {
 			for _, run := range checkRuns {
+				if run.GetStatus() != "completed" {
+					hasPending = true
+				}
 				c := run.GetConclusion()
-				if c == "failure" || c == "timed_out" || c == "cancelled" {
+				if c == "failure" || c == "timed_out" || c == "cancelled" || c == "action_required" || c == "stale" {
 					hasFailure = true
-					break
 				}
 			}
 		}
 
-		statuses, _, err := w.ghClient.Repositories.ListStatuses(ctx, w.Repo.Owner, w.Repo.Repo, headSHA, nil)
+		statuses, err := common.ListAllStatuses(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, headSHA)
 		if err == nil {
 			for _, status := range statuses {
+				if status.GetState() == "pending" {
+					hasPending = true
+				}
 				if status.GetState() == "failure" || status.GetState() == "error" {
 					hasFailure = true
-					break
 				}
 			}
 		}
@@ -514,7 +519,7 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 						}
 					}
 				}
-			} else if !hasFailure && !isApproved && state.lastReviewedSHA != headSHA && shouldAutoReviewPR(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, pr, prIssue, w.triggerLabel) {
+			} else if !hasFailure && !hasPending && !isApproved && state.lastReviewedSHA != headSHA && shouldAutoReviewPR(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, pr, prIssue, w.triggerLabel) {
 				hasBotReviewAfterLastCommit := false
 				for _, r := range reviews {
 					if isBotReply(r.GetUser(), w.githubLogin, bots) && (r.GetSubmittedAt().After(lastCommitTime) || r.GetCommitID() == headSHA) {
@@ -590,6 +595,7 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 
 				isReadyForHuman := !isConflicting &&
 					!hasFailure &&
+					!hasPending &&
 					!hasNewComments &&
 					!hasActiveTask &&
 					reviewSatisfied &&

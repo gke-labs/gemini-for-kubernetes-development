@@ -76,3 +76,35 @@ func ListAllCheckRuns(ctx context.Context, client *githubv39.Client, owner, repo
 	}
 	return deduplicated, nil
 }
+
+// ListAllStatuses retrieves all commit statuses for a ref handling pagination and deduplicating by context (keeping the latest status per context).
+func ListAllStatuses(ctx context.Context, client *githubv39.Client, owner, repo, ref string) ([]*githubv39.RepoStatus, error) {
+	var allStatuses []*githubv39.RepoStatus
+	opts := &githubv39.ListOptions{
+		PerPage: 100,
+	}
+	for {
+		statuses, resp, err := client.Repositories.ListStatuses(ctx, owner, repo, ref, opts)
+		if err != nil {
+			return nil, err
+		}
+		allStatuses = append(allStatuses, statuses...)
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+
+	// Deduplicate statuses by context, keeping only the latest status (first encountered since ListStatuses is reverse-chronological)
+	seenContexts := make(map[string]bool)
+	var deduplicated []*githubv39.RepoStatus
+	for _, status := range allStatuses {
+		ctxName := status.GetContext()
+		if seenContexts[ctxName] {
+			continue
+		}
+		seenContexts[ctxName] = true
+		deduplicated = append(deduplicated, status)
+	}
+	return deduplicated, nil
+}
