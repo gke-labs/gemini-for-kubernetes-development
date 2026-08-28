@@ -12,10 +12,25 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	githubv39 "github.com/google/go-github/v39/github"
 	"gopkg.in/yaml.v3"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	dynamicfake "k8s.io/client-go/dynamic/fake"
 )
+
+func newTestKubeClient() *clients.KubernetesClient {
+	scheme := runtime.NewScheme()
+	fakeDynamic := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, map[schema.GroupVersionResource]string{
+		k8s.SandboxGVR: "SandboxList",
+	})
+	return &clients.KubernetesClient{
+		DynamicClient: fakeDynamic,
+	}
+}
 
 func TestGetIssueTriggerInfo(t *testing.T) {
 	num := 42
@@ -182,6 +197,7 @@ func TestPRCommentsTriggerMetadata(t *testing.T) {
 		allBotUsers:   []string{"bot1"},
 		triggerLabel:  "factory",
 		ghClient:      ghClient,
+		kubeClient:    newTestKubeClient(),
 	}
 
 	prIssues := []*githubv39.Issue{
@@ -305,6 +321,7 @@ func TestPRInvestigateTriggerMetadata(t *testing.T) {
 		allBotUsers:   []string{"bot1"},
 		triggerLabel:  "factory",
 		ghClient:      ghClient,
+		kubeClient:    newTestKubeClient(),
 	}
 
 	prIssues := []*githubv39.Issue{
@@ -407,6 +424,7 @@ func TestPRIterateTriggerMetadata(t *testing.T) {
 		allBotUsers:   []string{"bot1"},
 		triggerLabel:  "factory",
 		ghClient:      ghClient,
+		kubeClient:    newTestKubeClient(),
 	}
 
 	prIssues := []*githubv39.Issue{
