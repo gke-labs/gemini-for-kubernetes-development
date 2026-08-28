@@ -33,6 +33,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -v -o /gemini-stream-proc
 
 # Envbuilder root
 FROM ghcr.io/coder/envbuilder
+RUN mkdir -p /repo-agent
 COPY --from=builder /repo-sandbox /repo-agent/repo-sandbox
 COPY --from=builder /gemini-stream-processor /usr/local/bin/gemini-stream-processor
 ENV KANIKO_DIR=/.envbuilder
