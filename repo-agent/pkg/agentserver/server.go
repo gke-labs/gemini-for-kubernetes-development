@@ -21,6 +21,9 @@ import (
 const (
 	// ServerPort is the port where the agent server listens.
 	ServerPort = 13339
+)
+
+var (
 	// LogsDirectory is the directory where the agent writes its logs.
 	LogsDirectory = "/workspaces/.agent/logs"
 )
