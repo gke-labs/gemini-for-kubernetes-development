@@ -138,9 +138,9 @@ func ensureSettings(geminiDir string) error {
 	}
 	general["previewFeatures"] = true
 	if model, ok := settings["model"]; !ok {
-		// if model is unset, set it to gemini-3.1-pro-preview
+		// if model is unset, set it to gemini-3.7-flash
 		settings["model"] = map[string]interface{}{
-			"name": "gemini-3.1-pro-preview",
+			"name": "gemini-3.7-flash",
 		}
 	} else if modelStr, ok := model.(string); ok {
 		// if model is a string, convert it to an object

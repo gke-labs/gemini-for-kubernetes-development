@@ -820,16 +820,17 @@ function PrReviewCard({
   const [showNewTaskForm, setShowNewTaskForm] = useState(false);
   const [newTaskPrompt, setNewTaskPrompt] = useState('');
   const [expectedComments, setExpectedComments] = useState(0);
-  const [selectedModel, setSelectedModel] = useState('gemini-3.1-pro-preview');
+  const [selectedModel, setSelectedModel] = useState('gemini-3.7-flash');
   const lastDragTargetRef = useRef(null);
 
   const reviewModels = (availableModels && availableModels.length > 0) ? availableModels : [
+    'gemini-3.7-flash',
     'gemini-3.6-flash',
     'gemini-3.5-flash',
     'gemini-3.1-pro-preview',
     'gemini-3-flash-preview',
-    'gemini-2.0-pro-exp-02-05',
-    'gemini-2.0-flash-exp'
+    'gemini-2.5-pro',
+    'gemini-2.5-flash'
   ];
 
 
