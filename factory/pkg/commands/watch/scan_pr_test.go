@@ -736,3 +736,144 @@ func TestProcessPRs_Review_GatedByPendingCheckRuns(t *testing.T) {
 		t.Errorf("expected review task to be created once CI completes successfully")
 	}
 }
+
+func TestProcessPRs_CommentsPrioritizedOverCIFailures(t *testing.T) {
+	tempDir := t.TempDir()
+	incomingDir := filepath.Join(tempDir, "incoming")
+	processingDir := filepath.Join(tempDir, "processing")
+	processedDir := filepath.Join(tempDir, "processed")
+	_ = os.MkdirAll(incomingDir, 0755)
+	_ = os.MkdirAll(processingDir, 0755)
+	_ = os.MkdirAll(processedDir, 0755)
+
+	prNum := 10
+	mergeable := true
+	headSHA := "sha-1234"
+	commitTime := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
+	commentTime := time.Date(2026, 8, 1, 11, 0, 0, 0, time.UTC)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10":
+			pr := &githubv39.PullRequest{
+				Number:    &prNum,
+				Mergeable: &mergeable,
+				State:     stringPtr("open"),
+				User:      &githubv39.User{Login: stringPtr("bot1")},
+				Head:      &githubv39.PullRequestBranch{SHA: stringPtr(headSHA)},
+				CreatedAt: &commitTime,
+			}
+			_ = json.NewEncoder(w).Encode(pr)
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10/commits":
+			commits := []*githubv39.RepositoryCommit{
+				{
+					SHA: stringPtr(headSHA),
+					Commit: &githubv39.Commit{
+						Committer: &githubv39.CommitAuthor{Date: &commitTime},
+					},
+				},
+			}
+			_ = json.NewEncoder(w).Encode(commits)
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/issues/10/comments":
+			comments := []*githubv39.IssueComment{
+				{
+					ID:        githubv39.Int64(100),
+					User:      &githubv39.User{Login: stringPtr("human-alice")},
+					CreatedAt: &commentTime,
+					Body:      stringPtr("Please fix the typo in the config"),
+				},
+			}
+			_ = json.NewEncoder(w).Encode(comments)
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10/reviews":
+			_ = json.NewEncoder(w).Encode([]*githubv39.PullRequestReview{})
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/commits/"+headSHA+"/check-runs":
+			checkRuns := []*githubv39.CheckRun{
+				{
+					Name:        stringPtr("ci-tests"),
+					Status:      stringPtr("completed"),
+					Conclusion:  stringPtr("failure"),
+					CompletedAt: &githubv39.Timestamp{Time: commentTime},
+				},
+			}
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"check_runs": checkRuns})
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/commits/"+headSHA+"/statuses":
+			_ = json.NewEncoder(w).Encode([]*githubv39.RepoStatus{})
+		case r.Method == "POST" && strings.Contains(r.URL.Path, "/reactions"):
+			_ = json.NewEncoder(w).Encode(&githubv39.Reaction{Content: stringPtr("eyes")})
+		default:
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
+		}
+	}))
+	defer server.Close()
+
+	ghClient := githubv39.NewClient(nil)
+	parsedURL, _ := url.Parse(server.URL + "/")
+	ghClient.BaseURL = parsedURL
+	ghClient.UploadURL = parsedURL
+
+	scheme := runtime.NewScheme()
+	fakeDynamic := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, map[schema.GroupVersionResource]string{
+		k8s.SandboxGVR: "SandboxList",
+	})
+	kubeClient := &clients.KubernetesClient{
+		DynamicClient: fakeDynamic,
+	}
+
+	w := &Watcher{
+		Flags: Flags{
+			Repo: RepoFlag{
+				Owner: "test-owner",
+				Repo:  "test-repo",
+			},
+			QueueDir: tempDir,
+		},
+		githubLogin:   "bot1",
+		allBotUsers:   []string{"bot1"},
+		incomingDir:   incomingDir,
+		processingDir: processingDir,
+		processedDir:  processedDir,
+		triggerLabel:  "factory",
+		processedPRs:  make(map[int]prWatchState),
+		ghClient:      ghClient,
+		kubeClient:    kubeClient,
+	}
+
+	prIssue := &githubv39.Issue{
+		Number: &prNum,
+		Assignees: []*githubv39.User{
+			{Login: stringPtr("bot1")},
+		},
+		Labels: []*githubv39.Label{
+			{Name: stringPtr("factory")},
+		},
+	}
+
+	// When both failing CI and new comments exist, comments (Phase 2) must be prioritized over investigate (Phase 3)
+	w.processPRs(context.Background(), []*githubv39.Issue{prIssue})
+
+	commentsTaskFile := filepath.Join(incomingDir, "task-pr-10-comments.yaml")
+	if _, err := os.Stat(commentsTaskFile); os.IsNotExist(err) {
+		t.Fatalf("expected task-pr-10-comments.yaml to be created when unaddressed comments exist despite CI failure")
+	}
+
+	investigateTaskFile := filepath.Join(incomingDir, "task-pr-10-investigate.yaml")
+	if _, err := os.Stat(investigateTaskFile); !os.IsNotExist(err) {
+		t.Fatalf("expected task-pr-10-investigate.yaml NOT to be created when comments take priority")
+	}
+
+	// 2. Clear incomingDir and simulate that investigate already ran for this SHA without fixing CI.
+	// When another new comment arrives, comments task MUST still be created (no starvation due to failing CI).
+	_ = os.Remove(commentsTaskFile)
+	w.processedPRs[10] = prWatchState{
+		lastInvestigatedSHA:  headSHA,
+		lastInvestigatedTime: time.Now(),
+	}
+	commentTime = commentTime.Add(10 * time.Minute)
+	w.processPRs(context.Background(), []*githubv39.Issue{prIssue})
+
+	if _, err := os.Stat(commentsTaskFile); os.IsNotExist(err) {
+		t.Fatalf("expected task-pr-10-comments.yaml to be created when new comment arrives on a PR with previously investigated failing CI")
+	}
+}

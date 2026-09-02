@@ -134,30 +134,33 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 
 		// Fetch all PR comments (handling pagination)
 		comments, listCommentsErr := github.ListAllIssueComments(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, num)
+		if listCommentsErr != nil {
+			klog.Errorf("Failed to list issue comments for PR #%d: %v", num, listCommentsErr)
+			continue
+		}
 
-		var reviews []*githubv39.PullRequestReview
-		var listReviewsErr error
-		if listCommentsErr == nil {
-			reviews, listReviewsErr = github.ListAllReviews(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, num)
+		reviews, listReviewsErr := github.ListAllReviews(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, num)
+		if listReviewsErr != nil {
+			klog.Errorf("Failed to list reviews for PR #%d: %v", num, listReviewsErr)
+			continue
 		}
 
 		revCommentsMap := make(map[int64][]*githubv39.PullRequestComment)
-		if listCommentsErr == nil && listReviewsErr == nil {
-			for _, r := range reviews {
-				if rc, err := github.ListAllReviewComments(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, num, r.GetID()); err == nil {
-					revCommentsMap[r.GetID()] = rc
-				}
+		for _, r := range reviews {
+			if rc, err := github.ListAllReviewComments(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, num, r.GetID()); err == nil {
+				revCommentsMap[r.GetID()] = rc
 			}
 		}
 
 		state := w.processedPRs[num]
 
+		var bots []string
+		if w.cfg != nil {
+			bots = w.cfg.AllowlistedBots
+		}
+
 		// PR Inactivity check
-		if w.PRInactivityTimeout > 0 && listCommentsErr == nil && listReviewsErr == nil {
-			var bots []string
-			if w.cfg != nil {
-				bots = w.cfg.AllowlistedBots
-			}
+		if w.PRInactivityTimeout > 0 {
 			lastActivity := getLastPRActivityTime(pr, comments, reviews, revCommentsMap, w.githubLogin, bots)
 			if time.Since(lastActivity) > w.PRInactivityTimeout {
 				stopLabel := getStopLabel(w.triggerLabel)
@@ -181,570 +184,650 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 		// Check Phase 1: Rebase/Conflicts
 		isConflicting := pr.Mergeable != nil && !*pr.Mergeable
 
-		if isConflicting {
-			w.reconcileReadyForHumanLabel(ctx, num, prIssue, false, headSHA)
-			if state.lastIteratedSHA != "" && state.lastIteratedSHA == headSHA {
-				klog.Infof("Skipping PR #%d rebase/conflict resolution because an iterate task was already processed for head SHA %s.", num, headSHA)
-				continue
+		var checkAnalysis prCheckAnalysis
+		var commentAnalysis prCommentAnalysis
+		var canReview bool
+
+		if !isConflicting {
+			checkAnalysis = w.evaluatePRChecks(ctx, headSHA)
+			commentAnalysis = w.evaluatePRComments(ctx, num, pr, comments, reviews, revCommentsMap, lastCommitTime, state.lastCommentAddressedTime, state.lastCommentAddressedSHA, headSHA, bots)
+			isApproved := isPRApprovedOrLGTM(pr, prIssue, reviews)
+			if isApproved {
+				klog.V(2).Infof("PR #%d is approved / LGTM'd", num)
 			}
-
-			filename := fmt.Sprintf("task-pr-%d-iterate.yaml", num)
-			if !taskExists(w.incomingDir, w.processingDir, filename) {
-				sandboxName := w.resolveSandboxName(ctx, "pr-iterate", num)
-				running, err := isSandboxTaskRunning(ctx, w.kubeClient, w.Namespace, sandboxName)
-				if err != nil {
-					klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
-					continue
-				} else if running {
-					klog.Infof("Skipping PR #%d rebase because there is an in-flight sandbox %s.", num, sandboxName)
-				} else {
-					assignedBot := assignedBotUser(prIssue, w.allBotUsers)
-
-					taskAssignee := assignedBot
-					if taskAssignee == "" {
-						taskAssignee = author
-					}
-
-					prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", w.Repo.Owner, w.Repo.Repo, num)
-					shortSHA := headSHA
-					if len(shortSHA) > 7 {
-						shortSHA = shortSHA[:7]
-					}
-					baseRef := ""
-					if pr.GetBase() != nil {
-						baseRef = pr.GetBase().GetRef()
-					}
-					notes := fmt.Sprintf("PR #%d has merge conflicts with base branch '%s'; head commit %s committer date %s, PR updated at %s", num, baseRef, shortSHA, lastCommitTime.Format(time.RFC3339), pr.GetUpdatedAt().Format(time.RFC3339))
-
-					task := w.newPRQueueTask(PRTaskOptions{
-						Type:             "pr-iterate",
-						PR:               pr,
-						PRIssue:          prIssue,
-						Phase:            1,
-						Assignee:         taskAssignee,
-						CommitSHA:        headSHA,
-						TriggerEventTime: lastCommitTime,
-						TriggerReason:    TriggerReasonPRMergeConflict,
-						TriggerNotes:     notes,
-					})
-
-					if w.DryRun {
-						fmt.Printf("[DRYRUN] Would queue rebase task for PR #%d: %s\n", num, prURL)
-					} else {
-						fmt.Printf("Queueing rebase task for PR #%d...\n", num)
-						state.lastIteratedSHA = headSHA
-						state.lastIteratedTime = time.Now()
-						w.processedPRs[num] = state
-						if err := writeTaskAtomically(w.incomingDir, filename, task); err != nil {
-							klog.Errorf("Failed to queue rebase task for PR #%d: %v", num, err)
-						} else {
-							writeTaskJournalEvent(w.QueueDir, filename, task, "Created", 0)
-						}
-					}
-				}
-			}
-			// If conflicting, we prioritize rebase and skip other PR checks for this PR in this loop
-			continue
-		}
-
-		// Check CI Check Failures and Pending Status
-		hasFailure := false
-		hasPending := false
-		var earliestFailureTime time.Time
-		var earliestFailureName string
-		var earliestFailureConclusion string
-		failedCount := 0
-
-		checkRuns, err := common.ListAllCheckRuns(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, headSHA)
-		if err == nil {
-			for _, run := range checkRuns {
-				if run.GetStatus() != "completed" {
-					hasPending = true
-				}
-				c := run.GetConclusion()
-				if c == "failure" || c == "timed_out" || c == "cancelled" || c == "action_required" || c == "stale" {
-					hasFailure = true
-					failedCount++
-					t := run.GetCompletedAt().Time
-					if t.IsZero() {
-						t = run.GetStartedAt().Time
-					}
-					if !t.IsZero() {
-						if earliestFailureTime.IsZero() || t.Before(earliestFailureTime) {
-							earliestFailureTime = t
-							earliestFailureName = run.GetName()
-							earliestFailureConclusion = c
-						}
-					} else if earliestFailureName == "" {
-						earliestFailureName = run.GetName()
-						earliestFailureConclusion = c
-					}
-				}
+			if !checkAnalysis.hasFailure && !checkAnalysis.hasPending && !isApproved && state.lastReviewedSHA != headSHA && shouldAutoReviewPR(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, pr, prIssue, w.triggerLabel) {
+				canReview = !hasBotReviewAfterLastCommit(reviews, lastCommitTime, headSHA, w.githubLogin, bots)
 			}
 		}
-
-		statuses, err := common.ListAllStatuses(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, headSHA)
-		if err == nil {
-			for _, status := range statuses {
-				if status.GetState() == "pending" {
-					hasPending = true
-				}
-				if status.GetState() == "failure" || status.GetState() == "error" {
-					hasFailure = true
-					failedCount++
-					t := status.GetUpdatedAt()
-					if t.IsZero() {
-						t = status.GetCreatedAt()
-					}
-					if !t.IsZero() {
-						if earliestFailureTime.IsZero() || t.Before(earliestFailureTime) {
-							earliestFailureTime = t
-							earliestFailureName = status.GetContext()
-							earliestFailureConclusion = status.GetState()
-						}
-					} else if earliestFailureName == "" {
-						earliestFailureName = status.GetContext()
-						earliestFailureConclusion = status.GetState()
-					}
-				}
-			}
-		}
-
-		state = w.processedPRs[num]
 
 		assignedBot := assignedBotUser(prIssue, w.allBotUsers)
 		isExplicitlyAssigned := assignedBot != ""
 
-		if hasFailure {
-			filename := fmt.Sprintf("task-pr-%d-investigate.yaml", num)
-			if !taskExists(w.incomingDir, w.processingDir, filename) {
-				investigationCount := 0
-				if listCommentsErr == nil {
-					var bots []string
-					if w.cfg != nil {
-						bots = w.cfg.AllowlistedBots
-					}
-					investigationCount = getInvestigationCount(comments, lastCommitTime, w.allBotUsers, w.githubLogin, bots)
+		taskAssignee := assignedBot
+		if taskAssignee == "" {
+			taskAssignee = author
+		}
+
+		canInvestigate := !isConflicting && checkAnalysis.hasFailure && w.canInvestigatePR(num, headSHA, isExplicitlyAssigned, state, comments, lastCommitTime, bots)
+
+		prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", w.Repo.Owner, w.Repo.Repo, num)
+		shortSHA := headSHA
+		if len(shortSHA) > 7 {
+			shortSHA = shortSHA[:7]
+		}
+
+		pc := &prContext{
+			pr:                   pr,
+			prIssue:              prIssue,
+			headSHA:              headSHA,
+			shortSHA:             shortSHA,
+			lastCommitTime:       lastCommitTime,
+			taskAssignee:         taskAssignee,
+			isExplicitlyAssigned: isExplicitlyAssigned,
+			prURL:                prURL,
+		}
+
+		// Top level case statement for handling each type of PR task
+		switch {
+		case isConflicting:
+			w.handlePRIterate(ctx, pc)
+			continue
+
+		case commentAnalysis.hasNewComments:
+			w.handlePRComments(ctx, pc, commentAnalysis)
+
+		case canInvestigate:
+			w.handlePRInvestigate(ctx, pc, checkAnalysis, comments, bots)
+
+		case canReview:
+			w.handlePRReview(ctx, pc, checkAnalysis.checkRuns)
+		}
+
+		// Check and reconcile ready-for-human label
+		isReviewRequired := shouldAutoReviewPR(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, pr, prIssue, w.triggerLabel)
+		hasBotReviewOnHead := hasCompletedBotReviewOnHead(reviews, headSHA, lastCommitTime, w.cfg)
+		reviewSatisfied := !isReviewRequired || hasBotReviewOnHead
+
+		hasActiveTask := hasActivePRTask(w.incomingDir, w.processingDir, num)
+
+		isReadyForHuman := !isConflicting &&
+			!checkAnalysis.hasFailure &&
+			!checkAnalysis.hasPending &&
+			!commentAnalysis.hasNewComments &&
+			!hasActiveTask &&
+			reviewSatisfied &&
+			!hasStopLabel(prIssue.Labels, w.triggerLabel) &&
+			!pr.GetDraft() &&
+			pr.GetState() == "open"
+
+		w.reconcileReadyForHumanLabel(ctx, num, prIssue, isReadyForHuman, headSHA)
+
+		if isReadyForHuman && assignedBot != "" {
+			if w.DryRun {
+				fmt.Printf("[DRYRUN] Would unassign bot %s from PR #%d (ready for human review)\n", assignedBot, num)
+			} else {
+				fmt.Printf("Unassigning bot %s from PR #%d (ready for human review)...\n", assignedBot, num)
+				if _, _, err := w.ghClient.Issues.RemoveAssignees(ctx, w.Repo.Owner, w.Repo.Repo, num, []string{assignedBot}); err != nil {
+					klog.Errorf("Failed to unassign bot %s from PR #%d: %v", assignedBot, num, err)
 				}
+			}
+		}
+	}
+}
 
-				if investigationCount >= 3 {
-					stopLabel := getStopLabel(w.triggerLabel)
-					if !w.DryRun {
-						addGitHubComment(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, num, fmt.Sprintf("🤖 AI Factory has attempted to investigate/fix CI check failures for this pull request 3 times since the last commit or update without success. To prevent infinite loops, I am pausing automated investigation and attaching the `%s` label.\n\nTo request another attempt or resume automated processing, please remove the `%s` label from this pull request (and/or push a new commit or leave a comment).", stopLabel, stopLabel))
-						if _, _, err := w.ghClient.Issues.AddLabelsToIssue(ctx, w.Repo.Owner, w.Repo.Repo, num, []string{stopLabel}); err != nil {
-							klog.Errorf("Failed to add stop label '%s' to PR #%d: %v", stopLabel, num, err)
-						}
+type prCheckAnalysis struct {
+	hasFailure                bool
+	hasPending                bool
+	earliestFailureTime       time.Time
+	earliestFailureName       string
+	earliestFailureConclusion string
+	failedCount               int
+	checkRuns                 []*githubv39.CheckRun
+}
+
+func (w *Watcher) evaluatePRChecks(ctx context.Context, headSHA string) prCheckAnalysis {
+	var analysis prCheckAnalysis
+
+	checkRuns, err := common.ListAllCheckRuns(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, headSHA)
+	if err == nil {
+		analysis.checkRuns = checkRuns
+		for _, run := range checkRuns {
+			if run.GetStatus() != "completed" {
+				analysis.hasPending = true
+			}
+			c := run.GetConclusion()
+			if c == "failure" || c == "timed_out" || c == "cancelled" || c == "action_required" || c == "stale" {
+				analysis.hasFailure = true
+				analysis.failedCount++
+				t := run.GetCompletedAt().Time
+				if t.IsZero() {
+					t = run.GetStartedAt().Time
+				}
+				if !t.IsZero() {
+					if analysis.earliestFailureTime.IsZero() || t.Before(analysis.earliestFailureTime) {
+						analysis.earliestFailureTime = t
+						analysis.earliestFailureName = run.GetName()
+						analysis.earliestFailureConclusion = c
 					}
-					klog.Infof("Skipping PR #%d investigate because it has reached the maximum retry limit (3 attempts since last update) and applying stop label '%s'.", num, stopLabel)
+				} else if analysis.earliestFailureName == "" {
+					analysis.earliestFailureName = run.GetName()
+					analysis.earliestFailureConclusion = c
+				}
+			}
+		}
+	}
+
+	statuses, err := common.ListAllStatuses(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, headSHA)
+	if err == nil {
+		for _, status := range statuses {
+			if status.GetState() == "pending" {
+				analysis.hasPending = true
+			}
+			if status.GetState() == "failure" || status.GetState() == "error" {
+				analysis.hasFailure = true
+				analysis.failedCount++
+				t := status.GetUpdatedAt()
+				if t.IsZero() {
+					t = status.GetCreatedAt()
+				}
+				if !t.IsZero() {
+					if analysis.earliestFailureTime.IsZero() || t.Before(analysis.earliestFailureTime) {
+						analysis.earliestFailureTime = t
+						analysis.earliestFailureName = status.GetContext()
+						analysis.earliestFailureConclusion = status.GetState()
+					}
+				} else if analysis.earliestFailureName == "" {
+					analysis.earliestFailureName = status.GetContext()
+					analysis.earliestFailureConclusion = status.GetState()
+				}
+			}
+		}
+	}
+
+	return analysis
+}
+
+type prCommentAnalysis struct {
+	hasNewComments      bool
+	unackCommentIDs     []int64
+	unackPRCommentIDs   []int64
+	oldestCommentTime   time.Time
+	oldestCommentAuthor string
+	oldestCommentType   string
+	oldestCommentID     int64
+}
+
+func (w *Watcher) evaluatePRComments(
+	ctx context.Context,
+	num int,
+	pr *githubv39.PullRequest,
+	comments []*githubv39.IssueComment,
+	reviews []*githubv39.PullRequestReview,
+	revCommentsMap map[int64][]*githubv39.PullRequestComment,
+	lastCommitTime, lastCommentAddressedTime time.Time,
+	lastCommentAddressedSHA, headSHA string,
+	bots []string,
+) prCommentAnalysis {
+	var analysis prCommentAnalysis
+
+	// Find the latest timestamp of any reply made by an allowlisted bot user (excluding reviewer bots)
+	var latestBotReplyTime time.Time
+	for _, c := range comments {
+		if !isReviewerBot(c.GetUser(), w.cfg) && isBotReply(c.GetUser(), w.githubLogin, bots) && c.GetCreatedAt().After(latestBotReplyTime) {
+			latestBotReplyTime = c.GetCreatedAt()
+		}
+	}
+	for _, r := range reviews {
+		if !isReviewerBot(r.GetUser(), w.cfg) && isBotReply(r.GetUser(), w.githubLogin, bots) && r.GetSubmittedAt().After(latestBotReplyTime) {
+			latestBotReplyTime = r.GetSubmittedAt()
+		}
+	}
+
+	hasNewHumanComments := false
+	hasNewBotReviews := false
+
+	updateOldestComment := func(t time.Time, author string, cType string, id int64) {
+		if !t.IsZero() && (analysis.oldestCommentTime.IsZero() || t.Before(analysis.oldestCommentTime)) {
+			analysis.oldestCommentTime = t
+			analysis.oldestCommentAuthor = author
+			analysis.oldestCommentType = cType
+			analysis.oldestCommentID = id
+		}
+	}
+
+	for _, c := range comments {
+		isReviewer := isReviewerBot(c.GetUser(), w.cfg)
+		if !isReviewer && shouldIgnoreUser(c.GetUser(), w.githubLogin, bots) {
+			continue
+		}
+		if strings.EqualFold(c.GetUser().GetLogin(), pr.GetUser().GetLogin()) {
+			continue
+		}
+		if c.GetCreatedAt().After(lastCommitTime) && c.GetCreatedAt().After(lastCommentAddressedTime) && c.GetCreatedAt().After(latestBotReplyTime) {
+			if hasIssueCommentReaction(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, c.GetID(), "+1", true, bots, w.githubLogin) {
+				continue
+			}
+			humanRocket := hasIssueCommentReaction(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, c.GetID(), "rocket", false, bots, w.githubLogin)
+			if !humanRocket && hasIssueCommentReaction(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, c.GetID(), "eyes", true, bots, w.githubLogin) {
+				continue
+			}
+			if !humanRocket && hasIssueCommentReaction(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, c.GetID(), "confused", true, bots, w.githubLogin) {
+				continue
+			}
+			if isReviewer {
+				hasNewBotReviews = true
+			} else {
+				hasNewHumanComments = true
+			}
+			analysis.unackCommentIDs = append(analysis.unackCommentIDs, c.GetID())
+			author := ""
+			if c.GetUser() != nil {
+				author = c.GetUser().GetLogin()
+			}
+			updateOldestComment(c.GetCreatedAt(), author, "comment", c.GetID())
+		}
+	}
+
+	// Also check inline PR review comments directly
+	for _, r := range reviews {
+		isReviewer := isReviewerBot(r.GetUser(), w.cfg)
+		if !isReviewer && shouldIgnoreUser(r.GetUser(), w.githubLogin, bots) {
+			if r.GetSubmittedAt().After(latestBotReplyTime) {
+				latestBotReplyTime = r.GetSubmittedAt()
+			}
+			continue
+		}
+		if strings.EqualFold(r.GetUser().GetLogin(), pr.GetUser().GetLogin()) {
+			continue
+		}
+		if r.GetSubmittedAt().After(lastCommitTime) && r.GetSubmittedAt().After(lastCommentAddressedTime) && r.GetSubmittedAt().After(latestBotReplyTime) {
+			if isReviewer {
+				hasNewBotReviews = true
+			} else {
+				hasNewHumanComments = true
+			}
+			if strings.TrimSpace(r.GetBody()) != "" {
+				author := ""
+				if r.GetUser() != nil {
+					author = r.GetUser().GetLogin()
+				}
+				updateOldestComment(r.GetSubmittedAt(), author, "review", r.GetID())
+			}
+		}
+
+		revComments := revCommentsMap[r.GetID()]
+		for _, rc := range revComments {
+			isInlineReviewer := isReviewerBot(rc.GetUser(), w.cfg)
+			if !isInlineReviewer && shouldIgnoreUser(rc.GetUser(), w.githubLogin, bots) {
+				if rc.GetCreatedAt().After(latestBotReplyTime) {
+					latestBotReplyTime = rc.GetCreatedAt()
+				}
+				continue
+			}
+			if strings.EqualFold(rc.GetUser().GetLogin(), pr.GetUser().GetLogin()) {
+				continue
+			}
+			if rc.GetCreatedAt().After(lastCommitTime) && rc.GetCreatedAt().After(lastCommentAddressedTime) && rc.GetCreatedAt().After(latestBotReplyTime) {
+				if isInlineReviewer {
+					hasNewBotReviews = true
 				} else {
-					prevFailed := false
-					processedPath := filepath.Join(w.processedDir, filename)
-					if data, err := os.ReadFile(processedPath); err == nil {
-						var t QueueTask
-						if err := yaml.Unmarshal(data, &t); err == nil {
-							if t.Status == "Failed" {
-								prevFailed = true
-							}
-						}
-					}
+					hasNewHumanComments = true
+				}
+				analysis.unackPRCommentIDs = append(analysis.unackPRCommentIDs, rc.GetID())
+				author := ""
+				if rc.GetUser() != nil {
+					author = rc.GetUser().GetLogin()
+				}
+				updateOldestComment(rc.GetCreatedAt(), author, "inline review comment", rc.GetID())
+			}
+		}
+	}
 
-					if state.lastInvestigatedSHA != headSHA || prevFailed || isExplicitlyAssigned || time.Since(state.lastInvestigatedTime) > 2*time.Hour {
-						sandboxName := w.resolveSandboxName(ctx, "pr-investigate", num)
-						running, err := isSandboxTaskRunning(ctx, w.kubeClient, w.Namespace, sandboxName)
-						if err != nil {
-							klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
-						} else if running {
-							klog.Infof("Skipping PR #%d investigate because there is an in-flight sandbox %s.", num, sandboxName)
-						} else {
-							assignedBot := assignedBotUser(prIssue, w.allBotUsers)
+	if hasNewHumanComments {
+		analysis.hasNewComments = true
+	} else if hasNewBotReviews {
+		if lastCommentAddressedSHA != "" && lastCommentAddressedSHA == headSHA {
+			klog.Infof("Skipping bot review feedback on PR #%d because an address-comments task already ran against SHA %s without resulting in a commit.", num, headSHA)
+		} else {
+			analysis.hasNewComments = true
+		}
+	}
 
-							taskAssignee := assignedBot
-							if taskAssignee == "" {
-								taskAssignee = author
-							}
+	return analysis
+}
 
-							prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", w.Repo.Owner, w.Repo.Repo, num)
-							eventTime := earliestFailureTime
-							if eventTime.IsZero() {
-								eventTime = lastCommitTime
-							}
-							shortSHA := headSHA
-							if len(shortSHA) > 7 {
-								shortSHA = shortSHA[:7]
-							}
-							failName := earliestFailureName
-							if failName == "" {
-								failName = "unknown check"
-							}
-							failConclusion := earliestFailureConclusion
-							if failConclusion == "" {
-								failConclusion = "failed"
-							}
-							notes := fmt.Sprintf("Earliest CI failure in '%s' (%s) at %s; total %d failed check(s) on commit %s", failName, failConclusion, eventTime.Format(time.RFC3339), failedCount, shortSHA)
+func hasBotReviewAfterLastCommit(reviews []*githubv39.PullRequestReview, lastCommitTime time.Time, headSHA, githubLogin string, bots []string) bool {
+	for _, r := range reviews {
+		if isBotReply(r.GetUser(), githubLogin, bots) && (r.GetSubmittedAt().After(lastCommitTime) || r.GetCommitID() == headSHA) {
+			return true
+		}
+	}
+	return false
+}
 
-							task := w.newPRQueueTask(PRTaskOptions{
-								Type:             "pr-investigate",
-								PR:               pr,
-								PRIssue:          prIssue,
-								Phase:            3,
-								Assignee:         taskAssignee,
-								CommitSHA:        headSHA,
-								TriggerEventTime: eventTime,
-								TriggerReason:    TriggerReasonPRCheckFailed,
-								TriggerNotes:     notes,
-							})
+type prContext struct {
+	pr                   *githubv39.PullRequest
+	prIssue              *githubv39.Issue
+	headSHA              string
+	shortSHA             string
+	lastCommitTime       time.Time
+	taskAssignee         string
+	isExplicitlyAssigned bool
+	prURL                string
+}
 
-							if w.DryRun {
-								fmt.Printf("[DRYRUN] Would queue investigate task for PR #%d: %s\n", num, prURL)
-							} else {
-								fmt.Printf("Queueing investigate task for PR #%d...\n", num)
-								state.lastInvestigatedSHA = headSHA
-								state.lastInvestigatedTime = time.Now()
-								w.processedPRs[num] = state
-								if err := writeTaskAtomically(w.incomingDir, filename, task); err != nil {
-									klog.Errorf("Failed to queue investigate task for PR #%d: %v", num, err)
-								} else {
-									writeTaskJournalEvent(w.QueueDir, filename, task, "Created", 0)
-								}
-							}
-						}
-					}
+func (w *Watcher) handlePRIterate(ctx context.Context, pc *prContext) {
+	num := pc.prIssue.GetNumber()
+	state := w.processedPRs[num]
+
+	w.reconcileReadyForHumanLabel(ctx, num, pc.prIssue, false, pc.headSHA)
+	if state.lastIteratedSHA != "" && state.lastIteratedSHA == pc.headSHA {
+		klog.Infof("Skipping PR #%d rebase/conflict resolution because an iterate task was already processed for head SHA %s.", num, pc.headSHA)
+		return
+	}
+
+	filename := fmt.Sprintf("task-pr-%d-iterate.yaml", num)
+	if !taskExists(w.incomingDir, w.processingDir, filename) {
+		sandboxName := w.resolveSandboxName(ctx, "pr-iterate", num)
+		running, err := isSandboxTaskRunning(ctx, w.kubeClient, w.Namespace, sandboxName)
+		if err != nil {
+			klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
+			return
+		} else if running {
+			klog.Infof("Skipping PR #%d rebase because there is an in-flight sandbox %s.", num, sandboxName)
+			return
+		}
+
+		baseRef := ""
+		if pc.pr.GetBase() != nil {
+			baseRef = pc.pr.GetBase().GetRef()
+		}
+		notes := fmt.Sprintf("PR #%d has merge conflicts with base branch '%s'; head commit %s committer date %s, PR updated at %s", num, baseRef, pc.shortSHA, pc.lastCommitTime.Format(time.RFC3339), pc.pr.GetUpdatedAt().Format(time.RFC3339))
+
+		task := w.newPRQueueTask(PRTaskOptions{
+			Type:             "pr-iterate",
+			PR:               pc.pr,
+			PRIssue:          pc.prIssue,
+			Phase:            1,
+			Assignee:         pc.taskAssignee,
+			CommitSHA:        pc.headSHA,
+			TriggerEventTime: pc.lastCommitTime,
+			TriggerReason:    TriggerReasonPRMergeConflict,
+			TriggerNotes:     notes,
+		})
+
+		if w.DryRun {
+			fmt.Printf("[DRYRUN] Would queue rebase task for PR #%d: %s\n", num, pc.prURL)
+		} else {
+			fmt.Printf("Queueing rebase task for PR #%d...\n", num)
+			state.lastIteratedSHA = pc.headSHA
+			state.lastIteratedTime = time.Now()
+			w.processedPRs[num] = state
+			if err := writeTaskAtomically(w.incomingDir, filename, task); err != nil {
+				klog.Errorf("Failed to queue rebase task for PR #%d: %v", num, err)
+			} else {
+				writeTaskJournalEvent(w.QueueDir, filename, task, "Created", 0)
+			}
+		}
+	}
+}
+
+func (w *Watcher) canInvestigatePR(
+	num int,
+	headSHA string,
+	isExplicitlyAssigned bool,
+	state prWatchState,
+	comments []*githubv39.IssueComment,
+	lastCommitTime time.Time,
+	bots []string,
+) bool {
+	filename := fmt.Sprintf("task-pr-%d-investigate.yaml", num)
+	if taskExists(w.incomingDir, w.processingDir, filename) {
+		return false
+	}
+	if getInvestigationCount(comments, lastCommitTime, w.allBotUsers, w.githubLogin, bots) >= 3 {
+		return true
+	}
+	prevFailed := false
+	processedPath := filepath.Join(w.processedDir, filename)
+	if data, err := os.ReadFile(processedPath); err == nil {
+		var t QueueTask
+		if err := yaml.Unmarshal(data, &t); err == nil {
+			if t.Status == "Failed" {
+				prevFailed = true
+			}
+		}
+	}
+	return state.lastInvestigatedSHA != headSHA || prevFailed || isExplicitlyAssigned || time.Since(state.lastInvestigatedTime) > 2*time.Hour
+}
+
+func (w *Watcher) handlePRInvestigate(
+	ctx context.Context,
+	pc *prContext,
+	checkAnalysis prCheckAnalysis,
+	comments []*githubv39.IssueComment,
+	bots []string,
+) {
+	num := pc.prIssue.GetNumber()
+	state := w.processedPRs[num]
+	filename := fmt.Sprintf("task-pr-%d-investigate.yaml", num)
+
+	if !taskExists(w.incomingDir, w.processingDir, filename) {
+		investigationCount := getInvestigationCount(comments, pc.lastCommitTime, w.allBotUsers, w.githubLogin, bots)
+
+		if investigationCount >= 3 {
+			stopLabel := getStopLabel(w.triggerLabel)
+			if !w.DryRun {
+				addGitHubComment(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, num, fmt.Sprintf("🤖 AI Factory has attempted to investigate/fix CI check failures for this pull request 3 times since the last commit or update without success. To prevent infinite loops, I am pausing automated investigation and attaching the `%s` label.\n\nTo request another attempt or resume automated processing, please remove the `%s` label from this pull request (and/or push a new commit or leave a comment).", stopLabel, stopLabel))
+				if _, _, err := w.ghClient.Issues.AddLabelsToIssue(ctx, w.Repo.Owner, w.Repo.Repo, num, []string{stopLabel}); err != nil {
+					klog.Errorf("Failed to add stop label '%s' to PR #%d: %v", stopLabel, num, err)
+				}
+			}
+			klog.Infof("Skipping PR #%d investigate because it has reached the maximum retry limit (3 attempts since last update) and applying stop label '%s'.", num, stopLabel)
+			return
+		}
+
+		prevFailed := false
+		processedPath := filepath.Join(w.processedDir, filename)
+		if data, err := os.ReadFile(processedPath); err == nil {
+			var t QueueTask
+			if err := yaml.Unmarshal(data, &t); err == nil {
+				if t.Status == "Failed" {
+					prevFailed = true
 				}
 			}
 		}
 
-		// Check review comments and approvals
-		isApproved := isPRApprovedOrLGTM(pr, prIssue, reviews)
-
-		if listCommentsErr == nil {
-			hasNewComments := false
-
-			var bots []string
-			if w.cfg != nil {
-				bots = w.cfg.AllowlistedBots
+		if state.lastInvestigatedSHA != pc.headSHA || prevFailed || pc.isExplicitlyAssigned || time.Since(state.lastInvestigatedTime) > 2*time.Hour {
+			sandboxName := w.resolveSandboxName(ctx, "pr-investigate", num)
+			running, err := isSandboxTaskRunning(ctx, w.kubeClient, w.Namespace, sandboxName)
+			if err != nil {
+				klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
+				return
+			} else if running {
+				klog.Infof("Skipping PR #%d investigate because there is an in-flight sandbox %s.", num, sandboxName)
+				return
 			}
 
-			// Find the latest timestamp of any reply made by an allowlisted bot user (excluding reviewer bots)
-			var latestBotReplyTime time.Time
-			for _, c := range comments {
-				if !isReviewerBot(c.GetUser(), w.cfg) && isBotReply(c.GetUser(), w.githubLogin, bots) && c.GetCreatedAt().After(latestBotReplyTime) {
-					latestBotReplyTime = c.GetCreatedAt()
-				}
+			eventTime := checkAnalysis.earliestFailureTime
+			if eventTime.IsZero() {
+				eventTime = pc.lastCommitTime
 			}
-			for _, r := range reviews {
-				if !isReviewerBot(r.GetUser(), w.cfg) && isBotReply(r.GetUser(), w.githubLogin, bots) && r.GetSubmittedAt().After(latestBotReplyTime) {
-					latestBotReplyTime = r.GetSubmittedAt()
-				}
+			failName := checkAnalysis.earliestFailureName
+			if failName == "" {
+				failName = "unknown check"
 			}
-
-			var unackCommentIDs []int64
-			var unackPRCommentIDs []int64
-			hasNewHumanComments := false
-			hasNewBotReviews := false
-			var oldestCommentTime time.Time
-			var oldestCommentAuthor string
-			var oldestCommentType string
-			var oldestCommentID int64
-			qualifyingCommentsCount := 0
-
-			updateOldestComment := func(t time.Time, author string, cType string, id int64) {
-				qualifyingCommentsCount++
-				if !t.IsZero() && (oldestCommentTime.IsZero() || t.Before(oldestCommentTime)) {
-					oldestCommentTime = t
-					oldestCommentAuthor = author
-					oldestCommentType = cType
-					oldestCommentID = id
-				}
+			failConclusion := checkAnalysis.earliestFailureConclusion
+			if failConclusion == "" {
+				failConclusion = "failed"
 			}
+			notes := fmt.Sprintf("Earliest CI failure in '%s' (%s) at %s; total %d failed check(s) on commit %s", failName, failConclusion, eventTime.Format(time.RFC3339), checkAnalysis.failedCount, pc.shortSHA)
 
-			for _, c := range comments {
-				isReviewer := isReviewerBot(c.GetUser(), w.cfg)
-				if !isReviewer && shouldIgnoreUser(c.GetUser(), w.githubLogin, bots) {
-					continue
-				}
-				if strings.EqualFold(c.GetUser().GetLogin(), pr.GetUser().GetLogin()) {
-					continue
-				}
-				if c.GetCreatedAt().After(lastCommitTime) && c.GetCreatedAt().After(state.lastCommentAddressedTime) && c.GetCreatedAt().After(latestBotReplyTime) {
-					if hasIssueCommentReaction(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, c.GetID(), "+1", true, bots, w.githubLogin) {
-						continue
-					}
-					humanRocket := hasIssueCommentReaction(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, c.GetID(), "rocket", false, bots, w.githubLogin)
-					if !humanRocket && hasIssueCommentReaction(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, c.GetID(), "eyes", true, bots, w.githubLogin) {
-						continue
-					}
-					if !humanRocket && hasIssueCommentReaction(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, c.GetID(), "confused", true, bots, w.githubLogin) {
-						continue
-					}
-					if isReviewer {
-						hasNewBotReviews = true
-					} else {
-						hasNewHumanComments = true
-					}
-					unackCommentIDs = append(unackCommentIDs, c.GetID())
-					author := ""
-					if c.GetUser() != nil {
-						author = c.GetUser().GetLogin()
-					}
-					updateOldestComment(c.GetCreatedAt(), author, "comment", c.GetID())
-				}
-			}
+			task := w.newPRQueueTask(PRTaskOptions{
+				Type:             "pr-investigate",
+				PR:               pc.pr,
+				PRIssue:          pc.prIssue,
+				Phase:            3,
+				Assignee:         pc.taskAssignee,
+				CommitSHA:        pc.headSHA,
+				TriggerEventTime: eventTime,
+				TriggerReason:    TriggerReasonPRCheckFailed,
+				TriggerNotes:     notes,
+			})
 
-			// Also check inline PR review comments directly
-			for _, r := range reviews {
-				isReviewer := isReviewerBot(r.GetUser(), w.cfg)
-				if !isReviewer && shouldIgnoreUser(r.GetUser(), w.githubLogin, bots) {
-					if r.GetSubmittedAt().After(latestBotReplyTime) {
-						latestBotReplyTime = r.GetSubmittedAt()
-					}
-					continue
-				}
-				if strings.EqualFold(r.GetUser().GetLogin(), pr.GetUser().GetLogin()) {
-					continue
-				}
-				if r.GetSubmittedAt().After(lastCommitTime) && r.GetSubmittedAt().After(state.lastCommentAddressedTime) && r.GetSubmittedAt().After(latestBotReplyTime) {
-					if isReviewer {
-						hasNewBotReviews = true
-					} else {
-						hasNewHumanComments = true
-					}
-					if strings.TrimSpace(r.GetBody()) != "" {
-						author := ""
-						if r.GetUser() != nil {
-							author = r.GetUser().GetLogin()
-						}
-						updateOldestComment(r.GetSubmittedAt(), author, "review", r.GetID())
-					}
-				}
-
-				revComments := revCommentsMap[r.GetID()]
-				for _, rc := range revComments {
-					isInlineReviewer := isReviewerBot(rc.GetUser(), w.cfg)
-					if !isInlineReviewer && shouldIgnoreUser(rc.GetUser(), w.githubLogin, bots) {
-						if rc.GetCreatedAt().After(latestBotReplyTime) {
-							latestBotReplyTime = rc.GetCreatedAt()
-						}
-						continue
-					}
-					if strings.EqualFold(rc.GetUser().GetLogin(), pr.GetUser().GetLogin()) {
-						continue
-					}
-					if rc.GetCreatedAt().After(lastCommitTime) && rc.GetCreatedAt().After(state.lastCommentAddressedTime) && rc.GetCreatedAt().After(latestBotReplyTime) {
-						if isInlineReviewer {
-							hasNewBotReviews = true
-						} else {
-							hasNewHumanComments = true
-						}
-						unackPRCommentIDs = append(unackPRCommentIDs, rc.GetID())
-						author := ""
-						if rc.GetUser() != nil {
-							author = rc.GetUser().GetLogin()
-						}
-						updateOldestComment(rc.GetCreatedAt(), author, "inline review comment", rc.GetID())
-					}
-				}
-			}
-
-			if hasNewHumanComments {
-				hasNewComments = true
-			} else if hasNewBotReviews {
-				if state.lastCommentAddressedSHA != "" && state.lastCommentAddressedSHA == headSHA {
-					klog.Infof("Skipping bot review feedback on PR #%d because an address-comments task already ran against SHA %s without resulting in a commit.", num, headSHA)
+			if w.DryRun {
+				fmt.Printf("[DRYRUN] Would queue investigate task for PR #%d: %s\n", num, pc.prURL)
+			} else {
+				fmt.Printf("Queueing investigate task for PR #%d...\n", num)
+				state.lastInvestigatedSHA = pc.headSHA
+				state.lastInvestigatedTime = time.Now()
+				w.processedPRs[num] = state
+				if err := writeTaskAtomically(w.incomingDir, filename, task); err != nil {
+					klog.Errorf("Failed to queue investigate task for PR #%d: %v", num, err)
 				} else {
-					hasNewComments = true
+					writeTaskJournalEvent(w.QueueDir, filename, task, "Created", 0)
 				}
 			}
+		}
+	}
+}
 
-			if isApproved {
-				klog.V(2).Infof("PR #%d is approved / LGTM'd", num)
+func (w *Watcher) handlePRComments(ctx context.Context, pc *prContext, commentAnalysis prCommentAnalysis) {
+	if os.Getenv("DRY_RUN") == "true" {
+		return
+	}
+	num := pc.prIssue.GetNumber()
+	state := w.processedPRs[num]
+	filename := fmt.Sprintf("task-pr-%d-comments.yaml", num)
+
+	if !taskExists(w.incomingDir, w.processingDir, filename) {
+		sandboxName := w.resolveSandboxName(ctx, "pr-comments", num)
+		running, err := isSandboxTaskRunning(ctx, w.kubeClient, w.Namespace, sandboxName)
+		if err != nil {
+			klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
+			return
+		} else if running {
+			klog.Infof("Skipping PR #%d address-comments because there is an in-flight sandbox %s.", num, sandboxName)
+			return
+		}
+
+		commitInfo := ""
+		if !pc.lastCommitTime.IsZero() {
+			commitInfo = fmt.Sprintf(" since last commit %s (committer date %s)", pc.shortSHA, pc.lastCommitTime.Format(time.RFC3339))
+		}
+		authorStr := ""
+		if commentAnalysis.oldestCommentAuthor != "" {
+			authorStr = fmt.Sprintf(" by %s", commentAnalysis.oldestCommentAuthor)
+		}
+		cType := commentAnalysis.oldestCommentType
+		if cType == "" {
+			cType = "comment"
+		}
+		notes := fmt.Sprintf("Oldest unaddressed %s%s added at %s (ID %d)%s", cType, authorStr, commentAnalysis.oldestCommentTime.Format(time.RFC3339), commentAnalysis.oldestCommentID, commitInfo)
+
+		task := w.newPRQueueTask(PRTaskOptions{
+			Type:             "pr-comments",
+			PR:               pc.pr,
+			PRIssue:          pc.prIssue,
+			Phase:            2,
+			Assignee:         pc.taskAssignee,
+			CommitSHA:        pc.headSHA,
+			TriggerEventTime: commentAnalysis.oldestCommentTime,
+			TriggerReason:    TriggerReasonPRCommentsAdded,
+			TriggerNotes:     notes,
+		})
+
+		if w.DryRun {
+			fmt.Printf("[DRYRUN] Would queue address-comments task for PR #%d: %s\n", num, pc.prURL)
+		} else {
+			fmt.Printf("Queueing address-comments task for PR #%d...\n", num)
+			for _, cid := range commentAnalysis.unackCommentIDs {
+				addIssueCommentReaction(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, cid, "eyes")
 			}
-
-			if hasNewComments {
-				if os.Getenv("DRY_RUN") == "true" {
-					continue
-				}
-				filename := fmt.Sprintf("task-pr-%d-comments.yaml", num)
-				if !taskExists(w.incomingDir, w.processingDir, filename) {
-					sandboxName := w.resolveSandboxName(ctx, "pr-comments", num)
-					running, err := isSandboxTaskRunning(ctx, w.kubeClient, w.Namespace, sandboxName)
-					if err != nil {
-						klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
-						continue
-					} else if running {
-						klog.Infof("Skipping PR #%d address-comments because there is an in-flight sandbox %s.", num, sandboxName)
-					} else {
-						taskAssignee := assignedBot
-						if taskAssignee == "" {
-							taskAssignee = author
-						}
-
-						prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", w.Repo.Owner, w.Repo.Repo, num)
-						shortSHA := headSHA
-						if len(shortSHA) > 7 {
-							shortSHA = shortSHA[:7]
-						}
-						commitInfo := ""
-						if !lastCommitTime.IsZero() {
-							commitInfo = fmt.Sprintf(" since last commit %s (committer date %s)", shortSHA, lastCommitTime.Format(time.RFC3339))
-						}
-						authorStr := ""
-						if oldestCommentAuthor != "" {
-							authorStr = fmt.Sprintf(" by %s", oldestCommentAuthor)
-						}
-						cType := oldestCommentType
-						if cType == "" {
-							cType = "comment"
-						}
-						notes := fmt.Sprintf("Oldest unaddressed %s%s added at %s (ID %d)%s", cType, authorStr, oldestCommentTime.Format(time.RFC3339), oldestCommentID, commitInfo)
-
-						task := w.newPRQueueTask(PRTaskOptions{
-							Type:             "pr-comments",
-							PR:               pr,
-							PRIssue:          prIssue,
-							Phase:            2,
-							Assignee:         taskAssignee,
-							CommitSHA:        headSHA,
-							TriggerEventTime: oldestCommentTime,
-							TriggerReason:    TriggerReasonPRCommentsAdded,
-							TriggerNotes:     notes,
-						})
-
-						if w.DryRun {
-							fmt.Printf("[DRYRUN] Would queue address-comments task for PR #%d: %s\n", num, prURL)
-						} else {
-							fmt.Printf("Queueing address-comments task for PR #%d...\n", num)
-							for _, cid := range unackCommentIDs {
-								addIssueCommentReaction(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, cid, "eyes")
-							}
-							for _, cid := range unackPRCommentIDs {
-								addPullRequestCommentReaction(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, cid, "eyes")
-							}
-							state.lastCommentAddressedTime = time.Now()
-							state.lastCommentAddressedSHA = headSHA
-							w.processedPRs[num] = state
-							if err := writeTaskAtomically(w.incomingDir, filename, task); err != nil {
-								klog.Errorf("Failed to queue address-comments task for PR #%d: %v", num, err)
-							} else {
-								writeTaskJournalEvent(w.QueueDir, filename, task, "Created", 0)
-							}
-						}
-					}
-				}
-			} else if !hasFailure && !hasPending && !isApproved && state.lastReviewedSHA != headSHA && shouldAutoReviewPR(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, pr, prIssue, w.triggerLabel) {
-				hasBotReviewAfterLastCommit := false
-				for _, r := range reviews {
-					if isBotReply(r.GetUser(), w.githubLogin, bots) && (r.GetSubmittedAt().After(lastCommitTime) || r.GetCommitID() == headSHA) {
-						hasBotReviewAfterLastCommit = true
-						break
-					}
-				}
-
-				if !hasBotReviewAfterLastCommit {
-					if os.Getenv("DRY_RUN") == "true" {
-						continue
-					}
-					filename := fmt.Sprintf("task-pr-%d-review.yaml", num)
-					if !taskExists(w.incomingDir, w.processingDir, filename) {
-						sandboxName := w.resolveSandboxName(ctx, "pr-review", num)
-						running, err := isSandboxTaskRunning(ctx, w.kubeClient, w.Namespace, sandboxName)
-						if err != nil {
-							klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
-							continue
-						} else if running {
-							klog.Infof("Skipping PR #%d review because there is an in-flight sandbox %s.", num, sandboxName)
-						} else {
-							var bodies []string
-							if pr.GetBody() != "" {
-								bodies = append(bodies, pr.GetBody())
-							}
-							for refIssueNum := range common.GetReferencedIssues(pr) {
-								refIssue, _, err := w.ghClient.Issues.Get(ctx, w.Repo.Owner, w.Repo.Repo, refIssueNum)
-								if err == nil && refIssue.GetBody() != "" {
-									bodies = append(bodies, refIssue.GetBody())
-								}
-							}
-							instructions := common.ExtractReviewInstructions(bodies...)
-
-							var latestCheckCompletedTime time.Time
-							for _, run := range checkRuns {
-								t := run.GetCompletedAt().Time
-								if t.After(latestCheckCompletedTime) {
-									latestCheckCompletedTime = t
-								}
-							}
-							eventTime := lastCommitTime
-							var notes string
-							shortSHA := headSHA
-							if len(shortSHA) > 7 {
-								shortSHA = shortSHA[:7]
-							}
-							if !latestCheckCompletedTime.IsZero() && latestCheckCompletedTime.After(lastCommitTime) {
-								eventTime = latestCheckCompletedTime
-								notes = fmt.Sprintf("Automated review triggered; all CI checks passed at %s for commit %s (committer date %s)", latestCheckCompletedTime.Format(time.RFC3339), shortSHA, lastCommitTime.Format(time.RFC3339))
-							} else {
-								notes = fmt.Sprintf("Automated review triggered for commit %s at %s", shortSHA, eventTime.Format(time.RFC3339))
-							}
-
-							prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", w.Repo.Owner, w.Repo.Repo, num)
-							task := w.newPRQueueTask(PRTaskOptions{
-								Type:             "pr-review",
-								PR:               pr,
-								PRIssue:          prIssue,
-								Phase:            2,
-								CommitSHA:        headSHA,
-								TriggerEventTime: eventTime,
-								TriggerReason:    TriggerReasonPRReadyForReview,
-								TriggerNotes:     notes,
-								Instructions:     instructions,
-							})
-
-							if w.DryRun {
-								fmt.Printf("[DRYRUN] Would queue review task for PR #%d: %s\n", num, prURL)
-							} else {
-								fmt.Printf("Queueing review task for PR #%d (Instructions: %d)...\n", num, len(instructions))
-								state.lastReviewedSHA = headSHA
-								w.processedPRs[num] = state
-								if err := writeTaskAtomically(w.incomingDir, filename, task); err != nil {
-									klog.Errorf("Failed to queue review task for PR #%d: %v", num, err)
-								} else {
-									writeTaskJournalEvent(w.QueueDir, filename, task, "Created", 0)
-								}
-							}
-						}
-					}
-				}
+			for _, cid := range commentAnalysis.unackPRCommentIDs {
+				addPullRequestCommentReaction(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, cid, "eyes")
 			}
+			state.lastCommentAddressedTime = time.Now()
+			state.lastCommentAddressedSHA = pc.headSHA
+			w.processedPRs[num] = state
+			if err := writeTaskAtomically(w.incomingDir, filename, task); err != nil {
+				klog.Errorf("Failed to queue address-comments task for PR #%d: %v", num, err)
+			} else {
+				writeTaskJournalEvent(w.QueueDir, filename, task, "Created", 0)
+			}
+		}
+	}
+}
 
-			// Check and reconcile ready-for-human label
-			if listReviewsErr == nil {
-				isReviewRequired := shouldAutoReviewPR(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, pr, prIssue, w.triggerLabel)
-				hasBotReviewOnHead := hasCompletedBotReviewOnHead(reviews, headSHA, lastCommitTime, w.cfg)
-				reviewSatisfied := !isReviewRequired || hasBotReviewOnHead
+func (w *Watcher) handlePRReview(ctx context.Context, pc *prContext, checkRuns []*githubv39.CheckRun) {
+	if os.Getenv("DRY_RUN") == "true" {
+		return
+	}
+	num := pc.prIssue.GetNumber()
+	state := w.processedPRs[num]
+	filename := fmt.Sprintf("task-pr-%d-review.yaml", num)
 
-				hasActiveTask := hasActivePRTask(w.incomingDir, w.processingDir, num)
+	if !taskExists(w.incomingDir, w.processingDir, filename) {
+		sandboxName := w.resolveSandboxName(ctx, "pr-review", num)
+		running, err := isSandboxTaskRunning(ctx, w.kubeClient, w.Namespace, sandboxName)
+		if err != nil {
+			klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
+			return
+		} else if running {
+			klog.Infof("Skipping PR #%d review because there is an in-flight sandbox %s.", num, sandboxName)
+			return
+		}
 
-				isReadyForHuman := !isConflicting &&
-					!hasFailure &&
-					!hasPending &&
-					!hasNewComments &&
-					!hasActiveTask &&
-					reviewSatisfied &&
-					!hasStopLabel(prIssue.Labels, w.triggerLabel) &&
-					!pr.GetDraft() &&
-					pr.GetState() == "open"
+		var bodies []string
+		if pc.pr.GetBody() != "" {
+			bodies = append(bodies, pc.pr.GetBody())
+		}
+		for refIssueNum := range common.GetReferencedIssues(pc.pr) {
+			refIssue, _, err := w.ghClient.Issues.Get(ctx, w.Repo.Owner, w.Repo.Repo, refIssueNum)
+			if err == nil && refIssue.GetBody() != "" {
+				bodies = append(bodies, refIssue.GetBody())
+			}
+		}
+		instructions := common.ExtractReviewInstructions(bodies...)
 
-				w.reconcileReadyForHumanLabel(ctx, num, prIssue, isReadyForHuman, headSHA)
+		var latestCheckCompletedTime time.Time
+		for _, run := range checkRuns {
+			t := run.GetCompletedAt().Time
+			if t.After(latestCheckCompletedTime) {
+				latestCheckCompletedTime = t
+			}
+		}
+		eventTime := pc.lastCommitTime
+		var notes string
+		if !latestCheckCompletedTime.IsZero() && latestCheckCompletedTime.After(pc.lastCommitTime) {
+			eventTime = latestCheckCompletedTime
+			notes = fmt.Sprintf("Automated review triggered; all CI checks passed at %s for commit %s (committer date %s)", latestCheckCompletedTime.Format(time.RFC3339), pc.shortSHA, pc.lastCommitTime.Format(time.RFC3339))
+		} else {
+			notes = fmt.Sprintf("Automated review triggered for commit %s at %s", pc.shortSHA, eventTime.Format(time.RFC3339))
+		}
 
-				if isReadyForHuman && assignedBot != "" {
-					if w.DryRun {
-						fmt.Printf("[DRYRUN] Would unassign bot %s from PR #%d (ready for human review)\n", assignedBot, num)
-					} else {
-						fmt.Printf("Unassigning bot %s from PR #%d (ready for human review)...\n", assignedBot, num)
-						if _, _, err := w.ghClient.Issues.RemoveAssignees(ctx, w.Repo.Owner, w.Repo.Repo, num, []string{assignedBot}); err != nil {
-							klog.Errorf("Failed to unassign bot %s from PR #%d: %v", assignedBot, num, err)
-						}
-					}
-				}
+		task := w.newPRQueueTask(PRTaskOptions{
+			Type:             "pr-review",
+			PR:               pc.pr,
+			PRIssue:          pc.prIssue,
+			Phase:            2,
+			CommitSHA:        pc.headSHA,
+			TriggerEventTime: eventTime,
+			TriggerReason:    TriggerReasonPRReadyForReview,
+			TriggerNotes:     notes,
+			Instructions:     instructions,
+		})
+
+		if w.DryRun {
+			fmt.Printf("[DRYRUN] Would queue review task for PR #%d: %s\n", num, pc.prURL)
+		} else {
+			fmt.Printf("Queueing review task for PR #%d (Instructions: %d)...\n", num, len(instructions))
+			state.lastReviewedSHA = pc.headSHA
+			w.processedPRs[num] = state
+			if err := writeTaskAtomically(w.incomingDir, filename, task); err != nil {
+				klog.Errorf("Failed to queue review task for PR #%d: %v", num, err)
+			} else {
+				writeTaskJournalEvent(w.QueueDir, filename, task, "Created", 0)
 			}
 		}
 	}
