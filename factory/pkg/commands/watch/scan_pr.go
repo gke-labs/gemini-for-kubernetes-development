@@ -245,7 +245,7 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 
 		// Check and reconcile ready-for-human label
 		isReviewRequired := shouldAutoReviewPR(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, pr, prIssue, w.triggerLabel)
-		hasBotReviewOnHead := hasCompletedBotReviewOnHead(reviews, headSHA, lastCommitTime, w.cfg)
+		hasBotReviewOnHead := hasCompletedBotReviewOnHead(reviews, revCommentsMap, headSHA, lastCommitTime, w.cfg)
 		reviewSatisfied := !isReviewRequired || hasBotReviewOnHead
 
 		hasActiveTask := hasActivePRTask(w.incomingDir, w.processingDir, num)
@@ -442,16 +442,20 @@ func (w *Watcher) evaluatePRComments(
 		}
 		if r.GetSubmittedAt().After(lastCommitTime) && r.GetSubmittedAt().After(lastCommentAddressedTime) && r.GetSubmittedAt().After(latestBotReplyTime) {
 			if isReviewer {
-				hasNewBotReviews = true
+				if r.GetState() == "CHANGES_REQUESTED" || len(revCommentsMap[r.GetID()]) > 0 {
+					hasNewBotReviews = true
+				}
 			} else {
 				hasNewHumanComments = true
 			}
 			if strings.TrimSpace(r.GetBody()) != "" {
-				author := ""
-				if r.GetUser() != nil {
-					author = r.GetUser().GetLogin()
+				if !isReviewer || r.GetState() == "CHANGES_REQUESTED" || len(revCommentsMap[r.GetID()]) > 0 {
+					author := ""
+					if r.GetUser() != nil {
+						author = r.GetUser().GetLogin()
+					}
+					updateOldestComment(r.GetSubmittedAt(), author, "review", r.GetID())
 				}
-				updateOldestComment(r.GetSubmittedAt(), author, "review", r.GetID())
 			}
 		}
 
@@ -487,7 +491,31 @@ func (w *Watcher) evaluatePRComments(
 		analysis.hasNewComments = true
 	} else if hasNewBotReviews {
 		if lastCommentAddressedSHA != "" && lastCommentAddressedSHA == headSHA {
-			klog.Infof("Skipping bot review feedback on PR #%d because an address-comments task already ran against SHA %s without resulting in a commit.", num, headSHA)
+			hasReviewAfterAddressed := false
+			for _, r := range reviews {
+				if isReviewerBot(r.GetUser(), w.cfg) && r.GetSubmittedAt().After(lastCommentAddressedTime) {
+					if r.GetState() == "CHANGES_REQUESTED" || len(revCommentsMap[r.GetID()]) > 0 {
+						hasReviewAfterAddressed = true
+						break
+					}
+				}
+				revComments := revCommentsMap[r.GetID()]
+				for _, rc := range revComments {
+					if isReviewerBot(rc.GetUser(), w.cfg) && rc.GetCreatedAt().After(lastCommentAddressedTime) {
+						hasReviewAfterAddressed = true
+						break
+					}
+				}
+				if hasReviewAfterAddressed {
+					break
+				}
+			}
+
+			if !hasReviewAfterAddressed {
+				klog.Infof("Skipping bot review feedback on PR #%d because an address-comments task already ran against SHA %s without resulting in a commit.", num, headSHA)
+			} else {
+				analysis.hasNewComments = true
+			}
 		} else {
 			analysis.hasNewComments = true
 		}
