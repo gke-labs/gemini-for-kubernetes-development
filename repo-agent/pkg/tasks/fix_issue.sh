@@ -125,14 +125,22 @@ function checkForExistingPR {
     echo "Checking for existing PRs..."
     pushd "/workspaces/${REPO_NAME}" > /dev/null
 
-    # Try to find a PR by the current user first
-    local pr_number=$(gh search prs "${ISSUE_NUMBER}" --state open --repo "${REPO_OWNER}/${REPO_NAME}" --author "${GITHUB_USER_ID}" --json number --jq '.[0] | "\(.number)"' --limit 1)
-    local pr_url=$(gh search prs "${ISSUE_NUMBER}" --state open --repo "${REPO_OWNER}/${REPO_NAME}" --author "${GITHUB_USER_ID}" --json url --jq '.[0] | "\(.url)"' --limit 1)
+    # Try to find a PR by the current user first, restricting search to title and body to be safer
+    local pr_number=$(gh search prs "${ISSUE_NUMBER}" --state open --repo "${REPO_OWNER}/${REPO_NAME}" --author "${GITHUB_USER_ID}" --match title,body --json number --jq '.[0] | "\(.number)"' --limit 1 2>/dev/null)
+    local pr_url=$(gh search prs "${ISSUE_NUMBER}" --state open --repo "${REPO_OWNER}/${REPO_NAME}" --author "${GITHUB_USER_ID}" --match title,body --json url --jq '.[0] | "\(.url)"' --limit 1 2>/dev/null)
 
-    # If not found, look for any PR
+    # If not found, look for any PR linked to the issue via the timeline API
     if [ -z "$pr_number" ] || [ "$pr_number" == "null" ]; then
-        pr_number=$(gh search prs "${ISSUE_NUMBER}" --repo "${REPO_OWNER}/${REPO_NAME}" --state open --json number --jq '.[0] | "\(.number)"' --limit 1)
-        pr_url=$(gh search prs "${ISSUE_NUMBER}" --repo "${REPO_OWNER}/${REPO_NAME}" --state open --json url --jq '.[0] | "\(.url)"' --limit 1)
+        pr_number=$(gh api "repos/${REPO_OWNER}/${REPO_NAME}/issues/${ISSUE_NUMBER}/timeline" \
+            --jq '.[] | select(.event == "cross-referenced" and .source.issue.pull_request != null and .source.issue.state == "open") | .source.issue.number' 2>/dev/null | head -n 1)
+        pr_url=$(gh api "repos/${REPO_OWNER}/${REPO_NAME}/issues/${ISSUE_NUMBER}/timeline" \
+            --jq '.[] | select(.event == "cross-referenced" and .source.issue.pull_request != null and .source.issue.state == "open") | .source.issue.html_url' 2>/dev/null | head -n 1)
+    fi
+
+    # As a final fallback for any PR, search by title matching only to avoid full-text comment/body/changelog false positives
+    if [ -z "$pr_number" ] || [ "$pr_number" == "null" ]; then
+        pr_number=$(gh search prs "${ISSUE_NUMBER}" --repo "${REPO_OWNER}/${REPO_NAME}" --state open --match title --json number --jq '.[0] | "\(.number)"' --limit 1 2>/dev/null)
+        pr_url=$(gh search prs "${ISSUE_NUMBER}" --repo "${REPO_OWNER}/${REPO_NAME}" --state open --match title --json url --jq '.[0] | "\(.url)"' --limit 1 2>/dev/null)
     fi
 
     if [ -n "$pr_number" ] && [ "$pr_number" != "null" ]; then
@@ -257,10 +265,10 @@ function recordPRLink {
         pr_url=$(gh pr list --head "issue_${ISSUE_NUMBER}" --json url --jq '.[0].url // empty')
     fi
 
-    # If still not found, try searching PRs by issue number and author
+    # If still not found, try searching PRs by issue number and author (matching only title and body to be safer)
     if [ -z "$pr_url" ] || [ "$pr_url" == "null" ]; then
         echo "Searching for PR..."
-        pr_url=$(gh search prs "${ISSUE_NUMBER}" --state open --repo "${REPO_OWNER}/${REPO_NAME}" --author "${GITHUB_USER_ID}" --json url --jq '.[0].url // empty' --limit 1)
+        pr_url=$(gh search prs "${ISSUE_NUMBER}" --state open --repo "${REPO_OWNER}/${REPO_NAME}" --author "${GITHUB_USER_ID}" --match title,body --json url --jq '.[0].url // empty' --limit 1 2>/dev/null)
     fi
 
     if [ -n "$pr_url" ] && [ "$pr_url" != "null" ]; then
