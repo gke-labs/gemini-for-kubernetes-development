@@ -213,3 +213,63 @@ func TestNewAgentSandbox(t *testing.T) {
 		})
 	}
 }
+
+func TestSandboxGPU(t *testing.T) {
+	// Test NewAgentSandbox with GPU enabled
+	optAgent := AgentSandboxOptions{
+		DevSandboxOptions: DevSandboxOptions{
+			Name:      "test-gpu-agent",
+			Namespace: "default",
+			GPU:       true,
+		},
+	}
+	sandboxAgent, _ := NewAgentSandbox(optAgent)
+
+	specAgent := sandboxAgent.Object["spec"].(map[string]interface{})
+	podTemplateAgent := specAgent["podTemplate"].(map[string]interface{})
+	podSpecAgent := podTemplateAgent["spec"].(map[string]interface{})
+
+	// Check nodeSelector
+	nodeSelectorAgent, ok := podSpecAgent["nodeSelector"].(map[string]interface{})
+	if !ok || nodeSelectorAgent["cloud.google.com/gke-gpu-sharing-strategy"] != "time-sharing" {
+		t.Errorf("expected nodeSelector for GKE GPU sharing, got %v", podSpecAgent["nodeSelector"])
+	}
+
+	// Check container resource limits
+	containersAgent := podSpecAgent["containers"].([]interface{})
+	containerAgent := containersAgent[0].(map[string]interface{})
+	resourcesAgent := containerAgent["resources"].(map[string]interface{})
+	limitsAgent := resourcesAgent["limits"].(map[string]interface{})
+	if limitsAgent["nvidia.com/gpu"] != "1" {
+		t.Errorf("expected nvidia.com/gpu limit to be 1, got %v", limitsAgent["nvidia.com/gpu"])
+	}
+
+	// Test NewReviewSandbox with GPU enabled
+	optReview := ReviewSandboxOptions{
+		DevSandboxOptions: DevSandboxOptions{
+			Name:      "test-gpu-review",
+			Namespace: "default",
+			GPU:       true,
+		},
+	}
+	sandboxReview, _ := NewReviewSandbox(optReview)
+
+	specReview := sandboxReview.Object["spec"].(map[string]interface{})
+	podTemplateReview := specReview["podTemplate"].(map[string]interface{})
+	podSpecReview := podTemplateReview["spec"].(map[string]interface{})
+
+	// Check nodeSelector
+	nodeSelectorReview, ok := podSpecReview["nodeSelector"].(map[string]interface{})
+	if !ok || nodeSelectorReview["cloud.google.com/gke-gpu-sharing-strategy"] != "time-sharing" {
+		t.Errorf("expected nodeSelector for GKE GPU sharing, got %v", podSpecReview["nodeSelector"])
+	}
+
+	// Check container resource limits
+	containersReview := podSpecReview["containers"].([]interface{})
+	containerReview := containersReview[0].(map[string]interface{})
+	resourcesReview := containerReview["resources"].(map[string]interface{})
+	limitsReview := resourcesReview["limits"].(map[string]interface{})
+	if limitsReview["nvidia.com/gpu"] != "1" {
+		t.Errorf("expected nvidia.com/gpu limit to be 1, got %v", limitsReview["nvidia.com/gpu"])
+	}
+}
