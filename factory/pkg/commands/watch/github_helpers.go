@@ -312,6 +312,9 @@ func getInvestigationCount(comments []*githubv39.IssueComment, lastCommitTime ti
 			}
 		}
 		isHuman := !isPoolBot && !shouldIgnoreUser(c.GetUser(), githubLogin, bots)
+		if isHuman && strings.HasPrefix(strings.ToLower(strings.TrimSpace(c.GetBody())), "/overseer-ignore") {
+			isHuman = false
+		}
 		if (isHuman || strings.Contains(c.GetBody(), "pausing automated investigation")) && c.GetCreatedAt().After(lastResetTime) {
 			lastResetTime = c.GetCreatedAt()
 		}
@@ -670,6 +673,9 @@ func getLastPRActivityTime(pr *githubv39.PullRequest, comments []*githubv39.Issu
 	for _, c := range comments {
 		isBot := isBotReply(c.GetUser(), githubLogin, bots)
 		if !isBot {
+			if strings.HasPrefix(strings.ToLower(strings.TrimSpace(c.GetBody())), "/overseer-ignore") {
+				continue
+			}
 			if c.GetCreatedAt().After(lastActivity) {
 				lastActivity = c.GetCreatedAt()
 			}
@@ -679,6 +685,9 @@ func getLastPRActivityTime(pr *githubv39.PullRequest, comments []*githubv39.Issu
 	// 2. Check reviews and review comments
 	for _, r := range reviews {
 		if !isBotReply(r.GetUser(), githubLogin, bots) {
+			if strings.HasPrefix(strings.ToLower(strings.TrimSpace(r.GetBody())), "/overseer-ignore") {
+				continue
+			}
 			if r.GetSubmittedAt().After(lastActivity) {
 				lastActivity = r.GetSubmittedAt()
 			}
@@ -687,6 +696,9 @@ func getLastPRActivityTime(pr *githubv39.PullRequest, comments []*githubv39.Issu
 		if rcList, ok := revComments[r.GetID()]; ok {
 			for _, rc := range rcList {
 				if !isBotReply(rc.GetUser(), githubLogin, bots) {
+					if strings.HasPrefix(strings.ToLower(strings.TrimSpace(rc.GetBody())), "/overseer-ignore") {
+						continue
+					}
 					if rc.GetCreatedAt().After(lastActivity) {
 						lastActivity = rc.GetCreatedAt()
 					}

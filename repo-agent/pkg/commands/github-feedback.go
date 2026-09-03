@@ -244,6 +244,9 @@ func (c *GithubFeedbackCommand) Run(ctx context.Context) error {
 
 	var newIssueComments, oldIssueComments []github.IssueComment
 	for _, comment := range c.issueComments {
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(comment.Body())), "/overseer-ignore") {
+			continue
+		}
 		if comment.CreatedAt().Before(lastCommitTime) {
 			oldIssueComments = append(oldIssueComments, comment)
 		} else {
@@ -253,6 +256,19 @@ func (c *GithubFeedbackCommand) Run(ctx context.Context) error {
 
 	var newPrReviews, oldPrReviews []github.PullRequestReview
 	for _, review := range c.prReviews {
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(review.Body())), "/overseer-ignore") {
+			continue
+		}
+
+		var filteredComments []github.PullRequestComment
+		for _, rc := range review.PullRequestComments {
+			if strings.HasPrefix(strings.ToLower(strings.TrimSpace(rc.Body())), "/overseer-ignore") {
+				continue
+			}
+			filteredComments = append(filteredComments, rc)
+		}
+		review.PullRequestComments = filteredComments
+
 		if review.SubmittedAt().Before(lastCommitTime) {
 			oldPrReviews = append(oldPrReviews, review)
 		} else {

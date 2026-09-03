@@ -284,6 +284,20 @@ func TestGetLastPRActivityTime(t *testing.T) {
 	if !got.Equal(humanReviewCommentTime) {
 		t.Errorf("Case 6 failed: expected %v, got %v", humanReviewCommentTime, got)
 	}
+
+	// Case 7: Human comment with /overseer-ignore (ignored)
+	ignoreTime := baseTime.Add(7 * time.Hour)
+	comments = []*githubv39.IssueComment{
+		{
+			User:      &githubv39.User{Login: stringPtr("human-user")},
+			CreatedAt: &ignoreTime,
+			Body:      stringPtr("/overseer-ignore: This is side-channel conversation"),
+		},
+	}
+	got = getLastPRActivityTime(pr, comments, nil, nil, githubLogin, bots)
+	if !got.Equal(baseTime) {
+		t.Errorf("Case 7 failed: expected /overseer-ignore comment to be ignored and return %v, got %v", baseTime, got)
+	}
 }
 
 func int64Ptr(i int64) *int64 {

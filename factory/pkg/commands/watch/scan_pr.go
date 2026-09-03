@@ -403,6 +403,9 @@ func (w *Watcher) evaluatePRComments(
 		if strings.EqualFold(c.GetUser().GetLogin(), pr.GetUser().GetLogin()) {
 			continue
 		}
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(c.GetBody())), "/overseer-ignore") {
+			continue
+		}
 		if c.GetCreatedAt().After(lastCommitTime) && c.GetCreatedAt().After(lastCommentAddressedTime) && c.GetCreatedAt().After(latestBotReplyTime) {
 			if hasIssueCommentReaction(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, c.GetID(), "+1", true, bots, w.githubLogin) {
 				continue
@@ -441,6 +444,9 @@ func (w *Watcher) evaluatePRComments(
 			continue
 		}
 		if r.GetSubmittedAt().After(lastCommitTime) && r.GetSubmittedAt().After(lastCommentAddressedTime) && r.GetSubmittedAt().After(latestBotReplyTime) {
+			if strings.HasPrefix(strings.ToLower(strings.TrimSpace(r.GetBody())), "/overseer-ignore") {
+				continue
+			}
 			if isReviewer {
 				hasNewBotReviews = true
 			} else {
@@ -468,6 +474,9 @@ func (w *Watcher) evaluatePRComments(
 				continue
 			}
 			if rc.GetCreatedAt().After(lastCommitTime) && rc.GetCreatedAt().After(lastCommentAddressedTime) && rc.GetCreatedAt().After(latestBotReplyTime) {
+				if strings.HasPrefix(strings.ToLower(strings.TrimSpace(rc.GetBody())), "/overseer-ignore") {
+					continue
+				}
 				if isInlineReviewer {
 					hasNewBotReviews = true
 				} else {
