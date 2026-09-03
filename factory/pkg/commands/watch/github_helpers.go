@@ -301,7 +301,7 @@ func hasStopLabel(labels []*githubv39.Label, triggerLabel string) bool {
 	return false
 }
 
-func getInvestigationCount(comments []*githubv39.IssueComment, lastCommitTime time.Time, allBotUsers []string, githubLogin string, bots []string) int {
+func getInvestigationCount(comments []*githubv39.IssueComment, lastCommitTime time.Time, allBotUsers []string, githubLogin string, bots []string, triggerLabel string) int {
 	lastResetTime := lastCommitTime
 	for _, c := range comments {
 		isPoolBot := false
@@ -312,7 +312,7 @@ func getInvestigationCount(comments []*githubv39.IssueComment, lastCommitTime ti
 			}
 		}
 		isHuman := !isPoolBot && !shouldIgnoreUser(c.GetUser(), githubLogin, bots)
-		if isHuman && strings.HasPrefix(strings.ToLower(strings.TrimSpace(c.GetBody())), "/overseer-ignore") {
+		if isHuman && hasIgnorePrefix(c.GetBody(), triggerLabel) {
 			isHuman = false
 		}
 		if (isHuman || strings.Contains(c.GetBody(), "pausing automated investigation")) && c.GetCreatedAt().After(lastResetTime) {
@@ -666,14 +666,14 @@ func addPullRequestCommentReaction(ctx context.Context, ghClient *githubv39.Clie
 	}
 }
 
-func getLastPRActivityTime(pr *githubv39.PullRequest, comments []*githubv39.IssueComment, reviews []*githubv39.PullRequestReview, revComments map[int64][]*githubv39.PullRequestComment, githubLogin string, bots []string) time.Time {
+func getLastPRActivityTime(pr *githubv39.PullRequest, comments []*githubv39.IssueComment, reviews []*githubv39.PullRequestReview, revComments map[int64][]*githubv39.PullRequestComment, githubLogin string, bots []string, triggerLabel string) time.Time {
 	lastActivity := pr.GetCreatedAt()
 
 	// 1. Check issue comments
 	for _, c := range comments {
 		isBot := isBotReply(c.GetUser(), githubLogin, bots)
 		if !isBot {
-			if strings.HasPrefix(strings.ToLower(strings.TrimSpace(c.GetBody())), "/overseer-ignore") {
+			if hasIgnorePrefix(c.GetBody(), triggerLabel) {
 				continue
 			}
 			if c.GetCreatedAt().After(lastActivity) {
@@ -685,7 +685,7 @@ func getLastPRActivityTime(pr *githubv39.PullRequest, comments []*githubv39.Issu
 	// 2. Check reviews and review comments
 	for _, r := range reviews {
 		if !isBotReply(r.GetUser(), githubLogin, bots) {
-			if strings.HasPrefix(strings.ToLower(strings.TrimSpace(r.GetBody())), "/overseer-ignore") {
+			if hasIgnorePrefix(r.GetBody(), triggerLabel) {
 				continue
 			}
 			if r.GetSubmittedAt().After(lastActivity) {
@@ -696,7 +696,7 @@ func getLastPRActivityTime(pr *githubv39.PullRequest, comments []*githubv39.Issu
 		if rcList, ok := revComments[r.GetID()]; ok {
 			for _, rc := range rcList {
 				if !isBotReply(rc.GetUser(), githubLogin, bots) {
-					if strings.HasPrefix(strings.ToLower(strings.TrimSpace(rc.GetBody())), "/overseer-ignore") {
+					if hasIgnorePrefix(rc.GetBody(), triggerLabel) {
 						continue
 					}
 					if rc.GetCreatedAt().After(lastActivity) {
@@ -716,6 +716,24 @@ func hasInactivityComment(comments []*githubv39.IssueComment, lastActivity time.
 			if c.GetCreatedAt().After(lastActivity) {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// hasIgnorePrefix checks if a comment body starts with the ignore prefix.
+// The prefix is constructed as "/" + triggerLabel + "-ignore".
+// If triggerLabel is empty or "overseer", we check for "/overseer-ignore".
+// Otherwise, we accept either "/overseer-ignore" or "/" + triggerLabel + "-ignore".
+func hasIgnorePrefix(body string, triggerLabel string) bool {
+	trimmed := strings.ToLower(strings.TrimSpace(body))
+	if strings.HasPrefix(trimmed, "/overseer-ignore") {
+		return true
+	}
+	if triggerLabel != "" && !strings.EqualFold(triggerLabel, "overseer") {
+		prefix := "/" + strings.ToLower(triggerLabel) + "-ignore"
+		if strings.HasPrefix(trimmed, prefix) {
+			return true
 		}
 	}
 	return false

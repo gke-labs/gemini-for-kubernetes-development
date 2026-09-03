@@ -181,7 +181,7 @@ func TestGetInvestigationCount(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			lastCommitTime := time.Now().Add(-24 * time.Hour)
-			count := getInvestigationCount(tc.comments, lastCommitTime, tc.allBotUsers, tc.githubLogin, tc.allowlist)
+			count := getInvestigationCount(tc.comments, lastCommitTime, tc.allBotUsers, tc.githubLogin, tc.allowlist, "factory")
 			if count != tc.expectedCount {
 				t.Errorf("expected count %d, got %d", tc.expectedCount, count)
 			}
@@ -203,7 +203,7 @@ func TestGetLastPRActivityTime(t *testing.T) {
 	bots := []string{"allowlisted-bot"}
 
 	// Case 1: No comments/reviews
-	got := getLastPRActivityTime(pr, nil, nil, nil, githubLogin, bots)
+	got := getLastPRActivityTime(pr, nil, nil, nil, githubLogin, bots, "factory")
 	if !got.Equal(baseTime) {
 		t.Errorf("Case 1 failed: expected %v, got %v", baseTime, got)
 	}
@@ -216,7 +216,7 @@ func TestGetLastPRActivityTime(t *testing.T) {
 			CreatedAt: &humanTime,
 		},
 	}
-	got = getLastPRActivityTime(pr, comments, nil, nil, githubLogin, bots)
+	got = getLastPRActivityTime(pr, comments, nil, nil, githubLogin, bots, "factory")
 	if !got.Equal(humanTime) {
 		t.Errorf("Case 2 failed: expected %v, got %v", humanTime, got)
 	}
@@ -229,7 +229,7 @@ func TestGetLastPRActivityTime(t *testing.T) {
 			CreatedAt: &botTime,
 		},
 	}
-	got = getLastPRActivityTime(pr, comments, nil, nil, githubLogin, bots)
+	got = getLastPRActivityTime(pr, comments, nil, nil, githubLogin, bots, "factory")
 	if !got.Equal(baseTime) {
 		t.Errorf("Case 3 failed: expected %v, got %v", baseTime, got)
 	}
@@ -243,7 +243,7 @@ func TestGetLastPRActivityTime(t *testing.T) {
 			Body:      stringPtr("🤖 AI Factory has paused automated processing on this pull request due to a period of inactivity"),
 		},
 	}
-	got = getLastPRActivityTime(pr, comments, nil, nil, githubLogin, bots)
+	got = getLastPRActivityTime(pr, comments, nil, nil, githubLogin, bots, "factory")
 	if !got.Equal(baseTime) {
 		t.Errorf("Case 4 failed: expected %v, got %v", baseTime, got)
 	}
@@ -257,7 +257,7 @@ func TestGetLastPRActivityTime(t *testing.T) {
 			SubmittedAt: &reviewTime,
 		},
 	}
-	got = getLastPRActivityTime(pr, nil, reviews, nil, githubLogin, bots)
+	got = getLastPRActivityTime(pr, nil, reviews, nil, githubLogin, bots, "factory")
 	if !got.Equal(reviewTime) {
 		t.Errorf("Case 5 failed: expected %v, got %v", reviewTime, got)
 	}
@@ -280,7 +280,7 @@ func TestGetLastPRActivityTime(t *testing.T) {
 			},
 		},
 	}
-	got = getLastPRActivityTime(pr, nil, reviews, revComments, githubLogin, bots)
+	got = getLastPRActivityTime(pr, nil, reviews, revComments, githubLogin, bots, "factory")
 	if !got.Equal(humanReviewCommentTime) {
 		t.Errorf("Case 6 failed: expected %v, got %v", humanReviewCommentTime, got)
 	}
@@ -294,9 +294,23 @@ func TestGetLastPRActivityTime(t *testing.T) {
 			Body:      stringPtr("/overseer-ignore: This is side-channel conversation"),
 		},
 	}
-	got = getLastPRActivityTime(pr, comments, nil, nil, githubLogin, bots)
+	got = getLastPRActivityTime(pr, comments, nil, nil, githubLogin, bots, "factory")
 	if !got.Equal(baseTime) {
 		t.Errorf("Case 7 failed: expected /overseer-ignore comment to be ignored and return %v, got %v", baseTime, got)
+	}
+
+	// Case 8: Human comment with /factory-ignore (ignored because triggerLabel is factory)
+	factoryIgnoreTime := baseTime.Add(8 * time.Hour)
+	comments = []*githubv39.IssueComment{
+		{
+			User:      &githubv39.User{Login: stringPtr("human-user")},
+			CreatedAt: &factoryIgnoreTime,
+			Body:      stringPtr("/factory-ignore: This is side-channel conversation with custom prefix"),
+		},
+	}
+	got = getLastPRActivityTime(pr, comments, nil, nil, githubLogin, bots, "factory")
+	if !got.Equal(baseTime) {
+		t.Errorf("Case 8 failed: expected /factory-ignore comment to be ignored when triggerLabel is 'factory' and return %v, got %v", baseTime, got)
 	}
 }
 
@@ -341,6 +355,62 @@ func TestHasInactivityComment(t *testing.T) {
 	}
 	if hasInactivityComment(otherComments, baseTime) {
 		t.Errorf("Case 4 failed: expected false for non-pause comment")
+	}
+}
+
+func TestHasIgnorePrefix(t *testing.T) {
+	tests := []struct {
+		body         string
+		triggerLabel string
+		expected     bool
+	}{
+		{
+			body:         "/overseer-ignore",
+			triggerLabel: "factory",
+			expected:     true,
+		},
+		{
+			body:         "  /OVERSEER-IGNORE: some message  ",
+			triggerLabel: "factory",
+			expected:     true,
+		},
+		{
+			body:         "/factory-ignore",
+			triggerLabel: "factory",
+			expected:     true,
+		},
+		{
+			body:         "  /FACTORY-IGNORE: custom prefix  ",
+			triggerLabel: "factory",
+			expected:     true,
+		},
+		{
+			body:         "/other-ignore",
+			triggerLabel: "factory",
+			expected:     false,
+		},
+		{
+			body:         "/overseer-ignore",
+			triggerLabel: "overseer",
+			expected:     true,
+		},
+		{
+			body:         "/overseer-ignore",
+			triggerLabel: "",
+			expected:     true,
+		},
+		{
+			body:         "just a regular comment",
+			triggerLabel: "factory",
+			expected:     false,
+		},
+	}
+
+	for _, tc := range tests {
+		got := hasIgnorePrefix(tc.body, tc.triggerLabel)
+		if got != tc.expected {
+			t.Errorf("hasIgnorePrefix(%q, %q) = %v; expected %v", tc.body, tc.triggerLabel, got, tc.expected)
+		}
 	}
 }
 
