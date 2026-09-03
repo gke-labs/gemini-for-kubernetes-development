@@ -275,7 +275,7 @@ func runInvestigate(ctx context.Context, prURL, prompt string, continueSession b
 		"PR_NUMBER":                  strconv.Itoa(prNum),
 		"FAILED_RUNS":                strings.Join(failedRunIDs, " "),
 		"FAILED_PROW_RUNS":           strings.Join(failedProwRuns, " "),
-		"MODELS":                     tasks.DefaultModelsString(),
+		"MODELS":                     tasks.GetAvailableModelsForKey(getGeminiAPIKey(secret)),
 		"GEMINI_CONTINUE_SESSION":    strconv.FormatBool(continueSession),
 	}
 
@@ -545,7 +545,7 @@ func runAddressComments(ctx context.Context, prURL, prompt string, continueSessi
 		"GITHUB_USER_EMAIL":          githubEmail,
 		"GITHUB_USER_NAME":           githubLogin,
 		"PR_NUMBER":                  strconv.Itoa(prNum),
-		"MODELS":                     tasks.DefaultModelsString(),
+		"MODELS":                     tasks.GetAvailableModelsForKey(getGeminiAPIKey(secret)),
 		"GEMINI_CONTINUE_SESSION":    strconv.FormatBool(continueSession),
 	}
 
@@ -958,7 +958,7 @@ func runIterate(ctx context.Context, prURL, prompt string, continueSession bool,
 		"GITHUB_USER_NAME":           githubLogin,
 		"PR_NUMBER":                  strconv.Itoa(prNum),
 		"BRANCH_NAME":                pr.GetHead().GetRef(),
-		"MODELS":                     tasks.DefaultModelsString(),
+		"MODELS":                     tasks.GetAvailableModelsForKey(getGeminiAPIKey(secret)),
 		"GEMINI_CONTINUE_SESSION":    strconv.FormatBool(continueSession),
 	}
 
@@ -1256,7 +1256,7 @@ func runAdopt(ctx context.Context, prURL, adoptAction, strategy string, ephemera
 		"PR_URL":                     prURL,
 		"ADOPT_FLAG":                 adoptAction,
 		"STRATEGY":                   strategy,
-		"MODELS":                     tasks.DefaultModelsString(),
+		"MODELS":                     tasks.GetAvailableModelsForKey(getGeminiAPIKey(secret)),
 	}
 
 	fmt.Println("Running adopt task via envd...")

@@ -1,19 +1,27 @@
 package tasks
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/geminitokens"
+)
 
 // DefaultModels is the list of Gemini models to use, in order of preference and fallback.
-var DefaultModels = []string{
-	"gemini-3.6-flash",
-	"gemini-3.5-flash",
-	"gemini-3-flash-preview",
-	"gemini-3.1-pro-preview",
-	"gemini-2.5-pro",
-}
+var DefaultModels = geminitokens.DefaultModels
 
 // DefaultModelsString returns DefaultModels as a space-separated string for environment variables.
 func DefaultModelsString() string {
 	return strings.Join(DefaultModels, " ")
+}
+
+// GetAvailableModelsForKey returns a space-separated string of models whose quota is not exceeded for the given key.
+func GetAvailableModelsForKey(key string) string {
+	activeModels := geminitokens.GetAvailableModels(key, DefaultModels)
+	// If all models are marked as quota exceeded, fall back to the full list so we don't pass an empty string
+	if len(activeModels) == 0 {
+		return DefaultModelsString()
+	}
+	return strings.Join(activeModels, " ")
 }
 
 // getScriptWithDefaults reads the specified script from scriptsFS and replaces

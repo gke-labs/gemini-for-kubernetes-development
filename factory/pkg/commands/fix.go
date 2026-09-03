@@ -317,7 +317,7 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch boo
 		"GITHUB_USER_EMAIL":          githubEmail,
 		"GITHUB_USER_NAME":           githubLogin,
 		"BRANCH_NAME":                branchName,
-		"MODELS":                     tasks.DefaultModelsString(),
+		"MODELS":                     tasks.GetAvailableModelsForKey(getGeminiAPIKey(secret)),
 		"NO_PR":                      strconv.FormatBool(noPR),
 	}
 
