@@ -137,12 +137,6 @@ function checkForExistingPR {
             --jq '.[] | select(.event == "cross-referenced" and .source.issue.pull_request != null and .source.issue.state == "open") | .source.issue.html_url' 2>/dev/null | head -n 1)
     fi
 
-    # As a final fallback for any PR, search by title matching only to avoid full-text comment/body/changelog false positives
-    if [ -z "$pr_number" ] || [ "$pr_number" == "null" ]; then
-        pr_number=$(gh search prs "${ISSUE_NUMBER}" --repo "${REPO_OWNER}/${REPO_NAME}" --state open --match title --json number --jq '.[0] | "\(.number)"' --limit 1 2>/dev/null)
-        pr_url=$(gh search prs "${ISSUE_NUMBER}" --repo "${REPO_OWNER}/${REPO_NAME}" --state open --match title --json url --jq '.[0] | "\(.url)"' --limit 1 2>/dev/null)
-    fi
-
     if [ -n "$pr_number" ] && [ "$pr_number" != "null" ]; then
         echo "Found existing PR:"
         echo $pr_number
