@@ -74,6 +74,10 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
     const [queueData, setQueueData] = useState(null);
     const [queueFilter, setQueueFilter] = useState('');
 
+    const [showStatus, setShowStatus] = useState(false);
+    const [statusData, setStatusData] = useState(null);
+    const [statusLoading, setStatusLoading] = useState(false);
+
     const logIntervalRef = useRef(null);
 
     const fetchQueue = useCallback(() => {
@@ -101,6 +105,37 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
         const interval = setInterval(fetchQueue, 5000);
         return () => clearInterval(interval);
     }, [fetchQueue]);
+
+    const fetchStatus = useCallback(() => {
+        if (!activeOverseer) return;
+        setStatusLoading(true);
+        fetch(`/api/overseers/${activeOverseer.metadata.name}/status`)
+            .then(res => {
+                if (!res.ok) throw new Error("Failed to fetch status");
+                return res.json();
+            })
+            .then(data => {
+                setStatusData(data);
+                setStatusLoading(false);
+            })
+            .catch(err => {
+                console.error("Failed to fetch status:", err);
+                setStatusLoading(false);
+            });
+    }, [activeOverseer]);
+
+    useEffect(() => {
+        if (showStatus) {
+            fetchStatus();
+            const interval = setInterval(fetchStatus, 5000);
+            return () => clearInterval(interval);
+        }
+    }, [showStatus, fetchStatus]);
+
+    useEffect(() => {
+        setStatusData(null);
+        setQueueData(null);
+    }, [activeOverseer]);
 
     const handleMakeCritical = (fileName, currentPriority) => {
         if (!activeOverseer) return;
@@ -264,6 +299,8 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
         setShowOverseerLogs(false);
         setShowTerminal(false);
         setShowPodLogs(isController);
+        setShowStatus(false);
+        setShowTaskQueue(false);
     };
 
     const handleOverseerDaemonClick = () => {
@@ -602,15 +639,15 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                 {/* Sub-Tab Navigation Bar */}
                 <div style={{ display: 'flex', gap: '10px', marginBottom: '20px', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px' }}>
                     <button 
-                        className={`btn ${!showTaskQueue && !showOverseerLogs && !activeSandbox ? 'btn-primary' : 'btn-secondary'}`}
-                        onClick={() => { setShowTaskQueue(false); setShowOverseerLogs(false); setActiveSandbox(null); }}
+                        className={`btn ${!showTaskQueue && !showOverseerLogs && !showStatus && !activeSandbox ? 'btn-primary' : 'btn-secondary'}`}
+                        onClick={() => { setShowTaskQueue(false); setShowOverseerLogs(false); setShowStatus(false); setActiveSandbox(null); }}
                         style={{ fontWeight: '600', padding: '8px 16px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
                     >
                         📦 Active Sandboxes ({sandboxes.length})
                     </button>
                     <button 
                         className={`btn ${showTaskQueue ? 'btn-primary' : 'btn-secondary'}`}
-                        onClick={() => { setShowTaskQueue(true); setShowOverseerLogs(false); setActiveSandbox(null); }}
+                        onClick={() => { setShowTaskQueue(true); setShowOverseerLogs(false); setShowStatus(false); setActiveSandbox(null); }}
                         style={{ fontWeight: '600', padding: '8px 16px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
                     >
                         📥 Incoming Task Queue ({queueData?.summary?.totalPending || 0})
@@ -622,14 +659,119 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                     </button>
                     <button 
                         className={`btn ${showOverseerLogs ? 'btn-primary' : 'btn-secondary'}`}
-                        onClick={() => { setShowOverseerLogs(true); setShowTaskQueue(false); setActiveSandbox(null); }}
+                        onClick={() => { setShowOverseerLogs(true); setShowTaskQueue(false); setShowStatus(false); setActiveSandbox(null); }}
                         style={{ fontWeight: '600', padding: '8px 16px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
                     >
                         📜 Daemon Logs
                     </button>
+                    <button 
+                        className={`btn ${showStatus ? 'btn-primary' : 'btn-secondary'}`}
+                        onClick={() => { setShowStatus(true); setShowTaskQueue(false); setShowOverseerLogs(false); setActiveSandbox(null); }}
+                        style={{ fontWeight: '600', padding: '8px 16px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                    >
+                        📊 Status
+                    </button>
                 </div>
 
-                {showTaskQueue ? (
+                {showStatus ? (
+                    <div style={{ textAlign: 'left', backgroundColor: 'var(--bg-card)', padding: '24px', borderRadius: '8px', border: '1px solid var(--border-color)', boxShadow: 'var(--shadow-card)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                            <h3 style={{ margin: 0, color: 'var(--text-primary)' }}>📊 Factory / API Token Status</h3>
+                            <button 
+                                className="btn btn-sm btn-secondary" 
+                                onClick={fetchStatus}
+                                style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+                            >
+                                🔄 Refresh Status
+                            </button>
+                        </div>
+
+                        {statusLoading && !statusData ? (
+                            <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                                🔄 Loading status data, please wait...
+                            </div>
+                        ) : (
+                            <div>
+                                {statusData?.isSyncing && (
+                                    <div style={{ backgroundColor: 'rgba(240, 173, 78, 0.1)', border: '1px solid #f0ad4e', padding: '12px 16px', borderRadius: '6px', color: '#f0ad4e', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '20px' }}>
+                                        ⚠️ Overseer daemon is currently initializing / in cycle sync phase. Displaying cached view...
+                                    </div>
+                                )}
+
+                                {/* Status summary cards */}
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '15px', marginBottom: '25px' }}>
+                                    <div style={{ backgroundColor: 'rgba(92, 184, 92, 0.1)', border: '1px solid #5cb85c', padding: '16px', borderRadius: '8px' }}>
+                                        <div style={{ fontSize: '0.85rem', color: '#5cb85c', fontWeight: 'bold', marginBottom: '4px' }}>🟢 Active Keys</div>
+                                        <div style={{ fontSize: '1.8rem', fontWeight: 'bold', color: '#5cb85c' }}>{statusData?.active || 0}</div>
+                                    </div>
+                                    <div style={{ backgroundColor: 'rgba(240, 173, 78, 0.1)', border: '1px solid #f0ad4e', padding: '16px', borderRadius: '8px' }}>
+                                        <div style={{ fontSize: '0.85rem', color: '#f0ad4e', fontWeight: 'bold', marginBottom: '4px' }}>🟡 Quota Exceeded Keys</div>
+                                        <div style={{ fontSize: '1.8rem', fontWeight: 'bold', color: '#f0ad4e' }}>{statusData?.quotaExceeded || 0}</div>
+                                    </div>
+                                    <div style={{ backgroundColor: 'rgba(217, 83, 79, 0.1)', border: '1px solid #d9534f', padding: '16px', borderRadius: '8px' }}>
+                                        <div style={{ fontSize: '0.85rem', color: '#d9534f', fontWeight: 'bold', marginBottom: '4px' }}>🔴 Suspended Keys</div>
+                                        <div style={{ fontSize: '1.8rem', fontWeight: 'bold', color: '#d9534f' }}>{statusData?.suspended || 0}</div>
+                                    </div>
+                                    <div style={{ backgroundColor: 'var(--bg-body)', border: '1px solid var(--border-color)', padding: '16px', borderRadius: '8px' }}>
+                                        <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>🔑 Total Tracked Keys</div>
+                                        <div style={{ fontSize: '1.8rem', fontWeight: 'bold', color: 'var(--text-primary)' }}>{statusData?.total || 0}</div>
+                                    </div>
+                                </div>
+
+                                {/* Lists of keys */}
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '20px' }}>
+                                    {/* Active keys column */}
+                                    <div style={{ border: '1px solid var(--border-color)', borderRadius: '6px', padding: '15px', backgroundColor: 'var(--bg-body)' }}>
+                                        <h4 style={{ marginTop: 0, marginBottom: '12px', color: '#5cb85c', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>🟢 Active Keys</h4>
+                                        {statusData?.activeList && statusData.activeList.length > 0 ? (
+                                            <ul style={{ listStyleType: 'none', paddingLeft: 0, margin: 0 }}>
+                                                {statusData.activeList.map((key, idx) => (
+                                                    <li key={idx} style={{ padding: '8px 12px', marginBottom: '6px', backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '4px', fontFamily: 'monospace', fontSize: '0.9rem' }}>
+                                                        {key}
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                        ) : (
+                                            <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>No active keys currently found.</div>
+                                        )}
+                                    </div>
+
+                                    {/* Quota Exceeded keys column */}
+                                    <div style={{ border: '1px solid var(--border-color)', borderRadius: '6px', padding: '15px', backgroundColor: 'var(--bg-body)' }}>
+                                        <h4 style={{ marginTop: 0, marginBottom: '12px', color: '#f0ad4e', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>🟡 Quota Exceeded Keys</h4>
+                                        {statusData?.quotaExceededList && statusData.quotaExceededList.length > 0 ? (
+                                            <ul style={{ listStyleType: 'none', paddingLeft: 0, margin: 0 }}>
+                                                {statusData.quotaExceededList.map((key, idx) => (
+                                                    <li key={idx} style={{ padding: '8px 12px', marginBottom: '6px', backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '4px', fontFamily: 'monospace', fontSize: '0.9rem' }}>
+                                                        {key}
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                        ) : (
+                                            <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>No quota-exceeded keys currently found.</div>
+                                        )}
+                                    </div>
+
+                                    {/* Suspended keys column */}
+                                    <div style={{ border: '1px solid var(--border-color)', borderRadius: '6px', padding: '15px', backgroundColor: 'var(--bg-body)' }}>
+                                        <h4 style={{ marginTop: 0, marginBottom: '12px', color: '#d9534f', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>🔴 Suspended Keys</h4>
+                                        {statusData?.suspendedList && statusData.suspendedList.length > 0 ? (
+                                            <ul style={{ listStyleType: 'none', paddingLeft: 0, margin: 0 }}>
+                                                {statusData.suspendedList.map((key, idx) => (
+                                                    <li key={idx} style={{ padding: '8px 12px', marginBottom: '6px', backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '4px', fontFamily: 'monospace', fontSize: '0.9rem', overflowX: 'auto' }}>
+                                                        {key}
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                        ) : (
+                                            <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>No suspended keys currently found.</div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                ) : showTaskQueue ? (
                     <div>
                         {queueData?.isSyncing && (
                             <div style={{
