@@ -1,6 +1,9 @@
 package watch
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -136,4 +139,83 @@ func TestBuildTaskCommandArgs(t *testing.T) {
 			t.Errorf("expected nil args for unknown type, got %v", args)
 		}
 	})
+}
+
+func TestRunTasks_DryRun_LeavesInIncoming(t *testing.T) {
+	tempDir := t.TempDir()
+	w := &Watcher{
+		Flags: Flags{
+			QueueDir:   tempDir,
+			DryRun:     true,
+			MaxActions: 10,
+			MaxPending: 10,
+		},
+		kubeClient: newTestKubeClient(),
+	}
+	w.initQueueManager()
+
+	fn := "task-issue-1.yaml"
+	incomingDir := filepath.Join(tempDir, "incoming")
+	if err := os.MkdirAll(incomingDir, 0755); err != nil {
+		t.Fatalf("failed to create incoming dir: %v", err)
+	}
+	taskContent := "type: issue-fix\nnumber: 1\nurl: https://github.com/owner/repo/issues/1\npriority: high\n"
+	if err := os.WriteFile(filepath.Join(incomingDir, fn), []byte(taskContent), 0644); err != nil {
+		t.Fatalf("failed to write incoming task file: %v", err)
+	}
+
+	task := &api.QueueTask{
+		Type:       api.TypeIssueFix,
+		URL:        "https://github.com/owner/repo/issues/1",
+		Number:     1,
+		Priority:   api.PriorityHigh,
+		EnqueuedAt: time.Now(),
+	}
+	if err := w.queueMgr.Enqueue(fn, task); err != nil {
+		t.Fatalf("Enqueue failed: %v", err)
+	}
+
+	w.runTasks(context.Background())
+
+	// Under dry run, the task should NOT move to processing. It must remain in incoming!
+	if _, err := os.Stat(filepath.Join(tempDir, "incoming", fn)); err != nil {
+		t.Errorf("expected %s to remain in incoming: %v", fn, err)
+	}
+	if _, err := os.Stat(filepath.Join(tempDir, "processing", fn)); !os.IsNotExist(err) {
+		t.Errorf("expected %s not to exist in processing", fn)
+	}
+
+	inc, proc, _ := w.queueMgr.GetCounts()
+	if inc != 1 || proc != 0 {
+		t.Errorf("expected counts (1, 0), got (%d, %d)", inc, proc)
+	}
+}
+
+func TestRunTasks_DrainMode_DoesNotClaim(t *testing.T) {
+	tempDir := t.TempDir()
+	w := &Watcher{
+		Flags: Flags{
+			QueueDir:   tempDir,
+			MaxActions: 10,
+			MaxPending: 10,
+		},
+		kubeClient: newTestKubeClient(),
+	}
+	w.initQueueManager()
+
+	_ = os.WriteFile(filepath.Join(tempDir, ".drain"), []byte(""), 0644)
+
+	task := &api.QueueTask{
+		Type:       api.TypeIssueFix,
+		Number:     2,
+		EnqueuedAt: time.Now(),
+	}
+	_ = w.queueMgr.Enqueue("task-issue-2.yaml", task)
+
+	w.runTasks(context.Background())
+
+	inc, proc, _ := w.queueMgr.GetCounts()
+	if inc != 1 || proc != 0 {
+		t.Errorf("expected counts (1, 0), got (%d, %d)", inc, proc)
+	}
 }

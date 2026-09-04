@@ -78,6 +78,8 @@ func TestProcessPRs_Filters(t *testing.T) {
 	w.processingDir = processingDir
 	w.processedDir = processedDir
 	w.triggerLabel = "factory"
+	w.initQueueManager()
+	_ = w.queueMgr.LoadFromDisk()
 
 	w.processPRs(context.Background(), prIssues)
 
@@ -93,6 +95,7 @@ func TestProcessPRs_DisabledMode(t *testing.T) {
 			PRMode: "disabled",
 		},
 	}
+	w.initQueueManager()
 	// Should return immediately without doing any operations
 	w.processPRs(context.Background(), nil)
 }
@@ -195,6 +198,7 @@ func TestProcessPRs_ReadyForHuman_GatedByActiveTask(t *testing.T) {
 			},
 		},
 	}
+	w.initQueueManager()
 
 	prIssue := &githubv39.Issue{
 		Number: &prNum,
@@ -341,6 +345,7 @@ func TestProcessPRs_UnassignOnReadyForHuman(t *testing.T) {
 			},
 		},
 	}
+	w.initQueueManager()
 
 	prIssue := &githubv39.Issue{
 		Number: &prNum,
@@ -460,6 +465,7 @@ func TestProcessPRs_ReadyForHuman_GatedByPendingCheckRuns(t *testing.T) {
 		triggerLabel:  "factory",
 		processedPRs:  make(map[int]prWatchState),
 	}
+	w.initQueueManager()
 
 	prIssue := &githubv39.Issue{
 		Number: &prNum,
@@ -584,6 +590,7 @@ func TestProcessPRs_ReadyForHuman_GatedByPendingCommitStatus(t *testing.T) {
 		triggerLabel:  "factory",
 		processedPRs:  make(map[int]prWatchState),
 	}
+	w.initQueueManager()
 
 	prIssue := &githubv39.Issue{
 		Number: &prNum,
@@ -709,6 +716,7 @@ func TestProcessPRs_Review_GatedByPendingCheckRuns(t *testing.T) {
 			},
 		},
 	}
+	w.initQueueManager()
 
 	prIssue := &githubv39.Issue{
 		Number: &prNum,
@@ -839,6 +847,7 @@ func TestProcessPRs_CommentsPrioritizedOverCIFailures(t *testing.T) {
 		ghClient:      ghClient,
 		kubeClient:    kubeClient,
 	}
+	w.initQueueManager()
 
 	prIssue := &githubv39.Issue{
 		Number: &prNum,
@@ -866,6 +875,7 @@ func TestProcessPRs_CommentsPrioritizedOverCIFailures(t *testing.T) {
 	// 2. Clear incomingDir and simulate that investigate already ran for this SHA without fixing CI.
 	// When another new comment arrives, comments task MUST still be created (no starvation due to failing CI).
 	_ = os.Remove(commentsTaskFile)
+	_ = w.queueMgr.RemoveTask("task-pr-10-comments.yaml")
 	w.processedPRs[10] = prWatchState{
 		lastInvestigatedSHA:  headSHA,
 		lastInvestigatedTime: time.Now(),

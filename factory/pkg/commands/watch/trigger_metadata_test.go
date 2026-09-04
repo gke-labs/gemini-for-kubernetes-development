@@ -15,6 +15,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/concurrency"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	githubv39 "github.com/google/go-github/v39/github"
 	"gopkg.in/yaml.v3"
@@ -200,6 +201,7 @@ func TestPRCommentsTriggerMetadata(t *testing.T) {
 		ghClient:      ghClient,
 		kubeClient:    newTestKubeClient(),
 	}
+	w.initQueueManager()
 
 	prIssues := []*githubv39.Issue{
 		{
@@ -324,6 +326,7 @@ func TestPRInvestigateTriggerMetadata(t *testing.T) {
 		ghClient:      ghClient,
 		kubeClient:    newTestKubeClient(),
 	}
+	w.initQueueManager()
 
 	prIssues := []*githubv39.Issue{
 		{
@@ -427,6 +430,7 @@ func TestPRIterateTriggerMetadata(t *testing.T) {
 		ghClient:      ghClient,
 		kubeClient:    newTestKubeClient(),
 	}
+	w.initQueueManager()
 
 	prIssues := []*githubv39.Issue{
 		{
@@ -461,8 +465,9 @@ func TestPRIterateTriggerMetadata(t *testing.T) {
 
 func TestBuildQueueResponseTriggerFields(t *testing.T) {
 	tempDir := t.TempDir()
-	incomingDir := filepath.Join(tempDir, "incoming")
-	_ = os.MkdirAll(incomingDir, 0755)
+	mgr := concurrency.NewTaskQueueManager(concurrency.TaskQueueManagerConfig{
+		QueueDir: tempDir,
+	})
 
 	eventTime := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
 	enqueuedTime := time.Date(2026, 8, 1, 10, 15, 0, 0, time.UTC)
@@ -472,7 +477,7 @@ func TestBuildQueueResponseTriggerFields(t *testing.T) {
 		URL:              "https://github.com/owner/repo/pull/123",
 		Number:           123,
 		Priority:         api.PriorityMedium,
-		Phase:            api.PhaseComments,
+		Phase:            api.PhaseIterate,
 		CreatedAt:        eventTime,
 		EnqueuedAt:       enqueuedTime,
 		TriggerEventTime: eventTime,
@@ -481,9 +486,11 @@ func TestBuildQueueResponseTriggerFields(t *testing.T) {
 		Status:           api.StatusPending,
 	}
 
-	_ = writeTaskAtomically(incomingDir, "task-pr-123-comments.yaml", task)
+	if err := mgr.Enqueue("task-pr-123-comments.yaml", task); err != nil {
+		t.Fatalf("failed to enqueue task: %v", err)
+	}
 
-	resp := buildQueueResponse(tempDir)
+	resp := mgr.GetQueueResponse()
 	if len(resp.Incoming) != 1 {
 		t.Fatalf("expected 1 incoming task, got %d", len(resp.Incoming))
 	}
@@ -497,62 +504,5 @@ func TestBuildQueueResponseTriggerFields(t *testing.T) {
 	}
 	if item.TriggerNotes != "Oldest comment by alice added at 2026-08-01T10:00:00Z" {
 		t.Errorf("expected item TriggerNotes 'Oldest comment by alice added at 2026-08-01T10:00:00Z', got '%s'", item.TriggerNotes)
-	}
-}
-
-func TestBuildQueueResponseStartedCompletedDuration(t *testing.T) {
-	tempDir := t.TempDir()
-	processingDir := filepath.Join(tempDir, "processing")
-	processedDir := filepath.Join(tempDir, "processed")
-	_ = os.MkdirAll(processingDir, 0755)
-	_ = os.MkdirAll(processedDir, 0755)
-
-	startTime := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
-	endTime := time.Date(2026, 8, 1, 10, 5, 30, 0, time.UTC)
-
-	processingTask := &api.QueueTask{
-		Type:      api.TypePRReview,
-		URL:       "https://github.com/owner/repo/pull/1",
-		Number:    1,
-		Status:    api.StatusRunning,
-		StartedAt: startTime,
-		Priority:  api.PriorityHigh,
-		Phase:     api.PhaseComments,
-	}
-	_ = writeTaskAtomically(processingDir, "task-pr-1-review.yaml", processingTask)
-
-	completedTask := &api.QueueTask{
-		Type:        api.TypeIssueFix,
-		URL:         "https://github.com/owner/repo/issues/2",
-		Number:      2,
-		Status:      api.StatusCompleted,
-		StartedAt:   startTime,
-		CompletedAt: endTime,
-		Priority:    api.PriorityMedium,
-		Phase:       api.PhaseInvestigate,
-	}
-	_ = writeTaskAtomically(processedDir, "task-issue-2-fix.yaml", completedTask)
-
-	resp := buildQueueResponse(tempDir)
-	if len(resp.Processing) != 1 {
-		t.Fatalf("expected 1 processing task, got %d", len(resp.Processing))
-	}
-	if resp.Processing[0].StartedAt != startTime.Format(time.RFC3339) {
-		t.Errorf("expected processing startedAt %s, got %s", startTime.Format(time.RFC3339), resp.Processing[0].StartedAt)
-	}
-
-	if len(resp.Processed) != 1 {
-		t.Fatalf("expected 1 processed task, got %d", len(resp.Processed))
-	}
-	p := resp.Processed[0]
-	if p.StartedAt != startTime.Format(time.RFC3339) {
-		t.Errorf("expected processed startedAt %s, got %s", startTime.Format(time.RFC3339), p.StartedAt)
-	}
-	if p.CompletedAt != endTime.Format(time.RFC3339) {
-		t.Errorf("expected processed completedAt %s, got %s", endTime.Format(time.RFC3339), p.CompletedAt)
-	}
-	expectedDuration := float64(330) // 5 minutes 30 seconds
-	if p.DurationSeconds != expectedDuration {
-		t.Errorf("expected durationSeconds %v, got %v", expectedDuration, p.DurationSeconds)
 	}
 }

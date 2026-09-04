@@ -72,13 +72,20 @@ Once the watcher has consolidated the active issues and PRs, it performs check-s
 
 ## 5. Queueing & Concurrency Control
 
-To ensure robustness, the watcher operates on a directory-based queue (`incoming/`, `processing/`, `processed/`):
+To ensure robustness, isolation, and low-latency API response times, the watcher operates through `TaskQueueManager` using thread-safe in-memory maps backed by write-through disk persistence to directory queues (`incoming/`, `processing/`, `processed/`) and append-only journal event logging (`queue/journal.log`):
 
-1. **Scan Mode (`--mode=scan`)**: Performs the queries, builds the task specifications, and writes them into `incoming/<task-id>.yaml`.
-2. **Run Mode (`--mode=run`)**: Periodically reads `incoming/` directory. It selects the next task, moves it atomically to `processing/`, runs the corresponding `factory` CLI command, and writes the output logs to `processing/<task-id>.log`.
-3. **Completion**: Once the CLI command exits:
-   * If successful: The task file and logs are moved to `processed/`.
-   * If failed: The task status is marked as `Failed` with the error trace, and moved to `processed/`.
+1. **Scan Mode (`--mode=scan`)**: Performs GitHub and local queries, builds task specifications, and writes them atomically into `incoming/<task-id>.yaml` (ingested by the in-memory manager).
+2. **Run Mode (`--mode=run`)**: Periodically drains the queue using an atomic candidate-claiming primitive (`ClaimNextCandidate`) rather than static batch snapshots:
+   * **Priority Queue Scheduling**: Incoming tasks are maintained in a persistent in-memory min-heap (`TaskPriorityQueue`) ordered by priority tier (`critical` > `urgent` > `important` > `high` > `medium` > `low`), phase execution order (1 to 4), and arrival timestamp (`enqueuedAt` FIFO), eliminating the need to re-sort on every claim.
+   * **Two-Phase Validation & Deferred Cycle Release**:
+     - *Phase 1 (Lock Acquired)*: `ClaimNextCandidate` atomically reserves the top unblocked candidate task from `incoming/` in memory while leaving the file in `incoming/` on disk and `Status: Pending`.
+     - *Phase 2 (Lock Released)*: The runner verifies external preconditions (Kubernetes sandbox pod status and GitHub stop labels/closed state) completely outside the mutex lock.
+     - *Resource Conflict Handling*: If the target sandbox pod is currently busy or Kubernetes is temporarily unreachable, the runner collects the candidate in a cycle-scoped list of released tasks. A deferred function in `runTasks` invokes `ReleaseTask(filename)` upon function exit to restore all skipped tasks back to the ready heap. This eliminates **Head-of-Line (HoL) blocking**, prevents intra-cycle busy-spin thrashing, and avoids unnecessary disk I/O.
+     - *Permanent Pruning*: If GitHub checks reveal an issue/PR is closed or labeled with `overseer/stop`, `RemoveTask` deletes it from memory and disk.
+     - *Execution Start*: Once all checks pass, `StartTask` transitions the task to `processing/` (marks `Running`, sets `StartedAt`, moves file, logs journal event) right before launching execution in the sandbox.
+3. **Completion**: Once the CLI command finishes in the sandbox:
+   * **Success**: The task file and output logs are moved to `processed/` with `Status: Completed`.
+   * **Failure**: The task is updated with `Status: Failed` and error details, then moved to `processed/`.
 
 ---
 

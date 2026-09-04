@@ -83,7 +83,7 @@ func (w *Watcher) scanChores(ctx context.Context) {
 			}
 
 			filename := fmt.Sprintf("task-chore-%s.yaml", common.Slugify(agentDef.Name))
-			if taskExists(w.incomingDir, w.processingDir, filename) {
+			if w.queueMgr.TaskExists(filename) {
 				continue
 			}
 
@@ -113,12 +113,11 @@ func (w *Watcher) scanChores(ctx context.Context) {
 					fmt.Printf("[DRYRUN] Would queue chore agent task %s (schedule: %s)\n", agentDef.Name, agentDef.Schedule)
 				} else {
 					fmt.Printf("Queueing chore agent task %s...\n", agentDef.Name)
-					if err := writeTaskAtomically(w.incomingDir, filename, task); err != nil {
+					if err := w.queueMgr.Enqueue(filename, task); err != nil {
 						klog.Errorf("Failed to queue chore task %s: %v", agentDef.Name, err)
 					} else {
 						choresState[agentDef.Name] = ChoreRunState{LastRun: time.Now()}
 						stateChanged = true
-						writeTaskJournalEvent(w.QueueDir, filename, task, "Created", 0)
 					}
 				}
 			}
