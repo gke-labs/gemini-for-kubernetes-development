@@ -253,7 +253,7 @@ func (c *GithubInvestigateCommand) Run(ctx context.Context) error {
 
 	var filteredComments []github.IssueComment
 	for _, comment := range comments {
-		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(comment.Body())), "/overseer-ignore") {
+		if hasOverseerIgnore(comment.Body()) {
 			continue
 		}
 		if comment.CreatedAt().After(lastCommitAt) {

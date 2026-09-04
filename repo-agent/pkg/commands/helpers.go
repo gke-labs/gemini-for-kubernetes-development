@@ -76,3 +76,14 @@ func ensureSSHConfigLine(ctx context.Context, path, line string) error {
 
 	return os.WriteFile(path, []byte(newConfig), 0644)
 }
+
+// hasOverseerIgnore checks if any line of the body (after trimming whitespace) starts with "/overseer-ignore" case-insensitive.
+func hasOverseerIgnore(body string) bool {
+	for _, line := range strings.Split(body, "\n") {
+		trimmed := strings.ToLower(strings.TrimSpace(line))
+		if strings.HasPrefix(trimmed, "/overseer-ignore") {
+			return true
+		}
+	}
+	return false
+}
