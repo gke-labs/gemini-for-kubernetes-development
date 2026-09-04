@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 	githubv39 "github.com/google/go-github/v39/github"
 	"gopkg.in/yaml.v3"
@@ -537,7 +538,7 @@ func (w *Watcher) handlePRIterate(ctx context.Context, pc *prContext) {
 
 	filename := fmt.Sprintf("task-pr-%d-iterate.yaml", num)
 	if !taskExists(w.incomingDir, w.processingDir, filename) {
-		sandboxName := w.resolveSandboxName(ctx, "pr-iterate", num)
+		sandboxName := w.resolveSandboxName(ctx, api.TypePRIterate, num)
 		running, err := isSandboxTaskRunning(ctx, w.kubeClient, w.Namespace, sandboxName)
 		if err != nil {
 			klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
@@ -554,14 +555,14 @@ func (w *Watcher) handlePRIterate(ctx context.Context, pc *prContext) {
 		notes := fmt.Sprintf("PR #%d has merge conflicts with base branch '%s'; head commit %s committer date %s, PR updated at %s", num, baseRef, pc.shortSHA, pc.lastCommitTime.Format(time.RFC3339), pc.pr.GetUpdatedAt().Format(time.RFC3339))
 
 		task := w.newPRQueueTask(PRTaskOptions{
-			Type:             "pr-iterate",
+			Type:             api.TypePRIterate,
 			PR:               pc.pr,
 			PRIssue:          pc.prIssue,
-			Phase:            1,
+			Phase:            api.PhaseRebase,
 			Assignee:         pc.taskAssignee,
 			CommitSHA:        pc.headSHA,
 			TriggerEventTime: pc.lastCommitTime,
-			TriggerReason:    TriggerReasonPRMergeConflict,
+			TriggerReason:    api.TriggerReasonPRMergeConflict,
 			TriggerNotes:     notes,
 		})
 
@@ -600,7 +601,7 @@ func (w *Watcher) canInvestigatePR(
 	prevFailed := false
 	processedPath := filepath.Join(w.processedDir, filename)
 	if data, err := os.ReadFile(processedPath); err == nil {
-		var t QueueTask
+		var t api.QueueTask
 		if err := yaml.Unmarshal(data, &t); err == nil {
 			if t.Status == "Failed" {
 				prevFailed = true
@@ -639,7 +640,7 @@ func (w *Watcher) handlePRInvestigate(
 		prevFailed := false
 		processedPath := filepath.Join(w.processedDir, filename)
 		if data, err := os.ReadFile(processedPath); err == nil {
-			var t QueueTask
+			var t api.QueueTask
 			if err := yaml.Unmarshal(data, &t); err == nil {
 				if t.Status == "Failed" {
 					prevFailed = true
@@ -648,7 +649,7 @@ func (w *Watcher) handlePRInvestigate(
 		}
 
 		if state.lastInvestigatedSHA != pc.headSHA || prevFailed || pc.isExplicitlyAssigned || time.Since(state.lastInvestigatedTime) > 2*time.Hour {
-			sandboxName := w.resolveSandboxName(ctx, "pr-investigate", num)
+			sandboxName := w.resolveSandboxName(ctx, api.TypePRInvestigate, num)
 			running, err := isSandboxTaskRunning(ctx, w.kubeClient, w.Namespace, sandboxName)
 			if err != nil {
 				klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
@@ -673,14 +674,14 @@ func (w *Watcher) handlePRInvestigate(
 			notes := fmt.Sprintf("Earliest CI failure in '%s' (%s) at %s; total %d failed check(s) on commit %s", failName, failConclusion, eventTime.Format(time.RFC3339), checkAnalysis.failedCount, pc.shortSHA)
 
 			task := w.newPRQueueTask(PRTaskOptions{
-				Type:             "pr-investigate",
+				Type:             api.TypePRInvestigate,
 				PR:               pc.pr,
 				PRIssue:          pc.prIssue,
-				Phase:            3,
+				Phase:            api.PhaseInvestigate,
 				Assignee:         pc.taskAssignee,
 				CommitSHA:        pc.headSHA,
 				TriggerEventTime: eventTime,
-				TriggerReason:    TriggerReasonPRCheckFailed,
+				TriggerReason:    api.TriggerReasonPRCheckFailed,
 				TriggerNotes:     notes,
 			})
 
@@ -710,7 +711,7 @@ func (w *Watcher) handlePRComments(ctx context.Context, pc *prContext, commentAn
 	filename := fmt.Sprintf("task-pr-%d-comments.yaml", num)
 
 	if !taskExists(w.incomingDir, w.processingDir, filename) {
-		sandboxName := w.resolveSandboxName(ctx, "pr-comments", num)
+		sandboxName := w.resolveSandboxName(ctx, api.TypePRComments, num)
 		running, err := isSandboxTaskRunning(ctx, w.kubeClient, w.Namespace, sandboxName)
 		if err != nil {
 			klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
@@ -735,14 +736,14 @@ func (w *Watcher) handlePRComments(ctx context.Context, pc *prContext, commentAn
 		notes := fmt.Sprintf("Oldest unaddressed %s%s added at %s (ID %d)%s", cType, authorStr, commentAnalysis.oldestCommentTime.Format(time.RFC3339), commentAnalysis.oldestCommentID, commitInfo)
 
 		task := w.newPRQueueTask(PRTaskOptions{
-			Type:             "pr-comments",
+			Type:             api.TypePRComments,
 			PR:               pc.pr,
 			PRIssue:          pc.prIssue,
-			Phase:            2,
+			Phase:            api.PhaseComments,
 			Assignee:         pc.taskAssignee,
 			CommitSHA:        pc.headSHA,
 			TriggerEventTime: commentAnalysis.oldestCommentTime,
-			TriggerReason:    TriggerReasonPRCommentsAdded,
+			TriggerReason:    api.TriggerReasonPRCommentsAdded,
 			TriggerNotes:     notes,
 		})
 
@@ -777,7 +778,7 @@ func (w *Watcher) handlePRReview(ctx context.Context, pc *prContext, checkRuns [
 	filename := fmt.Sprintf("task-pr-%d-review.yaml", num)
 
 	if !taskExists(w.incomingDir, w.processingDir, filename) {
-		sandboxName := w.resolveSandboxName(ctx, "pr-review", num)
+		sandboxName := w.resolveSandboxName(ctx, api.TypePRReview, num)
 		running, err := isSandboxTaskRunning(ctx, w.kubeClient, w.Namespace, sandboxName)
 		if err != nil {
 			klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
@@ -816,13 +817,13 @@ func (w *Watcher) handlePRReview(ctx context.Context, pc *prContext, checkRuns [
 		}
 
 		task := w.newPRQueueTask(PRTaskOptions{
-			Type:             "pr-review",
+			Type:             api.TypePRReview,
 			PR:               pc.pr,
 			PRIssue:          pc.prIssue,
-			Phase:            2,
+			Phase:            api.PhaseComments,
 			CommitSHA:        pc.headSHA,
 			TriggerEventTime: eventTime,
-			TriggerReason:    TriggerReasonPRReadyForReview,
+			TriggerReason:    api.TriggerReasonPRReadyForReview,
 			TriggerNotes:     notes,
 			Instructions:     instructions,
 		})

@@ -9,12 +9,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	"gopkg.in/yaml.v3"
 	"k8s.io/klog/v2"
 )
 
-func (w *Watcher) buildTaskCommandArgs(t *QueueTask, selectedUser string) []string {
+func (w *Watcher) buildTaskCommandArgs(t *api.QueueTask, selectedUser string) []string {
 	var args []string
 	switch t.Type {
 	case "issue-fix":
@@ -74,7 +75,7 @@ func (w *Watcher) buildTaskCommandArgs(t *QueueTask, selectedUser string) []stri
 	return args
 }
 
-func (w *Watcher) runSingleTask(ctx context.Context, taskFilename string, t *QueueTask) {
+func (w *Watcher) runSingleTask(ctx context.Context, taskFilename string, t *api.QueueTask) {
 	fmt.Printf("Starting task %s (Type: %s, URL: %s)...\n", taskFilename, t.Type, t.URL)
 	if t.StartedAt.IsZero() {
 		t.StartedAt = time.Now()
@@ -122,12 +123,12 @@ func (w *Watcher) runSingleTask(ctx context.Context, taskFilename string, t *Que
 
 	selectedUser := t.Assignee
 	var sUserErr error
-	if selectedUser == "" || (isPRTask(t.Type) && strings.EqualFold(selectedUser, w.targetAssignee)) {
+	if selectedUser == "" || (api.IsPRTask(t.Type) && strings.EqualFold(selectedUser, w.targetAssignee)) {
 		selectedUser, sUserErr = w.selectUserForTask(ctx, t.Type, t.Number)
 	}
 	if sUserErr != nil {
 		klog.Errorf("Failed to select user for task %s: %v", taskFilename, sUserErr)
-		t.Status = "Failed"
+		t.Status = api.StatusFailed
 		t.Error = sUserErr.Error()
 		_ = writeTaskAtomically(w.processingDir, taskFilename, t)
 		writeTaskJournalEvent(w.QueueDir, taskFilename, t, "Failed", 0)
@@ -167,7 +168,7 @@ func (w *Watcher) runSingleTask(ctx context.Context, taskFilename string, t *Que
 
 	if taskErr != nil {
 		klog.Errorf("Task %s failed: %v", taskFilename, taskErr)
-		t.Status = "Failed"
+		t.Status = api.StatusFailed
 		t.Error = taskErr.Error()
 		t.CompletedAt = time.Now()
 		writeTaskJournalEvent(w.QueueDir, taskFilename, t, "Failed", duration)
@@ -205,7 +206,7 @@ func (w *Watcher) runSingleTask(ctx context.Context, taskFilename string, t *Que
 		}
 	} else {
 		fmt.Printf("Task %s completed successfully.\n", taskFilename)
-		t.Status = "Completed"
+		t.Status = api.StatusCompleted
 		t.CompletedAt = time.Now()
 		writeTaskJournalEvent(w.QueueDir, taskFilename, t, "Completed", duration)
 		if t.Type == "pr-comments" && w.cfg != nil {
@@ -233,7 +234,7 @@ func (w *Watcher) runTasks(ctx context.Context) {
 		return
 	}
 
-	var taskItems []taskItem
+	var taskItems []api.TaskItem
 
 	for _, f := range incomingFiles {
 		if f.IsDir() || !strings.HasPrefix(f.Name(), "task-") || !strings.HasSuffix(f.Name(), ".yaml") {
@@ -248,7 +249,7 @@ func (w *Watcher) runTasks(ctx context.Context) {
 			continue
 		}
 
-		var t QueueTask
+		var t api.QueueTask
 		if err := parseTaskYAML(data, &t); err != nil {
 			klog.Errorf("Failed to parse task file %s: %v", filename, err)
 			continue
@@ -263,9 +264,9 @@ func (w *Watcher) runTasks(ctx context.Context) {
 			t.EnqueuedAt = getEnqueueTime(&t, modTime)
 		}
 
-		taskItems = append(taskItems, taskItem{
-			filename: filename,
-			task:     &t,
+		taskItems = append(taskItems, api.TaskItem{
+			Filename: filename,
+			Task:     &t,
 		})
 	}
 
@@ -303,8 +304,8 @@ func (w *Watcher) runTasks(ctx context.Context) {
 			break
 		}
 
-		filename := item.filename
-		task := item.task
+		filename := item.Filename
+		task := item.Task
 
 		sandboxName := w.resolveSandboxName(ctx, task.Type, task.Number)
 		if activeSandboxesInCycle[sandboxName] {
@@ -337,7 +338,7 @@ func (w *Watcher) runTasks(ctx context.Context) {
 			}
 		}
 
-		if task.Type != "agent-chore" && task.Recovered {
+		if task.Type != api.TypeAgentChore && task.Recovered {
 			completed, err := isSandboxTaskCompleted(ctx, w.kubeClient, w.Namespace, sandboxName, task.Type)
 			if err != nil {
 				klog.Errorf("Failed to check if sandbox %s completed task: %v", sandboxName, err)
@@ -350,7 +351,7 @@ func (w *Watcher) runTasks(ctx context.Context) {
 				}
 				incomingPath := filepath.Join(w.incomingDir, filename)
 				processedPath := filepath.Join(w.processedDir, filename)
-				task.Status = "Completed"
+				task.Status = api.StatusCompleted
 				if task.StartedAt.IsZero() {
 					task.StartedAt = task.EnqueuedAt
 				}
@@ -385,7 +386,7 @@ func (w *Watcher) runTasks(ctx context.Context) {
 		}
 
 		activeSandboxesInCycle[sandboxName] = true
-		task.Status = "Running"
+		task.Status = api.StatusRunning
 		task.StartedAt = time.Now()
 		_ = writeTaskAtomically(w.processingDir, filename, task)
 		writeTaskJournalEvent(w.QueueDir, filename, task, "Started", 0)
@@ -394,13 +395,13 @@ func (w *Watcher) runTasks(ctx context.Context) {
 		filesInProcessing++
 
 		w.wg.Add(1)
-		go func(taskFilename string, t *QueueTask) {
+		go func(taskFilename string, t *api.QueueTask) {
 			defer w.wg.Done()
 			w.runSingleTask(ctx, taskFilename, t)
 		}(filename, task)
 	}
 }
 
-func parseTaskYAML(data []byte, t *QueueTask) error {
+func parseTaskYAML(data []byte, t *api.QueueTask) error {
 	return yaml.Unmarshal(data, t)
 }

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	githubv39 "github.com/google/go-github/v39/github"
 	"gopkg.in/yaml.v3"
 	"k8s.io/klog/v2"
@@ -60,7 +61,7 @@ func (w *Watcher) queueIssueTasks(ctx context.Context, issues []*githubv39.Issue
 		if info, err := os.Stat(processedPath); err == nil {
 			lastRunTime := info.ModTime()
 			if data, err := os.ReadFile(processedPath); err == nil {
-				var t QueueTask
+				var t api.QueueTask
 				if err := yaml.Unmarshal(data, &t); err == nil && !t.CompletedAt.IsZero() {
 					lastRunTime = t.CompletedAt
 				}
@@ -129,9 +130,9 @@ func (w *Watcher) queueIssueTasks(ctx context.Context, issues []*githubv39.Issue
 
 			triggerEventTime, triggerReason, triggerNotes := getIssueTriggerInfo(issue, timeline, w.triggerLabel, wasAutoLabeled)
 
-			taskType := "issue-fix"
+			taskType := api.TypeIssueFix
 			if workflowName != "" {
-				taskType = "agent-chore"
+				taskType = api.TypeAgentChore
 			}
 
 			taskAssignee, err := w.selectUserForTask(ctx, taskType, num)
@@ -143,12 +144,12 @@ func (w *Watcher) queueIssueTasks(ctx context.Context, issues []*githubv39.Issue
 				taskAssignee = w.targetAssignee
 			}
 
-			var task *QueueTask
+			var task *api.QueueTask
 			if workflowName != "" {
 				task = w.newIssueQueueTask(IssueTaskOptions{
-					Type:             "agent-chore",
+					Type:             api.TypeAgentChore,
 					Issue:            issue,
-					Phase:            4,
+					Phase:            api.PhaseChores,
 					Assignee:         taskAssignee,
 					TriggerEventTime: triggerEventTime,
 					TriggerReason:    triggerReason,
@@ -158,9 +159,9 @@ func (w *Watcher) queueIssueTasks(ctx context.Context, issues []*githubv39.Issue
 				})
 			} else {
 				task = w.newIssueQueueTask(IssueTaskOptions{
-					Type:             "issue-fix",
+					Type:             api.TypeIssueFix,
 					Issue:            issue,
-					Phase:            3,
+					Phase:            api.PhaseInvestigate,
 					Assignee:         taskAssignee,
 					TriggerEventTime: triggerEventTime,
 					TriggerReason:    triggerReason,

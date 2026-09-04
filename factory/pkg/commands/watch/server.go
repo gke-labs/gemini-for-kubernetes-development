@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	"gopkg.in/yaml.v3"
 	"k8s.io/klog/v2"
 )
@@ -106,14 +107,14 @@ func startQueueHTTPServer(ctx context.Context, queueDir string, addr string) {
 	_ = server.Close()
 }
 
-func buildQueueResponse(queueDir string) QueueResponse {
-	readQueueDir := func(sub string) []taskItem {
+func buildQueueResponse(queueDir string) api.QueueResponse {
+	readQueueDir := func(sub string) []api.TaskItem {
 		d := filepath.Join(queueDir, sub)
 		entries, err := os.ReadDir(d)
 		if err != nil {
 			return nil
 		}
-		var items []taskItem
+		var items []api.TaskItem
 		for _, e := range entries {
 			if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") {
 				continue
@@ -122,12 +123,12 @@ func buildQueueResponse(queueDir string) QueueResponse {
 			if err != nil {
 				continue
 			}
-			var t QueueTask
+			var t api.QueueTask
 			if err := yaml.Unmarshal(data, &t); err != nil {
 				continue
 			}
 			if t.Priority == "" {
-				t.Priority = "medium"
+				t.Priority = api.PriorityMedium
 			}
 			if t.EnqueuedAt.IsZero() {
 				var modTime time.Time
@@ -136,19 +137,19 @@ func buildQueueResponse(queueDir string) QueueResponse {
 				}
 				t.EnqueuedAt = getEnqueueTime(&t, modTime)
 			}
-			items = append(items, taskItem{
-				filename: e.Name(),
-				task:     &t,
+			items = append(items, api.TaskItem{
+				Filename: e.Name(),
+				Task:     &t,
 			})
 		}
 		return items
 	}
 
-	taskToItem := func(item taskItem, sub string) QueueTaskItem {
-		t := item.task
-		tPrio := strings.ToLower(t.Priority)
+	taskToItem := func(item api.TaskItem, sub string) api.QueueTaskItem {
+		t := item.Task
+		tPrio := t.Priority
 		if tPrio == "" {
-			tPrio = "medium"
+			tPrio = api.PriorityMedium
 		}
 		var createdStr, enqueuedStr, triggerEventStr, startedStr, completedStr string
 		if !t.CreatedAt.IsZero() {
@@ -170,8 +171,8 @@ func buildQueueResponse(queueDir string) QueueResponse {
 		if !t.StartedAt.IsZero() && !t.CompletedAt.IsZero() && t.CompletedAt.After(t.StartedAt) {
 			durationSec = t.CompletedAt.Sub(t.StartedAt).Seconds()
 		}
-		return QueueTaskItem{
-			FileName:         item.filename,
+		return api.QueueTaskItem{
+			FileName:         item.Filename,
 			QueueState:       sub,
 			Type:             t.Type,
 			URL:              t.URL,
@@ -195,7 +196,7 @@ func buildQueueResponse(queueDir string) QueueResponse {
 	incomingItems := readQueueDir("incoming")
 	sortedIncoming := sortTasksFairly(incomingItems)
 
-	var incoming []QueueTaskItem
+	var incoming []api.QueueTaskItem
 	for i, item := range sortedIncoming {
 		m := taskToItem(item, "incoming")
 		m.Rank = i + 1
@@ -203,19 +204,19 @@ func buildQueueResponse(queueDir string) QueueResponse {
 	}
 
 	processingItems := readQueueDir("processing")
-	var processing []QueueTaskItem
+	var processing []api.QueueTaskItem
 	for _, item := range processingItems {
 		processing = append(processing, taskToItem(item, "processing"))
 	}
 
 	processedItems := readQueueDir("processed")
-	var processed []QueueTaskItem
+	var processed []api.QueueTaskItem
 	for _, item := range processedItems {
 		processed = append(processed, taskToItem(item, "processed"))
 	}
 
-	byPrio := make(map[string]int)
-	byType := make(map[string]int)
+	byPrio := make(map[api.TaskPriority]int)
+	byType := make(map[api.TaskType]int)
 	for _, item := range incoming {
 		byPrio[item.Priority]++
 		byType[item.Type]++
@@ -225,8 +226,8 @@ func buildQueueResponse(queueDir string) QueueResponse {
 		processed = processed[:20]
 	}
 
-	return QueueResponse{
-		Summary: QueueSummary{
+	return api.QueueResponse{
+		Summary: api.QueueSummary{
 			TotalPending:    len(incoming),
 			TotalProcessing: len(processing),
 			TotalCompleted:  len(processed),

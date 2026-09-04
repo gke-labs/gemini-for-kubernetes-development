@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	"github.com/google/go-cmp/cmp"
 )
 
@@ -77,34 +78,34 @@ createdAt: "2026-08-10T11:00:00Z"
 			t.Errorf("expected non-empty fallback enqueuedAt for task 2")
 		}
 
-		expectedIncoming := []QueueTaskItem{
+		expectedIncoming := []api.QueueTaskItem{
 			{
 				FileName:   "task1.yaml",
 				QueueState: "incoming",
-				Type:       "pr-review",
+				Type:       api.TypePRReview,
 				URL:        "https://github.com/org/repo/pull/42",
 				Number:     42,
-				Priority:   "critical",
-				Phase:      2,
+				Priority:   api.PriorityCritical,
+				Phase:      api.PhaseComments,
 				CreatedAt:  "2026-08-10T10:00:00Z",
 				EnqueuedAt: "2026-08-10T10:05:00Z",
 				Assignee:   "alice",
-				Status:     "Pending",
+				Status:     api.StatusPending,
 				CommitSHA:  "abc123def",
 				Rank:       1,
 			},
 			{
 				FileName:   "task2.yaml",
 				QueueState: "incoming",
-				Type:       "issue-fix",
+				Type:       api.TypeIssueFix,
 				URL:        "https://github.com/org/repo/issues/99",
 				Number:     99,
-				Priority:   "medium",
+				Priority:   api.PriorityMedium,
 				Phase:      0,
 				CreatedAt:  "2026-08-10T11:00:00Z",
 				EnqueuedAt: resp.Incoming[1].EnqueuedAt,
 				Assignee:   "",
-				Status:     "Pending",
+				Status:     api.StatusPending,
 				CommitSHA:  "",
 				Rank:       2,
 			},
@@ -315,7 +316,7 @@ func TestStartQueueHTTPServer(t *testing.T) {
 	if getResp.StatusCode != http.StatusOK {
 		t.Errorf("expected status OK, got %v", getResp.StatusCode)
 	}
-	var qResp QueueResponse
+	var qResp api.QueueResponse
 	if err := json.NewDecoder(getResp.Body).Decode(&qResp); err != nil {
 		t.Fatalf("failed to decode JSON response: %v", err)
 	}

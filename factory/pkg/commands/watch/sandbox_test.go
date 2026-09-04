@@ -8,6 +8,7 @@ import (
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -22,19 +23,19 @@ func TestIsSandboxTaskCompleted(t *testing.T) {
 	ns := "test-ns"
 
 	tests := []struct {
-		taskType          string
+		taskType          api.TaskType
 		annotatedTaskType string
 		state             string
 		expectedCompleted bool
 	}{
-		{"pr-comments", "address-comments", "Completed", true},
-		{"pr-comments", "address-comments", "Running", false},
-		{"pr-investigate", "investigate", "Completed", true},
-		{"pr-iterate", "iterate", "Completed", true},
-		{"pr-review", "review", "Completed", true},
-		{"issue-fix", "fix-issue", "Completed", true},
-		{"agent-chore", "agent", "Completed", true},
-		{"pr-comments", "wrong-type", "Completed", false},
+		{api.TypePRComments, "address-comments", "Completed", true},
+		{api.TypePRComments, "address-comments", "Running", false},
+		{api.TypePRInvestigate, "investigate", "Completed", true},
+		{api.TypePRIterate, "iterate", "Completed", true},
+		{api.TypePRReview, "review", "Completed", true},
+		{api.TypeIssueFix, "fix-issue", "Completed", true},
+		{api.TypeAgentChore, "agent", "Completed", true},
+		{api.TypePRComments, "wrong-type", "Completed", false},
 	}
 
 	for _, tc := range tests {
@@ -187,19 +188,19 @@ func TestResolveSandboxName(t *testing.T) {
 	}
 
 	// Issue task name
-	name := w.resolveSandboxName(context.Background(), "issue-fix", 10)
+	name := w.resolveSandboxName(context.Background(), api.TypeIssueFix, 10)
 	if name != "fix-test-repo-10" {
 		t.Errorf("expected 'fix-test-repo-10', got %q", name)
 	}
 
 	// Chore task name fallback
-	name = w.resolveSandboxName(context.Background(), "agent-chore", 10)
+	name = w.resolveSandboxName(context.Background(), api.TypeAgentChore, 10)
 	if name != "fix-test-repo-10" {
 		t.Errorf("expected 'fix-test-repo-10', got %q", name)
 	}
 
 	// PR task name fallback
-	name = w.resolveSandboxName(context.Background(), "pr-review", 55)
+	name = w.resolveSandboxName(context.Background(), api.TypePRReview, 55)
 	if name != "factory-pr-55" {
 		t.Errorf("expected 'factory-pr-55', got %q", name)
 	}
