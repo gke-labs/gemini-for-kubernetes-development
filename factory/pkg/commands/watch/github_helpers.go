@@ -721,19 +721,21 @@ func hasInactivityComment(comments []*githubv39.IssueComment, lastActivity time.
 	return false
 }
 
-// hasIgnorePrefix checks if a comment body starts with the ignore prefix.
+// hasIgnorePrefix checks if any line of a comment body starts with the ignore prefix.
 // The prefix is constructed as "/" + triggerLabel + "-ignore".
 // If triggerLabel is empty or "overseer", we check for "/overseer-ignore".
 // Otherwise, we accept either "/overseer-ignore" or "/" + triggerLabel + "-ignore".
 func hasIgnorePrefix(body string, triggerLabel string) bool {
-	trimmed := strings.ToLower(strings.TrimSpace(body))
-	if strings.HasPrefix(trimmed, "/overseer-ignore") {
-		return true
-	}
-	if triggerLabel != "" && !strings.EqualFold(triggerLabel, "overseer") {
-		prefix := "/" + strings.ToLower(triggerLabel) + "-ignore"
-		if strings.HasPrefix(trimmed, prefix) {
+	for _, line := range strings.Split(body, "\n") {
+		trimmed := strings.ToLower(strings.TrimSpace(line))
+		if strings.HasPrefix(trimmed, "/overseer-ignore") {
 			return true
+		}
+		if triggerLabel != "" && !strings.EqualFold(triggerLabel, "overseer") {
+			prefix := "/" + strings.ToLower(triggerLabel) + "-ignore"
+			if strings.HasPrefix(trimmed, prefix) {
+				return true
+			}
 		}
 	}
 	return false

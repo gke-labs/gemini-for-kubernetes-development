@@ -404,6 +404,21 @@ func TestHasIgnorePrefix(t *testing.T) {
 			triggerLabel: "factory",
 			expected:     false,
 		},
+		{
+			body:         "line 1\n/overseer-ignore\nline 3",
+			triggerLabel: "factory",
+			expected:     true,
+		},
+		{
+			body:         "line 1\n  /FACTORY-IGNORE: some message\nline 3",
+			triggerLabel: "factory",
+			expected:     true,
+		},
+		{
+			body:         "line 1\n  some comment containing /overseer-ignore but not at start",
+			triggerLabel: "factory",
+			expected:     false,
+		},
 	}
 
 	for _, tc := range tests {
