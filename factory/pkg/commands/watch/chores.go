@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	githubv39 "github.com/google/go-github/v39/github"
 	"github.com/robfig/cron/v3"
 	"k8s.io/klog/v2"
@@ -94,7 +95,7 @@ func (w *Watcher) scanChores(ctx context.Context) {
 						dueTime = sched.Next(lastRun)
 					}
 				}
-				reason := TriggerReasonChoreScheduled
+				reason := api.TriggerReasonChoreScheduled
 				lastRunStr := "never"
 				if !lastRun.IsZero() {
 					lastRunStr = lastRun.Format(time.RFC3339)

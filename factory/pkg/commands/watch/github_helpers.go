@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	githubv39 "github.com/google/go-github/v39/github"
@@ -154,7 +155,7 @@ func hasLinkedPRWithTimeline(ctx context.Context, client *githubv39.Client, owne
 	return hasLinkedPR(ctx, client, owner, repo, issueNum)
 }
 
-func getIssueTriggerInfo(issue *githubv39.Issue, timeline []*githubv39.Timeline, triggerLabel string, wasAutoLabeled bool) (time.Time, TriggerReason, string) {
+func getIssueTriggerInfo(issue *githubv39.Issue, timeline []*githubv39.Timeline, triggerLabel string, wasAutoLabeled bool) (time.Time, api.TriggerReason, string) {
 	createTime := issue.GetCreatedAt()
 	num := issue.GetNumber()
 
@@ -164,7 +165,7 @@ func getIssueTriggerInfo(issue *githubv39.Issue, timeline []*githubv39.Timeline,
 			user = fmt.Sprintf(" by %s", issue.GetUser().GetLogin())
 		}
 		notes := fmt.Sprintf("Issue #%d created%s at %s; trigger label '%s' auto-applied by watcher", num, user, createTime.Format(time.RFC3339), triggerLabel)
-		return createTime, TriggerReasonIssueCreated, notes
+		return createTime, api.TriggerReasonIssueCreated, notes
 	}
 
 	var latestLabelTime time.Time
@@ -189,11 +190,11 @@ func getIssueTriggerInfo(issue *githubv39.Issue, timeline []*githubv39.Timeline,
 			actorStr = fmt.Sprintf(" by %s", labelActor)
 		}
 		notes := fmt.Sprintf("Issue #%d created at %s; trigger label '%s' added%s at %s", num, createTime.Format(time.RFC3339), triggerLabel, actorStr, latestLabelTime.Format(time.RFC3339))
-		return latestLabelTime, TriggerReasonIssueLabeled, notes
+		return latestLabelTime, api.TriggerReasonIssueLabeled, notes
 	}
 
 	notes := fmt.Sprintf("Issue #%d created at %s with trigger label '%s'", num, createTime.Format(time.RFC3339), triggerLabel)
-	return createTime, TriggerReasonIssueCreated, notes
+	return createTime, api.TriggerReasonIssueCreated, notes
 }
 
 func isPRApprovedOrLGTM(pr *githubv39.PullRequest, prIssue *githubv39.Issue, reviews []*githubv39.PullRequestReview) bool {
@@ -438,7 +439,7 @@ func (w *Watcher) reconcileReadyForHumanLabel(ctx context.Context, num int, prIs
 	}
 }
 
-func (w *Watcher) selectUserForTask(ctx context.Context, taskType string, prNum int) (string, error) {
+func (w *Watcher) selectUserForTask(ctx context.Context, taskType api.TaskType, prNum int) (string, error) {
 	if w.cfg == nil || len(w.cfg.Roles) == 0 {
 		return "", nil // default fallback to factory-user
 	}
@@ -447,7 +448,7 @@ func (w *Watcher) selectUserForTask(ctx context.Context, taskType string, prNum 
 	role := ""
 	for roleName, rCfg := range w.cfg.Roles {
 		for _, t := range rCfg.Tasks {
-			if strings.EqualFold(t, taskType) {
+			if strings.EqualFold(t, string(taskType)) {
 				role = roleName
 				break
 			}
@@ -459,13 +460,13 @@ func (w *Watcher) selectUserForTask(ctx context.Context, taskType string, prNum 
 
 	if role == "" {
 		switch {
-		case taskType == "agent-chore":
+		case taskType == api.TypeAgentChore:
 			if rCfg, ok := w.cfg.Roles["agent"]; ok && len(rCfg.Users) > 0 {
 				role = "agent"
 			} else {
 				role = "coder"
 			}
-		case isPRTask(taskType):
+		case api.IsPRTask(taskType):
 			if prNum > 0 {
 				pr, _, err := w.ghClient.PullRequests.Get(ctx, w.Repo.Owner, w.Repo.Repo, prNum)
 				if err == nil {
@@ -491,9 +492,9 @@ func (w *Watcher) selectUserForTask(ctx context.Context, taskType string, prNum 
 			if role == "" {
 				role = "coder"
 			}
-		case taskType == "issue-fix":
+		case taskType == api.TypeIssueFix:
 			role = "coder"
-		case taskType == "pr-review":
+		case taskType == api.TypePRReview:
 			role = "reviewer"
 		default:
 			return "", nil // default fallback
@@ -512,15 +513,15 @@ func (w *Watcher) selectUserForTask(ctx context.Context, taskType string, prNum 
 	}
 
 	// 2. Select bot based on new vs existing PR/Issue
-	isIssueTask := taskType == "issue-fix" || taskType == "agent-chore"
+	isIssueTask := taskType == api.TypeIssueFix || taskType == api.TypeAgentChore
 	if isIssueTask {
 		if prNum > 0 {
 			// A. First check if a Sandbox already exists for this task on the cluster
 			// and has been pinned to a specific user.
 			var sandboxName string
-			if taskType == "issue-fix" {
+			if taskType == api.TypeIssueFix {
 				sandboxName = fmt.Sprintf("fix-%s-%d", w.Repo.Repo, prNum)
-			} else if taskType == "agent-chore" {
+			} else if taskType == api.TypeAgentChore {
 				sandboxName = fmt.Sprintf("wf-issue-%d", prNum)
 			}
 
@@ -581,7 +582,7 @@ func (w *Watcher) selectUserForTask(ctx context.Context, taskType string, prNum 
 			return "", fmt.Errorf("empty author login for PR %d", prNum)
 		}
 
-		if taskType == "pr-review" {
+		if taskType == api.TypePRReview {
 			reviewerRoleCfg, ok := w.cfg.Roles["reviewer"]
 			if ok && len(reviewerRoleCfg.Users) > 0 {
 				idx := time.Now().UnixNano() % int64(len(reviewerRoleCfg.Users))

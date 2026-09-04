@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	githubv39 "github.com/google/go-github/v39/github"
 	"gopkg.in/yaml.v3"
 	"k8s.io/klog/v2"
@@ -18,7 +19,7 @@ import (
 
 // getEnqueueTime returns the timestamp when a task was enqueued, falling back to
 // file modification time or task creation time if EnqueuedAt is unset.
-func getEnqueueTime(t *QueueTask, modTime time.Time) time.Time {
+func getEnqueueTime(t *api.QueueTask, modTime time.Time) time.Time {
 	if !t.EnqueuedAt.IsZero() {
 		return t.EnqueuedAt
 	}
@@ -30,7 +31,7 @@ func getEnqueueTime(t *QueueTask, modTime time.Time) time.Time {
 
 // getEntityKey returns the unique key representing the target entity (PR, issue, or chore)
 // for a given queue task.
-func getEntityKey(t *QueueTask) string {
+func getEntityKey(t *api.QueueTask) string {
 	if t.Number > 0 {
 		return fmt.Sprintf("%d", t.Number)
 	}
@@ -46,17 +47,17 @@ func getEntityKey(t *QueueTask) string {
 	return "default"
 }
 
-// priorityRankValue converts a priority string into an integer rank where lower numbers indicate higher priority.
-func priorityRankValue(p string) int {
-	priorityRank := map[string]int{
-		"critical":  1,
-		"urgent":    2,
-		"important": 3,
-		"high":      4,
-		"medium":    5,
-		"low":       6,
+// priorityRankValue converts a Priority into an integer rank where lower numbers indicate higher priority.
+func priorityRankValue(p api.TaskPriority) int {
+	priorityRank := map[api.TaskPriority]int{
+		api.PriorityCritical:  1,
+		api.PriorityUrgent:    2,
+		api.PriorityImportant: 3,
+		api.PriorityHigh:      4,
+		api.PriorityMedium:    5,
+		api.PriorityLow:       6,
 	}
-	if r, ok := priorityRank[strings.ToLower(p)]; ok {
+	if r, ok := priorityRank[api.TaskPriority(strings.ToLower(string(p)))]; ok {
 		return r
 	}
 	return 5
@@ -64,18 +65,18 @@ func priorityRankValue(p string) int {
 
 // isLessTask reports whether task a should be ordered before task b based on priority rank,
 // phase rank, enqueue timestamp (FIFO), creation timestamp, and filename tiebreaking.
-func isLessTask(a, b taskItem) bool {
-	rankA := priorityRankValue(a.task.Priority)
-	rankB := priorityRankValue(b.task.Priority)
+func isLessTask(a, b api.TaskItem) bool {
+	rankA := priorityRankValue(a.Task.Priority)
+	rankB := priorityRankValue(b.Task.Priority)
 	if rankA != rankB {
 		return rankA < rankB
 	}
 
-	phaseA := a.task.Phase
+	phaseA := a.Task.Phase
 	if phaseA == 0 {
 		phaseA = 3
 	}
-	phaseB := b.task.Phase
+	phaseB := b.Task.Phase
 	if phaseB == 0 {
 		phaseB = 3
 	}
@@ -83,28 +84,28 @@ func isLessTask(a, b taskItem) bool {
 		return phaseA < phaseB
 	}
 
-	if !a.task.EnqueuedAt.Equal(b.task.EnqueuedAt) {
-		return a.task.EnqueuedAt.Before(b.task.EnqueuedAt)
+	if !a.Task.EnqueuedAt.Equal(b.Task.EnqueuedAt) {
+		return a.Task.EnqueuedAt.Before(b.Task.EnqueuedAt)
 	}
 
-	if !a.task.CreatedAt.Equal(b.task.CreatedAt) {
-		return a.task.CreatedAt.Before(b.task.CreatedAt)
+	if !a.Task.CreatedAt.Equal(b.Task.CreatedAt) {
+		return a.Task.CreatedAt.Before(b.Task.CreatedAt)
 	}
 
-	return a.filename < b.filename
+	return a.Filename < b.Filename
 }
 
 // sortTasksFairly sorts queue tasks using a hybrid round-robin algorithm across entity buckets
 // while maintaining FIFO arrival order, priority ranks, and phase dependencies within each entity.
-func sortTasksFairly(items []taskItem) []taskItem {
+func sortTasksFairly(items []api.TaskItem) []api.TaskItem {
 	if len(items) <= 1 {
 		return items
 	}
 
-	bucketsMap := make(map[string][]taskItem)
+	bucketsMap := make(map[string][]api.TaskItem)
 
 	for _, item := range items {
-		key := getEntityKey(item.task)
+		key := getEntityKey(item.Task)
 		bucketsMap[key] = append(bucketsMap[key], item)
 	}
 
@@ -115,7 +116,7 @@ func sortTasksFairly(items []taskItem) []taskItem {
 		bucketsMap[key] = bucket
 	}
 
-	var result []taskItem
+	var result []api.TaskItem
 
 	for len(bucketsMap) > 0 {
 		var activeKeys []string
@@ -149,7 +150,7 @@ func sortTasksFairly(items []taskItem) []taskItem {
 	return result
 }
 
-func writeTaskAtomically(dir string, filename string, task *QueueTask) error {
+func writeTaskAtomically(dir string, filename string, task *api.QueueTask) error {
 	data, err := yaml.Marshal(task)
 	if err != nil {
 		return fmt.Errorf("marshaling task to YAML: %w", err)
@@ -201,21 +202,21 @@ func isDoNotProcess(queueDir string) bool {
 	return false
 }
 
-func getIssuePriority(issue *githubv39.Issue) string {
+func getIssuePriority(issue *githubv39.Issue) api.TaskPriority {
 	for _, l := range issue.Labels {
 		name := l.GetName()
 		if strings.HasPrefix(name, "priority/") {
-			return strings.TrimPrefix(name, "priority/")
+			return api.TaskPriority(strings.TrimPrefix(name, "priority/"))
 		}
 	}
-	return "medium"
+	return api.PriorityMedium
 }
 
-func getPRPriority(prIssue *githubv39.Issue) string {
+func getPRPriority(prIssue *githubv39.Issue) api.TaskPriority {
 	return getIssuePriority(prIssue)
 }
 
-func writeTaskJournalEvent(queueDir string, taskFilename string, task *QueueTask, event string, duration time.Duration) {
+func writeTaskJournalEvent(queueDir string, taskFilename string, task *api.QueueTask, event string, duration time.Duration) {
 	journalPath := filepath.Join(queueDir, "journal.jsonl")
 	f, err := os.OpenFile(journalPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
@@ -224,7 +225,7 @@ func writeTaskJournalEvent(queueDir string, taskFilename string, task *QueueTask
 	}
 	defer f.Close()
 
-	je := JournalEvent{
+	je := api.JournalEvent{
 		Timestamp:        time.Now(),
 		TaskID:           strings.TrimSuffix(taskFilename, ".yaml"),
 		Event:            event,
@@ -259,12 +260,12 @@ func parseProcessedPRTask(filePath string, name string, fInfo os.FileInfo, state
 	isReview := strings.HasSuffix(name, "-review")
 	isIterate := strings.HasSuffix(name, "-iterate")
 
-	var t QueueTask
+	var t api.QueueTask
 	hasTask := false
 	if data, err := os.ReadFile(filePath); err == nil {
 		if err := yaml.Unmarshal(data, &t); err == nil {
 			hasTask = true
-			if strings.EqualFold(t.Status, "Failed") {
+			if strings.EqualFold(string(t.Status), "Failed") {
 				return state
 			}
 		}
@@ -337,10 +338,6 @@ func hasActivePRTask(incomingDir, processingDir string, number int) bool {
 	return false
 }
 
-func isPRTask(taskType string) bool {
-	return taskType == "pr-investigate" || taskType == "pr-comments" || taskType == "pr-iterate"
-}
-
 func loadProcessedTasks(processedDir string) (map[int]time.Time, map[int]prWatchState) {
 	processedIssues := make(map[int]time.Time)
 	processedPRs := make(map[int]prWatchState)
@@ -357,14 +354,14 @@ func loadProcessedTasks(processedDir string) (map[int]time.Time, map[int]prWatch
 			trimmed := strings.TrimPrefix(f.Name(), "task-issue-")
 			trimmed = strings.TrimSuffix(trimmed, ".yaml")
 			if num, err := strconv.Atoi(trimmed); err == nil {
-				var t QueueTask
+				var t api.QueueTask
 				hasTask := false
 				if data, err := os.ReadFile(filePath); err == nil {
 					if err := yaml.Unmarshal(data, &t); err == nil {
 						hasTask = true
 					}
 				}
-				if hasTask && strings.EqualFold(t.Status, "Failed") {
+				if hasTask && strings.EqualFold(string(t.Status), "Failed") {
 					continue
 				}
 				if info, err := f.Info(); err == nil {
@@ -418,7 +415,7 @@ func (w *Watcher) recoverStuckTasks(ctx context.Context) {
 
 			// Read the task
 			if data, err := os.ReadFile(processingPath); err == nil {
-				var t QueueTask
+				var t api.QueueTask
 				if err := yaml.Unmarshal(data, &t); err == nil {
 					sandboxName := w.resolveSandboxName(ctx, t.Type, t.Number)
 					if w.kubeClient != nil && sandboxName != "" {
@@ -430,7 +427,7 @@ func (w *Watcher) recoverStuckTasks(ctx context.Context) {
 						completed, err := isSandboxTaskCompleted(ctx, w.kubeClient, w.Namespace, sandboxName, t.Type)
 						if err == nil && completed {
 							klog.Infof("Task %s already completed in sandbox %s. Moving from processing to processed.", f.Name(), sandboxName)
-							t.Status = "Completed"
+							t.Status = api.StatusCompleted
 							if t.StartedAt.IsZero() {
 								t.StartedAt = t.EnqueuedAt
 							}
@@ -449,7 +446,7 @@ func (w *Watcher) recoverStuckTasks(ctx context.Context) {
 						}
 					}
 
-					t.Status = "Pending"
+					t.Status = api.StatusPending
 					t.Recovered = true
 					if err := writeTaskAtomically(w.incomingDir, f.Name(), &t); err == nil {
 						_ = os.Remove(processingPath)
@@ -472,20 +469,20 @@ func (w *Watcher) recoverStuckTasks(ctx context.Context) {
 
 // PRTaskOptions specifies parameters for constructing a pull request QueueTask.
 type PRTaskOptions struct {
-	Type             string
+	Type             api.TaskType
 	PR               *githubv39.PullRequest
 	PRIssue          *githubv39.Issue
-	Phase            int
+	Phase            api.TaskPhase
 	Assignee         string
 	CommitSHA        string
 	TriggerEventTime time.Time
-	TriggerReason    TriggerReason
+	TriggerReason    api.TriggerReason
 	TriggerNotes     string
 	Instructions     []string
 }
 
 // newPRQueueTask constructs a QueueTask for pull request tasks with consistent defaults.
-func (w *Watcher) newPRQueueTask(opts PRTaskOptions) *QueueTask {
+func (w *Watcher) newPRQueueTask(opts PRTaskOptions) *api.QueueTask {
 	num := opts.PR.GetNumber()
 	eventTime := opts.TriggerEventTime
 	if eventTime.IsZero() {
@@ -494,7 +491,7 @@ func (w *Watcher) newPRQueueTask(opts PRTaskOptions) *QueueTask {
 	if eventTime.IsZero() {
 		eventTime = opts.PR.GetCreatedAt()
 	}
-	return &QueueTask{
+	return &api.QueueTask{
 		Type:             opts.Type,
 		URL:              fmt.Sprintf("https://github.com/%s/%s/pull/%d", w.Repo.Owner, w.Repo.Repo, num),
 		Number:           num,
@@ -506,7 +503,7 @@ func (w *Watcher) newPRQueueTask(opts PRTaskOptions) *QueueTask {
 		TriggerReason:    opts.TriggerReason,
 		TriggerNotes:     opts.TriggerNotes,
 		Assignee:         opts.Assignee,
-		Status:           "Pending",
+		Status:           api.StatusPending,
 		CommitSHA:        opts.CommitSHA,
 		Instructions:     opts.Instructions,
 	}
@@ -514,21 +511,21 @@ func (w *Watcher) newPRQueueTask(opts PRTaskOptions) *QueueTask {
 
 // IssueTaskOptions specifies parameters for constructing an issue QueueTask.
 type IssueTaskOptions struct {
-	Type             string
+	Type             api.TaskType
 	Issue            *githubv39.Issue
-	Phase            int
+	Phase            api.TaskPhase
 	Assignee         string
 	TriggerEventTime time.Time
-	TriggerReason    TriggerReason
+	TriggerReason    api.TriggerReason
 	TriggerNotes     string
 	AgentFile        string
 	SessionID        string
 }
 
 // newIssueQueueTask constructs a QueueTask for issue tasks with consistent defaults.
-func (w *Watcher) newIssueQueueTask(opts IssueTaskOptions) *QueueTask {
+func (w *Watcher) newIssueQueueTask(opts IssueTaskOptions) *api.QueueTask {
 	num := opts.Issue.GetNumber()
-	return &QueueTask{
+	return &api.QueueTask{
 		Type:             opts.Type,
 		URL:              fmt.Sprintf("https://github.com/%s/%s/issues/%d", w.Repo.Owner, w.Repo.Repo, num),
 		Number:           num,
@@ -540,7 +537,7 @@ func (w *Watcher) newIssueQueueTask(opts IssueTaskOptions) *QueueTask {
 		TriggerReason:    opts.TriggerReason,
 		TriggerNotes:     opts.TriggerNotes,
 		Assignee:         opts.Assignee,
-		Status:           "Pending",
+		Status:           api.StatusPending,
 		AgentFile:        opts.AgentFile,
 		SessionID:        opts.SessionID,
 	}
@@ -550,23 +547,23 @@ func (w *Watcher) newIssueQueueTask(opts IssueTaskOptions) *QueueTask {
 type ChoreTaskOptions struct {
 	AgentFile        string
 	TriggerEventTime time.Time
-	TriggerReason    TriggerReason
+	TriggerReason    api.TriggerReason
 	TriggerNotes     string
 }
 
 // newChoreQueueTask constructs a QueueTask for scheduled chore tasks with consistent defaults.
-func (w *Watcher) newChoreQueueTask(opts ChoreTaskOptions) *QueueTask {
-	return &QueueTask{
-		Type:             "agent-chore",
+func (w *Watcher) newChoreQueueTask(opts ChoreTaskOptions) *api.QueueTask {
+	return &api.QueueTask{
+		Type:             api.TypeAgentChore,
 		URL:              fmt.Sprintf("https://github.com/%s/%s", w.Repo.Owner, w.Repo.Repo),
-		Priority:         "medium",
-		Phase:            4,
+		Priority:         api.PriorityMedium,
+		Phase:            api.PhaseChores,
 		CreatedAt:        time.Now(),
 		EnqueuedAt:       time.Now(),
 		TriggerEventTime: opts.TriggerEventTime,
 		TriggerReason:    opts.TriggerReason,
 		TriggerNotes:     opts.TriggerNotes,
-		Status:           "Pending",
+		Status:           api.StatusPending,
 		AgentFile:        opts.AgentFile,
 	}
 }

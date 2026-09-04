@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 )
 
 func TestBuildTaskCommandArgs(t *testing.T) {
@@ -25,8 +26,8 @@ func TestBuildTaskCommandArgs(t *testing.T) {
 	}
 
 	t.Run("issue-fix task", func(t *testing.T) {
-		task := &QueueTask{
-			Type:   "issue-fix",
+		task := &api.QueueTask{
+			Type:   api.TypeIssueFix,
 			URL:    "https://github.com/test-owner/test-repo/issues/123",
 			Number: 123,
 		}
@@ -72,8 +73,8 @@ func TestBuildTaskCommandArgs(t *testing.T) {
 	})
 
 	t.Run("pr-review task with instructions", func(t *testing.T) {
-		task := &QueueTask{
-			Type:         "pr-review",
+		task := &api.QueueTask{
+			Type:         api.TypePRReview,
 			URL:          "https://github.com/test-owner/test-repo/pull/456",
 			Number:       456,
 			Instructions: []string{"check security", "check unit tests"},
@@ -99,8 +100,8 @@ func TestBuildTaskCommandArgs(t *testing.T) {
 	})
 
 	t.Run("agent-chore task with session-id", func(t *testing.T) {
-		task := &QueueTask{
-			Type:      "agent-chore",
+		task := &api.QueueTask{
+			Type:      api.TypeAgentChore,
 			URL:       "https://github.com/test-owner/test-repo/issues/789",
 			Number:    789,
 			AgentFile: ".agents/chore.md",
@@ -127,7 +128,7 @@ func TestBuildTaskCommandArgs(t *testing.T) {
 	})
 
 	t.Run("unknown task type returns nil", func(t *testing.T) {
-		task := &QueueTask{
+		task := &api.QueueTask{
 			Type: "unknown-type",
 		}
 		args := w.buildTaskCommandArgs(task, "bot")

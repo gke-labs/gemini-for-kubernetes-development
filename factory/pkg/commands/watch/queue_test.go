@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	githubv39 "github.com/google/go-github/v39/github"
 	"sigs.k8s.io/yaml"
 )
@@ -118,119 +119,119 @@ func TestSortTasksFairly(t *testing.T) {
 	baseTime := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
 
 	t.Run("FIFO within single entity prevents LIFO starvation", func(t *testing.T) {
-		task1 := taskItem{
-			filename: "task1.yaml",
-			task: &QueueTask{
-				Type:       "pr-comments",
+		task1 := api.TaskItem{
+			Filename: "task1.yaml",
+			Task: &api.QueueTask{
+				Type:       api.TypePRComments,
 				Number:     10,
-				Priority:   "medium",
-				Phase:      2,
+				Priority:   api.PriorityMedium,
+				Phase:      api.PhaseComments,
 				CreatedAt:  baseTime,
 				EnqueuedAt: baseTime.Add(1 * time.Minute),
 			},
 		}
-		task2 := taskItem{
-			filename: "task2.yaml",
-			task: &QueueTask{
-				Type:       "pr-comments",
+		task2 := api.TaskItem{
+			Filename: "task2.yaml",
+			Task: &api.QueueTask{
+				Type:       api.TypePRComments,
 				Number:     10,
-				Priority:   "medium",
-				Phase:      2,
+				Priority:   api.PriorityMedium,
+				Phase:      api.PhaseComments,
 				CreatedAt:  baseTime.Add(1 * time.Hour),
 				EnqueuedAt: baseTime.Add(2 * time.Minute),
 			},
 		}
-		task3 := taskItem{
-			filename: "task3.yaml",
-			task: &QueueTask{
-				Type:       "pr-comments",
+		task3 := api.TaskItem{
+			Filename: "task3.yaml",
+			Task: &api.QueueTask{
+				Type:       api.TypePRComments,
 				Number:     10,
-				Priority:   "medium",
-				Phase:      2,
+				Priority:   api.PriorityMedium,
+				Phase:      api.PhaseComments,
 				CreatedAt:  baseTime.Add(2 * time.Hour),
 				EnqueuedAt: baseTime.Add(3 * time.Minute),
 			},
 		}
 
-		items := []taskItem{task3, task2, task1}
+		items := []api.TaskItem{task3, task2, task1}
 		got := sortTasksFairly(items)
 
 		expectedOrder := []string{"task1.yaml", "task2.yaml", "task3.yaml"}
 		for i, expected := range expectedOrder {
-			if got[i].filename != expected {
-				t.Errorf("at index %d: expected %s, got %s", i, expected, got[i].filename)
+			if got[i].Filename != expected {
+				t.Errorf("at index %d: expected %s, got %s", i, expected, got[i].Filename)
 			}
 		}
 	})
 
 	t.Run("Round-Robin across entities prevents entity starvation", func(t *testing.T) {
-		pr10Task1 := taskItem{
-			filename: "pr10_1.yaml",
-			task:     &QueueTask{Number: 10, Priority: "medium", Phase: 3, EnqueuedAt: baseTime.Add(1 * time.Minute)},
+		pr10Task1 := api.TaskItem{
+			Filename: "pr10_1.yaml",
+			Task:     &api.QueueTask{Number: 10, Priority: api.PriorityMedium, Phase: api.PhaseComments, EnqueuedAt: baseTime.Add(1 * time.Minute)},
 		}
-		pr10Task2 := taskItem{
-			filename: "pr10_2.yaml",
-			task:     &QueueTask{Number: 10, Priority: "medium", Phase: 3, EnqueuedAt: baseTime.Add(3 * time.Minute)},
+		pr10Task2 := api.TaskItem{
+			Filename: "pr10_2.yaml",
+			Task:     &api.QueueTask{Number: 10, Priority: api.PriorityMedium, Phase: api.PhaseComments, EnqueuedAt: baseTime.Add(3 * time.Minute)},
 		}
-		pr10Task3 := taskItem{
-			filename: "pr10_3.yaml",
-			task:     &QueueTask{Number: 10, Priority: "medium", Phase: 3, EnqueuedAt: baseTime.Add(4 * time.Minute)},
-		}
-
-		pr20Task1 := taskItem{
-			filename: "pr20_1.yaml",
-			task:     &QueueTask{Number: 20, Priority: "medium", Phase: 3, EnqueuedAt: baseTime.Add(5 * time.Minute)},
+		pr10Task3 := api.TaskItem{
+			Filename: "pr10_3.yaml",
+			Task:     &api.QueueTask{Number: 10, Priority: api.PriorityMedium, Phase: api.PhaseComments, EnqueuedAt: baseTime.Add(4 * time.Minute)},
 		}
 
-		pr20Task2 := taskItem{
-			filename: "pr20_2.yaml",
-			task:     &QueueTask{Number: 20, Priority: "medium", Phase: 3, EnqueuedAt: baseTime.Add(6 * time.Minute)},
+		pr20Task1 := api.TaskItem{
+			Filename: "pr20_1.yaml",
+			Task:     &api.QueueTask{Number: 20, Priority: api.PriorityMedium, Phase: api.PhaseComments, EnqueuedAt: baseTime.Add(5 * time.Minute)},
 		}
 
-		items := []taskItem{pr10Task1, pr10Task2, pr10Task3, pr20Task1, pr20Task2}
+		pr20Task2 := api.TaskItem{
+			Filename: "pr20_2.yaml",
+			Task:     &api.QueueTask{Number: 20, Priority: api.PriorityMedium, Phase: api.PhaseComments, EnqueuedAt: baseTime.Add(6 * time.Minute)},
+		}
+
+		items := []api.TaskItem{pr10Task1, pr10Task2, pr10Task3, pr20Task1, pr20Task2}
 		got := sortTasksFairly(items)
 
 		expectedOrder := []string{"pr10_1.yaml", "pr20_1.yaml", "pr10_2.yaml", "pr20_2.yaml", "pr10_3.yaml"}
 		for i, expected := range expectedOrder {
-			if got[i].filename != expected {
-				t.Errorf("at index %d: expected %s, got %s", i, expected, got[i].filename)
+			if got[i].Filename != expected {
+				t.Errorf("at index %d: expected %s, got %s", i, expected, got[i].Filename)
 			}
 		}
 	})
 
 	t.Run("Priority and Phase are respected across entities", func(t *testing.T) {
-		criticalTask := taskItem{
-			filename: "critical.yaml",
-			task:     &QueueTask{Number: 10, Priority: "critical", Phase: 3, EnqueuedAt: baseTime.Add(5 * time.Minute)},
+		criticalTask := api.TaskItem{
+			Filename: "critical.yaml",
+			Task:     &api.QueueTask{Number: 10, Priority: api.PriorityCritical, Phase: api.PhaseComments, EnqueuedAt: baseTime.Add(5 * time.Minute)},
 		}
-		mediumTask := taskItem{
-			filename: "medium.yaml",
-			task:     &QueueTask{Number: 20, Priority: "medium", Phase: 3, EnqueuedAt: baseTime.Add(1 * time.Minute)},
+		mediumTask := api.TaskItem{
+			Filename: "medium.yaml",
+			Task:     &api.QueueTask{Number: 20, Priority: api.PriorityMedium, Phase: api.PhaseComments, EnqueuedAt: baseTime.Add(1 * time.Minute)},
 		}
-		phase1Task := taskItem{
-			filename: "phase1.yaml",
-			task:     &QueueTask{Number: 20, Priority: "medium", Phase: 1, EnqueuedAt: baseTime.Add(2 * time.Minute)},
+		phase1Task := api.TaskItem{
+			Filename: "phase1.yaml",
+			Task:     &api.QueueTask{Number: 20, Priority: api.PriorityMedium, Phase: api.PhaseIterate, EnqueuedAt: baseTime.Add(2 * time.Minute)},
 		}
 
-		items := []taskItem{mediumTask, criticalTask, phase1Task}
+		items := []api.TaskItem{mediumTask, criticalTask, phase1Task}
 		got := sortTasksFairly(items)
 
 		expectedOrder := []string{"critical.yaml", "phase1.yaml", "medium.yaml"}
 		for i, expected := range expectedOrder {
-			if got[i].filename != expected {
-				t.Errorf("at index %d: expected %s, got %s", i, expected, got[i].filename)
+			if got[i].Filename != expected {
+				t.Errorf("at index %d: expected %s, got %s", i, expected, got[i].Filename)
 			}
 		}
 	})
 
 	t.Run("Fallback to modTime or CreatedAt when EnqueuedAt is zero", func(t *testing.T) {
-		taskOldCreated := &QueueTask{
+		taskOldCreated := &api.QueueTask{
 			CreatedAt: baseTime,
 		}
-		taskNewCreated := &QueueTask{
+		taskNewCreated := &api.QueueTask{
 			CreatedAt: baseTime.Add(1 * time.Hour),
 		}
-		taskWithEnqueued := &QueueTask{
+		taskWithEnqueued := &api.QueueTask{
 			CreatedAt:  baseTime.Add(2 * time.Hour),
 			EnqueuedAt: baseTime.Add(10 * time.Minute),
 		}
@@ -256,11 +257,11 @@ func TestWriteTaskAtomicallyAndTaskExists(t *testing.T) {
 	dir := t.TempDir()
 	procDir := t.TempDir()
 
-	task := &QueueTask{
-		Type:     "issue-fix",
+	task := &api.QueueTask{
+		Type:     api.TypeIssueFix,
 		Number:   42,
-		Priority: "high",
-		Status:   "Pending",
+		Priority: api.PriorityHigh,
+		Status:   api.StatusPending,
 	}
 
 	filename := "task-issue-42.yaml"
@@ -304,16 +305,16 @@ func TestIsDoNotProcess(t *testing.T) {
 
 func TestPriorityRankValue(t *testing.T) {
 	tests := []struct {
-		priority string
+		priority api.TaskPriority
 		want     int
 	}{
-		{"critical", 1},
-		{"urgent", 2},
-		{"important", 3},
-		{"high", 4},
-		{"medium", 5},
-		{"low", 6},
-		{"unknown", 5},
+		{api.PriorityCritical, 1},
+		{api.PriorityUrgent, 2},
+		{api.PriorityImportant, 3},
+		{api.PriorityHigh, 4},
+		{api.PriorityMedium, 5},
+		{api.PriorityLow, 6},
+		{api.PriorityUnknown, 5},
 	}
 
 	for _, tc := range tests {
@@ -325,27 +326,27 @@ func TestPriorityRankValue(t *testing.T) {
 }
 
 func TestGetEntityKey(t *testing.T) {
-	t1 := &QueueTask{Number: 99}
+	t1 := &api.QueueTask{Number: 99}
 	if getEntityKey(t1) != "99" {
 		t.Errorf("expected '99', got %q", getEntityKey(t1))
 	}
 
-	t2 := &QueueTask{AgentFile: "test-chore.yaml"}
+	t2 := &api.QueueTask{AgentFile: "test-chore.yaml"}
 	if getEntityKey(t2) != "chore:test-chore.yaml" {
 		t.Errorf("expected 'chore:test-chore.yaml', got %q", getEntityKey(t2))
 	}
 
-	t3 := &QueueTask{URL: "https://github.com/org/repo"}
+	t3 := &api.QueueTask{URL: "https://github.com/org/repo"}
 	if getEntityKey(t3) != "url:https://github.com/org/repo" {
 		t.Errorf("expected 'url:https://github.com/org/repo', got %q", getEntityKey(t3))
 	}
 
-	t4 := &QueueTask{Type: "custom"}
+	t4 := &api.QueueTask{Type: "custom"}
 	if getEntityKey(t4) != "type:custom" {
 		t.Errorf("expected 'type:custom', got %q", getEntityKey(t4))
 	}
 
-	t5 := &QueueTask{}
+	t5 := &api.QueueTask{}
 	if getEntityKey(t5) != "default" {
 		t.Errorf("expected 'default', got %q", getEntityKey(t5))
 	}
@@ -388,15 +389,6 @@ func TestRemovePendingTasksForNumber(t *testing.T) {
 	}
 	if _, err := os.Stat(f3); os.IsNotExist(err) {
 		t.Errorf("expected f3 to NOT be removed")
-	}
-}
-
-func TestIsPRTask(t *testing.T) {
-	if !isPRTask("pr-investigate") || !isPRTask("pr-comments") || !isPRTask("pr-iterate") {
-		t.Errorf("expected true for PR task types")
-	}
-	if isPRTask("issue-fix") || isPRTask("agent-chore") || isPRTask("pr-review") {
-		t.Errorf("expected false for non-PR iterate/investigate/comments task types")
 	}
 }
 
@@ -458,7 +450,7 @@ func TestWorkflowCooldownCompletedAt(t *testing.T) {
 
 	lastRunTime := info.ModTime()
 	if data, err := os.ReadFile(processedPath); err == nil {
-		var q QueueTask
+		var q api.QueueTask
 		if err := yaml.Unmarshal(data, &q); err == nil && !q.CompletedAt.IsZero() {
 			lastRunTime = q.CompletedAt
 		}

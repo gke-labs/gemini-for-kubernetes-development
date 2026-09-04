@@ -14,6 +14,7 @@ import (
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	githubv39 "github.com/google/go-github/v39/github"
 	"gopkg.in/yaml.v3"
@@ -50,8 +51,8 @@ func TestGetIssueTriggerInfo(t *testing.T) {
 		if !eventTime.Equal(t1) {
 			t.Errorf("expected eventTime %v, got %v", t1, eventTime)
 		}
-		if reason != TriggerReasonIssueCreated {
-			t.Errorf("expected reason %s, got %s", TriggerReasonIssueCreated, reason)
+		if reason != api.TriggerReasonIssueCreated {
+			t.Errorf("expected reason %s, got %s", api.TriggerReasonIssueCreated, reason)
 		}
 		if !strings.Contains(notes, "Issue #42 created at 2026-08-01T10:00:00Z with trigger label 'factory'") {
 			t.Errorf("unexpected notes: %s", notes)
@@ -79,8 +80,8 @@ func TestGetIssueTriggerInfo(t *testing.T) {
 		if !eventTime.Equal(t2) {
 			t.Errorf("expected eventTime %v, got %v", t2, eventTime)
 		}
-		if reason != TriggerReasonIssueLabeled {
-			t.Errorf("expected reason %s, got %s", TriggerReasonIssueLabeled, reason)
+		if reason != api.TriggerReasonIssueLabeled {
+			t.Errorf("expected reason %s, got %s", api.TriggerReasonIssueLabeled, reason)
 		}
 		if !strings.Contains(notes, "trigger label 'factory' added by alice at 2026-08-01T11:30:00Z") {
 			t.Errorf("unexpected notes: %s", notes)
@@ -98,8 +99,8 @@ func TestGetIssueTriggerInfo(t *testing.T) {
 		if !eventTime.Equal(t1) {
 			t.Errorf("expected eventTime %v, got %v", t1, eventTime)
 		}
-		if reason != TriggerReasonIssueCreated {
-			t.Errorf("expected reason %s, got %s", TriggerReasonIssueCreated, reason)
+		if reason != api.TriggerReasonIssueCreated {
+			t.Errorf("expected reason %s, got %s", api.TriggerReasonIssueCreated, reason)
 		}
 		if !strings.Contains(notes, "auto-applied by watcher") {
 			t.Errorf("unexpected notes: %s", notes)
@@ -215,7 +216,7 @@ func TestPRCommentsTriggerMetadata(t *testing.T) {
 		t.Fatalf("expected task-pr-10-comments.yaml to be created: %v", err)
 	}
 
-	var task QueueTask
+	var task api.QueueTask
 	if err := yaml.Unmarshal(data, &task); err != nil {
 		t.Fatalf("failed to unmarshal task: %v", err)
 	}
@@ -223,8 +224,8 @@ func TestPRCommentsTriggerMetadata(t *testing.T) {
 	if !task.TriggerEventTime.Equal(comment1Time) {
 		t.Errorf("expected triggerEventTime %v (oldest comment), got %v", comment1Time, task.TriggerEventTime)
 	}
-	if task.TriggerReason != TriggerReasonPRCommentsAdded {
-		t.Errorf("expected triggerReason %s, got %s", TriggerReasonPRCommentsAdded, task.TriggerReason)
+	if task.TriggerReason != api.TriggerReasonPRCommentsAdded {
+		t.Errorf("expected triggerReason %s, got %s", api.TriggerReasonPRCommentsAdded, task.TriggerReason)
 	}
 	if !strings.Contains(task.TriggerNotes, "reviewer-alice") || !strings.Contains(task.TriggerNotes, "1000") {
 		t.Errorf("unexpected triggerNotes: %s", task.TriggerNotes)
@@ -339,7 +340,7 @@ func TestPRInvestigateTriggerMetadata(t *testing.T) {
 		t.Fatalf("expected task-pr-10-investigate.yaml to be created: %v", err)
 	}
 
-	var task QueueTask
+	var task api.QueueTask
 	if err := yaml.Unmarshal(data, &task); err != nil {
 		t.Fatalf("failed to unmarshal task: %v", err)
 	}
@@ -347,8 +348,8 @@ func TestPRInvestigateTriggerMetadata(t *testing.T) {
 	if !task.TriggerEventTime.Equal(fail1Time) {
 		t.Errorf("expected triggerEventTime %v (earliest failure), got %v", fail1Time, task.TriggerEventTime)
 	}
-	if task.TriggerReason != TriggerReasonPRCheckFailed {
-		t.Errorf("expected triggerReason %s, got %s", TriggerReasonPRCheckFailed, task.TriggerReason)
+	if task.TriggerReason != api.TriggerReasonPRCheckFailed {
+		t.Errorf("expected triggerReason %s, got %s", api.TriggerReasonPRCheckFailed, task.TriggerReason)
 	}
 	if !strings.Contains(task.TriggerNotes, "lint-go") || !strings.Contains(task.TriggerNotes, "2 failed check(s)") {
 		t.Errorf("unexpected triggerNotes: %s", task.TriggerNotes)
@@ -442,7 +443,7 @@ func TestPRIterateTriggerMetadata(t *testing.T) {
 		t.Fatalf("expected task-pr-10-iterate.yaml to be created: %v", err)
 	}
 
-	var task QueueTask
+	var task api.QueueTask
 	if err := yaml.Unmarshal(data, &task); err != nil {
 		t.Fatalf("failed to unmarshal task: %v", err)
 	}
@@ -450,8 +451,8 @@ func TestPRIterateTriggerMetadata(t *testing.T) {
 	if !task.TriggerEventTime.Equal(commitTime) {
 		t.Errorf("expected triggerEventTime %v (commit time), got %v", commitTime, task.TriggerEventTime)
 	}
-	if task.TriggerReason != TriggerReasonPRMergeConflict {
-		t.Errorf("expected triggerReason %s, got %s", TriggerReasonPRMergeConflict, task.TriggerReason)
+	if task.TriggerReason != api.TriggerReasonPRMergeConflict {
+		t.Errorf("expected triggerReason %s, got %s", api.TriggerReasonPRMergeConflict, task.TriggerReason)
 	}
 	if !strings.Contains(task.TriggerNotes, "merge conflicts with base branch 'main'") {
 		t.Errorf("unexpected triggerNotes: %s", task.TriggerNotes)
@@ -466,18 +467,18 @@ func TestBuildQueueResponseTriggerFields(t *testing.T) {
 	eventTime := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
 	enqueuedTime := time.Date(2026, 8, 1, 10, 15, 0, 0, time.UTC)
 
-	task := &QueueTask{
-		Type:             "pr-comments",
+	task := &api.QueueTask{
+		Type:             api.TypePRComments,
 		URL:              "https://github.com/owner/repo/pull/123",
 		Number:           123,
-		Priority:         "medium",
-		Phase:            2,
+		Priority:         api.PriorityMedium,
+		Phase:            api.PhaseComments,
 		CreatedAt:        eventTime,
 		EnqueuedAt:       enqueuedTime,
 		TriggerEventTime: eventTime,
-		TriggerReason:    TriggerReasonPRCommentsAdded,
+		TriggerReason:    api.TriggerReasonPRCommentsAdded,
 		TriggerNotes:     "Oldest comment by alice added at 2026-08-01T10:00:00Z",
-		Status:           "Pending",
+		Status:           api.StatusPending,
 	}
 
 	_ = writeTaskAtomically(incomingDir, "task-pr-123-comments.yaml", task)
@@ -491,8 +492,8 @@ func TestBuildQueueResponseTriggerFields(t *testing.T) {
 	if item.TriggerEventTime != eventTime.Format(time.RFC3339) {
 		t.Errorf("expected item TriggerEventTime %s, got %s", eventTime.Format(time.RFC3339), item.TriggerEventTime)
 	}
-	if item.TriggerReason != TriggerReasonPRCommentsAdded {
-		t.Errorf("expected item TriggerReason '%s', got '%s'", TriggerReasonPRCommentsAdded, item.TriggerReason)
+	if item.TriggerReason != api.TriggerReasonPRCommentsAdded {
+		t.Errorf("expected item TriggerReason '%s', got '%s'", api.TriggerReasonPRCommentsAdded, item.TriggerReason)
 	}
 	if item.TriggerNotes != "Oldest comment by alice added at 2026-08-01T10:00:00Z" {
 		t.Errorf("expected item TriggerNotes 'Oldest comment by alice added at 2026-08-01T10:00:00Z', got '%s'", item.TriggerNotes)
@@ -509,26 +510,26 @@ func TestBuildQueueResponseStartedCompletedDuration(t *testing.T) {
 	startTime := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
 	endTime := time.Date(2026, 8, 1, 10, 5, 30, 0, time.UTC)
 
-	processingTask := &QueueTask{
-		Type:      "pr-review",
+	processingTask := &api.QueueTask{
+		Type:      api.TypePRReview,
 		URL:       "https://github.com/owner/repo/pull/1",
 		Number:    1,
-		Status:    "Running",
+		Status:    api.StatusRunning,
 		StartedAt: startTime,
-		Priority:  "high",
-		Phase:     2,
+		Priority:  api.PriorityHigh,
+		Phase:     api.PhaseComments,
 	}
 	_ = writeTaskAtomically(processingDir, "task-pr-1-review.yaml", processingTask)
 
-	completedTask := &QueueTask{
-		Type:        "issue-fix",
+	completedTask := &api.QueueTask{
+		Type:        api.TypeIssueFix,
 		URL:         "https://github.com/owner/repo/issues/2",
 		Number:      2,
-		Status:      "Completed",
+		Status:      api.StatusCompleted,
 		StartedAt:   startTime,
 		CompletedAt: endTime,
-		Priority:    "medium",
-		Phase:       3,
+		Priority:    api.PriorityMedium,
+		Phase:       api.PhaseInvestigate,
 	}
 	_ = writeTaskAtomically(processedDir, "task-issue-2-fix.yaml", completedTask)
 

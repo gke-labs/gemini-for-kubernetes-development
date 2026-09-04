@@ -10,6 +10,7 @@ import (
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
@@ -19,8 +20,8 @@ import (
 	"k8s.io/klog/v2"
 )
 
-func (w *Watcher) resolveSandboxName(ctx context.Context, taskType string, num int) string {
-	if taskType == "issue-fix" || taskType == "agent-chore" {
+func (w *Watcher) resolveSandboxName(ctx context.Context, taskType api.TaskType, num int) string {
+	if taskType == api.TypeIssueFix || taskType == api.TypeAgentChore {
 		wfName := fmt.Sprintf("wf-issue-%d", num)
 		if w.kubeClient != nil {
 			if _, err := w.kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(w.Namespace).Get(ctx, wfName, metav1.GetOptions{}); err == nil {
@@ -163,7 +164,7 @@ func isSandboxTaskRunning(ctx context.Context, kubeClient *clients.KubernetesCli
 	return false, nil
 }
 
-func isSandboxTaskCompleted(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, name, taskType string) (bool, error) {
+func isSandboxTaskCompleted(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, name string, taskType api.TaskType) (bool, error) {
 	unstructObj, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
@@ -180,19 +181,19 @@ func isSandboxTaskCompleted(ctx context.Context, kubeClient *clients.KubernetesC
 	state := annotations["sandbox.gemini.google.com/last-task-state"]
 	tType := annotations["sandbox.gemini.google.com/last-task-type"]
 
-	sbTaskType := taskType
+	sbTaskType := string(taskType)
 	switch taskType {
-	case "issue-fix":
+	case api.TypeIssueFix:
 		sbTaskType = "fix-issue"
-	case "agent-chore":
+	case api.TypeAgentChore:
 		sbTaskType = "agent"
-	case "pr-comments":
+	case api.TypePRComments:
 		sbTaskType = "address-comments"
-	case "pr-investigate":
+	case api.TypePRInvestigate:
 		sbTaskType = "investigate"
-	case "pr-iterate":
+	case api.TypePRIterate:
 		sbTaskType = "iterate"
-	case "pr-review":
+	case api.TypePRReview:
 		sbTaskType = "review"
 	}
 
