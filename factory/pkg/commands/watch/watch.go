@@ -132,6 +132,8 @@ func (w *Watcher) init(ctx context.Context) error {
 	w.processingLogDir = filepath.Join(logDir, "processing")
 	w.processedLogDir = filepath.Join(logDir, "processed")
 
+	w.initQueueManager()
+
 	if !w.DryRun {
 		if err := os.MkdirAll(w.incomingDir, 0755); err != nil {
 			return fmt.Errorf("failed to create incoming queue dir: %w", err)
@@ -148,13 +150,17 @@ func (w *Watcher) init(ctx context.Context) error {
 		if err := os.MkdirAll(w.processedLogDir, 0755); err != nil {
 			return fmt.Errorf("failed to create processed log dir: %w", err)
 		}
-		go startQueueHTTPServer(ctx, w.QueueDir, ":13338")
+		go startQueueHTTPServer(ctx, w.queueMgr, ":13338")
 	}
 
 	fmt.Printf("Starting watch for repository %s/%s (mode: %s, queueDir: %s, poll interval: %s, assignee: '%s', labels: %v, dryRun: %v, watchTimeout: %s)...\n", w.Repo.Owner, w.Repo.Repo, w.Mode, w.QueueDir, w.PollInterval, w.targetAssignee, w.Labels, w.DryRun, w.WatchTimeout)
 
 	if w.WatchTimeout > 0 {
 		w.timeoutChan = time.After(w.WatchTimeout)
+	}
+
+	if err := w.queueMgr.LoadFromDisk(); err != nil {
+		klog.Warningf("Failed to load queue tasks from disk: %v", err)
 	}
 
 	w.processedIssues, w.processedPRs = loadProcessedTasks(w.processedDir)

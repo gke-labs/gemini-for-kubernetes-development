@@ -88,7 +88,7 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 		if hasStopLabel(prIssue.Labels, w.triggerLabel) {
 			klog.Infof("Skipping PR #%d because it has the stop label ('overseer/stop' or '%s/stop')", num, w.triggerLabel)
 			w.reconcileReadyForHumanLabel(ctx, num, prIssue, false, "")
-			removePendingTasksForNumber(w.incomingDir, num)
+			_ = w.queueMgr.RemovePendingTasksForNumber(num)
 			continue
 		}
 		pr, _, err := w.ghClient.PullRequests.Get(ctx, w.Repo.Owner, w.Repo.Repo, num)
@@ -116,7 +116,7 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 		if hasStopLabel(prIssue.Labels, w.triggerLabel) {
 			klog.Infof("Skipping PR #%d after label sync because it has the stop label ('overseer/stop' or '%s/stop')", num, w.triggerLabel)
 			w.reconcileReadyForHumanLabel(ctx, num, prIssue, false, "")
-			removePendingTasksForNumber(w.incomingDir, num)
+			_ = w.queueMgr.RemovePendingTasksForNumber(num)
 			continue
 		}
 
@@ -176,7 +176,7 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 					if _, _, err := w.ghClient.Issues.AddLabelsToIssue(ctx, w.Repo.Owner, w.Repo.Repo, num, []string{stopLabel}); err != nil {
 						klog.Errorf("Failed to add stop label '%s' to PR #%d: %v", stopLabel, num, err)
 					}
-					removePendingTasksForNumber(w.incomingDir, num)
+					_ = w.queueMgr.RemovePendingTasksForNumber(num)
 				}
 				continue
 			}
@@ -249,7 +249,7 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 		hasBotReviewOnHead := hasCompletedBotReviewOnHead(reviews, headSHA, lastCommitTime, w.cfg)
 		reviewSatisfied := !isReviewRequired || hasBotReviewOnHead
 
-		hasActiveTask := hasActivePRTask(w.incomingDir, w.processingDir, num)
+		hasActiveTask := w.queueMgr.HasActivePRTask(num)
 
 		isReadyForHuman := !isConflicting &&
 			!checkAnalysis.hasFailure &&
@@ -537,7 +537,7 @@ func (w *Watcher) handlePRIterate(ctx context.Context, pc *prContext) {
 	}
 
 	filename := fmt.Sprintf("task-pr-%d-iterate.yaml", num)
-	if !taskExists(w.incomingDir, w.processingDir, filename) {
+	if !w.queueMgr.TaskExists(filename) {
 		sandboxName := w.resolveSandboxName(ctx, api.TypePRIterate, num)
 		running, err := isSandboxTaskRunning(ctx, w.kubeClient, w.Namespace, sandboxName)
 		if err != nil {
@@ -573,10 +573,8 @@ func (w *Watcher) handlePRIterate(ctx context.Context, pc *prContext) {
 			state.lastIteratedSHA = pc.headSHA
 			state.lastIteratedTime = time.Now()
 			w.processedPRs[num] = state
-			if err := writeTaskAtomically(w.incomingDir, filename, task); err != nil {
+			if err := w.queueMgr.Enqueue(filename, task); err != nil {
 				klog.Errorf("Failed to queue rebase task for PR #%d: %v", num, err)
-			} else {
-				writeTaskJournalEvent(w.QueueDir, filename, task, "Created", 0)
 			}
 		}
 	}
@@ -592,7 +590,7 @@ func (w *Watcher) canInvestigatePR(
 	bots []string,
 ) bool {
 	filename := fmt.Sprintf("task-pr-%d-investigate.yaml", num)
-	if taskExists(w.incomingDir, w.processingDir, filename) {
+	if w.queueMgr.TaskExists(filename) {
 		return false
 	}
 	if getInvestigationCount(comments, lastCommitTime, w.allBotUsers, w.githubLogin, bots, w.triggerLabel) >= 3 {
@@ -622,7 +620,7 @@ func (w *Watcher) handlePRInvestigate(
 	state := w.processedPRs[num]
 	filename := fmt.Sprintf("task-pr-%d-investigate.yaml", num)
 
-	if !taskExists(w.incomingDir, w.processingDir, filename) {
+	if !w.queueMgr.TaskExists(filename) {
 		investigationCount := getInvestigationCount(comments, pc.lastCommitTime, w.allBotUsers, w.githubLogin, bots, w.triggerLabel)
 
 		if investigationCount >= 3 {
@@ -692,10 +690,8 @@ func (w *Watcher) handlePRInvestigate(
 				state.lastInvestigatedSHA = pc.headSHA
 				state.lastInvestigatedTime = time.Now()
 				w.processedPRs[num] = state
-				if err := writeTaskAtomically(w.incomingDir, filename, task); err != nil {
+				if err := w.queueMgr.Enqueue(filename, task); err != nil {
 					klog.Errorf("Failed to queue investigate task for PR #%d: %v", num, err)
-				} else {
-					writeTaskJournalEvent(w.QueueDir, filename, task, "Created", 0)
 				}
 			}
 		}
@@ -710,7 +706,7 @@ func (w *Watcher) handlePRComments(ctx context.Context, pc *prContext, commentAn
 	state := w.processedPRs[num]
 	filename := fmt.Sprintf("task-pr-%d-comments.yaml", num)
 
-	if !taskExists(w.incomingDir, w.processingDir, filename) {
+	if !w.queueMgr.TaskExists(filename) {
 		sandboxName := w.resolveSandboxName(ctx, api.TypePRComments, num)
 		running, err := isSandboxTaskRunning(ctx, w.kubeClient, w.Namespace, sandboxName)
 		if err != nil {
@@ -760,10 +756,8 @@ func (w *Watcher) handlePRComments(ctx context.Context, pc *prContext, commentAn
 			state.lastCommentAddressedTime = time.Now()
 			state.lastCommentAddressedSHA = pc.headSHA
 			w.processedPRs[num] = state
-			if err := writeTaskAtomically(w.incomingDir, filename, task); err != nil {
+			if err := w.queueMgr.Enqueue(filename, task); err != nil {
 				klog.Errorf("Failed to queue address-comments task for PR #%d: %v", num, err)
-			} else {
-				writeTaskJournalEvent(w.QueueDir, filename, task, "Created", 0)
 			}
 		}
 	}
@@ -777,7 +771,7 @@ func (w *Watcher) handlePRReview(ctx context.Context, pc *prContext, checkRuns [
 	state := w.processedPRs[num]
 	filename := fmt.Sprintf("task-pr-%d-review.yaml", num)
 
-	if !taskExists(w.incomingDir, w.processingDir, filename) {
+	if !w.queueMgr.TaskExists(filename) {
 		sandboxName := w.resolveSandboxName(ctx, api.TypePRReview, num)
 		running, err := isSandboxTaskRunning(ctx, w.kubeClient, w.Namespace, sandboxName)
 		if err != nil {
@@ -834,10 +828,8 @@ func (w *Watcher) handlePRReview(ctx context.Context, pc *prContext, checkRuns [
 			fmt.Printf("Queueing review task for PR #%d (Instructions: %d)...\n", num, len(instructions))
 			state.lastReviewedSHA = pc.headSHA
 			w.processedPRs[num] = state
-			if err := writeTaskAtomically(w.incomingDir, filename, task); err != nil {
+			if err := w.queueMgr.Enqueue(filename, task); err != nil {
 				klog.Errorf("Failed to queue review task for PR #%d: %v", num, err)
-			} else {
-				writeTaskJournalEvent(w.QueueDir, filename, task, "Created", 0)
 			}
 		}
 	}

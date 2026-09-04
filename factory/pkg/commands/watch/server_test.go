@@ -13,13 +13,22 @@ import (
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/concurrency"
 	"github.com/google/go-cmp/cmp"
 )
+
+func newTestQueueManager(queueDir string) *concurrency.TaskQueueManager {
+	mgr := concurrency.NewTaskQueueManager(concurrency.TaskQueueManagerConfig{
+		QueueDir: queueDir,
+	})
+	_ = mgr.LoadFromDisk()
+	return mgr
+}
 
 func TestBuildQueueResponse(t *testing.T) {
 	t.Run("Empty and non-existent directories", func(t *testing.T) {
 		tempDir := t.TempDir()
-		resp := buildQueueResponse(tempDir)
+		resp := newTestQueueManager(tempDir).GetQueueResponse()
 
 		if resp.Summary.TotalPending != 0 {
 			t.Errorf("expected totalPending 0, got %d", resp.Summary.TotalPending)
@@ -69,7 +78,7 @@ createdAt: "2026-08-10T11:00:00Z"
 			t.Fatal(err)
 		}
 
-		resp := buildQueueResponse(tempDir)
+		resp := newTestQueueManager(tempDir).GetQueueResponse()
 		if len(resp.Incoming) != 2 {
 			t.Fatalf("expected 2 incoming tasks, got %d", len(resp.Incoming))
 		}
@@ -82,30 +91,30 @@ createdAt: "2026-08-10T11:00:00Z"
 			{
 				FileName:   "task1.yaml",
 				QueueState: "incoming",
-				Type:       api.TypePRReview,
+				Type:       "pr-review",
 				URL:        "https://github.com/org/repo/pull/42",
 				Number:     42,
-				Priority:   api.PriorityCritical,
-				Phase:      api.PhaseComments,
+				Priority:   "critical",
+				Phase:      2,
 				CreatedAt:  "2026-08-10T10:00:00Z",
 				EnqueuedAt: "2026-08-10T10:05:00Z",
 				Assignee:   "alice",
-				Status:     api.StatusPending,
+				Status:     "Pending",
 				CommitSHA:  "abc123def",
 				Rank:       1,
 			},
 			{
 				FileName:   "task2.yaml",
 				QueueState: "incoming",
-				Type:       api.TypeIssueFix,
+				Type:       "issue-fix",
 				URL:        "https://github.com/org/repo/issues/99",
 				Number:     99,
-				Priority:   api.PriorityMedium,
+				Priority:   "medium",
 				Phase:      0,
 				CreatedAt:  "2026-08-10T11:00:00Z",
 				EnqueuedAt: resp.Incoming[1].EnqueuedAt,
 				Assignee:   "",
-				Status:     api.StatusPending,
+				Status:     "Pending",
 				CommitSHA:  "",
 				Rank:       2,
 			},
@@ -147,7 +156,7 @@ createdAt: "2026-08-10T11:00:00Z"
 			}
 		}
 
-		resp := buildQueueResponse(tempDir)
+		resp := newTestQueueManager(tempDir).GetQueueResponse()
 		if len(resp.Incoming) != len(tasks) {
 			t.Fatalf("expected %d tasks, got %d", len(tasks), len(resp.Incoming))
 		}
@@ -176,7 +185,7 @@ createdAt: "2026-08-10T11:00:00Z"
 		}
 	})
 
-	t.Run("Fair round-robin across multiple entities matching watch loop", func(t *testing.T) {
+	t.Run("Priority queue ordering across multiple entities", func(t *testing.T) {
 		tempDir := t.TempDir()
 		incomingDir := filepath.Join(tempDir, "incoming")
 		if err := os.MkdirAll(incomingDir, 0755); err != nil {
@@ -186,21 +195,21 @@ createdAt: "2026-08-10T11:00:00Z"
 		baseTime := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
 
 		// 3 tasks for PR 10
-		_ = os.WriteFile(filepath.Join(incomingDir, "pr10_1.yaml"), []byte(fmt.Sprintf("number: 10\ntype: pr-comments\npriority: medium\nphase: 3\nenqueuedAt: %s\n", baseTime.Add(1*time.Minute).Format(time.RFC3339))), 0644)
-		_ = os.WriteFile(filepath.Join(incomingDir, "pr10_2.yaml"), []byte(fmt.Sprintf("number: 10\ntype: pr-comments\npriority: medium\nphase: 3\nenqueuedAt: %s\n", baseTime.Add(3*time.Minute).Format(time.RFC3339))), 0644)
-		_ = os.WriteFile(filepath.Join(incomingDir, "pr10_3.yaml"), []byte(fmt.Sprintf("number: 10\ntype: pr-comments\npriority: medium\nphase: 3\nenqueuedAt: %s\n", baseTime.Add(4*time.Minute).Format(time.RFC3339))), 0644)
+		_ = os.WriteFile(filepath.Join(incomingDir, "pr10_1.yaml"), fmt.Appendf(nil, "number: 10\ntype: pr-comments\npriority: medium\nphase: 3\nenqueuedAt: %s\n", baseTime.Add(1*time.Minute).Format(time.RFC3339)), 0644)
+		_ = os.WriteFile(filepath.Join(incomingDir, "pr10_2.yaml"), fmt.Appendf(nil, "number: 10\ntype: pr-comments\npriority: medium\nphase: 3\nenqueuedAt: %s\n", baseTime.Add(3*time.Minute).Format(time.RFC3339)), 0644)
+		_ = os.WriteFile(filepath.Join(incomingDir, "pr10_3.yaml"), fmt.Appendf(nil, "number: 10\ntype: pr-comments\npriority: medium\nphase: 3\nenqueuedAt: %s\n", baseTime.Add(4*time.Minute).Format(time.RFC3339)), 0644)
 
 		// 2 tasks for PR 20
-		_ = os.WriteFile(filepath.Join(incomingDir, "pr20_1.yaml"), []byte(fmt.Sprintf("number: 20\ntype: pr-comments\npriority: medium\nphase: 3\nenqueuedAt: %s\n", baseTime.Add(5*time.Minute).Format(time.RFC3339))), 0644)
-		_ = os.WriteFile(filepath.Join(incomingDir, "pr20_2.yaml"), []byte(fmt.Sprintf("number: 20\ntype: pr-comments\npriority: medium\nphase: 3\nenqueuedAt: %s\n", baseTime.Add(6*time.Minute).Format(time.RFC3339))), 0644)
+		_ = os.WriteFile(filepath.Join(incomingDir, "pr20_1.yaml"), fmt.Appendf(nil, "number: 20\ntype: pr-comments\npriority: medium\nphase: 3\nenqueuedAt: %s\n", baseTime.Add(5*time.Minute).Format(time.RFC3339)), 0644)
+		_ = os.WriteFile(filepath.Join(incomingDir, "pr20_2.yaml"), fmt.Appendf(nil, "number: 20\ntype: pr-comments\npriority: medium\nphase: 3\nenqueuedAt: %s\n", baseTime.Add(6*time.Minute).Format(time.RFC3339)), 0644)
 
-		resp := buildQueueResponse(tempDir)
+		resp := newTestQueueManager(tempDir).GetQueueResponse()
 		if len(resp.Incoming) != 5 {
 			t.Fatalf("expected 5 incoming tasks, got %d", len(resp.Incoming))
 		}
 
-		// Expected round-robin order between PR 10 and PR 20
-		expectedOrder := []string{"pr10_1.yaml", "pr20_1.yaml", "pr10_2.yaml", "pr20_2.yaml", "pr10_3.yaml"}
+		// Expected priority queue order (all same priority and phase -> ordered by enqueuedAt FIFO)
+		expectedOrder := []string{"pr10_1.yaml", "pr10_2.yaml", "pr10_3.yaml", "pr20_1.yaml", "pr20_2.yaml"}
 		for i, exp := range expectedOrder {
 			if resp.Incoming[i].FileName != exp {
 				t.Errorf("at index %d: expected %s, got %v", i, exp, resp.Incoming[i].FileName)
@@ -235,7 +244,7 @@ createdAt: "2026-08-10T11:00:00Z"
 		// 1 processed task
 		_ = os.WriteFile(filepath.Join(processedDir, "done1.yaml"), []byte("type: pr-review\nstatus: Completed\n"), 0644)
 
-		resp := buildQueueResponse(tempDir)
+		resp := newTestQueueManager(tempDir).GetQueueResponse()
 
 		if resp.Summary.TotalPending != 3 {
 			t.Errorf("expected totalPending 3, got %v", resp.Summary.TotalPending)
@@ -268,7 +277,7 @@ createdAt: "2026-08-10T11:00:00Z"
 			_ = os.WriteFile(filepath.Join(processedDir, fn), []byte("type: pr-review\nstatus: Completed\n"), 0644)
 		}
 
-		resp := buildQueueResponse(tempDir)
+		resp := newTestQueueManager(tempDir).GetQueueResponse()
 
 		if len(resp.Processed) != 20 {
 			t.Errorf("expected processed capped at 20 items, got %d", len(resp.Processed))
@@ -303,7 +312,14 @@ func TestStartQueueHTTPServer(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go startQueueHTTPServer(ctx, tempDir, addr)
+	mgr := concurrency.NewTaskQueueManager(concurrency.TaskQueueManagerConfig{
+		QueueDir: tempDir,
+	})
+	if err := mgr.LoadFromDisk(); err != nil {
+		t.Fatal(err)
+	}
+
+	go startQueueHTTPServer(ctx, mgr, addr)
 
 	// Wait for server to start
 	time.Sleep(100 * time.Millisecond)
