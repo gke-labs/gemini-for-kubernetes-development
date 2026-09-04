@@ -244,6 +244,9 @@ func (c *GithubFeedbackCommand) Run(ctx context.Context) error {
 
 	var newIssueComments, oldIssueComments []github.IssueComment
 	for _, comment := range c.issueComments {
+		if hasOverseerIgnore(comment.Body()) {
+			continue
+		}
 		if comment.CreatedAt().Before(lastCommitTime) {
 			oldIssueComments = append(oldIssueComments, comment)
 		} else {
@@ -253,6 +256,19 @@ func (c *GithubFeedbackCommand) Run(ctx context.Context) error {
 
 	var newPrReviews, oldPrReviews []github.PullRequestReview
 	for _, review := range c.prReviews {
+		if hasOverseerIgnore(review.Body()) {
+			continue
+		}
+
+		var filteredComments []github.PullRequestComment
+		for _, rc := range review.PullRequestComments {
+			if hasOverseerIgnore(rc.Body()) {
+				continue
+			}
+			filteredComments = append(filteredComments, rc)
+		}
+		review.PullRequestComments = filteredComments
+
 		if review.SubmittedAt().Before(lastCommitTime) {
 			oldPrReviews = append(oldPrReviews, review)
 		} else {

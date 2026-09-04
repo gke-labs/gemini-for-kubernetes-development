@@ -161,7 +161,7 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 
 		// PR Inactivity check
 		if w.PRInactivityTimeout > 0 {
-			lastActivity := getLastPRActivityTime(pr, comments, reviews, revCommentsMap, w.githubLogin, bots)
+			lastActivity := getLastPRActivityTime(pr, comments, reviews, revCommentsMap, w.githubLogin, bots, w.triggerLabel)
 			if time.Since(lastActivity) > w.PRInactivityTimeout {
 				stopLabel := getStopLabel(w.triggerLabel)
 				w.reconcileReadyForHumanLabel(ctx, num, prIssue, false, headSHA)
@@ -403,6 +403,9 @@ func (w *Watcher) evaluatePRComments(
 		if strings.EqualFold(c.GetUser().GetLogin(), pr.GetUser().GetLogin()) {
 			continue
 		}
+		if hasIgnorePrefix(c.GetBody(), w.triggerLabel) {
+			continue
+		}
 		if c.GetCreatedAt().After(lastCommitTime) && c.GetCreatedAt().After(lastCommentAddressedTime) && c.GetCreatedAt().After(latestBotReplyTime) {
 			if hasIssueCommentReaction(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, c.GetID(), "+1", true, bots, w.githubLogin) {
 				continue
@@ -441,6 +444,9 @@ func (w *Watcher) evaluatePRComments(
 			continue
 		}
 		if r.GetSubmittedAt().After(lastCommitTime) && r.GetSubmittedAt().After(lastCommentAddressedTime) && r.GetSubmittedAt().After(latestBotReplyTime) {
+			if hasIgnorePrefix(r.GetBody(), w.triggerLabel) {
+				continue
+			}
 			if isReviewer {
 				hasNewBotReviews = true
 			} else {
@@ -468,6 +474,9 @@ func (w *Watcher) evaluatePRComments(
 				continue
 			}
 			if rc.GetCreatedAt().After(lastCommitTime) && rc.GetCreatedAt().After(lastCommentAddressedTime) && rc.GetCreatedAt().After(latestBotReplyTime) {
+				if hasIgnorePrefix(rc.GetBody(), w.triggerLabel) {
+					continue
+				}
 				if isInlineReviewer {
 					hasNewBotReviews = true
 				} else {
@@ -585,7 +594,7 @@ func (w *Watcher) canInvestigatePR(
 	if taskExists(w.incomingDir, w.processingDir, filename) {
 		return false
 	}
-	if getInvestigationCount(comments, lastCommitTime, w.allBotUsers, w.githubLogin, bots) >= 3 {
+	if getInvestigationCount(comments, lastCommitTime, w.allBotUsers, w.githubLogin, bots, w.triggerLabel) >= 3 {
 		return true
 	}
 	prevFailed := false
@@ -613,7 +622,7 @@ func (w *Watcher) handlePRInvestigate(
 	filename := fmt.Sprintf("task-pr-%d-investigate.yaml", num)
 
 	if !taskExists(w.incomingDir, w.processingDir, filename) {
-		investigationCount := getInvestigationCount(comments, pc.lastCommitTime, w.allBotUsers, w.githubLogin, bots)
+		investigationCount := getInvestigationCount(comments, pc.lastCommitTime, w.allBotUsers, w.githubLogin, bots, w.triggerLabel)
 
 		if investigationCount >= 3 {
 			stopLabel := getStopLabel(w.triggerLabel)
