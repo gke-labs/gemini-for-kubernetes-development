@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 set -o pipefail
-set -x
+#set -x
 
 if [ "${DISABLE_GITHUB_PROXY:-false}" != "true" ]; then
     if [ ! -f /usr/local/bin/gh ]; then
@@ -24,20 +24,10 @@ export CLONE_URL="{{ .Repo.CloneURL }}"
 export ISSUE_NUMBER={{ .Issue.Number }}
 export PROMPT_FILE="{{ .PromptFile }}"
 export GITHUB_USER_ID="{{ .User.UserID }}"
-export GITHUB_USER_EMAIL="{{ .User.Email }}"
 export GITHUB_USER_NAME="{{ .User.Name }}"
+export BRANCH="{{ .Branch }}"
 
-export GITHUB_USER_TOKEN="${GITHUB_USER_TOKEN:-${GITHUB_TOKEN}}"
-if [ -z "$GITHUB_USER_TOKEN" ]; then
-    # Try other common names
-    GITHUB_USER_TOKEN="${MANUAL_PAT:-${OAUTH_PAT}}"
-fi
-
-if [ -n "${GITHUB_BOT_LOGIN}" ]; then
-    if [ -n "${GITHUB_BOT_TOKEN}" ] || [ -n "${GITHUB_BOT_OAUTH_PAT}" ] || [ -n "${GITHUB_BOT_MANUAL_PAT}" ]; then
-        GITHUB_USER_TOKEN="${GITHUB_BOT_TOKEN:-${GITHUB_BOT_MANUAL_PAT:-${GITHUB_BOT_OAUTH_PAT}}}"
-    fi
-fi
+source "$(dirname "$0")/github_token_helper.sh"
 
 function setupGit {
     echo "Running setupGit..."
@@ -226,7 +216,7 @@ function runGemini {
         echo "All models failed."
         exit 1
     fi
-    set -x
+#set -x
     popd > /dev/null
 }
 
