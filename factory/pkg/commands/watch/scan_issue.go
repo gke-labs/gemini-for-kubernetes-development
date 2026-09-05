@@ -24,7 +24,7 @@ func (w *Watcher) queueIssueTasks(ctx context.Context, issues []*githubv39.Issue
 		}
 		if hasStopLabel(issue.Labels, w.triggerLabel) {
 			klog.Infof("Skipping issue #%d because it has the stop label ('overseer/stop' or '%s/stop')", num, w.triggerLabel)
-			removePendingTasksForNumber(w.incomingDir, num)
+			_ = w.queueMgr.RemovePendingTasksForNumber(num)
 			continue
 		}
 		if refIssues[num] {
@@ -52,7 +52,7 @@ func (w *Watcher) queueIssueTasks(ctx context.Context, issues []*githubv39.Issue
 			filename = fmt.Sprintf("task-workflow-%s-issue-%d.yaml", common.Slugify(workflowName), num)
 		}
 
-		if taskExists(w.incomingDir, w.processingDir, filename) {
+		if w.queueMgr.TaskExists(filename) {
 			continue
 		}
 
@@ -182,10 +182,8 @@ func (w *Watcher) queueIssueTasks(ctx context.Context, issues []*githubv39.Issue
 					fmt.Printf("Queueing fix task for issue #%d...\n", num)
 				}
 				w.processedIssues[num] = time.Now()
-				if err := writeTaskAtomically(w.incomingDir, filename, task); err != nil {
+				if err := w.queueMgr.Enqueue(filename, task); err != nil {
 					klog.Errorf("Failed to queue task for issue #%d: %v", num, err)
-				} else {
-					writeTaskJournalEvent(w.QueueDir, filename, task, "Created", 0)
 				}
 			}
 		}

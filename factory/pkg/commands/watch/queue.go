@@ -2,183 +2,19 @@ package watch
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	githubv39 "github.com/google/go-github/v39/github"
 	"gopkg.in/yaml.v3"
 	"k8s.io/klog/v2"
+
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 )
-
-// getEnqueueTime returns the timestamp when a task was enqueued, falling back to
-// file modification time or task creation time if EnqueuedAt is unset.
-func getEnqueueTime(t *api.QueueTask, modTime time.Time) time.Time {
-	if !t.EnqueuedAt.IsZero() {
-		return t.EnqueuedAt
-	}
-	if !modTime.IsZero() {
-		return modTime
-	}
-	return t.CreatedAt
-}
-
-// getEntityKey returns the unique key representing the target entity (PR, issue, or chore)
-// for a given queue task.
-func getEntityKey(t *api.QueueTask) string {
-	if t.Number > 0 {
-		return fmt.Sprintf("%d", t.Number)
-	}
-	if t.AgentFile != "" {
-		return fmt.Sprintf("chore:%s", t.AgentFile)
-	}
-	if t.URL != "" {
-		return fmt.Sprintf("url:%s", t.URL)
-	}
-	if t.Type != "" {
-		return fmt.Sprintf("type:%s", t.Type)
-	}
-	return "default"
-}
-
-// priorityRankValue converts a Priority into an integer rank where lower numbers indicate higher priority.
-func priorityRankValue(p api.TaskPriority) int {
-	priorityRank := map[api.TaskPriority]int{
-		api.PriorityCritical:  1,
-		api.PriorityUrgent:    2,
-		api.PriorityImportant: 3,
-		api.PriorityHigh:      4,
-		api.PriorityMedium:    5,
-		api.PriorityLow:       6,
-	}
-	if r, ok := priorityRank[api.TaskPriority(strings.ToLower(string(p)))]; ok {
-		return r
-	}
-	return 5
-}
-
-// isLessTask reports whether task a should be ordered before task b based on priority rank,
-// phase rank, enqueue timestamp (FIFO), creation timestamp, and filename tiebreaking.
-func isLessTask(a, b api.TaskItem) bool {
-	rankA := priorityRankValue(a.Task.Priority)
-	rankB := priorityRankValue(b.Task.Priority)
-	if rankA != rankB {
-		return rankA < rankB
-	}
-
-	phaseA := a.Task.Phase
-	if phaseA == 0 {
-		phaseA = 3
-	}
-	phaseB := b.Task.Phase
-	if phaseB == 0 {
-		phaseB = 3
-	}
-	if phaseA != phaseB {
-		return phaseA < phaseB
-	}
-
-	if !a.Task.EnqueuedAt.Equal(b.Task.EnqueuedAt) {
-		return a.Task.EnqueuedAt.Before(b.Task.EnqueuedAt)
-	}
-
-	if !a.Task.CreatedAt.Equal(b.Task.CreatedAt) {
-		return a.Task.CreatedAt.Before(b.Task.CreatedAt)
-	}
-
-	return a.Filename < b.Filename
-}
-
-// sortTasksFairly sorts queue tasks using a hybrid round-robin algorithm across entity buckets
-// while maintaining FIFO arrival order, priority ranks, and phase dependencies within each entity.
-func sortTasksFairly(items []api.TaskItem) []api.TaskItem {
-	if len(items) <= 1 {
-		return items
-	}
-
-	bucketsMap := make(map[string][]api.TaskItem)
-
-	for _, item := range items {
-		key := getEntityKey(item.Task)
-		bucketsMap[key] = append(bucketsMap[key], item)
-	}
-
-	for key, bucket := range bucketsMap {
-		sort.SliceStable(bucket, func(i, j int) bool {
-			return isLessTask(bucket[i], bucket[j])
-		})
-		bucketsMap[key] = bucket
-	}
-
-	var result []api.TaskItem
-
-	for len(bucketsMap) > 0 {
-		var activeKeys []string
-		for key := range bucketsMap {
-			activeKeys = append(activeKeys, key)
-		}
-
-		sort.SliceStable(activeKeys, func(i, j int) bool {
-			headI := bucketsMap[activeKeys[i]][0]
-			headJ := bucketsMap[activeKeys[j]][0]
-			if isLessTask(headI, headJ) {
-				return true
-			}
-			if isLessTask(headJ, headI) {
-				return false
-			}
-			return activeKeys[i] < activeKeys[j]
-		})
-
-		for _, key := range activeKeys {
-			bucket := bucketsMap[key]
-			result = append(result, bucket[0])
-			if len(bucket) == 1 {
-				delete(bucketsMap, key)
-			} else {
-				bucketsMap[key] = bucket[1:]
-			}
-		}
-	}
-
-	return result
-}
-
-func writeTaskAtomically(dir string, filename string, task *api.QueueTask) error {
-	data, err := yaml.Marshal(task)
-	if err != nil {
-		return fmt.Errorf("marshaling task to YAML: %w", err)
-	}
-
-	tempFile := filepath.Join(dir, fmt.Sprintf(".temp-%s", filename))
-	if err := os.WriteFile(tempFile, data, 0644); err != nil {
-		return fmt.Errorf("writing temp task file: %w", err)
-	}
-
-	targetFile := filepath.Join(dir, filename)
-	if err := os.Rename(tempFile, targetFile); err != nil {
-		os.Remove(tempFile)
-		return fmt.Errorf("renaming temp file to target %s: %w", targetFile, err)
-	}
-
-	return nil
-}
-
-func taskExists(incomingDir, processingDir, filename string) bool {
-	if _, err := os.Stat(filepath.Join(incomingDir, filename)); err == nil {
-		return true
-	}
-	if _, err := os.Stat(filepath.Join(processingDir, filename)); err == nil {
-		return true
-	}
-	return false
-}
 
 func isDoNotProcess(queueDir string) bool {
 	if os.Getenv("DO_NOT_PROCESS") == "true" || os.Getenv("FACTORY_DO_NOT_PROCESS") == "true" || os.Getenv("DRAIN") == "true" || os.Getenv("FACTORY_DRAIN") == "true" {
@@ -216,44 +52,6 @@ func getPRPriority(prIssue *githubv39.Issue) api.TaskPriority {
 	return getIssuePriority(prIssue)
 }
 
-func writeTaskJournalEvent(queueDir string, taskFilename string, task *api.QueueTask, event string, duration time.Duration) {
-	journalPath := filepath.Join(queueDir, "journal.jsonl")
-	f, err := os.OpenFile(journalPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		klog.Errorf("Failed to open journal file: %v", err)
-		return
-	}
-	defer f.Close()
-
-	je := api.JournalEvent{
-		Timestamp:        time.Now(),
-		TaskID:           strings.TrimSuffix(taskFilename, ".yaml"),
-		Event:            event,
-		Type:             task.Type,
-		URL:              task.URL,
-		Priority:         task.Priority,
-		TriggerEventTime: task.TriggerEventTime,
-		TriggerReason:    task.TriggerReason,
-		TriggerNotes:     task.TriggerNotes,
-		StartedAt:        task.StartedAt,
-		CompletedAt:      task.CompletedAt,
-		Error:            task.Error,
-	}
-	if duration > 0 {
-		je.DurationSecond = duration.Seconds()
-	}
-
-	data, err := json.Marshal(je)
-	if err != nil {
-		klog.Errorf("Failed to marshal journal event: %v", err)
-		return
-	}
-
-	if _, err := f.Write(append(data, '\n')); err != nil {
-		klog.Errorf("Failed to write journal event: %v", err)
-	}
-}
-
 func parseProcessedPRTask(filePath string, name string, fInfo os.FileInfo, state prWatchState) prWatchState {
 	isComments := strings.HasSuffix(name, "-comments")
 	isInvestigate := strings.HasSuffix(name, "-investigate")
@@ -265,7 +63,7 @@ func parseProcessedPRTask(filePath string, name string, fInfo os.FileInfo, state
 	if data, err := os.ReadFile(filePath); err == nil {
 		if err := yaml.Unmarshal(data, &t); err == nil {
 			hasTask = true
-			if strings.EqualFold(string(t.Status), "Failed") {
+			if strings.EqualFold(string(t.Status), string(api.StatusFailed)) {
 				return state
 			}
 		}
@@ -306,38 +104,6 @@ func parseProcessedPRTask(filePath string, name string, fInfo os.FileInfo, state
 	return state
 }
 
-func removePendingTasksForNumber(incomingDir string, number int) {
-	files, err := os.ReadDir(incomingDir)
-	if err != nil {
-		return
-	}
-	pattern1 := fmt.Sprintf("-issue-%d.yaml", number)
-	pattern2 := fmt.Sprintf("-pr-%d-", number)
-	for _, f := range files {
-		if !f.IsDir() && (strings.Contains(f.Name(), pattern1) || strings.Contains(f.Name(), pattern2)) {
-			_ = os.Remove(filepath.Join(incomingDir, f.Name()))
-		}
-	}
-}
-
-// hasActivePRTask reports whether any task for the given PR number is currently
-// pending in the incoming queue or executing in the processing directory.
-func hasActivePRTask(incomingDir, processingDir string, number int) bool {
-	prefix := fmt.Sprintf("task-pr-%d-", number)
-	for _, dir := range []string{incomingDir, processingDir} {
-		files, err := os.ReadDir(dir)
-		if err != nil {
-			continue
-		}
-		for _, f := range files {
-			if !f.IsDir() && strings.HasPrefix(f.Name(), prefix) && strings.HasSuffix(f.Name(), ".yaml") {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 func loadProcessedTasks(processedDir string) (map[int]time.Time, map[int]prWatchState) {
 	processedIssues := make(map[int]time.Time)
 	processedPRs := make(map[int]prWatchState)
@@ -361,7 +127,7 @@ func loadProcessedTasks(processedDir string) (map[int]time.Time, map[int]prWatch
 						hasTask = true
 					}
 				}
-				if hasTask && strings.EqualFold(string(t.Status), "Failed") {
+				if hasTask && strings.EqualFold(string(t.Status), string(api.StatusFailed)) {
 					continue
 				}
 				if info, err := f.Info(); err == nil {
@@ -427,20 +193,7 @@ func (w *Watcher) recoverStuckTasks(ctx context.Context) {
 						completed, err := isSandboxTaskCompleted(ctx, w.kubeClient, w.Namespace, sandboxName, t.Type)
 						if err == nil && completed {
 							klog.Infof("Task %s already completed in sandbox %s. Moving from processing to processed.", f.Name(), sandboxName)
-							t.Status = api.StatusCompleted
-							if t.StartedAt.IsZero() {
-								t.StartedAt = t.EnqueuedAt
-							}
-							if t.CompletedAt.IsZero() {
-								t.CompletedAt = time.Now()
-							}
-							duration := time.Duration(0)
-							if !t.StartedAt.IsZero() && t.CompletedAt.After(t.StartedAt) {
-								duration = t.CompletedAt.Sub(t.StartedAt)
-							}
-							if err := writeTaskAtomically(w.processedDir, f.Name(), &t); err == nil {
-								_ = os.Remove(processingPath)
-								writeTaskJournalEvent(w.QueueDir, f.Name(), &t, "Completed", duration)
+							if err := w.queueMgr.CompleteTask(f.Name(), &t); err == nil {
 								continue
 							}
 						}
@@ -448,8 +201,7 @@ func (w *Watcher) recoverStuckTasks(ctx context.Context) {
 
 					t.Status = api.StatusPending
 					t.Recovered = true
-					if err := writeTaskAtomically(w.incomingDir, f.Name(), &t); err == nil {
-						_ = os.Remove(processingPath)
+					if err := w.queueMgr.Enqueue(f.Name(), &t); err == nil {
 						klog.Infof("Recovered stuck task %s from processing to incoming", f.Name())
 						continue
 					}
@@ -467,7 +219,7 @@ func (w *Watcher) recoverStuckTasks(ctx context.Context) {
 	}
 }
 
-// PRTaskOptions specifies parameters for constructing a pull request QueueTask.
+// PRTaskOptions specifies parameters for constructing a pull request api.QueueTask.
 type PRTaskOptions struct {
 	Type             api.TaskType
 	PR               *githubv39.PullRequest
@@ -481,7 +233,7 @@ type PRTaskOptions struct {
 	Instructions     []string
 }
 
-// newPRQueueTask constructs a QueueTask for pull request tasks with consistent defaults.
+// newPRQueueTask constructs an api.QueueTask for pull request tasks with consistent defaults.
 func (w *Watcher) newPRQueueTask(opts PRTaskOptions) *api.QueueTask {
 	num := opts.PR.GetNumber()
 	eventTime := opts.TriggerEventTime
@@ -509,7 +261,7 @@ func (w *Watcher) newPRQueueTask(opts PRTaskOptions) *api.QueueTask {
 	}
 }
 
-// IssueTaskOptions specifies parameters for constructing an issue QueueTask.
+// IssueTaskOptions specifies parameters for constructing an issue api.QueueTask.
 type IssueTaskOptions struct {
 	Type             api.TaskType
 	Issue            *githubv39.Issue
@@ -522,7 +274,7 @@ type IssueTaskOptions struct {
 	SessionID        string
 }
 
-// newIssueQueueTask constructs a QueueTask for issue tasks with consistent defaults.
+// newIssueQueueTask constructs an api.QueueTask for issue tasks with consistent defaults.
 func (w *Watcher) newIssueQueueTask(opts IssueTaskOptions) *api.QueueTask {
 	num := opts.Issue.GetNumber()
 	return &api.QueueTask{
@@ -543,7 +295,7 @@ func (w *Watcher) newIssueQueueTask(opts IssueTaskOptions) *api.QueueTask {
 	}
 }
 
-// ChoreTaskOptions specifies parameters for constructing a scheduled chore QueueTask.
+// ChoreTaskOptions specifies parameters for constructing a scheduled chore api.QueueTask.
 type ChoreTaskOptions struct {
 	AgentFile        string
 	TriggerEventTime time.Time
@@ -551,7 +303,7 @@ type ChoreTaskOptions struct {
 	TriggerNotes     string
 }
 
-// newChoreQueueTask constructs a QueueTask for scheduled chore tasks with consistent defaults.
+// newChoreQueueTask constructs an api.QueueTask for scheduled chore tasks with consistent defaults.
 func (w *Watcher) newChoreQueueTask(opts ChoreTaskOptions) *api.QueueTask {
 	return &api.QueueTask{
 		Type:             api.TypeAgentChore,

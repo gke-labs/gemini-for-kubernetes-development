@@ -2,12 +2,15 @@ package watch
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/concurrency"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
 	githubv39 "github.com/google/go-github/v39/github"
 )
@@ -79,16 +82,42 @@ type Watcher struct {
 	processedLogDir  string
 	processedIssues  map[int]time.Time
 	processedPRs     map[int]prWatchState
+	queueMgr         *concurrency.TaskQueueManager
 	state            *watchState
 	timeoutChan      <-chan time.Time
 	wg               sync.WaitGroup
 }
 
+func (w *Watcher) initQueueManager() {
+	if w.incomingDir == "" && w.QueueDir != "" {
+		w.incomingDir = filepath.Join(w.QueueDir, "incoming")
+		w.processingDir = filepath.Join(w.QueueDir, "processing")
+		w.processedDir = filepath.Join(w.QueueDir, "processed")
+		logDir := os.Getenv("FACTORY_LOGS")
+		if logDir == "" {
+			logDir = filepath.Join(w.QueueDir, "logs")
+		}
+		w.processingLogDir = filepath.Join(logDir, "processing")
+		w.processedLogDir = filepath.Join(logDir, "processed")
+	}
+	w.queueMgr = concurrency.NewTaskQueueManager(concurrency.TaskQueueManagerConfig{
+		QueueDir:         w.QueueDir,
+		IncomingDir:      w.incomingDir,
+		ProcessingDir:    w.processingDir,
+		ProcessedDir:     w.processedDir,
+		ProcessingLogDir: w.processingLogDir,
+		ProcessedLogDir:  w.processedLogDir,
+		DryRun:           w.DryRun,
+	})
+}
+
 func NewWatcher(rootFlags common.RootFlags, flags Flags) *Watcher {
-	return &Watcher{
+	w := &Watcher{
 		RootFlags: rootFlags,
 		Flags:     flags,
 	}
+	w.initQueueManager()
+	return w
 }
 
 type ChoreRunState struct {

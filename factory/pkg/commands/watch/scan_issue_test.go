@@ -74,6 +74,8 @@ func TestQueueIssueTasks_Filters(t *testing.T) {
 	w.targetAssignee = "bot1"
 	w.allBotUsers = []string{"bot1"}
 	w.triggerLabel = "factory"
+	w.initQueueManager()
+	_ = w.queueMgr.LoadFromDisk()
 
 	w.queueIssueTasks(context.Background(), issues, refIssues)
 
