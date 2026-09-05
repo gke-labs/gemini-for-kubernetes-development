@@ -56,6 +56,7 @@ func priorityRankValue(p api.TaskPriority) int {
 		api.PriorityHigh:      4,
 		api.PriorityMedium:    5,
 		api.PriorityLow:       6,
+		api.PriorityUnknown:   5,
 	}
 	if r, ok := priorityRank[api.TaskPriority(strings.ToLower(string(p)))]; ok {
 		return r
@@ -74,11 +75,11 @@ func isLessTask(a, b api.TaskItem) bool {
 
 	phaseA := a.Task.Phase
 	if phaseA == 0 {
-		phaseA = 3
+		phaseA = api.PhaseInvestigate
 	}
 	phaseB := b.Task.Phase
 	if phaseB == 0 {
-		phaseB = 3
+		phaseB = api.PhaseInvestigate
 	}
 	if phaseA != phaseB {
 		return phaseA < phaseB
@@ -265,7 +266,7 @@ func parseProcessedPRTask(filePath string, name string, fInfo os.FileInfo, state
 	if data, err := os.ReadFile(filePath); err == nil {
 		if err := yaml.Unmarshal(data, &t); err == nil {
 			hasTask = true
-			if strings.EqualFold(string(t.Status), "Failed") {
+			if strings.EqualFold(string(t.Status), string(api.StatusFailed)) {
 				return state
 			}
 		}
@@ -361,7 +362,7 @@ func loadProcessedTasks(processedDir string) (map[int]time.Time, map[int]prWatch
 						hasTask = true
 					}
 				}
-				if hasTask && strings.EqualFold(string(t.Status), "Failed") {
+				if hasTask && strings.EqualFold(string(t.Status), string(api.StatusFailed)) {
 					continue
 				}
 				if info, err := f.Info(); err == nil {
@@ -467,7 +468,7 @@ func (w *Watcher) recoverStuckTasks(ctx context.Context) {
 	}
 }
 
-// PRTaskOptions specifies parameters for constructing a pull request QueueTask.
+// PRTaskOptions specifies parameters for constructing a pull request api.QueueTask.
 type PRTaskOptions struct {
 	Type             api.TaskType
 	PR               *githubv39.PullRequest
@@ -481,7 +482,7 @@ type PRTaskOptions struct {
 	Instructions     []string
 }
 
-// newPRQueueTask constructs a QueueTask for pull request tasks with consistent defaults.
+// newPRQueueTask constructs an api.QueueTask for pull request tasks with consistent defaults.
 func (w *Watcher) newPRQueueTask(opts PRTaskOptions) *api.QueueTask {
 	num := opts.PR.GetNumber()
 	eventTime := opts.TriggerEventTime
@@ -509,7 +510,7 @@ func (w *Watcher) newPRQueueTask(opts PRTaskOptions) *api.QueueTask {
 	}
 }
 
-// IssueTaskOptions specifies parameters for constructing an issue QueueTask.
+// IssueTaskOptions specifies parameters for constructing an issue api.QueueTask.
 type IssueTaskOptions struct {
 	Type             api.TaskType
 	Issue            *githubv39.Issue
@@ -522,7 +523,7 @@ type IssueTaskOptions struct {
 	SessionID        string
 }
 
-// newIssueQueueTask constructs a QueueTask for issue tasks with consistent defaults.
+// newIssueQueueTask constructs an api.QueueTask for issue tasks with consistent defaults.
 func (w *Watcher) newIssueQueueTask(opts IssueTaskOptions) *api.QueueTask {
 	num := opts.Issue.GetNumber()
 	return &api.QueueTask{
@@ -543,7 +544,7 @@ func (w *Watcher) newIssueQueueTask(opts IssueTaskOptions) *api.QueueTask {
 	}
 }
 
-// ChoreTaskOptions specifies parameters for constructing a scheduled chore QueueTask.
+// ChoreTaskOptions specifies parameters for constructing a scheduled chore api.QueueTask.
 type ChoreTaskOptions struct {
 	AgentFile        string
 	TriggerEventTime time.Time
@@ -551,7 +552,7 @@ type ChoreTaskOptions struct {
 	TriggerNotes     string
 }
 
-// newChoreQueueTask constructs a QueueTask for scheduled chore tasks with consistent defaults.
+// newChoreQueueTask constructs an api.QueueTask for scheduled chore tasks with consistent defaults.
 func (w *Watcher) newChoreQueueTask(opts ChoreTaskOptions) *api.QueueTask {
 	return &api.QueueTask{
 		Type:             api.TypeAgentChore,

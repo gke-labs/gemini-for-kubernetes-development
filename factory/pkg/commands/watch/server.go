@@ -73,7 +73,7 @@ func startQueueHTTPServer(ctx context.Context, queueDir string, addr string) {
 
 		if r.Method == http.MethodPost && len(parts) >= 2 && parts[1] == "priority" {
 			var body struct {
-				Priority string `json:"priority"`
+				Priority api.TaskPriority `json:"priority"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Priority == "" {
 				http.Error(w, "Invalid JSON body, priority required", http.StatusBadRequest)
@@ -103,7 +103,7 @@ func startQueueHTTPServer(ctx context.Context, queueDir string, addr string) {
 			}
 
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]string{"status": "updated", "priority": body.Priority, "fileName": filename})
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "updated", "priority": string(body.Priority), "fileName": filename})
 			return
 		}
 
