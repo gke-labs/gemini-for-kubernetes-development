@@ -18,20 +18,20 @@ import (
 func (w *Watcher) buildTaskCommandArgs(t *api.QueueTask, selectedUser string) []string {
 	var args []string
 	switch t.Type {
-	case "issue-fix":
+	case api.TypeIssueFix:
 		args = []string{"fix", "--url", t.URL, "--instruction", "Fix this issue"}
-	case "pr-investigate":
+	case api.TypePRInvestigate:
 		args = []string{"pr", "investigate", "--pr-url", t.URL}
-	case "pr-comments":
+	case api.TypePRComments:
 		args = []string{"pr", "address-comments", "--pr-url", t.URL}
-	case "pr-iterate":
+	case api.TypePRIterate:
 		args = []string{"pr", "iterate", "--pr-url", t.URL, "--prompt", "Please resolve merge conflicts in this PR by rebasing onto the latest master/main branch and resolving any conflicts that arise."}
-	case "pr-review":
+	case api.TypePRReview:
 		args = []string{"pr", "review", "--pr-url", t.URL, "--publish", "yes"}
 		for _, inst := range t.Instructions {
 			args = append(args, "--instruction", inst)
 		}
-	case "agent-chore":
+	case api.TypeAgentChore:
 		args = []string{"agent", "create", "--url", t.URL, "--agent", t.AgentFile}
 		if t.SessionID != "" {
 			args = append(args, "--session-id", t.SessionID)
@@ -89,7 +89,7 @@ func (w *Watcher) runSingleTask(ctx context.Context, taskFilename string, t *api
 	processedPath := filepath.Join(w.processedDir, taskFilename)
 
 	if t.Number > 0 && w.ghClient != nil {
-		if (t.Type == "issue-fix" || t.Type == "agent-chore") && t.Assignee != "" {
+		if (t.Type == api.TypeIssueFix || t.Type == api.TypeAgentChore) && t.Assignee != "" {
 			klog.Infof("Assigning issue #%d to %s as claimed", t.Number, t.Assignee)
 			if _, _, err := w.ghClient.Issues.AddAssignees(ctx, w.Repo.Owner, w.Repo.Repo, t.Number, []string{t.Assignee}); err != nil {
 				klog.Errorf("Failed to assign issue #%d to %s: %v", t.Number, t.Assignee, err)
@@ -101,18 +101,18 @@ func (w *Watcher) runSingleTask(ctx context.Context, taskFilename string, t *api
 			}
 		}
 
-		if t.Type != "agent-chore" {
+		if t.Type != api.TypeAgentChore {
 			var commentBody string
 			switch t.Type {
-			case "issue-fix":
+			case api.TypeIssueFix:
 				commentBody = "🤖 AI Factory started fixing this issue in a sandbox."
-			case "pr-investigate":
+			case api.TypePRInvestigate:
 				commentBody = "🤖 AI Factory started investigating CI check failures for this pull request."
-			case "pr-comments":
+			case api.TypePRComments:
 				commentBody = "🤖 AI Factory started addressing review feedback for this pull request."
-			case "pr-iterate":
+			case api.TypePRIterate:
 				commentBody = "🤖 AI Factory started resolving merge conflicts / rebasing this pull request in a sandbox."
-			case "pr-review":
+			case api.TypePRReview:
 				commentBody = "🤖 AI Factory started reviewing this pull request in a sandbox."
 			}
 			if commentBody != "" {
@@ -172,7 +172,7 @@ func (w *Watcher) runSingleTask(ctx context.Context, taskFilename string, t *api
 		t.Error = taskErr.Error()
 		t.CompletedAt = time.Now()
 		writeTaskJournalEvent(w.QueueDir, taskFilename, t, "Failed", duration)
-		if t.Type == "pr-comments" && w.cfg != nil {
+		if t.Type == api.TypePRComments && w.cfg != nil {
 			resolvePRCommentReactions(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, t.Number, "confused", w.cfg.AllowlistedBots, w.githubLogin)
 		}
 
@@ -180,19 +180,19 @@ func (w *Watcher) runSingleTask(ctx context.Context, taskFilename string, t *api
 		if taskCtx.Err() == context.DeadlineExceeded {
 			var sandboxName string
 			switch t.Type {
-			case "issue-fix":
+			case api.TypeIssueFix:
 				if t.SessionID != "" {
 					sandboxName = fmt.Sprintf("wf-issue-%d", t.Number)
 				} else {
 					sandboxName = fmt.Sprintf("fix-%s-%d", w.Repo.Repo, t.Number)
 				}
-			case "agent-chore":
+			case api.TypeAgentChore:
 				if t.SessionID != "" {
 					sandboxName = fmt.Sprintf("wf-issue-%d", t.Number)
 				} else {
 					sandboxName = fmt.Sprintf("agent-%s-%d", w.Repo.Repo, t.Number)
 				}
-			case "pr-investigate", "pr-comments", "pr-iterate", "pr-review":
+			case api.TypePRInvestigate, api.TypePRComments, api.TypePRIterate, api.TypePRReview:
 				sandboxName = w.resolveSandboxName(ctx, t.Type, t.Number)
 			}
 
@@ -209,7 +209,7 @@ func (w *Watcher) runSingleTask(ctx context.Context, taskFilename string, t *api
 		t.Status = api.StatusCompleted
 		t.CompletedAt = time.Now()
 		writeTaskJournalEvent(w.QueueDir, taskFilename, t, "Completed", duration)
-		if t.Type == "pr-comments" && w.cfg != nil {
+		if t.Type == api.TypePRComments && w.cfg != nil {
 			resolvePRCommentReactions(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, t.Number, "+1", w.cfg.AllowlistedBots, w.githubLogin)
 		}
 	}

@@ -359,12 +359,12 @@ func TestGetIssuePriority(t *testing.T) {
 			{Name: &nameUrgent},
 		},
 	}
-	if getIssuePriority(issue) != "urgent" {
+	if getIssuePriority(issue) != api.PriorityUrgent {
 		t.Errorf("expected 'urgent', got %q", getIssuePriority(issue))
 	}
 
 	issueNoLabel := &githubv39.Issue{}
-	if getIssuePriority(issueNoLabel) != "medium" {
+	if getIssuePriority(issueNoLabel) != api.PriorityMedium {
 		t.Errorf("expected 'medium', got %q", getIssuePriority(issueNoLabel))
 	}
 }
