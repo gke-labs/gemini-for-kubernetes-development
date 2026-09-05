@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -257,6 +258,7 @@ func TestBuildQuotaKillCmd(t *testing.T) {
 		files := NewTaskFiles(tmpDir)
 
 		cmd := exec.Command("sleep", "30")
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		if err := cmd.Start(); err != nil {
 			t.Fatalf("failed to start process: %v", err)
 		}
@@ -294,6 +296,7 @@ func TestBuildQuotaKillCmd(t *testing.T) {
 		files := NewTaskFiles(tmpDir)
 
 		cmd := exec.Command("sleep", "30")
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		if err := cmd.Start(); err != nil {
 			t.Fatalf("failed to start process: %v", err)
 		}

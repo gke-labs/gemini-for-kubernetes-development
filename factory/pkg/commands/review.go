@@ -287,7 +287,7 @@ func runReview(ctx context.Context, prURL string, publishPolicy string, instruct
 		"GITHUB_USER_EMAIL":          githubEmail,
 		"GITHUB_USER_NAME":           githubLogin,
 		"PR_NUMBER":                  strconv.Itoa(prNum),
-		"MODELS":                     tasks.DefaultModelsString(),
+		"MODELS":                     tasks.GetAvailableModelsForKey(getGeminiAPIKey(secret)),
 	}
 
 	fmt.Println("Running review task via envd...")

@@ -818,3 +818,52 @@ func (s *Server) updateOverseerQueueTaskPriority(c *gin.Context) {
 	c.Header("Content-Type", "application/json")
 	_, _ = io.Copy(c.Writer, resp.Body)
 }
+
+func (s *Server) getOverseerStatus(c *gin.Context) {
+	overseerName := c.Param("name")
+	namespace := fmt.Sprintf("overseer-%s", overseerName)
+
+	pods, err := s.K8sManager.Clientset.CoreV1().Pods(namespace).List(c.Request.Context(), v1.ListOptions{
+		LabelSelector: fmt.Sprintf("sandbox=overseer-%s", overseerName),
+	})
+	if err != nil || len(pods.Items) == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Overseer controller pod not found"})
+		return
+	}
+
+	targetPod := &pods.Items[0]
+	podIP := targetPod.Status.PodIP
+	if podIP == "" {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Overseer pod has no IP address allocated yet"})
+		return
+	}
+
+	podURL := fmt.Sprintf("http://%s:13338/api/v1/status", podIP)
+	client := http.Client{Timeout: 10 * time.Second}
+	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, podURL, nil)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create status request", "details": err.Error()})
+		return
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"status":            "syncing",
+			"isSyncing":         true,
+			"message":           "Overseer daemon is currently in cycle sync / Gemini orchestration phase.",
+			"total":             0,
+			"active":            0,
+			"quotaExceeded":     0,
+			"suspended":         0,
+			"activeList":        []string{},
+			"quotaExceededList": []string{},
+			"suspendedList":     []string{},
+		})
+		return
+	}
+	defer resp.Body.Close()
+
+	c.Status(resp.StatusCode)
+	c.Header("Content-Type", "application/json")
+	_, _ = io.Copy(c.Writer, resp.Body)
+}

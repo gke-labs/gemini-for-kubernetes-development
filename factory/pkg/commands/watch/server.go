@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/geminitokens"
 	"gopkg.in/yaml.v3"
 	"k8s.io/klog/v2"
 )
@@ -32,6 +33,20 @@ func startQueueHTTPServer(ctx context.Context, queueDir string, addr string) {
 		resp := buildQueueResponse(queueDir)
 		overseerQueueMu.Unlock()
 		_ = json.NewEncoder(w).Encode(resp)
+	})
+
+	mux.HandleFunc("/api/v1/status", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		status, err := geminitokens.GetTokensStatus()
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to get tokens status: %v", err), http.StatusInternalServerError)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(status)
 	})
 
 	mux.HandleFunc("/api/v1/queue/", func(w http.ResponseWriter, r *http.Request) {

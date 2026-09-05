@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"regexp"
 	"time"
 
 	"os/signal"
@@ -421,6 +422,7 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 
 	// 2. Tailing & status loop
 	var offset int64
+	var lastModelTried string
 
 	// Set up signal channel for Ctrl+C
 	sigChan := make(chan os.Signal, 1)
@@ -471,6 +473,9 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 				newData := logBuf.Bytes()
 				if len(newData) > 0 {
 					_, _ = os.Stdout.Write(newData)
+					if model := extractModelFromLogs(newData); model != "" {
+						lastModelTried = model
+					}
 					offset += int64(len(newData))
 
 					if geminitokens.IsFatalQuotaError(newData) {
@@ -479,7 +484,7 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 						defer killCancel()
 						killCmd := BuildQuotaKillCmd(taskFiles.PIDFile, taskFiles.StartTimeFile, taskFiles.ExitCodeFile)
 						_ = c.Exec(killCtx, killCmd, "/workspaces", nil, nil, nil, nil)
-						return handleQuotaOrSuspensionError(newData, envs)
+						return handleQuotaOrSuspensionError(newData, lastModelTried, envs)
 					} else if geminitokens.IsTransientRateLimit(newData) {
 						klog.V(2).Infof("Transient rate limit (RPM/TPM) detected in task output; allowing CLI to retry with backoff...")
 					}
@@ -527,11 +532,14 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 					newData := finalBuf.Bytes()
 					if len(newData) > 0 {
 						_, _ = os.Stdout.Write(newData)
+						if model := extractModelFromLogs(newData); model != "" {
+							lastModelTried = model
+						}
 						if geminitokens.IsFatalQuotaError(newData) {
 							killCtx, killCancel := context.WithTimeout(context.Background(), 15*time.Second)
 							defer killCancel()
 							_ = c.Exec(killCtx, BuildWriteExitCodeCmd(taskFiles.ExitCodeFile, 137), "/workspaces", nil, nil, nil, nil)
-							return handleQuotaOrSuspensionError(newData, envs)
+							return handleQuotaOrSuspensionError(newData, lastModelTried, envs)
 						}
 					}
 				}
@@ -560,11 +568,14 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 							newData := finalBuf.Bytes()
 							if len(newData) > 0 {
 								_, _ = os.Stdout.Write(newData)
+								if model := extractModelFromLogs(newData); model != "" {
+									lastModelTried = model
+								}
 								if geminitokens.IsFatalQuotaError(newData) {
 									killCtx, killCancel := context.WithTimeout(context.Background(), 15*time.Second)
 									defer killCancel()
 									_ = c.Exec(killCtx, BuildWriteExitCodeCmd(taskFiles.ExitCodeFile, 137), "/workspaces", nil, nil, nil, nil)
-									return handleQuotaOrSuspensionError(newData, envs)
+									return handleQuotaOrSuspensionError(newData, lastModelTried, envs)
 								}
 							}
 						}
@@ -599,7 +610,20 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 	}
 }
 
-func handleQuotaOrSuspensionError(newData []byte, envs map[string]string) error {
+var modelRegexp = regexp.MustCompile(`Trying model:\s*([a-zA-Z0-9\-\.]+)`)
+
+func extractModelFromLogs(logs []byte) string {
+	matches := modelRegexp.FindAllSubmatch(logs, -1)
+	if len(matches) > 0 {
+		lastMatch := matches[len(matches)-1]
+		if len(lastMatch) > 1 {
+			return string(lastMatch[1])
+		}
+	}
+	return ""
+}
+
+func handleQuotaOrSuspensionError(newData []byte, lastModelTried string, envs map[string]string) error {
 	key := geminitokens.ExtractAPIKeyFromError(newData)
 	if key == "" {
 		key = envs[constants.KeyGeminiAPIKey]
@@ -610,8 +634,8 @@ func handleQuotaOrSuspensionError(newData []byte, envs map[string]string) error 
 				klog.Errorf("Failed to mark key as suspended: %v", err)
 			}
 		} else {
-			if err := geminitokens.AddQuotaExceededKey(key, 4*time.Hour); err != nil {
-				klog.Errorf("Failed to mark key as quota exceeded: %v", err)
+			if err := geminitokens.AddQuotaExceededKeyAndModel(key, lastModelTried, 4*time.Hour); err != nil {
+				klog.Errorf("Failed to mark key and model as quota exceeded: %v", err)
 			}
 		}
 	}

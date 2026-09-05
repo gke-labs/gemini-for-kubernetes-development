@@ -314,7 +314,7 @@ func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 		"SESSION_ID":                 flags.SessionID,
 		"SKIP_PR":                    strconv.FormatBool(agentDef.SkipPR),
 		"PR_NUMBER":                  strconv.Itoa(prNum),
-		"MODELS":                     tasks.DefaultModelsString(),
+		"MODELS":                     tasks.GetAvailableModelsForKey(getGeminiAPIKey(secret)),
 		"DRY_RUN":                    strconv.FormatBool(flags.DryRun),
 	}
 

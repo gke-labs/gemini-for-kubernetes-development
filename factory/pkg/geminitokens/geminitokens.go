@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -222,12 +223,67 @@ func AddSuspendedKey(key string) error {
 		klog.Errorf("Failed to save suspended keys list: %v", err)
 	}
 
-	// Also mark it in quota exceeded list with 100-year expiration as fallback guardrail
-	_ = AddQuotaExceededKey(key, 100*365*24*time.Hour)
 	return nil
 }
 
-func IsKeyQuotaExceeded(key string) bool {
+// DefaultModels is the list of Gemini models to check when verifying general token health.
+var DefaultModels = []string{
+	"gemini-3.6-flash",
+	"gemini-3.5-flash",
+	"gemini-3-flash-preview",
+	"gemini-3.1-pro-preview",
+	"gemini-2.5-pro",
+}
+
+// GetAvailableModels returns the list of models (from the given candidates) whose quota is not exceeded for the key, loading the quota list exactly once.
+func GetAvailableModels(key string, models []string) []string {
+	if key == "" {
+		return models
+	}
+
+	listMutex.Lock()
+	list, err := loadQuotaExceededList()
+	listMutex.Unlock()
+	if err != nil {
+		klog.Errorf("Failed to load quota exceeded list: %v", err)
+		return models
+	}
+
+	var active []string
+	now := time.Now()
+	for _, m := range models {
+		mapKey := key + ":" + m
+
+		// Check model-specific quota
+		exp, exists := list[mapKey]
+		if exists && !now.After(exp) {
+			// quota is exceeded for this model, so we skip it
+			continue
+		}
+
+		// Fallback/Legacy check: if key itself exists in list without colon, it means general/all models quota is exceeded
+		expLegacy, legacyExists := list[key]
+		if legacyExists && !now.After(expLegacy) {
+			// legacy quota is exceeded for the key itself, so all models are skipped
+			continue
+		}
+
+		active = append(active, m)
+	}
+
+	return active
+}
+
+// IsKeyAllModelsQuotaExceeded checks if all DefaultModels have exceeded quota for the given key.
+func IsKeyAllModelsQuotaExceeded(key string) bool {
+	if key == "" {
+		return false
+	}
+	active := GetAvailableModels(key, DefaultModels)
+	return len(active) == 0
+}
+
+func IsKeyModelQuotaExceeded(key string, model string) bool {
 	if key == "" {
 		return false
 	}
@@ -241,22 +297,39 @@ func IsKeyQuotaExceeded(key string) bool {
 		return false
 	}
 
-	exp, exists := list[key]
-	if !exists {
-		return false
+	modified := false
+	defer func() {
+		if modified {
+			_ = saveQuotaExceededList(list)
+		}
+	}()
+
+	if model != "" {
+		mapKey := key + ":" + model
+		if exp, exists := list[mapKey]; exists {
+			if time.Now().After(exp) {
+				delete(list, mapKey)
+				modified = true
+				return false
+			}
+			return true
+		}
 	}
 
-	if time.Now().After(exp) {
-		// Clean up expired entry
-		delete(list, key)
-		_ = saveQuotaExceededList(list)
-		return false
+	// Legacy fallback/general check: if key exists directly without colon suffix, treat it as quota exceeded for all models.
+	if exp, exists := list[key]; exists {
+		if time.Now().After(exp) {
+			delete(list, key)
+			modified = true
+			return false
+		}
+		return true
 	}
 
-	return true
+	return false
 }
 
-func AddQuotaExceededKey(key string, duration time.Duration) error {
+func AddQuotaExceededKeyAndModel(key string, model string, duration time.Duration) error {
 	if key == "" {
 		return nil
 	}
@@ -270,13 +343,23 @@ func AddQuotaExceededKey(key string, duration time.Duration) error {
 	}
 
 	expiration := time.Now().Add(duration)
-	list[key] = expiration
 
 	keyDesc := key
 	if len(keyDesc) > 8 {
 		keyDesc = keyDesc[:8] + "..."
 	}
-	klog.Infof("Adding key starting with '%s' to quota exceeded list until %s (%s)", keyDesc, expiration.Format(time.RFC3339), duration)
+
+	if model == "" {
+		for _, m := range DefaultModels {
+			mapKey := key + ":" + m
+			list[mapKey] = expiration
+		}
+		klog.Infof("Adding key starting with '%s' for ALL models (fallback because model is empty) to quota exceeded list until %s (%s)", keyDesc, expiration.Format(time.RFC3339), duration)
+	} else {
+		mapKey := key + ":" + model
+		list[mapKey] = expiration
+		klog.Infof("Adding key starting with '%s' for model '%s' to quota exceeded list until %s (%s)", keyDesc, model, expiration.Format(time.RFC3339), duration)
+	}
 
 	if err := saveQuotaExceededList(list); err != nil {
 		return fmt.Errorf("saving quota exceeded list: %w", err)
@@ -402,7 +485,7 @@ func getTokenFromScript() (string, error) {
 			return "", nil
 		}
 
-		if !IsKeyQuotaExceeded(token) && !IsKeySuspended(token) {
+		if !IsKeyAllModelsQuotaExceeded(token) && !IsKeySuspended(token) {
 			return token, nil
 		}
 	}
@@ -462,13 +545,13 @@ func DiscoverTokensFromScript() ([]string, error) {
 }
 
 type TokensStatus struct {
-	Total             int
-	QuotaExceeded     int
-	Suspended         int
-	Active            int
-	ActiveList        []string
-	QuotaExceededList []string
-	SuspendedList     []string
+	Total             int      `json:"total"`
+	QuotaExceeded     int      `json:"quotaExceeded"`
+	Suspended         int      `json:"suspended"`
+	Active            int      `json:"active"`
+	ActiveList        []string `json:"activeList"`
+	QuotaExceededList []string `json:"quotaExceededList"`
+	SuspendedList     []string `json:"suspendedList"`
 }
 
 func GetTokensStatus() (*TokensStatus, error) {
@@ -477,7 +560,11 @@ func GetTokensStatus() (*TokensStatus, error) {
 		return nil, err
 	}
 
-	status := &TokensStatus{}
+	status := &TokensStatus{
+		ActiveList:        make([]string, 0),
+		QuotaExceededList: make([]string, 0),
+		SuspendedList:     make([]string, 0),
+	}
 	seenSuspended := make(map[string]bool)
 
 	suspendedMap, _ := loadSuspendedList()
@@ -487,36 +574,88 @@ func GetTokensStatus() (*TokensStatus, error) {
 		}
 	}
 
+	// Load quota exceeded list once and prune expired entries to avoid disk I/O in the loop
+	listMutex.Lock()
+	quotaList, _ := loadQuotaExceededList()
+	quotaModified := false
+	now := time.Now()
+	for k, exp := range quotaList {
+		if now.After(exp) {
+			delete(quotaList, k)
+			quotaModified = true
+		}
+	}
+	if quotaModified {
+		_ = saveQuotaExceededList(quotaList)
+	}
+	listMutex.Unlock()
+
+	// Keep track of all suspended keys uniquely
+	suspendedKeysMap := make(map[string]bool)
+	for k := range suspendedMap {
+		if k != "" {
+			suspendedKeysMap[k] = true
+		}
+	}
+
 	for _, t := range allTokens {
 		obscured := t
 		if len(obscured) > 8 {
 			obscured = obscured[:8] + "..."
 		}
-		if IsKeySuspended(t) || seenSuspended[t] {
-			seenSuspended[t] = true
-			status.SuspendedList = append(status.SuspendedList, t) // Full un-obscured key string
-		} else if IsKeyQuotaExceeded(t) {
-			status.QuotaExceededList = append(status.QuotaExceededList, obscured)
+		if seenSuspended[t] {
+			suspendedKeysMap[t] = true
 		} else {
-			status.ActiveList = append(status.ActiveList, obscured)
+			// Check specific models dynamically from quotaList
+			var exceededModels []string
+			legacyExceeded := false
+
+			// If legacy key is present, it's exceeded for everything
+			if exp, exists := quotaList[t]; exists && !now.After(exp) {
+				legacyExceeded = true
+				exceededModels = append(exceededModels, DefaultModels...)
+			} else {
+				// Otherwise check individual models
+				for _, m := range DefaultModels {
+					mapKey := t + ":" + m
+					if exp, exists := quotaList[mapKey]; exists && !now.After(exp) {
+						exceededModels = append(exceededModels, m)
+					}
+				}
+			}
+
+			if len(exceededModels) == len(DefaultModels) {
+				// Exceeded for ALL models -> fully Quota Exceeded
+				if legacyExceeded {
+					status.QuotaExceededList = append(status.QuotaExceededList, obscured)
+				} else {
+					sort.Strings(exceededModels)
+					status.QuotaExceededList = append(status.QuotaExceededList, fmt.Sprintf("%s (%s)", obscured, strings.Join(exceededModels, ", ")))
+				}
+			} else if len(exceededModels) > 0 {
+				// Exceeded for some but not all models -> Active (Degraded)
+				sort.Strings(exceededModels)
+				status.ActiveList = append(status.ActiveList, fmt.Sprintf("%s (Degraded: exceeded %s)", obscured, strings.Join(exceededModels, ", ")))
+			} else {
+				// Healthy
+				status.ActiveList = append(status.ActiveList, obscured)
+			}
 		}
 	}
 
-	// Add any suspended keys from storage file that weren't sampled in allTokens
-	for k := range suspendedMap {
-		if k != "" {
-			found := false
-			for _, s := range status.SuspendedList {
-				if s == k {
-					found = true
-					break
-				}
-			}
-			if !found {
-				status.SuspendedList = append(status.SuspendedList, k)
-			}
+	// Populate suspended list with obscured versions
+	for k := range suspendedKeysMap {
+		obscured := k
+		if len(obscured) > 8 {
+			obscured = obscured[:8] + "..."
 		}
+		status.SuspendedList = append(status.SuspendedList, obscured)
 	}
+
+	// Sort lists for perfect determinism
+	sort.Strings(status.ActiveList)
+	sort.Strings(status.QuotaExceededList)
+	sort.Strings(status.SuspendedList)
 
 	status.Suspended = len(status.SuspendedList)
 	status.QuotaExceeded = len(status.QuotaExceededList)
