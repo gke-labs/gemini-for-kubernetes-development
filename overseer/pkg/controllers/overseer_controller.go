@@ -22,11 +22,13 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -53,6 +55,7 @@ type OverseerReconciler struct {
 //+kubebuilder:rbac:groups="",resources=pods;events,verbs=get;list
 //+kubebuilder:rbac:groups="",resources=pods/portforward,verbs=create
 //+kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=agents.x-k8s.io,resources=sandboxes,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
@@ -88,6 +91,11 @@ func (r *OverseerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		} else {
 			return ctrl.Result{}, err
 		}
+	}
+
+	// Ensure sandbox egress NetworkPolicy exists in target namespace
+	if err := r.ensureNetworkPolicy(ctx, nsName); err != nil {
+		return ctrl.Result{}, err
 	}
 
 	// 2. Ensure ServiceAccount and RBAC for the overseer pod
@@ -497,6 +505,167 @@ func (r *OverseerReconciler) copySecret(ctx context.Context, name string, fromNa
 	// Update if data changed
 	targetSecret.ResourceVersion = existingSecret.ResourceVersion
 	return r.Update(ctx, targetSecret)
+}
+
+func (r *OverseerReconciler) ensureNetworkPolicy(ctx context.Context, namespace string) error {
+	log := log.FromContext(ctx)
+	policyName := "sandbox-egress-policy"
+
+	var apiServerIP string
+	var apiServerPort int32 = 443
+	svc := &corev1.Service{}
+	if err := r.Get(ctx, types.NamespacedName{Namespace: "default", Name: "kubernetes"}, svc); err == nil {
+		apiServerIP = svc.Spec.ClusterIP
+		if len(svc.Spec.Ports) > 0 {
+			apiServerPort = svc.Spec.Ports[0].Port
+		}
+	}
+
+	var registryIP string
+	var registryPort int32 = 5000
+	regSvc := &corev1.Service{}
+	if err := r.Get(ctx, types.NamespacedName{Namespace: "repo-agent-system", Name: "registry"}, regSvc); err == nil {
+		registryIP = regSvc.Spec.ClusterIP
+		if len(regSvc.Spec.Ports) > 0 {
+			registryPort = regSvc.Spec.Ports[0].Port
+		}
+	}
+
+	egressRules := []networkingv1.NetworkPolicyEgressRule{
+		// Allow DNS
+		{
+			Ports: []networkingv1.NetworkPolicyPort{
+				{
+					Protocol: protoPtr(corev1.ProtocolUDP),
+					Port:     intstrPtr(intstr.FromInt(53)),
+				},
+				{
+					Protocol: protoPtr(corev1.ProtocolTCP),
+					Port:     intstrPtr(intstr.FromInt(53)),
+				},
+			},
+		},
+		// Allow repo-agent-system namespace
+		{
+			To: []networkingv1.NetworkPolicyPeer{
+				{
+					NamespaceSelector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{
+							"kubernetes.io/metadata.name": "repo-agent-system",
+						},
+					},
+				},
+			},
+		},
+		// Allow overseer-system namespace
+		{
+			To: []networkingv1.NetworkPolicyPeer{
+				{
+					NamespaceSelector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{
+							"kubernetes.io/metadata.name": "overseer-system",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	if apiServerIP != "" {
+		egressRules = append(egressRules, networkingv1.NetworkPolicyEgressRule{
+			To: []networkingv1.NetworkPolicyPeer{
+				{
+					IPBlock: &networkingv1.IPBlock{
+						CIDR: apiServerIP + "/32",
+					},
+				},
+			},
+			Ports: []networkingv1.NetworkPolicyPort{
+				{
+					Protocol: protoPtr(corev1.ProtocolTCP),
+					Port:     intstrPtr(intstr.FromInt(int(apiServerPort))),
+				},
+			},
+		})
+	}
+
+	if registryIP != "" {
+		egressRules = append(egressRules, networkingv1.NetworkPolicyEgressRule{
+			To: []networkingv1.NetworkPolicyPeer{
+				{
+					IPBlock: &networkingv1.IPBlock{
+						CIDR: registryIP + "/32",
+					},
+				},
+			},
+			Ports: []networkingv1.NetworkPolicyPort{
+				{
+					Protocol: protoPtr(corev1.ProtocolTCP),
+					Port:     intstrPtr(intstr.FromInt(int(registryPort))),
+				},
+			},
+		})
+	}
+
+	egressRules = append(egressRules, networkingv1.NetworkPolicyEgressRule{
+		// Allow Public Internet (Blocks all other private IPs)
+		To: []networkingv1.NetworkPolicyPeer{
+			{
+				IPBlock: &networkingv1.IPBlock{
+					CIDR: "0.0.0.0/0",
+					Except: []string{
+						"10.0.0.0/8",
+						"172.16.0.0/12",
+						"192.168.0.0/16",
+						"169.254.0.0/16",
+					},
+				},
+			},
+		},
+	})
+
+	policy := &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      policyName,
+			Namespace: namespace,
+		},
+		Spec: networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{
+				MatchExpressions: []metav1.LabelSelectorRequirement{
+					{
+						Key:      "sandbox",
+						Operator: metav1.LabelSelectorOpExists,
+					},
+				},
+			},
+			PolicyTypes: []networkingv1.PolicyType{
+				networkingv1.PolicyTypeEgress,
+			},
+			Egress: egressRules,
+		},
+	}
+
+	existing := &networkingv1.NetworkPolicy{}
+	err := r.Get(ctx, types.NamespacedName{Name: policyName, Namespace: namespace}, existing)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			log.Info("Creating sandbox egress NetworkPolicy", "namespace", namespace)
+			return r.Create(ctx, policy)
+		}
+		return err
+	}
+
+	log.Info("Updating sandbox egress NetworkPolicy", "namespace", namespace)
+	policy.ResourceVersion = existing.ResourceVersion
+	return r.Update(ctx, policy)
+}
+
+func protoPtr(p corev1.Protocol) *corev1.Protocol {
+	return &p
+}
+
+func intstrPtr(i intstr.IntOrString) *intstr.IntOrString {
+	return &i
 }
 
 // SetupWithManager sets up the controller with the Manager.

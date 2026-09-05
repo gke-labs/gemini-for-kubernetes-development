@@ -1,0 +1,47 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-egress-policy
+  namespace: overseer-system
+spec:
+  podSelector:
+    matchExpressions:
+      - key: sandbox
+        operator: Exists
+  policyTypes:
+  - Egress
+  egress:
+    # Allow DNS
+    - ports:
+      - protocol: UDP
+        port: 53
+      - protocol: TCP
+        port: 53
+    # Allow repo-agent-system namespace
+    - to:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: repo-agent-system
+    # Allow overseer-system namespace
+    - to:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: overseer-system
+    # Allow default namespace (Kubernetes API Server Service)
+    - to:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: default
+    # Allow standard Kubernetes Service CIDR in Kind (e.g., CoreDNS, Registry, API Server)
+    - to:
+      - ipBlock:
+          cidr: 10.96.0.0/12
+    # Allow Public Internet (Blocks all other private IPs)
+    - to:
+      - ipBlock:
+          cidr: 0.0.0.0/0
+          except:
+          - 10.0.0.0/8
+          - 172.16.0.0/12
+          - 192.168.0.0/16
+          - 169.254.0.0/16
