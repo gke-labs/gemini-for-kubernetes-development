@@ -936,3 +936,19 @@ body.dark-mode .warning-banner {
   background-color: var(--text-danger);
   color: white;
 }
+
+.active-sandboxes-header {
+  margin-top: 10px;
+  border-bottom: 1px solid #ccc;
+  padding-bottom: 10px;
+  color: #333;
+}
+
+.active-sandboxes-header.mt-30 {
+  margin-top: 30px;
+}
+
+.dark-mode .active-sandboxes-header {
+  border-bottom-color: #555;
+  color: #ccc;
+}
