@@ -435,7 +435,7 @@ function runAgent {
             SLUGIFIED_NAME=$(echo "${AGENT_NAME}" | tr '[:upper:]' '[:lower:]' | tr -c '[:alnum:]' '-' | sed 's/^-//;s/-$//')
             
             # Check if there is an existing open PR for this agent chore
-            EXISTING_PR_NUM=$(gh pr list --state open --search "title:\"chore: ${AGENT_NAME}\"" --json number --jq '.[0].number' 2>/dev/null || true)
+            EXISTING_PR_NUM=$(gh pr list --state open --search "\"chore: ${AGENT_NAME}\" in:title" --json number --jq '.[0].number' 2>/dev/null || true)
             
             if [ -n "$EXISTING_PR_NUM" ] && [ "$EXISTING_PR_NUM" != "null" ]; then
                 echo "Found existing open PR #${EXISTING_PR_NUM} for ${AGENT_NAME}. Checking out its branch..."
