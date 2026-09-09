@@ -45,6 +45,8 @@ Because GitHub requires labels to exist in the repository before bots can attach
 > **Custom Trigger Labels**: If your `Overseer` custom resource specifies a custom `triggerLabel` (e.g., `factory` or a custom prefix), replace `overseer/` with `<triggerLabel>/` (e.g., `<triggerLabel>`, `<triggerLabel>/review`, `<triggerLabel>/ready-for-human`, `<triggerLabel>/stop`).
 >
 > **Additional Labels**: If your configuration defines `additionalLabels` (such as `ai-generated` or `automated-pr`), ensure those are also created in the GitHub repository so PRs created by the AI factory can be properly labeled.
+>
+> **Leaving Review Comments**: Human reviewers and authors are strongly recommended to wait for the `ready-for-human` label (or `<triggerLabel>/ready-for-human`) to be applied to a pull request before leaving review comments. If comments are added while the system is actively investigating CI check failures or resolving merge conflicts, subsequent automated commits pushed by the bot might render those comments outdated or cause them to be ignored.
 
 #### Quick Setup via GitHub CLI (`gh`)
 You can create all required labels in your target repository with the following script:

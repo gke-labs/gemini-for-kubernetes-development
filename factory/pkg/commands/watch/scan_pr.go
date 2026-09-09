@@ -199,9 +199,10 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 		var commentAnalysis prCommentAnalysis
 		var canReview bool
 
+		commentAnalysis = w.evaluatePRComments(ctx, num, pr, comments, reviews, revCommentsMap, lastCommitTime, state.lastCommentAddressedTime, state.lastCommentAddressedSHA, headSHA, bots)
+
 		if !isConflicting {
 			checkAnalysis = w.evaluatePRChecks(ctx, headSHA)
-			commentAnalysis = w.evaluatePRComments(ctx, num, pr, comments, reviews, revCommentsMap, lastCommitTime, state.lastCommentAddressedTime, state.lastCommentAddressedSHA, headSHA, bots)
 			isApproved := isPRApprovedOrLGTM(pr, prIssue, reviews)
 			if isApproved {
 				klog.V(2).Infof("PR #%d is approved / LGTM'd", num)
@@ -240,12 +241,12 @@ func (w *Watcher) processPRs(ctx context.Context, prIssues []*githubv39.Issue) {
 
 		// Top level case statement for handling each type of PR task
 		switch {
+		case commentAnalysis.hasNewComments:
+			w.handlePRComments(ctx, pc, commentAnalysis)
+
 		case isConflicting:
 			w.handlePRIterate(ctx, pc)
 			continue
-
-		case commentAnalysis.hasNewComments:
-			w.handlePRComments(ctx, pc, commentAnalysis)
 
 		case canInvestigate:
 			w.handlePRInvestigate(ctx, pc, checkAnalysis, comments, bots)
