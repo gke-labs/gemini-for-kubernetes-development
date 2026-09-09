@@ -108,11 +108,14 @@ Construct a progress summary comment and post/edit it on the coordinator issue (
 ```
 
 1. Search all existing comments on the coordinator issue for the exact text `### Migration Progress Tracker Summary`.
+   Identify its comment ID:
+   ```bash
+   gh issue view "${COORDINATOR_ISSUE_NUMBER}" --json comments --jq '.comments[] | select(.body | contains("### Migration Progress Tracker Summary")) | .id' | tail -n 1
+   ```
 2. If an existing comment containing that header is found:
-   - Identify its comment ID (e.g. `${COMMENT_ID}`).
-   - Update that same comment with the newly generated summary body (overwriting the previous content):
+   - Update that same comment with the newly generated summary body (overwriting the previous content) using `gh api`:
      ```bash
-     gh issue comment edit "${COMMENT_ID}" --body "${SUMMARY_BODY}"
+     gh api --method PATCH repos/{owner}/{repo}/issues/comments/${COMMENT_ID} -f body="${SUMMARY_BODY}"
      ```
 3. If and only if no such comment exists:
    - Post a new comment:
