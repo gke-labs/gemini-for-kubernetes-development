@@ -193,7 +193,7 @@ function commitChanges {
             
             if [ "${PR_NUMBER:-0}" -gt 0 ]; then
                 echo "PR already exists (#${PR_NUMBER}), pushed changes to branch."
-                echo "Pushed changes to PR #${PR_NUMBER}" > "$(dirname "${PROMPT_FILE}")/agent-output.txt"
+                echo "https://github.com/${REPO_OWNER}/${REPO_NAME}/pull/${PR_NUMBER}" > "$(dirname "${PROMPT_FILE}")/agent-output.txt"
             else
                 # Determine Repo Owner for the link
                 REPO_URL=$(git remote get-url origin)
@@ -433,16 +433,40 @@ function runAgent {
             fi
         else
             SLUGIFIED_NAME=$(echo "${AGENT_NAME}" | tr '[:upper:]' '[:lower:]' | tr -c '[:alnum:]' '-' | sed 's/^-//;s/-$//')
-            BRANCH_NAME="agent/${SLUGIFIED_NAME}-$(date +%Y%m%d-%H%M%S)"
             
-            # Start from base branch
-            git rebase --abort 2>/dev/null || true
-            git merge --abort 2>/dev/null || true
-            git cherry-pick --abort 2>/dev/null || true
-            git reset --hard HEAD
-            git clean -fd
-            git checkout "${BASE_BRANCH}"
-            git checkout -b "${BRANCH_NAME}"
+            # Check if there is an existing open PR for this agent chore
+            EXISTING_PR_NUM=$(gh pr list --state open --search "title:\"chore: ${AGENT_NAME}\"" --json number --jq '.[0].number' 2>/dev/null || true)
+            
+            if [ -n "$EXISTING_PR_NUM" ] && [ "$EXISTING_PR_NUM" != "null" ]; then
+                echo "Found existing open PR #${EXISTING_PR_NUM} for ${AGENT_NAME}. Checking out its branch..."
+                git rebase --abort 2>/dev/null || true
+                git merge --abort 2>/dev/null || true
+                git cherry-pick --abort 2>/dev/null || true
+                git reset --hard HEAD
+                git clean -fd
+                gh pr checkout "${EXISTING_PR_NUM}" --force
+                BRANCH_NAME=$(git branch --show-current)
+                PR_NUMBER="${EXISTING_PR_NUM}"
+                
+                # Rebasing existing branch onto latest default branch to keep it up to date
+                echo "Rebasing existing branch ${BRANCH_NAME} onto origin/${BASE_BRANCH}..."
+                if ! git rebase "origin/${BASE_BRANCH}"; then
+                    echo "Warning: Rebase failed. Aborting and continuing with existing branch state."
+                    git rebase --abort 2>/dev/null || true
+                fi
+            else
+                BRANCH_NAME="agent/${SLUGIFIED_NAME}"
+                
+                # Start from base branch
+                git rebase --abort 2>/dev/null || true
+                git merge --abort 2>/dev/null || true
+                git cherry-pick --abort 2>/dev/null || true
+                git reset --hard HEAD
+                git clean -fd
+                git checkout "${BASE_BRANCH}"
+                git reset --hard "origin/${BASE_BRANCH}" || true
+                git checkout -B "${BRANCH_NAME}"
+            fi
         fi
     fi
  
