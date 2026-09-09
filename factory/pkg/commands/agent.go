@@ -309,6 +309,24 @@ func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 		}
 	}
 
+	var preconditionPath string
+	if agentDef.Precondition != "" {
+		preconditionPromptBytes, err := tasks.RenderRunAgentPrecondition(tasks.PreconditionParams{
+			AgentName:         agentDef.Name,
+			AgentPrecondition: agentDef.Precondition,
+			GithubContext:     prompt,
+		})
+		if err != nil {
+			return fmt.Errorf("rendering agent precondition prompt: %w", err)
+		}
+
+		preconditionPath = fmt.Sprintf("%s/agent-precondition-prompt.txt", taskDir)
+		fmt.Println("Writing precondition prompt into sandbox...")
+		if err := client.WriteFile(ctx, preconditionPath, preconditionPromptBytes); err != nil {
+			return fmt.Errorf("writing precondition prompt: %w", err)
+		}
+	}
+
 	envMap := map[string]string{
 		"HOME":                       "/workspaces/.home",
 		"FACTORY_CONFIG":             "/workspaces/.factory.cfg",
@@ -343,6 +361,9 @@ func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 	}
 	if precondPath != "" {
 		envMap["PRECONDITION_FILE"] = precondPath
+	}
+	if preconditionPath != "" {
+		envMap["AGENT_PRECONDITION_FILE"] = preconditionPath
 	}
 
 	fmt.Println("Running agent task via envd...")

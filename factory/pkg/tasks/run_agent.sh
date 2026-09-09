@@ -540,10 +540,119 @@ function runPrecondition {
     fi
 }
 
+function evaluatePrecondition {
+    if [ -z "$AGENT_PRECONDITION_FILE" ]; then
+        echo "No AGENT_PRECONDITION_FILE defined. Proceeding to run agent."
+        return 0
+    fi
+
+    echo "AGENT_PRECONDITION_FILE is defined. Starting precondition evaluation..."
+
+    pushd "/workspaces/${REPO_NAME}" > /dev/null
+
+    echo "Evaluating precondition with Gemini in YOLO mode..."
+    set +x
+    export GEMINI_API_KEY="${GEMINI_API_KEY}"
+ 
+    MODELS_LIST="${MODELS:-__DEFAULT_MODELS__}"
+    SUCCESS=false
+    for MODEL in $MODELS_LIST; do
+        echo "Trying model for precondition evaluation: $MODEL"
+        if [ "${DRY_RUN:-false}" = "true" ]; then
+            echo "[dry-run] Would run: gemini --yolo --model \"$MODEL\" --include-directories \"$(dirname "${PROMPT_FILE}")\" --output-format json < \"$AGENT_PRECONDITION_FILE\""
+            # Write a dummy dry-run success output
+            echo '{"decision": "proceed", "reason": "dry-run"}' > "$(dirname "${PROMPT_FILE}")/precondition-output.json"
+            SUCCESS=true
+            break
+        fi
+        if gemini --yolo --model "$MODEL" --include-directories "$(dirname "${PROMPT_FILE}")" --output-format json < "$AGENT_PRECONDITION_FILE" > "$(dirname "${PROMPT_FILE}")/precondition-output.json"; then
+            echo "Precondition evaluation successful with model: $MODEL"
+            record_gemini_usage "$(dirname "${PROMPT_FILE}")/precondition-output.json"
+            SUCCESS=true
+            break
+        else
+            echo "Precondition evaluation failed with model: $MODEL. Retrying next model..."
+        fi
+    done
+
+    if [ "$SUCCESS" = false ]; then
+        echo "All models failed during precondition evaluation."
+        popd > /dev/null
+        exit 1
+    fi
+    set -x
+
+    PRECOND_OUT=$(python3 -c '
+import json, os, re
+
+output_path = os.path.join(os.path.dirname(os.getenv("PROMPT_FILE")), "precondition-output.json")
+try:
+    with open(output_path, "r") as f:
+        content = f.read().strip()
+    
+    match = re.search(r"```(?:json)?\s*(.*?)\s*```", content, re.DOTALL)
+    if match:
+        content = match.group(1).strip()
+    
+    data = json.loads(content)
+    decision = data.get("decision", "proceed").lower().strip()
+    reason = data.get("reason", "No reason provided")
+    
+    print(f"DECISION:{decision}")
+    print(f"REASON:{reason}")
+except Exception as e:
+    print("DECISION:error")
+    print(f"REASON:Failed to parse precondition evaluation output: {e}")
+')
+
+    DECISION=$(echo "$PRECOND_OUT" | grep "^DECISION:" | cut -d':' -f2-)
+    REASON=$(echo "$PRECOND_OUT" | grep "^REASON:" | cut -d':' -f2-)
+
+    if [ "$DECISION" = "proceed" ]; then
+        echo "Precondition met: $REASON"
+        popd > /dev/null
+        return 0
+    elif [ "$DECISION" = "defer" ]; then
+        echo "Precondition deferred the workflow. Reason: $REASON"
+        echo "Precondition deferred the workflow. Reason: $REASON" > "$(dirname "${PROMPT_FILE}")/agent-output.txt"
+        popd > /dev/null
+        exit 0
+    elif [ "$DECISION" = "stop" ]; then
+        echo "Precondition stopped the workflow. Reason: $REASON"
+        echo "Precondition stopped the workflow. Reason: $REASON" > "$(dirname "${PROMPT_FILE}")/agent-output.txt"
+        
+        STOP_LABEL="overseer/stop"
+        if [ -n "$FACTORY_CONFIG" ] && [ -f "$FACTORY_CONFIG" ]; then
+            TRIGGER=$(python3 -c "import yaml; cfg = yaml.safe_load(open('$FACTORY_CONFIG')) or {}; print(cfg.get('triggerLabel', ''))" 2>/dev/null || true)
+            if [ -n "$TRIGGER" ] && [ "$TRIGGER" != "overseer" ]; then
+                STOP_LABEL="$TRIGGER/stop"
+            fi
+        fi
+        
+        TARGET_NUM="${PR_NUMBER:-${ISSUE_NUMBER:-0}}"
+        if [ "$TARGET_NUM" -gt 0 ]; then
+            echo "Adding stop label and comment to #${TARGET_NUM}..."
+            gh issue comment "${TARGET_NUM}" --body "🤖 **Precondition evaluation stopped this workflow.**
+Reason: ${REASON}
+
+Adding \`${STOP_LABEL}\` to prevent future runs." || echo "Warning: failed to add comment to #${TARGET_NUM}"
+            
+            gh issue edit "${TARGET_NUM}" --add-label "${STOP_LABEL}" || echo "Warning: failed to add label ${STOP_LABEL} to #${TARGET_NUM}"
+        fi
+        popd > /dev/null
+        exit 0
+    else
+        echo "Precondition evaluation error: $REASON"
+        popd > /dev/null
+        exit 1
+    fi
+}
+
 setupGit
 setupGitRepos
 # HACK: Avoid git lock issues
 sleep 5
 configureGemini
 runPrecondition
+evaluatePrecondition
 runAgent

@@ -41,3 +41,24 @@ func RenderRunAgentPrompt(params AgentParams) ([]byte, error) {
 
 	return pBuf.Bytes(), nil
 }
+
+// PreconditionParams represents the parameters passed to the agent run precondition evaluation prompt.
+type PreconditionParams struct {
+	AgentName         string
+	AgentPrecondition string
+	GithubContext     string
+}
+
+// RenderRunAgentPrecondition executes the run_agent_precondition.txt template with the given parameters.
+func RenderRunAgentPrecondition(params PreconditionParams) ([]byte, error) {
+	promptTmpl, err := getPromptTemplate("run_agent_precondition.txt")
+	if err != nil {
+		return nil, fmt.Errorf("getting prompt template: %w", err)
+	}
+	var pBuf bytes.Buffer
+	if err := promptTmpl.Execute(&pBuf, params); err != nil {
+		return nil, fmt.Errorf("executing prompt template: %w", err)
+	}
+
+	return pBuf.Bytes(), nil
+}

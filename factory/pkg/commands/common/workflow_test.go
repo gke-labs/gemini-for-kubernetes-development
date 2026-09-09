@@ -1,6 +1,7 @@
 package common
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -181,6 +182,8 @@ preconditionScript: |
   #!/bin/bash
   echo "precondition check"
   exit 0
+precondition: |
+  Check if we have open PRs.
 ---
 You are a test assistant.
 `)
@@ -202,9 +205,12 @@ You are a test assistant.
 	if def.Cooldown != "15m" {
 		t.Errorf("Cooldown = %q; want %q", def.Cooldown, "15m")
 	}
-	expectedPrecondition := "#!/bin/bash\necho \"precondition check\"\nexit 0\n"
-	if def.PreconditionScript != expectedPrecondition {
-		t.Errorf("PreconditionScript = %q; want %q", def.PreconditionScript, expectedPrecondition)
+	expectedPreconditionScript := "#!/bin/bash\necho \"precondition check\"\nexit 0\n"
+	if def.PreconditionScript != expectedPreconditionScript {
+		t.Errorf("PreconditionScript = %q; want %q", def.PreconditionScript, expectedPreconditionScript)
+	}
+	if strings.TrimSpace(def.Precondition) != "Check if we have open PRs." {
+		t.Errorf("Precondition = %q; want %q", def.Precondition, "Check if we have open PRs.")
 	}
 	if def.Prompt != "You are a test assistant." {
 		t.Errorf("Prompt = %q; want %q", def.Prompt, "You are a test assistant.")

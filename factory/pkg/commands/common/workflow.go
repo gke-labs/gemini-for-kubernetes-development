@@ -23,6 +23,7 @@ type AgentDefinition struct {
 	Mode               string `yaml:"mode,omitempty"`
 	Cooldown           string `yaml:"cooldown,omitempty"`
 	PreconditionScript string `yaml:"preconditionScript,omitempty"`
+	Precondition       string `yaml:"precondition,omitempty"`
 	Prompt             string `yaml:"-"`
 }
 
