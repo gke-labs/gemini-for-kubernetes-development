@@ -27,10 +27,26 @@ func (w *Watcher) Run(ctx context.Context) error {
 	w.checkRepo(ctx)
 
 	if w.Once {
+		if w.Mode == "all" || w.Mode == "run" {
+			w.runTasks(ctx)
+		}
 		fmt.Println("Running in once mode. Waiting for active tasks to complete...")
-		w.wg.Wait()
+		w.Wait()
 		fmt.Println("All tasks completed. Exiting.")
 		return nil
+	}
+
+	daemonCtx, daemonCancel := context.WithCancel(ctx)
+	defer daemonCancel()
+
+	doneChan := make(chan struct{})
+	if w.Mode == "all" || w.Mode == "run" {
+		go func() {
+			defer close(doneChan)
+			_ = w.RunDispatcher(daemonCtx)
+		}()
+	} else {
+		close(doneChan)
 	}
 
 	for {
@@ -44,12 +60,9 @@ func (w *Watcher) Run(ctx context.Context) error {
 			w.state.shuttingDown = true
 			w.state.mu.Unlock()
 
+			daemonCancel()
+
 			fmt.Println("Waiting for active tasks to complete...")
-			doneChan := make(chan struct{})
-			go func() {
-				w.wg.Wait()
-				close(doneChan)
-			}()
 			select {
 			case <-doneChan:
 				fmt.Println("All tasks completed. Exiting.")
@@ -240,13 +253,6 @@ func (w *Watcher) checkRepo(ctx context.Context) {
 		}
 	}
 
-	runRunner := false
-	if w.Mode == "all" || w.Mode == "run" {
-		if w.state.lastRunnerRun.IsZero() || now.Sub(w.state.lastRunnerRun) >= 30*time.Second {
-			runRunner = true
-		}
-	}
-
 	w.state.mu.Lock()
 	refIssues := make(map[int]bool)
 	for k, v := range w.state.referencedIssues {
@@ -374,14 +380,6 @@ func (w *Watcher) checkRepo(ctx context.Context) {
 
 		w.state.mu.Lock()
 		w.state.lastIssueScan = now
-		w.state.mu.Unlock()
-	}
-
-	// 3. Runner Mode execution
-	if runRunner {
-		w.runTasks(ctx)
-		w.state.mu.Lock()
-		w.state.lastRunnerRun = now
 		w.state.mu.Unlock()
 	}
 }

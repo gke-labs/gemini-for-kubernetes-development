@@ -9,10 +9,17 @@ import (
 	"strings"
 	"time"
 
+	"k8s.io/klog/v2"
+
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
-	"k8s.io/klog/v2"
 )
+
+const (
+	DefaultDispatcherInterval = 30 * time.Second
+)
+
+var execCommand = exec.CommandContext
 
 func (w *Watcher) buildTaskCommandArgs(t *api.QueueTask, selectedUser string) []string {
 	var args []string
@@ -130,16 +137,18 @@ func (w *Watcher) runSingleTask(ctx context.Context, taskFilename string, t *api
 	executable, err := os.Executable()
 	if err != nil {
 		klog.Errorf("Failed to get executable path: %v", err)
+		_ = w.queueMgr.FailTask(taskFilename, t, err.Error())
 		return
 	}
 
 	args := w.buildTaskCommandArgs(t, selectedUser)
 	if args == nil {
 		klog.Errorf("Unknown task type: %s", t.Type)
+		_ = w.queueMgr.FailTask(taskFilename, t, fmt.Sprintf("unknown task type: %s", t.Type))
 		return
 	}
 
-	cmd := exec.CommandContext(taskCtx, executable, args...)
+	cmd := execCommand(taskCtx, executable, args...)
 
 	logFilename := strings.TrimSuffix(taskFilename, ".yaml") + ".log"
 	processingLogPath := filepath.Join(w.processingLogDir, logFilename)
@@ -199,6 +208,53 @@ func (w *Watcher) runSingleTask(ctx context.Context, taskFilename string, t *api
 	}
 }
 
+type dispatcherConfig struct {
+	interval time.Duration
+}
+
+// DispatcherOption configures the behavior of RunDispatcher.
+type DispatcherOption func(*dispatcherConfig)
+
+// WithDispatcherInterval sets the interval between task dispatch cycles.
+func WithDispatcherInterval(interval time.Duration) DispatcherOption {
+	return func(cfg *dispatcherConfig) {
+		if interval > 0 {
+			cfg.interval = interval
+		}
+	}
+}
+
+// RunDispatcher executes the dispatch loop until ctx is cancelled.
+// It listens on a ticker to periodically dispatch ready tasks.
+// It waits for all in-flight tasks to finish before returning.
+func (w *Watcher) RunDispatcher(ctx context.Context, opts ...DispatcherOption) error {
+	defer w.wg.Wait()
+
+	cfg := &dispatcherConfig{
+		interval: DefaultDispatcherInterval,
+	}
+	for _, opt := range opts {
+		opt(cfg)
+	}
+
+	w.runTasks(ctx)
+
+	ticker := time.NewTicker(cfg.interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			w.runTasks(ctx)
+			// Reset the ticker after running tasks to ensure we wait the expected interval
+			ticker.Reset(cfg.interval)
+		}
+	}
+}
+
+// runTasks executes a single task dispatch cycle.
 func (w *Watcher) runTasks(ctx context.Context) {
 	// sync from disk in case task files were changed out of band (e.g. admin editing files on disk)
 	_ = w.queueMgr.SyncIncomingFromDisk()
@@ -214,6 +270,12 @@ func (w *Watcher) runTasks(ctx context.Context) {
 	activeSandboxesInCycle := make(map[string]bool)
 
 	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
 		if isDoNotProcess(w.QueueDir) {
 			klog.Infof("[DO NOT PROCESS] Drain mode detected during cycle execution. Stopping scheduling of remaining queued tasks.")
 			break
@@ -247,8 +309,8 @@ func (w *Watcher) runTasks(ctx context.Context) {
 		}
 
 		sandboxName := w.resolveSandboxName(ctx, task.Type, task.Number)
-		if activeSandboxesInCycle[sandboxName] {
-			klog.Infof("Skipping task %s because sandbox %s is already scheduled to run a task in this cycle.", filename, sandboxName)
+		if activeSandboxesInCycle[sandboxName] || w.sandboxLocks.IsBusy(sandboxName) {
+			klog.Infof("Skipping task %s because sandbox %s is already scheduled or busy.", filename, sandboxName)
 			releasedTasks = append(releasedTasks, filename)
 			continue
 		}
@@ -301,7 +363,14 @@ func (w *Watcher) runTasks(ctx context.Context) {
 			}
 		}
 
+		if !w.sandboxLocks.TryAcquire(sandboxName, filename) {
+			klog.Infof("Skipping task %s because lease for sandbox %s could not be acquired.", filename, sandboxName)
+			releasedTasks = append(releasedTasks, filename)
+			continue
+		}
+
 		if w.DryRun {
+			w.sandboxLocks.Release(sandboxName, filename)
 			fmt.Printf("[DRYRUN] Would process task %s (Type: %s, URL: %s)\n", filename, task.Type, task.URL)
 			activeSandboxesInCycle[sandboxName] = true
 			actionsTaken++
@@ -314,14 +383,18 @@ func (w *Watcher) runTasks(ctx context.Context) {
 
 		if err := w.queueMgr.StartTask(filename, task); err != nil {
 			klog.Errorf("Failed to start task %s: %v", filename, err)
+			w.sandboxLocks.Release(sandboxName, filename)
 			releasedTasks = append(releasedTasks, filename)
 			continue
 		}
 
 		w.wg.Add(1)
-		go func(taskFilename string, t *api.QueueTask) {
-			defer w.wg.Done()
+		go func(taskFilename string, t *api.QueueTask, sbName string) {
+			defer func() {
+				w.sandboxLocks.Release(sbName, taskFilename)
+				w.wg.Done()
+			}()
 			w.runSingleTask(ctx, taskFilename, t)
-		}(filename, task)
+		}(filename, task, sandboxName)
 	}
 }

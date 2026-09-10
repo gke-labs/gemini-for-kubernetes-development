@@ -3,12 +3,14 @@ package watch
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
+	"gopkg.in/yaml.v3"
 )
 
 func TestBuildTaskCommandArgs(t *testing.T) {
@@ -217,5 +219,333 @@ func TestRunTasks_DrainMode_DoesNotClaim(t *testing.T) {
 	inc, proc, _ := w.queueMgr.GetCounts()
 	if inc != 1 || proc != 0 {
 		t.Errorf("expected counts (1, 0), got (%d, %d)", inc, proc)
+	}
+}
+
+func TestRunDispatcher_DispatchesEnqueuedTask(t *testing.T) {
+	origExec := execCommand
+	defer func() { execCommand = origExec }()
+	executed := false
+	execCommand = func(ctx context.Context, name string, arg ...string) *exec.Cmd {
+		executed = true
+		return exec.CommandContext(ctx, "true")
+	}
+
+	tempDir := t.TempDir()
+	w := &Watcher{
+		Flags: Flags{
+			QueueDir:    tempDir,
+			MaxActions:  10,
+			MaxPending:  10,
+			TaskTimeout: 30 * time.Minute,
+		},
+		kubeClient: newTestKubeClient(),
+	}
+	w.initQueueManager()
+
+	for _, d := range []string{"incoming", "processing", "processed"} {
+		if err := os.MkdirAll(filepath.Join(tempDir, d), 0755); err != nil {
+			t.Fatalf("failed to create dir: %v", err)
+		}
+	}
+
+	task := &api.QueueTask{
+		Type:       api.TypeIssueFix,
+		Number:     10,
+		URL:        "https://github.com/test-owner/test-repo/issues/10",
+		EnqueuedAt: time.Now(),
+	}
+
+	if err := w.queueMgr.Enqueue("task-10.yaml", task); err != nil {
+		t.Fatalf("failed to enqueue task: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	dispatcherDone := make(chan struct{})
+	go func() {
+		defer close(dispatcherDone)
+		_ = w.RunDispatcher(ctx)
+	}()
+
+	// Wait for the task to be processed
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		_, _, done := w.queueMgr.GetCounts()
+		if done == 1 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	cancel()
+	<-dispatcherDone
+
+	if !executed {
+		t.Errorf("expected execCommand to be called")
+	}
+	inc, proc, done := w.queueMgr.GetCounts()
+	if inc != 0 || proc != 0 || done != 1 {
+		t.Errorf("expected counts (0, 0, 1), got (%d, %d, %d)", inc, proc, done)
+	}
+}
+
+func TestRunTasks_SandboxLockRegistry_PreventsConcurrentSameSandbox(t *testing.T) {
+	origExec := execCommand
+	defer func() { execCommand = origExec }()
+	execCommand = func(ctx context.Context, name string, arg ...string) *exec.Cmd {
+		return exec.CommandContext(ctx, "true")
+	}
+
+	tempDir := t.TempDir()
+	w := &Watcher{
+		Flags: Flags{
+			QueueDir:    tempDir,
+			MaxActions:  10,
+			MaxPending:  10,
+			TaskTimeout: 30 * time.Minute,
+		},
+		kubeClient: newTestKubeClient(),
+	}
+	w.initQueueManager()
+
+	for _, d := range []string{"incoming", "processing", "processed"} {
+		if err := os.MkdirAll(filepath.Join(tempDir, d), 0755); err != nil {
+			t.Fatalf("failed to create dir: %v", err)
+		}
+	}
+
+	// Given Repo "test-repo", an issue-fix task for #42 resolves to "fix-test-repo-42"
+	w.Repo = RepoFlag{Owner: "test-owner", Repo: "test-repo"}
+	sandboxName := "fix-test-repo-42"
+
+	// Pre-acquire the lease
+	if !w.sandboxLocks.TryAcquire(sandboxName, "existing-task.yaml") {
+		t.Fatalf("failed to pre-acquire lease")
+	}
+
+	task := &api.QueueTask{
+		Type:       api.TypeIssueFix,
+		Number:     42,
+		EnqueuedAt: time.Now(),
+	}
+	fn := "task-issue-42.yaml"
+	if err := w.queueMgr.Enqueue(fn, task); err != nil {
+		t.Fatalf("failed to enqueue task: %v", err)
+	}
+
+	// Run tasks - should be skipped because the sandbox is leased
+	w.runTasks(context.Background())
+
+	inc, proc, _ := w.queueMgr.GetCounts()
+	if inc != 1 || proc != 0 {
+		t.Errorf("expected task to remain in incoming while sandbox is leased, got inc=%d, proc=%d", inc, proc)
+	}
+
+	// Release the lease
+	if !w.sandboxLocks.Release(sandboxName, "existing-task.yaml") {
+		t.Fatalf("failed to release pre-acquired lease")
+	}
+
+	// Next run: should be claimed and started
+	w.runTasks(context.Background())
+	w.Wait()
+
+	inc, proc, done := w.queueMgr.GetCounts()
+	if inc != 0 || proc != 0 || done != 1 {
+		t.Errorf("expected task to complete after lease released, got inc=%d, proc=%d, done=%d", inc, proc, done)
+	}
+
+	// Sandbox lock should now be released
+	if w.sandboxLocks.IsBusy(sandboxName) {
+		t.Errorf("expected sandbox lock to be free after worker completed")
+	}
+}
+
+func TestWatcher_RunTasks_Standalone(t *testing.T) {
+	origExec := execCommand
+	defer func() { execCommand = origExec }()
+	executed := false
+	execCommand = func(ctx context.Context, name string, arg ...string) *exec.Cmd {
+		executed = true
+		return exec.CommandContext(ctx, "true")
+	}
+
+	tempDir := t.TempDir()
+	w := &Watcher{
+		Flags: Flags{
+			QueueDir:    tempDir,
+			MaxActions:  10,
+			MaxPending:  10,
+			TaskTimeout: 30 * time.Minute,
+		},
+		kubeClient: newTestKubeClient(),
+	}
+	w.initQueueManager()
+
+	task := &api.QueueTask{
+		Type:       api.TypeIssueFix,
+		Number:     77,
+		URL:        "https://github.com/test-owner/test-repo/issues/77",
+		EnqueuedAt: time.Now(),
+	}
+	if err := w.queueMgr.Enqueue("task-77.yaml", task); err != nil {
+		t.Fatalf("Enqueue failed: %v", err)
+	}
+
+	w.runTasks(context.Background())
+	w.Wait()
+
+	if !executed {
+		t.Errorf("expected execCommand to be called")
+	}
+	inc, proc, done := w.queueMgr.GetCounts()
+	if inc != 0 || proc != 0 || done != 1 {
+		t.Errorf("expected counts (0, 0, 1), got (%d, %d, %d)", inc, proc, done)
+	}
+}
+
+func TestWatcher_RunDispatcher_WaitsForWorkers(t *testing.T) {
+	origExec := execCommand
+	defer func() { execCommand = origExec }()
+	executed := false
+	execCommand = func(ctx context.Context, name string, arg ...string) *exec.Cmd {
+		executed = true
+		return exec.CommandContext(ctx, "sleep", "0.05")
+	}
+
+	tempDir := t.TempDir()
+	w := &Watcher{
+		Flags: Flags{
+			QueueDir:    tempDir,
+			MaxActions:  10,
+			MaxPending:  10,
+			TaskTimeout: 30 * time.Minute,
+		},
+		kubeClient: newTestKubeClient(),
+	}
+	w.initQueueManager()
+
+	task := &api.QueueTask{
+		Type:       api.TypeIssueFix,
+		Number:     88,
+		URL:        "https://github.com/test-owner/test-repo/issues/88",
+		EnqueuedAt: time.Now(),
+	}
+	if err := w.queueMgr.Enqueue("task-88.yaml", task); err != nil {
+		t.Fatalf("Enqueue failed: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	doneChan := make(chan struct{})
+	go func() {
+		defer close(doneChan)
+		_ = w.RunDispatcher(ctx)
+	}()
+
+	// Allow dispatcher to pick up task and start worker
+	time.Sleep(50 * time.Millisecond)
+
+	// Cancel context while worker is running
+	cancel()
+
+	// Wait for RunDispatcher() to return via doneChan
+	select {
+	case <-doneChan:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for w.RunDispatcher() to return")
+	}
+
+	if !executed {
+		t.Errorf("expected execCommand to be called")
+	}
+
+	// Because RunDispatcher() waited for worker goroutine to complete before returning, task is done
+	inc, proc, done := w.queueMgr.GetCounts()
+	if inc != 0 || proc != 0 || done != 1 {
+		t.Errorf("expected counts (0, 0, 1) after RunDispatcher() returned, got (%d, %d, %d)", inc, proc, done)
+	}
+
+	// Verify the task actually completed successfully and was not killed
+	processedTaskPath := filepath.Join(tempDir, "processed", "task-88.yaml")
+	data, err := os.ReadFile(processedTaskPath)
+	if err != nil {
+		t.Fatalf("failed to read processed task file: %v", err)
+	}
+	var completedTask api.QueueTask
+	if err := yaml.Unmarshal(data, &completedTask); err != nil {
+		t.Fatalf("failed to unmarshal processed task: %v", err)
+	}
+	if completedTask.Status != api.StatusCompleted {
+		t.Errorf("expected task status to be %q, got %q", api.StatusCompleted, completedTask.Status)
+	}
+}
+
+func TestWatcher_RunDispatcher_PeriodicDispatch(t *testing.T) {
+	origExec := execCommand
+	defer func() { execCommand = origExec }()
+
+	execCommand = func(ctx context.Context, name string, arg ...string) *exec.Cmd {
+		return exec.CommandContext(ctx, "true")
+	}
+
+	tempDir := t.TempDir()
+	w := &Watcher{
+		Flags: Flags{
+			QueueDir:    tempDir,
+			MaxActions:  10,
+			MaxPending:  10,
+			TaskTimeout: 30 * time.Minute,
+		},
+		kubeClient: newTestKubeClient(),
+	}
+	w.initQueueManager()
+
+	for _, d := range []string{"incoming", "processing", "processed"} {
+		if err := os.MkdirAll(filepath.Join(tempDir, d), 0755); err != nil {
+			t.Fatalf("failed to create dir: %v", err)
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	dispatcherDone := make(chan struct{})
+	go func() {
+		defer close(dispatcherDone)
+		_ = w.RunDispatcher(ctx, WithDispatcherInterval(10*time.Millisecond))
+	}()
+
+	// Wait slightly for first dispatch to pass
+	time.Sleep(20 * time.Millisecond)
+
+	// Now enqueue a task AFTER initial runTasks has already executed
+	task := &api.QueueTask{
+		Type:       api.TypeIssueFix,
+		Number:     99,
+		URL:        "https://github.com/test-owner/test-repo/issues/99",
+		EnqueuedAt: time.Now(),
+	}
+	if err := w.queueMgr.Enqueue("task-99.yaml", task); err != nil {
+		t.Fatalf("failed to enqueue task: %v", err)
+	}
+
+	// Poll until the periodic ticker picks up and completes the task
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		_, _, done := w.queueMgr.GetCounts()
+		if done == 1 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	cancel()
+	<-dispatcherDone
+
+	inc, proc, done := w.queueMgr.GetCounts()
+	if inc != 0 || proc != 0 || done != 1 {
+		t.Errorf("expected counts (0, 0, 1), got (%d, %d, %d)", inc, proc, done)
 	}
 }

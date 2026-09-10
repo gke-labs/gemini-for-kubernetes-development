@@ -83,6 +83,7 @@ type Watcher struct {
 	processedIssues  map[int]time.Time
 	processedPRs     map[int]prWatchState
 	queueMgr         *concurrency.TaskQueueManager
+	sandboxLocks     *concurrency.SandboxLockRegistry
 	state            *watchState
 	timeoutChan      <-chan time.Time
 	wg               sync.WaitGroup
@@ -109,6 +110,12 @@ func (w *Watcher) initQueueManager() {
 		ProcessedLogDir:  w.processedLogDir,
 		DryRun:           w.DryRun,
 	})
+	w.sandboxLocks = concurrency.NewSandboxLockRegistry()
+}
+
+// Wait blocks until all in-flight tasks have completed.
+func (w *Watcher) Wait() {
+	w.wg.Wait()
 }
 
 func NewWatcher(rootFlags common.RootFlags, flags Flags) *Watcher {
@@ -148,6 +155,5 @@ type watchState struct {
 	referencedIssues map[int]bool
 	lastPRScan       time.Time
 	lastIssueScan    time.Time
-	lastRunnerRun    time.Time
 	shuttingDown     bool
 }
