@@ -3,6 +3,7 @@ package common
 import (
 	"context"
 	"regexp"
+	"sort"
 	"strconv"
 
 	githubv39 "github.com/google/go-github/v39/github"
@@ -107,4 +108,63 @@ func ListAllStatuses(ctx context.Context, client *githubv39.Client, owner, repo,
 		deduplicated = append(deduplicated, status)
 	}
 	return deduplicated, nil
+}
+
+// ExtractRelatedIssuesAndPRs parses the issue body and comments to find all referenced issue and PR numbers.
+// It returns a sorted, deduplicated slice of integer issue/PR numbers.
+func ExtractRelatedIssuesAndPRs(body string, comments []string, excludeNum int) []int {
+	referenced := make(map[int]bool)
+
+	// Combine body and comments for processing
+	allTexts := append([]string{body}, comments...)
+
+	// We match patterns like:
+	// 1. #123
+	// 2. GH-123
+	// 3. /issues/123
+	// 4. /pull/123 or /pulls/123
+	reHash := regexp.MustCompile(`(?:#|(?i:\bgh-))(\d+)\b`)
+	reURL := regexp.MustCompile(`\b(?:issues|pull|pulls)/(\d+)\b`)
+	reKeyword := regexp.MustCompile(`(?i:\b(?:fixes|closes|resolves|issue|pr)\s+)(\d+)\b`)
+
+	for _, text := range allTexts {
+		// Hash / GH- references
+		for _, match := range reHash.FindAllStringSubmatch(text, -1) {
+			if len(match) > 1 {
+				if num, err := strconv.Atoi(match[1]); err == nil && num < 10000000 {
+					if num != excludeNum {
+						referenced[num] = true
+					}
+				}
+			}
+		}
+		// URL / path references
+		for _, match := range reURL.FindAllStringSubmatch(text, -1) {
+			if len(match) > 1 {
+				if num, err := strconv.Atoi(match[1]); err == nil && num < 10000000 {
+					if num != excludeNum {
+						referenced[num] = true
+					}
+				}
+			}
+		}
+		// Keyword references
+		for _, match := range reKeyword.FindAllStringSubmatch(text, -1) {
+			if len(match) > 1 {
+				if num, err := strconv.Atoi(match[1]); err == nil && num < 10000000 {
+					if num != excludeNum {
+						referenced[num] = true
+					}
+				}
+			}
+		}
+	}
+
+	// Convert map keys to a sorted slice
+	var result []int
+	for num := range referenced {
+		result = append(result, num)
+	}
+	sort.Ints(result)
+	return result
 }

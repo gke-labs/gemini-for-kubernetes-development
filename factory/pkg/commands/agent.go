@@ -232,6 +232,7 @@ func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 	}
 	defer client.Close()
 
+	var relatedIssues []int
 	var prompt string
 	if isPR || isIssue {
 		fmt.Printf("Fetching details for #%d from GitHub...\n", targetNum)
@@ -246,9 +247,13 @@ func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 			return fmt.Errorf("fetching comments: %w", err)
 		}
 		var commentMsgs []string
+		var commentBodies []string
 		for _, c := range comments {
 			commentMsgs = append(commentMsgs, fmt.Sprintf("Comment from %s:\n%s", c.GetUser().GetLogin(), c.GetBody()))
+			commentBodies = append(commentBodies, c.GetBody())
 		}
+
+		relatedIssues = common.ExtractRelatedIssuesAndPRs(issue.GetBody(), commentBodies, targetNum)
 
 		prompt = fmt.Sprintf("%s\n\nOriginal GitHub Context:\nTitle: %s\n\nDescription:\n%s\n\nComments:\n%s",
 			agentDef.Prompt,
@@ -325,6 +330,16 @@ func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 		"PR_NUMBER":                  strconv.Itoa(prNum),
 		"MODELS":                     tasks.GetAvailableModelsForKey(getGeminiAPIKey(secret)),
 		"DRY_RUN":                    strconv.FormatBool(flags.DryRun),
+	}
+	if targetNum != 0 {
+		envMap["ISSUE_NUMBER"] = strconv.Itoa(targetNum)
+	}
+	if len(relatedIssues) > 0 {
+		var strIssues []string
+		for _, num := range relatedIssues {
+			strIssues = append(strIssues, strconv.Itoa(num))
+		}
+		envMap["RELATED_ISSUES"] = strings.Join(strIssues, ",")
 	}
 	if precondPath != "" {
 		envMap["PRECONDITION_FILE"] = precondPath

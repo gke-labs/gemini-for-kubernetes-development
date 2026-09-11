@@ -192,3 +192,23 @@ func TestListAllStatuses(t *testing.T) {
 		t.Errorf("expected ci/prow status to have state success (newest), got %s", prowStatus.GetState())
 	}
 }
+
+func TestExtractRelatedIssuesAndPRs(t *testing.T) {
+	body := "This issue fixes #100 and relates to https://github.com/foo/bar/issues/200."
+	comments := []string{
+		"Closed by pull request https://github.com/foo/bar/pull/300. Also see GH-400 and resolves #500.",
+		"Does not relate to 10000000 (too large) or 999. But wait, we should check pr 600.",
+	}
+
+	got := ExtractRelatedIssuesAndPRs(body, comments, 100)
+	expected := []int{200, 300, 400, 500, 600}
+
+	if len(got) != len(expected) {
+		t.Fatalf("ExtractRelatedIssuesAndPRs returned %v; want %v", got, expected)
+	}
+	for i, v := range expected {
+		if got[i] != v {
+			t.Errorf("at index %d: expected %d, got %d", i, v, got[i])
+		}
+	}
+}
