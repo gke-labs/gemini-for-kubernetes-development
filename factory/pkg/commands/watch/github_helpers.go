@@ -143,19 +143,30 @@ func listAllIssueTimeline(ctx context.Context, client *githubv39.Client, owner, 
 	return all, false, nil
 }
 
-// timelineHasOpenLinkedPR reports whether the timeline contains a cross-reference
-// from a pull request that is still open.
+// timelineHasOpenLinkedPR reports whether the timeline contains a connected pull request that is still open.
 func timelineHasOpenLinkedPR(timeline []*githubv39.Timeline) bool {
+	linkedPRs := make(map[int]bool)
 	for _, event := range timeline {
-		if event.GetEvent() == "cross-referenced" && event.Source != nil {
-			if event.Source.Issue != nil && event.Source.Issue.PullRequestLinks != nil {
-				if event.Source.Issue.GetState() == "open" {
-					return true
-				}
+		if event.Source == nil || event.Source.Issue == nil {
+			continue
+		}
+		if event.Source.Issue.PullRequestLinks == nil {
+			continue
+		}
+		prNum := event.Source.Issue.GetNumber()
+		if prNum == 0 {
+			continue
+		}
+		switch event.GetEvent() {
+		case "connected":
+			if event.Source.Issue.GetState() == "open" {
+				linkedPRs[prNum] = true
 			}
+		case "disconnected":
+			delete(linkedPRs, prNum)
 		}
 	}
-	return false
+	return len(linkedPRs) > 0
 }
 
 // searchForOpenLinkedPR asks the Search API whether any open PR mentions the
