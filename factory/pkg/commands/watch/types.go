@@ -12,6 +12,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/concurrency"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/dispatcher"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
 	githubv39 "github.com/google/go-github/v39/github"
 )
@@ -85,12 +86,19 @@ type Watcher struct {
 	processedPRs     map[int]prWatchState
 	queueMgr         *concurrency.TaskQueueManager
 	sandboxLocks     *concurrency.SandboxLockRegistry
+	entityCache      *concurrency.EntityStateCache
+	sandboxes        *sandbox.Service
 	dispatcher       *dispatcher.Dispatcher
+	reconciler       *sandbox.Reconciler
 	state            *watchState
 	timeoutChan      <-chan time.Time
 }
 
-func (w *Watcher) initQueueManager() {
+// initComponents builds the in-memory primitives and subcontrollers of the
+// watcher. It is called once from NewWatcher so that tests can drive individual
+// subcontrollers, and again from init once the GitHub and Kubernetes clients
+// have been resolved.
+func (w *Watcher) initComponents() {
 	if w.incomingDir == "" && w.QueueDir != "" {
 		w.incomingDir = filepath.Join(w.QueueDir, "incoming")
 		w.processingDir = filepath.Join(w.QueueDir, "processing")
@@ -112,7 +120,20 @@ func (w *Watcher) initQueueManager() {
 		DryRun:           w.DryRun,
 	})
 	w.sandboxLocks = concurrency.NewSandboxLockRegistry()
+	w.entityCache = concurrency.NewEntityStateCache()
+	// Allocated before the subcontrollers below, because the reconciler's pause
+	// signal reads the shutdown flag out of it.
+	w.state = &watchState{}
+	w.sandboxes = sandbox.NewService(sandbox.ServiceConfig{
+		Namespace: w.Namespace,
+		Owner:     w.Repo.Owner,
+		Repo:      w.Repo.Repo,
+	}, sandbox.ServiceDeps{
+		Kube:   w.kubeClient,
+		GitHub: w.ghClient,
+	})
 	w.dispatcher = w.newDispatcher(w.newCLIRunner())
+	w.reconciler = w.newReconciler()
 }
 
 // Wait blocks until all in-flight tasks have completed.
@@ -127,7 +148,7 @@ func NewWatcher(rootFlags common.RootFlags, flags Flags) *Watcher {
 		RootFlags: rootFlags,
 		Flags:     flags,
 	}
-	w.initQueueManager()
+	w.initComponents()
 	return w
 }
 
@@ -153,11 +174,11 @@ type prWatchState struct {
 	lastIteratedTime time.Time
 }
 
+// watchState tracks the cadence of the scan cycles and the shutdown signal.
+// Open pull request and issue state lives in the shared EntityStateCache.
 type watchState struct {
-	mu               sync.Mutex
-	openPRs          []*githubv39.PullRequest
-	referencedIssues map[int]bool
-	lastPRScan       time.Time
-	lastIssueScan    time.Time
-	shuttingDown     bool
+	mu            sync.Mutex
+	lastPRScan    time.Time
+	lastIssueScan time.Time
+	shuttingDown  bool
 }

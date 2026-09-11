@@ -79,7 +79,7 @@ func TestProcessPRs_Filters(t *testing.T) {
 	w.processingDir = processingDir
 	w.processedDir = processedDir
 	w.triggerLabel = "factory"
-	w.initQueueManager()
+	w.initComponents()
 	_ = w.queueMgr.LoadFromDisk()
 
 	w.processPRs(context.Background(), prIssues)
@@ -96,7 +96,7 @@ func TestProcessPRs_DisabledMode(t *testing.T) {
 			PRMode: "disabled",
 		},
 	}
-	w.initQueueManager()
+	w.initComponents()
 	// Should return immediately without doing any operations
 	w.processPRs(context.Background(), nil)
 }
@@ -199,7 +199,7 @@ func TestProcessPRs_ReadyForHuman_GatedByActiveTask(t *testing.T) {
 			},
 		},
 	}
-	w.initQueueManager()
+	w.initComponents()
 
 	prIssue := &githubv39.Issue{
 		Number: &prNum,
@@ -346,7 +346,7 @@ func TestProcessPRs_UnassignOnReadyForHuman(t *testing.T) {
 			},
 		},
 	}
-	w.initQueueManager()
+	w.initComponents()
 
 	prIssue := &githubv39.Issue{
 		Number: &prNum,
@@ -466,7 +466,7 @@ func TestProcessPRs_ReadyForHuman_GatedByPendingCheckRuns(t *testing.T) {
 		triggerLabel:  "factory",
 		processedPRs:  make(map[int]prWatchState),
 	}
-	w.initQueueManager()
+	w.initComponents()
 
 	prIssue := &githubv39.Issue{
 		Number: &prNum,
@@ -591,7 +591,7 @@ func TestProcessPRs_ReadyForHuman_GatedByPendingCommitStatus(t *testing.T) {
 		triggerLabel:  "factory",
 		processedPRs:  make(map[int]prWatchState),
 	}
-	w.initQueueManager()
+	w.initComponents()
 
 	prIssue := &githubv39.Issue{
 		Number: &prNum,
@@ -717,7 +717,7 @@ func TestProcessPRs_Review_GatedByPendingCheckRuns(t *testing.T) {
 			},
 		},
 	}
-	w.initQueueManager()
+	w.initComponents()
 
 	prIssue := &githubv39.Issue{
 		Number: &prNum,
@@ -848,7 +848,7 @@ func TestProcessPRs_CommentsPrioritizedOverCIFailures(t *testing.T) {
 		ghClient:      ghClient,
 		kubeClient:    kubeClient,
 	}
-	w.initQueueManager()
+	w.initComponents()
 
 	prIssue := &githubv39.Issue{
 		Number: &prNum,
@@ -979,7 +979,7 @@ func TestProcessPRs_CommentsPrioritizedOverMergeConflicts(t *testing.T) {
 		ghClient:      ghClient,
 		kubeClient:    kubeClient,
 	}
-	w.initQueueManager()
+	w.initComponents()
 
 	prIssue := &githubv39.Issue{
 		Number: &prNum,
@@ -1091,7 +1091,7 @@ func TestProcessPRs_InMergeQueue(t *testing.T) {
 			},
 		},
 	}
-	w.initQueueManager()
+	w.initComponents()
 
 	prIssue := &githubv39.Issue{
 		Number: &prNum,

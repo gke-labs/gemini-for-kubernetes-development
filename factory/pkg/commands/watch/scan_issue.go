@@ -111,7 +111,7 @@ func (w *Watcher) queueIssueTasks(ctx context.Context, issues []*githubv39.Issue
 				sandboxName = fmt.Sprintf("wf-issue-%d", num)
 			}
 
-			running, err := isSandboxTaskRunning(ctx, w.kubeClient, w.Namespace, sandboxName)
+			running, err := w.sandboxes.IsTaskRunning(ctx, sandboxName)
 			if err != nil {
 				klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
 				continue

@@ -9,7 +9,7 @@ import (
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/dispatcher"
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/sandbox"
 )
 
 // newDispatcher constructs the task dispatcher used by the watcher, wiring it to
@@ -25,10 +25,45 @@ func (w *Watcher) newDispatcher(runner dispatcher.TaskRunner) *dispatcher.Dispat
 	}, dispatcher.Deps{
 		Queue:        w.queueMgr,
 		SandboxLocks: w.sandboxLocks,
-		Sandboxes:    &watcherSandboxService{w: w},
+		Sandboxes:    w.sandboxes,
 		Coordinator:  &watcherTaskCoordinator{w: w},
 		Runner:       runner,
 	})
+}
+
+// newReconciler constructs the sandbox reconciler, which runs as its own
+// goroutine and keeps cluster sandbox state in sync without blocking scanning
+// or dispatching.
+func (w *Watcher) newReconciler() *sandbox.Reconciler {
+	return sandbox.New(sandbox.Config{
+		Interval:    sandbox.DefaultInterval,
+		GCInterval:  sandbox.DefaultGCInterval,
+		EvictionAge: w.SandboxEvictionAge,
+		IdleTimeout: w.SandboxIdleTimeout,
+		DryRun:      w.DryRun,
+	}, sandbox.Deps{
+		Sandboxes: w.sandboxes,
+		Locks:     w.sandboxLocks,
+		Entities:  w.entityCache,
+		Paused:    w.reclamationPaused,
+	})
+}
+
+// reclamationPaused reports whether the queue is draining, in which case the
+// reconciler holds off on reclaiming sandboxes.
+//
+// This is the reconciler's only view of queue state besides the lease registry,
+// and it is deliberately a one-way read: collection can observe that the queue
+// is draining but has no way to alter it.
+//
+// Shutdown is deliberately not reported here. The reconciler runs under the
+// daemon context, so cancelling it already stops collection, and it stops a
+// sweep that is already in flight - which this signal, read once at the top of
+// a sweep, cannot. Drain cannot be expressed that way in turn: it is a marker
+// file that an operator removes to resume, and a cancelled context never comes
+// back.
+func (w *Watcher) reclamationPaused() bool {
+	return w.queueMgr != nil && w.queueMgr.IsDrainMode()
 }
 
 // newCLIRunner builds the runner that executes tasks as child factory CLI processes.
@@ -47,35 +82,9 @@ func (w *Watcher) newCLIRunner() *dispatcher.CLIRunner {
 	})
 }
 
-// watcherSandboxService adapts the watcher's Kubernetes helpers to the dispatcher.SandboxService interface.
-type watcherSandboxService struct {
-	w *Watcher
-}
-
-var _ dispatcher.SandboxService = (*watcherSandboxService)(nil)
-
-func (s *watcherSandboxService) ResolveSandboxName(ctx context.Context, taskType api.TaskType, number int) string {
-	return s.w.resolveSandboxName(ctx, taskType, number)
-}
-
-func (s *watcherSandboxService) IsTaskRunning(ctx context.Context, sandboxName string) (bool, error) {
-	return isSandboxTaskRunning(ctx, s.w.kubeClient, s.w.Namespace, sandboxName)
-}
-
-func (s *watcherSandboxService) IsTaskCompleted(ctx context.Context, sandboxName string, taskType api.TaskType) (bool, error) {
-	return isSandboxTaskCompleted(ctx, s.w.kubeClient, s.w.Namespace, sandboxName, taskType)
-}
-
-func (s *watcherSandboxService) CountRunningTasks(ctx context.Context) (int, error) {
-	return countRunningSandboxTasks(ctx, s.w.kubeClient, s.w.Namespace)
-}
-
-func (s *watcherSandboxService) DeleteSandbox(ctx context.Context, sandboxName string) error {
-	if s.w.kubeClient == nil {
-		return nil
-	}
-	return k8s.NewManager(s.w.kubeClient).DeleteSandbox(ctx, s.w.Namespace, sandboxName)
-}
+// The watcher's sandbox service satisfies the dispatcher's interface directly,
+// so no adapter is needed.
+var _ dispatcher.SandboxService = (*sandbox.Service)(nil)
 
 // watcherTaskCoordinator adapts the watcher's GitHub interactions to the TaskCoordinator interface.
 type watcherTaskCoordinator struct {

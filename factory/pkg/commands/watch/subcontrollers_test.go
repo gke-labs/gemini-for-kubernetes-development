@@ -48,7 +48,7 @@ func newTestWatcher(t *testing.T, queueDir string) *Watcher {
 		},
 		kubeClient: newTestKubeClient(),
 	}
-	w.initQueueManager()
+	w.initComponents()
 	return w
 }
 
@@ -60,7 +60,7 @@ func TestWatcher_InitQueueManager_ConstructsDispatcher(t *testing.T) {
 }
 
 // TestWatcher_DispatchOnce_UsesWatcherAdapters exercises the dispatcher through the
-// watcher-provided SandboxService and TaskCoordinator adapters against fake clients.
+// watcher's sandbox service and TaskCoordinator adapter against fake clients.
 func TestWatcher_DispatchOnce_UsesWatcherAdapters(t *testing.T) {
 	w := newTestWatcher(t, t.TempDir())
 
@@ -94,12 +94,11 @@ func TestWatcher_DispatchOnce_UsesWatcherAdapters(t *testing.T) {
 	}
 }
 
-func TestWatcherSandboxService_ResolvesIssueSandboxName(t *testing.T) {
+func TestWatcherSandboxes_ResolveName_IssueSandbox(t *testing.T) {
 	w := newTestWatcher(t, t.TempDir())
-	sandboxes := &watcherSandboxService{w: w}
 
-	if got := sandboxes.ResolveSandboxName(context.Background(), api.TypeIssueFix, 42); got != "fix-test-repo-42" {
-		t.Errorf("ResolveSandboxName = %q, want %q", got, "fix-test-repo-42")
+	if got := w.sandboxes.ResolveName(context.Background(), api.TypeIssueFix, 42); got != "fix-test-repo-42" {
+		t.Errorf("ResolveName = %q, want %q", got, "fix-test-repo-42")
 	}
 }
 

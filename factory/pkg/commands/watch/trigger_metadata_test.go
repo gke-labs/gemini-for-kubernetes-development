@@ -201,7 +201,7 @@ func TestPRCommentsTriggerMetadata(t *testing.T) {
 		ghClient:      ghClient,
 		kubeClient:    newTestKubeClient(),
 	}
-	w.initQueueManager()
+	w.initComponents()
 
 	prIssues := []*githubv39.Issue{
 		{
@@ -326,7 +326,7 @@ func TestPRInvestigateTriggerMetadata(t *testing.T) {
 		ghClient:      ghClient,
 		kubeClient:    newTestKubeClient(),
 	}
-	w.initQueueManager()
+	w.initComponents()
 
 	prIssues := []*githubv39.Issue{
 		{
@@ -430,7 +430,7 @@ func TestPRIterateTriggerMetadata(t *testing.T) {
 		ghClient:      ghClient,
 		kubeClient:    newTestKubeClient(),
 	}
-	w.initQueueManager()
+	w.initComponents()
 
 	prIssues := []*githubv39.Issue{
 		{

@@ -12,8 +12,15 @@ import (
 
 // KubernetesClient holds Kubernetes clients and configuration.
 type KubernetesClient struct {
-	RestConfig       *rest.Config
-	Clientset        *kubernetes.Clientset
+	RestConfig *rest.Config
+	// Clientset is the typed client. It is stored as an interface, like
+	// DynamicClient, so that tests can substitute a fake implementation.
+	//
+	// Callers guard on "Clientset == nil" to detect a client that has no
+	// cluster behind it. That test only works for a genuinely nil interface, so
+	// never assign a typed nil pointer here: (*kubernetes.Clientset)(nil) would
+	// satisfy the guard and then panic on first use.
+	Clientset        kubernetes.Interface
 	DynamicClient    dynamic.Interface
 	CurrentNamespace string
 }

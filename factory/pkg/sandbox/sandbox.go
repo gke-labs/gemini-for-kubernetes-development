@@ -10,6 +10,7 @@ import (
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/klog/v2"
@@ -493,6 +494,11 @@ func IsCurrentSandbox(ctx context.Context, kubeClient *clients.KubernetesClient,
 	return false
 }
 
+// SuspendIdleSandboxes scales every sandbox that has been idle for longer than
+// idleTimeout down to zero replicas, and returns how many were suspended.
+//
+// Callers that need to bracket each sandbox with their own bookkeeping, such as
+// taking a lease, should drive SuspendSandboxIfIdle themselves instead.
 func SuspendIdleSandboxes(ctx context.Context, kubeClient *clients.KubernetesClient, namespace string, idleTimeout time.Duration, dryRun bool) (int, error) {
 	if kubeClient == nil || idleTimeout <= 0 {
 		return 0, nil
@@ -503,64 +509,108 @@ func SuspendIdleSandboxes(ctx context.Context, kubeClient *clients.KubernetesCli
 		return 0, fmt.Errorf("listing sandboxes for idle suspension check: %w", err)
 	}
 
-	now := time.Now()
 	suspendedCount := 0
-
-	for _, item := range list.Items {
-		name := item.GetName()
-		if IsCurrentSandbox(ctx, kubeClient, &item, namespace) {
+	for i := range list.Items {
+		item := &list.Items[i]
+		suspended, err := SuspendSandboxIfIdle(ctx, kubeClient, namespace, item, idleTimeout, dryRun)
+		if err != nil {
+			klog.Errorf("Failed to suspend idle sandbox '%s': %v", item.GetName(), err)
 			continue
 		}
-		replicas, found, err := unstructured.NestedInt64(item.Object, "spec", "replicas")
-		if err == nil && found && replicas == 0 {
-			continue // Already suspended
-		}
-
-		// Determine last activity time (latest of creation time, completion-time, last-task-time)
-		lastActivity := item.GetCreationTimestamp().Time
-		if annotations := item.GetAnnotations(); annotations != nil {
-			if state := annotations["sandbox.gemini.google.com/last-task-state"]; state != "" && !strings.EqualFold(state, "Completed") && !strings.EqualFold(state, "Failed") {
-				// There is an active task running right now (e.g. Running), do not suspend
-				continue
-			}
-			if tsStr, ok := annotations["sandbox.gemini.google.com/completion-time"]; ok {
-				if ts, err := time.Parse(time.RFC3339, tsStr); err == nil && ts.After(lastActivity) {
-					lastActivity = ts
-				}
-			}
-			if tsStr, ok := annotations["sandbox.gemini.google.com/last-task-time"]; ok {
-				if ts, err := time.Parse(time.RFC3339, tsStr); err == nil && ts.After(lastActivity) {
-					lastActivity = ts
-				}
-			}
-			if tsStr, ok := annotations["sandbox.gemini.google.com/unpaused-at"]; ok {
-				if ts, err := time.Parse(time.RFC3339, tsStr); err == nil && ts.After(lastActivity) {
-					lastActivity = ts
-				}
-			}
-		}
-
-		if now.Sub(lastActivity) > idleTimeout {
-			klog.Infof("Sandbox '%s' in namespace '%s' has not run any task for %v (last activity: %v). Suspending (replicas=0)...", name, namespace, idleTimeout, lastActivity)
-			if dryRun {
-				fmt.Printf("[DRYRUN] Would suspend idle sandbox '%s' (replicas=0)\n", name)
-				suspendedCount++
-				continue
-			}
-
-			if err := unstructured.SetNestedField(item.Object, int64(0), "spec", "replicas"); err != nil {
-				klog.Errorf("Failed to set replicas=0 on sandbox '%s': %v", name, err)
-				continue
-			}
-			_, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Update(ctx, &item, metav1.UpdateOptions{})
-			if err != nil {
-				klog.Errorf("Failed to update sandbox '%s' to replicas=0: %v", name, err)
-			} else {
-				fmt.Printf("Suspended idle sandbox '%s' (replicas=0)\n", name)
-				suspendedCount++
-			}
+		if suspended {
+			suspendedCount++
 		}
 	}
 
 	return suspendedCount, nil
+}
+
+// SuspendSandboxIfIdle scales a single sandbox down to zero replicas if it has
+// gone without activity for longer than idleTimeout, reporting whether it was
+// suspended.
+//
+// item is the caller's view of the sandbox and is used only to decide cheaply
+// whether it is a candidate at all. The sandbox is re-read before being written
+// because that view may be stale: a caller sweeping many sandboxes can be
+// minutes past its listing by the time it reaches this one, and an Update
+// carrying a stale resourceVersion would be rejected. The re-read also gives a
+// last chance to notice that the sandbox picked up work in the meantime.
+func SuspendSandboxIfIdle(ctx context.Context, kubeClient *clients.KubernetesClient, namespace string, item *unstructured.Unstructured, idleTimeout time.Duration, dryRun bool) (bool, error) {
+	if kubeClient == nil || item == nil || idleTimeout <= 0 {
+		return false, nil
+	}
+
+	name := item.GetName()
+	if IsCurrentSandbox(ctx, kubeClient, item, namespace) {
+		return false, nil
+	}
+	lastActivity, idle := idleSince(item, idleTimeout, time.Now())
+	if !idle {
+		return false, nil
+	}
+
+	klog.Infof("Sandbox '%s' in namespace '%s' has not run any task for %v (last activity: %v). Suspending (replicas=0)...", name, namespace, idleTimeout, lastActivity)
+	if dryRun {
+		fmt.Printf("[DRYRUN] Would suspend idle sandbox '%s' (replicas=0)\n", name)
+		return true, nil
+	}
+
+	current, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("reading sandbox %s before suspending it: %w", name, err)
+	}
+	if _, stillIdle := idleSince(current, idleTimeout, time.Now()); !stillIdle {
+		klog.Infof("Sandbox '%s' became active while it was being collected; leaving it running.", name)
+		return false, nil
+	}
+
+	if err := unstructured.SetNestedField(current.Object, int64(0), "spec", "replicas"); err != nil {
+		return false, fmt.Errorf("setting replicas=0 on sandbox %s: %w", name, err)
+	}
+	if _, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Update(ctx, current, metav1.UpdateOptions{}); err != nil {
+		return false, fmt.Errorf("updating sandbox %s to replicas=0: %w", name, err)
+	}
+
+	fmt.Printf("Suspended idle sandbox '%s' (replicas=0)\n", name)
+	return true, nil
+}
+
+// idleSince reports when a sandbox was last active and whether that was longer
+// ago than idleTimeout.
+//
+// A sandbox that is already scaled to zero, or whose annotations say a task is
+// still running, is never considered idle: the first has nothing left to
+// suspend and the second is busy regardless of how old its timestamps look.
+func idleSince(item *unstructured.Unstructured, idleTimeout time.Duration, now time.Time) (time.Time, bool) {
+	replicas, found, err := unstructured.NestedInt64(item.Object, "spec", "replicas")
+	if err == nil && found && replicas == 0 {
+		return time.Time{}, false // Already suspended.
+	}
+
+	// Last activity is the most recent of the creation time and any of the
+	// timestamps a task run leaves behind.
+	lastActivity := item.GetCreationTimestamp().Time
+	if annotations := item.GetAnnotations(); annotations != nil {
+		if state := annotations["sandbox.gemini.google.com/last-task-state"]; state != "" && !strings.EqualFold(state, "Completed") && !strings.EqualFold(state, "Failed") {
+			return time.Time{}, false
+		}
+		for _, key := range []string{
+			"sandbox.gemini.google.com/completion-time",
+			"sandbox.gemini.google.com/last-task-time",
+			"sandbox.gemini.google.com/unpaused-at",
+		} {
+			tsStr, ok := annotations[key]
+			if !ok {
+				continue
+			}
+			if ts, err := time.Parse(time.RFC3339, tsStr); err == nil && ts.After(lastActivity) {
+				lastActivity = ts
+			}
+		}
+	}
+
+	return lastActivity, now.Sub(lastActivity) > idleTimeout
 }

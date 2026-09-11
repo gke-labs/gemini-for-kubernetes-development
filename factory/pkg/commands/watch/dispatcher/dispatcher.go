@@ -48,16 +48,16 @@ type TaskRunner interface {
 // SandboxService abstracts the cluster interactions the dispatcher needs to
 // decide whether a task may be scheduled, and to clean up after a timeout.
 type SandboxService interface {
-	// ResolveSandboxName returns the name of the sandbox that a task would execute in.
-	ResolveSandboxName(ctx context.Context, taskType api.TaskType, number int) string
+	// ResolveName returns the name of the sandbox that a task would execute in.
+	ResolveName(ctx context.Context, taskType api.TaskType, number int) string
 	// IsTaskRunning reports whether the sandbox is currently executing a task.
 	IsTaskRunning(ctx context.Context, sandboxName string) (bool, error)
 	// IsTaskCompleted reports whether the sandbox has already completed a task of the given type.
 	IsTaskCompleted(ctx context.Context, sandboxName string, taskType api.TaskType) (bool, error)
 	// CountRunningTasks returns the number of sandboxes currently executing a task.
 	CountRunningTasks(ctx context.Context) (int, error)
-	// DeleteSandbox force deletes a sandbox, e.g. after a task times out.
-	DeleteSandbox(ctx context.Context, sandboxName string) error
+	// Delete force deletes a sandbox, e.g. after a task times out.
+	Delete(ctx context.Context, sandboxName string) error
 }
 
 // TaskCoordinator abstracts the GitHub-side interactions that surround the
@@ -308,7 +308,7 @@ func (d *Dispatcher) DispatchOnce(ctx context.Context) {
 			return
 		}
 
-		sandboxName := d.sandboxes.ResolveSandboxName(ctx, task.Type, task.Number)
+		sandboxName := d.sandboxes.ResolveName(ctx, task.Type, task.Number)
 		dispatched, requeue := d.dispatchTask(ctx, filename, task, sandboxName, activeSandboxesInCycle)
 		if requeue {
 			releasedTasks = append(releasedTasks, filename)
@@ -432,7 +432,7 @@ func (d *Dispatcher) executeTask(ctx context.Context, taskFilename string, task 
 		// Force clean up sandbox if the task timed out
 		if taskCtx.Err() == context.DeadlineExceeded && sandboxName != "" {
 			klog.Warningf("Task %s timed out after %s! Force cleaning up sandbox '%s'...", taskFilename, d.cfg.TaskTimeout, sandboxName)
-			if err := d.sandboxes.DeleteSandbox(ctx, sandboxName); err != nil {
+			if err := d.sandboxes.Delete(ctx, sandboxName); err != nil {
 				klog.Errorf("Failed to delete sandbox '%s' on timeout: %v", sandboxName, err)
 			}
 		}

@@ -89,7 +89,7 @@ flowchart TB
 
     subgraph SharedMemory["Shared Thread-Safe In-Memory State"]
         TQM["TaskQueueManager<br/>- incoming / processing / processed maps<br/>- fair-share sorter, RWMutex"]
-        ESC["EntityStateCache<br/>- open PRs, referenced issues<br/>- processed state (SHAs, timestamps)<br/>- RWMutex"]
+        ESC["EntityStateCache<br/>- open PRs, referenced issues<br/>- open issues, per-half scan marks<br/>- RWMutex"]
         SLR["SandboxLockRegistry<br/>- in-flight sandbox lease table<br/>- Mutex"]
     end
 
@@ -207,15 +207,24 @@ To guarantee maintainability and eliminate circular dependencies, subcontrollers
     4. Releases lease in `SandboxLockRegistry` verifying task ownership: `sandboxLocks.Release(sandboxName, filename)`.
 
 ### 5. `SandboxReconciler`
-* **Cadence**: Background ticker running every **30–60 seconds**.
+* **Location**: Dedicated `watch/sandbox` package. It exposes two collaborators so that the cheap per-task lookups and the expensive sweeps are not entangled:
+  * `sandbox.Service` — point lookups and probes (`ResolveName`, `IsTaskRunning`, `IsTaskCompleted`, `CountRunningTasks`, `Delete`) shared by the scanners and the dispatcher. It is the only place that knows how a task number maps onto a sandbox name.
+  * `sandbox.Reconciler` — the autonomous goroutine, built via `sandbox.New(Config, Deps)`.
+* **Cadence**: Two independent tickers driven from a single `select` loop, because the two workloads have very different costs:
+  * `Interval` (default **30s**) drives `ReconcileOnce`: deleting evicted pods and refreshing the recorded task state of sandboxes that still claim to be running. These are namespace-scoped cluster calls with a fixed cost.
+  * `GCInterval` (default **5m**) drives `CollectGarbage`. Collection confirms every candidate against GitHub before deleting it, so its cost scales with the number of sandboxes whose entity is missing from the cache. Running it on the fast ticker would multiply GitHub API traffic by 10x for no latency benefit, since nothing waits on garbage collection.
+  * Both cycles also run once at startup, so a daemon that is restarted more often than `GCInterval` still collects. Because the two share a goroutine, a slow sweep of either kind postpones the other until it returns; that is accepted deliberately in favour of a loop with no timeout plumbing or lifecycle of its own.
 * **Responsibilities**:
-  * Proactively deletes evicted sandbox pods (`Phase == Failed`, `Reason == Evicted`) and increments eviction counts.
-  * Reconciles running sandbox pods (checks container exit codes and `envd` status, updates annotations).
+  * Proactively deletes evicted sandbox pods (`Phase == Failed`, `Reason == Evicted`) and increments eviction counts. The sandbox name can live under either the `sandbox` or the `agents.x-k8s.io/sandbox` label, and a label selector cannot express "has either key", so each key is listed in turn and the results merged. The pod delete arbitrates the eviction count: `Service.IsTaskRunning` cleans up evicted pods too, so only whoever wins the delete increments the counter and the loser sees `NotFound`.
+  * Reconciles running sandbox pods (checks container exit codes and `envd` status, updates annotations) via `Service.RefreshTaskState`, which is `IsTaskRunning` under the name that admits the annotation correction is the point and the boolean incidental.
   * Cleans up sandboxes belonging to closed/merged PRs and closed issues (using `EntityStateCache` to fast-path open entities without GitHub API calls).
-  * **Lease-Protected Operations**: Strictly verifies `!sandboxLocks.IsBusy(sandboxName)` before deleting closed PR/issue sandboxes, suspending idle sandboxes, or evicting stale sandboxes, preventing destruction of active worker environments.
-  * Suspends idle sandboxes (`factorysandbox.SuspendIdleSandboxes`).
+  * **Lease-Protected Operations**: The reconciler *takes* `sandboxLocks.TryAcquire(sandboxName, "sandbox-gc")` for the whole confirm-and-delete, rather than testing `IsBusy` and then acting. Testing is not enough: confirming an entity against GitHub or probing a sandbox takes long enough that the dispatcher could lease the sandbox and start a task in the gap, and the delete would then destroy the workspace that task is running in. Holding the lease makes the dispatcher's `TryAcquire` fail instead, so it simply retries on a later cycle. This covers closed PR/issue collection, stale eviction and idle suspension.
+  * Suspends idle sandboxes by walking the sweep's own listing and calling `factorysandbox.SuspendSandboxIfIdle` per sandbox, each bracketed by the same acquire/release as every other pass, so a lease is never held across more than one sandbox. Sandboxes already deleted earlier in the sweep are skipped. Because the listing can be minutes old by the time a given sandbox is reached, `SuspendSandboxIfIdle` re-reads the sandbox before writing: the stale copy would carry a stale `resourceVersion`, and the re-read is also the last chance to notice the sandbox picked up work in the meantime.
   * Harvests token usage via `usagereport.HarvestSandbox`.
-* **Decoupling Benefit**: Removes all heavy cluster operations from the critical scanning and task dispatching paths.
+* **Cold Cache Guard**: An unpopulated cache is indistinguishable from "every entity is closed" on the fast path, so before the first scan the reconciler would confirm every sandbox against GitHub one at a time. The two halves of `EntityStateCache` are filled by *different* scans, so they are gated separately — `HasOpenPRs()` guards closed-PR collection and `HasOpenIssues()` guards closed-issue collection. Gating both on the PR signal, the first cut of this design, meant a mode that never ran a PR scan silently lost the issue fast path. Eviction and suspension read nothing but cluster state, so they are not gated at all and stay useful in modes where no scanner ever runs.
+* **Pause Signal**: `Deps.Paused` lets the `Watcher` hold off reclamation while the queue is draining, which `checkRepo` used to get for free when collection lived inside it. It is deliberately a `func() bool` rather than a queue handle: the reconciler can observe that the queue is draining but has no way to mutate it. State reconciliation keeps running while paused — it is non-destructive, and the drain report counts running tasks from exactly the annotations it corrects.
+* **Drain and Shutdown Are Not the Same Signal**: Shutdown deliberately does *not* travel through `Paused`. The reconciler runs under the daemon context, so `daemonCancel()` already stops it, and cancellation additionally aborts a sweep that has already started — `Paused` is read once at the top of `CollectGarbage` and cannot. Drain in turn cannot be expressed as cancellation: it is a marker file an operator removes to resume, whereas a cancelled context never comes back, so a drain that cancelled the reconciler would leave the daemon permanently without GC, eviction and suspension. Cancelling on drain would also take `ReconcileOnce` down with it, which is precisely what must keep running: it is the only thing correcting the `last-task-state` annotations that the drain report counts, so the "active child sandboxes" readout would never converge to zero.
+* **Decoupling Benefit**: Removes all heavy cluster operations from the critical scanning and task dispatching paths. The reconciler observes queue state exclusively through `SandboxLockRegistry` and the read-only `Paused` signal, so it has no dependency on `TaskQueueManager`.
 
 ### 6. `QueueServer` (HTTP API)
 * **Port**: `:13338`
@@ -289,19 +298,19 @@ type EntityStateCache struct {
     mu               sync.RWMutex
     openPRs          []*githubv39.PullRequest
     referencedIssues map[int]bool
-    processedIssues  map[int]time.Time
-    processedPRs     map[int]prWatchState
+    openIssues       map[int]bool
     lastPRScan       time.Time
     lastIssueScan    time.Time
 }
 ```
 
 * **Purpose**:
-  * Serves as the single authoritative thread-safe cache for PR and issue state across subcontrollers.
+  * Serves as the single authoritative thread-safe cache for open PR and issue state across subcontrollers.
   * Eliminates unsynchronized local map writes in `PRScanner` and `IssueScanner`.
   * Allows `IssueScanner` to check `IsIssueReferenced(num)` in O(1) time without API calls.
   * Allows `SandboxReconciler` to fast-path open PR and open issue checks during sandbox GC.
-  * Safely stores per-PR task gating state (`lastReviewedSHA`, `lastCommentAddressedSHA`, `lastInvestigatedSHA`).
+* **A Miss Is Always Safe**: Consumers treat the cache as a fast path and fall back to GitHub, which stays authoritative. What is *not* safe is reading an unpopulated cache as "nothing is open", so `lastPRScan` and `lastIssueScan` record whether each half has been published to. `HasOpenPRs()` and `HasOpenIssues()` distinguish "scanned, found nothing" from "never scanned" — only the latter means the corresponding fast path cannot be trusted. Scanners publish only on success, since a failed paginated scan returns a partial list that would otherwise be cached as though it were complete.
+* **Deferred: Per-Entity Processed State**: `processedIssues` and `processedPRs` (the `lastReviewedSHA` / `lastCommentAddressedSHA` / `lastInvestigatedSHA` gating state) are **not** here yet. They remain owned by the `Watcher` and move across in step 3d together with the PR scanner that consumes them. Mirroring them here ahead of their consumer would mean two live copies of the same state with nothing to keep them in agreement — a trap for whoever lands 3b and 3c in between.
 
 ---
 
@@ -370,16 +379,18 @@ sequenceDiagram
   * On timeout: force deletes the sandbox, then fails the task.
   * Atomically renames YAML and `.log` files to `processed/` and appends a structured entry to `journal.jsonl`.
   * Releases the sandbox lease when the goroutine exits.
-* **Reconciliation Safety Net**: As a secondary safeguard, `SandboxReconciler` periodically checks all active tasks in `TaskQueueManager.processing`. If a sandbox task has completed according to annotations or `envd` but has no active monitor, `SandboxReconciler` automatically transitions the task to `processed/`.
+* **Reconciliation Safety Net** (*not yet implemented*): A task can be orphaned if its monitor goroutine dies without recording an outcome. The sweep that detects this must compare `TaskQueueManager.processing` against sandbox state and transition finished tasks to `processed/`. It belongs to the `TaskDispatcher`, which already owns task lifecycle, leases and adoption monitors — **not** to `SandboxReconciler`, which is deliberately free of any `TaskQueueManager` dependency so that cluster garbage collection can never mutate queue state.
 
 ### Subcontroller Coordination & Lifecycle Management
-Subcontrollers run under a shared cancelable context (`daemonCtx`). Each subcontroller owns the synchronization primitives for the goroutines it spawns; the `Watcher` itself holds **no** `sync.WaitGroup`.
+Subcontrollers run under a shared cancelable context (`daemonCtx`). Each subcontroller owns the synchronization primitives for the **workers it spawns**; the `Watcher` never tracks another subcontroller's workers.
 
 * **Subcontroller-Owned Worker WaitGroups**:
-  * Each subcontroller declares a private `wg sync.WaitGroup` covering only the goroutines it starts. For `TaskDispatcher` this is both task workers (`executeTask`) and adopted-task monitors (`monitorAdoptedTask`).
-  * `Run(ctx)` drains its own workers via `defer d.wg.Wait()`, so returning from `Run` is itself the signal that the subcontroller is fully quiesced. The `Watcher` only has to wait for `Run` to return.
+  * Each subcontroller that spawns goroutines declares a private `wg sync.WaitGroup` covering only the ones it starts. For `TaskDispatcher` this is both task workers (`executeTask`) and adopted-task monitors (`monitorAdoptedTask`). `SandboxReconciler` spawns none — its whole `Run` is one loop on the caller's goroutine — so it needs no WaitGroup at all.
+  * `Run(ctx)` drains its own goroutines via `wg.Wait()`, so returning from `Run` is itself the signal that the subcontroller is fully quiesced. The `Watcher` only has to wait for `Run` to return.
   * The `Watcher` exposes `Wait()`, which delegates to the subcontrollers' `Wait()` methods. This is used by `--once` mode, where no polling loop is started but workers may still be in flight.
   * *Rationale*: Mixing long-running controller loops and short-running tasks on a single shared WaitGroup causes `Wait()` to block indefinitely or triggers runtime panics if `Add()` is invoked concurrently with `Wait()`. Scoping each WaitGroup to its owning subcontroller makes the `Add()`/`Wait()` pairing local and auditable.
+* **Clean Stop Is Not An Error**: A subcontroller's `Run` returns `nil` once cancellation has drained it. Cancellation is how these loops are *asked* to stop, so reporting `ctx.Err()` would force every call site to distinguish an expected shutdown from a real failure, and would make a future `errgroup` wiring treat shutdown as the first error.
+* **Watcher-Owned Join WaitGroup**: `Watcher.Run` uses a *local* `sync.WaitGroup` purely to join the subcontroller `Run` goroutines it launched. Its `Add` calls all happen before any `Wait`, and it never tracks task workers, so it does not reintroduce the failure mode above. A plain WaitGroup is preferred over `errgroup` because there is no error worth propagating and `errgroup` would cancel siblings on the first return during a shutdown that is already underway.
 
 ```go
 func (w *Watcher) Run(ctx context.Context) error {
@@ -388,7 +399,9 @@ func (w *Watcher) Run(ctx context.Context) error {
     }
 
     if w.Once {
+        w.reconciler.ReconcileOnce(ctx)
         w.checkRepo(ctx)
+        w.reconciler.CollectGarbage(ctx) // after the scan, so the entity cache is warm
         w.dispatcher.DispatchOnce(ctx)
         w.Wait() // delegates to each subcontroller's own Wait()
         return nil
@@ -398,8 +411,14 @@ func (w *Watcher) Run(ctx context.Context) error {
     defer daemonCancel()
 
     // Each subcontroller's Run() drains its own workers before returning.
+    var wg sync.WaitGroup
+    for _, run := range []func(context.Context) error{w.reconciler.Run, w.dispatcher.Run} {
+        wg.Add(1)
+        go func() { defer wg.Done(); _ = run(daemonCtx) }()
+    }
+
     doneChan := make(chan struct{})
-    go func() { defer close(doneChan); _ = w.dispatcher.Run(daemonCtx) }()
+    go func() { defer close(doneChan); wg.Wait() }()
 
     for {
         select {
@@ -520,15 +539,25 @@ To avoid the code sprawl and tight coupling seen in initial refactoring attempts
   * Verify `dispatcher/dispatcher_test.go`, `dispatcher/cli_runner_test.go`, `dispatcher_deps_test.go`, `server_test.go`, and `queue_test.go` pass under `go test -race`.
 
 ### Phase 3: Decouple Autonomous Subcontrollers
-* **Status**: Completed (`scan_issue.go`, `scan_pr.go`, `chores.go`, `sandbox.go`)
+Extracted one subcontroller at a time, each landing as its own package with the scanners temporarily remaining in `checkRepo()` until their turn.
+
+* **Status**: In progress.
+
+| Step | Subcontroller | Status | Location |
+| :--- | :--- | :--- | :--- |
+| 3a | `SandboxReconciler` | Completed | `sandbox/service.go`, `sandbox/reconciler.go` |
+| 3b | `ChoreScheduler` | Pending | `chores.go` |
+| 3c | `IssueScanner` | Pending | `scan_issue.go` |
+| 3d | `PRScanner` | Pending | `scan_pr.go` |
+
 * **Scope**:
-  * Extract `ChoreScheduler` into `chores.go` as an independent goroutine.
-  * Extract `SandboxReconciler` into `sandbox.go` as a background GC/reconciler goroutine (30s–60s).
-  * Extract `IssueScanner` into `scan_issue.go` with a single ticker (30s–60s).
-  * Extract `PRScanner` into `scan_pr.go` with a single ticker (1m–2m) and worker pool concurrency.
-  * Wire all subcontrollers into `Watcher.Run()` via `errgroup.WithContext(ctx)`.
+  * **3a — `SandboxReconciler`** (done): extracted into the `watch/sandbox` package as a `Service` (sandbox lookups and probes, shared with the scanners and dispatcher) plus a `Reconciler` running a 30s state ticker and a 5m GC ticker from a single loop, both also firing once at startup. `checkRepo()` no longer performs any cluster work. Every destructive pass — closed PR/issue collection, stale eviction and idle suspension — *takes* the sandbox lease for the duration of its confirm-and-act instead of testing it, so a dispatcher cannot start a task in a sandbox that is about to be deleted or scaled down. `EntityStateCache` was wired into the `Watcher` as the shared owner of open PR and referenced issue state, replacing the mutex-guarded fields on `watchState`; the scan cycle publishes its observed open issues to it on success, and the two halves gate their respective collection passes independently. A read-only `Paused` signal restores the drain behaviour that collection used to inherit from `checkRepo`; shutdown is left to cancelling the daemon context, which also stops a sweep already in flight. `clients.KubernetesClient.Clientset` was widened from `*kubernetes.Clientset` to `kubernetes.Interface` so the reconciler's pod and service paths can be exercised with a fake typed client.
+  * **3b — `ChoreScheduler`**: extract into an independent goroutine driven by cron triggers.
+  * **3c — `IssueScanner`**: extract with a single ticker (30s–60s), reading referenced issues from `EntityStateCache` instead of the Timeline API.
+  * **3d — `PRScanner`**: extract with a single ticker (1m–2m) and a bounded worker pool, moving `processedPRs` onto `EntityStateCache`.
+  * Each step wires its subcontroller into `Watcher.Run()` alongside the existing ones and deletes the corresponding branch of `checkRepo()`. `checkRepo` disappears once 3d lands.
 * **Verification Gate**:
-  * Run all existing test suites: `scan_pr_test.go`, `scan_issue_test.go`, `github_helpers_test.go`, `sandbox_test.go`. Ensure recent CI gating and unassignment tests pass without regressions.
+  * Each step must keep `go test -race ./factory/...` green, in particular `scan_pr_test.go`, `scan_issue_test.go`, `github_helpers_test.go` and the new `sandbox/*_test.go`, so that the CI gating and bot unassignment behaviour does not regress.
 
 ### Phase 4: Lifecycle, Recovery, and End-to-End Verification
 * **Status**: Completed (`watch.go`, `dispatcher/recovery.go`, `concurrency/recovery.go`, `adoption_test.go`, `dispatcher/recovery_test.go`)
