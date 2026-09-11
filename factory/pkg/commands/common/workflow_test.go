@@ -177,6 +177,10 @@ name: test-agent
 description: A test agent
 schedule: "0 * * * *"
 cooldown: 15m
+preconditionScript: |
+  #!/bin/bash
+  echo "precondition check"
+  exit 0
 ---
 You are a test assistant.
 `)
@@ -197,6 +201,10 @@ You are a test assistant.
 	}
 	if def.Cooldown != "15m" {
 		t.Errorf("Cooldown = %q; want %q", def.Cooldown, "15m")
+	}
+	expectedPrecondition := "#!/bin/bash\necho \"precondition check\"\nexit 0\n"
+	if def.PreconditionScript != expectedPrecondition {
+		t.Errorf("PreconditionScript = %q; want %q", def.PreconditionScript, expectedPrecondition)
 	}
 	if def.Prompt != "You are a test assistant." {
 		t.Errorf("Prompt = %q; want %q", def.Prompt, "You are a test assistant.")

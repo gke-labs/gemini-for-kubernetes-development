@@ -295,6 +295,15 @@ func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 		return fmt.Errorf("writing script: %w", err)
 	}
 
+	precondPath := ""
+	if agentDef.PreconditionScript != "" {
+		precondPath = fmt.Sprintf("%s/precondition-script", taskDir)
+		fmt.Println("Writing precondition script into sandbox...")
+		if err := client.WriteFile(ctx, precondPath, []byte(agentDef.PreconditionScript)); err != nil {
+			return fmt.Errorf("writing precondition script: %w", err)
+		}
+	}
+
 	envMap := map[string]string{
 		"HOME":                       "/workspaces/.home",
 		"FACTORY_CONFIG":             "/workspaces/.factory.cfg",
@@ -316,6 +325,9 @@ func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 		"PR_NUMBER":                  strconv.Itoa(prNum),
 		"MODELS":                     tasks.GetAvailableModelsForKey(getGeminiAPIKey(secret)),
 		"DRY_RUN":                    strconv.FormatBool(flags.DryRun),
+	}
+	if precondPath != "" {
+		envMap["PRECONDITION_FILE"] = precondPath
 	}
 
 	fmt.Println("Running agent task via envd...")

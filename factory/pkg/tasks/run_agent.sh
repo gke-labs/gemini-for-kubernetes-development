@@ -521,9 +521,29 @@ function runAgent {
     popd > /dev/null
 }
 
+function runPrecondition {
+    if [ -n "$PRECONDITION_FILE" ] && [ -f "$PRECONDITION_FILE" ]; then
+        echo "Running precondition script..."
+        chmod +x "$PRECONDITION_FILE"
+        
+        pushd "/workspaces/${REPO_NAME}" > /dev/null
+        
+        if ! "$PRECONDITION_FILE"; then
+            echo "Precondition script failed (exit status $?). Deferring workflow." > "$(dirname "${PROMPT_FILE}")/agent-output.txt"
+            echo "Precondition script failed. Deferring workflow."
+            popd > /dev/null
+            exit 0
+        fi
+        
+        echo "Precondition script passed."
+        popd > /dev/null
+    fi
+}
+
 setupGit
 setupGitRepos
 # HACK: Avoid git lock issues
 sleep 5
 configureGemini
+runPrecondition
 runAgent

@@ -31,4 +31,14 @@ func TestGetScriptWithDefaults(t *testing.T) {
 	if !strings.Contains(scriptContent, expectedString) {
 		t.Errorf("Expected script to contain default models list string: %s", expectedString)
 	}
+
+	// Test GetRunAgentScript containing runPrecondition function
+	runAgentScriptBytes, err := GetRunAgentScript()
+	if err != nil {
+		t.Fatalf("Failed to get run_agent script: %v", err)
+	}
+	runAgentScript := string(runAgentScriptBytes)
+	if !strings.Contains(runAgentScript, "runPrecondition") {
+		t.Error("Expected run_agent script to contain runPrecondition function")
+	}
 }
