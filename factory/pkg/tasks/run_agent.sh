@@ -528,11 +528,34 @@ function runPrecondition {
         
         pushd "/workspaces/${REPO_NAME}" > /dev/null
         
-        if ! "$PRECONDITION_FILE"; then
-            echo "Precondition script failed (exit status $?). Deferring workflow." > "$(dirname "${PROMPT_FILE}")/agent-output.txt"
-            echo "Precondition script failed. Deferring workflow."
-            popd > /dev/null
-            exit 0
+        # Determine the execution command based on shebang or syntax compilation
+        local first_line
+        read -r first_line < "$PRECONDITION_FILE"
+        
+        if [[ "$first_line" =~ ^#! ]]; then
+            echo "Precondition has shebang; running directly."
+            if ! "$PRECONDITION_FILE"; then
+                echo "Precondition script failed (exit status $?). Deferring workflow." > "$(dirname "${PROMPT_FILE}")/agent-output.txt"
+                echo "Precondition script failed. Deferring workflow."
+                popd > /dev/null
+                exit 0
+            fi
+        elif python3 -m py_compile "$PRECONDITION_FILE" >/dev/null 2>&1; then
+            echo "Precondition compiles as Python; running with python3."
+            if ! python3 "$PRECONDITION_FILE"; then
+                echo "Precondition script failed (exit status $?). Deferring workflow." > "$(dirname "${PROMPT_FILE}")/agent-output.txt"
+                echo "Precondition script failed. Deferring workflow."
+                popd > /dev/null
+                exit 0
+            fi
+        else
+            echo "Precondition did not compile as Python; running with bash."
+            if ! bash "$PRECONDITION_FILE"; then
+                echo "Precondition script failed (exit status $?). Deferring workflow." > "$(dirname "${PROMPT_FILE}")/agent-output.txt"
+                echo "Precondition script failed. Deferring workflow."
+                popd > /dev/null
+                exit 0
+            fi
         fi
         
         echo "Precondition script passed."
