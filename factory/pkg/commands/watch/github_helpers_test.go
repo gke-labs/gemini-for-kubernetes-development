@@ -998,3 +998,73 @@ func TestHasLinkedPR(t *testing.T) {
 		t.Errorf("expected hasLinkedPR to return true for connected open PR")
 	}
 }
+
+func TestHasLinkedPRWithSearch(t *testing.T) {
+	// 1. Test case where search returns a PR that MERELY MENTIONS the issue (should return false)
+	serverMention := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/search/issues") {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{
+				"total_count": 1,
+				"incomplete_results": false,
+				"items": [
+					{
+						"number": 123,
+						"title": "Unrelated title mentioning 42",
+						"body": "This pr relates to #42 but does not fix it.",
+						"state": "open"
+					}
+				]
+			}`))
+		} else {
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer serverMention.Close()
+
+	ghClient := githubv39.NewClient(nil)
+	ghClient.BaseURL, _ = url.Parse(serverMention.URL + "/")
+
+	got, err := hasLinkedPR(context.Background(), ghClient, "owner", "repo", 42)
+	if err != nil {
+		t.Fatalf("hasLinkedPR returned unexpected error: %v", err)
+	}
+	if got {
+		t.Errorf("expected hasLinkedPR to return false for PR with mere mention")
+	}
+
+	// 2. Test case where search returns a PR that ACTUALLY FIXES the issue (should return true)
+	serverFix := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/search/issues") {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{
+				"total_count": 1,
+				"incomplete_results": false,
+				"items": [
+					{
+						"number": 123,
+						"title": "Fixes #42",
+						"body": "This pr actually fixes issue 42.",
+						"state": "open"
+					}
+				]
+			}`))
+		} else {
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer serverFix.Close()
+
+	ghClientFix := githubv39.NewClient(nil)
+	ghClientFix.BaseURL, _ = url.Parse(serverFix.URL + "/")
+
+	gotFix, err := hasLinkedPR(context.Background(), ghClientFix, "owner", "repo", 42)
+	if err != nil {
+		t.Fatalf("hasLinkedPR returned unexpected error: %v", err)
+	}
+	if !gotFix {
+		t.Errorf("expected hasLinkedPR to return true for PR with closing keyword")
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 
 	githubv39 "github.com/google/go-github/v39/github"
 )
@@ -36,6 +37,76 @@ func GetReferencedIssues(pr *githubv39.PullRequest) map[int]bool {
 	}
 
 	return referenced
+}
+
+// GetClosingIssues scans a pull request's branch name, title, and body for closing references to issue numbers.
+func GetClosingIssues(pr *githubv39.PullRequest) map[int]bool {
+	closing := make(map[int]bool)
+
+	// Check branch name, ignoring epoch timestamps (num >= 10000000)
+	if pr.GetHead().GetRef() != "" {
+		re := regexp.MustCompile(`\d+`)
+		for _, match := range re.FindAllString(pr.GetHead().GetRef(), -1) {
+			if num, err := strconv.Atoi(match); err == nil && num < 10000000 {
+				closing[num] = true
+			}
+		}
+	}
+
+	// Keywords pattern to find closing scope
+	kwRe := regexp.MustCompile(`(?i:\b(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)\b)`)
+
+	for _, text := range []string{pr.GetTitle(), pr.GetBody()} {
+		if text == "" {
+			continue
+		}
+
+		// Find all occurrences of closing keywords
+		matches := kwRe.FindAllStringIndex(text, -1)
+		for _, match := range matches {
+			startIndex := match[1] // right after the keyword
+
+			// Determine the end of the scope (up to period, semicolon, newline, or 150 chars max)
+			endIndex := len(text)
+			if startIndex+150 < endIndex {
+				endIndex = startIndex + 150
+			}
+
+			scopeText := text[startIndex:endIndex]
+			// Truncate at sentence boundaries like period followed by space, semicolon, or newline
+			if idx := strings.Index(scopeText, ". "); idx != -1 {
+				scopeText = scopeText[:idx]
+			}
+			if idx := strings.Index(scopeText, ";"); idx != -1 {
+				scopeText = scopeText[:idx]
+			}
+			if idx := strings.Index(scopeText, "\n"); idx != -1 {
+				scopeText = scopeText[:idx]
+			}
+
+			// Now find all issue numbers inside the scope text
+			// e.g. #123 or /issues/123
+			hashRe := regexp.MustCompile(`#(\d+)\b`)
+			for _, hashMatch := range hashRe.FindAllStringSubmatch(scopeText, -1) {
+				if len(hashMatch) > 1 {
+					if num, err := strconv.Atoi(hashMatch[1]); err == nil && num < 10000000 {
+						closing[num] = true
+					}
+				}
+			}
+
+			urlRe := regexp.MustCompile(`/issues/(\d+)\b`)
+			for _, urlMatch := range urlRe.FindAllStringSubmatch(scopeText, -1) {
+				if len(urlMatch) > 1 {
+					if num, err := strconv.Atoi(urlMatch[1]); err == nil && num < 10000000 {
+						closing[num] = true
+					}
+				}
+			}
+		}
+	}
+
+	return closing
 }
 
 // ListAllCheckRuns retrieves all check runs for a ref handling pagination and deduplicating by name.

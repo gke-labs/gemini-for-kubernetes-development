@@ -105,6 +105,18 @@ func getMissingLabelsForPR(prLabels []*githubv39.Label, refIssues []*githubv39.I
 	return allMissingLabels
 }
 
+func issueIsClosingPR(issue *githubv39.Issue, issueNum int) bool {
+	if issue == nil {
+		return false
+	}
+	pr := &githubv39.PullRequest{
+		Title: issue.Title,
+		Body:  issue.Body,
+	}
+	closing := common.GetClosingIssues(pr)
+	return closing[issueNum]
+}
+
 // timelinePageSize is the maximum page size the GitHub timeline API accepts.
 const timelinePageSize = 100
 
@@ -181,7 +193,16 @@ func searchForOpenLinkedPR(ctx context.Context, client *githubv39.Client, owner,
 	if err != nil {
 		return false, fmt.Errorf("failed to search PRs for issue #%d: %w", issueNum, err)
 	}
-	return result.GetTotal() > 0, nil
+
+	if result.GetTotal() > 0 {
+		for _, issue := range result.Issues {
+			if issueIsClosingPR(issue, issueNum) {
+				return true, nil
+			}
+		}
+	}
+
+	return false, nil
 }
 
 func hasLinkedPR(ctx context.Context, client *githubv39.Client, owner, repo string, issueNum int) (bool, error) {
