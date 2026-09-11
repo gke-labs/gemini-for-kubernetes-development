@@ -19,6 +19,9 @@ import (
 	"k8s.io/klog/v2"
 )
 
+// checkRepoInterval is how often the watch loop polls the repo for new work.
+const checkRepoInterval = 1 * time.Minute
+
 func (w *Watcher) Run(ctx context.Context) error {
 	if err := w.init(ctx); err != nil {
 		return err
@@ -50,7 +53,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 	}
 
 	for {
-		fmt.Printf("Sleeping for 10s...\n")
+		fmt.Printf("Sleeping for %s...\n", checkRepoInterval)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -70,7 +73,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 				fmt.Println("Timeout waiting for active tasks to complete. Exiting.")
 			}
 			return nil
-		case <-time.After(10 * time.Second):
+		case <-time.After(checkRepoInterval):
 			w.checkRepo(ctx)
 		}
 	}
