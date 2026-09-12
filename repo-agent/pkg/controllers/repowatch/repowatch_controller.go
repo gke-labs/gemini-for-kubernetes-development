@@ -1114,6 +1114,16 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 		ephemeralStorage = resource.MustParse("40Gi")
 	}
 
+	var ghClient *github.Client
+	if r.NewGithubClient != nil {
+		client, _, err := r.NewGithubClient(ctx, r.Client, repoWatch)
+		if err == nil {
+			ghClient = client
+		}
+	}
+	issueOwner, issueRepo, _ := parseRepoURL(repoWatch.Spec.RepoURL)
+	gpuEnabled := r.hasGPURequirementDirect(ctx, ghClient, issueOwner, issueRepo, "")
+
 	opt := sandbox.AgentSandboxOptions{
 		DevSandboxOptions: sandbox.DevSandboxOptions{
 			Name:      name,
@@ -1123,6 +1133,7 @@ func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, 
 				"sandbox.gemini.google.com/type":     "issue",
 				"sandbox-type":                       "issue",
 			},
+			GPU: gpuEnabled,
 			Annotations: map[string]string{
 				"agentState": "provisioning",
 			},
@@ -1309,6 +1320,31 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, user *github.
 
 	log.Info("Generated Sandbox for PR", "pr", *pr, "llm.provider", repoWatch.Spec.Review.LLM.Provider)
 
+	var ghClient *github.Client
+	if r.NewGithubClient != nil {
+		client, _, err := r.NewGithubClient(ctx, r.Client, repoWatch)
+		if err == nil {
+			ghClient = client
+		}
+	}
+
+	prOwner := ""
+	prRepo := ""
+	prRef := ""
+	if pr != nil && pr.Head != nil {
+		if pr.Head.Repo != nil {
+			if pr.Head.Repo.Owner != nil {
+				prOwner = pr.Head.Repo.Owner.GetLogin()
+			}
+			prRepo = pr.Head.Repo.GetName()
+		}
+		prRef = pr.Head.GetRef()
+	}
+	if prOwner == "" || prRepo == "" {
+		prOwner, prRepo, _ = parseRepoURL(repoWatch.Spec.RepoURL)
+	}
+	gpuEnabled := r.hasGPURequirementDirect(ctx, ghClient, prOwner, prRepo, prRef)
+
 	opt := sandbox.ReviewSandboxOptions{
 		DevSandboxOptions: sandbox.DevSandboxOptions{
 			Name:      sandboxName,
@@ -1317,6 +1353,7 @@ func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, user *github.
 				"review.gemini.google.com/repowatch": repoWatch.Name,
 				"sandbox.gemini.google.com/type":     "review",
 			},
+			GPU:         gpuEnabled,
 			UserLogin:   userLogin,
 			UserName:    userName,
 			UserEmail:   userEmail,
@@ -1686,6 +1723,19 @@ func (r *Reconciler) createDevSandbox(ctx context.Context, user *github.User, re
 	}
 	userEmail := user.GetEmail()
 
+	var ghClient *github.Client
+	if r.NewGithubClient != nil {
+		client, _, err := r.NewGithubClient(ctx, r.Client, repoWatch)
+		if err == nil {
+			ghClient = client
+		}
+	}
+	devOwner, devRepo, _ := parseRepoURL(repoWatch.Spec.RepoURL)
+	gpuEnabled := r.hasGPURequirementDirect(ctx, ghClient, devOwner, devRepo, branchName)
+	if !gpuEnabled && branchName != "" {
+		gpuEnabled = r.hasGPURequirementDirect(ctx, ghClient, devOwner, devRepo, "")
+	}
+
 	opts := sandbox.DevSandboxOptions{
 		Name:      sandboxName,
 		Namespace: repoWatch.Namespace,
@@ -1694,6 +1744,7 @@ func (r *Reconciler) createDevSandbox(ctx context.Context, user *github.User, re
 			"sandbox.gemini.google.com/type":     "dev",
 			"sandbox-type":                       "dev",
 		},
+		GPU:      gpuEnabled,
 		CloneURL: cloneURL,
 		HTMLURL:  strings.TrimSuffix(repoWatch.Spec.RepoURL, ".git"),
 
@@ -2391,4 +2442,49 @@ func listAllCheckRuns(ctx context.Context, client *github.Client, owner, repo, r
 		opts.Page = resp.NextPage
 	}
 	return allRuns, nil
+}
+
+type DevcontainerConfig struct {
+	HostRequirements *HostRequirements `json:"hostRequirements,omitempty"`
+}
+
+type HostRequirements struct {
+	GPU interface{} `json:"gpu,omitempty"`
+}
+
+func isGPURequired(configContent []byte) bool {
+	reComments := regexp.MustCompile(`(?s)//.*?\n|/\*.*?\*/`)
+	cleaned := reComments.ReplaceAll(configContent, []byte("\n"))
+
+	var cfg DevcontainerConfig
+	if err := json.Unmarshal(cleaned, &cfg); err != nil {
+		return false
+	}
+	if cfg.HostRequirements != nil && cfg.HostRequirements.GPU != nil {
+		if b, ok := cfg.HostRequirements.GPU.(bool); ok {
+			return b
+		}
+		if s, ok := cfg.HostRequirements.GPU.(string); ok {
+			return s == "true"
+		}
+	}
+	return false
+}
+
+func (r *Reconciler) hasGPURequirementDirect(ctx context.Context, ghClient *github.Client, owner, repo, ref string) bool {
+	if ghClient == nil || owner == "" || repo == "" {
+		return false
+	}
+	fileContent, _, _, err := ghClient.Repositories.GetContents(ctx, owner, repo, ".devcontainer/devcontainer.json", &github.RepositoryContentGetOptions{Ref: ref})
+	if err != nil {
+		return false
+	}
+	if fileContent == nil {
+		return false
+	}
+	contentStr, err := fileContent.GetContent()
+	if err != nil {
+		return false
+	}
+	return isGPURequired([]byte(contentStr))
 }

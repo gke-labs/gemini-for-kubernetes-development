@@ -59,6 +59,8 @@ type DevSandboxOptions struct {
 
 	DindSupport string
 
+	GPU bool
+
 	// DisableGitHubProxy specifies whether to disable the GitHub proxy wrapper.
 	DisableGitHubProxy bool
 
