@@ -25,6 +25,11 @@ export GITHUB_USER_EMAIL="{{ .User.Email }}"
 export GITHUB_USER_NAME="{{ .User.Name }}"
 export PR_NUMBER={{ .PullRequestID }}
 
+if [ -n "${GITHUB_USER_TOKEN}" ]; then
+    export GITHUB_TOKEN="${GITHUB_USER_TOKEN}"
+    export GH_TOKEN="${GITHUB_USER_TOKEN}"
+fi
+
 function setupGit {
     echo "Running setupGit..."
     mkdir -p /root/.config/gh

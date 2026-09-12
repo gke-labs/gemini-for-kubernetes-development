@@ -27,6 +27,11 @@ export GITHUB_USER_ID="{{ .User.UserID }}"
 export GITHUB_USER_EMAIL="{{ .User.Email }}"
 export GITHUB_USER_NAME="{{ .User.Name }}"
 
+if [ -n "${GITHUB_USER_TOKEN}" ]; then
+    export GITHUB_TOKEN="${GITHUB_USER_TOKEN}"
+    export GH_TOKEN="${GITHUB_USER_TOKEN}"
+fi
+
 function setupGit {
     echo "Running setupGit..."
     echo "creating /root/.config/gh directory"

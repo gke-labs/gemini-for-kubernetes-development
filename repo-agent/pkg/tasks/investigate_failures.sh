@@ -37,6 +37,11 @@ if [ -n "${GITHUB_BOT_LOGIN}" ]; then
     fi
 fi
 
+if [ -n "${GITHUB_USER_TOKEN}" ]; then
+    export GITHUB_TOKEN="${GITHUB_USER_TOKEN}"
+    export GH_TOKEN="${GITHUB_USER_TOKEN}"
+fi
+
 function setupGit {
     echo "Running setupGit..."
     echo "creating /root/.config/gh directory"
