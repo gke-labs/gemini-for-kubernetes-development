@@ -502,6 +502,27 @@ func (m *Manager) CreateSandboxTask(ctx context.Context, namespace, sandboxName,
 	return err
 }
 
+func (m *Manager) GetSandboxTask(ctx context.Context, namespace, taskName string) (*sandboxtaskv1alpha1.SandboxTask, error) {
+	gvr := schema.GroupVersionResource{
+		Group:    "custom.agents.x-k8s.io",
+		Version:  "v1alpha1",
+		Resource: "sandboxtasks",
+	}
+
+	unstructuredTask, err := m.Client.Resource(gvr).Namespace(namespace).Get(ctx, taskName, v1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	task := &sandboxtaskv1alpha1.SandboxTask{}
+	err = runtime.DefaultUnstructuredConverter.FromUnstructured(unstructuredTask.UnstructuredContent(), task)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert unstructured task to SandboxTask: %w", err)
+	}
+
+	return task, nil
+}
+
 func (m *Manager) UpdateSandboxTaskStatus(ctx context.Context, namespace, taskName, state, result string, stats *sandboxtaskv1alpha1.Stats) error {
 	klog.Infof("Updating task %s status to %s", taskName, state)
 
@@ -515,7 +536,7 @@ func (m *Manager) UpdateSandboxTaskStatus(ctx context.Context, namespace, taskNa
 
 	if state == "Running" {
 		statusMap["startTime"] = timestamp
-	} else if state == "Completed" || state == "Failed" {
+	} else if state == "Completed" || state == "Failed" || state == "Cancelled" {
 		statusMap["completionTime"] = timestamp
 	}
 
