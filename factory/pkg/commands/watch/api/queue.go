@@ -33,9 +33,9 @@ const (
 type TaskPhase int
 
 const (
-	PhaseRebase      TaskPhase = 1 // Rebase/iterate
-	PhaseIterate     TaskPhase = 1
-	PhaseComments    TaskPhase = 2 // Comments
+	PhaseComments    TaskPhase = 1 // Comments
+	PhaseRebase      TaskPhase = 2 // Rebase/iterate
+	PhaseIterate     TaskPhase = 2
 	PhaseInvestigate TaskPhase = 3 // Investigate/Fix
 	PhaseFix         TaskPhase = 3
 	PhaseChores      TaskPhase = 4 // Chores

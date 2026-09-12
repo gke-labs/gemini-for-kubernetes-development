@@ -160,11 +160,11 @@ func taskStartedComment(taskType api.TaskType) string {
 	case api.TypeIssueFix:
 		return "🤖 AI Factory started fixing this issue in a sandbox."
 	case api.TypePRInvestigate:
-		return "🤖 AI Factory started investigating CI check failures for this pull request."
+		return "🤖 AI Factory started investigating CI check failures for this pull request.\n\nNote: We recommend waiting for the 'ready-for-human' label before leaving review comments. Comments added while the system is actively working may be associated with outdated commits once a new commit is pushed, causing them to be ignored."
 	case api.TypePRComments:
 		return "🤖 AI Factory started addressing review feedback for this pull request."
 	case api.TypePRIterate:
-		return "🤖 AI Factory started resolving merge conflicts / rebasing this pull request in a sandbox."
+		return "🤖 AI Factory started resolving merge conflicts / rebasing this pull request in a sandbox.\n\nNote: We recommend waiting for the 'ready-for-human' label before leaving review comments. Comments added while the system is actively working may be associated with outdated commits once a new commit is pushed, causing them to be ignored."
 	case api.TypePRReview:
 		return "🤖 AI Factory started reviewing this pull request in a sandbox."
 	default:

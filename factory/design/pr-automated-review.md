@@ -113,3 +113,6 @@ The label is applied when all of the following conditions are met:
 ### B. Invalidation & Removal
 The label is automatically removed if any condition ceases to hold (e.g. new commits pushed, new comments added, CI check failures, or merge conflicts), ensuring humans only review PRs that currently pass all automated criteria.
 
+### C. Reviewer & Author Best Practices
+Human reviewers and authors should wait for the `ready-for-human` label (or `<triggerLabel>/ready-for-human`) to be applied to a pull request before leaving review comments. If comments are added while the system is actively investigating CI check failures or resolving merge conflicts, subsequent automated commits pushed by the bot might render those comments outdated or cause them to be ignored. Waiting for the `ready-for-human` label ensures that the bot has finished all its automated cycles and is ready for human collaboration.
+
