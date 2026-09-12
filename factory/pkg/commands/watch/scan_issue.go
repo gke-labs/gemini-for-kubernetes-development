@@ -75,16 +75,28 @@ func (w *Watcher) queueIssueTasks(ctx context.Context, issues []*githubv39.Issue
 		lastProcessed, ok := w.processedIssues[num]
 		if !ok || issue.GetUpdatedAt().After(lastProcessed) || workflowName != "" {
 			var timeline []*githubv39.Timeline
+			timelineComplete := false
 			if w.ghClient != nil {
-				tl, _, err := w.ghClient.Issues.ListIssueTimeline(ctx, w.Repo.Owner, w.Repo.Repo, num, nil)
-				if err == nil {
+				tl, complete, err := listAllIssueTimeline(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, num)
+				if err != nil {
+					klog.Warningf("Failed to list timeline for issue #%d: %v", num, err)
+				} else {
 					timeline = tl
+					timelineComplete = complete
 				}
 			}
 
 			// Skip KRM check for workflow triggers since they don't necessarily have linked code PRs
 			if workflowName == "" {
-				linked, err := hasLinkedPRWithTimeline(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, num, timeline)
+				// Only let the linked-PR check trust the timeline we already
+				// fetched if it is complete. A missing or truncated timeline
+				// cannot prove the absence of a linked PR, so pass nil and let
+				// hasLinkedPRWithTimeline fall back to the Search API.
+				var verifiedTimeline []*githubv39.Timeline
+				if timelineComplete {
+					verifiedTimeline = timeline
+				}
+				linked, err := hasLinkedPRWithTimeline(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, num, verifiedTimeline)
 				if err != nil {
 					klog.Errorf("Failed to check linked PR for issue #%d: %v", num, err)
 					continue

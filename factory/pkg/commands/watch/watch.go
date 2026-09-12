@@ -191,6 +191,26 @@ func (w *Watcher) init(ctx context.Context) error {
 	return nil
 }
 
+// canQueueIssueTasks reports whether the watcher has enough state to safely
+// decide which issues still need work.
+//
+// The open PR cache is the primary duplicate-suppression signal for issue
+// scans. An empty cache is indistinguishable from "no open PR references this
+// issue", so scanning with an unpopulated cache makes the watcher re-trigger
+// fixes for issues that already have an open PR. This happens in practice when
+// the process restarts into a GitHub rate limit window and every attempt to
+// list open PRs fails. Fail closed and wait for a successful PR scan instead.
+func (w *Watcher) canQueueIssueTasks(prCachePopulated bool) bool {
+	if w.IssueMode == "disabled" {
+		return false
+	}
+	if !prCachePopulated {
+		klog.Warningf("Skipping issue task queueing: the open PR cache is not populated, so issues with an open fix PR cannot be identified. Waiting for a successful PR scan.")
+		return false
+	}
+	return true
+}
+
 func (w *Watcher) checkRepo(ctx context.Context) {
 	w.state.mu.Lock()
 	if w.state.shuttingDown {
@@ -279,6 +299,7 @@ func (w *Watcher) checkRepo(ctx context.Context) {
 				}
 			}
 			w.state.mu.Unlock()
+			hasPRs = true
 		} else {
 			klog.Errorf("Failed to populate open PRs cache: %v", err)
 		}
@@ -300,6 +321,7 @@ func (w *Watcher) checkRepo(ctx context.Context) {
 			}
 			w.state.lastPRScan = now
 			w.state.mu.Unlock()
+			hasPRs = true
 		} else {
 			klog.Errorf("Failed to list open PRs: %v", err)
 		}
@@ -311,7 +333,7 @@ func (w *Watcher) checkRepo(ctx context.Context) {
 		}
 
 		// Process slow issues
-		if w.IssueMode != "disabled" {
+		if w.canQueueIssueTasks(hasPRs) {
 			w.queueIssueTasks(ctx, slowIssues, refIssues)
 		}
 
@@ -371,7 +393,7 @@ func (w *Watcher) checkRepo(ctx context.Context) {
 			klog.Errorf("Failed to scan fast issues: %v", err)
 		}
 
-		if w.IssueMode != "disabled" {
+		if w.canQueueIssueTasks(hasPRs) {
 			w.queueIssueTasks(ctx, issues, refIssues)
 		}
 

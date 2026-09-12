@@ -105,24 +105,63 @@ func getMissingLabelsForPR(prLabels []*githubv39.Label, refIssues []*githubv39.I
 	return allMissingLabels
 }
 
-func hasLinkedPR(ctx context.Context, client *githubv39.Client, owner, repo string, issueNum int) (bool, error) {
-	// 1. Try timeline check (quick and standard)
-	timeline, _, err := client.Issues.ListIssueTimeline(ctx, owner, repo, issueNum, nil)
-	if err == nil {
-		for _, event := range timeline {
-			if event.GetEvent() == "cross-referenced" && event.Source != nil {
-				if event.Source.Issue != nil && event.Source.Issue.PullRequestLinks != nil {
-					if event.Source.Issue.GetState() == "open" {
-						return true, nil
-					}
+// timelinePageSize is the maximum page size the GitHub timeline API accepts.
+const timelinePageSize = 100
+
+// maxTimelinePages caps timeline pagination so a pathologically noisy issue
+// cannot stall a scan cycle or burn the whole API rate limit budget.
+const maxTimelinePages = 20
+
+// listAllIssueTimeline retrieves the timeline events for an issue, following
+// pagination.
+//
+// The GitHub API returns only 30 events per page by default, so an unpaginated
+// call silently truncates the history of long-lived issues. Cross-reference
+// events are ordered oldest-first, which means the most recent (and therefore
+// most relevant) linked PR is the one most likely to be dropped.
+//
+// The boolean return reports whether the full timeline was read. It is false
+// when pagination was cut short by maxTimelinePages, in which case callers must
+// not treat the absence of an event as proof that it does not exist.
+func listAllIssueTimeline(ctx context.Context, client *githubv39.Client, owner, repo string, issueNum int) ([]*githubv39.Timeline, bool, error) {
+	// Start non-nil so that a successful call never returns nil: callers use a
+	// nil timeline to mean "could not be determined".
+	all := []*githubv39.Timeline{}
+	opts := &githubv39.ListOptions{PerPage: timelinePageSize}
+	for page := 0; page < maxTimelinePages; page++ {
+		events, resp, err := client.Issues.ListIssueTimeline(ctx, owner, repo, issueNum, opts)
+		if err != nil {
+			return nil, false, err
+		}
+		all = append(all, events...)
+		if resp == nil || resp.NextPage == 0 {
+			return all, true, nil
+		}
+		opts.Page = resp.NextPage
+	}
+	klog.Warningf("Issue #%d has more than %d pages of timeline events; results are truncated", issueNum, maxTimelinePages)
+	return all, false, nil
+}
+
+// timelineHasOpenLinkedPR reports whether the timeline contains a cross-reference
+// from a pull request that is still open.
+func timelineHasOpenLinkedPR(timeline []*githubv39.Timeline) bool {
+	for _, event := range timeline {
+		if event.GetEvent() == "cross-referenced" && event.Source != nil {
+			if event.Source.Issue != nil && event.Source.Issue.PullRequestLinks != nil {
+				if event.Source.Issue.GetState() == "open" {
+					return true
 				}
 			}
 		}
-	} else {
-		klog.Warningf("Failed to list issue timeline for #%d: %v. Falling back to search API.", issueNum, err)
 	}
+	return false
+}
 
-	// 2. Fallback to Search API: search for open PRs referencing the issue number
+// searchForOpenLinkedPR asks the Search API whether any open PR mentions the
+// issue number. It is the fallback for when the timeline is unavailable or
+// incomplete.
+func searchForOpenLinkedPR(ctx context.Context, client *githubv39.Client, owner, repo string, issueNum int) (bool, error) {
 	query := fmt.Sprintf("repo:%s/%s type:pr state:open \"%d\"", owner, repo, issueNum)
 	opts := &githubv39.SearchOptions{
 		ListOptions: githubv39.ListOptions{PerPage: 10},
@@ -131,26 +170,34 @@ func hasLinkedPR(ctx context.Context, client *githubv39.Client, owner, repo stri
 	if err != nil {
 		return false, fmt.Errorf("failed to search PRs for issue #%d: %w", issueNum, err)
 	}
-
-	if result.GetTotal() > 0 {
-		return true, nil
-	}
-
-	return false, nil
+	return result.GetTotal() > 0, nil
 }
 
+func hasLinkedPR(ctx context.Context, client *githubv39.Client, owner, repo string, issueNum int) (bool, error) {
+	// 1. Try timeline check (quick and standard)
+	timeline, complete, err := listAllIssueTimeline(ctx, client, owner, repo, issueNum)
+	if err == nil {
+		if timelineHasOpenLinkedPR(timeline) {
+			return true, nil
+		}
+		if complete {
+			return false, nil
+		}
+		klog.Warningf("Timeline for issue #%d was truncated. Falling back to search API.", issueNum)
+	} else {
+		klog.Warningf("Failed to list issue timeline for #%d: %v. Falling back to search API.", issueNum, err)
+	}
+
+	// 2. Fallback to Search API: search for open PRs referencing the issue number
+	return searchForOpenLinkedPR(ctx, client, owner, repo, issueNum)
+}
+
+// hasLinkedPRWithTimeline reuses a timeline the caller already fetched to avoid a
+// redundant API round trip. A nil timeline means the caller could not fetch one,
+// so we fall back to fetching it (and the Search API) ourselves.
 func hasLinkedPRWithTimeline(ctx context.Context, client *githubv39.Client, owner, repo string, issueNum int, timeline []*githubv39.Timeline) (bool, error) {
 	if timeline != nil {
-		for _, event := range timeline {
-			if event.GetEvent() == "cross-referenced" && event.Source != nil {
-				if event.Source.Issue != nil && event.Source.Issue.PullRequestLinks != nil {
-					if event.Source.Issue.GetState() == "open" {
-						return true, nil
-					}
-				}
-			}
-		}
-		return false, nil
+		return timelineHasOpenLinkedPR(timeline), nil
 	}
 	return hasLinkedPR(ctx, client, owner, repo, issueNum)
 }
