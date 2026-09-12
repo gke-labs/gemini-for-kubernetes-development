@@ -49,6 +49,11 @@ func NewClient(ctx context.Context) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	return NewClientWithToken(ctx, token)
+}
+
+// NewClientWithToken creates a new GitHub client using the provided token.
+func NewClientWithToken(ctx context.Context, token string) (*Client, error) {
 	return &Client{
 		Client: clients.NewGitHubClient(ctx, token),
 	}, nil
