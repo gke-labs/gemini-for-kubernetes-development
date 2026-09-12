@@ -115,23 +115,6 @@ completedAt: "2026-07-23T20:00:00Z"
 	}
 }
 
-func TestIsDoNotProcess(t *testing.T) {
-	queueDir := t.TempDir()
-
-	if isDoNotProcess(queueDir) {
-		t.Errorf("expected isDoNotProcess to be false for empty dir")
-	}
-
-	drainFile := filepath.Join(queueDir, ".drain")
-	if err := os.WriteFile(drainFile, []byte(""), 0644); err != nil {
-		t.Fatalf("failed to write drain file: %v", err)
-	}
-
-	if !isDoNotProcess(queueDir) {
-		t.Errorf("expected isDoNotProcess to be true when .drain file exists")
-	}
-}
-
 func TestGetIssuePriority(t *testing.T) {
 	nameUrgent := "priority/urgent"
 	issue := &githubv39.Issue{

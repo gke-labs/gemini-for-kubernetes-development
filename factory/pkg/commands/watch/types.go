@@ -11,6 +11,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/concurrency"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/dispatcher"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
 	githubv39 "github.com/google/go-github/v39/github"
 )
@@ -84,9 +85,9 @@ type Watcher struct {
 	processedPRs     map[int]prWatchState
 	queueMgr         *concurrency.TaskQueueManager
 	sandboxLocks     *concurrency.SandboxLockRegistry
+	dispatcher       *dispatcher.Dispatcher
 	state            *watchState
 	timeoutChan      <-chan time.Time
-	wg               sync.WaitGroup
 }
 
 func (w *Watcher) initQueueManager() {
@@ -111,11 +112,14 @@ func (w *Watcher) initQueueManager() {
 		DryRun:           w.DryRun,
 	})
 	w.sandboxLocks = concurrency.NewSandboxLockRegistry()
+	w.dispatcher = w.newDispatcher(w.newCLIRunner())
 }
 
 // Wait blocks until all in-flight tasks have completed.
 func (w *Watcher) Wait() {
-	w.wg.Wait()
+	if w.dispatcher != nil {
+		w.dispatcher.Wait()
+	}
 }
 
 func NewWatcher(rootFlags common.RootFlags, flags Flags) *Watcher {

@@ -18,7 +18,7 @@ The `factory watch` daemon serves as the central background orchestration engine
 ### Primary Objectives
 * **Lower Pickup & Dispatch Latency**:
   * Reduce newly assigned/created issue pickup latency from **O(minutes-hours) down to O(seconds)**.
-  * Reduce task scheduling latency from **O(minutes) down to sub-second** via in-memory dispatching and immediate enqueue signaling.
+  * Reduce task scheduling latency to **at most one dispatch interval**, by dispatching from an in-memory queue on a dedicated loop that is never blocked behind scan cycles.
 * **Decoupled Separation of Concerns**:
   * Break down the monolithic loop into **5 dedicated, autonomous subcontrollers** running in isolated goroutines coordinated by a shared context.
   * Enforce strict, uni-directional dependencies to prevent circular cross-controller calls.
@@ -33,7 +33,7 @@ The `factory watch` daemon serves as the central background orchestration engine
 ## 2. Problem Statement & Motivation
 
 ### Current Monolithic Architecture
-Currently, [`Watcher.Run()`](file:///usr/local/google/home/sdowell/code/gemini-for-kubernetes-development/factory/pkg/commands/watch/watch.go) executes a single sequential loop governed by a 10-second sleep timer:
+Currently, `Watcher.Run()` executes a single sequential loop governed by a 10-second sleep timer:
 
 ```mermaid
 flowchart TD
@@ -82,13 +82,13 @@ flowchart TB
         ISC["Issue Scanner<br/>(Single Cycle: 30s-60s)"]
         PSC["PR Scanner<br/>(Single Cycle: 1m-2m<br/>+ Worker Pool)"]
         CSC["Chore Scheduler<br/>(Dedicated Cron Timers)"]
-        TQD["Task Dispatcher<br/>(500ms Ticker + Event Wakeup)"]
+        TQD["Task Dispatcher<br/>(Dedicated Ticker: 30s)"]
         SGC["Sandbox Reconciler & GC<br/>(Ticker: 30s-60s)"]
         SRV["Queue HTTP Server<br/>(:13338 /api/v1/queue)"]
     end
 
     subgraph SharedMemory["Shared Thread-Safe In-Memory State"]
-        TQM["TaskQueueManager<br/>- incoming / processing / processed maps<br/>- fair-share sorter, RWMutex<br/>- enqueue wakeup channel"]
+        TQM["TaskQueueManager<br/>- incoming / processing / processed maps<br/>- fair-share sorter, RWMutex"]
         ESC["EntityStateCache<br/>- open PRs, referenced issues<br/>- processed state (SHAs, timestamps)<br/>- RWMutex"]
         SLR["SandboxLockRegistry<br/>- in-flight sandbox lease table<br/>- Mutex"]
     end
@@ -116,8 +116,7 @@ flowchart TB
     TQM -->|"Atomic write"| FS_INC
 
     %% Dispatcher Flow
-    TQM -.->|"Instant Wakeup Signal"| TQD
-    TQD -->|"1. Poll / wake on ready tasks"| TQM
+    TQD -->|"1. Poll for ready tasks"| TQM
     TQD -->|"2. Acquire sandbox lease"| SLR
     TQD -->|"3. Claim task (incoming to processing)"| TQM
     TQM -->|"Atomic rename"| FS_PROC
@@ -183,9 +182,10 @@ To guarantee maintainability and eliminate circular dependencies, subcontrollers
 * **Decoupling Guarantee**: Completely independent of PR and issue scanning cycles.
 
 ### 4. `TaskDispatcher` (Core Execution Engine)
-* **Cadence**: Dual trigger: **500ms ticker** OR **immediate wakeup** via `TaskQueueManager.notifyChan`.
+* **Location**: Dedicated `watch/dispatcher` package, so the execution path cannot reach into scanner internals.
+* **Cadence**: Single dedicated ticker (`Config.Interval`, default **30 seconds**), running in its own goroutine so dispatch is never blocked behind scan or reconcile cycles.
 * **Responsibilities**:
-  * Evaluates drain state (`isDoNotProcess`) and active execution bounds (`MaxPending`, `MaxActions`).
+  * Evaluates drain state (`TaskQueueManager.IsDrainMode()`) and active execution bounds (`MaxPending`, `MaxActions`).
   * Consults `TaskQueueManager.ClaimNextEligibleTask(predicate)`:
     ```go
     // Predicate MUST be a pure, non-blocking in-memory check.
@@ -199,7 +199,7 @@ To guarantee maintainability and eliminate circular dependencies, subcontrollers
     1. Atomically claims candidate task in memory (`incoming` $\rightarrow$ `processing`) and moves disk file (`incoming/` $\rightarrow$ `processing/`).
     2. Atomically acquires lease in `SandboxLockRegistry` via `sandboxLocks.TryAcquire(sandboxName, filename)`. If acquisition fails, reverts task back to `incoming` via `RequeueTask`.
     3. Performs post-claim validation outside the queue lock: checks stop labels (`overseer/stop`), closed state, and completed recovery status. If invalidated, marks completed/cancelled outside the lock without deadlocking.
-  * Spawns an asynchronous worker goroutine executing the child `factory` CLI command.
+  * Spawns an asynchronous worker goroutine that delegates execution to a `TaskRunner`. The production implementation, `CLIRunner`, is the only component that maps a task onto a child `factory` CLI command line.
   * Worker completion handling (success, failure, or timeout):
     1. Calls `TaskQueueManager.CompleteTask` or `TaskQueueManager.FailTask`.
     2. Atomically moves disk file from `processing/` $\rightarrow$ `processed/`.
@@ -236,8 +236,6 @@ type TaskQueueManager struct {
     processing  map[string]*QueueTask
     processed   map[string]*QueueTask
 
-    notifyChan  chan struct{} // Non-blocking notification to wakeup dispatcher immediately
-
     incomingDir      string
     processingDir    string
     processedDir     string
@@ -250,13 +248,13 @@ type TaskQueueManager struct {
 
 * **Thread-Safety**: All reads and writes to `incoming`, `processing`, and `processed` maps are guarded by `mu`.
 * **In-Memory Authority**: Subcontrollers (`PRScanner`, `IssueScanner`, `ChoreScheduler`) MUST consult `queueMgr.TaskExists(filename)` and `queueMgr.HasActivePRTask(num)` rather than reading disk directories, eliminating race conditions during atomic file renames.
+* **Drain Awareness**: `IsDrainMode()` reports whether processing is paused (drain marker files in `queueDir` or drain environment variables), giving the dispatcher and the watcher a single source of truth.
 * **Atomic Write-Through**:
   * `Enqueue()`:
     1. Verifies deduplication in memory (`incoming` and `processing` maps).
     2. Writes task file atomically to `incomingDir` using temporary file + rename (`writeTaskAtomically`).
     3. Adds task to `incoming` map.
     4. Appends `Created` event to `journal.jsonl`.
-    5. Non-blocking send to `notifyChan` to wake the dispatcher immediately.
   * `ClaimNextEligibleTask()`:
     1. Sorts `incoming` map in memory using fair-share prioritization (`sortTasksFairly`).
     2. Iterates over candidates and tests caller's availability predicate (`isAvailable(task)`).
@@ -313,76 +311,75 @@ type EntityStateCache struct {
 1. **Load Config & Secret**: Initialize GitHub and Kubernetes clients, resolve target bot identities.
 2. **Directory Verification**: Create `incoming`, `processing`, `processed`, and `logs` directories if they do not exist.
 3. **Queue Rehydration**: `TaskQueueManager.LoadFromDisk()` seeds in-memory maps from existing YAMLs.
-4. **Crash Recovery & Task Adoption**: Run `recoverStuckTasks(ctx)` to reconcile tasks found in `processing/`. Active pod runs are adopted by supervisor goroutines.
+4. **Crash Recovery & Task Adoption**: Run `TaskDispatcher.Recover(ctx)` to reconcile tasks found in `processing/`. Active pod runs are adopted by supervisor goroutines owned by the dispatcher.
 5. **Start HTTP Server**: Launch queue server listening on `:13338`.
 
 ### Startup Crash Recovery & Running Task Adoption
 
 Because task execution inside cluster sandboxes is detached (`nohup ... &` via `envd`), a task may still be actively running inside a sandbox container even if the `factory watch` host process crashed or restarted. In the previous architecture, tasks found running during startup were simply left in `processing/` without any supervisor, causing them to become permanently orphaned.
 
-The new architecture handles tasks in `processing/` across restarts using a deterministic three-way recovery flow:
+Recovery is owned by the `TaskDispatcher`, which already owns sandbox leases and task execution. It handles tasks in `processing/` across restarts using a deterministic three-way recovery flow:
 
 ```mermaid
 sequenceDiagram
-    participant Watcher as Watcher Startup (Recovery)
+    participant TQD as TaskDispatcher.Recover
     participant TQM as TaskQueueManager
     participant SLR as SandboxLockRegistry
     participant Mon as Adoption Monitor Goroutine
     participant Pod as Cluster Sandbox (envd)
 
-    Note over Watcher: Watcher restarts, finds task-*.yaml in processing/
-    Watcher->>TQM: Load task into in-memory processing map
-    Watcher->>SLR: TryAcquire(sandboxName, filename) (Reserve Lease)
-    Watcher->>Pod: Probe isSandboxTaskRunning()
-    
+    Note over TQD: Watcher restarts, finds task-*.yaml in processing/
+    TQD->>TQM: SyncProcessingFromDisk() / ProcessingTasks()
+    TQD->>Pod: Probe IsTaskRunning()
+
     alt State A: Pod already completed before restart
-        Watcher->>TQM: CompleteTask() (move to processed/)
-        Watcher->>SLR: Release(sandboxName)
+        TQD->>TQM: CompleteTask() (move to processed/)
     else State B: Pod failed / evicted / missing
-        Watcher->>TQM: Re-queue to incoming/ with Recovered=true
-        Watcher->>SLR: Release(sandboxName)
+        TQD->>TQM: Re-queue to incoming/ with Recovered=true
     else State C: Pod is still actively executing
-        Watcher->>Mon: Spawn monitorAdoptedTask(ctx, task, sandboxName)
-        Note over Watcher: Watcher continues starting subcontrollers...
-        
-        loop Poll Status (every 5-10s)
+        TQD->>SLR: TryAcquire(sandboxName, filename) (Reserve Lease)
+        TQD->>Mon: Spawn monitorAdoptedTask(ctx, task, sandboxName)
+        Note over TQD: Recover returns; subcontrollers keep starting...
+
+        loop Poll Status (AdoptionPollInterval)
             Mon->>Pod: Check envd exit_code file / pod status
             Pod-->>Mon: Still running
         end
-        
+
         Pod-->>Mon: Task finished! (Exit code 0 or != 0)
         Mon->>TQM: CompleteTask() / FailTask()
         Note over TQM: Moves processing/ -> processed/ on disk & memory
         Mon->>SLR: Release(sandboxName)
-        Mon->>Mon: Resolve GitHub comment reactions & write journal
+        Mon->>Mon: Notify coordinator (comment reactions) & write journal
     end
 ```
 
 #### Detailed Recovery States:
-1. **Lease Re-Acquisition**: For every task found in `TaskQueueManager.processing`, the watcher immediately acquires the sandbox lease in `SandboxLockRegistry` (`sandboxLocks.TryAcquire(sandboxName, filename)`). This guarantees that neither the `TaskDispatcher` nor scanners can dispatch a conflicting task to that sandbox.
-2. **Tri-State Evaluation**:
-   * **State A (Already Finished)**: If `isSandboxTaskCompleted(sandboxName)` is true, the watcher immediately calls `TaskQueueManager.CompleteTask(filename, task)`, atomically moving the task file and logs to `processed/`, writing a journal event, and releasing the sandbox lease.
-   * **State B (Terminated / Evicted)**: If the pod failed, was evicted, or does not exist, the pod is cleaned up, `task.Recovered = true` is set, and the task is moved back to `incoming/` via `TaskQueueManager.Enqueue` so the `TaskDispatcher` can re-schedule it. The lease is released.
-   * **State C (Still Actively Running — Adoption)**: The task remains in `TaskQueueManager.processing`, the lease remains held in `SandboxLockRegistry`, and the daemon spawns an **Adoption Monitor Goroutine** (`go w.monitorAdoptedTask(ctx, filename, task, sandboxName)`).
+1. **Tri-State Evaluation**: For every task found in `TaskQueueManager.processing`, the dispatcher probes the resolved sandbox exactly once:
+   * **State A (Already Finished)**: If `IsTaskCompleted(sandboxName)` is true, the dispatcher calls `TaskQueueManager.CompleteTask(filename, task)`, atomically moving the task file and logs to `processed/` and writing a journal event. No lease is taken.
+   * **State B (Terminated / Evicted / Missing)**: `task.Recovered = true` is set and the task is moved back to `incoming/` via `TaskQueueManager.Enqueue` so the dispatcher can re-schedule it. No lease is taken.
+   * **State C (Still Actively Running — Adoption)**: The sandbox lease is acquired (`sandboxLocks.TryAcquire`), guaranteeing that neither the dispatcher nor the scanners can target that sandbox, the task remains in `TaskQueueManager.processing`, and an **Adoption Monitor Goroutine** is spawned under the dispatcher's worker WaitGroup.
+2. **Unparsable Files**: Task files in `processing/` that cannot be parsed are returned to `incoming/` by `TaskQueueManager.RequeueUntrackedProcessingFiles()` instead of being orphaned.
 
 #### Adoption Monitor Goroutine (`monitorAdoptedTask`):
-* **Budget Tracking**: Computes remaining timeout from `task.EnqueuedAt + taskTimeout - time.Now()`.
-* **Exit Code Polling**: Periodically (every 5–10 seconds) connects to `envd` and checks for `{taskDir}/exit_code`.
+* **Budget Tracking**: Computes the remaining timeout from the task's `StartedAt`/`EnqueuedAt`/`CreatedAt` so a restart does not grant a fresh full timeout.
+* **Status Polling**: Every `Config.AdoptionPollInterval` (default 5s), probes the sandbox via `SandboxService`.
 * **Post-Completion Execution**:
-  * On exit code `0`: Updates PR comment reactions (`+1` for `pr-comments`) and calls `TaskQueueManager.CompleteTask()`.
-  * On exit code `!= 0`: Updates PR comment reactions (`confused` for `pr-comments`) and calls `TaskQueueManager.FailTask()`.
-  * Atomically renames YAML and `.log` files to `processed/`.
-  * Appends structured entry to `journal.jsonl`.
-  * Releases sandbox lease via `defer sandboxLocks.Release(sandboxName, filename)`.
+  * On success: calls `TaskQueueManager.CompleteTask()` and `TaskCoordinator.NotifyTaskFinished(ctx, task, nil)`, which resolves `pr-comments` reactions with `+1`.
+  * On failure: calls `TaskQueueManager.FailTask()` and notifies with an error, resolving reactions with `confused`.
+  * On timeout: force deletes the sandbox, then fails the task.
+  * Atomically renames YAML and `.log` files to `processed/` and appends a structured entry to `journal.jsonl`.
+  * Releases the sandbox lease when the goroutine exits.
 * **Reconciliation Safety Net**: As a secondary safeguard, `SandboxReconciler` periodically checks all active tasks in `TaskQueueManager.processing`. If a sandbox task has completed according to annotations or `envd` but has no active monitor, `SandboxReconciler` automatically transitions the task to `processed/`.
 
 ### Subcontroller Coordination & Lifecycle Management
-Subcontrollers run under a shared cancelable context (`daemonCtx`) with decoupled synchronization primitives to prevent `sync.WaitGroup` misuse:
+Subcontrollers run under a shared cancelable context (`daemonCtx`). Each subcontroller owns the synchronization primitives for the goroutines it spawns; the `Watcher` itself holds **no** `sync.WaitGroup`.
 
-* **Dual WaitGroup Model**:
-  * `controllerWg sync.WaitGroup`: Tracks the 5 background subcontroller polling loops (`taskDispatcher`, `prScanner`, `issueScanner`, `sandboxReconciler`, `choreScheduler`).
-  * `workerWg sync.WaitGroup`: Dedicated strictly to active child worker executions and adopted tasks.
-  * *Rationale*: Mixing long-running controller loops and short-running tasks on a single WaitGroup causes `Wait()` to block indefinitely or triggers runtime panics if `Add()` is invoked concurrently with `Wait()`.
+* **Subcontroller-Owned Worker WaitGroups**:
+  * Each subcontroller declares a private `wg sync.WaitGroup` covering only the goroutines it starts. For `TaskDispatcher` this is both task workers (`executeTask`) and adopted-task monitors (`monitorAdoptedTask`).
+  * `Run(ctx)` drains its own workers via `defer d.wg.Wait()`, so returning from `Run` is itself the signal that the subcontroller is fully quiesced. The `Watcher` only has to wait for `Run` to return.
+  * The `Watcher` exposes `Wait()`, which delegates to the subcontrollers' `Wait()` methods. This is used by `--once` mode, where no polling loop is started but workers may still be in flight.
+  * *Rationale*: Mixing long-running controller loops and short-running tasks on a single shared WaitGroup causes `Wait()` to block indefinitely or triggers runtime panics if `Add()` is invoked concurrently with `Wait()`. Scoping each WaitGroup to its owning subcontroller makes the `Add()`/`Wait()` pairing local and auditable.
 
 ```go
 func (w *Watcher) Run(ctx context.Context) error {
@@ -391,46 +388,44 @@ func (w *Watcher) Run(ctx context.Context) error {
     }
 
     if w.Once {
-        w.checkRepoOnce(ctx)
-        w.workerWg.Wait()
+        w.checkRepo(ctx)
+        w.dispatcher.DispatchOnce(ctx)
+        w.Wait() // delegates to each subcontroller's own Wait()
         return nil
     }
 
     daemonCtx, daemonCancel := context.WithCancel(ctx)
     defer daemonCancel()
 
-    // Launch subcontrollers under controllerWg
-    w.controllerWg.Add(5)
-    go func() { defer w.controllerWg.Done(); _ = w.taskDispatcher.Run(daemonCtx) }()
-    go func() { defer w.controllerWg.Done(); _ = w.issueScanner.Run(daemonCtx) }()
-    go func() { defer w.controllerWg.Done(); _ = w.prScanner.Run(daemonCtx) }()
-    go func() { defer w.controllerWg.Done(); _ = w.choreScheduler.Run(daemonCtx) }()
-    go func() { defer w.controllerWg.Done(); _ = w.sandboxReconciler.Run(daemonCtx) }()
+    // Each subcontroller's Run() drains its own workers before returning.
+    doneChan := make(chan struct{})
+    go func() { defer close(doneChan); _ = w.dispatcher.Run(daemonCtx) }()
 
-    // Handle watch timeout
-    if w.WatchTimeout > 0 {
-        time.AfterFunc(w.WatchTimeout, func() {
-            klog.Infof("Watch timeout of %s reached, initiating graceful shutdown", w.WatchTimeout)
+    for {
+        select {
+        case <-ctx.Done():
+            return ctx.Err()
+        case <-w.timeoutChan:
             daemonCancel()
-        })
+            select {
+            case <-doneChan: // all subcontrollers quiesced
+            case <-time.After(5 * time.Minute):
+            }
+            return nil
+        case <-time.After(pollInterval):
+            w.checkRepo(ctx)
+        }
     }
-
-    // Wait for shutdown trigger
-    <-daemonCtx.Done()
-
-    // Stop subcontrollers and drain workers
-    w.controllerWg.Wait()
-    return w.waitForActiveWorkers(5 * time.Minute)
 }
 ```
 
 ### Graceful Shutdown & Drain Handling
 * When `ctx.Done()` is received or `WatchTimeout` expires:
-  1. `daemonCancel()` cancels `daemonCtx`, signaling all 5 subcontrollers to exit their polling `select` loops cleanly.
-  2. `controllerWg.Wait()` ensures all subcontrollers have stopped scheduling or claiming new tasks.
-  3. `TaskDispatcher` stops claiming new tasks from `incoming`.
-  4. Active worker goroutines tracked by `workerWg` are allowed to finish, with a 5-minute maximum drain timeout.
-* When drain mode (`isDoNotProcess`) is active:
+  1. `daemonCancel()` cancels `daemonCtx`, signaling all subcontrollers to exit their polling `select` loops cleanly.
+  2. `TaskDispatcher` stops claiming new tasks from `incoming`.
+  3. Each subcontroller's `Run` blocks on its own `defer wg.Wait()`, letting active workers and adopted-task monitors finish before returning.
+  4. The `Watcher` waits for every subcontroller's `Run` to return, bounded by a 5-minute maximum drain timeout.
+* When drain mode (`TaskQueueManager.IsDrainMode()`, backed by the `DO_NOT_PROCESS` marker in the queue directory) is active:
   1. The `TaskDispatcher` stops claiming new tasks.
   2. Active in-flight tasks continue running until completion.
 
@@ -456,7 +451,7 @@ To prevent race conditions, deadlocks, and state divergence in this asynchronous
 | Metric / Scenario | Current Monolithic Architecture | Proposed Subcontroller Architecture |
 | :--- | :--- | :--- |
 | **New Issue Pickup Latency** | minutes - hours (sequential loop blocking) | **Up to 30–60 seconds** (dedicated single-cycle issue ticker) |
-| **Task Dispatch Latency** | 0s – 30s after enqueue (waits for runner) | **< 500 milliseconds** (500ms ticker + channel wakeup) |
+| **Task Dispatch Latency** | 0s – 30s after enqueue, plus any in-progress scan (minutes) | **≤ one dispatch interval** (dedicated dispatcher goroutine, never blocked by scans) |
 | **PR Evaluation Concurrency** | Serial loop (all PRs block one another) | **Concurrent (3–5 workers in PR scanner pool)** |
 | **Chore Trigger Precision** | Delayed by up to 5 minutes | **Sub-second precision** |
 | **HTTP Queue API Latency** | 50ms – 500ms+ (disk scans & YAML parsing) | **< 1 millisecond** (in-memory `RLock` read) |
@@ -499,26 +494,33 @@ To avoid the code sprawl and tight coupling seen in initial refactoring attempts
 ## 9. Gradual 4-Phase Implementation Plan
 
 ### Phase 1: In-Memory Primitives & Infrastructure
-* **Status**: Completed ([`queue_manager.go`](file:///usr/local/google/home/sdowell/code/gemini-for-kubernetes-development/factory/pkg/commands/watch/queue_manager.go), [`sandbox_lock_registry.go`](file:///usr/local/google/home/sdowell/code/gemini-for-kubernetes-development/factory/pkg/commands/watch/sandbox_lock_registry.go), [`entity_state_cache.go`](file:///usr/local/google/home/sdowell/code/gemini-for-kubernetes-development/factory/pkg/commands/watch/entity_state_cache.go))
+* **Status**: Completed (`concurrency/queue_manager.go`, `concurrency/sandbox_lock_registry.go`, `concurrency/entity_state_cache.go`)
 * **Scope**:
   * Implement `TaskQueueManager` with atomic write-through, disk rehydration (`LoadFromDisk`), and fair-share in-memory sorting.
   * Implement `SandboxLockRegistry` for tracking in-flight sandbox leases.
   * Implement `EntityStateCache` for cached open PRs, referenced issues, and per-entity processed SHAs/timestamps.
 * **Verification Gate**:
-  * Comprehensive unit test suites ([`queue_manager_test.go`](file:///usr/local/google/home/sdowell/code/gemini-for-kubernetes-development/factory/pkg/commands/watch/queue_manager_test.go), [`sandbox_lock_registry_test.go`](file:///usr/local/google/home/sdowell/code/gemini-for-kubernetes-development/factory/pkg/commands/watch/sandbox_lock_registry_test.go), [`entity_state_cache_test.go`](file:///usr/local/google/home/sdowell/code/gemini-for-kubernetes-development/factory/pkg/commands/watch/entity_state_cache_test.go)) covering concurrent access, race detection (`go test -race`), write-through consistency, and crash recovery.
+  * Comprehensive unit test suites (`concurrency/queue_manager_test.go`, `concurrency/sandbox_lock_registry_test.go`, `concurrency/entity_state_cache_test.go`) covering concurrent access, race detection (`go test -race`), write-through consistency, and crash recovery.
 
-### Phase 2: In-Memory Task Dispatcher & HTTP Server Refactor
-* **Status**: Completed ([`runner.go`](file:///usr/local/google/home/sdowell/code/gemini-for-kubernetes-development/factory/pkg/commands/watch/runner.go), [`server.go`](file:///usr/local/google/home/sdowell/code/gemini-for-kubernetes-development/factory/pkg/commands/watch/server.go))
+### Phase 2: Dedicated Task Dispatcher, CLI Runner & HTTP Server Refactor
+* **Status**: Completed (`dispatcher/dispatcher.go`, `dispatcher/cli_runner.go`, `dispatcher_deps.go`, `concurrency/drain.go`, `server.go`)
 * **Scope**:
-  * Implement `TaskDispatcher` running a 500ms ticker + wakeup channel listener.
+  * Extract the dispatcher out of `Watcher` into a dedicated `watch/dispatcher` package. `dispatcher.Dispatcher` owns the dispatch loop, concurrency limits, sandbox leases, and queue state transitions, and is built via `dispatcher.New(Config, Deps)` instead of positional parameters.
+  * Extract `dispatcher.CLIRunner` as the sole component that maps a `QueueTask` onto a child `factory` command line and executes it, implementing the `TaskRunner` interface. Process spawning (`execCommand`) and binary resolution (`resolveExecutable`) are injectable, so dispatch logic is testable without spawning processes.
+  * Define narrow collaborator interfaces so the dispatcher never touches clients directly:
+    * `TaskRunner` — executes a claimed task.
+    * `SandboxService` — resolves sandbox names, probes running/completed state, deletes timed-out sandboxes.
+    * `TaskCoordinator` — GitHub-side gating (stop label / closed), bot user selection, and start/finish notifications.
+  * Bridge the interfaces to the existing Kubernetes and GitHub helpers via the `watcherSandboxService` and `watcherTaskCoordinator` adapters in the `watch` package, keeping the seam in place for later subcontroller extraction.
+  * Move drain detection into `concurrency.IsDrainMode` / `TaskQueueManager.IsDrainMode()` so the dispatcher package and the watcher share one implementation.
   * Refactor `server.go` to serve `/api/v1/queue` directly from `TaskQueueManager.GetQueueResponse()`.
-  * Wire `TaskDispatcher` into `Watcher.Run()` under an asynchronous goroutine while keeping scanners temporarily in `checkRepo()`.
+  * Wire the dispatcher into `Watcher.Run()` under an asynchronous goroutine while keeping scanners temporarily in `checkRepo()`.
 * **Verification Gate**:
-  * Verify that enqueued tasks execute in <500ms.
-  * Verify `server_test.go` and `queue_test.go` pass.
+  * Verify that enqueued tasks execute within one dispatch interval.
+  * Verify `dispatcher/dispatcher_test.go`, `dispatcher/cli_runner_test.go`, `dispatcher_deps_test.go`, `server_test.go`, and `queue_test.go` pass under `go test -race`.
 
 ### Phase 3: Decouple Autonomous Subcontrollers
-* **Status**: Completed ([`scan_issue.go`](file:///usr/local/google/home/sdowell/code/gemini-for-kubernetes-development/factory/pkg/commands/watch/scan_issue.go), [`scan_pr.go`](file:///usr/local/google/home/sdowell/code/gemini-for-kubernetes-development/factory/pkg/commands/watch/scan_pr.go), [`chores.go`](file:///usr/local/google/home/sdowell/code/gemini-for-kubernetes-development/factory/pkg/commands/watch/chores.go), [`sandbox.go`](file:///usr/local/google/home/sdowell/code/gemini-for-kubernetes-development/factory/pkg/commands/watch/sandbox.go))
+* **Status**: Completed (`scan_issue.go`, `scan_pr.go`, `chores.go`, `sandbox.go`)
 * **Scope**:
   * Extract `ChoreScheduler` into `chores.go` as an independent goroutine.
   * Extract `SandboxReconciler` into `sandbox.go` as a background GC/reconciler goroutine (30s–60s).
@@ -529,10 +531,10 @@ To avoid the code sprawl and tight coupling seen in initial refactoring attempts
   * Run all existing test suites: `scan_pr_test.go`, `scan_issue_test.go`, `github_helpers_test.go`, `sandbox_test.go`. Ensure recent CI gating and unassignment tests pass without regressions.
 
 ### Phase 4: Lifecycle, Recovery, and End-to-End Verification
-* **Status**: Completed ([`watch.go`](file:///usr/local/google/home/sdowell/code/gemini-for-kubernetes-development/factory/pkg/commands/watch/watch.go), [`adoption_test.go`](file:///usr/local/google/home/sdowell/code/gemini-for-kubernetes-development/factory/pkg/commands/watch/adoption_test.go), [`concurrency_test.go`](file:///usr/local/google/home/sdowell/code/gemini-for-kubernetes-development/factory/pkg/commands/watch/concurrency_test.go))
+* **Status**: Completed (`watch.go`, `dispatcher/recovery.go`, `concurrency/recovery.go`, `adoption_test.go`, `dispatcher/recovery_test.go`)
 * **Scope**:
   * Finalize graceful shutdown on context cancellation or `WatchTimeout`.
-  * Validate drain mode (`isDoNotProcess`) behavior.
+  * Validate drain mode (`TaskQueueManager.IsDrainMode()`) behavior.
   * Verify startup recovery of interrupted tasks in `processing/`.
 * **Verification Gate**:
   * Full repository test pass: `go test -race ./factory/pkg/commands/watch/...`.

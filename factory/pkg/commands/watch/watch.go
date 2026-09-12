@@ -31,7 +31,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 
 	if w.Once {
 		if w.Mode == "all" || w.Mode == "run" {
-			w.runTasks(ctx)
+			w.dispatcher.DispatchOnce(ctx)
 		}
 		fmt.Println("Running in once mode. Waiting for active tasks to complete...")
 		w.Wait()
@@ -46,7 +46,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 	if w.Mode == "all" || w.Mode == "run" {
 		go func() {
 			defer close(doneChan)
-			_ = w.RunDispatcher(daemonCtx)
+			_ = w.dispatcher.Run(daemonCtx)
 		}()
 	} else {
 		close(doneChan)
@@ -181,8 +181,9 @@ func (w *Watcher) init(ctx context.Context) error {
 
 	w.processedIssues, w.processedPRs = loadProcessedTasks(w.processedDir)
 
-	// Recovery: Handle any leftover tasks in processingDir on startup
-	w.recoverStuckTasks(ctx)
+	// Recovery: Reconcile any leftover tasks in processingDir on startup, adopting
+	// tasks that are still running inside their sandbox.
+	w.dispatcher.Recover(ctx)
 
 	w.state = &watchState{
 		referencedIssues: make(map[int]bool),
@@ -243,7 +244,7 @@ func (w *Watcher) checkRepo(ctx context.Context) {
 
 	w.reconcileRunningSandboxes(ctx)
 
-	if isDoNotProcess(w.QueueDir) {
+	if w.queueMgr.IsDrainMode() {
 		runningCount, err := countRunningSandboxTasks(ctx, w.kubeClient, w.Namespace)
 		if err != nil {
 			klog.Errorf("Failed to count running sandbox tasks during drain: %v", err)

@@ -9,6 +9,7 @@ import (
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/dispatcher"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -49,50 +50,64 @@ func newTestKubeClientWithSandbox(sbName, ns, taskState, taskType string) (*clie
 	return client, fakeDynamic
 }
 
-func TestRecoverStuckTasks_AdoptsRunningTaskAndReleasesOnCompletion(t *testing.T) {
-	tempDir := t.TempDir()
-	ns := "test-ns"
-	sbName := "fix-test-repo-100"
-
-	kubeClient, fakeDynamic := newTestKubeClientWithSandbox(sbName, ns, "Running", "fix-issue")
-
-	oldInterval := adoptionPollInterval
-	adoptionPollInterval = 10 * time.Millisecond
-	defer func() { adoptionPollInterval = oldInterval }()
-
+// newAdoptionTestWatcher builds a watcher whose dispatcher polls adopted sandboxes quickly.
+func newAdoptionTestWatcher(t *testing.T, queueDir, ns string, kubeClient *clients.KubernetesClient) *Watcher {
+	t.Helper()
 	w := &Watcher{
 		RootFlags: common.RootFlags{
 			Namespace: ns,
 		},
 		Flags: Flags{
-			QueueDir: tempDir,
+			QueueDir: queueDir,
 			Repo:     RepoFlag{Owner: "test-owner", Repo: "test-repo"},
 		},
 		kubeClient: kubeClient,
 	}
 	w.initQueueManager()
+	w.dispatcher = dispatcher.New(dispatcher.Config{
+		AdoptionPollInterval: 10 * time.Millisecond,
+	}, dispatcher.Deps{
+		Queue:        w.queueMgr,
+		SandboxLocks: w.sandboxLocks,
+		Sandboxes:    &watcherSandboxService{w: w},
+		Coordinator:  &watcherTaskCoordinator{w: w},
+		Runner:       &stubRunner{},
+	})
 
 	for _, d := range []string{"incoming", "processing", "processed"} {
-		if err := os.MkdirAll(filepath.Join(tempDir, d), 0755); err != nil {
+		if err := os.MkdirAll(filepath.Join(queueDir, d), 0755); err != nil {
 			t.Fatalf("failed to create dir: %v", err)
 		}
 	}
+	return w
+}
+
+func writeStuckTask(t *testing.T, queueDir, filename, body string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(queueDir, "processing", filename), []byte(body), 0644); err != nil {
+		t.Fatalf("failed to write task file: %v", err)
+	}
+}
+
+func TestRecover_AdoptsRunningTaskAndReleasesOnCompletion(t *testing.T) {
+	tempDir := t.TempDir()
+	ns := "test-ns"
+	sbName := "fix-test-repo-100"
+
+	kubeClient, fakeDynamic := newTestKubeClientWithSandbox(sbName, ns, "Running", "fix-issue")
+	w := newAdoptionTestWatcher(t, tempDir, ns, kubeClient)
 
 	fn := "task-issue-100.yaml"
-	taskYAML := `type: issue-fix
+	writeStuckTask(t, tempDir, fn, `type: issue-fix
 number: 100
 status: Running
 url: https://github.com/test-owner/test-repo/issues/100
-`
-	if err := os.WriteFile(filepath.Join(tempDir, "processing", fn), []byte(taskYAML), 0644); err != nil {
-		t.Fatalf("failed to write task file: %v", err)
-	}
+`)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Run recovery
-	w.recoverStuckTasks(ctx)
+	w.dispatcher.Recover(ctx)
 
 	// Verify the sandbox lease was acquired
 	if !w.sandboxLocks.IsBusy(sbName) {
@@ -119,8 +134,7 @@ url: https://github.com/test-owner/test-repo/issues/100
 			},
 		},
 	}
-	_, err := fakeDynamic.Resource(k8s.SandboxGVR).Namespace(ns).Update(ctx, updatedSB, metav1.UpdateOptions{})
-	if err != nil {
+	if _, err := fakeDynamic.Resource(k8s.SandboxGVR).Namespace(ns).Update(ctx, updatedSB, metav1.UpdateOptions{}); err != nil {
 		t.Fatalf("failed to update mock sandbox: %v", err)
 	}
 
@@ -152,42 +166,22 @@ url: https://github.com/test-owner/test-repo/issues/100
 	}
 }
 
-func TestRecoverStuckTasks_AlreadyCompletedReleasesLease(t *testing.T) {
+func TestRecover_AlreadyCompletedReleasesLease(t *testing.T) {
 	tempDir := t.TempDir()
 	ns := "test-ns"
 	sbName := "fix-test-repo-101"
 
 	kubeClient, _ := newTestKubeClientWithSandbox(sbName, ns, "Completed", "fix-issue")
-
-	w := &Watcher{
-		RootFlags: common.RootFlags{
-			Namespace: ns,
-		},
-		Flags: Flags{
-			QueueDir: tempDir,
-			Repo:     RepoFlag{Owner: "test-owner", Repo: "test-repo"},
-		},
-		kubeClient: kubeClient,
-	}
-	w.initQueueManager()
-
-	for _, d := range []string{"incoming", "processing", "processed"} {
-		if err := os.MkdirAll(filepath.Join(tempDir, d), 0755); err != nil {
-			t.Fatalf("failed to create dir: %v", err)
-		}
-	}
+	w := newAdoptionTestWatcher(t, tempDir, ns, kubeClient)
 
 	fn := "task-issue-101.yaml"
-	taskYAML := `type: issue-fix
+	writeStuckTask(t, tempDir, fn, `type: issue-fix
 number: 101
 status: Running
 url: https://github.com/test-owner/test-repo/issues/101
-`
-	if err := os.WriteFile(filepath.Join(tempDir, "processing", fn), []byte(taskYAML), 0644); err != nil {
-		t.Fatalf("failed to write task file: %v", err)
-	}
+`)
 
-	w.recoverStuckTasks(context.Background())
+	w.dispatcher.Recover(context.Background())
 
 	// Task should be in processed immediately
 	if _, err := os.Stat(filepath.Join(tempDir, "processed", fn)); err != nil {
@@ -200,7 +194,7 @@ url: https://github.com/test-owner/test-repo/issues/101
 	}
 }
 
-func TestRecoverStuckTasks_MissingSandboxRequeuesAndReleasesLease(t *testing.T) {
+func TestRecover_MissingSandboxRequeuesAndReleasesLease(t *testing.T) {
 	tempDir := t.TempDir()
 	ns := "test-ns"
 	sbName := "fix-test-repo-102"
@@ -215,36 +209,16 @@ func TestRecoverStuckTasks_MissingSandboxRequeuesAndReleasesLease(t *testing.T) 
 		DynamicClient: fakeDynamic,
 		Clientset:     cs,
 	}
-
-	w := &Watcher{
-		RootFlags: common.RootFlags{
-			Namespace: ns,
-		},
-		Flags: Flags{
-			QueueDir: tempDir,
-			Repo:     RepoFlag{Owner: "test-owner", Repo: "test-repo"},
-		},
-		kubeClient: kubeClient,
-	}
-	w.initQueueManager()
-
-	for _, d := range []string{"incoming", "processing", "processed"} {
-		if err := os.MkdirAll(filepath.Join(tempDir, d), 0755); err != nil {
-			t.Fatalf("failed to create dir: %v", err)
-		}
-	}
+	w := newAdoptionTestWatcher(t, tempDir, ns, kubeClient)
 
 	fn := "task-issue-102.yaml"
-	taskYAML := `type: issue-fix
+	writeStuckTask(t, tempDir, fn, `type: issue-fix
 number: 102
 status: Running
 url: https://github.com/test-owner/test-repo/issues/102
-`
-	if err := os.WriteFile(filepath.Join(tempDir, "processing", fn), []byte(taskYAML), 0644); err != nil {
-		t.Fatalf("failed to write task file: %v", err)
-	}
+`)
 
-	w.recoverStuckTasks(context.Background())
+	w.dispatcher.Recover(context.Background())
 
 	// Task should be requeued to incoming
 	if _, err := os.Stat(filepath.Join(tempDir, "incoming", fn)); err != nil {

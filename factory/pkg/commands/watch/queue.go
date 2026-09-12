@@ -1,7 +1,6 @@
 package watch
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,33 +10,9 @@ import (
 
 	githubv39 "github.com/google/go-github/v39/github"
 	"gopkg.in/yaml.v3"
-	"k8s.io/klog/v2"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 )
-
-func isDoNotProcess(queueDir string) bool {
-	if os.Getenv("DO_NOT_PROCESS") == "true" || os.Getenv("FACTORY_DO_NOT_PROCESS") == "true" || os.Getenv("DRAIN") == "true" || os.Getenv("FACTORY_DRAIN") == "true" {
-		return true
-	}
-	checkPaths := []string{
-		filepath.Join(queueDir, ".do_not_process"),
-		filepath.Join(queueDir, "do_not_process"),
-		filepath.Join(queueDir, ".drain"),
-		filepath.Join(queueDir, "drain"),
-		"/workspaces/.do_not_process",
-		"/workspaces/do_not_process",
-		"/workspaces/.drain",
-		"/workspaces/drain",
-	}
-	for _, p := range checkPaths {
-		if _, err := os.Stat(p); err == nil {
-			return true
-		}
-	}
-	return false
-}
 
 func getIssuePriority(issue *githubv39.Issue) api.TaskPriority {
 	for _, l := range issue.Labels {
@@ -169,148 +144,6 @@ func loadProcessedTasks(processedDir string) (map[int]time.Time, map[int]prWatch
 		}
 	}
 	return processedIssues, processedPRs
-}
-
-func (w *Watcher) recoverStuckTasks(ctx context.Context) {
-	files, err := os.ReadDir(w.processingDir)
-	if err != nil {
-		return
-	}
-	for _, f := range files {
-		if !f.IsDir() && strings.HasPrefix(f.Name(), "task-") && strings.HasSuffix(f.Name(), ".yaml") {
-			processingPath := filepath.Join(w.processingDir, f.Name())
-
-			// Read the task
-			if data, err := os.ReadFile(processingPath); err == nil {
-				var t api.QueueTask
-				if err := yaml.Unmarshal(data, &t); err == nil {
-					sandboxName := w.resolveSandboxName(ctx, t.Type, t.Number)
-					if w.kubeClient != nil && sandboxName != "" {
-						running, err := isSandboxTaskRunning(ctx, w.kubeClient, w.Namespace, sandboxName)
-						if err == nil && running {
-							if w.sandboxLocks.TryAcquire(sandboxName, f.Name()) {
-								klog.Infof("Task %s is still actively running in sandbox %s. Adopting task.", f.Name(), sandboxName)
-								taskCopy := t
-								w.wg.Add(1)
-								go func(fn string, task *api.QueueTask, sb string) {
-									defer func() {
-										w.sandboxLocks.Release(sb, fn)
-										w.wg.Done()
-									}()
-									w.monitorAdoptedTask(ctx, fn, task, sb)
-								}(f.Name(), &taskCopy, sandboxName)
-							} else {
-								klog.Infof("Task %s is still actively running in sandbox %s. Failed to acquire lease.", f.Name(), sandboxName)
-							}
-							continue
-						}
-						completed, err := isSandboxTaskCompleted(ctx, w.kubeClient, w.Namespace, sandboxName, t.Type)
-						if err == nil && completed {
-							klog.Infof("Task %s already completed in sandbox %s. Moving from processing to processed.", f.Name(), sandboxName)
-							if err := w.queueMgr.CompleteTask(f.Name(), &t); err == nil {
-								continue
-							}
-						}
-					}
-
-					t.Status = api.StatusPending
-					t.Recovered = true
-					if err := w.queueMgr.Enqueue(f.Name(), &t); err == nil {
-						klog.Infof("Recovered stuck task %s from processing to incoming", f.Name())
-						continue
-					}
-				}
-			}
-
-			// Fallback to simple rename if parsing fails
-			incomingPath := filepath.Join(w.incomingDir, f.Name())
-			if err := os.Rename(processingPath, incomingPath); err == nil {
-				klog.Infof("Recovered stuck task %s (fallback rename) to incoming", f.Name())
-			} else {
-				klog.Errorf("Failed to recover stuck task %s: %v", f.Name(), err)
-			}
-		}
-	}
-}
-
-var adoptionPollInterval = 5 * time.Second
-
-// monitorAdoptedTask supervises an adopted task that was already running in a cluster sandbox across restarts.
-func (w *Watcher) monitorAdoptedTask(ctx context.Context, taskFilename string, t *api.QueueTask, sandboxName string) {
-	interval := adoptionPollInterval
-
-	monitorCtx := ctx
-	var monitorCancel context.CancelFunc
-	if w.TaskTimeout > 0 {
-		timeoutBudget := w.TaskTimeout
-		baseTime := t.StartedAt
-		if baseTime.IsZero() {
-			baseTime = t.EnqueuedAt
-		}
-		if baseTime.IsZero() {
-			baseTime = t.CreatedAt
-		}
-		if !baseTime.IsZero() {
-			elapsed := time.Since(baseTime)
-			timeoutBudget = w.TaskTimeout - elapsed
-			if timeoutBudget <= 0 {
-				timeoutBudget = 1 * time.Millisecond
-			}
-		}
-		monitorCtx, monitorCancel = context.WithTimeout(ctx, timeoutBudget)
-		defer monitorCancel()
-	}
-
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-monitorCtx.Done():
-			if monitorCtx.Err() == context.DeadlineExceeded {
-				klog.Warningf("Adopted task %s in sandbox %s timed out after %s", taskFilename, sandboxName, w.TaskTimeout)
-				if sandboxName != "" && w.kubeClient != nil {
-					manager := k8s.NewManager(w.kubeClient)
-					_ = manager.DeleteSandbox(ctx, w.Namespace, sandboxName)
-				}
-				_ = w.queueMgr.FailTask(taskFilename, t, "adopted task timed out")
-				if t.Type == api.TypePRComments && w.cfg != nil {
-					resolvePRCommentReactions(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, t.Number, "confused", w.cfg.AllowlistedBots, w.githubLogin)
-				}
-			}
-			return
-		case <-ticker.C:
-			running, err := isSandboxTaskRunning(monitorCtx, w.kubeClient, w.Namespace, sandboxName)
-			if err != nil {
-				klog.Warningf("Failed to check status of adopted sandbox %s: %v", sandboxName, err)
-				continue
-			}
-			if running {
-				continue
-			}
-
-			// Task has finished! Check whether it completed or failed
-			completed, err := isSandboxTaskCompleted(monitorCtx, w.kubeClient, w.Namespace, sandboxName, t.Type)
-			if err != nil {
-				klog.Warningf("Failed to check completion state of adopted sandbox %s: %v", sandboxName, err)
-			}
-
-			if completed {
-				klog.Infof("Adopted task %s in sandbox %s completed successfully.", taskFilename, sandboxName)
-				_ = w.queueMgr.CompleteTask(taskFilename, t)
-				if t.Type == api.TypePRComments && w.cfg != nil {
-					resolvePRCommentReactions(monitorCtx, w.ghClient, w.Repo.Owner, w.Repo.Repo, t.Number, "+1", w.cfg.AllowlistedBots, w.githubLogin)
-				}
-			} else {
-				klog.Warningf("Adopted task %s in sandbox %s failed or terminated.", taskFilename, sandboxName)
-				_ = w.queueMgr.FailTask(taskFilename, t, "adopted task failed or terminated in sandbox")
-				if t.Type == api.TypePRComments && w.cfg != nil {
-					resolvePRCommentReactions(monitorCtx, w.ghClient, w.Repo.Owner, w.Repo.Repo, t.Number, "confused", w.cfg.AllowlistedBots, w.githubLogin)
-				}
-			}
-			return
-		}
-	}
 }
 
 // PRTaskOptions specifies parameters for constructing a pull request api.QueueTask.
