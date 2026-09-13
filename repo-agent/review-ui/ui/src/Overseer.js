@@ -79,10 +79,18 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
     const [statusLoading, setStatusLoading] = useState(false);
 
     const logIntervalRef = useRef(null);
+    const activeOverseerName = activeOverseer?.metadata?.name;
+    const activeSandboxName = activeSandbox?.metadata?.name;
+    const statusDataRef = useRef(statusData);
+    const prevOverseerNameRef = useRef(activeOverseerName);
+
+    useEffect(() => {
+        statusDataRef.current = statusData;
+    }, [statusData]);
 
     const fetchQueue = useCallback(() => {
-        if (!activeOverseer) return;
-        fetch(`/api/overseers/${activeOverseer.metadata.name}/queue`)
+        if (!activeOverseerName) return;
+        fetch(`/api/overseers/${activeOverseerName}/queue`)
             .then(res => {
                 if (!res.ok) throw new Error("Failed to fetch task queue");
                 return res.json();
@@ -91,14 +99,17 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                 if (data && data.isSyncing) {
                     setQueueData(prev => prev ? { ...prev, isSyncing: true } : data);
                 } else {
-                    setQueueData(data);
+                    setQueueData(prev => {
+                        if (prev && JSON.stringify(prev) === JSON.stringify(data)) return prev;
+                        return data;
+                    });
                 }
             })
             .catch(err => {
                 console.error("Failed to fetch task queue:", err);
                 setQueueData(prev => prev ? { ...prev, isSyncing: true } : null);
             });
-    }, [activeOverseer]);
+    }, [activeOverseerName]);
 
     useEffect(() => {
         fetchQueue();
@@ -106,41 +117,50 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
         return () => clearInterval(interval);
     }, [fetchQueue]);
 
-    const fetchStatus = useCallback(() => {
-        if (!activeOverseer) return;
-        setStatusLoading(true);
-        fetch(`/api/overseers/${activeOverseer.metadata.name}/status`)
+    const fetchStatus = useCallback((isManual = false) => {
+        if (!activeOverseerName) return;
+        if (isManual || !statusDataRef.current) {
+            setStatusLoading(true);
+        }
+        fetch(`/api/overseers/${activeOverseerName}/status`)
             .then(res => {
                 if (!res.ok) throw new Error("Failed to fetch status");
                 return res.json();
             })
             .then(data => {
-                setStatusData(data);
+                setStatusData(prev => {
+                    if (prev && JSON.stringify(prev) === JSON.stringify(data)) return prev;
+                    return data;
+                });
                 setStatusLoading(false);
             })
             .catch(err => {
                 console.error("Failed to fetch status:", err);
                 setStatusLoading(false);
             });
-    }, [activeOverseer]);
+    }, [activeOverseerName]);
 
     useEffect(() => {
         if (showStatus) {
             fetchStatus();
-            const interval = setInterval(fetchStatus, 5000);
+            const interval = setInterval(() => fetchStatus(false), 15000);
             return () => clearInterval(interval);
         }
     }, [showStatus, fetchStatus]);
 
     useEffect(() => {
-        setStatusData(null);
-        setQueueData(null);
-    }, [activeOverseer]);
+        if (activeOverseerName && prevOverseerNameRef.current && prevOverseerNameRef.current !== activeOverseerName) {
+            setStatusData(null);
+            setQueueData(null);
+            setActiveSandbox(null);
+        }
+        prevOverseerNameRef.current = activeOverseerName;
+    }, [activeOverseerName]);
 
     const handleMakeCritical = (fileName, currentPriority) => {
-        if (!activeOverseer) return;
+        if (!activeOverseerName) return;
         const newPriority = currentPriority === 'critical' ? 'medium' : 'critical';
-        fetch(`/api/overseers/${activeOverseer.metadata.name}/queue/${encodeURIComponent(fileName)}/priority`, {
+        fetch(`/api/overseers/${activeOverseerName}/queue/${encodeURIComponent(fileName)}/priority`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ priority: newPriority })
@@ -168,13 +188,18 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
             })
             .then(data => {
                 setError(null);
-                setOverseers(data || []);
+                setOverseers(prev => {
+                    if (prev && JSON.stringify(prev) === JSON.stringify(data)) return prev;
+                    return data || [];
+                });
                 setActiveOverseer(prev => {
                     if (data && data.length > 0 && !prev) {
                         return data[0];
                     } else if (prev) {
                         const updated = (data || []).find(o => o.metadata?.name === prev.metadata?.name);
-                        return updated || prev;
+                        if (!updated) return prev;
+                        if (JSON.stringify(prev) === JSON.stringify(updated)) return prev;
+                        return updated;
                     }
                     return prev;
                 });
@@ -193,25 +218,31 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
     }, [fetchOverseers]);
 
     const fetchSandboxes = useCallback(() => {
-        if (!activeOverseer) return;
-        fetch(`/api/overseers/${activeOverseer.metadata.name}/sandboxes`)
+        if (!activeOverseerName) return;
+        fetch(`/api/overseers/${activeOverseerName}/sandboxes`)
             .then(res => {
                 if (!res.ok) throw new Error("Failed to fetch sandboxes");
                 return res.json();
             })
             .then(data => {
-                setSandboxes(data || []);
+                const next = data || [];
+                setSandboxes(prev => {
+                    if (prev && JSON.stringify(prev) === JSON.stringify(next)) return prev;
+                    return next;
+                });
                 setActiveSandbox(prev => {
                     if (!prev) return null;
-                    const updated = (data || []).find(s => s.metadata?.name === prev.metadata?.name);
-                    return updated || prev;
+                    const updated = next.find(s => s.metadata?.name === prev.metadata?.name);
+                    if (!updated) return null;
+                    if (JSON.stringify(prev) === JSON.stringify(updated)) return prev;
+                    return updated;
                 });
             })
             .catch(err => {
                 console.error("Failed to fetch sandboxes:", err);
                 setSandboxes([]);
             });
-    }, [activeOverseer]);
+    }, [activeOverseerName]);
 
     useEffect(() => {
         fetchSandboxes();
@@ -220,38 +251,42 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
     }, [fetchSandboxes]);
 
     const fetchSandboxTasks = useCallback(() => {
-        if (!activeOverseer || !activeSandbox) return;
-        fetch(`/api/overseers/${activeOverseer.metadata.name}/sandboxes/${activeSandbox.metadata.name}/tasks`)
+        if (!activeOverseerName || !activeSandboxName) return;
+        fetch(`/api/overseers/${activeOverseerName}/sandboxes/${activeSandboxName}/tasks`)
             .then(res => {
                 if (!res.ok) throw new Error("Failed to fetch sandbox tasks");
                 return res.json();
             })
             .then(data => {
-                setTasks(data || []);
+                const next = data || [];
+                setTasks(prev => {
+                    if (prev && JSON.stringify(prev) === JSON.stringify(next)) return prev;
+                    return next;
+                });
             })
             .catch(err => {
                 console.error("Failed to fetch sandbox tasks:", err);
                 setTasks([]);
             });
-    }, [activeOverseer, activeSandbox]);
+    }, [activeOverseerName, activeSandboxName]);
 
     useEffect(() => {
-        if (activeSandbox) {
+        if (activeSandboxName) {
             fetchSandboxTasks();
             const interval = setInterval(fetchSandboxTasks, 5000);
             return () => clearInterval(interval);
         } else {
             setTasks([]);
         }
-    }, [activeSandbox, fetchSandboxTasks]);
+    }, [activeSandboxName, fetchSandboxTasks]);
 
     const fetchLogs = useCallback(() => {
-        if (!activeOverseer) return;
+        if (!activeOverseerName) return;
         let url = '';
         if (showOverseerLogs) {
-            url = `/api/overseers/${activeOverseer.metadata.name}/logs`;
-        } else if (activeSandbox && showPodLogs) {
-            url = `/api/overseers/${activeOverseer.metadata.name}/sandboxes/${activeSandbox.metadata.name}/logs`;
+            url = `/api/overseers/${activeOverseerName}/logs`;
+        } else if (activeSandboxName && showPodLogs) {
+            url = `/api/overseers/${activeOverseerName}/sandboxes/${activeSandboxName}/logs`;
         } else {
             return;
         }
@@ -260,12 +295,12 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
             .then(res => res.text())
             .then(data => setLogs(data))
             .catch(err => console.error("Failed to fetch logs:", err));
-    }, [activeOverseer, activeSandbox, showOverseerLogs, showPodLogs]);
+    }, [activeOverseerName, activeSandboxName, showOverseerLogs, showPodLogs]);
 
     useEffect(() => {
         if (logIntervalRef.current) clearInterval(logIntervalRef.current);
         
-        if (showOverseerLogs || (activeSandbox && showPodLogs)) {
+        if (showOverseerLogs || (activeSandboxName && showPodLogs)) {
             fetchLogs();
             logIntervalRef.current = setInterval(fetchLogs, 5000);
         } else {
@@ -275,7 +310,7 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
         return () => {
             if (logIntervalRef.current) clearInterval(logIntervalRef.current);
         };
-    }, [showOverseerLogs, showPodLogs, activeSandbox, fetchLogs]);
+    }, [showOverseerLogs, showPodLogs, activeSandboxName, fetchLogs]);
 
     const handleOverseerClick = (ov) => {
         if (activeOverseer?.metadata.name === ov.metadata.name) {
@@ -284,12 +319,16 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
             setShowOverseerLogs(false);
             setShowTerminal(false);
             setShowPodLogs(false);
+            setShowStatus(false);
+            setShowTaskQueue(false);
         } else {
             setActiveOverseer(ov);
             setActiveSandbox(null);
-            setShowOverseerLogs(true);
+            setShowOverseerLogs(false);
             setShowTerminal(false);
             setShowPodLogs(false);
+            setShowStatus(false);
+            setShowTaskQueue(false);
         }
     };
 
@@ -679,16 +718,21 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                             <h3 style={{ margin: 0, color: 'var(--text-primary)' }}>📊 Factory / API Token Status</h3>
                             <button 
                                 className="btn btn-sm btn-secondary" 
-                                onClick={fetchStatus}
+                                onClick={() => fetchStatus(true)}
+                                disabled={statusLoading}
                                 style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
                             >
-                                🔄 Refresh Status
+                                {statusLoading ? '⏳ Refreshing...' : '🔄 Refresh Status'}
                             </button>
                         </div>
 
-                        {statusLoading && !statusData ? (
+                        {!statusData && statusLoading ? (
                             <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-secondary)' }}>
                                 🔄 Loading status data, please wait...
+                            </div>
+                        ) : !statusData ? (
+                            <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                                No status data available. Click Refresh Status to load.
                             </div>
                         ) : (
                             <div>
