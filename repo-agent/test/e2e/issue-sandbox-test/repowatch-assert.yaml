@@ -5,4 +5,4 @@ metadata:
   namespace: repo-agent-system
 (status != null): true
 (length(status.issueSandboxes.fix || `[]`)): 1
-(starts_with(status.issueSandboxes.fix[0].sandboxName, 'fix-')): true
+(starts_with(status.issueSandboxes.fix[0].sandboxName || '', 'fix-')): true
