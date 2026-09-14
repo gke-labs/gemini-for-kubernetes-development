@@ -25,16 +25,23 @@ COPY agentsandboxes/ agentsandboxes/
 COPY repo-agent/pkg/ repo-agent/pkg/
 COPY repo-agent/api/ repo-agent/api/
 COPY repo-agent/cmd/repowatch-controller/ repo-agent/cmd/repowatch-controller/
+COPY factory/ factory/
 
 # Build
 WORKDIR /workspace/repo-agent
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o manager cmd/repowatch-controller/main.go
+
+# Build the factory CLI from monorepo source (same pattern as overseer's image);
+# the controller execs it to run agent tasks — process invocation only, no Go imports.
+WORKDIR /workspace/factory
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o factory ./main.go
 
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
 FROM gcr.io/distroless/static:nonroot
 WORKDIR /
 COPY --from=builder /workspace/repo-agent/manager .
+COPY --from=builder /workspace/factory/factory /usr/local/bin/factory
 USER 65532:65532
 
 ENTRYPOINT ["/manager"]

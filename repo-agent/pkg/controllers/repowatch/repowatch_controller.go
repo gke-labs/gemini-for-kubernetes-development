@@ -376,6 +376,12 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		user.Email = github.String(githubConfig["email"])
 	}
 
+	// Keep the tenant's factory-user secret in sync so factory CLI invocations
+	// pick up fresh credentials (identity contract shared with overseer).
+	if err := r.reconcileFactoryUserSecret(ctx, repoWatch, user); err != nil {
+		log.Error(err, "unable to reconcile factory-user secret")
+	}
+
 	// List Pods to check for status/eviction
 	podList := &corev1.PodList{}
 	if err := r.List(ctx, podList, client.InNamespace(repoWatch.Namespace)); err != nil {
