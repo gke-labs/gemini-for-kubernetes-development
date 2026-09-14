@@ -28,6 +28,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/google/go-github/v39/github"
 	"github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -111,11 +112,17 @@ func TestReconciler_ReconcileExplicitIssues(t *testing.T) {
 		},
 	}
 
-	fakeClient := clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch).WithStatusSubresource(&reviewv1alpha1.RepoWatch{}).Build()
+	githubSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-secret", Namespace: "default"},
+		Data:       map[string][]byte{"pat": []byte("test-pat")},
+	}
+	fakeClient := clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, githubSecret).WithStatusSubresource(&reviewv1alpha1.RepoWatch{}).Build()
 
+	fakeFactory := newFakeLauncher()
 	r := &Reconciler{
-		Client: fakeClient,
-		Scheme: s,
+		Factory: fakeFactory,
+		Client:  fakeClient,
+		Scheme:  s,
 		NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
 			return ghClient, map[string]string{"pat": "test-pat"}, nil
 		},
@@ -137,7 +144,11 @@ func TestReconciler_ReconcileExplicitIssues(t *testing.T) {
 	g.Expect(fetchedRepoWatch.Status.IssueSandboxes["test-handler"][0].Number).To(gomega.Equal(10))
 	g.Expect(fetchedRepoWatch.Status.IssueSandboxes["other-handler"][0].Number).To(gomega.Equal(10))
 
-	// Check that an IssueSandbox was created
+	// The factory CLI owns sandbox creation now: the controller launches one
+	// `factory fix` per issue and creates no sandboxes itself.
+	g.Expect(fakeFactory.launches()).To(gomega.HaveLen(1), "Only one factory fix should have been launched for Issue 10")
+	g.Expect(fakeFactory.launches()[0].Opts.IssueURL).To(gomega.Equal("https://github.com/test/repo/issues/10"))
+
 	issueSandboxList := &unstructured.UnstructuredList{}
 	issueSandboxList.SetGroupVersionKind(schema.GroupVersionKind{
 		Group:   "agents.x-k8s.io",
@@ -145,5 +156,5 @@ func TestReconciler_ReconcileExplicitIssues(t *testing.T) {
 		Kind:    "Sandbox",
 	})
 	g.Expect(fakeClient.List(context.Background(), issueSandboxList)).To(gomega.Succeed())
-	g.Expect(issueSandboxList.Items).To(gomega.HaveLen(1), "Only one sandbox should have been created for Issue 10")
+	g.Expect(issueSandboxList.Items).To(gomega.BeEmpty(), "The controller must not create sandboxes; factory does")
 }

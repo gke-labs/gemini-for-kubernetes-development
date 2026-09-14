@@ -39,6 +39,7 @@ import (
 	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
 	sandboxtaskv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/controllers/repowatch"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
 	//+kubebuilder:scaffold:imports
 )
 
@@ -96,8 +97,9 @@ func main() {
 	}
 
 	if err = (&repowatch.Reconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:  mgr.GetClient(),
+		Scheme:  mgr.GetScheme(),
+		Factory: factorycli.NewRunner(),
 		NewGithubClient: func(ctx context.Context, k8sClient client.Client, repoWatch *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
 			return repowatch.NewGithubClient(ctx, k8sClient, repoWatch)
 		},

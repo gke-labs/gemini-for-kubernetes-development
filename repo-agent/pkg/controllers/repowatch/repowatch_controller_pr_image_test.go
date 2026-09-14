@@ -78,8 +78,9 @@ func TestReconciler_Reconcile_PR_With_Image(t *testing.T) {
 	ghClient := clients.NewGitHubClientFromHTTP(mockHTTPClient)
 
 	r := &Reconciler{
-		Client: fakeClient,
-		Scheme: s,
+		Factory: newFakeLauncher(),
+		Client:  fakeClient,
+		Scheme:  s,
 		NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
 			return ghClient, map[string]string{"pat": "test-pat"}, nil
 		},

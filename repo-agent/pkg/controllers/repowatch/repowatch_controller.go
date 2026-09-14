@@ -25,7 +25,6 @@ import (
 	"math/rand"
 	"net/url"
 	"os"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -38,7 +37,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -53,7 +51,7 @@ import (
 	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
 	sandboxtaskv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
-	pkg_github "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/prompts"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 )
@@ -254,6 +252,7 @@ type Reconciler struct {
 	client.Client
 	Scheme           *runtime.Scheme
 	NewGithubClient  githubClientFactory
+	Factory          factorycli.Launcher
 	RepoSandboxImage string
 	ConfigDirImage   string
 	ForceSandboxMode string
@@ -824,164 +823,214 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 		opts.Page = resp.NextPage
 	}
 
-	// 2. List existing Sandboxes (issues)
-	sandboxList := &unstructured.UnstructuredList{}
+	// 2. List sandboxes: factory-managed ones (the issue engine since the
+	// factory-CLI migration) plus any legacy repo-agent issue sandboxes that
+	// still need to be drained.
 	sandboxGVK := schema.GroupVersionKind{
 		Group:   "agents.x-k8s.io",
 		Version: "v1alpha1",
 		Kind:    "Sandbox",
 	}
-	sandboxList.SetGroupVersionKind(sandboxGVK)
-	if err := r.List(ctx, sandboxList, client.InNamespace(repoWatch.Namespace), client.MatchingLabels{"sandbox.gemini.google.com/type": "issue"}); err != nil {
+	factoryList := &unstructured.UnstructuredList{}
+	factoryList.SetGroupVersionKind(sandboxGVK)
+	if err := r.List(ctx, factoryList, client.InNamespace(repoWatch.Namespace), client.MatchingLabels{factorycli.LabelManaged: "true"}); err != nil {
+		return err
+	}
+	factorySandboxes := make(map[string]*unstructured.Unstructured)
+	for i := range factoryList.Items {
+		factorySandboxes[factoryList.Items[i].GetName()] = &factoryList.Items[i]
+	}
+
+	legacyList := &unstructured.UnstructuredList{}
+	legacyList.SetGroupVersionKind(sandboxGVK)
+	if err := r.List(ctx, legacyList, client.InNamespace(repoWatch.Namespace), client.MatchingLabels{"sandbox.gemini.google.com/type": "issue"}); err != nil {
 		return err
 	}
 
-	ownedSandboxes := getOwnedSandboxes(sandboxList.Items, repoWatch.UID)
+	// factory's host-side GitHub reads authenticate with the tenant token
+	// from the factory-user secret (kept fresh by reconcileFactoryUserSecret).
+	// Without it we still report status but launch nothing.
+	githubToken, tokenErr := r.factoryGithubToken(ctx, repoWatch)
+	if tokenErr != nil {
+		log.Error(tokenErr, "factory-user secret not ready; skipping new issue task launches")
+	}
 
 	// 3. Process Issues
+	sandboxPrefix := fmt.Sprintf("fix-%s-", repo)
 	activeSandboxes := 0
 	totalSandboxes := 0
-	watchedIssues := make(map[string][]reviewv1alpha1.WatchedIssue)
-	pendingIssues := make(map[string][]int)
-
-	// Helper to count active/total
-	for _, sandbox := range ownedSandboxes {
-		replicas, found, err := unstructured.NestedInt64(sandbox.Object, "spec", "replicas")
+	for name, sb := range factorySandboxes {
+		if !strings.HasPrefix(name, sandboxPrefix) {
+			continue
+		}
+		totalSandboxes++
+		replicas, found, err := unstructured.NestedInt64(sb.Object, "spec", "replicas")
 		if err == nil && found && replicas > 0 {
 			activeSandboxes++
 		}
-		totalSandboxes++
 	}
 
-	// Track which sandboxes are valid (keep them)
+	watchedIssues := make(map[string][]reviewv1alpha1.WatchedIssue)
+	pendingIssues := make(map[string][]int)
 	validSandboxNames := make(map[string]bool)
 
 	for _, issue := range allIssues {
-		// Identify applicable handlers
-		var applicableHandlers []reviewv1alpha1.IssueHandlerSpec
+		var fixHandlers []reviewv1alpha1.IssueHandlerSpec
 		for _, handler := range repoWatch.Spec.Issue.Handlers {
-			if r.isIssueMatch(issue, handler, repoWatch, user) {
-				applicableHandlers = append(applicableHandlers, handler)
+			if !r.isIssueMatch(issue, handler, repoWatch, user) {
+				continue
+			}
+			// The factory CLI covers fix-type tasks. Other task types
+			// (triage, rollback, ...) return as factory agent definitions
+			// in a later migration phase.
+			switch handler.TaskType {
+			case "", "issue", "fix-issue":
+				fixHandlers = append(fixHandlers, handler)
+			default:
+				log.Info("skipping handler with task type unsupported by the factory engine", "handler", handler.Name, "taskType", handler.TaskType, "issue", *issue.Number)
 			}
 		}
-
-		if len(applicableHandlers) == 0 {
+		if len(fixHandlers) == 0 {
 			continue
 		}
 
-		sandboxName := fmt.Sprintf("%s-issue-%d", repoWatch.Name, *issue.Number)
+		sandboxName := factorycli.FixSandboxName(repo, *issue.Number)
 		validSandboxNames[sandboxName] = true
+		sb := factorySandboxes[sandboxName]
 
-		// Check if sandbox exists
-		var existingSandbox *unstructured.Unstructured
-		for i := range ownedSandboxes {
-			if ownedSandboxes[i].GetName() == sandboxName {
-				existingSandbox = &ownedSandboxes[i]
-				break
-			}
-		}
-
-		if existingSandbox != nil {
-			log.Info("sandbox found for", "issue", *issue.Number)
-
-			// Check for feedback
-			if err := r.reconcileIssueFeedback(ctx, repoWatch, existingSandbox, issue, ghClient); err != nil {
-				log.Error(err, "unable to reconcile issue feedback", "issue", *issue.Number)
-			}
-
-			// Check for PR failures
-			if err := r.reconcilePRFailures(ctx, repoWatch, existingSandbox, issue, ghClient); err != nil {
-				log.Error(err, "unable to reconcile PR failures", "issue", *issue.Number)
-			}
-
-			// Manage lifecycle (pause/unpause)
-			shutdownDuration := time.Minute * time.Duration(repoWatch.Spec.Issue.IssueShutdownAfterMinutes)
-			wasScaled, err := r.manageSandboxLifecycle(ctx, existingSandbox, shutdownDuration)
-			if err != nil {
-				log.Error(err, "unable to manage sandbox lifecycle", "sandbox", existingSandbox.GetName())
-			}
-
-			// Re-check replicas to see if it's scaled down
-			replicas, found, err := unstructured.NestedInt64(existingSandbox.Object, "spec", "replicas")
-			scaledDown := false
+		state := ""
+		scaledDown := false
+		if sb != nil {
+			state = sb.GetAnnotations()[factorycli.AnnotationTaskState]
+			replicas, found, err := unstructured.NestedInt64(sb.Object, "spec", "replicas")
 			if err == nil && found && replicas == 0 {
 				scaledDown = true
 			}
+		}
 
-			if wasScaled && scaledDown {
-				activeSandboxes--
+		launchKey := repoWatch.Namespace + "/" + sandboxName
+		running := r.Factory.IsRunning(launchKey)
+		status := state
+		if status == "" {
+			if running {
+				status = "Starting"
+			} else {
+				status = "Pending"
 			}
+		}
 
-			sandboxStatus, err := r.reconcileSandboxPodStatus(ctx, existingSandbox, podsBySandbox, scaledDown)
-			if err != nil {
-				log.Error(err, "unable to reconcile sandbox pod status", "issue", *issue.Number)
-			}
-
-			// Ensure tasks exist for applicable handlers
-			for _, handler := range applicableHandlers {
-				if err := r.ensureIssueTask(ctx, repoWatch, existingSandbox, sandboxName, issue, handler); err != nil {
-					log.Error(err, "unable to ensure task", "sandbox", sandboxName, "handler", handler.Name)
-				}
-				watchedIssues[handler.Name] = append(watchedIssues[handler.Name], reviewv1alpha1.WatchedIssue{
-					Number:      *issue.Number,
-					SandboxName: sandboxName,
-					Status:      sandboxStatus,
-					ScaledDown:  scaledDown,
-				})
-			}
-
-		} else {
-			log.Info("sandbox not found for", "issue", *issue.Number, "activeSandboxes", activeSandboxes, "totalSandboxes", totalSandboxes)
-			// Create Sandbox if within limits
-			issueIsExplicit := isIssueExplicit(*issue.Number, repoWatch.Spec.Issue.Issues)
-			if issueIsExplicit || (activeSandboxes < repoWatch.Spec.Issue.MaxActiveSandboxes &&
-				(repoWatch.Spec.Issue.MaxSandboxes == 0 || totalSandboxes < repoWatch.Spec.Issue.MaxSandboxes)) {
-				log.Info("creating sandbox for issue", "issue", *issue.Number)
-				createdSandbox, err := r.createIssueSandbox(ctx, user, repoWatch, issue)
+		// Launch (or reattach to) the task unless it reached a terminal
+		// state. An existing sandbox is never blocked by the concurrency
+		// limits: re-invoking factory only reattaches to its task.
+		if !running && githubToken != "" && state != factorycli.TaskStateCompleted && state != factorycli.TaskStateFailed {
+			withinLimits := activeSandboxes < repoWatch.Spec.Issue.MaxActiveSandboxes &&
+				(repoWatch.Spec.Issue.MaxSandboxes == 0 || totalSandboxes < repoWatch.Spec.Issue.MaxSandboxes)
+			if sb != nil || withinLimits || isIssueExplicit(*issue.Number, repoWatch.Spec.Issue.Issues) {
+				instruction, err := r.generateIssueHandlerPrompt(fixHandlers[0], issue)
 				if err != nil {
-					log.Error(err, "unable to create sandbox for issue", "issue", *issue.Number)
-				} else {
-					activeSandboxes++
-					totalSandboxes++
-					// Create tasks immediately
-					for _, handler := range applicableHandlers {
-						if err := r.ensureIssueTask(ctx, repoWatch, createdSandbox, sandboxName, issue, handler); err != nil {
-							log.Error(err, "unable to create task", "sandbox", sandboxName, "handler", handler.Name)
-						}
-						watchedIssues[handler.Name] = append(watchedIssues[handler.Name], reviewv1alpha1.WatchedIssue{
-							Number:      *issue.Number,
-							SandboxName: sandboxName,
-							Status:      "Creating",
-							ScaledDown:  false,
-						})
+					log.Error(err, "unable to expand handler prompt", "issue", *issue.Number)
+				} else if r.Factory.StartFix(launchKey, factorycli.FixOptions{
+					Namespace:         repoWatch.Namespace,
+					IssueURL:          issue.GetHTMLURL(),
+					Instruction:       instruction,
+					Image:             repoWatch.Spec.Issue.Image,
+					WorkspaceDiskSize: repoWatch.Spec.Issue.WorkspaceDiskSize,
+					GithubToken:       githubToken,
+				}) {
+					log.Info("launched factory fix", "issue", *issue.Number, "sandbox", sandboxName)
+					status = "Starting"
+					if sb == nil {
+						activeSandboxes++
+						totalSandboxes++
 					}
 				}
 			} else {
-				for _, handler := range applicableHandlers {
+				for _, handler := range fixHandlers {
 					pendingIssues[handler.Name] = append(pendingIssues[handler.Name], *issue.Number)
 				}
+				continue
 			}
+		}
+
+		for _, handler := range fixHandlers {
+			watchedIssues[handler.Name] = append(watchedIssues[handler.Name], reviewv1alpha1.WatchedIssue{
+				Number:      *issue.Number,
+				SandboxName: sandboxName,
+				Status:      status,
+				ScaledDown:  scaledDown,
+			})
 		}
 	}
 
-	// Cleanup old sandboxes
-	for _, sandbox := range ownedSandboxes {
+	// Drain legacy repo-agent issue sandboxes: the factory CLI is the issue
+	// engine now, so sandboxes from the old taskrunner path are deleted.
+	for _, sandbox := range getOwnedSandboxes(legacyList.Items, repoWatch.UID) {
 		labels := sandbox.GetLabels()
 		if labels != nil && labels["sandbox.gemini.google.com/type"] == "dev" {
 			continue
 		}
-		if !validSandboxNames[sandbox.GetName()] {
-			log.Info("deleting orphan issue sandbox", "sandbox", sandbox.GetName())
-			if err := r.Delete(ctx, &sandbox); err != nil {
-				log.Error(err, "unable to delete sandbox", "sandbox", sandbox.GetName())
-			}
+		log.Info("deleting legacy issue sandbox", "sandbox", sandbox.GetName())
+		if err := r.Delete(ctx, &sandbox); err != nil {
+			log.Error(err, "unable to delete legacy sandbox", "sandbox", sandbox.GetName())
 		}
+	}
+
+	// Delete factory fix sandboxes whose issue is closed or no longer watched.
+	for name, sb := range factorySandboxes {
+		if !strings.HasPrefix(name, sandboxPrefix) || validSandboxNames[name] {
+			continue
+		}
+		if r.Factory.IsRunning(repoWatch.Namespace + "/" + name) {
+			continue
+		}
+		log.Info("deleting factory sandbox for unwatched issue", "sandbox", name)
+		if err := r.Delete(ctx, sb); err != nil {
+			log.Error(err, "unable to delete sandbox", "sandbox", name)
+		}
+	}
+
+	// Pause finished sandboxes after the configured idle period.
+	if repoWatch.Spec.Issue.IssueShutdownAfterMinutes > 0 {
+		r.pauseFinishedFactorySandboxes(ctx, factorySandboxes, validSandboxNames, time.Duration(repoWatch.Spec.Issue.IssueShutdownAfterMinutes)*time.Minute)
 	}
 
 	repoWatch.Status.IssueSandboxes = watchedIssues
 	repoWatch.Status.PendingIssues = pendingIssues
 
 	return r.Status().Update(ctx, repoWatch)
+}
+
+// pauseFinishedFactorySandboxes scales factory sandboxes to zero replicas once
+// their task reached a terminal state and the completion timestamp (written by
+// factory) is older than the shutdown period.
+func (r *Reconciler) pauseFinishedFactorySandboxes(ctx context.Context, sandboxes map[string]*unstructured.Unstructured, names map[string]bool, after time.Duration) {
+	log := log.FromContext(ctx)
+	for name := range names {
+		sb, ok := sandboxes[name]
+		if !ok {
+			continue
+		}
+		annotations := sb.GetAnnotations()
+		state := annotations[factorycli.AnnotationTaskState]
+		if state != factorycli.TaskStateCompleted && state != factorycli.TaskStateFailed {
+			continue
+		}
+		completedAt, err := time.Parse(time.RFC3339, annotations[factorycli.AnnotationCompletionTime])
+		if err != nil || time.Since(completedAt) < after {
+			continue
+		}
+		replicas, found, err := unstructured.NestedInt64(sb.Object, "spec", "replicas")
+		if err != nil || (found && replicas == 0) {
+			continue
+		}
+		log.Info("pausing finished factory sandbox", "sandbox", name)
+		if err := unstructured.SetNestedField(sb.Object, int64(0), "spec", "replicas"); err != nil {
+			continue
+		}
+		if err := r.Update(ctx, sb); err != nil {
+			log.Error(err, "unable to pause sandbox", "sandbox", name)
+		}
+	}
 }
 
 func (r *Reconciler) isIssueMatch(issue *github.Issue, handler reviewv1alpha1.IssueHandlerSpec, repoWatch *reviewv1alpha1.RepoWatch, user *github.User) bool {
@@ -1046,222 +1095,6 @@ func (r *Reconciler) isIssueMatch(issue *github.Issue, handler reviewv1alpha1.Is
 	}
 
 	return true
-}
-
-func (r *Reconciler) createIssueSandbox(ctx context.Context, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, issue *github.Issue) (*unstructured.Unstructured, error) {
-	log := log.FromContext(ctx)
-	// Base name matches the issue identifier
-	name := fmt.Sprintf("%s-issue-%d", repoWatch.Name, *issue.Number)
-
-	cloneURL := strings.Replace(*issue.RepositoryURL, "api.github.com/repos", "github.com", 1) + ".git"
-	repoParts := strings.Split(cloneURL, "/")
-	repoName := repoParts[len(repoParts)-1]
-
-	userLogin := user.GetLogin()
-	userName := user.GetName()
-	if userName == "" {
-		userName = userLogin
-	}
-	userEmail := user.GetEmail()
-
-	// Default bot info to empty (or current user if not using robot account)
-	botLogin := ""
-	botName := ""
-	botEmail := ""
-
-	githubSecretName := repoWatch.Spec.GithubSecretName
-	if repoWatch.Spec.Issue.RobotAccount != "" {
-		githubSecretName = repoWatch.Spec.Issue.RobotAccount
-		if err := r.ensureRobotSecret(ctx, repoWatch.Namespace, githubSecretName); err != nil {
-			log.Error(err, "failed to ensure robot secret", "secret", githubSecretName)
-			return nil, err
-		}
-
-		secret := &corev1.Secret{}
-		if err := r.Get(ctx, types.NamespacedName{Name: githubSecretName, Namespace: repoWatch.Namespace}, secret); err != nil {
-			log.Error(err, "failed to get robot secret", "secret", githubSecretName)
-			return nil, err
-		}
-
-		if len(secret.Data["userid"]) > 0 {
-			botLogin = string(secret.Data["userid"])
-		}
-		if len(secret.Data["name"]) > 0 {
-			botName = string(secret.Data["name"])
-		}
-		if len(secret.Data["email"]) > 0 {
-			botEmail = string(secret.Data["email"])
-		}
-	}
-
-	originUser := userLogin
-	if botLogin != "" {
-		originUser = botLogin
-	}
-	originURL := fmt.Sprintf("github.com/%s/%s", originUser, repoName)
-	branchName := fmt.Sprintf("issue-%d-%s", *issue.Number, randString(4))
-
-	log.Info("Generated sandbox for Issue", "issue", *issue)
-
-	// Determine apiKeySecretName from IssueSpec
-	apiKeySecretName := repoWatch.Spec.Issue.LLM.APIKeySecretRef
-	if apiKeySecretName == "" {
-		// Fallback to a default if not specified, to avoid Pod validation error
-		apiKeySecretName = "gemini-vscode-tokens"
-	}
-
-	dindSupport := repoWatch.Spec.Issue.DindSupport
-	if r.ForceSandboxMode != "" {
-		dindSupport = r.ForceSandboxMode
-	}
-
-	ephemeralStorage := resource.MustParse("6Gi")
-	if dindSupport == reviewv1alpha1.DindSupportPrivileged {
-		ephemeralStorage = resource.MustParse("40Gi")
-	}
-
-	opt := sandbox.AgentSandboxOptions{
-		DevSandboxOptions: sandbox.DevSandboxOptions{
-			Name:      name,
-			Namespace: repoWatch.Namespace,
-			Labels: map[string]string{
-				"review.gemini.google.com/repowatch": repoWatch.Name,
-				"sandbox.gemini.google.com/type":     "issue",
-				"sandbox-type":                       "issue",
-			},
-			Annotations: map[string]string{
-				"agentState": "provisioning",
-			},
-			CloneURL:              cloneURL,
-			HTMLURL:               *issue.HTMLURL,
-			Branch:                branchName,
-			Origin:                originURL,
-			PushEnabled:           false,
-			UserLogin:             userLogin,
-			UserName:              userName,
-			UserEmail:             userEmail,
-			BotLogin:              botLogin,
-			BotName:               botName,
-			BotEmail:              botEmail,
-			LLMProvider:           repoWatch.Spec.Issue.LLM.Provider,
-			LLMConfigdirRef:       repoWatch.Spec.Issue.LLM.ConfigdirRef,
-			LLMAPIKeySecretName:   apiKeySecretName,
-			Prompt:                repoWatch.Spec.Issue.LLM.Prompt,
-			GithubSecretName:      githubSecretName,
-			DevcontainerConfigRef: repoWatch.Spec.Issue.DevcontainerConfigRef,
-			Image:                 repoWatch.Spec.Issue.Image,
-			RepoSandboxImage:      r.RepoSandboxImage,
-			ConfigDirImage:        r.ConfigDirImage,
-			HTTPEnabled:           true,
-			Replicas:              1,
-			ServiceAccountName:    "issue-sandbox",
-			WorkspaceDiskSize:     repoWatch.Spec.Issue.WorkspaceDiskSize,
-			DisableGitHubProxy:    true,
-		},
-		DindSupport:   dindSupport,
-		LLMExtensions: repoWatch.Spec.Issue.LLM.Extensions,
-		IssueID:       fmt.Sprintf("%d", *issue.Number),
-		IssueTitle:    *issue.Title,
-		IssueRepo:     repoWatch.GetName(),
-		//Handler:    "", // Handled per task?
-		Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{
-			corev1.ResourceCPU:    resource.MustParse("2000m"),
-			corev1.ResourceMemory: resource.MustParse("2Gi"),
-			"ephemeral-storage":   ephemeralStorage,
-		},
-			Limits: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("4000m"),
-				corev1.ResourceMemory: resource.MustParse("6Gi"),
-				"ephemeral-storage":   ephemeralStorage,
-			},
-		},
-	}
-
-	sb, svc := sandbox.NewAgentSandbox(opt)
-
-	if err := controllerutil.SetControllerReference(repoWatch, sb, r.Scheme); err != nil {
-		return nil, err
-	}
-	if err := controllerutil.SetControllerReference(repoWatch, svc, r.Scheme); err != nil {
-		return nil, err
-	}
-
-	if err := r.Create(ctx, svc); err != nil {
-		if !apierrors.IsAlreadyExists(err) {
-			return nil, err
-		}
-	}
-
-	if err := r.Create(ctx, sb); err != nil {
-		return nil, err
-	}
-
-	return sb, nil
-}
-
-func (r *Reconciler) ensureIssueTask(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, sandbox client.Object, sandboxName string, issue *github.Issue, handler reviewv1alpha1.IssueHandlerSpec) error {
-	taskName := fmt.Sprintf("%s-%s", sandboxName, handler.Name) // e.g. repo-issue-123-triage
-
-	// Check if task exists
-	task := &sandboxtaskv1alpha1.SandboxTask{}
-	err := r.Get(ctx, types.NamespacedName{Name: taskName, Namespace: repoWatch.Namespace}, task)
-	if err == nil {
-		return nil // Task exists
-	}
-	if !apierrors.IsNotFound(err) {
-		return err
-	}
-
-	// Create Task
-	prompt, err := r.generateIssueHandlerPrompt(handler, issue)
-	if err != nil {
-		return err
-	}
-
-	draftPR := false
-	if repoWatch.Spec.Issue.RobotAccount == "" {
-		if repoWatch.Spec.Issue.DraftPR != nil {
-			draftPR = *repoWatch.Spec.Issue.DraftPR
-		} else {
-			draftPR = true
-		}
-	} else {
-		draftPR = false
-	}
-
-	params := map[string]string{
-		"ISSUEID":      fmt.Sprintf("%d", *issue.Number),
-		"AGENT_PROMPT": prompt,
-		"HANDLER_NAME": handler.Name,
-		"PR_LABEL":     "repo-agent",
-	}
-	if draftPR {
-		params["DRAFT_PR"] = "true"
-	}
-	//params["GIT_PUSH_ENABLED"] = "true"
-	if repoWatch.Spec.Issue.LLM.Provider != "" {
-		params["AGENT_LLM_PROVIDER"] = repoWatch.Spec.Issue.LLM.Provider
-	}
-	if repoWatch.Spec.Issue.LLM.APIKeySecretRef != "" {
-		params["AGENT_LLM_API_KEY_SECRET"] = repoWatch.Spec.Issue.LLM.APIKeySecretRef
-	}
-	if repoWatch.Spec.Issue.LLM.ConfigdirRef != "" {
-		params["AGENT_LLM_CONFIGDIR"] = repoWatch.Spec.Issue.LLM.ConfigdirRef
-	}
-	if len(repoWatch.Spec.Issue.LLM.Extensions) > 0 {
-		exts, _ := json.Marshal(repoWatch.Spec.Issue.LLM.Extensions)
-		params["AGENT_LLM_EXTENSIONS"] = string(exts)
-	}
-	if len(repoWatch.Spec.Issue.Models) > 0 {
-		params["model"] = strings.Join(repoWatch.Spec.Issue.Models, ",")
-	}
-
-	taskType := handler.TaskType
-	if taskType == "" {
-		taskType = "issue"
-	}
-
-	return r.createSandboxTask(ctx, repoWatch, sandbox, sandboxName, taskName, taskType, params)
 }
 
 // generateIssueHandlerPrompt generates a prompt for an issue handler.
@@ -1940,379 +1773,6 @@ func (r *Reconciler) manageSandboxLifecycle(ctx context.Context, sandbox *unstru
 		return r.pauseSandboxIfIdle(ctx, sandbox, shutdownDuration)
 	}
 	return false, nil
-}
-
-func (r *Reconciler) reconcileIssueFeedback(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, sandbox *unstructured.Unstructured, issue *github.Issue, ghClient *github.Client) error {
-	log := log.FromContext(ctx)
-
-	// Check if we have an active address-feedback task
-	tasks := &sandboxtaskv1alpha1.SandboxTaskList{}
-	if err := r.List(ctx, tasks, client.InNamespace(sandbox.GetNamespace()), client.MatchingLabels{"sandbox.gemini.google.com/sandbox-name": sandbox.GetName()}); err != nil {
-		return err
-	}
-
-	if len(tasks.Items) == 0 {
-		return nil
-	}
-
-	activeTaskExists := false
-	var lastAddressFeedbackTaskTime time.Time
-
-	for _, task := range tasks.Items {
-		// If ANY task is active, skip creating a new one
-		state := task.Status.TaskState
-		if state == "" || state == "Pending" || state == "Running" {
-			activeTaskExists = true
-		}
-
-		if task.Spec.Type == "address-feedback" {
-			// Track the latest address-feedback task
-			if task.CreationTimestamp.Time.After(lastAddressFeedbackTaskTime) {
-				lastAddressFeedbackTaskTime = task.CreationTimestamp.Time
-			}
-		}
-	}
-
-	if activeTaskExists {
-		return nil
-	}
-
-	owner, repo, err := parseRepoURL(repoWatch.Spec.RepoURL)
-	if err != nil {
-		return err
-	}
-
-	pr, err := r.getLinkedPRFromSandbox(ctx, ghClient, sandbox)
-	if err != nil {
-		return err
-	}
-	if pr == nil {
-		return nil
-	}
-
-	if pr.GetState() != "open" {
-		return nil
-	}
-
-	// Fetch PR commits to find the latest one to establish a baseline time
-	var latestCommitTime time.Time
-	var latestCommitAuthorLogin string
-	opts := &github.ListOptions{PerPage: 100}
-	commitsFound := false
-	for {
-		commits, resp, err := ghClient.PullRequests.ListCommits(ctx, owner, repo, *pr.Number, opts)
-		if err != nil {
-			log.Error(err, "unable to list commits for PR", "pr", pr.Number)
-			break
-		}
-		for _, commit := range commits {
-			commitsFound = true
-			if t := commit.GetCommit().GetCommitter().GetDate(); t.After(latestCommitTime) {
-				latestCommitTime = t
-				if commit.Author != nil {
-					latestCommitAuthorLogin = commit.Author.GetLogin()
-				}
-			}
-		}
-		if resp.NextPage == 0 {
-			break
-		}
-		opts.Page = resp.NextPage
-	}
-
-	if !commitsFound {
-		return nil
-	}
-
-	// Check for new feedback
-	hasNew, latestFeedbackTime, err := r.hasNewFeedback(ctx, ghClient, owner, repo, pr, issue, latestCommitTime, latestCommitAuthorLogin)
-	if err != nil {
-		log.Error(err, "checking for new feedback", "pr", pr.Number)
-		return nil
-	}
-
-	if hasNew {
-		// Check if we have already created a task after the latest feedback
-		if !lastAddressFeedbackTaskTime.IsZero() && lastAddressFeedbackTaskTime.After(latestFeedbackTime) {
-			log.Info("Skipping address-feedback: last attempt was after latest feedback", "pr", *pr.Number, "lastAttempt", lastAddressFeedbackTaskTime, "latestFeedback", latestFeedbackTime)
-			return nil
-		}
-
-		log.Info("Found new feedback, creating address-feedback task", "pr", pr.Number)
-		params := map[string]string{
-			"PULL_REQUEST_ID": fmt.Sprintf("%d", *pr.Number),
-			"ISSUE_URL":       *issue.HTMLURL,
-			"AGENT_PROMPT":    repoWatch.Spec.Issue.LLM.Prompt,
-		}
-		// Add LLM params
-		if repoWatch.Spec.Issue.LLM.Provider != "" {
-			params["AGENT_LLM_PROVIDER"] = repoWatch.Spec.Issue.LLM.Provider
-		}
-		if repoWatch.Spec.Issue.LLM.APIKeySecretRef != "" {
-			params["AGENT_LLM_API_KEY_SECRET"] = repoWatch.Spec.Issue.LLM.APIKeySecretRef
-		}
-		if repoWatch.Spec.Issue.LLM.ConfigdirRef != "" {
-			params["AGENT_LLM_CONFIGDIR"] = repoWatch.Spec.Issue.LLM.ConfigdirRef
-		}
-		if len(repoWatch.Spec.Issue.LLM.Extensions) > 0 {
-			exts, _ := json.Marshal(repoWatch.Spec.Issue.LLM.Extensions)
-			params["AGENT_LLM_EXTENSIONS"] = string(exts)
-		}
-		if len(repoWatch.Spec.Issue.Models) > 0 {
-			params["model"] = strings.Join(repoWatch.Spec.Issue.Models, ",")
-		}
-
-		// Ensure sandbox is scaled up
-		replicas, found, err := unstructured.NestedInt64(sandbox.Object, "spec", "replicas")
-		if err != nil || !found || replicas == 0 {
-			if err := unstructured.SetNestedField(sandbox.Object, int64(1), "spec", "replicas"); err != nil {
-				log.Error(err, "unable to set replicas to 1")
-			} else {
-				if err := r.Update(ctx, sandbox); err != nil {
-					log.Error(err, "unable to scale up sandbox")
-				}
-			}
-		}
-
-		return r.createSandboxTask(ctx, repoWatch, sandbox, sandbox.GetName(), "", "address-feedback", params)
-	}
-
-	return nil
-}
-
-func (r *Reconciler) reconcilePRFailures(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, sandbox *unstructured.Unstructured, issue *github.Issue, ghClient *github.Client) error {
-	log := log.FromContext(ctx)
-
-	// Check if we have an active task
-	tasks := &sandboxtaskv1alpha1.SandboxTaskList{}
-	if err := r.List(ctx, tasks, client.InNamespace(sandbox.GetNamespace()), client.MatchingLabels{"sandbox.gemini.google.com/sandbox-name": sandbox.GetName()}); err != nil {
-		return err
-	}
-
-	if len(tasks.Items) == 0 {
-		return nil
-	}
-
-	activeTaskExists := false
-	var lastInvestigateFailuresTaskTime time.Time
-
-	for _, task := range tasks.Items {
-		// If ANY task is active, skip creating a new one
-		state := task.Status.TaskState
-		if state == "" || state == "Pending" || state == "Running" {
-			activeTaskExists = true
-		}
-
-		if task.Spec.Type == "investigate-failures" {
-			// Track the latest investigate-failures task
-			if task.CreationTimestamp.Time.After(lastInvestigateFailuresTaskTime) {
-				lastInvestigateFailuresTaskTime = task.CreationTimestamp.Time
-			}
-		}
-	}
-
-	if activeTaskExists {
-		return nil
-	}
-
-	owner, repo, err := parseRepoURL(repoWatch.Spec.RepoURL)
-	if err != nil {
-		return err
-	}
-
-	pr, err := r.getLinkedPRFromSandbox(ctx, ghClient, sandbox)
-	if err != nil {
-		return err
-	}
-	if pr == nil {
-		return nil
-	}
-
-	if pr.GetState() != "open" {
-		return nil
-	}
-
-	// Check for failures on the latest commit (HEAD)
-	sha := pr.GetHead().GetSHA()
-
-	// 1. Check Statuses
-	combinedStatus, _, err := ghClient.Repositories.GetCombinedStatus(ctx, owner, repo, sha, nil)
-	if err != nil {
-		log.Error(err, "unable to get combined status", "sha", sha)
-		return nil
-	}
-
-	failed := false
-	if combinedStatus.GetState() == "failure" || combinedStatus.GetState() == "error" {
-		failed = true
-	}
-
-	// 2. Check CheckRuns
-	if !failed {
-		checkRuns, err := listAllCheckRuns(ctx, ghClient, owner, repo, sha)
-		if err != nil {
-			log.Error(err, "unable to list check runs", "sha", sha)
-			return nil
-		}
-		for _, cr := range checkRuns {
-			if cr.GetConclusion() == "failure" || cr.GetConclusion() == "timed_out" || cr.GetConclusion() == "action_required" {
-				failed = true
-				break
-			}
-		}
-	}
-
-	if failed {
-		// Get head commit time to avoid re-triggering for the same commit if we already tried
-		commit, _, err := ghClient.Repositories.GetCommit(ctx, owner, repo, sha, nil)
-		if err != nil {
-			log.Error(err, "unable to get head commit", "sha", sha)
-			return nil
-		}
-		latestCommitTime := commit.GetCommit().GetCommitter().GetDate()
-
-		if !lastInvestigateFailuresTaskTime.IsZero() && lastInvestigateFailuresTaskTime.After(latestCommitTime) {
-			log.Info("Skipping investigate-failures: last attempt was after latest commit", "pr", *pr.Number, "lastAttempt", lastInvestigateFailuresTaskTime, "latestCommit", latestCommitTime)
-			return nil
-		}
-
-		log.Info("Found failures on latest commit, creating investigate-failures task", "pr", pr.Number, "sha", sha)
-		params := map[string]string{
-			"PULL_REQUEST_ID": fmt.Sprintf("%d", *pr.Number),
-			"ISSUE_URL":       *issue.HTMLURL,
-			"AGENT_PROMPT":    repoWatch.Spec.Issue.LLM.Prompt,
-		}
-		// Add LLM params
-		if repoWatch.Spec.Issue.LLM.Provider != "" {
-			params["AGENT_LLM_PROVIDER"] = repoWatch.Spec.Issue.LLM.Provider
-		}
-		if repoWatch.Spec.Issue.LLM.APIKeySecretRef != "" {
-			params["AGENT_LLM_API_KEY_SECRET"] = repoWatch.Spec.Issue.LLM.APIKeySecretRef
-		}
-		if repoWatch.Spec.Issue.LLM.ConfigdirRef != "" {
-			params["AGENT_LLM_CONFIGDIR"] = repoWatch.Spec.Issue.LLM.ConfigdirRef
-		}
-		if len(repoWatch.Spec.Issue.LLM.Extensions) > 0 {
-			exts, _ := json.Marshal(repoWatch.Spec.Issue.LLM.Extensions)
-			params["AGENT_LLM_EXTENSIONS"] = string(exts)
-		}
-		if len(repoWatch.Spec.Issue.Models) > 0 {
-			params["model"] = strings.Join(repoWatch.Spec.Issue.Models, ",")
-		}
-
-		// Ensure sandbox is scaled up
-		replicas, found, err := unstructured.NestedInt64(sandbox.Object, "spec", "replicas")
-		if err != nil || !found || replicas == 0 {
-			if err := unstructured.SetNestedField(sandbox.Object, int64(1), "spec", "replicas"); err != nil {
-				log.Error(err, "unable to set replicas to 1")
-			} else {
-				if err := r.Update(ctx, sandbox); err != nil {
-					log.Error(err, "unable to scale up sandbox")
-				}
-			}
-		}
-
-		return r.createSandboxTask(ctx, repoWatch, sandbox, sandbox.GetName(), "", "investigate-failures", params)
-	}
-
-	return nil
-}
-
-var prURLRegex = regexp.MustCompile(`https://github\.com/[\w-]+/[\w-]+/pull/\d+`)
-
-func (r *Reconciler) getLinkedPRFromSandbox(ctx context.Context, ghClient *github.Client, sandbox *unstructured.Unstructured) (*github.PullRequest, error) {
-	// List tasks
-	tasks := &sandboxtaskv1alpha1.SandboxTaskList{}
-	if err := r.List(ctx, tasks, client.InNamespace(sandbox.GetNamespace()), client.MatchingLabels{"sandbox.gemini.google.com/sandbox-name": sandbox.GetName()}); err != nil {
-		return nil, err
-	}
-
-	for _, task := range tasks.Items {
-		annotations := task.GetAnnotations()
-		agentDraft, ok := annotations["agentDraft"]
-		if !ok || agentDraft == "" {
-			continue
-		}
-
-		matches := prURLRegex.FindAllString(agentDraft, -1)
-		for _, match := range matches {
-			prRef, err := pkg_github.ParsePullRequestURL(match)
-			if err != nil {
-				continue
-			}
-
-			pr, _, err := ghClient.PullRequests.Get(ctx, prRef.Repo.Owner, prRef.Repo.Name, prRef.PullRequestNumber)
-			if err != nil {
-				continue
-			}
-			return pr, nil
-		}
-	}
-	return nil, nil
-}
-
-func (r *Reconciler) hasNewFeedback(ctx context.Context, ghClient *github.Client, owner, repo string, pr *github.PullRequest, issue *github.Issue, since time.Time, latestCommitAuthorLogin string) (bool, time.Time, error) {
-	var latestFeedbackTime time.Time
-	found := false
-
-	// Check PR comments
-	comments, _, err := ghClient.Issues.ListComments(ctx, owner, repo, *pr.Number, &github.IssueListCommentsOptions{
-		Since: &since,
-	})
-	if err != nil {
-		return false, time.Time{}, err
-	}
-	for _, c := range comments {
-		if c.CreatedAt != nil && c.CreatedAt.After(since) {
-			if c.User.GetLogin() == latestCommitAuthorLogin {
-				continue
-			}
-			found = true
-			if c.CreatedAt.After(latestFeedbackTime) {
-				latestFeedbackTime = *c.CreatedAt
-			}
-		}
-	}
-
-	// Check PR reviews
-	reviews, _, err := ghClient.PullRequests.ListReviews(ctx, owner, repo, *pr.Number, nil)
-	if err != nil {
-		return false, time.Time{}, err
-	}
-	for _, rev := range reviews {
-		if rev.SubmittedAt != nil && rev.SubmittedAt.After(since) {
-			if rev.User.GetLogin() == latestCommitAuthorLogin {
-				continue
-			}
-			found = true
-			if rev.SubmittedAt.After(latestFeedbackTime) {
-				latestFeedbackTime = *rev.SubmittedAt
-			}
-		}
-	}
-
-	// Check Issue comments
-	issueComments, _, err := ghClient.Issues.ListComments(ctx, owner, repo, *issue.Number, &github.IssueListCommentsOptions{
-		Since: &since,
-	})
-	if err != nil {
-		return false, time.Time{}, err
-	}
-	for _, c := range issueComments {
-		if c.CreatedAt != nil && c.CreatedAt.After(since) {
-			// We use the latest commit author (likely the bot/agent) to filter out
-			// comments made by the agent itself on the issue.
-			if c.User.GetLogin() == latestCommitAuthorLogin {
-				continue
-			}
-			found = true
-			if c.CreatedAt.After(latestFeedbackTime) {
-				latestFeedbackTime = *c.CreatedAt
-			}
-		}
-	}
-
-	return found, latestFeedbackTime, nil
 }
 
 func (r *Reconciler) reconcileSandboxPodStatus(ctx context.Context, sandbox *unstructured.Unstructured, podsBySandbox map[string]*corev1.Pod, scaledDown bool) (string, error) {
