@@ -4,5 +4,5 @@ metadata:
   name: ist-gfkd
   namespace: repo-agent-system
 (status != null): true
-(length(status.issueSandboxes.triage || `[]`)): 1
-
+(length(status.issueSandboxes.fix || `[]`)): 1
+(starts_with(status.issueSandboxes.fix[0].sandboxName, 'fix-')): true

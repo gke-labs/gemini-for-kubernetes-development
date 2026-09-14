@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: factory-user
+  namespace: repo-agent-system
+(data.GITHUB_TOKEN != null): true
+(data.GITHUB_LOGIN != null): true

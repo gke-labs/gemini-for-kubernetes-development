@@ -13,15 +13,10 @@ spec:
     maxSandboxes: 1
     maxActiveSandboxes: 1
     issueShutdownAfterMinutes: 30
-    devcontainerConfigRef: minimal-devcontainer-issue
-    llm:
-      apiKeySecretRef: dummy-provider-token
-      provider: dummy
     handlers:
-    - name: triage
-      taskType: triage-issue
+    - name: fix
       prompt: |
-        Triage this issue
+        Fix this issue
   dev:
     maxSandboxes: 0
     maxActiveSandboxes: 0

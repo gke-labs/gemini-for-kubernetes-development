@@ -18,18 +18,27 @@ spec:
             namespace: repo-agent-system
           status:
             readyReplicas: 1
-  - name: create-minimal-devcontainer
-    try:
-    - apply:
-        file: devcontainer-minimal.yaml
   - name: create-repowatch
     try:
     - apply:
         file: repowatch.yaml
+  # Issue-fix tasks are dispatched via the factory CLI: the controller
+  # materializes the factory-user identity secret and launches `factory fix`
+  # per matched issue; sandboxes are created by factory, not the controller.
+  - name: check-factory-user-secret
+    try:
+    - assert:
+        timeout: 2m
+        file: factory-user-assert.yaml
+    catch:
+      - podLogs:
+          namespace: repo-agent-system
+          selector: statefulset.kubernetes.io/pod-name=repowatch-controller-0
+          tail: 200
   - name: check-repowatch
     try:
     - assert:
-        timeout: 1m
+        timeout: 2m
         file: repowatch-assert.yaml
     catch:
       - describe:
@@ -42,75 +51,26 @@ spec:
           tail: 200
       - events:
           namespace: repo-agent-system
-  - name: check-issuesandbox
+  # The legacy in-controller issue engine must stay retired: no SandboxTask
+  # and no controller-owned issue sandbox may appear for this RepoWatch.
+  - name: check-no-legacy-issue-resources
     try:
-    - assert:
-        timeout: 20m
-        file: sandbox-assert.yaml
-    catch:
-    - describe:
-        apiVersion: agents.x-k8s.io/v1alpha1
-        kind: Sandbox
-        namespace: repo-agent-system
-        selector: review.gemini.google.com/repowatch=ist-gfkd
-    - script:
-        content: |
-          SANDBOX_NAME=$(kubectl get sandbox -n repo-agent-system -l review.gemini.google.com/repowatch=ist-gfkd -o jsonpath='{.items[0].metadata.name}')
-          if [ -z "$SANDBOX_NAME" ]; then
-            echo "No Sandbox found via label selector!"
-            exit 0
-          fi
-          echo "Found Sandbox: $SANDBOX_NAME"
-          
-          # Find pod by sandbox label
-          POD_NAME=$(kubectl get pod -n repo-agent-system -l sandbox=$SANDBOX_NAME -o jsonpath='{.items[0].metadata.name}')
-          if [ -z "$POD_NAME" ]; then
-             echo "Pod not found for sandbox $SANDBOX_NAME"
-             POD_NAME="$SANDBOX_NAME"
-          fi
-
-          echo "Looking for Pod: $POD_NAME"
-          echo "--- Describing Sandbox $SANDBOX_NAME ---"
-          kubectl describe sandbox -n repo-agent-system "$SANDBOX_NAME" || echo "Sandbox not found yet"
-          echo "--- Describing Pod $POD_NAME ---"
-          kubectl describe pod -n repo-agent-system "$POD_NAME" || echo "Pod not found yet"
-          echo "--- Logs for Pod $POD_NAME (container: sandbox) ---"
-          kubectl logs -n repo-agent-system "$POD_NAME" -c sandbox || echo "Could not fetch logs"
-  - name: check-sandboxtask
-    try:
-    - assert:
-        timeout: 20m
-        file: sandboxtask-assert.yaml
-    catch:
-    - describe:
-        apiVersion: custom.agents.x-k8s.io/v1alpha1
-        kind: SandboxTask
-        namespace: repo-agent-system
-        selector: review.gemini.google.com/repowatch=ist-gfkd
-    - script:
-        content: |
-          echo "=== Sandbox Pod Status ==="
-          SANDBOX_NAME=$(kubectl get sandbox -n repo-agent-system -l review.gemini.google.com/repowatch=ist-gfkd -o jsonpath='{.items[0].metadata.name}')
-          if [ -z "$SANDBOX_NAME" ]; then
-            echo "No Sandbox found!"
-            exit 0
-          fi
-          echo "Sandbox: $SANDBOX_NAME"
-
-          POD_NAME=$(kubectl get pod -n repo-agent-system -l sandbox=$SANDBOX_NAME -o jsonpath='{.items[0].metadata.name}')
-          if [ -z "$POD_NAME" ]; then
-            echo "Pod not found for sandbox $SANDBOX_NAME"
-            kubectl get pods -n repo-agent-system
-            exit 0
-          fi
-
-          echo "--- Pod Status ---"
-          kubectl get pod -n repo-agent-system "$POD_NAME" -o wide
-          echo "--- Pod Describe ---"
-          kubectl describe pod -n repo-agent-system "$POD_NAME"
-          echo "--- Pod Logs (sandbox container) ---"
-          kubectl logs -n repo-agent-system "$POD_NAME" -c sandbox --tail=100 || echo "Could not fetch sandbox logs"
-          echo "--- Pod Logs (repo-sandbox container) ---"
-          kubectl logs -n repo-agent-system "$POD_NAME" -c repo-sandbox --tail=100 || echo "Could not fetch repo-sandbox logs"
-          echo "--- Events ---"
-          kubectl get events -n repo-agent-system --sort-by='.lastTimestamp' --field-selector involvedObject.name="$POD_NAME" || true
+    - error:
+        timeout: 30s
+        resource:
+          apiVersion: custom.agents.x-k8s.io/v1alpha1
+          kind: SandboxTask
+          metadata:
+            namespace: repo-agent-system
+            labels:
+              review.gemini.google.com/repowatch: ist-gfkd
+    - error:
+        timeout: 30s
+        resource:
+          apiVersion: agents.x-k8s.io/v1alpha1
+          kind: Sandbox
+          metadata:
+            namespace: repo-agent-system
+            labels:
+              sandbox.gemini.google.com/type: issue
+              review.gemini.google.com/repowatch: ist-gfkd
