@@ -1837,24 +1837,3 @@ func (r *Reconciler) reconcileSandboxPodStatus(ctx context.Context, sandbox *uns
 
 	return sandboxStatus, nil
 }
-
-func listAllCheckRuns(ctx context.Context, client *github.Client, owner, repo, ref string) ([]*github.CheckRun, error) {
-	var allRuns []*github.CheckRun
-	opts := &github.ListCheckRunsOptions{
-		ListOptions: github.ListOptions{
-			PerPage: 200,
-		},
-	}
-	for {
-		runs, resp, err := client.Checks.ListCheckRunsForRef(ctx, owner, repo, ref, opts)
-		if err != nil {
-			return nil, err
-		}
-		allRuns = append(allRuns, runs.CheckRuns...)
-		if resp.NextPage == 0 {
-			break
-		}
-		opts.Page = resp.NextPage
-	}
-	return allRuns, nil
-}
