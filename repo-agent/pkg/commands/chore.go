@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tasks"
 	"github.com/spf13/cobra"
@@ -15,18 +16,23 @@ import (
 // ChoreCommand holds options for the Run function.
 type ChoreCommand struct {
 	// Configurable options
-	AgentPrompt  string
-	ChoreName    string
-	ChoreFile    string
-	InPod        bool
-	WorkspaceDir string
-	TaskDir      string
-	RepoName     string
-	CloneURL     string
-	RepoOwner    string
-	SkipPR       bool
+	AgentPrompt     string
+	ChoreName       string
+	ChoreFile       string
+	GithubUserLogin string
+	GithubUserEmail string
+	GithubUserName  string
+	GithubUserToken string
+	InPod           bool
+	WorkspaceDir    string
+	TaskDir         string
+	RepoName        string
+	CloneURL        string
+	RepoOwner       string
+	SkipPR          bool
 
 	// loaded objects
+	user      *github.User
 	sandbox   *sandbox.IssueSandbox
 	sandboxID string
 }
@@ -48,6 +54,9 @@ func BuildChoreCommand() *cobra.Command {
 	cmd.Flags().StringVar(&choreCommand.AgentPrompt, "prompt", os.Getenv("AGENT_PROMPT"), "Chore prompt")
 	cmd.Flags().StringVar(&choreCommand.ChoreName, "name", os.Getenv("CHORE_NAME"), "Chore name")
 	cmd.Flags().StringVar(&choreCommand.ChoreFile, "file", os.Getenv("CHORE_FILE"), "Chore definition file path")
+	cmd.Flags().StringVar(&choreCommand.GithubUserLogin, "github-user-login", os.Getenv("GITHUB_USER_LOGIN"), "Github user login")
+	cmd.Flags().StringVar(&choreCommand.GithubUserEmail, "github-user-email", os.Getenv("GITHUB_USER_EMAIL"), "Github user email")
+	cmd.Flags().StringVar(&choreCommand.GithubUserName, "github-user-name", os.Getenv("GITHUB_USER_NAME"), "Github user name")
 	cmd.Flags().StringVar(&choreCommand.RepoName, "repo", os.Getenv("REPO"), "Repository name")
 	cmd.Flags().StringVar(&choreCommand.CloneURL, "clone-url", os.Getenv("CLONE_URL"), "Repository clone URL")
 	cmd.Flags().StringVar(&choreCommand.RepoOwner, "repo-owner", os.Getenv("REPO_OWNER"), "Repository owner")
@@ -73,6 +82,25 @@ func (c *ChoreCommand) taskPath(name string, args ...interface{}) string {
 	return filepath.Join(c.TaskDir, file)
 }
 
+func (c *ChoreCommand) loadGithubObjects(ctx context.Context) error {
+	// Get github token
+	token, err := github.GetGithubToken(ctx)
+	if err != nil {
+		return err
+	}
+	c.GithubUserToken = token
+
+	user := github.User{
+		UserID: c.GithubUserLogin,
+		Email:  c.GithubUserEmail,
+		Name:   c.GithubUserName,
+		Token:  c.GithubUserToken,
+	}
+
+	c.user = &user
+	return nil
+}
+
 func (c *ChoreCommand) loadSandbox(ctx context.Context) error {
 	// For chore, we might not have an issue or full repo info easily available
 	// But IssueSandbox is what tasks.RunTask expects.
@@ -91,8 +119,14 @@ func (c *ChoreCommand) Run(ctx context.Context) error {
 	log := klog.FromContext(ctx)
 	log.Info("Starting chore task", "taskdir", c.TaskDir)
 
+	// Load user data
+	err := c.loadGithubObjects(ctx)
+	if err != nil {
+		return err
+	}
+
 	// get sandbox
-	err := c.loadSandbox(ctx)
+	err = c.loadSandbox(ctx)
 	if err != nil {
 		return err
 	}
@@ -107,6 +141,7 @@ func (c *ChoreCommand) Run(ctx context.Context) error {
 		RepoOwner:   c.RepoOwner,
 		PromptFile:  promptPath,
 		SkipPR:      c.SkipPR,
+		User:        c.user,
 	}
 
 	apikey, err := GetGeminiAPIKey(c.sandboxID)
@@ -115,7 +150,8 @@ func (c *ChoreCommand) Run(ctx context.Context) error {
 	}
 
 	env := map[string]string{
-		"GEMINI_API_KEY": apikey,
+		"GEMINI_API_KEY":    apikey,
+		"GITHUB_USER_TOKEN": c.GithubUserToken,
 	}
 	err = tasks.RunTask(ctx, &task, c.sandbox, c.TaskDir, env)
 	if err != nil {

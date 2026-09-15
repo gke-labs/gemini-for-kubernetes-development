@@ -12,23 +12,15 @@ import (
 	"strings"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/tokens"
 	githubv39 "github.com/google/go-github/v39/github"
 )
 
 // GetGithubToken retrieves the GitHub token from environment variables or the gh CLI.
-// The precedence order is:
-// 1. MANUAL_PAT (Manually provided Personal Access Token)
-// 2. GITHUB_TOKEN (Standard GitHub Actions or environment token)
-// 3. OAUTH_PAT (Token from OAuth flow)
+// The precedence order is defined in tokens.GetGitHubToken().
 // 4. gh auth token (Fallback to gh CLI credential helper)
 func GetGithubToken(ctx context.Context) (string, error) {
-	token := os.Getenv("MANUAL_PAT")
-	if token == "" {
-		token = os.Getenv("GITHUB_TOKEN")
-	}
-	if token == "" {
-		token = os.Getenv("OAUTH_PAT")
-	}
+	token := tokens.GetGitHubToken()
 	if token == "" {
 		githubCommand := exec.CommandContext(ctx, "gh", "auth", "token")
 		var stdout bytes.Buffer
