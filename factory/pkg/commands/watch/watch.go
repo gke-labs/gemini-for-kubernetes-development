@@ -10,6 +10,7 @@ import (
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/dispatcher"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/constants"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
@@ -63,14 +64,17 @@ func (w *Watcher) Run(ctx context.Context) error {
 			w.state.shuttingDown = true
 			w.state.mu.Unlock()
 
+			// Stops new tasks being claimed. Tasks already running keep their
+			// supervisor: the dispatcher drains them within its own grace period,
+			// so this wait has to outlast that.
 			daemonCancel()
 
 			fmt.Println("Waiting for active tasks to complete...")
 			select {
 			case <-doneChan:
-				fmt.Println("All tasks completed. Exiting.")
-			case <-time.After(5 * time.Minute):
-				fmt.Println("Timeout waiting for active tasks to complete. Exiting.")
+				fmt.Println("Active tasks settled. Exiting.")
+			case <-time.After(dispatcher.DefaultShutdownGracePeriod + time.Minute):
+				fmt.Println("Timed out waiting for active tasks to settle. Exiting; they are recovered on the next run.")
 			}
 			return nil
 		case <-time.After(checkRepoInterval):

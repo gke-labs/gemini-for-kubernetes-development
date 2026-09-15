@@ -529,3 +529,200 @@ func TestNewTaskDispatcher_DefaultsInterval(t *testing.T) {
 		t.Errorf("expected interval to default to %s, got %s", DefaultInterval, d.cfg.Interval)
 	}
 }
+
+// startInterruptedTask dispatches a task whose runner blocks until the dispatcher is
+// shut down, mimicking the watch cycle killing the supervising process while the real
+// workload keeps running detached inside its sandbox.
+func startInterruptedTask(t *testing.T, d *Dispatcher, queue *concurrency.TaskQueueManager, runner *fakeRunner, filename string, number int) {
+	t.Helper()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	started := make(chan struct{})
+	runner.run = func(runCtx context.Context, _ string, _ *api.QueueTask, _ string) error {
+		close(started)
+		<-runCtx.Done()
+		// What exec.CommandContext reports when it SIGKILLs the child factory CLI.
+		return errors.New("signal: killed")
+	}
+
+	enqueueTestTask(t, queue, filename, number)
+	d.DispatchOnce(ctx)
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for the task to start")
+	}
+
+	cancel()
+	d.Wait()
+}
+
+func TestDispatchOnce_ShutdownLeavesTaskInProcessingForRecovery(t *testing.T) {
+	tempDir := t.TempDir()
+	d, queue, _, coordinator, runner := testDispatcher(t, tempDir, nil)
+
+	startInterruptedTask(t, d, queue, runner, "task-issue-9.yaml", 9)
+
+	// The workload is detached and still running in its sandbox, so the task must stay
+	// in processing for Recover to triage rather than be buried in processed as Failed.
+	waitForCounts(t, queue, 0, 1, 0)
+
+	if _, err := os.Stat(filepath.Join(tempDir, "processing", "task-issue-9.yaml")); err != nil {
+		t.Errorf("expected the task file to remain in processing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(tempDir, "processed", "task-issue-9.yaml")); err == nil {
+		t.Errorf("expected the task file not to be moved to processed")
+	}
+	if outcomes := coordinator.outcomes(); len(outcomes) != 0 {
+		t.Errorf("expected no finish notification for an interrupted task, got %v", outcomes)
+	}
+}
+
+func TestRecover_AdoptsTaskInterruptedByShutdown(t *testing.T) {
+	tempDir := t.TempDir()
+	d, queue, sandboxes, coordinator, runner := testDispatcher(t, tempDir, func(cfg *Config, _ *Deps) {
+		cfg.AdoptionPollInterval = 5 * time.Millisecond
+	})
+
+	startInterruptedTask(t, d, queue, runner, "task-issue-10.yaml", 10)
+	waitForCounts(t, queue, 0, 1, 0)
+
+	// Next run: the workload is still executing in its sandbox.
+	sandboxes.mu.Lock()
+	sandboxes.running["sandbox"] = true
+	sandboxes.mu.Unlock()
+
+	d.Recover(context.Background())
+
+	if got := len(runner.invocations()); got != 1 {
+		t.Errorf("expected the adopted task not to be re-executed, got %d runner invocations", got)
+	}
+
+	// The sandbox finishes the work that outlived the previous watch cycle.
+	sandboxes.mu.Lock()
+	sandboxes.running["sandbox"] = false
+	sandboxes.completed["sandbox"] = true
+	sandboxes.mu.Unlock()
+
+	d.Wait()
+	waitForCounts(t, queue, 0, 0, 1)
+
+	outcomes := coordinator.outcomes()
+	if len(outcomes) != 1 || outcomes[0] != nil {
+		t.Errorf("expected a single success notification from adoption, got %v", outcomes)
+	}
+}
+
+func TestDispatchOnce_TaskTimeoutStillFailsDuringShutdown(t *testing.T) {
+	tempDir := t.TempDir()
+	d, queue, sandboxes, _, runner := testDispatcher(t, tempDir, func(cfg *Config, _ *Deps) {
+		cfg.TaskTimeout = 10 * time.Millisecond
+	})
+	runner.run = func(runCtx context.Context, _ string, _ *api.QueueTask, _ string) error {
+		<-runCtx.Done()
+		return runCtx.Err()
+	}
+
+	enqueueTestTask(t, queue, "task-issue-11.yaml", 11)
+
+	// The parent context stays alive: only the task's own deadline elapses, so the task
+	// has genuinely failed and must still be recorded and cleaned up.
+	d.DispatchOnce(context.Background())
+	d.Wait()
+
+	waitForCounts(t, queue, 0, 0, 1)
+	if deleted := sandboxes.deletedSandboxes(); len(deleted) != 1 || deleted[0] != "sandbox" {
+		t.Errorf("expected the timed out sandbox to be deleted, got %v", deleted)
+	}
+}
+
+// runDispatcher starts Run in the background and returns a channel closed when it returns.
+func runDispatcher(ctx context.Context, d *Dispatcher) <-chan struct{} {
+	runDone := make(chan struct{})
+	go func() {
+		defer close(runDone)
+		_ = d.Run(ctx)
+	}()
+	return runDone
+}
+
+func awaitRunReturn(t *testing.T, runDone <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-runDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for Run to return")
+	}
+}
+
+func TestRun_DrainLetsInFlightTaskFinishAfterShutdown(t *testing.T) {
+	tempDir := t.TempDir()
+	d, queue, _, coordinator, runner := testDispatcher(t, tempDir, func(cfg *Config, _ *Deps) {
+		cfg.ShutdownGracePeriod = 10 * time.Second
+	})
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	runner.run = func(runCtx context.Context, _ string, _ *api.QueueTask, _ string) error {
+		close(started)
+		select {
+		case <-release:
+			return nil
+		case <-runCtx.Done():
+			// The worker was aborted by shutdown instead of being allowed to drain.
+			return runCtx.Err()
+		}
+	}
+
+	enqueueTestTask(t, queue, "task-issue-12.yaml", 12)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	runDone := runDispatcher(ctx, d)
+
+	<-started
+	cancel()
+
+	// The worker's context is detached from the dispatch loop, so the task keeps
+	// running and can still finish normally.
+	time.Sleep(50 * time.Millisecond)
+	close(release)
+
+	awaitRunReturn(t, runDone)
+
+	waitForCounts(t, queue, 0, 0, 1)
+	outcomes := coordinator.outcomes()
+	if len(outcomes) != 1 || outcomes[0] != nil {
+		t.Errorf("expected the drained task to report success, got %v", outcomes)
+	}
+}
+
+func TestRun_DrainCancelsTasksThatOutlastGracePeriod(t *testing.T) {
+	tempDir := t.TempDir()
+	d, queue, _, coordinator, runner := testDispatcher(t, tempDir, func(cfg *Config, _ *Deps) {
+		cfg.ShutdownGracePeriod = 50 * time.Millisecond
+	})
+
+	started := make(chan struct{})
+	runner.run = func(runCtx context.Context, _ string, _ *api.QueueTask, _ string) error {
+		close(started)
+		<-runCtx.Done()
+		return errors.New("signal: killed")
+	}
+
+	enqueueTestTask(t, queue, "task-issue-13.yaml", 13)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	runDone := runDispatcher(ctx, d)
+
+	<-started
+	cancel()
+	awaitRunReturn(t, runDone)
+
+	// The grace period expired and the supervisor was cancelled, but the workload may
+	// still be running in its sandbox, so the task stays adoptable rather than failed.
+	waitForCounts(t, queue, 0, 1, 0)
+	if outcomes := coordinator.outcomes(); len(outcomes) != 0 {
+		t.Errorf("expected no finish notification for a task cut short by shutdown, got %v", outcomes)
+	}
+}
