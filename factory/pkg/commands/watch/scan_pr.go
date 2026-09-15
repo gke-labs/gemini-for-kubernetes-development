@@ -549,8 +549,8 @@ func (w *Watcher) handlePRIterate(ctx context.Context, pc *prContext) {
 
 	filename := fmt.Sprintf("task-pr-%d-iterate.yaml", num)
 	if !w.queueMgr.TaskExists(filename) {
-		sandboxName := w.resolveSandboxName(ctx, api.TypePRIterate, num)
-		running, err := isSandboxTaskRunning(ctx, w.kubeClient, w.Namespace, sandboxName)
+		sandboxName := w.sandboxes.ResolveName(ctx, api.TypePRIterate, num)
+		running, err := w.sandboxes.IsTaskRunning(ctx, sandboxName)
 		if err != nil {
 			klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
 			return
@@ -658,8 +658,8 @@ func (w *Watcher) handlePRInvestigate(
 		}
 
 		if state.lastInvestigatedSHA != pc.headSHA || prevFailed || pc.isExplicitlyAssigned || time.Since(state.lastInvestigatedTime) > 2*time.Hour {
-			sandboxName := w.resolveSandboxName(ctx, api.TypePRInvestigate, num)
-			running, err := isSandboxTaskRunning(ctx, w.kubeClient, w.Namespace, sandboxName)
+			sandboxName := w.sandboxes.ResolveName(ctx, api.TypePRInvestigate, num)
+			running, err := w.sandboxes.IsTaskRunning(ctx, sandboxName)
 			if err != nil {
 				klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
 				return
@@ -718,8 +718,8 @@ func (w *Watcher) handlePRComments(ctx context.Context, pc *prContext, commentAn
 	filename := fmt.Sprintf("task-pr-%d-comments.yaml", num)
 
 	if !w.queueMgr.TaskExists(filename) {
-		sandboxName := w.resolveSandboxName(ctx, api.TypePRComments, num)
-		running, err := isSandboxTaskRunning(ctx, w.kubeClient, w.Namespace, sandboxName)
+		sandboxName := w.sandboxes.ResolveName(ctx, api.TypePRComments, num)
+		running, err := w.sandboxes.IsTaskRunning(ctx, sandboxName)
 		if err != nil {
 			klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
 			return
@@ -783,8 +783,8 @@ func (w *Watcher) handlePRReview(ctx context.Context, pc *prContext, checkRuns [
 	filename := fmt.Sprintf("task-pr-%d-review.yaml", num)
 
 	if !w.queueMgr.TaskExists(filename) {
-		sandboxName := w.resolveSandboxName(ctx, api.TypePRReview, num)
-		running, err := isSandboxTaskRunning(ctx, w.kubeClient, w.Namespace, sandboxName)
+		sandboxName := w.sandboxes.ResolveName(ctx, api.TypePRReview, num)
+		running, err := w.sandboxes.IsTaskRunning(ctx, sandboxName)
 		if err != nil {
 			klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
 			return

@@ -63,13 +63,13 @@ func newAdoptionTestWatcher(t *testing.T, queueDir, ns string, kubeClient *clien
 		},
 		kubeClient: kubeClient,
 	}
-	w.initQueueManager()
+	w.initComponents()
 	w.dispatcher = dispatcher.New(dispatcher.Config{
 		AdoptionPollInterval: 10 * time.Millisecond,
 	}, dispatcher.Deps{
 		Queue:        w.queueMgr,
 		SandboxLocks: w.sandboxLocks,
-		Sandboxes:    &watcherSandboxService{w: w},
+		Sandboxes:    w.sandboxes,
 		Coordinator:  &watcherTaskCoordinator{w: w},
 		Runner:       &stubRunner{},
 	})

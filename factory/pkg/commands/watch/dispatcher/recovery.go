@@ -44,7 +44,7 @@ func (d *Dispatcher) Recover(ctx context.Context) {
 
 // recoverTask triages a single task found in the processing queue on startup.
 func (d *Dispatcher) recoverTask(ctx context.Context, filename string, task *api.QueueTask) {
-	sandboxName := d.sandboxes.ResolveSandboxName(ctx, task.Type, task.Number)
+	sandboxName := d.sandboxes.ResolveName(ctx, task.Type, task.Number)
 
 	if sandboxName != "" {
 		running, err := d.sandboxes.IsTaskRunning(ctx, sandboxName)
@@ -150,7 +150,7 @@ func (d *Dispatcher) monitorAdoptedTask(ctx context.Context, taskFilename string
 func (d *Dispatcher) failTimedOutAdoptedTask(ctx context.Context, taskFilename string, task *api.QueueTask, sandboxName string) {
 	klog.Warningf("Adopted task %s in sandbox %s timed out after %s", taskFilename, sandboxName, d.cfg.TaskTimeout)
 	if sandboxName != "" {
-		if err := d.sandboxes.DeleteSandbox(ctx, sandboxName); err != nil {
+		if err := d.sandboxes.Delete(ctx, sandboxName); err != nil {
 			klog.Errorf("Failed to delete sandbox '%s' for timed out adopted task: %v", sandboxName, err)
 		}
 	}

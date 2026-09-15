@@ -33,7 +33,7 @@ func newFakeSandboxService() *fakeSandboxService {
 	}
 }
 
-func (f *fakeSandboxService) ResolveSandboxName(_ context.Context, taskType api.TaskType, number int) string {
+func (f *fakeSandboxService) ResolveName(_ context.Context, taskType api.TaskType, number int) string {
 	if f.resolve != nil {
 		return f.resolve(taskType, number)
 	}
@@ -58,7 +58,7 @@ func (f *fakeSandboxService) CountRunningTasks(context.Context) (int, error) {
 	return f.runningCount, f.countErr
 }
 
-func (f *fakeSandboxService) DeleteSandbox(_ context.Context, sandboxName string) error {
+func (f *fakeSandboxService) Delete(_ context.Context, sandboxName string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.deleted = append(f.deleted, sandboxName)

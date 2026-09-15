@@ -6,16 +6,15 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/dispatcher"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/constants"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
-	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
-	corev1 "k8s.io/api/core/v1"
+	githubv39 "github.com/google/go-github/v39/github"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
 )
@@ -28,9 +27,10 @@ func (w *Watcher) Run(ctx context.Context) error {
 		return err
 	}
 
-	w.checkRepo(ctx)
-
 	if w.Once {
+		w.reconciler.ReconcileOnce(ctx)
+		w.checkRepo(ctx)
+		w.reconciler.CollectGarbage(ctx)
 		if w.Mode == "all" || w.Mode == "run" {
 			w.dispatcher.DispatchOnce(ctx)
 		}
@@ -43,15 +43,29 @@ func (w *Watcher) Run(ctx context.Context) error {
 	daemonCtx, daemonCancel := context.WithCancel(ctx)
 	defer daemonCancel()
 
-	doneChan := make(chan struct{})
+	// Each subcontroller runs in its own goroutine and drains its own workers
+	// before returning, so closing doneChan means the daemon has fully quiesced.
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_ = w.reconciler.Run(daemonCtx)
+	}()
 	if w.Mode == "all" || w.Mode == "run" {
+		wg.Add(1)
 		go func() {
-			defer close(doneChan)
+			defer wg.Done()
 			_ = w.dispatcher.Run(daemonCtx)
 		}()
-	} else {
-		close(doneChan)
 	}
+
+	doneChan := make(chan struct{})
+	go func() {
+		defer close(doneChan)
+		wg.Wait()
+	}()
+
+	w.checkRepo(ctx)
 
 	for {
 		fmt.Printf("Sleeping for %s...\n", checkRepoInterval)
@@ -152,7 +166,7 @@ func (w *Watcher) init(ctx context.Context) error {
 	w.processingLogDir = filepath.Join(logDir, "processing")
 	w.processedLogDir = filepath.Join(logDir, "processed")
 
-	w.initQueueManager()
+	w.initComponents()
 
 	if !w.DryRun {
 		if err := os.MkdirAll(w.incomingDir, 0755); err != nil {
@@ -189,10 +203,6 @@ func (w *Watcher) init(ctx context.Context) error {
 	// tasks that are still running inside their sandbox.
 	w.dispatcher.Recover(ctx)
 
-	w.state = &watchState{
-		referencedIssues: make(map[int]bool),
-	}
-
 	return nil
 }
 
@@ -216,6 +226,9 @@ func (w *Watcher) canQueueIssueTasks(prCachePopulated bool) bool {
 	return true
 }
 
+// checkRepo runs one scan cycle over the repository, queueing work for issues,
+// pull requests and chores. Sandbox reconciliation and garbage collection are
+// owned by the sandbox reconciler goroutine and deliberately absent here.
 func (w *Watcher) checkRepo(ctx context.Context) {
 	w.state.mu.Lock()
 	if w.state.shuttingDown {
@@ -224,32 +237,8 @@ func (w *Watcher) checkRepo(ctx context.Context) {
 	}
 	w.state.mu.Unlock()
 
-	// Proactively delete any evicted sandbox pods in the namespace so the sandbox controller can recreate them or free resources.
-	func() {
-		podList, err := w.kubeClient.Clientset.CoreV1().Pods(w.Namespace).List(ctx, metav1.ListOptions{LabelSelector: "sandbox"})
-		if err != nil {
-			return
-		}
-		for i := range podList.Items {
-			pod := &podList.Items[i]
-			if pod.DeletionTimestamp == nil && pod.Status.Phase == corev1.PodFailed && strings.EqualFold(pod.Status.Reason, "Evicted") {
-				klog.Infof("Found evicted sandbox pod %s in namespace %s. Deleting pod so controller can recreate or clean up.", pod.Name, w.Namespace)
-				sbName := pod.Labels["sandbox"]
-				if sbName == "" {
-					sbName = pod.Labels["agents.x-k8s.io/sandbox"]
-				}
-				if sbName != "" {
-					_ = factorysandbox.IncrementSandboxEvictionCount(ctx, w.kubeClient, w.Namespace, sbName)
-				}
-				_ = w.kubeClient.Clientset.CoreV1().Pods(w.Namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{})
-			}
-		}
-	}()
-
-	w.reconcileRunningSandboxes(ctx)
-
 	if w.queueMgr.IsDrainMode() {
-		runningCount, err := countRunningSandboxTasks(ctx, w.kubeClient, w.Namespace)
+		runningCount, err := w.sandboxes.CountRunningTasks(ctx)
 		if err != nil {
 			klog.Errorf("Failed to count running sandbox tasks during drain: %v", err)
 		}
@@ -281,29 +270,16 @@ func (w *Watcher) checkRepo(ctx context.Context) {
 		}
 	}
 
-	w.state.mu.Lock()
-	refIssues := make(map[int]bool)
-	for k, v := range w.state.referencedIssues {
-		refIssues[k] = v
-	}
-	hasPRs := len(w.state.openPRs) > 0 || !w.state.lastPRScan.IsZero()
-	w.state.mu.Unlock()
+	refIssues := w.entityCache.GetReferencedIssuesMap()
+	hasPRs := w.entityCache.HasOpenPRs()
 
 	// Populate PR cache once on startup if needed by issue scan
 	if !hasPRs && runIssueScan {
 		klog.Infof("Populating open PRs cache for referenced issues...")
 		prs, err := listAllOpenPRs(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo)
 		if err == nil {
-			w.state.mu.Lock()
-			w.state.openPRs = prs
-			w.state.referencedIssues = make(map[int]bool)
-			for _, pr := range prs {
-				for num := range common.GetReferencedIssues(pr) {
-					w.state.referencedIssues[num] = true
-					refIssues[num] = true
-				}
-			}
-			w.state.mu.Unlock()
+			w.entityCache.UpdateOpenPRs(prs)
+			refIssues = w.entityCache.GetReferencedIssuesMap()
 			hasPRs = true
 		} else {
 			klog.Errorf("Failed to populate open PRs cache: %v", err)
@@ -315,15 +291,9 @@ func (w *Watcher) checkRepo(ctx context.Context) {
 		klog.Infof("Running slow PR scan cycle...")
 		prs, err := listAllOpenPRs(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo)
 		if err == nil {
+			w.entityCache.UpdateOpenPRs(prs)
+			refIssues = w.entityCache.GetReferencedIssuesMap()
 			w.state.mu.Lock()
-			w.state.openPRs = prs
-			w.state.referencedIssues = make(map[int]bool)
-			for _, pr := range prs {
-				for num := range common.GetReferencedIssues(pr) {
-					w.state.referencedIssues[num] = true
-					refIssues[num] = true
-				}
-			}
 			w.state.lastPRScan = now
 			w.state.mu.Unlock()
 			hasPRs = true
@@ -332,9 +302,9 @@ func (w *Watcher) checkRepo(ctx context.Context) {
 		}
 
 		// Scan issues labeled with triggerLabel (handling pagination)
-		slowIssues, err := w.scanSlowIssues(ctx)
-		if err != nil {
-			klog.Errorf("Failed to list issues for label %s: %v", w.triggerLabel, err)
+		slowIssues, slowIssuesErr := w.scanSlowIssues(ctx)
+		if slowIssuesErr != nil {
+			klog.Errorf("Failed to list issues for label %s: %v", w.triggerLabel, slowIssuesErr)
 		}
 
 		// Process slow issues
@@ -355,38 +325,12 @@ func (w *Watcher) checkRepo(ctx context.Context) {
 			w.scanChores(ctx)
 		}
 
-		openPRMap := make(map[int]bool)
-		for _, pr := range prIssues {
-			openPRMap[pr.GetNumber()] = true
-		}
-
-		openIssueMap := make(map[int]bool)
-		for _, iss := range slowIssues {
-			openIssueMap[iss.GetNumber()] = true
-		}
-		for issNum := range w.processedIssues {
-			openIssueMap[issNum] = true
-		}
-
-		// Clean up sandboxes of merged or closed PRs
-		if err := w.cleanupClosedPRSandboxes(ctx, openPRMap); err != nil {
-			klog.Errorf("Failed to clean up closed PR sandboxes: %v", err)
-		}
-
-		// Clean up sandboxes of closed issues
-		if err := w.cleanupClosedIssueSandboxes(ctx, openIssueMap); err != nil {
-			klog.Errorf("Failed to clean up closed issue sandboxes: %v", err)
-		}
-
-		// Clean up stale idle sandboxes older than eviction age (defaults to 1 week)
-		if err := w.cleanupStaleIdleSandboxes(ctx); err != nil {
-			klog.Errorf("Failed to clean up stale idle sandboxes: %v", err)
-		}
-
-		if w.SandboxIdleTimeout > 0 {
-			if _, err := factorysandbox.SuspendIdleSandboxes(ctx, w.kubeClient, w.Namespace, w.SandboxIdleTimeout, w.DryRun); err != nil {
-				klog.Errorf("Failed to suspend idle sandboxes: %v", err)
-			}
+		// Publish the entities observed by this cycle so the sandbox reconciler
+		// can garbage collect closed ones without re-querying GitHub. A failed
+		// scan returns whatever it managed to page in, which would publish a
+		// truncated set as though it were the whole picture.
+		if slowIssuesErr == nil {
+			w.publishOpenEntities(slowIssues)
 		}
 	}
 
@@ -412,4 +356,24 @@ func (w *Watcher) checkRepo(ctx context.Context) {
 		w.state.lastIssueScan = now
 		w.state.mu.Unlock()
 	}
+}
+
+// publishOpenEntities records which issues are known to be open in the shared
+// entity cache. The sandbox reconciler uses it to skip sandboxes belonging to
+// live work instead of confirming every one of them against GitHub.
+//
+// Issues that have already been processed are treated as open: their sandbox
+// may still hold a workspace whose result has not been pushed yet, and the
+// reconciler confirms the state with GitHub before deleting anything anyway.
+func (w *Watcher) publishOpenEntities(openIssues []*githubv39.Issue) {
+	nums := make([]int, 0, len(openIssues)+len(w.processedIssues))
+	for _, iss := range openIssues {
+		if num := iss.GetNumber(); num > 0 {
+			nums = append(nums, num)
+		}
+	}
+	for num := range w.processedIssues {
+		nums = append(nums, num)
+	}
+	w.entityCache.SetOpenIssueNumbers(nums)
 }

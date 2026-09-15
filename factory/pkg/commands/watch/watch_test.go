@@ -46,15 +46,28 @@ func TestCanQueueIssueTasks(t *testing.T) {
 
 // TestCheckRepoHasPRsSignal documents the state that drives canQueueIssueTasks:
 // a fresh watcher has never listed open PRs, so it must not be treated as
-// "no issue has a linked PR".
+// "no issue has a linked PR". The signal lives in EntityStateCache, which is
+// what checkRepo consults.
 func TestCheckRepoHasPRsSignal(t *testing.T) {
-	w := &Watcher{state: &watchState{referencedIssues: make(map[int]bool)}}
+	w := &Watcher{}
+	w.initComponents()
 
-	hasPRs := len(w.state.openPRs) > 0 || !w.state.lastPRScan.IsZero()
-	if hasPRs {
-		t.Error("hasPRs = true for a watcher that has never scanned; want false")
+	if w.entityCache.HasOpenPRs() {
+		t.Error("HasOpenPRs() = true for a watcher that has never scanned; want false")
 	}
-	if w.canQueueIssueTasks(hasPRs) {
+	if w.canQueueIssueTasks(w.entityCache.HasOpenPRs()) {
 		t.Error("canQueueIssueTasks() = true before any successful PR scan; want false")
+	}
+
+	// A successful scan that finds no open PRs is still authoritative: the
+	// cache must report itself populated, otherwise issue scanning would stall
+	// forever on a repository with no open pull requests.
+	w.entityCache.UpdateOpenPRs(nil)
+
+	if !w.entityCache.HasOpenPRs() {
+		t.Error("HasOpenPRs() = false after a successful scan returning no PRs; want true")
+	}
+	if !w.canQueueIssueTasks(w.entityCache.HasOpenPRs()) {
+		t.Error("canQueueIssueTasks() = false after a successful PR scan; want true")
 	}
 }
