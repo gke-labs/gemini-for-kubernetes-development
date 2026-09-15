@@ -186,11 +186,6 @@ func (m *Manager) UpdateSecret(ctx context.Context, namespace, name string, data
 	return err
 }
 
-func (m *Manager) ScaledownSandbox(ctx context.Context, namespace, repo, prID string) error {
-	sandboxName := fmt.Sprintf("%s-pr-%s", repo, prID)
-	return m.ScaledownSandboxByName(ctx, namespace, sandboxName)
-}
-
 func (m *Manager) UpdateSandboxUserDraft(ctx context.Context, namespace, sandboxName, userDraft string) error {
 	sandbox, err := m.Client.Resource(SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
 	if err != nil {
@@ -354,33 +349,8 @@ func (m *Manager) ScaleupSandboxByName(ctx context.Context, namespace, name stri
 	return nil
 }
 
-func (m *Manager) ScaledownIssueSandbox(ctx context.Context, namespace, repo, issueID, handler string) error {
-	var sandboxName string
-	if handler != "" {
-		sandboxName = fmt.Sprintf("%s-issue-%s-%s", repo, issueID, handler)
-	} else {
-		sandboxName = fmt.Sprintf("%s-issue-%s", repo, issueID)
-	}
-	return m.ScaledownSandboxByName(ctx, namespace, sandboxName)
-}
-
 func (m *Manager) ScaledownDevSandboxHelper(ctx context.Context, namespace, name string) error {
 	return m.ScaledownSandboxByName(ctx, namespace, name)
-}
-
-func (m *Manager) ScaleupSandbox(ctx context.Context, namespace, repo, prID string) error {
-	sandboxName := fmt.Sprintf("%s-pr-%s", repo, prID)
-	return m.ScaleupSandboxByName(ctx, namespace, sandboxName)
-}
-
-func (m *Manager) ScaleupIssueSandbox(ctx context.Context, namespace, repo, issueID, handler string) error {
-	var sandboxName string
-	if handler != "" {
-		sandboxName = fmt.Sprintf("%s-issue-%s-%s", repo, issueID, handler)
-	} else {
-		sandboxName = fmt.Sprintf("%s-issue-%s", repo, issueID)
-	}
-	return m.ScaleupSandboxByName(ctx, namespace, sandboxName)
 }
 
 func (m *Manager) ScaleupDevSandboxHelper(ctx context.Context, namespace, name string) error {

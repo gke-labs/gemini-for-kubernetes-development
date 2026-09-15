@@ -153,3 +153,32 @@ func TestReconcileIssues_PRWatchFollowUp(t *testing.T) {
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(fakeFactory.launches()).To(gomega.HaveLen(2))
 }
+
+// TestRefixRequested covers the "Fix Again" gate: a terminal fix is
+// relaunched only when the re-fix request is newer than the completion.
+func TestRefixRequested(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	mk := func(annotations map[string]interface{}) *unstructured.Unstructured {
+		return &unstructured.Unstructured{Object: map[string]interface{}{
+			"metadata": map[string]interface{}{"annotations": annotations},
+		}}
+	}
+
+	g.Expect(refixRequested(nil)).To(gomega.BeFalse())
+	g.Expect(refixRequested(mk(map[string]interface{}{}))).To(gomega.BeFalse())
+	// Requested but never completed -> relaunch.
+	g.Expect(refixRequested(mk(map[string]interface{}{
+		"review.gemini.google.com/refix-requested-at": time.Now().UTC().Format(time.RFC3339),
+	}))).To(gomega.BeTrue())
+	// Requested after completion -> relaunch.
+	g.Expect(refixRequested(mk(map[string]interface{}{
+		"review.gemini.google.com/refix-requested-at": time.Now().UTC().Format(time.RFC3339),
+		"sandbox.gemini.google.com/completion-time":   time.Now().Add(-time.Hour).UTC().Format(time.RFC3339),
+	}))).To(gomega.BeTrue())
+	// Requested before the last completion -> stay terminal.
+	g.Expect(refixRequested(mk(map[string]interface{}{
+		"review.gemini.google.com/refix-requested-at": time.Now().Add(-time.Hour).UTC().Format(time.RFC3339),
+		"sandbox.gemini.google.com/completion-time":   time.Now().UTC().Format(time.RFC3339),
+	}))).To(gomega.BeFalse())
+}

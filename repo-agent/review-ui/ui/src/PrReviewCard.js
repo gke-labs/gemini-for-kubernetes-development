@@ -817,25 +817,10 @@ function PrReviewCard({
   const [fileCollapsed, setFileCollapsed] = useState({});
   const [curlCommand, setCurlCommand] = useState(null);
   const [tasks, setTasks] = useState([]);
-  const [showNewTaskForm, setShowNewTaskForm] = useState(false);
-  const [newTaskPrompt, setNewTaskPrompt] = useState('');
-  const [expectedComments, setExpectedComments] = useState(0);
-  const [selectedModel, setSelectedModel] = useState('gemini-3.1-pro-preview');
   const lastDragTargetRef = useRef(null);
 
-  const reviewModels = (availableModels && availableModels.length > 0) ? availableModels : [
-    'gemini-3.7-flash',
-    'gemini-3.6-flash',
-    'gemini-3.5-flash',
-    'gemini-3-flash-preview',
-    'gemini-3.1-pro-preview',
-    'gemini-2.5-pro',
-    'gemini-2.5-flash'
-  ];
-
-
   const isCollapsed = collapsedReviews[pr.id];
-  const repoName = propRepoName || (pr.sandbox ? pr.sandbox.split('-pr-')[0] : '');
+  const repoName = propRepoName;
 
   const handleSaveTaskDraft = (taskName, draft) => {
       if (!repoName) return;
@@ -892,23 +877,17 @@ function PrReviewCard({
       fetch(`/api/repo/${repoName}/prs/${pr.id}/tasks`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ 
-              prompt: newTaskPrompt, 
-              expectedComments: expectedComments,
-              model: selectedModel
-          })
+          body: JSON.stringify({})
       })
       .then(res => {
           if (res.ok) {
-              setShowNewTaskForm(false);
-              setNewTaskPrompt('');
-              setExpectedComments(0);
+              alert("Re-review requested! A fresh review will start shortly.");
               fetchTasks();
           } else {
-              res.text().then(t => alert("Failed to create task: " + t));
+              res.text().then(t => alert("Failed to request re-review: " + t));
           }
       })
-      .catch(err => console.error("Failed to create task", err));
+      .catch(err => console.error("Failed to request re-review", err));
   };
 
   useEffect(() => {
@@ -1090,58 +1069,10 @@ function PrReviewCard({
             ))}
 
             {!isSubmitted && (
-                <div style={{padding: '10px', borderTop: '1px solid var(--border-color)', marginTop: '10px', display: 'flex', gap: '10px', flexDirection: 'column'}}>
-                    <div style={{display: 'flex', gap: '10px'}}>
-                        {!showNewTaskForm && (
-                            <button className="btn" onClick={() => setShowNewTaskForm(true)}>Review Again</button>
-                        )}
-                    </div>
-
-                    {showNewTaskForm && (
-                        <div className="new-task-form" style={{padding: '10px', backgroundColor: 'var(--bg-secondary)', borderRadius: '5px'}}>
-                            <h4>Request New Review Task</h4>
-                            <div style={{marginBottom: '10px'}}>
-                                <label style={{marginRight: '10px', display: 'block', marginBottom: '5px'}}>
-                                    Expected Comments: {expectedComments === 0 ? 'Auto' : expectedComments}
-                                </label>
-                                <input 
-                                    type="range" 
-                                    min="0" 
-                                    max="50" 
-                                    value={expectedComments} 
-                                    onChange={(e) => setExpectedComments(parseInt(e.target.value))}
-                                    style={{width: '100%'}}
-                                />
-                                <div style={{display: 'flex', justifyContent: 'space-between', fontSize: 'small', color: 'var(--text-secondary)'}}>
-                                    <span>Auto</span>
-                                    <span>50</span>
-                                </div>
-                            </div>
-                            <div style={{marginBottom: '10px'}}>
-                                <label style={{fontSize: 'small', color: 'var(--text-secondary)', display: 'block', marginBottom: '5px'}}>Model:</label>
-                                <select 
-                                    value={selectedModel} 
-                                    onChange={(e) => setSelectedModel(e.target.value)}
-                                    style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-primary)', color: 'var(--text-primary)'}}
-                                >
-                                    {reviewModels.map(m => <option key={m} value={m}>{m}</option>)}
-                                </select>
-                            </div>
-                            <textarea 
-                                className="review-textarea"
-                                value={newTaskPrompt}
-                                onChange={(e) => setNewTaskPrompt(e.target.value)}
-                                placeholder="Enter custom instructions for the agent (optional)..."
-                                style={{width: '100%', marginBottom: '10px'}}
-                            />
-                            <div>
-                                <button className="btn btn-submit" onClick={handleCreateTask}>Start Task</button>
-                                <button className="btn" style={{marginLeft: '10px', backgroundColor: 'var(--status-grey)'}} onClick={() => setShowNewTaskForm(false)}>Cancel</button>
-                            </div>
-                        </div>
-                    )}
-
-
+                <div style={{padding: '10px', borderTop: '1px solid var(--border-color)', marginTop: '10px', display: 'flex', gap: '10px', alignItems: 'center'}}>
+                    {/* Reviews run through the factory engine with the RepoWatch
+                        review config; per-task prompt/model overrides are gone. */}
+                    <button className="btn" onClick={handleCreateTask} title="Request a fresh review of this PR">Review Again</button>
                 </div>
             )}
             

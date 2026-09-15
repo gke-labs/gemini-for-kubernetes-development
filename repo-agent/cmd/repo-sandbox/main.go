@@ -29,7 +29,7 @@ func run(ctx context.Context) error {
 		Use:   "repo-sandbox",
 		Short: "Gemini Repository Sandbox Agent",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return fmt.Errorf("repo-sandbox command requires a subcommand (e.g., dev-daemon, review-daemon)")
+			return fmt.Errorf("repo-sandbox command requires a subcommand (e.g., dev-daemon)")
 		},
 	}
 	rootCommand.SilenceUsage = true  // Usage is only printed for command syntax errors

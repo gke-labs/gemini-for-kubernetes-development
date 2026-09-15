@@ -80,8 +80,6 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 		api.GET("/repo/:repo/issues/:issue_id/tasks/:taskID/logs", s.getIssueTaskLogs)
 		api.GET("/repo/:repo/issues/:issue_id/tasks/:taskID/telemetry", s.getIssueTaskTelemetry)
 		api.GET("/repo/:repo/issues/:issue_id/details", s.getIssueDetails)
-		api.GET("/repo/:repo/issues/:issue_id/commits", s.getIssueCommits)
-		api.POST("/repo/:repo/issues/:issue_id/rollback", s.rollbackIssue)
 		api.POST("/repo/:repo/issues/:issue_id/tasks", s.createIssueTask)
 		api.POST("/repo/:repo/issues/:issue_id/draft", s.saveIssueDraft)
 		api.POST("/repo/:repo/issues/:issue_id/submitcomment", s.submitIssueComment)
