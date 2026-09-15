@@ -48,7 +48,9 @@ type LLMConfig struct {
 	// key for the LLM provider. The secret must have a key named "apiKey".
 	// This approach provides a secure way to manage API keys without exposing
 	// them in the CRD.
-	// +kubebuilder:validation:Required
+	// Optional since the factory-CLI migration: tasks resolve the Gemini key
+	// from the per-tenant factory-user secret instead.
+	// +kubebuilder:validation:Optional
 	APIKeySecretRef string `json:"apiKeySecretRef,omitempty"`
 
 	// Prompt is the prompt to use for the LLM. This can be a simple string or
