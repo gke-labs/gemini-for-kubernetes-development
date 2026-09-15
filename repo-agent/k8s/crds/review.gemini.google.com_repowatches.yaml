@@ -95,8 +95,6 @@ spec:
                         - claude-cli
                         - dummy
                         type: string
-                    required:
-                    - apiKeySecretRef
                     type: object
                   maxActiveSandboxes:
                     type: integer
@@ -189,8 +187,6 @@ spec:
                         - claude-cli
                         - dummy
                         type: string
-                    required:
-                    - apiKeySecretRef
                     type: object
                   maxActiveSandboxes:
                     type: integer
@@ -278,8 +274,6 @@ spec:
                         - claude-cli
                         - dummy
                         type: string
-                    required:
-                    - apiKeySecretRef
                     type: object
                   maxActiveSandboxes:
                     type: integer
