@@ -189,14 +189,24 @@ strictly better than today's taskrunner.
 
 ### Phase 4 — deletions & cleanup
 
-- Remove: `pkg/taskrunner`, `pkg/tasks`, `pkg/llm`, `pkg/prompts`, `pkg/models`,
-  `cmd/gemini-stream-processor`, agent subcommands of `cmd/repo-sandbox`,
-  review/issue sandbox builders in `pkg/sandbox`, `images/repo-sandbox` /
-  `generic-golang` / `dind-golang` (tenants use factory worker images; custom images
-  via `.factory.cfg image:`), the SandboxTask CRD (unless kept as UI status mirror).
-- `cmd/repo-sandbox` survives only if the dev-sandbox feature keeps it (D5);
-  otherwise the terminal path already falls back to `factory sshd`
-  (`pkg/api/handlers_terminal.go:118-119`).
+Scope narrowed during implementation: the dev-sandbox feature (kept per D5)
+turned out to share more of the machinery than assumed, so the cut is by
+*task type*, not by package:
+
+- Removed: agent subcommands of `cmd/repo-sandbox` (review, review-daemon,
+  github-fix/triage/feedback/investigate/autopoll, iterate, chore, rollback),
+  their task scripts/templates in `pkg/tasks`, the agent task types in
+  `pkg/taskrunner`, the review sandbox builder, and the review-system /
+  fix-pr-feedback prompt templates.
+- Kept for dev sandboxes: `cmd/repo-sandbox` itself (dev-daemon, dev-init,
+  create, threads, sshd, code-server, tmux), `pkg/taskrunner` + the
+  SandboxTask CRD (`dev-setup`/`script` types), `pkg/tasks` core
+  (`RunTask` + dev_setup), `pkg/llm` (dev workflow provider abstraction),
+  `pkg/agentoutput`, `cmd/gemini-stream-processor` (used by dev_setup.sh),
+  the agent sandbox builder (dev sandboxes are built on it), and the
+  sandbox images. Retiring these is a dev-sandbox redesign (D5 follow-up),
+  not part of this migration.
+- `pkg/models` stays: the API's submitReview parses `ReviewAgentOutput`.
 
 Each phase is independently shippable. Since breaking repo-agent changes are
 allowed, a phase cuts its task type over completely — the old path is removed in the
@@ -260,8 +270,11 @@ The review UI reads through `pkg/api`, so all bridging is server-side:
   `factory watch` in Phase 3 once trust is built.
 - **D2 — Claude support:** *resolved* — dropped; factory is gemini-only and stays
   untouched (repo-agent's own proposal already went CLI-first/gemini-first).
-- **D3 — SandboxTask CRD fate:** *resolved* — delete it and rewire the UI directly
-  to factory state; breaking repo-agent changes are allowed, so no status mirror.
+- **D3 — SandboxTask CRD fate:** *resolved (amended in Phase 4)* — the UI was
+  rewired directly to factory state for issues and reviews (no status mirror),
+  but the CRD itself survives because dev sandboxes still queue `dev-setup`
+  tasks through it. It goes away with the dev-sandbox redesign (D5), not this
+  migration.
 - **D4 — Triage/rollback tasks:** these two task types have no factory subcommand,
   and adding one is ruled out (factory stays untouched). Option A: port their
   prompts (`pkg/tasks/github-triage-issue.*`, `rollback.*`) into agent-definition
