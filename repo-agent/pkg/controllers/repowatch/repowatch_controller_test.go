@@ -29,7 +29,6 @@ import (
 	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
 	sandboxtaskv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 	"github.com/google/go-github/v39/github"
 	"github.com/onsi/gomega"
 	"golang.org/x/oauth2"
@@ -99,8 +98,9 @@ func TestReconciler_Reconcile(t *testing.T) {
 	}
 	ghClient := clients.NewGitHubClientFromHTTP(mockHTTPClient)
 
+	fakeFactory := newFakeLauncher()
 	r := &Reconciler{
-		Factory: newFakeLauncher(),
+		Factory: fakeFactory,
 		Client:  fakeClient,
 		Scheme:  s,
 		NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
@@ -159,7 +159,16 @@ func TestReconciler_Reconcile(t *testing.T) {
 	g.Expect(fetchedRepoWatch.Status.ReviewSandboxes).To(gomega.HaveLen(1))
 	g.Expect(fetchedRepoWatch.Status.ReviewSandboxes[0].Number).To(gomega.Equal(1))
 
-	// Check that a ReviewSandbox was created
+	// The factory CLI owns review execution: one `factory pr review` launch,
+	// no controller-created sandboxes.
+	g.Expect(fakeFactory.launches()).To(gomega.HaveLen(1))
+	launch := fakeFactory.launches()[0]
+	g.Expect(launch.Key).To(gomega.Equal("default/review-pr-1"))
+	g.Expect(launch.ReviewOpts).NotTo(gomega.BeNil())
+	g.Expect(launch.ReviewOpts.PRURL).To(gomega.Equal("https://github.com/test/repo/pull/1"))
+	g.Expect(launch.ReviewOpts.GithubToken).To(gomega.Equal("test-pat"))
+	g.Expect(fetchedRepoWatch.Status.ReviewSandboxes[0].Status).To(gomega.Equal("Reviewing"))
+
 	reviewSandboxList := &unstructured.UnstructuredList{}
 	reviewSandboxList.SetGroupVersionKind(schema.GroupVersionKind{
 		Group:   "agents.x-k8s.io",
@@ -167,70 +176,7 @@ func TestReconciler_Reconcile(t *testing.T) {
 		Kind:    "Sandbox",
 	})
 	g.Expect(fakeClient.List(context.Background(), reviewSandboxList)).To(gomega.Succeed())
-	g.Expect(reviewSandboxList.Items).To(gomega.HaveLen(1))
-	// Check that the apiKeySecretName is set correctly in the volume
-	volumes, found, err := unstructured.NestedSlice(reviewSandboxList.Items[0].Object, "spec", "podTemplate", "spec", "volumes")
-	g.Expect(err).NotTo(gomega.HaveOccurred())
-	g.Expect(found).To(gomega.BeTrue())
-
-	foundSecret := false
-	for _, v := range volumes {
-		vol := v.(map[string]interface{})
-		if vol["name"] == "tokens-secret" {
-			if projected, ok := vol["projected"].(map[string]interface{}); ok {
-				if sources, ok := projected["sources"].([]interface{}); ok {
-					for _, s := range sources {
-						source, ok := s.(map[string]interface{})
-						if !ok {
-							continue
-						}
-						if secret, ok := source["secret"].(map[string]interface{}); ok {
-							if secret["name"] == "llm-secret" {
-								foundSecret = true
-								break
-							}
-						}
-					}
-				}
-			}
-			if foundSecret {
-				break
-			}
-		}
-	}
-	g.Expect(foundSecret).To(gomega.BeTrue())
-
-	// Check environment variables
-	containers, found, err := unstructured.NestedSlice(reviewSandboxList.Items[0].Object, "spec", "podTemplate", "spec", "containers")
-	g.Expect(err).NotTo(gomega.HaveOccurred())
-	g.Expect(found).To(gomega.BeTrue())
-	g.Expect(containers).To(gomega.HaveLen(1))
-
-	container := containers[0].(map[string]interface{})
-	env, found, err := unstructured.NestedSlice(container, "env")
-	g.Expect(err).NotTo(gomega.HaveOccurred())
-	g.Expect(found).To(gomega.BeTrue())
-
-	expectedEnv := map[string]string{
-		"GOCACHE":     sandbox.GoCachePath,
-		"GOMODCACHE":  sandbox.GoModCachePath,
-		"TMPDIR":      sandbox.TmpDirPath,
-		"GOTMPDIR":    sandbox.TmpDirPath,
-		"GOTOOLCHAIN": "local",
-	}
-
-	for name, value := range expectedEnv {
-		found := false
-		for _, e := range env {
-			envVar := e.(map[string]interface{})
-			if envVar["name"] == name {
-				found = true
-				g.Expect(envVar["value"]).To(gomega.Equal(value))
-				break
-			}
-		}
-		g.Expect(found).To(gomega.BeTrue(), fmt.Sprintf("%s env var not found", name))
-	}
+	g.Expect(reviewSandboxList.Items).To(gomega.BeEmpty())
 }
 
 // TestReconciler_ReconcileIssues focuses on the success path for handling GitHub issues.
@@ -1016,8 +962,9 @@ func TestReconciler_Reconcile_ExplicitAndListedPRs(t *testing.T) {
 	}
 	ghClient := clients.NewGitHubClientFromHTTP(mockHTTPClient)
 
+	fakeFactory := newFakeLauncher()
 	r := &Reconciler{
-		Factory: newFakeLauncher(),
+		Factory: fakeFactory,
 		Client:  fakeClient,
 		Scheme:  s,
 		NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
@@ -1096,7 +1043,8 @@ func TestReconciler_Reconcile_ExplicitAndListedPRs(t *testing.T) {
 	}
 	g.Expect(foundPR42).To(gomega.BeTrue())
 
-	// Check that ReviewSandboxes were created
+	// Both PRs get a factory review launch; no controller-created sandboxes.
+	g.Expect(fakeFactory.launches()).To(gomega.HaveLen(2))
 	reviewSandboxList := &unstructured.UnstructuredList{}
 	reviewSandboxList.SetGroupVersionKind(schema.GroupVersionKind{
 		Group:   "agents.x-k8s.io",
@@ -1104,7 +1052,7 @@ func TestReconciler_Reconcile_ExplicitAndListedPRs(t *testing.T) {
 		Kind:    "Sandbox",
 	})
 	g.Expect(fakeClient.List(context.Background(), reviewSandboxList)).To(gomega.Succeed())
-	g.Expect(reviewSandboxList.Items).To(gomega.HaveLen(2))
+	g.Expect(reviewSandboxList.Items).To(gomega.BeEmpty())
 }
 
 func TestReconciler_Reconcile_FilteredAndSortedPRs(t *testing.T) {
@@ -1248,24 +1196,20 @@ func TestReconcileReviewSandboxes_RespectsExistingActiveSandboxes(t *testing.T) 
 		},
 	}
 
-	// 1. Pre-existing Active Sandbox for PR #1
+	// 1. Pre-existing active factory sandbox for PR #1, review still running
 	existingActiveSandbox := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "agents.x-k8s.io/v1alpha1",
 			"kind":       "Sandbox",
 			"metadata": map[string]interface{}{
-				"name":      "test-repowatch-maxactive-pr-1",
+				"name":      "factory-pr-1",
 				"namespace": "default",
 				"labels": map[string]interface{}{
-					"review.gemini.google.com/repowatch": repoWatch.Name,
+					"factory.gemini.google.com/managed": "true",
+					"factory.gemini.google.com/pr":      "1",
 				},
-				"ownerReferences": []interface{}{
-					map[string]interface{}{
-						"apiVersion": "review.gemini.google.com/v1alpha1",
-						"kind":       "RepoWatch",
-						"name":       repoWatch.Name,
-						"uid":        string(repoWatch.UID),
-					},
+				"annotations": map[string]interface{}{
+					"htmlURL": "https://github.com/test/repo/pull/1",
 				},
 			},
 			"spec": map[string]interface{}{
@@ -1289,10 +1233,11 @@ func TestReconcileReviewSandboxes_RespectsExistingActiveSandboxes(t *testing.T) 
 
 	// PR #1 is also "open" so the existing sandbox is not deleted.
 	pr1Number := 1
-	pr1 := &github.PullRequest{Number: &pr1Number}
+	pr1 := &github.PullRequest{Number: &pr1Number, HTMLURL: github.String("https://github.com/test/repo/pull/1")}
 
+	fakeFactory := newFakeLauncher()
 	r := &Reconciler{
-		Factory: newFakeLauncher(),
+		Factory: fakeFactory,
 		Client:  clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, existingActiveSandbox).WithStatusSubresource(repoWatch).Build(),
 		Scheme:  s,
 		NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
@@ -1300,14 +1245,12 @@ func TestReconcileReviewSandboxes_RespectsExistingActiveSandboxes(t *testing.T) 
 		},
 	}
 
-	// The list of sandboxes passed to the function contains the pre-existing one.
-	existingSandboxList := &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*existingActiveSandbox}}
-
 	// The list of open PRs includes the one with an existing sandbox and the new one.
 	openPRs := []*github.PullRequest{pr2, pr1}
 
 	// Call reconcile
-	watchedPRs, pendingPRs, activeSandboxes := r.reconcileReviewSandboxesInternal(context.Background(), &github.User{Login: github.String("test-user")}, repoWatch, []*github.PullRequest{}, openPRs, existingSandboxList, map[string]*corev1.Pod{})
+	sandboxesByPR := factorySandboxesByPR([]unstructured.Unstructured{*existingActiveSandbox}, "test", "repo")
+	watchedPRs, pendingPRs, activeSandboxes := r.reconcileFactoryReviews(context.Background(), repoWatch, []*github.PullRequest{}, openPRs, sandboxesByPR, "test-token")
 	repoWatch.Status.ReviewSandboxes = watchedPRs
 	repoWatch.Status.PendingPRs = pendingPRs
 	repoWatch.Status.ActiveSandboxCount = activeSandboxes
@@ -1336,6 +1279,11 @@ func TestReconcileReviewSandboxes_RespectsExistingActiveSandboxes(t *testing.T) 
 	g.Expect(fetchedRepoWatch.Status.ReviewSandboxes[0].Number).To(gomega.Equal(1))
 	g.Expect(fetchedRepoWatch.Status.PendingPRs).To(gomega.HaveLen(1))
 	g.Expect(fetchedRepoWatch.Status.PendingPRs[0]).To(gomega.Equal(2))
+
+	// PR 1's unfinished review is relaunched (reattach); PR 2 is over the
+	// active limit so nothing is launched for it.
+	g.Expect(fakeFactory.launches()).To(gomega.HaveLen(1))
+	g.Expect(fakeFactory.launches()[0].Key).To(gomega.Equal("default/review-pr-1"))
 }
 
 // TestReconcile_MultipleRepoWatchesSameRepo verifies that two RepoWatches
@@ -1405,8 +1353,9 @@ func TestReconcile_MultipleRepoWatchesSameRepo(t *testing.T) {
 
 	// 3. Setup fake client and reconciler
 	fakeClient := clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatchA, repoWatchB, secret).WithStatusSubresource(repoWatchA, repoWatchB).Build()
+	fakeFactory := newFakeLauncher()
 	r := &Reconciler{
-		Factory: newFakeLauncher(),
+		Factory: fakeFactory,
 		Client:  fakeClient,
 		Scheme:  s,
 		NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
@@ -1433,54 +1382,15 @@ func TestReconcile_MultipleRepoWatchesSameRepo(t *testing.T) {
 		Kind:    "Sandbox",
 	})
 	g.Expect(r.Client.List(context.Background(), sandboxList)).To(gomega.Succeed())
-	g.Expect(sandboxList.Items).To(gomega.HaveLen(2), "Expected two sandboxes to be created, one for each RepoWatch")
-
-	// Validate Sandbox A
-	sandboxA := &unstructured.Unstructured{}
-	sandboxA.SetGroupVersionKind(sandboxList.GroupVersionKind())
-	sandboxAName := types.NamespacedName{Name: fmt.Sprintf("%s-pr-%d", repoWatchA.Name, prNumber), Namespace: "default"}
-	g.Expect(r.Client.Get(context.Background(), sandboxAName, sandboxA)).To(gomega.Succeed())
-
-	// Check AGENT_NAME env var for provider
-	containersA, foundA, errA := unstructured.NestedSlice(sandboxA.Object, "spec", "podTemplate", "spec", "containers")
-	g.Expect(errA).NotTo(gomega.HaveOccurred())
-	g.Expect(foundA).To(gomega.BeTrue())
-	containerA := containersA[0].(map[string]interface{})
-	envA := containerA["env"].([]interface{})
-
-	foundAgentNameA := false
-	for _, e := range envA {
-		envVar := e.(map[string]interface{})
-		if envVar["name"] == "AGENT_NAME" {
-			g.Expect(envVar["value"]).To(gomega.Equal("gemini-cli"))
-			foundAgentNameA = true
-			break
-		}
+	// Reviews run through the factory CLI now: both RepoWatches share the
+	// factory sandbox for the PR, so the controller creates none itself, and
+	// each watch dispatches a review launch on the same single-flight key
+	// (deduplicated at runtime by the shared launcher).
+	g.Expect(sandboxList.Items).To(gomega.BeEmpty())
+	g.Expect(fakeFactory.launches()).NotTo(gomega.BeEmpty())
+	for _, l := range fakeFactory.launches() {
+		g.Expect(l.Key).To(gomega.Equal(fmt.Sprintf("default/review-pr-%d", prNumber)))
 	}
-	g.Expect(foundAgentNameA).To(gomega.BeTrue())
-
-	// Validate Sandbox B
-	sandboxB := &unstructured.Unstructured{}
-	sandboxB.SetGroupVersionKind(sandboxList.GroupVersionKind())
-	sandboxBName := types.NamespacedName{Name: fmt.Sprintf("%s-pr-%d", repoWatchB.Name, prNumber), Namespace: "default"}
-	g.Expect(r.Client.Get(context.Background(), sandboxBName, sandboxB)).To(gomega.Succeed())
-
-	containersB, foundB, errB := unstructured.NestedSlice(sandboxB.Object, "spec", "podTemplate", "spec", "containers")
-	g.Expect(errB).NotTo(gomega.HaveOccurred())
-	g.Expect(foundB).To(gomega.BeTrue())
-	containerB := containersB[0].(map[string]interface{})
-	envB := containerB["env"].([]interface{})
-
-	foundAgentNameB := false
-	for _, e := range envB {
-		envVar := e.(map[string]interface{})
-		if envVar["name"] == "AGENT_NAME" {
-			g.Expect(envVar["value"]).To(gomega.Equal("claude"))
-			foundAgentNameB = true
-			break
-		}
-	}
-	g.Expect(foundAgentNameB).To(gomega.BeTrue())
 
 	// Validate Status of RepoWatches
 	fetchedA := &reviewv1alpha1.RepoWatch{}

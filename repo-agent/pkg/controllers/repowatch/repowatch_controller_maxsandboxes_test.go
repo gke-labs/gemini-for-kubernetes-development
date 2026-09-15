@@ -70,21 +70,21 @@ func TestReconcileReviewSandboxes_MaxSandboxes(t *testing.T) {
 		},
 	}
 
-	// 1. Existing Active Sandbox (PR 1)
+	// 1. Existing active factory review sandbox with a stored draft (PR 1)
 	activeSandbox := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "agents.x-k8s.io/v1alpha1",
 			"kind":       "Sandbox",
 			"metadata": map[string]interface{}{
-				"name":      "test-repowatch-pr-1",
+				"name":      "factory-pr-1",
 				"namespace": "default",
-				"ownerReferences": []interface{}{
-					map[string]interface{}{
-						"apiVersion": "review.gemini.google.com/v1alpha1",
-						"kind":       "RepoWatch",
-						"name":       "test-repowatch",
-						"uid":        "test-uid",
-					},
+				"labels": map[string]interface{}{
+					"factory.gemini.google.com/managed": "true",
+					"factory.gemini.google.com/pr":      "1",
+				},
+				"annotations": map[string]interface{}{
+					"agentDraft": "review:\n  body: draft 1",
+					"htmlURL":    "https://github.com/test/repo/pull/1",
 				},
 			},
 			"spec": map[string]interface{}{
@@ -93,21 +93,21 @@ func TestReconcileReviewSandboxes_MaxSandboxes(t *testing.T) {
 		},
 	}
 
-	// 2. Existing Inactive Sandbox (PR 2) - scaled down
+	// 2. Existing scaled-down factory review sandbox with a stored draft (PR 2)
 	inactiveSandbox := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "agents.x-k8s.io/v1alpha1",
 			"kind":       "Sandbox",
 			"metadata": map[string]interface{}{
-				"name":      "test-repowatch-pr-2",
+				"name":      "factory-pr-2",
 				"namespace": "default",
-				"ownerReferences": []interface{}{
-					map[string]interface{}{
-						"apiVersion": "review.gemini.google.com/v1alpha1",
-						"kind":       "RepoWatch",
-						"name":       "test-repowatch",
-						"uid":        "test-uid",
-					},
+				"labels": map[string]interface{}{
+					"factory.gemini.google.com/managed": "true",
+					"factory.gemini.google.com/pr":      "2",
+				},
+				"annotations": map[string]interface{}{
+					"agentDraft": "review:\n  body: draft 2",
+					"htmlURL":    "https://github.com/test/repo/pull/2",
 				},
 			},
 			"spec": map[string]interface{}{
@@ -134,8 +134,9 @@ func TestReconcileReviewSandboxes_MaxSandboxes(t *testing.T) {
 	pr2Number := 2
 	pr2 := &github.PullRequest{Number: &pr2Number}
 
+	fakeFactory := newFakeLauncher()
 	r := &Reconciler{
-		Factory: newFakeLauncher(),
+		Factory: fakeFactory,
 		Client:  clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, activeSandbox, inactiveSandbox).WithStatusSubresource(repoWatch).Build(),
 		Scheme:  s,
 		NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
@@ -144,7 +145,8 @@ func TestReconcileReviewSandboxes_MaxSandboxes(t *testing.T) {
 	}
 
 	// Call reconcile
-	watchedPRs, pendingPRs, activeSandboxes := r.reconcileReviewSandboxesInternal(context.Background(), &github.User{Login: github.String("test-user")}, repoWatch, []*github.PullRequest{}, []*github.PullRequest{pr1, pr2, pr3}, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*activeSandbox, *inactiveSandbox}}, map[string]*corev1.Pod{})
+	sandboxesByPR := factorySandboxesByPR([]unstructured.Unstructured{*activeSandbox, *inactiveSandbox}, "test", "repo")
+	watchedPRs, pendingPRs, activeSandboxes := r.reconcileFactoryReviews(context.Background(), repoWatch, []*github.PullRequest{}, []*github.PullRequest{pr1, pr2, pr3}, sandboxesByPR, "test-token")
 	repoWatch.Status.ReviewSandboxes = watchedPRs
 	repoWatch.Status.PendingPRs = pendingPRs
 	repoWatch.Status.ActiveSandboxCount = activeSandboxes
@@ -167,6 +169,9 @@ func TestReconcileReviewSandboxes_MaxSandboxes(t *testing.T) {
 	// PR 3 should be pending
 	g.Expect(fetchedRepoWatch.Status.PendingPRs).To(gomega.HaveLen(1))
 	g.Expect(fetchedRepoWatch.Status.PendingPRs[0]).To(gomega.Equal(3))
+
+	// Both existing PRs have drafts, so no factory review is launched.
+	g.Expect(fakeFactory.launches()).To(gomega.BeEmpty())
 }
 
 // TestReconcileIssueHandlerSandboxes_MaxSandboxes verifies that the MaxSandboxes limit is respected for Issues.

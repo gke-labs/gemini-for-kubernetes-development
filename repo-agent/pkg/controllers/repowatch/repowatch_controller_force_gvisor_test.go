@@ -236,9 +236,9 @@ func TestReconciler_Reconcile_ForceGvisor_AllSandboxes(t *testing.T) {
 		t.Logf("Found sandbox name: %s, type label: %s", item.GetName(), item.GetLabels()["sandbox.gemini.google.com/type"])
 	}
 
-	// Only review and dev sandboxes are controller-created now; issue
+	// Only dev sandboxes are controller-created now; issue and review
 	// sandboxes are owned by the factory CLI.
-	g.Expect(sandboxList.Items).To(gomega.HaveLen(2))
+	g.Expect(sandboxList.Items).To(gomega.HaveLen(1))
 
 	for _, item := range sandboxList.Items {
 		runtimeClassName, found, err := unstructured.NestedString(item.Object, "spec", "podTemplate", "spec", "runtimeClassName")

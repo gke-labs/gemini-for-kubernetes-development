@@ -3,8 +3,6 @@ kind: RepoWatch
 metadata:
   name: rst-gfkd
   namespace: repo-agent-system
-# Wait until status is not null
 (status != null): true
-# Wait until activeSandboxCount is specifically 1
-(status.activeSandboxCount): 1
 (length(status.reviewSandboxes || `[]`)): 1
+(starts_with(status.reviewSandboxes[0].sandboxName || '', 'factory-pr-')): true

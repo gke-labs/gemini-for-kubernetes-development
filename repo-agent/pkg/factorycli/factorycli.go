@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -51,6 +52,44 @@ const (
 // (EnsureFixSandbox in factory/pkg/sandbox: fix-<repo>-<issueNumber>).
 func FixSandboxName(repo string, issueNumber int) string {
 	return fmt.Sprintf("fix-%s-%d", repo, issueNumber)
+}
+
+// LabelPR is the label factory puts on any sandbox working on a PR
+// (EnsureReviewSandbox looks sandboxes up by it, so a review may land on a
+// fix sandbox aliased to the same PR instead of the default factory-pr-<n>).
+const LabelPR = "factory.gemini.google.com/pr"
+
+// reviewBanner brackets the review YAML on `factory pr review --publish no`
+// stdout (factory/pkg/commands/review.go).
+const reviewBanner = "================= CODE REVIEW ================="
+
+// ExtractReviewYAML returns the review YAML printed between the CODE REVIEW
+// banners of a `factory pr review --publish no` invocation's output, or ""
+// if the banners are absent.
+func ExtractReviewYAML(output string) string {
+	start := strings.Index(output, reviewBanner)
+	if start < 0 {
+		return ""
+	}
+	rest := output[start+len(reviewBanner):]
+	end := strings.Index(rest, reviewBanner)
+	if end < 0 {
+		return ""
+	}
+	return strings.TrimSpace(rest[:end])
+}
+
+// ReviewOptions are the inputs for a `factory pr review` invocation.
+type ReviewOptions struct {
+	Namespace string
+	PRURL     string
+	// Instructions are passed as repeated --instruction flags (review
+	// prompt plus any policy lines like severity thresholds).
+	Instructions      []string
+	Image             string
+	WorkspaceDiskSize string
+	GithubToken       string
+	Timeout           time.Duration
 }
 
 // FixOptions are the inputs for a `factory fix` invocation.
@@ -86,6 +125,10 @@ type Launcher interface {
 	// StartFix launches `factory fix` for key unless one is already running.
 	// Returns false if an invocation for key is already in flight.
 	StartFix(key string, opts FixOptions) bool
+	// StartReview launches `factory pr review --publish no` for key unless
+	// one is already running. The review YAML is recovered from the
+	// invocation's output (see ExtractReviewYAML) via LastResult.
+	StartReview(key string, opts ReviewOptions) bool
 	IsRunning(key string) bool
 	// LastResult returns the outcome of the most recently finished
 	// invocation for key, if any.
@@ -115,42 +158,10 @@ func NewRunner() *Runner {
 }
 
 func (r *Runner) StartFix(key string, opts FixOptions) bool {
-	r.mu.Lock()
-	if _, ok := r.running[key]; ok {
-		r.mu.Unlock()
-		return false
-	}
-	r.running[key] = struct{}{}
-	r.mu.Unlock()
-
-	go r.runFix(key, opts)
-	return true
-}
-
-func (r *Runner) IsRunning(key string) bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	_, ok := r.running[key]
-	return ok
-}
-
-func (r *Runner) LastResult(key string) (Result, bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	res, ok := r.results[key]
-	return res, ok
-}
-
-func (r *Runner) runFix(key string, opts FixOptions) {
 	timeout := opts.Timeout
 	if timeout <= 0 {
 		timeout = 3 * time.Hour
 	}
-	// Detached from any reconcile context: the invocation outlives the
-	// reconcile that started it.
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
 	args := []string{
 		"fix",
 		"--url", opts.IssueURL,
@@ -169,19 +180,83 @@ func (r *Runner) runFix(key string, opts FixOptions) {
 	if opts.WorkspaceDiskSize != "" {
 		args = append(args, "--workspace-disk-size", opts.WorkspaceDiskSize)
 	}
+	return r.start(key, args, opts.GithubToken, timeout)
+}
+
+func (r *Runner) StartReview(key string, opts ReviewOptions) bool {
+	timeout := opts.Timeout
+	if timeout <= 0 {
+		timeout = 45 * time.Minute
+	}
+	args := []string{
+		"pr", "review",
+		"--pr-url", opts.PRURL,
+		// Draft-first flow: the human publishes via the repo-agent API, so
+		// factory only produces the review (printed on stdout).
+		"--publish", "no",
+		"--namespace", opts.Namespace,
+		"--timeout", timeout.String(),
+		"--abort-on-cancel=false",
+	}
+	for _, instruction := range opts.Instructions {
+		if instruction != "" {
+			args = append(args, "--instruction", instruction)
+		}
+	}
+	if opts.Image != "" {
+		args = append(args, "--image", opts.Image)
+	}
+	if opts.WorkspaceDiskSize != "" {
+		args = append(args, "--workspace-disk-size", opts.WorkspaceDiskSize)
+	}
+	return r.start(key, args, opts.GithubToken, timeout)
+}
+
+func (r *Runner) start(key string, args []string, githubToken string, timeout time.Duration) bool {
+	r.mu.Lock()
+	if _, ok := r.running[key]; ok {
+		r.mu.Unlock()
+		return false
+	}
+	r.running[key] = struct{}{}
+	r.mu.Unlock()
+
+	go r.run(key, args, githubToken, timeout)
+	return true
+}
+
+func (r *Runner) IsRunning(key string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, ok := r.running[key]
+	return ok
+}
+
+func (r *Runner) LastResult(key string) (Result, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	res, ok := r.results[key]
+	return res, ok
+}
+
+func (r *Runner) run(key string, args []string, githubToken string, timeout time.Duration) {
+	// Detached from any reconcile context: the invocation outlives the
+	// reconcile that started it.
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 
 	cmd := exec.CommandContext(ctx, r.Binary, args...)
-	cmd.Env = append(os.Environ(), "GITHUB_TOKEN="+opts.GithubToken)
+	cmd.Env = append(os.Environ(), "GITHUB_TOKEN="+githubToken)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
 
-	klog.Infof("factorycli: starting %s fix --url %s --namespace %s (key %s)", r.Binary, opts.IssueURL, opts.Namespace, key)
+	klog.Infof("factorycli: starting %s %s (key %s)", r.Binary, strings.Join(args[:2], " "), key)
 	err := cmd.Run()
 	if err != nil {
-		klog.Errorf("factorycli: fix for %s failed: %v\noutput tail:\n%s", key, err, tail(out.String(), 4096))
+		klog.Errorf("factorycli: %s for %s failed: %v\noutput tail:\n%s", args[0], key, err, tail(out.String(), 4096))
 	} else {
-		klog.Infof("factorycli: fix for %s completed", key)
+		klog.Infof("factorycli: %s for %s completed", args[0], key)
 	}
 
 	r.mu.Lock()

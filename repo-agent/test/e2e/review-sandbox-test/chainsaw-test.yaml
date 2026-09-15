@@ -18,18 +18,18 @@ spec:
             namespace: repo-agent-system
           status:
             readyReplicas: 1
-  - name: create-minimal-devcontainer
-    try:
-    - apply:
-        file: devcontainer-minimal.yaml
   - name: create-repowatch
     try:
     - apply:
         file: repowatch.yaml
+  # PR reviews are dispatched via the factory CLI: the controller launches
+  # `factory pr review` per selected PR and tracks it in status under a
+  # factory-named (factory-pr-*) sandbox; the controller creates no review
+  # sandboxes or SandboxTasks itself.
   - name: check-repowatch
     try:
     - assert:
-        timeout: 1m
+        timeout: 2m
         file: repowatch-assert.yaml
     catch:
       - describe:
@@ -42,50 +42,24 @@ spec:
           tail: 200
       - events:
           namespace: repo-agent-system
-  - name: check-reviewsandbox
+  - name: check-no-legacy-review-resources
     try:
-    - assert:
-        timeout: 20m
-        file: sandbox-assert.yaml
-    catch:
-    # 1. Describe the Sandbox to see why it might be stuck (Status/Events)
-    - describe:
-        apiVersion: agents.x-k8s.io/v1alpha1
-        kind: Sandbox
-        namespace: repo-agent-system
-        selector: review.gemini.google.com/repowatch=rst-gfkd
-    # 2. Run a script to dynamically find the Pod and get its logs
-    - script:
-        content: |
-          # 1. Find the Sandbox name using the common label
-          # We use jsonpath to extract just the name string (e.g., "rst-gfkd-pr-209")
-          RS_NAME=$(kubectl get sandbox -n repo-agent-system -l review.gemini.google.com/repowatch=rst-gfkd -o jsonpath='{.items[0].metadata.name}')
-          if [ -z "$RS_NAME" ]; then
-            echo "No Sandbox found via label selector!"
-            exit 0
-          fi
-          echo "Found Sandbox: $RS_NAME"
-          # 2. Find the Pod using the label selector
-          POD_LABEL="sandbox=$RS_NAME"
-          echo "Looking for Pod with label: $POD_LABEL"
-          POD_NAME=$(kubectl get pod -n repo-agent-system -l "$POD_LABEL" -o jsonpath='{.items[0].metadata.name}')
-
-          if [ -z "$POD_NAME" ]; then
-             echo "Pod not found yet"
-          else
-             echo "Found Pod: $POD_NAME"
-             echo "--- Describing Pod $POD_NAME ---"
-             kubectl describe pod -n repo-agent-system "$POD_NAME"
-             # 4. Fetch the logs
-             echo "--- Logs for Pod $POD_NAME (container: sandbox) ---"
-             kubectl logs -n repo-agent-system "$POD_NAME" -c sandbox || echo "Could not fetch logs (pod might not be running)"
-          fi
-  - name: check-sandboxtask
-    try:
-    - assert:
-        timeout: 20m
-        file: sandboxtask-assert.yaml
-  #- name: delete-repowatch
-  #  try:
-  #  - delete:
-  #      file: repowatch.yaml
+    - error:
+        timeout: 30s
+        resource:
+          apiVersion: custom.agents.x-k8s.io/v1alpha1
+          kind: SandboxTask
+          metadata:
+            namespace: repo-agent-system
+            labels:
+              review.gemini.google.com/repowatch: rst-gfkd
+    - error:
+        timeout: 30s
+        resource:
+          apiVersion: agents.x-k8s.io/v1alpha1
+          kind: Sandbox
+          metadata:
+            namespace: repo-agent-system
+            labels:
+              sandbox.gemini.google.com/type: review
+              review.gemini.google.com/repowatch: rst-gfkd

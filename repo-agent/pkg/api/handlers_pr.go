@@ -7,9 +7,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -43,55 +41,15 @@ func (s *Server) getPRTasks(c *gin.Context) {
 	repo := c.Param("repo")
 	prID := c.Param("id")
 
-	sandboxName := fmt.Sprintf("%s-pr-%s", repo, prID)
-
-	taskList, err := s.K8sManager.ListSandboxTasks(c.Request.Context(), namespace, sandboxName)
+	// Reviews are executed by the factory CLI; the draft and task state live
+	// on the factory sandbox, so the UI gets one synthesized task entry.
+	sb, err := s.resolveFactoryPRSandbox(c.Request.Context(), namespace, repo, prID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list tasks", "details": err.Error()})
+		c.JSON(http.StatusOK, []models.Task{})
 		return
 	}
 
-	var tasks []models.Task
-	for _, taskItem := range taskList.Items {
-		taskType := taskItem.Spec.Type
-		taskState := taskItem.Status.TaskState
-		result := taskItem.Status.Result
-
-		tAgentDraft := ""
-		tUserDraft := ""
-		tAgentState := ""
-		tAgentStateMessage := ""
-		tAgentDraftType := ""
-
-		tAnnotations := taskItem.GetAnnotations()
-		if tAnnotations != nil {
-			tAgentDraft = tAnnotations["agentDraft"]
-			tAgentDraftType = tAnnotations["agentDraftType"]
-			tUserDraft = tAnnotations["userDraft"]
-			tAgentState = tAnnotations["agentState"]
-			tAgentStateMessage = tAnnotations["agentStateMessage"]
-		}
-
-		tasks = append(tasks, models.Task{
-			Name:              taskItem.GetName(),
-			Type:              taskType,
-			TaskState:         taskState,
-			Result:            result,
-			CreationTimestamp: taskItem.GetCreationTimestamp().Format(time.RFC3339),
-			AgentDraft:        tAgentDraft,
-			AgentDraftType:    tAgentDraftType,
-			UserDraft:         tUserDraft,
-			AgentState:        tAgentState,
-			AgentStateMessage: tAgentStateMessage,
-			Stats:             convertStats(taskItem.Status.Stats),
-		})
-	}
-	// Sort tasks by creation timestamp (newest first)
-	sort.Slice(tasks, func(i, j int) bool {
-		return tasks[i].CreationTimestamp > tasks[j].CreationTimestamp
-	})
-
-	c.JSON(http.StatusOK, tasks)
+	c.JSON(http.StatusOK, []models.Task{factoryReviewTask(sb)})
 }
 
 func (s *Server) listPRsFromK8s(ctx context.Context, namespace, repo string) ([]models.PR, error) {
@@ -199,9 +157,12 @@ func (s *Server) saveDraft(c *gin.Context) {
 		return
 	}
 
-	sandboxName := fmt.Sprintf("%s-pr-%s", repo, prID)
-	err := s.K8sManager.UpdateSandboxUserDraft(c.Request.Context(), namespace, sandboxName, payload.Draft)
+	sb, err := s.resolveFactoryPRSandbox(c.Request.Context(), namespace, repo, prID)
 	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Failed to find review sandbox", "details": err.Error()})
+		return
+	}
+	if err := s.K8sManager.UpdateSandboxUserDraft(c.Request.Context(), namespace, sb.GetName(), payload.Draft); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save draft", "details": err.Error()})
 		return
 	}
@@ -220,10 +181,14 @@ func (s *Server) saveTaskDraft(c *gin.Context) {
 		return
 	}
 
-	err := s.K8sManager.UpdateSandboxTaskUserDraft(c.Request.Context(), namespace, taskName, payload.Draft)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save task draft", "details": err.Error()})
-		return
+	// Factory-run reviews synthesize the task from the sandbox, so the task
+	// name IS the sandbox name; fall back to the legacy SandboxTask CR for
+	// other flows.
+	if err := s.K8sManager.UpdateSandboxUserDraft(c.Request.Context(), namespace, taskName, payload.Draft); err != nil {
+		if err := s.K8sManager.UpdateSandboxTaskUserDraft(c.Request.Context(), namespace, taskName, payload.Draft); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save task draft", "details": err.Error()})
+			return
+		}
 	}
 
 	c.Status(http.StatusOK)
@@ -245,20 +210,14 @@ func (s *Server) submitReview(c *gin.Context) {
 	ctx := c.Request.Context()
 	log.Info("Submitting review for PR", "prID", prID, "repo", repo, "review", payload.Review)
 
-	sandboxName := fmt.Sprintf("%s-pr-%s", repo, prID)
-	gvr := schema.GroupVersionResource{
-		Group:    "agents.x-k8s.io",
-		Version:  "v1alpha1",
-		Resource: "sandboxes",
-	}
-
-	// Get Sandbox to check agentDraft
-	sandbox, err := s.K8sManager.Client.Resource(gvr).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
+	// Get the factory sandbox holding the draft
+	sandbox, err := s.resolveFactoryPRSandbox(ctx, namespace, repo, prID)
 	if err != nil {
-		log.Info("Failed to get sandbox", "name", sandboxName, "err", err)
+		log.Info("Failed to get review sandbox", "pr", prID, "err", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get sandbox"})
 		return
 	}
+	sandboxName := sandbox.GetName()
 
 	draft := payload.Review
 	agentDraft := ""
@@ -346,7 +305,7 @@ func (s *Server) submitReview(c *gin.Context) {
 	}
 
 	// scale down sandbox
-	err = s.K8sManager.ScaledownSandbox(ctx, namespace, repo, prID)
+	err = s.K8sManager.ScaledownSandboxByName(ctx, namespace, sandboxName)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scaledown Sandbox after review submission", "details": err.Error()})
 		return
@@ -361,7 +320,13 @@ func (s *Server) deletePR(c *gin.Context) {
 	prID := c.Param("id")
 	ctx := c.Request.Context()
 
-	if err := s.K8sManager.ScaledownSandbox(ctx, namespace, repo, prID); err != nil {
+	sb, err := s.resolveFactoryPRSandbox(ctx, namespace, repo, prID)
+	if err != nil {
+		// No sandbox to scale down; the PR exclusion is handled separately.
+		c.Status(http.StatusOK)
+		return
+	}
+	if err := s.K8sManager.ScaledownSandboxByName(ctx, namespace, sb.GetName()); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete sandbox", "details": err.Error()})
 		return
 	}
@@ -381,7 +346,12 @@ func (s *Server) scaleUpPR(c *gin.Context) {
 	// Ignore error as body might be empty
 	_ = c.ShouldBindJSON(&payload)
 
-	if err := s.K8sManager.ScaleupSandbox(ctx, namespace, repo, prID); err != nil {
+	sb, err := s.resolveFactoryPRSandbox(ctx, namespace, repo, prID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Failed to find review sandbox", "details": err.Error()})
+		return
+	}
+	if err := s.K8sManager.ScaleupSandboxByName(ctx, namespace, sb.GetName()); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scale up sandbox", "details": err.Error()})
 		return
 	}
@@ -394,7 +364,12 @@ func (s *Server) scaleDownPR(c *gin.Context) {
 	prID := c.Param("id")
 	ctx := c.Request.Context()
 
-	if err := s.K8sManager.ScaledownSandbox(ctx, namespace, repo, prID); err != nil {
+	sb, err := s.resolveFactoryPRSandbox(ctx, namespace, repo, prID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Failed to find review sandbox", "details": err.Error()})
+		return
+	}
+	if err := s.K8sManager.ScaledownSandboxByName(ctx, namespace, sb.GetName()); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scale down sandbox", "details": err.Error()})
 		return
 	}
@@ -416,63 +391,21 @@ func (s *Server) createPRTask(c *gin.Context) {
 		return
 	}
 
-	sandboxName := fmt.Sprintf("%s-pr-%s", repo, prID)
+	// Reviews run through the factory CLI: mark the sandbox for re-review and
+	// the repowatch controller relaunches `factory pr review` on its next
+	// reconcile. Custom prompt/model overrides from the old engine are not
+	// supported by this path; the RepoWatch review spec applies.
+	if payload.Prompt != "" || payload.Model != "" {
+		klog.Infof("createPRTask: per-task prompt/model overrides are ignored by the factory review engine (pr %s)", prID)
+	}
 
-	// Fetch RepoWatch to get latest config
-	rw, err := s.K8sManager.GetRepoWatch(c.Request.Context(), namespace, repo)
+	sb, err := s.resolveFactoryPRSandbox(c.Request.Context(), namespace, repo, prID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get RepoWatch", "details": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{"error": "Failed to find review sandbox", "details": err.Error()})
 		return
 	}
-
-	prompt := payload.Prompt
-	if prompt == "" {
-		defaultPrompt, found, err := unstructured.NestedString(rw.Object, "spec", "review", "llm", "prompt")
-		if err == nil && found {
-			prompt = defaultPrompt
-		}
-	}
-
-	params := map[string]string{
-		"AGENT_PROMPT": prompt,
-	}
-
-	// Inject MaxReviewFiles from RepoWatch
-	maxReviewFiles, found, err := unstructured.NestedInt64(rw.Object, "spec", "review", "maxReviewFiles")
-	if err == nil && found {
-		params["MAX_REVIEW_FILES"] = strconv.FormatInt(maxReviewFiles, 10)
-	}
-
-	// Inject IgnoreFiles from RepoWatch
-	ignoreFiles, found, err := unstructured.NestedStringSlice(rw.Object, "spec", "review", "ignoreFiles")
-	if err == nil && found && len(ignoreFiles) > 0 {
-		params["IGNORE_FILES"] = strings.Join(ignoreFiles, ",")
-	}
-
-	if payload.ExpectedComments > 0 {
-		params["EXPECTED_COMMENTS"] = strconv.Itoa(payload.ExpectedComments)
-	}
-
-	if payload.Model != "" {
-		params["model"] = payload.Model
-	} else {
-		// Inject Models from RepoWatch if not already specified
-		models, found, err := unstructured.NestedStringSlice(rw.Object, "spec", "review", "models")
-		if err == nil && found && len(models) > 0 {
-			params["model"] = strings.Join(models, ",")
-		}
-	}
-
-	err = s.K8sManager.CreateSandboxTask(c.Request.Context(), namespace, sandboxName, "Sandbox", "review", params)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create task", "details": err.Error()})
-		return
-	}
-
-	// Scale up the sandbox so it can process the task
-	if err := s.K8sManager.ScaleupSandbox(c.Request.Context(), namespace, repo, prID); err != nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Failed to scale up sandbox after task creation", "details": err.Error()})
-		klog.Warningf("Failed to scale up sandbox after task creation: %v", err)
+	if err := s.K8sManager.UpdateSandboxAnnotation(c.Request.Context(), namespace, sb.GetName(), annoRereviewRequest, time.Now().UTC().Format(time.RFC3339)); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to request re-review", "details": err.Error()})
 		return
 	}
 
