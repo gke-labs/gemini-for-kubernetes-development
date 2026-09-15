@@ -135,8 +135,9 @@ func TestReconcileReviewSandboxes_MaxSandboxes(t *testing.T) {
 	pr2 := &github.PullRequest{Number: &pr2Number}
 
 	r := &Reconciler{
-		Client: clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, activeSandbox, inactiveSandbox).WithStatusSubresource(repoWatch).Build(),
-		Scheme: s,
+		Factory: newFakeLauncher(),
+		Client:  clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, activeSandbox, inactiveSandbox).WithStatusSubresource(repoWatch).Build(),
+		Scheme:  s,
 		NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
 			return &github.Client{}, map[string]string{}, nil
 		},
@@ -204,24 +205,19 @@ func TestReconcileIssueHandlerSandboxes_MaxSandboxes(t *testing.T) {
 		},
 	}
 
-	// 1. Existing Active Sandbox (Issue 1)
+	// 1. Existing factory sandbox with a task still running (Issue 1)
 	activeSandbox := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "agents.x-k8s.io/v1alpha1",
 			"kind":       "Sandbox",
 			"metadata": map[string]interface{}{
-				"name":      "test-repowatch-issue-1",
+				"name":      "fix-repo-1",
 				"namespace": "default",
 				"labels": map[string]interface{}{
-					"sandbox.gemini.google.com/type": "issue",
+					"factory.gemini.google.com/managed": "true",
 				},
-				"ownerReferences": []interface{}{
-					map[string]interface{}{
-						"apiVersion": "review.gemini.google.com/v1alpha1",
-						"kind":       "RepoWatch",
-						"name":       "test-repowatch",
-						"uid":        "test-uid",
-					},
+				"annotations": map[string]interface{}{
+					"sandbox.gemini.google.com/last-task-state": "Running",
 				},
 			},
 			"spec": map[string]interface{}{
@@ -230,24 +226,19 @@ func TestReconcileIssueHandlerSandboxes_MaxSandboxes(t *testing.T) {
 		},
 	}
 
-	// 2. Existing Inactive Sandbox (Issue 2)
+	// 2. Existing factory sandbox whose task finished (Issue 2)
 	inactiveSandbox := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "agents.x-k8s.io/v1alpha1",
 			"kind":       "Sandbox",
 			"metadata": map[string]interface{}{
-				"name":      "test-repowatch-issue-2",
+				"name":      "fix-repo-2",
 				"namespace": "default",
 				"labels": map[string]interface{}{
-					"sandbox.gemini.google.com/type": "issue",
+					"factory.gemini.google.com/managed": "true",
 				},
-				"ownerReferences": []interface{}{
-					map[string]interface{}{
-						"apiVersion": "review.gemini.google.com/v1alpha1",
-						"kind":       "RepoWatch",
-						"name":       "test-repowatch",
-						"uid":        "test-uid",
-					},
+				"annotations": map[string]interface{}{
+					"sandbox.gemini.google.com/last-task-state": "Completed",
 				},
 			},
 			"spec": map[string]interface{}{
@@ -288,9 +279,11 @@ func TestReconcileIssueHandlerSandboxes_MaxSandboxes(t *testing.T) {
 
 	fakeClient := clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, activeSandbox, inactiveSandbox).WithStatusSubresource(repoWatch).Build()
 
+	fakeFactory := newFakeLauncher()
 	r := &Reconciler{
-		Client: fakeClient,
-		Scheme: s,
+		Factory: fakeFactory,
+		Client:  fakeClient,
+		Scheme:  s,
 		NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
 			return ghClient, map[string]string{"pat": "test-pat"}, nil
 		},
@@ -320,7 +313,12 @@ func TestReconcileIssueHandlerSandboxes_MaxSandboxes(t *testing.T) {
 		Kind:    "Sandbox",
 	})
 	g.Expect(r.Client.List(context.Background(), sandboxList)).To(gomega.Succeed())
-	g.Expect(sandboxList.Items).To(gomega.HaveLen(2)) // MaxSandboxes = 2, so Issue 3 should not have a sandbox
+	g.Expect(sandboxList.Items).To(gomega.HaveLen(2)) // MaxSandboxes = 2, so Issue 3 gets no sandbox
+
+	// Issue 1 is relaunched (reattach to its running task); Issue 2 is
+	// Completed so nothing is launched; Issue 3 is over the limit.
+	g.Expect(fakeFactory.launches()).To(gomega.HaveLen(1))
+	g.Expect(fakeFactory.launches()[0].Key).To(gomega.Equal("default/fix-repo-1"))
 
 	fetchedRepoWatch := &reviewv1alpha1.RepoWatch{}
 	g.Expect(r.Client.Get(context.Background(), types.NamespacedName{Name: repoWatch.Name, Namespace: repoWatch.Namespace}, fetchedRepoWatch)).To(gomega.Succeed())
@@ -328,6 +326,7 @@ func TestReconcileIssueHandlerSandboxes_MaxSandboxes(t *testing.T) {
 	// Check PendingIssues
 	g.Expect(fetchedRepoWatch.Status.PendingIssues[handlerName]).To(gomega.HaveLen(1))
 	g.Expect(fetchedRepoWatch.Status.PendingIssues[handlerName][0]).To(gomega.Equal(3))
+	g.Expect(fetchedRepoWatch.Status.IssueSandboxes[handlerName]).To(gomega.HaveLen(2))
 }
 
 // TestReconcileDevSandboxes_MaxSandboxes verifies that the MaxSandboxes limit is respected for Dev sandboxes.
@@ -385,8 +384,9 @@ func TestReconcileDevSandboxes_MaxSandboxes(t *testing.T) {
 	}
 
 	r := &Reconciler{
-		Client: clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, existingSandbox).WithStatusSubresource(repoWatch).Build(),
-		Scheme: s,
+		Factory: newFakeLauncher(),
+		Client:  clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, existingSandbox).WithStatusSubresource(repoWatch).Build(),
+		Scheme:  s,
 	}
 
 	// Both feature-1 and feature-2 are candidate branches

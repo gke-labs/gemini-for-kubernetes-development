@@ -110,3 +110,17 @@ func (r *Reconciler) reconcileFactoryUserSecret(ctx context.Context, repoWatch *
 	existing.Data = desired.Data
 	return r.Update(ctx, existing)
 }
+
+// factoryGithubToken returns the GitHub token from the tenant's factory-user
+// secret; factory CLI invocations use it for host-side GitHub reads.
+func (r *Reconciler) factoryGithubToken(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch) (string, error) {
+	secret := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Name: FactoryUserSecretName, Namespace: repoWatch.Namespace}, secret); err != nil {
+		return "", err
+	}
+	token := secret.Data[factoryKeyGithubToken]
+	if len(token) == 0 {
+		return "", fmt.Errorf("secret %s/%s has no %s", repoWatch.Namespace, FactoryUserSecretName, factoryKeyGithubToken)
+	}
+	return string(token), nil
+}

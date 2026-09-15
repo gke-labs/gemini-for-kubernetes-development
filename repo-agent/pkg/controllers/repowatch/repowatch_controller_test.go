@@ -100,8 +100,9 @@ func TestReconciler_Reconcile(t *testing.T) {
 	ghClient := clients.NewGitHubClientFromHTTP(mockHTTPClient)
 
 	r := &Reconciler{
-		Client: fakeClient,
-		Scheme: s,
+		Factory: newFakeLauncher(),
+		Client:  fakeClient,
+		Scheme:  s,
 		NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
 			return ghClient, map[string]string{"pat": "test-pat"}, nil
 		},
@@ -283,9 +284,11 @@ func TestReconciler_ReconcileIssues(t *testing.T) {
 	}
 	ghClient := clients.NewGitHubClientFromHTTP(mockHTTPClient)
 
+	fakeFactory := newFakeLauncher()
 	r := &Reconciler{
-		Client: fakeClient,
-		Scheme: s,
+		Factory: fakeFactory,
+		Client:  fakeClient,
+		Scheme:  s,
 		NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
 			return ghClient, map[string]string{"pat": "test-pat"}, nil
 		},
@@ -358,8 +361,17 @@ func TestReconciler_ReconcileIssues(t *testing.T) {
 	g.Expect(fakeClient.Get(context.Background(), req.NamespacedName, fetchedRepoWatch)).To(gomega.Succeed())
 	g.Expect(fetchedRepoWatch.Status.IssueSandboxes).To(gomega.HaveLen(1))
 	g.Expect(fetchedRepoWatch.Status.IssueSandboxes["test-handler"][0].Number).To(gomega.Equal(10))
+	g.Expect(fetchedRepoWatch.Status.IssueSandboxes["test-handler"][0].SandboxName).To(gomega.Equal("fix-repo-10"))
 
-	// Check that an IssueSandbox was created
+	// The factory CLI owns sandbox and task creation now: the controller only
+	// launches `factory fix` with the expanded handler prompt.
+	g.Expect(fakeFactory.launches()).To(gomega.HaveLen(1))
+	launch := fakeFactory.launches()[0]
+	g.Expect(launch.Opts.IssueURL).To(gomega.Equal("https://github.com/test/repo/issues/10"))
+	g.Expect(launch.Opts.Namespace).To(gomega.Equal(objNamespace))
+	g.Expect(launch.Opts.Instruction).To(gomega.ContainSubstring("issue 10 linked at https://github.com/test/repo/issues/10"))
+	g.Expect(launch.Opts.GithubToken).To(gomega.Equal("test-pat"))
+
 	issueSandboxList := &unstructured.UnstructuredList{}
 	issueSandboxList.SetGroupVersionKind(schema.GroupVersionKind{
 		Group:   "agents.x-k8s.io",
@@ -367,22 +379,11 @@ func TestReconciler_ReconcileIssues(t *testing.T) {
 		Kind:    "Sandbox",
 	})
 	g.Expect(fakeClient.List(context.Background(), issueSandboxList)).To(gomega.Succeed())
-	g.Expect(issueSandboxList.Items).To(gomega.HaveLen(1))
-	// Check that the apiKeySecretName is set correctly
-	// Note: apiKeySecretName is not in IssueSandbox.Spec.LLM anymore with new controller logic?
-	// Actually in createIssueSandbox, I set:
-	// "apiKeySecretName": "", //
-	// Wait, createIssueSandbox logic I wrote:
-	// "llm": map[string]interface{}{ "prompt": "", "apiKeySecretName": "" }
-	// So it won't be set on the Sandbox. The Task has the LLM config.
-	// So I should check if Task is created.
-	// But `reconcileIssues` creates tasks using `ensureIssueTask`.
-	// `ensureIssueTask` creates a SandboxTask.
-	// So I should verify SandboxTask creation.
+	g.Expect(issueSandboxList.Items).To(gomega.BeEmpty())
 
-	task := &sandboxtaskv1alpha1.SandboxTask{}
-	taskName := fmt.Sprintf("%s-issue-10-test-handler", repoWatch.Name)
-	g.Expect(fakeClient.Get(context.Background(), types.NamespacedName{Name: taskName, Namespace: objNamespace}, task)).To(gomega.Succeed())
+	taskList := &sandboxtaskv1alpha1.SandboxTaskList{}
+	g.Expect(fakeClient.List(context.Background(), taskList)).To(gomega.Succeed())
+	g.Expect(taskList.Items).To(gomega.BeEmpty())
 }
 
 // TestReconcileIssueHandlerSandboxes verifies issue sandbox lifecycle:
@@ -478,9 +479,11 @@ func TestReconcileIssueHandlerSandboxes(t *testing.T) {
 
 		fakeClient := clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, closedIssueSandbox).WithStatusSubresource(repoWatch).Build()
 
+		fakeFactory := newFakeLauncher()
 		r := &Reconciler{
-			Client: fakeClient,
-			Scheme: s,
+			Factory: fakeFactory,
+			Client:  fakeClient,
+			Scheme:  s,
 			NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
 				return ghClient, map[string]string{"pat": "test-pat"}, nil
 			},
@@ -493,12 +496,8 @@ func TestReconcileIssueHandlerSandboxes(t *testing.T) {
 		_, err := r.Reconcile(context.Background(), req)
 		g.Expect(err).NotTo(gomega.HaveOccurred())
 
-		// Second Reconcile to process creation after deletion
-		_, err = r.Reconcile(context.Background(), req)
-		g.Expect(err).NotTo(gomega.HaveOccurred())
-
-		// Check that the sandbox for the closed issue (Issue 2) is deleted
-		// And a new one for Issue 1 is created.
+		// The legacy sandbox (old engine) is drained, and a factory fix is
+		// launched for the open issue; the controller creates no sandboxes.
 		sandboxList := &unstructured.UnstructuredList{}
 		sandboxList.SetGroupVersionKind(schema.GroupVersionKind{
 			Group:   "agents.x-k8s.io",
@@ -506,30 +505,26 @@ func TestReconcileIssueHandlerSandboxes(t *testing.T) {
 			Kind:    "Sandbox",
 		})
 		g.Expect(r.Client.List(context.Background(), sandboxList)).To(gomega.Succeed())
-		g.Expect(sandboxList.Items).To(gomega.HaveLen(1))
-		g.Expect(sandboxList.Items[0].GetName()).To(gomega.Equal(fmt.Sprintf("%s-issue-1", repoWatch.Name)))
+		g.Expect(sandboxList.Items).To(gomega.BeEmpty())
+		g.Expect(fakeFactory.launches()).To(gomega.HaveLen(1))
+		g.Expect(fakeFactory.launches()[0].Opts.IssueURL).To(gomega.Equal("https://github.com/test/repo/issues/1"))
 	})
 
-	// Test case 3: Not creating a new sandbox if it already exists.
-	t.Run("does not create new sandbox if it already exists", func(_ *testing.T) {
-		// Existing sandbox for issueNumber 1
+	// Test case 3: An existing factory sandbox with a running task is
+	// reattached (relaunched) but never duplicated or deleted.
+	t.Run("reattaches to existing factory sandbox", func(_ *testing.T) {
 		existingIssueSandbox := &unstructured.Unstructured{
 			Object: map[string]interface{}{
 				"apiVersion": "agents.x-k8s.io/v1alpha1",
 				"kind":       "Sandbox",
 				"metadata": map[string]interface{}{
-					"name":      "test-repowatch-issue-1", // Must match controller naming
+					"name":      "fix-repo-1", // factory naming: fix-<repo>-<issue>
 					"namespace": "default",
 					"labels": map[string]interface{}{
-						"sandbox.gemini.google.com/type": "issue",
+						"factory.gemini.google.com/managed": "true",
 					},
-					"ownerReferences": []interface{}{
-						map[string]interface{}{
-							"apiVersion": "review.gemini.google.com/v1alpha1",
-							"kind":       "RepoWatch",
-							"name":       "test-repowatch",
-							"uid":        "test-uid",
-						},
+					"annotations": map[string]interface{}{
+						"sandbox.gemini.google.com/last-task-state": "Running",
 					},
 				},
 				"spec": map[string]interface{}{
@@ -563,9 +558,11 @@ func TestReconcileIssueHandlerSandboxes(t *testing.T) {
 
 		fakeClient := clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, existingIssueSandbox).WithStatusSubresource(repoWatch).Build()
 
+		fakeFactory := newFakeLauncher()
 		r := &Reconciler{
-			Client: fakeClient,
-			Scheme: s,
+			Factory: fakeFactory,
+			Client:  fakeClient,
+			Scheme:  s,
 			NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
 				return ghClient, map[string]string{"pat": "test-pat"}, nil
 			},
@@ -578,7 +575,8 @@ func TestReconcileIssueHandlerSandboxes(t *testing.T) {
 		_, err := r.Reconcile(context.Background(), req)
 		g.Expect(err).NotTo(gomega.HaveOccurred())
 
-		// Check that no new sandbox was created and the existing one is still there
+		// The sandbox is kept, and a single relaunch (reattach) happens for
+		// its non-terminal task.
 		sandboxList := &unstructured.UnstructuredList{}
 		sandboxList.SetGroupVersionKind(schema.GroupVersionKind{
 			Group:   "agents.x-k8s.io",
@@ -586,8 +584,14 @@ func TestReconcileIssueHandlerSandboxes(t *testing.T) {
 			Kind:    "Sandbox",
 		})
 		g.Expect(r.Client.List(context.Background(), sandboxList)).To(gomega.Succeed())
-		g.Expect(sandboxList.Items).To(gomega.HaveLen(1)) // Only the existingIssueSandbox should exist
-		g.Expect(sandboxList.Items[0].GetName()).To(gomega.Equal("test-repowatch-issue-1"))
+		g.Expect(sandboxList.Items).To(gomega.HaveLen(1))
+		g.Expect(sandboxList.Items[0].GetName()).To(gomega.Equal("fix-repo-1"))
+		g.Expect(fakeFactory.launches()).To(gomega.HaveLen(1))
+		g.Expect(fakeFactory.launches()[0].Key).To(gomega.Equal("default/fix-repo-1"))
+
+		fetched := &reviewv1alpha1.RepoWatch{}
+		g.Expect(fakeClient.Get(context.Background(), req.NamespacedName, fetched)).To(gomega.Succeed())
+		g.Expect(fetched.Status.IssueSandboxes[handlerName][0].Status).To(gomega.Equal("Starting"))
 	})
 }
 
@@ -604,8 +608,9 @@ func TestReconciler_Reconcile_NotFound(t *testing.T) {
 
 	// 3. Create your Reconciler instance
 	r := &Reconciler{
-		Client: fakeClient,
-		Scheme: s,
+		Factory: newFakeLauncher(),
+		Client:  fakeClient,
+		Scheme:  s,
 	}
 
 	// 4. Define the Reconcile request
@@ -634,8 +639,9 @@ func TestReconciler_Reconcile_GitHubSecretNotFound(t *testing.T) {
 
 	// 3. Create your Reconciler instance
 	r := &Reconciler{
-		Client: fakeClient,
-		Scheme: s,
+		Factory: newFakeLauncher(),
+		Client:  fakeClient,
+		Scheme:  s,
 		NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
 			// In this test, we expect the secret to be missing, so return an error.
 			return nil, nil, errors.New("github secret not found")
@@ -702,8 +708,9 @@ func TestReconciler_Reconcile_InvalidRepoURL(t *testing.T) {
 	}
 	ghClient := clients.NewGitHubClientFromHTTP(mockHTTPClient)
 	r := &Reconciler{
-		Client: fakeClient,
-		Scheme: s,
+		Factory: newFakeLauncher(),
+		Client:  fakeClient,
+		Scheme:  s,
 		NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
 			return ghClient, map[string]string{"pat": "test-pat"}, nil
 		},
@@ -1010,8 +1017,9 @@ func TestReconciler_Reconcile_ExplicitAndListedPRs(t *testing.T) {
 	ghClient := clients.NewGitHubClientFromHTTP(mockHTTPClient)
 
 	r := &Reconciler{
-		Client: fakeClient,
-		Scheme: s,
+		Factory: newFakeLauncher(),
+		Client:  fakeClient,
+		Scheme:  s,
 		NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
 			return ghClient, map[string]string{"pat": "test-pat"}, nil
 		},
@@ -1142,8 +1150,9 @@ func TestReconciler_Reconcile_FilteredAndSortedPRs(t *testing.T) {
 	ghClient := clients.NewGitHubClientFromHTTP(mockHTTPClient)
 
 	r := &Reconciler{
-		Client: fakeClient,
-		Scheme: s,
+		Factory: newFakeLauncher(),
+		Client:  fakeClient,
+		Scheme:  s,
 		NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
 			return ghClient, map[string]string{"pat": "test-pat"}, nil
 		},
@@ -1283,8 +1292,9 @@ func TestReconcileReviewSandboxes_RespectsExistingActiveSandboxes(t *testing.T) 
 	pr1 := &github.PullRequest{Number: &pr1Number}
 
 	r := &Reconciler{
-		Client: clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, existingActiveSandbox).WithStatusSubresource(repoWatch).Build(),
-		Scheme: s,
+		Factory: newFakeLauncher(),
+		Client:  clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatch, existingActiveSandbox).WithStatusSubresource(repoWatch).Build(),
+		Scheme:  s,
 		NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
 			return &github.Client{}, map[string]string{}, nil
 		},
@@ -1396,8 +1406,9 @@ func TestReconcile_MultipleRepoWatchesSameRepo(t *testing.T) {
 	// 3. Setup fake client and reconciler
 	fakeClient := clientfake.NewClientBuilder().WithScheme(s).WithObjects(repoWatchA, repoWatchB, secret).WithStatusSubresource(repoWatchA, repoWatchB).Build()
 	r := &Reconciler{
-		Client: fakeClient,
-		Scheme: s,
+		Factory: newFakeLauncher(),
+		Client:  fakeClient,
+		Scheme:  s,
 		NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
 			return ghClient, map[string]string{"pat": "test-pat"}, nil
 		},
@@ -1525,8 +1536,9 @@ func TestReconciler_Reconcile_AssigneeFilteredPRs(t *testing.T) {
 	ghClient := clients.NewGitHubClientFromHTTP(mockHTTPClient)
 
 	r := &Reconciler{
-		Client: fakeClient,
-		Scheme: s,
+		Factory: newFakeLauncher(),
+		Client:  fakeClient,
+		Scheme:  s,
 		NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
 			return ghClient, map[string]string{"pat": "test-pat"}, nil
 		},

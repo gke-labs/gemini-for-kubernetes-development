@@ -85,6 +85,10 @@ spec:
               name: github-token
               key: github-client-secret
               optional: true
+        # Inherited by the factory CLI child processes so issue-fix tasks
+        # report token usage to the collector.
+        - name: COLLECTOR_URL
+          value: http://token-usage.overseer-system.svc.cluster.local:8080
         resources:
           limits:
             cpu: 2000m
