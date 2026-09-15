@@ -23,9 +23,10 @@ import (
 )
 
 type fakeLaunch struct {
-	Key        string
-	Opts       factorycli.FixOptions
-	ReviewOpts *factorycli.ReviewOptions
+	Key         string
+	Opts        factorycli.FixOptions
+	ReviewOpts  *factorycli.ReviewOptions
+	PRWatchOpts *factorycli.PRWatchOptions
 }
 
 // fakeLauncher records factory CLI invocations instead of exec'ing the binary.
@@ -60,6 +61,16 @@ func (f *fakeLauncher) StartReview(key string, opts factorycli.ReviewOptions) bo
 		return false
 	}
 	f.calls = append(f.calls, fakeLaunch{Key: key, ReviewOpts: &opts})
+	return true
+}
+
+func (f *fakeLauncher) StartPRWatch(key string, opts factorycli.PRWatchOptions) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.running[key] {
+		return false
+	}
+	f.calls = append(f.calls, fakeLaunch{Key: key, PRWatchOpts: &opts})
 	return true
 }
 

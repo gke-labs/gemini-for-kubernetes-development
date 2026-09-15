@@ -92,6 +92,18 @@ type ReviewOptions struct {
 	Timeout           time.Duration
 }
 
+// PRWatchOptions are the inputs for a `factory pr watch` invocation, the
+// follow-up loop for a PR the factory created: it investigates failing
+// checks, addresses new review comments, and exits once the PR is merged or
+// closed. The child is bounded by Timeout and simply relaunched by a later
+// reconcile, so watching survives controller restarts.
+type PRWatchOptions struct {
+	Namespace   string
+	PRURL       string
+	GithubToken string
+	Timeout     time.Duration
+}
+
 // FixOptions are the inputs for a `factory fix` invocation.
 type FixOptions struct {
 	// Namespace the task (and its sandbox) runs in; factory resolves the
@@ -129,6 +141,9 @@ type Launcher interface {
 	// one is already running. The review YAML is recovered from the
 	// invocation's output (see ExtractReviewYAML) via LastResult.
 	StartReview(key string, opts ReviewOptions) bool
+	// StartPRWatch launches `factory pr watch` for key unless one is
+	// already running.
+	StartPRWatch(key string, opts PRWatchOptions) bool
 	IsRunning(key string) bool
 	// LastResult returns the outcome of the most recently finished
 	// invocation for key, if any.
@@ -208,6 +223,28 @@ func (r *Runner) StartReview(key string, opts ReviewOptions) bool {
 	}
 	if opts.WorkspaceDiskSize != "" {
 		args = append(args, "--workspace-disk-size", opts.WorkspaceDiskSize)
+	}
+	return r.start(key, args, opts.GithubToken, timeout)
+}
+
+func (r *Runner) StartPRWatch(key string, opts PRWatchOptions) bool {
+	timeout := opts.Timeout
+	if timeout <= 0 {
+		timeout = 55 * time.Minute
+	}
+	// Let the watch loop exit on its own before the hard process timeout.
+	watchTimeout := timeout - 5*time.Minute
+	if watchTimeout <= 0 {
+		watchTimeout = timeout / 2
+	}
+	args := []string{
+		"pr", "watch",
+		"--pr-url", opts.PRURL,
+		"--namespace", opts.Namespace,
+		"--watch-timeout", watchTimeout.String(),
+		"--timeout", timeout.String(),
+		"--continue-session",
+		"--abort-on-cancel=false",
 	}
 	return r.start(key, args, opts.GithubToken, timeout)
 }

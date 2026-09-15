@@ -880,6 +880,36 @@ func (r *Reconciler) reconcileFactoryReviews(ctx context.Context, repoWatch *rev
 	return watchedPRs, pendingPRs, activeSandboxes
 }
 
+// prWatchRelaunchInterval spaces out successive `factory pr watch` children
+// for the same PR; each child is time-bounded, so watching is a chain of
+// bounded invocations rather than one immortal process.
+const prWatchRelaunchInterval = 10 * time.Minute
+
+// ensurePRWatch keeps a `factory pr watch` invocation alive for the PR a fix
+// sandbox is aliased to (factory sets the pr label and the htmlURL annotation
+// once the fix task opens a PR).
+func (r *Reconciler) ensurePRWatch(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, sb *unstructured.Unstructured, githubToken string) {
+	prNum := sb.GetLabels()[factorycli.LabelPR]
+	prURL := sb.GetAnnotations()["htmlURL"]
+	if prNum == "" || !strings.Contains(prURL, "/pull/") {
+		return
+	}
+	key := fmt.Sprintf("%s/prwatch-%s", repoWatch.Namespace, prNum)
+	if r.Factory.IsRunning(key) {
+		return
+	}
+	if res, ok := r.Factory.LastResult(key); ok && time.Since(res.FinishedAt) < prWatchRelaunchInterval {
+		return
+	}
+	if r.Factory.StartPRWatch(key, factorycli.PRWatchOptions{
+		Namespace:   repoWatch.Namespace,
+		PRURL:       prURL,
+		GithubToken: githubToken,
+	}) {
+		log.FromContext(ctx).Info("launched factory pr watch", "pr", prNum, "sandbox", sb.GetName())
+	}
+}
+
 // rereviewRequested reports whether the API requested a re-review more
 // recently than the last stored draft.
 func rereviewRequested(sb *unstructured.Unstructured) bool {
@@ -1114,6 +1144,13 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 				}
 				continue
 			}
+		}
+
+		// Follow up on a PR created by this fix task: factory pr watch
+		// investigates failing checks and addresses new review comments,
+		// and exits once the PR merges or closes.
+		if sb != nil && githubToken != "" {
+			r.ensurePRWatch(ctx, repoWatch, sb, githubToken)
 		}
 
 		for _, handler := range fixHandlers {
