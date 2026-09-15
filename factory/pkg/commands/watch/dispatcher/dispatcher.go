@@ -22,6 +22,9 @@ import (
 const (
 	// DefaultInterval is the interval between dispatch cycles when none is configured.
 	DefaultInterval = 30 * time.Second
+	// DefaultShutdownGracePeriod is how long Run waits for in-flight tasks to finish
+	// after its context is cancelled, when none is configured.
+	DefaultShutdownGracePeriod = 5 * time.Minute
 )
 
 var (
@@ -86,6 +89,10 @@ type Config struct {
 	MaxPending int
 	// TaskTimeout bounds the execution time of a single task. Zero means no timeout.
 	TaskTimeout time.Duration
+	// ShutdownGracePeriod bounds how long Run waits for in-flight tasks to finish
+	// after its context is cancelled, before cancelling them. Zero means
+	// DefaultShutdownGracePeriod.
+	ShutdownGracePeriod time.Duration
 	// DryRun reports what would be dispatched without executing anything.
 	DryRun bool
 }
@@ -118,6 +125,16 @@ type Dispatcher struct {
 
 	// wg tracks in-flight task workers spawned by the dispatcher.
 	wg sync.WaitGroup
+
+	// taskCtxMu guards taskCtx and cancelTasks.
+	taskCtxMu sync.RWMutex
+	// taskCtx is the context in-flight task workers run under. Run installs one that
+	// is detached from the dispatch loop's context, so that stopping the loop does not
+	// abort work already running; it is nil until Run installs it.
+	taskCtx context.Context
+	// cancelTasks aborts the workers running under taskCtx. It is only invoked once
+	// the shutdown grace period is exhausted.
+	cancelTasks context.CancelFunc
 }
 
 // New constructs a Dispatcher from its configuration and dependencies.
@@ -137,8 +154,21 @@ func New(cfg Config, deps Deps) *Dispatcher {
 
 // Run executes the dispatch loop until ctx is cancelled.
 // It dispatches immediately, then once per configured interval.
-// It waits for all in-flight tasks to finish before returning.
+//
+// Cancelling ctx stops new tasks being claimed but does not abort tasks already
+// running: those are given ShutdownGracePeriod to finish. Run waits for all
+// in-flight tasks to settle before returning.
 func (d *Dispatcher) Run(ctx context.Context) error {
+	// Task workloads run detached inside their sandbox, so a worker that loses its
+	// context stops supervising work that carries on regardless. Give workers a
+	// context that outlives the dispatch loop and let drain decide when, if ever,
+	// to actually cancel them.
+	taskCtx, cancelTasks := context.WithCancel(context.WithoutCancel(ctx))
+	d.taskCtxMu.Lock()
+	d.taskCtx, d.cancelTasks = taskCtx, cancelTasks
+	d.taskCtxMu.Unlock()
+
+	defer cancelTasks()
 	defer d.wg.Wait()
 
 	d.DispatchOnce(ctx)
@@ -149,6 +179,7 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
+			d.drain()
 			return ctx.Err()
 		case <-ticker.C:
 			d.DispatchOnce(ctx)
@@ -161,6 +192,65 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 // Wait blocks until all in-flight tasks spawned by the dispatcher have completed.
 func (d *Dispatcher) Wait() {
 	d.wg.Wait()
+}
+
+// drain waits for in-flight tasks to finish once the dispatch loop has stopped.
+//
+// Tasks that finish within the grace period record their real outcome, which is the
+// whole point of draining: the workload is still running in its sandbox whether or
+// not this process is watching. Tasks that outlast the grace period are cancelled,
+// and executeTask then leaves them in the processing queue for the next run to adopt.
+func (d *Dispatcher) drain() {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		d.wg.Wait()
+	}()
+
+	grace := d.shutdownGracePeriod()
+	select {
+	case <-done:
+		return
+	case <-time.After(grace):
+	}
+
+	klog.Warningf("In-flight tasks did not finish within the %s shutdown grace period. Cancelling their supervisors. The tasks continue running detached, stay in the processing queue, and are recovered on the next run.", grace)
+	d.cancelInFlightTasks()
+	<-done
+}
+
+// cancelInFlightTasks aborts the workers running under the detached task context.
+func (d *Dispatcher) cancelInFlightTasks() {
+	d.taskCtxMu.RLock()
+	cancel := d.cancelTasks
+	d.taskCtxMu.RUnlock()
+
+	if cancel != nil {
+		cancel()
+	}
+}
+
+// workerContext returns the context a newly dispatched task worker should run under.
+//
+// Run installs a context detached from the dispatch loop. Callers that drive
+// DispatchOnce directly (one-shot runs and tests) keep the caller's context, so
+// cancelling it still aborts their tasks.
+func (d *Dispatcher) workerContext(ctx context.Context) context.Context {
+	d.taskCtxMu.RLock()
+	defer d.taskCtxMu.RUnlock()
+
+	if d.taskCtx != nil {
+		return d.taskCtx
+	}
+	return ctx
+}
+
+// shutdownGracePeriod returns the configured drain window, or the default.
+func (d *Dispatcher) shutdownGracePeriod() time.Duration {
+	if d.cfg.ShutdownGracePeriod > 0 {
+		return d.cfg.ShutdownGracePeriod
+	}
+	return DefaultShutdownGracePeriod
 }
 
 // DispatchOnce executes a single task dispatch cycle, claiming and starting as
@@ -291,13 +381,16 @@ func (d *Dispatcher) dispatchTask(ctx context.Context, filename string, task *ap
 		return false, true
 	}
 
+	// The worker outlives the dispatch loop: see Run and drain.
+	workerCtx := d.workerContext(ctx)
+
 	d.wg.Add(1)
 	go func() {
 		defer func() {
 			d.sandboxLocks.Release(sandboxName, filename)
 			d.wg.Done()
 		}()
-		d.executeTask(ctx, filename, task, sandboxName)
+		d.executeTask(workerCtx, filename, task, sandboxName)
 	}()
 
 	return true, false
@@ -327,6 +420,11 @@ func (d *Dispatcher) executeTask(ctx context.Context, taskFilename string, task 
 	}
 
 	if taskErr := d.runner.Run(taskCtx, taskFilename, task, selectedUser); taskErr != nil {
+		if errors.Is(ctx.Err(), context.Canceled) {
+			klog.Warningf("Task %s was interrupted by dispatcher shutdown (%v). Leaving it in the processing queue for recovery on the next run.", taskFilename, taskErr)
+			return
+		}
+
 		klog.Errorf("Task %s failed: %v", taskFilename, taskErr)
 		_ = d.queue.FailTask(taskFilename, task, taskErr.Error())
 		d.coordinator.NotifyTaskFinished(ctx, task, taskErr)
