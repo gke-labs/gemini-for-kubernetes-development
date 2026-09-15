@@ -56,7 +56,7 @@ func (c *EntityStateCache) UpdateOpenPRs(prs []*githubv39.PullRequest) {
 		if pr == nil {
 			continue
 		}
-		for num := range common.GetReferencedIssues(pr) {
+		for num := range common.GetClosingIssues(pr) {
 			c.referencedIssues[num] = true
 		}
 	}

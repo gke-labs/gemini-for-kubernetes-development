@@ -836,3 +836,235 @@ func TestReconcileReadyForHumanLabel(t *testing.T) {
 		})
 	}
 }
+
+func intPtr(i int) *int {
+	return &i
+}
+
+func TestHasLinkedPRWithTimeline(t *testing.T) {
+	tests := []struct {
+		name     string
+		timeline []*githubv39.Timeline
+		expected bool
+	}{
+		{
+			name: "Mere cross-reference (mention) is ignored",
+			timeline: []*githubv39.Timeline{
+				{
+					Event: stringPtr("cross-referenced"),
+					Source: &githubv39.Source{
+						Issue: &githubv39.Issue{
+							Number:           intPtr(123),
+							State:            stringPtr("open"),
+							PullRequestLinks: &githubv39.PullRequestLinks{},
+						},
+					},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "Connected open PR is recognized",
+			timeline: []*githubv39.Timeline{
+				{
+					Event: stringPtr("connected"),
+					Source: &githubv39.Source{
+						Issue: &githubv39.Issue{
+							Number:           intPtr(123),
+							State:            stringPtr("open"),
+							PullRequestLinks: &githubv39.PullRequestLinks{},
+						},
+					},
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "Connected then disconnected is ignored",
+			timeline: []*githubv39.Timeline{
+				{
+					Event: stringPtr("connected"),
+					Source: &githubv39.Source{
+						Issue: &githubv39.Issue{
+							Number:           intPtr(123),
+							State:            stringPtr("open"),
+							PullRequestLinks: &githubv39.PullRequestLinks{},
+						},
+					},
+				},
+				{
+					Event: stringPtr("disconnected"),
+					Source: &githubv39.Source{
+						Issue: &githubv39.Issue{
+							Number:           intPtr(123),
+							State:            stringPtr("open"),
+							PullRequestLinks: &githubv39.PullRequestLinks{},
+						},
+					},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "Connected closed PR is ignored",
+			timeline: []*githubv39.Timeline{
+				{
+					Event: stringPtr("connected"),
+					Source: &githubv39.Source{
+						Issue: &githubv39.Issue{
+							Number:           intPtr(123),
+							State:            stringPtr("closed"),
+							PullRequestLinks: &githubv39.PullRequestLinks{},
+						},
+					},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "Multiple PRs, one remains connected and open",
+			timeline: []*githubv39.Timeline{
+				{
+					Event: stringPtr("connected"),
+					Source: &githubv39.Source{
+						Issue: &githubv39.Issue{
+							Number:           intPtr(123),
+							State:            stringPtr("closed"),
+							PullRequestLinks: &githubv39.PullRequestLinks{},
+						},
+					},
+				},
+				{
+					Event: stringPtr("connected"),
+					Source: &githubv39.Source{
+						Issue: &githubv39.Issue{
+							Number:           intPtr(124),
+							State:            stringPtr("open"),
+							PullRequestLinks: &githubv39.PullRequestLinks{},
+						},
+					},
+				},
+			},
+			expected: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := hasLinkedPRWithTimeline(context.Background(), nil, "owner", "repo", 42, tc.timeline)
+			if err != nil {
+				t.Fatalf("hasLinkedPRWithTimeline returned unexpected error: %v", err)
+			}
+			if got != tc.expected {
+				t.Errorf("got = %v; want %v", got, tc.expected)
+			}
+		})
+	}
+}
+
+func TestHasLinkedPR(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/timeline") {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`[
+				{
+					"event": "connected",
+					"source": {
+						"issue": {
+							"number": 123,
+							"state": "open",
+							"pull_request": {
+								"url": "https://api.github.com/repos/owner/repo/pulls/123"
+							}
+						}
+					}
+				}
+			]`))
+		} else {
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	ghClient := githubv39.NewClient(nil)
+	ghClient.BaseURL, _ = url.Parse(server.URL + "/")
+
+	got, err := hasLinkedPR(context.Background(), ghClient, "owner", "repo", 42)
+	if err != nil {
+		t.Fatalf("hasLinkedPR returned unexpected error: %v", err)
+	}
+	if !got {
+		t.Errorf("expected hasLinkedPR to return true for connected open PR")
+	}
+}
+
+func TestHasLinkedPRWithSearch(t *testing.T) {
+	// 1. Test case where search returns a PR that MERELY MENTIONS the issue (should return false)
+	serverMention := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/search/issues") {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{
+				"total_count": 1,
+				"incomplete_results": false,
+				"items": [
+					{
+						"number": 123,
+						"title": "Unrelated title mentioning 42",
+						"body": "This pr relates to #42 but does not fix it.",
+						"state": "open"
+					}
+				]
+			}`))
+		} else {
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer serverMention.Close()
+
+	ghClient := githubv39.NewClient(nil)
+	ghClient.BaseURL, _ = url.Parse(serverMention.URL + "/")
+
+	got, err := hasLinkedPR(context.Background(), ghClient, "owner", "repo", 42)
+	if err != nil {
+		t.Fatalf("hasLinkedPR returned unexpected error: %v", err)
+	}
+	if got {
+		t.Errorf("expected hasLinkedPR to return false for PR with mere mention")
+	}
+
+	// 2. Test case where search returns a PR that ACTUALLY FIXES the issue (should return true)
+	serverFix := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/search/issues") {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{
+				"total_count": 1,
+				"incomplete_results": false,
+				"items": [
+					{
+						"number": 123,
+						"title": "Fixes #42",
+						"body": "This pr actually fixes issue 42.",
+						"state": "open"
+					}
+				]
+			}`))
+		} else {
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer serverFix.Close()
+
+	ghClientFix := githubv39.NewClient(nil)
+	ghClientFix.BaseURL, _ = url.Parse(serverFix.URL + "/")
+
+	gotFix, err := hasLinkedPR(context.Background(), ghClientFix, "owner", "repo", 42)
+	if err != nil {
+		t.Fatalf("hasLinkedPR returned unexpected error: %v", err)
+	}
+	if !gotFix {
+		t.Errorf("expected hasLinkedPR to return true for PR with closing keyword")
+	}
+}

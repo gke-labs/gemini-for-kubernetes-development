@@ -105,6 +105,18 @@ func getMissingLabelsForPR(prLabels []*githubv39.Label, refIssues []*githubv39.I
 	return allMissingLabels
 }
 
+func issueIsClosingPR(issue *githubv39.Issue, issueNum int) bool {
+	if issue == nil {
+		return false
+	}
+	pr := &githubv39.PullRequest{
+		Title: issue.Title,
+		Body:  issue.Body,
+	}
+	closing := common.GetClosingIssues(pr)
+	return closing[issueNum]
+}
+
 // timelinePageSize is the maximum page size the GitHub timeline API accepts.
 const timelinePageSize = 100
 
@@ -143,19 +155,30 @@ func listAllIssueTimeline(ctx context.Context, client *githubv39.Client, owner, 
 	return all, false, nil
 }
 
-// timelineHasOpenLinkedPR reports whether the timeline contains a cross-reference
-// from a pull request that is still open.
+// timelineHasOpenLinkedPR reports whether the timeline contains a connected pull request that is still open.
 func timelineHasOpenLinkedPR(timeline []*githubv39.Timeline) bool {
+	linkedPRs := make(map[int]bool)
 	for _, event := range timeline {
-		if event.GetEvent() == "cross-referenced" && event.Source != nil {
-			if event.Source.Issue != nil && event.Source.Issue.PullRequestLinks != nil {
-				if event.Source.Issue.GetState() == "open" {
-					return true
-				}
+		if event.Source == nil || event.Source.Issue == nil {
+			continue
+		}
+		if event.Source.Issue.PullRequestLinks == nil {
+			continue
+		}
+		prNum := event.Source.Issue.GetNumber()
+		if prNum == 0 {
+			continue
+		}
+		switch event.GetEvent() {
+		case "connected":
+			if event.Source.Issue.GetState() == "open" {
+				linkedPRs[prNum] = true
 			}
+		case "disconnected":
+			delete(linkedPRs, prNum)
 		}
 	}
-	return false
+	return len(linkedPRs) > 0
 }
 
 // searchForOpenLinkedPR asks the Search API whether any open PR mentions the
@@ -170,7 +193,16 @@ func searchForOpenLinkedPR(ctx context.Context, client *githubv39.Client, owner,
 	if err != nil {
 		return false, fmt.Errorf("failed to search PRs for issue #%d: %w", issueNum, err)
 	}
-	return result.GetTotal() > 0, nil
+
+	if result.GetTotal() > 0 {
+		for _, issue := range result.Issues {
+			if issueIsClosingPR(issue, issueNum) {
+				return true, nil
+			}
+		}
+	}
+
+	return false, nil
 }
 
 func hasLinkedPR(ctx context.Context, client *githubv39.Client, owner, repo string, issueNum int) (bool, error) {

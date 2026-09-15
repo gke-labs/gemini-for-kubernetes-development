@@ -79,6 +79,75 @@ func TestGetReferencedIssues(t *testing.T) {
 	}
 }
 
+func TestGetClosingIssues(t *testing.T) {
+	tests := []struct {
+		name     string
+		headRef  string
+		title    string
+		body     string
+		expected map[int]bool
+	}{
+		{
+			name:    "Branch name contains issue number",
+			headRef: "issue_8883",
+			title:   "Some PR title",
+			body:    "Some PR body",
+			expected: map[int]bool{
+				8883: true,
+			},
+		},
+		{
+			name:    "Title has closing keyword and body has non-closing references",
+			headRef: "my-dev-branch",
+			title:   "Fixes #8883 and #10294",
+			body:    "This relates to issue #9271 in config-connector",
+			expected: map[int]bool{
+				8883:  true,
+				10294: true,
+			},
+		},
+		{
+			name:     "No closing keywords, only references",
+			headRef:  "master",
+			title:    "Clean PR mentioning #8883",
+			body:     "Discussed in issue #9271, but no fix here.",
+			expected: map[int]bool{},
+		},
+		{
+			name:    "Closing keyword with URL",
+			headRef: "master",
+			title:   "Closes the issue https://github.com/GoogleCloudPlatform/k8s-config-connector/issues/12875",
+			body:    "Resolves pr #9271 with full url https://github.com/foo/bar/issues/1122",
+			expected: map[int]bool{
+				12875: true,
+				9271:  true,
+				1122:  true,
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			pr := &githubv39.PullRequest{
+				Head: &githubv39.PullRequestBranch{
+					Ref: &tc.headRef,
+				},
+				Title: &tc.title,
+				Body:  &tc.body,
+			}
+			got := GetClosingIssues(pr)
+			if len(got) != len(tc.expected) {
+				t.Fatalf("GetClosingIssues() returned %v; want %v", got, tc.expected)
+			}
+			for num := range tc.expected {
+				if !got[num] {
+					t.Errorf("GetClosingIssues() missed expected issue %d in %v", num, got)
+				}
+			}
+		})
+	}
+}
+
 func stringPtr(s string) *string {
 	return &s
 }
