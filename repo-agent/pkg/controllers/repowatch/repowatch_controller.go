@@ -910,6 +910,28 @@ func (r *Reconciler) ensurePRWatch(ctx context.Context, repoWatch *reviewv1alpha
 	}
 }
 
+// AnnotationRefixRequestedAt is set by the API ("Fix Again"); a value newer
+// than the fix task's completion time makes the controller relaunch the fix.
+const AnnotationRefixRequestedAt = "review.gemini.google.com/refix-requested-at"
+
+// refixRequested reports whether the API requested a re-fix more recently
+// than the last task completion.
+func refixRequested(sb *unstructured.Unstructured) bool {
+	if sb == nil {
+		return false
+	}
+	annotations := sb.GetAnnotations()
+	requestedAt, err := time.Parse(time.RFC3339, annotations[AnnotationRefixRequestedAt])
+	if err != nil {
+		return false
+	}
+	completedAt, err := time.Parse(time.RFC3339, annotations[factorycli.AnnotationCompletionTime])
+	if err != nil {
+		return true
+	}
+	return requestedAt.After(completedAt)
+}
+
 // rereviewRequested reports whether the API requested a re-review more
 // recently than the last stored draft.
 func rereviewRequested(sb *unstructured.Unstructured) bool {
@@ -1115,8 +1137,13 @@ func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alp
 
 		// Launch (or reattach to) the task unless it reached a terminal
 		// state. An existing sandbox is never blocked by the concurrency
-		// limits: re-invoking factory only reattaches to its task.
-		if !running && githubToken != "" && state != factorycli.TaskStateCompleted && state != factorycli.TaskStateFailed {
+		// limits: re-invoking factory only reattaches to its task. A re-fix
+		// requested via the API overrides a terminal state.
+		terminal := state == factorycli.TaskStateCompleted || state == factorycli.TaskStateFailed
+		if terminal && refixRequested(sb) {
+			terminal = false
+		}
+		if !running && githubToken != "" && !terminal {
 			withinLimits := activeSandboxes < repoWatch.Spec.Issue.MaxActiveSandboxes &&
 				(repoWatch.Spec.Issue.MaxSandboxes == 0 || totalSandboxes < repoWatch.Spec.Issue.MaxSandboxes)
 			if sb != nil || withinLimits || isIssueExplicit(*issue.Number, repoWatch.Spec.Issue.Issues) {

@@ -472,10 +472,12 @@ func (s *Server) getTaskLogs(c *gin.Context) {
 	prID := c.Param("id")
 	taskID := c.Param("taskID")
 
-	sandboxName := fmt.Sprintf("%s-pr-%s", repo, prID)
-	serviceName := fmt.Sprintf("%s-lb", sandboxName)
-
-	targetURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:13339", serviceName, namespace)
+	sb, err := s.resolveFactoryPRSandbox(c.Request.Context(), namespace, repo, prID)
+	if err != nil {
+		c.String(http.StatusOK, "Logs are not available: no review sandbox for this PR yet.")
+		return
+	}
+	targetURL := fmt.Sprintf("http://%s-lb.%s.svc.cluster.local:13339", sb.GetName(), namespace)
 
 	proxyURL, err := url.Parse(targetURL)
 	if err != nil {
@@ -489,8 +491,6 @@ func (s *Server) getTaskLogs(c *gin.Context) {
 	proxy.Director = func(req *http.Request) {
 		originalDirector(req)
 		req.URL.Path = fmt.Sprintf("/logs/%s", taskID)
-		// Clear query params if any, or keep them if agentserver supports them?
-		// agentserver just serves file, so query params might not matter.
 	}
 
 	// Custom error handler for proxy
@@ -510,9 +510,12 @@ func (s *Server) getTaskTelemetry(c *gin.Context) {
 	prID := c.Param("id")
 	taskID := c.Param("taskID")
 
-	sandboxName := fmt.Sprintf("%s-pr-%s", repo, prID)
-	serviceName := fmt.Sprintf("%s-lb", sandboxName)
-	targetURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:13339", serviceName, namespace)
+	sb, err := s.resolveFactoryPRSandbox(c.Request.Context(), namespace, repo, prID)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{})
+		return
+	}
+	targetURL := fmt.Sprintf("http://%s-lb.%s.svc.cluster.local:13339", sb.GetName(), namespace)
 
 	proxyURL, err := url.Parse(targetURL)
 	if err != nil {
