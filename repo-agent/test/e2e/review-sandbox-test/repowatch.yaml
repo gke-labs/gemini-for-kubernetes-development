@@ -8,11 +8,7 @@ spec:
   review:
     maxSandboxes: 1
     maxActiveSandboxes: 1
-    devcontainerConfigRef: minimal-devcontainer-review
-    maxReviewFiles: 1000
     llm:
-      apiKeySecretRef: dummy-provider-token
-      provider: dummy
       prompt: "dummy-review-prompt"
   issue:
     maxSandboxes: 0

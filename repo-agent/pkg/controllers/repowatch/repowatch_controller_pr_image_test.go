@@ -77,8 +77,9 @@ func TestReconciler_Reconcile_PR_With_Image(t *testing.T) {
 	}
 	ghClient := clients.NewGitHubClientFromHTTP(mockHTTPClient)
 
+	fakeFactory := newFakeLauncher()
 	r := &Reconciler{
-		Factory: newFakeLauncher(),
+		Factory: fakeFactory,
 		Client:  fakeClient,
 		Scheme:  s,
 		NewGithubClient: func(_ context.Context, _ client.Client, _ *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
@@ -141,6 +142,12 @@ func TestReconciler_Reconcile_PR_With_Image(t *testing.T) {
 	_, err := r.Reconcile(context.Background(), req)
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 
+	// The custom image is forwarded to the factory CLI, which owns sandbox
+	// creation.
+	g.Expect(fakeFactory.launches()).To(gomega.HaveLen(1))
+	g.Expect(fakeFactory.launches()[0].ReviewOpts).NotTo(gomega.BeNil())
+	g.Expect(fakeFactory.launches()[0].ReviewOpts.Image).To(gomega.Equal("custom-review-image:latest"))
+
 	reviewSandboxList := &unstructured.UnstructuredList{}
 	reviewSandboxList.SetGroupVersionKind(schema.GroupVersionKind{
 		Group:   "agents.x-k8s.io",
@@ -148,16 +155,5 @@ func TestReconciler_Reconcile_PR_With_Image(t *testing.T) {
 		Kind:    "Sandbox",
 	})
 	g.Expect(fakeClient.List(context.Background(), reviewSandboxList)).To(gomega.Succeed())
-	g.Expect(reviewSandboxList.Items).To(gomega.HaveLen(1))
-
-	containers, found, err := unstructured.NestedSlice(reviewSandboxList.Items[0].Object, "spec", "podTemplate", "spec", "containers")
-	g.Expect(err).NotTo(gomega.HaveOccurred())
-	g.Expect(found).To(gomega.BeTrue())
-	g.Expect(containers).To(gomega.HaveLen(1))
-
-	container := containers[0].(map[string]interface{})
-	image, found, err := unstructured.NestedString(container, "image")
-	g.Expect(err).NotTo(gomega.HaveOccurred())
-	g.Expect(found).To(gomega.BeTrue())
-	g.Expect(image).To(gomega.Equal("custom-review-image:latest"))
+	g.Expect(reviewSandboxList.Items).To(gomega.BeEmpty())
 }

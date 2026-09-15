@@ -19,7 +19,6 @@ package repowatch
 import (
 	"context"
 	"errors"
-	"strconv"
 	"strings"
 
 	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
@@ -28,68 +27,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
-
-// cleanupClosedPRSandboxes iterates through owned sandboxes and deletes those whose corresponding PRs are closed.
-// It returns the updated count of total sandboxes.
-func (r *Reconciler) cleanupClosedPRSandboxes(ctx context.Context, totalSandboxes int, ownedSandboxes []unstructured.Unstructured, allOpenPRs []*github.PullRequest) int {
-	log := log.FromContext(ctx)
-	for _, sandbox := range ownedSandboxes {
-		parts := strings.Split(sandbox.GetName(), "-pr-")
-		if len(parts) < 2 {
-			continue
-		}
-		prNumber, err := strconv.Atoi(parts[1])
-		if err != nil {
-			log.Error(err, "unable to parse pr number from sandbox name", "sandbox", sandbox.GetName())
-			continue
-		}
-
-		found := false
-		for _, pr := range allOpenPRs {
-			if *pr.Number == prNumber {
-				found = true
-				break
-			}
-		}
-
-		if !found {
-			log.Info("deleting sandbox for closed pr", "pr", prNumber)
-			if err := r.Delete(ctx, &sandbox); err != nil {
-				log.Error(err, "unable to delete sandbox", "sandbox", sandbox.GetName())
-			} else {
-				totalSandboxes--
-			}
-		}
-	}
-	return totalSandboxes
-}
-
-// countSandboxes calculates the number of active and total sandboxes from a given slice of owned sandboxes.
-// Sandboxes for explicit PRs are not counted towards the active limit.
-func countSandboxes(ownedSandboxes []unstructured.Unstructured, explicitPRs []*github.PullRequest) (int, int) {
-	activeSandboxes := 0
-	totalSandboxes := len(ownedSandboxes)
-	for _, sandbox := range ownedSandboxes {
-		replicas, found, err := unstructured.NestedInt64(sandbox.Object, "spec", "replicas")
-		if err == nil && found && replicas > 0 {
-			// Check if the PR is explicit, if so, dont count it towards the active sandbox limit.
-			// An "explicit" PR is one that is specifically listed in the `RepoWatch`
-			// spec's `pullRequests` field.
-			var prIsExplicit bool
-			parts := strings.Split(sandbox.GetName(), "-pr-")
-			if len(parts) >= 2 {
-				prNumber, err := strconv.Atoi(parts[1])
-				if err == nil {
-					prIsExplicit = isPRExplicit(prNumber, explicitPRs)
-				}
-				if !prIsExplicit {
-					activeSandboxes++
-				}
-			}
-		}
-	}
-	return activeSandboxes, totalSandboxes
-}
 
 // getOwnedSandboxes filters a slice of sandboxes and returns only those owned by the specified UID.
 func getOwnedSandboxes(sandboxes []unstructured.Unstructured, ownerUID types.UID) []unstructured.Unstructured {

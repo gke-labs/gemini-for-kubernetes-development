@@ -488,31 +488,75 @@ func (r *Reconciler) reconcileReviews(ctx context.Context, repoWatch *reviewv1al
 	}
 	log.V(4).Info("PRs:", "prs", prsStr)
 
-	// Get existing sandboxes
-	sandboxList := &unstructured.UnstructuredList{}
+	// Factory-managed sandboxes working on PRs of this repo (reviews are
+	// dispatched via the factory CLI since the factory migration).
 	sandboxGVK := schema.GroupVersionKind{
 		Group:   "agents.x-k8s.io",
 		Version: "v1alpha1",
 		Kind:    "Sandbox",
 	}
-	sandboxList.SetGroupVersionKind(sandboxGVK)
-
-	labelSelector := client.MatchingLabels{
-		"review.gemini.google.com/repowatch": repoWatch.Name,
-	}
-
-	if err := r.List(ctx, sandboxList, client.InNamespace(repoWatch.Namespace), labelSelector); err != nil {
-		log.Error(err, "unable to list Sandboxes")
+	factoryList := &unstructured.UnstructuredList{}
+	factoryList.SetGroupVersionKind(sandboxGVK)
+	if err := r.List(ctx, factoryList, client.InNamespace(repoWatch.Namespace), client.MatchingLabels{factorycli.LabelManaged: "true"}); err != nil {
+		log.Error(err, "unable to list factory sandboxes")
 		return err
 	}
+	sandboxesByPR := factorySandboxesByPR(factoryList.Items, owner, repo)
 
-	watchedPRs, pendingPRs, activeSandboxes := r.reconcileReviewSandboxesInternal(ctx, user, repoWatch, explicitPRs, prs, sandboxList, podsBySandbox)
+	// Drain legacy repo-agent review sandboxes from the old engine.
+	legacyList := &unstructured.UnstructuredList{}
+	legacyList.SetGroupVersionKind(sandboxGVK)
+	if err := r.List(ctx, legacyList, client.InNamespace(repoWatch.Namespace), client.MatchingLabels{"review.gemini.google.com/repowatch": repoWatch.Name, "sandbox.gemini.google.com/type": "review"}); err == nil {
+		for _, sandbox := range getOwnedSandboxes(legacyList.Items, repoWatch.UID) {
+			log.Info("deleting legacy review sandbox", "sandbox", sandbox.GetName())
+			if err := r.Delete(ctx, &sandbox); err != nil {
+				log.Error(err, "unable to delete legacy review sandbox", "sandbox", sandbox.GetName())
+			}
+		}
+	}
+
+	githubToken, tokenErr := r.factoryGithubToken(ctx, repoWatch)
+	if tokenErr != nil {
+		log.Error(tokenErr, "factory-user secret not ready; skipping new review launches")
+	}
+
+	watchedPRs, pendingPRs, activeSandboxes := r.reconcileFactoryReviews(ctx, repoWatch, explicitPRs, prs, sandboxesByPR, githubToken)
 
 	repoWatch.Status.ActiveSandboxCount = activeSandboxes
 	repoWatch.Status.ReviewSandboxes = watchedPRs
 	repoWatch.Status.PendingPRs = pendingPRs
 
 	return r.Status().Update(ctx, repoWatch)
+}
+
+// factorySandboxesByPR indexes factory-managed sandboxes by the PR number in
+// the factory.gemini.google.com/pr label, keeping only sandboxes that belong
+// to this repo (factory review sandbox names are not repo-qualified, so the
+// repo hint annotations disambiguate when one namespace watches several
+// repos). Sandboxes without any repo hint are accepted.
+func factorySandboxesByPR(items []unstructured.Unstructured, owner, repo string) map[int]*unstructured.Unstructured {
+	byPR := make(map[int]*unstructured.Unstructured)
+	for i := range items {
+		labels := items[i].GetLabels()
+		if labels == nil {
+			continue
+		}
+		prNum, err := strconv.Atoi(labels[factorycli.LabelPR])
+		if err != nil {
+			continue
+		}
+		annotations := items[i].GetAnnotations()
+		if annotations != nil {
+			if annoRepo := annotations["repo"]; annoRepo != "" && annoRepo != repo {
+				continue
+			}
+			if htmlURL := annotations["htmlURL"]; htmlURL != "" && !strings.Contains(htmlURL, fmt.Sprintf("github.com/%s/%s/", owner, repo)) {
+				continue
+			}
+		}
+		byPR[prNum] = &items[i]
+	}
+	return byPR
 }
 
 func (r *Reconciler) getExplicitPRs(ctx context.Context, ghClient *github.Client, repoWatch *reviewv1alpha1.RepoWatch, owner, repo string) []*github.PullRequest {
@@ -680,117 +724,237 @@ func (r *Reconciler) excludePRs(prs []*github.PullRequest, repoWatch *reviewv1al
 	return filteredPRs
 }
 
-func (r *Reconciler) reconcileReviewSandboxesInternal(ctx context.Context, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, explicitPRs []*github.PullRequest, prs []*github.PullRequest, sandboxes *unstructured.UnstructuredList, podsBySandbox map[string]*corev1.Pod) ([]reviewv1alpha1.WatchedPR, []int, int) {
+// Annotations repo-agent writes on factory sandboxes to carry the review
+// draft to the API/UI. agentDraft/userDraft/agentState keep their legacy
+// names so the API contract is unchanged.
+const (
+	AnnotationAgentDraft        = "agentDraft"
+	AnnotationUserDraft         = "userDraft"
+	AnnotationAgentState        = "agentState"
+	AnnotationAgentStateMessage = "agentStateMessage"
+	AnnotationReviewedAt        = "review.gemini.google.com/reviewed-at"
+	// AnnotationRereviewRequestedAt is set by the API ("Review Again"); a
+	// value newer than reviewed-at makes the controller relaunch the review.
+	AnnotationRereviewRequestedAt = "review.gemini.google.com/rereview-requested-at"
+
+	AgentStateReviewing   = "reviewing"
+	AgentStateReviewReady = "review ready"
+)
+
+// reviewRetryBackoff throttles relaunching a review whose last factory
+// invocation failed.
+const reviewRetryBackoff = 30 * time.Minute
+
+func (r *Reconciler) reconcileFactoryReviews(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, explicitPRs []*github.PullRequest, prs []*github.PullRequest, sandboxesByPR map[int]*unstructured.Unstructured, githubToken string) ([]reviewv1alpha1.WatchedPR, []int, int) {
 	log := log.FromContext(ctx)
 
-	ownedSandboxes := getOwnedSandboxes(sandboxes.Items, repoWatch.UID)
-
-	// Filter ownedSandboxes to exclude those for closed PRs
-	allOpenPRs := append(explicitPRs, prs...)
-	var validOwnedSandboxes []unstructured.Unstructured
-	for _, sandbox := range ownedSandboxes {
-		parts := strings.Split(sandbox.GetName(), "-pr-")
-		if len(parts) < 2 {
-			continue
-		}
-		prNumber, err := strconv.Atoi(parts[1])
-		if err != nil {
-			continue
-		}
-
-		found := false
-		for _, pr := range allOpenPRs {
-			if *pr.Number == prNumber {
-				found = true
-				break
-			}
-		}
-		if found {
-			validOwnedSandboxes = append(validOwnedSandboxes, sandbox)
+	activeSandboxes := 0
+	totalSandboxes := 0
+	for _, sb := range sandboxesByPR {
+		totalSandboxes++
+		replicas, found, err := unstructured.NestedInt64(sb.Object, "spec", "replicas")
+		if err == nil && found && replicas > 0 {
+			activeSandboxes++
 		}
 	}
-
-	activeSandboxes, totalSandboxes := countSandboxes(validOwnedSandboxes, explicitPRs)
-
-	// Cleanup closed PRs from the owned list
-	r.cleanupClosedPRSandboxes(ctx, totalSandboxes, ownedSandboxes, allOpenPRs)
 
 	watchedPRs := []reviewv1alpha1.WatchedPR{}
 	pendingPRs := []int{}
+	openPRNumbers := make(map[int]bool)
 
-	// Combine explicit and auto-discovered PRs for processing
-	allPRs := append(explicitPRs, prs...)
-
+	allPRs := append(append([]*github.PullRequest{}, explicitPRs...), prs...)
 	for _, pr := range allPRs {
-		sandboxName := fmt.Sprintf("%s-pr-%d", repoWatch.Name, *pr.Number)
-		sandboxExists := false
-		var existingSandbox *unstructured.Unstructured
+		openPRNumbers[*pr.Number] = true
+		sb := sandboxesByPR[*pr.Number]
+		key := fmt.Sprintf("%s/review-pr-%d", repoWatch.Namespace, *pr.Number)
+		running := r.Factory.IsRunning(key)
 
-		for i := range ownedSandboxes {
-			if ownedSandboxes[i].GetName() == sandboxName {
-				sandboxExists = true
-				existingSandbox = &ownedSandboxes[i]
-				break
-			}
-		}
-
-		if sandboxExists {
-			// Manage lifecycle (pause/unpause)
-			shutdownDuration := time.Minute * time.Duration(repoWatch.Spec.Review.ReviewShutdownAfterMinutes)
-			wasScaled, err := r.manageSandboxLifecycle(ctx, existingSandbox, shutdownDuration)
-			if err != nil {
-				log.Error(err, "unable to manage sandbox lifecycle", "sandbox", existingSandbox.GetName())
-			}
-
-			// Check if sandbox is scaled down (re-check in case we just updated it or it was already down)
-			replicas, found, err := unstructured.NestedInt64(existingSandbox.Object, "spec", "replicas")
-			scaledDown := false
+		draft := ""
+		scaledDown := false
+		sandboxName := fmt.Sprintf("factory-pr-%d", *pr.Number)
+		if sb != nil {
+			sandboxName = sb.GetName()
+			draft = sb.GetAnnotations()[AnnotationAgentDraft]
+			replicas, found, err := unstructured.NestedInt64(sb.Object, "spec", "replicas")
 			if err == nil && found && replicas == 0 {
 				scaledDown = true
 			}
+		}
 
-			// If it was just scaled down, decrement active count
-			if wasScaled && scaledDown {
-				activeSandboxes--
+		status := ""
+		switch {
+		case draft != "" && !rereviewRequested(sb):
+			// Draft ready (or already submitted); nothing to run.
+			status = sb.GetAnnotations()[AnnotationAgentState]
+			if status == "" {
+				status = AgentStateReviewReady
 			}
-
-			sandboxStatus, err := r.reconcileSandboxPodStatus(ctx, existingSandbox, podsBySandbox, scaledDown)
-			if err != nil {
-				log.Error(err, "unable to reconcile sandbox pod status", "pr", *pr.Number)
-			}
-
-			watchedPRs = append(watchedPRs, reviewv1alpha1.WatchedPR{
-				Number:      *pr.Number,
-				SandboxName: sandboxName,
-				Status:      sandboxStatus,
-				ScaledDown:  scaledDown,
-			})
-		} else {
-			// Sandbox does not exist, try to create it if within limits
-			prIsExplicit := isPRExplicit(*pr.Number, explicitPRs)
-			// Explicit PRs (defined in RepoWatch CRD) bypass MaxActiveSandboxes and MaxSandboxes limits.
-			// Auto-discovered PRs must respect these limits to prevent resource exhaustion.
-			if prIsExplicit || (activeSandboxes < repoWatch.Spec.Review.MaxActiveSandboxes) &&
-				(repoWatch.Spec.Review.MaxSandboxes == 0 || totalSandboxes < repoWatch.Spec.Review.MaxSandboxes) {
-				log.Info("creating sandbox for PR", "pr", *pr.Number)
-				if err := r.createReviewSandboxForPR(ctx, user, repoWatch, pr); err != nil {
-					log.Error(err, "unable to create sandbox for PR", "pr", *pr.Number)
-				} else {
-					activeSandboxes++
-					totalSandboxes++
-					watchedPRs = append(watchedPRs, reviewv1alpha1.WatchedPR{
-						Number:      *pr.Number,
-						SandboxName: sandboxName,
-						Status:      "Creating",
-						ScaledDown:  false,
-					})
+		case running:
+			status = "Reviewing"
+		default:
+			// Harvest a finished invocation before considering a launch.
+			if res, ok := r.Factory.LastResult(key); ok {
+				if res.Err == nil {
+					if yaml := factorycli.ExtractReviewYAML(res.Output); yaml != "" && sb != nil {
+						if err := r.decorateReviewSandbox(ctx, sb, repoWatch, pr, yaml); err != nil {
+							log.Error(err, "unable to store review draft", "pr", *pr.Number)
+						} else {
+							status = AgentStateReviewReady
+						}
+					}
+				} else if time.Since(res.FinishedAt) < reviewRetryBackoff {
+					status = "error: review failed"
 				}
-			} else {
-				pendingPRs = append(pendingPRs, *pr.Number)
+			}
+			if status == "" {
+				prIsExplicit := isPRExplicit(*pr.Number, explicitPRs)
+				withinLimits := activeSandboxes < repoWatch.Spec.Review.MaxActiveSandboxes &&
+					(repoWatch.Spec.Review.MaxSandboxes == 0 || totalSandboxes < repoWatch.Spec.Review.MaxSandboxes)
+				if githubToken != "" && (sb != nil || prIsExplicit || withinLimits) {
+					if r.Factory.StartReview(key, factorycli.ReviewOptions{
+						Namespace:         repoWatch.Namespace,
+						PRURL:             pr.GetHTMLURL(),
+						Instructions:      reviewInstructions(repoWatch),
+						Image:             repoWatch.Spec.Review.Image,
+						WorkspaceDiskSize: repoWatch.Spec.Review.WorkspaceDiskSize,
+						GithubToken:       githubToken,
+					}) {
+						log.Info("launched factory review", "pr", *pr.Number)
+					}
+					status = "Reviewing"
+					if sb == nil {
+						activeSandboxes++
+						totalSandboxes++
+					}
+				} else {
+					pendingPRs = append(pendingPRs, *pr.Number)
+					continue
+				}
 			}
 		}
+
+		// Make in-flight review sandboxes visible to the API/UI early.
+		if sb != nil && draft == "" {
+			if err := r.decorateReviewSandbox(ctx, sb, repoWatch, pr, ""); err != nil {
+				log.Error(err, "unable to decorate review sandbox", "pr", *pr.Number)
+			}
+		}
+
+		watchedPRs = append(watchedPRs, reviewv1alpha1.WatchedPR{
+			Number:      *pr.Number,
+			SandboxName: sandboxName,
+			Status:      status,
+			ScaledDown:  scaledDown,
+		})
 	}
+
+	// Delete pure review sandboxes for PRs that are closed or unwatched.
+	// Sandboxes shared with the fix flow (aliased to a PR but named fix-*)
+	// are left to the issue reconciler.
+	for prNum, sb := range sandboxesByPR {
+		if openPRNumbers[prNum] || !strings.HasPrefix(sb.GetName(), "factory-pr-") {
+			continue
+		}
+		if r.Factory.IsRunning(fmt.Sprintf("%s/review-pr-%d", repoWatch.Namespace, prNum)) {
+			continue
+		}
+		log.Info("deleting factory review sandbox for unwatched PR", "sandbox", sb.GetName())
+		if err := r.Delete(ctx, sb); err != nil {
+			log.Error(err, "unable to delete review sandbox", "sandbox", sb.GetName())
+		}
+	}
+
+	// Pause finished review sandboxes after the configured idle period.
+	if repoWatch.Spec.Review.ReviewShutdownAfterMinutes > 0 {
+		names := make(map[string]bool)
+		byName := make(map[string]*unstructured.Unstructured)
+		for prNum, sb := range sandboxesByPR {
+			if openPRNumbers[prNum] {
+				names[sb.GetName()] = true
+				byName[sb.GetName()] = sb
+			}
+		}
+		r.pauseFinishedFactorySandboxes(ctx, byName, names, time.Duration(repoWatch.Spec.Review.ReviewShutdownAfterMinutes)*time.Minute)
+	}
+
 	return watchedPRs, pendingPRs, activeSandboxes
+}
+
+// rereviewRequested reports whether the API requested a re-review more
+// recently than the last stored draft.
+func rereviewRequested(sb *unstructured.Unstructured) bool {
+	if sb == nil {
+		return false
+	}
+	annotations := sb.GetAnnotations()
+	requestedAt, err := time.Parse(time.RFC3339, annotations[AnnotationRereviewRequestedAt])
+	if err != nil {
+		return false
+	}
+	reviewedAt, err := time.Parse(time.RFC3339, annotations[AnnotationReviewedAt])
+	if err != nil {
+		return true
+	}
+	return requestedAt.After(reviewedAt)
+}
+
+// reviewInstructions maps the RepoWatch review spec onto factory
+// --instruction values (prompt plus policy lines the old engine enforced
+// programmatically).
+func reviewInstructions(repoWatch *reviewv1alpha1.RepoWatch) []string {
+	var instructions []string
+	if prompt := repoWatch.Spec.Review.LLM.Prompt; prompt != "" {
+		instructions = append(instructions, prompt)
+	}
+	if threshold := repoWatch.Spec.Review.SeverityThreshold; threshold != "" {
+		instructions = append(instructions, fmt.Sprintf("Only include review comments with severity %s or higher.", strings.ToUpper(threshold)))
+	}
+	if len(repoWatch.Spec.Review.IgnoreFiles) > 0 {
+		instructions = append(instructions, "Do not comment on files matching: "+strings.Join(repoWatch.Spec.Review.IgnoreFiles, ", "))
+	}
+	return instructions
+}
+
+// decorateReviewSandbox stamps repo-agent's review contract onto a factory
+// sandbox: the repowatch label (so the API lists it), PR fact annotations,
+// and — when draftYAML is non-empty — the draft plus reviewed-at marker.
+func (r *Reconciler) decorateReviewSandbox(ctx context.Context, sb *unstructured.Unstructured, repoWatch *reviewv1alpha1.RepoWatch, pr *github.PullRequest, draftYAML string) error {
+	labels := sb.GetLabels()
+	if labels == nil {
+		labels = map[string]string{}
+	}
+	annotations := sb.GetAnnotations()
+	if annotations == nil {
+		annotations = map[string]string{}
+	}
+
+	changed := false
+	setIfDifferent := func(m map[string]string, k, v string) {
+		if v != "" && m[k] != v {
+			m[k] = v
+			changed = true
+		}
+	}
+
+	setIfDifferent(labels, "review.gemini.google.com/repowatch", repoWatch.Name)
+	setIfDifferent(annotations, "pr", fmt.Sprintf("%d", *pr.Number))
+	setIfDifferent(annotations, "title", pr.GetTitle())
+	setIfDifferent(annotations, "htmlURL", pr.GetHTMLURL())
+	setIfDifferent(annotations, "diffURL", pr.GetDiffURL())
+	if draftYAML != "" {
+		setIfDifferent(annotations, AnnotationAgentDraft, draftYAML)
+		setIfDifferent(annotations, AnnotationAgentState, AgentStateReviewReady)
+		setIfDifferent(annotations, AnnotationReviewedAt, time.Now().UTC().Format(time.RFC3339))
+	} else {
+		setIfDifferent(annotations, AnnotationAgentState, AgentStateReviewing)
+	}
+
+	if !changed {
+		return nil
+	}
+	sb.SetLabels(labels)
+	sb.SetAnnotations(annotations)
+	return r.Update(ctx, sb)
 }
 
 func (r *Reconciler) reconcileIssues(ctx context.Context, repoWatch *reviewv1alpha1.RepoWatch, ghClient *github.Client, owner string, repo string, user *github.User, podsBySandbox map[string]*corev1.Pod) error {
@@ -1011,12 +1175,22 @@ func (r *Reconciler) pauseFinishedFactorySandboxes(ctx context.Context, sandboxe
 			continue
 		}
 		annotations := sb.GetAnnotations()
+		if annotations["sandbox.gemini.google.com/prevent-auto-shutdown"] == "true" {
+			continue
+		}
 		state := annotations[factorycli.AnnotationTaskState]
 		if state != factorycli.TaskStateCompleted && state != factorycli.TaskStateFailed {
 			continue
 		}
-		completedAt, err := time.Parse(time.RFC3339, annotations[factorycli.AnnotationCompletionTime])
-		if err != nil || time.Since(completedAt) < after {
+		// Idle clock: latest of task completion and a manual scale-up.
+		idleSince, err := time.Parse(time.RFC3339, annotations[factorycli.AnnotationCompletionTime])
+		if err != nil {
+			continue
+		}
+		if unpausedAt, err := time.Parse(time.RFC3339, annotations["sandbox.gemini.google.com/unpaused-at"]); err == nil && unpausedAt.After(idleSince) {
+			idleSince = unpausedAt
+		}
+		if time.Since(idleSince) < after {
 			continue
 		}
 		replicas, found, err := unstructured.NestedInt64(sb.Object, "spec", "replicas")
@@ -1100,127 +1274,6 @@ func (r *Reconciler) isIssueMatch(issue *github.Issue, handler reviewv1alpha1.Is
 // generateIssueHandlerPrompt generates a prompt for an issue handler.
 func (r *Reconciler) generateIssueHandlerPrompt(handler reviewv1alpha1.IssueHandlerSpec, issue *github.Issue) (string, error) {
 	return prompts.ExpandIssueHandlerPrompt(handler.Prompt, issue)
-}
-
-// createReviewSandboxForPR creates a ReviewSandbox for a pull request.
-// It uses the LLM configuration from the RepoWatch CRD to configure the
-// sandbox.
-func (r *Reconciler) createReviewSandboxForPR(ctx context.Context, user *github.User, repoWatch *reviewv1alpha1.RepoWatch, pr *github.PullRequest) error {
-	log := log.FromContext(ctx)
-	sandboxName := fmt.Sprintf("%s-pr-%d", repoWatch.Name, *pr.Number)
-
-	prompt := repoWatch.Spec.Review.LLM.Prompt
-
-	userLogin := user.GetLogin()
-	userName := user.GetName()
-	if userName == "" {
-		userName = userLogin
-	}
-	userEmail := user.GetEmail()
-
-	githubSecretName := repoWatch.Spec.GithubSecretName
-	botLogin := ""
-	botName := ""
-	botEmail := ""
-	if repoWatch.Spec.Review.RobotAccount != "" {
-		githubSecretName = repoWatch.Spec.Review.RobotAccount
-		if err := r.ensureRobotSecret(ctx, repoWatch.Namespace, githubSecretName); err != nil {
-			log.Error(err, "failed to ensure robot secret", "secret", githubSecretName)
-			return err
-		}
-
-		secret := &corev1.Secret{}
-		if err := r.Get(ctx, types.NamespacedName{Name: githubSecretName, Namespace: repoWatch.Namespace}, secret); err != nil {
-			log.Error(err, "failed to get robot secret", "secret", githubSecretName)
-			return err
-		}
-
-		if len(secret.Data["userid"]) > 0 {
-			botLogin = string(secret.Data["userid"])
-		}
-		if len(secret.Data["name"]) > 0 {
-			botName = string(secret.Data["name"])
-		}
-		if len(secret.Data["email"]) > 0 {
-			botEmail = string(secret.Data["email"])
-		}
-	}
-
-	log.Info("Generated Sandbox for PR", "pr", *pr, "llm.provider", repoWatch.Spec.Review.LLM.Provider)
-
-	opt := sandbox.ReviewSandboxOptions{
-		DevSandboxOptions: sandbox.DevSandboxOptions{
-			Name:      sandboxName,
-			Namespace: repoWatch.Namespace,
-			Labels: map[string]string{
-				"review.gemini.google.com/repowatch": repoWatch.Name,
-				"sandbox.gemini.google.com/type":     "review",
-			},
-			UserLogin:   userLogin,
-			UserName:    userName,
-			UserEmail:   userEmail,
-			BotLogin:    botLogin,
-			BotName:     botName,
-			BotEmail:    botEmail,
-			LLMProvider: repoWatch.Spec.Review.LLM.Provider, LLMConfigdirRef: repoWatch.Spec.Review.LLM.ConfigdirRef,
-			LLMAPIKeySecretName:   repoWatch.Spec.Review.LLM.APIKeySecretRef,
-			Prompt:                repoWatch.Spec.Review.LLM.Prompt,
-			GithubSecretName:      githubSecretName,
-			DevcontainerConfigRef: repoWatch.Spec.Review.DevcontainerConfigRef,
-			Image:                 repoWatch.Spec.Review.Image,
-			RepoSandboxImage:      r.RepoSandboxImage,
-			ConfigDirImage:        r.ConfigDirImage,
-			HTTPEnabled:           true,
-			Replicas:              1,
-			ServiceAccountName:    "review-sandbox",
-			DindSupport: func() string {
-				if r.ForceSandboxMode != "" {
-					return r.ForceSandboxMode
-				}
-				return repoWatch.Spec.Review.DindSupport
-			}(),
-			DisableGitHubProxy: true,
-		},
-		PRNumber:          *pr.Number,
-		PRTitle:           *pr.Title,
-		PRHTMLURL:         *pr.HTMLURL,
-		PRDiffURL:         *pr.DiffURL,
-		PRCloneURL:        fmt.Sprintf("%s#refs/heads/%s", *pr.Head.Repo.CloneURL, *pr.Head.Ref),
-		RepoName:          repoWatch.GetName(),
-		MaxReviewFiles:    repoWatch.Spec.Review.MaxReviewFiles,
-		IgnoreFiles:       repoWatch.Spec.Review.IgnoreFiles,
-		SeverityThreshold: repoWatch.Spec.Review.SeverityThreshold,
-		LLMExtensions:     repoWatch.Spec.Review.LLM.Extensions,
-		WorkspaceDiskSize: repoWatch.Spec.Review.WorkspaceDiskSize,
-	}
-
-	sb, svc := sandbox.NewReviewSandbox(opt)
-
-	if err := controllerutil.SetControllerReference(repoWatch, sb, r.Scheme); err != nil {
-		return err
-	}
-
-	if err := r.Create(ctx, sb); err != nil {
-		return err
-	}
-
-	if err := controllerutil.SetControllerReference(repoWatch, svc, r.Scheme); err != nil {
-		log.Error(err, "failed to set owner ref on service")
-	}
-
-	if err := r.Create(ctx, svc); err != nil {
-		if !apierrors.IsAlreadyExists(err) {
-			return err
-		}
-	}
-
-	if err := r.createSandboxTask(ctx, repoWatch, sb, sandboxName, "", "review", map[string]string{
-		"AGENT_PROMPT": prompt,
-	}); err != nil {
-		log.Error(err, "unable to create initial review task for sandbox", "sandbox", sandboxName)
-	}
-
-	return nil
 }
 
 // createSandboxTask creates a SandboxTask for a sandbox.
@@ -1609,170 +1662,6 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager, concurrency int) error {
 		WithOptions(controller.Options{MaxConcurrentReconciles: concurrency}).
 		// Owns(&reviewv1alpha1.ReviewSandbox{}).
 		Complete(r)
-}
-
-func (r *Reconciler) ensureRobotSecret(ctx context.Context, namespace, secretName string) error {
-	// Check if secret exists in namespace
-	secret := &corev1.Secret{}
-	err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: namespace}, secret)
-	if err == nil {
-		return nil // Secret exists
-	}
-	if !apierrors.IsNotFound(err) {
-		return err
-	}
-
-	// Secret not found, try to copy from system namespace
-	systemNamespace := os.Getenv("REPO_AGENT_SYSTEM_NAMESPACE")
-	if systemNamespace == "" {
-		systemNamespace = "repo-agent-system"
-	}
-
-	sourceSecret := &corev1.Secret{}
-	if err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: systemNamespace}, sourceSecret); err != nil {
-		return fmt.Errorf("failed to find robot secret %s in %s: %w", secretName, systemNamespace, err)
-	}
-
-	// Create secret in target namespace
-	newSecret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        secretName,
-			Namespace:   namespace,
-			Labels:      sourceSecret.Labels,
-			Annotations: sourceSecret.Annotations,
-		},
-		Data: sourceSecret.Data,
-		Type: sourceSecret.Type,
-	}
-
-	return r.Create(ctx, newSecret)
-}
-
-func (r *Reconciler) unpauseSandboxIfPendingTasks(ctx context.Context, sandbox *unstructured.Unstructured) (bool, error) {
-	log := log.FromContext(ctx)
-
-	// Check if paused (replicas == 0)
-	replicas, found, err := unstructured.NestedInt64(sandbox.Object, "spec", "replicas")
-	if err != nil || !found {
-		// If field missing, default is usually 1, so not paused.
-		return false, nil
-	}
-	if replicas > 0 {
-		return false, nil
-	}
-
-	// List tasks
-	tasks := &sandboxtaskv1alpha1.SandboxTaskList{}
-	if err := r.List(ctx, tasks, client.InNamespace(sandbox.GetNamespace()), client.MatchingLabels{"sandbox.gemini.google.com/sandbox-name": sandbox.GetName()}); err != nil {
-		return false, err
-	}
-
-	hasPending := false
-	for _, task := range tasks.Items {
-		state := task.Status.TaskState
-		// Pending (default if empty) or Running
-		if state == "" || state == "Pending" || state == "Running" {
-			hasPending = true
-			break
-		}
-	}
-
-	if hasPending {
-		log.Info("Unpausing sandbox due to pending tasks", "sandbox", sandbox.GetName())
-		if err := unstructured.SetNestedField(sandbox.Object, int64(1), "spec", "replicas"); err != nil {
-			return false, err
-		}
-		annotations := sandbox.GetAnnotations()
-		if annotations == nil {
-			annotations = make(map[string]string)
-		}
-		annotations["sandbox.gemini.google.com/unpaused-at"] = time.Now().Format(time.RFC3339)
-		sandbox.SetAnnotations(annotations)
-		return true, r.Update(ctx, sandbox)
-	}
-	return false, nil
-}
-
-func (r *Reconciler) pauseSandboxIfIdle(ctx context.Context, sandbox *unstructured.Unstructured, shutdownDuration time.Duration) (bool, error) {
-	log := log.FromContext(ctx)
-
-	// Check for manual override annotation
-	annotations := sandbox.GetAnnotations()
-	if val, ok := annotations["sandbox.gemini.google.com/prevent-auto-shutdown"]; ok && val == "true" {
-		// Log only at debug level to avoid spam, or Info if occasional
-		log.V(4).Info("Skipping auto-pause due to manual override", "sandbox", sandbox.GetName())
-		return false, nil
-	}
-
-	// Check if running (replicas > 0)
-	replicas, found, err := unstructured.NestedInt64(sandbox.Object, "spec", "replicas")
-	if err == nil && found && replicas == 0 {
-		return false, nil // Already paused
-	}
-
-	// List tasks
-	tasks := &sandboxtaskv1alpha1.SandboxTaskList{}
-	if err := r.List(ctx, tasks, client.InNamespace(sandbox.GetNamespace()), client.MatchingLabels{"sandbox.gemini.google.com/sandbox-name": sandbox.GetName()}); err != nil {
-		return false, err
-	}
-
-	// Check if all tasks are completed and find latest completion time
-	latestTime := sandbox.GetCreationTimestamp().Time
-
-	for _, task := range tasks.Items {
-		state := task.Status.TaskState
-		if state != "Completed" && state != "Failed" {
-			// Found an active task, do not pause
-			return false, nil
-		}
-
-		// Check completion time
-		taskAnnotations := task.GetAnnotations()
-		if tsStr, ok := taskAnnotations["sandbox.gemini.google.com/completion-time"]; ok {
-			if ts, err := time.Parse(time.RFC3339, tsStr); err == nil {
-				if ts.After(latestTime) {
-					latestTime = ts
-				}
-			}
-		}
-	}
-
-	// Check unpaused-at timestamp on sandbox so that unpausing a sandbox keeps it active
-	// for at least the configured shutdown duration before scaling down again.
-	if tsStr, ok := sandbox.GetAnnotations()["sandbox.gemini.google.com/unpaused-at"]; ok {
-		if ts, err := time.Parse(time.RFC3339, tsStr); err == nil {
-			if ts.After(latestTime) {
-				latestTime = ts
-			}
-		}
-	}
-
-	if time.Since(latestTime) > shutdownDuration {
-		log.Info("Pausing sandbox (idle)", "sandbox", sandbox.GetName(), "lastActivity", latestTime)
-		if err := unstructured.SetNestedField(sandbox.Object, int64(0), "spec", "replicas"); err != nil {
-			return false, err
-		}
-		return true, r.Update(ctx, sandbox)
-	}
-
-	return false, nil
-}
-
-func (r *Reconciler) manageSandboxLifecycle(ctx context.Context, sandbox *unstructured.Unstructured, shutdownDuration time.Duration) (bool, error) {
-	replicas, found, err := unstructured.NestedInt64(sandbox.Object, "spec", "replicas")
-	if err != nil || !found {
-		// If field missing, assume it's running (default behavior usually)
-		replicas = 1
-	}
-
-	if replicas == 0 {
-		return r.unpauseSandboxIfPendingTasks(ctx, sandbox)
-	}
-
-	if shutdownDuration > 0 {
-		return r.pauseSandboxIfIdle(ctx, sandbox, shutdownDuration)
-	}
-	return false, nil
 }
 
 func (r *Reconciler) reconcileSandboxPodStatus(ctx context.Context, sandbox *unstructured.Unstructured, podsBySandbox map[string]*corev1.Pod, scaledDown bool) (string, error) {
