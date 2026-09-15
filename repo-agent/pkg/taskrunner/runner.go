@@ -146,98 +146,13 @@ func (tr *TaskRunner) executeTask(ctx context.Context, task *sandboxtaskv1alpha1
 		return
 	}
 
+	// Issue-fix and PR-review task types were removed with the factory-CLI
+	// migration; the taskrunner only serves dev sandboxes now.
 	switch taskType {
-	case "review":
-		cmd = exec.Command(sandbox.RepoSandboxBinary, "review")
-		// Map params to env vars
-		cmd.Env = os.Environ()
-		cmd.Env = append(cmd.Env, "AGENT_OUTPUT_GVR_RESOURCE=sandboxtasks")
-		cmd.Env = append(cmd.Env, "AGENT_OUTPUT_GVR_GROUP=custom.agents.x-k8s.io")
-		cmd.Env = append(cmd.Env, "AGENT_OUTPUT_GVR_VERSION=v1alpha1")
-		// Inject params into env
-		for k, v := range params {
-			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
-		}
-
-	case "fix-issue":
-		cmd = exec.Command(sandbox.RepoSandboxBinary, "github-fix-issue", "--in-pod=true")
-		// Map params to env vars
-		cmd.Env = os.Environ()
-		// Inject params into env
-		for k, v := range params {
-			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
-		}
-
-	case "address-feedback":
-		cmd = exec.Command(sandbox.RepoSandboxBinary, "github-feedback", "--in-pod=true")
-		// Map params to env vars
-		cmd.Env = os.Environ()
-		// Inject params into env
-		for k, v := range params {
-			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
-		}
-
-	case "investigate-failures":
-		cmd = exec.Command(sandbox.RepoSandboxBinary, "github-investigate", "--in-pod=true")
-		// Map params to env vars
-		cmd.Env = os.Environ()
-		// Inject params into env
-		for k, v := range params {
-			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
-		}
-
-	case "triage-issue":
-		cmd = exec.Command(sandbox.RepoSandboxBinary, "github-triage-issue", "--in-pod=true")
-		// Map params to env vars
-		cmd.Env = os.Environ()
-		// Inject params into env
-		for k, v := range params {
-			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
-		}
-
 	case "dev-setup":
 		cmd = exec.Command(sandbox.RepoSandboxBinary, "dev-init", "--in-pod=true")
 		// Map params to env vars
 		cmd.Env = os.Environ()
-		// Inject params into env
-		for k, v := range params {
-			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
-		}
-
-	case "iterate":
-		cmd = exec.Command(sandbox.RepoSandboxBinary, "iterate", "--in-pod=true")
-		// Map params to env vars
-		cmd.Env = os.Environ()
-		// Inject params into env
-		for k, v := range params {
-			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
-		}
-
-	case "chore":
-		cmd = exec.Command(sandbox.RepoSandboxBinary, "chore", "--in-pod=true")
-		// Map params to env vars
-		cmd.Env = os.Environ()
-		// Inject params into env
-		for k, v := range params {
-			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
-		}
-
-	case "rollback":
-		cmd = exec.Command(sandbox.RepoSandboxBinary, "rollback", "--in-pod=true")
-		// Map params to env vars
-		cmd.Env = os.Environ()
-		// Inject params into env
-		for k, v := range params {
-			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
-		}
-
-	case "issue":
-		cmd = exec.Command(sandbox.RepoSandboxBinary, "dev")
-		// Map params to env vars
-		cmd.Env = os.Environ()
-		cmd.Env = append(cmd.Env, "AGENT_OUTPUT_GVR_RESOURCE=sandboxtasks")
-		cmd.Env = append(cmd.Env, "AGENT_OUTPUT_GVR_GROUP=custom.agents.x-k8s.io")
-		cmd.Env = append(cmd.Env, "AGENT_OUTPUT_GVR_VERSION=v1alpha1")
 		// Inject params into env
 		for k, v := range params {
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))

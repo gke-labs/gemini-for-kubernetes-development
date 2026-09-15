@@ -46,23 +46,13 @@ func run(ctx context.Context) error {
 	rootCommand.AddCommand(commands.BuildBootstrapCommand())
 	rootCommand.AddCommand(commands.BuildCodeCommand())
 	rootCommand.AddCommand(commands.BuildTmuxCommand())
-	rootCommand.AddCommand(commands.BuildGithubFixIssueCommand())
-	rootCommand.AddCommand(commands.BuildGithubTriageIssueCommand())
-	rootCommand.AddCommand(commands.BuildGithubFeedbackCommand())
-	rootCommand.AddCommand(commands.BuildGithubInvestigateCommand())
-	rootCommand.AddCommand(commands.BuildGithubAutopollCommand())
-	rootCommand.AddCommand(commands.BuildIterateCommand())
-	rootCommand.AddCommand(commands.BuildChoreCommand())
 
 	rootCommand.AddCommand(commands.BuildThreadsCommand())
 
-	// Commands from review-sandbox
-	reviewDaemon := commands.BuildReviewDaemonCommand()
-	reviewDaemon.Use = "review-daemon"
-	rootCommand.AddCommand(reviewDaemon)
-
-	rootCommand.AddCommand(commands.BuildReviewCommand())
-	rootCommand.AddCommand(commands.BuildRollbackCommand())
+	// Issue-fix and PR-review agent subcommands were removed with the
+	// factory-CLI migration: those tasks run through the factory engine now
+	// (see docs/design/factory-cli-migration.md). repo-sandbox remains the
+	// dev-sandbox binary.
 
 	// Common commands
 	rootCommand.AddCommand(commands.BuildSSHDCommand())
