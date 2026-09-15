@@ -221,28 +221,3 @@ func (w *Watcher) newIssueQueueTask(opts IssueTaskOptions) *api.QueueTask {
 		SessionID:        opts.SessionID,
 	}
 }
-
-// ChoreTaskOptions specifies parameters for constructing a scheduled chore api.QueueTask.
-type ChoreTaskOptions struct {
-	AgentFile        string
-	TriggerEventTime time.Time
-	TriggerReason    api.TriggerReason
-	TriggerNotes     string
-}
-
-// newChoreQueueTask constructs an api.QueueTask for scheduled chore tasks with consistent defaults.
-func (w *Watcher) newChoreQueueTask(opts ChoreTaskOptions) *api.QueueTask {
-	return &api.QueueTask{
-		Type:             api.TypeAgentChore,
-		URL:              fmt.Sprintf("https://github.com/%s/%s", w.Repo.Owner, w.Repo.Repo),
-		Priority:         api.PriorityMedium,
-		Phase:            api.PhaseChores,
-		CreatedAt:        time.Now(),
-		EnqueuedAt:       time.Now(),
-		TriggerEventTime: opts.TriggerEventTime,
-		TriggerReason:    opts.TriggerReason,
-		TriggerNotes:     opts.TriggerNotes,
-		Status:           api.StatusPending,
-		AgentFile:        opts.AgentFile,
-	}
-}

@@ -10,6 +10,7 @@ import (
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/chores"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/concurrency"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/dispatcher"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/sandbox"
@@ -90,6 +91,7 @@ type Watcher struct {
 	sandboxes        *sandbox.Service
 	dispatcher       *dispatcher.Dispatcher
 	reconciler       *sandbox.Reconciler
+	chores           *chores.Scheduler
 	state            *watchState
 	timeoutChan      <-chan time.Time
 }
@@ -134,6 +136,7 @@ func (w *Watcher) initComponents() {
 	})
 	w.dispatcher = w.newDispatcher(w.newCLIRunner())
 	w.reconciler = w.newReconciler()
+	w.chores = w.newChoreScheduler()
 }
 
 // Wait blocks until all in-flight tasks have completed.
@@ -150,10 +153,6 @@ func NewWatcher(rootFlags common.RootFlags, flags Flags) *Watcher {
 	}
 	w.initComponents()
 	return w
-}
-
-type ChoreRunState struct {
-	LastRun time.Time `json:"lastRun"`
 }
 
 // prWatchState tracks the progress and state of automated tasks for a monitored pull request.

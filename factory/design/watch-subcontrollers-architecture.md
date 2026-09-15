@@ -81,7 +81,7 @@ flowchart TB
     subgraph Controllers["Autonomous Subcontroller Goroutines"]
         ISC["Issue Scanner<br/>(Single Cycle: 30s-60s)"]
         PSC["PR Scanner<br/>(Single Cycle: 1m-2m<br/>+ Worker Pool)"]
-        CSC["Chore Scheduler<br/>(Dedicated Cron Timers)"]
+        CSC["Chore Scheduler<br/>(Ticker: 30s<br/>+ 5m definition cache)"]
         TQD["Task Dispatcher<br/>(Dedicated Ticker: 30s)"]
         SGC["Sandbox Reconciler & GC<br/>(Ticker: 30s-60s)"]
         SRV["Queue HTTP Server<br/>(:13338 /api/v1/queue)"]
@@ -172,14 +172,22 @@ To guarantee maintainability and eliminate circular dependencies, subcontrollers
 * **Decoupling Guarantee**: Does **not** scan issues or chores.
 
 ### 3. `ChoreScheduler`
-* **Cadence**: Evaluates `.agents/` workflows on independent cron triggers or a dedicated 30-second interval.
+* **Location**: Dedicated `watch/chores` package, built via `chores.New(Config, Deps)`. It reaches the rest of the daemon through two narrow collaborators and therefore depends on neither GitHub nor the cluster directly:
+  * `chores.Source` — lists and reads the agent definitions under `.agents/`, in paths and raw contents only. The GitHub-backed implementation is the `watcherAgentSource` adapter in the `watch` package.
+  * `chores.Queue` — the `TaskExists` / `Enqueue` pair, which is all the scheduler needs and is all it is permitted: it adds chore tasks and can mutate nothing else. `TaskQueueManager` satisfies it directly.
+* **Cadence**: Two intervals, split along the line between what is cheap and what is not:
+  * `Interval` (default **30s**) drives `ScheduleOnce`, which compares each cached schedule against the recorded last run. This is pure in-memory arithmetic, so it can run far more often than the definitions are fetched — and it is what sets the precision with which a chore fires once due.
+  * `RefreshInterval` (default **5m**) bounds how long a fetched set of definitions is reused. Reading them costs one request to list `.agents/` plus one per definition, which is the only part of scheduling that touches the network. Fetching them every evaluation cycle would multiply that traffic tenfold to learn nothing: definitions change when someone edits the repository, not when a chore comes due.
+  * A failed refresh keeps serving the previous copy. Schedules are evaluated against that copy without any network call, so a GitHub outage delays picking up *edits* to `.agents/` rather than stopping chores from firing.
 * **Responsibilities**:
-  * Parses schedules in `.agents/` workflow definitions from repository contents.
-  * Tracks execution history in `chores_state.json` using atomic write-and-rename semantics.
-  * Uses `TaskQueueManager.TaskExists(filename)` as primary in-memory deduplication.
-  * Computes the next scheduled execution using `cron.Parse(schedule).Next(lastRun)`.
-  * Directly enqueues `agent-chore` tasks into `TaskQueueManager` when triggers fire.
-* **Decoupling Guarantee**: Completely independent of PR and issue scanning cycles.
+  * Parses schedules out of the `.agents/` definitions' frontmatter, ignoring agents that declare none — those are invoked by issues, not by a clock. A definition that cannot be read or parsed is reported and skipped, so one malformed file cannot take the remaining chores down with it.
+  * Computes the next execution with `cron.Parse(schedule).Next(lastRun)`, treating `never` and `paused` as disabled and a chore that has never run as immediately due. An unparsable expression falls back to a 24h interval with a warning, rather than silently disabling the chore on a typo.
+  * Uses `TaskQueueManager.TaskExists(filename)` as the in-memory deduplication: a chore still queued or running from an earlier cycle is skipped outright, since the queue is keyed by file name and a second copy could not be distinguished from the first.
+  * Tracks execution history in `chores_state.json` under the queue directory, read once on first use and served from memory afterwards — the scheduler is that file's only writer. Writes go through a temporary file and a rename: a crash mid-write would otherwise leave a truncated file that reads back as "no chore has ever run" and re-fires every chore. A run is recorded only once the enqueue succeeded.
+  * Enqueues `agent-chore` tasks directly into `TaskQueueManager`.
+* **Pause Signal**: `Deps.Paused` is the same read-only drain signal the `SandboxReconciler` takes, supplied by `Watcher.draining`. Draining is how an operator stops the daemon from taking on new work, and a chore queued during a drain is exactly that. As with the reconciler, shutdown does *not* travel through it: the scheduler runs under the daemon context, and cancelling that also aborts a cycle already in flight.
+* **Single-Goroutine by Construction**: The definition cache and the run state are plain fields with no mutex, because `ScheduleOnce` is only ever called from the `Run` loop, or from the caller itself in `--once` mode. Nothing else may call into the scheduler concurrently.
+* **Decoupling Guarantee**: Completely independent of PR and issue scanning cycles. Chores previously rode inside the *slow PR cycle* of `checkRepo`, which meant a chore came due up to 5 minutes before anything noticed, and any GitHub latency in PR evaluation delayed it further.
 
 ### 4. `TaskDispatcher` (Core Execution Engine)
 * **Location**: Dedicated `watch/dispatcher` package, so the execution path cannot reach into scanner internals.
@@ -472,7 +480,7 @@ To prevent race conditions, deadlocks, and state divergence in this asynchronous
 | **New Issue Pickup Latency** | minutes - hours (sequential loop blocking) | **Up to 30–60 seconds** (dedicated single-cycle issue ticker) |
 | **Task Dispatch Latency** | 0s – 30s after enqueue, plus any in-progress scan (minutes) | **≤ one dispatch interval** (dedicated dispatcher goroutine, never blocked by scans) |
 | **PR Evaluation Concurrency** | Serial loop (all PRs block one another) | **Concurrent (3–5 workers in PR scanner pool)** |
-| **Chore Trigger Precision** | Delayed by up to 5 minutes | **Sub-second precision** |
+| **Chore Trigger Precision** | Delayed by up to 5 minutes, plus any in-progress PR scan | **Up to 30 seconds** (dedicated evaluation ticker over cached definitions) |
 | **HTTP Queue API Latency** | 50ms – 500ms+ (disk scans & YAML parsing) | **< 1 millisecond** (in-memory `RLock` read) |
 | **Sandbox Concurrency Checks** | Repetitive K8s API calls per candidate | **O(1) in-memory lookups** (`SandboxLockRegistry`) |
 | **Error Isolation** | Single API timeout pauses entire watch loop | **Isolated to offending subcontroller** |
@@ -546,18 +554,18 @@ Extracted one subcontroller at a time, each landing as its own package with the 
 | Step | Subcontroller | Status | Location |
 | :--- | :--- | :--- | :--- |
 | 3a | `SandboxReconciler` | Completed | `sandbox/service.go`, `sandbox/reconciler.go` |
-| 3b | `ChoreScheduler` | Pending | `chores.go` |
+| 3b | `ChoreScheduler` | Completed | `chores/scheduler.go`, `chores/schedule.go`, `chores/state.go` |
 | 3c | `IssueScanner` | Pending | `scan_issue.go` |
 | 3d | `PRScanner` | Pending | `scan_pr.go` |
 
 * **Scope**:
   * **3a — `SandboxReconciler`** (done): extracted into the `watch/sandbox` package as a `Service` (sandbox lookups and probes, shared with the scanners and dispatcher) plus a `Reconciler` running a 30s state ticker and a 5m GC ticker from a single loop, both also firing once at startup. `checkRepo()` no longer performs any cluster work. Every destructive pass — closed PR/issue collection, stale eviction and idle suspension — *takes* the sandbox lease for the duration of its confirm-and-act instead of testing it, so a dispatcher cannot start a task in a sandbox that is about to be deleted or scaled down. `EntityStateCache` was wired into the `Watcher` as the shared owner of open PR and referenced issue state, replacing the mutex-guarded fields on `watchState`; the scan cycle publishes its observed open issues to it on success, and the two halves gate their respective collection passes independently. A read-only `Paused` signal restores the drain behaviour that collection used to inherit from `checkRepo`; shutdown is left to cancelling the daemon context, which also stops a sweep already in flight. `clients.KubernetesClient.Clientset` was widened from `*kubernetes.Clientset` to `kubernetes.Interface` so the reconciler's pod and service paths can be exercised with a fake typed client.
-  * **3b — `ChoreScheduler`**: extract into an independent goroutine driven by cron triggers.
+  * **3b — `ChoreScheduler`** (done): extracted into the `watch/chores` package as a `Scheduler` evaluating schedules on a 30s ticker against definitions cached for 5m, both also firing once at startup. The cadence split is the point of the step: a chore now fires within 30s of coming due instead of waiting for the *slow PR cycle* that used to host it, while the GitHub traffic that reads `.agents/` stays on the 5m cadence it always had. The scheduler talks to a `Source` (list and read definitions) and a `Queue` (`TaskExists` / `Enqueue`) rather than to clients, so it is exercised end to end in unit tests without GitHub; the GitHub-backed `watcherAgentSource` adapter lives with the other adapters in the `watch` package and translates a missing `.agents/` directory into an empty list rather than an error. `chores_state.json` keeps its on-disk schema and moved to write-and-rename, so an interrupted write can no longer read back as "no chore has ever run" and re-fire every chore. The existing `Paused` drain signal was generalized from `Watcher.reclamationPaused` to `Watcher.draining` and is now shared by both subcontrollers: a drain stops the daemon taking on new work, and queueing a chore is taking on new work. Mode gating (`ChoresMode`, and the `all` / `scan` / `scan-pr` modes) moved to `Watcher.choresEnabled`, which decides whether the goroutine starts at all; `checkRepo()` no longer schedules anything.
   * **3c — `IssueScanner`**: extract with a single ticker (30s–60s), reading referenced issues from `EntityStateCache` instead of the Timeline API.
   * **3d — `PRScanner`**: extract with a single ticker (1m–2m) and a bounded worker pool, moving `processedPRs` onto `EntityStateCache`.
   * Each step wires its subcontroller into `Watcher.Run()` alongside the existing ones and deletes the corresponding branch of `checkRepo()`. `checkRepo` disappears once 3d lands.
 * **Verification Gate**:
-  * Each step must keep `go test -race ./factory/...` green, in particular `scan_pr_test.go`, `scan_issue_test.go`, `github_helpers_test.go` and the new `sandbox/*_test.go`, so that the CI gating and bot unassignment behaviour does not regress.
+  * Each step must keep `go test -race ./factory/...` green, in particular `scan_pr_test.go`, `scan_issue_test.go`, `github_helpers_test.go` and the new `sandbox/*_test.go` and `chores/*_test.go`, so that the CI gating and bot unassignment behaviour does not regress.
 
 ### Phase 4: Lifecycle, Recovery, and End-to-End Verification
 * **Status**: Completed (`watch.go`, `dispatcher/recovery.go`, `concurrency/recovery.go`, `adoption_test.go`, `dispatcher/recovery_test.go`)

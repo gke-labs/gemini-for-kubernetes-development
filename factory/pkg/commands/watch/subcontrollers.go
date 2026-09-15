@@ -8,8 +8,11 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/chores"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/concurrency"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/dispatcher"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/sandbox"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 )
 
 // newDispatcher constructs the task dispatcher used by the watcher, wiring it to
@@ -45,24 +48,43 @@ func (w *Watcher) newReconciler() *sandbox.Reconciler {
 		Sandboxes: w.sandboxes,
 		Locks:     w.sandboxLocks,
 		Entities:  w.entityCache,
-		Paused:    w.reclamationPaused,
+		Paused:    w.draining,
 	})
 }
 
-// reclamationPaused reports whether the queue is draining, in which case the
-// reconciler holds off on reclaiming sandboxes.
+// newChoreScheduler constructs the chore scheduler, which runs as its own
+// goroutine so that a scheduled agent is queued within one evaluation interval
+// of coming due, instead of waiting for the slow PR scan that used to carry it.
+func (w *Watcher) newChoreScheduler() *chores.Scheduler {
+	return chores.New(chores.Config{
+		Interval:        chores.DefaultInterval,
+		RefreshInterval: chores.DefaultRefreshInterval,
+		StateDir:        w.QueueDir,
+		Owner:           w.Repo.Owner,
+		Repo:            w.Repo.Repo,
+		DryRun:          w.DryRun,
+	}, chores.Deps{
+		Queue:  w.queueMgr,
+		Source: github.ForRepo(w.ghClient, w.Repo.Owner, w.Repo.Repo),
+		Paused: w.draining,
+	})
+}
+
+// draining reports whether the queue is in drain mode, in which case the
+// subcontrollers that create work hold off: the sandbox reconciler stops
+// reclaiming sandboxes and the chore scheduler stops queueing chores.
 //
-// This is the reconciler's only view of queue state besides the lease registry,
-// and it is deliberately a one-way read: collection can observe that the queue
-// is draining but has no way to alter it.
+// This is their only view of queue state besides the lease registry, and it is
+// deliberately a one-way read: they can observe that the queue is draining but
+// have no way to alter it.
 //
-// Shutdown is deliberately not reported here. The reconciler runs under the
-// daemon context, so cancelling it already stops collection, and it stops a
-// sweep that is already in flight - which this signal, read once at the top of
-// a sweep, cannot. Drain cannot be expressed that way in turn: it is a marker
+// Shutdown is deliberately not reported here. Both subcontrollers run under the
+// daemon context, so cancelling it already stops them, and it stops a cycle
+// that is already in flight - which this signal, read once at the top of a
+// cycle, cannot. Drain cannot be expressed that way in turn: it is a marker
 // file that an operator removes to resume, and a cancelled context never comes
 // back.
-func (w *Watcher) reclamationPaused() bool {
+func (w *Watcher) draining() bool {
 	return w.queueMgr != nil && w.queueMgr.IsDrainMode()
 }
 
@@ -85,6 +107,13 @@ func (w *Watcher) newCLIRunner() *dispatcher.CLIRunner {
 // The watcher's sandbox service satisfies the dispatcher's interface directly,
 // so no adapter is needed.
 var _ dispatcher.SandboxService = (*sandbox.Service)(nil)
+
+// The watcher's queue manager satisfies the chore scheduler's interface directly.
+var _ chores.Queue = (*concurrency.TaskQueueManager)(nil)
+
+// A repository-bound GitHub client is the chore scheduler's definition source,
+// so no adapter is needed on this side either.
+var _ chores.Source = (*github.Client)(nil)
 
 // watcherTaskCoordinator adapts the watcher's GitHub interactions to the TaskCoordinator interface.
 type watcherTaskCoordinator struct {

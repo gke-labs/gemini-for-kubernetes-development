@@ -71,3 +71,26 @@ func TestCheckRepoHasPRsSignal(t *testing.T) {
 		t.Error("canQueueIssueTasks() = false after a successful PR scan; want true")
 	}
 }
+
+// TestChoresEnabled pins the modes the chore scheduler goroutine starts in.
+// These are inherited from when chore scanning lived inside the slow PR cycle,
+// "scan-pr" included.
+func TestChoresEnabled(t *testing.T) {
+	for _, tc := range []struct {
+		mode       string
+		choresMode string
+		want       bool
+	}{
+		{mode: "all", want: true},
+		{mode: "scan", want: true},
+		{mode: "scan-pr", want: true},
+		{mode: "scan-issue", want: false},
+		{mode: "run", want: false},
+		{mode: "all", choresMode: "disabled", want: false},
+	} {
+		w := &Watcher{Flags: Flags{Mode: tc.mode, ChoresMode: tc.choresMode}}
+		if got := w.choresEnabled(); got != tc.want {
+			t.Errorf("choresEnabled(mode=%q, choresMode=%q) = %v, want %v", tc.mode, tc.choresMode, got, tc.want)
+		}
+	}
+}
