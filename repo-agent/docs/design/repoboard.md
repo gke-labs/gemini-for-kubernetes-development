@@ -129,11 +129,6 @@ spec:
     diskSize: 10Gi
     idleMinutes: 60
 
-  prompts:                      # optional --instruction overrides
-    fix: ""
-    review: ""
-    triage: ""
-
   prepIdentity:
     secretName: ""              # identity for draft-only intake tasks; a bot
                                 # is acceptable here because intake never
@@ -152,6 +147,13 @@ Deliberately absent, and why:
 - **No selection filters (labels/assignees/handlers).** Those are live query
   parameters on the work feed, adjustable per view.
 - **No engine config.** Factory owns models, execution, resilience.
+- **No prompts section.** Repo voice belongs in the repo, not the CR:
+  factory's built-in task prompts plus repo-level instruction files
+  (`GEMINI.md`, `.gemini/`, `.agents/` definitions) — which travel with the
+  code, get reviewed like code, and apply to every agent surface equally.
+  A per-board instruction override can be added later if a concrete need
+  appears; the draft-PR safety rail (§5) does not depend on it once the
+  flagged `--draft-pr` factory flag exists.
 - **No full `status.work`.** The board is computed live by the API
   (GitHub + sandboxes), overseer-dashboard style; status keeps only
   conditions and counts for `kubectl` ergonomics.
