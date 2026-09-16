@@ -24,6 +24,7 @@ const STAGE_LABEL = {
   'review-queued': 'Review queued',
   'review-ready': 'Review ready',
   'review-submitted': 'Review submitted',
+  'triage-ready': 'Triage ready',
 };
 
 function ageOf(ts) {
@@ -74,6 +75,18 @@ function WorkRow({ item, boardName, onAction, namespace }) {
         <a href={item.htmlURL} target="_blank" rel="noopener noreferrer" title={item.title}>{item.title}</a>
         {item.prURL && item.type === 'issue' && (
           <a href={item.prURL} target="_blank" rel="noopener noreferrer" style={{ marginLeft: '8px', fontSize: 'small' }}>PR ↗</a>
+        )}
+        {item.draft && (
+          <details style={{ marginTop: '4px' }}>
+            <summary style={{ cursor: 'pointer', fontSize: 'small', color: 'var(--text-secondary)' }}>
+              {item.type === 'issue' ? 'Triage suggestions' : 'Review draft'}
+            </summary>
+            <pre style={{
+              whiteSpace: 'pre-wrap', fontSize: 'small', margin: '4px 0 0 0',
+              padding: '8px', backgroundColor: 'var(--bg-secondary)',
+              borderRadius: '4px', maxHeight: '260px', overflowY: 'auto',
+            }}>{item.draft}</pre>
+          </details>
         )}
       </td>
       <td style={{ padding: '6px 8px' }}>{stage}</td>

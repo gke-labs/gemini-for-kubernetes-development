@@ -74,6 +74,16 @@ func (f *fakeLauncher) StartPRWatch(key string, opts factorycli.PRWatchOptions) 
 	return true
 }
 
+func (f *fakeLauncher) StartTriage(key string, _ factorycli.TriageOptions) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.running[key] {
+		return false
+	}
+	f.calls = append(f.calls, fakeLaunch{Key: key})
+	return true
+}
+
 func (f *fakeLauncher) IsRunning(key string) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()

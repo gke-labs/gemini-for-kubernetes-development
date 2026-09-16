@@ -48,6 +48,7 @@ type fakeLaunch struct {
 	FixOpts     *factorycli.FixOptions
 	ReviewOpts  *factorycli.ReviewOptions
 	PRWatchOpts *factorycli.PRWatchOptions
+	TriageOpts  *factorycli.TriageOptions
 }
 
 type fakeLauncher struct {
@@ -79,6 +80,16 @@ func (f *fakeLauncher) StartPRWatch(key string, opts factorycli.PRWatchOptions) 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, fakeLaunch{Key: key, PRWatchOpts: &opts})
+	return true
+}
+
+func (f *fakeLauncher) StartTriage(key string, opts factorycli.TriageOptions) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.running[key] {
+		return false
+	}
+	f.calls = append(f.calls, fakeLaunch{Key: key, TriageOpts: &opts})
 	return true
 }
 
@@ -539,4 +550,68 @@ func TestDraftReviewIntake(t *testing.T) {
 	g.Expect(launches).To(gomega.HaveLen(1))
 	g.Expect(launches[0].Key).To(gomega.Equal("alice/review-pr-5"))
 	g.Expect(launches[0].ReviewOpts).NotTo(gomega.BeNil())
+}
+
+// Triage intake: candidates launch the triage agent; a finished run's
+// report is harvested from the sandbox and stored as a draft.
+func TestTriageIntake(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	board := testBoard(nil)
+	board.Spec.Intake.TriageIssues = true
+
+	ghClient := clients.NewGitHubClientFromHTTP(&http.Client{Transport: &mockRoundTripper{responses: map[string]func() *http.Response{
+		"https://api.github.com/user": jsonResp(`{"login": "alice"}`),
+		"https://api.github.com/repos/test/repo/issues?labels=agent&per_page=100&state=open": jsonResp(`[]`),
+		"https://api.github.com/repos/test/repo/issues?per_page=100&state=open": jsonResp(`[
+			{"number": 30, "title": "untriaged", "html_url": "https://github.com/test/repo/issues/30", "labels": []},
+			{"number": 31, "title": "already fixing", "html_url": "https://github.com/test/repo/issues/31", "labels": [{"name": "agent"}]}
+		]`),
+	}}})
+
+	// Phase 1: launch.
+	fake := newFakeLauncher()
+	r := newTestReconciler(fake, ghClient, board, githubSecret())
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	launches := fake.launches()
+	g.Expect(launches).To(gomega.HaveLen(1))
+	g.Expect(launches[0].Key).To(gomega.Equal("alice/triage-repo-30"))
+	g.Expect(launches[0].TriageOpts).NotTo(gomega.BeNil())
+	g.Expect(launches[0].TriageOpts.IssueURL).To(gomega.Equal("https://github.com/test/repo/issues/30"))
+
+	// Phase 2: harvest after completion.
+	triageSandbox := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "agents.x-k8s.io/v1alpha1",
+		"kind":       "Sandbox",
+		"metadata": map[string]interface{}{
+			"name": "triage-repo-30", "namespace": "alice",
+			"labels":      map[string]interface{}{"factory.gemini.google.com/managed": "true"},
+			"annotations": map[string]interface{}{"htmlURL": "https://github.com/test/repo/issues/30"},
+		},
+		"spec": map[string]interface{}{"replicas": int64(1)},
+	}}
+	fake2 := newFakeLauncher()
+	fake2.results["alice/triage-repo-30"] = factorycli.Result{
+		FinishedAt: time.Now(),
+		Output:     "...\n================= ISSUE TRIAGE =================\ntriage:\n  labels: [bug]\n  priority: high\n  assessment: broken\n================================================\n",
+	}
+	r2 := newTestReconciler(fake2, ghClient, testBoardWithTriage(), githubSecret(), triageSandbox)
+	_, err = r2.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(fake2.launches()).To(gomega.BeEmpty())
+
+	updated := &unstructured.Unstructured{}
+	updated.SetGroupVersionKind(sandboxGVK)
+	g.Expect(r2.Get(context.Background(), types.NamespacedName{Name: "triage-repo-30", Namespace: "alice"}, updated)).To(gomega.Succeed())
+	g.Expect(updated.GetAnnotations()[AnnotationAgentDraft]).To(gomega.ContainSubstring("priority: high"))
+	g.Expect(updated.GetAnnotations()[AnnotationDraftType]).To(gomega.Equal("triage"))
+	g.Expect(updated.GetAnnotations()[AnnotationTriagedAt]).NotTo(gomega.BeEmpty())
+}
+
+func testBoardWithTriage() *boardv1alpha1.RepoBoard {
+	b := testBoard(nil)
+	b.Spec.Intake.TriageIssues = true
+	return b
 }

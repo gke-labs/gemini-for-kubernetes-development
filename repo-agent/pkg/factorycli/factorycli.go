@@ -144,6 +144,10 @@ type Launcher interface {
 	// StartPRWatch launches `factory pr watch` for key unless one is
 	// already running.
 	StartPRWatch(key string, opts PRWatchOptions) bool
+	// StartTriage launches `factory triage --publish no` for key unless
+	// one is already running. The triage YAML is recovered from the
+	// invocation's output (see ExtractTriageYAML) via LastResult.
+	StartTriage(key string, opts TriageOptions) bool
 	IsRunning(key string) bool
 	// LastResult returns the outcome of the most recently finished
 	// invocation for key, if any.
@@ -249,6 +253,22 @@ func (r *Runner) StartPRWatch(key string, opts PRWatchOptions) bool {
 	return r.start(key, args, opts.GithubToken, timeout)
 }
 
+func (r *Runner) StartTriage(key string, opts TriageOptions) bool {
+	timeout := opts.Timeout
+	if timeout <= 0 {
+		timeout = 30 * time.Minute
+	}
+	args := []string{
+		"triage",
+		"--url", opts.IssueURL,
+		"--publish", "no",
+		"--namespace", opts.Namespace,
+		"--timeout", timeout.String(),
+		"--abort-on-cancel=false",
+	}
+	return r.start(key, args, opts.GithubToken, timeout)
+}
+
 func (r *Runner) start(key string, args []string, githubToken string, timeout time.Duration) bool {
 	r.mu.Lock()
 	if _, ok := r.running[key]; ok {
@@ -307,4 +327,37 @@ func tail(s string, n int) string {
 		return s
 	}
 	return s[len(s)-n:]
+}
+
+// TriageOptions are the inputs for a `factory triage` invocation
+// (draft-only issue triage; --publish no writes nothing to GitHub).
+type TriageOptions struct {
+	Namespace   string
+	IssueURL    string
+	GithubToken string
+	Timeout     time.Duration
+}
+
+// triageBanner opens the triage YAML on `factory triage --publish no`
+// stdout (factory/pkg/commands/triage.go).
+const triageBanner = "================= ISSUE TRIAGE ================="
+
+// ExtractTriageYAML returns the triage YAML printed after the ISSUE TRIAGE
+// banner of a completed `factory triage` invocation, or "".
+func ExtractTriageYAML(output string) string {
+	start := strings.Index(output, triageBanner)
+	if start < 0 {
+		return ""
+	}
+	rest := output[start+len(triageBanner):]
+	if end := strings.Index(rest, "================"); end >= 0 {
+		rest = rest[:end]
+	}
+	return strings.TrimSpace(rest)
+}
+
+// TriageSandboxName returns the sandbox name `factory triage` uses
+// (EnsureTriageSandbox: triage-<repo>-<issueNumber>).
+func TriageSandboxName(repo string, issueNumber int) string {
+	return fmt.Sprintf("triage-%s-%d", repo, issueNumber)
 }
