@@ -190,6 +190,31 @@ GitHub's 403 regardless of the UI). `GET /api/boards` filters by gate 3, so
 non-members do not learn a board exists; deployment admins retain an
 ops-visible view as today.
 
+### 4.2 Membership is computed, never stored
+
+There is no member list, member CRD, or invitation flow:
+
+- **Onboarding = signing in.** The existing lazy bootstrap creates the
+  member's namespace (named their GitHub login), persists their OAuth token,
+  and materializes their `factory-user` secret. Boards then appear via the
+  gate-3 check. (Phase 1 work item: `factory-user` materialization/refresh
+  moves from the retiring repowatch reconcile to the login/bootstrap path
+  and the token-refresh hook.)
+- **Per-member state is a preferences ConfigMap in the member's own
+  namespace** (auto-fix opt-in per board, notification prefs) — not a CRD:
+  one writer (the API, resolving the target namespace from the session,
+  never the request — nobody can write another member's consent), one
+  reader (the controller at auto-launch evaluation), no lifecycle.
+- **The controller never enumerates members.** Triggers name the person:
+  auto-fix evaluates namespace `<assignee>` (absent namespace ⇒ never
+  logged in ⇒ no opt-in ⇒ skip — correct, since execution as them would be
+  impossible anyway); the live board reads sandboxes from the namespaces
+  named by claims. GitHub state is the membership index.
+- **Offboarding falls out**: repo access revoked ⇒ gate 3 fails, board
+  disappears, assignments and auto-fix stop; allowlist removal ⇒ no
+  sign-in. The member's namespace and sandboxes remain theirs; the board
+  needs no cleanup.
+
 ## 5. Coordination contract: GitHub is the shared database
 
 The system of record is **GitHub + sandboxes**; the CR stores neither queue
