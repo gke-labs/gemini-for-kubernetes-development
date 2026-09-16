@@ -5,7 +5,6 @@ go 1.26.3
 require (
 	cloud.google.com/go/monitoring v1.24.2
 	cloud.google.com/go/storage v1.58.0
-	github.com/bluekeyes/go-gitdiff v0.8.1
 	github.com/creack/pty v1.1.24
 	github.com/gin-contrib/sessions v1.0.4
 	github.com/gin-gonic/gin v1.11.0
