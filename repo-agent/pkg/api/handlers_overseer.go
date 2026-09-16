@@ -199,73 +199,6 @@ func (s *Server) getChoreLogs(c *gin.Context) {
 	}
 }
 
-func (s *Server) getChoreTasks(c *gin.Context) {
-	overseerName := c.Param("name")
-	choreSandboxName := c.Param("choreName")
-	namespace := fmt.Sprintf("overseer-%s", overseerName)
-
-	tasks, err := s.K8sManager.ListSandboxTasks(c.Request.Context(), namespace, choreSandboxName)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list chore tasks", "details": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, tasks.Items)
-}
-
-func (s *Server) getChoreTaskLogs(c *gin.Context) {
-	// Re-uses getChoreLogs logic but fits the TaskCard route pattern
-	overseerName := c.Param("repo")
-	choreSandboxName := c.Param("name")
-	taskID := c.Param("taskID")
-
-	namespace := fmt.Sprintf("overseer-%s", overseerName)
-
-	serviceName := fmt.Sprintf("%s-lb", choreSandboxName)
-	targetURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:13339", serviceName, namespace)
-
-	proxyURL, err := url.Parse(targetURL)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid target URL"})
-		return
-	}
-
-	proxy := httputil.NewSingleHostReverseProxy(proxyURL)
-	proxy.Director = func(req *http.Request) {
-		req.URL.Scheme = proxyURL.Scheme
-		req.URL.Host = proxyURL.Host
-		req.URL.Path = fmt.Sprintf("/logs/%s", taskID)
-	}
-	proxy.ServeHTTP(c.Writer, c.Request)
-}
-
-func (s *Server) getChoreTaskTelemetry(c *gin.Context) {
-	overseerName := c.Param("repo")
-	choreSandboxName := c.Param("name")
-	taskID := c.Param("taskID")
-	namespace := fmt.Sprintf("overseer-%s", overseerName)
-
-	serviceName := fmt.Sprintf("%s-lb", choreSandboxName)
-	targetURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:13339", serviceName, namespace)
-
-	proxyURL, err := url.Parse(targetURL)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid target URL"})
-		return
-	}
-
-	proxy := httputil.NewSingleHostReverseProxy(proxyURL)
-	proxy.Director = func(req *http.Request) {
-		req.URL.Scheme = proxyURL.Scheme
-		req.URL.Host = proxyURL.Host
-		req.URL.Path = fmt.Sprintf("/telemetry/%s", taskID)
-	}
-	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, err error) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte("{}"))
-	}
-	proxy.ServeHTTP(c.Writer, c.Request)
-}
-
 func (s *Server) pauseChore(c *gin.Context) {
 	overseerName := c.Param("name")
 	choreName := c.Param("choreName")
@@ -367,14 +300,7 @@ func (s *Server) getOverseerSandboxTasks(c *gin.Context) {
 	sandboxName := c.Param("sandboxName")
 	namespace := fmt.Sprintf("overseer-%s", overseerName)
 
-	// 1. Try checking if there is a SandboxTask CRD in K8s (for backwards compat)
-	tasks, err := s.K8sManager.ListSandboxTasks(c.Request.Context(), namespace, sandboxName)
-	if err == nil && len(tasks.Items) > 0 {
-		c.JSON(http.StatusOK, tasks.Items)
-		return
-	}
-
-	// 2. Try AgentServer HTTP /tasks on port 13339 if available
+	// 1. Try AgentServer HTTP /tasks on port 13339 if available
 	serviceName := fmt.Sprintf("%s-lb", sandboxName)
 	targetURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:13339/tasks", serviceName, namespace)
 	client := http.Client{Timeout: 2 * time.Second}
@@ -387,7 +313,7 @@ func (s *Server) getOverseerSandboxTasks(c *gin.Context) {
 		}
 	}
 
-	// 3. Find pod to exec into /workspaces/tasks
+	// 2. Find pod to exec into /workspaces/tasks
 	podID, err := sandbox.FindSandboxPodInNamespace(c.Request.Context(), sandboxName, namespace)
 	if err != nil || podID == nil {
 		// Fallback to checking the Sandbox CR annotations for last-task-type / last-task-state

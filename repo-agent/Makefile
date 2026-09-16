@@ -78,15 +78,11 @@ create-kind:
 	../dev/tools/limit-docker-log-size --check || sudo ../dev/tools/limit-docker-log-size || true
 	../dev/tools/create-kind-cluster --recreate ${KIND_CLUSTER} --kubeconfig bin/KUBECONFIG
 
-# --skip generic-golang for faster builds
-# github presubmits builds and pushed this image separately
 .PHONY: build-and-push-repo-agent
 build-and-push-repo-agent:
 	../dev/tools/push-images --image-prefix=$(REGISTRY) $(KIND_CLUSTER_ARG) \
 	--working-dir .. \
 	--images-dir images \
-	--skip generic-golang \
-	--skip dind-golang \
 	--skip github-mcp-server
 
 .PHONY: install-repo-agent
@@ -160,22 +156,13 @@ create-secrets: bin/tls.crt bin/key.json
 bin/configdir-cli: configdir/
 	../dev/tools/build-go-binaries --working-dir .
 
-.PHONY: apply-common-for-examples
-apply-common-for-examples:
-	# TODO(barney-s): is there a better way to handle SA ?
-	kubectl apply -f examples/sandbox-rbac.yaml -n $(NAMESPACE)
-	# end of SA
-	kubectl apply -f examples/go-configmap-devcontainer.yaml -n $(NAMESPACE)
-
 .PHONY: apply-examples
-apply-examples: apply-common-for-examples
-	kubectl apply -f examples/gkelabs-geminifork8s-repowatch.yaml -n $(NAMESPACE)
-	kubectl apply -f examples/agent-sandbox-repowatch.yaml -n $(NAMESPACE)
+apply-examples:
+	kubectl apply -f examples/repoboard.yaml -n $(NAMESPACE)
 	kubectl apply -f examples/kcc-configdir.yaml -n $(NAMESPACE)
-	kubectl apply -f examples/kcc-repowatch.yaml -n $(NAMESPACE)
 	kubectl apply -f examples/k8s-configdir.yaml -n $(NAMESPACE)
-	kubectl apply -f examples/k8s-repowatch.yaml -n $(NAMESPACE)
 	sleep 5
+	kubectl get repoboards -A
 	kubectl get sandboxes -A
 
 .PHONY: delete-instance

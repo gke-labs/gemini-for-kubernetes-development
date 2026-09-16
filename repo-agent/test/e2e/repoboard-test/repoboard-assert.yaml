@@ -1,0 +1,10 @@
+apiVersion: board.gemini.google.com/v1alpha1
+kind: RepoBoard
+metadata:
+  name: rbt-gfkd
+  namespace: repo-agent-system
+status:
+  conditions:
+  - type: Auth
+    status: "True"
+    reason: Authenticated

@@ -19,4 +19,4 @@ package controllers
 // Generate RBAC rules
 //go:generate go tool sigs.k8s.io/controller-tools/cmd/controller-gen paths=./configdir/... output:rbac:dir=../../k8s rbac:roleName=configdir-controller,fileName=configdir-rbac.generated.yaml
 //go:generate go tool sigs.k8s.io/controller-tools/cmd/controller-gen paths=./syncer/... output:rbac:dir=../../k8s rbac:roleName=syncer-role,fileName=syncer-rbac.generated.yaml
-//go:generate go tool sigs.k8s.io/controller-tools/cmd/controller-gen paths=./repowatch/... paths=./repoboard/... output:rbac:dir=../../k8s rbac:roleName=repo-agent-controller,fileName=rbac.generated.yaml
+//go:generate go tool sigs.k8s.io/controller-tools/cmd/controller-gen paths=./repoboard/... output:rbac:dir=../../k8s rbac:roleName=repo-agent-controller,fileName=rbac.generated.yaml

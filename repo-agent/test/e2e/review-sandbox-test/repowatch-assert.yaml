@@ -1,8 +1,0 @@
-apiVersion: review.gemini.google.com/v1alpha1
-kind: RepoWatch
-metadata:
-  name: rst-gfkd
-  namespace: repo-agent-system
-(status != null): true
-(length(status.reviewSandboxes || `[]`)): 1
-(starts_with(status.reviewSandboxes[0].sandboxName || '', 'factory-pr-')): true

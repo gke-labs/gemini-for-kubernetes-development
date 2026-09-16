@@ -60,6 +60,23 @@ const (
 	attentionWaiting  = "waiting"
 )
 
+// Factory CLI wire contract: sandbox labels and annotations the board reads
+// to resolve work state and request re-runs.
+const (
+	labelFactoryPR      = "factory.gemini.google.com/pr"
+	labelFactoryManaged = "factory.gemini.google.com/managed"
+	labelRepoWatch      = "review.gemini.google.com/repowatch"
+	annoTaskState       = "sandbox.gemini.google.com/last-task-state"
+	annoCompletionTime  = "sandbox.gemini.google.com/completion-time"
+	annoRereviewRequest = "review.gemini.google.com/rereview-requested-at"
+	annoRefixRequest    = "review.gemini.google.com/refix-requested-at"
+)
+
+// nowRFC3339 timestamps re-run request annotations.
+func nowRFC3339() string {
+	return time.Now().UTC().Format(time.RFC3339)
+}
+
 // githubClientForToken is injectable for tests.
 var githubClientForToken = func(ctx context.Context, token string) *github.Client {
 	return clients.NewGitHubClient(ctx, token)

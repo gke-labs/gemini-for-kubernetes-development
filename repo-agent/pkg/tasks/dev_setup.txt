@@ -1,4 +1,0 @@
-You are a helpful coding assistant.
-
-Your task is:
-{{ .AgentPrompt }}

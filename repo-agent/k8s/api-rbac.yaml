@@ -10,19 +10,12 @@ metadata:
   name: pr-review-api-role
 rules:
 # Can manage sandboxes in all user namespaces
-- apiGroups: ["custom.agents.x-k8s.io"]
-  resources: ["sandboxtasks"]
-  verbs: ["get", "list", "delete", "patch", "update", "create"]
 - apiGroups: ["agents.x-k8s.io"]
   resources: ["sandboxes"]
   verbs: ["get", "list", "delete", "patch", "update", "create"]
 - apiGroups: [""]
   resources: ["services"]
   verbs: ["get", "list", "delete", "patch", "update", "create"]
-# Can manage repowatches in all user namespaces
-- apiGroups: ["review.gemini.google.com"]
-  resources: ["repowatches"]
-  verbs: ["get", "list", "create", "delete", "update", "patch"]
 # Can read boards and record kickoff requests (mailbox annotation)
 - apiGroups: ["board.gemini.google.com"]
   resources: ["repoboards"]
@@ -70,34 +63,6 @@ subjects:
 roleRef:
   kind: ClusterRole
   name: pr-review-api-role
-  apiGroup: rbac.authorization.k8s.io
----
-# Grant permissions to bind specific cluster roles
-# Allows the API to create bindings containing these roles, without holding the role itself.
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: pr-review-api-bind-review-sandbox
-subjects:
-- kind: ServiceAccount
-  name: pr-review-api
-  namespace: repo-agent-system
-roleRef:
-  kind: ClusterRole
-  name: review-sandbox
-  apiGroup: rbac.authorization.k8s.io
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: pr-review-api-bind-issue-sandbox
-subjects:
-- kind: ServiceAccount
-  name: pr-review-api
-  namespace: repo-agent-system
-roleRef:
-  kind: ClusterRole
-  name: issue-sandbox
   apiGroup: rbac.authorization.k8s.io
 ---
 apiVersion: rbac.authorization.k8s.io/v1

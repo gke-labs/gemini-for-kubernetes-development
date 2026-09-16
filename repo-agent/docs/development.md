@@ -44,10 +44,10 @@ Ensure you have the following installed:
 
 5.  **Apply Example Configurations:**
 
-    Optionally if you want to explore the example `repowatches`, apply them from the example folder.
+    Optionally apply the example `RepoBoard` from the example folder.
 
     ```bash
-    kubectl apply -f examples/<repowatch...>
+    kubectl apply -f examples/repoboard.yaml
     ```
 
 ## Cleanup

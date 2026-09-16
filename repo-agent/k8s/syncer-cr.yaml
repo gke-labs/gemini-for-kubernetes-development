@@ -13,7 +13,3 @@ spec:
       kind: Sandbox
       # If left empty, it watches all namespaces.
       # namespaces: []
-    - group: custom.agents.x-k8s.io
-      version: v1alpha1
-      kind: SandboxTask
-      # namespaces: []

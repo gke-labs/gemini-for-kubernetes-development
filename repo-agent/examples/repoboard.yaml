@@ -1,0 +1,8 @@
+# A personal RepoBoard: work is discovered from GitHub involvement and
+# factory sandboxes; nothing is declared in spec (docs/design/repoboard.md).
+apiVersion: board.gemini.google.com/v1alpha1
+kind: RepoBoard
+metadata:
+  name: gemini-for-kubernetes-development
+spec:
+  repoURL: https://github.com/gke-labs/gemini-for-kubernetes-development

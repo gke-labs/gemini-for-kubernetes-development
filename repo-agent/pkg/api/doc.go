@@ -15,6 +15,6 @@ limitations under the License.
 */
 
 // Package api provides the HTTP server and handlers for the repo-agent.
-// It exposes endpoints for managing RepoWatches, Sandboxes, and interacting
-// with the frontend UI.
+// It exposes the RepoBoard work-queue endpoints, the Overseer admin and
+// token-usage views, and auth/settings/terminal plumbing for the UI.
 package api

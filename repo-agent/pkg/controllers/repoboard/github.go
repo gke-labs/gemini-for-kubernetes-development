@@ -35,8 +35,7 @@ import (
 )
 
 // Wire contract with the factory CLI (identity secret keys) and the
-// existing tenant secrets. Matches pkg/controllers/repowatch, which retires
-// with RepoWatch.
+// existing tenant secrets.
 const (
 	githubSecretName = "github-pat"
 	geminiSecretName = "gemini-vscode-tokens"
@@ -122,9 +121,6 @@ func githubClientFromToken(ctx context.Context, token string) *github.Client {
 // ensureFactoryUserSecret materializes a member's identity as the
 // factory-user Secret factory invocations consume, refreshed each reconcile
 // so token rotations propagate. Email may be empty (noreply fallback).
-// (This duty moves to the login/bootstrap path when the repowatch
-// controller retires; boards keep their own sync so they work standalone
-// meanwhile.)
 func (r *Reconciler) ensureFactoryUserSecret(ctx context.Context, namespace, login, email string) error {
 	token, err := r.executorToken(ctx, namespace)
 	if err != nil {

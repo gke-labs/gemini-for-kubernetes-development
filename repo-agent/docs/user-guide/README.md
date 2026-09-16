@@ -10,10 +10,7 @@ This directory contains user guides for the Repo Agent.
 
 ## Configuration
 
-*   [RepoWatch Configuration](repowatch-configuration.md)
-*   Review Prompts <!-- TODO -->
-*   Issue Handlers <!-- TODO -->
-*   DevContainer Integration <!-- TODO -->
+*   [RepoBoard Design & Configuration](../design/repoboard.md)
 *   ConfigDir <!-- TODO -->
 
 ## Features

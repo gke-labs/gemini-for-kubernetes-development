@@ -94,11 +94,8 @@ jobs:
           - github-mcp-server
           #- repowatch-controller
           #- review-api
-          #- repo-sandbox
           #- review-ui
           #- syncer
-          - generic-golang
-          - dind-golang
     permissions:
       contents: read
       packages: write

@@ -1,0 +1,7 @@
+apiVersion: board.gemini.google.com/v1alpha1
+kind: RepoBoard
+metadata:
+  name: rbt-gfkd
+  namespace: repo-agent-system
+spec:
+  repoURL: https://github.com/gke-labs/gemini-for-kubernetes-development
