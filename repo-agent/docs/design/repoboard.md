@@ -364,10 +364,11 @@ Foreseeable additive-factory candidates (flagged now, not approved):
 4. **Overseer convergence** — whether RepoBoard eventually absorbs the
    Overseer CR as `writePolicy: bot`. Out of scope here; the design keeps
    the door open.
-5. **D-dev: dev-sandbox fate at RepoWatch end-of-life.** Recommended (and
-   assumed by Phase 5): drop the feature and its stack entirely; a future
-   workspace product, if wanted, is rebuilt on factory sandboxes. The
-   alternative — porting DevSpec onto its own CRD while keeping
-   taskrunner/SandboxTask alive — preserves the feature but defeats the
-   full-deprecation goal. Needs an owner call on whether dev sandboxes
-   have users worth a rebuild commitment.
+5. **D-dev: dev-sandbox fate at RepoWatch end-of-life** — *resolved
+   (owner, 2026-09-16)*: the feature is useful but is dropped with
+   RepoWatch and reimplemented fresh later, on factory sandboxes, with no
+   scheduled timeline ("break it to make it"). The rebuild's headline is
+   the **VS Code angle** (browser IDE attached to an agent sandbox); when
+   picked up, it starts as its own design (`Workspace`) with
+   `factory sandbox` + `connect`/`sshd` as the base, and inherits none of
+   the legacy stack (SandboxTask/taskrunner/repo-sandbox).
