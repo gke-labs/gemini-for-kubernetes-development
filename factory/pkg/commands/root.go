@@ -89,6 +89,10 @@ coding tasks without local side effects or host dependencies.`,
 	fixCmd.GroupID = "workflows"
 	cmd.AddCommand(fixCmd)
 
+	triageCmd := NewTriageCommand(ctx)
+	triageCmd.GroupID = "workflows"
+	cmd.AddCommand(triageCmd)
+
 	prCmd := NewPRCommand(ctx)
 	prCmd.GroupID = "workflows"
 	cmd.AddCommand(prCmd)
