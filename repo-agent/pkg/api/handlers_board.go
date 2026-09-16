@@ -24,6 +24,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -79,10 +80,48 @@ func (s *Server) getBoard(ctx context.Context, namespace, name string) (*unstruc
 	return s.K8sManager.Client.Resource(repoBoardGVR).Namespace(namespace).Get(ctx, name, v1.GetOptions{})
 }
 
-// boardMember applies the phase-1 membership rule: the board lives in the
-// session namespace; mode list additionally requires the session user in
-// allow. Returns the member login used for involvement queries.
-func boardMember(board *unstructured.Unstructured, sessionUser string) (string, error) {
+// repoPermCache caches "does this user's token have push on that repo"
+// verdicts (design §4.1: ~15 min, so GitHub-side revocation propagates).
+var repoPermCache = struct {
+	sync.Mutex
+	entries map[string]repoPermEntry
+}{entries: map[string]repoPermEntry{}}
+
+type repoPermEntry struct {
+	allowed bool
+	expires time.Time
+}
+
+func (s *Server) hasPushPermission(ctx context.Context, namespace, sessionUser, repoURL string) bool {
+	key := sessionUser + "|" + repoURL
+	repoPermCache.Lock()
+	if e, ok := repoPermCache.entries[key]; ok && time.Now().Before(e.expires) {
+		repoPermCache.Unlock()
+		return e.allowed
+	}
+	repoPermCache.Unlock()
+
+	allowed := false
+	if owner, repo, err := parseRepoURL(repoURL); err == nil {
+		if token, err := s.memberToken(ctx, namespace); err == nil {
+			gh := githubClientForToken(ctx, token)
+			if repository, _, err := gh.Repositories.Get(ctx, owner, repo); err == nil {
+				perms := repository.GetPermissions()
+				allowed = perms["push"] || perms["maintain"] || perms["admin"]
+			}
+		}
+	}
+	repoPermCache.Lock()
+	repoPermCache.entries[key] = repoPermEntry{allowed: allowed, expires: time.Now().Add(15 * time.Minute)}
+	repoPermCache.Unlock()
+	return allowed
+}
+
+// boardMember applies the access gates (design §4.1): the viewer is a
+// member if the board lives in their namespace, their login is in the
+// allow list (mode list), or their own token proves push+ on the repo
+// (mode github). Returns the member login used for involvement queries.
+func (s *Server) boardMember(ctx context.Context, board *unstructured.Unstructured, namespace, sessionUser string) (string, error) {
 	mode, _, _ := unstructured.NestedString(board.Object, "spec", "access", "mode")
 	if mode == "list" {
 		allow, _, _ := unstructured.NestedStringSlice(board.Object, "spec", "access", "allow")
@@ -93,21 +132,60 @@ func boardMember(board *unstructured.Unstructured, sessionUser string) (string, 
 		}
 		return "", fmt.Errorf("user %s is not a member of board %s", sessionUser, board.GetName())
 	}
-	// mode github (or empty): personal-phase boards live in the member's own
-	// namespace; repo-permission verification arrives with shared boards.
-	return sessionUser, nil
+	// mode github (or empty)
+	if board.GetNamespace() == namespace {
+		return sessionUser, nil
+	}
+	repoURL, _, _ := unstructured.NestedString(board.Object, "spec", "repoURL")
+	if s.hasPushPermission(ctx, namespace, sessionUser, repoURL) {
+		return sessionUser, nil
+	}
+	return "", fmt.Errorf("user %s has no push permission on %s", sessionUser, repoURL)
+}
+
+// visibleBoards lists boards across namespaces the session may see.
+func (s *Server) visibleBoards(ctx context.Context, namespace, sessionUser string) []unstructured.Unstructured {
+	list, err := s.K8sManager.Client.Resource(repoBoardGVR).Namespace("").List(ctx, v1.ListOptions{})
+	if err != nil {
+		return nil
+	}
+	var visible []unstructured.Unstructured
+	for _, item := range list.Items {
+		if _, err := s.boardMember(ctx, &item, namespace, sessionUser); err == nil {
+			visible = append(visible, item)
+		}
+	}
+	return visible
+}
+
+// resolveBoard finds a visible board by name, preferring the session
+// namespace on name collisions.
+func (s *Server) resolveBoard(ctx context.Context, namespace, sessionUser, name string) (*unstructured.Unstructured, string, error) {
+	if board, err := s.getBoard(ctx, namespace, name); err == nil {
+		member, err := s.boardMember(ctx, board, namespace, sessionUser)
+		if err == nil {
+			return board, member, nil
+		}
+	}
+	for _, board := range s.visibleBoards(ctx, namespace, sessionUser) {
+		if board.GetName() == name {
+			member, err := s.boardMember(ctx, &board, namespace, sessionUser)
+			if err != nil {
+				return nil, "", err
+			}
+			b := board
+			return &b, member, nil
+		}
+	}
+	return nil, "", fmt.Errorf("board %s not found", name)
 }
 
 func (s *Server) getBoards(c *gin.Context) {
 	namespace := s.Auth.GetNamespaceFromContext(c)
-	list, err := s.K8sManager.Client.Resource(repoBoardGVR).Namespace(namespace).List(c.Request.Context(), v1.ListOptions{})
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list boards", "details": err.Error()})
-		return
-	}
+	sessionUser := s.Auth.GetUserFromContext(c)
 
 	boards := []models.Board{}
-	for _, item := range list.Items {
+	for _, item := range s.visibleBoards(c.Request.Context(), namespace, sessionUser) {
 		repoURL, _, _ := unstructured.NestedString(item.Object, "spec", "repoURL")
 		needsHuman, _, _ := unstructured.NestedInt64(item.Object, "status", "counts", "needsHuman")
 		active, _, _ := unstructured.NestedInt64(item.Object, "status", "counts", "active")
@@ -128,14 +206,9 @@ func (s *Server) getBoardWork(c *gin.Context) {
 	namespace := s.Auth.GetNamespaceFromContext(c)
 	sessionUser := s.Auth.GetUserFromContext(c)
 
-	board, err := s.getBoard(ctx, namespace, c.Param("board"))
+	board, member, err := s.resolveBoard(ctx, namespace, sessionUser, c.Param("board"))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Board not found"})
-		return
-	}
-	member, err := boardMember(board, sessionUser)
-	if err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		c.JSON(http.StatusForbidden, gin.H{"error": "Board not accessible", "details": err.Error()})
 		return
 	}
 
@@ -154,11 +227,26 @@ func (s *Server) getBoardWork(c *gin.Context) {
 	}
 	gh := githubClientForToken(ctx, token)
 
-	sandboxes, err := s.boardSandboxes(ctx, namespace, owner, repo)
-	if err != nil {
-		log.Info("failed to list sandboxes", "err", err)
-		sandboxes = map[string]*unstructured.Unstructured{}
+	// Sandboxes live where claims point: the board namespace plus every
+	// namespace named by an assignee claim on this repo's items.
+	sandboxNamespaces := map[string]bool{}
+	sandboxes := map[string]*unstructured.Unstructured{}
+	loadSandboxNamespace := func(ns string) {
+		if ns == "" || sandboxNamespaces[ns] {
+			return
+		}
+		sandboxNamespaces[ns] = true
+		got, err := s.boardSandboxes(ctx, ns, owner, repo)
+		if err != nil {
+			log.Info("failed to list sandboxes", "namespace", ns, "err", err)
+			return
+		}
+		for k, v := range got {
+			sandboxes[k] = v
+		}
 	}
+	loadSandboxNamespace(board.GetNamespace())
+	loadSandboxNamespace(namespace)
 
 	items := map[string]*models.WorkItem{}
 
@@ -175,14 +263,22 @@ func (s *Server) getBoardWork(c *gin.Context) {
 	if err != nil {
 		log.Info("failed to list assigned issues", "err", err)
 	}
-	collect(assigned)
+	var labeled []*github.Issue
 	if triggerLabel != "" {
-		labeled, err := listIssues(ctx, gh, owner, repo, &github.IssueListByRepoOptions{State: "open", Labels: []string{triggerLabel}})
+		labeled, err = listIssues(ctx, gh, owner, repo, &github.IssueListByRepoOptions{State: "open", Labels: []string{triggerLabel}})
 		if err != nil {
 			log.Info("failed to list labeled issues", "err", err)
 		}
-		collect(labeled)
 	}
+	// Load claimed executors' namespaces before merging rows so their
+	// sandboxes surface on the shared board.
+	for _, issue := range append(append([]*github.Issue{}, assigned...), labeled...) {
+		for _, a := range issue.Assignees {
+			loadSandboxNamespace(strings.ToLower(a.GetLogin()))
+		}
+	}
+	collect(assigned)
+	collect(labeled)
 
 	// PRs: authored by / review-requested to the member, trigger-labeled, or
 	// with an existing factory sandbox.
@@ -421,14 +517,9 @@ func (s *Server) kickoff(c *gin.Context, kind string) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid number"})
 		return
 	}
-	board, err := s.getBoard(ctx, namespace, c.Param("board"))
+	board, member, err := s.resolveBoard(ctx, namespace, sessionUser, c.Param("board"))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Board not found"})
-		return
-	}
-	member, err := boardMember(board, sessionUser)
-	if err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		c.JSON(http.StatusForbidden, gin.H{"error": "Board not accessible", "details": err.Error()})
 		return
 	}
 	repoURL, _, _ := unstructured.NestedString(board.Object, "spec", "repoURL")
@@ -480,7 +571,7 @@ func (s *Server) kickoff(c *gin.Context, kind string) {
 	b, _ := json.Marshal(requests)
 	annotations[annoBoardRequests] = string(b)
 	board.SetAnnotations(annotations)
-	if _, err := s.K8sManager.Client.Resource(repoBoardGVR).Namespace(namespace).Update(ctx, board, v1.UpdateOptions{}); err != nil {
+	if _, err := s.K8sManager.Client.Resource(repoBoardGVR).Namespace(board.GetNamespace()).Update(ctx, board, v1.UpdateOptions{}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to record request", "details": err.Error()})
 		return
 	}
@@ -495,11 +586,12 @@ func (s *Server) rerunBoardPR(c *gin.Context)    { s.rerunBoardWork(c, "prs") }
 func (s *Server) rerunBoardWork(c *gin.Context, kind string) {
 	ctx := c.Request.Context()
 	namespace := s.Auth.GetNamespaceFromContext(c)
+	sessionUser := s.Auth.GetUserFromContext(c)
 
 	number := c.Param("id")
-	board, err := s.getBoard(ctx, namespace, c.Param("board"))
+	board, _, err := s.resolveBoard(ctx, namespace, sessionUser, c.Param("board"))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Board not found"})
+		c.JSON(http.StatusForbidden, gin.H{"error": "Board not accessible", "details": err.Error()})
 		return
 	}
 	repoURL, _, _ := unstructured.NestedString(board.Object, "spec", "repoURL")
@@ -509,24 +601,38 @@ func (s *Server) rerunBoardWork(c *gin.Context, kind string) {
 		return
 	}
 
-	var sandboxName, annotation string
+	// Fix sandboxes live in the executor's namespace (session user for
+	// their own reruns); review sandboxes live in the board namespace.
+	var sandboxNS, sandboxName, annotation string
 	switch kind {
 	case "issues":
-		sandboxName = fmt.Sprintf("fix-%s-%s", repo, number)
 		annotation = annoRefixRequest
-	case "prs":
-		sandboxes, err := s.boardSandboxes(ctx, namespace, owner, repo)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
+		name := fmt.Sprintf("fix-%s-%s", repo, number)
+		for _, ns := range []string{namespace, board.GetNamespace()} {
+			if sandboxes, err := s.boardSandboxes(ctx, ns, owner, repo); err == nil {
+				if _, ok := sandboxes[name]; ok {
+					sandboxNS, sandboxName = ns, name
+					break
+				}
+			}
 		}
-		for name, sb := range sandboxes {
-			if sb.GetLabels()["factory.gemini.google.com/pr"] == number {
-				sandboxName = name
+	case "prs":
+		annotation = annoRereviewRequest
+		for _, ns := range []string{board.GetNamespace(), namespace} {
+			sandboxes, err := s.boardSandboxes(ctx, ns, owner, repo)
+			if err != nil {
+				continue
+			}
+			for name, sb := range sandboxes {
+				if sb.GetLabels()["factory.gemini.google.com/pr"] == number {
+					sandboxNS, sandboxName = ns, name
+					break
+				}
+			}
+			if sandboxName != "" {
 				break
 			}
 		}
-		annotation = annoRereviewRequest
 	default:
 		c.JSON(http.StatusBadRequest, gin.H{"error": "kind must be issues or prs"})
 		return
@@ -535,7 +641,7 @@ func (s *Server) rerunBoardWork(c *gin.Context, kind string) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "no sandbox for this item yet"})
 		return
 	}
-	if err := s.K8sManager.UpdateSandboxAnnotation(ctx, namespace, sandboxName, annotation, nowRFC3339()); err != nil {
+	if err := s.K8sManager.UpdateSandboxAnnotation(ctx, sandboxNS, sandboxName, annotation, nowRFC3339()); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to request re-run", "details": err.Error()})
 		return
 	}

@@ -294,3 +294,41 @@ func TestCreateAndDeleteBoard(t *testing.T) {
 		t.Errorf("board still exists after delete")
 	}
 }
+
+// Shared boards (mode github) are visible only when the viewer's own token
+// proves push permission on the repo.
+func TestSharedBoardPermissionGate(t *testing.T) {
+	mkBoard := func(repoURL string) *unstructured.Unstructured {
+		return &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "board.gemini.google.com/v1alpha1",
+			"kind":       "RepoBoard",
+			"metadata":   map[string]interface{}{"name": "shared", "namespace": "board-kcc"},
+			"spec": map[string]interface{}{
+				"repoURL": repoURL,
+				"access":  map[string]interface{}{"mode": "github"},
+			},
+		}}
+	}
+
+	run := func(t *testing.T, repoURL, permsJSON string) int {
+		t.Helper()
+		repoPermCache.Lock()
+		repoPermCache.entries = map[string]repoPermEntry{}
+		repoPermCache.Unlock()
+
+		apiPath := strings.Replace(repoURL, "https://github.com", "https://api.github.com/repos", 1)
+		_, r, _ := boardTestServer(t, map[string]string{apiPath: permsJSON}, mkBoard(repoURL))
+		r.GET("/boards", func(c *gin.Context) {})
+		req, _ := http.NewRequest("GET", "/board/shared/work", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		return w.Code
+	}
+
+	if code := run(t, "https://github.com/test/repo-yes", `{"permissions": {"push": true}}`); code == http.StatusForbidden {
+		t.Errorf("maintainer should access shared board, got %d", code)
+	}
+	if code := run(t, "https://github.com/test/repo-no", `{"permissions": {"pull": true}}`); code != http.StatusForbidden {
+		t.Errorf("non-maintainer should be forbidden, got %d", code)
+	}
+}
