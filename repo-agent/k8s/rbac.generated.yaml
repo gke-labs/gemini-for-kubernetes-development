@@ -61,6 +61,24 @@ rules:
   - update
   - watch
 - apiGroups:
+  - board.gemini.google.com
+  resources:
+  - repoboards
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - board.gemini.google.com
+  resources:
+  - repoboards/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
   - custom.agents.x-k8s.io
   resources:
   - sandboxtasks

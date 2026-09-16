@@ -36,8 +36,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
+	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
 	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
 	sandboxtaskv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/controllers/repoboard"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/controllers/repowatch"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
 	//+kubebuilder:scaffold:imports
@@ -52,6 +54,7 @@ func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
 	utilruntime.Must(reviewv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(boardv1alpha1.AddToScheme(scheme))
 	utilruntime.Must(sandboxtaskv1alpha1.AddToScheme(scheme))
 	//+kubebuilder:scaffold:scheme
 }
@@ -108,6 +111,15 @@ func main() {
 		ForceSandboxMode: forceSandboxMode,
 	}).SetupWithManager(mgr, concurrentReconciles); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "RepoWatch")
+		os.Exit(1)
+	}
+
+	if err = (&repoboard.Reconciler{
+		Client:  mgr.GetClient(),
+		Scheme:  mgr.GetScheme(),
+		Factory: factorycli.NewRunner(),
+	}).SetupWithManager(mgr, concurrentReconciles); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "RepoBoard")
 		os.Exit(1)
 	}
 	//+kubebuilder:scaffold:builder
