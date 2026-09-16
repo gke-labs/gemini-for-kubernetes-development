@@ -155,8 +155,8 @@ Deliberately absent, and why:
 - **No full `status.work`.** The board is computed live by the API
   (GitHub + sandboxes), overseer-dashboard style; status keeps only
   conditions and counts for `kubectl` ergonomics.
-- **No dev section.** Dev sandboxes stay on RepoWatch until their own
-  redesign (future `Workspace` CRD).
+- **No dev section.** Dev sandboxes stay on RepoWatch during the rollout
+  and are retired with it in Phase 5 (decision D-dev, §11).
 
 Per-user state (auto-fix opt-in per board, notification prefs) lives in the
 member's own namespace, managed via `/api/board/:name/settings` — never in
@@ -297,9 +297,26 @@ repo-agent are acceptable throughout (per the migration constraints).
   factory-CLI migration's D4 item, shipped as an `.agents/` definition run
   via `factory agent create --local`) and draft-review intake under
   `prepIdentity`.
-- **Phase 4 — auto tier + cleanup.** Two-key auto-fix, review-request
-  pre-drafting; delete legacy endpoints/models; RepoWatch shrinks to the
-  dev-sandbox feature pending the Workspace redesign.
+- **Phase 4 — auto tier.** Two-key auto-fix, review-request pre-drafting;
+  legacy endpoints/models deleted as boards absorb them.
+- **Phase 5 — RepoWatch end-of-life.** RepoWatch is deprecated *completely*:
+  CRD, controller, API endpoints (`/api/repos*`, legacy `/prs` `/issues`
+  plumbing), UI (tabs, AddRepo/UpdateRepo YAML flows), and the dev-sandbox
+  stack that was RepoWatch's last tenant — DevSpec, the SandboxTask CRD,
+  `pkg/taskrunner`, `pkg/tasks`, `pkg/llm`, `pkg/agentoutput`,
+  `cmd/gemini-stream-processor`, `cmd/repo-sandbox`, code-server/agentserver
+  packages, the dev UI (DevCard/DevSidebar/ExplorationGroup), the
+  repo-sandbox/generic-golang/dind-golang images, and their manifests.
+  What survives is the RepoBoard product plus the shared shell: auth +
+  namespace bootstrap, `pkg/factorycli`, the Terminal component (over
+  `factory sshd`), and — untouched as always — the Overseer admin and
+  TokenUsage views that serve the overseer stack. Migration for operators:
+  boards are one-URL onboarding, so "delete RepoWatch CRs, add boards" is
+  the entire runbook; no conversion tooling.
+  *Gating decision (D-dev, §11): dev sandboxes are dropped, not migrated.
+  If a workspace product is wanted later, it is rebuilt fresh on factory
+  sandboxes (`factory sandbox` / `connect` / `sshd` exist today) rather
+  than by carrying the legacy execution stack.*
 
 ## 10. Non-goals and boundaries
 
@@ -347,3 +364,10 @@ Foreseeable additive-factory candidates (flagged now, not approved):
 4. **Overseer convergence** — whether RepoBoard eventually absorbs the
    Overseer CR as `writePolicy: bot`. Out of scope here; the design keeps
    the door open.
+5. **D-dev: dev-sandbox fate at RepoWatch end-of-life.** Recommended (and
+   assumed by Phase 5): drop the feature and its stack entirely; a future
+   workspace product, if wanted, is rebuilt on factory sandboxes. The
+   alternative — porting DevSpec onto its own CRD while keeping
+   taskrunner/SandboxTask alive — preserves the feature but defeats the
+   full-deprecation goal. Needs an owner call on whether dev sandboxes
+   have users worth a rebuild commitment.
