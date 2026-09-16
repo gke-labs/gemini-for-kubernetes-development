@@ -332,3 +332,44 @@ func TestSharedBoardPermissionGate(t *testing.T) {
 		t.Errorf("non-maintainer should be forbidden, got %d", code)
 	}
 }
+
+// Settings roundtrip: the opt-in lands in the session member's own
+// namespace keyed by the board.
+func TestBoardSettings(t *testing.T) {
+	server, r, _ := boardTestServer(t, map[string]string{}, boardCR())
+	r.GET("/board/:board/settings", server.getBoardSettings)
+	r.PUT("/board/:board/settings", server.putBoardSettings)
+
+	req, _ := http.NewRequest("PUT", "/board/myboard/settings", strings.NewReader(`{"autoFix": true}`))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("put: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	cm, err := server.K8sManager.Clientset.CoreV1().ConfigMaps("alice").Get(context.Background(), "agent-preferences", v1.GetOptions{})
+	if err != nil {
+		t.Fatalf("prefs configmap missing: %v", err)
+	}
+	if cm.Data["autofix.alice.myboard"] != "true" {
+		t.Errorf("expected opt-in recorded, got %v", cm.Data)
+	}
+
+	req, _ = http.NewRequest("GET", "/board/myboard/settings", nil)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"autoFix":true`) {
+		t.Errorf("get: expected autoFix true, got %d %s", w.Code, w.Body.String())
+	}
+
+	req, _ = http.NewRequest("PUT", "/board/myboard/settings", strings.NewReader(`{"autoFix": false}`))
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("put off: expected 200, got %d", w.Code)
+	}
+	cm, _ = server.K8sManager.Clientset.CoreV1().ConfigMaps("alice").Get(context.Background(), "agent-preferences", v1.GetOptions{})
+	if _, ok := cm.Data["autofix.alice.myboard"]; ok {
+		t.Errorf("expected opt-in removed, got %v", cm.Data)
+	}
+}

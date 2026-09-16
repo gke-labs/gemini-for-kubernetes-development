@@ -30,6 +30,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
+	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 )
 
@@ -168,4 +169,22 @@ func (r *Reconciler) ensureFactoryUserSecret(ctx context.Context, namespace, log
 	}
 	existing.Data = desired.Data
 	return r.Update(ctx, existing)
+}
+
+// preferencesConfigMap holds a member's per-board opt-ins in their own
+// namespace; only the API (session-scoped) writes it — never the board CR,
+// so no board admin can flip another member's consent.
+const PreferencesConfigMap = "agent-preferences"
+
+// AutoFixPreferenceKey names the member-side auto-fix opt-in for a board.
+func AutoFixPreferenceKey(boardNamespace, boardName string) string {
+	return fmt.Sprintf("autofix.%s.%s", boardNamespace, boardName)
+}
+
+func (r *Reconciler) memberOptedInAutoFix(ctx context.Context, member string, board *boardv1alpha1.RepoBoard) bool {
+	cm := &corev1.ConfigMap{}
+	if err := r.Get(ctx, types.NamespacedName{Name: PreferencesConfigMap, Namespace: member}, cm); err != nil {
+		return false
+	}
+	return cm.Data[AutoFixPreferenceKey(board.Namespace, board.Name)] == "true"
 }
