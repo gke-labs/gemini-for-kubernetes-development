@@ -15,7 +15,7 @@
 // Package v1alpha1 contains the RepoBoard API Schema definitions
 // (design: docs/design/repoboard.md).
 // +kubebuilder:object:generate=true
-// +groupName=review.gemini.google.com
+// +groupName=board.gemini.google.com
 package v1alpha1
 
 import (
@@ -25,7 +25,7 @@ import (
 
 var (
 	// GroupVersion is group version used to register these objects.
-	GroupVersion = schema.GroupVersion{Group: "review.gemini.google.com", Version: "v1alpha1"}
+	GroupVersion = schema.GroupVersion{Group: "board.gemini.google.com", Version: "v1alpha1"}
 
 	// SchemeBuilder is used to add go types to the GroupVersionKind scheme.
 	SchemeBuilder = &scheme.Builder{GroupVersion: GroupVersion}

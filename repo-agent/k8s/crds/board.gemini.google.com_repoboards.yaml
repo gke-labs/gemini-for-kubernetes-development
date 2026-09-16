@@ -4,9 +4,9 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.19.0
-  name: repoboards.review.gemini.google.com
+  name: repoboards.board.gemini.google.com
 spec:
-  group: review.gemini.google.com
+  group: board.gemini.google.com
   names:
     kind: RepoBoard
     listKind: RepoBoardList

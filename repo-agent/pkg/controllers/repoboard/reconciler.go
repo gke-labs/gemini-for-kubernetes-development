@@ -87,8 +87,8 @@ type Reconciler struct {
 	NewGithubClient func(ctx context.Context, r *Reconciler, namespace string) (*github.Client, string, error)
 }
 
-//+kubebuilder:rbac:groups=review.gemini.google.com,resources=repoboards,verbs=get;list;watch;update;patch
-//+kubebuilder:rbac:groups=review.gemini.google.com,resources=repoboards/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups=board.gemini.google.com,resources=repoboards,verbs=get;list;watch;update;patch
+//+kubebuilder:rbac:groups=board.gemini.google.com,resources=repoboards/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=agents.x-k8s.io,resources=sandboxes,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
 
