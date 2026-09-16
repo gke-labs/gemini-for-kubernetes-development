@@ -4,8 +4,9 @@
 **Date:** 2026-09-16
 **Supersedes (incrementally):** the RepoWatch CRD and the Review/Issues tab UI.
 **Builds on:** the factory-CLI migration (`factory-cli-migration.md`) — factory
-is the only execution engine; this design changes nothing in `factory/` or
-`overseer/`.
+is the only execution engine. `overseer/` is not touched. `factory/` is not
+touched by default; strictly additive changes may be proposed with explicit
+approval (see §10).
 
 ## 1. Motivation
 
@@ -281,8 +282,8 @@ tab holding the current dev-sandbox UI as-is.
 ## 9. Rollout
 
 Each phase is an independently shippable PR series; breaking changes inside
-repo-agent are acceptable throughout (per the migration constraints), and
-`factory/`/`overseer/` are never touched.
+repo-agent are acceptable throughout (per the migration constraints).
+`overseer/` is never touched; any factory ask goes through the §10 gate.
 
 - **Phase 1 — read path.** RepoBoard CRD + controller (reusing the
   factorycli launcher and reconcile machinery from the migration); the
@@ -300,7 +301,39 @@ repo-agent are acceptable throughout (per the migration constraints), and
   pre-drafting; delete legacy endpoints/models; RepoWatch shrinks to the
   dev-sandbox feature pending the Workspace redesign.
 
-## 10. Open questions
+## 10. Non-goals and boundaries
+
+**RepoBoard is not overseer.** It borrows overseer's discovery *pattern*
+(trigger label + assignee → factory) but not its *job*. Explicit non-goals:
+workflow meta-skills, chores/cron, durable queues, bot identity pools, fleet
+operations, and any form of auto-publishing. The §2 invariant is the fence:
+the moment the board publishes to GitHub without a human key-turn, it has
+become a worse overseer. The creep test for future feature requests
+("auto-publish LOW-severity reviews?") is: *does the repo accept bot authors
+and want hands-off throughput?* Then the answer is "install overseer on that
+repo", not a board flag.
+
+**Dependency rules for this effort:**
+
+- `overseer/` — never modified, in any way.
+- `factory/` — not modified by default. Strictly **additive** changes (a new
+  flag or subcommand; no behavior change for existing callers, no wire-format
+  changes) may be proposed, each requiring explicit owner approval before any
+  factory PR is opened. Until approved, the repo-agent side ships with a
+  workaround or the feature waits.
+
+Foreseeable additive-factory candidates (flagged now, not approved):
+
+1. **Draft-PR support in `factory fix`** (e.g. a `--draft-pr` flag or env).
+   `policy.draftPR: true` — and the forced draft-PR rail on auto-fix — can
+   interim-ship via `--instruction` ("open the PR as a draft"), but that is
+   prompt-enforced, not guaranteed; a flag would make the safety rail hard.
+2. **Machine-readable output mode** (e.g. `--output json` on `fix`/
+   `pr review`). Today the controller parses the CODE REVIEW stdout banners
+   and `agent-output.txt` PR-URL lines — workable, but brittle as a
+   long-term contract.
+
+## 11. Open questions
 
 1. **Trigger-label taxonomy** — `agent`, `agent/fix`, `agent/review`,
    `agent/ready-for-human`? Becomes repo-visible vocabulary; pick once.
