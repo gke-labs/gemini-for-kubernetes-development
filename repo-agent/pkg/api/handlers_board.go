@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"sort"
 	"strconv"
@@ -29,6 +30,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/go-github/v39/github"
+	yamlv3 "go.yaml.in/yaml/v3"
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -781,4 +783,162 @@ func (s *Server) putBoardSettings(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusOK)
+}
+
+// Human-gated writes (design §6): publish a review draft, promote a draft
+// PR, or merge — always under the acting member's own token, so GitHub
+// re-enforces permissions and branch protection at the point of action.
+
+func (s *Server) boardWriteContext(c *gin.Context) (context.Context, *unstructured.Unstructured, string, string, string, int, bool) {
+	ctx := c.Request.Context()
+	namespace := s.Auth.GetNamespaceFromContext(c)
+	sessionUser := s.Auth.GetUserFromContext(c)
+
+	number, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid number"})
+		return ctx, nil, "", "", "", 0, false
+	}
+	board, _, err := s.resolveBoard(ctx, namespace, sessionUser, c.Param("board"))
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Board not accessible", "details": err.Error()})
+		return ctx, nil, "", "", "", 0, false
+	}
+	repoURL, _, _ := unstructured.NestedString(board.Object, "spec", "repoURL")
+	owner, repo, err := parseRepoURL(repoURL)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid repoURL on board"})
+		return ctx, nil, "", "", "", 0, false
+	}
+	token, err := s.memberToken(ctx, namespace)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "GitHub token unavailable", "details": err.Error()})
+		return ctx, nil, "", "", "", 0, false
+	}
+	return ctx, board, owner, repo, token, number, true
+}
+
+// publishBoardReview posts the stored (or payload-overridden) review draft
+// to GitHub as a pending review under the clicker's token.
+func (s *Server) publishBoardReview(c *gin.Context) {
+	ctx, board, owner, repo, token, number, ok := s.boardWriteContext(c)
+	if !ok {
+		return
+	}
+	var payload struct {
+		Review string `json:"review"`
+	}
+	_ = c.ShouldBindJSON(&payload)
+
+	// Resolve the review sandbox holding the draft.
+	var draftSB *unstructured.Unstructured
+	prStr := strconv.Itoa(number)
+	for _, ns := range []string{board.GetNamespace(), s.Auth.GetNamespaceFromContext(c)} {
+		sandboxes, err := s.boardSandboxes(ctx, ns, owner, repo)
+		if err != nil {
+			continue
+		}
+		for _, sb := range sandboxes {
+			if sb.GetLabels()["factory.gemini.google.com/pr"] == prStr && sb.GetAnnotations()["agentDraft"] != "" {
+				draftSB = sb
+				break
+			}
+		}
+		if draftSB != nil {
+			break
+		}
+	}
+
+	draft := payload.Review
+	if draft == "" && draftSB != nil {
+		draft = draftSB.GetAnnotations()["agentDraft"]
+	}
+	if draft == "" {
+		c.JSON(http.StatusNotFound, gin.H{"error": "no review draft to publish"})
+		return
+	}
+
+	agentOutput := &models.ReviewAgentOutput{}
+	reviewRequest := &github.PullRequestReviewRequest{}
+	if err := yamlv3.Unmarshal([]byte(draft), agentOutput); err != nil || agentOutput.Review == nil {
+		reviewRequest.Body = github.String(draft)
+	} else {
+		reviewRequest = agentOutput.Review.ToGitHubReviewRequest()
+	}
+	reviewRequest.Event = nil // pending (draft) review; the human finalizes on GitHub
+
+	gh := githubClientForToken(ctx, token)
+	if _, _, err := gh.PullRequests.CreateReview(ctx, owner, repo, number, reviewRequest); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to publish review", "details": err.Error()})
+		return
+	}
+	if draftSB != nil {
+		if err := s.K8sManager.UpdateSandboxAnnotation(ctx, draftSB.GetNamespace(), draftSB.GetName(), "reviewState", "submitted"); err == nil {
+			_ = s.K8sManager.ScaledownSandboxByName(ctx, draftSB.GetNamespace(), draftSB.GetName())
+		}
+	}
+	c.Status(http.StatusOK)
+}
+
+// promoteBoardPR marks a draft PR ready for review (GraphQL — the REST API
+// cannot un-draft) under the clicker's token.
+func (s *Server) promoteBoardPR(c *gin.Context) {
+	ctx, _, owner, repo, token, number, ok := s.boardWriteContext(c)
+	if !ok {
+		return
+	}
+	gh := githubClientForToken(ctx, token)
+	pr, _, err := gh.PullRequests.Get(ctx, owner, repo, number)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "PR not found", "details": err.Error()})
+		return
+	}
+	if !pr.GetDraft() {
+		c.Status(http.StatusOK)
+		return
+	}
+	if err := markPRReadyForReview(ctx, token, pr.GetNodeID()); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to promote draft PR", "details": err.Error()})
+		return
+	}
+	c.Status(http.StatusOK)
+}
+
+// mergeBoardPR merges under the clicker's token; GitHub branch protection
+// is the enforcement.
+func (s *Server) mergeBoardPR(c *gin.Context) {
+	ctx, _, owner, repo, token, number, ok := s.boardWriteContext(c)
+	if !ok {
+		return
+	}
+	gh := githubClientForToken(ctx, token)
+	if _, _, err := gh.PullRequests.Merge(ctx, owner, repo, number, "", &github.PullRequestOptions{MergeMethod: "squash"}); err != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "Merge failed", "details": err.Error()})
+		return
+	}
+	c.Status(http.StatusOK)
+}
+
+// markPRReadyForReview is injectable for tests.
+var markPRReadyForReview = func(ctx context.Context, token, nodeID string) error {
+	body, _ := json.Marshal(map[string]interface{}{
+		"query":     "mutation($id: ID!) { markPullRequestReadyForReview(input: {pullRequestId: $id}) { pullRequest { isDraft } } }",
+		"variables": map[string]string{"id": nodeID},
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.github.com/graphql", strings.NewReader(string(body)))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK || strings.Contains(string(respBody), `"errors"`) {
+		return fmt.Errorf("graphql markPullRequestReadyForReview failed: %s", string(respBody))
+	}
+	return nil
 }

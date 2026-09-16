@@ -373,3 +373,62 @@ func TestBoardSettings(t *testing.T) {
 		t.Errorf("expected opt-in removed, got %v", cm.Data)
 	}
 }
+
+// Publish posts the stored draft as a pending review under the member's
+// token and marks the sandbox submitted.
+func TestPublishBoardReview(t *testing.T) {
+	reviewSandbox := sandboxCR("factory-pr-42",
+		map[string]interface{}{"factory.gemini.google.com/managed": "true", "factory.gemini.google.com/pr": "42"},
+		map[string]interface{}{"agentDraft": "review:\n  body: ship it", "htmlURL": "https://github.com/test/repo/pull/42"}, 1)
+
+	server, r, dyn := boardTestServer(t, map[string]string{
+		"https://api.github.com/repos/test/repo/pulls/42/reviews": `{"id": 1}`,
+	}, boardCR(), reviewSandbox)
+	r.POST("/board/:board/prs/:id/publish", server.publishBoardReview)
+
+	req, _ := http.NewRequest("POST", "/board/myboard/prs/42/publish", strings.NewReader(`{}`))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	gvrSandbox := schema.GroupVersionResource{Group: "agents.x-k8s.io", Version: "v1alpha1", Resource: "sandboxes"}
+	sb, err := dyn.Resource(gvrSandbox).Namespace("alice").Get(context.Background(), "factory-pr-42", v1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sb.GetAnnotations()["reviewState"] != "submitted" {
+		t.Errorf("expected reviewState submitted, got %v", sb.GetAnnotations())
+	}
+}
+
+// Promote no-ops on a non-draft PR and calls the GraphQL mutation for a
+// draft one.
+func TestPromoteBoardPR(t *testing.T) {
+	called := false
+	prev := markPRReadyForReview
+	markPRReadyForReview = func(_ context.Context, _, nodeID string) error {
+		called = true
+		if nodeID != "NODE42" {
+			t.Errorf("unexpected node id %q", nodeID)
+		}
+		return nil
+	}
+	t.Cleanup(func() { markPRReadyForReview = prev })
+
+	server, r, _ := boardTestServer(t, map[string]string{
+		"https://api.github.com/repos/test/repo/pulls/42": `{"number": 42, "draft": true, "node_id": "NODE42"}`,
+	}, boardCR())
+	r.POST("/board/:board/prs/:id/promote", server.promoteBoardPR)
+
+	req, _ := http.NewRequest("POST", "/board/myboard/prs/42/promote", strings.NewReader(`{}`))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if !called {
+		t.Errorf("expected GraphQL promote to be called")
+	}
+}
