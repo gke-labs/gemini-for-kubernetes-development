@@ -85,28 +85,56 @@ func (r *Reconciler) memberGithubClient(ctx context.Context, namespace string) (
 	return clients.NewGitHubClientFromHTTP(tc), token, nil
 }
 
-// ensureFactoryUserSecret materializes the member's identity as the
+// executorToken resolves a member's GitHub token from their namespace
+// (namespace == GitHub login by tenancy convention). Errors mean the member
+// never onboarded.
+func (r *Reconciler) executorToken(ctx context.Context, namespace string) (string, error) {
+	secret := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Name: githubSecretName, Namespace: namespace}, secret); err != nil {
+		return "", err
+	}
+	token := githubTokenFromSecret(secret)
+	if token == "" {
+		return "", fmt.Errorf("no github token in secret %s/%s", namespace, githubSecretName)
+	}
+	return token, nil
+}
+
+// prepToken reads the shared board's prep-identity secret (factory-user
+// format) from the board namespace.
+func (r *Reconciler) prepToken(ctx context.Context, namespace, secretName string) (string, error) {
+	secret := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: namespace}, secret); err != nil {
+		return "", err
+	}
+	if v, ok := secret.Data[factoryKeyGithubToken]; ok && len(v) > 0 {
+		return string(v), nil
+	}
+	return "", fmt.Errorf("secret %s/%s has no %s", namespace, secretName, factoryKeyGithubToken)
+}
+
+func githubClientFromToken(ctx context.Context, token string) *github.Client {
+	tc := oauth2.NewClient(ctx, oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token}))
+	return clients.NewGitHubClientFromHTTP(tc)
+}
+
+// ensureFactoryUserSecret materializes a member's identity as the
 // factory-user Secret factory invocations consume, refreshed each reconcile
-// so token rotations propagate. (This duty moves to the login/bootstrap path
-// when the repowatch controller retires; boards keep their own sync so they
-// work standalone meanwhile.)
-func (r *Reconciler) ensureFactoryUserSecret(ctx context.Context, namespace string, user *github.User) error {
-	ghSecret := &corev1.Secret{}
-	if err := r.Get(ctx, types.NamespacedName{Name: githubSecretName, Namespace: namespace}, ghSecret); err != nil {
+// so token rotations propagate. Email may be empty (noreply fallback).
+// (This duty moves to the login/bootstrap path when the repowatch
+// controller retires; boards keep their own sync so they work standalone
+// meanwhile.)
+func (r *Reconciler) ensureFactoryUserSecret(ctx context.Context, namespace, login, email string) error {
+	token, err := r.executorToken(ctx, namespace)
+	if err != nil {
 		return err
 	}
-	token := githubTokenFromSecret(ghSecret)
-	if token == "" {
-		return fmt.Errorf("no github token in secret %s/%s", namespace, githubSecretName)
-	}
-
-	email := user.GetEmail()
 	if email == "" {
-		email = fmt.Sprintf("%s@users.noreply.github.com", user.GetLogin())
+		email = fmt.Sprintf("%s@users.noreply.github.com", login)
 	}
 	data := map[string][]byte{
 		factoryKeyGithubToken: []byte(token),
-		factoryKeyGithubLogin: []byte(user.GetLogin()),
+		factoryKeyGithubLogin: []byte(login),
 		factoryKeyGithubEmail: []byte(email),
 	}
 	geminiSecret := &corev1.Secret{}
@@ -128,7 +156,7 @@ func (r *Reconciler) ensureFactoryUserSecret(ctx context.Context, namespace stri
 		Data: data,
 	}
 	existing := &corev1.Secret{}
-	err := r.Get(ctx, types.NamespacedName{Name: factoryUserSecretName, Namespace: namespace}, existing)
+	err = r.Get(ctx, types.NamespacedName{Name: factoryUserSecretName, Namespace: namespace}, existing)
 	if apierrors.IsNotFound(err) {
 		return r.Create(ctx, desired)
 	}

@@ -18,6 +18,7 @@ package repoboard
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -354,4 +355,81 @@ func TestFollowUpPRWatch(t *testing.T) {
 	g.Expect(launches).To(gomega.HaveLen(1))
 	g.Expect(launches[0].Key).To(gomega.Equal("alice/prwatch-101"))
 	g.Expect(launches[0].PRWatchOpts.PRURL).To(gomega.Equal("https://github.com/test/repo/pull/101"))
+}
+
+// Shared board: execution routes to the consenting assignee's namespace with
+// their identity; a label applied by someone else never executes (degrades
+// to awaiting-go).
+func TestSharedBoardExecutorConsent(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	sharedBoard := &boardv1alpha1.RepoBoard{
+		ObjectMeta: metav1.ObjectMeta{Name: "kcc", Namespace: "board-kcc"},
+		Spec: boardv1alpha1.RepoBoardSpec{
+			RepoURL:      "https://github.com/test/repo",
+			Access:       boardv1alpha1.AccessSpec{Mode: "github"},
+			Triggers:     boardv1alpha1.TriggersSpec{Label: "agent"},
+			Limits:       boardv1alpha1.LimitsSpec{MaxActive: 5, MaxActivePerUser: 2},
+			PrepIdentity: boardv1alpha1.PrepIdentitySpec{SecretName: "prep-bot"},
+		},
+	}
+	prepSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "prep-bot", Namespace: "board-kcc"},
+		Data:       map[string][]byte{"GITHUB_TOKEN": []byte("gho_prep")},
+	}
+	bobSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "github-pat", Namespace: "bob"},
+		Data:       map[string][]byte{"oauth_pat": []byte("gho_bob")},
+	}
+
+	mkClient := func(events10, events11 string) *github.Client {
+		return clients.NewGitHubClientFromHTTP(&http.Client{Transport: &mockRoundTripper{responses: map[string]func() *http.Response{
+			"https://api.github.com/repos/test/repo/issues?labels=agent&per_page=100&state=open": jsonResp(`[
+				{"number": 10, "title": "bob self-labeled", "html_url": "https://github.com/test/repo/issues/10",
+				 "labels": [{"name": "agent"}], "assignees": [{"login": "bob"}]},
+				{"number": 11, "title": "carol labeled for bob", "html_url": "https://github.com/test/repo/issues/11",
+				 "labels": [{"name": "agent"}], "assignees": [{"login": "bob"}]}
+			]`),
+			"https://api.github.com/repos/test/repo/issues/10/events?per_page=100": jsonResp(events10),
+			"https://api.github.com/repos/test/repo/issues/11/events?per_page=100": jsonResp(events11),
+		}}})
+	}
+	ghClient := mkClient(
+		`[{"event": "labeled", "label": {"name": "agent"}, "actor": {"login": "bob"}}]`,
+		`[{"event": "labeled", "label": {"name": "agent"}, "actor": {"login": "carol"}}]`,
+	)
+
+	prevFromToken := newGithubClientFromToken
+	newGithubClientFromToken = func(_ context.Context, _ string) *github.Client { return ghClient }
+	t.Cleanup(func() { newGithubClientFromToken = prevFromToken })
+
+	fake := newFakeLauncher()
+	builder := clientfake.NewClientBuilder().WithScheme(testScheme()).WithStatusSubresource(&boardv1alpha1.RepoBoard{}).
+		WithObjects(sharedBoard, prepSecret, bobSecret)
+	r := &Reconciler{
+		Client:  builder.Build(),
+		Scheme:  testScheme(),
+		Factory: fake,
+		// Board namespace has no github-pat: personal path fails, prep path
+		// engages.
+		NewGithubClient: func(_ context.Context, _ *Reconciler, ns string) (*github.Client, string, error) {
+			return nil, "", fmt.Errorf("no github-pat in %s", ns)
+		},
+	}
+
+	_, err := r.Reconcile(context.Background(), reconcile.Request{NamespacedName: types.NamespacedName{Name: "kcc", Namespace: "board-kcc"}})
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	// Only issue 10 (labeled by its assignee bob) executes — as bob, in
+	// bob's namespace, with bob's token.
+	launches := fake.launches()
+	g.Expect(launches).To(gomega.HaveLen(1))
+	g.Expect(launches[0].Key).To(gomega.Equal("bob/fix-10"))
+	g.Expect(launches[0].FixOpts.Namespace).To(gomega.Equal("bob"))
+	g.Expect(launches[0].FixOpts.GithubToken).To(gomega.Equal("gho_bob"))
+
+	// Bob's factory-user secret was materialized in bob's namespace.
+	secret := &corev1.Secret{}
+	g.Expect(r.Get(context.Background(), types.NamespacedName{Name: "factory-user", Namespace: "bob"}, secret)).To(gomega.Succeed())
+	g.Expect(secret.Data["GITHUB_LOGIN"]).To(gomega.Equal([]byte("bob")))
 }

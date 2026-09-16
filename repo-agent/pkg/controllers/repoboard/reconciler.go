@@ -16,13 +16,10 @@ limitations under the License.
 
 // Package repoboard reconciles RepoBoard boards (docs/design/repoboard.md):
 // work is discovered from GitHub (trigger label + assignee, under the
-// executor-consent rule) and from the transient request mailbox; execution
-// runs through the factory CLI as the consenting member; GitHub and factory
-// sandboxes are the state, the CR is near-static config.
-//
-// Phase 1 scope: personal boards — the executor namespace is the board's
-// namespace. Shared boards (executor routed to the assignee's namespace)
-// arrive with the shared-board phase.
+// executor-consent rule) and from the transient request mailbox; attributed
+// execution runs through the factory CLI in the consenting member's own
+// namespace; draft-only reviews run in the board namespace. GitHub and
+// factory sandboxes are the state, the CR is near-static config.
 package repoboard
 
 import (
@@ -83,7 +80,7 @@ type Reconciler struct {
 	Factory factorycli.Launcher
 
 	// NewGithubClient is injectable for tests; defaults to
-	// memberGithubClient.
+	// memberGithubClient (token from the namespace's github-pat secret).
 	NewGithubClient func(ctx context.Context, r *Reconciler, namespace string) (*github.Client, string, error)
 }
 
@@ -91,6 +88,14 @@ type Reconciler struct {
 //+kubebuilder:rbac:groups=board.gemini.google.com,resources=repoboards/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=agents.x-k8s.io,resources=sandboxes,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
+
+// fixPlan is one consented fix to ensure: the executor is the member whose
+// identity and namespace run the task.
+type fixPlan struct {
+	issue    int
+	issueURL string
+	executor string
+}
 
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
@@ -106,68 +111,61 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{}, nil
 	}
 
-	// Phase 1: personal boards — member is the single allowed login (or the
-	// namespace name, which equals the GitHub login by tenancy convention),
-	// and execution happens in the board's own namespace.
-	member := board.Namespace
-	if board.Spec.Access.Mode == "list" && len(board.Spec.Access.Allow) > 0 {
-		member = board.Spec.Access.Allow[0]
+	// Discovery identity: a personal board (its namespace is a member
+	// namespace holding github-pat) reads with the member's token; a shared
+	// board reads with the prep identity. Discovery only reads GitHub —
+	// attributed writes always use the executor member's token.
+	work := &workState{board: board, owner: owner, repo: repo}
+	ghClient, err := r.discoveryClient(ctx, work)
+	if err != nil {
+		r.setCondition(ctx, board, "Auth", metav1.ConditionFalse, "DiscoveryIdentityUnavailable", err.Error())
+		return ctrl.Result{RequeueAfter: defaultRequeue}, nil
 	}
-	executorNS := board.Namespace
+	r.setCondition(ctx, board, "Auth", metav1.ConditionTrue, "Authenticated", "GitHub discovery identity available")
 
-	newClient := r.NewGithubClient
-	if newClient == nil {
-		newClient = func(ctx context.Context, r *Reconciler, ns string) (*github.Client, string, error) {
-			return r.memberGithubClient(ctx, ns)
+	// Build the work plan from GitHub (remote tier) and the mailbox
+	// (manual tier), applying the executor-consent rule.
+	var fixes []fixPlan
+	var reviews []int
+	if board.Spec.Triggers.Label != "" {
+		f, rv, err := r.discoverLabeled(ctx, ghClient, work)
+		if err != nil {
+			logger.Error(err, "trigger-label discovery failed")
 		}
+		fixes, reviews = f, rv
 	}
-	ghClient, githubToken, err := newClient(ctx, r, executorNS)
-	if err != nil {
-		r.setCondition(ctx, board, "Auth", metav1.ConditionFalse, "TokenMissing", err.Error())
-		return ctrl.Result{RequeueAfter: defaultRequeue}, nil
-	}
+	mailFixes, mailReviews := r.mailboxPlans(work)
+	fixes = append(fixes, mailFixes...)
+	reviews = append(reviews, mailReviews...)
 
-	user, _, err := ghClient.Users.Get(ctx, "")
-	if err != nil {
-		r.setCondition(ctx, board, "Auth", metav1.ConditionFalse, "TokenInvalid", err.Error())
-		return ctrl.Result{RequeueAfter: defaultRequeue}, nil
-	}
-	if err := r.ensureFactoryUserSecret(ctx, executorNS, user); err != nil {
-		logger.Error(err, "unable to sync factory-user secret", "namespace", executorNS)
-	}
-	r.setCondition(ctx, board, "Auth", metav1.ConditionTrue, "Authenticated", "GitHub authentication successful")
+	// Drop plans whose executor never onboarded (no namespace/token — we
+	// could not execute as them anyway).
+	fixes = r.filterOnboarded(ctx, logger, fixes)
 
-	sandboxes, err := r.listBoardSandboxes(ctx, executorNS, owner, repo)
-	if err != nil {
+	// Aggregate sandboxes across every involved namespace: the board's own,
+	// plus each planned executor's. (Sandboxes of past executors surface as
+	// long as their claim — the GitHub assignment — stands.)
+	namespaces := map[string]bool{board.Namespace: true}
+	for _, plan := range fixes {
+		namespaces[plan.executor] = true
+	}
+	if err := r.loadSandboxes(ctx, work, namespaces); err != nil {
 		return ctrl.Result{}, err
 	}
 
-	work := &workState{
-		board:      board,
-		owner:      owner,
-		repo:       repo,
-		member:     member,
-		executorNS: executorNS,
-		token:      githubToken,
-		sandboxes:  sandboxes,
+	for _, plan := range fixes {
+		r.ensureFix(ctx, work, plan)
 	}
-
-	// Remote tier: trigger-label discovery, gated by the executor-consent
-	// rule (assignee must be the member on a personal board).
-	if board.Spec.Triggers.Label != "" {
-		if err := r.discoverLabeled(ctx, ghClient, work); err != nil {
-			logger.Error(err, "trigger-label discovery failed")
-		}
+	for _, pr := range dedupeInts(reviews) {
+		r.ensureReview(ctx, work, pr)
 	}
 
 	// Resume in-flight reviews: harvest finished results and reattach after
 	// controller restarts, independent of how the review was triggered.
 	r.resumeReviews(ctx, work)
 
-	// Manual tier: consume the request mailbox (written by the API on the
-	// member's own click — consent is the click).
-	if err := r.consumeMailbox(ctx, work); err != nil {
-		logger.Error(err, "mailbox consumption failed")
+	if err := r.trimMailbox(ctx, work); err != nil {
+		logger.Error(err, "mailbox cleanup failed")
 	}
 
 	// Follow up factory-created PRs (investigate failures, address
@@ -187,47 +185,86 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 }
 
 type workState struct {
-	board      *boardv1alpha1.RepoBoard
-	owner      string
-	repo       string
-	member     string
-	executorNS string
-	token      string
-	sandboxes  map[string]*unstructured.Unstructured
+	board     *boardv1alpha1.RepoBoard
+	owner     string
+	repo      string
+	personal  bool   // board namespace is a member namespace
+	discToken string // discovery-identity token (reads only)
+	sandboxes []*unstructured.Unstructured
 }
 
 func (w *workState) fixSandboxName(issue int) string {
 	return factorycli.FixSandboxName(w.repo, issue)
 }
 
-func (r *Reconciler) listBoardSandboxes(ctx context.Context, namespace, owner, repo string) (map[string]*unstructured.Unstructured, error) {
-	list := &unstructured.UnstructuredList{}
-	list.SetGroupVersionKind(sandboxGVK)
-	if err := r.List(ctx, list, client.InNamespace(namespace), client.MatchingLabels{factorycli.LabelManaged: "true"}); err != nil {
-		return nil, err
-	}
-	byName := make(map[string]*unstructured.Unstructured)
-	repoHint := fmt.Sprintf("github.com/%s/%s/", owner, repo)
-	for i := range list.Items {
-		sb := &list.Items[i]
-		annotations := sb.GetAnnotations()
-		if annotations != nil {
-			if annoRepo := annotations["repo"]; annoRepo != "" && annoRepo != repo {
-				continue
-			}
-			if htmlURL := annotations["htmlURL"]; htmlURL != "" && !strings.Contains(htmlURL, repoHint) {
-				continue
-			}
+func (w *workState) findSandbox(namespace, name string) *unstructured.Unstructured {
+	for _, sb := range w.sandboxes {
+		if sb.GetNamespace() == namespace && sb.GetName() == name {
+			return sb
 		}
-		byName[sb.GetName()] = sb
 	}
-	return byName, nil
+	return nil
 }
 
-// discoverLabeled scans open issues and PRs carrying the trigger label.
-func (r *Reconciler) discoverLabeled(ctx context.Context, ghClient *github.Client, work *workState) error {
+func (w *workState) findPRSandbox(pr int) *unstructured.Unstructured {
+	prStr := strconv.Itoa(pr)
+	for _, sb := range w.sandboxes {
+		if sb.GetLabels()[factorycli.LabelPR] == prStr {
+			return sb
+		}
+	}
+	return nil
+}
+
+// discoveryClient resolves the identity used for GitHub reads and, for
+// personal boards, syncs the member's factory-user secret.
+func (r *Reconciler) discoveryClient(ctx context.Context, work *workState) (*github.Client, error) {
+	newClient := r.NewGithubClient
+	if newClient == nil {
+		newClient = func(ctx context.Context, r *Reconciler, ns string) (*github.Client, string, error) {
+			return r.memberGithubClient(ctx, ns)
+		}
+	}
+
+	if ghClient, token, err := newClient(ctx, r, work.board.Namespace); err == nil {
+		work.personal = true
+		work.discToken = token
+		user, _, err := ghClient.Users.Get(ctx, "")
+		if err != nil {
+			return nil, fmt.Errorf("github token invalid: %w", err)
+		}
+		if err := r.ensureFactoryUserSecret(ctx, work.board.Namespace, user.GetLogin(), user.GetEmail()); err != nil {
+			log.FromContext(ctx).Error(err, "unable to sync factory-user secret", "namespace", work.board.Namespace)
+		}
+		return ghClient, nil
+	}
+
+	// Shared board: prep identity holds a factory-user-format secret in the
+	// board namespace. Intake and review drafts never write to GitHub, so a
+	// bot identity is acceptable here.
+	secretName := work.board.Spec.PrepIdentity.SecretName
+	if secretName == "" {
+		return nil, fmt.Errorf("shared board requires spec.prepIdentity.secretName (no github-pat in namespace %s)", work.board.Namespace)
+	}
+	token, err := r.prepToken(ctx, work.board.Namespace, secretName)
+	if err != nil {
+		return nil, err
+	}
+	work.discToken = token
+	return newGithubClientFromToken(ctx, token), nil
+}
+
+// newGithubClientFromToken is injectable for tests.
+var newGithubClientFromToken = githubClientFromToken
+
+// discoverLabeled scans open items carrying the trigger label and returns
+// consented fix plans plus review candidates.
+func (r *Reconciler) discoverLabeled(ctx context.Context, ghClient *github.Client, work *workState) ([]fixPlan, []int, error) {
 	logger := log.FromContext(ctx)
 	label := work.board.Spec.Triggers.Label
+
+	var fixes []fixPlan
+	var reviews []int
 
 	opts := &github.IssueListByRepoOptions{
 		State:       "open",
@@ -237,61 +274,182 @@ func (r *Reconciler) discoverLabeled(ctx context.Context, ghClient *github.Clien
 	for {
 		items, resp, err := ghClient.Issues.ListByRepo(ctx, work.owner, work.repo, opts)
 		if err != nil {
-			return err
+			return fixes, reviews, err
 		}
 		for _, item := range items {
 			if vetoed(item.Labels, work.board.Spec.Intake.Filters.ExcludeLabels) {
 				continue
 			}
 			if item.IsPullRequest() {
-				r.ensureReview(ctx, work, item.GetNumber())
+				// Review drafts are unattributed prep — no consent needed.
+				reviews = append(reviews, item.GetNumber())
 				continue
 			}
-			// Executor-consent rule: on a personal board the executor is
-			// the member, so the item must be assigned to them. Unassigned
-			// or foreign-assigned labeled items surface as awaiting-go via
-			// the feed; they never execute here.
-			if !isAssignee(item, work.member) {
+			executor := r.consentedAssignee(ctx, ghClient, work, item)
+			if executor == "" {
 				logger.V(4).Info("labeled item awaiting assignee consent", "issue", item.GetNumber())
 				continue
 			}
-			r.ensureFix(ctx, work, item.GetNumber(), item.GetHTMLURL())
+			fixes = append(fixes, fixPlan{issue: item.GetNumber(), issueURL: item.GetHTMLURL(), executor: executor})
 		}
 		if resp.NextPage == 0 {
 			break
 		}
 		opts.Page = resp.NextPage
 	}
-	return nil
+	return fixes, reviews, nil
 }
 
-func isAssignee(issue *github.Issue, login string) bool {
+// consentedAssignee applies the executor-consent rule: an assignee may
+// execute if they applied the trigger label themselves (verified against the
+// issue's labeled events), or — personal-board fast path — the board lives
+// in the assignee's own namespace. Standing consent (auto-fix opt-in)
+// arrives with the intake phase.
+func (r *Reconciler) consentedAssignee(ctx context.Context, ghClient *github.Client, work *workState, issue *github.Issue) string {
+	var assignees []string
 	for _, a := range issue.Assignees {
-		if strings.EqualFold(a.GetLogin(), login) {
-			return true
-		}
+		assignees = append(assignees, a.GetLogin())
 	}
-	return false
-}
+	if len(assignees) == 0 {
+		return ""
+	}
 
-func vetoed(labels []*github.Label, excluded []string) bool {
-	for _, l := range labels {
-		for _, e := range excluded {
-			if strings.EqualFold(l.GetName(), e) {
-				return true
+	if work.personal {
+		for _, login := range assignees {
+			if strings.EqualFold(login, work.board.Namespace) {
+				return login
+			}
+		}
+		return ""
+	}
+
+	// Skip the events call when the work is already running or terminal:
+	// consent was established at launch time.
+	if sb := work.findAnySandboxNamed(work.fixSandboxName(issue.GetNumber())); sb != nil {
+		for _, login := range assignees {
+			if strings.EqualFold(login, sb.GetNamespace()) {
+				return login
 			}
 		}
 	}
-	return false
+
+	labeler := latestLabelerOf(ctx, ghClient, work, issue.GetNumber())
+	for _, login := range assignees {
+		if strings.EqualFold(login, labeler) {
+			return login
+		}
+	}
+	return ""
 }
 
-// ensureFix launches (or reattaches) a factory fix for the issue unless it
-// already reached a terminal state without a re-fix request.
-func (r *Reconciler) ensureFix(ctx context.Context, work *workState, issue int, issueURL string) {
+func (w *workState) findAnySandboxNamed(name string) *unstructured.Unstructured {
+	for _, sb := range w.sandboxes {
+		if sb.GetName() == name {
+			return sb
+		}
+	}
+	return nil
+}
+
+// latestLabelerOf returns the actor of the most recent trigger-label
+// "labeled" event on the issue.
+func latestLabelerOf(ctx context.Context, ghClient *github.Client, work *workState, issue int) string {
+	label := work.board.Spec.Triggers.Label
+	labeler := ""
+	opts := &github.ListOptions{PerPage: 100}
+	for {
+		events, resp, err := ghClient.Issues.ListIssueEvents(ctx, work.owner, work.repo, issue, opts)
+		if err != nil {
+			return ""
+		}
+		for _, ev := range events {
+			if ev.GetEvent() == "labeled" && strings.EqualFold(ev.GetLabel().GetName(), label) {
+				labeler = ev.GetActor().GetLogin()
+			}
+		}
+		if resp.NextPage == 0 {
+			return labeler
+		}
+		opts.Page = resp.NextPage
+	}
+}
+
+// mailboxPlans turns pending UI requests into plans; consent is the click,
+// recorded as the requesting member.
+func (r *Reconciler) mailboxPlans(work *workState) ([]fixPlan, []int) {
+	raw := work.board.GetAnnotations()[AnnotationRequests]
+	if raw == "" {
+		return nil, nil
+	}
+	requests := map[string]string{}
+	if err := json.Unmarshal([]byte(raw), &requests); err != nil {
+		return nil, nil
+	}
+	var fixes []fixPlan
+	var reviews []int
+	for key, member := range requests {
+		switch {
+		case strings.HasPrefix(key, "fix-"):
+			if n, err := strconv.Atoi(strings.TrimPrefix(key, "fix-")); err == nil {
+				fixes = append(fixes, fixPlan{issue: n, executor: member})
+			}
+		case strings.HasPrefix(key, "review-"):
+			if n, err := strconv.Atoi(strings.TrimPrefix(key, "review-")); err == nil {
+				reviews = append(reviews, n)
+			}
+		}
+	}
+	return fixes, reviews
+}
+
+func (r *Reconciler) filterOnboarded(ctx context.Context, logger interface{ Info(string, ...interface{}) }, fixes []fixPlan) []fixPlan {
+	kept := fixes[:0]
+	for _, plan := range fixes {
+		if plan.executor == "" {
+			continue
+		}
+		if _, err := r.executorToken(ctx, plan.executor); err != nil {
+			logger.Info("skipping fix: executor not onboarded", "issue", plan.issue, "executor", plan.executor)
+			continue
+		}
+		kept = append(kept, plan)
+	}
+	return kept
+}
+
+func (r *Reconciler) loadSandboxes(ctx context.Context, work *workState, namespaces map[string]bool) error {
+	repoHint := fmt.Sprintf("github.com/%s/%s/", work.owner, work.repo)
+	work.sandboxes = nil
+	for namespace := range namespaces {
+		list := &unstructured.UnstructuredList{}
+		list.SetGroupVersionKind(sandboxGVK)
+		if err := r.List(ctx, list, client.InNamespace(namespace), client.MatchingLabels{factorycli.LabelManaged: "true"}); err != nil {
+			return err
+		}
+		for i := range list.Items {
+			sb := &list.Items[i]
+			annotations := sb.GetAnnotations()
+			if annotations != nil {
+				if annoRepo := annotations["repo"]; annoRepo != "" && annoRepo != work.repo {
+					continue
+				}
+				if htmlURL := annotations["htmlURL"]; htmlURL != "" && !strings.Contains(htmlURL, repoHint) {
+					continue
+				}
+			}
+			work.sandboxes = append(work.sandboxes, sb)
+		}
+	}
+	return nil
+}
+
+// ensureFix launches (or reattaches) a factory fix as the plan's executor,
+// in the executor's namespace with the executor's identity.
+func (r *Reconciler) ensureFix(ctx context.Context, work *workState, plan fixPlan) {
 	logger := log.FromContext(ctx)
-	name := work.fixSandboxName(issue)
-	sb := work.sandboxes[name]
-	key := fmt.Sprintf("%s/fix-%d", work.executorNS, issue)
+	name := work.fixSandboxName(plan.issue)
+	sb := work.findSandbox(plan.executor, name)
+	key := fmt.Sprintf("%s/fix-%d", plan.executor, plan.issue)
 
 	if r.Factory.IsRunning(key) {
 		return
@@ -313,10 +471,23 @@ func (r *Reconciler) ensureFix(ctx context.Context, work *workState, issue int, 
 	if sb == nil && r.activeCount(work) >= work.board.Spec.Limits.MaxActive {
 		return
 	}
-	if issueURL == "" {
-		issueURL = fmt.Sprintf("https://github.com/%s/%s/issues/%d", work.owner, work.repo, issue)
+	if r.activeForExecutor(work, plan.executor) >= work.board.Spec.Limits.MaxActivePerUser && sb == nil {
+		return
 	}
 
+	token, err := r.executorToken(ctx, plan.executor)
+	if err != nil {
+		logger.Error(err, "executor token unavailable", "executor", plan.executor)
+		return
+	}
+	if err := r.ensureFactoryUserSecret(ctx, plan.executor, plan.executor, ""); err != nil {
+		logger.Error(err, "unable to sync executor factory-user secret", "executor", plan.executor)
+	}
+
+	issueURL := plan.issueURL
+	if issueURL == "" {
+		issueURL = fmt.Sprintf("https://github.com/%s/%s/issues/%d", work.owner, work.repo, plan.issue)
+	}
 	instruction := ""
 	if work.board.Spec.Policy.DraftPR == nil || *work.board.Spec.Policy.DraftPR {
 		instruction = draftPRInstruction
@@ -326,24 +497,25 @@ func (r *Reconciler) ensureFix(ctx context.Context, work *workState, issue int, 
 	}
 
 	if r.Factory.StartFix(key, factorycli.FixOptions{
-		Namespace:         work.executorNS,
+		Namespace:         plan.executor,
 		IssueURL:          issueURL,
 		Instruction:       instruction,
 		Image:             work.board.Spec.Sandbox.Image,
 		WorkspaceDiskSize: work.board.Spec.Sandbox.DiskSize,
-		GithubToken:       work.token,
+		GithubToken:       token,
 	}) {
-		logger.Info("launched factory fix", "issue", issue, "board", work.board.Name)
+		logger.Info("launched factory fix", "issue", plan.issue, "executor", plan.executor, "board", work.board.Name)
 	}
 }
 
-// ensureReview launches (or reattaches) a draft review for the PR and
-// harvests the resulting draft onto the sandbox.
+// ensureReview launches (or harvests) a draft review. Drafts are
+// unattributed prep: they run in the board namespace under the discovery
+// identity and write nothing to GitHub.
 func (r *Reconciler) ensureReview(ctx context.Context, work *workState, pr int) {
 	logger := log.FromContext(ctx)
-	key := fmt.Sprintf("%s/review-pr-%d", work.executorNS, pr)
+	key := fmt.Sprintf("%s/review-pr-%d", work.board.Namespace, pr)
 
-	sb := r.findPRSandbox(work, pr)
+	sb := work.findPRSandbox(pr)
 	draft := ""
 	if sb != nil {
 		draft = sb.GetAnnotations()[AnnotationAgentDraft]
@@ -355,7 +527,6 @@ func (r *Reconciler) ensureReview(ctx context.Context, work *workState, pr int) 
 		return
 	}
 
-	// Harvest a finished invocation before considering a launch.
 	if res, ok := r.Factory.LastResult(key); ok {
 		if res.Err == nil {
 			if yaml := factorycli.ExtractReviewYAML(res.Output); yaml != "" && sb != nil {
@@ -373,22 +544,25 @@ func (r *Reconciler) ensureReview(ctx context.Context, work *workState, pr int) 
 		return
 	}
 	if r.Factory.StartReview(key, factorycli.ReviewOptions{
-		Namespace:         work.executorNS,
+		Namespace:         work.board.Namespace,
 		PRURL:             fmt.Sprintf("https://github.com/%s/%s/pull/%d", work.owner, work.repo, pr),
 		Image:             work.board.Spec.Sandbox.Image,
 		WorkspaceDiskSize: work.board.Spec.Sandbox.DiskSize,
-		GithubToken:       work.token,
+		GithubToken:       work.discToken,
 	}) {
 		logger.Info("launched factory review", "pr", pr, "board", work.board.Name)
 	}
 }
 
-// resumeReviews revisits sandboxes that carry (or should carry) a review:
-// harvesting a finished invocation's draft, or relaunching an interrupted
-// review. Only sandboxes with review activity qualify — a fix sandbox
-// aliased to a PR never gets an unrequested review launched on it.
+// resumeReviews revisits board-namespace sandboxes that carry (or should
+// carry) a review: harvesting a finished invocation's draft or relaunching
+// an interrupted review. A fix sandbox aliased to a PR never gets an
+// unrequested review launched on it.
 func (r *Reconciler) resumeReviews(ctx context.Context, work *workState) {
 	for _, sb := range work.sandboxes {
+		if sb.GetNamespace() != work.board.Namespace {
+			continue
+		}
 		prStr := sb.GetLabels()[factorycli.LabelPR]
 		if prStr == "" {
 			continue
@@ -411,16 +585,6 @@ func (r *Reconciler) resumeReviews(ctx context.Context, work *workState) {
 	}
 }
 
-func (r *Reconciler) findPRSandbox(work *workState, pr int) *unstructured.Unstructured {
-	prStr := strconv.Itoa(pr)
-	for _, sb := range work.sandboxes {
-		if sb.GetLabels()[factorycli.LabelPR] == prStr {
-			return sb
-		}
-	}
-	return nil
-}
-
 // storeDraft stamps the draft and board decoration onto a factory sandbox.
 func (r *Reconciler) storeDraft(ctx context.Context, sb *unstructured.Unstructured, boardName, draftYAML string) error {
 	annotations := sb.GetAnnotations()
@@ -435,9 +599,8 @@ func (r *Reconciler) storeDraft(ctx context.Context, sb *unstructured.Unstructur
 	return r.Update(ctx, sb)
 }
 
-// consumeMailbox handles UI-initiated (discreet) kickoffs and clears entries
-// once the corresponding sandbox exists.
-func (r *Reconciler) consumeMailbox(ctx context.Context, work *workState) error {
+// trimMailbox clears request entries whose sandbox now exists.
+func (r *Reconciler) trimMailbox(ctx context.Context, work *workState) error {
 	raw := work.board.GetAnnotations()[AnnotationRequests]
 	if raw == "" {
 		return nil
@@ -448,29 +611,28 @@ func (r *Reconciler) consumeMailbox(ctx context.Context, work *workState) error 
 	}
 
 	remaining := map[string]string{}
-	for req := range requests {
+	for key, member := range requests {
 		switch {
-		case strings.HasPrefix(req, "fix-"):
-			issue, err := strconv.Atoi(strings.TrimPrefix(req, "fix-"))
-			if err != nil {
-				continue // drop malformed entries
-			}
-			if work.sandboxes[work.fixSandboxName(issue)] != nil {
-				continue // picked up: sandbox is the durable record
-			}
-			r.ensureFix(ctx, work, issue, "")
-			remaining[req] = requests[req]
-		case strings.HasPrefix(req, "review-"):
-			pr, err := strconv.Atoi(strings.TrimPrefix(req, "review-"))
+		case strings.HasPrefix(key, "fix-"):
+			n, err := strconv.Atoi(strings.TrimPrefix(key, "fix-"))
 			if err != nil {
 				continue
 			}
-			if r.findPRSandbox(work, pr) != nil {
+			if work.findSandbox(member, work.fixSandboxName(n)) != nil {
 				continue
 			}
-			r.ensureReview(ctx, work, pr)
-			remaining[req] = requests[req]
+		case strings.HasPrefix(key, "review-"):
+			n, err := strconv.Atoi(strings.TrimPrefix(key, "review-"))
+			if err != nil {
+				continue
+			}
+			if work.findPRSandbox(n) != nil {
+				continue
+			}
+		default:
+			continue
 		}
+		remaining[key] = member
 	}
 
 	if len(remaining) == len(requests) {
@@ -488,11 +650,11 @@ func (r *Reconciler) consumeMailbox(ctx context.Context, work *workState) error 
 }
 
 // followUpPRs keeps a factory pr watch running for every fix sandbox aliased
-// to an open PR.
+// to an open PR, in the sandbox owner's namespace with their identity.
 func (r *Reconciler) followUpPRs(ctx context.Context, work *workState) {
 	logger := log.FromContext(ctx)
-	for name, sb := range work.sandboxes {
-		if !strings.HasPrefix(name, "fix-") {
+	for _, sb := range work.sandboxes {
+		if !strings.HasPrefix(sb.GetName(), "fix-") {
 			continue
 		}
 		prNum := sb.GetLabels()[factorycli.LabelPR]
@@ -500,26 +662,31 @@ func (r *Reconciler) followUpPRs(ctx context.Context, work *workState) {
 		if prNum == "" || !strings.Contains(prURL, "/pull/") {
 			continue
 		}
-		key := fmt.Sprintf("%s/prwatch-%s", work.executorNS, prNum)
+		namespace := sb.GetNamespace()
+		key := fmt.Sprintf("%s/prwatch-%s", namespace, prNum)
 		if r.Factory.IsRunning(key) {
 			continue
 		}
 		if res, ok := r.Factory.LastResult(key); ok && time.Since(res.FinishedAt) < prWatchRelaunchInterval {
 			continue
 		}
+		token, err := r.executorToken(ctx, namespace)
+		if err != nil {
+			continue
+		}
 		if r.Factory.StartPRWatch(key, factorycli.PRWatchOptions{
-			Namespace:   work.executorNS,
+			Namespace:   namespace,
 			PRURL:       prURL,
-			GithubToken: work.token,
+			GithubToken: token,
 		}) {
-			logger.Info("launched factory pr watch", "pr", prNum, "board", work.board.Name)
+			logger.Info("launched factory pr watch", "pr", prNum, "namespace", namespace, "board", work.board.Name)
 		}
 	}
 }
 
 func (r *Reconciler) pauseFinished(ctx context.Context, work *workState, after time.Duration) {
 	logger := log.FromContext(ctx)
-	for name, sb := range work.sandboxes {
+	for _, sb := range work.sandboxes {
 		annotations := sb.GetAnnotations()
 		if annotations[AnnotationPreventAutoPause] == "true" {
 			continue
@@ -546,7 +713,7 @@ func (r *Reconciler) pauseFinished(ctx context.Context, work *workState, after t
 			continue
 		}
 		if err := r.Update(ctx, sb); err != nil {
-			logger.Error(err, "unable to pause sandbox", "sandbox", name)
+			logger.Error(err, "unable to pause sandbox", "sandbox", sb.GetName(), "namespace", sb.GetNamespace())
 		}
 	}
 }
@@ -554,6 +721,20 @@ func (r *Reconciler) pauseFinished(ctx context.Context, work *workState, after t
 func (r *Reconciler) activeCount(work *workState) int {
 	active := 0
 	for _, sb := range work.sandboxes {
+		replicas, found, err := unstructured.NestedInt64(sb.Object, "spec", "replicas")
+		if err == nil && found && replicas > 0 {
+			active++
+		}
+	}
+	return active
+}
+
+func (r *Reconciler) activeForExecutor(work *workState, namespace string) int {
+	active := 0
+	for _, sb := range work.sandboxes {
+		if sb.GetNamespace() != namespace {
+			continue
+		}
 		replicas, found, err := unstructured.NestedInt64(sb.Object, "spec", "replicas")
 		if err == nil && found && replicas > 0 {
 			active++
@@ -585,6 +766,18 @@ func (r *Reconciler) updateCounts(ctx context.Context, work *workState) {
 	}
 }
 
+func dedupeInts(in []int) []int {
+	seen := map[int]bool{}
+	out := in[:0]
+	for _, n := range in {
+		if !seen[n] {
+			seen[n] = true
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
 func rerunRequested(sb *unstructured.Unstructured, requestKey, completedKey string) bool {
 	if sb == nil {
 		return false
@@ -603,6 +796,17 @@ func rerunRequested(sb *unstructured.Unstructured, requestKey, completedKey stri
 
 func refixRequested(sb *unstructured.Unstructured) bool {
 	return rerunRequested(sb, AnnotationRefixRequested, factorycli.AnnotationCompletionTime)
+}
+
+func vetoed(labels []*github.Label, excluded []string) bool {
+	for _, l := range labels {
+		for _, e := range excluded {
+			if strings.EqualFold(l.GetName(), e) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (r *Reconciler) setCondition(ctx context.Context, board *boardv1alpha1.RepoBoard, condType string, status metav1.ConditionStatus, reason, message string) {
