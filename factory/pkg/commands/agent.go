@@ -148,6 +148,7 @@ func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 	if err != nil {
 		return fmt.Errorf("creating github client: %w", err)
 	}
+	repoClient := github.ForRepo(ghClient, owner, repo)
 
 	// Get agent definition
 	var content []byte
@@ -155,7 +156,7 @@ func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 	agentPath := flags.Agent
 	if strings.HasPrefix(agentPath, "http://") || strings.HasPrefix(agentPath, "https://") {
 		fmt.Printf("Fetching agent definition from URL: %s...\n", agentPath)
-		content, err = common.FetchWorkflowContent(ctx, ghClient, agentPath)
+		content, err = common.FetchWorkflowContent(ctx, repoClient, agentPath)
 		if err != nil {
 			return fmt.Errorf("fetching agent from URL %s: %w", agentPath, err)
 		}
@@ -242,7 +243,7 @@ func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 		}
 
 		fmt.Printf("Fetching comments for #%d from GitHub...\n", targetNum)
-		comments, err := github.ListAllIssueComments(ctx, ghClient, owner, repo, targetNum)
+		comments, err := repoClient.ListIssueComments(ctx, targetNum)
 		if err != nil {
 			return fmt.Errorf("fetching comments: %w", err)
 		}

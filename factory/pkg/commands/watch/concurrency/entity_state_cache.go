@@ -17,11 +17,14 @@ import (
 // unpopulated cache as "nothing is open", so each half of the cache records
 // whether a scan has published to it yet.
 //
-// Note that per-entity processed timestamps and commit SHAs deliberately do
-// *not* live here yet. They are still owned by the Watcher, and step 3d of the
-// subcontroller rearchitecture moves them across together with the PR scanner
-// that consumes them. Mirroring them here early would mean two copies of the
-// same state with nothing to keep them in agreement.
+// Note that the per-entity processed timestamps and commit SHAs deliberately do
+// *not* live here. Each scanner keeps its own: nothing outside the pull request
+// scanner reads which commit a pull request was last reviewed at, and nothing
+// outside the issue scanner reads when an issue was last worked on. What this
+// cache is for is the state that genuinely crosses subcontrollers - the open
+// pull requests, which the issue scanner reads to tell that an issue already
+// has a fix in flight and the sandbox reconciler reads to tell that a sandbox
+// is still wanted.
 type EntityStateCache struct {
 	mu               sync.RWMutex
 	openPRs          []*githubv39.PullRequest

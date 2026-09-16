@@ -160,6 +160,7 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch boo
 		return fmt.Errorf("expected URL format https://github.com/owner/repo or https://github.com/owner/repo/issues/123, got %s", targetURL)
 	}
 	owner, repo := parts[0], parts[1]
+	repoClient := github.ForRepo(ghClient, owner, repo)
 
 	var issueNum int
 	var issueTitle string
@@ -227,7 +228,7 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch boo
 		// Intercept and run as workflow if a workflow path is referenced in the issue body
 		workflowPath := common.FindWorkflowPath(issueBody)
 		if workflowPath != "" {
-			if common.IsWorkflowDefinition(ctx, ghClient, owner, repo, workflowPath) {
+			if common.IsWorkflowDefinition(ctx, repoClient, workflowPath) {
 				fmt.Printf("Detected workflow definition '%s' referenced in issue #%d. Forwarding to workflow execution...\n", workflowPath, issueNum)
 				agentFlags := AgentFlags{
 					URL:       targetURL,
@@ -238,7 +239,7 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch boo
 			}
 		}
 
-		comments, err := github.ListAllIssueComments(ctx, ghClient, owner, repo, issueNum)
+		comments, err := repoClient.ListIssueComments(ctx, issueNum)
 		if err == nil {
 			for _, c := range comments {
 				issueComments = append(issueComments, tasks.IssueComment{

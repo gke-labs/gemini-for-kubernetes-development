@@ -49,8 +49,12 @@ func (c *Client) Owner() string { return c.owner }
 // Repo returns the name of the bound repository.
 func (c *Client) Repo() string { return c.repo }
 
-// ready reports whether the client can issue requests.
-func (c *Client) ready() bool { return c != nil && c.gh != nil }
+// Ready reports whether the client can issue requests.
+//
+// Components are often constructed before authentication has happened, so this
+// lets a caller skip work that could only fail rather than make the call and
+// discard errNoClient.
+func (c *Client) Ready() bool { return c != nil && c.gh != nil }
 
 // IsNotFound reports whether a GitHub API call failed because the target does
 // not exist. It answers on the response status rather than on the text of the

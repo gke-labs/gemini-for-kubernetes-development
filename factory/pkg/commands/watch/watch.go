@@ -14,13 +14,9 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/constants"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
-	githubv39 "github.com/google/go-github/v39/github"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
 )
-
-// checkRepoInterval is how often the watch loop polls the repo for new work.
-const checkRepoInterval = 1 * time.Minute
 
 func (w *Watcher) Run(ctx context.Context) error {
 	if err := w.init(ctx); err != nil {
@@ -29,7 +25,12 @@ func (w *Watcher) Run(ctx context.Context) error {
 
 	if w.Once {
 		w.reconciler.ReconcileOnce(ctx)
-		w.checkRepo(ctx)
+		if w.issuesEnabled() {
+			w.issueScanner.ScanOnce(ctx)
+		}
+		if w.prsEnabled() {
+			w.prScanner.ScanOnce(ctx)
+		}
 		if w.choresEnabled() {
 			w.chores.ScheduleOnce(ctx)
 		}
@@ -54,6 +55,20 @@ func (w *Watcher) Run(ctx context.Context) error {
 		defer wg.Done()
 		_ = w.reconciler.Run(daemonCtx)
 	}()
+	if w.issuesEnabled() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = w.issueScanner.Run(daemonCtx)
+		}()
+	}
+	if w.prsEnabled() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = w.prScanner.Run(daemonCtx)
+		}()
+	}
 	if w.choresEnabled() {
 		wg.Add(1)
 		go func() {
@@ -75,35 +90,27 @@ func (w *Watcher) Run(ctx context.Context) error {
 		wg.Wait()
 	}()
 
-	w.checkRepo(ctx)
+	// Every cycle now belongs to a subcontroller, so this goroutine only
+	// supervises them: it waits for a reason to stop, and then stops them.
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-w.timeoutChan:
+		fmt.Printf("\nWatch timeout of %s expired. Shutting down gracefully...\n", w.WatchTimeout)
 
-	for {
-		fmt.Printf("Sleeping for %s...\n", checkRepoInterval)
+		// Stops new tasks being claimed. Tasks already running keep their
+		// supervisor: the dispatcher drains them within its own grace period,
+		// so this wait has to outlast that.
+		daemonCancel()
+
+		fmt.Println("Waiting for active tasks to complete...")
 		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-w.timeoutChan:
-			fmt.Printf("\nWatch timeout of %s expired. Shutting down gracefully...\n", w.WatchTimeout)
-			w.state.mu.Lock()
-			w.state.shuttingDown = true
-			w.state.mu.Unlock()
-
-			// Stops new tasks being claimed. Tasks already running keep their
-			// supervisor: the dispatcher drains them within its own grace period,
-			// so this wait has to outlast that.
-			daemonCancel()
-
-			fmt.Println("Waiting for active tasks to complete...")
-			select {
-			case <-doneChan:
-				fmt.Println("Active tasks settled. Exiting.")
-			case <-time.After(dispatcher.DefaultShutdownGracePeriod + time.Minute):
-				fmt.Println("Timed out waiting for active tasks to settle. Exiting; they are recovered on the next run.")
-			}
-			return nil
-		case <-time.After(checkRepoInterval):
-			w.checkRepo(ctx)
+		case <-doneChan:
+			fmt.Println("Active tasks settled. Exiting.")
+		case <-time.After(dispatcher.DefaultShutdownGracePeriod + time.Minute):
+			fmt.Println("Timed out waiting for active tasks to settle. Exiting; they are recovered on the next run.")
 		}
+		return nil
 	}
 }
 
@@ -207,8 +214,6 @@ func (w *Watcher) init(ctx context.Context) error {
 		klog.Warningf("Failed to load queue tasks from disk: %v", err)
 	}
 
-	w.processedIssues, w.processedPRs = loadProcessedTasks(w.processedDir)
-
 	// Recovery: Reconcile any leftover tasks in processingDir on startup, adopting
 	// tasks that are still running inside their sandbox.
 	w.dispatcher.Recover(ctx)
@@ -216,184 +221,41 @@ func (w *Watcher) init(ctx context.Context) error {
 	return nil
 }
 
-// canQueueIssueTasks reports whether the watcher has enough state to safely
-// decide which issues still need work.
+// issuesEnabled reports whether the issue scanner runs in this watcher's mode.
 //
-// The open PR cache is the primary duplicate-suppression signal for issue
-// scans. An empty cache is indistinguishable from "no open PR references this
-// issue", so scanning with an unpopulated cache makes the watcher re-trigger
-// fixes for issues that already have an open PR. This happens in practice when
-// the process restarts into a GitHub rate limit window and every attempt to
-// list open PRs fails. Fail closed and wait for a successful PR scan instead.
-func (w *Watcher) canQueueIssueTasks(prCachePopulated bool) bool {
+// It decides whether the goroutine starts at all, which is where mode gating
+// belongs now that scanning is not a branch of a shared cycle: a mode that does
+// not scan issues should not pay for a scanner that wakes up every interval to
+// discover it has nothing to do.
+func (w *Watcher) issuesEnabled() bool {
 	if w.IssueMode == "disabled" {
 		return false
 	}
-	if !prCachePopulated {
-		klog.Warningf("Skipping issue task queueing: the open PR cache is not populated, so issues with an open fix PR cannot be identified. Waiting for a successful PR scan.")
-		return false
-	}
-	return true
+	return w.Mode == "all" || w.Mode == "scan" || w.Mode == "scan-issue"
 }
 
-// choresEnabled reports whether scheduled chores run in this watcher's mode.
+// prsEnabled reports whether the pull request scanner runs in this watcher's mode.
 //
-// The set of modes is inherited from when chore scanning lived inside the slow
-// PR cycle of checkRepo, "scan-pr" included: chores have nothing to do with
-// pull requests, but a deployment running that mode is one that has been
-// scheduling them all along, and moving the scheduler out of that cycle is not
-// the change that should turn them off.
-func (w *Watcher) choresEnabled() bool {
-	if w.ChoresMode == "disabled" {
+// This is the same gate the old scan cycle applied to its PR branch, moved to
+// where the goroutine is started: a mode that does not scan pull requests
+// should not pay for the scanner at all.
+func (w *Watcher) prsEnabled() bool {
+	if w.PRMode == "disabled" {
 		return false
 	}
 	return w.Mode == "all" || w.Mode == "scan" || w.Mode == "scan-pr"
 }
 
-// checkRepo runs one scan cycle over the repository, queueing work for issues
-// and pull requests. Chore scheduling, sandbox reconciliation and garbage
-// collection are owned by their own subcontroller goroutines and deliberately
-// absent here.
-func (w *Watcher) checkRepo(ctx context.Context) {
-	w.state.mu.Lock()
-	if w.state.shuttingDown {
-		w.state.mu.Unlock()
-		return
-	}
-	w.state.mu.Unlock()
-
-	if w.queueMgr.IsDrainMode() {
-		runningCount, err := w.sandboxes.CountRunningTasks(ctx)
-		if err != nil {
-			klog.Errorf("Failed to count running sandbox tasks during drain: %v", err)
-		}
-		processingFiles, _ := os.ReadDir(w.processingDir)
-		filesInProcessing := 0
-		for _, f := range processingFiles {
-			if !f.IsDir() && strings.HasPrefix(f.Name(), "task-") && strings.HasSuffix(f.Name(), ".yaml") {
-				filesInProcessing++
-			}
-		}
-		klog.Infof("[DO NOT PROCESS] Drain mode active. Active child sandboxes: %d, Tasks in processing: %d. Pausing new scanning and task execution.", runningCount, filesInProcessing)
-		return
-	}
-
-	now := time.Now()
-
-	// Determine what to run
-	runIssueScan := false
-	if w.Mode == "all" || w.Mode == "scan" || w.Mode == "scan-issue" {
-		if w.state.lastIssueScan.IsZero() || now.Sub(w.state.lastIssueScan) >= 30*time.Second {
-			runIssueScan = true
-		}
-	}
-
-	runPRScan := false
-	if w.Mode == "all" || w.Mode == "scan" || w.Mode == "scan-pr" {
-		if w.state.lastPRScan.IsZero() || now.Sub(w.state.lastPRScan) >= 5*time.Minute {
-			runPRScan = true
-		}
-	}
-
-	refIssues := w.entityCache.GetReferencedIssuesMap()
-	hasPRs := w.entityCache.HasOpenPRs()
-
-	// Populate PR cache once on startup if needed by issue scan
-	if !hasPRs && runIssueScan {
-		klog.Infof("Populating open PRs cache for referenced issues...")
-		prs, err := listAllOpenPRs(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo)
-		if err == nil {
-			w.entityCache.UpdateOpenPRs(prs)
-			refIssues = w.entityCache.GetReferencedIssuesMap()
-			hasPRs = true
-		} else {
-			klog.Errorf("Failed to populate open PRs cache: %v", err)
-		}
-	}
-
-	// 1. Slow PR Scan Cycle
-	if runPRScan {
-		klog.Infof("Running slow PR scan cycle...")
-		prs, err := listAllOpenPRs(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo)
-		if err == nil {
-			w.entityCache.UpdateOpenPRs(prs)
-			refIssues = w.entityCache.GetReferencedIssuesMap()
-			w.state.mu.Lock()
-			w.state.lastPRScan = now
-			w.state.mu.Unlock()
-			hasPRs = true
-		} else {
-			klog.Errorf("Failed to list open PRs: %v", err)
-		}
-
-		// Scan issues labeled with triggerLabel (handling pagination)
-		slowIssues, slowIssuesErr := w.scanSlowIssues(ctx)
-		if slowIssuesErr != nil {
-			klog.Errorf("Failed to list issues for label %s: %v", w.triggerLabel, slowIssuesErr)
-		}
-
-		// Process slow issues
-		if w.canQueueIssueTasks(hasPRs) {
-			w.queueIssueTasks(ctx, slowIssues, refIssues)
-		}
-
-		// Process Pull Requests (Scanner)
-		prIssues, err := w.scanPRIssues(ctx)
-		if err != nil {
-			klog.Errorf("Failed to scan PR issues: %v", err)
-		}
-
-		w.processPRs(ctx, prIssues)
-
-		// Publish the entities observed by this cycle so the sandbox reconciler
-		// can garbage collect closed ones without re-querying GitHub. A failed
-		// scan returns whatever it managed to page in, which would publish a
-		// truncated set as though it were the whole picture.
-		if slowIssuesErr == nil {
-			w.publishOpenEntities(slowIssues)
-		}
-	}
-
-	// 2. Fast Issue Scan Cycle
-	if runIssueScan {
-		klog.Infof("Running fast issue scan cycle...")
-		issues, fastPRIssues, err := w.scanFastIssues(ctx)
-		if err != nil {
-			klog.Errorf("Failed to scan fast issues: %v", err)
-		}
-
-		if w.canQueueIssueTasks(hasPRs) {
-			w.queueIssueTasks(ctx, issues, refIssues)
-		}
-
-		// Process PRs assigned to the bot in the fast cycle
-		if len(fastPRIssues) > 0 {
-			klog.Infof("Processing %d assigned PRs in fast cycle...", len(fastPRIssues))
-			w.processPRs(ctx, fastPRIssues)
-		}
-
-		w.state.mu.Lock()
-		w.state.lastIssueScan = now
-		w.state.mu.Unlock()
-	}
-}
-
-// publishOpenEntities records which issues are known to be open in the shared
-// entity cache. The sandbox reconciler uses it to skip sandboxes belonging to
-// live work instead of confirming every one of them against GitHub.
+// choresEnabled reports whether scheduled chores run in this watcher's mode.
 //
-// Issues that have already been processed are treated as open: their sandbox
-// may still hold a workspace whose result has not been pushed yet, and the
-// reconciler confirms the state with GitHub before deleting anything anyway.
-func (w *Watcher) publishOpenEntities(openIssues []*githubv39.Issue) {
-	nums := make([]int, 0, len(openIssues)+len(w.processedIssues))
-	for _, iss := range openIssues {
-		if num := iss.GetNumber(); num > 0 {
-			nums = append(nums, num)
-		}
+// The set of modes is inherited from when chore scanning lived inside the slow
+// pull request cycle, "scan-pr" included: chores have nothing to do with pull
+// requests, but a deployment running that mode is one that has been scheduling
+// them all along, and moving the scheduler out of that cycle is not the change
+// that should turn them off.
+func (w *Watcher) choresEnabled() bool {
+	if w.ChoresMode == "disabled" {
+		return false
 	}
-	for num := range w.processedIssues {
-		nums = append(nums, num)
-	}
-	w.entityCache.SetOpenIssueNumbers(nums)
+	return w.Mode == "all" || w.Mode == "scan" || w.Mode == "scan-pr"
 }

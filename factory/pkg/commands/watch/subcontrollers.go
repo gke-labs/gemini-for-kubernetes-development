@@ -10,7 +10,10 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/chores"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/concurrency"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/conventions"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/dispatcher"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/issues"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/prs"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 )
@@ -65,25 +68,106 @@ func (w *Watcher) newChoreScheduler() *chores.Scheduler {
 		DryRun:          w.DryRun,
 	}, chores.Deps{
 		Queue:  w.queueMgr,
-		Source: github.ForRepo(w.ghClient, w.Repo.Owner, w.Repo.Repo),
+		Source: w.repoClient,
 		Paused: w.draining,
 	})
 }
 
+// newIssueScanner constructs the issue scanner, which runs as its own goroutine
+// so that a newly filed or newly assigned issue is queued within one interval,
+// instead of waiting behind the pull request evaluation that used to share its
+// cycle.
+func (w *Watcher) newIssueScanner() *issues.Scanner {
+	return issues.New(issues.Config{
+		Interval:       issues.DefaultInterval,
+		SweepInterval:  issues.DefaultSweepInterval,
+		TriggerLabel:   w.triggerLabel,
+		TargetAssignee: w.targetAssignee,
+		GitHubLogin:    w.githubLogin,
+		BotUsers:       w.allBotUsers,
+		ScanLimit:      w.ScanLimit,
+		MinNumber:      w.minIssueNumber(),
+		ProcessedDir:   w.processedDir,
+		DryRun:         w.DryRun,
+	}, issues.Deps{
+		GitHub:    w.repoClient,
+		Queue:     w.queueMgr,
+		Entities:  w.entityCache,
+		Sandboxes: w.sandboxes,
+		Users:     watcherUserSelector{w: w},
+		Paused:    w.draining,
+	})
+}
+
+// newPRScanner constructs the pull request scanner, which runs as its own
+// goroutine. It was the slowest thing in the watcher - a dozen GitHub requests
+// per pull request - and everything else used to wait behind it; now nothing does.
+func (w *Watcher) newPRScanner() *prs.Scanner {
+	return prs.New(prs.Config{
+		Interval:          prs.DefaultInterval,
+		SweepInterval:     prs.DefaultSweepInterval,
+		Workers:           prs.DefaultWorkers,
+		TriggerLabel:      w.triggerLabel,
+		GitHubLogin:       w.githubLogin,
+		BotUsers:          w.allBotUsers,
+		ReviewerLogins:    w.reviewerLogins(),
+		AllowlistedBots:   w.allowlistedBots(),
+		ScanLimit:         w.ScanLimit,
+		MinNumber:         w.minIssueNumber(),
+		InactivityTimeout: w.PRInactivityTimeout,
+		ProcessedDir:      w.processedDir,
+		DryRun:            w.DryRun,
+	}, prs.Deps{
+		GitHub:    w.repoClient,
+		Queue:     w.queueMgr,
+		Entities:  w.entityCache,
+		Sandboxes: w.sandboxes,
+		Paused:    w.draining,
+	})
+}
+
+// minIssueNumber is the issue number below which the repository's history is
+// ignored, as configured. Zero scans everything.
+func (w *Watcher) minIssueNumber() int {
+	if w.cfg == nil {
+		return 0
+	}
+	return w.cfg.MinNumber
+}
+
+// reviewerLogins are the accounts configured in the reviewer role, whose
+// comments count as review feedback to act on. Resolving the role here is what
+// keeps the scanner package free of the factory config shape.
+func (w *Watcher) reviewerLogins() []string {
+	if w.cfg == nil {
+		return nil
+	}
+	return w.cfg.Roles["reviewer"].Users
+}
+
+// allowlistedBots are the automated accounts whose comments are acted on rather
+// than ignored as machine noise.
+func (w *Watcher) allowlistedBots() []string {
+	if w.cfg == nil {
+		return nil
+	}
+	return w.cfg.AllowlistedBots
+}
+
 // draining reports whether the queue is in drain mode, in which case the
 // subcontrollers that create work hold off: the sandbox reconciler stops
-// reclaiming sandboxes and the chore scheduler stops queueing chores.
+// reclaiming sandboxes, and the chore scheduler and the issue and pull request
+// scanners stop queueing work.
 //
 // This is their only view of queue state besides the lease registry, and it is
 // deliberately a one-way read: they can observe that the queue is draining but
 // have no way to alter it.
 //
-// Shutdown is deliberately not reported here. Both subcontrollers run under the
-// daemon context, so cancelling it already stops them, and it stops a cycle
-// that is already in flight - which this signal, read once at the top of a
-// cycle, cannot. Drain cannot be expressed that way in turn: it is a marker
-// file that an operator removes to resume, and a cancelled context never comes
-// back.
+// Shutdown is deliberately not reported here. All of them run under the daemon
+// context, so cancelling it already stops them, and it stops a cycle that is
+// already in flight - which this signal, read once at the top of a cycle,
+// cannot. Drain cannot be expressed that way in turn: it is a marker file that
+// an operator removes to resume, and a cancelled context never comes back.
 func (w *Watcher) draining() bool {
 	return w.queueMgr != nil && w.queueMgr.IsDrainMode()
 }
@@ -115,6 +199,34 @@ var _ chores.Queue = (*concurrency.TaskQueueManager)(nil)
 // so no adapter is needed on this side either.
 var _ chores.Source = (*github.Client)(nil)
 
+// The shared primitives satisfy the scanners' collaborators directly. Each
+// scanner declares the narrow subset it uses; these assertions are what keep
+// those subsets honest as the primitives evolve.
+var (
+	_ issues.Queue     = (*concurrency.TaskQueueManager)(nil)
+	_ issues.Entities  = (*concurrency.EntityStateCache)(nil)
+	_ issues.Sandboxes = (*sandbox.Service)(nil)
+
+	_ prs.Queue     = (*concurrency.TaskQueueManager)(nil)
+	_ prs.Entities  = (*concurrency.EntityStateCache)(nil)
+	_ prs.Sandboxes = (*sandbox.Service)(nil)
+)
+
+// watcherUserSelector adapts the watcher's role-based bot selection to the
+// issue scanner's UserSelector. Selection reads the factory config and can pin
+// a task to the account an existing sandbox already belongs to, both of which
+// are the watcher's to own.
+type watcherUserSelector struct {
+	w *Watcher
+}
+
+var _ issues.UserSelector = watcherUserSelector{}
+
+// SelectUser returns the bot account a task for the given entity should run as.
+func (s watcherUserSelector) SelectUser(ctx context.Context, taskType api.TaskType, number int) (string, error) {
+	return s.w.selectUserForTask(ctx, taskType, number)
+}
+
 // watcherTaskCoordinator adapts the watcher's GitHub interactions to the TaskCoordinator interface.
 type watcherTaskCoordinator struct {
 	w *Watcher
@@ -130,11 +242,11 @@ func (c *watcherTaskCoordinator) ShouldCancelTask(ctx context.Context, task *api
 		return false, ""
 	}
 
-	issueOrPR, _, err := w.ghClient.Issues.Get(ctx, w.Repo.Owner, w.Repo.Repo, task.Number)
+	issueOrPR, err := w.repoClient.GetIssue(ctx, task.Number)
 	if err != nil || issueOrPR == nil {
 		return false, ""
 	}
-	if hasStopLabel(issueOrPR.Labels, w.triggerLabel) {
+	if conventions.HasStopLabel(issueOrPR.Labels, w.triggerLabel) {
 		return true, fmt.Sprintf("target #%d has the stop label ('overseer/stop' or '%s/stop')", task.Number, w.triggerLabel)
 	}
 	if issueOrPR.GetState() == "closed" {
@@ -163,18 +275,20 @@ func (c *watcherTaskCoordinator) NotifyTaskStarted(ctx context.Context, task *ap
 
 	if (task.Type == api.TypeIssueFix || task.Type == api.TypeAgentChore) && task.Assignee != "" {
 		klog.Infof("Assigning issue #%d to %s as claimed", task.Number, task.Assignee)
-		if _, _, err := w.ghClient.Issues.AddAssignees(ctx, w.Repo.Owner, w.Repo.Repo, task.Number, []string{task.Assignee}); err != nil {
+		if err := w.repoClient.AddAssignees(ctx, task.Number, []string{task.Assignee}); err != nil {
 			klog.Errorf("Failed to assign issue #%d to %s: %v", task.Number, task.Assignee, err)
 		}
 		if task.Assignee != w.targetAssignee {
-			if _, _, err := w.ghClient.Issues.RemoveAssignees(ctx, w.Repo.Owner, w.Repo.Repo, task.Number, []string{w.targetAssignee}); err != nil {
+			if err := w.repoClient.RemoveAssignees(ctx, task.Number, []string{w.targetAssignee}); err != nil {
 				klog.Errorf("Failed to remove watcher bot %s from issue #%d: %v", w.targetAssignee, task.Number, err)
 			}
 		}
 	}
 
 	if commentBody := taskStartedComment(task.Type); commentBody != "" {
-		addGitHubComment(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, task.Number, commentBody)
+		if err := w.repoClient.AddComment(ctx, task.Number, commentBody); err != nil {
+			klog.Errorf("Failed to create GitHub comment on #%d: %v", task.Number, err)
+		}
 	}
 }
 
@@ -188,7 +302,7 @@ func (c *watcherTaskCoordinator) NotifyTaskFinished(ctx context.Context, task *a
 	if taskErr != nil {
 		resolution = "confused"
 	}
-	resolvePRCommentReactions(ctx, w.ghClient, w.Repo.Owner, w.Repo.Repo, task.Number, resolution, w.cfg.AllowlistedBots, w.githubLogin)
+	conventions.ResolveCommentReactions(ctx, w.repoClient, task.Number, resolution, w.cfg.AllowlistedBots, w.githubLogin)
 }
 
 // taskStartedComment returns the GitHub comment announcing that a task has started,

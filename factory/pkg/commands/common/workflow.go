@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	githubv39 "github.com/google/go-github/v39/github"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 	"gopkg.in/yaml.v3"
 	"k8s.io/klog/v2"
 )
@@ -99,20 +99,15 @@ func FindWorkflowPath(body string) string {
 	return ""
 }
 
-func FetchWorkflowContent(ctx context.Context, ghClient *githubv39.Client, urlStr string) ([]byte, error) {
+func FetchWorkflowContent(ctx context.Context, ghClient *github.Client, urlStr string) ([]byte, error) {
 	urlStr = SanitizeWorkflowPath(urlStr)
 	if owner, repo, branch, path, ok := ParseGitHubURL(urlStr); ok {
 		klog.Infof("Fetching agent from GitHub repository %s/%s at branch/ref %s, path %s", owner, repo, branch, path)
-		fileContent, _, _, err := ghClient.Repositories.GetContents(ctx, owner, repo, path, &githubv39.RepositoryContentGetOptions{Ref: branch})
+		// The URL may point outside the repository this client is bound to,
+		// which is the whole reason a workflow can be referenced by URL.
+		contentStr, err := ghClient.FileContentIn(ctx, owner, repo, path, branch)
 		if err != nil {
 			return nil, fmt.Errorf("fetching content from GitHub repo: %w", err)
-		}
-		if fileContent == nil {
-			return nil, fmt.Errorf("content is nil (possibly a directory or submodule)")
-		}
-		contentStr, err := fileContent.GetContent()
-		if err != nil {
-			return nil, fmt.Errorf("decoding GitHub content: %w", err)
 		}
 		return []byte(contentStr), nil
 	}
@@ -139,7 +134,7 @@ func FetchWorkflowContent(ctx context.Context, ghClient *githubv39.Client, urlSt
 	return buf.Bytes(), nil
 }
 
-func IsWorkflowDefinition(ctx context.Context, ghClient *githubv39.Client, owner, repo, path string) bool {
+func IsWorkflowDefinition(ctx context.Context, ghClient *github.Client, path string) bool {
 	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
 		// 1. Path/URL convention check
 		if strings.Contains(path, "/workflows/") || strings.Contains(path, "/agents/") {
@@ -174,17 +169,9 @@ func IsWorkflowDefinition(ctx context.Context, ghClient *githubv39.Client, owner
 	cleanPath = strings.TrimPrefix(cleanPath, "/")
 
 	// 2. Fetch remote content from GitHub and search for keywords/metadata
-	fileContent, _, _, err := ghClient.Repositories.GetContents(ctx, owner, repo, cleanPath, &githubv39.RepositoryContentGetOptions{})
+	content, err := ghClient.FileContent(ctx, cleanPath, "")
 	if err != nil {
 		klog.V(4).Infof("Failed to get content for %s: %v", cleanPath, err)
-		return false
-	}
-	if fileContent == nil {
-		klog.V(4).Infof("Content is nil for %s (possibly a directory or submodule)", cleanPath)
-		return false
-	}
-	content, err := fileContent.GetContent()
-	if err != nil {
 		return false
 	}
 
@@ -202,7 +189,7 @@ func IsWorkflowDefinition(ctx context.Context, ghClient *githubv39.Client, owner
 	return false
 }
 
-func GetWorkflowCooldown(ctx context.Context, ghClient *githubv39.Client, owner, repo, path string) time.Duration {
+func GetWorkflowCooldown(ctx context.Context, ghClient *github.Client, path string) time.Duration {
 	defaultCooldown := 10 * time.Minute
 	if path == "" {
 		return defaultCooldown
@@ -215,11 +202,9 @@ func GetWorkflowCooldown(ctx context.Context, ghClient *githubv39.Client, owner,
 	} else {
 		cleanPath := strings.TrimPrefix(path, "./")
 		cleanPath = strings.TrimPrefix(cleanPath, "/")
-		var fileContent *githubv39.RepositoryContent
-		fileContent, _, _, err = ghClient.Repositories.GetContents(ctx, owner, repo, cleanPath, &githubv39.RepositoryContentGetOptions{})
+		var contentStr string
+		contentStr, err = ghClient.FileContent(ctx, cleanPath, "")
 		if err == nil {
-			var contentStr string
-			contentStr, err = fileContent.GetContent()
 			content = []byte(contentStr)
 		}
 	}
