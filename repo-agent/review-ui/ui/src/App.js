@@ -1,126 +1,36 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import yaml from 'js-yaml';
+import React, { useState, useEffect, useRef } from 'react';
 import './App.css';
-import PrReviewCard from './PrReviewCard';
-import Review from './Review';
-import Issues from './Issues';
-import IssueCard from './IssueCard';
-import DevCard from './DevCard';
-import ExplorationGroup from './ExplorationGroup';
-import DevSidebar from './DevSidebar';
-import AddRepo from './AddRepo';
-import DeleteRepo from './DeleteRepo';
 import Settings from './Settings';
-import UpdateRepo from './UpdateRepo';
 import Overseer from './Overseer';
 import TokenUsage from './TokenUsage';
 import Work from './Work';
 
+// Repo Agent shell: the Work board is home (docs/design/repoboard.md §8).
+// The legacy RepoWatch dashboard (Review/Issues/Dev tabs) retired with
+// design Phase 5; Overseer, Usage, and Settings remain as header views.
+
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-
   const [isLoadingAuth, setIsLoadingAuth] = useState(true);
   const [user, setUser] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
-  const [view, setView] = useState('dashboard'); // 'dashboard', 'settings', 'add_repo', 'overseer', 'usage'
+  const [view, setView] = useState('work'); // 'work', 'overseer', 'usage', 'settings'
   const [githubAuthEnabled, setGithubAuthEnabled] = useState(false);
-  const [showGithubConfig, setShowGithubConfig] = useState(false);
-  const [githubClientId, setGithubClientId] = useState('');
-  const [githubClientSecret, setGithubClientSecret] = useState('');
   const [isGeminiKeySet, setIsGeminiKeySet] = useState(true); // Default to true to avoid flash of warning
-  const [configError, setConfigError] = useState('');
-
-  const [repos, setRepos] = useState([]);
-  const [activeRepo, setActiveRepo] = useState(null);
-  const activeRepoRef = useRef(activeRepo);
   const hasRedirectedMissingKey = useRef(false);
-  useEffect(() => { activeRepoRef.current = activeRepo; }, [activeRepo]);
-
-  const [activeSubTab, setActiveSubTab] = useState({ repo: '', name: '' });
-  const [prs, setPrs] = useState([]);
-  const [issues, setIssues] = useState([]);
-  const [devSandboxes, setDevSandboxes] = useState([]);
-  const [activeSandbox, setActiveSandbox] = useState(null); // Selected sandbox in Dev Tab
-  const [drafts, setDrafts] = useState({});
-  const [collapsedReviews, setCollapsedReviews] = useState({});
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'light');
-  const [reviewViewModes, setReviewViewModes] = useState({});
-  const [yamlDrafts, setYamlDrafts] = useState({});
-  const [lastUpdated, setLastUpdated] = useState(null);
-  const [hasInstructionDraft, setHasInstructionDraft] = useState(false);
-  
-  // Dev Sandbox Sidebar State
-  const [sidebarWidth, setSidebarWidth] = useState(400);
-  const [isResizing, setIsResizing] = useState(false);
 
-  // Dev Sandbox Modals
-  const [devModalOpen, setDevModalOpen] = useState(false);
-  const [newDevBranch, setNewDevBranch] = useState('');
-  const [newDevPrompt, setNewDevPrompt] = useState('');
-  
-  // Exploration Modals
-  const [explorationModalOpen, setExplorationModalOpen] = useState(false);
-  const [newExplorationIdea, setNewExplorationIdea] = useState('');
-  const [newExplorationDescription, setNewExplorationDescription] = useState('');
-
-  // Approach Modal
-  const [approachModalOpen, setApproachModalOpen] = useState(false);
-  const [targetIdeaID, setTargetIdeaID] = useState('');
-  const [newApproachName, setNewApproachName] = useState('');
-  const [newApproachPrompt, setNewApproachPrompt] = useState('');
-  const [baseBranchForFork, setBaseBranchForFork] = useState('');
-  const [parentApproachForFork, setParentApproachForFork] = useState('');
-
+  // Feedback modal
   const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
   const [feedbackTitle, setFeedbackTitle] = useState('');
   const [feedbackText, setFeedbackText] = useState('');
   const [feedbackImage, setFeedbackImage] = useState('');
   const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
 
-
   useEffect(() => {
     document.body.className = theme === 'dark' ? 'dark-mode' : '';
     localStorage.setItem('theme', theme);
   }, [theme]);
-
-  // Sidebar Resizing Logic
-  const startResizing = useCallback(() => {
-    setIsResizing(true);
-  }, []);
-
-  const stopResizing = useCallback(() => {
-    setIsResizing(false);
-  }, []);
-
-  const resize = useCallback(
-    (mouseMoveEvent) => {
-      if (isResizing) {
-        // Limit width to reasonable bounds
-        const newWidth = Math.max(200, Math.min(mouseMoveEvent.clientX, 600));
-        setSidebarWidth(newWidth);
-      }
-    },
-    [isResizing]
-  );
-
-  useEffect(() => {
-    window.addEventListener("mousemove", resize);
-    window.addEventListener("mouseup", stopResizing);
-    return () => {
-      window.removeEventListener("mousemove", resize);
-      window.removeEventListener("mouseup", stopResizing);
-    };
-  }, [resize, stopResizing]);
-
-  // Keep activeSandbox in sync with polled updates
-  useEffect(() => {
-      if (activeSandbox && devSandboxes.length > 0) {
-          const updated = devSandboxes.find(s => s.name === activeSandbox.name);
-          if (updated && (updated.agentState !== activeSandbox.agentState || updated.sandboxReplica !== activeSandbox.sandboxReplica)) {
-              setActiveSandbox(updated);
-          }
-      }
-  }, [devSandboxes, activeSandbox]);
 
   // Check authentication status on load
   useEffect(() => {
@@ -139,7 +49,7 @@ function App() {
         setIsAuthenticated(false);
         setIsLoadingAuth(false);
       });
-      
+
     fetch('/api/auth/providers')
       .then(res => res.json())
       .then(data => {
@@ -163,644 +73,20 @@ function App() {
     }
   }, [isAuthenticated]);
 
-  useEffect(() => {
-    if (activeRepo && isAuthenticated) {
-        fetch(`/api/repos/${activeRepo.name}/instructions`)
-            .then(res => {
-                if (res.ok) return res.json();
-                throw new Error("Failed to fetch instructions");
-            })
-            .then(data => {
-                setHasInstructionDraft(!!data.draft);
-            })
-            .catch(err => {
-                console.error("Failed to check instructions draft:", err);
-                setHasInstructionDraft(false);
-            });
-    } else {
-        setHasInstructionDraft(false);
-    }
-  }, [activeRepo, isAuthenticated]);
-
-  const handleGithubConfigSubmit = (e) => {
-    e.preventDefault();
-    setConfigError('');
-    fetch('/api/auth/github-config', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ client_id: githubClientId, client_secret: githubClientSecret })
-    })
-    .then(async (res) => {
-      if (res.ok) {
-        setGithubAuthEnabled(true);
-        setShowGithubConfig(false);
-      } else {
-        const data = await res.json();
-        throw new Error(data.error || 'Failed to update config');
-      }
-    })
-    .catch(err => setConfigError(err.message));
-  };
-
-  const fetchRepos = useCallback(() => {
-    if (!isAuthenticated) return;
-    fetch('/api/repos')
-      .then(res => res.json())
-      .then(data => {
-        const safeData = data || [];
-        setRepos(safeData);
-        
-        const currentActiveRepo = activeRepoRef.current;
-        if (currentActiveRepo) {
-           const updatedRepo = safeData.find(r => r.name === currentActiveRepo.name);
-           if (updatedRepo) {
-               setActiveRepo(updatedRepo);
-           } else {
-               setActiveRepo(null);
-           }
-        } else if (safeData.length > 0 && view === 'dashboard') {
-           handleRepoClick(safeData[0].name, safeData);
-        }
-      })
-      .catch(err => console.error("Failed to fetch repos:", err));
-  }, [isAuthenticated, view]);
-
-  useEffect(() => {
-    if (isAuthenticated) {
-        fetchRepos();
-    }
-  }, [isAuthenticated, fetchRepos]);
-
-  const refreshData = useCallback((merge = false) => {
-    if (!isAuthenticated) return;
-    if (!activeRepo) return;
-    if (activeSubTab.repo !== activeRepo.name) return;
-
-    if (activeSubTab.name === 'review') {
-        if (!merge) setIssues([]);
-        fetch(`/api/repo/${activeRepo.name}/prs`)
-          .then(res => res.json())
-          .then(data => {
-            const safeData = data || [];
-            setPrs(safeData);
-            setLastUpdated(new Date());
-            
-            setDrafts(prev => {
-                const next = merge ? { ...prev } : {};
-                safeData.forEach(pr => {
-                  let parsedDraft = null;
-                  try {
-                    parsedDraft = yaml.load(pr.draft || '');
-                  } catch (e) {
-                    console.error(`Error parsing draft YAML for PR ${pr.id}:`, e);
-                  }
-                  const serverDraftObj = parsedDraft || { note: '', review: { body: '', comments: [] } };
-
-                  if (next[pr.id] === undefined) {
-                    next[pr.id] = serverDraftObj;
-                  } else {
-                    const local = next[pr.id];
-                    const isLocalEmpty = !local.note?.trim() && !local.review?.body?.trim() && (!local.review?.comments || local.review.comments.length === 0);
-                    const isServerEmpty = !serverDraftObj.note?.trim() && !serverDraftObj.review?.body?.trim() && (!serverDraftObj.review?.comments || serverDraftObj.review.comments.length === 0);
-
-                    if (isLocalEmpty && !isServerEmpty) {
-                        next[pr.id] = serverDraftObj;
-                    }
-                  }
-                });
-                return next;
-            });
-
-            setCollapsedReviews(prev => {
-                const next = merge ? { ...prev } : {};
-                safeData.forEach(pr => {
-                    if (next[pr.id] === undefined) next[pr.id] = true;
-                });
-                return next;
-            });
-
-            setReviewViewModes(prev => {
-                const next = merge ? { ...prev } : {};
-                safeData.forEach(pr => {
-                     if (next[pr.id] === undefined) next[pr.id] = 'structured';
-                });
-                return next;
-            });
-          })
-          .catch(err => console.error(`Failed to fetch PRs for ${activeRepo.name}:`, err));
-      } else if (activeSubTab.name === 'dev') {
-        if (!merge) setDevSandboxes([]);
-        fetch(`/api/repo/${activeRepo.name}/dev`)
-          .then(res => res.json())
-          .then(data => {
-            setDevSandboxes(data || []);
-            setLastUpdated(new Date());
-          })
-          .catch(err => console.error(`Failed to fetch dev sandboxes for ${activeRepo.name}:`, err));
-    } else if (activeSubTab.name) {
-        if (!merge) setPrs([]);
-        let url = `/api/repo/${activeRepo.name}/issues/${activeSubTab.name}`;
-        if (activeSubTab.name === 'issues') {
-             url = `/api/repo/${activeRepo.name}/issues`;
-        }
-        fetch(url)
-          .then(res => res.json())
-          .then(data => {
-            const safeData = data || [];
-            setIssues(safeData);
-            setLastUpdated(new Date());
-            setDrafts(prev => {
-                const next = merge ? { ...prev } : {};
-                safeData.forEach(issue => {
-                    const serverDraft = issue.draft || '';
-                    const isServerEmpty = !serverDraft.trim();
-
-                    if (next[issue.id] === undefined) {
-                        next[issue.id] = serverDraft;
-                    } else {
-                        const localDraft = next[issue.id];
-                        const isLocalEmpty = !localDraft.trim();
-
-                        if (isLocalEmpty && !isServerEmpty) {
-                            next[issue.id] = serverDraft;
-                        }
-                    }
-                });
-                return next;
-            });
-          })
-          .catch(err => console.error(`Failed to fetch issues for ${activeRepo.name} tab ${activeSubTab.name}:`, err));
-    }
-  }, [activeRepo, activeSubTab, isAuthenticated]);
-
-  useEffect(() => {
-    if (!isAuthenticated || view !== 'dashboard') return;
-
-    let intervalId;
-    let ticks = 0;
-
-    const tick = () => {
-        refreshData(true);
-        ticks++;
-        if (ticks % 3 === 0 && activeRepoRef.current) {
-             fetch(`/api/repos/${activeRepoRef.current.name}`)
-                .then(res => {
-                    if (res.ok) return res.json();
-                    throw new Error("Failed to fetch repo");
-                })
-                .then(updatedRepo => {
-                     if (activeRepoRef.current && activeRepoRef.current.name === updatedRepo.name) {
-                         setActiveRepo(updatedRepo);
-                     }
-                     setRepos(prevRepos => prevRepos.map(r => r.name === updatedRepo.name ? updatedRepo : r));
-                })
-                .catch(err => console.error("Failed to refresh active repo:", err));
-        }
-    };
-
-    const start = () => {
-      if (!intervalId) {
-        intervalId = setInterval(tick, 20000);
-      }
-    };
-
-    const stop = () => {
-      if (intervalId) {
-        clearInterval(intervalId);
-        intervalId = null;
-      }
-    };
-
-    const onVisibilityChange = () => {
-      if (document.hidden) {
-        stop();
-      } else {
-        tick(); // Update immediately when visible
-        start();
-      }
-    };
-
-    refreshData(false);
-
-    if (!document.hidden) {
-      start();
-    }
-
-    document.addEventListener("visibilitychange", onVisibilityChange);
-
-    return () => {
-      stop();
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-    };
-  }, [refreshData, isAuthenticated, view]);
-
   const handleLogin = (scope) => {
     window.location.href = `/api/auth/login?scope=${scope}`;
   };
 
-
-
   const handleLogout = () => {
-
     fetch('/api/auth/logout', { method: 'POST' })
       .then(() => {
         setIsAuthenticated(false);
         setUser(null);
-        setRepos([]);
-        setActiveRepo(null);
       })
       .catch(err => console.error("Failed to logout", err));
   };
 
-  const handleRepoClick = (repoName, currentRepos = repos) => {
-    setView('dashboard');
-    const repo = currentRepos.find(r => r.name === repoName);
-    setActiveRepo(repo);
-    setPrs([]);
-    setIssues([]);
-    setDevSandboxes([]);
-    if (repo) {
-      if (repo.review) {
-        setActiveSubTab({ repo: repoName, name: 'review' });
-      } else if (repo.issue) {
-        setActiveSubTab({ repo: repoName, name: 'issues' });
-      } else if (repo.dev) {
-        setActiveSubTab({ repo: repoName, name: 'dev' });
-      }
-    }
-  };
-
-  const handleRepoDeleted = (deletedRepoName) => {
-    fetchRepos();
-    if (activeRepo && activeRepo.name === deletedRepoName) {
-      setActiveRepo(null);
-    }
-  };
-
-  const handleAddPR = (prId = null) => {
-    let prNumber;
-    
-    if (prId) {
-        prNumber = parseInt(prId);
-    } else {
-        const input = window.prompt("Enter PR URL or Number:");
-        if (!input) return;
-
-        prNumber = parseInt(input);
-        if (isNaN(prNumber)) {
-          // Try to parse URL
-          // e.g., https://github.com/owner/repo/pull/123
-          try {
-            const url = new URL(input);
-            const parts = url.pathname.split('/');
-            const pullIndex = parts.indexOf('pull');
-            if (pullIndex !== -1 && pullIndex + 1 < parts.length) {
-                prNumber = parseInt(parts[pullIndex + 1]);
-            }
-          } catch (e) {
-            // ignore
-          }
-        }
-    }
-
-    if (isNaN(prNumber) || !prNumber) {
-        alert("Invalid PR number or URL");
-        return;
-    }
-
-    fetch(`/api/repos/${activeRepo.name}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ addPR: prNumber })
-    })
-    .then(res => {
-        if (res.ok) {
-            alert(`PR #${prNumber} has been added to watch list. It may take a few moments to appear.`);
-            fetchRepos(); // Refresh repos to update lists
-        } else {
-            res.json().then(data => {
-                const errorMsg = data.error || res.statusText;
-                const hint = "\n\nTip: If this is a private repo or organization-restricted, you may need a manual GitHub Classic PAT with 'repo' permissions in 'Settings'.";
-                alert("Failed to add PR: " + errorMsg + hint);
-            });
-        }
-    })
-    .catch(err => console.error("Failed to add PR:", err));
-  };
-
-  const handleDelete = (id) => {
-    fetch(`/api/repo/${activeRepo.name}/prs/${id}`, { method: 'DELETE' })
-      .then(res => {
-        if (res.ok) {
-           // Optimistically remove from view immediately
-           setPrs(prevPrs => prevPrs.filter(pr => pr.id !== id));
-
-           // Trigger exclusion in background
-           fetch(`/api/repos/${activeRepo.name}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ excludePR: parseInt(id) })
-           }).then(res2 => {
-               if (res2.ok) {
-                    fetchRepos();
-               } else {
-                   console.error("Sandbox deleted but failed to exclude PR");
-               }
-           });
-           
-           // Show alert slightly deferred to allow UI render
-           setTimeout(() => {
-                alert("PR Sandbox deleted. It will disappear from the list shortly.");
-           }, 50);
-        } else {
-          alert("Failed to delete PR sandbox");
-        }
-      })
-      .catch(err => console.error("Failed to delete PR:", err));
-  };
-
-  const handleSaveDraft = (id) => {
-    const draft = yaml.dump(drafts[id]);
-    fetch(`/api/repo/${activeRepo.name}/prs/${id}/draft`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ draft })
-    }).catch(err => console.error("Failed to save draft:", err));
-  };
-
-  const handleDraftChange = (id, field, value, index = null) => {
-    setDrafts(prevDrafts => {
-      const newDraft = { ...prevDrafts[id] };
-      if (field === 'note') {
-        newDraft.note = value;
-      } else if (field === 'review.body') {
-        newDraft.review = { ...newDraft.review, body: value };
-      } else if (field === 'comment.body' && index !== null) {
-        newDraft.review.comments[index] = { ...newDraft.review.comments[index], body: value };
-      } else if (field === 'comment.path' && index !== null) {
-        newDraft.review.comments[index] = { ...newDraft.review.comments[index], path: value };
-      } else if (field === 'comment.line' && index !== null) {
-        newDraft.review.comments[index] = { ...newDraft.review.comments[index], line: value };
-      } else if (field === 'comment.side' && index !== null) {
-        newDraft.review.comments[index] = { ...newDraft.review.comments[index], side: value };
-      }
-      return { ...prevDrafts, [id]: newDraft };
-    });
-  };
-
-  const handleRemoveComment = (id, index) => {
-    setDrafts(prevDrafts => {
-      const newDraft = { ...prevDrafts[id] };
-      newDraft.review.comments.splice(index, 1);
-      return { ...prevDrafts, [id]: newDraft };
-    });
-  };
-
-  const handleIssueDraftChange = (issueId, value) => {
-    setDrafts(prevDrafts => ({
-      ...prevDrafts,
-      [issueId]: value
-    }));
-  };
-
-  const toggleReviewView = (id) => {
-    const currentMode = reviewViewModes[id] || 'structured';
-    if (currentMode === 'yaml') {
-      try {
-        const parsedDraft = yaml.load(yamlDrafts[id]);
-        setDrafts(prev => ({ ...prev, [id]: parsedDraft }));
-        setReviewViewModes(prev => ({ ...prev, [id]: 'structured' }));
-      } catch (e) {
-        alert('Invalid YAML. Please fix it before switching view.');
-        console.error("YAML parse error on view switch:", e);
-      }
-    } else {
-      setYamlDrafts(prev => ({ ...prev, [id]: yaml.dump(drafts[id] || { note: '', review: { body: '', comments: [] } }) }));
-      setReviewViewModes(prev => ({ ...prev, [id]: 'yaml' }));
-    }
-  };
-
-  const handleYamlDraftChange = (id, value) => {
-    setYamlDrafts(prev => ({ ...prev, [id]: value }));
-  };
-
-  const handleYamlDraftBlur = (id) => {
-    try {
-      const parsedDraft = yaml.load(yamlDrafts[id]);
-      setDrafts(prev => ({ ...prev, [id]: parsedDraft }));
-      const draft = yaml.dump(parsedDraft);
-      fetch(`/api/repo/${activeRepo.name}/prs/${id}/draft`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ draft })
-      }).catch(err => console.error("Failed to save draft:", err));
-    } catch (e) {
-      alert('Invalid YAML, not saving.');
-      console.error("YAML parse error on blur:", e);
-    }
-  };
-
-  const handleSubmit = (id) => {
-    let review;
-    if (reviewViewModes[id] === 'yaml') {
-      try {
-        review = yaml.load(yamlDrafts[id]);
-      } catch (e) {
-        alert('Invalid YAML. Please fix it before submitting.');
-        return;
-      }
-    } else {
-      review = drafts[id];
-    }
-
-    if (!review || (!review.review.body?.trim() && (!review.review.comments || review.review.comments.length === 0))) {
-      alert("Please leave a review comment before Submitting.");
-      return;
-    }
-    const reviewYAML = yaml.dump(review);
-    fetch(`/api/repo/${activeRepo.name}/prs/${id}/submitreview`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ review: reviewYAML })
-    })
-    .then(res => {
-      if (res.ok) {
-        setPrs(prs.map(pr => pr.id === id ? { ...pr, review: reviewYAML, draft: '' } : pr));
-      } else {
-        res.json().then(data => {
-            const errorMsg = data.error || res.statusText;
-            const details = data.details ? "\nDetails: " + data.details : "";
-            const hint = "\n\nTip: This often happens if the GitHub token has insufficient permissions for this organization. Go to 'Settings' and provide a manual GitHub Classic PAT with 'repo' (read/write) permissions.";
-            alert("Failed to submit PR review: " + errorMsg + details + hint);
-        });
-      }
-    })
-    .catch(err => console.error("Failed to submit PR review:", err));
-  };
-
-  const handleExportCurl = (id, onSuccess) => {
-    let review;
-    if (reviewViewModes[id] === 'yaml') {
-      try {
-        review = yaml.load(yamlDrafts[id]);
-      } catch (e) {
-        alert('Invalid YAML. Please fix it before exporting.');
-        return;
-      }
-    } else {
-      review = drafts[id];
-    }
-
-    if (!review || (!review.review.body?.trim() && (!review.review.comments || review.review.comments.length === 0))) {
-      alert("Please leave a review comment before Exporting.");
-      return;
-    }
-
-    try {
-      const url = new URL(activeRepo.url);
-      const pathParts = url.pathname.split('/').filter(p => p);
-      if (pathParts.length < 2) {
-        alert("Invalid repo URL format");
-        return;
-      }
-      const owner = pathParts[0];
-      const repoName = pathParts[1];
-
-      const reviewRequest = review.review;
-      // Ensure event is not set (draft)
-      const requestBody = { ...reviewRequest };
-      delete requestBody.event;
-
-      // Filter out null values from comments
-      if (requestBody.comments) {
-        requestBody.comments = requestBody.comments.map(comment => {
-          const cleanComment = {};
-          Object.keys(comment).forEach(key => {
-            if (comment[key] !== null && comment[key] !== undefined) {
-              cleanComment[key] = comment[key];
-            }
-          });
-          return cleanComment;
-        });
-      }
-
-      const jsonBody = JSON.stringify(requestBody);
-      // Escape single quotes for bash single-quoted string using unicode escape
-      const escapedJSONBody = jsonBody.replace(/'/g, '\\u0027');
-
-      const curlCmd = `curl -L \\
-  -X POST \\
-  -H "Accept: application/vnd.github+json" \\
-  -H "Authorization: Bearer <YOUR_TOKEN>" \\
-  -H "X-GitHub-Api-Version: 2022-11-28" \\
-  https://api.github.com/repos/${owner}/${repoName}/pulls/${id}/reviews \\
-  -d '${escapedJSONBody}'`;
-
-      if (onSuccess) {
-        onSuccess(curlCmd);
-      }
-    } catch (e) {
-      console.error("Failed to generate curl command:", e);
-      alert("Failed to generate curl command: " + e.message);
-    }
-  };
-
-  const handleIssueSaveDraft = (issueId) => {
-    const draft = drafts[issueId];
-    fetch(`/api/repo/${activeRepo.name}/issues/${issueId}/draft`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ draft })
-    }).catch(err => console.error("Failed to save issue draft:", err));
-  };
-
-  const handleIssueSubmit = (issueId) => {
-    const comment = drafts[issueId];
-    if (!comment.trim()) {
-      alert("Please leave a comment before Submitting.");
-      return;
-    }
-    fetch(`/api/repo/${activeRepo.name}/issues/${issueId}/submitcomment`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ comment })
-    })
-    .then(res => {
-      if (res.ok) {
-        setIssues(issues.map(issue => issue.id === issueId ? { ...issue, comment, draft: '' } : issue));
-      } else {
-        res.json().then(data => {
-            const errorMsg = data.error || res.statusText;
-            const details = data.details ? "\nDetails: " + data.details : "";
-            const hint = "\n\nTip: This often happens if the GitHub token has insufficient permissions for this organization. Go to 'Settings' and provide a manual GitHub Classic PAT with 'repo' (read/write) permissions.";
-            alert("Failed to submit issue comment: " + errorMsg + details + hint);
-        });
-      }
-    })
-    .catch(err => console.error("Failed to submit issue comment:", err));
-  };
-
-  const handleIssueDelete = (issueId) => {
-    fetch(`/api/repo/${activeRepo.name}/issues/${issueId}`, { method: 'DELETE' })
-      .then(res => {
-        if (res.ok) {
-          // Optimistically remove from view immediately
-          setIssues(issues.filter(issue => issue.id !== issueId));
-
-          // Trigger exclusion in background
-          // We pick the first handler to add exclusion to, or 'triage' if available
-          let handlerName = '';
-          if (activeRepo.issue && activeRepo.issue.handlers && activeRepo.issue.handlers.length > 0) {
-              handlerName = activeRepo.issue.handlers[0].name;
-          }
-          
-          if (handlerName) {
-            fetch(`/api/repos/${activeRepo.name}`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ excludeIssue: parseInt(issueId), handlerName: handlerName })
-            }).then(res2 => {
-                if (res2.ok) {
-                    fetchRepos();
-                } else {
-                    console.error("Sandbox deleted but failed to exclude Issue");
-                }
-            });
-          }
-          // Show alert slightly deferred to allow UI render
-          setTimeout(() => {
-               alert("Issue Sandbox deleted. It will disappear from the list shortly.");
-          }, 50);
-        } else {
-          alert("Failed to delete issue sandbox");
-        }
-      })
-      .catch(err => console.error("Failed to delete issue:", err));
-  };
-
-  const handleMoveCommentAndSave = (id, index, newPath, newLine, newSide) => {
-    setDrafts(prevDrafts => {
-      const newDrafts = JSON.parse(JSON.stringify(prevDrafts));
-      const draftToUpdate = newDrafts[id];
-      if (draftToUpdate && draftToUpdate.review && draftToUpdate.review.comments && draftToUpdate.review.comments[index]) {
-        const commentToUpdate = draftToUpdate.review.comments[index];
-        commentToUpdate.path = newPath;
-        commentToUpdate.line = newLine;
-        commentToUpdate.side = newSide;
-
-        const draftYaml = yaml.dump(draftToUpdate);
-        fetch(`/api/repo/${activeRepo.name}/prs/${id}/draft`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ draft: draftYaml })
-        }).catch(err => console.error("Failed to save draft:", err));
-      } else {
-        console.error("Could not find comment to update in handleMoveCommentAndSave");
-      }
-      return newDrafts;
-    });
-  };
-
+  // Sandbox status coloring shared with the Overseer admin view.
   const getSandboxStatusClass = (item) => {
     if (!item.sandbox) {
       return 'grey';
@@ -816,231 +102,6 @@ function App() {
 
   const toggleTheme = () => {
     setTheme(theme === 'light' ? 'dark' : 'light');
-  };
-
-  const toggleCollapse = (id) => {
-    setCollapsedReviews(prev => ({
-      ...prev,
-      [id]: !prev[id]
-    }));
-  };
-
-  const handlePRScaleUp = (id, manual = false) => {
-    fetch(`/api/repo/${activeRepo.name}/prs/${id}/scaleup`, { 
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ manual })
-    })
-      .then(res => {
-        if (res.ok) {
-          // Refresh PRs to update status
-          fetchRepos();
-        } else {
-          alert("Failed to scale up sandbox");
-        }
-      })
-      .catch(err => console.error("Failed to scale up sandbox:", err));
-  };
-
-  const handlePRScaleDown = (id) => {
-    fetch(`/api/repo/${activeRepo.name}/prs/${id}/scaledown`, { method: 'POST' })
-      .then(res => {
-        if (res.ok) {
-          // Refresh PRs to update status
-          fetchRepos();
-        } else {
-          alert("Failed to scale down sandbox");
-        }
-      })
-      .catch(err => console.error("Failed to scale down sandbox:", err));
-  };
-
-  const handleIssueScaleUp = (issueId, manual = false) => {
-    fetch(`/api/repo/${activeRepo.name}/issues/${issueId}/scaleup`, { 
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ manual })
-    })
-      .then(res => {
-        if (res.ok) {
-          // Refresh Issues
-          fetchRepos(); // This might be overkill but ensures consistency. Ideally we just re-fetch issues.
-        } else {
-          alert("Failed to scale up issue sandbox");
-        }
-      })
-      .catch(err => console.error("Failed to scale up issue sandbox:", err));
-  };
-
-  const handleIssueScaleDown = (issueId) => {
-    fetch(`/api/repo/${activeRepo.name}/issues/${issueId}/scaledown`, { method: 'POST' })
-      .then(res => {
-        if (res.ok) {
-           fetchRepos();
-        } else {
-          alert("Failed to scale down issue sandbox");
-        }
-      })
-      .catch(err => console.error("Failed to scale down issue sandbox:", err));
-  };
-
-  const handleDevDelete = (sandbox) => {
-    const sandboxName = sandbox.name;
-    const branchName = sandbox.branch;
-
-
-    fetch(`/api/repo/${activeRepo.name}/dev/${sandboxName}`, { method: 'DELETE' })
-      .then(res => {
-        if (res.ok) {
-            // Optimistically remove from view
-            setDevSandboxes(devSandboxes.filter(s => s.name !== sandboxName));
-
-            // Trigger exclusion in background
-            fetch(`/api/repos/${activeRepo.name}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ excludeBranch: branchName })
-            })
-            .then(res2 => {
-                 if (res2.ok) {
-                 } else {
-                     console.error("Dev sandbox deleted but failed to exclude branch");
-                 }
-            });
-
-           // Show alert slightly deferred to allow UI render
-           setTimeout(() => {
-                alert("Dev Sandbox deleted. It will disappear from the list shortly.");
-           }, 50);
-        } else {
-            res.json().then(data => {
-                alert("Failed to delete dev sandbox: " + (data.error || res.statusText));
-            }).catch(() => {
-                alert("Failed to delete dev sandbox");
-            });
-        }
-      })
-      .catch(err => {
-          console.error("Failed to delete dev sandbox:", err);
-      });
-  };
-
-  const handleDevScaleUp = (sandboxName) => {
-    fetch(`/api/repo/${activeRepo.name}/dev/${sandboxName}/scaleup`, { method: 'POST' })
-        .then(res => {
-            if (res.ok) {
-                fetchRepos(); // Refresh to get updated status
-            } else {
-                alert("Failed to scale up dev sandbox");
-            }
-        })
-        .catch(err => console.error("Failed to scale up dev sandbox:", err));
-  };
-
-  const handleDevScaleDown = (sandboxName) => {
-      fetch(`/api/repo/${activeRepo.name}/dev/${sandboxName}/scaledown`, { method: 'POST' })
-          .then(res => {
-              if (res.ok) {
-                  fetchRepos(); // Refresh to get updated status
-              } else {
-                  alert("Failed to scale down dev sandbox");
-              }
-          })
-          .catch(err => console.error("Failed to scale down dev sandbox:", err));
-  };
-
-  const handleDevCreate = (data) => {
-      fetch(`/api/repo/${activeRepo.name}/dev`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(data)
-      })
-      .then(res => {
-          if (res.ok) {
-              fetchRepos(); // Refresh to show new sandbox
-          } else {
-              res.json().then(data => alert("Failed to create dev sandbox: " + data.error));
-          }
-      })
-      .catch(err => console.error("Failed to create dev sandbox:", err));
-  };
-
-  const submitDevCreate = () => {
-    if (newDevBranch) {
-        handleDevCreate({ branch: newDevBranch, prompt: newDevPrompt });
-        setDevModalOpen(false);
-        setNewDevBranch('');
-        setNewDevPrompt('');
-    }
-  };
-
-  const submitExplorationCreate = () => {
-    if (newExplorationIdea) {
-        // Idea ID should be URL-safe-ish
-        const ideaID = newExplorationIdea.toLowerCase().replace(/[^a-z0-9-]/g, '-');
-        
-        handleDevCreate({ 
-            ideaID: ideaID, 
-            description: newExplorationDescription
-        });
-        setExplorationModalOpen(false);
-        setNewExplorationIdea('');
-        setNewExplorationDescription('');
-    } else {
-        alert("Idea Name is required.");
-    }
-  };
-
-  const submitApproachCreate = () => {
-      if (targetIdeaID && newApproachName) {
-          const approach = newApproachName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
-          const payload = {
-              ideaID: targetIdeaID,
-              approach: approach,
-              prompt: newApproachPrompt
-          };
-          
-          if (baseBranchForFork) {
-              payload.baseBranch = baseBranchForFork;
-              payload.parentApproach = parentApproachForFork;
-          }
-
-          handleDevCreate(payload);
-          setApproachModalOpen(false);
-          setTargetIdeaID('');
-          setNewApproachName('');
-          setNewApproachPrompt('');
-          setBaseBranchForFork('');
-          setParentApproachForFork('');
-      } else {
-          alert("Approach Name is required.");
-      }
-  };
-
-  const handleOpenAddApproach = (ideaID) => {
-      setTargetIdeaID(ideaID);
-      setNewApproachName('');
-      setNewApproachPrompt('');
-      setBaseBranchForFork('');
-      setParentApproachForFork('');
-      setApproachModalOpen(true);
-  };
-  
-  const handleForkDevInstance = (sandbox) => {
-      if (sandbox.ideaID) {
-        setTargetIdeaID(sandbox.ideaID);
-        // Pre-fill name if it follows a pattern, or leave blank?
-        // Let's leave blank but maybe we can suggest something in the placeholder
-        setNewApproachName(''); 
-        setNewApproachPrompt('');
-        setBaseBranchForFork(sandbox.branch);
-        setParentApproachForFork(sandbox.approach || sandbox.branch);
-        setApproachModalOpen(true);
-      } else {
-          // If forking an ungrouped sandbox, maybe start a new exploration based on it?
-          // For now, let's just alert not supported or implement basic branching
-          alert("Forking ungrouped sandboxes into new explorations is not yet supported via this button.");
-      }
   };
 
   const handleFeedbackClick = async () => {
@@ -1111,257 +172,6 @@ function App() {
     .finally(() => setIsSubmittingFeedback(false));
   };
 
-  const renderContent = () => {
-    if (!activeRepo) return <p>Please select or add a repository to watch.</p>;
-    const namespace = user || 'default';
-    if (activeSubTab.name === 'review') {
-      return (
-        <Review
-          activeRepo={activeRepo}
-          prs={prs}
-          drafts={drafts}
-          collapsedReviews={collapsedReviews}
-          reviewViewModes={reviewViewModes}
-          yamlDrafts={yamlDrafts}
-          handleDelete={handleDelete}
-          handleSaveDraft={handleSaveDraft}
-          handleDraftChange={handleDraftChange}
-          handleRemoveComment={handleRemoveComment}
-          toggleReviewView={toggleReviewView}
-          handleYamlDraftChange={handleYamlDraftChange}
-          handleYamlDraftBlur={handleYamlDraftBlur}
-          handleSubmit={handleSubmit}
-          handleExportCurl={handleExportCurl}
-          getSandboxStatusClass={getSandboxStatusClass}
-          toggleCollapse={toggleCollapse}
-          namespace={namespace}
-          handleMoveCommentAndSave={handleMoveCommentAndSave}
-          handleScaleUp={handlePRScaleUp}
-          handleScaleDown={handlePRScaleDown}
-          handleAddPR={handleAddPR}
-          lastUpdated={lastUpdated}
-          onRefresh={() => refreshData(true)}
-        />
-      );
-    } else if (activeSubTab.name === 'dev') {
-        const activeList = devSandboxes.map(sandbox => ({...sandbox, type: 'active'}));
-        
-        // Group by Idea ID
-        const explorations = {};
-        const ungrouped = [];
-
-        activeList.forEach(sandbox => {
-            if (sandbox.ideaID) {
-                if (!explorations[sandbox.ideaID]) {
-                    explorations[sandbox.ideaID] = [];
-                }
-                explorations[sandbox.ideaID].push(sandbox);
-            } else {
-                ungrouped.push(sandbox);
-            }
-        });
-
-        // Ensure activeSandbox is still up to date with new data
-        if (activeSandbox) {
-            const updatedActive = activeList.find(s => s.name === activeSandbox.name);
-            if (updatedActive && updatedActive !== activeSandbox) {
-                // Only update if reference changed to avoid loop, though React handles set state check
-                // We use a useEffect/callback pattern for this usually, but inside render we just rely on data being fresh
-            }
-        }
-
-        const handleAddDevInstance = (branch) => {
-             setNewDevBranch(branch);
-             setDevModalOpen(true);
-        };
-
-        return (
-            <div className="dev-layout">
-                <div style={{ width: sidebarWidth, display: 'flex', flexDirection: 'column' }}>
-                    <DevSidebar 
-                        explorations={explorations}
-                        ungrouped={ungrouped}
-                        activeSandbox={activeSandbox}
-                        onSelectSandbox={setActiveSandbox}
-                        onAddExploration={() => setExplorationModalOpen(true)}
-                        onAddApproach={handleOpenAddApproach}
-                    />
-                </div>
-                <div 
-                    className="resizer"
-                    onMouseDown={startResizing}
-                />
-                
-                <div className="dev-main">
-                    {activeSandbox ? (
-                        <DevCard
-                            key={activeSandbox.name}
-                            sandbox={activeSandbox}
-                            handleDelete={handleDevDelete}
-                            getSandboxStatusClass={getSandboxStatusClass}
-                            namespace={namespace}
-                            handleScaleUp={handleDevScaleUp}
-                            handleScaleDown={handleDevScaleDown}
-                            handleFork={handleForkDevInstance}
-                            repoName={activeRepo.name}
-                        />
-                    ) : (
-                        <div style={{textAlign: 'center', marginTop: '50px', color: 'var(--text-secondary)'}}>
-                            <p>Select an approach from the sidebar to view details.</p>
-                            <p>Or create a standalone sandbox:</p>
-                            <button className="btn" onClick={() => { setNewDevBranch(''); setDevModalOpen(true); }} title="Create new Dev Sandbox (Branch)">
-                                Create Standalone Sandbox
-                            </button>
-                        </div>
-                    )}
-
-                    {/* Modals are rendered here to be part of the main layout but absolute/fixed positioned */}
-                    {devModalOpen && (
-                    <div className="modal-overlay" onClick={() => setDevModalOpen(false)}>
-                        <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-                            <h4>New Dev Sandbox (Branch)</h4>
-                            <input type="text" placeholder="Branch Name" value={newDevBranch} onChange={(e) => setNewDevBranch(e.target.value)} style={{padding: '5px', border: '1px solid #ccc'}} />
-                            <textarea placeholder="Prompt (optional)" value={newDevPrompt} onChange={(e) => setNewDevPrompt(e.target.value)} rows="15" style={{padding: '5px', border: '1px solid #ccc'}} />
-                            <div style={{display: 'flex', justifyContent: 'flex-end', gap: '10px'}}>
-                                <button className="btn" onClick={() => setDevModalOpen(false)} style={{backgroundColor: '#ccc', color: 'black'}}>Cancel</button>
-                                <button className="btn" onClick={submitDevCreate} style={{backgroundColor: '#007bff', color: 'white'}}>Create</button>
-                            </div>
-                        </div>
-                    </div>
-                    )}
-
-                    {explorationModalOpen && (
-                        <div className="modal-overlay" onClick={() => setExplorationModalOpen(false)}>
-                            <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-                                <h4>Start New Exploration</h4>
-                                <div className="form-group">
-                                    <label>Exploration Name (e.g., optimize-db)</label>
-                                    <input type="text" value={newExplorationIdea} onChange={(e) => setNewExplorationIdea(e.target.value)} style={{padding: '5px', border: '1px solid #ccc'}} />
-                                </div>
-                                <div className="form-group">
-                                    <label>Description</label>
-                                    <textarea value={newExplorationDescription} onChange={(e) => setNewExplorationDescription(e.target.value)} rows="5" style={{padding: '5px', border: '1px solid #ccc'}} />
-                                </div>
-                                <div style={{display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '15px'}}>
-                                    <button className="btn" onClick={() => setExplorationModalOpen(false)} style={{backgroundColor: '#ccc', color: 'black'}}>Cancel</button>
-                                    <button className="btn" onClick={submitExplorationCreate} style={{backgroundColor: '#007bff', color: 'white'}}>Create Exploration</button>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
-                    {approachModalOpen && (
-                        <div className="modal-overlay" onClick={() => setApproachModalOpen(false)}>
-                            <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-                                <h4>Add Approach to {targetIdeaID}</h4>
-                                <div className="form-group">
-                                    <label>Approach Name (e.g., attempt-2)</label>
-                                    <input type="text" value={newApproachName} onChange={(e) => setNewApproachName(e.target.value)} style={{padding: '5px', border: '1px solid #ccc'}} />
-                                </div>
-                                <div className="form-group">
-                                    <label>Prompt (Instructions for Agent)</label>
-                                    <textarea value={newApproachPrompt} onChange={(e) => setNewApproachPrompt(e.target.value)} rows="10" style={{padding: '5px', border: '1px solid #ccc'}} />
-                                </div>
-                                <div style={{display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '15px'}}>
-                                    <button className="btn" onClick={() => setApproachModalOpen(false)} style={{backgroundColor: '#ccc', color: 'black'}}>Cancel</button>
-                                    <button className="btn" onClick={submitApproachCreate} style={{backgroundColor: '#007bff', color: 'white'}}>Create Approach</button>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-                </div>
-            </div>
-        );
-    } else if (activeSubTab.name === 'issues') {
-      return (
-        <Issues
-          activeRepo={activeRepo}
-          issues={issues}
-          drafts={drafts}
-          activeSubTab={activeSubTab}
-          handleIssueDraftChange={handleIssueDraftChange}
-          handleIssueSaveDraft={handleIssueSaveDraft}
-          handleIssueSubmit={handleIssueSubmit}
-          handleIssueDelete={handleIssueDelete}
-          getSandboxStatusClass={getSandboxStatusClass}
-          namespace={namespace}
-          handleScaleUp={handleIssueScaleUp}
-          handleScaleDown={handleIssueScaleDown}
-        />
-      );
-    }
-  };
-
-  const renderDashboard = () => (
-    <>
-      <nav className="repo-tabs">
-        {repos.map(repo => (
-          <button
-            key={repo.name}
-            className={`tab-btn ${activeRepo && activeRepo.name === repo.name ? 'active' : ''}`}
-            onClick={() => handleRepoClick(repo.name)}
-          >
-            {repo.name}
-          </button>
-        ))}
-        <button className="tab-btn add-repo-btn" onClick={() => {
-          if (!isGeminiKeySet) {
-            alert("Please set your Gemini API Key in Settings before adding a repository.");
-            setView('settings');
-          } else {
-            setView('add_repo');
-          }
-        }} title="Watch new repository">+</button>
-      </nav>
-      {activeRepo && (
-        <div className="active-repo-container">
-            <nav className="sub-tabs">
-            {repos.find(r => r.name === activeRepo.name)?.review && (
-                <button
-                className={`sub-tab-btn ${activeSubTab.name === 'review' ? 'active' : ''}`}
-                onClick={() => setActiveSubTab({ repo: activeRepo.name, name: 'review' })}
-                >
-                Review
-                </button>
-            )}
-            {repos.find(r => r.name === activeRepo.name)?.issue && (
-                <button
-                className={`sub-tab-btn ${activeSubTab.name === 'issues' ? 'active' : ''}`}
-                onClick={() => setActiveSubTab({ repo: activeRepo.name, name: 'issues' })}
-                >
-                Issues
-                </button>
-            )}
-            {repos.find(r => r.name === activeRepo.name)?.dev && (
-                <button
-                className={`sub-tab-btn ${activeSubTab.name === 'dev' ? 'active' : ''}`}
-                onClick={() => setActiveSubTab({ repo: activeRepo.name, name: 'dev' })}
-                >
-                Dev
-                </button>
-            )}
-            </nav>
-            <div className="repo-controls">
-                {activeRepo.review?.assignees && activeRepo.review.assignees.length > 0 && (
-                    <span className="assignee-filter" title={`Watching PRs assigned to: ${activeRepo.review.assignees.join(', ')}`}>
-                        Filter: {activeRepo.review.assignees.join(', ')}
-                    </span>
-                )}
-                <button className="btn btn-refresh-lg" onClick={() => refreshData(true)} title="Refresh now">↻</button>
-                {lastUpdated && <span className={`last-updated ${Date.now() - lastUpdated > 60000 ? 'stale' : ''}`}>Updated {lastUpdated.toLocaleTimeString()}</span>}
-                <button className="btn" onClick={() => setView('update_repo')} style={{marginLeft: '10px', marginRight: '10px'}}>
-                    Repo Settings
-                    {hasInstructionDraft && <span style={{marginLeft: '5px', color: '#ffcc00', fontWeight: 'bold'}}>●</span>}
-                </button>
-            </div>
-        </div>
-      )}
-      <main className={activeSubTab.name === 'review' ? 'pr-list-review' : (activeSubTab.name === 'dev' ? 'dev-container-full' : 'pr-list')}>
-        {renderContent()}
-      </main>
-    </>
-  );
-
   if (isLoadingAuth) return <div className="App"><header className="App-header"><h1>Loading...</h1></header></div>;
 
   if (!isAuthenticated) {
@@ -1396,18 +206,18 @@ function App() {
   return (
     <div className="App">
       <header className="App-header">
-        <h1><a href="/" onClick={(e) => { e.preventDefault(); setView('dashboard'); }}>Repo Agent</a></h1>
+        <h1><a href="/" onClick={(e) => { e.preventDefault(); setView('work'); }}>Repo Agent</a></h1>
         <div className="header-right">
           {user && <span className="user-greeting">Hi, {user}</span>}
 
+          <button className="btn" onClick={() => setView('work')} style={{marginRight: '10px', backgroundColor: '#1a7f37', color: 'white'}}>
+              Work
+          </button>
           {isAdmin && (
             <button className="btn" onClick={() => setView('overseer')} style={{marginRight: '10px', backgroundColor: '#6f42c1', color: 'white'}}>
                 Overseer
             </button>
           )}
-          <button className="btn" onClick={() => setView('work')} style={{marginRight: '10px', backgroundColor: '#1a7f37', color: 'white'}}>
-              Work
-          </button>
           <button className="btn" onClick={() => setView('usage')} style={{marginRight: '10px', backgroundColor: '#0d6efd', color: 'white'}}>
               Usage
           </button>
@@ -1419,26 +229,17 @@ function App() {
           </div>
         </div>
       </header>
-      
+
       {isAuthenticated && !isGeminiKeySet && (
         <div className="warning-banner">
-          <strong>⚠️ Gemini API Key Missing:</strong> Please configure your Gemini API Key in <a href="#" onClick={(e) => { e.preventDefault(); setView('settings'); }}>Settings</a> to enable code reviews and issue handling.
+          <strong>⚠️ Gemini API Key Missing:</strong> Please configure your Gemini API Key in <a href="#" onClick={(e) => { e.preventDefault(); setView('settings'); }}>Settings</a> to enable fixes, reviews and triage.
         </div>
       )}
 
-      {activeRepo && activeRepo.conditions && activeRepo.conditions.filter(c => c.status === 'False').map((c, i) => (
-        <div key={i} className="warning-banner" style={{ backgroundColor: '#fdecea', color: '#721c24', borderColor: '#f5c6cb' }}>
-          <strong>⚠️ {c.type}:</strong> {c.message} <span style={{ opacity: 0.7, fontSize: 'small' }}>({c.reason}{c.lastTransitionTime ? ` — ${new Date(c.lastTransitionTime).toLocaleString()}` : ''})</span>
-        </div>
-      ))}
-
-      {view === 'dashboard' && renderDashboard()}
-      {view === 'overseer' && <Overseer onBack={() => setView('dashboard')} getSandboxStatusClass={getSandboxStatusClass} namespace={user || 'default'} />}
-      {view === 'work' && <Work onBack={() => setView('dashboard')} namespace={user || 'default'} />}
-      {view === 'usage' && <TokenUsage onBack={() => setView('dashboard')} />}
-      {view === 'settings' && <Settings onBack={() => setView('dashboard')} />}
-      {view === 'add_repo' && <AddRepo onCancel={() => setView('dashboard')} onRepoAdded={() => { fetchRepos(); setView('dashboard'); }} />}
-      {view === 'update_repo' && <UpdateRepo repo={activeRepo} onCancel={() => setView('dashboard')} onRepoUpdated={() => { fetchRepos(); setView('dashboard'); }} onRepoDeleted={handleRepoDeleted} />}
+      {view === 'work' && <Work namespace={user || 'default'} />}
+      {view === 'overseer' && <Overseer onBack={() => setView('work')} getSandboxStatusClass={getSandboxStatusClass} namespace={user || 'default'} />}
+      {view === 'usage' && <TokenUsage onBack={() => setView('work')} />}
+      {view === 'settings' && <Settings onBack={() => setView('work')} />}
 
       {feedbackModalOpen && (
         <div className="modal-overlay" onClick={() => setFeedbackModalOpen(false)}>
@@ -1447,10 +248,10 @@ function App() {
                 {feedbackImage && (
                     <>
                         <div style={{border: '1px solid #ccc', padding: '5px', maxHeight: '300px', overflow: 'hidden'}}>
-                            <img 
-                                src={feedbackImage} 
-                                alt="Screenshot" 
-                                style={{maxWidth: '100%', display: 'block', cursor: 'pointer'}} 
+                            <img
+                                src={feedbackImage}
+                                alt="Screenshot"
+                                style={{maxWidth: '100%', display: 'block', cursor: 'pointer'}}
                                 title="Click to open in new tab"
                                 onClick={() => {
                                     const w = window.open("");
@@ -1465,19 +266,19 @@ function App() {
                         </p>
                     </>
                 )}
-                <input 
-                    type="text" 
-                    placeholder="Title" 
-                    value={feedbackTitle} 
-                    onChange={(e) => setFeedbackTitle(e.target.value)} 
-                    style={{padding: '5px', border: '1px solid #ccc'}} 
+                <input
+                    type="text"
+                    placeholder="Title"
+                    value={feedbackTitle}
+                    onChange={(e) => setFeedbackTitle(e.target.value)}
+                    style={{padding: '5px', border: '1px solid #ccc'}}
                 />
-                <textarea 
-                    placeholder="Describe your issue or feedback..." 
-                    value={feedbackText} 
-                    onChange={(e) => setFeedbackText(e.target.value)} 
-                    rows="5" 
-                    style={{padding: '5px', border: '1px solid #ccc'}} 
+                <textarea
+                    placeholder="Describe your issue or feedback..."
+                    value={feedbackText}
+                    onChange={(e) => setFeedbackText(e.target.value)}
+                    rows="5"
+                    style={{padding: '5px', border: '1px solid #ccc'}}
                 />
                 <div style={{display: 'flex', justifyContent: 'flex-end', gap: '10px'}}>
                     <button className="btn" onClick={() => setFeedbackModalOpen(false)} style={{backgroundColor: '#ccc', color: 'black'}}>Cancel</button>

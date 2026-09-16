@@ -239,7 +239,7 @@ function Work({ onBack, namespace }) {
   return (
     <div style={{ padding: '10px 20px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
-        <button className="btn" onClick={onBack}>← Back</button>
+        {onBack && <button className="btn" onClick={onBack}>← Back</button>}
         <h2 style={{ margin: 0 }}>Work</h2>
         <nav className="repo-tabs" style={{ margin: 0 }}>
           {boards.map(b => (
