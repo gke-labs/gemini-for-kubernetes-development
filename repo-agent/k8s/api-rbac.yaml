@@ -23,6 +23,10 @@ rules:
 - apiGroups: ["review.gemini.google.com"]
   resources: ["repowatches"]
   verbs: ["get", "list", "create", "delete", "update", "patch"]
+# Can read boards and record kickoff requests (mailbox annotation)
+- apiGroups: ["board.gemini.google.com"]
+  resources: ["repoboards"]
+  verbs: ["get", "list", "create", "delete", "update", "patch"]
 # Can manage overseers
 - apiGroups: ["overseer.gemini.google.com"]
   resources: ["overseers"]

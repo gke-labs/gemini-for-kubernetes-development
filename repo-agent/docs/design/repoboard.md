@@ -78,7 +78,7 @@ untouched as the (temporary) home of the dev-sandbox feature until the
 workspace redesign retires it.
 
 ```yaml
-apiVersion: review.gemini.google.com/v1alpha1
+apiVersion: board.gemini.google.com/v1alpha1
 kind: RepoBoard
 metadata:
   name: kcc
