@@ -27,36 +27,14 @@
 	  done
     ```
 
-4.  **Apply Example Configurations:**
+4.  **Create a board:**
+
+    Boards are usually created from the UI (paste a repo URL on the Work
+    page), or apply the example RepoBoard:
 
     ```bash
     export VERSION=v0.1.0-rc.3
     export URL_PREFIX=https://raw.githubusercontent.com/gke-labs/gemini-for-kubernetes-development/refs/tags/${VERSION}/repo-agent/examples
-    ```
-
-    Kubernetes repo review example:
-
-    ```bash
-    curl ${URL_PREFIX}/k8s-configdir.yaml | kubectl apply -f -
-    curl ${URL_PREFIX}/k8s-repowatch.yaml | kubectl apply -f -
-    ```
-
-    GKE Labs repo example:
-
-    ```bash
-    curl ${URL_PREFIX}/gkelabs-geminifork8s-repowatch.yaml | kubectl apply -f -
-    ```
-
-    KCC repo example:
-
-    ```bash
-    curl ${URL_PREFIX}/kcc-configdir.yaml | kubectl apply -f -
-    curl ${URL_PREFIX}/kcc-repowatch.yaml | kubectl apply -f -
-    ```
-
-    Agent Sandbox repo example:
-
-    ```bash
-    curl ${URL_PREFIX}/agent-sandbox-repowatch.yaml | kubectl apply -f -
+    curl ${URL_PREFIX}/repoboard.yaml | kubectl apply -f -
     ```
 

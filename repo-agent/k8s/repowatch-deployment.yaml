@@ -69,22 +69,6 @@ spec:
         args:
         - --concurrent-reconciles=5
         env:
-        - name: REPO_SANDBOX_IMAGE
-          value: ko://repo-agent/images/repo-sandbox
-        - name: CONFIGDIR_CLI_IMAGE
-          value: ko://repo-agent/configdir/cmd/configdir-cli
-        - name: GITHUB_CLIENT_ID
-          valueFrom:
-            secretKeyRef:
-              name: github-token
-              key: github-client-id
-              optional: true
-        - name: GITHUB_CLIENT_SECRET
-          valueFrom:
-            secretKeyRef:
-              name: github-token
-              key: github-client-secret
-              optional: true
         # Inherited by the factory CLI child processes so issue-fix tasks
         # report token usage to the collector.
         - name: COLLECTOR_URL

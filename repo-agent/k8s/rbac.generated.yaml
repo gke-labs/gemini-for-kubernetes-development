@@ -8,7 +8,6 @@ rules:
   - ""
   resources:
   - configmaps
-  - pods
   verbs:
   - get
   - list
@@ -16,7 +15,6 @@ rules:
 - apiGroups:
   - ""
   resources:
-  - namespaces
   - secrets
   verbs:
   - create
@@ -26,33 +24,9 @@ rules:
   - update
   - watch
 - apiGroups:
-  - ""
-  resources:
-  - services
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
   - agents.x-k8s.io
   resources:
   - sandboxes
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - apps
-  resources:
-  - deployments
   verbs:
   - create
   - delete
@@ -75,44 +49,6 @@ rules:
   - board.gemini.google.com
   resources:
   - repoboards/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - custom.agents.x-k8s.io
-  resources:
-  - sandboxtasks
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - review.gemini.google.com
-  resources:
-  - repowatches
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - review.gemini.google.com
-  resources:
-  - repowatches/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - review.gemini.google.com
-  resources:
-  - repowatches/status
   verbs:
   - get
   - patch

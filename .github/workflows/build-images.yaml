@@ -18,13 +18,10 @@ jobs:
           - configdir-cli
           - configdir-controller
           - github-mcp-server
-          - repo-sandbox
           - repowatch-controller
           - review-api
           - review-ui
           - syncer
-          - generic-golang
-          - dind-golang
     permissions:
       contents: read
       packages: write

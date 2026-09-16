@@ -1,0 +1,55 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: repoboard-functionality
+spec:
+  steps:
+  # The controller binary keeps its historical repowatch-controller
+  # StatefulSet name; since the RepoWatch EOL it reconciles RepoBoards only.
+  - name: wait-for-board-controller
+    try:
+    - sleep:
+        duration: 10s
+    - assert:
+        timeout: 3m
+        resource:
+          apiVersion: apps/v1
+          kind: StatefulSet
+          metadata:
+            name: repowatch-controller
+            namespace: repo-agent-system
+          status:
+            readyReplicas: 1
+  - name: create-repoboard
+    try:
+    - apply:
+        file: repoboard.yaml
+  # A personal board authenticates with the namespace's github-pat secret;
+  # the controller validates the token and materializes the factory-user
+  # identity secret the factory CLI consumes.
+  - name: check-auth-condition
+    try:
+    - assert:
+        timeout: 2m
+        file: repoboard-assert.yaml
+    catch:
+      - describe:
+          apiVersion: board.gemini.google.com/v1alpha1
+          kind: RepoBoard
+          namespace: repo-agent-system
+      - podLogs:
+          namespace: repo-agent-system
+          selector: statefulset.kubernetes.io/pod-name=repowatch-controller-0
+          tail: 200
+      - events:
+          namespace: repo-agent-system
+  - name: check-factory-user-secret
+    try:
+    - assert:
+        timeout: 2m
+        file: factory-user-assert.yaml
+    catch:
+      - podLogs:
+          namespace: repo-agent-system
+          selector: statefulset.kubernetes.io/pod-name=repowatch-controller-0
+          tail: 200

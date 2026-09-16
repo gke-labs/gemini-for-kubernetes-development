@@ -14,15 +14,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+// The binary keeps its historical repowatch-controller path/name so the
+// StatefulSet and deploy scripts stay stable; since the RepoWatch EOL
+// (docs/design/repoboard.md Phase 5) it runs the RepoBoard controller only.
 package main
 
 import (
-	"context"
-	"errors"
 	"flag"
 	"os"
-
-	"github.com/google/go-github/v39/github"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -32,15 +31,11 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
-	reviewv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repowatch/v1alpha1"
-	sandboxtaskv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/sandboxtask/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/controllers/repoboard"
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/controllers/repowatch"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
 	//+kubebuilder:scaffold:imports
 )
@@ -53,9 +48,7 @@ var (
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
-	utilruntime.Must(reviewv1alpha1.AddToScheme(scheme))
 	utilruntime.Must(boardv1alpha1.AddToScheme(scheme))
-	utilruntime.Must(sandboxtaskv1alpha1.AddToScheme(scheme))
 	//+kubebuilder:scaffold:scheme
 }
 
@@ -70,21 +63,11 @@ func main() {
 			"Enabling this will ensure there is only one active controller manager.")
 	var concurrentReconciles int
 	flag.IntVar(&concurrentReconciles, "concurrent-reconciles", 1, "The number of concurrent reconciles.")
-	var forceSandboxMode string
-	flag.StringVar(&forceSandboxMode, "force-sandbox-mode", "", "Force all AgentSandboxes to use specified sandbox mode (gvisor, privileged, none), ignoring RepoWatch config.")
 	opts := zap.Options{
 		Development: true,
 	}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
-
-	if forceSandboxMode != "" &&
-		forceSandboxMode != reviewv1alpha1.DindSupportGvisor &&
-		forceSandboxMode != reviewv1alpha1.DindSupportPrivileged &&
-		forceSandboxMode != reviewv1alpha1.DindSupportNone {
-		setupLog.Error(errors.New("invalid force-sandbox-mode"), "must be gvisor, privileged, or none", "value", forceSandboxMode)
-		os.Exit(1)
-	}
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
@@ -96,21 +79,6 @@ func main() {
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
-		os.Exit(1)
-	}
-
-	if err = (&repowatch.Reconciler{
-		Client:  mgr.GetClient(),
-		Scheme:  mgr.GetScheme(),
-		Factory: factorycli.NewRunner(),
-		NewGithubClient: func(ctx context.Context, k8sClient client.Client, repoWatch *reviewv1alpha1.RepoWatch) (*github.Client, map[string]string, error) {
-			return repowatch.NewGithubClient(ctx, k8sClient, repoWatch)
-		},
-		RepoSandboxImage: os.Getenv("REPO_SANDBOX_IMAGE"),
-		ConfigDirImage:   os.Getenv("CONFIGDIR_CLI_IMAGE"),
-		ForceSandboxMode: forceSandboxMode,
-	}).SetupWithManager(mgr, concurrentReconciles); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "RepoWatch")
 		os.Exit(1)
 	}
 
