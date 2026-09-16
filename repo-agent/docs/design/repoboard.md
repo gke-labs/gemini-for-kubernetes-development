@@ -162,6 +162,34 @@ Per-user state (auto-fix opt-in per board, notification prefs) lives in the
 member's own namespace, managed via `/api/board/:name/settings` — never in
 the shared CR.
 
+### 4.1 Access model (three gates, all fail closed)
+
+Board access is the intersection of three independent gates:
+
+1. **Service allowlist** (exists today): the deployment's
+   `GITHUB_ALLOWED_USERS` / `allowed-users` ConfigMap decides who may sign
+   in at all. Operators control the universe of possible members.
+2. **Authenticated identity**: OAuth sign-in means the service holds the
+   viewer's own token, which performs every check and action below.
+3. **The board's `access` rule**:
+   - `mode: github` — the API checks the *viewer's own token's* permission
+     on `spec.repoURL` (`GET /repos/{o}/{r}`, caller's `permissions`
+     block); `push`/`maintain`/`admin` ⇒ member. No confused deputy: the
+     service cannot vouch beyond what GitHub grants the caller; private
+     repos 404 for non-collaborators; GitHub-side revocation propagates
+     within the ~15 min cache. v1 threshold is fixed at `push+` (a
+     `minPermission` knob is deliberately deferred).
+   - `mode: list` — membership is exactly `allow:` ∩ gate 1. Covers
+     personal boards (`allow: [me]`), members whose GitHub permission
+     doesn't reflect their role, and boards tighter than GitHub perms.
+
+Membership grants **viewing and orchestration only** — never more GitHub
+power: every write executes under the clicker's token, so GitHub
+re-enforces at the point of action (a member whose token cannot merge gets
+GitHub's 403 regardless of the UI). `GET /api/boards` filters by gate 3, so
+non-members do not learn a board exists; deployment admins retain an
+ops-visible view as today.
+
 ## 5. Coordination contract: GitHub is the shared database
 
 The system of record is **GitHub + sandboxes**; the CR stores neither queue
