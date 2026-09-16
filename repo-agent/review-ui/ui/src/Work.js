@@ -50,19 +50,33 @@ function WorkRow({ item, boardName, onAction, namespace }) {
   const attention = ATTENTION_STYLE[item.attention];
   const stage = STAGE_LABEL[item.stage] || item.stage;
 
-  // One primary action per row/stage.
-  let action = null;
+  // Row actions: kickoffs, re-runs, and the human-gated writes
+  // (publish/promote/merge run under the clicker's own token — GitHub
+  // enforces permissions and branch protection).
+  const prNumFromURL = (u) => {
+    const m = (u || '').match(/\/pull\/(\d+)/);
+    return m ? m[1] : null;
+  };
+  const actions = [];
   if (item.type === 'issue') {
     if (['open', 'awaiting-go', 'queued'].includes(item.stage) && !item.sandbox) {
-      action = { label: 'Fix', path: `issues/${item.number}/fix` };
-    } else if (['fix-failed', 'fix-done', 'pr-open'].includes(item.stage)) {
-      action = { label: 'Fix again', path: `issues/${item.number}/rerun` };
+      actions.push({ label: 'Fix', path: `issues/${item.number}/fix` });
+    } else if (['fix-failed', 'fix-done'].includes(item.stage)) {
+      actions.push({ label: 'Fix again', path: `issues/${item.number}/rerun` });
+    } else if (item.stage === 'pr-open') {
+      const prNum = prNumFromURL(item.prURL);
+      if (prNum) {
+        actions.push({ label: 'Promote PR', path: `prs/${prNum}/promote`, title: 'Mark the draft PR ready for review' });
+        actions.push({ label: 'Merge', path: `prs/${prNum}/merge`, confirm: `Merge PR #${prNum}? Branch protection still applies.` });
+      }
+      actions.push({ label: 'Fix again', path: `issues/${item.number}/rerun` });
     }
   } else {
     if (['open', 'review-queued'].includes(item.stage) && !item.sandbox) {
-      action = { label: 'Review', path: `prs/${item.number}/review` };
+      actions.push({ label: 'Review', path: `prs/${item.number}/review` });
     } else if (item.stage === 'review-ready') {
-      action = { label: 'Re-review', path: `prs/${item.number}/rerun` };
+      actions.push({ label: 'Publish review', path: `prs/${item.number}/publish`, confirm: `Publish the review draft on PR #${item.number} as your pending review?` });
+      actions.push({ label: 'Re-review', path: `prs/${item.number}/rerun` });
     }
   }
 
@@ -107,10 +121,19 @@ function WorkRow({ item, boardName, onAction, namespace }) {
         )}
       </td>
       <td style={{ padding: '6px 8px', fontSize: 'small', color: 'var(--text-secondary)' }}>{ageOf(item.updatedAt)}</td>
-      <td style={{ padding: '6px 8px', textAlign: 'right' }}>
-        {action && (
-          <button className="btn btn-sm" onClick={() => onAction(action.path, action.label)}>{action.label}</button>
-        )}
+      <td style={{ padding: '6px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+        {actions.map(a => (
+          <button
+            key={a.label}
+            className="btn btn-sm"
+            style={{ marginLeft: '4px' }}
+            title={a.title}
+            onClick={() => {
+              if (a.confirm && !window.confirm(a.confirm)) return;
+              onAction(a.path, a.label);
+            }}
+          >{a.label}</button>
+        ))}
       </td>
     </tr>
   );
