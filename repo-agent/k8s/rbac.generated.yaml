@@ -86,6 +86,7 @@ rules:
   - review.gemini.google.com
   resources:
   - repoboards/status
+  - repowatches/status
   verbs:
   - get
   - patch
@@ -107,12 +108,4 @@ rules:
   resources:
   - repowatches/finalizers
   verbs:
-  - update
-- apiGroups:
-  - review.gemini.google.com
-  resources:
-  - repowatches/status
-  verbs:
-  - get
-  - patch
   - update
