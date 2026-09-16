@@ -30,6 +30,9 @@ func (w *Watcher) Run(ctx context.Context) error {
 	if w.Once {
 		w.reconciler.ReconcileOnce(ctx)
 		w.checkRepo(ctx)
+		if w.choresEnabled() {
+			w.chores.ScheduleOnce(ctx)
+		}
 		w.reconciler.CollectGarbage(ctx)
 		if w.Mode == "all" || w.Mode == "run" {
 			w.dispatcher.DispatchOnce(ctx)
@@ -51,6 +54,13 @@ func (w *Watcher) Run(ctx context.Context) error {
 		defer wg.Done()
 		_ = w.reconciler.Run(daemonCtx)
 	}()
+	if w.choresEnabled() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = w.chores.Run(daemonCtx)
+		}()
+	}
 	if w.Mode == "all" || w.Mode == "run" {
 		wg.Add(1)
 		go func() {
@@ -226,9 +236,24 @@ func (w *Watcher) canQueueIssueTasks(prCachePopulated bool) bool {
 	return true
 }
 
-// checkRepo runs one scan cycle over the repository, queueing work for issues,
-// pull requests and chores. Sandbox reconciliation and garbage collection are
-// owned by the sandbox reconciler goroutine and deliberately absent here.
+// choresEnabled reports whether scheduled chores run in this watcher's mode.
+//
+// The set of modes is inherited from when chore scanning lived inside the slow
+// PR cycle of checkRepo, "scan-pr" included: chores have nothing to do with
+// pull requests, but a deployment running that mode is one that has been
+// scheduling them all along, and moving the scheduler out of that cycle is not
+// the change that should turn them off.
+func (w *Watcher) choresEnabled() bool {
+	if w.ChoresMode == "disabled" {
+		return false
+	}
+	return w.Mode == "all" || w.Mode == "scan" || w.Mode == "scan-pr"
+}
+
+// checkRepo runs one scan cycle over the repository, queueing work for issues
+// and pull requests. Chore scheduling, sandbox reconciliation and garbage
+// collection are owned by their own subcontroller goroutines and deliberately
+// absent here.
 func (w *Watcher) checkRepo(ctx context.Context) {
 	w.state.mu.Lock()
 	if w.state.shuttingDown {
@@ -319,11 +344,6 @@ func (w *Watcher) checkRepo(ctx context.Context) {
 		}
 
 		w.processPRs(ctx, prIssues)
-
-		// Scan chores
-		if (w.Mode == "all" || w.Mode == "scan" || w.Mode == "scan-pr") && w.ChoresMode != "disabled" {
-			w.scanChores(ctx)
-		}
 
 		// Publish the entities observed by this cycle so the sandbox reconciler
 		// can garbage collect closed ones without re-querying GitHub. A failed
