@@ -144,6 +144,12 @@ type Launcher interface {
 	// StartPRWatch launches `factory pr watch` for key unless one is
 	// already running.
 	StartPRWatch(key string, opts PRWatchOptions) bool
+	// StartAgent launches `factory agent create --local` for key unless
+	// one is already running.
+	StartAgent(key string, opts AgentOptions) bool
+	// Exec synchronously runs a command inside a sandbox via
+	// `factory sandbox exec` and returns its output.
+	Exec(namespace, sandbox, command string) (string, error)
 	IsRunning(key string) bool
 	// LastResult returns the outcome of the most recently finished
 	// invocation for key, if any.
@@ -249,6 +255,39 @@ func (r *Runner) StartPRWatch(key string, opts PRWatchOptions) bool {
 	return r.start(key, args, opts.GithubToken, timeout)
 }
 
+func (r *Runner) StartAgent(key string, opts AgentOptions) bool {
+	timeout := opts.Timeout
+	if timeout <= 0 {
+		timeout = 30 * time.Minute
+	}
+	args := []string{
+		"agent", "create",
+		"--url", opts.URL,
+		"--agent", opts.AgentFile,
+		"--local",
+		"--namespace", opts.Namespace,
+		"--timeout", timeout.String(),
+		"--abort-on-cancel=false",
+	}
+	return r.start(key, args, opts.GithubToken, timeout)
+}
+
+// Exec runs a command inside a sandbox via the factory CLI. The joined
+// command string is executed through a shell by envd, so substitutions
+// work; quoting does not survive the join — keep commands simple.
+func (r *Runner) Exec(namespace, sandbox, command string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	args := append([]string{"--namespace", namespace, "sandbox", "exec", sandbox}, strings.Fields(command)...)
+	cmd := exec.CommandContext(ctx, r.Binary, args...)
+	cmd.Env = os.Environ()
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	err := cmd.Run()
+	return out.String(), err
+}
+
 func (r *Runner) start(key string, args []string, githubToken string, timeout time.Duration) bool {
 	r.mu.Lock()
 	if _, ok := r.running[key]; ok {
@@ -307,4 +346,31 @@ func tail(s string, n int) string {
 		return s
 	}
 	return s[len(s)-n:]
+}
+
+// AgentOptions are the inputs for a `factory agent create` invocation
+// running a local agent definition (frontmatter + prompt, factory's
+// ParseAgent format). Used for draft-only intake agents such as triage.
+type AgentOptions struct {
+	Namespace string
+	// URL is the issue/PR/repo the agent works on.
+	URL string
+	// AgentFile is a local path to the agent definition.
+	AgentFile   string
+	GithubToken string
+	Timeout     time.Duration
+}
+
+// agentOutputMarker precedes the agent-output.txt contents on
+// `factory agent create` stdout (factory/pkg/commands/agent.go).
+const agentOutputMarker = "Agent Output:\n"
+
+// ExtractAgentOutput returns the agent output printed by a completed
+// `factory agent create` invocation, or "".
+func ExtractAgentOutput(output string) string {
+	idx := strings.LastIndex(output, agentOutputMarker)
+	if idx < 0 {
+		return ""
+	}
+	return strings.TrimSpace(output[idx+len(agentOutputMarker):])
 }

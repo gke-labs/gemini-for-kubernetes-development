@@ -395,6 +395,10 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 			prURL = u
 		}
 	}
+	triageDraft := ""
+	if triageSB := sandboxes[fmt.Sprintf("agent-%s-issue-%d-triage", repo, issue.GetNumber())]; triageSB != nil {
+		triageDraft = triageSB.GetAnnotations()["agentDraft"]
+	}
 
 	stage, attention := "open", ""
 	switch {
@@ -412,6 +416,8 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 		// Executor-consent rule: labeled but not consented — awaiting the
 		// member's go.
 		stage, attention = "awaiting-go", attentionNeedsYou
+	case triageDraft != "":
+		stage, attention = "triage-ready", attentionNeedsYou
 	}
 
 	items[key] = &models.WorkItem{
@@ -423,6 +429,7 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 		Attention: attention,
 		ClaimedBy: claimedBy,
 		PRURL:     prURL,
+		Draft:     triageDraft,
 		Sandbox:   workSandbox(sb),
 		UpdatedAt: issue.GetUpdatedAt().UTC().Format(time.RFC3339),
 	}
@@ -478,6 +485,10 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 	if reviewRequested {
 		claimedBy = member
 	}
+	rowDraft := ""
+	if stage == "review-ready" {
+		rowDraft = draft
+	}
 
 	key := fmt.Sprintf("pr-%d", pr.GetNumber())
 	items[key] = &models.WorkItem{
@@ -489,6 +500,7 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 		Attention: attention,
 		ClaimedBy: claimedBy,
 		PRURL:     pr.GetHTMLURL(),
+		Draft:     rowDraft,
 		Sandbox:   workSandbox(sb),
 		UpdatedAt: pr.GetUpdatedAt().UTC().Format(time.RFC3339),
 	}

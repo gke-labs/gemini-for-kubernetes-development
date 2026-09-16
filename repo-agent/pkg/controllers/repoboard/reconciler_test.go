@@ -48,6 +48,7 @@ type fakeLaunch struct {
 	FixOpts     *factorycli.FixOptions
 	ReviewOpts  *factorycli.ReviewOptions
 	PRWatchOpts *factorycli.PRWatchOptions
+	AgentOpts   *factorycli.AgentOptions
 }
 
 type fakeLauncher struct {
@@ -55,6 +56,7 @@ type fakeLauncher struct {
 	calls   []fakeLaunch
 	running map[string]bool
 	results map[string]factorycli.Result
+	execOut map[string]string
 }
 
 func newFakeLauncher() *fakeLauncher {
@@ -80,6 +82,25 @@ func (f *fakeLauncher) StartPRWatch(key string, opts factorycli.PRWatchOptions) 
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, fakeLaunch{Key: key, PRWatchOpts: &opts})
 	return true
+}
+
+func (f *fakeLauncher) StartAgent(key string, opts factorycli.AgentOptions) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.running[key] {
+		return false
+	}
+	f.calls = append(f.calls, fakeLaunch{Key: key, AgentOpts: &opts})
+	return true
+}
+
+func (f *fakeLauncher) Exec(namespace, sandbox, command string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.execOut == nil {
+		return "", nil
+	}
+	return f.execOut[namespace+"/"+sandbox], nil
 }
 
 func (f *fakeLauncher) IsRunning(key string) bool {
@@ -539,4 +560,69 @@ func TestDraftReviewIntake(t *testing.T) {
 	g.Expect(launches).To(gomega.HaveLen(1))
 	g.Expect(launches[0].Key).To(gomega.Equal("alice/review-pr-5"))
 	g.Expect(launches[0].ReviewOpts).NotTo(gomega.BeNil())
+}
+
+// Triage intake: candidates launch the triage agent; a finished run's
+// report is harvested from the sandbox and stored as a draft.
+func TestTriageIntake(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	board := testBoard(nil)
+	board.Spec.Intake.TriageIssues = true
+
+	ghClient := clients.NewGitHubClientFromHTTP(&http.Client{Transport: &mockRoundTripper{responses: map[string]func() *http.Response{
+		"https://api.github.com/user": jsonResp(`{"login": "alice"}`),
+		"https://api.github.com/repos/test/repo/issues?labels=agent&per_page=100&state=open": jsonResp(`[]`),
+		"https://api.github.com/repos/test/repo/issues?per_page=100&state=open": jsonResp(`[
+			{"number": 30, "title": "untriaged", "html_url": "https://github.com/test/repo/issues/30", "labels": []},
+			{"number": 31, "title": "already fixing", "html_url": "https://github.com/test/repo/issues/31", "labels": [{"name": "agent"}]}
+		]`),
+	}}})
+
+	// Phase 1: launch.
+	fake := newFakeLauncher()
+	r := newTestReconciler(fake, ghClient, board, githubSecret())
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	launches := fake.launches()
+	g.Expect(launches).To(gomega.HaveLen(1))
+	g.Expect(launches[0].Key).To(gomega.Equal("alice/triage-30"))
+	g.Expect(launches[0].AgentOpts).NotTo(gomega.BeNil())
+	g.Expect(launches[0].AgentOpts.URL).To(gomega.Equal("https://github.com/test/repo/issues/30"))
+	g.Expect(launches[0].AgentOpts.AgentFile).NotTo(gomega.BeEmpty())
+
+	// Phase 2: harvest after completion.
+	triageSandbox := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "agents.x-k8s.io/v1alpha1",
+		"kind":       "Sandbox",
+		"metadata": map[string]interface{}{
+			"name": "agent-repo-issue-30-triage", "namespace": "alice",
+			"labels":      map[string]interface{}{"factory.gemini.google.com/managed": "true"},
+			"annotations": map[string]interface{}{"htmlURL": "https://github.com/test/repo/issues/30"},
+		},
+		"spec": map[string]interface{}{"replicas": int64(1)},
+	}}
+	fake2 := newFakeLauncher()
+	fake2.results["alice/triage-30"] = factorycli.Result{FinishedAt: time.Now()}
+	fake2.execOut = map[string]string{
+		"alice/agent-repo-issue-30-triage": "Some preamble...\ntriage:\n  labels: [bug]\n  priority: high\n  assessment: broken\n```",
+	}
+	r2 := newTestReconciler(fake2, ghClient, testBoardWithTriage(), githubSecret(), triageSandbox)
+	_, err = r2.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(fake2.launches()).To(gomega.BeEmpty())
+
+	updated := &unstructured.Unstructured{}
+	updated.SetGroupVersionKind(sandboxGVK)
+	g.Expect(r2.Get(context.Background(), types.NamespacedName{Name: "agent-repo-issue-30-triage", Namespace: "alice"}, updated)).To(gomega.Succeed())
+	g.Expect(updated.GetAnnotations()[AnnotationAgentDraft]).To(gomega.ContainSubstring("priority: high"))
+	g.Expect(updated.GetAnnotations()[AnnotationDraftType]).To(gomega.Equal("triage"))
+	g.Expect(updated.GetAnnotations()[AnnotationTriagedAt]).NotTo(gomega.BeEmpty())
+}
+
+func testBoardWithTriage() *boardv1alpha1.RepoBoard {
+	b := testBoard(nil)
+	b.Spec.Intake.TriageIssues = true
+	return b
 }

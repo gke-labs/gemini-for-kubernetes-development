@@ -145,6 +145,14 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		}
 		reviews = append(reviews, rv...)
 	}
+	var triageCandidates []*github.Issue
+	if board.Spec.Intake.TriageIssues {
+		tc, err := r.discoverTriage(ctx, ghClient, work)
+		if err != nil {
+			logger.Error(err, "triage discovery failed")
+		}
+		triageCandidates = tc
+	}
 	if autoFixWithoutLabel(board) && work.personal {
 		// Aggressive personal variant: every issue assigned to the member
 		// is a candidate, gated by their own standing opt-in.
@@ -178,6 +186,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 	for _, pr := range dedupeInts(reviews) {
 		r.ensureReview(ctx, work, pr)
+	}
+	for _, issue := range triageCandidates {
+		r.ensureTriage(ctx, work, issue)
 	}
 
 	// Resume in-flight reviews: harvest finished results and reattach after

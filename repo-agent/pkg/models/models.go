@@ -219,6 +219,7 @@ type WorkItem struct {
 	Attention string       `json:"attention,omitempty"` // needs-you | working | waiting
 	ClaimedBy string       `json:"claimedBy,omitempty"`
 	PRURL     string       `json:"prURL,omitempty"`
+	Draft     string       `json:"draft,omitempty"` // triage/review draft, when ready
 	Sandbox   *WorkSandbox `json:"sandbox,omitempty"`
 	UpdatedAt string       `json:"updatedAt,omitempty"`
 }
