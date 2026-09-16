@@ -191,3 +191,34 @@ type DevSandbox struct {
 	Approach          string   `json:"approach,omitempty"`
 	ParentApproach    string   `json:"parentApproach,omitempty"`
 }
+
+// Board summarizes a RepoBoard for the boards list.
+type Board struct {
+	Name       string `json:"name"`
+	Namespace  string `json:"namespace"`
+	RepoURL    string `json:"repoURL"`
+	NeedsHuman int    `json:"needsHuman"`
+	Active     int    `json:"active"`
+}
+
+// WorkSandbox is the sandbox chip on a work-item row.
+type WorkSandbox struct {
+	Name      string `json:"name"`
+	Replicas  string `json:"replicas"`
+	TaskState string `json:"taskState,omitempty"`
+}
+
+// WorkItem is one row of the board work feed: an issue or PR merged with
+// its agent/sandbox state.
+type WorkItem struct {
+	Type      string       `json:"type"` // issue | pr
+	Number    int          `json:"number"`
+	Title     string       `json:"title"`
+	HTMLURL   string       `json:"htmlURL"`
+	Stage     string       `json:"stage"`
+	Attention string       `json:"attention,omitempty"` // needs-you | working | waiting
+	ClaimedBy string       `json:"claimedBy,omitempty"`
+	PRURL     string       `json:"prURL,omitempty"`
+	Sandbox   *WorkSandbox `json:"sandbox,omitempty"`
+	UpdatedAt string       `json:"updatedAt,omitempty"`
+}
