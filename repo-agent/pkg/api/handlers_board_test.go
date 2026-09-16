@@ -103,6 +103,8 @@ func boardTestServer(t *testing.T, ghResponses map[string]string, objs ...runtim
 	r.POST("/board/:board/issues/:id/fix", server.kickoffFix)
 	r.POST("/board/:board/prs/:id/review", server.kickoffReview)
 	r.POST("/board/:board/issues/:id/rerun", server.rerunBoardIssue)
+	r.POST("/boards", server.createBoard)
+	r.DELETE("/board/:board", server.deleteBoard)
 	return server, r, dynamicClient
 }
 
@@ -257,4 +259,38 @@ func TestRerunBoardIssue(t *testing.T) {
 
 func itoa(n int) string {
 	return strconv.Itoa(n)
+}
+
+func TestCreateAndDeleteBoard(t *testing.T) {
+	_, r, dyn := boardTestServer(t, map[string]string{})
+
+	req, _ := http.NewRequest("POST", "/boards", strings.NewReader(`{"repoURL": "https://github.com/test/repo"}`))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("create: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	board, err := dyn.Resource(repoBoardGVR).Namespace("alice").Get(context.Background(), "repo", v1.GetOptions{})
+	if err != nil {
+		t.Fatalf("board not created: %v", err)
+	}
+	repoURL, _, _ := unstructured.NestedString(board.Object, "spec", "repoURL")
+	if repoURL != "https://github.com/test/repo" {
+		t.Errorf("unexpected repoURL %q", repoURL)
+	}
+	allow, _, _ := unstructured.NestedStringSlice(board.Object, "spec", "access", "allow")
+	if len(allow) != 1 || allow[0] != "alice" {
+		t.Errorf("expected access.allow=[alice], got %v", allow)
+	}
+
+	req, _ = http.NewRequest("DELETE", "/board/repo", nil)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("delete: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if _, err := dyn.Resource(repoBoardGVR).Namespace("alice").Get(context.Background(), "repo", v1.GetOptions{}); err == nil {
+		t.Errorf("board still exists after delete")
+	}
 }

@@ -14,6 +14,7 @@ import Settings from './Settings';
 import UpdateRepo from './UpdateRepo';
 import Overseer from './Overseer';
 import TokenUsage from './TokenUsage';
+import Work from './Work';
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -1404,6 +1405,9 @@ function App() {
                 Overseer
             </button>
           )}
+          <button className="btn" onClick={() => setView('work')} style={{marginRight: '10px', backgroundColor: '#1a7f37', color: 'white'}}>
+              Work
+          </button>
           <button className="btn" onClick={() => setView('usage')} style={{marginRight: '10px', backgroundColor: '#0d6efd', color: 'white'}}>
               Usage
           </button>
@@ -1430,6 +1434,7 @@ function App() {
 
       {view === 'dashboard' && renderDashboard()}
       {view === 'overseer' && <Overseer onBack={() => setView('dashboard')} getSandboxStatusClass={getSandboxStatusClass} namespace={user || 'default'} />}
+      {view === 'work' && <Work onBack={() => setView('dashboard')} namespace={user || 'default'} />}
       {view === 'usage' && <TokenUsage onBack={() => setView('dashboard')} />}
       {view === 'settings' && <Settings onBack={() => setView('dashboard')} />}
       {view === 'add_repo' && <AddRepo onCancel={() => setView('dashboard')} onRepoAdded={() => { fetchRepos(); setView('dashboard'); }} />}

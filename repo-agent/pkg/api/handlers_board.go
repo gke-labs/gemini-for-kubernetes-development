@@ -541,3 +541,54 @@ func (s *Server) rerunBoardWork(c *gin.Context, kind string) {
 	}
 	c.Status(http.StatusOK)
 }
+
+// createBoard creates a personal RepoBoard in the session namespace from a
+// repo URL — boards are one-URL onboarding by design.
+func (s *Server) createBoard(c *gin.Context) {
+	ctx := c.Request.Context()
+	namespace := s.Auth.GetNamespaceFromContext(c)
+	sessionUser := s.Auth.GetUserFromContext(c)
+
+	var payload struct {
+		RepoURL string `json:"repoURL"`
+		Name    string `json:"name"`
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil || payload.RepoURL == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "repoURL is required"})
+		return
+	}
+	_, repo, err := parseRepoURL(payload.RepoURL)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid repoURL", "details": err.Error()})
+		return
+	}
+	name := payload.Name
+	if name == "" {
+		name = strings.ToLower(repo)
+	}
+
+	board := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "board.gemini.google.com/v1alpha1",
+		"kind":       "RepoBoard",
+		"metadata":   map[string]interface{}{"name": name, "namespace": namespace},
+		"spec": map[string]interface{}{
+			"repoURL": payload.RepoURL,
+			"access":  map[string]interface{}{"mode": "list", "allow": []interface{}{sessionUser}},
+		},
+	}}
+	if _, err := s.K8sManager.Client.Resource(repoBoardGVR).Namespace(namespace).Create(ctx, board, v1.CreateOptions{}); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create board", "details": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"name": name})
+}
+
+func (s *Server) deleteBoard(c *gin.Context) {
+	ctx := c.Request.Context()
+	namespace := s.Auth.GetNamespaceFromContext(c)
+	if err := s.K8sManager.Client.Resource(repoBoardGVR).Namespace(namespace).Delete(ctx, c.Param("board"), v1.DeleteOptions{}); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete board", "details": err.Error()})
+		return
+	}
+	c.Status(http.StatusOK)
+}
