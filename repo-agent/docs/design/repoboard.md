@@ -241,11 +241,33 @@ nor claims.
 | Tier | Predicate | Consent | First GitHub artifact |
 |---|---|---|---|
 | Manual | UI click (assign + optional label) | the click | assignment event |
-| Remote | trigger label applied on GitHub (any surface, incl. mobile) | the labeler's act | label + assignment |
+| Remote | trigger label applied on GitHub (any surface, incl. mobile) | the labeler's act — **executes only if labeler == assignee**, else degrades to an awaiting-go row | label + assignment |
 | Auto | issue assigned [+ label] to an opted-in member | **two-key**: `intake.autoFix.enabled` AND the member's opt-in | draft PR |
 | *(overseer)* | *assigned to bot* | *n/a* | *bot PR* |
 
 Notes on the tiers:
+
+- **Executor-consent rule (governs every tier):** work executes under
+  identity X only if (a) **X initiated the trigger** — their UI click, or
+  a trigger label applied *by X themselves* (the controller verifies the
+  `labeled` timeline event's actor against the assignee) — or (b) **X
+  holds standing consent** (the auto-fix opt-in). A trigger that names X
+  without X's consent — e.g. Alice assigns + labels an issue for Bob —
+  never silently executes: it degrades into a **"requested — awaiting
+  your go"** row on X's board with a one-click start. Third-party
+  assignment is thereby a *suggestion routed to X's attention*, not an
+  execution. Assignment alone (no label, no click) is never a trigger in
+  any tier. Review-requests never execute as the requestee at all: at
+  most a draft is prepared under `prepIdentity` (no GitHub writes, no
+  cost to the requestee); publishing always requires their click.
+
+  The rule itself is **an invariant, not a flag**: no board or member
+  setting can authorize execution under a non-consenting identity. The
+  configurable dials sit around it — board side: `triggers.label` (`""`
+  disables GitHub-side triggering entirely), `triggers.discreet`,
+  `intake.autoFix.enabled`/`require`, and the `no-agent` veto label;
+  member side: the per-board auto-fix opt-in (default off), which is the
+  only thing that can widen consent, and only its owner can set it.
 
 - **`assigned + label` is the recommended auto gate**: the label says *an
   agent should attempt this*, the assignee says *whose agent, whose
