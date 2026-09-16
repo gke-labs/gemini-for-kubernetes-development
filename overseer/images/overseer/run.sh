@@ -279,7 +279,8 @@ function runWatchCycle {
         --queue-dir ./overseer/queues \
         --repo "$REPO_PATH" \
         --sandbox-eviction-age "${SANDBOX_EVICTION_AGE:-14d}" \
-        --sandbox-idle-timeout "${SANDBOX_IDLE_TIMEOUT:-1h}"
+        --sandbox-idle-timeout "${SANDBOX_IDLE_TIMEOUT:-1h}" \
+        --task-timeout "${TASK_TIMEOUT:-24h}"
         
     # 6. Run Gemini LLM (Non-deterministic Scanner/Orchestrator)
     if [ "${ALLOW_GEMINI_ORCHESTRATION}" = "true" ]; then

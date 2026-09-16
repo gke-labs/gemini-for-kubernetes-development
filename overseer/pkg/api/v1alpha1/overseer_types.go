@@ -156,6 +156,14 @@ type OverseerSpec struct {
 	// +kubebuilder:validation:Optional
 	PRInactivityTimeout *metav1.Duration `json:"prInactivityTimeout,omitempty"`
 
+	// TaskTimeout bounds the execution time of a single queued task (e.g. "3h", "24h").
+	// When a task exceeds this budget it is marked failed and its sandbox is deleted,
+	// discarding any work in progress, so this must be generous enough for the longest
+	// legitimate task in the repo (e.g. end-to-end suites that record against real GCP).
+	// Defaults to 24h when unset.
+	// +kubebuilder:validation:Optional
+	TaskTimeout *metav1.Duration `json:"taskTimeout,omitempty"`
+
 	// MinNumber specifies the minimum PR/issue number to process.
 	// +kubebuilder:validation:Optional
 	MinNumber *int32 `json:"minNumber,omitempty"`

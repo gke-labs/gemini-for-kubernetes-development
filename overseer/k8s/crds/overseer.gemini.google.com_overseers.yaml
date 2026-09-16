@@ -164,6 +164,8 @@ spec:
                   - name
                   type: object
                 type: array
+              taskTimeout:
+                type: string
               workspaceDiskSize:
                 default: 10Gi
                 type: string
