@@ -615,3 +615,43 @@ func testBoardWithTriage() *boardv1alpha1.RepoBoard {
 	b.Spec.Intake.TriageIssues = true
 	return b
 }
+
+// A token that cannot answer GET /user (e.g. a CI installation token) still
+// authenticates when the github-pat secret records the identity in its
+// name/email keys; the factory-user secret uses that fallback login.
+func TestDiscoveryIdentityFallbackFromSecret(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	ghClient := clients.NewGitHubClientFromHTTP(&http.Client{Transport: &mockRoundTripper{responses: map[string]func() *http.Response{
+		"https://api.github.com/user": func() *http.Response {
+			return &http.Response{StatusCode: http.StatusForbidden, Body: io.NopCloser(strings.NewReader(`{"message": "Resource not accessible by integration"}`))}
+		},
+		"https://api.github.com/repos/test/repo/issues?labels=agent&per_page=100&state=open": jsonResp(`[]`),
+	}}})
+
+	secret := githubSecret()
+	secret.Data["name"] = []byte("ci-bot")
+	secret.Data["email"] = []byte("ci-bot@example.com")
+
+	fake := newFakeLauncher()
+	r := newTestReconciler(fake, ghClient, testBoard(nil), secret)
+
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	board := &boardv1alpha1.RepoBoard{}
+	g.Expect(r.Get(context.Background(), boardRequest().NamespacedName, board)).To(gomega.Succeed())
+	var auth *metav1.Condition
+	for i := range board.Status.Conditions {
+		if board.Status.Conditions[i].Type == "Auth" {
+			auth = &board.Status.Conditions[i]
+		}
+	}
+	g.Expect(auth).NotTo(gomega.BeNil())
+	g.Expect(string(auth.Status)).To(gomega.Equal("True"))
+
+	fu := &corev1.Secret{}
+	g.Expect(r.Get(context.Background(), types.NamespacedName{Name: "factory-user", Namespace: "alice"}, fu)).To(gomega.Succeed())
+	g.Expect(fu.Data["GITHUB_LOGIN"]).To(gomega.Equal([]byte("ci-bot")))
+	g.Expect(fu.Data["GITHUB_EMAIL"]).To(gomega.Equal([]byte("ci-bot@example.com")))
+}

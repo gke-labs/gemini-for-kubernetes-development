@@ -260,11 +260,17 @@ func (r *Reconciler) discoveryClient(ctx context.Context, work *workState) (*git
 	if ghClient, token, err := newClient(ctx, r, work.board.Namespace); err == nil {
 		work.personal = true
 		work.discToken = token
-		user, _, err := ghClient.Users.Get(ctx, "")
-		if err != nil {
-			return nil, fmt.Errorf("github token invalid: %w", err)
+		var login, email string
+		if user, _, userErr := ghClient.Users.Get(ctx, ""); userErr == nil {
+			login, email = user.GetLogin(), user.GetEmail()
+		} else if fbLogin, fbEmail, ok := r.identityFromSecret(ctx, work.board.Namespace); ok {
+			// Tokens that cannot answer GET /user (e.g. CI installation
+			// tokens) fall back to the identity recorded alongside the PAT.
+			login, email = fbLogin, fbEmail
+		} else {
+			return nil, fmt.Errorf("github token invalid: %w", userErr)
 		}
-		if err := r.ensureFactoryUserSecret(ctx, work.board.Namespace, user.GetLogin(), user.GetEmail()); err != nil {
+		if err := r.ensureFactoryUserSecret(ctx, work.board.Namespace, login, email); err != nil {
 			log.FromContext(ctx).Error(err, "unable to sync factory-user secret", "namespace", work.board.Namespace)
 		}
 		return ghClient, nil
