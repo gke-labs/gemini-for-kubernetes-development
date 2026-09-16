@@ -137,6 +137,11 @@ func (in *OverseerSpec) DeepCopyInto(out *OverseerSpec) {
 		*out = new(v1.Duration)
 		**out = **in
 	}
+	if in.TaskTimeout != nil {
+		in, out := &in.TaskTimeout, &out.TaskTimeout
+		*out = new(v1.Duration)
+		**out = **in
+	}
 	if in.MinNumber != nil {
 		in, out := &in.MinNumber, &out.MinNumber
 		*out = new(int32)
