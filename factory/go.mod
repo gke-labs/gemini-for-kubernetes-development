@@ -5,6 +5,7 @@ go 1.26.3
 require (
 	connectrpc.com/connect v1.18.1
 	github.com/creack/pty v1.1.24
+	github.com/google/go-cmp v0.7.0
 	github.com/google/go-github/v39 v39.2.0
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/spf13/cobra v1.10.2
