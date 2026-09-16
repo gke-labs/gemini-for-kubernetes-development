@@ -75,6 +75,24 @@ rules:
 - apiGroups:
   - review.gemini.google.com
   resources:
+  - repoboards
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - review.gemini.google.com
+  resources:
+  - repoboards/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - review.gemini.google.com
+  resources:
   - repowatches
   verbs:
   - create
