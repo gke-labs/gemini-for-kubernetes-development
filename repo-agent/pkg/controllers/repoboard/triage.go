@@ -18,11 +18,7 @@ package repoboard
 
 import (
 	"context"
-	_ "embed"
-	"fmt"
-	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/go-github/v39/github"
@@ -31,15 +27,12 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
 )
 
-// Triage intake (design D4): a draft-only factory agent prepares label /
+// Triage intake (design D4): `factory triage --publish no` prepares label /
 // priority / duplicate suggestions per inbound issue. It runs in the board
-// namespace under the discovery identity, writes nothing to GitHub
-// (skipPR), and its report is harvested from the sandbox's gemini output
-// via `factory sandbox exec` — the maintainer applies suggestions with
-// their own clicks.
-
-//go:embed triage_agent.md
-var triageAgentDefinition []byte
+// namespace under the discovery identity, writes nothing to GitHub, and the
+// structured report is harvested from the invocation's stdout banners —
+// the same contract the review flow uses. The maintainer applies
+// suggestions with their own clicks.
 
 const (
 	// AnnotationTriagedAt marks a stored triage draft.
@@ -47,40 +40,7 @@ const (
 	// AnnotationDraftType distinguishes triage drafts from review drafts on
 	// the shared agentDraft key (legacy name the UI already understands).
 	AnnotationDraftType = "agentDraftType"
-
-	triageAgentSlug = "triage"
 )
-
-var triageAgentFile = struct {
-	sync.Once
-	path string
-	err  error
-}{}
-
-// triageAgentPath materializes the embedded agent definition once per
-// process for `factory agent create --local`.
-func triageAgentPath() (string, error) {
-	triageAgentFile.Do(func() {
-		f, err := os.CreateTemp("", "triage-agent-*.md")
-		if err != nil {
-			triageAgentFile.err = err
-			return
-		}
-		defer f.Close()
-		if _, err := f.Write(triageAgentDefinition); err != nil {
-			triageAgentFile.err = err
-			return
-		}
-		triageAgentFile.path = f.Name()
-	})
-	return triageAgentFile.path, triageAgentFile.err
-}
-
-// triageSandboxName mirrors factory's EnsureAgentSandbox naming:
-// agent-<repo>-issue-<n>-<agent-slug>.
-func (w *workState) triageSandboxName(issue int) string {
-	return fmt.Sprintf("agent-%s-issue-%d-%s", w.repo, issue, triageAgentSlug)
-}
 
 // discoverTriage lists open issues needing triage: not PRs, not vetoed, and
 // not already routed to the fix flow via the trigger label.
@@ -121,12 +81,12 @@ func hasGithubLabel(labels []*github.Label, name string) bool {
 }
 
 // ensureTriage drives one issue's triage state machine: harvest a finished
-// run, or launch one within limits.
+// run's stdout report, or launch one within limits.
 func (r *Reconciler) ensureTriage(ctx context.Context, work *workState, issue *github.Issue) {
 	logger := log.FromContext(ctx)
-	name := work.triageSandboxName(issue.GetNumber())
+	name := factorycli.TriageSandboxName(work.repo, issue.GetNumber())
 	sb := work.findSandbox(work.board.Namespace, name)
-	key := fmt.Sprintf("%s/triage-%d", work.board.Namespace, issue.GetNumber())
+	key := work.board.Namespace + "/" + name
 
 	if sb != nil && sb.GetAnnotations()[AnnotationTriagedAt] != "" {
 		return
@@ -137,10 +97,7 @@ func (r *Reconciler) ensureTriage(ctx context.Context, work *workState, issue *g
 
 	if res, ok := r.Factory.LastResult(key); ok {
 		if res.Err == nil && sb != nil {
-			report, err := r.harvestTriageReport(work, name)
-			if err != nil {
-				logger.Error(err, "unable to harvest triage report", "issue", issue.GetNumber())
-			} else if report != "" {
+			if report := factorycli.ExtractTriageYAML(res.Output); report != "" {
 				annotations := sb.GetAnnotations()
 				if annotations == nil {
 					annotations = map[string]string{}
@@ -164,49 +121,11 @@ func (r *Reconciler) ensureTriage(ctx context.Context, work *workState, issue *g
 	if sb == nil && r.activeCount(work) >= work.board.Spec.Limits.MaxActive {
 		return
 	}
-	agentFile, err := triageAgentPath()
-	if err != nil {
-		logger.Error(err, "unable to materialize triage agent definition")
-		return
-	}
-	if r.Factory.StartAgent(key, factorycli.AgentOptions{
+	if r.Factory.StartTriage(key, factorycli.TriageOptions{
 		Namespace:   work.board.Namespace,
-		URL:         issue.GetHTMLURL(),
-		AgentFile:   agentFile,
+		IssueURL:    issue.GetHTMLURL(),
 		GithubToken: work.discToken,
 	}) {
-		logger.Info("launched triage agent", "issue", issue.GetNumber(), "board", work.board.Name)
+		logger.Info("launched factory triage", "issue", issue.GetNumber(), "board", work.board.Name)
 	}
-}
-
-// harvestTriageReport pulls the agent's final response out of the sandbox
-// (gemini-output.json of the latest agent task dir) and trims it to the
-// triage YAML block.
-func (r *Reconciler) harvestTriageReport(work *workState, sandboxName string) (string, error) {
-	out, err := r.Factory.Exec(work.board.Namespace, sandboxName,
-		"jq -r .response $(ls -td /workspaces/tasks/agent-*/gemini-output.json | head -1)")
-	if err != nil {
-		return "", fmt.Errorf("sandbox exec: %w (output: %s)", err, tailOf(out, 512))
-	}
-	return extractTriageYAML(out), nil
-}
-
-// extractTriageYAML trims a model response to the triage YAML block.
-func extractTriageYAML(response string) string {
-	idx := strings.LastIndex(response, "triage:")
-	if idx < 0 {
-		return ""
-	}
-	report := response[idx:]
-	if end := strings.Index(report, "```"); end >= 0 {
-		report = report[:end]
-	}
-	return strings.TrimSpace(report)
-}
-
-func tailOf(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[len(s)-n:]
 }

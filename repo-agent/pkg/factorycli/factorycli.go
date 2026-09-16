@@ -144,12 +144,10 @@ type Launcher interface {
 	// StartPRWatch launches `factory pr watch` for key unless one is
 	// already running.
 	StartPRWatch(key string, opts PRWatchOptions) bool
-	// StartAgent launches `factory agent create --local` for key unless
-	// one is already running.
-	StartAgent(key string, opts AgentOptions) bool
-	// Exec synchronously runs a command inside a sandbox via
-	// `factory sandbox exec` and returns its output.
-	Exec(namespace, sandbox, command string) (string, error)
+	// StartTriage launches `factory triage --publish no` for key unless
+	// one is already running. The triage YAML is recovered from the
+	// invocation's output (see ExtractTriageYAML) via LastResult.
+	StartTriage(key string, opts TriageOptions) bool
 	IsRunning(key string) bool
 	// LastResult returns the outcome of the most recently finished
 	// invocation for key, if any.
@@ -255,37 +253,20 @@ func (r *Runner) StartPRWatch(key string, opts PRWatchOptions) bool {
 	return r.start(key, args, opts.GithubToken, timeout)
 }
 
-func (r *Runner) StartAgent(key string, opts AgentOptions) bool {
+func (r *Runner) StartTriage(key string, opts TriageOptions) bool {
 	timeout := opts.Timeout
 	if timeout <= 0 {
 		timeout = 30 * time.Minute
 	}
 	args := []string{
-		"agent", "create",
-		"--url", opts.URL,
-		"--agent", opts.AgentFile,
-		"--local",
+		"triage",
+		"--url", opts.IssueURL,
+		"--publish", "no",
 		"--namespace", opts.Namespace,
 		"--timeout", timeout.String(),
 		"--abort-on-cancel=false",
 	}
 	return r.start(key, args, opts.GithubToken, timeout)
-}
-
-// Exec runs a command inside a sandbox via the factory CLI. The joined
-// command string is executed through a shell by envd, so substitutions
-// work; quoting does not survive the join — keep commands simple.
-func (r *Runner) Exec(namespace, sandbox, command string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-	args := append([]string{"--namespace", namespace, "sandbox", "exec", sandbox}, strings.Fields(command)...)
-	cmd := exec.CommandContext(ctx, r.Binary, args...)
-	cmd.Env = os.Environ()
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
-	err := cmd.Run()
-	return out.String(), err
 }
 
 func (r *Runner) start(key string, args []string, githubToken string, timeout time.Duration) bool {
@@ -348,29 +329,35 @@ func tail(s string, n int) string {
 	return s[len(s)-n:]
 }
 
-// AgentOptions are the inputs for a `factory agent create` invocation
-// running a local agent definition (frontmatter + prompt, factory's
-// ParseAgent format). Used for draft-only intake agents such as triage.
-type AgentOptions struct {
-	Namespace string
-	// URL is the issue/PR/repo the agent works on.
-	URL string
-	// AgentFile is a local path to the agent definition.
-	AgentFile   string
+// TriageOptions are the inputs for a `factory triage` invocation
+// (draft-only issue triage; --publish no writes nothing to GitHub).
+type TriageOptions struct {
+	Namespace   string
+	IssueURL    string
 	GithubToken string
 	Timeout     time.Duration
 }
 
-// agentOutputMarker precedes the agent-output.txt contents on
-// `factory agent create` stdout (factory/pkg/commands/agent.go).
-const agentOutputMarker = "Agent Output:\n"
+// triageBanner opens the triage YAML on `factory triage --publish no`
+// stdout (factory/pkg/commands/triage.go).
+const triageBanner = "================= ISSUE TRIAGE ================="
 
-// ExtractAgentOutput returns the agent output printed by a completed
-// `factory agent create` invocation, or "".
-func ExtractAgentOutput(output string) string {
-	idx := strings.LastIndex(output, agentOutputMarker)
-	if idx < 0 {
+// ExtractTriageYAML returns the triage YAML printed after the ISSUE TRIAGE
+// banner of a completed `factory triage` invocation, or "".
+func ExtractTriageYAML(output string) string {
+	start := strings.Index(output, triageBanner)
+	if start < 0 {
 		return ""
 	}
-	return strings.TrimSpace(output[idx+len(agentOutputMarker):])
+	rest := output[start+len(triageBanner):]
+	if end := strings.Index(rest, "================"); end >= 0 {
+		rest = rest[:end]
+	}
+	return strings.TrimSpace(rest)
+}
+
+// TriageSandboxName returns the sandbox name `factory triage` uses
+// (EnsureTriageSandbox: triage-<repo>-<issueNumber>).
+func TriageSandboxName(repo string, issueNumber int) string {
+	return fmt.Sprintf("triage-%s-%d", repo, issueNumber)
 }

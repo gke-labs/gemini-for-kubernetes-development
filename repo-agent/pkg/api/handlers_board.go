@@ -396,7 +396,7 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 		}
 	}
 	triageDraft := ""
-	if triageSB := sandboxes[fmt.Sprintf("agent-%s-issue-%d-triage", repo, issue.GetNumber())]; triageSB != nil {
+	if triageSB := sandboxes[fmt.Sprintf("triage-%s-%d", repo, issue.GetNumber())]; triageSB != nil {
 		triageDraft = triageSB.GetAnnotations()["agentDraft"]
 	}
 
