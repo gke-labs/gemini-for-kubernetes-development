@@ -110,6 +110,7 @@ function Work({ onBack, namespace }) {
   const [loading, setLoading] = useState(false);
   const [addURL, setAddURL] = useState('');
   const [error, setError] = useState('');
+  const [autoFix, setAutoFix] = useState(false);
 
   const fetchBoards = useCallback(() => {
     fetch('/api/boards')
@@ -131,6 +132,13 @@ function Work({ onBack, namespace }) {
   }, [activeBoard]);
 
   useEffect(() => { fetchBoards(); }, [fetchBoards]);
+  useEffect(() => {
+    if (!activeBoard) return;
+    fetch(`/api/board/${activeBoard}/settings`)
+      .then(res => res.ok ? res.json() : { autoFix: false })
+      .then(data => setAutoFix(!!data.autoFix))
+      .catch(() => setAutoFix(false));
+  }, [activeBoard]);
   useEffect(() => {
     fetchWork();
     const interval = setInterval(() => {
@@ -177,6 +185,17 @@ function Work({ onBack, namespace }) {
         else { res.text().then(t => setError(`Delete failed: ${t}`)); }
       })
       .catch(err => setError(`Delete failed: ${err}`));
+  };
+
+  const handleAutoFixToggle = (enabled) => {
+    setAutoFix(enabled);
+    fetch(`/api/board/${activeBoard}/settings`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ autoFix: enabled }),
+    })
+      .then(res => { if (!res.ok) { setAutoFix(!enabled); res.text().then(t => setError(`Settings save failed: ${t}`)); } })
+      .catch(err => { setAutoFix(!enabled); setError(`Settings save failed: ${err}`); });
   };
 
   const board = boards.find(b => b.name === activeBoard);
@@ -227,6 +246,10 @@ function Work({ onBack, namespace }) {
         <div style={{ fontSize: 'small', color: 'var(--text-secondary)', marginBottom: '8px' }}>
           <a href={board.repoURL} target="_blank" rel="noopener noreferrer">{board.repoURL}</a>
           {' — '}{board.active} active, {board.needsHuman} need you
+          <label style={{ marginLeft: '16px', cursor: 'pointer' }} title="With the board's auto-fix intake enabled, issues assigned to you (with the trigger label) start fixing automatically as you. Your consent, your identity, draft PRs only.">
+            <input type="checkbox" checked={autoFix} onChange={e => handleAutoFixToggle(e.target.checked)} style={{ marginRight: '4px' }} />
+            Auto-fix issues assigned to me
+          </label>
         </div>
       )}
 

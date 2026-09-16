@@ -29,12 +29,14 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/go-github/v39/github"
+	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/klog/v2"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/controllers/repoboard"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 )
 
@@ -694,6 +696,76 @@ func (s *Server) deleteBoard(c *gin.Context) {
 	namespace := s.Auth.GetNamespaceFromContext(c)
 	if err := s.K8sManager.Client.Resource(repoBoardGVR).Namespace(namespace).Delete(ctx, c.Param("board"), v1.DeleteOptions{}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete board", "details": err.Error()})
+		return
+	}
+	c.Status(http.StatusOK)
+}
+
+// Board settings: per-member opt-ins stored in the member's own namespace
+// (design §4.2) — the target namespace comes from the session, never the
+// request, so nobody can write another member's consent.
+
+func (s *Server) getBoardSettings(c *gin.Context) {
+	ctx := c.Request.Context()
+	namespace := s.Auth.GetNamespaceFromContext(c)
+	sessionUser := s.Auth.GetUserFromContext(c)
+
+	board, _, err := s.resolveBoard(ctx, namespace, sessionUser, c.Param("board"))
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Board not accessible", "details": err.Error()})
+		return
+	}
+
+	autoFix := false
+	if cm, err := s.K8sManager.Clientset.CoreV1().ConfigMaps(namespace).Get(ctx, repoboard.PreferencesConfigMap, v1.GetOptions{}); err == nil {
+		autoFix = cm.Data[repoboard.AutoFixPreferenceKey(board.GetNamespace(), board.GetName())] == "true"
+	}
+	c.JSON(http.StatusOK, gin.H{"autoFix": autoFix})
+}
+
+func (s *Server) putBoardSettings(c *gin.Context) {
+	ctx := c.Request.Context()
+	namespace := s.Auth.GetNamespaceFromContext(c)
+	sessionUser := s.Auth.GetUserFromContext(c)
+
+	var payload struct {
+		AutoFix bool `json:"autoFix"`
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	board, _, err := s.resolveBoard(ctx, namespace, sessionUser, c.Param("board"))
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Board not accessible", "details": err.Error()})
+		return
+	}
+
+	key := repoboard.AutoFixPreferenceKey(board.GetNamespace(), board.GetName())
+	cms := s.K8sManager.Clientset.CoreV1().ConfigMaps(namespace)
+	cm, err := cms.Get(ctx, repoboard.PreferencesConfigMap, v1.GetOptions{})
+	if err != nil {
+		cm = &corev1.ConfigMap{ObjectMeta: v1.ObjectMeta{Name: repoboard.PreferencesConfigMap, Namespace: namespace}, Data: map[string]string{}}
+		if payload.AutoFix {
+			cm.Data[key] = "true"
+		}
+		if _, err := cms.Create(ctx, cm, v1.CreateOptions{}); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save settings", "details": err.Error()})
+			return
+		}
+		c.Status(http.StatusOK)
+		return
+	}
+	if cm.Data == nil {
+		cm.Data = map[string]string{}
+	}
+	if payload.AutoFix {
+		cm.Data[key] = "true"
+	} else {
+		delete(cm.Data, key)
+	}
+	if _, err := cms.Update(ctx, cm, v1.UpdateOptions{}); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save settings", "details": err.Error()})
 		return
 	}
 	c.Status(http.StatusOK)

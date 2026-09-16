@@ -88,6 +88,7 @@ type Reconciler struct {
 //+kubebuilder:rbac:groups=board.gemini.google.com,resources=repoboards/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=agents.x-k8s.io,resources=sandboxes,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
+//+kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 
 // fixPlan is one consented fix to ensure: the executor is the member whose
 // identity and namespace run the task.
@@ -95,6 +96,9 @@ type fixPlan struct {
 	issue    int
 	issueURL string
 	executor string
+	// auto marks a launch consented via the member's standing auto-fix
+	// opt-in rather than a direct act; safety rails apply (forced draft PR).
+	auto bool
 }
 
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -133,6 +137,22 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 			logger.Error(err, "trigger-label discovery failed")
 		}
 		fixes, reviews = f, rv
+	}
+	if board.Spec.Intake.DraftReviews {
+		rv, err := r.discoverIntakePRs(ctx, ghClient, work)
+		if err != nil {
+			logger.Error(err, "draft-review intake discovery failed")
+		}
+		reviews = append(reviews, rv...)
+	}
+	if autoFixWithoutLabel(board) && work.personal {
+		// Aggressive personal variant: every issue assigned to the member
+		// is a candidate, gated by their own standing opt-in.
+		f, err := r.discoverAssigned(ctx, ghClient, work)
+		if err != nil {
+			logger.Error(err, "assigned-issue discovery failed")
+		}
+		fixes = append(fixes, f...)
 	}
 	mailFixes, mailReviews := r.mailboxPlans(work)
 	fixes = append(fixes, mailFixes...)
@@ -286,11 +306,19 @@ func (r *Reconciler) discoverLabeled(ctx context.Context, ghClient *github.Clien
 				continue
 			}
 			executor := r.consentedAssignee(ctx, ghClient, work, item)
+			auto := false
+			if executor == "" {
+				// Standing consent (two-key auto-fix) can substitute for a
+				// direct act when the require gate holds; the label
+				// requirement is satisfied here by construction.
+				executor = r.autoConsentedAssignee(ctx, work, item)
+				auto = executor != ""
+			}
 			if executor == "" {
 				logger.V(4).Info("labeled item awaiting assignee consent", "issue", item.GetNumber())
 				continue
 			}
-			fixes = append(fixes, fixPlan{issue: item.GetNumber(), issueURL: item.GetHTMLURL(), executor: executor})
+			fixes = append(fixes, fixPlan{issue: item.GetNumber(), issueURL: item.GetHTMLURL(), executor: executor, auto: auto})
 		}
 		if resp.NextPage == 0 {
 			break
@@ -340,6 +368,85 @@ func (r *Reconciler) consentedAssignee(ctx context.Context, ghClient *github.Cli
 		}
 	}
 	return ""
+}
+
+// autoConsentedAssignee returns an assignee holding standing auto-fix
+// consent (two-key: board intake.autoFix.enabled AND the member's own
+// opt-in), for items satisfying the require gate.
+func (r *Reconciler) autoConsentedAssignee(ctx context.Context, work *workState, issue *github.Issue) string {
+	autoFix := work.board.Spec.Intake.AutoFix
+	if !autoFix.Enabled {
+		return ""
+	}
+	for _, a := range issue.Assignees {
+		login := a.GetLogin()
+		if r.memberOptedInAutoFix(ctx, login, work.board) {
+			return login
+		}
+	}
+	return ""
+}
+
+func autoFixWithoutLabel(board *boardv1alpha1.RepoBoard) bool {
+	autoFix := board.Spec.Intake.AutoFix
+	if !autoFix.Enabled {
+		return false
+	}
+	for _, req := range autoFix.Require {
+		if req == "label" {
+			return false
+		}
+	}
+	return true
+}
+
+// discoverIntakePRs lists every open PR for draft-review intake.
+func (r *Reconciler) discoverIntakePRs(ctx context.Context, ghClient *github.Client, work *workState) ([]int, error) {
+	var reviews []int
+	opts := &github.PullRequestListOptions{State: "open", ListOptions: github.ListOptions{PerPage: 100}}
+	for {
+		prs, resp, err := ghClient.PullRequests.List(ctx, work.owner, work.repo, opts)
+		if err != nil {
+			return reviews, err
+		}
+		for _, pr := range prs {
+			if vetoed(pr.Labels, work.board.Spec.Intake.Filters.ExcludeLabels) {
+				continue
+			}
+			reviews = append(reviews, pr.GetNumber())
+		}
+		if resp.NextPage == 0 {
+			return reviews, nil
+		}
+		opts.Page = resp.NextPage
+	}
+}
+
+// discoverAssigned lists open issues assigned to the personal-board member
+// for the require=[assigned] auto tier.
+func (r *Reconciler) discoverAssigned(ctx context.Context, ghClient *github.Client, work *workState) ([]fixPlan, error) {
+	member := work.board.Namespace
+	if !r.memberOptedInAutoFix(ctx, member, work.board) {
+		return nil, nil
+	}
+	var fixes []fixPlan
+	opts := &github.IssueListByRepoOptions{State: "open", Assignee: member, ListOptions: github.ListOptions{PerPage: 100}}
+	for {
+		items, resp, err := ghClient.Issues.ListByRepo(ctx, work.owner, work.repo, opts)
+		if err != nil {
+			return fixes, err
+		}
+		for _, item := range items {
+			if item.IsPullRequest() || vetoed(item.Labels, work.board.Spec.Intake.Filters.ExcludeLabels) {
+				continue
+			}
+			fixes = append(fixes, fixPlan{issue: item.GetNumber(), issueURL: item.GetHTMLURL(), executor: member, auto: true})
+		}
+		if resp.NextPage == 0 {
+			return fixes, nil
+		}
+		opts.Page = resp.NextPage
+	}
 }
 
 func (w *workState) findAnySandboxNamed(name string) *unstructured.Unstructured {
@@ -489,7 +596,9 @@ func (r *Reconciler) ensureFix(ctx context.Context, work *workState, plan fixPla
 		issueURL = fmt.Sprintf("https://github.com/%s/%s/issues/%d", work.owner, work.repo, plan.issue)
 	}
 	instruction := ""
-	if work.board.Spec.Policy.DraftPR == nil || *work.board.Spec.Policy.DraftPR {
+	if plan.auto || work.board.Spec.Policy.DraftPR == nil || *work.board.Spec.Policy.DraftPR {
+		// Auto-started fixes always open draft PRs, regardless of policy —
+		// the human promotes.
 		instruction = draftPRInstruction
 	}
 	if work.board.Spec.Policy.Disclose {
