@@ -2,6 +2,7 @@ package prs
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -11,19 +12,25 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/conventions"
 )
 
+// maxCommentAttempts is how many times comments on the same revision are
+// addressed before the watcher gives up and hands the pull request back.
+const maxCommentAttempts = 3
+
 // prCommentAnalysis is the verdict on a pull request's outstanding feedback.
 //
 // The oldest unaddressed comment is singled out, not the newest: it is the one
 // that has been waiting longest, and quoting it in the task gives the agent the
 // start of the conversation rather than its tail.
 type prCommentAnalysis struct {
-	hasNewComments      bool
-	unackCommentIDs     []int64
-	unackPRCommentIDs   []int64
-	oldestCommentTime   time.Time
-	oldestCommentAuthor string
-	oldestCommentType   string
-	oldestCommentID     int64
+	hasNewComments         bool
+	unackCommentIDs        []int64
+	unackPRCommentIDs      []int64
+	oldestCommentTime      time.Time
+	oldestCommentAuthor    string
+	oldestCommentType      string
+	oldestCommentID        int64
+	commentsAttemptCount   int
+	lastCommentsTaskFailed bool
 }
 
 // evaluateComments decides whether a pull request has feedback still waiting on
@@ -51,18 +58,38 @@ func (s *Scanner) evaluateComments(
 	lastCommitTime, lastCommentAddressedTime time.Time,
 	lastCommentAddressedSHA, headSHA string,
 ) prCommentAnalysis {
-	var analysis prCommentAnalysis
-
+	filename := fmt.Sprintf("task-pr-%d-comments.yaml", num)
+	lastCommentsTaskFailed := s.lastCommentsTaskFailed(filename, headSHA)
 	comments := history.comments
 	reviews := history.reviews
 	revCommentsMap := history.revCommentsMap
 	bots := s.cfg.AllowlistedBots
 
+	commentsAttemptCount := getCommentsAttemptCount(comments, lastCommitTime, s.cfg.BotUsers, s.cfg.GitHubLogin, bots, s.cfg.TriggerLabel)
+
+	var analysis prCommentAnalysis
+	analysis.lastCommentsTaskFailed = lastCommentsTaskFailed
+	analysis.commentsAttemptCount = commentsAttemptCount
+
+	retryFailedComments := lastCommentsTaskFailed
+	commentAddressedTime := lastCommentAddressedTime
+	if retryFailedComments {
+		commentAddressedTime = time.Time{}
+	}
+
 	// Find the latest timestamp of any reply made by an allowlisted bot user
 	// (excluding reviewer bots, whose reviews are feedback rather than replies).
 	var latestBotReplyTime time.Time
 	for _, c := range comments {
-		if !conventions.IsReviewerBot(c.GetUser(), s.cfg.ReviewerLogins) && conventions.IsBotReply(c.GetUser(), s.cfg.GitHubLogin, bots) && c.GetCreatedAt().After(latestBotReplyTime) {
+		isAnnouncement := strings.Contains(c.GetBody(), "started addressing review feedback") ||
+			strings.Contains(c.GetBody(), "started investigating CI check failures") ||
+			strings.Contains(c.GetBody(), "started resolving merge conflicts") ||
+			strings.Contains(c.GetBody(), "started reviewing") ||
+			strings.Contains(c.GetBody(), "started fixing this issue") ||
+			strings.Contains(c.GetBody(), "pausing automated processing") ||
+			strings.Contains(c.GetBody(), "pausing automated investigation")
+
+		if !isAnnouncement && !conventions.IsReviewerBot(c.GetUser(), s.cfg.ReviewerLogins) && conventions.IsBotReply(c.GetUser(), s.cfg.GitHubLogin, bots) && c.GetCreatedAt().After(latestBotReplyTime) {
 			latestBotReplyTime = c.GetCreatedAt()
 		}
 	}
@@ -90,24 +117,30 @@ func (s *Scanner) evaluateComments(
 			continue
 		}
 		// The pull request's own author talking to itself is not feedback.
-		if strings.EqualFold(c.GetUser().GetLogin(), pr.GetUser().GetLogin()) {
+		if c.GetUser() != nil && pr.GetUser() != nil && strings.EqualFold(c.GetUser().GetLogin(), pr.GetUser().GetLogin()) {
 			continue
 		}
 		if conventions.HasIgnorePrefix(c.GetBody(), s.cfg.TriggerLabel) {
 			continue
 		}
-		if c.GetCreatedAt().After(lastCommitTime) && c.GetCreatedAt().After(lastCommentAddressedTime) && c.GetCreatedAt().After(latestBotReplyTime) {
-			if conventions.HasIssueCommentReaction(ctx, s.gh, c.GetID(), "+1", true, bots, s.cfg.GitHubLogin) {
-				continue
-			}
-			// A human's 'rocket' is an explicit request to look again, and
-			// overrides the watcher's own acknowledgements.
-			humanRocket := conventions.HasIssueCommentReaction(ctx, s.gh, c.GetID(), "rocket", false, bots, s.cfg.GitHubLogin)
-			if !humanRocket && conventions.HasIssueCommentReaction(ctx, s.gh, c.GetID(), "eyes", true, bots, s.cfg.GitHubLogin) {
-				continue
-			}
-			if !humanRocket && conventions.HasIssueCommentReaction(ctx, s.gh, c.GetID(), "confused", true, bots, s.cfg.GitHubLogin) {
-				continue
+		if c.GetCreatedAt().After(lastCommitTime) && c.GetCreatedAt().After(commentAddressedTime) && c.GetCreatedAt().After(latestBotReplyTime) {
+			if !retryFailedComments {
+				if conventions.HasIssueCommentReaction(ctx, s.gh, c.GetID(), "+1", true, bots, s.cfg.GitHubLogin) {
+					continue
+				}
+				// A human's 'rocket' is an explicit request to look again, and
+				// overrides the watcher's own acknowledgements.
+				humanRocket := conventions.HasIssueCommentReaction(ctx, s.gh, c.GetID(), "rocket", false, bots, s.cfg.GitHubLogin)
+				if !humanRocket && conventions.HasIssueCommentReaction(ctx, s.gh, c.GetID(), "eyes", true, bots, s.cfg.GitHubLogin) {
+					continue
+				}
+				if !humanRocket && conventions.HasIssueCommentReaction(ctx, s.gh, c.GetID(), "confused", true, bots, s.cfg.GitHubLogin) {
+					continue
+				}
+			} else {
+				if conventions.HasIssueCommentReaction(ctx, s.gh, c.GetID(), "+1", true, bots, s.cfg.GitHubLogin) {
+					continue
+				}
 			}
 			if isReviewer {
 				hasNewBotReviews = true
@@ -132,10 +165,10 @@ func (s *Scanner) evaluateComments(
 			}
 			continue
 		}
-		if strings.EqualFold(r.GetUser().GetLogin(), pr.GetUser().GetLogin()) {
+		if r.GetUser() != nil && pr.GetUser() != nil && strings.EqualFold(r.GetUser().GetLogin(), pr.GetUser().GetLogin()) {
 			continue
 		}
-		if r.GetSubmittedAt().After(lastCommitTime) && r.GetSubmittedAt().After(lastCommentAddressedTime) && r.GetSubmittedAt().After(latestBotReplyTime) {
+		if r.GetSubmittedAt().After(lastCommitTime) && r.GetSubmittedAt().After(commentAddressedTime) && r.GetSubmittedAt().After(latestBotReplyTime) {
 			if conventions.HasIgnorePrefix(r.GetBody(), s.cfg.TriggerLabel) {
 				continue
 			}
@@ -164,10 +197,10 @@ func (s *Scanner) evaluateComments(
 				}
 				continue
 			}
-			if strings.EqualFold(rc.GetUser().GetLogin(), pr.GetUser().GetLogin()) {
+			if rc.GetUser() != nil && pr.GetUser() != nil && strings.EqualFold(rc.GetUser().GetLogin(), pr.GetUser().GetLogin()) {
 				continue
 			}
-			if rc.GetCreatedAt().After(lastCommitTime) && rc.GetCreatedAt().After(lastCommentAddressedTime) && rc.GetCreatedAt().After(latestBotReplyTime) {
+			if rc.GetCreatedAt().After(lastCommitTime) && rc.GetCreatedAt().After(commentAddressedTime) && rc.GetCreatedAt().After(latestBotReplyTime) {
 				if conventions.HasIgnorePrefix(rc.GetBody(), s.cfg.TriggerLabel) {
 					continue
 				}
@@ -189,7 +222,7 @@ func (s *Scanner) evaluateComments(
 	if hasNewHumanComments {
 		analysis.hasNewComments = true
 	} else if hasNewBotReviews {
-		if lastCommentAddressedSHA != "" && lastCommentAddressedSHA == headSHA {
+		if !lastCommentsTaskFailed && lastCommentAddressedSHA != "" && lastCommentAddressedSHA == headSHA {
 			klog.Infof("Skipping bot review feedback on PR #%d because an address-comments task already ran against SHA %s without resulting in a commit.", num, headSHA)
 		} else {
 			analysis.hasNewComments = true
@@ -222,13 +255,15 @@ func getInvestigationCount(comments []*githubv39.IssueComment, lastCommitTime ti
 	lastResetTime := lastCommitTime
 	for _, c := range comments {
 		isPoolBot := false
-		for _, bot := range allBotUsers {
-			if strings.EqualFold(c.GetUser().GetLogin(), bot) {
-				isPoolBot = true
-				break
+		if c.GetUser() != nil {
+			for _, bot := range allBotUsers {
+				if strings.EqualFold(c.GetUser().GetLogin(), bot) {
+					isPoolBot = true
+					break
+				}
 			}
 		}
-		isHuman := !isPoolBot && !conventions.ShouldIgnoreUser(c.GetUser(), githubLogin, bots)
+		isHuman := !isPoolBot && c.GetUser() != nil && !conventions.ShouldIgnoreUser(c.GetUser(), githubLogin, bots)
 		if isHuman && conventions.HasIgnorePrefix(c.GetBody(), triggerLabel) {
 			isHuman = false
 		}
@@ -240,10 +275,12 @@ func getInvestigationCount(comments []*githubv39.IssueComment, lastCommitTime ti
 	investigationCount := 0
 	for _, c := range comments {
 		isPoolBot := false
-		for _, bot := range allBotUsers {
-			if strings.EqualFold(c.GetUser().GetLogin(), bot) {
-				isPoolBot = true
-				break
+		if c.GetUser() != nil {
+			for _, bot := range allBotUsers {
+				if strings.EqualFold(c.GetUser().GetLogin(), bot) {
+					isPoolBot = true
+					break
+				}
 			}
 		}
 		if isPoolBot &&
@@ -253,4 +290,50 @@ func getInvestigationCount(comments []*githubv39.IssueComment, lastCommitTime ti
 		}
 	}
 	return investigationCount
+}
+
+// getCommentsAttemptCount counts how many times the watcher has attempted to address comments
+// since the last thing that ought to reset its patience.
+//
+// The counter resets on a new commit or on any human comment, because either
+// one changes the situation the previous attempts failed against.
+func getCommentsAttemptCount(comments []*githubv39.IssueComment, lastCommitTime time.Time, allBotUsers []string, githubLogin string, bots []string, triggerLabel string) int {
+	lastResetTime := lastCommitTime
+	for _, c := range comments {
+		isPoolBot := false
+		if c.GetUser() != nil {
+			for _, bot := range allBotUsers {
+				if strings.EqualFold(c.GetUser().GetLogin(), bot) {
+					isPoolBot = true
+					break
+				}
+			}
+		}
+		isHuman := !isPoolBot && c.GetUser() != nil && !conventions.ShouldIgnoreUser(c.GetUser(), githubLogin, bots)
+		if isHuman && conventions.HasIgnorePrefix(c.GetBody(), triggerLabel) {
+			isHuman = false
+		}
+		if (isHuman || strings.Contains(c.GetBody(), "pausing automated processing")) && c.GetCreatedAt().After(lastResetTime) {
+			lastResetTime = c.GetCreatedAt()
+		}
+	}
+
+	attemptCount := 0
+	for _, c := range comments {
+		isPoolBot := false
+		if c.GetUser() != nil {
+			for _, bot := range allBotUsers {
+				if strings.EqualFold(c.GetUser().GetLogin(), bot) {
+					isPoolBot = true
+					break
+				}
+			}
+		}
+		if isPoolBot &&
+			strings.Contains(c.GetBody(), "started addressing review feedback") &&
+			c.GetCreatedAt().After(lastResetTime) {
+			attemptCount++
+		}
+	}
+	return attemptCount
 }
