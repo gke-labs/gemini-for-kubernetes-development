@@ -308,7 +308,6 @@ function Work({ onBack, namespace }) {
             style={{ padding: '6px', borderRadius: '4px', border: '1px solid var(--border-color)', width: '260px' }}
           />
           <button className="btn" onClick={handleAddBoard} disabled={loading}>Add board</button>
-          {activeBoard && <button className="btn btn-delete" onClick={handleDeleteBoard} title="Remove board">✕</button>}
         </div>
       </div>
 
@@ -319,13 +318,19 @@ function Work({ onBack, namespace }) {
       )}
 
       {board && (
-        <div style={{ fontSize: 'small', color: 'var(--text-secondary)', marginBottom: '8px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', fontSize: 'small', color: 'var(--text-secondary)', marginBottom: '8px' }}>
           <a href={board.repoURL} target="_blank" rel="noopener noreferrer">{board.repoURL}</a>
-          {' — '}{board.active} active, {board.needsHuman} need you
+          <span style={{ margin: '0 6px' }}>—</span>{board.active} active, {board.needsHuman} need you
           <label style={{ marginLeft: '16px', cursor: 'pointer' }} title="With the board's auto-fix intake enabled, issues assigned to you (with the trigger label) start fixing automatically as you. Your consent, your identity, draft PRs only.">
             <input type="checkbox" checked={autoFix} onChange={e => handleAutoFixToggle(e.target.checked)} style={{ marginRight: '4px' }} />
             Auto-fix issues assigned to me
           </label>
+          <button
+            className="btn btn-delete btn-sm"
+            onClick={handleDeleteBoard}
+            title="Remove this board (running sandboxes are not touched)"
+            style={{ marginLeft: 'auto' }}
+          >Delete</button>
         </div>
       )}
 
