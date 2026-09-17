@@ -63,6 +63,11 @@ const (
 	AnnotationPreventAutoPause  = "sandbox.gemini.google.com/prevent-auto-shutdown"
 	AnnotationUnpausedAt        = "sandbox.gemini.google.com/unpaused-at"
 	AnnotationBoard             = "board.gemini.google.com/board"
+	// AnnotationExecutor records which member's click consented a review;
+	// stamped when the mailbox entry is consumed so resume-after-restart
+	// keeps the executor identity even when the sandbox lives in the board
+	// namespace (personal boards).
+	AnnotationExecutor = "board.gemini.google.com/executor"
 	// AnnotationReviewState tracks GitHub-side review lifecycle: "pending"
 	// (posted as the executor's pending review, finalize on GitHub) or
 	// "submitted" (the API published a draft as a pending review).
@@ -758,7 +763,11 @@ func (r *Reconciler) ensureReview(ctx context.Context, work *workState, plan rev
 
 	if res, ok := r.Factory.LastResult(key); ok && !resultSuperseded(sb, res) {
 		if res.Err == nil {
-			if publish == "draft" && sb != nil {
+			// Trust the invocation's own output over the plan: on personal
+			// boards the resume path cannot always reconstruct whether a
+			// run was a clicked draft-publish, and misreading one as a
+			// draft-harvest re-runs the review in a loop.
+			if (publish == "draft" || factorycli.DraftWasPosted(res.Output)) && sb != nil {
 				// The pending review is already on GitHub; record that so
 				// the board points the member there.
 				if err := r.markReviewPending(ctx, sb, work.board.Name); err != nil {
@@ -819,10 +828,11 @@ func (r *Reconciler) resumeReviews(ctx context.Context, work *workState) {
 		if err != nil {
 			continue
 		}
-		// A sandbox outside the board namespace belongs to the executor
-		// whose namespace hosts it — resume it as their review.
-		executor := ""
-		if sb.GetNamespace() != work.board.Namespace {
+		// The stamped executor (a member's click) survives restarts; a
+		// sandbox outside the board namespace belongs to the executor
+		// whose namespace hosts it.
+		executor := annotations[AnnotationExecutor]
+		if executor == "" && sb.GetNamespace() != work.board.Namespace {
 			executor = sb.GetNamespace()
 		}
 		r.ensureReview(ctx, work, reviewPlan{pr: pr, executor: executor})
@@ -884,7 +894,21 @@ func (r *Reconciler) trimMailbox(ctx context.Context, work *workState) error {
 			if err != nil {
 				continue
 			}
-			if work.findPRSandbox(n) != nil {
+			if sb := work.findPRSandbox(n); sb != nil {
+				// Persist the consenting executor on the sandbox before
+				// dropping the mailbox entry: it is the only durable record
+				// that this review was a member's click (draft-publish).
+				if sb.GetAnnotations()[AnnotationExecutor] != member {
+					annotations := sb.GetAnnotations()
+					if annotations == nil {
+						annotations = map[string]string{}
+					}
+					annotations[AnnotationExecutor] = member
+					sb.SetAnnotations(annotations)
+					if err := r.Update(ctx, sb); err != nil {
+						return fmt.Errorf("stamping executor on %s: %w", sb.GetName(), err)
+					}
+				}
 				continue
 			}
 		default:

@@ -59,6 +59,17 @@ func FixSandboxName(repo string, issueNumber int) string {
 // fix sandbox aliased to the same PR instead of the default factory-pr-<n>).
 const LabelPR = "factory.gemini.google.com/pr"
 
+// draftPostedMarker appears in `factory pr review --publish draft` output
+// once the pending review has been posted to GitHub (draft mode prints no
+// CODE REVIEW banner, so this line is the completion signal).
+const draftPostedMarker = "Posting review as a draft (pending) review to GitHub PR"
+
+// DraftWasPosted reports whether an invocation's output shows the review
+// was published as a pending (draft) review on GitHub.
+func DraftWasPosted(output string) bool {
+	return strings.Contains(output, draftPostedMarker)
+}
+
 // reviewBanner brackets the review YAML on `factory pr review --publish no`
 // stdout (factory/pkg/commands/review.go).
 const reviewBanner = "================= CODE REVIEW ================="

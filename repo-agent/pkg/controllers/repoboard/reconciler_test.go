@@ -306,11 +306,52 @@ func TestMailboxReviewPendingOnGithub(t *testing.T) {
 	g.Expect(updated.GetAnnotations()[AnnotationAgentDraft]).To(gomega.BeEmpty())
 
 	// No launch happened (completion short-circuits), and the mailbox entry
-	// is cleared because the sandbox exists.
+	// is cleared because the sandbox exists — after persisting the executor
+	// on the sandbox so resumes keep the draft-publish identity.
 	g.Expect(fake.launches()).To(gomega.BeEmpty())
+	g.Expect(updated.GetAnnotations()[AnnotationExecutor]).To(gomega.Equal("alice"))
 	fetched := &boardv1alpha1.RepoBoard{}
 	g.Expect(r.Get(context.Background(), boardRequest().NamespacedName, fetched)).To(gomega.Succeed())
 	g.Expect(fetched.GetAnnotations()).NotTo(gomega.HaveKey(AnnotationRequests))
+}
+
+// The production loop: a clicked review finished (pending posted on GitHub)
+// but the mailbox was gone and the sandbox carried no executor stamp — the
+// resume path reprocessed it as a draft-harvest, found no banner, and
+// relaunched forever. The invocation output's draft-posted marker must win.
+func TestResumeRecognizesPostedDraftWithoutExecutor(t *testing.T) {
+	g := gomega.NewWithT(t)
+	ghClient := testGithubClient(`[]`)
+
+	prSandbox := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "agents.x-k8s.io/v1alpha1",
+		"kind":       "Sandbox",
+		"metadata": map[string]interface{}{
+			"name": "factory-pr-42", "namespace": "alice",
+			"labels": map[string]interface{}{
+				"factory.gemini.google.com/managed": "true",
+				"factory.gemini.google.com/pr":      "42",
+			},
+			"annotations": map[string]interface{}{"htmlURL": "https://github.com/test/repo/pull/42"},
+		},
+		"spec": map[string]interface{}{"replicas": int64(1)},
+	}}
+
+	fake := newFakeLauncher()
+	fake.results["alice/review-pr-42"] = factorycli.Result{
+		FinishedAt: time.Now(),
+		Output:     "...\nPosting review as a draft (pending) review to GitHub PR...\n",
+	}
+	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), prSandbox)
+
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	updated := &unstructured.Unstructured{}
+	updated.SetGroupVersionKind(sandboxGVK)
+	g.Expect(r.Get(context.Background(), types.NamespacedName{Name: "factory-pr-42", Namespace: "alice"}, updated)).To(gomega.Succeed())
+	g.Expect(updated.GetAnnotations()[AnnotationReviewState]).To(gomega.Equal("pending"))
+	g.Expect(fake.launches()).To(gomega.BeEmpty())
 }
 
 // A mailbox review click launches in the clicker's namespace under their
