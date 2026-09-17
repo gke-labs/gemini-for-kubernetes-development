@@ -786,3 +786,50 @@ func TestNoDraftHarvestAndNoHotLoop(t *testing.T) {
 	// Recent unrecognizable result: back off, no relaunch.
 	g.Expect(fake.launches()).To(gomega.BeEmpty())
 }
+
+// Once the member submits their pending review on GitHub, the row settles:
+// reviewState flips pending -> submitted and stops demanding attention.
+func TestSettleSubmittedReview(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	ghClient := clients.NewGitHubClientFromHTTP(&http.Client{Transport: &mockRoundTripper{responses: map[string]func() *http.Response{
+		"https://api.github.com/user": jsonResp(`{"login": "alice"}`),
+	}}})
+	reviewsClient := clients.NewGitHubClientFromHTTP(&http.Client{Transport: &mockRoundTripper{responses: map[string]func() *http.Response{
+		"https://api.github.com/repos/test/repo/pulls/42/reviews?per_page=100": jsonResp(`[
+			{"id": 1, "state": "COMMENTED", "user": {"login": "alice"}}
+		]`),
+	}}})
+	prev := newGithubClientFromToken
+	newGithubClientFromToken = func(_ context.Context, _ string) *github.Client { return reviewsClient }
+	defer func() { newGithubClientFromToken = prev }()
+
+	sandbox := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "agents.x-k8s.io/v1alpha1",
+		"kind":       "Sandbox",
+		"metadata": map[string]interface{}{
+			"name": "factory-pr-42", "namespace": "alice",
+			"labels": map[string]interface{}{
+				"factory.gemini.google.com/managed": "true",
+				"factory.gemini.google.com/pr":      "42",
+			},
+			"annotations": map[string]interface{}{
+				"htmlURL":                          "https://github.com/test/repo/pull/42",
+				"reviewState":                      "pending",
+				"board.gemini.google.com/executor": "alice",
+			},
+		},
+		"spec": map[string]interface{}{"replicas": int64(0)},
+	}}
+
+	fake := newFakeLauncher()
+	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), sandbox)
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	updated := &unstructured.Unstructured{}
+	updated.SetGroupVersionKind(sandboxGVK)
+	g.Expect(r.Get(context.Background(), types.NamespacedName{Name: "factory-pr-42", Namespace: "alice"}, updated)).To(gomega.Succeed())
+	g.Expect(updated.GetAnnotations()[AnnotationReviewState]).To(gomega.Equal("submitted"))
+	g.Expect(fake.launches()).To(gomega.BeEmpty())
+}
