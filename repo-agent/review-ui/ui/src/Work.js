@@ -179,6 +179,9 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
           <span style={{ marginLeft: '4px', fontSize: 'x-small', color: 'var(--text-muted)' }}>+{item.labels.length - 4}</span>
         )}
       </td>
+      {/* GitHub facts on the left …, repo-agent state on the right. */}
+      <td style={{ padding: '6px 8px', fontSize: 'small' }}>{item.assignee}</td>
+      <td style={{ padding: '6px 8px', fontSize: 'small', color: 'var(--text-secondary)' }}>{ageOf(item.updatedAt)}</td>
       <td style={{ padding: '6px 8px' }}>
         <Chip
           text={stage}
@@ -187,7 +190,6 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
           title={attention ? attention.label : ''}
         />
       </td>
-      <td style={{ padding: '6px 8px', fontSize: 'small' }}>{item.assignee}</td>
       <td style={{ padding: '6px 8px' }}>
         {item.sandbox && (
           <a href={`/sandbox/${namespace}/${item.sandbox.name}/`} target="_blank" rel="noopener noreferrer">
@@ -200,7 +202,6 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
           </a>
         )}
       </td>
-      <td style={{ padding: '6px 8px', fontSize: 'small', color: 'var(--text-secondary)' }}>{ageOf(item.updatedAt)}</td>
       <td style={{ padding: '6px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
         {item.draft && (
           <button
@@ -478,10 +479,10 @@ function Work({ onBack, namespace }) {
             <tr style={{ textAlign: 'left', borderBottom: '2px solid var(--border-color)', fontSize: 'small', color: 'var(--text-secondary)' }}>
               <th style={{ padding: '6px 8px' }}>#</th>
               <th style={{ padding: '6px 8px' }}>Title</th>
-              <th style={{ padding: '6px 8px' }}>Status</th>
               <th style={{ padding: '6px 8px' }}>Assignee</th>
-              <th style={{ padding: '6px 8px' }}>Sandbox</th>
               <th style={{ padding: '6px 8px' }}>Age</th>
+              <th style={{ padding: '6px 8px' }}>Status</th>
+              <th style={{ padding: '6px 8px' }}>Sandbox</th>
               <th style={{ padding: '6px 8px' }}></th>
             </tr>
           </thead>
