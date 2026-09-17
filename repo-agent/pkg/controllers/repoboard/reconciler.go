@@ -268,6 +268,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	// Resume in-flight reviews: harvest finished results and reattach after
 	// controller restarts, independent of how the review was triggered.
 	r.resumeReviews(ctx, work)
+	r.resumeTriages(ctx, work)
 	r.settleSubmittedReviews(ctx, work)
 
 	if err := r.trimMailbox(ctx, work); err != nil {

@@ -31,6 +31,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/go-github/v39/github"
+	yamlv3 "go.yaml.in/yaml/v3"
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -71,6 +72,7 @@ const (
 	annoRereviewRequest = "review.gemini.google.com/rereview-requested-at"
 	annoRefixRequest    = "review.gemini.google.com/refix-requested-at"
 	annoReviewAbandoned = "review.gemini.google.com/abandoned-at"
+	annoTriagePublished = "board.gemini.google.com/triage-published-at"
 )
 
 // nowRFC3339 timestamps re-run request annotations.
@@ -541,10 +543,12 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 	}
 	triageDraft := ""
 	triageState := ""
+	triagePublished := false
 	triageSB := sandboxes[fmt.Sprintf("triage-%s-%d", repo, issue.GetNumber())]
 	if triageSB != nil {
 		triageDraft = triageSB.GetAnnotations()["agentDraft"]
 		triageState = triageSB.GetAnnotations()[annoTaskState]
+		triagePublished = triageSB.GetAnnotations()[annoTriagePublished] != ""
 	}
 
 	stage, attention := "open", ""
@@ -563,6 +567,8 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 		// Executor-consent rule: labeled but not consented — awaiting the
 		// member's go.
 		stage, attention = "awaiting-go", attentionNeedsYou
+	case triageDraft != "" && triagePublished:
+		stage = "triaged"
 	case triageDraft != "":
 		stage, attention = "triage-ready", attentionNeedsYou
 	case triageState == "Running":
@@ -1251,5 +1257,72 @@ func (s *Server) putBoardSpec(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save board settings", "details": err.Error()})
 		return
 	}
+	c.Status(http.StatusOK)
+}
+
+// triageSuggestion mirrors the YAML factory's triage task emits.
+type triageSuggestion struct {
+	Triage struct {
+		Labels     []string `yaml:"labels"`
+		Priority   string   `yaml:"priority"`
+		Duplicates []string `yaml:"duplicates"`
+		Assessment string   `yaml:"assessment"`
+	} `yaml:"triage"`
+}
+
+// publishBoardTriage applies a stored triage suggestion to the issue under
+// the clicker's token: labels plus an assessment comment. The suggestion
+// stays viewable; the row settles to the quiet triaged stage.
+func (s *Server) publishBoardTriage(c *gin.Context) {
+	ctx, board, owner, repo, token, number, ok := s.boardWriteContext(c)
+	if !ok {
+		return
+	}
+
+	var draftSB *unstructured.Unstructured
+	name := fmt.Sprintf("triage-%s-%d", repo, number)
+	for _, ns := range []string{board.GetNamespace(), s.Auth.GetNamespaceFromContext(c)} {
+		sandboxes, err := s.boardSandboxes(ctx, ns, owner, repo)
+		if err != nil {
+			continue
+		}
+		if sb, found := sandboxes[name]; found && sb.GetAnnotations()["agentDraft"] != "" {
+			draftSB = sb
+			break
+		}
+	}
+	if draftSB == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "no triage suggestion to publish"})
+		return
+	}
+
+	suggestion := &triageSuggestion{}
+	if err := yamlv3.Unmarshal([]byte(draftSB.GetAnnotations()["agentDraft"]), suggestion); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "triage suggestion is not parseable", "details": err.Error()})
+		return
+	}
+
+	gh := githubClientForToken(ctx, token)
+	if len(suggestion.Triage.Labels) > 0 {
+		if _, _, err := gh.Issues.AddLabelsToIssue(ctx, owner, repo, number, suggestion.Triage.Labels); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to apply labels", "details": err.Error()})
+			return
+		}
+	}
+	if suggestion.Triage.Assessment != "" {
+		body := "**Triage:** " + suggestion.Triage.Assessment
+		if suggestion.Triage.Priority != "" {
+			body += "\n\nSuggested priority: " + suggestion.Triage.Priority
+		}
+		if _, _, err := gh.Issues.CreateComment(ctx, owner, repo, number, &github.IssueComment{Body: &body}); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to post triage comment", "details": err.Error()})
+			return
+		}
+	}
+
+	if err := s.K8sManager.UpdateSandboxAnnotation(ctx, draftSB.GetNamespace(), draftSB.GetName(), annoTriagePublished, nowRFC3339()); err != nil {
+		klog.FromContext(ctx).Info("failed to mark triage published", "issue", number, "err", err)
+	}
+	_ = s.K8sManager.ScaledownSandboxByName(ctx, draftSB.GetNamespace(), draftSB.GetName())
 	c.Status(http.StatusOK)
 }
