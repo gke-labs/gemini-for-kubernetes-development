@@ -61,6 +61,10 @@ type Board struct {
 	RepoURL    string `json:"repoURL"`
 	NeedsHuman int    `json:"needsHuman"`
 	Active     int    `json:"active"`
+	// Role is the viewer's relationship to the repo: "maintainer" (push+)
+	// or "read-only". Fix flows are pointless without push — the UI
+	// disables them on read-only boards.
+	Role string `json:"role,omitempty"`
 }
 
 // WorkSandbox is the sandbox chip on a work-item row.

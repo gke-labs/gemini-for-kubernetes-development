@@ -215,12 +215,17 @@ func (s *Server) getBoards(c *gin.Context) {
 		repoURL, _, _ := unstructured.NestedString(item.Object, "spec", "repoURL")
 		needsHuman, _, _ := unstructured.NestedInt64(item.Object, "status", "counts", "needsHuman")
 		active, _, _ := unstructured.NestedInt64(item.Object, "status", "counts", "active")
+		role := "read-only"
+		if s.hasPushPermission(c.Request.Context(), namespace, sessionUser, repoURL) {
+			role = "maintainer"
+		}
 		boards = append(boards, models.Board{
 			Name:       item.GetName(),
 			Namespace:  item.GetNamespace(),
 			RepoURL:    repoURL,
 			NeedsHuman: int(needsHuman),
 			Active:     int(active),
+			Role:       role,
 		})
 	}
 	c.JSON(http.StatusOK, boards)

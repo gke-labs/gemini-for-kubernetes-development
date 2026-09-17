@@ -62,6 +62,10 @@ func (m *boardMockRT) RoundTrip(req *http.Request) (*http.Response, error) {
 
 func boardTestServer(t *testing.T, ghResponses map[string]string, objs ...runtime.Object) (*Server, *gin.Engine, *fake.FakeDynamicClient) {
 	t.Helper()
+	// repoPermCache is package-global; drop verdicts from earlier tests.
+	repoPermCache.Lock()
+	repoPermCache.entries = map[string]repoPermEntry{}
+	repoPermCache.Unlock()
 	gvrSandbox := schema.GroupVersionResource{Group: "agents.x-k8s.io", Version: "v1alpha1", Resource: "sandboxes"}
 	dynamicClient := fake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
 		gvrSandbox:   "SandboxList",
@@ -104,6 +108,7 @@ func boardTestServer(t *testing.T, ghResponses map[string]string, objs ...runtim
 	r.POST("/board/:board/issues/:id/fix", server.kickoffFix)
 	r.POST("/board/:board/prs/:id/review", server.kickoffReview)
 	r.POST("/board/:board/issues/:id/rerun", server.rerunBoardIssue)
+	r.GET("/boards", server.getBoards)
 	r.POST("/boards", server.createBoard)
 	r.DELETE("/board/:board", server.deleteBoard)
 	return server, r, dynamicClient
@@ -319,7 +324,6 @@ func TestSharedBoardPermissionGate(t *testing.T) {
 
 		apiPath := strings.Replace(repoURL, "https://github.com", "https://api.github.com/repos", 1)
 		_, r, _ := boardTestServer(t, map[string]string{apiPath: permsJSON}, mkBoard(repoURL))
-		r.GET("/boards", func(c *gin.Context) {})
 		req, _ := http.NewRequest("GET", "/board/shared/work", nil)
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
@@ -603,5 +607,40 @@ func TestGetBoardWorkReviewRequested(t *testing.T) {
 	}
 	if row := byKey["pr-71"]; row.Stage != "review-requested" || row.Attention != "waiting" || row.ClaimedBy != "" {
 		t.Errorf("fossil request row wrong: %+v", row)
+	}
+}
+
+// getBoards reports the viewer's repo role so the UI can gate fix flows:
+// push permission => maintainer, anything else => read-only.
+func TestGetBoardsRole(t *testing.T) {
+	ghResponses := map[string]string{
+		"https://api.github.com/repos/test/repo": `{"permissions": {"push": true}}`,
+		// second board's repo: 404 -> read-only
+	}
+	roBoard := boardCR()
+	roBoard.SetName("otherboard")
+	_ = unstructured.SetNestedField(roBoard.Object, "https://github.com/test/otherrepo", "spec", "repoURL")
+
+	_, r, _ := boardTestServer(t, ghResponses, boardCR(), roBoard)
+
+	req, _ := http.NewRequest("GET", "/boards", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var boards []models.Board
+	if err := json.Unmarshal(w.Body.Bytes(), &boards); err != nil {
+		t.Fatalf("bad json: %v", err)
+	}
+	roles := map[string]string{}
+	for _, b := range boards {
+		roles[b.Name] = b.Role
+	}
+	if roles["myboard"] != "maintainer" {
+		t.Errorf("myboard role: want maintainer, got %q", roles["myboard"])
+	}
+	if roles["otherboard"] != "read-only" {
+		t.Errorf("otherboard role: want read-only, got %q", roles["otherboard"])
 	}
 }
