@@ -397,6 +397,30 @@ func (s *Server) getBoardWork(c *gin.Context) {
 		}
 	}
 
+	// A mailbox entry is a click the controller hasn't materialized yet
+	// (launch window is up to a reconcile): render those items as
+	// starting so the member sees immediate feedback and no second
+	// kickoff is invited.
+	if raw := board.GetAnnotations()[annoBoardRequests]; raw != "" {
+		requests := map[string]string{}
+		if err := json.Unmarshal([]byte(raw), &requests); err == nil {
+			preRunPR := map[string]bool{"open": true, "review-requested": true, "review-queued": true, "needs-reviewer": true, "review-submitted": true}
+			preRunIssue := map[string]bool{"open": true, "awaiting-go": true, "queued": true, "untriaged": true, "triage-ready": true}
+			for key := range requests {
+				if n, ok := strings.CutPrefix(key, "review-"); ok {
+					if item, found := items["pr-"+n]; found && preRunPR[item.Stage] {
+						item.Stage, item.Attention = "review-starting", attentionWorking
+					}
+				}
+				if n, ok := strings.CutPrefix(key, "fix-"); ok {
+					if item, found := items["issue-"+n]; found && preRunIssue[item.Stage] {
+						item.Stage, item.Attention = "fix-starting", attentionWorking
+					}
+				}
+			}
+		}
+	}
+
 	work := make([]models.WorkItem, 0, len(items))
 	for _, item := range items {
 		work = append(work, *item)
@@ -634,6 +658,11 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 		// An active run always wins — stale reviewState from a previous
 		// cycle must not mask a re-review in flight.
 		stage, attention = "reviewing", attentionWorking
+	case sb != nil && state == "" && reviewState == "":
+		// Sandbox exists but the task hasn't stamped a state yet:
+		// provisioning (pod scheduling, image pull, clone). Not the
+		// member's move.
+		stage, attention = "review-starting", attentionWorking
 	case reviewState == "submitted" && !reviewRequested:
 		stage = "review-submitted"
 	// A review request on an already-submitted row is GitHub's native

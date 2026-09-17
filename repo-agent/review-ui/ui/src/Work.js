@@ -24,6 +24,8 @@ const STAGE_LABEL = {
   'review-queued': 'Review queued',
   'review-requested': 'Review requested',
   'needs-reviewer': 'Needs a reviewer',
+  'review-starting': 'Starting…',
+  'fix-starting': 'Starting…',
   'review-ready': 'Review ready',
   'review-pending': 'Pending on GitHub',
   'review-submitted': 'Review submitted',
