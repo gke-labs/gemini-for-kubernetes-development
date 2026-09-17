@@ -23,6 +23,7 @@ const STAGE_LABEL = {
   'reviewing': 'Reviewing…',
   'review-queued': 'Review queued',
   'review-requested': 'Review requested',
+  'needs-reviewer': 'Needs a reviewer',
   'review-ready': 'Review ready',
   'review-pending': 'Pending on GitHub',
   'review-submitted': 'Review submitted',
@@ -121,7 +122,10 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
       actions.push({ label: 'Promote PR', path: `prs/${item.number}/promote`, title: 'Mark the draft PR ready for review' });
     }
   } else {
-    if (['open', 'review-queued', 'review-requested'].includes(item.stage) && !item.sandbox) {
+    // These stages only occur when no run is active or pending, so the
+    // stage itself is the guard — a leftover paused sandbox (e.g. after
+    // Abandon) must not hide the Review action.
+    if (['open', 'review-queued', 'review-requested', 'needs-reviewer'].includes(item.stage)) {
       actions.push({ label: 'Review', path: `prs/${item.number}/review`, title: 'Agent reviews as you and leaves a pending review on GitHub for you to finalize' });
     } else if (item.stage === 'review-pending') {
       // GitHub allows one pending review per user: finalize it there, or

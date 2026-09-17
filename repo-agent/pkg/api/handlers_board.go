@@ -279,6 +279,14 @@ func (s *Server) getBoardWork(c *gin.Context) {
 	loadSandboxNamespace(board.GetNamespace())
 	loadSandboxNamespace(namespace)
 
+	// Mirror of the controller's personal-board test: a board whose
+	// namespace holds a github-pat is owner-driven — labeled PRs really do
+	// auto-queue there. On shared boards a label alone launches nothing.
+	personalBoard := false
+	if _, err := s.K8sManager.Clientset.CoreV1().Secrets(board.GetNamespace()).Get(ctx, "github-pat", v1.GetOptions{}); err == nil {
+		personalBoard = true
+	}
+
 	items := map[string]*models.WorkItem{}
 
 	// Incoming issues (fix/triage): assigned to the member, plus
@@ -348,7 +356,7 @@ func (s *Server) getBoardWork(c *gin.Context) {
 		log.Info("failed to list PRs", "err", err)
 	}
 	for _, pr := range prs {
-		s.mergePRRow(items, sandboxes, pr, member, triggerLabel, false)
+		s.mergePRRow(items, sandboxes, pr, member, triggerLabel, personalBoard, false)
 	}
 
 	// A PR that addresses an issue on this board is board work even when
@@ -360,7 +368,7 @@ func (s *Server) getBoardWork(c *gin.Context) {
 		}
 		for _, n := range closingRefs(pr.GetBody()) {
 			if _, ok := items[fmt.Sprintf("issue-%d", n)]; ok {
-				s.mergePRRow(items, sandboxes, pr, member, triggerLabel, true)
+				s.mergePRRow(items, sandboxes, pr, member, triggerLabel, personalBoard, true)
 				break
 			}
 		}
@@ -590,7 +598,7 @@ func closingRefs(body string) []int {
 // mergePRRow adds a PR row when it involves the member (authored,
 // review-requested, trigger-labeled, or has a factory sandbox); force
 // includes it regardless (used for PRs that address an issue on the board).
-func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[string]*unstructured.Unstructured, pr *github.PullRequest, member, triggerLabel string, force bool) {
+func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[string]*unstructured.Unstructured, pr *github.PullRequest, member, triggerLabel string, personalBoard, force bool) {
 	var sb *unstructured.Unstructured
 	prStr := strconv.Itoa(pr.GetNumber())
 	for _, candidate := range sandboxes {
@@ -630,10 +638,15 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 		stage, attention = "review-pending", attentionNeedsYou
 	case state == "Running":
 		stage, attention = "reviewing", attentionWorking
-	case labeled:
-		// Trigger-labeled: the controller will launch a review — genuinely
-		// queued for the agent.
+	case labeled && personalBoard:
+		// Trigger-labeled on an owner-driven board: the controller will
+		// launch a review — genuinely queued for the agent.
 		stage, attention = "review-queued", attentionWaiting
+	case labeled:
+		// Shared board: a label names nobody and launches nothing —
+		// a member's click (or a review request to an opted-in member)
+		// is what makes it run.
+		stage, attention = "needs-reviewer", attentionNeedsYou
 	case reviewRequested:
 		// A bare GitHub review request: nothing is queued, a human is
 		// waiting on the member. Fresh requests demand attention; fossils
@@ -708,11 +721,11 @@ func (s *Server) kickoff(c *gin.Context, kind string) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid repoURL on board"})
 		return
 	}
-	triggerLabel, _, _ := unstructured.NestedString(board.Object, "spec", "triggers", "label")
-
-	// GitHub-native claim + optional label, best-effort under the clicker's
-	// token: kickoff proceeds via the mailbox even when the token lacks
-	// triage rights on the repo.
+	// GitHub-native claim, best-effort under the clicker's token: kickoff
+	// proceeds via the mailbox even when the token lacks triage rights.
+	// The trigger label is deliberately NOT written: a click is a one-time
+	// consent, while a label is a standing trigger that would relaunch the
+	// item forever after cleanup.
 	if token, err := s.memberToken(ctx, namespace); err == nil {
 		gh := githubClientForToken(ctx, token)
 		if kind == "issue" {
@@ -722,11 +735,6 @@ func (s *Server) kickoff(c *gin.Context, kind string) {
 		} else {
 			if _, _, err := gh.PullRequests.RequestReviewers(ctx, owner, repo, number, github.ReviewersRequest{Reviewers: []string{member}}); err != nil {
 				log.Info("best-effort self review-request failed", "pr", number, "err", err)
-			}
-		}
-		if triggerLabel != "" {
-			if _, _, err := gh.Issues.AddLabelsToIssue(ctx, owner, repo, number, []string{triggerLabel}); err != nil {
-				log.Info("best-effort trigger label failed", "number", number, "err", err)
 			}
 		}
 	} else {
