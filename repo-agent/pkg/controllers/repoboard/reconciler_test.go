@@ -678,3 +678,26 @@ func TestDiscoveryIdentityFallbackFromSecret(t *testing.T) {
 	g.Expect(fu.Data["GITHUB_LOGIN"]).To(gomega.Equal([]byte("ci-bot")))
 	g.Expect(fu.Data["GITHUB_EMAIL"]).To(gomega.Equal([]byte("ci-bot@example.com")))
 }
+
+// A board created without a limits block (API-server defaulting does not
+// reach absent parent objects) must not silently block every launch: zero
+// limits mean the CRD defaults.
+func TestMailboxReviewLaunchesWithoutLimitsBlock(t *testing.T) {
+	g := gomega.NewWithT(t)
+	ghClient := testGithubClient(`[]`)
+
+	board := testBoard(map[string]string{AnnotationRequests: `{"review-1163": "alice"}`})
+	board.Spec.Limits = boardv1alpha1.LimitsSpec{} // UI-created boards omit limits entirely
+	board.Spec.Triggers = boardv1alpha1.TriggersSpec{}
+
+	fake := newFakeLauncher()
+	r := newTestReconciler(fake, ghClient, board, githubSecret())
+
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	launches := fake.launches()
+	g.Expect(launches).To(gomega.HaveLen(1))
+	g.Expect(launches[0].Key).To(gomega.Equal("alice/review-pr-1163"))
+	g.Expect(launches[0].ReviewOpts.Publish).To(gomega.Equal("draft"))
+}
