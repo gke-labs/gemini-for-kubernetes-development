@@ -25,12 +25,15 @@ const STAGE_LABEL = {
   'review-ready': 'Review ready',
   'review-submitted': 'Review submitted',
   'triage-ready': 'Triage ready',
+  'triaging': 'Triaging…',
+  'untriaged': 'Untriaged',
 };
 
 // Action-first grouping (tabs). UP NEXT pins needs-you rows across groups.
 const GROUPS = [
   { key: 'review', label: 'Review', hint: 'Incoming PRs to review' },
-  { key: 'fix', label: 'Fix / Triage', hint: 'Incoming issues to triage or fix' },
+  { key: 'fix', label: 'Fix', hint: 'Issues assigned to you or trigger-labeled' },
+  { key: 'triage', label: 'Triage', hint: 'Repo-wide triage inbox (board intake.triageIssues)' },
   { key: 'mine-pr', label: 'My PRs', hint: 'PRs you authored — monitor and refine' },
   { key: 'mine-issue', label: 'My issues', hint: 'Issues you filed, waiting on others' },
 ];
@@ -73,7 +76,7 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag }) {
   };
   const actions = [];
   if (item.type === 'issue') {
-    if (['open', 'awaiting-go', 'queued'].includes(item.stage) && !item.sandbox) {
+    if (['open', 'awaiting-go', 'queued', 'untriaged', 'triage-ready'].includes(item.stage) && !item.sandbox) {
       actions.push({ label: 'Fix', path: `issues/${item.number}/fix` });
     } else if (['fix-failed', 'fix-done'].includes(item.stage)) {
       actions.push({ label: 'Fix again', path: `issues/${item.number}/rerun` });
@@ -295,18 +298,22 @@ function Work({ onBack, namespace }) {
             </button>
           ))}
         </nav>
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: '6px', alignItems: 'center' }}>
-          <input
-            type="text"
-            placeholder="https://github.com/org/repo"
-            value={addURL}
-            onChange={e => setAddURL(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && handleAddBoard()}
-            style={{ padding: '6px', borderRadius: '4px', border: '1px solid var(--border-color)', width: '260px' }}
-          />
-          <button className="btn" onClick={handleAddBoard} disabled={loading}>Add board</button>
-          {activeBoard && <button className="btn btn-delete" onClick={handleDeleteBoard} title="Remove board">✕</button>}
-        </div>
+        <input
+          type="text"
+          placeholder="https://github.com/org/repo"
+          title="Add a board for a repository"
+          value={addURL}
+          onChange={e => setAddURL(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && handleAddBoard()}
+          style={{ padding: '6px', borderRadius: '4px', border: '1px solid var(--border-color)', width: '230px' }}
+        />
+        <button
+          className="btn"
+          onClick={handleAddBoard}
+          disabled={loading}
+          title="Add board"
+          style={{ padding: '4px 10px', fontWeight: 'bold' }}
+        >+</button>
       </div>
 
       {error && (
@@ -316,13 +323,19 @@ function Work({ onBack, namespace }) {
       )}
 
       {board && (
-        <div style={{ fontSize: 'small', color: 'var(--text-secondary)', marginBottom: '8px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', fontSize: 'small', color: 'var(--text-secondary)', marginBottom: '8px' }}>
           <a href={board.repoURL} target="_blank" rel="noopener noreferrer">{board.repoURL}</a>
-          {' — '}{board.active} active, {board.needsHuman} need you
+          <span style={{ margin: '0 6px' }}>—</span>{board.active} active, {board.needsHuman} need you
           <label style={{ marginLeft: '16px', cursor: 'pointer' }} title="With the board's auto-fix intake enabled, issues assigned to you (with the trigger label) start fixing automatically as you. Your consent, your identity, draft PRs only.">
             <input type="checkbox" checked={autoFix} onChange={e => handleAutoFixToggle(e.target.checked)} style={{ marginRight: '4px' }} />
             Auto-fix issues assigned to me
           </label>
+          <button
+            className="btn btn-delete btn-sm"
+            onClick={handleDeleteBoard}
+            title="Remove this board (running sandboxes are not touched)"
+            style={{ marginLeft: 'auto' }}
+          >Delete</button>
         </div>
       )}
 
@@ -338,7 +351,7 @@ function Work({ onBack, namespace }) {
           || (GROUPS.find(g => byGroup[g.key].length) || {}).key
           || 'review';
         const rows = byGroup[shown] || [];
-        const groupLabel = { review: 'REVIEW', fix: 'FIX', 'mine-pr': 'MY PR', 'mine-issue': 'MY ISSUE' };
+        const groupLabel = { review: 'REVIEW', fix: 'FIX', triage: 'TRIAGE', 'mine-pr': 'MY PR', 'mine-issue': 'MY ISSUE' };
         const header = (
           <thead>
             <tr style={{ textAlign: 'left', borderBottom: '2px solid var(--border-color)', fontSize: 'small', color: 'var(--text-secondary)' }}>
@@ -376,20 +389,27 @@ function Work({ onBack, namespace }) {
               </div>
             )}
 
-            <nav className="repo-tabs" style={{ margin: '0 0 4px 0' }}>
+            <nav className="group-tabs">
               {GROUPS.map(g => {
                 const needs = byGroup[g.key].filter(i => i.attention === 'needs-you').length;
                 return (
                   <button
                     key={g.key}
-                    className={`tab-btn ${shown === g.key ? 'active' : ''}`}
+                    className={`group-tab ${shown === g.key ? 'active' : ''}`}
                     title={g.hint}
                     onClick={() => setActiveGroup(g.key)}
                   >
-                    {g.label} {byGroup[g.key].length > 0 && <span style={{ color: 'var(--text-secondary)' }}>{byGroup[g.key].length}</span>}
+                    {g.label}
+                    {byGroup[g.key].length > 0 && (
+                      <span style={{
+                        marginLeft: '6px', backgroundColor: 'var(--bg-secondary)',
+                        borderRadius: '9px', padding: '0 7px', fontSize: 'x-small',
+                        color: 'var(--text-secondary)',
+                      }}>{byGroup[g.key].length}</span>
+                    )}
                     {needs > 0 && (
                       <span style={{
-                        marginLeft: '6px', backgroundColor: '#d73a49', color: 'white',
+                        marginLeft: '4px', backgroundColor: '#d73a49', color: 'white',
                         borderRadius: '9px', padding: '0 6px', fontSize: 'x-small',
                       }}>{needs}</span>
                     )}

@@ -309,6 +309,29 @@ func (s *Server) getBoardWork(c *gin.Context) {
 	collect(labeled, "fix")
 	collect(created, "mine-issue")
 
+	// Repo-wide triage inbox: with triage intake on, every open issue is a
+	// candidate (minus excluded and trigger-labeled ones, which route to
+	// fix). Rows already claimed above keep their group.
+	if triageOn, _, _ := unstructured.NestedBool(board.Object, "spec", "intake", "triageIssues"); triageOn {
+		excludeLabels, _, _ := unstructured.NestedStringSlice(board.Object, "spec", "intake", "filters", "excludeLabels")
+		all, err := listIssues(ctx, gh, owner, repo, &github.IssueListByRepoOptions{State: "open"})
+		if err != nil {
+			log.Info("failed to list issues for triage", "err", err)
+		}
+		for _, issue := range all {
+			if issue.IsPullRequest() {
+				continue
+			}
+			if triggerLabel != "" && hasLabel(issue.Labels, triggerLabel) {
+				continue
+			}
+			if hasAnyLabel(issue.Labels, excludeLabels) {
+				continue
+			}
+			s.mergeIssueRow(items, sandboxes, issue, repo, member, triggerLabel, "triage")
+		}
+	}
+
 	// PRs: authored by / review-requested to the member, trigger-labeled, or
 	// with an existing factory sandbox.
 	prs, _, err := gh.PullRequests.List(ctx, owner, repo, &github.PullRequestListOptions{State: "open", ListOptions: github.ListOptions{PerPage: 100}})
@@ -316,7 +339,22 @@ func (s *Server) getBoardWork(c *gin.Context) {
 		log.Info("failed to list PRs", "err", err)
 	}
 	for _, pr := range prs {
-		s.mergePRRow(items, sandboxes, pr, member, triggerLabel)
+		s.mergePRRow(items, sandboxes, pr, member, triggerLabel, false)
+	}
+
+	// A PR that addresses an issue on this board is board work even when
+	// nothing else selects it (e.g. a bot-authored fix): surface it for
+	// review so it can swallow the issue row below.
+	for _, pr := range prs {
+		if _, ok := items[fmt.Sprintf("pr-%d", pr.GetNumber())]; ok {
+			continue
+		}
+		for _, n := range closingRefs(pr.GetBody()) {
+			if _, ok := items[fmt.Sprintf("issue-%d", n)]; ok {
+				s.mergePRRow(items, sandboxes, pr, member, triggerLabel, true)
+				break
+			}
+		}
 	}
 
 	// Fold issues into the PR that addresses them: once a fix PR exists the
@@ -416,6 +454,15 @@ func hasLabel(labels []*github.Label, name string) bool {
 	return false
 }
 
+func hasAnyLabel(labels []*github.Label, names []string) bool {
+	for _, name := range names {
+		if hasLabel(labels, name) {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[string]*unstructured.Unstructured, issue *github.Issue, repo, member, triggerLabel, group string) {
 	key := fmt.Sprintf("issue-%d", issue.GetNumber())
 	if _, ok := items[key]; ok {
@@ -446,8 +493,11 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 		}
 	}
 	triageDraft := ""
-	if triageSB := sandboxes[fmt.Sprintf("triage-%s-%d", repo, issue.GetNumber())]; triageSB != nil {
+	triageState := ""
+	triageSB := sandboxes[fmt.Sprintf("triage-%s-%d", repo, issue.GetNumber())]
+	if triageSB != nil {
 		triageDraft = triageSB.GetAnnotations()["agentDraft"]
+		triageState = triageSB.GetAnnotations()[annoTaskState]
 	}
 
 	stage, attention := "open", ""
@@ -468,6 +518,14 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 		stage, attention = "awaiting-go", attentionNeedsYou
 	case triageDraft != "":
 		stage, attention = "triage-ready", attentionNeedsYou
+	case triageState == "Running":
+		stage, attention = "triaging", attentionWorking
+	case group == "triage":
+		stage = "untriaged"
+	}
+	if sb == nil && triageSB != nil && stage == "triaging" {
+		// Surface the triage sandbox on rows without a fix sandbox.
+		sb = triageSB
 	}
 
 	items[key] = &models.WorkItem{
@@ -520,7 +578,10 @@ func closingRefs(body string) []int {
 	return refs
 }
 
-func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[string]*unstructured.Unstructured, pr *github.PullRequest, member, triggerLabel string) {
+// mergePRRow adds a PR row when it involves the member (authored,
+// review-requested, trigger-labeled, or has a factory sandbox); force
+// includes it regardless (used for PRs that address an issue on the board).
+func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[string]*unstructured.Unstructured, pr *github.PullRequest, member, triggerLabel string, force bool) {
 	var sb *unstructured.Unstructured
 	prStr := strconv.Itoa(pr.GetNumber())
 	for _, candidate := range sandboxes {
@@ -538,7 +599,7 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 	}
 	authored := strings.EqualFold(pr.GetUser().GetLogin(), member)
 	labeled := triggerLabel != "" && hasLabel(pr.Labels, triggerLabel)
-	if sb == nil && !authored && !reviewRequested && !labeled {
+	if sb == nil && !authored && !reviewRequested && !labeled && !force {
 		return
 	}
 
