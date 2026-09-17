@@ -98,6 +98,12 @@ type Reconciler struct {
 //+kubebuilder:rbac:groups=agents.x-k8s.io,resources=sandboxes,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
 //+kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
+// The factory CLI runs under this ServiceAccount: it creates each sandbox's
+// -lb Service, waits on the pod, and execs the task inside it.
+//+kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
+//+kubebuilder:rbac:groups="",resources=pods/exec,verbs=create
+//+kubebuilder:rbac:groups="",resources=pods/log,verbs=get
 
 // fixPlan is one consented fix to ensure: the executor is the member whose
 // identity and namespace run the task.
