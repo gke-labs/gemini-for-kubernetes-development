@@ -182,7 +182,12 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
       <td style={{ padding: '6px 8px', maxWidth: '480px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {item.assignee && (
           <span style={{ marginRight: '6px' }}>
-            <Chip text={`⦿ ${item.assignee}`} color="var(--text-secondary)" bg="var(--bg-secondary)" title="GitHub assignee" />
+            <Chip
+              text={`⦿ ${item.assignee}`}
+              color={item.assignee.startsWith(namespace) ? 'var(--group-fix)' : 'var(--group-review)'}
+              bg={`color-mix(in srgb, ${item.assignee.startsWith(namespace) ? 'var(--group-fix)' : 'var(--group-review)'} 14%, transparent)`}
+              title="GitHub assignee"
+            />
           </span>
         )}
         <a href={item.htmlURL} target="_blank" rel="noopener noreferrer" title={item.title}>{item.title}</a>
