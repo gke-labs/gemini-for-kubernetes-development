@@ -368,14 +368,31 @@ func AddQuotaExceededKeyAndModel(key string, model string, duration time.Duratio
 	return nil
 }
 
+// Log markers are stored as []byte rather than string so that the detection helpers
+// below can match against raw log chunks with bytes.Contains/bytes.Index. These run on
+// every poll tick over the whole rolling window, so converting the chunk to a string
+// would copy the entire window on each call.
+var (
+	suspendedKeyMarkers = [][]byte{
+		[]byte("CONSUMER_SUSPENDED"),
+		[]byte("has been suspended"),
+		[]byte("API_KEY_INVALID"),
+		[]byte("API key not valid"),
+	}
+	permissionDeniedMarker = []byte("PERMISSION_DENIED")
+	suspendedWordMarker    = []byte("suspended")
+	disabledWordMarker     = []byte("disabled")
+)
+
 // IsSuspendedKeyError checks if the output indicates that an API key has been suspended or disabled permanently.
 func IsSuspendedKeyError(data []byte) bool {
-	str := string(data)
-	return strings.Contains(str, "CONSUMER_SUSPENDED") ||
-		strings.Contains(str, "has been suspended") ||
-		strings.Contains(str, "API_KEY_INVALID") ||
-		strings.Contains(str, "API key not valid") ||
-		(strings.Contains(str, "PERMISSION_DENIED") && (strings.Contains(str, "suspended") || strings.Contains(str, "disabled")))
+	for _, marker := range suspendedKeyMarkers {
+		if bytes.Contains(data, marker) {
+			return true
+		}
+	}
+	return bytes.Contains(data, permissionDeniedMarker) &&
+		(bytes.Contains(data, suspendedWordMarker) || bytes.Contains(data, disabledWordMarker))
 }
 
 // ExtractAPIKeyFromError attempts to parse an explicit API key string from error logs/payloads.
@@ -391,36 +408,85 @@ func ExtractAPIKeyFromError(data []byte) string {
 	return ""
 }
 
-// IsFatalQuotaError checks if the output indicates daily quota exhaustion (RPD) or unrecoverable billing/quota errors,
-// ignoring intermediate transient RPM/TPM retry messages ("Retrying with backoff").
-func IsFatalQuotaError(data []byte) bool {
+// ambiguousQuotaMarkers are HTTP 429 / RESOURCE_EXHAUSTED indicators that are only fatal
+// when they are not accompanied by a nearby "Retrying with backoff" message.
+var ambiguousQuotaMarkers = [][]byte{
+	[]byte("RESOURCE_EXHAUSTED"),
+	[]byte("exceeded your current quota"),
+	[]byte("check your plan and billing details"),
+	[]byte("status: 429"),
+	[]byte("statusCode: 429"),
+	[]byte(`status": 429`),
+	[]byte(`status: "Too Many Requests"`),
+}
+
+// unambiguousFatalMarkers indicate quota exhaustion or terminal failures that no amount
+// of client-side backoff can recover from.
+var unambiguousFatalMarkers = [][]byte{
+	[]byte("requests per day"),
+	[]byte("Generate requests per day"),
+	[]byte("Max retries exceeded"),
+	[]byte("Terminal error"),
+}
+
+const (
+	retryBackoffMarker     = "Retrying with backoff"
+	DefaultQuotaWindowSize = 8192
+)
+
+var (
+	retryBackoffMarkerBytes = []byte(retryBackoffMarker)
+	status429Marker         = []byte("status: 429")
+)
+
+// IsUnambiguousFatalQuotaError checks for fatal quota or key suspension errors
+// that are unrecoverable regardless of whether the CLI attempts a backoff retry.
+// Note: Generic 429 messages from generativelanguage.googleapis.com ("You exceeded your
+// current quota, please check your plan and billing details") are returned on transient
+// RPM/TPM rate limits as well, so they are classified as ambiguous and deferred when
+// accompanied by "Retrying with backoff".
+func IsUnambiguousFatalQuotaError(data []byte) bool {
 	if IsSuspendedKeyError(data) {
 		return true
 	}
 
-	str := string(data)
+	for _, marker := range unambiguousFatalMarkers {
+		if bytes.Contains(data, marker) {
+			return true
+		}
+	}
+	return false
+}
 
-	hasFatalKeyword := strings.Contains(str, "exceeded your current quota") ||
-		strings.Contains(str, "check your plan and billing details") ||
-		strings.Contains(str, "requests per day") ||
-		strings.Contains(str, "Generate requests per day") ||
-		strings.Contains(str, "Max retries exceeded") ||
-		strings.Contains(str, "Terminal error")
+// HasAmbiguousQuotaError checks for HTTP 429 or RESOURCE_EXHAUSTED indicators
+// that may be either transient (if accompanied by "Retrying with backoff") or fatal.
+func HasAmbiguousQuotaError(data []byte) bool {
+	for _, marker := range ambiguousQuotaMarkers {
+		if bytes.Contains(data, marker) {
+			return true
+		}
+	}
+	return false
+}
 
-	if hasFatalKeyword {
+// ContainsRetryBackoff checks if the output contains a backoff retry indicator.
+func ContainsRetryBackoff(data []byte) bool {
+	return bytes.Contains(data, retryBackoffMarkerBytes)
+}
+
+// IsFatalQuotaError checks if the output indicates daily quota exhaustion (RPD) or unrecoverable billing/quota errors,
+// ignoring intermediate transient RPM/TPM retry messages ("Retrying with backoff").
+func IsFatalQuotaError(data []byte) bool {
+	if IsUnambiguousFatalQuotaError(data) {
 		return true
 	}
 
 	// If the log indicates an active retry with backoff, treat as transient rate limit rather than fatal RPD quota.
-	if strings.Contains(str, "Retrying with backoff") {
+	if ContainsRetryBackoff(data) {
 		return false
 	}
 
-	return strings.Contains(str, "RESOURCE_EXHAUSTED") ||
-		strings.Contains(str, "status: 429") ||
-		strings.Contains(str, "statusCode: 429") ||
-		strings.Contains(str, "status\": 429") ||
-		strings.Contains(str, "status: \"Too Many Requests\"")
+	return HasAmbiguousQuotaError(data)
 }
 
 // IsTransientRateLimit checks if the output indicates a transient RPM/TPM rate limit spike being retried.
@@ -428,13 +494,235 @@ func IsTransientRateLimit(data []byte) bool {
 	if IsFatalQuotaError(data) {
 		return false
 	}
-	str := string(data)
-	return strings.Contains(str, "Retrying with backoff") ||
-		strings.Contains(str, "status: 429")
+	return bytes.Contains(data, retryBackoffMarkerBytes) ||
+		bytes.Contains(data, status429Marker)
 }
 
 func ContainsQuotaError(data []byte) bool {
 	return IsFatalQuotaError(data)
+}
+
+type retryInterval struct {
+	start int
+	end   int
+}
+
+// QuotaStreamTracker buffers streamed log chunks across polling intervals to
+// robustly detect fatal quota and key-suspension errors without false positives
+// when retry messages ("Retrying with backoff") and error payloads ("RESOURCE_EXHAUSTED" / "429")
+// are split across chunk boundaries or separate poll ticks.
+type QuotaStreamTracker struct {
+	window            []byte
+	windowStartOffset int64
+	totalOffset       int64
+	maxWindowSize     int
+
+	pendingAmbiguous       bool
+	pendingAmbiguousOffset int64
+}
+
+// NewQuotaStreamTracker creates a QuotaStreamTracker with the default sliding window size.
+func NewQuotaStreamTracker() *QuotaStreamTracker {
+	return &QuotaStreamTracker{
+		maxWindowSize: DefaultQuotaWindowSize,
+	}
+}
+
+// Window returns the current rolling log buffer for extracting metadata such as API keys or models.
+func (t *QuotaStreamTracker) Window() []byte {
+	return t.window
+}
+
+// trimWindow drops the oldest bytes once the window exceeds maxWindowSize.
+//
+// The retained bytes are shifted to the front of the existing backing array rather than
+// resliced with t.window[excess:]. Reslicing would advance the slice pointer and shrink
+// the remaining capacity on every poll, so the window would walk through its backing array
+// and force a fresh allocation + copy every time that capacity ran out. Shifting in place
+// keeps the steady-state poll path free of allocations.
+func (t *QuotaStreamTracker) trimWindow() {
+	if len(t.window) > t.maxWindowSize {
+		excess := len(t.window) - t.maxWindowSize
+		copy(t.window, t.window[excess:])
+		t.window = t.window[:t.maxWindowSize]
+		t.windowStartOffset += int64(excess)
+	}
+}
+
+// appendChunk folds a newly read log chunk into the rolling window and returns the
+// buffer that should be analyzed along with the stream offset of its first byte.
+//
+// Retained memory is bounded *before* analysis rather than after it: a single poll can
+// return an arbitrarily large chunk (e.g. reattaching to a long-running task tails the
+// whole existing log from offset 0), and appending that to the window would transiently
+// allocate len(window)+len(chunk) bytes. Oversized chunks are therefore scanned in place
+// (no copy) and only their trailing maxWindowSize bytes are retained for subsequent polls.
+func (t *QuotaStreamTracker) appendChunk(newData []byte) (analysisBuf []byte, baseOffset int64) {
+	if len(newData) > t.maxWindowSize {
+		chunkStart := t.totalOffset
+		t.totalOffset += int64(len(newData))
+		// Reuse the existing backing array; it is already capped at maxWindowSize.
+		t.window = append(t.window[:0], newData[len(newData)-t.maxWindowSize:]...)
+		t.windowStartOffset = t.totalOffset - int64(t.maxWindowSize)
+		return newData, chunkStart
+	}
+	if len(newData) > 0 {
+		t.window = append(t.window, newData...)
+		t.totalOffset += int64(len(newData))
+		t.trimWindow()
+	}
+	return t.window, t.windowStartOffset
+}
+
+// ObservePoll processes a delta chunk from a single poll interval while the task is running.
+// Returns (isFatal, isTransient).
+//   - Unambiguous fatal errors (e.g. billing RPD exhaustion, suspended keys, max retries exceeded)
+//     trigger isFatal immediately.
+//   - Ambiguous 429/RESOURCE_EXHAUSTED errors without a matching "Retrying with backoff" are held
+//     for 1 poll grace period so that retry messages flushed slightly later or across chunk boundaries
+//     are not falsely killed.
+func (t *QuotaStreamTracker) ObservePoll(newData []byte) (bool, bool) {
+	buf, baseOffset := t.appendChunk(newData)
+
+	if IsUnambiguousFatalQuotaError(buf) {
+		return true, false
+	}
+
+	found, earliestUncoveredOffset, hasTransient := findUncoveredAmbiguousError(buf, baseOffset)
+	if !found {
+		t.pendingAmbiguous = false
+		isNewTransient := len(newData) > 0 && (ContainsRetryBackoff(newData) || (hasTransient && HasAmbiguousQuotaError(newData)))
+		return false, isNewTransient
+	}
+
+	// If an uncovered error was already pending from a previous poll tick and remains uncovered,
+	// the 1-poll grace period has expired without a retry message.
+	if t.pendingAmbiguous && earliestUncoveredOffset <= t.pendingAmbiguousOffset {
+		return true, false
+	}
+
+	// First poll seeing this uncovered ambiguous error: start the 1-poll grace period.
+	t.pendingAmbiguous = true
+	t.pendingAmbiguousOffset = earliestUncoveredOffset
+	return false, false
+}
+
+// ObserveFinal processes any remaining log output when the task process exits.
+// Unlike ObservePoll, it does not wait an additional poll interval.
+// If processFailed is true (non-zero exit code or abnormal termination), any uncovered
+// ambiguous quota error in the window is treated as fatal.
+func (t *QuotaStreamTracker) ObserveFinal(finalData []byte, processFailed bool) bool {
+	buf, baseOffset := t.appendChunk(finalData)
+
+	if IsUnambiguousFatalQuotaError(buf) {
+		return true
+	}
+	if !processFailed {
+		return false
+	}
+	found, _, _ := findUncoveredAmbiguousError(buf, baseOffset)
+	return found
+}
+
+// findUncoveredAmbiguousError scans buf (operating directly on the bytes, without
+// materializing a string copy) for ambiguous quota indicators that are not covered by a
+// nearby "Retrying with backoff" message. baseOffset is the stream offset of buf[0], so
+// returned offsets remain stable as the rolling window slides.
+func findUncoveredAmbiguousError(buf []byte, baseOffset int64) (found bool, earliestUncoveredOffset int64, hasTransient bool) {
+	var intervals []retryInterval
+	searchIdx := 0
+	for {
+		idx := bytes.Index(buf[searchIdx:], retryBackoffMarkerBytes)
+		if idx == -1 {
+			break
+		}
+		retryStart := searchIdx + idx
+		coverStart := retryStart - 2048
+		if coverStart < 0 {
+			coverStart = 0
+		}
+		coverEnd := computeRetryCoverEnd(buf, retryStart)
+		intervals = append(intervals, retryInterval{
+			start: coverStart,
+			end:   coverEnd,
+		})
+		hasTransient = true
+		searchIdx = retryStart + len(retryBackoffMarkerBytes)
+	}
+
+	for _, marker := range ambiguousQuotaMarkers {
+		searchIdx = 0
+		for {
+			idx := bytes.Index(buf[searchIdx:], marker)
+			if idx == -1 {
+				break
+			}
+			errStart := searchIdx + idx
+			covered := false
+			for _, iv := range intervals {
+				if errStart >= iv.start && errStart <= iv.end {
+					covered = true
+					break
+				}
+			}
+			if covered {
+				hasTransient = true
+			} else {
+				streamOffset := baseOffset + int64(errStart)
+				if !found || streamOffset < earliestUncoveredOffset {
+					found = true
+					earliestUncoveredOffset = streamOffset
+				}
+			}
+			searchIdx = errStart + len(marker)
+		}
+	}
+
+	return found, earliestUncoveredOffset, hasTransient
+}
+
+var (
+	spacePrefix     = []byte(" ")
+	tabPrefix       = []byte("\t")
+	apiErrorPrefix  = []byte("_ApiError")
+	openBracePrefix = []byte("{")
+)
+
+// isPayloadContinuation reports whether the line following a newline is a continuation of a
+// multi-line error payload rather than the start of unrelated log output.
+func isPayloadContinuation(line []byte) bool {
+	return bytes.HasPrefix(line, spacePrefix) ||
+		bytes.HasPrefix(line, tabPrefix) ||
+		bytes.HasPrefix(line, apiErrorPrefix) ||
+		bytes.HasPrefix(line, openBracePrefix)
+}
+
+// computeRetryCoverEnd returns the index at which the log region "covered" by the retry
+// message starting at retryStart ends: the first newline that is outside any brace-delimited
+// payload and is not followed by a continuation line, capped 2048 bytes past retryStart.
+func computeRetryCoverEnd(buf []byte, retryStart int) int {
+	maxEnd := retryStart + 2048
+	if maxEnd > len(buf) {
+		maxEnd = len(buf)
+	}
+	braceDepth := 0
+	for i := retryStart; i < maxEnd; i++ {
+		switch ch := buf[i]; {
+		case ch == '{':
+			braceDepth++
+		case ch == '}':
+			if braceDepth > 0 {
+				braceDepth--
+			}
+		case ch == '\n' && braceDepth == 0:
+			if isPayloadContinuation(buf[i+1:]) {
+				// Still inside a multi-line payload; keep scanning.
+				continue
+			}
+			return i
+		}
+	}
+	return maxEnd
 }
 
 func GetGeminiAPIKey(secret *corev1.Secret) string {
