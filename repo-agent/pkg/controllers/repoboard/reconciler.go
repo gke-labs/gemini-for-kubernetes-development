@@ -255,6 +255,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	// Resume in-flight reviews: harvest finished results and reattach after
 	// controller restarts, independent of how the review was triggered.
 	r.resumeReviews(ctx, work)
+	r.settleSubmittedReviews(ctx, work)
 
 	if err := r.trimMailbox(ctx, work); err != nil {
 		logger.Error(err, "mailbox cleanup failed")
@@ -858,6 +859,65 @@ func (r *Reconciler) resumeReviews(ctx context.Context, work *workState) {
 			executor = work.board.Namespace
 		}
 		r.ensureReview(ctx, work, reviewPlan{pr: pr, executor: executor})
+	}
+}
+
+// settleSubmittedReviews flips reviewState pending→submitted once the
+// member has finalized their pending review on GitHub, so the row stops
+// demanding attention. Pending reviews are only visible to their author,
+// hence the check runs under the executor's own token.
+func (r *Reconciler) settleSubmittedReviews(ctx context.Context, work *workState) {
+	logger := log.FromContext(ctx)
+	for _, sb := range work.sandboxes {
+		annotations := sb.GetAnnotations()
+		if annotations[AnnotationReviewState] != reviewStatePending {
+			continue
+		}
+		pr, err := strconv.Atoi(sb.GetLabels()[factorycli.LabelPR])
+		if err != nil {
+			continue
+		}
+		executor := annotations[AnnotationExecutor]
+		if executor == "" && sb.GetNamespace() != work.board.Namespace {
+			executor = sb.GetNamespace()
+		}
+		if executor == "" && work.personal {
+			executor = work.board.Namespace
+		}
+		if executor == "" {
+			continue
+		}
+		token, err := r.executorToken(ctx, executor)
+		if err != nil {
+			continue
+		}
+		gh := newGithubClientFromToken(ctx, token)
+		reviews, _, err := gh.PullRequests.ListReviews(ctx, work.owner, work.repo, pr, &github.ListOptions{PerPage: 100})
+		if err != nil {
+			logger.Info("settle check failed", "pr", pr, "err", err)
+			continue
+		}
+		stillPending := false
+		submitted := false
+		for _, review := range reviews {
+			if !strings.EqualFold(review.GetUser().GetLogin(), executor) {
+				continue
+			}
+			switch strings.ToUpper(review.GetState()) {
+			case "PENDING":
+				stillPending = true
+			case "APPROVED", "CHANGES_REQUESTED", "COMMENTED":
+				submitted = true
+			}
+		}
+		if stillPending || !submitted {
+			continue
+		}
+		annotations[AnnotationReviewState] = "submitted"
+		sb.SetAnnotations(annotations)
+		if err := r.Update(ctx, sb); err != nil {
+			logger.Error(err, "unable to settle submitted review", "pr", pr)
+		}
 	}
 }
 

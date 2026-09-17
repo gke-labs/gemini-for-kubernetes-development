@@ -666,3 +666,35 @@ func TestLabeledPRStagePerBoardType(t *testing.T) {
 		t.Errorf("shared board labeled PR: want needs-reviewer/needs-you, got %q/%q", stage2, attention2)
 	}
 }
+
+// GitHub's native "review again": submitting clears you from
+// requested_reviewers, a re-request re-adds you — a submitted row with a
+// fresh request returns to review-requested instead of staying quiet.
+func TestSubmittedThenReRequested(t *testing.T) {
+	fresh := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
+	ghResponses := map[string]string{
+		"https://api.github.com/repos/test/repo/pulls?per_page=100&state=open": `[
+			{"number": 90, "title": "re-requested", "html_url": "https://github.com/test/repo/pull/90", "updated_at": "` + fresh + `",
+			 "user": {"login": "carol"}, "requested_reviewers": [{"login": "alice"}]}
+		]`,
+	}
+	submittedSandbox := sandboxCR("factory-pr-90",
+		map[string]interface{}{"factory.gemini.google.com/managed": "true", "factory.gemini.google.com/pr": "90"},
+		map[string]interface{}{"reviewState": "submitted", "htmlURL": "https://github.com/test/repo/pull/90"}, 0)
+
+	_, r, _ := boardTestServer(t, ghResponses, boardCR(), submittedSandbox)
+	req, _ := http.NewRequest("GET", "/board/myboard/work", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	var work []models.WorkItem
+	_ = json.Unmarshal(w.Body.Bytes(), &work)
+	for _, item := range work {
+		if item.Number == 90 {
+			if item.Stage != "review-requested" || item.Attention != "needs-you" {
+				t.Errorf("re-requested after submit: want review-requested/needs-you, got %q/%q", item.Stage, item.Attention)
+			}
+			return
+		}
+	}
+	t.Fatal("pr-90 row missing")
+}
