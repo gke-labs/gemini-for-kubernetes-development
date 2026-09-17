@@ -138,7 +138,7 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
     } else if (item.stage === 'review-pending') {
       // GitHub allows one pending review per user: finalize it there, or
       // abandon it to start over.
-      actions.push({ label: 'Finalize on GitHub ↗', href: `${item.htmlURL}/files`, title: 'Your pending review is on GitHub — edit and submit it there' });
+      // Finalize lives on the status chip (Pending on GitHub ↗).
       actions.push({ label: 'Abandon review', path: `prs/${item.number}/abandon`, confirm: `Delete your pending review on PR #${item.number}?` });
     } else if (item.stage === 'review-submitted') {
       // Submitting freed your pending-review slot; a voluntary re-run is
@@ -148,6 +148,26 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
       actions.push({ label: 'Retry', path: `prs/${item.number}/review`, title: 'Relaunch the review' });
     }
   }
+
+  // Clicking the status shows the thing it names.
+  const statusAction = (() => {
+    switch (item.stage) {
+      case 'triage-ready':
+        return { onClick: () => setShowDraft(v => !v), title: 'Show the triage suggestions' };
+      case 'review-pending':
+        return { href: `${item.htmlURL}/files`, title: 'Open your pending review on GitHub' };
+      case 'review-requested':
+        return { href: item.htmlURL, title: 'Open the PR on GitHub' };
+      case 'pr-open':
+        return item.prURL ? { href: item.prURL, title: 'Open the PR on GitHub' } : null;
+      case 'fix-failed':
+      case 'review-failed':
+      case 'fix-done':
+        return item.sandbox ? { href: `/sandbox/${namespace}/${item.sandbox.name}/`, title: 'Open the sandbox (logs)' } : null;
+      default:
+        return null;
+    }
+  })();
 
   return (
     <React.Fragment>
@@ -185,14 +205,24 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
       </td>
       {/* GitHub facts on the left …, repo-agent state on the right. */}
       <td style={{ padding: '6px 8px' }}>
-        {STAGE_LABEL[item.stage] && (
+        {STAGE_LABEL[item.stage] && (statusAction ? (
+          statusAction.href ? (
+            <a href={statusAction.href} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }} title={statusAction.title}>
+              <Chip text={STAGE_LABEL[item.stage] + ' ↗'} color={attention ? attention.color : 'var(--text-secondary)'} bg={attention ? attention.bg : 'var(--bg-secondary)'} />
+            </a>
+          ) : (
+            <span onClick={statusAction.onClick} style={{ cursor: 'pointer' }} title={statusAction.title}>
+              <Chip text={STAGE_LABEL[item.stage] + (showDraft ? ' ▴' : ' ▾')} color={attention ? attention.color : 'var(--text-secondary)'} bg={attention ? attention.bg : 'var(--bg-secondary)'} />
+            </span>
+          )
+        ) : (
           <Chip
             text={STAGE_LABEL[item.stage]}
             color={attention ? attention.color : 'var(--text-secondary)'}
             bg={attention ? attention.bg : 'var(--bg-secondary)'}
             title={attention ? attention.label : ''}
           />
-        )}
+        ))}
       </td>
       <td style={{ padding: '6px 8px' }}>
         {AGENT_STAGE[item.stage] ? (
@@ -215,7 +245,7 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
         )}
       </td>
       <td style={{ padding: '6px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
-        {item.draft && (
+        {item.draft && item.stage !== 'triage-ready' && (
           <button
             className="btn btn-sm"
             style={{ marginLeft: '4px' }}
