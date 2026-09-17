@@ -12,28 +12,27 @@ const ATTENTION_STYLE = {
   'waiting':   { label: 'Waiting', color: '#6a737d', bg: 'rgba(106,115,125,0.12)' },
 };
 
+// Status is the human inbox: it shows text only when a person's move (or
+// wait) matters. Machine motion lives in the Agent column; resting rows
+// are blank.
 const STAGE_LABEL = {
-  'open': 'Open',
-  'queued': 'Queued',
-  'awaiting-go': 'Awaiting your go',
-  'fixing': 'Fixing…',
   'fix-done': 'Fix done',
   'fix-failed': 'Fix failed',
   'pr-open': 'PR open',
-  'reviewing': 'Reviewing…',
-  'review-queued': 'Review queued',
   'review-requested': 'Review requested',
-  'needs-reviewer': 'Needs a reviewer',
-  'review-starting': 'Starting…',
-  'fix-starting': 'Starting…',
   'review-failed': 'Review failed',
-  'review-ready': 'Review ready',
   'review-pending': 'Pending on GitHub',
-  'review-submitted': 'Review submitted',
   'triage-ready': 'Triage ready',
-  'triaged': 'Triaged',
-  'triaging': 'Triaging…',
-  'untriaged': 'Untriaged',
+};
+
+// Agent-column wording for stages where the machine has the row (covers
+// the mailbox window before any sandbox exists).
+const AGENT_STAGE = {
+  'fix-starting': 'starting',
+  'review-starting': 'starting',
+  'fixing': 'fixing',
+  'reviewing': 'reviewing',
+  'triaging': 'triaging',
 };
 
 // Action-first grouping (tabs). UP NEXT pins needs-you rows across groups.
@@ -85,7 +84,6 @@ function Chip({ text, color, bg, title }) {
 function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
   const [showDraft, setShowDraft] = useState(false);
   const attention = ATTENTION_STYLE[item.attention];
-  const stage = STAGE_LABEL[item.stage] || item.stage;
   const group = groupOf(item);
 
   // Row actions: kickoffs, re-runs, and the human-gated writes
@@ -140,7 +138,7 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
     } else if (item.stage === 'review-pending') {
       // GitHub allows one pending review per user: finalize it there, or
       // abandon it to start over.
-      actions.push({ label: 'Finalize on GitHub ↗', href: `${item.htmlURL}/files`, title: 'Your pending review is on GitHub — edit and submit it there' });
+      // Finalize lives on the status chip (Pending on GitHub ↗).
       actions.push({ label: 'Abandon review', path: `prs/${item.number}/abandon`, confirm: `Delete your pending review on PR #${item.number}?` });
     } else if (item.stage === 'review-submitted') {
       // Submitting freed your pending-review slot; a voluntary re-run is
@@ -151,6 +149,26 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
     }
   }
 
+  // Clicking the status shows the thing it names.
+  const statusAction = (() => {
+    switch (item.stage) {
+      case 'triage-ready':
+        return { onClick: () => setShowDraft(v => !v), title: 'Show the triage suggestions' };
+      case 'review-pending':
+        return { href: `${item.htmlURL}/files`, title: 'Open your pending review on GitHub' };
+      case 'review-requested':
+        return { href: item.htmlURL, title: 'Open the PR on GitHub' };
+      case 'pr-open':
+        return item.prURL ? { href: item.prURL, title: 'Open the PR on GitHub' } : null;
+      case 'fix-failed':
+      case 'review-failed':
+      case 'fix-done':
+        return item.sandbox ? { href: `/sandbox/${namespace}/${item.sandbox.name}/`, title: 'Open the sandbox (logs)' } : null;
+      default:
+        return null;
+    }
+  })();
+
   return (
     <React.Fragment>
     <tr>
@@ -160,7 +178,13 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
         )}
         {groupTag ? ' ' : ''}{item.type === 'issue' ? '◉' : '⇄'} #{item.number}
       </td>
+      <td style={{ padding: '6px 8px', fontSize: 'small', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{ageOf(item.updatedAt)}</td>
       <td style={{ padding: '6px 8px', maxWidth: '480px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {item.assignee && (
+          <span style={{ marginRight: '6px' }}>
+            <Chip text={`⦿ ${item.assignee}`} color="var(--text-secondary)" bg="var(--bg-secondary)" title="GitHub assignee" />
+          </span>
+        )}
         <a href={item.htmlURL} target="_blank" rel="noopener noreferrer" title={item.title}>{item.title}</a>
         {item.prURL && item.type === 'issue' && (
           <a href={item.prURL} target="_blank" rel="noopener noreferrer" style={{ marginLeft: '8px', fontSize: 'small' }}>PR ↗</a>
@@ -180,18 +204,36 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
         )}
       </td>
       {/* GitHub facts on the left …, repo-agent state on the right. */}
-      <td style={{ padding: '6px 8px', fontSize: 'small' }}>{item.assignee}</td>
-      <td style={{ padding: '6px 8px', fontSize: 'small', color: 'var(--text-secondary)' }}>{ageOf(item.updatedAt)}</td>
       <td style={{ padding: '6px 8px' }}>
-        <Chip
-          text={stage}
-          color={attention ? attention.color : 'var(--text-secondary)'}
-          bg={attention ? attention.bg : 'var(--bg-secondary)'}
-          title={attention ? attention.label : ''}
-        />
+        {STAGE_LABEL[item.stage] && (statusAction ? (
+          statusAction.href ? (
+            <a href={statusAction.href} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }} title={statusAction.title}>
+              <Chip text={STAGE_LABEL[item.stage] + ' ↗'} color={attention ? attention.color : 'var(--text-secondary)'} bg={attention ? attention.bg : 'var(--bg-secondary)'} />
+            </a>
+          ) : (
+            <span onClick={statusAction.onClick} style={{ cursor: 'pointer' }} title={statusAction.title}>
+              <Chip text={STAGE_LABEL[item.stage] + (showDraft ? ' ▴' : ' ▾')} color={attention ? attention.color : 'var(--text-secondary)'} bg={attention ? attention.bg : 'var(--bg-secondary)'} />
+            </span>
+          )
+        ) : (
+          <Chip
+            text={STAGE_LABEL[item.stage]}
+            color={attention ? attention.color : 'var(--text-secondary)'}
+            bg={attention ? attention.bg : 'var(--bg-secondary)'}
+            title={attention ? attention.label : ''}
+          />
+        ))}
       </td>
       <td style={{ padding: '6px 8px' }}>
-        {item.sandbox && (
+        {AGENT_STAGE[item.stage] ? (
+          item.sandbox ? (
+            <a href={`/sandbox/${namespace}/${item.sandbox.name}/`} target="_blank" rel="noopener noreferrer">
+              <Chip text={AGENT_STAGE[item.stage]} color="#b08800" bg="rgba(176,136,0,0.12)" title={item.sandbox.name} />
+            </a>
+          ) : (
+            <Chip text={AGENT_STAGE[item.stage]} color="#b08800" bg="rgba(176,136,0,0.12)" title="launching" />
+          )
+        ) : item.sandbox && (
           <a href={`/sandbox/${namespace}/${item.sandbox.name}/`} target="_blank" rel="noopener noreferrer">
             <Chip
               text={item.sandbox.replicas === '0' ? 'paused' : (item.sandbox.taskState || 'active').toLowerCase()}
@@ -203,7 +245,7 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
         )}
       </td>
       <td style={{ padding: '6px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
-        {item.draft && (
+        {item.draft && item.stage !== 'triage-ready' && (
           <button
             className="btn btn-sm"
             style={{ marginLeft: '4px' }}
@@ -237,7 +279,7 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
     </tr>
     {showDraft && item.draft && (
       <tr>
-        <td colSpan="7" style={{ padding: '0 8px 10px 8px' }}>
+        <td colSpan="6" style={{ padding: '0 8px 10px 8px' }}>
           <pre style={{
             whiteSpace: 'pre-wrap', fontSize: 'small', margin: 0,
             padding: '10px', backgroundColor: 'var(--bg-secondary)',
@@ -478,11 +520,10 @@ function Work({ onBack, namespace }) {
           <thead>
             <tr style={{ textAlign: 'left', borderBottom: '2px solid var(--border-color)', fontSize: 'small', color: 'var(--text-secondary)' }}>
               <th style={{ padding: '6px 8px' }}>#</th>
-              <th style={{ padding: '6px 8px' }}>Title</th>
-              <th style={{ padding: '6px 8px' }}>Assignee</th>
               <th style={{ padding: '6px 8px' }}>Age</th>
+              <th style={{ padding: '6px 8px' }}>Title</th>
               <th style={{ padding: '6px 8px' }}>Status</th>
-              <th style={{ padding: '6px 8px' }}>Sandbox</th>
+              <th style={{ padding: '6px 8px' }}>Agent</th>
               <th style={{ padding: '6px 8px' }}></th>
             </tr>
           </thead>
@@ -551,7 +592,7 @@ function Work({ onBack, namespace }) {
                     <WorkRow key={`${item.type}-${item.number}`} item={item} boardName={activeBoard} onAction={handleAction} namespace={namespace} readOnly={readOnly} />
                   ))}
                   {!rows.length && (
-                    <tr><td colSpan="7" style={{ padding: '16px 8px', color: 'var(--text-secondary)' }}>
+                    <tr><td colSpan="6" style={{ padding: '16px 8px', color: 'var(--text-secondary)' }}>
                       Nothing in {(GROUPS.find(g => g.key === shown) || {}).label || 'this group'} — {(GROUPS.find(g => g.key === shown) || {}).hint || ''}.
                     </td></tr>
                   )}
