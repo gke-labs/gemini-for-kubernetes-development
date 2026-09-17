@@ -80,7 +80,7 @@ function Chip({ text, color, bg, title }) {
   );
 }
 
-function WorkRow({ item, boardName, onAction, namespace, groupTag }) {
+function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
   const attention = ATTENTION_STYLE[item.attention];
   const stage = STAGE_LABEL[item.stage] || item.stage;
   const group = groupOf(item);
@@ -92,9 +92,13 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag }) {
     const m = (u || '').match(/\/pull\/(\d+)/);
     return m ? m[1] : null;
   };
+  // Fix and repo-write flows need push permission; on read-only boards the
+  // buttons are suppressed so failure is prevented, not discovered.
   const actions = [];
   if (item.type === 'issue') {
-    if (['open', 'awaiting-go', 'queued', 'untriaged', 'triage-ready'].includes(item.stage) && !item.sandbox) {
+    if (readOnly) {
+      // No fix pipeline without push: the agent's PR could not land.
+    } else if (['open', 'awaiting-go', 'queued', 'untriaged', 'triage-ready'].includes(item.stage) && !item.sandbox) {
       actions.push({ label: 'Fix', path: `issues/${item.number}/fix` });
     } else if (['fix-failed', 'fix-done'].includes(item.stage)) {
       actions.push({ label: 'Fix again', path: `issues/${item.number}/rerun` });
@@ -112,12 +116,14 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag }) {
     if (item.stage === 'review-ready') {
       actions.push({ label: 'Publish review', path: `prs/${item.number}/publish`, confirm: `Publish the review draft on PR #${item.number} as your pending review?` });
     }
-    if (item.draftPR) {
+    if (readOnly) {
+      // Merge/promote would 403 without push.
+    } else if (item.draftPR) {
       actions.push({ label: 'Promote PR', path: `prs/${item.number}/promote`, title: 'Mark the draft PR ready for review' });
     } else {
       actions.push({ label: 'Merge', path: `prs/${item.number}/merge`, confirm: `Merge PR #${item.number}? Branch protection still applies.` });
     }
-    if (item.fixes && item.fixes.length && item.sandbox) {
+    if (!readOnly && item.fixes && item.fixes.length && item.sandbox) {
       actions.push({ label: 'Fix again', path: `issues/${item.fixes[0]}/rerun`, title: `Re-run the fix for #${item.fixes[0]}` });
     }
   } else {
@@ -295,6 +301,7 @@ function Work({ onBack, namespace }) {
   };
 
   const board = boards.find(b => b.name === activeBoard);
+  const readOnly = !!board && board.role === 'read-only';
 
   return (
     <div style={{ padding: '10px 20px' }}>
@@ -345,11 +352,25 @@ function Work({ onBack, namespace }) {
       {board && (
         <div style={{ display: 'flex', alignItems: 'center', fontSize: 'small', color: 'var(--text-secondary)', marginBottom: '8px' }}>
           <a href={board.repoURL} target="_blank" rel="noopener noreferrer">{board.repoURL}</a>
+          {board.role && (
+            <span style={{ marginLeft: '8px' }}>
+              <Chip
+                text={board.role}
+                color={board.role === 'maintainer' ? 'var(--group-fix)' : 'var(--group-mine-issue)'}
+                bg={board.role === 'maintainer' ? 'color-mix(in srgb, var(--group-fix) 12%, transparent)' : 'var(--bg-secondary)'}
+                title={board.role === 'maintainer'
+                  ? 'Your token has push access — fixes, promote and merge are available.'
+                  : 'Your token has no push access — reviews and triage work; fixes, promote and merge are disabled.'}
+              />
+            </span>
+          )}
           <span style={{ margin: '0 6px' }}>—</span>{board.active} active, {board.needsHuman} need you
+          {board.role !== 'read-only' && (
           <label style={{ marginLeft: '16px', cursor: 'pointer' }} title="With the board's auto-fix intake enabled, issues assigned to you (with the trigger label) start fixing automatically as you. Your consent, your identity, draft PRs only.">
             <input type="checkbox" checked={autoFix} onChange={e => handleAutoFixToggle(e.target.checked)} style={{ marginRight: '4px' }} />
             Auto-fix issues assigned to me
           </label>
+          )}
           <button
             className="btn btn-delete btn-sm"
             onClick={handleDeleteBoard}
@@ -397,7 +418,7 @@ function Work({ onBack, namespace }) {
                   <tbody>
                     {upNext.slice(0, UP_NEXT_CAP).map(item => (
                       <WorkRow key={`up-${item.type}-${item.number}`} item={item} boardName={activeBoard}
-                        onAction={handleAction} namespace={namespace} groupTag={groupLabel[groupOf(item)]} />
+                        onAction={handleAction} namespace={namespace} groupTag={groupLabel[groupOf(item)]} readOnly={readOnly} />
                     ))}
                   </tbody>
                 </table>
@@ -447,7 +468,7 @@ function Work({ onBack, namespace }) {
                 {header}
                 <tbody>
                   {rows.map(item => (
-                    <WorkRow key={`${item.type}-${item.number}`} item={item} boardName={activeBoard} onAction={handleAction} namespace={namespace} />
+                    <WorkRow key={`${item.type}-${item.number}`} item={item} boardName={activeBoard} onAction={handleAction} namespace={namespace} readOnly={readOnly} />
                   ))}
                   {!rows.length && (
                     <tr><td colSpan="8" style={{ padding: '16px 8px', color: 'var(--text-secondary)' }}>
