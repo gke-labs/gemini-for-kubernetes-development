@@ -99,9 +99,19 @@ spec:
                                 #   remote-trigger + explicit-agent marker
     discreet: true              # allow UI-only kickoff (mailbox, no label)
 
-  intake:                       # automation that produces DRAFTS ONLY —
-    triageIssues: true          #   zero GitHub writes; suggestions surface on
-    draftReviews: true          #   the board until a human publishes/applies
+  intake:                       # background automation
+    triageIssues: true          # draft-only triage: zero GitHub writes,
+                                #   suggestions surface on the board
+    draftReviews: true          # attributed reviews only — every review runs
+                                #   as a named consenting member and parks a
+                                #   PENDING review on GitHub (visible only to
+                                #   its author: saved work, not a public act).
+                                #   Personal board: every open PR, as the
+                                #   member. Shared board: only PRs whose
+                                #   review is requested from a member with
+                                #   the standing auto-review opt-in (two-key,
+                                #   like autoFix). Anonymous prep-identity
+                                #   reviews never run.
     autoFix:
       enabled: false            # board-side key of the two-key consent
       require: [assigned, label]  # or [assigned] (aggressive; discouraged)

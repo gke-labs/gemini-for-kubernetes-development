@@ -128,10 +128,6 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
       // abandon it to start over.
       actions.push({ label: 'Finalize on GitHub ↗', href: `${item.htmlURL}/files`, title: 'Your pending review is on GitHub — edit and submit it there' });
       actions.push({ label: 'Abandon review', path: `prs/${item.number}/abandon`, confirm: `Delete your pending review on PR #${item.number}?` });
-    } else if (item.stage === 'review-ready') {
-      // Intake/labeled draft: display-only. Review runs under your
-      // identity and leaves a pending review on GitHub.
-      actions.push({ label: 'Review', path: `prs/${item.number}/review`, title: 'Agent reviews as you and leaves a pending review on GitHub for you to finalize' });
     }
   }
 
@@ -223,6 +219,7 @@ function Work({ onBack, namespace }) {
   const [addURL, setAddURL] = useState('');
   const [error, setError] = useState('');
   const [autoFix, setAutoFix] = useState(false);
+  const [autoReview, setAutoReview] = useState(false);
 
   const fetchBoards = useCallback(() => {
     fetch('/api/boards')
@@ -247,9 +244,9 @@ function Work({ onBack, namespace }) {
   useEffect(() => {
     if (!activeBoard) return;
     fetch(`/api/board/${activeBoard}/settings`)
-      .then(res => res.ok ? res.json() : { autoFix: false })
-      .then(data => setAutoFix(!!data.autoFix))
-      .catch(() => setAutoFix(false));
+      .then(res => res.ok ? res.json() : { autoFix: false, autoReview: false })
+      .then(data => { setAutoFix(!!data.autoFix); setAutoReview(!!data.autoReview); })
+      .catch(() => { setAutoFix(false); setAutoReview(false); });
   }, [activeBoard]);
   useEffect(() => {
     fetchWork();
@@ -299,15 +296,26 @@ function Work({ onBack, namespace }) {
       .catch(err => setError(`Delete failed: ${err}`));
   };
 
-  const handleAutoFixToggle = (enabled) => {
-    setAutoFix(enabled);
+  // The settings PUT carries the full preference set; sending one flag
+  // alone would clear the other.
+  const savePrefs = (nextAutoFix, nextAutoReview, revert) => {
     fetch(`/api/board/${activeBoard}/settings`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ autoFix: enabled }),
+      body: JSON.stringify({ autoFix: nextAutoFix, autoReview: nextAutoReview }),
     })
-      .then(res => { if (!res.ok) { setAutoFix(!enabled); res.text().then(t => setError(`Settings save failed: ${t}`)); } })
-      .catch(err => { setAutoFix(!enabled); setError(`Settings save failed: ${err}`); });
+      .then(res => { if (!res.ok) { revert(); res.text().then(t => setError(`Settings save failed: ${t}`)); } })
+      .catch(err => { revert(); setError(`Settings save failed: ${err}`); });
+  };
+
+  const handleAutoFixToggle = (enabled) => {
+    setAutoFix(enabled);
+    savePrefs(enabled, autoReview, () => setAutoFix(!enabled));
+  };
+
+  const handleAutoReviewToggle = (enabled) => {
+    setAutoReview(enabled);
+    savePrefs(autoFix, enabled, () => setAutoReview(!enabled));
   };
 
   const board = boards.find(b => b.name === activeBoard);
@@ -381,6 +389,10 @@ function Work({ onBack, namespace }) {
             Auto-fix issues assigned to me
           </label>
           )}
+          <label style={{ marginLeft: '16px', cursor: 'pointer' }} title="With the board's review intake enabled, PRs that request your review run the agent as you and park a pending review on GitHub — visible only to you until you submit it.">
+            <input type="checkbox" checked={autoReview} onChange={e => handleAutoReviewToggle(e.target.checked)} style={{ marginRight: '4px' }} />
+            Auto-review PRs assigned to me
+          </label>
           <button
             className="btn btn-delete btn-sm"
             onClick={handleDeleteBoard}

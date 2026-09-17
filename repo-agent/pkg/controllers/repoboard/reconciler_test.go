@@ -614,6 +614,10 @@ func TestDraftReviewIntake(t *testing.T) {
 	g.Expect(launches).To(gomega.HaveLen(1))
 	g.Expect(launches[0].Key).To(gomega.Equal("alice/review-pr-5"))
 	g.Expect(launches[0].ReviewOpts).NotTo(gomega.BeNil())
+	// Personal board: the member is the executor — attributed, publish draft.
+	g.Expect(launches[0].ReviewOpts.Namespace).To(gomega.Equal("alice"))
+	g.Expect(launches[0].ReviewOpts.Publish).To(gomega.Equal("draft"))
+	g.Expect(launches[0].ReviewOpts.GithubToken).To(gomega.Equal("gho_alice"))
 }
 
 // Triage intake: candidates launch the triage agent; a finished run's
@@ -743,53 +747,42 @@ func TestMailboxReviewLaunchesWithoutLimitsBlock(t *testing.T) {
 	g.Expect(launches[0].ReviewOpts.Publish).To(gomega.Equal("draft"))
 }
 
-// A discovery review's finished invocation (real single-banner output) is
-// harvested as a draft; and a success with unrecognizable output backs off
-// instead of hot-looping the agent.
-func TestReviewHarvestRealOutputAndNoHotLoop(t *testing.T) {
+// Review drafts are no longer harvested into annotations — a finished
+// invocation either shows the draft-posted marker (pending on GitHub) or
+// gets the standard backoff; legacy banner output stores nothing and must
+// not hot-loop the agent.
+func TestNoDraftHarvestAndNoHotLoop(t *testing.T) {
 	g := gomega.NewWithT(t)
 	ghClient := testGithubClient(`[]`)
 
-	mkSandbox := func() *unstructured.Unstructured {
-		return &unstructured.Unstructured{Object: map[string]interface{}{
-			"apiVersion": "agents.x-k8s.io/v1alpha1",
-			"kind":       "Sandbox",
-			"metadata": map[string]interface{}{
-				"name": "factory-pr-42", "namespace": "alice",
-				"labels": map[string]interface{}{
-					"factory.gemini.google.com/managed": "true",
-					"factory.gemini.google.com/pr":      "42",
-				},
-				"annotations": map[string]interface{}{"htmlURL": "https://github.com/test/repo/pull/42"},
+	sandbox := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "agents.x-k8s.io/v1alpha1",
+		"kind":       "Sandbox",
+		"metadata": map[string]interface{}{
+			"name": "factory-pr-42", "namespace": "alice",
+			"labels": map[string]interface{}{
+				"factory.gemini.google.com/managed": "true",
+				"factory.gemini.google.com/pr":      "42",
 			},
-			"spec": map[string]interface{}{"replicas": int64(1)},
-		}}
-	}
+			"annotations": map[string]interface{}{"htmlURL": "https://github.com/test/repo/pull/42"},
+		},
+		"spec": map[string]interface{}{"replicas": int64(1)},
+	}}
 
-	// Real factory output: single banner, plain '=' closer.
 	fake := newFakeLauncher()
 	fake.results["alice/review-pr-42"] = factorycli.Result{
 		FinishedAt: time.Now(),
-		Output:     "Reading output...\n\n================= CODE REVIEW =================\nreview:\n  body: harvested\n===============================================\n",
+		Output:     "Reading output...\n\n================= CODE REVIEW =================\nreview:\n  body: legacy banner\n===============================================\n",
 	}
-	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), mkSandbox())
+	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), sandbox)
 	_, err := r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 
 	updated := &unstructured.Unstructured{}
 	updated.SetGroupVersionKind(sandboxGVK)
 	g.Expect(r.Get(context.Background(), types.NamespacedName{Name: "factory-pr-42", Namespace: "alice"}, updated)).To(gomega.Succeed())
-	g.Expect(updated.GetAnnotations()[AnnotationAgentDraft]).To(gomega.ContainSubstring("harvested"))
+	g.Expect(updated.GetAnnotations()[AnnotationAgentDraft]).To(gomega.BeEmpty())
+	g.Expect(updated.GetAnnotations()[AnnotationReviewState]).To(gomega.BeEmpty())
+	// Recent unrecognizable result: back off, no relaunch.
 	g.Expect(fake.launches()).To(gomega.BeEmpty())
-
-	// Unrecognizable success: no relaunch within the backoff window.
-	fake2 := newFakeLauncher()
-	fake2.results["alice/review-pr-42"] = factorycli.Result{
-		FinishedAt: time.Now(),
-		Output:     "nothing useful here\n",
-	}
-	r2 := newTestReconciler(fake2, ghClient, testBoard(nil), githubSecret(), mkSandbox())
-	_, err = r2.Reconcile(context.Background(), boardRequest())
-	g.Expect(err).NotTo(gomega.HaveOccurred())
-	g.Expect(fake2.launches()).To(gomega.BeEmpty())
 }

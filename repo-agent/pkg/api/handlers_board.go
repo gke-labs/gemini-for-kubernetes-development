@@ -612,12 +612,10 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 		return
 	}
 
-	draft := ""
 	reviewState := ""
 	state := ""
 	if sb != nil {
 		annotations := sb.GetAnnotations()
-		draft = annotations["agentDraft"]
 		reviewState = annotations["reviewState"]
 		state = annotations[annoTaskState]
 	}
@@ -630,8 +628,6 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 		// The agent posted a pending review under the member's identity;
 		// GitHub is where they finalize it.
 		stage, attention = "review-pending", attentionNeedsYou
-	case draft != "":
-		stage, attention = "review-ready", attentionNeedsYou
 	case state == "Running":
 		stage, attention = "reviewing", attentionWorking
 	case labeled:
@@ -652,10 +648,6 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 
 	// A review request is not a claim — nobody is executing anything yet.
 	claimedBy := ""
-	rowDraft := ""
-	if stage == "review-ready" {
-		rowDraft = draft
-	}
 
 	group := "review"
 	if authored {
@@ -673,7 +665,6 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 		Attention: attention,
 		ClaimedBy: claimedBy,
 		PRURL:     pr.GetHTMLURL(),
-		Draft:     rowDraft,
 		DraftPR:   pr.GetDraft(),
 		Fixes:     closingRefs(pr.GetBody()),
 		Sandbox:   workSandbox(sb),
@@ -897,10 +888,12 @@ func (s *Server) getBoardSettings(c *gin.Context) {
 	}
 
 	autoFix := false
+	autoReview := false
 	if cm, err := s.K8sManager.Clientset.CoreV1().ConfigMaps(namespace).Get(ctx, repoboard.PreferencesConfigMap, v1.GetOptions{}); err == nil {
 		autoFix = cm.Data[repoboard.AutoFixPreferenceKey(board.GetNamespace(), board.GetName())] == "true"
+		autoReview = cm.Data[repoboard.AutoReviewPreferenceKey(board.GetNamespace(), board.GetName())] == "true"
 	}
-	c.JSON(http.StatusOK, gin.H{"autoFix": autoFix})
+	c.JSON(http.StatusOK, gin.H{"autoFix": autoFix, "autoReview": autoReview})
 }
 
 func (s *Server) putBoardSettings(c *gin.Context) {
@@ -909,7 +902,8 @@ func (s *Server) putBoardSettings(c *gin.Context) {
 	sessionUser := s.Auth.GetUserFromContext(c)
 
 	var payload struct {
-		AutoFix bool `json:"autoFix"`
+		AutoFix    bool `json:"autoFix"`
+		AutoReview bool `json:"autoReview"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -921,14 +915,24 @@ func (s *Server) putBoardSettings(c *gin.Context) {
 		return
 	}
 
-	key := repoboard.AutoFixPreferenceKey(board.GetNamespace(), board.GetName())
+	prefs := map[string]bool{
+		repoboard.AutoFixPreferenceKey(board.GetNamespace(), board.GetName()):    payload.AutoFix,
+		repoboard.AutoReviewPreferenceKey(board.GetNamespace(), board.GetName()): payload.AutoReview,
+	}
+	apply := func(data map[string]string) {
+		for key, on := range prefs {
+			if on {
+				data[key] = "true"
+			} else {
+				delete(data, key)
+			}
+		}
+	}
 	cms := s.K8sManager.Clientset.CoreV1().ConfigMaps(namespace)
 	cm, err := cms.Get(ctx, repoboard.PreferencesConfigMap, v1.GetOptions{})
 	if err != nil {
 		cm = &corev1.ConfigMap{ObjectMeta: v1.ObjectMeta{Name: repoboard.PreferencesConfigMap, Namespace: namespace}, Data: map[string]string{}}
-		if payload.AutoFix {
-			cm.Data[key] = "true"
-		}
+		apply(cm.Data)
 		if _, err := cms.Create(ctx, cm, v1.CreateOptions{}); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save settings", "details": err.Error()})
 			return
@@ -939,11 +943,7 @@ func (s *Server) putBoardSettings(c *gin.Context) {
 	if cm.Data == nil {
 		cm.Data = map[string]string{}
 	}
-	if payload.AutoFix {
-		cm.Data[key] = "true"
-	} else {
-		delete(cm.Data, key)
-	}
+	apply(cm.Data)
 	if _, err := cms.Update(ctx, cm, v1.UpdateOptions{}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save settings", "details": err.Error()})
 		return

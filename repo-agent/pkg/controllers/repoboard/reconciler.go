@@ -18,8 +18,9 @@ limitations under the License.
 // work is discovered from GitHub (trigger label + assignee, under the
 // executor-consent rule) and from the transient request mailbox; attributed
 // execution runs through the factory CLI in the consenting member's own
-// namespace; draft-only reviews run in the board namespace. GitHub and
-// factory sandboxes are the state, the CR is near-static config.
+// namespace; reviews always run attributed and land as the member's
+// pending review on GitHub. GitHub and factory sandboxes are the state,
+// the CR is near-static config.
 package repoboard
 
 import (
@@ -77,7 +78,6 @@ const (
 	// than this must not be re-recorded as pending.
 	AnnotationReviewAbandoned   = "review.gemini.google.com/abandoned-at"
 	reviewStatePending          = "pending"
-	agentStateReviewReady       = "review ready"
 	defaultRequeue              = time.Minute
 	launchRetryBackoff          = 30 * time.Minute
 	prWatchRelaunchInterval     = 10 * time.Minute
@@ -139,12 +139,11 @@ func maxActivePerUser(board *boardv1alpha1.RepoBoard) int {
 	return board.Spec.Limits.MaxActivePerUser
 }
 
-// reviewPlan is one review to ensure. With an executor (a member's click),
-// the review runs in their namespace under their identity with
-// --publish draft: the pending review lands on GitHub, visible only to
-// them, finalized natively there. Without an executor (trigger label or
-// intake), it runs draft-only in the board namespace under the discovery
-// identity — nothing is written to GitHub.
+// reviewPlan is one review to ensure. Reviews are always attributed: the
+// executor is the consenting member (click, personal-board intake, or
+// review-request + standing opt-in), the run happens in their namespace
+// under their identity with --publish draft, and the pending review lands
+// on GitHub visible only to them. Plans without an executor never run.
 type reviewPlan struct {
 	pr       int
 	executor string
@@ -186,18 +185,21 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 			logger.Error(err, "trigger-label discovery failed")
 		}
 		fixes = f
-		for _, pr := range rv {
-			reviews = append(reviews, reviewPlan{pr: pr})
+		// Labeled PRs review as the personal-board member; on shared
+		// boards a label alone names nobody, so nothing runs without a
+		// click or a review request to an opted-in member.
+		if work.personal {
+			for _, pr := range rv {
+				reviews = append(reviews, reviewPlan{pr: pr, executor: board.Namespace})
+			}
 		}
 	}
 	if board.Spec.Intake.DraftReviews {
 		rv, err := r.discoverIntakePRs(ctx, ghClient, work)
 		if err != nil {
-			logger.Error(err, "draft-review intake discovery failed")
+			logger.Error(err, "review intake discovery failed")
 		}
-		for _, pr := range rv {
-			reviews = append(reviews, reviewPlan{pr: pr})
-		}
+		reviews = append(reviews, rv...)
 	}
 	var triageCandidates []*github.Issue
 	if board.Spec.Intake.TriageIssues {
@@ -477,8 +479,16 @@ func autoFixWithoutLabel(board *boardv1alpha1.RepoBoard) bool {
 }
 
 // discoverIntakePRs lists every open PR for draft-review intake.
-func (r *Reconciler) discoverIntakePRs(ctx context.Context, ghClient *github.Client, work *workState) ([]int, error) {
-	var reviews []int
+// discoverIntakePRs plans intake reviews. Every review needs a named,
+// consenting executor — anonymous prep-identity reviews never run (tokens
+// spent on a review nobody asked for, invisible to everyone):
+//   - personal board: the member IS the board; every open PR is reviewed
+//     as them (enabling intake was their consent).
+//   - shared board: only PRs whose review is explicitly requested from a
+//     member with the standing auto-review opt-in (two-key, like auto-fix).
+func (r *Reconciler) discoverIntakePRs(ctx context.Context, ghClient *github.Client, work *workState) ([]reviewPlan, error) {
+	var reviews []reviewPlan
+	optedIn := map[string]bool{}
 	opts := &github.PullRequestListOptions{State: "open", ListOptions: github.ListOptions{PerPage: 100}}
 	for {
 		prs, resp, err := ghClient.PullRequests.List(ctx, work.owner, work.repo, opts)
@@ -489,7 +499,22 @@ func (r *Reconciler) discoverIntakePRs(ctx context.Context, ghClient *github.Cli
 			if vetoed(pr.Labels, work.board.Spec.Intake.Filters.ExcludeLabels) {
 				continue
 			}
-			reviews = append(reviews, pr.GetNumber())
+			if work.personal {
+				reviews = append(reviews, reviewPlan{pr: pr.GetNumber(), executor: work.board.Namespace})
+				continue
+			}
+			for _, reviewer := range pr.RequestedReviewers {
+				member := strings.ToLower(reviewer.GetLogin())
+				opted, ok := optedIn[member]
+				if !ok {
+					opted = r.memberOptedInAutoReview(ctx, member, work.board)
+					optedIn[member] = opted
+				}
+				if opted {
+					reviews = append(reviews, reviewPlan{pr: pr.GetNumber(), executor: member})
+					break
+				}
+			}
 		}
 		if resp.NextPage == 0 {
 			return reviews, nil
@@ -724,34 +749,32 @@ func (r *Reconciler) ensureFix(ctx context.Context, work *workState, plan fixPla
 func (r *Reconciler) ensureReview(ctx context.Context, work *workState, plan reviewPlan) {
 	logger := log.FromContext(ctx)
 
-	// Executor reviews (a member's click) run in that member's namespace
-	// under their identity and publish a pending review on GitHub — only
-	// its author can see or finalize it. Discovery reviews stay draft-only
-	// under the discovery identity.
-	namespace := work.board.Namespace
-	token := work.discToken
-	publish := "no"
-	if plan.executor != "" {
-		t, err := r.executorToken(ctx, plan.executor)
-		if err != nil {
-			logger.Error(err, "review executor has no token", "executor", plan.executor, "pr", plan.pr)
-			return
-		}
-		namespace, token, publish = plan.executor, t, "draft"
-		if err := r.ensureFactoryUserSecret(ctx, plan.executor, plan.executor, ""); err != nil {
-			logger.Error(err, "unable to sync factory-user secret", "namespace", plan.executor)
-			return
-		}
+	// Every review is attributed: it runs in the consenting member's
+	// namespace under their identity and posts a pending review on GitHub
+	// (visible only to them — saved work, not a public act). Plans without
+	// an executor never run; anonymous reviews are tokens spent on a
+	// review nobody asked for.
+	if plan.executor == "" {
+		return
 	}
-	key := fmt.Sprintf("%s/review-pr-%d", namespace, plan.pr)
+	token, err := r.executorToken(ctx, plan.executor)
+	if err != nil {
+		logger.Error(err, "review executor has no token", "executor", plan.executor, "pr", plan.pr)
+		return
+	}
+	if err := r.ensureFactoryUserSecret(ctx, plan.executor, plan.executor, ""); err != nil {
+		logger.Error(err, "unable to sync factory-user secret", "namespace", plan.executor)
+		return
+	}
+	key := fmt.Sprintf("%s/review-pr-%d", plan.executor, plan.pr)
 
 	sb := work.findPRSandbox(plan.pr)
 	annotations := map[string]string{}
 	if sb != nil && sb.GetAnnotations() != nil {
 		annotations = sb.GetAnnotations()
 	}
-	// An abandoned review is terminal too: relaunch only on a fresh
-	// re-review marker (a new click stamps one).
+	// Abandoned and legacy draft-bearing sandboxes are terminal: relaunch
+	// only on a fresh re-review marker (a new click stamps one).
 	done := annotations[AnnotationAgentDraft] != "" || annotations[AnnotationReviewState] != "" ||
 		annotations[AnnotationReviewAbandoned] != ""
 	if done && !rerunRequested(sb, AnnotationRereviewRequested, AnnotationReviewedAt) {
@@ -762,29 +785,16 @@ func (r *Reconciler) ensureReview(ctx context.Context, work *workState, plan rev
 	}
 
 	if res, ok := r.Factory.LastResult(key); ok && !resultSuperseded(sb, res) {
-		if res.Err == nil {
-			// Trust the invocation's own output over the plan: on personal
-			// boards the resume path cannot always reconstruct whether a
-			// run was a clicked draft-publish, and misreading one as a
-			// draft-harvest re-runs the review in a loop.
-			if (publish == "draft" || factorycli.DraftWasPosted(res.Output)) && sb != nil {
-				// The pending review is already on GitHub; record that so
-				// the board points the member there.
-				if err := r.markReviewPending(ctx, sb, work.board.Name); err != nil {
-					logger.Error(err, "unable to mark review pending", "pr", plan.pr)
-				}
-				return
+		if res.Err == nil && sb != nil && factorycli.DraftWasPosted(res.Output) {
+			// The pending review is already on GitHub; record that so the
+			// board points the member there.
+			if err := r.markReviewPending(ctx, sb, work.board.Name); err != nil {
+				logger.Error(err, "unable to mark review pending", "pr", plan.pr)
 			}
-			if yaml := factorycli.ExtractReviewYAML(res.Output); yaml != "" && sb != nil {
-				if err := r.storeDraft(ctx, sb, work.board.Name, yaml); err != nil {
-					logger.Error(err, "unable to store review draft", "pr", plan.pr)
-				}
-				return
-			}
+			return
 		}
 		// Error, or a success with nothing recognizable in its output:
-		// back off rather than hot-looping the agent (a broken harvest
-		// once re-ran a review nine times back to back).
+		// back off rather than hot-looping the agent.
 		if time.Since(res.FinishedAt) < launchRetryBackoff {
 			return
 		}
@@ -794,15 +804,19 @@ func (r *Reconciler) ensureReview(ctx context.Context, work *workState, plan rev
 		logger.Info("review deferred: board at maxActive", "pr", plan.pr, "limit", maxActive(work.board))
 		return
 	}
+	if r.activeForExecutor(work, plan.executor) >= maxActivePerUser(work.board) && sb == nil {
+		logger.Info("review deferred: executor at maxActivePerUser", "pr", plan.pr, "executor", plan.executor, "limit", maxActivePerUser(work.board))
+		return
+	}
 	if r.Factory.StartReview(key, factorycli.ReviewOptions{
-		Namespace:         namespace,
+		Namespace:         plan.executor,
 		PRURL:             fmt.Sprintf("https://github.com/%s/%s/pull/%d", work.owner, work.repo, plan.pr),
 		Image:             work.board.Spec.Sandbox.Image,
 		WorkspaceDiskSize: work.board.Spec.Sandbox.DiskSize,
 		GithubToken:       token,
-		Publish:           publish,
+		Publish:           "draft",
 	}) {
-		logger.Info("launched factory review", "pr", plan.pr, "board", work.board.Name, "namespace", namespace, "publish", publish)
+		logger.Info("launched factory review", "pr", plan.pr, "board", work.board.Name, "executor", plan.executor)
 	}
 }
 
@@ -834,10 +848,14 @@ func (r *Reconciler) resumeReviews(ctx context.Context, work *workState) {
 		}
 		// The stamped executor (a member's click) survives restarts; a
 		// sandbox outside the board namespace belongs to the executor
-		// whose namespace hosts it.
+		// whose namespace hosts it, and on personal boards the member is
+		// the only possible executor.
 		executor := annotations[AnnotationExecutor]
 		if executor == "" && sb.GetNamespace() != work.board.Namespace {
 			executor = sb.GetNamespace()
+		}
+		if executor == "" && work.personal {
+			executor = work.board.Namespace
 		}
 		r.ensureReview(ctx, work, reviewPlan{pr: pr, executor: executor})
 	}
@@ -851,20 +869,6 @@ func (r *Reconciler) markReviewPending(ctx context.Context, sb *unstructured.Uns
 		annotations = map[string]string{}
 	}
 	annotations[AnnotationReviewState] = reviewStatePending
-	annotations[AnnotationReviewedAt] = time.Now().UTC().Format(time.RFC3339)
-	annotations[AnnotationBoard] = boardName
-	sb.SetAnnotations(annotations)
-	return r.Update(ctx, sb)
-}
-
-// storeDraft stamps the draft and board decoration onto a factory sandbox.
-func (r *Reconciler) storeDraft(ctx context.Context, sb *unstructured.Unstructured, boardName, draftYAML string) error {
-	annotations := sb.GetAnnotations()
-	if annotations == nil {
-		annotations = map[string]string{}
-	}
-	annotations[AnnotationAgentDraft] = draftYAML
-	annotations[AnnotationAgentState] = agentStateReviewReady
 	annotations[AnnotationReviewedAt] = time.Now().UTC().Format(time.RFC3339)
 	annotations[AnnotationBoard] = boardName
 	sb.SetAnnotations(annotations)
