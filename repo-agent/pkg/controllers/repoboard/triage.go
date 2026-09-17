@@ -118,7 +118,7 @@ func (r *Reconciler) ensureTriage(ctx context.Context, work *workState, issue *g
 		}
 	}
 
-	if sb == nil && r.activeCount(work) >= work.board.Spec.Limits.MaxActive {
+	if sb == nil && r.activeCount(work) >= maxActive(work.board) {
 		return
 	}
 	if r.Factory.StartTriage(key, factorycli.TriageOptions{

@@ -98,6 +98,12 @@ type Reconciler struct {
 //+kubebuilder:rbac:groups=agents.x-k8s.io,resources=sandboxes,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
 //+kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
+// The factory CLI runs under this ServiceAccount: it creates each sandbox's
+// -lb Service, waits on the pod, and execs the task inside it.
+//+kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
+//+kubebuilder:rbac:groups="",resources=pods/exec,verbs=create
+//+kubebuilder:rbac:groups="",resources=pods/log,verbs=get
 
 // fixPlan is one consented fix to ensure: the executor is the member whose
 // identity and namespace run the task.
@@ -108,6 +114,24 @@ type fixPlan struct {
 	// auto marks a launch consented via the member's standing auto-fix
 	// opt-in rather than a direct act; safety rails apply (forced draft PR).
 	auto bool
+}
+
+// maxActive/maxActivePerUser mirror the CRD defaults for specs that omit
+// the limits block entirely (API-server defaulting only fires when the
+// parent object exists, so a UI-created board carries no limits at all —
+// zero must mean "default", not "block every launch").
+func maxActive(board *boardv1alpha1.RepoBoard) int {
+	if board.Spec.Limits.MaxActive <= 0 {
+		return 5
+	}
+	return board.Spec.Limits.MaxActive
+}
+
+func maxActivePerUser(board *boardv1alpha1.RepoBoard) int {
+	if board.Spec.Limits.MaxActivePerUser <= 0 {
+		return 2
+	}
+	return board.Spec.Limits.MaxActivePerUser
 }
 
 // reviewPlan is one review to ensure. With an executor (a member's click),
@@ -645,10 +669,12 @@ func (r *Reconciler) ensureFix(ctx context.Context, work *workState, plan fixPla
 	if res, ok := r.Factory.LastResult(key); ok && res.Err != nil && time.Since(res.FinishedAt) < launchRetryBackoff {
 		return
 	}
-	if sb == nil && r.activeCount(work) >= work.board.Spec.Limits.MaxActive {
+	if sb == nil && r.activeCount(work) >= maxActive(work.board) {
+		log.FromContext(ctx).Info("fix deferred: board at maxActive", "issue", plan.issue, "limit", maxActive(work.board))
 		return
 	}
-	if r.activeForExecutor(work, plan.executor) >= work.board.Spec.Limits.MaxActivePerUser && sb == nil {
+	if r.activeForExecutor(work, plan.executor) >= maxActivePerUser(work.board) && sb == nil {
+		log.FromContext(ctx).Info("fix deferred: executor at maxActivePerUser", "issue", plan.issue, "executor", plan.executor, "limit", maxActivePerUser(work.board))
 		return
 	}
 
@@ -751,7 +777,8 @@ func (r *Reconciler) ensureReview(ctx context.Context, work *workState, plan rev
 		}
 	}
 
-	if sb == nil && r.activeCount(work) >= work.board.Spec.Limits.MaxActive {
+	if sb == nil && r.activeCount(work) >= maxActive(work.board) {
+		logger.Info("review deferred: board at maxActive", "pr", plan.pr, "limit", maxActive(work.board))
 		return
 	}
 	if r.Factory.StartReview(key, factorycli.ReviewOptions{
