@@ -110,6 +110,10 @@ type Config struct {
 	// ProcessedDir is the queue directory holding completed task files, read to
 	// recover when each issue was last worked on.
 	ProcessedDir string
+	// PrimeOpenPRs makes this scanner populate the open pull request half of
+	// the entity cache itself, which it must do when no pull request scanner is
+	// running to do it. See primeOpenPRs.
+	PrimeOpenPRs bool
 	// DryRun reports what would be queued without touching the queue or GitHub.
 	DryRun bool
 }
@@ -258,16 +262,22 @@ func (s *Scanner) sweepDue() bool {
 	return s.lastSweep.IsZero() || time.Since(s.lastSweep) >= s.cfg.SweepInterval
 }
 
-// primeOpenPRs fills the open PR half of the entity cache when no pull request
-// scan has published to it yet.
+// primeOpenPRs fills the open PR half of the entity cache on behalf of a pull
+// request scanner that is not running.
 //
-// The pull request scanner owns that half and refreshes it on its own cadence,
-// but it does not run in every mode, and on startup it may not have run yet.
-// Rather than stall issue scanning until it does, the scanner pays for the one
-// listing itself - it is a single paginated query, against the several per pull
-// request that a full PR evaluation costs.
+// That half belongs to the pull request scanner, which republishes it every
+// sweep, and this scan only reads it. But the two are gated independently: a
+// deployment can scan issues with pull request scanning switched off entirely,
+// and there the cache would never be published to at all. Since the scan fails
+// closed on an unpublished cache, that is not a slow issue scan but no issue
+// scan ever, so the scanner pays for the one listing itself.
+//
+// It is deliberately not a fallback for "the pull request scanner has not got
+// to it yet". Priming whenever the cache happened to be cold would have both
+// scanners issue the same paginated listing on every start, and would leave the
+// cache with two writers.
 func (s *Scanner) primeOpenPRs(ctx context.Context) {
-	if s.entities.HasOpenPRs() || !s.gh.Ready() {
+	if !s.cfg.PrimeOpenPRs || s.entities.HasOpenPRs() || !s.gh.Ready() {
 		return
 	}
 	klog.Infof("Populating open PRs cache for referenced issues...")

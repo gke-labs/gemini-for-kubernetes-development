@@ -166,7 +166,7 @@ func TestScanOnce_ColdPRCacheFailsClosed(t *testing.T) {
 	gh.BaseURL, _ = url.Parse(server.URL + "/")
 
 	entities := &fakeEntities{referenced: map[int]bool{}}
-	s, queue, _ := newScanner(t, Config{BotUsers: []string{"bot1"}}, Deps{GitHub: github.ForRepo(gh, "test-owner", "test-repo"), Entities: entities})
+	s, queue, _ := newScanner(t, Config{BotUsers: []string{"bot1"}, PrimeOpenPRs: true}, Deps{GitHub: github.ForRepo(gh, "test-owner", "test-repo"), Entities: entities})
 
 	s.ScanOnce(context.Background())
 
@@ -197,7 +197,7 @@ func TestScanOnce_PrimesPRCache(t *testing.T) {
 	gh.BaseURL, _ = url.Parse(server.URL + "/")
 
 	entities := &fakeEntities{referenced: map[int]bool{}}
-	s, _, _ := newScanner(t, Config{}, Deps{GitHub: github.ForRepo(gh, "test-owner", "test-repo"), Entities: entities})
+	s, _, _ := newScanner(t, Config{PrimeOpenPRs: true}, Deps{GitHub: github.ForRepo(gh, "test-owner", "test-repo"), Entities: entities})
 
 	s.ScanOnce(context.Background())
 
@@ -205,11 +205,43 @@ func TestScanOnce_PrimesPRCache(t *testing.T) {
 		t.Errorf("published the open PR listing %d times, want 1", entities.prsSet)
 	}
 
-	// Once a scan has published, the scanner leaves that half of the cache to
-	// the pull request scanner that owns it.
+	// Once a scan has published, there is nothing left to prime.
 	s.ScanOnce(context.Background())
 	if entities.prsSet != 1 {
 		t.Errorf("published the open PR listing %d times after priming, want 1", entities.prsSet)
+	}
+}
+
+// TestScanOnce_DoesNotPrimePRCacheWhenPRScannerRuns is the other half of
+// TestScanOnce_PrimesPRCache. When a pull request scanner is running, that
+// scanner owns the open PR half of the cache; priming it here as well would
+// duplicate the same paginated listing on every start and give the cache two
+// writers. The cold cycle is skipped instead, and the next one proceeds on what
+// the pull request scanner published.
+func TestScanOnce_DoesNotPrimePRCacheWhenPRScannerRuns(t *testing.T) {
+	var listedPRs bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/repos/test-owner/test-repo/pulls" {
+			listedPRs = true
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]*githubv39.Issue{})
+	}))
+	defer server.Close()
+
+	gh := githubv39.NewClient(nil)
+	gh.BaseURL, _ = url.Parse(server.URL + "/")
+
+	entities := &fakeEntities{referenced: map[int]bool{}}
+	s, _, _ := newScanner(t, Config{}, Deps{GitHub: github.ForRepo(gh, "test-owner", "test-repo"), Entities: entities})
+
+	s.ScanOnce(context.Background())
+
+	if listedPRs {
+		t.Error("listed open PRs while a pull request scanner owns that half of the cache; want the listing left to it")
+	}
+	if entities.prsSet != 0 {
+		t.Errorf("published the open PR listing %d times, want 0", entities.prsSet)
 	}
 }
 

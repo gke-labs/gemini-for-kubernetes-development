@@ -88,6 +88,7 @@ func (w *Watcher) newIssueScanner() *issues.Scanner {
 		ScanLimit:      w.ScanLimit,
 		MinNumber:      w.minIssueNumber(),
 		ProcessedDir:   w.processedDir,
+		PrimeOpenPRs:   !w.prsEnabled(),
 		DryRun:         w.DryRun,
 	}, issues.Deps{
 		GitHub:    w.repoClient,
