@@ -31,6 +31,7 @@ const STAGE_LABEL = {
   'review-pending': 'Pending on GitHub',
   'review-submitted': 'Review submitted',
   'triage-ready': 'Triage ready',
+  'triaged': 'Triaged',
   'triaging': 'Triaging…',
   'untriaged': 'Untriaged',
 };
@@ -86,6 +87,7 @@ function Chip({ text, color, bg, title }) {
 }
 
 function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
+  const [showDraft, setShowDraft] = useState(false);
   const attention = ATTENTION_STYLE[item.attention];
   const stage = STAGE_LABEL[item.stage] || item.stage;
   const group = groupOf(item);
@@ -105,6 +107,9 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
       // Triage is draft-only (discovery identity) — available even on
       // read-only boards; runs only on this click or auto-triage.
       actions.push({ label: 'Triage', path: `issues/${item.number}/triage`, title: 'Run the triage agent for this issue — suggestions appear on the board, nothing is written to GitHub' });
+    }
+    if (item.stage === 'triage-ready' && !readOnly) {
+      actions.push({ label: 'Publish triage', path: `issues/${item.number}/publish-triage`, confirm: `Apply the suggested labels and post the triage comment on issue #${item.number} as you?`, title: 'Applies suggested labels and posts the assessment comment under your identity' });
     }
     if (readOnly || group === 'triage') {
       // No fix pipeline without push; and the Triage tab stays a
@@ -151,6 +156,7 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
   }
 
   return (
+    <React.Fragment>
     <tr>
       <td className="work-num" style={{ padding: '6px 8px' }} title={item.type === 'issue' ? 'Issue' : 'Pull request'}>
         {groupTag && (
@@ -168,18 +174,6 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
             style={{ marginLeft: '8px', fontSize: 'small', color: 'var(--text-secondary)' }}
             title="Issue folded into this PR — the PR is the focus now">↳ fixes #{n}</a>
         ))}
-        {item.draft && (
-          <details style={{ marginTop: '4px' }}>
-            <summary style={{ cursor: 'pointer', fontSize: 'small', color: 'var(--text-secondary)' }}>
-              {item.type === 'issue' ? 'Triage suggestions' : 'Review draft'}
-            </summary>
-            <pre style={{
-              whiteSpace: 'pre-wrap', fontSize: 'small', margin: '4px 0 0 0',
-              padding: '8px', backgroundColor: 'var(--bg-secondary)',
-              borderRadius: '4px', maxHeight: '260px', overflowY: 'auto',
-            }}>{item.draft}</pre>
-          </details>
-        )}
       </td>
       <td style={{ padding: '6px 8px' }}>
         <Chip text={stage} color={accentOf(item)} bg={tintOf(item)} />
@@ -202,6 +196,14 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
       </td>
       <td style={{ padding: '6px 8px', fontSize: 'small', color: 'var(--text-secondary)' }}>{ageOf(item.updatedAt)}</td>
       <td style={{ padding: '6px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+        {item.draft && (
+          <button
+            className="btn btn-sm"
+            style={{ marginLeft: '4px' }}
+            title="Show the agent's suggestions"
+            onClick={() => setShowDraft(v => !v)}
+          >{showDraft ? 'Hide suggestions' : 'Suggestions'}</button>
+        )}
         {actions.map(a => a.href ? (
           <a
             key={a.label}
@@ -226,6 +228,19 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
         ))}
       </td>
     </tr>
+    {showDraft && item.draft && (
+      <tr>
+        <td colSpan="8" style={{ padding: '0 8px 10px 8px' }}>
+          <pre style={{
+            whiteSpace: 'pre-wrap', fontSize: 'small', margin: 0,
+            padding: '10px', backgroundColor: 'var(--bg-secondary)',
+            borderRadius: '6px', maxHeight: '300px', overflowY: 'auto',
+            textAlign: 'left',
+          }}>{item.draft}</pre>
+        </td>
+      </tr>
+    )}
+    </React.Fragment>
   );
 }
 
