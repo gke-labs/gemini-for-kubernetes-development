@@ -101,15 +101,17 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
       // No fix pipeline without push: the agent's PR could not land.
     } else if (['open', 'awaiting-go', 'queued', 'untriaged', 'triage-ready'].includes(item.stage) && !item.sandbox) {
       actions.push({ label: 'Fix', path: `issues/${item.number}/fix` });
-    } else if (['fix-failed', 'fix-done'].includes(item.stage)) {
-      actions.push({ label: 'Fix again', path: `issues/${item.number}/rerun` });
+    } else if (item.stage === 'fix-failed') {
+      // Nothing shipped, so relaunching in the same sandbox is a clean
+      // retry. Successful fixes have no re-run: candidate PRs would need
+      // per-run sandboxes, which the shared fix sandbox can't provide.
+      actions.push({ label: 'Retry', path: `issues/${item.number}/rerun` });
     } else if (item.stage === 'pr-open') {
       // Merging happens on GitHub — the row links to the PR.
       const prNum = prNumFromURL(item.prURL);
       if (prNum) {
         actions.push({ label: 'Promote PR', path: `prs/${prNum}/promote`, title: 'Mark the draft PR ready for review' });
       }
-      actions.push({ label: 'Fix again', path: `issues/${item.number}/rerun` });
     }
   } else if (group === 'mine-pr') {
     // Your own PR: promote drafts, merge, or send the agent back to iterate
@@ -117,9 +119,6 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
     if (!readOnly && item.draftPR) {
       // Merging happens on GitHub; promote is the one repo-write left here.
       actions.push({ label: 'Promote PR', path: `prs/${item.number}/promote`, title: 'Mark the draft PR ready for review' });
-    }
-    if (!readOnly && item.fixes && item.fixes.length && item.sandbox) {
-      actions.push({ label: 'Fix again', path: `issues/${item.fixes[0]}/rerun`, title: `Re-run the fix for #${item.fixes[0]}` });
     }
   } else {
     if (['open', 'review-queued', 'review-requested'].includes(item.stage) && !item.sandbox) {
