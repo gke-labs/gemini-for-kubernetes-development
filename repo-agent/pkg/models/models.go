@@ -73,7 +73,8 @@ type WorkSandbox struct {
 // WorkItem is one row of the board work feed: an issue or PR merged with
 // its agent/sandbox state.
 type WorkItem struct {
-	Type      string       `json:"type"` // issue | pr
+	Type      string       `json:"type"`            // issue | pr
+	Group     string       `json:"group,omitempty"` // review | fix | mine-pr | mine-issue
 	Number    int          `json:"number"`
 	Title     string       `json:"title"`
 	HTMLURL   string       `json:"htmlURL"`
@@ -81,7 +82,9 @@ type WorkItem struct {
 	Attention string       `json:"attention,omitempty"` // needs-you | working | waiting
 	ClaimedBy string       `json:"claimedBy,omitempty"`
 	PRURL     string       `json:"prURL,omitempty"`
-	Draft     string       `json:"draft,omitempty"` // triage/review draft, when ready
+	Draft     string       `json:"draft,omitempty"`   // triage/review draft, when ready
+	DraftPR   bool         `json:"draftPR,omitempty"` // PR is a GitHub draft (promotable)
+	Fixes     []int        `json:"fixes,omitempty"`   // issue numbers this PR closes
 	Sandbox   *WorkSandbox `json:"sandbox,omitempty"`
 	UpdatedAt string       `json:"updatedAt,omitempty"`
 }
