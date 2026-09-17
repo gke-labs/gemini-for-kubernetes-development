@@ -698,3 +698,40 @@ func TestSubmittedThenReRequested(t *testing.T) {
 	}
 	t.Fatal("pr-90 row missing")
 }
+
+// Between a click and the run: a mailbox entry renders the row as
+// Starting… (no needs-you, no second kickoff invited), and a sandbox
+// without a task state (provisioning) does the same.
+func TestKickoffFeedbackStages(t *testing.T) {
+	fresh := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
+	ghResponses := map[string]string{
+		"https://api.github.com/repos/test/repo/pulls?per_page=100&state=open": `[
+			{"number": 5, "title": "clicked", "html_url": "https://github.com/test/repo/pull/5", "updated_at": "` + fresh + `",
+			 "user": {"login": "carol"}, "requested_reviewers": [{"login": "alice"}]},
+			{"number": 6, "title": "provisioning", "html_url": "https://github.com/test/repo/pull/6", "updated_at": "` + fresh + `",
+			 "user": {"login": "carol"}, "requested_reviewers": [{"login": "alice"}]}
+		]`,
+	}
+	board := boardCR()
+	board.SetAnnotations(map[string]string{"board.gemini.google.com/requests": `{"review-5": "alice"}`})
+	provisioning := sandboxCR("factory-pr-6",
+		map[string]interface{}{"factory.gemini.google.com/managed": "true", "factory.gemini.google.com/pr": "6"},
+		map[string]interface{}{"htmlURL": "https://github.com/test/repo/pull/6"}, 1)
+
+	_, r, _ := boardTestServer(t, ghResponses, board, provisioning)
+	req, _ := http.NewRequest("GET", "/board/myboard/work", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	var work []models.WorkItem
+	_ = json.Unmarshal(w.Body.Bytes(), &work)
+	stages := map[int][2]string{}
+	for _, item := range work {
+		stages[item.Number] = [2]string{item.Stage, item.Attention}
+	}
+	if s := stages[5]; s[0] != "review-starting" || s[1] != "working" {
+		t.Errorf("mailboxed PR: want review-starting/working, got %v", s)
+	}
+	if s := stages[6]; s[0] != "review-starting" || s[1] != "working" {
+		t.Errorf("provisioning PR: want review-starting/working, got %v", s)
+	}
+}
