@@ -36,6 +36,15 @@
   --text-danger: #d9534f;
   --border-danger: #d9534f;
   --bg-danger-light: #fdf7f7;
+
+  /* Work-board group accents (Review/Fix/Triage/My PRs/My issues) */
+  --group-review: #0969da;
+  --group-fix: #1a7f37;
+  --group-triage: #bf8700;
+  --group-mine-pr: #8250df;
+  --group-mine-issue: #6e7781;
+  --upnext-bg: #fff8f6;
+  --upnext-accent: #d73a49;
 }
 
 body.dark-mode {
@@ -72,6 +81,14 @@ body.dark-mode {
   --text-danger: #f85149;
   --border-danger: #f85149;
   --bg-danger-light: #2c1a1a;
+
+  --group-review: #58a6ff;
+  --group-fix: #3fb950;
+  --group-triage: #d29922;
+  --group-mine-pr: #a371f7;
+  --group-mine-issue: #8b949e;
+  --upnext-bg: #221618;
+  --upnext-accent: #f85149;
 }
 
 .App {
@@ -224,6 +241,65 @@ input:checked + .slider:before {
   color: var(--text-primary);
   font-weight: 600;
   border-bottom-color: var(--bg-active);
+}
+
+/* Each group underlines (and labels) in its own accent when active. */
+.group-tab.g-review.active { color: var(--group-review); border-bottom-color: var(--group-review); }
+.group-tab.g-fix.active { color: var(--group-fix); border-bottom-color: var(--group-fix); }
+.group-tab.g-triage.active { color: var(--group-triage); border-bottom-color: var(--group-triage); }
+.group-tab.g-mine-pr.active { color: var(--group-mine-pr); border-bottom-color: var(--group-mine-pr); }
+.group-tab.g-mine-issue.active { color: var(--group-mine-issue); border-bottom-color: var(--group-mine-issue); }
+
+/* UP NEXT: warm tinted card with an urgency accent bar. */
+.up-next-card {
+  background-color: var(--upnext-bg);
+  border: 1px solid var(--border-color);
+  border-left: 3px solid var(--upnext-accent);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-bottom: 16px;
+}
+
+.up-next-title {
+  font-size: small;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--upnext-accent);
+  margin-bottom: 4px;
+}
+
+/* The work table sits on a card surface with row hover. */
+.work-card {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: var(--shadow-card);
+  padding: 4px 8px 8px 8px;
+}
+
+.work-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.work-table tbody tr {
+  border-bottom: 1px solid var(--border-color);
+}
+
+.work-table tbody tr:last-child {
+  border-bottom: none;
+}
+
+.work-table tbody tr:hover {
+  background-color: var(--bg-hover);
+}
+
+.work-num {
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
 }
 
 .pr-list {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import './App.css';
 import Settings from './Settings';
 import Overseer from './Overseer';
@@ -16,6 +16,7 @@ function App() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [view, setView] = useState('work'); // 'work', 'overseer', 'usage', 'settings'
   const [githubAuthEnabled, setGithubAuthEnabled] = useState(false);
+  const [providersError, setProvidersError] = useState(false);
   const [isGeminiKeySet, setIsGeminiKeySet] = useState(true); // Default to true to avoid flash of warning
   const hasRedirectedMissingKey = useRef(false);
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'light');
@@ -31,6 +32,21 @@ function App() {
     document.body.className = theme === 'dark' ? 'dark-mode' : '';
     localStorage.setItem('theme', theme);
   }, [theme]);
+
+  // A failed providers fetch means the API is unreachable — different from
+  // auth being unconfigured. Retry until we get a real answer.
+  const fetchProviders = useCallback(() => {
+    fetch('/api/auth/providers')
+      .then(res => { if (!res.ok) throw new Error(res.statusText); return res.json(); })
+      .then(data => {
+        setGithubAuthEnabled(data.github);
+        setProvidersError(false);
+      })
+      .catch(err => {
+        console.error("Failed to fetch auth providers:", err);
+        setProvidersError(true);
+      });
+  }, []);
 
   // Check authentication status on load
   useEffect(() => {
@@ -50,13 +66,14 @@ function App() {
         setIsLoadingAuth(false);
       });
 
-    fetch('/api/auth/providers')
-      .then(res => res.json())
-      .then(data => {
-        setGithubAuthEnabled(data.github);
-      })
-      .catch(err => console.error("Failed to fetch auth providers:", err));
-  }, []);
+    fetchProviders();
+  }, [fetchProviders]);
+
+  useEffect(() => {
+    if (!providersError) return;
+    const t = setInterval(fetchProviders, 10000);
+    return () => clearInterval(t);
+  }, [providersError, fetchProviders]);
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -191,6 +208,11 @@ function App() {
                 <button className="btn btn-submit" onClick={() => handleLogin('readwrite')} style={{backgroundColor: '#0366d6', marginRight: '10px'}}>Login with GitHub (Read-Write)</button>
                 <button className="btn btn-submit" onClick={() => handleLogin('readonly')} style={{backgroundColor: '#6f42c1'}}>Login with GitHub (Read-Only)</button>
                 </>
+            ) : providersError ? (
+                <div className="auth-error">
+                    <p>Cannot reach the Repo Agent API right now — retrying…</p>
+                    <p style={{fontSize: 'small', color: 'var(--text-secondary)'}}>The backend may be restarting or rescheduling. This page will recover automatically.</p>
+                </div>
             ) : (
                 <div className="auth-error">
                     <p>GitHub Authentication is not configured.</p>

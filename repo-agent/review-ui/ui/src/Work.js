@@ -43,6 +43,23 @@ function groupOf(item) {
   return item.group || (item.type === 'issue' ? 'fix' : 'review');
 }
 
+// Per-group accent (CSS vars so dark mode derives automatically).
+const GROUP_ACCENT = {
+  review: 'var(--group-review)',
+  fix: 'var(--group-fix)',
+  triage: 'var(--group-triage)',
+  'mine-pr': 'var(--group-mine-pr)',
+  'mine-issue': 'var(--group-mine-issue)',
+};
+
+function accentOf(item) {
+  return GROUP_ACCENT[groupOf(item)] || 'var(--text-secondary)';
+}
+
+function tintOf(item) {
+  return `color-mix(in srgb, ${accentOf(item)} 12%, transparent)`;
+}
+
 function ageOf(ts) {
   if (!ts) return '';
   const mins = Math.floor((Date.now() - new Date(ts).getTime()) / 60000);
@@ -112,10 +129,10 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag }) {
   }
 
   return (
-    <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
-      <td style={{ padding: '6px 8px', whiteSpace: 'nowrap' }} title={item.type === 'issue' ? 'Issue' : 'Pull request'}>
+    <tr>
+      <td className="work-num" style={{ padding: '6px 8px' }} title={item.type === 'issue' ? 'Issue' : 'Pull request'}>
         {groupTag && (
-          <Chip text={groupTag} color="var(--text-secondary)" bg="var(--bg-secondary)" title={GROUPS.find(g => g.key === group)?.hint} />
+          <Chip text={groupTag} color={accentOf(item)} bg={tintOf(item)} title={GROUPS.find(g => g.key === group)?.hint} />
         )}
         {groupTag ? ' ' : ''}{item.type === 'issue' ? '◉' : '⇄'} #{item.number}
       </td>
@@ -142,7 +159,9 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag }) {
           </details>
         )}
       </td>
-      <td style={{ padding: '6px 8px' }}>{stage}</td>
+      <td style={{ padding: '6px 8px' }}>
+        <Chip text={stage} color={accentOf(item)} bg={tintOf(item)} />
+      </td>
       <td style={{ padding: '6px 8px' }}>
         {attention && <Chip text={attention.label} color={attention.color} bg={attention.bg} />}
       </td>
@@ -368,12 +387,12 @@ function Work({ onBack, namespace }) {
         );
         return (
           <div>
-            {upNext.length > 0 && (
-              <div style={{ marginBottom: '14px' }}>
-                <div style={{ fontSize: 'small', fontWeight: 'bold', color: '#d73a49', marginBottom: '2px' }}>
+            {upNext.length > 0 ? (
+              <div className="up-next-card">
+                <div className="up-next-title">
                   UP NEXT — needs you ({upNext.length})
                 </div>
-                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                <table className="work-table">
                   <tbody>
                     {upNext.slice(0, UP_NEXT_CAP).map(item => (
                       <WorkRow key={`up-${item.type}-${item.number}`} item={item} boardName={activeBoard}
@@ -387,6 +406,10 @@ function Work({ onBack, namespace }) {
                   </div>
                 )}
               </div>
+            ) : work.length > 0 && (
+              <div style={{ fontSize: 'small', color: 'var(--status-green)', margin: '0 0 12px 2px' }}>
+                ✓ Nothing needs you right now
+              </div>
             )}
 
             <nav className="group-tabs">
@@ -395,7 +418,7 @@ function Work({ onBack, namespace }) {
                 return (
                   <button
                     key={g.key}
-                    className={`group-tab ${shown === g.key ? 'active' : ''}`}
+                    className={`group-tab g-${g.key} ${shown === g.key ? 'active' : ''}`}
                     title={g.hint}
                     onClick={() => setActiveGroup(g.key)}
                   >
@@ -418,19 +441,21 @@ function Work({ onBack, namespace }) {
               })}
             </nav>
 
-            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
-              {header}
-              <tbody>
-                {rows.map(item => (
-                  <WorkRow key={`${item.type}-${item.number}`} item={item} boardName={activeBoard} onAction={handleAction} namespace={namespace} />
-                ))}
-                {!rows.length && (
-                  <tr><td colSpan="8" style={{ padding: '16px 8px', color: 'var(--text-secondary)' }}>
-                    Nothing in {(GROUPS.find(g => g.key === shown) || {}).label || 'this group'} — {(GROUPS.find(g => g.key === shown) || {}).hint || ''}.
-                  </td></tr>
-                )}
-              </tbody>
-            </table>
+            <div className="work-card">
+              <table className="work-table">
+                {header}
+                <tbody>
+                  {rows.map(item => (
+                    <WorkRow key={`${item.type}-${item.number}`} item={item} boardName={activeBoard} onAction={handleAction} namespace={namespace} />
+                  ))}
+                  {!rows.length && (
+                    <tr><td colSpan="8" style={{ padding: '16px 8px', color: 'var(--text-secondary)' }}>
+                      Nothing in {(GROUPS.find(g => g.key === shown) || {}).label || 'this group'} — {(GROUPS.find(g => g.key === shown) || {}).hint || ''}.
+                    </td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         );
       })()}
