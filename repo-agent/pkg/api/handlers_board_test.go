@@ -145,10 +145,6 @@ func TestGetBoardWork(t *testing.T) {
 			{"number": 10, "title": "fixing", "html_url": "https://github.com/test/repo/issues/10", "updated_at": "2026-09-16T10:00:00Z",
 			 "labels": [{"name": "agent"}], "assignees": [{"login": "alice"}]}
 		]`,
-		"https://api.github.com/repos/test/repo/issues?labels=agent&per_page=100&state=open": `[
-			{"number": 11, "title": "bobs labeled", "html_url": "https://github.com/test/repo/issues/11", "updated_at": "2026-09-16T11:00:00Z",
-			 "labels": [{"name": "agent"}], "assignees": [{"login": "bob"}]}
-		]`,
 		"https://api.github.com/repos/test/repo/pulls?per_page=100&state=open": `[
 			{"number": 42, "title": "review me", "html_url": "https://github.com/test/repo/pull/42", "updated_at": "2026-09-16T12:00:00Z",
 			 "user": {"login": "carol"}, "requested_reviewers": [{"login": "alice"}]}
@@ -174,8 +170,8 @@ func TestGetBoardWork(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &work); err != nil {
 		t.Fatalf("bad json: %v", err)
 	}
-	if len(work) != 3 {
-		t.Fatalf("expected 3 rows, got %d: %s", len(work), w.Body.String())
+	if len(work) != 2 {
+		t.Fatalf("expected 2 rows, got %d: %s", len(work), w.Body.String())
 	}
 
 	byKey := map[string]models.WorkItem{}
@@ -185,9 +181,6 @@ func TestGetBoardWork(t *testing.T) {
 
 	if row := byKey["issue-10"]; row.Stage != "fixing" || row.Attention != "working" || row.Sandbox == nil || row.Sandbox.Name != "fix-repo-10" {
 		t.Errorf("issue-10 row wrong: %+v", row)
-	}
-	if row := byKey["issue-11"]; row.Stage != "awaiting-go" || row.Attention != "needs-you" || row.ClaimedBy != "bob" {
-		t.Errorf("issue-11 row wrong: %+v", row)
 	}
 	if row := byKey["pr-42"]; row.Stage != "review-pending" || row.Attention != "needs-you" {
 		t.Errorf("pr-42 row wrong: %+v", row)
@@ -464,8 +457,8 @@ func TestGetBoardWorkGroupsAndFolding(t *testing.T) {
 	if row := byKey["pr-42"]; row.Group != "review" {
 		t.Errorf("pr-42 should be group review: %+v", row)
 	}
-	if row := byKey["issue-12"]; row.Group != "mine-issue" {
-		t.Errorf("issue-12 should be group mine-issue: %+v", row)
+	if row := byKey["issue-12"]; row.Group != "issues" {
+		t.Errorf("issue-12 should be group issues: %+v", row)
 	}
 
 	// A bot-authored PR with no involvement signals still surfaces (and
@@ -526,18 +519,19 @@ func TestGetBoardWorkTriageGroup(t *testing.T) {
 		byKey[item.Type+"-"+itoa(item.Number)] = item
 	}
 
-	if row := byKey["issue-20"]; row.Group != "triage" || row.Stage != "triage-ready" || row.Draft == "" {
+	if row := byKey["issue-20"]; row.Group != "issues" || row.Stage != "triage-ready" || row.Draft == "" {
 		t.Errorf("issue-20 row wrong: %+v", row)
 	}
-	if row := byKey["issue-21"]; row.Group != "triage" || row.Stage != "untriaged" {
+	if row := byKey["issue-21"]; row.Group != "issues" || row.Stage != "untriaged" {
 		t.Errorf("issue-21 row wrong: %+v", row)
 	}
 	if _, ok := byKey["issue-22"]; ok {
 		t.Errorf("excluded issue-22 should not appear: %s", w.Body.String())
 	}
-	// Trigger-labeled issues route through the labeled list (group fix), not triage.
-	if _, ok := byKey["issue-23"]; ok {
-		t.Errorf("issue-23 is trigger-labeled and not in the labeled response; it must not land in triage: %s", w.Body.String())
+	// The trigger label is automation-only: a labeled, unassigned issue
+	// still lists in the triage view.
+	if row, ok := byKey["issue-23"]; !ok || row.Group != "issues" {
+		t.Errorf("issue-23 (labeled, unassigned) should list in triage: %s", w.Body.String())
 	}
 }
 
@@ -618,10 +612,10 @@ func TestGetBoardsRole(t *testing.T) {
 	}
 }
 
-// A trigger-labeled PR is only "queued" where someone will actually run it
-// (personal board, owner-driven). On shared boards a label names nobody —
-// the stage is needs-reviewer so a member acts.
-func TestLabeledPRStagePerBoardType(t *testing.T) {
+// The trigger label is automation-only: a labeled PR with no involvement
+// signal (not authored, no review request, no sandbox, no issue link) does
+// not appear in the view at all.
+func TestLabeledPRNotAView(t *testing.T) {
 	prsJSON := `[
 		{"number": 80, "title": "labeled", "html_url": "https://github.com/test/repo/pull/80", "updated_at": "2026-09-17T10:00:00Z",
 		 "user": {"login": "carol"}, "labels": [{"name": "agent"}]}
@@ -630,40 +624,16 @@ func TestLabeledPRStagePerBoardType(t *testing.T) {
 		"https://api.github.com/repos/test/repo/pulls?per_page=100&state=open": prsJSON,
 	}
 
-	// Personal: board in alice's namespace (github-pat present).
 	_, r, _ := boardTestServer(t, ghResponses, boardCR())
 	req, _ := http.NewRequest("GET", "/board/myboard/work", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	var work []models.WorkItem
 	_ = json.Unmarshal(w.Body.Bytes(), &work)
-	stage := ""
 	for _, item := range work {
 		if item.Number == 80 {
-			stage = item.Stage
+			t.Errorf("labeled-only PR must not appear in the view: %+v", item)
 		}
-	}
-	if stage != "review-queued" {
-		t.Errorf("personal board labeled PR: want review-queued, got %q", stage)
-	}
-
-	// Shared: board in a namespace without github-pat.
-	shared := boardCR()
-	shared.SetNamespace("board-kcc")
-	_ = unstructured.SetNestedStringSlice(shared.Object, []string{"alice"}, "spec", "access", "allow")
-	_, r2, _ := boardTestServer(t, ghResponses, shared)
-	w2 := httptest.NewRecorder()
-	r2.ServeHTTP(w2, req)
-	var work2 []models.WorkItem
-	_ = json.Unmarshal(w2.Body.Bytes(), &work2)
-	stage2, attention2 := "", ""
-	for _, item := range work2 {
-		if item.Number == 80 {
-			stage2, attention2 = item.Stage, item.Attention
-		}
-	}
-	if stage2 != "needs-reviewer" || attention2 != "needs-you" {
-		t.Errorf("shared board labeled PR: want needs-reviewer/needs-you, got %q/%q", stage2, attention2)
 	}
 }
 

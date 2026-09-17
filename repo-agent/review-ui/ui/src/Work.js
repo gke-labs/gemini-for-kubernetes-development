@@ -39,24 +39,20 @@ const STAGE_LABEL = {
 // Action-first grouping (tabs). UP NEXT pins needs-you rows across groups.
 const GROUPS = [
   { key: 'review', label: 'Review', hint: 'Incoming PRs to review' },
-  { key: 'fix', label: 'Fix', hint: 'Issues assigned to you or trigger-labeled' },
-  { key: 'triage', label: 'Triage', hint: 'Repo-wide triage inbox (board intake.triageIssues)' },
+  { key: 'issues', label: 'Issues', hint: 'All open issues — yours, unclaimed, and filed by you; actions follow each row' },
   { key: 'mine-pr', label: 'My PRs', hint: 'PRs you authored — monitor and refine' },
-  { key: 'mine-issue', label: 'My issues', hint: 'Issues you filed, waiting on others' },
 ];
 const UP_NEXT_CAP = 5;
 
 function groupOf(item) {
-  return item.group || (item.type === 'issue' ? 'fix' : 'review');
+  return item.group || (item.type === 'issue' ? 'issues' : 'review');
 }
 
 // Per-group accent (CSS vars so dark mode derives automatically).
 const GROUP_ACCENT = {
   review: 'var(--group-review)',
-  fix: 'var(--group-fix)',
-  triage: 'var(--group-triage)',
+  issues: 'var(--group-fix)',
   'mine-pr': 'var(--group-mine-pr)',
-  'mine-issue': 'var(--group-mine-issue)',
 };
 
 function accentOf(item) {
@@ -111,10 +107,9 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
     if (item.stage === 'triage-ready' && !readOnly) {
       actions.push({ label: 'Publish triage', path: `issues/${item.number}/publish-triage`, confirm: `Apply the suggested labels and post the triage comment on issue #${item.number} as you?`, title: 'Applies suggested labels and posts the assessment comment under your identity' });
     }
-    if (readOnly || group === 'triage') {
-      // No fix pipeline without push; and the Triage tab stays a
-      // single-verb inbox — issues move to Fix via assignment or label.
-    } else if (['open', 'awaiting-go', 'queued'].includes(item.stage) && !item.sandbox) {
+    if (readOnly) {
+      // No fix pipeline without push: the agent's PR could not land.
+    } else if (['open', 'untriaged', 'triage-ready', 'triaged'].includes(item.stage) && !item.sandbox) {
       actions.push({ label: 'Fix', path: `issues/${item.number}/fix` });
     } else if (item.stage === 'fix-failed') {
       // Nothing shipped, so relaunching in the same sandbox is a clean
@@ -174,6 +169,14 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
             style={{ marginLeft: '8px', fontSize: 'small', color: 'var(--text-secondary)' }}
             title="Issue folded into this PR — the PR is the focus now">↳ fixes #{n}</a>
         ))}
+        {(item.labels || []).slice(0, 4).map(l => (
+          <span key={l} style={{ marginLeft: '6px' }}>
+            <Chip text={l} color="var(--text-secondary)" bg="var(--bg-secondary)" title="GitHub label" />
+          </span>
+        ))}
+        {(item.labels || []).length > 4 && (
+          <span style={{ marginLeft: '4px', fontSize: 'x-small', color: 'var(--text-muted)' }}>+{item.labels.length - 4}</span>
+        )}
       </td>
       <td style={{ padding: '6px 8px' }}>
         <Chip text={stage} color={accentOf(item)} bg={tintOf(item)} />
@@ -476,7 +479,7 @@ function Work({ onBack, namespace }) {
           || (GROUPS.find(g => byGroup[g.key].length) || {}).key
           || 'review';
         const rows = byGroup[shown] || [];
-        const groupLabel = { review: 'REVIEW', fix: 'FIX', triage: 'TRIAGE', 'mine-pr': 'MY PR', 'mine-issue': 'MY ISSUE' };
+        const groupLabel = { review: 'REVIEW', issues: 'ISSUE', 'mine-pr': 'MY PR' };
         const header = (
           <thead>
             <tr style={{ textAlign: 'left', borderBottom: '2px solid var(--border-color)', fontSize: 'small', color: 'var(--text-secondary)' }}>
