@@ -22,6 +22,7 @@ const STAGE_LABEL = {
   'pr-open': 'PR open',
   'reviewing': 'Reviewing…',
   'review-queued': 'Review queued',
+  'review-requested': 'Review requested',
   'review-ready': 'Review ready',
   'review-submitted': 'Review submitted',
   'triage-ready': 'Triage ready',
@@ -120,7 +121,7 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag }) {
       actions.push({ label: 'Fix again', path: `issues/${item.fixes[0]}/rerun`, title: `Re-run the fix for #${item.fixes[0]}` });
     }
   } else {
-    if (['open', 'review-queued'].includes(item.stage) && !item.sandbox) {
+    if (['open', 'review-queued', 'review-requested'].includes(item.stage) && !item.sandbox) {
       actions.push({ label: 'Review', path: `prs/${item.number}/review` });
     } else if (item.stage === 'review-ready') {
       actions.push({ label: 'Publish review', path: `prs/${item.number}/publish`, confirm: `Publish the review draft on PR #${item.number} as your pending review?` });
