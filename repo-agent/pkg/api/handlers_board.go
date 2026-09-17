@@ -129,20 +129,43 @@ func (s *Server) hasPushPermission(ctx context.Context, namespace, sessionUser, 
 	}
 	repoPermCache.Unlock()
 
-	allowed := false
-	if owner, repo, err := parseRepoURL(repoURL); err == nil {
-		if token, err := s.memberToken(ctx, namespace); err == nil {
-			gh := githubClientForToken(ctx, token)
-			if repository, _, err := gh.Repositories.Get(ctx, owner, repo); err == nil {
-				perms := repository.GetPermissions()
-				allowed = perms["push"] || perms["maintain"] || perms["admin"]
-			}
-		}
+	// Only a definitive GitHub answer is cached for the full TTL. A
+	// transient failure (token fetch, network, rate limit) must not poison
+	// the verdict: it would silently strip Fix/Promote/Publish from the UI
+	// for 15 minutes. On error, keep any previous verdict and retry soon.
+	owner, repo, err := parseRepoURL(repoURL)
+	if err != nil {
+		return false
 	}
+	token, err := s.memberToken(ctx, namespace)
+	if err != nil {
+		return s.stalePermOrFalse(key)
+	}
+	gh := githubClientForToken(ctx, token)
+	repository, _, err := gh.Repositories.Get(ctx, owner, repo)
+	if err != nil {
+		klog.FromContext(ctx).Info("push-permission check failed; keeping previous verdict", "repo", repoURL, "err", err)
+		return s.stalePermOrFalse(key)
+	}
+	perms := repository.GetPermissions()
+	allowed := perms["push"] || perms["maintain"] || perms["admin"]
 	repoPermCache.Lock()
 	repoPermCache.entries[key] = repoPermEntry{allowed: allowed, expires: time.Now().Add(15 * time.Minute)}
 	repoPermCache.Unlock()
 	return allowed
+}
+
+// stalePermOrFalse returns the last cached verdict (even expired) when a
+// fresh check could not be made, extending it briefly so the next request
+// retries soon.
+func (s *Server) stalePermOrFalse(key string) bool {
+	repoPermCache.Lock()
+	defer repoPermCache.Unlock()
+	if e, ok := repoPermCache.entries[key]; ok {
+		repoPermCache.entries[key] = repoPermEntry{allowed: e.allowed, expires: time.Now().Add(30 * time.Second)}
+		return e.allowed
+	}
+	return false
 }
 
 // Boards are personal: each lives in its owner's namespace and is visible
