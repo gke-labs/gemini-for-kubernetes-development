@@ -159,7 +159,7 @@ func TestGetBoardWork(t *testing.T) {
 		map[string]interface{}{"sandbox.gemini.google.com/last-task-state": "Running", "htmlURL": "https://github.com/test/repo/issues/10"}, 1)
 	reviewSandbox := sandboxCR("factory-pr-42",
 		map[string]interface{}{"factory.gemini.google.com/managed": "true", "factory.gemini.google.com/pr": "42"},
-		map[string]interface{}{"agentDraft": "review:\n  body: hi", "htmlURL": "https://github.com/test/repo/pull/42"}, 1)
+		map[string]interface{}{"reviewState": "pending", "htmlURL": "https://github.com/test/repo/pull/42"}, 1)
 
 	_, r, _ := boardTestServer(t, ghResponses, boardCR(), fixSandbox, reviewSandbox)
 
@@ -189,7 +189,7 @@ func TestGetBoardWork(t *testing.T) {
 	if row := byKey["issue-11"]; row.Stage != "awaiting-go" || row.Attention != "needs-you" || row.ClaimedBy != "bob" {
 		t.Errorf("issue-11 row wrong: %+v", row)
 	}
-	if row := byKey["pr-42"]; row.Stage != "review-ready" || row.Attention != "needs-you" {
+	if row := byKey["pr-42"]; row.Stage != "review-pending" || row.Attention != "needs-you" {
 		t.Errorf("pr-42 row wrong: %+v", row)
 	}
 

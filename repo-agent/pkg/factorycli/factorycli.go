@@ -70,27 +70,6 @@ func DraftWasPosted(output string) bool {
 	return strings.Contains(output, draftPostedMarker)
 }
 
-// reviewBanner brackets the review YAML on `factory pr review --publish no`
-// stdout (factory/pkg/commands/review.go).
-const reviewBanner = "================= CODE REVIEW ================="
-
-// ExtractReviewYAML returns the review YAML printed after the CODE REVIEW
-// banner of a `factory pr review --publish no` invocation's output, or ""
-// if the banner is absent. Factory closes the block with a plain run of
-// '=' characters (not a second CODE REVIEW banner), so the closer is any
-// long '=' run — same contract as ExtractTriageYAML.
-func ExtractReviewYAML(output string) string {
-	start := strings.Index(output, reviewBanner)
-	if start < 0 {
-		return ""
-	}
-	rest := output[start+len(reviewBanner):]
-	if end := strings.Index(rest, "================"); end >= 0 {
-		rest = rest[:end]
-	}
-	return strings.TrimSpace(rest)
-}
-
 // ReviewOptions are the inputs for a `factory pr review` invocation.
 type ReviewOptions struct {
 	Namespace string
@@ -154,9 +133,9 @@ type Launcher interface {
 	// StartFix launches `factory fix` for key unless one is already running.
 	// Returns false if an invocation for key is already in flight.
 	StartFix(key string, opts FixOptions) bool
-	// StartReview launches `factory pr review --publish no` for key unless
+	// StartReview launches `factory pr review` for key unless
 	// one is already running. The review YAML is recovered from the
-	// invocation's output (see ExtractReviewYAML) via LastResult.
+	// invocation's output (see DraftWasPosted) via LastResult.
 	StartReview(key string, opts ReviewOptions) bool
 	// StartPRWatch launches `factory pr watch` for key unless one is
 	// already running.

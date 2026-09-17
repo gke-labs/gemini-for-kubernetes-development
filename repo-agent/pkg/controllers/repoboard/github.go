@@ -192,10 +192,25 @@ func AutoFixPreferenceKey(boardNamespace, boardName string) string {
 	return fmt.Sprintf("autofix.%s.%s", boardNamespace, boardName)
 }
 
+// AutoReviewPreferenceKey names the member-side auto-review opt-in for a
+// board: with it set, a PR that requests the member's review runs the
+// agent as them and parks a pending review on GitHub.
+func AutoReviewPreferenceKey(boardNamespace, boardName string) string {
+	return fmt.Sprintf("autoreview.%s.%s", boardNamespace, boardName)
+}
+
 func (r *Reconciler) memberOptedInAutoFix(ctx context.Context, member string, board *boardv1alpha1.RepoBoard) bool {
+	return r.memberPreference(ctx, member, AutoFixPreferenceKey(board.Namespace, board.Name))
+}
+
+func (r *Reconciler) memberOptedInAutoReview(ctx context.Context, member string, board *boardv1alpha1.RepoBoard) bool {
+	return r.memberPreference(ctx, member, AutoReviewPreferenceKey(board.Namespace, board.Name))
+}
+
+func (r *Reconciler) memberPreference(ctx context.Context, member, key string) bool {
 	cm := &corev1.ConfigMap{}
 	if err := r.Get(ctx, types.NamespacedName{Name: PreferencesConfigMap, Namespace: member}, cm); err != nil {
 		return false
 	}
-	return cm.Data[AutoFixPreferenceKey(board.Namespace, board.Name)] == "true"
+	return cm.Data[key] == "true"
 }
