@@ -617,3 +617,52 @@ func TestGetBoardsRole(t *testing.T) {
 		t.Errorf("otherboard role: want read-only, got %q", roles["otherboard"])
 	}
 }
+
+// A trigger-labeled PR is only "queued" where someone will actually run it
+// (personal board, owner-driven). On shared boards a label names nobody —
+// the stage is needs-reviewer so a member acts.
+func TestLabeledPRStagePerBoardType(t *testing.T) {
+	prsJSON := `[
+		{"number": 80, "title": "labeled", "html_url": "https://github.com/test/repo/pull/80", "updated_at": "2026-09-17T10:00:00Z",
+		 "user": {"login": "carol"}, "labels": [{"name": "agent"}]}
+	]`
+	ghResponses := map[string]string{
+		"https://api.github.com/repos/test/repo/pulls?per_page=100&state=open": prsJSON,
+	}
+
+	// Personal: board in alice's namespace (github-pat present).
+	_, r, _ := boardTestServer(t, ghResponses, boardCR())
+	req, _ := http.NewRequest("GET", "/board/myboard/work", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	var work []models.WorkItem
+	_ = json.Unmarshal(w.Body.Bytes(), &work)
+	stage := ""
+	for _, item := range work {
+		if item.Number == 80 {
+			stage = item.Stage
+		}
+	}
+	if stage != "review-queued" {
+		t.Errorf("personal board labeled PR: want review-queued, got %q", stage)
+	}
+
+	// Shared: board in a namespace without github-pat.
+	shared := boardCR()
+	shared.SetNamespace("board-kcc")
+	_ = unstructured.SetNestedStringSlice(shared.Object, []string{"alice"}, "spec", "access", "allow")
+	_, r2, _ := boardTestServer(t, ghResponses, shared)
+	w2 := httptest.NewRecorder()
+	r2.ServeHTTP(w2, req)
+	var work2 []models.WorkItem
+	_ = json.Unmarshal(w2.Body.Bytes(), &work2)
+	stage2, attention2 := "", ""
+	for _, item := range work2 {
+		if item.Number == 80 {
+			stage2, attention2 = item.Stage, item.Attention
+		}
+	}
+	if stage2 != "needs-reviewer" || attention2 != "needs-you" {
+		t.Errorf("shared board labeled PR: want needs-reviewer/needs-you, got %q/%q", stage2, attention2)
+	}
+}
