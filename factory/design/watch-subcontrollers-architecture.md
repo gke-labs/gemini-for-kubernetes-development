@@ -2,10 +2,10 @@
 
 | Metadata | Details |
 | :--- | :--- |
-| **Status** | Implementable |
+| **Status** | Implemented |
 | **Author(s)** | Sam Dowell (`sdowell@google.com`) |
 | **Created** | 2026-08-31 |
-| **Last Updated** | 2026-08-31 |
+| **Last Updated** | 2026-09-17 |
 
 This document proposes a decoupled, asynchronous subcontroller architecture for the `factory watch` command. It details the motivation, structural design, shared memory model, concurrency controls, lifecycle management, and a gradual implementation plan.
 
