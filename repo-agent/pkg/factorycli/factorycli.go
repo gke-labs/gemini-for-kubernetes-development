@@ -74,20 +74,21 @@ func DraftWasPosted(output string) bool {
 // stdout (factory/pkg/commands/review.go).
 const reviewBanner = "================= CODE REVIEW ================="
 
-// ExtractReviewYAML returns the review YAML printed between the CODE REVIEW
-// banners of a `factory pr review --publish no` invocation's output, or ""
-// if the banners are absent.
+// ExtractReviewYAML returns the review YAML printed after the CODE REVIEW
+// banner of a `factory pr review --publish no` invocation's output, or ""
+// if the banner is absent. Factory closes the block with a plain run of
+// '=' characters (not a second CODE REVIEW banner), so the closer is any
+// long '=' run — same contract as ExtractTriageYAML.
 func ExtractReviewYAML(output string) string {
 	start := strings.Index(output, reviewBanner)
 	if start < 0 {
 		return ""
 	}
 	rest := output[start+len(reviewBanner):]
-	end := strings.Index(rest, reviewBanner)
-	if end < 0 {
-		return ""
+	if end := strings.Index(rest, "================"); end >= 0 {
+		rest = rest[:end]
 	}
-	return strings.TrimSpace(rest[:end])
+	return strings.TrimSpace(rest)
 }
 
 // ReviewOptions are the inputs for a `factory pr review` invocation.
